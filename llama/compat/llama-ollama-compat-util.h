@@ -112,6 +112,38 @@ bool take_load_op    (const char * dest_name, LoadOp & out); // removes + return
 // Read `size` bytes at `offset` from `path` into `dst`. Used by LoadOps.
 bool read_at(const char * path, size_t offset, void * dst, size_t size);
 
+// -- Endianness helpers --
+
+// Returns true when the current host byte-order is big-endian (e.g. s390x).
+// Evaluated at runtime so the same binary works on mixed-endian clusters.
+bool host_is_big_endian();
+
+// Returns true when the GGUF file was written in little-endian byte order,
+// which is the universal convention for GGUF files from Ollama/HF registries.
+// Currently checks the `general.file_type` field; falls back to true when the
+// key is absent (all published models are little-endian).
+bool gguf_is_little_endian(const gguf_context * meta);
+
+// Byte-swap all endian-sensitive fields of a loaded tensor buffer in place.
+// Handles F16, BF16, F32, and every K-quant/legacy-quant block layout that
+// Ollama-registry models can contain. No-op for types with no multi-byte
+// scalar fields (Q8_0 without scale handled, integer arrays, etc.).
+// `nbytes` must be a multiple of the tensor's block size.
+void bswap_tensor_buf(ggml_type type, uint8_t * data, size_t nbytes);
+
+// Register a LoadOp for `tensor_name` that reads the raw little-endian bytes
+// from disk at `file_offset` / `file_size` and byte-swaps them in memory
+// before writing to the destination buffer.  Only registers when the host is
+// big-endian; on little-endian hosts this is a no-op.
+//
+// Must be called AFTER any renames that change the tensor's destination name
+// (so the LoadOp key matches what the loader will ask for at load time),
+// but BEFORE the file offset is invalidated by reshape/reclaim operations.
+void maybe_register_bswap_load_op(const char * tensor_name,
+                                  ggml_type    type,
+                                  size_t       file_offset,
+                                  size_t       file_size);
+
 // -- Common high-level transforms --
 
 // F16 -> F32 promotion. Captures the source file offset at registration
@@ -122,8 +154,11 @@ void promote_tensor_to_f32(gguf_context * meta, ggml_context * ctx, const char *
 // file offset + byte size at registration time. Layout assumption: sources
 // concatenate cleanly along the destination's slow ggml axis, which in
 // C order means the destination bytes are src[0] || src[1] || ... .
+// `src_type` is the ggml_type shared by all source tensors; used for the
+// per-block endian byte-swap on big-endian hosts.
 void register_concat_load(const gguf_context * meta, std::string dest_name,
-                          const std::vector<std::string> & src_names);
+                          const std::vector<std::string> & src_names,
+                          ggml_type src_type);
 
 // Mixed-type variant of register_concat_load: dequantizes each source to
 // F32 via its ggml_type_traits.to_float and concatenates the F32 arrays.

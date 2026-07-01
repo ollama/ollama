@@ -617,26 +617,28 @@ bool register_qwen35_norm_shift_load(gguf_context * meta, ggml_context * ctx,
     if (!dst) return false;
 
     set_tensor_type(dst, GGML_TYPE_F32);
+    const bool need_bswap = host_is_big_endian();
     register_load_op(to, LoadOp{
-        [src_offset, src_size, src_type, n_elem](const char * path, void * out, size_t out_size) {
+        [src_offset, src_size, src_type, n_elem, need_bswap](const char * path, void * out, size_t out_size) {
             if (out_size != n_elem * sizeof(float)) return false;
 
-            float * dst = static_cast<float *>(out);
+            float * dst_fp = static_cast<float *>(out);
+            std::vector<uint8_t> src(src_size);
+            if (!read_at(path, src_offset, src.data(), src.size())) return false;
+            // Bswap raw LE fields before numeric interpretation.
+            if (need_bswap) bswap_tensor_buf(src_type, src.data(), src_size);
+
             if (src_type == GGML_TYPE_F32) {
                 if (src_size != n_elem * sizeof(float)) return false;
-                std::vector<uint8_t> src(src_size);
-                if (!read_at(path, src_offset, src.data(), src.size())) return false;
                 const float * fp = reinterpret_cast<const float *>(src.data());
-                for (size_t i = 0; i < n_elem; ++i) dst[i] = fp[i] + 1.0f;
+                for (size_t i = 0; i < n_elem; ++i) dst_fp[i] = fp[i] + 1.0f;
                 return true;
             }
 
-            std::vector<uint8_t> src(src_size);
-            if (!read_at(path, src_offset, src.data(), src.size())) return false;
             const auto * traits = ggml_get_type_traits(src_type);
             if (!traits || !traits->to_float) return false;
-            traits->to_float(src.data(), dst, (int64_t) n_elem);
-            for (size_t i = 0; i < n_elem; ++i) dst[i] += 1.0f;
+            traits->to_float(src.data(), dst_fp, (int64_t) n_elem);
+            for (size_t i = 0; i < n_elem; ++i) dst_fp[i] += 1.0f;
             return true;
         },
         "F32 add-one norm shift",
@@ -724,7 +726,7 @@ bool register_qwen35moe_mtp_expert_merge(gguf_context * meta, ggml_context * ctx
     char dest[GGML_MAX_NAME];
     std::snprintf(dest, sizeof(dest), "blk.%u.%s", block, dst_suffix);
 
-    register_concat_load(meta, dest, names);
+    register_concat_load(meta, dest, names, type);
     rename_tensor(meta, ctx, names[0].c_str(), dest);
     if (ggml_tensor * t = ggml_get_tensor(ctx, dest)) {
         set_tensor_shape(t, {ne0, ne1, (int64_t) names.size()});
@@ -999,16 +1001,21 @@ bool register_gemma4_moe_gate_up_load(gguf_context * meta,
     if (gate_size != up_size || gate_size % (size_t) n_expert != 0) return false;
 
     const size_t expert_size = gate_size / (size_t) n_expert;
+    const ggml_type gate_type = gate->type;
+    const bool need_bswap = host_is_big_endian();
     register_load_op(gate_up_n, LoadOp{
-        [gate_offset, up_offset, expert_size, n_expert](const char * path, void * dst, size_t dst_size) {
+        [gate_offset, up_offset, expert_size, n_expert, gate_type, need_bswap](
+                const char * path, void * dst, size_t dst_size) {
             if (dst_size != expert_size * (size_t) n_expert * 2) return false;
 
             uint8_t * p = static_cast<uint8_t *>(dst);
             for (int64_t e = 0; e < n_expert; ++e) {
                 const size_t off = (size_t) e * expert_size;
                 if (!read_at(path, gate_offset + off, p, expert_size)) return false;
+                if (need_bswap) bswap_tensor_buf(gate_type, p, expert_size);
                 p += expert_size;
                 if (!read_at(path, up_offset + off, p, expert_size)) return false;
+                if (need_bswap) bswap_tensor_buf(gate_type, p, expert_size);
                 p += expert_size;
             }
             return true;
@@ -1370,11 +1377,12 @@ void register_glm4_ffn_concat(gguf_context * meta, ggml_context * ctx, int block
     std::snprintf(gate_n, sizeof(gate_n), "blk.%d.ffn_gate.weight", block_idx);
     std::snprintf(up_n,   sizeof(up_n),   "blk.%d.ffn_up.weight",   block_idx);
 
-    if (!ggml_get_tensor(ctx, gate_n) || !ggml_get_tensor(ctx, up_n)) return;
+    ggml_tensor * gate_t = ggml_get_tensor(ctx, gate_n);
+    if (!gate_t || !ggml_get_tensor(ctx, up_n)) return;
 
     // GLM4's fused ffn_up has gate as first half, up as second half
     // (so ggml_swiglu's silu(first_half) * second_half gives silu(gate) * up).
-    register_concat_load(meta, up_n, {gate_n, up_n});
+    register_concat_load(meta, up_n, {gate_n, up_n}, gate_t->type);
 
     if (ggml_tensor * t = ggml_get_tensor(ctx, up_n)) {
         set_tensor_shape(t, {t->ne[0], t->ne[1] * 2});
@@ -1908,11 +1916,18 @@ void register_qwen35moe_qkv_merge(gguf_context * meta, ggml_context * ctx, int b
     std::snprintf(qkv_w, sizeof(qkv_w), "v.blk.%d.attn_qkv.weight", block_idx);
     std::snprintf(qkv_b, sizeof(qkv_b), "v.blk.%d.attn_qkv.bias",   block_idx);
 
-    if (!ggml_get_tensor(ctx, q)) return; // no vision block at this index
+    ggml_tensor * q_t = ggml_get_tensor(ctx, q);
+    if (!q_t) return; // no vision block at this index
 
     // Capture source offsets for the concat BEFORE renaming.
-    register_concat_load(meta, qkv_w, {q, k, v});
-    register_concat_load(meta, qkv_b, {qbias, kbias, vbias});
+    // Bias tensors are typically F32; weight tensors use the type from the q tensor.
+    const ggml_type qkv_wtype = q_t->type;
+    const ggml_type qkv_btype = [&]() -> ggml_type {
+        const ggml_tensor * qb_t = ggml_get_tensor(ctx, qbias);
+        return qb_t ? qb_t->type : GGML_TYPE_F32;
+    }();
+    register_concat_load(meta, qkv_w, {q, k, v},         qkv_wtype);
+    register_concat_load(meta, qkv_b, {qbias, kbias, vbias}, qkv_btype);
 
     // Rename attn_q -> attn_qkv and widen from [hidden, hidden] to [hidden, 3*hidden].
     rename_tensor(meta, ctx, q, qkv_w);
@@ -1963,6 +1978,7 @@ void register_qwen35moe_patch_embed_split(gguf_context * meta, ggml_context * ct
     const size_t hw         = (size_t) width * (size_t) height;
     const int64_t cout      = packed / cin;
 
+    const bool need_bswap = host_is_big_endian();
     auto make_slice_op = [=](int slice_idx) {
         return LoadOp{
             [=](const char * path, void * dst, size_t dst_size) {
@@ -1970,6 +1986,9 @@ void register_qwen35moe_patch_embed_split(gguf_context * meta, ggml_context * ct
                 if (dst_size != expected) return false;
                 std::vector<uint8_t> src(src_size);
                 if (!read_at(path, src_offset, src.data(), src_size)) return false;
+                // Bswap LE fp16 bytes before ggml_fp16_to_fp32 reads them
+                // as a native uint16_t on big-endian hosts.
+                if (need_bswap) bswap_tensor_buf(GGML_TYPE_F16, src.data(), src_size);
                 const uint16_t * sp = reinterpret_cast<const uint16_t *>(src.data());
                 float          * dp = reinterpret_cast<float *>(dst);
                 for (int64_t c_out = 0; c_out < cout; ++c_out) {
@@ -2033,6 +2052,7 @@ void register_qwen3vl_patch_embed_split(gguf_context * meta, ggml_context * ctx,
     const size_t src_size   = (size_t) ggml_nelements(src_t) * sizeof(uint16_t);
     const size_t hw         = (size_t) width * (size_t) height;
 
+    const bool need_bswap = host_is_big_endian();
     auto make_slice_op = [=](int slice_idx) {
         return LoadOp{
             [=](const char * path, void * dst, size_t dst_size) {
@@ -2040,6 +2060,8 @@ void register_qwen3vl_patch_embed_split(gguf_context * meta, ggml_context * ctx,
                 if (dst_size != expected) return false;
                 std::vector<uint8_t> src(src_size);
                 if (!read_at(path, src_offset, src.data(), src_size)) return false;
+                // Bswap LE fp16 bytes before ggml_fp16_to_fp32 on big-endian.
+                if (need_bswap) bswap_tensor_buf(GGML_TYPE_F16, src.data(), src_size);
                 const uint16_t * sp = reinterpret_cast<const uint16_t *>(src.data());
                 float          * dp = reinterpret_cast<float *>(dst);
                 for (int64_t c_out = 0; c_out < cout; ++c_out) {
@@ -2261,11 +2283,20 @@ bool read_tensor_as_f32(const char * path,
                         std::vector<float> & out) {
     out.resize(n_elem);
     if (type == GGML_TYPE_F32) {
-        return read_at(path, offset, out.data(), n_elem * sizeof(float));
+        if (!read_at(path, offset, out.data(), n_elem * sizeof(float))) return false;
+        // On big-endian hosts, bswap the raw LE float bytes.
+        if (host_is_big_endian()) {
+            bswap_tensor_buf(GGML_TYPE_F32,
+                             reinterpret_cast<uint8_t *>(out.data()),
+                             n_elem * sizeof(float));
+        }
+        return true;
     }
 
     std::vector<uint8_t> src(src_size);
     if (!read_at(path, offset, src.data(), src.size())) return false;
+    // Bswap LE block-scale fields before the to_float() conversion.
+    if (host_is_big_endian()) bswap_tensor_buf(type, src.data(), src_size);
     const auto * traits = ggml_get_type_traits(type);
     if (!traits || !traits->to_float) return false;
     traits->to_float(src.data(), out.data(), (int64_t) n_elem);
@@ -2818,11 +2849,15 @@ void register_mistral3_vision_qk_permute(gguf_context * meta, ggml_context * ctx
     const int head_dim  = total_out / n_head;
     const int head_dim2 = head_dim / 2;
 
+    const bool need_bswap = host_is_big_endian();
     register_load_op(tensor_name, LoadOp{
         [=](const char * path, void * dst, size_t dst_size) {
             if (dst_size != total_bytes) return false;
             std::vector<uint8_t> src(total_bytes);
             if (!read_at(path, src_offset, src.data(), total_bytes)) return false;
+            // Row-shuffle on F16 data: bswap the source LE fp16 bytes first so
+            // that after the memcpy each destination row contains correct BE fp16.
+            if (need_bswap) bswap_tensor_buf(GGML_TYPE_F16, src.data(), total_bytes);
             uint8_t * dp = static_cast<uint8_t *>(dst);
             for (int oa = 0; oa < total_out; ++oa) {
                 const int h    = oa / head_dim;
@@ -3193,6 +3228,79 @@ void handle_missing_llava_projector_type(gguf_context * meta) {
     gguf_set_val_str(meta, "clip.projector_type", "mlp");
 }
 
+// =========================================================================
+// s390x / big-endian smart converter
+// =========================================================================
+//
+// Standard GGUF files from the Ollama registry and Hugging Face are always
+// written in little-endian byte order. On a big-endian host (s390x) each
+// tensor's FP16 / FP32 scale fields must be byte-swapped after reading.
+//
+// Detection: runtime host-endian check + conservatively assume any GGUF
+// that hasn't been explicitly tagged as big-endian is little-endian.
+//
+// Strategy: register a bswap LoadOp for every tensor in the file. Because
+// maybe_load_text_tensor / maybe_load_tensor consume LoadOps before the
+// normal file-read path, each tensor is: (1) read from disk, (2) byte-swapped
+// in the temporary heap buffer, (3) written to the backend buffer. This is
+// transparent to all callers and requires no Modelfile changes.
+//
+// Interaction with OLLAMA_BIGENDIAN_BSWAP patch (003):
+//   - When `OLLAMA_BIGENDIAN_BSWAP` is defined at compile time, the patch
+//     already inserts bswap_tensor_data() after every file read, so having both
+//     active would double-swap. Detect this at compile time and skip the compat
+//     LoadOp registration when the patch is present.
+//   - When only the compat layer is active (e.g. pre-existing binary without
+//     the patch), the LoadOp path is the sole swap mechanism.
+//
+// mmap: the bswap happens in a heap buffer before writing to the backend
+// buffer, so it is incompatible with mmap (which maps tensors directly into
+// read-only file pages). `disable_mmap_for` is called at translate_metadata
+// time to force the read() path, giving us a writable staging buffer.
+
+void handle_bigendian_bswap(const llama_model_loader * ml,
+                             const gguf_context * meta,
+                             const ggml_context * ctx) {
+#if defined(OLLAMA_BIGENDIAN_BSWAP)
+    // Patch 003 already performs the swap after every model-loader read.
+    // Registering a LoadOp here would double-swap. Skip.
+    (void) ml;
+    (void) meta;
+    (void) ctx;
+    return;
+#else
+    if (!host_is_big_endian()) return;
+    if (!gguf_is_little_endian(meta)) return;
+
+    OLLAMA_COMPAT_LOG_INFO(
+        "%s: big-endian host detected with little-endian GGUF; registering per-tensor bswap LoadOps\n",
+        __func__);
+
+    // Walk every tensor and register a bswap LoadOp for it.
+    // We capture file offset and byte-size at registration time (before any
+    // later rename / reshape operation could invalidate the gguf_context index).
+    const int64_t n = gguf_get_n_tensors(meta);
+    for (int64_t i = 0; i < n; ++i) {
+        const char * name   = gguf_get_tensor_name(meta, i);
+        const size_t offset = gguf_get_data_offset(meta)
+                            + gguf_get_tensor_offset(meta, i);
+        const size_t size   = gguf_get_tensor_size(meta, i);
+
+        // Determine the ggml_type from the in-memory tensor context.
+        ggml_type type = GGML_TYPE_F16; // safe default
+        if (const ggml_tensor * t =
+                ggml_get_tensor(const_cast<ggml_context *>(ctx), name)) {
+            type = t->type;
+        }
+
+        maybe_register_bswap_load_op(name, type, offset, size);
+    }
+
+    // Force the read() path so bswap_tensor_buf gets a writable staging buffer.
+    disable_mmap_for(ml);
+#endif
+}
+
 } // anonymous namespace
 
 // =========================================================================
@@ -3210,15 +3318,30 @@ bool translate_metadata(const llama_model_loader * ml,
         std::lock_guard<std::mutex> lk(g_loader_path_mutex);
         g_loader_paths[ml] = fname ? fname : "";
     }
-    // On big-endian hosts (s390x) every tensor's FP16/FP32 scale fields must
-    // be byteswapped after loading from the little-endian GGUF file. mmap
-    // provides a read-only view of the file — there is no writeable buffer to
-    // swap in-place. Force the read() path so bswap_tensor_data (injected by
-    // 003-tensor-data-big-endian-byteswap.patch) gets a writable buffer.
-    // Controlled by OLLAMA_S390X_BIGENDIAN_BSWAP cmake option (ON by default
-    // on s390x); set OFF if supplying pre-converted big-endian GGUFs.
+    // Big-endian smart converter: detect host endianness at runtime and
+    // register a per-tensor bswap LoadOp for every tensor that needs it.
+    // This must run FIRST so that:
+    //   1. Per-arch handlers (e.g. gemma3, glmocr) that register their own
+    //      LoadOps (concat, F16->F32 promote) will overwrite the bswap
+    //      LoadOp for those specific tensors via register_load_op, so those
+    //      tensors are handled by the higher-level op (which already works on
+    //      the raw bytes from disk and is responsible for its own endian
+    //      conversion internally where needed — e.g. ggml_fp16_to_fp32 on a
+    //      big-endian host reads the stored LE fp16 bits, which are already
+    //      byte-swapped by the host's FP16->FP32 intrinsic when loaded as
+    //      uint16_t through read_at).
+    //   2. Tensors that no per-arch handler touches are covered by the bswap
+    //      op registered here.
+    //
+    // When OLLAMA_BIGENDIAN_BSWAP is defined (patch 003 active), the patch
+    // inserts bswap_tensor_data() after every model-loader read, so the compat
+    // LoadOps are skipped (handle_bigendian_bswap becomes a no-op). The
+    // disable_mmap_for call below still applies via the patch's own guard.
 #if defined(OLLAMA_BIGENDIAN_BSWAP)
+    // Patch 003 owns the bswap; just ensure mmap is disabled.
     disable_mmap_for(ml);
+#else
+    handle_bigendian_bswap(ml, meta, ctx);
 #endif
     // embeddinggemma must run before gemma3: it switches arch_name to
     // "gemma-embedding", which is what later checks (and the loader's KV

@@ -93,6 +93,7 @@ This table tracks the dispatch surface. Keep it brief; the handler comments in
 | `llama` with Llama 3 markers | Fixes Llama 3 tokenizer metadata. | n/a |
 | `llama4` | Hides embedded vision/projector tensors from the text loader. | Llama 4 projector translation. |
 | `clip` projector without `clip.projector_type` | n/a | Defaults LLaVA/BakLLaVA projectors to `clip.projector_type=mlp`. |
+| Any model on big-endian host (s390x) | On-the-fly per-tensor endian byte-swap of little-endian GGUF data. Transparent — no Modelfile or pre-conversion required. | Same byte-swap applied to all vision/clip tensors loaded via LoadOp. |
 
 Usage:
 
@@ -133,6 +134,37 @@ because the public API does not expose equivalent mutators:
 | Direct writes to `ggml_tensor::type` / `ne[]` / `nb[]` | Post-creation tensor reshape/retype for in-memory translation. | Add public tensor shape/type mutators. |
 | `const_cast<char *>(gguf_get_tensor_name(...))` in `rename_tensor` | Renames gguf tensors in place. | Add a public `gguf_rename_tensor` helper. |
 | `llama_model_loader` forward declaration from `src/llama-model-loader.h` | Opaque key for per-loader registries. The pointer is never dereferenced. | Replace registry keys with `const void *`. |
+
+## Big-Endian / s390x Support
+
+Standard GGUF files (from Ollama and Hugging Face) are always stored in
+little-endian byte order. IBM Z (s390x) is a big-endian architecture, which
+means tensor weight bytes need per-element byte-swapping after loading from disk.
+
+The compat layer provides two complementary mechanisms:
+
+1. **Compile-time patch (`OLLAMA_BIGENDIAN_BSWAP`)** — when the CMake option is
+   set (on by default for `target_arch=s390x`), patch `003` injects
+   `bswap_tensor_data()` directly into `llama-model-loader.cpp` after every
+   file read. This is the primary path for Ollama production builds.
+
+2. **Runtime compat-layer smart converter** — regardless of the compile-time
+   option, `translate_metadata` calls `handle_bigendian_bswap` which:
+   * Detects host byte-order at runtime (`host_is_big_endian()`).
+   * Confirms the GGUF file is little-endian (`gguf_is_little_endian()`).
+   * Registers a per-tensor bswap `LoadOp` for every tensor in the file using
+     `maybe_register_bswap_load_op()`. The LoadOp reads raw bytes and calls
+     `bswap_tensor_buf()` before writing to the backend buffer.
+   * Forces `disable_mmap_for(ml)` so the read() path provides a writable
+     staging buffer (mmap maps read-only file pages; bswap requires writable
+     memory).
+   * When `OLLAMA_BIGENDIAN_BSWAP` is also defined, `handle_bigendian_bswap`
+     is a no-op to avoid double-swapping.
+
+All per-arch LoadOps that use `read_at` + `ggml_fp16_to_fp32` / `to_float()`
+(F16 promote, concat, norm-shift, patch-embed split, QK permute) also bswap
+the raw source bytes before their numeric conversion so they work correctly on
+big-endian hosts.
 
 Two helpers need extra context:
 

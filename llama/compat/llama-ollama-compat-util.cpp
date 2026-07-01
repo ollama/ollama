@@ -306,6 +306,133 @@ bool read_at(const char * path, size_t offset, void * dst, size_t size) {
 }
 
 // -------------------------------------------------------------------------
+// Endianness helpers
+// -------------------------------------------------------------------------
+
+bool host_is_big_endian() {
+#if defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__)
+    return __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__;
+#elif defined(__BIG_ENDIAN__)
+    return true;
+#else
+    // Runtime probe: store a known multi-byte value and check the first byte.
+    const uint32_t probe = 0x01020304u;
+    uint8_t buf[4];
+    std::memcpy(buf, &probe, 4);
+    return buf[0] == 0x01;
+#endif
+}
+
+bool gguf_is_little_endian(const gguf_context * meta) {
+    // GGUF on-disk format is universally little-endian for all models published
+    // via Ollama and Hugging Face registries. There is no "big-endian GGUF"
+    // standard key, so we conservatively return true (needs swap on big-endian
+    // host) unless we can positively identify the file as already native.
+    //
+    // Future: if a `general.endianness` KV is ever standardized, check it here.
+    (void) meta;
+    return true;
+}
+
+// Swap two bytes in place.
+static inline void bswap2(uint8_t * b) {
+    const uint8_t t = b[0]; b[0] = b[1]; b[1] = t;
+}
+
+// Swap four bytes in place.
+static inline void bswap4(uint8_t * b) {
+    uint8_t t;
+    t = b[0]; b[0] = b[3]; b[3] = t;
+    t = b[1]; b[1] = b[2]; b[2] = t;
+}
+
+void bswap_tensor_buf(ggml_type type, uint8_t * data, size_t nbytes) {
+    // Scalar float types: swap every element uniformly.
+    if (type == GGML_TYPE_F16 || type == GGML_TYPE_BF16) {
+        for (size_t off = 0; off + 1 < nbytes; off += 2) bswap2(data + off);
+        return;
+    }
+    if (type == GGML_TYPE_F32) {
+        for (size_t off = 0; off + 3 < nbytes; off += 4) bswap4(data + off);
+        return;
+    }
+    // I8/U8: single-byte elements, no swap needed.
+    if (type == GGML_TYPE_I8 || type == GGML_TYPE_I32 || type == GGML_TYPE_I64) {
+        // I32/I64 are CPU-internal types not normally stored in GGUF weights;
+        // skip them rather than guessing a layout.
+        return;
+    }
+
+    // Legacy quants: FP16 scale at fixed offset within each block.
+    // Block sizes are retrieved from ggml_type_size() at runtime for safety.
+    const size_t blk = ggml_type_size(type);
+    if (blk == 0 || nbytes % blk != 0) return;
+
+    // Q4_0, Q5_0, Q8_0: d (FP16) at byte 0.
+    // Q8_0 block: [d:FP16(2), qs:i8[32]] — d is the FP16 scale, must be swapped.
+    if (type == GGML_TYPE_Q4_0 || type == GGML_TYPE_Q5_0 || type == GGML_TYPE_Q8_0) {
+        for (size_t off = 0; off + blk <= nbytes; off += blk) bswap2(data + off);
+        return;
+    }
+    // Q4_1, Q5_1: d (FP16) at byte 0, m (FP16) at byte 2.
+    if (type == GGML_TYPE_Q4_1 || type == GGML_TYPE_Q5_1) {
+        for (size_t off = 0; off + blk <= nbytes; off += blk) {
+            bswap2(data + off);
+            bswap2(data + off + 2);
+        }
+        return;
+    }
+    // K-quant super-blocks.
+    // Q4_K (144B): d (FP16) at 0, dmin (FP16) at 2.
+    // Q5_K (176B): d (FP16) at 0, dmin (FP16) at 2.
+    if (type == GGML_TYPE_Q4_K || type == GGML_TYPE_Q5_K) {
+        for (size_t off = 0; off + blk <= nbytes; off += blk) {
+            bswap2(data + off);
+            bswap2(data + off + 2);
+        }
+        return;
+    }
+    // Q2_K (84B): d (FP16) at 80, dmin (FP16) at 82.
+    if (type == GGML_TYPE_Q2_K) {
+        for (size_t off = 0; off + blk <= nbytes; off += blk) {
+            bswap2(data + off + 80);
+            bswap2(data + off + 82);
+        }
+        return;
+    }
+    // Q3_K (110B): d (FP16) at 108.
+    if (type == GGML_TYPE_Q3_K) {
+        for (size_t off = 0; off + blk <= nbytes; off += blk) bswap2(data + off + 108);
+        return;
+    }
+    // Q6_K (210B): d (FP16) at 208.
+    if (type == GGML_TYPE_Q6_K) {
+        for (size_t off = 0; off + blk <= nbytes; off += blk) bswap2(data + off + 208);
+        return;
+    }
+    // IQ/other quant types or types with no numeric scale fields (e.g. pure
+    // bit-packed data): no swap needed.  If a new quant type with FP16 scales
+    // is added to llama.cpp later, add a case above.
+}
+
+void maybe_register_bswap_load_op(const char * tensor_name,
+                                  ggml_type    type,
+                                  size_t       file_offset,
+                                  size_t       file_size) {
+    if (!host_is_big_endian()) return;
+
+    register_load_op(tensor_name, LoadOp{
+        [file_offset, file_size, type](const char * path, void * dst, size_t dst_size) -> bool {
+            if (dst_size != file_size) return false;
+            if (!read_at(path, file_offset, dst, file_size)) return false;
+            bswap_tensor_buf(type, static_cast<uint8_t *>(dst), file_size);
+            return true;
+        },
+        "little-endian -> big-endian bswap",
+    });
+}
+
+// -------------------------------------------------------------------------
 // Common high-level transforms
 // -------------------------------------------------------------------------
 
@@ -321,11 +448,15 @@ void promote_tensor_to_f32(gguf_context * meta, ggml_context * ctx, const char *
 
     set_tensor_type(t, GGML_TYPE_F32);
 
+    const bool need_bswap = host_is_big_endian();
     register_load_op(name, LoadOp{
-        [src_offset, src_size, n_elem](const char * path, void * dst, size_t dst_size) {
+        [src_offset, src_size, n_elem, need_bswap](const char * path, void * dst, size_t dst_size) {
             (void) dst_size;
             std::vector<uint8_t> src(src_size);
             if (!read_at(path, src_offset, src.data(), src_size)) return false;
+            // On big-endian hosts the file's LE fp16 bytes must be swapped
+            // before ggml_fp16_to_fp32 interprets them as a native uint16_t.
+            if (need_bswap) bswap_tensor_buf(GGML_TYPE_F16, src.data(), src_size);
             const uint16_t * sp = reinterpret_cast<const uint16_t *>(src.data());
             float          * dp = reinterpret_cast<float *>(dst);
             for (size_t i = 0; i < n_elem; ++i) dp[i] = ggml_fp16_to_fp32(sp[i]);
@@ -336,25 +467,31 @@ void promote_tensor_to_f32(gguf_context * meta, ggml_context * ctx, const char *
 }
 
 void register_concat_load(const gguf_context * meta, std::string dest_name,
-                          const std::vector<std::string> & src_names) {
-    std::vector<std::pair<size_t, size_t>> regions;
+                          const std::vector<std::string> & src_names,
+                          ggml_type src_type) {
+    struct Region { size_t offset; size_t size; };
+    std::vector<Region> regions;
     regions.reserve(src_names.size());
     for (const auto & n : src_names) {
         const int64_t id = gguf_find_tensor(meta, n.c_str());
         if (id < 0) return;
-        regions.emplace_back(
+        regions.push_back({
             gguf_get_data_offset(meta) + gguf_get_tensor_offset(meta, id),
-            gguf_get_tensor_size(meta, id));
+            gguf_get_tensor_size(meta, id),
+        });
     }
+    const bool need_bswap = host_is_big_endian();
     register_load_op(std::move(dest_name), LoadOp{
-        [regions](const char * path, void * dst, size_t dst_size) {
+        [regions, src_type, need_bswap](const char * path, void * dst, size_t dst_size) {
             size_t total = 0;
-            for (auto & [_, sz] : regions) total += sz;
+            for (auto & r : regions) total += r.size;
             if (total != dst_size) return false;
             uint8_t * p = static_cast<uint8_t *>(dst);
-            for (auto & [off, sz] : regions) {
-                if (!read_at(path, off, p, sz)) return false;
-                p += sz;
+            for (auto & r : regions) {
+                if (!read_at(path, r.offset, p, r.size)) return false;
+                // Bswap each region independently so block boundaries align.
+                if (need_bswap) bswap_tensor_buf(src_type, p, r.size);
+                p += r.size;
             }
             return true;
         },
@@ -381,8 +518,9 @@ void register_concat_load_to_f32(const gguf_context * meta,
             (size_t) ggml_nelements(t),
         });
     }
+    const bool need_bswap = host_is_big_endian();
     register_load_op(std::move(dest_name), LoadOp{
-        [regions](const char * path, void * dst, size_t dst_size) {
+        [regions, need_bswap](const char * path, void * dst, size_t dst_size) {
             size_t total_elems = 0;
             for (auto & r : regions) total_elems += r.n_elem;
             if (total_elems * sizeof(float) != dst_size) return false;
@@ -392,12 +530,20 @@ void register_concat_load_to_f32(const gguf_context * meta,
                 if (r.type == GGML_TYPE_F32) {
                     if (r.size != r.n_elem * sizeof(float)) return false;
                     if (!read_at(path, r.offset, dp, r.size)) return false;
+                    // F32 regions need a 4-byte bswap before use on BE hosts.
+                    if (need_bswap) {
+                        bswap_tensor_buf(GGML_TYPE_F32,
+                                         reinterpret_cast<uint8_t *>(dp), r.size);
+                    }
                     dp += r.n_elem;
                     continue;
                 }
 
                 std::vector<uint8_t> src(r.size);
                 if (!read_at(path, r.offset, src.data(), r.size)) return false;
+                // Non-F32 regions: bswap the raw LE block-scale fields BEFORE
+                // to_float() reads them as native scalar values.
+                if (need_bswap) bswap_tensor_buf(r.type, src.data(), r.size);
                 const auto * tt = ggml_get_type_traits(r.type);
                 if (!tt || !tt->to_float) return false;
                 tt->to_float(src.data(), dp, (int64_t) r.n_elem);
