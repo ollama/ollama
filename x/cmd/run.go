@@ -149,8 +149,9 @@ type RunOptions struct {
 	Options      map[string]any
 	KeepAlive    *api.Duration
 	Think        *api.ThinkValue
-	HideThinking bool
-	Verbose      bool
+	HideThinking     bool
+	ThinkingToStderr bool
+	Verbose          bool
 
 	// Agent fields (managed externally for session persistence)
 	Tools    *tools.Registry
@@ -201,32 +202,42 @@ func Chat(ctx context.Context, opts RunOptions) (*api.Message, error) {
 	var consecutiveErrors int // Track consecutive 500 errors for retry limit
 	var latest api.ChatResponse
 
+	showThinking := !opts.HideThinking || opts.ThinkingToStderr
+	thinkWriter := io.Writer(os.Stdout)
+	thinkFd := int(os.Stdout.Fd())
+	thinkPlainText := false
+	if opts.ThinkingToStderr {
+		thinkWriter = os.Stderr
+		thinkFd = int(os.Stderr.Fd())
+		thinkPlainText = !term.IsTerminal(thinkFd)
+	}
+
 	role := "assistant"
 	messages := opts.Messages
 
 	fn := func(response api.ChatResponse) error {
-		if response.Message.Content != "" || !opts.HideThinking {
+		if response.Message.Content != "" || showThinking {
 			p.StopAndClear()
 		}
 
 		latest = response
 		role = response.Message.Role
-		if response.Message.Thinking != "" && !opts.HideThinking {
+		if response.Message.Thinking != "" && showThinking {
 			if !thinkTagOpened {
-				fmt.Print(thinkingOutputOpeningText(false))
+				fmt.Fprint(thinkWriter, thinkingOutputOpeningText(thinkPlainText))
 				thinkTagOpened = true
 				thinkTagClosed = false
 			}
 			thinkingContent.WriteString(response.Message.Thinking)
-			displayResponse(response.Message.Thinking, opts.WordWrap, state)
+			displayResponseTo(thinkWriter, thinkFd, response.Message.Thinking, opts.WordWrap, state)
 		}
 
 		content := response.Message.Content
 		if thinkTagOpened && !thinkTagClosed && (content != "" || len(response.Message.ToolCalls) > 0) {
 			if !strings.HasSuffix(thinkingContent.String(), "\n") {
-				fmt.Println()
+				fmt.Fprintln(thinkWriter)
 			}
-			fmt.Print(thinkingOutputClosingText(false))
+			fmt.Fprint(thinkWriter, thinkingOutputClosingText(thinkPlainText))
 			thinkTagOpened = false
 			thinkTagClosed = true
 			state = &displayResponseState{}
@@ -549,12 +560,16 @@ type displayResponseState struct {
 }
 
 func displayResponse(content string, wordWrap bool, state *displayResponseState) {
-	termWidth, _, _ := term.GetSize(int(os.Stdout.Fd()))
+	displayResponseTo(os.Stdout, int(os.Stdout.Fd()), content, wordWrap, state)
+}
+
+func displayResponseTo(w io.Writer, fd int, content string, wordWrap bool, state *displayResponseState) {
+	termWidth, _, _ := term.GetSize(fd)
 	if wordWrap && termWidth >= 10 {
 		for _, ch := range content {
 			if state.lineLength+1 > termWidth-5 {
 				if len(state.wordBuffer) > termWidth-10 {
-					fmt.Printf("%s%c", state.wordBuffer, ch)
+					fmt.Fprintf(w, "%s%c", state.wordBuffer, ch)
 					state.wordBuffer = ""
 					state.lineLength = 0
 					continue
@@ -563,14 +578,14 @@ func displayResponse(content string, wordWrap bool, state *displayResponseState)
 				// backtrack the length of the last word and clear to the end of the line
 				a := len(state.wordBuffer)
 				if a > 0 {
-					fmt.Printf("\x1b[%dD", a)
+					fmt.Fprintf(w, "\x1b[%dD", a)
 				}
-				fmt.Printf("\x1b[K\n")
-				fmt.Printf("%s%c", state.wordBuffer, ch)
+				fmt.Fprintf(w, "\x1b[K\n")
+				fmt.Fprintf(w, "%s%c", state.wordBuffer, ch)
 
 				state.lineLength = len(state.wordBuffer) + 1
 			} else {
-				fmt.Print(string(ch))
+				fmt.Fprint(w, string(ch))
 				state.lineLength++
 
 				switch ch {
@@ -585,7 +600,7 @@ func displayResponse(content string, wordWrap bool, state *displayResponseState)
 			}
 		}
 	} else {
-		fmt.Printf("%s%s", state.wordBuffer, content)
+		fmt.Fprintf(w, "%s%s", state.wordBuffer, content)
 		if len(state.wordBuffer) > 0 {
 			state.wordBuffer = ""
 		}
@@ -662,7 +677,7 @@ func checkModelCapabilities(ctx context.Context, modelName string) (supportsTool
 // This is called from cmd.go when --experimental flag is set.
 // If yoloMode is true, all tool approvals are skipped.
 // If enableWebsearch is true, the web search tool is registered.
-func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, options map[string]any, think *api.ThinkValue, hideThinking bool, keepAlive *api.Duration, yoloMode bool, enableWebsearch bool) error {
+func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, options map[string]any, think *api.ThinkValue, hideThinking bool, thinkingToStderr bool, keepAlive *api.Duration, yoloMode bool, enableWebsearch bool) error {
 	scanner, err := readline.New(readline.Prompt{
 		Prompt:         ">>> ",
 		AltPrompt:      "... ",
@@ -1058,15 +1073,16 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 
 			verbose, _ := cmd.Flags().GetBool("verbose")
 			opts := RunOptions{
-				Model:        modelName,
-				Messages:     messages,
-				WordWrap:     wordWrap,
-				Format:       format,
-				Options:      options,
-				Think:        think,
-				HideThinking: hideThinking,
-				KeepAlive:    keepAlive,
-				Tools:        toolRegistry,
+				Model:            modelName,
+				Messages:         messages,
+				WordWrap:         wordWrap,
+				Format:           format,
+				Options:          options,
+				Think:            think,
+				HideThinking:     hideThinking,
+				ThinkingToStderr: thinkingToStderr,
+				KeepAlive:        keepAlive,
+				Tools:            toolRegistry,
 				Approval:     approval,
 				YoloMode:     yoloMode,
 				Verbose:      verbose,
