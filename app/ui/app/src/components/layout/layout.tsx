@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { useSettings } from "@/hooks/useSettings";
+import { useState, useEffect } from "react";
 
 export function SidebarLayout({
   sidebar,
@@ -11,11 +12,22 @@ export function SidebarLayout({
 }>) {
   const { settings, setSettings } = useSettings();
   const isWindows = navigator.platform.toLowerCase().includes("win");
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
+
+  useEffect(() => {
+    // Disable transitions on initial load to prevent sidebar animation
+    const timer = setTimeout(() => setIsInitialLoad(false), 50);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const transitionClass = isInitialLoad ? "" : "transition-[width] duration-300";
+  const transitionLeftClass = isInitialLoad ? "" : "transition-[left] duration-375";
+  const transitionAllClass = isInitialLoad ? "" : "transition-all duration-300";
 
   return (
-    <div className={`flex transition-[width] duration-300 dark:bg-neutral-900`}>
+    <div className={`flex ${transitionClass} dark:bg-neutral-900`}>
       <div
-        className={`absolute flex mx-2 py-2 z-20 items-center transition-[left] duration-375 text-neutral-500 dark:text-neutral-400 ${settings.sidebarOpen ? (isWindows ? "left-2" : "left-[204px]") : isWindows ? "left-2" : "left-20"}`}
+        className={`absolute flex mx-2 py-2 z-20 items-center ${transitionLeftClass} text-neutral-500 dark:text-neutral-400 ${settings.sidebarOpen ? (isWindows ? "left-2" : "left-[204px]") : isWindows ? "left-2" : "left-20"}`}
       >
         <button
           onClick={() => setSettings({ SidebarOpen: !settings.sidebarOpen })}
@@ -57,7 +69,7 @@ export function SidebarLayout({
         </Link>
       </div>
       <div
-        className={`flex flex-col transition-[width] duration-300 max-h-screen ${settings.sidebarOpen ? "w-64" : "w-0"}`}
+        className={`flex flex-col ${transitionClass} max-h-screen ${settings.sidebarOpen ? "w-64" : "w-0"}`}
       >
         <div
           onDoubleClick={() => window.doubleClick && window.doubleClick()}
@@ -67,7 +79,7 @@ export function SidebarLayout({
         {settings.sidebarOpen && sidebar}
       </div>
       <main
-        className={`flex flex-1 flex-col min-w-0 transition-all duration-300`}
+        className={`flex flex-1 flex-col min-w-0 ${transitionAllClass}`}
       >
         <div
           className={`h-13 flex-none w-full z-10 flex items-center bg-white dark:bg-neutral-900 ${isWindows ? "xl:hidden" : "xl:fixed xl:bg-transparent xl:dark:bg-transparent"}`}
