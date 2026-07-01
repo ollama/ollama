@@ -260,6 +260,7 @@ console.log(response.message.content);
 
 ### Frameworks & Agents
 
+- [AgentField](https://github.com/Agent-Field/agentfield) - Open-source control plane for building and orchestrating autonomous AI agents ([docs](https://agentfield.ai/docs))
 - [AutoGPT](https://github.com/Significant-Gravitas/AutoGPT/blob/master/docs/content/platform/ollama.md) - Autonomous AI agent platform
 - [crewAI](https://github.com/crewAIInc/crewAI) - Multi-agent orchestration framework
 - [Strands Agents](https://github.com/strands-agents/sdk-python) - Model-driven agent building by AWS
