@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ollama/ollama/app/auth"
+	"github.com/ollama/ollama/app/dialog"
 	"github.com/ollama/ollama/app/logrotate"
 	"github.com/ollama/ollama/app/server"
 	"github.com/ollama/ollama/app/store"
@@ -246,6 +247,13 @@ func main() {
 	wv.Store = st
 	done := make(chan error, 1)
 	osrv := server.New(st, devMode)
+	osrv.NotifyPortConflict = func(addr string) {
+		dialog.Message(
+			"Ollama can't start because the address %s is already in use by another "+
+				"application.\n\nQuit the other application (or change OLLAMA_HOST) and Ollama "+
+				"will start automatically.", addr,
+		).Title("Ollama").Error()
+	}
 	go func() {
 		slog.Info("starting ollama server")
 		done <- osrv.Run(octx)
