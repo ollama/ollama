@@ -2121,13 +2121,22 @@ func TestAppendMMProjArgs(t *testing.T) {
 			want:         []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
 		},
 		{
-			name:         "integrated rocm gpu disables projector offload",
+			name:         "integrated rocm gpu keeps projector offload when projector fits",
 			projectors:   []string{"model.gguf"},
 			opts:         defaultOpts,
 			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "ROCm"}, Integrated: true, FreeMemory: 32 << 30}},
 			mmprojMemory: 933 << 20,
 			modelLayers:  81,
-			want:         []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
+			want:         []string{"base", "--mmproj", "model.gguf"},
+		},
+		{
+			name:         "integrated cuda gpu keeps projector offload",
+			projectors:   []string{"model.gguf"},
+			opts:         defaultOpts,
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, Integrated: true, FreeMemory: 32 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+			want:         []string{"base", "--mmproj", "model.gguf"},
 		},
 		{
 			name:         "integrated metal gpu keeps projector offload",
@@ -2192,6 +2201,51 @@ func TestAppendMMProjArgs(t *testing.T) {
 				t.Fatalf("appendMMProjArgs = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestMMProjFitTargetExtraEnvs(t *testing.T) {
+	if old, ok := os.LookupEnv(llamaArgFitTargetEnv); ok {
+		t.Setenv(llamaArgFitTargetEnv, old)
+	} else {
+		t.Setenv(llamaArgFitTargetEnv, "")
+	}
+	os.Unsetenv(llamaArgFitTargetEnv)
+
+	launch := llamaServerLaunchConfig{
+		projectors:   []string{"model.gguf"},
+		mmprojMemory: 933 << 20,
+		opts:         api.DefaultOptions(),
+		gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, Integrated: true, FreeMemory: 32 << 30}},
+		modelLayers:  81,
+		extraEnvs:    map[string]string{"KEEP": "1"},
+	}
+
+	got := launch.extraEnvsForStart()
+	if got[llamaArgFitTargetEnv] != "1957" {
+		t.Fatalf("fit target = %q, want 1957", got[llamaArgFitTargetEnv])
+	}
+	if _, ok := launch.extraEnvs[llamaArgFitTargetEnv]; ok {
+		t.Fatal("extraEnvsForStart mutated launch.extraEnvs")
+	}
+
+	launch.extraEnvs = map[string]string{llamaArgFitTargetEnv: "2048"}
+	got = launch.extraEnvsForStart()
+	if got[llamaArgFitTargetEnv] != "4005" {
+		t.Fatalf("existing fit target plus projector pad = %q, want 4005", got[llamaArgFitTargetEnv])
+	}
+
+	launch.extraEnvs = map[string]string{llamaArgFitTargetEnv: "512"}
+	got = launch.extraEnvsForStart()
+	if got[llamaArgFitTargetEnv] != "2469" {
+		t.Fatalf("raised fit target plus projector pad = %q, want 2469", got[llamaArgFitTargetEnv])
+	}
+
+	t.Setenv(llamaArgFitTargetEnv, "256")
+	launch.extraEnvs = map[string]string{}
+	got = launch.extraEnvsForStart()
+	if _, ok := got[llamaArgFitTargetEnv]; ok {
+		t.Fatalf("user env should not be overridden, got extra env %q", got[llamaArgFitTargetEnv])
 	}
 }
 
