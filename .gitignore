@@ -16,3 +16,7 @@ llama/build
 llama/vendor
 /ollama
 integration/testdata/models/
+docker-compose.yml
+docke-compose.gpu.yml
+.env.example
+.env
