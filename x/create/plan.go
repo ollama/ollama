@@ -87,16 +87,49 @@ type quantizePolicy interface {
 // weights are quantized and to what; pass noopImportTransform{} for the generic
 // policy.
 func Plan(inv Inventory, class Classification, policy quantizePolicy) ([]BlobSpec, error) {
+	var (
+		specs []BlobSpec
+		err   error
+	)
 	switch class.Kind {
 	case SourceFloat:
-		return planFloat(inv, class.Quantize, policy)
+		specs, err = planFloat(inv, class.Quantize, policy)
 	case SourcePrequantized:
-		return planPrequantized(inv)
+		specs, err = planPrequantized(inv)
 	case SourceBlockFP8:
-		return planBlockFP8(inv, class.Quantize, policy)
+		specs, err = planBlockFP8(inv, class.Quantize, policy)
 	default:
 		return nil, fmt.Errorf("plan: source kind %q is not yet supported", class.Kind)
 	}
+	if err != nil {
+		return nil, err
+	}
+	if err := checkOutputCollisions(specs); err != nil {
+		return nil, err
+	}
+	return specs, nil
+}
+
+// checkOutputCollisions rejects a plan in which two source tensors normalized
+// to the same output name — for example a source shipping both foo.weight and
+// foo.weight_packed, which would both fuse to foo.weight. Writing such a plan
+// would produce blobs that silently shadow each other at load time.
+func checkOutputCollisions(specs []BlobSpec) error {
+	blobs := make(map[string]bool, len(specs))
+	tensors := make(map[string]string)
+	for _, spec := range specs {
+		if blobs[spec.Name] {
+			return fmt.Errorf("plan: two blobs named %s (source tensors normalize to a clashing name)", spec.Name)
+		}
+		blobs[spec.Name] = true
+		for _, ts := range spec.Tensors {
+			if prev, ok := tensors[ts.Name]; ok {
+				return fmt.Errorf("plan: output tensor %s planned in both blob %s and blob %s (source tensors normalize to a clashing name)", ts.Name, prev, spec.Name)
+			}
+			tensors[ts.Name] = spec.Name
+		}
+	}
+	return nil
 }
 
 // planFloat plans a float model: per-expert tensors are packed into one blob

@@ -19,23 +19,14 @@ type BlobStore interface {
 }
 
 // WriteBlobs executes a plan's blobs: for each blob it resolves the tensors'
-// sources, then either packs them directly (byte transforms only) or runs them
-// through the MLX quantizer, and stores the result.
+// sources, produces the blob bytes, and stores the result.
 func WriteBlobs(specs []BlobSpec, modelDir string, store BlobStore) ([]LayerInfo, error) {
 	src := newSourceFiles(modelDir)
 	defer src.close()
 
 	layers := make([]LayerInfo, 0, len(specs))
 	for _, spec := range specs {
-		var (
-			layer LayerInfo
-			err   error
-		)
-		if blobNeedsMLX(spec) {
-			layer, err = writeQuantizedBlob(spec, src, store)
-		} else {
-			layer, err = writePackedBlob(spec, src, store)
-		}
+		layer, err := writeBlob(spec, src, store)
 		if err != nil {
 			return nil, err
 		}
@@ -44,54 +35,48 @@ func WriteBlobs(specs []BlobSpec, modelDir string, store BlobStore) ([]LayerInfo
 	return layers, nil
 }
 
-// writePackedBlob handles a blob whose tensors are produced by byte transforms
-// only (no MLX): each tensor's sources are transformed and the results are
-// packed into one safetensors blob.
-func writePackedBlob(spec BlobSpec, src *sourceFiles, store BlobStore) (LayerInfo, error) {
-	tensors := make([]*safetensors.TensorData, 0, len(spec.Tensors))
-	for _, ts := range spec.Tensors {
-		sources, err := src.resolve(ts.Sources)
-		if err != nil {
-			return LayerInfo{}, err
-		}
-		td, err := applyByteTransform(ts, sources)
-		if err != nil {
-			return LayerInfo{}, fmt.Errorf("blob %s: tensor %s: %w", spec.Name, ts.Name, err)
-		}
-		tensors = append(tensors, td)
-	}
-	layer, err := store.WriteBlob(
-		safetensors.BuildPackedSafetensorsReaderWithMetadata(tensors, spec.Metadata),
-		mediaTypeImageTensor,
-		spec.Name,
+// writeBlob resolves each tensor's sources and produces the blob.
+func writeBlob(spec BlobSpec, src *sourceFiles, store BlobStore) (LayerInfo, error) {
+	needsMLX := blobNeedsMLX(spec)
+	var (
+		tensors []*safetensors.TensorData
+		items   []quantizeItem
 	)
-	if err != nil {
-		return LayerInfo{}, fmt.Errorf("write blob %s: %w", spec.Name, err)
-	}
-	return layer, nil
-}
-
-// writeQuantizedBlob handles a blob whose tensors require MLX: it builds a
-// quantize item per tensor (decoding FP8 and byte-stacking experts as needed)
-// and runs them through the quantizer, which produces the combined blob.
-func writeQuantizedBlob(spec BlobSpec, src *sourceFiles, store BlobStore) (LayerInfo, error) {
-	items := make([]quantizeItem, 0, len(spec.Tensors))
 	for _, ts := range spec.Tensors {
 		sources, err := src.resolve(ts.Sources)
 		if err != nil {
 			return LayerInfo{}, err
 		}
-		reader, err := quantizeInputReader(ts, sources)
-		if err != nil {
-			return LayerInfo{}, fmt.Errorf("blob %s: tensor %s: %w", spec.Name, ts.Name, err)
+		if needsMLX {
+			reader, err := quantizeInputReader(ts, sources)
+			if err != nil {
+				return LayerInfo{}, fmt.Errorf("blob %s: tensor %s: %w", spec.Name, ts.Name, err)
+			}
+			items = append(items, quantizeItem{name: ts.Name, quantize: ts.Quantize, reader: reader, decodeFP8: needsFP8Decode(ts.Transform)})
+		} else {
+			td, err := applyByteTransform(ts, sources)
+			if err != nil {
+				return LayerInfo{}, fmt.Errorf("blob %s: tensor %s: %w", spec.Name, ts.Name, err)
+			}
+			tensors = append(tensors, td)
 		}
-		items = append(items, quantizeItem{name: ts.Name, quantize: ts.Quantize, reader: reader, decodeFP8: needsFP8Decode(ts.Transform)})
 	}
-	blobData, err := quantizeBlob(items)
-	if err != nil {
-		return LayerInfo{}, fmt.Errorf("quantize blob %s: %w", spec.Name, err)
+
+	// The quantizer computes the blob's quant metadata itself and ignores
+	// spec.Metadata; today only prequant blobs carry Metadata and they never
+	// take the MLX path.
+	var r io.Reader
+	if needsMLX {
+		blobData, err := quantizeBlob(items)
+		if err != nil {
+			return LayerInfo{}, fmt.Errorf("quantize blob %s: %w", spec.Name, err)
+		}
+		r = bytes.NewReader(blobData)
+	} else {
+		r = safetensors.BuildPackedSafetensorsReaderWithMetadata(tensors, spec.Metadata)
 	}
-	layer, err := store.WriteBlob(bytes.NewReader(blobData), mediaTypeImageTensor, spec.Name)
+
+	layer, err := store.WriteBlob(r, mediaTypeImageTensor, spec.Name)
 	if err != nil {
 		return LayerInfo{}, fmt.Errorf("write blob %s: %w", spec.Name, err)
 	}

@@ -3,8 +3,25 @@ package create
 import (
 	"slices"
 	"sort"
+	"strings"
 	"testing"
 )
+
+func TestPlanRejectsOutputNameCollision(t *testing.T) {
+	// A source shipping both an MLX-pattern weight (foo.weight + foo.scales)
+	// and a compressed-tensors weight (foo.weight_packed + foo.weight_scale)
+	// fuses both to the output name foo.weight.
+	inv := newInventory(sourceModelConfig{}, map[string]string{
+		"model.a.weight":        "U32",
+		"model.a.scales":        "BF16",
+		"model.a.weight_packed": "U8",
+		"model.a.weight_scale":  "F8_E4M3",
+	})
+	_, err := Plan(inv, Classification{Kind: SourcePrequantized}, noopImportTransform{})
+	if err == nil || !strings.Contains(err.Error(), "clashing name") {
+		t.Fatalf("Plan() error = %v, want a clashing-name error", err)
+	}
+}
 
 func TestPlanFloat(t *testing.T) {
 	inv := newInventory(sourceModelConfig{}, map[string]string{

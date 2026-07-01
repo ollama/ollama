@@ -60,31 +60,47 @@ func ReadInventory(dir string) (Inventory, error) {
 		return Inventory{}, err
 	}
 
-	tensors := make(map[string]SourceTensor)
+	// Only the standard HF weights - a monolithic model.safetensors or the
+	// sharded model-*.safetensors set - are imported. Other safetensors in the
+	// same repo - notably Mistral's consolidated-*.safetensors - use a layout
+	// we don't support, and are skipped so they can't shadow or pollute the
+	// model tensors.
+	var monolithic bool
+	var files []string
 	for _, entry := range entries {
-		// Only the standard HF weights (model.safetensors / model-*.safetensors)
-		// are imported. Other safetensors in the same repo — notably Mistral's
-		// consolidated-*.safetensors — use a layout we don't support, and are
-		// skipped so they can't shadow or pollute the model tensors.
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".safetensors") || !strings.HasPrefix(entry.Name(), "model") {
 			continue
 		}
+		if entry.Name() == "model.safetensors" {
+			monolithic = true
+		}
+		files = append(files, entry.Name())
+	}
+	if monolithic && len(files) > 1 {
+		return Inventory{}, fmt.Errorf("found both model.safetensors and sharded model-*.safetensors weights in %s: ambiguous source", dir)
+	}
 
-		ext, err := safetensors.OpenForExtraction(filepath.Join(dir, entry.Name()))
+	tensors := make(map[string]SourceTensor)
+	for _, file := range files {
+		ext, err := safetensors.OpenForExtraction(filepath.Join(dir, file))
 		if err != nil {
-			return Inventory{}, fmt.Errorf("open %s: %w", entry.Name(), err)
+			return Inventory{}, fmt.Errorf("open %s: %w", file, err)
 		}
 		for _, name := range ext.ListTensors() {
 			td, err := ext.GetTensor(name)
 			if err != nil {
 				ext.Close()
-				return Inventory{}, fmt.Errorf("read tensor %s from %s: %w", name, entry.Name(), err)
+				return Inventory{}, fmt.Errorf("read tensor %s from %s: %w", name, file, err)
+			}
+			if prev, ok := tensors[name]; ok {
+				ext.Close()
+				return Inventory{}, fmt.Errorf("duplicate tensor %s: found in both %s and %s", name, prev.File, file)
 			}
 			tensors[name] = SourceTensor{
 				Name:  name,
 				Dtype: td.Dtype,
 				Shape: td.Shape,
-				File:  entry.Name(),
+				File:  file,
 			}
 		}
 		ext.Close()

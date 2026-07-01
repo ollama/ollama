@@ -87,6 +87,38 @@ func TestReadInventorySkipsConsolidated(t *testing.T) {
 	}
 }
 
+func TestReadInventoryRejectsMonolithicPlusShards(t *testing.T) {
+	dir := t.TempDir()
+	writeConfigJSON(t, dir, `{"architectures":["TestModel"]}`)
+	createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
+		st.NewTensorDataFromBytes("model.a.weight", "BF16", []int32{4, 4}, make([]byte, 4*4*2)),
+	})
+	createTestSafetensors(t, filepath.Join(dir, "model-00001-of-00001.safetensors"), []*st.TensorData{
+		st.NewTensorDataFromBytes("model.a.weight", "BF16", []int32{4, 4}, make([]byte, 4*4*2)),
+	})
+
+	_, err := ReadInventory(dir)
+	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("ReadInventory() error = %v, want an 'ambiguous source' error", err)
+	}
+}
+
+func TestReadInventoryRejectsDuplicateTensorAcrossShards(t *testing.T) {
+	dir := t.TempDir()
+	writeConfigJSON(t, dir, `{"architectures":["TestModel"]}`)
+	createTestSafetensors(t, filepath.Join(dir, "model-00001-of-00002.safetensors"), []*st.TensorData{
+		st.NewTensorDataFromBytes("model.a.weight", "BF16", []int32{4, 4}, make([]byte, 4*4*2)),
+	})
+	createTestSafetensors(t, filepath.Join(dir, "model-00002-of-00002.safetensors"), []*st.TensorData{
+		st.NewTensorDataFromBytes("model.a.weight", "BF16", []int32{4, 4}, make([]byte, 4*4*2)),
+	})
+
+	_, err := ReadInventory(dir)
+	if err == nil || !strings.Contains(err.Error(), "duplicate tensor") {
+		t.Fatalf("ReadInventory() error = %v, want a 'duplicate tensor' error", err)
+	}
+}
+
 func TestReadInventoryNoModelWeights(t *testing.T) {
 	dir := t.TempDir()
 	writeConfigJSON(t, dir, `{"architectures":["TestModel"]}`)
