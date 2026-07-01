@@ -467,7 +467,7 @@ type downloadOpts struct {
 // downloadBlob downloads a blob from the registry and stores it in the blobs directory
 func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ error) {
 	if opts.digest == "" {
-		return false, fmt.Errorf(("%s: %s"), opts.n.DisplayNamespaceModel(), "digest is empty")
+		return false, fmt.Errorf("%s: %s", opts.n.DisplayNamespaceModel(), "digest is empty")
 	}
 
 	fp, err := manifest.BlobsPath(opts.digest)
