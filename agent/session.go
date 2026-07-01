@@ -609,12 +609,6 @@ func (s *Session) skipToolCalls(ctx context.Context, runID string, opts RunOptio
 	return toolMessages, nil
 }
 
-func (s *Session) toolContext() ToolContext {
-	return ToolContext{
-		WorkingDir: s.currentWorkingDir(),
-	}
-}
-
 func (s *Session) currentWorkingDir() string {
 	if s.WorkingDir != "" {
 		return s.WorkingDir
