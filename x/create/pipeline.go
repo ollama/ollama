@@ -20,7 +20,7 @@ func Create(modelName, modelDir, quantize string, store BlobStore, writeManifest
 	if err != nil {
 		return fmt.Errorf("read model: %w", err)
 	}
-	class, err := Classify(inv, quantize, "--quantize")
+	class, err := Classify(inv, quantize)
 	if err != nil {
 		return err
 	}

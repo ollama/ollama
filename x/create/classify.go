@@ -40,10 +40,8 @@ type Classification struct {
 // Classify decides a source model's kind and resolves the effective
 // quantization from the user's requested type, rejecting requests that are not
 // allowed for the kind.
-// flag is the CLI option the quantize value came from (e.g. "--quantize" or
-// "--draft-quantize"), used only in error messages.
-func Classify(inv Inventory, requested, flag string) (Classification, error) {
-	requested, err := normalizeRequested(requested, flag)
+func Classify(inv Inventory, requested string) (Classification, error) {
+	requested, err := normalizeRequested(requested)
 	if err != nil {
 		return Classification{}, err
 	}
@@ -58,7 +56,7 @@ func Classify(inv Inventory, requested, flag string) (Classification, error) {
 
 	case SourcePrequantized:
 		if requested != "" {
-			return Classification{}, fmt.Errorf("cannot requantize an already-quantized source model with %s %q: only bf16/fp16/fp32 sources can be quantized", flag, requested)
+			return Classification{}, fmt.Errorf("cannot requantize an already-quantized source model (requested %q): only bf16/fp16/fp32 sources can be quantized", requested)
 		}
 		return Classification{Kind: SourcePrequantized}, nil
 
@@ -71,7 +69,7 @@ func Classify(inv Inventory, requested, flag string) (Classification, error) {
 			return Classification{}, fmt.Errorf("unsupported fp8 source block size %dx%d (only 128x128 is supported)", rows, cols)
 		}
 		if requested != "" {
-			return Classification{}, fmt.Errorf("cannot quantize an fp8 source model with %s %q: fp8 sources are converted to mxfp8 automatically; only bf16/fp16/fp32 sources can be quantized", flag, requested)
+			return Classification{}, fmt.Errorf("cannot quantize an fp8 source model (requested %q): fp8 sources are converted to mxfp8 automatically; only bf16/fp16/fp32 sources can be quantized", requested)
 		}
 		return Classification{Kind: SourceBlockFP8, Quantize: "mxfp8"}, nil
 	}
@@ -80,14 +78,14 @@ func Classify(inv Inventory, requested, flag string) (Classification, error) {
 }
 
 // normalizeRequested validates the user's quantize value and returns its
-// canonical form ("" for no quantization). flag names the CLI option for errors.
-func normalizeRequested(requested, flag string) (string, error) {
+// canonical form ("" for no quantization).
+func normalizeRequested(requested string) (string, error) {
 	if strings.TrimSpace(requested) == "" {
 		return "", nil
 	}
 	c := quant.Canonical(requested)
 	if c == "" {
-		return "", fmt.Errorf("unsupported %s %q: supported types are int4, int8, nvfp4, mxfp4, mxfp8", flag, requested)
+		return "", fmt.Errorf("unsupported quantize type %q: supported types are int4, int8, nvfp4, mxfp4, mxfp8", requested)
 	}
 	return c, nil
 }

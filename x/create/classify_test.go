@@ -74,7 +74,7 @@ func TestClassify(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := Classify(newInventory(tt.cfg, tt.tensors), tt.requested, "--quantize")
+			got, err := Classify(newInventory(tt.cfg, tt.tensors), tt.requested)
 			if err != nil {
 				t.Fatalf("Classify() error = %v", err)
 			}
@@ -100,7 +100,7 @@ func TestClassifyErrors(t *testing.T) {
 			name:      "invalid quantize type",
 			tensors:   map[string]string{"model.layers.0.weight": "BF16"},
 			requested: "int3",
-			wantErr:   "unsupported --quantize",
+			wantErr:   "unsupported quantize type",
 		},
 		{
 			name:      "mlx prequantized rejects requantize",
@@ -140,7 +140,7 @@ func TestClassifyErrors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := Classify(newInventory(tt.cfg, tt.tensors), tt.requested, "--quantize")
+			_, err := Classify(newInventory(tt.cfg, tt.tensors), tt.requested)
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 				t.Fatalf("Classify() error = %v, want substring %q", err, tt.wantErr)
 			}

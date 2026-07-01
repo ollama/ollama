@@ -26,6 +26,7 @@ import (
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/x/create"
 	imagemanifest "github.com/ollama/ollama/x/imagegen/manifest"
+	"github.com/ollama/ollama/x/quant"
 )
 
 // MinOllamaVersion is the minimum Ollama version required for safetensors models.
@@ -145,6 +146,12 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 	isBaseModelWithDraft := hasDraft && !isSafetensors && create.IsSafetensorsLLMModel(opts.ModelDir)
 	if opts.DraftQuantize != "" && !hasDraft {
 		return fmt.Errorf("--draft-quantize requires a DRAFT model")
+	}
+	if opts.Quantize != "" && quant.Canonical(opts.Quantize) == "" {
+		return fmt.Errorf("unsupported --quantize %q: supported types are int4, int8, nvfp4, mxfp4, mxfp8", opts.Quantize)
+	}
+	if opts.DraftQuantize != "" && quant.Canonical(opts.DraftQuantize) == "" {
+		return fmt.Errorf("unsupported --draft-quantize %q: supported types are int4, int8, nvfp4, mxfp4, mxfp8", opts.DraftQuantize)
 	}
 
 	if !isSafetensors && !isBaseModelWithDraft {

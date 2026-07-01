@@ -25,7 +25,7 @@ func CreateDraftLayers(modelDir, tensorPrefix, configPrefix, quantize string, st
 	if err != nil {
 		return nil, fmt.Errorf("read draft model: %w", err)
 	}
-	class, err := Classify(inv, quantize, "--draft-quantize")
+	class, err := Classify(inv, quantize)
 	if err != nil {
 		return nil, err
 	}
