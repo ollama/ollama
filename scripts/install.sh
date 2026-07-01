@@ -177,17 +177,10 @@ fi
 
 # Check for NVIDIA JetPack systems with additional downloads
 if [ -f /etc/nv_tegra_release ] ; then
-    # /etc/nv_tegra_release starts with e.g. "# R36 (release), ...". The L4T
-    # major version maps to JetPack non-arithmetically.
-    L4T_MAJOR=$(grep -o 'R[0-9][0-9]*' /etc/nv_tegra_release | head -1 | tr -dc '0-9')
-    if [ "$L4T_MAJOR" = "35" ] ; then
-        download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-jetpack5"
-    elif [ "$L4T_MAJOR" = "36" ] ; then
+    if grep R36 /etc/nv_tegra_release > /dev/null ; then
         download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-jetpack6"
-    elif [ "${L4T_MAJOR:-0}" -ge 38 ] ; then
-        # JetPack 7+ (L4T R38/R39 and newer) uses SBSA-based CUDA, which is
-        # included in the base package.
-        status "NVIDIA Jetson (L4T R${L4T_MAJOR}) detected; using the bundled CUDA build."
+    elif grep R35 /etc/nv_tegra_release > /dev/null ; then
+        download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-jetpack5"
     else
         warning "Unsupported JetPack version detected.  GPU may not be supported"
     fi
