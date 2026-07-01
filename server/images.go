@@ -76,6 +76,7 @@ type Model struct {
 	License            []string
 	Digest             string
 	Options            map[string]any
+	GenerationDefaults model.GenerationDefaults
 	Messages           []api.Message
 
 	Template *template.Template
@@ -87,6 +88,19 @@ func (m *Model) IsMLX() bool {
 
 func (m *Model) isGGUF() bool {
 	return m.Config.ModelFormat == "" || m.Config.ModelFormat == "gguf"
+}
+
+func generationDefaultsFromGGUF(f *gguf.File) model.GenerationDefaults {
+	return model.ParseGGUFGenerationDefaults(
+		func(key string) (int64, bool) {
+			kv := f.KeyValue(key)
+			return kv.IntOK()
+		},
+		func(key string) (float64, bool) {
+			kv := f.KeyValue(key)
+			return kv.FloatOK()
+		},
+	)
 }
 
 func appendCapability(capabilities []model.Capability, capability model.Capability) []model.Capability {
@@ -667,6 +681,7 @@ func GetModel(name string) (*Model, error) {
 		if err := json.NewDecoder(configFile).Decode(&m.Config); err != nil {
 			return nil, err
 		}
+		m.GenerationDefaults = m.Config.GenerationDefaults
 	}
 
 	modelHasPooling := false
@@ -690,6 +705,7 @@ func GetModel(name string) (*Model, error) {
 				ggufChatTemplate = f.KeyValue("tokenizer.chat_template").String()
 				m.HasChatTemplate = ggufChatTemplate != ""
 				modelHasPooling = f.KeyValue("pooling_type").Valid()
+				m.GenerationDefaults = generationDefaultsFromGGUF(f)
 				f.Close()
 			}
 		case manifest.MediaTypeImageDraft:
