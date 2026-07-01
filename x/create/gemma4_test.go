@@ -1,8 +1,7 @@
 package create
 
 import (
-	"os"
-	"path/filepath"
+	"encoding/json"
 	"testing"
 )
 
@@ -11,27 +10,40 @@ func TestGemma4UnifiedImportTransformRegistration(t *testing.T) {
 		name       string
 		configJSON string
 		cfg        sourceModelConfig
+		wantErr    bool
+		wantLayers int
 	}{
 		{
 			name:       "unified conditional generation architecture",
 			configJSON: `{"architectures":["Gemma4UnifiedForConditionalGeneration"],"text_config":{"num_hidden_layers":48}}`,
 			cfg:        sourceModelConfig{Architectures: []string{"Gemma4UnifiedForConditionalGeneration"}},
+			wantLayers: 48,
 		},
 		{
 			name:       "unified model type fallback",
 			configJSON: `{"model_type":"gemma4_unified","text_config":{"num_hidden_layers":48}}`,
 			cfg:        sourceModelConfig{ModelType: "gemma4_unified"},
+			wantLayers: 48,
+		},
+		{
+			name:       "malformed config is a hard error",
+			configJSON: `{"architectures":["Gemma4UnifiedForConditionalGeneration"],"num_hidden_layers":"oops"}`,
+			cfg:        sourceModelConfig{Architectures: []string{"Gemma4UnifiedForConditionalGeneration"}},
+			wantErr:    true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.configJSON), 0o644); err != nil {
-				t.Fatal(err)
-			}
+			inv := Inventory{Config: tt.cfg, RawConfig: json.RawMessage(tt.configJSON)}
 
-			transform, err := newTensorImportTransform(dir, tt.cfg)
+			transform, err := newTensorImportTransform(inv)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("newTensorImportTransform() error = nil, want error")
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("newTensorImportTransform() error = %v", err)
 			}
@@ -40,8 +52,8 @@ func TestGemma4UnifiedImportTransformRegistration(t *testing.T) {
 			if !ok {
 				t.Fatalf("newTensorImportTransform() = %T, want gemma4ImportTransform", transform)
 			}
-			if gemmaTransform.numLayers != 48 {
-				t.Fatalf("numLayers = %d, want 48", gemmaTransform.numLayers)
+			if gemmaTransform.numLayers != tt.wantLayers {
+				t.Fatalf("numLayers = %d, want %d", gemmaTransform.numLayers, tt.wantLayers)
 			}
 		})
 	}

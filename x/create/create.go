@@ -394,19 +394,23 @@ type sourceModelConfig struct {
 	} `json:"text_config"`
 }
 
-func readSourceModelConfig(modelDir string) (sourceModelConfig, error) {
+// readSourceModelConfig parses config.json into the shared sourceModelConfig
+// and returns the raw bytes alongside it. The raw bytes are retained on the
+// Inventory so architecture-specific factories can parse their own fields
+// without re-opening the file.
+func readSourceModelConfig(modelDir string) (sourceModelConfig, json.RawMessage, error) {
 	configPath := filepath.Join(modelDir, "config.json")
 	data, err := os.ReadFile(configPath)
 	if err != nil {
-		return sourceModelConfig{}, err
+		return sourceModelConfig{}, nil, err
 	}
 
 	var cfg sourceModelConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return sourceModelConfig{}, err
+		return sourceModelConfig{}, nil, err
 	}
 
-	return cfg, nil
+	return cfg, data, nil
 }
 
 func (cfg sourceModelConfig) Architecture() string {
@@ -479,7 +483,7 @@ func (noopImportTransform) quantizationType(name string, shape []int32, quantize
 	return GetTensorQuantization(name, shape, quantize)
 }
 
-type tensorImportTransformFactory func(modelDir string, cfg sourceModelConfig) (quantizePolicy, error)
+type tensorImportTransformFactory func(rawConfig json.RawMessage) (quantizePolicy, error)
 
 var tensorImportTransformRegistry = map[string]tensorImportTransformFactory{
 	"Qwen3_5ForCausalLM":                    newQwen35ImportTransform,
@@ -503,9 +507,9 @@ var tensorImportTransformRegistry = map[string]tensorImportTransformFactory{
 	"gemma4_unified_assistant":              newGemma4ImportTransform,
 }
 
-func newTensorImportTransform(modelDir string, cfg sourceModelConfig) (quantizePolicy, error) {
-	if factory, ok := tensorImportTransformRegistry[cfg.Architecture()]; ok {
-		return factory(modelDir, cfg)
+func newTensorImportTransform(inv Inventory) (quantizePolicy, error) {
+	if factory, ok := tensorImportTransformRegistry[inv.Config.Architecture()]; ok {
+		return factory(inv.RawConfig)
 	}
 	return noopImportTransform{}, nil
 }

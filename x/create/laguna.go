@@ -1,10 +1,13 @@
 package create
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+)
 
 type lagunaImportTransform struct{}
 
-func newLagunaImportTransform(string, sourceModelConfig) (quantizePolicy, error) {
+func newLagunaImportTransform(json.RawMessage) (quantizePolicy, error) {
 	return lagunaImportTransform{}, nil
 }
 

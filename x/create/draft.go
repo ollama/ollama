@@ -29,7 +29,7 @@ func CreateDraftLayers(modelDir, tensorPrefix, configPrefix, quantize string, st
 	if err != nil {
 		return nil, err
 	}
-	policy, err := newTensorImportTransform(modelDir, inv.Config)
+	policy, err := newTensorImportTransform(inv)
 	if err != nil {
 		return nil, fmt.Errorf("build draft quantization policy for %q: %w", inv.Config.Architecture(), err)
 	}

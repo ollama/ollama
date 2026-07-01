@@ -2,8 +2,7 @@ package create
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -24,14 +23,10 @@ type gemma4Config struct {
 	} `json:"text_config"`
 }
 
-func newGemma4ImportTransform(modelDir string, _ sourceModelConfig) (quantizePolicy, error) {
-	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
-	if err != nil {
-		return gemma4ImportTransform{}, nil //nolint:nilerr // fallback to no heuristic
-	}
+func newGemma4ImportTransform(rawConfig json.RawMessage) (quantizePolicy, error) {
 	var cfg gemma4Config
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return gemma4ImportTransform{}, nil //nolint:nilerr // fallback to no heuristic
+	if err := json.Unmarshal(rawConfig, &cfg); err != nil {
+		return nil, fmt.Errorf("gemma4: parse config.json: %w", err)
 	}
 
 	numLayers := cfg.NumHiddenLayers

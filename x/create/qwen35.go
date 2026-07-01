@@ -1,10 +1,13 @@
 package create
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+)
 
 type qwen35ImportTransform struct{}
 
-func newQwen35ImportTransform(_ string, _ sourceModelConfig) (quantizePolicy, error) {
+func newQwen35ImportTransform(json.RawMessage) (quantizePolicy, error) {
 	return qwen35ImportTransform{}, nil
 }
 

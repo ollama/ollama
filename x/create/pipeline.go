@@ -24,7 +24,7 @@ func Create(modelName, modelDir, quantize string, store BlobStore, writeManifest
 	if err != nil {
 		return err
 	}
-	policy, err := newTensorImportTransform(modelDir, inv.Config)
+	policy, err := newTensorImportTransform(inv)
 	if err != nil {
 		return fmt.Errorf("build quantization policy for %q: %w", inv.Config.Architecture(), err)
 	}

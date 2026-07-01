@@ -1,6 +1,7 @@
 package create
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,11 +24,13 @@ type SourceTensor struct {
 // indexed by name, plus the parsed config and the model directory. Reading
 // source headers happens only here; the classify, plan, and write steps work
 // entirely from this listing and never re-open a source header to make a
-// decision.
+// decision. RawConfig holds the config.json bytes so architecture-specific
+// factories can parse their own fields without re-opening the file.
 type Inventory struct {
-	Dir     string
-	Config  sourceModelConfig
-	Tensors map[string]SourceTensor
+	Dir       string
+	Config    sourceModelConfig
+	RawConfig json.RawMessage
+	Tensors   map[string]SourceTensor
 }
 
 // Has reports whether a tensor with the given name exists in the source.
@@ -42,7 +45,7 @@ func (inv Inventory) Has(name string) bool {
 // shard, e.g. a partial download), it fails rather than silently producing an
 // incomplete model.
 func ReadInventory(dir string) (Inventory, error) {
-	cfg, err := readSourceModelConfig(dir)
+	cfg, rawConfig, err := readSourceModelConfig(dir)
 	if err != nil {
 		return Inventory{}, fmt.Errorf("read config: %w", err)
 	}
@@ -101,5 +104,5 @@ func ReadInventory(dir string) (Inventory, error) {
 		return Inventory{}, fmt.Errorf("no model.safetensors or model-*.safetensors weights found in %s", dir)
 	}
 
-	return Inventory{Dir: dir, Config: cfg, Tensors: tensors}, nil
+	return Inventory{Dir: dir, Config: cfg, RawConfig: rawConfig, Tensors: tensors}, nil
 }

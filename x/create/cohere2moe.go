@@ -2,8 +2,7 @@ package create
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -15,16 +14,12 @@ type cohere2MoeImportTransform struct {
 	numLayers int
 }
 
-func newCohere2MoeImportTransform(modelDir string, _ sourceModelConfig) (quantizePolicy, error) {
-	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
-	if err != nil {
-		return cohere2MoeImportTransform{}, nil //nolint:nilerr // fallback to no heuristic
-	}
+func newCohere2MoeImportTransform(rawConfig json.RawMessage) (quantizePolicy, error) {
 	var cfg struct {
 		NumHiddenLayers int `json:"num_hidden_layers"`
 	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return cohere2MoeImportTransform{}, nil //nolint:nilerr // fallback to no heuristic
+	if err := json.Unmarshal(rawConfig, &cfg); err != nil {
+		return nil, fmt.Errorf("cohere2moe: parse config.json: %w", err)
 	}
 	return cohere2MoeImportTransform{numLayers: cfg.NumHiddenLayers}, nil
 }
