@@ -17,7 +17,7 @@ func TestPlanRejectsOutputNameCollision(t *testing.T) {
 		"model.a.weight_packed": "U8",
 		"model.a.weight_scale":  "F8_E4M3",
 	})
-	_, err := Plan(inv, Classification{Kind: SourcePrequantized}, noopImportTransform{})
+	_, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
 	if err == nil || !strings.Contains(err.Error(), "clashing name") {
 		t.Fatalf("Plan() error = %v, want a clashing-name error", err)
 	}
@@ -33,7 +33,7 @@ func TestPlanFloat(t *testing.T) {
 	})
 
 	t.Run("no quantize", func(t *testing.T) {
-		specs, err := Plan(inv, Classification{Kind: SourceFloat}, noopImportTransform{})
+		specs, err := Plan(inv, Classification{Kind: SourceFloat}, defaultQuantPolicy{})
 		if err != nil {
 			t.Fatalf("Plan() error = %v", err)
 		}
@@ -54,7 +54,7 @@ func TestPlanFloat(t *testing.T) {
 	})
 
 	t.Run("int4 applies the mixed-precision policy", func(t *testing.T) {
-		specs, err := Plan(inv, Classification{Kind: SourceFloat, Quantize: "int4"}, noopImportTransform{})
+		specs, err := Plan(inv, Classification{Kind: SourceFloat, Quantize: "int4"}, defaultQuantPolicy{})
 		if err != nil {
 			t.Fatalf("Plan() error = %v", err)
 		}
@@ -90,7 +90,7 @@ func TestPlanFloatExpertGroup(t *testing.T) {
 		"model.layers.0.input_layernorm.weight":         "BF16",
 	})
 
-	specs, err := Plan(inv, Classification{Kind: SourceFloat, Quantize: "int4"}, noopImportTransform{})
+	specs, err := Plan(inv, Classification{Kind: SourceFloat, Quantize: "int4"}, defaultQuantPolicy{})
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
@@ -145,7 +145,7 @@ func TestPlanFloatPrestackedExperts(t *testing.T) {
 		"model.layers.0.mlp.gate.weight":                 {Name: "model.layers.0.mlp.gate.weight", Dtype: "BF16", Shape: []int32{8, 128}},
 	}}
 
-	specs, err := Plan(inv, Classification{Kind: SourceFloat, Quantize: "int4"}, noopImportTransform{})
+	specs, err := Plan(inv, Classification{Kind: SourceFloat, Quantize: "int4"}, defaultQuantPolicy{})
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
@@ -177,7 +177,7 @@ func TestPlanExpertGroupMismatchedLayout(t *testing.T) {
 		"model.layers.0.mlp.experts.0.gate_proj.weight": {Name: "model.layers.0.mlp.experts.0.gate_proj.weight", Dtype: "BF16", Shape: []int32{128, 128}},
 		"model.layers.0.mlp.experts.1.gate_proj.weight": {Name: "model.layers.0.mlp.experts.1.gate_proj.weight", Dtype: "BF16", Shape: []int32{128, 64}},
 	}}
-	if _, err := Plan(inv, Classification{Kind: SourceFloat, Quantize: "int4"}, noopImportTransform{}); err == nil {
+	if _, err := Plan(inv, Classification{Kind: SourceFloat, Quantize: "int4"}, defaultQuantPolicy{}); err == nil {
 		t.Fatal("Plan() error = nil, want mismatched expert layout error")
 	}
 }

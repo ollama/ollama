@@ -48,7 +48,7 @@ func TestPlanPrequantizedMLX(t *testing.T) {
 		"norm.weight": "BF16",
 	})
 
-	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, noopImportTransform{})
+	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
@@ -85,7 +85,7 @@ func TestPlanPrequantizedModelOptNVFP4(t *testing.T) {
 		"l.weight_scale_2": "F32",
 	})
 
-	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, noopImportTransform{})
+	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
@@ -129,7 +129,7 @@ func TestPlanPrequantizedModelOptDropsActivationScale(t *testing.T) {
 		"l.input_global_scale": "F32",
 	})
 
-	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, noopImportTransform{})
+	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
@@ -157,7 +157,7 @@ func TestPlanPrequantizedCompressedNVFP4(t *testing.T) {
 		"l.input_global_scale":  "F32",
 	})
 
-	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, noopImportTransform{})
+	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}

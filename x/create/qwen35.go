@@ -16,14 +16,10 @@ func (qwen35ImportTransform) quantizationType(name string, shape []int32, quanti
 	// projections are sensitive; keep both at source precision. Everything else
 	// follows the generic policy, which already keeps embeddings, norms, biases,
 	// and routing gates unquantized.
-	if qwen35IsVisionTower(name) || qwen35IsLowRankProjection(name) {
+	if isVisionTower(name) || qwen35IsLowRankProjection(name) {
 		return ""
 	}
 	return GetTensorQuantization(name, shape, quantize)
-}
-
-func qwen35IsVisionTower(name string) bool {
-	return strings.Contains(name, "vision_tower") || strings.Contains(name, ".visual.")
 }
 
 func qwen35IsLowRankProjection(name string) bool {

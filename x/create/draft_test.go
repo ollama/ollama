@@ -63,7 +63,7 @@ func TestPrefixSpecs(t *testing.T) {
 }
 
 func TestDraftPolicyKeepsEmbeddingsUnquantized(t *testing.T) {
-	p := draftPolicy{noopImportTransform{}}
+	p := draftPolicy{defaultQuantPolicy{}}
 
 	// Draft token embeddings start unquantized regardless of the request.
 	if got := p.quantizationType("model.embed_tokens.weight", []int32{4096, 2048}, "int8"); got != "" {

@@ -468,14 +468,6 @@ func (cfg sourceModelConfig) HFFP8WeightBlockSize() (rows, cols int32, ok bool) 
 	return 0, 0, false
 }
 
-// noopImportTransform is the generic quantize policy — the shared
-// GetTensorQuantization decision with no architecture-specific overrides.
-type noopImportTransform struct{}
-
-func (noopImportTransform) quantizationType(name string, shape []int32, quantize string) string {
-	return GetTensorQuantization(name, shape, quantize)
-}
-
 type tensorImportTransformFactory func(rawConfig json.RawMessage) (quantizePolicy, error)
 
 var tensorImportTransformRegistry = map[string]tensorImportTransformFactory{
@@ -504,7 +496,7 @@ func newTensorImportTransform(inv Inventory) (quantizePolicy, error) {
 	if factory, ok := tensorImportTransformRegistry[inv.Config.Architecture()]; ok {
 		return factory(inv.RawConfig)
 	}
-	return noopImportTransform{}, nil
+	return defaultQuantPolicy{}, nil
 }
 
 func buildSourceFP8Reader(weightTD, scaleTD *safetensors.TensorData) io.Reader {

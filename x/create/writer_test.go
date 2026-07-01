@@ -84,7 +84,7 @@ func TestWriteBlobsCompressedNVFP4(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadInventory() error = %v", err)
 	}
-	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, noopImportTransform{})
+	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
@@ -145,7 +145,7 @@ func TestWriteBlobsQuantizeFloat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadInventory() error = %v", err)
 	}
-	specs, err := Plan(inv, Classification{Kind: SourceFloat, Quantize: "int4"}, noopImportTransform{})
+	specs, err := Plan(inv, Classification{Kind: SourceFloat, Quantize: "int4"}, defaultQuantPolicy{})
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
@@ -190,7 +190,7 @@ func TestWriteBlobsBlockFP8Decode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadInventory() error = %v", err)
 	}
-	specs, err := Plan(inv, Classification{Kind: SourceBlockFP8, Quantize: "mxfp8"}, noopImportTransform{})
+	specs, err := Plan(inv, Classification{Kind: SourceBlockFP8, Quantize: "mxfp8"}, defaultQuantPolicy{})
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}

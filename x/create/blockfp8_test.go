@@ -30,7 +30,7 @@ func TestPlanBlockFP8(t *testing.T) {
 		"model.embed_tokens.weight":                        "BF16",
 	})
 
-	specs, err := Plan(inv, Classification{Kind: SourceBlockFP8, Quantize: "mxfp8"}, noopImportTransform{})
+	specs, err := Plan(inv, Classification{Kind: SourceBlockFP8, Quantize: "mxfp8"}, defaultQuantPolicy{})
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
@@ -66,7 +66,7 @@ func TestPlanBlockFP8PrestackedExperts(t *testing.T) {
 		"model.layers.0.mlp.experts.gate_up_proj.weight":           {Name: "model.layers.0.mlp.experts.gate_up_proj.weight", Dtype: "F8_E4M3", Shape: []int32{8, 512, 256}},
 		"model.layers.0.mlp.experts.gate_up_proj.weight_scale_inv": {Name: "model.layers.0.mlp.experts.gate_up_proj.weight_scale_inv", Dtype: "F32", Shape: []int32{8, 4, 2}},
 	}}
-	specs, err := Plan(inv, Classification{Kind: SourceBlockFP8, Quantize: "mxfp8"}, noopImportTransform{})
+	specs, err := Plan(inv, Classification{Kind: SourceBlockFP8, Quantize: "mxfp8"}, defaultQuantPolicy{})
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
@@ -90,7 +90,7 @@ func TestPlanBlockFP8PerExpertStacked(t *testing.T) {
 		"model.layers.0.mlp.experts.1.gate_proj.weight":       {Name: "model.layers.0.mlp.experts.1.gate_proj.weight", Dtype: "F8_E4M3", Shape: []int32{256, 256}},
 		"model.layers.0.mlp.experts.1.gate_proj.weight_scale": {Name: "model.layers.0.mlp.experts.1.gate_proj.weight_scale", Dtype: "BF16", Shape: []int32{2, 2}},
 	}}
-	specs, err := Plan(inv, Classification{Kind: SourceBlockFP8, Quantize: "mxfp8"}, noopImportTransform{})
+	specs, err := Plan(inv, Classification{Kind: SourceBlockFP8, Quantize: "mxfp8"}, defaultQuantPolicy{})
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}

@@ -75,7 +75,7 @@ type BlobSpec struct {
 // quantizePolicy decides the quantization type for each tensor of a model,
 // returning "" to keep it at source precision. A policy may return a higher-
 // precision type than requested for sensitive tensors. The per-architecture
-// import transforms implement it; noopImportTransform provides the generic
+// import transforms implement it; defaultQuantPolicy provides the generic
 // default (GetTensorQuantization).
 type quantizePolicy interface {
 	quantizationType(name string, shape []int32, requested string) string
@@ -84,7 +84,7 @@ type quantizePolicy interface {
 // Plan turns an inventory and its classification into the ordered list of
 // blobs to write. It reads no weight data and makes every decision here, so
 // the writer that follows has nothing left to decide. The policy decides which
-// weights are quantized and to what; pass noopImportTransform{} for the generic
+// weights are quantized and to what; pass defaultQuantPolicy{} for the generic
 // policy.
 func Plan(inv Inventory, class Classification, policy quantizePolicy) ([]BlobSpec, error) {
 	var (
