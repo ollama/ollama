@@ -24,6 +24,7 @@ func TestQwenParserStreaming(t *testing.T) {
 	cases := []struct {
 		desc  string
 		steps []step
+		tools []api.Tool
 		only  bool
 	}{
 		{
@@ -45,6 +46,20 @@ func TestQwenParserStreaming(t *testing.T) {
 				{
 					input:      "hi there<tool_call>",
 					wantEvents: []qwenEvent{qwenEventContent{content: "hi there"}},
+				},
+			},
+		},
+		{
+			desc:  "content before bare function tool call",
+			tools: []api.Tool{tool("get_weather", nil)},
+			steps: []step{
+				{
+					input: "hi there<function=get_weather><parameter=location>SF</parameter></function></tool_call>after",
+					wantEvents: []qwenEvent{
+						qwenEventContent{content: "hi there"},
+						qwenEventRawToolCall{raw: "<function=get_weather><parameter=location>SF</parameter></function>", bare: true},
+						qwenEventContent{content: "after"},
+					},
 				},
 			},
 		},
@@ -87,6 +102,48 @@ func TestQwenParserStreaming(t *testing.T) {
 					input: "ter",
 					wantEvents: []qwenEvent{
 						qwenEventContent{content: "ter"},
+					},
+				},
+			},
+		},
+		{
+			desc:  "bare function tool call with split tag",
+			tools: []api.Tool{tool("get_weather", nil)},
+			steps: []step{
+				{
+					input: "before<func",
+					wantEvents: []qwenEvent{
+						qwenEventContent{content: "before"},
+					},
+				},
+				{
+					input:      "tion=get_weather><parameter=location>SF</parameter></function></tool",
+					wantEvents: []qwenEvent{},
+				},
+				{
+					input: "_call>after",
+					wantEvents: []qwenEvent{
+						qwenEventRawToolCall{raw: "<function=get_weather><parameter=location>SF</parameter></function>", bare: true},
+						qwenEventContent{content: "after"},
+					},
+				},
+			},
+		},
+		{
+			desc:  "bare function tool call split after function name",
+			tools: []api.Tool{tool("get_weather", nil)},
+			steps: []step{
+				{
+					input: "before<function=get_weather",
+					wantEvents: []qwenEvent{
+						qwenEventContent{content: "before"},
+					},
+				},
+				{
+					input: "><parameter=location>SF</parameter></function></tool_call>after",
+					wantEvents: []qwenEvent{
+						qwenEventRawToolCall{raw: "<function=get_weather><parameter=location>SF</parameter></function>", bare: true},
+						qwenEventContent{content: "after"},
 					},
 				},
 			},
@@ -359,6 +416,7 @@ func TestQwenParserStreaming(t *testing.T) {
 
 		t.Run(tc.desc, func(t *testing.T) {
 			parser := Qwen3CoderParser{}
+			parser.Init(tc.tools, nil, nil)
 
 			for i, step := range tc.steps {
 				parser.acc.WriteString(step.input)
@@ -1059,6 +1117,118 @@ func TestQwen3CoderParserToolCallIndexing(t *testing.T) {
 		if !toolCallEqual(calls[i], want[i]) {
 			t.Fatalf("call %d mismatch: got %#v, want %#v", i, calls[i], want[i])
 		}
+	}
+}
+
+func TestQwen3CoderParserBareFunctionToolCall(t *testing.T) {
+	parser := Qwen3CoderParser{}
+	parser.Init([]api.Tool{tool("WebFetch", nil)}, nil, nil)
+
+	input := `I'll fetch the page.
+
+<function=WebFetch>
+<parameter=url>
+https://example.com
+</parameter>
+<parameter=prompt>
+What is the title of this webpage?
+</parameter>
+</function>
+</tool_call>`
+
+	content, thinking, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	if content != "I'll fetch the page." {
+		t.Fatalf("expected content %q, got %q", "I'll fetch the page.", content)
+	}
+	if thinking != "" {
+		t.Fatalf("expected no thinking, got %q", thinking)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+
+	want := api.ToolCall{
+		Function: api.ToolCallFunction{
+			Name: "WebFetch",
+			Arguments: testArgs(map[string]any{
+				"url":    "https://example.com",
+				"prompt": "What is the title of this webpage?",
+			}),
+			Index: 0,
+		},
+	}
+	if !toolCallEqual(calls[0], want) {
+		t.Fatalf("got %#v, want %#v", calls[0], want)
+	}
+}
+
+func TestQwen3CoderParserBareFunctionContentWithClosingTagFakeout(t *testing.T) {
+	parser := Qwen3CoderParser{}
+	parser.Init([]api.Tool{tool("search", nil)}, nil, nil)
+
+	input := "Document <function=search> literally, then show </tool_call> too."
+
+	content, thinking, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	if content != input {
+		t.Fatalf("expected content %q, got %q", input, content)
+	}
+	if thinking != "" {
+		t.Fatalf("expected no thinking, got %q", thinking)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no tool calls, got %d", len(calls))
+	}
+}
+
+func TestQwen3CoderParserBareFunctionWithoutToolsIsContent(t *testing.T) {
+	parser := Qwen3CoderParser{}
+	parser.Init(nil, nil, nil)
+
+	input := "<function=WebFetch><parameter=url>https://example.com</parameter></function></tool_call>"
+
+	content, thinking, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	if content != input {
+		t.Fatalf("expected content %q, got %q", input, content)
+	}
+	if thinking != "" {
+		t.Fatalf("expected no thinking, got %q", thinking)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no tool calls, got %d", len(calls))
+	}
+}
+
+func TestQwen3CoderParserBareFunctionContentFakeout(t *testing.T) {
+	parser := Qwen3CoderParser{}
+	parser.Init(nil, nil, nil)
+
+	input := "Document the syntax <function=search> in the response."
+
+	content, thinking, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	if content != input {
+		t.Fatalf("expected content %q, got %q", input, content)
+	}
+	if thinking != "" {
+		t.Fatalf("expected no thinking, got %q", thinking)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no tool calls, got %d", len(calls))
 	}
 }
 

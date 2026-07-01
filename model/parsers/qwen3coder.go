@@ -19,8 +19,9 @@ import (
 type qwenParserState int
 
 const (
-	toolOpenTag  = "<tool_call>"
-	toolCloseTag = "</tool_call>"
+	toolOpenTag             = "<tool_call>"
+	toolCloseTag            = "</tool_call>"
+	bareFunctionOpenTagHead = "<function="
 )
 
 const (
@@ -29,10 +30,12 @@ const (
 )
 
 type Qwen3CoderParser struct {
-	state     qwenParserState
-	acc       strings.Builder
-	tools     []api.Tool
-	callIndex int
+	state                qwenParserState
+	acc                  strings.Builder
+	tools                []api.Tool
+	callIndex            int
+	collectingBareTool   bool
+	toolPrefixWhitespace string
 }
 
 func (p *Qwen3CoderParser) HasToolSupport() bool {
@@ -53,6 +56,8 @@ func (p *Qwen3CoderParser) PreservedTokens() []string {
 func (p *Qwen3CoderParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
 	p.callIndex = 0
+	p.collectingBareTool = false
+	p.toolPrefixWhitespace = ""
 	return tools // Qwen doesn't modify tools
 }
 
@@ -68,6 +73,13 @@ func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking st
 		case qwenEventRawToolCall:
 			toolCall, err := parseToolCall(event, p.tools)
 			if err != nil {
+				if event.bare {
+					sb.WriteString(event.beforeWhitespace)
+					sb.WriteString(event.raw)
+					sb.WriteString(toolCloseTag)
+					sb.WriteString(event.afterCloseWhitespace)
+					continue
+				}
 				slog.Warn("qwen tool call parsing failed", "error", err)
 				return "", "", nil, err
 			}
@@ -80,6 +92,19 @@ func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking st
 			// `qwenEvent`s for more details
 			sb.WriteString(event.content)
 		}
+	}
+
+	if done && p.acc.Len() > 0 {
+		if p.state == qwenParserState_CollectingToolContent {
+			if p.collectingBareTool {
+				sb.WriteString(p.toolPrefixWhitespace)
+			}
+			p.toolPrefixWhitespace = ""
+			p.collectingBareTool = false
+		}
+		sb.WriteString(p.acc.String())
+		p.acc.Reset()
+		p.state = qwenParserState_LookingForToolStart
 	}
 
 	return sb.String(), "", toolCalls, nil
@@ -116,7 +141,10 @@ type qwenEvent interface {
 }
 
 type qwenEventRawToolCall struct {
-	raw string
+	raw                  string
+	bare                 bool
+	beforeWhitespace     string
+	afterCloseWhitespace string
 }
 
 type qwenEventContent struct {
@@ -135,21 +163,36 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 
 	switch p.state {
 	case qwenParserState_LookingForToolStart:
-		if strings.Contains(p.acc.String(), toolOpenTag) {
+		if before, after, bare, ok := splitToolStart(p.acc.String(), p.tools); ok {
 			// we found a full tool open tag, so we can emit the content before the
 			// tag, being sure to trim any trailing whitespace
-			split := strings.SplitN(p.acc.String(), toolOpenTag, 2)
-			before := split[0]
+			rawBefore := before
 			before = strings.TrimRightFunc(before, unicode.IsSpace)
+			p.toolPrefixWhitespace = rawBefore[len(before):]
+			if !bare {
+				p.toolPrefixWhitespace = ""
+			}
 			if len(before) > 0 {
 				events = append(events, qwenEventContent{content: before})
 			}
-			after := split[1]
 			p.acc.Reset()
 			p.acc.WriteString(after)
 			p.state = qwenParserState_CollectingToolContent
+			p.collectingBareTool = bare
 			return events, true
-		} else if overlap := overlap(p.acc.String(), toolOpenTag); overlap > 0 {
+		} else if incompleteBareFunctionIdx := incompleteBareFunctionStartIndex(p.acc.String()); incompleteBareFunctionIdx != -1 {
+			beforePartialTag := p.acc.String()[:incompleteBareFunctionIdx]
+			trailingWhitespaceLen := trailingWhitespaceLen(beforePartialTag)
+			ambiguousStart := len(beforePartialTag) - trailingWhitespaceLen
+			unambiguous := p.acc.String()[:ambiguousStart]
+			ambiguous := p.acc.String()[ambiguousStart:]
+			p.acc.Reset()
+			p.acc.WriteString(ambiguous)
+			if len(unambiguous) > 0 {
+				events = append(events, qwenEventContent{content: unambiguous})
+			}
+			return events, false
+		} else if overlap := max(overlap(p.acc.String(), toolOpenTag), overlap(p.acc.String(), bareFunctionOpenTagHead)); overlap > 0 {
 			// we found a partial tool open tag, so we can emit the unambiguous part,
 			// which is the (trailing-whitespace trimmed) content before the partial
 			// tool open tag
@@ -186,11 +229,19 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 				slog.Warn("qwen tool call closing tag found but no content before it")
 			}
 			// remove any whitespace between the tool call and any content after it
-			after := strings.TrimLeftFunc(split[1], unicode.IsSpace)
+			rawAfter := split[1]
+			after := strings.TrimLeftFunc(rawAfter, unicode.IsSpace)
 			p.acc.Reset()
 			p.acc.WriteString(after)
-			events = append(events, qwenEventRawToolCall{raw: before})
+			event := qwenEventRawToolCall{raw: before, bare: p.collectingBareTool}
+			if p.collectingBareTool {
+				event.beforeWhitespace = p.toolPrefixWhitespace
+				event.afterCloseWhitespace = rawAfter[:len(rawAfter)-len(after)]
+			}
+			events = append(events, event)
 			p.state = qwenParserState_LookingForToolStart
+			p.collectingBareTool = false
+			p.toolPrefixWhitespace = ""
 			return events, true
 		} else {
 			// note that we don't need to check the overlap here because we only plan
@@ -201,6 +252,56 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 		}
 	default:
 		panic("unreachable")
+	}
+}
+
+func incompleteBareFunctionStartIndex(s string) int {
+	idx := strings.Index(s, bareFunctionOpenTagHead)
+	if idx == -1 {
+		return -1
+	}
+	nameStart := idx + len(bareFunctionOpenTagHead)
+	if strings.IndexByte(s[nameStart:], '>') == -1 {
+		return idx
+	}
+	return -1
+}
+
+func splitToolStart(s string, tools []api.Tool) (before string, after string, bare bool, ok bool) {
+	toolOpenIdx := strings.Index(s, toolOpenTag)
+	bareFunctionIdx := bareFunctionToolStartIndex(s, tools)
+
+	switch {
+	case toolOpenIdx == -1 && bareFunctionIdx == -1:
+		return "", "", false, false
+	case bareFunctionIdx == -1 || (toolOpenIdx != -1 && toolOpenIdx < bareFunctionIdx):
+		return s[:toolOpenIdx], s[toolOpenIdx+len(toolOpenTag):], false, true
+	default:
+		return s[:bareFunctionIdx], s[bareFunctionIdx:], true, true
+	}
+}
+
+func bareFunctionToolStartIndex(s string, tools []api.Tool) int {
+	for offset := 0; ; {
+		idx := strings.Index(s[offset:], bareFunctionOpenTagHead)
+		if idx == -1 {
+			return -1
+		}
+		idx += offset
+
+		nameStart := idx + len(bareFunctionOpenTagHead)
+		nameEnd := strings.IndexByte(s[nameStart:], '>')
+		if nameEnd == -1 {
+			return -1
+		}
+		name := s[nameStart : nameStart+nameEnd]
+		for _, tool := range tools {
+			if tool.Function.Name == name {
+				return idx
+			}
+		}
+
+		offset = nameStart
 	}
 }
 
