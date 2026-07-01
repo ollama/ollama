@@ -132,6 +132,10 @@ jobs:
             rocm-version: '7.1'
           - os: windows
             arch: amd64
+            preset: 'TheRock ROCm'
+            build-steps: rocm_v7_14_nightly
+          - os: windows
+            arch: amd64
             preset: Vulkan
             build-steps: vulkan
             install: https://sdk.lunarg.com/sdk/download/1.4.321.1/windows/vulkansdk-windows-X64-1.4.321.1.exe
@@ -265,6 +269,30 @@ jobs:
             C:\Program Files\NVIDIA\CUDNN
           key: ${{ matrix.install }}-${{ matrix.cudnn-install }}
       - uses: actions/checkout@v4
+      - if: matrix.preset == 'TheRock ROCm'
+        id: resolve-therock-win
+        name: Resolve TheRock ROCm version for Windows
+        shell: pwsh
+        run: |
+          $info = powershell -ExecutionPolicy Bypass -File .\scripts\fetch_therock_rocm_windows.ps1 -ResolveOnly
+          $version = ($info | Select-String "Version:" | Select-Object -First 1) -replace '.*Version:\s*', ''
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+      - if: matrix.preset == 'TheRock ROCm'
+        id: cache-therock-win
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache\therock-rocm
+          key: therock-rocm-windows-multiarch-${{ steps.resolve-therock-win.outputs.version }}
+      - if: matrix.preset == 'TheRock ROCm'
+        name: Fetch TheRock ROCm for Windows
+        shell: pwsh
+        run: |
+          powershell -ExecutionPolicy Bypass -File .\scripts\fetch_therock_rocm_windows.ps1
+      - if: ${{ !cancelled() && matrix.preset == 'TheRock ROCm' && steps.cache-therock-win.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: .cache\therock-rocm
+          key: therock-rocm-windows-multiarch-${{ steps.resolve-therock-win.outputs.version }}
       - uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}\.ccache
@@ -447,6 +475,8 @@ jobs:
           - arch: amd64
             target: llama-server-rocm_v7_2
           - arch: amd64
+            target: llama-server-rocm-nightly
+          - arch: amd64
             target: llama-server-vulkan
           - arch: arm64
             target: llama-server-cpu
@@ -490,6 +520,12 @@ jobs:
           sudo swapon "$SWAP_PATH"
           swapon --show
           free -h
+      - if: matrix.target == 'llama-server-rocm-nightly'
+        id: resolve-therock
+        name: Resolve TheRock version
+        run: |
+          version=$(bash scripts/fetch_therock_rocm_linux.sh --resolve-only 2>/dev/null | awk '/Version:/{print $2}')
+          echo "version=${version}" >> $GITHUB_OUTPUT
       - uses: docker/build-push-action@v6
         with:
           context: .
@@ -505,6 +541,7 @@ jobs:
             OLLAMA_MLX_NVCC_THREADS=6
             APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu
             APT_PORTS_MIRROR=http://azure.ports.ubuntu.com/ubuntu-ports
+            THEROCK_VERSION=${{ steps.resolve-therock.outputs.version || '' }}
           cache-from: |
             type=registry,ref=ollama/release:cache-${{ matrix.arch }}-${{ matrix.target }}
             type=registry,ref=${{ vars.DOCKER_REPO }}:latest
@@ -553,6 +590,7 @@ jobs:
               type=registry,ref=ollama/release:cache-amd64-mlx
               type=registry,ref=ollama/release:cache-amd64-llama-server-rocm_v7_2
               type=registry,ref=ollama/release:cache-amd64-llama-server-vulkan
+              type=registry,ref=ollama/release:cache-amd64-llama-server-rocm-nightly
               type=registry,ref=${{ vars.DOCKER_REPO }}:latest
           - os: linux
             arch: amd64
@@ -570,6 +608,7 @@ jobs:
             cache-from: |
               type=registry,ref=ollama/release:cache-amd64-llama-server-cpu
               type=registry,ref=ollama/release:cache-amd64-llama-server-rocm_v7_2
+              type=registry,ref=ollama/release:cache-amd64-llama-server-rocm-nightly
               type=registry,ref=${{ vars.DOCKER_REPO }}:latest
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
@@ -583,6 +622,12 @@ jobs:
         with:
           username: ${{ vars.DOCKER_USER }}
           password: ${{ secrets.DOCKER_ACCESS_TOKEN }}
+      - if: matrix.arch == 'amd64'
+        id: resolve-therock
+        name: Resolve TheRock version
+        run: |
+          version=$(bash scripts/fetch_therock_rocm_linux.sh --resolve-only 2>/dev/null | awk '/Version:/{print $2}')
+          echo "version=${version}" >> $GITHUB_OUTPUT
       - id: build-push
         uses: docker/build-push-action@v6
         with:
@@ -590,7 +635,9 @@ jobs:
           platforms: ${{ matrix.os }}/${{ matrix.arch }}
           provenance: false
           sbom: false
-          build-args: ${{ matrix.build-args }}
+          build-args: |
+            ${{ matrix.build-args }}
+            THEROCK_VERSION=${{ steps.resolve-therock.outputs.version || '' }}
           outputs: type=image,name=${{ vars.DOCKER_REPO }},push-by-digest=true,name-canonical=true,push=true
           cache-from: ${{ matrix.cache-from }}
           cache-to: type=inline
@@ -610,7 +657,9 @@ jobs:
           target: ${{ matrix.archive-target }}
           provenance: false
           sbom: false
-          build-args: ${{ matrix.build-args }}
+          build-args: |
+            ${{ matrix.build-args }}
+            THEROCK_VERSION=${{ steps.resolve-therock.outputs.version || '' }}
           outputs: type=local,dest=dist/${{ matrix.os }}-${{ matrix.arch }}
           cache-from: ${{ matrix.cache-from }}
       - name: Deduplicate CUDA libraries
@@ -639,7 +688,6 @@ jobs:
               lib/ollama/include*)       echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-mlx.tar.in ;;
               lib/ollama/cuda_jetpack5)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack5.tar.in ;;
               lib/ollama/cuda_jetpack6)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack6.tar.in ;;
-              lib/ollama/rocm_v*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-rocm.tar.in ;;
             esac
           done
         working-directory: dist/${{ matrix.os }}-${{ matrix.arch }}
@@ -656,6 +704,18 @@ jobs:
             tar c -C dist/${{ matrix.os }}-${{ matrix.arch }} -T $ARCHIVE --owner 0 --group 0 | zstd -19 -T0 >$(basename ${ARCHIVE//.*/}.tar.zst) &
           done
           wait
+      - if: matrix.suffix == '-rocm'
+        name: Bundle ROCm packages
+        run: |
+          base="dist/${{ matrix.os }}-${{ matrix.arch }}"
+          if [ -d "$base/lib/ollama/rocm_v7_2" ]; then
+            tar c -C "$base" --exclude hipblaslt ./lib/ollama/rocm_v7_2 | zstd -19 -T0 >ollama-${{ matrix.os }}-${{ matrix.arch }}-rocm-stable-1-of-2.tar.zst
+            tar c -C "$base" ./lib/ollama/rocm_v7_2/hipblaslt | zstd -19 -T0 >ollama-${{ matrix.os }}-${{ matrix.arch }}-rocm-stable-2-of-2.tar.zst
+          fi
+          if [ -d "$base/lib/ollama/rocm_v7_14_nightly" ]; then
+            tar c -C "$base" --exclude gfx942 ./lib/ollama/rocm_v7_14_nightly | zstd -19 -T0 >ollama-${{ matrix.os }}-${{ matrix.arch }}-rocm-nightly-1-of-2.tar.zst
+            tar c -C "$base" ./lib/ollama/rocm_v7_14_nightly/hipblaslt/library/gfx942 | zstd -19 -T0 >ollama-${{ matrix.os }}-${{ matrix.arch }}-rocm-nightly-2-of-2.tar.zst
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: bundles-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.suffix }}
