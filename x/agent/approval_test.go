@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -286,6 +288,19 @@ func TestApprovalManager_HierarchicalPrefixAllowlist_CrossPlatform(t *testing.T)
 	// Mixed slashes should also work
 	if !am.IsAllowed("bash", map[string]any{"command": "cat tools\\a/b\\c/deep.go"}) {
 		t.Error("expected mixed slash path to be allowed via hierarchical prefix")
+	}
+}
+
+func TestIsCommandOutsideCwdDetectsSiblingDirectory(t *testing.T) {
+	tmp := t.TempDir()
+	cwd := filepath.Join(tmp, "workspace")
+	if err := os.Mkdir(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(cwd)
+
+	if !isCommandOutsideCwd("cat ../workspace2/secret.txt") {
+		t.Fatal("expected sibling directory path to be detected as outside cwd")
 	}
 }
 
