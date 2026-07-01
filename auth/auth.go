@@ -27,7 +27,7 @@ func GetPublicKey() (string, error) {
 	keyPath := filepath.Join(home, ".ollama", defaultPrivateKey)
 	privateKeyFile, err := os.ReadFile(keyPath)
 	if err != nil {
-		slog.Info(fmt.Sprintf("Failed to load private key: %v", err))
+		slog.Info("failed to load private key", "error", err)
 		return "", err
 	}
 
@@ -59,7 +59,7 @@ func Sign(ctx context.Context, bts []byte) (string, error) {
 	keyPath := filepath.Join(home, ".ollama", defaultPrivateKey)
 	privateKeyFile, err := os.ReadFile(keyPath)
 	if err != nil {
-		slog.Info(fmt.Sprintf("Failed to load private key: %v", err))
+		slog.Info("failed to load private key", "error", err)
 		return "", err
 	}
 
