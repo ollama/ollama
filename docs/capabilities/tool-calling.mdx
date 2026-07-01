@@ -470,7 +470,7 @@ It also might help to tell the model that it is in a loop and can make multiple 
         response: ChatResponse = chat(
             model='qwen3',
             messages=messages,
-            tools=[add, multiply],
+            tools=available_functions.values(),
             think=True,
         )
         messages.append(response.message)
@@ -769,6 +769,7 @@ def get_temperature(city: str) -> str:
   }
   return temperatures.get(city, 'Unknown')
 
+messages = [{"role": "user", "content": "What is the temperature in New York?"}]
 available_functions = {
   'get_temperature': get_temperature,
 }
