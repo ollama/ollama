@@ -79,6 +79,7 @@ type Scheduler struct {
 	getGpuFn        func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo
 	getSystemInfoFn func() ml.SystemInfo
 	waitForRecovery time.Duration
+	sleepInhibitor  *sleepInhibitor
 }
 
 // Default automatic value for number of models we allow per GPU
@@ -102,6 +103,7 @@ func InitScheduler(ctx context.Context) *Scheduler {
 		waitForRecovery: 5 * time.Second,
 	}
 	sched.loadFn = sched.load
+	sched.sleepInhibitor = &sleepInhibitor{}
 	return sched
 }
 
@@ -205,7 +207,7 @@ func (s *Scheduler) getRunner(c context.Context, m *Model, opts api.Options, ses
 	runner := s.loaded[key]
 	s.loadedMu.Unlock()
 	if runner != nil && !runner.needsReload(c, req) {
-		req.useLoadedRunner(runner, s.finishedReqCh)
+		req.useLoadedRunner(runner, s.finishedReqCh, s.sleepInhibitor)
 	} else {
 		select {
 		case s.pendingReqCh <- req:
@@ -265,7 +267,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					} else {
 						// Runner is usable, return it
 						logutil.Trace("using existing loaded runner", "model", pendingKey)
-						pending.useLoadedRunner(runner, s.finishedReqCh)
+						pending.useLoadedRunner(runner, s.finishedReqCh, s.sleepInhibitor)
 						break
 					}
 				} else if maxRunners > 0 && loadedCount >= int(maxRunners) {
@@ -389,6 +391,7 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 			runner.refMu.Lock()
 			runner.refCount--
 			if runner.refCount <= 0 {
+				s.sleepInhibitor.AllowSleep()
 				if runner.sessionDuration <= 0 {
 					slog.Debug("runner with zero duration has gone idle, expiring to unload", "runner", runner)
 					if runner.expireTimer != nil {
@@ -478,9 +481,12 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 // Complete the pending request and send the runner back to the requester
 // Wires up a finished event after the request context is completed
 // Updates session duration, and resets expiration timer
-func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *LlmRequest) {
+func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *LlmRequest, si *sleepInhibitor) {
 	runner.refMu.Lock()
 	defer runner.refMu.Unlock()
+	if runner.refCount == 0 {
+		si.PreventSleep()
+	}
 	runner.refCount++
 	if runner.expireTimer != nil {
 		runner.expireTimer.Stop()
@@ -752,6 +758,7 @@ iGPUScan:
 		if runner.pid < 0 {
 			runner.pid = llama.Pid()
 		}
+		s.sleepInhibitor.PreventSleep()
 		runner.refCount++
 		runner.loading = false
 		go func() {
@@ -1711,6 +1718,7 @@ func (s *Scheduler) findRunnerToUnload() *runnerRef {
 }
 
 func (s *Scheduler) unloadAllRunners() {
+	s.sleepInhibitor.Close()
 	s.loadedMu.Lock()
 	defer s.loadedMu.Unlock()
 
