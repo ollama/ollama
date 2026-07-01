@@ -68,7 +68,7 @@
       "inherits": ["llama_cuda_v12_base"],
       "binaryDir": "${sourceDir}/../../build/llama-server-cuda_v12",
       "cacheVariables": {
-        "CMAKE_CUDA_ARCHITECTURES": "50-virtual;52-virtual;60-virtual;61-virtual;70;75;80;86;89;90;90a;120"
+        "CMAKE_CUDA_ARCHITECTURES": "50-virtual;52-virtual;60;61;70;75;80;86;89;90;90a;120"
       }
     },
     {
