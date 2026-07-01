@@ -37,39 +37,20 @@ func NewProgress(w io.Writer) *Progress {
 	return p
 }
 
-func (p *Progress) stop() bool {
-	for _, state := range p.states {
-		if spinner, ok := state.(*Spinner); ok {
-			spinner.Stop()
-		}
-	}
-
-	if p.ticker != nil {
-		p.ticker.Stop()
-		p.ticker = nil
-		p.render()
-		return true
-	}
-
-	return false
-}
-
 func (p *Progress) Stop() bool {
-	stopped := p.stop()
-	if stopped {
-		fmt.Fprint(p.w, "\n")
-		p.w.Flush()
-	}
-	return stopped
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.stopLocked()
 }
 
 func (p *Progress) StopAndClear() bool {
-	defer p.w.Flush()
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
 	fmt.Fprint(p.w, "\033[?25l")
 	defer fmt.Fprint(p.w, "\033[?25h")
 
-	stopped := p.stop()
+	stopped := p.stopLocked()
 	if stopped {
 		// clear all progress lines
 		for i := range p.pos {
@@ -80,7 +61,35 @@ func (p *Progress) StopAndClear() bool {
 		}
 	}
 
+	p.w.Flush()
 	return stopped
+}
+
+// stopLocked stops the progress ticker. Must be called with p.mu held.
+func (p *Progress) stopLocked() bool {
+	// Stop all spinners
+	for _, state := range p.states {
+		if spinner, ok := state.(*Spinner); ok {
+			spinner.Stop()
+		}
+	}
+
+	if p.ticker != nil {
+		ticker := p.ticker
+		p.ticker = nil
+
+		// Stop ticker OUTSIDE lock to avoid deadlock
+		p.mu.Unlock()
+		ticker.Stop()
+		p.mu.Lock()
+
+		p.renderLocked()
+		fmt.Fprint(p.w, "\n")
+		p.w.Flush()
+		return true
+	}
+
+	return false
 }
 
 func (p *Progress) Add(key string, state State) {
@@ -91,13 +100,17 @@ func (p *Progress) Add(key string, state State) {
 }
 
 func (p *Progress) render() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.renderLocked()
+}
+
+// renderLocked renders the progress. Must be called with p.mu held.
+func (p *Progress) renderLocked() {
 	_, termHeight, err := term.GetSize(int(os.Stderr.Fd()))
 	if err != nil {
 		termHeight = defaultTermHeight
 	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
 
 	defer p.w.Flush()
 
@@ -127,8 +140,14 @@ func (p *Progress) render() {
 }
 
 func (p *Progress) start() {
-	p.ticker = time.NewTicker(100 * time.Millisecond)
-	for range p.ticker.C {
+	ticker := time.NewTicker(100 * time.Millisecond)
+
+	// Write ticker field while holding lock
+	p.mu.Lock()
+	p.ticker = ticker
+	p.mu.Unlock()
+
+	for range ticker.C {
 		p.render()
 	}
 }
