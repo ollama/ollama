@@ -69,6 +69,14 @@ func TestEditorRunsDoNotRewriteConfig(t *testing.T) {
 				return filepath.Join(home, ".omp", "agent", "models.yml")
 			},
 		},
+		{
+			name:   "goose-cli",
+			binary: "goose",
+			runner: &GooseCLI{},
+			checkPath: func(home string) string {
+				return filepath.Join(home, ".config", "goose", "custom_providers", "ollama.json")
+			},
+		},
 	}
 
 	for _, tt := range tests {
