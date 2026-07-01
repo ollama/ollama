@@ -92,7 +92,7 @@ If Ollama is run as a macOS application, environment variables should be set usi
 
 If Ollama is run as a systemd service, environment variables should be set using `systemctl`:
 
-1. Edit the systemd service by calling `systemctl edit ollama.service`. This will open an editor.
+1. Edit the systemd service by calling `systemctl edit ollama.service`. This will open an editor for the service's override file.
 
 2. For each environment variable, add a line `Environment` under section `[Service]`:
 
