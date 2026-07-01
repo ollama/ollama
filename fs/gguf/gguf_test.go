@@ -2,6 +2,8 @@ package gguf_test
 
 import (
 	"bytes"
+	"encoding/binary"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -12,6 +14,47 @@ import (
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/fs/gguf"
 )
+
+func createMalformedGGUFFile(tb testing.TB, writeBody func(*os.File)) string {
+	tb.Helper()
+	f, err := os.CreateTemp(tb.TempDir(), "")
+	if err != nil {
+		tb.Fatal(err)
+	}
+	defer f.Close()
+
+	for _, value := range []any{
+		[]byte("GGUF"),
+		uint32(3),
+		uint64(0),
+		uint64(1),
+	} {
+		if err := binary.Write(f, binary.LittleEndian, value); err != nil {
+			tb.Fatal(err)
+		}
+	}
+
+	writeBody(f)
+	return f.Name()
+}
+
+func assertGGUFLazyParseDoesNotPanic(tb testing.TB, path string) {
+	tb.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			tb.Fatalf("GGUF lazy parse panicked: %v", r)
+		}
+	}()
+
+	f, err := gguf.Open(path)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	defer f.Close()
+
+	for range f.KeyValues() {
+	}
+}
 
 func createBinFile(tb testing.TB) string {
 	tb.Helper()
@@ -82,6 +125,34 @@ func createBinFile(tb testing.TB) string {
 	}
 
 	return f.Name()
+}
+
+func TestMalformedStringLengthDoesNotPanic(t *testing.T) {
+	path := createMalformedGGUFFile(t, func(f *os.File) {
+		if err := binary.Write(f, binary.LittleEndian, uint64(math.MaxUint64)); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	assertGGUFLazyParseDoesNotPanic(t, path)
+}
+
+func TestMalformedArrayLengthDoesNotPanic(t *testing.T) {
+	path := createMalformedGGUFFile(t, func(f *os.File) {
+		for _, value := range []any{
+			uint64(1),
+			[]byte("x"),
+			uint32(9),
+			uint32(0),
+			uint64(math.MaxUint64),
+		} {
+			if err := binary.Write(f, binary.LittleEndian, value); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+
+	assertGGUFLazyParseDoesNotPanic(t, path)
 }
 
 func TestRead(t *testing.T) {
