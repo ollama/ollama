@@ -27,12 +27,16 @@ type Progress struct {
 
 	pos int
 
-	ticker *time.Ticker
-	states []State
+	// done signals the background render goroutine to exit. It is created in
+	// NewProgress (before the goroutine starts) and closed exactly once by
+	// stopOnce, so stop is idempotent and free of a start/stop race.
+	done     chan struct{}
+	stopOnce sync.Once
+	states   []State
 }
 
 func NewProgress(w io.Writer) *Progress {
-	p := &Progress{w: bufio.NewWriter(w)}
+	p := &Progress{w: bufio.NewWriter(w), done: make(chan struct{})}
 	go p.start()
 	return p
 }
@@ -44,14 +48,19 @@ func (p *Progress) stop() bool {
 		}
 	}
 
-	if p.ticker != nil {
-		p.ticker.Stop()
-		p.ticker = nil
+	stopped := false
+	p.stopOnce.Do(func() {
+		// Closing done makes the start goroutine return; time.Ticker.Stop
+		// alone would not, because it does not close the ticker channel.
+		close(p.done)
+		stopped = true
+	})
+
+	if stopped {
 		p.render()
-		return true
 	}
 
-	return false
+	return stopped
 }
 
 func (p *Progress) Stop() bool {
@@ -127,8 +136,17 @@ func (p *Progress) render() {
 }
 
 func (p *Progress) start() {
-	p.ticker = time.NewTicker(100 * time.Millisecond)
-	for range p.ticker.C {
-		p.render()
+	// The ticker is owned solely by this goroutine, so there is no shared
+	// mutable state to race on. defer Stop releases the ticker on exit.
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			p.render()
+		case <-p.done:
+			return
+		}
 	}
 }
