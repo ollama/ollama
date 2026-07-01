@@ -26,6 +26,7 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
+	"github.com/ollama/ollama/envconfig"
 )
 
 const maxRetries = 6
@@ -97,10 +98,18 @@ func (p *blobDownloadPart) UnmarshalJSON(b []byte) error {
 }
 
 const (
-	numDownloadParts          = 16
 	minDownloadPartSize int64 = 100 * format.MegaByte
 	maxDownloadPartSize int64 = 1000 * format.MegaByte
 )
+
+func getNumDownloadParts() int {
+	if envconfig.NoFileFragmentation() {
+		return 1
+	}
+
+	const numDownloadParts = 16 // inside the func to avoid accidental use outside
+	return numDownloadParts
+}
 
 func (p *blobDownloadPart) Name() string {
 	return strings.Join([]string{
@@ -153,7 +162,7 @@ func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *r
 
 		b.Total, _ = strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
 
-		size := b.Total / numDownloadParts
+		size := b.Total / int64(getNumDownloadParts())
 		switch {
 		case size < minDownloadPartSize:
 			size = minDownloadPartSize
@@ -273,7 +282,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 	}
 
 	g, inner := errgroup.WithContext(ctx)
-	g.SetLimit(numDownloadParts)
+	g.SetLimit(getNumDownloadParts())
 	for i := range b.Parts {
 		part := b.Parts[i]
 		if part.Completed.Load() == part.Size {
