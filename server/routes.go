@@ -466,7 +466,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	if slices.Contains(modelCaps, model.CapabilityThinking) {
 		caps = append(caps, model.CapabilityThinking)
 		if req.Think == nil {
-			req.Think = &api.ThinkValue{Value: true}
+			// Auto-disable thinking for audio inputs (see ChatHandler).
+			if imagesContainAudio(req.Images) {
+				req.Think = &api.ThinkValue{Value: false}
+			} else {
+				req.Think = &api.ThinkValue{Value: true}
+			}
 		}
 	} else {
 		if req.Think != nil && req.Think.Bool() {
@@ -2640,7 +2645,16 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	if slices.Contains(modelCaps, model.CapabilityThinking) {
 		caps = append(caps, model.CapabilityThinking)
 		if req.Think == nil {
-			req.Think = &api.ThinkValue{Value: true}
+			// Auto-disable thinking when the request contains audio data.
+			// Thinking mode consumes the num_predict token budget with
+			// internal reasoning, often leaving no tokens for the actual
+			// response. Audio inputs (speech transcription, voice commands)
+			// need direct answers rather than chain-of-thought reasoning.
+			if messagesContainAudio(req.Messages) {
+				req.Think = &api.ThinkValue{Value: false}
+			} else {
+				req.Think = &api.ThinkValue{Value: true}
+			}
 		}
 	} else {
 		if req.Think != nil && req.Think.Bool() {
@@ -3281,4 +3295,26 @@ func (s *Server) handleImageGenerate(c *gin.Context, req api.GenerateRequest, mo
 	if !isStreaming {
 		c.JSON(http.StatusOK, finalResponse)
 	}
+}
+
+// messagesContainAudio reports whether any message in msgs carries audio data
+// (e.g. a WAV file) in its Images field. Audio files are detected by checking
+// for WAV/MP3 magic bytes using [llm.AudioFormat].
+func messagesContainAudio(msgs []api.Message) bool {
+	for _, msg := range msgs {
+		if imagesContainAudio(msg.Images) {
+			return true
+		}
+	}
+	return false
+}
+
+// imagesContainAudio reports whether any entry in images is an audio file.
+func imagesContainAudio(images []api.ImageData) bool {
+	for _, img := range images {
+		if _, ok := llm.AudioFormat(img); ok {
+			return true
+		}
+	}
+	return false
 }
