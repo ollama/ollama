@@ -291,9 +291,23 @@ check_gpu() {
     esac
 }
 
-if check_gpu nvidia-smi; then
-    status "NVIDIA GPU installed."
-    exit 0
+# Check for NVIDIA GPU - must verify actual hardware, not just nvidia-smi tool presence
+# nvidia-smi can be installed without actual GPU (e.g., from nvidia-utils package)
+if check_gpu nvidia-smi || check_gpu lspci nvidia || check_gpu lshw nvidia; then
+    # Verify it's not a false positive - nvidia-smi might be installed but no GPU
+    if check_gpu nvidia-smi; then
+        # nvidia-smi is available, check if it actually reports a GPU
+        if nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | grep -q .; then
+            status "NVIDIA GPU installed."
+            exit 0
+        fi
+    fi
+    # Even if nvidia-smi failed, check if we have NVIDIA hardware via lspci/lshw
+    if check_gpu lspci nvidia || check_gpu lshw nvidia; then
+        status "NVIDIA GPU installed."
+        exit 0
+    fi
+    # nvidia-smi is installed but no actual GPU found - continue to check for AMD
 fi
 
 if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdgpu && ! check_gpu lshw amdgpu; then
