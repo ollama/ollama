@@ -130,7 +130,7 @@ func cleanup() error {
 
 	ok, err := terminated(pid)
 	if err != nil {
-		slog.Debug("cleanup: error checking if terminated", "pid", pid, "err", err)
+		slog.Debug("cleanup: error checking if terminated", "pid", pid, "error", err)
 	}
 	if ok {
 		return nil
@@ -149,7 +149,7 @@ func stop(proc *os.Process) error {
 	}
 
 	if err := terminate(proc); err != nil {
-		slog.Warn("graceful terminate failed, killing", "err", err)
+		slog.Warn("graceful terminate failed, killing", "error", err)
 		return proc.Kill()
 	}
 
@@ -164,7 +164,7 @@ func stop(proc *os.Process) error {
 		default:
 			ok, err := terminated(proc.Pid)
 			if err != nil {
-				slog.Error("error checking if ollama process is terminated", "err", err)
+				slog.Error("error checking if ollama process is terminated", "error", err)
 				return err
 			}
 			if ok {
@@ -184,7 +184,7 @@ func (s *Server) Run(ctx context.Context) error {
 	defer s.log.Close()
 
 	if err := cleanup(); err != nil {
-		slog.Warn("failed to cleanup previous ollama process", "err", err)
+		slog.Warn("failed to cleanup previous ollama process", "error", err)
 	}
 
 	reaped := false
@@ -206,7 +206,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 		err = os.WriteFile(pidFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0o644)
 		if err != nil {
-			slog.Warn("failed to write pid file", "file", pidFile, "err", err)
+			slog.Warn("failed to write pid file", "file", pidFile, "error", err)
 		}
 
 		if err = cmd.Wait(); err != nil && !errors.Is(err, context.Canceled) {
@@ -215,13 +215,13 @@ func (s *Server) Run(ctx context.Context) error {
 				reaped = true
 				// This could be a port conflict, try to kill any existing ollama processes
 				if err := reapServers(); err != nil {
-					slog.Warn("failed to stop existing ollama server", "err", err)
+					slog.Warn("failed to stop existing ollama server", "error", err)
 				} else {
 					slog.Debug("conflicting server stopped, waiting for port to be released")
 					continue
 				}
 			}
-			slog.Error("ollama exited", "err", err)
+			slog.Error("ollama exited", "error", err)
 		}
 	}
 	return ctx.Err()
@@ -257,7 +257,7 @@ func (s *Server) cmd(ctx context.Context) (*exec.Cmd, error) {
 		if _, err := os.Stat(settings.Models); err == nil {
 			env["OLLAMA_MODELS"] = settings.Models
 		} else {
-			slog.Warn("models path not accessible, using default", "path", settings.Models, "err", err)
+			slog.Warn("models path not accessible, using default", "path", settings.Models, "error", err)
 		}
 	}
 	if settings.ContextLength > 0 {

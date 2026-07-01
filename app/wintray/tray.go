@@ -222,7 +222,7 @@ func (t *winTray) initInstance() error {
 
 	boolRet, _, err := pUpdateWindow.Call(uintptr(t.window))
 	if boolRet == 0 {
-		slog.Error(fmt.Sprintf("failed to update window: %s", err))
+		slog.Error("failed to update window", "error", err)
 	}
 
 	t.muNID.Lock()
@@ -377,7 +377,7 @@ func (t *winTray) showMenu() error {
 	}
 	boolRet, _, err = pSetForegroundWindow.Call(uintptr(t.window))
 	if boolRet == 0 {
-		slog.Warn(fmt.Sprintf("failed to bring menu to foreground: %s", err))
+		slog.Warn("failed to bring menu to foreground", "error", err)
 	}
 
 	boolRet, _, err = pTrackPopupMenu.Call(
