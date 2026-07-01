@@ -609,7 +609,20 @@ func extractFileNames(input string) []string {
 	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav)\b`
 	re := regexp.MustCompile(regexPattern)
 
-	return re.FindAllString(input, -1)
+	matches := re.FindAllStringIndex(input, -1)
+	paths := make([]string, 0, len(matches))
+	lastEnd := -1
+	for _, match := range matches {
+		start, end := match[0], match[1]
+		if len(paths) > 0 && start == lastEnd && (input[start] == '/' || input[start] == '\\') {
+			paths[len(paths)-1] += input[start:end]
+		} else {
+			paths = append(paths, input[start:end])
+		}
+		lastEnd = end
+	}
+
+	return paths
 }
 
 func extractFileData(input string) (string, []api.ImageData, error) {
