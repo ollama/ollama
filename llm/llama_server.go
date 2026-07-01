@@ -328,7 +328,11 @@ func (s *llamaServerRunner) ContextLength() int {
 func FindLlamaServer() (string, error) {
 	path, candidates, err := findLlamaCppBinary("llama-server", defaultLlamaCppBinarySearch())
 	if err != nil {
-		return "", fmt.Errorf("llama-server binary not found (checked: %s). Run 'cmake -S llama/server --preset cpu && cmake --build --preset cpu' first", strings.Join(candidates, ", "))
+		return "", fmt.Errorf("llama-server binary not found. Ollama needs llama-server to run GGUF models (MLX models do not require it). "+
+			"If you installed Ollama from a package (Homebrew, a distro package, etc.) that does not include it, the package must ship the llama-server built from the Ollama tree using Ollama's cmake wiring — "+
+			"Ollama patches llama.cpp and pins it to a specific GGML version, so an unrelated llama-server will not work. Please report this to the package maintainer. "+
+			"To build it from source, run 'cmake -S llama/server --preset cpu && cmake --build --preset cpu'. "+
+			"(checked: %s)", strings.Join(candidates, ", "))
 	}
 	return path, nil
 }
