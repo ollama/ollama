@@ -64,6 +64,55 @@ d:\path with\spaces\thirteen.WEBP some ending
 	assert.Contains(t, res[12], "d:")
 }
 
+func TestExtractFilenamesWithMacOSPaths(t *testing.T) {
+	// macOS drag-drop paths with escaped spaces (backslash-space)
+	input := `describe /Users/jdoe/My\ Project/image.png and also /Users/jdoe/file.webp`
+	res := extractFileNames(input)
+	assert.Contains(t, res[0], "image.png", "should find macOS path with escaped space")
+	assert.Contains(t, res[1], "file.webp", "should find normal macOS path")
+
+	// macOS drag-drop with file:// URL prefix
+	input = `what's in file:///Users/jdoe/photo.jpeg?`
+	res = extractFileNames(input)
+	assert.Contains(t, res[0], "photo.jpeg", "should find file:// path")
+
+	// macOS drag-drop combining file:// with escaped spaces
+	input = `analyze file:///Users/jdoe/My\ Project/screenshot.png`
+	res = extractFileNames(input)
+	assert.NotEmpty(t, res, "should find file:// path with escaped space")
+	assert.Contains(t, res[0], "screenshot.png")
+
+	// Quoted paths (single and double quotes)
+	input = `look at '/path/to/my file.jpg' and "/another/file with spaces.png"`
+	res = extractFileNames(input)
+	assert.Contains(t, res[0], "my file.jpg", "should find single-quoted path")
+	assert.Contains(t, res[1], "file with spaces.png", "should find double-quoted path")
+
+	// Mixed content with macOS drag-drop path
+	input = `describe the image file:///Users/jdoe/Desktop/sample.JPEG and /tmp/normal.webp`
+	res = extractFileNames(input)
+	assert.Len(t, res, 2, "should find both macOS drag-drop and normal paths")
+}
+
+func TestNormalizeFilePath(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"file:///Users/jdoe/image.png", "/Users/jdoe/image.png"},
+		{"/Users/jdoe/My\\ Project/image.png", "/Users/jdoe/My Project/image.png"},
+		{"file:///Users/jdoe/My\\ Project/image.png", "/Users/jdoe/My Project/image.png"},
+		{"/path/with (parens)/file.png", "/path/with (parens)/file.png"},
+		{"/path/with/file?.png", "/path/with/file?.png"},
+	}
+	for _, tt := range tests {
+		got := normalizeFilePath(tt.input)
+		if got != tt.expected {
+			t.Errorf("normalizeFilePath(%q) = %q, want %q", tt.input, got, tt.expected)
+		}
+	}
+}
+
 // Ensure that file paths wrapped in single quotes are removed with the quotes.
 func TestExtractFileDataRemovesQuotedFilepath(t *testing.T) {
 	dir := t.TempDir()
