@@ -88,7 +88,7 @@ func (r *Read) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[
 		content, err = readLineSelection(file, selection)
 	} else {
 		var contentBytes []byte
-		contentBytes, err = io.ReadAll(file)
+		contentBytes, err = readAllWithinLimit(file, maxReadBytes)
 		content = string(contentBytes)
 	}
 	if err != nil {
@@ -178,7 +178,7 @@ func (e *Edit) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[
 	default:
 	}
 
-	contentBytes, err := io.ReadAll(file)
+	contentBytes, err := readAllWithinLimit(file, maxReadBytes)
 	if closeErr := file.Close(); err == nil && closeErr != nil {
 		err = closeErr
 	}
@@ -312,6 +312,14 @@ func writeFileAtomic(workingDir, path string, data []byte, perm os.FileMode) err
 		if err != nil {
 			return rootPathError(err)
 		}
+		if err := file.Chmod(perm); err != nil {
+			closeErr := file.Close()
+			_ = root.Remove(candidate)
+			if closeErr != nil {
+				return closeErr
+			}
+			return err
+		}
 		writeErr := writeAllAndSync(file, data)
 		closeErr := file.Close()
 		if writeErr != nil || closeErr != nil {
@@ -373,6 +381,20 @@ func writeAllAndSync(file *os.File, data []byte) error {
 		return err
 	}
 	return file.Sync()
+}
+
+func readAllWithinLimit(reader io.Reader, limit int) ([]byte, error) {
+	if limit < 0 {
+		limit = 0
+	}
+	content, err := io.ReadAll(io.LimitReader(reader, int64(limit)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(content) > limit {
+		return nil, fmt.Errorf("content is too large (%d byte limit)", limit)
+	}
+	return content, nil
 }
 
 func workingDirAbs(workingDir string) (string, error) {

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -257,6 +258,21 @@ func TestReadSelectionRejectsHugeSingleLine(t *testing.T) {
 		t.Fatal("expected huge selected line to fail")
 	}
 	if !strings.Contains(err.Error(), "selected content is too large") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestReadAllWithinLimitRejectsGrowingRead(t *testing.T) {
+	reader := io.MultiReader(
+		strings.NewReader(strings.Repeat("x", maxReadBytes)),
+		strings.NewReader("x"),
+	)
+
+	_, err := readAllWithinLimit(reader, maxReadBytes)
+	if err == nil {
+		t.Fatal("expected over-limit read to fail")
+	}
+	if !strings.Contains(err.Error(), "content is too large") {
 		t.Fatalf("err = %v", err)
 	}
 }

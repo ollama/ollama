@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,6 +18,7 @@ import (
 
 const (
 	bashTimeout        = 3 * time.Minute
+	bashWaitDelay      = 1 * time.Second
 	maxBashOutputBytes = 60_000
 )
 
@@ -72,6 +74,7 @@ func (b *Bash) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[
 	defer os.Remove(cwdPath)
 
 	cmd := newBashCommand(ctx, command, cwdPath)
+	cmd.WaitDelay = bashWaitDelay
 	cmd.Cancel = func() error {
 		return killBashCommand(cmd)
 	}
@@ -102,13 +105,17 @@ func (b *Bash) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[
 
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return agent.ToolResult{Content: sb.String() + "\n\nError: command timed out after " + bashTimeout.String(), WorkingDir: finalWorkingDir}, nil
+			return agent.ToolResult{Content: bashContentWithError(sb.String(), "Error: command timed out after "+bashTimeout.String()), WorkingDir: finalWorkingDir}, nil
 		}
 		if ctx.Err() == context.Canceled {
-			return agent.ToolResult{Content: sb.String() + "\n\nError: command was canceled", WorkingDir: finalWorkingDir}, nil
+			return agent.ToolResult{Content: bashContentWithError(sb.String(), "Error: command was canceled"), WorkingDir: finalWorkingDir}, nil
+		}
+		if errors.Is(err, exec.ErrWaitDelay) {
+			_ = killBashCommand(cmd)
+			return agent.ToolResult{Content: bashContentWithError(sb.String(), "Error: command output pipes did not close after "+bashWaitDelay.String()), WorkingDir: finalWorkingDir}, nil
 		}
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return agent.ToolResult{Content: sb.String() + fmt.Sprintf("\n\nExit code: %d", exitErr.ExitCode()), WorkingDir: finalWorkingDir}, nil
+			return agent.ToolResult{Content: bashContentWithError(sb.String(), fmt.Sprintf("Exit code: %d", exitErr.ExitCode())), WorkingDir: finalWorkingDir}, nil
 		}
 		return agent.ToolResult{Content: sb.String(), WorkingDir: finalWorkingDir}, fmt.Errorf("executing command: %w", err)
 	}
@@ -117,6 +124,13 @@ func (b *Bash) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[
 		return agent.ToolResult{Content: "(no output)", WorkingDir: finalWorkingDir}, nil
 	}
 	return agent.ToolResult{Content: sb.String(), WorkingDir: finalWorkingDir}, nil
+}
+
+func bashContentWithError(content, msg string) string {
+	if content == "" {
+		return msg
+	}
+	return content + "\n\n" + msg
 }
 
 func rejectUnsafeShellCommand(command string) error {
@@ -356,29 +370,12 @@ func utf8SafePrefixLen(p []byte) int {
 	if len(p) == 0 {
 		return 0
 	}
-	start := len(p) - 1
-	for start >= 0 && p[start]&0xc0 == 0x80 {
-		start--
-	}
-	if start < 0 {
-		return 0
-	}
-	lead := p[start]
-	if lead < utf8.RuneSelf {
-		return len(p)
-	}
-	if lead < 0xc2 || lead > 0xf4 {
-		return len(p)
-	}
-	_, size := utf8.DecodeRune(p[start:])
-	if size == 1 {
-		return start
-	}
-	if start+size == len(p) {
-		return len(p)
-	}
-	if start+size > len(p) {
-		return start
+	for i := 0; i < len(p); {
+		r, size := utf8.DecodeRune(p[i:])
+		if r == utf8.RuneError && size == 1 {
+			return i
+		}
+		i += size
 	}
 	return len(p)
 }

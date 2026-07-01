@@ -101,6 +101,32 @@ func TestBoundedOutputTrimsTrailingPartialUTF8(t *testing.T) {
 	}
 }
 
+func TestUTF8SafePrefixRejectsMalformedLeadByte(t *testing.T) {
+	input := []byte{'a', 0xc0, 0x80, 'b'}
+	if got := utf8SafePrefixLen(input); got != 1 {
+		t.Fatalf("safe prefix length = %d, want 1", got)
+	}
+}
+
+func TestBoundedOutputDropsMalformedUTF8(t *testing.T) {
+	var out boundedOutput
+	out.Limit = 4
+
+	if _, err := out.Write([]byte{'a', 0xc0, 0x80, 'b'}); err != nil {
+		t.Fatal(err)
+	}
+	content := out.String("stdout")
+	if !utf8.ValidString(content) {
+		t.Fatalf("content is not valid UTF-8: %q", content)
+	}
+	if strings.ContainsRune(content, utf8.RuneError) {
+		t.Fatalf("content contains replacement rune: %q", content)
+	}
+	if !strings.HasPrefix(content, "a\n\n[stdout truncated:") {
+		t.Fatalf("content = %q, want valid prefix and truncation marker", content)
+	}
+}
+
 func TestBashReportsCanceledCommand(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
