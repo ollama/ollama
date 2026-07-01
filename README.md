@@ -305,6 +305,7 @@ console.log(response.message.content);
 
 ### Productivity & Apps
 
+- [Oriloq](https://www.oriloq.app) - AI-enhanced transcription and voice-activated smart actions. 
 - [AppFlowy](https://github.com/AppFlowy-IO/AppFlowy) - AI collaborative workspace, self-hostable Notion alternative
 - [Screenpipe](https://github.com/mediar-ai/screenpipe) - 24/7 screen and mic recording with AI-powered search
 - [Vibe](https://github.com/thewh1teagle/vibe) - Transcribe and analyze meetings
