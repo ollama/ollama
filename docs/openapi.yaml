@@ -1490,6 +1490,29 @@ paths:
       responses:
         "200":
           description: Model successfully deleted
+  /metrics:
+    get:
+      summary: Get metrics
+      description: >-
+        Expose server metrics in the Prometheus text exposition format. Disabled by
+        default; enable by setting the OLLAMA_METRICS environment variable.
+      operationId: metrics
+      x-codeSamples:
+        - lang: bash
+          label: Default
+          source: |
+            curl http://localhost:11434/metrics
+      responses:
+        "200":
+          description: Metrics in the Prometheus text exposition format
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: |
+                # HELP ollama_requests_queued Number of requests waiting for a model runner.
+                # TYPE ollama_requests_queued gauge
+                ollama_requests_queued 0
   /api/version:
     get:
       summary: Get version

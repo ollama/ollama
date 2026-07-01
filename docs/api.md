@@ -1879,6 +1879,36 @@ curl http://localhost:11434/api/version
 }
 ```
 
+## Metrics
+
+```
+GET /metrics
+```
+
+Expose server metrics in the [Prometheus text exposition format](https://prometheus.io/docs/instrumenting/exposition_formats/). Disabled by default; set the `OLLAMA_METRICS` environment variable to enable the endpoint.
+
+### Examples
+
+#### Request
+
+```shell
+curl http://localhost:11434/metrics
+```
+
+#### Response
+
+```
+# HELP ollama_requests_queued Number of requests waiting for a model runner.
+# TYPE ollama_requests_queued gauge
+ollama_requests_queued 0
+# HELP ollama_queue_capacity Maximum number of requests that can be queued (OLLAMA_MAX_QUEUE).
+# TYPE ollama_queue_capacity gauge
+ollama_queue_capacity 512
+# HELP ollama_models_loaded Number of models currently loaded in memory.
+# TYPE ollama_models_loaded gauge
+ollama_models_loaded 1
+```
+
 ## Experimental Features
 
 ### Image Generation (Experimental)

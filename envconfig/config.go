@@ -218,6 +218,8 @@ var (
 	GoTemplate = BoolWithDefault("OLLAMA_GO_TEMPLATE")
 	// DebugLogRequests logs inference requests to disk for replay/debugging.
 	DebugLogRequests = Bool("OLLAMA_DEBUG_LOG_REQUESTS")
+	// Metrics enables the Prometheus-compatible /metrics endpoint.
+	Metrics = Bool("OLLAMA_METRICS")
 	// KvCacheType is the quantization type for the K/V cache.
 	KvCacheType = String("OLLAMA_KV_CACHE_TYPE")
 	// NoHistory disables readline history.
@@ -326,6 +328,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_MAX_LOADED_MODELS":    {"OLLAMA_MAX_LOADED_MODELS", MaxRunners(), "Maximum number of loaded models per GPU"},
 		"OLLAMA_MAX_TRANSFER_STREAMS": {"OLLAMA_MAX_TRANSFER_STREAMS", MaxTransferStreams(), "Maximum parallel transfer streams for safetensors model pulls/pushes (default 4)"},
 		"OLLAMA_MAX_QUEUE":            {"OLLAMA_MAX_QUEUE", MaxQueue(), "Maximum number of queued requests"},
+		"OLLAMA_METRICS":              {"OLLAMA_METRICS", Metrics(), "Enable the Prometheus-compatible /metrics endpoint"},
 		"OLLAMA_MODELS":               {"OLLAMA_MODELS", Models(), "The path to the models directory"},
 		"OLLAMA_NO_CLOUD":             {"OLLAMA_NO_CLOUD", NoCloud(), "Disable Ollama cloud features (remote inference and web search)"},
 		"OLLAMA_NOHISTORY":            {"OLLAMA_NOHISTORY", NoHistory(), "Do not preserve readline history"},

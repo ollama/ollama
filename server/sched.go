@@ -81,6 +81,27 @@ type Scheduler struct {
 	waitForRecovery time.Duration
 }
 
+// schedulerMetrics is a point-in-time snapshot of scheduler state for the /metrics endpoint.
+type schedulerMetrics struct {
+	requestsQueued int
+	queueCapacity  int
+	modelsLoaded   int
+}
+
+// collectMetrics returns a snapshot of scheduler state. The pending queue is a buffered
+// channel so its length is a race-safe read; loaded is guarded by loadedMu.
+func (s *Scheduler) collectMetrics() schedulerMetrics {
+	s.loadedMu.Lock()
+	loaded := len(s.loaded)
+	s.loadedMu.Unlock()
+
+	return schedulerMetrics{
+		requestsQueued: len(s.pendingReqCh),
+		queueCapacity:  cap(s.pendingReqCh),
+		modelsLoaded:   loaded,
+	}
+}
+
 // Default automatic value for number of models we allow per GPU
 // Model will still need to fit in VRAM, but loading many small models
 // on a large GPU can cause stalling

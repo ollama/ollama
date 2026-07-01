@@ -1898,6 +1898,11 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/experimental/web_fetch", s.WebFetchExperimentalHandler)
 	r.GET("/api/experimental/model-recommendations", s.ModelRecommendationsExperimentalHandler)
 
+	// Monitoring (Prometheus /metrics is opt-in via OLLAMA_METRICS)
+	if envconfig.Metrics() {
+		r.GET("/metrics", s.MetricsHandler)
+	}
+
 	// Inference
 	r.GET("/api/ps", s.PsHandler)
 	r.POST("/api/generate", s.withInferenceRequestLogging("/api/generate", s.GenerateHandler)...)
