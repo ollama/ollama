@@ -307,6 +307,7 @@ func RetrieveMiddleware() gin.HandlerFunc {
 		}
 
 		c.Request.Body = io.NopCloser(&b)
+		c.Request.ContentLength = int64(b.Len())
 
 		w := &RetrieveWriter{
 			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
@@ -341,6 +342,7 @@ func CompletionsMiddleware() gin.HandlerFunc {
 		}
 
 		c.Request.Body = io.NopCloser(&b)
+		c.Request.ContentLength = int64(b.Len())
 
 		w := &CompleteWriter{
 			BaseWriter:    BaseWriter{ResponseWriter: c.Writer},
@@ -392,6 +394,7 @@ func EmbeddingsMiddleware() gin.HandlerFunc {
 		}
 
 		c.Request.Body = io.NopCloser(&b)
+		c.Request.ContentLength = int64(b.Len())
 
 		w := &EmbedWriter{
 			BaseWriter:     BaseWriter{ResponseWriter: c.Writer},
@@ -433,6 +436,7 @@ func ChatMiddleware() gin.HandlerFunc {
 		}
 
 		c.Request.Body = io.NopCloser(&b)
+		c.Request.ContentLength = int64(b.Len())
 
 		w := &ChatWriter{
 			BaseWriter:    BaseWriter{ResponseWriter: c.Writer},
@@ -544,6 +548,7 @@ func ResponsesMiddleware() gin.HandlerFunc {
 		}
 
 		c.Request.Body = io.NopCloser(&b)
+		c.Request.ContentLength = int64(b.Len())
 
 		responseID := fmt.Sprintf("resp_%d", rand.Intn(999999))
 		itemID := fmt.Sprintf("msg_%d", rand.Intn(999999))
@@ -623,6 +628,7 @@ func ImageGenerationsMiddleware() gin.HandlerFunc {
 		}
 
 		c.Request.Body = io.NopCloser(&b)
+		c.Request.ContentLength = int64(b.Len())
 
 		w := &ImageWriter{
 			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
@@ -669,6 +675,7 @@ func ImageEditsMiddleware() gin.HandlerFunc {
 		}
 
 		c.Request.Body = io.NopCloser(&b)
+		c.Request.ContentLength = int64(b.Len())
 
 		w := &ImageWriter{
 			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
