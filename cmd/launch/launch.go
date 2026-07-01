@@ -170,6 +170,12 @@ type ManagedModelListConfigurer interface {
 	ConfigureWithModels(primary string, models []LaunchModel) error
 }
 
+// ManagedShowMetadataConfigurer marks managed integrations that need /api/show
+// metadata for their generated model catalog.
+type ManagedShowMetadataConfigurer interface {
+	EnrichModelMetadataFromShow() bool
+}
+
 // ManagedAutodiscoveryIntegration is for managed integrations that do not need
 // a launcher-selected model because the app discovers available models itself.
 type ManagedAutodiscoveryIntegration interface {
@@ -803,7 +809,11 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 		if err != nil {
 			return err
 		}
-		if err := prepareManagedSingleIntegration(name, managed, target, c.modelInventory().Resolve(ctx, configureModels)); err != nil {
+		launchModels := c.modelInventory().Resolve(ctx, configureModels)
+		if showMetadata, ok := managed.(ManagedShowMetadataConfigurer); ok && showMetadata.EnrichModelMetadataFromShow() {
+			launchModels = c.modelInventory().withShowMetadata(ctx, launchModels)
+		}
+		if err := prepareManagedSingleIntegration(name, managed, target, launchModels); err != nil {
 			return err
 		}
 		if refresher, ok := managed.(ManagedRuntimeRefresher); ok {
