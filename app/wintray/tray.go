@@ -108,6 +108,11 @@ func InitTray(icon, updateIcon []byte, app AppCallbacks) (*winTray, error) {
 	wt.normalIcon = icon
 	wt.updateIcon = updateIcon
 	wt.app = app
+
+	// Follow the Windows app theme so the tray menu is dark in dark mode. Done
+	// before any window/menu is created so they pick up the chosen theme.
+	enableDarkModeMenus()
+
 	if err := wt.initInstance(); err != nil {
 		return nil, fmt.Errorf("Unable to init instance: %w\n", err)
 	}
@@ -217,6 +222,10 @@ func (t *winTray) initInstance() error {
 		return err
 	}
 	t.window = windows.Handle(windowHandle)
+
+	// Opt this window into dark mode so the popup menu it owns follows the system
+	// theme on Windows 10 (Windows 11 themes it from the process app mode alone).
+	applyDarkModeToWindow(t.window)
 
 	pShowWindow.Call(uintptr(t.window), uintptr(SW_HIDE)) //nolint:errcheck
 
