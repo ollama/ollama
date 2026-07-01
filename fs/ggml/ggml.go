@@ -573,6 +573,21 @@ func DetectContentType(b []byte) string {
 func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, error) {
 	rs = bufioutil.NewBufferedSeeker(rs, 32<<10)
 
+	// Determine the underlying file size so the parser can reject
+	// attacker-controlled lengths that exceed what the file could possibly
+	// contain. A zero or negative value here is treated as "unknown" and
+	// length checks fall back to the signed-overflow guard only.
+	var fileSize int64
+	start, serr := rs.Seek(0, io.SeekCurrent)
+	if serr == nil {
+		if end, eerr := rs.Seek(0, io.SeekEnd); eerr == nil {
+			fileSize = end
+			if _, err := rs.Seek(start, io.SeekStart); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	var magic uint32
 	if err := binary.Read(rs, binary.LittleEndian, &magic); err != nil {
 		return nil, err
@@ -581,9 +596,9 @@ func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, error) {
 	var c container
 	switch magic {
 	case FILE_MAGIC_GGUF_LE:
-		c = &containerGGUF{ByteOrder: binary.LittleEndian, maxArraySize: maxArraySize}
+		c = &containerGGUF{ByteOrder: binary.LittleEndian, maxArraySize: maxArraySize, fileSize: fileSize}
 	case FILE_MAGIC_GGUF_BE:
-		c = &containerGGUF{ByteOrder: binary.BigEndian, maxArraySize: maxArraySize}
+		c = &containerGGUF{ByteOrder: binary.BigEndian, maxArraySize: maxArraySize, fileSize: fileSize}
 	default:
 		return nil, errors.New("invalid file magic")
 	}
