@@ -520,9 +520,15 @@ func displayImageInTerminal(imagePath string) bool {
 // extractFileNames finds image file paths in the input string.
 func extractFileNames(input string) []string {
 	// Regex to match file paths with image extensions
-	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp)\b`
+	regexPattern := `((?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp))(?:$|["'\s.,;:!?)\]><&|+}` + "`" + `])`
 	re := regexp.MustCompile(regexPattern)
-	return re.FindAllString(input, -1)
+	matches := re.FindAllStringSubmatch(input, -1)
+	fileNames := make([]string, 0, len(matches))
+	for _, match := range matches {
+		fileNames = append(fileNames, match[1])
+	}
+
+	return fileNames
 }
 
 // extractFileData extracts image data from file paths found in the input.
