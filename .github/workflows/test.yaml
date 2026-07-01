@@ -17,6 +17,10 @@ on:
       - '!docs/**'
       - '!README.md'
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
   changes:
     runs-on: ubuntu-latest
