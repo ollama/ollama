@@ -163,6 +163,28 @@ func LoadTimeout() (loadTimeout time.Duration) {
 	return loadTimeout
 }
 
+// DownloadTimeout returns the duration for stall detection during model downloads.
+// If no data is received for this duration, the download part is considered stalled
+// and will be retried. DownloadTimeout can be configured via the OLLAMA_DOWNLOAD_TIMEOUT
+// environment variable. Zero or Negative values are treated as infinite.
+// Default is 30 seconds.
+func DownloadTimeout() (downloadTimeout time.Duration) {
+	downloadTimeout = 30 * time.Second
+	if s := Var("OLLAMA_DOWNLOAD_TIMEOUT"); s != "" {
+		if d, err := time.ParseDuration(s); err == nil {
+			downloadTimeout = d
+		} else if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+			downloadTimeout = time.Duration(n) * time.Second
+		}
+	}
+
+	if downloadTimeout <= 0 {
+		return time.Duration(math.MaxInt64)
+	}
+
+	return downloadTimeout
+}
+
 func Remotes() []string {
 	var r []string
 	raw := strings.TrimSpace(Var("OLLAMA_REMOTES"))
@@ -323,6 +345,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_KEEP_ALIVE":           {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
 		"OLLAMA_LLM_LIBRARY":          {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},
 		"OLLAMA_LOAD_TIMEOUT":         {"OLLAMA_LOAD_TIMEOUT", LoadTimeout(), "How long to allow model loads to stall before giving up (default \"5m\")"},
+		"OLLAMA_DOWNLOAD_TIMEOUT":     {"OLLAMA_DOWNLOAD_TIMEOUT", DownloadTimeout(), "How long to wait with no download progress before retrying a stalled part (default \"30s\")"},
 		"OLLAMA_MAX_LOADED_MODELS":    {"OLLAMA_MAX_LOADED_MODELS", MaxRunners(), "Maximum number of loaded models per GPU"},
 		"OLLAMA_MAX_TRANSFER_STREAMS": {"OLLAMA_MAX_TRANSFER_STREAMS", MaxTransferStreams(), "Maximum parallel transfer streams for safetensors model pulls/pushes (default 4)"},
 		"OLLAMA_MAX_QUEUE":            {"OLLAMA_MAX_QUEUE", MaxQueue(), "Maximum number of queued requests"},

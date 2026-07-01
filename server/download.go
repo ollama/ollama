@@ -23,6 +23,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
@@ -343,8 +344,14 @@ func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w
 		defer resp.Body.Close()
 
 		n, err := io.CopyN(w, io.TeeReader(resp.Body, part), part.Size-part.Completed.Load())
-		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.ErrUnexpectedEOF) {
-			// rollback progress
+		switch {
+		case err == nil,
+			errors.Is(err, context.Canceled),
+			errors.Is(err, io.ErrUnexpectedEOF),
+			errors.Is(err, io.EOF):
+			// success or resumable: persist the progress
+		default:
+			// non-resumable error: rollback progress
 			b.Completed.Add(-n)
 			return err
 		}
@@ -371,7 +378,7 @@ func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w
 				lastUpdated := part.lastUpdated
 				part.lastUpdatedMu.Unlock()
 
-				if !lastUpdated.IsZero() && time.Since(lastUpdated) > 30*time.Second {
+				if !lastUpdated.IsZero() && time.Since(lastUpdated) > envconfig.DownloadTimeout() {
 					const msg = "%s part %d stalled; retrying. If this persists, press ctrl-c to exit, then 'ollama pull' to find a faster connection."
 					slog.Info(fmt.Sprintf(msg, b.Digest[7:19], part.N))
 					// reset last updated
