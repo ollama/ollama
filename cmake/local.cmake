@@ -7,8 +7,13 @@
 include(ExternalProject)
 
 set(OLLAMA_LLAMA_BACKENDS "" CACHE STRING
-    "Semicolon-separated llama-server GPU backends to build: cuda_v12;cuda_v13;rocm_v7_1;rocm_v7_2;vulkan;cuda_jetpack5;cuda_jetpack6")
+    "Semicolon-separated llama-server GPU backends to build: cuda_v12;cuda_v13;rocm_v7_1;rocm_v7_2;vulkan;sycl;cuda_jetpack5;cuda_jetpack6")
 set(_ollama_mlx_backends_doc "Semicolon-separated MLX backends to build: cuda_v13;metal_v3;metal_v4")
+option(OLLAMA_ENABLE_SYCL "Build the llama-server SYCL backend for Intel oneAPI GPUs" OFF)
+if(OLLAMA_ENABLE_SYCL)
+    list(APPEND OLLAMA_LLAMA_BACKENDS sycl)
+    list(REMOVE_DUPLICATES OLLAMA_LLAMA_BACKENDS)
+endif()
 set(OLLAMA_VERSION "0.0.0" CACHE STRING "Ollama version embedded in the local Go binary")
 set(OLLAMA_PAYLOAD_INSTALL_PREFIX "${CMAKE_BINARY_DIR}" CACHE PATH
     "Build-time staging prefix for nested Ollama native payloads")
@@ -680,6 +685,18 @@ if(OLLAMA_HAVE_LLAMA_SERVER)
                     -DGGML_VULKAN=ON
                     -DOLLAMA_GPU_BACKEND=vulkan)
             list(APPEND _backend_targets ollama-llama-server-vulkan)
+        elseif(_backend STREQUAL "sycl")
+            ollama_add_llama_server_build(sycl
+                RUNNER_DIR sycl
+                TARGETS ggml-sycl
+                CMAKE_ARGS
+                    -DBUILD_SHARED_LIBS=ON
+                    -DGGML_BACKEND_DL=ON
+                    -DGGML_SYCL=ON
+                    -DGGML_SYCL_F16=ON
+                    -DGGML_SYCL_TARGET=INTEL
+                    -DOLLAMA_GPU_BACKEND=sycl)
+            list(APPEND _backend_targets ollama-llama-server-sycl)
         elseif(_backend STREQUAL "cuda_jetpack5")
             if(CMAKE_CUDA_ARCHITECTURES)
                 set(_cuda_preset llama_cuda_jetpack5_user_arch)

@@ -574,6 +574,7 @@ func FlashAttentionSupported(l []DeviceInfo) bool {
 			gpu.Name == "Metal" || gpu.Library == "Metal" ||
 			cudaFlashAttentionSupported(gpu) ||
 			gpu.Library == "ROCm" ||
+			gpu.Library == "SYCL" ||
 			gpu.Library == "Vulkan"
 
 		if !supportsFA {
