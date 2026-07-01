@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"encoding/binary"
 	"io"
+	"log/slog"
 	"math"
 	"strings"
 	"sync"
@@ -62,7 +63,11 @@ func (p *phi3Model) KV(t *Tokenizer) KV {
 	case "yarn":
 		kv["phi3.rope.scaling.attn_factor"] = float32(max(0.1*math.Log(scale)+1.0, 1.0))
 	default:
-		panic("unknown rope scaling type")
+		// RopeScaling.Type comes from attacker-controlled config.json.
+		// An unrecognized value is unknown metadata, not a security
+		// boundary, so skip it instead of panicking and crashing the
+		// (unrecovered) conversion goroutine.
+		slog.Warn("unknown rope scaling type, ignoring", "type", p.RopeScaling.Type)
 	}
 
 	return kv
