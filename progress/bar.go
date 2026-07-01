@@ -132,6 +132,9 @@ func (b *Bar) String() string {
 	var mid strings.Builder
 	// add 5 extra spaces: 2 boundary characters and 1 space at each end
 	f := termWidth - pre.Len() - suf.Len() - 5
+	if f < 0 {
+		f = 0
+	}
 	n := int(float64(f) * b.percent() / 100)
 
 	mid.WriteString(" ▕")
