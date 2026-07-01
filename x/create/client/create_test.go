@@ -423,84 +423,6 @@ func TestInferSafetensorsCapabilities(t *testing.T) {
 	}
 }
 
-func TestParsePerExpertInputs(t *testing.T) {
-	makeInput := func(name, quantize string) create.PackedTensorInput {
-		return create.PackedTensorInput{Name: name, Quantize: quantize}
-	}
-
-	t.Run("uniform quant across projections", func(t *testing.T) {
-		inputs := []create.PackedTensorInput{
-			makeInput("layer.moe.experts.0.gate_proj.weight", "int4"),
-			makeInput("layer.moe.experts.1.gate_proj.weight", "int4"),
-			makeInput("layer.moe.experts.0.down_proj.weight", "int4"),
-			makeInput("layer.moe.experts.1.down_proj.weight", "int4"),
-		}
-		groups, projQ := parsePerExpertInputs("layer.moe.experts", inputs)
-		if groups == nil {
-			t.Fatal("expected non-nil groups")
-		}
-		if len(groups) != 2 {
-			t.Fatalf("expected 2 projection groups, got %d", len(groups))
-		}
-		if projQ["gate_proj.weight"] != "int4" {
-			t.Errorf("gate_proj quant = %q, want int4", projQ["gate_proj.weight"])
-		}
-		if projQ["down_proj.weight"] != "int4" {
-			t.Errorf("down_proj quant = %q, want int4", projQ["down_proj.weight"])
-		}
-	})
-
-	t.Run("mixed quant across projections", func(t *testing.T) {
-		inputs := []create.PackedTensorInput{
-			makeInput("layer.moe.experts.0.gate_proj.weight", "int4"),
-			makeInput("layer.moe.experts.1.gate_proj.weight", "int4"),
-			makeInput("layer.moe.experts.0.down_proj.weight", "int8"),
-			makeInput("layer.moe.experts.1.down_proj.weight", "int8"),
-		}
-		groups, projQ := parsePerExpertInputs("layer.moe.experts", inputs)
-		if groups == nil {
-			t.Fatal("expected non-nil groups for mixed cross-projection quant")
-		}
-		if projQ["gate_proj.weight"] != "int4" {
-			t.Errorf("gate_proj quant = %q, want int4", projQ["gate_proj.weight"])
-		}
-		if projQ["down_proj.weight"] != "int8" {
-			t.Errorf("down_proj quant = %q, want int8", projQ["down_proj.weight"])
-		}
-	})
-
-	t.Run("mixed quant within same projection rejected", func(t *testing.T) {
-		inputs := []create.PackedTensorInput{
-			makeInput("layer.moe.experts.0.down_proj.weight", "int4"),
-			makeInput("layer.moe.experts.1.down_proj.weight", "int8"),
-		}
-		groups, _ := parsePerExpertInputs("layer.moe.experts", inputs)
-		if groups != nil {
-			t.Fatal("expected nil for mixed quant within same projection")
-		}
-	})
-
-	t.Run("non-experts group rejected", func(t *testing.T) {
-		inputs := []create.PackedTensorInput{
-			makeInput("layer.mlp.gate_proj.weight", "int4"),
-		}
-		groups, _ := parsePerExpertInputs("layer.mlp", inputs)
-		if groups != nil {
-			t.Fatal("expected nil for non-experts group")
-		}
-	})
-}
-
-func TestQuantizeSupported(t *testing.T) {
-	// This just verifies the function exists and returns a boolean
-	// The actual value depends on build tags (mlx vs non-mlx)
-	supported := QuantizeSupported()
-
-	// In non-mlx builds, this should be false
-	// We can't easily test both cases, so just verify it returns something
-	_ = supported
-}
-
 func TestCreateModelfileLayersIncludesParameters(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
@@ -632,74 +554,88 @@ func TestNewManifestWriter_PopulatesDraftMetadata(t *testing.T) {
 	}
 }
 
-func TestSupportsThinking(t *testing.T) {
+func TestDetectCapabilities(t *testing.T) {
+	const thinkingTemplate = `{"chat_template": "{%- if '</think>' in content %}{{ content.split('</think>')[-1] }}{%- endif %}<think>\n</think>"}`
+	const instructTemplate = `{"chat_template": "{{ '<|im_start|>assistant\n' }}"}`
+
 	tests := []struct {
-		name       string
-		configJSON string
-		want       bool
+		name          string
+		configJSON    string
+		tokenizerJSON string
+		want          modelCapabilities
 	}{
 		{
-			name:       "qwen3 architecture",
+			name:          "thinking from chat template",
+			configJSON:    `{"architectures": ["Qwen3ForCausalLM"], "model_type": "qwen3"}`,
+			tokenizerJSON: thinkingTemplate,
+			want:          modelCapabilities{thinking: true},
+		},
+		{
+			name:          "instruct template has no thinking",
+			configJSON:    `{"architectures": ["Qwen3ForCausalLM"], "model_type": "qwen3"}`,
+			tokenizerJSON: instructTemplate,
+			want:          modelCapabilities{thinking: false},
+		},
+		{
+			name:       "plain qwen3 without template has no thinking",
 			configJSON: `{"architectures": ["Qwen3ForCausalLM"], "model_type": "qwen3"}`,
-			want:       true,
+			want:       modelCapabilities{thinking: false},
 		},
 		{
-			name:       "deepseek architecture",
-			configJSON: `{"architectures": ["DeepseekV3ForCausalLM"]}`,
-			want:       true,
+			name:          "qwen3.5 moe always thinks without a thinking template",
+			configJSON:    `{"architectures": ["Qwen3_5MoeForConditionalGeneration"], "model_type": "qwen3_5_moe"}`,
+			tokenizerJSON: instructTemplate,
+			want:          modelCapabilities{thinking: true},
 		},
 		{
-			name:       "glm4moe architecture",
-			configJSON: `{"architectures": ["GLM4MoeForCausalLM"]}`,
-			want:       true,
+			name:       "qwen3-next always thinks",
+			configJSON: `{"architectures": ["Qwen3NextForCausalLM"]}`,
+			want:       modelCapabilities{thinking: true},
 		},
 		{
-			name:       "llama architecture (no thinking)",
+			name:       "vision config",
+			configJSON: `{"architectures": ["Gemma4ForConditionalGeneration"], "vision_config": {}}`,
+			want:       modelCapabilities{vision: true},
+		},
+		{
+			name:       "audio config",
+			configJSON: `{"architectures": ["Qwen3OmniForConditionalGeneration"], "audio_config": {}}`,
+			want:       modelCapabilities{audio: true},
+		},
+		{
+			name:       "llama has no extra capabilities",
 			configJSON: `{"architectures": ["LlamaForCausalLM"], "model_type": "llama"}`,
-			want:       false,
+			want:       modelCapabilities{},
 		},
 		{
-			name:       "gemma architecture (no thinking)",
-			configJSON: `{"architectures": ["Gemma3ForCausalLM"], "model_type": "gemma3"}`,
-			want:       false,
-		},
-		{
-			name:       "model_type only",
-			configJSON: `{"model_type": "deepseek"}`,
-			want:       true,
-		},
-		{
-			name:       "laguna architecture without template",
-			configJSON: `{"architectures": ["LagunaForCausalLM"], "model_type": "laguna"}`,
-			want:       false,
-		},
-		{
-			name:       "empty config",
-			configJSON: `{}`,
-			want:       false,
-		},
-		{
-			name:       "invalid json",
+			name:       "invalid config json",
 			configJSON: `not json`,
-			want:       false,
+			want:       modelCapabilities{},
+		},
+		{
+			name: "missing files",
+			want: modelCapabilities{},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
-			os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.configJSON), 0o644)
+			if tt.configJSON != "" {
+				if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.configJSON), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.tokenizerJSON != "" {
+				if err := os.WriteFile(filepath.Join(dir, "tokenizer_config.json"), []byte(tt.tokenizerJSON), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
 
-			if got := supportsThinking(dir); got != tt.want {
-				t.Errorf("supportsThinking() = %v, want %v", got, tt.want)
+			if got := detectCapabilities(dir); got != tt.want {
+				t.Errorf("detectCapabilities() = %+v, want %+v", got, tt.want)
 			}
 		})
-	}
-}
-
-func TestSupportsThinking_NoConfig(t *testing.T) {
-	if supportsThinking(t.TempDir()) {
-		t.Error("supportsThinking should return false for missing config.json")
 	}
 }
 
