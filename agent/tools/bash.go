@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ollama/ollama/agent"
 	"github.com/ollama/ollama/api"
@@ -54,6 +55,9 @@ func (b *Bash) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[
 	command, ok := args["command"].(string)
 	if !ok || strings.TrimSpace(command) == "" {
 		return agent.ToolResult{}, fmt.Errorf("command parameter is required")
+	}
+	if err := rejectUnsafeShellCommand(command); err != nil {
+		return agent.ToolResult{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, bashTimeout)
@@ -115,6 +119,166 @@ func (b *Bash) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[
 	return agent.ToolResult{Content: sb.String(), WorkingDir: finalWorkingDir}, nil
 }
 
+func rejectUnsafeShellCommand(command string) error {
+	switch {
+	case hasUnsafeRecursiveDelete(command):
+		return fmt.Errorf("refusing to run unsafe command: recursive delete target is too broad")
+	case readsCredentialPath(command):
+		return fmt.Errorf("refusing to run unsafe command: credential file reads are not allowed")
+	default:
+		return nil
+	}
+}
+
+func hasUnsafeRecursiveDelete(command string) bool {
+	fields := shellSafetyFields(command)
+	for i, field := range fields {
+		if isRMCommand(field) && rmCommandDeletesUnsafeTarget(fields[i+1:]) {
+			return true
+		}
+		if isPowerShellDeleteCommand(field) && powerShellDeleteCommandDeletesUnsafeTarget(fields[i+1:]) {
+			return true
+		}
+	}
+	return false
+}
+
+func rmCommandDeletesUnsafeTarget(fields []string) bool {
+	var flags string
+	for _, field := range fields {
+		if field == "--" {
+			continue
+		}
+		if strings.HasPrefix(field, "-") {
+			flags += field
+			continue
+		}
+		if strings.Contains(flags, "r") && strings.Contains(flags, "f") && isUnsafeDeleteTarget(field) {
+			return true
+		}
+	}
+	return false
+}
+
+func powerShellDeleteCommandDeletesUnsafeTarget(fields []string) bool {
+	var recurse, force bool
+	var targets []string
+	for _, field := range fields {
+		switch field {
+		case "-r", "-recurse", "-recursive":
+			recurse = true
+		case "-f", "-force":
+			force = true
+		default:
+			if !strings.HasPrefix(field, "-") {
+				targets = append(targets, field)
+			}
+		}
+	}
+	if !recurse || !force {
+		return false
+	}
+	for _, target := range targets {
+		if isUnsafeDeleteTarget(target) {
+			return true
+		}
+	}
+	return false
+}
+
+func readsCredentialPath(command string) bool {
+	fields := shellSafetyFields(command)
+	if !hasCredentialReadVerb(fields) {
+		return false
+	}
+	normalized := shellSafetyText(command)
+	for _, fragment := range []string{
+		"/.ssh/id_rsa",
+		"/.ssh/id_dsa",
+		"/.ssh/id_ecdsa",
+		"/.ssh/id_ed25519",
+		"/.aws/credentials",
+		"/.config/gcloud/application_default_credentials.json",
+		"/.kube/config",
+		"/etc/shadow",
+	} {
+		if strings.Contains(normalized, fragment) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasCredentialReadVerb(fields []string) bool {
+	for _, field := range fields {
+		switch field {
+		case "cat", "less", "more", "head", "tail", "type", "get-content", "gc", "select-string", "grep", "rg", "sed", "awk":
+			return true
+		}
+	}
+	return false
+}
+
+func isRMCommand(field string) bool {
+	return field == "rm" || strings.HasSuffix(field, "/rm")
+}
+
+func isPowerShellDeleteCommand(field string) bool {
+	switch field {
+	case "remove-item", "del", "erase", "rd", "rmdir":
+		return true
+	default:
+		return false
+	}
+}
+
+func isUnsafeDeleteTarget(target string) bool {
+	if target == "." || target == "./" || target == "*" {
+		return true
+	}
+	if target == "/*" {
+		return true
+	}
+	target = strings.TrimSuffix(target, "/*")
+	for _, prefix := range []string{"~/", "$home/", "${home}/", "$env:home/", "$env:userprofile/", "%userprofile%/"} {
+		if strings.HasPrefix(target, prefix) {
+			return true
+		}
+	}
+	for _, prefix := range []string{"/etc/", "/bin/", "/sbin/", "/usr/", "/var/", "/lib/", "/library/", "/system/", "/applications/", "c:/windows/", "c:/program files/"} {
+		if strings.HasPrefix(target, prefix) {
+			return true
+		}
+	}
+	for _, exact := range []string{"/", "~", "$home", "${home}", "$env:home", "$env:userprofile", "%userprofile%", "c:", "c:/", "/etc", "/bin", "/sbin", "/usr", "/var", "/lib", "/library", "/system", "/applications", "c:/windows", "c:/program files"} {
+		if target == exact {
+			return true
+		}
+	}
+	return false
+}
+
+func shellSafetyFields(command string) []string {
+	return strings.Fields(shellSafetyText(command))
+}
+
+func shellSafetyText(command string) string {
+	command = strings.ToLower(command)
+	return strings.NewReplacer(
+		"\\", "/",
+		"\n", " ",
+		"\t", " ",
+		";", " ",
+		"&", " ",
+		"|", " ",
+		"(", " ",
+		")", " ",
+		"\"", "",
+		"'", "",
+		"`", "",
+	).Replace(command)
+}
+
 func readFinalWorkingDir(path string) string {
 	content, err := os.ReadFile(path)
 	if err != nil {
@@ -150,7 +314,7 @@ func isASCIIAlpha(b byte) bool {
 
 type boundedOutput struct {
 	Limit   int
-	buf     strings.Builder
+	buf     []byte
 	omitted int
 }
 
@@ -159,30 +323,64 @@ func (b *boundedOutput) Write(p []byte) (int, error) {
 		b.omitted += len(p)
 		return len(p), nil
 	}
-	remaining := b.Limit - b.buf.Len()
+	remaining := b.Limit - len(b.buf)
 	if remaining <= 0 {
 		b.omitted += len(p)
 		return len(p), nil
 	}
 	if len(p) <= remaining {
-		b.buf.Write(p)
+		b.buf = append(b.buf, p...)
 		return len(p), nil
 	}
-	b.buf.Write(p[:remaining])
-	b.omitted += len(p) - remaining
+	writeLen := utf8SafePrefixLen(p[:remaining])
+	b.buf = append(b.buf, p[:writeLen]...)
+	b.omitted += len(p) - writeLen
 	return len(p), nil
 }
 
 func (b *boundedOutput) Len() int {
-	return b.buf.Len() + b.omitted
+	return len(b.buf) + b.omitted
 }
 
 func (b *boundedOutput) String(label string) string {
-	content := b.buf.String()
-	if b.omitted == 0 {
+	safeLen := utf8SafePrefixLen(b.buf)
+	content := string(b.buf[:safeLen])
+	omitted := b.omitted + len(b.buf) - safeLen
+	if omitted == 0 {
 		return content
 	}
-	return content + fmt.Sprintf("\n\n[%s truncated: omitted ~%d tokens]", label, approximateTokensFromBytes(b.omitted))
+	return content + fmt.Sprintf("\n\n[%s truncated: omitted ~%d tokens]", label, approximateTokensFromBytes(omitted))
+}
+
+func utf8SafePrefixLen(p []byte) int {
+	if len(p) == 0 {
+		return 0
+	}
+	start := len(p) - 1
+	for start >= 0 && p[start]&0xc0 == 0x80 {
+		start--
+	}
+	if start < 0 {
+		return 0
+	}
+	lead := p[start]
+	if lead < utf8.RuneSelf {
+		return len(p)
+	}
+	if lead < 0xc2 || lead > 0xf4 {
+		return len(p)
+	}
+	_, size := utf8.DecodeRune(p[start:])
+	if size == 1 {
+		return start
+	}
+	if start+size == len(p) {
+		return len(p)
+	}
+	if start+size > len(p) {
+		return start
+	}
+	return len(p)
 }
 
 func approximateTokensFromBytes(n int) int {

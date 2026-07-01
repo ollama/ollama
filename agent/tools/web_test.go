@@ -11,12 +11,12 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-func TestWebToolsDoNotRequireApproval(t *testing.T) {
-	if coreagent.ToolRequiresApproval((&WebSearch{}), map[string]any{"query": "ollama"}) {
-		t.Fatal("web search should not require approval")
+func TestWebToolsRequireApproval(t *testing.T) {
+	if !coreagent.ToolRequiresApproval((&WebSearch{}), map[string]any{"query": "ollama"}) {
+		t.Fatal("web search should require approval")
 	}
-	if coreagent.ToolRequiresApproval((&WebFetch{}), map[string]any{"url": "https://ollama.com"}) {
-		t.Fatal("web fetch should not require approval")
+	if !coreagent.ToolRequiresApproval((&WebFetch{}), map[string]any{"url": "https://ollama.com"}) {
+		t.Fatal("web fetch should require approval")
 	}
 }
 

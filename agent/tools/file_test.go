@@ -163,6 +163,12 @@ func TestReadRejectsParentOutsideCurrentWorkingDir(t *testing.T) {
 	}
 }
 
+func TestReadRequiresApproval(t *testing.T) {
+	if !agent.ToolRequiresApproval((&Read{}), map[string]any{"path": "note.txt"}) {
+		t.Fatal("read should require approval")
+	}
+}
+
 func TestReadDefaultsToEntireFile(t *testing.T) {
 	dir := t.TempDir()
 	content := "one\ntwo\nthree\n"

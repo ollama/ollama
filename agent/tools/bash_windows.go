@@ -62,7 +62,7 @@ func powerShellCommandScript(command, cwdPath string) string {
 		"} finally {",
 		"  try { [System.IO.File]::WriteAllText(" + cwdPath + ", (Get-Location).ProviderPath, [System.Text.Encoding]::UTF8) } catch {}",
 		"}",
-		"} | Out-String -Stream",
+		"} | Out-String -Stream -Width 4096",
 		"exit $__ollama_status",
 	}, "\n")
 }

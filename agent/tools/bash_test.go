@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/ollama/ollama/agent"
 )
@@ -54,6 +55,52 @@ func TestBashBoundsOutputWhileRunning(t *testing.T) {
 	}
 }
 
+func TestBoundedOutputTruncatesAtUTF8Boundary(t *testing.T) {
+	var out boundedOutput
+	out.Limit = len([]byte("abc")) + 1
+
+	if _, err := out.Write([]byte("abcédef")); err != nil {
+		t.Fatal(err)
+	}
+	content := out.String("stdout")
+	if !utf8.ValidString(content) {
+		t.Fatalf("content is not valid UTF-8: %q", content)
+	}
+	if strings.ContainsRune(content, utf8.RuneError) {
+		t.Fatalf("content contains replacement rune: %q", content)
+	}
+	if !strings.HasPrefix(content, "abc\n\n[stdout truncated:") {
+		t.Fatalf("content = %q, want complete ASCII prefix and truncation marker", content)
+	}
+}
+
+func TestBoundedOutputKeepsCompleteUTF8AtBoundary(t *testing.T) {
+	var out boundedOutput
+	out.Limit = len([]byte("abcé"))
+
+	if _, err := out.Write([]byte("abcédef")); err != nil {
+		t.Fatal(err)
+	}
+	if content := out.String("stdout"); !strings.HasPrefix(content, "abcé\n\n[stdout truncated:") {
+		t.Fatalf("content = %q, want complete UTF-8 prefix", content)
+	}
+}
+
+func TestBoundedOutputTrimsTrailingPartialUTF8(t *testing.T) {
+	var out boundedOutput
+	out.Limit = 4
+
+	if _, err := out.Write([]byte{'a', 'b', 'c', 0xc3}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := out.Write([]byte{0xa9}); err != nil {
+		t.Fatal(err)
+	}
+	if content := out.String("stdout"); !utf8.ValidString(content) || !strings.HasPrefix(content, "abc\n\n[stdout truncated:") {
+		t.Fatalf("content = %q, want valid UTF-8 with partial suffix trimmed", content)
+	}
+}
+
 func TestBashReportsCanceledCommand(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -69,6 +116,51 @@ func TestBashReportsCanceledCommand(t *testing.T) {
 	}
 	if strings.Contains(result.Content, "Exit code: -1") {
 		t.Fatalf("content = %q, should not mask cancellation as exit code", result.Content)
+	}
+}
+
+func TestRejectUnsafeShellCommand(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		wantErr bool
+	}{
+		{name: "rm root", command: "rm -rf /", wantErr: true},
+		{name: "sudo rm root", command: "sudo rm -rf -- /", wantErr: true},
+		{name: "rm home", command: "rm -fr $HOME", wantErr: true},
+		{name: "rm root wildcard", command: "rm -rf /*", wantErr: true},
+		{name: "rm system subdir", command: "rm -rf /etc/ssh", wantErr: true},
+		{name: "rm cwd", command: "rm -rf .", wantErr: true},
+		{name: "powershell remove root", command: `Remove-Item -Recurse -Force C:\`, wantErr: true},
+		{name: "powershell remove system subdir", command: `Remove-Item -Recurse -Force C:\Windows\Temp`, wantErr: true},
+		{name: "ssh private key", command: "cat ~/.ssh/id_rsa", wantErr: true},
+		{name: "aws credentials", command: "Get-Content $HOME/.aws/credentials", wantErr: true},
+		{name: "shadow", command: "head /etc/shadow", wantErr: true},
+		{name: "delete build dir", command: "rm -rf build", wantErr: false},
+		{name: "read project file", command: "cat README.md", wantErr: false},
+		{name: "mention key text", command: "rg id_rsa docs", wantErr: false},
+		{name: "env example", command: "cat .env.example", wantErr: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := rejectUnsafeShellCommand(tt.command)
+			if tt.wantErr && err == nil {
+				t.Fatal("expected unsafe command to be rejected")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("command rejected: %v", err)
+			}
+		})
+	}
+}
+
+func TestBashRejectsUnsafeCommandBeforeExecution(t *testing.T) {
+	_, err := (&Bash{}).Execute(context.Background(), agent.ToolContext{WorkingDir: t.TempDir()}, map[string]any{
+		"command": "rm -rf /",
+	})
+	if err == nil || !strings.Contains(err.Error(), "refusing to run unsafe command") {
+		t.Fatalf("err = %v, want unsafe command rejection", err)
 	}
 }
 

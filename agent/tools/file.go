@@ -53,6 +53,10 @@ func (r *Read) Schema() api.ToolFunction {
 	}
 }
 
+func (r *Read) RequiresApproval(map[string]any) bool {
+	return true
+}
+
 func (r *Read) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[string]any) (agent.ToolResult, error) {
 	path, ok := args["path"].(string)
 	if !ok || strings.TrimSpace(path) == "" {
