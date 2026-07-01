@@ -9,6 +9,10 @@ package imagegen
 type Request struct {
 	Prompt string `json:"prompt"`
 
+	// Negative is the negative prompt for classifier-free guidance.
+	// Only used by models that support CFG (e.g. Z-Image). Empty means no CFG.
+	Negative string `json:"negative,omitempty"`
+
 	// LLM-specific fields
 	Options *RequestOptions `json:"options,omitempty"`
 
