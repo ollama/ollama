@@ -243,6 +243,7 @@ console.log(response.message.content);
 - [Ollama-rs for Rust](https://github.com/pepperoni21/ollama-rs) - Rust SDK
 - [LangChain for .NET](https://github.com/tryAGI/LangChain) - .NET LangChain ([example](https://github.com/tryAGI/LangChain/blob/main/examples/LangChain.Samples.OpenAI/Program.cs))
 - [chromem-go](https://github.com/philippgille/chromem-go) - Go vector database with Ollama embeddings ([example](https://github.com/philippgille/chromem-go/tree/v0.5.0/examples/rag-wikipedia-ollama))
+- [Dakera](https://github.com/dakera-ai/dakera-deploy) - Self-hosted persistent memory server adding decay-weighted vector recall across sessions for Ollama apps
 - [LangChainDart](https://github.com/davidmigloz/langchain_dart) - Dart LangChain
 - [LlmTornado](https://github.com/lofcz/llmtornado) - Unified C# interface for multiple inference APIs
 - [Ollama4j for Java](https://github.com/ollama4j/ollama4j) - Java SDK
