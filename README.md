@@ -236,6 +236,7 @@ console.log(response.message.content);
 - [LangChain](https://python.langchain.com/docs/integrations/chat/ollama/) and [LangChain.js](https://js.langchain.com/docs/integrations/chat/ollama/) with [example](https://js.langchain.com/docs/tutorials/local_rag/)
 - [Ollama for Ruby](https://github.com/crmne/ruby_llm) - Ruby LLM library
 - [any-llm](https://github.com/mozilla-ai/any-llm) - Unified LLM interface by Mozilla
+- [nxusKit](https://github.com/nxus-SYSTEMS/nxusKit) - Provider-agnostic SDK for Rust, Go, Python, and C ABI with Ollama support ([multi-provider example](https://github.com/nxus-SYSTEMS/nxusKit-examples/tree/main/examples/patterns/multi-provider))
 - [OllamaSharp for .NET](https://github.com/awaescher/OllamaSharp) - .NET SDK
 - [LangChainRust](https://github.com/Abraxas-365/langchain-rust) - Rust LangChain ([example](https://github.com/Abraxas-365/langchain-rust/blob/main/examples/llm_ollama.rs))
 - [Agents-Flex for Java](https://github.com/agents-flex/agents-flex) - Java agent framework ([example](https://github.com/agents-flex/agents-flex/tree/main/agents-flex-llm/agents-flex-llm-ollama/src/test/java/com/agentsflex/llm/ollama))
