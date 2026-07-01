@@ -30,6 +30,10 @@ func newInferenceRequestLogger() (*inferenceRequestLogger, error) {
 	return &inferenceRequestLogger{dir: dir}, nil
 }
 
+func (l *inferenceRequestLogger) Close() {
+	os.RemoveAll(l.dir)
+}
+
 func (s *Server) initRequestLogging() error {
 	if !envconfig.DebugLogRequests() {
 		return nil

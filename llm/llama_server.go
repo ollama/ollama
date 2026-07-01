@@ -1452,6 +1452,8 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 		return err
 	}
 	defer s.sem.Release(1)
+	AcquireSleepInhibition()
+	defer ReleaseSleepInhibition()
 
 	req.Options.NumPredict = boundedNumPredict(req.Options.NumPredict, s.options.NumCtx)
 
@@ -1805,6 +1807,8 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 		return err
 	}
 	defer s.sem.Release(1)
+	AcquireSleepInhibition()
+	defer ReleaseSleepInhibition()
 
 	req.Options.NumPredict = boundedNumPredict(req.Options.NumPredict, s.options.NumCtx)
 
@@ -2224,6 +2228,8 @@ func (s *llamaServerRunner) Embedding(ctx context.Context, input string) ([]floa
 		return nil, 0, err
 	}
 	defer s.sem.Release(1)
+	AcquireSleepInhibition()
+	defer ReleaseSleepInhibition()
 
 	status, err := s.getServerStatusRetry(ctx)
 	if err != nil {
