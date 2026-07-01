@@ -223,6 +223,10 @@ var integrationSpecs = []*IntegrationSpec{
 				_, err := exec.LookPath("pool")
 				return err == nil
 			},
+			EnsureInstalled: func() error {
+				_, err := ensurePoolsideInstalled()
+				return err
+			},
 			URL: "https://github.com/poolsideai/pool",
 		},
 	},
@@ -378,9 +382,6 @@ func ListVisibleIntegrationSpecs() []IntegrationSpec {
 		if supported, ok := spec.Runner.(SupportedIntegration); ok && supported.Supported() != nil {
 			continue
 		}
-		if spec.Name == "pool" && poolsideGOOS == "windows" {
-			continue
-		}
 		visible = append(visible, *spec)
 	}
 
@@ -499,10 +500,6 @@ func EnsureIntegrationInstalled(name string, runner Runner) error {
 		if err := supported.Supported(); err != nil {
 			return err
 		}
-	}
-
-	if integration.spec.Name == "pool" && poolsideGOOS == "windows" {
-		return poolsideUnsupportedError()
 	}
 
 	if integration.installed {
