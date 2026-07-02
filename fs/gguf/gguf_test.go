@@ -2,6 +2,8 @@ package gguf_test
 
 import (
 	"bytes"
+	"encoding/binary"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -12,6 +14,17 @@ import (
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/fs/gguf"
 )
+
+const (
+	ggufTestTypeUint32 uint32 = 4
+	ggufTestTypeString uint32 = 8
+	ggufTestTypeArray  uint32 = 9
+)
+
+type ggufTestEntry struct {
+	key   string
+	value any
+}
 
 func createBinFile(tb testing.TB) string {
 	tb.Helper()
@@ -82,6 +95,68 @@ func createBinFile(tb testing.TB) string {
 	}
 
 	return f.Name()
+}
+
+func createOrderedGGUF(tb testing.TB, entries ...ggufTestEntry) string {
+	tb.Helper()
+	f, err := os.CreateTemp(tb.TempDir(), "")
+	if err != nil {
+		tb.Fatal(err)
+	}
+	defer f.Close()
+
+	if _, err := f.Write([]byte("GGUF")); err != nil {
+		tb.Fatal(err)
+	}
+	writeGGUFTestValue(tb, f, uint32(3))
+	writeGGUFTestValue(tb, f, uint64(0))
+	writeGGUFTestValue(tb, f, uint64(len(entries)))
+
+	for _, entry := range entries {
+		writeGGUFTestString(tb, f, entry.key)
+		writeGGUFTestTypedValue(tb, f, entry.value)
+	}
+
+	return f.Name()
+}
+
+func writeGGUFTestTypedValue(tb testing.TB, w io.Writer, value any) {
+	tb.Helper()
+
+	switch value := value.(type) {
+	case uint32:
+		writeGGUFTestValue(tb, w, ggufTestTypeUint32)
+		writeGGUFTestValue(tb, w, value)
+	case string:
+		writeGGUFTestValue(tb, w, ggufTestTypeString)
+		writeGGUFTestString(tb, w, value)
+	case []string:
+		writeGGUFTestValue(tb, w, ggufTestTypeArray)
+		writeGGUFTestValue(tb, w, ggufTestTypeString)
+		writeGGUFTestValue(tb, w, uint64(len(value)))
+		for _, item := range value {
+			writeGGUFTestString(tb, w, item)
+		}
+	default:
+		tb.Fatalf("unsupported test GGUF value type %T", value)
+	}
+}
+
+func writeGGUFTestString(tb testing.TB, w io.Writer, value string) {
+	tb.Helper()
+
+	writeGGUFTestValue(tb, w, uint64(len(value)))
+	if _, err := io.WriteString(w, value); err != nil {
+		tb.Fatal(err)
+	}
+}
+
+func writeGGUFTestValue(tb testing.TB, w io.Writer, value any) {
+	tb.Helper()
+
+	if err := binary.Write(w, binary.LittleEndian, value); err != nil {
+		tb.Fatal(err)
+	}
 }
 
 func TestRead(t *testing.T) {
@@ -223,6 +298,29 @@ func TestRead(t *testing.T) {
 
 	if b.Len() != int(ti.NumBytes()) {
 		t.Errorf(`ReadFrom TensorReader("output.weight") length = %d, want %d`, b.Len(), ti.NumBytes())
+	}
+}
+
+func TestScanKeyValuesSkipsUnselectedValues(t *testing.T) {
+	keyValues, err := gguf.ScanKeyValues(createOrderedGGUF(t,
+		ggufTestEntry{"general.architecture", "gemma4"},
+		ggufTestEntry{"tokenizer.ggml.tokens", []string{"hello", strings.Repeat("x", 64<<10)}},
+		ggufTestEntry{"gemma4.vision.block_count", uint32(16)},
+	), func(key string) bool {
+		return key == "general.architecture" || key == "gemma4.vision.block_count"
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(keyValues) != 2 {
+		t.Fatalf("selected key-values = %d, want 2: %+v", len(keyValues), keyValues)
+	}
+	if keyValues[0].Key != "general.architecture" || keyValues[0].String() != "gemma4" {
+		t.Fatalf("first selected key-value = %+v, want general.architecture=gemma4", keyValues[0])
+	}
+	if keyValues[1].Key != "gemma4.vision.block_count" || keyValues[1].Uint() != 16 {
+		t.Fatalf("second selected key-value = %+v, want gemma4.vision.block_count=16", keyValues[1])
 	}
 }
 

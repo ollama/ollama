@@ -128,16 +128,37 @@ func (f *File) readTensor() (TensorInfo, error) {
 }
 
 func (f *File) readKeyValue() (KeyValue, error) {
-	key, err := readString(f)
+	key, t, err := f.readKeyValueHeader()
 	if err != nil {
 		return KeyValue{}, err
+	}
+
+	value, err := f.readValue(t)
+	if err != nil {
+		return KeyValue{}, err
+	}
+
+	return KeyValue{
+		Key:   key,
+		Value: value,
+	}, nil
+}
+
+func (f *File) readKeyValueHeader() (string, uint32, error) {
+	key, err := readString(f)
+	if err != nil {
+		return "", 0, err
 	}
 
 	t, err := read[uint32](f)
 	if err != nil {
-		return KeyValue{}, err
+		return "", 0, err
 	}
 
+	return key, t, nil
+}
+
+func (f *File) readValue(t uint32) (Value, error) {
 	value, err := func() (any, error) {
 		switch t {
 		case typeUint8:
@@ -171,13 +192,29 @@ func (f *File) readKeyValue() (KeyValue, error) {
 		}
 	}()
 	if err != nil {
-		return KeyValue{}, err
+		return Value{}, err
 	}
 
-	return KeyValue{
-		Key:   key,
-		Value: Value{value},
-	}, nil
+	return Value{value}, nil
+}
+
+func (f *File) skipValue(t uint32) error {
+	switch t {
+	case typeUint8, typeInt8, typeBool:
+		return discard(f, 1)
+	case typeUint16, typeInt16:
+		return discard(f, 2)
+	case typeUint32, typeInt32, typeFloat32:
+		return discard(f, 4)
+	case typeUint64, typeInt64, typeFloat64:
+		return discard(f, 8)
+	case typeString:
+		return skipString(f)
+	case typeArray:
+		return skipArray(f)
+	default:
+		return fmt.Errorf("%w type %d", ErrUnsupported, t)
+	}
 }
 
 func read[T any](f *File) (t T, err error) {
@@ -185,8 +222,12 @@ func read[T any](f *File) (t T, err error) {
 	return t, err
 }
 
+func readUint64(f *File) (uint64, error) {
+	return f.reader.ReadUint64()
+}
+
 func readString(f *File) (string, error) {
-	n, err := read[uint64](f)
+	n, err := readUint64(f)
 	if err != nil {
 		return "", err
 	}
@@ -273,6 +314,51 @@ func readArrayString(f *File, n uint64) (s []string, err error) {
 	return s, nil
 }
 
+func skipArray(f *File) error {
+	t, err := read[uint32](f)
+	if err != nil {
+		return err
+	}
+
+	n, err := read[uint64](f)
+	if err != nil {
+		return err
+	}
+
+	switch t {
+	case typeUint8, typeInt8, typeBool:
+		return discard(f, int64(n))
+	case typeUint16, typeInt16:
+		return discard(f, int64(n*2))
+	case typeUint32, typeInt32, typeFloat32:
+		return discard(f, int64(n*4))
+	case typeUint64, typeInt64, typeFloat64:
+		return discard(f, int64(n*8))
+	case typeString:
+		for range n {
+			if err := skipString(f); err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("%w type %d", ErrUnsupported, t)
+	}
+}
+
+func skipString(f *File) error {
+	n, err := readUint64(f)
+	if err != nil {
+		return err
+	}
+
+	return discard(f, int64(n))
+}
+
+func discard(f *File, n int64) error {
+	return f.reader.Discard(n)
+}
+
 func (f *File) Close() error {
 	f.keyValues.stop()
 	f.tensors.stop()
@@ -305,6 +391,38 @@ func (f *File) NumKeyValues() int {
 
 func (f *File) KeyValues() iter.Seq2[int, KeyValue] {
 	return f.keyValues.All()
+}
+
+// ScanKeyValues returns selected metadata key-values and skips unselected values.
+func ScanKeyValues(path string, keep func(string) bool) ([]KeyValue, error) {
+	f, err := Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var keyValues []KeyValue
+	for range f.keyValues.count {
+		key, valueType, err := f.readKeyValueHeader()
+		if err != nil {
+			return nil, err
+		}
+
+		if keep == nil || keep(key) {
+			value, err := f.readValue(valueType)
+			if err != nil {
+				return nil, err
+			}
+			keyValues = append(keyValues, KeyValue{Key: key, Value: value})
+			continue
+		}
+
+		if err := f.skipValue(valueType); err != nil {
+			return nil, err
+		}
+	}
+
+	return keyValues, nil
 }
 
 func (f *File) TensorInfo(name string) TensorInfo {
