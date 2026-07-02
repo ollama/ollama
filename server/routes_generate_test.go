@@ -754,12 +754,13 @@ func TestGenerateChat(t *testing.T) {
 
 	mock := mockRunner{
 		CompletionResponse: llm.CompletionResponse{
-			Done:               true,
-			DoneReason:         llm.DoneReasonStop,
-			PromptEvalCount:    1,
-			PromptEvalDuration: 1,
-			EvalCount:          1,
-			EvalDuration:       1,
+			Done:                  true,
+			DoneReason:            llm.DoneReasonStop,
+			PromptEvalCount:       1,
+			PromptEvalCachedCount: 1,
+			PromptEvalDuration:    1,
+			EvalCount:             1,
+			EvalDuration:          1,
 		},
 	}
 
@@ -970,6 +971,10 @@ func TestGenerateChat(t *testing.T) {
 
 		if actual.PromptEvalCount == 0 {
 			t.Errorf("expected prompt eval count > 0, got 0")
+		}
+
+		if actual.PromptEvalCachedCount != 1 {
+			t.Errorf("expected prompt eval cached count 1, got %d", actual.PromptEvalCachedCount)
 		}
 
 		if actual.PromptEvalDuration == 0 {
@@ -1471,12 +1476,13 @@ func TestGenerate(t *testing.T) {
 
 	mock := mockRunner{
 		CompletionResponse: llm.CompletionResponse{
-			Done:               true,
-			DoneReason:         llm.DoneReasonStop,
-			PromptEvalCount:    1,
-			PromptEvalDuration: 1,
-			EvalCount:          1,
-			EvalDuration:       1,
+			Done:                  true,
+			DoneReason:            llm.DoneReasonStop,
+			PromptEvalCount:       1,
+			PromptEvalCachedCount: 1,
+			PromptEvalDuration:    1,
+			EvalCount:             1,
+			EvalDuration:          1,
 		},
 	}
 
@@ -1667,6 +1673,10 @@ func TestGenerate(t *testing.T) {
 
 		if actual.PromptEvalCount == 0 {
 			t.Errorf("expected prompt eval count > 0, got 0")
+		}
+
+		if actual.PromptEvalCachedCount != 1 {
+			t.Errorf("expected prompt eval cached count 1, got %d", actual.PromptEvalCachedCount)
 		}
 
 		if actual.PromptEvalDuration == 0 {

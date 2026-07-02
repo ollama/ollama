@@ -569,12 +569,13 @@ type DebugInfo struct {
 }
 
 type Metrics struct {
-	TotalDuration      time.Duration `json:"total_duration,omitempty"`
-	LoadDuration       time.Duration `json:"load_duration,omitempty"`
-	PromptEvalCount    int           `json:"prompt_eval_count,omitempty"`
-	PromptEvalDuration time.Duration `json:"prompt_eval_duration,omitempty"`
-	EvalCount          int           `json:"eval_count,omitempty"`
-	EvalDuration       time.Duration `json:"eval_duration,omitempty"`
+	TotalDuration         time.Duration `json:"total_duration,omitempty"`
+	LoadDuration          time.Duration `json:"load_duration,omitempty"`
+	PromptEvalCount       int           `json:"prompt_eval_count,omitempty"`
+	PromptEvalCachedCount int           `json:"prompt_eval_cached_count,omitempty"`
+	PromptEvalDuration    time.Duration `json:"prompt_eval_duration,omitempty"`
+	EvalCount             int           `json:"eval_count,omitempty"`
+	EvalDuration          time.Duration `json:"eval_duration,omitempty"`
 }
 
 // Options specified in [GenerateRequest].  If you add a new option here, also
@@ -966,6 +967,10 @@ func (m *Metrics) Summary() {
 
 	if m.PromptEvalCount > 0 {
 		fmt.Fprintf(os.Stderr, "prompt eval count:    %d token(s)\n", m.PromptEvalCount)
+	}
+
+	if m.PromptEvalCachedCount > 0 {
+		fmt.Fprintf(os.Stderr, "prompt eval cached:   %d token(s)\n", m.PromptEvalCachedCount)
 	}
 
 	if m.PromptEvalDuration > 0 {

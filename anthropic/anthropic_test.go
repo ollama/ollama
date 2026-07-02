@@ -778,6 +778,38 @@ func TestToMessagesResponse_Basic(t *testing.T) {
 	}
 }
 
+func TestToMessagesResponse_UsageIncludesCacheReadTokens(t *testing.T) {
+	resp := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Role:    "assistant",
+			Content: "Hello there!",
+		},
+		Done:       true,
+		DoneReason: "stop",
+		Metrics: api.Metrics{
+			PromptEvalCount:       10,
+			PromptEvalCachedCount: 4,
+			EvalCount:             5,
+		},
+	}
+
+	result := ToMessagesResponse("msg_123", resp)
+
+	if result.Usage.InputTokens != 6 {
+		t.Errorf("expected input_tokens 6, got %d", result.Usage.InputTokens)
+	}
+	if result.Usage.CacheReadInputTokens != 4 {
+		t.Errorf("expected cache_read_input_tokens 4, got %d", result.Usage.CacheReadInputTokens)
+	}
+	if result.Usage.CacheCreationInputTokens != 0 {
+		t.Errorf("expected cache_creation_input_tokens 0, got %d", result.Usage.CacheCreationInputTokens)
+	}
+	if result.Usage.OutputTokens != 5 {
+		t.Errorf("expected output_tokens 5, got %d", result.Usage.OutputTokens)
+	}
+}
+
 func TestToMessagesResponse_WithToolCalls(t *testing.T) {
 	resp := api.ChatResponse{
 		Model: "test-model",
@@ -985,6 +1017,51 @@ func TestStreamConverter_Basic(t *testing.T) {
 	}
 	if !hasStop {
 		t.Error("expected message_stop event in final chunk")
+	}
+}
+
+func TestStreamConverter_UsageIncludesCacheReadTokens(t *testing.T) {
+	conv := NewStreamConverter("msg_123", "test-model", 0)
+
+	events := conv.Process(api.ChatResponse{
+		Model:      "test-model",
+		Message:    api.Message{Role: "assistant"},
+		Done:       true,
+		DoneReason: "stop",
+		Metrics: api.Metrics{
+			PromptEvalCount:       10,
+			PromptEvalCachedCount: 4,
+			EvalCount:             5,
+		},
+	})
+
+	var found bool
+	for _, e := range events {
+		if e.Event != "message_delta" {
+			continue
+		}
+
+		data, ok := e.Data.(MessageDeltaEvent)
+		if !ok {
+			t.Fatalf("unexpected data type: %T", e.Data)
+		}
+		found = true
+		if data.Usage.InputTokens != 6 {
+			t.Errorf("expected input_tokens 6, got %d", data.Usage.InputTokens)
+		}
+		if data.Usage.CacheReadInputTokens != 4 {
+			t.Errorf("expected cache_read_input_tokens 4, got %d", data.Usage.CacheReadInputTokens)
+		}
+		if data.Usage.CacheCreationInputTokens != 0 {
+			t.Errorf("expected cache_creation_input_tokens 0, got %d", data.Usage.CacheCreationInputTokens)
+		}
+		if data.Usage.OutputTokens != 5 {
+			t.Errorf("expected output_tokens 5, got %d", data.Usage.OutputTokens)
+		}
+	}
+
+	if !found {
+		t.Fatal("expected message_delta event")
 	}
 }
 
