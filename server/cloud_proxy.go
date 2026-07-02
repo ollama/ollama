@@ -55,6 +55,14 @@ var hopByHopHeaders = map[string]struct{}{
 	"upgrade":             {},
 }
 
+// sensitiveClientHeaders carry end-user credentials that must never be
+// forwarded upstream when proxying to Ollama cloud. Authorization is handled
+// separately because signCloudProxyRequest overwrites it with the cloud
+// signature; these headers have no such replacement and would otherwise leak.
+var sensitiveClientHeaders = map[string]struct{}{
+	"x-api-key": {},
+}
+
 func init() {
 	baseURL, signingHost, overridden, err := resolveCloudProxyBaseURL(envconfig.Var(cloudProxyBaseURLEnv), mode)
 	if err != nil {
@@ -440,7 +448,7 @@ func isLoopbackHost(host string) bool {
 func copyProxyRequestHeaders(dst, src http.Header) {
 	connectionTokens := connectionHeaderTokens(src)
 	for key, values := range src {
-		if isHopByHopHeader(key) || isConnectionTokenHeader(key, connectionTokens) {
+		if isHopByHopHeader(key) || isConnectionTokenHeader(key, connectionTokens) || isSensitiveClientHeader(key) {
 			continue
 		}
 
@@ -542,6 +550,11 @@ func (w *jsonlFramingResponseWriter) flushCompleteLines() error {
 
 func isHopByHopHeader(name string) bool {
 	_, ok := hopByHopHeaders[strings.ToLower(name)]
+	return ok
+}
+
+func isSensitiveClientHeader(name string) bool {
+	_, ok := sensitiveClientHeaders[strings.ToLower(name)]
 	return ok
 }
 
