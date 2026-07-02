@@ -178,7 +178,7 @@
       "inherits": ["rocm_v7_1_base"],
       "binaryDir": "${sourceDir}/../../build/llama-server-rocm_v7_1",
       "cacheVariables": {
-        "AMDGPU_TARGETS": "gfx942;gfx950;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1200;gfx1201"
+        "AMDGPU_TARGETS": "gfx1030;gfx1100;gfx1101;gfx1102;gfx1150;gfx1151;gfx1200;gfx1201"
       }
     },
     {
@@ -202,7 +202,7 @@
       "inherits": ["rocm_v7_2_base"],
       "binaryDir": "${sourceDir}/../../build/llama-server-rocm_v7_2",
       "cacheVariables": {
-        "AMDGPU_TARGETS": "gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-;gfx942;gfx950;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1200;gfx1201"
+        "AMDGPU_TARGETS": "gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-;gfx942;gfx950;gfx1030;gfx1100;gfx1101;gfx1102;gfx1150;gfx1151;gfx1200;gfx1201"
       }
     },
     {
