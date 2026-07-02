@@ -2582,6 +2582,7 @@ void handle_gemma4_clip(gguf_context * meta, ggml_context * ctx) {
         //   mm.a.input_projection.weight already matches.
         rename_tensor(meta, ctx, "a.pre_encode.out.weight", "a.input_projection.weight");
         rename_tensor(meta, ctx, "mm.a.fc.weight",          "a.pre_encode.out.weight");
+        rename_tensor(meta, ctx, "a.pre_encode.out.bias",   "a.input_projection.bias");
         rename_tensor(meta, ctx, "mm.a.fc.bias",            "a.pre_encode.out.bias");
 
         // Per-block renames. Scoped to a.blk.* (NOT vision blocks, which also
