@@ -48,9 +48,16 @@ NC='\033[0m'
 ################################################################################
 setup_logging() {
     mkdir -p "$(dirname "$LOG_FILE")" "$RESULTS_DIR"
-    exec > >(tee -a "$LOG_FILE")
-    exec 2>&1
-    log_info "Logging initialized: $LOG_FILE"
+    # Process substitution (>(...)) requires /dev/fd; fall back to plain
+    # redirection when it is unavailable (e.g. restricted containers).
+    if [ -e /dev/fd/1 ]; then
+        exec > >(tee -a "$LOG_FILE")
+        exec 2>&1
+        log_info "Logging initialized: $LOG_FILE"
+    else
+        exec >> "$LOG_FILE" 2>&1
+        log_info "Logging initialized (no /dev/fd, stdout redirected): $LOG_FILE"
+    fi
 }
 
 log_info()    { echo -e "${BLUE}[INFO $(date '+%Y-%m-%d %H:%M:%S')]${NC} $1"; }
