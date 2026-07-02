@@ -857,9 +857,15 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 }
 
 // SupportsKVCacheType checks if the requested cache type is supported
-func (f GGML) SupportsKVCacheType(cacheType string) bool {
+func (kv KV) SupportsKVCacheType(cacheType string) bool {
 	if cacheType == "" || cacheType == "f16" {
 		return true
+	}
+
+	if arch := kv.Architecture(); slices.Contains([]string{"gptoss", "gpt-oss"}, arch) {
+		// gpt-oss uses attention with sinks which does not support quantized cache types
+		slog.Warn("model only supports non-quantized cache types", "model", arch)
+		return false
 	}
 
 	return slices.Contains([]string{"q8_0", "q4_0"}, cacheType)
