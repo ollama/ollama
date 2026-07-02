@@ -1,6 +1,7 @@
 package ggml
 
 import (
+	"encoding/binary"
 	"maps"
 	"math"
 	"slices"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/ollama/ollama/ml"
 )
 
 func TestTensorLayers(t *testing.T) {
@@ -296,6 +298,111 @@ func TestHeadCount(t *testing.T) {
 		got := tt.kv.HeadCountMax()
 		if got != tt.want {
 			t.Errorf("unexpected max value: got=%d want=%d", got, tt.want)
+		}
+	}
+}
+
+// makeGGML constructs a minimal GGML for unit-testing GraphSize without a file round-trip.
+func makeGGML(kv KV) GGML {
+	g := newGGUF(&containerGGUF{ByteOrder: binary.LittleEndian, Version: 3})
+	for k, v := range kv {
+		g.kv[k] = v
+	}
+	return GGML{container: g.containerGGUF, model: g}
+}
+
+// TestGraphSizeSlidingWindowPattern verifies that the generic SWA correction in
+// GraphSize uses the per-layer bool array (attention.sliding_window_pattern) to
+// reduce KV cache estimates for sliding-window layers. Without the fix, Gemma 4
+// at 8k context over-estimates by ~7× (3.52 GB vs 0.48 GB), starving GPU expert
+// placement.
+func TestGraphSizeSlidingWindowPattern(t *testing.T) {
+	// Mirrors the actual Gemma 4 26B GGUF metadata (30 layers, every 6th is full-attention).
+	const (
+		nLayers       = 30
+		slidingWindow = uint32(1024)
+		keyLenFull    = uint32(512)
+		valLenFull    = uint32(512)
+		keyLenSwa     = uint32(256)
+		valLenSwa     = uint32(256)
+	)
+
+	// sliding_window_pattern: true = sliding layer, false = full-attention (every 6th).
+	swPattern := make([]bool, nLayers)
+	hkvArr := make([]uint32, nLayers)
+	hArr := make([]uint32, nLayers)
+	for i := range nLayers {
+		swPattern[i] = (i+1)%6 != 0
+		if !swPattern[i] {
+			hkvArr[i] = 2 // full-attention layers have fewer KV heads in Gemma 4
+		} else {
+			hkvArr[i] = 8
+		}
+		hArr[i] = 16
+	}
+
+	kv := KV{
+		"general.architecture":                    "gemma4",
+		"tokenizer.ggml.tokens":                   &array[string]{size: 256000},
+		"gemma4.block_count":                      uint32(nLayers),
+		"gemma4.embedding_length":                 uint32(2816),
+		"gemma4.attention.head_count":             &array[uint32]{values: hArr, size: nLayers},
+		"gemma4.attention.head_count_kv":          &array[uint32]{values: hkvArr, size: nLayers},
+		"gemma4.attention.key_length":             keyLenFull,
+		"gemma4.attention.value_length":           valLenFull,
+		"gemma4.attention.key_length_swa":         keyLenSwa,
+		"gemma4.attention.value_length_swa":       valLenSwa,
+		"gemma4.attention.sliding_window":         slidingWindow,
+		"gemma4.attention.sliding_window_pattern": &array[bool]{values: swPattern, size: nLayers},
+		"gemma4.context_length":                   uint32(262144),
+		"gemma4.attention.layer_norm_rms_epsilon": float32(1e-6),
+	}
+
+	contexts := []struct {
+		ctx     uint64
+		maxKVGB float64 // generous upper bound: correct answer must be below this
+		minKVGB float64 // must be above this (guards against zero/underflow)
+	}{
+		{4096, 0.6, 0.1},
+		{8192, 0.7, 0.1},
+		{32768, 1.5, 0.5},
+		{131072, 4.0, 2.0},
+	}
+
+	g := makeGGML(kv)
+	for _, tc := range contexts {
+		kvSizes, _, _ := g.GraphSize(tc.ctx, 512, 1, "f16", ml.FlashAttentionDisabled)
+		var total uint64
+		for _, s := range kvSizes {
+			total += s
+		}
+		totalGB := float64(total) / 1e9
+		if totalGB > tc.maxKVGB {
+			t.Errorf("ctx=%d: KV estimate %.3f GB exceeds max %.3f GB (SWA correction not applied?)",
+				tc.ctx, totalGB, tc.maxKVGB)
+		}
+		if totalGB < tc.minKVGB {
+			t.Errorf("ctx=%d: KV estimate %.3f GB below min %.3f GB (underflow?)",
+				tc.ctx, totalGB, tc.minKVGB)
+		}
+	}
+
+	// Regression: a model without sliding_window_pattern must be unaffected.
+	kvNoSWA := KV{
+		"general.architecture":                   "llama",
+		"tokenizer.ggml.tokens":                  &array[string]{size: 32000},
+		"llama.block_count":                      uint32(4),
+		"llama.embedding_length":                 uint32(4096),
+		"llama.attention.head_count":             uint32(32),
+		"llama.attention.head_count_kv":          uint32(8),
+		"llama.context_length":                   uint32(4096),
+		"llama.attention.layer_norm_rms_epsilon": float32(1e-5),
+	}
+	gNoSWA := makeGGML(kvNoSWA)
+	kvSizesNoSWA, _, _ := gNoSWA.GraphSize(4096, 512, 1, "f16", ml.FlashAttentionDisabled)
+	for i, s := range kvSizesNoSWA {
+		if s == 0 {
+			t.Errorf("non-SWA model: layer %d KV size is 0, expected non-zero", i)
 		}
 	}
 }
