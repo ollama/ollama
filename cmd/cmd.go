@@ -795,7 +795,10 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	opts.WordWrap = !nowrap
+	// Word wrapping emits ANSI cursor-movement escape sequences, so only enable
+	// it when stdout is an interactive terminal. When stdout is redirected to a
+	// file or pipe the escapes would otherwise be written verbatim into the output.
+	opts.WordWrap = !nowrap && term.IsTerminal(int(os.Stdout.Fd()))
 
 	// Fill out the rest of the options based on information about the
 	// model.
