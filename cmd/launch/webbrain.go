@@ -50,14 +50,7 @@ func webBrainOllamaBaseURL() string {
 	clone := *u
 	clone.RawQuery = ""
 	clone.Fragment = ""
-
-	path := strings.TrimRight(clone.Path, "/")
-	if path == "" {
-		path = "/v1"
-	} else if !strings.HasSuffix(path, "/v1") {
-		path += "/v1"
-	}
-	clone.Path = path
+	clone.Path = strings.TrimRight(clone.Path, "/") + "/v1"
 	return clone.String()
 }
 

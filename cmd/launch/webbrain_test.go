@@ -46,6 +46,20 @@ func TestWebBrainHandoffURLUsesDefaultContextWindow(t *testing.T) {
 	}
 }
 
+func TestWebBrainHandoffURLAppendsV1ToProxyPrefixedHost(t *testing.T) {
+	t.Setenv("OLLAMA_HOST", "https://proxy.example/ollama/v1")
+
+	got := webBrainHandoffURL("qwen3:8b", []LaunchModel{{Name: "qwen3:8b"}})
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("failed to parse handoff URL: %v", err)
+	}
+
+	if u.Query().Get("baseUrl") != "https://proxy.example:443/ollama/v1/v1" {
+		t.Fatalf("baseUrl = %q, want proxy prefix plus /v1", u.Query().Get("baseUrl"))
+	}
+}
+
 func TestWebBrainRunRejectsExtraArgs(t *testing.T) {
 	err := (&WebBrain{}).Run("llama3.2", nil, []string{"--help"})
 	if err == nil {
