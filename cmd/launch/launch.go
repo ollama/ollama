@@ -290,6 +290,7 @@ Supported integrations:
   codex-app       Codex App (aliases: codex-desktop, codex-gui)
   hermes          Hermes Agent
   openclaw        OpenClaw (aliases: clawdbot, moltbot)
+  webbrain        WebBrain
   opencode        OpenCode
   codex           Codex
   hermes-desktop  Hermes Desktop
@@ -310,6 +311,7 @@ Examples:
   ollama launch codex-app
   ollama launch codex-app --restore
   ollama launch hermes
+  ollama launch webbrain --model <model>
   ollama launch hermes-desktop
   ollama launch droid --config (does not auto-launch)
   ollama launch codex --restore
