@@ -68,7 +68,10 @@ const CodeBlock = React.memo(
     }, [codeText, language]);
 
     return (
-      <div className="relative bg-neutral-100 dark:bg-neutral-800 rounded-2xl overflow-hidden my-6">
+      <div
+        dir="ltr"
+        className="relative bg-neutral-100 dark:bg-neutral-800 rounded-2xl overflow-hidden my-6"
+      >
         <div className="flex select-none">
           {language && (
             <div className="text-[13px] text-neutral-500 dark:text-neutral-400 font-mono px-4 py-2">
@@ -143,6 +146,7 @@ const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
 
     return (
       <div
+        dir="auto"
         className={`
           max-w-full
           ${size === "sm" ? "prose-sm" : size === "lg" ? "prose-lg" : ""}

@@ -48,14 +48,18 @@ func (p *Qwen3VLParser) PreservedTokens() []string {
 	}
 }
 
-func (p *Qwen3VLParser) setInitialState(lastMessage *api.Message) {
-	prefill := lastMessage != nil && lastMessage.Role == "assistant"
+func (p *Qwen3VLParser) setInitialState(lastMessage *api.Message, thinkValue *api.ThinkValue) {
 	if !p.HasThinkingSupport() {
 		p.state = CollectingContent
 		return
 	}
 
-	if prefill && lastMessage.Content != "" {
+	// Thinking is enabled by default when the caller doesn't specify a value,
+	// otherwise honor the requested think value (think=false disables it).
+	thinkingEnabled := thinkValue == nil || thinkValue.Bool()
+
+	prefill := lastMessage != nil && lastMessage.Role == "assistant" && lastMessage.Content != ""
+	if !thinkingEnabled || prefill {
 		p.state = CollectingContent
 		return
 	}
@@ -66,7 +70,7 @@ func (p *Qwen3VLParser) setInitialState(lastMessage *api.Message) {
 func (p *Qwen3VLParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
 	p.callIndex = 0
-	p.setInitialState(lastMessage)
+	p.setInitialState(lastMessage, thinkValue)
 	return tools
 }
 
