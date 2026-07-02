@@ -133,6 +133,30 @@ func TestBuildModelListSummaryReadsGGUFChatTemplateCapabilities(t *testing.T) {
 	}
 }
 
+func TestModelListSummaryMatchesModelCapabilitiesForPureGGUF(t *testing.T) {
+	setTestHome(t, t.TempDir())
+
+	modelPath, digest := createBinFile(t, map[string]any{
+		"general.architecture":     "llama",
+		"llama.vision.block_count": uint32(1),
+		"tokenizer.chat_template":  "{% if tools %}{{ tools }}{% endif %}<think>{{ content }}</think>",
+	}, nil)
+	layer, err := manifest.NewLayerFromLayer(digest, "application/vnd.ollama.image.model", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	summary, err := buildModelListSummary(model.ParseName("list-pure-gguf-capabilities"), &manifest.Manifest{Layers: []manifest.Layer{layer}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	caps := (&Model{ModelPath: modelPath}).Capabilities()
+	if !sameCapabilities(summary.Capabilities, caps) {
+		t.Fatalf("list capabilities = %v, model capabilities = %v", summary.Capabilities, caps)
+	}
+}
+
 func TestModelListCacheRefreshUpdatesEntry(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())
@@ -251,6 +275,19 @@ func TestModelListCacheSyncsManifestChanges(t *testing.T) {
 	if slices.Contains(names, "list-sync-a:latest") || !slices.Contains(names, "list-sync-b:latest") {
 		t.Fatalf("names after delete = %v, want only list-sync-b", names)
 	}
+}
+
+func sameCapabilities(a, b []model.Capability) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for _, capability := range a {
+		if !slices.Contains(b, capability) {
+			return false
+		}
+	}
+	return true
 }
 
 func TestModelListCacheSyncDropsStaleEntryOnRefreshFailure(t *testing.T) {

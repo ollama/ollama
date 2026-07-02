@@ -25,10 +25,10 @@ import (
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/manifest"
+	modelcapabilities "github.com/ollama/ollama/model/capabilities"
 	"github.com/ollama/ollama/model/parsers"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/template"
-	"github.com/ollama/ollama/thinking"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 	"github.com/ollama/ollama/x/transfer"
@@ -90,10 +90,7 @@ func (m *Model) isGGUF() bool {
 }
 
 func appendCapability(capabilities []model.Capability, capability model.Capability) []model.Capability {
-	if capability == "" || slices.Contains(capabilities, capability) {
-		return capabilities
-	}
-	return append(capabilities, capability)
+	return modelcapabilities.Append(capabilities, capability)
 }
 
 type templateCapabilitySource int
@@ -155,136 +152,37 @@ func (m *Model) ggufCapabilities(capabilities []model.Capability, source templat
 	switch source {
 	case templateCapabilitySelected:
 		if !usesOllamaRenderedChat(m) {
-			capabilities = chatTemplateCapabilities(capabilities, f.KeyValue(ggufKeyTokenizerChatTemplate).String())
+			capabilities = modelcapabilities.AppendChatTemplate(capabilities, f.KeyValue(ggufKeyTokenizerChatTemplate).String())
 		}
 	case templateCapabilityChat:
-		capabilities = chatTemplateCapabilities(capabilities, f.KeyValue(ggufKeyTokenizerChatTemplate).String())
+		capabilities = modelcapabilities.AppendChatTemplate(capabilities, f.KeyValue(ggufKeyTokenizerChatTemplate).String())
 	}
 	capabilities = appendGGUFMetadataCapabilities(capabilities, ggufArchitectureMetadataFromFile(f))
 
 	return capabilities, modelArch
 }
 
-func chatTemplateCapabilities(capabilities []model.Capability, chatTemplate string) []model.Capability {
-	if chatTemplate == "" {
-		return capabilities
-	}
-
-	if chatTemplateHasToolSupport(chatTemplate) {
-		capabilities = appendCapability(capabilities, model.CapabilityTools)
-	}
-	if chatTemplateHasThinkingSupport(chatTemplate) {
-		capabilities = appendCapability(capabilities, model.CapabilityThinking)
-	}
-
-	return capabilities
-}
-
-func chatTemplateHasToolSupport(chatTemplate string) bool {
-	return strings.Contains(chatTemplate, "tools") || strings.Contains(chatTemplate, "tool_call")
-}
-
-func chatTemplateHasToolRoundTrip(chatTemplate string) bool {
-	if !chatTemplateHasToolSupport(chatTemplate) {
-		return false
-	}
-
-	toolCalls := strings.Contains(chatTemplate, "tool_calls") || strings.Contains(chatTemplate, "assistant_tool_call")
-	return toolCalls && (strings.Contains(chatTemplate, "tool_response") ||
-		strings.Contains(chatTemplate, "tool_results") ||
-		strings.Contains(chatTemplate, "role'] == 'tool'") ||
-		strings.Contains(chatTemplate, `role'] == "tool"`) ||
-		strings.Contains(chatTemplate, `role"] == 'tool'`) ||
-		strings.Contains(chatTemplate, `role"] == "tool"`) ||
-		strings.Contains(chatTemplate, `message.role == 'tool'`) ||
-		strings.Contains(chatTemplate, `message.role == "tool"`) ||
-		strings.Contains(chatTemplate, "ipython"))
-}
-
-func chatTemplateHasThinkingSupport(chatTemplate string) bool {
-	if strings.Contains(chatTemplate, "<think>") && strings.Contains(chatTemplate, "</think>") {
-		return true
-	}
-
-	// Some Qwen/DeepSeek templates strip prior reasoning by splitting assistant
-	// content at </think>; llama.cpp can still extract reasoning from them.
-	return (strings.Contains(chatTemplate, "content.split('</think>')") ||
-		strings.Contains(chatTemplate, `content.split("</think>")`)) &&
-		!strings.Contains(chatTemplate, "reasoning_content") &&
-		!strings.Contains(chatTemplate, "<SPECIAL_12>")
-}
-
 func goTemplateCapabilities(t *template.Template) []model.Capability {
-	if t == nil {
-		return nil
-	}
-
-	v, err := t.Vars()
+	capabilities, err := modelcapabilities.FromGoTemplate(t)
 	if err != nil {
 		slog.Warn("model template contains errors", "error", err)
 		return nil
 	}
-
-	var capabilities []model.Capability
-	if slices.Contains(v, "tools") {
-		capabilities = appendCapability(capabilities, model.CapabilityTools)
-	}
-	if slices.Contains(v, "suffix") {
-		capabilities = appendCapability(capabilities, model.CapabilityInsert)
-	}
-
-	openingTag, closingTag := thinking.InferTags(t.Template)
-	if openingTag != "" && closingTag != "" {
-		capabilities = appendCapability(capabilities, model.CapabilityThinking)
-	}
-
 	return capabilities
 }
 
-func goTemplateHasToolRoundTrip(t *template.Template) bool {
-	if t == nil {
-		return false
-	}
-
-	v, err := t.Vars()
-	if err != nil || !slices.Contains(v, "tools") || !slices.Contains(v, "toolcalls") {
-		return false
-	}
-
-	raw := t.String()
-	return strings.Contains(raw, `eq .Role "tool"`) ||
-		strings.Contains(raw, "tool_response") ||
-		strings.Contains(raw, "TOOL_RESULTS")
-}
-
-func hasMoreCapabilities(candidate, current []model.Capability) bool {
-	return len(candidate) > len(current)
-}
-
-func sameCapabilities(candidate, current []model.Capability) bool {
-	if len(candidate) != len(current) {
-		return false
-	}
-	for _, c := range candidate {
-		if !slices.Contains(current, c) {
-			return false
-		}
-	}
-	return true
-}
-
 func shouldPreferChatTemplate(chatTemplate string, chatTemplateCaps []model.Capability, goTemplate *template.Template, goTemplateCaps []model.Capability) bool {
-	if hasMoreCapabilities(chatTemplateCaps, goTemplateCaps) {
-		return !goTemplateHasToolRoundTrip(goTemplate) || chatTemplateHasToolRoundTrip(chatTemplate)
+	if modelcapabilities.HasMore(chatTemplateCaps, goTemplateCaps) {
+		return !modelcapabilities.GoTemplateHasToolRoundTrip(goTemplate) || modelcapabilities.ChatTemplateHasToolRoundTrip(chatTemplate)
 	}
 
-	if !sameCapabilities(chatTemplateCaps, goTemplateCaps) ||
+	if !modelcapabilities.Same(chatTemplateCaps, goTemplateCaps) ||
 		!slices.Contains(chatTemplateCaps, model.CapabilityTools) ||
 		!slices.Contains(goTemplateCaps, model.CapabilityTools) {
 		return false
 	}
 
-	return chatTemplateHasToolRoundTrip(chatTemplate) && !goTemplateHasToolRoundTrip(goTemplate)
+	return modelcapabilities.ChatTemplateHasToolRoundTrip(chatTemplate) && !modelcapabilities.GoTemplateHasToolRoundTrip(goTemplate)
 }
 
 func goTemplateEnvSet() bool {
@@ -419,14 +317,7 @@ func (m *Model) parserCapabilities(capabilities []model.Capability) []model.Capa
 		return capabilities
 	}
 
-	if builtinParser.HasToolSupport() {
-		capabilities = appendCapability(capabilities, model.CapabilityTools)
-	}
-	if builtinParser.HasThinkingSupport() {
-		capabilities = appendCapability(capabilities, model.CapabilityThinking)
-	}
-
-	return capabilities
+	return modelcapabilities.AppendAll(capabilities, modelcapabilities.FromParser(builtinParser)...)
 }
 
 func (m *Model) modelFamilyCapabilities(capabilities []model.Capability) []model.Capability {
@@ -740,7 +631,7 @@ func GetModel(name string) (*Model, error) {
 		}
 	}
 
-	ggufCaps := chatTemplateCapabilities(nil, ggufChatTemplate)
+	ggufCaps := modelcapabilities.FromChatTemplate(ggufChatTemplate)
 	goCaps := goTemplateCapabilities(m.Template)
 	usesHarmony := m.Template != nil && shouldUseHarmony(m)
 	if !goTemplateEnvSet() && m.HasGoTemplate && ggufChatTemplate != "" && m.Config.Renderer == "" && m.Config.Parser == "" && !usesHarmony && shouldPreferChatTemplate(ggufChatTemplate, ggufCaps, m.Template, goCaps) {

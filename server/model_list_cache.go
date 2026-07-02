@@ -14,9 +14,9 @@ import (
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/manifest"
+	modelcapabilities "github.com/ollama/ollama/model/capabilities"
 	"github.com/ollama/ollama/model/parsers"
 	ollamatemplate "github.com/ollama/ollama/template"
-	"github.com/ollama/ollama/thinking"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -362,22 +362,15 @@ func buildModelListSummary(name model.Name, mf *manifest.Manifest) (modelListSum
 
 	builtinParser := parsers.ParserForName(cfg.Parser)
 	if tmpl != nil {
-		vars, err := tmpl.Vars()
+		templateCapabilities, err := modelcapabilities.FromGoTemplate(tmpl)
 		if err != nil {
 			slog.Warn("model template contains errors", "model", name.String(), "error", err)
 		}
-		if slices.Contains(vars, "tools") || (builtinParser != nil && builtinParser.HasToolSupport()) {
-			summary.Capabilities = appendModelListCapability(summary.Capabilities, model.CapabilityTools)
-		}
-		if slices.Contains(vars, "suffix") {
-			summary.Capabilities = appendModelListCapability(summary.Capabilities, model.CapabilityInsert)
-		}
+		summary.Capabilities = appendModelListCapabilities(summary.Capabilities, templateCapabilities...)
+		summary.Capabilities = appendModelListCapabilities(summary.Capabilities, modelcapabilities.FromParser(builtinParser)...)
 
-		openingTag, closingTag := thinking.InferTags(tmpl.Template)
-		hasTags := openingTag != "" && closingTag != ""
 		isGptoss := slices.Contains([]string{"gptoss", "gpt-oss"}, cfg.ModelFamily)
-		if !slices.Contains(summary.Capabilities, model.CapabilityThinking) &&
-			(hasTags || isGptoss || (builtinParser != nil && builtinParser.HasThinkingSupport())) {
+		if !slices.Contains(summary.Capabilities, model.CapabilityThinking) && isGptoss {
 			summary.Capabilities = appendModelListCapability(summary.Capabilities, model.CapabilityThinking)
 		}
 	}
@@ -476,7 +469,7 @@ func readModelListGGUF(path string) (modelListGGUF, error) {
 		case ggufKeyGeneralFileType:
 			info.FileType = ggml.FileType(ggufMetadataInt(kv.Value)).String()
 		case ggufKeyTokenizerChatTemplate:
-			info.Capabilities = chatTemplateCapabilities(info.Capabilities, kv.String())
+			info.Capabilities = modelcapabilities.AppendChatTemplate(info.Capabilities, kv.String())
 		default:
 			arch, suffix, _ := cutGGUFArchitectureKey(kv.Key)
 			value := byArchitecture[arch]
@@ -505,10 +498,7 @@ func keepModelListGGUFKey(key string) bool {
 }
 
 func appendModelListCapabilities(capabilities []model.Capability, values ...model.Capability) []model.Capability {
-	for _, capability := range values {
-		capabilities = appendCapability(capabilities, capability)
-	}
-	return capabilities
+	return modelcapabilities.AppendAll(capabilities, values...)
 }
 
 func appendModelListCapability(capabilities []model.Capability, capability model.Capability) []model.Capability {
