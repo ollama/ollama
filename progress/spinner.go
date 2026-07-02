@@ -3,11 +3,13 @@ package progress
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
 
 type Spinner struct {
+	mu           sync.Mutex
 	message      atomic.Value
 	messageWidth int
 
@@ -15,9 +17,10 @@ type Spinner struct {
 
 	value int
 
-	ticker  *time.Ticker
-	started time.Time
-	stopped time.Time
+	done     chan struct{}
+	stopOnce sync.Once
+	started  time.Time
+	stopped  time.Time
 }
 
 func NewSpinner(message string) *Spinner {
@@ -26,6 +29,7 @@ func NewSpinner(message string) *Spinner {
 			"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
 		},
 		started: time.Now(),
+		done:    make(chan struct{}),
 	}
 	s.SetMessage(message)
 	go s.start()
@@ -53,8 +57,12 @@ func (s *Spinner) String() string {
 		sb.WriteString(" ")
 	}
 
-	if s.stopped.IsZero() {
-		spinner := s.parts[s.value]
+	s.mu.Lock()
+	value := s.value
+	stopped := !s.stopped.IsZero()
+	s.mu.Unlock()
+	if !stopped {
+		spinner := s.parts[value]
 		sb.WriteString(spinner)
 		sb.WriteString(" ")
 	}
@@ -63,17 +71,38 @@ func (s *Spinner) String() string {
 }
 
 func (s *Spinner) start() {
-	s.ticker = time.NewTicker(100 * time.Millisecond)
-	for range s.ticker.C {
-		s.value = (s.value + 1) % len(s.parts)
-		if !s.stopped.IsZero() {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	s.mu.Lock()
+	if !s.stopped.IsZero() {
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Unlock()
+	for {
+		select {
+		case <-s.done:
 			return
+		case <-ticker.C:
+			s.mu.Lock()
+			if !s.stopped.IsZero() {
+				s.mu.Unlock()
+				return
+			}
+			s.value = (s.value + 1) % len(s.parts)
+			s.mu.Unlock()
 		}
 	}
 }
 
 func (s *Spinner) Stop() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.stopped.IsZero() {
 		s.stopped = time.Now()
 	}
+	s.stopOnce.Do(func() {
+		close(s.done)
+	})
 }

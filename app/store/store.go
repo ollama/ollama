@@ -107,6 +107,7 @@ type Chat struct {
 	ID           string          `json:"id"`
 	Messages     []Message       `json:"messages"`
 	Title        string          `json:"title"`
+	Model        string          `json:"model,omitempty"`
 	CreatedAt    time.Time       `json:"created_at"`
 	BrowserState json.RawMessage `json:"browser_state,omitempty" ts_type:"BrowserStateData"`
 }
@@ -192,7 +193,7 @@ var defaultDBPath = func() string {
 	default:
 		return filepath.Join(os.Getenv("HOME"), ".ollama", "db.sqlite")
 	}
-}()
+}
 
 // legacyConfigPath is the path to the old config.json file
 var legacyConfigPath = func() string {
@@ -229,7 +230,7 @@ func (s *Store) ensureDB() error {
 
 	dbPath := s.DBPath
 	if dbPath == "" {
-		dbPath = defaultDBPath
+		dbPath = defaultDBPath()
 	}
 
 	// Ensure directory exists

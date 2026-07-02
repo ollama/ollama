@@ -302,6 +302,36 @@ func TestLoad(t *testing.T) {
 	})
 }
 
+func TestAgentSignInPromptSeen(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	if AgentSignInPromptSeen() {
+		t.Fatal("new config should not have agent sign-in onboarding marked seen")
+	}
+
+	if err := SetAgentSignInPromptSeen(true); err != nil {
+		t.Fatal(err)
+	}
+	if !AgentSignInPromptSeen() {
+		t.Fatal("agent sign-in onboarding seen state was not saved")
+	}
+
+	path, err := configPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"onboarding"`) ||
+		!strings.Contains(string(data), `"agent"`) ||
+		!strings.Contains(string(data), `"sign_in_prompt_seen": true`) {
+		t.Fatalf("config does not include onboarding state: %s", data)
+	}
+}
+
 func TestMigrateConfig(t *testing.T) {
 	t.Run("migrates legacy file to new location", func(t *testing.T) {
 		tmpDir := t.TempDir()

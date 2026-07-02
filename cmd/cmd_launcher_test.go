@@ -2,6 +2,9 @@ package cmd
 
 import (
 	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -9,12 +12,14 @@ import (
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/launch"
 	"github.com/ollama/ollama/cmd/tui"
+	"github.com/ollama/ollama/envconfig"
 )
 
 func setCmdTestHome(t *testing.T, dir string) {
 	t.Helper()
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
+	envconfig.ReloadServerConfig()
 }
 
 func unexpectedRunModelResolution(t *testing.T) func(context.Context, launch.RunModelRequest) (string, error) {
@@ -38,6 +43,277 @@ func unexpectedModelLaunch(t *testing.T) func(*cobra.Command, string) error {
 	return func(cmd *cobra.Command, model string) error {
 		t.Fatalf("did not expect chat launch: %s", model)
 		return nil
+	}
+}
+
+func TestRunAgentModelPickerUsesSavedModelWhenAvailable(t *testing.T) {
+	setCmdTestHome(t, t.TempDir())
+	if err := config.SetAgentSignInPromptSeen(true); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotReq launch.RunModelRequest
+	var launched string
+	prefetchedAccount := &launch.AccountState{}
+	accountUpdates := func(context.Context) <-chan *launch.AccountState { return nil }
+	deps := agentModelPickerDeps{
+		resolveRunModel: func(ctx context.Context, req launch.RunModelRequest) (string, error) {
+			gotReq = req
+			return "qwen3:8b", nil
+		},
+		runModel: func(cmd *cobra.Command, model string) error {
+			launched = model
+			return nil
+		},
+		accountState: func() *launch.AccountState {
+			return prefetchedAccount
+		},
+		accountStateUpdates: accountUpdates,
+	}
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	if err := runAgentModelPickerWithDeps(cmd, deps); err != nil {
+		t.Fatalf("runAgentModelPickerWithDeps error: %v", err)
+	}
+
+	if gotReq.ForcePicker {
+		t.Fatal("expected root agent flow to reuse a saved model when available")
+	}
+	if gotReq.AccountState != prefetchedAccount {
+		t.Fatal("expected prefetched account state to be passed to model picker")
+	}
+	if gotReq.AccountStateProvider == nil || gotReq.AccountStateUpdates == nil {
+		t.Fatal("expected account state callbacks to be passed to model picker")
+	}
+	if launched != "qwen3:8b" {
+		t.Fatalf("launched model = %q, want qwen3:8b", launched)
+	}
+}
+
+func TestRunAgentModelPickerFallsBackToPickerWhenPlanVerificationFails(t *testing.T) {
+	setCmdTestHome(t, t.TempDir())
+
+	var requests []launch.RunModelRequest
+	var launched string
+	deps := agentModelPickerDeps{
+		resolveRunModel: func(ctx context.Context, req launch.RunModelRequest) (string, error) {
+			requests = append(requests, req)
+			if len(requests) == 1 {
+				return "", launch.ErrPlanVerificationUnavailable
+			}
+			return "llama3.2", nil
+		},
+		runModel: func(cmd *cobra.Command, model string) error {
+			launched = model
+			return nil
+		},
+		accountState: func() *launch.AccountState {
+			return &launch.AccountState{}
+		},
+	}
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	if err := runAgentModelPickerWithDeps(cmd, deps); err != nil {
+		t.Fatalf("runAgentModelPickerWithDeps error: %v", err)
+	}
+
+	if len(requests) != 2 {
+		t.Fatalf("resolve calls = %d, want 2", len(requests))
+	}
+	if requests[0].ForcePicker {
+		t.Fatal("first request should try the saved model path")
+	}
+	if !requests[1].ForcePicker {
+		t.Fatal("second request should force the model picker")
+	}
+	if requests[1].AccountStateProvider != nil {
+		t.Fatal("retry should not keep using the stale account-state provider")
+	}
+	if requests[1].AccountState == nil {
+		t.Fatal("retry should pass an explicit unknown account state")
+	}
+	if launched != "llama3.2" {
+		t.Fatalf("launched model = %q, want llama3.2", launched)
+	}
+}
+
+func TestRunAgentModelPickerReturnsPlanVerificationErrorWhenPickerRetryFails(t *testing.T) {
+	setCmdTestHome(t, t.TempDir())
+
+	var calls int
+	deps := agentModelPickerDeps{
+		resolveRunModel: func(ctx context.Context, req launch.RunModelRequest) (string, error) {
+			calls++
+			return "", launch.ErrPlanVerificationUnavailable
+		},
+		runModel: unexpectedModelLaunch(t),
+	}
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	err := runAgentModelPickerWithDeps(cmd, deps)
+	if !errors.Is(err, launch.ErrPlanVerificationUnavailable) {
+		t.Fatalf("error = %v, want ErrPlanVerificationUnavailable", err)
+	}
+	if calls != 2 {
+		t.Fatalf("resolve calls = %d, want 2", calls)
+	}
+}
+
+func TestMaybeRunAgentOnboarding(t *testing.T) {
+	t.Run("prompts once and saves seen state", func(t *testing.T) {
+		setCmdTestHome(t, t.TempDir())
+		oldPrompt := agentOnboardingPrompt
+		oldSignedIn := agentOnboardingSignedInStatus
+		t.Cleanup(func() {
+			agentOnboardingPrompt = oldPrompt
+			agentOnboardingSignedInStatus = oldSignedIn
+		})
+
+		var prompts int
+		agentOnboardingPrompt = func() (bool, error) {
+			prompts++
+			return false, nil
+		}
+		agentOnboardingSignedInStatus = func(context.Context) (bool, bool) {
+			return false, true
+		}
+
+		signIn, err := maybeRunAgentOnboarding(context.Background())
+		if err != nil {
+			t.Fatalf("maybeRunAgentOnboarding error: %v", err)
+		}
+		if signIn {
+			t.Fatal("signIn = true, want false")
+		}
+		if prompts != 1 {
+			t.Fatalf("prompts = %d, want 1", prompts)
+		}
+		if !config.AgentSignInPromptSeen() {
+			t.Fatal("expected onboarding state to be saved")
+		}
+
+		signIn, err = maybeRunAgentOnboarding(context.Background())
+		if err != nil {
+			t.Fatalf("second maybeRunAgentOnboarding error: %v", err)
+		}
+		if signIn {
+			t.Fatal("second signIn = true, want false")
+		}
+		if prompts != 1 {
+			t.Fatalf("prompt should not run again, prompts = %d", prompts)
+		}
+	})
+
+	t.Run("skips prompt when already signed in", func(t *testing.T) {
+		setCmdTestHome(t, t.TempDir())
+		oldPrompt := agentOnboardingPrompt
+		oldSignedIn := agentOnboardingSignedInStatus
+		t.Cleanup(func() {
+			agentOnboardingPrompt = oldPrompt
+			agentOnboardingSignedInStatus = oldSignedIn
+		})
+
+		var prompts int
+		agentOnboardingPrompt = func() (bool, error) {
+			prompts++
+			return false, nil
+		}
+		agentOnboardingSignedInStatus = func(context.Context) (bool, bool) {
+			return true, true
+		}
+
+		signIn, err := maybeRunAgentOnboarding(context.Background())
+		if err != nil {
+			t.Fatalf("maybeRunAgentOnboarding error: %v", err)
+		}
+		if signIn {
+			t.Fatal("signIn = true, want false")
+		}
+		if prompts != 0 {
+			t.Fatalf("prompts = %d, want 0", prompts)
+		}
+		if !config.AgentSignInPromptSeen() {
+			t.Fatal("expected onboarding state to be saved")
+		}
+	})
+
+	t.Run("skips prompt when signed-in check is unknown", func(t *testing.T) {
+		setCmdTestHome(t, t.TempDir())
+		oldPrompt := agentOnboardingPrompt
+		oldSignedIn := agentOnboardingSignedInStatus
+		t.Cleanup(func() {
+			agentOnboardingPrompt = oldPrompt
+			agentOnboardingSignedInStatus = oldSignedIn
+		})
+
+		var prompts int
+		agentOnboardingPrompt = func() (bool, error) {
+			prompts++
+			return false, nil
+		}
+		agentOnboardingSignedInStatus = func(context.Context) (bool, bool) {
+			return false, false
+		}
+
+		signIn, err := maybeRunAgentOnboarding(context.Background())
+		if err != nil {
+			t.Fatalf("maybeRunAgentOnboarding error: %v", err)
+		}
+		if signIn {
+			t.Fatal("signIn = true, want false")
+		}
+		if prompts != 0 {
+			t.Fatalf("prompts = %d, want 0", prompts)
+		}
+		if config.AgentSignInPromptSeen() {
+			t.Fatal("unknown auth state should not save onboarding state")
+		}
+	})
+
+	t.Run("cancel does not save seen state", func(t *testing.T) {
+		setCmdTestHome(t, t.TempDir())
+		oldPrompt := agentOnboardingPrompt
+		oldSignedIn := agentOnboardingSignedInStatus
+		t.Cleanup(func() {
+			agentOnboardingPrompt = oldPrompt
+			agentOnboardingSignedInStatus = oldSignedIn
+		})
+
+		agentOnboardingPrompt = func() (bool, error) {
+			return false, tui.ErrCancelled
+		}
+		agentOnboardingSignedInStatus = func(context.Context) (bool, bool) {
+			return false, true
+		}
+
+		_, err := maybeRunAgentOnboarding(context.Background())
+		if !errors.Is(err, launch.ErrCancelled) {
+			t.Fatalf("error = %v, want launch.ErrCancelled", err)
+		}
+		if config.AgentSignInPromptSeen() {
+			t.Fatal("cancel should not save onboarding state")
+		}
+	})
+}
+
+func TestRunAgentOnboardingSignInEmptyWhoamiDoesNotSilentlySucceed(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/me" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	t.Setenv("OLLAMA_HOST", server.URL)
+
+	err := runAgentOnboardingSignIn(context.Background())
+	if !errors.Is(err, errAgentOnboardingNotSignedIn) {
+		t.Fatalf("error = %v, want errAgentOnboardingNotSignedIn", err)
 	}
 }
 

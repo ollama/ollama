@@ -48,8 +48,8 @@ type menuItem struct {
 const pinnedIntegrationCount = 4
 
 var runModelMenuItem = menuItem{
-	title:       "Chat with a model",
-	description: "Start an interactive chat with a model",
+	title:       "Chat and Code",
+	description: "Ollama's built-in agent to chat, code, and do work",
 	isRunModel:  true,
 }
 

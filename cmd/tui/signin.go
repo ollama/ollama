@@ -194,7 +194,7 @@ func renderSignIn(modelName, signInURL string, spinner, width int) string {
 
 	var s strings.Builder
 
-	fmt.Fprintf(&s, "To use %s, please sign in.\n\n", selectorSelectedItemStyle.Render(modelName))
+	fmt.Fprintf(&s, "To use %s, please sign in.\n\n", modelName)
 
 	s.WriteString("Navigate to:\n")
 	s.WriteString(urlWrap.Render(urlColor.Render(signInURL)))

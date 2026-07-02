@@ -174,6 +174,100 @@ func TestMigrationV15ToV16LastHomeViewDefaultsToLaunch(t *testing.T) {
 	}
 }
 
+func TestMigrationV16ToV17AddsAgentSchema(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	db, err := newDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.conn.Exec(`
+		DROP INDEX IF EXISTS idx_messages_chat_id_id;
+		DROP INDEX IF EXISTS idx_messages_chat_id_archived;
+		DROP INDEX IF EXISTS idx_compactions_chat_id;
+		DROP TABLE IF EXISTS compactions;
+		ALTER TABLE chats DROP COLUMN model_name;
+		ALTER TABLE chats DROP COLUMN source;
+		ALTER TABLE messages DROP COLUMN images;
+		ALTER TABLE messages DROP COLUMN tool_name;
+		ALTER TABLE messages DROP COLUMN tool_call_id;
+		ALTER TABLE messages DROP COLUMN archived;
+		ALTER TABLE tool_calls DROP COLUMN tool_call_id;
+		UPDATE settings SET schema_version = 16;
+	`); err != nil {
+		t.Fatalf("failed to seed v16 schema: %v", err)
+	}
+
+	if err := db.migrate(); err != nil {
+		t.Fatalf("migration from v16 to v17 failed: %v", err)
+	}
+
+	version, err := db.getSchemaVersion()
+	if err != nil {
+		t.Fatalf("failed to get schema version: %v", err)
+	}
+	if version != 17 {
+		t.Fatalf("expected schema version 17, got %d", version)
+	}
+
+	columns := columnMap(db)
+	for _, want := range []struct {
+		table  string
+		column string
+	}{
+		{"chats", "model_name TEXT NOT NULL DEFAULT ''"},
+		{"chats", "source TEXT NOT NULL DEFAULT 'app'"},
+		{"messages", "images TEXT NOT NULL DEFAULT '[]'"},
+		{"messages", "archived BOOLEAN NOT NULL DEFAULT 0"},
+		{"tool_calls", "tool_call_id TEXT NOT NULL DEFAULT ''"},
+	} {
+		if !containsString(columns[want.table], want.column) {
+			t.Fatalf("%s columns missing %q: %#v", want.table, want.column, columns[want.table])
+		}
+	}
+	if _, ok := columns["compactions"]; !ok {
+		t.Fatalf("compactions table was not created: %#v", columns)
+	}
+}
+
+func TestMigrationRepairsIncompleteCurrentSchema(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	db, err := newDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.conn.Exec(`
+		ALTER TABLE chats DROP COLUMN source;
+		UPDATE settings SET schema_version = 17;
+	`); err != nil {
+		t.Fatalf("failed to seed incomplete current schema: %v", err)
+	}
+
+	if err := db.migrate(); err != nil {
+		t.Fatalf("migration repair failed: %v", err)
+	}
+
+	version, err := db.getSchemaVersion()
+	if err != nil {
+		t.Fatalf("failed to get schema version: %v", err)
+	}
+	if version != currentSchemaVersion {
+		t.Fatalf("expected schema version %d, got %d", currentSchemaVersion, version)
+	}
+
+	columns := columnMap(db)
+	if !containsString(columns["chats"], "source TEXT NOT NULL DEFAULT 'app'") {
+		t.Fatalf("chats.source was not repaired: %#v", columns["chats"])
+	}
+}
+
 func TestChatDeletionWithCascade(t *testing.T) {
 	t.Run("chat deletion cascades to related messages", func(t *testing.T) {
 		tmpDir := t.TempDir()
@@ -367,6 +461,15 @@ func countRowsWithCondition(t *testing.T, db *database, table, condition string,
 		t.Fatalf("failed to count rows with condition: %v", err)
 	}
 	return count
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 // Test helpers for schema migration testing

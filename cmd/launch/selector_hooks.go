@@ -29,8 +29,9 @@ var DefaultConfirmPrompt func(prompt string, options ConfirmOptions) (bool, erro
 
 // ConfirmOptions customizes labels for confirmation prompts.
 type ConfirmOptions struct {
-	YesLabel string
-	NoLabel  string
+	YesLabel    string
+	NoLabel     string
+	PlainPrompt bool
 }
 
 // SingleSelector is a function type for single item selection.

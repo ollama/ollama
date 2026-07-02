@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"database/sql"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -17,7 +18,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path"
 	"path/filepath"
 	"runtime"
@@ -26,7 +26,6 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/containerd/console"
@@ -34,10 +33,12 @@ import (
 	"github.com/olekukonko/tablewriter"
 	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
 
+	agentstore "github.com/ollama/ollama/agent/store"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/launch"
@@ -49,13 +50,11 @@ import (
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
-	"github.com/ollama/ollama/readline"
 	"github.com/ollama/ollama/runner"
 	"github.com/ollama/ollama/server"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/types/syncmap"
 	"github.com/ollama/ollama/version"
-	xcmd "github.com/ollama/ollama/x/cmd"
 	xcreate "github.com/ollama/ollama/x/create"
 	xcreateclient "github.com/ollama/ollama/x/create/client"
 	"github.com/ollama/ollama/x/imagegen"
@@ -570,33 +569,33 @@ func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions) error {
 			}
 		}
 
-		if opts.ShowConnect {
+		if opts.ShowConnect && !isCloud {
 			p.StopAndClear()
 			remoteModel := info.RemoteModel
 			if remoteModel == "" {
 				remoteModel = opts.Model
 			}
-			if isCloud {
-				fmt.Fprintf(os.Stderr, "Connecting to '%s' on 'ollama.com' ⚡\n", remoteModel)
-			} else {
-				fmt.Fprintf(os.Stderr, "Connecting to '%s' on '%s'\n", remoteModel, info.RemoteHost)
-			}
+			fmt.Fprintf(os.Stderr, "Connecting to '%s' on '%s'\n", remoteModel, info.RemoteHost)
 		}
 
 		return nil
 	}
 
+	return preloadLocalModel(cmd.Context(), client, *opts)
+}
+
+func preloadLocalModel(ctx context.Context, client *api.Client, opts runOptions) error {
+	if client == nil {
+		return errors.New("client is required")
+	}
 	req := &api.GenerateRequest{
 		Model:     opts.Model,
 		KeepAlive: opts.KeepAlive,
 
-		// pass Think here so we fail before getting to the chat prompt if the model doesn't support it
+		// Pass Think here so unsupported thinking modes fail before the first chat request.
 		Think: opts.Think,
 	}
-
-	return client.Generate(cmd.Context(), req, func(r api.GenerateResponse) error {
-		return nil
-	})
+	return client.Generate(ctx, req, func(api.GenerateResponse) error { return nil })
 }
 
 func StopHandler(cmd *cobra.Command, args []string) error {
@@ -713,59 +712,26 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	interactive := true
 
 	opts := runOptions{
-		Model:       args[0],
-		WordWrap:    os.Getenv("TERM") == "xterm-256color",
 		Options:     map[string]any{},
 		ShowConnect: true,
 	}
 
-	format, err := cmd.Flags().GetString("format")
+	thinkExplicit, err := applyRunFlagsToOptions(cmd, &opts)
 	if err != nil {
 		return err
 	}
-	opts.Format = format
-
-	thinkFlag := cmd.Flags().Lookup("think")
-	if thinkFlag.Changed {
-		thinkStr, err := cmd.Flags().GetString("think")
-		if err != nil {
-			return err
-		}
-
-		// Handle different values for --think
-		switch thinkStr {
-		case "", "true":
-			// --think or --think=true
-			opts.Think = &api.ThinkValue{Value: true}
-		case "false":
-			opts.Think = &api.ThinkValue{Value: false}
-		case "high", "medium", "low", "max":
-			opts.Think = &api.ThinkValue{Value: thinkStr}
-		default:
-			return fmt.Errorf("invalid value for --think: %q (must be true, false, high, medium, low, or max)", thinkStr)
+	if len(args) == 0 {
+		if !opts.Resume {
+			return errors.New("model is required")
 		}
 	} else {
-		opts.Think = nil
-	}
-	hidethinking, err := cmd.Flags().GetBool("hidethinking")
-	if err != nil {
-		return err
-	}
-	opts.HideThinking = hidethinking
-
-	keepAlive, err := cmd.Flags().GetString("keepalive")
-	if err != nil {
-		return err
-	}
-	if keepAlive != "" {
-		d, err := time.ParseDuration(keepAlive)
-		if err != nil {
-			return err
-		}
-		opts.KeepAlive = &api.Duration{Duration: d}
+		opts.Model = args[0]
 	}
 
-	prompts := args[1:]
+	var prompts []string
+	if len(args) > 1 {
+		prompts = args[1:]
+	}
 	// prepend stdin to the prompt if provided
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		in, err := io.ReadAll(os.Stdin)
@@ -779,7 +745,6 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 			prompts = append([]string{stdinContent}, prompts...)
 		}
 		opts.ShowConnect = false
-		opts.WordWrap = false
 		interactive = false
 	}
 	opts.Prompt = strings.Join(prompts, " ")
@@ -790,12 +755,13 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	if !term.IsTerminal(int(os.Stdout.Fd())) {
 		interactive = false
 	}
-
-	nowrap, err := cmd.Flags().GetBool("nowordwrap")
-	if err != nil {
-		return err
+	if opts.Resume && opts.Model == "" {
+		modelName, err := resumeModelFromLatestChat(cmd.Context())
+		if err != nil {
+			return err
+		}
+		opts.Model = modelName
 	}
-	opts.WordWrap = !nowrap
 
 	// Fill out the rest of the options based on information about the
 	// model.
@@ -804,7 +770,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	name := args[0]
+	name := opts.Model
 	requestedCloud := modelref.HasExplicitCloudSource(name)
 
 	info, err := func() (*api.ShowResponse, error) {
@@ -831,26 +797,12 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 	ensureCloudStub(cmd.Context(), client, name)
 
-	opts.Think, err = inferThinkingOption(&info.Capabilities, &opts, thinkFlag.Changed)
+	opts.Think, err = inferThinkingOption(&info.Capabilities, &opts, thinkExplicit)
 	if err != nil {
 		return err
 	}
 
-	audioCapable := slices.Contains(info.Capabilities, model.CapabilityAudio)
-	opts.MultiModal = slices.Contains(info.Capabilities, model.CapabilityVision) || audioCapable
-
-	// TODO: remove the projector info and vision info checks below,
-	// these are left in for backwards compatibility with older servers
-	// that don't have the capabilities field in the model info
-	if len(info.ProjectorInfo) != 0 {
-		opts.MultiModal = true
-	}
-	for k := range info.ModelInfo {
-		if strings.Contains(k, ".vision.") {
-			opts.MultiModal = true
-			break
-		}
-	}
+	applyMultiModalCompat(&opts, info)
 
 	applyShowResponseToRunOptions(&opts, info)
 
@@ -885,12 +837,33 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return imagegen.RunCLI(cmd, name, opts.Prompt, interactive, opts.KeepAlive)
 	}
 
-	// Check for experimental flag
-	isExperimental, _ := cmd.Flags().GetBool("experimental")
-	yoloMode, _ := cmd.Flags().GetBool("experimental-yolo")
-	enableWebsearch, _ := cmd.Flags().GetBool("experimental-websearch")
-
 	if interactive {
+		if info.RemoteHost != "" || requestedCloud {
+			if err := loadOrUnloadModel(cmd, &opts); err != nil {
+				var sErr api.AuthorizationError
+				if errors.As(err, &sErr) && sErr.StatusCode == http.StatusUnauthorized {
+					fmt.Printf("You need to be signed in to Ollama to run Cloud models.\n\n")
+
+					if sErr.SigninURL != "" {
+						fmt.Printf(ConnectInstructions, sErr.SigninURL)
+					}
+					return nil
+				}
+				return err
+			}
+		}
+
+		contextWindowTokens := contextWindowTokensForRun(cmd.Context(), client, opts.Model, opts.ContextWindowTokens)
+
+		agentOpts := agentOptionsFromRunOptions(opts)
+		agentOpts.ContextWindowTokens = contextWindowTokens
+		if err := config.SetLastModel(opts.Model); err != nil {
+			return err
+		}
+		return GenerateAgentTUI(cmd, agentOpts)
+	}
+
+	if info.RemoteHost == "" && !requestedCloud {
 		if err := loadOrUnloadModel(cmd, &opts); err != nil {
 			var sErr api.AuthorizationError
 			if errors.As(err, &sErr) && sErr.StatusCode == http.StatusUnauthorized {
@@ -903,33 +876,125 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 			}
 			return err
 		}
-
-		for _, msg := range info.Messages {
-			switch msg.Role {
-			case "user":
-				fmt.Printf(">>> %s\n", msg.Content)
-			case "assistant":
-				state := &displayResponseState{}
-				displayResponse(msg.Content, opts.WordWrap, state)
-				fmt.Println()
-				fmt.Println()
-			}
-		}
-
-		// Use experimental agent loop with tools
-		if isExperimental {
-			return xcmd.GenerateInteractive(cmd, opts.Model, opts.WordWrap, opts.Options, opts.Think, opts.HideThinking, opts.KeepAlive, yoloMode, enableWebsearch)
-		}
-
-		return generateInteractive(cmd, opts)
 	}
-	if err := generate(cmd, opts); err != nil {
+	opts.ContextWindowTokens = contextWindowTokensForRun(cmd.Context(), client, opts.Model, opts.ContextWindowTokens)
+
+	return runAgentHeadless(cmd, opts)
+}
+
+func autoApproveToolsFromFlags(cmd *cobra.Command) (bool, error) {
+	for _, name := range []string{"auto-approve-tools", "yolo", "experimental-yolo"} {
+		if cmd.Flags().Lookup(name) == nil {
+			continue
+		}
+		enabled, err := cmd.Flags().GetBool(name)
+		if err != nil {
+			return false, err
+		}
+		if enabled {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func applyRunFlagsToOptions(cmd *cobra.Command, opts *runOptions) (bool, error) {
+	if cmd == nil || opts == nil {
+		return false, nil
+	}
+	if cmd.Flags().Lookup("format") != nil {
+		format, err := cmd.Flags().GetString("format")
+		if err != nil {
+			return false, err
+		}
+		opts.Format = format
+	}
+
+	thinkExplicit := false
+	if thinkFlag := cmd.Flags().Lookup("think"); thinkFlag != nil && thinkFlag.Changed {
+		thinkStr, err := cmd.Flags().GetString("think")
+		if err != nil {
+			return false, err
+		}
+		thinkExplicit = true
+
+		switch thinkStr {
+		case "", "true":
+			opts.Think = &api.ThinkValue{Value: true}
+		case "false":
+			opts.Think = &api.ThinkValue{Value: false}
+		case "high", "medium", "low", "max":
+			opts.Think = &api.ThinkValue{Value: thinkStr}
+		default:
+			return false, fmt.Errorf("invalid value for --think: %q (must be true, false, high, medium, low, or max)", thinkStr)
+		}
+	} else {
+		opts.Think = nil
+	}
+
+	if cmd.Flags().Lookup("resume") != nil {
+		resume, err := cmd.Flags().GetBool("resume")
+		if err != nil {
+			return false, err
+		}
+		opts.Resume = resume
+	}
+	autoApproveTools, err := autoApproveToolsFromFlags(cmd)
+	if err != nil {
+		return false, err
+	}
+	opts.AutoApproveTools = autoApproveTools
+	if cmd.Flags().Lookup("verbose") != nil {
+		verbose, err := cmd.Flags().GetBool("verbose")
+		if err != nil {
+			return false, err
+		}
+		opts.Verbose = verbose
+	}
+	if cmd.Flags().Lookup("keepalive") != nil {
+		keepAlive, err := cmd.Flags().GetString("keepalive")
+		if err != nil {
+			return false, err
+		}
+		if keepAlive != "" {
+			d, err := time.ParseDuration(keepAlive)
+			if err != nil {
+				return false, err
+			}
+			opts.KeepAlive = &api.Duration{Duration: d}
+		}
+	}
+	return thinkExplicit, nil
+}
+
+func runAgentHeadless(cmd *cobra.Command, opts runOptions) error {
+	if err := GenerateAgentHeadless(cmd, agentOptionsFromRunOptions(opts)); err != nil {
 		if handleCloudAuthorizationError(err) {
 			return nil
 		}
 		return err
 	}
 	return nil
+}
+
+func resumeModelFromLatestChat(ctx context.Context) (string, error) {
+	store, err := agentstore.New("")
+	if err != nil {
+		return "", fmt.Errorf("chat resume unavailable: %w", err)
+	}
+	defer store.Close()
+
+	chat, err := store.LatestChat(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", errors.New("no saved chat to resume; pass a model to start a new chat")
+		}
+		return "", fmt.Errorf("could not resume chat: %w", err)
+	}
+	if strings.TrimSpace(chat.Model) == "" {
+		return "", errors.New("latest saved chat has no model; pass a model to start a new chat")
+	}
+	return chat.Model, nil
 }
 
 func SigninHandler(cmd *cobra.Command, args []string) error {
@@ -1582,24 +1647,24 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 	return client.Pull(cmd.Context(), &request, fn)
 }
 
-type generateContextKey string
-
 type runOptions struct {
-	Model          string
-	ParentModel    string
-	LoadedMessages []api.Message
-	Prompt         string
-	Messages       []api.Message
-	WordWrap       bool
-	Format         string
-	System         string
-	Images         []api.ImageData
-	Options        map[string]any
-	MultiModal     bool
-	KeepAlive      *api.Duration
-	Think          *api.ThinkValue
-	HideThinking   bool
-	ShowConnect    bool
+	Model               string
+	ParentModel         string
+	LoadedMessages      []api.Message
+	Prompt              string
+	Messages            []api.Message
+	Format              string
+	System              string
+	Images              []api.ImageData
+	Options             map[string]any
+	MultiModal          bool
+	KeepAlive           *api.Duration
+	Think               *api.ThinkValue
+	ShowConnect         bool
+	ContextWindowTokens int
+	Resume              bool
+	AutoApproveTools    bool
+	Verbose             bool
 }
 
 func (r runOptions) Copy() runOptions {
@@ -1636,361 +1701,276 @@ func (r runOptions) Copy() runOptions {
 	}
 
 	return runOptions{
-		Model:          r.Model,
-		ParentModel:    r.ParentModel,
-		LoadedMessages: loadedMessages,
-		Prompt:         r.Prompt,
-		Messages:       messages,
-		WordWrap:       r.WordWrap,
-		Format:         r.Format,
-		System:         r.System,
-		Images:         images,
-		Options:        opts,
-		MultiModal:     r.MultiModal,
-		KeepAlive:      r.KeepAlive,
-		Think:          think,
-		HideThinking:   r.HideThinking,
-		ShowConnect:    r.ShowConnect,
+		Model:               r.Model,
+		ParentModel:         r.ParentModel,
+		LoadedMessages:      loadedMessages,
+		Prompt:              r.Prompt,
+		Messages:            messages,
+		Format:              r.Format,
+		System:              r.System,
+		Images:              images,
+		Options:             opts,
+		MultiModal:          r.MultiModal,
+		KeepAlive:           r.KeepAlive,
+		Think:               think,
+		ShowConnect:         r.ShowConnect,
+		ContextWindowTokens: r.ContextWindowTokens,
+		Resume:              r.Resume,
+		AutoApproveTools:    r.AutoApproveTools,
+		Verbose:             r.Verbose,
 	}
 }
 
 func applyShowResponseToRunOptions(opts *runOptions, info *api.ShowResponse) {
 	opts.ParentModel = info.Details.ParentModel
 	opts.LoadedMessages = slices.Clone(info.Messages)
-}
-
-type displayResponseState struct {
-	lineLength int
-	wordBuffer string
-}
-
-func displayResponse(content string, wordWrap bool, state *displayResponseState) {
-	termWidth, _, _ := term.GetSize(int(os.Stdout.Fd()))
-	if termWidth == 0 {
-		termWidth = 80
+	if strings.TrimSpace(opts.System) == "" {
+		opts.System = info.System
 	}
-	if wordWrap && termWidth >= 10 {
-		for _, ch := range content {
-			if state.lineLength+1 > termWidth-5 {
-				if runewidth.StringWidth(state.wordBuffer) > termWidth-10 {
-					fmt.Printf("%s%c", state.wordBuffer, ch)
-					state.wordBuffer = ""
-					state.lineLength = 0
-					continue
-				}
+	opts.ContextWindowTokens = contextWindowTokensFromShowResponse(info)
+}
 
-				// backtrack the length of the last word and clear to the end of the line
-				a := runewidth.StringWidth(state.wordBuffer)
-				if a > 0 {
-					fmt.Printf("\x1b[%dD", a)
-				}
-				fmt.Printf("\x1b[K\n")
-				fmt.Printf("%s%c", state.wordBuffer, ch)
-				chWidth := runewidth.RuneWidth(ch)
+func applyMultiModalCompat(opts *runOptions, info *api.ShowResponse) {
+	audioCapable := slices.Contains(info.Capabilities, model.CapabilityAudio)
+	opts.MultiModal = slices.Contains(info.Capabilities, model.CapabilityVision) || audioCapable
+	// TODO: remove the projector info and vision info checks below,
+	// these are left in for backwards compatibility with older servers
+	// that don't have the capabilities field in the model info
+	if len(info.ProjectorInfo) != 0 {
+		opts.MultiModal = true
+	}
+	for k := range info.ModelInfo {
+		if strings.Contains(k, ".vision.") {
+			opts.MultiModal = true
+			break
+		}
+	}
+}
 
-				state.lineLength = runewidth.StringWidth(state.wordBuffer) + chWidth
-			} else {
-				fmt.Print(string(ch))
-				state.lineLength += runewidth.RuneWidth(ch)
-				if runewidth.RuneWidth(ch) >= 2 {
-					state.wordBuffer = ""
-					continue
-				}
+func contextWindowTokensFromShowResponse(info *api.ShowResponse) int {
+	if info == nil {
+		return 0
+	}
+	if info.Details.ContextLength > 0 {
+		return info.Details.ContextLength
+	}
+	if info.ModelInfo == nil {
+		return 0
+	}
+	arch, _ := info.ModelInfo["general.architecture"].(string)
+	if arch == "" {
+		return 0
+	}
+	switch v := info.ModelInfo[fmt.Sprintf("%s.context_length", arch)].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case float32:
+		return int(v)
+	default:
+		return 0
+	}
+}
 
-				switch ch {
-				case ' ', '\t':
-					state.wordBuffer = ""
-				case '\n', '\r':
-					state.lineLength = 0
-					state.wordBuffer = ""
-				default:
-					state.wordBuffer += string(ch)
-				}
+func contextWindowTokensForRun(ctx context.Context, client *api.Client, modelName string, fallback int) int {
+	if client == nil || strings.TrimSpace(modelName) == "" {
+		return fallback
+	}
+	if running, err := client.ListRunning(ctx); err == nil {
+		if contextLength := contextWindowTokensFromRunningModels(running.Models, modelName); contextLength > 0 {
+			return contextLength
+		}
+	}
+	if modelref.HasExplicitCloudSource(modelName) {
+		if info, err := client.Show(ctx, &api.ShowRequest{Model: modelName}); err == nil {
+			if contextLength := contextWindowTokensFromShowResponse(info); contextLength > 0 {
+				return contextLength
 			}
 		}
-	} else {
-		fmt.Printf("%s%s", state.wordBuffer, content)
-		if len(state.wordBuffer) > 0 {
-			state.wordBuffer = ""
-		}
 	}
+	return fallback
 }
 
-func thinkingOutputOpeningText(plainText bool) string {
-	text := "Thinking...\n"
-
-	if plainText {
-		return text
+func contextWindowTokensFromRunningModels(models []api.ProcessModelResponse, modelName string) int {
+	for _, running := range models {
+		if running.ContextLength > 0 && runningModelMatchesName(running, modelName) {
+			return running.ContextLength
+		}
 	}
-
-	return readline.ColorGrey + readline.ColorBold + text + readline.ColorDefault + readline.ColorGrey
+	return 0
 }
 
-func thinkingOutputClosingText(plainText bool) string {
-	text := "...done thinking.\n\n"
-
-	if plainText {
-		return text
+func runningModelMatchesName(running api.ProcessModelResponse, modelName string) bool {
+	for _, candidate := range []string{running.Name, running.Model} {
+		if modelNameMatches(candidate, modelName) {
+			return true
+		}
 	}
-
-	return readline.ColorGrey + readline.ColorBold + text + readline.ColorDefault
+	return false
 }
 
-func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return nil, err
+func modelNameMatches(a, b string) bool {
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
+	if a == "" || b == "" {
+		return false
 	}
+	if a == b {
+		return true
+	}
+	return model.ParseName(a).DisplayShortest() == model.ParseName(b).DisplayShortest()
+}
 
-	p := progress.NewProgress(os.Stderr)
-	defer p.StopAndClear()
-
-	spinner := progress.NewSpinner("")
-	p.Add("", spinner)
-
-	cancelCtx, cancel := context.WithCancel(cmd.Context())
-	defer cancel()
-
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT)
-
-	go func() {
-		<-sigChan
-		cancel()
-	}()
-
-	var state *displayResponseState = &displayResponseState{}
-	var thinkingContent strings.Builder
-	var latest api.ChatResponse
-	var fullResponse strings.Builder
-	var thinkTagOpened bool = false
-	var thinkTagClosed bool = false
-
-	role := "assistant"
-
-	fn := func(response api.ChatResponse) error {
-		if response.Message.Content != "" || !opts.HideThinking {
-			p.StopAndClear()
-		}
-
-		latest = response
-
-		role = response.Message.Role
-		if response.Message.Thinking != "" && !opts.HideThinking {
-			if !thinkTagOpened {
-				fmt.Print(thinkingOutputOpeningText(false))
-				thinkTagOpened = true
-				thinkTagClosed = false
-			}
-			thinkingContent.WriteString(response.Message.Thinking)
-			displayResponse(response.Message.Thinking, opts.WordWrap, state)
-		}
-
-		content := response.Message.Content
-		if thinkTagOpened && !thinkTagClosed && (content != "" || len(response.Message.ToolCalls) > 0) {
-			if !strings.HasSuffix(thinkingContent.String(), "\n") {
-				fmt.Println()
-			}
-			fmt.Print(thinkingOutputClosingText(false))
-			thinkTagOpened = false
-			thinkTagClosed = true
-			state = &displayResponseState{}
-		}
-		// purposefully not putting thinking blocks in the response, which would
-		// only be needed if we later added tool calling to the cli (they get
-		// filtered out anyway since current models don't expect them unless you're
-		// about to finish some tool calls)
-		fullResponse.WriteString(content)
-
-		if response.Message.ToolCalls != nil {
-			toolCalls := response.Message.ToolCalls
-			if len(toolCalls) > 0 {
-				fmt.Print(renderToolCalls(toolCalls, false))
-			}
-		}
-
-		displayResponse(content, opts.WordWrap, state)
-
+func runCommandArgs(cmd *cobra.Command, args []string) error {
+	if len(args) > 0 {
 		return nil
 	}
-
-	if opts.Format == "json" {
-		opts.Format = `"` + opts.Format + `"`
-	}
-
-	req := &api.ChatRequest{
-		Model:    opts.Model,
-		Messages: opts.Messages,
-		Format:   json.RawMessage(opts.Format),
-		Options:  opts.Options,
-		Think:    opts.Think,
-	}
-
-	if opts.KeepAlive != nil {
-		req.KeepAlive = opts.KeepAlive
-	}
-
-	if err := client.Chat(cancelCtx, req, fn); err != nil {
-		if errors.Is(err, context.Canceled) {
-			return nil, nil
-		}
-
-		// this error should ideally be wrapped properly by the client
-		if strings.Contains(err.Error(), "upstream error") {
-			p.StopAndClear()
-			fmt.Println("An error occurred while processing your message. Please try again.")
-			fmt.Println()
-			return nil, nil
-		}
-		return nil, err
-	}
-
-	if len(opts.Messages) > 0 {
-		fmt.Println()
-		fmt.Println()
-	}
-
-	verbose, err := cmd.Flags().GetBool("verbose")
-	if err != nil {
-		return nil, err
-	}
-
-	if verbose {
-		latest.Summary()
-	}
-
-	return &api.Message{Role: role, Thinking: thinkingContent.String(), Content: fullResponse.String()}, nil
-}
-
-func generate(cmd *cobra.Command, opts runOptions) error {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return err
-	}
-
-	p := progress.NewProgress(os.Stderr)
-	defer p.StopAndClear()
-
-	spinner := progress.NewSpinner("")
-	p.Add("", spinner)
-
-	var latest api.GenerateResponse
-
-	generateContext, ok := cmd.Context().Value(generateContextKey("context")).([]int)
-	if !ok {
-		generateContext = []int{}
-	}
-
-	ctx, cancel := context.WithCancel(cmd.Context())
-	defer cancel()
-
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT)
-
-	go func() {
-		<-sigChan
-		cancel()
-	}()
-
-	var state *displayResponseState = &displayResponseState{}
-	var thinkingContent strings.Builder
-	var thinkTagOpened bool = false
-	var thinkTagClosed bool = false
-
-	plainText := !term.IsTerminal(int(os.Stdout.Fd()))
-
-	fn := func(response api.GenerateResponse) error {
-		latest = response
-		content := response.Response
-
-		if response.Response != "" || !opts.HideThinking {
-			p.StopAndClear()
-		}
-
-		if response.Thinking != "" && !opts.HideThinking {
-			if !thinkTagOpened {
-				fmt.Print(thinkingOutputOpeningText(plainText))
-				thinkTagOpened = true
-				thinkTagClosed = false
-			}
-			thinkingContent.WriteString(response.Thinking)
-			displayResponse(response.Thinking, opts.WordWrap, state)
-		}
-
-		if thinkTagOpened && !thinkTagClosed && (content != "" || len(response.ToolCalls) > 0) {
-			if !strings.HasSuffix(thinkingContent.String(), "\n") {
-				fmt.Println()
-			}
-			fmt.Print(thinkingOutputClosingText(plainText))
-			thinkTagOpened = false
-			thinkTagClosed = true
-			state = &displayResponseState{}
-		}
-
-		displayResponse(content, opts.WordWrap, state)
-
-		if response.ToolCalls != nil {
-			toolCalls := response.ToolCalls
-			if len(toolCalls) > 0 {
-				fmt.Print(renderToolCalls(toolCalls, plainText))
-			}
-		}
-
-		return nil
-	}
-
-	if opts.MultiModal {
-		opts.Prompt, opts.Images, err = extractFileData(opts.Prompt)
+	if flag := cmd.Flags().Lookup("resume"); flag != nil {
+		resume, err := cmd.Flags().GetBool("resume")
 		if err != nil {
+			return err
+		}
+		if resume {
+			return nil
+		}
+	}
+	return cobra.MinimumNArgs(1)(cmd, args)
+}
+
+func prepareRootResumeRunCommand(rootCmd, runCmd *cobra.Command) error {
+	return prepareRootRunCommand(rootCmd, runCmd, true)
+}
+
+func prepareRootModelRunCommand(rootCmd, runCmd *cobra.Command) error {
+	return prepareRootRunCommand(rootCmd, runCmd, false)
+}
+
+func prepareRootRunCommand(rootCmd, runCmd *cobra.Command, resume bool) error {
+	if runCmd == nil {
+		return errors.New("run command unavailable")
+	}
+
+	runCmd.SetContext(rootCmd.Context())
+	if resume {
+		if err := runCmd.Flags().Set("resume", "true"); err != nil {
 			return err
 		}
 	}
 
-	if opts.Format == "json" {
-		opts.Format = `"` + opts.Format + `"`
-	}
-
-	request := api.GenerateRequest{
-		Model:     opts.Model,
-		Prompt:    opts.Prompt,
-		Context:   generateContext,
-		Images:    opts.Images,
-		Format:    json.RawMessage(opts.Format),
-		System:    opts.System,
-		Options:   opts.Options,
-		KeepAlive: opts.KeepAlive,
-		Think:     opts.Think,
-	}
-
-	if err := client.Generate(ctx, &request, fn); err != nil {
-		if errors.Is(err, context.Canceled) {
-			return nil
+	var setErr error
+	rootCmd.Flags().Visit(func(rootFlag *pflag.Flag) {
+		if setErr != nil {
+			return
 		}
-		return err
+		switch rootFlag.Name {
+		case "model", "resume", "version":
+			return
+		}
+		runFlag := runCmd.Flags().Lookup(rootFlag.Name)
+		if runFlag == nil {
+			return
+		}
+		if err := runCmd.Flags().Set(rootFlag.Name, rootFlag.Value.String()); err != nil {
+			setErr = err
+		}
+	})
+	if setErr != nil {
+		return setErr
 	}
-
-	if opts.Prompt != "" {
-		fmt.Println()
-		fmt.Println()
-	}
-
-	if !latest.Done {
-		return nil
-	}
-
-	verbose, err := cmd.Flags().GetBool("verbose")
-	if err != nil {
-		return err
-	}
-
-	if verbose {
-		latest.Summary()
-	}
-
-	ctx = context.WithValue(cmd.Context(), generateContextKey("context"), latest.Context)
-	cmd.SetContext(ctx)
 
 	return nil
+}
+
+type runFlagOptions struct {
+	includeResume  bool
+	includeVerbose bool
+	includeFormat  bool
+}
+
+func registerRunFlags(cmd *cobra.Command, includeResume bool) {
+	registerRunFlagsWithOptions(cmd, runFlagOptions{
+		includeResume:  includeResume,
+		includeVerbose: true,
+		includeFormat:  true,
+	})
+}
+
+func registerRootRunFlags(cmd *cobra.Command) {
+	registerRunFlagsWithOptions(cmd, runFlagOptions{
+		includeResume: true,
+	})
+}
+
+func registerRunFlagsWithOptions(cmd *cobra.Command, opts runFlagOptions) {
+	cmd.Flags().String("keepalive", "", "Duration to keep a model loaded (e.g. 5m)")
+	if opts.includeVerbose {
+		cmd.Flags().Bool("verbose", false, "Show timings for response")
+	}
+	cmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	if opts.includeFormat {
+		cmd.Flags().String("format", "", "Response format (e.g. json)")
+	}
+	cmd.Flags().String("think", "", "Enable thinking mode: true/false or high/medium/low for supported models")
+	cmd.Flags().Lookup("think").NoOptDefVal = "true"
+	if opts.includeResume {
+		cmd.Flags().Bool("resume", false, "Resume the latest persisted chat")
+	}
+	cmd.Flags().Bool("auto-approve-tools", false, "Allow agent tools to run without prompting")
+	cmd.Flags().Bool("yolo", false, "Alias for --auto-approve-tools")
+	cmd.Flags().Bool("experimental-yolo", false, "Deprecated: use --auto-approve-tools")
+	cmd.Flags().Bool("truncate", false, "For embedding models: truncate inputs exceeding context length (default: true). Set --truncate=false to error instead")
+	cmd.Flags().Int("dimensions", 0, "Truncate output embeddings to specified dimension (embedding models only)")
+	cmd.Flags().Bool("experimental", false, "Deprecated: agent chat is enabled by default")
+	cmd.Flags().Bool("experimental-websearch", false, "Deprecated: web tools are enabled by default when available")
+	_ = cmd.Flags().MarkHidden("experimental-yolo")
+	_ = cmd.Flags().MarkHidden("experimental")
+	_ = cmd.Flags().MarkHidden("experimental-websearch")
+
+	imagegen.RegisterFlags(cmd)
+
+	cmd.Flags().Bool("imagegen", false, "Use the imagegen runner for LLM inference")
+	_ = cmd.Flags().MarkHidden("imagegen")
+}
+
+var (
+	runHandler                    = RunHandler
+	rootAgentHandler              = runAgentModelPicker
+	agentOnboardingPrompt         = tui.RunAgentSignInOnboarding
+	agentOnboardingSignIn         = runAgentOnboardingSignIn
+	agentOnboardingSignedInStatus = runAgentOnboardingSignedInStatus
+	errAgentOnboardingNotSignedIn = errors.New("not signed in")
+)
+
+func runRootResume(rootCmd, runCmd *cobra.Command, args []string) error {
+	if err := prepareRootResumeRunCommand(rootCmd, runCmd); err != nil {
+		return err
+	}
+	if runCmd.PreRunE != nil {
+		if err := runCmd.PreRunE(runCmd, args); err != nil {
+			return err
+		}
+	}
+	return runHandler(runCmd, args)
+}
+
+func runRootModel(rootCmd, runCmd *cobra.Command, modelName string, args []string) error {
+	if modelName == "" {
+		return errors.New("model is required")
+	}
+	if err := prepareRootModelRunCommand(rootCmd, runCmd); err != nil {
+		return err
+	}
+
+	runArgs := append([]string{modelName}, args...)
+	if runCmd.PreRunE != nil {
+		if err := runCmd.PreRunE(runCmd, runArgs); err != nil {
+			return err
+		}
+	}
+	return runHandler(runCmd, runArgs)
 }
 
 func RunServer(_ *cobra.Command, _ []string) error {
@@ -2145,9 +2125,13 @@ func ensureServerRunning(ctx context.Context) error {
 func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
 	opts := runOptions{
 		Model:       modelName,
-		WordWrap:    os.Getenv("TERM") == "xterm-256color",
 		Options:     map[string]any{},
 		ShowConnect: true,
+	}
+
+	thinkExplicit, err := applyRunFlagsToOptions(cmd, &opts)
+	if err != nil {
+		return err
 	}
 
 	client, err := api.ClientFromEnvironment()
@@ -2181,36 +2165,167 @@ func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
 
 	ensureCloudStub(cmd.Context(), client, modelName)
 
-	opts.Think, err = inferThinkingOption(&info.Capabilities, &opts, false)
+	opts.Think, err = inferThinkingOption(&info.Capabilities, &opts, thinkExplicit)
 	if err != nil {
 		return err
 	}
 
-	audioCapable := slices.Contains(info.Capabilities, model.CapabilityAudio)
-	opts.MultiModal = slices.Contains(info.Capabilities, model.CapabilityVision) || audioCapable
-
-	// TODO: remove the projector info and vision info checks below,
-	// these are left in for backwards compatibility with older servers
-	// that don't have the capabilities field in the model info
-	if len(info.ProjectorInfo) != 0 {
-		opts.MultiModal = true
-	}
-	for k := range info.ModelInfo {
-		if strings.Contains(k, ".vision.") {
-			opts.MultiModal = true
-			break
-		}
-	}
+	applyMultiModalCompat(&opts, info)
 
 	applyShowResponseToRunOptions(&opts, info)
 
-	if err := loadOrUnloadModel(cmd, &opts); err != nil {
-		return fmt.Errorf("error loading model: %w", err)
+	if info.RemoteHost != "" || requestedCloud {
+		if err := loadOrUnloadModel(cmd, &opts); err != nil {
+			return fmt.Errorf("error loading model: %w", err)
+		}
 	}
-	if err := generateInteractive(cmd, opts); err != nil {
-		return fmt.Errorf("error running model: %w", err)
+
+	agentOpts := agentOptionsFromRunOptions(opts)
+	agentOpts.ContextWindowTokens = contextWindowTokensForRun(cmd.Context(), client, opts.Model, opts.ContextWindowTokens)
+	if err := config.SetLastModel(opts.Model); err != nil {
+		return err
+	}
+	if err := GenerateAgentTUI(cmd, agentOpts); err != nil {
+		if handleCloudAuthorizationError(err) {
+			return nil
+		}
+		return fmt.Errorf("error running agent: %w", err)
 	}
 	return nil
+}
+
+func runAgentModelPicker(cmd *cobra.Command) {
+	if err := ensureServerRunning(cmd.Context()); err != nil {
+		fmt.Fprintf(os.Stderr, "Error starting server: %v\n", err)
+		return
+	}
+
+	signIn, err := maybeRunAgentOnboarding(cmd.Context())
+	if errors.Is(err, launch.ErrCancelled) {
+		return
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return
+	}
+	if signIn {
+		if err := agentOnboardingSignIn(cmd.Context()); err != nil && !errors.Is(err, launch.ErrCancelled) {
+			fmt.Fprintf(os.Stderr, "Warning: unable to sign in: %v\n\n", err)
+		}
+	}
+
+	accountPrefetch := launch.StartAccountStatePrefetch(cmd.Context())
+	deps := agentModelPickerDeps{
+		resolveRunModel:     launch.ResolveRunModel,
+		runModel:            launchInteractiveModel,
+		accountState:        accountPrefetch.StateIfReady,
+		accountStateUpdates: accountPrefetch.StateUpdates,
+	}
+	if err := runAgentModelPickerWithDeps(cmd, deps); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	}
+}
+
+func maybeRunAgentOnboarding(ctx context.Context) (bool, error) {
+	if envconfig.NoCloud() || config.AgentSignInPromptSeen() {
+		return false, nil
+	}
+
+	signedIn, known := agentOnboardingSignedInStatus(ctx)
+	if signedIn {
+		return false, config.SetAgentSignInPromptSeen(true)
+	}
+	if !known {
+		return false, nil
+	}
+
+	signIn, err := agentOnboardingPrompt()
+	if errors.Is(err, tui.ErrCancelled) {
+		return false, launch.ErrCancelled
+	}
+	if err != nil {
+		return false, err
+	}
+	if err := config.SetAgentSignInPromptSeen(true); err != nil {
+		return false, err
+	}
+	return signIn, nil
+}
+
+func runAgentOnboardingSignedInStatus(ctx context.Context) (signedIn bool, known bool) {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return false, false
+	}
+	user, err := client.Whoami(ctx)
+	if err == nil {
+		return user != nil && user.Name != "", true
+	}
+	var authErr api.AuthorizationError
+	if errors.As(err, &authErr) {
+		return false, true
+	}
+	return false, false
+}
+
+func runAgentOnboardingSignIn(ctx context.Context) error {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	user, err := client.Whoami(ctx)
+	if err == nil && user != nil && user.Name != "" {
+		return nil
+	}
+	if err == nil {
+		return errAgentOnboardingNotSignedIn
+	}
+
+	var authErr api.AuthorizationError
+	if !errors.As(err, &authErr) || authErr.SigninURL == "" {
+		return err
+	}
+
+	_, err = tui.RunSignIn("Ollama", authErr.SigninURL)
+	if errors.Is(err, tui.ErrCancelled) {
+		return launch.ErrCancelled
+	}
+	return err
+}
+
+type agentModelPickerDeps struct {
+	resolveRunModel     func(context.Context, launch.RunModelRequest) (string, error)
+	runModel            func(*cobra.Command, string) error
+	accountState        func() *launch.AccountState
+	accountStateUpdates func(context.Context) <-chan *launch.AccountState
+}
+
+func runAgentModelPickerWithDeps(cmd *cobra.Command, deps agentModelPickerDeps) error {
+	req := launch.RunModelRequest{}
+	if deps.accountState != nil {
+		req.AccountState = deps.accountState()
+		req.AccountStateProvider = deps.accountState
+	}
+	req.AccountStateUpdates = deps.accountStateUpdates
+
+	modelName, err := deps.resolveRunModel(cmd.Context(), req)
+	if errors.Is(err, launch.ErrCancelled) {
+		return nil
+	}
+	if errors.Is(err, launch.ErrPlanVerificationUnavailable) && !req.ForcePicker {
+		req.ForcePicker = true
+		req.AccountState = &launch.AccountState{}
+		req.AccountStateProvider = nil
+		modelName, err = deps.resolveRunModel(cmd.Context(), req)
+		if errors.Is(err, launch.ErrCancelled) {
+			return nil
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("selecting model: %w", err)
+	}
+	return deps.runModel(cmd, modelName)
 }
 
 // runInteractiveTUI runs the main interactive TUI menu.
@@ -2339,27 +2454,41 @@ func NewCLI() *cobra.Command {
 		console.ConsoleFromFile(os.Stdin) //nolint:errcheck
 	}
 
+	var runCmd *cobra.Command
 	rootCmd := &cobra.Command{
 		Use:           "ollama",
-		Short:         "Large language model runner",
+		Short:         "Run large language models and connect them to agents",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		CompletionOptions: cobra.CompletionOptions{
 			DisableDefaultCmd: true,
 		},
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			if version, _ := cmd.Flags().GetBool("version"); version {
 				versionHandler(cmd, args)
-				return
+				return nil
 			}
 
-			runInteractiveTUI(cmd)
+			if resume, _ := cmd.Flags().GetBool("resume"); resume {
+				modelName, _ := cmd.Flags().GetString("model")
+				if modelName != "" {
+					args = append([]string{modelName}, args...)
+				}
+				return runRootResume(cmd, runCmd, args)
+			}
+
+			if modelName, _ := cmd.Flags().GetString("model"); modelName != "" {
+				return runRootModel(cmd, runCmd, modelName, args)
+			}
+
+			rootAgentHandler(cmd)
+			return nil
 		},
 	}
 
 	rootCmd.Flags().BoolP("version", "v", false, "Show version information")
-	rootCmd.Flags().Bool("verbose", false, "Show timings for response")
-	rootCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
+	rootCmd.Flags().String("model", "", "Run a model")
+	registerRootRunFlags(rootCmd)
 
 	createCmd := &cobra.Command{
 		Use:   "create MODEL",
@@ -2395,33 +2524,15 @@ func NewCLI() *cobra.Command {
 	showCmd.Flags().Bool("system", false, "Show system message of a model")
 	showCmd.Flags().BoolP("verbose", "v", false, "Show detailed model information")
 
-	runCmd := &cobra.Command{
-		Use:     "run MODEL [PROMPT]",
+	runCmd = &cobra.Command{
+		Use:     "run [MODEL] [PROMPT]",
 		Short:   "Run a model",
-		Args:    cobra.MinimumNArgs(1),
+		Args:    runCommandArgs,
 		PreRunE: checkServerHeartbeat,
 		RunE:    RunHandler,
 	}
 
-	runCmd.Flags().String("keepalive", "", "Duration to keep a model loaded (e.g. 5m)")
-	runCmd.Flags().Bool("verbose", false, "Show timings for response")
-	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
-	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
-	runCmd.Flags().String("format", "", "Response format (e.g. json)")
-	runCmd.Flags().String("think", "", "Enable thinking mode: true/false or high/medium/low for supported models")
-	runCmd.Flags().Lookup("think").NoOptDefVal = "true"
-	runCmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
-	runCmd.Flags().Bool("truncate", false, "For embedding models: truncate inputs exceeding context length (default: true). Set --truncate=false to error instead")
-	runCmd.Flags().Int("dimensions", 0, "Truncate output embeddings to specified dimension (embedding models only)")
-	runCmd.Flags().Bool("experimental", false, "Enable experimental agent loop with tools")
-	runCmd.Flags().Bool("experimental-yolo", false, "Skip all tool approval prompts (use with caution)")
-	runCmd.Flags().Bool("experimental-websearch", false, "Enable web search tool in experimental mode")
-
-	// Image generation flags (width, height, steps, seed, etc.)
-	imagegen.RegisterFlags(runCmd)
-
-	runCmd.Flags().Bool("imagegen", false, "Use the imagegen runner for LLM inference")
-	runCmd.Flags().MarkHidden("imagegen")
+	registerRunFlags(runCmd, true)
 
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
@@ -2658,30 +2769,4 @@ func inferThinkingOption(caps *[]model.Capability, runOpts *runOptions, explicit
 	}
 
 	return nil, nil
-}
-
-func renderToolCalls(toolCalls []api.ToolCall, plainText bool) string {
-	out := ""
-	formatExplanation := ""
-	formatValues := ""
-	if !plainText {
-		formatExplanation = readline.ColorGrey + readline.ColorBold
-		formatValues = readline.ColorDefault
-		out += formatExplanation
-	}
-	for i, toolCall := range toolCalls {
-		argsAsJSON, err := json.Marshal(toolCall.Function.Arguments)
-		if err != nil {
-			return ""
-		}
-		if i > 0 {
-			out += "\n"
-		}
-		// all tool calls are unexpected since we don't currently support registering any in the CLI
-		out += fmt.Sprintf("  Model called a non-existent function '%s()' with arguments: %s", formatValues+toolCall.Function.Name+formatExplanation, formatValues+string(argsAsJSON)+formatExplanation)
-	}
-	if !plainText {
-		out += readline.ColorDefault
-	}
-	return out
 }

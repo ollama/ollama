@@ -19,6 +19,14 @@ type integration struct {
 	Onboarded bool              `json:"onboarded,omitempty"`
 }
 
+type onboarding struct {
+	Agent *agentOnboarding `json:"agent,omitempty"`
+}
+
+type agentOnboarding struct {
+	SignInPromptSeen bool `json:"sign_in_prompt_seen,omitempty"`
+}
+
 // IntegrationConfig is the persisted config for one integration.
 type IntegrationConfig = integration
 
@@ -26,6 +34,7 @@ type config struct {
 	Integrations  map[string]*integration `json:"integrations"`
 	LastModel     string                  `json:"last_model,omitempty"`
 	LastSelection string                  `json:"last_selection,omitempty"` // "run" or integration name
+	Onboarding    *onboarding             `json:"onboarding,omitempty"`
 }
 
 func configPath() (string, error) {
@@ -227,6 +236,34 @@ func SetLastSelection(selection string) error {
 		return err
 	}
 	cfg.LastSelection = selection
+	return save(cfg)
+}
+
+// AgentSignInPromptSeen reports whether the root agent sign-in onboarding prompt
+// has already been shown.
+func AgentSignInPromptSeen() bool {
+	cfg, err := load()
+	if err != nil {
+		return false
+	}
+	return cfg.Onboarding != nil &&
+		cfg.Onboarding.Agent != nil &&
+		cfg.Onboarding.Agent.SignInPromptSeen
+}
+
+// SetAgentSignInPromptSeen persists the root agent sign-in onboarding prompt state.
+func SetAgentSignInPromptSeen(seen bool) error {
+	cfg, err := load()
+	if err != nil {
+		return err
+	}
+	if cfg.Onboarding == nil {
+		cfg.Onboarding = &onboarding{}
+	}
+	if cfg.Onboarding.Agent == nil {
+		cfg.Onboarding.Agent = &agentOnboarding{}
+	}
+	cfg.Onboarding.Agent.SignInPromptSeen = seen
 	return save(cfg)
 }
 

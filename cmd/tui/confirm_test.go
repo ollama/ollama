@@ -22,6 +22,34 @@ func TestConfirmModel_View_ContainsPrompt(t *testing.T) {
 	}
 }
 
+func TestConfirmModel_View_PlainPromptDoesNotStylePrompt(t *testing.T) {
+	m := confirmModel{prompt: "Sign in?", yes: true, plain: true}
+	got := m.View()
+	promptBlock := strings.SplitN(got, "\n\n", 2)[0]
+	if strings.Contains(promptBlock, "\x1b[") {
+		t.Fatalf("plain prompt should not include ANSI styling: %q", promptBlock)
+	}
+}
+
+func TestConfirmModel_View_WrapsPromptToWidth(t *testing.T) {
+	m := confirmModel{
+		prompt: "Sign in to use web search and cloud models with Ollama, Claude Code, OpenClaw, Hermes and more?\n\nYou can keep using local models without signing in.",
+		yes:    true,
+		width:  52,
+		plain:  true,
+	}
+
+	got := stripANSI(m.View())
+	if !strings.Contains(got, "Hermes and more?") {
+		t.Fatalf("wrapped prompt lost trailing text:\n%s", got)
+	}
+	for _, line := range strings.Split(got, "\n") {
+		if len(line) > m.width {
+			t.Fatalf("line width = %d, want <= %d: %q\n%s", len(line), m.width, line, got)
+		}
+	}
+}
+
 func TestConfirmModel_View_ContainsButtons(t *testing.T) {
 	m := confirmModel{prompt: "Download?", yes: true}
 	got := m.View()
