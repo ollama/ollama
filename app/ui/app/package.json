@@ -25,6 +25,7 @@
     "clsx": "^2.1.1",
     "framer-motion": "^12.17.0",
     "katex": "^0.16.22",
+    "lodash-es": "^4.18.0",
     "micromark-extension-llm-math": "^3.1.0",
     "ollama": "^0.6.0",
     "react": "^19.1.0",
