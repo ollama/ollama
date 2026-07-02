@@ -2461,6 +2461,17 @@ func writeChatResponse(c *gin.Context, req api.ChatRequest, ch chan any) {
 	streamResponse(c, ch)
 }
 
+// defaultChatThink resolves the default thinking setting for a thinking-capable
+// model on the chat path when the client expressed no preference. Thinking
+// defaults on, except when tools are also requested: some thinking models (e.g.
+// Qwen3) then express their tool-call intent only inside the reasoning block and
+// never emit tool-call tokens, yielding empty content and no tool calls. The
+// caller still honors an explicit client preference (req.Think != nil).
+// See https://github.com/ollama/ollama/issues/10976.
+func defaultChatThink(hasTools bool) *api.ThinkValue {
+	return &api.ThinkValue{Value: !hasTools}
+}
+
 func (s *Server) ChatHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 
@@ -2640,7 +2651,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	if slices.Contains(modelCaps, model.CapabilityThinking) {
 		caps = append(caps, model.CapabilityThinking)
 		if req.Think == nil {
-			req.Think = &api.ThinkValue{Value: true}
+			req.Think = defaultChatThink(len(req.Tools) > 0)
 		}
 	} else {
 		if req.Think != nil && req.Think.Bool() {
