@@ -954,10 +954,31 @@ func availableMemoryForLoad(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo) (ava
 	// live measurement that already includes those loaded runners, so use the
 	// smaller value for shared-memory GPUs without discounting discrete VRAM.
 	if systemInfo.FreeMemory > 0 && sharedGPUFree > 0 && systemInfo.FreeMemory < sharedGPUFree {
+		// Unified-memory APUs (e.g. AMD Strix Halo) carve their VRAM out of
+		// system RAM and report GPU free memory accurately, so host free memory
+		// is not a meaningful bound on the GPU budget. Trust the GPU's own free
+		// memory rather than clamping to system free.
+		if allUnifiedMemoryAPUs(gpus) {
+			return gpuFree, gpuFree, false
+		}
 		return discreteGPUFree + systemInfo.FreeMemory, gpuFree, true
 	}
 
 	return gpuFree, gpuFree, false
+}
+
+// allUnifiedMemoryAPUs reports whether every GPU in the list is a unified-memory
+// APU (see ml.DeviceInfo.IsUnifiedMemoryAPU). Returns false for an empty list.
+func allUnifiedMemoryAPUs(gpus []ml.DeviceInfo) bool {
+	if len(gpus) == 0 {
+		return false
+	}
+	for _, gpu := range gpus {
+		if !gpu.IsUnifiedMemoryAPU() {
+			return false
+		}
+	}
+	return true
 }
 
 func availableMemoryForPlacement(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, opts api.Options) (available, gpuFree uint64, systemLimited bool) {
@@ -1129,6 +1150,11 @@ func hasDiscreteGPU(gpus []ml.DeviceInfo) bool {
 
 func availableMemoryForGPU(systemInfo ml.SystemInfo, gpu ml.DeviceInfo) uint64 {
 	if gpu.Integrated && systemInfo.FreeMemory > 0 && systemInfo.FreeMemory < gpu.FreeMemory {
+		// Unified-memory APUs report GPU free memory accurately and their VRAM is
+		// not bounded by host free memory, so don't clamp to system free.
+		if gpu.IsUnifiedMemoryAPU() {
+			return gpu.FreeMemory
+		}
 		return systemInfo.FreeMemory
 	}
 
