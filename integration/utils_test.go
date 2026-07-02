@@ -500,10 +500,15 @@ func PullIfMissing(ctx context.Context, client *api.Client, modelName string) er
 	}
 	slog.Info("model missing", "model", modelName)
 
-	stallDuration := 60 * time.Second // This includes checksum verification, which can take a while on larger models, and slower systems
+	var maxTotal int64
+	stallDuration := pullStallDuration(maxTotal)
 	stallTimer := time.NewTimer(stallDuration)
 	fn := func(resp api.ProgressResponse) error {
 		// fmt.Print(".")
+		if resp.Total > maxTotal {
+			maxTotal = resp.Total
+			stallDuration = pullStallDuration(maxTotal)
+		}
 		if !stallTimer.Reset(stallDuration) {
 			return errors.New("stall was detected, aborting status reporting")
 		}
@@ -523,10 +528,20 @@ func PullIfMissing(ctx context.Context, client *api.Client, modelName string) er
 
 	select {
 	case <-stallTimer.C:
-		return errors.New("download stalled")
+		return fmt.Errorf("download stalled after %s without progress", stallDuration)
 	case <-done:
 		return pullError
 	}
+}
+
+func pullStallDuration(total int64) time.Duration {
+	const gibiByte = 1 << 30
+
+	timeout := 60 * time.Second
+	if total > 0 {
+		timeout += time.Duration((total+gibiByte-1)/gibiByte) * 4 * time.Second
+	}
+	return min(timeout, 15*time.Minute)
 }
 
 var serverProcMutex sync.Mutex
@@ -889,10 +904,14 @@ func skipIfModelTooLargeForVRAM(ctx context.Context, t *testing.T, client *api.C
 		t.Fatalf("list models failed %v", err)
 	}
 	for _, m := range resp.Models {
-		if m.Name == modelName && float32(m.Size)*0.75 > float32(maxVram) {
+		if sameModelName(m.Name, modelName) && float32(m.Size)*0.75 > float32(maxVram) {
 			t.Skipf("model %s is too large %s for available VRAM %s", modelName, format.HumanBytes(m.Size), format.HumanBytes(int64(maxVram)))
 		}
 	}
+}
+
+func sameModelName(a, b string) bool {
+	return a == b || strings.TrimSuffix(a, ":latest") == strings.TrimSuffix(b, ":latest")
 }
 
 func skipUnderMinVRAM(t *testing.T, gb uint64) {

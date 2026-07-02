@@ -329,6 +329,18 @@ func (f *File) NumTensors() int {
 	return int(f.tensors.count)
 }
 
+func (f *File) TensorDataOffset() int64 {
+	// The tensor data base offset is only known after all tensor metadata has
+	// been read because GGUF stores it after the tensor-info table.
+	_ = f.keyValues.rest()
+	_ = f.tensors.rest()
+	return f.offset
+}
+
+func (f *File) ReaderAt() io.ReaderAt {
+	return f.file
+}
+
 func (f *File) TensorInfos() iter.Seq2[int, TensorInfo] {
 	// fast forward through key values if we haven't already
 	f.keyValues.rest()

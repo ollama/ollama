@@ -116,18 +116,7 @@ func (m *embeddingGemmaModel) parseMore(fsys fs.FS) error {
 }
 
 func (m *embeddingGemmaModel) adjustTokenizer(t *Tokenizer) {
-	n := int(m.VocabSize)
-	if n == 0 || len(t.Vocabulary.Tokens) <= n {
-		return
-	}
-
-	t.Vocabulary.Tokens = t.Vocabulary.Tokens[:n]
-	if len(t.Vocabulary.Scores) > n {
-		t.Vocabulary.Scores = t.Vocabulary.Scores[:n]
-	}
-	if len(t.Vocabulary.Types) > n {
-		t.Vocabulary.Types = t.Vocabulary.Types[:n]
-	}
+	truncateTokenizerVocabulary(t, int(m.VocabSize))
 }
 
 func embeddingGemmaPoolingType(fsys fs.FS, modulePath string) (uint32, error) {

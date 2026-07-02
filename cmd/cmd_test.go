@@ -327,6 +327,63 @@ Weigh anchor!
 	})
 }
 
+func TestShowInfoRendersRunnerAlternates(t *testing.T) {
+	var b bytes.Buffer
+	if err := showInfo(&api.ShowResponse{
+		ModelInfo: map[string]any{
+			"general.architecture": "gemma3",
+		},
+		Details: api.ModelDetails{
+			ParameterSize:     "4.3B",
+			QuantizationLevel: "nvfp4",
+		},
+		Manifests: []api.ManifestSummary{
+			{Digest: "sha256:aaaaaaaaaaaabbbbbbbbbbbbccccccccccccddddddddddddeeeeeeeeeeeeffffffff", Runner: "mlx", Format: "safetensors", Selected: true},
+			{Digest: "sha256:1111111111112222222222223333333333334444444444445555555555556666", Runner: "llamacpp", Format: "gguf"},
+		},
+	}, false, &b); err != nil {
+		t.Fatal(err)
+	}
+
+	expect := `  Model
+    architecture         gemma3
+    parameters           4.3B
+    quantization         nvfp4
+    runner               mlx
+    available runners    mlx:sha256:aaaaaaaaaaaa,
+                           llamacpp:sha256:111111111111
+
+`
+	trimLinePadding := func(s string) string {
+		lines := strings.Split(s, "\n")
+		for i, line := range lines {
+			lines[i] = strings.TrimRight(line, " \t\r")
+		}
+		return strings.Join(lines, "\n")
+	}
+	if diff := cmp.Diff(trimLinePadding(expect), trimLinePadding(b.String())); diff != "" {
+		t.Errorf("unexpected output (-want +got):\n%s", diff)
+	}
+}
+
+func TestShowRunnerSummaries(t *testing.T) {
+	selected, ok := showSelectedRunner([]api.ManifestSummary{
+		{Digest: "sha256:aaaaaaaaaaaabbbbbbbbbbbbccccccccccccddddddddddddeeeeeeeeeeeeffffffff", Runner: "mlx", Format: "safetensors", Selected: true},
+		{Digest: "sha256:1111111111112222222222223333333333334444444444445555555555556666", Runner: "llamacpp", Format: "gguf"},
+	})
+	if !ok || selected != "mlx" {
+		t.Fatalf("selected = %q, %t", selected, ok)
+	}
+
+	available := showAvailableRunners([]api.ManifestSummary{
+		{Digest: "sha256:aaaaaaaaaaaabbbbbbbbbbbbccccccccccccddddddddddddeeeeeeeeeeeeffffffff", Runner: "mlx", Format: "safetensors", Selected: true},
+		{Digest: "sha256:1111111111112222222222223333333333334444444444445555555555556666", Runner: "llamacpp", Format: "gguf"},
+	})
+	if available != "mlx:sha256:aaaaaaaaaaaa, llamacpp:sha256:111111111111" {
+		t.Fatalf("available = %q", available)
+	}
+}
+
 func TestDeleteHandler(t *testing.T) {
 	stopped := false
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -477,6 +534,143 @@ func TestRunEmbeddingModel(t *testing.T) {
 	expectOutput := "[0.1,0.2,0.3]\n"
 	if diff := cmp.Diff(expectOutput, out.String()); diff != "" {
 		t.Errorf("unexpected output (-want +got):\n%s", diff)
+	}
+}
+
+func TestListRunningHandlerShowsRunner(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/ps" || r.Method != http.MethodGet {
+			http.NotFound(w, r)
+			return
+		}
+
+		if err := json.NewEncoder(w).Encode(api.ProcessResponse{
+			Models: []api.ProcessModelResponse{
+				{
+					Name:          "test-model:latest",
+					Model:         "test-model:latest",
+					Digest:        "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+					Size:          1024,
+					SizeVRAM:      1024,
+					ContextLength: 4096,
+					Runner:        "mlx",
+					ExpiresAt:     time.Now().Add(time.Hour),
+				},
+			},
+		}); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}))
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	err := ListRunningHandler(cmd, nil)
+	w.Close()
+	os.Stdout = oldStdout
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(out)
+	for _, want := range []string{"CONTEXT", "RUNNER", "abcdef123456", "mlx"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestRunHandlerRunnerFlag(t *testing.T) {
+	showReqCh := make(chan api.ShowRequest, 1)
+	generateReqCh := make(chan api.GenerateRequest, 1)
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/show" && r.Method == http.MethodPost:
+			var req api.ShowRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			showReqCh <- req
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityCompletion},
+				ModelInfo:    map[string]any{},
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+		case r.URL.Path == "/api/generate" && r.Method == http.MethodPost:
+			var req api.GenerateRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			generateReqCh <- req
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			if err := json.NewEncoder(w).Encode(api.GenerateResponse{
+				Model: "test-model",
+				Done:  true,
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("keepalive", "", "")
+	cmd.Flags().Bool("verbose", false, "")
+	cmd.Flags().Bool("insecure", false, "")
+	cmd.Flags().Bool("nowordwrap", false, "")
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("runner", "", "")
+	cmd.Flags().String("think", "", "")
+	cmd.Flags().Bool("hidethinking", false, "")
+	if err := cmd.Flags().Set("runner", "llamacpp"); err != nil {
+		t.Fatal(err)
+	}
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	err := RunHandler(cmd, []string{"test-model", "hello"})
+	w.Close()
+	os.Stdout = oldStdout
+	if _, readErr := io.ReadAll(r); readErr != nil {
+		t.Fatal(readErr)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case req := <-showReqCh:
+		if req.Runner != "llamacpp" {
+			t.Fatalf("show runner = %q, want %q", req.Runner, "llamacpp")
+		}
+	default:
+		t.Fatal("server did not receive show request")
+	}
+	select {
+	case req := <-generateReqCh:
+		if req.Runner != "llamacpp" {
+			t.Fatalf("generate runner = %q, want %q", req.Runner, "llamacpp")
+		}
+	default:
+		t.Fatal("server did not receive generate request")
 	}
 }
 
@@ -1634,6 +1828,66 @@ func TestResolveExperimentalDraftDir(t *testing.T) {
 	_, err = resolveExperimentalDraftDir("assistant-model", modelfile)
 	if err == nil || !strings.Contains(err.Error(), "DRAFT model references are not supported with --experimental yet") {
 		t.Fatalf("error = %v, want unsupported draft model reference", err)
+	}
+}
+
+func TestCreateHandlerManifestList(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/create" {
+			t.Errorf("unexpected request to %s", r.URL.Path)
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST request, got %s", r.Method)
+		}
+
+		var req api.CreateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.Model != "parent" {
+			t.Errorf("model = %q, want %q", req.Model, "parent")
+		}
+		if !cmp.Equal(req.List, []string{"gguf", "safetensors"}) {
+			t.Errorf("list = %#v, want %#v", req.List, []string{"gguf", "safetensors"})
+		}
+		if req.From != "" || len(req.Files) > 0 {
+			t.Errorf("manifest list create sent normal create fields: from=%q files=%v", req.From, req.Files)
+		}
+
+		if err := json.NewEncoder(w).Encode(api.ProgressResponse{Status: "success"}); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.(http.Flusher).Flush()
+	}))
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.Flags().String("file", "", "")
+	cmd.Flags().String("quantize", "", "")
+	cmd.Flags().Bool("experimental", false, "")
+	cmd.Flags().StringSlice("combine", nil, "")
+	cmd.SetContext(t.Context())
+	if err := cmd.Flags().Set("combine", "gguf,safetensors"); err != nil {
+		t.Fatal(err)
+	}
+
+	oldStderr := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	err := CreateHandler(cmd, []string{"parent"})
+	w.Close()
+	os.Stderr = oldStderr
+	if _, readErr := io.ReadAll(r); readErr != nil {
+		t.Fatal(readErr)
+	}
+
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
