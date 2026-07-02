@@ -21,7 +21,12 @@ type TokenizerConfig struct {
 // Note: This won't load special token config from companion files. Use LoadFromBytesWithConfig
 // to provide tokenizer_config.json data for proper PAD/EOS token loading.
 func LoadFromBytes(data []byte) (*Tokenizer, error) {
-	return loadFromTokenizerJSON(data)
+	t, err := loadFromTokenizerJSON(data)
+	if err != nil {
+		return nil, err
+	}
+	finalizeBOS(t)
+	return t, nil
 }
 
 // LoadFromBytesWithConfig loads a tokenizer from tokenizer.json bytes with additional config files.
@@ -32,12 +37,14 @@ func LoadFromBytesWithConfig(data []byte, config *TokenizerConfig) (*Tokenizer, 
 		return nil, err
 	}
 
-	if config == nil {
-		return t, nil
+	// Apply special token configs from provided data
+	if config != nil {
+		loadSpecialTokenConfigFromBytes(t, config)
 	}
 
-	// Apply special token configs from provided data
-	loadSpecialTokenConfigFromBytes(t, config)
+	// Decide BOS prepending once any companion config (bos_token, add_bos_token)
+	// has been parsed.
+	finalizeBOS(t)
 
 	return t, nil
 }
@@ -50,9 +57,10 @@ func loadFromTokenizerJSON(data []byte) (*Tokenizer, error) {
 			Vocab  map[string]int32 `json:"vocab"`
 			Merges json.RawMessage  `json:"merges"` // Can be []string or [][]string (BPE only)
 		} `json:"model"`
-		PreTokenizer json.RawMessage `json:"pre_tokenizer"`
-		Decoder      json.RawMessage `json:"decoder"`
-		AddedTokens  []struct {
+		PreTokenizer  json.RawMessage `json:"pre_tokenizer"`
+		Decoder       json.RawMessage `json:"decoder"`
+		PostProcessor json.RawMessage `json:"post_processor"`
+		AddedTokens   []struct {
 			ID      int32  `json:"id"`
 			Content string `json:"content"`
 			Special bool   `json:"special"`
@@ -91,11 +99,12 @@ func loadFromTokenizerJSON(data []byte) (*Tokenizer, error) {
 	// Build tokenizer
 	t := &Tokenizer{
 		vocab: &Vocabulary{
-			Values:  make([]string, len(raw.Model.Vocab)),
-			Reverse: raw.Model.Vocab,
-			Merges:  make(map[string]int, len(mergesStrings)),
-			BOS:     -1,
-			PAD:     -1,
+			Values:           make([]string, len(raw.Model.Vocab)),
+			Reverse:          raw.Model.Vocab,
+			Merges:           make(map[string]int, len(mergesStrings)),
+			BOS:              -1,
+			PAD:              -1,
+			ppLeadingSpecial: -1,
 		},
 		specialTokens: make(map[string]int32),
 	}
@@ -156,7 +165,93 @@ func loadFromTokenizerJSON(data []byte) (*Tokenizer, error) {
 
 	cacheSortedSpecialTokens(t)
 
+	// Record the special token (if any) that the tokenizer.json post-processor
+	// prepends to every single sequence. Whether that token is the BOS - and so
+	// whether to prepend it during encoding - is decided by finalizeBOS once any
+	// companion config has been parsed.
+	t.vocab.ppLeadingSpecial = postProcessorLeadingSpecial(t, raw.PostProcessor)
+
 	return t, nil
+}
+
+// postProcessorLeadingSpecial returns the token id of the special token that a
+// tokenizer.json post-processor prepends to every single sequence (e.g. Gemma's
+// <bos>), or -1 if the post-processor does not begin with a resolvable special
+// token. Handles a top-level TemplateProcessing and a Sequence wrapping one.
+func postProcessorLeadingSpecial(t *Tokenizer, ppRaw json.RawMessage) int32 {
+	if len(ppRaw) == 0 {
+		return -1
+	}
+
+	var pp struct {
+		Type          string                       `json:"type"`
+		Single        []map[string]json.RawMessage `json:"single"`
+		SpecialTokens map[string]struct {
+			IDs []int32 `json:"ids"`
+		} `json:"special_tokens"`
+		Processors []json.RawMessage `json:"processors"`
+	}
+	if err := json.Unmarshal(ppRaw, &pp); err != nil {
+		return -1
+	}
+
+	if pp.Type == "Sequence" {
+		for _, p := range pp.Processors {
+			if id := postProcessorLeadingSpecial(t, p); id >= 0 {
+				return id
+			}
+		}
+		return -1
+	}
+
+	if pp.Type != "TemplateProcessing" || len(pp.Single) == 0 {
+		return -1
+	}
+
+	st, ok := pp.Single[0]["SpecialToken"]
+	if !ok {
+		return -1
+	}
+	var tok struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(st, &tok); err != nil || tok.ID == "" {
+		return -1
+	}
+
+	// Resolve the token string to an id: prefer the processor's own table, then
+	// fall back to the tokenizer's special tokens / vocabulary.
+	if info, ok := pp.SpecialTokens[tok.ID]; ok && len(info.IDs) > 0 {
+		return info.IDs[0]
+	}
+	if id, ok := t.specialTokens[tok.ID]; ok {
+		return id
+	}
+	if id, ok := t.vocab.Reverse[tok.ID]; ok {
+		return id
+	}
+	return -1
+}
+
+// finalizeBOS decides whether encoding should prepend a BOS, based on the
+// tokenizer.json post-processor and any companion config. An explicit
+// add_bos_token in tokenizer_config.json takes precedence. Otherwise the
+// post-processor's leading special token enables BOS only when it matches the
+// configured BOS (or, when no BOS is configured, is adopted as the BOS) - so a
+// post-processor that prepends some other special token is not mistaken for BOS.
+func finalizeBOS(t *Tokenizer) {
+	if t.vocab.addBOSExplicit || t.vocab.ppLeadingSpecial < 0 {
+		return
+	}
+	switch {
+	case t.vocab.BOS < 0:
+		// No configured BOS; adopt the post-processor's leading special token.
+		t.vocab.BOS = t.vocab.ppLeadingSpecial
+		t.vocab.AddBOS = true
+	case t.vocab.ppLeadingSpecial == t.vocab.BOS:
+		// The post-processor prepends the configured BOS.
+		t.vocab.AddBOS = true
+	}
 }
 
 func cacheSortedSpecialTokens(t *Tokenizer) {
@@ -268,6 +363,7 @@ func applySpecialTokenConfig(t *Tokenizer, config specialTokenConfigData) {
 			}
 			if tokConfig.AddBOSToken != nil {
 				t.vocab.AddBOS = *tokConfig.AddBOSToken
+				t.vocab.addBOSExplicit = true
 			}
 			if tokConfig.AddEOSToken != nil {
 				t.vocab.AddEOS = *tokConfig.AddEOSToken
