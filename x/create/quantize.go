@@ -263,6 +263,7 @@ func decodeSourceFP8Tensor(weight, scale *mlx.Array) (*mlx.Array, error) {
 	}
 
 	decoded := mlx.FromFP8(weight, mlx.DTypeBFloat16)
+	dtype := decoded.DType()
 	padBottom := blockRows*sr - rows
 	padSide := blockCols*sc - cols
 	if padBottom > 0 || padSide > 0 {
@@ -276,7 +277,8 @@ func decodeSourceFP8Tensor(weight, scale *mlx.Array) (*mlx.Array, error) {
 	decoded = mlx.Reshape(decoded, blocked...)
 	// scale [..., sr, sc] -> [..., sr, 1, sc, 1]
 	scaleB := mlx.ExpandDims(mlx.ExpandDims(scale, len(lead)+1), len(lead)+3)
-	decoded = mlx.Mul(decoded, scaleB)
+	// Multiplying by an F32 scale promotes the result; keep the decoded dtype.
+	decoded = mlx.Mul(decoded, scaleB).AsType(dtype)
 	padded := append(append([]int32(nil), leadI32...), int32(rows+padBottom), int32(cols+padSide))
 	decoded = mlx.Reshape(decoded, padded...)
 	if padBottom > 0 || padSide > 0 {

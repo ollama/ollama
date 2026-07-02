@@ -505,8 +505,8 @@ func TestGetTensorQuantization_StackedExpert3D(t *testing.T) {
 		[]int32{64, 4096, 11008},
 		"nvfp4",
 	)
-	if nvfp4Down != "mxfp8" {
-		t.Fatalf("nvfp4 down_proj quantization = %q, want %q", nvfp4Down, "mxfp8")
+	if nvfp4Down != "nvfp4" {
+		t.Fatalf("nvfp4 down_proj quantization = %q, want %q", nvfp4Down, "nvfp4")
 	}
 
 	mxfp4GateUp := GetTensorQuantization(
@@ -523,8 +523,8 @@ func TestGetTensorQuantization_StackedExpert3D(t *testing.T) {
 		[]int32{64, 4096, 11008},
 		"mxfp4",
 	)
-	if mxfp4Down != "mxfp8" {
-		t.Fatalf("mxfp4 down_proj quantization = %q, want %q", mxfp4Down, "mxfp8")
+	if mxfp4Down != "mxfp4" {
+		t.Fatalf("mxfp4 down_proj quantization = %q, want %q", mxfp4Down, "mxfp4")
 	}
 }
 
@@ -597,6 +597,11 @@ func TestGetTensorQuantization_MixedPrecisionPromotion(t *testing.T) {
 
 		// int8: already 8-bit, no promotion
 		{"v_proj int8 stays", "model.layers.0.self_attn.v_proj.weight", aligned, "int8", "int8"},
+
+		// lm_head stays at source precision for fp modes, quantizes for affine
+		{"lm_head nvfp4 kept", "lm_head.weight", aligned, "nvfp4", ""},
+		{"lm_head mxfp8 kept", "lm_head.weight", aligned, "mxfp8", ""},
+		{"lm_head int4 stays", "lm_head.weight", aligned, "int4", "int4"},
 
 		// Expert tensors: down_proj also promoted for int4
 		{"expert down_proj int4", "model.layers.0.mlp.experts.down_proj.weight", []int32{128, 4096, 2816}, "int4", "int8"},

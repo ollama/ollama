@@ -295,14 +295,18 @@ func GetTensorQuantization(name string, shape []int32, quantize string) string {
 		return ""
 	}
 
+	// lm_head is too sensitive for the fp quant modes; keep it at source precision.
+	if strings.HasSuffix(name, "lm_head.weight") && (quantNorm == "nvfp4" || quantNorm == "mxfp4" || quantNorm == "mxfp8") {
+		return ""
+	}
+
 	// MLX quantization requires last dimension to be divisible by group size.
 	if !isAligned(shape, quantNorm) {
 		return ""
 	}
 
-	// 4-bit types don't have enough precision for the quantization-sensitive
-	// projections, so promote them to the 8-bit type in the same family.
-	if quantNorm == "int4" || quantNorm == "nvfp4" || quantNorm == "mxfp4" {
+	// Promote sensitive projections to 8-bit; fp4 skips experts since their kernels take a single mode.
+	if quantNorm == "int4" || ((quantNorm == "nvfp4" || quantNorm == "mxfp4") && !stackedExpert) {
 		if strings.Contains(name, ".v_proj") || strings.Contains(name, ".k_proj") || strings.Contains(name, "down_proj") {
 			if e := eightBit(quantNorm); isAligned(shape, e) {
 				return e

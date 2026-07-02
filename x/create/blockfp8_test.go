@@ -28,6 +28,7 @@ func TestPlanBlockFP8(t *testing.T) {
 		"model.layers.0.mlp.down_proj.weight_scale_inv":    "F32",
 		"model.layers.0.input_layernorm.weight":            "F32", // norm stays as-is
 		"model.embed_tokens.weight":                        "BF16",
+		"lm_head.weight":                                   "BF16",
 	})
 
 	specs, err := Plan(inv, Classification{Kind: SourceBlockFP8, Quantize: "mxfp8"}, defaultQuantPolicy{})
@@ -56,6 +57,12 @@ func TestPlanBlockFP8(t *testing.T) {
 	norm, _ := specByName(specs, "model.layers.0.input_layernorm.weight")
 	if norm.Tensors[0].Quantize != "" || norm.Tensors[0].Transform != TransformNone || norm.Tensors[0].OutDtype != "" {
 		t.Errorf("norm = %+v, want kept at source precision", norm.Tensors[0])
+	}
+
+	// BF16 weights pass through untouched.
+	lmHead, _ := specByName(specs, "lm_head.weight")
+	if lmHead.Tensors[0].Quantize != "" || lmHead.Tensors[0].Transform != TransformNone {
+		t.Errorf("lm_head = %+v, want kept at source precision", lmHead.Tensors[0])
 	}
 }
 

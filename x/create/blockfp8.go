@@ -10,8 +10,8 @@ import (
 // planBlockFP8 plans an HF block-FP8 source. MLX has no FP8 tensor type, so
 // every FP8 weight is decoded to BF16 using its block scale and then quantized
 // to the target (mxfp8); a weight the policy declines is still decoded and kept
-// at BF16 (it is never stored as FP8). BF16 tensors in the source are quantized
-// per the policy or kept at source precision (norms stay BF16/F32).
+// at BF16 (it is never stored as FP8). Everything else passes through at source
+// precision.
 func planBlockFP8(inv Inventory, target string, policy quantizePolicy) ([]BlobSpec, error) {
 	// The scale companion of each FP8 weight is folded into that weight's
 	// blob, so it is not emitted on its own.
@@ -66,12 +66,12 @@ func planBlockFP8(inv Inventory, target string, policy quantizePolicy) ([]BlobSp
 
 		specs = append(specs, BlobSpec{
 			Name:    name,
-			Tensors: []TensorSpec{{Name: name, Sources: []SourceTensor{t}, Quantize: policy.quantizationType(name, t.Shape, target)}},
+			Tensors: []TensorSpec{{Name: name, Sources: []SourceTensor{t}}},
 		})
 	}
 
 	for _, gp := range sortedKeys(groups) {
-		spec, err := planExpertGroup(gp, groups[gp], target, policy)
+		spec, err := planExpertGroup(gp, groups[gp], "", policy)
 		if err != nil {
 			return nil, err
 		}
