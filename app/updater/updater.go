@@ -127,15 +127,12 @@ func (u *Updater) checkForUpdate(ctx context.Context) (bool, UpdateResponse) {
 		slog.Warn(fmt.Sprintf("malformed response checking for update: %s", err))
 		return false, updateResp
 	}
-	// Extract the version string from the URL in the github release artifact path
-	updateResp.UpdateVersion = path.Base(path.Dir(updateResp.UpdateURL))
 
 	slog.Info("New update available at " + updateResp.UpdateURL)
 	return true, updateResp
 }
 
 func (u *Updater) DownloadNewRelease(ctx context.Context, updateResp UpdateResponse) error {
-	// Create a cancellable context for this download
 	downloadCtx, cancel := context.WithCancel(ctx)
 	u.cancelDownloadLock.Lock()
 	u.cancelDownload = cancel
@@ -146,15 +143,19 @@ func (u *Updater) DownloadNewRelease(ctx context.Context, updateResp UpdateRespo
 		u.cancelDownloadLock.Unlock()
 		cancel()
 	}()
+	return u.downloadNewRelease(downloadCtx, updateResp)
+}
 
+// downloadSingleFileRelease downloads a single staged update bundle.
+func (u *Updater) downloadSingleFileRelease(ctx context.Context, updateResp UpdateResponse) error {
 	// Do a head first to check etag info
-	req, err := http.NewRequestWithContext(downloadCtx, http.MethodHead, updateResp.UpdateURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, updateResp.UpdateURL, nil)
 	if err != nil {
 		return err
 	}
 
 	// In case of slow downloads, continue the update check in the background
-	bgctx, bgcancel := context.WithCancel(downloadCtx)
+	bgctx, bgcancel := context.WithCancel(ctx)
 	defer bgcancel()
 	go func() {
 		for {
