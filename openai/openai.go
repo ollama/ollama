@@ -149,7 +149,7 @@ type CompletionRequest struct {
 	Stream           bool           `json:"stream"`
 	StreamOptions    *StreamOptions `json:"stream_options"`
 	Temperature      *float32       `json:"temperature"`
-	TopP             float32        `json:"top_p"`
+	TopP             *float32       `json:"top_p"`
 	Suffix           string         `json:"suffix"`
 	Logprobs         *int           `json:"logprobs"`
 	DebugRenderOnly  bool           `json:"_debug_render_only"`
@@ -761,8 +761,8 @@ func FromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 
 	options["presence_penalty"] = r.PresencePenalty
 
-	if r.TopP != 0.0 {
-		options["top_p"] = r.TopP
+	if r.TopP != nil {
+		options["top_p"] = *r.TopP
 	} else {
 		options["top_p"] = 1.0
 	}

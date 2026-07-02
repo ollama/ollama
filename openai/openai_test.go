@@ -173,6 +173,29 @@ func TestFromCompleteRequest_Basic(t *testing.T) {
 	}
 }
 
+func TestFromCompleteRequest_TopP(t *testing.T) {
+	t.Run("explicit zero is preserved", func(t *testing.T) {
+		topP := float32(0)
+		result, err := FromCompleteRequest(CompletionRequest{Model: "test-model", TopP: &topP})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if v, ok := result.Options["top_p"].(float32); !ok || v != 0 {
+			t.Errorf("expected top_p 0, got %v", result.Options["top_p"])
+		}
+	})
+
+	t.Run("unset defaults to 1", func(t *testing.T) {
+		result, err := FromCompleteRequest(CompletionRequest{Model: "test-model"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if v, ok := result.Options["top_p"].(float64); !ok || v != 1.0 {
+			t.Errorf("expected top_p 1.0, got %v", result.Options["top_p"])
+		}
+	})
+}
+
 func TestToUsage(t *testing.T) {
 	resp := api.ChatResponse{
 		Metrics: api.Metrics{
