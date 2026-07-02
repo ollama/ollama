@@ -219,6 +219,17 @@
         "OLLAMA_RUNNER_DIR": "vulkan",
         "OLLAMA_GPU_BACKEND": "vulkan"
       }
+    },
+    {
+      "name": "zendnn",
+      "inherits": ["default"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-zendnn",
+      "cacheVariables": {
+        "GGML_ZENDNN": "ON",
+        "GGML_OPENMP": "ON",
+        "GGML_CPU_ALL_VARIANTS": "ON",
+        "OLLAMA_RUNNER_DIR": ""
+      }
     }
   ],
   "buildPresets": [
@@ -316,6 +327,11 @@
       "name": "vulkan",
       "configurePreset": "vulkan",
       "targets": ["ggml-vulkan"]
+    },
+    {
+      "name": "zendnn",
+      "configurePreset": "zendnn",
+      "targets": ["ggml-zendnn"]
     }
   ]
 }
