@@ -108,6 +108,12 @@ func addLocalLibOllamaPaths(add func(string), base, goos, goarch string) {
 		return
 	}
 	add(filepath.Join(base, "build", "lib", "ollama"))
+	// Also search any named build directories (e.g. build-be, build-cuda).
+	if matches, err := filepath.Glob(filepath.Join(base, "build-*", "lib", "ollama")); err == nil {
+		for _, m := range matches {
+			add(m)
+		}
+	}
 	add(filepath.Join(base, "dist", goos+"-"+goarch, "lib", "ollama"))
 	if goos+"_"+goarch != goos+"-"+goarch {
 		add(filepath.Join(base, "dist", goos+"_"+goarch, "lib", "ollama"))

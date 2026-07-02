@@ -553,6 +553,8 @@ if(OLLAMA_MLX_BACKENDS)
     endif()
 endif()
 
+option(OLLAMA_BUILD_GO "Build the Ollama Go binary (requires Go; set OFF to build only the C++ payload)" ON)
+
 if(OLLAMA_HAVE_LLAMA_SERVER)
     if(NOT OLLAMA_GO_OUTPUT)
         if(WIN32)
@@ -570,7 +572,7 @@ if(OLLAMA_HAVE_LLAMA_SERVER)
 
     set(OLLAMA_GO_LDFLAGS
         "-s -w -X=github.com/ollama/ollama/version.Version=${OLLAMA_VERSION} -X=github.com/ollama/ollama/server.mode=release")
-    if(GO_EXECUTABLE)
+    if(OLLAMA_BUILD_GO AND GO_EXECUTABLE)
         add_custom_target(ollama-go ALL
             COMMAND ${CMAKE_COMMAND} -E make_directory "${OLLAMA_GO_OUTPUT_DIR}"
             COMMAND ${CMAKE_COMMAND} -E env CGO_ENABLED=1
@@ -579,12 +581,17 @@ if(OLLAMA_HAVE_LLAMA_SERVER)
             BYPRODUCTS ${OLLAMA_GO_OUTPUT}
             COMMENT "Building Ollama Go binary"
             VERBATIM)
-    else()
+    elseif(OLLAMA_BUILD_GO)
         add_custom_target(ollama-go ALL
             COMMAND ${CMAKE_COMMAND} -E echo
                 "Go executable not found. Install Go or set GO_EXECUTABLE to build the local Ollama binary."
             COMMAND ${CMAKE_COMMAND} -E false
             COMMENT "Building Ollama Go binary"
+            VERBATIM)
+    else()
+        add_custom_target(ollama-go ALL
+            COMMAND ${CMAKE_COMMAND} -E echo "Skipping Go binary build (OLLAMA_BUILD_GO=OFF)"
+            COMMENT "Skipping Ollama Go binary build"
             VERBATIM)
     endif()
 
