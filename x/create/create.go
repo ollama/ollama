@@ -300,17 +300,12 @@ func GetTensorQuantization(name string, shape []int32, quantize string) string {
 		return ""
 	}
 
-	// For non-affine modes, use the same quantization for all eligible tensors.
-	if quantNorm == "nvfp4" || quantNorm == "mxfp4" || quantNorm == "mxfp8" {
-		return quantNorm
-	}
-
-	// affine int4 quants don't have enough precision for certain tensors, so instead don't
-	// quantize them to 4 bits.
-	if quantNorm == "int4" {
+	// 4-bit types don't have enough precision for the quantization-sensitive
+	// projections, so promote them to the 8-bit type in the same family.
+	if quantNorm == "int4" || quantNorm == "nvfp4" || quantNorm == "mxfp4" {
 		if strings.Contains(name, ".v_proj") || strings.Contains(name, ".k_proj") || strings.Contains(name, "down_proj") {
-			if isAligned(shape, "int8") {
-				return "int8"
+			if e := eightBit(quantNorm); isAligned(shape, e) {
+				return e
 			}
 		}
 	}

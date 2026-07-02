@@ -505,8 +505,8 @@ func TestGetTensorQuantization_StackedExpert3D(t *testing.T) {
 		[]int32{64, 4096, 11008},
 		"nvfp4",
 	)
-	if nvfp4Down != "nvfp4" {
-		t.Fatalf("nvfp4 down_proj quantization = %q, want %q", nvfp4Down, "nvfp4")
+	if nvfp4Down != "mxfp8" {
+		t.Fatalf("nvfp4 down_proj quantization = %q, want %q", nvfp4Down, "mxfp8")
 	}
 
 	mxfp4GateUp := GetTensorQuantization(
@@ -523,8 +523,8 @@ func TestGetTensorQuantization_StackedExpert3D(t *testing.T) {
 		[]int32{64, 4096, 11008},
 		"mxfp4",
 	)
-	if mxfp4Down != "mxfp4" {
-		t.Fatalf("mxfp4 down_proj quantization = %q, want %q", mxfp4Down, "mxfp4")
+	if mxfp4Down != "mxfp8" {
+		t.Fatalf("mxfp4 down_proj quantization = %q, want %q", mxfp4Down, "mxfp8")
 	}
 }
 
@@ -589,9 +589,10 @@ func TestGetTensorQuantization_MixedPrecisionPromotion(t *testing.T) {
 		{"gate_proj int4 stays", "model.layers.0.mlp.gate_proj.weight", aligned, "int4", "int4"},
 		{"up_proj int4 stays", "model.layers.0.mlp.up_proj.weight", aligned, "int4", "int4"},
 
-		// nvfp4/mxfp4/mxfp8: no promotion (uniform quantization)
-		{"v_proj nvfp4 uniform", "model.layers.0.self_attn.v_proj.weight", aligned, "nvfp4", "nvfp4"},
-		{"down_proj mxfp4 uniform", "model.layers.0.mlp.down_proj.weight", aligned, "mxfp4", "mxfp4"},
+		// nvfp4/mxfp4 → mxfp8 promotion for sensitive tensors; mxfp8 stays uniform
+		{"v_proj nvfp4 promoted", "model.layers.0.self_attn.v_proj.weight", aligned, "nvfp4", "mxfp8"},
+		{"down_proj mxfp4 promoted", "model.layers.0.mlp.down_proj.weight", aligned, "mxfp4", "mxfp8"},
+		{"q_proj nvfp4 stays", "model.layers.0.self_attn.q_proj.weight", aligned, "nvfp4", "nvfp4"},
 		{"v_proj mxfp8 uniform", "model.layers.0.self_attn.v_proj.weight", aligned, "mxfp8", "mxfp8"},
 
 		// int8: already 8-bit, no promotion

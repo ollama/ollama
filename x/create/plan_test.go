@@ -53,6 +53,31 @@ func TestPlanFloat(t *testing.T) {
 		}
 	})
 
+	t.Run("4-bit fp promotes sensitive tensors to mxfp8", func(t *testing.T) {
+		for _, quant := range []string{"nvfp4", "mxfp4"} {
+			specs, err := Plan(inv, Classification{Kind: SourceFloat, Quantize: quant}, defaultQuantPolicy{})
+			if err != nil {
+				t.Fatalf("Plan(%s) error = %v", quant, err)
+			}
+			got := make(map[string]string)
+			for _, s := range specs {
+				got[s.Name] = s.Tensors[0].Quantize
+			}
+			want := map[string]string{
+				"model.embed_tokens.weight":              "",
+				"model.layers.0.input_layernorm.weight":  "",
+				"model.layers.0.self_attn.q_proj.weight": quant,
+				"model.layers.0.self_attn.v_proj.weight": "mxfp8",
+				"model.layers.0.mlp.down_proj.weight":    "mxfp8",
+			}
+			for name, w := range want {
+				if got[name] != w {
+					t.Errorf("%s: %s quantize = %q, want %q", quant, name, got[name], w)
+				}
+			}
+		}
+	})
+
 	t.Run("int4 applies the mixed-precision policy", func(t *testing.T) {
 		specs, err := Plan(inv, Classification{Kind: SourceFloat, Quantize: "int4"}, defaultQuantPolicy{})
 		if err != nil {
