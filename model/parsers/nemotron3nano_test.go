@@ -212,6 +212,27 @@ func TestNemotron3NanoParser_Streaming(t *testing.T) {
 			expectedThinking: "Think first",
 			expectedContent:  "Done.",
 		},
+		{
+			name:             "partial tool call tag fakeout while thinking preserves whitespace",
+			chunks:           []string{"reasoning ending with ", "<tool_call", " fakeout", "</think>", "Done."},
+			thinkValue:       &api.ThinkValue{Value: true},
+			expectedThinking: "reasoning ending with <tool_call fakeout",
+			expectedContent:  "Done.",
+		},
+		{
+			name:             "partial think close tag fakeout preserves whitespace",
+			chunks:           []string{"reasoning ending with ", "</think", " fakeout", "</think>", "Done."},
+			thinkValue:       &api.ThinkValue{Value: true},
+			expectedThinking: "reasoning ending with </think fakeout",
+			expectedContent:  "Done.",
+		},
+		{
+			name:             "leading partial think tag fakeout is thinking",
+			chunks:           []string{"<th", "oughts are literal", "</think>", "Done."},
+			thinkValue:       &api.ThinkValue{Value: true},
+			expectedThinking: "<thoughts are literal",
+			expectedContent:  "Done.",
+		},
 	}
 
 	for _, tt := range tests {

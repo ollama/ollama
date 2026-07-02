@@ -125,6 +125,9 @@ func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *specu
 	materializeCaches := func() {
 		state := make([]*mlx.Array, 0, 2*len(caches))
 		for _, c := range caches {
+			if c == nil {
+				continue
+			}
 			state = append(state, c.State()...)
 		}
 		if len(state) == 0 {

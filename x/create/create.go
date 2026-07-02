@@ -489,6 +489,9 @@ var tensorImportTransformRegistry = map[string]tensorImportTransformFactory{
 	"Gemma4AssistantForCausalLM":            newGemma4ImportTransform,
 	"Gemma4UnifiedAssistantForCausalLM":     newGemma4ImportTransform,
 	"gemma4_unified_assistant":              newGemma4ImportTransform,
+	"NemotronH_Nano_VL_V2":                  newNemotronHImportTransform,
+	"NemotronH_Nano_Omni_Reasoning_V3":      newNemotronHImportTransform,
+	"NemotronHForCausalLM":                  newNemotronHImportTransform,
 }
 
 func newTensorImportTransform(inv Inventory) (quantizePolicy, error) {

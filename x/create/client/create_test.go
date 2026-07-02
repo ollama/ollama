@@ -41,6 +41,30 @@ func TestModelfileConfig(t *testing.T) {
 	}
 }
 
+func TestNemotronNanoOmniMetadataInference(t *testing.T) {
+	dir := t.TempDir()
+	config := `{
+		"architectures": ["NemotronH_Nano_Omni_Reasoning_V3"],
+		"model_type": "NemotronH_Nano_Omni_Reasoning_V3",
+		"vision_config": {"patch_size": 16},
+		"sound_config": {"model_type": "parakeet"},
+		"llm_config": {"model_type": "nemotron_h"}
+	}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := getParserName(dir), "nemotron-3-nano"; got != want {
+		t.Fatalf("parser = %q, want %q", got, want)
+	}
+	if got, want := getRendererName(dir), "nemotron-3-nano"; got != want {
+		t.Fatalf("renderer = %q, want %q", got, want)
+	}
+	caps := inferSafetensorsCapabilities(dir, getParserName(dir))
+	if !slices.Equal(caps, []string{"completion", "vision", "audio", "tools", "thinking"}) {
+		t.Fatalf("capabilities = %v, want completion/vision/audio/tools/thinking", caps)
+	}
+}
+
 func TestConfigFromModelfile(t *testing.T) {
 	modelfile, err := parser.ParseFile(strings.NewReader(`
 FROM ./model
@@ -400,6 +424,15 @@ func TestInferSafetensorsCapabilities(t *testing.T) {
 			want: []string{"completion", "audio"},
 		},
 		{
+			name: "model with sound config",
+			configJSON: `{
+				"architectures": ["SomeSoundModel"],
+				"model_type": "other",
+				"sound_config": {"model_type": "parakeet"}
+			}`,
+			want: []string{"completion", "audio"},
+		},
+		{
 			name: "non-qwen conditional generation model",
 			configJSON: `{
 				"architectures": ["SomeOtherForConditionalGeneration"],
@@ -730,6 +763,11 @@ func TestGetParserName(t *testing.T) {
 			want:       "laguna",
 		},
 		{
+			name:       "nemotron nested llm config",
+			configJSON: `{"model_type": "nemotron_h_omni", "llm_config": {"model_type": "nemotron_h"}}`,
+			want:       "nemotron-3-nano",
+		},
+		{
 			name:       "no config",
 			configJSON: `{}`,
 			want:       "",
@@ -783,6 +821,11 @@ func TestGetRendererName(t *testing.T) {
 			name:       "laguna model",
 			configJSON: `{"architectures": ["LagunaForCausalLM"], "model_type": "laguna"}`,
 			want:       "laguna",
+		},
+		{
+			name:       "nemotron nested llm config",
+			configJSON: `{"model_type": "nemotron_h_omni", "llm_config": {"model_type": "nemotron_h"}}`,
+			want:       "nemotron-3-nano",
 		},
 	}
 

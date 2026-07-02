@@ -170,6 +170,9 @@ type SwitchMLP struct {
 	GateGroupSize int
 	UpGroupSize   int
 	DownGroupSize int
+	GateMode      string
+	UpMode        string
+	DownMode      string
 
 	UseQuantized bool
 }
@@ -431,6 +434,10 @@ func supportsGatherQMM(mode string, bits int) bool {
 	default:
 		return false
 	}
+}
+
+func shouldMapMoEExperts(tokens int32) bool {
+	return tokens >= 64
 }
 
 func freeTensorKeys(tensors map[string]*mlx.Array, keys ...string) {
@@ -979,16 +986,19 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 				switchMLP.GateBiases = gateW.Biases
 				switchMLP.GateBits = gateW.Bits
 				switchMLP.GateGroupSize = gateW.GroupSize
+				switchMLP.GateMode = gateW.Mode
 				switchMLP.UpWeightQ = upW.Weight
 				switchMLP.UpScales = upW.Scales
 				switchMLP.UpBiases = upW.Biases
 				switchMLP.UpBits = upW.Bits
 				switchMLP.UpGroupSize = upW.GroupSize
+				switchMLP.UpMode = upW.Mode
 				switchMLP.DownWeightQ = downW.Weight
 				switchMLP.DownScales = downW.Scales
 				switchMLP.DownBiases = downW.Biases
 				switchMLP.DownBits = downW.Bits
 				switchMLP.DownGroupSize = downW.GroupSize
+				switchMLP.DownMode = downW.Mode
 			} else {
 				switchMLP.GateWeight = transposeExpertWeightForGatherMM(gateW.Weight)
 				switchMLP.UpWeight = transposeExpertWeightForGatherMM(upW.Weight)
@@ -1195,6 +1205,10 @@ func (m *DenseMLP) Forward(x *mlx.Array, _ *Config) *mlx.Array {
 }
 
 func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.Array {
+	if out, ok := s.mappedQuantizedForward(x, indices, cfg); ok {
+		return out
+	}
+
 	dims := x.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	topK := cfg.NumExpertsPerTok
@@ -1218,12 +1232,12 @@ func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.
 	var gate, up, hidden, down *mlx.Array
 	if s.UseQuantized {
 		gate = mlx.GatherQMM(xFlat, s.GateWeightQ, s.GateScales, s.GateBiases,
-			nil, idxFlat, true, s.GateGroupSize, s.GateBits, cfg.QuantMode, doSort)
+			nil, idxFlat, true, s.GateGroupSize, s.GateBits, s.GateMode, doSort)
 		up = mlx.GatherQMM(xFlat, s.UpWeightQ, s.UpScales, s.UpBiases,
-			nil, idxFlat, true, s.UpGroupSize, s.UpBits, cfg.QuantMode, doSort)
+			nil, idxFlat, true, s.UpGroupSize, s.UpBits, s.UpMode, doSort)
 		hidden = mlx.SwiGLU(gate, up)
 		down = mlx.GatherQMM(hidden, s.DownWeightQ, s.DownScales, s.DownBiases,
-			nil, idxFlat, true, s.DownGroupSize, s.DownBits, cfg.QuantMode, doSort)
+			nil, idxFlat, true, s.DownGroupSize, s.DownBits, s.DownMode, doSort)
 	} else {
 		gate = mlx.GatherMM(xFlat, s.GateWeight, nil, idxFlat, doSort)
 		up = mlx.GatherMM(xFlat, s.UpWeight, nil, idxFlat, doSort)
@@ -1238,6 +1252,61 @@ func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.
 	}
 
 	return mlx.Reshape(down, B, L, topK, cfg.HiddenSize)
+}
+
+func (s *SwitchMLP) canMapQuantizedExpert() bool {
+	if !s.UseQuantized {
+		return false
+	}
+	if s.GateWeightQ == nil || s.GateScales == nil ||
+		s.UpWeightQ == nil || s.UpScales == nil ||
+		s.DownWeightQ == nil || s.DownScales == nil {
+		return false
+	}
+	if s.GateBiases != nil || s.UpBiases != nil || s.DownBiases != nil {
+		return false
+	}
+	return mlx.SupportsMoEGatherQMMBlockMapped(s.GateGroupSize, s.GateBits, s.GateMode) &&
+		mlx.SupportsMoEGatherQMMBlockMapped(s.UpGroupSize, s.UpBits, s.UpMode) &&
+		mlx.SupportsMoEGatherQMMBlockMapped(s.DownGroupSize, s.DownBits, s.DownMode)
+}
+
+func (s *SwitchMLP) mappedQuantizedForward(x *mlx.Array, indices *mlx.Array, cfg *Config) (*mlx.Array, bool) {
+	if !s.canMapQuantizedExpert() {
+		return nil, false
+	}
+
+	dims := x.Dims()
+	if len(dims) != 3 || dims[0] <= 0 || dims[1] <= 0 || dims[2] <= 0 || cfg.NumExpertsPerTok <= 0 {
+		return nil, false
+	}
+	B, L := int32(dims[0]), int32(dims[1])
+	tokens := B * L
+	if !shouldMapMoEExperts(tokens) {
+		return nil, false
+	}
+
+	topK := int(cfg.NumExpertsPerTok)
+	idxFlat := mlx.Reshape(indices, tokens, cfg.NumExpertsPerTok)
+	expertMap, ok := mlx.NewMoEGatherQMMMap(idxFlat, s.GateWeightQ.Dim(0))
+	if !ok {
+		return nil, false
+	}
+	xFlat := mlx.Reshape(x, tokens, 1, cfg.HiddenSize)
+	gate, ok := mlx.FastMoEGatherQMMBlockMapped(xFlat, s.GateWeightQ, s.GateScales, expertMap, topK, s.GateGroupSize, s.GateBits, s.GateMode)
+	if !ok {
+		return nil, false
+	}
+	up, ok := mlx.FastMoEGatherQMMBlockMapped(xFlat, s.UpWeightQ, s.UpScales, expertMap, topK, s.UpGroupSize, s.UpBits, s.UpMode)
+	if !ok {
+		return nil, false
+	}
+	hidden := mlx.SwiGLU(gate, up)
+	down, ok := mlx.FastMoEGatherQMMBlockMapped(hidden, s.DownWeightQ, s.DownScales, expertMap, topK, s.DownGroupSize, s.DownBits, s.DownMode)
+	if !ok {
+		return nil, false
+	}
+	return mlx.Reshape(down, B, L, cfg.NumExpertsPerTok, cfg.HiddenSize), true
 }
 
 func (m *SparseMoE) Forward(x *mlx.Array, cfg *Config) *mlx.Array {
