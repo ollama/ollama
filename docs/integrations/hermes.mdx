@@ -2,116 +2,185 @@
 title: Hermes Agent
 ---
 
-Hermes Agent is a self-improving AI agent built by Nous Research. It features automatic skill creation, cross-session memory, and 70+ skills that it ships with by default. 
+[Hermes Agent](https://hermes-agent.nousresearch.com) is an assistant from Nous Research with memory, skills, subagents, tools, and messaging gateways.
 
-![Hermes Agent with Ollama](/images/hermes.png)
+## Get started
 
-## Quick start
+Launch Hermes with Ollama:
 
-```bash
+```shell
 ollama launch hermes
 ```
 
-Ollama handles everything automatically:
+If Hermes is not installed, Ollama prompts to install it. Ollama configures the Ollama provider, sets your selected model as the default, and opens Hermes chat.
 
-1. **Install** — If Hermes isn't installed, Ollama prompts to install it via the Nous Research install script
-2. **Model** — Pick a model from the selector (local or cloud)
-3. **Onboarding** — Ollama configures the Ollama provider, points Hermes at `http://127.0.0.1:11434/v1`, and sets your model as the primary
-4. **Gateway** — Optionally connects a messaging platform (Telegram, Discord, Slack, WhatsApp, Signal, Email) and launches the Hermes chat
+## Capabilities
 
-## Recommended models
+<div className="capability-list capability-list-full">
+  <div className="capability-list-grid">
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="comment" /></div>
+      <div>
+        <div className="capability-list-heading">Chat</div>
+        <div className="capability-list-copy">Ask questions about a repository or task</div>
+      </div>
+    </div>
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="terminal" /></div>
+      <div>
+        <div className="capability-list-heading">Command line</div>
+        <div className="capability-list-copy">Run commands with Hermes</div>
+      </div>
+    </div>
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="wrench" /></div>
+      <div>
+        <div className="capability-list-heading">Tool calling</div>
+        <div className="capability-list-copy">Use tools with compatible models</div>
+      </div>
+    </div>
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="file-pen" /></div>
+      <div>
+        <div className="capability-list-heading">File edits</div>
+        <div className="capability-list-copy">Read and edit files in your project</div>
+      </div>
+    </div>
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="users" /></div>
+      <div>
+        <div className="capability-list-heading">Subagents</div>
+        <div className="capability-list-copy">Split work across tasks</div>
+      </div>
+    </div>
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="globe" /></div>
+      <div>
+        <div className="capability-list-heading">Web fetch</div>
+        <div className="capability-list-copy">Fetch and summarize web pages</div>
+      </div>
+    </div>
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="image" /></div>
+      <div>
+        <div className="capability-list-heading">Vision</div>
+        <div className="capability-list-copy">Send images and screenshots</div>
+      </div>
+    </div>
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="brain" /></div>
+      <div>
+        <div className="capability-list-heading">Thinking</div>
+        <div className="capability-list-copy">Use thinking controls with compatible models</div>
+      </div>
+    </div>
+  </div>
+</div>
 
-**Cloud models**:
+## Models
 
-- `kimi-k2.5:cloud` — Multimodal reasoning with subagents
-- `glm-5.1:cloud` — Reasoning and code generation
-- `qwen3.5:cloud` — Reasoning, coding, and agentic tool use with vision
-- `minimax-m2.7:cloud` — Fast, efficient coding and real-world productivity
+Choose a local or cloud model from Ollama when launching Hermes.
 
-**Local models:**
+<CardGroup cols={2}>
+  <Card title="Cloud models" icon="cloud" href="https://ollama.com/search?c=cloud">
+    Use larger models hosted by Ollama.
+  </Card>
+  <Card title="Local models" icon="cpu" href="https://ollama.com/search">
+    Run models on your own machine.
+  </Card>
+</CardGroup>
 
-- `gemma4` — Reasoning and code generation locally (~16 GB VRAM)
-- `qwen3.6` — Reasoning, coding, and visual understanding locally (~24 GB VRAM)
+Run Hermes with a model directly:
 
-More models at [ollama.com/search](https://ollama.com/search?c=cloud).
+```shell
+ollama launch hermes --model gemma4:cloud
+```
 
-## Connect messaging apps
+## Messaging apps
 
-Link Telegram, Discord, Slack, WhatsApp, Signal, or Email to chat with your models from anywhere:
+On first interactive launch, Ollama asks whether you want to connect a messaging app.
 
-```bash
+Connect one later with Hermes:
+
+```shell
 hermes gateway setup
 ```
 
-## Reconfigure
+Hermes supports Telegram, Discord, Slack, WhatsApp, Signal, Email, and more.
 
-Re-run the full setup wizard at any time:
+## Run without interaction
 
-```bash
-hermes setup
+Use `--yes` with a model for scripts and repeatable setups:
+
+```shell
+ollama launch hermes --model gemma4:cloud --yes
 ```
 
 ## Manual setup
 
-If you'd rather drive Hermes's own wizard instead of `ollama launch hermes`, install it directly:
+<div className="manual-step-title">1. Install Hermes</div>
 
-```bash
+<CodeGroup>
+
+```shell macOS / Linux
 curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
 ```
 
+```powershell Windows
+irm https://hermes-agent.nousresearch.com/install.ps1 | iex
+```
+
+</CodeGroup>
+
+<div className="manual-step-title">2. Choose Quick setup</div>
+
 Hermes launches the setup wizard automatically. Choose **Quick setup**:
 
-```
+```text
 How would you like to set up Hermes?
 
  →  Quick setup — provider, model & messaging (recommended)
     Full setup — configure everything
 ```
 
-### Connect to Ollama
+<div className="manual-step-title">3. Configure Ollama</div>
 
-1. Select **More providers...**
-2. Select **Custom endpoint (enter URL manually)**
-3. Set the API base URL to the Ollama OpenAI-compatible endpoint:
+- Select **More providers...**
+- Select **Custom endpoint (enter URL manually)**
+- Set the API base URL to the Ollama OpenAI-compatible endpoint:
 
-   ```
-   API base URL [e.g. https://api.example.com/v1]: http://127.0.0.1:11434/v1
-   ```
-
-4. Leave the API key blank (not required for local Ollama):
-
-   ```
-   API key [optional]:
-   ```
-
-5. Hermes auto-detects downloaded models, confirm the one you want:
-
-   ```
-   Verified endpoint via http://127.0.0.1:11434/v1/models (1 model(s) visible)
-     Detected model: kimi-k2.5:cloud
-     Use this model? [Y/n]:
-   ```
-
-6. Leave context length blank to auto-detect:
-
-   ```
-   Context length in tokens [leave blank for auto-detect]:
-   ```
-
-### Connect messaging
-
-Optionally connect a messaging platform during setup:
-
-```
-Connect a messaging platform? (Telegram, Discord, etc.)
-
- →  Set up messaging now (recommended)
-    Skip — set up later with 'hermes setup gateway'
+```text
+API base URL [e.g. https://api.example.com/v1]: http://127.0.0.1:11434/v1
 ```
 
-### Launch
+- Leave the API key blank. It is not required for local Ollama.
 
-```
-Launch hermes chat now? [Y/n]: Y
+```text
+API key [optional]:
 ```
 
+- Confirm the model Hermes detects:
+
+```text
+Verified endpoint via http://127.0.0.1:11434/v1/models (1 model(s) visible)
+  Detected model: kimi-k2.5:cloud
+  Use this model? [Y/n]:
+```
+
+- Leave context length blank to auto-detect:
+
+```text
+Context length in tokens [leave blank for auto-detect]:
+```
+
+<div className="manual-step-title">4. Connect messaging apps</div>
+
+```shell
+hermes gateway setup
+```
+
+<div className="manual-step-title">5. Launch Hermes</div>
+
+```shell
+hermes
+```
