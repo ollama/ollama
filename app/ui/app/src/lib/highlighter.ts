@@ -1,8 +1,11 @@
 import { createHighlighter } from "shiki";
 import type { ThemeRegistration } from "shiki";
 
+export const THEME_LIGHT = "one-light";
+export const THEME_DARK = "one-dark";
+
 const oneLightTheme: ThemeRegistration = {
-  name: "one-light",
+  name: THEME_LIGHT,
   type: "light",
   colors: {
     "editor.background": "#fafafa",
@@ -64,7 +67,7 @@ const oneLightTheme: ThemeRegistration = {
 };
 
 const oneDarkTheme: ThemeRegistration = {
-  name: "one-dark",
+  name: THEME_DARK,
   type: "dark",
   colors: {
     "editor.background": "#282c34",
