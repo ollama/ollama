@@ -2596,9 +2596,10 @@ func PredictServerVRAM(modelPath string, f *ggml.GGML, numCtx int) uint64 {
 //	MTL0_Mapped model buffer size =  1918.35 MiB
 //	ROCm0 model buffer size =  1918.35 MiB
 type memoryParsingWriter struct {
-	inner   io.Writer
-	runner  *llamaServerRunner
-	buffers map[memoryBufferKey]memoryBuffer
+	inner                   io.Writer
+	runner                  *llamaServerRunner
+	buffers                 map[memoryBufferKey]memoryBuffer
+	suppressLogContinuation bool
 }
 
 type memoryBufferKey struct {
@@ -2625,6 +2626,7 @@ var bufferSizeRegex = regexp.MustCompile(`(?m)(?:^|\n)[^\n:]*?([A-Za-z_][A-Za-z0
 var (
 	offloadedLayersRegex      = regexp.MustCompile(`offloaded\s+(\d+)/(\d+)\s+layers to GPU`)
 	fitOverflowingLayersRegex = regexp.MustCompile(`common_params_fit_impl:\s+-\s+.+:\s+\d+\s+layers\s+\(\s*(\d+)\s+overflowing\)`)
+	successfulGinLogRegex     = regexp.MustCompile(`^\[GIN\].*\|\s+[23]\d\d\s+\|`)
 )
 
 // isGPUBuffer returns true if the backend buffer name represents GPU memory.
@@ -2699,7 +2701,89 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 			}
 		}()
 	}
-	return w.inner.Write(b)
+
+	if w.inner == nil {
+		return len(b), nil
+	}
+
+	forward := b
+	if !forwardLlamaServerLogOutputUnfiltered() {
+		forward = w.filterLlamaServerLogOutput(b)
+	}
+
+	if len(forward) == 0 {
+		return len(b), nil
+	}
+	_, err := w.inner.Write(forward)
+	return len(b), err
+}
+
+func forwardLlamaServerLogOutputUnfiltered() bool {
+	return envconfig.LogLevel() <= slog.LevelDebug
+}
+
+func (w *memoryParsingWriter) filterLlamaServerLogOutput(b []byte) []byte {
+	filtered := make([]byte, 0, len(b))
+	for len(b) > 0 {
+		lineEnd := bytes.IndexByte(b, '\n')
+		var line []byte
+		if lineEnd < 0 {
+			line = b
+			b = nil
+		} else {
+			line = b[:lineEnd+1]
+			b = b[lineEnd+1:]
+		}
+
+		if w.suppressLlamaServerLogLine(line) {
+			continue
+		}
+		filtered = append(filtered, line...)
+	}
+	return filtered
+}
+
+func (w *memoryParsingWriter) suppressLlamaServerLogLine(lineBytes []byte) bool {
+	line := strings.TrimRight(string(lineBytes), "\r\n")
+	trimmed := strings.TrimLeft(line, " \t")
+
+	if trimmed == "" {
+		return w.suppressLogContinuation
+	}
+
+	if statusErrorLine(trimmed) != "" || isLlamaServerSchedulerAccountingLog(trimmed) {
+		w.suppressLogContinuation = false
+		return false
+	}
+
+	if isIndentedLine(line) && w.suppressLogContinuation {
+		return true
+	}
+	w.suppressLogContinuation = false
+
+	if isNoisyLlamaServerLogLine(trimmed) {
+		w.suppressLogContinuation = strings.Contains(trimmed, "sampler params:")
+		return true
+	}
+
+	return false
+}
+
+func isIndentedLine(line string) bool {
+	return strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t")
+}
+
+func isLlamaServerSchedulerAccountingLog(line string) bool {
+	return deviceFreeRegex.MatchString(line) ||
+		bufferSizeRegex.MatchString(line) ||
+		offloadedLayersRegex.MatchString(line) ||
+		fitOverflowingLayersRegex.MatchString(line)
+}
+
+func isNoisyLlamaServerLogLine(line string) bool {
+	return strings.HasPrefix(line, "slot ") ||
+		strings.HasPrefix(line, "srv ") ||
+		successfulGinLogRegex.MatchString(line)
 }
 
 func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
