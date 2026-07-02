@@ -186,6 +186,7 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 
 	var draftLayers []create.LayerInfo
 	var err error
+
 	if hasDraft {
 		draftLayers, err = create.CreateDraftLayers(
 			opts.Modelfile.Draft,
@@ -516,6 +517,7 @@ func detectCapabilities(modelDir string) modelCapabilities {
 		ModelType     string          `json:"model_type"`
 		VisionConfig  *map[string]any `json:"vision_config"`
 		AudioConfig   *map[string]any `json:"audio_config"`
+		SoundConfig   *map[string]any `json:"sound_config"`
 	}
 	if data, err := os.ReadFile(filepath.Join(modelDir, "config.json")); err == nil {
 		_ = json.Unmarshal(data, &cfg)
@@ -523,7 +525,7 @@ func detectCapabilities(modelDir string) modelCapabilities {
 
 	return modelCapabilities{
 		vision: cfg.VisionConfig != nil,
-		audio:  cfg.AudioConfig != nil,
+		audio:  cfg.AudioConfig != nil || cfg.SoundConfig != nil,
 		thinking: chatTemplateHasThinkingSupport(readChatTemplate(modelDir)) ||
 			alwaysSupportsThinking(cfg.Architectures, cfg.ModelType),
 	}
@@ -609,64 +611,50 @@ func getParserName(modelDir string) string {
 	var cfg struct {
 		Architectures []string `json:"architectures"`
 		ModelType     string   `json:"model_type"`
+		LLMConfig     struct {
+			ModelType string `json:"model_type"`
+		} `json:"llm_config"`
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return ""
 	}
 
-	// Check architectures for known parsers
 	for _, arch := range cfg.Architectures {
-		archLower := strings.ToLower(arch)
-		if strings.Contains(archLower, "laguna") {
-			return lagunaRendererParserName(modelDir)
-		}
-		if strings.Contains(archLower, "cohere2moe") || strings.Contains(archLower, "cohere2_moe") {
-			return "cohere"
-		}
-		if strings.Contains(archLower, "glm4") || strings.Contains(archLower, "glm-4") {
-			return "glm-4.7"
-		}
-		if strings.Contains(archLower, "deepseek") {
-			return "deepseek3"
-		}
-		if strings.Contains(archLower, "gemma4") {
-			return "gemma4"
-		}
-		if isQwen35Family(archLower) {
-			return "qwen3.5"
-		}
-		if strings.Contains(archLower, "qwen3") {
-			return "qwen3"
+		if name := parserNameForIdentifier(modelDir, arch); name != "" {
+			return name
 		}
 	}
-
-	// Also check model_type
-	if cfg.ModelType != "" {
-		typeLower := strings.ToLower(cfg.ModelType)
-		if strings.Contains(typeLower, "laguna") {
-			return lagunaRendererParserName(modelDir)
-		}
-		if strings.Contains(typeLower, "cohere2_moe") {
-			return "cohere"
-		}
-		if strings.Contains(typeLower, "glm4") || strings.Contains(typeLower, "glm-4") {
-			return "glm-4.7"
-		}
-		if strings.Contains(typeLower, "deepseek") {
-			return "deepseek3"
-		}
-		if strings.Contains(typeLower, "gemma4") {
-			return "gemma4"
-		}
-		if isQwen35Family(typeLower) {
-			return "qwen3.5"
-		}
-		if strings.Contains(typeLower, "qwen3") {
-			return "qwen3"
+	for _, modelType := range []string{cfg.ModelType, cfg.LLMConfig.ModelType} {
+		if name := parserNameForIdentifier(modelDir, modelType); name != "" {
+			return name
 		}
 	}
 
 	return ""
+}
+
+func parserNameForIdentifier(modelDir, s string) string {
+	s = strings.ToLower(s)
+	switch {
+	case strings.Contains(s, "laguna"):
+		return lagunaRendererParserName(modelDir)
+	case strings.Contains(s, "cohere2moe") || strings.Contains(s, "cohere2_moe"):
+		return "cohere"
+	case strings.Contains(s, "glm4") || strings.Contains(s, "glm-4"):
+		return "glm-4.7"
+	case strings.Contains(s, "deepseek"):
+		return "deepseek3"
+	case strings.Contains(s, "gemma4"):
+		return "gemma4"
+	case isQwen35Family(s):
+		return "qwen3.5"
+	case strings.Contains(s, "qwen3"):
+		return "qwen3"
+	case strings.Contains(s, "nemotronh_nano") || strings.Contains(s, "nemotron-3-nano") || strings.Contains(s, "nemotron_h"):
+		return "nemotron-3-nano"
+	default:
+		return ""
+	}
 }
 
 // getRendererName returns the renderer name for a model based on its architecture.
@@ -681,62 +669,48 @@ func getRendererName(modelDir string) string {
 	var cfg struct {
 		Architectures []string `json:"architectures"`
 		ModelType     string   `json:"model_type"`
+		LLMConfig     struct {
+			ModelType string `json:"model_type"`
+		} `json:"llm_config"`
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return ""
 	}
 
-	// Check architectures for known renderers
 	for _, arch := range cfg.Architectures {
-		archLower := strings.ToLower(arch)
-		if strings.Contains(archLower, "laguna") {
-			return lagunaRendererParserName(modelDir)
-		}
-		if strings.Contains(archLower, "cohere2moe") || strings.Contains(archLower, "cohere2_moe") {
-			return "cohere"
-		}
-		if strings.Contains(archLower, "gemma4") {
-			return "gemma4"
-		}
-		if strings.Contains(archLower, "glm4") || strings.Contains(archLower, "glm-4") {
-			return "glm-4.7"
-		}
-		if strings.Contains(archLower, "deepseek") {
-			return "deepseek3"
-		}
-		if isQwen35Family(archLower) {
-			return "qwen3.5"
-		}
-		if strings.Contains(archLower, "qwen3") {
-			return "qwen3-coder"
+		if name := rendererNameForIdentifier(modelDir, arch); name != "" {
+			return name
 		}
 	}
-
-	// Also check model_type
-	if cfg.ModelType != "" {
-		typeLower := strings.ToLower(cfg.ModelType)
-		if strings.Contains(typeLower, "laguna") {
-			return lagunaRendererParserName(modelDir)
-		}
-		if strings.Contains(typeLower, "cohere2_moe") {
-			return "cohere"
-		}
-		if strings.Contains(typeLower, "gemma4") {
-			return "gemma4"
-		}
-		if strings.Contains(typeLower, "glm4") || strings.Contains(typeLower, "glm-4") {
-			return "glm-4.7"
-		}
-		if strings.Contains(typeLower, "deepseek") {
-			return "deepseek3"
-		}
-		if isQwen35Family(typeLower) {
-			return "qwen3.5"
-		}
-		if strings.Contains(typeLower, "qwen3") {
-			return "qwen3-coder"
+	for _, modelType := range []string{cfg.ModelType, cfg.LLMConfig.ModelType} {
+		if name := rendererNameForIdentifier(modelDir, modelType); name != "" {
+			return name
 		}
 	}
 
 	return ""
+}
+
+func rendererNameForIdentifier(modelDir, s string) string {
+	s = strings.ToLower(s)
+	switch {
+	case strings.Contains(s, "laguna"):
+		return lagunaRendererParserName(modelDir)
+	case strings.Contains(s, "cohere2moe") || strings.Contains(s, "cohere2_moe"):
+		return "cohere"
+	case strings.Contains(s, "gemma4"):
+		return "gemma4"
+	case strings.Contains(s, "glm4") || strings.Contains(s, "glm-4"):
+		return "glm-4.7"
+	case strings.Contains(s, "deepseek"):
+		return "deepseek3"
+	case isQwen35Family(s):
+		return "qwen3.5"
+	case strings.Contains(s, "qwen3"):
+		return "qwen3-coder"
+	case strings.Contains(s, "nemotronh_nano") || strings.Contains(s, "nemotron-3-nano") || strings.Contains(s, "nemotron_h"):
+		return "nemotron-3-nano"
+	default:
+		return ""
+	}
 }
