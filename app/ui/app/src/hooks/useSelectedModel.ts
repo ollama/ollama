@@ -19,9 +19,9 @@ export function recommendDefaultModel(totalVRAM: number): string {
   return "gpt-oss:20b";
 }
 
-export function useSelectedModel(currentChatId?: string, searchQuery?: string) {
+export function useSelectedModel(currentChatId?: string, searchQuery?: string, localOnly: boolean = false) {
   const { settings, setSettings } = useSettings();
-  const { data: models = [], isLoading } = useModels(searchQuery || "");
+  const { data: models = [], isLoading } = useModels(searchQuery || "", localOnly);
   const { cloudDisabled } = useCloudStatus();
   const { data: chatData, isLoading: isChatLoading } = useChat(
     currentChatId && currentChatId !== "new" ? currentChatId : "",
@@ -50,6 +50,16 @@ export function useSelectedModel(currentChatId?: string, searchQuery?: string) {
 
   const selectedModel: Model | null = useMemo(() => {
     // If cloud is disabled and selected model ends with cloud, switch to a local default.
+    
+    // if you need to prevent using cloud models. "Local models only" filter usually means: hide cloud models from the picker
+    // ----------------------------------------------------------------------------------------------------------------------
+    // if (localOnly && settings.selectedModel?.endsWith("cloud")) {
+    //   return (
+    //     models.find((m) => !m.isCloud()) ||
+    //     null
+    //   );
+    // }
+
     if (cloudDisabled && settings.selectedModel?.endsWith("cloud")) {
       return (
         models.find((m) => m.model === recommendedModel) ||
