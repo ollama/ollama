@@ -789,6 +789,9 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	// Be quiet if we're redirecting to a pipe or file
 	if !term.IsTerminal(int(os.Stdout.Fd())) {
 		interactive = false
+		if opts.Prompt == "" {
+			return fmt.Errorf("interactive mode requires a terminal. To redirect output, pass the prompt directly: ollama run %s \"your prompt\" > output.txt", args[0])
+		}
 	}
 
 	nowrap, err := cmd.Flags().GetBool("nowordwrap")
