@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -2817,6 +2818,81 @@ func TestMemoryParsingWriter(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMemoryParsingWriterWarnsOnLargeCUDAHostModelBuffer(t *testing.T) {
+	logs := captureSlog(t)
+
+	runner := &llamaServerRunner{vramByDevice: make(map[string]uint64)}
+	w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+	if _, err := w.Write([]byte("load_tensors:    CUDA_Host model buffer size = 12849.61 MiB\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	got := logs.String()
+	for _, want := range []string{"model using CUDA host memory", "size=\"12.55 GiB\""} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("logs = %q, want substring %q", got, want)
+		}
+	}
+}
+
+func TestMemoryParsingWriterSkipsSmallOrNonModelCUDAHostBuffers(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+	}{
+		{
+			name: "small model buffer",
+			line: "load_tensors:    CUDA_Host model buffer size =   512.00 MiB\n",
+		},
+		{
+			name: "large compute buffer",
+			line: "sched_reserve:  CUDA_Host compute buffer size =  2048.00 MiB\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logs := captureSlog(t)
+
+			runner := &llamaServerRunner{vramByDevice: make(map[string]uint64)}
+			w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+			if _, err := w.Write([]byte(tt.line)); err != nil {
+				t.Fatal(err)
+			}
+
+			if got := logs.String(); strings.Contains(got, "model using CUDA host memory") {
+				t.Fatalf("logs = %q, want no CUDA host memory warning", got)
+			}
+		})
+	}
+}
+
+func TestMemoryParsingWriterWarnsOnceForLargeCUDAHostModelBuffers(t *testing.T) {
+	logs := captureSlog(t)
+
+	runner := &llamaServerRunner{vramByDevice: make(map[string]uint64)}
+	w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+	for range 2 {
+		if _, err := w.Write([]byte("load_tensors:    CUDA_Host model buffer size = 2048.00 MiB\n")); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if got := strings.Count(logs.String(), "model using CUDA host memory"); got != 1 {
+		t.Fatalf("warning count = %d, want 1; logs = %q", got, logs.String())
+	}
+}
+
+func captureSlog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+
+	var logs bytes.Buffer
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(oldLogger) })
+	return &logs
 }
 
 func TestMemoryParsingWriterRecordsOutputActivityWithoutNewline(t *testing.T) {

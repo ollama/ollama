@@ -2596,9 +2596,10 @@ func PredictServerVRAM(modelPath string, f *ggml.GGML, numCtx int) uint64 {
 //	MTL0_Mapped model buffer size =  1918.35 MiB
 //	ROCm0 model buffer size =  1918.35 MiB
 type memoryParsingWriter struct {
-	inner   io.Writer
-	runner  *llamaServerRunner
-	buffers map[memoryBufferKey]memoryBuffer
+	inner               io.Writer
+	runner              *llamaServerRunner
+	buffers             map[memoryBufferKey]memoryBuffer
+	cudaHostModelWarned bool
 }
 
 type memoryBufferKey struct {
@@ -2610,6 +2611,8 @@ type memoryBufferKey struct {
 type memoryBuffer struct {
 	bytes uint64
 }
+
+const largeCUDAHostModelBufferBytes = 1024 * 1024 * 1024
 
 // deviceFreeRegex matches per-device free VRAM reported at model load time:
 //
@@ -2686,6 +2689,7 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 			for _, match := range bufferSizeRegex.FindAllSubmatch(b, -1) {
 				backendName := string(match[2])
 				if mib, err := strconv.ParseFloat(string(match[4]), 64); err == nil {
+					bytes := uint64(mib * 1024 * 1024)
 					if w.buffers == nil {
 						w.buffers = make(map[memoryBufferKey]memoryBuffer)
 					}
@@ -2693,7 +2697,8 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 						component: string(match[1]),
 						backend:   backendName,
 						kind:      string(match[3]),
-					}] = memoryBuffer{bytes: uint64(mib * 1024 * 1024)}
+					}] = memoryBuffer{bytes: bytes}
+					w.warnLargeCUDAHostModelBufferLocked(backendName, string(match[3]), bytes)
 					w.updateRunnerMemoryLocked()
 				}
 			}
@@ -2733,6 +2738,18 @@ func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
 	w.runner.memModelFileBacked = modelFileBacked
 	w.runner.memCPUMappedModel = cpuMappedModel
 	w.runner.vramByDevice = byDevice
+}
+
+func (w *memoryParsingWriter) warnLargeCUDAHostModelBufferLocked(backendName, kind string, bytes uint64) {
+	if w.cudaHostModelWarned || backendName != "CUDA_Host" || kind != "model" || bytes < largeCUDAHostModelBufferBytes {
+		return
+	}
+	w.cudaHostModelWarned = true
+	slog.Warn("model using CUDA host memory", "size", humanGiB(bytes), "detail", "large CUDA_Host model buffers can reduce throughput because model weights are read through system memory; use a smaller model or quantization, or disable NVIDIA system memory fallback on Windows")
+}
+
+func humanGiB(bytes uint64) string {
+	return fmt.Sprintf("%.2f GiB", float64(bytes)/(1024*1024*1024))
 }
 
 // VRAMByGPU returns the VRAM used by this runner on the specified device.
