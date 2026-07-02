@@ -1,5 +1,5 @@
 // mlx_error_handler.h - Safe error handling for MLX initialization
-// This replaces the default exit(-1) MLX error handler during init()
+// This replaces the default exit(-1) MLX error handler during InitMLX()
 // so that GPU failures don't kill the process.
 
 #ifndef MLX_ERROR_HANDLER_H

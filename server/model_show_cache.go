@@ -29,10 +29,11 @@ metadata, quantization details, remote metadata, and model-specific fields.
 TODO(parthsareen): Consider removing show cache if /api/tags grows to cover
 the remaining callers.
 
-Local model entries are stored lazily by canonical model name and verbose flag,
-with the manifest digest recorded in the entry. The manifest digest is the
-freshness boundary: if the model content changes, the digest changes, so the
-previous response is replaced instead of accumulating under an old digest key.
+Local model entries are stored lazily by canonical model name, runner, and
+verbose flag, with the manifest digest recorded in the entry. The manifest
+digest is the freshness boundary: if the model content changes, the digest
+changes, so the previous response is replaced instead of accumulating under an
+old digest key.
 Requests with System or Options overlays bypass the cache because those overlays
 mutate the effective show response.
 
@@ -87,6 +88,7 @@ type modelShowCache struct {
 // served and disappear on process restart.
 type modelShowLocalKey struct {
 	Model   string
+	Runner  string
 	Verbose bool
 }
 
@@ -210,6 +212,18 @@ func (c *modelShowCache) hasLocal(key modelShowLocalKey, digest string) bool {
 	return ok && entry.Digest == digest && entry.Response != nil
 }
 
+func (c *modelShowCache) invalidateLocal(name model.Name) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	modelName := name.String()
+	for key := range c.local {
+		if key.Model == modelName {
+			delete(c.local, key)
+		}
+	}
+}
+
 func (c *modelShowCache) getCloud(key modelShowCloudKey) (*api.ShowResponse, bool) {
 	c.mu.RLock()
 	resp, ok := c.cloud[key]
@@ -312,6 +326,7 @@ func (c *modelShowCache) hydrateLocal(ctx context.Context) error {
 		digest := mf.Digest()
 		key := modelShowLocalKey{
 			Model:   modelName,
+			Runner:  "",
 			Verbose: false,
 		}
 		if c.hasLocal(key, digest) {
@@ -525,22 +540,28 @@ func modelShowStatusError(resp *http.Response, body []byte) error {
 // on-disk model name and returns the current manifest digest used to validate
 // the cached entry.
 func modelShowLocalKeyForRequest(req api.ShowRequest) (modelShowLocalKey, string, error) {
-	name := model.ParseName(req.Model)
-	if !name.IsValid() {
-		return modelShowLocalKey{}, "", model.Unqualified(name)
-	}
-	name, err := getExistingName(name)
+	runner, err := normalizeRunner(req.Runner)
 	if err != nil {
 		return modelShowLocalKey{}, "", err
 	}
 
-	mf, err := manifest.ParseNamedManifest(name)
+	name := model.ParseName(req.Model)
+	if !name.IsValid() {
+		return modelShowLocalKey{}, "", model.Unqualified(name)
+	}
+	name, err = getExistingName(name)
+	if err != nil {
+		return modelShowLocalKey{}, "", err
+	}
+
+	mf, err := manifest.ParseNamedManifestForRunner(name, runner)
 	if err != nil {
 		return modelShowLocalKey{}, "", err
 	}
 
 	return modelShowLocalKey{
 		Model:   name.String(),
+		Runner:  runner,
 		Verbose: req.Verbose,
 	}, mf.Digest(), nil
 }
@@ -601,6 +622,7 @@ func cloneShowResponse(in *api.ShowResponse) *api.ShowResponse {
 	out.Details.Families = slices.Clone(in.Details.Families)
 	out.Messages = cloneMessages(in.Messages)
 	out.Capabilities = slices.Clone(in.Capabilities)
+	out.Manifests = slices.Clone(in.Manifests)
 	out.ModelInfo = cloneAnyMap(in.ModelInfo)
 	out.ProjectorInfo = cloneAnyMap(in.ProjectorInfo)
 	out.Tensors = cloneTensors(in.Tensors)

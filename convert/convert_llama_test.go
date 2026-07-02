@@ -32,3 +32,26 @@ func TestLlama3RopeFactorsTensorDoesNotDependOnKVOrder(t *testing.T) {
 		t.Fatalf("expected one rope tensor after KV call, got %#v", afterKV)
 	}
 }
+
+func TestLlama3TokenizerMetadataGapRequiresChatTemplate(t *testing.T) {
+	tokens := make([]string, 128010)
+	tokens[128006] = "<|start_header_id|>"
+	tokens[128009] = "<|eot_id|>"
+
+	baseText := KV{
+		"tokenizer.ggml.tokens":       tokens,
+		"tokenizer.ggml.eos_token_id": uint32(128001),
+	}
+	if llama3TokenizerMetadataGap(baseText) {
+		t.Fatal("base text model without chat template should keep end_of_text EOS")
+	}
+
+	instruct := KV{
+		"tokenizer.ggml.tokens":       tokens,
+		"tokenizer.ggml.eos_token_id": uint32(128001),
+		"tokenizer.chat_template":     "<|start_header_id|>{{ content }}<|eot_id|>",
+	}
+	if !llama3TokenizerMetadataGap(instruct) {
+		t.Fatal("instruct model with Llama 3 chat template should use eot EOS")
+	}
+}

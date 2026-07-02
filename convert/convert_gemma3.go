@@ -3,6 +3,7 @@ package convert
 import (
 	"cmp"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 
@@ -18,6 +19,11 @@ type gemma3Model struct {
 		HiddenLayers     uint32 `json:"num_hidden_layers"`
 		IntermediateSize uint32 `json:"intermediate_size"`
 		SlidingWindow    uint32 `json:"sliding_window"`
+		VocabSize        uint32 `json:"vocab_size"`
+		RopeScaling      *struct {
+			Type   string  `json:"rope_type"`
+			Factor float32 `json:"factor"`
+		} `json:"rope_scaling"`
 	} `json:"text_config"`
 	VisionModel struct {
 		NumAttentionHeads uint32  `json:"num_attention_heads"` // attention.head_count 16
@@ -50,6 +56,8 @@ type gemma3Model struct {
 		BetaSlow                      float32 `json:"beta_slow"`
 	} `json:"rope_scaling"`
 }
+
+var _ MultimodalConverter = (*gemma3Model)(nil)
 
 const (
 	gemma4BLayerCount  = 34
@@ -115,7 +123,7 @@ func (p *gemma3Model) KV(t *Tokenizer) KV {
 		if p.FinalLogitSoftcap > 0 {
 			kv["gemma3.final_logit_softcapping"] = p.FinalLogitSoftcap
 		}
-		kv["gemma3.rope.local.freq_base"] = cmp.Or(p.RopeLocalTheta, 10000.0)
+		kv["gemma3.rope.freq_base_swa"] = cmp.Or(p.RopeLocalTheta, 10000.0)
 		kv["gemma3.rope.freq_base"] = cmp.Or(p.RopeTheta, 1000000.0)
 		if p.RopeScaling != nil && p.RopeScaling.Type == "yarn" && p.RopeScaling.Factor > 0 {
 			kv["gemma3.rope.scaling.type"] = "yarn"
@@ -152,6 +160,59 @@ func (p *gemma3Model) KV(t *Tokenizer) KV {
 	return kv
 }
 
+func (p *gemma3Model) TextKV(t *Tokenizer) KV {
+	kv := p.KV(t)
+	for key := range kv {
+		if strings.HasPrefix(key, "gemma3.vision.") {
+			delete(kv, key)
+		}
+	}
+	delete(kv, "gemma3.mm.tokens_per_image")
+
+	if _, ok := kv["gemma3.attention.layer_norm_rms_epsilon"]; !ok {
+		kv["gemma3.attention.layer_norm_rms_epsilon"] = float32(1e-6)
+	}
+	if _, ok := kv["gemma3.rope.freq_base"]; !ok {
+		kv["gemma3.rope.freq_base"] = float32(1000000.0)
+	}
+	if _, ok := kv["gemma3.rope.freq_base_swa"]; !ok {
+		kv["gemma3.rope.freq_base_swa"] = float32(10000.0)
+	}
+
+	if p.TextModel.RopeScaling != nil && p.TextModel.RopeScaling.Type != "" && p.TextModel.RopeScaling.Factor > 0 {
+		kv["gemma3.rope.scaling.type"] = p.TextModel.RopeScaling.Type
+		kv["gemma3.rope.scaling.factor"] = p.TextModel.RopeScaling.Factor
+	} else if contextLength, _ := kv["gemma3.context_length"].(uint32); contextLength >= 131072 {
+		kv["gemma3.rope.scaling.type"] = "linear"
+		kv["gemma3.rope.scaling.factor"] = float32(8.0)
+	}
+
+	return kv
+}
+
+func (p *gemma3Model) ProjectorKV(*Tokenizer) KV {
+	return KV{
+		"general.architecture":                     "clip",
+		"general.type":                             "mmproj",
+		"general.file_type":                        uint32(1),
+		"general.quantization_version":             uint32(2),
+		"clip.has_vision_encoder":                  true,
+		"clip.projector_type":                      "gemma3",
+		"clip.use_gelu":                            true,
+		"clip.vision.block_count":                  p.VisionModel.NumHiddenLayers,
+		"clip.vision.embedding_length":             p.VisionModel.HiddenSize,
+		"clip.vision.feed_forward_length":          p.VisionModel.IntermediateSize,
+		"clip.vision.image_size":                   p.VisionModel.ImageSize,
+		"clip.vision.patch_size":                   p.VisionModel.PatchSize,
+		"clip.vision.num_channels":                 cmp.Or(p.VisionModel.NumChannels, uint32(3)),
+		"clip.vision.attention.head_count":         p.VisionModel.NumAttentionHeads,
+		"clip.vision.attention.layer_norm_epsilon": cmp.Or(p.VisionModel.LayerNormEpsilon, float32(1e-6)),
+		"clip.vision.projection_dim":               p.TextModel.HiddenSize,
+		"clip.vision.image_mean":                   []float32{0.5, 0.5, 0.5},
+		"clip.vision.image_std":                    []float32{0.5, 0.5, 0.5},
+	}
+}
+
 func (p *gemma3Model) Replacements() []string {
 	return []string{
 		"lm_head", "output",
@@ -181,6 +242,72 @@ func (p *gemma3Model) Replacements() []string {
 		"input_projection_weight", "input_projection.weight",
 		"multi_modal_projector", "mm",
 	}
+}
+
+func gemma3VisionTensor(name string) bool {
+	return strings.HasPrefix(name, "v.") || strings.HasPrefix(name, "mm.")
+}
+
+func (p *gemma3Model) TextTensors(ts []Tensor, t *Tokenizer) []*ggml.Tensor {
+	var textOnly []Tensor
+	for _, tensor := range ts {
+		if gemma3VisionTensor(tensor.Name()) {
+			continue
+		}
+		if tensor.Name() == "token_embd.weight" && len(tensor.Shape()) > 0 {
+			truncateTokenizerVocabulary(t, int(tensor.Shape()[0]))
+		}
+		textOnly = append(textOnly, tensor)
+	}
+	return p.TensorsWithTokenizer(textOnly, t)
+}
+
+var gemma3ProjectorRenames = []struct{ from, to string }{
+	{"v.patch_embedding", "v.patch_embd"},
+	{"v.position_embedding", "v.position_embd"},
+	{"v.post_layernorm", "v.post_ln"},
+	{".layer_norm1", ".ln1"},
+	{".layer_norm2", ".ln2"},
+	{".attn_output", ".attn_out"},
+	{".mlp.fc1", ".ffn_down"},
+	{".mlp.fc2", ".ffn_up"},
+	{"mm.mm_input_projection", "mm.input_projection"},
+	{"mm.mm_soft_emb_norm", "mm.soft_emb_norm"},
+}
+
+func gemma3ProjectorTensorName(name string) string {
+	for _, r := range gemma3ProjectorRenames {
+		name = strings.Replace(name, r.from, r.to, 1)
+	}
+	return name
+}
+
+func (p *gemma3Model) ProjectorTensors(ts []Tensor) []*ggml.Tensor {
+	var out []*ggml.Tensor
+	for _, t := range ts {
+		if !gemma3VisionTensor(t.Name()) {
+			continue
+		}
+
+		name := gemma3ProjectorTensorName(t.Name())
+		kind := t.Kind()
+		var writer io.WriterTo = t
+		if !strings.HasPrefix(name, "v.") && strings.HasSuffix(name, "_norm.weight") {
+			t.SetRepacker(p.addOne)
+		}
+		if name == "v.patch_embd.weight" || name == "v.position_embd.weight" {
+			kind = tensorKindFP32
+			writer = tensorFloat32Writer{tensor: t}
+		}
+
+		out = append(out, &ggml.Tensor{
+			Name:     name,
+			Kind:     kind,
+			Shape:    slices.Clone(t.Shape()),
+			WriterTo: writer,
+		})
+	}
+	return out
 }
 
 func (p *gemma3Model) TensorsWithTokenizer(ts []Tensor, t *Tokenizer) []*ggml.Tensor {
@@ -220,4 +347,8 @@ func (p *gemma3Model) TensorsWithTokenizer(ts []Tensor, t *Tokenizer) []*ggml.Te
 	}
 
 	return out
+}
+
+func (p *gemma3Model) adjustTokenizer(t *Tokenizer) {
+	truncateTokenizerVocabulary(t, int(cmp.Or(p.VocabSize, p.TextModel.VocabSize)))
 }

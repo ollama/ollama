@@ -100,7 +100,34 @@ func (p *llamaModel) KV(t *Tokenizer) KV {
 		kv["llama.attention.value_length"] = p.HeadDim
 	}
 
+	fixLlama3TokenizerMetadata(kv)
+
 	return kv
+}
+
+func fixLlama3TokenizerMetadata(kv KV) {
+	if !llama3TokenizerMetadataGap(kv) {
+		return
+	}
+
+	if kv.String("tokenizer.ggml.pre") == "" || kv.String("tokenizer.ggml.pre") == "default" {
+		kv["tokenizer.ggml.pre"] = "llama-bpe"
+	}
+	kv["tokenizer.ggml.eos_token_id"] = uint32(128009)
+	kv["tokenizer.ggml.eot_token_id"] = uint32(128009)
+	kv["tokenizer.ggml.eos_token_ids"] = []int32{128009}
+}
+
+func llama3TokenizerMetadataGap(kv KV) bool {
+	tokens := kv.Strings("tokenizer.ggml.tokens")
+	if len(tokens) <= 128009 || tokens[128009] != "<|eot_id|>" {
+		return false
+	}
+
+	chatTemplate := kv.String("tokenizer.chat_template")
+	hasChatMarkers := strings.Contains(chatTemplate, "<|start_header_id|>") ||
+		strings.Contains(chatTemplate, "<|eot_id|>")
+	return hasChatMarkers && kv.Uint("tokenizer.ggml.eos_token_id") == 128001
 }
 
 func (p *llamaModel) Tensors(ts []Tensor) []*ggml.Tensor {

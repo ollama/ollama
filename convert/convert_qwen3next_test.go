@@ -101,7 +101,7 @@ func TestQwen3NextKVLegacyConfig(t *testing.T) {
 	}
 
 	kv := m.KV(&Tokenizer{Vocabulary: &Vocabulary{}})
-	if got, want := kv["general.architecture"], "qwen35moe"; got != want {
+	if got, want := kv["general.architecture"], "qwen3next"; got != want {
 		t.Fatalf("unexpected architecture: got %v want %v", got, want)
 	}
 	if got, want := kv["tokenizer.ggml.pre"], "qwen35"; got != want {
