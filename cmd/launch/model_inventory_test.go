@@ -64,14 +64,14 @@ func TestModelInventoryResolveDoesNotRefreshCloudMiss(t *testing.T) {
 	u, _ := url.Parse(srv.URL)
 	inventory := newModelInventory(api.NewClient(u, srv.Client()))
 
-	got := inventory.Resolve(context.Background(), []string{"glm-5.1:cloud"})
+	got := inventory.Resolve(context.Background(), []string{"glm-5.2:cloud"})
 	if calls != 1 {
 		t.Fatalf("List calls = %d, want 1", calls)
 	}
 	if len(got) != 1 {
 		t.Fatalf("Resolve returned %d models, want 1", len(got))
 	}
-	if got[0].Name != "glm-5.1:cloud" || !got[0].Remote {
+	if got[0].Name != "glm-5.2:cloud" || !got[0].Remote {
 		t.Fatalf("resolved model = %#v, want cloud fallback", got[0])
 	}
 	if got[0].ContextLength <= 0 || got[0].MaxOutputTokens <= 0 {
