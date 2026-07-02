@@ -61,7 +61,7 @@ func webBrainOllamaBaseURL() string {
 	return clone.String()
 }
 
-func webBrainContextWindow(models []LaunchModel) int64 {
+func webBrainContextWindow(models []LaunchModel) int {
 	if len(models) > 0 && models[0].ContextLength > 0 {
 		return models[0].ContextLength
 	}
