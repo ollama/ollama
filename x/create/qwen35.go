@@ -83,7 +83,7 @@ func qwen35InspectSource(modelDir string) (qwen35SourceInfo, error) {
 }
 
 func (t qwen35ImportTransform) skipTensor(name string) bool {
-	return false
+	return strings.Contains(name, "mtp.")
 }
 
 func qwen35ShouldKeepBF16ForDirectNonAffine(name string) bool {
@@ -253,8 +253,6 @@ func (t qwen35ImportTransform) canonicalTensorName(name string) string {
 		return "vision_tower." + strings.TrimPrefix(name, "model.visual.")
 	case strings.HasPrefix(name, "vision_tower."):
 		return name
-	case strings.HasPrefix(name, "mtp."):
-		return name
 	}
 
 	// Language model tensors: normalize to language_model.model.* prefix
@@ -275,8 +273,6 @@ func qwen35ShouldShiftNormKey(key string) bool {
 	for _, suffix := range []string{
 		".input_layernorm.weight",
 		".post_attention_layernorm.weight",
-		"mtp.pre_fc_norm_embedding.weight",
-		"mtp.pre_fc_norm_hidden.weight",
 		"model.norm.weight",
 		".q_norm.weight",
 		".k_norm.weight",
