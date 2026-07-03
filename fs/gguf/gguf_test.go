@@ -3,9 +3,11 @@ package gguf_test
 import (
 	"bytes"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -224,6 +226,50 @@ func TestRead(t *testing.T) {
 	if b.Len() != int(ti.NumBytes()) {
 		t.Errorf(`ReadFrom TensorReader("output.weight") length = %d, want %d`, b.Len(), ti.NumBytes())
 	}
+}
+
+func TestOpenCleansUpPartialLazyReader(t *testing.T) {
+	p := createFile(t, []byte{
+		'G', 'G', 'U', 'F',
+		3, 0, 0, 0,
+		0, 0, 0, 0, 0, 0, 0, 0,
+	})
+
+	runtime.GC()
+	before := runtime.NumGoroutine()
+
+	for range 20 {
+		f, err := gguf.Open(p)
+		if err == nil {
+			f.Close()
+			t.Fatal("gguf.Open truncated header succeeded")
+		}
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		runtime.GC()
+		runtime.Gosched()
+		if runtime.NumGoroutine() <= before+2 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if after := runtime.NumGoroutine(); after > before+2 {
+		t.Fatalf("goroutines after repeated failed gguf.Open = %d, want at most %d", after, before+2)
+	}
+}
+
+func createFile(tb testing.TB, b []byte) string {
+	tb.Helper()
+
+	p := tb.TempDir() + "/model.gguf"
+	if err := os.WriteFile(p, b, 0o600); err != nil {
+		tb.Fatal(err)
+	}
+
+	return p
 }
 
 func BenchmarkRead(b *testing.B) {

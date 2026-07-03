@@ -1,6 +1,9 @@
 package create
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 // CreateDraftLayers imports a draft (speculative-decoding / MTP assistant)
 // safetensors model into prefixed tensor and config blobs and returns the
@@ -12,7 +15,7 @@ import "fmt"
 // tensor names keep their source form, namespaced by tensorPrefix (e.g.
 // "draft.") so they cannot collide with the target's tensors; config blobs are
 // named under configPrefix (e.g. "draft/").
-func CreateDraftLayers(modelDir, tensorPrefix, configPrefix, quantize string, store BlobStore, fn func(status string)) ([]LayerInfo, error) {
+func CreateDraftLayers(ctx context.Context, modelDir, tensorPrefix, configPrefix, quantize string, store BlobStore, fn func(status string)) ([]LayerInfo, error) {
 	if tensorPrefix == "" {
 		return nil, fmt.Errorf("draft tensor prefix must not be empty")
 	}
@@ -21,9 +24,15 @@ func CreateDraftLayers(modelDir, tensorPrefix, configPrefix, quantize string, st
 	}
 	defer sweepMLX()
 
+	if err := checkContext(ctx); err != nil {
+		return nil, err
+	}
 	inv, err := ReadInventory(modelDir)
 	if err != nil {
 		return nil, fmt.Errorf("read draft model: %w", err)
+	}
+	if err := checkContext(ctx); err != nil {
+		return nil, err
 	}
 	class, err := Classify(inv, quantize)
 	if err != nil {
@@ -40,12 +49,12 @@ func CreateDraftLayers(modelDir, tensorPrefix, configPrefix, quantize string, st
 	specs = prefixSpecs(specs, tensorPrefix)
 
 	fn(fmt.Sprintf("importing draft (%d tensors%s)", len(inv.Tensors), quantizeStatus(class)))
-	layers, err := WriteBlobs(specs, modelDir, store)
+	layers, err := WriteBlobs(ctx, specs, modelDir, store)
 	if err != nil {
 		return nil, err
 	}
 
-	configLayers, _, err := importConfigBlobs(modelDir, configPrefix, store, fn)
+	configLayers, _, err := importConfigBlobs(ctx, modelDir, configPrefix, store, fn)
 	if err != nil {
 		return nil, err
 	}

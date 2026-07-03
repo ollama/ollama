@@ -1,6 +1,7 @@
 package create
 
 import (
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -86,7 +87,7 @@ func TestCreateDraftLayersPrefixesNamesAndConfig(t *testing.T) {
 	})
 
 	store := &recordingStore{}
-	layers, err := CreateDraftLayers(dir, "draft.", "draft/", "", store, func(string) {})
+	layers, err := CreateDraftLayers(context.Background(), dir, "draft.", "draft/", "", store, func(string) {})
 	if err != nil {
 		t.Fatalf("CreateDraftLayers: %v", err)
 	}
@@ -112,10 +113,10 @@ func TestCreateDraftLayersPrefixesNamesAndConfig(t *testing.T) {
 
 func TestCreateDraftLayersRejectsEmptyPrefixes(t *testing.T) {
 	store := &recordingStore{}
-	if _, err := CreateDraftLayers(t.TempDir(), "", "draft/", "", store, func(string) {}); err == nil {
+	if _, err := CreateDraftLayers(context.Background(), t.TempDir(), "", "draft/", "", store, func(string) {}); err == nil {
 		t.Error("expected an error for an empty tensor prefix")
 	}
-	if _, err := CreateDraftLayers(t.TempDir(), "draft.", "", "", store, func(string) {}); err == nil {
+	if _, err := CreateDraftLayers(context.Background(), t.TempDir(), "draft.", "", "", store, func(string) {}); err == nil {
 		t.Error("expected an error for an empty config prefix")
 	}
 }

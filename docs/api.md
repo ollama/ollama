@@ -1186,10 +1186,10 @@ POST /api/create
 Create a model from:
 
 - another model;
-- a safetensors directory; or
+- a safetensors directory as an MLX-backed model; or
 - a GGUF file.
 
-If you are creating a model from a safetensors directory or from a GGUF file, you must [create a blob](#create-a-blob) for each of the files and then use the file name and SHA256 digest associated with each blob in the `files` field.
+If you are creating a model from a safetensors directory or from a GGUF file, you must [create a blob](#create-a-blob) for each of the files and then use the file name and SHA256 digest associated with each blob in the `files` field. GGUF inputs are imported as GGUF models. Safetensors inputs are imported as MLX-backed safetensors models.
 
 ### Parameters
 
@@ -1205,15 +1205,17 @@ If you are creating a model from a safetensors directory or from a GGUF file, yo
 - `parameters`: (optional) a dictionary of parameters for the model (see [Modelfile](./modelfile.mdx#valid-parameters-and-values) for a list of parameters)
 - `messages`: (optional) a list of message objects used to create a conversation
 - `stream`: (optional) if `false` the response will be returned as a single response object, rather than a stream of objects
-- `quantize` (optional): quantize a non-quantized (e.g. float16) model
+- `quantize` (optional): quantize a safetensors MLX model during import. GGUF inputs must already be quantized before import.
 
-#### Quantization types
+#### Safetensors quantization types
 
-| Type   | Recommended |
-| ------ | :---------: |
-| q4_K_M |     \*      |
-| q4_K_S |             |
-| q8_0   |     \*      |
+| Type  | Recommended |
+| ----- |:---------: |
+| nvfp4 |     \*      |
+| mxfp8 |     \*      |
+| mxfp4 |             |
+| int4  |             |
+| int8  |             |
 
 ### Examples
 
@@ -1249,17 +1251,21 @@ A stream of JSON objects is returned:
 {"status":"success"}
 ```
 
-#### Quantize a model
+#### Create a quantized Safetensors model
 
-Quantize a non-quantized model.
+Quantize a safetensors MLX model during import.
 
 ##### Request
 
 ```shell
 curl http://localhost:11434/api/create -d '{
-  "model": "llama3.2:quantized",
-  "from": "llama3.2:3b-instruct-fp16",
-  "quantize": "q4_K_M"
+  "model": "fred-mxfp8",
+  "files": {
+    "config.json": "sha256:dd3443e529fb2290423a0c65c2d633e67b419d273f170259e27297219828e389",
+    "tokenizer.json": "sha256:bbc1904d35169c542dffbe1f7589a5994ec7426d9e5b609d07bab876f32e97ab",
+    "model.safetensors": "sha256:1ff795ff6a07e6a68085d206fb84417da2f083f68391c2843cd2b8ac6df8538f"
+  },
+  "quantize": "mxfp8"
 }'
 ```
 
@@ -1268,21 +1274,16 @@ curl http://localhost:11434/api/create -d '{
 A stream of JSON objects is returned:
 
 ```json
-{"status":"quantizing F16 model to Q4_K_M","digest":"0","total":6433687776,"completed":12302}
-{"status":"quantizing F16 model to Q4_K_M","digest":"0","total":6433687776,"completed":6433687552}
-{"status":"verifying conversion"}
-{"status":"creating new layer sha256:fb7f4f211b89c6c4928ff4ddb73db9f9c0cfca3e000c3e40d6cf27ddc6ca72eb"}
-{"status":"using existing layer sha256:966de95ca8a62200913e3f8bfbf84c8494536f1b94b49166851e76644e966396"}
-{"status":"using existing layer sha256:fcc5a6bec9daf9b561a68827b67ab6088e1dba9d1fa2a50d7bbcc8384e0a265d"}
-{"status":"using existing layer sha256:a70ff7e570d97baaf4e62ac6e6ad9975e04caa6d900d3742d37698494479e0cd"}
-{"status":"using existing layer sha256:56bb8bd477a519ffa694fc449c2413c6f0e1d3b1c88fa7e3c9d88d3ae49d4dcb"}
-{"status":"writing manifest"}
+{"status":"importing fred-mxfp8 (2 tensors, quantizing to MXFP8)"}
+{"status":"writing manifest for fred-mxfp8"}
 {"status":"success"}
 ```
 
 #### Create a model from GGUF
 
 Create a model from a GGUF file. The `files` parameter should be filled out with the file name and SHA256 digest of the GGUF file you wish to use. Use [/api/blobs/:digest](#push-a-blob) to push the GGUF file to the server before calling this API.
+
+Ollama does not convert or quantize GGUF inputs during create. To quantize a model for GGUF import, use the llama.cpp conversion and quantization tools before creating the Ollama model.
 
 ##### Request
 
@@ -1308,7 +1309,7 @@ A stream of JSON objects is returned:
 
 #### Create a model from a Safetensors directory
 
-The `files` parameter should include a dictionary of files for the safetensors model which includes the file names and SHA256 digest of each file. Use [/api/blobs/:digest](#push-a-blob) to first push each of the files to the server before calling this API. Files will remain in the cache until the Ollama server is restarted.
+The `files` parameter should include a dictionary of files for the safetensors model which includes the file names and SHA256 digest of each file. Safetensors inputs create MLX-backed Ollama models. Use [/api/blobs/:digest](#push-a-blob) to first push each of the files to the server before calling this API. Files will remain in the cache until the Ollama server is restarted.
 
 ##### Request
 
@@ -1331,11 +1332,8 @@ curl http://localhost:11434/api/create -d '{
 A stream of JSON objects is returned:
 
 ```shell
-{"status":"converting model"}
-{"status":"creating new layer sha256:05ca5b813af4a53d2c2922933936e398958855c44ee534858fcfd830940618b6"}
-{"status":"using autodetected template llama3-instruct"}
-{"status":"using existing layer sha256:56bb8bd477a519ffa694fc449c2413c6f0e1d3b1c88fa7e3c9d88d3ae49d4dcb"}
-{"status":"writing manifest"}
+{"status":"importing fred (2 tensors)"}
+{"status":"writing manifest for fred"}
 {"status":"success"}
 ```
 

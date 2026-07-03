@@ -9,7 +9,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/ollama/ollama/convert/sentencepiece"
+	"github.com/ollama/ollama/tokenizer/sentencepiece"
 )
 
 func loadSentencePieceVocab(t *testing.T) SentencePiece {
