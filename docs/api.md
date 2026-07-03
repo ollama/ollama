@@ -1907,6 +1907,33 @@ ollama_queue_capacity 512
 # HELP ollama_models_loaded Number of models currently loaded in memory.
 # TYPE ollama_models_loaded gauge
 ollama_models_loaded 1
+# HELP ollama_build_info Ollama build information.
+# TYPE ollama_build_info gauge
+ollama_build_info{version="0.0.0"} 1719990000
+# HELP http_requests_total The total number of requests on the endpoints.
+# TYPE http_requests_total counter
+http_requests_total{action="generate",status="OK",status_code="200"} 2.000000
+# HELP ollama_peak_memory_bytes The peak memory used during computation in bytes.
+# TYPE ollama_peak_memory_bytes gauge
+ollama_peak_memory_bytes{model="llama3",reason="stop"} 123456
+# HELP ollama_total_duration_seconds The request total duration in seconds.
+# TYPE ollama_total_duration_seconds counter
+ollama_total_duration_seconds{model="llama3",reason="stop"} 12.5
+# HELP ollama_load_duration_seconds The request load duration in seconds.
+# TYPE ollama_load_duration_seconds counter
+ollama_load_duration_seconds{model="llama3",reason="stop"} 3.1
+# HELP ollama_prompt_eval_total The number of prompt token evaluated.
+# TYPE ollama_prompt_eval_total counter
+ollama_prompt_eval_total{model="llama3",reason="stop"} 112
+# HELP ollama_prompt_eval_duration_seconds The prompt evaluation duration in seconds.
+# TYPE ollama_prompt_eval_duration_seconds counter
+ollama_prompt_eval_duration_seconds{model="llama3",reason="stop"} 0.42
+# HELP ollama_eval_total The number of token evaluated.
+# TYPE ollama_eval_total counter
+ollama_eval_total{model="llama3",reason="stop"} 42
+# HELP ollama_eval_duration_seconds The token evaluation duration in seconds.
+# TYPE ollama_eval_duration_seconds counter
+ollama_eval_duration_seconds{model="llama3",reason="stop"} 1.3
 ```
 
 ## Experimental Features

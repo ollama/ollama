@@ -75,6 +75,16 @@ func (m *mockRunner) Completion(ctx context.Context, r llm.CompletionRequest, fn
 	return nil
 }
 
+func (m *mockRunner) MemorySize() (uint64, uint64) {
+	if m == nil {
+		return 0, 0
+	}
+	if m.LlamaServer == nil {
+		return 0, 0
+	}
+	return m.LlamaServer.MemorySize()
+}
+
 func (m *mockRunner) Chat(ctx context.Context, r llm.ChatRequest, fn func(llm.ChatResponse)) error {
 	m.ChatRequest = r
 	if m.ChatFn != nil {
