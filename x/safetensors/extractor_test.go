@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -36,7 +37,7 @@ func createTestSafetensors(t *testing.T, path string, tensors map[string]struct 
 		header[name] = tensorInfo{
 			Dtype:       info.dtype,
 			Shape:       info.shape,
-			DataOffsets: [2]int{offset, offset + len(info.data)},
+			DataOffsets: []int64{int64(offset), int64(offset + len(info.data))},
 		}
 		allData = append(allData, info.data...)
 		offset += len(info.data)
@@ -64,6 +65,32 @@ func createTestSafetensors(t *testing.T, path string, tensors map[string]struct 
 		t.Fatalf("failed to write header: %v", err)
 	}
 	if _, err := f.Write(allData); err != nil {
+		t.Fatalf("failed to write data: %v", err)
+	}
+}
+
+func createRawSafetensors(t *testing.T, path string, header map[string]any, data []byte) {
+	t.Helper()
+
+	headerJSON, err := json.Marshal(header)
+	if err != nil {
+		t.Fatalf("failed to marshal header: %v", err)
+	}
+	padding := (8 - len(headerJSON)%8) % 8
+	headerJSON = append(headerJSON, bytes.Repeat([]byte(" "), padding)...)
+
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
+	defer f.Close()
+	if err := binary.Write(f, binary.LittleEndian, uint64(len(headerJSON))); err != nil {
+		t.Fatalf("failed to write header size: %v", err)
+	}
+	if _, err := f.Write(headerJSON); err != nil {
+		t.Fatalf("failed to write header: %v", err)
+	}
+	if _, err := f.Write(data); err != nil {
 		t.Fatalf("failed to write data: %v", err)
 	}
 }
@@ -100,6 +127,133 @@ func TestOpenForExtraction(t *testing.T) {
 	names := ext.ListTensors()
 	if len(names) != 1 || names[0] != "test_tensor" {
 		t.Errorf("ListTensors() = %v, want [test_tensor]", names)
+	}
+}
+
+func TestOpenForExtractionRejectsInvalidHeaderSize(t *testing.T) {
+	t.Run("header exceeds cap", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "test.safetensors")
+		f, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := binary.Write(f, binary.LittleEndian, uint64(maxSafetensorsHeaderSize+1)); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = OpenForExtraction(path)
+		if err == nil || !strings.Contains(err.Error(), "exceeds maximum") {
+			t.Fatalf("OpenForExtraction() error = %v, want header size cap error", err)
+		}
+	})
+
+	t.Run("header exceeds file", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "test.safetensors")
+		f, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := binary.Write(f, binary.LittleEndian, uint64(16)); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = OpenForExtraction(path)
+		if err == nil || !strings.Contains(err.Error(), "exceeds file payload") {
+			t.Fatalf("OpenForExtraction() error = %v, want header/file size error", err)
+		}
+	})
+}
+
+func TestOpenForExtractionRejectsInvalidTensorMetadata(t *testing.T) {
+	tests := []struct {
+		name   string
+		header map[string]any
+		data   []byte
+		want   string
+	}{
+		{
+			name: "missing offsets",
+			header: map[string]any{"weight": map[string]any{
+				"dtype": "F32",
+				"shape": []int32{1},
+			}},
+			data: make([]byte, 4),
+			want: "invalid data offsets",
+		},
+		{
+			name: "negative offset",
+			header: map[string]any{"weight": tensorInfo{
+				Dtype: "F32", Shape: []int32{1}, DataOffsets: []int64{-1, 4},
+			}},
+			data: make([]byte, 4),
+			want: "negative data offsets",
+		},
+		{
+			name: "reversed offsets",
+			header: map[string]any{"weight": tensorInfo{
+				Dtype: "F32", Shape: []int32{1}, DataOffsets: []int64{4, 0},
+			}},
+			data: make([]byte, 4),
+			want: "invalid data offsets",
+		},
+		{
+			name: "offset beyond file",
+			header: map[string]any{"weight": tensorInfo{
+				Dtype: "F32", Shape: []int32{2}, DataOffsets: []int64{0, 8},
+			}},
+			data: make([]byte, 4),
+			want: "exceed data size",
+		},
+		{
+			name: "unsupported dtype",
+			header: map[string]any{"weight": tensorInfo{
+				Dtype: "BAD", Shape: []int32{4}, DataOffsets: []int64{0, 4},
+			}},
+			data: make([]byte, 4),
+			want: "unsupported dtype",
+		},
+		{
+			name: "negative shape",
+			header: map[string]any{"weight": tensorInfo{
+				Dtype: "F32", Shape: []int32{-1}, DataOffsets: []int64{0, 0},
+			}},
+			data: nil,
+			want: "negative dimension",
+		},
+		{
+			name: "shape byte mismatch",
+			header: map[string]any{"weight": tensorInfo{
+				Dtype: "F32", Shape: []int32{2}, DataOffsets: []int64{0, 4},
+			}},
+			data: make([]byte, 4),
+			want: "does not match",
+		},
+		{
+			name: "overlapping offsets",
+			header: map[string]any{
+				"a": tensorInfo{Dtype: "F32", Shape: []int32{1}, DataOffsets: []int64{0, 4}},
+				"b": tensorInfo{Dtype: "F32", Shape: []int32{1}, DataOffsets: []int64{2, 6}},
+			},
+			data: make([]byte, 6),
+			want: "overlap",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "test.safetensors")
+			createRawSafetensors(t, path, tt.header, tt.data)
+			_, err := OpenForExtraction(path)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("OpenForExtraction() error = %v, want substring %q", err, tt.want)
+			}
+		})
 	}
 }
 
@@ -356,6 +510,21 @@ func TestExtractRawFromSafetensors_InvalidInput(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for truncated header size")
 	}
+
+	// Zero header size
+	headerSizeBytes := make([]byte, 8)
+	binary.LittleEndian.PutUint64(headerSizeBytes, 0)
+	_, err = ExtractRawFromSafetensors(bytes.NewReader(headerSizeBytes))
+	if err == nil {
+		t.Error("expected error for zero header size")
+	}
+
+	// Oversized header
+	binary.LittleEndian.PutUint64(headerSizeBytes, uint64(maxSafetensorsHeaderSize)+1)
+	_, err = ExtractRawFromSafetensors(bytes.NewReader(headerSizeBytes))
+	if err == nil {
+		t.Error("expected error for oversized header size")
+	}
 }
 
 func TestOpenForExtraction_MetadataIgnored(t *testing.T) {
@@ -368,7 +537,7 @@ func TestOpenForExtraction_MetadataIgnored(t *testing.T) {
 		"weight": tensorInfo{
 			Dtype:       "F32",
 			Shape:       []int32{2},
-			DataOffsets: [2]int{0, 8},
+			DataOffsets: []int64{0, 8},
 		},
 	}
 	headerJSON, _ := json.Marshal(header)

@@ -1,6 +1,7 @@
 package create
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -13,12 +14,18 @@ import (
 // through store, import the config files, and write the manifest. It is the
 // server-side entry point — the caller supplies blob storage (store) and
 // manifest assembly (writeManifest).
-func Create(modelName, modelDir, quantize string, store BlobStore, writeManifest ManifestWriter, fn func(status string)) error {
+func Create(ctx context.Context, modelName, modelDir, quantize string, store BlobStore, writeManifest ManifestWriter, fn func(status string)) error {
 	defer sweepMLX()
 
+	if err := checkContext(ctx); err != nil {
+		return err
+	}
 	inv, err := ReadInventory(modelDir)
 	if err != nil {
 		return fmt.Errorf("read model: %w", err)
+	}
+	if err := checkContext(ctx); err != nil {
+		return err
 	}
 	class, err := Classify(inv, quantize)
 	if err != nil {
@@ -34,13 +41,13 @@ func Create(modelName, modelDir, quantize string, store BlobStore, writeManifest
 	}
 
 	fn(fmt.Sprintf("importing %s (%d tensors%s)", modelName, len(inv.Tensors), quantizeStatus(class)))
-	layers, err := WriteBlobs(specs, modelDir, store)
+	layers, err := WriteBlobs(ctx, specs, modelDir, store)
 	if err != nil {
 		return err
 	}
 
 	// Import config files (config.json, tokenizer, etc.) as JSON blobs.
-	configLayers, configLayer, err := importConfigBlobs(modelDir, "", store, fn)
+	configLayers, configLayer, err := importConfigBlobs(ctx, modelDir, "", store, fn)
 	if err != nil {
 		return err
 	}
@@ -57,6 +64,13 @@ func Create(modelName, modelDir, quantize string, store BlobStore, writeManifest
 	return nil
 }
 
+func checkContext(ctx context.Context) error {
+	if ctx == nil {
+		return nil
+	}
+	return ctx.Err()
+}
+
 const mediaTypeImageJSON = "application/vnd.ollama.image.json"
 
 // importConfigBlobs writes every .json in modelDir (except the shard index) as an
@@ -64,7 +78,7 @@ const mediaTypeImageJSON = "application/vnd.ollama.image.json"
 // resulting layers along with the config.json layer (zero value if absent). The
 // target import passes "" for namePrefix; a draft import passes "draft/" so its
 // config sits beside the target's.
-func importConfigBlobs(modelDir, namePrefix string, store BlobStore, fn func(status string)) ([]LayerInfo, LayerInfo, error) {
+func importConfigBlobs(ctx context.Context, modelDir, namePrefix string, store BlobStore, fn func(status string)) ([]LayerInfo, LayerInfo, error) {
 	entries, err := os.ReadDir(modelDir)
 	if err != nil {
 		return nil, LayerInfo{}, err
@@ -72,6 +86,9 @@ func importConfigBlobs(modelDir, namePrefix string, store BlobStore, fn func(sta
 	var layers []LayerInfo
 	var configLayer LayerInfo
 	for _, entry := range entries {
+		if err := checkContext(ctx); err != nil {
+			return nil, LayerInfo{}, err
+		}
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") || entry.Name() == "model.safetensors.index.json" {
 			continue
 		}

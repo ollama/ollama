@@ -509,7 +509,7 @@ components:
             $ref: "#/components/schemas/ChatMessage"
         quantize:
           type: string
-          description: Quantization level to apply (e.g. `q4_K_M`, `q8_0`)
+          description: Safetensors MLX quantization level to apply during import (e.g. `nvfp4`)
         stream:
           type: boolean
           default: true
@@ -1331,12 +1331,13 @@ paths:
               "system": "You are Ollama the llama."
             }'
         - lang: bash
-          label: Quantize
+          label: Create from GGUF
           source: |
             curl http://localhost:11434/api/create -d '{
-              "model": "llama3.1:8b-instruct-Q4_K_M",
-              "from": "llama3.1:8b-instruct-fp16",
-              "quantize": "q4_K_M"
+              "model": "my-gguf-model",
+              "files": {
+                "model.gguf": "sha256:432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3"
+              }
             }'
       requestBody:
         required: true
