@@ -7,7 +7,7 @@
 package client
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -28,9 +28,6 @@ import (
 	imagemanifest "github.com/ollama/ollama/x/imagegen/manifest"
 	"github.com/ollama/ollama/x/quant"
 )
-
-// MinOllamaVersion is the minimum Ollama version required for safetensors models.
-const MinOllamaVersion = "0.19.0"
 
 // ModelfileConfig holds configuration extracted from a Modelfile.
 type ModelfileConfig struct {
@@ -86,9 +83,9 @@ func ConfigFromModelfile(modelfile *parser.Modelfile) (string, *ModelfileConfig,
 			if !semver.IsValid(requires) {
 				return "", nil, fmt.Errorf("requires must be a valid semver (e.g. 0.14.0)")
 			}
-			minVersion := "v" + MinOllamaVersion
+			minVersion := "v" + create.SafetensorsMinOllamaVersion
 			if semver.Compare(requires, minVersion) < 0 {
-				return "", nil, fmt.Errorf("requires %s is below the minimum supported version %s for safetensors models", strings.TrimPrefix(requires, "v"), MinOllamaVersion)
+				return "", nil, fmt.Errorf("requires %s is below the minimum supported version %s for safetensors models", strings.TrimPrefix(requires, "v"), create.SafetensorsMinOllamaVersion)
 			}
 			mfConfig.Requires = strings.TrimPrefix(requires, "v")
 		case "adapter", "message":
@@ -138,8 +135,8 @@ type CreateOptions struct {
 
 // CreateModel imports a model from a local directory.
 // This creates blobs and manifest directly on disk, bypassing the HTTP API.
-// Automatically detects model type (safetensors LLM vs image gen) and routes accordingly.
-func CreateModel(opts CreateOptions, p *progress.Progress) error {
+// Automatically detects safetensors source imports and existing safetensors base models.
+func CreateModel(ctx context.Context, opts CreateOptions, p *progress.Progress) error {
 	// Detect model type
 	isSafetensors := create.IsSafetensorsModelDir(opts.ModelDir)
 	hasDraft := opts.Modelfile != nil && opts.Modelfile.Draft != ""
@@ -153,6 +150,9 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 	if opts.DraftQuantize != "" && quant.Canonical(opts.DraftQuantize) == "" {
 		return fmt.Errorf("unsupported --draft-quantize %q: supported types are int4, int8, nvfp4, mxfp4, mxfp8", opts.DraftQuantize)
 	}
+	if isBaseModelWithDraft && opts.Quantize != "" {
+		return fmt.Errorf("--quantize is only supported when importing a safetensors source directory")
+	}
 
 	if !isSafetensors && !isBaseModelWithDraft {
 		return fmt.Errorf("%s is not a supported safetensors model directory (needs config.json + *.safetensors)", opts.ModelDir)
@@ -161,15 +161,19 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 	if hasDraft && !create.IsSafetensorsModelDir(opts.Modelfile.Draft) {
 		return fmt.Errorf("draft %s is not a supported safetensors model directory", opts.Modelfile.Draft)
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	modelType := "safetensors model"
 	spinnerKey := "create"
-	var capabilities []string
-	var parserName, rendererName string
+	var metadata sourceMetadata
 	if isSafetensors {
-		parserName = getParserName(opts.ModelDir)
-		rendererName = getRendererName(opts.ModelDir)
-		capabilities = inferSafetensorsCapabilities(opts.ModelDir, resolveParserName(opts.Modelfile, parserName))
+		var err error
+		metadata, err = readSourceMetadata(opts.ModelDir, opts.Modelfile)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Set up progress spinner
@@ -188,6 +192,7 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 	var err error
 	if hasDraft {
 		draftLayers, err = create.CreateDraftLayers(
+			ctx,
 			opts.Modelfile.Draft,
 			"draft.",
 			"draft/",
@@ -202,7 +207,7 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 	}
 
 	if isBaseModelWithDraft {
-		err = createModelFromBaseWithDraft(opts, draftLayers, progressFn)
+		err = createModelFromBaseWithDraft(ctx, opts, draftLayers, progressFn)
 		spinner.Stop()
 		if err != nil {
 			return err
@@ -213,11 +218,12 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 
 	// Create the model through the x/create pipeline (read → classify → plan
 	// → write), supplying blob storage and manifest assembly.
-	writer := newManifestWriter(opts, capabilities, parserName, rendererName)
+	writer := newManifestWriter(opts, metadata.capabilities, metadata.parserName, metadata.rendererName)
 	if len(draftLayers) > 0 {
 		writer = appendLayersManifestWriter(writer, draftLayers)
 	}
 	err = create.Create(
+		ctx,
 		opts.ModelName, opts.ModelDir, opts.Quantize,
 		create.StoreFromLayerCreator(newLayerCreator()),
 		writer,
@@ -234,55 +240,30 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 }
 
 func appendLayersManifestWriter(next create.ManifestWriter, extra []create.LayerInfo) create.ManifestWriter {
-	return func(modelName string, config create.LayerInfo, layers []create.LayerInfo) error {
-		layers = append(layers, extra...)
-		return next(modelName, config, layers)
+	return func(modelName string, info create.ManifestInfo) error {
+		info.Layers = append(info.Layers, extra...)
+		return next(modelName, info)
 	}
 }
 
-func draftMetadata(draftDir string) (*model.Draft, error) {
-	configPath := filepath.Join(draftDir, "config.json")
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read draft config %s: %w", configPath, err)
+func createModelFromBaseWithDraft(ctx context.Context, opts CreateOptions, draftLayers []create.LayerInfo, progressFn func(string)) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-
-	var cfg struct {
-		Architectures []string `json:"architectures"`
-		ModelType     string   `json:"model_type"`
-	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse draft config %s: %w", configPath, err)
-	}
-
-	arch := ""
-	if len(cfg.Architectures) > 0 {
-		arch = cfg.Architectures[0]
-	}
-	if arch == "" {
-		arch = cfg.ModelType
-	}
-	if arch == "" {
-		return nil, fmt.Errorf("draft architecture not found in %s", configPath)
-	}
-
-	return &model.Draft{
-		ModelFormat:  "safetensors",
-		Architecture: arch,
-		TensorPrefix: "draft.",
-		Config:       "draft/config.json",
-	}, nil
-}
-
-func createModelFromBaseWithDraft(opts CreateOptions, draftLayers []create.LayerInfo, progressFn func(string)) error {
 	progressFn(fmt.Sprintf("loading base model %s", opts.ModelDir))
 	baseManifest, err := imagemanifest.LoadManifest(opts.ModelDir)
 	if err != nil {
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	baseConfig, err := readConfigV2(baseManifest)
 	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	opts.BaseConfig = baseConfig
@@ -304,15 +285,20 @@ func createModelFromBaseWithDraft(opts CreateOptions, draftLayers []create.Layer
 	layers = append(layers, draftLayers...)
 
 	progressFn(fmt.Sprintf("writing manifest for %s", opts.ModelName))
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return newManifestWriter(opts, baseConfig.Capabilities, baseConfig.Parser, baseConfig.Renderer)(
 		opts.ModelName,
-		create.LayerInfo{
-			Digest:    configLayer.Digest,
-			Size:      configLayer.Size,
-			MediaType: configLayer.MediaType,
-			Name:      configLayer.Name,
+		create.ManifestInfo{
+			Config: create.LayerInfo{
+				Digest:    configLayer.Digest,
+				Size:      configLayer.Size,
+				MediaType: configLayer.MediaType,
+				Name:      configLayer.Name,
+			},
+			Layers: layers,
 		},
-		layers,
 	)
 }
 
@@ -329,10 +315,98 @@ func readConfigV2(m *imagemanifest.ModelManifest) (*model.ConfigV2, error) {
 	return &cfg, nil
 }
 
-func inferSafetensorsCapabilities(modelDir, parserName string) []string {
+type sourceConfig struct {
+	Architectures []string        `json:"architectures"`
+	ModelType     string          `json:"model_type"`
+	VisionConfig  *map[string]any `json:"vision_config"`
+	AudioConfig   *map[string]any `json:"audio_config"`
+}
+
+type sourceMetadata struct {
+	parserName   string
+	rendererName string
+	capabilities []string
+}
+
+func readSourceMetadata(modelDir string, mf *ModelfileConfig) (sourceMetadata, error) {
+	cfg, chatTemplate, err := readSourceMetadataInputs(modelDir)
+	if err != nil {
+		return sourceMetadata{}, err
+	}
+	parserName, err := parserNameForConfig(modelDir, cfg, chatTemplate)
+	if err != nil {
+		return sourceMetadata{}, err
+	}
+	rendererName, err := rendererNameForConfig(modelDir, cfg, chatTemplate)
+	if err != nil {
+		return sourceMetadata{}, err
+	}
+
+	resolvedParser := resolveParserName(mf, parserName)
+	return sourceMetadata{
+		parserName:   parserName,
+		rendererName: rendererName,
+		capabilities: inferSafetensorsCapabilitiesFromConfig(cfg, chatTemplate, resolvedParser),
+	}, nil
+}
+
+func readSourceMetadataInputs(modelDir string) (sourceConfig, string, error) {
+	cfg, err := readSourceConfig(modelDir)
+	if err != nil {
+		return sourceConfig{}, "", err
+	}
+	chatTemplate, err := readChatTemplateStrict(modelDir)
+	if err != nil {
+		return sourceConfig{}, "", err
+	}
+	return cfg, chatTemplate, nil
+}
+
+func readSourceConfig(modelDir string) (sourceConfig, error) {
+	configPath := filepath.Join(modelDir, "config.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return sourceConfig{}, fmt.Errorf("read %s: %w", configPath, err)
+	}
+
+	var cfg sourceConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return sourceConfig{}, fmt.Errorf("parse %s: %w", configPath, err)
+	}
+	return cfg, nil
+}
+
+func readChatTemplateStrict(modelDir string) (string, error) {
+	tokenizerConfig := filepath.Join(modelDir, "tokenizer_config.json")
+	if data, err := os.ReadFile(tokenizerConfig); err == nil {
+		var cfg struct {
+			ChatTemplate string `json:"chat_template"`
+		}
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			return "", fmt.Errorf("parse %s: %w", tokenizerConfig, err)
+		}
+		if cfg.ChatTemplate != "" {
+			return cfg.ChatTemplate, nil
+		}
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("read %s: %w", tokenizerConfig, err)
+	}
+
+	chatTemplatePath := filepath.Join(modelDir, "chat_template.jinja")
+	data, err := os.ReadFile(chatTemplatePath)
+	if err == nil {
+		return string(data), nil
+	}
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	return "", fmt.Errorf("read %s: %w", chatTemplatePath, err)
+}
+
+func inferSafetensorsCapabilitiesFromConfig(cfg sourceConfig, chatTemplate, parserName string) []string {
 	capabilities := []string{"completion"}
 
-	caps := detectCapabilities(modelDir)
+	caps := detectCapabilitiesFromConfig(cfg, chatTemplate)
 	if caps.vision {
 		capabilities = append(capabilities, "vision")
 	}
@@ -376,68 +450,32 @@ func newLayerCreator() create.LayerCreator {
 
 // newManifestWriter returns a ManifestWriter callback for writing the model manifest.
 func newManifestWriter(opts CreateOptions, capabilities []string, parserName, rendererName string) create.ManifestWriter {
-	return func(modelName string, config create.LayerInfo, layers []create.LayerInfo) error {
-		name := model.ParseName(modelName)
-		if !name.IsValid() {
-			return fmt.Errorf("invalid model name: %s", modelName)
-		}
-
-		// Create config blob with version requirement.
-		configData := model.ConfigV2{}
-		if opts.BaseConfig != nil {
-			configData = *opts.BaseConfig
-		}
-		configData.ModelFormat = "safetensors"
-		if opts.Quantize != "" || configData.FileType == "" {
-			configData.FileType = strings.ToLower(strings.TrimSpace(opts.Quantize))
-		}
-		configData.Capabilities = capabilities
-		configData.Requires = MinOllamaVersion
-		if opts.Modelfile != nil && opts.Modelfile.Requires != "" {
-			configData.Requires = opts.Modelfile.Requires
-		}
-		configData.Parser = resolveParserName(opts.Modelfile, parserName)
-		configData.Renderer = resolveRendererName(opts.Modelfile, rendererName)
-		if opts.Modelfile != nil && opts.Modelfile.Draft != "" {
-			draft, err := draftMetadata(opts.Modelfile.Draft)
-			if err != nil {
-				return err
-			}
-			configData.Draft = draft
-		}
-		configJSON, err := json.Marshal(configData)
-		if err != nil {
-			return fmt.Errorf("failed to marshal config: %w", err)
-		}
-
-		// Create config layer blob
-		configLayer, err := manifest.NewLayer(bytes.NewReader(configJSON), "application/vnd.docker.container.image.v1+json")
-		if err != nil {
-			return fmt.Errorf("failed to create config layer: %w", err)
-		}
-
-		// Convert LayerInfo to manifest.Layer
-		manifestLayers := make([]manifest.Layer, 0, len(layers))
-		for _, l := range layers {
-			manifestLayers = append(manifestLayers, manifest.Layer{
-				MediaType: l.MediaType,
-				Digest:    l.Digest,
-				Size:      l.Size,
-				Name:      l.Name,
-			})
-		}
-
-		// Add Modelfile layers if present
-		if opts.Modelfile != nil {
-			modelfileLayers, err := createModelfileLayers(opts.Modelfile)
-			if err != nil {
-				return err
-			}
-			manifestLayers = append(manifestLayers, modelfileLayers...)
-		}
-
-		return manifest.WriteManifest(name, configLayer, manifestLayers)
+	var template, system, license, requires, draftDir string
+	var parameters map[string]any
+	if opts.Modelfile != nil {
+		template = opts.Modelfile.Template
+		system = opts.Modelfile.System
+		license = opts.Modelfile.License
+		requires = opts.Modelfile.Requires
+		draftDir = opts.Modelfile.Draft
+		parameters = opts.Modelfile.Parameters
 	}
+	return create.NewSafetensorsManifestWriter(create.SafetensorsManifestOptions{
+		ModelDir:           opts.ModelDir,
+		BaseConfig:         opts.BaseConfig,
+		Capabilities:       capabilities,
+		MinVersion:         create.SafetensorsMinOllamaVersion,
+		Requires:           requires,
+		Parser:             resolveParserName(opts.Modelfile, parserName),
+		Renderer:           resolveRendererName(opts.Modelfile, rendererName),
+		DraftDir:           draftDir,
+		Template:           template,
+		System:             system,
+		License:            license,
+		Parameters:         parameters,
+		ExtraLayers:        nil,
+		IncludeRootFSDiffs: false,
+	})
 }
 
 func resolveParserName(mf *ModelfileConfig, inferred string) string {
@@ -456,50 +494,6 @@ func resolveRendererName(mf *ModelfileConfig, inferred string) string {
 	return inferred
 }
 
-// createModelfileLayers creates layers for template, system, and license from Modelfile config.
-func createModelfileLayers(mf *ModelfileConfig) ([]manifest.Layer, error) {
-	var layers []manifest.Layer
-
-	if mf.Template != "" {
-		layer, err := manifest.NewLayer(bytes.NewReader([]byte(mf.Template)), "application/vnd.ollama.image.template")
-		if err != nil {
-			return nil, fmt.Errorf("failed to create template layer: %w", err)
-		}
-		layers = append(layers, layer)
-	}
-
-	if mf.System != "" {
-		layer, err := manifest.NewLayer(bytes.NewReader([]byte(mf.System)), "application/vnd.ollama.image.system")
-		if err != nil {
-			return nil, fmt.Errorf("failed to create system layer: %w", err)
-		}
-		layers = append(layers, layer)
-	}
-
-	if mf.License != "" {
-		layer, err := manifest.NewLayer(bytes.NewReader([]byte(mf.License)), "application/vnd.ollama.image.license")
-		if err != nil {
-			return nil, fmt.Errorf("failed to create license layer: %w", err)
-		}
-		layers = append(layers, layer)
-	}
-
-	if len(mf.Parameters) > 0 {
-		var b bytes.Buffer
-		if err := json.NewEncoder(&b).Encode(mf.Parameters); err != nil {
-			return nil, fmt.Errorf("failed to encode parameters: %w", err)
-		}
-
-		layer, err := manifest.NewLayer(&b, "application/vnd.ollama.image.params")
-		if err != nil {
-			return nil, fmt.Errorf("failed to create params layer: %w", err)
-		}
-		layers = append(layers, layer)
-	}
-
-	return layers, nil
-}
-
 // modelCapabilities holds the input-modality and reasoning capabilities a model
 // advertises, inferred from its source metadata.
 type modelCapabilities struct {
@@ -508,43 +502,13 @@ type modelCapabilities struct {
 	thinking bool
 }
 
-// detectCapabilities reads the model directory once and reports the vision,
-// audio, and thinking capabilities it can infer.
-func detectCapabilities(modelDir string) modelCapabilities {
-	var cfg struct {
-		Architectures []string        `json:"architectures"`
-		ModelType     string          `json:"model_type"`
-		VisionConfig  *map[string]any `json:"vision_config"`
-		AudioConfig   *map[string]any `json:"audio_config"`
-	}
-	if data, err := os.ReadFile(filepath.Join(modelDir, "config.json")); err == nil {
-		_ = json.Unmarshal(data, &cfg)
-	}
-
+func detectCapabilitiesFromConfig(cfg sourceConfig, chatTemplate string) modelCapabilities {
 	return modelCapabilities{
 		vision: cfg.VisionConfig != nil,
 		audio:  cfg.AudioConfig != nil,
-		thinking: chatTemplateHasThinkingSupport(readChatTemplate(modelDir)) ||
+		thinking: chatTemplateHasThinkingSupport(chatTemplate) ||
 			alwaysSupportsThinking(cfg.Architectures, cfg.ModelType),
 	}
-}
-
-// readChatTemplate returns the model's chat template, preferring the
-// chat_template field of tokenizer_config.json and falling back to a standalone
-// chat_template.jinja. It returns "" when neither is present.
-func readChatTemplate(modelDir string) string {
-	if data, err := os.ReadFile(filepath.Join(modelDir, "tokenizer_config.json")); err == nil {
-		var cfg struct {
-			ChatTemplate string `json:"chat_template"`
-		}
-		if json.Unmarshal(data, &cfg) == nil && cfg.ChatTemplate != "" {
-			return cfg.ChatTemplate
-		}
-	}
-	if data, err := os.ReadFile(filepath.Join(modelDir, "chat_template.jinja")); err == nil {
-		return string(data)
-	}
-	return ""
 }
 
 // chatTemplateHasThinkingSupport reports whether a chat template emits thinking
@@ -580,63 +544,51 @@ func isQwen35Family(s string) bool {
 	return strings.Contains(s, "qwen3_5") || strings.Contains(s, "qwen3next")
 }
 
-func lagunaRendererParserName(modelDir string) string {
+func lagunaRendererParserNameFromTemplate(modelDir, chatTemplate string) (string, error) {
 	const poolsideV1Marker = "laguna_glm_thinking_v8"
 
-	if strings.Contains(readChatTemplate(modelDir), poolsideV1Marker) {
-		return "poolside-v1"
+	if strings.Contains(chatTemplate, poolsideV1Marker) {
+		return "poolside-v1", nil
 	}
 
 	// Poolside's tokenizer config includes the standalone template by name
 	// rather than embedding it, so inspect that file as well.
-	if data, err := os.ReadFile(filepath.Join(modelDir, "chat_template.jinja")); err == nil &&
-		strings.Contains(string(data), poolsideV1Marker) {
-		return "poolside-v1"
+	chatTemplatePath := filepath.Join(modelDir, "chat_template.jinja")
+	data, err := os.ReadFile(chatTemplatePath)
+	if err == nil && strings.Contains(string(data), poolsideV1Marker) {
+		return "poolside-v1", nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("read %s: %w", chatTemplatePath, err)
 	}
 
-	return "laguna"
+	return "laguna", nil
 }
 
-// getParserName returns the parser name for a model based on its architecture.
-// This reads the config.json from the model directory and determines the appropriate parser.
-func getParserName(modelDir string) string {
-	configPath := filepath.Join(modelDir, "config.json")
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return ""
-	}
-
-	var cfg struct {
-		Architectures []string `json:"architectures"`
-		ModelType     string   `json:"model_type"`
-	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return ""
-	}
-
+func parserNameForConfig(modelDir string, cfg sourceConfig, chatTemplate string) (string, error) {
 	// Check architectures for known parsers
 	for _, arch := range cfg.Architectures {
 		archLower := strings.ToLower(arch)
 		if strings.Contains(archLower, "laguna") {
-			return lagunaRendererParserName(modelDir)
+			return lagunaRendererParserNameFromTemplate(modelDir, chatTemplate)
 		}
 		if strings.Contains(archLower, "cohere2moe") || strings.Contains(archLower, "cohere2_moe") {
-			return "cohere"
+			return "cohere", nil
 		}
 		if strings.Contains(archLower, "glm4") || strings.Contains(archLower, "glm-4") {
-			return "glm-4.7"
+			return "glm-4.7", nil
 		}
 		if strings.Contains(archLower, "deepseek") {
-			return "deepseek3"
+			return "deepseek3", nil
 		}
 		if strings.Contains(archLower, "gemma4") {
-			return "gemma4"
+			return "gemma4", nil
 		}
 		if isQwen35Family(archLower) {
-			return "qwen3.5"
+			return "qwen3.5", nil
 		}
 		if strings.Contains(archLower, "qwen3") {
-			return "qwen3"
+			return "qwen3", nil
 		}
 	}
 
@@ -644,71 +596,55 @@ func getParserName(modelDir string) string {
 	if cfg.ModelType != "" {
 		typeLower := strings.ToLower(cfg.ModelType)
 		if strings.Contains(typeLower, "laguna") {
-			return lagunaRendererParserName(modelDir)
+			return lagunaRendererParserNameFromTemplate(modelDir, chatTemplate)
 		}
 		if strings.Contains(typeLower, "cohere2_moe") {
-			return "cohere"
+			return "cohere", nil
 		}
 		if strings.Contains(typeLower, "glm4") || strings.Contains(typeLower, "glm-4") {
-			return "glm-4.7"
+			return "glm-4.7", nil
 		}
 		if strings.Contains(typeLower, "deepseek") {
-			return "deepseek3"
+			return "deepseek3", nil
 		}
 		if strings.Contains(typeLower, "gemma4") {
-			return "gemma4"
+			return "gemma4", nil
 		}
 		if isQwen35Family(typeLower) {
-			return "qwen3.5"
+			return "qwen3.5", nil
 		}
 		if strings.Contains(typeLower, "qwen3") {
-			return "qwen3"
+			return "qwen3", nil
 		}
 	}
 
-	return ""
+	return "", nil
 }
 
-// getRendererName returns the renderer name for a model based on its architecture.
-// This reads the config.json from the model directory and determines the appropriate renderer.
-func getRendererName(modelDir string) string {
-	configPath := filepath.Join(modelDir, "config.json")
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return ""
-	}
-
-	var cfg struct {
-		Architectures []string `json:"architectures"`
-		ModelType     string   `json:"model_type"`
-	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return ""
-	}
-
+func rendererNameForConfig(modelDir string, cfg sourceConfig, chatTemplate string) (string, error) {
 	// Check architectures for known renderers
 	for _, arch := range cfg.Architectures {
 		archLower := strings.ToLower(arch)
 		if strings.Contains(archLower, "laguna") {
-			return lagunaRendererParserName(modelDir)
+			return lagunaRendererParserNameFromTemplate(modelDir, chatTemplate)
 		}
 		if strings.Contains(archLower, "cohere2moe") || strings.Contains(archLower, "cohere2_moe") {
-			return "cohere"
+			return "cohere", nil
 		}
 		if strings.Contains(archLower, "gemma4") {
-			return "gemma4"
+			return "gemma4", nil
 		}
 		if strings.Contains(archLower, "glm4") || strings.Contains(archLower, "glm-4") {
-			return "glm-4.7"
+			return "glm-4.7", nil
 		}
 		if strings.Contains(archLower, "deepseek") {
-			return "deepseek3"
+			return "deepseek3", nil
 		}
 		if isQwen35Family(archLower) {
-			return "qwen3.5"
+			return "qwen3.5", nil
 		}
 		if strings.Contains(archLower, "qwen3") {
-			return "qwen3-coder"
+			return "qwen3-coder", nil
 		}
 	}
 
@@ -716,27 +652,27 @@ func getRendererName(modelDir string) string {
 	if cfg.ModelType != "" {
 		typeLower := strings.ToLower(cfg.ModelType)
 		if strings.Contains(typeLower, "laguna") {
-			return lagunaRendererParserName(modelDir)
+			return lagunaRendererParserNameFromTemplate(modelDir, chatTemplate)
 		}
 		if strings.Contains(typeLower, "cohere2_moe") {
-			return "cohere"
+			return "cohere", nil
 		}
 		if strings.Contains(typeLower, "gemma4") {
-			return "gemma4"
+			return "gemma4", nil
 		}
 		if strings.Contains(typeLower, "glm4") || strings.Contains(typeLower, "glm-4") {
-			return "glm-4.7"
+			return "glm-4.7", nil
 		}
 		if strings.Contains(typeLower, "deepseek") {
-			return "deepseek3"
+			return "deepseek3", nil
 		}
 		if isQwen35Family(typeLower) {
-			return "qwen3.5"
+			return "qwen3.5", nil
 		}
 		if strings.Contains(typeLower, "qwen3") {
-			return "qwen3-coder"
+			return "qwen3-coder", nil
 		}
 	}
 
-	return ""
+	return "", nil
 }

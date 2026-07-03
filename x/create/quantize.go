@@ -12,11 +12,6 @@ import (
 	"github.com/ollama/ollama/x/quant"
 )
 
-// QuantizeSupported reports whether MLX (and thus quantization) is available.
-func QuantizeSupported() bool {
-	return mlx.CheckInit() == nil
-}
-
 // quantizeItem is one tensor going into a (possibly multi-tensor) quantized
 // blob: its output name, the quantization to apply (or "" to decode/keep at
 // source precision), a safetensors-wrapped reader for its input bytes (keyed by
@@ -203,7 +198,11 @@ func loadAndQuantizeArray(r io.Reader, name, quantize string, decodeFP8 bool, ar
 	}
 
 	groupSize, bits, mode := quant.Params(quantize)
-	qweight, scales, qbiases := mlx.Quantize(arr, groupSize, bits, mode)
+	qweight, scales, qbiases, err := mlx.Quantize(arr, groupSize, bits, mode)
+	if err != nil {
+		st.Free()
+		return tmpPath, nil, nil, fmt.Errorf("mlx.Quantize failed for %s (quantize=%s, groupSize=%d, bits=%d, mode=%s): %w", name, quantize, groupSize, bits, mode, err)
+	}
 	mlx.Eval(qweight, scales)
 	if len(qweight.Dims()) == 0 || qweight.Dims()[0] == 0 {
 		st.Free()
