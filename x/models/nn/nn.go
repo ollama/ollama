@@ -1,6 +1,10 @@
 package nn
 
-import "github.com/ollama/ollama/x/mlxrunner/mlx"
+import (
+	"fmt"
+
+	"github.com/ollama/ollama/x/mlxrunner/mlx"
+)
 
 // Layer is the interface for neural network layers with a Forward method.
 type Layer interface {
@@ -92,7 +96,10 @@ type QuantizedLinear struct {
 }
 
 func NewQuantizedLinear(weight *mlx.Array, bias *mlx.Array, groupSize, bits int, mode string) *QuantizedLinear {
-	qw, scales, qbiases := mlx.Quantize(weight, groupSize, bits, mode)
+	qw, scales, qbiases, err := mlx.Quantize(weight, groupSize, bits, mode)
+	if err != nil {
+		panic(fmt.Sprintf("mlx quantize linear: %v", err))
+	}
 	if qbiases != nil {
 		mlx.Eval(qw, scales, qbiases)
 	} else {
@@ -245,28 +252,4 @@ func NewMultiLinear(weight *mlx.Array) *MultiLinear {
 func (ml *MultiLinear) Forward(x *mlx.Array) *mlx.Array {
 	wT := ml.Weight.Transpose(0, 2, 1)
 	return x.Matmul(wT)
-}
-
-// ApplyCausalMask applies causal (lower triangular) mask to attention scores.
-func ApplyCausalMask(scores *mlx.Array) *mlx.Array {
-	shape := scores.Dims()
-	seqLen := int32(shape[2])
-	mask := mlx.Tri(seqLen, seqLen, 0)
-	negInf := mlx.NewScalarArray(float32(-1e9))
-	mask = mask.ExpandDims(0).ExpandDims(0)
-	return mlx.Where(mask, scores, negInf)
-}
-
-// ApplyCausalMaskWithOffset applies causal mask for cached attention.
-func ApplyCausalMaskWithOffset(scores *mlx.Array, offset int32) *mlx.Array {
-	if offset == 0 {
-		return ApplyCausalMask(scores)
-	}
-	shape := scores.Dims()
-	queryLen := int32(shape[2])
-	keyLen := int32(shape[3])
-	mask := mlx.Tri(queryLen, keyLen, int(offset))
-	negInf := mlx.NewScalarArray(float32(-1e9))
-	mask = mask.ExpandDims(0).ExpandDims(0)
-	return mlx.Where(mask, scores, negInf)
 }

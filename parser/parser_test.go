@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,8 +20,6 @@ import (
 	"golang.org/x/text/encoding/unicode"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/convert"
-	"github.com/ollama/ollama/fs/ggml"
 )
 
 func TestParseFileFile(t *testing.T) {
@@ -843,46 +840,21 @@ MESSAGE assistant Hi! How are you?
 	}
 }
 
-func getSHA256Digest(t *testing.T, r io.Reader) (string, int64) {
+func createTestFile(t *testing.T, contents string) (string, string) {
 	t.Helper()
 
-	h := sha256.New()
-	n, err := io.Copy(h, r)
-	if err != nil {
+	path := filepath.Join(t.TempDir(), "model.gguf")
+	data := []byte(contents)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-
-	return fmt.Sprintf("sha256:%x", h.Sum(nil)), n
-}
-
-func createBinFile(t *testing.T, kv map[string]any, ti []*ggml.Tensor) (string, string) {
-	t.Helper()
-
-	f, err := os.CreateTemp(t.TempDir(), "testbin.*.gguf")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-
-	var base convert.KV = map[string]any{"general.architecture": "test"}
-	maps.Copy(base, kv)
-
-	if err := ggml.WriteGGUF(f, base, ti); err != nil {
-		t.Fatal(err)
-	}
-	// Calculate sha256 of file
-	if _, err := f.Seek(0, 0); err != nil {
-		t.Fatal(err)
-	}
-
-	digest, _ := getSHA256Digest(t, f)
-
-	return f.Name(), digest
+	digest := sha256.Sum256(data)
+	return path, fmt.Sprintf("sha256:%x", digest)
 }
 
 func TestCreateRequestFiles(t *testing.T) {
-	n1, d1 := createBinFile(t, nil, nil)
-	n2, d2 := createBinFile(t, map[string]any{"foo": "bar"}, nil)
+	n1, d1 := createTestFile(t, "first")
+	n2, d2 := createTestFile(t, "second")
 
 	cases := []struct {
 		input    string

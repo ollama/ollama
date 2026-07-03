@@ -67,14 +67,6 @@ func newBytePairEncoding(vocab *Vocabulary, pretokenizer []string, opts ...BPEOp
 	return bpe
 }
 
-func (bpe BytePairEncoding) Vocabulary() *Vocabulary {
-	return bpe.vocab
-}
-
-func (bpe BytePairEncoding) Is(id int32, special Special) bool {
-	return bpe.vocab.Is(id, special)
-}
-
 func (bpe *BytePairEncoding) split(s string) iter.Seq[string] {
 	parts := []string{s}
 	for _, re := range bpe.regexps {

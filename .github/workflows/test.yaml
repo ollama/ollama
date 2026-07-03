@@ -386,7 +386,6 @@ jobs:
           go-version-file: go.mod
       - name: Verify Go dependency licenses
         run: |
-          # See cmake/generate_go_license.cmake for special case handling.
           cmake -S . -B build/go-license \
             -DOLLAMA_LLAMA_BACKENDS= \
             -DOLLAMA_MLX_BACKENDS= \
