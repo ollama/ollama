@@ -73,7 +73,7 @@ type Options struct {
 	Compactor                   coreagent.Compactor
 	ContextWindowTokens         int
 	ContextWindowTokensForModel func(context.Context, string, int) int
-	PreloadModel                func(context.Context, string, *api.ThinkValue) error
+	PreloadModel                func(context.Context, string, *api.ThinkValue) (int, error)
 	CheckCloudModel             func(context.Context, string, string) error
 	OpenBrowser                 func(string)
 	PollCloudAuth               func(context.Context) (string, bool)
@@ -96,47 +96,50 @@ type chatModel struct {
 	entries      []chatEntry
 	workingDir   string
 
-	input             []rune
-	inputCursor       int
-	inputCursorSet    bool
-	inputAttachments  []chatInputAttachment
-	inputPastedTexts  []chatInputPastedText
-	nextImageID       int
-	nextAudioID       int
-	nextPastedTextID  int
-	queued            []string
-	queuedAttachments [][]chatInputAttachment
-	queuedPastedTexts [][]chatInputPastedText
-	promptHistory     []string
-	promptCursor      int
-	promptDraft       []rune
-	promptActive      bool
-	running           bool
-	awaitingModel     bool
-	compacting        bool
-	cancel            context.CancelFunc
-	events            <-chan tea.Msg
-	compactEvents     <-chan tea.Msg
-	scroll            int
-	toolOutputMode    bool
-	toolOutputOpen    bool
-	thinking          bool
-	thinkingTokens    int
-	compactingTokens  int
-	contextTokens     int
-	contextEstimate   bool
-	modelPicker       *chatModelPicker
-	thinkPicker       *chatThinkPicker
-	approvalPrompt    *chatApprovalPrompt
-	cloudAuthPrompt   *cloudAuthPrompt
-	pendingModel      string
-	allowAllTools     bool
-	permissionNotice  string
-	selection         chatSelection
+	input              []rune
+	inputCursor        int
+	inputCursorSet     bool
+	inputAttachments   []chatInputAttachment
+	inputPastedTexts   []chatInputPastedText
+	nextImageID        int
+	nextAudioID        int
+	nextPastedTextID   int
+	promptHistory      []string
+	promptCursor       int
+	promptDraft        []rune
+	promptActive       bool
+	running            bool
+	awaitingModel      bool
+	compacting         bool
+	cancel             context.CancelFunc
+	events             <-chan tea.Msg
+	compactEvents      <-chan tea.Msg
+	detectedToolCalls  []chatEntry
+	scroll             int
+	toolOutputMode     bool
+	toolOutputOpen     bool
+	flowPrintedLines   int
+	thinking           bool
+	thinkingTokens     int
+	compactingTokens   int
+	contextTokens      int
+	contextEstimate    bool
+	modelPicker        *chatModelPicker
+	modelPickerModels  []ModelOption
+	thinkPicker        *chatThinkPicker
+	promptDebug        *chatPromptDebug
+	approvalPrompt     *chatApprovalPrompt
+	approvalController *chatApprovalController
+	cloudAuthPrompt    *cloudAuthPrompt
+	pendingModel       string
+	allowAllTools      bool
+	defaultAllowAll    bool
+	allowedScopes      map[string]bool
+	permissionNotice   string
+	selection          chatSelection
 
 	width              int
 	height             int
-	fullScreen         bool
 	status             string
 	spinner            int
 	tickActive         bool
@@ -209,21 +212,31 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		messages:        slices.Clone(opts.Messages),
 		workingDir:      opts.WorkingDir,
 		allowAllTools:   opts.AllowAllTools,
+		defaultAllowAll: opts.AllowAllTools,
 		promptHistory:   initialPromptHistory(ctx, opts),
-		fullScreen:      true,
 		status:          "ready",
 		openModelOnInit: opts.OpenModelPicker || (strings.TrimSpace(opts.Model) == "" && opts.ModelOptions != nil),
 	}
 	m.nextImageID, m.nextAudioID = nextInputAttachmentIDsFromMessages(m.messages)
 	m.nextPastedTextID = nextInputPastedTextIDFromMessages(m.messages)
 	m.entries = entriesFromMessages(m.messages)
+	if !m.openModelOnInit {
+		m.refreshContextWindowTokens(m.opts.Model)
+	}
 	m.contextTokens = m.estimatePromptTokens(m.messages, "")
 	m.contextEstimate = true
+	if m.openModelOnInit {
+		updated, cmd := m.openModelPicker("")
+		if cmd != nil {
+			return nil, errors.New("initial model picker returned an unexpected command")
+		}
+		m = updated.(chatModel)
+	}
 	if opts.PreloadModel != nil && strings.TrimSpace(opts.Model) != "" && !m.openModelOnInit {
 		m.preloadingModel = strings.TrimSpace(opts.Model)
 	}
 
-	p := tea.NewProgram(m, tea.WithReportFocus(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(m, tea.WithReportFocus())
 	finalModel, err := p.Run()
 	if err != nil {
 		return nil, err
@@ -237,10 +250,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 }
 
 func (m chatModel) Init() tea.Cmd {
-	cmds := []tea.Cmd{tea.EnterAltScreen}
-	if m.openModelOnInit {
-		cmds = append(cmds, openInitialModelPickerCmd())
-	}
+	var cmds []tea.Cmd
 	if m.preloadingModel != "" && m.opts.PreloadModel != nil {
 		cmds = append(cmds, preloadModelCmd(m.ctx, m.opts.PreloadModel, m.preloadingModel, m.opts.Think), chatTickCmd())
 	}
@@ -256,14 +266,13 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		wasSet := m.width > 0 || m.height > 0
-		resized := m.width != msg.Width || m.height != msg.Height
+		resized := wasSet && (m.width != msg.Width || m.height != msg.Height)
 		m.width = msg.Width
 		m.height = msg.Height
-		if wasSet && resized {
-			m.resetRenderAfterResize()
-			return m, tea.Batch(tea.EnterAltScreen, tea.ClearScreen)
+		if resized {
+			return m.withFlowTranscriptRepaint(nil)
 		}
-		return m, nil
+		return m.withFlowTranscriptFlush(nil)
 
 	case tea.FocusMsg:
 		return m, nil
@@ -298,15 +307,16 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		m.refreshContextWindowTokens(msg.model)
+		if msg.contextWindowTokens > 0 {
+			m.updateContextWindowTokens(msg.contextWindowTokens)
+		} else {
+			m.refreshContextWindowTokens(msg.model)
+		}
 		return m, nil
-
-	case chatOpenModelPickerMsg:
-		return m.openModelPicker("")
 
 	case chatAgentMsg:
 		m.applyAgentEvent(msg.event)
-		return m, waitForChatMsg(m.events)
+		return m.withFlowTranscriptFlush(waitForChatMsg(m.events))
 
 	case chatClipboardErrorMsg:
 		if msg.err != nil {
@@ -316,6 +326,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case chatApprovalPromptMsg:
 		m.modelPicker = nil
+		m.modelPickerModels = nil
 		m.openApprovalPrompt(msg)
 		return m, nil
 
@@ -328,6 +339,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.compactingTokens = 0
 		m.cancel = nil
 		m.events = nil
+		m.approvalController = nil
 		m.thinking = false
 		m.thinkingTokens = 0
 		m.approvalPrompt = nil
@@ -350,17 +362,17 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if wasCanceling || isChatContextCanceledError(msg.err) {
 			m.status = "Tell the model what to do instead."
-			return m, m.startNextQueued()
+			return m.withFlowTranscriptFlush(nil)
 		}
 		if msg.err != nil {
 			if !m.eventErrorRendered {
 				m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: msg.err.Error(), err: msg.err.Error()}))
 			}
 			m.status = "error"
-			return m, nil
+			return m.withFlowTranscriptFlush(nil)
 		}
 		m.status = "ready"
-		return m, m.startNextQueued()
+		return m.withFlowTranscriptFlush(nil)
 
 	case chatCompactDoneMsg:
 		return m.finishManualCompaction(msg)
@@ -407,23 +419,22 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *chatModel) resetRenderAfterResize() {
-	m.enterFullScreen()
-	m.scroll = m.maxScroll()
-}
-
-func (m *chatModel) enterFullScreen() {
-	m.fullScreen = true
-	m.selection = chatSelection{}
-}
-
 func (m chatModel) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.promptDebug != nil {
+		switch msg.Type {
+		case tea.MouseWheelUp:
+			m.promptDebug.scroll = clamp(m.promptDebug.scroll-3, 0, m.promptDebugMaxScroll())
+		case tea.MouseWheelDown:
+			m.promptDebug.scroll = clamp(m.promptDebug.scroll+3, 0, m.promptDebugMaxScroll())
+		}
+		return m, nil
+	}
 	if m.modelPicker != nil {
 		switch msg.Type {
 		case tea.MouseWheelUp:
-			m.modelPicker.move(-3)
+			m.modelPicker.Move(-3)
 		case tea.MouseWheelDown:
-			m.modelPicker.move(3)
+			m.modelPicker.Move(3)
 		}
 		return m, nil
 	}
@@ -507,13 +518,14 @@ func (m *chatModel) finishTranscriptSelection(msg tea.MouseMsg) tea.Cmd {
 }
 
 func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.promptDebug != nil {
+		return m.updatePromptDebug(msg)
+	}
 	if msg.Type == tea.KeyCtrlO {
 		m.toggleInlineToolOutput()
 		m.disarmQuit()
 		m.disarmEsc()
-		// Toggling tool output changes the transcript height; force a full
-		// repaint so the input box and model-status footer aren't left stale.
-		return m, tea.ClearScreen
+		return m.withFlowTranscriptRepaint(nil)
 	}
 	if msg.Type == tea.KeyShiftTab {
 		return m.togglePermissionMode()
@@ -680,9 +692,6 @@ func (m chatModel) updateCtrlD() (tea.Model, tea.Cmd) {
 }
 
 func (m chatModel) quitCmd() tea.Cmd {
-	if m.fullScreen {
-		return tea.Batch(tea.ExitAltScreen, tea.Quit)
-	}
 	return tea.Quit
 }
 
@@ -693,15 +702,18 @@ func (m *chatModel) armQuit(key, status string) {
 }
 
 func (m chatModel) updateEsc() (tea.Model, tea.Cmd) {
+	if (m.running || m.compacting) && m.cancel != nil {
+		m.cancel()
+		m.disarmQuit()
+		m.escArmed = false
+		m.status = "canceling"
+		return m, nil
+	}
 	if !m.escArmed {
 		m.escArmed = true
 		switch {
-		case len(m.input) > 0 && (m.running || m.compacting):
-			m.status = "press esc again to clear input and cancel"
 		case len(m.input) > 0:
 			m.status = "press esc again to clear input"
-		case (m.running || m.compacting) && m.cancel != nil:
-			m.status = "press esc again to cancel"
 		default:
 			m.status = "ready"
 		}
@@ -714,12 +726,6 @@ func (m chatModel) updateEsc() (tea.Model, tea.Cmd) {
 		m.clearInput()
 		m.resetPromptHistoryCursor()
 		cleared = true
-	}
-	if (m.running || m.compacting) && m.cancel != nil {
-		m.cancel()
-		m.disarmQuit()
-		m.status = "canceling"
-		return m, nil
 	}
 	if cleared {
 		m.status = "ready"
@@ -786,39 +792,100 @@ func (m chatModel) View() string {
 		height = 24
 	}
 
-	if m.modelPicker != nil && m.shouldRenderPickerFullFrame(width, height) {
-		return renderFullFrame(m.renderModelPicker(width), width, height)
+	if m.promptDebug != nil {
+		return m.renderPromptDebug(width, height)
+	}
+	if m.modelPicker != nil && m.openModelOnInit {
+		return m.renderModelPicker(width)
 	}
 	if m.cloudAuthPrompt != nil {
-		return renderFullFrame(m.renderCloudAuthPrompt(width), width, height)
+		return m.renderCloudAuthPrompt(width)
 	}
 	if m.thinkPicker != nil {
-		return renderFullFrame(m.renderThinkPicker(width), width, height)
+		return m.renderThinkPicker(width)
 	}
-	headerLines := m.headerLines()
+	return m.flowView(width)
+}
+
+func (m chatModel) flowView(width int) string {
 	allTranscriptLines := m.transcriptLines(width)
-	contentLineCount := len(allTranscriptLines)
+	bottomLines := m.bottomLines(width, 0)
+	bottomGap := transcriptInputGap(0, len(bottomLines), len(allTranscriptLines))
 
-	bottomLines := m.bottomLines(width, height-len(headerLines))
-	bottomGap := transcriptInputGap(height-len(headerLines), len(bottomLines), contentLineCount)
-	available := height - len(headerLines) - len(bottomLines) - bottomGap
-	if available < 0 {
-		available = 0
-	}
-
-	transcriptLines := m.visibleTranscriptLinesForLines(allTranscriptLines, available)
-	if len(allTranscriptLines) > available {
-		for len(transcriptLines) < available {
-			transcriptLines = append(transcriptLines, "")
-		}
-	}
-
-	lines := append(headerLines, transcriptLines...)
+	printed := clamp(m.flowPrintedLines, 0, len(allTranscriptLines))
+	lines := slices.Clone(allTranscriptLines[printed:])
 	for range bottomGap {
 		lines = append(lines, "")
 	}
 	lines = append(lines, bottomLines...)
-	return renderFrameLines(lines, width, height)
+	return strings.Join(lines, "\n")
+}
+
+func (m chatModel) withFlowTranscriptFlush(cmd tea.Cmd) (tea.Model, tea.Cmd) {
+	next, printCmd := m.flowTranscriptFlushCmd()
+	return next, tea.Batch(printCmd, cmd)
+}
+
+func (m chatModel) withFlowTranscriptRepaint(cmd tea.Cmd) (tea.Model, tea.Cmd) {
+	if m.flowPrintedLines == 0 {
+		return m.withFlowTranscriptFlush(cmd)
+	}
+	m.flowPrintedLines = 0
+	next, printCmd := m.flowTranscriptFlushCmd()
+	return next, tea.Sequence(tea.ClearScreen, printCmd, cmd)
+}
+
+func (m chatModel) flowTranscriptFlushCmd() (chatModel, tea.Cmd) {
+	if m.promptDebug != nil || m.modelPicker != nil || m.thinkPicker != nil || m.cloudAuthPrompt != nil {
+		return m, nil
+	}
+	width := m.viewWidth()
+	lines := m.transcriptLines(width)
+	if len(lines) == 0 {
+		m.flowPrintedLines = 0
+		return m, nil
+	}
+	m.flowPrintedLines = clamp(m.flowPrintedLines, 0, len(lines))
+	flushCount := m.flowTranscriptFlushCount(lines, width)
+	if flushCount <= m.flowPrintedLines {
+		return m, nil
+	}
+	pending := strings.Join(lines[m.flowPrintedLines:flushCount], "\n")
+	m.flowPrintedLines = flushCount
+	return m, tea.Println(pending)
+}
+
+func (m chatModel) flowTranscriptFlushCount(lines []string, width int) int {
+	holdFrom := m.flowTranscriptHoldEntryIndex()
+	if holdFrom < 0 {
+		return len(lines)
+	}
+	clone := m
+	clone.entries = slices.Clone(m.entries[:holdFrom])
+	clone.selection = chatSelection{}
+	return len(clone.transcriptLines(width))
+}
+
+func (m chatModel) flowTranscriptHoldEntryIndex() int {
+	if !m.running && !m.compacting {
+		return -1
+	}
+	if len(m.entries) == 0 {
+		return -1
+	}
+	index := len(m.entries) - 1
+	entry := m.entries[index]
+	switch entry.role {
+	case "assistant":
+		if entry.content != "" {
+			return index
+		}
+	case "tool":
+		if isToolActiveStatus(entry.status) {
+			return index
+		}
+	}
+	return -1
 }
 
 func (m chatModel) emptyChatHint() string {
@@ -828,7 +895,7 @@ func (m chatModel) emptyChatHint() string {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(m.chatID))
 	prompt := chatEmptyPrompts[int(h.Sum32())%len(chatEmptyPrompts)]
-	return `Try: "` + prompt + `"`
+	return prompt
 }
 
 func (m chatModel) headerLines() []string {
@@ -839,23 +906,28 @@ func (m *chatModel) resetChat(status string) (tea.Model, tea.Cmd) {
 	m.messages = nil
 	m.liveMessages = nil
 	m.entries = nil
-	m.queued = nil
-	m.queuedAttachments = nil
-	m.queuedPastedTexts = nil
 	m.inputAttachments = nil
 	m.inputPastedTexts = nil
+	m.modelPicker = nil
+	m.modelPickerModels = nil
+	m.approvalController = nil
 	m.nextImageID = 0
 	m.nextAudioID = 0
 	m.nextPastedTextID = 1
 	m.resetPromptHistoryCursor()
 	m.resetWorkingDir()
+	m.allowAllTools = m.defaultAllowAll
+	m.opts.AllowAllTools = m.defaultAllowAll
+	m.allowedScopes = nil
+	m.permissionNotice = ""
 	m.thinking = false
 	m.thinkingTokens = 0
 	m.contextTokens = 0
 	m.contextEstimate = true
 	m.scroll = 0
+	m.flowPrintedLines = 0
 	m.status = status
-	return *m, nil
+	return *m, tea.ClearScreen
 }
 
 func (m *chatModel) resetWorkingDir() {
@@ -944,6 +1016,7 @@ func (m *chatModel) startRunWithMessages(displayInput, historyInput string, newM
 	m.status = "running"
 	m.spinner = 0
 	m.scroll = 0
+	m.detectedToolCalls = nil
 	m.thinking = false
 	m.thinkingTokens = 0
 	m.eventErrorRendered = false
@@ -956,6 +1029,7 @@ func (m *chatModel) startRunWithMessages(displayInput, historyInput string, newM
 	m.cancel = cancel
 	events := make(chan tea.Msg, 128)
 	m.events = events
+	m.approvalController = newChatApprovalController(events, m.allowAllTools, m.allowedScopes)
 
 	var newMessagesPersisted bool
 	eventSinks := []coreagent.EventSink{chatEventSink{ctx: runCtx, ch: events, newMessagesPersisted: &newMessagesPersisted}}
@@ -965,8 +1039,9 @@ func (m *chatModel) startRunWithMessages(displayInput, historyInput string, newM
 		Client:           m.opts.Client,
 		EventSinks:       eventSinks,
 		Tools:            m.opts.Tools,
-		ApprovalPrompter: m.approvalPrompterForRun(events),
+		ApprovalPrompter: m.approvalPrompterForRun(m.approvalController),
 		AllowAllTools:    m.allowAllTools,
+		AllowedScopes:    cloneAllowedScopes(m.allowedScopes),
 		WorkingDir:       m.currentWorkingDir(),
 		Compactor:        m.opts.Compactor,
 	}
@@ -995,31 +1070,9 @@ func (m *chatModel) startRunWithMessages(displayInput, historyInput string, newM
 	}()
 
 	tickCmd := m.scheduleTick()
-	return *m, tea.Batch(waitForChatMsg(events), tickCmd)
-}
-
-func (m *chatModel) startNextQueued() tea.Cmd {
-	for len(m.queued) > 0 && !m.running && !m.compacting && !m.quitting && m.modelPicker == nil && m.thinkPicker == nil {
-		input := m.queued[0]
-		m.queued = m.queued[1:]
-		if len(m.queuedAttachments) > 0 {
-			m.inputAttachments = cloneInputAttachments(m.queuedAttachments[0])
-			m.queuedAttachments = m.queuedAttachments[1:]
-		} else {
-			m.inputAttachments = nil
-		}
-		if len(m.queuedPastedTexts) > 0 {
-			m.inputPastedTexts = cloneInputPastedTexts(m.queuedPastedTexts[0])
-			m.queuedPastedTexts = m.queuedPastedTexts[1:]
-		} else {
-			m.inputPastedTexts = nil
-		}
-		_, cmd := m.submitInput(input)
-		if cmd != nil || m.running || m.compacting || m.quitting {
-			return cmd
-		}
-	}
-	return nil
+	flushModel, flushCmd := m.flowTranscriptFlushCmd()
+	*m = flushModel
+	return *m, tea.Batch(flushCmd, waitForChatMsg(events), tickCmd)
 }
 
 func (m *chatModel) finishLiveMessagesForStoppedRun(promote bool, persistedMessages []api.Message) {
@@ -1075,7 +1128,7 @@ func (m *chatModel) disarmEsc() {
 }
 
 func (m chatModel) canEditInput() bool {
-	return m.approvalPrompt == nil && m.cloudAuthPrompt == nil && m.modelPicker == nil && m.thinkPicker == nil
+	return m.promptDebug == nil && m.approvalPrompt == nil && m.cloudAuthPrompt == nil && m.modelPicker == nil && m.thinkPicker == nil
 }
 
 func isChatContextCanceledError(err error) bool {

@@ -39,7 +39,7 @@ func (m confirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		wasSet := m.width > 0
 		m.width = msg.Width
 		if wasSet {
-			return m, tea.EnterAltScreen
+			return m, tea.ClearScreen
 		}
 		return m, nil
 

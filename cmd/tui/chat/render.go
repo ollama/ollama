@@ -39,7 +39,10 @@ type chatEntry struct {
 	renderLines []string
 }
 
-const chatMessageIndent = "  "
+const (
+	chatMessageIndent     = "  "
+	chatUserMessagePrefix = "> "
+)
 
 type chatEntryRenderKey struct {
 	width   int
@@ -113,7 +116,7 @@ func (m *chatModel) applyToolOutputModeTo(index int) {
 }
 
 func (m *chatModel) groupCompletedToolHistory() {
-	m.entries = groupCompletedToolEntries(m.entries)
+	m.entries = groupCompletedToolEntries(m.entries, m.detectedToolCalls...)
 	m.applyToolOutputMode()
 }
 
@@ -269,13 +272,9 @@ func (m chatModel) bottomLines(width, maxHeight int) []string {
 	} else {
 		lines = append(lines, m.completionLines(width)...)
 	}
-	lines = append(lines, m.queuedLines(width)...)
 
 	actionStatusLines := m.renderActionStatusLines(width)
 	approvalLines := m.renderApprovalPromptLines(width)
-	if len(actionStatusLines) == 0 {
-		actionStatusLines = []string{""}
-	}
 	if maxHeight > 0 {
 		maxApprovalLines := max(0, maxHeight-len(lines)-len(actionStatusLines)-3)
 		if len(approvalLines) > maxApprovalLines {
@@ -344,8 +343,11 @@ func (m chatModel) renderActionStatusLines(width int) []string {
 	return nil
 }
 
-func transcriptInputGap(maxHeight, bottomLineCount, _ int) int {
+func transcriptInputGap(maxHeight, bottomLineCount, transcriptLineCount int) int {
 	const desiredGap = 1
+	if transcriptLineCount == 0 {
+		return 0
+	}
 	if maxHeight <= 0 {
 		return desiredGap
 	}
@@ -452,7 +454,7 @@ func (m chatModel) selectedTranscriptText(width int) string {
 	end.line = clamp(end.line, 0, len(lines)-1)
 	var selected []string
 	for lineIndex := start.line; lineIndex <= end.line; lineIndex++ {
-		text := stripChatANSI(lines[lineIndex])
+		text := transcriptLineTextForSelection(stripChatANSI(lines[lineIndex]))
 		runes := []rune(text)
 		startCol, endCol := 0, len(runes)
 		if lineIndex == start.line {
@@ -467,6 +469,18 @@ func (m chatModel) selectedTranscriptText(width int) string {
 		selected = append(selected, string(runes[startCol:endCol]))
 	}
 	return strings.TrimRight(strings.Join(selected, "\n"), "\n")
+}
+
+func transcriptLineTextForSelection(text string) string {
+	firstPrefix := chatMessageIndent + chatUserMessagePrefix
+	if strings.HasPrefix(text, firstPrefix) {
+		return chatMessageIndent + strings.TrimPrefix(text, firstPrefix)
+	}
+	continuationPrefix := chatMessageIndent + strings.Repeat(" ", lipgloss.Width(chatUserMessagePrefix))
+	if strings.HasPrefix(text, continuationPrefix) {
+		return chatMessageIndent + strings.TrimPrefix(text, continuationPrefix)
+	}
+	return text
 }
 
 func (m chatModel) renderEntry(entry chatEntry) (string, string) {
@@ -534,10 +548,16 @@ func renderUserMessageLines(content string, width int) []string {
 	if width < 20 {
 		width = 20
 	}
-	innerWidth := max(1, width-lipgloss.Width(chatMessageIndent))
+	firstPrefix := chatMessageIndent + chatUserMessagePrefix
+	continuationPrefix := chatMessageIndent + strings.Repeat(" ", lipgloss.Width(chatUserMessagePrefix))
+	innerWidth := max(1, width-lipgloss.Width(firstPrefix))
 	lines := wrapChatText(content, innerWidth)
 	for i, line := range lines {
-		lines[i] = chatUserBlockStyle.Render(padRenderedLine(chatMessageIndent+line, width))
+		prefix := continuationPrefix
+		if i == 0 {
+			prefix = firstPrefix
+		}
+		lines[i] = chatUserBlockStyle.Render(padRenderedLine(prefix+line, width))
 	}
 	return lines
 }
@@ -795,25 +815,6 @@ func historyLabel(label string) bool {
 	}
 }
 
-func (m chatModel) queuedLines(width int) []string {
-	if len(m.queued) == 0 {
-		return nil
-	}
-	limit := 2
-	if width < 40 {
-		limit = 1
-	}
-	lines := make([]string, 0, min(len(m.queued), limit)+1)
-	for i, queued := range m.queued {
-		if i >= limit {
-			lines = append(lines, chatMetaStyle.Render(fmt.Sprintf("  +%d more", len(m.queued)-i)))
-			break
-		}
-		lines = append(lines, chatMetaStyle.Render(truncateRunes("  "+queued, max(20, width))))
-	}
-	return lines
-}
-
 func renderToolResultLines(entry chatEntry, width int) []string {
 	lines := wrapChatText(toolStatusLine(entry), width)
 	if !entry.expanded {
@@ -938,16 +939,23 @@ func (m *chatModel) finishThinkingEntry() {
 }
 
 func toolGroupChildStatusLine(entry chatEntry) string {
-	label := entry.label
-	if label == "" {
-		label = toolDisplayName(entry.detail)
-	}
+	label := toolGroupChildStatusLabel(entry)
 
 	segment := renderToolStatusSegment(entry)
 	if segment == "" {
 		return boldToolInvocationName(label)
 	}
 	return fmt.Sprintf("%s %s", boldToolInvocationName(label), segment)
+}
+
+func toolGroupChildStatusLabel(entry chatEntry) string {
+	if strings.TrimSpace(entry.label) != "" {
+		return entry.label
+	}
+	if strings.TrimSpace(entry.detail) != "" {
+		return toolInvocationLabel(entry.detail, entry.args)
+	}
+	return toolEntryStatusLabel(entry)
 }
 
 func boldToolInvocationName(label string) string {
@@ -1047,7 +1055,7 @@ func isToolActiveStatus(status string) bool {
 }
 
 func isToolResultStatus(status string) bool {
-	return status == "done" || status == "error"
+	return status == "done" || status == "error" || status == "denied"
 }
 
 // renderToolStatusSegment returns the styled status text for a tool entry,
@@ -1058,14 +1066,11 @@ func renderToolStatusSegment(entry chatEntry) string {
 	if s == "" {
 		return ""
 	}
-	return toolStatusStyle(entry.status).Render(s)
+	return chatMetaStyle.Render(s)
 }
 
 func toolStatusLine(entry chatEntry) string {
-	label := entry.label
-	if label == "" {
-		label = toolDisplayName(entry.detail)
-	}
+	label := toolEntryStatusLabel(entry)
 
 	segment := renderToolStatusSegment(entry)
 	if segment == "" {
@@ -1074,21 +1079,47 @@ func toolStatusLine(entry chatEntry) string {
 	return fmt.Sprintf("%s %s", label, segment)
 }
 
+func toolEntryStatusLabel(entry chatEntry) string {
+	if isShellToolName(entry.detail) {
+		switch entry.status {
+		case "approval":
+			if entry.label != "" {
+				return entry.label
+			}
+			return toolInvocationLabel(entry.detail, entry.args)
+		case "queued":
+			return "Queued command"
+		case "running":
+			return "Running command"
+		case "denied":
+			return "Command denied"
+		case "done", "error":
+			return "Ran a command"
+		}
+	}
+	if entry.status == "denied" {
+		if entry.label != "" {
+			return entry.label + " denied"
+		}
+		return toolDisplayName(entry.detail) + " denied"
+	}
+	if entry.label != "" {
+		return entry.label
+	}
+	return toolDisplayName(entry.detail)
+}
+
 func toolGroupStatusLine(entry chatEntry) string {
 	label := entry.label
 	if label == "" || strings.HasPrefix(label, "Tool calls (") {
 		label = toolGroupSummary(entry.tools)
 	}
 
-	// Color the label with the group's outcome color (green/red/amber/yellow);
-	// the small dot prefix already carries the same color, so the label
-	// reinforces which outcome the group had without adding a status word.
-	styledLabel := toolGroupPrefixStyle(entry).Render(label)
 	segment := renderToolStatusSegment(entry)
 	if segment == "" {
-		return styledLabel
+		return label
 	}
-	return fmt.Sprintf("%s %s", styledLabel, segment)
+	return fmt.Sprintf("%s %s", label, segment)
 }
 
 func toolGroupSummary(tools []chatEntry) string {
@@ -1104,13 +1135,7 @@ func toolGroupSummary(tools []chatEntry) string {
 	var counts []actionCount
 	indexes := map[string]int{}
 	for _, tool := range tools {
-		action := toolAction(tool.detail)
-		if action == "" {
-			action = toolAction(tool.label)
-		}
-		if action == "" {
-			action = "tool"
-		}
+		action := toolActionForEntry(tool)
 		if index, ok := indexes[action]; ok {
 			counts[index].count++
 			continue
@@ -1124,6 +1149,23 @@ func toolGroupSummary(tools []chatEntry) string {
 		phrases = append(phrases, toolActionPhrase(count.action, count.count))
 	}
 	return joinToolActionPhrases(phrases)
+}
+
+func toolActionForEntry(tool chatEntry) string {
+	if tool.status == "denied" {
+		if isShellToolName(tool.detail) || strings.Contains(strings.ToLower(tool.label), "bash(") || strings.Contains(strings.ToLower(tool.label), "powershell(") {
+			return "denied_command"
+		}
+		return "denied_tool"
+	}
+	action := toolAction(tool.detail)
+	if action == "" {
+		action = toolAction(tool.label)
+	}
+	if action == "" {
+		action = "tool"
+	}
+	return action
 }
 
 func toolAction(name string) string {
@@ -1167,6 +1209,16 @@ func toolAction(name string) string {
 func toolActionPhrase(action string, count int) string {
 	plural := count != 1
 	switch action {
+	case "denied_command":
+		if plural {
+			return fmt.Sprintf("Denied %d commands", count)
+		}
+		return "Denied a command"
+	case "denied_tool":
+		if plural {
+			return fmt.Sprintf("Denied %d tools", count)
+		}
+		return "Denied a tool"
 	case "command":
 		if plural {
 			return fmt.Sprintf("Ran %d commands", count)
@@ -1236,19 +1288,25 @@ func lowerInitial(s string) string {
 }
 
 func toolGroupPrefixStyle(entry chatEntry) lipgloss.Style {
-	succeeded, failed := toolGroupResultCounts(entry.tools)
+	succeeded, failed, denied := toolGroupResultCounts(entry.tools)
 	switch {
-	case succeeded > 0 && failed > 0:
+	case succeeded > 0 && (failed > 0 || denied > 0):
 		return chatToolMixedStyle
 	case succeeded > 0:
 		return chatToolDoneStyle
+	case denied > 0 && failed == 0:
+		return toolStatusStyle("denied")
 	default:
 		return toolStatusStyle(entry.status)
 	}
 }
 
-func toolGroupResultCounts(tools []chatEntry) (succeeded int, failed int) {
+func toolGroupResultCounts(tools []chatEntry) (succeeded int, failed int, denied int) {
 	for _, tool := range tools {
+		if tool.status == "denied" {
+			denied++
+			continue
+		}
 		if tool.err != "" || tool.status == "error" {
 			failed++
 			continue
@@ -1257,7 +1315,7 @@ func toolGroupResultCounts(tools []chatEntry) (succeeded int, failed int) {
 			succeeded++
 		}
 	}
-	return succeeded, failed
+	return succeeded, failed, denied
 }
 
 func toolStatusLabel(entry chatEntry) string {
@@ -1272,10 +1330,14 @@ func toolStatusLabel(entry chatEntry) string {
 
 func toolStatusStyle(status string) lipgloss.Style {
 	switch status {
+	case "queued", "running", "approval":
+		return chatToolRunningStyle
 	case "done":
 		return chatToolDoneStyle
 	case "error":
 		return chatErrorStyle
+	case "denied":
+		return chatToolMixedStyle
 	default:
 		return chatMetaStyle
 	}
@@ -1428,6 +1490,12 @@ func rawStringArg(args map[string]any, key string) (string, bool) {
 	return value, true
 }
 
+func isDeniedToolResult(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	return strings.Contains(value, "tool execution denied") ||
+		strings.Contains(value, "tool approval canceled")
+}
+
 func truncateRunes(value string, limit int) string {
 	runes := []rune(value)
 	if len(runes) <= limit {
@@ -1445,7 +1513,7 @@ func (m chatModel) notificationLine() string {
 		return ""
 	}
 	switch status {
-	case "queued", "running", "compacting", "approval required", "full access enabled", "review mode enabled":
+	case "running", "compacting", "approval required", "full access enabled", "review mode enabled":
 		return ""
 	default:
 		return status
@@ -1561,6 +1629,9 @@ func (m chatModel) activityLine() string {
 	}
 	label := m.activityLabel()
 	if label == "" {
+		if m.awaitingToolStart() {
+			return statusWithSpinner(m.spinnerFrame(), "Working")
+		}
 		if !m.waitingForModel() || m.spinner < waitingSpinnerTicks {
 			return ""
 		}
@@ -1596,6 +1667,10 @@ func (m chatModel) activityLabel() string {
 			if isToolActiveStatus(entry.status) {
 				return ""
 			}
+		case "tool_group":
+			if entryHasActiveTool(entry) {
+				return ""
+			}
 		case "assistant":
 			if entry.content != "" {
 				return ""
@@ -1621,6 +1696,10 @@ func (m chatModel) waitingForModel() bool {
 		switch entry.role {
 		case "tool":
 			if isToolActiveStatus(entry.status) {
+				return false
+			}
+		case "tool_group":
+			if entryHasActiveTool(entry) {
 				return false
 			}
 		case "assistant":
@@ -1710,7 +1789,7 @@ func formatTokenCount(count int) string {
 }
 
 func (m chatModel) contextStatus() string {
-	window := coreagent.ResolveContextWindowTokens(m.opts.Options, m.opts.ContextWindowTokens)
+	window := m.displayContextWindowTokens()
 	if window <= 0 {
 		return ""
 	}
@@ -1748,6 +1827,43 @@ func (m chatModel) contextStatus() string {
 	}
 
 	return ""
+}
+
+func (m chatModel) displayContextWindowTokens() int {
+	if n := chatIntOption(m.opts.Options, "num_ctx"); n > 0 {
+		return n
+	}
+	return max(0, m.opts.ContextWindowTokens)
+}
+
+func chatIntOption(options map[string]any, key string) int {
+	if options == nil {
+		return 0
+	}
+	switch v := options[key].(type) {
+	case int:
+		return max(0, v)
+	case int32:
+		return max(0, int(v))
+	case int64:
+		return max(0, int(v))
+	case uint:
+		return int(v)
+	case uint32:
+		return int(v)
+	case uint64:
+		return int(v)
+	case float64:
+		if v == float64(int(v)) {
+			return max(0, int(v))
+		}
+	case string:
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err == nil {
+			return max(0, n)
+		}
+	}
+	return 0
 }
 
 func formatContextTokenCount(value int) string {
@@ -1982,12 +2098,16 @@ func entriesFromMessages(messages []api.Message) []chatEntry {
 				}
 				args = call.Function.Arguments.ToMap()
 			}
+			status := "done"
+			if isDeniedToolResult(msg.Content) {
+				status = "denied"
+			}
 			entries = append(entries, newChatEntry(chatEntry{
 				role:    "tool",
 				content: msg.Content,
 				label:   toolInvocationLabel(toolName, args),
 				detail:  toolName,
-				status:  "done",
+				status:  status,
 				toolID:  msg.ToolCallID,
 				args:    args,
 			}))
@@ -2000,29 +2120,40 @@ func compactionSummaryContent(msg api.Message) (string, bool) {
 	return coreagent.CompactionSummaryContent(msg)
 }
 
-func groupCompletedToolEntries(entries []chatEntry) []chatEntry {
+func groupCompletedToolEntries(entries []chatEntry, detected ...chatEntry) []chatEntry {
 	grouped := make([]chatEntry, 0, len(entries))
+	visibleToolIDs := visibleToolIDs(entries)
 	for i := 0; i < len(entries); {
-		if !isCompletedToolHistoryEntry(entries[i]) {
+		if !isGroupableToolHistoryEntry(entries[i]) {
 			grouped = append(grouped, entries[i])
 			i++
 			continue
 		}
 
 		start := i
-		for i < len(entries) && isCompletedToolHistoryEntry(entries[i]) {
-			i++
+		var tools []chatEntry
+		for i < len(entries) {
+			if isGroupableToolHistoryEntry(entries[i]) {
+				tools = append(tools, flattenToolHistory([]chatEntry{entries[i]})...)
+				i++
+				continue
+			}
+			if isInvisibleToolGroupingBoundary(entries[i]) && nextGroupableToolHistoryIndex(entries, i+1) >= 0 {
+				i++
+				continue
+			}
+			break
 		}
 
-		tools := flattenToolHistory(entries[start:i])
-		if len(tools) <= 1 {
-			grouped = append(grouped, entries[start:i]...)
+		summaryTools := toolSummaryEntries(tools, detected, visibleToolIDs)
+		if len(summaryTools) <= 1 {
+			grouped = append(grouped, flattenToolHistory(entries[start:i])...)
 			continue
 		}
 
 		group := chatEntry{
 			role:       "tool_group",
-			label:      toolGroupSummary(tools),
+			label:      toolGroupSummary(summaryTools),
 			status:     aggregateToolStatus(tools),
 			expanded:   anyToolExpanded(tools),
 			startedAt:  firstToolStartedAt(tools),
@@ -2037,6 +2168,30 @@ func groupCompletedToolEntries(entries []chatEntry) []chatEntry {
 	return grouped
 }
 
+func isInvisibleToolGroupingBoundary(entry chatEntry) bool {
+	switch entry.role {
+	case "assistant":
+		return strings.TrimSpace(entry.content) == "" &&
+			strings.TrimSpace(entry.label) == "" &&
+			strings.TrimSpace(entry.detail) == "" &&
+			entry.metrics == nil
+	case "thinking":
+		return !entry.expanded
+	default:
+		return false
+	}
+}
+
+func nextGroupableToolHistoryIndex(entries []chatEntry, index int) int {
+	for index < len(entries) && isInvisibleToolGroupingBoundary(entries[index]) {
+		index++
+	}
+	if index < len(entries) && isGroupableToolHistoryEntry(entries[index]) {
+		return index
+	}
+	return -1
+}
+
 func anyToolExpanded(tools []chatEntry) bool {
 	for _, tool := range tools {
 		if tool.expanded {
@@ -2046,9 +2201,54 @@ func anyToolExpanded(tools []chatEntry) bool {
 	return false
 }
 
-func isCompletedToolHistoryEntry(entry chatEntry) bool {
+func isGroupableToolHistoryEntry(entry chatEntry) bool {
 	return (entry.role == "tool" && isToolResultStatus(entry.status)) ||
 		(entry.role == "tool_group" && len(entry.tools) > 0)
+}
+
+func visibleToolIDs(entries []chatEntry) map[string]struct{} {
+	ids := map[string]struct{}{}
+	for _, tool := range flattenToolHistory(entries) {
+		if tool.toolID != "" {
+			ids[tool.toolID] = struct{}{}
+		}
+	}
+	return ids
+}
+
+func toolSummaryEntries(tools []chatEntry, detected []chatEntry, visible map[string]struct{}) []chatEntry {
+	if len(detected) == 0 {
+		return tools
+	}
+	seen := make(map[string]struct{}, len(visible)+len(tools))
+	for id := range visible {
+		seen[id] = struct{}{}
+	}
+	summary := slices.Clone(tools)
+	for _, tool := range detected {
+		if tool.toolID != "" {
+			if _, ok := seen[tool.toolID]; ok {
+				continue
+			}
+			seen[tool.toolID] = struct{}{}
+		}
+		summary = append(summary, tool)
+	}
+	return summary
+}
+
+func entryHasActiveTool(entry chatEntry) bool {
+	switch entry.role {
+	case "tool":
+		return isToolActiveStatus(entry.status)
+	case "tool_group":
+		for _, tool := range entry.tools {
+			if isToolActiveStatus(tool.status) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func flattenToolHistory(entries []chatEntry) []chatEntry {
@@ -2065,10 +2265,24 @@ func flattenToolHistory(entries []chatEntry) []chatEntry {
 }
 
 func aggregateToolStatus(tools []chatEntry) string {
+	denied := false
+	active := false
 	for _, tool := range tools {
 		if tool.err != "" || tool.status == "error" {
 			return "error"
 		}
+		if tool.status == "denied" {
+			denied = true
+		}
+		if isToolActiveStatus(tool.status) {
+			active = true
+		}
+	}
+	if denied {
+		return "denied"
+	}
+	if active {
+		return "running"
 	}
 	return "done"
 }

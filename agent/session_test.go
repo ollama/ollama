@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -37,6 +38,10 @@ type staticTool struct{}
 
 type approvalTestTool struct {
 	called *bool
+}
+
+type namedApprovalTestTool struct {
+	name string
 }
 
 type cwdTestTool struct{}
@@ -272,6 +277,32 @@ func (t approvalTestTool) Execute(context.Context, ToolContext, map[string]any) 
 	return ToolResult{Content: "approved"}, nil
 }
 
+func (t namedApprovalTestTool) Name() string {
+	return t.name
+}
+
+func (t namedApprovalTestTool) Description() string {
+	return "requires approval"
+}
+
+func (t namedApprovalTestTool) Schema() api.ToolFunction {
+	return api.ToolFunction{
+		Name:        t.name,
+		Description: "requires approval",
+		Parameters: api.ToolFunctionParameters{
+			Type: "object",
+		},
+	}
+}
+
+func (t namedApprovalTestTool) RequiresApproval(map[string]any) bool {
+	return true
+}
+
+func (t namedApprovalTestTool) Execute(context.Context, ToolContext, map[string]any) (ToolResult, error) {
+	return ToolResult{Content: "approved"}, nil
+}
+
 func (p *recordingApprovalPrompter) PromptApproval(_ context.Context, req ApprovalRequest) (Approval, error) {
 	p.requests = append(p.requests, req)
 	if len(p.results) == 0 {
@@ -399,6 +430,45 @@ func TestSessionAddsSystemPromptOnlyToRequest(t *testing.T) {
 	reqMessages := client.requests[0].Messages
 	if len(reqMessages) != 2 || reqMessages[0].Role != "system" || reqMessages[0].Content != "available context: go-code" {
 		t.Fatalf("request messages = %#v", reqMessages)
+	}
+}
+
+func TestSessionChatRequestMatchesRunRequest(t *testing.T) {
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{
+			{{Message: api.Message{Role: "assistant", Content: "done"}}},
+		},
+	}
+	registry := &Registry{}
+	registry.Register(staticTool{})
+	session := &Session{Client: client, Tools: registry}
+	opts := RunOptions{
+		ChatID:       "chat-1",
+		Model:        "model",
+		SystemPrompt: "available context: go-code",
+		NewMessages:  []api.Message{{Role: "user", Content: "hello"}},
+		Format:       "json",
+		Options:      map[string]any{"temperature": 0.5},
+	}
+
+	want := buildChatRequest(opts, opts.NewMessages, registry.Tools())
+	_, err := session.Run(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.requests) != 1 {
+		t.Fatalf("requests = %d, want 1", len(client.requests))
+	}
+	gotJSON, err := json.Marshal(client.requests[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantJSON, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotJSON) != string(wantJSON) {
+		t.Fatalf("ChatRequest mismatch\ngot:  %s\nwant: %s", gotJSON, wantJSON)
 	}
 }
 
@@ -1780,6 +1850,150 @@ func TestSessionAllowAllApprovalSkipsFuturePrompts(t *testing.T) {
 	}
 	if len(prompter.requests) != 1 {
 		t.Fatalf("approval prompts = %d, want 1", len(prompter.requests))
+	}
+}
+
+func TestSessionAllowToolApprovalSkipsFuturePromptForSameTool(t *testing.T) {
+	args := api.NewToolCallFunctionArguments()
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{
+			{
+				{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+					ID: "call-1",
+					Function: api.ToolCallFunction{
+						Name:      "approval_tool",
+						Arguments: args,
+					},
+				}}}},
+			},
+			{
+				{Message: api.Message{Role: "assistant", Content: "done"}},
+			},
+			{
+				{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+					ID: "call-2",
+					Function: api.ToolCallFunction{
+						Name:      "approval_tool",
+						Arguments: args,
+					},
+				}}}},
+			},
+			{
+				{Message: api.Message{Role: "assistant", Content: "done again"}},
+			},
+		},
+	}
+	registry := &Registry{}
+	registry.Register(approvalTestTool{})
+	prompter := &recordingApprovalPrompter{
+		results: []Approval{{AllowScopes: []string{"approval_tool"}}},
+	}
+	session := &Session{
+		Client:           client,
+		Tools:            registry,
+		ApprovalPrompter: prompter,
+	}
+
+	for range 2 {
+		if _, err := session.Run(context.Background(), RunOptions{
+			Model:       "model",
+			NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if session.AllowAllTools {
+		t.Fatal("allowing one tool enabled full access")
+	}
+	if !session.AllowedScopes["approval_tool"] {
+		t.Fatalf("allowed scopes = %#v, want approval_tool", session.AllowedScopes)
+	}
+	if len(prompter.requests) != 1 {
+		t.Fatalf("approval prompts = %d, want 1", len(prompter.requests))
+	}
+}
+
+func TestSessionAllowShellApprovalScopesToExactCommand(t *testing.T) {
+	pwdArgs := api.NewToolCallFunctionArguments()
+	pwdArgs.Set("command", "pwd")
+	lsArgs := api.NewToolCallFunctionArguments()
+	lsArgs.Set("command", "ls")
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{
+			{
+				{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+					ID: "call-1",
+					Function: api.ToolCallFunction{
+						Name:      "bash",
+						Arguments: pwdArgs,
+					},
+				}}}},
+			},
+			{
+				{Message: api.Message{Role: "assistant", Content: "done"}},
+			},
+			{
+				{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+					ID: "call-2",
+					Function: api.ToolCallFunction{
+						Name:      "bash",
+						Arguments: pwdArgs,
+					},
+				}}}},
+			},
+			{
+				{Message: api.Message{Role: "assistant", Content: "done again"}},
+			},
+			{
+				{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+					ID: "call-3",
+					Function: api.ToolCallFunction{
+						Name:      "bash",
+						Arguments: lsArgs,
+					},
+				}}}},
+			},
+			{
+				{Message: api.Message{Role: "assistant", Content: "done finally"}},
+			},
+		},
+	}
+	registry := &Registry{}
+	registry.Register(namedApprovalTestTool{name: "bash"})
+	prompter := &recordingApprovalPrompter{
+		results: []Approval{
+			{AllowScopes: []string{toolApprovalScope("bash", map[string]any{"command": "pwd"})}},
+			{Allow: true},
+		},
+	}
+	session := &Session{
+		Client:           client,
+		Tools:            registry,
+		ApprovalPrompter: prompter,
+	}
+
+	for range 3 {
+		if _, err := session.Run(context.Background(), RunOptions{
+			Model:       "model",
+			NewMessages: []api.Message{{Role: "user", Content: "use a command"}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !session.AllowedScopes["bash\x00pwd"] {
+		t.Fatalf("allowed scopes = %#v, want pwd command scope", session.AllowedScopes)
+	}
+	if session.AllowedScopes["bash"] || session.AllowedScopes["bash\x00ls"] {
+		t.Fatalf("allowed scopes = %#v, shell approval was too broad", session.AllowedScopes)
+	}
+	if len(prompter.requests) != 2 {
+		t.Fatalf("approval prompts = %d, want first pwd and later ls", len(prompter.requests))
+	}
+	if got := prompter.requests[0].Calls[0].ApprovalScope; got != "bash\x00pwd" {
+		t.Fatalf("first approval scope = %q, want pwd command scope", got)
+	}
+	if got := prompter.requests[1].Calls[0].ApprovalScope; got != "bash\x00ls" {
+		t.Fatalf("second approval scope = %q, want ls command scope", got)
 	}
 }
 

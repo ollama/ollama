@@ -133,6 +133,13 @@ func bashContentWithError(content, msg string) string {
 	return content + "\n\n" + msg
 }
 
+// rejectUnsafeShellCommand applies a best-effort blocklist for obviously
+// destructive or credential-exfiltrating commands. It is defense-in-depth
+// ONLY: the interactive approval prompt is the real security control, and
+// this check must not be relied upon as a sandbox. Sophisticated or novel
+// dangerous commands (e.g. find / -delete, dd, fork bombs, custom binaries)
+// are NOT caught here and will simply be routed through approval like any
+// other command. Keep the approval prompt as the gate.
 func rejectUnsafeShellCommand(command string) error {
 	switch {
 	case hasUnsafeRecursiveDelete(command):
@@ -211,9 +218,17 @@ func readsCredentialPath(command string) bool {
 		"/.ssh/id_dsa",
 		"/.ssh/id_ecdsa",
 		"/.ssh/id_ed25519",
+		"/.ssh/config",
+		"/.ssh/known_hosts",
 		"/.aws/credentials",
+		"/.aws/config",
 		"/.config/gcloud/application_default_credentials.json",
 		"/.kube/config",
+		"/.netrc",
+		"/.npmrc",
+		"/.docker/config.json",
+		"/.config/gh/hosts.yml",
+		"/.gnupg/",
 		"/etc/shadow",
 	} {
 		if strings.Contains(normalized, fragment) {
@@ -227,6 +242,8 @@ func hasCredentialReadVerb(fields []string) bool {
 	for _, field := range fields {
 		switch field {
 		case "cat", "less", "more", "head", "tail", "type", "get-content", "gc", "select-string", "grep", "rg", "sed", "awk":
+			return true
+		case "env", "printenv":
 			return true
 		}
 	}

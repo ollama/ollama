@@ -20,6 +20,35 @@ func TestWebToolsRequireApproval(t *testing.T) {
 	}
 }
 
+func TestWebFetchRejectsUnsupportedScheme(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		wantErr bool
+	}{
+		{name: "file scheme", url: "file:///etc/passwd", wantErr: true},
+		{name: "data scheme", url: "data:text/plain,secret", wantErr: true},
+		{name: "ftp scheme", url: "ftp://example.com/secret", wantErr: true},
+		{name: "http allowed", url: "http://example.com", wantErr: false},
+		{name: "https allowed", url: "https://example.com", wantErr: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := (&WebFetch{}).Execute(t.Context(), coreagent.ToolContext{}, map[string]any{"url": tt.url})
+			if tt.wantErr && err == nil {
+				t.Fatal("expected unsupported scheme to be rejected")
+			}
+			// For allowed schemes we expect an error only from the missing
+			// server/auth path, not from scheme validation. The http/https
+			// cases reach the client and may fail on connection/auth; we only
+			// assert that the error is NOT a scheme error.
+			if !tt.wantErr && err != nil && strings.Contains(err.Error(), "unsupported URL scheme") {
+				t.Fatalf("http/https rejected as unsupported: %v", err)
+			}
+		})
+	}
+}
+
 func TestWebFetchBoundsContentBeforeReturning(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/experimental/web_fetch" {

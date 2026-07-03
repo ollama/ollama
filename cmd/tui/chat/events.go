@@ -21,8 +21,6 @@ type chatApprovalPromptMsg struct {
 	reply   chan<- coreagent.Approval
 }
 
-type chatOpenModelPickerMsg struct{}
-
 type chatRunDoneMsg struct {
 	result               *coreagent.RunResult
 	err                  error
@@ -55,13 +53,15 @@ func (m *chatModel) resetRunState() {
 	m.awaitingModel = false
 	m.compacting = false
 	m.compactingTokens = 0
+	m.detectedToolCalls = nil
 	m.thinking = false
 	m.thinkingTokens = 0
 }
 
 type chatModelPreloadDoneMsg struct {
-	model string
-	err   error
+	model               string
+	contextWindowTokens int
+	err                 error
 }
 
 type chatEventsClosedMsg struct{}
@@ -89,6 +89,7 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 	case coreagent.EventMessageDelta:
 		m.resetStreamingState()
 		m.groupCompletedToolHistory()
+		m.detectedToolCalls = nil
 		idx := m.ensureAssistantEntry()
 		m.entries[idx].content += event.Content
 		m.markEntryDirty(idx)
@@ -100,6 +101,7 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		m.awaitingModel = m.running
 		m.thinking = false
 		m.thinkingTokens = 0
+		m.addDetectedToolCalls(event.ToolCalls)
 		idx := m.ensureLiveAssistantMessage()
 		m.liveMessages[idx].ToolCalls = append(m.liveMessages[idx].ToolCalls, event.ToolCalls...)
 		contextChanged = true
@@ -121,6 +123,7 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		m.entries[idx].startedAt = startedAt
 		m.applyToolOutputModeTo(idx)
 		m.markEntryDirty(idx)
+		m.groupCompletedToolHistory()
 	case coreagent.EventToolFinished:
 		m.resetStreamingState()
 		m.refreshContextWindowTokens(m.opts.Model)
@@ -128,10 +131,7 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 			m.workingDir = event.WorkingDir
 		}
 		startedAt := m.toolStartedAt(event.ToolCallID)
-		status := "done"
-		if event.Error != "" {
-			status = "error"
-		}
+		status := toolFinishedStatus(event)
 		idx := m.findToolEntry(event.ToolCallID)
 		if idx < 0 {
 			m.entries = append(m.entries, newChatEntry(chatEntry{role: "tool"}))
@@ -141,7 +141,9 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		m.entries[idx].label = toolInvocationLabel(event.ToolName, event.Args)
 		m.entries[idx].detail = event.ToolName
 		m.entries[idx].status = status
-		m.entries[idx].err = event.Error
+		if status != "denied" {
+			m.entries[idx].err = event.Error
+		}
 		m.entries[idx].toolID = event.ToolCallID
 		m.entries[idx].args = event.Args
 		m.entries[idx].startedAt = startedAt
@@ -154,6 +156,7 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 			ToolName:   event.ToolName,
 			ToolCallID: event.ToolCallID,
 		})
+		m.groupCompletedToolHistory()
 		contextChanged = true
 	case coreagent.EventCompacted:
 		m.resetRunState()
@@ -195,6 +198,53 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 	if contextChanged {
 		m.refreshLiveContextEstimate()
 	}
+}
+
+func (m *chatModel) addDetectedToolCalls(calls []api.ToolCall) {
+	if len(calls) == 0 {
+		return
+	}
+	seen := make(map[string]struct{}, len(m.detectedToolCalls)+len(calls))
+	for _, entry := range m.detectedToolCalls {
+		if entry.toolID != "" {
+			seen[entry.toolID] = struct{}{}
+		}
+	}
+	for _, call := range calls {
+		if call.ID != "" {
+			if _, ok := seen[call.ID]; ok {
+				continue
+			}
+			seen[call.ID] = struct{}{}
+		}
+		args := call.Function.Arguments.ToMap()
+		m.detectedToolCalls = append(m.detectedToolCalls, newChatEntry(chatEntry{
+			role:   "tool",
+			label:  toolInvocationLabel(call.Function.Name, args),
+			detail: call.Function.Name,
+			status: "queued",
+			toolID: call.ID,
+			args:   args,
+		}))
+	}
+}
+
+func toolFinishedStatus(event coreagent.Event) string {
+	switch strings.TrimSpace(event.Status) {
+	case "denied":
+		return "denied"
+	case "done":
+		return "done"
+	case "error":
+		return "error"
+	}
+	if isDeniedToolResult(event.Content) || isDeniedToolResult(event.Error) {
+		return "denied"
+	}
+	if event.Error != "" {
+		return "error"
+	}
+	return "done"
 }
 
 func messagesEndWithCompactionResult(messages []api.Message) bool {
@@ -256,12 +306,6 @@ func (s chatEventSink) Emit(event coreagent.Event) error {
 	}
 }
 
-func openInitialModelPickerCmd() tea.Cmd {
-	return func() tea.Msg {
-		return chatOpenModelPickerMsg{}
-	}
-}
-
 func waitForChatMsg(ch <-chan tea.Msg) tea.Cmd {
 	if ch == nil {
 		return nil
@@ -289,7 +333,7 @@ func chatTickCmd() tea.Cmd {
 	})
 }
 
-func preloadModelCmd(ctx context.Context, preload func(context.Context, string, *api.ThinkValue) error, model string, think *api.ThinkValue) tea.Cmd {
+func preloadModelCmd(ctx context.Context, preload func(context.Context, string, *api.ThinkValue) (int, error), model string, think *api.ThinkValue) tea.Cmd {
 	if preload == nil || strings.TrimSpace(model) == "" {
 		return nil
 	}
@@ -301,7 +345,8 @@ func preloadModelCmd(ctx context.Context, preload func(context.Context, string, 
 		if ctx == nil {
 			ctx = context.Background()
 		}
-		return chatModelPreloadDoneMsg{model: model, err: preload(ctx, model, think)}
+		tokens, err := preload(ctx, model, think)
+		return chatModelPreloadDoneMsg{model: model, contextWindowTokens: tokens, err: err}
 	}
 }
 

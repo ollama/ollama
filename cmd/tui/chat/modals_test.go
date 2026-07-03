@@ -10,6 +10,7 @@ import (
 
 	coreagent "github.com/ollama/ollama/agent"
 	"github.com/ollama/ollama/api"
+	apptui "github.com/ollama/ollama/cmd/tui"
 )
 
 func TestChatModelCommandOpensPicker(t *testing.T) {
@@ -39,21 +40,103 @@ func TestChatModelCommandOpensPicker(t *testing.T) {
 		t.Fatal("model picker was not opened")
 	}
 	view := stripANSI(m.View())
-	if !strings.Contains(view, "Select model: type to filter") ||
+	if !strings.Contains(view, "Select model") ||
+		!strings.Contains(view, "Type to filter") ||
 		!strings.Contains(view, "kimi-k2.6:cloud") ||
-		!strings.Contains(view, "llama3.2") ||
-		!strings.Contains(view, "current") {
+		!strings.Contains(view, "llama3.2") {
 		t.Fatalf("model picker view missing content: %q", view)
 	}
 	if strings.Contains(view, "Search...") {
 		t.Fatalf("model picker should render inline without full search box: %q", view)
+	}
+	if strings.Contains(view, "local") || strings.Contains(view, "cloud coding") {
+		t.Fatalf("inline model picker should stay compact without descriptions: %q", view)
 	}
 	if !strings.Contains(view, "│ █") {
 		t.Fatalf("inline model picker should keep input box visible: %q", view)
 	}
 }
 
-func TestChatModelPickerFallsBackToFullFrameWhenSmall(t *testing.T) {
+func TestChatModelCommandShowsRecommendedFirstWithoutSections(t *testing.T) {
+	m := chatModel{
+		ctx:    context.Background(),
+		input:  []rune("/model"),
+		width:  100,
+		height: 20,
+		opts: Options{
+			Model: "llama3.2",
+			ModelOptions: func(context.Context) ([]ModelOption, error) {
+				return []ModelOption{
+					{Name: "llama3.2", Description: "selected local"},
+					{Name: "gemma4", Description: "local"},
+					{Name: "glm-5.2:cloud", Description: "recommended cloud", Recommended: true, Cloud: true},
+					{Name: "kimi-k2.7-code:cloud", Description: "another recommended cloud", Recommended: true, Cloud: true},
+				}, nil
+			},
+		},
+	}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("model command should not return a command")
+	}
+	view := stripANSI(updated.(chatModel).View())
+	for _, unwanted := range []string{"Recommended", "More", "recommended cloud", "selected local"} {
+		if strings.Contains(view, unwanted) {
+			t.Fatalf("compact model picker should be flat and description-free; found %q in %q", unwanted, view)
+		}
+	}
+	firstRecommended := strings.Index(view, "glm-5.2:cloud")
+	secondRecommended := strings.Index(view, "kimi-k2.7-code:cloud")
+	current := strings.Index(view, "llama3.2")
+	local := strings.Index(view, "gemma4")
+	if firstRecommended < 0 || secondRecommended < 0 || current < 0 || local < 0 {
+		t.Fatalf("compact model picker missing expected models: %q", view)
+	}
+	if !(firstRecommended < current && secondRecommended < current && current < local) {
+		t.Fatalf("compact model picker order should be recommended, current, local: %q", view)
+	}
+}
+
+func TestChatModelCommandOpensSmallPicker(t *testing.T) {
+	m := chatModel{
+		ctx:    context.Background(),
+		input:  []rune("/model"),
+		width:  100,
+		height: 24,
+		opts: Options{
+			Model: "model-1",
+			ModelOptions: func(context.Context) ([]ModelOption, error) {
+				return []ModelOption{
+					{Name: "model-1"},
+					{Name: "model-2"},
+					{Name: "model-3"},
+					{Name: "model-4"},
+					{Name: "model-5"},
+					{Name: "model-6"},
+					{Name: "model-7"},
+				}, nil
+			},
+		},
+	}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("model command should not return a command")
+	}
+	m = updated.(chatModel)
+	view := stripANSI(m.View())
+	for _, want := range []string{"model-1", "model-5", "... and 2 more"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("small model picker missing %q: %q", want, view)
+		}
+	}
+	if strings.Contains(view, "model-6") || strings.Contains(view, "model-7") {
+		t.Fatalf("small model picker rendered too many items: %q", view)
+	}
+}
+
+func TestChatModelPickerStaysInlineWhenSmall(t *testing.T) {
 	m := chatModel{
 		ctx:    context.Background(),
 		input:  []rune("/model"),
@@ -76,8 +159,11 @@ func TestChatModelPickerFallsBackToFullFrameWhenSmall(t *testing.T) {
 	}
 	m = updated.(chatModel)
 	view := stripANSI(m.View())
-	if !strings.Contains(view, "Switch model") || !strings.Contains(view, "Search...") {
-		t.Fatalf("small model picker should use full-frame fallback: %q", view)
+	if !strings.Contains(view, "Select model") || !strings.Contains(view, "Type to filter") {
+		t.Fatalf("small model picker should stay inline: %q", view)
+	}
+	if strings.Contains(view, "Search...") {
+		t.Fatalf("small model picker should not use bespoke full-frame search: %q", view)
 	}
 }
 
@@ -98,6 +184,56 @@ func TestChatModelPickerShowsRecommendedModelsFirst(t *testing.T) {
 	}
 }
 
+func TestChatModelPickerPinsCurrentThenRecommendedModels(t *testing.T) {
+	models := normalizeModelOptions([]ModelOption{
+		{Name: "llama3.2", Description: "local"},
+		{Name: "glm-5.2:cloud", Description: "cloud selected", Recommended: true, Cloud: true},
+		{Name: "kimi-k2.7-code:cloud", Description: "cloud coding", Recommended: true, Cloud: true},
+		{Name: "gemma4", Description: "local"},
+	})
+
+	items := modelSelectorItems(models, "glm-5.2:cloud")
+	got := make([]string, 0, len(items))
+	for _, item := range items {
+		got = append(got, item.Name)
+	}
+	want := []string{"glm-5.2:cloud", "kimi-k2.7-code:cloud", "llama3.2", "gemma4"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("selector item order = %#v, want %#v", got, want)
+	}
+	for _, item := range items[:3] {
+		if !item.Recommended {
+			t.Fatalf("%q should be pinned in the first picker section", item.Name)
+		}
+	}
+	if items[0].Description != "cloud selected" {
+		t.Fatalf("current model description = %q, want plain model description", items[0].Description)
+	}
+}
+
+func TestInitialModelPickerRendersBeforeChatShell(t *testing.T) {
+	models := normalizeModelOptions([]ModelOption{
+		{Name: "glm-5.2:cloud", Description: "cloud selected", Recommended: true, Cloud: true},
+		{Name: "llama3.2", Description: "local"},
+	})
+	picker := apptui.NewModelSelectorModel("Select model", modelSelectorItems(models, "glm-5.2:cloud"), "glm-5.2:cloud", "")
+	m := chatModel{
+		width:           100,
+		height:          20,
+		openModelOnInit: true,
+		modelPicker:     &picker,
+		entries:         []chatEntry{{role: "assistant", content: "old chat content"}},
+	}
+
+	view := stripANSI(m.View())
+	if !strings.Contains(view, "Select model") || !strings.Contains(view, "llama3.2") {
+		t.Fatalf("initial picker view missing model content: %q", view)
+	}
+	if strings.Contains(view, "old chat content") || strings.Contains(view, "│ █") {
+		t.Fatalf("initial picker should render before chat shell: %q", view)
+	}
+}
+
 func TestChatModelPickerRanksClosestFilteredModelFirst(t *testing.T) {
 	models := normalizeModelOptions([]ModelOption{
 		{Name: "gemma3:27b", Description: "recommended but longer", Recommended: true},
@@ -105,9 +241,9 @@ func TestChatModelPickerRanksClosestFilteredModelFirst(t *testing.T) {
 		{Name: "gemma4:27b", Description: "longer local"},
 		{Name: "gemma4", Description: "short local"},
 	})
-	picker := newChatModelPicker(models, "", "gemm")
+	picker := apptui.NewModelSelectorModel("Select model", modelSelectorItems(models, ""), "", "gemm")
 
-	filtered := picker.filtered()
+	filtered := picker.FilteredItems()
 	got := make([]string, 0, len(filtered))
 	for _, model := range filtered {
 		got = append(got, model.Name)
@@ -177,7 +313,7 @@ func TestChatModelPickerFiltersAndSwitchesModel(t *testing.T) {
 		t.Fatal("model command should not return a command")
 	}
 	m = updated.(chatModel)
-	if m.modelPicker == nil || m.modelPicker.filter != "qwen" {
+	if m.modelPicker == nil || m.modelPicker.Filter() != "qwen" {
 		t.Fatalf("model picker = %#v, want qwen filter", m.modelPicker)
 	}
 	if view := stripANSI(m.View()); !strings.Contains(view, "qwen3.5:cloud") || strings.Contains(view, "llama3.2") {
@@ -229,8 +365,8 @@ func TestChatModelSelectionStartsBackgroundPreload(t *testing.T) {
 		ctx: context.Background(),
 		opts: Options{
 			Model: "llama3.2",
-			PreloadModel: func(context.Context, string, *api.ThinkValue) error {
-				return nil
+			PreloadModel: func(context.Context, string, *api.ThinkValue) (int, error) {
+				return 0, nil
 			},
 		},
 	}

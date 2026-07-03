@@ -7,27 +7,11 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	apptui "github.com/ollama/ollama/cmd/tui"
 )
 
-type chatModelPicker = chatPicker[ModelOption]
-
-type chatPicker[T any] struct {
-	items  []T
-	filter string
-	cursor int
-	scroll int
-	match  func(T, string) bool
-	less   func(T, T, string) int
-
-	// Display configuration shared by the full-frame and inline renderers.
-	title       string
-	inlineTitle string
-	emptyLabel  string
-	fullFooter  string
-	itemTitle   func(T) string
-	itemMeta    func(T) string
-	itemBadge   func(T) string
-}
+type chatModelPicker = apptui.SelectorModel
 
 func (m *chatModel) openModelPicker(filter string) (tea.Model, tea.Cmd) {
 	if m.opts.ModelOptions == nil {
@@ -53,7 +37,16 @@ func (m *chatModel) openModelPicker(filter string) (tea.Model, tea.Cmd) {
 		return *m, nil
 	}
 
-	m.modelPicker = newChatModelPicker(models, m.opts.Model, filter)
+	items := modelSelectorItems(models, m.opts.Model)
+	current := m.opts.Model
+	if !m.openModelOnInit {
+		items = compactModelSelectorItems(models, m.opts.Model)
+		current = ""
+	}
+	picker := apptui.NewModelSelectorModel("Select model", items, current, filter)
+	picker.SetHelpText("↑/↓ navigate • enter select • type search • esc cancel")
+	m.modelPicker = &picker
+	m.modelPickerModels = models
 	m.status = "model"
 	return *m, nil
 }
@@ -86,99 +79,52 @@ func normalizeModelOptions(models []ModelOption) []ModelOption {
 	return out
 }
 
-func newChatModelPicker(models []ModelOption, current, filter string) *chatModelPicker {
-	picker := newChatPicker(models, filter, func(model ModelOption) bool {
-		return model.Name == current
-	}, func(model ModelOption, filter string) bool {
-		return modelOptionMatchScore(model, filter).ok
-	})
-	picker.less = compareModelOptionsForFilter
-	picker.title = "Switch model"
-	picker.inlineTitle = "Select model"
-	picker.emptyLabel = "No matching models"
-	picker.fullFooter = "↑/↓ move • enter switch • type search • esc cancel"
-	picker.itemTitle = func(model ModelOption) string { return model.Name }
-	picker.itemMeta = func(model ModelOption) string { return modelOptionMeta(model, current) }
-	picker.itemBadge = func(model ModelOption) string { return model.AvailabilityBadge }
-	return picker
+func modelSelectorItems(models []ModelOption, current string) []apptui.SelectItem {
+	return modelSelectorItemsWithCurrentPriority(models, current, true)
 }
 
-type modelOptionScore struct {
-	ok          bool
-	rank        int
-	index       int
-	lengthDelta int
-	recommended int
-	name        string
+func compactModelSelectorItems(models []ModelOption, current string) []apptui.SelectItem {
+	return modelSelectorItemsWithCurrentPriority(models, current, false)
 }
 
-func compareModelOptionsForFilter(a, b ModelOption, filter string) int {
-	aScore := modelOptionMatchScore(a, filter)
-	bScore := modelOptionMatchScore(b, filter)
-	for _, cmp := range []int{
-		compareInt(aScore.rank, bScore.rank),
-		compareInt(aScore.index, bScore.index),
-		compareInt(aScore.lengthDelta, bScore.lengthDelta),
-		compareInt(aScore.recommended, bScore.recommended),
-		strings.Compare(aScore.name, bScore.name),
-	} {
-		if cmp != 0 {
+func modelSelectorItemsWithCurrentPriority(models []ModelOption, current string, pinCurrent bool) []apptui.SelectItem {
+	ordered := slices.Clone(models)
+	slices.SortStableFunc(ordered, func(a, b ModelOption) int {
+		if cmp := compareModelPickerGroup(modelPickerGroup(a, current, pinCurrent), modelPickerGroup(b, current, pinCurrent)); cmp != 0 {
 			return cmp
 		}
+		return 0
+	})
+
+	items := make([]apptui.SelectItem, 0, len(ordered))
+	for _, model := range ordered {
+		items = append(items, apptui.SelectItem{
+			Name:              model.Name,
+			Description:       modelOptionMeta(model),
+			Recommended:       model.Name == current || !model.Cloud || model.Recommended,
+			AvailabilityBadge: model.AvailabilityBadge,
+		})
 	}
-	return 0
+	return items
 }
 
-func modelOptionMatchScore(model ModelOption, filter string) modelOptionScore {
-	filter = strings.ToLower(strings.TrimSpace(filter))
-	name := strings.ToLower(strings.TrimSpace(model.Name))
-	description := strings.ToLower(strings.TrimSpace(model.Description))
-	score := modelOptionScore{
-		rank:        4,
-		index:       1 << 20,
-		lengthDelta: 1 << 20,
-		name:        name,
+func modelPickerGroup(model ModelOption, current string, pinCurrent bool) int {
+	if pinCurrent && model.Name == current {
+		return 0
 	}
 	if model.Recommended {
-		score.recommended = -1
+		return 1
 	}
-	if filter == "" {
-		score.ok = true
-		return score
+	if model.Name == current {
+		return 2
 	}
-	nameRunes := len([]rune(name))
-	filterRunes := len([]rune(filter))
-	if name == filter {
-		score.ok = true
-		score.rank = 0
-		score.index = 0
-		score.lengthDelta = 0
-		return score
+	if !model.Cloud {
+		return 3
 	}
-	if strings.HasPrefix(name, filter) {
-		score.ok = true
-		score.rank = 1
-		score.index = 0
-		score.lengthDelta = max(0, nameRunes-filterRunes)
-		return score
-	}
-	if index := strings.Index(name, filter); index >= 0 {
-		score.ok = true
-		score.rank = 2
-		score.index = len([]rune(name[:index]))
-		score.lengthDelta = max(0, nameRunes-filterRunes)
-		return score
-	}
-	if index := strings.Index(description, filter); index >= 0 {
-		score.ok = true
-		score.rank = 3
-		score.index = len([]rune(description[:index]))
-		score.lengthDelta = max(0, nameRunes-filterRunes)
-	}
-	return score
+	return 4
 }
 
-func compareInt(a, b int) int {
+func compareModelPickerGroup(a, b int) int {
 	switch {
 	case a < b:
 		return -1
@@ -193,14 +139,17 @@ func (m chatModel) updateModelPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.modelPicker == nil {
 		return m, nil
 	}
-	clear, enter := m.modelPicker.handleKey(msg)
-	if clear {
+	switch msg.Type {
+	case tea.KeyCtrlC, tea.KeyEsc:
 		m.modelPicker = nil
+		m.modelPickerModels = nil
+		m.openModelOnInit = false
 		m.status = "ready"
 		return m, nil
-	}
-	if enter {
+	case tea.KeyEnter:
 		return m.selectModel()
+	default:
+		m.modelPicker.UpdateNavigation(msg)
 	}
 	return m, nil
 }
@@ -209,7 +158,11 @@ func (m chatModel) selectModel() (tea.Model, tea.Cmd) {
 	if m.modelPicker == nil {
 		return m, nil
 	}
-	selected, ok := m.modelPicker.selected()
+	selectedItem, ok := m.modelPicker.SelectedItem()
+	if !ok {
+		return m, nil
+	}
+	selected, ok := m.modelOptionForSelection(selectedItem.Name)
 	if !ok {
 		return m, nil
 	}
@@ -229,6 +182,8 @@ func (m chatModel) selectModel() (tea.Model, tea.Cmd) {
 	}
 
 	m.modelPicker = nil
+	m.modelPickerModels = nil
+	m.openModelOnInit = false
 	if err := m.applyModelSelection(selected.Name, true); err != nil {
 		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: fmt.Sprintf("Could not switch model: %v", err), err: err.Error()}))
 		m.status = "error"
@@ -236,6 +191,15 @@ func (m chatModel) selectModel() (tea.Model, tea.Cmd) {
 	}
 	m.status = "ready"
 	return m, m.startModelPreload(selected.Name)
+}
+
+func (m chatModel) modelOptionForSelection(name string) (ModelOption, bool) {
+	for _, model := range m.modelPickerModels {
+		if model.Name == name {
+			return model, true
+		}
+	}
+	return ModelOption{}, false
 }
 
 func (m *chatModel) applyModelSelection(modelName string, persist bool) error {
@@ -282,279 +246,18 @@ func (m *chatModel) startModelPreload(modelName string) tea.Cmd {
 }
 
 func (m chatModel) renderModelPicker(width int) string {
-	return m.modelPicker.render(width)
-}
-
-func (m chatModel) shouldRenderPickerFullFrame(width, height int) bool {
-	return width < 48 || height < 12
+	return m.modelPicker.RenderContent()
 }
 
 func (m chatModel) renderInlineModelPicker(width int) []string {
-	return m.modelPicker.renderInline(width)
-}
-
-func renderPickerSearchBox(filter string, width int) string {
-	if width < 20 {
-		width = 20
-	}
-	placeholder := "Search..."
-	value := filter
-	if value == "" {
-		value = placeholder
-	}
-	line := "⌕ " + value
-	lines := []string{
-		chatPickerBorderStyle.Render(strings.Repeat("─", width)),
-		chatPickerTextStyle.Render(truncateRunes(line, max(20, width))),
-		chatPickerBorderStyle.Render(strings.Repeat("─", width)),
-	}
-	return strings.Join(lines, "\n")
-}
-
-func newChatPicker[T any](items []T, filter string, selected func(T) bool, match func(T, string) bool) *chatPicker[T] {
-	picker := &chatPicker[T]{
-		items:  slices.Clone(items),
-		filter: strings.TrimSpace(filter),
-		match:  match,
-	}
-	if picker.filter != "" || selected == nil {
-		return picker
-	}
-	for i, item := range picker.items {
-		if selected(item) {
-			picker.cursor = i
-			picker.updateScroll()
-			break
-		}
-	}
-	return picker
-}
-
-func (p *chatPicker[T]) filtered() []T {
-	if p == nil {
-		return nil
-	}
-	filter := strings.ToLower(strings.TrimSpace(p.filter))
-	if filter == "" {
-		return p.items
-	}
-	var out []T
-	for _, item := range p.items {
-		if p.match == nil || p.match(item, filter) {
-			out = append(out, item)
-		}
-	}
-	if p.less != nil {
-		slices.SortStableFunc(out, func(a, b T) int {
-			return p.less(a, b, filter)
-		})
-	}
-	return out
-}
-
-func (p *chatPicker[T]) move(delta int) {
-	if p == nil {
-		return
-	}
-	filtered := p.filtered()
-	if len(filtered) == 0 {
-		p.cursor = 0
-		p.scroll = 0
-		return
-	}
-	p.cursor = clamp(p.cursor+delta, 0, len(filtered)-1)
-	p.updateScroll()
-}
-
-func (p *chatPicker[T]) updateScroll() {
-	if p == nil {
-		return
-	}
-	if p.cursor < p.scroll {
-		p.scroll = p.cursor
-	}
-	if p.cursor >= p.scroll+maxPickerItems {
-		p.scroll = p.cursor - maxPickerItems + 1
-	}
-	if p.scroll < 0 {
-		p.scroll = 0
-	}
-}
-
-func (p *chatPicker[T]) selected() (T, bool) {
-	var zero T
-	if p == nil {
-		return zero, false
-	}
-	filtered := p.filtered()
-	if len(filtered) == 0 || p.cursor < 0 || p.cursor >= len(filtered) {
-		return zero, false
-	}
-	return filtered[p.cursor], true
-}
-
-// handleKey processes a key event for any chatPicker. It returns clear when the
-// picker should be closed and enter when the selected item should be activated.
-func (p *chatPicker[T]) handleKey(msg tea.KeyMsg) (clear, enter bool) {
-	switch msg.Type {
-	case tea.KeyCtrlC, tea.KeyEsc:
-		return true, false
-	case tea.KeyEnter:
-		return false, true
-	case tea.KeyUp:
-		p.move(-1)
-	case tea.KeyDown:
-		p.move(1)
-	case tea.KeyPgUp:
-		p.move(-maxPickerItems)
-	case tea.KeyPgDown:
-		p.move(maxPickerItems)
-	case tea.KeyBackspace:
-		if len(p.filter) > 0 {
-			runes := []rune(p.filter)
-			p.filter = string(runes[:len(runes)-1])
-			p.cursor = 0
-			p.scroll = 0
-		}
-	case tea.KeyCtrlU:
-		p.filter = ""
-		p.cursor = 0
-		p.scroll = 0
-	case tea.KeySpace:
-		p.filter += " "
-		p.cursor = 0
-		p.scroll = 0
-	case tea.KeyRunes:
-		p.filter += string(msg.Runes)
-		p.cursor = 0
-		p.scroll = 0
-	}
-	return false, false
-}
-
-// render produces the full-frame picker view with a search box.
-func (p *chatPicker[T]) render(width int) string {
-	if p == nil {
-		return ""
-	}
-	if width <= 0 {
-		width = 80
-	}
-
-	var b strings.Builder
-	b.WriteString(truncateRenderedLine(chatPickerTitleStyle.Render(p.title), width))
-	b.WriteString("\n\n")
-	b.WriteString(renderPickerSearchBox(p.filter, width))
-	b.WriteString("\n\n")
-
-	filtered := p.filtered()
-	if len(filtered) == 0 {
-		b.WriteString(chatPickerMetaStyle.Render(p.emptyLabel))
-		b.WriteString("\n")
-	} else {
-		start := clamp(p.scroll, 0, max(0, len(filtered)-1))
-		end := min(len(filtered), start+maxPickerItems)
-		for i := start; i < end; i++ {
-			item := filtered[i]
-			selected := i == p.cursor
-			badge := p.itemBadge(item)
-			for j, line := range wrapChatText(p.itemTitle(item), max(10, width-2)) {
-				marker := "  "
-				if selected && j == 0 {
-					marker = "› "
-				}
-				if j == 0 && badge != "" {
-					line += " " + chatPickerMetaStyle.Render("("+badge+")")
-				}
-				if selected {
-					b.WriteString(chatPickerSelectedStyle.Render(marker + line))
-				} else {
-					b.WriteString("  " + chatPickerTextStyle.Render(line))
-				}
-				b.WriteByte('\n')
-			}
-			if meta := p.itemMeta(item); meta != "" {
-				for _, line := range wrapChatText(meta, max(10, width-2)) {
-					b.WriteString(chatPickerMetaStyle.Render("  " + line))
-					b.WriteByte('\n')
-				}
-			}
-			if i < end-1 {
-				b.WriteByte('\n')
-			}
-		}
-		if end < len(filtered) {
-			b.WriteString(chatPickerMetaStyle.Render(fmt.Sprintf("\n  +%d more", len(filtered)-end)))
-			b.WriteByte('\n')
-		}
-	}
-
-	b.WriteString("\n")
-	b.WriteString(truncateRenderedLine(chatPickerMetaStyle.Render(p.fullFooter), width))
-	return b.String()
-}
-
-// renderInline produces the compact inline picker view shown above the input.
-func (p *chatPicker[T]) renderInline(width int) []string {
-	if p == nil {
-		return nil
-	}
-	if width <= 0 {
-		width = 80
-	}
-
-	filter := strings.TrimSpace(p.filter)
-	title := p.inlineTitle
-	if filter != "" {
-		title += ": " + filter
-	} else {
-		title += ": type to filter"
-	}
-
-	lines := []string{truncateRenderedLine(chatPickerTitleStyle.Render(title), width)}
-	filtered := p.filtered()
-	if len(filtered) == 0 {
-		lines = append(lines, truncateRenderedLine(chatPickerMetaStyle.Render("  "+p.emptyLabel), width))
-	} else {
-		start, end := completionWindow(len(filtered), p.cursor, maxInlineModelPickerItems)
-		for i := start; i < end; i++ {
-			item := filtered[i]
-			selected := i == p.cursor
-			badge := p.itemBadge(item)
-			for j, line := range wrapChatText(p.itemTitle(item), max(10, width-2)) {
-				marker := "  "
-				if selected && j == 0 {
-					marker = "› "
-				}
-				if j == 0 && badge != "" {
-					line += " " + chatPickerMetaStyle.Render("("+badge+")")
-				}
-				if selected {
-					lines = append(lines, truncateRenderedLine(chatPickerSelectedStyle.Render(marker+line), width))
-				} else {
-					lines = append(lines, truncateRenderedLine("  "+chatPickerTextStyle.Render(line), width))
-				}
-			}
-			if meta := p.itemMeta(item); meta != "" {
-				for _, line := range wrapChatText(meta, max(10, width-2)) {
-					lines = append(lines, truncateRenderedLine(chatPickerMetaStyle.Render("  "+line), width))
-				}
-			}
-		}
-		if end < len(filtered) {
-			lines = append(lines, truncateRenderedLine(chatPickerMetaStyle.Render(fmt.Sprintf("  +%d more", len(filtered)-end)), width))
-		}
+	rendered := m.modelPicker.RenderCompactContent(maxInlineModelPickerItems)
+	lines := strings.Split(strings.TrimRight(rendered, "\n"), "\n")
+	for i := range lines {
+		lines[i] = truncateRenderedLine(lines[i], width)
 	}
 	return lines
 }
 
-func modelOptionMeta(model ModelOption, current string) string {
-	var parts []string
-	if model.Name == current {
-		parts = append(parts, "current")
-	}
-	if model.Description != "" {
-		parts = append(parts, model.Description)
-	}
-	return strings.Join(parts, " · ")
+func modelOptionMeta(model ModelOption) string {
+	return strings.TrimSpace(model.Description)
 }

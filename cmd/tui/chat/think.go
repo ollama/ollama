@@ -169,6 +169,6 @@ func (m chatModel) renderThinkPicker(width int) string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(chatPickerMetaStyle.Render("↑/↓ move • enter select • esc cancel"))
+	b.WriteString(chatPickerMetaStyle.Render("↑/↓ navigate • enter select • esc cancel"))
 	return b.String()
 }

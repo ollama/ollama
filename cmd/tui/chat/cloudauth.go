@@ -93,6 +93,7 @@ func (m *chatModel) startCloudAuthSignIn(modelName, requiredPlan, signInURL stri
 	}
 	m.status = "cloud-auth"
 	m.modelPicker = nil
+	m.modelPickerModels = nil
 	if m.opts.OpenBrowser != nil && signInURL != "" {
 		m.opts.OpenBrowser(signInURL)
 	}
@@ -111,6 +112,7 @@ func (m *chatModel) startCloudAuthUpgrade(modelName, requiredPlan string) (tea.M
 	}
 	m.status = "cloud-auth"
 	m.modelPicker = nil
+	m.modelPickerModels = nil
 	return m, nil
 }
 
@@ -133,6 +135,7 @@ func (m chatModel) updateCloudAuthPrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Could be a plan upgrade error or unknown error.
 		m.cloudAuthPrompt = nil
+		m.openModelOnInit = false
 		m.status = "ready"
 		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: fmt.Sprintf("Could not switch model: %v", msg.err), err: msg.err.Error()}))
 		return m, nil
@@ -159,6 +162,7 @@ func (m chatModel) updateCloudAuthPrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Type == tea.KeyEsc || msg.Type == tea.KeyCtrlC {
 			m.cloudAuthPrompt = nil
 			m.pendingModel = ""
+			m.openModelOnInit = false
 			m.status = "ready"
 			return m, nil
 		}
@@ -173,6 +177,7 @@ func (m chatModel) updateCloudAuthPrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.cloudAuthPrompt = nil
 				m.pendingModel = ""
+				m.openModelOnInit = false
 				m.status = "ready"
 				return m, nil
 			}
@@ -187,6 +192,8 @@ func (m chatModel) completeCloudAuth() (tea.Model, tea.Cmd) {
 	m.cloudAuthPrompt = nil
 	m.pendingModel = ""
 	m.modelPicker = nil
+	m.modelPickerModels = nil
+	m.openModelOnInit = false
 	m.status = "ready"
 	if err := m.applyModelSelection(pending, true); err != nil {
 		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: fmt.Sprintf("Could not switch model: %v", err), err: err.Error()}))

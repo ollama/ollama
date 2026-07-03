@@ -1,4 +1,5 @@
 .DS_Store
+evals/
 .vscode
 .env
 .venv

@@ -69,7 +69,20 @@ func AgentHandler(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(opts.Model) != "" && !opts.OpenModelPicker {
+
+	if opts.OpenModelPicker {
+		modelName, err := selectAgentModel(cmd.Context(), client, opts.Model)
+		if errors.Is(err, launch.ErrCancelled) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		opts.Model = modelName
+		opts.OpenModelPicker = false
+	}
+
+	if strings.TrimSpace(opts.Model) != "" {
 		info, err := prepareAgentModel(cmd, client, &opts, thinkExplicit)
 		if err != nil {
 			if handleCloudAuthorizationError(err) {
@@ -78,6 +91,9 @@ func AgentHandler(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 		opts.System = info.System
+		if err := saveLastAgentModel(opts.Model); err != nil {
+			return err
+		}
 	}
 
 	if err := GenerateAgentTUI(cmd, client, opts); err != nil {
@@ -153,6 +169,14 @@ func applyAgentFlags(cmd *cobra.Command, opts *agentTUIOptions) (bool, error) {
 	return thinkExplicit, nil
 }
 
+func saveLastAgentModel(model string) error {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return nil
+	}
+	return config.SetLastModel(model)
+}
+
 func prepareAgentModel(cmd *cobra.Command, client *api.Client, opts *agentTUIOptions, thinkExplicit bool) (*api.ShowResponse, error) {
 	requestedCloud := modelref.HasExplicitCloudSource(opts.Model)
 	info, err := func() (*api.ShowResponse, error) {
@@ -188,15 +212,17 @@ func GenerateAgentTUI(cmd *cobra.Command, client *api.Client, opts agentTUIOptio
 	if err != nil {
 		cwd = ""
 	}
+	contextWindowForModel := func(ctx context.Context, model string, fallback int) int {
+		return agentContextWindowForModel(ctx, client, model, fallback)
+	}
 
 	registry := agentToolsRegistry(cmd.Context(), client, opts.Model)
 	systemPrompt := agentSystemPrompt(opts.Model, opts.System, "")
 
 	_, err = agentchat.Run(cmd.Context(), agentchat.Options{
-		Model:           opts.Model,
-		OpenModelPicker: opts.OpenModelPicker,
-		Client:          client,
-		Tools:           registry,
+		Model:  opts.Model,
+		Client: client,
+		Tools:  registry,
 		ToolRegistryForModel: func(ctx context.Context, model string) *coreagent.Registry {
 			return agentToolsRegistry(ctx, client, model)
 		},
@@ -226,9 +252,9 @@ func GenerateAgentTUI(cmd *cobra.Command, client *api.Client, opts agentTUIOptio
 			Options: coreagent.CompactionOptions{ContextWindowTokens: opts.ContextWindowTokens},
 		},
 		ContextWindowTokensForModel: func(ctx context.Context, model string, fallback int) int {
-			return agentContextWindowForModel(ctx, client, model, fallback)
+			return contextWindowForModel(ctx, model, fallback)
 		},
-		PreloadModel: func(ctx context.Context, model string, think *api.ThinkValue) error {
+		PreloadModel: func(ctx context.Context, model string, think *api.ThinkValue) (int, error) {
 			return preloadAgentModelIfLocal(ctx, client, opts, model, think)
 		},
 		CheckCloudModel: func(ctx context.Context, model, requiredPlan string) error {
@@ -244,6 +270,43 @@ func GenerateAgentTUI(cmd *cobra.Command, client *api.Client, opts agentTUIOptio
 		},
 	})
 	return err
+}
+
+func selectAgentModel(ctx context.Context, client *api.Client, current string) (string, error) {
+	models, err := agentModelOptions(ctx, client)
+	if err != nil {
+		return "", err
+	}
+	if len(models) == 0 {
+		return "", errors.New("no models available, run 'ollama pull <model>' first")
+	}
+
+	items := agentSelectionItems(models)
+	switch {
+	case launch.DefaultSingleSelectorWithUpdates != nil:
+		return launch.DefaultSingleSelectorWithUpdates("Select model to run:", items, current, nil)
+	case launch.DefaultSingleSelector != nil:
+		return launch.DefaultSingleSelector("Select model to run:", items, current)
+	default:
+		return "", errors.New("no selector configured")
+	}
+}
+
+func agentSelectionItems(models []agentchat.ModelOption) []launch.SelectionItem {
+	items := make([]launch.SelectionItem, 0, len(models))
+	for _, model := range models {
+		items = append(items, launch.SelectionItem{
+			Name:              model.Name,
+			Description:       agentSelectionDescription(model),
+			Recommended:       model.Recommended,
+			AvailabilityBadge: model.AvailabilityBadge,
+		})
+	}
+	return items
+}
+
+func agentSelectionDescription(model agentchat.ModelOption) string {
+	return strings.TrimSpace(model.Description)
 }
 
 func agentSystemPrompt(modelName string, modelSystem string, extra string) string {
@@ -365,6 +428,14 @@ func agentContextWindowForModel(ctx context.Context, client *api.Client, modelNa
 	if client == nil || strings.TrimSpace(modelName) == "" {
 		return fallback
 	}
+	if tokens := loadedContextWindowForModel(ctx, client, modelName); tokens > 0 {
+		return tokens
+	}
+	if modelref.HasExplicitCloudSource(modelName) {
+		if tokens := agentRecommendationContextWindowForModel(ctx, client, modelName); tokens > 0 {
+			return tokens
+		}
+	}
 	resp, err := client.Show(ctx, &api.ShowRequest{Model: modelName})
 	if err != nil {
 		return fallback
@@ -375,6 +446,56 @@ func agentContextWindowForModel(ctx context.Context, client *api.Client, modelNa
 	return fallback
 }
 
+func agentRecommendationContextWindowForModel(ctx context.Context, client *api.Client, modelName string) int {
+	if client == nil {
+		return 0
+	}
+	recs, err := client.ModelRecommendationsExperimental(ctx)
+	if err != nil || recs == nil {
+		return 0
+	}
+	return contextWindowFromRecommendations(modelName, recs.Recommendations)
+}
+
+func contextWindowFromRecommendations(modelName string, recommendations []api.ModelRecommendation) int {
+	for _, rec := range recommendations {
+		if rec.ContextLength <= 0 {
+			continue
+		}
+		if sameModelRef(modelName, rec.Model) {
+			return rec.ContextLength
+		}
+	}
+	return 0
+}
+
+func sameModelRef(a, b string) bool {
+	a = comparableModelRef(a)
+	b = comparableModelRef(b)
+	if strings.EqualFold(a, b) {
+		return true
+	}
+	pa, errA := modelref.ParseRef(a)
+	pb, errB := modelref.ParseRef(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	if !strings.EqualFold(pa.Base, pb.Base) {
+		return false
+	}
+	return pa.Source == pb.Source ||
+		pa.Source == modelref.ModelSourceUnspecified ||
+		pb.Source == modelref.ModelSourceUnspecified
+}
+
+func comparableModelRef(value string) string {
+	value = strings.TrimSpace(value)
+	if strings.HasSuffix(strings.ToLower(value), ":latest") {
+		return strings.TrimSpace(value[:len(value)-len(":latest")])
+	}
+	return value
+}
+
 func showResponseContextWindow(resp *api.ShowResponse) int {
 	if resp == nil {
 		return 0
@@ -382,23 +503,34 @@ func showResponseContextWindow(resp *api.ShowResponse) int {
 	if resp.Details.ContextLength > 0 {
 		return resp.Details.ContextLength
 	}
-	for _, key := range []string{
-		"general.context_length",
-		"llama.context_length",
-		"qwen2.context_length",
-	} {
-		if n, ok := numericModelInfo(resp.ModelInfo[key]); ok {
-			return n
+	if n, ok := numericModelInfo(resp.ModelInfo["general.context_length"]); ok {
+		return n
+	}
+	best := 0
+	for key, value := range resp.ModelInfo {
+		if key != "context_length" && !strings.HasSuffix(key, ".context_length") {
+			continue
+		}
+		if n, ok := numericModelInfo(value); ok && n > best {
+			best = n
 		}
 	}
-	return 0
+	return best
 }
 
 func numericModelInfo(value any) (int, bool) {
 	switch v := value.(type) {
 	case int:
 		return v, v > 0
+	case int32:
+		return int(v), v > 0
 	case int64:
+		return int(v), v > 0
+	case uint:
+		return int(v), v > 0
+	case uint32:
+		return int(v), v > 0
+	case uint64:
 		return int(v), v > 0
 	case float64:
 		return int(v), v > 0
@@ -410,25 +542,58 @@ func numericModelInfo(value any) (int, bool) {
 	}
 }
 
-func preloadAgentModelIfLocal(ctx context.Context, client *api.Client, opts agentTUIOptions, modelName string, think *api.ThinkValue) error {
+func preloadAgentModelIfLocal(ctx context.Context, client *api.Client, opts agentTUIOptions, modelName string, think *api.ThinkValue) (int, error) {
 	modelName = strings.TrimSpace(modelName)
 	if client == nil || modelName == "" {
-		return nil
+		return 0, nil
+	}
+	if modelref.HasExplicitCloudSource(modelName) {
+		return 0, nil
 	}
 	info, err := client.Show(ctx, &api.ShowRequest{Model: modelName})
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if info.RemoteHost != "" || modelref.HasExplicitCloudSource(modelName) {
-		return nil
+	if info.RemoteHost != "" {
+		return 0, nil
 	}
-	return client.Generate(ctx, &api.GenerateRequest{
+	if err := client.Generate(ctx, &api.GenerateRequest{
 		Model:     modelName,
 		KeepAlive: opts.KeepAlive,
+		Options:   opts.Options,
 		Think:     think,
 	}, func(api.GenerateResponse) error {
 		return nil
-	})
+	}); err != nil {
+		return 0, err
+	}
+	return loadedContextWindowForModel(ctx, client, modelName), nil
+}
+
+func loadedContextWindowForModel(ctx context.Context, client *api.Client, modelName string) int {
+	if client == nil || strings.TrimSpace(modelName) == "" {
+		return 0
+	}
+	resp, err := client.ListRunning(ctx)
+	if err != nil {
+		return 0
+	}
+	return processContextWindowForModel(modelName, resp)
+}
+
+func processContextWindowForModel(modelName string, resp *api.ProcessResponse) int {
+	if resp == nil {
+		return 0
+	}
+	for _, running := range resp.Models {
+		if running.ContextLength <= 0 {
+			continue
+		}
+		if sameModelRef(modelName, running.Name) || sameModelRef(modelName, running.Model) {
+			return running.ContextLength
+		}
+	}
+	return 0
 }
 
 func agentModelOptions(ctx context.Context, client *api.Client) ([]agentchat.ModelOption, error) {

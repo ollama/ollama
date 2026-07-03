@@ -3,12 +3,12 @@ package chat
 import "github.com/charmbracelet/lipgloss"
 
 const (
-	chatAnsiRed    = "1"
-	chatAnsiGreen  = "2"
-	chatAnsiYellow = "3"
-	chatAnsiBlue   = "4"
-	chatAnsiCyan   = "6"
-	chatAnsiMuted  = "8"
+	chatAnsiRed         = "1"
+	chatAnsiGreen       = "2"
+	chatAnsiYellow      = "3"
+	chatAnsiBlue        = "4"
+	chatAnsiCyan        = "6"
+	chatAnsiBrightBlack = "8"
 )
 
 var (
@@ -16,48 +16,47 @@ var (
 			Bold(true)
 
 	chatMetaStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(chatAnsiMuted))
+			Faint(true)
 
 	chatFooterStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "#777777", Dark: "#9a9a9a"})
+			Faint(true)
 
 	chatInputBorderStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "#8a8a8a", Dark: "#555555"})
+				Faint(true)
+
+	chatInputPlaceholderStyle = lipgloss.NewStyle().
+					Foreground(lipgloss.Color("8"))
 
 	chatCursorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("15")).
-			Background(lipgloss.Color(chatAnsiMuted))
+			Reverse(true)
 
 	chatBlankCursorStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color(chatAnsiMuted))
+				Faint(true)
 
-	chatNotificationStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("7"))
+	chatNotificationStyle = chatMetaStyle
 
 	chatUserStyle = lipgloss.NewStyle()
 
 	chatUserBlockStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "#666666", Dark: "#b8b8b8"}).
-				Background(lipgloss.AdaptiveColor{Light: "#eeeeee", Dark: "#2a2a2a"})
+				Foreground(lipgloss.Color(chatAnsiBrightBlack))
 
 	chatAssistantStyle = lipgloss.NewStyle()
 
 	chatToolStyle = lipgloss.NewStyle()
 
 	chatInlineCodeStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color(chatAnsiMuted))
+				Bold(true)
 
-	chatCodeBlockStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("7"))
+	chatCodeBlockStyle = lipgloss.NewStyle()
 
 	chatTableBorderStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color(chatAnsiMuted))
+				Faint(true)
 
 	chatToolRunningStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color(chatAnsiMuted))
+				Foreground(lipgloss.Color(chatAnsiYellow))
 
 	chatToolDoneStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color(chatAnsiMuted))
+				Foreground(lipgloss.Color(chatAnsiGreen))
 
 	// chatToolMixedStyle marks a tool group with both succeeded and failed
 	// calls (partial success). Amber/orange is distinct from green (success),
@@ -66,7 +65,7 @@ var (
 				Foreground(lipgloss.Color("208"))
 
 	chatDiffMetaStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color(chatAnsiMuted))
+				Faint(true)
 
 	chatDiffFileStyle = lipgloss.NewStyle().
 				Bold(true).
@@ -98,17 +97,17 @@ var (
 				Bold(true)
 
 	chatPickerMetaStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color(chatAnsiMuted))
+				Faint(true)
 
 	chatPickerBorderStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color(chatAnsiMuted))
+				Faint(true)
 
 	chatHistoryTitleStyle = lipgloss.NewStyle().
 				Bold(true)
 
 	chatHistorySystemRoleStyle = lipgloss.NewStyle().
 					Bold(true).
-					Foreground(lipgloss.Color(chatAnsiMuted))
+					Faint(true)
 
 	chatHistoryUserRoleStyle = lipgloss.NewStyle().
 					Bold(true).
@@ -123,7 +122,7 @@ var (
 					Foreground(lipgloss.Color(chatAnsiGreen))
 
 	chatHistoryLabelStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color(chatAnsiMuted))
+				Faint(true)
 
 	chatHistoryTextStyle = lipgloss.NewStyle()
 

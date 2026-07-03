@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -12,16 +13,17 @@ import (
 )
 
 type chatApprovalChoice struct {
-	label    string
-	key      string
-	allow    bool
-	allowAll bool
-	reason   string
+	label      string
+	key        string
+	allow      bool
+	allowTools bool
+	allowAll   bool
+	reason     string
 }
 
 var chatApprovalChoices = []chatApprovalChoice{
 	{label: "Approve once", key: "1", allow: true},
-	{label: "Approve all", key: "2", allow: true, allowAll: true},
+	{label: "Always allow tool", key: "2", allow: true, allowTools: true},
 	{label: "Deny", key: "3", reason: "Tool execution denied."},
 }
 
@@ -31,14 +33,14 @@ type chatApprovalPrompt struct {
 	cursor  int
 }
 
-func (m chatModel) approvalPrompterForRun(events chan<- tea.Msg) coreagent.ApprovalPrompter {
+func (m chatModel) approvalPrompterForRun(controller *chatApprovalController) coreagent.ApprovalPrompter {
 	if m.allowAllTools {
 		return nil
 	}
 	if m.opts.ApprovalPrompter != nil {
 		return m.opts.ApprovalPrompter
 	}
-	return chatApprovalPrompter{ch: events}
+	return controller
 }
 
 func (m *chatModel) openApprovalPrompt(msg chatApprovalPromptMsg) {
@@ -52,6 +54,7 @@ func (m *chatModel) openApprovalPrompt(msg chatApprovalPromptMsg) {
 func (m *chatModel) togglePermissionMode() (tea.Model, tea.Cmd) {
 	m.allowAllTools = !m.allowAllTools
 	m.opts.AllowAllTools = m.allowAllTools
+	m.syncApprovalController()
 	if m.allowAllTools {
 		m.permissionNotice = "full access enabled"
 		m.status = "full access enabled"
@@ -73,6 +76,12 @@ func (m *chatModel) togglePermissionMode() (tea.Model, tea.Cmd) {
 
 func (m chatModel) autoApproveTools() bool {
 	return m.allowAllTools
+}
+
+func (m *chatModel) syncApprovalController() {
+	if m.approvalController != nil {
+		m.approvalController.set(m.allowAllTools, m.allowedScopes)
+	}
 }
 
 func (m *chatModel) upsertApprovalToolEntries(request coreagent.ApprovalRequest) {
@@ -151,6 +160,16 @@ func (m chatModel) resolveApprovalPrompt(choice chatApprovalChoice) (tea.Model, 
 		m.allowAllTools = true
 		m.opts.AllowAllTools = true
 	}
+	allowScopes := approvalScopes(prompt.request)
+	if choice.allowTools {
+		if m.allowedScopes == nil {
+			m.allowedScopes = make(map[string]bool, len(allowScopes))
+		}
+		for _, scope := range allowScopes {
+			m.allowedScopes[scope] = true
+		}
+	}
+	m.syncApprovalController()
 	for _, call := range prompt.request.Calls {
 		if idx := m.findToolEntry(call.ToolCallID); idx >= 0 && m.entries[idx].status == "approval" {
 			if !choice.allow {
@@ -165,7 +184,11 @@ func (m chatModel) resolveApprovalPrompt(choice chatApprovalChoice) (tea.Model, 
 			m.markEntryDirty(idx)
 		}
 	}
-	prompt.reply <- coreagent.Approval{Allow: choice.allow, AllowAll: choice.allowAll, Reason: choice.reason}
+	result := coreagent.Approval{Allow: choice.allow, AllowAll: choice.allowAll, Reason: choice.reason}
+	if choice.allowTools {
+		result.AllowScopes = allowScopes
+	}
+	prompt.reply <- result
 	return m, waitForChatMsg(m.events)
 }
 
@@ -192,7 +215,7 @@ func (m chatModel) renderApprovalPromptLines(width int) []string {
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, indentLines(renderApprovalChoices(prompt.cursor, bodyWidth), "  ")...)
+	lines = append(lines, indentLines(renderApprovalChoices(prompt.request, prompt.cursor, bodyWidth), "  ")...)
 	return lines
 }
 
@@ -241,10 +264,10 @@ func approvalToolCallDetail(call coreagent.ApprovalToolCall, width int) string {
 	}
 }
 
-func renderApprovalChoices(cursor int, width int) []string {
+func renderApprovalChoices(request coreagent.ApprovalRequest, cursor int, width int) []string {
 	var lines []string
 	for i, choice := range chatApprovalChoices {
-		label := choice.key + ". " + choice.label
+		label := choice.key + ". " + approvalChoiceLabel(choice, request)
 		wrapped := wrapChatText(label, max(20, width-2))
 		if i == clamp(cursor, 0, len(chatApprovalChoices)-1) {
 			for j, line := range wrapped {
@@ -261,6 +284,66 @@ func renderApprovalChoices(cursor int, width int) []string {
 		}
 	}
 	return lines
+}
+
+func approvalChoiceLabel(choice chatApprovalChoice, request coreagent.ApprovalRequest) string {
+	if !choice.allowTools {
+		return choice.label
+	}
+	scopes := approvalScopes(request)
+	if len(scopes) == 1 {
+		call := approvalCallForScope(request, scopes[0])
+		if isShellToolName(call.ToolName) {
+			if command, ok := rawStringArg(call.Args, "command"); ok && strings.TrimSpace(command) != "" {
+				return "Always allow this command"
+			}
+		}
+		return "Always allow " + toolDisplayName(call.ToolName)
+	}
+	return "Always allow these requests"
+}
+
+func approvalScopes(request coreagent.ApprovalRequest) []string {
+	seen := make(map[string]bool, len(request.Calls))
+	var scopes []string
+	for _, call := range request.Calls {
+		scope := approvalScope(call)
+		if scope == "" || seen[scope] {
+			continue
+		}
+		seen[scope] = true
+		scopes = append(scopes, scope)
+	}
+	return scopes
+}
+
+func approvalCallForScope(request coreagent.ApprovalRequest, scope string) coreagent.ApprovalToolCall {
+	for _, call := range request.Calls {
+		if approvalScope(call) == scope {
+			return call
+		}
+	}
+	return coreagent.ApprovalToolCall{}
+}
+
+func approvalScope(call coreagent.ApprovalToolCall) string {
+	if scope := strings.TrimSpace(call.ApprovalScope); scope != "" {
+		return scope
+	}
+	return strings.TrimSpace(call.ToolName)
+}
+
+func cloneAllowedScopes(src map[string]bool) map[string]bool {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]bool, len(src))
+	for name, allowed := range src {
+		if allowed {
+			dst[name] = true
+		}
+	}
+	return dst
 }
 
 type chatApprovalPrompter struct {
@@ -281,4 +364,57 @@ func (p chatApprovalPrompter) PromptApproval(ctx context.Context, request coreag
 	case <-ctx.Done():
 		return coreagent.Approval{Reason: "Tool approval canceled."}, nil
 	}
+}
+
+type chatApprovalController struct {
+	mu       sync.RWMutex
+	ch       chan<- tea.Msg
+	allowAll bool
+	scopes   map[string]bool
+}
+
+func newChatApprovalController(ch chan<- tea.Msg, allowAll bool, scopes map[string]bool) *chatApprovalController {
+	return &chatApprovalController{
+		ch:       ch,
+		allowAll: allowAll,
+		scopes:   cloneAllowedScopes(scopes),
+	}
+}
+
+func (c *chatApprovalController) set(allowAll bool, scopes map[string]bool) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.allowAll = allowAll
+	c.scopes = cloneAllowedScopes(scopes)
+}
+
+func (c *chatApprovalController) PromptApproval(ctx context.Context, request coreagent.ApprovalRequest) (coreagent.Approval, error) {
+	if result, ok := c.preapproved(request); ok {
+		return result, nil
+	}
+	return chatApprovalPrompter{ch: c.ch}.PromptApproval(ctx, request)
+}
+
+func (c *chatApprovalController) preapproved(request coreagent.ApprovalRequest) (coreagent.Approval, bool) {
+	if c == nil {
+		return coreagent.Approval{}, false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.allowAll {
+		return coreagent.Approval{Allow: true, AllowAll: true}, true
+	}
+	scopes := approvalScopes(request)
+	if len(scopes) == 0 {
+		return coreagent.Approval{}, false
+	}
+	for _, scope := range scopes {
+		if !c.scopes[scope] {
+			return coreagent.Approval{}, false
+		}
+	}
+	return coreagent.Approval{Allow: true, AllowScopes: scopes}, true
 }

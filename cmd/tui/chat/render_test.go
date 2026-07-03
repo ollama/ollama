@@ -38,7 +38,7 @@ func TestChatViewRendersEmptyPromptHint(t *testing.T) {
 
 	view := stripANSI(m.View())
 	lines := strings.Split(view, "\n")
-	hintLine := lineIndexContaining(lines, `Try: "`)
+	hintLine := lineIndexContaining(lines, "what changed on this branch?")
 	if hintLine < 0 {
 		t.Fatalf("empty chat view missing prompt hint: %q", view)
 	}
@@ -60,7 +60,7 @@ func TestChatUserEntryHasNoLabel(t *testing.T) {
 	}
 
 	transcript := stripANSI(m.renderTranscript(80))
-	if !strings.Contains(transcript, "  hello") {
+	if !strings.Contains(transcript, "  > hello") {
 		t.Fatalf("user transcript should render as user block: %q", transcript)
 	}
 }
@@ -129,6 +129,56 @@ func TestChatToolStatusLineDoesNotUseDisclosureGlyph(t *testing.T) {
 	}
 }
 
+func TestChatCompletedToolStatusLineUsesResultStyle(t *testing.T) {
+	entry := newChatEntry(chatEntry{
+		role:   "tool",
+		detail: "bash",
+		label:  `Bash("pwd")`,
+		status: "done",
+	})
+
+	if line := toolStatusLine(entry); line != "Ran a command" {
+		t.Fatalf("tool status line = %q, want neutral command summary", line)
+	}
+	prefix, _ := (chatModel{}).renderEntry(entry)
+	if prefix != chatToolDoneStyle.Render("•")+" " {
+		t.Fatalf("tool prefix = %q, want done-styled marker", prefix)
+	}
+}
+
+func TestChatToolStatusMarkerUsesStateColors(t *testing.T) {
+	if got, want := chatToolRunningStyle.GetForeground(), lipgloss.Color(chatAnsiYellow); got != want {
+		t.Fatalf("running tool foreground = %v, want %v", got, want)
+	}
+	if got, want := chatToolDoneStyle.GetForeground(), lipgloss.Color(chatAnsiGreen); got != want {
+		t.Fatalf("done tool foreground = %v, want %v", got, want)
+	}
+
+	running := newChatEntry(chatEntry{
+		role:   "tool",
+		detail: "bash",
+		label:  `Bash("pwd")`,
+		status: "running",
+	})
+	if line := toolStatusLine(running); line != "Running command" {
+		t.Fatalf("running tool status line = %q, want neutral command summary", line)
+	}
+	prefix, _ := (chatModel{}).renderEntry(running)
+	if prefix != chatToolRunningStyle.Render("•")+" " {
+		t.Fatalf("running tool prefix = %q, want running-styled marker", prefix)
+	}
+
+	child := newChatEntry(chatEntry{
+		role:   "tool",
+		detail: "bash",
+		label:  `Bash("pwd")`,
+		status: "done",
+	})
+	if line := toolGroupChildStatusLine(child); line != boldToolInvocationName(`Bash("pwd")`) {
+		t.Fatalf("tool group child line = %q, want neutral invocation", line)
+	}
+}
+
 func TestChatViewRendersInputBox(t *testing.T) {
 	m := chatModel{
 		input:  []rune("hello"),
@@ -145,6 +195,36 @@ func TestChatViewRendersInputBox(t *testing.T) {
 	}
 }
 
+func TestChatViewRendersSentUserPromptPrefix(t *testing.T) {
+	m := chatModel{
+		width:  40,
+		height: 12,
+		entries: []chatEntry{
+			{role: "user", content: "hello"},
+		},
+	}
+
+	view := stripANSI(m.View())
+	if !strings.Contains(view, "> hello") {
+		t.Fatalf("submitted user message should include prompt prefix: %q", view)
+	}
+	if strings.Contains(view, "│ >") {
+		t.Fatalf("active input should not include prompt prefix: %q", view)
+	}
+}
+
+func TestChatFlowViewStartsAtInputWhenEmpty(t *testing.T) {
+	m := chatModel{
+		input: []rune("hello"),
+		width: 40,
+	}
+
+	lines := strings.Split(stripANSI(m.View()), "\n")
+	if len(lines) == 0 || !strings.Contains(lines[0], inputBoxTopBorderLine(40)) {
+		t.Fatalf("empty flow view should start at input box:\n%s", strings.Join(lines, "\n"))
+	}
+}
+
 func TestChatViewRendersCursorWithEmptyPlaceholder(t *testing.T) {
 	m := chatModel{
 		chatID: "placeholder-chat",
@@ -153,7 +233,7 @@ func TestChatViewRendersCursorWithEmptyPlaceholder(t *testing.T) {
 	}
 
 	view := stripANSI(m.View())
-	if !strings.Contains(view, "Try:") {
+	if !strings.Contains(view, "summarize this file and suggest edits") {
 		t.Fatalf("empty placeholder should show hint: %q", view)
 	}
 }
@@ -255,6 +335,43 @@ func TestChatViewWrapsNotificationWhenNarrow(t *testing.T) {
 	}
 }
 
+func TestPromptTokenTextDoesNotUseCompactionFallback(t *testing.T) {
+	m := chatModel{}
+	if got := m.promptTokenText(702); got != "702 tokens" {
+		t.Fatalf("promptTokenText without model context = %q, want bare token count", got)
+	}
+
+	m.opts.ContextWindowTokens = 262144
+	if got := m.promptTokenText(702); got != "702 / 262144 tokens" {
+		t.Fatalf("promptTokenText with model context = %q", got)
+	}
+
+	m.opts.Options = map[string]any{"num_ctx": 131072}
+	if got := m.promptTokenText(702); got != "702 / 131072 tokens" {
+		t.Fatalf("promptTokenText with num_ctx = %q", got)
+	}
+}
+
+func TestPreloadDoneUpdatesContextWindowTokens(t *testing.T) {
+	compactor := &coreagent.SimpleCompactor{}
+	m := chatModel{
+		preloadingModel: "ornith",
+		opts: Options{
+			ContextWindowTokens: 32768,
+			Compactor:           compactor,
+		},
+	}
+
+	next, _ := m.Update(chatModelPreloadDoneMsg{model: "ornith", contextWindowTokens: 262144})
+	got := next.(chatModel)
+	if got.opts.ContextWindowTokens != 262144 {
+		t.Fatalf("context window = %d, want 262144", got.opts.ContextWindowTokens)
+	}
+	if compactor.Options.ContextWindowTokens != 262144 {
+		t.Fatalf("compactor context window = %d, want 262144", compactor.Options.ContextWindowTokens)
+	}
+}
+
 func TestChatViewRendersNotificationAboveInput(t *testing.T) {
 	m := chatModel{
 		input:  []rune("hello"),
@@ -274,17 +391,27 @@ func TestChatViewRendersNotificationAboveInput(t *testing.T) {
 	}
 }
 
-func TestChatViewDoesNotRenderQueueStatusAsNotification(t *testing.T) {
-	m := chatModel{
-		input:  []rune("next"),
-		queued: []string{"next"},
-		width:  40,
-		height: 12,
-		status: "queued",
+func TestChatNotificationsUseSecondaryStyle(t *testing.T) {
+	if !chatNotificationStyle.GetFaint() {
+		t.Fatal("notification style should use secondary/faint styling")
 	}
+}
 
-	if got := m.notificationLine(); got != "" {
-		t.Fatalf("notificationLine = %q, want empty", got)
+func TestChatSubmittedPromptUsesThemeSecondaryGrey(t *testing.T) {
+	if got, want := chatUserBlockStyle.GetForeground(), lipgloss.Color(chatAnsiBrightBlack); got != want {
+		t.Fatalf("submitted prompt foreground = %v, want %v", got, want)
+	}
+	if chatUserBlockStyle.GetFaint() {
+		t.Fatal("submitted prompt should use ANSI secondary grey, not faint styling")
+	}
+}
+
+func TestChatInlineCodeDoesNotLookSelected(t *testing.T) {
+	if chatInlineCodeStyle.GetReverse() {
+		t.Fatal("inline code should not use reverse-video styling")
+	}
+	if !chatInlineCodeStyle.GetBold() {
+		t.Fatal("inline code should still have lightweight emphasis")
 	}
 }
 
@@ -504,71 +631,6 @@ func TestChatScrollsTranscript(t *testing.T) {
 	}
 }
 
-func TestChatResizeAndScrollsLongAssistantOutput(t *testing.T) {
-	var generated []string
-	for i := range 80 {
-		generated = append(generated, fmt.Sprintf("generated line %02d", i))
-	}
-	m := chatModel{
-		input: []rune("next"),
-		entries: []chatEntry{{
-			role:    "assistant",
-			content: strings.Join(generated, "\n\n"),
-		}},
-	}
-
-	updated, cmd := m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
-	m = updated.(chatModel)
-	if cmd != nil {
-		t.Fatal("initial terminal size should not clear the screen")
-	}
-	if !strings.Contains(stripANSI(m.View()), "generated line 79") {
-		t.Fatalf("bounded view should show latest generated content initially:\n%s", stripANSI(m.View()))
-	}
-
-	updated, cmd = m.Update(tea.WindowSizeMsg{Width: 72, Height: 10})
-	m = updated.(chatModel)
-	if cmd == nil {
-		t.Fatal("terminal resize should clear stale rendering")
-	}
-	if !m.fullScreen {
-		t.Fatal("terminal resize should enter fullscreen managed rendering")
-	}
-	if m.maxScroll() == 0 {
-		t.Fatal("long assistant output should be scrollable after resize")
-	}
-	if !strings.Contains(stripANSI(m.View()), "generated line 00") {
-		t.Fatalf("bounded view should reset to earliest generated content after resize:\n%s", stripANSI(m.View()))
-	}
-	assertChatFrameSize(t, m.View(), 72, 10)
-
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlHome})
-	m = updated.(chatModel)
-	if !strings.Contains(stripANSI(m.View()), "generated line 00") {
-		t.Fatalf("scrolling to top should show earliest generated content:\n%s", stripANSI(m.View()))
-	}
-
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlEnd})
-	m = updated.(chatModel)
-	if !strings.Contains(stripANSI(m.View()), "generated line 79") {
-		t.Fatalf("scrolling back to bottom should restore latest generated content:\n%s", stripANSI(m.View()))
-	}
-	assertChatFrameSize(t, m.View(), 72, 10)
-}
-
-func assertChatFrameSize(t *testing.T, view string, width, height int) {
-	t.Helper()
-	lines := strings.Split(view, "\n")
-	if len(lines) != height {
-		t.Fatalf("frame rendered %d lines, want %d:\n%s", len(lines), height, stripANSI(view))
-	}
-	for i, line := range lines {
-		if got := lipgloss.Width(line); got > width {
-			t.Fatalf("frame line %d width = %d, want <= %d: %q", i, got, width, stripANSI(line))
-		}
-	}
-}
-
 func TestChatStreamingAssistantOutputHoldsLiveMarkdown(t *testing.T) {
 	m := chatModel{
 		width:   80,
@@ -580,7 +642,7 @@ func TestChatStreamingAssistantOutputHoldsLiveMarkdown(t *testing.T) {
 	updated, _ := m.Update(chatAgentMsg{event: coreagent.Event{Type: coreagent.EventMessageDelta, Content: "generated line 00"}})
 	m = updated.(chatModel)
 	if !strings.Contains(stripANSI(m.View()), "generated line 00") {
-		t.Fatalf("live output should be visible in managed frame:\n%s", stripANSI(m.View()))
+		t.Fatalf("live output should be visible in flow view:\n%s", stripANSI(m.View()))
 	}
 
 	updated, _ = m.Update(chatAgentMsg{event: coreagent.Event{Type: coreagent.EventMessageDelta, Content: "\n\ngenerated line 01"}})
@@ -825,7 +887,7 @@ func TestChatMouseDragSelectionUsesScrolledTranscriptCoordinates(t *testing.T) {
 
 func TestChatArrowKeysNavigatePromptHistoryWhenTranscriptScrollable(t *testing.T) {
 	m := chatModel{
-		input:         []rune("queued draft"),
+		input:         []rune("current draft"),
 		promptHistory: []string{"old prompt"},
 		width:         80,
 		height:        10,
@@ -852,7 +914,7 @@ func TestChatArrowKeysNavigatePromptHistoryWhenTranscriptScrollable(t *testing.T
 	if m.scroll != 0 {
 		t.Fatalf("key down should not scroll transcript, got %d", m.scroll)
 	}
-	if got := string(m.input); got != "queued draft" {
+	if got := string(m.input); got != "current draft" {
 		t.Fatalf("key down should restore draft, got %q", got)
 	}
 }
@@ -883,10 +945,42 @@ func TestEntriesFromMessagesSkipsToolCallOnlyAssistant(t *testing.T) {
 	if entries[1].role != "tool" || entries[1].label != "Bash(\"pwd\")" {
 		t.Fatalf("tool entry = %#v", entries[1])
 	}
+	if line := stripANSI(toolStatusLine(entries[1])); line != "Ran a command" {
+		t.Fatalf("tool status line = %q, want collapsed command summary", line)
+	}
 
 	transcript := stripANSI((chatModel{entries: entries}).renderTranscript(120))
 	if strings.Contains(transcript, "• \n") || strings.Contains(transcript, "•\n") {
 		t.Fatalf("transcript has blank assistant bullet: %q", transcript)
+	}
+}
+
+func TestEntriesFromMessagesRendersDeniedCommandAsDenied(t *testing.T) {
+	args := api.NewToolCallFunctionArguments()
+	args.Set("command", "pwd")
+	messages := []api.Message{
+		{
+			Role: "assistant",
+			ToolCalls: []api.ToolCall{{
+				ID: "call-1",
+				Function: api.ToolCallFunction{
+					Name:      "bash",
+					Arguments: args,
+				},
+			}},
+		},
+		{Role: "tool", ToolName: "bash", ToolCallID: "call-1", Content: "Tool execution denied."},
+	}
+
+	entries := entriesFromMessages(messages)
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want one tool entry: %#v", len(entries), entries)
+	}
+	if entries[0].status != "denied" {
+		t.Fatalf("tool status = %q, want denied: %#v", entries[0].status, entries[0])
+	}
+	if line := stripANSI(toolStatusLine(entries[0])); line != "Command denied" {
+		t.Fatalf("tool status line = %q, want denied command summary", line)
 	}
 }
 
@@ -922,7 +1016,7 @@ func TestEntriesFromMessagesRendersCompactionSummaryCollapsed(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
-	view := stripANSI(m.View())
+	view := stripANSI(m.renderTranscript(100))
 	if !strings.Contains(view, "old work") || !strings.Contains(view, "decisions") {
 		t.Fatalf("inline summary body missing: %q", view)
 	}
@@ -1094,8 +1188,58 @@ func TestChatCompletedToolsGroupWhenNextStepStarts(t *testing.T) {
 	if m.entries[0].role != "tool_group" || len(m.entries[0].tools) != 2 {
 		t.Fatalf("first entry should be grouped tool history: %#v", m.entries[0])
 	}
+	if line := stripANSI(toolGroupStatusLine(m.entries[0])); line != "Ran 2 commands" {
+		t.Fatalf("grouped command line = %q", line)
+	}
 	if m.entries[1].status != "running" || m.entries[1].label != "Bash(\"date\")" {
 		t.Fatalf("second entry should be active tool: %#v", m.entries[1])
+	}
+	if line := stripANSI(toolStatusLine(m.entries[1])); line != "Running command" {
+		t.Fatalf("running command line = %q", line)
+	}
+}
+
+func TestChatCompletedToolsGroupAcrossEmptyAssistantEntries(t *testing.T) {
+	entries := groupCompletedToolEntries([]chatEntry{
+		newChatEntry(chatEntry{role: "tool", detail: "bash", label: `Bash("ls")`, status: "done", content: "listed"}),
+		newChatEntry(chatEntry{role: "assistant"}),
+		newChatEntry(chatEntry{role: "tool", detail: "read", label: `Read("agent")`, status: "error", err: "is directory", content: "is directory"}),
+		newChatEntry(chatEntry{role: "assistant", content: "   "}),
+		newChatEntry(chatEntry{role: "tool", detail: "read", label: `Read("AGENTS.md")`, status: "done", content: "instructions"}),
+		newChatEntry(chatEntry{role: "assistant", content: "The files were listed."}),
+	})
+
+	if len(entries) != 2 {
+		t.Fatalf("entries = %d, want grouped tools plus assistant: %#v", len(entries), entries)
+	}
+	if entries[0].role != "tool_group" || len(entries[0].tools) != 3 {
+		t.Fatalf("first entry should group tools across empty assistant entries: %#v", entries[0])
+	}
+	if line := stripANSI(toolGroupStatusLine(entries[0])); line != "Ran a command and read 2 files" {
+		t.Fatalf("grouped tool line = %q", line)
+	}
+	if entries[1].role != "assistant" || entries[1].content != "The files were listed." {
+		t.Fatalf("second entry should keep real assistant content: %#v", entries[1])
+	}
+}
+
+func TestChatCompletedToolsGroupAcrossCollapsedThinking(t *testing.T) {
+	entries := groupCompletedToolEntries([]chatEntry{
+		newChatEntry(chatEntry{role: "tool", detail: "bash", label: `Bash("pwd")`, status: "done", content: "one"}),
+		newChatEntry(chatEntry{role: "thinking", label: "Thinking", content: "choose next tool", status: "done"}),
+		newChatEntry(chatEntry{role: "tool", detail: "bash", label: `Bash("ls")`, status: "done", content: "two"}),
+		newChatEntry(chatEntry{role: "assistant"}),
+		newChatEntry(chatEntry{role: "tool", detail: "read", label: `Read("AGENTS.md")`, status: "done", content: "instructions"}),
+	})
+
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want one grouped tool entry: %#v", len(entries), entries)
+	}
+	if entries[0].role != "tool_group" || len(entries[0].tools) != 3 {
+		t.Fatalf("tools should group across collapsed thinking: %#v", entries[0])
+	}
+	if line := stripANSI(toolGroupStatusLine(entries[0])); line != "Ran 2 commands and read a file" {
+		t.Fatalf("grouped tool line = %q", line)
 	}
 }
 
@@ -1117,7 +1261,7 @@ func TestChatCtrlOTogglesInlineToolOutput(t *testing.T) {
 			t.Fatalf("tool entry %d should be expanded inline", index)
 		}
 	}
-	view := stripANSI(m.View())
+	view := stripANSI(m.renderTranscript(100))
 	if strings.Contains(view, "Tool details") {
 		t.Fatalf("ctrl+o should keep tool output inline: %q", view)
 	}
@@ -1137,11 +1281,10 @@ func TestChatCtrlOTogglesInlineToolOutput(t *testing.T) {
 	}
 }
 
-func TestChatCtrlOTogglesInlineOutputWithoutLeavingFullscreen(t *testing.T) {
+func TestChatCtrlOTogglesInlineOutput(t *testing.T) {
 	m := chatModel{
-		width:      100,
-		height:     24,
-		fullScreen: true,
+		width:  100,
+		height: 24,
 		entries: []chatEntry{
 			{role: "user", content: "who is parth sareen"},
 			{role: "tool", detail: "web_search", label: "Web Search(\"who is Parth Sareen\")", status: "done", content: "Search results"},
@@ -1151,18 +1294,12 @@ func TestChatCtrlOTogglesInlineOutputWithoutLeavingFullscreen(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
-	if !m.fullScreen {
-		t.Fatal("inline tool toggle should keep managed fullscreen mode")
-	}
 	if !m.toolOutputOpen || !m.entries[1].expanded {
 		t.Fatalf("tool output should be expanded inline: %#v", m.entries[1])
 	}
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
-	if !m.fullScreen {
-		t.Fatal("inline tool toggle should stay fullscreen")
-	}
 	if m.toolOutputOpen || m.entries[1].expanded {
 		t.Fatalf("tool output should be collapsed inline: %#v", m.entries[1])
 	}
@@ -1170,10 +1307,9 @@ func TestChatCtrlOTogglesInlineOutputWithoutLeavingFullscreen(t *testing.T) {
 
 func TestChatCtrlOCollapseKeepsInputPromptVisible(t *testing.T) {
 	m := chatModel{
-		width:      80,
-		height:     8,
-		fullScreen: true,
-		opts:       Options{Model: "gemma4"},
+		width:  80,
+		height: 8,
+		opts:   Options{Model: "gemma4"},
 		entries: []chatEntry{
 			{role: "user", content: "inspect this"},
 			{role: "tool", detail: "bash", label: "Bash(\"pwd\")", status: "done", content: strings.Repeat("output\n", 20)},
@@ -1195,11 +1331,10 @@ func TestChatCtrlOCollapseKeepsInputPromptVisible(t *testing.T) {
 func TestChatCtrlOShowsRunningToolOutputInline(t *testing.T) {
 	args := map[string]any{"command": "pwd"}
 	m := chatModel{
-		width:      100,
-		height:     20,
-		fullScreen: true,
-		running:    true,
-		opts:       Options{Model: "test-model"},
+		width:   100,
+		height:  20,
+		running: true,
+		opts:    Options{Model: "test-model"},
 	}
 	m.applyAgentEvent(coreagent.Event{
 		Type:       coreagent.EventToolStarted,
@@ -1214,7 +1349,7 @@ func TestChatCtrlOShowsRunningToolOutputInline(t *testing.T) {
 		t.Fatalf("ctrl+o should expand the running tool inline")
 	}
 	view := stripANSI(m.View())
-	if !strings.Contains(view, `Bash("pwd")`) || !strings.Contains(view, "$ pwd") {
+	if !strings.Contains(view, "Running command") || !strings.Contains(view, "$ pwd") {
 		t.Fatalf("expanded transcript missing running tool details:\n%s", view)
 	}
 
@@ -1248,12 +1383,11 @@ func TestChatCtrlOShowsRunningToolOutputInline(t *testing.T) {
 	}
 }
 
-func TestChatLongBashCommandLabelTruncatesAndCtrlOShowsFullCommand(t *testing.T) {
+func TestChatLongCommandLabelTruncatesAndCtrlOShowsFullCommand(t *testing.T) {
 	command := strings.Repeat("x", 120)
 	m := chatModel{
-		width:      180,
-		height:     20,
-		fullScreen: true,
+		width:  180,
+		height: 20,
 	}
 	m.applyAgentEvent(coreagent.Event{
 		Type:       coreagent.EventToolStarted,
@@ -1272,7 +1406,7 @@ func TestChatLongBashCommandLabelTruncatesAndCtrlOShowsFullCommand(t *testing.T)
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
-	view := stripANSI(m.View())
+	view := stripANSI(m.renderTranscript(180))
 	if !strings.Contains(view, "$ "+command) {
 		t.Fatalf("expanded ctrl+o view should show full command:\n%s", view)
 	}
@@ -1300,10 +1434,18 @@ func TestChatCtrlOInlineOutputSurvivesToolGrouping(t *testing.T) {
 	if m.entries[0].role != "tool_group" || !m.entries[0].expanded {
 		t.Fatalf("grouped tool history should stay expanded inline: %#v", m.entries[0])
 	}
+	if line := stripANSI(toolGroupStatusLine(m.entries[0])); line != "Ran 2 commands" {
+		t.Fatalf("grouped command line = %q", line)
+	}
 
-	view := stripANSI(m.View())
-	if !strings.Contains(view, "one") || !strings.Contains(view, "two") {
-		t.Fatalf("grouped tool output should be visible inline: %q", view)
+	view := stripANSI(m.renderTranscript(100))
+	for _, want := range []string{`Bash("pwd")`, `Bash("ls")`, "one", "two"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("grouped tool output missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "    Ran a command") {
+		t.Fatalf("expanded grouped children should show concrete invocations, not generic summaries:\n%s", view)
 	}
 }
 

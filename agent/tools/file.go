@@ -261,11 +261,14 @@ func regularRootFileInfo(root *os.Root, rel, path string) (os.FileInfo, error) {
 	if err != nil {
 		return nil, rootPathError(err)
 	}
+	// Reject symlinks outright. os.Root.Open follows symlinks via openat
+	// without O_NOFOLLOW, so a symlink inside the working root that points
+	// outside it (e.g. ./notes -> ~/.ssh/id_rsa) would otherwise be read
+	// transparently, bypassing the working-directory confinement that the
+	// bash denylist enforces for direct credential reads. The caller must
+	// operate on the real target file instead.
 	if info.Mode()&os.ModeSymlink != 0 {
-		info, err = root.Stat(rel)
-		if err != nil {
-			return nil, rootPathError(err)
-		}
+		return nil, fmt.Errorf("%s is a symlink; read the target file directly", path)
 	}
 	if err := rejectNonRegularFile(path, info); err != nil {
 		return nil, err

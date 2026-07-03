@@ -24,6 +24,7 @@ import (
 
 type chatSlashCommand struct {
 	name        string
+	usage       string
 	description string
 	aliases     []string
 	hidden      bool
@@ -57,6 +58,8 @@ var chatSlashCommands = []chatSlashCommand{
 	{name: "/compact", description: "summarize older context"},
 	{name: "/help", description: "show commands", aliases: []string{"/?"}},
 	{name: "/bye", description: "exit", aliases: []string{"/exit"}},
+	{name: "/prompt", description: "show full prompt, tools, and messages"},
+	{name: "/save", usage: "/save <filename>", description: "save request JSON; saved as <filename>.json"},
 	{name: "/load", hidden: true},
 	{name: "/set", hidden: true},
 	{name: "/show", hidden: true},
@@ -68,6 +71,15 @@ func (m *chatModel) handleSubmit() (tea.Model, tea.Cmd) {
 	if selected, ok := m.selectedSlashCommand(); ok {
 		input = selected
 	}
+	if input == "" {
+		return *m, nil
+	}
+	_, _, hasSlashCommand := slashCommandInvocation(input)
+	if (m.running || m.compacting) && !hasSlashCommand {
+		m.status = "wait for current response"
+		return *m, nil
+	}
+
 	attachments := cloneInputAttachments(m.inputAttachments)
 	pastedTexts := cloneInputPastedTexts(m.inputPastedTexts)
 	m.input = nil
@@ -77,22 +89,6 @@ func (m *chatModel) handleSubmit() (tea.Model, tea.Cmd) {
 	m.inputPastedTexts = nil
 	m.complete = 0
 	m.resetPromptHistoryCursor()
-	if input == "" {
-		return *m, nil
-	}
-
-	if m.running || m.compacting {
-		if strings.HasPrefix(input, "/") {
-			m.inputAttachments = attachments
-			m.inputPastedTexts = pastedTexts
-			return m.submitInput(input)
-		}
-		m.queued = append(m.queued, input)
-		m.queuedAttachments = append(m.queuedAttachments, attachments)
-		m.queuedPastedTexts = append(m.queuedPastedTexts, pastedTexts)
-		m.status = "queued"
-		return *m, nil
-	}
 
 	m.inputAttachments = attachments
 	m.inputPastedTexts = pastedTexts
@@ -140,6 +136,10 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 		return m.handleLegacySetCommand(input)
 	case command == "/show":
 		return m.handleLegacyShowCommand(input)
+	case command == "/prompt":
+		return m.handlePromptCommand(args)
+	case command == "/save":
+		return m.handleSaveCommand(args)
 	case command == "/new" && args == "":
 		return m.resetChat("new chat")
 	case command == "/compact" && args == "":
@@ -794,10 +794,10 @@ func isShiftEnterCSI(msg tea.Msg) bool {
 }
 
 func (m chatModel) emptyInputPlaceholder() string {
-	if m.modelPicker != nil || m.thinkPicker != nil || m.approvalPrompt != nil || m.cloudAuthPrompt != nil {
+	if m.promptDebug != nil || m.modelPicker != nil || m.thinkPicker != nil || m.approvalPrompt != nil || m.cloudAuthPrompt != nil {
 		return ""
 	}
-	if len(m.entries) > 0 || len(m.messages) > 0 || len(m.input) > 0 || len(m.inputAttachments) > 0 || len(m.inputPastedTexts) > 0 || len(m.queued) > 0 {
+	if len(m.entries) > 0 || len(m.messages) > 0 || len(m.input) > 0 || len(m.inputAttachments) > 0 || len(m.inputPastedTexts) > 0 {
 		return ""
 	}
 	return m.emptyChatHint()
@@ -841,20 +841,20 @@ func renderInputBoxLines(input string, cursor int, width, maxBodyLines int, plac
 			if i == 0 && strings.HasPrefix(line, prefix) {
 				rest := strings.TrimPrefix(line, prefix)
 				if strings.HasPrefix(rest, inputCursorMarker) {
-					rendered = chatUserStyle.Render(prefix) + renderInputTextWithCursorStyle(rest, chatMetaStyle)
+					rendered = chatUserStyle.Render(prefix) + renderInputTextWithCursorStyle(rest, chatInputPlaceholderStyle)
 					lines = append(lines, renderInputBoxBodyLine(rendered, contentWidth))
 					continue
 				}
-				rendered = chatUserStyle.Render(prefix) + chatMetaStyle.Render(rest)
+				rendered = chatUserStyle.Render(prefix) + chatInputPlaceholderStyle.Render(rest)
 				lines = append(lines, renderInputBoxBodyLine(rendered, contentWidth))
 				continue
 			}
 			if strings.HasPrefix(line, continuationPrefix) {
-				rendered = chatMetaStyle.Render(continuationPrefix + strings.TrimPrefix(line, continuationPrefix))
+				rendered = chatInputPlaceholderStyle.Render(continuationPrefix + strings.TrimPrefix(line, continuationPrefix))
 				lines = append(lines, renderInputBoxBodyLine(rendered, contentWidth))
 				continue
 			}
-			rendered = chatMetaStyle.Render(line)
+			rendered = chatInputPlaceholderStyle.Render(line)
 			lines = append(lines, renderInputBoxBodyLine(rendered, contentWidth))
 			continue
 		}
@@ -1282,7 +1282,11 @@ func (m chatModel) helpSummary() string {
 		if command.hidden || strings.TrimSpace(command.description) == "" {
 			continue
 		}
-		lines = append(lines, fmt.Sprintf("- `%s`: %s", command.name, command.description))
+		usage := command.name
+		if command.usage != "" {
+			usage = command.usage
+		}
+		lines = append(lines, fmt.Sprintf("- `%s`: %s", usage, command.description))
 	}
 	lines = append(lines,
 		"",

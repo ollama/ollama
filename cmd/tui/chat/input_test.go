@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	coreagent "github.com/ollama/ollama/agent"
 	"github.com/ollama/ollama/api"
 )
 
@@ -32,6 +33,8 @@ func TestChatHelpCommandShowsV1Commands(t *testing.T) {
 		"- `/compact`: summarize older context",
 		"- `/help`: show commands",
 		"- `/bye`: exit",
+		"- `/prompt`: show full prompt, tools, and messages",
+		"- `/save <filename>`: save request JSON; saved as <filename>.json",
 		"**Shortcuts**",
 		"- `shift+enter`: insert a newline",
 		"- `shift+tab`: toggle permission mode",
@@ -44,6 +47,288 @@ func TestChatHelpCommandShowsV1Commands(t *testing.T) {
 		if strings.Contains(fm.entries[0].content, removed) {
 			t.Fatalf("removed command %q should stay hidden from help:\n%s", removed, fm.entries[0].content)
 		}
+	}
+}
+
+func TestChatNewCommandRepaintsFromTop(t *testing.T) {
+	m := chatModel{
+		input:            []rune("/new"),
+		flowPrintedLines: 4,
+		entries:          []chatEntry{{role: "assistant", content: "old transcript"}},
+		messages:         []api.Message{{Role: "user", Content: "old prompt"}},
+		allowAllTools:    true,
+		allowedScopes:    map[string]bool{"edit": true},
+		opts:             Options{AllowAllTools: true},
+		permissionNotice: "full access enabled",
+	}
+
+	updated, cmd := m.handleSubmit()
+	if cmd == nil {
+		t.Fatal("/new should return a repaint command")
+	}
+	m = updated.(chatModel)
+	if m.status != "new chat" {
+		t.Fatalf("status = %q, want new chat", m.status)
+	}
+	if len(m.entries) != 0 || len(m.messages) != 0 {
+		t.Fatalf("chat was not reset: entries=%#v messages=%#v", m.entries, m.messages)
+	}
+	if m.flowPrintedLines != 0 {
+		t.Fatalf("flowPrintedLines = %d, want 0", m.flowPrintedLines)
+	}
+	if m.allowAllTools || m.opts.AllowAllTools || len(m.allowedScopes) != 0 || m.permissionNotice != "" {
+		t.Fatalf("permissions were not reset: allowAll=%v opts=%v allowed=%#v notice=%q", m.allowAllTools, m.opts.AllowAllTools, m.allowedScopes, m.permissionNotice)
+	}
+	if msg := cmd(); msg == nil {
+		t.Fatal("repaint command returned nil")
+	}
+}
+
+func TestChatNewCommandPreservesLaunchFullAccessDefault(t *testing.T) {
+	m := chatModel{
+		input:           []rune("/new"),
+		defaultAllowAll: true,
+		allowedScopes:   map[string]bool{"edit": true},
+	}
+
+	updated, _ := m.handleSubmit()
+	fm := updated.(chatModel)
+	if !fm.allowAllTools || !fm.opts.AllowAllTools {
+		t.Fatalf("full access default was not restored: allowAll=%v opts=%v", fm.allowAllTools, fm.opts.AllowAllTools)
+	}
+	if len(fm.allowedScopes) != 0 {
+		t.Fatalf("allowed scopes = %#v, want cleared", fm.allowedScopes)
+	}
+}
+
+func TestChatSaveCommandRequiresFilename(t *testing.T) {
+	m := chatModel{
+		input: []rune("/save"),
+		opts:  Options{Model: "llama3.2"},
+	}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("/save should not start a command")
+	}
+	fm := updated.(chatModel)
+	if fm.status != "error" {
+		t.Fatalf("status = %q, want error", fm.status)
+	}
+	if len(fm.entries) != 1 || !strings.Contains(fm.entries[0].content, "usage: /save <filename>") {
+		t.Fatalf("entries = %#v, want usage error", fm.entries)
+	}
+}
+
+func TestChatSaveCommandWritesRequestJSON(t *testing.T) {
+	dir := t.TempDir()
+	m := chatModel{
+		input:      []rune("/save request"),
+		workingDir: dir,
+		opts: Options{
+			Model:        "llama3.2",
+			SystemPrompt: "You are Ollama.",
+		},
+		messages: []api.Message{{Role: "user", Content: "hello"}},
+	}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("/save redirect should not start a command")
+	}
+	fm := updated.(chatModel)
+	if fm.status != "saved" {
+		t.Fatalf("status = %q, want saved", fm.status)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "request.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := string(data)
+	for _, want := range []string{
+		`"model": "llama3.2"`,
+		`"role": "system"`,
+		`"content": "You are Ollama."`,
+		`"role": "user"`,
+		`"content": "hello"`,
+	} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("saved request missing %q:\n%s", want, raw)
+		}
+	}
+	if got := fm.entries[len(fm.entries)-1].content; got != "saved as request.json" {
+		t.Fatalf("save entry = %q, want saved filename", got)
+	}
+}
+
+func TestChatSaveCommandRejectsPath(t *testing.T) {
+	dir := t.TempDir()
+	m := chatModel{
+		input:      []rune("/save ../request"),
+		workingDir: dir,
+		opts:       Options{Model: "llama3.2"},
+	}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("invalid /save should not start a command")
+	}
+	fm := updated.(chatModel)
+	if fm.status != "error" {
+		t.Fatalf("status = %q, want error", fm.status)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(dir), "request.json")); !os.IsNotExist(err) {
+		t.Fatalf("/save wrote outside working dir, stat err = %v", err)
+	}
+}
+
+func TestChatPromptCommandOpensPromptDebugScreen(t *testing.T) {
+	registry := &coreagent.Registry{}
+	registry.Register(chatTestTool{})
+	toolArgs := api.NewToolCallFunctionArguments()
+	toolArgs.Set("query", "show me everything")
+	m := chatModel{
+		input:  []rune("/prompt"),
+		width:  100,
+		height: 20,
+		opts: Options{
+			Model:               "llama3.2",
+			SystemPrompt:        "You are Ollama.",
+			Tools:               registry,
+			ContextWindowTokens: 1024,
+		},
+		messages: []api.Message{
+			{Role: "user", Content: "hello\nsecond line"},
+			{
+				Role:     "assistant",
+				Content:  "I'll call a tool.",
+				Thinking: "I should call the fake tool first.",
+				ToolCalls: []api.ToolCall{{
+					ID: "call-1",
+					Function: api.ToolCallFunction{
+						Name:      "fake_tool",
+						Arguments: toolArgs,
+					},
+				}},
+			},
+			{Role: "tool", ToolName: "fake_tool", ToolCallID: "call-1", Content: "tool result line 1\ntool result line 2"},
+		},
+	}
+
+	updated, cmd := m.handleSubmit()
+	if cmd == nil {
+		t.Fatal("/prompt should enable managed prompt screen")
+	}
+	fm := updated.(chatModel)
+	if fm.promptDebug == nil {
+		t.Fatal("/prompt should open prompt debug screen")
+	}
+	if len(fm.entries) != 0 {
+		t.Fatalf("/prompt should not append a transcript entry: %#v", fm.entries)
+	}
+	out := stripANSI(fm.View())
+	body := stripANSI(strings.Join(fm.promptDebugLines(160), "\n"))
+	for _, want := range []string{
+		"Prompt",
+		"full request preview",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("/prompt view missing %q:\n%s", want, out)
+		}
+	}
+	for _, want := range []string{
+		"model: llama3.2",
+		"estimated prompt:",
+		"/ 1024 tokens",
+		"messages: 4",
+		"tools: 1",
+		"Tools",
+		"1. fake_tool",
+		"description:",
+		"does test work",
+		"parameters: object",
+		"1. system",
+		"You are Ollama.",
+		"2. user",
+		"hello",
+		"second line",
+		"3. assistant",
+		"thinking:",
+		"I should call the fake tool first.",
+		"content:",
+		"I'll call a tool.",
+		"tool call 1: fake_tool",
+		"id: call-1",
+		"arguments:",
+		"query: show me everything",
+		"4. tool:fake_tool",
+		"tool_name: fake_tool",
+		"tool_call_id: call-1",
+		"tool result",
+		"tool result line 1",
+		"tool result line 2",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("/prompt output missing %q:\n%s", want, body)
+		}
+	}
+	assistantStart := strings.Index(body, "3. assistant")
+	if assistantStart < 0 {
+		t.Fatalf("/prompt output missing assistant message:\n%s", body)
+	}
+	assistantBody := body[assistantStart:]
+	thinkingIndex := strings.Index(assistantBody, "thinking:")
+	contentIndex := strings.Index(assistantBody, "content:")
+	if thinkingIndex < 0 || contentIndex < 0 {
+		t.Fatalf("/prompt assistant output missing thinking/content labels:\n%s", body)
+	}
+	if thinkingIndex > contentIndex {
+		t.Fatalf("/prompt assistant thinking should render before content:\n%s", body)
+	}
+	for _, unwanted := range []string{`"query":`, `"name": "fake_tool"`} {
+		if strings.Contains(body, unwanted) {
+			t.Fatalf("/prompt output should be rendered, not raw JSON; found %q:\n%s", unwanted, body)
+		}
+	}
+
+	updated, cmd = fm.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd == nil {
+		t.Fatal("closing prompt debug should disable prompt mouse mode")
+	}
+	fm = updated.(chatModel)
+	if fm.promptDebug != nil {
+		t.Fatal("esc should close prompt debug screen")
+	}
+}
+
+func TestChatPromptDebugMouseWheelScrolls(t *testing.T) {
+	m := chatModel{
+		width:  80,
+		height: 8,
+		opts:   Options{Model: "llama3.2", ContextWindowTokens: 1024},
+		promptDebug: &chatPromptDebug{
+			request: api.ChatRequest{Model: "llama3.2"},
+			tokens:  10,
+		},
+	}
+	for range 30 {
+		m.promptDebug.request.Messages = append(m.promptDebug.request.Messages, api.Message{Role: "user", Content: "line"})
+	}
+	if m.promptDebugMaxScroll() == 0 {
+		t.Fatal("test setup should produce a scrollable prompt debug screen")
+	}
+
+	updated, _ := m.Update(tea.MouseMsg{Type: tea.MouseWheelDown})
+	m = updated.(chatModel)
+	if m.promptDebug.scroll == 0 {
+		t.Fatal("mouse wheel down should scroll prompt debug screen")
+	}
+
+	updated, _ = m.Update(tea.MouseMsg{Type: tea.MouseWheelUp})
+	m = updated.(chatModel)
+	if m.promptDebug.scroll != 0 {
+		t.Fatalf("mouse wheel up should return prompt debug screen to top, got scroll %d", m.promptDebug.scroll)
 	}
 }
 
@@ -199,6 +484,26 @@ func TestChatViewRendersSlashCommandSuggestions(t *testing.T) {
 	}
 }
 
+func TestChatSlashCommandSuggestionsIncludePromptAndSave(t *testing.T) {
+	for _, tt := range []struct {
+		input       string
+		command     string
+		description string
+	}{
+		{input: "/pr", command: "/prompt", description: "show full prompt, tools, and messages"},
+		{input: "/sa", command: "/save", description: "save request JSON; saved as <filename>.json"},
+	} {
+		t.Run(tt.command, func(t *testing.T) {
+			m := chatModel{input: []rune(tt.input)}
+
+			lines := stripANSI(strings.Join(m.slashCommandLines(80), "\n"))
+			if !strings.Contains(lines, tt.command) || !strings.Contains(lines, tt.description) {
+				t.Fatalf("suggestions missing %s: %q", tt.command, lines)
+			}
+		})
+	}
+}
+
 func TestChatSlashCommandSuggestionsIncludeThink(t *testing.T) {
 	m := chatModel{input: []rune("/th")}
 
@@ -221,7 +526,7 @@ func TestChatEnterAcceptsSelectedSlashCommand(t *testing.T) {
 	}
 }
 
-func TestChatSlashCommandsDoNotQueueWhileRunning(t *testing.T) {
+func TestChatSlashCommandsRunWhileModelResponds(t *testing.T) {
 	m := chatModel{running: true, input: []rune("/help")}
 
 	updated, cmd := m.handleSubmit()
@@ -229,11 +534,42 @@ func TestChatSlashCommandsDoNotQueueWhileRunning(t *testing.T) {
 		t.Fatal("help command should not return a command")
 	}
 	m = updated.(chatModel)
-	if len(m.queued) != 0 {
-		t.Fatalf("slash command queued while running: %#v", m.queued)
-	}
 	if len(m.entries) != 1 || m.entries[0].role != "slash" {
 		t.Fatalf("entries = %#v, want immediate slash output", m.entries)
+	}
+}
+
+func TestChatMessageSubmitWhileRunningPreservesDraft(t *testing.T) {
+	attachment := chatInputAttachment{placeholder: "[image 1]", kind: "image"}
+	pasted := chatInputPastedText{placeholder: "[pasted 1]", content: "long paste"}
+	m := chatModel{
+		running:          true,
+		input:            []rune("next prompt [image 1] [pasted 1]"),
+		inputCursor:      4,
+		inputCursorSet:   true,
+		inputAttachments: []chatInputAttachment{attachment},
+		inputPastedTexts: []chatInputPastedText{pasted},
+	}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("busy submit should not start a command")
+	}
+	m = updated.(chatModel)
+	if got := string(m.input); got != "next prompt [image 1] [pasted 1]" {
+		t.Fatalf("input = %q, want draft preserved", got)
+	}
+	if m.inputCursor != 4 || !m.inputCursorSet {
+		t.Fatalf("cursor not preserved: cursor=%d set=%v", m.inputCursor, m.inputCursorSet)
+	}
+	if len(m.inputAttachments) != 1 || m.inputAttachments[0].placeholder != attachment.placeholder || m.inputAttachments[0].kind != attachment.kind {
+		t.Fatalf("attachments not preserved: %#v", m.inputAttachments)
+	}
+	if len(m.inputPastedTexts) != 1 || m.inputPastedTexts[0] != pasted {
+		t.Fatalf("pasted text not preserved: %#v", m.inputPastedTexts)
+	}
+	if len(m.entries) != 0 {
+		t.Fatalf("busy submit should not add entries: %#v", m.entries)
 	}
 }
 

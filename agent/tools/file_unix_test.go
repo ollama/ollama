@@ -73,3 +73,49 @@ func TestEditPreservesModeDespiteUmask(t *testing.T) {
 		t.Fatalf("mode = %#o, want 0666", got)
 	}
 }
+
+func TestReadRejectsSymlinkEscapingWorkingDir(t *testing.T) {
+	root := t.TempDir()
+	secret := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(secret, []byte("top secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "notes")
+	if err := os.Symlink(secret, link); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := (&Read{}).Execute(context.Background(), agent.ToolContext{WorkingDir: root}, map[string]any{
+		"path": "notes",
+	})
+	if err == nil {
+		t.Fatal("expected symlink escaping working dir to be rejected")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("err = %v, want symlink rejection", err)
+	}
+}
+
+func TestReadRejectsSymlinkInsideWorkingDirToOutside(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "real.txt")
+	if err := os.WriteFile(target, []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A symlink to a sibling file still resolves inside the root; Read must
+	// reject it regardless, consistent with Edit's rejectFinalSymlink.
+	link := filepath.Join(root, "alias")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := (&Read{}).Execute(context.Background(), agent.ToolContext{WorkingDir: root}, map[string]any{
+		"path": "alias",
+	})
+	if err == nil {
+		t.Fatal("expected symlink to be rejected even when target is inside root")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("err = %v, want symlink rejection", err)
+	}
+}
