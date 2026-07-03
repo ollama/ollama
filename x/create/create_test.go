@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/types/model"
 	st "github.com/ollama/ollama/x/safetensors"
 )
 
@@ -197,52 +199,6 @@ func readPackedTensorRaw(t *testing.T, data []byte, tensorName string) []byte {
 	return data[start:end]
 }
 
-func TestResolveManifestPath(t *testing.T) {
-	tests := []struct {
-		name      string
-		modelName string
-		wantParts []string // Parts that should appear in the path
-	}{
-		{
-			name:      "simple model name",
-			modelName: "llama2",
-			wantParts: []string{"registry.ollama.ai", "library", "llama2", "latest"},
-		},
-		{
-			name:      "model name with tag",
-			modelName: "llama2:7b",
-			wantParts: []string{"registry.ollama.ai", "library", "llama2", "7b"},
-		},
-		{
-			name:      "model name with namespace",
-			modelName: "myuser/mymodel",
-			wantParts: []string{"registry.ollama.ai", "myuser", "mymodel", "latest"},
-		},
-		{
-			name:      "model name with namespace and tag",
-			modelName: "myuser/mymodel:v1",
-			wantParts: []string{"registry.ollama.ai", "myuser", "mymodel", "v1"},
-		},
-		{
-			name:      "fully qualified model name",
-			modelName: "registry.example.com/namespace/model:tag",
-			wantParts: []string{"registry.example.com", "namespace", "model", "tag"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := resolveManifestPath(tt.modelName)
-
-			for _, part := range tt.wantParts {
-				if !strings.Contains(got, part) {
-					t.Errorf("resolveManifestPath(%q) = %q, missing part %q", tt.modelName, got, part)
-				}
-			}
-		})
-	}
-}
-
 func TestLayerInfo(t *testing.T) {
 	layer := LayerInfo{
 		Digest:    "sha256:abc123",
@@ -265,98 +221,98 @@ func TestLayerInfo(t *testing.T) {
 	}
 }
 
-func TestModelConfig(t *testing.T) {
-	config := ModelConfig{
-		ModelFormat:  "safetensors",
-		Capabilities: []string{"completion", "chat"},
-	}
+func TestIsSafetensorsLLMModel(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
-	if config.ModelFormat != "safetensors" {
-		t.Errorf("ModelFormat = %q, want %q", config.ModelFormat, "safetensors")
-	}
-	if len(config.Capabilities) != 2 {
-		t.Errorf("Capabilities length = %d, want %d", len(config.Capabilities), 2)
-	}
-}
-
-func TestManifest(t *testing.T) {
-	manifest := Manifest{
-		SchemaVersion: 2,
-		MediaType:     "application/vnd.oci.image.manifest.v1+json",
-		Config: ManifestLayer{
-			MediaType: "application/vnd.docker.container.image.v1+json",
-			Digest:    "sha256:config",
-			Size:      100,
+	tests := []struct {
+		name   string
+		config model.ConfigV2
+		want   bool
+	}{
+		{
+			name: "registry.example.com:5000/team/completion:tag",
+			config: model.ConfigV2{
+				ModelFormat:  "safetensors",
+				Capabilities: []string{"completion", "vision"},
+			},
+			want: true,
 		},
-		Layers: []ManifestLayer{
-			{
-				MediaType: "application/vnd.ollama.image.tensor",
-				Digest:    "sha256:layer1",
-				Size:      1000,
-				Name:      "weight.bin",
+		{
+			name: "image-only",
+			config: model.ConfigV2{
+				ModelFormat:  "safetensors",
+				Capabilities: []string{"image"},
+			},
+		},
+		{
+			name: "gguf-model",
+			config: model.ConfigV2{
+				ModelFormat:  "gguf",
+				Capabilities: []string{"completion"},
 			},
 		},
 	}
 
-	if manifest.SchemaVersion != 2 {
-		t.Errorf("SchemaVersion = %d, want %d", manifest.SchemaVersion, 2)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configLayer, err := safetensorsConfigLayer(tt.config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			name := model.ParseName(tt.name)
+			if !name.IsValid() {
+				t.Fatalf("invalid test model name %q", tt.name)
+			}
+			if err := manifest.WriteManifest(name, configLayer, nil); err != nil {
+				t.Fatal(err)
+			}
+			if got := IsSafetensorsLLMModel(tt.name); got != tt.want {
+				t.Fatalf("IsSafetensorsLLMModel() = %v, want %v", got, tt.want)
+			}
+		})
 	}
-	if manifest.Config.Digest != "sha256:config" {
-		t.Errorf("Config.Digest = %q, want %q", manifest.Config.Digest, "sha256:config")
-	}
-	if len(manifest.Layers) != 1 {
-		t.Errorf("Layers length = %d, want %d", len(manifest.Layers), 1)
-	}
-	if manifest.Layers[0].Name != "weight.bin" {
-		t.Errorf("Layers[0].Name = %q, want %q", manifest.Layers[0].Name, "weight.bin")
+
+	if IsSafetensorsLLMModel("missing") {
+		t.Fatal("missing model detected as a safetensors LLM")
 	}
 }
 
-func TestShouldQuantize(t *testing.T) {
+func TestShouldQuantizePredicate(t *testing.T) {
 	tests := []struct {
-		name      string
-		tensor    string
-		component string
-		want      bool
+		name   string
+		tensor string
+		want   bool
 	}{
-		// VAE component should never be quantized
-		{"vae weight", "decoder.weight", "vae", false},
-		{"vae bias", "decoder.bias", "vae", false},
-
 		// Embeddings should not be quantized
-		{"embedding weight", "embed_tokens.weight", "", false},
-		{"embedding in name", "token_embedding.weight", "", false},
+		{"embedding weight", "embed_tokens.weight", false},
+		{"embedding in name", "token_embedding.weight", false},
 
 		// Norms should not be quantized
-		{"layer norm", "layer_norm.weight", "", false},
-		{"rms norm", "rms_norm.weight", "", false},
-		{"ln prefix", "ln_1.weight", "", false},
-		{"layernorm in name", "input_layernorm.weight", "", false},
+		{"layer norm", "layer_norm.weight", false},
+		{"rms norm", "rms_norm.weight", false},
+		{"ln prefix", "ln_1.weight", false},
+		{"layernorm in name", "input_layernorm.weight", false},
 
 		// Audio encoder tensors should not be quantized
-		{"audio tower weight", "model.audio_tower.layers.0.weight", "", false},
-		{"audio tower norm", "model.audio_tower.norm.weight", "", false},
-		{"embed audio weight", "embed_audio.weight", "", false},
+		{"audio tower weight", "model.audio_tower.layers.0.weight", false},
+		{"audio tower norm", "model.audio_tower.norm.weight", false},
+		{"embed audio weight", "embed_audio.weight", false},
 
 		// Biases should not be quantized
-		{"bias tensor", "attention.bias", "", false},
-		{"proj bias", "o_proj.bias", "", false},
+		{"bias tensor", "attention.bias", false},
+		{"proj bias", "o_proj.bias", false},
 
 		// Linear weights should be quantized
-		{"linear weight", "q_proj.weight", "", true},
-		{"attention weight", "self_attn.weight", "", true},
-		{"mlp weight", "mlp.gate_proj.weight", "", true},
-
-		// Transformer component weights should be quantized
-		{"transformer weight", "layers.0.weight", "transformer", true},
-		{"text_encoder weight", "encoder.weight", "text_encoder", true},
+		{"linear weight", "q_proj.weight", true},
+		{"attention weight", "self_attn.weight", true},
+		{"mlp weight", "mlp.gate_proj.weight", true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ShouldQuantize(tt.tensor, tt.component)
+			got := shouldQuantize(tt.tensor)
 			if got != tt.want {
-				t.Errorf("ShouldQuantize(%q, %q) = %v, want %v", tt.tensor, tt.component, got, tt.want)
+				t.Errorf("shouldQuantize(%q) = %v, want %v", tt.tensor, got, tt.want)
 			}
 		})
 	}

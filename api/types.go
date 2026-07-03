@@ -657,10 +657,10 @@ type CreateRequest struct {
 	// Stream specifies whether the response is streaming; it is true by default.
 	Stream *bool `json:"stream,omitempty"`
 
-	// Quantize is the quantization format for the model; leave blank to not change the quantization level.
+	// Quantize is the quantization format to apply when importing safetensors weights.
 	Quantize string `json:"quantize,omitempty"`
 
-	// DraftQuantize is the quantization format for the draft model.
+	// DraftQuantize is the quantization format to apply when importing safetensors draft weights.
 	DraftQuantize string `json:"draft_quantize,omitempty"`
 
 	// From is the name of the model or file to use as the source.
@@ -669,10 +669,10 @@ type CreateRequest struct {
 	// RemoteHost is the URL of the upstream ollama API for the model (if any).
 	RemoteHost string `json:"remote_host,omitempty"`
 
-	// Files is a map of files include when creating the model.
+	// Files maps source file names to their SHA-256 digests.
 	Files map[string]string `json:"files,omitempty"`
 
-	// DraftFiles is a map of draft model files to include when creating the model.
+	// DraftFiles maps draft source file names to their SHA-256 digests.
 	DraftFiles map[string]string `json:"draft_files,omitempty"`
 
 	// Adapters is a map of LoRA adapters to include when creating the model.
