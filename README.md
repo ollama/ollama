@@ -243,7 +243,7 @@ console.log(response.message.content);
 - [Ollama-rs for Rust](https://github.com/pepperoni21/ollama-rs) - Rust SDK
 - [LangChain for .NET](https://github.com/tryAGI/LangChain) - .NET LangChain ([example](https://github.com/tryAGI/LangChain/blob/main/examples/LangChain.Samples.OpenAI/Program.cs))
 - [chromem-go](https://github.com/philippgille/chromem-go) - Go vector database with Ollama embeddings ([example](https://github.com/philippgille/chromem-go/tree/v0.5.0/examples/rag-wikipedia-ollama))
-- [Dakera](https://github.com/dakera-ai/dakera-deploy) - Self-hosted persistent memory server adding decay-weighted vector recall across sessions for Ollama apps
+- [Dakera](https://github.com/dakera-ai/dakera-py) - Self-hosted persistent memory with decay-weighted vector recall across sessions for Ollama apps ([example](https://github.com/dakera-ai/dakera-py/blob/main/examples/ollama_memory_chat.py))
 - [LangChainDart](https://github.com/davidmigloz/langchain_dart) - Dart LangChain
 - [LlmTornado](https://github.com/lofcz/llmtornado) - Unified C# interface for multiple inference APIs
 - [Ollama4j for Java](https://github.com/ollama4j/ollama4j) - Java SDK
@@ -335,6 +335,7 @@ console.log(response.message.content);
 - [pgai](https://github.com/timescale/pgai) - PostgreSQL as a vector database ([guide](https://github.com/timescale/pgai/blob/main/docs/vectorizer-quick-start.md))
 - [MindsDB](https://github.com/mindsdb/mindsdb/blob/staging/mindsdb/integrations/handlers/ollama_handler/README.md) - Connect Ollama with 200+ data platforms
 - [chromem-go](https://github.com/philippgille/chromem-go/blob/v0.5.0/embed_ollama.go) - Embeddable vector database for Go ([example](https://github.com/philippgille/chromem-go/tree/v0.5.0/examples/rag-wikipedia-ollama))
+- [Dakera](https://github.com/dakera-ai/dakera-py) - Self-hosted vector memory server with decay-weighted recall ([example](https://github.com/dakera-ai/dakera-py/blob/main/examples/ollama_memory_proxy.py))
 - [Kangaroo](https://github.com/dbkangaroo/kangaroo) - AI-powered SQL client
 
 ### Infrastructure & Deployment
