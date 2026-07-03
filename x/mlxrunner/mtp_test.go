@@ -330,8 +330,9 @@ func TestAcceptMTPDraftsGreedyMismatch(t *testing.T) {
 func TestAcceptMTPDraftsGreedyEOS(t *testing.T) {
 	skipIfNoMLX(t)
 	// The second accepted draft token is EOS: it is recorded but stops
-	// generation and no bonus token is produced. The EOS's own KV is rolled
-	// back so the caches rest one token behind the recorded outputs.
+	// generation and no bonus token is produced. The round commits one below
+	// the last content token — the EOS and the token whose key packs it stay
+	// uncommitted — so a continuation restores exactly.
 	const eos int32 = 6
 	predict := map[int32]int32{1: 2, 2: eos, eos: 0}
 	r := mtpTestRunner(t, predict, []int32{eos}, sampler.Options{})
@@ -360,11 +361,11 @@ func TestAcceptMTPDraftsGreedyEOS(t *testing.T) {
 	if len(results) != accepted {
 		t.Fatalf("results has %d tokens, want exactly the %d accepted with no bonus after EOS", len(results), accepted)
 	}
-	if position != 2 {
-		t.Fatalf("position = %d, want 2 (current + kept draft, EOS dropped)", position)
+	if position != 1 {
+		t.Fatalf("position = %d, want 1 (one below the last content token)", position)
 	}
-	if got := caches[0].Offset(); got != 2 {
-		t.Fatalf("cache offset = %d, want 2 (one behind the recorded outputs, EOS dropped)", got)
+	if got := caches[0].Offset(); got != 1 {
+		t.Fatalf("cache offset = %d, want 1 (one below the last content token)", got)
 	}
 }
 
@@ -745,12 +746,12 @@ func TestDecodeKVDraft(t *testing.T) {
 		t.Fatalf("speculation engine not built around the draft caches")
 	}
 	pinDraftLimit(spec, 4)
-	defer spec.close()
 	d := spec.decoder(mlx.FromValues([]int32{1}, 1), position)
 	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	d.close()
+	spec.close()
 
 	content, final := collectResponses(ch)
 	if content != "23456" {
@@ -763,13 +764,13 @@ func TestDecodeKVDraft(t *testing.T) {
 		t.Fatalf("session outputs = %v, want %v", session.outputs, got)
 	}
 
-	// All caches rest together at the trie frontier: the prompt token plus
-	// five generated tokens; the EOS's KV is never committed.
-	if got := caches[0].Offset(); got != 6 {
-		t.Fatalf("target offset = %d, want 6", got)
+	// All caches are committed together one below the last content token:
+	// the EOS and the token whose key packs it stay uncommitted.
+	if got := caches[0].Offset(); got != 5 {
+		t.Fatalf("target offset = %d, want 5", got)
 	}
-	if got := caches[1].Offset(); got != 6 {
-		t.Fatalf("draft cache offset = %d, want 6 (lockstep with target)", got)
+	if got := caches[1].Offset(); got != 5 {
+		t.Fatalf("draft cache offset = %d, want 5 (lockstep with target)", got)
 	}
 
 	// Every committed draft slot S fuses look-ahead token x_{S+1} with the
@@ -781,18 +782,18 @@ func TestDecodeKVDraft(t *testing.T) {
 	// consumes the catch-up's held logits — the four-token draft makes only
 	// three head calls before the rebuild.
 	wantExtends := []extendCall{
-		{offset: 0, ids: []int32{2, 3}, hiddens: []int32{2, 3}},                 // parked pairs flushed at the first proposal
-		{offset: 2, ids: []int32{4}, hiddens: []int32{-1}},                      // speculative step 2 (held projection)
-		{offset: 3, ids: []int32{5}, hiddens: []int32{-1}},                      // speculative step 3 (projection)
-		{offset: 4, ids: []int32{6}, hiddens: []int32{-1}},                      // speculative step 4 (projection)
-		{offset: 2, ids: []int32{4, 5, 6, eos}, hiddens: []int32{4, 5, 6, eos}}, // committed pairs from the validated run + finish
+		{offset: 0, ids: []int32{2, 3}, hiddens: []int32{2, 3}},       // parked pairs flushed at the first proposal
+		{offset: 2, ids: []int32{4}, hiddens: []int32{-1}},            // speculative step 2 (held projection)
+		{offset: 3, ids: []int32{5}, hiddens: []int32{-1}},            // speculative step 3 (projection)
+		{offset: 4, ids: []int32{6}, hiddens: []int32{-1}},            // speculative step 4 (projection)
+		{offset: 2, ids: []int32{4, 5, 6}, hiddens: []int32{4, 5, 6}}, // committed pairs from the validated run; nothing names the EOS
 	}
 	if !reflect.DeepEqual(draft.extends, wantExtends) {
 		t.Fatalf("draft extends = %+v, want %+v", draft.extends, wantExtends)
 	}
 
 	// The committed draft KV holds the look-ahead tokens, one per slot.
-	if got, want := caches[1].(*fakeRewindableCache).tokens, []int32{2, 3, 4, 5, 6, eos}; !slices.Equal(got, want) {
+	if got, want := caches[1].(*fakeRewindableCache).tokens, []int32{2, 3, 4, 5, 6}; !slices.Equal(got, want) {
 		t.Fatalf("draft cache = %v, want %v", got, want)
 	}
 }
@@ -826,12 +827,12 @@ func TestDecodeKVDraftRejectionRebuildsFromTarget(t *testing.T) {
 	}
 	spec := r.spec.open(req, caches)
 	pinDraftLimit(spec, 4)
-	defer spec.close()
 	d := spec.decoder(mlx.FromValues([]int32{1}, 1), position)
 	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	d.close()
+	spec.close()
 
 	content, final := collectResponses(ch)
 	if content != "2345" {
@@ -857,13 +858,13 @@ func TestDecodeKVDraftRejectionRebuildsFromTarget(t *testing.T) {
 	// ...but the rejection rolled it back: both caches rest in lockstep at the
 	// target chain, and the committed draft KV holds only the validated
 	// look-ahead tokens.
-	if got := caches[0].Offset(); got != 5 {
-		t.Fatalf("target offset = %d, want 5", got)
+	if got := caches[0].Offset(); got != 4 {
+		t.Fatalf("target offset = %d, want 4", got)
 	}
-	if got := caches[1].Offset(); got != 5 {
-		t.Fatalf("draft cache offset = %d, want 5 (lockstep with target)", got)
+	if got := caches[1].Offset(); got != 4 {
+		t.Fatalf("draft cache offset = %d, want 4 (lockstep with target)", got)
 	}
-	if got, want := caches[1].(*fakeRewindableCache).tokens, []int32{2, 3, 4, 5, eos}; !slices.Equal(got, want) {
+	if got, want := caches[1].(*fakeRewindableCache).tokens, []int32{2, 3, 4, 5}; !slices.Equal(got, want) {
 		t.Fatalf("draft cache = %v, want %v (rejected proposals rolled back)", got, want)
 	}
 }
@@ -1012,12 +1013,12 @@ func TestCommittedRunBatchesPastFlushCap(t *testing.T) {
 	}
 }
 
-func TestRestoredPrefixRewritesBoundaryPair(t *testing.T) {
+func TestRestoredPrefixBuildsBoundaryPair(t *testing.T) {
 	skipIfNoMLX(t)
-	// A finished generation levels the draft with the target, its boundary
-	// pair naming the never-committed EOS. The next request restores one
-	// token below the match (the draft look-ahead), so the re-evaluated
-	// boundary token's report rewrites that pair with the token that follows.
+	// A finished generation is committed one below the last content token
+	// with no pair naming the EOS. A continuation's match is exactly that
+	// offset, so the restore no-ops; the re-evaluated boundary token's
+	// report builds the boundary pair with the token that actually follows.
 	const eos int32 = 7
 	predict := map[int32]int32{1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: eos, eos: 0}
 	r := mtpTestRunner(t, predict, []int32{eos}, sampler.Options{})
@@ -1041,14 +1042,15 @@ func TestRestoredPrefixRewritesBoundaryPair(t *testing.T) {
 	d.close()
 	spec.close()
 
-	// The leveled rest: the draft's last pair names the EOS.
-	if got, want := caches[1].(*fakeRewindableCache).tokens, []int32{2, 3, 4, 5, 6, eos}; !slices.Equal(got, want) {
+	// After close, the draft holds pairs through the last committed token;
+	// nothing names the EOS.
+	if got, want := caches[1].(*fakeRewindableCache).tokens, []int32{2, 3, 4, 5, 6}; !slices.Equal(got, want) {
 		t.Fatalf("draft cache = %v, want %v", got, want)
 	}
 
-	// The next request matches the six stored tokens and restores at 5, as
-	// begin does for the draft look-ahead; its prefill re-evaluates token 6,
-	// and the token that follows is 1, not the EOS.
+	// The next request's match is the caches' offset, so the restore no-ops;
+	// its prefill re-evaluates token 6, and the token that follows is 1,
+	// not the EOS.
 	for _, c := range caches {
 		if !c.Restore(nil, 5) {
 			t.Fatal("restore to 5 failed")
@@ -1060,10 +1062,10 @@ func TestRestoredPrefixRewritesBoundaryPair(t *testing.T) {
 
 	last := draft.extends[len(draft.extends)-1]
 	if want := (extendCall{offset: 5, ids: []int32{1}, hiddens: []int32{eos}}); !reflect.DeepEqual(last, want) {
-		t.Fatalf("boundary rewrite = %+v, want %+v", last, want)
+		t.Fatalf("boundary pair = %+v, want %+v", last, want)
 	}
 	if got, want := caches[1].(*fakeRewindableCache).tokens, []int32{2, 3, 4, 5, 6, 1}; !slices.Equal(got, want) {
-		t.Fatalf("draft cache = %v, want %v (stale EOS pair rewritten)", got, want)
+		t.Fatalf("draft cache = %v, want %v (boundary pair built from the actual follower)", got, want)
 	}
 }
 
@@ -1142,15 +1144,15 @@ func TestDecodeParkedDraftResume(t *testing.T) {
 	wantExtends := []extendCall{
 		{offset: 0, ids: []int32{2, 3, 4}, hiddens: []int32{2, 3, 4}},
 		{offset: 3, ids: []int32{5}, hiddens: []int32{-1}},
-		{offset: 3, ids: []int32{5, 6, eos}, hiddens: []int32{5, 6, eos}},
+		{offset: 3, ids: []int32{5, 6}, hiddens: []int32{5, 6}},
 	}
 	if !reflect.DeepEqual(draft.extends, wantExtends) {
 		t.Fatalf("draft extends = %+v, want %+v", draft.extends, wantExtends)
 	}
-	if got, want := caches[0].Offset(), 6; got != want {
-		t.Fatalf("target offset = %d, want %d (EOS never forwarded)", got, want)
+	if got, want := caches[0].Offset(), 5; got != want {
+		t.Fatalf("target offset = %d, want %d (one below the last content token)", got, want)
 	}
-	if got, want := caches[1].Offset(), 6; got != want {
+	if got, want := caches[1].Offset(), 5; got != want {
 		t.Fatalf("draft cache offset = %d, want %d (lockstep with target)", got, want)
 	}
 }

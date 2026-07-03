@@ -133,13 +133,10 @@ func (d *mtpDraftSession) queueCacheWrites(tokens, hiddens *mlx.Array) {
 	}
 }
 
-// flush writes the pending pairs to the draft caches in one head forward,
-// dropping speculative entries past the committed range first and holding
-// the last row's logits and projected hidden for the next proposal chain.
+// flush drops speculative entries past the committed range from the draft
+// caches, then writes the pending pairs in one head forward, holding the
+// last row's logits and projected hidden for the next proposal chain.
 func (d *mtpDraftSession) flush() {
-	if len(d.pendingTokens) == 0 {
-		return
-	}
 	spec := d.drafter.spec
 	for _, c := range spec.draftKV {
 		if c.Offset() > d.committedDraftOffset {
@@ -147,6 +144,10 @@ func (d *mtpDraftSession) flush() {
 				panic(fmt.Sprintf("mtp: draft cache rewind to %d failed", d.committedDraftOffset))
 			}
 		}
+	}
+
+	if len(d.pendingTokens) == 0 {
+		return
 	}
 
 	ids := mlx.Concatenate(d.pendingTokens, 1)
