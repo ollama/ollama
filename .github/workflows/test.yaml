@@ -383,6 +383,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+      - name: Cache MLX Darwin release payload
+        if: ${{ startsWith(matrix.os, 'macos') }}
+        uses: actions/cache@v4
+        with:
+          path: .cache/mlx-darwin-release
+          key: mlx-darwin-${{ hashFiles('MLX_VERSION', 'MLX_C_VERSION') }}
+      - name: Prepare MLX Darwin release payload
+        if: ${{ startsWith(matrix.os, 'macos') }}
+        run: .github/scripts/prepare_mlx_darwin.sh
       - name: Install UI dependencies
         working-directory: ./app/ui/app
         run: npm ci
