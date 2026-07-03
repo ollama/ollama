@@ -6,13 +6,6 @@ import (
 	"sync"
 )
 
-type Special int32
-
-const (
-	SpecialBOS Special = iota
-	SpecialEOS
-)
-
 type Vocabulary struct {
 	Values []string
 	Types  []int32
@@ -30,17 +23,6 @@ type Vocabulary struct {
 
 	mergeOnce sync.Once
 	merge     map[string]int32
-}
-
-func (v *Vocabulary) Is(id int32, special Special) bool {
-	switch special {
-	case SpecialBOS:
-		return slices.Contains(v.BOS, id)
-	case SpecialEOS:
-		return slices.Contains(v.EOS, id)
-	default:
-		return false
-	}
 }
 
 func (v *Vocabulary) addSpecials(ids []int32) []int32 {

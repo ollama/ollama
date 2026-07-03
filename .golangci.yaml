@@ -5,6 +5,7 @@ linters:
     - bidichk
     - bodyclose
     - containedctx
+    - depguard
     - gocheckcompilerdirectives
     - intrange
     - makezero
@@ -20,6 +21,15 @@ linters:
     - errcheck
     - usestdlibvars
   settings:
+    depguard:
+      rules:
+        test-only-packages:
+          files:
+            - $all
+            - "!$test"
+          deny:
+            - pkg: github.com/ollama/ollama/internal/testutil
+              desc: test helpers may only be imported by test files
     govet:
       disable:
         - unusedresult

@@ -36,7 +36,7 @@ import (
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/fs/gguf"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
 	"github.com/ollama/ollama/internal/proxy"
 	"github.com/ollama/ollama/llm"
@@ -118,10 +118,7 @@ func init() {
 	renderers.RenderImgTags = true
 }
 
-var (
-	errRequired    = errors.New("is required")
-	errBadTemplate = errors.New("template error")
-)
+var errRequired = errors.New("is required")
 
 func (s *Server) modelOptions(model *Model, requestOpts map[string]any) (api.Options, error) {
 	return s.modelOptionsWithEmbeddingBatchDefault(model, requestOpts, shouldApplyEmbeddingBatchDefault(model, requestOpts))
@@ -869,19 +866,13 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	kvData, _, err := getModelData(m.ModelPath, false)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
 	ctx := c.Request.Context()
 
 	adjustTokenLimit := func(tokens []int, limit int) int {
-		if bos := kvData.Uint("tokenizer.ggml.bos_token_id"); len(tokens) > 0 && tokens[0] != int(bos) && kvData.Bool("add_bos_token", true) {
+		if bos := m.metadata.Int("tokenizer.ggml.bos_token_id"); len(tokens) > 0 && tokens[0] != int(bos) && m.metadata.Bool("add_bos_token", true) {
 			limit--
 		}
-		if eos := kvData.Uint("tokenizer.ggml.eos_token_id"); len(tokens) > 0 && tokens[len(tokens)-1] != int(eos) && kvData.Bool("add_eos_token", true) {
+		if eos := m.metadata.Int("tokenizer.ggml.eos_token_id"); len(tokens) > 0 && tokens[len(tokens)-1] != int(eos) && m.metadata.Bool("add_eos_token", true) {
 			limit--
 		}
 		return limit
@@ -894,7 +885,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		}
 
 		// TODO @nicolepardal: avoid reaching into kvData here; pass required tokenizer metadata via model/options instead
-		ctxLen := int(kvData.ContextLength())
+		ctxLen := int(m.metadata.Int("context_length"))
 		if opts.NumCtx > 0 {
 			ctxLen = min(opts.NumCtx, ctxLen)
 		}
@@ -1429,7 +1420,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		QuantizationLevel: m.Config.FileType,
 	}
 
-	// For safetensors LLM models (experimental), populate details from config.json
+	// For safetensors LLM models, populate details from config.json.
 	if m.Config.ModelFormat == "safetensors" && slices.Contains(m.Config.Capabilities, "completion") {
 		if info, err := xserver.GetSafetensorsLLMInfo(name); err == nil {
 			if arch, ok := info["general.architecture"].(string); ok && arch != "" {
@@ -1540,7 +1531,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		return resp, nil
 	}
 
-	// For safetensors LLM models (experimental), populate ModelInfo from config.json
+	// For safetensors LLM models, populate ModelInfo from config.json.
 	if m.Config.ModelFormat == "safetensors" && slices.Contains(m.Config.Capabilities, "completion") {
 		if info, err := xserver.GetSafetensorsLLMInfo(name); err == nil {
 			resp.ModelInfo = info
@@ -1567,65 +1558,67 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		return resp, nil
 	}
 
-	kvData, tensors, err := getModelData(m.ModelPath, req.Verbose)
+	kvData, tensors, err := getModelData(m.modelPaths(), req.Verbose)
 	if err != nil {
 		return nil, err
 	}
 
 	resp.Template = selectedModelTemplate(m, kvData)
 	if isUnknownQuantization(resp.Details.QuantizationLevel) {
-		if fileType := kvData.FileType().String(); !isUnknownQuantization(fileType) {
-			resp.Details.QuantizationLevel = fileType
+		if value := kvData.FileType().String(); !isUnknownQuantization(value) {
+			resp.Details.QuantizationLevel = value
 		}
 	}
 
-	delete(kvData, "general.name")
-	delete(kvData, "tokenizer.chat_template")
-	resp.ModelInfo = kvData
+	modelInfo := kvData.Values()
+	delete(modelInfo, "general.name")
+	delete(modelInfo, "tokenizer.chat_template")
+	resp.ModelInfo = modelInfo
 
-	tensorData := make([]api.Tensor, len(tensors.Items()))
-	for cnt, t := range tensors.Items() {
-		tensorData[cnt] = api.Tensor{Name: t.Name, Type: t.Type(), Shape: t.Shape}
+	if req.Verbose {
+		tensorItems := tensors.Items()
+		resp.Tensors = make([]api.Tensor, 0, len(tensorItems))
+		for _, tensor := range tensorItems {
+			tensorType := tensor.Type.String()
+			if tensorType != "unknown" {
+				tensorType = strings.ToUpper(tensorType)
+			}
+			resp.Tensors = append(resp.Tensors, api.Tensor{Name: tensor.Name, Type: tensorType, Shape: tensor.Shape})
+		}
 	}
-	resp.Tensors = tensorData
 
 	if len(m.ProjectorPaths) > 0 {
-		projectorData, _, err := getModelData(m.ProjectorPaths[0], req.Verbose)
+		projectorData, _, err := getModelData(m.ProjectorPaths[:1], req.Verbose)
 		if err != nil {
 			return nil, err
 		}
-		resp.ProjectorInfo = projectorData
+		projectorInfo := projectorData.Values()
+		resp.ProjectorInfo = projectorInfo
 	}
 
 	return resp, nil
 }
 
-func getModelData(digest string, verbose bool) (ggml.KV, ggml.Tensors, error) {
+func getModelData(paths []string, verbose bool) (*gguf.Metadata, gguf.Tensors, error) {
+	if len(paths) == 0 {
+		return nil, gguf.Tensors{}, os.ErrNotExist
+	}
+
 	maxArraySize := 0
 	if verbose {
 		maxArraySize = -1
 	}
-	data, err := llm.LoadModel(digest, maxArraySize)
+	data, err := llm.LoadModel(paths[0], maxArraySize, paths[1:]...)
 	if err != nil {
-		return nil, ggml.Tensors{}, err
+		return nil, gguf.Tensors{}, err
 	}
 
-	kv := data.KV()
-
-	if !verbose {
-		for k := range kv {
-			if t, ok := kv[k].([]any); len(t) > 5 && ok {
-				kv[k] = []any{}
-			}
-		}
-	}
-
-	return kv, data.Tensors(), nil
+	return data.KV(), data.Tensors(), nil
 }
 
-func selectedModelTemplate(m *Model, kv ggml.KV) string {
+func selectedModelTemplate(m *Model, kv *gguf.Metadata) string {
 	if m.HasChatTemplate && chatModeForModel(m) == chatExecutionModeNative {
-		if chatTemplate := kv.String("tokenizer.chat_template"); chatTemplate != "" {
+		if chatTemplate := kv.ChatTemplate(); chatTemplate != "" {
 			return chatTemplate
 		}
 	}
@@ -1688,8 +1681,11 @@ func (s *Server) HeadBlobHandler(c *gin.Context) {
 		return
 	}
 
-	if _, err := os.Stat(path); err != nil {
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("blob %q not found", c.Param("digest"))})
+		return
+	} else if err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -1959,6 +1955,9 @@ func Serve(ln net.Listener) error {
 
 	blobsDir, err := manifest.BlobsPath("")
 	if err != nil {
+		return err
+	}
+	if err := llm.PruneSplitModelDirs(blobsDir, time.Now().Add(-layerPruneGracePeriod)); err != nil {
 		return err
 	}
 	if err := fixBlobs(blobsDir); err != nil {
@@ -2369,8 +2368,10 @@ func chatModeForModel(m *Model) chatExecutionMode {
 
 func llamaServerConfigForModel(m *Model) llm.LlamaServerConfig {
 	return llm.LlamaServerConfig{
-		DisableJinja:   usesOllamaRenderedChat(m),
-		DraftModelPath: m.DraftPath,
+		DisableJinja:         usesOllamaRenderedChat(m),
+		ManifestDigest:       m.Digest,
+		DraftModelPath:       m.DraftPath,
+		DraftModelShardPaths: slices.Clone(m.DraftShardPaths),
 	}
 }
 

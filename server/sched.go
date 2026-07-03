@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"reflect"
 	"runtime"
@@ -18,7 +19,7 @@ import (
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
@@ -74,7 +75,7 @@ type Scheduler struct {
 	loaded        map[string]*runnerRef
 
 	loadFn          func(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) bool
-	newServerFn     func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int, config llm.LlamaServerConfig) (llm.LlamaServer, error)
+	newServerFn     func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, adapters []string, projectors []string, opts api.Options, numParallel int, config llm.LlamaServerConfig) (llm.LlamaServer, error)
 	getGpuFn        func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo
 	getSystemInfoFn func() ml.SystemInfo
 	waitForRecovery time.Duration
@@ -112,6 +113,10 @@ func schedulerModelKey(m *Model) string {
 		return ""
 	}
 	if m.ModelPath != "" {
+		if len(m.ModelShardPaths) > 0 {
+			// NUL cannot appear in a file path, so it unambiguously separates shard paths.
+			return strings.Join(m.modelPaths(), "\x00")
+		}
 		return m.ModelPath
 	}
 	if m.Digest != "" {
@@ -146,11 +151,11 @@ func supportsContextShift(m *Model) bool {
 	return true
 }
 
-func effectiveModelContext(numCtx int, f *ggml.GGML) int {
+func effectiveModelContext(numCtx int, f *gguf.Model) int {
 	return effectiveContext(numCtx, modelTrainContext(f))
 }
 
-func modelTrainContext(f *ggml.GGML) int {
+func modelTrainContext(f *gguf.Model) int {
 	if f == nil {
 		return 0
 	}
@@ -516,7 +521,7 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 
 	s.loadedMu.Lock()
 	llama := s.activeLoading
-	var f *ggml.GGML
+	var f *gguf.Model
 	loadGpus := gpus
 	var launchOpts api.Options
 
@@ -524,7 +529,7 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 		var err error
 		if !req.model.IsMLX() {
 			var loadErr error
-			f, loadErr = llm.LoadModel(req.model.ModelPath, 1024)
+			f, loadErr = llm.LoadModel(req.model.ModelPath, 1024, req.model.ModelShardPaths...)
 			if loadErr != nil {
 				slog.Info("failed to load model metadata", "model", req.model.ModelPath, "error", loadErr)
 				req.errCh <- loadErr
@@ -579,7 +584,7 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 				// some older models are not compatible with newer versions of llama.cpp
 				// show a generalized compatibility error until there is a better way to
 				// check for model compatibility
-				if errors.Is(err, ggml.ErrUnsupportedFormat) || strings.Contains(err.Error(), "failed to load model") {
+				if errors.Is(err, gguf.ErrUnsupported) || strings.Contains(err.Error(), "failed to load model") {
 					err = fmt.Errorf("%v: this model may be incompatible with your version of Ollama. If you previously pulled this model, try updating it by running `ollama pull %s`", err, req.model.ShortName)
 				}
 			}
@@ -754,7 +759,7 @@ iGPUScan:
 	return false
 }
 
-func (req *LlmRequest) reduceAutoNumCtxForLoadOOM(f *ggml.GGML, numParallel int, completion bool, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, launchOpts api.Options) (oldNumCtx, effectiveNumCtx, newNumCtx, oldNumBatch, newNumBatch int, ok bool) {
+func (req *LlmRequest) reduceAutoNumCtxForLoadOOM(f *gguf.Model, numParallel int, completion bool, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, launchOpts api.Options) (oldNumCtx, effectiveNumCtx, newNumCtx, oldNumBatch, newNumBatch int, ok bool) {
 	if !req.numCtxAuto {
 		return 0, 0, 0, 0, 0, false
 	}
@@ -782,7 +787,7 @@ func (req *LlmRequest) reduceAutoNumCtxForLoadOOM(f *ggml.GGML, numParallel int,
 	return oldNumCtx, effectiveNumCtx, newNumCtx, oldNumBatch, newNumBatch, true
 }
 
-func explicitPartialGPUOffload(opts api.Options, f *ggml.GGML) bool {
+func explicitPartialGPUOffload(opts api.Options, f *gguf.Model) bool {
 	if opts.NumGPU <= 0 || f == nil {
 		return false
 	}
@@ -790,7 +795,7 @@ func explicitPartialGPUOffload(opts api.Options, f *ggml.GGML) bool {
 	return uint64(opts.NumGPU) < f.KV().BlockCount()+1
 }
 
-func effectiveLlamaServerContext(numCtx int, f *ggml.GGML, numParallel int) int {
+func effectiveLlamaServerContext(numCtx int, f *gguf.Model, numParallel int) int {
 	return effectiveModelContext(numCtx, f) * max(numParallel, 1)
 }
 
@@ -1135,7 +1140,7 @@ func logSelectedGPUGroup(all, selected []ml.DeviceInfo) {
 		"available_gpu_count", len(all))
 }
 
-func (s *Scheduler) applyLlamaServerMmapDefaults(req *LlmRequest, launchOpts api.Options, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, f *ggml.GGML, numParallel int) api.Options {
+func (s *Scheduler) applyLlamaServerMmapDefaults(req *LlmRequest, launchOpts api.Options, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, f *gguf.Model, numParallel int) api.Options {
 	predictedCtx := effectiveLlamaServerContext(req.opts.NumCtx, f, numParallel)
 	predictedVRAM := llm.PredictServerVRAM(req.model.ModelPath, f, predictedCtx)
 	availableVRAM, _, _ := availableMemoryForPlacement(systemInfo, gpus, launchOpts)
@@ -1197,8 +1202,8 @@ func allDevicesLibrary(gpus []ml.DeviceInfo, library string) bool {
 	return true
 }
 
-func (s *Scheduler) maybeDisableMmapForHostPressure(req *LlmRequest, launchOpts api.Options, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, f *ggml.GGML, numParallel int) {
-	modelSize := modelFileSize(req.model.ModelPath)
+func (s *Scheduler) maybeDisableMmapForHostPressure(req *LlmRequest, launchOpts api.Options, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, f *gguf.Model, numParallel int) {
+	modelSize := modelFileSize(req.model.modelPaths()...)
 	loadedMmapSize := s.loadedMmapModelSizeLocked()
 	predictedCtx := effectiveLlamaServerContext(req.opts.NumCtx, f, numParallel)
 	predictedVRAM := llm.PredictServerVRAM(req.model.ModelPath, f, predictedCtx)
@@ -1259,15 +1264,19 @@ func mmapHostPressureHeadroom(totalMemory uint64) uint64 {
 	return max(8*format.GigaByte, totalMemory/10)
 }
 
-func modelFileSize(path string) uint64 {
-	if path == "" {
-		return 0
+func modelFileSize(paths ...string) uint64 {
+	var size uint64
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		info, err := os.Stat(path)
+		if err != nil || info.Size() < 0 || uint64(info.Size()) > math.MaxUint64-size {
+			return 0
+		}
+		size += uint64(info.Size())
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return 0
-	}
-	return uint64(info.Size())
+	return size
 }
 
 func (s *Scheduler) loadedMmapModelSizeLocked() uint64 {
@@ -1276,7 +1285,7 @@ func (s *Scheduler) loadedMmapModelSizeLocked() uint64 {
 		if !runnerUsesMmap(r) {
 			continue
 		}
-		if size := modelFileSize(r.modelPath); size > 0 {
+		if size := modelFileSize(r.model.modelPaths()...); size > 0 {
 			total += size
 		} else {
 			total += r.totalSize

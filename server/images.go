@@ -65,7 +65,9 @@ type Model struct {
 	Config             model.ConfigV2
 	ShortName          string
 	ModelPath          string
+	ModelShardPaths    []string
 	DraftPath          string
+	DraftShardPaths    []string
 	ParentModel        string
 	HasChatTemplate    bool
 	HasGoTemplate      bool
@@ -93,6 +95,15 @@ func (m *Model) IsMLX() bool {
 
 func (m *Model) isGGUF() bool {
 	return m.Config.ModelFormat == "" || m.Config.ModelFormat == "gguf"
+}
+
+func (m *Model) modelPaths() []string {
+	if m == nil || m.ModelPath == "" {
+		return nil
+	}
+	paths := make([]string, 1, len(m.ModelShardPaths)+1)
+	paths[0] = m.ModelPath
+	return append(paths, m.ModelShardPaths...)
 }
 
 func generationDefaultsFromMetadata(md ggufMetadata) model.GenerationDefaults {
@@ -206,7 +217,7 @@ func chatTemplateCapabilities(capabilities []model.Capability, chatTemplate stri
 	if chatTemplateHasToolSupport(chatTemplate) {
 		capabilities = appendCapability(capabilities, model.CapabilityTools)
 	}
-	if chatTemplateHasThinkingSupport(chatTemplate) {
+	if thinking.TemplateSupportsThinking(chatTemplate) {
 		capabilities = appendCapability(capabilities, model.CapabilityThinking)
 	}
 
@@ -232,19 +243,6 @@ func chatTemplateHasToolRoundTrip(chatTemplate string) bool {
 		strings.Contains(chatTemplate, `message.role == 'tool'`) ||
 		strings.Contains(chatTemplate, `message.role == "tool"`) ||
 		strings.Contains(chatTemplate, "ipython"))
-}
-
-func chatTemplateHasThinkingSupport(chatTemplate string) bool {
-	if strings.Contains(chatTemplate, "<think>") && strings.Contains(chatTemplate, "</think>") {
-		return true
-	}
-
-	// Some Qwen/DeepSeek templates strip prior reasoning by splitting assistant
-	// content at </think>; llama.cpp can still extract reasoning from them.
-	return (strings.Contains(chatTemplate, "content.split('</think>')") ||
-		strings.Contains(chatTemplate, `content.split("</think>")`)) &&
-		!strings.Contains(chatTemplate, "reasoning_content") &&
-		!strings.Contains(chatTemplate, "<SPECIAL_12>")
 }
 
 func goTemplateCapabilities(t *template.Template) []model.Capability {
@@ -712,6 +710,10 @@ func GetModel(name string) (*Model, error) {
 
 		switch layer.MediaType {
 		case "application/vnd.ollama.image.model":
+			if m.ModelPath != "" {
+				m.ModelShardPaths = append(m.ModelShardPaths, filename)
+				break
+			}
 			m.ModelPath = filename
 			m.ParentModel = layer.From
 			if m.isGGUF() {
@@ -727,7 +729,11 @@ func GetModel(name string) (*Model, error) {
 				m.GenerationDefaults = generationDefaultsFromMetadata(md)
 			}
 		case manifest.MediaTypeImageDraft:
-			m.DraftPath = filename
+			if m.DraftPath == "" {
+				m.DraftPath = filename
+			} else {
+				m.DraftShardPaths = append(m.DraftShardPaths, filename)
+			}
 		case "application/vnd.ollama.image.embed":
 			// Deprecated in versions  > 0.1.2
 			// TODO: remove this warning in a future version
