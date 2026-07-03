@@ -1,6 +1,10 @@
 package create
 
 import (
+	"context"
+	"errors"
+	"io"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -20,13 +24,13 @@ func TestCreatePipeline(t *testing.T) {
 	var gotConfig LayerInfo
 	var gotLayers []LayerInfo
 	var gotClass Classification
-	writeManifest := func(name string, config LayerInfo, layers []LayerInfo, class Classification) error {
-		gotName, gotConfig, gotLayers = name, config, layers
-		gotClass = class
+	writeManifest := func(name string, info ManifestInfo) error {
+		gotName, gotConfig, gotLayers = name, info.Config, info.Layers
+		gotClass = info.Class
 		return nil
 	}
 
-	if err := Create("mymodel", dir, "", store, writeManifest, func(string) {}); err != nil {
+	if err := Create(context.Background(), "mymodel", dir, "", store, writeManifest, func(string) {}); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
 
@@ -60,14 +64,68 @@ func TestCreatePipelineReportsPrequantizedFileType(t *testing.T) {
 
 	store := newCaptureStore()
 	var got Classification
-	writeManifest := func(_ string, _ LayerInfo, _ []LayerInfo, class Classification) error {
-		got = class
+	writeManifest := func(_ string, info ManifestInfo) error {
+		got = info.Class
 		return nil
 	}
-	if err := Create("mymodel", dir, "", store, writeManifest, func(string) {}); err != nil {
+	if err := Create(context.Background(), "mymodel", dir, "", store, writeManifest, func(string) {}); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
 	if got.Kind != SourcePrequantized || got.Quantize != "nvfp4" {
 		t.Errorf("classification = {%s %q}, want {prequantized nvfp4}", got.Kind, got.Quantize)
+	}
+}
+
+func TestCreatePipelineReturnsCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := Create(ctx, "mymodel", t.TempDir(), "", newCaptureStore(), func(string, ManifestInfo) error {
+		return nil
+	}, func(string) {})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Create() error = %v, want context.Canceled", err)
+	}
+}
+
+func TestCreatePipelineDoesNotPublishAfterCancellation(t *testing.T) {
+	dir := t.TempDir()
+	writeConfigJSON(t, dir, `{"architectures":["TestModel"]}`)
+	createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
+		st.NewTensorDataFromBytes("model.embed_tokens.weight", "BF16", []int32{8, 8}, make([]byte, 8*8*2)),
+	})
+	if err := os.WriteFile(filepath.Join(dir, "z.json"), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	store := newCaptureStore()
+	cancelingStore := StoreFromLayerCreator(func(r io.Reader, mediaType, name string) (LayerInfo, error) {
+		layer, err := store.WriteBlob(r, mediaType, name)
+		if name == "z.json" {
+			cancel()
+		}
+		return layer, err
+	})
+	manifestCalled := false
+	err := Create(ctx, "mymodel", dir, "", cancelingStore, func(string, ManifestInfo) error {
+		manifestCalled = true
+		return nil
+	}, func(string) {})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Create() error = %v, want context.Canceled", err)
+	}
+	if manifestCalled {
+		t.Fatal("Create() published a manifest after cancellation")
+	}
+}
+
+func TestCreatePipelineRejectsNilContext(t *testing.T) {
+	var ctx context.Context
+	err := Create(ctx, "mymodel", t.TempDir(), "", newCaptureStore(), func(string, ManifestInfo) error {
+		return nil
+	}, func(string) {})
+	if err == nil || err.Error() != "nil context" {
+		t.Fatalf("Create() error = %v, want nil context", err)
 	}
 }

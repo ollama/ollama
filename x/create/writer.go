@@ -2,14 +2,14 @@ package create
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"path/filepath"
 
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/x/safetensors"
 )
-
-const mediaTypeImageTensor = "application/vnd.ollama.image.tensor"
 
 // BlobStore stores a finished blob and returns its layer info. The writer
 // produces the blob bytes; where they are stored — the local model store, or a
@@ -20,13 +20,16 @@ type BlobStore interface {
 
 // WriteBlobs executes a plan's blobs: for each blob it resolves the tensors'
 // sources, produces the blob bytes, and stores the result.
-func WriteBlobs(specs []BlobSpec, modelDir string, store BlobStore) ([]LayerInfo, error) {
+func WriteBlobs(ctx context.Context, specs []BlobSpec, modelDir string, store BlobStore) ([]LayerInfo, error) {
 	src := newSourceFiles(modelDir)
 	defer src.close()
 
 	layers := make([]LayerInfo, 0, len(specs))
 	for _, spec := range specs {
-		layer, err := writeBlob(spec, src, store)
+		if err := checkContext(ctx); err != nil {
+			return nil, err
+		}
+		layer, err := writeBlob(ctx, spec, src, store)
 		if err != nil {
 			return nil, err
 		}
@@ -36,13 +39,16 @@ func WriteBlobs(specs []BlobSpec, modelDir string, store BlobStore) ([]LayerInfo
 }
 
 // writeBlob resolves each tensor's sources and produces the blob.
-func writeBlob(spec BlobSpec, src *sourceFiles, store BlobStore) (LayerInfo, error) {
+func writeBlob(ctx context.Context, spec BlobSpec, src *sourceFiles, store BlobStore) (LayerInfo, error) {
 	needsMLX := blobNeedsMLX(spec)
 	var (
 		tensors []*safetensors.TensorData
 		items   []quantizeItem
 	)
 	for _, ts := range spec.Tensors {
+		if err := checkContext(ctx); err != nil {
+			return LayerInfo{}, err
+		}
 		sources, err := src.resolve(ts.Sources)
 		if err != nil {
 			return LayerInfo{}, err
@@ -67,6 +73,9 @@ func writeBlob(spec BlobSpec, src *sourceFiles, store BlobStore) (LayerInfo, err
 	// take the MLX path.
 	var r io.Reader
 	if needsMLX {
+		if err := checkContext(ctx); err != nil {
+			return LayerInfo{}, err
+		}
 		blobData, err := quantizeBlob(items) //nolint:staticcheck,nolintlint // quantizeBlob can return nil via runOnMLXThread; staticcheck SA4023 false positive on closure-capture pattern
 		if err != nil {                      //nolint:staticcheck,nolintlint
 			return LayerInfo{}, fmt.Errorf("quantize blob %s: %w", spec.Name, err)
@@ -76,7 +85,10 @@ func writeBlob(spec BlobSpec, src *sourceFiles, store BlobStore) (LayerInfo, err
 		r = safetensors.BuildPackedSafetensorsReaderWithMetadata(tensors, spec.Metadata)
 	}
 
-	layer, err := store.WriteBlob(r, mediaTypeImageTensor, spec.Name)
+	if err := checkContext(ctx); err != nil {
+		return LayerInfo{}, err
+	}
+	layer, err := store.WriteBlob(r, manifest.MediaTypeImageTensor, spec.Name)
 	if err != nil {
 		return LayerInfo{}, fmt.Errorf("write blob %s: %w", spec.Name, err)
 	}

@@ -151,16 +151,6 @@ func (wpm WordPiece) Encode(s string, addSpecial bool) ([]int32, error) {
 	return ids, nil
 }
 
-// Is implements Tokenizer.
-func (wpm WordPiece) Is(id int32, special Special) bool {
-	return wpm.vocab.Is(id, special)
-}
-
-// Vocabulary implements Tokenizer.
-func (wpm WordPiece) Vocabulary() *Vocabulary {
-	return wpm.vocab
-}
-
 var _ Tokenizer = (*WordPiece)(nil)
 
 func NewWordPiece(vocab *Vocabulary, lowercase bool) WordPiece {

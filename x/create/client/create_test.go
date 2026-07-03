@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -13,6 +14,16 @@ import (
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/x/create"
 )
+
+func sourceMetadataInputsForTest(t *testing.T, dir string) (sourceConfig, string) {
+	t.Helper()
+
+	cfg, chatTemplate, err := readSourceMetadataInputs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg, chatTemplate
+}
 
 func TestModelfileConfig(t *testing.T) {
 	// Test that ModelfileConfig struct works as expected
@@ -53,13 +64,17 @@ func TestNemotronNanoOmniMetadataInference(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(config), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := getParserName(dir), "nemotron-3-nano"; got != want {
+	metadata, err := readSourceMetadata(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := metadata.parserName, "nemotron-3-nano"; got != want {
 		t.Fatalf("parser = %q, want %q", got, want)
 	}
-	if got, want := getRendererName(dir), "nemotron-3-nano"; got != want {
+	if got, want := metadata.rendererName, "nemotron-3-nano"; got != want {
 		t.Fatalf("renderer = %q, want %q", got, want)
 	}
-	caps := inferSafetensorsCapabilities(dir, getParserName(dir))
+	caps := metadata.capabilities
 	if !slices.Equal(caps, []string{"completion", "vision", "audio", "tools", "thinking"}) {
 		t.Fatalf("capabilities = %v, want completion/vision/audio/tools/thinking", caps)
 	}
@@ -74,10 +89,14 @@ func TestNemotron35MetadataInference(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "chat_template.jinja"), []byte("{reasoning effort: efficient}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := getParserName(dir), "nemotron-3.5-nano"; got != want {
+	metadata, err := readSourceMetadata(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := metadata.parserName, "nemotron-3.5-nano"; got != want {
 		t.Fatalf("parser = %q, want %q", got, want)
 	}
-	if got, want := getRendererName(dir), "nemotron-3.5-nano"; got != want {
+	if got, want := metadata.rendererName, "nemotron-3.5-nano"; got != want {
 		t.Fatalf("renderer = %q, want %q", got, want)
 	}
 }
@@ -208,17 +227,17 @@ func TestModelfileConfig_PartialFields(t *testing.T) {
 
 func TestMinOllamaVersion(t *testing.T) {
 	// Verify the minimum version constant is set
-	if MinOllamaVersion == "" {
-		t.Error("MinOllamaVersion should not be empty")
+	if create.SafetensorsMinOllamaVersion == "" {
+		t.Error("SafetensorsMinOllamaVersion should not be empty")
 	}
-	if MinOllamaVersion != "0.19.0" {
-		t.Errorf("MinOllamaVersion = %q, want %q", MinOllamaVersion, "0.19.0")
+	if create.SafetensorsMinOllamaVersion != "0.19.0" {
+		t.Errorf("SafetensorsMinOllamaVersion = %q, want %q", create.SafetensorsMinOllamaVersion, "0.19.0")
 	}
 }
 
 func TestCreateModel_InvalidDir(t *testing.T) {
 	// Test that CreateModel returns error for invalid directory
-	err := CreateModel(CreateOptions{
+	err := CreateModel(context.Background(), CreateOptions{
 		ModelName: "test-model",
 		ModelDir:  "/nonexistent/path",
 	}, nil)
@@ -231,7 +250,7 @@ func TestCreateModel_NotSafetensorsDir(t *testing.T) {
 	// Test that CreateModel returns error for directory without safetensors
 	dir := t.TempDir()
 
-	err := CreateModel(CreateOptions{
+	err := CreateModel(context.Background(), CreateOptions{
 		ModelName: "test-model",
 		ModelDir:  dir,
 	}, nil)
@@ -241,13 +260,94 @@ func TestCreateModel_NotSafetensorsDir(t *testing.T) {
 }
 
 func TestCreateModel_DraftQuantizeRequiresDraft(t *testing.T) {
-	err := CreateModel(CreateOptions{
+	err := CreateModel(context.Background(), CreateOptions{
 		ModelName:     "test-model",
 		ModelDir:      t.TempDir(),
 		DraftQuantize: "mxfp8",
 	}, nil)
 	if err == nil || !strings.Contains(err.Error(), "--draft-quantize requires a DRAFT model") {
 		t.Fatalf("error = %v, want draft-quantize requires DRAFT", err)
+	}
+}
+
+func TestCreateModelCanceledContext(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"architectures":["Qwen3ForCausalLM"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "model.safetensors"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := CreateModel(ctx, CreateOptions{
+		ModelName: "test-model",
+		ModelDir:  dir,
+	}, nil)
+	if err != context.Canceled {
+		t.Fatalf("CreateModel() error = %v, want context.Canceled", err)
+	}
+}
+
+func TestCreateModelMalformedMetadataErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		files      map[string]string
+		wantErrSub string
+	}{
+		{
+			name: "config",
+			files: map[string]string{
+				"config.json": "{",
+			},
+			wantErrSub: "parse",
+		},
+		{
+			name: "tokenizer config",
+			files: map[string]string{
+				"config.json":           `{"architectures":["Qwen3ForCausalLM"]}`,
+				"tokenizer_config.json": "{",
+			},
+			wantErrSub: "parse",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for name, content := range tt.files {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(dir, "model.safetensors"), nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			err := CreateModel(context.Background(), CreateOptions{
+				ModelName: "test-model",
+				ModelDir:  dir,
+			}, nil)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErrSub) {
+				t.Fatalf("CreateModel() error = %v, want substring %q", err, tt.wantErrSub)
+			}
+		})
+	}
+}
+
+func TestReadSourceMetadataMissingTokenizerConfig(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"architectures":["Qwen3ForCausalLM"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	metadata, err := readSourceMetadata(dir, nil)
+	if err != nil {
+		t.Fatalf("readSourceMetadata() error = %v", err)
+	}
+	if metadata.parserName != "qwen3" || metadata.rendererName != "qwen3-coder" {
+		t.Fatalf("metadata parser/renderer = %q/%q, want qwen3/qwen3-coder", metadata.parserName, metadata.rendererName)
 	}
 }
 
@@ -466,51 +566,11 @@ func TestInferSafetensorsCapabilities(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if got := inferSafetensorsCapabilities(dir, ""); !slices.Equal(got, tt.want) {
-				t.Fatalf("inferSafetensorsCapabilities() = %#v, want %#v", got, tt.want)
+			cfg, chatTemplate := sourceMetadataInputsForTest(t, dir)
+			if got := inferSafetensorsCapabilitiesFromConfig(cfg, chatTemplate, ""); !slices.Equal(got, tt.want) {
+				t.Fatalf("inferSafetensorsCapabilitiesFromConfig() = %#v, want %#v", got, tt.want)
 			}
 		})
-	}
-}
-
-func TestCreateModelfileLayersIncludesParameters(t *testing.T) {
-	t.Setenv("OLLAMA_MODELS", t.TempDir())
-
-	layers, err := createModelfileLayers(&ModelfileConfig{
-		Parameters: map[string]any{
-			"temperature": float32(0.7),
-			"stop":        []string{"USER:", "ASSISTANT:"},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(layers) != 1 {
-		t.Fatalf("len(layers) = %d, want 1", len(layers))
-	}
-
-	if layers[0].MediaType != "application/vnd.ollama.image.params" {
-		t.Fatalf("MediaType = %q, want %q", layers[0].MediaType, "application/vnd.ollama.image.params")
-	}
-
-	blobPath, err := manifest.BlobsPath(layers[0].Digest)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	data, err := os.ReadFile(blobPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var got map[string]any
-	if err := json.Unmarshal(data, &got); err != nil {
-		t.Fatal(err)
-	}
-
-	if got["temperature"] != float64(0.7) {
-		t.Fatalf("temperature = %v, want %v", got["temperature"], float64(0.7))
 	}
 }
 
@@ -523,8 +583,7 @@ func TestNewManifestWriter_PopulatesFileTypeFromEffectiveQuantize(t *testing.T) 
 	}
 
 	writer := newManifestWriter(opts, []string{"completion"}, "qwen3", "qwen3")
-	class := create.Classification{Kind: create.SourceBlockFP8, Quantize: "mxfp8"}
-	if err := writer(opts.ModelName, create.LayerInfo{}, nil, class); err != nil {
+	if err := writer(opts.ModelName, create.ManifestInfo{Class: create.Classification{Quantize: "mxfp8"}}); err != nil {
 		t.Fatalf("newManifestWriter() error = %v", err)
 	}
 
@@ -569,7 +628,7 @@ func TestNewManifestWriter_PopulatesDraftMetadata(t *testing.T) {
 	}
 
 	writer := newManifestWriter(opts, []string{"completion"}, "gemma4", "gemma4")
-	if err := writer(opts.ModelName, create.LayerInfo{}, nil, create.Classification{}); err != nil {
+	if err := writer(opts.ModelName, create.ManifestInfo{}); err != nil {
 		t.Fatalf("newManifestWriter() error = %v", err)
 	}
 
@@ -662,15 +721,6 @@ func TestDetectCapabilities(t *testing.T) {
 			configJSON: `{"architectures": ["LlamaForCausalLM"], "model_type": "llama"}`,
 			want:       modelCapabilities{},
 		},
-		{
-			name:       "invalid config json",
-			configJSON: `not json`,
-			want:       modelCapabilities{},
-		},
-		{
-			name: "missing files",
-			want: modelCapabilities{},
-		},
 	}
 
 	for _, tt := range tests {
@@ -687,8 +737,9 @@ func TestDetectCapabilities(t *testing.T) {
 				}
 			}
 
-			if got := detectCapabilities(dir); got != tt.want {
-				t.Errorf("detectCapabilities() = %+v, want %+v", got, tt.want)
+			cfg, chatTemplate := sourceMetadataInputsForTest(t, dir)
+			if got := detectCapabilitiesFromConfig(cfg, chatTemplate); got != tt.want {
+				t.Errorf("detectCapabilitiesFromConfig() = %+v, want %+v", got, tt.want)
 			}
 		})
 	}
@@ -729,8 +780,9 @@ func TestInferSafetensorsCapabilitiesFromParser(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if got := inferSafetensorsCapabilities(dir, tt.parserName); !slices.Equal(got, tt.want) {
-				t.Fatalf("inferSafetensorsCapabilities() = %#v, want %#v", got, tt.want)
+			cfg, chatTemplate := sourceMetadataInputsForTest(t, dir)
+			if got := inferSafetensorsCapabilitiesFromConfig(cfg, chatTemplate, tt.parserName); !slices.Equal(got, tt.want) {
+				t.Fatalf("inferSafetensorsCapabilitiesFromConfig() = %#v, want %#v", got, tt.want)
 			}
 		})
 	}
@@ -746,10 +798,14 @@ func TestInferSafetensorsCapabilitiesGlimmerPreservesVisionMetadata(t *testing.T
 		t.Fatal(err)
 	}
 
-	got := inferSafetensorsCapabilities(dir, "glimmer")
+	metadata, err := readSourceMetadata(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := metadata.capabilities
 	want := []string{"completion", "vision", "tools", "thinking"}
 	if !slices.Equal(got, want) {
-		t.Fatalf("inferSafetensorsCapabilities() = %#v, want %#v", got, want)
+		t.Fatalf("readSourceMetadata() capabilities = %#v, want %#v", got, want)
 	}
 }
 
@@ -759,7 +815,8 @@ func TestInferSafetensorsCapabilitiesLaguna(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := inferSafetensorsCapabilities(dir, "laguna")
+	cfg, chatTemplate := sourceMetadataInputsForTest(t, dir)
+	got := inferSafetensorsCapabilitiesFromConfig(cfg, chatTemplate, "laguna")
 	for _, want := range []string{"completion", "tools", "thinking"} {
 		if !slices.Contains(got, want) {
 			t.Fatalf("capabilities %v missing %q", got, want)
@@ -841,10 +898,17 @@ func TestGetParserName(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
-			os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.configJSON), 0o644)
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.configJSON), 0o644); err != nil {
+				t.Fatal(err)
+			}
 
-			if got := getParserName(dir); got != tt.want {
-				t.Errorf("getParserName() = %q, want %q", got, tt.want)
+			cfg, chatTemplate := sourceMetadataInputsForTest(t, dir)
+			got, err := parserNameForConfig(dir, cfg, chatTemplate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Errorf("parserNameForConfig() = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -945,8 +1009,13 @@ func TestGetRendererName(t *testing.T) {
 				}
 			}
 
-			if got := getRendererName(dir); got != tt.want {
-				t.Errorf("getRendererName() = %q, want %q", got, tt.want)
+			cfg, chatTemplate := sourceMetadataInputsForTest(t, dir)
+			got, err := rendererNameForConfig(dir, cfg, chatTemplate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Errorf("rendererNameForConfig() = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -983,11 +1052,20 @@ func TestGetLagunaRendererParserName(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if got := getParserName(dir); got != tt.want {
-				t.Errorf("getParserName() = %q, want %q", got, tt.want)
+			cfg, chatTemplate := sourceMetadataInputsForTest(t, dir)
+			gotParser, err := parserNameForConfig(dir, cfg, chatTemplate)
+			if err != nil {
+				t.Fatal(err)
 			}
-			if got := getRendererName(dir); got != tt.want {
-				t.Errorf("getRendererName() = %q, want %q", got, tt.want)
+			if gotParser != tt.want {
+				t.Errorf("parserNameForConfig() = %q, want %q", gotParser, tt.want)
+			}
+			gotRenderer, err := rendererNameForConfig(dir, cfg, chatTemplate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if gotRenderer != tt.want {
+				t.Errorf("rendererNameForConfig() = %q, want %q", gotRenderer, tt.want)
 			}
 		})
 	}
