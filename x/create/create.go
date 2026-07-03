@@ -1,6 +1,7 @@
 package create
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -13,114 +14,34 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/x/safetensors"
 )
 
-// ModelConfig represents the config blob stored with a model.
-type ModelConfig struct {
-	ModelFormat  string   `json:"model_format"`
-	Capabilities []string `json:"capabilities"`
-}
-
-// Manifest represents the manifest JSON structure.
-type Manifest struct {
-	SchemaVersion int             `json:"schemaVersion"`
-	MediaType     string          `json:"mediaType"`
-	Config        ManifestLayer   `json:"config"`
-	Layers        []ManifestLayer `json:"layers"`
-}
-
-// ManifestLayer represents a layer in the manifest.
-type ManifestLayer struct {
-	MediaType string `json:"mediaType"`
-	Digest    string `json:"digest"`
-	Size      int64  `json:"size"`
-	Name      string `json:"name,omitempty"`
-}
-
-// defaultManifestDir returns the manifest storage directory.
-func defaultManifestDir() string {
-	return filepath.Join(envconfig.Models(), "manifests")
-}
-
-// defaultBlobDir returns the blob storage directory.
-func defaultBlobDir() string {
-	return filepath.Join(envconfig.Models(), "blobs")
-}
-
-// resolveManifestPath converts a model name to a manifest file path.
-func resolveManifestPath(modelName string) string {
-	host := "registry.ollama.ai"
-	namespace := "library"
-	name := modelName
-	tag := "latest"
-
-	if idx := strings.LastIndex(name, ":"); idx != -1 {
-		tag = name[idx+1:]
-		name = name[:idx]
-	}
-
-	parts := strings.Split(name, "/")
-	switch len(parts) {
-	case 3:
-		host = parts[0]
-		namespace = parts[1]
-		name = parts[2]
-	case 2:
-		namespace = parts[0]
-		name = parts[1]
-	}
-
-	return filepath.Join(defaultManifestDir(), host, namespace, name, tag)
-}
-
-// loadManifest loads a manifest for the given model name.
-func loadManifest(modelName string) (*Manifest, error) {
-	manifestPath := resolveManifestPath(modelName)
-
-	data, err := os.ReadFile(manifestPath)
-	if err != nil {
-		return nil, err
-	}
-
-	var manifest Manifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		return nil, err
-	}
-
-	return &manifest, nil
-}
-
-// loadModelConfig loads the config blob for a model.
-func loadModelConfig(modelName string) (*ModelConfig, error) {
-	manifest, err := loadManifest(modelName)
-	if err != nil {
-		return nil, err
-	}
-
-	// Read the config blob
-	blobName := strings.Replace(manifest.Config.Digest, ":", "-", 1)
-	blobPath := filepath.Join(defaultBlobDir(), blobName)
-
-	data, err := os.ReadFile(blobPath)
-	if err != nil {
-		return nil, err
-	}
-
-	var config ModelConfig
-	if err := json.Unmarshal(data, &config); err != nil {
-		return nil, err
-	}
-
-	return &config, nil
-}
+// SafetensorsMinOllamaVersion is the minimum Ollama version required for
+// safetensors-backed models.
+const SafetensorsMinOllamaVersion = "0.19.0"
 
 // IsSafetensorsLLMModel checks if a model is a safetensors LLM model
 // (has completion capability, not image generation).
 func IsSafetensorsLLMModel(modelName string) bool {
-	config, err := loadModelConfig(modelName)
+	name := model.ParseName(modelName)
+	if !name.IsValid() {
+		return false
+	}
+	m, err := manifest.ParseNamedManifest(name)
 	if err != nil {
+		return false
+	}
+	f, err := m.Config.Open()
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	var config model.ConfigV2
+	if err := json.NewDecoder(f).Decode(&config); err != nil {
 		return false
 	}
 	return config.ModelFormat == "safetensors" && slices.Contains(config.Capabilities, "completion")
@@ -157,23 +78,19 @@ type LayerInfo struct {
 	Name      string // Path-style name: "component/tensor" or "path/to/config.json"
 }
 
-// LayerCreator is called to create a blob layer.
-// name is the path-style name (e.g., "tokenizer/tokenizer.json")
-type LayerCreator func(r io.Reader, mediaType, name string) (LayerInfo, error)
+// ManifestInfo is the data a manifest writer needs after the import pipeline
+// has planned and written the source model.
+type ManifestInfo struct {
+	ModelConfig model.ConfigV2
+	ConfigLayer LayerInfo
+	Layers      []LayerInfo
+	Class       Classification
+}
 
-// ManifestWriter writes the manifest file with the source classification used
-// to produce its tensor layers.
-type ManifestWriter func(modelName string, config LayerInfo, layers []LayerInfo, class Classification) error
+// ManifestWriter writes the manifest file.
+type ManifestWriter func(ctx context.Context, modelName string, info ManifestInfo) error
 
-// ShouldQuantize returns true if a tensor should be quantized.
-// For image gen models (component non-empty): quantizes linear weights, skipping VAE, embeddings, norms.
-// For LLM models (component empty): quantizes linear weights, skipping embeddings, norms, and small tensors.
-func ShouldQuantize(name, component string) bool {
-	// Image gen specific: skip VAE entirely
-	if component == "vae" {
-		return false
-	}
-
+func shouldQuantize(name string) bool {
 	// Skip audio encoder tensors (highly sensitive to quantization)
 	if strings.Contains(name, "audio_tower") || strings.Contains(name, "embed_audio") {
 		return false
@@ -264,7 +181,7 @@ func GetTensorQuantization(name string, shape []int32, quantize string) string {
 	stackedExpert := isStackedExpertWeight(name)
 
 	// Use basic name-based check first
-	if !stackedExpert && !ShouldQuantize(name, "") {
+	if !stackedExpert && !shouldQuantize(name) {
 		return ""
 	}
 
@@ -378,8 +295,15 @@ type sourceQuantization struct {
 }
 
 type sourceModelConfig struct {
-	ModelType          string             `json:"model_type"`
-	Architectures      []string           `json:"architectures"`
+	ModelType     string          `json:"model_type"`
+	Architectures []string        `json:"architectures"`
+	VisionConfig  *map[string]any `json:"vision_config"`
+	AudioConfig   *map[string]any `json:"audio_config"`
+	HasVision     bool            `json:"has_vision"`
+	SoundConfig   *map[string]any `json:"sound_config"`
+	LLMConfig     struct {
+		ModelType string `json:"model_type"`
+	} `json:"llm_config"`
 	Quantization       sourceQuantization `json:"quantization"`
 	QuantizationConfig sourceQuantization `json:"quantization_config"`
 	CompressionConfig  sourceQuantization `json:"compression_config"`
@@ -399,12 +323,12 @@ func readSourceModelConfig(modelDir string) (sourceModelConfig, json.RawMessage,
 	configPath := filepath.Join(modelDir, "config.json")
 	data, err := os.ReadFile(configPath)
 	if err != nil {
-		return sourceModelConfig{}, nil, err
+		return sourceModelConfig{}, nil, fmt.Errorf("read %s: %w", configPath, err)
 	}
 
 	var cfg sourceModelConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return sourceModelConfig{}, nil, err
+		return sourceModelConfig{}, nil, fmt.Errorf("parse %s: %w", configPath, err)
 	}
 
 	return cfg, data, nil

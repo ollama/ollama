@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -1453,6 +1454,9 @@ func TestCreateHandler(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodHead && r.URL.Path == "/" {
+					return
+				}
 				handler, ok := tt.serverResponse[r.URL.Path]
 				if !ok {
 					t.Errorf("unexpected request to %s", r.URL.Path)
@@ -1587,7 +1591,78 @@ func TestCreateHandlerDraftQuantizeRequiresDraft(t *testing.T) {
 	}
 }
 
-func TestResolveExperimentalLocalModelDir(t *testing.T) {
+func TestCreateHandlerRejectsGGUFQuantizeBeforeUpload(t *testing.T) {
+	dir := t.TempDir()
+	modelfile := filepath.Join(dir, "Modelfile")
+	if err := os.WriteFile(modelfile, []byte("FROM base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := &cobra.Command{}
+	cmd.Flags().String("file", modelfile, "")
+	cmd.Flags().String("quantize", "Q4_K_M", "")
+	cmd.Flags().String("draft-quantize", "", "")
+	cmd.Flags().Bool("force", false, "")
+	cmd.SetContext(t.Context())
+
+	err := CreateHandler(cmd, []string{"test-model"})
+	if err == nil || !strings.Contains(err.Error(), "quantize GGUF models") {
+		t.Fatalf("error = %v, want GGUF quantization error", err)
+	}
+}
+
+func TestCreateHandlerRejectsForceForGGUF(t *testing.T) {
+	dir := t.TempDir()
+	modelfile := filepath.Join(dir, "Modelfile")
+	if err := os.WriteFile(modelfile, []byte("FROM base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := &cobra.Command{}
+	cmd.Flags().String("file", modelfile, "")
+	cmd.Flags().String("quantize", "", "")
+	cmd.Flags().String("draft-quantize", "", "")
+	cmd.Flags().Bool("force", true, "")
+	cmd.SetContext(t.Context())
+
+	err := CreateHandler(cmd, []string{"test-model"})
+	if err == nil || !strings.Contains(err.Error(), "--force is only supported for local MLX safetensors imports") {
+		t.Fatalf("error = %v, want GGUF force error", err)
+	}
+}
+
+func TestCreateHandlerRejectsForceForRemoteSafetensors(t *testing.T) {
+	t.Setenv("OLLAMA_CREATE_REMOTE", "1")
+	dir := t.TempDir()
+	modelDir := filepath.Join(dir, "model")
+	if err := os.Mkdir(modelDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "config.json"), []byte(`{"architectures":["Qwen3ForCausalLM"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "model.safetensors"), []byte("dummy"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	modelfile := filepath.Join(dir, "Modelfile")
+	if err := os.WriteFile(modelfile, []byte("FROM "+modelDir+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := &cobra.Command{}
+	cmd.Flags().String("file", modelfile, "")
+	cmd.Flags().String("quantize", "", "")
+	cmd.Flags().String("draft-quantize", "", "")
+	cmd.Flags().Bool("force", true, "")
+	cmd.SetContext(t.Context())
+
+	err := CreateHandler(cmd, []string{"test-model"})
+	if err == nil || !strings.Contains(err.Error(), "--force is only supported for local MLX safetensors imports") {
+		t.Fatalf("error = %v, want remote force error", err)
+	}
+}
+
+func TestResolveCreateLocalModelDir(t *testing.T) {
 	dir := t.TempDir()
 	modelfile := filepath.Join(dir, "Modelfile")
 	modelDir := filepath.Join(dir, "model")
@@ -1601,15 +1676,15 @@ func TestResolveExperimentalLocalModelDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := resolveExperimentalLocalModelDir("gemma4", modelfile); got != "gemma4" {
-		t.Fatalf("resolveExperimentalLocalModelDir(model name) = %q, want gemma4", got)
+	if got := resolveCreateLocalModelDir("gemma4", modelfile); got != "gemma4" {
+		t.Fatalf("resolveCreateLocalModelDir(model name) = %q, want gemma4", got)
 	}
-	if got := resolveExperimentalLocalModelDir("./model", modelfile); got != modelDir {
-		t.Fatalf("resolveExperimentalLocalModelDir(local dir) = %q, want %q", got, modelDir)
+	if got := resolveCreateLocalModelDir("./model", modelfile); got != modelDir {
+		t.Fatalf("resolveCreateLocalModelDir(local dir) = %q, want %q", got, modelDir)
 	}
 }
 
-func TestResolveExperimentalDraftDir(t *testing.T) {
+func TestResolveCreateDraftDir(t *testing.T) {
 	dir := t.TempDir()
 	modelfile := filepath.Join(dir, "Modelfile")
 	draftDir := filepath.Join(dir, "assistant")
@@ -1623,17 +1698,148 @@ func TestResolveExperimentalDraftDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := resolveExperimentalDraftDir("./assistant", modelfile)
+	got, err := resolveCreateDraftDir("./assistant", modelfile)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != draftDir {
-		t.Fatalf("resolveExperimentalDraftDir(local dir) = %q, want %q", got, draftDir)
+		t.Fatalf("resolveCreateDraftDir(local dir) = %q, want %q", got, draftDir)
 	}
 
-	_, err = resolveExperimentalDraftDir("assistant-model", modelfile)
-	if err == nil || !strings.Contains(err.Error(), "DRAFT model references are not supported with --experimental yet") {
+	_, err = resolveCreateDraftDir("assistant-model", modelfile)
+	if err == nil || !strings.Contains(err.Error(), "DRAFT model references must be local safetensors directories") {
 		t.Fatalf("error = %v, want unsupported draft model reference", err)
+	}
+}
+
+func TestSafetensorsCreateOptionsDetectsLocalDir(t *testing.T) {
+	dir := t.TempDir()
+	modelDir := filepath.Join(dir, "model")
+	draftDir := filepath.Join(dir, "assistant")
+	for _, d := range []string{modelDir, draftDir} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "config.json"), []byte(`{"architectures":["Qwen3ForCausalLM"]}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "model.safetensors"), []byte("dummy"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	modelfilePath := filepath.Join(dir, "Modelfile")
+	modelfile, err := parser.ParseFile(strings.NewReader("FROM ./model\nDRAFT ./assistant\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	opts, ok, err := safetensorsCreateOptions(modelfile, modelfilePath, "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("safetensorsCreateOptions did not detect safetensors model")
+	}
+	if opts.ModelName != "test-model" || opts.ModelDir != modelDir {
+		t.Fatalf("opts model/name = %q/%q, want test-model/%s", opts.ModelName, opts.ModelDir, modelDir)
+	}
+	if opts.Modelfile == nil || opts.Modelfile.Draft != draftDir {
+		t.Fatalf("draft dir = %v, want %s", opts.Modelfile, draftDir)
+	}
+
+	for _, tt := range []struct {
+		name      string
+		modelfile string
+		want      string
+	}{
+		{
+			name:      "multiple model sources",
+			modelfile: "FROM ./model\nFROM ./model\n",
+			want:      "exactly one FROM source",
+		},
+		{
+			name:      "multiple draft sources",
+			modelfile: "FROM ./model\nDRAFT ./assistant\nDRAFT ./assistant\n",
+			want:      "at most one DRAFT source",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			modelfile, err := parser.ParseFile(strings.NewReader(tt.modelfile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _, err = safetensorsCreateOptions(modelfile, modelfilePath, "test-model")
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestSafetensorsCreateOptionsLeavesGGUFDraftOnStandardPath(t *testing.T) {
+	modelfile, err := parser.ParseFile(strings.NewReader("FROM ./model.gguf\nDRAFT ./draft.gguf\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, gotCreate, err := safetensorsCreateOptions(modelfile, filepath.Join(t.TempDir(), "Modelfile"), "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotCreate {
+		t.Fatal("GGUF draft was routed through safetensors create")
+	}
+}
+
+func TestSafetensorsCreateOptionsAppliesMinimumVersionOnlyToSafetensors(t *testing.T) {
+	dir := t.TempDir()
+	modelDir := filepath.Join(dir, "model")
+	if err := os.Mkdir(modelDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "config.json"), []byte(`{"architectures":["Qwen3ForCausalLM"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "model.safetensors"), []byte("dummy"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	modelfilePath := filepath.Join(dir, "Modelfile")
+
+	for _, tt := range []struct {
+		name      string
+		modelfile string
+		wantErr   string
+	}{
+		{
+			name:      "safetensors below minimum",
+			modelfile: "FROM ./model\nREQUIRES 0.14.0\n",
+			wantErr:   "below the minimum supported version",
+		},
+		{
+			name:      "GGUF below safetensors minimum",
+			modelfile: "FROM ./model.gguf\nREQUIRES 0.14.0\n",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			modelfile, err := parser.ParseFile(strings.NewReader(tt.modelfile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, gotCreate, err := safetensorsCreateOptions(modelfile, modelfilePath, "test-model")
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if gotCreate {
+				t.Fatal("unexpected safetensors create")
+			}
+		})
 	}
 }
 

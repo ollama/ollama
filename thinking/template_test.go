@@ -5,6 +5,29 @@ import (
 	"text/template"
 )
 
+func TestTemplateSupportsThinking(t *testing.T) {
+	tests := []struct {
+		name string
+		tmpl string
+		want bool
+	}{
+		{name: "paired tags", tmpl: "<think>{{ reasoning }}</think>", want: true},
+		{name: "single quoted split", tmpl: "content.split('</think>')", want: true},
+		{name: "double quoted split", tmpl: `content.split("</think>")`, want: true},
+		{name: "separate reasoning field", tmpl: "content.split('</think>') reasoning_content", want: false},
+		{name: "special token reasoning", tmpl: "content.split('</think>') <SPECIAL_12>", want: false},
+		{name: "plain template", tmpl: "{{ content }}", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := TemplateSupportsThinking(tt.tmpl); got != tt.want {
+				t.Fatalf("TemplateSupportsThinking() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestInferThinkingTags(t *testing.T) {
 	cases := []struct {
 		desc           string

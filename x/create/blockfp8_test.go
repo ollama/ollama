@@ -2,6 +2,7 @@ package create
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -128,5 +129,45 @@ func TestPlanBlockFP8PerExpertStacked(t *testing.T) {
 		if ts.Sources[i].Name != want {
 			t.Errorf("source[%d] = %q, want %q", i, ts.Sources[i].Name, want)
 		}
+	}
+}
+
+func TestPlanBlockFP8InvalidExpertIndices(t *testing.T) {
+	tests := []struct {
+		name    string
+		tensors map[string]string
+		wantErr string
+	}{
+		{
+			name: "gap",
+			tensors: map[string]string{
+				"model.layers.0.mlp.experts.0.gate_proj.weight":           "F8_E4M3",
+				"model.layers.0.mlp.experts.0.gate_proj.weight_scale_inv": "F32",
+				"model.layers.0.mlp.experts.2.gate_proj.weight":           "F8_E4M3",
+				"model.layers.0.mlp.experts.2.gate_proj.weight_scale_inv": "F32",
+			},
+			wantErr: "missing expert index 1",
+		},
+		{
+			name: "projection count mismatch",
+			tensors: map[string]string{
+				"model.layers.0.mlp.experts.0.down_proj.weight":           "F8_E4M3",
+				"model.layers.0.mlp.experts.0.down_proj.weight_scale_inv": "F32",
+				"model.layers.0.mlp.experts.0.gate_proj.weight":           "F8_E4M3",
+				"model.layers.0.mlp.experts.0.gate_proj.weight_scale_inv": "F32",
+				"model.layers.0.mlp.experts.1.gate_proj.weight":           "F8_E4M3",
+				"model.layers.0.mlp.experts.1.gate_proj.weight_scale_inv": "F32",
+			},
+			wantErr: "want 1 to match the other projections",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Plan(blockFP8(tt.tensors), Classification{Kind: SourceBlockFP8, Quantize: "mxfp8"}, defaultQuantPolicy{})
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Plan() error = %v, want error containing %q", err, tt.wantErr)
+			}
+		})
 	}
 }

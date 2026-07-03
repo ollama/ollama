@@ -51,12 +51,19 @@ type File struct {
 	bts    []byte
 }
 
-func Open(path string) (f *File, err error) {
-	f = &File{bts: make([]byte, 4096)}
+func Open(path string) (_ *File, err error) {
+	f := &File{bts: make([]byte, 4096)}
 	f.file, err = os.Open(path)
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if err != nil {
+			if closeErr := f.close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}
+	}()
 
 	f.reader = newBufferedReader(f.file, 32<<10)
 
@@ -273,14 +280,15 @@ func readArrayData[T any](f *File, n uint64) (s []T, err error) {
 		return nil, err
 	}
 
-	s = make([]T, size)
-	for i := range size {
+	// The count comes from the file, so grow only as elements are read.
+	s = make([]T, 0, min(size, 4096))
+	for range size {
 		e, err := read[T](f)
 		if err != nil {
 			return nil, err
 		}
 
-		s[i] = e
+		s = append(s, e)
 	}
 
 	return s, nil
@@ -292,14 +300,15 @@ func readArrayString(f *File, n uint64) (s []string, err error) {
 		return nil, err
 	}
 
-	s = make([]string, size)
-	for i := range size {
+	// The count comes from the file, so grow only as elements are read.
+	s = make([]string, 0, min(size, 4096))
+	for range size {
 		e, err := readString(f)
 		if err != nil {
 			return nil, err
 		}
 
-		s[i] = e
+		s = append(s, e)
 	}
 
 	return s, nil
@@ -324,8 +333,19 @@ func maxInt64() uint64 {
 }
 
 func (f *File) Close() error {
-	f.keyValues.stop()
-	f.tensors.stop()
+	return f.close()
+}
+
+func (f *File) close() error {
+	if f.keyValues != nil {
+		f.keyValues.stop()
+	}
+	if f.tensors != nil {
+		f.tensors.stop()
+	}
+	if f.file == nil {
+		return nil
+	}
 	return f.file.Close()
 }
 

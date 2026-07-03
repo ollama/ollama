@@ -76,9 +76,11 @@ func createTestFile(t *testing.T, name string) (string, string) {
 		t.Fatal(err)
 	}
 
-	if err := createLink(f.Name(), filepath.Join(modelDir, "blobs", fmt.Sprintf("sha256-%s", strings.TrimPrefix(digest, "sha256:")))); err != nil {
+	blobPath, err := manifest.BlobsPath(digest)
+	if err != nil {
 		t.Fatal(err)
 	}
+	linkOrCopyTestBlob(t, f.Name(), blobPath)
 
 	return f.Name(), digest
 }
@@ -122,17 +124,14 @@ func TestRoutes(t *testing.T) {
 
 		modelName := model.ParseName(name)
 
-		baseLayers, err := ggufLayers(digest, "test.gguf", fn)
+		baseLayers, err := ggufLayersWithMediaType(digest, "test.gguf", "", fn)
 		if err != nil {
 			t.Fatalf("failed to create model: %v", err)
 		}
 
-		config := &model.ConfigV2{
-			OS:           "linux",
-			Architecture: "amd64",
-		}
+		config := new(model.ConfigV2)
 
-		if err := createModel(r, modelName, baseLayers, config, fn); err != nil {
+		if err := createModel(t.Context(), r, modelName, baseLayers, config, fn); err != nil {
 			t.Fatal(err)
 		}
 		s.refreshModelListCache(modelName)

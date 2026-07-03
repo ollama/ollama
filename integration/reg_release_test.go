@@ -123,7 +123,7 @@ func init() {
 
 		integrationTestCase("create-safetensors", "", runCreateSafetensorsLLM),
 		integrationTestCase("create-gguf", "", runCreateGGUF),
-		integrationTestCase("quantization", "qwen2.5:0.5b-instruct-fp16", runQuantization),
+		integrationTestCase("quantization", "", runQuantization),
 	)
 	registerStructuredOutputCases()
 
