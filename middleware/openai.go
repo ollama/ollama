@@ -55,6 +55,17 @@ type EmbedWriter struct {
 	encodingFormat string
 }
 
+func setEventStreamHeaders(h http.Header) {
+	h.Set("Content-Type", "text/event-stream")
+	h.Set("Cache-Control", "no-cache")
+	h.Set("Connection", "keep-alive")
+	h.Set("X-Accel-Buffering", "no")
+}
+
+func flushEventStream(w gin.ResponseWriter) {
+	w.Flush()
+}
+
 func (w *BaseWriter) writeError(data []byte) (int, error) {
 	var serr api.StatusError
 	if err := json.Unmarshal(data, &serr); err != nil {
@@ -81,7 +92,7 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 	// chat chunk
 	if w.stream {
 		chunks := openai.ToChunks(w.id, chatResponse, w.toolCallSent)
-		w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")
+		setEventStreamHeaders(w.ResponseWriter.Header())
 		for _, c := range chunks {
 			d, err := json.Marshal(c)
 			if err != nil {
@@ -95,6 +106,7 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 				return 0, err
 			}
 		}
+		flushEventStream(w.ResponseWriter)
 
 		if chatResponse.Done {
 			c := openai.ToChunk(w.id, chatResponse, w.toolCallSent)
@@ -115,11 +127,13 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 				if err != nil {
 					return 0, err
 				}
+				flushEventStream(w.ResponseWriter)
 			}
 			_, err = w.ResponseWriter.Write([]byte("data: [DONE]\n\n"))
 			if err != nil {
 				return 0, err
 			}
+			flushEventStream(w.ResponseWriter)
 		}
 
 		return len(data), nil
@@ -162,11 +176,12 @@ func (w *CompleteWriter) writeResponse(data []byte) (int, error) {
 			return 0, err
 		}
 
-		w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")
+		setEventStreamHeaders(w.ResponseWriter.Header())
 		_, err = w.ResponseWriter.Write([]byte(fmt.Sprintf("data: %s\n\n", d)))
 		if err != nil {
 			return 0, err
 		}
+		flushEventStream(w.ResponseWriter)
 
 		if generateResponse.Done {
 			if w.streamOptions != nil && w.streamOptions.IncludeUsage {
@@ -181,11 +196,13 @@ func (w *CompleteWriter) writeResponse(data []byte) (int, error) {
 				if err != nil {
 					return 0, err
 				}
+				flushEventStream(w.ResponseWriter)
 			}
 			_, err = w.ResponseWriter.Write([]byte("data: [DONE]\n\n"))
 			if err != nil {
 				return 0, err
 			}
+			flushEventStream(w.ResponseWriter)
 		}
 
 		return len(data), nil

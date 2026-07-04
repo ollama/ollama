@@ -89,6 +89,26 @@ func sseDataFrames(body string) []string {
 	return data
 }
 
+func assertEventStreamResponse(t *testing.T, recorder *httptest.ResponseRecorder) {
+	t.Helper()
+
+	if got := recorder.Header().Get("Content-Type"); got != "text/event-stream" {
+		t.Fatalf("expected Content-Type text/event-stream, got %q", got)
+	}
+	if got := recorder.Header().Get("Cache-Control"); got != "no-cache" {
+		t.Fatalf("expected Cache-Control no-cache, got %q", got)
+	}
+	if got := recorder.Header().Get("Connection"); got != "keep-alive" {
+		t.Fatalf("expected Connection keep-alive, got %q", got)
+	}
+	if got := recorder.Header().Get("X-Accel-Buffering"); got != "no" {
+		t.Fatalf("expected X-Accel-Buffering no, got %q", got)
+	}
+	if !recorder.Flushed {
+		t.Fatal("expected stream writer to flush")
+	}
+}
+
 func TestChatWriter_StreamMixedThinkingAndContentEmitsSplitChunks(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
@@ -124,9 +144,7 @@ func TestChatWriter_StreamMixedThinkingAndContentEmitsSplitChunks(t *testing.T) 
 		t.Fatalf("write response: %v", err)
 	}
 
-	if got := recorder.Header().Get("Content-Type"); got != "text/event-stream" {
-		t.Fatalf("expected Content-Type text/event-stream, got %q", got)
-	}
+	assertEventStreamResponse(t, recorder)
 
 	frames := sseDataFrames(recorder.Body.String())
 	if len(frames) != 4 {
@@ -307,6 +325,49 @@ func TestChatWriter_StreamMixedThinkingAndToolCallsWithoutDoneEmitsChunksOnly(t 
 	}
 	if !writer.toolCallSent {
 		t.Fatal("expected toolCallSent to be tracked after tool-call chunk emission")
+	}
+}
+
+func TestCompleteWriter_StreamFlushesAndSetsEventStreamHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+
+	writer := &CompleteWriter{
+		stream:        true,
+		streamOptions: &openai.StreamOptions{IncludeUsage: true},
+		id:            "cmpl-test",
+		BaseWriter:    BaseWriter{ResponseWriter: context.Writer},
+	}
+
+	response := api.GenerateResponse{
+		Model:      "test-model",
+		Response:   "done",
+		Done:       true,
+		DoneReason: "stop",
+		Metrics: api.Metrics{
+			PromptEvalCount: 4,
+			EvalCount:       1,
+		},
+	}
+
+	data, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("marshal response: %v", err)
+	}
+
+	if _, err = writer.Write(data); err != nil {
+		t.Fatalf("write response: %v", err)
+	}
+
+	assertEventStreamResponse(t, recorder)
+
+	frames := sseDataFrames(recorder.Body.String())
+	if len(frames) != 3 {
+		t.Fatalf("expected 3 SSE data frames (chunk + usage + [DONE]), got %d:\n%s", len(frames), recorder.Body.String())
+	}
+	if frames[2] != "[DONE]" {
+		t.Fatalf("expected final frame [DONE], got %q", frames[2])
 	}
 }
 
