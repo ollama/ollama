@@ -1368,6 +1368,9 @@ func getValue(header, key string) string {
 
 	// Move the index to the starting quote after the key.
 	startIdx += len(key) + 2
+	if startIdx > len(header) {
+		return ""
+	}
 	endIdx := startIdx
 
 	for endIdx < len(header) {
