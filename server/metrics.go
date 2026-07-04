@@ -12,6 +12,52 @@ import (
 	"github.com/ollama/ollama/version"
 )
 
+type metricLabel struct {
+	name  string
+	value string
+}
+
+func formatLabels(labels ...metricLabel) string {
+	if len(labels) == 0 {
+		return ""
+	}
+
+	labelNames := make([]string, 0, len(labels))
+	labelValues := make(map[string]string, len(labels))
+	for _, label := range labels {
+		labelNames = append(labelNames, label.name)
+		labelValues[label.name] = strings.ReplaceAll(
+			strings.ReplaceAll(
+				strings.ReplaceAll(
+					label.value,
+					"\\",
+					"\\\\",
+				),
+				"\n",
+				"\\n",
+			),
+			"\"",
+			"\\\"",
+		)
+	}
+	sort.Strings(labelNames)
+
+	var renderedLabels strings.Builder
+	renderedLabels.WriteByte('{')
+	for i, name := range labelNames {
+		if i > 0 {
+			renderedLabels.WriteByte(',')
+		}
+		renderedLabels.WriteString(name)
+		renderedLabels.WriteByte('=')
+		renderedLabels.WriteByte('"')
+		renderedLabels.WriteString(labelValues[name])
+		renderedLabels.WriteByte('"')
+	}
+	renderedLabels.WriteByte('}')
+	return renderedLabels.String()
+}
+
 // MetricsHandler serves scheduler state in the Prometheus text exposition format
 // (https://prometheus.io/docs/instrumenting/exposition_formats/). It is registered only
 // when OLLAMA_METRICS is enabled, mirroring llama.cpp's opt-in --metrics endpoint. The
@@ -20,47 +66,6 @@ func (s *Server) MetricsHandler(c *gin.Context) {
 	m := s.sched.collectMetrics()
 
 	var b strings.Builder
-	type metricLabel struct {
-		name  string
-		value string
-	}
-
-	formatLabels := func(labels ...metricLabel) string {
-		if len(labels) == 0 {
-			return ""
-		}
-
-		sort.Slice(labels, func(i, j int) bool {
-			return labels[i].name < labels[j].name
-		})
-
-		var renderedLabels strings.Builder
-		renderedLabels.WriteByte('{')
-		for i, label := range labels {
-			if i > 0 {
-				renderedLabels.WriteByte(',')
-			}
-			renderedLabels.WriteString(label.name)
-			renderedLabels.WriteByte('=')
-			renderedLabels.WriteByte('"')
-			renderedLabels.WriteString(strings.ReplaceAll(
-				strings.ReplaceAll(
-					strings.ReplaceAll(
-						label.value,
-						"\\",
-						"\\\\",
-					),
-					"\n",
-					"\\n",
-				),
-				"\"",
-				"\\\"",
-			))
-			renderedLabels.WriteByte('"')
-		}
-		renderedLabels.WriteByte('}')
-		return renderedLabels.String()
-	}
 
 	gauge := func(name, help string, value int) {
 		fmt.Fprintf(&b, "# HELP %s %s\n# TYPE %s gauge\n%s %d\n", name, help, name, name, value)
@@ -71,29 +76,20 @@ func (s *Server) MetricsHandler(c *gin.Context) {
 			return
 		}
 
-		type sample struct {
-			labelText string
-			value     string
-		}
-		samples := make([]sample, 0, len(values))
+		samples := make([]string, 0, len(values))
 		for key, count := range values {
 			labelText := formatLabels(
 				metricLabel{name: "action", value: key.action},
 				metricLabel{name: "status_code", value: strconv.Itoa(key.statusCode)},
 				metricLabel{name: "status", value: key.status},
 			)
-			samples = append(samples, sample{
-				labelText: labelText,
-				value:     strconv.FormatFloat(float64(count), 'f', 6, 64),
-			})
+			samples = append(samples, name+labelText+" "+strconv.FormatFloat(float64(count), 'f', 6, 64))
 		}
-		sort.Slice(samples, func(i, j int) bool {
-			return samples[i].labelText < samples[j].labelText
-		})
+		sort.Strings(samples)
 
 		fmt.Fprintf(&b, "# HELP %s %s\n# TYPE %s counter\n", name, help, name)
 		for _, sample := range samples {
-			fmt.Fprintf(&b, "%s%s %s\n", name, sample.labelText, sample.value)
+			fmt.Fprintln(&b, sample)
 		}
 	}
 
@@ -102,11 +98,7 @@ func (s *Server) MetricsHandler(c *gin.Context) {
 			return
 		}
 
-		type sample struct {
-			labelText string
-			value     float64
-		}
-		samples := make([]sample, 0, len(values))
+		samples := make([]string, 0, len(values))
 		for key, durationNanoseconds := range values {
 			labels := []metricLabel{
 				{name: "model", value: key.model},
@@ -114,18 +106,13 @@ func (s *Server) MetricsHandler(c *gin.Context) {
 			if key.reasonSet {
 				labels = append(labels, metricLabel{name: "reason", value: key.reason})
 			}
-			samples = append(samples, sample{
-				labelText: formatLabels(labels...),
-				value:     float64(durationNanoseconds) / float64(time.Second),
-			})
+			samples = append(samples, name+formatLabels(labels...)+" "+strconv.FormatFloat(float64(durationNanoseconds)/float64(time.Second), 'f', 6, 64))
 		}
-		sort.Slice(samples, func(i, j int) bool {
-			return samples[i].labelText < samples[j].labelText
-		})
+		sort.Strings(samples)
 
 		fmt.Fprintf(&b, "# HELP %s %s\n# TYPE %s counter\n", name, help, name)
 		for _, sample := range samples {
-			fmt.Fprintf(&b, "%s%s %s\n", name, sample.labelText, strconv.FormatFloat(sample.value, 'f', 6, 64))
+			fmt.Fprintln(&b, sample)
 		}
 	}
 
@@ -134,11 +121,7 @@ func (s *Server) MetricsHandler(c *gin.Context) {
 			return
 		}
 
-		type sample struct {
-			labelText string
-			value     uint64
-		}
-		samples := make([]sample, 0, len(values))
+		samples := make([]string, 0, len(values))
 		for key, count := range values {
 			labels := []metricLabel{
 				{name: "model", value: key.model},
@@ -146,18 +129,13 @@ func (s *Server) MetricsHandler(c *gin.Context) {
 			if key.reasonSet {
 				labels = append(labels, metricLabel{name: "reason", value: key.reason})
 			}
-			samples = append(samples, sample{
-				labelText: formatLabels(labels...),
-				value:     count,
-			})
+			samples = append(samples, name+formatLabels(labels...)+" "+strconv.FormatUint(count, 10))
 		}
-		sort.Slice(samples, func(i, j int) bool {
-			return samples[i].labelText < samples[j].labelText
-		})
+		sort.Strings(samples)
 
 		fmt.Fprintf(&b, "# HELP %s %s\n# TYPE %s counter\n", name, help, name)
 		for _, sample := range samples {
-			fmt.Fprintf(&b, "%s%s %d\n", name, sample.labelText, sample.value)
+			fmt.Fprintln(&b, sample)
 		}
 	}
 
@@ -166,11 +144,7 @@ func (s *Server) MetricsHandler(c *gin.Context) {
 			return
 		}
 
-		type sample struct {
-			labelText string
-			value     string
-		}
-		samples := make([]sample, 0, len(values))
+		samples := make([]string, 0, len(values))
 		for key, value := range values {
 			labels := []metricLabel{
 				{name: "model", value: key.model},
@@ -178,28 +152,16 @@ func (s *Server) MetricsHandler(c *gin.Context) {
 			if key.reasonSet {
 				labels = append(labels, metricLabel{name: "reason", value: key.reason})
 			}
-			samples = append(samples, sample{
-				labelText: formatLabels(labels...),
-				value:     strconv.FormatUint(value, 10),
-			})
+			samples = append(samples, name+formatLabels(labels...)+" "+strconv.FormatUint(value, 10))
 		}
 		if labelKey != "" && labelValue != "" {
-			samples = append(samples, sample{
-				labelText: formatLabels(metricLabel{name: labelKey, value: labelValue}),
-				value:     strconv.FormatInt(m.startUnix, 10),
-			})
+			samples = append(samples, name+formatLabels(metricLabel{name: labelKey, value: labelValue})+" "+strconv.FormatInt(m.startUnix, 10))
 		}
-		sort.Slice(samples, func(i, j int) bool {
-			return samples[i].labelText < samples[j].labelText
-		})
+		sort.Strings(samples)
 
 		fmt.Fprintf(&b, "# HELP %s %s\n# TYPE %s gauge\n", name, help, name)
 		for _, sample := range samples {
-			if sample.labelText == "" {
-				fmt.Fprintf(&b, "%s %s\n", name, sample.value)
-			} else {
-				fmt.Fprintf(&b, "%s%s %s\n", name, sample.labelText, sample.value)
-			}
+			fmt.Fprintln(&b, sample)
 		}
 	}
 

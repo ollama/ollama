@@ -74,6 +74,138 @@ func TestMetricsHandlerEmpty(t *testing.T) {
 	}
 }
 
+func TestMetricsHandlerOmitsEmptyMetricFamilies(t *testing.T) {
+	s := &Server{sched: &Scheduler{
+		pendingReqCh: make(chan *LlmRequest, 512),
+		loaded:       map[string]*runnerRef{},
+	}}
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.GET("/metrics", s.MetricsHandler)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	body := w.Body.String()
+
+	// Empty metric maps should only emit build-info and base gauges.
+	for _, unwanted := range []string{
+		"http_requests_total",
+		"ollama_total_duration_seconds",
+		"ollama_load_duration_seconds",
+		"ollama_prompt_eval_total",
+		"ollama_prompt_eval_duration_seconds",
+		"ollama_eval_total",
+		"ollama_eval_duration_seconds",
+		"ollama_peak_memory_bytes",
+	} {
+		if strings.Contains(body, "# HELP "+unwanted) {
+			t.Fatalf("metrics output should omit helper for %s when no values are recorded", unwanted)
+		}
+	}
+
+	if !strings.Contains(body, `# HELP ollama_build_info Ollama build information.`) {
+		t.Fatalf("metrics output missing build info metric")
+	}
+}
+
+func TestMetricsHandlerSortedHTTPMetrics(t *testing.T) {
+	sched := &Scheduler{
+		pendingReqCh: make(chan *LlmRequest, 4),
+		loaded:       map[string]*runnerRef{"model-a": {}},
+	}
+
+	sched.recordHTTPRequests("chat", http.StatusServiceUnavailable, http.StatusText(http.StatusServiceUnavailable))
+	sched.recordHTTPRequests("chat", http.StatusOK, http.StatusText(http.StatusOK))
+	sched.recordHTTPRequests("embed", http.StatusBadRequest, http.StatusText(http.StatusBadRequest))
+	sched.recordHTTPRequests("all", http.StatusOK, http.StatusText(http.StatusOK))
+
+	s := &Server{sched: sched}
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.GET("/metrics", s.MetricsHandler)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	body := w.Body.String()
+	want := []string{
+		`http_requests_total{action="all",status="Bad Request",status_code="400"} 1.000000`,
+		`http_requests_total{action="all",status="OK",status_code="200"} 3.000000`,
+		`http_requests_total{action="all",status="Service Unavailable",status_code="503"} 1.000000`,
+		`http_requests_total{action="chat",status="OK",status_code="200"} 1.000000`,
+		`http_requests_total{action="chat",status="Service Unavailable",status_code="503"} 1.000000`,
+		`http_requests_total{action="embed",status="Bad Request",status_code="400"} 1.000000`,
+	}
+
+	prev := -1
+	for _, wantLine := range want {
+		pos := strings.Index(body, wantLine)
+		if pos == -1 {
+			t.Fatalf("metrics output missing line %q\n--- got ---\n%s", wantLine, body)
+		}
+		if pos < prev {
+			t.Fatalf("metric sample ordering is incorrect; %q appeared after previous sample", wantLine)
+		}
+		prev = pos
+	}
+}
+
+func TestMetricsHandlerReasonLabels(t *testing.T) {
+	sched := &Scheduler{
+		pendingReqCh: make(chan *LlmRequest, 4),
+		loaded:       map[string]*runnerRef{"model-a": {}},
+	}
+
+	sched.recordPromptAndEvalMetricsWithMemory("with-reason", "timeout", true, 2*time.Second, time.Second, 500*time.Millisecond, 500*time.Millisecond, 200, 150, 4096)
+	sched.recordPromptAndEvalMetricsWithMemory("no-reason", "ignore", false, time.Second, 250*time.Millisecond, 100*time.Millisecond, 150*time.Millisecond, 100, 50, 2048)
+
+	s := &Server{sched: sched}
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.GET("/metrics", s.MetricsHandler)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	body := w.Body.String()
+
+	if !strings.Contains(body, `ollama_prompt_eval_duration_seconds{model="with-reason",reason="timeout"} 0.500000`) {
+		t.Fatalf("metrics output missing with-reason sample")
+	}
+	if !strings.Contains(body, `ollama_prompt_eval_duration_seconds{model="no-reason"} 0.100000`) {
+		t.Fatalf("metrics output missing no-reason sample")
+	}
+	if strings.Contains(body, `ollama_prompt_eval_duration_seconds{model="no-reason",reason="ignore"}`) {
+		t.Fatalf("prompt eval should not include reason when includeReason=false")
+	}
+
+	if !strings.Contains(body, `ollama_peak_memory_bytes{model="no-reason"} 2048`) {
+		t.Fatalf("metrics output missing peak memory sample")
+	}
+
+	if !strings.Contains(body, `ollama_peak_memory_bytes{model="with-reason",reason="timeout"} 4096`) {
+		t.Fatalf("metrics output missing reasoned peak memory sample")
+	}
+
+	if strings.Contains(body, `ollama_peak_memory_bytes 4096`) {
+		t.Fatalf("metrics output unexpectedly used unlabeled peak memory sample")
+	}
+}
+
 func TestMetricsHandlerExpandedMetrics(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
