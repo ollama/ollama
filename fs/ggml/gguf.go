@@ -305,6 +305,9 @@ func readGGUFV1String(llm *gguf, r io.Reader) (string, error) {
 	}
 
 	// gguf v1 strings are null-terminated
+	if b.Len() == 0 {
+		return "", fmt.Errorf("gguf: invalid v1 string (missing null terminator)")
+	}
 	b.Truncate(b.Len() - 1)
 
 	return b.String(), nil
@@ -357,6 +360,10 @@ func readGGUFString(llm *gguf, r io.Reader) (string, error) {
 	}
 
 	length := int(llm.ByteOrder.Uint64(buf))
+	// Guard a malicious/oversized declared length (avoids makeslice / negative-slice panic).
+	if length < 0 || length > 64<<20 {
+		return "", fmt.Errorf("gguf: invalid string length %d", length)
+	}
 	if length > len(llm.scratch) {
 		buf = make([]byte, length)
 	} else {
