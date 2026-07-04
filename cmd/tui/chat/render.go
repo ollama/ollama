@@ -40,8 +40,9 @@ type chatEntry struct {
 }
 
 const (
-	chatMessageIndent     = "  "
-	chatUserMessagePrefix = "> "
+	chatMessageIndent       = "  "
+	chatUserMessagePrefix   = "> "
+	maxCtrlOToolOutputRunes = 400
 )
 
 type chatEntryRenderKey struct {
@@ -81,15 +82,13 @@ func (m chatModel) toolStartedAt(toolID string) time.Time {
 func entryHasExpandableOutput(entry chatEntry) bool {
 	return (entry.role == "tool" && (len(entry.args) > 0 || strings.TrimSpace(entry.content) != "")) ||
 		(entry.role == "tool_group" && len(entry.tools) > 0) ||
-		(entry.role == "compaction_summary" && strings.TrimSpace(entry.content) != "") ||
-		(entry.role == "thinking" && strings.TrimSpace(entry.content) != "")
+		(entry.role == "compaction_summary" && strings.TrimSpace(entry.content) != "")
 }
 
 func entryHasToolOutputMode(entry chatEntry) bool {
 	return (entry.role == "tool" && (isToolActiveStatus(entry.status) || isToolResultStatus(entry.status) || entry.content != "")) ||
 		(entry.role == "tool_group" && len(entry.tools) > 0) ||
-		(entry.role == "compaction_summary" && strings.TrimSpace(entry.content) != "") ||
-		(entry.role == "thinking" && strings.TrimSpace(entry.content) != "")
+		(entry.role == "compaction_summary" && strings.TrimSpace(entry.content) != "")
 }
 
 func (m *chatModel) applyToolOutputMode() {
@@ -912,7 +911,7 @@ func (m *chatModel) syncThinkingEntry() {
 	m.entries[idx].content = m.latestLiveThinking()
 	m.entries[idx].label = m.thinkingLabel()
 	m.entries[idx].status = "running"
-	m.entries[idx].expanded = m.toolOutputMode && m.toolOutputOpen
+	m.entries[idx].expanded = false
 	m.markEntryDirty(idx)
 }
 
@@ -968,6 +967,7 @@ func boldToolInvocationName(label string) string {
 
 func renderToolOutputLines(entry chatEntry, output string, width int) []string {
 	output = stripInternalToolTruncationMarkers(output)
+	output = truncateCtrlOToolOutput(output)
 	if looksLikeUnifiedDiff(output) {
 		return splitRenderedBody(renderDiffForView(output, width))
 	}
@@ -975,6 +975,14 @@ func renderToolOutputLines(entry chatEntry, output string, width int) []string {
 		return splitRenderedBody(renderMarkdownForView(output, width))
 	}
 	return wrapChatText(output, width)
+}
+
+func truncateCtrlOToolOutput(output string) string {
+	runes := []rune(output)
+	if len(runes) <= maxCtrlOToolOutputRunes {
+		return output
+	}
+	return string(runes[:maxCtrlOToolOutputRunes-3]) + "..."
 }
 
 func stripInternalToolTruncationMarkers(output string) string {
@@ -1087,14 +1095,16 @@ func toolEntryStatusLabel(entry chatEntry) string {
 				return entry.label
 			}
 			return toolInvocationLabel(entry.detail, entry.args)
-		case "queued":
-			return "Queued command"
-		case "running":
-			return "Running command"
 		case "denied":
-			return "Command denied"
-		case "done", "error":
-			return "Ran a command"
+			if entry.label != "" {
+				return entry.label + " denied"
+			}
+			return toolInvocationLabel(entry.detail, entry.args) + " denied"
+		case "queued", "running", "done", "error":
+			if entry.label != "" {
+				return entry.label
+			}
+			return toolInvocationLabel(entry.detail, entry.args)
 		}
 	}
 	if entry.status == "denied" {
@@ -1223,7 +1233,7 @@ func toolActionPhrase(action string, count int) string {
 		if plural {
 			return fmt.Sprintf("Ran %d commands", count)
 		}
-		return "Ran a command"
+		return "Ran 1 command"
 	case "edit":
 		if plural {
 			return fmt.Sprintf("Edited %d files", count)
@@ -1630,6 +1640,9 @@ func (m chatModel) activityLine() string {
 	label := m.activityLabel()
 	if label == "" {
 		if m.awaitingToolStart() {
+			return statusWithSpinner(m.spinnerFrame(), "Working")
+		}
+		if m.awaitingModel {
 			return statusWithSpinner(m.spinnerFrame(), "Working")
 		}
 		if !m.waitingForModel() || m.spinner < waitingSpinnerTicks {

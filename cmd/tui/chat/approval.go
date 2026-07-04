@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -150,6 +151,11 @@ func (m chatModel) resolveApprovalPrompt(choice chatApprovalChoice) (tea.Model, 
 	if m.approvalPrompt == nil {
 		return m, nil
 	}
+	printedLines := m.flowPrintedLines
+	var printedTranscript []string
+	if printedLines > 0 {
+		printedTranscript = slices.Clone(m.transcriptLines(m.viewWidth()))
+	}
 	prompt := m.approvalPrompt
 	m.approvalPrompt = nil
 	m.status = "running"
@@ -189,7 +195,7 @@ func (m chatModel) resolveApprovalPrompt(choice chatApprovalChoice) (tea.Model, 
 		result.AllowScopes = allowScopes
 	}
 	prompt.reply <- result
-	return m, waitForChatMsg(m.events)
+	return m.withFlowTranscriptRefreshAfter(printedTranscript, printedLines, waitForChatMsg(m.events))
 }
 
 func (m chatModel) renderApprovalPromptLines(width int) []string {
@@ -203,18 +209,20 @@ func (m chatModel) renderApprovalPromptLines(width int) []string {
 	bodyWidth := max(20, width-2)
 
 	var lines []string
-	detail := approvalRequestDetail(prompt.request, bodyWidth)
-	if detail == "" {
-		label := "Tool request"
-		if len(prompt.request.Calls) == 1 {
-			label = toolDisplayName(prompt.request.Calls[0].ToolName)
+	if len(prompt.request.Calls) <= 1 {
+		detail := approvalRequestDetail(prompt.request, bodyWidth)
+		if detail == "" {
+			label := "Tool request"
+			if len(prompt.request.Calls) == 1 {
+				label = toolDisplayName(prompt.request.Calls[0].ToolName)
+			}
+			lines = append(lines, wrapChatText(fmt.Sprintf("%s wants to run", label), width)...)
+		} else {
+			lines = append(lines, indentLines(splitRenderedBody(detail), "  ")...)
 		}
-		lines = append(lines, wrapChatText(fmt.Sprintf("%s wants to run", label), width)...)
-	} else {
-		lines = append(lines, indentLines(splitRenderedBody(detail), "  ")...)
+		lines = append(lines, "")
 	}
 
-	lines = append(lines, "")
 	lines = append(lines, indentLines(renderApprovalChoices(prompt.request, prompt.cursor, bodyWidth), "  ")...)
 	return lines
 }

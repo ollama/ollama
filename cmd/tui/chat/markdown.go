@@ -123,37 +123,128 @@ func renderMarkdownTable(lines []string, width int) ([]string, int) {
 	for _, row := range rows {
 		columnCount = max(columnCount, len(row))
 	}
-	widths := make([]int, columnCount)
+	naturalWidths := make([]int, columnCount)
 	for _, row := range rows {
 		for i := 0; i < columnCount; i++ {
 			cell := ""
 			if i < len(row) {
 				cell = row[i]
 			}
-			widths[i] = max(widths[i], lipglossWidth(cell))
+			naturalWidths[i] = max(naturalWidths[i], lipglossWidth(cell))
 		}
 	}
+	widths := markdownTableColumnWidths(naturalWidths, width)
 
 	var rendered []string
 	for rowIndex, row := range rows {
-		cells := make([]string, columnCount)
+		wrappedCells := make([][]string, columnCount)
+		rowHeight := 1
 		for i := 0; i < columnCount; i++ {
 			cell := ""
 			if i < len(row) {
 				cell = row[i]
 			}
-			cells[i] = padPlainLine(cell, widths[i])
+			wrappedCells[i] = wrapMarkdownTableCell(cell, widths[i])
+			rowHeight = max(rowHeight, len(wrappedCells[i]))
 		}
-		line := strings.Join(cells, chatTableBorderStyle.Render(" | "))
-		if rowIndex == 0 {
-			line = chatHeaderStyle.Render(stripANSIForWidth(line))
+		for lineIndex := 0; lineIndex < rowHeight; lineIndex++ {
+			cells := make([]string, columnCount)
+			for i := 0; i < columnCount; i++ {
+				cellLine := ""
+				if lineIndex < len(wrappedCells[i]) {
+					cellLine = wrappedCells[i][lineIndex]
+				}
+				cells[i] = padPlainLine(cellLine, widths[i])
+			}
+			line := strings.Join(cells, chatTableBorderStyle.Render(" | "))
+			if rowIndex == 0 {
+				line = chatHeaderStyle.Render(stripANSIForWidth(line))
+			}
+			rendered = append(rendered, line)
 		}
-		if lipglossWidth(line) > width {
-			line = truncateRunes(stripANSIForWidth(line), width)
-		}
-		rendered = append(rendered, line)
 	}
 	return rendered, consumed
+}
+
+func markdownTableColumnWidths(naturalWidths []int, width int) []int {
+	if len(naturalWidths) == 0 {
+		return nil
+	}
+	separatorWidth := max(0, len(naturalWidths)-1) * lipglossWidth(" | ")
+	available := max(1, width-separatorWidth)
+	widths := make([]int, len(naturalWidths))
+	minWidths := make([]int, len(naturalWidths))
+	for i, natural := range naturalWidths {
+		widths[i] = max(1, natural)
+		minWidth := min(widths[i], 12)
+		if i == 0 {
+			minWidth = min(widths[i], 4)
+		}
+		minWidths[i] = max(1, minWidth)
+	}
+
+	for sumInts(widths) > available {
+		index := widestShrinkableColumn(widths, minWidths)
+		if index < 0 {
+			break
+		}
+		widths[index]--
+	}
+	for sumInts(widths) > available {
+		index := widestColumn(widths)
+		if index < 0 || widths[index] <= 1 {
+			break
+		}
+		widths[index]--
+	}
+	return widths
+}
+
+func widestShrinkableColumn(widths, minWidths []int) int {
+	index := -1
+	for i, width := range widths {
+		if width <= minWidths[i] {
+			continue
+		}
+		if index < 0 || width > widths[index] {
+			index = i
+		}
+	}
+	return index
+}
+
+func widestColumn(widths []int) int {
+	index := -1
+	for i, width := range widths {
+		if index < 0 || width > widths[index] {
+			index = i
+		}
+	}
+	return index
+}
+
+func sumInts(values []int) int {
+	sum := 0
+	for _, value := range values {
+		sum += value
+	}
+	return sum
+}
+
+func wrapMarkdownTableCell(cell string, width int) []string {
+	width = max(1, width)
+	var out []string
+	line := strings.TrimSpace(cell)
+	for lipglossWidth(line) > width {
+		cut := chatDisplayWidthCut(line, width)
+		out = append(out, strings.TrimSpace(line[:cut]))
+		line = strings.TrimSpace(line[cut:])
+	}
+	out = append(out, line)
+	if len(out) == 0 {
+		return []string{""}
+	}
+	return out
 }
 
 func looksLikeMarkdownTableRow(line string) bool {

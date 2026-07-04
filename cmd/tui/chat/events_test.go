@@ -47,8 +47,8 @@ func TestApplyAgentEventTracksToolLifecycle(t *testing.T) {
 	if entry.status != "done" || entry.content != "ok" || !strings.Contains(entry.label, "Bash") {
 		t.Fatalf("tool entry = %#v", entry)
 	}
-	if line := stripANSI(toolStatusLine(entry)); line != "Ran a command" {
-		t.Fatalf("tool status line = %q, want collapsed command summary", line)
+	if line := stripANSI(toolStatusLine(entry)); line != `Bash("pwd")` {
+		t.Fatalf("tool status line = %q, want command label", line)
 	}
 	if len(m.liveMessages) != 1 || m.liveMessages[0].Role != "tool" || m.liveMessages[0].Content != "ok" {
 		t.Fatalf("live messages = %#v", m.liveMessages)
@@ -76,8 +76,8 @@ func TestApplyAgentEventRendersDeniedCommandAsDenied(t *testing.T) {
 	if entry.status != "denied" {
 		t.Fatalf("tool status = %q, want denied: %#v", entry.status, entry)
 	}
-	if line := stripANSI(toolStatusLine(entry)); line != "Command denied" {
-		t.Fatalf("tool status line = %q, want denied command summary", line)
+	if line := stripANSI(toolStatusLine(entry)); line != `Bash("pwd") denied` {
+		t.Fatalf("tool status line = %q, want denied command label", line)
 	}
 }
 
@@ -101,6 +101,18 @@ func TestApplyAgentEventShowsWorkingWhileAwaitingCloudToolStart(t *testing.T) {
 
 	if line := stripANSI(m.activityLine()); !strings.Contains(line, "Working") {
 		t.Fatalf("activityLine = %q, want Working while tool call is pending", line)
+	}
+}
+
+func TestActivityLineShowsWorkingWhileAwaitingModelBeforeFirstEvent(t *testing.T) {
+	m := chatModel{
+		running:       true,
+		awaitingModel: true,
+		spinner:       0,
+	}
+
+	if line := stripANSI(m.activityLine()); !strings.Contains(line, "Working") {
+		t.Fatalf("activityLine = %q, want Working while stream is open before first event", line)
 	}
 }
 
@@ -141,10 +153,10 @@ func TestApplyAgentEventCountsHiddenDetectedCommandsInGroupSummary(t *testing.T)
 	if len(m.entries) != 2 {
 		t.Fatalf("entries after second start = %d, want finished command plus running command: %#v", len(m.entries), m.entries)
 	}
-	if line := stripANSI(toolStatusLine(m.entries[0])); line != "Ran a command" {
+	if line := stripANSI(toolStatusLine(m.entries[0])); line != `Bash("pwd")` {
 		t.Fatalf("finished command line after second start = %q", line)
 	}
-	if line := stripANSI(toolStatusLine(m.entries[1])); line != "Running command" {
+	if line := stripANSI(toolStatusLine(m.entries[1])); line != `Bash("ls")` {
 		t.Fatalf("running command line = %q", line)
 	}
 }

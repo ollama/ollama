@@ -127,6 +127,234 @@ func TestChatApprovalUsesShellNameForPermissionPrompt(t *testing.T) {
 	}
 }
 
+func TestChatApprovalPromptOmitsDuplicateBatchDetails(t *testing.T) {
+	request := coreagent.ApprovalRequest{
+		WorkingDir: "/repo",
+		Calls: []coreagent.ApprovalToolCall{
+			{
+				ToolCallID:    "call-1",
+				ToolName:      "bash",
+				Args:          map[string]any{"command": "git rev-parse --abbrev-ref HEAD"},
+				ApprovalScope: "bash\x00git rev-parse --abbrev-ref HEAD",
+			},
+			{
+				ToolCallID:    "call-2",
+				ToolName:      "bash",
+				Args:          map[string]any{"command": "git branch -a"},
+				ApprovalScope: "bash\x00git branch -a",
+			},
+		},
+	}
+	m := chatModel{
+		approvalPrompt: &chatApprovalPrompt{request: request},
+	}
+
+	lines := stripANSI(strings.Join(m.renderApprovalPromptLines(120), "\n"))
+	if strings.Contains(lines, `Bash("git rev-parse --abbrev-ref HEAD")`) || strings.Contains(lines, `Bash("git branch -a")`) {
+		t.Fatalf("batched approval prompt should not duplicate visible tool rows:\n%s", lines)
+	}
+	for _, want := range []string{"1. Approve once", "2. Always allow these requests", "3. Deny"} {
+		if !strings.Contains(lines, want) {
+			t.Fatalf("batched approval prompt missing %q:\n%s", want, lines)
+		}
+	}
+}
+
+func TestChatApprovalKeepsQueuedBatchCallsVisible(t *testing.T) {
+	reply := make(chan coreagent.Approval, 1)
+	request := coreagent.ApprovalRequest{
+		WorkingDir: "/repo",
+		Calls: []coreagent.ApprovalToolCall{
+			{
+				ToolCallID:    "call-1",
+				ToolName:      "bash",
+				Args:          map[string]any{"command": "git rev-parse --abbrev-ref HEAD"},
+				ApprovalScope: "bash\x00git rev-parse --abbrev-ref HEAD",
+			},
+			{
+				ToolCallID:    "call-2",
+				ToolName:      "bash",
+				Args:          map[string]any{"command": "git branch -a"},
+				ApprovalScope: "bash\x00git branch -a",
+			},
+		},
+	}
+	m := chatModel{
+		running: true,
+		events:  make(chan tea.Msg),
+	}
+	m.openApprovalPrompt(chatApprovalPromptMsg{request: request, reply: reply})
+
+	updated, _ := m.resolveApprovalPrompt(chatApprovalChoice{allow: true})
+	m = updated.(chatModel)
+	m.applyAgentEvent(coreagent.Event{
+		Type:       coreagent.EventToolStarted,
+		ToolCallID: "call-1",
+		ToolName:   "bash",
+		Args:       request.Calls[0].Args,
+	})
+	m.applyAgentEvent(coreagent.Event{
+		Type:       coreagent.EventToolFinished,
+		ToolCallID: "call-1",
+		ToolName:   "bash",
+		Args:       request.Calls[0].Args,
+		Content:    "parth-agent-tui\n",
+	})
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventMessageDelta, Content: "I'm on branch parth-agent-tui."})
+
+	transcript := stripANSI(m.renderTranscript(180))
+	for _, want := range []string{
+		`Bash("git rev-parse --abbrev-ref HEAD")`,
+		`Bash("git branch -a")`,
+		"I'm on branch parth-agent-tui.",
+	} {
+		if !strings.Contains(transcript, want) {
+			t.Fatalf("transcript missing %q:\n%s", want, transcript)
+		}
+	}
+}
+
+func TestChatApprovalPromptRepaintsFlowTranscript(t *testing.T) {
+	reply := make(chan coreagent.Approval, 1)
+	request := coreagent.ApprovalRequest{
+		WorkingDir: "/repo",
+		Calls: []coreagent.ApprovalToolCall{
+			{
+				ToolCallID:    "call-1",
+				ToolName:      "web_fetch",
+				Args:          map[string]any{"url": "https://parthsareen.com/"},
+				ApprovalScope: "web_fetch",
+			},
+			{
+				ToolCallID:    "call-2",
+				ToolName:      "web_fetch",
+				Args:          map[string]any{"url": "https://github.com/ParthSareen"},
+				ApprovalScope: "web_fetch",
+			},
+		},
+	}
+	m := chatModel{
+		running:          true,
+		width:            160,
+		flowPrintedLines: 1,
+		entries: []chatEntry{
+			{role: "user", content: "research parth"},
+		},
+	}
+
+	updated, cmd := m.Update(chatApprovalPromptMsg{request: request, reply: reply})
+	if cmd == nil {
+		t.Fatal("opening approval should repaint flow transcript")
+	}
+	fm := updated.(chatModel)
+	transcript := stripANSI(fm.renderTranscript(160))
+	for _, want := range []string{
+		`Web Fetch("https://parthsareen.com/") needs approval`,
+		`Web Fetch("https://github.com/ParthSareen") needs approval`,
+	} {
+		if !strings.Contains(transcript, want) {
+			t.Fatalf("transcript missing %q:\n%s", want, transcript)
+		}
+	}
+}
+
+func TestChatApprovalResolutionRepaintsFlowTranscript(t *testing.T) {
+	reply := make(chan coreagent.Approval, 1)
+	request := coreagent.ApprovalRequest{
+		WorkingDir: "/repo",
+		Calls: []coreagent.ApprovalToolCall{
+			{
+				ToolCallID:    "call-1",
+				ToolName:      "web_fetch",
+				Args:          map[string]any{"url": "https://parthsareen.com/"},
+				ApprovalScope: "web_fetch",
+			},
+			{
+				ToolCallID:    "call-2",
+				ToolName:      "web_fetch",
+				Args:          map[string]any{"url": "https://github.com/ParthSareen"},
+				ApprovalScope: "web_fetch",
+			},
+		},
+	}
+	m := chatModel{
+		running: true,
+		width:   160,
+		events:  make(chan tea.Msg),
+		entries: []chatEntry{
+			{role: "user", content: "research parth"},
+		},
+	}
+	m.openApprovalPrompt(chatApprovalPromptMsg{request: request, reply: reply})
+	printed := len(m.transcriptLines(160))
+	m.flowPrintedLines = printed
+
+	updated, cmd := m.resolveApprovalPrompt(chatApprovalChoice{allow: true})
+	if cmd == nil {
+		t.Fatal("approval resolution should keep waiting for agent events")
+	}
+	fm := updated.(chatModel)
+	if fm.flowPrintedLines >= printed {
+		t.Fatalf("approval resolution should repaint and hold queued rows, flowPrintedLines = %d, was %d", fm.flowPrintedLines, printed)
+	}
+	if result := <-reply; !result.Allow {
+		t.Fatalf("approval = %#v, want allow", result)
+	}
+}
+
+func TestChatApprovalBatchCollapsesAfterAllCallsFinish(t *testing.T) {
+	reply := make(chan coreagent.Approval, 1)
+	request := coreagent.ApprovalRequest{
+		WorkingDir: "/repo",
+		Calls: []coreagent.ApprovalToolCall{
+			{
+				ToolCallID:    "call-1",
+				ToolName:      "bash",
+				Args:          map[string]any{"command": "git rev-parse --abbrev-ref HEAD"},
+				ApprovalScope: "bash\x00git rev-parse --abbrev-ref HEAD",
+			},
+			{
+				ToolCallID:    "call-2",
+				ToolName:      "bash",
+				Args:          map[string]any{"command": "git branch -a"},
+				ApprovalScope: "bash\x00git branch -a",
+			},
+		},
+	}
+	m := chatModel{
+		running: true,
+		events:  make(chan tea.Msg),
+	}
+	m.openApprovalPrompt(chatApprovalPromptMsg{request: request, reply: reply})
+
+	updated, _ := m.resolveApprovalPrompt(chatApprovalChoice{allow: true})
+	m = updated.(chatModel)
+	for _, call := range request.Calls {
+		m.applyAgentEvent(coreagent.Event{
+			Type:       coreagent.EventToolStarted,
+			ToolCallID: call.ToolCallID,
+			ToolName:   call.ToolName,
+			Args:       call.Args,
+		})
+		m.applyAgentEvent(coreagent.Event{
+			Type:       coreagent.EventToolFinished,
+			ToolCallID: call.ToolCallID,
+			ToolName:   call.ToolName,
+			Args:       call.Args,
+			Content:    "ok\n",
+		})
+	}
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventMessageDelta, Content: "I'm on branch parth-agent-tui."})
+
+	transcript := stripANSI(m.renderTranscript(180))
+	if !strings.Contains(transcript, "Ran 2 commands") {
+		t.Fatalf("completed batch should collapse to command summary:\n%s", transcript)
+	}
+	if strings.Contains(transcript, `Bash("git branch -a")`) {
+		t.Fatalf("completed collapsed batch should not lose one command as a lone row:\n%s", transcript)
+	}
+}
+
 func TestChatApprovalPrompterCancels(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

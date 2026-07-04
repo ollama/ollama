@@ -291,6 +291,11 @@ func TestChatPromptCommandOpensPromptDebugScreen(t *testing.T) {
 			t.Fatalf("/prompt output should be rendered, not raw JSON; found %q:\n%s", unwanted, body)
 		}
 	}
+	messagesIndex := strings.Index(body, "Messages")
+	toolsIndex := strings.Index(body, "Tools")
+	if messagesIndex < 0 || toolsIndex < 0 || toolsIndex < messagesIndex {
+		t.Fatalf("/prompt should render tools after messages:\n%s", body)
+	}
 
 	updated, cmd = fm.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	if cmd == nil {
@@ -299,6 +304,39 @@ func TestChatPromptCommandOpensPromptDebugScreen(t *testing.T) {
 	fm = updated.(chatModel)
 	if fm.promptDebug != nil {
 		t.Fatal("esc should close prompt debug screen")
+	}
+}
+
+func TestChatPromptDebugCapsToolResultPreview(t *testing.T) {
+	longResult := strings.Repeat("x", maxPromptDebugToolResultRunes+25) + "tail-marker"
+	m := chatModel{
+		width:  120,
+		height: 20,
+		promptDebug: &chatPromptDebug{
+			request: api.ChatRequest{
+				Model: "llama3.2",
+				Messages: []api.Message{{
+					Role:       "tool",
+					ToolName:   "bash",
+					ToolCallID: "call-1",
+					Content:    longResult,
+				}},
+			},
+		},
+	}
+
+	body := stripANSI(strings.Join(m.promptDebugLines(120), "\n"))
+	if strings.Contains(body, "tail-marker") {
+		t.Fatalf("/prompt should cap rendered tool results:\n%s", body)
+	}
+	if !strings.Contains(body, "...") {
+		t.Fatalf("/prompt capped tool result should show ellipsis:\n%s", body)
+	}
+	if got := strings.Count(body, "x"); got != maxPromptDebugToolResultRunes-3 {
+		t.Fatalf("rendered tool result x count = %d, want %d:\n%s", got, maxPromptDebugToolResultRunes-3, body)
+	}
+	if got := m.promptDebug.request.Messages[0].Content; got != longResult {
+		t.Fatal("/prompt rendering should not mutate the request")
 	}
 }
 

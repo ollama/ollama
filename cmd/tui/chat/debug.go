@@ -21,6 +21,8 @@ type chatPromptDebug struct {
 	scroll  int
 }
 
+const maxPromptDebugToolResultRunes = 400
+
 func (m *chatModel) handleSaveCommand(args string) (tea.Model, tea.Cmd) {
 	filename, err := saveRequestFilename(args)
 	if err != nil {
@@ -243,27 +245,27 @@ func (m chatModel) promptDebugLines(width int) []string {
 	if req.KeepAlive != nil {
 		lines = append(lines, promptDebugFieldLine("keep_alive", req.KeepAlive.String(), innerWidth))
 	}
-	lines = append(lines, "", chatHeaderStyle.Render("Tools"))
-	if len(req.Tools) == 0 {
-		lines = append(lines, chatMetaStyle.Render("none"))
-	} else {
-		for i, tool := range req.Tools {
-			if i > 0 {
-				lines = append(lines, "")
-			}
-			lines = append(lines, promptDebugToolLines(i+1, tool, innerWidth)...)
-		}
-	}
 	lines = append(lines, "", chatHeaderStyle.Render("Messages"))
 	if len(req.Messages) == 0 {
 		lines = append(lines, chatMetaStyle.Render("none"))
+	} else {
+		for i, msg := range req.Messages {
+			if i > 0 {
+				lines = append(lines, "")
+			}
+			lines = append(lines, promptDebugMessageLines(i+1, msg, innerWidth)...)
+		}
+	}
+	lines = append(lines, "", chatHeaderStyle.Render("Tools"))
+	if len(req.Tools) == 0 {
+		lines = append(lines, chatMetaStyle.Render("none"))
 		return lines
 	}
-	for i, msg := range req.Messages {
+	for i, tool := range req.Tools {
 		if i > 0 {
 			lines = append(lines, "")
 		}
-		lines = append(lines, promptDebugMessageLines(i+1, msg, innerWidth)...)
+		lines = append(lines, promptDebugToolLines(i+1, tool, innerWidth)...)
 	}
 	return lines
 }
@@ -301,12 +303,20 @@ func promptDebugMessageLines(index int, msg api.Message, width int) []string {
 		if msg.ToolCallID != "" {
 			lines = append(lines, "  "+chatHistoryLabelStyle.Render("tool_call_id:")+" "+chatHistoryTextStyle.Render(msg.ToolCallID))
 		}
-		lines = append(lines, promptDebugBlockLines("tool result", msg.Content, width, chatHistoryTextStyle)...)
+		lines = append(lines, promptDebugBlockLines("tool result", promptDebugToolResult(msg.Content), width, chatHistoryTextStyle)...)
 	}
 	if len(msg.Images) > 0 {
 		lines = append(lines, "  "+chatHistoryLabelStyle.Render(fmt.Sprintf("%d image%s", len(msg.Images), pluralSuffix(len(msg.Images)))))
 	}
 	return lines
+}
+
+func promptDebugToolResult(content string) string {
+	runes := []rune(content)
+	if len(runes) <= maxPromptDebugToolResultRunes {
+		return content
+	}
+	return string(runes[:maxPromptDebugToolResultRunes-3]) + "..."
 }
 
 func promptDebugMapLines(label string, values map[string]any, width int) []string {

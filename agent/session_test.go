@@ -1796,6 +1796,83 @@ func TestSessionPromptsOnceForApprovalBatch(t *testing.T) {
 	}
 }
 
+func TestSessionRunsFullApprovedToolBatchBeforeNextModelStep(t *testing.T) {
+	args := api.NewToolCallFunctionArguments()
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{
+			{
+				{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{
+					{
+						ID: "call-1",
+						Function: api.ToolCallFunction{
+							Name:      "approval_tool",
+							Arguments: args,
+						},
+					},
+					{
+						ID: "call-2",
+						Function: api.ToolCallFunction{
+							Name:      "approval_tool",
+							Arguments: args,
+						},
+					},
+				}}},
+			},
+			{
+				{Message: api.Message{Role: "assistant", Content: "done"}},
+			},
+		},
+	}
+	registry := &Registry{}
+	registry.Register(approvalTestTool{})
+	prompter := &recordingApprovalPrompter{
+		results: []Approval{{Allow: true}},
+	}
+	events := &recordingEventSink{}
+	session := &Session{
+		Client:           client,
+		Tools:            registry,
+		ApprovalPrompter: prompter,
+		EventSinks:       []EventSink{events},
+	}
+
+	result, err := session.Run(context.Background(), RunOptions{
+		Model:       "model",
+		NewMessages: []api.Message{{Role: "user", Content: "use tools"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.calls != 2 {
+		t.Fatalf("client calls = %d, want second model step only after tool batch", client.calls)
+	}
+	if len(result.Messages) != 5 {
+		t.Fatalf("messages = %#v, want user, assistant tool calls, two tool results, final assistant", result.Messages)
+	}
+	if result.Messages[2].Role != "tool" || result.Messages[2].ToolCallID != "call-1" {
+		t.Fatalf("first tool result = %#v", result.Messages[2])
+	}
+	if result.Messages[3].Role != "tool" || result.Messages[3].ToolCallID != "call-2" {
+		t.Fatalf("second tool result = %#v", result.Messages[3])
+	}
+	if result.Messages[4].Role != "assistant" || result.Messages[4].Content != "done" {
+		t.Fatalf("final assistant = %#v", result.Messages[4])
+	}
+
+	var finishedBeforeDelta []string
+	for _, event := range events.events {
+		if event.Type == EventMessageDelta && event.Content == "done" {
+			break
+		}
+		if event.Type == EventToolFinished {
+			finishedBeforeDelta = append(finishedBeforeDelta, event.ToolCallID)
+		}
+	}
+	if strings.Join(finishedBeforeDelta, ",") != "call-1,call-2" {
+		t.Fatalf("tool finishes before final model delta = %#v, want full batch before model", finishedBeforeDelta)
+	}
+}
+
 func TestSessionAllowAllApprovalSkipsFuturePrompts(t *testing.T) {
 	args := api.NewToolCallFunctionArguments()
 	client := &fakeClient{

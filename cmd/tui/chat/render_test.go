@@ -137,8 +137,8 @@ func TestChatCompletedToolStatusLineUsesResultStyle(t *testing.T) {
 		status: "done",
 	})
 
-	if line := toolStatusLine(entry); line != "Ran a command" {
-		t.Fatalf("tool status line = %q, want neutral command summary", line)
+	if line := toolStatusLine(entry); line != `Bash("pwd")` {
+		t.Fatalf("tool status line = %q, want command label", line)
 	}
 	prefix, _ := (chatModel{}).renderEntry(entry)
 	if prefix != chatToolDoneStyle.Render("•")+" " {
@@ -160,8 +160,8 @@ func TestChatToolStatusMarkerUsesStateColors(t *testing.T) {
 		label:  `Bash("pwd")`,
 		status: "running",
 	})
-	if line := toolStatusLine(running); line != "Running command" {
-		t.Fatalf("running tool status line = %q, want neutral command summary", line)
+	if line := toolStatusLine(running); line != `Bash("pwd")` {
+		t.Fatalf("running tool status line = %q, want command label", line)
 	}
 	prefix, _ := (chatModel{}).renderEntry(running)
 	if prefix != chatToolRunningStyle.Render("•")+" " {
@@ -222,6 +222,66 @@ func TestChatFlowViewStartsAtInputWhenEmpty(t *testing.T) {
 	lines := strings.Split(stripANSI(m.View()), "\n")
 	if len(lines) == 0 || !strings.Contains(lines[0], inputBoxTopBorderLine(40)) {
 		t.Fatalf("empty flow view should start at input box:\n%s", strings.Join(lines, "\n"))
+	}
+}
+
+func TestFlowTranscriptChangedPrefixStartDetectsToolGrouping(t *testing.T) {
+	firstArgs := map[string]any{"command": "pwd"}
+	secondArgs := map[string]any{"command": "ls"}
+	beforeModel := chatModel{
+		width: 120,
+		entries: []chatEntry{
+			{
+				role:   "tool",
+				label:  `Bash("pwd")`,
+				detail: "bash",
+				status: "done",
+				toolID: "call-1",
+				args:   firstArgs,
+			},
+		},
+	}
+	before := beforeModel.transcriptLines(120)
+
+	afterModel := beforeModel
+	afterModel.entries = groupCompletedToolEntries([]chatEntry{
+		beforeModel.entries[0],
+		{
+			role:   "tool",
+			label:  `Bash("ls")`,
+			detail: "bash",
+			status: "done",
+			toolID: "call-2",
+			args:   secondArgs,
+		},
+	})
+
+	after := afterModel.transcriptLines(120)
+	if start := flowTranscriptChangedPrefixStart(before, after, len(before)); start != 0 {
+		t.Fatalf("changed prefix start = %d, want 0; before=%q after=%q", start, before, after)
+	}
+	sequence := flowTranscriptRewriteSequence(len(before), after)
+	if !strings.HasPrefix(sequence, "\x1b[1A\r\x1b[J") {
+		t.Fatalf("rewrite sequence = %q, want cursor-up clear-below prefix", sequence)
+	}
+	if !strings.Contains(sequence, "Ran 2 commands") {
+		t.Fatalf("grouping should invalidate already printed tool row; before=%q after=%q", before, afterModel.transcriptLines(120))
+	}
+}
+
+func TestFlowTranscriptChangedPrefixStartIgnoresAppendedLines(t *testing.T) {
+	beforeModel := chatModel{
+		width: 120,
+		entries: []chatEntry{
+			{role: "assistant", content: "hello"},
+		},
+	}
+	before := beforeModel.transcriptLines(120)
+	afterModel := beforeModel
+	afterModel.entries = append(afterModel.entries, chatEntry{role: "assistant", content: "world"})
+
+	if start := flowTranscriptChangedPrefixStart(before, afterModel.transcriptLines(120), len(before)); start >= 0 {
+		t.Fatalf("appended transcript lines should not invalidate already printed prefix")
 	}
 }
 
@@ -945,8 +1005,8 @@ func TestEntriesFromMessagesSkipsToolCallOnlyAssistant(t *testing.T) {
 	if entries[1].role != "tool" || entries[1].label != "Bash(\"pwd\")" {
 		t.Fatalf("tool entry = %#v", entries[1])
 	}
-	if line := stripANSI(toolStatusLine(entries[1])); line != "Ran a command" {
-		t.Fatalf("tool status line = %q, want collapsed command summary", line)
+	if line := stripANSI(toolStatusLine(entries[1])); line != `Bash("pwd")` {
+		t.Fatalf("tool status line = %q, want command label", line)
 	}
 
 	transcript := stripANSI((chatModel{entries: entries}).renderTranscript(120))
@@ -979,8 +1039,8 @@ func TestEntriesFromMessagesRendersDeniedCommandAsDenied(t *testing.T) {
 	if entries[0].status != "denied" {
 		t.Fatalf("tool status = %q, want denied: %#v", entries[0].status, entries[0])
 	}
-	if line := stripANSI(toolStatusLine(entries[0])); line != "Command denied" {
-		t.Fatalf("tool status line = %q, want denied command summary", line)
+	if line := stripANSI(toolStatusLine(entries[0])); line != `Bash("pwd") denied` {
+		t.Fatalf("tool status line = %q, want denied command label", line)
 	}
 }
 
@@ -1126,11 +1186,7 @@ func TestChatToolCallDetectedDoesNotRenderQueuedRows(t *testing.T) {
 }
 
 func TestChatToolOutputIsHiddenUntilExpanded(t *testing.T) {
-	var outputLines []string
-	for i := range 25 {
-		outputLines = append(outputLines, fmt.Sprintf("line %02d", i))
-	}
-	fullOutput := strings.Join(outputLines, "\n")
+	fullOutput := strings.Repeat("x", maxCtrlOToolOutputRunes+25) + "tail-marker"
 	m := chatModel{}
 	m.applyAgentEvent(coreagent.Event{
 		Type:     coreagent.EventToolFinished,
@@ -1147,7 +1203,7 @@ func TestChatToolOutputIsHiddenUntilExpanded(t *testing.T) {
 
 	transcript := m.renderTranscript(100)
 	body := stripANSI(transcript)
-	if strings.Contains(body, "line") {
+	if strings.Contains(body, "tail-marker") || strings.Contains(body, strings.Repeat("x", 20)) {
 		t.Fatalf("collapsed tool output should be hidden: %q", body)
 	}
 
@@ -1158,14 +1214,20 @@ func TestChatToolOutputIsHiddenUntilExpanded(t *testing.T) {
 		t.Fatalf("ctrl+o should expand tool output inline: %#v", m.entries[0])
 	}
 	body = stripANSI(m.renderTranscript(100))
-	if !strings.Contains(body, "line 00") || !strings.Contains(body, "line 24") {
-		t.Fatalf("expanded transcript should show full tool output: %q", body)
+	if strings.Contains(body, "tail-marker") {
+		t.Fatalf("expanded transcript should cap tool output: %q", body)
+	}
+	if !strings.Contains(body, "...") {
+		t.Fatalf("expanded transcript should show capped output ellipsis: %q", body)
+	}
+	if got := strings.Count(body, "x"); got != maxCtrlOToolOutputRunes-3 {
+		t.Fatalf("expanded transcript x count = %d, want %d:\n%s", got, maxCtrlOToolOutputRunes-3, body)
 	}
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
 	body = stripANSI(m.renderTranscript(100))
-	if m.toolOutputOpen || m.entries[0].expanded || strings.Contains(body, "line 00") {
+	if m.toolOutputOpen || m.entries[0].expanded || strings.Contains(body, strings.Repeat("x", 20)) {
 		t.Fatalf("second ctrl+o should collapse tool output: %q", body)
 	}
 }
@@ -1194,7 +1256,7 @@ func TestChatCompletedToolsGroupWhenNextStepStarts(t *testing.T) {
 	if m.entries[1].status != "running" || m.entries[1].label != "Bash(\"date\")" {
 		t.Fatalf("second entry should be active tool: %#v", m.entries[1])
 	}
-	if line := stripANSI(toolStatusLine(m.entries[1])); line != "Running command" {
+	if line := stripANSI(toolStatusLine(m.entries[1])); line != `Bash("date")` {
 		t.Fatalf("running command line = %q", line)
 	}
 }
@@ -1215,7 +1277,7 @@ func TestChatCompletedToolsGroupAcrossEmptyAssistantEntries(t *testing.T) {
 	if entries[0].role != "tool_group" || len(entries[0].tools) != 3 {
 		t.Fatalf("first entry should group tools across empty assistant entries: %#v", entries[0])
 	}
-	if line := stripANSI(toolGroupStatusLine(entries[0])); line != "Ran a command and read 2 files" {
+	if line := stripANSI(toolGroupStatusLine(entries[0])); line != "Ran 1 command and read 2 files" {
 		t.Fatalf("grouped tool line = %q", line)
 	}
 	if entries[1].role != "assistant" || entries[1].content != "The files were listed." {
@@ -1305,6 +1367,32 @@ func TestChatCtrlOTogglesInlineOutput(t *testing.T) {
 	}
 }
 
+func TestChatCtrlODoesNotExpandThinking(t *testing.T) {
+	m := chatModel{
+		entries: []chatEntry{
+			newChatEntry(chatEntry{role: "thinking", label: "Thinking", status: "done", content: "private reasoning"}),
+		},
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	m = updated.(chatModel)
+	if m.entries[0].expanded {
+		t.Fatalf("ctrl+o should not expand thinking entries: %#v", m.entries[0])
+	}
+	if view := stripANSI(m.renderTranscript(100)); strings.Contains(view, "private reasoning") {
+		t.Fatalf("ctrl+o should not render thinking content:\n%s", view)
+	}
+
+	m.liveMessages = []api.Message{{Role: "assistant", Thinking: "live private reasoning"}}
+	m.syncThinkingEntry()
+	if m.entries[1].expanded {
+		t.Fatalf("live thinking should not inherit ctrl+o expansion: %#v", m.entries[1])
+	}
+	if view := stripANSI(m.renderTranscript(100)); strings.Contains(view, "live private reasoning") {
+		t.Fatalf("ctrl+o should not render live thinking content:\n%s", view)
+	}
+}
+
 func TestChatCtrlOCollapseKeepsInputPromptVisible(t *testing.T) {
 	m := chatModel{
 		width:  80,
@@ -1349,7 +1437,7 @@ func TestChatCtrlOShowsRunningToolOutputInline(t *testing.T) {
 		t.Fatalf("ctrl+o should expand the running tool inline")
 	}
 	view := stripANSI(m.View())
-	if !strings.Contains(view, "Running command") || !strings.Contains(view, "$ pwd") {
+	if !strings.Contains(view, `Bash("pwd")`) || !strings.Contains(view, "$ pwd") {
 		t.Fatalf("expanded transcript missing running tool details:\n%s", view)
 	}
 
@@ -1444,7 +1532,7 @@ func TestChatCtrlOInlineOutputSurvivesToolGrouping(t *testing.T) {
 			t.Fatalf("grouped tool output missing %q:\n%s", want, view)
 		}
 	}
-	if strings.Contains(view, "    Ran a command") {
+	if strings.Contains(view, "    Ran 1 command") {
 		t.Fatalf("expanded grouped children should show concrete invocations, not generic summaries:\n%s", view)
 	}
 }
@@ -1495,6 +1583,42 @@ func TestChatExpandedToolGroupRendersIndentedToolBlocks(t *testing.T) {
 	}
 }
 
+func TestChatExpandedToolGroupCapsChildOutput(t *testing.T) {
+	longOutput := strings.Repeat("y", maxCtrlOToolOutputRunes+25) + "group-tail-marker"
+	m := chatModel{
+		entries: []chatEntry{
+			newChatEntry(chatEntry{
+				role:     "tool_group",
+				status:   "done",
+				expanded: true,
+				tools: []chatEntry{
+					newChatEntry(chatEntry{
+						role:    "tool",
+						detail:  "read",
+						label:   "Read(\"big.log\")",
+						status:  "done",
+						content: longOutput,
+					}),
+				},
+			}),
+		},
+	}
+
+	transcript := stripANSI(m.renderTranscript(120))
+	if strings.Contains(transcript, "group-tail-marker") {
+		t.Fatalf("expanded grouped tool output should be capped:\n%s", transcript)
+	}
+	if !strings.Contains(transcript, "...") {
+		t.Fatalf("expanded grouped tool output should show capped output ellipsis:\n%s", transcript)
+	}
+	if got := strings.Count(transcript, "y"); got != maxCtrlOToolOutputRunes-3 {
+		t.Fatalf("expanded grouped tool output y count = %d, want %d:\n%s", got, maxCtrlOToolOutputRunes-3, transcript)
+	}
+	if got := m.entries[0].tools[0].content; got != longOutput {
+		t.Fatal("ctrl+o rendering should not mutate grouped tool content")
+	}
+}
+
 func TestChatToolGroupStatusOmitsResultCounts(t *testing.T) {
 	startedAt := time.Date(2026, 6, 15, 17, 0, 0, 0, time.UTC)
 	entry := newChatEntry(chatEntry{
@@ -1538,6 +1662,56 @@ func TestChatToolGroupStatusShowsAllSuccessCount(t *testing.T) {
 	}
 	if line != "Used 2 tools" {
 		t.Fatalf("group status = %q, want action summary", line)
+	}
+}
+
+func TestChatToolGroupStatusRecomputesCachedLabel(t *testing.T) {
+	entries := groupCompletedToolEntries([]chatEntry{
+		newChatEntry(chatEntry{
+			role:   "tool_group",
+			label:  "Ran 1 command",
+			status: "done",
+			tools: []chatEntry{
+				newChatEntry(chatEntry{role: "tool", detail: "bash", label: `Bash("pwd")`, status: "done"}),
+			},
+		}),
+		newChatEntry(chatEntry{
+			role:   "tool",
+			detail: "bash",
+			label:  `Bash("ls")`,
+			status: "done",
+		}),
+	})
+
+	if len(entries) != 1 || entries[0].role != "tool_group" {
+		t.Fatalf("entries = %#v, want regrouped tool group", entries)
+	}
+	if line := stripANSI(toolGroupStatusLine(entries[0])); line != "Ran 2 commands" {
+		t.Fatalf("group status = %q, want recomputed action summary", line)
+	}
+}
+
+func TestChatToolGroupStatusKeepsHiddenDetectedCount(t *testing.T) {
+	args := map[string]any{"command": "ls"}
+	entry := newChatEntry(chatEntry{
+		role:   "tool_group",
+		label:  "Ran 2 commands",
+		status: "done",
+		tools: []chatEntry{
+			newChatEntry(chatEntry{role: "tool", detail: "bash", label: `Bash("pwd")`, status: "done"}),
+		},
+	})
+	entry.tools[0].args = map[string]any{"command": "pwd"}
+	detected := []chatEntry{
+		newChatEntry(chatEntry{role: "tool", detail: "bash", label: `Bash("ls")`, status: "queued", args: args}),
+	}
+
+	grouped := groupCompletedToolEntries([]chatEntry{entry}, detected...)
+	if len(grouped) != 1 || grouped[0].role != "tool_group" || len(grouped[0].tools) != 1 {
+		t.Fatalf("grouped entries = %#v, want visible finished child only", grouped)
+	}
+	if line := stripANSI(toolGroupStatusLine(grouped[0])); line != "Ran 2 commands" {
+		t.Fatalf("group status = %q, want hidden detected command counted", line)
 	}
 }
 
@@ -1707,6 +1881,28 @@ func TestWrapChatTextUsesDisplayWidth(t *testing.T) {
 	for _, line := range lines {
 		if got := lipgloss.Width(line); got > 20 {
 			t.Fatalf("line %q width = %d, want <= 20", line, got)
+		}
+	}
+}
+
+func TestRenderMarkdownTableWrapsLongCells(t *testing.T) {
+	markdown := strings.Join([]string{
+		"| # | Item | Why it matters |",
+		"|---|---|---|",
+		"| **C** | **Bash filesystem/network confinement** | Biggest asymmetry: file tools are sandboxed via `os.Root`, bash is not and this text should survive until tail-token. |",
+	}, "\n")
+
+	rendered := renderMarkdownForView(markdown, 72)
+	plain := stripANSI(rendered)
+	if !strings.Contains(plain, "tail-token") {
+		t.Fatalf("long table cell was truncated:\n%s", plain)
+	}
+	if strings.Contains(plain, "tail-toke...") {
+		t.Fatalf("long table cell should wrap, not ellipsize:\n%s", plain)
+	}
+	for _, line := range strings.Split(rendered, "\n") {
+		if got := lipgloss.Width(line); got > 72 {
+			t.Fatalf("rendered table line width = %d, want <= 72: %q\n%s", got, stripANSI(line), plain)
 		}
 	}
 }

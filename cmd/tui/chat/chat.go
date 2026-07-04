@@ -315,8 +315,13 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case chatAgentMsg:
+		printedLines := m.flowPrintedLines
+		var printedTranscript []string
+		if printedLines > 0 {
+			printedTranscript = slices.Clone(m.transcriptLines(m.viewWidth()))
+		}
 		m.applyAgentEvent(msg.event)
-		return m.withFlowTranscriptFlush(waitForChatMsg(m.events))
+		return m.withFlowTranscriptRefreshAfter(printedTranscript, printedLines, waitForChatMsg(m.events))
 
 	case chatClipboardErrorMsg:
 		if msg.err != nil {
@@ -325,10 +330,15 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case chatApprovalPromptMsg:
+		printedLines := m.flowPrintedLines
+		var printedTranscript []string
+		if printedLines > 0 {
+			printedTranscript = slices.Clone(m.transcriptLines(m.viewWidth()))
+		}
 		m.modelPicker = nil
 		m.modelPickerModels = nil
 		m.openApprovalPrompt(msg)
-		return m, nil
+		return m.withFlowTranscriptRefreshAfter(printedTranscript, printedLines, nil)
 
 	case chatRunDoneMsg:
 		wasCanceling := m.status == "canceling"
@@ -835,6 +845,60 @@ func (m chatModel) withFlowTranscriptRepaint(cmd tea.Cmd) (tea.Model, tea.Cmd) {
 	return next, tea.Sequence(tea.ClearScreen, printCmd, cmd)
 }
 
+func (m chatModel) withFlowTranscriptRefreshAfter(before []string, printed int, cmd tea.Cmd) (tea.Model, tea.Cmd) {
+	next, printCmd := m.flowTranscriptRefreshAfterCmd(before, printed)
+	return next, tea.Batch(printCmd, cmd)
+}
+
+func (m chatModel) flowTranscriptRefreshAfterCmd(before []string, printed int) (chatModel, tea.Cmd) {
+	width := m.viewWidth()
+	after := m.transcriptLines(width)
+	start := flowTranscriptChangedPrefixStart(before, after, printed)
+	if start < 0 {
+		return m.flowTranscriptFlushCmd()
+	}
+
+	printed = clamp(printed, 0, len(before))
+	start = clamp(start, 0, len(after))
+	rewind := printed - start
+	if rewind <= 0 {
+		return m.flowTranscriptFlushCmd()
+	}
+
+	flushCount := m.flowTranscriptFlushCount(after, width)
+	flushCount = clamp(flushCount, start, len(after))
+	rewriteLines := slices.Clone(after[start:flushCount])
+	m.flowPrintedLines = flushCount
+	return m, tea.Printf("%s", flowTranscriptRewriteSequence(rewind, rewriteLines))
+}
+
+func flowTranscriptChangedPrefixStart(before, after []string, printed int) int {
+	printed = clamp(printed, 0, len(before))
+	if printed == 0 {
+		return -1
+	}
+	limit := min(printed, len(after))
+	for i := 0; i < limit; i++ {
+		if before[i] != after[i] {
+			return i
+		}
+	}
+	if len(after) < printed {
+		return len(after)
+	}
+	return -1
+}
+
+func flowTranscriptRewriteSequence(rewind int, lines []string) string {
+	var b strings.Builder
+	if rewind > 0 {
+		fmt.Fprintf(&b, "\x1b[%dA", rewind)
+	}
+	b.WriteString("\r\x1b[J")
+	b.WriteString(strings.Join(lines, "\n"))
+	return b.String()
+}
+
 func (m chatModel) flowTranscriptFlushCmd() (chatModel, tea.Cmd) {
 	if m.promptDebug != nil || m.modelPicker != nil || m.thinkPicker != nil || m.cloudAuthPrompt != nil {
 		return m, nil
@@ -1012,7 +1076,7 @@ func (m *chatModel) startRunWithMessages(displayInput, historyInput string, newM
 		m.entries = append(m.entries, entriesFromMessages(newMessages[1:])...)
 	}
 	m.running = true
-	m.awaitingModel = false
+	m.awaitingModel = true
 	m.status = "running"
 	m.spinner = 0
 	m.scroll = 0
