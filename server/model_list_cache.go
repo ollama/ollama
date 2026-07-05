@@ -17,6 +17,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/model/parsers"
 	ollamatemplate "github.com/ollama/ollama/template"
@@ -370,7 +371,15 @@ func buildModelListSummary(name model.Name, mf *manifest.Manifest) (modelListSum
 		if err != nil {
 			slog.Warn("model template contains errors", "model", name.String(), "error", err)
 		}
-		if slices.Contains(vars, "tools") || (builtinParser != nil && builtinParser.HasToolSupport()) {
+		hasToolsVar := slices.Contains(vars, "tools")
+		if !hasToolsVar && modelPath != "" {
+			if f, err := gguf.Open(modelPath); err == nil {
+				chatTmpl := f.KeyValue("tokenizer.chat_template").String()
+				f.Close()
+				hasToolsVar = strings.Contains(chatTmpl, "tools") || strings.Contains(chatTmpl, "tool_call")
+			}
+		}
+		if hasToolsVar || (builtinParser != nil && builtinParser.HasToolSupport()) {
 			summary.Capabilities = appendModelListCapability(summary.Capabilities, model.CapabilityTools)
 		}
 		if slices.Contains(vars, "suffix") {

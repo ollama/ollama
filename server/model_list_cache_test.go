@@ -237,3 +237,53 @@ func createListCacheModel(t *testing.T, name string, kv map[string]any, tmpl str
 		t.Fatalf("create model status = %d, want 200: %s", w.Code, w.Body.String())
 	}
 }
+
+// TestBuildModelListSummaryGGUFChatTemplateTools verifies that /api/tags includes
+// the "tools" capability when it is present only in the GGUF tokenizer.chat_template
+// but not in the Ollama Go template (reproduces issue #16969).
+func TestBuildModelListSummaryGGUFChatTemplateTools(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setTestHome(t, t.TempDir())
+	// Go template has no .Tools reference; tools support lives in the GGUF chat template.
+	createListCacheModelWithKV(t, "list-gguf-tools",
+		map[string]any{
+			"test.context_length":       uint32(4096),
+			"tokenizer.chat_template":   "{% for tool in tools %} {{ tool.name }} {% endfor %}{{ prompt }}",
+		},
+		"{{ .prompt }}",
+	)
+
+	cache := newModelListCache()
+	if err := cache.hydrate(context.Background()); err != nil {
+		t.Fatalf("hydrate failed: %v", err)
+	}
+
+	summary, ok := cache.Get(model.ParseName("list-gguf-tools"))
+	if !ok {
+		t.Fatal("list summary missing")
+	}
+
+	if !slices.Contains(summary.Capabilities, model.CapabilityTools) {
+		t.Fatalf("capabilities = %v, want to contain %s (tools in GGUF chat template)", summary.Capabilities, model.CapabilityTools)
+	}
+}
+
+func createListCacheModelWithKV(t *testing.T, name string, kv map[string]any, tmpl string) {
+	t.Helper()
+	_, digest := createBinFile(t, kv, nil)
+
+	req := api.CreateRequest{
+		Model:  name,
+		Files:  map[string]string{"model.gguf": digest},
+		Stream: &stream,
+	}
+	if tmpl != "" {
+		req.Template = tmpl
+	}
+
+	var s Server
+	w := createRequest(t, s.CreateHandler, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("create model status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+}
