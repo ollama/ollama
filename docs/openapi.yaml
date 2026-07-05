@@ -444,8 +444,10 @@ components:
           type: integer
           description: Number of dimensions to generate embeddings for
         keep_alive:
-          type: string
-          description: Model keep-alive duration
+          oneOf:
+            - type: string
+            - type: number
+          description: Model keep-alive duration (for example `5m` or `0` to unload immediately)
         options:
           $ref: "#/components/schemas/ModelOptions"
     EmbedResponse:
