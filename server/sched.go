@@ -242,6 +242,9 @@ func (s *Scheduler) processPending(ctx context.Context) {
 
 			if pending.ctx.Err() != nil {
 				slog.Debug("pending request cancelled or timed out, skipping scheduling")
+				// The caller blocks on successCh/errCh with no context arm, so it
+				// must be notified here or its goroutine leaks forever.
+				pending.errCh <- pending.ctx.Err()
 				continue
 			}
 			logutil.Trace("processing incoming request", "model", pending.model.ModelPath)
