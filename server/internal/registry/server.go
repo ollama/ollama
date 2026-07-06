@@ -116,6 +116,10 @@ func (s *Local) serveHTTP(rec *statusCodeRecorder, r *http.Request) {
 	proxied, err := func() (bool, error) {
 		switch r.URL.Path {
 		case "/api/delete":
+			if s.Fallback != nil {
+				s.Fallback.ServeHTTP(rec, r)
+				return true, nil
+			}
 			return false, s.handleDelete(rec, r)
 		case "/api/pull":
 			return false, s.handlePull(rec, r)

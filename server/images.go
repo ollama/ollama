@@ -777,31 +777,12 @@ func CopyModel(src, dst model.Name) error {
 		return nil
 	}
 
-	manifests, err := manifest.Path()
+	data, err := manifest.ReadManifestData(src)
 	if err != nil {
 		return err
 	}
 
-	dstpath := filepath.Join(manifests, dst.Filepath())
-	if err := os.MkdirAll(filepath.Dir(dstpath), 0o755); err != nil {
-		return err
-	}
-
-	srcpath := filepath.Join(manifests, src.Filepath())
-	srcfile, err := os.Open(srcpath)
-	if err != nil {
-		return err
-	}
-	defer srcfile.Close()
-
-	dstfile, err := os.Create(dstpath)
-	if err != nil {
-		return err
-	}
-	defer dstfile.Close()
-
-	_, err = io.Copy(dstfile, srcfile)
-	return err
+	return manifest.WriteManifestData(dst, data)
 }
 
 func deleteUnusedLayers(deleteMap map[string]struct{}) error {
@@ -812,6 +793,10 @@ func deleteUnusedLayers(deleteMap map[string]struct{}) error {
 	}
 
 	for _, manifest := range manifests {
+		if manifest.BlobDigest() != "" {
+			delete(deleteMap, manifest.BlobDigest())
+		}
+
 		for _, layer := range manifest.Layers {
 			delete(deleteMap, layer.Digest)
 		}
@@ -915,11 +900,7 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	// Use fast transfer for models with tensor layers (many small blobs)
 	if hasTensorLayers(layers) {
 		// Read raw manifest JSON to preserve tensor metadata fields
-		manifestPath, err := manifest.PathForName(n)
-		if err != nil {
-			return err
-		}
-		manifestJSON, err := os.ReadFile(manifestPath)
+		manifestJSON, err := manifest.ReadManifestData(n)
 		if err != nil {
 			return err
 		}
@@ -975,6 +956,14 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		}
 		if existingMf.Config.Digest != "" {
 			deleteMap[existingMf.Config.Digest] = struct{}{}
+		}
+		if existingMf.BlobDigest() != "" {
+			digest := existingMf.BlobDigest()
+			if blob, err := manifest.BlobsPath(digest); err == nil {
+				if _, err := os.Stat(blob); err == nil {
+					deleteMap[digest] = struct{}{}
+				}
+			}
 		}
 	}
 
@@ -1045,21 +1034,12 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 
 	fn(api.ProgressResponse{Status: "writing manifest"})
 
-	fp, err := manifest.PathForName(n)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(fp), 0o755); err != nil {
+	if err := manifest.WriteManifestData(n, manifestData); err != nil {
+		slog.Info(fmt.Sprintf("couldn't write manifest for %s", n.DisplayShortest()))
 		return err
 	}
 
-	err = os.WriteFile(fp, manifestData, 0o644)
-	if err != nil {
-		slog.Info(fmt.Sprintf("couldn't write to %s", fp))
-		return err
-	}
-
-	slog.Debug("manifest written", "path", fp, "sha256", fmt.Sprintf("%x", sha256.Sum256(manifestData)), "size", len(manifestData))
+	slog.Debug("manifest written", "name", n.DisplayShortest(), "sha256", fmt.Sprintf("%x", sha256.Sum256(manifestData)), "size", len(manifestData))
 
 	if !envconfig.NoPrune() && len(deleteMap) > 0 {
 		fn(api.ProgressResponse{Status: "removing unused layers"})
@@ -1143,19 +1123,11 @@ func pullWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer
 	// Write manifest
 	fn(api.ProgressResponse{Status: "writing manifest"})
 
-	fp, err := manifest.PathForName(n)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(fp), 0o755); err != nil {
+	if err := manifest.WriteManifestData(n, manifestData); err != nil {
 		return err
 	}
 
-	if err := os.WriteFile(fp, manifestData, 0o644); err != nil {
-		return err
-	}
-
-	slog.Debug("manifest written", "path", fp, "sha256", fmt.Sprintf("%x", sha256.Sum256(manifestData)), "size", len(manifestData))
+	slog.Debug("manifest written", "name", n.DisplayShortest(), "sha256", fmt.Sprintf("%x", sha256.Sum256(manifestData)), "size", len(manifestData))
 	return nil
 }
 
