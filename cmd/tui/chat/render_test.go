@@ -791,6 +791,12 @@ func TestChatWindowsMouseWheelScrollsTranscript(t *testing.T) {
 }
 
 func TestChatMouseDragSelectsTranscriptWithoutAutoCopy(t *testing.T) {
+	oldGOOS := chatRuntimeGOOS
+	chatRuntimeGOOS = "darwin"
+	defer func() {
+		chatRuntimeGOOS = oldGOOS
+	}()
+
 	m := chatModel{
 		width:  80,
 		height: 10,
