@@ -20,12 +20,6 @@ type chatCaptureClient struct {
 	requests []*api.ChatRequest
 }
 
-type chatShowTestClient struct {
-	chatTestClient
-	resp *api.ShowResponse
-	req  *api.ShowRequest
-}
-
 type chatTestCompactor struct {
 	result   coreagent.CompactionResult
 	err      error
@@ -52,17 +46,6 @@ func (c *chatCaptureClient) Chat(ctx context.Context, req *api.ChatRequest, fn a
 		Message: api.Message{Role: "assistant", Content: "ok"},
 		Done:    true,
 	})
-}
-
-func (c *chatShowTestClient) Show(ctx context.Context, req *api.ShowRequest) (*api.ShowResponse, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	c.req = req
-	if c.resp != nil {
-		return c.resp, nil
-	}
-	return &api.ShowResponse{}, nil
 }
 
 func (c *chatTestCompactor) MaybeCompact(_ context.Context, req coreagent.CompactionRequest) (coreagent.CompactionResult, error) {

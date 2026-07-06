@@ -119,7 +119,7 @@ func TestActivityLineShowsWorkingWhileAwaitingModelBeforeFirstEvent(t *testing.T
 func TestActivityLineShowsWorkingAfterAssistantContentGoesIdle(t *testing.T) {
 	m := chatModel{
 		running: true,
-		spinner: waitingSpinnerTicks,
+		spinner: idleWorkingDelayTicks,
 	}
 
 	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventMessageDelta, Content: "I will inspect that next."})
@@ -127,7 +127,7 @@ func TestActivityLineShowsWorkingAfterAssistantContentGoesIdle(t *testing.T) {
 		t.Fatalf("activityLine immediately after content = %q, want quiet until the idle delay", line)
 	}
 
-	m.spinner = waitingSpinnerTicks
+	m.spinner = idleWorkingDelayTicks
 	if line := stripANSI(m.activityLine()); !strings.Contains(line, "Working") {
 		t.Fatalf("activityLine after idle content stream = %q, want Working while stream remains open", line)
 	}
@@ -140,7 +140,7 @@ func TestApplyAgentEventKeepsDetectedBatchStableUntilComplete(t *testing.T) {
 	secondArgs.Set("command", "ls")
 	m := chatModel{
 		running: true,
-		spinner: waitingSpinnerTicks,
+		spinner: idleWorkingDelayTicks,
 	}
 
 	m.applyAgentEvent(coreagent.Event{

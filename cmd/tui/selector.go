@@ -159,15 +159,22 @@ func currentItemName(items []SelectItem, cursor int) string {
 	return items[cursor].Name
 }
 
+func indexOfItemName(items []SelectItem, name string) int {
+	for i, item := range items {
+		if item.Name == name {
+			return i
+		}
+	}
+	return -1
+}
+
 func cursorForItemName(items []SelectItem, name string, fallback int) int {
 	if len(items) == 0 {
 		return 0
 	}
 	if name != "" {
-		for i, item := range items {
-			if item.Name == name {
-				return i
-			}
+		if i := indexOfItemName(items, name); i >= 0 {
+			return i
 		}
 	}
 	if fallback < 0 {
@@ -681,10 +688,8 @@ func cursorForCurrent(items []SelectItem, current string) int {
 
 	// Prefer exact name matches before tag-prefix fallback so "qwen3.5" does not
 	// incorrectly select "qwen3.5:cloud" (and vice versa) based on list order.
-	for i, item := range items {
-		if item.Name == current {
-			return i
-		}
+	if i := indexOfItemName(items, current); i >= 0 {
+		return i
 	}
 
 	for i, item := range items {

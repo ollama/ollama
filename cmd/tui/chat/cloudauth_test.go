@@ -83,7 +83,7 @@ func TestCloudModelPreflightFailureShowsPlanVerificationNotice(t *testing.T) {
 	}
 	m = updated.(chatModel)
 
-	if got := m.status; got != "Could not verify Ollama plan" {
+	if got := m.status; got != cloudPlanVerificationUnavailable {
 		t.Fatalf("status = %q", got)
 	}
 	if m.cloudAuthPrompt != nil {

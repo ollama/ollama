@@ -55,14 +55,12 @@ var chatSlashCommands = []chatSlashCommand{
 	{name: "/model", description: "switch models"},
 	{name: "/new", description: "start a new chat"},
 	{name: "/think", description: "set thinking mode"},
+	{name: "/tools", usage: "/tools on|off", description: "turn tools on or off"},
 	{name: "/compact", description: "summarize older context"},
 	{name: "/help", description: "show commands", aliases: []string{"/?"}},
 	{name: "/bye", description: "exit", aliases: []string{"/exit"}},
 	{name: "/prompt", description: "show full prompt, tools, and messages"},
 	{name: "/save", usage: "/save <filename>", description: "save request JSON; saved as <filename>.json"},
-	{name: "/load", hidden: true},
-	{name: "/set", hidden: true},
-	{name: "/show", hidden: true},
 }
 
 func (m *chatModel) handleSubmit() (tea.Model, tea.Cmd) {
@@ -85,13 +83,10 @@ func (m *chatModel) handleSubmit() (tea.Model, tea.Cmd) {
 	m.input = nil
 	m.inputCursor = 0
 	m.inputCursorSet = false
-	m.inputAttachments = nil
-	m.inputPastedTexts = nil
-	m.complete = 0
-	m.resetPromptHistoryCursor()
-
 	m.inputAttachments = attachments
 	m.inputPastedTexts = pastedTexts
+	m.complete = 0
+	m.resetPromptHistoryCursor()
 	return m.submitInput(input)
 }
 
@@ -108,8 +103,8 @@ func (m chatModel) selectedSlashCommand() (string, bool) {
 }
 
 func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
-	command, args, hasSlashCommand := slashCommandInvocation(input)
-	if hasSlashCommand {
+	command, args, _ := slashCommandInvocation(input)
+	if command != "" {
 		input = strings.TrimSpace(command + " " + args)
 	}
 
@@ -117,25 +112,19 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 	case command == "/bye":
 		m.quitting = true
 		return *m, m.quitCmd()
-	case command == "/help" && args == "":
+	case command == "/help":
 		m.entries = append(m.entries, newSlashEntry(m.helpSummary()))
 		return *m, nil
-	case command == "/help":
-		return m.handleLegacyHelpCommand(input)
 	case command == "/clear" && args == "":
 		return m.resetChat("cleared")
 	case command == "/model":
 		return m.openModelPicker(args)
-	case command == "/load":
-		return m.handleLegacyLoadCommand(input)
 	case command == "/think" && args == "":
 		return m.openThinkPicker()
 	case command == "/think":
 		return m.handleThinkCommand(args)
-	case command == "/set":
-		return m.handleLegacySetCommand(input)
-	case command == "/show":
-		return m.handleLegacyShowCommand(input)
+	case command == "/tools":
+		return m.handleToolsCommand(args)
 	case command == "/prompt":
 		return m.handlePromptCommand(args)
 	case command == "/save":
@@ -152,6 +141,29 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 	}
 
 	return m.startRun(input)
+}
+
+func (m *chatModel) handleToolsCommand(args string) (tea.Model, tea.Cmd) {
+	switch strings.ToLower(strings.TrimSpace(args)) {
+	case "off":
+		m.opts.ToolsDisabled = true
+		m.opts.Tools = nil
+		m.status = "tools off"
+		m.entries = append(m.entries, newSlashEntry("Tools are off."))
+		return *m, nil
+	case "on":
+		m.opts.ToolsDisabled = false
+		if m.opts.ToolRegistryForModel != nil {
+			m.opts.Tools = m.opts.ToolRegistryForModel(m.ctx, m.opts.Model)
+		}
+		m.status = "tools on"
+		m.entries = append(m.entries, newSlashEntry("Tools are on."))
+		return *m, nil
+	default:
+		m.status = "error"
+		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: "usage: /tools on|off"}))
+		return *m, nil
+	}
 }
 
 func (m chatModel) slashInputIsMultimodalFile(input string) bool {

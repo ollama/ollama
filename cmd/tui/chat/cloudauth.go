@@ -21,6 +21,8 @@ const (
 	cloudAuthChecking cloudAuthKind = "checking"
 )
 
+const cloudPlanVerificationUnavailable = "Could not verify Ollama plan. Try again in a moment or use a local model."
+
 // cloudAuthPrompt is an inline modal that handles sign-in and plan-upgrade
 // flows when a user selects a cloud model from the picker.
 type cloudAuthPrompt struct {
@@ -122,7 +124,7 @@ func (m chatModel) updateCloudModelPreflight(msg cloudModelPreflightMsg) (tea.Mo
 		return m, nil
 	}
 	if msg.err == nil {
-		if m.status == "Could not verify Ollama plan" {
+		if m.status == cloudPlanVerificationUnavailable {
 			m.status = "ready"
 		}
 		return m, nil
@@ -130,7 +132,7 @@ func (m chatModel) updateCloudModelPreflight(msg cloudModelPreflightMsg) (tea.Mo
 	if msg.signInURL != "" {
 		return m.startCloudAuthSignIn(msg.model, "", msg.signInURL)
 	}
-	m.status = "Could not verify Ollama plan"
+	m.status = cloudPlanVerificationUnavailable
 	return m, nil
 }
 

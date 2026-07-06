@@ -43,12 +43,14 @@ const (
 	chatMessageIndent       = "  "
 	chatUserMessagePrefix   = ""
 	maxCtrlOToolOutputRunes = 400
+
+	defaultViewWidth  = 80
+	defaultViewHeight = 24
 )
 
 type chatEntryRenderKey struct {
 	width   int
 	version int
-	hash    string
 }
 
 func (m chatModel) findToolEntry(toolID string) int {
@@ -185,8 +187,14 @@ func (m chatModel) renderTranscript(width int) string {
 	return b.String()
 }
 
+// renderEntryLinesCached renders (and memoizes) the wrapped lines for an entry.
+// Despite the value receiver, the cache write below mutates the caller's entries
+// in place: m.entries is a slice, so the value-receiver copy shares its backing
+// array with the caller. markEntryDirty invalidates a cached entry by bumping
+// its version, which entryRenderKey compares against to decide whether to reuse
+// or re-render.
 func (m chatModel) renderEntryLinesCached(index int, entry chatEntry, body string, width int) []string {
-	key := entryRenderKey(entry, body, width)
+	key := entryRenderKey(entry, width)
 	if index >= 0 && index < len(m.entries) {
 		cached := m.entries[index]
 		if cached.renderKey == key && cached.renderLines != nil {
@@ -238,21 +246,30 @@ func (m chatModel) visibleTranscriptStartLineForLines(total, available int) int 
 }
 
 func (m chatModel) viewWidth() int {
-	if m.width > 0 {
-		return m.width
+	width, _ := m.viewSize()
+	return width
+}
+
+// defaultSize clamps caller-supplied dimensions to the standard fallbacks
+// (80x24) when unset. Free functions that receive width/height as arguments
+// (rather than reading them off the model) use this directly; methods use
+// viewSize, which reads m.width/m.height first.
+func defaultSize(width, height int) (int, int) {
+	if width <= 0 {
+		width = defaultViewWidth
 	}
-	return 80
+	if height <= 0 {
+		height = defaultViewHeight
+	}
+	return width, height
+}
+
+func (m chatModel) viewSize() (int, int) {
+	return defaultSize(m.width, m.height)
 }
 
 func (m chatModel) transcriptHeight() int {
-	width := m.width
-	if width <= 0 {
-		width = 80
-	}
-	height := m.height
-	if height <= 0 {
-		height = 24
-	}
+	width, height := m.viewSize()
 	lineCount := len(m.transcriptLines(width))
 	baseHeaderHeight := 2
 	baseMaxHeight := height - baseHeaderHeight
@@ -268,25 +285,15 @@ func (m chatModel) transcriptHeight() int {
 }
 
 func (m chatModel) transcriptLayout() (top, height int) {
-	width := m.width
-	if width <= 0 {
-		width = 80
-	}
-	viewHeight := m.height
-	if viewHeight <= 0 {
-		viewHeight = 24
-	}
+	width, height := m.viewSize()
 	headerHeight := len(m.headerLines())
-	bottomLines := m.bottomLines(width, viewHeight-headerHeight)
+	bottomLines := m.bottomLines(width, height-headerHeight)
 	transcriptLineCount := len(m.transcriptLines(width))
-	return headerHeight, max(0, viewHeight-headerHeight-len(bottomLines)-transcriptInputGap(viewHeight-headerHeight, len(bottomLines), transcriptLineCount))
+	return headerHeight, max(0, height-headerHeight-len(bottomLines)-transcriptInputGap(height-headerHeight, len(bottomLines), transcriptLineCount))
 }
 
 func (m chatModel) maxScroll() int {
-	width := m.width
-	if width <= 0 {
-		width = 80
-	}
+	width, _ := m.viewSize()
 	return max(0, len(m.transcriptLines(width))-m.transcriptHeight())
 }
 
@@ -638,172 +645,6 @@ func metricsEmpty(metrics api.Metrics) bool {
 		metrics.EvalDuration <= 0
 }
 
-func renderHistoryMessages(messages []api.Message, width int) []string {
-	if width < 20 {
-		width = 20
-	}
-	var lines []string
-	for _, msg := range messages {
-		role := strings.TrimSpace(msg.Role)
-		if role == "" {
-			role = "message"
-		}
-		lines = append(lines, renderHistoryStyledLine("", role, width, historyRoleStyle(role))...)
-
-		var meta []string
-		if msg.ToolName != "" {
-			meta = append(meta, "tool: `"+msg.ToolName+"`")
-		}
-		if msg.ToolCallID != "" {
-			meta = append(meta, "tool call: `"+msg.ToolCallID+"`")
-		}
-		if len(meta) > 0 {
-			lines = append(lines, "  "+renderHistoryMetaLine(strings.Join(meta, " · ")))
-		}
-
-		if strings.TrimSpace(msg.Thinking) != "" {
-			lines = append(lines, renderHistoryFieldLines("  ", "thinking", msg.Thinking, width)...)
-		}
-		if len(msg.ToolCalls) > 0 {
-			lines = append(lines, "  "+chatHistoryLabelStyle.Render("tool calls:"))
-			for _, call := range msg.ToolCalls {
-				lines = append(lines, renderHistoryToolCallLines(call, width)...)
-			}
-		}
-		if strings.TrimSpace(msg.Content) != "" {
-			content := msg.Content
-			if msg.Role == "tool" {
-				content = stripInternalToolTruncationMarkers(content)
-			}
-			lines = append(lines, renderHistoryFieldLines("  ", "content", content, width)...)
-		}
-		if strings.TrimSpace(msg.Thinking) == "" && len(msg.ToolCalls) == 0 && strings.TrimSpace(msg.Content) == "" {
-			lines = append(lines, "  "+chatHistoryTextStyle.Render("_empty_"))
-		}
-		lines = append(lines, "")
-	}
-	return stringsTrimTrailingEmptyLines(lines)
-}
-
-func renderHistoryFieldLines(indent, label, content string, width int) []string {
-	content = strings.TrimRight(content, "\n")
-	if content == "" {
-		return nil
-	}
-	if !strings.Contains(content, "\n") {
-		return renderHistoryLabelValue(indent, label, content, width)
-	}
-	lines := []string{indent + chatHistoryLabelStyle.Render(label+":")}
-	for _, line := range strings.Split(content, "\n") {
-		lines = append(lines, renderHistoryCodeLine(indent, line, width)...)
-	}
-	return lines
-}
-
-func renderHistoryToolCallLines(call api.ToolCall, width int) []string {
-	name := call.Function.Name
-	if name == "" {
-		name = "tool"
-	}
-	line := "    - "
-	if call.ID != "" {
-		line += "`" + call.ID + "` "
-	}
-	line += toolDisplayName(name)
-	lines := renderHistoryStyledLine("", line, width, chatHistoryTextStyle)
-
-	args := call.Function.Arguments.ToMap()
-	if len(args) == 0 {
-		return lines
-	}
-	lines = append(lines, "      "+chatHistoryLabelStyle.Render("args:"))
-	data, err := json.MarshalIndent(args, "", "  ")
-	if err != nil {
-		lines = append(lines, renderHistoryCodeLine("      ", fmt.Sprint(args), width)...)
-		return lines
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		lines = append(lines, renderHistoryCodeLine("      ", line, width)...)
-	}
-	return lines
-}
-
-func stringsTrimTrailingEmptyLines(lines []string) []string {
-	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
-		lines = lines[:len(lines)-1]
-	}
-	return lines
-}
-
-func renderHistoryLabelValue(indent, label, value string, width int) []string {
-	labelText := label + ":"
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return []string{indent + chatHistoryLabelStyle.Render(labelText)}
-	}
-
-	prefixWidth := lipgloss.Width(indent) + lipgloss.Width(labelText) + 1
-	wrapped := wrapChatText(value, max(10, width-prefixWidth))
-	lines := make([]string, 0, len(wrapped))
-	for i, line := range wrapped {
-		if i == 0 {
-			lines = append(lines, indent+chatHistoryLabelStyle.Render(labelText)+" "+renderHistoryInline(line, chatHistoryTextStyle))
-			continue
-		}
-		lines = append(lines, indent+strings.Repeat(" ", lipgloss.Width(labelText)+1)+renderHistoryInline(line, chatHistoryTextStyle))
-	}
-	return lines
-}
-
-func renderHistoryStyledLine(indent, text string, width int, style lipgloss.Style) []string {
-	wrapped := wrapChatText(text, max(10, width-lipgloss.Width(indent)))
-	for i, line := range wrapped {
-		wrapped[i] = indent + renderHistoryInline(line, style)
-	}
-	return wrapped
-}
-
-func renderHistoryCodeLine(indent, code string, width int) []string {
-	codeIndent := indent + "  "
-	wrapped := wrapChatText(code, max(10, width-lipgloss.Width(codeIndent)))
-	for i, line := range wrapped {
-		wrapped[i] = codeIndent + chatHistoryCodeStyle.Render(line)
-	}
-	return wrapped
-}
-
-func renderHistoryMetaLine(text string) string {
-	parts := strings.Split(text, " · ")
-	for i, part := range parts {
-		if label, value, ok := historyLabelValue(part); ok {
-			parts[i] = chatHistoryLabelStyle.Render(label+":") + " " + renderHistoryInline(value, chatHistoryTextStyle)
-			continue
-		}
-		parts[i] = renderHistoryInline(part, chatHistoryTextStyle)
-	}
-	return strings.Join(parts, chatHistoryLabelStyle.Render(" · "))
-}
-
-func renderHistoryInline(text string, style lipgloss.Style) string {
-	text = strings.ReplaceAll(text, "**", "")
-	var b strings.Builder
-	for {
-		before, rest, ok := strings.Cut(text, "`")
-		b.WriteString(style.Render(before))
-		if !ok {
-			break
-		}
-		code, after, ok := strings.Cut(rest, "`")
-		if !ok {
-			b.WriteString(style.Render("`" + rest))
-			break
-		}
-		b.WriteString(chatHistoryCodeStyle.Render(code))
-		text = after
-	}
-	return b.String()
-}
-
 func historyRoleStyle(role string) lipgloss.Style {
 	switch role {
 	case "system":
@@ -816,27 +657,6 @@ func historyRoleStyle(role string) lipgloss.Style {
 		return chatHistoryToolRoleStyle
 	default:
 		return chatHistoryTitleStyle
-	}
-}
-
-func historyLabelValue(text string) (string, string, bool) {
-	label, value, ok := strings.Cut(text, ":")
-	if !ok {
-		return "", "", false
-	}
-	label = strings.TrimSpace(label)
-	if !historyLabel(label) {
-		return "", "", false
-	}
-	return label, strings.TrimSpace(value), true
-}
-
-func historyLabel(label string) bool {
-	switch label {
-	case "args", "content", "thinking", "tool", "tool call", "tool calls":
-		return true
-	default:
-		return false
 	}
 }
 
@@ -1002,9 +822,16 @@ func renderToolOutputLines(entry chatEntry, output string, width int) []string {
 		return splitRenderedBody(renderDiffForView(output, width))
 	}
 	if toolOutputUsesMarkdown(entry.detail) {
-		return splitRenderedBody(renderMarkdownForView(output, width))
+		return styleLines(splitRenderedBody(renderMarkdownForView(output, width)), chatToolOutputStyle)
 	}
-	return wrapChatText(output, width)
+	return styleLines(wrapChatText(output, width), chatToolOutputStyle)
+}
+
+func styleLines(lines []string, style lipgloss.Style) []string {
+	for i := range lines {
+		lines[i] = style.Render(lines[i])
+	}
+	return lines
 }
 
 func truncateCtrlOToolOutput(output string) string {
@@ -1675,13 +1502,16 @@ func (m chatModel) activityLine() string {
 		if m.awaitingModel {
 			return statusWithSpinner(m.spinnerFrame(), "Working")
 		}
-		if !m.waitingForModel() || m.spinner < waitingSpinnerTicks {
+		if !m.waitingForModel() || m.spinner < idleWorkingDelayTicks {
 			return ""
 		}
 		if m.preloadingModel != "" {
 			return statusWithSpinner(m.spinnerFrame(), "Working")
 		}
 		return statusWithSpinner(m.spinnerFrame(), "Working")
+	}
+	if m.thinking {
+		return label
 	}
 	return statusWithSpinner(m.spinnerFrame(), label)
 }
@@ -1961,12 +1791,7 @@ func statusWithSpinner(frame, label string) string {
 }
 
 func renderFullFrame(content string, width, height int) string {
-	if width <= 0 {
-		width = 80
-	}
-	if height <= 0 {
-		height = 24
-	}
+	width, height = defaultSize(width, height)
 	rendered := lipgloss.NewStyle().MaxWidth(width).Render(content)
 	lines := strings.Split(strings.TrimRight(rendered, "\n"), "\n")
 	if len(lines) > height {
@@ -1979,12 +1804,7 @@ func renderFullFrame(content string, width, height int) string {
 }
 
 func renderFrameLines(lines []string, width, height int) string {
-	if width <= 0 {
-		width = 80
-	}
-	if height <= 0 {
-		height = 24
-	}
+	width, height = defaultSize(width, height)
 	if len(lines) > height {
 		lines = lines[:height]
 	}
@@ -2052,41 +1872,8 @@ func (m *chatModel) markEntryDirty(index int) {
 	entry.renderLines = nil
 }
 
-func entryRenderKey(entry chatEntry, body string, width int) chatEntryRenderKey {
-	if entry.version > 0 {
-		return chatEntryRenderKey{width: width, version: entry.version}
-	}
-	return chatEntryRenderKey{width: width, hash: fallbackEntryRenderHash(entry, body)}
-}
-
-func fallbackEntryRenderHash(entry chatEntry, body string) string {
-	var b strings.Builder
-	writeEntryRenderHash(&b, entry)
-	b.WriteString("\x00body\x00")
-	b.WriteString(body)
-	return b.String()
-}
-
-func writeEntryRenderHash(b *strings.Builder, entry chatEntry) {
-	for _, value := range []string{
-		entry.role,
-		entry.content,
-		entry.label,
-		entry.detail,
-		entry.status,
-		entry.err,
-		entry.toolID,
-		strconv.FormatBool(entry.expanded),
-		strconv.FormatInt(entry.startedAt.UnixNano(), 10),
-		strconv.FormatInt(entry.finishedAt.UnixNano(), 10),
-		strings.Join(metricsSummaryLines(entry.metrics), "\n"),
-	} {
-		b.WriteString(value)
-		b.WriteByte(0)
-	}
-	for _, tool := range entry.tools {
-		writeEntryRenderHash(b, tool)
-	}
+func entryRenderKey(entry chatEntry, width int) chatEntryRenderKey {
+	return chatEntryRenderKey{width: width, version: entry.version}
 }
 
 func entriesFromMessages(messages []api.Message) []chatEntry {

@@ -461,11 +461,17 @@ func TestChatNotificationsUseSecondaryStyle(t *testing.T) {
 }
 
 func TestChatSubmittedPromptUsesThemeSecondaryGrey(t *testing.T) {
-	if got, want := chatUserBlockStyle.GetForeground(), lipgloss.Color(chatAnsiBrightBlack); got != want {
+	if got, want := chatUserBlockStyle.GetForeground(), lipgloss.TerminalColor(lipgloss.AdaptiveColor{Light: "#777777", Dark: "#8a8a8a"}); got != want {
 		t.Fatalf("submitted prompt foreground = %v, want %v", got, want)
 	}
 	if chatUserBlockStyle.GetFaint() {
-		t.Fatal("submitted prompt should use ANSI secondary grey, not faint styling")
+		t.Fatal("submitted prompt should use secondary grey, not faint styling")
+	}
+}
+
+func TestChatToolOutputUsesDistinctSecondaryGrey(t *testing.T) {
+	if got, want := chatToolOutputStyle.GetForeground(), lipgloss.TerminalColor(lipgloss.AdaptiveColor{Light: "#666666", Dark: "#a0a0a0"}); got != want {
+		t.Fatalf("tool output foreground = %v, want %v", got, want)
 	}
 }
 
@@ -526,6 +532,9 @@ func TestChatViewKeepsInputBoxWhileRunning(t *testing.T) {
 	}
 	if borderLine < 1 || !strings.Contains(lines[borderLine-1], "Thinking ↓ 42 tokens") {
 		t.Fatalf("thinking line should sit directly above input box:\n%s", view)
+	}
+	if strings.Contains(lines[borderLine-1], "...") {
+		t.Fatalf("thinking line should not show spinner dots:\n%s", view)
 	}
 }
 
@@ -1835,21 +1844,6 @@ func TestChatToolOutputHidesInternalTruncationMarker(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "head") || !strings.Contains(rendered, "tail") {
 		t.Fatalf("tool output should keep visible content: %q", rendered)
-	}
-}
-
-func TestChatHistoryHidesInternalToolTruncationMarker(t *testing.T) {
-	rendered := stripANSI(strings.Join(renderHistoryMessages([]api.Message{{
-		Role:       "tool",
-		ToolName:   "bash",
-		ToolCallID: "call-1",
-		Content:    "head\n\n[tool output truncated: showing first ~10 tokens and last ~10 tokens; omitted ~25 tokens. Use a narrower command, line range, or search query if more detail is needed.]\n\ntail",
-	}}, 80), "\n"))
-	if strings.Contains(rendered, "tool output truncated") || strings.Contains(rendered, "omitted ~25 tokens") {
-		t.Fatalf("internal truncation marker should be hidden from history: %q", rendered)
-	}
-	if !strings.Contains(rendered, "head") || !strings.Contains(rendered, "tail") {
-		t.Fatalf("history should keep visible content: %q", rendered)
 	}
 }
 

@@ -38,7 +38,7 @@ var (
 	chatUserStyle = lipgloss.NewStyle()
 
 	chatUserBlockStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color(chatAnsiBrightBlack))
+				Foreground(lipgloss.AdaptiveColor{Light: "#777777", Dark: "#8a8a8a"})
 
 	chatAssistantStyle = lipgloss.NewStyle()
 
@@ -63,6 +63,9 @@ var (
 	// red (failure), and yellow (running).
 	chatToolMixedStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("208"))
+
+	chatToolOutputStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.AdaptiveColor{Light: "#666666", Dark: "#a0a0a0"})
 
 	chatDiffMetaStyle = lipgloss.NewStyle().
 				Faint(true)
@@ -125,9 +128,6 @@ var (
 				Faint(true)
 
 	chatHistoryTextStyle = lipgloss.NewStyle()
-
-	chatHistoryCodeStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color(chatAnsiCyan))
 
 	chatSelectionStyle = lipgloss.NewStyle().
 				Reverse(true)

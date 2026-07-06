@@ -43,7 +43,7 @@ func TestChatHelpCommandShowsV1Commands(t *testing.T) {
 			t.Fatalf("help output missing %q:\n%s", want, fm.entries[0].content)
 		}
 	}
-	for _, removed := range []string{"/history", "/raw", "/resume", "/skills", "/verbose"} {
+	for _, removed := range []string{"/history", "/load", "/raw", "/resume", "/set", "/show", "/skills", "/verbose"} {
 		if strings.Contains(fm.entries[0].content, removed) {
 			t.Fatalf("removed command %q should stay hidden from help:\n%s", removed, fm.entries[0].content)
 		}
@@ -483,7 +483,7 @@ func TestInitialPromptHistoryLoadsFromMessages(t *testing.T) {
 }
 
 func TestChatDeletedSlashCommandsAreUnknown(t *testing.T) {
-	for _, command := range []string{"/copy", "/copy-all", "/tools", "/launch", "/system", "/history", "/raw", "/resume", "/skills", "/verbose"} {
+	for _, command := range []string{"/copy", "/copy-all", "/launch", "/system", "/history", "/load", "/raw", "/resume", "/set", "/show", "/skills", "/verbose"} {
 		t.Run(command, func(t *testing.T) {
 			m := chatModel{input: []rune(command)}
 
@@ -507,18 +507,79 @@ func TestChatViewRendersSlashCommandSuggestions(t *testing.T) {
 	}
 
 	view := stripANSI(m.View())
-	for _, want := range []string{"/clear", "/model", "/new", "/think", "/compact"} {
+	for _, want := range []string{"/clear", "/model", "/new", "/think", "/tools"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %s suggestion: %q", want, view)
 		}
 	}
-	for _, removed := range []string{"/copy", "/copy-all", "/tools", "/history", "/raw", "/resume", "/skills", "/verbose"} {
+	for _, removed := range []string{"/copy", "/copy-all", "/history", "/load", "/raw", "/resume", "/set", "/show", "/skills", "/verbose"} {
 		if strings.Contains(view, removed) {
 			t.Fatalf("bare slash should hide removed command %s: %q", removed, view)
 		}
 	}
 	if got := len(m.slashCommandLines(80)); got != maxSlashCompletions {
 		t.Fatalf("slash suggestions = %d, want %d", got, maxSlashCompletions)
+	}
+}
+
+func TestChatToolsCommandTogglesToolRegistry(t *testing.T) {
+	registry := &coreagent.Registry{}
+	registry.Register(chatTestTool{})
+	calls := 0
+	m := chatModel{
+		ctx:   context.Background(),
+		input: []rune("/tools off"),
+		opts: Options{
+			Model: "llama3.2",
+			Tools: registry,
+			ToolRegistryForModel: func(context.Context, string) *coreagent.Registry {
+				calls++
+				return registry
+			},
+		},
+	}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("/tools off should not start a command")
+	}
+	m = updated.(chatModel)
+	if !m.opts.ToolsDisabled || m.opts.Tools != nil {
+		t.Fatalf("tools off state = disabled:%v tools:%#v", m.opts.ToolsDisabled, m.opts.Tools)
+	}
+	req, _ := m.requestPreview()
+	if got := len(req.Tools); got != 0 {
+		t.Fatalf("request preview tools = %d, want 0", got)
+	}
+
+	m.input = []rune("/tools on")
+	updated, cmd = m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("/tools on should not start a command")
+	}
+	m = updated.(chatModel)
+	if m.opts.ToolsDisabled || m.opts.Tools == nil {
+		t.Fatalf("tools on state = disabled:%v tools:%#v", m.opts.ToolsDisabled, m.opts.Tools)
+	}
+	if calls != 1 {
+		t.Fatalf("tool registry calls = %d, want 1", calls)
+	}
+	req, _ = m.requestPreview()
+	if got := len(req.Tools); got != 1 {
+		t.Fatalf("request preview tools = %d, want 1", got)
+	}
+}
+
+func TestChatToolsCommandUsage(t *testing.T) {
+	m := chatModel{input: []rune("/tools")}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("invalid /tools should not start a command")
+	}
+	m = updated.(chatModel)
+	if m.status != "error" || len(m.entries) != 1 || !strings.Contains(m.entries[0].content, "usage: /tools on|off") {
+		t.Fatalf("invalid /tools result = status:%q entries:%#v", m.status, m.entries)
 	}
 }
 
@@ -647,92 +708,6 @@ func TestChatThinkCommandSetsModes(t *testing.T) {
 				t.Fatalf("think = %#v, want %#v", m.opts.Think, tt.want)
 			}
 		})
-	}
-}
-
-func TestChatLegacySetFormatCommandsStaySupported(t *testing.T) {
-	m := chatModel{input: []rune("/set format json")}
-
-	updated, cmd := m.handleSubmit()
-	if cmd != nil {
-		t.Fatal("legacy set format should not return a command")
-	}
-	m = updated.(chatModel)
-	if m.opts.Format != "json" {
-		t.Fatalf("format = %q, want json", m.opts.Format)
-	}
-
-	m.input = []rune("/set noformat")
-	updated, cmd = m.handleSubmit()
-	if cmd != nil {
-		t.Fatal("legacy set noformat should not return a command")
-	}
-	m = updated.(chatModel)
-	if m.opts.Format != "" {
-		t.Fatalf("format = %q, want empty", m.opts.Format)
-	}
-}
-
-func TestChatLegacySetParameterCommandStaySupported(t *testing.T) {
-	m := chatModel{input: []rune("/set parameter temperature 0.7")}
-
-	updated, cmd := m.handleSubmit()
-	if cmd != nil {
-		t.Fatal("legacy set parameter should not return a command")
-	}
-	m = updated.(chatModel)
-	if got := m.opts.Options["temperature"]; got != float32(0.7) {
-		t.Fatalf("temperature option = %#v, want 0.7", got)
-	}
-}
-
-func TestChatLegacySetHistoryStaysUnsupported(t *testing.T) {
-	m := chatModel{input: []rune("/set history")}
-
-	updated, cmd := m.handleSubmit()
-	if cmd != nil {
-		t.Fatal("legacy set history should not return a command")
-	}
-	m = updated.(chatModel)
-	if len(m.entries) != 1 || m.entries[0].role != "error" || !strings.Contains(m.entries[0].content, "Unknown command") {
-		t.Fatalf("entries = %#v, want unsupported error", m.entries)
-	}
-}
-
-func TestChatLegacyLoadCommandSwitchesModel(t *testing.T) {
-	m := chatModel{
-		input: []rune("/load qwen3"),
-		opts: Options{
-			Model: "llama3.2",
-		},
-	}
-
-	updated, cmd := m.handleSubmit()
-	if cmd != nil {
-		t.Fatal("legacy load should not return a command")
-	}
-	m = updated.(chatModel)
-	if m.opts.Model != "qwen3" {
-		t.Fatalf("model = %q, want qwen3", m.opts.Model)
-	}
-}
-
-func TestChatLegacyShowCommandRendersModelInfo(t *testing.T) {
-	client := &chatShowTestClient{resp: &api.ShowResponse{
-		Details: api.ModelDetails{Family: "llama", ParameterSize: "8B"},
-	}}
-	m := chatModel{
-		input: []rune("/show info"),
-		opts:  Options{Client: client},
-	}
-
-	updated, cmd := m.handleSubmit()
-	if cmd != nil {
-		t.Fatal("legacy show should not return a command")
-	}
-	m = updated.(chatModel)
-	if len(m.entries) != 1 || !strings.Contains(m.entries[0].content, "family") || !strings.Contains(m.entries[0].content, "llama") {
-		t.Fatalf("show entry = %#v", m.entries)
 	}
 }
 

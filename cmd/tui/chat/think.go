@@ -90,14 +90,6 @@ func (m *chatModel) handleThinkCommand(value string) (tea.Model, tea.Cmd) {
 	return m.applyThinkValue(value)
 }
 
-func (m *chatModel) handleLegacySetThinkCommand(input string) (tea.Model, tea.Cmd) {
-	value := strings.TrimSpace(strings.TrimPrefix(input, "/set think"))
-	if value == "" {
-		value = "on"
-	}
-	return m.applyThinkValue(value)
-}
-
 func (m *chatModel) applyThinkValue(value string) (tea.Model, tea.Cmd) {
 	think, label, err := parseThinkValue(value)
 	if err != nil {

@@ -36,6 +36,7 @@ type agentTUIOptions struct {
 	KeepAlive           *api.Duration
 	ContextWindowTokens int
 	AllowAllTools       bool
+	ToolsDisabled       bool
 	MultiModal          bool
 }
 
@@ -47,6 +48,7 @@ func registerAgentFlags(cmd *cobra.Command) {
 	cmd.Flags().Lookup("think").NoOptDefVal = "true"
 	cmd.Flags().Bool("auto-approve-tools", false, "Allow agent tools to run without prompting")
 	cmd.Flags().Bool("yolo", false, "Alias for --auto-approve-tools")
+	cmd.Flags().Bool("no-tools", false, "Disable agent tools")
 }
 
 func AgentHandler(cmd *cobra.Command, _ []string) error {
@@ -166,6 +168,11 @@ func applyAgentFlags(cmd *cobra.Command, opts *agentTUIOptions) (bool, error) {
 		return false, err
 	}
 	opts.AllowAllTools = autoApprove || yolo
+	toolsDisabled, err := cmd.Flags().GetBool("no-tools")
+	if err != nil {
+		return false, err
+	}
+	opts.ToolsDisabled = toolsDisabled
 	return thinkExplicit, nil
 }
 
@@ -216,16 +223,21 @@ func GenerateAgentTUI(cmd *cobra.Command, client *api.Client, opts agentTUIOptio
 		return agentContextWindowForModel(ctx, client, model, fallback)
 	}
 
-	registry := agentToolsRegistry(cmd.Context(), client, opts.Model)
+	var registry *coreagent.Registry
+	registryForModel := func(ctx context.Context, model string) *coreagent.Registry {
+		return agentToolsRegistry(ctx, client, model)
+	}
+	if !opts.ToolsDisabled {
+		registry = agentToolsRegistry(cmd.Context(), client, opts.Model)
+	}
 	systemPrompt := agentSystemPrompt(opts.Model, opts.System, "")
 
 	_, err = agentchat.Run(cmd.Context(), agentchat.Options{
-		Model:  opts.Model,
-		Client: client,
-		Tools:  registry,
-		ToolRegistryForModel: func(ctx context.Context, model string) *coreagent.Registry {
-			return agentToolsRegistry(ctx, client, model)
-		},
+		Model:                opts.Model,
+		Client:               client,
+		Tools:                registry,
+		ToolRegistryForModel: registryForModel,
+		ToolsDisabled:        opts.ToolsDisabled,
 		MultiModalForModel: func(ctx context.Context, model string) bool {
 			return agentModelSupportsMultimodal(ctx, client, model)
 		},

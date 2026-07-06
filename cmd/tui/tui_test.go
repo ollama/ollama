@@ -141,8 +141,8 @@ func TestMenuRendersPinnedItemsAndMore(t *testing.T) {
 
 	view := menu.View()
 	for _, want := range []string{
-		"Chat & Work",
-		"Chat with models, search, and do light work",
+		"Chat, Code, & Work",
+		"Chat with models, code, search the web, and do work",
 		"Launch Claude Code",
 		"Launch Hermes Agent",
 		"Launch OpenClaw",

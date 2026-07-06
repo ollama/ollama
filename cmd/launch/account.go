@@ -20,7 +20,7 @@ const (
 )
 
 var (
-	ErrPlanVerificationUnavailable = errors.New("Could not verify Ollama plan")
+	ErrPlanVerificationUnavailable = errors.New("Could not verify Ollama plan. Try again in a moment or use a local model.")
 	errUpgradeCancelled            = errors.New("upgrade cancelled")
 )
 

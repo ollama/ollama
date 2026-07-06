@@ -16,7 +16,7 @@ import (
 	"github.com/ollama/ollama/cmd/internal/filedata"
 )
 
-var chatSpinnerFrames = []string{"...", ".", "..", "..."}
+var chatSpinnerFrames = []string{".", "..", "..."}
 
 var chatRuntimeGOOS = runtime.GOOS
 
@@ -25,7 +25,7 @@ const (
 	maxInlineModelPickerItems = 5
 	maxSlashCompletions       = 5
 	maxPromptHistory          = 50
-	waitingSpinnerTicks       = 4
+	idleWorkingDelayTicks     = 4
 )
 
 var chatEmptyPrompts = []string{
@@ -55,6 +55,7 @@ type Options struct {
 	Client                      coreagent.ChatClient
 	Tools                       *coreagent.Registry
 	ToolRegistryForModel        func(context.Context, string) *coreagent.Registry
+	ToolsDisabled               bool
 	MultiModalForModel          func(context.Context, string) bool
 	ModelOptions                func(context.Context) ([]ModelOption, error)
 	OnModelSelected             func(context.Context, string) error
@@ -653,10 +654,6 @@ func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !msg.Alt || !m.handleInputAltRunes(msg.Runes) {
 			m.insertInputRunesFromKey(msg.Runes, msg.Paste)
 		}
-	default:
-		if m.canEditInput() && isShiftEnterCSI(msg) {
-			m.insertInputNewline()
-		}
 	}
 	return m, nil
 }
@@ -798,14 +795,7 @@ func (m chatModel) View() string {
 		return ""
 	}
 
-	width := m.width
-	if width <= 0 {
-		width = 80
-	}
-	height := m.height
-	if height <= 0 {
-		height = 24
-	}
+	width, height := m.viewSize()
 
 	if m.promptDebug != nil {
 		return m.renderPromptDebug(width, height)
