@@ -40,8 +40,6 @@ var (
 	chatUserBlockStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.AdaptiveColor{Light: "#777777", Dark: "#8a8a8a"})
 
-	chatAssistantStyle = lipgloss.NewStyle()
-
 	chatToolStyle = lipgloss.NewStyle()
 
 	chatInlineCodeStyle = lipgloss.NewStyle().
@@ -102,9 +100,6 @@ var (
 	chatPickerMetaStyle = lipgloss.NewStyle().
 				Faint(true)
 
-	chatPickerBorderStyle = lipgloss.NewStyle().
-				Faint(true)
-
 	chatHistoryTitleStyle = lipgloss.NewStyle().
 				Bold(true)
 
@@ -128,7 +123,4 @@ var (
 				Faint(true)
 
 	chatHistoryTextStyle = lipgloss.NewStyle()
-
-	chatSelectionStyle = lipgloss.NewStyle().
-				Reverse(true)
 )

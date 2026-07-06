@@ -20,13 +20,6 @@ type chatCaptureClient struct {
 	requests []*api.ChatRequest
 }
 
-type chatTestCompactor struct {
-	result   coreagent.CompactionResult
-	err      error
-	progress []int
-	request  coreagent.CompactionRequest
-}
-
 func (chatTestClient) Chat(ctx context.Context, req *api.ChatRequest, fn api.ChatResponseFunc) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -46,30 +39,6 @@ func (c *chatCaptureClient) Chat(ctx context.Context, req *api.ChatRequest, fn a
 		Message: api.Message{Role: "assistant", Content: "ok"},
 		Done:    true,
 	})
-}
-
-func (c *chatTestCompactor) MaybeCompact(_ context.Context, req coreagent.CompactionRequest) (coreagent.CompactionResult, error) {
-	c.request = req
-	for _, tokens := range c.progress {
-		if req.Progress != nil {
-			req.Progress(coreagent.CompactionProgress{Tokens: tokens})
-		}
-	}
-	return c.result, c.err
-}
-
-func nextChatMsg(t *testing.T, ch <-chan tea.Msg) tea.Msg {
-	t.Helper()
-	select {
-	case msg, ok := <-ch:
-		if !ok {
-			t.Fatal("message channel closed")
-		}
-		return msg
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for chat message")
-		return nil
-	}
 }
 
 func (chatTestTool) Name() string {

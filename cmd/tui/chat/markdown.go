@@ -125,7 +125,7 @@ func renderMarkdownTable(lines []string, width int) ([]string, int) {
 	}
 	naturalWidths := make([]int, columnCount)
 	for _, row := range rows {
-		for i := 0; i < columnCount; i++ {
+		for i := range columnCount {
 			cell := ""
 			if i < len(row) {
 				cell = row[i]
@@ -139,7 +139,7 @@ func renderMarkdownTable(lines []string, width int) ([]string, int) {
 	for rowIndex, row := range rows {
 		wrappedCells := make([][]string, columnCount)
 		rowHeight := 1
-		for i := 0; i < columnCount; i++ {
+		for i := range columnCount {
 			cell := ""
 			if i < len(row) {
 				cell = row[i]
@@ -147,9 +147,9 @@ func renderMarkdownTable(lines []string, width int) ([]string, int) {
 			wrappedCells[i] = wrapMarkdownTableCell(cell, widths[i])
 			rowHeight = max(rowHeight, len(wrappedCells[i]))
 		}
-		for lineIndex := 0; lineIndex < rowHeight; lineIndex++ {
+		for lineIndex := range rowHeight {
 			cells := make([]string, columnCount)
-			for i := 0; i < columnCount; i++ {
+			for i := range columnCount {
 				cellLine := ""
 				if lineIndex < len(wrappedCells[i]) {
 					cellLine = wrappedCells[i][lineIndex]

@@ -219,19 +219,6 @@ func (m chatModel) transcriptLines(width int) []string {
 	return strings.Split(transcript, "\n")
 }
 
-func (m chatModel) visibleTranscriptLinesForLines(lines []string, available int) []string {
-	if available <= 0 {
-		return nil
-	}
-	start := 0
-	if len(lines) > available {
-		start = m.visibleTranscriptStartLineForLines(len(lines), available)
-		lines = lines[start : start+available]
-	}
-	lines = m.applyTranscriptSelection(lines, start)
-	return lines
-}
-
 func (m chatModel) visibleTranscriptStartLine(width, available int) int {
 	return m.visibleTranscriptStartLineForLines(len(m.transcriptLines(width)), available)
 }
@@ -419,43 +406,6 @@ func normalizedSelectionRangeFor(selection chatSelection) (chatSelectionPoint, c
 		return chatSelectionPoint{}, chatSelectionPoint{}, false
 	}
 	return start, end, true
-}
-
-func (m chatModel) applyTranscriptSelection(lines []string, offset int) []string {
-	start, end, ok := m.normalizedSelectionRange()
-	if !ok || len(lines) == 0 {
-		return lines
-	}
-	out := slices.Clone(lines)
-	for i, line := range out {
-		lineIndex := offset + i
-		if lineIndex < start.line || lineIndex > end.line {
-			continue
-		}
-		text := stripChatANSI(line)
-		startCol, endCol := 0, len([]rune(text))
-		if lineIndex == start.line {
-			startCol = displayColumnToRuneIndex(text, start.col)
-		}
-		if lineIndex == end.line {
-			endCol = displayColumnToRuneIndex(text, end.col)
-		}
-		if startCol > endCol {
-			startCol, endCol = endCol, startCol
-		}
-		out[i] = renderSelectedTranscriptLine(text, startCol, endCol)
-	}
-	return out
-}
-
-func renderSelectedTranscriptLine(line string, startCol, endCol int) string {
-	runes := []rune(line)
-	startCol = clamp(startCol, 0, len(runes))
-	endCol = clamp(endCol, 0, len(runes))
-	if startCol == endCol {
-		return line
-	}
-	return string(runes[:startCol]) + chatSelectionStyle.Render(string(runes[startCol:endCol])) + string(runes[endCol:])
 }
 
 func displayColumnToRuneIndex(line string, col int) int {

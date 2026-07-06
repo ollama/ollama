@@ -75,10 +75,6 @@ func (m *chatModel) togglePermissionMode() (tea.Model, tea.Cmd) {
 	return *m, nil
 }
 
-func (m chatModel) autoApproveTools() bool {
-	return m.allowAllTools
-}
-
 func (m *chatModel) syncApprovalController() {
 	if m.approvalController != nil {
 		m.approvalController.set(m.allowAllTools, m.allowedScopes)

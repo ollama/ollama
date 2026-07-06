@@ -900,10 +900,6 @@ func inputCursorCell(after string) (string, string) {
 	return after[:size], after[size:]
 }
 
-func renderInputCursor() string {
-	return renderInputCursorCell("")
-}
-
 func renderInputCursorCell(cell string) string {
 	if cell == "" {
 		return chatBlankCursorStyle.Render(inputCursorGlyph)
@@ -980,17 +976,6 @@ func truncateInputLine(line string, width int) string {
 		return line
 	}
 	return runewidth.Truncate(line, width, "")
-}
-
-func renderPromptRow(text string, width int) []string {
-	if width < 20 {
-		width = 20
-	}
-	lines := wrapChatText(text, width)
-	for i, line := range lines {
-		lines[i] = chatUserStyle.Render(line)
-	}
-	return lines
 }
 
 func (m chatModel) slashCommandLines(width int) []string {
@@ -1310,14 +1295,6 @@ func (m chatModel) helpSummary() string {
 		"- `ctrl+a/e`: move to line start or end",
 	)
 	return strings.Join(lines, "\n")
-}
-
-func (m chatModel) historyMessages() []api.Message {
-	var messages []api.Message
-	if systemPrompt := strings.TrimSpace(m.systemPrompt("")); systemPrompt != "" {
-		messages = append(messages, api.Message{Role: "system", Content: systemPrompt})
-	}
-	return append(messages, m.messages...)
 }
 
 func (m chatModel) systemPrompt(extra string) string {

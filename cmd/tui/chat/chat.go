@@ -873,7 +873,7 @@ func flowTranscriptChangedPrefixStart(before, after []string, printed int) int {
 		return -1
 	}
 	limit := min(printed, len(after))
-	for i := 0; i < limit; i++ {
+	for i := range limit {
 		if before[i] != after[i] {
 			return i
 		}
