@@ -93,6 +93,21 @@ func TestPrepareClaudeLaunchModelsSetsHighLocalContextWithoutWarning(t *testing.
 	}
 }
 
+func TestPrepareClaudeLaunchModelsMatchesLatestSuffix(t *testing.T) {
+	client, _ := testLauncherClientWithStatus(t, 128*1024)
+
+	models, err := client.prepareLaunchModelsForRun(context.Background(), &Claude{}, "gemma4", []LaunchModel{{Name: "gemma4:latest"}})
+	if err != nil {
+		t.Fatalf("prepareLaunchModelsForRun error = %v", err)
+	}
+	if len(models) != 1 {
+		t.Fatalf("models = %+v, want existing model updated without fallback", models)
+	}
+	if models[0].Name != "gemma4:latest" || models[0].ContextLength != 128*1024 {
+		t.Fatalf("model = %+v, want latest-suffixed model updated with context length", models[0])
+	}
+}
+
 func TestPrepareClaudeLaunchModelsYesPrintsShortWarning(t *testing.T) {
 	client, _ := testLauncherClientWithStatus(t, 32*1024)
 
@@ -258,6 +273,16 @@ func TestPrepareOpenCodeLaunchModelsSkipsAllCloudModels(t *testing.T) {
 	}
 	if len(models) != 1 || models[0].ContextLength != 0 {
 		t.Fatalf("models = %+v, want unchanged cloud model", models)
+	}
+}
+
+func TestLaunchModelsWithOpenCodeLocalLimitsDoesNotAppendMissingCloudPrimary(t *testing.T) {
+	models := launchModelsWithOpenCodeLocalLimits("glm-5:cloud", []LaunchModel{{Name: "llama3.2"}}, 32*1024)
+	if len(models) != 1 {
+		t.Fatalf("models = %+v, want no fallback cloud primary appended", models)
+	}
+	if models[0].Name != "llama3.2" || models[0].ContextLength != 32*1024 || models[0].MaxOutputTokens != 8192 {
+		t.Fatalf("local model = %+v, want local limits applied", models[0])
 	}
 }
 

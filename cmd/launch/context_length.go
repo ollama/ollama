@@ -95,7 +95,7 @@ func launchModelsWithContextLength(primary string, models []LaunchModel, context
 
 	out := cloneLaunchModels(models)
 	for i := range out {
-		if out[i].Name == primary {
+		if launchModelMatches(out[i].Name, primary) {
 			out[i].ContextLength = contextLength
 			return out
 		}
@@ -125,7 +125,7 @@ func launchModelsWithOpenCodeLocalLimits(primary string, models []LaunchModel, c
 		out[i].ContextLength = contextLength
 		out[i].MaxOutputTokens = openCodeLocalMaxOutputTokens(contextLength)
 	}
-	if primary != "" && !hasLaunchModel(out, primary) {
+	if primary != "" && !isCloudModelName(primary) && !hasLaunchModel(out, primary) {
 		model := fallbackLaunchModel(primary)
 		model.ContextLength = contextLength
 		model.MaxOutputTokens = openCodeLocalMaxOutputTokens(contextLength)
