@@ -15,6 +15,8 @@ import (
 // Claude implements Runner for Claude Code integration.
 type Claude struct{}
 
+const claudeCodeAutoCompactMinContext = 100_000
+
 func (c *Claude) String() string { return "Claude Code" }
 
 func (c *Claude) args(model string, extra []string) []string {
@@ -49,7 +51,7 @@ func (c *Claude) findPath() (string, error) {
 	return "", fmt.Errorf("claude binary not found")
 }
 
-func (c *Claude) Run(model string, _ []LaunchModel, args []string) error {
+func (c *Claude) Run(model string, models []LaunchModel, args []string) error {
 	claudePath, err := ensureClaudeInstalled()
 	if err != nil {
 		return err
@@ -67,7 +69,7 @@ func (c *Claude) Run(model string, _ []LaunchModel, args []string) error {
 		"CLAUDE_CODE_ATTRIBUTION_HEADER=0",
 	)
 
-	env = append(env, c.modelEnvVars(model)...)
+	env = append(env, c.modelEnvVars(model, models...)...)
 
 	cmd.Env = env
 	return cmd.Run()
@@ -155,7 +157,7 @@ func claudeInstallerCommand(goos string) (string, []string, error) {
 }
 
 // modelEnvVars returns Claude Code env vars that route all model tiers through Ollama.
-func (c *Claude) modelEnvVars(model string) []string {
+func (c *Claude) modelEnvVars(model string, models ...LaunchModel) []string {
 	env := []string{
 		"ANTHROPIC_DEFAULT_OPUS_MODEL=" + model,
 		"ANTHROPIC_DEFAULT_SONNET_MODEL=" + model,
@@ -167,6 +169,8 @@ func (c *Claude) modelEnvVars(model string) []string {
 		if l, ok := lookupCloudModelLimit(model); ok {
 			env = append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+strconv.Itoa(l.Context))
 		}
+	} else if launchModel, ok := findLaunchModel(models, model); ok && launchModel.ContextLength >= claudeCodeAutoCompactMinContext {
+		env = append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+strconv.Itoa(launchModel.ContextLength))
 	}
 
 	return env

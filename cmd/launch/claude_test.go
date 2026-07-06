@@ -389,6 +389,20 @@ func TestClaudeModelEnvVars(t *testing.T) {
 		}
 	})
 
+	t.Run("sets auto compact window for local models at Claude minimum", func(t *testing.T) {
+		got := envMap(c.modelEnvVars("llama3.2", LaunchModel{Name: "llama3.2", ContextLength: 131072}))
+		if got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != "131072" {
+			t.Errorf("AUTO_COMPACT_WINDOW = %q, want 131072", got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
+		}
+	})
+
+	t.Run("does not set auto compact window for local models below Claude minimum", func(t *testing.T) {
+		got := envMap(c.modelEnvVars("llama3.2", LaunchModel{Name: "llama3.2", ContextLength: 32768}))
+		if got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != "" {
+			t.Errorf("AUTO_COMPACT_WINDOW = %q, want empty", got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
+		}
+	})
+
 	t.Run("does not set auto compact window for unknown cloud models", func(t *testing.T) {
 		got := envMap(c.modelEnvVars("unknown-model:cloud"))
 		if got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != "" {

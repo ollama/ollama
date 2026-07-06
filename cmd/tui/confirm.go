@@ -115,7 +115,7 @@ func RunConfirmWithOptions(prompt string, options ConfirmOptions) (bool, error) 
 		prompt:   prompt,
 		yesLabel: yesLabel,
 		noLabel:  noLabel,
-		yes:      true, // default to yes
+		yes:      !options.DefaultNo,
 	}
 
 	p := tea.NewProgram(m)

@@ -226,6 +226,63 @@ func TestOpenCodeEdit(t *testing.T) {
 	})
 }
 
+func TestOpenCodeRunPassesConfigContent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell fake binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	binDir := filepath.Join(tmpDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	capturePath := filepath.Join(tmpDir, "opencode-config.json")
+	t.Setenv("CAPTURE_PATH", capturePath)
+	t.Setenv("PATH", binDir)
+
+	fakeOpenCode := filepath.Join(binDir, "opencode")
+	script := "#!/bin/sh\nprintf '%s' \"$OPENCODE_CONFIG_CONTENT\" > \"$CAPTURE_PATH\"\n"
+	if err := os.WriteFile(fakeOpenCode, []byte(script), 0o755); err != nil {
+		t.Fatalf("failed to write fake opencode: %v", err)
+	}
+
+	models := []LaunchModel{{
+		Name:            "gemma4",
+		ContextLength:   32_768,
+		MaxOutputTokens: 8_192,
+	}}
+	o := &OpenCode{}
+	if err := o.Run("gemma4", models, nil); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	data, err := os.ReadFile(capturePath)
+	if err != nil {
+		t.Fatalf("failed to read captured config: %v", err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("captured config is not valid JSON: %v\n%s", err, string(data))
+	}
+	if cfg["model"] != "ollama/gemma4" {
+		t.Fatalf("model = %v, want ollama/gemma4", cfg["model"])
+	}
+
+	provider, _ := cfg["provider"].(map[string]any)
+	ollama, _ := provider["ollama"].(map[string]any)
+	cfgModels, _ := ollama["models"].(map[string]any)
+	entry, _ := cfgModels["gemma4"].(map[string]any)
+	limit, _ := entry["limit"].(map[string]any)
+	if limit["context"] != float64(32_768) {
+		t.Fatalf("limit.context = %v, want 32768", limit["context"])
+	}
+	if limit["output"] != float64(8_192) {
+		t.Fatalf("limit.output = %v, want 8192", limit["output"])
+	}
+}
+
 func TestBuildModelEntries(t *testing.T) {
 	t.Run("defaults to model name without capabilities", func(t *testing.T) {
 		models := buildModelEntries(testLaunchModels("llama3.2"))

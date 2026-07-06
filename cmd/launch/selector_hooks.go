@@ -29,8 +29,9 @@ var DefaultConfirmPrompt func(prompt string, options ConfirmOptions) (bool, erro
 
 // ConfirmOptions customizes labels for confirmation prompts.
 type ConfirmOptions struct {
-	YesLabel string
-	NoLabel  string
+	YesLabel  string
+	NoLabel   string
+	DefaultNo bool
 }
 
 // SingleSelector is a function type for single item selection.
@@ -111,7 +112,11 @@ func ConfirmPromptWithOptions(prompt string, options ConfirmOptions) (bool, erro
 	}
 	defer term.Restore(fd, oldState)
 
-	fmt.Fprintf(os.Stderr, "%s (\033[1my\033[0m/n) ", prompt)
+	if options.DefaultNo {
+		fmt.Fprintf(os.Stderr, "%s [\033[1my\033[0m/N] ", prompt)
+	} else {
+		fmt.Fprintf(os.Stderr, "%s (\033[1my\033[0m/n) ", prompt)
+	}
 
 	buf := make([]byte, 1)
 	for {
@@ -120,7 +125,14 @@ func ConfirmPromptWithOptions(prompt string, options ConfirmOptions) (bool, erro
 		}
 
 		switch buf[0] {
-		case 'Y', 'y', 13:
+		case 'Y', 'y':
+			fmt.Fprintf(os.Stderr, "yes\r\n")
+			return true, nil
+		case 13:
+			if options.DefaultNo {
+				fmt.Fprintf(os.Stderr, "no\r\n")
+				return false, nil
+			}
 			fmt.Fprintf(os.Stderr, "yes\r\n")
 			return true, nil
 		case 'N', 'n', 27, 3:
