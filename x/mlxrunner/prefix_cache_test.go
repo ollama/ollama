@@ -398,9 +398,9 @@ type feedableCache interface {
 	feed(tokens []int32)
 }
 
-// testEnv encapsulates a kvCache and its fake caches for a test scenario.
+// testEnv encapsulates a prefixCache and its fake caches for a test scenario.
 type testEnv struct {
-	kvc        *kvCache
+	pc         *prefixCache
 	caches     []cache.Cache // typed references for assertions
 	tracker    *snapshotTracker
 	rewindable bool // true when all caches support arbitrary Restore(nil, target)
@@ -412,7 +412,7 @@ func newTransformerEnv() *testEnv {
 	tracker := &snapshotTracker{}
 	caches := []cache.Cache{&fakeRewindableCache{tracker: tracker}}
 	return &testEnv{
-		kvc:        &kvCache{caches: caches},
+		pc:         &prefixCache{caches: caches},
 		caches:     caches,
 		tracker:    tracker,
 		rewindable: true,
@@ -430,7 +430,7 @@ func newSlidingWindowEnv() *testEnv {
 	sw := &fakeSlidingWindowCache{maxSize: 4, tracker: tr}
 	caches := []cache.Cache{rc, sw}
 	return &testEnv{
-		kvc:        &kvCache{caches: caches},
+		pc:         &prefixCache{caches: caches},
 		caches:     caches,
 		tracker:    tr,
 		rewindable: false,
@@ -445,7 +445,7 @@ func newRecurrentEnv() *testEnv {
 	nrc := &fakeRecurrentCache{tracker: tr}
 	caches := []cache.Cache{rc, nrc}
 	return &testEnv{
-		kvc:        &kvCache{caches: caches},
+		pc:         &prefixCache{caches: caches},
 		caches:     caches,
 		tracker:    tr,
 		rewindable: false,
@@ -476,10 +476,10 @@ type requestResult struct {
 
 // simulateRequest runs a request through the harness. If userSnapshotAt > 0,
 // a user snapshot is requested at that offset during prefill.
-func simulateRequest(t *testing.T, kvc *kvCache, inputs, generated []int32, userSnapshotAt ...int) requestResult {
+func simulateRequest(t *testing.T, pc *prefixCache, inputs, generated []int32, userSnapshotAt ...int) requestResult {
 	t.Helper()
 
-	session := kvc.begin(nil, inputs)
+	session := pc.begin(nil, inputs)
 	var snapshotOffsets []int
 	for _, at := range userSnapshotAt {
 		if at > 0 {
@@ -492,9 +492,9 @@ func simulateRequest(t *testing.T, kvc *kvCache, inputs, generated []int32, user
 		pendingSnapshots: len(session.pendingSnapshots),
 	}
 
-	assertCacheOffsetAlignment(t, kvc, "after begin")
+	assertCacheOffsetAlignment(t, pc, "after begin")
 
-	baseOffset := kvc.minCacheOffset()
+	baseOffset := pc.minCacheOffset()
 	remaining := inputs[baseOffset:]
 
 	// Prefill: schedule the pending snapshots, feed the whole prompt in one pass
@@ -502,19 +502,19 @@ func simulateRequest(t *testing.T, kvc *kvCache, inputs, generated []int32, user
 	// captures to the trie.
 	session.schedulePrefillSnapshots(snapshotOffsets)
 	if len(remaining) > 0 {
-		feedAll(kvc.caches, remaining)
+		feedAll(pc.caches, remaining)
 	}
 	session.attachPrefillSnapshots()
 
-	assertCacheOffsetAlignment(t, kvc, "after prefill")
+	assertCacheOffsetAlignment(t, pc, "after prefill")
 
 	// Generate tokens.
 	if len(generated) > 0 {
 		session.outputs = generated
-		feedAll(kvc.caches, generated)
+		feedAll(pc.caches, generated)
 	}
 
-	assertCacheOffsetAlignment(t, kvc, "before close")
+	assertCacheOffsetAlignment(t, pc, "before close")
 	session.close()
 	return result
 }
@@ -528,14 +528,14 @@ func feedAll(caches []cache.Cache, tokens []int32) {
 }
 
 // assertCacheOffsetAlignment verifies all caches report the same offset.
-func assertCacheOffsetAlignment(t *testing.T, kvc *kvCache, label string) {
+func assertCacheOffsetAlignment(t *testing.T, pc *prefixCache, label string) {
 	t.Helper()
-	if len(kvc.caches) < 2 {
+	if len(pc.caches) < 2 {
 		return
 	}
-	expected := kvc.caches[0].Offset()
-	for i := 1; i < len(kvc.caches); i++ {
-		if got := kvc.caches[i].Offset(); got != expected {
+	expected := pc.caches[0].Offset()
+	for i := 1; i < len(pc.caches); i++ {
+		if got := pc.caches[i].Offset(); got != expected {
 			t.Errorf("%s: cache %d offset=%d != cache 0 offset=%d", label, i, got, expected)
 		}
 	}
@@ -649,7 +649,7 @@ func forEachEnv(t *testing.T, fn func(t *testing.T, env *testEnv)) {
 	t.Helper()
 	run := func(t *testing.T, env *testEnv) {
 		t.Cleanup(func() {
-			checkSnapshotLeaks(t, env.tracker, env.kvc.root)
+			checkSnapshotLeaks(t, env.tracker, env.pc.root)
 		})
 		fn(t, env)
 	}
@@ -664,17 +664,17 @@ func forEachEnv(t *testing.T, fn func(t *testing.T, env *testEnv)) {
 // hit lengths, and that semantic caches contain the correct token sequences.
 func TestBranchCreationAndReuse(t *testing.T) {
 	forEachEnv(t, func(t *testing.T, env *testEnv) {
-		kvc := env.kvc
+		pc := env.pc
 
 		// Request A: [1,2,3,4,5,6,7,8] + generate [20,21] — full miss.
-		resA := simulateRequest(t, kvc, []int32{1, 2, 3, 4, 5, 6, 7, 8}, []int32{20, 21})
+		resA := simulateRequest(t, pc, []int32{1, 2, 3, 4, 5, 6, 7, 8}, []int32{20, 21})
 		if len(resA.remaining) != 8 {
 			t.Fatalf("A: remaining = %d, want 8 (full miss)", len(resA.remaining))
 		}
 		env.assertAllTokens(t, "after A", []int32{1, 2, 3, 4, 5, 6, 7, 8, 20, 21})
 
 		// Verify trie was populated by close().
-		_, mA := findBestMatch(kvc.root, []int32{1, 2, 3, 4, 5, 6, 7, 8, 20, 21})
+		_, mA := findBestMatch(pc.root, []int32{1, 2, 3, 4, 5, 6, 7, 8, 20, 21})
 		if mA != 10 {
 			t.Fatalf("A findable: expected 10 matched, got %d", mA)
 		}
@@ -683,7 +683,7 @@ func TestBranchCreationAndReuse(t *testing.T) {
 		// For rewindable caches, switchToPath rewinds to the match point
 		// so only the non-matching suffix needs evaluation. For non-rewindable
 		// caches (RecurrentCache), the rewind fails and freeAll fires.
-		resB := simulateRequest(t, kvc, []int32{1, 2, 3, 4, 5, 10, 11, 12}, []int32{30, 31})
+		resB := simulateRequest(t, pc, []int32{1, 2, 3, 4, 5, 10, 11, 12}, []int32{30, 31})
 		if env.rewindable {
 			if resB.pendingSnapshots != 0 {
 				t.Fatalf("B: pendingSnapshots = %d, want 0 (rewind succeeded)", resB.pendingSnapshots)
@@ -702,24 +702,24 @@ func TestBranchCreationAndReuse(t *testing.T) {
 		env.assertAllTokens(t, "after B", []int32{1, 2, 3, 4, 5, 10, 11, 12, 30, 31})
 
 		// Both A and B should be findable in the trie.
-		_, mA2 := findBestMatch(kvc.root, []int32{1, 2, 3, 4, 5, 6, 7, 8, 20, 21})
+		_, mA2 := findBestMatch(pc.root, []int32{1, 2, 3, 4, 5, 6, 7, 8, 20, 21})
 		if mA2 < 5 {
 			t.Fatalf("A still findable: expected >= 5 matched, got %d", mA2)
 		}
-		_, mB := findBestMatch(kvc.root, []int32{1, 2, 3, 4, 5, 10, 11, 12, 30, 31})
+		_, mB := findBestMatch(pc.root, []int32{1, 2, 3, 4, 5, 10, 11, 12, 30, 31})
 		if mB < 5 {
 			t.Fatalf("B findable: expected >= 5 matched, got %d", mB)
 		}
 
 		// Request C: [1,2,3,4,5,6,7,8,40,41] — extends A's prefix.
 		// Should get a cache hit for the shared prefix.
-		resC := simulateRequest(t, kvc, []int32{1, 2, 3, 4, 5, 6, 7, 8, 40, 41}, nil)
+		resC := simulateRequest(t, pc, []int32{1, 2, 3, 4, 5, 6, 7, 8, 40, 41}, nil)
 		if len(resC.remaining) >= 10 {
 			t.Fatalf("C: remaining = %d, want < 10 (should get cache hit)", len(resC.remaining))
 		}
 		env.assertAllTokens(t, "after C", []int32{1, 2, 3, 4, 5, 6, 7, 8, 40, 41})
 
-		checkTrieInvariants(t, kvc.root)
+		checkTrieInvariants(t, pc.root)
 	})
 }
 
@@ -728,16 +728,16 @@ func TestBranchCreationAndReuse(t *testing.T) {
 // The last token must be re-evaluated to seed generation.
 func TestExactMatchSeedBehavior(t *testing.T) {
 	forEachEnv(t, func(t *testing.T, env *testEnv) {
-		kvc := env.kvc
+		pc := env.pc
 
 		// Request A: first time.
-		simulateRequest(t, kvc, []int32{1, 2, 3, 4, 5}, []int32{10, 11})
+		simulateRequest(t, pc, []int32{1, 2, 3, 4, 5}, []int32{10, 11})
 
 		// Request B: identical prompt. Holdback means matched=4, partial in
 		// the 5-token edge. For rewindable caches, switchToPath rewinds to
 		// offset 4, so only the held-back token needs re-evaluation. For
 		// non-rewindable caches, the rewind fails and freeAll fires.
-		resB := simulateRequest(t, kvc, []int32{1, 2, 3, 4, 5}, []int32{20, 21})
+		resB := simulateRequest(t, pc, []int32{1, 2, 3, 4, 5}, []int32{20, 21})
 		if env.rewindable {
 			if len(resB.remaining) != 1 {
 				t.Fatalf("B: remaining = %d, want 1 (rewind to holdback point)", len(resB.remaining))
@@ -755,7 +755,7 @@ func TestExactMatchSeedBehavior(t *testing.T) {
 		}
 		env.assertAllTokens(t, "after B", []int32{1, 2, 3, 4, 5, 20, 21})
 
-		checkTrieInvariants(t, kvc.root)
+		checkTrieInvariants(t, pc.root)
 	})
 }
 
@@ -764,28 +764,28 @@ func TestExactMatchSeedBehavior(t *testing.T) {
 // prefix (system prompt + first turn + assistant response).
 func TestConversationResumption(t *testing.T) {
 	forEachEnv(t, func(t *testing.T, env *testEnv) {
-		kvc := env.kvc
+		pc := env.pc
 
 		// Turn 1: system prompt + user message, assistant generates response.
-		simulateRequest(t, kvc, []int32{1, 2, 3, 4, 5}, []int32{10, 11, 12})
+		simulateRequest(t, pc, []int32{1, 2, 3, 4, 5}, []int32{10, 11, 12})
 		env.assertAllTokens(t, "turn 1", []int32{1, 2, 3, 4, 5, 10, 11, 12})
 
 		// Turn 2: full history + new user message. Should get a cache hit on
 		// the prefix [1,2,3,4,5,10,11,12] and only need to evaluate [20,21].
-		resB := simulateRequest(t, kvc, []int32{1, 2, 3, 4, 5, 10, 11, 12, 20, 21}, []int32{30})
+		resB := simulateRequest(t, pc, []int32{1, 2, 3, 4, 5, 10, 11, 12, 20, 21}, []int32{30})
 		if len(resB.remaining) > 5 {
 			t.Fatalf("turn 2: remaining = %d, want <= 5 (should reuse most of history)", len(resB.remaining))
 		}
 		env.assertAllTokens(t, "turn 2", []int32{1, 2, 3, 4, 5, 10, 11, 12, 20, 21, 30})
 
 		// Turn 3: even longer history.
-		resC := simulateRequest(t, kvc, []int32{1, 2, 3, 4, 5, 10, 11, 12, 20, 21, 30, 40, 41}, nil)
+		resC := simulateRequest(t, pc, []int32{1, 2, 3, 4, 5, 10, 11, 12, 20, 21, 30, 40, 41}, nil)
 		if len(resC.remaining) > 5 {
 			t.Fatalf("turn 3: remaining = %d, want <= 5", len(resC.remaining))
 		}
 		env.assertAllTokens(t, "turn 3", []int32{1, 2, 3, 4, 5, 10, 11, 12, 20, 21, 30, 40, 41})
 
-		checkTrieInvariants(t, kvc.root)
+		checkTrieInvariants(t, pc.root)
 	})
 }
 
@@ -794,18 +794,18 @@ func TestConversationResumption(t *testing.T) {
 // active path and shared prefix survive while memory stays bounded.
 func TestEvictionPreservesActiveConversations(t *testing.T) {
 	forEachEnv(t, func(t *testing.T, env *testEnv) {
-		kvc := env.kvc
+		pc := env.pc
 		systemPrompt := []int32{1, 2, 3, 4, 5}
 
 		// Create 5 conversations with unique suffixes.
 		for i := range 5 {
 			suffix := []int32{int32(100 + i*10), int32(101 + i*10), int32(102 + i*10)}
 			inputs := append(slices.Clone(systemPrompt), suffix...)
-			simulateRequest(t, kvc, inputs, []int32{int32(200 + i)})
+			simulateRequest(t, pc, inputs, []int32{int32(200 + i)})
 		}
 
 		// Inflate snapshot sizes to trigger eviction.
-		walkNodes(kvc.root, func(n *trieNode) bool {
+		walkNodes(pc.root, func(n *trieNode) bool {
 			if !n.hasSnapshots() {
 				return true
 			}
@@ -815,31 +815,31 @@ func TestEvictionPreservesActiveConversations(t *testing.T) {
 					snaps[i] = &fakeSnapshot{byteSize: 2 * 1024 * 1024 * 1024} // 2 GiB per snapshot
 				}
 			}
-			n.setSnapshots(snaps, &kvc.pagedOutBytes)
+			n.setSnapshots(snaps, &pc.pagedOutBytes)
 			return true
 		})
 
 		// Run eviction.
-		kvc.enforceEvictionPolicy()
+		pc.enforceEvictionPolicy()
 
 		// Memory should be within limits.
-		if kvc.pagedOutBytes > maxPagedOutBytes {
-			t.Fatalf("pagedOutBytes = %d, want <= %d", kvc.pagedOutBytes, maxPagedOutBytes)
+		if pc.pagedOutBytes > maxPagedOutBytes {
+			t.Fatalf("pagedOutBytes = %d, want <= %d", pc.pagedOutBytes, maxPagedOutBytes)
 		}
 
 		// Active path should be untouched.
-		if len(kvc.activePath) < 2 {
-			t.Fatalf("activePath should have >= 2 nodes, got %d", len(kvc.activePath))
+		if len(pc.activePath) < 2 {
+			t.Fatalf("activePath should have >= 2 nodes, got %d", len(pc.activePath))
 		}
 
 		// System prompt prefix should still be findable (multi-child
 		// branch points are protected from eviction entirely).
-		_, matched := findBestMatch(kvc.root, systemPrompt)
+		_, matched := findBestMatch(pc.root, systemPrompt)
 		if matched < len(systemPrompt) {
 			t.Fatalf("system prompt match = %d, want %d", matched, len(systemPrompt))
 		}
 
-		checkTrieInvariants(t, kvc.root)
+		checkTrieInvariants(t, pc.root)
 	})
 }
 
@@ -849,27 +849,27 @@ func TestEvictionPreservesActiveConversations(t *testing.T) {
 //   - The snapshot remains restorable after other branches are added
 func TestUserSnapshotPreservesRestorePoint(t *testing.T) {
 	forEachEnv(t, func(t *testing.T, env *testEnv) {
-		kvc := env.kvc
+		pc := env.pc
 
 		// Request A: user snapshot at offset 5, then generate.
-		simulateRequest(t, kvc, []int32{1, 2, 3, 4, 5}, []int32{10, 11}, 5)
+		simulateRequest(t, pc, []int32{1, 2, 3, 4, 5}, []int32{10, 11}, 5)
 
-		assertUserNodeExists(t, kvc, "after A")
+		assertUserNodeExists(t, pc, "after A")
 
 		// Request B: extends A's prefix. The user node at offset 5 should
 		// force tokens into a child rather than extending in-place.
-		simulateRequest(t, kvc, []int32{1, 2, 3, 4, 5, 10, 11, 20, 21}, nil)
+		simulateRequest(t, pc, []int32{1, 2, 3, 4, 5, 10, 11, 20, 21}, nil)
 		env.assertAllTokens(t, "after B", []int32{1, 2, 3, 4, 5, 10, 11, 20, 21})
-		assertUserNodeExists(t, kvc, "after B")
+		assertUserNodeExists(t, pc, "after B")
 
 		// Request C: diverge from the user node.
-		simulateRequest(t, kvc, []int32{1, 2, 3, 4, 5, 30, 31}, []int32{40})
+		simulateRequest(t, pc, []int32{1, 2, 3, 4, 5, 30, 31}, []int32{40})
 
 		// Request D: switch back to A's branch — user snapshot still restorable.
-		simulateRequest(t, kvc, []int32{1, 2, 3, 4, 5, 10, 11, 20, 21, 50}, nil)
+		simulateRequest(t, pc, []int32{1, 2, 3, 4, 5, 10, 11, 20, 21, 50}, nil)
 		env.assertAllTokens(t, "back to A", []int32{1, 2, 3, 4, 5, 10, 11, 20, 21, 50})
 
-		checkTrieInvariants(t, kvc.root)
+		checkTrieInvariants(t, pc.root)
 	})
 }
 
@@ -877,22 +877,22 @@ func TestUserSnapshotPreservesRestorePoint(t *testing.T) {
 // a user-marked parent node is not auto-merged with its remaining single child.
 func TestUserSnapshotResistsAutoMerge(t *testing.T) {
 	forEachEnv(t, func(t *testing.T, env *testEnv) {
-		kvc := env.kvc
+		pc := env.pc
 
 		// Request A: user snapshot at offset 3, then continue to offset 5.
-		simulateRequest(t, kvc, []int32{1, 2, 3, 4, 5}, []int32{10}, 3)
+		simulateRequest(t, pc, []int32{1, 2, 3, 4, 5}, []int32{10}, 3)
 
 		// Request B: diverges at the user node, creating a second child.
-		simulateRequest(t, kvc, []int32{1, 2, 3, 6, 7}, []int32{20})
+		simulateRequest(t, pc, []int32{1, 2, 3, 6, 7}, []int32{20})
 
-		userNode := findUserNode(t, kvc)
+		userNode := findUserNode(t, pc)
 		if len(userNode.children) != 2 {
 			t.Fatalf("user node children = %d, want 2", len(userNode.children))
 		}
 
 		// Inflate snapshot sizes and evict. The non-active branch should be
 		// evicted, leaving the user node with one child.
-		walkNodes(kvc.root, func(n *trieNode) bool {
+		walkNodes(pc.root, func(n *trieNode) bool {
 			if !n.hasSnapshots() {
 				return true
 			}
@@ -902,15 +902,15 @@ func TestUserSnapshotResistsAutoMerge(t *testing.T) {
 					snaps[i] = &fakeSnapshot{byteSize: 5 * 1024 * 1024 * 1024}
 				}
 			}
-			n.setSnapshots(snaps, &kvc.pagedOutBytes)
+			n.setSnapshots(snaps, &pc.pagedOutBytes)
 			return true
 		})
-		kvc.enforceEvictionPolicy()
+		pc.enforceEvictionPolicy()
 
 		// The user node should still exist (not auto-merged) even with one child.
-		assertUserNodeExists(t, kvc, "after eviction")
+		assertUserNodeExists(t, pc, "after eviction")
 
-		checkTrieInvariants(t, kvc.root)
+		checkTrieInvariants(t, pc.root)
 	})
 }
 
@@ -920,26 +920,26 @@ func TestUserSnapshotResistsAutoMerge(t *testing.T) {
 // than materialized as a trie node claiming tokens the cache never wrote.
 func TestSnapshotBeyondPrefillSkipped(t *testing.T) {
 	forEachEnv(t, func(t *testing.T, env *testEnv) {
-		kvc := env.kvc
+		pc := env.pc
 		inputs := []int32{1, 2, 3, 4, 5}
 
-		session := kvc.begin(nil, inputs)
+		session := pc.begin(nil, inputs)
 		// Request a reachable snapshot at 3 and one at len(inputs), which a
 		// prefill that stops one token short never crosses.
 		session.schedulePrefillSnapshots([]int{3, len(inputs)})
 		// Prefill writes all but the final token (mirrors total-processed > 1).
-		feedAll(kvc.caches, inputs[kvc.minCacheOffset():len(inputs)-1])
+		feedAll(pc.caches, inputs[pc.minCacheOffset():len(inputs)-1])
 		session.attachPrefillSnapshots()
 
 		// The reachable offset became a node; the unreached one did not.
-		if !nodeExistsAtOffset(kvc.root, 3) {
+		if !nodeExistsAtOffset(pc.root, 3) {
 			t.Errorf("no trie node at reached offset 3")
 		}
-		if nodeExistsAtOffset(kvc.root, len(inputs)) {
+		if nodeExistsAtOffset(pc.root, len(inputs)) {
 			t.Errorf("trie node materialized at unreached offset %d", len(inputs))
 		}
 
-		checkTrieInvariants(t, kvc.root)
+		checkTrieInvariants(t, pc.root)
 	})
 }
 
@@ -950,20 +950,20 @@ func TestSnapshotBeyondPrefillSkipped(t *testing.T) {
 // leaking the snapshots (caught by checkSnapshotLeaks in the env cleanup).
 func TestPrefillSnapshotsDiscardedOnCancel(t *testing.T) {
 	forEachEnv(t, func(t *testing.T, env *testEnv) {
-		kvc := env.kvc
+		pc := env.pc
 		inputs := []int32{1, 2, 3, 4, 5}
 
-		session := kvc.begin(nil, inputs)
+		session := pc.begin(nil, inputs)
 		session.schedulePrefillSnapshots([]int{3})
 		// Cross offset 3 so the caches capture it, then close the session as a
 		// canceled prefill would, before the captures are attached to the trie.
-		feedAll(kvc.caches, inputs[kvc.minCacheOffset():3])
+		feedAll(pc.caches, inputs[pc.minCacheOffset():3])
 		session.close()
 
 		// close advances the trie over the committed tokens, but the abandoned
 		// captures must not be attached as snapshots to any node.
-		walkNodes(kvc.root, func(n *trieNode) bool {
-			if n != kvc.root && n.hasSnapshots() {
+		walkNodes(pc.root, func(n *trieNode) bool {
+			if n != pc.root && n.hasSnapshots() {
 				t.Errorf("abandoned capture attached as snapshot at offset %d", n.endOffset)
 			}
 			return true
@@ -971,9 +971,9 @@ func TestPrefillSnapshotsDiscardedOnCancel(t *testing.T) {
 
 		// A second request re-prepares snapshots on the same caches: if the
 		// discarded ones were not closed, prepare() orphans them here.
-		simulateRequest(t, kvc, inputs, nil, 4)
+		simulateRequest(t, pc, inputs, nil, 4)
 
-		checkTrieInvariants(t, kvc.root)
+		checkTrieInvariants(t, pc.root)
 	})
 }
 
@@ -988,10 +988,10 @@ func nodeExistsAtOffset(root *trieNode, offset int) bool {
 	return found
 }
 
-func findUserNode(t *testing.T, kvc *kvCache) *trieNode {
+func findUserNode(t *testing.T, pc *prefixCache) *trieNode {
 	t.Helper()
 	var found *trieNode
-	walkNodes(kvc.root, func(n *trieNode) bool {
+	walkNodes(pc.root, func(n *trieNode) bool {
 		if n.user {
 			found = n
 		}
@@ -1003,10 +1003,10 @@ func findUserNode(t *testing.T, kvc *kvCache) *trieNode {
 	return found
 }
 
-func assertUserNodeExists(t *testing.T, kvc *kvCache, label string) {
+func assertUserNodeExists(t *testing.T, pc *prefixCache, label string) {
 	t.Helper()
 	var exists bool
-	walkNodes(kvc.root, func(n *trieNode) bool {
+	walkNodes(pc.root, func(n *trieNode) bool {
 		if n.user {
 			exists = true
 		}
@@ -1023,21 +1023,21 @@ func assertUserNodeExists(t *testing.T, kvc *kvCache, label string) {
 // non-rewindable caches.
 func TestBranchSwitchRestoresCorrectState(t *testing.T) {
 	forEachEnv(t, func(t *testing.T, env *testEnv) {
-		kvc := env.kvc
+		pc := env.pc
 
 		// Request A: [1,2,3,4,5] + generate [10,11]
-		simulateRequest(t, kvc, []int32{1, 2, 3, 4, 5}, []int32{10, 11})
+		simulateRequest(t, pc, []int32{1, 2, 3, 4, 5}, []int32{10, 11})
 		env.assertAllTokens(t, "after A", []int32{1, 2, 3, 4, 5, 10, 11})
 
 		// Request B: [1,2,3,6,7] — diverges at token 4
-		simulateRequest(t, kvc, []int32{1, 2, 3, 6, 7}, []int32{12, 13})
+		simulateRequest(t, pc, []int32{1, 2, 3, 6, 7}, []int32{12, 13})
 		env.assertAllTokens(t, "after B", []int32{1, 2, 3, 6, 7, 12, 13})
 
 		// Request C: switch back to A's branch [1,2,3,4,5,10,11,20]
-		simulateRequest(t, kvc, []int32{1, 2, 3, 4, 5, 10, 11, 20}, nil)
+		simulateRequest(t, pc, []int32{1, 2, 3, 4, 5, 10, 11, 20}, nil)
 		env.assertAllTokens(t, "after C (back to A)", []int32{1, 2, 3, 4, 5, 10, 11, 20})
 
-		checkTrieInvariants(t, kvc.root)
+		checkTrieInvariants(t, pc.root)
 	})
 }
 
@@ -1046,18 +1046,18 @@ func TestBranchSwitchRestoresCorrectState(t *testing.T) {
 // refreshed, allowing them to age out and collapse.
 func TestLRUOnlyUpdatesUsedNodes(t *testing.T) {
 	forEachEnv(t, func(t *testing.T, env *testEnv) {
-		kvc := env.kvc
+		pc := env.pc
 
 		// Request A: creates path [1,2,3,4,5] + generate [10,11]
-		simulateRequest(t, kvc, []int32{1, 2, 3, 4, 5}, []int32{10, 11})
+		simulateRequest(t, pc, []int32{1, 2, 3, 4, 5}, []int32{10, 11})
 
 		// Request B: diverges at token 4, creating a branch point at offset 3
 		// with a split snapshot.
-		simulateRequest(t, kvc, []int32{1, 2, 3, 6, 7}, []int32{20, 21})
+		simulateRequest(t, pc, []int32{1, 2, 3, 6, 7}, []int32{20, 21})
 
 		// Set all lastUsed to a known old time.
 		oldTime := time.Now().Add(-1 * time.Hour)
-		walkNodes(kvc.root, func(n *trieNode) bool {
+		walkNodes(pc.root, func(n *trieNode) bool {
 			n.lastUsed = oldTime
 			return true
 		})
@@ -1066,15 +1066,15 @@ func TestLRUOnlyUpdatesUsedNodes(t *testing.T) {
 		// and extend it. The branch point's snapshot may be paged in
 		// for some cache types but not others.
 		beforeRequest := time.Now()
-		simulateRequest(t, kvc, []int32{1, 2, 3, 6, 7, 20, 21, 30}, nil)
+		simulateRequest(t, pc, []int32{1, 2, 3, 6, 7, 20, 21, 30}, nil)
 
 		// The path must have enough depth to exercise intermediate nodes.
-		if len(kvc.activePath) < 3 {
-			t.Fatalf("activePath too short to test intermediate nodes: got %d nodes", len(kvc.activePath))
+		if len(pc.activePath) < 3 {
+			t.Fatalf("activePath too short to test intermediate nodes: got %d nodes", len(pc.activePath))
 		}
 
 		// The frontier (deepest node on the active path) must be updated.
-		frontier := kvc.activePath[len(kvc.activePath)-1]
+		frontier := pc.activePath[len(pc.activePath)-1]
 		if frontier.lastUsed.Before(beforeRequest) {
 			t.Errorf("frontier lastUsed was not updated: got %v, want >= %v",
 				frontier.lastUsed, beforeRequest)
@@ -1082,14 +1082,14 @@ func TestLRUOnlyUpdatesUsedNodes(t *testing.T) {
 
 		// Every non-frontier node on the active path (including root)
 		// should retain its old lastUsed — only the frontier gets refreshed.
-		for i, node := range kvc.activePath[:len(kvc.activePath)-1] {
+		for i, node := range pc.activePath[:len(pc.activePath)-1] {
 			if !node.lastUsed.Before(beforeRequest) {
 				t.Errorf("activePath[%d] (endOffset=%d) lastUsed was refreshed: got %v, want < %v",
 					i, node.endOffset, node.lastUsed, beforeRequest)
 			}
 		}
 
-		checkTrieInvariants(t, kvc.root)
+		checkTrieInvariants(t, pc.root)
 	})
 }
 
@@ -1098,24 +1098,24 @@ func TestLRUOnlyUpdatesUsedNodes(t *testing.T) {
 // state), the trie's pagedOutBytes counter picks up the delta via the
 // installed materialize hook.
 func TestPagedOutBytesUpdatesOnMaterialize(t *testing.T) {
-	kvc := &kvCache{}
-	kvc.ensureRoot()
+	pc := &prefixCache{}
+	pc.ensureRoot()
 
-	node := &trieNode{parent: kvc.root, tokens: []int32{1, 2, 3}, endOffset: 3}
-	kvc.root.children = append(kvc.root.children, node)
+	node := &trieNode{parent: pc.root, tokens: []int32{1, 2, 3}, endOffset: 3}
+	pc.root.children = append(pc.root.children, node)
 
 	snap := &fakeSnapshot{from: 0, to: 3, byteSize: 0}
-	node.setSnapshots([]cache.Snapshot{snap}, &kvc.pagedOutBytes)
+	node.setSnapshots([]cache.Snapshot{snap}, &pc.pagedOutBytes)
 
-	if kvc.pagedOutBytes != 0 {
-		t.Fatalf("pagedOutBytes after install = %d, want 0 (lazy snapshot)", kvc.pagedOutBytes)
+	if pc.pagedOutBytes != 0 {
+		t.Fatalf("pagedOutBytes after install = %d, want 0 (lazy snapshot)", pc.pagedOutBytes)
 	}
 
 	const materialized = 1 << 20
 	snap.materialize(materialized)
 
-	if kvc.pagedOutBytes != materialized {
-		t.Fatalf("pagedOutBytes after materialize = %d, want %d", kvc.pagedOutBytes, materialized)
+	if pc.pagedOutBytes != materialized {
+		t.Fatalf("pagedOutBytes after materialize = %d, want %d", pc.pagedOutBytes, materialized)
 	}
 }
 
@@ -1124,28 +1124,28 @@ func TestPagedOutBytesUpdatesOnMaterialize(t *testing.T) {
 // materialize. Without detach, a Split/Merge that folds an old snapshot
 // elsewhere would double-count its bytes if it copied out afterward.
 func TestSwapSnapshotsDetachesHook(t *testing.T) {
-	kvc := &kvCache{}
-	kvc.ensureRoot()
+	pc := &prefixCache{}
+	pc.ensureRoot()
 
-	node := &trieNode{parent: kvc.root, tokens: []int32{1, 2, 3}, endOffset: 3}
-	kvc.root.children = append(kvc.root.children, node)
+	node := &trieNode{parent: pc.root, tokens: []int32{1, 2, 3}, endOffset: 3}
+	pc.root.children = append(pc.root.children, node)
 
 	snap := &fakeSnapshot{from: 0, to: 3, byteSize: 0}
-	node.setSnapshots([]cache.Snapshot{snap}, &kvc.pagedOutBytes)
+	node.setSnapshots([]cache.Snapshot{snap}, &pc.pagedOutBytes)
 
 	replacement := &fakeSnapshot{from: 0, to: 3, byteSize: 0}
-	old := node.swapSnapshots([]cache.Snapshot{replacement}, &kvc.pagedOutBytes)
+	old := node.swapSnapshots([]cache.Snapshot{replacement}, &pc.pagedOutBytes)
 	if len(old) != 1 || old[0] != snap {
 		t.Fatalf("swapSnapshots returned %v, want the original snap", old)
 	}
 
 	snap.materialize(1 << 20)
-	if kvc.pagedOutBytes != 0 {
-		t.Fatalf("pagedOutBytes after detached materialize = %d, want 0", kvc.pagedOutBytes)
+	if pc.pagedOutBytes != 0 {
+		t.Fatalf("pagedOutBytes after detached materialize = %d, want 0", pc.pagedOutBytes)
 	}
 
 	replacement.materialize(2 << 20)
-	if kvc.pagedOutBytes != 2<<20 {
-		t.Fatalf("pagedOutBytes after replacement materialize = %d, want %d", kvc.pagedOutBytes, 2<<20)
+	if pc.pagedOutBytes != 2<<20 {
+		t.Fatalf("pagedOutBytes after replacement materialize = %d, want %d", pc.pagedOutBytes, 2<<20)
 	}
 }

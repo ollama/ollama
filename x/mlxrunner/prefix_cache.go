@@ -1,6 +1,7 @@
-// cache.go manages a shared KV cache across conversations using a compressed
-// prefix trie. Each trie node stores a token sequence (edge) and optional
-// per-layer snapshots that can be paged in/out of the live MLX cache arrays.
+// prefix_cache.go manages cache state shared across conversations using a
+// compressed prefix trie. Each trie node stores a token sequence (edge) and
+// optional per-layer snapshots that can be paged in/out of the live MLX cache
+// arrays.
 //
 // Key properties:
 //   - Only one path through the trie is "active" (backed by live MLX arrays)
@@ -31,7 +32,7 @@ import (
 
 const maxPagedOutBytes int64 = 8 << 30 // 8 GiB eviction threshold for paged-out snapshot memory
 
-type kvCache struct {
+type prefixCache struct {
 	root          *trieNode   // root of the prefix trie
 	activePath    []*trieNode // current root→leaf path with live MLX arrays
 	caches        []cache.Cache
@@ -48,7 +49,7 @@ type pendingSnapshot struct {
 // Callers should append generated tokens to outputs and
 // defer close to save the cache state.
 type cacheSession struct {
-	cache   *kvCache
+	cache   *prefixCache
 	inputs  []int32
 	outputs []int32
 
@@ -61,7 +62,7 @@ type cacheSession struct {
 	pendingSnapshots []pendingSnapshot
 }
 
-func (c *kvCache) ensureCaches(m base.Model) {
+func (c *prefixCache) ensureCaches(m base.Model) {
 	if len(c.caches) != 0 {
 		return
 	}
@@ -75,7 +76,7 @@ func (c *kvCache) ensureCaches(m base.Model) {
 	}
 }
 
-func (c *kvCache) ensureRoot() {
+func (c *prefixCache) ensureRoot() {
 	if c.root == nil {
 		c.root = &trieNode{
 			lastUsed: time.Now(),
@@ -86,7 +87,7 @@ func (c *kvCache) ensureRoot() {
 
 // begin prepares caches for a new request. It finds the nearest
 // matching cache or creates new caches if none match.
-func (c *kvCache) begin(m base.Model, inputs []int32) *cacheSession {
+func (c *prefixCache) begin(m base.Model, inputs []int32) *cacheSession {
 	c.ensureCaches(m)
 	c.ensureRoot()
 
@@ -130,7 +131,7 @@ func (c *kvCache) begin(m base.Model, inputs []int32) *cacheSession {
 
 // switchToPath transitions from the current active path to a new path,
 // paging out diverging segments and paging in the new path.
-func (c *kvCache) switchToPath(newPath []*trieNode, matched int) {
+func (c *prefixCache) switchToPath(newPath []*trieNode, matched int) {
 	defer c.enforceEvictionPolicy()
 
 	// Find common ancestor index.
@@ -401,7 +402,7 @@ func (s *cacheSession) attachCapturedSnapshots(node *trieNode, snaps []cache.Sna
 // advancePath advances the active path from the current frontier by matching
 // tokens against existing trie children, splitting partial matches, and
 // appending any remaining tokens as new nodes. Returns the new frontier.
-func (c *kvCache) advancePath(frontier *trieNode, tokens []int32, endOffset int) *trieNode {
+func (c *prefixCache) advancePath(frontier *trieNode, tokens []int32, endOffset int) *trieNode {
 	// Check if existing children already cover some or all of tokens.
 	// tokens may span multiple trie nodes when extending a previous run's
 	// leaf and this snapshot now overlaps that same range.
@@ -438,7 +439,7 @@ func (c *kvCache) advancePath(frontier *trieNode, tokens []int32, endOffset int)
 }
 
 // freeAll releases all cache layers.
-func (c *kvCache) freeAll() {
+func (c *prefixCache) freeAll() {
 	for _, kv := range c.caches {
 		if kv != nil {
 			kv.Free()
@@ -446,7 +447,7 @@ func (c *kvCache) freeAll() {
 	}
 }
 
-func (c *kvCache) minCacheOffset() int {
+func (c *prefixCache) minCacheOffset() int {
 	offset := 0
 	found := false
 	for _, kv := range c.caches {
@@ -503,7 +504,7 @@ func (s *cacheSession) close() {
 }
 
 // enforceEvictionPolicy evicts eligible nodes until paged-out memory is within limits.
-func (c *kvCache) enforceEvictionPolicy() {
+func (c *prefixCache) enforceEvictionPolicy() {
 	if c.pagedOutBytes <= maxPagedOutBytes {
 		return
 	}
@@ -537,7 +538,7 @@ func (c *kvCache) enforceEvictionPolicy() {
 }
 
 // evictNode evicts a single node from the trie, freeing its snapshot memory.
-func (c *kvCache) evictNode(node *trieNode) {
+func (c *prefixCache) evictNode(node *trieNode) {
 	if len(node.children) == 0 {
 		// Leaf: remove entirely.
 		slog.Debug("evicting leaf", "offset", node.startOffset(), "tokens", len(node.tokens), "freed", mlx.PrettyBytes(int(node.snapshotBytes())))
@@ -553,7 +554,7 @@ func (c *kvCache) evictNode(node *trieNode) {
 	}
 }
 
-func (c *kvCache) dumpTree() {
+func (c *prefixCache) dumpTree() {
 	// Summary stats
 	var cacheBytes int
 	for _, kv := range c.caches {
@@ -640,7 +641,7 @@ func (c *kvCache) dumpTree() {
 	dump(c.root, "", true)
 
 	offset := c.minCacheOffset()
-	logutil.Trace(fmt.Sprintf("kv cache active_tokens: %d, active_size: %s, paged_out: %s, trie: nodes=%d, snapshots=%d",
+	logutil.Trace(fmt.Sprintf("prefix cache active_tokens: %d, active_size: %s, paged_out: %s, trie: nodes=%d, snapshots=%d",
 		offset, mlx.PrettyBytes(cacheBytes), mlx.PrettyBytes(int(pagedBytes)), nodeCount, snapshotCount))
 	for i, l := range lines {
 		if i == 0 {
