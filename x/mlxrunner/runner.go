@@ -38,7 +38,7 @@ type Runner struct {
 	Tokenizer     *tokenizer.Tokenizer
 	Requests      chan Request
 	Sampler       *sample.Sampler
-	cache         kvCache
+	cache         prefixCache
 	contextLength int
 	mlxThread     *mlxthread.Thread
 	// spec is the speculative-decoding subsystem. Nil when the model ships no

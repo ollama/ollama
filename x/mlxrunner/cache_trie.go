@@ -8,7 +8,7 @@ import (
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 )
 
-// trieNode represents a node in the compressed prefix trie for KV cache branching.
+// trieNode represents a node in the compressed prefix trie for cache branching.
 // Each node stores a compressed edge (multiple tokens) and optional paged-out
 // snapshot data per cache layer.
 type trieNode struct {
