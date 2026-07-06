@@ -495,23 +495,24 @@ func simulateRequest(t *testing.T, pc *prefixCache, inputs, generated []int32, u
 	assertCacheOffsetAlignment(t, pc, "after begin")
 
 	baseOffset := pc.minCacheOffset()
-	remaining := inputs[baseOffset:]
+	seed := len(inputs) - 1
 
-	// Prefill: schedule the pending snapshots, feed the whole prompt in one pass
-	// (the caches self-segment at the scheduled offsets), then attach the
-	// captures to the trie.
+	// Prefill: schedule the pending snapshots, feed the prompt up to the
+	// seed token in one pass (the caches self-segment at the scheduled
+	// offsets), then attach the captures to the trie.
 	session.schedulePrefillSnapshots(snapshotOffsets)
-	if len(remaining) > 0 {
-		feedAll(pc.caches, remaining)
+	if baseOffset < seed {
+		feedAll(pc.caches, inputs[baseOffset:seed])
 	}
 	session.attachPrefillSnapshots()
 
 	assertCacheOffsetAlignment(t, pc, "after prefill")
 
-	// Generate tokens.
+	// Decode: feed the seed and all but the last generated token.
 	if len(generated) > 0 {
 		session.outputs = generated
-		feedAll(pc.caches, generated)
+		feedAll(pc.caches, inputs[seed:])
+		feedAll(pc.caches, generated[:len(generated)-1])
 	}
 
 	assertCacheOffsetAlignment(t, pc, "before close")
@@ -586,7 +587,7 @@ func checkTrieInvariants(t *testing.T, root *trieNode) {
 			}
 		}
 		// No two siblings should start with the same token.
-		seen := make(map[int32]bool)
+		seen := make(map[trieKey]bool)
 		for _, c := range n.children {
 			if len(c.tokens) > 0 {
 				first := c.tokens[0]
@@ -641,21 +642,36 @@ func checkSnapshotLeaks(t *testing.T, tracker *snapshotTracker, root *trieNode) 
 	}
 }
 
-// forEachEnv runs fn as subtests for three realistic model configurations:
+// forEachEnv runs fn as subtests for three realistic model configurations —
 // pure transformer, transformer + sliding window (Mistral-style), and
-// transformer + recurrent (Jamba-style). Leak checking runs automatically
-// at the end of each subtest.
+// transformer + recurrent (Jamba-style) — each with and without a draft
+// look-ahead. Leak checking runs automatically at the end of each subtest.
 func forEachEnv(t *testing.T, fn func(t *testing.T, env *testEnv)) {
 	t.Helper()
-	run := func(t *testing.T, env *testEnv) {
-		t.Cleanup(func() {
-			checkSnapshotLeaks(t, env.tracker, env.pc.root)
-		})
-		fn(t, env)
+	envs := []struct {
+		name string
+		make func() *testEnv
+	}{
+		{"Transformer", newTransformerEnv},
+		{"SlidingWindow", newSlidingWindowEnv},
+		{"Recurrent", newRecurrentEnv},
 	}
-	t.Run("Transformer", func(t *testing.T) { run(t, newTransformerEnv()) })
-	t.Run("SlidingWindow", func(t *testing.T) { run(t, newSlidingWindowEnv()) })
-	t.Run("Recurrent", func(t *testing.T) { run(t, newRecurrentEnv()) })
+	for _, e := range envs {
+		for _, lookahead := range []int{0, 1} {
+			name := e.name
+			if lookahead > 0 {
+				name += "+Lookahead"
+			}
+			t.Run(name, func(t *testing.T) {
+				env := e.make()
+				env.pc.draftLookahead = lookahead
+				t.Cleanup(func() {
+					checkSnapshotLeaks(t, env.tracker, env.pc.root)
+				})
+				fn(t, env)
+			})
+		}
+	}
 }
 
 // TestBranchCreationAndReuse exercises the core multi-conversation lifecycle:
@@ -671,25 +687,28 @@ func TestBranchCreationAndReuse(t *testing.T) {
 		if len(resA.remaining) != 8 {
 			t.Fatalf("A: remaining = %d, want 8 (full miss)", len(resA.remaining))
 		}
-		env.assertAllTokens(t, "after A", []int32{1, 2, 3, 4, 5, 6, 7, 8, 20, 21})
+		env.assertAllTokens(t, "after A", []int32{1, 2, 3, 4, 5, 6, 7, 8, 20})
 
-		// Verify trie was populated by close().
-		_, mA := findBestMatch(pc.root, []int32{1, 2, 3, 4, 5, 6, 7, 8, 20, 21})
-		if mA != 10 {
-			t.Fatalf("A findable: expected 10 matched, got %d", mA)
+		// Verify trie was populated by close(): everything in the caches
+		// is findable; the last generated token is not.
+		seqA := []int32{1, 2, 3, 4, 5, 6, 7, 8, 20, 21}
+		_, mA := findBestMatch(pc.root, pc.key(seqA))
+		if want := len(seqA) - 1; mA != want {
+			t.Fatalf("A findable: expected %d matched, got %d", want, mA)
 		}
 
 		// Request B: [1,2,3,4,5,10,11,12] — shares 5-token prefix with A.
 		// For rewindable caches, switchToPath rewinds to the match point
-		// so only the non-matching suffix needs evaluation. For non-rewindable
-		// caches (RecurrentCache), the rewind fails and freeAll fires.
+		// (one below the shared tokens with a look-ahead) so only the suffix
+		// needs evaluation. For non-rewindable caches (RecurrentCache), the
+		// rewind fails and freeAll fires.
 		resB := simulateRequest(t, pc, []int32{1, 2, 3, 4, 5, 10, 11, 12}, []int32{30, 31})
 		if env.rewindable {
 			if resB.pendingSnapshots != 0 {
 				t.Fatalf("B: pendingSnapshots = %d, want 0 (rewind succeeded)", resB.pendingSnapshots)
 			}
-			if len(resB.remaining) != 3 {
-				t.Fatalf("B: remaining = %d, want 3 (rewind to match point)", len(resB.remaining))
+			if want := 3 + pc.draftLookahead; len(resB.remaining) != want {
+				t.Fatalf("B: remaining = %d, want %d (rewind to match point)", len(resB.remaining), want)
 			}
 		} else {
 			if resB.pendingSnapshots != 1 {
@@ -699,14 +718,14 @@ func TestBranchCreationAndReuse(t *testing.T) {
 				t.Fatalf("B: remaining = %d, want 8 (freeAll fallback)", len(resB.remaining))
 			}
 		}
-		env.assertAllTokens(t, "after B", []int32{1, 2, 3, 4, 5, 10, 11, 12, 30, 31})
+		env.assertAllTokens(t, "after B", []int32{1, 2, 3, 4, 5, 10, 11, 12, 30})
 
 		// Both A and B should be findable in the trie.
-		_, mA2 := findBestMatch(pc.root, []int32{1, 2, 3, 4, 5, 6, 7, 8, 20, 21})
+		_, mA2 := findBestMatch(pc.root, pc.key(seqA))
 		if mA2 < 5 {
 			t.Fatalf("A still findable: expected >= 5 matched, got %d", mA2)
 		}
-		_, mB := findBestMatch(pc.root, []int32{1, 2, 3, 4, 5, 10, 11, 12, 30, 31})
+		_, mB := findBestMatch(pc.root, pc.key([]int32{1, 2, 3, 4, 5, 10, 11, 12, 30, 31}))
 		if mB < 5 {
 			t.Fatalf("B findable: expected >= 5 matched, got %d", mB)
 		}
@@ -717,7 +736,7 @@ func TestBranchCreationAndReuse(t *testing.T) {
 		if len(resC.remaining) >= 10 {
 			t.Fatalf("C: remaining = %d, want < 10 (should get cache hit)", len(resC.remaining))
 		}
-		env.assertAllTokens(t, "after C", []int32{1, 2, 3, 4, 5, 6, 7, 8, 40, 41})
+		env.assertAllTokens(t, "after C", []int32{1, 2, 3, 4, 5, 6, 7, 8, 40})
 
 		checkTrieInvariants(t, pc.root)
 	})
@@ -753,7 +772,7 @@ func TestExactMatchSeedBehavior(t *testing.T) {
 				t.Fatalf("B: pendingSnapshots = %d, want 1", resB.pendingSnapshots)
 			}
 		}
-		env.assertAllTokens(t, "after B", []int32{1, 2, 3, 4, 5, 20, 21})
+		env.assertAllTokens(t, "after B", []int32{1, 2, 3, 4, 5, 20})
 
 		checkTrieInvariants(t, pc.root)
 	})
@@ -768,22 +787,22 @@ func TestConversationResumption(t *testing.T) {
 
 		// Turn 1: system prompt + user message, assistant generates response.
 		simulateRequest(t, pc, []int32{1, 2, 3, 4, 5}, []int32{10, 11, 12})
-		env.assertAllTokens(t, "turn 1", []int32{1, 2, 3, 4, 5, 10, 11, 12})
+		env.assertAllTokens(t, "turn 1", []int32{1, 2, 3, 4, 5, 10, 11})
 
-		// Turn 2: full history + new user message. Should get a cache hit on
-		// the prefix [1,2,3,4,5,10,11,12] and only need to evaluate [20,21].
+		// Turn 2: full history + new user message; the match lands exactly
+		// at the caches' offset, so even exact-offset state is reused.
 		resB := simulateRequest(t, pc, []int32{1, 2, 3, 4, 5, 10, 11, 12, 20, 21}, []int32{30})
 		if len(resB.remaining) > 5 {
 			t.Fatalf("turn 2: remaining = %d, want <= 5 (should reuse most of history)", len(resB.remaining))
 		}
-		env.assertAllTokens(t, "turn 2", []int32{1, 2, 3, 4, 5, 10, 11, 12, 20, 21, 30})
+		env.assertAllTokens(t, "turn 2", []int32{1, 2, 3, 4, 5, 10, 11, 12, 20, 21})
 
 		// Turn 3: even longer history.
 		resC := simulateRequest(t, pc, []int32{1, 2, 3, 4, 5, 10, 11, 12, 20, 21, 30, 40, 41}, nil)
 		if len(resC.remaining) > 5 {
 			t.Fatalf("turn 3: remaining = %d, want <= 5", len(resC.remaining))
 		}
-		env.assertAllTokens(t, "turn 3", []int32{1, 2, 3, 4, 5, 10, 11, 12, 20, 21, 30, 40, 41})
+		env.assertAllTokens(t, "turn 3", []int32{1, 2, 3, 4, 5, 10, 11, 12, 20, 21, 30, 40})
 
 		checkTrieInvariants(t, pc.root)
 	})
@@ -834,9 +853,9 @@ func TestEvictionPreservesActiveConversations(t *testing.T) {
 
 		// System prompt prefix should still be findable (multi-child
 		// branch points are protected from eviction entirely).
-		_, matched := findBestMatch(pc.root, systemPrompt)
-		if matched < len(systemPrompt) {
-			t.Fatalf("system prompt match = %d, want %d", matched, len(systemPrompt))
+		_, matched := findBestMatch(pc.root, pc.key(systemPrompt))
+		if want := len(pc.key(systemPrompt)); matched < want {
+			t.Fatalf("system prompt match = %d, want %d", matched, want)
 		}
 
 		checkTrieInvariants(t, pc.root)
@@ -844,30 +863,39 @@ func TestEvictionPreservesActiveConversations(t *testing.T) {
 }
 
 // TestUserSnapshotPreservesRestorePoint verifies that user-created snapshots
-// (snapshot(true)) resist structural changes that would destroy them:
+// (snapshot(true)) are exact restore points that resist structural changes:
 //   - A user node forces new tokens into a child instead of extending in-place
+//   - A prompt diverging at the snapshot resumes there, even for caches that
+//     cannot rewind
 //   - The snapshot remains restorable after other branches are added
 func TestUserSnapshotPreservesRestorePoint(t *testing.T) {
 	forEachEnv(t, func(t *testing.T, env *testEnv) {
 		pc := env.pc
+		inputs := []int32{1, 2, 3, 4, 5}
 
-		// Request A: user snapshot at offset 5, then generate.
-		simulateRequest(t, pc, []int32{1, 2, 3, 4, 5}, []int32{10, 11}, 5)
+		// Request A: user snapshot at offset 4, then generate.
+		simulateRequest(t, pc, inputs, []int32{10, 11}, 4)
 
 		assertUserNodeExists(t, pc, "after A")
 
-		// Request B: extends A's prefix. The user node at offset 5 should
-		// force tokens into a child rather than extending in-place.
+		// Request B: extends A's prefix. The user node should force tokens
+		// into a child rather than extending in-place.
 		simulateRequest(t, pc, []int32{1, 2, 3, 4, 5, 10, 11, 20, 21}, nil)
-		env.assertAllTokens(t, "after B", []int32{1, 2, 3, 4, 5, 10, 11, 20, 21})
+		env.assertAllTokens(t, "after B", []int32{1, 2, 3, 4, 5, 10, 11, 20})
 		assertUserNodeExists(t, pc, "after B")
 
-		// Request C: diverge from the user node.
-		simulateRequest(t, pc, []int32{1, 2, 3, 4, 5, 30, 31}, []int32{40})
+		// Request C: diverge at the snapshot — prefill resumes at its capture
+		// point, one token lower with a look-ahead (the boundary token
+		// re-evaluates to rebuild its draft pair).
+		divergeC := append(slices.Clone(inputs[:4]), 30, 31)
+		resC := simulateRequest(t, pc, divergeC, []int32{40})
+		if want := divergeC[4-pc.draftLookahead:]; !slices.Equal(resC.remaining, want) {
+			t.Fatalf("C: remaining = %v, want %v", resC.remaining, want)
+		}
 
 		// Request D: switch back to A's branch — user snapshot still restorable.
 		simulateRequest(t, pc, []int32{1, 2, 3, 4, 5, 10, 11, 20, 21, 50}, nil)
-		env.assertAllTokens(t, "back to A", []int32{1, 2, 3, 4, 5, 10, 11, 20, 21, 50})
+		env.assertAllTokens(t, "back to A", []int32{1, 2, 3, 4, 5, 10, 11, 20, 21})
 
 		checkTrieInvariants(t, pc.root)
 	})
@@ -878,9 +906,10 @@ func TestUserSnapshotPreservesRestorePoint(t *testing.T) {
 func TestUserSnapshotResistsAutoMerge(t *testing.T) {
 	forEachEnv(t, func(t *testing.T, env *testEnv) {
 		pc := env.pc
+		inputs := []int32{1, 2, 3, 4, 5}
 
 		// Request A: user snapshot at offset 3, then continue to offset 5.
-		simulateRequest(t, pc, []int32{1, 2, 3, 4, 5}, []int32{10}, 3)
+		simulateRequest(t, pc, inputs, []int32{10}, 3)
 
 		// Request B: diverges at the user node, creating a second child.
 		simulateRequest(t, pc, []int32{1, 2, 3, 6, 7}, []int32{20})
@@ -924,20 +953,25 @@ func TestSnapshotBeyondPrefillSkipped(t *testing.T) {
 		inputs := []int32{1, 2, 3, 4, 5}
 
 		session := pc.begin(inputs)
-		// Request a reachable snapshot at 3 and one at len(inputs), which a
-		// prefill that stops one token short never crosses.
+		// Request a snapshot at 3 and one at len(inputs); captures land at
+		// the requested prefix minus the look-ahead.
 		session.schedulePrefillSnapshots([]int{3, len(inputs)})
 		// Prefill writes all but the final token (mirrors total-processed > 1).
 		feedAll(pc.caches, inputs[pc.minCacheOffset():len(inputs)-1])
 		session.attachPrefillSnapshots()
 
-		// The reachable offset became a node; the unreached one did not.
-		if !nodeExistsAtOffset(pc.root, 3) {
-			t.Errorf("no trie node at reached offset 3")
+		// The first request became a node at its capture point; nothing may
+		// claim offsets the prefill never wrote.
+		if at := 3 - pc.draftLookahead; !nodeExistsAtOffset(pc.root, at) {
+			t.Errorf("no trie node at capture point %d", at)
 		}
-		if nodeExistsAtOffset(pc.root, len(inputs)) {
-			t.Errorf("trie node materialized at unreached offset %d", len(inputs))
-		}
+		reached := pc.minCacheOffset()
+		walkNodes(pc.root, func(n *trieNode) bool {
+			if n.endOffset > reached {
+				t.Errorf("trie node materialized at unwritten offset %d", n.endOffset)
+			}
+			return true
+		})
 
 		checkTrieInvariants(t, pc.root)
 	})
@@ -971,7 +1005,7 @@ func TestPrefillSnapshotsDiscardedOnCancel(t *testing.T) {
 
 		// A second request re-prepares snapshots on the same caches: if the
 		// discarded ones were not closed, prepare() orphans them here.
-		simulateRequest(t, pc, inputs, nil, 4)
+		simulateRequest(t, pc, inputs, nil, 5)
 
 		checkTrieInvariants(t, pc.root)
 	})
@@ -1027,15 +1061,15 @@ func TestBranchSwitchRestoresCorrectState(t *testing.T) {
 
 		// Request A: [1,2,3,4,5] + generate [10,11]
 		simulateRequest(t, pc, []int32{1, 2, 3, 4, 5}, []int32{10, 11})
-		env.assertAllTokens(t, "after A", []int32{1, 2, 3, 4, 5, 10, 11})
+		env.assertAllTokens(t, "after A", []int32{1, 2, 3, 4, 5, 10})
 
 		// Request B: [1,2,3,6,7] — diverges at token 4
 		simulateRequest(t, pc, []int32{1, 2, 3, 6, 7}, []int32{12, 13})
-		env.assertAllTokens(t, "after B", []int32{1, 2, 3, 6, 7, 12, 13})
+		env.assertAllTokens(t, "after B", []int32{1, 2, 3, 6, 7, 12})
 
 		// Request C: switch back to A's branch [1,2,3,4,5,10,11,20]
 		simulateRequest(t, pc, []int32{1, 2, 3, 4, 5, 10, 11, 20}, nil)
-		env.assertAllTokens(t, "after C (back to A)", []int32{1, 2, 3, 4, 5, 10, 11, 20})
+		env.assertAllTokens(t, "after C (back to A)", []int32{1, 2, 3, 4, 5, 10, 11})
 
 		checkTrieInvariants(t, pc.root)
 	})
@@ -1066,7 +1100,9 @@ func TestLRUOnlyUpdatesUsedNodes(t *testing.T) {
 		// and extend it. The branch point's snapshot may be paged in
 		// for some cache types but not others.
 		beforeRequest := time.Now()
-		simulateRequest(t, pc, []int32{1, 2, 3, 6, 7, 20, 21, 30}, nil)
+		inputsC := []int32{1, 2, 3, 6, 7, 20, 21, 30}
+		resC := simulateRequest(t, pc, inputsC, nil)
+		landing := len(inputsC) - len(resC.remaining)
 
 		// The path must have enough depth to exercise intermediate nodes.
 		if len(pc.activePath) < 3 {
@@ -1080,9 +1116,12 @@ func TestLRUOnlyUpdatesUsedNodes(t *testing.T) {
 				frontier.lastUsed, beforeRequest)
 		}
 
-		// Every non-frontier node on the active path (including root)
-		// should retain its old lastUsed — only the frontier gets refreshed.
+		// Only used nodes refresh — the frontier and the restore landing;
+		// merely traversed nodes keep their age so they can still evict.
 		for i, node := range pc.activePath[:len(pc.activePath)-1] {
+			if node.endOffset == landing {
+				continue
+			}
 			if !node.lastUsed.Before(beforeRequest) {
 				t.Errorf("activePath[%d] (endOffset=%d) lastUsed was refreshed: got %v, want < %v",
 					i, node.endOffset, node.lastUsed, beforeRequest)
@@ -1101,7 +1140,7 @@ func TestPagedOutBytesUpdatesOnMaterialize(t *testing.T) {
 	pc := &prefixCache{}
 	pc.ensureRoot()
 
-	node := &trieNode{parent: pc.root, tokens: []int32{1, 2, 3}, endOffset: 3}
+	node := &trieNode{parent: pc.root, tokens: []trieKey{1, 2, 3}, endOffset: 3}
 	pc.root.children = append(pc.root.children, node)
 
 	snap := &fakeSnapshot{from: 0, to: 3, byteSize: 0}
@@ -1127,7 +1166,7 @@ func TestSwapSnapshotsDetachesHook(t *testing.T) {
 	pc := &prefixCache{}
 	pc.ensureRoot()
 
-	node := &trieNode{parent: pc.root, tokens: []int32{1, 2, 3}, endOffset: 3}
+	node := &trieNode{parent: pc.root, tokens: []trieKey{1, 2, 3}, endOffset: 3}
 	pc.root.children = append(pc.root.children, node)
 
 	snap := &fakeSnapshot{from: 0, to: 3, byteSize: 0}

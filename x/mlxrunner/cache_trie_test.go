@@ -8,7 +8,7 @@ import (
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 )
 
-func newTestTrie(tokens []int32) *trieNode {
+func newTestTrie(tokens []trieKey) *trieNode {
 	root := &trieNode{lastUsed: time.Now()}
 	if len(tokens) > 0 {
 		child := &trieNode{
@@ -26,13 +26,13 @@ func TestFindBestMatchMultipleBranches(t *testing.T) {
 	root := &trieNode{lastUsed: time.Now()}
 
 	branch1 := &trieNode{
-		tokens:    []int32{1, 2, 3},
+		tokens:    []trieKey{1, 2, 3},
 		endOffset: 3,
 		parent:    root,
 		lastUsed:  time.Now(),
 	}
 	branch2 := &trieNode{
-		tokens:    []int32{4, 5, 6},
+		tokens:    []trieKey{4, 5, 6},
 		endOffset: 3,
 		parent:    root,
 		lastUsed:  time.Now(),
@@ -40,7 +40,7 @@ func TestFindBestMatchMultipleBranches(t *testing.T) {
 	root.children = []*trieNode{branch1, branch2}
 
 	// Match branch 1.
-	path, matched := findBestMatch(root, []int32{1, 2, 3, 7})
+	path, matched := findBestMatch(root, []trieKey{1, 2, 3, 7})
 	if matched != 3 {
 		t.Fatalf("expected 3 matched, got %d", matched)
 	}
@@ -49,7 +49,7 @@ func TestFindBestMatchMultipleBranches(t *testing.T) {
 	}
 
 	// Match branch 2.
-	path, matched = findBestMatch(root, []int32{4, 5, 6, 8})
+	path, matched = findBestMatch(root, []trieKey{4, 5, 6, 8})
 	if matched != 3 {
 		t.Fatalf("expected 3 matched, got %d", matched)
 	}
@@ -58,7 +58,7 @@ func TestFindBestMatchMultipleBranches(t *testing.T) {
 	}
 
 	// Match neither.
-	_, matched = findBestMatch(root, []int32{7, 8, 9})
+	_, matched = findBestMatch(root, []trieKey{7, 8, 9})
 	if matched != 0 {
 		t.Fatalf("expected 0 matched, got %d", matched)
 	}
@@ -68,7 +68,7 @@ func TestFindBestMatchPrefersFullEdge(t *testing.T) {
 	root := &trieNode{lastUsed: time.Now()}
 
 	shared := &trieNode{
-		tokens:    []int32{1, 2, 3},
+		tokens:    []trieKey{1, 2, 3},
 		endOffset: 3,
 		parent:    root,
 		lastUsed:  time.Now(),
@@ -76,13 +76,13 @@ func TestFindBestMatchPrefersFullEdge(t *testing.T) {
 	root.children = []*trieNode{shared}
 
 	longer := &trieNode{
-		tokens:    []int32{10, 11, 12, 13, 14},
+		tokens:    []trieKey{10, 11, 12, 13, 14},
 		endOffset: 8,
 		parent:    shared,
 		lastUsed:  time.Now(),
 	}
 	shorter := &trieNode{
-		tokens:    []int32{10, 11, 12},
+		tokens:    []trieKey{10, 11, 12},
 		endOffset: 6,
 		parent:    shared,
 		lastUsed:  time.Now(),
@@ -90,7 +90,7 @@ func TestFindBestMatchPrefersFullEdge(t *testing.T) {
 	// Put longer first so naive first-match would pick it.
 	shared.children = []*trieNode{longer, shorter}
 
-	input := []int32{1, 2, 3, 10, 11, 12, 99, 100}
+	input := []trieKey{1, 2, 3, 10, 11, 12, 99, 100}
 	path, matched := findBestMatch(root, input)
 
 	if matched != 6 {
@@ -108,20 +108,20 @@ func TestFindBestMatchPrefersLongerPartial(t *testing.T) {
 	root := &trieNode{lastUsed: time.Now()}
 
 	child1 := &trieNode{
-		tokens:    []int32{1, 2, 3, 4, 5},
+		tokens:    []trieKey{1, 2, 3, 4, 5},
 		endOffset: 5,
 		parent:    root,
 		lastUsed:  time.Now(),
 	}
 	child2 := &trieNode{
-		tokens:    []int32{1, 2, 9},
+		tokens:    []trieKey{1, 2, 9},
 		endOffset: 3,
 		parent:    root,
 		lastUsed:  time.Now(),
 	}
 	root.children = []*trieNode{child2, child1}
 
-	input := []int32{1, 2, 3, 7, 8}
+	input := []trieKey{1, 2, 3, 7, 8}
 	path, matched := findBestMatch(root, input)
 
 	if matched != 3 {
@@ -133,7 +133,7 @@ func TestFindBestMatchPrefersLongerPartial(t *testing.T) {
 }
 
 func TestSplitNodeWithSnapshots(t *testing.T) {
-	root := newTestTrie([]int32{1, 2, 3, 4, 5})
+	root := newTestTrie([]trieKey{1, 2, 3, 4, 5})
 	child := root.children[0]
 
 	rc := &fakeRewindableCache{tracker: &snapshotTracker{}, tokens: []int32{1, 2, 3, 4, 5}}
@@ -159,9 +159,9 @@ func TestSplitNodeWithSnapshots(t *testing.T) {
 }
 
 func TestFindSplitAppendSequence(t *testing.T) {
-	root := newTestTrie([]int32{1, 2, 3, 4, 5})
+	root := newTestTrie([]trieKey{1, 2, 3, 4, 5})
 
-	path, matched := findBestMatch(root, []int32{1, 2, 3, 6, 7})
+	path, matched := findBestMatch(root, []trieKey{1, 2, 3, 6, 7})
 	if matched != 3 {
 		t.Fatalf("expected 3 matched, got %d", matched)
 	}
@@ -170,28 +170,28 @@ func TestFindSplitAppendSequence(t *testing.T) {
 	matchedInEdge := matched - lastNode.startOffset()
 	split := splitNode(lastNode, matchedInEdge, nil, nil)
 
-	split.appendTokens(root, []int32{6, 7}, 5)
+	split.appendTokens(root, []trieKey{6, 7}, 5)
 
 	if len(root.children) != 1 {
 		t.Fatalf("root should have 1 child, got %d", len(root.children))
 	}
 	shared := root.children[0]
-	if !slices.Equal(shared.tokens, []int32{1, 2, 3}) {
+	if !slices.Equal(shared.tokens, []trieKey{1, 2, 3}) {
 		t.Fatalf("shared tokens = %v, want [1,2,3]", shared.tokens)
 	}
 	if len(shared.children) != 2 {
 		t.Fatalf("shared should have 2 children, got %d", len(shared.children))
 	}
 
-	_, m1 := findBestMatch(root, []int32{1, 2, 3, 4, 5})
+	_, m1 := findBestMatch(root, []trieKey{1, 2, 3, 4, 5})
 	if m1 != 5 {
 		t.Fatalf("original branch: expected 5 matched, got %d", m1)
 	}
-	_, m2 := findBestMatch(root, []int32{1, 2, 3, 6, 7})
+	_, m2 := findBestMatch(root, []trieKey{1, 2, 3, 6, 7})
 	if m2 != 5 {
 		t.Fatalf("new branch: expected 5 matched, got %d", m2)
 	}
-	_, m3 := findBestMatch(root, []int32{1, 2, 3, 9, 9})
+	_, m3 := findBestMatch(root, []trieKey{1, 2, 3, 9, 9})
 	if m3 != 3 {
 		t.Fatalf("unrelated input: expected 3 matched, got %d", m3)
 	}
@@ -200,32 +200,32 @@ func TestFindSplitAppendSequence(t *testing.T) {
 func TestRepeatedBranching(t *testing.T) {
 	root := &trieNode{lastUsed: time.Now()}
 
-	root.appendTokens(root, []int32{1, 2, 3, 4, 5}, 5)
+	root.appendTokens(root, []trieKey{1, 2, 3, 4, 5}, 5)
 
-	_, matchedB := findBestMatch(root, []int32{1, 2, 3, 6, 7})
+	_, matchedB := findBestMatch(root, []trieKey{1, 2, 3, 6, 7})
 	if matchedB != 3 {
 		t.Fatalf("B: expected 3 matched, got %d", matchedB)
 	}
 	nodeA := root.children[0]
 	split1 := splitNode(nodeA, 3, nil, nil)
-	split1.appendTokens(root, []int32{6, 7}, 5)
+	split1.appendTokens(root, []trieKey{6, 7}, 5)
 
-	_, matchedC := findBestMatch(root, []int32{1, 2, 8, 9})
+	_, matchedC := findBestMatch(root, []trieKey{1, 2, 8, 9})
 	if matchedC != 2 {
 		t.Fatalf("C: expected 2 matched, got %d", matchedC)
 	}
 	split2 := splitNode(split1, 2, nil, nil)
-	split2.appendTokens(root, []int32{8, 9}, 4)
+	split2.appendTokens(root, []trieKey{8, 9}, 4)
 
-	_, mA := findBestMatch(root, []int32{1, 2, 3, 4, 5})
+	_, mA := findBestMatch(root, []trieKey{1, 2, 3, 4, 5})
 	if mA != 5 {
 		t.Fatalf("A: expected 5 matched, got %d", mA)
 	}
-	_, mB := findBestMatch(root, []int32{1, 2, 3, 6, 7})
+	_, mB := findBestMatch(root, []trieKey{1, 2, 3, 6, 7})
 	if mB != 5 {
 		t.Fatalf("B: expected 5 matched, got %d", mB)
 	}
-	_, mC := findBestMatch(root, []int32{1, 2, 8, 9})
+	_, mC := findBestMatch(root, []trieKey{1, 2, 8, 9})
 	if mC != 4 {
 		t.Fatalf("C: expected 4 matched, got %d", mC)
 	}
@@ -239,21 +239,21 @@ func TestMergeWithChild(t *testing.T) {
 		now := time.Now()
 		root := &trieNode{lastUsed: now}
 		a := &trieNode{
-			tokens:    []int32{1, 2, 3},
+			tokens:    []trieKey{1, 2, 3},
 			endOffset: 3,
 			parent:    root,
 			lastUsed:  now,
 			snapshots: []cache.Snapshot{&fakeSnapshot{tokens: []int32{1, 2, 3}, from: 0, to: 3}},
 		}
 		b := &trieNode{
-			tokens:    []int32{4, 5},
+			tokens:    []trieKey{4, 5},
 			endOffset: 5,
 			parent:    a,
 			lastUsed:  now,
 			snapshots: []cache.Snapshot{&fakeSnapshot{tokens: []int32{4, 5}, from: 3, to: 5}},
 		}
-		c := &trieNode{tokens: []int32{6}, endOffset: 6, parent: b, lastUsed: now}
-		d := &trieNode{tokens: []int32{7}, endOffset: 6, parent: b, lastUsed: now}
+		c := &trieNode{tokens: []trieKey{6}, endOffset: 6, parent: b, lastUsed: now}
+		d := &trieNode{tokens: []trieKey{7}, endOffset: 6, parent: b, lastUsed: now}
 		root.children = []*trieNode{a}
 		a.children = []*trieNode{b}
 		b.children = []*trieNode{c, d}
@@ -262,7 +262,7 @@ func TestMergeWithChild(t *testing.T) {
 		mergeWithChild(a, []cache.Cache{mc}, nil)
 
 		// Tokens concatenated.
-		if !slices.Equal(a.tokens, []int32{1, 2, 3, 4, 5}) {
+		if !slices.Equal(a.tokens, []trieKey{1, 2, 3, 4, 5}) {
 			t.Fatalf("merged tokens = %v, want [1,2,3,4,5]", a.tokens)
 		}
 		if a.endOffset != 5 {
@@ -294,11 +294,11 @@ func TestMergeWithChild(t *testing.T) {
 	t.Run("UserFlag", func(t *testing.T) {
 		root := &trieNode{lastUsed: time.Now()}
 		parent := &trieNode{
-			tokens: []int32{1, 2}, endOffset: 2, parent: root,
+			tokens: []trieKey{1, 2}, endOffset: 2, parent: root,
 			lastUsed: time.Now(), user: false,
 		}
 		child := &trieNode{
-			tokens: []int32{3, 4}, endOffset: 4, parent: parent,
+			tokens: []trieKey{3, 4}, endOffset: 4, parent: parent,
 			lastUsed: time.Now(), user: true,
 		}
 		root.children = []*trieNode{parent}
@@ -315,11 +315,11 @@ func TestMergeWithChild(t *testing.T) {
 		now := time.Now()
 		root := &trieNode{lastUsed: now}
 		parent := &trieNode{
-			tokens: []int32{1}, endOffset: 1, parent: root,
+			tokens: []trieKey{1}, endOffset: 1, parent: root,
 			lastUsed: now.Add(-1 * time.Hour),
 		}
 		child := &trieNode{
-			tokens: []int32{2}, endOffset: 2, parent: parent,
+			tokens: []trieKey{2}, endOffset: 2, parent: parent,
 			lastUsed: now.Add(1 * time.Hour),
 		}
 		root.children = []*trieNode{parent}
@@ -340,10 +340,10 @@ func TestMergeWithChild(t *testing.T) {
 		}()
 		root := &trieNode{lastUsed: time.Now()}
 		node := &trieNode{
-			tokens: []int32{1}, endOffset: 1, parent: root, lastUsed: time.Now(),
+			tokens: []trieKey{1}, endOffset: 1, parent: root, lastUsed: time.Now(),
 			children: []*trieNode{
-				{tokens: []int32{2}, endOffset: 2, lastUsed: time.Now()},
-				{tokens: []int32{3}, endOffset: 2, lastUsed: time.Now()},
+				{tokens: []trieKey{2}, endOffset: 2, lastUsed: time.Now()},
+				{tokens: []trieKey{3}, endOffset: 2, lastUsed: time.Now()},
 			},
 		}
 		root.children = []*trieNode{node}
@@ -354,7 +354,7 @@ func TestMergeWithChild(t *testing.T) {
 func TestSplitMergeRoundTrip(t *testing.T) {
 	root := &trieNode{lastUsed: time.Now()}
 	leaf := &trieNode{
-		tokens:    []int32{1, 2, 3, 4, 5},
+		tokens:    []trieKey{1, 2, 3, 4, 5},
 		endOffset: 5,
 		parent:    root,
 		lastUsed:  time.Now(),
@@ -367,17 +367,17 @@ func TestSplitMergeRoundTrip(t *testing.T) {
 
 	// Split at 3: [1,2,3] -> [4,5]
 	newParent := splitNode(leaf, 3, caches, nil)
-	if !slices.Equal(newParent.tokens, []int32{1, 2, 3}) {
+	if !slices.Equal(newParent.tokens, []trieKey{1, 2, 3}) {
 		t.Fatalf("after split: parent tokens = %v, want [1,2,3]", newParent.tokens)
 	}
-	if !slices.Equal(leaf.tokens, []int32{4, 5}) {
+	if !slices.Equal(leaf.tokens, []trieKey{4, 5}) {
 		t.Fatalf("after split: child tokens = %v, want [4,5]", leaf.tokens)
 	}
 	checkTrieInvariants(t, root)
 
 	// Merge back: should restore [1,2,3,4,5]
 	mergeWithChild(newParent, caches, nil)
-	if !slices.Equal(newParent.tokens, []int32{1, 2, 3, 4, 5}) {
+	if !slices.Equal(newParent.tokens, []trieKey{1, 2, 3, 4, 5}) {
 		t.Fatalf("after merge: tokens = %v, want [1,2,3,4,5]", newParent.tokens)
 	}
 	if newParent.endOffset != 5 {
@@ -402,14 +402,14 @@ func TestRemoveNode(t *testing.T) {
 	t.Run("Leaf", func(t *testing.T) {
 		root := &trieNode{lastUsed: time.Now()}
 		shared := &trieNode{
-			tokens: []int32{1, 2, 3}, endOffset: 3, parent: root, lastUsed: time.Now(),
+			tokens: []trieKey{1, 2, 3}, endOffset: 3, parent: root, lastUsed: time.Now(),
 		}
 		leafA := &trieNode{
-			tokens: []int32{4, 5}, endOffset: 5, parent: shared, lastUsed: time.Now(),
+			tokens: []trieKey{4, 5}, endOffset: 5, parent: shared, lastUsed: time.Now(),
 			snapshots: []cache.Snapshot{&fakeSnapshot{from: 3, to: 5}},
 		}
 		leafB := &trieNode{
-			tokens: []int32{6, 7}, endOffset: 5, parent: shared, lastUsed: time.Now(),
+			tokens: []trieKey{6, 7}, endOffset: 5, parent: shared, lastUsed: time.Now(),
 			snapshots: []cache.Snapshot{&fakeSnapshot{from: 3, to: 5}},
 		}
 		root.children = []*trieNode{shared}

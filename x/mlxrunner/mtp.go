@@ -14,12 +14,18 @@ import (
 const mtpPendingFlushTokens = 32
 
 // mtpDrafter drafts with a model's multi-token-prediction head. Constructed
-// at load, it opens each request's drafting session.
+// at load, it fixes the trie keys' draft look-ahead for the model's lifetime
+// and opens each request's drafting session.
 type mtpDrafter struct {
 	spec *speculation
 }
 
 func newMTPDrafter(s *speculation) *mtpDrafter {
+	if len(s.draftKV) > 0 {
+		// The pairing references one token past each slot; trie keys carry
+		// that look-ahead so a match verifies it (see prefixCache.draftLookahead).
+		s.r.cache.draftLookahead = 1
+	}
 	return &mtpDrafter{spec: s}
 }
 
@@ -94,29 +100,15 @@ func (d *mtpDraftSession) committed(tokens, hiddens *mlx.Array, position int) {
 	d.setFrontierHidden(lastHiddenRow(hiddens))
 }
 
-// finish settles the drafter when generation ends: current completes the
-// frontier pair, leveling the draft caches with the target's resting offset.
-//
-// TODO: leveling the draft to the target writes a boundary entry whose
-// look-ahead token is outside the stored prefix (here, the never-committed
-// current). When a later request restores this prefix and diverges at the
-// boundary, that entry is stale and lowers draft acceptance. EAGLE keeps the
-// draft one slot behind the target so the unconfirmed boundary entry is never
-// written (its bigram partner token[S+1] does not exist yet); we should do the
-// same rather than level here. Regenerating hidden[S] to re-pair the boundary
-// on the next request is a separate, re-prefill-bound concern for recurrent
-// targets.
-func (d *mtpDraftSession) finish(current *mlx.Array) {
+// settle completes any open frontier pair with next — the token after the
+// last committed slot — and flushes, leveling the draft caches with the
+// target.
+func (d *mtpDraftSession) settle(next *mlx.Array) {
 	if len(d.drafter.spec.draftKV) == 0 {
 		return
 	}
-	d.settle(current)
-}
-
-// settle completes any open frontier pair with current, then flushes.
-func (d *mtpDraftSession) settle(current *mlx.Array) {
 	if d.frontierHidden != nil && d.frontier-1 == d.committedDraftOffset+d.pendingCount {
-		d.queueCacheWrites(current.ExpandDims(-1), d.frontierHidden)
+		d.queueCacheWrites(next.ExpandDims(-1), d.frontierHidden)
 	}
 	d.flush()
 }

@@ -25,13 +25,10 @@ type drafter interface {
 	// chunks, the decode seed, then each round's validated tokens.
 	committed(tokens, hiddens *mlx.Array, position int)
 
-	// finish reports generation ended with current sampled but never
-	// committed, so the drafter can settle state tracking the target caches.
-	finish(current *mlx.Array)
-
-	// flush writes any buffered committed reports through to the draft
-	// caches. A drafter without draft caches has nothing to write.
-	flush()
+	// settle completes any open frontier pair with next — the token after
+	// the last committed slot — and writes buffered reports through,
+	// leveling the draft caches with the target caches.
+	settle(next *mlx.Array)
 
 	close()
 }
@@ -184,21 +181,13 @@ func (s *speculationSession) committed(tokens, hiddens *mlx.Array, position int)
 	s.drafter.committed(tokens, hiddens, position)
 }
 
-// finish reports the end of generation to the drafter: current was sampled
-// after the last committed slot and will never be committed.
-func (s *speculationSession) finish(current *mlx.Array) {
+// settle completes the drafter's open frontier pair with next and writes
+// buffered reports through to the draft caches.
+func (s *speculationSession) settle(next *mlx.Array) {
 	if s == nil {
 		return
 	}
-	s.drafter.finish(current)
-}
-
-// flush writes the drafter's buffered committed reports to the draft caches.
-func (s *speculationSession) flush() {
-	if s == nil {
-		return
-	}
-	s.drafter.flush()
+	s.drafter.settle(next)
 }
 
 func (s *speculationSession) close() {
@@ -225,8 +214,8 @@ type speculativeDecoder struct {
 // decoder returns the decoder for this engine's session. A speculationSession that
 // cannot draft (logprobs) has no depth controller and permanently parks,
 // running the inner pipelined decoder whose reports keep the draft KV level.
-func (s *speculationSession) decoder(seed []int32, position int) decoder {
-	current := sampler.Result{Token: mlx.FromValues(seed, len(seed))}
+func (s *speculationSession) decoder(seed *mlx.Array, position int) decoder {
+	current := sampler.Result{Token: seed}
 	mlx.Pin(current.Arrays()...)
 	return &speculativeDecoder{s: s, position: position, current: current}
 }
@@ -284,14 +273,13 @@ func (st *speculativeDecoder) advance(next sampler.Result) {
 // but never forwarded) is exactly the current token a drafting round expects,
 // so emit it and let the next call draft from it.
 func (st *speculativeDecoder) resume() []sampler.Result {
-	next, position := st.inner.detach()
+	next, position := st.inner.drain()
 	st.position = position
+	st.inner.close()
 	st.inner = nil
 	// No round spans this call, so the next beginRound attributes no cost.
 	st.s.roundDrafts = -1
-	// detach handed over the pin; advance re-pins, no sweep in between.
-	mlx.Unpin(next.Arrays()...)
-	return []sampler.Result{next}
+	return next
 }
 
 // park decodes one pipelined plain token while the engine cannot draft. Each
@@ -305,6 +293,15 @@ func (st *speculativeDecoder) park(remaining int) ([]sampler.Result, error) {
 	return st.inner.next(remaining)
 }
 
+// drain surrenders the inner decoder's undelivered sample while parked; a
+// drafting decoder has already delivered everything it sampled.
+func (st *speculativeDecoder) drain() ([]sampler.Result, int) {
+	if st.inner != nil {
+		return st.inner.drain()
+	}
+	return nil, st.position
+}
+
 func (st *speculativeDecoder) close() {
 	if st.inner != nil {
 		// Ended while parked: the inner decoder's close settles the drafter
@@ -313,7 +310,7 @@ func (st *speculativeDecoder) close() {
 	} else {
 		// The final token was emitted but never forwarded; its report settles
 		// the drafter level with the caches' resting offset.
-		st.s.finish(st.current.Token)
+		st.s.settle(st.current.Token)
 	}
 	mlx.Unpin(st.current.Arrays()...)
 	st.s.logStats()
