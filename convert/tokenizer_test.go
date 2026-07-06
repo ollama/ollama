@@ -131,6 +131,31 @@ func TestParseTokenizer(t *testing.T) {
 			},
 		},
 		{
+			name: "byte fallback tokens",
+			fsys: createTokenizerFS(t, t.TempDir(), map[string]io.Reader{
+				"tokenizer.json": strings.NewReader(`{
+					"model": {
+						"vocab": {
+							"<0x00>": 0,
+							"<0xE2>": 1,
+							"<0x82>": 2,
+							"<0x87>": 3,
+							"plain": 4
+						}
+					}
+				}`),
+			}),
+			want: &Tokenizer{
+				Vocabulary: &Vocabulary{
+					Model:  "gpt2",
+					Tokens: []string{"<0x00>", "<0xE2>", "<0x82>", "<0x87>", "plain"},
+					Scores: []float32{0, 1, 2, 3, 4},
+					Types:  []int32{6, 6, 6, 6, 1},
+				},
+				Pre: "default",
+			},
+		},
+		{
 			name: "special token types",
 			fsys: createTokenizerFS(t, t.TempDir(), map[string]io.Reader{
 				"tokenizer.json": strings.NewReader(`{

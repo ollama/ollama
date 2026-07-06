@@ -947,6 +947,49 @@ void handle_qwen3next(gguf_context * meta, ggml_context * ctx) {
 // Split expert gate/up tensors are valid in llama.cpp GGUFs, so they are not
 // sufficient to identify an existing published Ollama model.
 
+bool is_byte_fallback_token(const char * tok) {
+    if (!tok) return false;
+    if (std::strlen(tok) != 6) return false;
+    if (tok[0] != '<' || tok[1] != '0' || tok[2] != 'x' || tok[5] != '>') return false;
+
+    auto is_hex = [](char c) {
+        return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f');
+    };
+    return is_hex(tok[3]) && is_hex(tok[4]);
+}
+
+void fix_byte_fallback_token_types(gguf_context * meta) {
+    const int64_t tok_kid = gguf_find_key(meta, "tokenizer.ggml.tokens");
+    const int64_t typ_kid = gguf_find_key(meta, "tokenizer.ggml.token_type");
+    if (tok_kid < 0 || typ_kid < 0) return;
+    if (gguf_get_kv_type(meta, tok_kid) != GGUF_TYPE_ARRAY ||
+        gguf_get_arr_type(meta, tok_kid) != GGUF_TYPE_STRING) {
+        return;
+    }
+    if (gguf_get_kv_type(meta, typ_kid) != GGUF_TYPE_ARRAY ||
+        gguf_get_arr_type(meta, typ_kid) != GGUF_TYPE_INT32) {
+        return;
+    }
+
+    const size_t n_tokens = gguf_get_arr_n(meta, tok_kid);
+    const size_t n_types = gguf_get_arr_n(meta, typ_kid);
+    const size_t n = std::min(n_tokens, n_types);
+    const auto * src = static_cast<const int32_t *>(gguf_get_arr_data(meta, typ_kid));
+    std::vector<int32_t> types(src, src + n_types);
+
+    bool changed = false;
+    for (size_t i = 0; i < n; ++i) {
+        if (is_byte_fallback_token(gguf_get_arr_str(meta, tok_kid, i)) && types[i] != 6) { // LLAMA_TOKEN_TYPE_BYTE
+            types[i] = 6;
+            changed = true;
+        }
+    }
+
+    if (changed) {
+        gguf_set_arr_data(meta, "tokenizer.ggml.token_type", GGUF_TYPE_INT32, types.data(), types.size());
+    }
+}
+
 bool detect_ollama_gemma4(const gguf_context * meta, const ggml_context * ctx) {
     const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
     if (arch_kid < 0) return false;
@@ -1048,6 +1091,7 @@ void handle_gemma4(const llama_model_loader * ml, gguf_context * meta, ggml_cont
             }
         }
     }
+    fix_byte_fallback_token_types(meta);
 
     // Hide embedded audio + vision + projector tensors from the text loader.
     add_skip_prefix(ml, "a.");
