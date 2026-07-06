@@ -23,7 +23,7 @@ func TestReadStringRejectsOversizedLength(t *testing.T) {
 
 func TestReadArrayRejectsOversizedCollectedArray(t *testing.T) {
 	var b bytes.Buffer
-	writeInternalRaw(t, &b, uint32(typeString))
+	writeInternalRaw(t, &b, typeString)
 	writeInternalRaw(t, &b, uint64(MaxArraySize+1))
 
 	_, err := readArray(testFile(b.Bytes()))

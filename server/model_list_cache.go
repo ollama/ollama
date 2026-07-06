@@ -723,7 +723,7 @@ func skipModelListGGUFArray(r io.Reader, byteOrder binary.ByteOrder, version uin
 	case modelListGGUFTypeUint64, modelListGGUFTypeInt64, modelListGGUFTypeFloat64:
 		size = 8
 	case modelListGGUFTypeString:
-		for i := uint64(0); i < count; i++ {
+		for range count {
 			if err := skipModelListGGUFString(r, byteOrder, version); err != nil {
 				return err
 			}

@@ -28,7 +28,7 @@ func newLazy[T any](f *File, fn func() (T, error)) (*lazy[T], error) {
 
 	it.values = make([]T, 0)
 	it.next, it.stop = iter.Pull(func(yield func(T) bool) {
-		for i := uint64(0); i < it.count; i++ {
+		for i := range it.count {
 			t, err := fn()
 			if err != nil {
 				it.err = fmt.Errorf("error reading GGUF item %d: %w", i, err)
@@ -64,7 +64,7 @@ func (g *lazy[T]) Values() iter.Seq[T] {
 
 func (g *lazy[T]) All() iter.Seq2[int, T] {
 	return func(yield func(int, T) bool) {
-		for i := uint64(0); i < g.count; i++ {
+		for i := range g.count {
 			n := int(i)
 			if n < len(g.values) {
 				if !yield(n, g.values[n]) {
