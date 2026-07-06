@@ -2205,48 +2205,72 @@ func TestAppendMMProjArgs(t *testing.T) {
 }
 
 func TestMMProjFitTargetExtraEnvs(t *testing.T) {
-	if old, ok := os.LookupEnv(llamaArgFitTargetEnv); ok {
-		t.Setenv(llamaArgFitTargetEnv, old)
-	} else {
-		t.Setenv(llamaArgFitTargetEnv, "")
-	}
-	os.Unsetenv(llamaArgFitTargetEnv)
+	t.Setenv(llamaArgFitTargetEnv, "")
+	_ = os.Unsetenv(llamaArgFitTargetEnv)
 
-	launch := llamaServerLaunchConfig{
-		projectors:   []string{"model.gguf"},
-		mmprojMemory: 933 << 20,
-		opts:         api.DefaultOptions(),
-		gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, Integrated: true, FreeMemory: 32 << 30}},
-		modelLayers:  81,
-		extraEnvs:    map[string]string{"KEEP": "1"},
+	const (
+		projectorMemoryMiB = uint64(933)
+		projectorPadMiB    = projectorMemoryMiB + mmprojOffloadHeadroom/bytesPerMiB
+	)
+
+	fitTargetValue := func(mib uint64) string {
+		return fmt.Sprint(mib)
 	}
 
-	got := launch.extraEnvsForStart()
-	if got[llamaArgFitTargetEnv] != "1957" {
-		t.Fatalf("fit target = %q, want 1957", got[llamaArgFitTargetEnv])
-	}
-	if _, ok := launch.extraEnvs[llamaArgFitTargetEnv]; ok {
-		t.Fatal("extraEnvsForStart mutated launch.extraEnvs")
-	}
-
-	launch.extraEnvs = map[string]string{llamaArgFitTargetEnv: "2048"}
-	got = launch.extraEnvsForStart()
-	if got[llamaArgFitTargetEnv] != "4005" {
-		t.Fatalf("existing fit target plus projector pad = %q, want 4005", got[llamaArgFitTargetEnv])
+	assertFitTarget := func(t *testing.T, got map[string]string, wantMiB uint64) {
+		t.Helper()
+		if got[llamaArgFitTargetEnv] != fitTargetValue(wantMiB) {
+			t.Fatalf("fit target = %q, want %d", got[llamaArgFitTargetEnv], wantMiB)
+		}
 	}
 
-	launch.extraEnvs = map[string]string{llamaArgFitTargetEnv: "512"}
-	got = launch.extraEnvsForStart()
-	if got[llamaArgFitTargetEnv] != "2469" {
-		t.Fatalf("raised fit target plus projector pad = %q, want 2469", got[llamaArgFitTargetEnv])
+	newLaunch := func(extraEnvs map[string]string) llamaServerLaunchConfig {
+		return llamaServerLaunchConfig{
+			projectors:   []string{"model.gguf"},
+			mmprojMemory: projectorMemoryMiB * bytesPerMiB,
+			opts:         api.DefaultOptions(),
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, Integrated: true, FreeMemory: 32 << 30}},
+			modelLayers:  81,
+			extraEnvs:    extraEnvs,
+		}
 	}
 
-	t.Setenv(llamaArgFitTargetEnv, "256")
-	launch.extraEnvs = map[string]string{}
-	got = launch.extraEnvsForStart()
-	if _, ok := got[llamaArgFitTargetEnv]; ok {
-		t.Fatalf("user env should not be overridden, got extra env %q", got[llamaArgFitTargetEnv])
+	t.Run("sets projector pad when no fit target exists", func(t *testing.T) {
+		launch := newLaunch(map[string]string{"KEEP": "1"})
+
+		got := launch.extraEnvsForStart()
+		assertFitTarget(t, got, projectorPadMiB)
+		if _, ok := launch.extraEnvs[llamaArgFitTargetEnv]; ok {
+			t.Fatal("extraEnvsForStart mutated launch.extraEnvs")
+		}
+	})
+
+	for _, tt := range []struct {
+		name               string
+		launchFitTargetMiB uint64
+	}{
+		{name: "adds projector pad to existing launch fit target", launchFitTargetMiB: 2048},
+		{name: "adds projector pad to smaller launch fit target", launchFitTargetMiB: 512},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			launch := newLaunch(map[string]string{
+				llamaArgFitTargetEnv: fitTargetValue(tt.launchFitTargetMiB),
+			})
+
+			got := launch.extraEnvsForStart()
+			assertFitTarget(t, got, tt.launchFitTargetMiB+projectorPadMiB)
+		})
 	}
+
+	t.Run("preserves inherited user fit target", func(t *testing.T) {
+		t.Setenv(llamaArgFitTargetEnv, fitTargetValue(256))
+		launch := newLaunch(map[string]string{})
+
+		got := launch.extraEnvsForStart()
+		if _, ok := got[llamaArgFitTargetEnv]; ok {
+			t.Fatalf("user env should not be overridden, got extra env %q", got[llamaArgFitTargetEnv])
+		}
+	})
 }
 
 func TestMMProjMemoryRequirement(t *testing.T) {

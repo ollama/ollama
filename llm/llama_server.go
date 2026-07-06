@@ -77,6 +77,14 @@ const (
 	openEndedGenerationContextMultiplier = 10
 )
 
+const (
+	llamaArgFitTargetEnv = "LLAMA_ARG_FIT_TARGET"
+	bytesPerMiB          = 1 << 20
+
+	// mmprojOffloadHeadroom leaves 1 GiB for backend buffers beyond projector weights.
+	mmprojOffloadHeadroom = 1 << 30
+)
+
 // DefaultEmbeddingNumBatchForContext caps the embedding batch default to the
 // active context length before it is passed to llama-server.
 func DefaultEmbeddingNumBatchForContext(numCtx int) int {
@@ -621,12 +629,6 @@ func appendMainGPUArgs(params []string, opts api.Options) []string {
 	return append(params, "--split-mode", "none", "--main-gpu", strconv.Itoa(*opts.MainGPU))
 }
 
-const (
-	// mmprojOffloadHeadroom leaves 1 GiB for backend buffers beyond projector weights.
-	mmprojOffloadHeadroom = 1 << 30
-	llamaArgFitTargetEnv  = "LLAMA_ARG_FIT_TARGET"
-)
-
 func appendMMProjArgs(params []string, launch llamaServerLaunchConfig) []string {
 	if len(launch.projectors) == 0 {
 		return params
@@ -677,19 +679,26 @@ func (launch llamaServerLaunchConfig) extraEnvsForStart() map[string]string {
 		return launch.extraEnvs
 	}
 
-	target := pad
 	if existing, ok := launch.extraEnvs[llamaArgFitTargetEnv]; ok {
 		existingTarget, err := strconv.ParseUint(existing, 10, 64)
 		if err != nil {
+			slog.Warn("invalid llama-server fit target", "env", llamaArgFitTargetEnv, "value", existing, "error", err)
 			return launch.extraEnvs
 		}
-		target += existingTarget
-	} else if _, ok := os.LookupEnv(llamaArgFitTargetEnv); ok {
+
+		envs := cloneStringMap(launch.extraEnvs)
+		envs[llamaArgFitTargetEnv] = strconv.FormatUint(existingTarget+pad, 10)
+		return envs
+	}
+
+	if _, ok := os.LookupEnv(llamaArgFitTargetEnv); ok {
+		// Preserve an inherited user override. SetupLlamaServerCommandEnv
+		// will pass it through unless extraEnvs overrides it.
 		return launch.extraEnvs
 	}
 
 	envs := cloneStringMap(launch.extraEnvs)
-	envs[llamaArgFitTargetEnv] = strconv.FormatUint(target, 10)
+	envs[llamaArgFitTargetEnv] = strconv.FormatUint(pad, 10)
 	return envs
 }
 
@@ -702,8 +711,7 @@ func (launch llamaServerLaunchConfig) mmprojFitTargetMiB() (uint64, bool) {
 	}
 
 	requiredMemory := launch.mmprojMemory + mmprojOffloadHeadroom
-	const mebiByte = 1 << 20
-	return (requiredMemory + mebiByte - 1) / mebiByte, true
+	return (requiredMemory + bytesPerMiB - 1) / bytesPerMiB, true
 }
 
 // mmprojMemoryRequirement is a stopgap until fit accounts for mmproj memory directly.
