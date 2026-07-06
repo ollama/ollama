@@ -1514,10 +1514,15 @@ func TestChatCtrlOInlineOutputSurvivesToolGrouping(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
-	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventMessageDelta, Content: "done"})
+	m.applyAgentEvent(coreagent.Event{
+		Type:       coreagent.EventToolStarted,
+		ToolCallID: "call-3",
+		ToolName:   "bash",
+		Args:       map[string]any{"command": "date"},
+	})
 
 	if len(m.entries) != 2 {
-		t.Fatalf("entries = %d, want tool group plus assistant: %#v", len(m.entries), m.entries)
+		t.Fatalf("entries = %d, want tool group plus active tool: %#v", len(m.entries), m.entries)
 	}
 	if m.entries[0].role != "tool_group" || !m.entries[0].expanded {
 		t.Fatalf("grouped tool history should stay expanded inline: %#v", m.entries[0])
@@ -1527,7 +1532,7 @@ func TestChatCtrlOInlineOutputSurvivesToolGrouping(t *testing.T) {
 	}
 
 	view := stripANSI(m.renderTranscript(100))
-	for _, want := range []string{`Bash("pwd")`, `Bash("ls")`, "one", "two"} {
+	for _, want := range []string{`Bash("pwd")`, `Bash("ls")`, `Bash("date")`, "one", "two"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("grouped tool output missing %q:\n%s", want, view)
 		}

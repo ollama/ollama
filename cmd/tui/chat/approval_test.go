@@ -302,7 +302,7 @@ func TestChatApprovalResolutionRepaintsFlowTranscript(t *testing.T) {
 	}
 }
 
-func TestChatApprovalBatchCollapsesAfterAllCallsFinish(t *testing.T) {
+func TestChatApprovalBatchCollapsesAtNextToolBoundary(t *testing.T) {
 	reply := make(chan coreagent.Approval, 1)
 	request := coreagent.ApprovalRequest{
 		WorkingDir: "/repo",
@@ -347,11 +347,25 @@ func TestChatApprovalBatchCollapsesAfterAllCallsFinish(t *testing.T) {
 	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventMessageDelta, Content: "I'm on branch parth-agent-tui."})
 
 	transcript := stripANSI(m.renderTranscript(180))
-	if !strings.Contains(transcript, "Ran 2 commands") {
-		t.Fatalf("completed batch should collapse to command summary:\n%s", transcript)
+	if strings.Contains(transcript, "Ran 2 commands") {
+		t.Fatalf("completed batch should stay expanded until the next tool boundary:\n%s", transcript)
 	}
-	if strings.Contains(transcript, `Bash("git branch -a")`) {
-		t.Fatalf("completed collapsed batch should not lose one command as a lone row:\n%s", transcript)
+	if !strings.Contains(transcript, `Bash("git branch -a")`) {
+		t.Fatalf("completed batch should keep concrete command rows before the next boundary:\n%s", transcript)
+	}
+
+	m.applyAgentEvent(coreagent.Event{
+		Type:       coreagent.EventToolStarted,
+		ToolCallID: "call-3",
+		ToolName:   "bash",
+		Args:       map[string]any{"command": "git status --short"},
+	})
+	transcript = stripANSI(m.renderTranscript(180))
+	if !strings.Contains(transcript, "Ran 2 commands") {
+		t.Fatalf("completed batch should collapse when a new tool starts:\n%s", transcript)
+	}
+	if !strings.Contains(transcript, `Bash("git status --short")`) {
+		t.Fatalf("new running command should remain concrete after previous batch collapses:\n%s", transcript)
 	}
 }
 

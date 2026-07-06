@@ -2108,7 +2108,7 @@ func TestResolveRunModel_UpgradeCancelledReturnsToModelSelector(t *testing.T) {
 	}
 }
 
-func TestResolveRunModel_SubscriptionModelUnavailableWhoamiFailsGracefully(t *testing.T) {
+func TestResolveRunModel_SubscriptionModelUnavailableWhoamiAllowsSelection(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
@@ -2130,6 +2130,8 @@ func TestResolveRunModel_SubscriptionModelUnavailableWhoamiFailsGracefully(t *te
 		case "/api/status":
 			w.WriteHeader(http.StatusNotFound)
 			fmt.Fprint(w, `{"error":"not found"}`)
+		case "/api/show":
+			fmt.Fprint(w, `{"remote_model":"kimi-k2.6"}`)
 		case "/api/me":
 			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprint(w, `{"error":"temporary failure"}`)
@@ -2140,12 +2142,12 @@ func TestResolveRunModel_SubscriptionModelUnavailableWhoamiFailsGracefully(t *te
 	defer srv.Close()
 	t.Setenv("OLLAMA_HOST", srv.URL)
 
-	_, err := ResolveRunModel(context.Background(), RunModelRequest{ForcePicker: true})
-	if err == nil {
-		t.Fatal("expected plan verification error")
+	model, err := ResolveRunModel(context.Background(), RunModelRequest{ForcePicker: true})
+	if err != nil {
+		t.Fatalf("ResolveRunModel returned error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "Could not verify your plan. Try again in a moment.") {
-		t.Fatalf("unexpected error: %v", err)
+	if model != "kimi-k2.6:cloud" {
+		t.Fatalf("expected selected cloud model, got %q", model)
 	}
 }
 

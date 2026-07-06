@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/internal/modelref"
 )
 
 type cloudAuthKind string
@@ -32,6 +34,12 @@ type cloudAuthPrompt struct {
 }
 
 type cloudAuthCheckMsg struct {
+	err       error
+	signInURL string
+}
+
+type cloudModelPreflightMsg struct {
+	model     string
 	err       error
 	signInURL string
 }
@@ -62,10 +70,68 @@ func checkCloudModelCmd(ctx context.Context, check func(context.Context, string,
 	}
 }
 
+func cloudModelPreflightCmd(ctx context.Context, opts Options, modelName, requiredPlan string) tea.Cmd {
+	modelName = strings.TrimSpace(modelName)
+	if opts.CheckCloudModel == nil || modelName == "" || !modelref.HasExplicitCloudSource(modelName) {
+		return nil
+	}
+	return func() tea.Msg {
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		plan := strings.TrimSpace(requiredPlan)
+		if plan == "" && opts.ModelOptions != nil {
+			models, err := opts.ModelOptions(ctx)
+			if err == nil {
+				for _, model := range models {
+					if strings.EqualFold(strings.TrimSpace(model.Name), modelName) {
+						plan = strings.TrimSpace(model.RequiredPlan)
+						break
+					}
+				}
+			}
+		}
+		err := opts.CheckCloudModel(ctx, modelName, plan)
+		return cloudModelPreflightMsg{
+			model:     modelName,
+			err:       err,
+			signInURL: cloudAuthSignInURL(err),
+		}
+	}
+}
+
+func cloudAuthSignInURL(err error) string {
+	if err == nil {
+		return ""
+	}
+	var authErr api.AuthorizationError
+	if errors.As(err, &authErr) && (authErr.StatusCode == http.StatusUnauthorized || authErr.SigninURL != "") {
+		return authErr.SigninURL
+	}
+	return ""
+}
+
 func cloudAuthTickCmd() tea.Cmd {
 	return tea.Tick(200*time.Millisecond, func(t time.Time) tea.Msg {
 		return cloudAuthTickMsg{}
 	})
+}
+
+func (m chatModel) updateCloudModelPreflight(msg cloudModelPreflightMsg) (tea.Model, tea.Cmd) {
+	if msg.model == "" || !strings.EqualFold(strings.TrimSpace(m.opts.Model), strings.TrimSpace(msg.model)) {
+		return m, nil
+	}
+	if msg.err == nil {
+		if m.status == "Could not verify Ollama plan" {
+			m.status = "ready"
+		}
+		return m, nil
+	}
+	if msg.signInURL != "" {
+		return m.startCloudAuthSignIn(msg.model, "", msg.signInURL)
+	}
+	m.status = "Could not verify Ollama plan"
+	return m, nil
 }
 
 func pollCloudAuthCmd(ctx context.Context, poll func(context.Context) (string, bool)) tea.Cmd {

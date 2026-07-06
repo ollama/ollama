@@ -688,8 +688,12 @@ func cloudAvailabilityBadges(ctx context.Context, client *api.Client, options []
 	if err != nil {
 		var authErr api.AuthorizationError
 		signInURL := ""
-		if errors.As(err, &authErr) && authErr.SigninURL != "" {
-			signInURL = authErr.SigninURL
+		if errors.As(err, &authErr) && (authErr.StatusCode == http.StatusUnauthorized || authErr.SigninURL != "") {
+			if authErr.SigninURL != "" {
+				signInURL = authErr.SigninURL
+			}
+		} else {
+			return badges, signInURLs
 		}
 		for _, opt := range options {
 			if opt.Cloud {

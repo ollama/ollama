@@ -194,10 +194,10 @@ func ensureCloudAuth(ctx context.Context, client *api.Client, modelList string) 
 	}
 
 	var aErr api.AuthorizationError
-	if !errors.As(err, &aErr) || aErr.SigninURL == "" {
-		if err != nil {
-			return err
-		}
+	if err != nil && !errors.As(err, &aErr) {
+		return nil
+	}
+	if err == nil || aErr.SigninURL == "" {
 		return fmt.Errorf("%s requires sign in", modelList)
 	}
 

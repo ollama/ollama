@@ -88,7 +88,7 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		}
 	case coreagent.EventMessageDelta:
 		m.resetStreamingState()
-		m.groupCompletedToolHistory()
+		m.spinner = 0
 		m.detectedToolCalls = nil
 		idx := m.ensureAssistantEntry()
 		m.entries[idx].content += event.Content
@@ -101,6 +101,8 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		m.awaitingModel = m.running
 		m.thinking = false
 		m.thinkingTokens = 0
+		m.groupCompletedToolHistory()
+		m.detectedToolCalls = nil
 		m.addDetectedToolCalls(event.ToolCalls)
 		idx := m.ensureLiveAssistantMessage()
 		m.liveMessages[idx].ToolCalls = append(m.liveMessages[idx].ToolCalls, event.ToolCalls...)
@@ -123,7 +125,6 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		m.entries[idx].startedAt = startedAt
 		m.applyToolOutputModeTo(idx)
 		m.markEntryDirty(idx)
-		m.groupCompletedToolHistory()
 	case coreagent.EventToolFinished:
 		m.resetStreamingState()
 		m.refreshContextWindowTokens(m.opts.Model)
@@ -156,7 +157,9 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 			ToolName:   event.ToolName,
 			ToolCallID: event.ToolCallID,
 		})
-		m.groupCompletedToolHistory()
+		if m.running && status != "denied" && !m.hasPendingDetectedToolCalls() {
+			m.awaitingModel = true
+		}
 		contextChanged = true
 	case coreagent.EventCompacted:
 		m.resetRunState()
@@ -255,17 +258,20 @@ func messagesEndWithCompactionResult(messages []api.Message) bool {
 }
 
 func (m chatModel) awaitingToolStart() bool {
-	if len(m.liveMessages) == 0 {
-		return false
-	}
-	msg := m.liveMessages[len(m.liveMessages)-1]
-	if msg.Role != "assistant" || len(msg.ToolCalls) == 0 {
-		return false
-	}
-	for _, call := range msg.ToolCalls {
-		if call.ID == "" || m.findToolEntry(call.ID) < 0 {
-			return true
+	for i := len(m.liveMessages) - 1; i >= 0; i-- {
+		msg := m.liveMessages[i]
+		if msg.Role != "assistant" {
+			continue
 		}
+		if len(msg.ToolCalls) == 0 {
+			return false
+		}
+		for _, call := range msg.ToolCalls {
+			if call.ID == "" || m.findToolEntry(call.ID) < 0 {
+				return true
+			}
+		}
+		return false
 	}
 	return false
 }

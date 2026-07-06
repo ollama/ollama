@@ -254,6 +254,9 @@ func (m chatModel) Init() tea.Cmd {
 	if m.preloadingModel != "" && m.opts.PreloadModel != nil {
 		cmds = append(cmds, preloadModelCmd(m.ctx, m.opts.PreloadModel, m.preloadingModel, m.opts.Think), chatTickCmd())
 	}
+	if cmd := cloudModelPreflightCmd(m.ctx, m.opts, m.opts.Model, ""); cmd != nil && !m.openModelOnInit {
+		cmds = append(cmds, cmd)
+	}
 	return tea.Batch(cmds...)
 }
 
@@ -366,7 +369,6 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.applyResponseMetrics(&msg.result.Latest)
 			}
 		}
-		m.groupCompletedToolHistory()
 		if msg.result == nil {
 			m.finishLiveMessagesForStoppedRun(msg.newMessagesPersisted, msg.persistedMessages)
 		}
@@ -413,6 +415,9 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateCloudAuthPrompt(msg)
 		}
 		return m, nil
+
+	case cloudModelPreflightMsg:
+		return m.updateCloudModelPreflight(msg)
 
 	case cloudAuthPollMsg:
 		if m.cloudAuthPrompt != nil {

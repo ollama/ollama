@@ -115,8 +115,34 @@ func (m *chatModel) applyToolOutputModeTo(index int) {
 }
 
 func (m *chatModel) groupCompletedToolHistory() {
+	if m.hasPendingDetectedToolCalls() {
+		m.applyToolOutputMode()
+		return
+	}
 	m.entries = groupCompletedToolEntries(m.entries, m.detectedToolCalls...)
 	m.applyToolOutputMode()
+}
+
+func (m chatModel) hasPendingDetectedToolCalls() bool {
+	if len(m.detectedToolCalls) == 0 {
+		return false
+	}
+	results := map[string]struct{}{}
+	for _, tool := range flattenToolHistory(m.entries) {
+		if tool.toolID == "" || !isToolResultStatus(tool.status) {
+			continue
+		}
+		results[tool.toolID] = struct{}{}
+	}
+	for _, tool := range m.detectedToolCalls {
+		if tool.toolID == "" {
+			continue
+		}
+		if _, ok := results[tool.toolID]; !ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *chatModel) ensureAssistantEntry() int {
@@ -1716,7 +1742,7 @@ func (m chatModel) waitingForModel() bool {
 				return false
 			}
 		case "assistant":
-			return entry.content == ""
+			return true
 		}
 	}
 	return true

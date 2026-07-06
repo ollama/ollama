@@ -190,7 +190,7 @@ func (m chatModel) selectModel() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.status = "ready"
-	return m, m.startModelPreload(selected.Name)
+	return m, tea.Batch(m.startModelPreload(selected.Name), cloudModelPreflightCmd(m.ctx, m.opts, selected.Name, selected.RequiredPlan))
 }
 
 func (m chatModel) modelOptionForSelection(name string) (ModelOption, bool) {
