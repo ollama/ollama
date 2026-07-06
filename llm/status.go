@@ -205,12 +205,25 @@ func llamaServerSrvErrorLine(line string) string {
 	if !strings.Contains(trimmed, "log_server_r:") {
 		return ""
 	}
-	for _, field := range strings.Fields(trimmed) {
+	fields := strings.Fields(trimmed)
+	if hasHealthRequestPath(fields) {
+		return ""
+	}
+	for _, field := range fields {
 		if isFailedHTTPStatusField(field) {
 			return strings.TrimRight(trimmed, " \t\r")
 		}
 	}
 	return ""
+}
+
+func hasHealthRequestPath(fields []string) bool {
+	for _, field := range fields {
+		if field == "/health" || strings.HasPrefix(field, "/health?") {
+			return true
+		}
+	}
+	return false
 }
 
 func isFailedHTTPStatusField(field string) bool {

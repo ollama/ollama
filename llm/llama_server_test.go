@@ -2840,6 +2840,7 @@ func TestMemoryParsingWriterFiltersNoisyRequestLogs(t *testing.T) {
 		"slot get_availabl: id  0 | task -1 | selected slot by LRU, t_last = -1",
 		"srv  get_availabl: updating prompt cache",
 		"srv  log_server_r: request: GET /health 127.0.0.1 200",
+		"srv  log_server_r: request: GET /health 127.0.0.1 503",
 		"srv  log_server_r: request: POST /completion 127.0.0.1 500",
 		"srv    operator(): got exception: {\"error\":\"boom\"}",
 		"slot launch_slot_: id  0 | task -1 | sampler params:",

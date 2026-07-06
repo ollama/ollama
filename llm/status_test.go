@@ -32,6 +32,11 @@ func TestStatusWriterCapturesErrorLine(t *testing.T) {
 			want: "",
 		},
 		{
+			name: "srv health loading",
+			log:  "srv  log_server_r: request: GET /health 127.0.0.1 503\n",
+			want: "",
+		},
+		{
 			name: "srv request failure",
 			log:  "srv  log_server_r: request: POST /completion 127.0.0.1 500\n",
 			want: "srv  log_server_r: request: POST /completion 127.0.0.1 500",
