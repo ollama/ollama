@@ -215,17 +215,17 @@ func (i *Instance) Readline() (string, error) {
 						buf.MoveLeftWord()
 					case KeyRight:
 						buf.MoveRightWord()
-					case MetaStart:
+					case KeyHome:
 						buf.MoveToStart()
-					case MetaEnd:
+					case KeyEnd:
 						buf.MoveToEnd()
 					}
 				case '~':
 					buf.MoveToStart()
 				}
-			case MetaStart:
+			case KeyHome:
 				buf.MoveToStart()
-			case MetaEnd:
+			case KeyEnd:
 				buf.MoveToEnd()
 			default:
 				// skip any keys we don't know about

@@ -40,8 +40,8 @@ const (
 	KeyDown     = 66
 	KeyRight    = 67
 	KeyLeft     = 68
-	MetaEnd     = 70
-	MetaStart   = 72
+	KeyEnd      = 70 // ESC [ F / ESC [ 1 ; n F
+	KeyHome     = 72 // ESC [ H / ESC [ 1 ; n H
 )
 
 const (
