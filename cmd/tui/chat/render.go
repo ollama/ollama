@@ -870,7 +870,7 @@ func isToolActiveStatus(status string) bool {
 }
 
 func isToolResultStatus(status string) bool {
-	return status == "done" || status == "error" || status == "denied"
+	return status == "done" || status == "error" || status == "denied" || status == "disabled"
 }
 
 // renderToolStatusSegment returns the styled status text for a tool entry,
@@ -975,6 +975,12 @@ func toolActionForEntry(tool chatEntry) string {
 		}
 		return "denied_tool"
 	}
+	if tool.status == "disabled" {
+		if isShellToolName(tool.detail) || strings.Contains(strings.ToLower(tool.label), "bash(") || strings.Contains(strings.ToLower(tool.label), "powershell(") {
+			return "disabled_command"
+		}
+		return "disabled_tool"
+	}
 	action := toolAction(tool.detail)
 	if action == "" {
 		action = toolAction(tool.label)
@@ -1036,6 +1042,16 @@ func toolActionPhrase(action string, count int) string {
 			return fmt.Sprintf("Denied %d tools", count)
 		}
 		return "Denied a tool"
+	case "disabled_command":
+		if plural {
+			return fmt.Sprintf("Skipped %d commands", count)
+		}
+		return "Skipped a command"
+	case "disabled_tool":
+		if plural {
+			return fmt.Sprintf("Skipped %d tools", count)
+		}
+		return "Skipped a tool"
 	case "command":
 		if plural {
 			return fmt.Sprintf("Ran %d commands", count)
@@ -1120,7 +1136,7 @@ func toolGroupPrefixStyle(entry chatEntry) lipgloss.Style {
 
 func toolGroupResultCounts(tools []chatEntry) (succeeded int, failed int, denied int) {
 	for _, tool := range tools {
-		if tool.status == "denied" {
+		if tool.status == "denied" || tool.status == "disabled" {
 			denied++
 			continue
 		}
@@ -1153,7 +1169,7 @@ func toolStatusStyle(status string) lipgloss.Style {
 		return chatToolDoneStyle
 	case "error":
 		return chatErrorStyle
-	case "denied":
+	case "denied", "disabled":
 		return chatToolMixedStyle
 	default:
 		return chatMetaStyle
@@ -1311,6 +1327,10 @@ func isDeniedToolResult(value string) bool {
 	value = strings.ToLower(strings.TrimSpace(value))
 	return strings.Contains(value, "tool execution denied") ||
 		strings.Contains(value, "tool approval canceled")
+}
+
+func isDisabledToolResult(value string) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(value)), "tool execution disabled")
 }
 
 func truncateRunes(value string, limit int) string {
@@ -1876,7 +1896,9 @@ func entriesFromMessages(messages []api.Message) []chatEntry {
 				args = call.Function.Arguments.ToMap()
 			}
 			status := "done"
-			if isDeniedToolResult(msg.Content) {
+			if isDisabledToolResult(msg.Content) {
+				status = "disabled"
+			} else if isDeniedToolResult(msg.Content) {
 				status = "denied"
 			}
 			entries = append(entries, newChatEntry(chatEntry{

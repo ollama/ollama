@@ -227,7 +227,7 @@ func GenerateAgentTUI(cmd *cobra.Command, client *api.Client, opts agentTUIOptio
 	registryForModel := func(ctx context.Context, model string) *coreagent.Registry {
 		return agentToolsRegistry(ctx, client, model)
 	}
-	if !opts.ToolsDisabled {
+	if opts.Model != "" {
 		registry = agentToolsRegistry(cmd.Context(), client, opts.Model)
 	}
 	systemPrompt := agentSystemPrompt(opts.Model, opts.System, "")

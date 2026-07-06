@@ -152,16 +152,48 @@ func rejectUnsafeShellCommand(command string) error {
 }
 
 func hasUnsafeRecursiveDelete(command string) bool {
-	fields := shellSafetyFields(command)
-	for i, field := range fields {
-		if isRMCommand(field) && rmCommandDeletesUnsafeTarget(fields[i+1:]) {
-			return true
-		}
-		if isPowerShellDeleteCommand(field) && powerShellDeleteCommandDeletesUnsafeTarget(fields[i+1:]) {
-			return true
+	// Check each command segment independently. shellSafetyText flattens
+	// separators (; & | newlines) to spaces, which would otherwise let the
+	// rm target scan bleed across command boundaries — e.g.
+	// "rm -rf build && echo ~/.ssh/config" flattened to one token stream
+	// would treat the unrelated ~/.ssh/config (a ~/-prefixed "unsafe
+	// target") as an rm argument. Splitting on separators first restores
+	// command boundaries while still catching multi-target single commands
+	// like "rm -rf build /etc".
+	for _, segment := range shellSegments(command) {
+		fields := shellSafetyFields(segment)
+		for i, field := range fields {
+			if isRMCommand(field) && rmCommandDeletesUnsafeTarget(fields[i+1:]) {
+				return true
+			}
+			if isPowerShellDeleteCommand(field) && powerShellDeleteCommandDeletesUnsafeTarget(fields[i+1:]) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// shellSegments splits a command on shell control operators (;, &, |, &&,
+// ||), newlines, and subshell boundaries, returning the individual command
+// segments. It operates on the lowercased raw command before quote/separator
+// normalization so that command boundaries are preserved for per-segment
+// checks. Empty segments are dropped.
+func shellSegments(command string) []string {
+	command = strings.ToLower(command)
+	var segments []string
+	for _, segment := range strings.FieldsFunc(command, func(r rune) bool {
+		switch r {
+		case ';', '&', '|', '(', ')', '\n', '\r':
+			return true
+		}
+		return false
+	}) {
+		if segment = strings.TrimSpace(segment); segment != "" {
+			segments = append(segments, segment)
+		}
+	}
+	return segments
 }
 
 func rmCommandDeletesUnsafeTarget(fields []string) bool {

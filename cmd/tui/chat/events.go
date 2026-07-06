@@ -236,6 +236,8 @@ func toolFinishedStatus(event coreagent.Event) string {
 	switch strings.TrimSpace(event.Status) {
 	case "denied":
 		return "denied"
+	case "disabled":
+		return "disabled"
 	case "done":
 		return "done"
 	case "error":

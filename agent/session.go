@@ -22,6 +22,7 @@ type Session struct {
 	Client           ChatClient
 	EventSinks       []EventSink
 	Tools            *Registry
+	DisableTools     bool
 	ApprovalPrompter ApprovalPrompter
 	AllowAllTools    bool
 	AllowedScopes    map[string]bool
@@ -80,6 +81,8 @@ const (
 	toolExecutionDenied   toolExecutionStop = "denied"
 	toolExecutionCanceled toolExecutionStop = "canceled"
 )
+
+const toolExecutionDisabledMessage = "Tool execution disabled."
 
 type runPhase int
 
@@ -234,6 +237,18 @@ func (s *Session) runModelStep(ctx context.Context, st *runState) error {
 		return nil
 	}
 
+	if s.DisableTools {
+		batch, skipErr := s.disabledToolCalls(ctx, st.runID, opts, st.messages, pendingToolCalls)
+		if skipErr != nil {
+			s.emit(Event{Type: EventError, RunID: st.runID, ChatID: opts.ChatID, Model: opts.Model, Error: skipErr.Error()})
+			return skipErr
+		}
+		st.messages = append(st.messages, batch.messages...)
+		st.toolBatch = &batch
+		st.phase = runPhaseCompact
+		return nil
+	}
+
 	if s.Tools == nil {
 		st.finishDone()
 		return nil
@@ -324,7 +339,11 @@ func (s *Session) finishRun(ctx context.Context, st *runState) (*RunResult, erro
 }
 
 func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, messages []api.Message, latest *api.ChatResponse) (api.Message, []api.ToolCall, bool, error) {
-	req := buildChatRequest(opts, messages, s.availableTools())
+	var tools api.Tools
+	if !s.DisableTools {
+		tools = s.availableTools()
+	}
+	req := buildChatRequest(opts, messages, tools)
 
 	assistant := api.Message{Role: "assistant"}
 	var pendingToolCalls []api.ToolCall
@@ -550,6 +569,24 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 			batch.messages = append(batch.messages, skipped...)
 			batch.stop = toolExecutionCanceled
 			return batch, nil
+		}
+	}
+	return batch, nil
+}
+
+func (s *Session) disabledToolCalls(ctx context.Context, runID string, opts RunOptions, messages []api.Message, calls []api.ToolCall) (toolBatchResult, error) {
+	batch := toolBatchResult{
+		messages: make([]api.Message, 0, len(calls)),
+	}
+	projectedMessages := append([]api.Message(nil), messages...)
+	for _, call := range calls {
+		toolName := call.Function.Name
+		args := call.Function.Arguments.ToMap()
+		msg := s.toolMessageForContext(toolName, call.ID, toolExecutionDisabledMessage, opts, projectedMessages)
+		batch.messages = append(batch.messages, msg)
+		projectedMessages = append(projectedMessages, msg)
+		if emitErr := s.emitIgnoringCanceled(ctx, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "disabled", ToolCallID: call.ID, ToolName: toolName, Args: args, Content: msg.Content, Error: msg.Content}); emitErr != nil {
+			return toolBatchResult{}, emitErr
 		}
 	}
 	return batch, nil

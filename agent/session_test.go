@@ -658,6 +658,71 @@ func TestSessionTreatsHTTPContextCanceledStringAsCancellation(t *testing.T) {
 	}
 }
 
+func TestSessionDisabledToolsOmitToolsAndReturnsDisabledResults(t *testing.T) {
+	args := api.NewToolCallFunctionArguments()
+	args.Set("value", "hello")
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{
+			{{
+				Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+					ID: "call-1",
+					Function: api.ToolCallFunction{
+						Name:      "echo_tool",
+						Arguments: args,
+					},
+				}}},
+			}},
+			{{Message: api.Message{Role: "assistant", Content: "tools are off"}}},
+		},
+	}
+	registry := &Registry{}
+	registry.Register(staticTool{})
+	events := &recordingEventSink{}
+	session := &Session{
+		Client:       client,
+		EventSinks:   []EventSink{events},
+		Tools:        registry,
+		DisableTools: true,
+	}
+
+	result, err := session.Run(context.Background(), RunOptions{
+		ChatID:      "chat-1",
+		Model:       "model",
+		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.requests) != 2 {
+		t.Fatalf("requests = %d, want 2", len(client.requests))
+	}
+	if got := len(client.requests[0].Tools); got != 0 {
+		t.Fatalf("advertised tools = %d, want 0", got)
+	}
+	secondMessages := client.requests[1].Messages
+	if len(secondMessages) != 3 {
+		t.Fatalf("second request messages = %#v", secondMessages)
+	}
+	if secondMessages[2].Role != "tool" || secondMessages[2].ToolCallID != "call-1" || secondMessages[2].Content != toolExecutionDisabledMessage {
+		t.Fatalf("disabled tool message = %#v", secondMessages[2])
+	}
+	if len(result.Messages) != 4 || result.Messages[2].Content != toolExecutionDisabledMessage {
+		t.Fatalf("result messages = %#v", result.Messages)
+	}
+	var sawDetected, sawDisabled bool
+	for _, event := range events.events {
+		if event.Type == EventToolCallDetected {
+			sawDetected = true
+		}
+		if event.Type == EventToolFinished && event.Status == "disabled" && event.Content == toolExecutionDisabledMessage {
+			sawDisabled = true
+		}
+	}
+	if !sawDetected || !sawDisabled {
+		t.Fatalf("events missing detected/disabled: %#v", events.events)
+	}
+}
+
 func TestSessionCancellationAfterToolCallAppendsSkippedToolMessage(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	registry := &Registry{}

@@ -1098,6 +1098,7 @@ func (m *chatModel) startRunWithMessages(displayInput, historyInput string, newM
 		Client:           m.opts.Client,
 		EventSinks:       eventSinks,
 		Tools:            m.opts.Tools,
+		DisableTools:     m.opts.ToolsDisabled,
 		ApprovalPrompter: m.approvalPrompterForRun(m.approvalController),
 		AllowAllTools:    m.allowAllTools,
 		AllowedScopes:    cloneAllowedScopes(m.allowedScopes),

@@ -55,7 +55,7 @@ var chatSlashCommands = []chatSlashCommand{
 	{name: "/model", description: "switch models"},
 	{name: "/new", description: "start a new chat"},
 	{name: "/think", description: "set thinking mode"},
-	{name: "/tools", usage: "/tools on|off", description: "turn tools on or off"},
+	{name: "/tools", description: "toggle tools on or off"},
 	{name: "/compact", description: "summarize older context"},
 	{name: "/help", description: "show commands", aliases: []string{"/?"}},
 	{name: "/bye", description: "exit", aliases: []string{"/exit"}},
@@ -144,26 +144,22 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 }
 
 func (m *chatModel) handleToolsCommand(args string) (tea.Model, tea.Cmd) {
-	switch strings.ToLower(strings.TrimSpace(args)) {
-	case "off":
-		m.opts.ToolsDisabled = true
-		m.opts.Tools = nil
-		m.status = "tools off"
-		m.entries = append(m.entries, newSlashEntry("Tools are off."))
+	if strings.TrimSpace(args) != "" {
+		m.status = "error"
+		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: "usage: /tools"}))
 		return *m, nil
-	case "on":
+	}
+	if m.opts.ToolsDisabled {
 		m.opts.ToolsDisabled = false
 		if m.opts.ToolRegistryForModel != nil {
 			m.opts.Tools = m.opts.ToolRegistryForModel(m.ctx, m.opts.Model)
 		}
 		m.status = "tools on"
-		m.entries = append(m.entries, newSlashEntry("Tools are on."))
-		return *m, nil
-	default:
-		m.status = "error"
-		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: "usage: /tools on|off"}))
-		return *m, nil
+	} else {
+		m.opts.ToolsDisabled = true
+		m.status = "tools off"
 	}
+	return *m, nil
 }
 
 func (m chatModel) slashInputIsMultimodalFile(input string) bool {

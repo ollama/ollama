@@ -1068,6 +1068,38 @@ func TestEntriesFromMessagesRendersDeniedCommandAsDenied(t *testing.T) {
 	}
 }
 
+func TestEntriesFromMessagesRendersDisabledToolAsSkipped(t *testing.T) {
+	args := api.NewToolCallFunctionArguments()
+	args.Set("command", "pwd")
+	messages := []api.Message{
+		{
+			Role: "assistant",
+			ToolCalls: []api.ToolCall{{
+				ID: "call-1",
+				Function: api.ToolCallFunction{
+					Name:      "bash",
+					Arguments: args,
+				},
+			}},
+		},
+		{Role: "tool", ToolName: "bash", ToolCallID: "call-1", Content: "Tool execution disabled."},
+	}
+
+	entries := entriesFromMessages(messages)
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want one tool entry: %#v", len(entries), entries)
+	}
+	if entries[0].status != "disabled" {
+		t.Fatalf("tool status = %q, want disabled: %#v", entries[0].status, entries[0])
+	}
+	if action := toolActionForEntry(entries[0]); action != "disabled_command" {
+		t.Fatalf("tool action = %q, want disabled_command", action)
+	}
+	if phrase := toolActionPhrase(toolActionForEntry(entries[0]), 1); phrase != "Skipped a command" {
+		t.Fatalf("tool action phrase = %q, want skipped command", phrase)
+	}
+}
+
 func TestEntriesFromMessagesRendersCompactionSummaryCollapsed(t *testing.T) {
 	entries := entriesFromMessages([]api.Message{
 		{Role: "assistant", ToolCalls: []api.ToolCall{{

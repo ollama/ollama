@@ -528,7 +528,7 @@ func TestChatToolsCommandTogglesToolRegistry(t *testing.T) {
 	calls := 0
 	m := chatModel{
 		ctx:   context.Background(),
-		input: []rune("/tools off"),
+		input: []rune("/tools"),
 		opts: Options{
 			Model: "llama3.2",
 			Tools: registry,
@@ -541,21 +541,24 @@ func TestChatToolsCommandTogglesToolRegistry(t *testing.T) {
 
 	updated, cmd := m.handleSubmit()
 	if cmd != nil {
-		t.Fatal("/tools off should not start a command")
+		t.Fatal("/tools should not start a command")
 	}
 	m = updated.(chatModel)
-	if !m.opts.ToolsDisabled || m.opts.Tools != nil {
+	if !m.opts.ToolsDisabled || m.opts.Tools == nil {
 		t.Fatalf("tools off state = disabled:%v tools:%#v", m.opts.ToolsDisabled, m.opts.Tools)
+	}
+	if len(m.entries) != 0 {
+		t.Fatalf("/tools should only update action space, got entries:%#v", m.entries)
 	}
 	req, _ := m.requestPreview()
 	if got := len(req.Tools); got != 0 {
 		t.Fatalf("request preview tools = %d, want 0", got)
 	}
 
-	m.input = []rune("/tools on")
+	m.input = []rune("/tools")
 	updated, cmd = m.handleSubmit()
 	if cmd != nil {
-		t.Fatal("/tools on should not start a command")
+		t.Fatal("/tools should not start a command")
 	}
 	m = updated.(chatModel)
 	if m.opts.ToolsDisabled || m.opts.Tools == nil {
@@ -564,6 +567,9 @@ func TestChatToolsCommandTogglesToolRegistry(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("tool registry calls = %d, want 1", calls)
 	}
+	if len(m.entries) != 0 {
+		t.Fatalf("/tools should only update action space, got entries:%#v", m.entries)
+	}
 	req, _ = m.requestPreview()
 	if got := len(req.Tools); got != 1 {
 		t.Fatalf("request preview tools = %d, want 1", got)
@@ -571,14 +577,14 @@ func TestChatToolsCommandTogglesToolRegistry(t *testing.T) {
 }
 
 func TestChatToolsCommandUsage(t *testing.T) {
-	m := chatModel{input: []rune("/tools")}
+	m := chatModel{input: []rune("/tools off")}
 
 	updated, cmd := m.handleSubmit()
 	if cmd != nil {
 		t.Fatal("invalid /tools should not start a command")
 	}
 	m = updated.(chatModel)
-	if m.status != "error" || len(m.entries) != 1 || !strings.Contains(m.entries[0].content, "usage: /tools on|off") {
+	if m.status != "error" || len(m.entries) != 1 || !strings.Contains(m.entries[0].content, "usage: /tools") {
 		t.Fatalf("invalid /tools result = status:%q entries:%#v", m.status, m.entries)
 	}
 }

@@ -214,7 +214,7 @@ func (m chatModel) previewChatRequest(opts coreagent.RunOptions, messages []api.
 	if opts.KeepAlive != nil {
 		req.KeepAlive = opts.KeepAlive
 	}
-	if m.opts.Tools != nil {
+	if m.opts.Tools != nil && !m.opts.ToolsDisabled {
 		req.Tools = m.opts.Tools.Tools()
 	}
 	return req

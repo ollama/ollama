@@ -209,9 +209,7 @@ func (m *chatModel) applyModelSelection(modelName string, persist bool) error {
 	}
 	m.opts.Model = modelName
 	m.opts.ContextWindowTokens = 0
-	if m.opts.ToolsDisabled {
-		m.opts.Tools = nil
-	} else if m.opts.ToolRegistryForModel != nil {
+	if m.opts.ToolRegistryForModel != nil {
 		m.opts.Tools = m.opts.ToolRegistryForModel(m.ctx, modelName)
 	}
 	if m.opts.SystemPromptForModel != nil {

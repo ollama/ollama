@@ -172,6 +172,11 @@ func TestRejectUnsafeShellCommand(t *testing.T) {
 		{name: "read project file", command: "cat README.md", wantErr: false},
 		{name: "mention key text", command: "rg id_rsa docs", wantErr: false},
 		{name: "env example", command: "cat .env.example", wantErr: false},
+		{name: "rm build then unrelated tilde path", command: "rm -rf build && echo ~/.ssh/config", wantErr: false},
+		{name: "rm build then unrelated slash path", command: "rm -rf build; cat /etc/passwd", wantErr: false},
+		{name: "rm build then unrelated star glob", command: "rm -rf build && ls *.go", wantErr: false},
+		{name: "rm multiple targets one unsafe", command: "rm -rf build /etc", wantErr: true},
+		{name: "rm unsafe then safe piped", command: "rm -rf / | tee log", wantErr: true},
 	}
 
 	for _, tt := range tests {
