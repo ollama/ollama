@@ -60,7 +60,7 @@ func TestChatUserEntryHasNoLabel(t *testing.T) {
 	}
 
 	transcript := stripANSI(m.renderTranscript(80))
-	if !strings.Contains(transcript, "  > hello") {
+	if !strings.Contains(transcript, "  hello") {
 		t.Fatalf("user transcript should render as user block: %q", transcript)
 	}
 }
@@ -195,7 +195,7 @@ func TestChatViewRendersInputBox(t *testing.T) {
 	}
 }
 
-func TestChatViewRendersSentUserPromptPrefix(t *testing.T) {
+func TestChatViewRendersSentUserPromptWithoutPrefix(t *testing.T) {
 	m := chatModel{
 		width:  40,
 		height: 12,
@@ -205,8 +205,11 @@ func TestChatViewRendersSentUserPromptPrefix(t *testing.T) {
 	}
 
 	view := stripANSI(m.View())
-	if !strings.Contains(view, "> hello") {
-		t.Fatalf("submitted user message should include prompt prefix: %q", view)
+	if !strings.Contains(view, "hello") {
+		t.Fatalf("submitted user message should render: %q", view)
+	}
+	if strings.Contains(view, "> hello") {
+		t.Fatalf("submitted user message should not include prompt prefix: %q", view)
 	}
 	if strings.Contains(view, "│ >") {
 		t.Fatalf("active input should not include prompt prefix: %q", view)
@@ -521,7 +524,7 @@ func TestChatViewKeepsInputBoxWhileRunning(t *testing.T) {
 	if borderLine < 0 {
 		t.Fatalf("view missing input box: %q", view)
 	}
-	if borderLine < 1 || !strings.Contains(lines[borderLine-1], "Thinking 42 tokens") {
+	if borderLine < 1 || !strings.Contains(lines[borderLine-1], "Thinking ↓ 42 tokens") {
 		t.Fatalf("thinking line should sit directly above input box:\n%s", view)
 	}
 }
@@ -915,6 +918,12 @@ func TestChatBoundedViewDoesNotRenderScrollHeader(t *testing.T) {
 }
 
 func TestChatMouseDragSelectionUsesScrolledTranscriptCoordinates(t *testing.T) {
+	oldGOOS := chatRuntimeGOOS
+	chatRuntimeGOOS = "darwin"
+	defer func() {
+		chatRuntimeGOOS = oldGOOS
+	}()
+
 	m := chatModel{
 		width:  80,
 		height: 8,

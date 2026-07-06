@@ -41,7 +41,7 @@ type chatEntry struct {
 
 const (
 	chatMessageIndent       = "  "
-	chatUserMessagePrefix   = "> "
+	chatUserMessagePrefix   = ""
 	maxCtrlOToolOutputRunes = 400
 )
 
@@ -916,8 +916,12 @@ func thinkingStatusLine(entry chatEntry) string {
 }
 
 func (m chatModel) thinkingLabel() string {
-	if m.thinkingTokens > 0 {
-		return "Thinking " + formatTokenCount(m.thinkingTokens)
+	return thinkingActivityLabel(m.thinkingTokens)
+}
+
+func thinkingActivityLabel(tokens int) string {
+	if tokens > 0 {
+		return "Thinking ↓ " + formatTokenCount(tokens)
 	}
 	return "Thinking"
 }
@@ -1693,10 +1697,7 @@ func (m chatModel) activityLabel() string {
 		return "Compacting"
 	}
 	if m.thinking {
-		if m.thinkingTokens > 0 {
-			return "Thinking " + formatTokenCount(m.thinkingTokens)
-		}
-		return "Thinking"
+		return thinkingActivityLabel(m.thinkingTokens)
 	}
 	start := m.currentTurnEntryStart()
 	for i := len(m.entries) - 1; i >= start; i-- {
