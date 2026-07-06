@@ -26,7 +26,7 @@ import (
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/x/create"
 	imagemanifest "github.com/ollama/ollama/x/imagegen/manifest"
-	"github.com/ollama/ollama/x/safetensors"
+	"github.com/ollama/ollama/x/quant"
 )
 
 // MinOllamaVersion is the minimum Ollama version required for safetensors models.
@@ -142,43 +142,34 @@ type CreateOptions struct {
 func CreateModel(opts CreateOptions, p *progress.Progress) error {
 	// Detect model type
 	isSafetensors := create.IsSafetensorsModelDir(opts.ModelDir)
-	isImageGen := create.IsTensorModelDir(opts.ModelDir)
 	hasDraft := opts.Modelfile != nil && opts.Modelfile.Draft != ""
 	isBaseModelWithDraft := hasDraft && !isSafetensors && create.IsSafetensorsLLMModel(opts.ModelDir)
 	if opts.DraftQuantize != "" && !hasDraft {
 		return fmt.Errorf("--draft-quantize requires a DRAFT model")
 	}
+	if opts.Quantize != "" && quant.Canonical(opts.Quantize) == "" {
+		return fmt.Errorf("unsupported --quantize %q: supported types are int4, int8, nvfp4, mxfp4, mxfp8", opts.Quantize)
+	}
+	if opts.DraftQuantize != "" && quant.Canonical(opts.DraftQuantize) == "" {
+		return fmt.Errorf("unsupported --draft-quantize %q: supported types are int4, int8, nvfp4, mxfp4, mxfp8", opts.DraftQuantize)
+	}
 
-	if !isSafetensors && !isImageGen && !isBaseModelWithDraft {
-		return fmt.Errorf("%s is not a supported model directory (needs config.json + *.safetensors or model_index.json)", opts.ModelDir)
+	if !isSafetensors && !isBaseModelWithDraft {
+		return fmt.Errorf("%s is not a supported safetensors model directory (needs config.json + *.safetensors)", opts.ModelDir)
 	}
 
 	if hasDraft && !create.IsSafetensorsModelDir(opts.Modelfile.Draft) {
 		return fmt.Errorf("draft %s is not a supported safetensors model directory", opts.Modelfile.Draft)
 	}
-	if hasDraft && isImageGen {
-		return fmt.Errorf("draft models are only supported for safetensors LLM models")
-	}
 
-	// Determine model type settings
-	var modelType, spinnerKey string
+	modelType := "safetensors model"
+	spinnerKey := "create"
 	var capabilities []string
 	var parserName, rendererName string
 	if isSafetensors {
-		modelType = "safetensors model"
-		spinnerKey = "create"
-
-		// Set parser and renderer name based on architecture
 		parserName = getParserName(opts.ModelDir)
 		rendererName = getRendererName(opts.ModelDir)
 		capabilities = inferSafetensorsCapabilities(opts.ModelDir, resolveParserName(opts.Modelfile, parserName))
-	} else if isBaseModelWithDraft {
-		modelType = "safetensors model"
-		spinnerKey = "create"
-	} else {
-		modelType = "image generation model"
-		spinnerKey = "imagegen"
-		capabilities = []string{"image"}
 	}
 
 	// Set up progress spinner
@@ -196,13 +187,12 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 	var draftLayers []create.LayerInfo
 	var err error
 	if hasDraft {
-		draftLayers, err = create.CreateDraftSafetensorsLayers(
+		draftLayers, err = create.CreateDraftLayers(
 			opts.Modelfile.Draft,
 			"draft.",
-			"draft",
+			"draft/",
 			opts.DraftQuantize,
-			newLayerCreator(),
-			newTensorLayerCreator(),
+			create.StoreFromLayerCreator(newLayerCreator()),
 			progressFn,
 		)
 		if err != nil {
@@ -221,27 +211,18 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 		return nil
 	}
 
-	// Create the model using shared callbacks
-	if isSafetensors {
-		writer := newManifestWriter(opts, capabilities, parserName, rendererName)
-		if len(draftLayers) > 0 {
-			writer = appendLayersManifestWriter(writer, draftLayers)
-		}
-		err = create.CreateSafetensorsModel(
-			opts.ModelName, opts.ModelDir, opts.Quantize,
-			newLayerCreator(), newTensorLayerCreator(),
-			writer,
-			progressFn,
-			newPackedTensorLayerCreator(),
-		)
-	} else {
-		err = create.CreateImageGenModel(
-			opts.ModelName, opts.ModelDir, opts.Quantize,
-			newLayerCreator(), newTensorLayerCreator(),
-			newManifestWriter(opts, capabilities, "", ""),
-			progressFn,
-		)
+	// Create the model through the x/create pipeline (read → classify → plan
+	// → write), supplying blob storage and manifest assembly.
+	writer := newManifestWriter(opts, capabilities, parserName, rendererName)
+	if len(draftLayers) > 0 {
+		writer = appendLayersManifestWriter(writer, draftLayers)
 	}
+	err = create.Create(
+		opts.ModelName, opts.ModelDir, opts.Quantize,
+		create.StoreFromLayerCreator(newLayerCreator()),
+		writer,
+		progressFn,
+	)
 
 	spinner.Stop()
 	if err != nil {
@@ -351,12 +332,12 @@ func readConfigV2(m *imagemanifest.ModelManifest) (*model.ConfigV2, error) {
 func inferSafetensorsCapabilities(modelDir, parserName string) []string {
 	capabilities := []string{"completion"}
 
-	// Qwen3.5 multimodal checkpoints use ConditionalGeneration architectures.
-	if supportsVision(modelDir) {
+	caps := detectCapabilities(modelDir)
+	if caps.vision {
 		capabilities = append(capabilities, "vision")
 	}
 
-	if supportsAudio(modelDir) {
+	if caps.audio {
 		capabilities = append(capabilities, "audio")
 	}
 
@@ -369,7 +350,7 @@ func inferSafetensorsCapabilities(modelDir, parserName string) []string {
 		capabilities = append(capabilities, "tools")
 	}
 
-	if supportsThinking(modelDir) || (builtinParser != nil && builtinParser.HasThinkingSupport()) {
+	if caps.thinking || (builtinParser != nil && builtinParser.HasThinkingSupport()) {
 		capabilities = append(capabilities, "thinking")
 	}
 
@@ -389,115 +370,6 @@ func newLayerCreator() create.LayerCreator {
 			Size:      layer.Size,
 			MediaType: layer.MediaType,
 			Name:      name,
-		}, nil
-	}
-}
-
-// newTensorLayerCreator returns a QuantizingTensorLayerCreator callback for creating tensor layers.
-// When quantize is non-empty, returns multiple layers (weight + scales + optional qbias).
-func newTensorLayerCreator() create.QuantizingTensorLayerCreator {
-	return func(r io.Reader, name, dtype string, shape []int32, quantize string) ([]create.LayerInfo, error) {
-		if quantize != "" {
-			return createQuantizedLayers(r, name, dtype, shape, quantize)
-		}
-		return createUnquantizedLayer(r, name)
-	}
-}
-
-// createQuantizedLayers quantizes a tensor and returns a single combined layer.
-// The combined blob contains data, scale, and optional bias tensors with metadata.
-func createQuantizedLayers(r io.Reader, name, dtype string, shape []int32, quantize string) ([]create.LayerInfo, error) {
-	if !QuantizeSupported() {
-		return nil, fmt.Errorf("quantization requires MLX support")
-	}
-
-	// Quantize the tensor into a single combined blob
-	blobData, err := quantizeTensor(r, name, dtype, shape, quantize)
-	if err != nil {
-		return nil, fmt.Errorf("failed to quantize %s: %w", name, err)
-	}
-
-	// Create single layer for the combined blob
-	layer, err := manifest.NewLayer(bytes.NewReader(blobData), manifest.MediaTypeImageTensor)
-	if err != nil {
-		return nil, err
-	}
-
-	return []create.LayerInfo{
-		{
-			Digest:    layer.Digest,
-			Size:      layer.Size,
-			MediaType: layer.MediaType,
-			Name:      name,
-		},
-	}, nil
-}
-
-// createUnquantizedLayer creates a single tensor layer without quantization.
-func createUnquantizedLayer(r io.Reader, name string) ([]create.LayerInfo, error) {
-	layer, err := manifest.NewLayer(r, manifest.MediaTypeImageTensor)
-	if err != nil {
-		return nil, err
-	}
-
-	return []create.LayerInfo{
-		{
-			Digest:    layer.Digest,
-			Size:      layer.Size,
-			MediaType: layer.MediaType,
-			Name:      name,
-		},
-	}, nil
-}
-
-// newPackedTensorLayerCreator returns a PackedTensorLayerCreator callback for
-// creating packed multi-tensor blob layers (used for expert groups).
-func newPackedTensorLayerCreator() create.PackedTensorLayerCreator {
-	return func(groupName string, tensors []create.PackedTensorInput) (create.LayerInfo, error) {
-		// Check if any tensor in the group needs quantization
-		hasQuantize := false
-		for _, t := range tensors {
-			if t.Quantize != "" {
-				hasQuantize = true
-				break
-			}
-		}
-
-		var blobReader io.Reader
-		if hasQuantize {
-			if !QuantizeSupported() {
-				return create.LayerInfo{}, fmt.Errorf("quantization requires MLX support")
-			}
-			blobData, err := quantizePackedGroup(groupName, tensors)
-			if err != nil {
-				return create.LayerInfo{}, fmt.Errorf("failed to quantize packed group %s: %w", groupName, err)
-			}
-			blobReader = bytes.NewReader(blobData)
-		} else {
-			// Build unquantized packed blob using streaming reader
-			// Extract raw tensor data from safetensors-wrapped readers
-			var tds []*safetensors.TensorData
-			for _, t := range tensors {
-				rawData, err := safetensors.ExtractRawFromSafetensors(t.Reader)
-				if err != nil {
-					return create.LayerInfo{}, fmt.Errorf("failed to extract tensor %s: %w", t.Name, err)
-				}
-				td := safetensors.NewTensorDataFromBytes(t.Name, t.Dtype, t.Shape, rawData)
-				tds = append(tds, td)
-			}
-			blobReader = safetensors.BuildPackedSafetensorsReader(tds)
-		}
-
-		layer, err := manifest.NewLayer(blobReader, manifest.MediaTypeImageTensor)
-		if err != nil {
-			return create.LayerInfo{}, err
-		}
-
-		return create.LayerInfo{
-			Digest:    layer.Digest,
-			Size:      layer.Size,
-			MediaType: layer.MediaType,
-			Name:      groupName,
 		}, nil
 	}
 }
@@ -641,85 +513,84 @@ func createModelfileLayers(mf *ModelfileConfig) ([]manifest.Layer, error) {
 	return layers, nil
 }
 
-// supportsThinking checks if the model supports thinking mode based on known
-// architectures that do not expose a cleaner signal in their local metadata.
-func supportsThinking(modelDir string) bool {
-	configPath := filepath.Join(modelDir, "config.json")
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return false
-	}
+// modelCapabilities holds the input-modality and reasoning capabilities a model
+// advertises, inferred from its source metadata.
+type modelCapabilities struct {
+	vision   bool
+	audio    bool
+	thinking bool
+}
 
+// detectCapabilities reads the model directory once and reports the vision,
+// audio, and thinking capabilities it can infer.
+func detectCapabilities(modelDir string) modelCapabilities {
 	var cfg struct {
-		Architectures []string `json:"architectures"`
-		ModelType     string   `json:"model_type"`
+		Architectures []string        `json:"architectures"`
+		ModelType     string          `json:"model_type"`
+		VisionConfig  *map[string]any `json:"vision_config"`
+		AudioConfig   *map[string]any `json:"audio_config"`
 	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return false
-	}
-
-	// Check architectures that support thinking
-	thinkingArchitectures := []string{
-		"glm4moe",  // GLM-4 MoE models
-		"deepseek", // DeepSeek models
-		"qwen3",    // Qwen3 models
+	if data, err := os.ReadFile(filepath.Join(modelDir, "config.json")); err == nil {
+		_ = json.Unmarshal(data, &cfg)
 	}
 
-	// Check the architecture list
-	for _, arch := range cfg.Architectures {
-		archLower := strings.ToLower(arch)
-		for _, thinkArch := range thinkingArchitectures {
-			if strings.Contains(archLower, thinkArch) {
-				return true
-			}
+	return modelCapabilities{
+		vision: cfg.VisionConfig != nil,
+		audio:  cfg.AudioConfig != nil,
+		thinking: chatTemplateHasThinkingSupport(readChatTemplate(modelDir)) ||
+			alwaysSupportsThinking(cfg.Architectures, cfg.ModelType),
+	}
+}
+
+// readChatTemplate returns the model's chat template, preferring the
+// chat_template field of tokenizer_config.json and falling back to a standalone
+// chat_template.jinja. It returns "" when neither is present.
+func readChatTemplate(modelDir string) string {
+	if data, err := os.ReadFile(filepath.Join(modelDir, "tokenizer_config.json")); err == nil {
+		var cfg struct {
+			ChatTemplate string `json:"chat_template"`
+		}
+		if json.Unmarshal(data, &cfg) == nil && cfg.ChatTemplate != "" {
+			return cfg.ChatTemplate
 		}
 	}
+	if data, err := os.ReadFile(filepath.Join(modelDir, "chat_template.jinja")); err == nil {
+		return string(data)
+	}
+	return ""
+}
 
-	// Also check model_type
-	if cfg.ModelType != "" {
-		typeLower := strings.ToLower(cfg.ModelType)
-		for _, thinkArch := range thinkingArchitectures {
-			if strings.Contains(typeLower, thinkArch) {
-				return true
-			}
-		}
+// chatTemplateHasThinkingSupport reports whether a chat template emits thinking
+// blocks. Copied from server.chatTemplateHasThinkingSupport so this package need
+// not depend on the server package for an eight-line string check.
+func chatTemplateHasThinkingSupport(chatTemplate string) bool {
+	if strings.Contains(chatTemplate, "<think>") && strings.Contains(chatTemplate, "</think>") {
+		return true
 	}
 
+	// Some Qwen/DeepSeek templates strip prior reasoning by splitting assistant
+	// content at </think>; llama.cpp can still extract reasoning from them.
+	return (strings.Contains(chatTemplate, "content.split('</think>')") ||
+		strings.Contains(chatTemplate, `content.split("</think>")`)) &&
+		!strings.Contains(chatTemplate, "reasoning_content") &&
+		!strings.Contains(chatTemplate, "<SPECIAL_12>")
+}
+
+func alwaysSupportsThinking(architectures []string, modelType string) bool {
+	if isQwen35Family(modelType) {
+		return true
+	}
+	for _, arch := range architectures {
+		if isQwen35Family(arch) {
+			return true
+		}
+	}
 	return false
 }
 
-// supportsVision checks if the model has a vision encoder by looking for
-// vision_config in config.json.
-func supportsVision(modelDir string) bool {
-	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
-	if err != nil {
-		return false
-	}
-
-	var cfg struct {
-		VisionConfig *map[string]any `json:"vision_config"`
-	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return false
-	}
-
-	return cfg.VisionConfig != nil
-}
-
-func supportsAudio(modelDir string) bool {
-	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
-	if err != nil {
-		return false
-	}
-
-	var cfg struct {
-		AudioConfig *map[string]any `json:"audio_config"`
-	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return false
-	}
-
-	return cfg.AudioConfig != nil
+func isQwen35Family(s string) bool {
+	s = strings.ToLower(s)
+	return strings.Contains(s, "qwen3_5") || strings.Contains(s, "qwen3next")
 }
 
 // getParserName returns the parser name for a model based on its architecture.

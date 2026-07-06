@@ -67,6 +67,15 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 		requested := envconfig.LLMLibrary()
 		jetpack := cudaJetpack()
 
+		// If the detected JetPack runner isn't installed, clear the override so
+		// normal discovery can select a standard CUDA build (e.g. cuda_v13,
+		// which supports Orin on JetPack 7).
+		if jetpack != "" {
+			if _, ok := libDirs[filepath.Join(ml.LibOllamaPath, "cuda_"+jetpack)]; !ok {
+				jetpack = ""
+			}
+		}
+
 		// For our initial discovery pass, we gather all the known GPUs through
 		// all the libraries that were detected. This pass may include GPUs that
 		// are enumerated, but not actually supported.
