@@ -133,7 +133,7 @@ func TestOpenAIListMatchesTagsModels(t *testing.T) {
 	setManifestTime("older-model:latest", older)
 	setManifestTime("newer-model:latest", newer)
 
-	router, err := s.GenerateRoutes(nil)
+	router, err := s.GenerateRoutes()
 	if err != nil {
 		t.Fatal(err)
 	}
