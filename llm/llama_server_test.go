@@ -2839,6 +2839,9 @@ func TestMemoryParsingWriterFiltersNoisyRequestLogs(t *testing.T) {
 	input := strings.Join([]string{
 		"slot get_availabl: id  0 | task -1 | selected slot by LRU, t_last = -1",
 		"srv  get_availabl: updating prompt cache",
+		"srv  log_server_r: request: GET /health 127.0.0.1 200",
+		"srv  log_server_r: request: POST /completion 127.0.0.1 500",
+		"srv    operator(): got exception: {\"error\":\"boom\"}",
 		"slot launch_slot_: id  0 | task -1 | sampler params:",
 		"\trepeat_last_n = 64, repeat_penalty = 1.000, frequency_penalty = 0.000",
 		"\ttop_k = 20, top_p = 0.950, min_p = 0.000",
@@ -2860,6 +2863,7 @@ func TestMemoryParsingWriterFiltersNoisyRequestLogs(t *testing.T) {
 	for _, unexpected := range []string{
 		"slot get_availabl",
 		"srv  get_availabl",
+		"GET /health",
 		"sampler params",
 		"repeat_last_n",
 		`| 200 |`,
@@ -2872,6 +2876,8 @@ func TestMemoryParsingWriterFiltersNoisyRequestLogs(t *testing.T) {
 		"CUDA0 model buffer size",
 		"CUDA0 KV buffer size",
 		"offloaded 33/33 layers",
+		"POST /completion",
+		"got exception",
 		`| 500 |`,
 		"error: runner failed",
 	} {
