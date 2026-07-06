@@ -210,10 +210,12 @@ func parseTokenizer(fsys fs.FS, specialTokenTypes []string) (*Tokenizer, error) 
 type tokenizer struct {
 	AddedTokens []token `json:"added_tokens"`
 	Model       struct {
-		Type   string          `json:"type"`
-		Vocab  map[string]int  `json:"vocab"`
-		Merges json.RawMessage `json:"merges"`
+		Type         string          `json:"type"`
+		Vocab        map[string]int  `json:"vocab"`
+		Merges       json.RawMessage `json:"merges"`
+		ByteFallback bool            `json:"byte_fallback"`
 	} `json:"model"`
+	Decoder json.RawMessage `json:"decoder"`
 
 	PreTokenizer struct {
 		PreTokenizers []struct {
@@ -269,6 +271,8 @@ func parseVocabularyFromTokenizer(fsys fs.FS) (*Vocabulary, error) {
 		tokens[token.ID] = token
 	}
 
+	hasByteFallback := t.Model.ByteFallback || hasDecoderType(t.Decoder, "ByteFallback")
+
 	v := Vocabulary{Model: "gpt2"}
 	for _, k := range slices.Sorted(maps.Keys(tokens)) {
 		token := tokens[k]
@@ -280,7 +284,7 @@ func parseVocabularyFromTokenizer(fsys fs.FS) (*Vocabulary, error) {
 			v.Types = append(v.Types, tokenTypeControl)
 		case token.UserDefined:
 			v.Types = append(v.Types, tokenTypeUserDefined)
-		case isByteFallbackToken(token.Content):
+		case hasByteFallback && isByteFallbackToken(token.Content):
 			v.Types = append(v.Types, tokenTypeByte)
 		default:
 			v.Types = append(v.Types, tokenTypeNormal)
@@ -324,6 +328,41 @@ func isByteFallbackToken(s string) bool {
 	}
 
 	return true
+}
+
+func hasDecoderType(data json.RawMessage, typ string) bool {
+	if len(data) == 0 {
+		return false
+	}
+
+	var v any
+	if err := json.Unmarshal(data, &v); err != nil {
+		return false
+	}
+
+	return containsDecoderType(v, typ)
+}
+
+func containsDecoderType(v any, typ string) bool {
+	switch v := v.(type) {
+	case map[string]any:
+		if s, ok := v["type"].(string); ok && s == typ {
+			return true
+		}
+		for _, vv := range v {
+			if containsDecoderType(vv, typ) {
+				return true
+			}
+		}
+	case []any:
+		for _, vv := range v {
+			if containsDecoderType(vv, typ) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 type SpecialVocabulary struct {

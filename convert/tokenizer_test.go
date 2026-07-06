@@ -141,7 +141,8 @@ func TestParseTokenizer(t *testing.T) {
 							"<0x82>": 2,
 							"<0x87>": 3,
 							"plain": 4
-						}
+						},
+						"byte_fallback": true
 					}
 				}`),
 			}),
@@ -151,6 +152,58 @@ func TestParseTokenizer(t *testing.T) {
 					Tokens: []string{"<0x00>", "<0xE2>", "<0x82>", "<0x87>", "plain"},
 					Scores: []float32{0, 1, 2, 3, 4},
 					Types:  []int32{6, 6, 6, 6, 1},
+				},
+				Pre: "default",
+			},
+		},
+		{
+			name: "byte-shaped tokens without byte fallback",
+			fsys: createTokenizerFS(t, t.TempDir(), map[string]io.Reader{
+				"tokenizer.json": strings.NewReader(`{
+					"model": {
+						"vocab": {
+							"<0x41>": 0,
+							"plain": 1
+						}
+					}
+				}`),
+			}),
+			want: &Tokenizer{
+				Vocabulary: &Vocabulary{
+					Model:  "gpt2",
+					Tokens: []string{"<0x41>", "plain"},
+					Scores: []float32{0, 1},
+					Types:  []int32{1, 1},
+				},
+				Pre: "default",
+			},
+		},
+		{
+			name: "byte fallback decoder",
+			fsys: createTokenizerFS(t, t.TempDir(), map[string]io.Reader{
+				"tokenizer.json": strings.NewReader(`{
+					"decoder": {
+						"type": "Sequence",
+						"decoders": [
+							{"type": "Replace"},
+							{"type": "ByteFallback"},
+							{"type": "Fuse"}
+						]
+					},
+					"model": {
+						"vocab": {
+							"<0x41>": 0,
+							"plain": 1
+						}
+					}
+				}`),
+			}),
+			want: &Tokenizer{
+				Vocabulary: &Vocabulary{
+					Model:  "gpt2",
+					Tokens: []string{"<0x41>", "plain"},
+					Scores: []float32{0, 1},
+					Types:  []int32{6, 1},
 				},
 				Pre: "default",
 			},
