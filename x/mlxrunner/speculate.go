@@ -56,6 +56,10 @@ type speculation struct {
 	draftKV []cache.Cache
 	targets []cache.Cache
 
+	// drafter is the persistent half of the MTP drafting machinery; each
+	// request's session comes from drafter.open.
+	drafter *mtpDrafter
+
 	// depth selects each request's draft length and owns the cost/acceptance
 	// models and probe cadence it learns across requests.
 	depth *depthController
@@ -67,7 +71,10 @@ func newSpeculation(r *Runner, draft base.DraftModel) *speculation {
 	if draft == nil {
 		return nil
 	}
-	return &speculation{r: r, draft: draft, depth: newDepthController()}
+	s := &speculation{r: r, draft: draft, depth: newDepthController()}
+	s.bind(r.cache.caches)
+	s.drafter = newMTPDrafter(s)
+	return s
 }
 
 // bind computes the draft/target cache partition the first time the persistent
@@ -123,7 +130,7 @@ func (s *speculation) open(request Request, caches []cache.Cache) *speculationSe
 		return nil
 	}
 	s.bind(caches)
-	d := newMTPDrafter(s)
+	d := s.drafter.open()
 
 	// Logprobs are not yet supported, so a logprobs request keeps a speculationSession
 	// only to maintain a draft cache in lockstep (permanently parked).

@@ -71,7 +71,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 
 	inputs := request.Tokens
 
-	session := r.cache.begin(r.Model, inputs)
+	session := r.cache.begin(inputs)
 	defer session.close()
 	caches := session.caches
 
