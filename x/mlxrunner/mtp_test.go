@@ -221,6 +221,7 @@ func mtpTestRunner(t *testing.T, predict map[int32]int32, eos []int32, opts samp
 		Model:     &fakeMTPModel{predict: predict, tok: tok},
 		Tokenizer: tok,
 		Sampler:   sampler.New(4096),
+		cache:     &prefixCache{},
 	}
 	r.Sampler.Add(pipelineSlot, opts, nil)
 	t.Cleanup(func() { r.Sampler.Remove(pipelineSlot) })
@@ -377,9 +378,9 @@ func TestRunMTPDecodeGreedy(t *testing.T) {
 	r := mtpTestRunner(t, predict, []int32{eos}, sampler.Options{})
 	// The draft mirrors the target chain, so every drafted token is accepted.
 	draft := &fakeMTPDraft{predict: predict}
-	r.spec = newSpeculation(r, draft)
-
 	caches, _ := newMTPTestCaches(1)
+	r.cache.caches = caches
+	r.spec = newSpeculation(r, draft)
 	session, ch := newMTPTestSession(caches)
 	position := 1 // one prefill token already processed
 
@@ -438,9 +439,9 @@ func TestRunMTPDecodeSampled(t *testing.T) {
 	const eos int32 = 7
 	predict := map[int32]int32{1: 2, 2: 3, 3: 4, 4: eos, eos: 0}
 	r := mtpTestRunner(t, predict, []int32{eos}, sampler.Options{Temperature: 1, Seed: 42, UseSeed: true})
-	r.spec = newSpeculation(r, &fakeMTPDraft{predict: predict})
-
 	caches, _ := newMTPTestCaches(1)
+	r.cache.caches = caches
+	r.spec = newSpeculation(r, &fakeMTPDraft{predict: predict})
 	session, ch := newMTPTestSession(caches)
 	position := 1
 
@@ -482,9 +483,9 @@ func TestRunMTPDecodeWarmDrafter(t *testing.T) {
 	predict := map[int32]int32{1: 2, 2: 3, 3: 4, 4: eos, eos: 0}
 	r := mtpTestRunner(t, predict, []int32{eos}, sampler.Options{})
 	draft := &fakeMTPDraft{predict: predict}
-	r.spec = newSpeculation(r, draft)
-
 	caches, _ := newMTPTestCaches(1)
+	r.cache.caches = caches
+	r.spec = newSpeculation(r, draft)
 	session, ch := newMTPTestSession(caches)
 	position := 1 // one prefill token already processed
 
@@ -543,9 +544,9 @@ func TestRunMTPDecodeEOSCutLeavesPositionsUnjudged(t *testing.T) {
 	const eos int32 = 7
 	predict := map[int32]int32{1: 2, 2: 3, 3: eos, eos: 0}
 	r := mtpTestRunner(t, predict, []int32{eos}, sampler.Options{})
-	r.spec = newSpeculation(r, &fakeMTPDraft{predict: predict})
-
 	caches, _ := newMTPTestCaches(1)
+	r.cache.caches = caches
+	r.spec = newSpeculation(r, &fakeMTPDraft{predict: predict})
 	session, ch := newMTPTestSession(caches)
 	position := 1
 
@@ -648,9 +649,9 @@ func TestDecodeCancelledMidStream(t *testing.T) {
 	const eos int32 = 7
 	predict := map[int32]int32{1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: eos}
 	r := mtpTestRunner(t, predict, []int32{eos}, sampler.Options{})
-	r.spec = newSpeculation(r, &fakeMTPDraft{predict: predict})
-
 	caches, tr := newMTPTestCaches(1)
+	r.cache.caches = caches
+	r.spec = newSpeculation(r, &fakeMTPDraft{predict: predict})
 	session := &cacheSession{caches: caches}
 	ch := make(chan CompletionResponse) // unbuffered: every send must rendezvous
 
@@ -727,9 +728,9 @@ func TestDecodeKVDraft(t *testing.T) {
 	predict := map[int32]int32{1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: eos, eos: 0}
 	r := mtpTestRunner(t, predict, []int32{eos}, sampler.Options{})
 	draft := &fakeKVDraft{predict: predict}
-	r.spec = newSpeculation(r, draft)
-
 	caches, _ := newMTPTestCaches(2) // caches[0] target, caches[1] draft KV
+	r.cache.caches = caches
+	r.spec = newSpeculation(r, draft)
 	session, ch := newMTPTestSession(caches)
 	position := 0
 
@@ -811,9 +812,9 @@ func TestDecodeKVDraftRejectionRebuildsFromTarget(t *testing.T) {
 	// the target chain); once the target corrects 3->4 the next proposal
 	// re-aligns on the shared chain.
 	draft := &fakeKVDraft{predict: map[int32]int32{1: 2, 2: 3, 3: 6, 6: 0, 4: 5, 5: eos, eos: 0}}
-	r.spec = newSpeculation(r, draft)
-
 	caches, _ := newMTPTestCaches(2) // caches[0] target, caches[1] draft KV
+	r.cache.caches = caches
+	r.spec = newSpeculation(r, draft)
 	session, ch := newMTPTestSession(caches)
 	position := 0
 
@@ -880,9 +881,9 @@ func TestDecodeMaintainsDraftCacheWithoutDrafting(t *testing.T) {
 	opts := sampler.Options{Logprobs: true}
 	r := mtpTestRunner(t, predict, []int32{eos}, opts)
 	draft := &fakeKVDraft{predict: predict}
-	r.spec = newSpeculation(r, draft)
-
 	caches, _ := newMTPTestCaches(2)
+	r.cache.caches = caches
+	r.spec = newSpeculation(r, draft)
 	session, ch := newMTPTestSession(caches)
 	position := 0
 
@@ -943,9 +944,9 @@ func TestFlushLevelsDraftCacheWithPrefill(t *testing.T) {
 	predict := map[int32]int32{2: 3, 3: 4, 4: 5}
 	r := mtpTestRunner(t, predict, []int32{eos}, sampler.Options{})
 	draft := &fakeKVDraft{predict: predict}
-	r.spec = newSpeculation(r, draft)
-
 	caches, _ := newMTPTestCaches(2)
+	r.cache.caches = caches
+	r.spec = newSpeculation(r, draft)
 	req := Request{
 		CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
 		SamplerOpts:       sampler.Options{},
@@ -983,9 +984,9 @@ func TestCommittedRunBatchesPastFlushCap(t *testing.T) {
 
 	r := mtpTestRunner(t, predict, []int32{0}, sampler.Options{})
 	draft := &fakeKVDraft{predict: predict}
-	r.spec = newSpeculation(r, draft)
-
 	caches, _ := newMTPTestCaches(2)
+	r.cache.caches = caches
+	r.spec = newSpeculation(r, draft)
 	req := Request{
 		CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
 		SamplerOpts:       sampler.Options{},
@@ -1021,9 +1022,9 @@ func TestDecodeParkedDraftResume(t *testing.T) {
 	predict := map[int32]int32{1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: eos, eos: 0}
 	r := mtpTestRunner(t, predict, []int32{eos}, sampler.Options{})
 	draft := &fakeKVDraft{predict: predict}
-	r.spec = newSpeculation(r, draft)
-
 	caches, _ := newMTPTestCaches(2)
+	r.cache.caches = caches
+	r.spec = newSpeculation(r, draft)
 	req := Request{
 		Tokens:            []int32{1},
 		CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
@@ -1123,7 +1124,7 @@ func newMTPTestSession(caches []cache.Cache) (*cacheSession, chan CompletionResp
 func testSpeculationSession(r *Runner, caches []cache.Cache) *speculationSession {
 	if r.spec != nil {
 		r.spec.bind(caches)
-		return &speculationSession{spec: r.spec, drafter: newMTPDrafter(r.spec)}
+		return &speculationSession{spec: r.spec, drafter: r.spec.drafter.open()}
 	}
 	s := &speculation{r: r, caches: caches, targets: caches}
 	return &speculationSession{spec: s, drafter: nopDrafter{}}
@@ -1151,7 +1152,7 @@ func scriptedCandidates(r *Runner, tokens []int32) *draftCandidates {
 		prev = tok
 	}
 	s := &speculation{r: r, draft: &fakeMTPDraft{predict: chain}}
-	d := &mtpDrafter{spec: s}
+	d := (&mtpDrafter{spec: s}).open()
 	d.committed(mlx.FromValues([]int32{0}, 1, 1), mlx.Zeros(mlx.DTypeFloat32, 1, 1, mtpTestVocab), 0)
 	return d.propose(mlx.FromValues([]int32{0}, 1), len(tokens))
 }

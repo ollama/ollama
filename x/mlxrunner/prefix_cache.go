@@ -62,18 +62,17 @@ type cacheSession struct {
 	pendingSnapshots []pendingSnapshot
 }
 
-func (c *prefixCache) ensureCaches(m base.Model) {
-	if len(c.caches) != 0 {
-		return
-	}
+func newPrefixCache(m base.Model) *prefixCache {
+	c := &prefixCache{}
 	if cacheFactory, ok := m.(interface{ NewCaches() []cache.Cache }); ok {
 		c.caches = cacheFactory.NewCaches()
-		return
+		return c
 	}
 	c.caches = make([]cache.Cache, m.NumLayers())
 	for i := range c.caches {
 		c.caches[i] = cache.NewKVCache()
 	}
+	return c
 }
 
 func (c *prefixCache) ensureRoot() {
@@ -87,8 +86,7 @@ func (c *prefixCache) ensureRoot() {
 
 // begin prepares caches for a new request. It finds the nearest
 // matching cache or creates new caches if none match.
-func (c *prefixCache) begin(m base.Model, inputs []int32) *cacheSession {
-	c.ensureCaches(m)
+func (c *prefixCache) begin(inputs []int32) *cacheSession {
 	c.ensureRoot()
 
 	matchPath, matched := findBestMatch(c.root, inputs)

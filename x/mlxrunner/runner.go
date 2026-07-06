@@ -38,7 +38,7 @@ type Runner struct {
 	Tokenizer     *tokenizer.Tokenizer
 	Requests      chan Request
 	Sampler       *sample.Sampler
-	cache         prefixCache
+	cache         *prefixCache
 	contextLength int
 	mlxThread     *mlxthread.Thread
 	// spec is the speculative-decoding subsystem. Nil when the model ships no
@@ -105,6 +105,7 @@ func (r *Runner) Load(modelName string) error {
 	r.Model = m
 	r.Tokenizer = m.Tokenizer()
 	r.contextLength = m.MaxContextLength()
+	r.cache = newPrefixCache(m)
 	r.Sampler = sample.New(r.contextLength)
 	r.spec = newSpeculation(r, draftModel)
 

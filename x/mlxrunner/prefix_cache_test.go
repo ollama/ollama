@@ -479,7 +479,7 @@ type requestResult struct {
 func simulateRequest(t *testing.T, pc *prefixCache, inputs, generated []int32, userSnapshotAt ...int) requestResult {
 	t.Helper()
 
-	session := pc.begin(nil, inputs)
+	session := pc.begin(inputs)
 	var snapshotOffsets []int
 	for _, at := range userSnapshotAt {
 		if at > 0 {
@@ -923,7 +923,7 @@ func TestSnapshotBeyondPrefillSkipped(t *testing.T) {
 		pc := env.pc
 		inputs := []int32{1, 2, 3, 4, 5}
 
-		session := pc.begin(nil, inputs)
+		session := pc.begin(inputs)
 		// Request a reachable snapshot at 3 and one at len(inputs), which a
 		// prefill that stops one token short never crosses.
 		session.schedulePrefillSnapshots([]int{3, len(inputs)})
@@ -953,7 +953,7 @@ func TestPrefillSnapshotsDiscardedOnCancel(t *testing.T) {
 		pc := env.pc
 		inputs := []int32{1, 2, 3, 4, 5}
 
-		session := pc.begin(nil, inputs)
+		session := pc.begin(inputs)
 		session.schedulePrefillSnapshots([]int{3})
 		// Cross offset 3 so the caches capture it, then close the session as a
 		// canceled prefill would, before the captures are attached to the trie.
