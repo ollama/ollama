@@ -500,9 +500,24 @@ func promptDebugBlockLines(label, value string, width int, style lipgloss.Style)
 func (m chatModel) promptTokenText(tokens int) string {
 	window := m.displayContextWindowTokens()
 	if window > 0 {
-		return fmt.Sprintf("%d / %d tokens", max(tokens, 0), window)
+		return fmt.Sprintf("%s / %s tokens", formatPromptTokenCount(max(tokens, 0)), formatPromptTokenCount(window))
 	}
 	return formatTokenCount(tokens)
+}
+
+func formatPromptTokenCount(count int) string {
+	sign := ""
+	if count < 0 {
+		sign = "-"
+		count = -count
+	}
+	if count < 100_000 {
+		return sign + fmt.Sprint(count)
+	}
+	if count >= 950_000 {
+		return fmt.Sprintf("%s%dM", sign, int(float64(count)/1_000_000+0.5))
+	}
+	return fmt.Sprintf("%s%dk", sign, int(float64(count)/1024+0.5))
 }
 
 func promptMessageLabel(msg api.Message) string {

@@ -405,13 +405,23 @@ func TestPromptTokenTextDoesNotUseCompactionFallback(t *testing.T) {
 	}
 
 	m.opts.ContextWindowTokens = 262144
-	if got := m.promptTokenText(702); got != "702 / 262144 tokens" {
+	if got := m.promptTokenText(702); got != "702 / 256k tokens" {
 		t.Fatalf("promptTokenText with model context = %q", got)
 	}
 
 	m.opts.Options = map[string]any{"num_ctx": 131072}
-	if got := m.promptTokenText(702); got != "702 / 131072 tokens" {
+	if got := m.promptTokenText(702); got != "702 / 128k tokens" {
 		t.Fatalf("promptTokenText with num_ctx = %q", got)
+	}
+
+	m.opts.Options = map[string]any{"num_ctx": 1000000}
+	if got := m.promptTokenText(702); got != "702 / 1M tokens" {
+		t.Fatalf("promptTokenText with large num_ctx = %q", got)
+	}
+
+	m.opts.Options = map[string]any{"num_ctx": 99999}
+	if got := m.promptTokenText(702); got != "702 / 99999 tokens" {
+		t.Fatalf("promptTokenText below compact threshold = %q", got)
 	}
 }
 
