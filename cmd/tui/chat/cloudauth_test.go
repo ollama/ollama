@@ -197,7 +197,7 @@ func TestCloudAuthPollResetsFailuresOnHealthyResponse(t *testing.T) {
 	}
 
 	// Accumulate some failures without hitting the threshold.
-	for i := 0; i < maxPollFailures-2; i++ {
+	for range maxPollFailures - 2 {
 		updated, _ := m.updateCloudAuthPrompt(cloudAuthPollMsg{done: false, err: pollErr})
 		m = updated.(chatModel)
 	}
