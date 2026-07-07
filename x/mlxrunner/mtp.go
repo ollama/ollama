@@ -11,7 +11,7 @@ import (
 // mtpPendingFlushTokens caps how many committed look-ahead tokens wait in the
 // pending buffer before a batched flush, bounding the pinned hidden states
 // regardless of what else triggers a flush.
-const mtpPendingFlushTokens = 32
+const mtpPendingFlushTokens = 256
 
 // mtpDrafter drafts with a model's multi-token-prediction head. Constructed
 // at load, it fixes the trie keys' draft look-ahead for the model's lifetime
