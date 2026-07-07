@@ -77,7 +77,7 @@ type Options struct {
 	PreloadModel                func(context.Context, string, *api.ThinkValue) (int, error)
 	CheckCloudModel             func(context.Context, string, string) error
 	OpenBrowser                 func(string)
-	PollCloudAuth               func(context.Context) (string, bool)
+	PollCloudAuth               func(context.Context) (string, bool, error)
 	CompactionThreshold         float64
 	SystemPrompt                string
 }

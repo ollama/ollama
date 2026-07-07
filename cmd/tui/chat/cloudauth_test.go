@@ -12,9 +12,9 @@ func TestCloudAuthTickDoesNotPoll(t *testing.T) {
 	m := chatModel{
 		cloudAuthPrompt: &cloudAuthPrompt{polling: true},
 		opts: Options{
-			PollCloudAuth: func(context.Context) (string, bool) {
+			PollCloudAuth: func(context.Context) (string, bool, error) {
 				polls++
-				return "", false
+				return "", false, nil
 			},
 		},
 	}
@@ -44,9 +44,9 @@ func TestCloudAuthPollSchedulesNextPoll(t *testing.T) {
 	m := chatModel{
 		cloudAuthPrompt: &cloudAuthPrompt{polling: true},
 		opts: Options{
-			PollCloudAuth: func(context.Context) (string, bool) {
+			PollCloudAuth: func(context.Context) (string, bool, error) {
 				polls++
-				return "", false
+				return "", false, nil
 			},
 		},
 	}
@@ -135,5 +135,113 @@ func TestCloudModelPreflightCommandChecksCloudModel(t *testing.T) {
 	}
 	if msg.model != "glm-5.2:cloud" || msg.err == nil || !strings.Contains(msg.err.Error(), "temporary") {
 		t.Fatalf("message = %#v", msg)
+	}
+}
+
+func TestCloudAuthPollGivesUpAfterConsecutiveFailures(t *testing.T) {
+	pollErr := errors.New("whoami: connection refused")
+	m := chatModel{
+		cloudAuthPrompt: &cloudAuthPrompt{polling: true, kind: cloudAuthSignIn},
+		opts: Options{
+			PollCloudAuth: func(context.Context) (string, bool, error) {
+				return "", false, pollErr
+			},
+		},
+	}
+
+	// The first maxPollFailures-1 failures should keep retrying.
+	for i := 1; i < maxPollFailures; i++ {
+		updated, _ := m.updateCloudAuthPrompt(cloudAuthPollMsg{done: false, err: pollErr})
+		m = updated.(chatModel)
+		if m.cloudAuthPrompt == nil {
+			t.Fatalf("failure %d: prompt cleared early", i)
+		}
+		if got := m.cloudAuthPrompt.pollFailures; got != i {
+			t.Fatalf("failure %d: pollFailures = %d, want %d", i, got, i)
+		}
+		if m.cloudAuthPrompt.pollErr != pollErr.Error() {
+			t.Fatalf("failure %d: pollErr = %q, want %q", i, m.cloudAuthPrompt.pollErr, pollErr.Error())
+		}
+	}
+
+	// The threshold failure gives up: prompt cleared, back to ready, error entry.
+	updated, cmd := m.updateCloudAuthPrompt(cloudAuthPollMsg{done: false, err: pollErr})
+	m = updated.(chatModel)
+	if cmd != nil {
+		t.Fatalf("threshold failure should not reschedule, got cmd %T", cmd)
+	}
+	if m.cloudAuthPrompt != nil {
+		t.Fatalf("prompt = %#v, want nil after give-up", m.cloudAuthPrompt)
+	}
+	if m.status != "ready" {
+		t.Fatalf("status = %q, want ready", m.status)
+	}
+	if len(m.entries) == 0 {
+		t.Fatal("expected an error entry after give-up")
+	}
+	last := m.entries[len(m.entries)-1]
+	if last.role != "error" || !strings.Contains(last.content, "couldn't verify sign-in") {
+		t.Fatalf("last entry = %+v, want error containing sign-in failure", last)
+	}
+}
+
+func TestCloudAuthPollResetsFailuresOnHealthyResponse(t *testing.T) {
+	pollErr := errors.New("whoami: timeout")
+	m := chatModel{
+		cloudAuthPrompt: &cloudAuthPrompt{polling: true, kind: cloudAuthSignIn},
+		opts: Options{
+			PollCloudAuth: func(context.Context) (string, bool, error) {
+				return "", false, pollErr
+			},
+		},
+	}
+
+	// Accumulate some failures without hitting the threshold.
+	for i := 0; i < maxPollFailures-2; i++ {
+		updated, _ := m.updateCloudAuthPrompt(cloudAuthPollMsg{done: false, err: pollErr})
+		m = updated.(chatModel)
+	}
+	if got := m.cloudAuthPrompt.pollFailures; got != maxPollFailures-2 {
+		t.Fatalf("pollFailures = %d, want %d", got, maxPollFailures-2)
+	}
+
+	// A healthy (no-error, not-done) response resets the streak so a later
+	// transient blip isn't counted against a recovered connection.
+	updated, _ := m.updateCloudAuthPrompt(cloudAuthPollMsg{done: false, err: nil})
+	m = updated.(chatModel)
+	if m.cloudAuthPrompt == nil {
+		t.Fatal("healthy response should keep the prompt open")
+	}
+	if got := m.cloudAuthPrompt.pollFailures; got != 0 {
+		t.Fatalf("pollFailures = %d, want 0 after healthy response", got)
+	}
+	if m.cloudAuthPrompt.pollErr != "" {
+		t.Fatalf("pollErr = %q, want empty after healthy response", m.cloudAuthPrompt.pollErr)
+	}
+}
+
+func TestCloudAuthPollCompletesAfterFailures(t *testing.T) {
+	pollErr := errors.New("whoami: timeout")
+	m := chatModel{
+		cloudAuthPrompt: &cloudAuthPrompt{
+			modelName:    "glm-5.2:cloud",
+			polling:      true,
+			kind:         cloudAuthSignIn,
+			pollFailures: maxPollFailures - 1,
+		},
+		opts: Options{
+			CheckCloudModel: func(context.Context, string, string) error { return nil },
+			PollCloudAuth:   func(context.Context) (string, bool, error) { return "", false, pollErr },
+		},
+	}
+
+	// A successful sign-in mid-retry should clear the failure state and re-check.
+	updated, _ := m.updateCloudAuthPrompt(cloudAuthPollMsg{done: true})
+	m = updated.(chatModel)
+	if m.cloudAuthPrompt.polling {
+		t.Fatal("done should stop polling")
+	}
+	if m.cloudAuthPrompt.pollFailures != 0 || m.cloudAuthPrompt.pollErr != "" {
+		t.Fatalf("failure state not reset: failures=%d err=%q", m.cloudAuthPrompt.pollFailures, m.cloudAuthPrompt.pollErr)
 	}
 }

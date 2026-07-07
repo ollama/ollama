@@ -273,12 +273,15 @@ func GenerateAgentTUI(cmd *cobra.Command, client *api.Client, opts agentTUIOptio
 			return ensureCloudModelAccess(ctx, client, model, requiredPlan)
 		},
 		OpenBrowser: launch.OpenBrowser,
-		PollCloudAuth: func(ctx context.Context) (string, bool) {
+		PollCloudAuth: func(ctx context.Context) (string, bool, error) {
 			user, err := client.Whoami(ctx)
-			if err != nil || user == nil || user.Name == "" {
-				return "", false
+			if err != nil {
+				return "", false, err
 			}
-			return user.Name, true
+			if user == nil || user.Name == "" {
+				return "", false, nil
+			}
+			return user.Name, true, nil
 		},
 	})
 	return err
