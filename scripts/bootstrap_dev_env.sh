@@ -96,6 +96,47 @@ create_compose_file() {
 
     ARCH=$(uname -m)
 
+    # Determine the Go archive suffix for the current architecture
+    case "$ARCH" in
+        s390x)  GO_ARCH="s390x" ;;
+        x86_64) GO_ARCH="amd64" ;;
+        aarch64) GO_ARCH="arm64" ;;
+        *) GO_ARCH="amd64" ;;
+    esac
+
+    # Write a Dockerfile.dev so all deps are baked into the image (no apt lock races at runtime)
+    log_info "Generating Dockerfile.dev..."
+    cat > "Dockerfile.dev" << DOCKERFILE_EOF
+FROM docker.io/library/debian:bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+        curl \\
+        git \\
+        vim \\
+        htop \\
+        ca-certificates \\
+        wget \\
+        tar \\
+        cmake \\
+        ninja-build \\
+        gcc \\
+        g++ \\
+        make \\
+        pkg-config \\
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN wget -q https://go.dev/dl/go1.22.5.linux-${GO_ARCH}.tar.gz -O /tmp/go.tar.gz \\
+    && rm -rf /usr/local/go \\
+    && tar -C /usr/local -xzf /tmp/go.tar.gz \\
+    && rm /tmp/go.tar.gz
+
+ENV PATH=\$PATH:/usr/local/go/bin
+RUN echo 'export PATH=\$PATH:/usr/local/go/bin' >> /root/.bashrc
+
+CMD ["sleep", "infinity"]
+DOCKERFILE_EOF
+    log_success "Dockerfile.dev generated"
+
     if [[ "$ARCH" == "s390x" ]]; then
         log_warning "Detected s390x architecture. The official ollama/ollama image is not available for s390x."
         log_info "Generating compose file without the official 'ollama' service (only ollama-dev for building)."
@@ -131,42 +172,18 @@ services:
           --ServerApp.allow_root=True
     restart: unless-stopped
 
-  # Development container for building Ollama from source (main service on s390x)
+  # Development container — built from Dockerfile.dev (all deps pre-installed, no lock races)
   ollama-dev:
     container_name: ollama-dev
-    image: docker.io/library/debian:bookworm
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
     networks:
       - ollama-net
     volumes:
       - ./ollama-src:/workspace/ollama-s390x:Z
       - ./ollama-models:/root/.ollama:Z
     working_dir: /workspace/ollama-s390x
-    command:
-      - sh
-      - -c
-      - |
-        apt-get update && apt-get install -y \
-          curl \
-          git \
-          vim \
-          htop \
-          ca-certificates \
-          wget \
-          tar \
-          cmake \
-          ninja-build \
-          gcc \
-          g++ \
-          make \
-          pkg-config && \
-        wget https://go.dev/dl/go1.22.5.linux-s390x.tar.gz -O /tmp/go.tar.gz && \
-        rm -rf /usr/local/go && \
-        tar -C /usr/local -xzf /tmp/go.tar.gz && \
-        rm /tmp/go.tar.gz && \
-        export PATH=$PATH:/usr/local/go/bin && \
-        echo 'export PATH=$PATH:/usr/local/go/bin' >> /root/.bashrc && \
-        go version && \
-        sleep infinity
     restart: unless-stopped
 
 networks:
@@ -207,42 +224,18 @@ services:
           --ServerApp.allow_root=True
     restart: unless-stopped
 
-  # Development container for building Ollama from source
+  # Development container — built from Dockerfile.dev (all deps pre-installed, no lock races)
   ollama-dev:
     container_name: ollama-dev
-    image: docker.io/library/debian:bookworm
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
     networks:
       - ollama-net
     volumes:
       - ./ollama-src:/workspace/ollama-s390x:Z
       - ./ollama-models:/root/.ollama:Z
     working_dir: /workspace/ollama-s390x
-    command:
-      - sh
-      - -c
-      - |
-        apt-get update && apt-get install -y \
-          curl \
-          git \
-          vim \
-          htop \
-          ca-certificates \
-          wget \
-          tar \
-          cmake \
-          ninja-build \
-          gcc \
-          g++ \
-          make \
-          pkg-config && \
-        wget https://go.dev/dl/go1.22.5.linux-amd64.tar.gz -O /tmp/go.tar.gz && \
-        rm -rf /usr/local/go && \
-        tar -C /usr/local -xzf /tmp/go.tar.gz && \
-        rm /tmp/go.tar.gz && \
-        export PATH=$PATH:/usr/local/go/bin && \
-        echo 'export PATH=$PATH:/usr/local/go/bin' >> /root/.bashrc && \
-        go version && \
-        sleep infinity
     restart: unless-stopped
 
   # Official Ollama runtime (for testing models) - not available on s390x
