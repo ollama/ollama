@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/cmd/launch"
 	"github.com/ollama/ollama/internal/modelref"
 )
 
@@ -29,6 +30,7 @@ type cloudAuthPrompt struct {
 	modelName    string
 	requiredPlan string
 	signInURL    string
+	upgradeURL   string
 	kind         cloudAuthKind
 	spinner      int
 	openNow      bool
@@ -152,10 +154,16 @@ func pollCloudAuthCmd(ctx context.Context, poll func(context.Context) (string, b
 }
 
 func (m *chatModel) startCloudAuthSignIn(modelName, requiredPlan, signInURL string) (tea.Model, tea.Cmd) {
+	// When no sign-in URL is available yet, show the "checking" state while
+	// we verify the plan, rather than rendering a blank "Navigate to:" URL.
+	kind := cloudAuthSignIn
+	if signInURL == "" {
+		kind = cloudAuthChecking
+	}
 	m.cloudAuthPrompt = &cloudAuthPrompt{
 		modelName:    modelName,
 		requiredPlan: requiredPlan,
-		kind:         cloudAuthSignIn,
+		kind:         kind,
 		signInURL:    signInURL,
 		polling:      true,
 	}
@@ -176,6 +184,7 @@ func (m *chatModel) startCloudAuthUpgrade(modelName, requiredPlan string) (tea.M
 		modelName:    modelName,
 		requiredPlan: requiredPlan,
 		kind:         cloudAuthUpgrade,
+		upgradeURL:   launch.DefaultUpgradeURL,
 		openNow:      true,
 	}
 	m.status = "cloud-auth"
@@ -241,6 +250,9 @@ func (m chatModel) updateCloudAuthPrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case tea.KeyEnter:
 				if m.cloudAuthPrompt.openNow {
 					m.cloudAuthPrompt.polling = true
+					if m.opts.OpenBrowser != nil && m.cloudAuthPrompt.upgradeURL != "" {
+						m.opts.OpenBrowser(m.cloudAuthPrompt.upgradeURL)
+					}
 					return m, tea.Batch(cloudAuthTickCmd(), pollCloudAuthCmd(m.ctx, m.opts.PollCloudAuth))
 				}
 				m.cloudAuthPrompt = nil
@@ -315,6 +327,19 @@ func (m chatModel) renderCloudAuthPrompt(width int) string {
 			b.WriteString("Open upgrade page now?\n")
 			b.WriteString(yesBtn + "  " + noBtn)
 			b.WriteString("\n\n")
+			if !p.openNow {
+				b.WriteString("Or navigate to:\n")
+				urlWrap := chatPickerTextStyle
+				if width > 4 {
+					urlWrap = chatPickerTextStyle.Width(width - 4)
+				}
+				if u := p.upgradeURL; u != "" {
+					b.WriteString(urlWrap.Render(u))
+				} else {
+					b.WriteString(urlWrap.Render(launch.DefaultUpgradeURL))
+				}
+				b.WriteString("\n\n")
+			}
 			b.WriteString(chatPickerMetaStyle.Render("←/→ navigate • enter confirm • esc cancel"))
 		} else {
 			b.WriteString(chatPickerMetaStyle.Render(frame + " Waiting for upgrade to complete..."))

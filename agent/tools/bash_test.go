@@ -177,6 +177,7 @@ func TestRejectUnsafeShellCommand(t *testing.T) {
 		{name: "rm build then unrelated star glob", command: "rm -rf build && ls *.go", wantErr: false},
 		{name: "rm multiple targets one unsafe", command: "rm -rf build /etc", wantErr: true},
 		{name: "rm unsafe then safe piped", command: "rm -rf / | tee log", wantErr: true},
+		{name: "rm unsafe via command substitution", command: "rm -rf $(echo /)", wantErr: true},
 	}
 
 	for _, tt := range tests {

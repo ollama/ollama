@@ -175,16 +175,19 @@ func hasUnsafeRecursiveDelete(command string) bool {
 }
 
 // shellSegments splits a command on shell control operators (;, &, |, &&,
-// ||), newlines, and subshell boundaries, returning the individual command
-// segments. It operates on the lowercased raw command before quote/separator
-// normalization so that command boundaries are preserved for per-segment
-// checks. Empty segments are dropped.
+// ||) and newlines, returning the individual command segments. It operates on
+// the lowercased raw command before quote/separator normalization so that
+// command boundaries are preserved for per-segment checks. Subshell parens are
+// intentionally NOT treated as separators: splitting on them would fragment
+// command substitutions like "rm -rf $(echo /)" into "rm -rf $" and "echo /",
+// hiding the destructive "/" target from the per-segment scan. Empty segments
+// are dropped.
 func shellSegments(command string) []string {
 	command = strings.ToLower(command)
 	var segments []string
 	for _, segment := range strings.FieldsFunc(command, func(r rune) bool {
 		switch r {
-		case ';', '&', '|', '(', ')', '\n', '\r':
+		case ';', '&', '|', '\n', '\r':
 			return true
 		}
 		return false
