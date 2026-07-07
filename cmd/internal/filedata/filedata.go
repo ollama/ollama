@@ -49,11 +49,14 @@ func NormalizePath(fp string) string {
 	return fp
 }
 
-func ExtractNames(input string) []string {
-	regexPattern := `(?:file://\S+?\.(?i:jpg|jpeg|png|webp|wav)\b)|(?:(?:[a-zA-Z]:)?(?:\./|\.\\|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav)\b)`
-	re := regexp.MustCompile(regexPattern)
+// fileExtractRe matches file:// URLs and filesystem paths ending in image/audio
+// extensions. Hoisted to package scope so the per-keystroke slash-completion
+// path (chat.slashInputIsMultimodalFile -> ExtractNames) doesn't recompile it
+// on every call.
+var fileExtractRe = regexp.MustCompile(`(?:file://\S+?\.(?i:jpg|jpeg|png|webp|wav)\b)|(?:(?:[a-zA-Z]:)?(?:\./|\.\\|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav)\b)`)
 
-	return re.FindAllString(input, -1)
+func ExtractNames(input string) []string {
+	return fileExtractRe.FindAllString(input, -1)
 }
 
 func Extract(input string) (string, []api.ImageData, error) {
@@ -78,7 +81,7 @@ func ExtractWithFiles(input string) (string, []File, error) {
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		} else if err != nil {
-			return "", files, fmt.Errorf("couldn't process file %q: %w", nfp, err)
+			return "", nil, fmt.Errorf("couldn't process file %q: %w", nfp, err)
 		}
 		input = strings.ReplaceAll(input, "'"+nfp+"'", "")
 		input = strings.ReplaceAll(input, "'"+fp+"'", "")

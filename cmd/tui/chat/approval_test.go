@@ -416,3 +416,29 @@ func TestChatPermissionToggleSyncsRunningApprovalController(t *testing.T) {
 		t.Fatalf("approval = %#v, want full-access approval", result)
 	}
 }
+
+func TestChatApprovalPromptSkippedWhenFullAccessEnabledInFlight(t *testing.T) {
+	reply := make(chan coreagent.Approval, 1)
+	// Full access is on by the time the buffered approval request reaches the
+	// UI (toggled after the agent sent the request but before Update ran).
+	// The stale prompt must not surface; the request is auto-approved.
+	m := chatModel{allowAllTools: true, running: true}
+
+	updated, _ := m.Update(chatApprovalPromptMsg{request: testApprovalRequest(), reply: reply})
+	fm := updated.(chatModel)
+
+	if fm.approvalPrompt != nil {
+		t.Fatalf("approval prompt = %#v, want nil (full access on)", fm.approvalPrompt)
+	}
+	if got := fm.status; got == "approval required" {
+		t.Fatalf("status = %q, should not show approval required", got)
+	}
+	select {
+	case result := <-reply:
+		if !result.Allow || !result.AllowAll {
+			t.Fatalf("approval = %#v, want full-access approval", result)
+		}
+	default:
+		t.Fatal("expected auto-approval sent on the reply channel")
+	}
+}

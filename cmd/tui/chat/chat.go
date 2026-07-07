@@ -334,6 +334,15 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case chatApprovalPromptMsg:
+		// Full access may have been enabled while this request was in flight
+		// (the user toggled it on after the agent sent the approval request
+		// but before this buffered message was handled). In that window
+		// togglePermissionMode's auto-resolve sees no open prompt yet, so
+		// short-circuit here rather than surfacing a stale approval prompt.
+		if m.allowAllTools {
+			m.approvalPrompt = &chatApprovalPrompt{request: msg.request, reply: msg.reply}
+			return m.resolveApprovalPrompt(chatApprovalChoice{allow: true, allowAll: true})
+		}
 		printedLines := m.flowPrintedLines
 		var printedTranscript []string
 		if printedLines > 0 {
