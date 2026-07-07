@@ -102,6 +102,58 @@ func createRequest(t *testing.T, fn func(*gin.Context), body any) *httptest.Resp
 	return w.ResponseRecorder
 }
 
+func TestCreateHandlerRejectsInvalidInfoTypes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	testCases := []struct {
+		name string
+		info map[string]any
+		err  string
+	}{
+		{
+			name: "string_field",
+			info: map[string]any{
+				"model_family": float64(1),
+			},
+			err: "model_family",
+		},
+		{
+			name: "fractional_integer_field",
+			info: map[string]any{
+				"context_length": 1.5,
+			},
+			err: "context_length",
+		},
+	}
+
+	for _, tt := range testCases {
+		t.Run(tt.name, func(t *testing.T) {
+			var s Server
+			_, digest := createBinFile(t, nil, nil)
+			w := createRequest(t, s.CreateHandler, api.CreateRequest{
+				Model: "test-create-invalid-info",
+				Files: map[string]string{
+					"test.gguf": digest,
+				},
+				Info:   tt.info,
+				Stream: &stream,
+			})
+
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("expected status code 400, got %d", w.Code)
+			}
+
+			var resp map[string]string
+			if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+				t.Fatal(err)
+			}
+			if got := resp["error"]; !strings.Contains(got, tt.err) {
+				t.Fatalf("expected %s error, got %q", tt.err, got)
+			}
+		})
+	}
+}
+
 func readCreatedModelConfig(t *testing.T, name string) model.ConfigV2 {
 	t.Helper()
 
