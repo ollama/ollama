@@ -2195,6 +2195,87 @@ func TestAppendMMProjArgs(t *testing.T) {
 	}
 }
 
+func TestApplyLlamaArgFitDefault(t *testing.T) {
+	defaultOpts := api.DefaultOptions()
+
+	tests := []struct {
+		name   string
+		launch llamaServerLaunchConfig
+		env    map[string]string
+		want   map[string]string
+	}{
+		{
+			name: "gemma4 limited vram projector disables llama fit by default",
+			launch: llamaServerLaunchConfig{
+				modelArch:    "gemma4",
+				projectors:   []string{"model.gguf"},
+				opts:         defaultOpts,
+				gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 4 << 30}},
+				mmprojMemory: 4 << 30,
+				modelLayers:  37,
+			},
+			want: map[string]string{"LLAMA_ARG_FIT": "off"},
+		},
+		{
+			name: "user configured llama fit is preserved",
+			launch: llamaServerLaunchConfig{
+				modelArch:    "gemma4",
+				projectors:   []string{"model.gguf"},
+				opts:         defaultOpts,
+				gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 4 << 30}},
+				mmprojMemory: 4 << 30,
+				modelLayers:  37,
+			},
+			env:  map[string]string{"LLAMA_ARG_FIT": "on"},
+			want: map[string]string{"LLAMA_ARG_FIT": "on"},
+		},
+		{
+			name: "non gemma4 projector leaves llama fit unset",
+			launch: llamaServerLaunchConfig{
+				modelArch:    "gemma3",
+				projectors:   []string{"model.gguf"},
+				opts:         defaultOpts,
+				gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 4 << 30}},
+				mmprojMemory: 933 << 20,
+				modelLayers:  37,
+			},
+			want: map[string]string{},
+		},
+		{
+			name: "gemma4 without projector leaves llama fit unset",
+			launch: llamaServerLaunchConfig{
+				modelArch:   "gemma4",
+				opts:        defaultOpts,
+				gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 4 << 30}},
+				modelLayers: 37,
+			},
+			want: map[string]string{},
+		},
+		{
+			name: "gemma4 projector with ample vram leaves llama fit unset",
+			launch: llamaServerLaunchConfig{
+				modelArch:    "gemma4",
+				projectors:   []string{"model.gguf"},
+				opts:         defaultOpts,
+				gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
+				mmprojMemory: 933 << 20,
+				modelLayers:  37,
+			},
+			want: map[string]string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := cloneStringMap(tt.env)
+			applyLlamaArgFitDefault(env, tt.launch)
+			if !reflect.DeepEqual(env, tt.want) {
+				t.Fatalf("applyLlamaArgFitDefault env = %v, want %v", env, tt.want)
+			}
+		})
+	}
+}
+
 func TestMMProjMemoryRequirement(t *testing.T) {
 	if got, err := mmprojMemoryRequirement("model.gguf", nil, nil); err != nil || got != 0 {
 		t.Fatalf("no projector memory = %d, %v; want 0, nil", got, err)

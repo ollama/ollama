@@ -839,6 +839,9 @@ func NewLlamaServerRunner(
 		serverEnvs[k] = v
 	}
 	serverEnvs["LLAMA_MEDIA_MARKER"] = mediaMarker
+	if v, ok := os.LookupEnv("LLAMA_ARG_FIT"); ok {
+		serverEnvs["LLAMA_ARG_FIT"] = v
+	}
 
 	launch := llamaServerLaunchConfig{
 		modelPath:    modelPath,
@@ -854,8 +857,9 @@ func NewLlamaServerRunner(
 		config:       config,
 		gpus:         slices.Clone(gpus),
 		gpuLibs:      slices.Clone(gpuLibs),
-		extraEnvs:    cloneStringMap(serverEnvs),
 	}
+	applyLlamaArgFitDefault(serverEnvs, launch)
+	launch.extraEnvs = cloneStringMap(serverEnvs)
 
 	s := &llamaServerRunner{
 		client:           newLlamaServerHTTPClient(),
@@ -890,6 +894,29 @@ func cloneStringMap(src map[string]string) map[string]string {
 		dst[k] = v
 	}
 	return dst
+}
+
+func applyLlamaArgFitDefault(env map[string]string, launch llamaServerLaunchConfig) {
+	if _, ok := env["LLAMA_ARG_FIT"]; ok {
+		return
+	}
+
+	if disabled, reason := launch.llamaArgFitDisabled(); disabled {
+		slog.Info("disabling llama.cpp fit", "reason", reason, "model", launch.modelPath)
+		env["LLAMA_ARG_FIT"] = "off"
+	}
+}
+
+func (launch llamaServerLaunchConfig) llamaArgFitDisabled() (bool, string) {
+	if launch.modelArch != "gemma4" || len(launch.projectors) == 0 {
+		return false, ""
+	}
+
+	_, reason := shouldDisableMMProjOffload(launch.opts, launch.gpus, launch.modelLayers, launch.mmprojMemory)
+	if reason == "limited-vram" {
+		return true, "gemma4-limited-vram"
+	}
+	return false, ""
 }
 
 func legacyEmbeddingsWereRaw(kv ggml.KV) bool {
