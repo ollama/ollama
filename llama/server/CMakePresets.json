@@ -30,6 +30,46 @@
       }
     },
     {
+      "name": "cpu_s390x_base",
+      "hidden": true,
+      "inherits": ["default"],
+      "cacheVariables": {
+        "OLLAMA_RUNNER_DIR": "",
+        "OLLAMA_S390X_BIGENDIAN": "ON",
+        "GGML_CPU_ALL_VARIANTS": "ON",
+        "GGML_BLAS": "ON",
+        "GGML_BLAS_VENDOR": "OpenBLAS"
+      }
+    },
+    {
+      "name": "cpu_s390x",
+      "inherits": ["cpu_s390x_base"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-cpu_s390x",
+      "description": "s390x CPU build with VXE/VXE2 SIMD enabled (IBM z15+, auto-detected by GGML)",
+      "cacheVariables": {
+        "GGML_VXE": "ON"
+      }
+    },
+    {
+      "name": "cpu_s390x_zdnn",
+      "inherits": ["cpu_s390x_base"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-cpu_s390x_zdnn",
+      "description": "s390x build with zDNN/zAIU co-processor acceleration (IBM z17+); requires IBM zDNN library",
+      "cacheVariables": {
+        "GGML_VXE": "ON",
+        "GGML_ZDNN": "ON"
+      }
+    },
+    {
+      "name": "cpu_s390x_novxe",
+      "inherits": ["cpu_s390x_base"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-cpu_s390x_novxe",
+      "description": "s390x scalar-only CPU build with VXE disabled (debugging / older z14 hardware)",
+      "cacheVariables": {
+        "GGML_VXE": "OFF"
+      }
+    },
+    {
       "name": "cpu_arm64",
       "inherits": ["default"],
       "binaryDir": "${sourceDir}/../../build/llama-server-cpu_arm64",
@@ -230,6 +270,21 @@
     {
       "name": "cpu_windows",
       "configurePreset": "cpu_windows",
+      "targets": ["llama-server", "llama-quantize"]
+    },
+    {
+      "name": "cpu_s390x",
+      "configurePreset": "cpu_s390x",
+      "targets": ["llama-server", "llama-quantize"]
+    },
+    {
+      "name": "cpu_s390x_zdnn",
+      "configurePreset": "cpu_s390x_zdnn",
+      "targets": ["llama-server", "llama-quantize"]
+    },
+    {
+      "name": "cpu_s390x_novxe",
+      "configurePreset": "cpu_s390x_novxe",
       "targets": ["llama-server", "llama-quantize"]
     },
     {

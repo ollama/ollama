@@ -64,14 +64,47 @@ else()
     set(OLLAMA_HAVE_LLAMA_SERVER FALSE)
 endif()
 
-# Declare s390x big-endian feature flag at the root so passing
-# -DOLLAMA_S390X_BIGENDIAN=ON/OFF here is a known variable.
-# The resolved value is forwarded to the llama/server ExternalProject
-# in cmake/local.cmake; the actual default logic lives in llama/server/CMakeLists.txt.
+# ---------------------------------------------------------------------------
+# s390x / IBM Z & LinuxONE feature flags
+#
+# These options are declared here (root project) so that:
+#   -DOLLAMA_S390X_* flags on the top-level cmake invocation are recognized.
+# The resolved values are forwarded into the llama/server ExternalProject
+# via cmake/local.cmake.  The actual default-value logic still lives in
+# llama/server/CMakeLists.txt for standalone sub-project builds.
+#
+# OLLAMA_S390X_BIGENDIAN  – byte-swap little-endian GGUF scalar fields
+#                           (auto ON for s390x; required for all z-series builds)
+#
+# OLLAMA_S390X_VXE        – VX/VXE/VXE2 SIMD acceleration via GGML_VXE
+#                           Available on IBM z15 / LinuxONE 3 or later.
+#                           Enabled by default on s390x; set OFF only for
+#                           debugging or when targeting older z14 hardware.
+#
+# OLLAMA_S390X_ZDNN       – IBM zDNN / zAIU co-processor acceleration via GGML_ZDNN
+#                           Available on IBM z17 / LinuxONE 5 or later.
+#                           Requires the IBM zDNN library installed on the build host.
+#                           OFF by default even on s390x; opt-in explicitly.
+# ---------------------------------------------------------------------------
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "s390x")
     option(OLLAMA_S390X_BIGENDIAN "Enable big-endian GGUF byte-swap (auto ON for s390x)" ON)
+    option(OLLAMA_S390X_VXE
+        "Enable VX/VXE/VXE2 SIMD acceleration (GGML_VXE=ON; z15+ required; auto ON for s390x)" ON)
+    option(OLLAMA_S390X_ZDNN
+        "Enable IBM zDNN/zAIU co-processor acceleration (GGML_ZDNN=ON; z17+ and zDNN library required)" OFF)
 else()
     option(OLLAMA_S390X_BIGENDIAN "Enable big-endian GGUF byte-swap (auto ON for s390x)" OFF)
+    option(OLLAMA_S390X_VXE
+        "Enable VX/VXE/VXE2 SIMD acceleration (GGML_VXE=ON; z15+ required; auto ON for s390x)" OFF)
+    option(OLLAMA_S390X_ZDNN
+        "Enable IBM zDNN/zAIU co-processor acceleration (GGML_ZDNN=ON; z17+ and zDNN library required)" OFF)
+endif()
+
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "s390x")
+    message(STATUS "s390x target detected")
+    message(STATUS "  OLLAMA_S390X_BIGENDIAN = ${OLLAMA_S390X_BIGENDIAN}")
+    message(STATUS "  OLLAMA_S390X_VXE       = ${OLLAMA_S390X_VXE}  (GGML_VXE; z15+ SIMD)")
+    message(STATUS "  OLLAMA_S390X_ZDNN      = ${OLLAMA_S390X_ZDNN}  (GGML_ZDNN; z17+ zAIU co-processor)")
 endif()
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/local.cmake)

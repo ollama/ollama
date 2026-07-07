@@ -134,28 +134,65 @@ set(_ollama_compat_patch_cmd "")
 include(${CMAKE_CURRENT_SOURCE_DIR}/../compat/compat.cmake)
 
 # ---------------------------------------------------------------------------
-# s390x big-endian feature flag
+# s390x / IBM Z & LinuxONE feature flags
 #
-# OLLAMA_S390X_BIGENDIAN controls whether the compat layer byte-swaps the
-# little-endian scalar fields (tensor scales, KV metadata, etc.) that GGUF
-# files carry on disk.  It defaults to ON only when the target processor is
-# s390x; every other architecture leaves it OFF.
+# When this sub-project is built standalone (e.g. cmake --preset cpu_s390x)
+# the flags default based on the detected processor.  When built via the
+# Ollama superbuild (cmake/local.cmake), the root CMakeLists.txt resolves
+# the defaults and forwards them here explicitly.
 #
-# To force-enable on a non-s390x host (e.g. cross-compilation testing):
-#   cmake -DOLLAMA_S390X_BIGENDIAN=ON ...
+# OLLAMA_S390X_BIGENDIAN – byte-swap GGUF little-endian scalars (auto ON for s390x)
+# OLLAMA_S390X_VXE       – enable VX/VXE/VXE2 SIMD via GGML_VXE (z15+; auto ON)
+# OLLAMA_S390X_ZDNN      – enable IBM zDNN co-processor via GGML_ZDNN (z17+; opt-in)
 #
-# To force-disable on real s390x hardware (debugging / perf comparison):
-#   cmake -DOLLAMA_S390X_BIGENDIAN=OFF ...
+# Override examples:
+#   cmake -DOLLAMA_S390X_BIGENDIAN=ON  ...   # force big-endian (cross-compile test)
+#   cmake -DOLLAMA_S390X_VXE=OFF       ...   # scalar-only; useful on z14 or for debugging
+#   cmake -DOLLAMA_S390X_ZDNN=ON       ...   # enable zAIU co-proc (z17+ + zDNN lib)
 # ---------------------------------------------------------------------------
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "s390x")
     set(_ollama_s390x_bigendian_default ON)
+    set(_ollama_s390x_vxe_default ON)
+    set(_ollama_s390x_zdnn_default OFF)
 else()
     set(_ollama_s390x_bigendian_default OFF)
+    set(_ollama_s390x_vxe_default OFF)
+    set(_ollama_s390x_zdnn_default OFF)
 endif()
+
 option(OLLAMA_S390X_BIGENDIAN
     "Enable big-endian GGUF byte-swap in the Ollama compat layer (auto ON for s390x)"
     ${_ollama_s390x_bigendian_default})
-message(STATUS "OLLAMA_S390X_BIGENDIAN = ${OLLAMA_S390X_BIGENDIAN} (processor: ${CMAKE_SYSTEM_PROCESSOR})")
+option(OLLAMA_S390X_VXE
+    "Enable VX/VXE/VXE2 SIMD acceleration (GGML_VXE=ON; IBM z15 / LinuxONE 3+; auto ON for s390x)"
+    ${_ollama_s390x_vxe_default})
+option(OLLAMA_S390X_ZDNN
+    "Enable IBM zDNN/zAIU co-processor acceleration (GGML_ZDNN=ON; IBM z17 / LinuxONE 5+; requires zDNN library)"
+    ${_ollama_s390x_zdnn_default})
+
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "s390x")
+    message(STATUS "s390x sub-project flags (processor: ${CMAKE_SYSTEM_PROCESSOR})")
+    message(STATUS "  OLLAMA_S390X_BIGENDIAN = ${OLLAMA_S390X_BIGENDIAN}")
+    message(STATUS "  OLLAMA_S390X_VXE       = ${OLLAMA_S390X_VXE}  (-> GGML_VXE)")
+    message(STATUS "  OLLAMA_S390X_ZDNN      = ${OLLAMA_S390X_ZDNN}  (-> GGML_ZDNN)")
+else()
+    message(STATUS "OLLAMA_S390X_BIGENDIAN = ${OLLAMA_S390X_BIGENDIAN} (processor: ${CMAKE_SYSTEM_PROCESSOR})")
+endif()
+
+# Apply SIMD and zDNN GGML flags from the Ollama-level s390x options.
+# These are set BEFORE FetchContent_MakeAvailable so llama.cpp picks them up.
+if(OLLAMA_S390X_VXE AND CMAKE_SYSTEM_PROCESSOR MATCHES "s390x")
+    set(GGML_VXE ON CACHE BOOL "s390x VX/VXE/VXE2 SIMD (set by OLLAMA_S390X_VXE)" FORCE)
+    message(STATUS "  GGML_VXE forced ON (OLLAMA_S390X_VXE=ON)")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "s390x" AND NOT OLLAMA_S390X_VXE)
+    set(GGML_VXE OFF CACHE BOOL "s390x VX/VXE/VXE2 SIMD (set by OLLAMA_S390X_VXE=OFF)" FORCE)
+    message(STATUS "  GGML_VXE forced OFF (OLLAMA_S390X_VXE=OFF)")
+endif()
+
+if(OLLAMA_S390X_ZDNN AND CMAKE_SYSTEM_PROCESSOR MATCHES "s390x")
+    set(GGML_ZDNN ON CACHE BOOL "s390x zDNN/zAIU co-processor (set by OLLAMA_S390X_ZDNN)" FORCE)
+    message(STATUS "  GGML_ZDNN forced ON (OLLAMA_S390X_ZDNN=ON)")
+endif()
 
 option(OLLAMA_LLAMA_CPP_SKIP_COMPAT_PATCH
     "Skip llama.cpp compat patch application because the source is already prepared"

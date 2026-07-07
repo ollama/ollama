@@ -7,7 +7,7 @@
 include(ExternalProject)
 
 set(OLLAMA_LLAMA_BACKENDS "" CACHE STRING
-    "Semicolon-separated llama-server GPU backends to build: cuda_v12;cuda_v13;rocm_v7_1;rocm_v7_2;vulkan;cuda_jetpack5;cuda_jetpack6")
+    "Semicolon-separated llama-server GPU backends to build: cuda_v12;cuda_v13;rocm_v7_1;rocm_v7_2;vulkan;cuda_jetpack5;cuda_jetpack6;s390x_vxe;s390x_zdnn")
 set(_ollama_mlx_backends_doc "Semicolon-separated MLX backends to build: cuda_v13;metal_v3;metal_v4")
 set(OLLAMA_VERSION "0.0.0" CACHE STRING "Ollama version embedded in the local Go binary")
 set(OLLAMA_PAYLOAD_INSTALL_PREFIX "${CMAKE_BINARY_DIR}" CACHE PATH
@@ -372,16 +372,40 @@ function(ollama_add_llama_server_build name)
     endif()
     ollama_collect_cache_args_with_prefix("GGML_" _ggml_cache_args)
     ollama_collect_cache_args_with_prefix("LLAMA_" _llama_cache_args)
-    set(_cmake_args
+    # -----------------------------------------------------------------------
+    # Core cmake arguments forwarded to every llama/server sub-project build.
+    # Split into named groups so log output makes it clear which layer each
+    # flag comes from (aids debugging when a build fails during configure).
+    # -----------------------------------------------------------------------
+
+    # Group 1: paths & install layout
+    set(_cmake_args_paths
         -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
         -DCMAKE_INSTALL_PREFIX=${OLLAMA_PAYLOAD_INSTALL_PREFIX}
         -DOLLAMA_LIB_DIR:STRING=${OLLAMA_LIB_DIR}
         -DOLLAMA_RUNNER_DIR=${ARG_RUNNER_DIR}
         -DFETCHCONTENT_SOURCE_DIR_LLAMA_CPP=${OLLAMA_LLAMA_CPP_SOURCE_DIR}
         -DOLLAMA_LLAMA_CPP_SKIP_COMPAT_PATCH=ON
+    )
+
+    # Group 2: s390x / IBM Z feature flags
+    set(_cmake_args_s390x
         -DOLLAMA_S390X_BIGENDIAN=${OLLAMA_S390X_BIGENDIAN}
+        -DOLLAMA_S390X_VXE=${OLLAMA_S390X_VXE}
+        -DOLLAMA_S390X_ZDNN=${OLLAMA_S390X_ZDNN}
+    )
+
+    # Group 3: ggml tunables that must be OFF at the superbuild level
+    set(_cmake_args_ggml_base
         -DGGML_NATIVE=OFF
         -DGGML_OPENMP=OFF
+    )
+
+    # Combine all groups + caller-supplied overrides + forwarded cache vars
+    set(_cmake_args
+        ${_cmake_args_paths}
+        ${_cmake_args_s390x}
+        ${_cmake_args_ggml_base}
         ${ARG_CMAKE_ARGS}
         ${_ggml_cache_args}
         ${_llama_cache_args}
@@ -424,16 +448,37 @@ function(ollama_add_llama_server_build name)
             -B <BINARY_DIR>
             ${_cmake_args})
     endif()
+    # Print the full configure command so CI logs show exactly which flags
+    # are being passed – this is the single most useful debugging aid.
+    string(REPLACE ";" " " _configure_command_display "${_configure_command}")
+    message(STATUS "[ollama-llama-server-${name}] configure command:\n  ${_configure_command_display}")
+    message(STATUS "[ollama-llama-server-${name}] build dir: ${_build_dir}")
+    message(STATUS "[ollama-llama-server-${name}] targets:   ${ARG_TARGETS}")
+
     ExternalProject_Add(ollama-llama-server-${name}
         SOURCE_DIR ${CMAKE_SOURCE_DIR}/llama/server
         BINARY_DIR ${_build_dir}
+
+        # --- Configure step ------------------------------------------------
         CONFIGURE_COMMAND ${_configure_command}
-        BUILD_COMMAND ${OLLAMA_NATIVE_BUILD_TOOL_COMMAND}
-            ${OLLAMA_NATIVE_CONFIG_ARG}
-            ${OLLAMA_NATIVE_BUILD_TARGET_ARG} ${ARG_TARGETS}
-        INSTALL_COMMAND ${CMAKE_COMMAND} --install <BINARY_DIR>
-            ${OLLAMA_NATIVE_CONFIG_ARG}
-            --component llama-server
+
+        # --- Build step ----------------------------------------------------
+        # Build only the explicitly requested targets (e.g. llama-server,
+        # llama-quantize, ggml-cuda …) rather than the whole tree.  This
+        # keeps incremental builds fast and makes failure output focused.
+        BUILD_COMMAND
+            ${CMAKE_COMMAND} -E echo "--- [ollama-llama-server-${name}] build: ${ARG_TARGETS} ---"
+            COMMAND ${OLLAMA_NATIVE_BUILD_TOOL_COMMAND}
+                ${OLLAMA_NATIVE_CONFIG_ARG}
+                ${OLLAMA_NATIVE_BUILD_TARGET_ARG} ${ARG_TARGETS}
+
+        # --- Install step --------------------------------------------------
+        INSTALL_COMMAND
+            ${CMAKE_COMMAND} -E echo "--- [ollama-llama-server-${name}] install ---"
+            COMMAND ${CMAKE_COMMAND} --install <BINARY_DIR>
+                ${OLLAMA_NATIVE_CONFIG_ARG}
+                --component llama-server
+
         DEPENDS ollama-llama-cpp-source
         LIST_SEPARATOR |
         # ExternalProject cannot reliably infer when nested FetchContent
@@ -595,14 +640,70 @@ if(OLLAMA_HAVE_LLAMA_SERVER)
             VERBATIM)
     endif()
 
+    # -----------------------------------------------------------------------
+    # Local CPU build: select GGML feature flags based on the target platform.
+    # Each branch is kept separate so CI failures point directly at the arch.
+    # -----------------------------------------------------------------------
     set(_cpu_args)
+
     if(APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
+        # ---- macOS arm64 (Apple Silicon) -----------------------------------
+        message(STATUS "[local build] platform: macOS arm64 (Apple Silicon)")
         list(APPEND _cpu_args
             -DBUILD_SHARED_LIBS=OFF
             -DGGML_BACKEND_DL=OFF
             -DGGML_METAL=ON
             -DGGML_METAL_EMBED_LIBRARY=ON)
+
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "s390x")
+        # ---- IBM Z / s390x -------------------------------------------------
+        # VXE/VXE2 SIMD  : GGML_VXE (z15+, ON by default via OLLAMA_S390X_VXE)
+        # zDNN co-proc    : GGML_ZDNN (z17+, opt-in via OLLAMA_S390X_ZDNN)
+        # BLAS            : OpenBLAS strongly recommended for SIMD performance
+        # Big-endian swap : controlled by OLLAMA_S390X_BIGENDIAN (auto ON)
+        message(STATUS "[local build] platform: s390x / IBM Z & LinuxONE")
+        message(STATUS "  SIMD (GGML_VXE)  : ${OLLAMA_S390X_VXE}")
+        message(STATUS "  zDNN (GGML_ZDNN) : ${OLLAMA_S390X_ZDNN}")
+
+        list(APPEND _cpu_args
+            -DBUILD_SHARED_LIBS=ON
+            -DGGML_BACKEND_DL=ON
+            -DGGML_CPU_ALL_VARIANTS=ON
+            # SIMD acceleration: VX/VXE/VXE2 (IBM z15 / LinuxONE 3+)
+            -DGGML_VXE=${OLLAMA_S390X_VXE}
+            # zDNN / zAIU co-processor (IBM z17 / LinuxONE 5+); OFF by default
+            -DGGML_ZDNN=${OLLAMA_S390X_ZDNN}
+            # OpenBLAS is strongly recommended for best SIMD throughput
+            -DGGML_BLAS=ON
+            -DGGML_BLAS_VENDOR=OpenBLAS)
+
+        # Verify BLAS is actually available; warn clearly so the user knows
+        # they need to install libopenblas-dev (or equivalent).
+        find_package(BLAS QUIET)
+        if(NOT BLAS_FOUND)
+            message(WARNING
+                "s390x build: OpenBLAS not found on this host.\n"
+                "  SIMD (VXE) acceleration depends on BLAS; performance will be degraded.\n"
+                "  Install OpenBLAS: e.g. 'dnf install openblas-devel' or 'apt install libopenblas-dev'")
+        endif()
+
+        if(OLLAMA_S390X_ZDNN)
+            # zDNN requires the IBM zDNN library (libzdnn).
+            # Check early so the build fails with a clear message rather than a
+            # cryptic link error deep inside the llama.cpp sub-project.
+            find_library(_ollama_zdnn_lib zdnn)
+            if(NOT _ollama_zdnn_lib)
+                message(FATAL_ERROR
+                    "s390x build: GGML_ZDNN=ON but the IBM zDNN library (libzdnn) was not found.\n"
+                    "  Install zDNN: https://github.com/IBM/zDNN\n"
+                    "  Or disable zDNN acceleration with -DOLLAMA_S390X_ZDNN=OFF")
+            endif()
+            message(STATUS "  zDNN library found: ${_ollama_zdnn_lib}")
+        endif()
+
     else()
+        # ---- Generic Linux / x86_64 / Windows / etc. -----------------------
+        message(STATUS "[local build] platform: ${CMAKE_SYSTEM_PROCESSOR}")
         list(APPEND _cpu_args
             -DBUILD_SHARED_LIBS=ON
             -DGGML_BACKEND_DL=ON
