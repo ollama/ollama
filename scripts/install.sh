@@ -238,6 +238,17 @@ if [ "$ARCH" = "s390x" ]; then
         $SUDO ln -sf "$OLLAMA_INSTALL_DIR/bin/ollama" "$BINDIR/ollama"
     fi
 
+    # Create versioned symlinks (.so.0) so llama-server can resolve its dependencies
+    for f in "$OLLAMA_INSTALL_DIR/lib/ollama"/*.so; do
+        [ -f "$f" ] && $SUDO ln -sf "$f" "${f}.0"
+    done
+
+    # Register the lib dir with the dynamic linker
+    if [ -d /etc/ld.so.conf.d ]; then
+        echo "$OLLAMA_INSTALL_DIR/lib/ollama" | $SUDO tee /etc/ld.so.conf.d/ollama.conf >/dev/null
+        $SUDO ldconfig
+    fi
+
     status "IBM Z (s390x) architecture detected - running in CPU-only mode"
 
     if available systemctl; then
