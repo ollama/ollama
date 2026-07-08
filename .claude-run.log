@@ -1,0 +1,23 @@
+The diff is minimal and clean. `slices.Clone(nil)` / sorting an empty slice are both safe, so the empty-`groups` path won't panic.
+
+## Summary
+
+**Issue #17018 — Vulkan Multi-GPU Allocation Anomaly:** GPU0 gets 0 layers and the output tensor spills to CPU despite ample free VRAM across 4 GPUs.
+
+**Root cause (reachable in this checkout):** When a model must be split across GPUs, `server/sched.go`'s `bestGPUGroupByAvailableMemory` returned the GPU group in raw **enumeration order**. That order flows straight to `llama-server` (and `GGML_VK_VISIBLE_DEVICES` via `ml.GetDevicesEnv`), whose **first device is the main GPU** that holds the non-split output tensor + KV overflow. With a smaller GPU first, llama.cpp's back-to-front fit strands it at 0 layers and pushes the output layer to CPU. The repo already had the right comparator — `ml.ByFreeMemory` ("Reverse() yields the largest discrete GPU first") — but only used it for **logging**, never for the list actually handed to the runner. The reporter's `GGML_VK_VISIBLE_DEVICES=0,3,1,2` workaround is exactly this device-reordering lever.
+
+**Fix:** Order the selected spread group with the most-free (discrete-first) GPU first before returning it, reusing the existing comparator:
+```go
+best = slices.Clone(best)
+sort.Sort(sort.Reverse(ml.ByFreeMemory(best)))
+```
+This makes the split deterministic and puts the output layer on a GPU with headroom. Single-GPU and explicit-`main_gpu` paths are untouched.
+
+**Files changed:**
+- `server/sched.go` — reorder the multi-GPU spread group (9 lines).
+- `server/sched_test.go` — new focused subtest modeling the 4-GPU Vulkan layout, asserting the 31 GB device is placed first.
+- `NOTES.md` — full write-up (root cause, fix rationale, files, risk, verification).
+
+**Verification:** `go vet ./server/` clean; `go test ./server/` and `go test ./ml/` both `ok`; all 7 `TestSelectLlamaServerPlacement` subtests pass including the new one.
+
+**Honest caveat (in NOTES.md):** The per-layer packing math itself lives in llama.cpp's vendored `common_params_fit_impl` and Ollama's `ml/backend/ggml/ggml.go` — neither is present in this clone, so it can't be altered here. This change corrects the in-tree lever (device ordering fed into that fit), which is the reporter-validated mechanism. Per instructions, I did not commit, push, or open a PR — the working tree is left modified.
