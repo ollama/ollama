@@ -8,11 +8,14 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,8 +25,11 @@ import (
 )
 
 var (
-	errStalled = errors.New("download stalled")
-	errSlow    = errors.New("download too slow")
+	errStalled        = errors.New("download stalled")
+	errSlow           = errors.New("download too slow")
+	errUnsafeRedirect = errors.New("unsafe redirect")
+
+	lookupNetIP = net.DefaultResolver.LookupNetIP
 )
 
 type downloader struct {
@@ -200,6 +206,8 @@ func (d *downloader) download(ctx context.Context, blob Blob) error {
 		switch {
 		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 			return err
+		case errors.Is(err, errUnsafeRedirect):
+			return err
 		case errors.Is(err, errStalled):
 			// Don't count stall retries against limit
 		case errors.Is(err, errSlow):
@@ -261,7 +269,7 @@ func (d *downloader) downloadOnce(ctx context.Context, blob Blob) (int64, error)
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", existingSize))
 	}
 
-	resp, err := d.client.Do(req)
+	resp, err := noRedirectClient(d.client, baseURL).Do(req)
 	if err != nil {
 		return 0, err
 	}
@@ -399,6 +407,9 @@ func (d *downloader) copy(ctx context.Context, dst io.Writer, src io.Reader, h i
 // redirecting to CDN, while GET triggers the actual CDN redirect.
 func (d *downloader) resolve(ctx context.Context, rawURL string) (*url.URL, error) {
 	u, _ := url.Parse(rawURL)
+	baseURL, _ := url.Parse(d.baseURL)
+	client := noRedirectClient(d.client, baseURL)
+
 	for range 10 {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 		req.Header.Set("User-Agent", d.userAgent)
@@ -407,7 +418,7 @@ func (d *downloader) resolve(ctx context.Context, rawURL string) (*url.URL, erro
 			req.Header.Set("Authorization", "Bearer "+prev)
 		}
 
-		resp, err := d.client.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			return nil, err
 		}
@@ -429,6 +440,9 @@ func (d *downloader) resolve(ctx context.Context, rawURL string) (*url.URL, erro
 		case http.StatusTemporaryRedirect, http.StatusFound, http.StatusMovedPermanently:
 			loc, _ := resp.Location()
 			if loc.Host != u.Host {
+				if err := validateRedirectURL(ctx, baseURL, loc, d.client); err != nil {
+					return nil, err
+				}
 				return loc, nil
 			}
 			u = loc
@@ -437,6 +451,233 @@ func (d *downloader) resolve(ctx context.Context, rawURL string) (*url.URL, erro
 		}
 	}
 	return nil, fmt.Errorf("too many redirects")
+}
+
+func noRedirectClient(client *http.Client, baseURL *url.URL) *http.Client {
+	if client == nil {
+		client = defaultClient
+	}
+
+	c := *client
+	c.Transport = guardedTransport(c.Transport, baseURL)
+	c.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return &c
+}
+
+func guardedTransport(rt http.RoundTripper, baseURL *url.URL) http.RoundTripper {
+	if rt == nil {
+		rt = http.DefaultTransport
+	}
+
+	tr, ok := rt.(*http.Transport)
+	if !ok {
+		return rt
+	}
+
+	allowLocalTargets := baseURL != nil && isLocalHost(baseURL.Hostname())
+	if allowLocalTargets {
+		return tr.Clone()
+	}
+
+	direct := guardedDirectTransport(tr, allowLocalTargets)
+	if tr.Proxy == nil {
+		return direct
+	}
+
+	return guardedProxyTransport{
+		direct:  direct,
+		proxied: tr.Clone(),
+		proxy:   tr.Proxy,
+	}
+}
+
+type guardedProxyTransport struct {
+	direct  *http.Transport
+	proxied *http.Transport
+	proxy   func(*http.Request) (*url.URL, error)
+}
+
+func (t guardedProxyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	proxyURL, err := t.proxy(req)
+	if err != nil {
+		return nil, err
+	}
+	if proxyURL != nil {
+		return t.proxied.RoundTrip(req)
+	}
+	return t.direct.RoundTrip(req)
+}
+
+func guardedDirectTransport(tr *http.Transport, allowLocalTargets bool) *http.Transport {
+	clone := tr.Clone()
+	clone.Proxy = nil
+	dialContext := clone.DialContext
+	if dialContext == nil {
+		var dialer net.Dialer
+		dialContext = dialer.DialContext
+	}
+
+	clone.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return dialResolved(ctx, network, addr, allowLocalTargets, dialContext)
+	}
+
+	// Custom TLS dialers perform their own network dialing, so they cannot be
+	// made to use the IP address checked above while preserving normal SNI
+	// behavior. Let net/http run TLS over the guarded DialContext instead.
+	clone.DialTLSContext = nil
+
+	return clone
+}
+
+type dialContextFunc func(context.Context, string, string) (net.Conn, error)
+
+func dialResolved(ctx context.Context, network, addr string, allowLocalTargets bool, dialContext dialContextFunc) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+
+	addrs, err := resolveHostAddrs(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+
+	if !allowLocalTargets {
+		for _, addr := range addrs {
+			if isLocalAddr(addr) {
+				return nil, fmt.Errorf("%w: refusing connection to local address %s", errUnsafeRedirect, net.JoinHostPort(addr.String(), port))
+			}
+		}
+	}
+
+	var lastErr error
+	for _, addr := range addrs {
+		conn, err := dialContext(ctx, network, net.JoinHostPort(addr.String(), port))
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+
+	if lastErr != nil {
+		return nil, lastErr
+	}
+
+	return nil, fmt.Errorf("no addresses for %s", host)
+}
+
+func validateRedirectURL(ctx context.Context, baseURL, loc *url.URL, client *http.Client) error {
+	if loc.Scheme != "http" && loc.Scheme != "https" {
+		return fmt.Errorf("%w: refusing redirect to unsupported scheme %q", errUnsafeRedirect, loc.Scheme)
+	}
+
+	if loc.Hostname() == "" {
+		return fmt.Errorf("%w: refusing redirect to empty host", errUnsafeRedirect)
+	}
+
+	targetLocal, err := hostResolvesToLocal(ctx, loc.Hostname())
+	if err != nil {
+		return fmt.Errorf("%w: refusing redirect to unresolved host %s: %v", errUnsafeRedirect, loc.Host, err)
+	}
+
+	baseHost := ""
+	baseLocal := false
+	if baseURL != nil {
+		baseHost = baseURL.Host
+		baseLocal = isLocalHost(baseURL.Hostname())
+	}
+	if targetLocal && !baseLocal {
+		return fmt.Errorf("%w: refusing redirect from %s to local address %s", errUnsafeRedirect, baseHost, loc.Host)
+	}
+
+	if !baseLocal {
+		usesProxy, err := redirectUsesProxy(client, loc)
+		if err != nil {
+			return fmt.Errorf("%w: refusing redirect with proxy lookup error for %s: %v", errUnsafeRedirect, loc.Host, err)
+		}
+		if usesProxy {
+			return fmt.Errorf("%w: refusing redirect through proxy to %s", errUnsafeRedirect, loc.Host)
+		}
+	}
+
+	return nil
+}
+
+func redirectUsesProxy(client *http.Client, target *url.URL) (bool, error) {
+	tr, ok := effectiveTransport(client).(*http.Transport)
+	if !ok || tr.Proxy == nil {
+		return false, nil
+	}
+
+	req := &http.Request{
+		Method: http.MethodGet,
+		URL:    target,
+		Header: make(http.Header),
+	}
+	proxyURL, err := tr.Proxy(req)
+	return proxyURL != nil, err
+}
+
+func effectiveTransport(client *http.Client) http.RoundTripper {
+	if client == nil {
+		client = defaultClient
+	}
+	if client.Transport != nil {
+		return client.Transport
+	}
+	return http.DefaultTransport
+}
+
+func hostResolvesToLocal(ctx context.Context, host string) (bool, error) {
+	if isLocalHost(host) {
+		return true, nil
+	}
+
+	addrs, err := resolveHostAddrs(ctx, host)
+	if err != nil {
+		return false, err
+	}
+
+	for _, addr := range addrs {
+		if isLocalAddr(addr) {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func resolveHostAddrs(ctx context.Context, host string) ([]netip.Addr, error) {
+	if addr, err := netip.ParseAddr(host); err == nil {
+		return []netip.Addr{addr.Unmap()}, nil
+	}
+
+	return lookupNetIP(ctx, "ip", host)
+}
+
+func isLocalHost(host string) bool {
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+
+	return isLocalAddr(addr)
+}
+
+func isLocalAddr(addr netip.Addr) bool {
+	addr = addr.Unmap()
+	return addr.IsLoopback() ||
+		addr.IsPrivate() ||
+		addr.IsLinkLocalUnicast() ||
+		addr.IsLinkLocalMulticast() ||
+		addr.IsUnspecified()
 }
 
 type speedTracker struct {
