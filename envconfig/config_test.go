@@ -188,9 +188,9 @@ func TestBool(t *testing.T) {
 		"false": false,
 		"1":     true,
 		"0":     false,
-		// invalid values
-		"random":    true,
-		"something": true,
+		// invalid values fall back to the default (false)
+		"random":    false,
+		"something": false,
 	}
 
 	for k, v := range cases {
@@ -198,6 +198,31 @@ func TestBool(t *testing.T) {
 			t.Setenv("OLLAMA_BOOL", k)
 			if b := Bool("OLLAMA_BOOL")(); b != v {
 				t.Errorf("%s: expected %t, got %t", k, v, b)
+			}
+		})
+	}
+}
+
+func TestBoolWithDefaultInvalidFallsBackToDefault(t *testing.T) {
+	cases := []struct {
+		name     string
+		env      string
+		def      bool
+		expected bool
+	}{
+		{"empty uses default false", "", false, false},
+		{"empty uses default true", "", true, true},
+		{"valid true overrides default false", "true", false, true},
+		{"valid false overrides default true", "false", true, false},
+		{"invalid falls back to default false", "garbage", false, false},
+		{"invalid falls back to default true", "garbage", true, true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("OLLAMA_BOOL_WD", c.env)
+			if got := BoolWithDefault("OLLAMA_BOOL_WD")(c.def); got != c.expected {
+				t.Errorf("BoolWithDefault(%q)(%t) = %t; want %t", c.env, c.def, got, c.expected)
 			}
 		})
 	}
