@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -154,6 +155,51 @@ func claudeInstallerCommand(goos string) (string, []string, error) {
 	default:
 		return "", nil, fmt.Errorf("unsupported platform for claude install: %s", goos)
 	}
+}
+
+func (c *Claude) prepareRunLaunchModels(ctx context.Context, client *launcherClient, model string, models []LaunchModel) ([]LaunchModel, error) {
+	if model == "" || isCloudModelName(model) {
+		return models, nil
+	}
+
+	contextLength, ok := client.localServerContextLength(ctx)
+	if !ok {
+		return models, nil
+	}
+
+	models = launchModelsWithContextLength(model, models, contextLength)
+	if contextLength >= claudeCodeAutoCompactMinContext {
+		return models, nil
+	}
+
+	if err := confirmLocalContextWarning(c.String(), contextLength, claudeCodeAutoCompactMinContext); err != nil {
+		return nil, err
+	}
+	return models, nil
+}
+
+func launchModelsWithContextLength(primary string, models []LaunchModel, contextLength int) []LaunchModel {
+	if contextLength <= 0 {
+		return models
+	}
+	if len(models) == 0 && primary != "" {
+		models = launchModelsFromNames([]string{primary})
+	}
+
+	out := cloneLaunchModels(models)
+	for i := range out {
+		if launchModelMatches(out[i].Name, primary) {
+			out[i].ContextLength = contextLength
+			return out
+		}
+	}
+
+	if primary != "" {
+		model := fallbackLaunchModel(primary)
+		model.ContextLength = contextLength
+		out = append([]LaunchModel{model}, out...)
+	}
+	return out
 }
 
 // modelEnvVars returns Claude Code env vars that route all model tiers through Ollama.
