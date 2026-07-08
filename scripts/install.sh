@@ -130,48 +130,75 @@ if [ -n "$NEEDS" ]; then
     exit 1
 fi
 
+install_success() {
+    status 'The Ollama API is now available at 127.0.0.1:11434.'
+    status 'Install complete. Run "ollama" from the command line.'
+}
+trap install_success EXIT
+
 # s390x: download pre-built binary from this repo's GitHub Releases
 if [ "$ARCH" = "s390x" ]; then
-    S390X_REPO="https://github.com/Brice12347/ollama-s390x"
+    S390X_REPO_SLUG="Brice12347/ollama-s390x"
+    S390X_REPO="https://github.com/${S390X_REPO_SLUG}"
     status "Fetching latest s390x release from ${S390X_REPO}..."
 
     RELEASE_TAG=$(curl --fail --silent --location \
-        "https://api.github.com/repos/Brice12347/ollama-s390x/releases/latest" \
+        "https://api.github.com/repos/${S390X_REPO_SLUG}/releases/latest" \
         | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
 
     if [ -z "$RELEASE_TAG" ]; then
-        error "Could not determine latest release tag from ${S390X_REPO}/releases"
+        error "Could not determine latest release tag.
+  API endpoint : https://api.github.com/repos/${S390X_REPO_SLUG}/releases/latest
+  Possible cause: GitHub API rate limit or no published release yet.
+  Workaround   : Set OLLAMA_VERSION=vX.Y.Z and re-run, e.g.:
+    OLLAMA_VERSION=v0.9.0 curl -fsSL https://raw.githubusercontent.com/${S390X_REPO_SLUG}/main/scripts/install.sh | sh"
     fi
 
-    DOWNLOAD_URL="${S390X_REPO}/releases/download/${RELEASE_TAG}/ollama-linux-s390x.tgz"
-    status "Downloading ollama-linux-s390x.tgz (${RELEASE_TAG})..."
+    status "Resolved release tag: ${RELEASE_TAG}"
 
     for BINDIR in /usr/local/bin /usr/bin /bin; do
-        echo $PATH | grep -q $BINDIR && break || continue
+        echo "$PATH" | grep -q "$BINDIR" && break || continue
     done
-    OLLAMA_INSTALL_DIR=$(dirname ${BINDIR})
+    OLLAMA_INSTALL_DIR=$(dirname "$BINDIR")
 
     if [ -d "$OLLAMA_INSTALL_DIR/lib/ollama" ]; then
         status "Cleaning up old version at $OLLAMA_INSTALL_DIR/lib/ollama"
         $SUDO rm -rf "$OLLAMA_INSTALL_DIR/lib/ollama"
     fi
-    $SUDO install -o0 -g0 -m755 -d $BINDIR
+    $SUDO install -o0 -g0 -m755 -d "$BINDIR"
     $SUDO install -o0 -g0 -m755 -d "$OLLAMA_INSTALL_DIR/lib/ollama"
 
-    curl --fail --show-error --location --progress-bar "$DOWNLOAD_URL" | \
-        $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+    # Try .tgz first; fall back to .tar.zst for smaller downloads
+    S390X_URL_TGZ="${S390X_REPO}/releases/download/${RELEASE_TAG}/ollama-linux-s390x.tgz"
+    S390X_URL_ZST="${S390X_REPO}/releases/download/${RELEASE_TAG}/ollama-linux-s390x.tar.zst"
+
+    if curl --fail --silent --head --location "$S390X_URL_TGZ" >/dev/null 2>&1; then
+        status "Downloading ollama-linux-s390x.tgz (${RELEASE_TAG})..."
+        curl --fail --show-error --location --progress-bar "$S390X_URL_TGZ" | \
+            $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+    else
+        status "ollama-linux-s390x.tgz not found, trying .tar.zst..."
+        if ! available zstd; then
+            error "ollama-linux-s390x.tar.zst requires zstd for extraction. Please install it:
+  Debian/Ubuntu : sudo apt-get install zstd
+  RHEL/Fedora   : sudo dnf install zstd"
+        fi
+        status "Downloading ollama-linux-s390x.tar.zst (${RELEASE_TAG})..."
+        curl --fail --show-error --location --progress-bar "$S390X_URL_ZST" | \
+            zstd -d | $SUDO tar -xf - -C "$OLLAMA_INSTALL_DIR"
+    fi
 
     if [ "$OLLAMA_INSTALL_DIR/bin/ollama" != "$BINDIR/ollama" ]; then
         status "Making ollama accessible in the PATH in $BINDIR"
-        $SUDO ln -sf "$OLLAMA_INSTALL_DIR/ollama" "$BINDIR/ollama"
+        $SUDO ln -sf "$OLLAMA_INSTALL_DIR/bin/ollama" "$BINDIR/ollama"
     fi
 
     status "IBM Z (s390x) architecture detected - running in CPU-only mode"
-    install_success() {
-        status 'The Ollama API is now available at 127.0.0.1:11434.'
-        status 'Install complete. Run "ollama" from the command line.'
-    }
-    install_success
+
+    if available systemctl; then
+        configure_systemd_s390x
+    fi
+
     exit 0
 fi
 
@@ -235,13 +262,47 @@ if [ -f /etc/nv_tegra_release ] ; then
     fi
 fi
 
-install_success() {
-    status 'The Ollama API is now available at 127.0.0.1:11434.'
-    status 'Install complete. Run "ollama" from the command line.'
-}
-trap install_success EXIT
-
 # Everything from this point onwards is optional.
+
+configure_systemd_s390x() {
+    if ! id ollama >/dev/null 2>&1; then
+        status "Creating ollama user..."
+        $SUDO useradd -r -s /bin/false -U -m -d /usr/share/ollama ollama
+    fi
+
+    status "Adding current user to ollama group..."
+    $SUDO usermod -a -G ollama "$(whoami)"
+
+    status "Creating ollama systemd service (s390x)..."
+    cat <<EOF | $SUDO tee /etc/systemd/system/ollama.service >/dev/null
+[Unit]
+Description=Ollama Service
+After=network-online.target
+
+[Service]
+ExecStart=$BINDIR/ollama serve
+User=ollama
+Group=ollama
+Restart=always
+RestartSec=3
+Environment="PATH=$PATH"
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    SYSTEMCTL_RUNNING="$(systemctl is-system-running || true)"
+    case $SYSTEMCTL_RUNNING in
+        running|degraded)
+            status "Enabling and starting ollama service..."
+            $SUDO systemctl daemon-reload
+            $SUDO systemctl enable ollama
+            $SUDO systemctl restart ollama
+            ;;
+        *)
+            warning "systemd is not running; service will start on next boot"
+            ;;
+    esac
+}
 
 configure_systemd() {
     if ! id ollama >/dev/null 2>&1; then
