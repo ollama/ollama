@@ -180,18 +180,23 @@ EOF
 if [ "$ARCH" = "s390x" ]; then
     S390X_REPO_SLUG="Brice12347/ollama-s390x"
     S390X_REPO="https://github.com/${S390X_REPO_SLUG}"
-    status "Fetching latest s390x release from ${S390X_REPO}..."
 
-    RELEASE_TAG=$(curl --fail --silent --location \
-        "https://api.github.com/repos/${S390X_REPO_SLUG}/releases/latest" \
-        | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
+    if [ -n "${OLLAMA_VERSION:-}" ]; then
+        RELEASE_TAG="$OLLAMA_VERSION"
+        status "Using pinned release: ${RELEASE_TAG}"
+    else
+        status "Fetching latest s390x release from ${S390X_REPO}..."
+        RELEASE_TAG=$(curl --fail --silent --location \
+            "https://api.github.com/repos/${S390X_REPO_SLUG}/releases/latest" \
+            | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
 
-    if [ -z "$RELEASE_TAG" ]; then
-        error "Could not determine latest release tag.
+        if [ -z "$RELEASE_TAG" ]; then
+            error "Could not determine latest release tag.
   API endpoint : https://api.github.com/repos/${S390X_REPO_SLUG}/releases/latest
   Possible cause: GitHub API rate limit or no published release yet.
   Workaround   : Set OLLAMA_VERSION=vX.Y.Z and re-run, e.g.:
     OLLAMA_VERSION=v0.9.0 curl -fsSL https://raw.githubusercontent.com/${S390X_REPO_SLUG}/main/scripts/install.sh | sh"
+        fi
     fi
 
     status "Resolved release tag: ${RELEASE_TAG}"
