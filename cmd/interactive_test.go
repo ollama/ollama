@@ -79,6 +79,14 @@ d:\path with\spaces\thirteen.WEBP some ending
 	res = extractFileNames(input)
 	assert.Equal(t, []string{"/tmp/a.png", "/tmp/b.png"}, res)
 
+	input = `describe /tmp/cat.png请描述 and /tmp/dog.jpg。`
+	res = extractFileNames(input)
+	assert.Equal(t, []string{"/tmp/cat.png", "/tmp/dog.jpg"}, res)
+
+	input = `/tmp/a.png./b.png`
+	res = extractFileNames(input)
+	assert.Equal(t, []string{"/tmp/a.png", "./b.png"}, res)
+
 	input = `compare C:\tmp\a.png&D:\tmp\b.jpg`
 	res = extractFileNames(input)
 	assert.Equal(t, []string{`C:\tmp\a.png`, `D:\tmp\b.jpg`}, res)

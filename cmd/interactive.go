@@ -606,13 +606,18 @@ func extractFileNames(input string) []string {
 	// Regex to match file paths starting with optional drive letter, / ./ \ or .\ and include escaped or unescaped spaces (\ or %20)
 	// and followed by more characters and a file extension
 	// This will capture non filename strings, but we'll check for file existence to remove mismatches
-	regexPattern := `((?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav))(?:$|["'\s.,;:!?)\]><&|+}` + "`" + `])`
+	regexPattern := "((?:[a-zA-Z]:)?(?:\\./|/|\\\\)[\\S\\\\ ]+?\\.(?i:jpg|jpeg|png|webp|wav))(?:$|[\"'\\s.,;:!?)\\]><&|+}`]|[^\\x00-\\x7F])"
 	re := regexp.MustCompile(regexPattern)
 
-	matches := re.FindAllStringSubmatch(input, -1)
-	fileNames := make([]string, 0, len(matches))
-	for _, match := range matches {
-		fileNames = append(fileNames, match[1])
+	var fileNames []string
+	for offset := 0; offset < len(input); {
+		match := re.FindStringSubmatchIndex(input[offset:])
+		if match == nil {
+			break
+		}
+		fileNameEnd := offset + match[3]
+		fileNames = append(fileNames, input[offset+match[2]:fileNameEnd])
+		offset = fileNameEnd
 	}
 
 	return fileNames
