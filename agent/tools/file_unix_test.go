@@ -23,7 +23,7 @@ func TestOpenRegularFileRejectsFIFO(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		file, _, err := openRegularFile(dir, "pipe")
+		file, _, err := openRegularFile(dir, "pipe", false)
 		if file != nil {
 			file.Close()
 		}

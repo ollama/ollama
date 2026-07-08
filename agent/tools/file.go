@@ -63,7 +63,7 @@ func (r *Read) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[
 		return agent.ToolResult{}, fmt.Errorf("path parameter is required")
 	}
 
-	file, info, err := openRegularFile(toolCtx.WorkingDir, path)
+	file, info, err := openRegularFile(toolCtx.WorkingDir, path, true)
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
@@ -162,7 +162,7 @@ func (e *Edit) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[
 		return agent.ToolResult{}, err
 	}
 
-	file, info, err := openRegularFile(toolCtx.WorkingDir, path)
+	file, info, err := openRegularFile(toolCtx.WorkingDir, path, false)
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
@@ -226,7 +226,39 @@ func cleanRelativePath(path string) (string, error) {
 	return cleaned, nil
 }
 
-func openRegularFile(workingDir, path string) (*os.File, os.FileInfo, error) {
+func openRegularFile(workingDir, path string, allowAbsolute bool) (*os.File, os.FileInfo, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil, nil, fmt.Errorf("path parameter is required")
+	}
+	if allowAbsolute && filepath.IsAbs(path) {
+		cleaned := filepath.Clean(path)
+		info, err := os.Lstat(cleaned)
+		if err != nil {
+			return nil, nil, err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil, nil, fmt.Errorf("%s is a symlink; read the target file directly", path)
+		}
+		if err := rejectNonRegularFile(path, info); err != nil {
+			return nil, nil, err
+		}
+		file, err := os.Open(cleaned)
+		if err != nil {
+			return nil, nil, err
+		}
+		info, err = file.Stat()
+		if err != nil {
+			file.Close()
+			return nil, nil, err
+		}
+		if err := rejectNonRegularFile(path, info); err != nil {
+			file.Close()
+			return nil, nil, err
+		}
+		return file, info, nil
+	}
+
 	rel, err := cleanRelativePath(path)
 	if err != nil {
 		return nil, nil, err
