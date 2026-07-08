@@ -448,7 +448,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	if !req.Raw && m.Config.Parser != "" {
-		builtinParser = parsers.ParserForName(m.Config.Parser)
+		builtinParser = parsers.ParserForName(resolveParserName(m))
 		if builtinParser != nil {
 			// no tools or last message for generate endpoint
 			builtinParser.Init(nil, nil, req.Think)
@@ -2685,7 +2685,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	processedTools := req.Tools
 
 	if m.Config.Parser != "" {
-		builtinParser = parsers.ParserForName(m.Config.Parser)
+		builtinParser = parsers.ParserForName(resolveParserName(m))
 		if builtinParser != nil {
 			// Determine last message for chat prefill
 			var lastMessage *api.Message

@@ -11,6 +11,9 @@ const (
 	gemma4RendererLegacy = "gemma4"
 	gemma4RendererSmall  = "gemma4-small"
 	gemma4RendererLarge  = "gemma4-large"
+	qwen35Legacy         = "qwen3.5"
+	qwen35Instruct       = "qwen3.5-instruct"
+	qwen35Thinking       = "qwen3.5-thinking"
 
 	// Gemma 4 small templates cover the e2b/e4b family, while 12b/26b/31b use
 	// the large template. Default to the small prompt unless the model is
@@ -26,8 +29,23 @@ func resolveRendererName(m *Model) string {
 	switch m.Config.Renderer {
 	case gemma4RendererLegacy:
 		return resolveGemma4Renderer(m)
+	case qwen35Legacy:
+		return resolveQwen35Variant(m)
 	default:
 		return m.Config.Renderer
+	}
+}
+
+func resolveParserName(m *Model) string {
+	if m == nil || m.Config.Parser == "" {
+		return ""
+	}
+
+	switch m.Config.Parser {
+	case qwen35Legacy:
+		return resolveQwen35Variant(m)
+	default:
+		return m.Config.Parser
 	}
 }
 
@@ -69,6 +87,45 @@ func gemma4RendererFromName(name string) (string, bool) {
 		return gemma4RendererSmall, true
 	case strings.Contains(lower, "12b"), strings.Contains(lower, "26b"), strings.Contains(lower, "31b"):
 		return gemma4RendererLarge, true
+	default:
+		return "", false
+	}
+}
+
+func resolveQwen35Variant(m *Model) string {
+	if m == nil {
+		return qwen35Legacy
+	}
+
+	for _, name := range []string{m.ShortName, m.Name, m.Config.BaseName, m.Config.RemoteModel} {
+		if variant, ok := qwen35VariantFromName(name); ok {
+			return variant
+		}
+	}
+
+	return qwen35Legacy
+}
+
+func qwen35VariantFromName(name string) (string, bool) {
+	lower := strings.ToLower(name)
+	if idx := strings.LastIndex(lower, "/"); idx != -1 {
+		lower = lower[idx+1:]
+	}
+
+	if !strings.Contains(lower, "qwen3.5") && !strings.Contains(lower, "qwen35") {
+		return "", false
+	}
+
+	switch {
+	case strings.Contains(lower, "instruct"),
+		strings.Contains(lower, "non-thinking"),
+		strings.Contains(lower, "non_thinking"),
+		strings.Contains(lower, "nothink"),
+		strings.Contains(lower, "no-think"):
+		return qwen35Instruct, true
+	case strings.Contains(lower, "thinking"),
+		strings.Contains(lower, "think"):
+		return qwen35Thinking, true
 	default:
 		return "", false
 	}

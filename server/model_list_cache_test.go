@@ -70,6 +70,42 @@ func TestModelListCacheHydratesSummary(t *testing.T) {
 	}
 }
 
+func TestModelListCacheResolvesQwen35InstructParserCapabilities(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setTestHome(t, t.TempDir())
+
+	_, digest := createBinFile(t, map[string]any{"test.context_length": uint32(4096)}, nil)
+	var s Server
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:    "qwen3.5:instruct",
+		Files:    map[string]string{"model.gguf": digest},
+		Template: "{{ .Prompt }}",
+		Renderer: qwen35Legacy,
+		Parser:   qwen35Legacy,
+		Stream:   &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("create model status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+
+	cache := newModelListCache()
+	if err := cache.hydrate(context.Background()); err != nil {
+		t.Fatalf("hydrate failed: %v", err)
+	}
+
+	summary, ok := cache.Get(model.ParseName("qwen3.5:instruct"))
+	if !ok {
+		t.Fatal("list summary missing")
+	}
+
+	if !slices.Contains(summary.Capabilities, model.CapabilityTools) {
+		t.Fatalf("capabilities = %v, want tools", summary.Capabilities)
+	}
+	if slices.Contains(summary.Capabilities, model.CapabilityThinking) {
+		t.Fatalf("capabilities = %v, did not want thinking", summary.Capabilities)
+	}
+}
+
 func TestModelListCacheRefreshUpdatesEntry(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())

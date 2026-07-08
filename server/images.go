@@ -425,7 +425,7 @@ func (m *Model) templateCapabilities(capabilities []model.Capability, source tem
 }
 
 func (m *Model) parserCapabilities(capabilities []model.Capability) []model.Capability {
-	builtinParser := parsers.ParserForName(m.Config.Parser)
+	builtinParser := parsers.ParserForName(resolveParserName(m))
 	if builtinParser == nil {
 		return capabilities
 	}

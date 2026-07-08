@@ -90,6 +90,47 @@ func TestQwen35RendererNoThinkPrefill(t *testing.T) {
 	}
 }
 
+func TestQwen35InstructRendererDoesNotInjectThinking(t *testing.T) {
+	renderer := &Qwen35Renderer{isThinking: false}
+	msgs := []api.Message{
+		{Role: "user", Content: "hello"},
+	}
+
+	got, err := renderer.Render(msgs, nil, nil)
+	if err != nil {
+		t.Fatalf("render failed: %v", err)
+	}
+
+	if strings.Contains(got, "<think>") || strings.Contains(got, "</think>") {
+		t.Fatalf("did not expect think tags for instruct renderer, got:\n%s", got)
+	}
+	if !strings.HasSuffix(got, "<|im_start|>assistant\n") {
+		t.Fatalf("expected plain assistant prefill, got:\n%s", got)
+	}
+}
+
+func TestQwen35RendererNamesSplitThinkingDefaults(t *testing.T) {
+	msgs := []api.Message{
+		{Role: "user", Content: "hello"},
+	}
+
+	instruct, err := RenderWithRenderer("qwen3.5-instruct", msgs, nil, nil)
+	if err != nil {
+		t.Fatalf("render instruct failed: %v", err)
+	}
+	if strings.Contains(instruct, "<think>") || strings.Contains(instruct, "</think>") {
+		t.Fatalf("did not expect think tags for qwen3.5-instruct, got:\n%s", instruct)
+	}
+
+	thinking, err := RenderWithRenderer("qwen3.5-thinking", msgs, nil, nil)
+	if err != nil {
+		t.Fatalf("render thinking failed: %v", err)
+	}
+	if !strings.HasSuffix(thinking, "<|im_start|>assistant\n<think>\n") {
+		t.Fatalf("expected thinking prefill for qwen3.5-thinking, got:\n%s", thinking)
+	}
+}
+
 func TestQwen35RendererBackToBackToolCallsAndResponses(t *testing.T) {
 	renderer := &Qwen35Renderer{isThinking: true}
 
