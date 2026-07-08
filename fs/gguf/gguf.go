@@ -216,6 +216,8 @@ func (f *File) readValue(t uint32) (Value, error) {
 }
 
 func (f *File) skipValue(t uint32) error {
+	// ScanKeyValues uses this to skip unselected metadata without
+	// materializing large values such as tokenizer arrays.
 	switch t {
 	case typeUint8, typeInt8, typeBool:
 		return discard(f, 1)

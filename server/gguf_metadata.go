@@ -63,9 +63,9 @@ func updateGGUFArchitectureMetadata(metadata *ggufArchitectureMetadata, suffix s
 	case ggufKeyAudioBlockCount:
 		metadata.HasAudio = true
 	case ggufKeyContextLength:
-		metadata.ContextLength = ggufMetadataInt(value)
+		metadata.ContextLength = int(value.Uint())
 	case ggufKeyEmbeddingLength:
-		metadata.EmbeddingLength = ggufMetadataInt(value)
+		metadata.EmbeddingLength = int(value.Uint())
 	default:
 		return false
 	}
@@ -84,11 +84,4 @@ func isGGUFArchitectureMetadataSuffix(suffix string) bool {
 	default:
 		return false
 	}
-}
-
-func ggufMetadataInt(value gguf.Value) int {
-	if u := value.Uint(); u != 0 {
-		return int(u)
-	}
-	return int(value.Int())
 }

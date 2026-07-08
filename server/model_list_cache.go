@@ -467,7 +467,7 @@ func readModelListGGUF(path string) (modelListGGUF, error) {
 			architecture = kv.String()
 			metadata = byArchitecture[architecture]
 		case ggufKeyGeneralFileType:
-			info.FileType = ggml.FileType(ggufMetadataInt(kv.Value)).String()
+			info.FileType = ggml.FileType(kv.Uint()).String()
 		case ggufKeyTokenizerChatTemplate:
 			info.Capabilities = modelcapabilities.AppendChatTemplate(info.Capabilities, kv.String())
 		default:
