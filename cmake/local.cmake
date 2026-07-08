@@ -672,15 +672,16 @@ if(OLLAMA_HAVE_LLAMA_SERVER)
             # SIMD acceleration: VX/VXE/VXE2 (IBM z15 / LinuxONE 3+)
             -DGGML_VXE=${OLLAMA_S390X_VXE}
             # zDNN / zAIU co-processor (IBM z17 / LinuxONE 5+); OFF by default
-            -DGGML_ZDNN=${OLLAMA_S390X_ZDNN}
-            # OpenBLAS is strongly recommended for best SIMD throughput
-            -DGGML_BLAS=ON
-            -DGGML_BLAS_VENDOR=OpenBLAS)
+            -DGGML_ZDNN=${OLLAMA_S390X_ZDNN})
 
-        # Verify BLAS is actually available; warn clearly so the user knows
-        # they need to install libopenblas-dev (or equivalent).
+        # Only enable BLAS if OpenBLAS is actually present on this host.
+        # Passing -DGGML_BLAS=ON when the library is missing causes a hard
+        # configure failure inside the llama.cpp ExternalProject.
         find_package(BLAS QUIET)
-        if(NOT BLAS_FOUND)
+        if(BLAS_FOUND)
+            list(APPEND _cpu_args -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS)
+        else()
+            list(APPEND _cpu_args -DGGML_BLAS=OFF)
             message(WARNING
                 "s390x build: OpenBLAS not found on this host.\n"
                 "  SIMD (VXE) acceleration depends on BLAS; performance will be degraded.\n"
