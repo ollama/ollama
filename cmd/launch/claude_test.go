@@ -1,6 +1,8 @@
 package launch
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -329,6 +331,128 @@ func TestClaudeArgs(t *testing.T) {
 				t.Errorf("args(%q, %v) = %v, want %v", tt.model, tt.args, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestClaudePrepareRunLaunchModelsWarnsForLowLocalContext(t *testing.T) {
+	client, _ := testLauncherClientWithStatus(t, 32*1024)
+
+	oldConfirm := DefaultConfirmPrompt
+	defer func() { DefaultConfirmPrompt = oldConfirm }()
+
+	var gotPrompt string
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		gotPrompt = prompt
+		if !options.DefaultNo {
+			t.Fatal("expected warning prompt to default to no")
+		}
+		if options.YesLabel != "Continue" || options.NoLabel != "Cancel" {
+			t.Fatalf("labels = %q/%q, want Continue/Cancel", options.YesLabel, options.NoLabel)
+		}
+		return false, nil
+	}
+
+	_, err := client.prepareLaunchModelsForRun(context.Background(), &Claude{}, "llama3.2", []LaunchModel{{Name: "llama3.2"}})
+	if !errors.Is(err, ErrCancelled) {
+		t.Fatalf("error = %v, want ErrCancelled", err)
+	}
+	for _, want := range []string{
+		"Claude Code works best with at least 100k context.",
+		"Current local context: 32k.",
+		"Continue launching Claude Code?",
+	} {
+		if !strings.Contains(gotPrompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, gotPrompt)
+		}
+	}
+}
+
+func TestClaudePrepareRunLaunchModelsSetsHighLocalContextWithoutWarning(t *testing.T) {
+	client, _ := testLauncherClientWithStatus(t, 128*1024)
+
+	oldConfirm := DefaultConfirmPrompt
+	defer func() { DefaultConfirmPrompt = oldConfirm }()
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		t.Fatalf("did not expect prompt, got %q", prompt)
+		return false, nil
+	}
+
+	models, err := client.prepareLaunchModelsForRun(context.Background(), &Claude{}, "llama3.2", []LaunchModel{{Name: "llama3.2"}})
+	if err != nil {
+		t.Fatalf("prepareLaunchModelsForRun error = %v", err)
+	}
+	if len(models) != 1 || models[0].ContextLength != 128*1024 {
+		t.Fatalf("models = %+v, want local context length set", models)
+	}
+}
+
+func TestClaudePrepareRunLaunchModelsMatchesLatestSuffix(t *testing.T) {
+	client, _ := testLauncherClientWithStatus(t, 128*1024)
+
+	models, err := client.prepareLaunchModelsForRun(context.Background(), &Claude{}, "gemma4", []LaunchModel{{Name: "gemma4:latest"}})
+	if err != nil {
+		t.Fatalf("prepareLaunchModelsForRun error = %v", err)
+	}
+	if len(models) != 1 {
+		t.Fatalf("models = %+v, want existing model updated without fallback", models)
+	}
+	if models[0].Name != "gemma4:latest" || models[0].ContextLength != 128*1024 {
+		t.Fatalf("model = %+v, want latest-suffixed model updated with context length", models[0])
+	}
+}
+
+func TestClaudePrepareRunLaunchModelsYesPrintsShortWarning(t *testing.T) {
+	client, _ := testLauncherClientWithStatus(t, 32*1024)
+
+	oldConfirm := DefaultConfirmPrompt
+	defer func() { DefaultConfirmPrompt = oldConfirm }()
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		t.Fatalf("did not expect prompt with --yes, got %q", prompt)
+		return false, nil
+	}
+
+	restoreConfirm := withLaunchConfirmPolicy(launchConfirmPolicy{yes: true})
+	defer restoreConfirm()
+
+	output := captureContextWarningStderr(t, func() {
+		models, err := client.prepareLaunchModelsForRun(context.Background(), &Claude{}, "llama3.2", []LaunchModel{{Name: "llama3.2"}})
+		if err != nil {
+			t.Fatalf("prepareLaunchModelsForRun error = %v", err)
+		}
+		if len(models) != 1 || models[0].ContextLength != 32*1024 {
+			t.Fatalf("models = %+v, want local context length set", models)
+		}
+	})
+
+	for _, want := range []string{
+		"Warning: Claude Code works best with at least 100k context; current local context is 32k.",
+		"Continuing because --yes was provided.",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("stderr missing %q:\n%s", want, output)
+		}
+	}
+}
+
+func TestClaudePrepareRunLaunchModelsSkipsCloudModels(t *testing.T) {
+	client, statusCalls := testLauncherClientWithStatus(t, 32*1024)
+
+	oldConfirm := DefaultConfirmPrompt
+	defer func() { DefaultConfirmPrompt = oldConfirm }()
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		t.Fatalf("did not expect prompt, got %q", prompt)
+		return false, nil
+	}
+
+	models, err := client.prepareLaunchModelsForRun(context.Background(), &Claude{}, "glm-5:cloud", []LaunchModel{{Name: "glm-5:cloud", Remote: true}})
+	if err != nil {
+		t.Fatalf("prepareLaunchModelsForRun error = %v", err)
+	}
+	if *statusCalls != 0 {
+		t.Fatalf("status calls = %d, want 0", *statusCalls)
+	}
+	if len(models) != 1 || models[0].ContextLength != 0 {
+		t.Fatalf("models = %+v, want unchanged cloud model", models)
 	}
 }
 
