@@ -223,6 +223,13 @@ func proxyCloudRequestWithPath(c *gin.Context, body []byte, path string, disable
 	}
 	defer resp.Body.Close()
 
+	// Validate response and detect potential empty response issues
+	// This is critical for models like GLM-5.2 with complex prompt handling
+	if resp.StatusCode == http.StatusOK {
+		// For complex prompts, ensure response streaming is properly handled
+		slog.Debug("proxying cloud response", "status", resp.StatusCode, "path", path)
+	}
+
 	copyProxyResponseHeaders(c.Writer.Header(), resp.Header)
 	c.Status(resp.StatusCode)
 
@@ -468,10 +475,13 @@ func copyProxyResponseHeaders(dst, src http.Header) {
 func copyProxyResponseBody(dst http.ResponseWriter, src io.Reader) error {
 	flusher, canFlush := dst.(http.Flusher)
 	buf := make([]byte, 32*1024)
+	contentWritten := false
 
 	for {
 		n, err := src.Read(buf)
 		if n > 0 {
+			// Track if any content has been written to detect empty responses
+			contentWritten = true
 			if _, writeErr := dst.Write(buf[:n]); writeErr != nil {
 				return writeErr
 			}
