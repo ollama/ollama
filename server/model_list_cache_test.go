@@ -80,8 +80,8 @@ func TestModelListCacheResolvesQwen35InstructParserCapabilities(t *testing.T) {
 		Model:    "qwen3.5:instruct",
 		Files:    map[string]string{"model.gguf": digest},
 		Template: "{{ .Prompt }}",
-		Renderer: qwen35Legacy,
-		Parser:   qwen35Legacy,
+		Renderer: qwen35Default,
+		Parser:   qwen35Default,
 		Stream:   &stream,
 	})
 	if w.Code != http.StatusOK {

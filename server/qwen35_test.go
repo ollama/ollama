@@ -20,7 +20,7 @@ func TestResolveQwen35Variant(t *testing.T) {
 			model: &Model{
 				Name:      "registry.ollama.ai/frob/qwen3.5-instruct:latest",
 				ShortName: "frob/qwen3.5-instruct:latest",
-				Config:    model.ConfigV2{Renderer: qwen35Legacy, Parser: qwen35Legacy},
+				Config:    model.ConfigV2{Renderer: qwen35Default, Parser: qwen35Default},
 			},
 			want: qwen35Instruct,
 		},
@@ -28,8 +28,8 @@ func TestResolveQwen35Variant(t *testing.T) {
 			name: "instruct from base name",
 			model: &Model{
 				Config: model.ConfigV2{
-					Renderer: qwen35Legacy,
-					Parser:   qwen35Legacy,
+					Renderer: qwen35Default,
+					Parser:   qwen35Default,
 					BaseName: "Qwen3.5-Instruct",
 				},
 			},
@@ -39,23 +39,23 @@ func TestResolveQwen35Variant(t *testing.T) {
 			name: "thinking from short name",
 			model: &Model{
 				ShortName: "library/qwen3.5-thinking:latest",
-				Config:    model.ConfigV2{Renderer: qwen35Legacy, Parser: qwen35Legacy},
+				Config:    model.ConfigV2{Renderer: qwen35Default, Parser: qwen35Default},
 			},
 			want: qwen35Thinking,
 		},
 		{
-			name: "plain remains legacy",
+			name: "plain remains default",
 			model: &Model{
 				ShortName: "library/qwen3.5:latest",
-				Config:    model.ConfigV2{Renderer: qwen35Legacy, Parser: qwen35Legacy},
+				Config:    model.ConfigV2{Renderer: qwen35Default, Parser: qwen35Default},
 			},
-			want: qwen35Legacy,
+			want: qwen35Default,
 		},
 		{
 			name: "instruct from tag",
 			model: &Model{
 				ShortName: "library/qwen3.5:instruct",
-				Config:    model.ConfigV2{Renderer: qwen35Legacy, Parser: qwen35Legacy},
+				Config:    model.ConfigV2{Renderer: qwen35Default, Parser: qwen35Default},
 			},
 			want: qwen35Instruct,
 		},
@@ -63,9 +63,9 @@ func TestResolveQwen35Variant(t *testing.T) {
 			name: "namespace does not select instruct variant",
 			model: &Model{
 				ShortName: "instruct-lab/qwen3.5:latest",
-				Config:    model.ConfigV2{Renderer: qwen35Legacy, Parser: qwen35Legacy},
+				Config:    model.ConfigV2{Renderer: qwen35Default, Parser: qwen35Default},
 			},
-			want: qwen35Legacy,
+			want: qwen35Default,
 		},
 	}
 
@@ -85,7 +85,7 @@ func TestQwen35InstructModelDoesNotAdvertiseThinking(t *testing.T) {
 	m := Model{
 		Name:      "registry.ollama.ai/frob/qwen3.5-instruct:latest",
 		ShortName: "frob/qwen3.5-instruct:latest",
-		Config:    model.ConfigV2{Parser: qwen35Legacy},
+		Config:    model.ConfigV2{Parser: qwen35Default},
 	}
 
 	caps := m.Capabilities()
@@ -101,7 +101,7 @@ func TestRenderPromptResolvesQwen35InstructRenderer(t *testing.T) {
 	m := Model{
 		Name:      "registry.ollama.ai/frob/qwen3.5-instruct:latest",
 		ShortName: "frob/qwen3.5-instruct:latest",
-		Config:    model.ConfigV2{Renderer: qwen35Legacy},
+		Config:    model.ConfigV2{Renderer: qwen35Default},
 	}
 
 	got, err := renderPrompt(&m, []api.Message{{Role: "user", Content: "Hello"}}, nil, nil)

@@ -11,7 +11,7 @@ const (
 	gemma4RendererLegacy = "gemma4"
 	gemma4RendererSmall  = "gemma4-small"
 	gemma4RendererLarge  = "gemma4-large"
-	qwen35Legacy         = "qwen3.5"
+	qwen35Default        = "qwen3.5"
 	qwen35Instruct       = "qwen3.5-instruct"
 	qwen35Thinking       = "qwen3.5-thinking"
 
@@ -29,7 +29,7 @@ func resolveRendererName(m *Model) string {
 	switch m.Config.Renderer {
 	case gemma4RendererLegacy:
 		return resolveGemma4Renderer(m)
-	case qwen35Legacy:
+	case qwen35Default:
 		return resolveQwen35Variant(m)
 	default:
 		return m.Config.Renderer
@@ -42,7 +42,7 @@ func resolveParserName(m *Model) string {
 	}
 
 	switch m.Config.Parser {
-	case qwen35Legacy:
+	case qwen35Default:
 		return resolveQwen35Variant(m)
 	default:
 		return m.Config.Parser
@@ -94,7 +94,7 @@ func gemma4RendererFromName(name string) (string, bool) {
 
 func resolveQwen35Variant(m *Model) string {
 	if m == nil {
-		return qwen35Legacy
+		return qwen35Default
 	}
 
 	for _, name := range []string{m.ShortName, m.Name, m.Config.BaseName, m.Config.RemoteModel} {
@@ -103,7 +103,7 @@ func resolveQwen35Variant(m *Model) string {
 		}
 	}
 
-	return qwen35Legacy
+	return qwen35Default
 }
 
 func qwen35VariantFromName(name string) (string, bool) {
