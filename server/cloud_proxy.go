@@ -113,21 +113,22 @@ func cloudPassthroughMiddleware(disabledOperation string) gin.HandlerFunc {
 			return
 		}
 
+		// For /v1/messages (Anthropic compatibility), let the middleware chain handle it
+		// so AnthropicMessagesMiddleware can properly format the request and handle
+		// cloud-specific logic like web_search tool coordination.
+		if c.Request.URL.Path == "/v1/messages" {
+			if hasAnthropicWebSearchTool(body) {
+				c.Set(legacyCloudAnthropicKey, true)
+			}
+			c.Next()
+			return
+		}
+
 		normalizedBody, err := replaceJSONModelField(body, modelRef.Base)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			c.Abort()
 			return
-		}
-
-		// TEMP(drifkin): keep Anthropic web search requests on the local middleware
-		// path so WebSearchAnthropicWriter can orchestrate follow-up calls.
-		if c.Request.URL.Path == "/v1/messages" {
-			if hasAnthropicWebSearchTool(body) {
-				c.Set(legacyCloudAnthropicKey, true)
-				c.Next()
-				return
-			}
 		}
 
 		proxyCloudRequest(c, normalizedBody, disabledOperation)
