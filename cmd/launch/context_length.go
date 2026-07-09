@@ -7,28 +7,6 @@ import (
 	"strconv"
 )
 
-type launchModelRunPreparer interface {
-	prepareRunLaunchModels(context.Context, *launcherClient, string, []LaunchModel) ([]LaunchModel, error)
-}
-
-type launchModelConfigPreparer interface {
-	prepareConfigLaunchModels(context.Context, *launcherClient, string, []LaunchModel) []LaunchModel
-}
-
-func (c *launcherClient) prepareLaunchModelsForRun(ctx context.Context, runner Runner, model string, models []LaunchModel) ([]LaunchModel, error) {
-	if preparer, ok := runner.(launchModelRunPreparer); ok {
-		return preparer.prepareRunLaunchModels(ctx, c, model, models)
-	}
-	return models, nil
-}
-
-func (c *launcherClient) prepareLaunchModelsForConfig(ctx context.Context, editor Editor, primary string, models []LaunchModel) []LaunchModel {
-	if preparer, ok := editor.(launchModelConfigPreparer); ok {
-		return preparer.prepareConfigLaunchModels(ctx, c, primary, models)
-	}
-	return models
-}
-
 func (c *launcherClient) localServerContextLength(ctx context.Context) (int, bool) {
 	if c == nil || c.apiClient == nil {
 		return 0, false

@@ -1390,6 +1390,28 @@ func runIntegration(runner Runner, modelName string, models []LaunchModel, args 
 	return runner.Run(modelName, models, args)
 }
 
+type launchModelRunPreparer interface {
+	prepareRunLaunchModels(context.Context, *launcherClient, string, []LaunchModel) ([]LaunchModel, error)
+}
+
+type launchModelConfigPreparer interface {
+	prepareConfigLaunchModels(context.Context, *launcherClient, string, []LaunchModel) []LaunchModel
+}
+
+func (c *launcherClient) prepareLaunchModelsForRun(ctx context.Context, runner Runner, model string, models []LaunchModel) ([]LaunchModel, error) {
+	if preparer, ok := runner.(launchModelRunPreparer); ok {
+		return preparer.prepareRunLaunchModels(ctx, c, model, models)
+	}
+	return models, nil
+}
+
+func (c *launcherClient) prepareLaunchModelsForConfig(ctx context.Context, editor Editor, primary string, models []LaunchModel) []LaunchModel {
+	if preparer, ok := editor.(launchModelConfigPreparer); ok {
+		return preparer.prepareConfigLaunchModels(ctx, c, primary, models)
+	}
+	return models
+}
+
 func (c *launcherClient) launchAfterConfiguration(ctx context.Context, name string, runner Runner, model string, models []LaunchModel, req IntegrationLaunchRequest) error {
 	if req.ConfigureOnly {
 		launch, err := ConfirmPrompt(fmt.Sprintf("Launch %s now?", runner))
