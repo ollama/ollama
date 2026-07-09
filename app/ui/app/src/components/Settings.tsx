@@ -12,6 +12,7 @@ import {
   BoltIcon,
   WrenchIcon,
   CloudIcon,
+  MagnifyingGlassIcon,
   XMarkIcon,
   CogIcon,
   ArrowLeftIcon,
@@ -423,11 +424,11 @@ export default function Settings() {
                   <div className="flex items-start space-x-3 flex-1">
                     <CloudIcon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
                     <div>
-                      <Label>Cloud</Label>
+                      <Label>Cloud Models</Label>
                       <Description>
                         {cloudOverriddenByEnv
                           ? "The OLLAMA_NO_CLOUD environment variable is currently forcing cloud off."
-                          : "Enable cloud models and web search."}
+                          : "Enable cloud-hosted models."}
                       </Description>
                     </div>
                   </div>
@@ -441,6 +442,29 @@ export default function Settings() {
                         }
                         updateCloudMutation.mutate(checked);
                       }}
+                    />
+                  </div>
+                </div>
+              </Field>
+
+              {/* Web Search */}
+              <Field>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start space-x-3 flex-1">
+                    <MagnifyingGlassIcon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
+                    <div>
+                      <Label>Web Search</Label>
+                      <Description>
+                        Enable web search for supported models.
+                      </Description>
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0">
+                    <Switch
+                      checked={settings.WebSearchEnabled}
+                      onChange={(checked) =>
+                        handleChange("WebSearchEnabled", checked)
+                      }
                     />
                   </div>
                 </div>
