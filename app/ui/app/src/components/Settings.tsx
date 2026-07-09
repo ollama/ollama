@@ -455,13 +455,16 @@ export default function Settings() {
                     <div>
                       <Label>Web Search</Label>
                       <Description>
-                        Enable web search for supported models.
+                        {cloudOverriddenByEnv
+                          ? "The OLLAMA_NO_CLOUD environment variable is currently forcing cloud off."
+                          : "Enable web search for supported models."}
                       </Description>
                     </div>
                   </div>
                   <div className="flex-shrink-0">
                     <Switch
                       checked={settings.WebSearchEnabled}
+                      disabled={cloudOverriddenByEnv}
                       onChange={(checked) =>
                         handleChange("WebSearchEnabled", checked)
                       }
