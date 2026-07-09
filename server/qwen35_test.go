@@ -36,14 +36,6 @@ func TestResolveQwen35Variant(t *testing.T) {
 			want: qwen35Instruct,
 		},
 		{
-			name: "thinking from short name",
-			model: &Model{
-				ShortName: "library/qwen3.5-thinking:latest",
-				Config:    model.ConfigV2{Renderer: qwen35Default, Parser: qwen35Default},
-			},
-			want: qwen35Thinking,
-		},
-		{
 			name: "plain remains default",
 			model: &Model{
 				ShortName: "library/qwen3.5:latest",

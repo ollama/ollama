@@ -52,7 +52,7 @@ func ParserForName(name string) Parser {
 		p = &Qwen3Parser{hasThinkingSupport: false, defaultThinking: false}
 	case "qwen3-thinking":
 		p = &Qwen3Parser{hasThinkingSupport: true, defaultThinking: true}
-	case "qwen3.5", "qwen3.5-thinking":
+	case "qwen3.5":
 		p = &Qwen35Parser{hasThinkingSupport: true, defaultThinking: true}
 	case "qwen3.5-instruct":
 		p = &Qwen35Parser{hasThinkingSupport: false, defaultThinking: false}

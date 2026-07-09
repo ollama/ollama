@@ -66,7 +66,7 @@ func rendererForName(name string) Renderer {
 	case "qwen3-vl-thinking":
 		renderer := &Qwen3VLRenderer{isThinking: true, useImgTags: RenderImgTags}
 		return renderer
-	case "qwen3.5", "qwen3.5-thinking":
+	case "qwen3.5":
 		renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true, useImgTags: RenderImgTags}
 		return renderer
 	case "qwen3.5-instruct":

@@ -109,7 +109,7 @@ func TestQwen35InstructRendererDoesNotInjectThinking(t *testing.T) {
 	}
 }
 
-func TestQwen35RendererNamesSplitThinkingDefaults(t *testing.T) {
+func TestQwen35RendererNamesSplitInstructAndDefault(t *testing.T) {
 	msgs := []api.Message{
 		{Role: "user", Content: "hello"},
 	}
@@ -122,12 +122,12 @@ func TestQwen35RendererNamesSplitThinkingDefaults(t *testing.T) {
 		t.Fatalf("did not expect think tags for qwen3.5-instruct, got:\n%s", instruct)
 	}
 
-	thinking, err := RenderWithRenderer("qwen3.5-thinking", msgs, nil, nil)
+	thinking, err := RenderWithRenderer("qwen3.5", msgs, nil, nil)
 	if err != nil {
-		t.Fatalf("render thinking failed: %v", err)
+		t.Fatalf("render default failed: %v", err)
 	}
 	if !strings.HasSuffix(thinking, "<|im_start|>assistant\n<think>\n") {
-		t.Fatalf("expected thinking prefill for qwen3.5-thinking, got:\n%s", thinking)
+		t.Fatalf("expected thinking prefill for qwen3.5, got:\n%s", thinking)
 	}
 }
 

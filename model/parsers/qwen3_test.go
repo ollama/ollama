@@ -260,13 +260,13 @@ func TestQwen35InstructParserDefaultsToContent(t *testing.T) {
 	}
 }
 
-func TestQwen35ThinkingParserDefaultsToThinking(t *testing.T) {
-	parser := ParserForName("qwen3.5-thinking")
+func TestQwen35DefaultParserDefaultsToThinking(t *testing.T) {
+	parser := ParserForName("qwen3.5")
 	if parser == nil {
-		t.Fatal("expected qwen3.5-thinking parser")
+		t.Fatal("expected qwen3.5 parser")
 	}
 	if !parser.HasThinkingSupport() {
-		t.Fatal("expected thinking parser to advertise thinking support")
+		t.Fatal("expected default parser to advertise thinking support")
 	}
 
 	parser.Init(nil, nil, nil)

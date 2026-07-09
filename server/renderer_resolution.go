@@ -13,7 +13,6 @@ const (
 	gemma4RendererLarge  = "gemma4-large"
 	qwen35Default        = "qwen3.5"
 	qwen35Instruct       = "qwen3.5-instruct"
-	qwen35Thinking       = "qwen3.5-thinking"
 
 	// Gemma 4 small templates cover the e2b/e4b family, while 12b/26b/31b use
 	// the large template. Default to the small prompt unless the model is
@@ -123,9 +122,6 @@ func qwen35VariantFromName(name string) (string, bool) {
 		strings.Contains(lower, "nothink"),
 		strings.Contains(lower, "no-think"):
 		return qwen35Instruct, true
-	case strings.Contains(lower, "thinking"),
-		strings.Contains(lower, "think"):
-		return qwen35Thinking, true
 	default:
 		return "", false
 	}
