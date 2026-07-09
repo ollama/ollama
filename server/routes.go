@@ -96,11 +96,12 @@ var useClient2 = experimentEnabled("client2")
 var mode string = gin.DebugMode
 
 type Server struct {
-	addr          net.Addr
-	sched         *Scheduler
-	defaultNumCtx int
-	requestLogger *inferenceRequestLogger
-	modelCaches   *modelCaches
+	addr             net.Addr
+	sched            *Scheduler
+	defaultNumCtx    int
+	requestLogger    *inferenceRequestLogger
+	modelCaches      *modelCaches
+	modelRequests    *ModelRequestStore
 }
 
 func init() {
@@ -1896,6 +1897,12 @@ func (s *Server) GenerateRoutes() (http.Handler, error) {
 	r.POST("/api/experimental/web_fetch", s.WebFetchExperimentalHandler)
 	r.GET("/api/experimental/model-recommendations", s.ModelRecommendationsExperimentalHandler)
 
+	// Model requests for Ollama Cloud
+	r.POST("/api/experimental/model-requests", s.CreateModelRequestHandler)
+	r.GET("/api/experimental/model-requests", s.ListModelRequestsHandler)
+	r.GET("/api/experimental/model-requests/:id", s.GetModelRequestHandler)
+	r.POST("/api/experimental/model-requests/:id/vote", s.VoteModelRequestHandler)
+
 	// Inference
 	r.GET("/api/ps", s.PsHandler)
 	r.POST("/api/generate", s.withInferenceRequestLogging("/api/generate", s.GenerateHandler)...)
@@ -1942,6 +1949,92 @@ func (s *Server) ModelRecommendationsExperimentalHandler(c *gin.Context) {
 	})
 }
 
+func (s *Server) CreateModelRequestHandler(c *gin.Context) {
+	if s.modelRequests == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "model requests are not available"})
+		return
+	}
+
+	var req api.ModelRequestCreateRequest
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx := c.Request.Context()
+	modelReq, err := s.modelRequests.CreateRequest(ctx, &req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, api.ModelRequestResponse{
+		Request: modelReq,
+	})
+}
+
+func (s *Server) ListModelRequestsHandler(c *gin.Context) {
+	if s.modelRequests == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "model requests are not available"})
+		return
+	}
+
+	ctx := c.Request.Context()
+	requests := s.modelRequests.ListRequests(ctx)
+
+	c.JSON(http.StatusOK, api.ModelRequestsResponse{
+		Requests: requests,
+	})
+}
+
+func (s *Server) GetModelRequestHandler(c *gin.Context) {
+	if s.modelRequests == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "model requests are not available"})
+		return
+	}
+
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "request ID is required"})
+		return
+	}
+
+	ctx := c.Request.Context()
+	modelReq, err := s.modelRequests.GetRequest(ctx, id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, api.ModelRequestResponse{
+		Request: modelReq,
+	})
+}
+
+func (s *Server) VoteModelRequestHandler(c *gin.Context) {
+	if s.modelRequests == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "model requests are not available"})
+		return
+	}
+
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "request ID is required"})
+		return
+	}
+
+	ctx := c.Request.Context()
+	modelReq, err := s.modelRequests.VoteRequest(ctx, id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, api.ModelRequestResponse{
+		Request: modelReq,
+	})
+}
+
 func Serve(ln net.Listener) error {
 	slog.SetDefault(logutil.NewLogger(os.Stderr, envconfig.LogLevel()))
 	slog.Info("server config", "env", envconfig.Values())
@@ -1976,9 +2069,15 @@ func Serve(ln net.Listener) error {
 		}
 	}
 
+	modelRequests, err := NewModelRequestStore()
+	if err != nil {
+		slog.Warn("failed to initialize model request store", "error", err)
+	}
+
 	s := &Server{
-		addr:        ln.Addr(),
-		modelCaches: newModelCaches(),
+		addr:          ln.Addr(),
+		modelCaches:   newModelCaches(),
+		modelRequests: modelRequests,
 	}
 	if err := s.initRequestLogging(); err != nil {
 		return err

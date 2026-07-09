@@ -493,6 +493,42 @@ func (c *Client) WebFetchExperimental(ctx context.Context, req *WebFetchRequest)
 	return &resp, nil
 }
 
+// CreateModelRequestExperimental creates a new model request for Ollama Cloud.
+func (c *Client) CreateModelRequestExperimental(ctx context.Context, req *ModelRequestCreateRequest) (*ModelRequestResponse, error) {
+	var resp ModelRequestResponse
+	if err := c.do(ctx, http.MethodPost, "/api/experimental/model-requests", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// ListModelRequestsExperimental lists all model requests for Ollama Cloud.
+func (c *Client) ListModelRequestsExperimental(ctx context.Context) (*ModelRequestsResponse, error) {
+	var resp ModelRequestsResponse
+	if err := c.do(ctx, http.MethodGet, "/api/experimental/model-requests", nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// GetModelRequestExperimental gets a specific model request by ID.
+func (c *Client) GetModelRequestExperimental(ctx context.Context, id string) (*ModelRequestResponse, error) {
+	var resp ModelRequestResponse
+	if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/api/experimental/model-requests/%s", id), nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// VoteModelRequestExperimental votes for a model request.
+func (c *Client) VoteModelRequestExperimental(ctx context.Context, id string) (*ModelRequestResponse, error) {
+	var resp ModelRequestResponse
+	if err := c.do(ctx, http.MethodPost, fmt.Sprintf("/api/experimental/model-requests/%s/vote", id), nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // Signout will signout a client for a local ollama server.
 func (c *Client) Signout(ctx context.Context) error {
 	return c.do(ctx, http.MethodPost, "/api/signout", nil, nil)

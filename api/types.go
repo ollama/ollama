@@ -824,6 +824,35 @@ type ModelRecommendation struct {
 	RequiredPlan    string `json:"required_plan,omitempty"`
 }
 
+// ModelRequestCreateRequest is the request to create a model request.
+type ModelRequestCreateRequest struct {
+	Model       string `json:"model"`
+	Description string `json:"description,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+}
+
+// ModelRequest represents a user's request for a model to be added to Ollama Cloud.
+type ModelRequest struct {
+	ID        string    `json:"id"`
+	Model     string    `json:"model"`
+	Description string `json:"description,omitempty"`
+	Reason    string    `json:"reason,omitempty"`
+	Status    string    `json:"status"` // "pending", "approved", "rejected", "added"
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	VoteCount int       `json:"vote_count,omitempty"`
+}
+
+// ModelRequestResponse is the response from creating a model request.
+type ModelRequestResponse struct {
+	Request *ModelRequest `json:"request"`
+}
+
+// ModelRequestsResponse is the response from listing model requests.
+type ModelRequestsResponse struct {
+	Requests []ModelRequest `json:"requests"`
+}
+
 // ProcessResponse is the response from [Client.Process].
 type ProcessResponse struct {
 	Models []ProcessModelResponse `json:"models"`
