@@ -56,8 +56,7 @@ func TestChatNewCommandRepaintsFromTop(t *testing.T) {
 		flowPrintedLines: 4,
 		entries:          []chatEntry{{role: "assistant", content: "old transcript"}},
 		messages:         []api.Message{{Role: "user", Content: "old prompt"}},
-		allowAllTools:    true,
-		allowedScopes:    map[string]bool{"edit": true},
+		approvalState:    testApprovalState(true, map[string]bool{"edit": true}),
 		opts:             Options{AllowAllTools: true},
 		permissionNotice: "full access enabled",
 	}
@@ -76,8 +75,8 @@ func TestChatNewCommandRepaintsFromTop(t *testing.T) {
 	if m.flowPrintedLines != 0 {
 		t.Fatalf("flowPrintedLines = %d, want 0", m.flowPrintedLines)
 	}
-	if m.allowAllTools || m.opts.AllowAllTools || len(m.allowedScopes) != 0 || m.permissionNotice != "" {
-		t.Fatalf("permissions were not reset: allowAll=%v opts=%v allowed=%#v notice=%q", m.allowAllTools, m.opts.AllowAllTools, m.allowedScopes, m.permissionNotice)
+	if m.approvalState.AllowAll() || m.opts.AllowAllTools || m.approvalState.Allows("edit") || m.permissionNotice != "" {
+		t.Fatalf("permissions were not reset: allowAll=%v opts=%v editAllowed=%v notice=%q", m.approvalState.AllowAll(), m.opts.AllowAllTools, m.approvalState.Allows("edit"), m.permissionNotice)
 	}
 	if msg := cmd(); msg == nil {
 		t.Fatal("repaint command returned nil")
@@ -88,16 +87,17 @@ func TestChatNewCommandPreservesLaunchFullAccessDefault(t *testing.T) {
 	m := chatModel{
 		input:           []rune("/new"),
 		defaultAllowAll: true,
-		allowedScopes:   map[string]bool{"edit": true},
+		approvalState:   testApprovalState(false, map[string]bool{"edit": true}),
 	}
 
 	updated, _ := m.handleSubmit()
 	fm := updated.(chatModel)
-	if !fm.allowAllTools || !fm.opts.AllowAllTools {
-		t.Fatalf("full access default was not restored: allowAll=%v opts=%v", fm.allowAllTools, fm.opts.AllowAllTools)
+	if !fm.approvalState.AllowAll() || !fm.opts.AllowAllTools {
+		t.Fatalf("full access default was not restored: allowAll=%v opts=%v", fm.approvalState.AllowAll(), fm.opts.AllowAllTools)
 	}
-	if len(fm.allowedScopes) != 0 {
-		t.Fatalf("allowed scopes = %#v, want cleared", fm.allowedScopes)
+	fm.approvalState.SetAllowAll(false)
+	if fm.approvalState.Allows("edit") {
+		t.Fatal("edit scope should be cleared")
 	}
 }
 

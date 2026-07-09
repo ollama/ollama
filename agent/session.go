@@ -24,8 +24,7 @@ type Session struct {
 	Tools            *Registry
 	DisableTools     bool
 	ApprovalPrompter ApprovalPrompter
-	AllowAllTools    bool
-	AllowedScopes    map[string]bool
+	ApprovalState    *ApprovalState
 	WorkingDir       string
 	Compactor        Compactor
 }
@@ -151,6 +150,9 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 	}
 	if opts.Model == "" {
 		return nil, errors.New("agent session requires a model")
+	}
+	if s.ApprovalState == nil {
+		s.ApprovalState = &ApprovalState{}
 	}
 	runID := uuid.NewString()
 	messages := make([]api.Message, 0, len(opts.Messages)+len(opts.NewMessages))

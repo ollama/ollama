@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -35,13 +34,35 @@ type chatApprovalPrompt struct {
 }
 
 func (m chatModel) approvalPrompterForRun(controller *chatApprovalController) coreagent.ApprovalPrompter {
-	if m.allowAllTools {
-		return nil
-	}
 	if m.opts.ApprovalPrompter != nil {
 		return m.opts.ApprovalPrompter
 	}
 	return controller
+}
+
+func (m *chatModel) ensureApprovalState() *coreagent.ApprovalState {
+	if m.approvalState == nil {
+		m.approvalState = &coreagent.ApprovalState{}
+		m.approvalState.Set(m.defaultAllowAll, nil)
+	}
+	return m.approvalState
+}
+
+func (m *chatModel) resetApprovalState() {
+	m.approvalState = &coreagent.ApprovalState{}
+	m.approvalState.Set(m.defaultAllowAll, nil)
+}
+
+func (m chatModel) allowAllToolsEnabled() bool {
+	if m.approvalState == nil {
+		return m.defaultAllowAll
+	}
+	return m.approvalState.AllowAll()
+}
+
+func (m *chatModel) setAllowAllTools(allowAll bool) {
+	m.ensureApprovalState().SetAllowAll(allowAll)
+	m.opts.AllowAllTools = allowAll
 }
 
 func (m *chatModel) openApprovalPrompt(msg chatApprovalPromptMsg) {
@@ -53,10 +74,8 @@ func (m *chatModel) openApprovalPrompt(msg chatApprovalPromptMsg) {
 }
 
 func (m *chatModel) togglePermissionMode() (tea.Model, tea.Cmd) {
-	m.allowAllTools = !m.allowAllTools
-	m.opts.AllowAllTools = m.allowAllTools
-	m.syncApprovalController()
-	if m.allowAllTools {
+	m.setAllowAllTools(!m.allowAllToolsEnabled())
+	if m.allowAllToolsEnabled() {
 		m.permissionNotice = "full access enabled"
 		m.status = "full access enabled"
 		if m.approvalPrompt != nil {
@@ -73,12 +92,6 @@ func (m *chatModel) togglePermissionMode() (tea.Model, tea.Cmd) {
 	m.permissionNotice = "review mode enabled"
 	m.status = "review mode enabled"
 	return *m, nil
-}
-
-func (m *chatModel) syncApprovalController() {
-	if m.approvalController != nil {
-		m.approvalController.set(m.allowAllTools, m.allowedScopes)
-	}
 }
 
 func (m *chatModel) upsertApprovalToolEntries(request coreagent.ApprovalRequest) {
@@ -159,19 +172,12 @@ func (m chatModel) resolveApprovalPrompt(choice chatApprovalChoice) (tea.Model, 
 		m.status = "denied"
 	}
 	if choice.allowAll {
-		m.allowAllTools = true
-		m.opts.AllowAllTools = true
+		m.setAllowAllTools(true)
 	}
 	allowScopes := approvalScopes(prompt.request)
 	if choice.allowTools {
-		if m.allowedScopes == nil {
-			m.allowedScopes = make(map[string]bool, len(allowScopes))
-		}
-		for _, scope := range allowScopes {
-			m.allowedScopes[scope] = true
-		}
+		m.ensureApprovalState().AllowScopes(allowScopes)
 	}
-	m.syncApprovalController()
 	for _, call := range prompt.request.Calls {
 		if idx := m.findToolEntry(call.ToolCallID); idx >= 0 && m.entries[idx].status == "approval" {
 			if !choice.allow {
@@ -337,19 +343,6 @@ func approvalScope(call coreagent.ApprovalToolCall) string {
 	return strings.TrimSpace(call.ToolName)
 }
 
-func cloneAllowedScopes(src map[string]bool) map[string]bool {
-	if len(src) == 0 {
-		return nil
-	}
-	dst := make(map[string]bool, len(src))
-	for name, allowed := range src {
-		if allowed {
-			dst[name] = true
-		}
-	}
-	return dst
-}
-
 type chatApprovalPrompter struct {
 	ch chan<- tea.Msg
 }
@@ -371,28 +364,15 @@ func (p chatApprovalPrompter) PromptApproval(ctx context.Context, request coreag
 }
 
 type chatApprovalController struct {
-	mu       sync.RWMutex
-	ch       chan<- tea.Msg
-	allowAll bool
-	scopes   map[string]bool
+	ch    chan<- tea.Msg
+	state *coreagent.ApprovalState
 }
 
-func newChatApprovalController(ch chan<- tea.Msg, allowAll bool, scopes map[string]bool) *chatApprovalController {
+func newChatApprovalController(ch chan<- tea.Msg, state *coreagent.ApprovalState) *chatApprovalController {
 	return &chatApprovalController{
-		ch:       ch,
-		allowAll: allowAll,
-		scopes:   cloneAllowedScopes(scopes),
+		ch:    ch,
+		state: state,
 	}
-}
-
-func (c *chatApprovalController) set(allowAll bool, scopes map[string]bool) {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.allowAll = allowAll
-	c.scopes = cloneAllowedScopes(scopes)
 }
 
 func (c *chatApprovalController) PromptApproval(ctx context.Context, request coreagent.ApprovalRequest) (coreagent.Approval, error) {
@@ -406,9 +386,7 @@ func (c *chatApprovalController) preapproved(request coreagent.ApprovalRequest) 
 	if c == nil {
 		return coreagent.Approval{}, false
 	}
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if c.allowAll {
+	if c.state.AllowAll() {
 		return coreagent.Approval{Allow: true, AllowAll: true}, true
 	}
 	scopes := approvalScopes(request)
@@ -416,7 +394,7 @@ func (c *chatApprovalController) preapproved(request coreagent.ApprovalRequest) 
 		return coreagent.Approval{}, false
 	}
 	for _, scope := range scopes {
-		if !c.scopes[scope] {
+		if !c.state.Allows(scope) {
 			return coreagent.Approval{}, false
 		}
 	}

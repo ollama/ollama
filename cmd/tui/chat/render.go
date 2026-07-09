@@ -1403,7 +1403,7 @@ func (m chatModel) permissionModeNotice() string {
 	case "full access enabled", "review mode enabled":
 		return strings.TrimSpace(m.status)
 	}
-	if m.allowAllTools && m.notificationLine() == "" {
+	if m.allowAllToolsEnabled() && m.notificationLine() == "" {
 		return "full access enabled"
 	}
 	return ""

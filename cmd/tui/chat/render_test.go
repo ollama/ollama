@@ -363,7 +363,7 @@ func TestChatViewWrapsNotificationWhenNarrow(t *testing.T) {
 		width:         28,
 		height:        14,
 		status:        "cache will break by turning system prompt off",
-		allowAllTools: true,
+		approvalState: testApprovalState(true, nil),
 		opts: Options{
 			ContextWindowTokens: 262144,
 		},

@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -20,6 +21,12 @@ func testApprovalRequest() coreagent.ApprovalRequest {
 			ApprovalScope: "edit",
 		}},
 	}
+}
+
+func testApprovalState(allowAll bool, scopes map[string]bool) *coreagent.ApprovalState {
+	state := &coreagent.ApprovalState{}
+	state.Set(allowAll, scopes)
+	return state
 }
 
 func TestChatApprovalApprovesOnce(t *testing.T) {
@@ -59,11 +66,11 @@ func TestChatApprovalAllowsTool(t *testing.T) {
 
 	updated, _ := m.updateApprovalPrompt(tea.KeyMsg{Type: tea.KeyEnter})
 	fm := updated.(chatModel)
-	if fm.allowAllTools {
+	if fm.allowAllToolsEnabled() {
 		t.Fatal("allowing a tool should not enable full access")
 	}
-	if !fm.allowedScopes["edit"] {
-		t.Fatalf("allowed scopes = %#v, want edit", fm.allowedScopes)
+	if !fm.approvalState.Allows("edit") {
+		t.Fatal("edit scope was not saved")
 	}
 	result := <-reply
 	if !result.Allow || result.AllowAll || len(result.AllowScopes) != 1 || result.AllowScopes[0] != "edit" {
@@ -383,8 +390,9 @@ func TestChatApprovalPrompterCancels(t *testing.T) {
 
 func TestChatApprovalControllerAutoApprovesAfterFullAccessToggle(t *testing.T) {
 	events := make(chan tea.Msg, 1)
-	controller := newChatApprovalController(events, false, nil)
-	controller.set(true, nil)
+	state := testApprovalState(false, nil)
+	controller := newChatApprovalController(events, state)
+	state.SetAllowAll(true)
 
 	result, err := controller.PromptApproval(context.Background(), testApprovalRequest())
 	if err != nil {
@@ -402,8 +410,10 @@ func TestChatApprovalControllerAutoApprovesAfterFullAccessToggle(t *testing.T) {
 
 func TestChatPermissionToggleSyncsRunningApprovalController(t *testing.T) {
 	events := make(chan tea.Msg, 1)
+	state := testApprovalState(false, nil)
 	m := chatModel{
-		approvalController: newChatApprovalController(events, false, nil),
+		approvalState:      state,
+		approvalController: newChatApprovalController(events, state),
 	}
 
 	updated, _ := m.togglePermissionMode()
@@ -417,12 +427,53 @@ func TestChatPermissionToggleSyncsRunningApprovalController(t *testing.T) {
 	}
 }
 
+func TestChatPermissionToggleFromFullAccessRequiresReviewInRunningController(t *testing.T) {
+	events := make(chan tea.Msg, 1)
+	state := testApprovalState(true, nil)
+	m := chatModel{
+		approvalState:      state,
+		approvalController: newChatApprovalController(events, state),
+	}
+
+	updated, _ := m.togglePermissionMode()
+	fm := updated.(chatModel)
+	if fm.allowAllToolsEnabled() {
+		t.Fatal("full access should be disabled")
+	}
+
+	resultCh := make(chan coreagent.Approval, 1)
+	go func() {
+		result, err := fm.approvalController.PromptApproval(context.Background(), testApprovalRequest())
+		if err != nil {
+			resultCh <- coreagent.Approval{Reason: err.Error()}
+			return
+		}
+		resultCh <- result
+	}()
+
+	select {
+	case msg := <-events:
+		prompt, ok := msg.(chatApprovalPromptMsg)
+		if !ok {
+			t.Fatalf("event = %#v, want approval prompt", msg)
+		}
+		prompt.reply <- coreagent.Approval{Reason: "denied"}
+	case <-time.After(time.Second):
+		t.Fatal("expected approval prompt after toggling from full access to review")
+	}
+
+	result := <-resultCh
+	if result.Allow {
+		t.Fatalf("approval = %#v, want review prompt result", result)
+	}
+}
+
 func TestChatApprovalPromptSkippedWhenFullAccessEnabledInFlight(t *testing.T) {
 	reply := make(chan coreagent.Approval, 1)
 	// Full access is on by the time the buffered approval request reaches the
 	// UI (toggled after the agent sent the request but before Update ran).
 	// The stale prompt must not surface; the request is auto-approved.
-	m := chatModel{allowAllTools: true, running: true}
+	m := chatModel{approvalState: testApprovalState(true, nil), running: true}
 
 	updated, _ := m.Update(chatApprovalPromptMsg{request: testApprovalRequest(), reply: reply})
 	fm := updated.(chatModel)

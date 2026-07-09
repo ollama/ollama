@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"strings"
+	"sync"
 )
 
 type ApprovalRequest struct {
@@ -37,18 +38,113 @@ type ApprovalPrompter interface {
 	PromptApproval(context.Context, ApprovalRequest) (Approval, error)
 }
 
+type ApprovalState struct {
+	mu       sync.RWMutex
+	allowAll bool
+	scopes   map[string]bool
+}
+
+func (s *ApprovalState) Set(allowAll bool, scopes map[string]bool) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.allowAll = allowAll
+	s.scopes = cloneApprovalScopes(scopes)
+}
+
+func (s *ApprovalState) SetAllowAll(allowAll bool) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.allowAll = allowAll
+}
+
+func (s *ApprovalState) AllowAll() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.allowAll
+}
+
+func (s *ApprovalState) Allows(scope string) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.allowAll || s.scopes[scope]
+}
+
+func (s *ApprovalState) Apply(result *Approval) {
+	if s == nil || result == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if result.AllowAll {
+		result.Allow = true
+		s.allowAll = true
+	}
+	if len(result.AllowScopes) > 0 {
+		result.Allow = true
+		if s.scopes == nil {
+			s.scopes = make(map[string]bool, len(result.AllowScopes))
+		}
+		for _, scope := range result.AllowScopes {
+			scope = strings.TrimSpace(scope)
+			if scope != "" {
+				s.scopes[scope] = true
+			}
+		}
+	}
+}
+
+func (s *ApprovalState) AllowScopes(scopes []string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.scopes == nil {
+		s.scopes = make(map[string]bool, len(scopes))
+	}
+	for _, scope := range scopes {
+		scope = strings.TrimSpace(scope)
+		if scope != "" {
+			s.scopes[scope] = true
+		}
+	}
+}
+
+func cloneApprovalScopes(src map[string]bool) map[string]bool {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]bool, len(src))
+	for scope, allowed := range src {
+		if allowed {
+			dst[scope] = true
+		}
+	}
+	return dst
+}
+
 func (s *Session) needsApproval(tool Tool, name string, args map[string]any) bool {
 	return ToolRequiresApproval(tool, args) && !s.allows(toolApprovalScope(name, args))
 }
 
-// allows reports whether scope is permitted by the session's accumulated
-// approval state. Session.AllowAllTools and Session.AllowedScopes are the
-// single source of truth for what has been approved.
+// allows reports whether scope is permitted by the session's accumulated approval state.
 func (s *Session) allows(scope string) bool {
-	if s == nil {
+	if s == nil || s.ApprovalState == nil {
 		return false
 	}
-	return s.AllowAllTools || s.AllowedScopes[scope]
+	return s.ApprovalState.Allows(scope)
 }
 
 // applyApproval merges an approval result into the session's state and marks
@@ -58,30 +154,14 @@ func (s *Session) applyApproval(result *Approval) {
 	if s == nil || result == nil {
 		return
 	}
-	if result.AllowAll {
-		result.Allow = true
-		s.AllowAllTools = true
+	if s.ApprovalState == nil {
+		s.ApprovalState = &ApprovalState{}
 	}
-	if len(result.AllowScopes) > 0 {
-		result.Allow = true
-		s.allowScopes(result.AllowScopes)
-	}
-}
-
-func (s *Session) allowScopes(scopes []string) {
-	if s.AllowedScopes == nil {
-		s.AllowedScopes = make(map[string]bool, len(scopes))
-	}
-	for _, scope := range scopes {
-		scope = strings.TrimSpace(scope)
-		if scope != "" {
-			s.AllowedScopes[scope] = true
-		}
-	}
+	s.ApprovalState.Apply(result)
 }
 
 func (s *Session) authorizeToolCalls(ctx context.Context, req ApprovalRequest) (Approval, error) {
-	if s == nil || s.AllowAllTools || len(req.Calls) == 0 {
+	if s == nil || len(req.Calls) == 0 || (s.ApprovalState != nil && s.ApprovalState.AllowAll()) {
 		return Approval{Allow: true}, nil
 	}
 	if s.ApprovalPrompter == nil {

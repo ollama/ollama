@@ -152,6 +152,12 @@ type recordingApprovalPrompter struct {
 	results  []Approval
 }
 
+func approvalStateForTest(allowAll bool, scopes map[string]bool) *ApprovalState {
+	state := &ApprovalState{}
+	state.Set(allowAll, scopes)
+	return state
+}
+
 func (staticTool) Name() string {
 	return "echo_tool"
 }
@@ -378,7 +384,7 @@ func TestSessionRunsToolLoop(t *testing.T) {
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
@@ -537,7 +543,7 @@ func TestSessionRequestHistoryKeepsThinkingAndServerToolCallIDs(t *testing.T) {
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
@@ -730,7 +736,7 @@ func TestSessionCancellationAfterToolCallAppendsSkippedToolMessage(t *testing.T)
 	session := &Session{
 		Client:        cancelAfterToolCallClient{cancel: cancel},
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 	}
 
 	result, err := session.Run(ctx, RunOptions{
@@ -771,7 +777,7 @@ func TestSessionCancellationDuringToolExecutionAppendsToolMessage(t *testing.T) 
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 		EventSinks:    []EventSink{events},
 	}
 
@@ -832,7 +838,7 @@ func TestSessionToolLoopAllowsRoundsUnderDefaultCap(t *testing.T) {
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 	}
 
 	if _, err := session.Run(context.Background(), RunOptions{
@@ -891,7 +897,7 @@ func TestSessionToolRoundLimitAppendsSkippedToolMessages(t *testing.T) {
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
@@ -942,7 +948,7 @@ func TestSessionToolLoopStopsAtDefaultRoundCap(t *testing.T) {
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 	}
 
 	_, err := session.Run(context.Background(), RunOptions{
@@ -982,7 +988,7 @@ func TestSessionToolLoopNegativeLimitIsUnlimited(t *testing.T) {
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 	}
 
 	if _, err := session.Run(context.Background(), RunOptions{
@@ -1018,7 +1024,7 @@ func TestSessionTruncatesLargeToolResultsBeforeHistory(t *testing.T) {
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
@@ -1071,7 +1077,7 @@ func TestSessionSmallContextUsesLowerToolResultPreviewCap(t *testing.T) {
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 		Compactor: &SimpleCompactor{Client: nil, Options: CompactionOptions{
 			ContextWindowTokens: smallContextToolResultTokenWindow,
 		}},
@@ -1119,7 +1125,7 @@ func TestSessionSmallContextRecapsPreTruncatedToolOutput(t *testing.T) {
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 		Compactor: &SimpleCompactor{Client: nil, Options: CompactionOptions{
 			ContextWindowTokens: smallContextToolResultTokenWindow,
 		}},
@@ -1208,7 +1214,7 @@ func TestSessionCompactsAfterToolResultsBeforeContinuing(t *testing.T) {
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 		Compactor:     compactor,
 	}
 
@@ -1269,7 +1275,7 @@ func TestSessionStopsWhenCompactedHistoryStillExceedsContext(t *testing.T) {
 		Client:        client,
 		EventSinks:    []EventSink{events},
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 		Compactor:     compactor,
 	}
 
@@ -1325,7 +1331,7 @@ func TestSessionContextCapsToolResultBeforeCompaction(t *testing.T) {
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 		Compactor: &SimpleCompactor{Client: nil, Options: CompactionOptions{
 			ContextWindowTokens: 100,
 			Threshold:           0.8,
@@ -1374,7 +1380,7 @@ func TestSessionCompactsThenReattachesFullyOmittedToolResult(t *testing.T) {
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 		Compactor: &SimpleCompactor{Client: client, Options: CompactionOptions{
 			ContextWindowTokens: smallContextToolResultTokenWindow,
 			Threshold:           0.45,
@@ -1451,7 +1457,7 @@ func TestSessionEmitsAutoCompactionActivityEvents(t *testing.T) {
 		Client:        client,
 		EventSinks:    []EventSink{events},
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 		Compactor: &SimpleCompactor{Client: client, Options: CompactionOptions{
 			ContextWindowTokens: 300,
 			Threshold:           0.3,
@@ -1702,7 +1708,7 @@ func TestSessionAllowsToolWorkingDirOutsideInitialDir(t *testing.T) {
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 		WorkingDir:    root,
 	}
 
@@ -1987,7 +1993,7 @@ func TestSessionAllowAllApprovalSkipsFuturePrompts(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if !session.AllowAllTools {
+	if !session.ApprovalState.AllowAll() {
 		t.Fatal("session did not remember allow all")
 	}
 	if len(prompter.requests) != 1 {
@@ -2044,11 +2050,11 @@ func TestSessionAllowToolApprovalSkipsFuturePromptForSameTool(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if session.AllowAllTools {
+	if session.ApprovalState.AllowAll() {
 		t.Fatal("allowing one tool enabled full access")
 	}
-	if !session.AllowedScopes["approval_tool"] {
-		t.Fatalf("allowed scopes = %#v, want approval_tool", session.AllowedScopes)
+	if !session.ApprovalState.Allows("approval_tool") {
+		t.Fatal("approval_tool scope was not saved")
 	}
 	if len(prompter.requests) != 1 {
 		t.Fatalf("approval prompts = %d, want 1", len(prompter.requests))
@@ -2122,11 +2128,11 @@ func TestSessionAllowShellApprovalScopesToExactCommand(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if !session.AllowedScopes["bash\x00pwd"] {
-		t.Fatalf("allowed scopes = %#v, want pwd command scope", session.AllowedScopes)
+	if !session.ApprovalState.Allows("bash\x00pwd") {
+		t.Fatal("pwd command scope was not saved")
 	}
-	if session.AllowedScopes["bash"] || session.AllowedScopes["bash\x00ls"] {
-		t.Fatalf("allowed scopes = %#v, shell approval was too broad", session.AllowedScopes)
+	if session.ApprovalState.Allows("bash") || session.ApprovalState.Allows("bash\x00ls") {
+		t.Fatal("shell approval was too broad")
 	}
 	if len(prompter.requests) != 2 {
 		t.Fatalf("approval prompts = %d, want first pwd and later ls", len(prompter.requests))
@@ -2163,7 +2169,7 @@ func TestSessionAllowAllToolsExecutesApprovalTool(t *testing.T) {
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{

@@ -131,11 +131,10 @@ type chatModel struct {
 	promptDebug        *chatPromptDebug
 	approvalPrompt     *chatApprovalPrompt
 	approvalController *chatApprovalController
+	approvalState      *coreagent.ApprovalState
 	cloudAuthPrompt    *cloudAuthPrompt
 	pendingModel       string
-	allowAllTools      bool
 	defaultAllowAll    bool
-	allowedScopes      map[string]bool
 	permissionNotice   string
 	selection          chatSelection
 
@@ -206,13 +205,16 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		opts.RootDir = opts.WorkingDir
 	}
 
+	approvalState := &coreagent.ApprovalState{}
+	approvalState.Set(opts.AllowAllTools, nil)
+
 	m := chatModel{
 		ctx:             ctx,
 		opts:            opts,
 		chatID:          opts.ChatID,
 		messages:        slices.Clone(opts.Messages),
 		workingDir:      opts.WorkingDir,
-		allowAllTools:   opts.AllowAllTools,
+		approvalState:   approvalState,
 		defaultAllowAll: opts.AllowAllTools,
 		promptHistory:   initialPromptHistory(ctx, opts),
 		status:          "ready",
@@ -339,7 +341,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// but before this buffered message was handled). In that window
 		// togglePermissionMode's auto-resolve sees no open prompt yet, so
 		// short-circuit here rather than surfacing a stale approval prompt.
-		if m.allowAllTools {
+		if m.allowAllToolsEnabled() {
 			m.approvalPrompt = &chatApprovalPrompt{request: msg.request, reply: msg.reply}
 			return m.resolveApprovalPrompt(chatApprovalChoice{allow: true, allowAll: true})
 		}
@@ -979,14 +981,13 @@ func (m *chatModel) resetChat(status string) (tea.Model, tea.Cmd) {
 	m.modelPicker = nil
 	m.modelPickerModels = nil
 	m.approvalController = nil
+	m.resetApprovalState()
 	m.nextImageID = 0
 	m.nextAudioID = 0
 	m.nextPastedTextID = 1
 	m.resetPromptHistoryCursor()
 	m.resetWorkingDir()
-	m.allowAllTools = m.defaultAllowAll
 	m.opts.AllowAllTools = m.defaultAllowAll
-	m.allowedScopes = nil
 	m.permissionNotice = ""
 	m.thinking = false
 	m.thinkingTokens = 0
@@ -1097,7 +1098,7 @@ func (m *chatModel) startRunWithMessages(displayInput, historyInput string, newM
 	m.cancel = cancel
 	events := make(chan tea.Msg, 128)
 	m.events = events
-	m.approvalController = newChatApprovalController(events, m.allowAllTools, m.allowedScopes)
+	m.approvalController = newChatApprovalController(events, m.ensureApprovalState())
 
 	var newMessagesPersisted bool
 	eventSinks := []coreagent.EventSink{chatEventSink{ctx: runCtx, ch: events, newMessagesPersisted: &newMessagesPersisted}}
@@ -1109,8 +1110,7 @@ func (m *chatModel) startRunWithMessages(displayInput, historyInput string, newM
 		Tools:            m.opts.Tools,
 		DisableTools:     m.opts.ToolsDisabled,
 		ApprovalPrompter: m.approvalPrompterForRun(m.approvalController),
-		AllowAllTools:    m.allowAllTools,
-		AllowedScopes:    cloneAllowedScopes(m.allowedScopes),
+		ApprovalState:    m.ensureApprovalState(),
 		WorkingDir:       m.currentWorkingDir(),
 		Compactor:        m.opts.Compactor,
 	}

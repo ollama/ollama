@@ -33,13 +33,13 @@ func TestSessionApplyApprovalScopes(t *testing.T) {
 		t.Fatal("scoped approval should allow the current request")
 	}
 	if !session.allows("edit") || !session.allows("bash\x00pwd") {
-		t.Fatalf("allowed scopes = %#v, want saved scopes", session.AllowedScopes)
+		t.Fatal("scoped approval was not saved")
 	}
 	if session.allows("bash") || session.allows("bash\x00ls") {
-		t.Fatalf("allowed scopes = %#v, shell scope is too broad", session.AllowedScopes)
+		t.Fatal("shell approval was too broad")
 	}
-	if session.AllowAllTools {
-		t.Fatalf("AllowAllTools = true, want false for scoped approval")
+	if session.ApprovalState.AllowAll() {
+		t.Fatal("allow all = true, want false for scoped approval")
 	}
 }
 
@@ -50,6 +50,6 @@ func TestSessionApplyApprovalAllowAll(t *testing.T) {
 	session.applyApproval(&result)
 
 	if !result.Allow || !session.allows("anything") {
-		t.Fatalf("AllowAllTools = %v result = %#v, want allow all", session.AllowAllTools, result)
+		t.Fatalf("allow all = %v result = %#v, want allow all", session.ApprovalState.AllowAll(), result)
 	}
 }
