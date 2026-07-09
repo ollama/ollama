@@ -777,6 +777,20 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 	}
 
 	if r.Message.Thinking != "" && !c.thinkingDone {
+		// Close text block if still open (text → thinking, e.g. models that
+		// emit text before their thinking block)
+		if c.textStarted {
+			events = append(events, StreamEvent{
+				Event: "content_block_stop",
+				Data: ContentBlockStopEvent{
+					Type:  "content_block_stop",
+					Index: c.contentIndex,
+				},
+			})
+			c.contentIndex++
+			c.textStarted = false
+		}
+
 		if !c.thinkingStarted {
 			c.thinkingStarted = true
 			events = append(events, StreamEvent{
