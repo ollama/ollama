@@ -1494,6 +1494,9 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 	}
 	defer s.sem.Release(1)
 
+	release, _ := preventSleep()
+	defer release()
+
 	req.Options.NumPredict = boundedNumPredict(req.Options.NumPredict, s.options.NumCtx)
 
 	status, err := s.getServerStatusRetry(ctx)
@@ -1846,6 +1849,9 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 		return err
 	}
 	defer s.sem.Release(1)
+
+	release, _ := preventSleep()
+	defer release()
 
 	req.Options.NumPredict = boundedNumPredict(req.Options.NumPredict, s.options.NumCtx)
 
