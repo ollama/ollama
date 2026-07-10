@@ -48,8 +48,8 @@ type menuItem struct {
 const pinnedIntegrationCount = 4
 
 var runModelMenuItem = menuItem{
-	title:       "Chat with a model",
-	description: "Start an interactive chat with a model",
+	title:       "Chat, Code, & Work",
+	description: "Chat with models, code, search the web, and do work",
 	isRunModel:  true,
 }
 

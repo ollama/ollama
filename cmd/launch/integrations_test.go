@@ -1081,6 +1081,51 @@ func TestShowOrPullWithPolicy_CloudModelNotFound_FailsEarlyForAllPolicies(t *tes
 	}
 }
 
+func TestShowOrPullWithPolicy_CloudModelShowUnavailableAllowsSelection(t *testing.T) {
+	oldHook := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		t.Fatal("confirm prompt should not be called for explicit cloud models")
+		return false, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldHook }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprintf(w, `{"error":"temporary failure"}`)
+		case "/api/status":
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprintf(w, `{"error":"temporary failure"}`)
+		case "/api/pull":
+			t.Fatal("pull should not be called for explicit cloud models")
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	if err := showOrPullWithPolicy(context.Background(), client, "glm-5.1:cloud", missingModelFail, true); err != nil {
+		t.Fatalf("showOrPullWithPolicy returned error: %v", err)
+	}
+}
+
+func TestShowOrPullWithPolicy_CloudModelShowUnreachableAllowsSelection(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected request after server close: %s %s", r.Method, r.URL.Path)
+	}))
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+	srv.Close()
+
+	if err := showOrPullWithPolicy(context.Background(), client, "glm-5.1:cloud", missingModelFail, true); err != nil {
+		t.Fatalf("showOrPullWithPolicy returned error: %v", err)
+	}
+}
+
 func TestShowOrPullWithPolicy_CloudModelDisabled_FailsWithCloudDisabledError(t *testing.T) {
 	oldHook := DefaultConfirmPrompt
 	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
