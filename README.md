@@ -34,6 +34,37 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 [Manual install instructions](https://docs.ollama.com/linux#manual-install)
 
+### IBM Z / LinuxONE (s390x)
+
+```shell
+curl -fsSL https://raw.githubusercontent.com/Brice12347/ollama-s390x/main/scripts/install.sh | sh
+```
+
+The installer automatically detects s390x, downloads a pre-built binary from [GitHub Releases](https://github.com/Brice12347/ollama-s390x/releases), installs it to `/usr/local/bin/ollama`, and configures a systemd service.
+
+After install:
+
+```shell
+ollama serve
+ollama run llama3.2:1b
+```
+
+**Pin a specific release:**
+
+```shell
+OLLAMA_VERSION=v0.1.0 curl -fsSL \
+  https://raw.githubusercontent.com/Brice12347/ollama-s390x/main/scripts/install.sh | sh
+```
+
+**Debug mode:**
+
+```shell
+OLLAMA_DEBUG=1 curl -fsSL \
+  https://raw.githubusercontent.com/Brice12347/ollama-s390x/main/scripts/install.sh | sh
+```
+
+> **Note:** Binaries are built against glibc 2.36 (Debian 12 / Ubuntu 22.04) for broad compatibility. Tested on z15 and z17 hardware.
+
 ### Docker
 
 The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `ollama/ollama` is available on Docker Hub.
