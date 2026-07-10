@@ -14,6 +14,7 @@ plain="$( (/usr/bin/tput sgr0 || :) 2>&-)"
 status() { echo ">>> $*" >&2; }
 error() { echo "${red}ERROR:${plain} $*"; exit 1; }
 warning() { echo "${red}WARNING:${plain} $*"; }
+debug() { [ -n "${OLLAMA_DEBUG:-}" ] && echo ">>> [debug] $*" >&2 || true; }
 
 TEMP_DIR=$(mktemp -d)
 cleanup() { rm -rf $TEMP_DIR; }
@@ -33,6 +34,7 @@ require() {
 
 OS="$(uname -s)"
 ARCH=$(uname -m)
+debug "Detected OS=$OS ARCH=$ARCH"
 case "$ARCH" in
     x86_64) ARCH="amd64" ;;
     aarch64|arm64) ARCH="arm64" ;;
@@ -205,6 +207,7 @@ if [ "$ARCH" = "s390x" ]; then
         echo "$PATH" | grep -q "$BINDIR" && break || continue
     done
     OLLAMA_INSTALL_DIR=$(dirname "$BINDIR")
+    debug "BINDIR=$BINDIR OLLAMA_INSTALL_DIR=$OLLAMA_INSTALL_DIR"
 
     if [ -d "$OLLAMA_INSTALL_DIR/lib/ollama" ]; then
         status "Cleaning up old version at $OLLAMA_INSTALL_DIR/lib/ollama"
