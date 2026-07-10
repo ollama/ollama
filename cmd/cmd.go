@@ -2132,72 +2132,32 @@ func ensureServerRunning(ctx context.Context) error {
 }
 
 func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
-	opts := runOptions{
-		Model:       modelName,
-		WordWrap:    os.Getenv("TERM") == "xterm-256color",
-		Options:     map[string]any{},
-		ShowConnect: true,
-	}
-
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
 
-	requestedCloud := modelref.HasExplicitCloudSource(modelName)
-
-	info, err := func() (*api.ShowResponse, error) {
-		showReq := &api.ShowRequest{Name: modelName}
-		info, err := client.Show(cmd.Context(), showReq)
-		var se api.StatusError
-		if errors.As(err, &se) && se.StatusCode == http.StatusNotFound {
-			if requestedCloud {
-				return nil, err
-			}
-			if err := PullHandler(cmd, []string{modelName}); err != nil {
-				return nil, err
-			}
-			return client.Show(cmd.Context(), &api.ShowRequest{Name: modelName})
-		}
-		return info, err
-	}()
+	opts := agentTUIOptions{
+		Model:   modelName,
+		Options: map[string]any{},
+	}
+	info, err := prepareAgentModel(cmd, client, &opts, false)
 	if err != nil {
 		if handleCloudAuthorizationError(err) {
 			return nil
 		}
 		return err
 	}
+	opts.System = info.System
 
-	ensureCloudStub(cmd.Context(), client, modelName)
-
-	opts.Think, err = inferThinkingOption(&info.Capabilities, &opts, false)
-	if err != nil {
+	if err := saveLastAgentModel(opts.Model); err != nil {
 		return err
 	}
-
-	audioCapable := slices.Contains(info.Capabilities, model.CapabilityAudio)
-	opts.MultiModal = slices.Contains(info.Capabilities, model.CapabilityVision) || audioCapable
-
-	// TODO: remove the projector info and vision info checks below,
-	// these are left in for backwards compatibility with older servers
-	// that don't have the capabilities field in the model info
-	if len(info.ProjectorInfo) != 0 {
-		opts.MultiModal = true
-	}
-	for k := range info.ModelInfo {
-		if strings.Contains(k, ".vision.") {
-			opts.MultiModal = true
-			break
+	if err := GenerateAgentTUI(cmd, client, opts); err != nil {
+		if handleCloudAuthorizationError(err) {
+			return nil
 		}
-	}
-
-	applyShowResponseToRunOptions(&opts, info)
-
-	if err := loadOrUnloadModel(cmd, &opts); err != nil {
-		return fmt.Errorf("error loading model: %w", err)
-	}
-	if err := generateInteractive(cmd, opts); err != nil {
-		return fmt.Errorf("error running model: %w", err)
+		return fmt.Errorf("error running agent: %w", err)
 	}
 	return nil
 }
@@ -2409,6 +2369,15 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("imagegen", false, "Use the imagegen runner for LLM inference")
 	runCmd.Flags().MarkHidden("imagegen")
 
+	agentCmd := &cobra.Command{
+		Use:     "agent",
+		Short:   "Run an agent",
+		Args:    cobra.ExactArgs(0),
+		PreRunE: checkServerHeartbeat,
+		RunE:    AgentHandler,
+	}
+	registerAgentFlags(agentCmd)
+
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
 		Short:   "Stop a running model",
@@ -2539,6 +2508,7 @@ func NewCLI() *cobra.Command {
 		createCmd,
 		showCmd,
 		runCmd,
+		agentCmd,
 		stopCmd,
 		pullCmd,
 		pushCmd,
@@ -2586,6 +2556,7 @@ func NewCLI() *cobra.Command {
 		createCmd,
 		showCmd,
 		runCmd,
+		agentCmd,
 		stopCmd,
 		pullCmd,
 		pushCmd,

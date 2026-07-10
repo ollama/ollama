@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -37,6 +38,10 @@ type staticTool struct{}
 
 type approvalTestTool struct {
 	called *bool
+}
+
+type namedApprovalTestTool struct {
+	name string
 }
 
 type cwdTestTool struct{}
@@ -145,6 +150,12 @@ func (c *oversizedCompactor) MaybeCompact(_ context.Context, req CompactionReque
 type recordingApprovalPrompter struct {
 	requests []ApprovalRequest
 	results  []Approval
+}
+
+func approvalStateForTest(allowAll bool, scopes map[string]bool) *ApprovalState {
+	state := &ApprovalState{}
+	state.Set(allowAll, scopes)
+	return state
 }
 
 func (staticTool) Name() string {
@@ -272,6 +283,32 @@ func (t approvalTestTool) Execute(context.Context, ToolContext, map[string]any) 
 	return ToolResult{Content: "approved"}, nil
 }
 
+func (t namedApprovalTestTool) Name() string {
+	return t.name
+}
+
+func (t namedApprovalTestTool) Description() string {
+	return "requires approval"
+}
+
+func (t namedApprovalTestTool) Schema() api.ToolFunction {
+	return api.ToolFunction{
+		Name:        t.name,
+		Description: "requires approval",
+		Parameters: api.ToolFunctionParameters{
+			Type: "object",
+		},
+	}
+}
+
+func (t namedApprovalTestTool) RequiresApproval(map[string]any) bool {
+	return true
+}
+
+func (t namedApprovalTestTool) Execute(context.Context, ToolContext, map[string]any) (ToolResult, error) {
+	return ToolResult{Content: "approved"}, nil
+}
+
 func (p *recordingApprovalPrompter) PromptApproval(_ context.Context, req ApprovalRequest) (Approval, error) {
 	p.requests = append(p.requests, req)
 	if len(p.results) == 0 {
@@ -347,7 +384,7 @@ func TestSessionRunsToolLoop(t *testing.T) {
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
@@ -399,6 +436,45 @@ func TestSessionAddsSystemPromptOnlyToRequest(t *testing.T) {
 	reqMessages := client.requests[0].Messages
 	if len(reqMessages) != 2 || reqMessages[0].Role != "system" || reqMessages[0].Content != "available context: go-code" {
 		t.Fatalf("request messages = %#v", reqMessages)
+	}
+}
+
+func TestSessionChatRequestMatchesRunRequest(t *testing.T) {
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{
+			{{Message: api.Message{Role: "assistant", Content: "done"}}},
+		},
+	}
+	registry := &Registry{}
+	registry.Register(staticTool{})
+	session := &Session{Client: client, Tools: registry}
+	opts := RunOptions{
+		ChatID:       "chat-1",
+		Model:        "model",
+		SystemPrompt: "available context: go-code",
+		NewMessages:  []api.Message{{Role: "user", Content: "hello"}},
+		Format:       "json",
+		Options:      map[string]any{"temperature": 0.5},
+	}
+
+	want := buildChatRequest(opts, opts.NewMessages, registry.Tools())
+	_, err := session.Run(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.requests) != 1 {
+		t.Fatalf("requests = %d, want 1", len(client.requests))
+	}
+	gotJSON, err := json.Marshal(client.requests[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantJSON, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotJSON) != string(wantJSON) {
+		t.Fatalf("ChatRequest mismatch\ngot:  %s\nwant: %s", gotJSON, wantJSON)
 	}
 }
 
@@ -467,7 +543,7 @@ func TestSessionRequestHistoryKeepsThinkingAndServerToolCallIDs(t *testing.T) {
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
@@ -588,6 +664,71 @@ func TestSessionTreatsHTTPContextCanceledStringAsCancellation(t *testing.T) {
 	}
 }
 
+func TestSessionDisabledToolsOmitToolsAndReturnsDisabledResults(t *testing.T) {
+	args := api.NewToolCallFunctionArguments()
+	args.Set("value", "hello")
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{
+			{{
+				Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+					ID: "call-1",
+					Function: api.ToolCallFunction{
+						Name:      "echo_tool",
+						Arguments: args,
+					},
+				}}},
+			}},
+			{{Message: api.Message{Role: "assistant", Content: "tools are off"}}},
+		},
+	}
+	registry := &Registry{}
+	registry.Register(staticTool{})
+	events := &recordingEventSink{}
+	session := &Session{
+		Client:       client,
+		EventSinks:   []EventSink{events},
+		Tools:        registry,
+		DisableTools: true,
+	}
+
+	result, err := session.Run(context.Background(), RunOptions{
+		ChatID:      "chat-1",
+		Model:       "model",
+		NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(client.requests) != 2 {
+		t.Fatalf("requests = %d, want 2", len(client.requests))
+	}
+	if got := len(client.requests[0].Tools); got != 0 {
+		t.Fatalf("advertised tools = %d, want 0", got)
+	}
+	secondMessages := client.requests[1].Messages
+	if len(secondMessages) != 3 {
+		t.Fatalf("second request messages = %#v", secondMessages)
+	}
+	if secondMessages[2].Role != "tool" || secondMessages[2].ToolCallID != "call-1" || secondMessages[2].Content != toolExecutionDisabledMessage {
+		t.Fatalf("disabled tool message = %#v", secondMessages[2])
+	}
+	if len(result.Messages) != 4 || result.Messages[2].Content != toolExecutionDisabledMessage {
+		t.Fatalf("result messages = %#v", result.Messages)
+	}
+	var sawDetected, sawDisabled bool
+	for _, event := range events.events {
+		if event.Type == EventToolCallDetected {
+			sawDetected = true
+		}
+		if event.Type == EventToolFinished && event.Status == "disabled" && event.Content == toolExecutionDisabledMessage {
+			sawDisabled = true
+		}
+	}
+	if !sawDetected || !sawDisabled {
+		t.Fatalf("events missing detected/disabled: %#v", events.events)
+	}
+}
+
 func TestSessionCancellationAfterToolCallAppendsSkippedToolMessage(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	registry := &Registry{}
@@ -595,7 +736,7 @@ func TestSessionCancellationAfterToolCallAppendsSkippedToolMessage(t *testing.T)
 	session := &Session{
 		Client:        cancelAfterToolCallClient{cancel: cancel},
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 	}
 
 	result, err := session.Run(ctx, RunOptions{
@@ -636,7 +777,7 @@ func TestSessionCancellationDuringToolExecutionAppendsToolMessage(t *testing.T) 
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 		EventSinks:    []EventSink{events},
 	}
 
@@ -697,7 +838,7 @@ func TestSessionToolLoopAllowsRoundsUnderDefaultCap(t *testing.T) {
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 	}
 
 	if _, err := session.Run(context.Background(), RunOptions{
@@ -756,7 +897,7 @@ func TestSessionToolRoundLimitAppendsSkippedToolMessages(t *testing.T) {
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
@@ -807,7 +948,7 @@ func TestSessionToolLoopStopsAtDefaultRoundCap(t *testing.T) {
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 	}
 
 	_, err := session.Run(context.Background(), RunOptions{
@@ -847,7 +988,7 @@ func TestSessionToolLoopNegativeLimitIsUnlimited(t *testing.T) {
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 	}
 
 	if _, err := session.Run(context.Background(), RunOptions{
@@ -883,7 +1024,7 @@ func TestSessionTruncatesLargeToolResultsBeforeHistory(t *testing.T) {
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{
@@ -936,7 +1077,7 @@ func TestSessionSmallContextUsesLowerToolResultPreviewCap(t *testing.T) {
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 		Compactor: &SimpleCompactor{Client: nil, Options: CompactionOptions{
 			ContextWindowTokens: smallContextToolResultTokenWindow,
 		}},
@@ -984,7 +1125,7 @@ func TestSessionSmallContextRecapsPreTruncatedToolOutput(t *testing.T) {
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 		Compactor: &SimpleCompactor{Client: nil, Options: CompactionOptions{
 			ContextWindowTokens: smallContextToolResultTokenWindow,
 		}},
@@ -1073,7 +1214,7 @@ func TestSessionCompactsAfterToolResultsBeforeContinuing(t *testing.T) {
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 		Compactor:     compactor,
 	}
 
@@ -1134,7 +1275,7 @@ func TestSessionStopsWhenCompactedHistoryStillExceedsContext(t *testing.T) {
 		Client:        client,
 		EventSinks:    []EventSink{events},
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 		Compactor:     compactor,
 	}
 
@@ -1190,7 +1331,7 @@ func TestSessionContextCapsToolResultBeforeCompaction(t *testing.T) {
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 		Compactor: &SimpleCompactor{Client: nil, Options: CompactionOptions{
 			ContextWindowTokens: 100,
 			Threshold:           0.8,
@@ -1239,7 +1380,7 @@ func TestSessionCompactsThenReattachesFullyOmittedToolResult(t *testing.T) {
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 		Compactor: &SimpleCompactor{Client: client, Options: CompactionOptions{
 			ContextWindowTokens: smallContextToolResultTokenWindow,
 			Threshold:           0.45,
@@ -1316,7 +1457,7 @@ func TestSessionEmitsAutoCompactionActivityEvents(t *testing.T) {
 		Client:        client,
 		EventSinks:    []EventSink{events},
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 		Compactor: &SimpleCompactor{Client: client, Options: CompactionOptions{
 			ContextWindowTokens: 300,
 			Threshold:           0.3,
@@ -1567,7 +1708,7 @@ func TestSessionAllowsToolWorkingDirOutsideInitialDir(t *testing.T) {
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 		WorkingDir:    root,
 	}
 
@@ -1726,6 +1867,83 @@ func TestSessionPromptsOnceForApprovalBatch(t *testing.T) {
 	}
 }
 
+func TestSessionRunsFullApprovedToolBatchBeforeNextModelStep(t *testing.T) {
+	args := api.NewToolCallFunctionArguments()
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{
+			{
+				{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{
+					{
+						ID: "call-1",
+						Function: api.ToolCallFunction{
+							Name:      "approval_tool",
+							Arguments: args,
+						},
+					},
+					{
+						ID: "call-2",
+						Function: api.ToolCallFunction{
+							Name:      "approval_tool",
+							Arguments: args,
+						},
+					},
+				}}},
+			},
+			{
+				{Message: api.Message{Role: "assistant", Content: "done"}},
+			},
+		},
+	}
+	registry := &Registry{}
+	registry.Register(approvalTestTool{})
+	prompter := &recordingApprovalPrompter{
+		results: []Approval{{Allow: true}},
+	}
+	events := &recordingEventSink{}
+	session := &Session{
+		Client:           client,
+		Tools:            registry,
+		ApprovalPrompter: prompter,
+		EventSinks:       []EventSink{events},
+	}
+
+	result, err := session.Run(context.Background(), RunOptions{
+		Model:       "model",
+		NewMessages: []api.Message{{Role: "user", Content: "use tools"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.calls != 2 {
+		t.Fatalf("client calls = %d, want second model step only after tool batch", client.calls)
+	}
+	if len(result.Messages) != 5 {
+		t.Fatalf("messages = %#v, want user, assistant tool calls, two tool results, final assistant", result.Messages)
+	}
+	if result.Messages[2].Role != "tool" || result.Messages[2].ToolCallID != "call-1" {
+		t.Fatalf("first tool result = %#v", result.Messages[2])
+	}
+	if result.Messages[3].Role != "tool" || result.Messages[3].ToolCallID != "call-2" {
+		t.Fatalf("second tool result = %#v", result.Messages[3])
+	}
+	if result.Messages[4].Role != "assistant" || result.Messages[4].Content != "done" {
+		t.Fatalf("final assistant = %#v", result.Messages[4])
+	}
+
+	var finishedBeforeDelta []string
+	for _, event := range events.events {
+		if event.Type == EventMessageDelta && event.Content == "done" {
+			break
+		}
+		if event.Type == EventToolFinished {
+			finishedBeforeDelta = append(finishedBeforeDelta, event.ToolCallID)
+		}
+	}
+	if strings.Join(finishedBeforeDelta, ",") != "call-1,call-2" {
+		t.Fatalf("tool finishes before final model delta = %#v, want full batch before model", finishedBeforeDelta)
+	}
+}
+
 func TestSessionAllowAllApprovalSkipsFuturePrompts(t *testing.T) {
 	args := api.NewToolCallFunctionArguments()
 	client := &fakeClient{
@@ -1775,11 +1993,155 @@ func TestSessionAllowAllApprovalSkipsFuturePrompts(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if !session.AllowAllTools {
+	if !session.ApprovalState.AllowAll() {
 		t.Fatal("session did not remember allow all")
 	}
 	if len(prompter.requests) != 1 {
 		t.Fatalf("approval prompts = %d, want 1", len(prompter.requests))
+	}
+}
+
+func TestSessionAllowToolApprovalSkipsFuturePromptForSameTool(t *testing.T) {
+	args := api.NewToolCallFunctionArguments()
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{
+			{
+				{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+					ID: "call-1",
+					Function: api.ToolCallFunction{
+						Name:      "approval_tool",
+						Arguments: args,
+					},
+				}}}},
+			},
+			{
+				{Message: api.Message{Role: "assistant", Content: "done"}},
+			},
+			{
+				{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+					ID: "call-2",
+					Function: api.ToolCallFunction{
+						Name:      "approval_tool",
+						Arguments: args,
+					},
+				}}}},
+			},
+			{
+				{Message: api.Message{Role: "assistant", Content: "done again"}},
+			},
+		},
+	}
+	registry := &Registry{}
+	registry.Register(approvalTestTool{})
+	prompter := &recordingApprovalPrompter{
+		results: []Approval{{AllowScopes: []string{"approval_tool"}}},
+	}
+	session := &Session{
+		Client:           client,
+		Tools:            registry,
+		ApprovalPrompter: prompter,
+	}
+
+	for range 2 {
+		if _, err := session.Run(context.Background(), RunOptions{
+			Model:       "model",
+			NewMessages: []api.Message{{Role: "user", Content: "use a tool"}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if session.ApprovalState.AllowAll() {
+		t.Fatal("allowing one tool enabled full access")
+	}
+	if !session.ApprovalState.Allows("approval_tool") {
+		t.Fatal("approval_tool scope was not saved")
+	}
+	if len(prompter.requests) != 1 {
+		t.Fatalf("approval prompts = %d, want 1", len(prompter.requests))
+	}
+}
+
+func TestSessionAllowShellApprovalScopesToExactCommand(t *testing.T) {
+	pwdArgs := api.NewToolCallFunctionArguments()
+	pwdArgs.Set("command", "pwd")
+	lsArgs := api.NewToolCallFunctionArguments()
+	lsArgs.Set("command", "ls")
+	client := &fakeClient{
+		responses: [][]api.ChatResponse{
+			{
+				{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+					ID: "call-1",
+					Function: api.ToolCallFunction{
+						Name:      "bash",
+						Arguments: pwdArgs,
+					},
+				}}}},
+			},
+			{
+				{Message: api.Message{Role: "assistant", Content: "done"}},
+			},
+			{
+				{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+					ID: "call-2",
+					Function: api.ToolCallFunction{
+						Name:      "bash",
+						Arguments: pwdArgs,
+					},
+				}}}},
+			},
+			{
+				{Message: api.Message{Role: "assistant", Content: "done again"}},
+			},
+			{
+				{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+					ID: "call-3",
+					Function: api.ToolCallFunction{
+						Name:      "bash",
+						Arguments: lsArgs,
+					},
+				}}}},
+			},
+			{
+				{Message: api.Message{Role: "assistant", Content: "done finally"}},
+			},
+		},
+	}
+	registry := &Registry{}
+	registry.Register(namedApprovalTestTool{name: "bash"})
+	prompter := &recordingApprovalPrompter{
+		results: []Approval{
+			{AllowScopes: []string{toolApprovalScope("bash", map[string]any{"command": "pwd"})}},
+			{Allow: true},
+		},
+	}
+	session := &Session{
+		Client:           client,
+		Tools:            registry,
+		ApprovalPrompter: prompter,
+	}
+
+	for range 3 {
+		if _, err := session.Run(context.Background(), RunOptions{
+			Model:       "model",
+			NewMessages: []api.Message{{Role: "user", Content: "use a command"}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !session.ApprovalState.Allows("bash\x00pwd") {
+		t.Fatal("pwd command scope was not saved")
+	}
+	if session.ApprovalState.Allows("bash") || session.ApprovalState.Allows("bash\x00ls") {
+		t.Fatal("shell approval was too broad")
+	}
+	if len(prompter.requests) != 2 {
+		t.Fatalf("approval prompts = %d, want first pwd and later ls", len(prompter.requests))
+	}
+	if got := prompter.requests[0].Calls[0].ApprovalScope; got != "bash\x00pwd" {
+		t.Fatalf("first approval scope = %q, want pwd command scope", got)
+	}
+	if got := prompter.requests[1].Calls[0].ApprovalScope; got != "bash\x00ls" {
+		t.Fatalf("second approval scope = %q, want ls command scope", got)
 	}
 }
 
@@ -1807,7 +2169,7 @@ func TestSessionAllowAllToolsExecutesApprovalTool(t *testing.T) {
 	session := &Session{
 		Client:        client,
 		Tools:         registry,
-		AllowAllTools: true,
+		ApprovalState: approvalStateForTest(true, nil),
 	}
 
 	result, err := session.Run(context.Background(), RunOptions{

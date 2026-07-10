@@ -18,33 +18,13 @@ type ChatClient interface {
 	Chat(context.Context, *api.ChatRequest, api.ChatResponseFunc) error
 }
 
-type ApprovalRequest struct {
-	WorkingDir string
-	Calls      []ApprovalToolCall
-}
-
-type ApprovalToolCall struct {
-	ToolCallID string
-	ToolName   string
-	Args       map[string]any
-}
-
-type Approval struct {
-	Allow    bool
-	AllowAll bool
-	Reason   string
-}
-
-type ApprovalPrompter interface {
-	PromptApproval(context.Context, ApprovalRequest) (Approval, error)
-}
-
 type Session struct {
 	Client           ChatClient
 	EventSinks       []EventSink
 	Tools            *Registry
+	DisableTools     bool
 	ApprovalPrompter ApprovalPrompter
-	AllowAllTools    bool
+	ApprovalState    *ApprovalState
 	WorkingDir       string
 	Compactor        Compactor
 }
@@ -100,6 +80,8 @@ const (
 	toolExecutionDenied   toolExecutionStop = "denied"
 	toolExecutionCanceled toolExecutionStop = "canceled"
 )
+
+const toolExecutionDisabledMessage = "Tool execution disabled."
 
 type runPhase int
 
@@ -168,6 +150,9 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 	}
 	if opts.Model == "" {
 		return nil, errors.New("agent session requires a model")
+	}
+	if s.ApprovalState == nil {
+		s.ApprovalState = &ApprovalState{}
 	}
 	runID := uuid.NewString()
 	messages := make([]api.Message, 0, len(opts.Messages)+len(opts.NewMessages))
@@ -251,6 +236,18 @@ func (s *Session) runModelStep(ctx context.Context, st *runState) error {
 		}
 		st.messages = append(st.messages, skipped...)
 		st.finishCanceled()
+		return nil
+	}
+
+	if s.DisableTools {
+		batch, skipErr := s.disabledToolCalls(ctx, st.runID, opts, st.messages, pendingToolCalls)
+		if skipErr != nil {
+			s.emit(Event{Type: EventError, RunID: st.runID, ChatID: opts.ChatID, Model: opts.Model, Error: skipErr.Error()})
+			return skipErr
+		}
+		st.messages = append(st.messages, batch.messages...)
+		st.toolBatch = &batch
+		st.phase = runPhaseCompact
 		return nil
 	}
 
@@ -344,31 +341,11 @@ func (s *Session) finishRun(ctx context.Context, st *runState) (*RunResult, erro
 }
 
 func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, messages []api.Message, latest *api.ChatResponse) (api.Message, []api.ToolCall, bool, error) {
-	requestMessages := sanitizeMessagesForRequest(messages)
-	if strings.TrimSpace(opts.SystemPrompt) != "" {
-		withSystem := make([]api.Message, 0, len(requestMessages)+1)
-		withSystem = append(withSystem, api.Message{Role: "system", Content: opts.SystemPrompt})
-		requestMessages = append(withSystem, requestMessages...)
+	var tools api.Tools
+	if !s.DisableTools {
+		tools = s.availableTools()
 	}
-
-	format := opts.Format
-	if format == "json" {
-		format = `"` + format + `"`
-	}
-
-	req := api.ChatRequest{
-		Model:    opts.Model,
-		Messages: requestMessages,
-		Format:   json.RawMessage(format),
-		Options:  opts.Options,
-		Think:    opts.Think,
-	}
-	if opts.KeepAlive != nil {
-		req.KeepAlive = opts.KeepAlive
-	}
-	if tools := s.availableTools(); len(tools) > 0 {
-		req.Tools = tools
-	}
+	req := buildChatRequest(opts, messages, tools)
 
 	assistant := api.Message{Role: "assistant"}
 	var pendingToolCalls []api.ToolCall
@@ -418,6 +395,35 @@ func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, 
 	return assistant, pendingToolCalls, false, nil
 }
 
+func buildChatRequest(opts RunOptions, messages []api.Message, tools api.Tools) api.ChatRequest {
+	requestMessages := sanitizeMessagesForRequest(messages)
+	if strings.TrimSpace(opts.SystemPrompt) != "" {
+		withSystem := make([]api.Message, 0, len(requestMessages)+1)
+		withSystem = append(withSystem, api.Message{Role: "system", Content: opts.SystemPrompt})
+		requestMessages = append(withSystem, requestMessages...)
+	}
+
+	format := opts.Format
+	if format == "json" {
+		format = `"` + format + `"`
+	}
+
+	req := api.ChatRequest{
+		Model:    opts.Model,
+		Messages: requestMessages,
+		Format:   json.RawMessage(format),
+		Options:  opts.Options,
+		Think:    opts.Think,
+	}
+	if opts.KeepAlive != nil {
+		req.KeepAlive = opts.KeepAlive
+	}
+	if len(tools) > 0 {
+		req.Tools = tools
+	}
+	return req
+}
+
 func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOptions, messages []api.Message, calls []api.ToolCall) (toolBatchResult, error) {
 	batch := toolBatchResult{
 		messages: make([]api.Message, 0, len(calls)),
@@ -445,12 +451,8 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 			args:       args,
 			workingDir: batchWorkingDir,
 		})
-		if ok && ToolRequiresApproval(tool, args) {
-			approvalReq.Calls = append(approvalReq.Calls, ApprovalToolCall{
-				ToolCallID: call.ID,
-				ToolName:   toolName,
-				Args:       args,
-			})
+		if ok && s.needsApproval(tool, toolName, args) {
+			approvalReq.AddToolCall(call.ID, toolName, args)
 		}
 	}
 
@@ -574,25 +576,22 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 	return batch, nil
 }
 
-func (s *Session) authorizeToolCalls(ctx context.Context, req ApprovalRequest) (Approval, error) {
-	if s == nil || s.AllowAllTools || len(req.Calls) == 0 {
-		return Approval{Allow: true}, nil
+func (s *Session) disabledToolCalls(ctx context.Context, runID string, opts RunOptions, messages []api.Message, calls []api.ToolCall) (toolBatchResult, error) {
+	batch := toolBatchResult{
+		messages: make([]api.Message, 0, len(calls)),
 	}
-	if s.ApprovalPrompter == nil {
-		return Approval{
-			Reason: "Tool execution requires approval, but no approval prompter is available.",
-		}, nil
+	projectedMessages := append([]api.Message(nil), messages...)
+	for _, call := range calls {
+		toolName := call.Function.Name
+		args := call.Function.Arguments.ToMap()
+		msg := s.toolMessageForContext(toolName, call.ID, toolExecutionDisabledMessage, opts, projectedMessages)
+		batch.messages = append(batch.messages, msg)
+		projectedMessages = append(projectedMessages, msg)
+		if emitErr := s.emitIgnoringCanceled(ctx, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "disabled", ToolCallID: call.ID, ToolName: toolName, Args: args, Content: msg.Content, Error: msg.Content}); emitErr != nil {
+			return toolBatchResult{}, emitErr
+		}
 	}
-
-	result, err := s.ApprovalPrompter.PromptApproval(ctx, req)
-	if err != nil {
-		return Approval{}, err
-	}
-	if result.AllowAll {
-		result.Allow = true
-		s.AllowAllTools = true
-	}
-	return result, nil
+	return batch, nil
 }
 
 func (s *Session) skipToolCalls(ctx context.Context, runID string, opts RunOptions, calls []api.ToolCall, content string) ([]api.Message, error) {

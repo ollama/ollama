@@ -63,6 +63,9 @@ func (r *Registry) Names() []string {
 }
 
 func (r *Registry) Tools() api.Tools {
+	if r == nil {
+		return nil
+	}
 	names := r.Names()
 	apiTools := make(api.Tools, 0, len(names))
 	for _, name := range names {
