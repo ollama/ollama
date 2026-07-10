@@ -321,8 +321,8 @@ func TestOMPConfigureWithModelsWritesModelsYML(t *testing.T) {
 	o := &OMP{}
 	models := []LaunchModel{
 		{
-			Name:            "glm-5.1:cloud",
-			ContextLength:   202_752,
+			Name:            "glm-5.2:cloud",
+			ContextLength:   1_000_000,
 			MaxOutputTokens: 131_072,
 		},
 		{
@@ -330,7 +330,7 @@ func TestOMPConfigureWithModelsWritesModelsYML(t *testing.T) {
 			Capabilities: []modelpkg.Capability{modelpkg.CapabilityVision},
 		},
 	}
-	if err := o.ConfigureWithModels("glm-5.1:cloud", models); err != nil {
+	if err := o.ConfigureWithModels("glm-5.2:cloud", models); err != nil {
 		t.Fatalf("ConfigureWithModels returned error: %v", err)
 	}
 
@@ -360,11 +360,11 @@ func TestOMPConfigureWithModelsWritesModelsYML(t *testing.T) {
 	if len(entries) != 2 {
 		t.Fatalf("models length = %d, want 2", len(entries))
 	}
-	if entries[0]["id"] != "glm-5.1:cloud" {
+	if entries[0]["id"] != "glm-5.2:cloud" {
 		t.Fatalf("first model id = %v, want primary first", entries[0]["id"])
 	}
-	if got := numericYAMLValue(entries[0]["contextWindow"]); got != 202_752 {
-		t.Fatalf("contextWindow = %d, want 202752", got)
+	if got := numericYAMLValue(entries[0]["contextWindow"]); got != 1_000_000 {
+		t.Fatalf("contextWindow = %d, want 1000000", got)
 	}
 	if got := numericYAMLValue(entries[0]["maxTokens"]); got != 131_072 {
 		t.Fatalf("maxTokens = %d, want 131072", got)
@@ -372,8 +372,8 @@ func TestOMPConfigureWithModelsWritesModelsYML(t *testing.T) {
 	if input := stringSliceYAMLValue(entries[1]["input"]); !slices.Equal(input, []string{"text", "image"}) {
 		t.Fatalf("vision input = %v, want [text image]", input)
 	}
-	if got := o.CurrentModel(); got != "glm-5.1:cloud" {
-		t.Fatalf("CurrentModel = %q, want glm-5.1:cloud", got)
+	if got := o.CurrentModel(); got != "glm-5.2:cloud" {
+		t.Fatalf("CurrentModel = %q, want glm-5.2:cloud", got)
 	}
 
 	configPath := filepath.Join(home, ".omp", "agent", "config.yml")
