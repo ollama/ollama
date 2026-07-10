@@ -190,3 +190,16 @@ Or run with environment variables inline:
 ```shell
 ANTHROPIC_AUTH_TOKEN=ollama ANTHROPIC_BASE_URL=http://localhost:11434 ANTHROPIC_API_KEY="" claude --model kimi-k2.7-code:cloud
 ```
+
+Or save them in `~/.claude/settings.json`:
+
+```json
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://localhost:11434",
+    "ANTHROPIC_API_KEY": "",
+    "ANTHROPIC_MODEL": "qwen3.5",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "qwen3.5"
+  }
+}
+```
