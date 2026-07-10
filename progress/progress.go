@@ -29,7 +29,7 @@ type Progress struct {
 
 	ticker *time.Ticker
 	states []State
-	isTTY bool
+	isTTY  bool
 }
 
 func NewProgress(w io.Writer) *Progress {
