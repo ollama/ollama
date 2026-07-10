@@ -360,7 +360,7 @@ func TestModelRecommendationsRouteRegistration(t *testing.T) {
 	cache.set([]api.ModelRecommendation{{Model: "route-model", Description: "route description"}})
 	s := &Server{modelCaches: &modelCaches{recommendations: cache}}
 
-	router, err := s.GenerateRoutes(nil)
+	router, err := s.GenerateRoutes()
 	if err != nil {
 		t.Fatalf("GenerateRoutes failed: %v", err)
 	}

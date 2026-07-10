@@ -63,17 +63,25 @@ func (c *Claude) Run(model string, models []LaunchModel, args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	env := append(os.Environ(),
-		"ANTHROPIC_BASE_URL="+envconfig.Host().String(),
+	cmd.Env = append(os.Environ(), c.envVars(model, models...)...)
+	return cmd.Run()
+}
+
+func (c *Claude) envVars(model string, models ...LaunchModel) []string {
+	env := []string{
+		"ANTHROPIC_BASE_URL=" + envconfig.Host().String(),
 		"ANTHROPIC_API_KEY=",
 		"ANTHROPIC_AUTH_TOKEN=ollama",
 		"CLAUDE_CODE_ATTRIBUTION_HEADER=0",
-	)
+		"DISABLE_TELEMETRY=1",
+		"DISABLE_ERROR_REPORTING=1",
+		"DISABLE_FEEDBACK_COMMAND=1",
+		"CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1",
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
+	}
 
 	env = append(env, c.modelEnvVars(model, models...)...)
-
-	cmd.Env = env
-	return cmd.Run()
+	return env
 }
 
 func ensureClaudeInstalled() (string, error) {

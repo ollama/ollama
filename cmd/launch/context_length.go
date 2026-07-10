@@ -41,9 +41,9 @@ func confirmLocalContextWarning(integration string, current, recommended int) er
 		integration,
 	)
 	ok, err := ConfirmPromptWithOptions(prompt, ConfirmOptions{
-		YesLabel:  "Continue",
-		NoLabel:   "Cancel",
-		DefaultNo: true,
+		YesLabel: "Continue",
+		NoLabel:  "Cancel",
+		Default:  ConfirmDefaultNo,
 	})
 	if err != nil {
 		return err

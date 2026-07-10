@@ -869,6 +869,36 @@ type StatusResponse struct {
 	ContextLength int         `json:"context_length,omitempty"`
 }
 
+// WebSearchRequest is the request for [Client.WebSearchExperimental].
+type WebSearchRequest struct {
+	Query      string `json:"query"`
+	MaxResults int    `json:"max_results,omitempty"`
+}
+
+// WebSearchResult is a single result from [Client.WebSearchExperimental].
+type WebSearchResult struct {
+	Title   string `json:"title"`
+	URL     string `json:"url"`
+	Content string `json:"content"`
+}
+
+// WebSearchResponse is the response from [Client.WebSearchExperimental].
+type WebSearchResponse struct {
+	Results []WebSearchResult `json:"results"`
+}
+
+// WebFetchRequest is the request for [Client.WebFetchExperimental].
+type WebFetchRequest struct {
+	URL string `json:"url"`
+}
+
+// WebFetchResponse is the response from [Client.WebFetchExperimental].
+type WebFetchResponse struct {
+	Title   string   `json:"title"`
+	Content string   `json:"content"`
+	Links   []string `json:"links,omitempty"`
+}
+
 // GenerateResponse is the response passed into [GenerateResponseFunc].
 type GenerateResponse struct {
 	// Model is the model name that generated the response.

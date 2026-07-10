@@ -17,6 +17,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/fs/ggml"
+	fsgguf "github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/model/parsers"
 	ollamatemplate "github.com/ollama/ollama/template"
@@ -707,6 +708,10 @@ func skipModelListGGUFValue(r io.Reader, byteOrder binary.ByteOrder, version uin
 }
 
 func skipModelListGGUFArray(r io.Reader, byteOrder binary.ByteOrder, version uint32, arrayType uint32, count uint64) error {
+	if _, err := checkedModelListGGUFLength(count, "array size", fsgguf.MaxArraySize); err != nil {
+		return err
+	}
+
 	var size uint64
 	switch arrayType {
 	case modelListGGUFTypeUint8, modelListGGUFTypeInt8, modelListGGUFTypeBool:
@@ -727,6 +732,10 @@ func skipModelListGGUFArray(r io.Reader, byteOrder binary.ByteOrder, version uin
 	default:
 		return fmt.Errorf("unsupported gguf array type %d", arrayType)
 	}
+
+	if count > uint64(maxModelListGGUFInt64())/size {
+		return fmt.Errorf("gguf array byte length %d*%d exceeds maximum %d", count, size, maxModelListGGUFInt64())
+	}
 	return discardModelListGGUFBytes(r, int64(count*size))
 }
 
@@ -736,15 +745,16 @@ func readModelListGGUFString(r io.Reader, byteOrder binary.ByteOrder, version ui
 		return "", err
 	}
 
-	if length == 0 {
-		return "", nil
+	n, err := checkedModelListGGUFLength(length, "string", fsgguf.MaxStringLength)
+	if err != nil {
+		return "", err
 	}
 
-	bts := make([]byte, length)
+	bts := make([]byte, n)
 	if _, err := io.ReadFull(r, bts); err != nil {
 		return "", err
 	}
-	if version == 1 && bts[len(bts)-1] == 0 {
+	if version == 1 && len(bts) > 0 && bts[len(bts)-1] == 0 {
 		bts = bts[:len(bts)-1]
 	}
 	return string(bts), nil
@@ -755,7 +765,12 @@ func skipModelListGGUFString(r io.Reader, byteOrder binary.ByteOrder, version ui
 	if err := binary.Read(r, byteOrder, &length); err != nil {
 		return err
 	}
-	return discardModelListGGUFBytes(r, int64(length))
+
+	n, err := checkedModelListGGUFLength(length, "string", fsgguf.MaxStringLength)
+	if err != nil {
+		return err
+	}
+	return discardModelListGGUFBytes(r, int64(n))
 }
 
 func discardModelListGGUFBytes(r io.Reader, n int64) error {
@@ -764,6 +779,24 @@ func discardModelListGGUFBytes(r io.Reader, n int64) error {
 	}
 	_, err := io.CopyN(io.Discard, r, n)
 	return err
+}
+
+func checkedModelListGGUFLength(n uint64, kind string, max uint64) (int, error) {
+	if n > uint64(maxModelListGGUFInt()) {
+		return 0, fmt.Errorf("gguf %s %d exceeds maximum %d", kind, n, maxModelListGGUFInt())
+	}
+	if n > max {
+		return 0, fmt.Errorf("gguf %s %d exceeds maximum %d", kind, n, max)
+	}
+	return int(n), nil
+}
+
+func maxModelListGGUFInt() int {
+	return int(^uint(0) >> 1)
+}
+
+func maxModelListGGUFInt64() int64 {
+	return 1<<63 - 1
 }
 
 func appendModelListCapabilities(capabilities []model.Capability, values ...model.Capability) []model.Capability {

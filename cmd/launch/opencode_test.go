@@ -334,7 +334,7 @@ func TestOpenCodePrepareLaunchModelsWarnsForLowLocalContext(t *testing.T) {
 	var gotPrompt string
 	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		gotPrompt = prompt
-		if !options.DefaultNo {
+		if options.Default != ConfirmDefaultNo {
 			t.Fatal("expected warning prompt to default to no")
 		}
 		return false, nil

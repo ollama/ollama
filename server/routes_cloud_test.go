@@ -219,7 +219,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		t.Cleanup(func() { cloudProxyBaseURL = original })
 
 		s := &Server{}
-		router, err := s.GenerateRoutes(nil)
+		router, err := s.GenerateRoutes()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -270,7 +270,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		t.Cleanup(func() { cloudProxyBaseURL = original })
 
 		s := &Server{}
-		router, err := s.GenerateRoutes(nil)
+		router, err := s.GenerateRoutes()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -313,7 +313,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		t.Cleanup(func() { cloudProxyBaseURL = original })
 
 		s := &Server{}
-		router, err := s.GenerateRoutes(nil)
+		router, err := s.GenerateRoutes()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -356,7 +356,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		t.Cleanup(func() { cloudProxyBaseURL = original })
 
 		s := &Server{}
-		router, err := s.GenerateRoutes(nil)
+		router, err := s.GenerateRoutes()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -399,7 +399,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		t.Cleanup(func() { cloudProxyBaseURL = original })
 
 		s := &Server{}
-		router, err := s.GenerateRoutes(nil)
+		router, err := s.GenerateRoutes()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -442,7 +442,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		t.Cleanup(func() { cloudProxyBaseURL = original })
 
 		s := &Server{}
-		router, err := s.GenerateRoutes(nil)
+		router, err := s.GenerateRoutes()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -498,7 +498,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		t.Cleanup(func() { cloudProxyBaseURL = original })
 
 		s := &Server{}
-		router, err := s.GenerateRoutes(nil)
+		router, err := s.GenerateRoutes()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -554,7 +554,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		t.Cleanup(func() { cloudProxyBaseURL = original })
 
 		s := &Server{}
-		router, err := s.GenerateRoutes(nil)
+		router, err := s.GenerateRoutes()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -605,7 +605,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		t.Cleanup(func() { cloudProxyBaseURL = original })
 
 		s := &Server{}
-		router, err := s.GenerateRoutes(nil)
+		router, err := s.GenerateRoutes()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -656,7 +656,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		t.Cleanup(func() { cloudProxyBaseURL = original })
 
 		s := &Server{}
-		router, err := s.GenerateRoutes(nil)
+		router, err := s.GenerateRoutes()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -723,7 +723,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		t.Cleanup(func() { cloudProxyBaseURL = original })
 
 		s := &Server{}
-		router, err := s.GenerateRoutes(nil)
+		router, err := s.GenerateRoutes()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -770,7 +770,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		t.Cleanup(func() { cloudProxyBaseURL = original })
 
 		s := &Server{}
-		router, err := s.GenerateRoutes(nil)
+		router, err := s.GenerateRoutes()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -816,7 +816,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		t.Cleanup(func() { cloudProxyBaseURL = original })
 
 		s := &Server{}
-		router, err := s.GenerateRoutes(nil)
+		router, err := s.GenerateRoutes()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -851,7 +851,7 @@ func TestCloudDisabledBlocksExplicitCloudPassthrough(t *testing.T) {
 	t.Setenv("OLLAMA_NO_CLOUD", "1")
 
 	s := &Server{}
-	router, err := s.GenerateRoutes(nil)
+	router, err := s.GenerateRoutes()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -912,7 +912,7 @@ func TestCloudPassthroughStreamsPromptly(t *testing.T) {
 	t.Cleanup(func() { cloudProxyBaseURL = original })
 
 	s := &Server{}
-	router, err := s.GenerateRoutes(nil)
+	router, err := s.GenerateRoutes()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1096,7 +1096,7 @@ func TestCloudPassthroughSigningFailureReturnsUnauthorized(t *testing.T) {
 	})
 
 	s := &Server{}
-	router, err := s.GenerateRoutes(nil)
+	router, err := s.GenerateRoutes()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1154,7 +1154,7 @@ func TestCloudPassthroughSigningFailureWithoutSigninURL(t *testing.T) {
 	})
 
 	s := &Server{}
-	router, err := s.GenerateRoutes(nil)
+	router, err := s.GenerateRoutes()
 	if err != nil {
 		t.Fatal(err)
 	}

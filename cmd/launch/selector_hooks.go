@@ -27,11 +27,18 @@ var errCancelled = ErrCancelled
 // When set, ConfirmPrompt delegates to it instead of using raw terminal I/O.
 var DefaultConfirmPrompt func(prompt string, options ConfirmOptions) (bool, error)
 
+type ConfirmDefault int
+
+const (
+	ConfirmDefaultYes ConfirmDefault = iota
+	ConfirmDefaultNo
+)
+
 // ConfirmOptions customizes labels for confirmation prompts.
 type ConfirmOptions struct {
-	YesLabel  string
-	NoLabel   string
-	DefaultNo bool
+	YesLabel string
+	NoLabel  string
+	Default  ConfirmDefault
 }
 
 // SingleSelector is a function type for single item selection.
@@ -112,8 +119,9 @@ func ConfirmPromptWithOptions(prompt string, options ConfirmOptions) (bool, erro
 	}
 	defer term.Restore(fd, oldState)
 
-	if options.DefaultNo {
-		fmt.Fprintf(os.Stderr, "%s [\033[1my\033[0m/N] ", prompt)
+	defaultNo := options.Default == ConfirmDefaultNo
+	if defaultNo {
+		fmt.Fprintf(os.Stderr, "%s (y/\033[1mN\033[0m) ", prompt)
 	} else {
 		fmt.Fprintf(os.Stderr, "%s (\033[1my\033[0m/n) ", prompt)
 	}
@@ -129,7 +137,7 @@ func ConfirmPromptWithOptions(prompt string, options ConfirmOptions) (bool, erro
 			fmt.Fprintf(os.Stderr, "yes\r\n")
 			return true, nil
 		case 13:
-			if options.DefaultNo {
+			if defaultNo {
 				fmt.Fprintf(os.Stderr, "no\r\n")
 				return false, nil
 			}

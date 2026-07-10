@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/ollama/ollama/envconfig"
 )
 
 func TestClaudeIntegration(t *testing.T) {
@@ -334,6 +336,40 @@ func TestClaudeArgs(t *testing.T) {
 	}
 }
 
+func TestClaudeEnvVars(t *testing.T) {
+	c := &Claude{}
+
+	envMap := func(envs []string) map[string]string {
+		m := make(map[string]string)
+		for _, e := range envs {
+			k, v, _ := strings.Cut(e, "=")
+			m[k] = v
+		}
+		return m
+	}
+
+	got := envMap(c.envVars("llama3.2"))
+	for key, want := range map[string]string{
+		"ANTHROPIC_BASE_URL":                       envconfig.Host().String(),
+		"ANTHROPIC_API_KEY":                        "",
+		"ANTHROPIC_AUTH_TOKEN":                     "ollama",
+		"CLAUDE_CODE_ATTRIBUTION_HEADER":           "0",
+		"DISABLE_TELEMETRY":                        "1",
+		"DISABLE_ERROR_REPORTING":                  "1",
+		"DISABLE_FEEDBACK_COMMAND":                 "1",
+		"CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY":      "1",
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL":             "llama3.2",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL":           "llama3.2",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL":            "llama3.2",
+		"CLAUDE_CODE_SUBAGENT_MODEL":               "llama3.2",
+	} {
+		if got[key] != want {
+			t.Errorf("%s = %q, want %q", key, got[key], want)
+		}
+	}
+}
+
 func TestClaudePrepareRunLaunchModelsWarnsForLowLocalContext(t *testing.T) {
 	client, _ := testLauncherClientWithStatus(t, 32*1024)
 
@@ -343,7 +379,7 @@ func TestClaudePrepareRunLaunchModelsWarnsForLowLocalContext(t *testing.T) {
 	var gotPrompt string
 	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		gotPrompt = prompt
-		if !options.DefaultNo {
+		if options.Default != ConfirmDefaultNo {
 			t.Fatal("expected warning prompt to default to no")
 		}
 		if options.YesLabel != "Continue" || options.NoLabel != "Cancel" {

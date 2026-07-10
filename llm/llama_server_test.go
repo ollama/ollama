@@ -1955,7 +1955,7 @@ func TestAppendFlashAttentionArgs(t *testing.T) {
 	supportedGPU := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 13, ComputeMajor: 8, ComputeMinor: 9}}
 	oldGPU := []ml.DeviceInfo{
 		{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 8, ComputeMinor: 9},
-		{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 6, ComputeMinor: 2},
+		{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 5, ComputeMinor: 0},
 	}
 
 	tests := []struct {
@@ -2121,13 +2121,22 @@ func TestAppendMMProjArgs(t *testing.T) {
 			want:         []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
 		},
 		{
-			name:         "integrated rocm gpu disables projector offload",
+			name:         "integrated rocm gpu keeps projector offload when projector fits",
 			projectors:   []string{"model.gguf"},
 			opts:         defaultOpts,
 			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "ROCm"}, Integrated: true, FreeMemory: 32 << 30}},
 			mmprojMemory: 933 << 20,
 			modelLayers:  81,
-			want:         []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
+			want:         []string{"base", "--mmproj", "model.gguf"},
+		},
+		{
+			name:         "integrated cuda gpu keeps projector offload",
+			projectors:   []string{"model.gguf"},
+			opts:         defaultOpts,
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, Integrated: true, FreeMemory: 32 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+			want:         []string{"base", "--mmproj", "model.gguf"},
 		},
 		{
 			name:         "integrated metal gpu keeps projector offload",
@@ -2193,6 +2202,75 @@ func TestAppendMMProjArgs(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMMProjFitTargetExtraEnvs(t *testing.T) {
+	t.Setenv(llamaArgFitTargetEnv, "")
+	_ = os.Unsetenv(llamaArgFitTargetEnv)
+
+	const (
+		projectorMemoryMiB = uint64(933)
+		projectorPadMiB    = projectorMemoryMiB + mmprojOffloadHeadroom/bytesPerMiB
+	)
+
+	fitTargetValue := func(mib uint64) string {
+		return fmt.Sprint(mib)
+	}
+
+	assertFitTarget := func(t *testing.T, got map[string]string, wantMiB uint64) {
+		t.Helper()
+		if got[llamaArgFitTargetEnv] != fitTargetValue(wantMiB) {
+			t.Fatalf("fit target = %q, want %d", got[llamaArgFitTargetEnv], wantMiB)
+		}
+	}
+
+	newLaunch := func(extraEnvs map[string]string) llamaServerLaunchConfig {
+		return llamaServerLaunchConfig{
+			projectors:   []string{"model.gguf"},
+			mmprojMemory: projectorMemoryMiB * bytesPerMiB,
+			opts:         api.DefaultOptions(),
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, Integrated: true, FreeMemory: 32 << 30}},
+			modelLayers:  81,
+			extraEnvs:    extraEnvs,
+		}
+	}
+
+	t.Run("sets projector pad when no fit target exists", func(t *testing.T) {
+		launch := newLaunch(map[string]string{"KEEP": "1"})
+
+		got := launch.extraEnvsForStart()
+		assertFitTarget(t, got, projectorPadMiB)
+		if _, ok := launch.extraEnvs[llamaArgFitTargetEnv]; ok {
+			t.Fatal("extraEnvsForStart mutated launch.extraEnvs")
+		}
+	})
+
+	for _, tt := range []struct {
+		name               string
+		launchFitTargetMiB uint64
+	}{
+		{name: "adds projector pad to existing launch fit target", launchFitTargetMiB: 2048},
+		{name: "adds projector pad to smaller launch fit target", launchFitTargetMiB: 512},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			launch := newLaunch(map[string]string{
+				llamaArgFitTargetEnv: fitTargetValue(tt.launchFitTargetMiB),
+			})
+
+			got := launch.extraEnvsForStart()
+			assertFitTarget(t, got, tt.launchFitTargetMiB+projectorPadMiB)
+		})
+	}
+
+	t.Run("preserves inherited user fit target", func(t *testing.T) {
+		t.Setenv(llamaArgFitTargetEnv, fitTargetValue(256))
+		launch := newLaunch(map[string]string{})
+
+		got := launch.extraEnvsForStart()
+		if _, ok := got[llamaArgFitTargetEnv]; ok {
+			t.Fatalf("user env should not be overridden, got extra env %q", got[llamaArgFitTargetEnv])
+		}
+	})
 }
 
 func TestMMProjMemoryRequirement(t *testing.T) {

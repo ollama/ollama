@@ -141,6 +141,88 @@ func TestMoEBlockSortedForward(t *testing.T) {
 	}
 }
 
+// TestLoadFusedExpertsQuantized verifies that a quantized, fused gate_up
+// projection is loaded onto the GatherQMM path under every name the experts
+// ship as — including gemma's bare ".experts." name, which previously fell
+// through to the dense branch and was loaded unquantized (the memory bloat
+// bug this fix addresses).
+func TestLoadFusedExpertsQuantized(t *testing.T) {
+	skipIfNoMLX(t)
+
+	const E, I, H = 4, 8, 16
+	m := &Model{TextConfig: &TextConfig{QuantGroupSize: 16, QuantBits: 4, QuantMode: "nvfp4"}}
+
+	for _, prefix := range []string{
+		"model.language_model.layers.0.experts",        // gemma HF (bare .experts.)
+		"model.language_model.layers.0.moe.switch_mlp", // create pipeline
+	} {
+		t.Run(prefix, func(t *testing.T) {
+			gateUpKey := prefix + ".gate_up_proj"
+			downKey := prefix + ".down_proj"
+			tensors := map[string]*mlx.Array{
+				gateUpKey:            onesLike(E, 2*I, H),
+				gateUpKey + "_scale": onesLike(E, 2*I, H/16),
+				gateUpKey + "_qbias": onesLike(E, 2*I, H/16),
+				downKey:              onesLike(E, H, I),
+				downKey + "_scale":   onesLike(E, H, I/16),
+				downKey + "_qbias":   onesLike(E, H, I/16),
+			}
+
+			moe := &MoEBlock{}
+			m.loadFusedExperts(moe, tensors, gateUpKey, tensors[gateUpKey], downKey, tensors[downKey])
+
+			if !moe.UseQuantized {
+				t.Error("UseQuantized = false, want true")
+			}
+			if !moe.UseFusedGateUp {
+				t.Error("UseFusedGateUp = false, want true")
+			}
+			if moe.GateUpWeightQ == nil || moe.GateUpScales == nil || moe.GateUpBiases == nil {
+				t.Error("quantized gate_up weight/scale/bias not all set")
+			}
+			if moe.DownWeightQ == nil || moe.DownScales == nil || moe.DownBiases == nil {
+				t.Error("quantized down weight/scale/bias not all set")
+			}
+			// Dense fields must stay nil so Forward takes the GatherQMM path.
+			if moe.GateUpWeight != nil || moe.DownWeight != nil {
+				t.Error("dense weights set on a quantized block")
+			}
+		})
+	}
+}
+
+// TestLoadFusedExpertsDense verifies that a fused gate_up projection with no
+// scale companions is loaded onto the dense GatherMM path, kept fused.
+func TestLoadFusedExpertsDense(t *testing.T) {
+	skipIfNoMLX(t)
+
+	const E, I, H = 4, 8, 16
+	m := &Model{TextConfig: &TextConfig{}}
+
+	gateUpKey := "model.language_model.layers.0.experts.gate_up_proj"
+	downKey := "model.language_model.layers.0.experts.down_proj"
+	tensors := map[string]*mlx.Array{
+		gateUpKey: onesLike(E, 2*I, H),
+		downKey:   onesLike(E, I, H),
+	}
+
+	moe := &MoEBlock{}
+	m.loadFusedExperts(moe, tensors, gateUpKey, tensors[gateUpKey], downKey, tensors[downKey])
+
+	if moe.UseQuantized {
+		t.Error("UseQuantized = true, want false (no scales present)")
+	}
+	if !moe.UseFusedGateUp {
+		t.Error("UseFusedGateUp = false, want true")
+	}
+	if moe.GateUpWeight == nil || moe.DownWeight == nil {
+		t.Error("dense fused weights not set")
+	}
+	if moe.GateUpWeightQ != nil || moe.DownWeightQ != nil {
+		t.Error("quantized weights set on a dense block")
+	}
+}
+
 // TestRouterForwardMatchesLegacy verifies the optimized Router.Forward —
 // which takes the top-k of the raw logits and softmaxes only the selected
 // values — produces the same indices and (within tolerance) the same
