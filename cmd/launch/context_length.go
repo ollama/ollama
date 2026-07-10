@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
 
 func (c *launcherClient) localServerContextLength(ctx context.Context) (int, bool) {
@@ -33,15 +34,8 @@ func confirmLocalContextWarning(integration string, current, recommended int) er
 		return fmt.Errorf("%s Re-run with --yes to continue", shortWarning)
 	}
 
-	prompt := fmt.Sprintf(
-		"%s works best with at least %s context.\nCurrent local context: %s.\nAdjust Context length in Ollama Settings and restart to change this.\n\nContinue launching %s?",
-		integration,
-		formatContextLength(recommended),
-		formatContextLength(current),
-		integration,
-	)
-	ok, err := ConfirmPromptWithOptions(prompt, ConfirmOptions{
-		YesLabel: "Continue",
+	ok, err := ConfirmPromptWithOptions(localContextLengthPrompt(integration, current, recommended), ConfirmOptions{
+		YesLabel: "Launch anyway",
 		NoLabel:  "Cancel",
 		Default:  ConfirmDefaultNo,
 	})
@@ -52,6 +46,16 @@ func confirmLocalContextWarning(integration string, current, recommended int) er
 		return ErrCancelled
 	}
 	return nil
+}
+
+func localContextLengthPrompt(integration string, current, recommended int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s works best with at least %s context. ", integration, formatContextLength(recommended))
+	fmt.Fprintf(&b, "Current local context: %s. ", formatContextLength(current))
+	b.WriteString("Adjust Context length in Ollama Settings and restart to change this:\n")
+	b.WriteString("  https://docs.ollama.com/context-length")
+	fmt.Fprintf(&b, "\n\nLaunch %s anyway?", integration)
+	return b.String()
 }
 
 func formatContextLength(tokens int) string {

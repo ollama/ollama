@@ -348,7 +348,7 @@ func TestClaudeEnvVars(t *testing.T) {
 		return m
 	}
 
-	got := envMap(c.envVars("llama3.2"))
+	got := envMap(c.envVars("llama3.2", 0))
 	for key, want := range map[string]string{
 		"ANTHROPIC_BASE_URL":                       envconfig.Host().String(),
 		"ANTHROPIC_API_KEY":                        "",
@@ -382,8 +382,8 @@ func TestClaudePrepareRunLaunchModelsWarnsForLowLocalContext(t *testing.T) {
 		if options.Default != ConfirmDefaultNo {
 			t.Fatal("expected warning prompt to default to no")
 		}
-		if options.YesLabel != "Continue" || options.NoLabel != "Cancel" {
-			t.Fatalf("labels = %q/%q, want Continue/Cancel", options.YesLabel, options.NoLabel)
+		if options.YesLabel != "Launch anyway" || options.NoLabel != "Cancel" {
+			t.Fatalf("labels = %q/%q, want Launch anyway/Cancel", options.YesLabel, options.NoLabel)
 		}
 		return false, nil
 	}
@@ -393,9 +393,8 @@ func TestClaudePrepareRunLaunchModelsWarnsForLowLocalContext(t *testing.T) {
 		t.Fatalf("error = %v, want ErrCancelled", err)
 	}
 	for _, want := range []string{
-		"Claude Code works best with at least 100k context.",
-		"Current local context: 32k.",
-		"Continue launching Claude Code?",
+		"Claude Code works best with at least 100k context. Current local context: 32k.",
+		"Launch Claude Code anyway?",
 	} {
 		if !strings.Contains(gotPrompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, gotPrompt)
@@ -505,7 +504,7 @@ func TestClaudeModelEnvVars(t *testing.T) {
 	}
 
 	t.Run("maps all Claude model env vars to the provided model", func(t *testing.T) {
-		got := envMap(c.modelEnvVars("llama3.2"))
+		got := envMap(c.modelEnvVars("llama3.2", 0))
 		if got["ANTHROPIC_DEFAULT_OPUS_MODEL"] != "llama3.2" {
 			t.Errorf("OPUS = %q, want llama3.2", got["ANTHROPIC_DEFAULT_OPUS_MODEL"])
 		}
@@ -524,7 +523,7 @@ func TestClaudeModelEnvVars(t *testing.T) {
 	})
 
 	t.Run("supports empty model", func(t *testing.T) {
-		got := envMap(c.modelEnvVars(""))
+		got := envMap(c.modelEnvVars("", 0))
 		if got["ANTHROPIC_DEFAULT_OPUS_MODEL"] != "" {
 			t.Errorf("OPUS = %q, want empty", got["ANTHROPIC_DEFAULT_OPUS_MODEL"])
 		}
@@ -543,28 +542,28 @@ func TestClaudeModelEnvVars(t *testing.T) {
 	})
 
 	t.Run("sets auto compact window for known cloud models", func(t *testing.T) {
-		got := envMap(c.modelEnvVars("glm-5:cloud"))
+		got := envMap(c.modelEnvVars("glm-5:cloud", 0))
 		if got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != "202752" {
 			t.Errorf("AUTO_COMPACT_WINDOW = %q, want 202752", got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
 		}
 	})
 
 	t.Run("sets auto compact window for local models at Claude minimum", func(t *testing.T) {
-		got := envMap(c.modelEnvVars("llama3.2", LaunchModel{Name: "llama3.2", ContextLength: 131072}))
+		got := envMap(c.modelEnvVars("llama3.2", 131072))
 		if got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != "131072" {
 			t.Errorf("AUTO_COMPACT_WINDOW = %q, want 131072", got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
 		}
 	})
 
 	t.Run("does not set auto compact window for local models below Claude minimum", func(t *testing.T) {
-		got := envMap(c.modelEnvVars("llama3.2", LaunchModel{Name: "llama3.2", ContextLength: 32768}))
+		got := envMap(c.modelEnvVars("llama3.2", 32768))
 		if got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != "" {
 			t.Errorf("AUTO_COMPACT_WINDOW = %q, want empty", got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
 		}
 	})
 
 	t.Run("does not set auto compact window for unknown cloud models", func(t *testing.T) {
-		got := envMap(c.modelEnvVars("unknown-model:cloud"))
+		got := envMap(c.modelEnvVars("unknown-model:cloud", 0))
 		if got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != "" {
 			t.Errorf("AUTO_COMPACT_WINDOW = %q, want empty", got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
 		}

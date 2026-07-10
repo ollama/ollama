@@ -58,16 +58,21 @@ func (c *Claude) Run(model string, models []LaunchModel, args []string) error {
 		return err
 	}
 
+	contextLength := 0
+	if len(models) > 0 {
+		contextLength = models[0].ContextLength
+	}
+
 	cmd := exec.Command(claudePath, c.args(model, args)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	cmd.Env = append(os.Environ(), c.envVars(model, models...)...)
+	cmd.Env = append(os.Environ(), c.envVars(model, contextLength)...)
 	return cmd.Run()
 }
 
-func (c *Claude) envVars(model string, models ...LaunchModel) []string {
+func (c *Claude) envVars(model string, contextLength int) []string {
 	env := []string{
 		"ANTHROPIC_BASE_URL=" + envconfig.Host().String(),
 		"ANTHROPIC_API_KEY=",
@@ -80,7 +85,7 @@ func (c *Claude) envVars(model string, models ...LaunchModel) []string {
 		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
 	}
 
-	env = append(env, c.modelEnvVars(model, models...)...)
+	env = append(env, c.modelEnvVars(model, contextLength)...)
 	return env
 }
 
@@ -211,7 +216,7 @@ func launchModelsWithContextLength(primary string, models []LaunchModel, context
 }
 
 // modelEnvVars returns Claude Code env vars that route all model tiers through Ollama.
-func (c *Claude) modelEnvVars(model string, models ...LaunchModel) []string {
+func (c *Claude) modelEnvVars(model string, contextLength int) []string {
 	env := []string{
 		"ANTHROPIC_DEFAULT_OPUS_MODEL=" + model,
 		"ANTHROPIC_DEFAULT_SONNET_MODEL=" + model,
@@ -223,8 +228,8 @@ func (c *Claude) modelEnvVars(model string, models ...LaunchModel) []string {
 		if l, ok := lookupCloudModelLimit(model); ok {
 			env = append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+strconv.Itoa(l.Context))
 		}
-	} else if launchModel, ok := findLaunchModel(models, model); ok && launchModel.ContextLength >= claudeCodeAutoCompactMinContext {
-		env = append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+strconv.Itoa(launchModel.ContextLength))
+	} else if contextLength >= claudeCodeAutoCompactMinContext {
+		env = append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+strconv.Itoa(contextLength))
 	}
 
 	return env

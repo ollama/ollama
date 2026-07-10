@@ -78,3 +78,15 @@ func TestFormatContextLength(t *testing.T) {
 		}
 	}
 }
+
+func TestLocalContextLengthPrompt(t *testing.T) {
+	got := localContextLengthPrompt("Claude Code", 32*1024, 100_000)
+	want := "Claude Code works best with at least 100k context. " +
+		"Current local context: 32k. " +
+		"Adjust Context length in Ollama Settings and restart to change this:\n" +
+		"  https://docs.ollama.com/context-length\n\n" +
+		"Launch Claude Code anyway?"
+	if got != want {
+		t.Fatalf("prompt = %q, want %q", got, want)
+	}
+}

@@ -337,6 +337,9 @@ func TestOpenCodePrepareLaunchModelsWarnsForLowLocalContext(t *testing.T) {
 		if options.Default != ConfirmDefaultNo {
 			t.Fatal("expected warning prompt to default to no")
 		}
+		if options.YesLabel != "Launch anyway" || options.NoLabel != "Cancel" {
+			t.Fatalf("labels = %q/%q, want Launch anyway/Cancel", options.YesLabel, options.NoLabel)
+		}
 		return false, nil
 	}
 
@@ -345,9 +348,8 @@ func TestOpenCodePrepareLaunchModelsWarnsForLowLocalContext(t *testing.T) {
 		t.Fatalf("error = %v, want ErrCancelled", err)
 	}
 	for _, want := range []string{
-		"OpenCode works best with at least 64k context.",
-		"Current local context: 32k.",
-		"Continue launching OpenCode?",
+		"OpenCode works best with at least 64k context. Current local context: 32k.",
+		"Launch OpenCode anyway?",
 	} {
 		if !strings.Contains(gotPrompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, gotPrompt)
