@@ -661,7 +661,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		// TODO (jmorganca): avoid building the response twice both here and below
 		var sb strings.Builder
 		defer close(ch)
-		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
+
+		ctx, cancel := context.WithCancel(c.Request.Context())
+		defer cancel()
+
+		if err := r.Completion(ctx, llm.CompletionRequest{
 			Prompt:          prompt,
 			Media:           media,
 			Format:          req.Format,
@@ -690,7 +694,9 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			if builtinParser != nil {
 				content, thinking, toolCalls, err := builtinParser.Add(cr.Content, cr.Done)
 				if err != nil {
-					ch <- gin.H{"error": err.Error()}
+					if !sendStreamValue(ctx, ch, gin.H{"error": err.Error()}) {
+						cancel()
+					}
 					return
 				}
 				res.Response = content
@@ -705,7 +711,9 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			}
 
 			if _, err := sb.WriteString(cr.Content); err != nil {
-				ch <- gin.H{"error": err.Error()}
+				if !sendStreamValue(ctx, ch, gin.H{"error": err.Error()}) {
+					cancel()
+				}
 			}
 
 			if cr.Done {
@@ -714,9 +722,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 
 				if !req.Raw {
-					tokens, err := r.Tokenize(c.Request.Context(), prompt+sb.String())
+					tokens, err := r.Tokenize(ctx, prompt+sb.String())
 					if err != nil {
-						ch <- gin.H{"error": err.Error()}
+						if !sendStreamValue(ctx, ch, gin.H{"error": err.Error()}) {
+							cancel()
+						}
 						return
 					}
 					res.Context = tokens
@@ -728,20 +738,26 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				// visible content, otherwise generate logprobs disappear for models with
 				// builtin thinking/tool parsers.
 				if res.Response != "" || res.Thinking != "" || res.Done || len(res.ToolCalls) > 0 || len(res.Logprobs) > 0 {
-					ch <- res
+					if !sendStreamValue(ctx, ch, res) {
+						cancel()
+					}
 				}
 
 				return
 			}
 
-			ch <- res
+			if !sendStreamValue(ctx, ch, res) {
+				cancel()
+			}
 		}); err != nil {
 			s.sched.expireRunnersForRuntimeOOM(m, err)
-			var serr api.StatusError
-			if errors.As(err, &serr) {
-				ch <- gin.H{"error": serr.ErrorMessage, "status": serr.StatusCode}
-			} else {
-				ch <- gin.H{"error": err.Error()}
+			if !errors.Is(err, context.Canceled) {
+				var serr api.StatusError
+				if errors.As(err, &serr) {
+					sendStreamValue(ctx, ch, gin.H{"error": serr.ErrorMessage, "status": serr.StatusCode})
+				} else {
+					sendStreamValue(ctx, ch, gin.H{"error": err.Error()})
+				}
 			}
 		}
 	}()
@@ -1172,25 +1188,30 @@ func (s *Server) PushHandler(c *gin.Context) {
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
+
+		ctx, cancel := context.WithCancel(c.Request.Context())
+		defer cancel()
+
 		fn := func(r api.ProgressResponse) {
-			ch <- r
+			if !sendStreamValue(ctx, ch, r) {
+				cancel()
+			}
 		}
 
 		regOpts := &registryOptions{
 			Insecure: req.Insecure,
 		}
 
-		ctx, cancel := context.WithCancel(c.Request.Context())
-		defer cancel()
-
 		name, err := getExistingName(model.ParseName(mname))
 		if err != nil {
-			ch <- gin.H{"error": err.Error()}
+			sendStreamValue(ctx, ch, gin.H{"error": err.Error()})
 			return
 		}
 
 		if err := PushModel(ctx, name.DisplayShortest(), regOpts, fn); err != nil {
-			ch <- gin.H{"error": err.Error()}
+			if !errors.Is(err, context.Canceled) {
+				sendStreamValue(ctx, ch, gin.H{"error": err.Error()})
+			}
 		}
 	}()
 
@@ -2088,6 +2109,15 @@ func waitForStream(c *gin.Context, ch chan any) {
 	}
 
 	c.JSON(http.StatusOK, latest)
+}
+
+func sendStreamValue(ctx context.Context, ch chan<- any, v any) bool {
+	select {
+	case ch <- v:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 func streamResponse(c *gin.Context, ch chan any) {
@@ -2994,7 +3024,10 @@ func (s *Server) handleNativeChat(c *gin.Context, req api.ChatRequest, m *Model,
 	go func() {
 		defer close(ch)
 
-		err := r.Chat(c.Request.Context(), nativeReq, func(r llm.ChatResponse) {
+		ctx, cancel := context.WithCancel(c.Request.Context())
+		defer cancel()
+
+		err := r.Chat(ctx, nativeReq, func(r llm.ChatResponse) {
 			res := api.ChatResponse{
 				Model:     req.Model,
 				CreatedAt: time.Now().UTC(),
@@ -3019,15 +3052,17 @@ func (s *Server) handleNativeChat(c *gin.Context, req api.ChatRequest, m *Model,
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 			}
 
-			ch <- res
+			if !sendStreamValue(ctx, ch, res) {
+				cancel()
+			}
 		})
-		if err != nil {
+		if err != nil && !errors.Is(err, context.Canceled) {
 			s.sched.expireRunnersForRuntimeOOM(m, err)
 			var serr api.StatusError
 			if errors.As(err, &serr) {
-				ch <- gin.H{"error": serr.ErrorMessage, "status": serr.StatusCode}
+				sendStreamValue(ctx, ch, gin.H{"error": serr.ErrorMessage, "status": serr.StatusCode})
 			} else {
-				ch <- gin.H{"error": err.Error()}
+				sendStreamValue(ctx, ch, gin.H{"error": err.Error()})
 			}
 		}
 	}()
