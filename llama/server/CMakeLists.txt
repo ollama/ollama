@@ -122,6 +122,18 @@ if(DEFINED ENV{OLLAMA_LLAMA_CPP_SOURCE})
     message(STATUS "Using local llama.cpp source: ${_src}")
 endif()
 
+set(_ollama_llama_cpp_repo "https://github.com/ggml-org/llama.cpp.git")
+if(DEFINED ENV{OLLAMA_LLAMA_CPP_REPOSITORY})
+    set(_ollama_llama_cpp_repo "$ENV{OLLAMA_LLAMA_CPP_REPOSITORY}")
+    message(STATUS "Using overridden llama.cpp repository: ${_ollama_llama_cpp_repo}")
+endif()
+
+set(_ollama_llama_cpp_tag ${LLAMA_CPP_GIT_TAG})
+if(DEFINED ENV{OLLAMA_LLAMA_CPP_TAG})
+    set(_ollama_llama_cpp_tag "$ENV{OLLAMA_LLAMA_CPP_TAG}")
+    message(STATUS "Using overridden llama.cpp tag: ${_ollama_llama_cpp_tag}")
+endif()
+
 # Ollama-compat shim: overlays the fetched llama.cpp source with a small
 # in-memory translation layer for existing published model blobs.
 # See llama/compat/README.md for details.
@@ -179,8 +191,8 @@ set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)
 
 FetchContent_Declare(
     llama_cpp
-    GIT_REPOSITORY "https://github.com/ggml-org/llama.cpp.git"
-    GIT_TAG ${LLAMA_CPP_GIT_TAG}
+    GIT_REPOSITORY "${_ollama_llama_cpp_repo}"
+    GIT_TAG ${_ollama_llama_cpp_tag}
     GIT_SHALLOW TRUE
     ${_ollama_compat_patch_cmd}
 )
