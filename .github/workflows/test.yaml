@@ -382,7 +382,7 @@ jobs:
             MLX_C_VERSION
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
       - name: Install UI dependencies
         working-directory: ./app/ui/app
         run: npm ci
