@@ -1,0 +1,20 @@
+version: 2
+updates:
+  # Go module dependencies
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+
+  # GitHub Actions workflows
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # Frontend (desktop app UI) dependencies
+  - package-ecosystem: "npm"
+    directory: "/app/ui/app"
+    schedule:
+      interval: "weekly"
