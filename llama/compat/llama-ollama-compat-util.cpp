@@ -126,6 +126,7 @@ void truncate_data_arr(gguf_context * meta, const char * key,
                        gguf_type elem_type, size_t elem_size, size_t new_n) {
     const int64_t kid = gguf_find_key(meta, key);
     if (kid < 0 || new_n >= gguf_get_arr_n(meta, kid)) return;
+    if (elem_size == 0 || new_n > SIZE_MAX / elem_size) return;
 
     std::vector<uint8_t> copy(elem_size * new_n);
     std::memcpy(copy.data(), gguf_get_arr_data(meta, kid), elem_size * new_n);
