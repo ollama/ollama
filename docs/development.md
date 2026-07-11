@@ -188,7 +188,7 @@ cmake --build build --parallel 8
 
 The Hy3 GGUF page currently recommends running against `hf.co/satgeze/Hy3-1M-GGUF`
 with a branch that has `hy_v3` support in llama.cpp (for example
-`satgeze/llama.cpp` at the `hy3-mtp` branch).
+`satindergrewal/llama.cpp` at the `hy3-mtp` branch).
 
 To keep model files on a dedicated data drive, set the cache location before any
 deploy or run:

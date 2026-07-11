@@ -6,8 +6,9 @@ set -euo pipefail
 # Keeps model artifacts in the configured OLLAMA_MODELS directory (default: /srv/hy3)
 # and exposes a one-off Ollama instance for terminal verification.
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODEL_CLASS="${1:-auto}"
-OLLAMA_BIN="${OLLAMA_BIN:-ollama}"
+OLLAMA_BIN="${OLLAMA_BIN:-$SCRIPT_DIR/../ollama}"
 OLLAMA_MODELS_DIR="${OLLAMA_MODELS:-/srv/hy3}"
 OLLAMA_HOST="${OLLAMA_HOST:-127.0.0.1:11450}"
 MODEL_REPO="hf.co/satgeze/Hy3-1M-GGUF"
@@ -40,7 +41,7 @@ class: one of Q2_K, IQ2_M, IQ1_M, or any MTP-* variant supported by hf.co/satgez
 Environment:
   OLLAMA_MODELS   Directory used for cache (default: /srv/hy3)
   OLLAMA_HOST     Host for temporary run (default: 127.0.0.1:11450)
-  OLLAMA_BIN      Ollama executable (default: ollama)
+  OLLAMA_BIN      Ollama executable (default: <repo>/ollama)
   OLLAMA_HY3_PROMPT    Optional prompt to run for verification
 EOF
 }
@@ -132,7 +133,7 @@ fi
 echo "Running verify prompt: ${PROMPT}"
 if ! "$OLLAMA_BIN" run "$MODEL_NAME" "$PROMPT"; then
     echo "Run failed. If this is 'unknown model architecture: hy_v3', rebuild Ollama"
-    echo "with OLLAMA_LLAMA_CPP_REPOSITORY=https://github.com/satgeze/llama.cpp.git"
+    echo "with OLLAMA_LLAMA_CPP_REPOSITORY=https://github.com/satindergrewal/llama.cpp.git"
     echo "and OLLAMA_LLAMA_CPP_TAG=hy3-mtp before deploying again."
     exit 1
 fi
