@@ -63,6 +63,26 @@ func TestInferThinkingTags(t *testing.T) {
 			wantClosingTag: "Some text after",
 		},
 		{
+			desc: "gemma3-instruct",
+			tmplString: `{{- range $i, $_ := .Messages }}
+{{- $last := eq (len (slice $.Messages $i)) 1 }}
+{{- if eq .Role "user" }}<start_of_turn>user
+{{- if and (eq $i 1) $.System }}
+{{ $.System }}
+{{ end }}
+{{ .Content }}<end_of_turn>
+{{ else if eq .Role "assistant" }}<start_of_turn>model
+{{- if and $last .Thinking }}<unused94>{{ .Thinking }}<unused95>
+{{ end }}
+{{ .Content }}<end_of_turn>
+{{ end }}
+{{- if $last }}<start_of_turn>model{{ if $.Think }}<unused94>{{ end }}
+{{ end }}
+{{- end }}`,
+			wantOpeningTag: "<unused94>",
+			wantClosingTag: "<unused95>",
+		},
+		{
 			desc: "qwen3",
 			tmplString: `
 {{- if or .System .Tools .Thinking }}<|im_start|>system

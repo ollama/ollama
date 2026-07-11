@@ -645,7 +645,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	var thinkingState *thinking.Parser
 	if builtinParser == nil {
 		openingTag, closingTag := thinking.InferTags(m.Template.Template)
-		if req.Think != nil && req.Think.Bool() && openingTag != "" && closingTag != "" {
+		if openingTag != "" && closingTag != "" {
 			thinkingState = &thinking.Parser{
 				OpeningTag: openingTag,
 				ClosingTag: closingTag,
@@ -2724,7 +2724,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	var thinkingState *thinking.Parser
 	openingTag, closingTag := thinking.InferTags(m.Template.Template)
-	if req.Think != nil && req.Think.Bool() && openingTag != "" && closingTag != "" {
+	if openingTag != "" && closingTag != "" {
 		thinkingState = &thinking.Parser{
 			OpeningTag: openingTag,
 			ClosingTag: closingTag,

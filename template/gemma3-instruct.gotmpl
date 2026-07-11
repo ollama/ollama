@@ -6,8 +6,10 @@
 {{ end }}
 {{ .Content }}<end_of_turn>
 {{ else if eq .Role "assistant" }}<start_of_turn>model
+{{- if and $last .Thinking }}<unused94>{{ .Thinking }}<unused95>
+{{ end }}
 {{ .Content }}<end_of_turn>
 {{ end }}
-{{- if $last }}<start_of_turn>model
+{{- if $last }}<start_of_turn>model{{ if $.Think }}<unused94>{{ end }}
 {{ end }}
 {{- end }}
