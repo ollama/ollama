@@ -60,8 +60,23 @@ func (c *Claude) Run(model string, _ []LaunchModel, args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	cmd.Env = append(os.Environ(), c.envVars(model)...)
+	cmd.Env = c.launchEnv(model, os.Environ())
 	return cmd.Run()
+}
+
+func (c *Claude) launchEnv(model string, inherited []string) []string {
+	const disabledTraffic = "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"
+
+	overrides := c.envVars(model)
+	env := make([]string, 0, len(inherited)+len(overrides))
+	for _, entry := range inherited {
+		key, _, _ := strings.Cut(entry, "=")
+		if strings.EqualFold(key, disabledTraffic) {
+			continue
+		}
+		env = append(env, entry)
+	}
+	return append(env, overrides...)
 }
 
 func (c *Claude) envVars(model string) []string {
@@ -74,7 +89,6 @@ func (c *Claude) envVars(model string) []string {
 		"DISABLE_ERROR_REPORTING=1",
 		"DISABLE_FEEDBACK_COMMAND=1",
 		"CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1",
-		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
 	}
 
 	env = append(env, c.modelEnvVars(model)...)

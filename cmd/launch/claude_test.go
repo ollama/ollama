@@ -348,23 +348,55 @@ func TestClaudeEnvVars(t *testing.T) {
 
 	got := envMap(c.envVars("llama3.2"))
 	for key, want := range map[string]string{
-		"ANTHROPIC_BASE_URL":                       envconfig.Host().String(),
-		"ANTHROPIC_API_KEY":                        "",
-		"ANTHROPIC_AUTH_TOKEN":                     "ollama",
-		"CLAUDE_CODE_ATTRIBUTION_HEADER":           "0",
-		"DISABLE_TELEMETRY":                        "1",
-		"DISABLE_ERROR_REPORTING":                  "1",
-		"DISABLE_FEEDBACK_COMMAND":                 "1",
-		"CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY":      "1",
-		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-		"ANTHROPIC_DEFAULT_OPUS_MODEL":             "llama3.2",
-		"ANTHROPIC_DEFAULT_SONNET_MODEL":           "llama3.2",
-		"ANTHROPIC_DEFAULT_HAIKU_MODEL":            "llama3.2",
-		"CLAUDE_CODE_SUBAGENT_MODEL":               "llama3.2",
+		"ANTHROPIC_BASE_URL":                  envconfig.Host().String(),
+		"ANTHROPIC_API_KEY":                   "",
+		"ANTHROPIC_AUTH_TOKEN":                "ollama",
+		"CLAUDE_CODE_ATTRIBUTION_HEADER":      "0",
+		"DISABLE_TELEMETRY":                   "1",
+		"DISABLE_ERROR_REPORTING":             "1",
+		"DISABLE_FEEDBACK_COMMAND":            "1",
+		"CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL":        "llama3.2",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL":      "llama3.2",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL":       "llama3.2",
+		"CLAUDE_CODE_SUBAGENT_MODEL":          "llama3.2",
 	} {
 		if got[key] != want {
 			t.Errorf("%s = %q, want %q", key, got[key], want)
 		}
+	}
+
+	if _, ok := got["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"]; ok {
+		t.Error("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC must remain unset so Claude Code channels stay available")
+	}
+}
+
+func TestClaudeLaunchEnv(t *testing.T) {
+	c := &Claude{}
+	inherited := []string{
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=0",
+		"claude_code_disable_nonessential_traffic=1",
+		"Claude_Code_Disable_Nonessential_Traffic=1",
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC_BACKUP=1",
+		"UNRELATED=value",
+	}
+
+	got := c.launchEnv("llama3.2", inherited)
+	for _, entry := range got {
+		key, _, _ := strings.Cut(entry, "=")
+		if strings.EqualFold(key, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC") {
+			t.Fatalf("launch environment inherited %q", entry)
+		}
+	}
+	if !slices.Contains(got, "UNRELATED=value") {
+		t.Error("launch environment did not preserve unrelated inherited variable")
+	}
+	if !slices.Contains(got, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC_BACKUP=1") {
+		t.Error("launch environment removed similarly named inherited variable")
+	}
+	if !slices.Contains(got, "ANTHROPIC_AUTH_TOKEN=ollama") {
+		t.Error("launch environment did not include Claude overrides")
 	}
 }
 
