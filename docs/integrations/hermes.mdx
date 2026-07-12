@@ -56,7 +56,7 @@ hermes setup
 If you'd rather drive Hermes's own wizard instead of `ollama launch hermes`, install it directly:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
+curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
 ```
 
 Hermes launches the setup wizard automatically. Choose **Quick setup**:
@@ -115,25 +115,3 @@ Connect a messaging platform? (Telegram, Discord, etc.)
 Launch hermes chat now? [Y/n]: Y
 ```
 
-### Configure desktop app with Ollama cloud models
-
-To configure Hermes Desktop with cloud models, run:
-
-```bash
-hermes model
-```
-
-In the model wizard:
-
-1. Select **Ollama Cloud** as the provider
-2. Enter your [Ollama API key](https://ollama.com/settings/keys)
-3. Leave the default base URL as `https://ollama.com/v1`
-4. Pick a model. Recommended: `glm-5.1` or `kimi-k2.6`
-
-Then launch Hermes Desktop:
-
-```bash
-hermes desktop
-```
-
-This can take some time to configure before the desktop app starts.

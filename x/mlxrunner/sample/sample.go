@@ -443,8 +443,12 @@ func (s *Sampler) Sample(seqIDs []int, logits *mlx.Array) Result {
 }
 
 // Distribution applies this slot's sampling transforms to logits without
-// mutating sampler state. Row i is built as if draftTokens[:i] had already
-// been appended to the slot history. logits must be [R,V] or [1,R,V].
+// mutating sampler state. Rows align with the end of the draft chain: the
+// final row is built as if every draft token had already been appended to
+// the slot history, each earlier row with one fewer. Validation passes
+// len(draftTokens)+1 rows, so row i sees draftTokens[:i]; a proposal step
+// passes a single row, which sees the whole chain so far. logits must be
+// [R,V] or [1,R,V].
 func (s *Sampler) Distribution(seqID int, logits *mlx.Array, draftTokens *mlx.Array) Distribution {
 	slot, logits, draftTokens := s.speculativeInputs("Distribution", seqID, logits, draftTokens)
 	rows := logits.Dim(0)
@@ -465,7 +469,8 @@ func (s *Sampler) Distribution(seqID int, logits *mlx.Array, draftTokens *mlx.Ar
 
 // SpeculativeScores applies this slot's sampling transforms to logits without
 // mutating sampler state and returns dense log-probability scores for sampled
-// decoding. Greedy decoding returns the penalty-adjusted logits.
+// decoding. Greedy decoding returns the penalty-adjusted logits. Rows align
+// with the end of the draft chain as in Distribution.
 func (s *Sampler) SpeculativeScores(seqID int, logits *mlx.Array, draftTokens *mlx.Array) *mlx.Array {
 	slot, logits, draftTokens := s.speculativeInputs("SpeculativeScores", seqID, logits, draftTokens)
 	rows := logits.Dim(0)
@@ -521,6 +526,17 @@ func (s *Sampler) speculativeInputs(caller string, seqID int, logits *mlx.Array,
 
 	if draftTokens != nil && draftTokens.NumDims() == 1 {
 		draftTokens = draftTokens.ExpandDims(0)
+	}
+
+	// Rows align with the end of the draft chain, so the earliest row sees
+	// draftCount-rows+1 prior drafts. More rows than draftCount+1 would make
+	// that count negative and silently drop the prefix; reject it loudly.
+	draftCount := 0
+	if draftTokens != nil {
+		draftCount = draftTokens.Dim(1)
+	}
+	if logits.Dim(0) > draftCount+1 {
+		panic(fmt.Sprintf("sample.Sampler.%s: %d logit rows exceed the %d-token draft chain", caller, logits.Dim(0), draftCount))
 	}
 	return slot, logits, draftTokens
 }
@@ -578,7 +594,7 @@ func (s *Sampler) speculativeDistributionSerial(slot *slotState, logits *mlx.Arr
 	for i := range rows {
 		rowLogits := logits.Slice(mlx.Slice(i, i+1), mlx.Slice())
 		hist := base
-		prefixLen := min(i, draftCount)
+		prefixLen := draftCount - rows + 1 + i
 		if prefixLen > 0 {
 			prefix := draftTokens.Slice(mlx.Slice(), mlx.Slice(0, prefixLen))
 			if hist == nil {
@@ -616,7 +632,9 @@ func (s *Sampler) speculativeHistory(slot *slotState, draftTokens *mlx.Array, ro
 	sourceIdx := make([]int32, rows*width)
 	writeMask := make([]bool, rows*width)
 	for i := range rows {
-		prefixLen := min(i, draftCount)
+		// Non-positive lengths run no iterations: rows beyond the draft
+		// chain's start carry the base history unchanged.
+		prefixLen := draftCount - rows + 1 + i
 		for j := range prefixLen {
 			pos := (next + j) % width
 			sourceIdx[i*width+pos] = int32(j)

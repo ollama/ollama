@@ -55,7 +55,6 @@ import (
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/types/syncmap"
 	"github.com/ollama/ollama/version"
-	xcmd "github.com/ollama/ollama/x/cmd"
 	xcreate "github.com/ollama/ollama/x/create"
 	xcreateclient "github.com/ollama/ollama/x/create/client"
 	"github.com/ollama/ollama/x/imagegen"
@@ -885,11 +884,6 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return imagegen.RunCLI(cmd, name, opts.Prompt, interactive, opts.KeepAlive)
 	}
 
-	// Check for experimental flag
-	isExperimental, _ := cmd.Flags().GetBool("experimental")
-	yoloMode, _ := cmd.Flags().GetBool("experimental-yolo")
-	enableWebsearch, _ := cmd.Flags().GetBool("experimental-websearch")
-
 	if interactive {
 		if err := loadOrUnloadModel(cmd, &opts); err != nil {
 			var sErr api.AuthorizationError
@@ -914,11 +908,6 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 				fmt.Println()
 				fmt.Println()
 			}
-		}
-
-		// Use experimental agent loop with tools
-		if isExperimental {
-			return xcmd.GenerateInteractive(cmd, opts.Model, opts.WordWrap, opts.Options, opts.Think, opts.HideThinking, opts.KeepAlive, yoloMode, enableWebsearch)
 		}
 
 		return generateInteractive(cmd, opts)
@@ -2143,72 +2132,32 @@ func ensureServerRunning(ctx context.Context) error {
 }
 
 func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
-	opts := runOptions{
-		Model:       modelName,
-		WordWrap:    os.Getenv("TERM") == "xterm-256color",
-		Options:     map[string]any{},
-		ShowConnect: true,
-	}
-
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
 
-	requestedCloud := modelref.HasExplicitCloudSource(modelName)
-
-	info, err := func() (*api.ShowResponse, error) {
-		showReq := &api.ShowRequest{Name: modelName}
-		info, err := client.Show(cmd.Context(), showReq)
-		var se api.StatusError
-		if errors.As(err, &se) && se.StatusCode == http.StatusNotFound {
-			if requestedCloud {
-				return nil, err
-			}
-			if err := PullHandler(cmd, []string{modelName}); err != nil {
-				return nil, err
-			}
-			return client.Show(cmd.Context(), &api.ShowRequest{Name: modelName})
-		}
-		return info, err
-	}()
+	opts := agentTUIOptions{
+		Model:   modelName,
+		Options: map[string]any{},
+	}
+	info, err := prepareAgentModel(cmd, client, &opts, false)
 	if err != nil {
 		if handleCloudAuthorizationError(err) {
 			return nil
 		}
 		return err
 	}
+	opts.System = info.System
 
-	ensureCloudStub(cmd.Context(), client, modelName)
-
-	opts.Think, err = inferThinkingOption(&info.Capabilities, &opts, false)
-	if err != nil {
+	if err := saveLastAgentModel(opts.Model); err != nil {
 		return err
 	}
-
-	audioCapable := slices.Contains(info.Capabilities, model.CapabilityAudio)
-	opts.MultiModal = slices.Contains(info.Capabilities, model.CapabilityVision) || audioCapable
-
-	// TODO: remove the projector info and vision info checks below,
-	// these are left in for backwards compatibility with older servers
-	// that don't have the capabilities field in the model info
-	if len(info.ProjectorInfo) != 0 {
-		opts.MultiModal = true
-	}
-	for k := range info.ModelInfo {
-		if strings.Contains(k, ".vision.") {
-			opts.MultiModal = true
-			break
+	if err := GenerateAgentTUI(cmd, client, opts); err != nil {
+		if handleCloudAuthorizationError(err) {
+			return nil
 		}
-	}
-
-	applyShowResponseToRunOptions(&opts, info)
-
-	if err := loadOrUnloadModel(cmd, &opts); err != nil {
-		return fmt.Errorf("error loading model: %w", err)
-	}
-	if err := generateInteractive(cmd, opts); err != nil {
-		return fmt.Errorf("error running model: %w", err)
+		return fmt.Errorf("error running agent: %w", err)
 	}
 	return nil
 }
@@ -2413,15 +2362,21 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
 	runCmd.Flags().Bool("truncate", false, "For embedding models: truncate inputs exceeding context length (default: true). Set --truncate=false to error instead")
 	runCmd.Flags().Int("dimensions", 0, "Truncate output embeddings to specified dimension (embedding models only)")
-	runCmd.Flags().Bool("experimental", false, "Enable experimental agent loop with tools")
-	runCmd.Flags().Bool("experimental-yolo", false, "Skip all tool approval prompts (use with caution)")
-	runCmd.Flags().Bool("experimental-websearch", false, "Enable web search tool in experimental mode")
 
 	// Image generation flags (width, height, steps, seed, etc.)
 	imagegen.RegisterFlags(runCmd)
 
 	runCmd.Flags().Bool("imagegen", false, "Use the imagegen runner for LLM inference")
 	runCmd.Flags().MarkHidden("imagegen")
+
+	agentCmd := &cobra.Command{
+		Use:     "agent",
+		Short:   "Run an agent",
+		Args:    cobra.ExactArgs(0),
+		PreRunE: checkServerHeartbeat,
+		RunE:    AgentHandler,
+	}
+	registerAgentFlags(agentCmd)
 
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
@@ -2553,6 +2508,7 @@ func NewCLI() *cobra.Command {
 		createCmd,
 		showCmd,
 		runCmd,
+		agentCmd,
 		stopCmd,
 		pullCmd,
 		pushCmd,
@@ -2600,6 +2556,7 @@ func NewCLI() *cobra.Command {
 		createCmd,
 		showCmd,
 		runCmd,
+		agentCmd,
 		stopCmd,
 		pullCmd,
 		pushCmd,

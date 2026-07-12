@@ -140,7 +140,14 @@ func TestMenuRendersPinnedItemsAndMore(t *testing.T) {
 	}
 
 	view := menu.View()
-	for _, want := range []string{"Chat with a model", "Launch Claude Code", "Launch Hermes Agent", "Launch OpenClaw", "More..."} {
+	for _, want := range []string{
+		"Chat, Code, & Work",
+		"Chat with models, code, search the web, and do work",
+		"Launch Claude Code",
+		"Launch Hermes Agent",
+		"Launch OpenClaw",
+		"More...",
+	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected menu view to contain %q\n%s", want, view)
 		}

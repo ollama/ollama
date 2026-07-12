@@ -1,8 +1,7 @@
 package create
 
 import (
-	"os"
-	"path/filepath"
+	"encoding/json"
 	"testing"
 )
 
@@ -11,27 +10,40 @@ func TestGemma4UnifiedImportTransformRegistration(t *testing.T) {
 		name       string
 		configJSON string
 		cfg        sourceModelConfig
+		wantErr    bool
+		wantLayers int
 	}{
 		{
 			name:       "unified conditional generation architecture",
 			configJSON: `{"architectures":["Gemma4UnifiedForConditionalGeneration"],"text_config":{"num_hidden_layers":48}}`,
 			cfg:        sourceModelConfig{Architectures: []string{"Gemma4UnifiedForConditionalGeneration"}},
+			wantLayers: 48,
 		},
 		{
 			name:       "unified model type fallback",
 			configJSON: `{"model_type":"gemma4_unified","text_config":{"num_hidden_layers":48}}`,
 			cfg:        sourceModelConfig{ModelType: "gemma4_unified"},
+			wantLayers: 48,
+		},
+		{
+			name:       "malformed config is a hard error",
+			configJSON: `{"architectures":["Gemma4UnifiedForConditionalGeneration"],"num_hidden_layers":"oops"}`,
+			cfg:        sourceModelConfig{Architectures: []string{"Gemma4UnifiedForConditionalGeneration"}},
+			wantErr:    true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.configJSON), 0o644); err != nil {
-				t.Fatal(err)
-			}
+			inv := Inventory{Config: tt.cfg, RawConfig: json.RawMessage(tt.configJSON)}
 
-			transform, err := newTensorImportTransform(dir, tt.cfg)
+			transform, err := newTensorImportTransform(inv)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("newTensorImportTransform() error = nil, want error")
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("newTensorImportTransform() error = %v", err)
 			}
@@ -40,8 +52,8 @@ func TestGemma4UnifiedImportTransformRegistration(t *testing.T) {
 			if !ok {
 				t.Fatalf("newTensorImportTransform() = %T, want gemma4ImportTransform", transform)
 			}
-			if gemmaTransform.numLayers != 48 {
-				t.Fatalf("numLayers = %d, want 48", gemmaTransform.numLayers)
+			if gemmaTransform.numLayers != tt.wantLayers {
+				t.Fatalf("numLayers = %d, want %d", gemmaTransform.numLayers, tt.wantLayers)
 			}
 		})
 	}
@@ -151,7 +163,7 @@ func TestGemma4QuantizationType(t *testing.T) {
 		// but not intercepted by gemma4's layer-position heuristic.
 		// Falls through to GetTensorQuantization which applies uniform promotion.
 		{"vision v_proj int4", transform26B, "model.vision_tower.encoder.layers.0.self_attn.v_proj.linear.weight", aligned, "int4", "int8"},
-		{"vision v_proj nvfp4", transform26B, "model.vision_tower.encoder.layers.0.self_attn.v_proj.linear.weight", aligned, "nvfp4", "nvfp4"},
+		{"vision v_proj nvfp4", transform26B, "model.vision_tower.encoder.layers.0.self_attn.v_proj.linear.weight", aligned, "nvfp4", "mxfp8"},
 		// Audio tower down_proj
 		{"audio down_proj int4", transform26B, "model.audio_tower.layers.0.mlp.down_proj.linear.weight", aligned, "int4", ""},
 		{"audio down_proj nvfp4", transform26B, "model.audio_tower.layers.0.mlp.down_proj.linear.weight", aligned, "nvfp4", ""},
@@ -203,37 +215,5 @@ func TestUseMoreBits(t *testing.T) {
 	// Layer 5 should be promoted: (5 - 3) % 3 == 2
 	if !promoted[5] {
 		t.Errorf("layer 5 should be promoted (periodic)")
-	}
-}
-
-func TestIsGemma4StackedMoETensor(t *testing.T) {
-	tests := []struct {
-		label      string
-		tensorName string
-		shape      []int32
-		want       bool
-	}{
-		// New-style: .experts.gate_up_proj
-		{"experts gate_up_proj 3D", "model.layers.0.experts.gate_up_proj", []int32{128, 1408, 2816}, true},
-		{"experts down_proj 3D", "model.layers.0.experts.down_proj", []int32{128, 2816, 704}, true},
-		// Old-style: .moe.gate_proj
-		{"moe gate_proj 3D", "model.layers.0.moe.gate_proj", []int32{128, 2112, 2816}, true},
-		{"moe down_proj 3D", "model.layers.0.moe.down_proj.weight", []int32{128, 2816, 2112}, true},
-		// Not stacked: 2D
-		{"2D weight", "model.layers.0.experts.gate_up_proj", []int32{1408, 2816}, false},
-		// Not expert
-		{"non-expert 3D", "model.layers.0.mlp.gate_proj", []int32{3, 2816, 2816}, false},
-		// Not a projection
-		{"expert non-proj", "model.layers.0.experts.scale", []int32{128, 1, 1}, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.label, func(t *testing.T) {
-			got := isGemma4StackedMoETensor(tt.tensorName, tt.shape)
-			if got != tt.want {
-				t.Errorf("isGemma4StackedMoETensor(%q, %v) = %v, want %v",
-					tt.tensorName, tt.shape, got, tt.want)
-			}
-		})
 	}
 }

@@ -501,26 +501,6 @@ if(OLLAMA_RUNNER_DIR)
                 RUNTIME DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
                 LIBRARY DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
             )
-            if(WIN32)
-                # Bundle the system Vulkan loader, not an arbitrary SDK copy.
-                # The loader is supplied by the installed Vulkan runtime or
-                # GPU driver; using that copy avoids PATH-dependent SDK drift.
-                if(DEFINED ENV{SystemRoot})
-                    file(TO_CMAKE_PATH "$ENV{SystemRoot}" _ollama_windows_root)
-                else()
-                    set(_ollama_windows_root "C:/Windows")
-                endif()
-                find_file(_vulkan_loader_dll
-                    NAMES vulkan-1.dll
-                    HINTS "${_ollama_windows_root}/System32"
-                    NO_DEFAULT_PATH)
-                if(NOT _vulkan_loader_dll)
-                    message(FATAL_ERROR "Could not find vulkan-1.dll in the Windows Vulkan runtime. Install the Vulkan runtime from the GPU driver or VULKAN_SDK/Helpers/VulkanRT.exe.")
-                endif()
-                install(FILES "${_vulkan_loader_dll}"
-                    DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}"
-                    COMPONENT llama-server)
-            endif()
         endif()
     endif()
 else()

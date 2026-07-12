@@ -192,8 +192,16 @@ if(OLLAMA_MLX_BACKENDS)
     add_custom_target(ollama-mlx-sources DEPENDS ${_mlx_source_targets})
 endif()
 
+set(OLLAMA_BUILD_PARALLEL "" CACHE STRING
+    "Number of parallel jobs for nested native builds (empty = use generator default)")
+
+set(_native_parallel_args --parallel)
+if(NOT OLLAMA_BUILD_PARALLEL STREQUAL "")
+    list(APPEND _native_parallel_args ${OLLAMA_BUILD_PARALLEL})
+endif()
+
 set(OLLAMA_NATIVE_BUILD_TOOL_COMMAND
-    ${CMAKE_COMMAND} --build <BINARY_DIR>)
+    ${CMAKE_COMMAND} --build <BINARY_DIR> ${_native_parallel_args})
 set(OLLAMA_NATIVE_BUILD_TARGET_ARG --target)
 if(CMAKE_GENERATOR MATCHES "Makefiles")
     set(OLLAMA_NATIVE_BUILD_TOOL_COMMAND
@@ -233,6 +241,67 @@ function(ollama_cache_arg_is_set name output)
         set(${output} TRUE PARENT_SCOPE)
     else()
         set(${output} FALSE PARENT_SCOPE)
+    endif()
+endfunction()
+
+function(ollama_backend_cuda_major backend output)
+    if("${backend}" MATCHES "^cuda_v([0-9]+)$")
+        set(${output} "${CMAKE_MATCH_1}" PARENT_SCOPE)
+    else()
+        set(${output} "" PARENT_SCOPE)
+    endif()
+endfunction()
+
+function(ollama_find_windows_cuda_root major output)
+    if(NOT WIN32 OR "${major}" STREQUAL "")
+        set(${output} "" PARENT_SCOPE)
+        return()
+    endif()
+
+    execute_process(
+        COMMAND ${CMAKE_COMMAND} -E environment
+        OUTPUT_VARIABLE _environment)
+    string(REPLACE "\r\n" "\n" _environment "${_environment}")
+    string(REPLACE "\r" "\n" _environment "${_environment}")
+    string(REGEX MATCHALL "CUDA_PATH_V${major}_[0-9]+=[^\n]*" _matches "${_environment}")
+
+    set(_best_minor -1)
+    set(_best_root "")
+    foreach(_entry IN LISTS _matches)
+        if(_entry MATCHES "^CUDA_PATH_V${major}_([0-9]+)=(.*)$")
+            set(_minor "${CMAKE_MATCH_1}")
+            set(_root "${CMAKE_MATCH_2}")
+            if(_minor GREATER _best_minor)
+                set(_best_minor ${_minor})
+                set(_best_root "${_root}")
+            endif()
+        endif()
+    endforeach()
+
+    if(_best_root STREQUAL "" AND DEFINED ENV{CUDA_PATH})
+        set(_cuda_path "$ENV{CUDA_PATH}")
+        if(EXISTS "${_cuda_path}/version.json")
+            file(READ "${_cuda_path}/version.json" _version_json)
+            if(_version_json MATCHES "\"cuda\"[ \t\r\n]*:[ \t\r\n]*\"${major}\\.")
+                set(_best_root "${_cuda_path}")
+            endif()
+        endif()
+    endif()
+
+    set(${output} "${_best_root}" PARENT_SCOPE)
+endfunction()
+
+function(ollama_append_cuda_toolkit_args output backend)
+    # If CUDAToolkit_ROOT is already explicitly set, just forward it.
+    ollama_append_cache_arg_if_set(${output} CUDAToolkit_ROOT)
+    if(NOT DEFINED CUDAToolkit_ROOT OR "${CUDAToolkit_ROOT}" STREQUAL "")
+        # Auto-discover CUDA toolkit for the requested backend version on Windows.
+        ollama_backend_cuda_major("${backend}" _cuda_major)
+        ollama_find_windows_cuda_root("${_cuda_major}" _cuda_root)
+        if(NOT "${_cuda_root}" STREQUAL "")
+            ollama_escape_cmake_list("${_cuda_root}" _value)
+            set(${output} ${${output}} "-DCUDAToolkit_ROOT=${_value}" PARENT_SCOPE)
+        endif()
     endif()
 endfunction()
 
@@ -327,12 +396,28 @@ function(ollama_add_llama_server_build name)
                 -DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET})
         endif()
     endif()
+    # Visual Studio requires -T toolset override to select the correct CUDA toolkit.
+    # MSBuild's CUDA integration ignores -DCUDAToolkit_ROOT for nvcc selection.
+    # Prefer user-specified CUDAToolkit_ROOT before falling back to auto-discovery.
+    set(_generator_args)
+    if(WIN32 AND CMAKE_GENERATOR MATCHES "Visual Studio")
+        set(_cuda_root "${CUDAToolkit_ROOT}")
+        if("${_cuda_root}" STREQUAL "")
+            ollama_backend_cuda_major("${name}" _cuda_major)
+            ollama_find_windows_cuda_root("${_cuda_major}" _cuda_root)
+        endif()
+        if(NOT "${_cuda_root}" STREQUAL "")
+            list(APPEND _generator_args -T cuda=${_cuda_root})
+        endif()
+    endif()
     set(_configure_command ${CMAKE_COMMAND}
+        ${_generator_args}
         -S ${CMAKE_SOURCE_DIR}/llama/server
         -B <BINARY_DIR>
         ${_cmake_args})
     if(ARG_PRESET)
         set(_configure_command ${CMAKE_COMMAND}
+            ${_generator_args}
             -S ${CMAKE_SOURCE_DIR}/llama/server
             --preset ${ARG_PRESET}
             -B <BINARY_DIR>
@@ -544,6 +629,7 @@ if(OLLAMA_HAVE_LLAMA_SERVER)
             set(_cuda_args)
             ollama_append_cache_arg_if_set(_cuda_args CMAKE_CUDA_ARCHITECTURES)
             ollama_append_cache_arg_if_set(_cuda_args CMAKE_CUDA_FLAGS)
+            ollama_append_cuda_toolkit_args(_cuda_args ${_backend})
             ollama_add_llama_server_build(${_backend}
                 PRESET ${_cuda_preset}
                 RUNNER_DIR ${_backend}
@@ -555,6 +641,7 @@ if(OLLAMA_HAVE_LLAMA_SERVER)
             set(_cuda_args)
             ollama_append_cache_arg_if_set(_cuda_args CMAKE_CUDA_ARCHITECTURES)
             ollama_append_cache_arg_if_set(_cuda_args CMAKE_CUDA_FLAGS)
+            ollama_append_cuda_toolkit_args(_cuda_args ${_backend})
             ollama_add_llama_server_build(${_backend}
                 PRESET ${_cuda_preset}
                 RUNNER_DIR ${_backend}

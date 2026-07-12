@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
@@ -28,10 +29,7 @@ func init() {
 }
 
 // Compile-time interface checks.
-var (
-	_ base.Model               = (*Model)(nil)
-	_ base.MTPDefaultsProvider = (*Model)(nil)
-)
+var _ base.Model = (*Model)(nil)
 
 // RopeParams holds per-layer-type RoPE settings.
 type RopeParams struct {
@@ -157,6 +155,17 @@ func firstNonNil(tensors map[string]*mlx.Array, keys ...string) *mlx.Array {
 	return nil
 }
 
+// firstTensorKey returns the first key present in tensors along with its
+// tensor, or "", nil if none of the keys are present.
+func firstTensorKey(tensors map[string]*mlx.Array, keys ...string) (string, *mlx.Array) {
+	for _, k := range keys {
+		if t := tensors[k]; t != nil {
+			return k, t
+		}
+	}
+	return "", nil
+}
+
 // sliceAxis1 slices a tensor along axis 1: a[:, start:stop, ...].
 func sliceAxis1(a *mlx.Array, start, stop int32) *mlx.Array {
 	dims := a.Dims()
@@ -244,6 +253,38 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *TextConfig, pre
 		mlx.Eval(out.Biases)
 	}
 	return out
+}
+
+// loadFusedExperts configures an MoE block from a fused, pre-stacked gate_up
+// projection and its down projection. It keeps the fused gate_up as a single
+// tensor and chooses GatherQMM (one quantized call) when scale companions are
+// present, or GatherMM otherwise. It is name-agnostic: callers resolve the
+// tensor keys, which may or may not carry a ".weight" suffix.
+func (m *Model) loadFusedExperts(moe *MoEBlock, tensors map[string]*mlx.Array, gateUpKey string, gateUp *mlx.Array, downKey string, down *mlx.Array) {
+	moe.UseFusedGateUp = true
+
+	gateUpScales := firstNonNil(tensors, gateUpKey+"_scale", gateUpKey+".scale")
+	downScales := firstNonNil(tensors, downKey+"_scale", downKey+".scale")
+	if gateUpScales == nil || downScales == nil {
+		// Dense: keep gate_up fused and transpose for GatherMM.
+		moe.GateUpWeight = transposeForGatherMM(gateUp)
+		moe.DownWeight = transposeForGatherMM(down)
+		return
+	}
+
+	// Quantized: keep the fused gate_up packed for a single GatherQMM call.
+	moe.UseQuantized = true
+	moe.GateUpWeightQ = gateUp
+	moe.GateUpScales = gateUpScales
+	moe.GateUpBiases = firstNonNil(tensors, gateUpKey+"_qbias", gateUpKey+".bias")
+	moe.DownWeightQ = down
+	moe.DownScales = downScales
+	moe.DownBiases = firstNonNil(tensors, downKey+"_qbias", downKey+".bias")
+
+	moe.GateUpGroupSize, moe.GateUpBits, moe.QuantMode = model.ResolveLinearQuantParams(
+		m.QuantGroupSize, m.QuantBits, m.QuantMode, m.TensorQuant, gateUpKey, gateUp, gateUpScales)
+	moe.DownGroupSize, moe.DownBits, moe.DownQuantMode = model.ResolveLinearQuantParams(
+		m.QuantGroupSize, m.QuantBits, m.QuantMode, m.TensorQuant, downKey, down, downScales)
 }
 
 // Router implements Gemma 4's expert routing mechanism.
@@ -487,24 +528,6 @@ func parseSuppressTokens(configData []byte) []int32 {
 
 func (m *Model) EnableCompile() bool {
 	return true
-}
-
-func (m *Model) MTPDraftDefaults(_ bool) base.MTPDefaults {
-	defaults := base.MTPDefaults{
-		InitialDraftTokens: 4,
-		MaxDraftTokens:     16,
-		Enabled:            true,
-	}
-	if m == nil || m.TextConfig == nil {
-		return defaults
-	}
-	switch {
-	case !m.EnableMoeBlock && m.HiddenSize == 5376 && m.NumHiddenLayers == 60:
-		defaults.InitialDraftTokens = 14
-	case m.EnableMoeBlock && m.HiddenSize == 2816 && m.NumHiddenLayers == 30:
-		defaults.InitialDraftTokens = 8
-	}
-	return defaults
 }
 
 func resolveWeightPrefix(tensors map[string]*mlx.Array) string {
@@ -782,109 +805,33 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 
 			moe := &MoEBlock{PerExpertScale: perExpertScale}
 
-			// Check for pre-stacked tensors (unquantized HF format).
-			// Try .experts. first (new weight drop), fall back to .moe. (old format).
-			gateUpW := tensors[layerPrefix+".experts.gate_up_proj"]
-			if gateUpW == nil {
-				gateUpW = tensors[layerPrefix+".moe.gate_up_proj"]
-			}
-			gateW := tensors[layerPrefix+".experts.gate_proj"]
-			if gateW == nil {
-				gateW = tensors[layerPrefix+".moe.gate_proj"]
-			}
-			if gateUpW != nil {
-				// Fused gate+up: split along dim 1, transpose for GatherMM.
-				dims := gateUpW.Dims()
-				half := int32(dims[1] / 2)
-				gateSlice := sliceAxis1(gateUpW, 0, half)
-				upSlice := sliceAxis1(gateUpW, half, int32(dims[1]))
-				moe.GateWeight = transposeForGatherMM(gateSlice)
-				moe.UpWeight = transposeForGatherMM(upSlice)
-				downW := tensors[layerPrefix+".experts.down_proj"]
-				if downW == nil {
-					downW = tensors[layerPrefix+".moe.down_proj"]
+			// Experts ship with gate+up fused into one pre-stacked tensor under
+			// a few different names: HF (.experts./.moe.) and the create
+			// pipeline (.moe.switch_mlp.), each with or without a ".weight"
+			// suffix. Resolve the gate_up projection once, then let
+			// loadFusedExperts decide quantized vs dense from its scales.
+			if gateUpKey, gateUp := firstTensorKey(tensors,
+				layerPrefix+".experts.gate_up_proj.weight", layerPrefix+".experts.gate_up_proj",
+				layerPrefix+".moe.gate_up_proj.weight", layerPrefix+".moe.gate_up_proj",
+				layerPrefix+".moe.switch_mlp.gate_up_proj.weight", layerPrefix+".moe.switch_mlp.gate_up_proj",
+			); gateUp != nil {
+				downKey := strings.Replace(gateUpKey, "gate_up_proj", "down_proj", 1)
+				down := tensors[downKey]
+				if down == nil {
+					return fmt.Errorf("layer %d: missing MoE down_proj for fused gate_up_proj %q", i, gateUpKey)
 				}
-				if downW == nil {
-					return fmt.Errorf("layer %d: missing MoE down_proj with fused gate_up_proj", i)
-				}
-				moe.DownWeight = transposeForGatherMM(downW)
-			} else if gateW != nil {
-				// Separate gate_proj and up_proj (older format). Transpose for GatherMM.
+				m.loadFusedExperts(moe, tensors, gateUpKey, gateUp, downKey, down)
+			} else if gateW := firstNonNil(tensors,
+				layerPrefix+".experts.gate_proj", layerPrefix+".moe.gate_proj"); gateW != nil {
+				// Separate (non-fused) pre-stacked gate/up projections (older HF
+				// layout, dense only). Transpose for GatherMM.
 				moe.GateWeight = transposeForGatherMM(gateW)
-				upW := tensors[layerPrefix+".experts.up_proj"]
-				if upW == nil {
-					upW = tensors[layerPrefix+".moe.up_proj"]
-				}
-				downW := tensors[layerPrefix+".experts.down_proj"]
-				if downW == nil {
-					downW = tensors[layerPrefix+".moe.down_proj"]
-				}
-				moe.UpWeight = transposeForGatherMM(upW)
-				moe.DownWeight = transposeForGatherMM(downW)
+				moe.UpWeight = transposeForGatherMM(firstNonNil(tensors,
+					layerPrefix+".experts.up_proj", layerPrefix+".moe.up_proj"))
+				moe.DownWeight = transposeForGatherMM(firstNonNil(tensors,
+					layerPrefix+".experts.down_proj", layerPrefix+".moe.down_proj"))
 				if moe.UpWeight == nil || moe.DownWeight == nil {
 					return fmt.Errorf("layer %d: incomplete pre-stacked MoE weights", i)
-				}
-			} else if switchGateUp := firstNonNil(tensors,
-				layerPrefix+".moe.switch_mlp.gate_up_proj.weight",
-				layerPrefix+".moe.switch_mlp.gate_up_proj"); switchGateUp != nil {
-				// Stacked switch_mlp format (from create pipeline with expert packing).
-				switchDown := firstNonNil(tensors,
-					layerPrefix+".moe.switch_mlp.down_proj.weight",
-					layerPrefix+".moe.switch_mlp.down_proj")
-				if switchDown == nil {
-					return fmt.Errorf("layer %d: missing switch_mlp down_proj", i)
-				}
-
-				// Check for quantized weights (scales present).
-				// The scale key depends on whether the tensor has .weight suffix.
-				gateUpKey := layerPrefix + ".moe.switch_mlp.gate_up_proj.weight"
-				if tensors[gateUpKey] == nil {
-					gateUpKey = layerPrefix + ".moe.switch_mlp.gate_up_proj"
-				}
-				downKey := layerPrefix + ".moe.switch_mlp.down_proj.weight"
-				if tensors[downKey] == nil {
-					downKey = layerPrefix + ".moe.switch_mlp.down_proj"
-				}
-				gateUpScales := firstNonNil(tensors, gateUpKey+"_scale", gateUpKey+".scale")
-				downScales := firstNonNil(tensors, downKey+"_scale", downKey+".scale")
-
-				if gateUpScales != nil && downScales != nil {
-					// Quantized: keep fused gate_up as single tensor for GatherQMM.
-					// One fused call instead of two separate gate+up calls.
-					gateUpBiases := firstNonNil(tensors, gateUpKey+"_qbias", gateUpKey+".bias")
-					downBiases := firstNonNil(tensors, downKey+"_qbias", downKey+".bias")
-
-					moe.GateUpWeightQ = switchGateUp
-					moe.GateUpScales = gateUpScales
-					moe.GateUpBiases = gateUpBiases
-					moe.DownWeightQ = switchDown
-					moe.DownScales = downScales
-					if downBiases != nil {
-						moe.DownBiases = downBiases
-					}
-
-					groupSize, bits, mode := model.ResolveLinearQuantParams(
-						m.QuantGroupSize, m.QuantBits, m.QuantMode,
-						m.TensorQuant, gateUpKey, switchGateUp, gateUpScales,
-					)
-					moe.UseQuantized = true
-					moe.UseFusedGateUp = true
-					moe.GateUpGroupSize = groupSize
-					moe.GateUpBits = bits
-					moe.QuantMode = mode
-
-					dGroupSize, dBits, dMode := model.ResolveLinearQuantParams(
-						m.QuantGroupSize, m.QuantBits, m.QuantMode,
-						m.TensorQuant, downKey, switchDown, downScales,
-					)
-					moe.DownGroupSize = dGroupSize
-					moe.DownBits = dBits
-					moe.DownQuantMode = dMode
-				} else {
-					// Unquantized switch_mlp: keep fused and transpose for GatherMM.
-					moe.GateUpWeight = transposeForGatherMM(switchGateUp)
-					moe.UseFusedGateUp = true
-					moe.DownWeight = transposeForGatherMM(switchDown)
 				}
 			} else {
 				// Per-expert tensors (from create path).

@@ -2958,6 +2958,7 @@ void handle_qwen25vl_clip(gguf_context * meta, ggml_context * ctx) {
             gguf_set_val_u32(meta, "clip.vision.n_wa_pattern", (uint32_t)(arr[0] + 1));
         }
     }
+    inject_u32_if_missing(meta, "clip.vision.n_wa_pattern", 8);
 
     // Default image_size = 560 (Qwen2VLVisionModel default, no image_size in HF config).
     inject_u32_if_missing(meta, "clip.vision.image_size", 560);

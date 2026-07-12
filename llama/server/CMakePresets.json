@@ -68,7 +68,7 @@
       "inherits": ["llama_cuda_v12_base"],
       "binaryDir": "${sourceDir}/../../build/llama-server-cuda_v12",
       "cacheVariables": {
-        "CMAKE_CUDA_ARCHITECTURES": "50-virtual;52-virtual;60-virtual;61-virtual;70;75;80;86;89;90;90a;120"
+        "CMAKE_CUDA_ARCHITECTURES": "50-virtual;52-virtual;60;61;70;75;80;86;89;90;90a;120"
       }
     },
     {
@@ -100,7 +100,7 @@
       "inherits": ["llama_cuda_v13_base"],
       "binaryDir": "${sourceDir}/../../build/llama-server-cuda_v13",
       "cacheVariables": {
-        "CMAKE_CUDA_ARCHITECTURES": "75-virtual;80-virtual;86-virtual;89-virtual;90-virtual;90a-virtual;100-virtual;103-virtual;110-virtual;120-virtual;121-virtual"
+        "CMAKE_CUDA_ARCHITECTURES": "75-virtual;80-virtual;86-virtual;87-virtual;89-virtual;90-virtual;90a-virtual;100-virtual;103-virtual;110-virtual;120-virtual;121-virtual"
       }
     },
     {
@@ -108,7 +108,7 @@
       "inherits": ["llama_cuda_v13_base"],
       "binaryDir": "${sourceDir}/../../build/llama-server-cuda_v13",
       "cacheVariables": {
-        "CMAKE_CUDA_ARCHITECTURES": "75-virtual;89-virtual;100-virtual;120-virtual"
+        "CMAKE_CUDA_ARCHITECTURES": "75-virtual;80-virtual;86-virtual;89-virtual;100-virtual;120-virtual"
       }
     },
     {
@@ -178,7 +178,7 @@
       "inherits": ["rocm_v7_1_base"],
       "binaryDir": "${sourceDir}/../../build/llama-server-rocm_v7_1",
       "cacheVariables": {
-        "AMDGPU_TARGETS": "gfx942;gfx950;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1200;gfx1201"
+        "AMDGPU_TARGETS": "gfx1030;gfx1100;gfx1101;gfx1102;gfx1150;gfx1151;gfx1200;gfx1201"
       }
     },
     {
@@ -202,7 +202,7 @@
       "inherits": ["rocm_v7_2_base"],
       "binaryDir": "${sourceDir}/../../build/llama-server-rocm_v7_2",
       "cacheVariables": {
-        "AMDGPU_TARGETS": "gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-;gfx942;gfx950;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1200;gfx1201"
+        "AMDGPU_TARGETS": "gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-;gfx942;gfx950;gfx1030;gfx1100;gfx1101;gfx1102;gfx1150;gfx1151;gfx1200;gfx1201"
       }
     },
     {

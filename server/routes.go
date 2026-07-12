@@ -44,8 +44,6 @@ import (
 	"github.com/ollama/ollama/middleware"
 	"github.com/ollama/ollama/model/parsers"
 	"github.com/ollama/ollama/model/renderers"
-	"github.com/ollama/ollama/server/internal/client/ollama"
-	"github.com/ollama/ollama/server/internal/registry"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/thinking"
 	"github.com/ollama/ollama/tools"
@@ -567,17 +565,59 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		// support for generate
 		if values.Messages != nil && values.Suffix == "" && req.Template == "" {
 			genTruncate := (req.Truncate == nil || *req.Truncate) && !m.IsMLX()
-			prompt, media, err = chatPrompt(c.Request.Context(), m, r.Tokenize, optionsForPrompt(opts, r), values.Messages, []api.Tool{}, req.Think, genTruncate)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
+			if m.HasChatTemplate && chatModeForModel(m) == chatExecutionModeNative {
+				nativeReq, err := prepareNativeChatRequest(c.Request.Context(), m, r, opts, llm.ChatRequest{
+					Messages:    values.Messages,
+					Format:      req.Format,
+					Options:     opts,
+					Think:       req.Think,
+					Shift:       req.Shift == nil || *req.Shift,
+					Logprobs:    req.Logprobs,
+					TopLogprobs: req.TopLogprobs,
+				}, genTruncate)
+				if err != nil {
+					slog.Error("chat template prompt error", "error", err)
+					var serr api.StatusError
+					if errors.As(err, &serr) {
+						c.JSON(serr.StatusCode, gin.H{"error": serr.ErrorMessage})
+					} else {
+						c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					}
+					return
+				}
+				nativeReq.Messages, media, err = imageTaggedMessages(m, nativeReq.Messages, 0, true)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+				prompt, err = r.ApplyChatTemplate(c.Request.Context(), nativeReq)
+				if err != nil {
+					var serr api.StatusError
+					if errors.As(err, &serr) {
+						c.JSON(serr.StatusCode, gin.H{"error": serr.ErrorMessage})
+					} else {
+						c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					}
+					return
+				}
+				// TEMP(drifkin): req.Context will be removed very soon, but we're temporarily supporting it in this flow here
+				if req.Context != nil {
+					b.WriteString(prompt)
+					prompt = b.String()
+				}
+			} else {
+				prompt, media, err = chatPrompt(c.Request.Context(), m, r.Tokenize, optionsForPrompt(opts, r), values.Messages, []api.Tool{}, req.Think, genTruncate)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+				// TEMP(drifkin): req.Context will be removed very soon, but we're temporarily supporting it in this flow here
+				if req.Context != nil {
+					b.WriteString(prompt)
+					prompt = b.String()
+				}
+				leadingBOS = leadingBOSForModel(m)
 			}
-			// TEMP(drifkin): req.Context will be removed very soon, but we're temporarily supporting it in this flow here
-			if req.Context != nil {
-				b.WriteString(prompt)
-				prompt = b.String()
-			}
-			leadingBOS = leadingBOSForModel(m)
 		} else {
 			// Direct template execution flow.
 			if err := tmpl.Execute(&b, values); err != nil {
@@ -1791,7 +1831,7 @@ func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 	}
 }
 
-func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
+func (s *Server) GenerateRoutes() (http.Handler, error) {
 	corsConfig := cors.DefaultConfig()
 	corsConfig.AllowWildcard = true
 	corsConfig.AllowBrowserExtensions = true
@@ -1881,18 +1921,6 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	// Inference (Anthropic compatibility)
 	r.POST("/v1/messages", s.withInferenceRequestLogging("/v1/messages", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.AnthropicMessagesMiddleware(), s.ChatHandler)...)
 
-	if rc != nil {
-		// wrap old with new
-		rs := &registry.Local{
-			Client:   rc,
-			Logger:   slog.Default(), // TODO(bmizerany): Take a logger, do not use slog.Default()
-			Fallback: r,
-
-			Prune: PruneLayers,
-		}
-		return rs, nil
-	}
-
 	return r, nil
 }
 
@@ -1956,16 +1984,11 @@ func Serve(ln net.Listener) error {
 		return err
 	}
 
-	var rc *ollama.Registry
 	if useClient2 {
-		var err error
-		rc, err = ollama.DefaultRegistry()
-		if err != nil {
-			return err
-		}
+		slog.Warn("OLLAMA_EXPERIMENT=client2 is no longer available. Please remove this environment.")
 	}
 
-	h, err := s.GenerateRoutes(rc)
+	h, err := s.GenerateRoutes()
 	if err != nil {
 		return err
 	}
@@ -2743,9 +2766,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			// current approach uses the transition from parsed thinking content to
 			// parsed non-thinking content as the signal to turn constraining on
 
-			// TODO(parthsareen): temporary fix for https://github.com/ollama/ollama/issues/15260.
-			// To revisit for other models and have a consistent pattern across models through parsers.
-			forceImmediate := m.Config.Parser == "gemma4" && req.Think != nil && !req.Think.Bool()
+			forceImmediate := builtinParser != nil && builtinParser.HasThinkingSupport() && req.Think != nil && !req.Think.Bool()
 			if req.Format != nil && structuredOutputsState == structuredOutputsState_None && !forceImmediate && ((builtinParser != nil || thinkingState != nil) && slices.Contains(m.Capabilities(), model.CapabilityThinking)) {
 				currentFormat = nil
 			}
@@ -2917,8 +2938,15 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	writeChatResponse(c, req, ch)
 }
 
+func prepareNativeChatRequest(ctx context.Context, m *Model, r llm.LlamaServer, opts *api.Options, nativeReq llm.ChatRequest, truncate bool) (llm.ChatRequest, error) {
+	var err error
+	nativeReq.Messages, err = truncateNativeChatMessages(ctx, m, r, optionsForPrompt(opts, r), nativeReq, truncate)
+	return nativeReq, err
+}
+
 func (s *Server) handleNativeChat(c *gin.Context, req api.ChatRequest, m *Model, r llm.LlamaServer, opts *api.Options, msgs []api.Message, checkpointStart, checkpointLoaded time.Time) {
-	nativeReq := llm.ChatRequest{
+	truncate := req.Truncate == nil || *req.Truncate
+	nativeReq, err := prepareNativeChatRequest(c.Request.Context(), m, r, opts, llm.ChatRequest{
 		Messages:    msgs,
 		Tools:       req.Tools,
 		Format:      req.Format,
@@ -2927,10 +2955,7 @@ func (s *Server) handleNativeChat(c *gin.Context, req api.ChatRequest, m *Model,
 		Shift:       req.Shift == nil || *req.Shift,
 		Logprobs:    req.Logprobs,
 		TopLogprobs: req.TopLogprobs,
-	}
-	truncate := req.Truncate == nil || *req.Truncate
-	var err error
-	nativeReq.Messages, err = truncateNativeChatMessages(c.Request.Context(), m, r, optionsForPrompt(opts, r), nativeReq, truncate)
+	}, truncate)
 	if err != nil {
 		slog.Error("chat template prompt error", "error", err)
 		var serr api.StatusError
