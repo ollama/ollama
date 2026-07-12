@@ -890,30 +890,30 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return tokens, adjustTokenLimit(tokens, ctxLen), nil
 	}
 
-	truncateInputToLimit := func(text string, limit int) (string, bool, error) {
+	truncateInputToLimit := func(text string, limit int) (string, bool, int, error) {
 		tokens, ctxLen, err := inputTokensAndContext(text)
 		if err != nil {
-			return "", false, err
+			return "", false, 0, err
 		}
 		if limit > 0 {
 			ctxLen = min(ctxLen, adjustTokenLimit(tokens, limit))
 		}
 
 		if ctxLen <= 0 {
-			return "", false, fmt.Errorf("input after truncation exceeds maximum context length")
+			return "", false, ctxLen, fmt.Errorf("input after truncation exceeds maximum context length")
 		}
 		if len(tokens) <= ctxLen {
-			return text, false, nil
+			return text, false, ctxLen, nil
 		}
 
 		truncated, err := r.Detokenize(ctx, tokens[:ctxLen])
 		if err != nil {
-			return "", false, err
+			return "", false, ctxLen, err
 		}
-		return truncated, true, nil
+		return truncated, true, ctxLen, nil
 	}
 
-	truncateInput := func(text string) (string, bool, error) {
+	truncateInput := func(text string) (string, bool, int, error) {
 		return truncateInputToLimit(text, 0)
 	}
 
@@ -934,9 +934,14 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			}
 		} else {
 			var err error
-			text, _, err = truncateInput(text)
+			var truncated bool
+			var ctxLen int
+			text, truncated, ctxLen, err = truncateInput(text)
 			if err != nil {
 				return nil, 0, err
+			}
+			if truncated {
+				slog.Warn("truncating embed input which exceeds context length", "context_length", ctxLen)
 			}
 		}
 
@@ -953,13 +958,14 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			return nil, 0, err
 		}
 
-		truncated, ok, err := truncateInputToLimit(text, opts.NumBatch)
+		truncated, ok, ctxLen, err := truncateInputToLimit(text, opts.NumBatch)
 		if err != nil {
 			return nil, 0, err
 		}
 		if !ok {
 			return nil, 0, fmt.Errorf("input exceeds maximum context length and cannot be truncated further")
 		}
+		slog.Warn("truncating embed input which exceeds batch context length", "context_length", ctxLen)
 
 		return r.Embedding(ctx, truncated)
 	}
@@ -3082,7 +3088,7 @@ func truncateNativeChatMessages(ctx context.Context, m *Model, r llm.LlamaServer
 	}
 
 	if currMsgIdx > 0 {
-		slog.Debug("truncating native chat messages which exceed context length", "truncated", currMsgIdx)
+		slog.Warn("truncating native chat messages which exceed context length", "truncated", currMsgIdx, "context_length", opts.NumCtx)
 	}
 
 	system = system[:0]
