@@ -14,7 +14,7 @@ go run . serve
 ```
 
 > [!NOTE]
-> Ollama includes native code compiled with CGO.  From time to time these data structures can change and CGO can get out of sync resulting in unexpected crashes.  You can force a full build of the native code by running `go clean -cache` first. 
+> Ollama includes native code compiled with CGO.  From time to time these data structures can change and CGO can get out of sync resulting in unexpected crashes.  You can force a full build of the native code by running `go clean -cache` first.
 
 ## Native build model
 
@@ -85,7 +85,7 @@ Additional prerequisites:
 For Ninja builds, run CMake from a Developer PowerShell/Command Prompt or another shell where the Visual Studio compiler is available.
 
 > Building for Vulkan requires VULKAN_SDK environment variable:
-> 
+>
 > PowerShell
 > ```powershell
 > $env:VULKAN_SDK="C:\VulkanSDK\<version>"
