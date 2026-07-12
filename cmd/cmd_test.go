@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -1521,6 +1522,118 @@ func TestCreateHandler(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCreateRequestFileNamesPreservesModelDirectoryLayout(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		filepath.Join(root, "model.safetensors"):            "sha256:model",
+		filepath.Join(root, "config.json"):                  "sha256:config",
+		filepath.Join(root, "2_Dense", "config.json"):       "sha256:dense-config",
+		filepath.Join(root, "2_Dense", "model.safetensors"): "sha256:dense-model",
+	}
+
+	got := createRequestFileNames(files)
+	want := map[string]string{
+		filepath.Join(root, "model.safetensors"):            "model.safetensors",
+		filepath.Join(root, "config.json"):                  "config.json",
+		filepath.Join(root, "2_Dense", "config.json"):       "2_Dense/config.json",
+		filepath.Join(root, "2_Dense", "model.safetensors"): "2_Dense/model.safetensors",
+	}
+
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestCreateRequestFileNamesPreservesRelativeModelDirectoryLayout(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+
+	files := map[string]string{
+		"model.safetensors":         "sha256:model",
+		"config.json":               "sha256:config",
+		"2_Dense/config.json":       "sha256:dense-config",
+		"2_Dense/model.safetensors": "sha256:dense-model",
+		"3_Dense/config.json":       "sha256:dense-config",
+		"3_Dense/model.safetensors": "sha256:dense-model",
+	}
+
+	got := createRequestFileNames(files)
+	for file := range files {
+		if got[file] != filepath.ToSlash(file) {
+			t.Fatalf("%s = %q, want %q", file, got[file], filepath.ToSlash(file))
+		}
+	}
+}
+
+func TestCreateHandlerDraftQuantizeRequiresDraft(t *testing.T) {
+	dir := t.TempDir()
+	modelfile := filepath.Join(dir, "Modelfile")
+	if err := os.WriteFile(modelfile, []byte("FROM base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := &cobra.Command{}
+	cmd.Flags().Bool("experimental", false, "")
+	cmd.Flags().String("file", modelfile, "")
+	cmd.Flags().String("draft-quantize", "mxfp8", "")
+	cmd.SetContext(t.Context())
+
+	err := CreateHandler(cmd, []string{"test-model"})
+	if err == nil || !strings.Contains(err.Error(), "--draft-quantize requires a DRAFT model") {
+		t.Fatalf("error = %v, want draft-quantize requires DRAFT", err)
+	}
+}
+
+func TestResolveExperimentalLocalModelDir(t *testing.T) {
+	dir := t.TempDir()
+	modelfile := filepath.Join(dir, "Modelfile")
+	modelDir := filepath.Join(dir, "model")
+	if err := os.Mkdir(modelDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "config.json"), []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(modelDir, "model.safetensors"), []byte("dummy"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := resolveExperimentalLocalModelDir("gemma4", modelfile); got != "gemma4" {
+		t.Fatalf("resolveExperimentalLocalModelDir(model name) = %q, want gemma4", got)
+	}
+	if got := resolveExperimentalLocalModelDir("./model", modelfile); got != modelDir {
+		t.Fatalf("resolveExperimentalLocalModelDir(local dir) = %q, want %q", got, modelDir)
+	}
+}
+
+func TestResolveExperimentalDraftDir(t *testing.T) {
+	dir := t.TempDir()
+	modelfile := filepath.Join(dir, "Modelfile")
+	draftDir := filepath.Join(dir, "assistant")
+	if err := os.Mkdir(draftDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(draftDir, "config.json"), []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(draftDir, "model.safetensors"), []byte("dummy"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := resolveExperimentalDraftDir("./assistant", modelfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != draftDir {
+		t.Fatalf("resolveExperimentalDraftDir(local dir) = %q, want %q", got, draftDir)
+	}
+
+	_, err = resolveExperimentalDraftDir("assistant-model", modelfile)
+	if err == nil || !strings.Contains(err.Error(), "DRAFT model references are not supported with --experimental yet") {
+		t.Fatalf("error = %v, want unsupported draft model reference", err)
 	}
 }
 

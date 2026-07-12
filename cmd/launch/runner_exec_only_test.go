@@ -26,7 +26,7 @@ func TestEditorRunsDoNotRewriteConfig(t *testing.T) {
 			binary: "opencode",
 			runner: &OpenCode{},
 			checkPath: func(home string) string {
-				return filepath.Join(home, ".config", "opencode", "opencode.json")
+				return filepath.Join(home, ".local", "state", "opencode", "model.json")
 			},
 		},
 		{
@@ -45,10 +45,38 @@ func TestEditorRunsDoNotRewriteConfig(t *testing.T) {
 				return filepath.Join(home, ".pi", "agent", "models.json")
 			},
 		},
+		{
+			name:   "pool",
+			binary: "pool",
+			runner: &Poolside{},
+			checkPath: func(home string) string {
+				return filepath.Join(home, ".poolside", "config")
+			},
+		},
+		{
+			name:   "kimi",
+			binary: "kimi",
+			runner: &Kimi{},
+			checkPath: func(home string) string {
+				return filepath.Join(home, ".kimi", "config.toml")
+			},
+		},
+		{
+			name:   "omp",
+			binary: "omp",
+			runner: &OMP{},
+			checkPath: func(home string) string {
+				return filepath.Join(home, ".omp", "agent", "models.yml")
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.name == "pool" && poolsideGOOS == "windows" {
+				t.Skip("Poolside is intentionally unsupported on Windows")
+			}
+
 			home := t.TempDir()
 			setTestHome(t, home)
 
@@ -57,10 +85,14 @@ func TestEditorRunsDoNotRewriteConfig(t *testing.T) {
 			if tt.name == "pi" {
 				writeFakeBinary(t, binDir, "npm")
 			}
+			if tt.name == "kimi" {
+				writeFakeBinary(t, binDir, "curl")
+				writeFakeBinary(t, binDir, "bash")
+			}
 			t.Setenv("PATH", binDir)
 
 			configPath := tt.checkPath(home)
-			if err := tt.runner.Run("llama3.2", nil); err != nil {
+			if err := tt.runner.Run("llama3.2", nil, nil); err != nil {
 				t.Fatalf("Run returned error: %v", err)
 			}
 			if _, err := os.Stat(configPath); !os.IsNotExist(err) {

@@ -29,6 +29,10 @@ const (
 	glm46ThinkingCloseTag = "</think>"
 	glm46ToolOpenTag      = "<tool_call>"
 	glm46ToolCloseTag     = "</tool_call>"
+	glm46ArgKeyOpenTag    = "<arg_key>"
+	glm46ArgKeyCloseTag   = "</arg_key>"
+	glm46ArgValueOpenTag  = "<arg_value>"
+	glm46ArgValueCloseTag = "</arg_value>"
 )
 
 type GLM46Parser struct {
@@ -44,6 +48,19 @@ func (p *GLM46Parser) HasToolSupport() bool {
 
 func (p *GLM46Parser) HasThinkingSupport() bool {
 	return true
+}
+
+func (p *GLM46Parser) PreservedTokens() []string {
+	return []string{
+		glm46ThinkingOpenTag,
+		glm46ThinkingCloseTag,
+		glm46ToolOpenTag,
+		glm46ToolCloseTag,
+		glm46ArgKeyOpenTag,
+		glm46ArgKeyCloseTag,
+		glm46ArgValueOpenTag,
+		glm46ArgValueCloseTag,
+	}
 }
 
 // func (p *GLM46Parser) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool {
@@ -314,10 +331,10 @@ func escapeGLM46Content(s string) string {
 
 		if ch == '<' {
 			// Check if this is a known tag
-			if strings.HasPrefix(s[i:], "<arg_key>") ||
-				strings.HasPrefix(s[i:], "</arg_key>") ||
-				strings.HasPrefix(s[i:], "<arg_value>") ||
-				strings.HasPrefix(s[i:], "</arg_value>") {
+			if strings.HasPrefix(s[i:], glm46ArgKeyOpenTag) ||
+				strings.HasPrefix(s[i:], glm46ArgKeyCloseTag) ||
+				strings.HasPrefix(s[i:], glm46ArgValueOpenTag) ||
+				strings.HasPrefix(s[i:], glm46ArgValueCloseTag) {
 				inTag = true
 			}
 		}
@@ -369,7 +386,7 @@ const (
 // When a tag is missing, it inserts the tag and consumes any text in between.
 func repairGLM46XML(s string) string {
 	// tagCycle is the repeating sequence of tags after the function name.
-	tagCycle := [phaseCount]string{"<arg_key>", "</arg_key>", "<arg_value>", "</arg_value>"}
+	tagCycle := [phaseCount]string{glm46ArgKeyOpenTag, glm46ArgKeyCloseTag, glm46ArgValueOpenTag, glm46ArgValueCloseTag}
 
 	// findNextTag returns the index and identity of the earliest known tag in s.
 	findNextTag := func(s string) (int, string) {
@@ -407,11 +424,11 @@ func repairGLM46XML(s string) string {
 	// the function name and key content (e.g. "weather city</arg_key>").
 	// Function names cannot contain space, so split at the first space.
 	phase := phaseArgKeyOpen
-	if firstTag != "<arg_key>" {
+	if firstTag != glm46ArgKeyOpenTag {
 		if spIdx := strings.IndexFunc(prefix, unicode.IsSpace); spIdx != -1 {
 			result.WriteString(prefix[:spIdx])
 			keyContent := strings.TrimLeftFunc(prefix[spIdx:], unicode.IsSpace)
-			result.WriteString("<arg_key>")
+			result.WriteString(glm46ArgKeyOpenTag)
 			result.WriteString(keyContent)
 			phase = phaseArgKeyClose
 		} else {
@@ -492,14 +509,14 @@ func repairGLM46XML(s string) string {
 	// If we stopped mid-pair (after an opening tag), close it
 	switch phase {
 	case phaseArgKeyClose: // after <arg_key>, expecting text/</arg_key>
-		result.WriteString("</arg_key>")
-		result.WriteString("<arg_value>")
-		result.WriteString("</arg_value>")
+		result.WriteString(glm46ArgKeyCloseTag)
+		result.WriteString(glm46ArgValueOpenTag)
+		result.WriteString(glm46ArgValueCloseTag)
 	case phaseArgValOpen: // after </arg_key>, expecting <arg_value>
-		result.WriteString("<arg_value>")
-		result.WriteString("</arg_value>")
+		result.WriteString(glm46ArgValueOpenTag)
+		result.WriteString(glm46ArgValueCloseTag)
 	case phaseArgValClose: // after <arg_value>, expecting text/</arg_value>
-		result.WriteString("</arg_value>")
+		result.WriteString(glm46ArgValueCloseTag)
 	}
 
 	return result.String()

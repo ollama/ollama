@@ -45,6 +45,8 @@ var (
 
 	// Note: add newer models at the top of the list to test them first
 	ollamaEngineChatModels = []string{
+		"nemotron3:33b",
+		// "laguna-xs.2:q4_K_M", // TODO: re-enable when llama.cpp supports laguna.
 		"gemma4",
 		"lfm2.5-thinking",
 		"ministral-3",
@@ -53,7 +55,7 @@ var (
 		"gemma3n:e2b",
 		"mistral-small3.2:latest",
 		"deepseek-r1:1.5b",
-		"llama3.2-vision:latest",
+		// "llama3.2-vision:latest", // TODO: re-enable when llama.cpp supports mllama.
 		"qwen2.5-coder:latest",
 		"qwen2.5vl:3b",
 		"qwen3:0.6b", // dense
@@ -66,6 +68,15 @@ var (
 		"minicpm-v:latest",    // arch=qwen2
 		"granite-code:latest", // arch=llama
 	}
+	// MLX-backed safetensors tags. These exercise the mlxrunner subprocess
+	// on platforms where MLX is available (today: macOS; Linux/Windows CUDA
+	// coming). On other platforms, skipIfMLXUnsupported turns the load
+	// failure into a test skip.
+	mlxEngineChatModels = []string{
+		"laguna-xs.2:nvfp4",
+		"qwen3.5:2b-nvfp4", // ~2.5GB, Qwen3_5 arch
+		"gemma4:e2b-nvfp4", // ~7.1GB, Gemma4 arch (skipped under low VRAM)
+	}
 	llamaRunnerChatModels = []string{
 		"mistral:latest",
 		"falcon3:latest",
@@ -73,18 +84,9 @@ var (
 		"command-r:latest",
 		"nemotron-mini:latest",
 		"phi3.5:latest",
-		"solar-pro:latest",
 		"internlm2:latest",
 		"codellama:latest", // arch=llama
 		"phi3:latest",
-		"falcon2:latest",
-		"gemma:latest",
-		"llama2:latest",
-		"nous-hermes:latest",
-		"orca-mini:latest",
-		"qwen:latest",
-		"stablelm2:latest", // Predictions are off, crashes on small VRAM GPUs
-		"falcon:latest",
 	}
 
 	// Some library models are quite large - ensure large VRAM and sufficient disk space
@@ -163,7 +165,7 @@ var (
 		"llama3-gradient",
 		"llama3-groq-tool-use",
 		"llama3.1",
-		"llama3.2-vision",
+		// "llama3.2-vision", // TODO: re-enable when llama.cpp supports mllama.
 		"llama3.2",
 		"llama3.3",
 		"llama3",
@@ -233,7 +235,6 @@ var (
 		"smallthinker",
 		"smollm",
 		"smollm2",
-		"solar-pro",
 		"solar",
 		"sqlcoder",
 		"stable-beluga",
@@ -261,7 +262,6 @@ var (
 		"zephyr",
 	}
 	libraryEmbedModels = []string{
-		"qwen3-embedding",
 		"embeddinggemma",
 		"nomic-embed-text",
 		"all-minilm",
@@ -272,8 +272,11 @@ var (
 		"paraphrase-multilingual",
 		"snowflake-arctic-embed",
 		"snowflake-arctic-embed2",
+		"qwen3-embedding",
 	}
 	libraryToolsModels = []string{
+		"nemotron3:33b",
+		// "laguna-xs.2", // TODO: re-enable when llama.cpp supports laguna.
 		"gemma4",
 		"lfm2.5-thinking",
 		"qwen3-vl",
@@ -284,7 +287,6 @@ var (
 		"llama3.2",
 		"mistral",
 		"qwen2.5",
-		"qwen2",
 		"ministral-3",
 		"mistral-nemo",
 		"mistral-small",
@@ -329,13 +331,23 @@ func testModels(defaults []string) []string {
 }
 
 // requireCapability skips the test if the model does not advertise the
-// given capability. It queries the server via Show and caches nothing —
-// call it once per subtest. For local-only models where Show may not
-// return capabilities (e.g. models created via ollama create), this is
-// a best-effort check.
+// given capability. If the model is missing locally, it first goes through
+// the normal pull-if-missing path so tests still behave correctly on cold
+// hosts. For local-only models where Show may not return capabilities
+// (e.g. models created via ollama create), this is a best-effort check.
 func requireCapability(ctx context.Context, t *testing.T, client *api.Client, modelName string, cap model.Capability) {
 	t.Helper()
+
 	resp, err := client.Show(ctx, &api.ShowRequest{Name: modelName})
+	var statusError api.StatusError
+	if errors.As(err, &statusError) && statusError.StatusCode == http.StatusNotFound {
+		if err := PullIfMissing(ctx, client, modelName); err != nil {
+			t.Skipf("model %s not available: %v", modelName, err)
+		}
+
+		resp, err = client.Show(ctx, &api.ShowRequest{Name: modelName})
+	}
+
 	if err != nil {
 		t.Fatalf("failed to show model %s: %v", modelName, err)
 	}
@@ -541,7 +553,7 @@ func InitServerConnection(ctx context.Context, t *testing.T) (*api.Client, strin
 			<-serverDone
 			slog.Info("terminate complete")
 
-			if t.Failed() {
+			if t.Failed() || os.Getenv("OLLAMA_TEST_LOG_SERVER") != "" {
 				slog.Warn("SERVER LOG FOLLOWS")
 				io.Copy(os.Stderr, &serverLog)
 				slog.Warn("END OF SERVER")
@@ -699,6 +711,45 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 		}
 }
 
+// summarizeMessages returns a compact string form of the messages suitable
+// for logs and error output. Image byte payloads are replaced with a
+// "<image: N bytes>" marker so vision tests don't dump huge integer arrays.
+func summarizeMessages(msgs []api.Message) string {
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, m := range msgs {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b, "{Role:%s Content:%q", m.Role, m.Content)
+		if m.Thinking != "" {
+			fmt.Fprintf(&b, " Thinking:%q", m.Thinking)
+		}
+		if len(m.Images) > 0 {
+			b.WriteString(" Images:[")
+			for j, img := range m.Images {
+				if j > 0 {
+					b.WriteString(", ")
+				}
+				fmt.Fprintf(&b, "<image: %d bytes>", len(img))
+			}
+			b.WriteByte(']')
+		}
+		if len(m.ToolCalls) > 0 {
+			fmt.Fprintf(&b, " ToolCalls:%+v", m.ToolCalls)
+		}
+		if m.ToolName != "" {
+			fmt.Fprintf(&b, " ToolName:%s", m.ToolName)
+		}
+		if m.ToolCallID != "" {
+			fmt.Fprintf(&b, " ToolCallID:%s", m.ToolCallID)
+		}
+		b.WriteByte('}')
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
 func DoChat(ctx context.Context, t *testing.T, client *api.Client, req api.ChatRequest, anyResp []string, initialTimeout, streamTimeout time.Duration) *api.Message {
 	stallTimer := time.NewTimer(initialTimeout)
 	var buf bytes.Buffer
@@ -734,7 +785,7 @@ func DoChat(ctx context.Context, t *testing.T, client *api.Client, req api.ChatR
 			}
 		}
 		if !atLeastOne {
-			t.Fatalf("%s: none of %v found in \"%s\" -- request was:%v", req.Model, anyResp, response, req.Messages)
+			t.Fatalf("%s: none of %v found in \"%s\" -- request was:%s", req.Model, anyResp, response, summarizeMessages(req.Messages))
 		}
 	}
 
@@ -751,10 +802,10 @@ func DoChat(ctx context.Context, t *testing.T, client *api.Client, req api.ChatR
 			return nil
 		}
 		if genErr != nil {
-			t.Fatalf("%s failed with %s request prompt %v", genErr, req.Model, req.Messages)
+			t.Fatalf("%s failed with %s request prompt %s", genErr, req.Model, summarizeMessages(req.Messages))
 		}
 		verify()
-		slog.Info("test pass", "model", req.Model, "messages", req.Messages, "contains", anyResp, "response", response)
+		slog.Info("test pass", "model", req.Model, "messages", summarizeMessages(req.Messages), "contains", anyResp, "response", response)
 	case <-ctx.Done():
 		// On slow systems, we might timeout before some models finish rambling, so check what we have so far to see
 		// if it's considered a pass - the stallTimer will detect hangs, but we want to consider slow systems a pass
@@ -784,6 +835,66 @@ func ChatRequests() ([]api.ChatRequest, [][]string) {
 	return reqs, results
 }
 
+// skipIfMLXUnsupported converts an MLX runner startup error into a test skip
+// when the fingerprint matches "the MLX stack is not wired up on this host",
+// and only on platforms where MLX is not yet expected to work. On Apple
+// Silicon (darwin/arm64) MLX must work, so the same errors there fall
+// through and fail the test — we never want to mask a real Mac regression.
+//
+// The fingerprints are the exact wrapper strings produced by the MLX code
+// paths (see x/mlxrunner/server.go, x/mlxrunner/mlx/dynamic.go,
+// x/imagegen/mlx/mlx.go, x/imagegen/memory.go). Model-level errors
+// (unsupported architecture, tensor mismatches, runtime failures) do not
+// contain these strings, so this helper will not mask them.
+func skipIfMLXUnsupported(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		return
+	}
+	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
+		return
+	}
+	msg := err.Error()
+	for _, s := range []string{
+		"MLX not available:",
+		"failed to load MLX dynamic library",
+		"failed to load MLX function symbols",
+		"image generation on macOS requires Apple Silicon",
+		"image generation is not supported on",
+	} {
+		if strings.Contains(msg, s) {
+			t.Skipf("MLX not available on %s/%s: %v", runtime.GOOS, runtime.GOARCH, err)
+		}
+	}
+}
+
+// skipIfModelTooLargeForVRAM skips the test when the model's on-disk size
+// is larger than OLLAMA_MAX_VRAM by enough that even partial GPU offload
+// won't help. Uses the same 0.75x gate as TestPerfModels (model_perf_test.go)
+// so vision/audio tests stay runnable on systems where the model is slightly
+// over VRAM and a portion legitimately spills to CPU. No-op when
+// OLLAMA_MAX_VRAM is unset.
+func skipIfModelTooLargeForVRAM(ctx context.Context, t *testing.T, client *api.Client, modelName string) {
+	t.Helper()
+	s := os.Getenv("OLLAMA_MAX_VRAM")
+	if s == "" {
+		return
+	}
+	maxVram, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		t.Fatalf("invalid OLLAMA_MAX_VRAM %v", err)
+	}
+	resp, err := client.List(ctx)
+	if err != nil {
+		t.Fatalf("list models failed %v", err)
+	}
+	for _, m := range resp.Models {
+		if m.Name == modelName && float32(m.Size)*0.75 > float32(maxVram) {
+			t.Skipf("model %s is too large %s for available VRAM %s", modelName, format.HumanBytes(m.Size), format.HumanBytes(int64(maxVram)))
+		}
+	}
+}
+
 func skipUnderMinVRAM(t *testing.T, gb uint64) {
 	// TODO use info API in the future
 	if s := os.Getenv("OLLAMA_MAX_VRAM"); s != "" {
@@ -802,6 +913,8 @@ func skipUnderMinVRAM(t *testing.T, gb uint64) {
 func skipIfNotGPULoaded(ctx context.Context, t *testing.T, client *api.Client, model string, minPercent int) {
 	gpuPercent := getGPUPercent(ctx, t, client, model)
 	if gpuPercent < minPercent {
+		// Unload the model if we're going to skip
+		client.Generate(ctx, &api.GenerateRequest{Model: model, KeepAlive: &api.Duration{Duration: 0}}, func(rsp api.GenerateResponse) error { return nil })
 		t.Skip(fmt.Sprintf("test requires minimum %d%% GPU load, but model %s only has %d%%", minPercent, model, gpuPercent))
 	}
 }

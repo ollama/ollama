@@ -842,6 +842,24 @@ func TestDone(t *testing.T) {
 			buffer: []byte("[]"),
 			want:   true,
 		},
+		{
+			name:   "json close brace inside string",
+			tag:    "{",
+			buffer: []byte("{\"note\": \"a}b\""),
+			want:   false,
+		},
+		{
+			name:   "json complete with brace inside string",
+			tag:    "{",
+			buffer: []byte("{\"note\": \"a}b\"}"),
+			want:   true,
+		},
+		{
+			name:   "list close bracket inside string",
+			tag:    "[",
+			buffer: []byte("[{\"note\": \"x]y\"}"),
+			want:   false,
+		},
 	}
 
 	for _, tt := range tests {

@@ -4,9 +4,11 @@ package qwen3_5
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math"
 	"strings"
 
+	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
@@ -399,7 +401,7 @@ func NewModel(root *model.Root) (base.Model, error) {
 		tok:    tok,
 	}
 
-	for i := int32(0); i < cfg.NumHiddenLayers; i++ {
+	for i := range cfg.NumHiddenLayers {
 		m.Layers[i] = &Layer{IsLinear: layerIsLinear(&cfg, i)}
 	}
 
@@ -569,7 +571,7 @@ func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQ
 	groupSize := 0
 	mode := cfg.QuantMode
 
-	for e := int32(0); e < numExperts; e++ {
+	for e := range numExperts {
 		base := fmt.Sprintf("%s.mlp.experts.%d.%s", layerPrefix, e, proj)
 		w, key := tensorByBase(tensors, base)
 		if w == nil {
@@ -871,7 +873,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	}
 	moeLoadSummaries := make([]string, 0)
 
-	for i := int32(0); i < cfg.NumHiddenLayers; i++ {
+	for i := range cfg.NumHiddenLayers {
 		layerPrefix := fmt.Sprintf("%slayers.%d", modelPrefix, i)
 		layer := &Layer{IsLinear: layerIsLinear(cfg, i)}
 
@@ -1068,6 +1070,9 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 
 		m.Layers[i] = layer
 	}
+	for _, summary := range moeLoadSummaries {
+		slog.Debug("qwen3.5 moe load", "summary", summary)
+	}
 
 	return nil
 }
@@ -1076,32 +1081,7 @@ func softplus(x *mlx.Array) *mlx.Array {
 	return mlx.Logaddexp(x, mlx.Zeros(x.DType(), x.Dims()...))
 }
 
-func depthwiseCausalConv1d(x, w *mlx.Array, outLen int32) *mlx.Array {
-	if x == nil || w == nil {
-		return nil
-	}
-	if w.NumDims() != 2 {
-		return nil
-	}
-	B := int32(x.Dim(0))
-	C := int32(w.Dim(0))
-	K := int32(w.Dim(1))
-	var out *mlx.Array
-	for i := int32(0); i < K; i++ {
-		seg := mlx.SliceStartStop(x, []int32{0, i, 0}, []int32{B, i + outLen, C})
-		wi := mlx.SliceStartStop(w, []int32{0, i}, []int32{C, i + 1})
-		wi = mlx.Reshape(wi, 1, 1, C)
-		term := mlx.Mul(seg, wi)
-		if out == nil {
-			out = term
-		} else {
-			out = mlx.Add(out, term)
-		}
-	}
-	return out
-}
-
-func splitQKVZBA(mixedQKVZ, mixedBA *mlx.Array, cfg *Config, B, L int32) (q, k, v, z, b, a *mlx.Array) {
+func splitQKVZBA(mixedQKVZ, mixedBA *mlx.Array, cfg *Config, B, L int32) (q, k, v, z, beta, alpha *mlx.Array) {
 	nk := cfg.LinearNumKeyHeads
 	nv := cfg.LinearNumValueHeads
 	dk := cfg.LinearKeyHeadDim
@@ -1118,15 +1098,15 @@ func splitQKVZBA(mixedQKVZ, mixedBA *mlx.Array, cfg *Config, B, L int32) (q, k, 
 	z = mlx.Reshape(z, B, L, nv, dv)
 
 	mixedBA = mlx.Reshape(mixedBA, B, L, nk, 2*vPerK)
-	b = mlx.SliceStartStop(mixedBA, []int32{0, 0, 0, 0}, []int32{B, L, nk, vPerK})
-	a = mlx.SliceStartStop(mixedBA, []int32{0, 0, 0, vPerK}, []int32{B, L, nk, 2 * vPerK})
-	b = mlx.Reshape(b, B, L, nv)
-	a = mlx.Reshape(a, B, L, nv)
+	beta = mlx.SliceStartStop(mixedBA, []int32{0, 0, 0, 0}, []int32{B, L, nk, vPerK})
+	alpha = mlx.SliceStartStop(mixedBA, []int32{0, 0, 0, vPerK}, []int32{B, L, nk, 2 * vPerK})
+	beta = mlx.Reshape(beta, B, L, nv)
+	alpha = mlx.Reshape(alpha, B, L, nv)
 
-	return q, k, v, z, b, a
+	return q, k, v, z, beta, alpha
 }
 
-func (a *FullAttention) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
+func (a *FullAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
 	qg := a.QProj.Forward(x)
 	qg = mlx.Reshape(qg, B, L, cfg.NumAttentionHeads, cfg.HeadDim*2)
 	q := mlx.SliceStartStop(qg, []int32{0, 0, 0, 0}, []int32{B, L, cfg.NumAttentionHeads, cfg.HeadDim})
@@ -1145,18 +1125,17 @@ func (a *FullAttention) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Co
 	k = mlx.Transpose(k, 0, 2, 1, 3)
 	v = mlx.Transpose(v, 0, 2, 1, 3)
 
-	offset := 0
-	if c != nil {
-		offset = c.Offset()
-	}
-	q = mlx.RoPEWithBase(q, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, offset)
-	k = mlx.RoPEWithBase(k, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, offset)
+	q = mlx.RoPEWithBase(q, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, positions)
+	k = mlx.RoPEWithBase(k, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, positions)
 
+	var kv nn.SDPAOption
 	if c != nil {
-		k, v = c.Update(k, v)
+		history := c.(cache.Attention).Update(b, k, v)
+		kv = nn.WithKVHistory(history)
+	} else {
+		kv = nn.WithKV(k, v, b.SeqQueryLens)
 	}
-
-	out := mlx.ScaledDotProductAttentionCausal(q, k, v, cfg.Scale, L > 1)
+	out := nn.ScaledDotProductAttention(b, q, cfg.Scale, kv, nn.WithMask(nn.CausalMask()))
 	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), B, L, cfg.NumAttentionHeads*cfg.HeadDim)
 	gateSigmoid := mlx.Sigmoid(gate)
 	out = mlx.Mul(out, gateSigmoid)
@@ -1164,20 +1143,20 @@ func (a *FullAttention) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Co
 	return out
 }
 
-func (g *GatedDeltaNet) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
-	var qkv, z, b, a *mlx.Array
+func (g *GatedDeltaNet) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
+	var qkv, z, beta, alpha *mlx.Array
 	useSplitProj := g.InProjQKV != nil && g.InProjZ != nil && g.InProjB != nil && g.InProjA != nil
 	if useSplitProj {
 		qkv = g.InProjQKV.Forward(x)
 		z = g.InProjZ.Forward(x)
 		z = mlx.Reshape(z, B, L, cfg.LinearNumValueHeads, cfg.LinearValueHeadDim)
-		b = g.InProjB.Forward(x)
-		a = g.InProjA.Forward(x)
+		beta = g.InProjB.Forward(x)
+		alpha = g.InProjA.Forward(x)
 	} else {
 		mixedQKVZ := g.InProjQKVZ.Forward(x)
 		mixedBA := g.InProjBA.Forward(x)
 		var q, k, v *mlx.Array
-		q, k, v, z, b, a = splitQKVZBA(mixedQKVZ, mixedBA, cfg, B, L)
+		q, k, v, z, beta, alpha = splitQKVZBA(mixedQKVZ, mixedBA, cfg, B, L)
 		qkv = mlx.Concatenate([]*mlx.Array{
 			mlx.Reshape(q, B, L, cfg.LinearNumKeyHeads*cfg.LinearKeyHeadDim),
 			mlx.Reshape(k, B, L, cfg.LinearNumKeyHeads*cfg.LinearKeyHeadDim),
@@ -1185,32 +1164,26 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Co
 		}, -1)
 	}
 	convTail := cfg.LinearConvKernelDim - 1
-	var convState *mlx.Array
 	var rc *cache.RecurrentCache
-	if c != nil {
-		if typed, ok := c.(*cache.RecurrentCache); ok {
-			rc = typed
-			convState = rc.ConvState(int(B), x.DType())
+	opts := make([]nn.RecurrentOption, 0, 2)
+	if typed, ok := c.(*cache.RecurrentCache); ok {
+		rc = typed
+		opts = append(opts, nn.WithRecurrentHistory(rc.Get(b, x.DType())))
+		// When the cache has scheduled per-token snapshots, segment the
+		// recurrent kernels at the interior offsets so each boundary state
+		// can be captured.
+		if splits := rc.SnapshotSplits(int(L)); len(splits) > 0 {
+			opts = append(opts, nn.WithSnapshotSplits(splits))
 		}
-	}
-	if convState == nil {
-		convState = mlx.Zeros(x.DType(), int(B), int(convTail), int(2*cfg.LinearNumKeyHeads*cfg.LinearKeyHeadDim+cfg.LinearNumValueHeads*cfg.LinearValueHeadDim))
+	} else {
+		opts = append(opts, nn.WithRecurrentState(
+			mlx.Zeros(x.DType(), int(B), int(convTail), qkv.Dim(2)),
+			mlx.Zeros(mlx.DTypeFloat32, int(B), int(cfg.LinearNumValueHeads), int(cfg.LinearValueHeadDim), int(cfg.LinearKeyHeadDim)),
+		))
 	}
 
-	convInput := mlx.Concatenate([]*mlx.Array{convState, qkv}, 1)
-	var convOut *mlx.Array
-	if g.Conv1D != nil {
-		convOut = g.Conv1D.Forward(convInput)
-	} else {
-		convOut = depthwiseCausalConv1d(convInput, g.ConvWeight, L)
-	}
+	convOut, convStates := nn.CausalConv1D(b, qkv, g.Conv1D, g.ConvWeight, int(convTail), opts...)
 	convOut = mlx.SiLU(convOut)
-	if rc != nil {
-		total := int32(convInput.Dim(1))
-		start := total - convTail
-		nextConv := mlx.SliceStartStop(convInput, []int32{0, start, 0}, []int32{B, total, int32(convInput.Dim(2))})
-		rc.SetConvState(nextConv)
-	}
 
 	keyDim := cfg.LinearNumKeyHeads * cfg.LinearKeyHeadDim
 	valueDim := cfg.LinearNumValueHeads * cfg.LinearValueHeadDim
@@ -1224,36 +1197,27 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Co
 	q = mlx.MulScalar(mlx.RMSNormFn(q, nil, 1e-6), invScale*invScale)
 	k = mlx.MulScalar(mlx.RMSNormFn(k, nil, 1e-6), invScale)
 
-	gDecay := softplus(mlx.Add(a, g.DtBias))
+	gDecay := softplus(mlx.Add(alpha, g.DtBias))
 	gDecay = mlx.Mul(gDecay, g.AExp)
 	gDecay = mlx.Exp(mlx.MulScalar(gDecay, -1))
-	gDecay = gDecay.AsType(a.DType())
+	gDecay = gDecay.AsType(alpha.DType())
 
-	beta := mlx.Sigmoid(b)
+	betaGate := mlx.Sigmoid(beta)
 
-	var state *mlx.Array
-	if rc != nil {
-		state = rc.DeltaState(int(B), x.DType())
-	}
-	if state == nil {
-		state = mlx.Zeros(x.DType(), int(B), int(cfg.LinearNumValueHeads), int(cfg.LinearValueHeadDim), int(cfg.LinearKeyHeadDim))
-	}
-
-	out, state := mlx.GatedDelta(q, k, v, gDecay, beta, state)
+	out, deltaStates := nn.GatedDelta(b, q, k, v, gDecay, betaGate, opts...)
 	outDType := out.DType()
 	out = mlx.RMSNormFn(out, g.NormWeight, cfg.RMSNormEps)
 	out = mlx.Mul(out.AsType(mlx.DTypeFloat32), mlx.SiLU(z.AsType(mlx.DTypeFloat32))).AsType(outDType)
 	out = mlx.Reshape(out, B, L, valueDim)
 	out = g.OutProj.Forward(out)
 	if rc != nil {
-		rc.SetDeltaState(state)
-		rc.Advance(int(L))
+		rc.Put(b, convStates, deltaStates)
 	}
 	return out
 }
 
 func (m *DenseMLP) Forward(x *mlx.Array, _ *Config) *mlx.Array {
-	return m.DownProj.Forward(mlx.Mul(mlx.SiLU(m.GateProj.Forward(x)), m.UpProj.Forward(x)))
+	return m.DownProj.Forward(mlx.SwiGLU(m.GateProj.Forward(x), m.UpProj.Forward(x)))
 }
 
 func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.Array {
@@ -1283,13 +1247,13 @@ func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.
 			nil, idxFlat, true, s.GateGroupSize, s.GateBits, cfg.QuantMode, doSort)
 		up = mlx.GatherQMM(xFlat, s.UpWeightQ, s.UpScales, s.UpBiases,
 			nil, idxFlat, true, s.UpGroupSize, s.UpBits, cfg.QuantMode, doSort)
-		hidden = mlx.Mul(mlx.SiLU(gate), up)
+		hidden = mlx.SwiGLU(gate, up)
 		down = mlx.GatherQMM(hidden, s.DownWeightQ, s.DownScales, s.DownBiases,
 			nil, idxFlat, true, s.DownGroupSize, s.DownBits, cfg.QuantMode, doSort)
 	} else {
 		gate = mlx.GatherMM(xFlat, s.GateWeight, nil, idxFlat, doSort)
 		up = mlx.GatherMM(xFlat, s.UpWeight, nil, idxFlat, doSort)
-		hidden = mlx.Mul(mlx.SiLU(gate), up)
+		hidden = mlx.SwiGLU(gate, up)
 		down = mlx.GatherMM(hidden, s.DownWeight, nil, idxFlat, doSort)
 	}
 
@@ -1332,30 +1296,31 @@ func (m *SparseMoE) Forward(x *mlx.Array, cfg *Config) *mlx.Array {
 	return mlx.Reshape(y, B, L, cfg.HiddenSize)
 }
 
-func (l *Layer) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
+func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
 	var r *mlx.Array
 	normed := l.InputNorm.Forward(x, cfg.RMSNormEps)
 	if l.IsLinear {
-		r = l.Linear.Forward(normed, c, B, L, cfg)
+		r = l.Linear.Forward(normed, b, c, B, L, cfg)
 	} else {
-		r = l.FullAttn.Forward(normed, c, B, L, cfg)
+		r = l.FullAttn.Forward(normed, b, c, positions, B, L, cfg)
 	}
 	h := mlx.Add(x, r)
 	r = l.MLP.Forward(l.PostAttentionNorm.Forward(h, cfg.RMSNormEps), cfg)
 	return mlx.Add(h, r)
 }
 
-func (m *Model) Forward(tokens *mlx.Array, caches []cache.Cache) *mlx.Array {
-	dims := tokens.Dims()
+func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
+	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
+	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
 
-	h := m.EmbedTokens.Forward(tokens)
+	h := m.EmbedTokens.Forward(b.InputIDs)
 	for i, layer := range m.Layers {
 		var c cache.Cache
 		if caches != nil && i < len(caches) {
 			c = caches[i]
 		}
-		h = layer.Forward(h, c, B, L, m.Config)
+		h = layer.Forward(h, b, c, positions, B, L, m.Config)
 	}
 	out := m.Norm.Forward(h, m.RMSNormEps)
 	return out

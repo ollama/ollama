@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/cmd/launch"
 )
 
@@ -28,6 +29,13 @@ func launcherTestState() *launch.LauncherState {
 				Selectable:  true,
 				Changeable:  true,
 			},
+			"codex-app": {
+				Name:        "codex-app",
+				DisplayName: "Codex App",
+				Description: "An AI agent you can delegate real work to, by OpenAI",
+				Selectable:  true,
+				Changeable:  true,
+			},
 			"openclaw": {
 				Name:            "openclaw",
 				DisplayName:     "OpenClaw",
@@ -40,6 +48,13 @@ func launcherTestState() *launch.LauncherState {
 				Name:        "opencode",
 				DisplayName: "OpenCode",
 				Description: "Anomaly's open-source coding agent",
+				Selectable:  true,
+				Changeable:  true,
+			},
+			"hermes": {
+				Name:        "hermes",
+				DisplayName: "Hermes Agent",
+				Description: "Self-improving AI agent built by Nous Research",
 				Selectable:  true,
 				Changeable:  true,
 			},
@@ -70,32 +85,107 @@ func findMenuCursorByIntegration(items []menuItem, name string) int {
 	return -1
 }
 
+func integrationSequence(items []menuItem) []string {
+	sequence := make([]string, 0, len(items))
+	for _, item := range items {
+		switch {
+		case item.isRunModel:
+			sequence = append(sequence, "run")
+		case item.isOthers:
+			sequence = append(sequence, "more")
+		case item.integration != "":
+			sequence = append(sequence, item.integration)
+		}
+	}
+	return sequence
+}
+
+func compareStrings(got, want []string) string {
+	return cmp.Diff(want, got)
+}
+
+func expectedCollapsedSequence(state *launch.LauncherState) []string {
+	sequence := []string{"run"}
+	for _, item := range pinnedIntegrationItems(state) {
+		sequence = append(sequence, item.integration)
+	}
+	if len(otherIntegrationItems(state)) > 0 {
+		sequence = append(sequence, "more")
+	}
+	return sequence
+}
+
+func expectedExpandedSequence(state *launch.LauncherState) []string {
+	sequence := []string{"run"}
+	for _, item := range pinnedIntegrationItems(state) {
+		sequence = append(sequence, item.integration)
+	}
+	for _, item := range otherIntegrationItems(state) {
+		sequence = append(sequence, item.integration)
+	}
+	return sequence
+}
+
 func TestMenuRendersPinnedItemsAndMore(t *testing.T) {
-	view := newModel(launcherTestState()).View()
-	for _, want := range []string{"Chat with a model", "Launch OpenClaw", "Launch Claude Code", "Launch OpenCode", "More..."} {
+	state := launcherTestState()
+	menu := newModel(state)
+	wantPrefix := []string{"run", "claude", "codex-app", "hermes", "openclaw"}
+	if findMenuCursorByIntegration(menu.items, "codex-app") == -1 {
+		wantPrefix = []string{"run", "claude", "hermes", "openclaw", "opencode"}
+	}
+	if got := integrationSequence(menu.items); len(got) < len(wantPrefix) {
+		t.Fatalf("expected at least %d menu items, got %v", len(wantPrefix), got)
+	} else if diff := compareStrings(got[:len(wantPrefix)], wantPrefix); diff != "" {
+		t.Fatalf("unexpected primary TUI order: %s", diff)
+	}
+
+	view := menu.View()
+	for _, want := range []string{
+		"Chat, Code, & Work",
+		"Chat with models, code, search the web, and do work",
+		"Launch Claude Code",
+		"Launch Hermes Agent",
+		"Launch OpenClaw",
+		"More...",
+	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected menu view to contain %q\n%s", want, view)
 		}
 	}
-	if strings.Contains(view, "Launch Codex") {
-		t.Fatalf("expected Codex to be under More, not pinned\n%s", view)
+	if findMenuCursorByIntegration(menu.items, "codex-app") != -1 && !strings.Contains(view, "Launch Codex App") {
+		t.Fatalf("expected menu view to contain Codex App\n%s", view)
+	}
+	if strings.Contains(view, "Launch Claude Desktop") {
+		t.Fatalf("expected hidden Claude Desktop to be absent\n%s", view)
+	}
+	wantOrder := expectedCollapsedSequence(state)
+	if diff := compareStrings(integrationSequence(menu.items), wantOrder); diff != "" {
+		t.Fatalf("unexpected pinned order: %s", diff)
 	}
 }
 
 func TestMenuExpandsOthersFromLastSelection(t *testing.T) {
 	state := launcherTestState()
-	state.LastSelection = "pi"
+	overflow := otherIntegrationItems(state)
+	if len(overflow) == 0 {
+		t.Fatal("expected at least one overflow integration")
+	}
+	state.LastSelection = overflow[0].integration
 
 	menu := newModel(state)
 	if !menu.showOthers {
 		t.Fatal("expected others section to expand when last selection is in the overflow list")
 	}
 	view := menu.View()
-	if !strings.Contains(view, "Launch Pi") {
+	if !strings.Contains(view, overflow[0].title) {
 		t.Fatalf("expected expanded view to contain overflow integration\n%s", view)
 	}
 	if strings.Contains(view, "More...") {
 		t.Fatalf("expected expanded view to replace More... item\n%s", view)
+	}
+	wantOrder := expectedExpandedSequence(state)
+	if diff := compareStrings(integrationSequence(menu.items), wantOrder); diff != "" {
+		t.Fatalf("unexpected expanded order: %s", diff)
 	}
 }
 

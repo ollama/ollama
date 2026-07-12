@@ -1,55 +1,98 @@
-# `llama`
+# Llama
 
-This package provides Go bindings to [llama.cpp](https://github.com/ggerganov/llama.cpp).
+## Updating llama.cpp
 
-## Vendoring
+`LLAMA_CPP_VERSION` pins Ollama's llama.cpp source. An update can change more
+than compilation: it can affect model loading, GPU discovery, scheduler inputs,
+runtime logs, streaming, and compatibility patches. Validate the upstream diff,
+the patched source Ollama actually builds, and the affected local paths.
 
-Ollama vendors [llama.cpp](https://github.com/ggerganov/llama.cpp/) and [ggml](https://github.com/ggerganov/llama.cpp/tree/master/ggml/src). While we generally strive to contribute changes back upstream to avoid drift, we carry a small set of patches which are applied to the tracking commit.
+### Workflow
 
-If you update the vendoring code, start by running the following command to establish the tracking llama.cpp repo in the `./vendor/` directory.
+Record the old ref from the base branch and choose an explicit new llama.cpp
+tag or commit. After updating `LLAMA_CPP_VERSION`, materialize the source
+through Ollama's normal build path:
 
-```shell
-make -f Makefile.sync apply-patches
+```sh
+cmake -S llama/server --preset cpu
 ```
 
-### Updating Base Commit
+This configure step fetches the pinned source and applies `llama/compat/`
+patches. Confirm the resulting checkout, usually
+`build/llama-server-cpu/_deps/llama_cpp-src`, resolves to the intended new ref.
+Do not trust an old or dirty `_deps/` checkout as validation.
+This is only a source and patch-application check; it is not runtime
+validation.
 
-**Pin to new base commit**
+Review the upstream diff using Git refs from the llama.cpp checkout:
 
-To change the base commit, update `FETCH_HEAD` in Makefile.sync.
-
-When updating to a newer base commit, the existing patches may not apply cleanly and require manual merge resolution.
-
-Start by applying the patches. If any of the patches have conflicts, the `git am` will stop at the first failure.
-
-```shell
-make -f Makefile.sync apply-patches
+```sh
+git diff <old-ref> <new-ref> -- <path>
+git show <new-ref>:<path>
 ```
 
-If there are conflicts, you will see an error message. Resolve the conflicts in `./vendor/`, and continue the patch series with `git am --continue` and rerun `make -f Makefile.sync apply-patches`. Repeat until all patches are successfully applied.
+Avoid treating patched working-tree files as pristine upstream source.
 
-Once all patches are applied, commit the changes to the tracking repository.
+For build prerequisites, platform notes, and backend selection, see the
+[developer guide](../docs/development.md).
 
-```shell
-make -f Makefile.sync format-patches sync
+### What to review
+
+- Build option and dependency drift: changed `GGML_*` or `LLAMA_*` options,
+  new `find_package` calls, generated assets, shader tools, or backend
+  dependencies. Compare against `llama/server/CMakeLists.txt`,
+  `llama/server/CMakePresets.json`, `cmake/local.cmake`, Dockerfiles, CI, and
+  build scripts as needed.
+- Backend discovery contracts: GGML symbols used by `discover/native_probe*.go`,
+  `ggml_backend_dev_props`, backend device type enums, backend registry loading,
+  device ordering, visible-device filtering, and CUDA/ROCm/Vulkan/Metal runtime
+  library behavior.
+- llama-server contracts: launch args and defaults, status and error payloads,
+  memory/offload log lines, `system_info:`, flash-attention logging,
+  `--main-gpu`, split-mode behavior, and scheduler-sensitive flags consumed by
+  `llm/llama_server.go` or `server/sched.go`.
+- Streaming: any new SSE frame shape, heartbeat, keepalive ping, completion
+  marker, or response cadence on paths Ollama parses directly.
+- Model and conversion surfaces: new architectures, tensor names, GGUF
+  metadata, tokenizer behavior, speculative/MTP paths, sampler defaults, and
+  server capabilities that may require updates under `convert/`, `model/`,
+  `x/create/`, `llm/`, or `llama/compat/`. A model load alone is not enough;
+  affected paths should run a real request and assert the expected result.
+
+### Compatibility patches
+
+Patches under `llama/compat/` are applied during configure. If a patch
+insertion point moved, regenerate the patch against a fresh checkout of the new
+ref rather than editing an already-patched `_deps/` tree.
+
+If compatibility sources, model patches, `llama/server/CMakeLists.txt`, or
+`cmake/local.cmake` changed, build the CPU target:
+
+```sh
+cmake --build build/llama-server-cpu --target llama-server --parallel 12
 ```
 
-### Generating Patches
+Configure-only validation can miss missing sources, template instantiation
+problems, and link errors. Also check whether upstream now supports a locally
+patched model natively; if it does, the local patch may need removal or rebase.
 
-When working on new fixes or features that impact vendored code, use the following model. First get a clean tracking repo with all current patches applied:
+### Local checks
 
-```shell
-make -f Makefile.sync clean apply-patches
+Run the Go tests:
+
+```sh
+go test ./...
 ```
+Then proceed to build the full Ollama release and verify.
 
-Iterate until you're ready to submit PRs. Once your code is ready, commit a change in the `./vendor/` directory, then generate the patches for ollama with
+### End-to-end Testing
 
-```shell
-make -f Makefile.sync format-patches
-```
+For runtime validation, build the full applicable native payload for the
+platform using the [developer guide](../docs/development.md): Metal on macOS
+arm64, and the available CUDA, ROCm, and Vulkan backends on Linux and Windows.
 
-In your `./vendor/` directory, create a branch, and cherry-pick the new commit to that branch, then submit a PR upstream to llama.cpp.
-
-Commit the changes in the ollama repo and submit a PR to Ollama, which will include the vendored code update with your change, along with the patches.
-
-After your PR upstream is merged, follow the **Updating Base Commit** instructions above, however first remove your patch before running `apply-patches` since the new base commit contains your change already.
+Then run the [integration tests](../integration/README.md) on the platforms
+being validated. Use them to exercise real Ollama requests and inspect logs for
+device discovery, offload, memory accounting, flash attention, and
+request/response behavior. macOS, Windows, and Linux behavior must be validated
+on those platforms.

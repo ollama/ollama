@@ -44,7 +44,9 @@ func TestModelfileConfig(t *testing.T) {
 func TestConfigFromModelfile(t *testing.T) {
 	modelfile, err := parser.ParseFile(strings.NewReader(`
 FROM ./model
+DRAFT ./assistant
 TEMPLATE {{ .Prompt }}
+REQUIRES 0.20.0
 PARAMETER temperature 0.7
 PARAMETER stop USER:
 PARAMETER stop ASSISTANT:
@@ -66,12 +68,56 @@ PARAMETER stop ASSISTANT:
 		t.Fatalf("Template = %q, want %q", mfConfig.Template, "{{ .Prompt }}")
 	}
 
+	if mfConfig.Draft != "./assistant" {
+		t.Fatalf("Draft = %q, want %q", mfConfig.Draft, "./assistant")
+	}
+
+	if mfConfig.Requires != "0.20.0" {
+		t.Fatalf("Requires = %q, want %q", mfConfig.Requires, "0.20.0")
+	}
+
 	if got := mfConfig.Parameters["temperature"]; got != float32(0.7) {
 		t.Fatalf("temperature = %#v, want %v", got, float32(0.7))
 	}
 
 	if got := mfConfig.Parameters["stop"]; got == nil || len(got.([]string)) != 2 {
 		t.Fatalf("unexpected stop params: %#v", got)
+	}
+}
+
+func TestConfigFromModelfile_RequiresBelowMinimum(t *testing.T) {
+	modelfile, err := parser.ParseFile(strings.NewReader(`
+FROM ./model
+REQUIRES 0.14.0
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = ConfigFromModelfile(modelfile)
+	if err == nil {
+		t.Fatal("expected error for REQUIRES below minimum, got nil")
+	}
+	if !strings.Contains(err.Error(), "minimum supported version") {
+		t.Fatalf("error = %v, want error mentioning minimum supported version", err)
+	}
+}
+
+func TestConfigFromModelfile_RequiresInvalidSemver(t *testing.T) {
+	modelfile, err := parser.ParseFile(strings.NewReader(`
+FROM ./model
+REQUIRES not-a-version
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = ConfigFromModelfile(modelfile)
+	if err == nil {
+		t.Fatal("expected error for invalid semver, got nil")
+	}
+	if !strings.Contains(err.Error(), "valid semver") {
+		t.Fatalf("error = %v, want semver error", err)
 	}
 }
 
@@ -153,11 +199,23 @@ func TestCreateModel_NotSafetensorsDir(t *testing.T) {
 	}
 }
 
+func TestCreateModel_DraftQuantizeRequiresDraft(t *testing.T) {
+	err := CreateModel(CreateOptions{
+		ModelName:     "test-model",
+		ModelDir:      t.TempDir(),
+		DraftQuantize: "mxfp8",
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "--draft-quantize requires a DRAFT model") {
+		t.Fatalf("error = %v, want draft-quantize requires DRAFT", err)
+	}
+}
+
 func TestCreateOptions(t *testing.T) {
 	opts := CreateOptions{
-		ModelName: "my-model",
-		ModelDir:  "/path/to/model",
-		Quantize:  "fp8",
+		ModelName:     "my-model",
+		ModelDir:      "/path/to/model",
+		Quantize:      "fp8",
+		DraftQuantize: "mxfp8",
 		Modelfile: &ModelfileConfig{
 			Template: "test",
 			System:   "system",
@@ -178,6 +236,9 @@ func TestCreateOptions(t *testing.T) {
 	}
 	if opts.Quantize != "fp8" {
 		t.Errorf("Quantize = %q, want %q", opts.Quantize, "fp8")
+	}
+	if opts.DraftQuantize != "mxfp8" {
+		t.Errorf("DraftQuantize = %q, want %q", opts.DraftQuantize, "mxfp8")
 	}
 	if opts.Modelfile == nil {
 		t.Error("Modelfile should not be nil")
@@ -286,6 +347,9 @@ func TestCreateOptions_Defaults(t *testing.T) {
 	if opts.Quantize != "" {
 		t.Errorf("Quantize should be empty by default, got %q", opts.Quantize)
 	}
+	if opts.DraftQuantize != "" {
+		t.Errorf("DraftQuantize should be empty by default, got %q", opts.DraftQuantize)
+	}
 
 	// Modelfile should default to nil
 	if opts.Modelfile != nil {
@@ -311,9 +375,29 @@ func TestInferSafetensorsCapabilities(t *testing.T) {
 			name: "qwen3.5 multimodal model",
 			configJSON: `{
 				"architectures": ["Qwen3_5ForConditionalGeneration"],
-				"model_type": "qwen3"
+				"model_type": "qwen3",
+				"vision_config": {"hidden_size": 1024}
 			}`,
 			want: []string{"completion", "vision", "thinking"},
+		},
+		{
+			name: "model with audio config",
+			configJSON: `{
+				"architectures": ["Gemma4ForConditionalGeneration"],
+				"model_type": "gemma4",
+				"vision_config": {"hidden_size": 1024},
+				"audio_config": {"num_mel_bins": 128}
+			}`,
+			want: []string{"completion", "vision", "audio"},
+		},
+		{
+			name: "model with audio but no vision",
+			configJSON: `{
+				"architectures": ["SomeAudioModel"],
+				"model_type": "other",
+				"audio_config": {"num_mel_bins": 128}
+			}`,
+			want: []string{"completion", "audio"},
 		},
 		{
 			name: "non-qwen conditional generation model",
@@ -332,21 +416,11 @@ func TestInferSafetensorsCapabilities(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if got := inferSafetensorsCapabilities(dir); !slices.Equal(got, tt.want) {
+			if got := inferSafetensorsCapabilities(dir, ""); !slices.Equal(got, tt.want) {
 				t.Fatalf("inferSafetensorsCapabilities() = %#v, want %#v", got, tt.want)
 			}
 		})
 	}
-}
-
-func TestQuantizeSupported(t *testing.T) {
-	// This just verifies the function exists and returns a boolean
-	// The actual value depends on build tags (mlx vs non-mlx)
-	supported := QuantizeSupported()
-
-	// In non-mlx builds, this should be false
-	// We can't easily test both cases, so just verify it returns something
-	_ = supported
 }
 
 func TestCreateModelfileLayersIncludesParameters(t *testing.T) {
@@ -430,69 +504,187 @@ func TestNewManifestWriter_PopulatesFileTypeFromQuantize(t *testing.T) {
 	}
 }
 
-func TestSupportsThinking(t *testing.T) {
+func TestNewManifestWriter_PopulatesDraftMetadata(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	draftDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(draftDir, "config.json"), []byte(`{"architectures":["DFlashDraftModel"],"model_type":"qwen3"}`), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	opts := CreateOptions{
+		ModelName: "test-draft",
+		ModelDir:  t.TempDir(),
+		Modelfile: &ModelfileConfig{Draft: draftDir},
+	}
+
+	writer := newManifestWriter(opts, []string{"completion"}, "gemma4", "gemma4")
+	if err := writer(opts.ModelName, create.LayerInfo{}, nil); err != nil {
+		t.Fatalf("newManifestWriter() error = %v", err)
+	}
+
+	name := model.ParseName(opts.ModelName)
+	mf, err := manifest.ParseNamedManifest(name)
+	if err != nil {
+		t.Fatalf("ParseNamedManifest() error = %v", err)
+	}
+
+	configPath, err := manifest.BlobsPath(mf.Config.Digest)
+	if err != nil {
+		t.Fatalf("BlobsPath() error = %v", err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+
+	var cfg model.ConfigV2
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if cfg.Draft == nil {
+		t.Fatal("Draft metadata missing")
+	}
+	if cfg.Draft.TensorPrefix != "draft." || cfg.Draft.Config != "draft/config.json" {
+		t.Fatalf("Draft = %#v, want draft prefix/config", cfg.Draft)
+	}
+	if cfg.Draft.Architecture != "DFlashDraftModel" {
+		t.Fatalf("Draft architecture = %q, want DFlashDraftModel", cfg.Draft.Architecture)
+	}
+}
+
+func TestDetectCapabilities(t *testing.T) {
+	const thinkingTemplate = `{"chat_template": "{%- if '</think>' in content %}{{ content.split('</think>')[-1] }}{%- endif %}<think>\n</think>"}`
+	const instructTemplate = `{"chat_template": "{{ '<|im_start|>assistant\n' }}"}`
+
 	tests := []struct {
-		name       string
-		configJSON string
-		want       bool
+		name          string
+		configJSON    string
+		tokenizerJSON string
+		want          modelCapabilities
 	}{
 		{
-			name:       "qwen3 architecture",
+			name:          "thinking from chat template",
+			configJSON:    `{"architectures": ["Qwen3ForCausalLM"], "model_type": "qwen3"}`,
+			tokenizerJSON: thinkingTemplate,
+			want:          modelCapabilities{thinking: true},
+		},
+		{
+			name:          "instruct template has no thinking",
+			configJSON:    `{"architectures": ["Qwen3ForCausalLM"], "model_type": "qwen3"}`,
+			tokenizerJSON: instructTemplate,
+			want:          modelCapabilities{thinking: false},
+		},
+		{
+			name:       "plain qwen3 without template has no thinking",
 			configJSON: `{"architectures": ["Qwen3ForCausalLM"], "model_type": "qwen3"}`,
-			want:       true,
+			want:       modelCapabilities{thinking: false},
 		},
 		{
-			name:       "deepseek architecture",
-			configJSON: `{"architectures": ["DeepseekV3ForCausalLM"]}`,
-			want:       true,
+			name:          "qwen3.5 moe always thinks without a thinking template",
+			configJSON:    `{"architectures": ["Qwen3_5MoeForConditionalGeneration"], "model_type": "qwen3_5_moe"}`,
+			tokenizerJSON: instructTemplate,
+			want:          modelCapabilities{thinking: true},
 		},
 		{
-			name:       "glm4moe architecture",
-			configJSON: `{"architectures": ["GLM4MoeForCausalLM"]}`,
-			want:       true,
+			name:       "qwen3-next always thinks",
+			configJSON: `{"architectures": ["Qwen3NextForCausalLM"]}`,
+			want:       modelCapabilities{thinking: true},
 		},
 		{
-			name:       "llama architecture (no thinking)",
+			name:       "vision config",
+			configJSON: `{"architectures": ["Gemma4ForConditionalGeneration"], "vision_config": {}}`,
+			want:       modelCapabilities{vision: true},
+		},
+		{
+			name:       "audio config",
+			configJSON: `{"architectures": ["Qwen3OmniForConditionalGeneration"], "audio_config": {}}`,
+			want:       modelCapabilities{audio: true},
+		},
+		{
+			name:       "llama has no extra capabilities",
 			configJSON: `{"architectures": ["LlamaForCausalLM"], "model_type": "llama"}`,
-			want:       false,
+			want:       modelCapabilities{},
 		},
 		{
-			name:       "gemma architecture (no thinking)",
-			configJSON: `{"architectures": ["Gemma3ForCausalLM"], "model_type": "gemma3"}`,
-			want:       false,
-		},
-		{
-			name:       "model_type only",
-			configJSON: `{"model_type": "deepseek"}`,
-			want:       true,
-		},
-		{
-			name:       "empty config",
-			configJSON: `{}`,
-			want:       false,
-		},
-		{
-			name:       "invalid json",
+			name:       "invalid config json",
 			configJSON: `not json`,
-			want:       false,
+			want:       modelCapabilities{},
+		},
+		{
+			name: "missing files",
+			want: modelCapabilities{},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
-			os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.configJSON), 0o644)
+			if tt.configJSON != "" {
+				if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.configJSON), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.tokenizerJSON != "" {
+				if err := os.WriteFile(filepath.Join(dir, "tokenizer_config.json"), []byte(tt.tokenizerJSON), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
 
-			if got := supportsThinking(dir); got != tt.want {
-				t.Errorf("supportsThinking() = %v, want %v", got, tt.want)
+			if got := detectCapabilities(dir); got != tt.want {
+				t.Errorf("detectCapabilities() = %+v, want %+v", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestSupportsThinking_NoConfig(t *testing.T) {
-	if supportsThinking(t.TempDir()) {
-		t.Error("supportsThinking should return false for missing config.json")
+func TestInferSafetensorsCapabilitiesFromParser(t *testing.T) {
+	tests := []struct {
+		name       string
+		parserName string
+		want       []string
+	}{
+		{
+			name:       "laguna tools and thinking",
+			parserName: "laguna",
+			want:       []string{"completion", "tools", "thinking"},
+		},
+		{
+			name:       "functiongemma tools only",
+			parserName: "functiongemma",
+			want:       []string{"completion", "tools"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			if got := inferSafetensorsCapabilities(dir, tt.parserName); !slices.Equal(got, tt.want) {
+				t.Fatalf("inferSafetensorsCapabilities() = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestInferSafetensorsCapabilitiesLaguna(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"architectures": ["LagunaForCausalLM"], "model_type": "laguna"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := inferSafetensorsCapabilities(dir, "laguna")
+	for _, want := range []string{"completion", "tools", "thinking"} {
+		if !slices.Contains(got, want) {
+			t.Fatalf("capabilities %v missing %q", got, want)
+		}
+	}
+	if slices.Contains(got, "vision") || slices.Contains(got, "audio") {
+		t.Fatalf("unexpected non-text capability in %v", got)
 	}
 }
 
@@ -506,6 +698,11 @@ func TestGetParserName(t *testing.T) {
 			name:       "qwen3 model",
 			configJSON: `{"architectures": ["Qwen3ForCausalLM"]}`,
 			want:       "qwen3",
+		},
+		{
+			name:       "qwen3.5 model",
+			configJSON: `{"architectures": ["Qwen3_5ForConditionalGeneration"]}`,
+			want:       "qwen3.5",
 		},
 		{
 			name:       "deepseek model",
@@ -526,6 +723,11 @@ func TestGetParserName(t *testing.T) {
 			name:       "qwen3 via model_type",
 			configJSON: `{"model_type": "qwen3"}`,
 			want:       "qwen3",
+		},
+		{
+			name:       "laguna model",
+			configJSON: `{"architectures": ["LagunaForCausalLM"], "model_type": "laguna"}`,
+			want:       "laguna",
 		},
 		{
 			name:       "no config",
@@ -558,6 +760,11 @@ func TestGetRendererName(t *testing.T) {
 			want:       "qwen3-coder",
 		},
 		{
+			name:       "qwen3.5 model",
+			configJSON: `{"architectures": ["Qwen3_5ForConditionalGeneration"]}`,
+			want:       "qwen3.5",
+		},
+		{
 			name:       "deepseek model",
 			configJSON: `{"architectures": ["DeepseekV3ForCausalLM"]}`,
 			want:       "deepseek3",
@@ -571,6 +778,11 @@ func TestGetRendererName(t *testing.T) {
 			name:       "llama model (no renderer)",
 			configJSON: `{"architectures": ["LlamaForCausalLM"]}`,
 			want:       "",
+		},
+		{
+			name:       "laguna model",
+			configJSON: `{"architectures": ["LagunaForCausalLM"], "model_type": "laguna"}`,
+			want:       "laguna",
 		},
 	}
 

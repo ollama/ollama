@@ -545,6 +545,61 @@ func BenchmarkBytePairEncoding(b *testing.B) {
 	}
 }
 
+func TestBytePairEncodingSplitMultipleRegexpsPreservesOffsets(t *testing.T) {
+	t.Parallel()
+
+	bpe := NewBytePairEncoding(
+		nil,
+		`(?:\r?\n)+(?!\r?\n)`,
+		`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
+	)
+
+	input := "One line\nTwo lines\n\nThree"
+	got := slices.Collect(bpe.split(input))
+	want := []string{"One", " line", "\n", "Two", " lines", "\n\n", "Three"}
+
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("split mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestBytePairEncodingSplitRefactPreservesOffsets(t *testing.T) {
+	t.Parallel()
+
+	bpe := NewBytePairEncoding(
+		nil,
+		`\p{N}`,
+		`'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+`,
+	)
+
+	input := "One line\nTwo lines\n\nThree"
+	got := slices.Collect(bpe.split(input))
+	want := []string{"One", " line", "\n", "Two", " lines", "\n", "\n", "Three"}
+
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("split mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestBytePairEncodingSplitDeepSeekV3PreservesOffsets(t *testing.T) {
+	t.Parallel()
+
+	bpe := NewBytePairEncoding(
+		nil,
+		"\\p{N}{1,3}",
+		`[一-龥぀-ゟ゠-ヿ]+`,
+		"[!\"#$%&'()*+,\\-./:;<=>?@\\[\\\\\\]^_`{|}~][A-Za-z]+|[^\\r\\n\\p{L}\\p{P}\\p{S}]?[\\p{L}\\p{M}]+| ?[\\p{P}\\p{S}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
+	)
+
+	input := "One line\nTwo lines\n\nThree"
+	got := slices.Collect(bpe.split(input))
+	want := []string{"One", " line", "\n", "Two", " lines", "\n\n", "Three"}
+
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("split mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestSplit(t *testing.T) {
 	cases := []struct {
 		name string

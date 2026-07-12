@@ -39,12 +39,8 @@ func TestModelsChat(t *testing.T) {
 		slog.Warn("No VRAM info available, testing all models, so larger ones might timeout...")
 	}
 
-	var chatModels []string
-	if s := os.Getenv("OLLAMA_NEW_ENGINE"); s != "" {
-		chatModels = ollamaEngineChatModels
-	} else {
-		chatModels = append(ollamaEngineChatModels, llamaRunnerChatModels...)
-	}
+	chatModels := append(ollamaEngineChatModels, llamaRunnerChatModels...)
+	chatModels = append(chatModels, mlxEngineChatModels...)
 
 	for _, model := range testModels(chatModels) {
 		t.Run(model, func(t *testing.T) {
@@ -71,6 +67,7 @@ func TestModelsChat(t *testing.T) {
 				func(response api.GenerateResponse) error { return nil },
 			)
 			if err != nil {
+				skipIfMLXUnsupported(t, err)
 				t.Fatalf("failed to load model %s: %s", model, err)
 			}
 			gpuPercent := getGPUPercent(ctx, t, client, model)

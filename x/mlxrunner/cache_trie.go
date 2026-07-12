@@ -51,14 +51,27 @@ func (n *trieNode) setSnapshots(snaps []cache.Snapshot, counter *int64) {
 // swapSnapshots is like setSnapshots but returns the previous snapshots
 // without closing them. Use this when the old snapshots will be consumed
 // (e.g. by Split/Merge).
+//
+// Snapshots that are lazy when installed contribute 0 to the counter, but
+// may later materialize via copyOut and grow the counter through a hook.
 func (n *trieNode) swapSnapshots(snaps []cache.Snapshot, counter *int64) []cache.Snapshot {
 	old := n.snapshots
+	for _, s := range old {
+		if s != nil {
+			s.SetMaterializeHook(nil)
+		}
+	}
 	if counter != nil {
 		*counter -= n.snapshotBytes()
 	}
 	n.snapshots = snaps
 	if counter != nil {
 		*counter += n.snapshotBytes()
+		for _, s := range snaps {
+			if s != nil {
+				s.SetMaterializeHook(func(delta int) { *counter += int64(delta) })
+			}
+		}
 	}
 	return old
 }

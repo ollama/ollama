@@ -57,6 +57,15 @@ func (p *MinistralParser) HasThinkingSupport() bool {
 	return p.hasThinkingSupport
 }
 
+func (p *MinistralParser) PreservedTokens() []string {
+	return []string{
+		ministralToolCallsTag,
+		ministralThinkTag,
+		ministralThinkEndTag,
+		ministralArgsTag,
+	}
+}
+
 func (p *MinistralParser) setInitialState(lastMessage *api.Message) {
 	prefill := lastMessage != nil && lastMessage.Role == "assistant"
 	if !p.HasThinkingSupport() {

@@ -2,12 +2,9 @@ package launch
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net"
-	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -16,7 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/cmd/internal/fileutil"
+	"github.com/ollama/ollama/types/model"
 )
 
 func TestOpenclawIntegration(t *testing.T) {
@@ -77,7 +75,7 @@ func TestOpenclawRunPassthroughArgs(t *testing.T) {
 	defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
 
 	c := &Openclaw{}
-	if err := c.Run("llama3.2", []string{"gateway", "--someflag"}); err != nil {
+	if err := c.Run("llama3.2", nil, []string{"gateway", "--someflag"}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
@@ -151,7 +149,7 @@ fi
 	defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
 
 	c := &Openclaw{}
-	if err := c.Run("llama3.2", nil); err != nil {
+	if err := c.Run("llama3.2", nil, nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
@@ -223,7 +221,7 @@ func TestOpenclawRun_SetupLaterContinuesToGatewayAndTUI(t *testing.T) {
 	defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
 
 	c := &Openclaw{}
-	if err := c.Run("llama3.2", nil); err != nil {
+	if err := c.Run("llama3.2", nil, nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
@@ -251,6 +249,359 @@ func TestOpenclawRun_SetupLaterContinuesToGatewayAndTUI(t *testing.T) {
 	}
 }
 
+func TestOpenclawRun_FirstLaunchOnboardUsesLaunchManagedHealthFlow(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("PATH", tmpDir)
+
+	bin := filepath.Join(tmpDir, "openclaw")
+	script := fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$*" >> "$HOME/invocations.log"
+if [ "$1" = "onboard" ]; then
+  /usr/bin/env | /usr/bin/sort > "$HOME/onboard-env.log"
+  /bin/mkdir -p "$HOME/.openclaw"
+  /bin/cat > "$HOME/.openclaw/openclaw.json" <<'EOF'
+{"wizard":{"lastRunAt":"2026-01-01T00:00:00Z"},"gateway":{"port":18789,"mode":"local"}}
+EOF
+fi
+exit 0
+`)
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldConfirmPrompt := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		if prompt != "I understand the risks. Continue?" {
+			t.Fatalf("unexpected prompt: %q", prompt)
+		}
+		return true, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
+
+	c := &Openclaw{}
+	if err := c.Run("llama3.2", nil, []string{"status"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "invocations.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected onboard + passthrough invocations, got %v", lines)
+	}
+	onboardInvocation := ""
+	for _, line := range lines {
+		if strings.HasPrefix(line, "onboard ") {
+			onboardInvocation = line
+			break
+		}
+	}
+	if onboardInvocation == "" {
+		t.Fatalf("expected onboard invocation, got %v", lines)
+	}
+	if !strings.Contains(onboardInvocation, "--skip-health") {
+		t.Fatalf("expected onboard invocation to include --skip-health, got %q", onboardInvocation)
+	}
+
+	envData, err := os.ReadFile(filepath.Join(tmpDir, "onboard-env.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := envSliceToMap(strings.Split(strings.TrimSpace(string(envData)), "\n"))
+	if env["OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS"] != "1" {
+		t.Fatalf("OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS = %q, want %q", env["OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS"], "1")
+	}
+	if env["OPENCLAW_PLUGIN_STAGE_DIR"] != filepath.Join(tmpDir, ".openclaw", "plugin-runtime-deps") {
+		t.Fatalf("OPENCLAW_PLUGIN_STAGE_DIR = %q, want %q", env["OPENCLAW_PLUGIN_STAGE_DIR"], filepath.Join(tmpDir, ".openclaw", "plugin-runtime-deps"))
+	}
+}
+
+func TestOpenclawRun_FirstLaunchTUIArgsEnsureGatewayBeforePassthrough(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("PATH", tmpDir)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	bin := filepath.Join(tmpDir, "openclaw")
+	script := fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$*" >> "$HOME/invocations.log"
+if [ "$1" = "onboard" ]; then
+  /bin/mkdir -p "$HOME/.openclaw"
+  /bin/cat > "$HOME/.openclaw/openclaw.json" <<'EOF'
+{"wizard":{"lastRunAt":"2026-01-01T00:00:00Z"},"gateway":{"port":%d,"mode":"local"}}
+EOF
+fi
+exit 0
+`, port)
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldConfirmPrompt := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		if prompt != "I understand the risks. Continue?" {
+			t.Fatalf("unexpected prompt: %q", prompt)
+		}
+		return true, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
+
+	c := &Openclaw{}
+	if err := c.Run("llama3.2", nil, []string{"tui"}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "invocations.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("expected at least 3 invocations (update, onboard, daemon restart, tui), got %v", lines)
+	}
+	onboardIdx, daemonRestartIdx, tuiIdx := -1, -1, -1
+	for i, line := range lines {
+		if onboardIdx == -1 && strings.HasPrefix(line, "onboard ") {
+			onboardIdx = i
+		}
+		if daemonRestartIdx == -1 && line == "daemon restart" {
+			daemonRestartIdx = i
+		}
+		if tuiIdx == -1 && line == "tui" {
+			tuiIdx = i
+		}
+	}
+	if onboardIdx == -1 {
+		t.Fatalf("expected an onboarding invocation, got %v", lines)
+	}
+	if daemonRestartIdx == -1 {
+		t.Fatalf("expected a daemon restart before tui, got %v", lines)
+	}
+	if tuiIdx == -1 {
+		t.Fatalf("expected a tui invocation, got %v", lines)
+	}
+	if !(onboardIdx < daemonRestartIdx && daemonRestartIdx < tuiIdx) {
+		t.Fatalf("expected onboarding, then daemon restart, then tui; got %v", lines)
+	}
+}
+
+func TestOpenclawEnsureGatewayReady_UsesDaemonStartFallback(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("PATH", tmpDir)
+
+	portProbe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := portProbe.Addr().(*net.TCPAddr).Port
+	_ = portProbe.Close()
+
+	configDir := filepath.Join(tmpDir, ".openclaw")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(fmt.Sprintf(`{
+		"wizard": {"lastRunAt": "2026-01-01T00:00:00Z"},
+		"gateway": {"port": %d, "mode": "local"}
+	}`, port)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	bin := filepath.Join(tmpDir, "openclaw")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/invocations.log\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldCanInstallDaemon := openclawCanInstallDaemon
+	openclawCanInstallDaemon = func() bool { return true }
+	defer func() { openclawCanInstallDaemon = oldCanInstallDaemon }()
+
+	triggeredBy := make(chan string, 1)
+	listenerReady := make(chan net.Listener, 1)
+	go func() {
+		invocationsPath := filepath.Join(tmpDir, "invocations.log")
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			data, err := os.ReadFile(invocationsPath)
+			if err == nil {
+				lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+				for _, line := range lines {
+					if line != "daemon start" && line != "gateway run --force" {
+						continue
+					}
+					ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+					if err != nil {
+						return
+					}
+					go func() {
+						for {
+							conn, err := ln.Accept()
+							if err != nil {
+								return
+							}
+							_ = conn.Close()
+						}
+					}()
+					triggeredBy <- line
+					listenerReady <- ln
+					return
+				}
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+
+	c := &Openclaw{}
+	cleanup, _, gotPort, err := c.ensureGatewayReady(bin)
+	if err != nil {
+		t.Fatalf("ensureGatewayReady() error = %v", err)
+	}
+	defer cleanup()
+	if gotPort != port {
+		t.Fatalf("ensureGatewayReady() port = %d, want %d", gotPort, port)
+	}
+
+	var ln net.Listener
+	select {
+	case which := <-triggeredBy:
+		if which != "daemon start" {
+			t.Fatalf("expected daemon start fallback, got %q", which)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for gateway startup trigger")
+	}
+	select {
+	case ln = <-listenerReady:
+		defer ln.Close()
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for test listener")
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "invocations.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) == 0 || lines[0] != "daemon start" {
+		t.Fatalf("expected daemon start invocation, got %v", lines)
+	}
+	for _, line := range lines {
+		if line == "gateway run --force" {
+			t.Fatalf("did not expect gateway run fallback when daemon start succeeds, got %v", lines)
+		}
+	}
+}
+
+func TestOpenclawEnv_StagesBundledPluginRuntimeDeps(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("OPENAI_API_KEY", "should-be-cleared")
+
+	env := envSliceToMap(openclawEnv())
+
+	if env["OPENCLAW_PLUGIN_STAGE_DIR"] != filepath.Join(tmpDir, ".openclaw", "plugin-runtime-deps") {
+		t.Fatalf("OPENCLAW_PLUGIN_STAGE_DIR = %q, want %q", env["OPENCLAW_PLUGIN_STAGE_DIR"], filepath.Join(tmpDir, ".openclaw", "plugin-runtime-deps"))
+	}
+	if _, ok := env["OPENAI_API_KEY"]; ok {
+		t.Fatal("expected OPENAI_API_KEY to be cleared from openclaw environment")
+	}
+}
+
+func TestOpenclawInstallEnv_PreservesExplicitStageDirAndAddsEagerDeps(t *testing.T) {
+	t.Setenv("OPENCLAW_PLUGIN_STAGE_DIR", "/tmp/custom-stage")
+
+	env := envSliceToMap(openclawInstallEnv())
+
+	if env["OPENCLAW_PLUGIN_STAGE_DIR"] != "/tmp/custom-stage" {
+		t.Fatalf("OPENCLAW_PLUGIN_STAGE_DIR = %q, want %q", env["OPENCLAW_PLUGIN_STAGE_DIR"], "/tmp/custom-stage")
+	}
+	if env["OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS"] != "1" {
+		t.Fatalf("OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS = %q, want %q", env["OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS"], "1")
+	}
+}
+
+func TestEnsureOpenclawInstalled_UsesBundledPluginInstallEnv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("PATH", tmpDir)
+
+	writeScript := func(path, content string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	openclawPath := filepath.Join(tmpDir, "openclaw")
+	npmScript := fmt.Sprintf(`#!/bin/sh
+/usr/bin/env | /usr/bin/sort > "$HOME/npm-env.log"
+/bin/cat > %q <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+/bin/chmod +x %q
+exit 0
+`, openclawPath, openclawPath)
+	writeScript(filepath.Join(tmpDir, "npm"), npmScript)
+	writeScript(filepath.Join(tmpDir, "git"), "#!/bin/sh\nexit 0\n")
+
+	oldConfirmPrompt := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		if prompt != "OpenClaw is not installed. Install with npm?" {
+			t.Fatalf("unexpected prompt: %q", prompt)
+		}
+		return true, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
+
+	openclawFreshInstall = false
+	bin, err := ensureOpenclawInstalled()
+	if err != nil {
+		t.Fatalf("ensureOpenclawInstalled() error = %v", err)
+	}
+	if bin != "openclaw" {
+		t.Fatalf("ensureOpenclawInstalled() bin = %q, want %q", bin, "openclaw")
+	}
+
+	envData, err := os.ReadFile(filepath.Join(tmpDir, "npm-env.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := envSliceToMap(strings.Split(strings.TrimSpace(string(envData)), "\n"))
+	if env["OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS"] != "1" {
+		t.Fatalf("OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS = %q, want %q", env["OPENCLAW_EAGER_BUNDLED_PLUGIN_DEPS"], "1")
+	}
+	if env["OPENCLAW_PLUGIN_STAGE_DIR"] != filepath.Join(tmpDir, ".openclaw", "plugin-runtime-deps") {
+		t.Fatalf("OPENCLAW_PLUGIN_STAGE_DIR = %q, want %q", env["OPENCLAW_PLUGIN_STAGE_DIR"], filepath.Join(tmpDir, ".openclaw", "plugin-runtime-deps"))
+	}
+}
+
 func TestOpenclawEdit(t *testing.T) {
 	c := &Openclaw{}
 	tmpDir := t.TempDir()
@@ -263,7 +614,7 @@ func TestOpenclawEdit(t *testing.T) {
 
 	t.Run("fresh install", func(t *testing.T) {
 		cleanup()
-		if err := c.Edit([]string{"llama3.2"}); err != nil {
+		if err := c.Edit(testLaunchModels("llama3.2")); err != nil {
 			t.Fatal(err)
 		}
 		assertOpenclawModelExists(t, configPath, "llama3.2")
@@ -272,7 +623,7 @@ func TestOpenclawEdit(t *testing.T) {
 
 	t.Run("multiple models - first is primary", func(t *testing.T) {
 		cleanup()
-		if err := c.Edit([]string{"llama3.2", "mistral"}); err != nil {
+		if err := c.Edit(testLaunchModels("llama3.2", "mistral")); err != nil {
 			t.Fatal(err)
 		}
 		assertOpenclawModelExists(t, configPath, "llama3.2")
@@ -284,7 +635,7 @@ func TestOpenclawEdit(t *testing.T) {
 		cleanup()
 		os.MkdirAll(configDir, 0o755)
 		os.WriteFile(configPath, []byte(`{"models":{"providers":{"anthropic":{"apiKey":"xxx"}}}}`), 0o644)
-		if err := c.Edit([]string{"llama3.2"}); err != nil {
+		if err := c.Edit(testLaunchModels("llama3.2")); err != nil {
 			t.Fatal(err)
 		}
 		data, _ := os.ReadFile(configPath)
@@ -301,7 +652,7 @@ func TestOpenclawEdit(t *testing.T) {
 		cleanup()
 		os.MkdirAll(configDir, 0o755)
 		os.WriteFile(configPath, []byte(`{"theme":"dark","mcp":{"servers":{}}}`), 0o644)
-		if err := c.Edit([]string{"llama3.2"}); err != nil {
+		if err := c.Edit(testLaunchModels("llama3.2")); err != nil {
 			t.Fatal(err)
 		}
 		data, _ := os.ReadFile(configPath)
@@ -317,7 +668,7 @@ func TestOpenclawEdit(t *testing.T) {
 
 	t.Run("preserve user customizations on models", func(t *testing.T) {
 		cleanup()
-		c.Edit([]string{"llama3.2"})
+		c.Edit(testLaunchModels("llama3.2"))
 
 		// User adds custom field
 		data, _ := os.ReadFile(configPath)
@@ -333,7 +684,7 @@ func TestOpenclawEdit(t *testing.T) {
 		os.WriteFile(configPath, configData, 0o644)
 
 		// Re-run Edit
-		c.Edit([]string{"llama3.2"})
+		c.Edit(testLaunchModels("llama3.2"))
 
 		data, _ = os.ReadFile(configPath)
 		json.Unmarshal(data, &cfg)
@@ -349,8 +700,8 @@ func TestOpenclawEdit(t *testing.T) {
 
 	t.Run("edit replaces models list", func(t *testing.T) {
 		cleanup()
-		c.Edit([]string{"llama3.2", "mistral"})
-		c.Edit([]string{"llama3.2"})
+		c.Edit(testLaunchModels("llama3.2", "mistral"))
+		c.Edit(testLaunchModels("llama3.2"))
 
 		assertOpenclawModelExists(t, configPath, "llama3.2")
 		assertOpenclawModelNotExists(t, configPath, "mistral")
@@ -362,7 +713,7 @@ func TestOpenclawEdit(t *testing.T) {
 		original := `{"existing":"data"}`
 		os.WriteFile(configPath, []byte(original), 0o644)
 
-		c.Edit([]string{})
+		c.Edit(testLaunchModels())
 
 		data, _ := os.ReadFile(configPath)
 		if string(data) != original {
@@ -375,7 +726,7 @@ func TestOpenclawEdit(t *testing.T) {
 		os.MkdirAll(configDir, 0o755)
 		os.WriteFile(configPath, []byte(`{corrupted`), 0o644)
 
-		if err := c.Edit([]string{"llama3.2"}); err != nil {
+		if err := c.Edit(testLaunchModels("llama3.2")); err != nil {
 			t.Fatal(err)
 		}
 
@@ -391,7 +742,7 @@ func TestOpenclawEdit(t *testing.T) {
 		os.MkdirAll(configDir, 0o755)
 		os.WriteFile(configPath, []byte(`{"models":"not a map"}`), 0o644)
 
-		if err := c.Edit([]string{"llama3.2"}); err != nil {
+		if err := c.Edit(testLaunchModels("llama3.2")); err != nil {
 			t.Fatal(err)
 		}
 		assertOpenclawModelExists(t, configPath, "llama3.2")
@@ -571,7 +922,7 @@ func TestOpenclawEditSchemaFields(t *testing.T) {
 	setTestHome(t, tmpDir)
 	configPath := filepath.Join(tmpDir, ".openclaw", "openclaw.json")
 
-	if err := c.Edit([]string{"llama3.2"}); err != nil {
+	if err := c.Edit(testLaunchModels("llama3.2")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -612,7 +963,7 @@ func TestOpenclawEditModelNames(t *testing.T) {
 
 	t.Run("model with colon tag", func(t *testing.T) {
 		cleanup()
-		if err := c.Edit([]string{"llama3.2:70b"}); err != nil {
+		if err := c.Edit(testLaunchModels("llama3.2:70b")); err != nil {
 			t.Fatal(err)
 		}
 		assertOpenclawModelExists(t, configPath, "llama3.2:70b")
@@ -621,7 +972,7 @@ func TestOpenclawEditModelNames(t *testing.T) {
 
 	t.Run("model with slash", func(t *testing.T) {
 		cleanup()
-		if err := c.Edit([]string{"library/model:tag"}); err != nil {
+		if err := c.Edit(testLaunchModels("library/model:tag")); err != nil {
 			t.Fatal(err)
 		}
 		assertOpenclawModelExists(t, configPath, "library/model:tag")
@@ -630,7 +981,7 @@ func TestOpenclawEditModelNames(t *testing.T) {
 
 	t.Run("model with hyphen", func(t *testing.T) {
 		cleanup()
-		if err := c.Edit([]string{"test-model"}); err != nil {
+		if err := c.Edit(testLaunchModels("test-model")); err != nil {
 			t.Fatal(err)
 		}
 		assertOpenclawModelExists(t, configPath, "test-model")
@@ -650,7 +1001,7 @@ func TestOpenclawEditAgentsPreservation(t *testing.T) {
 		os.MkdirAll(configDir, 0o755)
 		os.WriteFile(configPath, []byte(`{"agents":{"defaults":{"model":{"primary":"old"},"temperature":0.7}}}`), 0o644)
 
-		c.Edit([]string{"llama3.2"})
+		c.Edit(testLaunchModels("llama3.2"))
 
 		data, _ := os.ReadFile(configPath)
 		var cfg map[string]any
@@ -667,7 +1018,7 @@ func TestOpenclawEditAgentsPreservation(t *testing.T) {
 		os.MkdirAll(configDir, 0o755)
 		os.WriteFile(configPath, []byte(`{"agents":{"defaults":{},"custom-agent":{"foo":"bar"}}}`), 0o644)
 
-		c.Edit([]string{"llama3.2"})
+		c.Edit(testLaunchModels("llama3.2"))
 
 		data, _ := os.ReadFile(configPath)
 		var cfg map[string]any
@@ -707,7 +1058,7 @@ func TestOpenclawEdit_RoundTrip(t *testing.T) {
 	os.MkdirAll(configDir, 0o755)
 	os.WriteFile(configPath, []byte(testOpenclawFixture), 0o644)
 
-	if err := c.Edit([]string{"llama3.2", "mistral"}); err != nil {
+	if err := c.Edit(testLaunchModels("llama3.2", "mistral")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -753,10 +1104,10 @@ func TestOpenclawEdit_Idempotent(t *testing.T) {
 	os.MkdirAll(configDir, 0o755)
 	os.WriteFile(configPath, []byte(testOpenclawFixture), 0o644)
 
-	c.Edit([]string{"llama3.2", "mistral"})
+	c.Edit(testLaunchModels("llama3.2", "mistral"))
 	firstData, _ := os.ReadFile(configPath)
 
-	c.Edit([]string{"llama3.2", "mistral"})
+	c.Edit(testLaunchModels("llama3.2", "mistral"))
 	secondData, _ := os.ReadFile(configPath)
 
 	if string(firstData) != string(secondData) {
@@ -779,7 +1130,7 @@ func TestOpenclawEdit_MultipleConsecutiveEdits(t *testing.T) {
 		if i%2 == 0 {
 			models = []string{"model-x", "model-y", "model-z"}
 		}
-		if err := c.Edit(models); err != nil {
+		if err := c.Edit(launchModelsFromNames(models)); err != nil {
 			t.Fatalf("edit %d failed: %v", i, err)
 		}
 	}
@@ -801,18 +1152,18 @@ func TestOpenclawEdit_BackupCreated(t *testing.T) {
 	setTestHome(t, tmpDir)
 	configDir := filepath.Join(tmpDir, ".openclaw")
 	configPath := filepath.Join(configDir, "openclaw.json")
-	backupDir := filepath.Join(os.TempDir(), "ollama-backups")
+	backupDir := fileutil.BackupDir()
 
 	os.MkdirAll(configDir, 0o755)
 	uniqueMarker := fmt.Sprintf("test-marker-%d", os.Getpid())
 	original := fmt.Sprintf(`{"theme": "%s"}`, uniqueMarker)
 	os.WriteFile(configPath, []byte(original), 0o644)
 
-	if err := c.Edit([]string{"model-a"}); err != nil {
+	if err := c.Edit(testLaunchModels("model-a")); err != nil {
 		t.Fatal(err)
 	}
 
-	backups, _ := filepath.Glob(filepath.Join(backupDir, "openclaw.json.*"))
+	backups, _ := filepath.Glob(filepath.Join(backupDir, "openclaw", "openclaw.json.*"))
 	foundBackup := false
 	for _, backup := range backups {
 		data, _ := os.ReadFile(backup)
@@ -930,7 +1281,7 @@ func TestOpenclawLegacyPaths(t *testing.T) {
 		os.WriteFile(filepath.Join(newDir, "openclaw.json"), []byte(`{"theme":"new"}`), 0o644)
 		os.WriteFile(filepath.Join(legacyDir, "clawdbot.json"), []byte(`{"theme":"legacy"}`), 0o644)
 
-		if err := c.Edit([]string{"llama3.2"}); err != nil {
+		if err := c.Edit(testLaunchModels("llama3.2")); err != nil {
 			t.Fatal(err)
 		}
 
@@ -949,7 +1300,7 @@ func TestOpenclawLegacyPaths(t *testing.T) {
 		os.MkdirAll(legacyDir, 0o755)
 		os.WriteFile(filepath.Join(legacyDir, "clawdbot.json"), []byte(`{"theme":"dark"}`), 0o644)
 
-		if err := c.Edit([]string{"llama3.2"}); err != nil {
+		if err := c.Edit(testLaunchModels("llama3.2")); err != nil {
 			t.Fatal(err)
 		}
 
@@ -977,7 +1328,7 @@ func TestOpenclawEdit_CreatesDirectoryIfMissing(t *testing.T) {
 		t.Fatal("directory should not exist before test")
 	}
 
-	if err := c.Edit([]string{"model-a"}); err != nil {
+	if err := c.Edit(testLaunchModels("model-a")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1227,6 +1578,18 @@ func TestOpenclawChannelsConfigured(t *testing.T) {
 	})
 }
 
+func envSliceToMap(entries []string) map[string]string {
+	env := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		env[key] = value
+	}
+	return env
+}
+
 func TestOpenclawChannelSetupPreflight(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses a POSIX shell test binary")
@@ -1301,6 +1664,46 @@ func TestOpenclawChannelSetupPreflight(t *testing.T) {
 		}
 		if _, err := os.Stat(filepath.Join(tmpDir, "invocations.log")); !os.IsNotExist(err) {
 			t.Fatalf("expected no channels add invocation, got err=%v", err)
+		}
+	})
+
+	t.Run("--yes skips preflight without channels configured", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		configDir := filepath.Join(tmpDir, ".openclaw")
+		if err := os.MkdirAll(configDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// Empty config = no channels configured. Without the --yes skip, the
+		// preflight would prompt and (on confirm) spawn `openclaw channels add`.
+		if err := os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(`{}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		bin := filepath.Join(tmpDir, "openclaw")
+		if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/invocations.log\"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		oldInteractive := isInteractiveSession
+		isInteractiveSession = func() bool { return true }
+		defer func() { isInteractiveSession = oldInteractive }()
+
+		restore := withLaunchConfirmPolicy(launchConfirmPolicy{yes: true})
+		defer restore()
+
+		oldConfirmPrompt := DefaultConfirmPrompt
+		DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+			t.Fatalf("did not expect prompt in --yes mode: %s", prompt)
+			return false, nil
+		}
+		defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
+
+		if err := c.runChannelSetupPreflight("openclaw"); err != nil {
+			t.Fatalf("runChannelSetupPreflight() error = %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(tmpDir, "invocations.log")); !os.IsNotExist(err) {
+			t.Fatalf("expected no channels add invocation in --yes mode, got err=%v", err)
 		}
 	})
 
@@ -1730,7 +2133,7 @@ func TestPrintOpenclawReady(t *testing.T) {
 		buf.ReadFrom(r)
 
 		output := buf.String()
-		if !strings.Contains(output, "localhost:9999") {
+		if !strings.Contains(output, "127.0.0.1:9999") {
 			t.Errorf("expected port 9999 in output, got:\n%s", output)
 		}
 		if strings.Contains(output, "#token=") {
@@ -1842,8 +2245,8 @@ func TestPrintOpenclawReady(t *testing.T) {
 }
 
 func TestOpenclawModelConfig(t *testing.T) {
-	t.Run("nil client returns base config", func(t *testing.T) {
-		cfg, _ := openclawModelConfig(context.Background(), nil, "llama3.2")
+	t.Run("minimal model returns base config", func(t *testing.T) {
+		cfg, _ := openclawModelConfig(fallbackLaunchModel("llama3.2"))
 
 		if cfg["id"] != "llama3.2" {
 			t.Errorf("id = %v, want llama3.2", cfg["id"])
@@ -1854,29 +2257,17 @@ func TestOpenclawModelConfig(t *testing.T) {
 		if cfg["cost"] == nil {
 			t.Error("cost should be set")
 		}
-		// Should not have capability fields without API
+		// Should not have capability fields without inventory metadata.
 		if _, ok := cfg["reasoning"]; ok {
-			t.Error("reasoning should not be set without API")
+			t.Error("reasoning should not be set without metadata")
 		}
 		if _, ok := cfg["contextWindow"]; ok {
-			t.Error("contextWindow should not be set without API")
+			t.Error("contextWindow should not be set without metadata")
 		}
 	})
 
 	t.Run("sets vision input when model has vision capability", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/show" {
-				fmt.Fprintf(w, `{"capabilities":["vision"],"model_info":{"llama.context_length":4096}}`)
-				return
-			}
-			w.WriteHeader(http.StatusNotFound)
-		}))
-		defer srv.Close()
-
-		u, _ := url.Parse(srv.URL)
-		client := api.NewClient(u, srv.Client())
-
-		cfg, _ := openclawModelConfig(context.Background(), client, "llava:7b")
+		cfg, _ := openclawModelConfig(LaunchModel{Name: "llava:7b", Capabilities: []model.Capability{"vision"}, ContextLength: 4096})
 
 		input, ok := cfg["input"].([]any)
 		if !ok || len(input) != 2 {
@@ -1885,19 +2276,7 @@ func TestOpenclawModelConfig(t *testing.T) {
 	})
 
 	t.Run("sets text-only input when model lacks vision", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/show" {
-				fmt.Fprintf(w, `{"capabilities":["completion"],"model_info":{}}`)
-				return
-			}
-			w.WriteHeader(http.StatusNotFound)
-		}))
-		defer srv.Close()
-
-		u, _ := url.Parse(srv.URL)
-		client := api.NewClient(u, srv.Client())
-
-		cfg, _ := openclawModelConfig(context.Background(), client, "llama3.2")
+		cfg, _ := openclawModelConfig(LaunchModel{Name: "llama3.2", Capabilities: []model.Capability{"completion"}})
 
 		input, ok := cfg["input"].([]any)
 		if !ok || len(input) != 1 {
@@ -1909,39 +2288,15 @@ func TestOpenclawModelConfig(t *testing.T) {
 	})
 
 	t.Run("sets reasoning when model has thinking capability", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/show" {
-				fmt.Fprintf(w, `{"capabilities":["thinking"],"model_info":{}}`)
-				return
-			}
-			w.WriteHeader(http.StatusNotFound)
-		}))
-		defer srv.Close()
-
-		u, _ := url.Parse(srv.URL)
-		client := api.NewClient(u, srv.Client())
-
-		cfg, _ := openclawModelConfig(context.Background(), client, "qwq")
+		cfg, _ := openclawModelConfig(LaunchModel{Name: "qwq", Capabilities: []model.Capability{"thinking"}})
 
 		if cfg["reasoning"] != true {
 			t.Error("expected reasoning = true for thinking model")
 		}
 	})
 
-	t.Run("extracts context window from model info", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/show" {
-				fmt.Fprintf(w, `{"capabilities":[],"model_info":{"llama.context_length":131072}}`)
-				return
-			}
-			w.WriteHeader(http.StatusNotFound)
-		}))
-		defer srv.Close()
-
-		u, _ := url.Parse(srv.URL)
-		client := api.NewClient(u, srv.Client())
-
-		cfg, _ := openclawModelConfig(context.Background(), client, "llama3.2")
+	t.Run("sets context window from inventory metadata", func(t *testing.T) {
+		cfg, _ := openclawModelConfig(LaunchModel{Name: "llama3.2", ContextLength: 131072})
 
 		if cfg["contextWindow"] != 131072 {
 			t.Errorf("contextWindow = %v, want 131072", cfg["contextWindow"])
@@ -1949,19 +2304,11 @@ func TestOpenclawModelConfig(t *testing.T) {
 	})
 
 	t.Run("handles all capabilities together", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/show" {
-				fmt.Fprintf(w, `{"capabilities":["vision","thinking"],"model_info":{"qwen3.context_length":32768}}`)
-				return
-			}
-			w.WriteHeader(http.StatusNotFound)
-		}))
-		defer srv.Close()
-
-		u, _ := url.Parse(srv.URL)
-		client := api.NewClient(u, srv.Client())
-
-		cfg, _ := openclawModelConfig(context.Background(), client, "qwen3-vision")
+		cfg, _ := openclawModelConfig(LaunchModel{
+			Name:          "qwen3-vision",
+			Capabilities:  []model.Capability{"vision", "thinking"},
+			ContextLength: 32768,
+		})
 
 		input, ok := cfg["input"].([]any)
 		if !ok || len(input) != 2 {
@@ -1975,17 +2322,8 @@ func TestOpenclawModelConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("returns base config when show fails", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprintf(w, `{"error":"model not found"}`)
-		}))
-		defer srv.Close()
-
-		u, _ := url.Parse(srv.URL)
-		client := api.NewClient(u, srv.Client())
-
-		cfg, _ := openclawModelConfig(context.Background(), client, "missing-model")
+	t.Run("returns base config when metadata is unavailable", func(t *testing.T) {
+		cfg, _ := openclawModelConfig(fallbackLaunchModel("missing-model"))
 
 		if cfg["id"] != "missing-model" {
 			t.Errorf("id = %v, want missing-model", cfg["id"])
@@ -1995,62 +2333,15 @@ func TestOpenclawModelConfig(t *testing.T) {
 			t.Error("input should always be set")
 		}
 		if _, ok := cfg["reasoning"]; ok {
-			t.Error("reasoning should not be set when show fails")
+			t.Error("reasoning should not be set when metadata is unavailable")
 		}
 		if _, ok := cfg["contextWindow"]; ok {
-			t.Error("contextWindow should not be set when show fails")
-		}
-	})
-
-	t.Run("times out slow show and returns base config", func(t *testing.T) {
-		oldTimeout := openclawModelShowTimeout
-		openclawModelShowTimeout = 50 * time.Millisecond
-		t.Cleanup(func() { openclawModelShowTimeout = oldTimeout })
-
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/show" {
-				time.Sleep(300 * time.Millisecond)
-				fmt.Fprintf(w, `{"capabilities":["thinking"],"model_info":{"llama.context_length":4096}}`)
-				return
-			}
-			w.WriteHeader(http.StatusNotFound)
-		}))
-		defer srv.Close()
-
-		u, _ := url.Parse(srv.URL)
-		client := api.NewClient(u, srv.Client())
-
-		start := time.Now()
-		cfg, _ := openclawModelConfig(context.Background(), client, "slow-model")
-		elapsed := time.Since(start)
-		if elapsed >= 250*time.Millisecond {
-			t.Fatalf("openclawModelConfig took too long: %v", elapsed)
-		}
-		if cfg["id"] != "slow-model" {
-			t.Errorf("id = %v, want slow-model", cfg["id"])
-		}
-		if _, ok := cfg["reasoning"]; ok {
-			t.Error("reasoning should not be set on timeout")
-		}
-		if _, ok := cfg["contextWindow"]; ok {
-			t.Error("contextWindow should not be set on timeout")
+			t.Error("contextWindow should not be set when metadata is unavailable")
 		}
 	})
 
 	t.Run("skips zero context length", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/show" {
-				fmt.Fprintf(w, `{"capabilities":[],"model_info":{"llama.context_length":0}}`)
-				return
-			}
-			w.WriteHeader(http.StatusNotFound)
-		}))
-		defer srv.Close()
-
-		u, _ := url.Parse(srv.URL)
-		client := api.NewClient(u, srv.Client())
-
-		cfg, _ := openclawModelConfig(context.Background(), client, "test-model")
+		cfg, _ := openclawModelConfig(LaunchModel{Name: "test-model", ContextLength: 0})
 
 		if _, ok := cfg["contextWindow"]; ok {
 			t.Error("contextWindow should not be set for zero value")
@@ -2058,21 +2349,7 @@ func TestOpenclawModelConfig(t *testing.T) {
 	})
 
 	t.Run("cloud model uses hardcoded limits", func(t *testing.T) {
-		// Use a model name that's in cloudModelLimits and make the server
-		// report it as a remote/cloud model
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/show" {
-				fmt.Fprintf(w, `{"capabilities":[],"model_info":{},"remote_model":"minimax-m2.7"}`)
-				return
-			}
-			w.WriteHeader(http.StatusNotFound)
-		}))
-		defer srv.Close()
-
-		u, _ := url.Parse(srv.URL)
-		client := api.NewClient(u, srv.Client())
-
-		cfg, isCloud := openclawModelConfig(context.Background(), client, "minimax-m2.7:cloud")
+		cfg, isCloud := openclawModelConfig(fallbackLaunchModel("minimax-m2.7:cloud"))
 
 		if !isCloud {
 			t.Error("expected isCloud = true for cloud model")
@@ -2086,21 +2363,11 @@ func TestOpenclawModelConfig(t *testing.T) {
 	})
 
 	t.Run("cloud model with vision capability gets image input", func(t *testing.T) {
-		// Regression test: cloud models must not skip capability detection.
-		// A cloud model that reports vision capability should have input: [text, image].
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/show" {
-				fmt.Fprintf(w, `{"capabilities":["vision"],"model_info":{},"remote_model":"qwen3-vl"}`)
-				return
-			}
-			w.WriteHeader(http.StatusNotFound)
-		}))
-		defer srv.Close()
-
-		u, _ := url.Parse(srv.URL)
-		client := api.NewClient(u, srv.Client())
-
-		cfg, isCloud := openclawModelConfig(context.Background(), client, "qwen3-vl:235b-cloud")
+		cfg, isCloud := openclawModelConfig(LaunchModel{
+			Name:         "qwen3-vl:235b-cloud",
+			Remote:       true,
+			Capabilities: []model.Capability{"vision"},
+		}.WithCloudLimits())
 
 		if !isCloud {
 			t.Error("expected isCloud = true for cloud vision model")
@@ -2112,21 +2379,11 @@ func TestOpenclawModelConfig(t *testing.T) {
 	})
 
 	t.Run("cloud model with thinking capability gets reasoning flag", func(t *testing.T) {
-		// Regression test: cloud models must not skip capability detection.
-		// A cloud model that reports thinking capability should have reasoning: true.
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/api/show" {
-				fmt.Fprintf(w, `{"capabilities":["thinking"],"model_info":{},"remote_model":"qwq-cloud"}`)
-				return
-			}
-			w.WriteHeader(http.StatusNotFound)
-		}))
-		defer srv.Close()
-
-		u, _ := url.Parse(srv.URL)
-		client := api.NewClient(u, srv.Client())
-
-		cfg, isCloud := openclawModelConfig(context.Background(), client, "qwq:cloud")
+		cfg, isCloud := openclawModelConfig(LaunchModel{
+			Name:         "qwq:cloud",
+			Remote:       true,
+			Capabilities: []model.Capability{"thinking"},
+		})
 
 		if !isCloud {
 			t.Error("expected isCloud = true for cloud thinking model")
@@ -2202,95 +2459,7 @@ func TestIntegrationOnboarded(t *testing.T) {
 	})
 }
 
-func TestVersionLessThan(t *testing.T) {
-	tests := []struct {
-		a, b string
-		want bool
-	}{
-		{"0.1.7", "0.2.1", true},
-		{"0.2.0", "0.2.1", true},
-		{"0.2.1", "0.2.1", false},
-		{"0.2.2", "0.2.1", false},
-		{"1.0.0", "0.2.1", false},
-		{"0.2.1", "1.0.0", true},
-		{"v0.1.7", "0.2.1", true},
-		{"0.2.1", "v0.2.1", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.a+"_vs_"+tt.b, func(t *testing.T) {
-			if got := versionLessThan(tt.a, tt.b); got != tt.want {
-				t.Errorf("versionLessThan(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestWebSearchPluginUpToDate(t *testing.T) {
-	t.Run("missing directory", func(t *testing.T) {
-		if webSearchPluginUpToDate(filepath.Join(t.TempDir(), "nonexistent")) {
-			t.Error("expected false for missing directory")
-		}
-	})
-
-	t.Run("missing package.json", func(t *testing.T) {
-		dir := t.TempDir()
-		if webSearchPluginUpToDate(dir) {
-			t.Error("expected false for missing package.json")
-		}
-	})
-
-	t.Run("old version", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"version":"0.1.7"}`), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if webSearchPluginUpToDate(dir) {
-			t.Error("expected false for old version 0.1.7")
-		}
-	})
-
-	t.Run("exact minimum version", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"version":"0.2.1"}`), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if !webSearchPluginUpToDate(dir) {
-			t.Error("expected true for exact minimum version 0.2.1")
-		}
-	})
-
-	t.Run("newer version", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"version":"1.0.0"}`), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if !webSearchPluginUpToDate(dir) {
-			t.Error("expected true for newer version 1.0.0")
-		}
-	})
-
-	t.Run("invalid json", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`not json`), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if webSearchPluginUpToDate(dir) {
-			t.Error("expected false for invalid json")
-		}
-	})
-
-	t.Run("empty version", func(t *testing.T) {
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"version":""}`), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if webSearchPluginUpToDate(dir) {
-			t.Error("expected false for empty version")
-		}
-	})
-}
-
-func TestRegisterWebSearchPlugin(t *testing.T) {
+func TestConfigureOllamaWebSearch(t *testing.T) {
 	home := t.TempDir()
 	setTestHome(t, home)
 
@@ -2305,7 +2474,7 @@ func TestRegisterWebSearchPlugin(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		registerWebSearchPlugin()
+		configureOllamaWebSearch()
 
 		data, err := os.ReadFile(configPath)
 		if err != nil {
@@ -2321,40 +2490,30 @@ func TestRegisterWebSearchPlugin(t *testing.T) {
 			t.Fatal("plugins section missing")
 		}
 
-		// Check entries
 		entries, _ := plugins["entries"].(map[string]any)
-		entry, _ := entries["openclaw-web-search"].(map[string]any)
+		entry, _ := entries["ollama"].(map[string]any)
 		if enabled, _ := entry["enabled"].(bool); !enabled {
-			t.Error("expected entries.openclaw-web-search.enabled = true")
+			t.Error("expected entries.ollama.enabled = true")
+		}
+		if _, ok := entries["openclaw-web-search"]; ok {
+			t.Error("expected stale openclaw-web-search entry to be absent")
 		}
 
-		// Check allow list
-		allow, _ := plugins["allow"].([]any)
-		found := false
-		for _, v := range allow {
-			if s, ok := v.(string); ok && s == "openclaw-web-search" {
-				found = true
-			}
+		if _, ok := plugins["allow"]; ok {
+			t.Error("did not expect plugins.allow to be created when no allowlist exists")
 		}
-		if !found {
-			t.Error("expected plugins.allow to contain openclaw-web-search")
+		if _, ok := plugins["installs"]; ok {
+			t.Error("did not expect plugins.installs to be created")
 		}
 
-		// Check install provenance
-		installs, _ := plugins["installs"].(map[string]any)
-		record, _ := installs["openclaw-web-search"].(map[string]any)
-		if record == nil {
-			t.Fatal("expected plugins.installs.openclaw-web-search")
+		tools, _ := config["tools"].(map[string]any)
+		web, _ := tools["web"].(map[string]any)
+		search, _ := web["search"].(map[string]any)
+		if got, _ := search["provider"].(string); got != "ollama" {
+			t.Errorf("search provider = %q, want %q", got, "ollama")
 		}
-		if source, _ := record["source"].(string); source != "npm" {
-			t.Errorf("install source = %q, want %q", source, "npm")
-		}
-		if spec, _ := record["spec"].(string); spec != webSearchNpmPackage {
-			t.Errorf("install spec = %q, want %q", spec, webSearchNpmPackage)
-		}
-		expectedPath := filepath.Join(home, ".openclaw", "extensions", "openclaw-web-search")
-		if installPath, _ := record["installPath"].(string); installPath != expectedPath {
-			t.Errorf("installPath = %q, want %q", installPath, expectedPath)
+		if enabled, _ := search["enabled"].(bool); !enabled {
+			t.Error("expected tools.web.search.enabled = true")
 		}
 	})
 
@@ -2363,8 +2522,8 @@ func TestRegisterWebSearchPlugin(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		registerWebSearchPlugin()
-		registerWebSearchPlugin()
+		configureOllamaWebSearch()
+		configureOllamaWebSearch()
 
 		data, err := os.ReadFile(configPath)
 		if err != nil {
@@ -2376,30 +2535,39 @@ func TestRegisterWebSearchPlugin(t *testing.T) {
 		}
 
 		plugins, _ := config["plugins"].(map[string]any)
-		allow, _ := plugins["allow"].([]any)
-		count := 0
-		for _, v := range allow {
-			if s, ok := v.(string); ok && s == "openclaw-web-search" {
-				count++
-			}
+		entries, _ := plugins["entries"].(map[string]any)
+		if len(entries) != 1 {
+			t.Fatalf("expected only bundled ollama entry, got %v", entries)
 		}
-		if count != 1 {
-			t.Errorf("expected exactly 1 openclaw-web-search in allow, got %d", count)
+		if _, ok := entries["ollama"]; !ok {
+			t.Fatalf("expected entries.ollama to exist, got %v", entries)
 		}
 	})
 
-	t.Run("preserves existing config", func(t *testing.T) {
+	t.Run("migrates stale plugin config and preserves unrelated settings", func(t *testing.T) {
 		initial := map[string]any{
 			"plugins": map[string]any{
-				"allow": []any{"some-other-plugin"},
+				"allow": []any{"some-other-plugin", "openclaw-web-search"},
 				"entries": map[string]any{
-					"some-other-plugin": map[string]any{"enabled": true},
+					"some-other-plugin":   map[string]any{"enabled": true},
+					"openclaw-web-search": map[string]any{"enabled": true},
 				},
 				"installs": map[string]any{
 					"some-other-plugin": map[string]any{
 						"source":      "npm",
 						"installPath": "/some/path",
 					},
+					"openclaw-web-search": map[string]any{
+						"source":      "npm",
+						"installPath": "/old/path",
+					},
+				},
+			},
+			"tools": map[string]any{
+				"alsoAllow": []any{"ollama_web_search", "ollama_web_fetch", "browser"},
+				"web": map[string]any{
+					"search": map[string]any{"enabled": false},
+					"fetch":  map[string]any{"enabled": false},
 				},
 			},
 			"customField": "preserved",
@@ -2409,7 +2577,7 @@ func TestRegisterWebSearchPlugin(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		registerWebSearchPlugin()
+		configureOllamaWebSearch()
 
 		out, err := os.ReadFile(configPath)
 		if err != nil {
@@ -2429,28 +2597,61 @@ func TestRegisterWebSearchPlugin(t *testing.T) {
 		if entries["some-other-plugin"] == nil {
 			t.Error("existing plugin entry was lost")
 		}
+		if entries["openclaw-web-search"] != nil {
+			t.Error("stale openclaw-web-search entry should be removed")
+		}
+		if ollamaEntry, _ := entries["ollama"].(map[string]any); ollamaEntry == nil {
+			t.Fatal("expected bundled ollama entry to be enabled")
+		}
 
 		installs, _ := plugins["installs"].(map[string]any)
 		if installs["some-other-plugin"] == nil {
 			t.Error("existing install record was lost")
 		}
+		if installs["openclaw-web-search"] != nil {
+			t.Error("stale openclaw-web-search install record should be removed")
+		}
 
 		allow, _ := plugins["allow"].([]any)
-		hasOther, hasWebSearch := false, false
+		hasOther, hasStalePlugin, hasOllama := false, false, false
 		for _, v := range allow {
 			s, _ := v.(string)
 			if s == "some-other-plugin" {
 				hasOther = true
 			}
 			if s == "openclaw-web-search" {
-				hasWebSearch = true
+				hasStalePlugin = true
+			}
+			if s == "ollama" {
+				hasOllama = true
 			}
 		}
 		if !hasOther {
 			t.Error("existing allow entry was lost")
 		}
-		if !hasWebSearch {
-			t.Error("openclaw-web-search not added to allow")
+		if hasStalePlugin {
+			t.Error("stale openclaw-web-search allow entry should be removed")
+		}
+		if !hasOllama {
+			t.Error("expected plugins.allow to contain bundled ollama plugin")
+		}
+
+		tools, _ := config["tools"].(map[string]any)
+		alsoAllow, _ := tools["alsoAllow"].([]any)
+		if len(alsoAllow) != 1 || alsoAllow[0] != "browser" {
+			t.Errorf("expected stale custom web tools to be removed, got %v", alsoAllow)
+		}
+		web, _ := tools["web"].(map[string]any)
+		search, _ := web["search"].(map[string]any)
+		fetch, _ := web["fetch"].(map[string]any)
+		if got, _ := search["provider"].(string); got != "ollama" {
+			t.Errorf("search provider = %q, want %q", got, "ollama")
+		}
+		if enabled, _ := search["enabled"].(bool); !enabled {
+			t.Error("expected migrated tools.web.search.enabled = true")
+		}
+		if enabled, _ := fetch["enabled"].(bool); !enabled {
+			t.Error("expected migrated tools.web.fetch.enabled = true")
 		}
 	})
 }

@@ -3,7 +3,6 @@ package launch
 import (
 	"encoding/json"
 	"fmt"
-	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,8 +14,16 @@ import (
 	"github.com/ollama/ollama/envconfig"
 )
 
-// OpenCode implements Runner and Editor for OpenCode integration
-type OpenCode struct{}
+const openCodeInstallScript = "curl -fsSL https://opencode.ai/install | bash"
+
+var openCodeGOOS = runtime.GOOS
+
+// OpenCode implements Runner and Editor for OpenCode integration.
+// Config is passed via OPENCODE_CONFIG_CONTENT env var at launch time
+// instead of writing to opencode's config files.
+type OpenCode struct {
+	configContent string // JSON config built by Edit, passed to Run via env var
+}
 
 func (o *OpenCode) String() string { return "OpenCode" }
 
@@ -31,7 +38,7 @@ func findOpenCode() (string, bool) {
 		return "", false
 	}
 	name := "opencode"
-	if runtime.GOOS == "windows" {
+	if openCodeGOOS == "windows" {
 		name = "opencode.exe"
 	}
 	fallback := filepath.Join(home, ".opencode", "bin", name)
@@ -41,146 +48,188 @@ func findOpenCode() (string, bool) {
 	return "", false
 }
 
-func (o *OpenCode) Run(model string, args []string) error {
-	opencodePath, ok := findOpenCode()
-	if !ok {
-		return fmt.Errorf("opencode is not installed, install from https://opencode.ai")
+func (o *OpenCode) Run(model string, models []LaunchModel, args []string) error {
+	opencodePath, err := ensureOpenCodeInstalled()
+	if err != nil {
+		return err
 	}
 
 	cmd := exec.Command(opencodePath, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	cmd.Env = os.Environ()
+	if content := o.resolveContent(model, models); content != "" {
+		cmd.Env = append(cmd.Env, "OPENCODE_CONFIG_CONTENT="+content)
+	}
 	return cmd.Run()
 }
 
-func (o *OpenCode) Paths() []string {
-	home, err := os.UserHomeDir()
+func ensureOpenCodeInstalled() (string, error) {
+	if opencodePath, ok := findOpenCode(); ok {
+		return opencodePath, nil
+	}
+
+	if err := checkOpenCodeInstallerDependencies(); err != nil {
+		return "", err
+	}
+
+	ok, err := ConfirmPrompt("OpenCode is not installed. Install now?")
 	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("opencode installation cancelled")
+	}
+
+	bin, args, err := openCodeInstallerCommand(openCodeGOOS)
+	if err != nil {
+		return "", err
+	}
+
+	fmt.Fprintf(os.Stderr, "\nInstalling OpenCode...\n")
+	cmd := exec.Command(bin, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to install opencode: %w", err)
+	}
+
+	opencodePath, ok := findOpenCode()
+	if !ok {
+		return "", fmt.Errorf("opencode was installed but the binary was not found on PATH\n\nYou may need to restart your shell")
+	}
+
+	fmt.Fprintf(os.Stderr, "%sOpenCode installed successfully%s\n\n", ansiGreen, ansiReset)
+	return opencodePath, nil
+}
+
+func checkOpenCodeInstallerDependencies() error {
+	switch openCodeGOOS {
+	case "windows":
+		if _, err := exec.LookPath("npm"); err != nil {
+			return fmt.Errorf("opencode is not installed and required dependencies are missing\n\nInstall the following first:\n  npm (Node.js): https://nodejs.org/\n\nThen re-run:\n  ollama launch opencode")
+		}
+	default:
+		var missing []string
+		if _, err := exec.LookPath("curl"); err != nil {
+			missing = append(missing, "curl: https://curl.se/")
+		}
+		if _, err := exec.LookPath("bash"); err != nil {
+			missing = append(missing, "bash: https://www.gnu.org/software/bash/")
+		}
+		if len(missing) > 0 {
+			return fmt.Errorf("opencode is not installed and required dependencies are missing\n\nInstall the following first:\n  %s\n\nThen re-run:\n  ollama launch opencode", strings.Join(missing, "\n  "))
+		}
+	}
+	return nil
+}
+
+func openCodeInstallerCommand(goos string) (string, []string, error) {
+	switch goos {
+	case "windows":
+		return "npm", []string{"install", "-g", "opencode-ai@latest"}, nil
+	case "darwin", "linux":
+		return "bash", []string{"-c", "set -o pipefail; " + openCodeInstallScript}, nil
+	default:
+		return "", nil, fmt.Errorf("unsupported platform for opencode install: %s", goos)
+	}
+}
+
+// resolveContent returns the inline config to send via OPENCODE_CONFIG_CONTENT.
+// Returns content built by Edit if available, otherwise builds from model.json
+// with the requested model as primary (e.g. re-launch with saved config).
+func (o *OpenCode) resolveContent(model string, models []LaunchModel) string {
+	if o.configContent != "" {
+		return o.configContent
+	}
+	resolvedModels := resolveOpenCodeRunModels(model, models, readModelJSONModels())
+	if len(resolvedModels) == 0 {
+		return ""
+	}
+	content, err := buildInlineConfig(resolvedModels[0], resolvedModels)
+	if err != nil {
+		return ""
+	}
+	return content
+}
+
+func resolveOpenCodeRunModels(primary string, models []LaunchModel, stateModels []string) []LaunchModel {
+	if primary == "" {
 		return nil
 	}
 
-	var paths []string
-	p := filepath.Join(home, ".config", "opencode", "opencode.json")
-	if _, err := os.Stat(p); err == nil {
-		paths = append(paths, p)
+	resolved := make([]LaunchModel, 0, 1+len(models)+len(stateModels))
+	appendModel := func(name string) {
+		if name == "" || hasLaunchModel(resolved, name) {
+			return
+		}
+		if model, ok := findLaunchModel(models, name); ok {
+			resolved = append(resolved, model)
+			return
+		}
+		resolved = append(resolved, fallbackLaunchModel(name))
 	}
-	sp := filepath.Join(home, ".local", "state", "opencode", "model.json")
-	if _, err := os.Stat(sp); err == nil {
-		paths = append(paths, sp)
+
+	appendModel(primary)
+	for _, model := range models {
+		appendModel(model.Name)
 	}
-	return paths
+	for _, model := range stateModels {
+		appendModel(model)
+	}
+	return resolved
 }
 
-func (o *OpenCode) Edit(modelList []string) error {
+func hasLaunchModel(models []LaunchModel, name string) bool {
+	for _, model := range models {
+		if launchModelMatches(model.Name, name) || launchModelMatches(name, model.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+func (o *OpenCode) Paths() []string {
+	sp, err := openCodeStatePath()
+	if err != nil {
+		return nil
+	}
+	if _, err := os.Stat(sp); err == nil {
+		return []string{sp}
+	}
+	return nil
+}
+
+// openCodeStatePath returns the path to opencode's model state file.
+// TODO: this hardcodes the Linux/macOS XDG path. On Windows, opencode stores
+// state under %LOCALAPPDATA% (or similar) — verify and branch on runtime.GOOS.
+func openCodeStatePath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".local", "state", "opencode", "model.json"), nil
+}
+
+func (o *OpenCode) Edit(models []LaunchModel) error {
+	modelList := launchModelNames(models)
 	if len(modelList) == 0 {
 		return nil
 	}
 
-	home, err := os.UserHomeDir()
+	content, err := buildInlineConfig(models[0], models)
 	if err != nil {
 		return err
 	}
+	o.configContent = content
 
-	configPath := filepath.Join(home, ".config", "opencode", "opencode.json")
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		return err
-	}
-
-	config := make(map[string]any)
-	if data, err := os.ReadFile(configPath); err == nil {
-		_ = json.Unmarshal(data, &config) // Ignore parse errors; treat missing/corrupt files as empty
-	}
-
-	config["$schema"] = "https://opencode.ai/config.json"
-
-	provider, ok := config["provider"].(map[string]any)
-	if !ok {
-		provider = make(map[string]any)
-	}
-
-	ollama, ok := provider["ollama"].(map[string]any)
-	if !ok {
-		ollama = map[string]any{
-			"npm":  "@ai-sdk/openai-compatible",
-			"name": "Ollama",
-			"options": map[string]any{
-				"baseURL": envconfig.Host().String() + "/v1",
-			},
-		}
-	}
-
-	// Migrate legacy provider name
-	if name, _ := ollama["name"].(string); name == "Ollama (local)" {
-		ollama["name"] = "Ollama"
-	}
-
-	models, ok := ollama["models"].(map[string]any)
-	if !ok {
-		models = make(map[string]any)
-	}
-
-	selectedSet := make(map[string]bool)
-	for _, m := range modelList {
-		selectedSet[m] = true
-	}
-
-	for name, cfg := range models {
-		if cfgMap, ok := cfg.(map[string]any); ok {
-			if isOllamaModel(cfgMap) && !selectedSet[name] {
-				delete(models, name)
-			}
-		}
-	}
-
-	for _, model := range modelList {
-		if existing, ok := models[model].(map[string]any); ok {
-			// migrate existing models without _launch marker
-			if isOllamaModel(existing) {
-				existing["_launch"] = true
-				if name, ok := existing["name"].(string); ok {
-					existing["name"] = strings.TrimSuffix(name, " [Ollama]")
-				}
-			}
-			if isCloudModelName(model) {
-				if l, ok := lookupCloudModelLimit(model); ok {
-					existing["limit"] = map[string]any{
-						"context": l.Context,
-						"output":  l.Output,
-					}
-				}
-			}
-			continue
-		}
-		entry := map[string]any{
-			"name":    model,
-			"_launch": true,
-		}
-		if isCloudModelName(model) {
-			if l, ok := lookupCloudModelLimit(model); ok {
-				entry["limit"] = map[string]any{
-					"context": l.Context,
-					"output":  l.Output,
-				}
-			}
-		}
-		models[model] = entry
-	}
-
-	ollama["models"] = models
-	provider["ollama"] = ollama
-	config["provider"] = provider
-	config["model"] = "ollama/" + modelList[0]
-
-	configData, err := json.MarshalIndent(config, "", "  ")
+	// Write model state file so models appear in OpenCode's model picker
+	statePath, err := openCodeStatePath()
 	if err != nil {
 		return err
 	}
-	if err := fileutil.WriteWithBackup(configPath, configData); err != nil {
-		return err
-	}
-
-	statePath := filepath.Join(home, ".local", "state", "opencode", "model.json")
 	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
 		return err
 	}
@@ -228,37 +277,129 @@ func (o *OpenCode) Edit(modelList []string) error {
 	if err != nil {
 		return err
 	}
-	return fileutil.WriteWithBackup(statePath, stateData)
+	return fileutil.WriteWithBackup(statePath, stateData, "opencode")
 }
 
 func (o *OpenCode) Models() []string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil
-	}
-	config, err := fileutil.ReadJSON(filepath.Join(home, ".config", "opencode", "opencode.json"))
-	if err != nil {
-		return nil
-	}
-	provider, _ := config["provider"].(map[string]any)
-	ollama, _ := provider["ollama"].(map[string]any)
-	models, _ := ollama["models"].(map[string]any)
-	if len(models) == 0 {
-		return nil
-	}
-	keys := slices.Collect(maps.Keys(models))
-	slices.Sort(keys)
-	return keys
+	return nil
 }
 
-// isOllamaModel reports whether a model config entry is managed by us
-func isOllamaModel(cfg map[string]any) bool {
-	if v, ok := cfg["_launch"].(bool); ok && v {
-		return true
+// buildInlineConfig produces the JSON string for OPENCODE_CONFIG_CONTENT.
+// primary is the model to launch with, models is the full list of available models.
+func buildInlineConfig(primary LaunchModel, models []LaunchModel) (string, error) {
+	if primary.Name == "" || len(models) == 0 {
+		return "", fmt.Errorf("buildInlineConfig: primary and models are required")
 	}
-	// previously used [Ollama] as a suffix for the model managed by ollama launch
-	if name, ok := cfg["name"].(string); ok {
-		return strings.HasSuffix(name, "[Ollama]")
+
+	config := map[string]any{
+		"$schema": "https://opencode.ai/config.json",
+		"provider": map[string]any{
+			"ollama": map[string]any{
+				"npm":  "@ai-sdk/openai-compatible",
+				"name": "Ollama",
+				"options": map[string]any{
+					"baseURL": envconfig.Host().String() + "/v1",
+				},
+				"models": buildModelEntries(models),
+			},
+		},
+		"model": "ollama/" + primary.Name,
 	}
-	return false
+	data, err := json.Marshal(config)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+// readModelJSONModels reads ollama model IDs from the opencode model.json state file
+func readModelJSONModels() []string {
+	statePath, err := openCodeStatePath()
+	if err != nil {
+		return nil
+	}
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		return nil
+	}
+	var state map[string]any
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil
+	}
+	recent, _ := state["recent"].([]any)
+	var models []string
+	for _, entry := range recent {
+		e, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if e["providerID"] != "ollama" {
+			continue
+		}
+		if id, ok := e["modelID"].(string); ok && id != "" {
+			models = append(models, id)
+		}
+	}
+	return models
+}
+
+func buildModelEntries(modelList []LaunchModel) map[string]any {
+	models := make(map[string]any)
+	for _, model := range modelList {
+		entry := map[string]any{
+			"name": model.Name,
+		}
+		if model.HasCapability("vision") {
+			entry["modalities"] = map[string]any{
+				"input":  []string{"text", "image"},
+				"output": []string{"text"},
+			}
+		}
+		if model.HasCapability("thinking") {
+			entry["reasoning"] = true
+			if openCodeModelSupportsThinkingLevels(model) {
+				entry["options"] = map[string]any{"reasoningEffort": "medium"}
+				entry["variants"] = map[string]any{
+					"low":    map[string]any{"reasoningEffort": "low"},
+					"medium": map[string]any{"reasoningEffort": "medium"},
+					"high":   map[string]any{"reasoningEffort": "high"},
+					"max":    map[string]any{"reasoningEffort": "max"},
+				}
+			} else {
+				entry["variants"] = map[string]any{
+					"none":   map[string]any{"reasoningEffort": "none"},
+					"low":    map[string]any{"disabled": true},
+					"medium": map[string]any{"disabled": true},
+					"high":   map[string]any{"disabled": true},
+				}
+			}
+		}
+		if model.MaxOutputTokens > 0 {
+			limit := make(map[string]any)
+			if model.ContextLength > 0 {
+				limit["context"] = model.ContextLength
+			}
+			limit["output"] = model.MaxOutputTokens
+			entry["limit"] = limit
+		}
+		models[model.Name] = entry
+	}
+	return models
+}
+
+func openCodeModelSupportsThinkingLevels(model LaunchModel) bool {
+	for _, family := range append([]string{model.Details.Family}, model.Details.Families...) {
+		if normalizeOpenCodeModelFamily(family) == "gptoss" {
+			return true
+		}
+	}
+
+	return strings.Contains(normalizeOpenCodeModelFamily(model.Name), "gptoss")
+}
+
+func normalizeOpenCodeModelFamily(s string) string {
+	s = strings.ToLower(s)
+	s = strings.ReplaceAll(s, "-", "")
+	s = strings.ReplaceAll(s, "_", "")
+	return s
 }

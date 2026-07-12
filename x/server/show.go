@@ -13,6 +13,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
+	"github.com/ollama/ollama/x/quant"
 )
 
 func canonicalQuantType(quantType string) string {
@@ -267,13 +268,10 @@ func getTensorInfoFromManifest(mf *manifest.Manifest) ([]api.Tensor, error) {
 					shape[i] = uint64(s)
 				}
 
-				var packFactor int64
-				switch strings.ToLower(info.QuantType) {
-				case "int4", "nvfp4":
-					packFactor = 8
-				case "int8", "mxfp8":
-					packFactor = 4
-				}
+				// Quantized weights are packed into U32 words; report the
+				// logical unpacked shape. PackFactor covers every quant type
+				// the engine produces (including mxfp4) from one table.
+				packFactor := int64(quant.PackFactor(info.QuantType))
 				if packFactor > 0 && len(shape) >= 2 {
 					shape[len(shape)-1] = uint64(info.Shape[len(info.Shape)-1] * packFactor)
 				}
@@ -306,15 +304,17 @@ func getTensorInfoFromManifest(mf *manifest.Manifest) ([]api.Tensor, error) {
 }
 
 // GetSafetensorsDtype returns the quantization type for a safetensors model.
-// Reads quant_type from the first tensor blob's __metadata__.
-// Falls back to torch_dtype from config.json if no quant metadata.
+// Reads tensor headers and reports the lowest-precision quantized weight type.
+// Falls back to torch_dtype from config.json if no quant metadata exists.
 func GetSafetensorsDtype(name model.Name) (string, error) {
 	mf, err := manifest.ParseNamedManifest(name)
 	if err != nil {
 		return "", fmt.Errorf("failed to load manifest: %w", err)
 	}
 
-	// Check first tensor blob for quant_type metadata
+	var bestQuantType string
+	var bestPrecision int
+
 	for _, layer := range mf.Layers {
 		if layer.MediaType != manifest.MediaTypeImageTensor {
 			continue
@@ -323,15 +323,30 @@ func GetSafetensorsDtype(name model.Name) (string, error) {
 		if err != nil {
 			continue
 		}
-		info, err := readSafetensorsHeader(blobPath)
+		f, err := os.Open(blobPath)
 		if err != nil {
 			continue
 		}
-		if quantType := canonicalQuantType(info.QuantType); quantType != "" {
-			return quantType, nil
+		infos, err := parseSafetensorsAllHeaders(f)
+		_ = f.Close()
+		if err != nil {
+			continue
 		}
-		// Only check the first tensor blob
-		break
+		for _, info := range infos {
+			quantType := canonicalQuantType(info.QuantType)
+			if quantType == "" {
+				continue
+			}
+			precision := quantTypePrecision(quantType)
+			if bestQuantType == "" || (precision > 0 && (bestPrecision == 0 || precision < bestPrecision)) {
+				bestQuantType = quantType
+				bestPrecision = precision
+			}
+		}
+	}
+
+	if bestQuantType != "" {
+		return bestQuantType, nil
 	}
 
 	// Not quantized - return torch_dtype from config.json
@@ -345,6 +360,10 @@ func GetSafetensorsDtype(name model.Name) (string, error) {
 	return cfg.TorchDtype, nil
 }
 
+func quantTypePrecision(quantType string) int {
+	return quant.Bits(quantType)
+}
+
 // safetensorsTensorInfo holds metadata about a tensor from a safetensors header
 type safetensorsTensorInfo struct {
 	Name      string  // tensor name from the header key
@@ -354,88 +373,9 @@ type safetensorsTensorInfo struct {
 	GroupSize string  // from __metadata__.group_size (e.g., "32", "64")
 }
 
-// readSafetensorsHeader reads the JSON header from a safetensors file to get tensor metadata.
-// Safetensors format: 8-byte header size (little endian) + JSON header + tensor data
-func readSafetensorsHeader(path string) (*safetensorsTensorInfo, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	return parseSafetensorsHeader(f)
-}
-
-// parseSafetensorsHeader parses a safetensors header from a reader.
-// This is separated for testability.
-// Parses __metadata__ for quant_type and group_size if present.
-func parseSafetensorsHeader(r io.Reader) (*safetensorsTensorInfo, error) {
-	// Read header size (8 bytes, little endian)
-	var headerSize uint64
-	if err := binary.Read(r, binary.LittleEndian, &headerSize); err != nil {
-		return nil, fmt.Errorf("failed to read header size: %w", err)
-	}
-
-	// Sanity check - header shouldn't be too large
-	if headerSize > 1024*1024 {
-		return nil, fmt.Errorf("header size too large: %d", headerSize)
-	}
-
-	// Read header JSON
-	headerBytes := make([]byte, headerSize)
-	if _, err := io.ReadFull(r, headerBytes); err != nil {
-		return nil, fmt.Errorf("failed to read header: %w", err)
-	}
-
-	// Parse as map of tensor name -> info
-	var header map[string]json.RawMessage
-	if err := json.Unmarshal(headerBytes, &header); err != nil {
-		return nil, fmt.Errorf("failed to parse header: %w", err)
-	}
-
-	// Parse metadata if present
-	var quantType, groupSize string
-	if metaRaw, ok := header["__metadata__"]; ok {
-		var meta map[string]string
-		if json.Unmarshal(metaRaw, &meta) == nil {
-			quantType = meta["quant_type"]
-			groupSize = meta["group_size"]
-		}
-	}
-
-	// Find the main tensor entry (not __metadata__, .scale, or .bias)
-	for name, raw := range header {
-		if name == "__metadata__" || strings.HasSuffix(name, ".scale") || strings.HasSuffix(name, ".bias") {
-			continue
-		}
-		var info safetensorsTensorInfo
-		if err := json.Unmarshal(raw, &info); err != nil {
-			return nil, fmt.Errorf("failed to parse tensor info: %w", err)
-		}
-		info.QuantType = quantType
-		info.GroupSize = groupSize
-		return &info, nil
-	}
-
-	// Fall back to first non-metadata tensor entry
-	for name, raw := range header {
-		if name == "__metadata__" {
-			continue
-		}
-		var info safetensorsTensorInfo
-		if err := json.Unmarshal(raw, &info); err != nil {
-			return nil, fmt.Errorf("failed to parse tensor info: %w", err)
-		}
-		info.QuantType = quantType
-		info.GroupSize = groupSize
-		return &info, nil
-	}
-
-	return nil, fmt.Errorf("no tensor found in header")
-}
-
 // parseSafetensorsAllHeaders parses all tensor entries from a safetensors header.
-// Returns one safetensorsTensorInfo per main tensor (skipping __metadata__, .scale, .bias).
+// Returns one safetensorsTensorInfo per main tensor, skipping quantization
+// companion entries such as __metadata__, .scale, .bias, and .global_scale.
 // For packed blobs this returns multiple entries; for single-tensor blobs, one entry.
 // Each tensor's quant type is inferred from its shape and the presence of .scale/.bias entries
 // when no global __metadata__ quant_type is present.
@@ -478,7 +418,7 @@ func parseSafetensorsAllHeaders(r io.Reader) ([]safetensorsTensorInfo, error) {
 	// Collect all main tensor entries (sorted for deterministic output)
 	var mainNames []string
 	for name := range header {
-		if name == "__metadata__" || strings.HasSuffix(name, ".scale") || strings.HasSuffix(name, ".bias") {
+		if isSafetensorsCompanionTensor(name) {
 			continue
 		}
 		mainNames = append(mainNames, name)
@@ -510,6 +450,13 @@ func parseSafetensorsAllHeaders(r io.Reader) ([]safetensorsTensorInfo, error) {
 	}
 
 	return results, nil
+}
+
+func isSafetensorsCompanionTensor(name string) bool {
+	return name == "__metadata__" ||
+		strings.HasSuffix(name, ".scale") ||
+		strings.HasSuffix(name, ".bias") ||
+		strings.HasSuffix(name, ".global_scale")
 }
 
 // inferQuantType infers the quantization type for a tensor from its shape and scale shape.

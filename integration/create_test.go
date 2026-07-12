@@ -48,10 +48,8 @@ func skipIfRemote(t *testing.T) {
 
 // findHFCLI returns the path to the HuggingFace CLI, or "" if not found.
 func findHFCLI() string {
-	for _, name := range []string{"huggingface-cli", "hf"} {
-		if p, err := exec.LookPath(name); err == nil {
-			return p
-		}
+	if p, err := exec.LookPath("hf"); err == nil {
+		return p
 	}
 	return ""
 }
@@ -139,6 +137,9 @@ func runOllamaCreate(ctx context.Context, t *testing.T, args ...string) {
 }
 
 func TestCreateSafetensorsLLM(t *testing.T) {
+	if testModel != "" {
+		t.Skip("exercises create pipeline with a fixed source model, not applicable with model override")
+	}
 	skipIfRemote(t)
 
 	modelDir := filepath.Join(testdataModelsDir, "TinyLlama-1.1B")
@@ -214,6 +215,9 @@ func TestCreateSafetensorsLLM(t *testing.T) {
 }
 
 func TestCreateGGUF(t *testing.T) {
+	if testModel != "" {
+		t.Skip("exercises create pipeline with a fixed source model, not applicable with model override")
+	}
 	modelDir := filepath.Join(testdataModelsDir, "Llama-3.2-1B-GGUF")
 	downloadHFModel(t, "bartowski/Llama-3.2-1B-Instruct-GGUF", modelDir,
 		"--include", "Llama-3.2-1B-Instruct-IQ3_M.gguf")

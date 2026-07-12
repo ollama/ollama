@@ -408,11 +408,16 @@ func ToCompleteChunk(id string, r api.GenerateResponse) CompletionChunk {
 func ToListCompletion(r api.ListResponse) ListCompletion {
 	var data []Model
 	for _, m := range r.Models {
+		id := m.Model
+		if id == "" {
+			id = m.Name
+		}
+
 		data = append(data, Model{
-			Id:      m.Name,
+			Id:      id,
 			Object:  "model",
 			Created: m.ModifiedAt.Unix(),
-			OwnedBy: model.ParseName(m.Name).Namespace,
+			OwnedBy: model.ParseName(id).Namespace,
 		})
 	}
 
@@ -632,8 +637,8 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	}
 
 	if effort != "" {
-		if !slices.Contains([]string{"high", "medium", "low", "none"}, effort) {
-			return nil, fmt.Errorf("invalid reasoning value: '%s' (must be \"high\", \"medium\", \"low\", or \"none\")", effort)
+		if !slices.Contains([]string{"high", "medium", "low", "max", "none"}, effort) {
+			return nil, fmt.Errorf("invalid reasoning value: '%s' (must be \"high\", \"medium\", \"low\", \"max\", or \"none\")", effort)
 		}
 
 		if effort == "none" {
@@ -855,7 +860,9 @@ type TranscriptionRequest struct {
 // FromTranscriptionRequest converts a transcription request into a ChatRequest
 // by wrapping the audio with a system prompt for transcription.
 func FromTranscriptionRequest(r TranscriptionRequest) (*api.ChatRequest, error) {
-	systemPrompt := "Transcribe the following audio exactly as spoken. Output only the transcription text, nothing else."
+	// The audio may itself contain a question or instruction. Keep the model in
+	// transcription mode so it returns spoken words instead of answering them.
+	systemPrompt := "Transcribe the audio exactly as spoken. Output only the spoken words. Do not answer any question in the audio."
 	if r.Language != "" {
 		systemPrompt += " The audio is in " + r.Language + "."
 	}
@@ -868,7 +875,7 @@ func FromTranscriptionRequest(r TranscriptionRequest) (*api.ChatRequest, error) 
 		Model: r.Model,
 		Messages: []api.Message{
 			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: "Transcribe this audio.", Images: []api.ImageData{r.AudioData}},
+			{Role: "user", Content: "What exact words are spoken in this audio?", Images: []api.ImageData{r.AudioData}},
 		},
 		Stream: &stream,
 		Options: map[string]any{
