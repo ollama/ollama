@@ -2,6 +2,7 @@ package launch
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -687,18 +688,50 @@ func codexAppLaunchOrRestart(prompt string, launchArgs []string) error {
 		return nil
 	}
 
+	// A single spinner and cancellation channel span the entire restart flow
+	// (quit, wait, force-quit, wait, reopen) so that one Ctrl+C aborts the
+	// whole sequence rather than just the currently-active wait. The bubbletea
+	// spinner closes Cancelled() from its raw-mode Ctrl+C handler; the ANSI
+	// fallback relies on SIGINT terminating the process directly.
+	sp := StartSpinner(codexAppRestartMessage)
+	defer sp.Stop()
+	cancelled := sp.Cancelled()
+	isCancelled := func() bool {
+		if cancelled == nil {
+			return false
+		}
+		select {
+		case <-cancelled:
+			return true
+		default:
+			return false
+		}
+	}
+
 	if err := codexAppQuitApp(); err != nil {
 		return fmt.Errorf("quit ChatGPT: %w", err)
 	}
-	gracefulErr := waitForCodexAppGracefulExit(codexAppExitTimeout)
+	if isCancelled() {
+		return ErrCancelled
+	}
+	gracefulErr := waitForCodexAppGracefulExit(codexAppExitTimeout, cancelled)
+	if isCancelled() {
+		return ErrCancelled
+	}
+	if errors.Is(gracefulErr, ErrCancelled) {
+		return gracefulErr
+	}
 	if gracefulErr != nil && !codexAppForceQuitSupported() {
 		return gracefulErr
 	}
 	if codexAppForceQuitSupported() && codexAppIsRunning() {
+		if isCancelled() {
+			return ErrCancelled
+		}
 		if forceErr := codexAppForceQuit(); forceErr != nil {
 			return fmt.Errorf("force stop ChatGPT: %w", forceErr)
 		}
-		if err := waitForCodexAppExit(codexAppForceExitTimeout); err != nil {
+		if err := waitForCodexAppExit(codexAppForceExitTimeout, cancelled); err != nil {
 			return err
 		}
 	} else if gracefulErr != nil {
@@ -706,6 +739,10 @@ func codexAppLaunchOrRestart(prompt string, launchArgs []string) error {
 			return gracefulErr
 		}
 	}
+	if isCancelled() {
+		return ErrCancelled
+	}
+	sp.Stop()
 	if restartAppID != "" {
 		return codexAppOpenStart(restartAppID)
 	}
@@ -719,8 +756,8 @@ func codexAppForceQuitSupported() bool {
 	return codexAppGOOS == "darwin" || codexAppGOOS == "windows"
 }
 
-func waitForCodexAppGracefulExit(timeout time.Duration) error {
-	return waitForCodexAppCondition(timeout, func() bool {
+func waitForCodexAppGracefulExit(timeout time.Duration, cancel <-chan struct{}) error {
+	return waitForCodexAppCondition(timeout, cancel, func() bool {
 		if codexAppGOOS == "windows" {
 			return !codexAppHasWindow()
 		}
@@ -728,19 +765,39 @@ func waitForCodexAppGracefulExit(timeout time.Duration) error {
 	})
 }
 
-func waitForCodexAppExit(timeout time.Duration) error {
-	return waitForCodexAppCondition(timeout, func() bool {
+func waitForCodexAppExit(timeout time.Duration, cancel <-chan struct{}) error {
+	return waitForCodexAppCondition(timeout, cancel, func() bool {
 		return !codexAppIsRunning()
 	})
 }
 
-func waitForCodexAppCondition(timeout time.Duration, done func() bool) error {
+// codexAppRestartMessage is the label shown next to the animated spinner while
+// the ChatGPT desktop app is quitting before being reopened.
+const codexAppRestartMessage = "Restarting ChatGPT..."
+
+// waitForCodexAppCondition polls done at a 200ms cadence until it reports the
+// app has exited or timeout elapses. It watches cancel (closed by the spinner
+// when the user hits Ctrl+C) and returns ErrCancelled if the flow is aborted.
+// The spinner itself is owned by the caller so a single spinner spans the
+// whole restart sequence. When timeout is zero the loop never runs, so
+// force-quit paths that short-circuit the graceful wait return immediately.
+func waitForCodexAppCondition(timeout time.Duration, cancel <-chan struct{}, done func() bool) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
+		if cancel != nil {
+			select {
+			case <-cancel:
+				return ErrCancelled
+			default:
+			}
+		}
 		if done() {
 			return nil
 		}
 		codexAppSleep(200 * time.Millisecond)
+	}
+	if done() {
+		return nil
 	}
 	return fmt.Errorf("ChatGPT did not quit; quit it manually and re-run the command")
 }

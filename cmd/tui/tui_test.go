@@ -32,7 +32,7 @@ func launcherTestState() *launch.LauncherState {
 			"chatgpt": {
 				Name:        "chatgpt",
 				DisplayName: "ChatGPT",
-				Description:  "Complete work with ChatGPT",
+				Description: "Complete work with ChatGPT",
 				Selectable:  true,
 				Changeable:  true,
 			},

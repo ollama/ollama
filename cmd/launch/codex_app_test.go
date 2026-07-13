@@ -2,6 +2,7 @@ package launch
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1517,6 +1518,61 @@ func TestCodexAppRunWaitsForGracefulExitBeforeReopening(t *testing.T) {
 	}
 	if sleepCalls == 0 {
 		t.Fatal("expected restart to wait for Codex to exit before reopening")
+	}
+}
+
+func TestCodexAppRunCtrlCAbortsEntireRestartFlow(t *testing.T) {
+	withCodexAppPlatform(t, "darwin")
+	restoreConfirm := withLaunchConfirmPolicy(launchConfirmPolicy{yes: true})
+	defer restoreConfirm()
+
+	oldSleep := codexAppSleep
+	oldDefaultSpinner := DefaultSpinner
+	t.Cleanup(func() {
+		codexAppSleep = oldSleep
+		DefaultSpinner = oldDefaultSpinner
+	})
+
+	// Simulate the user pressing Ctrl+C during the graceful-exit wait: the
+	// shared spinner's cancellation channel is closed on the first poll,
+	// which only happens inside the wait loop.
+	cancel := make(chan struct{})
+	var spinnerStopped bool
+	codexAppSleep = func(time.Duration) {
+		select {
+		case <-cancel:
+		default:
+			close(cancel)
+		}
+	}
+	DefaultSpinner = func(string) *Spinner {
+		return NewSpinner(func() { spinnerStopped = true }, cancel)
+	}
+
+	var calls []string
+	withCodexAppProcessHooks(t,
+		func() bool { return true }, // app stays "running" so the wait polls
+		func() error { calls = append(calls, "quit"); return nil },
+		func() error { calls = append(calls, "open"); return nil },
+	)
+	codexAppExitTimeout = 5 * time.Second
+	codexAppForceQuit = func() error {
+		calls = append(calls, "force")
+		return nil
+	}
+
+	err := (&CodexApp{}).Run("qwen3.5", nil, nil)
+	if !errors.Is(err, ErrCancelled) {
+		t.Fatalf("Run error = %v, want ErrCancelled", err)
+	}
+	if !spinnerStopped {
+		t.Fatal("expected the shared spinner to be stopped on cancel")
+	}
+	// The flow must abort after quit: no force-quit, no reopen, despite the app
+	// still being "running" (which would otherwise trigger the force-quit path).
+	want := []string{"quit"}
+	if !slices.Equal(calls, want) {
+		t.Fatalf("calls = %v, want the whole flow to abort after quit: %v", calls, want)
 	}
 }
 

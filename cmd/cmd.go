@@ -95,6 +95,8 @@ func init() {
 	}
 
 	launch.DefaultConfirmPrompt = tui.RunConfirmWithOptions
+
+	launch.DefaultSpinner = tui.RunSpinner
 }
 
 func runTUISingleSelector(title string, items []launch.SelectionItem, current string, updates <-chan []launch.SelectionItem) (string, error) {
