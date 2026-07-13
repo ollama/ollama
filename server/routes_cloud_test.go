@@ -44,6 +44,64 @@ func TestStatusHandler(t *testing.T) {
 	}
 }
 
+func TestStatusHandlerContextLength(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setTestHome(t, t.TempDir())
+
+	tests := []struct {
+		name           string
+		envContextLen  string
+		defaultNumCtx  int
+		wantContextLen int
+	}{
+		{
+			name:           "environment context length wins",
+			envContextLen:  "8192",
+			defaultNumCtx:  32768,
+			wantContextLen: 8192,
+		},
+		{
+			name:           "server default context length is used when environment is unset",
+			defaultNumCtx:  32768,
+			wantContextLen: 32768,
+		},
+		{
+			name: "context length is omitted when unavailable",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OLLAMA_CONTEXT_LENGTH", tt.envContextLen)
+
+			s := Server{defaultNumCtx: tt.defaultNumCtx}
+			w := createRequest(t, s.StatusHandler, nil)
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected status 200, got %d", w.Code)
+			}
+
+			var body map[string]any
+			if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+
+			got, ok := body["context_length"]
+			if tt.wantContextLen == 0 {
+				if ok {
+					t.Fatalf("context_length = %v, want omitted", got)
+				}
+				return
+			}
+			if !ok {
+				t.Fatal("context_length is missing")
+			}
+			if got != float64(tt.wantContextLen) {
+				t.Fatalf("context_length = %v, want %d", got, tt.wantContextLen)
+			}
+		})
+	}
+}
+
 func TestCloudDisabledBlocksRemoteOperations(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())
