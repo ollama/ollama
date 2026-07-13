@@ -732,6 +732,7 @@ func TestHermesDesktopRun(t *testing.T) {
 		})
 	}
 }
+
 func writeHermesVersionedTestBinary(t *testing.T, dir, version string) {
 	t.Helper()
 	script := "#!/bin/sh\n" +
