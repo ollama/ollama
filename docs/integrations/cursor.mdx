@@ -1,0 +1,55 @@
+---
+title: Cursor
+---
+
+Use Ollama.com models in Cursor without installing or running Ollama locally.
+
+## Connect Cursor to Ollama.com
+
+You need an Ollama.com account and an [Ollama API key](https://ollama.com/settings/keys). This is a direct API connection: `ollama signin` and a local Ollama server are not required.
+
+1. In Cursor, open **Settings** > **Models**.
+2. In the **OpenAI API Key** section, enter your Ollama API key.
+3. Enable **Override OpenAI Base URL** and set the base URL to:
+
+   ```
+   https://ollama.com/v1
+   ```
+
+4. Add a custom model using an Ollama.com cloud model ID, then select it from Cursor's model picker.
+
+For the direct Ollama.com API, use the model ID shown for that cloud model. Do not use the `:cloud` suffix used when a local Ollama installation forwards a request to the cloud. For example, use `qwen3-coder:480b`, not `qwen3-coder:480b-cloud`.
+
+Browse available [cloud models](https://ollama.com/search?c=cloud). Models that Cursor uses for agent work should support [tool calling](/capabilities/tool-calling).
+
+## What this connects to
+
+- **This page:** Cursor sends OpenAI-compatible requests directly to Ollama.com using your Ollama API key.
+- **Local Ollama:** Use `http://localhost:11434/v1` only when Ollama is installed and running on your computer. It can run local models and can forward `:cloud` models after you sign in. See [Cloud](/cloud).
+- **Ollama VS Code extension:** This is a separate integration for VS Code and Copilot Chat. See [VS Code](/integrations/vscode).
+
+This uses Cursor's OpenAI custom-base-URL setting, rather than a native Ollama provider. Turn off the override when you want Cursor to use its normal OpenAI route again.
+
+## Troubleshooting
+
+### Unauthorized or invalid API key
+
+Create a new key in [Ollama API keys](https://ollama.com/settings/keys) and paste that key into Cursor's **OpenAI API Key** field. An Ollama sign-in session or a local API key is not a replacement for an Ollama.com API key.
+
+### Model not found
+
+Use the exact direct API model ID from the [cloud model catalog](https://ollama.com/search?c=cloud). Remove `:cloud`; that suffix is for requests through local Ollama, not direct requests to Ollama.com.
+
+### Endpoint or connection error
+
+Set the base URL to exactly `https://ollama.com/v1`. Do not use `https://ollama.com/api`, which is Ollama's native API base URL rather than its OpenAI-compatible base URL.
+
+### Requests work locally but not in Cursor
+
+Verify the model supports tool calling, then try a new Cursor chat after selecting the custom model. For the API contract and supported OpenAI-compatible features, see [OpenAI compatibility](/api/openai-compatibility).
+
+## Related
+
+- [Cloud API access](/cloud#cloud-api-access)
+- [API authentication](/api/authentication)
+- [OpenAI compatibility](/api/openai-compatibility)

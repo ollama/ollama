@@ -164,6 +164,7 @@
             "expanded": true,
             "pages": [
               "/integrations/vscode",
+              "/integrations/cursor",
               "/integrations/cline",
               "/integrations/jetbrains",
               "/integrations/roo-code",
