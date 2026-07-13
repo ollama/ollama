@@ -233,57 +233,55 @@ func TestRotatingPerTokenSnapshotRestore(t *testing.T) {
 
 	const draft = 4
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			for accepted := 0; accepted <= draft; accepted++ {
-				c := NewRotatingKVCache(tc.window)
-				fillTagged(c, tc.before)
+		for accepted := 0; accepted <= draft; accepted++ {
+			c := NewRotatingKVCache(tc.window)
+			fillTagged(c, tc.before)
 
-				offsets := make([]int, draft)
-				for i := range offsets {
-					offsets[i] = tc.before + i
-				}
-				c.PrepareSnapshots(offsets)
+			offsets := make([]int, draft)
+			for i := range offsets {
+				offsets[i] = tc.before + i
+			}
+			c.PrepareSnapshots(offsets)
 
-				k, v := taggedKV(tc.before, draft)
-				c.Update(newKVBatch(tc.before, draft), k, v)
+			k, v := taggedKV(tc.before, draft)
+			c.Update(newKVBatch(tc.before, draft), k, v)
 
-				snaps := c.TakeSnapshots()
-				if len(snaps) != draft {
-					t.Fatalf("accepted=%d: got %d snapshots, want %d", accepted, len(snaps), draft)
-				}
+			snaps := c.TakeSnapshots()
+			if len(snaps) != draft {
+				t.Fatalf("%s accepted=%d: got %d snapshots, want %d", tc.name, accepted, len(snaps), draft)
+			}
 
-				if accepted < draft {
-					if !c.Restore(snaps[accepted], tc.before+accepted) {
-						t.Fatalf("accepted=%d: restore failed", accepted)
-					}
-				}
-				for _, s := range snaps {
-					s.Close()
-				}
-
-				want := tc.before + draft
-				if accepted < draft {
-					want = tc.before + accepted
-				}
-				if c.Offset() != want {
-					t.Fatalf("accepted=%d: offset after commit = %d, want %d", accepted, c.Offset(), want)
-				}
-				// The logical window holds the trailing min(offset, window)
-				// absolute positions in order — a slot-math error would keep the
-				// right count but the wrong positions, which a dimension check
-				// would miss. A batched write through concat can leave the raw
-				// buffer larger than the window (it retains maxSize-1+L slots);
-				// View trims to the trailing window at SDPA time, so compare the
-				// trailing window of the linearized buffer.
-				got := windowTags(t, c)
-				if len(got) > tc.window {
-					got = got[len(got)-tc.window:]
-				}
-				if wantTags := wantWindowTags(want, tc.window); !slices.Equal(got, wantTags) {
-					t.Fatalf("accepted=%d: window tags = %v, want %v", accepted, got, wantTags)
+			if accepted < draft {
+				if !c.Restore(snaps[accepted], tc.before+accepted) {
+					t.Fatalf("%s accepted=%d: restore failed", tc.name, accepted)
 				}
 			}
-		})
+			for _, s := range snaps {
+				s.Close()
+			}
+
+			want := tc.before + draft
+			if accepted < draft {
+				want = tc.before + accepted
+			}
+			if c.Offset() != want {
+				t.Fatalf("%s accepted=%d: offset after commit = %d, want %d", tc.name, accepted, c.Offset(), want)
+			}
+			// The logical window holds the trailing min(offset, window)
+			// absolute positions in order — a slot-math error would keep the
+			// right count but the wrong positions, which a dimension check
+			// would miss. A batched write through concat can leave the raw
+			// buffer larger than the window (it retains maxSize-1+L slots);
+			// View trims to the trailing window at SDPA time, so compare the
+			// trailing window of the linearized buffer.
+			got := windowTags(t, c)
+			if len(got) > tc.window {
+				got = got[len(got)-tc.window:]
+			}
+			if wantTags := wantWindowTags(want, tc.window); !slices.Equal(got, wantTags) {
+				t.Fatalf("%s accepted=%d: window tags = %v, want %v", tc.name, accepted, got, wantTags)
+			}
+		}
 	}
 }
 
@@ -308,74 +306,72 @@ func TestRotatingRestoreLazyOwnSnapshotSlices(t *testing.T) {
 
 	const draft, accepted = 4, 2
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			c := NewRotatingKVCache(tc.window)
-			fillTagged(c, tc.before)
+		c := NewRotatingKVCache(tc.window)
+		fillTagged(c, tc.before)
 
-			offsets := make([]int, draft)
-			for i := range offsets {
-				offsets[i] = tc.before + i
-			}
-			c.PrepareSnapshots(offsets)
+		offsets := make([]int, draft)
+		for i := range offsets {
+			offsets[i] = tc.before + i
+		}
+		c.PrepareSnapshots(offsets)
 
-			k, v := taggedKV(tc.before, draft)
-			c.Update(newKVBatch(tc.before, draft), k, v)
+		k, v := taggedKV(tc.before, draft)
+		c.Update(newKVBatch(tc.before, draft), k, v)
 
-			snaps := c.TakeSnapshots()
-			snap := snaps[accepted].(*rotatingSnapshot)
-			if snap.keys != nil {
-				t.Fatal("snapshot materialized before restore; expected lazy")
-			}
+		snaps := c.TakeSnapshots()
+		snap := snaps[accepted].(*rotatingSnapshot)
+		if snap.keys != nil {
+			t.Fatalf("%s: snapshot materialized before restore; expected lazy", tc.name)
+		}
 
-			if !c.Restore(snap, tc.before+accepted) {
-				t.Fatal("restore failed")
-			}
+		if !c.Restore(snap, tc.before+accepted) {
+			t.Fatalf("%s: restore failed", tc.name)
+		}
 
-			// Fast path: the snapshot was sliced, not copied out, and stays a
-			// valid lazy snapshot re-pointed at the new buffer.
-			if snap.keys != nil {
-				t.Fatal("snapshot was copied out; expected the slice fast path")
-			}
-			if snap.cache != c {
-				t.Fatal("snapshot lost its lazy cache reference")
-			}
-			if !slices.Contains(c.lazySnapshots, snap) {
-				t.Fatal("snapshot not re-added to the lazy set")
-			}
-			if snap.sliceStart != 0 || snap.sliceEnd != min(tc.before+accepted, tc.window) {
-				t.Fatalf("snapshot slots = [%d,%d), want [0,%d)", snap.sliceStart, snap.sliceEnd, min(tc.before+accepted, tc.window))
-			}
+		// Fast path: the snapshot was sliced, not copied out, and stays a
+		// valid lazy snapshot re-pointed at the new buffer.
+		if snap.keys != nil {
+			t.Fatalf("%s: snapshot was copied out; expected the slice fast path", tc.name)
+		}
+		if snap.cache != c {
+			t.Fatalf("%s: snapshot lost its lazy cache reference", tc.name)
+		}
+		if !slices.Contains(c.lazySnapshots, snap) {
+			t.Fatalf("%s: snapshot not re-added to the lazy set", tc.name)
+		}
+		if snap.sliceStart != 0 || snap.sliceEnd != min(tc.before+accepted, tc.window) {
+			t.Fatalf("%s: snapshot slots = [%d,%d), want [0,%d)", tc.name, snap.sliceStart, snap.sliceEnd, min(tc.before+accepted, tc.window))
+		}
 
-			got := windowTags(t, c)
-			want := wantWindowTags(tc.before+accepted, tc.window)
-			if !slices.Equal(got, want) {
-				t.Fatalf("window tags = %v, want %v", got, want)
-			}
+		got := windowTags(t, c)
+		want := wantWindowTags(tc.before+accepted, tc.window)
+		if !slices.Equal(got, want) {
+			t.Fatalf("%s: window tags = %v, want %v", tc.name, got, want)
+		}
 
-			// A following decode write must produce correct content (the sliced
-			// buffer feeds update's ring math unchanged). The write copies the
-			// re-pointed snapshot out first; it must capture the same window.
-			wk, wv := taggedKV(c.Offset(), 1)
-			c.Update(newKVBatch(c.Offset(), 1), wk, wv)
-			if snap.keys == nil {
-				t.Fatal("following write did not copy out the re-pointed snapshot")
-			}
-			mlx.Eval(snap.keys)
-			if head := int(snap.keys.Floats()[0]) - 1; head != tc.before+accepted-min(tc.before+accepted, tc.window) {
-				t.Fatalf("re-pointed snapshot head tag = %d, want %d", head, tc.before+accepted-min(tc.before+accepted, tc.window))
-			}
-			got = windowTags(t, c)
-			want = wantWindowTags(tc.before+accepted+1, tc.window)
-			if !slices.Equal(got, want) {
-				t.Fatalf("after follow-up write: window tags = %v, want %v", got, want)
-			}
+		// A following decode write must produce correct content (the sliced
+		// buffer feeds update's ring math unchanged). The write copies the
+		// re-pointed snapshot out first; it must capture the same window.
+		wk, wv := taggedKV(c.Offset(), 1)
+		c.Update(newKVBatch(c.Offset(), 1), wk, wv)
+		if snap.keys == nil {
+			t.Fatalf("%s: following write did not copy out the re-pointed snapshot", tc.name)
+		}
+		mlx.Eval(snap.keys)
+		if head := int(snap.keys.Floats()[0]) - 1; head != tc.before+accepted-min(tc.before+accepted, tc.window) {
+			t.Fatalf("%s: re-pointed snapshot head tag = %d, want %d", tc.name, head, tc.before+accepted-min(tc.before+accepted, tc.window))
+		}
+		got = windowTags(t, c)
+		want = wantWindowTags(tc.before+accepted+1, tc.window)
+		if !slices.Equal(got, want) {
+			t.Fatalf("%s: after follow-up write: window tags = %v, want %v", tc.name, got, want)
+		}
 
-			for _, s := range snaps {
-				if s != nil {
-					s.Close()
-				}
+		for _, s := range snaps {
+			if s != nil {
+				s.Close()
 			}
-		})
+		}
 	}
 }
 
@@ -463,30 +459,28 @@ func TestRotatingSnapshotSingleTokenWrite(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			c := NewRotatingKVCache(tc.window)
-			fillTagged(c, tc.before)
+		c := NewRotatingKVCache(tc.window)
+		fillTagged(c, tc.before)
 
-			// Schedule the offset the single-token write reaches as its end
-			// boundary, then perform that write.
-			c.PrepareSnapshots([]int{tc.before + 1})
-			k, v := taggedKV(tc.before, 1)
-			c.Update(newKVBatch(tc.before, 1), k, v)
+		// Schedule the offset the single-token write reaches as its end
+		// boundary, then perform that write.
+		c.PrepareSnapshots([]int{tc.before + 1})
+		k, v := taggedKV(tc.before, 1)
+		c.Update(newKVBatch(tc.before, 1), k, v)
 
-			snaps := c.TakeSnapshots()
-			if len(snaps) != 1 || snaps[0] == nil {
-				t.Fatalf("snapshot not captured: %v", snaps)
-			}
+		snaps := c.TakeSnapshots()
+		if len(snaps) != 1 || snaps[0] == nil {
+			t.Fatalf("%s: snapshot not captured: %v", tc.name, snaps)
+		}
 
-			if !c.Restore(snaps[0], tc.before+1) {
-				t.Fatal("restore failed")
-			}
-			snaps[0].Close()
+		if !c.Restore(snaps[0], tc.before+1) {
+			t.Fatalf("%s: restore failed", tc.name)
+		}
+		snaps[0].Close()
 
-			if got, want := windowTags(t, c), wantWindowTags(tc.before+1, tc.window); !slices.Equal(got, want) {
-				t.Fatalf("window tags = %v, want %v", got, want)
-			}
-		})
+		if got, want := windowTags(t, c), wantWindowTags(tc.before+1, tc.window); !slices.Equal(got, want) {
+			t.Fatalf("%s: window tags = %v, want %v", tc.name, got, want)
+		}
 	}
 }
 
