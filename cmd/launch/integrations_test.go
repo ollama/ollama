@@ -85,7 +85,7 @@ func TestIntegrationLookup(t *testing.T) {
 }
 
 func TestIntegrationRegistry(t *testing.T) {
-	expectedIntegrations := []string{"claude", "claude-desktop", "cline", "codex", "codex-app", "kimi", "droid", "opencode", "omp", "hermes", "hermes-desktop", "pool", "qwen"}
+	expectedIntegrations := []string{"claude", "claude-desktop", "cline", "codex", "codex-app", "kimi", "droid", "opencode", "omp", "hermes", "hermes-desktop", "pool", "qwen", "vscode"}
 	for _, name := range expectedIntegrations {
 		t.Run(name, func(t *testing.T) {
 			r, ok := integrations[name]
@@ -102,7 +102,7 @@ func TestIntegrationRegistry(t *testing.T) {
 func TestHiddenIntegrationsExcludedFromVisibleLists(t *testing.T) {
 	for _, info := range ListIntegrationInfos() {
 		switch info.Name {
-		case "vscode", "kimi":
+		case "kimi":
 			t.Fatalf("hidden integration %q should not appear in ListIntegrationInfos", info.Name)
 		}
 	}
@@ -1893,9 +1893,9 @@ func TestListIntegrationInfos(t *testing.T) {
 		for _, info := range infos {
 			got = append(got, info.Name)
 		}
-		wantPrefix := []string{"claude", "codex-app", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp"}
+		wantPrefix := []string{"claude", "codex-app", "vscode", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp"}
 		if codexAppSupported() != nil {
-			wantPrefix = []string{"claude", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp"}
+			wantPrefix = []string{"claude", "vscode", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp"}
 		}
 		if len(got) < len(wantPrefix) {
 			t.Fatalf("expected at least %d integrations, got %v", len(wantPrefix), got)
@@ -1917,7 +1917,7 @@ func TestListIntegrationInfos(t *testing.T) {
 	})
 
 	t.Run("includes known integrations", func(t *testing.T) {
-		known := map[string]bool{"claude": false, "cline": false, "codex": false, "opencode": false, "omp": false}
+		known := map[string]bool{"claude": false, "cline": false, "codex": false, "opencode": false, "omp": false, "vscode": false}
 		if codexAppSupported() == nil {
 			known["codex-app"] = false
 		}
