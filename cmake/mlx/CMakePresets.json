@@ -55,7 +55,7 @@
       "inherits": [ "default" ],
       "binaryDir": "${sourceDir}/../../build/metal-v4",
       "cacheVariables": {
-        "CMAKE_OSX_DEPLOYMENT_TARGET": "26.0",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "26.2",
         "OLLAMA_RUNNER_DIR": "mlx_metal_v4"
       }
     }
