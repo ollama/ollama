@@ -157,6 +157,9 @@ func TestChatWriter_StreamMixedThinkingAndContentEmitsSplitChunks(t *testing.T) 
 	if reasoningChunk.Choices[0].Delta.Reasoning != "reasoning" {
 		t.Fatalf("expected reasoning chunk reasoning %q, got %q", "reasoning", reasoningChunk.Choices[0].Delta.Reasoning)
 	}
+	if reasoningChunk.Choices[0].Delta.Role != "assistant" {
+		t.Fatalf("expected reasoning chunk role %q, got %q", "assistant", reasoningChunk.Choices[0].Delta.Role)
+	}
 	if reasoningChunk.Choices[0].Delta.Content != "" {
 		t.Fatalf("expected reasoning chunk content to be empty, got %v", reasoningChunk.Choices[0].Delta.Content)
 	}
@@ -169,6 +172,9 @@ func TestChatWriter_StreamMixedThinkingAndContentEmitsSplitChunks(t *testing.T) 
 	}
 	if contentChunk.Choices[0].Delta.Reasoning != "" {
 		t.Fatalf("expected content chunk reasoning to be empty, got %q", contentChunk.Choices[0].Delta.Reasoning)
+	}
+	if contentChunk.Choices[0].Delta.Role != "" {
+		t.Fatalf("expected content chunk role to be omitted, got %q", contentChunk.Choices[0].Delta.Role)
 	}
 	if contentChunk.Choices[0].Delta.Content != "final answer" {
 		t.Fatalf("expected content chunk content %q, got %v", "final answer", contentChunk.Choices[0].Delta.Content)
@@ -237,6 +243,64 @@ func TestChatWriter_StreamSingleChunkPathStillEmitsOneChunk(t *testing.T) {
 	}
 }
 
+func TestChatWriter_StreamRoleOnlyInFirstChunk(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+
+	writer := &ChatWriter{
+		stream:     true,
+		id:         "chatcmpl-test",
+		BaseWriter: BaseWriter{ResponseWriter: context.Writer},
+	}
+
+	responses := []api.ChatResponse{
+		{
+			Model:   "test-model",
+			Message: api.Message{Content: "hello"},
+		},
+		{
+			Model:      "test-model",
+			Message:    api.Message{Content: " world"},
+			Done:       true,
+			DoneReason: "stop",
+		},
+	}
+
+	for _, response := range responses {
+		data, err := json.Marshal(response)
+		if err != nil {
+			t.Fatalf("marshal response: %v", err)
+		}
+		if _, err := writer.Write(data); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
+	}
+
+	frames := sseDataFrames(recorder.Body.String())
+	if len(frames) != 3 {
+		t.Fatalf("expected 3 SSE data frames (2 chunks + [DONE]), got %d:\n%s", len(frames), recorder.Body.String())
+	}
+
+	var first openai.ChatCompletionChunk
+	if err := json.Unmarshal([]byte(frames[0]), &first); err != nil {
+		t.Fatalf("unmarshal first chunk: %v", err)
+	}
+	if got := first.Choices[0].Delta.Role; got != "assistant" {
+		t.Fatalf("first chunk role = %q, want assistant", got)
+	}
+
+	var second map[string]any
+	if err := json.Unmarshal([]byte(frames[1]), &second); err != nil {
+		t.Fatalf("unmarshal second chunk: %v", err)
+	}
+	choices := second["choices"].([]any)
+	delta := choices[0].(map[string]any)["delta"].(map[string]any)
+	if _, ok := delta["role"]; ok {
+		t.Fatalf("second chunk unexpectedly contains role: %s", frames[1])
+	}
+}
+
 func TestChatWriter_StreamMixedThinkingAndToolCallsWithoutDoneEmitsChunksOnly(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
@@ -299,8 +363,14 @@ func TestChatWriter_StreamMixedThinkingAndToolCallsWithoutDoneEmitsChunksOnly(t 
 	if len(reasoningChunk.Choices) != 1 || reasoningChunk.Choices[0].Delta.Reasoning != "reasoning" {
 		t.Fatalf("expected first chunk to be reasoning-only, got %+v", reasoningChunk.Choices)
 	}
+	if reasoningChunk.Choices[0].Delta.Role != "assistant" {
+		t.Fatalf("expected reasoning chunk role %q, got %q", "assistant", reasoningChunk.Choices[0].Delta.Role)
+	}
 	if len(toolCallChunk.Choices) != 1 || len(toolCallChunk.Choices[0].Delta.ToolCalls) != 1 {
 		t.Fatalf("expected second chunk to contain tool calls, got %+v", toolCallChunk.Choices)
+	}
+	if toolCallChunk.Choices[0].Delta.Role != "" {
+		t.Fatalf("expected tool-call chunk role to be omitted, got %q", toolCallChunk.Choices[0].Delta.Role)
 	}
 	if toolCallChunk.Choices[0].FinishReason != nil {
 		t.Fatalf("expected nil finish reason for non-final tool-call chunk, got %v", toolCallChunk.Choices[0].FinishReason)

@@ -32,7 +32,7 @@ type ErrorResponse struct {
 }
 
 type Message struct {
-	Role       string     `json:"role"`
+	Role       string     `json:"role,omitempty"`
 	Content    any        `json:"content"`
 	Reasoning  string     `json:"reasoning,omitempty"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
