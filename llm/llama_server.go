@@ -22,6 +22,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"log/slog"
 	"math/rand"
@@ -39,6 +43,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	_ "golang.org/x/image/webp"
 	"golang.org/x/sync/semaphore"
 
 	"github.com/ollama/ollama/api"
@@ -379,6 +384,7 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 	params = appendMTPDraftArgs(params, launch.config, launch.opts)
 
 	params = append(params, qwenVLServerArgs(launch.modelArch)...)
+	params = append(params, gemma4ServerArgs(launch.modelArch, launch.opts.ImageMaxTokens)...)
 
 	// LoRA adapters
 	for _, adapter := range launch.adapters {
@@ -396,6 +402,9 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 	}
 
 	params = appendFlashAttentionArgs(params, launch.gpus)
+
+	// Size the batch to hold a whole Gemma 4 image before emitting -b/-ub.
+	launch.opts.NumBatch = gemma4BatchSize(launch.modelArch, launch.opts.NumBatch, launch.opts.ImageMaxTokens)
 
 	params = appendBatchArgs(params, launch.opts, launch.embedding, launch.numParallel)
 
@@ -993,6 +1002,108 @@ func qwenVLServerArgs(modelArch string) []string {
 	}
 }
 
+// gemma4SupportedImageTokens are Gemma 4's documented visual token budgets, in
+// ascending order. Higher budgets preserve more detail (better OCR) but cost
+// more compute and memory per image.
+var gemma4SupportedImageTokens = []int{70, 140, 280, 560, 1120}
+
+// gemma4DefaultImageMaxTokens is the budget used when image_max_tokens is unset.
+// The GGUF default of 280 downscales high-resolution images too aggressively for
+// OCR; 560 is the smallest budget Google documents as OCR-suitable, kept below
+// the 1120 maximum to limit default memory use.
+const gemma4DefaultImageMaxTokens = 560
+
+// gemma4ImageMarkerHeadroom pads the batch above the token budget to leave room
+// for the begin/end-of-image marker tokens that wrap the image.
+const gemma4ImageMarkerHeadroom = 128
+
+// resolveGemma4ImageMaxTokens snaps a requested budget to the nearest supported
+// value at or below it; an unset (non-positive) value uses the default and
+// anything above 1120 caps there. This keeps llama-server from receiving a
+// budget the model rejects, which aborts the server.
+func resolveGemma4ImageMaxTokens(requested int) int {
+	if requested <= 0 {
+		return gemma4DefaultImageMaxTokens
+	}
+	budget := gemma4SupportedImageTokens[0]
+	for _, b := range gemma4SupportedImageTokens {
+		if requested >= b {
+			budget = b
+		}
+	}
+	return budget
+}
+
+// gemma4ServerArgs returns the llama-server flags that set Gemma 4's visual
+// token budget. Other architectures get no flags.
+func gemma4ServerArgs(modelArch string, imageMaxTokens int) []string {
+	switch modelArch {
+	case "gemma4":
+		budget := resolveGemma4ImageMaxTokens(imageMaxTokens)
+		return []string{"--image-max-tokens", strconv.Itoa(budget)}
+	default:
+		return nil
+	}
+}
+
+// gemma4BatchSize grows the batch so a whole image fits in one micro-batch.
+// Gemma 4 attends over image tokens non-causally, so a batch smaller than the
+// visual token budget aborts llama-server. Other architectures are unchanged.
+func gemma4BatchSize(modelArch string, numBatch, imageMaxTokens int) int {
+	if modelArch == "gemma4" {
+		budget := resolveGemma4ImageMaxTokens(imageMaxTokens)
+		return max(numBatch, budget+gemma4ImageMarkerHeadroom)
+	}
+	return numBatch
+}
+
+// gemma4PatchArea is the source pixels each visual token represents:
+// (patchSize 16)^2 * (nMerge 3)^2. Budget times this area is the largest image,
+// in pixels, preserved without downscaling.
+const gemma4PatchArea = 16 * 16 * 3 * 3
+
+// gemma4ImageWillDownscale reports whether an image of the given size is
+// downscaled to fit the budget. Images larger than budget*gemma4PatchArea pixels
+// are shrunk by llama-server, degrading OCR. Non-Gemma models and unknown
+// dimensions never downscale.
+func gemma4ImageWillDownscale(modelArch string, imageMaxTokens, width, height int) bool {
+	if modelArch != "gemma4" || width <= 0 || height <= 0 {
+		return false
+	}
+	return width*height > resolveGemma4ImageMaxTokens(imageMaxTokens)*gemma4PatchArea
+}
+
+// gemma4MediaDownscaleWarning reads an image header and reports its dimensions
+// and whether it will be downscaled at the given budget. Data that cannot be
+// decoded returns warn=false so an unreadable format never blocks a request.
+func gemma4MediaDownscaleWarning(modelArch string, imageMaxTokens int, data []byte) (width, height int, warn bool) {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return 0, 0, false
+	}
+	return cfg.Width, cfg.Height, gemma4ImageWillDownscale(modelArch, imageMaxTokens, cfg.Width, cfg.Height)
+}
+
+// warnGemma4ImageDownscale logs a notice for each image Gemma 4 will downscale,
+// turning a silent quality loss on OCR inputs into a visible, actionable
+// message. The downscaling itself happens in llama-server; this only reads the
+// image headers.
+func (s *llamaServerRunner) warnGemma4ImageDownscale(media []MediaData) {
+	if s.launch.modelArch != "gemma4" {
+		return
+	}
+	for _, m := range media {
+		if m.Kind != MediaKindImage {
+			continue
+		}
+		if w, h, warn := gemma4MediaDownscaleWarning(s.launch.modelArch, s.options.ImageMaxTokens, m.Data); warn {
+			slog.Warn("image exceeds the Gemma 4 visual token budget and will be downscaled before the model sees it; raise image_max_tokens (up to 1120) for OCR or reading small text",
+				"width", w, "height", h,
+				"image_max_tokens", resolveGemma4ImageMaxTokens(s.options.ImageMaxTokens))
+		}
+	}
+}
+
 // Load waits for llama-server to finish loading the model. llama-server loads
 // the model at startup and auto-detects GPU layers, so this just waits for
 // health to report ready. The scheduler handles full-fit preflight for
@@ -1480,6 +1591,8 @@ type llamaServerTokenProb struct {
 
 func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {
 	slog.Debug("llama-server completion request", "media", len(req.Media), "prompt_len", len(req.Prompt))
+
+	s.warnGemma4ImageDownscale(req.Media)
 
 	if req.Options == nil {
 		opts := api.DefaultOptions()

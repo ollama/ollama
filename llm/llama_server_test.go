@@ -7,6 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"net"
 	"net/http"
@@ -1596,6 +1599,211 @@ func TestQwenVLServerArgs(t *testing.T) {
 				t.Fatalf("qwenVLServerArgs(%q) = %v, want %v", tt.arch, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestResolveGemma4ImageMaxTokens(t *testing.T) {
+	tests := []struct {
+		name      string
+		requested int
+		want      int
+	}{
+		{name: "unset uses the OCR-friendly default", requested: 0, want: 560},
+		{name: "negative uses the default", requested: -1, want: 560},
+		{name: "supported value passes through", requested: 1120, want: 1120},
+		{name: "supported low value passes through", requested: 70, want: 70},
+		{name: "unsupported value snaps down to nearest budget", requested: 1000, want: 560},
+		{name: "value above the maximum caps at 1120", requested: 4096, want: 1120},
+		{name: "value below the minimum floors at 70", requested: 30, want: 70},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := resolveGemma4ImageMaxTokens(tt.requested); got != tt.want {
+				t.Fatalf("resolveGemma4ImageMaxTokens(%d) = %d, want %d", tt.requested, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGemma4ServerArgs(t *testing.T) {
+	tests := []struct {
+		name           string
+		arch           string
+		imageMaxTokens int
+		want           []string
+	}{
+		{
+			name:           "gemma4 with no override uses the default budget",
+			arch:           "gemma4",
+			imageMaxTokens: 0,
+			want:           []string{"--image-max-tokens", "560"},
+		},
+		{
+			name:           "gemma4 honors an explicit budget",
+			arch:           "gemma4",
+			imageMaxTokens: 1120,
+			want:           []string{"--image-max-tokens", "1120"},
+		},
+		{
+			name:           "other model is unchanged",
+			arch:           "llama",
+			imageMaxTokens: 1120,
+			want:           nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := gemma4ServerArgs(tt.arch, tt.imageMaxTokens); !slices.Equal(got, tt.want) {
+				t.Fatalf("gemma4ServerArgs(%q, %d) = %v, want %v", tt.arch, tt.imageMaxTokens, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGemma4BatchSize(t *testing.T) {
+	tests := []struct {
+		name           string
+		arch           string
+		numBatch       int
+		imageMaxTokens int
+		want           int
+	}{
+		{
+			// Gemma 4 encodes image tokens with non-causal attention, so the
+			// whole image must fit in one micro-batch. The default batch of 512
+			// is smaller than the 560-token budget and would make llama-server
+			// abort, so it must be raised above the budget.
+			name:           "raises a batch below the default budget",
+			arch:           "gemma4",
+			numBatch:       512,
+			imageMaxTokens: 0,
+			want:           688,
+		},
+		{
+			name:           "raises the batch to fit a larger explicit budget",
+			arch:           "gemma4",
+			numBatch:       512,
+			imageMaxTokens: 1120,
+			want:           1248,
+		},
+		{
+			name:           "keeps a batch already above the budget",
+			arch:           "gemma4",
+			numBatch:       2048,
+			imageMaxTokens: 1120,
+			want:           2048,
+		},
+		{
+			name:           "other model is unchanged",
+			arch:           "llama",
+			numBatch:       512,
+			imageMaxTokens: 1120,
+			want:           512,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := gemma4BatchSize(tt.arch, tt.numBatch, tt.imageMaxTokens); got != tt.want {
+				t.Fatalf("gemma4BatchSize(%q, %d, %d) = %d, want %d", tt.arch, tt.numBatch, tt.imageMaxTokens, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGemma4ImageWillDownscale(t *testing.T) {
+	tests := []struct {
+		name           string
+		arch           string
+		imageMaxTokens int
+		width, height  int
+		want           bool
+	}{
+		{
+			// A 1080p screenshot at the default budget exceeds the ~1.29M
+			// pixels 560 tokens preserve, so it is downscaled (the reported bug).
+			name: "1080p at default budget is downscaled", arch: "gemma4",
+			imageMaxTokens: 0, width: 1920, height: 1080, want: true,
+		},
+		{
+			// The same image at the maximum budget fits, so no warning.
+			name: "1080p at max budget fits", arch: "gemma4",
+			imageMaxTokens: 1120, width: 1920, height: 1080, want: false,
+		},
+		{
+			name: "small image fits the default budget", arch: "gemma4",
+			imageMaxTokens: 0, width: 800, height: 600, want: false,
+		},
+		{
+			name: "non-gemma model never warns", arch: "llama",
+			imageMaxTokens: 0, width: 4096, height: 4096, want: false,
+		},
+		{
+			name: "unknown dimensions never warn", arch: "gemma4",
+			imageMaxTokens: 0, width: 0, height: 0, want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := gemma4ImageWillDownscale(tt.arch, tt.imageMaxTokens, tt.width, tt.height); got != tt.want {
+				t.Fatalf("gemma4ImageWillDownscale(%q, %d, %d, %d) = %v, want %v",
+					tt.arch, tt.imageMaxTokens, tt.width, tt.height, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGemma4MediaDownscaleWarning(t *testing.T) {
+	encodePNG := func(w, h int) []byte {
+		var buf bytes.Buffer
+		img := image.NewRGBA(image.Rect(0, 0, w, h))
+		img.Set(0, 0, color.White)
+		if err := png.Encode(&buf, img); err != nil {
+			t.Fatalf("encoding test png: %v", err)
+		}
+		return buf.Bytes()
+	}
+
+	t.Run("reads dimensions and flags a large image", func(t *testing.T) {
+		w, h, warn := gemma4MediaDownscaleWarning("gemma4", 0, encodePNG(1920, 1080))
+		if w != 1920 || h != 1080 || !warn {
+			t.Fatalf("got (%d, %d, %v), want (1920, 1080, true)", w, h, warn)
+		}
+	})
+
+	t.Run("does not flag an image that fits", func(t *testing.T) {
+		_, _, warn := gemma4MediaDownscaleWarning("gemma4", 0, encodePNG(640, 480))
+		if warn {
+			t.Fatalf("got warn=true, want false for a small image")
+		}
+	})
+
+	t.Run("undecodable data is skipped silently", func(t *testing.T) {
+		_, _, warn := gemma4MediaDownscaleWarning("gemma4", 0, []byte("not an image"))
+		if warn {
+			t.Fatalf("got warn=true, want false for undecodable data")
+		}
+	})
+}
+
+// TestGemma4BatchFitsImageBudget encodes the crash-safety invariant: Gemma 4's
+// non-causal image attention requires a whole image to fit in one micro-batch,
+// so the launched batch size must always stay strictly above the resolved
+// visual token budget for every supported budget. A single image produces at
+// most that many tokens, so this guarantees llama-server never aborts on the
+// batch it is launched with.
+func TestGemma4BatchFitsImageBudget(t *testing.T) {
+	for _, budget := range gemma4SupportedImageTokens {
+		for _, numBatch := range []int{0, 256, 512, 1024, 2048} {
+			got := gemma4BatchSize("gemma4", numBatch, budget)
+			if got <= budget {
+				t.Fatalf("gemma4BatchSize(gemma4, %d, %d) = %d, must be > budget %d to avoid the non-causal ubatch abort",
+					numBatch, budget, got, budget)
+			}
+		}
 	}
 }
 
