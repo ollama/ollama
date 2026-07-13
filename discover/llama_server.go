@@ -194,10 +194,18 @@ var cudaArchsRegex = regexp.MustCompile(
 )
 
 var (
-	cudaRuntimeSORegex  = regexp.MustCompile(`^libcudart\.so\.(\d+)(?:\.(\d+))?`)
-	cudaRuntimeDLLRegex = regexp.MustCompile(`^cudart64_(\d{2})(\d)\.dll$`)
+	cudaRuntimeSORegex = regexp.MustCompile(`^libcudart\.so\.(\d+)(?:\.(\d+))?`)
+	// CUDA 11 and earlier put the minor version in the runtime DLL name
+	// (cudart64_110.dll). CUDA 12 and later only carry the major
+	// (cudart64_12.dll), so the minor is not knowable from the file layout.
+	cudaRuntimeDLLRegex = regexp.MustCompile(`^cudart64_(\d{2})(\d)?\.dll$`)
 	cudaRuntimeDirRegex = regexp.MustCompile(`^cuda_v(\d+)$`)
 )
+
+// cudaRuntimeMinorUnknown is reported by cudaRuntimeVersion when the runtime
+// major version is known but the minor version is not. Callers must not treat
+// this as ".0" — an unknown minor may still be the newest runtime we ship.
+const cudaRuntimeMinorUnknown = -1
 
 // parseLlamaServerDevices parses the combined output of llama-server discovery.
 // It extracts device info, ROCm gfx targets, CUDA compute capabilities, and
@@ -361,7 +369,9 @@ func parseLlamaServerDevicesWithNative(output, nativeOutput string, libDirs []st
 		setROCmGFXTarget(&dev, rocmGFXOverride)
 		if library == "CUDA" && dev.DriverMajor == 0 && hasCUDARuntime {
 			dev.DriverMajor = cudaRuntimeMajor
-			dev.DriverMinor = cudaRuntimeMinor
+			if cudaRuntimeMinor != cudaRuntimeMinorUnknown {
+				dev.DriverMinor = cudaRuntimeMinor
+			}
 		}
 
 		devices = append(devices, dev)
@@ -397,34 +407,39 @@ func nativeProbeMatchesLlamaServerDevice(library, description string, totalBytes
 	return true
 }
 
+// cudaRuntimeVersion reports the newest CUDA runtime staged in libDirs. The
+// minor version is cudaRuntimeMinorUnknown when only the major can be
+// determined, which is the norm for CUDA 12 and later on Windows.
 func cudaRuntimeVersion(libDirs []string) (int, int, bool) {
-	bestMajor, bestMinor := -1, -1
+	bestMajor, bestMinor := -1, cudaRuntimeMinorUnknown
 	update := func(major, minor int) {
 		if major > bestMajor || (major == bestMajor && minor > bestMinor) {
 			bestMajor, bestMinor = major, minor
 		}
+	}
+	parseMinor := func(match string) int {
+		if match == "" {
+			return cudaRuntimeMinorUnknown
+		}
+		minor, _ := strconv.Atoi(match)
+		return minor
 	}
 
 	for _, dir := range libDirs {
 		for _, entry := range readDirNames(dir) {
 			if matches := cudaRuntimeSORegex.FindStringSubmatch(entry); matches != nil {
 				major, _ := strconv.Atoi(matches[1])
-				minor := 0
-				if matches[2] != "" {
-					minor, _ = strconv.Atoi(matches[2])
-				}
-				update(major, minor)
+				update(major, parseMinor(matches[2]))
 			}
 			if matches := cudaRuntimeDLLRegex.FindStringSubmatch(entry); matches != nil {
 				major, _ := strconv.Atoi(matches[1])
-				minor, _ := strconv.Atoi(matches[2])
-				update(major, minor)
+				update(major, parseMinor(matches[2]))
 			}
 		}
 
 		if matches := cudaRuntimeDirRegex.FindStringSubmatch(filepath.Base(dir)); matches != nil {
 			major, _ := strconv.Atoi(matches[1])
-			update(major, 0)
+			update(major, cudaRuntimeMinorUnknown)
 		}
 	}
 

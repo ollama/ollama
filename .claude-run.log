@@ -1,0 +1,27 @@
+Done. Working tree has the fix, focused tests, and NOTES.md — no commits made.
+
+## What was wrong
+
+Ollama's Windows CUDA 12 build compiles Maxwell/Pascal as **PTX-only** (`50-virtual;52-virtual;60-virtual;61-virtual;...` in `llama/server/CMakePresets.json`), so those GPUs need the driver to JIT the PTX at model load. PTX from the CUDA 12.8 toolkit needs driver ≥ 570; an older driver rejects it, ggml's `CUDA_CHECK` calls `abort()`, and Windows reports that as `0xc0000409`. That's the reported crash.
+
+`discover.filterOldCUDADriver` exists to prevent exactly this by dropping GPUs whose driver is below the floor. **On Windows it was a no-op**, for two compounding reasons in `cudaRuntimeVersion`:
+
+1. `cudaRuntimeDLLRegex` was `^cudart64_(\d{2})(\d)\.dll$` — three digits, the **CUDA ≤ 11** naming (`cudart64_110.dll`). CUDA 12/13 ship `cudart64_12.dll` / `cudart64_13.dll`, so it never matched the shipped runtime at all.
+2. It then fell back to the directory name (`cuda_v12`) and **fabricated a minor of `0`** — it had no way to say "major known, minor unknown."
+
+So the gate concluded the runtime was CUDA *12.0*: too old for compressed fatbins (needs ≥12.4) and too old to JIT legacy compute (needs ≥12.8). Both guards went false, it took the early return, and nothing was filtered.
+
+This also explains why the previous fix for this same crash (#16994) looked like it worked: every existing test uses the Linux layout `libcudart.so.12.8.90`, which parses fine. Linux got fixed; Windows — the one platform where Pascal is PTX-only, and where the crash was actually reported — did not.
+
+## The fix
+
+Make "minor unknown" a real value (`cudaRuntimeMinorUnknown`) instead of silently coercing to `0`, fix the DLL regex to accept the CUDA 12+ naming, and have `cuda_compat.go` treat an unknown minor as *at least* the runtime we ship. That direction matters: guessing low disables the driver floors and crashes the runner; guessing high drops the GPU with the existing "NVIDIA driver too old" warning and falls back to CPU.
+
+## Verification
+
+I reverted the source but kept the new tests, and they fail on the unfixed code in exactly the shape of the bug — `got 2 devices, want 1`, with the GTX 1060 (CC 6.1, driver 560) still in the list, i.e. still on its way to llama-server to JIT PTX its driver can't consume. With the fix: `go test ./discover/... ./ml/... ./llm/...` all pass, vet and gofmt clean, and `GOOS=windows go build` on the affected packages succeeds.
+
+Two things worth flagging, both written up in NOTES.md:
+
+- **A real trade-off:** a Windows user *building from source* with an old toolkit **and** old driver now gets dropped to CPU, because on Windows the runtime minor genuinely isn't in the filename. The precise alternative is reading the DLL's Win32 `VERSIONINFO` (which does carry `12.8.90`) — I left that out as a larger platform-specific change I can't exercise from Linux.
+- **I could not run this on real Windows/NVIDIA hardware.** The driver-rejects-PTX step itself isn't reproducible here; what I tested is the discovery-time decision that leads into it.
