@@ -225,15 +225,12 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 		return nil, nil, nil, err
 	}
 
-	runnerCh, errCh := s.sched.getRunner(ctx, model, opts, keepAlive, numCtxAuto, numBatchAuto, shift)
-	var runner *runnerRef
-	select {
-	case runner = <-runnerCh:
-	case err = <-errCh:
+	llama, err := s.sched.acquireRunner(ctx, model, opts, keepAlive, numCtxAuto, numBatchAuto, shift)
+	if err != nil {
 		return nil, nil, nil, err
 	}
 
-	return runner.llama, model, &opts, nil
+	return llama, model, &opts, nil
 }
 
 func signinURL() (string, error) {

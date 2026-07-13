@@ -19,6 +19,10 @@ import (
 
 var ErrLoadRequiredFull = errors.New("unable to load full model on GPU")
 
+// LlamaServerFitTargetEnv is llama.cpp's env form of --fit-target: the
+// per-device MiB margin its fit pass reserves when auto-sizing a load.
+const LlamaServerFitTargetEnv = "LLAMA_ARG_FIT_TARGET"
+
 type filteredEnv []string
 
 func (e filteredEnv) LogValue() slog.Value {
@@ -41,6 +45,7 @@ func filteredEnvLogKey(key string) bool {
 		strings.HasPrefix(key, "HSA_") ||
 		strings.HasPrefix(key, "GGML_") ||
 		slices.Contains([]string{
+			LlamaServerFitTargetEnv,
 			"PATH",
 			"LD_LIBRARY_PATH",
 			"DYLD_LIBRARY_PATH",
@@ -82,6 +87,11 @@ type LlamaServerConfig struct {
 	ContextShift   bool
 	EnableMTP      bool
 	DraftModelPath string
+	// FitTargetsMiB sets LLAMA_ARG_FIT_TARGET for this launch, one MiB value
+	// per visible device, so llama.cpp fit uses the same per-device reserve
+	// the scheduler used for placement. Empty leaves the inherited environment
+	// or llama.cpp default in place.
+	FitTargetsMiB []uint64
 }
 
 // LoadModel will load a model from disk. The model must be in the GGML format.
