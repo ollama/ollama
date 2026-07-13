@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -157,6 +158,27 @@ func TestCodexAppInstalledUsesMacBundleIDFallback(t *testing.T) {
 	}
 }
 
+func TestChatGPTMissingAppGivesDownloadRecovery(t *testing.T) {
+	withCodexAppPlatform(t, "darwin")
+
+	oldCanOpenID := codexAppCanOpenID
+	oldStat := codexAppStat
+	codexAppCanOpenID = func() bool { return false }
+	codexAppStat = func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }
+	t.Cleanup(func() {
+		codexAppCanOpenID = oldCanOpenID
+		codexAppStat = oldStat
+	})
+
+	err := EnsureIntegrationInstalled(chatGPTIntegrationName, &CodexApp{})
+	if err == nil {
+		t.Fatal("expected missing ChatGPT install error")
+	}
+	if !strings.Contains(err.Error(), "chatgpt is not installed") || !strings.Contains(err.Error(), "https://chatgpt.com/download") {
+		t.Fatalf("missing-app error = %q, want ChatGPT download recovery", err)
+	}
+}
+
 func TestCodexAppConfigureActivatesOllamaProviderWithoutLegacyProfile(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
@@ -289,6 +311,58 @@ func TestCodexAppConfigureUsesAppSpecificProfileWithoutTouchingCLIProfile(t *tes
 		t.Fatalf("app provider base URL = %q", got)
 	}
 	assertBackupContains(t, filepath.Join(fileutil.BackupDir(), codexAppIntegrationName, "config.toml.*"), `profile = "default"`)
+}
+
+func TestCodexAppConfigureIsIdempotentAndPreservesUnrelatedProvider(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:9999")
+
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := "[model_providers.custom]\n" +
+		`name = "Custom"` + "\n" +
+		`base_url = "https://example.invalid/v1"` + "\n" +
+		`env_key = "CUSTOM_API_KEY"` + "\n"
+	if err := os.WriteFile(configPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := &CodexApp{}
+	models := testLaunchModels("llama3.2", "qwen3:8b")
+	if err := app.ConfigureWithModels("llama3.2", models); err != nil {
+		t.Fatalf("first ConfigureWithModels returned error: %v", err)
+	}
+	first, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.ConfigureWithModels("llama3.2", models); err != nil {
+		t.Fatalf("second ConfigureWithModels returned error: %v", err)
+	}
+	second, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(second) != string(first) {
+		t.Fatalf("rerun changed generated config:\nfirst:\n%s\nsecond:\n%s", first, second)
+	}
+
+	parsed, err := codexParseConfig(string(second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsed.ProviderString("custom", "env_key"); got != "CUSTOM_API_KEY" {
+		t.Fatalf("custom provider env_key = %q, want preserved value", got)
+	}
+	if parsed.Exists("model_providers", codexAppProfileName, "env_key") {
+		t.Fatalf("managed local Ollama provider should not require an API key:\n%s", second)
+	}
+	if got := app.CurrentModel(); got != "llama3.2" {
+		t.Fatalf("CurrentModel = %q, want llama3.2", got)
+	}
 }
 
 func TestCodexCLIConfigRefreshLeavesCodexAppConfigActive(t *testing.T) {
@@ -1499,7 +1573,7 @@ func TestCodexAppRunReturnsMacForceStopError(t *testing.T) {
 	}
 
 	err := (&CodexApp{}).Run("qwen3.5", nil, nil)
-	if err == nil || !strings.Contains(err.Error(), "force stop Codex") || !strings.Contains(err.Error(), "operation not permitted") {
+	if err == nil || !strings.Contains(err.Error(), "force stop ChatGPT") || !strings.Contains(err.Error(), "operation not permitted") {
 		t.Fatalf("Run error = %v, want force stop failure", err)
 	}
 }
@@ -1641,7 +1715,7 @@ func TestCodexAppRunReturnsWindowsForceStopError(t *testing.T) {
 	}
 
 	err := (&CodexApp{}).Run("qwen3.5", nil, nil)
-	if err == nil || !strings.Contains(err.Error(), "force stop Codex") || !strings.Contains(err.Error(), "access denied") {
+	if err == nil || !strings.Contains(err.Error(), "force stop ChatGPT") || !strings.Contains(err.Error(), "access denied") {
 		t.Fatalf("Run error = %v, want force stop failure", err)
 	}
 }
@@ -1656,6 +1730,8 @@ func TestCodexAppRunRejectsExtraArgs(t *testing.T) {
 
 func TestCodexAppProcessMatchesMainAndAppServer(t *testing.T) {
 	for _, command := range []string{
+		"/Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+		"/Applications/ChatGPT.app/Contents/Resources/codex app-server --analytics-default-enabled",
 		"/Applications/Codex.app/Contents/MacOS/Codex",
 		"/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled",
 		`C:\Users\parth\AppData\Local\Programs\Codex\Codex.exe`,
@@ -1668,6 +1744,7 @@ func TestCodexAppProcessMatchesMainAndAppServer(t *testing.T) {
 	}
 
 	for _, command := range []string{
+		"/Applications/ChatGPT.app/Contents/Frameworks/ChatGPT Helper.app/Contents/MacOS/ChatGPT Helper",
 		"/Applications/Codex.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper",
 		"/Applications/Codex.app/Contents/Frameworks/Electron Framework.framework/Helpers/chrome_crashpad_handler",
 		`"C:\Program Files\WindowsApps\OpenAI.Codex_26.429.8261.0_x64__2p2nqsd0c76g0\app\Codex.exe" --type=renderer --user-data-dir="C:\Users\parth\AppData\Roaming\Codex"`,
@@ -1676,6 +1753,24 @@ func TestCodexAppProcessMatchesMainAndAppServer(t *testing.T) {
 		if codexAppProcessMatches(command) {
 			t.Fatalf("expected helper command not to match Codex App process: %s", command)
 		}
+	}
+}
+
+func TestCodexAppCandidatesIncludeChatGPT(t *testing.T) {
+	withCodexAppPlatform(t, "darwin")
+	candidates := codexAppDarwinAppCandidates()
+	if len(candidates) == 0 || candidates[0] != "/Applications/ChatGPT.app" {
+		t.Fatalf("darwin candidates = %v, want ChatGPT first", candidates)
+	}
+	if !slices.Contains(candidates, "/Applications/Codex.app") {
+		t.Fatalf("darwin candidates = %v, want legacy Codex app", candidates)
+	}
+
+	withCodexAppPlatform(t, "windows")
+	local := filepath.Join(t.TempDir(), "LocalAppData")
+	t.Setenv("LOCALAPPDATA", local)
+	if candidates := codexAppWindowsAppCandidates(); !slices.Contains(candidates, filepath.Join(local, "Programs", "ChatGPT", "ChatGPT.exe")) {
+		t.Fatalf("windows candidates = %v, want ChatGPT app", candidates)
 	}
 }
 

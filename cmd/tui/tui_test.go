@@ -29,10 +29,10 @@ func launcherTestState() *launch.LauncherState {
 				Selectable:  true,
 				Changeable:  true,
 			},
-			"codex-app": {
-				Name:        "codex-app",
-				DisplayName: "Codex App",
-				Description: "An AI agent you can delegate real work to, by OpenAI",
+			"chatgpt": {
+				Name:        "chatgpt",
+				DisplayName: "ChatGPT",
+				Description:  "Complete work with ChatGPT",
 				Selectable:  true,
 				Changeable:  true,
 			},
@@ -123,7 +123,7 @@ func TestMenuRendersRootLaunchChoices(t *testing.T) {
 			t.Fatalf("expected menu view to contain %q\n%s", want, view)
 		}
 	}
-	for _, hidden := range []string{"Launch Codex App", "Launch Codex", "Launch Droid", "Launch Pi", "More..."} {
+	for _, hidden := range []string{"Launch ChatGPT", "Launch Codex", "Launch Droid", "Launch Pi", "More..."} {
 		if strings.Contains(view, hidden) {
 			t.Fatalf("expected root menu to omit %q\n%s", hidden, view)
 		}

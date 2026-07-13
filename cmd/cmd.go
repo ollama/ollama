@@ -2273,7 +2273,7 @@ func runLauncherAction(cmd *cobra.Command, action tui.TUIAction, deps launcherDe
 
 func launcherActionExitsLoop(integration string) bool {
 	switch integration {
-	case "codex-app", "vscode":
+	case "chatgpt", "codex-app", "vscode":
 		return true
 	default:
 		return false
