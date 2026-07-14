@@ -1557,16 +1557,34 @@ func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 	}
 }
 
-func TestQwenVLServerArgs(t *testing.T) {
+func TestVisionServerArgs(t *testing.T) {
 	tests := []struct {
 		name string
 		arch string
+		opts api.Options
 		want []string
 	}{
 		{
 			name: "qwen2vl",
 			arch: "qwen2vl",
 			want: []string{"--image-min-tokens", "1024"},
+		},
+		{
+			name: "gemma4 defaults (unset opts fall back)",
+			arch: "gemma4",
+			want: []string{"--image-min-tokens", "40", "--image-max-tokens", "1120"},
+		},
+		{
+			name: "gemma4 custom budget",
+			arch: "gemma4",
+			opts: api.Options{Runner: api.Runner{ImageMinTokens: 70, ImageMaxTokens: 560}},
+			want: []string{"--image-min-tokens", "70", "--image-max-tokens", "560"},
+		},
+		{
+			name: "gemma4 min clamped to max",
+			arch: "gemma4",
+			opts: api.Options{Runner: api.Runner{ImageMinTokens: 900, ImageMaxTokens: 280}},
+			want: []string{"--image-min-tokens", "280", "--image-max-tokens", "280"},
 		},
 		{
 			name: "qwen25vl",
@@ -1592,8 +1610,8 @@ func TestQwenVLServerArgs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := qwenVLServerArgs(tt.arch); !slices.Equal(got, tt.want) {
-				t.Fatalf("qwenVLServerArgs(%q) = %v, want %v", tt.arch, got, tt.want)
+			if got := visionServerArgs(tt.arch, tt.opts); !slices.Equal(got, tt.want) {
+				t.Fatalf("visionServerArgs(%q, %+v) = %v, want %v", tt.arch, tt.opts, got, tt.want)
 			}
 		})
 	}

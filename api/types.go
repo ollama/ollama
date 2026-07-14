@@ -598,6 +598,13 @@ type Options struct {
 	Stop             []string `json:"stop,omitempty"`
 }
 
+// Default Gemma 4 vision image-token budget (gemma4v projector). Exposed via
+// Runner.ImageMinTokens/ImageMaxTokens so callers can tune it per request.
+const (
+	DefaultImageMinTokens = 40   // llama.cpp's documented gemma4v floor
+	DefaultImageMaxTokens = 1120 // raised from llama.cpp's 280 default ceiling
+)
+
 // Runner options which must be set when the model is loaded into memory
 type Runner struct {
 	NumCtx          int   `json:"num_ctx,omitempty"`
@@ -607,6 +614,11 @@ type Runner struct {
 	UseMMap         *bool `json:"use_mmap,omitempty"`
 	NumThread       int   `json:"num_thread,omitempty"`
 	DraftNumPredict int   `json:"draft_num_predict,omitempty"`
+
+	// Vision image-token budget, currently honored by Gemma 4 (gemma4v
+	// projector). 0 = unset; DefaultOptions supplies the defaults above.
+	ImageMinTokens int `json:"image_min_tokens,omitempty"`
+	ImageMaxTokens int `json:"image_max_tokens,omitempty"`
 }
 
 // EmbedRequest is the request passed to [Client.Embed].
@@ -1143,6 +1155,8 @@ func DefaultOptions() Options {
 			NumThread:       0,  // let the runtime decide
 			DraftNumPredict: 4,
 			UseMMap:         nil,
+			ImageMinTokens:  DefaultImageMinTokens,
+			ImageMaxTokens:  DefaultImageMaxTokens,
 		},
 	}
 }
