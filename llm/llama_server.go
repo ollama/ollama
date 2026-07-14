@@ -989,11 +989,12 @@ func visionServerArgs(modelArch string) []string {
 		// correct grounding/counting behavior; the GGUF metadata default is too low.
 		return []string{"--image-min-tokens", "1024"}
 	case "gemma4":
-		// Gemma 4 vision (gemma4v projector) defaults to a max of 280 image
-		// tokens (llama.cpp set_limit_image_tokens(40, 280)). Raise the ceiling
-		// so high-resolution images can use more visual tokens for detail. The
-		// min is left at the model default; only the max is lifted.
-		return []string{"--image-max-tokens", "1120"}
+		// Gemma 4 vision (gemma4v projector) defaults to
+		// set_limit_image_tokens(40, 280) in llama.cpp. Lift the max ceiling so
+		// high-resolution images can use more visual tokens for detail, and pin
+		// the min at the model's documented floor of 40 (upstream bumps the
+		// minimum to 40 because the model degrades on very small images).
+		return []string{"--image-min-tokens", "40", "--image-max-tokens", "1120"}
 	default:
 		return nil
 	}

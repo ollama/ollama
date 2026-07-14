@@ -1571,7 +1571,7 @@ func TestVisionServerArgs(t *testing.T) {
 		{
 			name: "gemma4",
 			arch: "gemma4",
-			want: []string{"--image-max-tokens", "1120"},
+			want: []string{"--image-min-tokens", "40", "--image-max-tokens", "1120"},
 		},
 		{
 			name: "qwen25vl",
