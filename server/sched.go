@@ -1105,6 +1105,15 @@ func bestGPUGroupByAvailableMemory(systemInfo ml.SystemInfo, groups [][]ml.Devic
 		}
 	}
 
+	// llama-server treats the first device in the list as the main GPU, which
+	// holds the non-split output tensor and any KV-cache overflow, and its
+	// back-to-front layer fit is sensitive to device order. Pass the group with
+	// the most free memory first (discrete before integrated) so the output
+	// layer has a home and a smaller GPU isn't left with zero layers while it
+	// still has free VRAM. See https://github.com/ollama/ollama/issues/17018.
+	best = slices.Clone(best)
+	sort.Sort(sort.Reverse(ml.ByFreeMemory(best)))
+
 	return best
 }
 
