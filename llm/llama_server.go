@@ -378,7 +378,7 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 	params = appendMMProjArgs(params, launch)
 	params = appendMTPDraftArgs(params, launch.config, launch.opts)
 
-	params = append(params, qwenVLServerArgs(launch.modelArch)...)
+	params = append(params, visionServerArgs(launch.modelArch)...)
 
 	// LoRA adapters
 	for _, adapter := range launch.adapters {
@@ -982,12 +982,18 @@ func (s *llamaServerRunner) startProcess() error {
 	return nil
 }
 
-func qwenVLServerArgs(modelArch string) []string {
+func visionServerArgs(modelArch string) []string {
 	switch modelArch {
 	case "qwen2vl", "qwen25vl", "qwen3vl", "qwen3vlmoe":
 		// Upstream mtmd warns that Qwen-VL needs at least 1024 image tokens for
 		// correct grounding/counting behavior; the GGUF metadata default is too low.
 		return []string{"--image-min-tokens", "1024"}
+	case "gemma4":
+		// Gemma 4 vision (gemma4v projector) defaults to a max of 280 image
+		// tokens (llama.cpp set_limit_image_tokens(40, 280)). Raise the ceiling
+		// so high-resolution images can use more visual tokens for detail. The
+		// min is left at the model default; only the max is lifted.
+		return []string{"--image-max-tokens", "1120"}
 	default:
 		return nil
 	}
