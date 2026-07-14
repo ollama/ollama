@@ -118,10 +118,6 @@ type FullAttention struct {
 
 // GatedDeltaNet is the recurrent linear-attention branch.
 type GatedDeltaNet struct {
-	InProjQKV  nn.LinearLayer
-	InProjZ    nn.LinearLayer
-	InProjB    nn.LinearLayer
-	InProjA    nn.LinearLayer
 	InProjQKVZ nn.LinearLayer
 	InProjBA   nn.LinearLayer
 	OutProj    nn.LinearLayer
@@ -872,12 +868,19 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 
 		if layer.IsLinear {
 			lin := &GatedDeltaNet{}
-			lin.InProjQKV = linears.Make(layerPrefix + ".linear_attn.in_proj_qkv")
-			lin.InProjZ = linears.Make(layerPrefix + ".linear_attn.in_proj_z")
-			lin.InProjB = linears.Make(layerPrefix + ".linear_attn.in_proj_b")
-			lin.InProjA = linears.Make(layerPrefix + ".linear_attn.in_proj_a")
-			lin.InProjQKVZ = linears.Make(layerPrefix + ".linear_attn.in_proj_qkvz")
-			lin.InProjBA = linears.Make(layerPrefix + ".linear_attn.in_proj_ba")
+			var err error
+			lin.InProjQKVZ, lin.InProjBA, err = packGatedDeltaProjections(
+				linears.Make(layerPrefix+".linear_attn.in_proj_qkv"),
+				linears.Make(layerPrefix+".linear_attn.in_proj_z"),
+				linears.Make(layerPrefix+".linear_attn.in_proj_b"),
+				linears.Make(layerPrefix+".linear_attn.in_proj_a"),
+				linears.Make(layerPrefix+".linear_attn.in_proj_qkvz"),
+				linears.Make(layerPrefix+".linear_attn.in_proj_ba"),
+				cfg,
+			)
+			if err != nil {
+				return fmt.Errorf("layer %d: %w", i, err)
+			}
 			lin.OutProj = linears.Make(layerPrefix + ".linear_attn.out_proj")
 
 			convWeight := sanitizeConvWeight(tensors[layerPrefix+".linear_attn.conv1d.weight"])
@@ -900,9 +903,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 				lin.AExp = mlx.Exp(lin.ALog.AsType(mlx.DTypeFloat32))
 			}
 
-			hasSplit := lin.InProjQKV != nil && lin.InProjZ != nil && lin.InProjB != nil && lin.InProjA != nil
-			hasCombined := lin.InProjQKVZ != nil && lin.InProjBA != nil
-			if (!hasSplit && !hasCombined) || lin.OutProj == nil {
+			if lin.OutProj == nil {
 				return fmt.Errorf("layer %d: missing linear attention projections", i)
 			}
 			if convWeight == nil || lin.NormWeight == nil || lin.DtBias == nil || lin.ALog == nil || lin.AExp == nil {
@@ -987,31 +988,6 @@ func softplus(x *mlx.Array) *mlx.Array {
 	return mlx.Logaddexp(x, mlx.Zeros(x.DType(), x.Dims()...))
 }
 
-func splitQKVZBA(mixedQKVZ, mixedBA *mlx.Array, cfg *Config, B, L int32) (q, k, v, z, beta, alpha *mlx.Array) {
-	nk := cfg.LinearNumKeyHeads
-	nv := cfg.LinearNumValueHeads
-	dk := cfg.LinearKeyHeadDim
-	dv := cfg.LinearValueHeadDim
-	vPerK := nv / nk
-
-	mixedQKVZ = mlx.Reshape(mixedQKVZ, B, L, nk, 2*dk+2*vPerK*dv)
-	q = mlx.SliceStartStop(mixedQKVZ, []int32{0, 0, 0, 0}, []int32{B, L, nk, dk})
-	k = mlx.SliceStartStop(mixedQKVZ, []int32{0, 0, 0, dk}, []int32{B, L, nk, 2 * dk})
-	v = mlx.SliceStartStop(mixedQKVZ, []int32{0, 0, 0, 2 * dk}, []int32{B, L, nk, 2*dk + vPerK*dv})
-	z = mlx.SliceStartStop(mixedQKVZ, []int32{0, 0, 0, 2*dk + vPerK*dv}, []int32{B, L, nk, 2*dk + 2*vPerK*dv})
-
-	v = mlx.Reshape(v, B, L, nv, dv)
-	z = mlx.Reshape(z, B, L, nv, dv)
-
-	mixedBA = mlx.Reshape(mixedBA, B, L, nk, 2*vPerK)
-	beta = mlx.SliceStartStop(mixedBA, []int32{0, 0, 0, 0}, []int32{B, L, nk, vPerK})
-	alpha = mlx.SliceStartStop(mixedBA, []int32{0, 0, 0, vPerK}, []int32{B, L, nk, 2 * vPerK})
-	beta = mlx.Reshape(beta, B, L, nv)
-	alpha = mlx.Reshape(alpha, B, L, nv)
-
-	return q, k, v, z, beta, alpha
-}
-
 func (a *FullAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
 	qg := a.QProj.Forward(x)
 	qg = mlx.Reshape(qg, B, L, cfg.NumAttentionHeads, cfg.HeadDim*2)
@@ -1050,25 +1026,17 @@ func (a *FullAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, pos
 }
 
 func (g *GatedDeltaNet) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
-	var qkv, z, beta, alpha *mlx.Array
-	useSplitProj := g.InProjQKV != nil && g.InProjZ != nil && g.InProjB != nil && g.InProjA != nil
-	if useSplitProj {
-		qkv = g.InProjQKV.Forward(x)
-		z = g.InProjZ.Forward(x)
-		z = mlx.Reshape(z, B, L, cfg.LinearNumValueHeads, cfg.LinearValueHeadDim)
-		beta = g.InProjB.Forward(x)
-		alpha = g.InProjA.Forward(x)
-	} else {
-		mixedQKVZ := g.InProjQKVZ.Forward(x)
-		mixedBA := g.InProjBA.Forward(x)
-		var q, k, v *mlx.Array
-		q, k, v, z, beta, alpha = splitQKVZBA(mixedQKVZ, mixedBA, cfg, B, L)
-		qkv = mlx.Concatenate([]*mlx.Array{
-			mlx.Reshape(q, B, L, cfg.LinearNumKeyHeads*cfg.LinearKeyHeadDim),
-			mlx.Reshape(k, B, L, cfg.LinearNumKeyHeads*cfg.LinearKeyHeadDim),
-			mlx.Reshape(v, B, L, cfg.LinearNumValueHeads*cfg.LinearValueHeadDim),
-		}, -1)
-	}
+	keyDim := cfg.LinearNumKeyHeads * cfg.LinearKeyHeadDim
+	valueDim := cfg.LinearNumValueHeads * cfg.LinearValueHeadDim
+	qkvDim := 2*keyDim + valueDim
+
+	mixedQKVZ := g.InProjQKVZ.Forward(x)
+	mixedBA := g.InProjBA.Forward(x)
+	qkv := mlx.SliceStartStop(mixedQKVZ, []int32{0, 0, 0}, []int32{B, L, qkvDim})
+	z := mlx.SliceStartStop(mixedQKVZ, []int32{0, 0, qkvDim}, []int32{B, L, qkvDim + valueDim})
+	z = mlx.Reshape(z, B, L, cfg.LinearNumValueHeads, cfg.LinearValueHeadDim)
+	beta := mlx.SliceStartStop(mixedBA, []int32{0, 0, 0}, []int32{B, L, cfg.LinearNumValueHeads})
+	alpha := mlx.SliceStartStop(mixedBA, []int32{0, 0, cfg.LinearNumValueHeads}, []int32{B, L, 2 * cfg.LinearNumValueHeads})
 	convTail := cfg.LinearConvKernelDim - 1
 	var rc *cache.RecurrentCache
 	opts := make([]nn.RecurrentOption, 0, 2)
@@ -1091,8 +1059,6 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, 
 	convOut, convStates := nn.CausalConv1D(b, qkv, g.Conv1D, int(convTail), opts...)
 	convOut = mlx.SiLU(convOut)
 
-	keyDim := cfg.LinearNumKeyHeads * cfg.LinearKeyHeadDim
-	valueDim := cfg.LinearNumValueHeads * cfg.LinearValueHeadDim
 	q := mlx.SliceStartStop(convOut, []int32{0, 0, 0}, []int32{B, L, keyDim})
 	k := mlx.SliceStartStop(convOut, []int32{0, 0, keyDim}, []int32{B, L, 2 * keyDim})
 	v := mlx.SliceStartStop(convOut, []int32{0, 0, 2 * keyDim}, []int32{B, L, 2*keyDim + valueDim})
