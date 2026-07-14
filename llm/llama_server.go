@@ -378,7 +378,7 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 	params = appendMMProjArgs(params, launch)
 	params = appendMTPDraftArgs(params, launch.config, launch.opts)
 
-	params = append(params, visionServerArgs(launch.modelArch)...)
+	params = append(params, visionServerArgs(launch.modelArch, launch.opts)...)
 
 	// LoRA adapters
 	for _, adapter := range launch.adapters {
@@ -982,22 +982,43 @@ func (s *llamaServerRunner) startProcess() error {
 	return nil
 }
 
-func visionServerArgs(modelArch string) []string {
+func visionServerArgs(modelArch string, opts api.Options) []string {
 	switch modelArch {
 	case "qwen2vl", "qwen25vl", "qwen3vl", "qwen3vlmoe":
 		// Upstream mtmd warns that Qwen-VL needs at least 1024 image tokens for
 		// correct grounding/counting behavior; the GGUF metadata default is too low.
 		return []string{"--image-min-tokens", "1024"}
 	case "gemma4":
-		// Gemma 4 vision (gemma4v projector) defaults to
-		// set_limit_image_tokens(40, 280) in llama.cpp. Lift the max ceiling so
-		// high-resolution images can use more visual tokens for detail, and pin
-		// the min at the model's documented floor of 40 (upstream bumps the
-		// minimum to 40 because the model degrades on very small images).
-		return []string{"--image-min-tokens", "40", "--image-max-tokens", "1120"}
+		// Gemma 4 vision (gemma4v projector) image-token budget. llama.cpp
+		// defaults to set_limit_image_tokens(40, 280); we expose both bounds as
+		// api.Options (defaults 40 / 1120 from DefaultOptions) so they can be
+		// tuned per request. These are Runner options, so changing them reloads
+		// the runner.
+		minTok, maxTok := gemma4ImageTokenBudget(opts)
+		return []string{
+			"--image-min-tokens", strconv.Itoa(minTok),
+			"--image-max-tokens", strconv.Itoa(maxTok),
+		}
 	default:
 		return nil
 	}
+}
+
+// gemma4ImageTokenBudget resolves the Gemma 4 vision image-token budget from
+// opts, falling back to the defaults when unset (<= 0) and clamping min down to
+// max — llama-server refuses to load when image_max_pixels < image_min_pixels.
+func gemma4ImageTokenBudget(opts api.Options) (minTok, maxTok int) {
+	minTok, maxTok = opts.ImageMinTokens, opts.ImageMaxTokens
+	if minTok <= 0 {
+		minTok = api.DefaultImageMinTokens
+	}
+	if maxTok <= 0 {
+		maxTok = api.DefaultImageMaxTokens
+	}
+	if minTok > maxTok {
+		minTok = maxTok
+	}
+	return minTok, maxTok
 }
 
 // Load waits for llama-server to finish loading the model. llama-server loads
