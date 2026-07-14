@@ -2,6 +2,7 @@ package tools
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,6 +18,61 @@ func TestWebToolsRequireApproval(t *testing.T) {
 	}
 	if !coreagent.ToolRequiresApproval((&WebFetch{}), map[string]any{"url": "https://ollama.com"}) {
 		t.Fatal("web fetch should require approval")
+	}
+}
+
+var webToolCases = []struct {
+	name string
+	tool coreagent.Tool
+	args map[string]any
+	path string
+}{
+	{"search", &WebSearch{}, map[string]any{"query": "ollama"}, "/api/experimental/web_search"},
+	{"fetch", &WebFetch{}, map[string]any{"url": "https://ollama.com"}, "/api/experimental/web_fetch"},
+}
+
+// runWebTool executes tool against a stub server that responds to every
+// request with status and body, returning the resulting error.
+func runWebTool(t *testing.T, tool coreagent.Tool, args map[string]any, path string, status int, body string) error {
+	t.Helper()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != path {
+			t.Fatalf("path = %q, want %q", r.URL.Path, path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(ts.Close)
+	t.Setenv("OLLAMA_HOST", ts.URL)
+	_, err := tool.Execute(t.Context(), coreagent.ToolContext{}, args)
+	return err
+}
+
+func TestWebToolsReportAuthenticationError(t *testing.T) {
+	for _, tt := range webToolCases {
+		t.Run(tt.name, func(t *testing.T) {
+			err := runWebTool(t, tt.tool, tt.args, tt.path, http.StatusUnauthorized,
+				`{"error":"unauthorized","signin_url":"https://ollama.com/signin"}`)
+			if !errors.Is(err, ErrWebAuthRequired) {
+				t.Fatalf("error = %v, want %v", err, ErrWebAuthRequired)
+			}
+		})
+	}
+}
+
+func TestWebToolsPreserveNonAuthenticationErrors(t *testing.T) {
+	for _, tt := range webToolCases {
+		t.Run(tt.name, func(t *testing.T) {
+			err := runWebTool(t, tt.tool, tt.args, tt.path, http.StatusTooManyRequests,
+				`{"error":"web search quota exceeded"}`)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), "web search quota exceeded") {
+				t.Fatalf("error = %q, want original error message", err)
+			}
+		})
 	}
 }
 
