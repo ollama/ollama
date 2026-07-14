@@ -3,7 +3,6 @@ package launch
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -3556,27 +3555,43 @@ func TestLaunchIntegration_ClaudeModelOverrideSkipsSelector(t *testing.T) {
 	}
 }
 
-func TestLaunchIntegration_ModelOverrideDeprecatedPromptsAndDeclineCancels(t *testing.T) {
+func TestLaunchIntegration_ClaudeModelOverrideDeprecatedDeclineOpensPicker(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
 	withInteractiveSession(t, true)
 
 	binDir := t.TempDir()
-	writeFakeBinary(t, binDir, "droid")
+	writeFakeBinary(t, binDir, "claude")
 	t.Setenv("PATH", binDir)
 
-	runner := &launcherSingleRunner{}
-	withIntegrationOverride(t, "droid", runner)
-
 	var showCalls atomic.Int32
-	var pullCalls atomic.Int32
 	var prompt string
 	var promptOptions ConfirmOptions
 	DefaultConfirmPrompt = func(p string, options ConfirmOptions) (bool, error) {
 		prompt = p
 		promptOptions = options
 		return false, nil
+	}
+	var selectorCalls int
+	DefaultSingleSelector = func(title string, items []SelectionItem, current string) (string, error) {
+		selectorCalls++
+		if title != "Select model for Claude Code:" {
+			t.Fatalf("picker title = %q, want Claude Code model picker", title)
+		}
+		if current != "llama3.2" {
+			t.Fatalf("picker current = %q, want deprecated override", current)
+		}
+		itemNames := selectionItemNames(items)
+		if slices.Contains(itemNames, "llama3.2") {
+			t.Fatalf("expected deprecated override to be hidden from picker, got %v", itemNames)
+		}
+		for _, model := range []string{"best-cloud:cloud", "best-local"} {
+			if !slices.Contains(itemNames, model) {
+				t.Fatalf("expected compatible model %q in picker, got %v", model, itemNames)
+			}
+		}
+		return "best-local", nil
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -3585,12 +3600,11 @@ func TestLaunchIntegration_ModelOverrideDeprecatedPromptsAndDeclineCancels(t *te
 				`{"model":"best-cloud:cloud","description":"Cloud rec","context_length":262144,"max_output_tokens":32768},`+
 				`{"model":"best-local","description":"Local rec"}`+
 				`]}`)
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"llama3.2"},{"name":"best-local"}]}`)
 		case "/api/show":
 			showCalls.Add(1)
 			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
-		case "/api/pull":
-			pullCalls.Add(1)
-			fmt.Fprint(w, `{"status":"success"}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -3598,14 +3612,13 @@ func TestLaunchIntegration_ModelOverrideDeprecatedPromptsAndDeclineCancels(t *te
 	defer srv.Close()
 	t.Setenv("OLLAMA_HOST", srv.URL)
 
-	err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
-		Name:          "droid",
-		ModelOverride: "qwen2.5-coder:32b",
-	})
-	if !errors.Is(err, ErrCancelled) {
-		t.Fatalf("expected deprecated model override decline to cancel, got %v", err)
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+		Name:          "claude",
+		ModelOverride: "llama3.2",
+	}); err != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", err)
 	}
-	for _, want := range []string{"qwen2.5-coder:32b does not work well with StubSingle", "best-cloud:cloud", "best-local", "ollama launch droid --model best-cloud:cloud"} {
+	for _, want := range []string{"llama3.2 does not work well with Claude Code", "best-cloud:cloud", "best-local", "ollama launch claude --model best-cloud:cloud"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt %q does not contain %q", prompt, want)
 		}
@@ -3613,14 +3626,18 @@ func TestLaunchIntegration_ModelOverrideDeprecatedPromptsAndDeclineCancels(t *te
 	if promptOptions.YesLabel != "Launch anyway" || promptOptions.NoLabel != "Pick another model" || promptOptions.Default != ConfirmDefaultNo {
 		t.Fatalf("unexpected deprecation prompt options: %+v", promptOptions)
 	}
-	if showCalls.Load() != 0 {
-		t.Fatalf("deprecated override decline should stop before /api/show, got %d calls", showCalls.Load())
+	if selectorCalls != 1 {
+		t.Fatalf("expected picker to open after declining override, got %d calls", selectorCalls)
 	}
-	if pullCalls.Load() != 0 {
-		t.Fatalf("deprecated override decline should stop before /api/pull, got %d calls", pullCalls.Load())
+	if showCalls.Load() != 1 {
+		t.Fatalf("expected only replacement model readiness to call /api/show, got %d calls", showCalls.Load())
 	}
-	if runner.ranModel != "" {
-		t.Fatalf("expected integration not to run, got %q", runner.ranModel)
+	saved, err := config.LoadIntegration("claude")
+	if err != nil {
+		t.Fatalf("failed to reload saved config: %v", err)
+	}
+	if got := primaryModelFromConfig(saved); got != "best-local" {
+		t.Fatalf("expected picked model to replace deprecated override, got %q", got)
 	}
 }
 
