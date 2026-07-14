@@ -63,7 +63,7 @@ func (p *Qwen35Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkVal
 		thinkingEnabled = true
 	}
 
-	assistantPrefill := lastMessage != nil && lastMessage.Role == "assistant" && lastMessage.Content != ""
+	assistantPrefill := lastMessage != nil && lastMessage.Role == "assistant"
 	if thinkingEnabled && !assistantPrefill {
 		p.state = qwen35ParserStateCollectingThinking
 		p.allowLeadingThinkOpenTag = true
