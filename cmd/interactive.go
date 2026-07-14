@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -591,6 +592,13 @@ func normalizeFilePath(fp string) string {
 		if err == nil {
 			fp = filepath.Join(home, fp[2:])
 		}
+	}
+
+	if runtime.GOOS == "windows" {
+		// On Windows, backslashes are path separators, but spaces might still be escaped in bash-like environments.
+		// So we only replace backslash-escaped spaces with a space.
+		fp = strings.ReplaceAll(fp, `\ `, ` `)
+		return fp
 	}
 
 	// Generic shell unescaper: replace backslash followed by any character with that character
