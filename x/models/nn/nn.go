@@ -85,7 +85,7 @@ type QuantizedLinear struct {
 	Scales      *mlx.Array // Scale factors for dequantization
 	QBiases     *mlx.Array // Quantization biases (nil for nvfp4)
 	Bias        *mlx.Array // Layer bias [output_dims] or nil
-	GlobalScale *mlx.Array // Per-tensor global scale for double-scale nvfp4 (nil for standard)
+	GlobalScale *mlx.Array // Per-tensor or per-row global scale for double-scale nvfp4 (nil for standard)
 	GroupSize   int
 	Bits        int
 	Mode        string
@@ -116,8 +116,8 @@ func (ql *QuantizedLinear) Forward(x *mlx.Array) *mlx.Array {
 	out := mlx.QuantizedMatmul(x, ql.Weight, ql.Scales, ql.QBiases, true, ql.GroupSize, ql.Bits, ql.Mode)
 	if ql.GlobalScale != nil {
 		// Double-scale nvfp4 (e.g., NVIDIA ModelOpt): standard quantized_matmul
-		// followed by global_scale multiply. The global_scale is a per-tensor
-		// F32 scalar (weight_scale_2 in NVIDIA's format).
+		// followed by global_scale multiply. The global_scale is F32, per-tensor
+		// (weight_scale_2 in NVIDIA's format) or per-row.
 		// TODO: switch to a fused double-scale matmul once MLX has kernel
 		// coverage for this path.
 		outDType := out.DType()
