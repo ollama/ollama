@@ -147,6 +147,22 @@ bool token_at_equals(const gguf_context * meta, size_t idx, const char * want) {
     return tok && std::strcmp(tok, want) == 0;
 }
 
+// Look up a token id by its literal text in `tokenizer.ggml.tokens`.
+// Returns -1 when the vocab or the token is missing.
+int64_t find_token_id(const gguf_context * meta, const char * want) {
+    const int64_t kid = gguf_find_key(meta, "tokenizer.ggml.tokens");
+    if (kid < 0 || gguf_get_kv_type(meta, kid) != GGUF_TYPE_ARRAY) return -1;
+    if (gguf_get_arr_type(meta, kid) != GGUF_TYPE_STRING) return -1;
+
+    const size_t n = gguf_get_arr_n(meta, kid);
+    for (size_t i = 0; i < n; ++i) {
+        const char * tok = gguf_get_arr_str(meta, kid, i);
+        if (tok && std::strcmp(tok, want) == 0) return (int64_t) i;
+    }
+
+    return -1;
+}
+
 bool string_kv_equals(const gguf_context * meta, const char * key, const char * want) {
     const int64_t kid = gguf_find_key(meta, key);
     if (kid < 0 || gguf_get_kv_type(meta, kid) != GGUF_TYPE_STRING) return false;
@@ -1429,6 +1445,20 @@ void handle_glmocr(const llama_model_loader * ml, gguf_context * meta,
             }
         }
     }
+    // End of generation: GLM-OCR ends its turn with `<|user|>` as well as
+    // `<|endoftext|>`. Existing files only record the second id in Ollama's
+    // `tokenizer.ggml.eos_token_ids` array, which llama.cpp does not read, and
+    // `<|user|>` is not in its list of assumed-EOG token names. llama.cpp then
+    // decodes straight through the end of the answer and the model re-emits it
+    // until the token limit. Mirror convert/convert_glmocr.go and publish
+    // `<|user|>` as the EOT token, which llama.cpp does treat as EOG.
+    if (!has_key(meta, "tokenizer.ggml.eot_token_id")) {
+        const int64_t eot = find_token_id(meta, "<|user|>");
+        if (eot >= 0) {
+            gguf_set_val_u32(meta, "tokenizer.ggml.eot_token_id", (uint32_t) eot);
+        }
+    }
+
     // Tensor renames (substring): each leaf appears once per block and
     // doesn't overlap the others.
     rename_tensors_containing(meta, ctx, ".attn_out.",       ".attn_output.");

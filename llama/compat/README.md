@@ -86,7 +86,7 @@ This table tracks the dispatch surface. Keep it brief; the handler comments in
 | `qwen25vl` | Maps to `qwen2vl` metadata conventions. | Qwen2.5-VL projector translation. |
 | `qwen3vl`, `qwen3vlmoe` | Adds missing Qwen3-VL metadata and hides embedded vision/projector tensors. | Qwen3-VL projector translation, including QKV merge and patch-embedding split/repack. |
 | `deepseekocr` | Maps to `deepseek2-ocr`, injects missing OCR/MoE metadata, and hides embedded SAM/vision/projector tensors. | DeepSeek OCR projector translation. |
-| `glmocr` | Maps GLM OCR metadata/tensors to the llama.cpp-compatible view. | GLM OCR projector translation. |
+| `glmocr` | Maps GLM OCR metadata/tensors to the llama.cpp-compatible view and fixes tokenizer/EOG metadata. | GLM OCR projector translation. |
 | `glm4moelite` | Maps GLM-4.7 Flash MLA metadata to the `deepseek2` path and fixes special-token metadata. | n/a |
 | `nemotron_h_moe` | Fixes latent-FFN variants and hides MTP tensors. | n/a |
 | `nemotron_h_omni` | Selects the Nemotron text loader and hides audio/vision/projector tensors from the text loader. | Nemotron V2 VL projector translation; audio remains disabled. |
