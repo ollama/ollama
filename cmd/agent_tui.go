@@ -215,10 +215,7 @@ func prepareAgentModel(cmd *cobra.Command, client *api.Client, opts *agentTUIOpt
 }
 
 func GenerateAgentTUI(cmd *cobra.Command, client *api.Client, opts agentTUIOptions) error {
-	cwd, err := os.Getwd()
-	if err != nil {
-		cwd = ""
-	}
+	cwd := agentWorkingDir()
 	contextWindowForModel := func(ctx context.Context, model string, fallback int) int {
 		return agentContextWindowForModel(ctx, client, model, fallback)
 	}
@@ -230,9 +227,9 @@ func GenerateAgentTUI(cmd *cobra.Command, client *api.Client, opts agentTUIOptio
 	if opts.Model != "" {
 		registry = agentToolsRegistry(cmd.Context(), client, opts.Model)
 	}
-	systemPrompt := agentSystemPrompt(opts.Model, opts.System, "")
+	systemPrompt := agentSystemPromptWithWorkingDir(opts.Model, opts.System, "", cwd)
 
-	_, err = agentchat.Run(cmd.Context(), agentchat.Options{
+	_, err := agentchat.Run(cmd.Context(), agentchat.Options{
 		Model:                opts.Model,
 		Client:               client,
 		Tools:                registry,
@@ -248,7 +245,7 @@ func GenerateAgentTUI(cmd *cobra.Command, client *api.Client, opts agentTUIOptio
 			return config.SetLastModel(model)
 		},
 		SystemPromptForModel: func(ctx context.Context, model string, registry *coreagent.Registry) string {
-			return agentSystemPrompt(model, agentSystemFromShow(ctx, client, model), "")
+			return agentSystemPromptWithWorkingDir(model, agentSystemFromShow(ctx, client, model), "", cwd)
 		},
 		SystemPrompt:        systemPrompt,
 		WorkingDir:          cwd,
@@ -324,13 +321,31 @@ func agentSelectionDescription(model agentchat.ModelOption) string {
 	return strings.TrimSpace(model.Description)
 }
 
+var agentGetwd = os.Getwd
+
+func agentWorkingDir() string {
+	cwd, err := agentGetwd()
+	if err != nil {
+		return ""
+	}
+	return cwd
+}
+
 func agentSystemPrompt(modelName string, modelSystem string, extra string) string {
-	return agentSystemPromptAt(time.Now(), modelName, modelSystem, extra)
+	return agentSystemPromptWithWorkingDir(modelName, modelSystem, extra, agentWorkingDir())
+}
+
+func agentSystemPromptWithWorkingDir(modelName string, modelSystem string, extra string, workingDir string) string {
+	return agentSystemPromptAtWithWorkingDir(time.Now(), modelName, modelSystem, extra, workingDir)
 }
 
 func agentSystemPromptAt(now time.Time, modelName string, modelSystem string, extra string) string {
+	return agentSystemPromptAtWithWorkingDir(now, modelName, modelSystem, extra, agentWorkingDir())
+}
+
+func agentSystemPromptAtWithWorkingDir(now time.Time, modelName string, modelSystem string, extra string, workingDir string) string {
 	var parts []string
-	parts = append(parts, agentDefaultSystemPrompt(now, modelName))
+	parts = append(parts, agentDefaultSystemPromptWithWorkingDir(now, modelName, workingDir))
 	if strings.TrimSpace(modelSystem) != "" {
 		parts = append(parts, strings.TrimSpace(modelSystem))
 	}
@@ -341,22 +356,32 @@ func agentSystemPromptAt(now time.Time, modelName string, modelSystem string, ex
 }
 
 func agentDefaultSystemPrompt(now time.Time, modelName string) string {
+	return agentDefaultSystemPromptWithWorkingDir(now, modelName, agentWorkingDir())
+}
+
+func agentDefaultSystemPromptWithWorkingDir(now time.Time, modelName string, workingDir string) string {
 	date := now.Format("Monday, January 2, 2006")
 	shellName := "bash"
 	if runtime.GOOS == "windows" {
 		shellName = "PowerShell"
 	}
-	return strings.Join([]string{
+	parts := []string{
 		"You are running in Ollama, in a harness to help the user accomplish tasks, and the model is " + modelName + ".",
 		"",
 		"Current date: " + date + ".",
 		"",
+	}
+	if workingDir != "" {
+		parts = append(parts, "Current working directory: "+strconv.Quote(workingDir)+".", "")
+	}
+	parts = append(parts,
 		"Be concise, practical, and action-oriented. Use tools when they materially help. Verify current or fast-changing facts with web tools when available; otherwise state uncertainty.",
 		"",
-		"Use " + shellName + " carefully. Prefer read-only inspection first. Stay within the current working directory unless explicitly asked. Surface intent before risky actions such as writes, deletes, moves, installs, git state changes, service changes, sudo, secrets access, network scripts, or commands outside the working directory. Request approval when required and do not work around denied approvals.",
+		"Use "+shellName+" carefully. Prefer read-only inspection first. Stay within the current working directory unless explicitly asked. Surface intent before risky actions such as writes, deletes, moves, installs, git state changes, service changes, sudo, secrets access, network scripts, or commands outside the working directory. Request approval when required and do not work around denied approvals.",
 		"",
 		"Tell the user about meaningful changes, verification, failures, blockers, assumptions, and risks. Summarize routine tool output instead of dumping it.",
-	}, "\n")
+	)
+	return strings.Join(parts, "\n")
 }
 
 func agentSystemFromShow(ctx context.Context, client *api.Client, modelName string) string {

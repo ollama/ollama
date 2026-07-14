@@ -1,7 +1,11 @@
 package cmd
 
 import (
+	"errors"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -9,6 +13,41 @@ import (
 	"github.com/ollama/ollama/cmd/config"
 	agentchat "github.com/ollama/ollama/cmd/tui/chat"
 )
+
+func TestAgentSystemPromptIncludesSessionWorkingDirOnce(t *testing.T) {
+	workingDir := t.TempDir()
+	prompt := agentSystemPromptAtWithWorkingDir(
+		time.Date(2026, time.July, 14, 0, 0, 0, 0, time.UTC),
+		"test-model",
+		"model instruction",
+		"caller instruction",
+		workingDir,
+	)
+
+	workingDirInstruction := "Current working directory: " + strconv.Quote(workingDir) + "."
+	if got := strings.Count(prompt, workingDirInstruction); got != 1 {
+		t.Fatalf("working directory instruction count = %d, want 1:\n%s", got, prompt)
+	}
+	for _, want := range []string{"model instruction", "caller instruction"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestAgentWorkingDirIgnoresGetwdFailure(t *testing.T) {
+	original := agentGetwd
+	agentGetwd = func() (string, error) {
+		return "", errors.New("getwd failed")
+	}
+	t.Cleanup(func() {
+		agentGetwd = original
+	})
+
+	if got := agentWorkingDir(); got != "" {
+		t.Fatalf("working directory = %q, want empty on getwd failure", got)
+	}
+}
 
 func TestAgentSelectionItemsUseLaunchSections(t *testing.T) {
 	items := agentSelectionItems([]agentchat.ModelOption{
