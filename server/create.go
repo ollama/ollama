@@ -117,12 +117,6 @@ func (s *Server) CreateHandler(c *gin.Context) {
 
 	ch := make(chan any)
 	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Error("create handler panic", "error", r)
-				ch <- gin.H{"error": fmt.Sprintf("internal error: %v", r)}
-			}
-		}()
 		defer close(ch)
 		fn := func(resp api.ProgressResponse) {
 			ch <- resp
