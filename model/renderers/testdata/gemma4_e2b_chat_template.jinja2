@@ -1,3 +1,9 @@
+{#
+  Template: Google Gemma 4 Canonical Chat Template
+  Author: Google Gemma Engineering Team
+  Published: 2026-07-09
+  Context: Fixed tool-calling loops, turn closures, and thinking content-ordering.
+#}
 {%- macro format_parameters(properties, required, filter_keys=false) -%}
     {%- set standard_keys = ['description', 'type', 'properties', 'required', 'nullable'] -%}
     {%- set ns = namespace(found_first=false) -%}
@@ -116,7 +122,9 @@
     }
 {%- endmacro -%}
 {%- macro format_argument(argument, escape_keys=True) -%}
-    {%- if argument is string -%}
+    {%- if argument is none -%}
+        {{- 'null' -}}
+    {%- elif argument is string -%}
         {{- '<|"|>' + argument + '<|"|>' -}}
     {%- elif argument is boolean -%}
         {{- 'true' if argument else 'false' -}}
@@ -172,18 +180,21 @@
     {{- '<tool_response|>' -}}
 {%- endmacro -%}
 
-{%- set ns = namespace(prev_message_type=None) -%}
+{#- ===== SETUP ===== -#}
+{%- set ns = namespace(prev_message_type=None, prev_non_tool_role=None) -%}
 {%- set loop_messages = messages -%}
+{%- set enable_thinking = enable_thinking | default(false) -%}
+{%- set preserve_thinking = preserve_thinking | default(false) -%}
 {{- bos_token -}}
 {#- Handle System/Tool Definitions Block -#}
-{%- if (enable_thinking is defined and enable_thinking) or tools or messages[0]['role'] in ['system', 'developer'] -%}
+{%- if enable_thinking or tools or (messages and messages[0]['role'] in ['system', 'developer']) -%}
     {{- '<|turn>system\n' -}}
     {#- Inject Thinking token at the very top of the FIRST system turn -#}
-    {%- if enable_thinking is defined and enable_thinking -%}
+    {%- if enable_thinking -%}
         {{- '<|think|>\n' -}}
         {%- set ns.prev_message_type = 'think' -%}
     {%- endif -%}
-    {%- if messages[0]['role'] in ['system', 'developer'] -%}
+    {%- if messages and messages[0]['role'] in ['system', 'developer'] -%}
         {%- if messages[0]['content'] is string -%}
             {{- messages[0]['content'] | trim -}}
         {%- elif messages[0]['content'] is sequence -%}
@@ -217,31 +228,21 @@
     {%- if message['role'] != 'tool' -%}
     {%- set ns.prev_message_type = None -%}
     {%- set role = 'model' if message['role'] == 'assistant' else message['role'] -%}
-    {#- Detect continuation: suppress duplicate <|turn>model when previous non-tool message was also assistant -#}
-    {%- set prev_nt = namespace(role=None, found=false) -%}
-    {%- if loop.index0 > 0 -%}
-        {%- for j in range(loop.index0 - 1, -1, -1) -%}
-            {%- if not prev_nt.found -%}
-                {%- if loop_messages[j]['role'] != 'tool' -%}
-                    {%- set prev_nt.role = loop_messages[j]['role'] -%}
-                    {%- set prev_nt.found = true -%}
-                {%- endif -%}
-            {%- endif -%}
-        {%- endfor -%}
-    {%- endif -%}
-    {%- set continue_same_model_turn = (role == 'model' and prev_nt.role == 'assistant') -%}
+    {#- Detect continuation using tracked state — O(1) instead of O(n) backward scan -#}
+    {%- set continue_same_model_turn = (role == 'model' and ns.prev_non_tool_role == 'assistant') -%}
     {%- if not continue_same_model_turn -%}
         {{- '<|turn>' + role + '\n' }}
     {%- endif -%}
 
     {#- Render reasoning/reasoning_content as thinking channel -#}
     {%- set thinking_text = message.get('reasoning') or message.get('reasoning_content') -%}
-    {%- if thinking_text and loop.index0 > ns_turn.last_user_idx and message.get('tool_calls') -%}
+    {%- set thinking_gate = (loop.index0 > ns_turn.last_user_idx) or (preserve_thinking and message.get('tool_calls')) -%}
+    {%- if thinking_text and thinking_gate -%}
         {{- '<|channel>thought\n' + thinking_text + '\n<channel|>' -}}
     {%- endif -%}
 
-            {%- if message['tool_calls'] -%}
-                {%- for tool_call in message['tool_calls'] -%}
+            {%- if message.get('tool_calls') -%}
+                {%- for tool_call in message.get('tool_calls') -%}
                     {%- set function = tool_call['function'] -%}
                     {{- '<|tool_call>call:' + function['name'] + '{' -}}
                     {%- if function['arguments'] is mapping -%}
@@ -251,8 +252,13 @@
                             {%- set ns_args.found_first = true -%}
                             {{- key -}}:{{- format_argument(value, escape_keys=False) -}}
                         {%- endfor -%}
-                    {%- elif function['arguments'] is string -%}
-                        {{- function['arguments'] -}}
+                    {%- elif function['arguments'] is none -%}
+                    {%- else -%}
+                        {{- raise_exception(
+                            "chat_template: tool_calls[].function.arguments must be a "
+                            "JSON object (mapping), not a string. Deserialize arguments "
+                            "before passing to the template."
+                        ) -}}
                     {%- endif -%}
                     {{- '}<tool_call|>' -}}
                 {%- endfor -%}
@@ -262,8 +268,8 @@
             {%- set ns_tr_out = namespace(flag=false) -%}
             {%- if message.get('tool_responses') -%}
                 {#- Legacy: tool_responses embedded on the assistant message (Google/Gemma native) -#}
-                {%- for tool_response in message['tool_responses'] -%}
-                    {{- format_tool_response_block(tool_response['name'] | default('unknown'), tool_response['response']) -}}
+                {%- for tool_response in message.get('tool_responses') -%}
+                    {{- format_tool_response_block(tool_response['name'] | default('unknown', true), tool_response['response']) -}}
                     {%- set ns_tr_out.flag = true -%}
                     {%- set ns.prev_message_type = 'tool_response' -%}
                 {%- endfor -%}
@@ -277,8 +283,8 @@
                     {%- else -%}
                         {%- set follow = loop_messages[k] -%}
                         {#- Resolve tool_call_id to function name -#}
-                        {%- set ns_tname = namespace(name=follow.get('name') | default('unknown')) -%}
-                        {%- for tc in message['tool_calls'] -%}
+                        {%- set ns_tname = namespace(name=follow.get('name') or 'unknown') -%}
+                        {%- for tc in message.get('tool_calls') -%}
                             {%- if tc.get('id') == follow.get('tool_call_id') -%}
                                 {%- set ns_tname.name = tc['function']['name'] -%}
                             {%- endif -%}
@@ -295,6 +301,15 @@
                                 {%- endif -%}
                             {%- endfor -%}
                             {{- format_tool_response_block(ns_tname.name, ns_txt.s) -}}
+                            {%- for part in tool_body -%}
+                                {%- if part.get('type') in ['image', 'image_url'] -%}
+                                    {{- '<|image|>' -}}
+                                {%- elif part.get('type') in ['audio', 'input_audio'] -%}
+                                    {{- '<|audio|>' -}}
+                                {%- elif part.get('type') == 'video' -%}
+                                    {{- '<|video|>' -}}
+                                {%- endif -%}
+                            {%- endfor -%}
                         {%- else -%}
                             {{- format_tool_response_block(ns_tname.name, tool_body) -}}
                         {%- endif -%}
@@ -305,29 +320,26 @@
             {%- endif -%}
 
             {%- set captured_content -%}
-            {%- if message['content'] is string -%}
+            {%- if message.get('content') is string -%}
                 {%- if role == 'model' -%}
                     {{- strip_thinking(message['content']) -}}
                 {%- else -%}
                     {{- message['content'] | trim -}}
                 {%- endif -%}
-            {%- elif message['content'] is sequence -%}
+            {%- elif message.get('content') is sequence -%}
                 {%- for item in message['content'] -%}
-                    {%- if item['type'] == 'text' -%}
+                    {%- if item.get('type') == 'text' -%}
                         {%- if role == 'model' -%}
                             {{- strip_thinking(item['text']) -}}
                         {%- else -%}
                             {{- item['text'] | trim -}}
                         {%- endif -%}
-                    {%- elif item['type'] == 'image' -%}
+                    {%- elif item.get('type') in ['image', 'image_url'] -%}
                         {{- '<|image|>' -}}
-                        {%- set ns.prev_message_type = 'image' -%}
-                    {%- elif item['type'] == 'audio' -%}
+                    {%- elif item.get('type') in ['audio', 'input_audio'] -%}
                         {{- '<|audio|>' -}}
-                        {%- set ns.prev_message_type = 'audio' -%}
-                    {%- elif item['type'] == 'video' -%}
+                    {%- elif item.get('type') == 'video' -%}
                         {{- '<|video|>' -}}
-                        {%- set ns.prev_message_type = 'video' -%}
                     {%- endif -%}
                 {%- endfor -%}
             {%- endif -%}
@@ -336,16 +348,39 @@
             {{- captured_content -}}
             {%- set has_content = captured_content | trim | length > 0 -%}
 
+        {#- Forward-scan: find next non-tool message role for continuation detection -#}
+        {%- set next_nt = namespace(role=None, found=false) -%}
+        {%- for j in range(loop.index0 + 1, loop_messages | length) -%}
+            {%- if not next_nt.found -%}
+                {%- if loop_messages[j]['role'] != 'tool' -%}
+                    {%- set next_nt.role = loop_messages[j]['role'] -%}
+                    {%- set next_nt.found = true -%}
+                {%- endif -%}
+            {%- endif -%}
+        {%- endfor -%}
+
+        {%- set continues_into_next = (
+            role == 'model'
+            and next_nt.role == 'assistant'
+            and (not message.get('tool_calls') or ns_tr_out.flag)
+        ) -%}
+
         {%- if ns.prev_message_type == 'tool_call' and not ns_tr_out.flag -%}
             {{- '<|tool_response>' -}}
-        {%- elif not (ns_tr_out.flag and not has_content) -%}
+        {%- elif continues_into_next -%}
+        {%- elif not (ns_tr_out.flag and not has_content and not next_nt.found) -%}
             {{- '<turn|>\n' -}}
         {%- endif -%}
+
+    {#- Track previous non-tool role for next iteration (avoids O(n) backward scan) -#}
+    {%- set ns.prev_non_tool_role = message['role'] -%}
     {%- endif -%}
 {%- endfor -%}
 
 {%- if add_generation_prompt -%}
     {%- if ns.prev_message_type != 'tool_response' and ns.prev_message_type != 'tool_call' -%}
         {{- '<|turn>model\n' -}}
+    {%- elif ns.prev_message_type == 'tool_response' and enable_thinking -%}
+        {{- '<|channel>thought\n' -}}
     {%- endif -%}
 {%- endif -%}

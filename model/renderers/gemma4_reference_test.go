@@ -988,7 +988,7 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				"<|turn>user\nWeather?<turn|>\n" +
 				"<|turn>model\n<|tool_call>call:get_weather{city:" + q + "Tokyo" + q + "}<tool_call|>" +
 				"<|tool_response>response:get_weather{value:" + q + `{"temperature": 15, "weather": "sunny"}` + q + "}<tool_response|>" +
-				"<|turn>user\nThanks!<turn|>\n" +
+				"<turn|>\n<|turn>user\nThanks!<turn|>\n" +
 				"<|turn>model\n",
 		},
 		// === Ordering and whitespace edge cases ===
@@ -1559,6 +1559,101 @@ func TestGemma4LargeRendererOmitsEmptyThoughtBlockWhenThinkingEnabled(t *testing
 	assert.NoError(t, err)
 	assert.Equal(t, "<bos><|turn>system\n<|think|>\n<turn|>\n<|turn>user\nHello<turn|>\n<|turn>model\n", got)
 	assert.NotContains(t, got, "<|channel>thought\n<channel|>")
+}
+
+func TestGemma4RendererCanonicalToolContinuations(t *testing.T) {
+	q := `<|"|>`
+	messages := []api.Message{
+		{Role: "user", Content: "Use the tool"},
+		{Role: "assistant", Content: "First."},
+		{Role: "assistant", Content: "Checking.", ToolCalls: []api.ToolCall{{
+			Function: api.ToolCallFunction{
+				Name:      "bash",
+				Arguments: testArgs(map[string]any{"command": nil}),
+			},
+		}}},
+		{Role: "tool", ToolName: "bash", Content: "done"},
+		{Role: "assistant", Content: "Done."},
+		{Role: "user", Content: "Next"},
+	}
+
+	base := "<bos><|turn>system\n" + bashSmallDeclRef + "<turn|>\n" +
+		"<|turn>user\nUse the tool<turn|>\n" +
+		"<|turn>model\nFirst." +
+		"<|tool_call>call:bash{command:null}<tool_call|>" +
+		"<|tool_response>response:bash{value:" + q + "done" + q + "}<tool_response|>" +
+		"Checking.Done.<turn|>\n" +
+		"<|turn>user\nNext<turn|>\n<|turn>model\n"
+
+	tests := []struct {
+		name     string
+		renderer *Gemma4Renderer
+		want     string
+	}{
+		{name: "small", renderer: &Gemma4Renderer{}, want: base},
+		{name: "31b", renderer: &Gemma4Renderer{emptyBlockOnNothink: true}, want: base + "<|channel>thought\n<channel|>"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.renderer.Render(messages, bashSmallTool(), nil)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+			assert.NotContains(t, got, "First.<turn|>\n<|tool_call>")
+			assert.NotContains(t, got, "Checking.<turn|>\nDone.")
+		})
+	}
+}
+
+func TestGemma4RendererPreservesActiveToolChainThinking(t *testing.T) {
+	messages := []api.Message{
+		{Role: "user", Content: "Use the tool"},
+		{Role: "assistant", ToolCalls: []api.ToolCall{{
+			Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "true"})},
+		}}},
+		{Role: "tool", ToolName: "bash", Content: "done"},
+		{Role: "assistant", Thinking: "The tool completed successfully.", Content: "Done."},
+	}
+
+	for _, tt := range []struct {
+		name     string
+		renderer *Gemma4Renderer
+	}{
+		{name: "small", renderer: &Gemma4Renderer{}},
+		{name: "31b", renderer: &Gemma4Renderer{emptyBlockOnNothink: true}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.renderer.Render(messages, bashSmallTool(), nil)
+			assert.NoError(t, err)
+			assert.Contains(t, got, "<|channel>thought\nThe tool completed successfully.\n<channel|>Done.")
+		})
+	}
+}
+
+func TestGemma4RendererDoesNotReinjectHistoricalToolThinking(t *testing.T) {
+	const historicalThought = "do not replay this thought"
+	messages := []api.Message{
+		{Role: "user", Content: "First request"},
+		{Role: "assistant", Thinking: historicalThought, ToolCalls: []api.ToolCall{{
+			Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "true"})},
+		}}},
+		{Role: "tool", ToolName: "bash", Content: "ok"},
+		{Role: "user", Content: "Second request"},
+	}
+
+	for _, tt := range []struct {
+		name     string
+		renderer *Gemma4Renderer
+	}{
+		{name: "small", renderer: &Gemma4Renderer{}},
+		{name: "31b", renderer: &Gemma4Renderer{emptyBlockOnNothink: true}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.renderer.Render(messages, bashSmallTool(), nil)
+			assert.NoError(t, err)
+			assert.NotContains(t, got, historicalThought)
+		})
+	}
 }
 
 func TestGemma4RendererMatchesJinja2ExpandedParity(t *testing.T) {

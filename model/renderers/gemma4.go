@@ -86,7 +86,10 @@ func (r *Gemma4Renderer) Render(messages []api.Message, tools []api.Tool, thinkV
 			sb.WriteString("<|turn>" + role + "\n")
 		}
 
-		if message.Role == "assistant" && message.Thinking != "" && i > lastUserIdx && len(message.ToolCalls) > 0 {
+		// Preserve thinking generated within the active user turn, including an
+		// assistant continuation after a tool response. Thoughts from earlier
+		// user turns remain stripped by default.
+		if message.Role == "assistant" && message.Thinking != "" && i > lastUserIdx {
 			sb.WriteString("<|channel>thought\n")
 			sb.WriteString(message.Thinking)
 			sb.WriteString("\n<channel|>")
@@ -125,7 +128,13 @@ func (r *Gemma4Renderer) Render(messages []api.Message, tools []api.Tool, thinkV
 
 		if prevMessageType == "tool_call" && !toolResponsesEmitted {
 			sb.WriteString("<|tool_response>")
-		} else if !(toolResponsesEmitted && !messageHadContent) {
+		} else if role == "model" && r.nextNonToolRole(loopMessages, i) == "assistant" &&
+			(len(message.ToolCalls) == 0 || toolResponsesEmitted) {
+			// The canonical template keeps adjacent assistant messages in one
+			// model turn. In particular, an assistant message that includes both
+			// content and completed tool calls must not close the turn before the
+			// following assistant continuation.
+		} else if !(toolResponsesEmitted && !messageHadContent && r.nextNonToolRole(loopMessages, i) == "") {
 			sb.WriteString("<turn|>\n")
 		}
 	}
@@ -183,6 +192,15 @@ func (r *Gemma4Renderer) renderToolResponseContent(msg api.Message, imageOffset 
 
 func (r *Gemma4Renderer) previousNonToolRole(messages []api.Message, idx int) string {
 	for i := idx - 1; i >= 0; i-- {
+		if messages[i].Role != "tool" {
+			return messages[i].Role
+		}
+	}
+	return ""
+}
+
+func (r *Gemma4Renderer) nextNonToolRole(messages []api.Message, idx int) string {
+	for i := idx + 1; i < len(messages); i++ {
 		if messages[i].Role != "tool" {
 			return messages[i].Role
 		}
@@ -699,6 +717,8 @@ func (r *Gemma4Renderer) formatToolResponseBlock(toolName, response string) stri
 
 func (r *Gemma4Renderer) formatArgValue(value any) string {
 	switch v := value.(type) {
+	case nil:
+		return "null"
 	case string:
 		return g4Q + v + g4Q
 	case bool:
