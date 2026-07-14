@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -139,5 +140,16 @@ func TestNormalizeFilePath(t *testing.T) {
 	fp = `/tmp/test_\!_\"image\".jpg`
 	normalized = normalizeFilePath(fp)
 	assert.Equal(t, `/tmp/test_!_"image".jpg`, filepath.ToSlash(normalized))
+
+	// Windows path normalization
+	if runtime.GOOS == "windows" {
+		fp = `c:\users\jdoe\eight.png`
+		normalized = normalizeFilePath(fp)
+		assert.Equal(t, `c:\users\jdoe\eight.png`, normalized)
+
+		fp = `c:\users\jdoe\my\ image.png`
+		normalized = normalizeFilePath(fp)
+		assert.Equal(t, `c:\users\jdoe\my image.png`, normalized)
+	}
 }
 
