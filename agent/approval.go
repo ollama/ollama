@@ -54,16 +54,18 @@ func (s *ApprovalState) Set(allowAll bool, scopes map[string]bool) {
 	s.scopes = cloneApprovalScopes(scopes)
 }
 
-func (s *ApprovalState) SetAllowAll(allowAll bool) {
+// GrantAll grants blanket approval for all future tool calls.
+func (s *ApprovalState) GrantAll() {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.allowAll = allowAll
+	s.allowAll = true
 }
 
-func (s *ApprovalState) AllowAll() bool {
+// AllGranted reports whether blanket approval has been granted.
+func (s *ApprovalState) AllGranted() bool {
 	if s == nil {
 		return false
 	}
@@ -81,36 +83,41 @@ func (s *ApprovalState) Allows(scope string) bool {
 	return s.allowAll || s.scopes[scope]
 }
 
-func (s *ApprovalState) Apply(result *Approval) {
+// Apply merges an approval's scopes and allow-all flag into the state. It
+// returns true if the approval grants permission (allow-all or at least one
+// scope). It does not mutate the approval; the caller sets Allow based on the
+// returned value.
+func (s *ApprovalState) Apply(result *Approval) bool {
 	if s == nil || result == nil {
-		return
+		return false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	granted := false
 	if result.AllowAll {
-		result.Allow = true
 		s.allowAll = true
+		granted = true
 	}
 	if len(result.AllowScopes) > 0 {
-		result.Allow = true
-		if s.scopes == nil {
-			s.scopes = make(map[string]bool, len(result.AllowScopes))
-		}
-		for _, scope := range result.AllowScopes {
-			scope = strings.TrimSpace(scope)
-			if scope != "" {
-				s.scopes[scope] = true
-			}
-		}
+		granted = true
+		s.grantScopesLocked(result.AllowScopes)
 	}
+	return granted
 }
 
-func (s *ApprovalState) AllowScopes(scopes []string) {
+// GrantScopes merges the given scopes into the state.
+func (s *ApprovalState) GrantScopes(scopes []string) {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.grantScopesLocked(scopes)
+}
+
+// grantScopesLocked adds trimmed, non-empty scopes to the state. Caller must
+// hold s.mu.
+func (s *ApprovalState) grantScopesLocked(scopes []string) {
 	if s.scopes == nil {
 		s.scopes = make(map[string]bool, len(scopes))
 	}
@@ -148,8 +155,7 @@ func (s *Session) allows(scope string) bool {
 }
 
 // applyApproval merges an approval result into the session's state and marks
-// the result as allowed when scopes or allow-all were granted. It mutates
-// result.Allow so the caller can branch on the effective decision.
+// the result as allowed when scopes or allow-all were granted.
 func (s *Session) applyApproval(result *Approval) {
 	if s == nil || result == nil {
 		return
@@ -157,11 +163,13 @@ func (s *Session) applyApproval(result *Approval) {
 	if s.ApprovalState == nil {
 		s.ApprovalState = &ApprovalState{}
 	}
-	s.ApprovalState.Apply(result)
+	if s.ApprovalState.Apply(result) {
+		result.Allow = true
+	}
 }
 
 func (s *Session) authorizeToolCalls(ctx context.Context, req ApprovalRequest) (Approval, error) {
-	if s == nil || len(req.Calls) == 0 || (s.ApprovalState != nil && s.ApprovalState.AllowAll()) {
+	if s == nil || len(req.Calls) == 0 || (s.ApprovalState != nil && s.ApprovalState.AllGranted()) {
 		return Approval{Allow: true}, nil
 	}
 	if s.ApprovalPrompter == nil {

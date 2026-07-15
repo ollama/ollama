@@ -38,7 +38,7 @@ func TestSessionApplyApprovalScopes(t *testing.T) {
 	if session.allows("bash") || session.allows("bash\x00ls") {
 		t.Fatal("shell approval was too broad")
 	}
-	if session.ApprovalState.AllowAll() {
+	if session.ApprovalState.AllGranted() {
 		t.Fatal("allow all = true, want false for scoped approval")
 	}
 }
@@ -50,6 +50,6 @@ func TestSessionApplyApprovalAllowAll(t *testing.T) {
 	session.applyApproval(&result)
 
 	if !result.Allow || !session.allows("anything") {
-		t.Fatalf("allow all = %v result = %#v, want allow all", session.ApprovalState.AllowAll(), result)
+		t.Fatalf("allow all = %v result = %#v, want allow all", session.ApprovalState.AllGranted(), result)
 	}
 }

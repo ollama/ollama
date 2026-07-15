@@ -2009,7 +2009,7 @@ func TestSessionAllowAllApprovalSkipsFuturePrompts(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if !session.ApprovalState.AllowAll() {
+	if !session.ApprovalState.AllGranted() {
 		t.Fatal("session did not remember allow all")
 	}
 	if len(prompter.requests) != 1 {
@@ -2066,7 +2066,7 @@ func TestSessionAllowToolApprovalSkipsFuturePromptForSameTool(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if session.ApprovalState.AllowAll() {
+	if session.ApprovalState.AllGranted() {
 		t.Fatal("allowing one tool enabled full access")
 	}
 	if !session.ApprovalState.Allows("approval_tool") {
