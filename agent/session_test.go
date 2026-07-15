@@ -136,6 +136,14 @@ func (c *recordingCompactor) MaybeCompact(_ context.Context, req CompactionReque
 	return result, nil
 }
 
+func (c *recordingCompactor) ContextWindowTokens(options map[string]any) int {
+	return ResolveContextWindowTokens(options, 0)
+}
+func (c *recordingCompactor) Threshold() float64 { return 0 }
+func (c *recordingCompactor) ShouldCompact(_ CompactionRequest) (string, bool) {
+	return "", false
+}
+
 func (c *oversizedCompactor) MaybeCompact(_ context.Context, req CompactionRequest) (CompactionResult, error) {
 	c.requests = append(c.requests, req)
 	summary := strings.Repeat("oversized summary ", 300)
@@ -145,6 +153,14 @@ func (c *oversizedCompactor) MaybeCompact(_ context.Context, req CompactionReque
 		Due:       true,
 		Summary:   summary,
 	}, nil
+}
+
+func (c *oversizedCompactor) ContextWindowTokens(options map[string]any) int {
+	return ResolveContextWindowTokens(options, 0)
+}
+func (c *oversizedCompactor) Threshold() float64 { return 0 }
+func (c *oversizedCompactor) ShouldCompact(_ CompactionRequest) (string, bool) {
+	return "", false
 }
 
 type recordingApprovalPrompter struct {

@@ -806,21 +806,12 @@ func (s *Session) emitCompacted(runID string, opts RunOptions, messages []api.Me
 }
 
 func (s *Session) autoCompactionTrigger(req CompactionRequest) string {
-	if compactor, ok := s.Compactor.(*SimpleCompactor); ok && compactor != nil {
-		if req.Force {
-			return "force"
-		}
-		contextWindow := compactor.contextWindowTokens(req.Options)
-		threshold := int(float64(contextWindow) * compactor.threshold())
-		if threshold <= 0 {
-			return ""
-		}
-		if req.Latest.PromptEvalCount > 0 && req.Latest.PromptEvalCount >= threshold {
-			return "prompt_eval"
-		}
-		if estimateCompactionRequestTokens(req) >= threshold {
-			return "estimate"
-		}
+	if s.Compactor == nil {
+		return ""
+	}
+	trigger, should := s.Compactor.ShouldCompact(req)
+	if should {
+		return trigger
 	}
 	return ""
 }
@@ -930,8 +921,8 @@ func (s *Session) compactionThresholdTokens(opts RunOptions) int {
 	}
 
 	configuredThreshold := 0.0
-	if compactor, ok := s.Compactor.(*SimpleCompactor); ok && compactor != nil {
-		configuredThreshold = compactor.Options.Threshold
+	if s.Compactor != nil {
+		configuredThreshold = s.Compactor.Threshold()
 	}
 
 	threshold := int(float64(contextWindow) * ResolveCompactionThreshold(configuredThreshold))
@@ -945,13 +936,7 @@ func (s *Session) contextWindowTokens(opts RunOptions) int {
 	if s.Compactor == nil {
 		return 0
 	}
-
-	configuredWindow := 0
-	if compactor, ok := s.Compactor.(*SimpleCompactor); ok && compactor != nil {
-		configuredWindow = compactor.Options.ContextWindowTokens
-	}
-
-	return ResolveContextWindowTokens(opts.Options, configuredWindow)
+	return s.Compactor.ContextWindowTokens(opts.Options)
 }
 
 func toolMessage(toolName, toolCallID, content string) api.Message {
