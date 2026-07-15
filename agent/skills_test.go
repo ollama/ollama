@@ -111,3 +111,87 @@ func TestSkillsDirUsesOverrideAndXDG(t *testing.T) {
 		t.Fatalf("SkillsDir xdg = %q, want %q, %v", got, filepath.Join(xdg, "ollama", "skills"), err)
 	}
 }
+
+func TestLoadDefaultSkillsPrecedenceAndCollisions(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // Windows: os.UserHomeDir uses %USERPROFILE%
+
+	userOllama := t.TempDir()
+	t.Setenv(SkillsDirEnv, userOllama)
+
+	userAgents := filepath.Join(home, ".agents", "skills")
+	project := t.TempDir()
+	projectAgents := filepath.Join(project, ".agents", "skills")
+	projectOllama := filepath.Join(project, ".ollama", "skills")
+
+	// release-notes exists in all four roots; project ollama must win.
+	writeCatalogSkill(t, userAgents, "release-notes", "from user agents")
+	writeCatalogSkill(t, userOllama, "release-notes", "from user ollama")
+	writeCatalogSkill(t, projectOllama, "release-notes", "from project ollama")
+	// code-review exists in both project roots; project ollama beats project agents.
+	writeCatalogSkill(t, projectAgents, "code-review", "from project agents")
+	writeCatalogSkill(t, projectOllama, "code-review", "from project ollama")
+	// unique appears only in user ollama (via env override).
+	writeCatalogSkill(t, userOllama, "unique", "only here")
+
+	catalog, err := LoadDefaultSkills(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rn, err := catalog.Load("release-notes")
+	if err != nil || !strings.Contains(rn.Instructions, "from project ollama") || !strings.Contains(rn.Path, ".ollama") {
+		t.Fatalf("release-notes = %#v, want project ollama to win", rn)
+	}
+	cr, err := catalog.Load("code-review")
+	if err != nil || !strings.Contains(cr.Instructions, "from project ollama") {
+		t.Fatalf("code-review = %#v, want project ollama to win over project agents", cr)
+	}
+	if _, err := catalog.Load("unique"); err != nil {
+		t.Fatalf("unique should load from user ollama: %v", err)
+	}
+	var shadows int
+	for _, d := range catalog.Diagnostics() {
+		if strings.Contains(d.Error(), "shadows") {
+			shadows++
+		}
+	}
+	if shadows < 2 {
+		t.Fatalf("expected collision diagnostics, got %d: %#v", shadows, catalog.Diagnostics())
+	}
+}
+
+func TestSkillContentListsDirectoryAndResources(t *testing.T) {
+	root := t.TempDir()
+	skillDir := filepath.Join(root, "pdf-processing")
+	if err := os.MkdirAll(filepath.Join(skillDir, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(skillDir, "references"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("Handle PDFs."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "scripts", "extract.py"), []byte("#!/usr/bin/env python3"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "references", "ref.md"), []byte("ref"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := DiscoverSkills(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	skill, err := catalog.Load("pdf-processing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := skill.Content()
+	if !strings.Contains(content, "Skill directory:") || !strings.Contains(content, skillDir) {
+		t.Fatalf("content missing skill directory: %q", content)
+	}
+	if !strings.Contains(content, "<file>scripts/extract.py</file>") || !strings.Contains(content, "<file>references/ref.md</file>") {
+		t.Fatalf("content missing resource listing: %q", content)
+	}
+}

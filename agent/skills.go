@@ -12,8 +12,11 @@ import (
 )
 
 const (
-	// SkillsDirEnv overrides the runtime-owned skills directory. Ollama never
-	// searches Codex or Claude skill directories.
+	// SkillsDirEnv overrides the user-level Ollama-owned skills directory. The
+	// cross-client .agents/skills/ convention and project-level .ollama/skills/
+	// are also scanned (see LoadDefaultSkills); on a name collision, Ollama-owned
+	// directories take precedence over .agents/skills/, and project-level takes
+	// precedence over user-level.
 	SkillsDirEnv  = "OLLAMA_SKILLS"
 	skillFilename = "SKILL.md"
 	maxSkillBytes = 1 << 20
@@ -46,7 +49,41 @@ type Skill struct {
 }
 
 func (s Skill) Content() string {
-	return fmt.Sprintf("<skill name=%q>\n%s\n</skill>", s.Name, strings.TrimSpace(s.Instructions))
+	dir := filepath.Dir(s.Path)
+	var b strings.Builder
+	fmt.Fprintf(&b, "<skill name=%q>\n%s\n", s.Name, strings.TrimSpace(s.Instructions))
+	fmt.Fprintf(&b, "Skill directory: %s\n", dir)
+	b.WriteString("Relative paths in this skill are relative to the skill directory.\n")
+	if resources := s.resources(); len(resources) > 0 {
+		b.WriteString("<skill_resources>\n")
+		for _, r := range resources {
+			fmt.Fprintf(&b, "  <file>%s</file>\n", r)
+		}
+		b.WriteString("</skill_resources>\n")
+	}
+	b.WriteString("</skill>")
+	return b.String()
+}
+
+// resources lists bundled files one level deep under scripts/, references/,
+// and assets/ without reading them, so the model can load them on demand.
+func (s Skill) resources() []string {
+	dir := filepath.Dir(s.Path)
+	var resources []string
+	for _, sub := range []string{"scripts", "references", "assets"} {
+		entries, err := os.ReadDir(filepath.Join(dir, sub))
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			resources = append(resources, filepath.Join(sub, e.Name()))
+		}
+	}
+	sort.Strings(resources)
+	return resources
 }
 
 // SkillCatalog contains valid skills and diagnostics for ignored invalid
@@ -102,12 +139,70 @@ func DiscoverSkills(dir string) (*SkillCatalog, error) {
 	return catalog, nil
 }
 
-func LoadDefaultSkills() (*SkillCatalog, error) {
-	dir, err := SkillsDir()
+// LoadDefaultSkills discovers skills from the spec's scopes, merged with
+// deterministic precedence. Roots are scanned lowest-precedence first so later
+// roots override earlier ones on name collisions (recording a diagnostic):
+//
+//  1. ~/.agents/skills/              (user, cross-client)
+//  2. user Ollama skills dir          (user, Ollama-owned; SkillsDir)
+//  3. <project>/.agents/skills/      (project, cross-client)
+//  4. <project>/.ollama/skills/      (project, Ollama-owned)
+//
+// Project-level overrides user-level, and within a scope Ollama-owned
+// directories override .agents/skills/. projectDir is the agent's working
+// directory at startup (discovery is a session-start snapshot per the spec).
+func LoadDefaultSkills(projectDir string) (*SkillCatalog, error) {
+	roots, err := defaultSkillRoots(projectDir)
 	if err != nil {
 		return nil, err
 	}
-	return DiscoverSkills(dir)
+	catalog := &SkillCatalog{skills: make(map[string]Skill)}
+	for _, root := range roots {
+		sub, err := DiscoverSkills(root.path)
+		if err != nil {
+			return nil, fmt.Errorf("discover skills in %s: %w", root.path, err)
+		}
+		catalog.diagnostics = append(catalog.diagnostics, sub.diagnostics...)
+		for _, skill := range sub.skills {
+			if existing, ok := catalog.skills[skill.Name]; ok && existing.Path != skill.Path {
+				catalog.diagnostics = append(catalog.diagnostics, fmt.Errorf("skill %q in %s shadows %q", skill.Name, root.path, existing.Path))
+			}
+			catalog.skills[skill.Name] = skill
+		}
+	}
+	return catalog, nil
+}
+
+type skillRoot struct {
+	path string
+}
+
+// defaultSkillRoots returns skill directories ordered lowest- to
+// highest-precedence. Non-existent directories are scanned harmlessly
+// (DiscoverSkills skips them).
+func defaultSkillRoots(projectDir string) ([]skillRoot, error) {
+	var roots []skillRoot
+
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		roots = append(roots, skillRoot{path: filepath.Join(home, ".agents", "skills")})
+	}
+
+	userOllama, err := SkillsDir()
+	if err != nil {
+		return nil, err
+	}
+	roots = append(roots, skillRoot{path: userOllama})
+
+	projectDir = strings.TrimSpace(projectDir)
+	if projectDir != "" {
+		if abs, err := filepath.Abs(projectDir); err == nil {
+			roots = append(roots,
+				skillRoot{path: filepath.Join(abs, ".agents", "skills")},
+				skillRoot{path: filepath.Join(abs, ".ollama", "skills")},
+			)
+		}
+	}
+	return roots, nil
 }
 
 func (c *SkillCatalog) Dir() string {

@@ -220,7 +220,7 @@ func GenerateAgentTUI(cmd *cobra.Command, client *api.Client, opts agentTUIOptio
 		return agentContextWindowForModel(ctx, client, model, fallback)
 	}
 
-	skillCatalog, err := coreagent.LoadDefaultSkills()
+	skillCatalog, err := coreagent.LoadDefaultSkills(cwd)
 	if err != nil {
 		return fmt.Errorf("load agent skills: %w", err)
 	}
