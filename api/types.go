@@ -430,13 +430,26 @@ func (t *ToolPropertiesMap) UnmarshalJSON(data []byte) error {
 }
 
 type ToolProperty struct {
-	AnyOf       []ToolProperty     `json:"anyOf,omitempty"`
-	Type        PropertyType       `json:"type,omitempty"`
-	Items       any                `json:"items,omitempty"`
-	Description string             `json:"description,omitempty"`
-	Enum        []any              `json:"enum,omitempty"`
-	Properties  *ToolPropertiesMap `json:"properties,omitempty"`
-	Required    []string           `json:"required,omitempty"`
+	AnyOf              []ToolProperty     `json:"anyOf,omitempty"`
+	Type               PropertyType       `json:"type,omitempty"`
+	Items              any                `json:"items,omitempty"`
+	Description        string             `json:"description,omitempty"`
+	Enum               []any              `json:"enum,omitempty"`
+	Properties         *ToolPropertiesMap `json:"properties,omitempty"`
+	Required           []string           `json:"required,omitempty"`
+	Minimum            *float64           `json:"minimum,omitempty"`
+	Maximum            *float64           `json:"maximum,omitempty"`
+	ExclusiveMinimum   any                `json:"exclusiveMinimum,omitempty"`
+	ExclusiveMaximum   any                `json:"exclusiveMaximum,omitempty"`
+	MultipleOf         *float64           `json:"multipleOf,omitempty"`
+	Default            any                `json:"default,omitempty"`
+	Format             string             `json:"format,omitempty"`
+	Pattern            string             `json:"pattern,omitempty"`
+	MinLength          *int               `json:"minLength,omitempty"`
+	MaxLength          *int               `json:"maxLength,omitempty"`
+	MinItems           *int               `json:"minItems,omitempty"`
+	MaxItems           *int               `json:"maxItems,omitempty"`
+	Const              any                `json:"const,omitempty"`
 }
 
 // ToTypeScriptType converts a ToolProperty to a TypeScript type string
