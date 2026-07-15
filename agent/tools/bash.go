@@ -415,7 +415,7 @@ func (b *boundedOutput) String(label string) string {
 	if omitted == 0 {
 		return content
 	}
-	return content + fmt.Sprintf("\n\n[%s truncated: omitted ~%d tokens]", label, approximateTokensFromBytes(omitted))
+	return content + fmt.Sprintf("\n\n[%s truncated: omitted ~%d tokens]", label, agent.ApproximateTokens(omitted))
 }
 
 func utf8SafePrefixLen(p []byte) int {
@@ -430,11 +430,4 @@ func utf8SafePrefixLen(p []byte) int {
 		i += size
 	}
 	return len(p)
-}
-
-func approximateTokensFromBytes(n int) int {
-	if n <= 0 {
-		return 0
-	}
-	return max(1, (n+3)/4)
 }

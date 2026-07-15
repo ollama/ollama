@@ -373,7 +373,7 @@ func estimateCompactionTokens(text string) int {
 	if text == "" {
 		return 0
 	}
-	return max(1, (len([]rune(text))+3)/4)
+	return ApproximateTokens(len([]rune(text)))
 }
 
 func estimateMessagesTokens(messages []api.Message) int {

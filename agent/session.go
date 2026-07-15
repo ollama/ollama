@@ -971,7 +971,7 @@ func truncateToolResultContent(content string) string {
 
 func truncateToolResultContentTo(content string, maxRunes int) string {
 	if maxRunes <= 0 {
-		return fmt.Sprintf("%s omitted ~%d tokens. Use a narrower command, line range, or search query if more detail is needed.]", toolOutputFullOmissionPrefix, approximateTokensFromRunes(len([]rune(content))))
+		return fmt.Sprintf("%s omitted ~%d tokens. Use a narrower command, line range, or search query if more detail is needed.]", toolOutputFullOmissionPrefix, ApproximateTokens(len([]rune(content))))
 	}
 	if len(content) <= maxRunes {
 		return content
@@ -985,9 +985,9 @@ func truncateToolResultContentTo(content string, maxRunes int) string {
 	omitted := len(runes) - head - tail
 	marker := fmt.Sprintf(
 		"\n\n[tool output truncated: showing first ~%d tokens and last ~%d tokens; omitted ~%d tokens. Use a narrower command, line range, or search query if more detail is needed.]\n\n",
-		approximateTokensFromRunes(head),
-		approximateTokensFromRunes(tail),
-		approximateTokensFromRunes(omitted),
+		ApproximateTokens(head),
+		ApproximateTokens(tail),
+		ApproximateTokens(omitted),
 	)
 	return string(runes[:head]) + marker + string(runes[len(runes)-tail:])
 }
@@ -996,7 +996,10 @@ func toolOutputFullyOmitted(content string) bool {
 	return strings.HasPrefix(content, toolOutputFullOmissionPrefix)
 }
 
-func approximateTokensFromRunes(n int) int {
+// ApproximateTokens estimates token count from a character/byte count using
+// the standard ~4 chars-per-token heuristic. It is intentionally rough; all
+// callers use it only for sizing/truncation decisions, not billing.
+func ApproximateTokens(n int) int {
 	if n <= 0 {
 		return 0
 	}
