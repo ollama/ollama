@@ -190,6 +190,12 @@
             ]
           },
           {
+            "group": "Python libraries",
+            "pages": [
+              "/integrations/pixeltable"
+            ]
+          },
+          {
             "group": "Assistant Sandboxing",
             "pages": [
               "/integrations/nemoclaw"
