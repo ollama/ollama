@@ -1076,10 +1076,11 @@ func pluralSuffix(count int) string {
 
 func (m *chatModel) startSkillRun(name string) (tea.Model, tea.Cmd) {
 	name = strings.TrimSpace(name)
-	// The skill instructions are already delivered via the synthetic tool result
-	// above, so this user turn orients the model rather than re-requesting the
-	// skill (which would just re-load the same content via the skill tool).
-	message := api.Message{Role: "user", Content: "The " + name + " skill is loaded above; follow its instructions for this request."}
+	// The skill instructions are delivered via the synthetic tool result that
+	// follows this user turn, so this message orients the model rather than
+	// re-requesting the skill (which would just re-load the same content via the
+	// skill tool).
+	message := api.Message{Role: "user", Content: "The " + name + " skill is loaded; follow its instructions for this request."}
 	return m.startRunWithMessages("/skill "+name, "", []api.Message{message}, "", name)
 }
 
