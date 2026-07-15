@@ -26,8 +26,7 @@ const (
 	defaultCompactionThreshold           = 0.8
 	compactOnlySummaryContextTokens      = 16000
 
-	maxCompactionSummaryBytes  = 16 * 1024
-	compactionSummaryTruncated = "\n\n[summary truncated]"
+	maxCompactionSummaryRunes = 16 * 1024
 
 	compactionSystemPrompt = "Summarize the archived part of an Ollama agent conversation. Preserve user goals, decisions, files, commands, tool results, and unresolved tasks needed to continue. Omit private reasoning and return only the summary."
 )
@@ -351,21 +350,10 @@ func (c *SimpleCompactor) compactionPromptBodyBudgetTokens(options map[string]an
 }
 
 func truncateCompactionSummary(summary string) string {
-	if len(summary) <= maxCompactionSummaryBytes {
-		return summary
-	}
-	limit := maxCompactionSummaryBytes - len(compactionSummaryTruncated)
-	if limit < 0 {
-		limit = 0
-	}
-	var b strings.Builder
-	for _, r := range summary {
-		if b.Len()+len(string(r)) > limit {
-			break
-		}
-		b.WriteRune(r)
-	}
-	return strings.TrimSpace(b.String()) + compactionSummaryTruncated
+	return Truncate(summary, TruncateConfig{
+		MaxRunes: maxCompactionSummaryRunes,
+		Label:    "summary",
+	})
 }
 
 func estimateCompactionTokens(text string) int {

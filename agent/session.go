@@ -970,26 +970,80 @@ func truncateToolResultContent(content string) string {
 }
 
 func truncateToolResultContentTo(content string, maxRunes int) string {
-	if maxRunes <= 0 {
-		return fmt.Sprintf("%s omitted ~%d tokens. Use a narrower command, line range, or search query if more detail is needed.]", toolOutputFullOmissionPrefix, ApproximateTokens(len([]rune(content))))
-	}
-	if len(content) <= maxRunes {
-		return content
-	}
+	return Truncate(content, TruncateConfig{
+		MaxRunes:           maxRunes,
+		HeadTail:           true,
+		HeadPct:            75,
+		Label:              "tool output",
+		Hint:               "Use a narrower command, line range, or search query if more detail is needed.",
+		FullOmissionPrefix: toolOutputFullOmissionPrefix,
+	})
+}
+
+// TruncateConfig configures content truncation via Truncate.
+type TruncateConfig struct {
+	MaxRunes           int    // rune limit; <= 0 means full omission
+	HeadTail           bool   // true = head + tail split; false = head only
+	HeadPct            int    // percentage of MaxRunes for head (e.g. 75); tail gets the rest
+	Label              string // e.g. "tool output", "summary", "stdout"
+	Hint               string // guidance text appended to marker (optional)
+	FullOmissionPrefix string // marker prefix when MaxRunes <= 0
+}
+
+// Truncate truncates content to at most cfg.MaxRunes runes. When HeadTail is
+// true, it preserves the first HeadPct% and last (100-HeadPct)% of the budget
+// with a marker between; otherwise it keeps only the head. MaxRunes <= 0
+// triggers full omission using FullOmissionPrefix. All token counts in
+// markers use ApproximateTokens.
+func Truncate(content string, cfg TruncateConfig) string {
 	runes := []rune(content)
-	if len(runes) <= maxRunes {
+	total := len(runes)
+
+	if cfg.MaxRunes <= 0 {
+		return fmt.Sprintf("%s omitted ~%d tokens.%s]", cfg.FullOmissionPrefix, ApproximateTokens(total), truncHint(cfg.Hint))
+	}
+	if total <= cfg.MaxRunes {
 		return content
 	}
-	head := maxRunes * 3 / 4
-	tail := maxRunes - head
-	omitted := len(runes) - head - tail
-	marker := fmt.Sprintf(
-		"\n\n[tool output truncated: showing first ~%d tokens and last ~%d tokens; omitted ~%d tokens. Use a narrower command, line range, or search query if more detail is needed.]\n\n",
-		ApproximateTokens(head),
-		ApproximateTokens(tail),
-		ApproximateTokens(omitted),
-	)
-	return string(runes[:head]) + marker + string(runes[len(runes)-tail:])
+
+	if !cfg.HeadTail {
+		head := cfg.MaxRunes
+		omitted := total - head
+		return string(runes[:head]) + truncMarker(cfg.Label, head, 0, omitted, false, cfg.Hint)
+	}
+
+	head := cfg.MaxRunes * cfg.HeadPct / 100
+	tail := cfg.MaxRunes - head
+	omitted := total - head - tail
+	return string(runes[:head]) + truncMarker(cfg.Label, head, tail, omitted, true, cfg.Hint) + string(runes[len(runes)-tail:])
+}
+
+func truncHint(hint string) string {
+	hint = strings.TrimSpace(hint)
+	if hint == "" {
+		return ""
+	}
+	if !strings.HasSuffix(hint, ".") {
+		hint += "."
+	}
+	return " " + hint
+}
+
+func truncMarker(label string, head, tail, omitted int, headTail bool, hint string) string {
+	var b strings.Builder
+	b.WriteString("\n\n[")
+	b.WriteString(label)
+	b.WriteString(" truncated: ")
+	if headTail {
+		fmt.Fprintf(&b, "showing first ~%d tokens and last ~%d tokens; ", ApproximateTokens(head), ApproximateTokens(tail))
+	} else {
+		fmt.Fprintf(&b, "showing first ~%d tokens; ", ApproximateTokens(head))
+	}
+	fmt.Fprintf(&b, "omitted ~%d tokens.%s]", ApproximateTokens(omitted), truncHint(hint))
+	if headTail {
+		b.WriteString("\n\n")
+	}
+	return b.String()
 }
 
 func toolOutputFullyOmitted(content string) bool {

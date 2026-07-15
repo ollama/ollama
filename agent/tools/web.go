@@ -180,10 +180,9 @@ func truncateWebFetchContent(content string) string {
 	if len(runes) <= maxWebFetchContentRunes {
 		return content
 	}
-	omitted := len(runes) - maxWebFetchContentRunes
-	return string(runes[:maxWebFetchContentRunes]) + fmt.Sprintf(
-		"\n\n[tool output truncated: showing first ~%d tokens; omitted ~%d tokens. Use a narrower request or search query if more detail is needed.]",
-		agent.ApproximateTokens(maxWebFetchContentRunes),
-		agent.ApproximateTokens(omitted),
-	)
+	return agent.Truncate(content, agent.TruncateConfig{
+		MaxRunes: maxWebFetchContentRunes,
+		Label:    "tool output",
+		Hint:     "Use a narrower request or search query if more detail is needed.",
+	})
 }
