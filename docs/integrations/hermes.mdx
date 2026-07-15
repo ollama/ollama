@@ -14,7 +14,7 @@ ollama launch hermes
 
 Ollama handles everything automatically:
 
-1. **Install** — If Hermes isn't installed, Ollama prompts to install it via the Nous Research install script
+1. **Install** — If Hermes isn't installed, Ollama prompts to install the Hermes command-line agent
 2. **Model** — Pick a model from the selector (local or cloud)
 3. **Onboarding** — Ollama configures the Ollama provider, points Hermes at `http://127.0.0.1:11434/v1`, and sets your model as the primary
 4. **Gateway** — Optionally connects a messaging platform (Telegram, Discord, Slack, WhatsApp, Signal, Email) and launches the Hermes chat
@@ -45,10 +45,10 @@ hermes gateway setup
 
 ## Reconfigure
 
-Re-run the full setup wizard at any time:
+Use Hermes's model picker to change providers or models later:
 
 ```bash
-hermes setup
+hermes model
 ```
 
 ## Manual setup
@@ -106,7 +106,7 @@ Optionally connect a messaging platform during setup:
 Connect a messaging platform? (Telegram, Discord, etc.)
 
  →  Set up messaging now (recommended)
-    Skip — set up later with 'hermes setup gateway'
+    Skip — set up later with 'hermes gateway setup'
 ```
 
 ### Launch
@@ -114,4 +114,3 @@ Connect a messaging platform? (Telegram, Discord, etc.)
 ```
 Launch hermes chat now? [Y/n]: Y
 ```
-
