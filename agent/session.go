@@ -429,6 +429,12 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 		messages: make([]api.Message, 0, len(calls)),
 	}
 	projectedMessages := append([]api.Message(nil), messages...)
+	// Pre-compute the full-history token estimate once per batch instead of
+	// re-marshaling the entire history for each tool call. Per-call deltas
+	// (tool messages already appended this batch) are tracked in batchTokens
+	// and added to historyTokens for a lightweight running total.
+	historyTokens := s.estimateRunPromptTokens(opts, messages)
+	batchTokens := 0
 
 	type plannedToolCall struct {
 		call       api.ToolCall
@@ -476,9 +482,10 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 				content = "Tool execution denied."
 			}
 			for _, plan := range plans {
-				msg := s.toolMessageForContext(plan.toolName, plan.call.ID, content, opts, projectedMessages)
+				msg := s.toolMessageForContext(plan.toolName, plan.call.ID, content, opts, projectedMessages, historyTokens+batchTokens)
 				batch.messages = append(batch.messages, msg)
 				projectedMessages = append(projectedMessages, msg)
+				batchTokens += estimateMessagesTokens([]api.Message{msg})
 				deniedContent := msg.Content
 				if emitErr := s.emit(Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "denied", ToolCallID: plan.call.ID, ToolName: plan.toolName, Args: plan.args, Content: deniedContent, Error: deniedContent}); emitErr != nil {
 					return toolBatchResult{}, emitErr
@@ -504,9 +511,10 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 		}
 		if plan.tool == nil {
 			content := fmt.Sprintf("Error: unknown tool: %s", toolName)
-			msg := s.toolMessageForContext(toolName, call.ID, content, opts, projectedMessages)
+			msg := s.toolMessageForContext(toolName, call.ID, content, opts, projectedMessages, historyTokens+batchTokens)
 			batch.messages = append(batch.messages, msg)
 			projectedMessages = append(projectedMessages, msg)
+			batchTokens += estimateMessagesTokens([]api.Message{msg})
 			content = msg.Content
 			if toolOutputFullyOmitted(content) {
 				batch.overflows = append(batch.overflows, toolOutputOverflow{toolName: toolName, toolCallID: call.ID, content: fmt.Sprintf("Error: unknown tool: %s", toolName)})
@@ -524,9 +532,10 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 		result, err := s.Tools.Execute(ctx, ToolContext{WorkingDir: plan.workingDir}, call)
 		if err != nil {
 			rawContent := fmt.Sprintf("Error: %v", err)
-			msg := s.toolMessageForContext(toolName, call.ID, rawContent, opts, projectedMessages)
+			msg := s.toolMessageForContext(toolName, call.ID, rawContent, opts, projectedMessages, historyTokens+batchTokens)
 			batch.messages = append(batch.messages, msg)
 			projectedMessages = append(projectedMessages, msg)
+			batchTokens += estimateMessagesTokens([]api.Message{msg})
 			content := msg.Content
 			if toolOutputFullyOmitted(content) {
 				batch.overflows = append(batch.overflows, toolOutputOverflow{toolName: toolName, toolCallID: call.ID, content: rawContent})
@@ -552,9 +561,10 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 		}
 		rawContent := result.Content
 
-		msg := s.toolMessageForContext(toolName, call.ID, rawContent, opts, projectedMessages)
+		msg := s.toolMessageForContext(toolName, call.ID, rawContent, opts, projectedMessages, historyTokens+batchTokens)
 		batch.messages = append(batch.messages, msg)
 		projectedMessages = append(projectedMessages, msg)
+		batchTokens += estimateMessagesTokens([]api.Message{msg})
 		content := msg.Content
 
 		if toolOutputFullyOmitted(content) {
@@ -581,12 +591,15 @@ func (s *Session) disabledToolCalls(ctx context.Context, runID string, opts RunO
 		messages: make([]api.Message, 0, len(calls)),
 	}
 	projectedMessages := append([]api.Message(nil), messages...)
+	historyTokens := s.estimateRunPromptTokens(opts, messages)
+	batchTokens := 0
 	for _, call := range calls {
 		toolName := call.Function.Name
 		args := call.Function.Arguments.ToMap()
-		msg := s.toolMessageForContext(toolName, call.ID, toolExecutionDisabledMessage, opts, projectedMessages)
+		msg := s.toolMessageForContext(toolName, call.ID, toolExecutionDisabledMessage, opts, projectedMessages, historyTokens+batchTokens)
 		batch.messages = append(batch.messages, msg)
 		projectedMessages = append(projectedMessages, msg)
+		batchTokens += estimateMessagesTokens([]api.Message{msg})
 		if emitErr := s.emitIgnoringCanceled(ctx, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "disabled", ToolCallID: call.ID, ToolName: toolName, Args: args, Content: msg.Content, Error: msg.Content}); emitErr != nil {
 			return toolBatchResult{}, emitErr
 		}
@@ -733,6 +746,8 @@ func (s *Session) compactForToolOutputOverflow(ctx context.Context, runID string
 		compacted = append(compacted, assistant)
 	}
 
+	historyTokens := s.estimateRunPromptTokens(opts, compacted)
+	batchTokens := 0
 	for _, msg := range toolMessages {
 		content := msg.Content
 		toolName := msg.ToolName
@@ -742,8 +757,9 @@ func (s *Session) compactForToolOutputOverflow(ctx context.Context, runID string
 				toolName = overflow.toolName
 			}
 		}
-		refit := s.toolMessageForPostCompactionContext(toolName, msg.ToolCallID, content, opts, compacted)
+		refit := s.toolMessageForPostCompactionContext(toolName, msg.ToolCallID, content, opts, compacted, historyTokens+batchTokens)
 		compacted = append(compacted, refit)
+		batchTokens += estimateMessagesTokens([]api.Message{refit})
 	}
 
 	s.emitCompacted(runID, opts, compacted, "tool_output", result.Summary)
@@ -831,7 +847,7 @@ func resolvedMaxToolRounds(value int) int {
 	return value
 }
 
-func (s *Session) toolMessageForContext(toolName, toolCallID, content string, opts RunOptions, messages []api.Message) api.Message {
+func (s *Session) toolMessageForContext(toolName, toolCallID, content string, opts RunOptions, messages []api.Message, baseTokens int) api.Message {
 	maxRunes := maxToolResultRunes
 	if limit := smallContextToolResultLimitRunes(s.contextWindowTokens(opts)); limit > 0 {
 		maxRunes = min(maxRunes, limit)
@@ -843,13 +859,14 @@ func (s *Session) toolMessageForContext(toolName, toolCallID, content string, op
 		return msg
 	}
 
-	projected := append(append([]api.Message(nil), messages...), msg)
-	projectedTokens := s.estimateRunPromptTokens(opts, projected)
+	// Lightweight check: does the new tool message fit under the threshold?
+	// baseTokens already includes the full history estimate (computed once per
+	// batch) plus any tool messages already appended this batch.
+	projectedTokens := baseTokens + estimateMessagesTokens([]api.Message{msg})
 	if projectedTokens < threshold {
 		return msg
 	}
 
-	baseTokens := s.estimateRunPromptTokens(opts, messages)
 	overheadTokens := estimateMessagesTokens([]api.Message{{
 		Role:       "tool",
 		ToolName:   toolName,
@@ -865,7 +882,7 @@ func (s *Session) toolMessageForContext(toolName, toolCallID, content string, op
 	return msg
 }
 
-func (s *Session) toolMessageForPostCompactionContext(toolName, toolCallID, content string, opts RunOptions, messages []api.Message) api.Message {
+func (s *Session) toolMessageForPostCompactionContext(toolName, toolCallID, content string, opts RunOptions, messages []api.Message, baseTokens int) api.Message {
 	maxRunes := maxToolResultRunes
 	if limit := smallContextToolResultLimitRunes(s.contextWindowTokens(opts)); limit > 0 {
 		maxRunes = min(maxRunes, limit)
@@ -876,7 +893,6 @@ func (s *Session) toolMessageForPostCompactionContext(toolName, toolCallID, cont
 		return toolMessageWithLimit(toolName, toolCallID, content, maxRunes)
 	}
 
-	baseTokens := s.estimateRunPromptTokens(opts, messages)
 	overheadTokens := estimateMessagesTokens([]api.Message{{
 		Role:       "tool",
 		ToolName:   toolName,
