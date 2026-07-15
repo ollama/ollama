@@ -95,6 +95,8 @@ func init() {
 	}
 
 	launch.DefaultConfirmPrompt = tui.RunConfirmWithOptions
+
+	launch.DefaultSpinner = tui.RunSpinner
 }
 
 func runTUISingleSelector(title string, items []launch.SelectionItem, current string, updates <-chan []launch.SelectionItem) (string, error) {
@@ -2273,7 +2275,7 @@ func runLauncherAction(cmd *cobra.Command, action tui.TUIAction, deps launcherDe
 
 func launcherActionExitsLoop(integration string) bool {
 	switch integration {
-	case "codex-app", "vscode":
+	case "chatgpt", "codex-app", "vscode":
 		return true
 	default:
 		return false

@@ -58,9 +58,10 @@ func TestIntegrationLookup(t *testing.T) {
 		{"claude desktop", "claude-desktop", true, "Claude Desktop"},
 		{"claude desktop alias", "claude-app", true, "Claude Desktop"},
 		{"codex", "codex", true, "Codex"},
-		{"codex app", "codex-app", true, "Codex App"},
-		{"codex app desktop alias", "codex-desktop", true, "Codex App"},
-		{"codex app gui alias", "codex-gui", true, "Codex App"},
+		{"chatgpt", "chatgpt", true, "ChatGPT"},
+		{"codex app legacy alias", "codex-app", true, "ChatGPT"},
+		{"codex app desktop alias", "codex-desktop", true, "ChatGPT"},
+		{"codex app gui alias", "codex-gui", true, "ChatGPT"},
 		{"hermes desktop", "hermes-desktop", true, "Hermes Desktop"},
 		{"kimi", "kimi", true, "Kimi Code CLI"},
 		{"droid", "droid", true, "Droid"},
@@ -86,7 +87,7 @@ func TestIntegrationLookup(t *testing.T) {
 }
 
 func TestIntegrationRegistry(t *testing.T) {
-	expectedIntegrations := []string{"claude", "claude-desktop", "cline", "codex", "codex-app", "kimi", "droid", "opencode", "omp", "hermes", "hermes-desktop", "pool", "qwen", "webbrain"}
+	expectedIntegrations := []string{"claude", "claude-desktop", "cline", "codex", "chatgpt", "kimi", "droid", "opencode", "omp", "hermes", "hermes-desktop", "pool", "qwen", "webbrain"}
 	for _, name := range expectedIntegrations {
 		t.Run(name, func(t *testing.T) {
 			r, ok := integrations[name]
@@ -97,6 +98,30 @@ func TestIntegrationRegistry(t *testing.T) {
 				t.Error("integration.String() should not be empty")
 			}
 		})
+	}
+}
+
+func TestChatGPTMigratesLegacyCodexAppLaunchConfig(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	if err := config.SaveIntegration(codexAppIntegrationName, []string{"qwen3.5"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.MarkIntegrationOnboarded(codexAppIntegrationName); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := loadStoredIntegrationConfig(chatGPTIntegrationName)
+	if err != nil {
+		t.Fatalf("loadStoredIntegrationConfig returned error: %v", err)
+	}
+	if diff := compareStrings(got.Models, []string{"qwen3.5"}); diff != "" {
+		t.Fatalf("migrated models mismatch: %s", diff)
+	}
+	if !got.Onboarded {
+		t.Fatal("migrated integration should remain onboarded")
+	}
+	if _, err := config.LoadIntegration(chatGPTIntegrationName); err != nil {
+		t.Fatalf("canonical ChatGPT config was not written: %v", err)
 	}
 }
 
@@ -1789,9 +1814,9 @@ func TestIntegration_InstallHint(t *testing.T) {
 			wantURL: "https://developers.openai.com/codex/cli/",
 		},
 		{
-			name:    "codex app has hint",
-			input:   "codex-app",
-			wantURL: "https://developers.openai.com/codex/quickstart",
+			name:    "chatgpt has hint",
+			input:   "chatgpt",
+			wantURL: "https://chatgpt.com/download",
 		},
 		{
 			name:    "openclaw has hint",
@@ -1877,7 +1902,7 @@ func TestListIntegrationInfos(t *testing.T) {
 		if codexAppSupported() != nil {
 			filtered := make([]string, 0, len(want))
 			for _, name := range want {
-				if name != "codex-app" {
+				if name != "chatgpt" {
 					filtered = append(filtered, name)
 				}
 			}
@@ -1894,7 +1919,7 @@ func TestListIntegrationInfos(t *testing.T) {
 		for _, info := range infos {
 			got = append(got, info.Name)
 		}
-		wantPrefix := []string{"claude", "codex-app", "hermes", "openclaw", "webbrain", "opencode", "hermes-desktop", "codex", "copilot", "omp"}
+		wantPrefix := []string{"claude", "chatgpt", "hermes", "openclaw", "webbrain", "opencode", "hermes-desktop", "codex", "copilot", "omp"}
 		if codexAppSupported() != nil {
 			wantPrefix = []string{"claude", "hermes", "openclaw", "webbrain", "opencode", "hermes-desktop", "codex", "copilot", "omp"}
 		}
@@ -1920,7 +1945,7 @@ func TestListIntegrationInfos(t *testing.T) {
 	t.Run("includes known integrations", func(t *testing.T) {
 		known := map[string]bool{"claude": false, "cline": false, "codex": false, "opencode": false, "omp": false}
 		if codexAppSupported() == nil {
-			known["codex-app"] = false
+			known["chatgpt"] = false
 		}
 		if poolsideGOOS != "windows" {
 			known["pool"] = false

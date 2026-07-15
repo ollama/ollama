@@ -2,6 +2,7 @@ package launch
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,13 +17,14 @@ import (
 )
 
 const (
+	chatGPTIntegrationName       = "chatgpt"
 	codexAppIntegrationName      = "codex-app"
 	codexAppProfileName          = "ollama-launch-codex-app"
 	codexAppBundleID             = "com.openai.codex"
 	codexAppModelCatalogFilename = "ollama-launch-models.json"
-	codexAppRestoreHint          = "To restore your usual Codex profile, run: ollama launch codex-app --restore"
-	codexAppConfigurationSuccess = "Codex App profile changed to Ollama."
-	codexAppRestoreSuccess       = "Codex App restored to your usual profile."
+	codexAppRestoreHint          = "To restore your usual ChatGPT profile, run: ollama launch chatgpt --restore"
+	codexAppConfigurationSuccess = "ChatGPT profile changed to Ollama."
+	codexAppRestoreSuccess       = "ChatGPT restored to your usual profile."
 )
 
 var (
@@ -49,7 +51,7 @@ var (
 // model while leaving model discovery and switching to Codex's Ollama provider.
 type CodexApp struct{}
 
-func (c *CodexApp) String() string { return "Codex App" }
+func (c *CodexApp) String() string { return "ChatGPT" }
 
 func (c *CodexApp) Supported() error { return codexAppSupported() }
 
@@ -68,7 +70,7 @@ func (c *CodexApp) Configure(model string) error {
 func (c *CodexApp) ConfigureWithModels(primary string, models []LaunchModel) error {
 	primary = strings.TrimSpace(primary)
 	if primary == "" {
-		return fmt.Errorf("codex-app requires a model")
+		return fmt.Errorf("chatgpt requires a model")
 	}
 
 	configPath, err := codexConfigPath()
@@ -250,10 +252,10 @@ func writeCodexAppConfig(configPath, model, modelCatalogPath string) error {
 
 func codexValidateAppConfigText(config codexParsedConfig, model, modelCatalogPath, baseURL string) error {
 	if got, ok := config.RootStringOK(codexRootProfileKey); ok {
-		return fmt.Errorf("generated Codex App config still contains legacy profile = %q", got)
+		return fmt.Errorf("generated ChatGPT config still contains legacy profile = %q", got)
 	}
 	if config.Exists("profiles", codexAppProfileName) {
-		return fmt.Errorf("generated Codex App config still contains legacy profiles.%s table", codexAppProfileName)
+		return fmt.Errorf("generated ChatGPT config still contains legacy profiles.%s table", codexAppProfileName)
 	}
 	for _, check := range []struct {
 		path []string
@@ -267,14 +269,14 @@ func codexValidateAppConfigText(config codexParsedConfig, model, modelCatalogPat
 		{[]string{"model_providers", codexAppProfileName, "wire_api"}, "responses"},
 	} {
 		if got, ok := config.String(check.path...); !ok || got != check.want {
-			return fmt.Errorf("generated Codex App config missing %s = %q", strings.Join(check.path, "."), check.want)
+			return fmt.Errorf("generated ChatGPT config missing %s = %q", strings.Join(check.path, "."), check.want)
 		}
 	}
 	return nil
 }
 
 func (c *CodexApp) Onboard() error {
-	return config.MarkIntegrationOnboarded(codexAppIntegrationName)
+	return config.MarkIntegrationOnboarded(chatGPTIntegrationName)
 }
 
 func (c *CodexApp) RequiresInteractiveOnboarding() bool {
@@ -298,9 +300,9 @@ func (c *CodexApp) Run(_ string, _ []LaunchModel, args []string) error {
 		return err
 	}
 	if len(args) > 0 {
-		return fmt.Errorf("codex-app does not accept extra arguments")
+		return fmt.Errorf("chatgpt does not accept extra arguments")
 	}
-	return codexAppLaunchOrRestart("Restart Codex to use Ollama?", nil)
+	return codexAppLaunchOrRestart("Restart ChatGPT to use Ollama?", nil)
 }
 
 func (c *CodexApp) Restore() error {
@@ -324,7 +326,7 @@ func (c *CodexApp) Restore() error {
 			if err := codexAppRemoveOwnedCatalog(); err != nil {
 				return codexAppRestoreFailure(configPath, err)
 			}
-			return codexAppLaunchOrRestart("Restart Codex to use your usual profile?", nil)
+			return codexAppLaunchOrRestart("Restart ChatGPT to use your usual profile?", nil)
 		}
 		return codexAppRestoreFailure(configPath, err)
 	}
@@ -360,11 +362,11 @@ func (c *CodexApp) Restore() error {
 	if err := removeCodexAppRestoreState(); err != nil {
 		return codexAppRestoreFailure(configPath, err)
 	}
-	return codexAppLaunchOrRestart("Restart Codex to use your usual profile?", nil)
+	return codexAppLaunchOrRestart("Restart ChatGPT to use your usual profile?", nil)
 }
 
 func codexAppRestoreFailure(configPath string, err error) error {
-	return fmt.Errorf("restore Codex App config: %w\n\nRestore did not complete. Check these files before retrying:\n  Codex config: %s\n  Restore state: %s\n  Model catalog: %s\n  Backups: %s",
+	return fmt.Errorf("restore ChatGPT config: %w\n\nRestore did not complete. Check these files before retrying:\n  Codex config: %s\n  Restore state: %s\n  Model catalog: %s\n  Backups: %s",
 		err,
 		configPath,
 		codexAppRestoreStatePath(),
@@ -378,7 +380,7 @@ func codexAppSupported() error {
 	case "darwin", "windows":
 		return nil
 	default:
-		return fmt.Errorf("Codex App launch is only supported on macOS and Windows")
+		return fmt.Errorf("ChatGPT launch is only supported on macOS and Windows")
 	}
 }
 
@@ -422,7 +424,7 @@ func codexAppModelCatalogPathForConfig(configPath string) string {
 
 func writeCodexAppModelCatalog(path, primary string, models []LaunchModel) error {
 	if len(models) == 0 {
-		return fmt.Errorf("codex-app model catalog cannot be empty")
+		return fmt.Errorf("chatgpt model catalog cannot be empty")
 	}
 
 	baseInstructions := codexAppBaseInstructions()
@@ -585,9 +587,12 @@ func codexAppAppPath() string {
 }
 
 func codexAppDarwinAppCandidates() []string {
-	candidates := []string{"/Applications/Codex.app"}
+	candidates := []string{"/Applications/ChatGPT.app", "/Applications/Codex.app"}
 	if home, err := os.UserHomeDir(); err == nil {
-		candidates = append(candidates, filepath.Join(home, "Applications", "Codex.app"))
+		candidates = append(candidates,
+			filepath.Join(home, "Applications", "ChatGPT.app"),
+			filepath.Join(home, "Applications", "Codex.app"),
+		)
 	}
 	return candidates
 }
@@ -599,6 +604,11 @@ func codexAppWindowsAppCandidates() []string {
 	}
 
 	candidates := []string{
+		filepath.Join(local, "Programs", "ChatGPT", "ChatGPT.exe"),
+		filepath.Join(local, "Programs", "OpenAI ChatGPT", "ChatGPT.exe"),
+		filepath.Join(local, "ChatGPT", "ChatGPT.exe"),
+		filepath.Join(local, "OpenAI ChatGPT", "ChatGPT.exe"),
+		filepath.Join(local, "OpenAI", "ChatGPT", "ChatGPT.exe"),
 		filepath.Join(local, "Programs", "Codex", "Codex.exe"),
 		filepath.Join(local, "Programs", "OpenAI Codex", "Codex.exe"),
 		filepath.Join(local, "Codex", "Codex.exe"),
@@ -607,6 +617,11 @@ func codexAppWindowsAppCandidates() []string {
 		filepath.Join(local, "openai-codex-electron", "Codex.exe"),
 	}
 	for _, pattern := range []string{
+		filepath.Join(local, "Programs", "ChatGPT", "app-*", "ChatGPT.exe"),
+		filepath.Join(local, "Programs", "OpenAI ChatGPT", "app-*", "ChatGPT.exe"),
+		filepath.Join(local, "ChatGPT", "app-*", "ChatGPT.exe"),
+		filepath.Join(local, "OpenAI ChatGPT", "app-*", "ChatGPT.exe"),
+		filepath.Join(local, "OpenAI", "ChatGPT", "app-*", "ChatGPT.exe"),
 		filepath.Join(local, "Programs", "Codex", "app-*", "Codex.exe"),
 		filepath.Join(local, "Programs", "OpenAI Codex", "app-*", "Codex.exe"),
 		filepath.Join(local, "Codex", "app-*", "Codex.exe"),
@@ -669,22 +684,54 @@ func codexAppLaunchOrRestart(prompt string, launchArgs []string) error {
 		return err
 	}
 	if !restart {
-		fmt.Fprintln(os.Stderr, "\nQuit and reopen Codex when you're ready for the profile change to take effect.")
+		fmt.Fprintln(os.Stderr, "\nQuit and reopen ChatGPT when you're ready for the profile change to take effect.")
 		return nil
 	}
 
-	if err := codexAppQuitApp(); err != nil {
-		return fmt.Errorf("quit Codex: %w", err)
+	// A single spinner and cancellation channel span the entire restart flow
+	// (quit, wait, force-quit, wait, reopen) so that one Ctrl+C aborts the
+	// whole sequence rather than just the currently-active wait. The bubbletea
+	// spinner closes Cancelled() from its raw-mode Ctrl+C handler; the ANSI
+	// fallback relies on SIGINT terminating the process directly.
+	sp := StartSpinner(codexAppRestartMessage)
+	defer sp.Stop()
+	cancelled := sp.Cancelled()
+	isCancelled := func() bool {
+		if cancelled == nil {
+			return false
+		}
+		select {
+		case <-cancelled:
+			return true
+		default:
+			return false
+		}
 	}
-	gracefulErr := waitForCodexAppGracefulExit(codexAppExitTimeout)
+
+	if err := codexAppQuitApp(); err != nil {
+		return fmt.Errorf("quit ChatGPT: %w", err)
+	}
+	if isCancelled() {
+		return ErrCancelled
+	}
+	gracefulErr := waitForCodexAppGracefulExit(codexAppExitTimeout, cancelled)
+	if isCancelled() {
+		return ErrCancelled
+	}
+	if errors.Is(gracefulErr, ErrCancelled) {
+		return gracefulErr
+	}
 	if gracefulErr != nil && !codexAppForceQuitSupported() {
 		return gracefulErr
 	}
 	if codexAppForceQuitSupported() && codexAppIsRunning() {
-		if forceErr := codexAppForceQuit(); forceErr != nil {
-			return fmt.Errorf("force stop Codex: %w", forceErr)
+		if isCancelled() {
+			return ErrCancelled
 		}
-		if err := waitForCodexAppExit(codexAppForceExitTimeout); err != nil {
+		if forceErr := codexAppForceQuit(); forceErr != nil {
+			return fmt.Errorf("force stop ChatGPT: %w", forceErr)
+		}
+		if err := waitForCodexAppExit(codexAppForceExitTimeout, cancelled); err != nil {
 			return err
 		}
 	} else if gracefulErr != nil {
@@ -692,6 +739,10 @@ func codexAppLaunchOrRestart(prompt string, launchArgs []string) error {
 			return gracefulErr
 		}
 	}
+	if isCancelled() {
+		return ErrCancelled
+	}
+	sp.Stop()
 	if restartAppID != "" {
 		return codexAppOpenStart(restartAppID)
 	}
@@ -705,8 +756,8 @@ func codexAppForceQuitSupported() bool {
 	return codexAppGOOS == "darwin" || codexAppGOOS == "windows"
 }
 
-func waitForCodexAppGracefulExit(timeout time.Duration) error {
-	return waitForCodexAppCondition(timeout, func() bool {
+func waitForCodexAppGracefulExit(timeout time.Duration, cancel <-chan struct{}) error {
+	return waitForCodexAppCondition(timeout, cancel, func() bool {
 		if codexAppGOOS == "windows" {
 			return !codexAppHasWindow()
 		}
@@ -714,21 +765,41 @@ func waitForCodexAppGracefulExit(timeout time.Duration) error {
 	})
 }
 
-func waitForCodexAppExit(timeout time.Duration) error {
-	return waitForCodexAppCondition(timeout, func() bool {
+func waitForCodexAppExit(timeout time.Duration, cancel <-chan struct{}) error {
+	return waitForCodexAppCondition(timeout, cancel, func() bool {
 		return !codexAppIsRunning()
 	})
 }
 
-func waitForCodexAppCondition(timeout time.Duration, done func() bool) error {
+// codexAppRestartMessage is the label shown next to the animated spinner while
+// the ChatGPT desktop app is quitting before being reopened.
+const codexAppRestartMessage = "Restarting ChatGPT..."
+
+// waitForCodexAppCondition polls done at a 200ms cadence until it reports the
+// app has exited or timeout elapses. It watches cancel (closed by the spinner
+// when the user hits Ctrl+C) and returns ErrCancelled if the flow is aborted.
+// The spinner itself is owned by the caller so a single spinner spans the
+// whole restart sequence. When timeout is zero the loop never runs, so
+// force-quit paths that short-circuit the graceful wait return immediately.
+func waitForCodexAppCondition(timeout time.Duration, cancel <-chan struct{}, done func() bool) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
+		if cancel != nil {
+			select {
+			case <-cancel:
+				return ErrCancelled
+			default:
+			}
+		}
 		if done() {
 			return nil
 		}
 		codexAppSleep(200 * time.Millisecond)
 	}
-	return fmt.Errorf("Codex did not quit; quit it manually and re-run the command")
+	if done() {
+		return nil
+	}
+	return fmt.Errorf("ChatGPT did not quit; quit it manually and re-run the command")
 }
 
 func defaultCodexAppOpenApp(args []string) error {
@@ -751,7 +822,7 @@ func defaultCodexAppOpenApp(args []string) error {
 		if appID := codexAppStartID(); appID != "" {
 			return codexAppOpenStart(appID)
 		}
-		return fmt.Errorf("Codex executable was not found; open Codex manually once and re-run 'ollama launch codex-app'")
+		return fmt.Errorf("ChatGPT was not found; install it from https://chatgpt.com/download, then re-run 'ollama launch chatgpt'")
 	case "darwin":
 		if path := codexAppAppPath(); path != "" {
 			cmd := exec.Command("open", path)
@@ -788,13 +859,16 @@ func defaultCodexAppOpenStartAppID(appID string) error {
 
 func defaultCodexAppQuitApp() error {
 	if codexAppGOOS == "windows" {
-		script := `Get-Process Codex -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object { [void]$_.CloseMainWindow() }`
+		script := `Get-Process ChatGPT,Codex -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object { [void]$_.CloseMainWindow() }`
 		return exec.Command("powershell.exe", "-NoProfile", "-Command", script).Run()
 	}
 
-	scriptErr := exec.Command("osascript", "-e", `tell application "Codex" to quit`).Run()
+	scriptErr := exec.Command("osascript", "-e", `tell application "ChatGPT" to quit`).Run()
 	if scriptErr != nil {
 		scriptErr = exec.Command("osascript", "-e", `tell application id "`+codexAppBundleID+`" to quit`).Run()
+	}
+	if scriptErr != nil {
+		scriptErr = exec.Command("osascript", "-e", `tell application "Codex" to quit`).Run()
 	}
 	return scriptErr
 }
@@ -834,7 +908,7 @@ func defaultCodexAppHasOpenWindow() bool {
 	if codexAppGOOS != "windows" {
 		return codexAppIsRunning()
 	}
-	script := `(Get-Process Codex -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1).Id`
+	script := `(Get-Process ChatGPT,Codex -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1).Id`
 	out, err := exec.Command("powershell.exe", "-NoProfile", "-Command", script).Output()
 	return err == nil && strings.TrimSpace(string(out)) != ""
 }
@@ -844,7 +918,11 @@ func defaultCodexAppIsRunning() bool {
 	case "windows":
 		return len(codexAppMatchingProcessIDs()) > 0
 	case "darwin":
-		out, err := exec.Command("osascript", "-e", `tell application "System Events" to exists process "Codex"`).Output()
+		out, err := exec.Command("osascript", "-e", `tell application "System Events" to exists process "ChatGPT"`).Output()
+		if err == nil && strings.TrimSpace(string(out)) == "true" {
+			return true
+		}
+		out, err = exec.Command("osascript", "-e", `tell application "System Events" to exists process "Codex"`).Output()
 		if err == nil && strings.TrimSpace(string(out)) == "true" {
 			return true
 		}
@@ -886,7 +964,7 @@ func codexAppMatchingProcessIDs() []int {
 }
 
 func codexAppWindowsMatchingProcessIDs() []int {
-	script := fmt.Sprintf(`$current = %d; Get-CimInstance Win32_Process -Filter "Name = 'Codex.exe' OR Name = 'codex.exe'" | Where-Object { $_.ProcessId -ne $current -and ((($_.Name -ieq 'Codex.exe') -and (($null -eq $_.CommandLine) -or ($_.CommandLine -notlike '* --type=*'))) -or (($_.Name -ieq 'codex.exe') -and ($_.CommandLine -like '*app-server*'))) } | Select-Object -ExpandProperty ProcessId`, os.Getpid())
+	script := fmt.Sprintf(`$current = %d; Get-CimInstance Win32_Process -Filter "Name = 'Codex.exe' OR Name = 'codex.exe' OR Name = 'ChatGPT.exe' OR Name = 'chatgpt.exe'" | Where-Object { $_.ProcessId -ne $current -and ((($_.Name -ieq 'Codex.exe' -or $_.Name -ieq 'ChatGPT.exe') -and (($null -eq $_.CommandLine) -or ($_.CommandLine -notlike '* --type=*'))) -or ((($_.Name -ieq 'codex.exe') -or ($_.Name -ieq 'chatgpt.exe')) -and ($_.CommandLine -like '*app-server*'))) } | Select-Object -ExpandProperty ProcessId`, os.Getpid())
 	out, err := exec.Command("powershell.exe", "-NoProfile", "-Command", script).Output()
 	if err != nil {
 		return nil
@@ -906,7 +984,7 @@ func defaultCodexAppRunningAppPath() string {
 	if codexAppGOOS != "windows" {
 		return ""
 	}
-	script := `(Get-Process Codex -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 -and $_.Path } | Select-Object -First 1 -ExpandProperty Path)`
+	script := `(Get-Process ChatGPT,Codex -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 -and $_.Path } | Select-Object -First 1 -ExpandProperty Path)`
 	out, err := exec.Command("powershell.exe", "-NoProfile", "-Command", script).Output()
 	if err != nil {
 		return ""
@@ -918,7 +996,7 @@ func defaultCodexAppStartAppID() string {
 	if codexAppGOOS != "windows" {
 		return ""
 	}
-	script := `(Get-StartApps Codex | Where-Object { $_.Name -eq 'Codex' -or $_.Name -like 'Codex*' } | Select-Object -First 1 -ExpandProperty AppID)`
+	script := `(Get-StartApps | Where-Object { $_.Name -eq 'ChatGPT' -or $_.Name -like 'ChatGPT*' -or $_.Name -eq 'Codex' -or $_.Name -like 'Codex*' } | Select-Object -First 1 -ExpandProperty AppID)`
 	out, err := exec.Command("powershell.exe", "-NoProfile", "-Command", script).Output()
 	if err != nil {
 		return ""
@@ -936,7 +1014,7 @@ func defaultCodexAppCanOpenBundleID() bool {
 }
 
 func codexAppProcessMatches(command string) bool {
-	if strings.Contains(command, `\Codex.exe`) && strings.Contains(command, " --type=") {
+	if (strings.Contains(command, `\Codex.exe`) || strings.Contains(command, `\ChatGPT.exe`)) && strings.Contains(command, " --type=") {
 		return false
 	}
 	for _, pattern := range codexAppProcessPatterns() {
@@ -949,8 +1027,14 @@ func codexAppProcessMatches(command string) bool {
 
 func codexAppProcessPatterns() []string {
 	return []string{
+		"ChatGPT.app/Contents/MacOS/ChatGPT",
+		"ChatGPT.app/Contents/Resources/codex app-server",
 		"Codex.app/Contents/MacOS/Codex",
 		"Codex.app/Contents/Resources/codex app-server",
+		`\ChatGPT.exe`,
+		`resources\chatgpt.exe app-server`,
+		`resources\chatgpt.exe" app-server`,
+		`resources\chatgpt.exe" "app-server`,
 		`\Codex.exe`,
 		`resources\codex.exe app-server`,
 		`resources\codex.exe" app-server`,
