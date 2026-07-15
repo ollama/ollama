@@ -233,16 +233,15 @@ func (m *chatModel) addDetectedToolCalls(calls []api.ToolCall) {
 }
 
 func toolFinishedStatus(event coreagent.Event) string {
-	switch strings.TrimSpace(event.Status) {
-	case "denied":
+	switch event.ToolStatus {
+	case coreagent.ToolStatusDenied:
 		return "denied"
-	case "disabled":
+	case coreagent.ToolStatusDisabled:
 		return "disabled"
-	case "done":
+	case coreagent.ToolStatusDone:
 		return "done"
-	case "error":
-		return "error"
 	}
+	// failed/skipped/unknown: derive from content and error fields.
 	if isDeniedToolResult(event.Content) || isDeniedToolResult(event.Error) {
 		return "denied"
 	}

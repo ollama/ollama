@@ -720,7 +720,7 @@ func TestSessionDisabledToolsOmitToolsAndReturnsDisabledResults(t *testing.T) {
 		if event.Type == EventToolCallDetected {
 			sawDetected = true
 		}
-		if event.Type == EventToolFinished && event.Status == "disabled" && event.Content == toolExecutionDisabledMessage {
+		if event.Type == EventToolFinished && event.ToolStatus == ToolStatusDisabled && event.Content == toolExecutionDisabledMessage {
 			sawDisabled = true
 		}
 	}
@@ -807,7 +807,7 @@ func TestSessionCancellationDuringToolExecutionAppendsToolMessage(t *testing.T) 
 	if finished == nil {
 		t.Fatalf("run finished event missing: %#v", events.events)
 	}
-	if finished.Status != "canceled" {
+	if finished.Status != RunStatusCanceled {
 		t.Fatalf("run status = %q, want canceled", finished.Status)
 	}
 }

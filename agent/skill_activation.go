@@ -46,7 +46,7 @@ func (s *Session) activateSkill(ctx context.Context, runID string, opts RunOptio
 	if err := s.emitToolStarted(runID, opts, call.ID, "skill", s.currentWorkingDir(), args.ToMap()); err != nil {
 		return nil, err
 	}
-	if err := s.emitToolFinished(ctx, runID, opts, "done", call.ID, "skill", s.currentWorkingDir(), args.ToMap(), result.Content, ""); err != nil {
+	if err := s.emitToolFinished(ctx, runID, opts, ToolStatusDone, call.ID, "skill", s.currentWorkingDir(), args.ToMap(), result.Content, ""); err != nil {
 		return nil, err
 	}
 	return []api.Message{
