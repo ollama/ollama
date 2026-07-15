@@ -73,6 +73,14 @@ operator
     </div>
 
     <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="file-search" /></div>
+      <div>
+        <div className="capability-list-heading">Deep research</div>
+        <div className="capability-list-copy">Multi-step web research with cross-verification and detailed reports</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
       <div className="capability-list-icon"><Icon icon="globe" /></div>
       <div>
         <div className="capability-list-heading">Browser</div>
@@ -152,6 +160,27 @@ Operator can control a real browser for QA, E2E testing, and UI verification:
 | Select element | `select the dropdown and choose "Premium"` |
 
 The browser runs headless — no GUI required, works on VPS.
+
+## Deep research
+
+Operator can perform multi-step web research with cross-verification and confidence scoring:
+
+| Feature | Description |
+|---|---|
+| Multi-source search | Searches DuckDuckGo and Wikipedia in parallel |
+| Cross-verification | Compares claims across multiple sources |
+| Confidence scoring | Rates each claim (confirmed / likely / unclear) |
+| Structured reports | Generates detailed reports with citations |
+| Query planning | Breaks complex topics into focused sub-queries |
+| Claim scoring | Evaluates individual claims against evidence |
+
+Usage example:
+
+```text
+research "compare qwen3 vs gemma4 architecture and performance"
+```
+
+Output includes a structured report with sources, confidence levels, and detailed findings.
 
 ## Requirements
 
