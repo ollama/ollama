@@ -541,6 +541,34 @@ func TestSkillCommandsListAndPersistSyntheticToolCall(t *testing.T) {
 	}
 }
 
+func TestSkillSlashCommandPromptBecomesUserMessage(t *testing.T) {
+	catalog := writeTestSkillCatalog(t)
+	m := chatModel{ctx: context.Background(), opts: Options{Model: "test", Skills: catalog, Client: chatTestClient{}}, input: []rune("/release-notes draft the v1.2 notes")}
+	updated, cmd := m.handleSubmit()
+	if cmd == nil {
+		t.Fatal("/<skill-name> <prompt> should start a run")
+	}
+	m = updated.(chatModel)
+	for {
+		msg, ok := <-m.events
+		if !ok {
+			t.Fatal("skill run closed before it finished")
+		}
+		updated, _ = m.Update(msg)
+		m = updated.(chatModel)
+		if _, ok := msg.(chatRunDoneMsg); ok {
+			break
+		}
+	}
+	if len(m.messages) < 1 || m.messages[0].Role != "user" || m.messages[0].Content != "draft the v1.2 notes" {
+		t.Fatalf("user message = %#v, want the prompt", m.messages[0])
+	}
+	// The skill still loads as a synthetic tool call right after the user turn.
+	if len(m.messages) < 3 || m.messages[1].Role != "assistant" || len(m.messages[1].ToolCalls) != 1 || m.messages[1].ToolCalls[0].Function.Name != "skill" {
+		t.Fatalf("synthetic skill call missing: %#v", m.messages)
+	}
+}
+
 func writeTestSkillCatalog(t *testing.T) *coreagent.SkillCatalog {
 	t.Helper()
 	dir := t.TempDir()
@@ -572,18 +600,18 @@ func TestSkillSlashNameResolvesAndRejectsArgsAndUnknown(t *testing.T) {
 	catalog := writeTestSkillCatalog(t)
 	m := &chatModel{opts: Options{Skills: catalog}}
 
-	if got := m.skillSlashName("/release-notes"); got != "release-notes" {
-		t.Fatalf("/release-notes = %q, want release-notes", got)
+	if name, _, ok := m.skillSlashInvocation("/release-notes"); !ok || name != "release-notes" {
+		t.Fatalf("/release-notes = %q %v, want release-notes true", name, ok)
 	}
-	if got := m.skillSlashName("/release-notes extra"); got != "" {
-		t.Fatalf("skill with args = %q, want empty", got)
+	if name, prompt, ok := m.skillSlashInvocation("/release-notes draft notes"); !ok || name != "release-notes" || prompt != "draft notes" {
+		t.Fatalf("/release-notes draft notes = %q %q %v, want release-notes / draft notes / true", name, prompt, ok)
 	}
-	if got := m.skillSlashName("/no-such-skill"); got != "" {
-		t.Fatalf("unknown skill = %q, want empty", got)
+	if _, _, ok := m.skillSlashInvocation("/no-such-skill"); ok {
+		t.Fatal("unknown skill should not resolve")
 	}
 	// A built-in command sharing a prefix must not be claimed as a skill.
-	if got := m.skillSlashName("/skills"); got != "" {
-		t.Fatalf("/skills = %q, want empty (built-in wins)", got)
+	if _, _, ok := m.skillSlashInvocation("/skills"); ok {
+		t.Fatal("/skills should resolve to the built-in, not a skill")
 	}
 
 	// Unknown slash input that is not a skill stays an unknown command.

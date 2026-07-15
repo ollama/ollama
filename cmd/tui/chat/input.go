@@ -74,8 +74,10 @@ func (m *chatModel) handleSubmit() (tea.Model, tea.Cmd) {
 		return *m, nil
 	}
 	_, _, hasSlashCommand := slashCommandInvocation(input)
-	if !hasSlashCommand && m.skillSlashName(input) != "" {
-		hasSlashCommand = true
+	if !hasSlashCommand {
+		if _, _, ok := m.skillSlashInvocation(input); ok {
+			hasSlashCommand = true
+		}
 	}
 	if (m.running || m.compacting) && !hasSlashCommand {
 		m.status = "wait for current response"
@@ -111,6 +113,7 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 	if command != "" {
 		input = strings.TrimSpace(command + " " + args)
 	}
+	skillName, skillPrompt, skillOK := m.skillSlashInvocation(input)
 
 	switch {
 	case command == "/bye":
@@ -139,8 +142,8 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 		return m.resetChat("new chat")
 	case command == "/compact" && args == "":
 		return m.startManualCompaction()
-	case m.skillSlashName(input) != "":
-		return m.startSkillRun(m.skillSlashName(input))
+	case skillOK:
+		return m.startSkillRun(skillName, skillPrompt)
 	case strings.HasPrefix(input, "/") && m.slashInputIsMultimodalFile(input):
 		return m.startRun(input)
 	case strings.HasPrefix(input, "/"):
@@ -185,25 +188,27 @@ func skillsDirForDisplay(catalog *coreagent.SkillCatalog) string {
 	return dir
 }
 
-// skillSlashName returns the skill name when input is "/<skill-name>" with no
-// arguments naming a catalog skill; otherwise "". Built-in slash commands take
-// precedence, so a skill sharing a command name is not reachable this way.
-func (m *chatModel) skillSlashName(input string) string {
+// skillSlashInvocation parses "/<skill-name>" or "/<skill-name> <prompt>".
+// It returns the skill name, any trailing prompt, and ok when the first token is
+// a catalog skill. Built-in slash commands take precedence over same-named
+// skills, so they are never claimed here.
+func (m *chatModel) skillSlashInvocation(input string) (name, prompt string, ok bool) {
 	input = strings.TrimSpace(input)
-	if !strings.HasPrefix(input, "/") || strings.ContainsAny(input, " \t") {
-		return ""
+	if !strings.HasPrefix(input, "/") {
+		return "", "", false
 	}
-	name := strings.TrimPrefix(input, "/")
+	token, args, _ := strings.Cut(input, " ")
+	name = strings.TrimPrefix(token, "/")
 	if name == "" {
-		return ""
+		return "", "", false
 	}
 	if _, _, known := slashCommandInvocation(input); known {
-		return ""
+		return "", "", false
 	}
 	if _, err := m.opts.Skills.Load(name); err != nil {
-		return ""
+		return "", "", false
 	}
-	return name
+	return name, strings.TrimSpace(args), true
 }
 
 func (m *chatModel) handleToolsCommand(args string) (tea.Model, tea.Cmd) {

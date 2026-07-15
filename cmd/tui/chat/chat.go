@@ -1074,14 +1074,22 @@ func pluralSuffix(count int) string {
 	return "s"
 }
 
-func (m *chatModel) startSkillRun(name string) (tea.Model, tea.Cmd) {
+func (m *chatModel) startSkillRun(name, prompt string) (tea.Model, tea.Cmd) {
 	name = strings.TrimSpace(name)
+	prompt = strings.TrimSpace(prompt)
 	// The skill instructions are delivered via the synthetic tool result that
 	// follows this user turn, so this message orients the model rather than
-	// re-requesting the skill (which would just re-load the same content via the
-	// skill tool).
-	message := api.Message{Role: "user", Content: "The " + name + " skill is loaded; follow its instructions for this request."}
-	return m.startRunWithMessages("/skill "+name, "", []api.Message{message}, "", name)
+	// re-requesting the skill. When a prompt is supplied it becomes the task.
+	content := prompt
+	if content == "" {
+		content = "The " + name + " skill is loaded; follow its instructions for this request."
+	}
+	message := api.Message{Role: "user", Content: content}
+	displayInput := "/" + name
+	if prompt != "" {
+		displayInput = "/" + name + " " + prompt
+	}
+	return m.startRunWithMessages(displayInput, "", []api.Message{message}, "", name)
 }
 
 func (m *chatModel) startRunWithMessages(displayInput, historyInput string, newMessages []api.Message, extraSystemPrompt, skillName string) (tea.Model, tea.Cmd) {
