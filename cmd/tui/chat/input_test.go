@@ -506,10 +506,10 @@ func TestSkillCommandsListAndPersistSyntheticToolCall(t *testing.T) {
 		t.Fatalf("/skills entries = %#v", m.entries)
 	}
 
-	m = chatModel{ctx: context.Background(), opts: Options{Model: "test", Skills: catalog, Client: chatTestClient{}}, input: []rune("/skill release-notes")}
+	m = chatModel{ctx: context.Background(), opts: Options{Model: "test", Skills: catalog, Client: chatTestClient{}}, input: []rune("/release-notes")}
 	updated, cmd = m.handleSubmit()
 	if cmd == nil {
-		t.Fatal("/skill should continue the chat with the loaded instructions")
+		t.Fatal("/<skill-name> should continue the chat with the loaded instructions")
 	}
 	m = updated.(chatModel)
 	events := m.events
@@ -538,6 +538,63 @@ func TestSkillCommandsListAndPersistSyntheticToolCall(t *testing.T) {
 	entries := entriesFromMessages(m.messages)
 	if len(entries) != 3 || entries[1].toolID != call.ToolCalls[0].ID || entries[1].detail != "skill" || entries[1].args["name"] != "release-notes" {
 		t.Fatalf("round-trip entries = %#v", entries)
+	}
+}
+
+func writeTestSkillCatalog(t *testing.T) *coreagent.SkillCatalog {
+	t.Helper()
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "release-notes")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: release-notes\ndescription: Draft release notes.\n---\nUse concise bullets."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := coreagent.DiscoverSkills(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return catalog
+}
+
+func TestSkillSlashCommandAppearsInCompletions(t *testing.T) {
+	catalog := writeTestSkillCatalog(t)
+	m := chatModel{opts: Options{Skills: catalog}, input: []rune("/re")}
+
+	lines := stripANSI(strings.Join(m.slashCommandLines(80), "\n"))
+	if !strings.Contains(lines, "/release-notes") || !strings.Contains(lines, "Draft release notes.") {
+		t.Fatalf("suggestions missing /release-notes: %q", lines)
+	}
+}
+
+func TestSkillSlashNameResolvesAndRejectsArgsAndUnknown(t *testing.T) {
+	catalog := writeTestSkillCatalog(t)
+	m := &chatModel{opts: Options{Skills: catalog}}
+
+	if got := m.skillSlashName("/release-notes"); got != "release-notes" {
+		t.Fatalf("/release-notes = %q, want release-notes", got)
+	}
+	if got := m.skillSlashName("/release-notes extra"); got != "" {
+		t.Fatalf("skill with args = %q, want empty", got)
+	}
+	if got := m.skillSlashName("/no-such-skill"); got != "" {
+		t.Fatalf("unknown skill = %q, want empty", got)
+	}
+	// A built-in command sharing a prefix must not be claimed as a skill.
+	if got := m.skillSlashName("/skills"); got != "" {
+		t.Fatalf("/skills = %q, want empty (built-in wins)", got)
+	}
+
+	// Unknown slash input that is not a skill stays an unknown command.
+	m2 := chatModel{opts: Options{Skills: catalog}, input: []rune("/no-such-skill")}
+	updated, cmd := m2.handleSubmit()
+	if cmd != nil {
+		t.Fatal("unknown slash command should not start a run")
+	}
+	m2 = updated.(chatModel)
+	if len(m2.entries) != 1 || m2.entries[0].role != "error" || !strings.Contains(m2.entries[0].content, "Unknown command") {
+		t.Fatalf("entries = %#v, want unknown command", m2.entries)
 	}
 }
 
