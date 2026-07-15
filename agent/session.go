@@ -142,30 +142,15 @@ func (st *runState) finishError(err error) {
 }
 
 func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) {
-	if s == nil {
-		return nil, errors.New("nil session")
-	}
-	if s.Client == nil {
-		return nil, errors.New("agent session requires a chat client")
-	}
-	if opts.Model == "" {
-		return nil, errors.New("agent session requires a model")
+	if err := s.validateRun(opts); err != nil {
+		return nil, err
 	}
 	if s.ApprovalState == nil {
 		s.ApprovalState = &ApprovalState{}
 	}
 	runID := uuid.NewString()
-	messages := make([]api.Message, 0, len(opts.Messages)+len(opts.NewMessages))
-	for _, msg := range opts.Messages {
-		messages = append(messages, sanitizeMessageForRun(msg))
-	}
-	for _, msg := range opts.NewMessages {
-		msg = sanitizeMessageForRun(msg)
-		messages = append(messages, msg)
-	}
-
-	if err := s.checkPreflightPromptBudget(opts, messages); err != nil {
-		s.emit(Event{Type: EventError, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Error: err.Error()})
+	messages, err := s.buildRunMessages(ctx, runID, opts)
+	if err != nil {
 		return nil, err
 	}
 
@@ -194,6 +179,40 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 			return s.finishRun(ctx, &st)
 		}
 	}
+}
+
+// validateRun checks the preconditions for a run.
+func (s *Session) validateRun(opts RunOptions) error {
+	if s == nil {
+		return errors.New("nil session")
+	}
+	if s.Client == nil {
+		return errors.New("agent session requires a chat client")
+	}
+	if opts.Model == "" {
+		return errors.New("agent session requires a model")
+	}
+	return nil
+}
+
+// buildRunMessages sanitizes the provided message history, runs the preflight
+// prompt-budget check, and returns the initial message list for the run. It
+// emits an EventError and returns it if the preflight check fails.
+func (s *Session) buildRunMessages(ctx context.Context, runID string, opts RunOptions) ([]api.Message, error) {
+	messages := make([]api.Message, 0, len(opts.Messages)+len(opts.NewMessages))
+	for _, msg := range opts.Messages {
+		messages = append(messages, sanitizeMessageForRun(msg))
+	}
+	for _, msg := range opts.NewMessages {
+		msg = sanitizeMessageForRun(msg)
+		messages = append(messages, msg)
+	}
+
+	if err := s.checkPreflightPromptBudget(opts, messages); err != nil {
+		s.emit(Event{Type: EventError, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Error: err.Error()})
+		return nil, err
+	}
+	return messages, nil
 }
 
 func (s *Session) runModelStep(ctx context.Context, st *runState) error {
