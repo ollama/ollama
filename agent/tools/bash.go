@@ -432,7 +432,7 @@ func (b *boundedOutput) String(label string) string {
 	if omitted == 0 {
 		return content
 	}
-	return content + fmt.Sprintf("\n\n[%s truncated: showing first ~%d tokens; omitted ~%d tokens.]", label, agent.ApproximateTokens(safeLen), agent.ApproximateTokens(omitted))
+	return content + agent.TruncMarker(label, safeLen, 0, omitted, false, "")
 }
 
 func utf8SafePrefixLen(p []byte) int {

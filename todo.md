@@ -13,14 +13,20 @@
 - [ ] Update tests accordingly
 - [ ] `go vet`, `go test ./...`
 
-## 3. Truncation sprawl — unify into one helper
-- [ ] Create a single `truncate(content string, opts truncateOpts) string` helper
-- [ ] `truncateOpts` struct: `{maxRunes int, headRatio float64, fullOmissionPrefix string, marker string}` — `headRatio` of 0 = head-only, 0.75 = head+tail split
-- [ ] All 5 truncation sites route through it: `truncateToolResultContentTo` (head+tail), its `maxRunes <= 0` full-omission branch, `truncateCompactionSummary` (head-only), `truncateWebFetchContent` (head-only), `boundedOutput.String` (bash stdout/stderr)
-- [ ] Standardize marker wording — shared template with a `label` param ("tool output", "summary", "stdout", etc.) so the model sees consistent truncation language
-- [ ] Replace the rune-by-rune `strings.Builder` loop in `truncateCompactionSummary` with `[]rune` slicing (same as the other sites already use)
-- [ ] Confirm whether the `maxRunes <= 0` full-omission branch is reachable; if only `toolMessageWithLimit` callers can pass 0 and none do in practice, simplify
-- [ ] `go vet`, `go test ./...`
+## 3. Truncation sprawl — unify into one helper (DONE)
+- [x] Create a single `Truncate(content string, cfg TruncateConfig) string` helper
+- [x] `TruncateConfig` struct: `{MaxRunes, HeadTail, HeadPct, Label, Hint, FullOmissionPrefix}`
+- [x] 4 post-hoc truncation sites route through `Truncate`: `truncateToolResultContentTo`
+      (head+tail + full-omission), `truncateCompactionSummary` (head-only),
+      `truncateWebFetchContent` (head-only)
+- [x] `boundedOutput.String` (bash stdout/stderr) uses streaming byte truncation during
+      `Write()` — structurally different from post-hoc `Truncate` (which re-slices a complete
+      rune string). It cannot route through `Truncate` without buffering all output. Instead
+      it shares the marker formatting via exported `TruncMarker` for consistent wording.
+- [x] Standardize marker wording — `TruncMarker` with a `label` param
+- [x] Replace the rune-by-rune `strings.Builder` loop in `truncateCompactionSummary` with `[]rune` slicing
+- [x] The `MaxRunes <= 0` full-omission branch IS reachable (via `max(0, availableRunes)` in
+      `toolMessageWithBudget` when `availableRunes < 0`); kept as-is
 
 ## 4. executeToolCalls — per-tool estimate is preventive, not a preflight
 Context: `estimateRunPromptTokens` inside `toolMessageForContext` (session.go:890,895) is a

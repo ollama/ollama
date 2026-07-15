@@ -1019,13 +1019,13 @@ func Truncate(content string, cfg TruncateConfig) string {
 	if !cfg.HeadTail {
 		head := cfg.MaxRunes
 		omitted := total - head
-		return string(runes[:head]) + truncMarker(cfg.Label, head, 0, omitted, false, cfg.Hint)
+		return string(runes[:head]) + TruncMarker(cfg.Label, head, 0, omitted, false, cfg.Hint)
 	}
 
 	head := cfg.MaxRunes * cfg.HeadPct / 100
 	tail := cfg.MaxRunes - head
 	omitted := total - head - tail
-	return string(runes[:head]) + truncMarker(cfg.Label, head, tail, omitted, true, cfg.Hint) + string(runes[len(runes)-tail:])
+	return string(runes[:head]) + TruncMarker(cfg.Label, head, tail, omitted, true, cfg.Hint) + string(runes[len(runes)-tail:])
 }
 
 func truncHint(hint string) string {
@@ -1039,7 +1039,10 @@ func truncHint(hint string) string {
 	return " " + hint
 }
 
-func truncMarker(label string, head, tail, omitted int, headTail bool, hint string) string {
+// TruncMarker formats a truncation marker with consistent wording. head and
+// tail are rune counts; omitted is the count of runes removed. headTail
+// selects the head+tail vs head-only format. hint is optional guidance text.
+func TruncMarker(label string, head, tail, omitted int, headTail bool, hint string) string {
 	var b strings.Builder
 	b.WriteString("\n\n[")
 	b.WriteString(label)

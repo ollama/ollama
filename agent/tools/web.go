@@ -178,10 +178,6 @@ func (w *WebFetch) Execute(ctx context.Context, _ agent.ToolContext, args map[st
 }
 
 func truncateWebFetchContent(content string) string {
-	runes := []rune(content)
-	if len(runes) <= maxWebFetchContentRunes {
-		return content
-	}
 	return agent.Truncate(content, agent.TruncateConfig{
 		MaxRunes: maxWebFetchContentRunes,
 		Label:    "tool output",
