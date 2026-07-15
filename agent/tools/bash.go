@@ -54,6 +54,7 @@ func (b *Bash) RequiresApproval(map[string]any) bool {
 }
 
 func (b *Bash) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[string]any) (agent.ToolResult, error) {
+	// TODO: use shared agent.RequiredStringArg for the "command" parameter (see agent package cleanup plan).
 	command, ok := args["command"].(string)
 	if !ok || strings.TrimSpace(command) == "" {
 		return agent.ToolResult{}, fmt.Errorf("command parameter is required")

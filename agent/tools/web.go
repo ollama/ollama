@@ -53,6 +53,7 @@ func (w *WebSearch) RequiresApproval(map[string]any) bool {
 }
 
 func (w *WebSearch) Execute(ctx context.Context, _ agent.ToolContext, args map[string]any) (agent.ToolResult, error) {
+	// TODO: use shared agent.RequiredStringArg for the "query" parameter (see agent package cleanup plan).
 	if internalcloud.Disabled() {
 		return agent.ToolResult{}, errors.New(internalcloud.DisabledError("web search is unavailable"))
 	}
@@ -130,6 +131,7 @@ func (w *WebFetch) RequiresApproval(map[string]any) bool {
 }
 
 func (w *WebFetch) Execute(ctx context.Context, _ agent.ToolContext, args map[string]any) (agent.ToolResult, error) {
+	// TODO: use shared agent.RequiredStringArg for the "url" parameter (see agent package cleanup plan).
 	if internalcloud.Disabled() {
 		return agent.ToolResult{}, errors.New(internalcloud.DisabledError("web fetch is unavailable"))
 	}
