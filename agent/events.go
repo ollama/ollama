@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 
 	"github.com/ollama/ollama/api"
 )
@@ -57,16 +58,16 @@ func (s *Session) emit(event Event) error {
 	if s == nil {
 		return nil
 	}
-	var firstErr error
+	var errs []error
 	for _, sink := range s.EventSinks {
 		if sink == nil {
 			continue
 		}
-		if err := sink.Emit(event); err != nil && firstErr == nil {
-			firstErr = err
+		if err := sink.Emit(event); err != nil {
+			errs = append(errs, err)
 		}
 	}
-	return firstErr
+	return errors.Join(errs...)
 }
 
 func (s *Session) emitIgnoringCanceled(ctx context.Context, event Event) error {
