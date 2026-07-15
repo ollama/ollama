@@ -58,16 +58,17 @@ func Open(path string) (f *File, err error) {
 		return nil, err
 	}
 
+	filePtr := f
 	defer func() {
-		if err != nil {
-			if f.tensors != nil && f.tensors.stop != nil {
-				f.tensors.stop()
+		if err != nil && filePtr != nil {
+			if filePtr.tensors != nil && filePtr.tensors.stop != nil {
+				filePtr.tensors.stop()
 			}
-			if f.keyValues != nil && f.keyValues.stop != nil {
-				f.keyValues.stop()
+			if filePtr.keyValues != nil && filePtr.keyValues.stop != nil {
+				filePtr.keyValues.stop()
 			}
-			if f.file != nil {
-				f.file.Close()
+			if filePtr.file != nil {
+				filePtr.file.Close()
 			}
 		}
 	}()
