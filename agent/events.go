@@ -54,6 +54,65 @@ func (fn EventSinkFunc) Emit(event Event) error {
 	return fn(event)
 }
 
+// eventMeta carries the run identification fields shared by all events.
+type eventMeta struct {
+	runID  string
+	chatID string
+	model  string
+}
+
+func newEventMeta(runID string, opts RunOptions) eventMeta {
+	return eventMeta{runID: runID, chatID: opts.ChatID, model: opts.Model}
+}
+
+func newMessageDelta(m eventMeta, content string) Event {
+	return Event{Type: EventMessageDelta, RunID: m.runID, ChatID: m.chatID, Model: m.model, Content: content}
+}
+
+func newThinkingDelta(m eventMeta, thinking string) Event {
+	return Event{Type: EventThinkingDelta, RunID: m.runID, ChatID: m.chatID, Model: m.model, Thinking: thinking}
+}
+
+func newToolCallDetected(m eventMeta, calls []api.ToolCall) Event {
+	return Event{Type: EventToolCallDetected, RunID: m.runID, ChatID: m.chatID, Model: m.model, ToolCalls: calls}
+}
+
+func newToolStarted(m eventMeta, callID, toolName, workingDir string, args map[string]any) Event {
+	return Event{Type: EventToolStarted, RunID: m.runID, ChatID: m.chatID, Model: m.model, Status: "running", ToolCallID: callID, ToolName: toolName, WorkingDir: workingDir, Args: args}
+}
+
+func newToolFinished(m eventMeta, status, callID, toolName, workingDir string, args map[string]any, content, errMsg string) Event {
+	ev := Event{Type: EventToolFinished, RunID: m.runID, ChatID: m.chatID, Model: m.model, Status: status, ToolCallID: callID, ToolName: toolName, WorkingDir: workingDir, Args: args, Content: content}
+	if errMsg != "" {
+		ev.Error = errMsg
+	}
+	return ev
+}
+
+func newRunFinished(m eventMeta, status string) Event {
+	return Event{Type: EventRunFinished, RunID: m.runID, ChatID: m.chatID, Model: m.model, Status: status}
+}
+
+func newErrorEvent(m eventMeta, errMsg string) Event {
+	return Event{Type: EventError, RunID: m.runID, ChatID: m.chatID, Model: m.model, Error: errMsg}
+}
+
+func newCompactionProgress(m eventMeta, tokens int) Event {
+	return Event{Type: EventCompactionProgress, RunID: m.runID, ChatID: m.chatID, Model: m.model, Tokens: tokens}
+}
+
+func newCompactionStarted(m eventMeta, status string) Event {
+	return Event{Type: EventCompactionStarted, RunID: m.runID, ChatID: m.chatID, Model: m.model, Status: status}
+}
+
+func newCompactionSkipped(m eventMeta, status, content string) Event {
+	return Event{Type: EventCompactionSkipped, RunID: m.runID, ChatID: m.chatID, Model: m.model, Status: status, Content: content}
+}
+
+func newCompacted(m eventMeta, messages []api.Message, status, content string) Event {
+	return Event{Type: EventCompacted, RunID: m.runID, ChatID: m.chatID, Model: m.model, Status: status, Content: content, Messages: messages}
+}
+
 func (s *Session) emit(event Event) error {
 	if s == nil {
 		return nil
