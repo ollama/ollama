@@ -11,12 +11,12 @@ type ApprovalRequest struct {
 	Calls      []ApprovalToolCall
 }
 
-func (r *ApprovalRequest) AddToolCall(id, name string, args map[string]any) {
+func (r *ApprovalRequest) AddToolCall(id, name, scope string, args map[string]any) {
 	r.Calls = append(r.Calls, ApprovalToolCall{
 		ToolCallID:    id,
 		ToolName:      name,
 		Args:          args,
-		ApprovalScope: toolApprovalScope(name, args),
+		ApprovalScope: scope,
 	})
 }
 
@@ -143,7 +143,7 @@ func cloneApprovalScopes(src map[string]bool) map[string]bool {
 }
 
 func (s *Session) needsApproval(tool Tool, name string, args map[string]any) bool {
-	return ToolRequiresApproval(tool, args) && !s.allows(toolApprovalScope(name, args))
+	return ToolRequiresApproval(tool, args) && !s.allows(toolApprovalScope(tool, name, args))
 }
 
 // allows reports whether scope is permitted by the session's accumulated approval state.
@@ -187,31 +187,12 @@ func (s *Session) authorizeToolCalls(ctx context.Context, req ApprovalRequest) (
 }
 
 // toolApprovalScope returns the approval scope key for a tool invocation.
-//
-// For shell tools (bash/powershell) the scope is "<tool>\x00<command>": the
-// exact, trimmed command byte string. "Always allow this command" therefore
-// matches ONLY that precise string — any whitespace, quoting, or casing
-// variant, or any command that is a superset of the approved one, will
-// re-prompt. The NUL separator is safe because a shell command string cannot
-// contain a literal NUL. For all other tools the scope is the tool name.
-func toolApprovalScope(toolName string, args map[string]any) string {
-	toolName = strings.TrimSpace(toolName)
-	if isShellApprovalTool(toolName) {
-		if command, ok := stringArg(args, "command"); ok {
-			command = strings.TrimSpace(command)
-			if command != "" {
-				return toolName + "\x00" + command
-			}
-		}
+// If the tool implements ScopedTool, its ApprovalScope method determines the
+// scope (e.g. shell tools scope to "<tool>\x00<command>"). Otherwise the scope
+// is the trimmed tool name.
+func toolApprovalScope(tool Tool, toolName string, args map[string]any) string {
+	if scoped, ok := tool.(ScopedTool); ok {
+		return scoped.ApprovalScope(args)
 	}
-	return toolName
-}
-
-func isShellApprovalTool(name string) bool {
-	return name == "bash" || name == "powershell"
-}
-
-func stringArg(args map[string]any, key string) (string, bool) {
-	value, ok := args[key].(string)
-	return value, ok
+	return strings.TrimSpace(toolName)
 }

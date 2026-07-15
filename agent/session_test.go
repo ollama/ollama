@@ -325,6 +325,20 @@ func (t namedApprovalTestTool) Execute(context.Context, ToolContext, map[string]
 	return ToolResult{Content: "approved"}, nil
 }
 
+// ApprovalScope mimics the Bash tool's command-scoping behavior so tests can
+// exercise the shell approval flow without importing the tools package.
+func (t namedApprovalTestTool) ApprovalScope(args map[string]any) string {
+	if t.name == "bash" || t.name == "powershell" {
+		if cmd, ok := args["command"].(string); ok {
+			cmd = strings.TrimSpace(cmd)
+			if cmd != "" {
+				return t.name + "\x00" + cmd
+			}
+		}
+	}
+	return t.name
+}
+
 func (p *recordingApprovalPrompter) PromptApproval(_ context.Context, req ApprovalRequest) (Approval, error) {
 	p.requests = append(p.requests, req)
 	if len(p.results) == 0 {
@@ -2126,7 +2140,7 @@ func TestSessionAllowShellApprovalScopesToExactCommand(t *testing.T) {
 	registry.Register(namedApprovalTestTool{name: "bash"})
 	prompter := &recordingApprovalPrompter{
 		results: []Approval{
-			{AllowScopes: []string{toolApprovalScope("bash", map[string]any{"command": "pwd"})}},
+			{AllowScopes: []string{toolApprovalScope(namedApprovalTestTool{name: "bash"}, "bash", map[string]any{"command": "pwd"})}},
 			{Allow: true},
 		},
 	}
