@@ -3584,6 +3584,65 @@ func writeTestGGML(t *testing.T, kv ggml.KV, tensors []*ggml.Tensor) (string, *g
 	return f.Name(), model
 }
 
+func TestPredictServerVRAM(t *testing.T) {
+	base := func() ggml.KV {
+		return ggml.KV{
+			"general.architecture":                "qwen3moe",
+			"qwen3moe.block_count":                uint32(4),
+			"qwen3moe.embedding_length":           uint32(2048),
+			"qwen3moe.attention.head_count":       uint32(8),
+			"qwen3moe.attention.head_count_kv":    uint32(4),
+			"qwen3moe.expert_count":               uint32(128),
+			"qwen3moe.expert_used_count":          uint32(8),
+			"qwen3moe.expert_feed_forward_length": uint32(768),
+			"tokenizer.ggml.tokens":               []string{" "},
+			"tokenizer.ggml.scores":               []float32{0},
+			"tokenizer.ggml.token_type":           []int32{0},
+		}
+	}
+	const ctx = 8192
+
+	// extra returns the KV + compute portion of the estimate, subtracting the GGUF
+	// file size so metadata differences between cases cancel out.
+	extra := func(kv ggml.KV) uint64 {
+		path, model := writeTestGGML(t, kv, nil)
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return PredictServerVRAM(path, model, ctx) - uint64(info.Size())
+	}
+
+	// Declared attention.key_length/value_length must size the KV cache. Without
+	// them the estimate falls back to embedding_length/head_count (2048/8 = 256);
+	// with them (128) the per-head size is smaller. The compute buffer is the same
+	// in both cases, so the difference is exactly the KV delta over all layers.
+	withoutDims := base()
+	withDims := base()
+	withDims["qwen3moe.attention.key_length"] = uint32(128)
+	withDims["qwen3moe.attention.value_length"] = uint32(128)
+	const layers, kvHeads = 4, 4
+	wantKVDelta := uint64(layers) * kvHeads * ((256 + 256) - (128 + 128)) * ctx * 2
+	if got := extra(withoutDims) - extra(withDims); got != wantKVDelta {
+		t.Errorf("KV delta from explicit key/value_length = %d, want %d", got, wantKVDelta)
+	}
+
+	// A MoE model adds a routed-FFN compute surcharge (4 * ubatch * per-expert
+	// feed-forward width); an otherwise identical dense model does not.
+	dense := base()
+	delete(dense, "qwen3moe.expert_count")
+	delete(dense, "qwen3moe.expert_used_count")
+	wantSurcharge := uint64(4 * 512 * 768)
+	if got := extra(base()) - extra(dense); got != wantSurcharge {
+		t.Errorf("MoE compute surcharge = %d, want %d", got, wantSurcharge)
+	}
+
+	// The estimate accounts for KV and compute on top of the raw weights.
+	if extra(base()) == 0 {
+		t.Error("estimate added nothing beyond weights")
+	}
+}
+
 func testGGMLTensor(name string, kind ggml.TensorType, shape []uint64) *ggml.Tensor {
 	tensor := &ggml.Tensor{
 		Name:  name,

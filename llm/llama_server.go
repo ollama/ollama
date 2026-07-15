@@ -2606,22 +2606,48 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 func PredictServerVRAM(modelPath string, f *ggml.GGML, numCtx int) uint64 {
 	var weights uint64
 	if info, err := os.Stat(modelPath); err == nil {
-		weights = uint64(info.Size())
+		weights = uint64(info.Size()) // all experts are resident, so file size is the full weight footprint
 	}
 
-	// KV cache: 2 (K+V) * layers * kv_heads * head_dim * context * 2 bytes (f16)
-	layers := f.KV().BlockCount()
-	kvHeads := f.KV().HeadCountKVMin()
-	if kvHeads == 0 {
-		kvHeads = 1
-	}
-	headDim := uint64(0)
-	if f.KV().HeadCountMax() > 0 {
-		headDim = f.KV().EmbeddingLength() / f.KV().HeadCountMax()
-	}
-	kvCache := 2 * layers * kvHeads * headDim * uint64(numCtx) * 2
+	kv := f.KV()
+	ctx := uint64(numCtx)
 
-	return weights + kvCache
+	// KV cache: sum per layer, using each layer's KV head count and the model's
+	// declared K/V head dimensions. Layers with zero KV heads are recurrent or
+	// linear-attention blocks (hybrid MoE such as qwen3next or nemotron_h) and
+	// hold no attention cache. The previous formula counted every block as full
+	// attention with head_dim = embedding/head_count; that over-counts hybrid MoE
+	// and mis-sizes any model that sets attention.key_length / value_length
+	// (DeepSeek MLA, Qwen3, Gemma). For a uniform-GQA dense model it reduces to
+	// the same value as before.
+	dimK, dimV := kv.EmbeddingHeadCountK(), kv.EmbeddingHeadCountV()
+	var kvCache uint64
+	for _, h := range kv.HeadCountKV() {
+		if h == 0 {
+			continue
+		}
+		kvCache += ctx * h * (dimK + dimV) * 2 // f16
+	}
+
+	// Compute (graph) buffer. The previous estimate omitted this entirely, which
+	// under-counts models that just fit by weights+KV and leaves llama-server to
+	// spill a layer to CPU (a known MoE mis-placement, e.g. #5136). Model a dense
+	// activation working set of one ubatch (mirrors the per-arch shapes in
+	// ggml.GraphSize), plus a surcharge for the routed-FFN buffer that scales with
+	// the per-expert feed-forward width. This is a deliberately conservative
+	// approximation: the real compute buffer depends on whether flash attention is
+	// active, which is not known at estimation time.
+	const batch = 512
+	embedding := kv.EmbeddingLength()
+	heads := kv.HeadCountMax()
+	headsKV := kv.HeadCountKVMax()
+	compute := 4 * batch * (2 + 3*embedding + ctx*(1+heads) + 2*headsKV)
+	if kv.ExpertCount() > 0 {
+		ffExp := uint64(kv.Uint("expert_feed_forward_length", kv.Uint("feed_forward_length", 0)))
+		compute += 4 * batch * ffExp
+	}
+
+	return weights + kvCache + compute
 }
 
 // memoryParsingWriter wraps an io.Writer and parses llama-server log output

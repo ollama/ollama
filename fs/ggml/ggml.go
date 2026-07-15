@@ -135,6 +135,14 @@ func (kv KV) EmbeddingHeadCountV() uint64 {
 	return uint64(kv.Uint("attention.value_length", uint32(kv.EmbeddingHeadCountMax())))
 }
 
+func (kv KV) ExpertCount() uint64 {
+	return uint64(kv.Uint("expert_count", 0))
+}
+
+func (kv KV) ExpertUsedCount() uint64 {
+	return uint64(kv.Uint("expert_used_count", 0))
+}
+
 func (kv KV) ContextLength() uint64 {
 	return uint64(kv.Uint("context_length"))
 }
