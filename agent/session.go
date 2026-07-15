@@ -213,7 +213,7 @@ func (s *Session) buildRunMessages(ctx context.Context, runID string, opts RunOp
 	}
 
 	if err := s.checkPreflightPromptBudget(opts, messages); err != nil {
-		s.emit(newErrorEvent(newEventMeta(runID, opts), err.Error()))
+		s.emit(newErrorEvent(newEventMetadata(runID, opts), err.Error()))
 		return nil, err
 	}
 	return messages, nil
@@ -221,7 +221,7 @@ func (s *Session) buildRunMessages(ctx context.Context, runID string, opts RunOp
 
 func (s *Session) runModelStep(ctx context.Context, st *runState) error {
 	opts := st.opts
-	meta := newEventMeta(st.runID, opts)
+	meta := newEventMetadata(st.runID, opts)
 
 	assistant, pendingToolCalls, canceled, err := s.chatRound(ctx, st.runID, opts, st.messages, &st.latest)
 	if err != nil {
@@ -301,7 +301,7 @@ func (s *Session) runModelStep(ctx context.Context, st *runState) error {
 func (s *Session) runToolStep(ctx context.Context, st *runState) error {
 	batch, err := s.executeToolCalls(ctx, st.runID, st.opts, st.messages, st.pendingToolCalls)
 	if err != nil {
-		s.emit(newErrorEvent(newEventMeta(st.runID, st.opts), err.Error()))
+		s.emit(newErrorEvent(newEventMetadata(st.runID, st.opts), err.Error()))
 		return err
 	}
 
@@ -313,7 +313,7 @@ func (s *Session) runToolStep(ctx context.Context, st *runState) error {
 
 func (s *Session) runCompactionStep(ctx context.Context, st *runState) error {
 	opts := st.opts
-	meta := newEventMeta(st.runID, opts)
+	meta := newEventMetadata(st.runID, opts)
 	var err error
 	if st.toolBatch != nil && len(st.toolBatch.overflows) > 0 {
 		st.messages, st.compactionSkipNotified, err = s.compactForToolOutputOverflow(ctx, st.runID, opts, st.messages, st.latest, st.assistant, st.toolBatch.messages, st.toolBatch.overflows, st.compactionSkipNotified)
@@ -352,7 +352,7 @@ func (s *Session) runCompactionStep(ctx context.Context, st *runState) error {
 
 func (s *Session) finishRun(ctx context.Context, st *runState) (*RunResult, error) {
 	if st.finish.status != "" {
-		event := newRunFinished(newEventMeta(st.runID, st.opts), st.finish.status)
+		event := newRunFinished(newEventMetadata(st.runID, st.opts), st.finish.status)
 		var err error
 		if st.finish.ignoreCanceled {
 			err = s.emitIgnoringCanceled(ctx, event)
@@ -367,7 +367,7 @@ func (s *Session) finishRun(ctx context.Context, st *runState) (*RunResult, erro
 }
 
 func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, messages []api.Message, latest *api.ChatResponse) (api.Message, []api.ToolCall, bool, error) {
-	meta := newEventMeta(runID, opts)
+	meta := newEventMetadata(runID, opts)
 	var tools api.Tools
 	if !s.DisableTools {
 		tools = s.availableTools()
@@ -452,7 +452,7 @@ func buildChatRequest(opts RunOptions, messages []api.Message, tools api.Tools) 
 }
 
 func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOptions, messages []api.Message, calls []api.ToolCall) (toolBatchResult, error) {
-	meta := newEventMeta(runID, opts)
+	meta := newEventMetadata(runID, opts)
 	batch := toolBatchResult{
 		messages: make([]api.Message, 0, len(calls)),
 	}
@@ -615,7 +615,7 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 }
 
 func (s *Session) disabledToolCalls(ctx context.Context, runID string, opts RunOptions, messages []api.Message, calls []api.ToolCall) (toolBatchResult, error) {
-	meta := newEventMeta(runID, opts)
+	meta := newEventMetadata(runID, opts)
 	batch := toolBatchResult{
 		messages: make([]api.Message, 0, len(calls)),
 	}
@@ -637,7 +637,7 @@ func (s *Session) disabledToolCalls(ctx context.Context, runID string, opts RunO
 }
 
 func (s *Session) skipToolCalls(ctx context.Context, runID string, opts RunOptions, calls []api.ToolCall, content string) ([]api.Message, error) {
-	meta := newEventMeta(runID, opts)
+	meta := newEventMetadata(runID, opts)
 	toolMessages := make([]api.Message, 0, len(calls))
 	for _, call := range calls {
 		toolName := call.Function.Name
@@ -800,7 +800,7 @@ func (s *Session) compactForToolOutputOverflow(ctx context.Context, runID string
 }
 
 func (s *Session) compactionRequest(runID string, opts RunOptions, messages []api.Message, latest api.ChatResponse) CompactionRequest {
-	meta := newEventMeta(runID, opts)
+	meta := newEventMetadata(runID, opts)
 	return CompactionRequest{
 		ChatID:       opts.ChatID,
 		Model:        opts.Model,
@@ -820,15 +820,15 @@ func (s *Session) compactionRequest(runID string, opts RunOptions, messages []ap
 }
 
 func (s *Session) emitCompactionStarted(runID string, opts RunOptions, status string) {
-	_ = s.emit(newCompactionStarted(newEventMeta(runID, opts), status))
+	_ = s.emit(newCompactionStarted(newEventMetadata(runID, opts), status))
 }
 
 func (s *Session) emitCompactionSkipped(runID string, opts RunOptions, status, reason string) {
-	_ = s.emit(newCompactionSkipped(newEventMeta(runID, opts), status, compactionSkippedMessage(reason)))
+	_ = s.emit(newCompactionSkipped(newEventMetadata(runID, opts), status, compactionSkippedMessage(reason)))
 }
 
 func (s *Session) emitCompacted(runID string, opts RunOptions, messages []api.Message, status, summary string) {
-	_ = s.emit(newCompacted(newEventMeta(runID, opts), messages, status, summary))
+	_ = s.emit(newCompacted(newEventMetadata(runID, opts), messages, status, summary))
 }
 
 func (s *Session) autoCompactionTrigger(req CompactionRequest) string {
