@@ -88,13 +88,26 @@ func TestDiscoverSkillsFollowsSymlinks(t *testing.T) {
 }
 
 func TestSkillsDirUsesOverrideAndXDG(t *testing.T) {
-	t.Setenv(SkillsDirEnv, "/tmp/ollama-skills")
-	if got, err := SkillsDir(); err != nil || got != "/tmp/ollama-skills" {
-		t.Fatalf("SkillsDir = %q, %v", got, err)
+	base := t.TempDir()
+
+	override := filepath.Join(base, "skills-override")
+	t.Setenv(SkillsDirEnv, override)
+	got, err := SkillsDir()
+	if err != nil {
+		t.Fatal(err)
 	}
+	want, err := filepath.Abs(override)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("SkillsDir override = %q, want %q", got, want)
+	}
+
 	t.Setenv(SkillsDirEnv, "")
-	t.Setenv("XDG_CONFIG_HOME", "/tmp/config")
-	if got, err := SkillsDir(); err != nil || got != "/tmp/config/ollama/skills" {
-		t.Fatalf("SkillsDir = %q, %v", got, err)
+	xdg := filepath.Join(base, "xdg")
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	if got, err := SkillsDir(); err != nil || got != filepath.Join(xdg, "ollama", "skills") {
+		t.Fatalf("SkillsDir xdg = %q, want %q, %v", got, filepath.Join(xdg, "ollama", "skills"), err)
 	}
 }
