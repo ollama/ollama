@@ -54,6 +54,7 @@ type Options struct {
 	Messages                    []api.Message
 	Client                      coreagent.ChatClient
 	Tools                       *coreagent.Registry
+	Skills                      *coreagent.SkillCatalog
 	ToolRegistryForModel        func(context.Context, string) *coreagent.Registry
 	ToolsDisabled               bool
 	MultiModalForModel          func(context.Context, string) bool
@@ -1014,7 +1015,7 @@ func (m *chatModel) startRun(input string) (tea.Model, tea.Cmd) {
 		m.status = "error"
 		return *m, nil
 	}
-	return m.startRunWithMessages(displayInput, message.Content, []api.Message{message}, "")
+	return m.startRunWithMessages(displayInput, message.Content, []api.Message{message}, "", "")
 }
 
 func (m *chatModel) userMessageFromInput(displayInput, userInput string) (string, api.Message, error) {
@@ -1073,7 +1074,16 @@ func pluralSuffix(count int) string {
 	return "s"
 }
 
-func (m *chatModel) startRunWithMessages(displayInput, historyInput string, newMessages []api.Message, extraSystemPrompt string) (tea.Model, tea.Cmd) {
+func (m *chatModel) startSkillRun(name string) (tea.Model, tea.Cmd) {
+	name = strings.TrimSpace(name)
+	// The skill instructions are already delivered via the synthetic tool result
+	// above, so this user turn orients the model rather than re-requesting the
+	// skill (which would just re-load the same content via the skill tool).
+	message := api.Message{Role: "user", Content: "The " + name + " skill is loaded above; follow its instructions for this request."}
+	return m.startRunWithMessages("/skill "+name, "", []api.Message{message}, "", name)
+}
+
+func (m *chatModel) startRunWithMessages(displayInput, historyInput string, newMessages []api.Message, extraSystemPrompt, skillName string) (tea.Model, tea.Cmd) {
 	m.refreshContextWindowTokens(m.opts.Model)
 	m.addPromptHistory(historyInput)
 	m.entries = append(m.entries, newChatEntry(chatEntry{role: "user", content: displayInput}))
@@ -1108,6 +1118,7 @@ func (m *chatModel) startRunWithMessages(displayInput, historyInput string, newM
 		Client:           m.opts.Client,
 		EventSinks:       eventSinks,
 		Tools:            m.opts.Tools,
+		Skills:           m.opts.Skills,
 		DisableTools:     m.opts.ToolsDisabled,
 		ApprovalPrompter: m.approvalPrompterForRun(m.approvalController),
 		ApprovalState:    m.ensureApprovalState(),
@@ -1124,6 +1135,7 @@ func (m *chatModel) startRunWithMessages(displayInput, historyInput string, newM
 		Options:      m.opts.Options,
 		Think:        m.opts.Think,
 		KeepAlive:    m.opts.KeepAlive,
+		SkillName:    skillName,
 	}
 
 	persistedMessages := make([]api.Message, 0, len(m.messages)+len(newMessages))

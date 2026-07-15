@@ -22,6 +22,7 @@ type Session struct {
 	Client           ChatClient
 	EventSinks       []EventSink
 	Tools            *Registry
+	Skills           *SkillCatalog
 	DisableTools     bool
 	ApprovalPrompter ApprovalPrompter
 	ApprovalState    *ApprovalState
@@ -39,6 +40,9 @@ type RunOptions struct {
 	Options      map[string]any
 	Think        *api.ThinkValue
 	KeepAlive    *api.Duration
+	// SkillName loads a catalog skill as an ordered synthetic tool call/result
+	// before the first model request for this run.
+	SkillName string
 	// MaxToolRounds limits consecutive model/tool cycles.
 	// Zero uses the default guard; negative disables the guard for tests or
 	// special callers.
@@ -163,6 +167,12 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 		msg = sanitizeMessageForRun(msg)
 		messages = append(messages, msg)
 	}
+	activatedSkill, err := s.activateSkill(ctx, runID, opts)
+	if err != nil {
+		s.emit(Event{Type: EventError, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Error: err.Error()})
+		return nil, err
+	}
+	messages = append(messages, activatedSkill...)
 
 	if err := s.checkPreflightPromptBudget(opts, messages); err != nil {
 		s.emit(Event{Type: EventError, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Error: err.Error()})
@@ -377,7 +387,7 @@ func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, 
 		if len(response.Message.ToolCalls) > 0 {
 			assistant.ToolCalls = append(assistant.ToolCalls, response.Message.ToolCalls...)
 			pendingToolCalls = append(pendingToolCalls, response.Message.ToolCalls...)
-			if err := s.emit(Event{Type: EventToolCallDetected, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, ToolCalls: response.Message.ToolCalls}); err != nil {
+			if err := s.emitToolCallDetected(runID, opts, response.Message.ToolCalls); err != nil {
 				return err
 			}
 		}
@@ -422,6 +432,30 @@ func buildChatRequest(opts RunOptions, messages []api.Message, tools api.Tools) 
 		req.Tools = tools
 	}
 	return req
+}
+
+// emitToolCallDetected announces tool calls the model produced (or a synthetic
+// run injected) before they are executed. Shared by every tool lifecycle so the
+// transcript and event stream stay consistent regardless of who originated the
+// call.
+func (s *Session) emitToolCallDetected(runID string, opts RunOptions, calls []api.ToolCall) error {
+	return s.emit(Event{Type: EventToolCallDetected, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, ToolCalls: calls})
+}
+
+// emitToolStarted marks a single tool call as running.
+func (s *Session) emitToolStarted(runID string, opts RunOptions, callID, toolName, workingDir string, args map[string]any) error {
+	return s.emit(Event{Type: EventToolStarted, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "running", ToolCallID: callID, ToolName: toolName, WorkingDir: workingDir, Args: args})
+}
+
+// emitToolFinished reports the terminal outcome of a tool call. errMsg, when
+// non-empty, populates the Error field. Cancellation is tolerated so a sink
+// closing mid-shutdown does not surface as a user-facing failure.
+func (s *Session) emitToolFinished(ctx context.Context, runID string, opts RunOptions, status, callID, toolName, workingDir string, args map[string]any, content, errMsg string) error {
+	ev := Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: status, ToolCallID: callID, ToolName: toolName, WorkingDir: workingDir, Args: args, Content: content}
+	if errMsg != "" {
+		ev.Error = errMsg
+	}
+	return s.emitIgnoringCanceled(ctx, ev)
 }
 
 func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOptions, messages []api.Message, calls []api.ToolCall) (toolBatchResult, error) {
@@ -480,7 +514,7 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 				batch.messages = append(batch.messages, msg)
 				projectedMessages = append(projectedMessages, msg)
 				deniedContent := msg.Content
-				if emitErr := s.emit(Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "denied", ToolCallID: plan.call.ID, ToolName: plan.toolName, Args: plan.args, Content: deniedContent, Error: deniedContent}); emitErr != nil {
+				if emitErr := s.emitToolFinished(ctx, runID, opts, "denied", plan.call.ID, plan.toolName, "", plan.args, deniedContent, deniedContent); emitErr != nil {
 					return toolBatchResult{}, emitErr
 				}
 			}
@@ -511,13 +545,13 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 			if toolOutputFullyOmitted(content) {
 				batch.overflows = append(batch.overflows, toolOutputOverflow{toolName: toolName, toolCallID: call.ID, content: fmt.Sprintf("Error: unknown tool: %s", toolName)})
 			}
-			if emitErr := s.emit(Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "failed", ToolCallID: call.ID, ToolName: toolName, Args: args, Content: content, Error: fmt.Sprintf("unknown tool: %s", toolName)}); emitErr != nil {
+			if emitErr := s.emitToolFinished(ctx, runID, opts, "failed", call.ID, toolName, "", args, content, fmt.Sprintf("unknown tool: %s", toolName)); emitErr != nil {
 				return toolBatchResult{}, emitErr
 			}
 			continue
 		}
 
-		if err := s.emit(Event{Type: EventToolStarted, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "running", ToolCallID: call.ID, ToolName: toolName, WorkingDir: plan.workingDir, Args: args}); err != nil {
+		if err := s.emitToolStarted(runID, opts, call.ID, toolName, plan.workingDir, args); err != nil {
 			return toolBatchResult{}, err
 		}
 
@@ -531,7 +565,7 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 			if toolOutputFullyOmitted(content) {
 				batch.overflows = append(batch.overflows, toolOutputOverflow{toolName: toolName, toolCallID: call.ID, content: rawContent})
 			}
-			if emitErr := s.emitIgnoringCanceled(ctx, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "failed", ToolCallID: call.ID, ToolName: toolName, Args: args, Content: content, Error: err.Error()}); emitErr != nil {
+			if emitErr := s.emitToolFinished(ctx, runID, opts, "failed", call.ID, toolName, "", args, content, err.Error()); emitErr != nil {
 				return toolBatchResult{}, emitErr
 			}
 			if ctx.Err() != nil {
@@ -560,7 +594,7 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 		if toolOutputFullyOmitted(content) {
 			batch.overflows = append(batch.overflows, toolOutputOverflow{toolName: toolName, toolCallID: call.ID, content: rawContent})
 		}
-		if err := s.emitIgnoringCanceled(ctx, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "done", ToolCallID: call.ID, ToolName: toolName, WorkingDir: eventWorkingDir, Args: args, Content: content}); err != nil {
+		if err := s.emitToolFinished(ctx, runID, opts, "done", call.ID, toolName, eventWorkingDir, args, content, ""); err != nil {
 			return toolBatchResult{}, err
 		}
 		if ctx.Err() != nil {
@@ -587,7 +621,7 @@ func (s *Session) disabledToolCalls(ctx context.Context, runID string, opts RunO
 		msg := s.toolMessageForContext(toolName, call.ID, toolExecutionDisabledMessage, opts, projectedMessages)
 		batch.messages = append(batch.messages, msg)
 		projectedMessages = append(projectedMessages, msg)
-		if emitErr := s.emitIgnoringCanceled(ctx, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "disabled", ToolCallID: call.ID, ToolName: toolName, Args: args, Content: msg.Content, Error: msg.Content}); emitErr != nil {
+		if emitErr := s.emitToolFinished(ctx, runID, opts, "disabled", call.ID, toolName, "", args, msg.Content, msg.Content); emitErr != nil {
 			return toolBatchResult{}, emitErr
 		}
 	}
@@ -601,7 +635,7 @@ func (s *Session) skipToolCalls(ctx context.Context, runID string, opts RunOptio
 		args := call.Function.Arguments.ToMap()
 		msg := toolMessage(toolName, call.ID, content)
 		toolMessages = append(toolMessages, msg)
-		if emitErr := s.emitIgnoringCanceled(ctx, Event{Type: EventToolFinished, RunID: runID, ChatID: opts.ChatID, Model: opts.Model, Status: "skipped", ToolCallID: call.ID, ToolName: toolName, Args: args, Content: msg.Content, Error: msg.Content}); emitErr != nil {
+		if emitErr := s.emitToolFinished(ctx, runID, opts, "skipped", call.ID, toolName, "", args, msg.Content, msg.Content); emitErr != nil {
 			return nil, emitErr
 		}
 	}

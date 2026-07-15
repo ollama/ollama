@@ -56,6 +56,8 @@ var chatSlashCommands = []chatSlashCommand{
 	{name: "/new", description: "start a new chat"},
 	{name: "/think", description: "set thinking mode"},
 	{name: "/tools", description: "toggle tools on or off"},
+	{name: "/skills", description: "list available skills"},
+	{name: "/skill", usage: "/skill <name>", description: "load a skill into this chat"},
 	{name: "/compact", description: "summarize older context"},
 	{name: "/help", description: "show commands", aliases: []string{"/?"}},
 	{name: "/bye", description: "exit", aliases: []string{"/exit"}},
@@ -125,6 +127,10 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 		return m.handleThinkCommand(args)
 	case command == "/tools":
 		return m.handleToolsCommand(args)
+	case command == "/skills":
+		return m.handleSkillsCommand(args)
+	case command == "/skill":
+		return m.handleSkillCommand(args)
 	case command == "/prompt":
 		return m.handlePromptCommand(args)
 	case command == "/save":
@@ -141,6 +147,53 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 	}
 
 	return m.startRun(input)
+}
+
+func (m *chatModel) handleSkillsCommand(args string) (tea.Model, tea.Cmd) {
+	if strings.TrimSpace(args) != "" {
+		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: "usage: /skills"}))
+		return *m, nil
+	}
+	skills := m.opts.Skills.List()
+	if len(skills) == 0 {
+		m.entries = append(m.entries, newSlashEntry("No skills found. Add directories containing SKILL.md under "+skillsDirForDisplay(m.opts.Skills)+"."))
+		return *m, nil
+	}
+	lines := []string{"Available skills:"}
+	for _, skill := range skills {
+		description := skill.Description
+		if description == "" {
+			description = "No description provided."
+		}
+		lines = append(lines, fmt.Sprintf("- `%s`: %s", skill.Name, description))
+	}
+	lines = append(lines, "\nUse `/skill <name>` to load one into the conversation.")
+	m.entries = append(m.entries, newSlashEntry(strings.Join(lines, "\n")))
+	return *m, nil
+}
+
+func skillsDirForDisplay(catalog *coreagent.SkillCatalog) string {
+	if catalog != nil && catalog.Dir() != "" {
+		return catalog.Dir()
+	}
+	dir, err := coreagent.SkillsDir()
+	if err != nil {
+		return "the Ollama skills directory"
+	}
+	return dir
+}
+
+func (m *chatModel) handleSkillCommand(args string) (tea.Model, tea.Cmd) {
+	fields := strings.Fields(args)
+	if len(fields) != 1 {
+		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: "usage: /skill <name>"}))
+		return *m, nil
+	}
+	if m.opts.Skills == nil {
+		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: "skills are unavailable"}))
+		return *m, nil
+	}
+	return m.startSkillRun(fields[0])
 }
 
 func (m *chatModel) handleToolsCommand(args string) (tea.Model, tea.Cmd) {

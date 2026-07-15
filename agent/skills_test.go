@@ -1,0 +1,100 @@
+package agent
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func writeCatalogSkill(t *testing.T, dir, name, content string) {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(path, skillFilename), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDiscoverAndLoadSkills(t *testing.T) {
+	dir := t.TempDir()
+	writeCatalogSkill(t, dir, "release-notes", "---\nname: release-notes\ndescription: Draft concise release notes.\n---\n# Release notes\n\nUse short bullets.")
+	catalog, err := DiscoverSkills(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := catalog.List()
+	if len(list) != 1 || list[0].Name != "release-notes" || list[0].Description != "Draft concise release notes." {
+		t.Fatalf("skills = %#v", list)
+	}
+	skill, err := catalog.Load("release-notes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(skill.Content(), `<skill name="release-notes">`) || !strings.Contains(skill.Content(), "Use short bullets.") {
+		t.Fatalf("skill content = %q", skill.Content())
+	}
+	if context := catalog.SystemContext(); !strings.Contains(context, "release-notes: Draft concise release notes.") || !strings.Contains(context, "normal approval rules") {
+		t.Fatalf("system context = %q", context)
+	}
+}
+
+func TestDiscoverSkillsSkipsMalformedEntries(t *testing.T) {
+	dir := t.TempDir()
+	writeCatalogSkill(t, dir, "valid", "do the useful thing")
+	// A mismatched front matter "name" no longer rejects a skill: the directory
+	// name is canonical, so this loads fine.
+	writeCatalogSkill(t, dir, "mismatched", "---\nname: whatever\ndescription: still loads\n---\nbody")
+	// Genuinely malformed front matter (a line without a key:value pair) is still rejected.
+	writeCatalogSkill(t, dir, "broken", "---\nname: broken\ndescription\n---\nnope")
+	catalog, err := DiscoverSkills(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := len(catalog.List()), 2; got != want {
+		t.Fatalf("valid skills = %d, want %d", got, want)
+	}
+	if got := len(catalog.Diagnostics()); got != 1 {
+		t.Fatalf("diagnostics = %d, want 1", got)
+	}
+	if _, err := catalog.Load("broken"); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("load broken error = %v", err)
+	}
+	if _, err := catalog.Load("../valid"); err == nil || !strings.Contains(err.Error(), "invalid skill name") {
+		t.Fatalf("unsafe name error = %v", err)
+	}
+}
+
+func TestDiscoverSkillsFollowsSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	target := t.TempDir()
+	writeCatalogSkill(t, target, "shared", "---\ndescription: From a linked repo.\n---\nshared instructions")
+	if err := os.Symlink(filepath.Join(target, "shared"), filepath.Join(dir, "shared")); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+	catalog, err := DiscoverSkills(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := catalog.List()
+	if len(list) != 1 || list[0].Name != "shared" || list[0].Description != "From a linked repo." {
+		t.Fatalf("symlinked skills = %#v", list)
+	}
+	if !strings.Contains(list[0].Content(), "shared instructions") {
+		t.Fatalf("symlinked skill content = %q", list[0].Content())
+	}
+}
+
+func TestSkillsDirUsesOverrideAndXDG(t *testing.T) {
+	t.Setenv(SkillsDirEnv, "/tmp/ollama-skills")
+	if got, err := SkillsDir(); err != nil || got != "/tmp/ollama-skills" {
+		t.Fatalf("SkillsDir = %q, %v", got, err)
+	}
+	t.Setenv(SkillsDirEnv, "")
+	t.Setenv("XDG_CONFIG_HOME", "/tmp/config")
+	if got, err := SkillsDir(); err != nil || got != "/tmp/config/ollama/skills" {
+		t.Fatalf("SkillsDir = %q, %v", got, err)
+	}
+}
