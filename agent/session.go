@@ -74,6 +74,10 @@ type toolBatchResult struct {
 	overflows []toolOutputOverflow
 }
 
+// toolExecutionStop is the batch-level outcome for a group of tool calls,
+// distinct from per-call Event.Status values. The values overlap with
+// runFinish.status ("denied", "canceled") because a denied or canceled
+// batch also terminates the run with the matching status.
 type toolExecutionStop string
 
 const (
@@ -173,7 +177,7 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 			}
 		case runPhaseCompact:
 			if err := s.runCompactionStep(ctx, &st); err != nil {
-				return &RunResult{Messages: st.messages, Latest: st.latest, WorkingDir: s.WorkingDir}, err
+				return nil, err
 			}
 		case runPhaseDone:
 			return s.finishRun(ctx, &st)
@@ -318,7 +322,8 @@ func (s *Session) runCompactionStep(ctx context.Context, st *runState) error {
 	}
 	if err != nil {
 		s.emit(newErrorEvent(meta, err.Error()))
-		return err
+		st.finishError(err)
+		return nil
 	}
 
 	if st.toolBatch == nil {
@@ -377,7 +382,7 @@ func (s *Session) chatRound(ctx context.Context, runID string, opts RunOptions, 
 			assistant.Role = response.Message.Role
 		}
 
-		if response.Message.Content == "" && response.Message.Thinking == "" && len(response.Message.ToolCalls) == 0 {
+		if messageEmpty(response.Message) {
 			*latest = response
 			return nil
 		}
@@ -819,7 +824,7 @@ func (s *Session) emitCompactionStarted(runID string, opts RunOptions, status st
 }
 
 func (s *Session) emitCompactionSkipped(runID string, opts RunOptions, status, reason string) {
-	_ = s.emit(newCompactionSkipped(newEventMeta(runID, opts), status, CompactionSkippedMessage(reason)))
+	_ = s.emit(newCompactionSkipped(newEventMeta(runID, opts), status, compactionSkippedMessage(reason)))
 }
 
 func (s *Session) emitCompacted(runID string, opts RunOptions, messages []api.Message, status, summary string) {
@@ -837,7 +842,7 @@ func (s *Session) autoCompactionTrigger(req CompactionRequest) string {
 	return ""
 }
 
-func CompactionSkippedMessage(reason string) string {
+func compactionSkippedMessage(reason string) string {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
 		reason = "compaction could not run"
@@ -965,13 +970,9 @@ func sanitizeMessagesForRequest(messages []api.Message) []api.Message {
 	}
 	sanitized := make([]api.Message, len(messages))
 	for i, msg := range messages {
-		sanitized[i] = sanitizeMessageForRequest(msg)
+		sanitized[i] = sanitizeMessageForRun(msg)
 	}
 	return sanitized
-}
-
-func sanitizeMessageForRequest(msg api.Message) api.Message {
-	return sanitizeMessageForRun(msg)
 }
 
 func truncateToolResultContent(content string) string {
