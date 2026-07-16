@@ -1140,6 +1140,119 @@ func TestStreamConverter_ThinkingDirectlyFollowedByToolCall(t *testing.T) {
 	}
 }
 
+func TestStreamConverter_TextBeforeThinking(t *testing.T) {
+	conv := NewStreamConverter("msg_123", "test-model", 0)
+
+	// First chunk: text content (some models emit text before their thinking block)
+	resp1 := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Role:    "assistant",
+			Content: "---\n",
+		},
+	}
+	events1 := conv.Process(resp1)
+
+	// Should have: message_start, content_block_start(text), content_block_delta(text)
+	if len(events1) < 3 {
+		t.Fatalf("expected at least 3 events for text chunk, got %d", len(events1))
+	}
+	textStart, ok := events1[1].Data.(ContentBlockStartEvent)
+	if !ok || textStart.ContentBlock.Type != "text" {
+		t.Errorf("expected content_block_start(text) as second event, got %+v", events1[1])
+	}
+	if textStart.Index != 0 {
+		t.Errorf("expected text block at index 0, got %d", textStart.Index)
+	}
+
+	// Second chunk: thinking arrives after text has already started
+	resp2 := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Role:     "assistant",
+			Thinking: "Let me think about this.",
+		},
+	}
+	events2 := conv.Process(resp2)
+
+	// Expect: content_block_stop(index=0), content_block_start(thinking, index=1),
+	//         content_block_delta(thinking_delta, index=1)
+	var textStop, thinkingStart, thinkingDelta *StreamEvent
+	for i := range events2 {
+		e := &events2[i]
+		switch e.Event {
+		case "content_block_stop":
+			if stop, ok := e.Data.(ContentBlockStopEvent); ok && stop.Index == 0 {
+				textStop = e
+			}
+		case "content_block_start":
+			if start, ok := e.Data.(ContentBlockStartEvent); ok && start.ContentBlock.Type == "thinking" {
+				thinkingStart = e
+			}
+		case "content_block_delta":
+			if delta, ok := e.Data.(ContentBlockDeltaEvent); ok && delta.Delta.Type == "thinking_delta" {
+				thinkingDelta = e
+			}
+		}
+	}
+
+	if textStop == nil {
+		t.Error("expected content_block_stop for text block (index 0)")
+	}
+	if thinkingStart == nil {
+		t.Fatal("expected content_block_start for thinking block")
+	}
+	if start, ok := thinkingStart.Data.(ContentBlockStartEvent); !ok || start.Index != 1 {
+		t.Errorf("expected thinking block at index 1, got %+v", thinkingStart.Data)
+	}
+	if thinkingDelta == nil {
+		t.Fatal("expected thinking_delta event")
+	}
+	if delta, ok := thinkingDelta.Data.(ContentBlockDeltaEvent); !ok || delta.Index != 1 {
+		t.Errorf("expected thinking delta at index 1, got %+v", thinkingDelta.Data)
+	}
+
+	// Third chunk: the answer text after thinking, done
+	resp3 := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Role:    "assistant",
+			Content: "The answer.",
+		},
+		Done:       true,
+		DoneReason: "stop",
+		Metrics:    api.Metrics{PromptEvalCount: 10, EvalCount: 5},
+	}
+	events3 := conv.Process(resp3)
+
+	// Expect: content_block_stop(index=1), content_block_start(text, index=2),
+	//         content_block_delta(text_delta, index=2), content_block_stop(index=2),
+	//         message_delta, message_stop
+	var thinkingStop, answerStart *StreamEvent
+	for i := range events3 {
+		e := &events3[i]
+		switch e.Event {
+		case "content_block_stop":
+			if stop, ok := e.Data.(ContentBlockStopEvent); ok && stop.Index == 1 && thinkingStop == nil {
+				thinkingStop = e
+			}
+		case "content_block_start":
+			if start, ok := e.Data.(ContentBlockStartEvent); ok && start.ContentBlock.Type == "text" {
+				answerStart = e
+			}
+		}
+	}
+	if thinkingStop == nil {
+		t.Error("expected content_block_stop for thinking block (index 1)")
+	}
+	if answerStart == nil {
+		t.Fatal("expected content_block_start for the answer text block")
+	}
+	if start, ok := answerStart.Data.(ContentBlockStartEvent); !ok || start.Index != 2 {
+		t.Errorf("expected answer text block at index 2, got %+v", answerStart.Data)
+	}
+}
+
 func TestStreamConverter_ToolCallWithUnmarshalableArgs(t *testing.T) {
 	// Test that unmarshalable arguments (like channels) are handled gracefully
 	// and don't cause a panic or corrupt stream
