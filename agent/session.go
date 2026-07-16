@@ -824,7 +824,7 @@ func (s *Session) emitCompactionStarted(runID string, opts RunOptions, status st
 }
 
 func (s *Session) emitCompactionSkipped(runID string, opts RunOptions, status, reason string) {
-	_ = s.emit(newCompactionSkipped(newEventMetadata(runID, opts), status, compactionSkippedMessage(reason)))
+	_ = s.emit(newCompactionSkipped(newEventMetadata(runID, opts), status, CompactionSkippedMessage(reason)))
 }
 
 func (s *Session) emitCompacted(runID string, opts RunOptions, messages []api.Message, status, summary string) {
@@ -842,7 +842,7 @@ func (s *Session) autoCompactionTrigger(req CompactionRequest) string {
 	return ""
 }
 
-func compactionSkippedMessage(reason string) string {
+func CompactionSkippedMessage(reason string) string {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
 		reason = "compaction could not run"

@@ -75,8 +75,8 @@ func TestChatNewCommandRepaintsFromTop(t *testing.T) {
 	if m.flowPrintedLines != 0 {
 		t.Fatalf("flowPrintedLines = %d, want 0", m.flowPrintedLines)
 	}
-	if m.approvalState.AllowAll() || m.opts.AllowAllTools || m.approvalState.Allows("edit") || m.permissionNotice != "" {
-		t.Fatalf("permissions were not reset: allowAll=%v opts=%v editAllowed=%v notice=%q", m.approvalState.AllowAll(), m.opts.AllowAllTools, m.approvalState.Allows("edit"), m.permissionNotice)
+	if m.approvalState.AllGranted() || m.opts.AllowAllTools || m.approvalState.Allows("edit") || m.permissionNotice != "" {
+		t.Fatalf("permissions were not reset: allowAll=%v opts=%v editAllowed=%v notice=%q", m.approvalState.AllGranted(), m.opts.AllowAllTools, m.approvalState.Allows("edit"), m.permissionNotice)
 	}
 	if msg := cmd(); msg == nil {
 		t.Fatal("repaint command returned nil")
@@ -92,10 +92,10 @@ func TestChatNewCommandPreservesLaunchFullAccessDefault(t *testing.T) {
 
 	updated, _ := m.handleSubmit()
 	fm := updated.(chatModel)
-	if !fm.approvalState.AllowAll() || !fm.opts.AllowAllTools {
-		t.Fatalf("full access default was not restored: allowAll=%v opts=%v", fm.approvalState.AllowAll(), fm.opts.AllowAllTools)
+	if !fm.approvalState.AllGranted() || !fm.opts.AllowAllTools {
+		t.Fatalf("full access default was not restored: allowAll=%v opts=%v", fm.approvalState.AllGranted(), fm.opts.AllowAllTools)
 	}
-	fm.approvalState.SetAllowAll(false)
+	fm.approvalState.Set(false, nil)
 	if fm.approvalState.Allows("edit") {
 		t.Fatal("edit scope should be cleared")
 	}
