@@ -72,7 +72,7 @@ func createTestBlob(t *testing.T, dir string, size int) (Blob, []byte) {
 	digest := fmt.Sprintf("sha256:%x", h)
 
 	// Write to file
-	path := filepath.Join(dir, digestToPath(digest))
+	path := filepath.Join(dir, mustDigestToPath(t, digest))
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -81,6 +81,15 @@ func createTestBlob(t *testing.T, dir string, size int) (Blob, []byte) {
 	}
 
 	return Blob{Digest: digest, Size: int64(size)}, data
+}
+
+func mustDigestToPath(t testing.TB, digest string) string {
+	t.Helper()
+	path, err := digestToPath(digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func TestDownload(t *testing.T) {
@@ -95,7 +104,7 @@ func TestDownload(t *testing.T) {
 		// Extract digest from URL: /v2/library/_/blobs/sha256:...
 		digest := filepath.Base(r.URL.Path)
 
-		path := filepath.Join(serverDir, digestToPath(digest))
+		path := filepath.Join(serverDir, mustDigestToPath(t, digest))
 		data, err := os.ReadFile(path)
 		if err != nil {
 			http.NotFound(w, r)
@@ -152,7 +161,7 @@ func TestDownloadWithRedirect(t *testing.T) {
 	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Serve the blob content
 		digest := filepath.Base(r.URL.Path)
-		path := filepath.Join(cdnDir, digestToPath(digest))
+		path := filepath.Join(cdnDir, mustDigestToPath(t, digest))
 		blobData, err := os.ReadFile(path)
 		if err != nil {
 			http.NotFound(w, r)
@@ -203,7 +212,7 @@ func TestDownloadWithRetry(t *testing.T) {
 		}
 
 		digest := filepath.Base(r.URL.Path)
-		path := filepath.Join(serverDir, digestToPath(digest))
+		path := filepath.Join(serverDir, mustDigestToPath(t, digest))
 		blobData, err := os.ReadFile(path)
 		if err != nil {
 			http.NotFound(w, r)
@@ -249,7 +258,7 @@ func TestDownloadWithAuth(t *testing.T) {
 		}
 
 		digest := filepath.Base(r.URL.Path)
-		path := filepath.Join(serverDir, digestToPath(digest))
+		path := filepath.Join(serverDir, mustDigestToPath(t, digest))
 		blobData, err := os.ReadFile(path)
 		if err != nil {
 			http.NotFound(w, r)
@@ -294,7 +303,7 @@ func TestDownloadSkipsExisting(t *testing.T) {
 
 	// Pre-populate client dir
 	clientDir := t.TempDir()
-	path := filepath.Join(clientDir, digestToPath(blob1.Digest))
+	path := filepath.Join(clientDir, mustDigestToPath(t, blob1.Digest))
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -339,7 +348,7 @@ func TestDownloadResumeProgressTotal(t *testing.T) {
 		blob Blob
 		data []byte
 	}{{blob1, data1}, {blob2, data2}} {
-		path := filepath.Join(clientDir, digestToPath(b.blob.Digest))
+		path := filepath.Join(clientDir, mustDigestToPath(t, b.blob.Digest))
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -350,7 +359,7 @@ func TestDownloadResumeProgressTotal(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		digest := filepath.Base(r.URL.Path)
-		path := filepath.Join(serverDir, digestToPath(digest))
+		path := filepath.Join(serverDir, mustDigestToPath(t, digest))
 		data, err := os.ReadFile(path)
 		if err != nil {
 			http.NotFound(w, r)
@@ -745,7 +754,7 @@ func TestDownloadWithCustomRepository(t *testing.T) {
 
 		// Serve blob from any path
 		digest := filepath.Base(r.URL.Path)
-		path := filepath.Join(serverDir, digestToPath(digest))
+		path := filepath.Join(serverDir, mustDigestToPath(t, digest))
 		blobData, err := os.ReadFile(path)
 		if err != nil {
 			http.NotFound(w, r)
@@ -783,20 +792,83 @@ func TestDownloadWithCustomRepository(t *testing.T) {
 }
 
 func TestDigestToPath(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string
+	valid := []struct {
+		name   string
+		digest string
+		want   string
 	}{
-		{"sha256:abc123", "sha256-abc123"},
-		{"sha256-abc123", "sha256-abc123"},
-		{"other", "other"},
+		{"colon separator", "sha256:" + strings.Repeat("a", 64), "sha256-" + strings.Repeat("a", 64)},
+		{"hyphen separator", "sha256-" + strings.Repeat("b", 64), "sha256-" + strings.Repeat("b", 64)},
+		{"uppercase hex", "sha256:" + strings.Repeat("A1", 32), "sha256-" + strings.Repeat("A1", 32)},
 	}
 
-	for _, tt := range tests {
-		got := digestToPath(tt.input)
-		if got != tt.want {
-			t.Errorf("digestToPath(%q) = %q, want %q", tt.input, got, tt.want)
-		}
+	for _, tt := range valid {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := digestToPath(tt.digest)
+			if err != nil {
+				t.Fatalf("digestToPath(%q) returned error: %v", tt.digest, err)
+			}
+			if got != tt.want {
+				t.Errorf("digestToPath(%q) = %q, want %q", tt.digest, got, tt.want)
+			}
+		})
+	}
+
+	invalid := []struct {
+		name   string
+		digest string
+	}{
+		{"parent traversal", "sha256:../../outside"},
+		{"forward slash", "sha256:" + strings.Repeat("a", 32) + "/" + strings.Repeat("b", 31)},
+		{"backslash", "sha256:" + strings.Repeat("a", 32) + `\` + strings.Repeat("b", 31)},
+		{"dot segments", "sha256:" + strings.Repeat("a", 31) + ".." + strings.Repeat("b", 31)},
+		{"short hash", "sha256:abc123"},
+		{"long hash", "sha256:" + strings.Repeat("a", 65)},
+		{"non hex", "sha256:" + strings.Repeat("g", 64)},
+		{"wrong algorithm", "sha512:" + strings.Repeat("a", 64)},
+		{"wrong separator", "sha256_" + strings.Repeat("a", 64)},
+		{"empty", ""},
+	}
+
+	for _, tt := range invalid {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := digestToPath(tt.digest)
+			if !errors.Is(err, errInvalidDigestFormat) {
+				t.Fatalf("digestToPath(%q) error = %v, want %v", tt.digest, err, errInvalidDigestFormat)
+			}
+			if got != "" {
+				t.Errorf("digestToPath(%q) = %q, want empty path", tt.digest, got)
+			}
+		})
+	}
+}
+
+func TestDownloadRejectsInvalidDigest(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	destDir := t.TempDir()
+	err := Download(context.Background(), DownloadOptions{
+		Blobs:   []Blob{{Digest: "sha256:../../outside", Size: 1}},
+		BaseURL: server.URL,
+		DestDir: destDir,
+	})
+	if !errors.Is(err, errInvalidDigestFormat) {
+		t.Fatalf("Download() error = %v, want %v", err, errInvalidDigestFormat)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Errorf("registry received %d requests for invalid digest, want 0", got)
+	}
+	entries, readErr := os.ReadDir(destDir)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 0 {
+		t.Errorf("destination contains %d entries after rejected download, want 0", len(entries))
 	}
 }
 
@@ -838,7 +910,7 @@ func TestParseAuthChallenge(t *testing.T) {
 func verifyBlob(t *testing.T, dir string, blob Blob, expected []byte) {
 	t.Helper()
 
-	path := filepath.Join(dir, digestToPath(blob.Digest))
+	path := filepath.Join(dir, mustDigestToPath(t, blob.Digest))
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Errorf("Failed to read %s: %v", blob.Digest[:19], err)
@@ -889,7 +961,7 @@ func TestDownloadParallelism(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 
 		digest := filepath.Base(r.URL.Path)
-		path := filepath.Join(serverDir, digestToPath(digest))
+		path := filepath.Join(serverDir, mustDigestToPath(t, digest))
 		data, err := os.ReadFile(path)
 		if err != nil {
 			http.NotFound(w, r)
@@ -1031,7 +1103,7 @@ func TestDownloadStallDetection(t *testing.T) {
 		count := requestCount.Add(1)
 
 		digest := filepath.Base(r.URL.Path)
-		path := filepath.Join(serverDir, digestToPath(digest))
+		path := filepath.Join(serverDir, mustDigestToPath(t, digest))
 		data, err := os.ReadFile(path)
 		if err != nil {
 			http.NotFound(w, r)
@@ -1096,7 +1168,7 @@ func TestDownloadCancellation(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		digest := filepath.Base(r.URL.Path)
-		path := filepath.Join(serverDir, digestToPath(digest))
+		path := filepath.Join(serverDir, mustDigestToPath(t, digest))
 		data, _ := os.ReadFile(path)
 
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
@@ -1226,7 +1298,7 @@ func TestProgressTracking(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		digest := filepath.Base(r.URL.Path)
-		path := filepath.Join(serverDir, digestToPath(digest))
+		path := filepath.Join(serverDir, mustDigestToPath(t, digest))
 		data, _ := os.ReadFile(path)
 		w.WriteHeader(http.StatusOK)
 		w.Write(data)
@@ -1375,7 +1447,7 @@ func TestProgressRollback(t *testing.T) {
 	blob := Blob{Digest: digest, Size: int64(len(content))}
 
 	clientDir := t.TempDir()
-	path := filepath.Join(clientDir, digestToPath(digest))
+	path := filepath.Join(clientDir, mustDigestToPath(t, digest))
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1652,7 +1724,7 @@ func BenchmarkUploadThroughput(b *testing.B) {
 
 	// Create source file once
 	srcDir := b.TempDir()
-	path := filepath.Join(srcDir, digestToPath(digest))
+	path := filepath.Join(srcDir, mustDigestToPath(b, digest))
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		b.Fatal(err)
 	}
@@ -1742,7 +1814,7 @@ func TestResumeFromPartialFile(t *testing.T) {
 
 	// Pre-create a partial .tmp file (first half)
 	partialSize := blobSize / 2
-	dest := filepath.Join(clientDir, digestToPath(digest))
+	dest := filepath.Join(clientDir, mustDigestToPath(t, digest))
 	os.MkdirAll(filepath.Dir(dest), 0o755)
 	os.WriteFile(dest+".tmp", data[:partialSize], 0o644)
 
@@ -1824,7 +1896,7 @@ func TestResumeCorruptPartialFile(t *testing.T) {
 	for i := range corruptData {
 		corruptData[i] = 0xFF // All 0xFF — definitely wrong
 	}
-	dest := filepath.Join(clientDir, digestToPath(digest))
+	dest := filepath.Join(clientDir, mustDigestToPath(t, digest))
 	os.MkdirAll(filepath.Dir(dest), 0o755)
 	os.WriteFile(dest+".tmp", corruptData, 0o644)
 
@@ -1875,7 +1947,7 @@ func TestResumePartialFileLargerThanBlob(t *testing.T) {
 
 	// Pre-create .tmp file LARGER than expected blob
 	oversizedData := make([]byte, blobSize+1000)
-	dest := filepath.Join(clientDir, digestToPath(digest))
+	dest := filepath.Join(clientDir, mustDigestToPath(t, digest))
 	os.MkdirAll(filepath.Dir(dest), 0o755)
 	os.WriteFile(dest+".tmp", oversizedData, 0o644)
 
@@ -1929,7 +2001,7 @@ func TestResumeBelowThreshold(t *testing.T) {
 	clientDir := t.TempDir()
 
 	// Pre-create a partial .tmp file
-	dest := filepath.Join(clientDir, digestToPath(digest))
+	dest := filepath.Join(clientDir, mustDigestToPath(t, digest))
 	os.MkdirAll(filepath.Dir(dest), 0o755)
 	os.WriteFile(dest+".tmp", data[:blobSize/2], 0o644)
 
@@ -1983,7 +2055,7 @@ func TestResumeServerDoesNotSupportRange(t *testing.T) {
 	clientDir := t.TempDir()
 
 	// Pre-create partial .tmp file
-	dest := filepath.Join(clientDir, digestToPath(digest))
+	dest := filepath.Join(clientDir, mustDigestToPath(t, digest))
 	os.MkdirAll(filepath.Dir(dest), 0o755)
 	os.WriteFile(dest+".tmp", data[:blobSize/2], 0o644)
 
@@ -2054,7 +2126,7 @@ func TestResumePartialFileExactSize(t *testing.T) {
 
 	// Pre-create .tmp file with exact correct content (full size)
 	// This simulates a download that completed but wasn't renamed
-	dest := filepath.Join(clientDir, digestToPath(digest))
+	dest := filepath.Join(clientDir, mustDigestToPath(t, digest))
 	os.MkdirAll(filepath.Dir(dest), 0o755)
 	os.WriteFile(dest+".tmp", data, 0o644)
 
@@ -2248,7 +2320,7 @@ func TestChunkedUploadBasic(t *testing.T) {
 	blob := Blob{Digest: digest, Size: int64(blobSize)}
 
 	clientDir := t.TempDir()
-	path := filepath.Join(clientDir, digestToPath(digest))
+	path := filepath.Join(clientDir, mustDigestToPath(t, digest))
 	os.MkdirAll(filepath.Dir(path), 0o755)
 	os.WriteFile(path, data, 0o644)
 
@@ -2313,7 +2385,7 @@ func TestChunkedUploadCDNRedirect(t *testing.T) {
 	blob := Blob{Digest: digest, Size: int64(blobSize)}
 
 	clientDir := t.TempDir()
-	path := filepath.Join(clientDir, digestToPath(digest))
+	path := filepath.Join(clientDir, mustDigestToPath(t, digest))
 	os.MkdirAll(filepath.Dir(path), 0o755)
 	os.WriteFile(path, data, 0o644)
 
@@ -2392,7 +2464,7 @@ func TestChunkedUploadPartRetry(t *testing.T) {
 	blob := Blob{Digest: digest, Size: int64(blobSize)}
 
 	clientDir := t.TempDir()
-	path := filepath.Join(clientDir, digestToPath(digest))
+	path := filepath.Join(clientDir, mustDigestToPath(t, digest))
 	os.MkdirAll(filepath.Dir(path), 0o755)
 	os.WriteFile(path, data, 0o644)
 
@@ -2446,7 +2518,7 @@ func multiPartTestHelper(t *testing.T, blobSize int, partSize int64, serverURL s
 	blob := Blob{Digest: digest, Size: int64(blobSize)}
 
 	clientDir := t.TempDir()
-	path := filepath.Join(clientDir, digestToPath(digest))
+	path := filepath.Join(clientDir, mustDigestToPath(t, digest))
 	os.MkdirAll(filepath.Dir(path), 0o755)
 	os.WriteFile(path, data, 0o644)
 
@@ -2486,7 +2558,7 @@ func TestChunkedUploadMultiPartSessionURLChain(t *testing.T) {
 
 	u, blob, data := multiPartTestHelper(t, blobSize, partSize, server.URL)
 
-	f, err := os.Open(filepath.Join(u.srcDir, digestToPath(blob.Digest)))
+	f, err := os.Open(filepath.Join(u.srcDir, mustDigestToPath(t, blob.Digest)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2545,7 +2617,7 @@ func TestChunkedUploadMultiPartDataIntegrity(t *testing.T) {
 
 	u, blob, data := multiPartTestHelper(t, blobSize, partSize, server.URL)
 
-	f, err := os.Open(filepath.Join(u.srcDir, digestToPath(blob.Digest)))
+	f, err := os.Open(filepath.Join(u.srcDir, mustDigestToPath(t, blob.Digest)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2605,7 +2677,7 @@ func TestChunkedUploadMultiPartProgressRollback(t *testing.T) {
 		mu.Unlock()
 	})
 
-	f, err := os.Open(filepath.Join(u.srcDir, digestToPath(blob.Digest)))
+	f, err := os.Open(filepath.Join(u.srcDir, mustDigestToPath(t, blob.Digest)))
 	if err != nil {
 		t.Fatal(err)
 	}
