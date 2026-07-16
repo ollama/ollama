@@ -17,6 +17,7 @@ func (m mockTool) Description() string { return "" }
 func (m mockTool) Schema() api.ToolFunction {
 	return api.ToolFunction{Name: m.name}
 }
+
 func (m mockTool) Execute(context.Context, ToolContext, map[string]any) (ToolResult, error) {
 	return ToolResult{}, nil
 }
@@ -32,7 +33,8 @@ func TestToolApprovalScopeUsesScopedTool(t *testing.T) {
 				}
 			}
 			return "bash"
-		}}
+		},
+	}
 	plainTool := mockTool{name: "edit"}
 
 	tests := []struct {
