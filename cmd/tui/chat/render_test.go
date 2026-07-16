@@ -738,6 +738,54 @@ func TestChatStreamingAssistantOutputHoldsLiveMarkdown(t *testing.T) {
 	}
 }
 
+func TestChatStreamingRendersBoldBareURLAfterCompletion(t *testing.T) {
+	const response = "Draft PR opened: **https://github.com/ollama/ollama/pull/17203**"
+	m := chatModel{width: 80, height: 12, running: true, events: make(chan tea.Msg)}
+
+	updated, _ := m.Update(chatAgentMsg{event: coreagent.Event{Type: coreagent.EventMessageDelta, Content: "Draft PR opened: **https://github.com/ollama/"}})
+	m = updated.(chatModel)
+	if got := stripANSI(m.renderTranscript(80)); !strings.Contains(got, "**https://github.com/ollama/") {
+		t.Fatalf("incomplete Markdown should remain visible while streaming: %q", got)
+	}
+
+	updated, _ = m.Update(chatAgentMsg{event: coreagent.Event{Type: coreagent.EventMessageDelta, Content: "ollama/pull/17203**"}})
+	m = updated.(chatModel)
+	if got := m.entries[0].content; got != response {
+		t.Fatalf("streamed content = %q, want %q", got, response)
+	}
+	rendered := m.renderTranscript(80)
+	plain := stripANSI(rendered)
+	if strings.Contains(plain, "**") {
+		t.Fatalf("rendered response should not contain Markdown delimiters: %q", plain)
+	}
+	if !strings.Contains(plain, "Draft PR opened: https://github.com/ollama/ollama/pull/17203") {
+		t.Fatalf("rendered response missing URL: %q", plain)
+	}
+	if !strings.Contains(rendered, chatStrongStyle.Render("https://github.com/ollama/ollama/pull/17203")) {
+		t.Fatalf("URL should use the bold terminal style: %q", rendered)
+	}
+}
+
+func TestRenderMarkdownInlineWrapsStrongTextWithoutDelimiters(t *testing.T) {
+	rendered := renderMarkdownForView("**alpha beta gamma delta epsilon**", 20)
+	plain := stripANSI(rendered)
+	if strings.Contains(plain, "**") {
+		t.Fatalf("wrapped strong text should not contain Markdown delimiters: %q", plain)
+	}
+	for _, line := range strings.Split(rendered, "\n") {
+		if got := lipgloss.Width(line); got > 20 {
+			t.Fatalf("rendered line width = %d, want <= 20: %q", got, line)
+		}
+	}
+}
+
+func TestRenderMarkdownPreservesBareURLUnderscores(t *testing.T) {
+	const url = "https://example.com/a__b__"
+	if got := stripANSI(renderMarkdownForView(url, 80)); got != url {
+		t.Fatalf("bare URL = %q, want %q", got, url)
+	}
+}
+
 func TestChatMouseWheelScrollsTranscriptWhileRunning(t *testing.T) {
 	m := chatModel{
 		width:         80,
@@ -1872,7 +1920,10 @@ func TestChatToolCallRendersPrettyInvocationAndResult(t *testing.T) {
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
 	view := stripANSI(m.renderTranscript(100))
-	if !strings.Contains(view, "**Search results for:**") || !strings.Contains(view, "https://parthsareen.com") {
+	if strings.Contains(view, "**") {
+		t.Fatalf("inline web output should render Markdown, not show delimiters: %q", view)
+	}
+	if !strings.Contains(view, "Search results for:") || !strings.Contains(view, "https://parthsareen.com") {
 		t.Fatalf("inline web output missing content: %q", view)
 	}
 }

@@ -45,6 +45,9 @@ var (
 	chatInlineCodeStyle = lipgloss.NewStyle().
 				Bold(true)
 
+	chatStrongStyle = lipgloss.NewStyle().
+			Bold(true)
+
 	chatCodeBlockStyle = lipgloss.NewStyle()
 
 	chatTableBorderStyle = lipgloss.NewStyle().
