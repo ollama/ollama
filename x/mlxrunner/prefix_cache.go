@@ -1,6 +1,7 @@
-// cache.go manages a shared KV cache across conversations using a compressed
-// prefix trie. Each trie node stores a token sequence (edge) and optional
-// per-layer snapshots that can be paged in/out of the live MLX cache arrays.
+// prefix_cache.go manages cache state shared across conversations using a
+// compressed prefix trie. Each trie node stores a token sequence (edge) and
+// optional per-layer snapshots that can be paged in/out of the live MLX cache
+// arrays.
 //
 // Key properties:
 //   - Only one path through the trie is "active" (backed by live MLX arrays)
@@ -31,11 +32,15 @@ import (
 
 const maxPagedOutBytes int64 = 8 << 30 // 8 GiB eviction threshold for paged-out snapshot memory
 
-type kvCache struct {
+type prefixCache struct {
 	root          *trieNode   // root of the prefix trie
 	activePath    []*trieNode // current root→leaf path with live MLX arrays
 	caches        []cache.Cache
 	pagedOutBytes int64 // total bytes in paged-out snapshots across the trie
+
+	// draftLookahead is how far the draft caches' entries reference past
+	// their own slot; trie keys pack each token with its look-ahead (see key).
+	draftLookahead int
 }
 
 // pendingSnapshot is a snapshot scheduled to be taken during prefill.
@@ -48,7 +53,7 @@ type pendingSnapshot struct {
 // Callers should append generated tokens to outputs and
 // defer close to save the cache state.
 type cacheSession struct {
-	cache   *kvCache
+	cache   *prefixCache
 	inputs  []int32
 	outputs []int32
 
@@ -61,21 +66,20 @@ type cacheSession struct {
 	pendingSnapshots []pendingSnapshot
 }
 
-func (c *kvCache) ensureCaches(m base.Model) {
-	if len(c.caches) != 0 {
-		return
-	}
+func newPrefixCache(m base.Model) *prefixCache {
+	c := &prefixCache{}
 	if cacheFactory, ok := m.(interface{ NewCaches() []cache.Cache }); ok {
 		c.caches = cacheFactory.NewCaches()
-		return
+		return c
 	}
 	c.caches = make([]cache.Cache, m.NumLayers())
 	for i := range c.caches {
 		c.caches[i] = cache.NewKVCache()
 	}
+	return c
 }
 
-func (c *kvCache) ensureRoot() {
+func (c *prefixCache) ensureRoot() {
 	if c.root == nil {
 		c.root = &trieNode{
 			lastUsed: time.Now(),
@@ -86,17 +90,17 @@ func (c *kvCache) ensureRoot() {
 
 // begin prepares caches for a new request. It finds the nearest
 // matching cache or creates new caches if none match.
-func (c *kvCache) begin(m base.Model, inputs []int32) *cacheSession {
-	c.ensureCaches(m)
+func (c *prefixCache) begin(inputs []int32) *cacheSession {
 	c.ensureRoot()
 
-	matchPath, matched := findBestMatch(c.root, inputs)
+	keys := c.key(inputs)
+	matchPath, matched := findBestMatch(c.root, keys)
 	originalMatched := matched
 
 	// Always keep at least one token to re-evaluate so the
 	// pipeline can seed token generation from it.
 	if matched == len(inputs) && matched > 0 {
-		matchPath, matched = findBestMatch(c.root, inputs[:len(inputs)-1])
+		matchPath, matched = findBestMatch(c.root, keys[:matched-1])
 	}
 
 	// Switch to the matched path, paging in/out as needed.
@@ -128,9 +132,31 @@ func (c *kvCache) begin(m base.Model, inputs []int32) *cacheSession {
 	return session
 }
 
+// key converts tokens to trie keys, one per restorable cache offset. A model
+// that drafts through MTP-style draft caches pairs each cache slot with the
+// token after it, so slot i is reusable only if token i+1 also matched. The
+// key for offset i then packs (token i, token i+1): matching k keys verifies
+// k+1 tokens, making every match a valid restore point.
+func (c *prefixCache) key(tokens []int32) []trieKey {
+	keys := make([]trieKey, max(len(tokens)-c.draftLookahead, 0))
+	switch c.draftLookahead {
+	case 0:
+		for i, t := range tokens {
+			keys[i] = trieKey(t)
+		}
+	case 1:
+		for i := range keys {
+			keys[i] = trieKey(uint32(tokens[i]))<<32 | trieKey(uint32(tokens[i+1]))
+		}
+	default:
+		panic(fmt.Sprintf("prefixCache: unsupported draft look-ahead %d", c.draftLookahead))
+	}
+	return keys
+}
+
 // switchToPath transitions from the current active path to a new path,
 // paging out diverging segments and paging in the new path.
-func (c *kvCache) switchToPath(newPath []*trieNode, matched int) {
+func (c *prefixCache) switchToPath(newPath []*trieNode, matched int) {
 	defer c.enforceEvictionPolicy()
 
 	// Find common ancestor index.
@@ -253,9 +279,11 @@ pageIn:
 
 // schedulePrefillSnapshots schedules every cache to capture snapshots as the
 // forward pass crosses the given absolute token offsets, so a single full-size
-// prefill records interior states without the caller breaking the batch. The
-// passed offsets are user-requested restore points; they are merged with any
-// snapshots begin already scheduled (e.g. a branch point), with coinciding
+// prefill records interior states without the caller breaking the batch. A
+// passed offset names a token prefix; the capture lands at the deepest
+// state that prefix alone determines (offset - draftLookahead), which is where
+// a prompt sharing exactly that prefix restores. The offsets are merged with
+// any snapshots begin already scheduled (e.g. a branch point), with coinciding
 // offsets upgraded to user so eviction preserves them.
 //
 // Offsets at or before the current cache position, or past the end of the
@@ -265,6 +293,7 @@ func (s *cacheSession) schedulePrefillSnapshots(offsets []int) {
 	c := s.cache
 	base := c.minCacheOffset()
 	for _, offset := range offsets {
+		offset -= c.draftLookahead
 		if offset <= base || offset > len(s.inputs) {
 			continue
 		}
@@ -361,7 +390,7 @@ func (s *cacheSession) attachPrefillSnapshots() {
 	// no captured state. Skip it rather than materialize a node whose edge
 	// claims tokens the cache never wrote. Closing its (nil) row is a no-op.
 	reached := c.minCacheOffset()
-	stored := append(s.inputs, s.outputs...)
+	stored := c.key(append(s.inputs, s.outputs...))
 	for i, p := range pending {
 		if p.offset > reached {
 			// Never crossed by a write, so the row is nil; close any entry
@@ -401,7 +430,7 @@ func (s *cacheSession) attachCapturedSnapshots(node *trieNode, snaps []cache.Sna
 // advancePath advances the active path from the current frontier by matching
 // tokens against existing trie children, splitting partial matches, and
 // appending any remaining tokens as new nodes. Returns the new frontier.
-func (c *kvCache) advancePath(frontier *trieNode, tokens []int32, endOffset int) *trieNode {
+func (c *prefixCache) advancePath(frontier *trieNode, tokens []trieKey, endOffset int) *trieNode {
 	// Check if existing children already cover some or all of tokens.
 	// tokens may span multiple trie nodes when extending a previous run's
 	// leaf and this snapshot now overlaps that same range.
@@ -438,7 +467,7 @@ func (c *kvCache) advancePath(frontier *trieNode, tokens []int32, endOffset int)
 }
 
 // freeAll releases all cache layers.
-func (c *kvCache) freeAll() {
+func (c *prefixCache) freeAll() {
 	for _, kv := range c.caches {
 		if kv != nil {
 			kv.Free()
@@ -446,7 +475,7 @@ func (c *kvCache) freeAll() {
 	}
 }
 
-func (c *kvCache) minCacheOffset() int {
+func (c *prefixCache) minCacheOffset() int {
 	offset := 0
 	found := false
 	for _, kv := range c.caches {
@@ -488,12 +517,17 @@ func (s *cacheSession) close() {
 	// that we also actually have the data.
 	mlx.AsyncEval(arrays...)
 
-	// Advance the trie frontier with any newly generated tokens.
+	// The caches never advance past the stored keys; anything more
+	// means positions desynced.
 	c := s.cache
+	stored := c.key(append(s.inputs, s.outputs...))
+	if offset > len(stored) {
+		panic(fmt.Sprintf("cache: offset %d exceeds %d stored keys", offset, len(stored)))
+	}
+
+	// Advance the trie frontier with any newly generated tokens.
 	if len(c.activePath) > 0 {
 		frontier := c.activePath[len(c.activePath)-1]
-		stored := append(s.inputs, s.outputs...)
-
 		if offset > frontier.endOffset {
 			newTokens := stored[frontier.endOffset:offset]
 			c.advancePath(frontier, newTokens, offset)
@@ -503,7 +537,7 @@ func (s *cacheSession) close() {
 }
 
 // enforceEvictionPolicy evicts eligible nodes until paged-out memory is within limits.
-func (c *kvCache) enforceEvictionPolicy() {
+func (c *prefixCache) enforceEvictionPolicy() {
 	if c.pagedOutBytes <= maxPagedOutBytes {
 		return
 	}
@@ -537,7 +571,7 @@ func (c *kvCache) enforceEvictionPolicy() {
 }
 
 // evictNode evicts a single node from the trie, freeing its snapshot memory.
-func (c *kvCache) evictNode(node *trieNode) {
+func (c *prefixCache) evictNode(node *trieNode) {
 	if len(node.children) == 0 {
 		// Leaf: remove entirely.
 		slog.Debug("evicting leaf", "offset", node.startOffset(), "tokens", len(node.tokens), "freed", mlx.PrettyBytes(int(node.snapshotBytes())))
@@ -553,7 +587,7 @@ func (c *kvCache) evictNode(node *trieNode) {
 	}
 }
 
-func (c *kvCache) dumpTree() {
+func (c *prefixCache) dumpTree() {
 	// Summary stats
 	var cacheBytes int
 	for _, kv := range c.caches {
@@ -640,7 +674,7 @@ func (c *kvCache) dumpTree() {
 	dump(c.root, "", true)
 
 	offset := c.minCacheOffset()
-	logutil.Trace(fmt.Sprintf("kv cache active_tokens: %d, active_size: %s, paged_out: %s, trie: nodes=%d, snapshots=%d",
+	logutil.Trace(fmt.Sprintf("prefix cache active_tokens: %d, active_size: %s, paged_out: %s, trie: nodes=%d, snapshots=%d",
 		offset, mlx.PrettyBytes(cacheBytes), mlx.PrettyBytes(int(pagedBytes)), nodeCount, snapshotCount))
 	for i, l := range lines {
 		if i == 0 {

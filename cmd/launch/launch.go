@@ -287,7 +287,7 @@ Flags and extra arguments require an integration name.
 
 Supported integrations:
   claude          Claude Code
-  codex-app       Codex App (aliases: codex-desktop, codex-gui)
+  chatgpt         ChatGPT (aliases: codex-app, codex-desktop, codex-gui)
   hermes          Hermes Agent
   openclaw        OpenClaw (aliases: clawdbot, moltbot)
   opencode        OpenCode
@@ -307,8 +307,8 @@ Examples:
   ollama launch
   ollama launch claude
   ollama launch claude --model <model>
-  ollama launch codex-app
-  ollama launch codex-app --restore
+  ollama launch chatgpt
+  ollama launch chatgpt --restore
   ollama launch hermes
   ollama launch hermes-desktop
   ollama launch droid --config (does not auto-launch)
@@ -996,9 +996,11 @@ func (c *launcherClient) resolveSingleIntegrationTarget(ctx context.Context, nam
 		target = selected
 	} else if !skipReadiness {
 		if err := c.ensureModelsReadyFor(ctx, []string{target}, runner.String(), name); err != nil {
-			if !errors.Is(err, errDeprecatedLaunchModelDeclined) || req.ModelOverride != "" {
+			if !errors.Is(err, errDeprecatedLaunchModelDeclined) {
 				return "", false, err
 			}
+			// "Pick another model" is an interactive recovery path, including
+			// when --model supplied the initial target.
 			selected, err := c.selectSingleModelWithSelectorReady(ctx, fmt.Sprintf("Select model for %s:", runner), target, DefaultSingleSelector, true, runner.String(), name)
 			if err != nil {
 				return "", false, err

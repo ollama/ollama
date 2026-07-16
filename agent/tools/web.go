@@ -13,16 +13,13 @@ import (
 	internalcloud "github.com/ollama/ollama/internal/cloud"
 )
 
-var (
-	ErrWebSearchAuthRequired = errors.New("web search requires authentication")
-	ErrWebFetchAuthRequired  = errors.New("web fetch requires authentication")
-)
-
 const (
 	maxWebFetchContentRunes = 60_000
 	webSearchTimeout        = 15 * time.Second
 	webFetchTimeout         = 30 * time.Second
 )
+
+var ErrWebAuthRequired = errors.New("Not authenticated. Run `ollama signin` and try again.")
 
 type WebSearch struct{}
 
@@ -76,7 +73,7 @@ func (w *WebSearch) Execute(ctx context.Context, _ agent.ToolContext, args map[s
 	if err != nil {
 		var authErr api.AuthorizationError
 		if errors.As(err, &authErr) {
-			return agent.ToolResult{}, fmt.Errorf("%w: %s", ErrWebSearchAuthRequired, authErr)
+			return agent.ToolResult{}, ErrWebAuthRequired
 		}
 		return agent.ToolResult{}, err
 	}
@@ -160,7 +157,7 @@ func (w *WebFetch) Execute(ctx context.Context, _ agent.ToolContext, args map[st
 	if err != nil {
 		var authErr api.AuthorizationError
 		if errors.As(err, &authErr) {
-			return agent.ToolResult{}, fmt.Errorf("%w: %s", ErrWebFetchAuthRequired, authErr)
+			return agent.ToolResult{}, ErrWebAuthRequired
 		}
 		return agent.ToolResult{}, err
 	}
