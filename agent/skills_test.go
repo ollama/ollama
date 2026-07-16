@@ -150,14 +150,11 @@ func TestLoadDefaultSkillsPrecedenceAndCollisions(t *testing.T) {
 	if _, err := catalog.Load("unique"); err != nil {
 		t.Fatalf("unique should load from user ollama: %v", err)
 	}
-	var shadows int
+	// Collisions are resolved silently by precedence — no diagnostics.
 	for _, d := range catalog.Diagnostics() {
 		if strings.Contains(d.Error(), "shadows") {
-			shadows++
+			t.Fatalf("unexpected shadow diagnostic: %v", d)
 		}
-	}
-	if shadows < 2 {
-		t.Fatalf("expected collision diagnostics, got %d: %#v", shadows, catalog.Diagnostics())
 	}
 }
 

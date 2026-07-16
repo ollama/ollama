@@ -164,9 +164,9 @@ func LoadDefaultSkills(projectDir string) (*SkillCatalog, error) {
 		}
 		catalog.diagnostics = append(catalog.diagnostics, sub.diagnostics...)
 		for _, skill := range sub.skills {
-			if existing, ok := catalog.skills[skill.Name]; ok && existing.Path != skill.Path {
-				catalog.diagnostics = append(catalog.diagnostics, fmt.Errorf("skill %q in %s shadows %q", skill.Name, root.path, existing.Path))
-			}
+			// Name collisions across roots are expected precedence resolution,
+			// not errors: later (higher-precedence) roots legitimately override
+			// earlier ones. The skill is still loaded; no diagnostic needed.
 			catalog.skills[skill.Name] = skill
 		}
 	}
