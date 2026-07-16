@@ -79,7 +79,7 @@ func (s Skill) resources() []string {
 			if e.IsDir() {
 				continue
 			}
-			resources = append(resources, filepath.Join(sub, e.Name()))
+			resources = append(resources, sub+"/"+e.Name())
 		}
 	}
 	sort.Strings(resources)
