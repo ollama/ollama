@@ -419,6 +419,35 @@ func TestChatInputAcceptsSpace(t *testing.T) {
 	}
 }
 
+func TestChatCloudModelDefaultToolRoundsAreUnlimited(t *testing.T) {
+	const formerDefaultLimit = 100
+	client := &chatToolLoopClient{toolRounds: formerDefaultLimit + 1}
+	registry := &coreagent.Registry{}
+	registry.Register(chatTestTool{})
+	m := chatModel{
+		ctx: context.Background(),
+		opts: Options{
+			Model:         "test:cloud",
+			Client:        client,
+			Tools:         registry,
+			AllowAllTools: true,
+		},
+	}
+
+	updated, cmd := m.startRun("keep going")
+	m = updated.(chatModel)
+	if cmd == nil {
+		t.Fatal("startRun should start a cloud model run")
+	}
+	done := waitForRunDone(t, m.events)
+	if done.err != nil {
+		t.Fatalf("cloud run returned error: %v", done.err)
+	}
+	if client.calls != formerDefaultLimit+2 {
+		t.Fatalf("client calls = %d, want %d", client.calls, formerDefaultLimit+2)
+	}
+}
+
 func TestChatLargePasteUsesPlaceholderAndExpandsOnSubmit(t *testing.T) {
 	pasted := strings.Repeat("line\n", pastedTextPlaceholderMinLines-1) + "line"
 	m := chatModel{

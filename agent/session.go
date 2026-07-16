@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/internal/modelref"
 )
 
 type ChatClient interface {
@@ -39,9 +40,10 @@ type RunOptions struct {
 	Options      map[string]any
 	Think        *api.ThinkValue
 	KeepAlive    *api.Duration
-	// MaxToolRounds limits consecutive model/tool cycles.
-	// Zero uses the default guard; negative disables the guard for tests or
-	// special callers.
+	// MaxToolRounds limits consecutive model/tool cycles. A positive value is
+	// an explicit limit. Zero selects the model-specific default: local models
+	// use the default guard and cloud models are unlimited. A negative value
+	// disables the guard for tests or special callers.
 	MaxToolRounds int
 }
 
@@ -174,7 +176,7 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 		opts:          opts,
 		phase:         runPhaseModel,
 		messages:      messages,
-		maxToolRounds: resolvedMaxToolRounds(opts.MaxToolRounds),
+		maxToolRounds: resolvedMaxToolRounds(opts.Model, opts.MaxToolRounds),
 	}
 	for {
 		switch st.phase {
@@ -833,11 +835,14 @@ func CompactionSkippedMessage(reason string) string {
 	return reason
 }
 
-func resolvedMaxToolRounds(value int) int {
-	if value == 0 {
-		return defaultMaxToolRounds
+func resolvedMaxToolRounds(model string, value int) int {
+	if value != 0 {
+		return value
 	}
-	return value
+	if modelref.HasExplicitCloudSource(model) {
+		return -1
+	}
+	return defaultMaxToolRounds
 }
 
 func (s *Session) toolMessageForContext(toolName, toolCallID, content string, opts RunOptions, messages []api.Message) api.Message {
