@@ -1099,8 +1099,11 @@ func (s *Server) GenerateRoutes() http.Handler {
 	restrictedAPIGroup := r.Group("/api")
 	restrictedAPIGroup.Use(cors.New(restrictedConfig), allowedHostsMiddleware(s.addr))
 	{
+		// Register OPTIONS handlers per-route so preflight requests use the restricted CORS policy.
+		for _, p := range []string{"/create", "/push", "/copy", "/delete", "/blobs/:digest", "/ps"} {
+			restrictedAPIGroup.OPTIONS(p, func(c *gin.Context) { c.Status(http.StatusNoContent) })
+		}
 		restrictedAPIGroup.POST("/create", s.CreateModelHandler)
-		restrictedAPIGroup.POST("/push", s.PushModelHandler)
 		restrictedAPIGroup.POST("/copy", s.CopyModelHandler)
 		restrictedAPIGroup.DELETE("/delete", s.DeleteModelHandler)
 		restrictedAPIGroup.POST("/blobs/:digest", s.CreateBlobHandler)
