@@ -84,16 +84,24 @@ Additional prerequisites:
 
 For Ninja builds, run CMake from a Developer PowerShell/Command Prompt or another shell where the Visual Studio compiler is available.
 
-> Building for Vulkan requires VULKAN_SDK environment variable:
-> 
+> Building for Vulkan requires the VULKAN_SDK environment variable **and**
+> `-DOLLAMA_LLAMA_BACKENDS=vulkan` passed to CMake:
+>
 > PowerShell
 > ```powershell
 > $env:VULKAN_SDK="C:\VulkanSDK\<version>"
+> cmake -B build . -DOLLAMA_LLAMA_BACKENDS=vulkan
+> cmake --build build --parallel 8
 > ```
 > CMD
 > ```cmd
 > set VULKAN_SDK=C:\VulkanSDK\<version>
+> cmake -B build . -DOLLAMA_LLAMA_BACKENDS=vulkan
+> cmake --build build --parallel 8
 > ```
+>
+> Without `-DOLLAMA_LLAMA_BACKENDS=vulkan`, the Vulkan backend library is not
+> compiled and setting `OLLAMA_VULKAN=1` will have no effect.
 
 ## Windows (ARM)
 
@@ -110,6 +118,8 @@ Additional prerequisites:
 - (Optional) Vulkan GPU support
     - [Vulkan SDK](https://vulkan.lunarg.com/sdk/home) - useful for AMD/Intel GPUs
     - Or install via package manager: `sudo apt install vulkan-sdk` (Ubuntu/Debian) or `sudo dnf install vulkan-sdk` (Fedora/CentOS)
+    - After installing the SDK, build with: `cmake -B build . -DOLLAMA_LLAMA_BACKENDS=vulkan && cmake --build build --parallel 8`
+    - **Note:** installing the SDK alone is not enough — you must also pass `-DOLLAMA_LLAMA_BACKENDS=vulkan` to CMake; without it, `OLLAMA_VULKAN=1` has no effect and inference falls back to CPU
 - (Optional) MLX engine support
     - [CUDA 13+ SDK](https://developer.nvidia.com/cuda-downloads)
     - [cuDNN 9+](https://developer.nvidia.com/cudnn)
