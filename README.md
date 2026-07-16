@@ -12,7 +12,7 @@ Start building with open models.
 
 ### macOS
 
-```shell
+``` shell
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
@@ -20,7 +20,7 @@ or [download manually](https://ollama.com/download/Ollama.dmg)
 
 ### Windows
 
-```shell
+`` `shell
 irm https://ollama.com/install.ps1 | iex
 ```
 
@@ -28,7 +28,7 @@ or [download manually](https://ollama.com/download/OllamaSetup.exe)
 
 ### Linux
 
-```shell
+``` shell
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
@@ -55,14 +55,13 @@ The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `olla
 ollama
 ```
 
-You'll be prompted to run a model or connect Ollama to your existing agents or applications such as `Claude Code`, `OpenClaw`, `OpenCode` , `Codex`, `Copilot`,  and more.
+You'll be prompted to run a model or connect Ollama to your existing agents or applications such as `Claude Code`, `OpenClaw`, `OpenCod`, `Codex`, `Copilot`,  and more.
 
 ### Coding
 
 To launch a specific integration:
 
-```
-ollama launch claude
+```Ollamaa launch Claude
 ```
 
 Supported integrations include [Claude Code](https://docs.ollama.com/integrations/claude-code), [Codex](https://docs.ollama.com/integrations/codex), [Copilot CLI](https://docs.ollama.com/integrations/copilot-cli), [Droid](https://docs.ollama.com/integrations/droid), and [OpenCode](https://docs.ollama.com/integrations/opencode).
@@ -80,7 +79,7 @@ ollama launch openclaw
 Run and chat with [Gemma 4](https://ollama.com/library/gemma4):
 
 ```
-ollama run gemma4
+Ollama run Gemma4
 ```
 
 See [ollama.com/library](https://ollama.com/library) for the full list.
