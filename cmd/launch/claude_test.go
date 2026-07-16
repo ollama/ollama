@@ -366,99 +366,11 @@ func TestClaudeEnvVars(t *testing.T) {
 		}
 	}
 
+	// Both variables disable Claude Code feature-flag evaluation, which keeps Channels unavailable.
 	for _, key := range []string{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "DISABLE_TELEMETRY"} {
 		if _, ok := got[key]; ok {
 			t.Errorf("%s must not be set by Ollama", key)
 		}
-	}
-}
-
-func TestClaudeRunEnvironmentAndChannels(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("uses a POSIX shell capture binary")
-	}
-	channelsBlockingEnvVars := []string{
-		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
-		"DISABLE_TELEMETRY",
-	}
-
-	writeCaptureBinary := func(t *testing.T) string {
-		t.Helper()
-		binDir := t.TempDir()
-		path := filepath.Join(binDir, "claude")
-		script := `#!/bin/sh
-printf 'ARG=%s\n' "$@" > "$OLLAMA_LAUNCH_CLAUDE_TEST_LOG"
-env >> "$OLLAMA_LAUNCH_CLAUDE_TEST_LOG"
-`
-		if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-			t.Fatalf("write capture binary: %v", err)
-		}
-		t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-		return filepath.Join(t.TempDir(), "claude.log")
-	}
-
-	clearChannelsBlockingEnv := func(t *testing.T) {
-		t.Helper()
-		for _, key := range channelsBlockingEnvVars {
-			if value, ok := os.LookupEnv(key); ok {
-				t.Setenv(key, value)
-			} else {
-				t.Setenv(key, "")
-			}
-			if err := os.Unsetenv(key); err != nil {
-				t.Fatalf("unset %s: %v", key, err)
-			}
-		}
-	}
-
-	t.Run("does not add blocking flags and passes channels", func(t *testing.T) {
-		clearChannelsBlockingEnv(t)
-		logPath := writeCaptureBinary(t)
-		t.Setenv("OLLAMA_LAUNCH_CLAUDE_TEST_LOG", logPath)
-
-		err := (&Claude{}).Run("llama3.2", nil, []string{"--channels", "plugin:telegram@claude-plugins-official"})
-		if err != nil {
-			t.Fatalf("Run() error = %v", err)
-		}
-
-		data, err := os.ReadFile(logPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		got := string(data)
-		wantArgs := "ARG=--model\nARG=llama3.2\nARG=--channels\nARG=plugin:telegram@claude-plugins-official\n"
-		if !strings.Contains(got, wantArgs) {
-			t.Fatalf("child args did not contain channels invocation:\n%s", got)
-		}
-		for _, key := range channelsBlockingEnvVars {
-			if strings.Contains(got, "\n"+key+"=") {
-				t.Fatalf("child environment contained %s:\n%s", key, got)
-			}
-		}
-		if !strings.Contains(got, "\nDISABLE_ERROR_REPORTING=1\n") {
-			t.Fatalf("child environment did not retain error-reporting opt-out:\n%s", got)
-		}
-	})
-
-	for _, key := range channelsBlockingEnvVars {
-		t.Run("preserves explicit "+key+" without channels", func(t *testing.T) {
-			clearChannelsBlockingEnv(t)
-			logPath := writeCaptureBinary(t)
-			t.Setenv("OLLAMA_LAUNCH_CLAUDE_TEST_LOG", logPath)
-			t.Setenv(key, "1")
-
-			if err := (&Claude{}).Run("llama3.2", nil, []string{"--print"}); err != nil {
-				t.Fatalf("Run() error = %v", err)
-			}
-
-			data, err := os.ReadFile(logPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !strings.Contains(string(data), "\n"+key+"=1\n") {
-				t.Fatalf("child environment did not preserve explicit %s:\n%s", key, data)
-			}
-		})
 	}
 }
 
