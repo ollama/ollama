@@ -23,6 +23,7 @@ type Session struct {
 	Client           ChatClient
 	EventSinks       []EventSink
 	Tools            *Registry
+	Skills           *SkillCatalog
 	DisableTools     bool
 	ApprovalPrompter ApprovalPrompter
 	ApprovalState    *ApprovalState
@@ -40,6 +41,9 @@ type RunOptions struct {
 	Options      map[string]any
 	Think        *api.ThinkValue
 	KeepAlive    *api.Duration
+	// SkillName loads a catalog skill as an ordered synthetic tool call/result
+	// before the first model request for this run.
+	SkillName string
 	// MaxToolRounds limits consecutive model/tool cycles. A positive value is
 	// an explicit limit. Zero selects the model-specific default: local models
 	// use the default guard and cloud models are unlimited. A negative value
@@ -122,23 +126,23 @@ type runState struct {
 }
 
 type runFinish struct {
-	status         string
+	status         RunStatus
 	ignoreCanceled bool
 	err            error
 }
 
 func (st *runState) finishDone() {
-	st.finish = runFinish{status: "done"}
+	st.finish = runFinish{status: RunStatusDone}
 	st.phase = runPhaseDone
 }
 
 func (st *runState) finishDenied() {
-	st.finish = runFinish{status: "denied"}
+	st.finish = runFinish{status: RunStatusDenied}
 	st.phase = runPhaseDone
 }
 
 func (st *runState) finishCanceled() {
-	st.finish = runFinish{status: "canceled", ignoreCanceled: true}
+	st.finish = runFinish{status: RunStatusCanceled, ignoreCanceled: true}
 	st.phase = runPhaseDone
 }
 
@@ -158,6 +162,18 @@ func (s *Session) Run(ctx context.Context, opts RunOptions) (*RunResult, error) 
 	messages, err := s.buildRunMessages(ctx, runID, opts)
 	if err != nil {
 		return nil, err
+	}
+	activatedSkill, err := s.activateSkill(ctx, runID, opts)
+	if err != nil {
+		s.emit(newErrorEvent(newEventMetadata(runID, opts), err.Error()))
+		return nil, err
+	}
+	if len(activatedSkill) > 0 {
+		messages = append(messages, activatedSkill...)
+		if err := s.checkPreflightPromptBudget(opts, messages); err != nil {
+			s.emit(newErrorEvent(newEventMetadata(runID, opts), err.Error()))
+			return nil, err
+		}
 	}
 
 	st := runState{
@@ -717,7 +733,7 @@ func (s *Session) maybeCompact(ctx context.Context, runID string, opts RunOption
 	if err != nil {
 		if result.Due && !skipNotified {
 			if trigger == "" {
-				trigger = "error"
+				trigger = CompactionTriggerError
 			}
 			s.emitCompactionSkipped(runID, opts, trigger, result.Reason)
 			skipNotified = true
@@ -727,7 +743,7 @@ func (s *Session) maybeCompact(ctx context.Context, runID string, opts RunOption
 	if !result.Compacted {
 		if result.Due && !skipNotified {
 			if trigger == "" {
-				trigger = "due"
+				trigger = CompactionTriggerDue
 			}
 			s.emitCompactionSkipped(runID, opts, trigger, result.Reason)
 			skipNotified = true
@@ -750,19 +766,19 @@ func (s *Session) compactForToolOutputOverflow(ctx context.Context, runID string
 	req := s.compactionRequest(runID, opts, messages, latest)
 	req.Force = true
 	req.KeepUserTurns = &keepUserTurns
-	s.emitCompactionStarted(runID, opts, "tool_output")
+	s.emitCompactionStarted(runID, opts, CompactionTriggerToolOutput)
 
 	result, err := s.Compactor.MaybeCompact(ctx, req)
 	if err != nil {
 		if result.Due && !skipNotified {
-			s.emitCompactionSkipped(runID, opts, "tool_output", result.Reason)
+			s.emitCompactionSkipped(runID, opts, CompactionTriggerToolOutput, result.Reason)
 			skipNotified = true
 		}
 		return messages, skipNotified, nil
 	}
 	if !result.Compacted {
 		if result.Due && !skipNotified {
-			s.emitCompactionSkipped(runID, opts, "tool_output", result.Reason)
+			s.emitCompactionSkipped(runID, opts, CompactionTriggerToolOutput, result.Reason)
 			skipNotified = true
 		}
 		return messages, skipNotified, nil
@@ -794,7 +810,7 @@ func (s *Session) compactForToolOutputOverflow(ctx context.Context, runID string
 		batchTokens += estimateMessagesTokens([]api.Message{refit})
 	}
 
-	s.emitCompacted(runID, opts, compacted, "tool_output", result.Summary)
+	s.emitCompacted(runID, opts, compacted, CompactionTriggerToolOutput, result.Summary)
 	if err := s.checkPostCompactionPromptBudget(opts, compacted); err != nil {
 		return compacted, skipNotified, err
 	}
@@ -821,25 +837,25 @@ func (s *Session) compactionRequest(runID string, opts RunOptions, messages []ap
 	}
 }
 
-func (s *Session) emitCompactionStarted(runID string, opts RunOptions, status string) {
-	_ = s.emit(newCompactionStarted(newEventMetadata(runID, opts), status))
+func (s *Session) emitCompactionStarted(runID string, opts RunOptions, trigger CompactionTrigger) {
+	_ = s.emit(newCompactionStarted(newEventMetadata(runID, opts), trigger))
 }
 
-func (s *Session) emitCompactionSkipped(runID string, opts RunOptions, status, reason string) {
-	_ = s.emit(newCompactionSkipped(newEventMetadata(runID, opts), status, CompactionSkippedMessage(reason)))
+func (s *Session) emitCompactionSkipped(runID string, opts RunOptions, trigger CompactionTrigger, reason string) {
+	_ = s.emit(newCompactionSkipped(newEventMetadata(runID, opts), trigger, CompactionSkippedMessage(reason)))
 }
 
-func (s *Session) emitCompacted(runID string, opts RunOptions, messages []api.Message, status, summary string) {
-	_ = s.emit(newCompacted(newEventMetadata(runID, opts), messages, status, summary))
+func (s *Session) emitCompacted(runID string, opts RunOptions, messages []api.Message, trigger CompactionTrigger, summary string) {
+	_ = s.emit(newCompacted(newEventMetadata(runID, opts), messages, trigger, summary))
 }
 
-func (s *Session) autoCompactionTrigger(req CompactionRequest) string {
+func (s *Session) autoCompactionTrigger(req CompactionRequest) CompactionTrigger {
 	if s.Compactor == nil {
 		return ""
 	}
 	trigger, should := s.Compactor.ShouldCompact(req)
 	if should {
-		return trigger
+		return CompactionTrigger(trigger)
 	}
 	return ""
 }

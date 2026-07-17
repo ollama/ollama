@@ -289,7 +289,7 @@ func TestChatModelPickerFiltersAndSwitchesModel(t *testing.T) {
 				}
 				return 262144
 			},
-			SystemPromptForModel: func(ctx context.Context, model string, registry *coreagent.Registry) string {
+			SystemPromptForModel: func(ctx context.Context, model string, registry *coreagent.Registry, toolsDisabled bool) string {
 				if model != "qwen3.5:cloud" {
 					t.Fatalf("system prompt model = %q, want qwen3.5:cloud", model)
 				}
@@ -397,7 +397,7 @@ func TestChatModelSwitchNextRunKeepsHistory(t *testing.T) {
 		opts: Options{
 			Model:  "llama3.2",
 			Client: client,
-			SystemPromptForModel: func(_ context.Context, model string, _ *coreagent.Registry) string {
+			SystemPromptForModel: func(_ context.Context, model string, _ *coreagent.Registry, _ bool) string {
 				return "system for " + model
 			},
 		},

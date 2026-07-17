@@ -56,6 +56,7 @@ var chatSlashCommands = []chatSlashCommand{
 	{name: "/new", description: "start a new chat"},
 	{name: "/think", description: "set thinking mode"},
 	{name: "/tools", description: "toggle tools on or off"},
+	{name: "/skills", description: "list available skills"},
 	{name: "/compact", description: "summarize older context"},
 	{name: "/help", description: "show commands", aliases: []string{"/?"}},
 	{name: "/bye", description: "exit", aliases: []string{"/exit"}},
@@ -107,6 +108,7 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 	if command != "" {
 		input = strings.TrimSpace(command + " " + args)
 	}
+	skillName, skillPrompt, skillOK := m.skillSlashInvocation(input)
 
 	switch {
 	case command == "/bye":
@@ -125,6 +127,8 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 		return m.handleThinkCommand(args)
 	case command == "/tools":
 		return m.handleToolsCommand(args)
+	case command == "/skills":
+		return m.handleSkillsCommand(args)
 	case command == "/prompt":
 		return m.handlePromptCommand(args)
 	case command == "/save":
@@ -133,6 +137,8 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 		return m.resetChat("new chat")
 	case command == "/compact" && args == "":
 		return m.startManualCompaction()
+	case skillOK:
+		return m.startSkillRun(skillName, skillPrompt)
 	case strings.HasPrefix(input, "/") && m.slashInputIsMultimodalFile(input):
 		return m.startRun(input)
 	case strings.HasPrefix(input, "/"):
@@ -141,6 +147,63 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 	}
 
 	return m.startRun(input)
+}
+
+func (m *chatModel) handleSkillsCommand(args string) (tea.Model, tea.Cmd) {
+	if strings.TrimSpace(args) != "" {
+		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: "usage: /skills"}))
+		return *m, nil
+	}
+	skills := m.opts.Skills.List()
+	if len(skills) == 0 {
+		m.entries = append(m.entries, newSlashEntry("No skills found. Add directories containing SKILL.md under "+skillsDirForDisplay(m.opts.Skills)+"."))
+		return *m, nil
+	}
+	lines := []string{"Available skills:"}
+	for _, skill := range skills {
+		description := skill.Description
+		if description == "" {
+			description = "No description provided."
+		}
+		lines = append(lines, fmt.Sprintf("- `%s`: %s", skill.Name, description))
+	}
+	lines = append(lines, "\nType `/<name>` to load a skill into the conversation.")
+	m.entries = append(m.entries, newSlashEntry(strings.Join(lines, "\n")))
+	return *m, nil
+}
+
+func skillsDirForDisplay(catalog *coreagent.SkillCatalog) string {
+	if catalog != nil && catalog.Dir() != "" {
+		return catalog.Dir()
+	}
+	dir, err := coreagent.SkillsDir()
+	if err != nil {
+		return "the Ollama skills directory"
+	}
+	return dir
+}
+
+// skillSlashInvocation parses "/<skill-name>" or "/<skill-name> <prompt>".
+// It returns the skill name, any trailing prompt, and ok when the first token is
+// a catalog skill. Built-in slash commands take precedence over same-named
+// skills, so they are never claimed here.
+func (m *chatModel) skillSlashInvocation(input string) (name, prompt string, ok bool) {
+	input = strings.TrimSpace(input)
+	if !strings.HasPrefix(input, "/") {
+		return "", "", false
+	}
+	token, args, _ := strings.Cut(input, " ")
+	name = strings.TrimPrefix(token, "/")
+	if name == "" {
+		return "", "", false
+	}
+	if _, _, known := slashCommandInvocation(input); known {
+		return "", "", false
+	}
+	if _, err := m.opts.Skills.Load(name); err != nil {
+		return "", "", false
+	}
+	return name, strings.TrimSpace(args), true
 }
 
 func (m *chatModel) handleToolsCommand(args string) (tea.Model, tea.Cmd) {
@@ -158,6 +221,9 @@ func (m *chatModel) handleToolsCommand(args string) (tea.Model, tea.Cmd) {
 	} else {
 		m.opts.ToolsDisabled = true
 		m.status = "tools off"
+	}
+	if m.opts.SystemPromptForModel != nil {
+		m.opts.SystemPrompt = m.opts.SystemPromptForModel(m.ctx, m.opts.Model, m.opts.Tools, m.opts.ToolsDisabled)
 	}
 	return *m, nil
 }
@@ -1041,16 +1107,16 @@ func (m chatModel) completions() []chatCompletion {
 }
 
 func (m chatModel) slashCompletions() []chatCompletion {
-	input := strings.TrimSpace(string(m.input))
+	rawInput := string(m.input)
+	input := strings.TrimSpace(rawInput)
 	if !strings.HasPrefix(input, "/") {
+		return nil
+	}
+	if m.skillSlashPromptStarted(rawInput) {
 		return nil
 	}
 
 	commands := matchingSlashCommands(input)
-	if len(commands) == 0 {
-		return []chatCompletion{{label: "No matching commands"}}
-	}
-
 	completions := make([]chatCompletion, 0, len(commands))
 	for _, command := range commands {
 		completions = append(completions, chatCompletion{
@@ -1059,7 +1125,43 @@ func (m chatModel) slashCompletions() []chatCompletion {
 			description: command.description,
 		})
 	}
+	// Each catalog skill is also invocable as "/<skill-name>"; surface them as
+	// completions so they are discoverable by typing.
+	if m.opts.Skills != nil {
+		prefix := strings.ToLower(input)
+		for _, skill := range m.opts.Skills.List() {
+			name := "/" + skill.Name
+			if !strings.HasPrefix(name, prefix) {
+				continue
+			}
+			if _, _, known := slashCommandInvocation(name); known {
+				continue // built-in command wins; don't shadow it
+			}
+			description := skill.Description
+			if description == "" {
+				description = "No description provided."
+			}
+			completions = append(completions, chatCompletion{
+				value:       name,
+				label:       name,
+				description: description,
+			})
+		}
+	}
+	if len(completions) == 0 {
+		return []chatCompletion{{label: "No matching commands"}}
+	}
 	return completions
+}
+
+func (m chatModel) skillSlashPromptStarted(input string) bool {
+	input = strings.TrimLeftFunc(input, unicode.IsSpace)
+	end := strings.IndexFunc(input, unicode.IsSpace)
+	if end < 0 {
+		return false
+	}
+	_, _, ok := m.skillSlashInvocation(input[:end])
+	return ok
 }
 
 func matchingSlashCommands(input string) []chatSlashCommand {
