@@ -1084,9 +1084,9 @@ func toolActionPhrase(action string, count int) string {
 		return "Fetched a URL"
 	case "skill":
 		if plural {
-			return fmt.Sprintf("Ran %d skills", count)
+			return fmt.Sprintf("Loaded %d skills", count)
 		}
-		return "Ran a skill"
+		return "Loaded a skill"
 	default:
 		if plural {
 			return fmt.Sprintf("Used %d tools", count)

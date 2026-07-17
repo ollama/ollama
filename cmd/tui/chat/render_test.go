@@ -1049,6 +1049,15 @@ func TestEntriesFromMessagesSkipsToolCallOnlyAssistant(t *testing.T) {
 	}
 }
 
+func TestToolActionPhraseLoadsSkills(t *testing.T) {
+	if got := toolActionPhrase("skill", 1); got != "Loaded a skill" {
+		t.Fatalf("single skill action = %q", got)
+	}
+	if got := toolActionPhrase("skill", 2); got != "Loaded 2 skills" {
+		t.Fatalf("multiple skill action = %q", got)
+	}
+}
+
 func TestEntriesFromMessagesRendersDeniedCommandAsDenied(t *testing.T) {
 	args := api.NewToolCallFunctionArguments()
 	args.Set("command", "pwd")

@@ -54,12 +54,13 @@ type Options struct {
 	Messages                    []api.Message
 	Client                      coreagent.ChatClient
 	Tools                       *coreagent.Registry
+	Skills                      *coreagent.SkillCatalog
 	ToolRegistryForModel        func(context.Context, string) *coreagent.Registry
 	ToolsDisabled               bool
 	MultiModalForModel          func(context.Context, string) bool
 	ModelOptions                func(context.Context) ([]ModelOption, error)
 	OnModelSelected             func(context.Context, string) error
-	SystemPromptForModel        func(context.Context, string, *coreagent.Registry) string
+	SystemPromptForModel        func(context.Context, string, *coreagent.Registry, bool) string
 	ApprovalPrompter            coreagent.ApprovalPrompter
 	EventSinks                  []coreagent.EventSink
 	AllowAllTools               bool
@@ -1017,7 +1018,7 @@ func (m *chatModel) startRun(input string) (tea.Model, tea.Cmd) {
 		m.status = "error"
 		return *m, nil
 	}
-	return m.startRunWithMessages(displayInput, message.Content, []api.Message{message}, "")
+	return m.startRunWithMessages(displayInput, message.Content, []api.Message{message}, "", "")
 }
 
 func (m *chatModel) userMessageFromInput(displayInput, userInput string) (string, api.Message, error) {
@@ -1076,7 +1077,25 @@ func pluralSuffix(count int) string {
 	return "s"
 }
 
-func (m *chatModel) startRunWithMessages(displayInput, historyInput string, newMessages []api.Message, extraSystemPrompt string) (tea.Model, tea.Cmd) {
+func (m *chatModel) startSkillRun(name, prompt string) (tea.Model, tea.Cmd) {
+	name = strings.TrimSpace(name)
+	prompt = strings.TrimSpace(prompt)
+	// The skill instructions are delivered via the synthetic tool result that
+	// follows this user turn, so this message orients the model rather than
+	// re-requesting the skill. When a prompt is supplied it becomes the task.
+	content := prompt
+	if content == "" {
+		content = "The " + name + " skill is loaded; follow its instructions for this request."
+	}
+	message := api.Message{Role: "user", Content: content}
+	displayInput := "/" + name
+	if prompt != "" {
+		displayInput = "/" + name + " " + prompt
+	}
+	return m.startRunWithMessages(displayInput, "", []api.Message{message}, "", name)
+}
+
+func (m *chatModel) startRunWithMessages(displayInput, historyInput string, newMessages []api.Message, extraSystemPrompt, skillName string) (tea.Model, tea.Cmd) {
 	m.refreshContextWindowTokens(m.opts.Model)
 	m.addPromptHistory(historyInput)
 	m.entries = append(m.entries, newChatEntry(chatEntry{role: "user", content: displayInput}))
@@ -1111,6 +1130,7 @@ func (m *chatModel) startRunWithMessages(displayInput, historyInput string, newM
 		Client:           m.opts.Client,
 		EventSinks:       eventSinks,
 		Tools:            m.opts.Tools,
+		Skills:           m.opts.Skills,
 		DisableTools:     m.opts.ToolsDisabled,
 		ApprovalPrompter: m.approvalPrompterForRun(m.approvalController),
 		ApprovalState:    m.ensureApprovalState(),
@@ -1127,6 +1147,7 @@ func (m *chatModel) startRunWithMessages(displayInput, historyInput string, newM
 		Options:      m.opts.Options,
 		Think:        m.opts.Think,
 		KeepAlive:    m.opts.KeepAlive,
+		SkillName:    skillName,
 	}
 
 	persistedMessages := make([]api.Message, 0, len(m.messages)+len(newMessages))

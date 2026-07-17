@@ -3,6 +3,7 @@ package anthropic
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -1137,6 +1138,56 @@ func TestStreamConverter_ThinkingDirectlyFollowedByToolCall(t *testing.T) {
 	}
 	if toolStop == nil {
 		t.Error("expected content_block_stop for tool_use block (index 1)")
+	}
+}
+
+func TestStreamConverter_TextBeforeThinking(t *testing.T) {
+	conv := NewStreamConverter("msg_123", "test-model", 0)
+
+	responses := []api.ChatResponse{
+		{Message: api.Message{Role: "assistant", Content: "---\n"}},
+		{Message: api.Message{Role: "assistant", Thinking: "Let me think."}},
+		{
+			Message:    api.Message{Role: "assistant", Content: "The answer."},
+			Done:       true,
+			DoneReason: "stop",
+			Metrics:    api.Metrics{PromptEvalCount: 10, EvalCount: 5},
+		},
+	}
+
+	var got []string
+	for _, response := range responses {
+		for _, event := range conv.Process(response) {
+			switch data := event.Data.(type) {
+			case ContentBlockStartEvent:
+				got = append(got, fmt.Sprintf("%s:%s:%d", event.Event, data.ContentBlock.Type, data.Index))
+			case ContentBlockDeltaEvent:
+				got = append(got, fmt.Sprintf("%s:%s:%d", event.Event, data.Delta.Type, data.Index))
+			case ContentBlockStopEvent:
+				got = append(got, fmt.Sprintf("%s:%d", event.Event, data.Index))
+			default:
+				got = append(got, event.Event)
+			}
+		}
+	}
+
+	want := []string{
+		"message_start",
+		"content_block_start:text:0",
+		"content_block_delta:text_delta:0",
+		"content_block_stop:0",
+		"content_block_start:thinking:1",
+		"content_block_delta:thinking_delta:1",
+		"content_block_stop:1",
+		"content_block_start:text:2",
+		"content_block_delta:text_delta:2",
+		"content_block_stop:2",
+		"message_delta",
+		"message_stop",
+	}
+
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("unexpected stream events (-want +got):\n%s", diff)
 	}
 }
 

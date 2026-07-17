@@ -220,16 +220,23 @@ func GenerateAgentTUI(cmd *cobra.Command, client *api.Client, opts agentTUIOptio
 		return agentContextWindowForModel(ctx, client, model, fallback)
 	}
 
+	skillCatalog, err := coreagent.LoadDefaultSkills(cwd)
+	if err != nil {
+		return fmt.Errorf("load agent skills: %w", err)
+	}
+	for _, diagnostic := range skillCatalog.Diagnostics() {
+		fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m ignored invalid agent skill: %v\n", diagnostic)
+	}
 	var registry *coreagent.Registry
 	registryForModel := func(ctx context.Context, model string) *coreagent.Registry {
-		return agentToolsRegistry(ctx, client, model)
+		return agentToolsRegistry(ctx, client, model, skillCatalog)
 	}
 	if opts.Model != "" {
-		registry = agentToolsRegistry(cmd.Context(), client, opts.Model)
+		registry = agentToolsRegistry(cmd.Context(), client, opts.Model, skillCatalog)
 	}
-	systemPrompt := agentSystemPromptWithWorkingDir(opts.Model, opts.System, "", cwd)
+	systemPrompt := agentSystemPromptWithWorkingDir(opts.Model, opts.System, agentSkillSystemContext(skillCatalog, registry, opts.ToolsDisabled), cwd)
 
-	_, err := agentchat.Run(cmd.Context(), agentchat.Options{
+	_, err = agentchat.Run(cmd.Context(), agentchat.Options{
 		Model:                opts.Model,
 		Client:               client,
 		Tools:                registry,
@@ -244,9 +251,10 @@ func GenerateAgentTUI(cmd *cobra.Command, client *api.Client, opts agentTUIOptio
 		OnModelSelected: func(_ context.Context, model string) error {
 			return config.SetLastModel(model)
 		},
-		SystemPromptForModel: func(ctx context.Context, model string, registry *coreagent.Registry) string {
-			return agentSystemPromptWithWorkingDir(model, agentSystemFromShow(ctx, client, model), "", cwd)
+		SystemPromptForModel: func(ctx context.Context, model string, registry *coreagent.Registry, toolsDisabled bool) string {
+			return agentSystemPromptWithWorkingDir(model, agentSystemFromShow(ctx, client, model), agentSkillSystemContext(skillCatalog, registry, toolsDisabled), cwd)
 		},
+		Skills:              skillCatalog,
 		SystemPrompt:        systemPrompt,
 		WorkingDir:          cwd,
 		Format:              opts.Format,
@@ -282,6 +290,16 @@ func GenerateAgentTUI(cmd *cobra.Command, client *api.Client, opts agentTUIOptio
 		},
 	})
 	return err
+}
+
+func agentSkillSystemContext(catalog *coreagent.SkillCatalog, registry *coreagent.Registry, toolsDisabled bool) string {
+	if toolsDisabled || registry == nil {
+		return ""
+	}
+	if _, ok := registry.Get("skill"); !ok {
+		return ""
+	}
+	return catalog.SystemContext()
 }
 
 func selectAgentModel(ctx context.Context, client *api.Client, current string) (string, error) {
@@ -331,16 +349,8 @@ func agentWorkingDir() string {
 	return cwd
 }
 
-func agentSystemPrompt(modelName string, modelSystem string, extra string) string {
-	return agentSystemPromptWithWorkingDir(modelName, modelSystem, extra, agentWorkingDir())
-}
-
 func agentSystemPromptWithWorkingDir(modelName string, modelSystem string, extra string, workingDir string) string {
 	return agentSystemPromptAtWithWorkingDir(time.Now(), modelName, modelSystem, extra, workingDir)
-}
-
-func agentSystemPromptAt(now time.Time, modelName string, modelSystem string, extra string) string {
-	return agentSystemPromptAtWithWorkingDir(now, modelName, modelSystem, extra, agentWorkingDir())
 }
 
 func agentSystemPromptAtWithWorkingDir(now time.Time, modelName string, modelSystem string, extra string, workingDir string) string {
@@ -355,10 +365,6 @@ func agentSystemPromptAtWithWorkingDir(now time.Time, modelName string, modelSys
 	return strings.Join(parts, "\n\n")
 }
 
-func agentDefaultSystemPrompt(now time.Time, modelName string) string {
-	return agentDefaultSystemPromptWithWorkingDir(now, modelName, agentWorkingDir())
-}
-
 func agentDefaultSystemPromptWithWorkingDir(now time.Time, modelName string, workingDir string) string {
 	date := now.Format("Monday, January 2, 2006")
 	shellName := "bash"
@@ -371,9 +377,6 @@ func agentDefaultSystemPromptWithWorkingDir(now time.Time, modelName string, wor
 		"Current date: " + date + ".",
 		"",
 	}
-	if workingDir != "" {
-		parts = append(parts, "Current working directory: "+strconv.Quote(workingDir)+".", "")
-	}
 	parts = append(parts,
 		"Be concise, practical, and action-oriented. Use tools when they materially help. Verify current or fast-changing facts with web tools when available; otherwise state uncertainty.",
 		"",
@@ -381,6 +384,9 @@ func agentDefaultSystemPromptWithWorkingDir(now time.Time, modelName string, wor
 		"",
 		"Tell the user about meaningful changes, verification, failures, blockers, assumptions, and risks. Summarize routine tool output instead of dumping it.",
 	)
+	if workingDir != "" {
+		parts = append(parts, "Current working directory: "+strconv.Quote(workingDir)+".")
+	}
 	return strings.Join(parts, "\n")
 }
 
@@ -396,7 +402,7 @@ func agentSystemFromShow(ctx context.Context, client *api.Client, modelName stri
 	return resp.System
 }
 
-func agentToolsRegistry(ctx context.Context, client *api.Client, modelName string) *coreagent.Registry {
+func agentToolsRegistry(ctx context.Context, client *api.Client, modelName string, skillCatalog *coreagent.SkillCatalog) *coreagent.Registry {
 	supportsTools, err := agentModelSupportsTools(ctx, client, modelName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m could not check model capabilities: %v\n", err)
@@ -411,6 +417,9 @@ func agentToolsRegistry(ctx context.Context, client *api.Client, modelName strin
 	}
 	registry.Register(&agenttools.Read{})
 	registry.Register(&agenttools.Edit{})
+	if len(skillCatalog.List()) > 0 {
+		registry.Register(&agenttools.Skill{Catalog: skillCatalog})
+	}
 
 	if os.Getenv("OLLAMA_AGENT_DISABLE_WEBSEARCH") == "" {
 		if disabled, known := agentCloudStatusDisabled(ctx, client); !known || !disabled {

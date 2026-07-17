@@ -43,7 +43,7 @@ func TestChatHelpCommandShowsV1Commands(t *testing.T) {
 			t.Fatalf("help output missing %q:\n%s", want, fm.entries[0].content)
 		}
 	}
-	for _, removed := range []string{"/history", "/load", "/raw", "/resume", "/set", "/show", "/skills", "/verbose"} {
+	for _, removed := range []string{"/history", "/load", "/raw", "/resume", "/set", "/show", "/verbose"} {
 		if strings.Contains(fm.entries[0].content, removed) {
 			t.Fatalf("removed command %q should stay hidden from help:\n%s", removed, fm.entries[0].content)
 		}
@@ -75,8 +75,8 @@ func TestChatNewCommandRepaintsFromTop(t *testing.T) {
 	if m.flowPrintedLines != 0 {
 		t.Fatalf("flowPrintedLines = %d, want 0", m.flowPrintedLines)
 	}
-	if m.approvalState.AllowAll() || m.opts.AllowAllTools || m.approvalState.Allows("edit") || m.permissionNotice != "" {
-		t.Fatalf("permissions were not reset: allowAll=%v opts=%v editAllowed=%v notice=%q", m.approvalState.AllowAll(), m.opts.AllowAllTools, m.approvalState.Allows("edit"), m.permissionNotice)
+	if m.approvalState.AllGranted() || m.opts.AllowAllTools || m.approvalState.Allows("edit") || m.permissionNotice != "" {
+		t.Fatalf("permissions were not reset: allowAll=%v opts=%v editAllowed=%v notice=%q", m.approvalState.AllGranted(), m.opts.AllowAllTools, m.approvalState.Allows("edit"), m.permissionNotice)
 	}
 	if msg := cmd(); msg == nil {
 		t.Fatal("repaint command returned nil")
@@ -92,10 +92,10 @@ func TestChatNewCommandPreservesLaunchFullAccessDefault(t *testing.T) {
 
 	updated, _ := m.handleSubmit()
 	fm := updated.(chatModel)
-	if !fm.approvalState.AllowAll() || !fm.opts.AllowAllTools {
-		t.Fatalf("full access default was not restored: allowAll=%v opts=%v", fm.approvalState.AllowAll(), fm.opts.AllowAllTools)
+	if !fm.approvalState.AllGranted() || !fm.opts.AllowAllTools {
+		t.Fatalf("full access default was not restored: allowAll=%v opts=%v", fm.approvalState.AllGranted(), fm.opts.AllowAllTools)
 	}
-	fm.approvalState.SetAllowAll(false)
+	fm.approvalState.Set(false, nil)
 	if fm.approvalState.Allows("edit") {
 		t.Fatal("edit scope should be cleared")
 	}
@@ -419,6 +419,35 @@ func TestChatInputAcceptsSpace(t *testing.T) {
 	}
 }
 
+func TestChatCloudModelDefaultToolRoundsAreUnlimited(t *testing.T) {
+	const formerDefaultLimit = 100
+	client := &chatToolLoopClient{toolRounds: formerDefaultLimit + 1}
+	registry := &coreagent.Registry{}
+	registry.Register(chatTestTool{})
+	m := chatModel{
+		ctx: context.Background(),
+		opts: Options{
+			Model:         "test:cloud",
+			Client:        client,
+			Tools:         registry,
+			AllowAllTools: true,
+		},
+	}
+
+	updated, cmd := m.startRun("keep going")
+	m = updated.(chatModel)
+	if cmd == nil {
+		t.Fatal("startRun should start a cloud model run")
+	}
+	done := waitForRunDone(t, m.events)
+	if done.err != nil {
+		t.Fatalf("cloud run returned error: %v", done.err)
+	}
+	if client.calls != formerDefaultLimit+2 {
+		t.Fatalf("client calls = %d, want %d", client.calls, formerDefaultLimit+2)
+	}
+}
+
 func TestChatLargePasteUsesPlaceholderAndExpandsOnSubmit(t *testing.T) {
 	pasted := strings.Repeat("line\n", pastedTextPlaceholderMinLines-1) + "line"
 	m := chatModel{
@@ -482,8 +511,204 @@ func TestInitialPromptHistoryLoadsFromMessages(t *testing.T) {
 	}
 }
 
+func TestSkillCommandsListAndPersistSyntheticToolCall(t *testing.T) {
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "release-notes")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: release-notes\ndescription: Draft release notes.\n---\nUse concise bullets."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := coreagent.DiscoverSkills(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := chatModel{opts: Options{Skills: catalog}, input: []rune("/skills")}
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("/skills should not start a model run")
+	}
+	m = updated.(chatModel)
+	if len(m.entries) != 1 || !strings.Contains(m.entries[0].content, "release-notes") {
+		t.Fatalf("/skills entries = %#v", m.entries)
+	}
+
+	m = chatModel{ctx: context.Background(), opts: Options{Model: "test", Skills: catalog, Client: chatTestClient{}}, input: []rune("/release-notes")}
+	updated, cmd = m.handleSubmit()
+	if cmd == nil {
+		t.Fatal("/<skill-name> should continue the chat with the loaded instructions")
+	}
+	m = updated.(chatModel)
+	events := m.events
+	for {
+		msg, ok := <-events
+		if !ok {
+			t.Fatal("skill run closed before it finished")
+		}
+		updated, _ = m.Update(msg)
+		m = updated.(chatModel)
+		if _, ok := msg.(chatRunDoneMsg); ok {
+			break
+		}
+	}
+	if len(m.messages) != 4 {
+		t.Fatalf("synthetic messages = %#v", m.messages)
+	}
+	call := m.messages[1]
+	result := m.messages[2]
+	if call.Role != "assistant" || len(call.ToolCalls) != 1 || call.ToolCalls[0].Function.Name != "skill" || !strings.HasPrefix(call.ToolCalls[0].ID, "call_skill_") {
+		t.Fatalf("synthetic call = %#v", call)
+	}
+	if result.Role != "tool" || result.ToolCallID != call.ToolCalls[0].ID || !strings.Contains(result.Content, "Use concise bullets.") {
+		t.Fatalf("synthetic result = %#v", result)
+	}
+	entries := entriesFromMessages(m.messages)
+	if len(entries) != 3 || entries[1].toolID != call.ToolCalls[0].ID || entries[1].detail != "skill" || entries[1].args["name"] != "release-notes" {
+		t.Fatalf("round-trip entries = %#v", entries)
+	}
+}
+
+func TestSkillSlashCommandPromptBecomesUserMessage(t *testing.T) {
+	catalog := writeTestSkillCatalog(t)
+	m := chatModel{ctx: context.Background(), opts: Options{Model: "test", Skills: catalog, Client: chatTestClient{}}, input: []rune("/release-notes draft the v1.2 notes")}
+	updated, cmd := m.handleSubmit()
+	if cmd == nil {
+		t.Fatal("/<skill-name> <prompt> should start a run")
+	}
+	m = updated.(chatModel)
+	for {
+		msg, ok := <-m.events
+		if !ok {
+			t.Fatal("skill run closed before it finished")
+		}
+		updated, _ = m.Update(msg)
+		m = updated.(chatModel)
+		if _, ok := msg.(chatRunDoneMsg); ok {
+			break
+		}
+	}
+	if len(m.messages) < 1 || m.messages[0].Role != "user" || m.messages[0].Content != "draft the v1.2 notes" {
+		t.Fatalf("user message = %#v, want the prompt", m.messages[0])
+	}
+	// The skill still loads as a synthetic tool call right after the user turn.
+	if len(m.messages) < 3 || m.messages[1].Role != "assistant" || len(m.messages[1].ToolCalls) != 1 || m.messages[1].ToolCalls[0].Function.Name != "skill" {
+		t.Fatalf("synthetic skill call missing: %#v", m.messages)
+	}
+}
+
+func TestChatSkillSubmitWhileActiveRunKeepsActiveState(t *testing.T) {
+	catalog := writeTestSkillCatalog(t)
+	for _, state := range []struct {
+		name       string
+		running    bool
+		compacting bool
+	}{
+		{name: "running", running: true},
+		{name: "compacting", compacting: true},
+	} {
+		t.Run(state.name, func(t *testing.T) {
+			events := make(chan tea.Msg)
+			cancel := func() {}
+			m := chatModel{
+				opts:       Options{Skills: catalog},
+				input:      []rune("/release-notes draft notes"),
+				running:    state.running,
+				compacting: state.compacting,
+				events:     events,
+				cancel:     cancel,
+			}
+
+			updated, cmd := m.handleSubmit()
+			if cmd != nil {
+				t.Fatal("skill submit should not start another run while active")
+			}
+			got := updated.(chatModel)
+			if got.events != events || got.cancel == nil || got.running != state.running || got.compacting != state.compacting {
+				t.Fatalf("active run state changed: %#v", got)
+			}
+			if string(got.input) != "/release-notes draft notes" {
+				t.Fatalf("input = %q, want skill invocation preserved", got.input)
+			}
+			if got.status != "wait for current response" {
+				t.Fatalf("status = %q", got.status)
+			}
+		})
+	}
+}
+
+func writeTestSkillCatalog(t *testing.T) *coreagent.SkillCatalog {
+	t.Helper()
+	dir := t.TempDir()
+	skillDir := filepath.Join(dir, "release-notes")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: release-notes\ndescription: Draft release notes.\n---\nUse concise bullets."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := coreagent.DiscoverSkills(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return catalog
+}
+
+func TestSkillSlashCommandAppearsInCompletions(t *testing.T) {
+	catalog := writeTestSkillCatalog(t)
+	m := chatModel{opts: Options{Skills: catalog}, input: []rune("/re")}
+
+	lines := stripANSI(strings.Join(m.slashCommandLines(80), "\n"))
+	if !strings.Contains(lines, "/release-notes") || !strings.Contains(lines, "Draft release notes.") {
+		t.Fatalf("suggestions missing /release-notes: %q", lines)
+	}
+}
+
+func TestSkillSlashPromptHidesCommandCompletions(t *testing.T) {
+	catalog := writeTestSkillCatalog(t)
+	for _, input := range []string{"/release-notes ", "/release-notes draft the release notes"} {
+		t.Run(input, func(t *testing.T) {
+			m := chatModel{opts: Options{Skills: catalog}, input: []rune(input)}
+			if lines := m.completionLines(80); len(lines) != 0 {
+				t.Fatalf("completion lines = %#v, want none", lines)
+			}
+		})
+	}
+}
+
+func TestSkillSlashNameResolvesAndRejectsArgsAndUnknown(t *testing.T) {
+	catalog := writeTestSkillCatalog(t)
+	m := &chatModel{opts: Options{Skills: catalog}}
+
+	if name, _, ok := m.skillSlashInvocation("/release-notes"); !ok || name != "release-notes" {
+		t.Fatalf("/release-notes = %q %v, want release-notes true", name, ok)
+	}
+	if name, prompt, ok := m.skillSlashInvocation("/release-notes draft notes"); !ok || name != "release-notes" || prompt != "draft notes" {
+		t.Fatalf("/release-notes draft notes = %q %q %v, want release-notes / draft notes / true", name, prompt, ok)
+	}
+	if _, _, ok := m.skillSlashInvocation("/no-such-skill"); ok {
+		t.Fatal("unknown skill should not resolve")
+	}
+	// A built-in command sharing a prefix must not be claimed as a skill.
+	if _, _, ok := m.skillSlashInvocation("/skills"); ok {
+		t.Fatal("/skills should resolve to the built-in, not a skill")
+	}
+
+	// Unknown slash input that is not a skill stays an unknown command.
+	m2 := chatModel{opts: Options{Skills: catalog}, input: []rune("/no-such-skill")}
+	updated, cmd := m2.handleSubmit()
+	if cmd != nil {
+		t.Fatal("unknown slash command should not start a run")
+	}
+	m2 = updated.(chatModel)
+	if len(m2.entries) != 1 || m2.entries[0].role != "error" || !strings.Contains(m2.entries[0].content, "Unknown command") {
+		t.Fatalf("entries = %#v, want unknown command", m2.entries)
+	}
+}
+
 func TestChatDeletedSlashCommandsAreUnknown(t *testing.T) {
-	for _, command := range []string{"/clear", "/copy", "/copy-all", "/launch", "/system", "/history", "/load", "/raw", "/resume", "/set", "/show", "/skills", "/verbose"} {
+	for _, command := range []string{"/clear", "/copy", "/copy-all", "/launch", "/system", "/history", "/load", "/raw", "/resume", "/set", "/show", "/verbose"} {
 		t.Run(command, func(t *testing.T) {
 			m := chatModel{input: []rune(command)}
 
@@ -507,12 +732,12 @@ func TestChatViewRendersSlashCommandSuggestions(t *testing.T) {
 	}
 
 	view := stripANSI(m.View())
-	for _, want := range []string{"/model", "/new", "/think", "/tools", "/compact"} {
+	for _, want := range []string{"/model", "/new", "/think", "/tools", "/skills"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %s suggestion: %q", want, view)
 		}
 	}
-	for _, removed := range []string{"/clear", "/copy", "/copy-all", "/history", "/load", "/raw", "/resume", "/set", "/show", "/skills", "/verbose"} {
+	for _, removed := range []string{"/clear", "/copy", "/copy-all", "/history", "/load", "/raw", "/resume", "/set", "/show", "/verbose"} {
 		if strings.Contains(view, removed) {
 			t.Fatalf("bare slash should hide removed command %s: %q", removed, view)
 		}
@@ -573,6 +798,35 @@ func TestChatToolsCommandTogglesToolRegistry(t *testing.T) {
 	req, _ = m.requestPreview()
 	if got := len(req.Tools); got != 1 {
 		t.Fatalf("request preview tools = %d, want 1", got)
+	}
+}
+
+func TestChatToolsCommandRefreshesCapabilityAwareSystemPrompt(t *testing.T) {
+	registry := &coreagent.Registry{}
+	registry.Register(chatTestTool{})
+	m := chatModel{
+		ctx: context.Background(),
+		opts: Options{
+			Model: "test",
+			Tools: registry,
+			SystemPromptForModel: func(_ context.Context, _ string, _ *coreagent.Registry, disabled bool) string {
+				if disabled {
+					return "tools disabled"
+				}
+				return "tools enabled"
+			},
+		},
+	}
+
+	updated, _ := m.handleToolsCommand("")
+	m = updated.(chatModel)
+	if m.opts.SystemPrompt != "tools disabled" {
+		t.Fatalf("system prompt = %q, want disabled prompt", m.opts.SystemPrompt)
+	}
+	updated, _ = m.handleToolsCommand("")
+	m = updated.(chatModel)
+	if m.opts.SystemPrompt != "tools enabled" {
+		t.Fatalf("system prompt = %q, want enabled prompt", m.opts.SystemPrompt)
 	}
 }
 

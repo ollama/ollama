@@ -26,14 +26,25 @@ const (
 	defaultCompactionThreshold           = 0.8
 	compactOnlySummaryContextTokens      = 16000
 
-	maxCompactionSummaryBytes  = 16 * 1024
-	compactionSummaryTruncated = "\n\n[summary truncated]"
+	maxCompactionSummaryRunes = 16 * 1024
 
 	compactionSystemPrompt = "Summarize the archived part of an Ollama agent conversation. Preserve user goals, decisions, files, commands, tool results, and unresolved tasks needed to continue. Omit private reasoning and return only the summary."
 )
 
 type Compactor interface {
 	MaybeCompact(context.Context, CompactionRequest) (CompactionResult, error)
+
+	// ContextWindowTokens returns the effective context window size in
+	// tokens, resolving runtime options against configured defaults.
+	ContextWindowTokens(options map[string]any) int
+
+	// Threshold returns the compaction threshold as a fraction of the
+	// context window (e.g. 0.8 means compact at 80% capacity).
+	Threshold() float64
+
+	// ShouldCompact reports whether a compaction should run and returns the
+	// trigger reason. An empty trigger means compaction is not needed.
+	ShouldCompact(req CompactionRequest) (trigger string, should bool)
 }
 
 type CompactionOptions struct {
@@ -146,6 +157,48 @@ func (c *SimpleCompactor) contextWindowTokens(options map[string]any) int {
 	return ResolveContextWindowTokens(options, c.Options.ContextWindowTokens)
 }
 
+// ContextWindowTokens resolves the effective context window from runtime
+// options or configured defaults. Satisfies the Compactor interface.
+func (c *SimpleCompactor) ContextWindowTokens(options map[string]any) int {
+	if c == nil {
+		return 0
+	}
+	return c.contextWindowTokens(options)
+}
+
+func (c *SimpleCompactor) threshold() float64 {
+	return ResolveCompactionThreshold(c.Options.Threshold)
+}
+
+// Threshold returns the configured compaction threshold fraction. Satisfies
+// the Compactor interface.
+func (c *SimpleCompactor) Threshold() float64 {
+	if c == nil {
+		return 0
+	}
+	return c.threshold()
+}
+
+// ShouldCompact reports whether compaction is due and the trigger reason.
+// Satisfies the Compactor interface.
+func (c *SimpleCompactor) ShouldCompact(req CompactionRequest) (string, bool) {
+	if c == nil {
+		return "", false
+	}
+	if req.Force {
+		return "force", true
+	}
+	if c.shouldCompact(req) {
+		contextWindow := c.contextWindowTokens(req.Options)
+		threshold := int(float64(contextWindow) * c.threshold())
+		if req.Latest.PromptEvalCount > 0 && req.Latest.PromptEvalCount >= threshold {
+			return "prompt_eval", true
+		}
+		return "estimate", true
+	}
+	return "", false
+}
+
 func (c *SimpleCompactor) keepUserTurns(options map[string]any) int {
 	contextWindow := c.contextWindowTokens(options)
 	if contextWindow > 0 && contextWindow < compactOnlySummaryContextTokens {
@@ -155,10 +208,6 @@ func (c *SimpleCompactor) keepUserTurns(options map[string]any) int {
 		return c.Options.KeepUserTurns
 	}
 	return defaultCompactionKeepUserTurns
-}
-
-func (c *SimpleCompactor) threshold() float64 {
-	return ResolveCompactionThreshold(c.Options.Threshold)
 }
 
 func ResolveContextWindowTokens(options map[string]any, configured int) int {
@@ -301,21 +350,10 @@ func (c *SimpleCompactor) compactionPromptBodyBudgetTokens(options map[string]an
 }
 
 func truncateCompactionSummary(summary string) string {
-	if len(summary) <= maxCompactionSummaryBytes {
-		return summary
-	}
-	limit := maxCompactionSummaryBytes - len(compactionSummaryTruncated)
-	if limit < 0 {
-		limit = 0
-	}
-	var b strings.Builder
-	for _, r := range summary {
-		if b.Len()+len(string(r)) > limit {
-			break
-		}
-		b.WriteRune(r)
-	}
-	return strings.TrimSpace(b.String()) + compactionSummaryTruncated
+	return Truncate(summary, TruncateConfig{
+		MaxRunes: maxCompactionSummaryRunes,
+		Label:    "summary",
+	})
 }
 
 func estimateCompactionTokens(text string) int {
@@ -323,7 +361,7 @@ func estimateCompactionTokens(text string) int {
 	if text == "" {
 		return 0
 	}
-	return max(1, (len([]rune(text))+3)/4)
+	return ApproximateTokens(len([]rune(text)))
 }
 
 func estimateMessagesTokens(messages []api.Message) int {
