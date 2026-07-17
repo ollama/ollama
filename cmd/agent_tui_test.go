@@ -9,12 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spf13/cobra"
-
 	coreagent "github.com/ollama/ollama/agent"
 	agenttools "github.com/ollama/ollama/agent/tools"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
+	agentchat "github.com/ollama/ollama/cmd/tui/chat"
 )
 
 func TestAgentSystemPromptIncludesSessionWorkingDirOnce(t *testing.T) {
