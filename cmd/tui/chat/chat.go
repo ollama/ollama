@@ -588,6 +588,9 @@ func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.insertInputNewline()
 			return m, nil
 		}
+		if m.applySlashCompletion() {
+			return m, nil
+		}
 		return m.handleSubmit()
 	case tea.KeyCtrlJ:
 		m.insertInputNewline()

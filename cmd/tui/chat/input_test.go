@@ -483,7 +483,7 @@ func TestInitialPromptHistoryLoadsFromMessages(t *testing.T) {
 }
 
 func TestChatDeletedSlashCommandsAreUnknown(t *testing.T) {
-	for _, command := range []string{"/copy", "/copy-all", "/launch", "/system", "/history", "/load", "/raw", "/resume", "/set", "/show", "/skills", "/verbose"} {
+	for _, command := range []string{"/clear", "/copy", "/copy-all", "/launch", "/system", "/history", "/load", "/raw", "/resume", "/set", "/show", "/skills", "/verbose"} {
 		t.Run(command, func(t *testing.T) {
 			m := chatModel{input: []rune(command)}
 
@@ -507,12 +507,12 @@ func TestChatViewRendersSlashCommandSuggestions(t *testing.T) {
 	}
 
 	view := stripANSI(m.View())
-	for _, want := range []string{"/clear", "/model", "/new", "/think", "/tools"} {
+	for _, want := range []string{"/model", "/new", "/think", "/tools", "/compact"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %s suggestion: %q", want, view)
 		}
 	}
-	for _, removed := range []string{"/copy", "/copy-all", "/history", "/load", "/raw", "/resume", "/set", "/show", "/skills", "/verbose"} {
+	for _, removed := range []string{"/clear", "/copy", "/copy-all", "/history", "/load", "/raw", "/resume", "/set", "/show", "/skills", "/verbose"} {
 		if strings.Contains(view, removed) {
 			t.Fatalf("bare slash should hide removed command %s: %q", removed, view)
 		}
@@ -618,16 +618,28 @@ func TestChatSlashCommandSuggestionsIncludeThink(t *testing.T) {
 	}
 }
 
-func TestChatEnterAcceptsSelectedSlashCommand(t *testing.T) {
+func TestChatEnterFillsSelectedSlashCommandBeforeSubmitting(t *testing.T) {
 	m := chatModel{input: []rune("/th")}
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(chatModel)
 	if cmd != nil {
+		t.Fatal("filling a slash command should not return a command")
+	}
+	if got := string(m.input); got != "/think" {
+		t.Fatalf("input = %q, want completed command", got)
+	}
+	if m.thinkPicker != nil {
+		t.Fatal("filling a slash command should not open its picker")
+	}
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(chatModel)
+	if cmd != nil {
 		t.Fatal("think command should not return a command")
 	}
 	if m.thinkPicker == nil {
-		t.Fatal("selected /think command should open picker")
+		t.Fatal("second enter should submit the completed /think command")
 	}
 }
 

@@ -51,7 +51,6 @@ const (
 )
 
 var chatSlashCommands = []chatSlashCommand{
-	{name: "/clear", description: "clear this chat"},
 	{name: "/model", description: "switch models"},
 	{name: "/new", description: "start a new chat"},
 	{name: "/think", description: "set thinking mode"},
@@ -66,9 +65,6 @@ var chatSlashCommands = []chatSlashCommand{
 func (m *chatModel) handleSubmit() (tea.Model, tea.Cmd) {
 	m.syncInputPlaceholders()
 	input := strings.TrimSpace(string(m.input))
-	if selected, ok := m.selectedSlashCommand(); ok {
-		input = selected
-	}
 	if input == "" {
 		return *m, nil
 	}
@@ -90,16 +86,25 @@ func (m *chatModel) handleSubmit() (tea.Model, tea.Cmd) {
 	return m.submitInput(input)
 }
 
-func (m chatModel) selectedSlashCommand() (string, bool) {
+func (m *chatModel) applySlashCompletion() bool {
 	input := strings.TrimSpace(string(m.input))
 	if !strings.HasPrefix(input, "/") {
-		return "", false
+		return false
 	}
 	completions := m.slashCompletions()
 	if len(completions) == 0 || !completionIsSelectable(completions) {
-		return "", false
+		return false
 	}
-	return completions[clamp(m.complete, 0, len(completions)-1)].value, true
+	selected := completions[clamp(m.complete, 0, len(completions)-1)]
+	if selected.value == input {
+		return false
+	}
+	m.resetPromptHistoryCursor()
+	m.input = []rune(selected.value)
+	m.inputCursor = len(m.input)
+	m.inputCursorSet = true
+	m.complete = 0
+	return true
 }
 
 func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
@@ -115,8 +120,6 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 	case command == "/help":
 		m.entries = append(m.entries, newSlashEntry(m.helpSummary()))
 		return *m, nil
-	case command == "/clear" && args == "":
-		return m.resetChat("cleared")
 	case command == "/model":
 		return m.openModelPicker(args)
 	case command == "/think" && args == "":
