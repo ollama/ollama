@@ -136,6 +136,14 @@ func (c *recordingCompactor) MaybeCompact(_ context.Context, req CompactionReque
 	return result, nil
 }
 
+func (c *recordingCompactor) ContextWindowTokens(options map[string]any) int {
+	return ResolveContextWindowTokens(options, 0)
+}
+func (c *recordingCompactor) Threshold() float64 { return 0 }
+func (c *recordingCompactor) ShouldCompact(_ CompactionRequest) (string, bool) {
+	return "", false
+}
+
 func (c *oversizedCompactor) MaybeCompact(_ context.Context, req CompactionRequest) (CompactionResult, error) {
 	c.requests = append(c.requests, req)
 	summary := strings.Repeat("oversized summary ", 300)
@@ -145,6 +153,14 @@ func (c *oversizedCompactor) MaybeCompact(_ context.Context, req CompactionReque
 		Due:       true,
 		Summary:   summary,
 	}, nil
+}
+
+func (c *oversizedCompactor) ContextWindowTokens(options map[string]any) int {
+	return ResolveContextWindowTokens(options, 0)
+}
+func (c *oversizedCompactor) Threshold() float64 { return 0 }
+func (c *oversizedCompactor) ShouldCompact(_ CompactionRequest) (string, bool) {
+	return "", false
 }
 
 type recordingApprovalPrompter struct {
@@ -307,6 +323,20 @@ func (t namedApprovalTestTool) RequiresApproval(map[string]any) bool {
 
 func (t namedApprovalTestTool) Execute(context.Context, ToolContext, map[string]any) (ToolResult, error) {
 	return ToolResult{Content: "approved"}, nil
+}
+
+// ApprovalScope mimics the Bash tool's command-scoping behavior so tests can
+// exercise the shell approval flow without importing the tools package.
+func (t namedApprovalTestTool) ApprovalScope(args map[string]any) string {
+	if t.name == "bash" || t.name == "powershell" {
+		if cmd, ok := args["command"].(string); ok {
+			cmd = strings.TrimSpace(cmd)
+			if cmd != "" {
+				return t.name + "\x00" + cmd
+			}
+		}
+	}
+	return t.name
 }
 
 func (p *recordingApprovalPrompter) PromptApproval(_ context.Context, req ApprovalRequest) (Approval, error) {
@@ -1993,7 +2023,7 @@ func TestSessionAllowAllApprovalSkipsFuturePrompts(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if !session.ApprovalState.AllowAll() {
+	if !session.ApprovalState.AllGranted() {
 		t.Fatal("session did not remember allow all")
 	}
 	if len(prompter.requests) != 1 {
@@ -2050,7 +2080,7 @@ func TestSessionAllowToolApprovalSkipsFuturePromptForSameTool(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if session.ApprovalState.AllowAll() {
+	if session.ApprovalState.AllGranted() {
 		t.Fatal("allowing one tool enabled full access")
 	}
 	if !session.ApprovalState.Allows("approval_tool") {
@@ -2110,7 +2140,7 @@ func TestSessionAllowShellApprovalScopesToExactCommand(t *testing.T) {
 	registry.Register(namedApprovalTestTool{name: "bash"})
 	prompter := &recordingApprovalPrompter{
 		results: []Approval{
-			{AllowScopes: []string{toolApprovalScope("bash", map[string]any{"command": "pwd"})}},
+			{AllowScopes: []string{toolApprovalScope(namedApprovalTestTool{name: "bash"}, "bash", map[string]any{"command": "pwd"})}},
 			{Allow: true},
 		},
 	}

@@ -392,7 +392,7 @@ func TestChatApprovalControllerAutoApprovesAfterFullAccessToggle(t *testing.T) {
 	events := make(chan tea.Msg, 1)
 	state := testApprovalState(false, nil)
 	controller := newChatApprovalController(events, state)
-	state.SetAllowAll(true)
+	state.GrantAll()
 
 	result, err := controller.PromptApproval(context.Background(), testApprovalRequest())
 	if err != nil {

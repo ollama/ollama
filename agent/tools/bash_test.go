@@ -44,7 +44,7 @@ func TestBashBoundsOutputWhileRunning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result.Content, "[stdout truncated: omitted ~") || !strings.Contains(result.Content, " tokens]") {
+	if !strings.Contains(result.Content, "[stdout truncated: showing first ~") || !strings.Contains(result.Content, "omitted ~") || !strings.Contains(result.Content, " tokens.]") {
 		t.Fatalf("content = %q, want stdout truncation marker", result.Content)
 	}
 	if count, want := strings.Count(result.Content, "x"), shellTestCapturedXCount(); count != want {
