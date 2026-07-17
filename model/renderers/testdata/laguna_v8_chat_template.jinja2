@@ -1,0 +1,93 @@
+{#- Iteration on laguna_glm_thinking_v8/chat_template.jinja -#}
+{#- No formatting instructions -#}
+{{- "〈|EOS|〉" -}}
+{%- set enable_thinking = enable_thinking | default(false) -%}
+{%- set add_generation_prompt = add_generation_prompt | default(false) -%}
+
+{#- ───── header (system message) ───── -#}
+{#- A caller-supplied system message with empty content opts out of the default below, producing no <system> block — used to train without a system message. -#}
+{%- set system_message = "You are a helpful, conversationally-fluent assistant made by Poolside. You are here to be helpful to users through natural language conversations." -%}
+{%- if messages and messages[0].role == "system" -%}
+  {%- set system_message = messages[0].content -%}
+  {%- set messages = messages[1:] -%}
+{%- endif -%}
+
+{%- set has_sys = system_message and system_message.strip() -%}
+{%- if has_sys or tools or enable_thinking -%}
+  {{- "<system>" -}}
+
+  {%- if has_sys -%}
+    {{- system_message.rstrip() -}}
+    {%- if tools -%}{{- "\n\n" -}}{%- endif -%}
+  {%- endif -%}
+
+  {%- if tools -%}
+    {{- "### Tools\n\n" -}}
+    {{- "You may call functions to assist with the user query.\n" -}}
+    {{- "All available function signatures are listed below:\n" -}}
+    {{- "<available_tools>\n" -}}
+    {%- for tool in tools -%}
+      {{- (tool | tojson) ~ "\n" -}}
+    {%- endfor -%}
+    {{- "</available_tools>" -}}
+  {%- endif -%}
+
+  {{- "</system>\n" -}}
+{%- endif -%}
+
+{#- ───── main loop ───── -#}
+{%- for message in messages -%}
+  {%- set content = message.content if message.content is string else "" -%}
+  {%- if message.role == "user" -%}
+    {{- "<user>" + content + "</user>\n" -}}
+  {%- elif message.role == "assistant" -%}
+    {%- generation -%}
+      {{- "<assistant>" -}}
+      {#- Extract reasoning content from message.reasoning (vLLM field name) or message.reasoning_content -#}
+      {%- set reasoning_content = '' -%}
+      {%- if message.reasoning is string -%}
+        {%- set reasoning_content = message.reasoning -%}
+      {%- elif message.reasoning_content is string -%}
+        {%- set reasoning_content = message.reasoning_content -%}
+      {%- endif -%}
+      {#- Display reasoning content for all messages if enable_thinking -#}
+      {%- if enable_thinking -%}
+        {{- '<think>' + reasoning_content + '</think>' -}}
+      {%- else -%}
+        {{- '</think>' -}}
+      {%- endif -%}
+      {#- Display main content (trailing newline only when no tool_calls follow) -#}
+      {%- if content -%}
+        {{- content -}}
+      {%- endif -%}
+      {%- if message.tool_calls -%}
+        {%- for tool_call in message.tool_calls -%}
+          {%- set function_data = tool_call.function -%}
+          {{- '<tool_call>' + function_data.name -}}
+          {%- set _args = function_data.arguments -%}
+          {%- for k, v in _args.items() -%}
+            {{- "<arg_key>" ~ k ~ "</arg_key>" -}}
+            {{- "<arg_value>" -}}{{- v | tojson(ensure_ascii=False) if v is not string else v -}}{{- "</arg_value>" -}}
+          {%- endfor -%}
+          {{- "</tool_call>" -}}
+        {%- endfor -%}
+      {%- endif -%}
+      {{- "</assistant>\n" -}}
+    {%- endgeneration -%}
+  {%- elif message.role == "tool" -%}
+    {{- "<tool_response>" + content + "</tool_response>\n" -}}
+  {%- elif message.role == "system" -%}
+    {#- Render additional system messages (the first one, if any, is handled separately in the header and was sliced off above) -#}
+    {{- "<system>" + content + "</system>\n" -}}
+  {%- endif -%}
+{%- endfor -%}
+{#- ───── generation prompt ───── -#}
+{%- if add_generation_prompt -%}
+  {{- "<assistant>" -}}
+  {#- ───── Include reasoning mode directive ───── -#}
+  {%- if enable_thinking -%}
+    {{- '<think>' -}}
+  {%- else -%}
+    {{- '</think>' -}}
+  {%- endif -%}
+{%- endif -%}

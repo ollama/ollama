@@ -2,6 +2,7 @@ package laguna
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/x/mlxrunner/batch"
@@ -330,6 +331,68 @@ func TestTinyLagunaLoadWeightsFusesDenseGateUp(t *testing.T) {
 	}
 }
 
+func TestTinyLagunaLoadWeightsKeepsBF16SourceLayout(t *testing.T) {
+	skipIfNoMLX(t)
+	cfg, err := parseConfig([]byte(`{
+		"model_type": "laguna",
+		"hidden_size": 8,
+		"intermediate_size": 12,
+		"moe_intermediate_size": 4,
+		"shared_expert_intermediate_size": 4,
+		"num_hidden_layers": 2,
+		"num_attention_heads": 2,
+		"num_attention_heads_per_layer": [2, 2],
+		"num_key_value_heads": 1,
+		"head_dim": 4,
+		"vocab_size": 16,
+		"max_position_embeddings": 64,
+		"layer_types": ["full_attention", "sliding_attention"],
+		"sliding_window": 2,
+		"mlp_only_layers": [0],
+		"decoder_sparse_step": 1,
+		"num_experts": 2,
+		"num_experts_per_tok": 1,
+		"norm_topk_prob": false,
+		"moe_routed_scaling_factor": 2.5,
+		"gating": "per-head",
+		"rms_norm_eps": 1e-5
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tensors := tinyLagunaTensors()
+	for key, tensor := range tensors {
+		if strings.Contains(key, ".mlp.experts.") && strings.HasSuffix(key, ".weight") {
+			tensors[key] = tensor.AsType(mlx.DTypeBFloat16)
+		}
+	}
+	m := &Model{
+		Config: &cfg,
+		Layers: []*Layer{
+			{LayerIdx: 0, IsSliding: false},
+			{LayerIdx: 1, IsSliding: true},
+		},
+	}
+	if err := m.LoadWeights(tensors); err != nil {
+		t.Fatalf("LoadWeights failed: %v", err)
+	}
+
+	moe, ok := m.Layers[1].MLP.(*SparseMoE)
+	if !ok {
+		t.Fatalf("layer 1 MLP type = %T, want *SparseMoE", m.Layers[1].MLP)
+	}
+	if !moe.SwitchMLP.DenseWeightsSourceLayout {
+		t.Fatal("expected BF16 dense SwitchMLP to keep source-layout expert weights")
+	}
+	if moe.SwitchMLP.UseFusedGateUp || moe.SwitchMLP.GateUpWeight != nil {
+		t.Fatal("expected BF16 source-layout SwitchMLP to avoid pre-fused gate/up weights")
+	}
+	if got, want := moe.SwitchMLP.GateWeight.Dims(), []int{2, 4, 8}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("GateWeight dims = %v, want %v", got, want)
+	}
+}
+
 func TestSparseMoERouteBiasAffectsSelectionNotRoutingWeights(t *testing.T) {
 	skipIfNoMLX(t)
 	cfg := &Config{
@@ -404,6 +467,33 @@ func TestSwitchMLPFusedGateUpMatchesSeparate(t *testing.T) {
 	gotSeparateF32 := gotSeparate.AsType(mlx.DTypeFloat32)
 	mlx.Eval(gotFusedF32, gotSeparateF32)
 	assertFloatSlicesClose(t, gotFusedF32.Floats(), gotSeparateF32.Floats(), 1e-5)
+}
+
+func TestDenseExpertWeightForGatherMMDequantizesQuantizedWeight(t *testing.T) {
+	skipIfNoMLX(t)
+	weight := makePatternExpertWeight(2, 4, 32, 0.011)
+	qweight, scales, qbiases := mlx.Quantize(weight, 32, 8, "mxfp8")
+	mlx.Eval(qweight, scales)
+
+	got := denseExpertWeightForGatherMM(&stackedExpertWeights{
+		Weight:    qweight,
+		Scales:    scales,
+		Biases:    qbiases,
+		GroupSize: 32,
+		Bits:      8,
+		Mode:      "mxfp8",
+	})
+	mlx.Eval(got)
+
+	if got == nil {
+		t.Fatal("denseExpertWeightForGatherMM returned nil")
+	}
+	if dims := got.Dims(); len(dims) != 3 || dims[0] != 2 || dims[1] != 32 || dims[2] != 4 {
+		t.Fatalf("dense expert dims = %v, want [2 32 4]", dims)
+	}
+	if got.DType() == mlx.DTypeUint32 {
+		t.Fatal("dense expert fallback kept packed U32 weight")
+	}
 }
 
 func TestCombinedTensorGlobalScaleIgnoresInputGlobalScale(t *testing.T) {
