@@ -1435,18 +1435,6 @@ func (m *chatModel) updateContextWindowTokens(tokens int) {
 	}
 }
 
-func (m chatModel) responseModelName(response *api.ChatResponse) string {
-	if response != nil {
-		if strings.TrimSpace(response.Model) != "" {
-			return response.Model
-		}
-		if strings.TrimSpace(response.RemoteModel) != "" {
-			return response.RemoteModel
-		}
-	}
-	return m.opts.Model
-}
-
 func (m chatModel) currentWorkingDir() string {
 	if strings.TrimSpace(m.workingDir) != "" {
 		return m.workingDir

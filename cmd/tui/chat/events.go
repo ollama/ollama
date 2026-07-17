@@ -109,7 +109,6 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		contextChanged = true
 	case coreagent.EventToolStarted:
 		m.resetStreamingState()
-		m.refreshContextWindowTokens(m.opts.Model)
 		startedAt := time.Now()
 		idx := m.findActiveToolEntry(event.ToolCallID)
 		if idx < 0 {
@@ -127,7 +126,6 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		m.markEntryDirty(idx)
 	case coreagent.EventToolFinished:
 		m.resetStreamingState()
-		m.refreshContextWindowTokens(m.opts.Model)
 		if event.WorkingDir != "" {
 			m.workingDir = event.WorkingDir
 		}
