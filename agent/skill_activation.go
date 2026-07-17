@@ -40,13 +40,14 @@ func (s *Session) activateSkill(ctx context.Context, runID string, opts RunOptio
 		ToolCallID: call.ID,
 		Content:    skill.Content(),
 	}
-	if err := s.emitToolCallDetected(runID, opts, []api.ToolCall{call}); err != nil {
+	meta := newEventMetadata(runID, opts)
+	if err := s.emit(newToolCallDetected(meta, []api.ToolCall{call})); err != nil {
 		return nil, err
 	}
-	if err := s.emitToolStarted(runID, opts, call.ID, "skill", s.currentWorkingDir(), args.ToMap()); err != nil {
+	if err := s.emit(newToolStarted(meta, call.ID, "skill", s.currentWorkingDir(), args.ToMap())); err != nil {
 		return nil, err
 	}
-	if err := s.emitToolFinished(ctx, runID, opts, ToolStatusDone, call.ID, "skill", s.currentWorkingDir(), args.ToMap(), result.Content, ""); err != nil {
+	if err := s.emitIgnoringCanceled(ctx, newToolFinished(meta, ToolStatusDone, call.ID, "skill", s.currentWorkingDir(), args.ToMap(), result.Content, "")); err != nil {
 		return nil, err
 	}
 	return []api.Message{

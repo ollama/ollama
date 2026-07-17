@@ -75,8 +75,8 @@ func TestChatNewCommandRepaintsFromTop(t *testing.T) {
 	if m.flowPrintedLines != 0 {
 		t.Fatalf("flowPrintedLines = %d, want 0", m.flowPrintedLines)
 	}
-	if m.approvalState.AllowAll() || m.opts.AllowAllTools || m.approvalState.Allows("edit") || m.permissionNotice != "" {
-		t.Fatalf("permissions were not reset: allowAll=%v opts=%v editAllowed=%v notice=%q", m.approvalState.AllowAll(), m.opts.AllowAllTools, m.approvalState.Allows("edit"), m.permissionNotice)
+	if m.approvalState.AllGranted() || m.opts.AllowAllTools || m.approvalState.Allows("edit") || m.permissionNotice != "" {
+		t.Fatalf("permissions were not reset: allowAll=%v opts=%v editAllowed=%v notice=%q", m.approvalState.AllGranted(), m.opts.AllowAllTools, m.approvalState.Allows("edit"), m.permissionNotice)
 	}
 	if msg := cmd(); msg == nil {
 		t.Fatal("repaint command returned nil")
@@ -92,10 +92,10 @@ func TestChatNewCommandPreservesLaunchFullAccessDefault(t *testing.T) {
 
 	updated, _ := m.handleSubmit()
 	fm := updated.(chatModel)
-	if !fm.approvalState.AllowAll() || !fm.opts.AllowAllTools {
-		t.Fatalf("full access default was not restored: allowAll=%v opts=%v", fm.approvalState.AllowAll(), fm.opts.AllowAllTools)
+	if !fm.approvalState.AllGranted() || !fm.opts.AllowAllTools {
+		t.Fatalf("full access default was not restored: allowAll=%v opts=%v", fm.approvalState.AllGranted(), fm.opts.AllowAllTools)
 	}
-	fm.approvalState.SetAllowAll(false)
+	fm.approvalState.Set(false, nil)
 	if fm.approvalState.Allows("edit") {
 		t.Fatal("edit scope should be cleared")
 	}
@@ -416,6 +416,35 @@ func TestChatInputAcceptsSpace(t *testing.T) {
 
 	if got := string(m.input); got != "hello world" {
 		t.Fatalf("input = %q, want hello world", got)
+	}
+}
+
+func TestChatCloudModelDefaultToolRoundsAreUnlimited(t *testing.T) {
+	const formerDefaultLimit = 100
+	client := &chatToolLoopClient{toolRounds: formerDefaultLimit + 1}
+	registry := &coreagent.Registry{}
+	registry.Register(chatTestTool{})
+	m := chatModel{
+		ctx: context.Background(),
+		opts: Options{
+			Model:         "test:cloud",
+			Client:        client,
+			Tools:         registry,
+			AllowAllTools: true,
+		},
+	}
+
+	updated, cmd := m.startRun("keep going")
+	m = updated.(chatModel)
+	if cmd == nil {
+		t.Fatal("startRun should start a cloud model run")
+	}
+	done := waitForRunDone(t, m.events)
+	if done.err != nil {
+		t.Fatalf("cloud run returned error: %v", done.err)
+	}
+	if client.calls != formerDefaultLimit+2 {
+		t.Fatalf("client calls = %d, want %d", client.calls, formerDefaultLimit+2)
 	}
 }
 

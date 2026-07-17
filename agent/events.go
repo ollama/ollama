@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 
 	"github.com/ollama/ollama/api"
 )
@@ -91,20 +92,79 @@ func (fn EventSinkFunc) Emit(event Event) error {
 	return fn(event)
 }
 
+// eventMetadata carries the run identification fields shared by all events.
+type eventMetadata struct {
+	runID  string
+	chatID string
+	model  string
+}
+
+func newEventMetadata(runID string, opts RunOptions) eventMetadata {
+	return eventMetadata{runID: runID, chatID: opts.ChatID, model: opts.Model}
+}
+
+func newMessageDelta(m eventMetadata, content string) Event {
+	return Event{Type: EventMessageDelta, RunID: m.runID, ChatID: m.chatID, Model: m.model, Content: content}
+}
+
+func newThinkingDelta(m eventMetadata, thinking string) Event {
+	return Event{Type: EventThinkingDelta, RunID: m.runID, ChatID: m.chatID, Model: m.model, Thinking: thinking}
+}
+
+func newToolCallDetected(m eventMetadata, calls []api.ToolCall) Event {
+	return Event{Type: EventToolCallDetected, RunID: m.runID, ChatID: m.chatID, Model: m.model, ToolCalls: calls}
+}
+
+func newToolStarted(m eventMetadata, callID, toolName, workingDir string, args map[string]any) Event {
+	return Event{Type: EventToolStarted, RunID: m.runID, ChatID: m.chatID, Model: m.model, ToolStatus: ToolStatusRunning, ToolCallID: callID, ToolName: toolName, WorkingDir: workingDir, Args: args}
+}
+
+func newToolFinished(m eventMetadata, status ToolStatus, callID, toolName, workingDir string, args map[string]any, content, errMsg string) Event {
+	ev := Event{Type: EventToolFinished, RunID: m.runID, ChatID: m.chatID, Model: m.model, ToolStatus: status, ToolCallID: callID, ToolName: toolName, WorkingDir: workingDir, Args: args, Content: content}
+	if errMsg != "" {
+		ev.Error = errMsg
+	}
+	return ev
+}
+
+func newRunFinished(m eventMetadata, status RunStatus) Event {
+	return Event{Type: EventRunFinished, RunID: m.runID, ChatID: m.chatID, Model: m.model, Status: status}
+}
+
+func newErrorEvent(m eventMetadata, errMsg string) Event {
+	return Event{Type: EventError, RunID: m.runID, ChatID: m.chatID, Model: m.model, Error: errMsg}
+}
+
+func newCompactionProgress(m eventMetadata, tokens int) Event {
+	return Event{Type: EventCompactionProgress, RunID: m.runID, ChatID: m.chatID, Model: m.model, Tokens: tokens}
+}
+
+func newCompactionStarted(m eventMetadata, trigger CompactionTrigger) Event {
+	return Event{Type: EventCompactionStarted, RunID: m.runID, ChatID: m.chatID, Model: m.model, CompactionTrigger: trigger}
+}
+
+func newCompactionSkipped(m eventMetadata, trigger CompactionTrigger, content string) Event {
+	return Event{Type: EventCompactionSkipped, RunID: m.runID, ChatID: m.chatID, Model: m.model, CompactionTrigger: trigger, Content: content}
+}
+
+func newCompacted(m eventMetadata, messages []api.Message, trigger CompactionTrigger, content string) Event {
+	return Event{Type: EventCompacted, RunID: m.runID, ChatID: m.chatID, Model: m.model, CompactionTrigger: trigger, Content: content, Messages: messages}
+}
+
 func (s *Session) emit(event Event) error {
 	if s == nil {
 		return nil
 	}
-	var firstErr error
+	var errs []error
 	for _, sink := range s.EventSinks {
 		if sink == nil {
 			continue
 		}
-		if err := sink.Emit(event); err != nil && firstErr == nil {
-			firstErr = err
+		if err := sink.Emit(event); err != nil {
+			errs = append(errs, err)
 		}
 	}
-	return firstErr
+	return errors.Join(errs...)
 }
 
 func (s *Session) emitIgnoringCanceled(ctx context.Context, event Event) error {

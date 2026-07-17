@@ -28,6 +28,13 @@ type ApprovalRequired interface {
 	RequiresApproval(map[string]any) bool
 }
 
+// ScopedTool is implemented by tools that need per-invocation approval
+// scoping beyond the tool name (e.g. shell commands scoped to the exact
+// command string). Tools that don't implement this are scoped by name only.
+type ScopedTool interface {
+	ApprovalScope(args map[string]any) string
+}
+
 type Registry struct {
 	tools map[string]Tool
 }

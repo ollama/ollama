@@ -136,6 +136,14 @@ func (c *recordingCompactor) MaybeCompact(_ context.Context, req CompactionReque
 	return result, nil
 }
 
+func (c *recordingCompactor) ContextWindowTokens(options map[string]any) int {
+	return ResolveContextWindowTokens(options, 0)
+}
+func (c *recordingCompactor) Threshold() float64 { return 0 }
+func (c *recordingCompactor) ShouldCompact(_ CompactionRequest) (string, bool) {
+	return "", false
+}
+
 func (c *oversizedCompactor) MaybeCompact(_ context.Context, req CompactionRequest) (CompactionResult, error) {
 	c.requests = append(c.requests, req)
 	summary := strings.Repeat("oversized summary ", 300)
@@ -145,6 +153,14 @@ func (c *oversizedCompactor) MaybeCompact(_ context.Context, req CompactionReque
 		Due:       true,
 		Summary:   summary,
 	}, nil
+}
+
+func (c *oversizedCompactor) ContextWindowTokens(options map[string]any) int {
+	return ResolveContextWindowTokens(options, 0)
+}
+func (c *oversizedCompactor) Threshold() float64 { return 0 }
+func (c *oversizedCompactor) ShouldCompact(_ CompactionRequest) (string, bool) {
+	return "", false
 }
 
 type recordingApprovalPrompter struct {
@@ -307,6 +323,20 @@ func (t namedApprovalTestTool) RequiresApproval(map[string]any) bool {
 
 func (t namedApprovalTestTool) Execute(context.Context, ToolContext, map[string]any) (ToolResult, error) {
 	return ToolResult{Content: "approved"}, nil
+}
+
+// ApprovalScope mimics the Bash tool's command-scoping behavior so tests can
+// exercise the shell approval flow without importing the tools package.
+func (t namedApprovalTestTool) ApprovalScope(args map[string]any) string {
+	if t.name == "bash" || t.name == "powershell" {
+		if cmd, ok := args["command"].(string); ok {
+			cmd = strings.TrimSpace(cmd)
+			if cmd != "" {
+				return t.name + "\x00" + cmd
+			}
+		}
+	}
+	return t.name
 }
 
 func (p *recordingApprovalPrompter) PromptApproval(_ context.Context, req ApprovalRequest) (Approval, error) {
@@ -853,7 +883,7 @@ func TestSessionToolLoopAllowsRoundsUnderDefaultCap(t *testing.T) {
 	}
 }
 
-func TestSessionToolRoundLimitAppendsSkippedToolMessages(t *testing.T) {
+func TestSessionLocalToolRoundLimitAppendsSkippedToolMessages(t *testing.T) {
 	firstArgs := api.NewToolCallFunctionArguments()
 	firstArgs.Set("value", "first")
 	secondArgs := api.NewToolCallFunctionArguments()
@@ -902,7 +932,7 @@ func TestSessionToolRoundLimitAppendsSkippedToolMessages(t *testing.T) {
 
 	result, err := session.Run(context.Background(), RunOptions{
 		ChatID:        "chat-1",
-		Model:         "model",
+		Model:         "test:local",
 		NewMessages:   []api.Message{{Role: "user", Content: "hit cap"}},
 		MaxToolRounds: 1,
 	})
@@ -926,7 +956,7 @@ func TestSessionToolRoundLimitAppendsSkippedToolMessages(t *testing.T) {
 	}
 }
 
-func TestSessionToolLoopStopsAtDefaultRoundCap(t *testing.T) {
+func TestSessionLocalToolLoopStopsAtDefaultRoundCap(t *testing.T) {
 	responses := make([][]api.ChatResponse, 0, defaultMaxToolRounds+1)
 	for range defaultMaxToolRounds + 1 {
 		args := api.NewToolCallFunctionArguments()
@@ -952,7 +982,7 @@ func TestSessionToolLoopStopsAtDefaultRoundCap(t *testing.T) {
 	}
 
 	_, err := session.Run(context.Background(), RunOptions{
-		Model:       "model",
+		Model:       "test:local",
 		NewMessages: []api.Message{{Role: "user", Content: "keep going"}},
 	})
 	if err == nil || !strings.Contains(err.Error(), "tool round limit reached after 100 rounds") {
@@ -960,6 +990,53 @@ func TestSessionToolLoopStopsAtDefaultRoundCap(t *testing.T) {
 	}
 	if client.calls != defaultMaxToolRounds+1 {
 		t.Fatalf("client calls = %d, want %d", client.calls, defaultMaxToolRounds+1)
+	}
+}
+
+func TestSessionCloudToolLoopHonorsExplicitRoundCap(t *testing.T) {
+	args := api.NewToolCallFunctionArguments()
+	args.Set("value", "hello")
+	client := &fakeClient{responses: [][]api.ChatResponse{
+		{{
+			Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+				ID: "call-1",
+				Function: api.ToolCallFunction{
+					Name:      "echo_tool",
+					Arguments: args,
+				},
+			}}},
+		}},
+		{{
+			Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+				ID: "call-2",
+				Function: api.ToolCallFunction{
+					Name:      "echo_tool",
+					Arguments: args,
+				},
+			}}},
+		}},
+	}}
+	registry := &Registry{}
+	registry.Register(staticTool{})
+	session := &Session{
+		Client:        client,
+		Tools:         registry,
+		ApprovalState: approvalStateForTest(true, nil),
+	}
+
+	result, err := session.Run(context.Background(), RunOptions{
+		Model:         "test:cloud",
+		NewMessages:   []api.Message{{Role: "user", Content: "keep going"}},
+		MaxToolRounds: 1,
+	})
+	if err == nil || !strings.Contains(err.Error(), "tool round limit reached after 1 rounds") {
+		t.Fatalf("error = %v, want explicit tool-round limit", err)
+	}
+	if result == nil {
+		t.Fatal("expected partial result with skipped tool message")
+	}
+	if client.calls != 2 {
+		t.Fatalf("client calls = %d, want 2", client.calls)
 	}
 }
 
@@ -1993,7 +2070,7 @@ func TestSessionAllowAllApprovalSkipsFuturePrompts(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if !session.ApprovalState.AllowAll() {
+	if !session.ApprovalState.AllGranted() {
 		t.Fatal("session did not remember allow all")
 	}
 	if len(prompter.requests) != 1 {
@@ -2050,7 +2127,7 @@ func TestSessionAllowToolApprovalSkipsFuturePromptForSameTool(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if session.ApprovalState.AllowAll() {
+	if session.ApprovalState.AllGranted() {
 		t.Fatal("allowing one tool enabled full access")
 	}
 	if !session.ApprovalState.Allows("approval_tool") {
@@ -2110,7 +2187,7 @@ func TestSessionAllowShellApprovalScopesToExactCommand(t *testing.T) {
 	registry.Register(namedApprovalTestTool{name: "bash"})
 	prompter := &recordingApprovalPrompter{
 		results: []Approval{
-			{AllowScopes: []string{toolApprovalScope("bash", map[string]any{"command": "pwd"})}},
+			{AllowScopes: []string{toolApprovalScope(namedApprovalTestTool{name: "bash"}, "bash", map[string]any{"command": "pwd"})}},
 			{Allow: true},
 		},
 	}

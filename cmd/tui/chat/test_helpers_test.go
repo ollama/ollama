@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"testing"
 	"time"
@@ -18,6 +19,11 @@ type chatTestClient struct{}
 
 type chatCaptureClient struct {
 	requests []*api.ChatRequest
+}
+
+type chatToolLoopClient struct {
+	calls      int
+	toolRounds int
 }
 
 func (chatTestClient) Chat(ctx context.Context, req *api.ChatRequest, fn api.ChatResponseFunc) error {
@@ -39,6 +45,26 @@ func (c *chatCaptureClient) Chat(ctx context.Context, req *api.ChatRequest, fn a
 		Message: api.Message{Role: "assistant", Content: "ok"},
 		Done:    true,
 	})
+}
+
+func (c *chatToolLoopClient) Chat(ctx context.Context, req *api.ChatRequest, fn api.ChatResponseFunc) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c.calls++
+	if c.calls > c.toolRounds {
+		return fn(api.ChatResponse{Message: api.Message{Role: "assistant", Content: "done"}, Done: true})
+	}
+
+	args := api.NewToolCallFunctionArguments()
+	args.Set("value", "keep going")
+	return fn(api.ChatResponse{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+		ID: fmt.Sprintf("call-%d", c.calls),
+		Function: api.ToolCallFunction{
+			Name:      "fake_tool",
+			Arguments: args,
+		},
+	}}}})
 }
 
 func (chatTestTool) Name() string {
