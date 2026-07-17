@@ -22,6 +22,33 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
+func TestCLIRemovesAgentCommand(t *testing.T) {
+	root := NewCLI()
+	for _, command := range root.Commands() {
+		if command.Name() == "agent" {
+			t.Fatal("agent must not be exposed as a CLI subcommand")
+		}
+	}
+
+	var help bytes.Buffer
+	root.SetOut(&help)
+	root.SetErr(&help)
+	root.SetArgs([]string{"--help"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("root help returned error: %v", err)
+	}
+	if strings.Contains(help.String(), "  agent") {
+		t.Fatalf("root help still advertises agent:\n%s", help.String())
+	}
+
+	root = NewCLI()
+	root.SetArgs([]string{"agent", "--help"})
+	err := root.Execute()
+	if err == nil || err.Error() != `unknown command "agent" for "ollama"` {
+		t.Fatalf("agent help error = %v, want unknown command", err)
+	}
+}
+
 func TestShowInfo(t *testing.T) {
 	t.Run("bare details", func(t *testing.T) {
 		var b bytes.Buffer
