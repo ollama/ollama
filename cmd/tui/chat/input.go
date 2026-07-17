@@ -99,6 +99,9 @@ func (m *chatModel) applySlashCompletion() bool {
 	if selected.value == input {
 		return false
 	}
+	// Reset prompt-history state: Up/Down is shared between history recall and
+	// slash completion, and a recalled prompt may start with "/" and trigger
+	// completion. Keep the two in sync when we accept a completion.
 	m.resetPromptHistoryCursor()
 	m.input = []rune(selected.value)
 	m.inputCursor = len(m.input)
