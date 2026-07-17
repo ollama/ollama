@@ -2,10 +2,12 @@ package laguna
 
 import (
 	"math"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/x/mlxrunner/batch"
+	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/models/nn"
 )
@@ -113,6 +115,34 @@ func TestParseConfigLagunaFP8RopeScaling(t *testing.T) {
 	}
 	if cfg.FullRopeDim != 64 {
 		t.Fatalf("FullRopeDim = %d, want 64", cfg.FullRopeDim)
+	}
+}
+
+func TestShouldChunkPrefillOnlyForLongSingleSequenceCacheBackedForwards(t *testing.T) {
+	m := &Model{Layers: []*Layer{{}, {}}}
+	caches := []cache.Cache{cache.NewKVCache(), cache.NewRotatingKVCache(512)}
+	b := &batch.Batch{
+		SeqOffsets:   []int32{0},
+		SeqQueryLens: []int32{lagunaPrefillChunkSize + 1},
+	}
+
+	if !m.shouldChunkPrefill(b, caches, 1, lagunaPrefillChunkSize+1) {
+		t.Fatal("expected long single-sequence cache-backed prefill to chunk")
+	}
+	if m.shouldChunkPrefill(b, caches, 1, lagunaPrefillChunkSize) {
+		t.Fatal("short prefill should not chunk")
+	}
+	if m.shouldChunkPrefill(b, caches, 2, lagunaPrefillChunkSize+1) {
+		t.Fatal("batched prefill should not chunk")
+	}
+	if m.shouldChunkPrefill(&batch.Batch{
+		SeqOffsets:   []int32{0},
+		SeqQueryLens: []int32{lagunaPrefillChunkSize},
+	}, caches, 1, lagunaPrefillChunkSize+1) {
+		t.Fatal("padded query rows should not chunk")
+	}
+	if m.shouldChunkPrefill(b, caches[:1], 1, lagunaPrefillChunkSize+1) {
+		t.Fatal("missing layer caches should not chunk")
 	}
 }
 
@@ -408,7 +438,10 @@ func TestSparseMoERouteBiasAffectsSelectionNotRoutingWeights(t *testing.T) {
 	}
 
 	xFlat := mlx.FromValues([]float32{1}, 1, int(cfg.HiddenSize)).AsType(mlx.DTypeBFloat16)
-	scores, inds := moe.route(xFlat, cfg)
+	scores, inds, scalesFolded := moe.route(xFlat, cfg)
+	if scalesFolded {
+		t.Fatal("route folded scales without expert projection scales")
+	}
 	scores = scores.AsType(mlx.DTypeFloat32)
 	inds = inds.AsType(mlx.DTypeInt32)
 	mlx.Eval(scores, inds)
@@ -467,6 +500,52 @@ func TestSwitchMLPFusedGateUpMatchesSeparate(t *testing.T) {
 	gotSeparateF32 := gotSeparate.AsType(mlx.DTypeFloat32)
 	mlx.Eval(gotFusedF32, gotSeparateF32)
 	assertFloatSlicesClose(t, gotFusedF32.Floats(), gotSeparateF32.Floats(), 1e-5)
+}
+
+func TestSwitchMLPMappedDenseForwardMatchesGatherForward(t *testing.T) {
+	useMLXTestThread(t)
+	cfg := &Config{HiddenSize: 128, NumExpertsPerTok: 8}
+	const (
+		batch       = 1
+		seqLen      = 56
+		numExperts  = 16
+		moeHidden   = 64
+		hiddenSize  = 128
+		routedTopK  = 8
+		totalTokens = batch * seqLen
+	)
+
+	xVals := make([]float32, totalTokens*hiddenSize)
+	for i := range xVals {
+		xVals[i] = float32((i%37)-18) * 0.01
+	}
+	x := mlx.FromValues(xVals, batch, seqLen, hiddenSize).AsType(mlx.DTypeBFloat16)
+
+	indicesVals := make([]int32, totalTokens*routedTopK)
+	for tok := range totalTokens {
+		for k := range routedTopK {
+			indicesVals[tok*routedTopK+k] = int32((tok*5 + k*3 + k*k) % numExperts)
+		}
+	}
+	indices := mlx.FromValues(indicesVals, totalTokens, routedTopK)
+
+	s := &SwitchMLP{
+		GateWeight: makePatternExpertWeight(numExperts, hiddenSize, moeHidden, 0.011),
+		UpWeight:   makePatternExpertWeight(numExperts, hiddenSize, moeHidden, 0.017),
+		DownWeight: makePatternExpertWeight(numExperts, moeHidden, hiddenSize, 0.013),
+	}
+	s.GateUpWeight = fuseExpertStacks(s.GateWeight, s.UpWeight, 2)
+	s.UseFusedGateUp = s.GateUpWeight != nil
+
+	got, ok := s.mappedDenseForward(x, indices, cfg)
+	if !ok {
+		t.Skip("mapped dense fast path unavailable")
+	}
+	want := s.gatherForward(x, indices, cfg, false)
+	gotF32 := got.AsType(mlx.DTypeFloat32)
+	wantF32 := want.AsType(mlx.DTypeFloat32)
+	mlx.Eval(gotF32, wantF32)
+	assertFloatSlicesClose(t, gotF32.Floats(), wantF32.Floats(), 3e-2)
 }
 
 func TestDenseExpertWeightForGatherMMDequantizesQuantizedWeight(t *testing.T) {
@@ -595,5 +674,30 @@ func skipIfNoMLX(t *testing.T) {
 	t.Helper()
 	if err := mlx.CheckInit(); err != nil {
 		t.Skipf("MLX not available: %v", err)
+	}
+}
+
+func useMLXTestThread(t *testing.T) {
+	t.Helper()
+
+	runtime.LockOSThread()
+	initialized := false
+	t.Cleanup(func() {
+		if initialized {
+			mlx.Sweep()
+			mlx.ClearCache()
+			if mlx.GPUIsAvailable() {
+				mlx.SetDefaultDeviceGPU()
+			}
+		}
+		runtime.UnlockOSThread()
+	})
+
+	if err := mlx.CheckInit(); err != nil {
+		t.Skipf("MLX not available: %v", err)
+	}
+	initialized = true
+	if mlx.GPUIsAvailable() {
+		mlx.SetDefaultDeviceGPU()
 	}
 }
