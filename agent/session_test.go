@@ -883,7 +883,7 @@ func TestSessionToolLoopAllowsRoundsUnderDefaultCap(t *testing.T) {
 	}
 }
 
-func TestSessionToolRoundLimitAppendsSkippedToolMessages(t *testing.T) {
+func TestSessionLocalToolRoundLimitAppendsSkippedToolMessages(t *testing.T) {
 	firstArgs := api.NewToolCallFunctionArguments()
 	firstArgs.Set("value", "first")
 	secondArgs := api.NewToolCallFunctionArguments()
@@ -932,7 +932,7 @@ func TestSessionToolRoundLimitAppendsSkippedToolMessages(t *testing.T) {
 
 	result, err := session.Run(context.Background(), RunOptions{
 		ChatID:        "chat-1",
-		Model:         "model",
+		Model:         "test:local",
 		NewMessages:   []api.Message{{Role: "user", Content: "hit cap"}},
 		MaxToolRounds: 1,
 	})
@@ -956,7 +956,7 @@ func TestSessionToolRoundLimitAppendsSkippedToolMessages(t *testing.T) {
 	}
 }
 
-func TestSessionToolLoopStopsAtDefaultRoundCap(t *testing.T) {
+func TestSessionLocalToolLoopStopsAtDefaultRoundCap(t *testing.T) {
 	responses := make([][]api.ChatResponse, 0, defaultMaxToolRounds+1)
 	for range defaultMaxToolRounds + 1 {
 		args := api.NewToolCallFunctionArguments()
@@ -982,7 +982,7 @@ func TestSessionToolLoopStopsAtDefaultRoundCap(t *testing.T) {
 	}
 
 	_, err := session.Run(context.Background(), RunOptions{
-		Model:       "model",
+		Model:       "test:local",
 		NewMessages: []api.Message{{Role: "user", Content: "keep going"}},
 	})
 	if err == nil || !strings.Contains(err.Error(), "tool round limit reached after 100 rounds") {
@@ -990,6 +990,53 @@ func TestSessionToolLoopStopsAtDefaultRoundCap(t *testing.T) {
 	}
 	if client.calls != defaultMaxToolRounds+1 {
 		t.Fatalf("client calls = %d, want %d", client.calls, defaultMaxToolRounds+1)
+	}
+}
+
+func TestSessionCloudToolLoopHonorsExplicitRoundCap(t *testing.T) {
+	args := api.NewToolCallFunctionArguments()
+	args.Set("value", "hello")
+	client := &fakeClient{responses: [][]api.ChatResponse{
+		{{
+			Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+				ID: "call-1",
+				Function: api.ToolCallFunction{
+					Name:      "echo_tool",
+					Arguments: args,
+				},
+			}}},
+		}},
+		{{
+			Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+				ID: "call-2",
+				Function: api.ToolCallFunction{
+					Name:      "echo_tool",
+					Arguments: args,
+				},
+			}}},
+		}},
+	}}
+	registry := &Registry{}
+	registry.Register(staticTool{})
+	session := &Session{
+		Client:        client,
+		Tools:         registry,
+		ApprovalState: approvalStateForTest(true, nil),
+	}
+
+	result, err := session.Run(context.Background(), RunOptions{
+		Model:         "test:cloud",
+		NewMessages:   []api.Message{{Role: "user", Content: "keep going"}},
+		MaxToolRounds: 1,
+	})
+	if err == nil || !strings.Contains(err.Error(), "tool round limit reached after 1 rounds") {
+		t.Fatalf("error = %v, want explicit tool-round limit", err)
+	}
+	if result == nil {
+		t.Fatal("expected partial result with skipped tool message")
+	}
+	if client.calls != 2 {
+		t.Fatalf("client calls = %d, want 2", client.calls)
 	}
 }
 
