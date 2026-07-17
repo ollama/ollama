@@ -142,6 +142,22 @@ func TestCodexAppInstalledUsesWindowsStartMenuFallback(t *testing.T) {
 	}
 }
 
+func TestCodexAppStartAppsScriptMatchesStablePackageIdentity(t *testing.T) {
+	// After Codex merged into the ChatGPT desktop app the Store entry shows as
+	// "ChatGPT" while keeping the OpenAI.Codex package family, and the display
+	// name may be localized. Detection must key off the stable AppID family so
+	// it doesn't false-negative on those installs (issue #17119).
+	if !strings.Contains(codexAppStartAppsScript, "$_.AppID -like 'OpenAI.Codex_*!App'") {
+		t.Fatalf("Start menu detection must match the stable OpenAI.Codex package AppID, got: %s", codexAppStartAppsScript)
+	}
+	// Keep the display-name fallbacks for installs that only surface by name.
+	for _, want := range []string{"$_.Name -eq 'ChatGPT'", "$_.Name -eq 'Codex'"} {
+		if !strings.Contains(codexAppStartAppsScript, want) {
+			t.Fatalf("Start menu detection should retain name fallback %q, got: %s", want, codexAppStartAppsScript)
+		}
+	}
+}
+
 func TestCodexAppInstalledUsesMacBundleIDFallback(t *testing.T) {
 	withCodexAppPlatform(t, "darwin")
 

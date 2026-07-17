@@ -992,12 +992,20 @@ func defaultCodexAppRunningAppPath() string {
 	return strings.TrimSpace(string(out))
 }
 
+// codexAppStartAppsScript resolves the ChatGPT/Codex desktop Start menu AppID.
+// It matches the stable Store package identity (OpenAI.Codex_*!App) first so
+// detection survives the display name changing or being localized, then falls
+// back to the display name for installs that surface differently. Since Codex
+// merged into the ChatGPT desktop app the Store entry shows as "ChatGPT" while
+// keeping the OpenAI.Codex package family, so name-only matching missed it on
+// systems where the display name is not exactly "ChatGPT" or "Codex".
+const codexAppStartAppsScript = `(Get-StartApps | Where-Object { $_.AppID -like 'OpenAI.Codex_*!App' -or $_.Name -eq 'ChatGPT' -or $_.Name -like 'ChatGPT*' -or $_.Name -eq 'Codex' -or $_.Name -like 'Codex*' } | Select-Object -First 1 -ExpandProperty AppID)`
+
 func defaultCodexAppStartAppID() string {
 	if codexAppGOOS != "windows" {
 		return ""
 	}
-	script := `(Get-StartApps | Where-Object { $_.Name -eq 'ChatGPT' -or $_.Name -like 'ChatGPT*' -or $_.Name -eq 'Codex' -or $_.Name -like 'Codex*' } | Select-Object -First 1 -ExpandProperty AppID)`
-	out, err := exec.Command("powershell.exe", "-NoProfile", "-Command", script).Output()
+	out, err := exec.Command("powershell.exe", "-NoProfile", "-Command", codexAppStartAppsScript).Output()
 	if err != nil {
 		return ""
 	}
