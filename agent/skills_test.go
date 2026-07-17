@@ -118,6 +118,9 @@ func TestLoadDefaultSkillsContinuesAfterBadRoot(t *testing.T) {
 	if _, err := catalog.Load("release-notes"); err != nil {
 		t.Fatalf("valid skill was hidden by bad root: %v", err)
 	}
+	if _, err := catalog.Load(bundledSkillCreatorName); err != nil {
+		t.Fatalf("bundled skill was hidden by bad root: %v", err)
+	}
 	var foundDiagnostic bool
 	for _, diagnostic := range catalog.Diagnostics() {
 		if strings.Contains(diagnostic.Error(), badRoot) {
@@ -127,6 +130,51 @@ func TestLoadDefaultSkillsContinuesAfterBadRoot(t *testing.T) {
 	}
 	if !foundDiagnostic {
 		t.Fatalf("diagnostics = %#v, want bad root %q", catalog.Diagnostics(), badRoot)
+	}
+}
+
+func TestLoadDefaultSkillsInstallsBundledSkillCreator(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(SkillsDirEnv, dir)
+
+	catalog, err := LoadDefaultSkills("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	skill, err := catalog.Load(bundledSkillCreatorName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, bundledSkillCreatorName, skillFilename)
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(contents) != bundledSkillCreatorContent {
+		t.Fatalf("installed skill = %q, want bundled contents", contents)
+	}
+	if skill.Path != path {
+		t.Fatalf("skill path = %q, want %q", skill.Path, path)
+	}
+	if !strings.Contains(skill.Content(), "Skill directory: "+filepath.Dir(path)) {
+		t.Fatalf("skill content does not identify its directory: %q", skill.Content())
+	}
+}
+
+func TestLoadDefaultSkillsUpdatesExistingSkillCreator(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(SkillsDirEnv, dir)
+	writeCatalogSkill(t, dir, bundledSkillCreatorName, "custom instructions")
+
+	if _, err := LoadDefaultSkills(""); err != nil {
+		t.Fatal(err)
+	}
+	contents, err := os.ReadFile(filepath.Join(dir, bundledSkillCreatorName, skillFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(contents) != bundledSkillCreatorContent {
+		t.Fatalf("installed skill = %q, want bundled contents", contents)
 	}
 }
 
@@ -152,6 +200,14 @@ func TestSkillsDirUsesOverrideAndXDG(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 	if got, err := SkillsDir(); err != nil || got != filepath.Join(xdg, "ollama", "skills") {
 		t.Fatalf("SkillsDir xdg = %q, want %q, %v", got, filepath.Join(xdg, "ollama", "skills"), err)
+	}
+
+	t.Setenv("XDG_CONFIG_HOME", "")
+	home := filepath.Join(base, "home")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if got, err := SkillsDir(); err != nil || got != filepath.Join(home, ".ollama", "skills") {
+		t.Fatalf("SkillsDir default = %q, want %q, %v", got, filepath.Join(home, ".ollama", "skills"), err)
 	}
 }
 

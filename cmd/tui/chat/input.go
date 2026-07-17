@@ -1107,8 +1107,12 @@ func (m chatModel) completions() []chatCompletion {
 }
 
 func (m chatModel) slashCompletions() []chatCompletion {
-	input := strings.TrimSpace(string(m.input))
+	rawInput := string(m.input)
+	input := strings.TrimSpace(rawInput)
 	if !strings.HasPrefix(input, "/") {
+		return nil
+	}
+	if m.skillSlashPromptStarted(rawInput) {
 		return nil
 	}
 
@@ -1148,6 +1152,16 @@ func (m chatModel) slashCompletions() []chatCompletion {
 		return []chatCompletion{{label: "No matching commands"}}
 	}
 	return completions
+}
+
+func (m chatModel) skillSlashPromptStarted(input string) bool {
+	input = strings.TrimLeftFunc(input, unicode.IsSpace)
+	end := strings.IndexFunc(input, unicode.IsSpace)
+	if end < 0 {
+		return false
+	}
+	_, _, ok := m.skillSlashInvocation(input[:end])
+	return ok
 }
 
 func matchingSlashCommands(input string) []chatSlashCommand {

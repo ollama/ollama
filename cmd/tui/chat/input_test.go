@@ -636,6 +636,18 @@ func TestSkillSlashCommandAppearsInCompletions(t *testing.T) {
 	}
 }
 
+func TestSkillSlashPromptHidesCommandCompletions(t *testing.T) {
+	catalog := writeTestSkillCatalog(t)
+	for _, input := range []string{"/release-notes ", "/release-notes draft the release notes"} {
+		t.Run(input, func(t *testing.T) {
+			m := chatModel{opts: Options{Skills: catalog}, input: []rune(input)}
+			if lines := m.completionLines(80); len(lines) != 0 {
+				t.Fatalf("completion lines = %#v, want none", lines)
+			}
+		})
+	}
+}
+
 func TestSkillSlashNameResolvesAndRejectsArgsAndUnknown(t *testing.T) {
 	catalog := writeTestSkillCatalog(t)
 	m := &chatModel{opts: Options{Skills: catalog}}
