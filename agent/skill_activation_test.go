@@ -24,7 +24,7 @@ func testSkillCatalog(t *testing.T) *SkillCatalog {
 	if err := os.Mkdir(path, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(path, "SKILL.md"), []byte("Use concise bullets."), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(path, "SKILL.md"), []byte("---\nname: release-notes\ndescription: Draft release notes.\n---\nUse concise bullets."), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	catalog, err := DiscoverSkills(dir)

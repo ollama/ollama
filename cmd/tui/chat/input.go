@@ -74,11 +74,6 @@ func (m *chatModel) handleSubmit() (tea.Model, tea.Cmd) {
 		return *m, nil
 	}
 	_, _, hasSlashCommand := slashCommandInvocation(input)
-	if !hasSlashCommand {
-		if _, _, ok := m.skillSlashInvocation(input); ok {
-			hasSlashCommand = true
-		}
-	}
 	if (m.running || m.compacting) && !hasSlashCommand {
 		m.status = "wait for current response"
 		return *m, nil
@@ -226,6 +221,9 @@ func (m *chatModel) handleToolsCommand(args string) (tea.Model, tea.Cmd) {
 	} else {
 		m.opts.ToolsDisabled = true
 		m.status = "tools off"
+	}
+	if m.opts.SystemPromptForModel != nil {
+		m.opts.SystemPrompt = m.opts.SystemPromptForModel(m.ctx, m.opts.Model, m.opts.Tools, m.opts.ToolsDisabled)
 	}
 	return *m, nil
 }

@@ -60,7 +60,7 @@ type Options struct {
 	MultiModalForModel          func(context.Context, string) bool
 	ModelOptions                func(context.Context) ([]ModelOption, error)
 	OnModelSelected             func(context.Context, string) error
-	SystemPromptForModel        func(context.Context, string, *coreagent.Registry) string
+	SystemPromptForModel        func(context.Context, string, *coreagent.Registry, bool) string
 	ApprovalPrompter            coreagent.ApprovalPrompter
 	EventSinks                  []coreagent.EventSink
 	AllowAllTools               bool

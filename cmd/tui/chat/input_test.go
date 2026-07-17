@@ -569,6 +569,46 @@ func TestSkillSlashCommandPromptBecomesUserMessage(t *testing.T) {
 	}
 }
 
+func TestChatSkillSubmitWhileActiveRunKeepsActiveState(t *testing.T) {
+	catalog := writeTestSkillCatalog(t)
+	for _, state := range []struct {
+		name       string
+		running    bool
+		compacting bool
+	}{
+		{name: "running", running: true},
+		{name: "compacting", compacting: true},
+	} {
+		t.Run(state.name, func(t *testing.T) {
+			events := make(chan tea.Msg)
+			cancel := func() {}
+			m := chatModel{
+				opts:       Options{Skills: catalog},
+				input:      []rune("/release-notes draft notes"),
+				running:    state.running,
+				compacting: state.compacting,
+				events:     events,
+				cancel:     cancel,
+			}
+
+			updated, cmd := m.handleSubmit()
+			if cmd != nil {
+				t.Fatal("skill submit should not start another run while active")
+			}
+			got := updated.(chatModel)
+			if got.events != events || got.cancel == nil || got.running != state.running || got.compacting != state.compacting {
+				t.Fatalf("active run state changed: %#v", got)
+			}
+			if string(got.input) != "/release-notes draft notes" {
+				t.Fatalf("input = %q, want skill invocation preserved", got.input)
+			}
+			if got.status != "wait for current response" {
+				t.Fatalf("status = %q", got.status)
+			}
+		})
+	}
+}
+
 func writeTestSkillCatalog(t *testing.T) *coreagent.SkillCatalog {
 	t.Helper()
 	dir := t.TempDir()
@@ -717,6 +757,35 @@ func TestChatToolsCommandTogglesToolRegistry(t *testing.T) {
 	req, _ = m.requestPreview()
 	if got := len(req.Tools); got != 1 {
 		t.Fatalf("request preview tools = %d, want 1", got)
+	}
+}
+
+func TestChatToolsCommandRefreshesCapabilityAwareSystemPrompt(t *testing.T) {
+	registry := &coreagent.Registry{}
+	registry.Register(chatTestTool{})
+	m := chatModel{
+		ctx: context.Background(),
+		opts: Options{
+			Model: "test",
+			Tools: registry,
+			SystemPromptForModel: func(_ context.Context, _ string, _ *coreagent.Registry, disabled bool) string {
+				if disabled {
+					return "tools disabled"
+				}
+				return "tools enabled"
+			},
+		},
+	}
+
+	updated, _ := m.handleToolsCommand("")
+	m = updated.(chatModel)
+	if m.opts.SystemPrompt != "tools disabled" {
+		t.Fatalf("system prompt = %q, want disabled prompt", m.opts.SystemPrompt)
+	}
+	updated, _ = m.handleToolsCommand("")
+	m = updated.(chatModel)
+	if m.opts.SystemPrompt != "tools enabled" {
+		t.Fatalf("system prompt = %q, want enabled prompt", m.opts.SystemPrompt)
 	}
 }
 

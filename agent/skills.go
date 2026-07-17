@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -22,7 +24,7 @@ const (
 	maxSkillBytes = 1 << 20
 )
 
-var skillName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+var skillName = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 
 // SkillsDir returns the canonical runtime-owned skill directory.
 func SkillsDir() (string, error) {
@@ -160,7 +162,8 @@ func LoadDefaultSkills(projectDir string) (*SkillCatalog, error) {
 	for _, root := range roots {
 		sub, err := DiscoverSkills(root.path)
 		if err != nil {
-			return nil, fmt.Errorf("discover skills in %s: %w", root.path, err)
+			catalog.diagnostics = append(catalog.diagnostics, fmt.Errorf("discover skills in %s: %w", root.path, err))
+			continue
 		}
 		catalog.diagnostics = append(catalog.diagnostics, sub.diagnostics...)
 		for _, skill := range sub.skills {
@@ -285,17 +288,27 @@ func parseSkill(path, directoryName string) (Skill, error) {
 	if instructions == "" {
 		return Skill{}, fmt.Errorf("skill %q: %s is empty", directoryName, skillFilename)
 	}
-	skill := Skill{Name: directoryName, Path: path}
-	if strings.HasPrefix(instructions, "---\n") || strings.HasPrefix(instructions, "---\r\n") {
-		metadata, body, err := skillFrontMatter(instructions)
-		if err != nil {
-			return Skill{}, fmt.Errorf("skill %q: %w", directoryName, err)
-		}
-		// The directory name is the canonical skill name; a front matter "name"
-		// field is accepted for compatibility but is not required to match.
-		skill.Description = metadata["description"]
-		instructions = body
+	if !strings.HasPrefix(instructions, "---\n") && !strings.HasPrefix(instructions, "---\r\n") {
+		return Skill{}, fmt.Errorf("skill %q: missing YAML front matter", directoryName)
 	}
+	metadata, body, err := skillFrontMatter(instructions)
+	if err != nil {
+		return Skill{}, fmt.Errorf("skill %q: %w", directoryName, err)
+	}
+	if metadata.Name == "" {
+		return Skill{}, fmt.Errorf("skill %q: front matter requires name", directoryName)
+	}
+	if metadata.Description == "" {
+		return Skill{}, fmt.Errorf("skill %q: front matter requires description", directoryName)
+	}
+	if !skillName.MatchString(metadata.Name) {
+		return Skill{}, fmt.Errorf("skill %q: invalid front matter name %q", directoryName, metadata.Name)
+	}
+	if metadata.Name != directoryName {
+		return Skill{}, fmt.Errorf("skill %q: front matter name %q must match directory name", directoryName, metadata.Name)
+	}
+	skill := Skill{Name: metadata.Name, Description: metadata.Description, Path: path}
+	instructions = body
 	if strings.TrimSpace(instructions) == "" {
 		return Skill{}, fmt.Errorf("skill %q: instructions are empty", directoryName)
 	}
@@ -303,25 +316,28 @@ func parseSkill(path, directoryName string) (Skill, error) {
 	return skill, nil
 }
 
-func skillFrontMatter(input string) (map[string]string, string, error) {
+type skillFrontMatterMetadata struct {
+	Name        string         `yaml:"name"`
+	Description string         `yaml:"description"`
+	Metadata    map[string]any `yaml:"metadata"`
+}
+
+func skillFrontMatter(input string) (skillFrontMatterMetadata, string, error) {
 	input = strings.ReplaceAll(input, "\r\n", "\n")
 	lines := strings.Split(input, "\n")
 	if len(lines) < 3 || lines[0] != "---" {
-		return nil, "", errors.New("invalid front matter")
+		return skillFrontMatterMetadata{}, "", errors.New("invalid front matter")
 	}
-	metadata := make(map[string]string)
 	for i := 1; i < len(lines); i++ {
 		if lines[i] == "---" {
+			var metadata skillFrontMatterMetadata
+			if err := yaml.Unmarshal([]byte(strings.Join(lines[1:i], "\n")), &metadata); err != nil {
+				return skillFrontMatterMetadata{}, "", fmt.Errorf("parse YAML front matter: %w", err)
+			}
+			metadata.Name = strings.TrimSpace(metadata.Name)
+			metadata.Description = strings.TrimSpace(metadata.Description)
 			return metadata, strings.Join(lines[i+1:], "\n"), nil
 		}
-		key, value, ok := strings.Cut(lines[i], ":")
-		if !ok || strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
-			return nil, "", fmt.Errorf("invalid front matter line %q", lines[i])
-		}
-		if _, exists := metadata[key]; exists {
-			return nil, "", fmt.Errorf("duplicate front matter field %q", key)
-		}
-		metadata[key] = strings.Trim(strings.TrimSpace(value), `"`)
 	}
-	return nil, "", errors.New("front matter is not closed")
+	return skillFrontMatterMetadata{}, "", errors.New("front matter is not closed")
 }

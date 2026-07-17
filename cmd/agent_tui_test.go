@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	coreagent "github.com/ollama/ollama/agent"
+	agenttools "github.com/ollama/ollama/agent/tools"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
 	agentchat "github.com/ollama/ollama/cmd/tui/chat"
@@ -67,6 +68,32 @@ func TestAgentSystemPromptIncludesSkillCatalog(t *testing.T) {
 	got := agentSystemPromptAt(time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC), "model", "", catalog.SystemContext())
 	if !strings.Contains(got, "release-notes: Draft releases.") || !strings.Contains(got, "normal approval rules") {
 		t.Fatalf("system prompt missing skill context: %q", got)
+	}
+}
+
+func TestAgentSkillSystemContextRequiresAvailableEnabledSkillTool(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "release-notes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "release-notes", "SKILL.md"), []byte("---\nname: release-notes\ndescription: Draft releases.\n---\nUse bullets."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := coreagent.DiscoverSkills(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := &coreagent.Registry{}
+	registry.Register(&agenttools.Skill{Catalog: catalog})
+
+	if got := agentSkillSystemContext(catalog, registry, false); !strings.Contains(got, "release-notes: Draft releases.") {
+		t.Fatalf("enabled skill context = %q", got)
+	}
+	if got := agentSkillSystemContext(catalog, registry, true); got != "" {
+		t.Fatalf("disabled tools should omit skill context, got %q", got)
+	}
+	if got := agentSkillSystemContext(catalog, &coreagent.Registry{}, false); got != "" {
+		t.Fatalf("unavailable skill tool should omit skill context, got %q", got)
 	}
 }
 

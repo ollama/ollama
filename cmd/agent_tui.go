@@ -227,8 +227,6 @@ func GenerateAgentTUI(cmd *cobra.Command, client *api.Client, opts agentTUIOptio
 	for _, diagnostic := range skillCatalog.Diagnostics() {
 		fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m ignored invalid agent skill: %v\n", diagnostic)
 	}
-	skillContext := skillCatalog.SystemContext()
-
 	var registry *coreagent.Registry
 	registryForModel := func(ctx context.Context, model string) *coreagent.Registry {
 		return agentToolsRegistry(ctx, client, model, skillCatalog)
@@ -236,7 +234,7 @@ func GenerateAgentTUI(cmd *cobra.Command, client *api.Client, opts agentTUIOptio
 	if opts.Model != "" {
 		registry = agentToolsRegistry(cmd.Context(), client, opts.Model, skillCatalog)
 	}
-	systemPrompt := agentSystemPromptWithWorkingDir(opts.Model, opts.System, skillContext, cwd)
+	systemPrompt := agentSystemPromptWithWorkingDir(opts.Model, opts.System, agentSkillSystemContext(skillCatalog, registry, opts.ToolsDisabled), cwd)
 
 	_, err = agentchat.Run(cmd.Context(), agentchat.Options{
 		Model:                opts.Model,
@@ -253,8 +251,8 @@ func GenerateAgentTUI(cmd *cobra.Command, client *api.Client, opts agentTUIOptio
 		OnModelSelected: func(_ context.Context, model string) error {
 			return config.SetLastModel(model)
 		},
-		SystemPromptForModel: func(ctx context.Context, model string, registry *coreagent.Registry) string {
-			return agentSystemPromptWithWorkingDir(model, agentSystemFromShow(ctx, client, model), skillContext, cwd)
+		SystemPromptForModel: func(ctx context.Context, model string, registry *coreagent.Registry, toolsDisabled bool) string {
+			return agentSystemPromptWithWorkingDir(model, agentSystemFromShow(ctx, client, model), agentSkillSystemContext(skillCatalog, registry, toolsDisabled), cwd)
 		},
 		Skills:              skillCatalog,
 		SystemPrompt:        systemPrompt,
@@ -292,6 +290,16 @@ func GenerateAgentTUI(cmd *cobra.Command, client *api.Client, opts agentTUIOptio
 		},
 	})
 	return err
+}
+
+func agentSkillSystemContext(catalog *coreagent.SkillCatalog, registry *coreagent.Registry, toolsDisabled bool) string {
+	if toolsDisabled || registry == nil {
+		return ""
+	}
+	if _, ok := registry.Get("skill"); !ok {
+		return ""
+	}
+	return catalog.SystemContext()
 }
 
 func selectAgentModel(ctx context.Context, client *api.Client, current string) (string, error) {

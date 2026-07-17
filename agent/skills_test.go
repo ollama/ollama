@@ -13,6 +13,9 @@ func writeCatalogSkill(t *testing.T, dir, name, content string) {
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if !strings.HasPrefix(content, "---") {
+		content = "---\nname: " + name + "\ndescription: Test skill.\n---\n" + content
+	}
 	if err := os.WriteFile(filepath.Join(path, skillFilename), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -20,7 +23,7 @@ func writeCatalogSkill(t *testing.T, dir, name, content string) {
 
 func TestDiscoverAndLoadSkills(t *testing.T) {
 	dir := t.TempDir()
-	writeCatalogSkill(t, dir, "release-notes", "---\nname: release-notes\ndescription: Draft concise release notes.\n---\n# Release notes\n\nUse short bullets.")
+	writeCatalogSkill(t, dir, "release-notes", "---\nname: release-notes\ndescription: Draft concise release notes.\nmetadata:\n  author: Ollama\n  labels:\n    - release\n    - docs\n---\n# Release notes\n\nUse short bullets.")
 	catalog, err := DiscoverSkills(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -44,20 +47,28 @@ func TestDiscoverAndLoadSkills(t *testing.T) {
 func TestDiscoverSkillsSkipsMalformedEntries(t *testing.T) {
 	dir := t.TempDir()
 	writeCatalogSkill(t, dir, "valid", "do the useful thing")
-	// A mismatched front matter "name" no longer rejects a skill: the directory
-	// name is canonical, so this loads fine.
-	writeCatalogSkill(t, dir, "mismatched", "---\nname: whatever\ndescription: still loads\n---\nbody")
+	writeCatalogSkill(t, dir, "mismatched", "---\nname: whatever\ndescription: wrong name\n---\nbody")
 	// Genuinely malformed front matter (a line without a key:value pair) is still rejected.
 	writeCatalogSkill(t, dir, "broken", "---\nname: broken\ndescription\n---\nnope")
+	writeCatalogSkill(t, dir, "missing-name", "---\ndescription: missing name\n---\nbody")
+	writeCatalogSkill(t, dir, "missing-description", "---\nname: missing-description\n---\nbody")
+	writeCatalogSkill(t, dir, "bad-name", "---\nname: bad_name\ndescription: invalid name\n---\nbody")
+	writeCatalogSkill(t, dir, "under_score", "---\nname: under_score\ndescription: invalid directory\n---\nbody")
+	if err := os.MkdirAll(filepath.Join(dir, "no-front-matter"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "no-front-matter", skillFilename), []byte("body"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	catalog, err := DiscoverSkills(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := len(catalog.List()), 2; got != want {
+	if got, want := len(catalog.List()), 1; got != want {
 		t.Fatalf("valid skills = %d, want %d", got, want)
 	}
-	if got := len(catalog.Diagnostics()); got != 1 {
-		t.Fatalf("diagnostics = %d, want 1", got)
+	if got, want := len(catalog.Diagnostics()), 7; got != want {
+		t.Fatalf("diagnostics = %d, want %d: %#v", got, want, catalog.Diagnostics())
 	}
 	if _, err := catalog.Load("broken"); err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("load broken error = %v", err)
@@ -70,7 +81,7 @@ func TestDiscoverSkillsSkipsMalformedEntries(t *testing.T) {
 func TestDiscoverSkillsFollowsSymlinks(t *testing.T) {
 	dir := t.TempDir()
 	target := t.TempDir()
-	writeCatalogSkill(t, target, "shared", "---\ndescription: From a linked repo.\n---\nshared instructions")
+	writeCatalogSkill(t, target, "shared", "---\nname: shared\ndescription: From a linked repo.\n---\nshared instructions")
 	if err := os.Symlink(filepath.Join(target, "shared"), filepath.Join(dir, "shared")); err != nil {
 		t.Skipf("symlink not supported: %v", err)
 	}
@@ -84,6 +95,38 @@ func TestDiscoverSkillsFollowsSymlinks(t *testing.T) {
 	}
 	if !strings.Contains(list[0].Content(), "shared instructions") {
 		t.Fatalf("symlinked skill content = %q", list[0].Content())
+	}
+}
+
+func TestLoadDefaultSkillsContinuesAfterBadRoot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	project := t.TempDir()
+	writeCatalogSkill(t, filepath.Join(project, ".ollama", "skills"), "release-notes", "project instructions")
+
+	badRoot := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(badRoot, []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(SkillsDirEnv, badRoot)
+
+	catalog, err := LoadDefaultSkills(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := catalog.Load("release-notes"); err != nil {
+		t.Fatalf("valid skill was hidden by bad root: %v", err)
+	}
+	var foundDiagnostic bool
+	for _, diagnostic := range catalog.Diagnostics() {
+		if strings.Contains(diagnostic.Error(), badRoot) {
+			foundDiagnostic = true
+			break
+		}
+	}
+	if !foundDiagnostic {
+		t.Fatalf("diagnostics = %#v, want bad root %q", catalog.Diagnostics(), badRoot)
 	}
 }
 
@@ -167,7 +210,7 @@ func TestSkillContentListsDirectoryAndResources(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(skillDir, "references"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("Handle PDFs."), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: pdf-processing\ndescription: Handle PDFs.\n---\nHandle PDFs."), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(skillDir, "scripts", "extract.py"), []byte("#!/usr/bin/env python3"), 0o755); err != nil {
