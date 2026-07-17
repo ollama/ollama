@@ -371,9 +371,6 @@ func agentDefaultSystemPromptWithWorkingDir(now time.Time, modelName string, wor
 		"Current date: " + date + ".",
 		"",
 	}
-	if workingDir != "" {
-		parts = append(parts, "Current working directory: "+strconv.Quote(workingDir)+".", "")
-	}
 	parts = append(parts,
 		"Be concise, practical, and action-oriented. Use tools when they materially help. Verify current or fast-changing facts with web tools when available; otherwise state uncertainty.",
 		"",
@@ -381,6 +378,9 @@ func agentDefaultSystemPromptWithWorkingDir(now time.Time, modelName string, wor
 		"",
 		"Tell the user about meaningful changes, verification, failures, blockers, assumptions, and risks. Summarize routine tool output instead of dumping it.",
 	)
+	if workingDir != "" {
+		parts = append(parts, "Current working directory: "+strconv.Quote(workingDir)+".")
+	}
 	return strings.Join(parts, "\n")
 }
 
