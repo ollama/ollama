@@ -114,10 +114,17 @@ type MLPBlock interface {
 	Forward(x *mlx.Array, cfg *Config) *mlx.Array
 }
 
+type MLPBlockAdder interface {
+	ForwardAdd(x, residual *mlx.Array, cfg *Config) *mlx.Array
+}
+
 type DenseMLP struct {
-	GateProj nn.LinearLayer
-	UpProj   nn.LinearLayer
-	DownProj nn.LinearLayer
+	GateProj        nn.LinearLayer
+	UpProj          nn.LinearLayer
+	DownProj        nn.LinearLayer
+	GateUpProj      nn.LinearLayer
+	GateUpGateScale *mlx.Array
+	GateUpUpScale   *mlx.Array
 }
 
 type SparseMoE struct {
@@ -125,6 +132,7 @@ type SparseMoE struct {
 	SwitchMLP            *SwitchMLP
 	SharedExpert         *DenseMLP
 	EScoreCorrectionBias *mlx.Array
+	RoutedScale          *mlx.Array
 }
 
 type SwitchMLP struct {
@@ -132,6 +140,11 @@ type SwitchMLP struct {
 	GateWeight   *mlx.Array
 	UpWeight     *mlx.Array
 	DownWeight   *mlx.Array
+	// Source-layout expert weights are stored as [experts, out, in], matching
+	// the published tensors. GatherMM transposes them lazily so load does not
+	// materialize huge BF16 expert tensors.
+	GateUpWeightsSourceLayout bool
+	DownWeightSourceLayout    bool
 
 	GateUpWeightQ, GateUpScales, GateUpBiases *mlx.Array
 	GateWeightQ, GateScales, GateBiases       *mlx.Array
@@ -143,7 +156,6 @@ type SwitchMLP struct {
 	GateUpBits, GateBits, UpBits, DownBits                     int
 	GateUpGroupSize, GateGroupSize, UpGroupSize, DownGroupSize int
 	GateUpMode, GateMode, UpMode, DownMode                     string
-	UseQuantized, UseFusedGateUp                               bool
 }
 
 type stackedExpertWeights struct {
@@ -588,6 +600,55 @@ func transposeExpertWeightForGatherMM(w *mlx.Array) *mlx.Array {
 	return t
 }
 
+func transposeExpertWeightViewForGatherMM(w *mlx.Array) *mlx.Array {
+	if w == nil || !w.Valid() || w.NumDims() != 3 {
+		return w
+	}
+	return mlx.Transpose(w, 0, 2, 1)
+}
+
+func denseExpertWeight(w *stackedExpertWeights) *mlx.Array {
+	if w == nil {
+		return nil
+	}
+	weight := w.Weight
+	if w.Scales != nil {
+		weight = mlx.Dequantize(w.Weight, w.Scales, w.Biases, w.GroupSize, w.Bits, w.Mode)
+		if w.GlobalScales != nil {
+			scale := w.GlobalScales
+			if scale.DType() != weight.DType() {
+				scale = scale.AsType(weight.DType())
+			}
+			if !(scale.NumDims() == 0 || (scale.NumDims() == 1 && scale.Dim(0) == 1)) {
+				scale = mlx.ExpandDims(mlx.ExpandDims(scale, -1), -1)
+			}
+			weight = mlx.Mul(weight, scale)
+		}
+	}
+	return weight
+}
+
+func denseExpertWeightForGatherMM(w *stackedExpertWeights) *mlx.Array {
+	weight := denseExpertWeight(w)
+	if weight == nil {
+		return nil
+	}
+	return transposeExpertWeightForGatherMM(weight)
+}
+
+func denseExpertWeightSupportsSourceLayout(w *stackedExpertWeights) bool {
+	return w != nil && w.Weight != nil && w.Weight.Valid() && w.Scales == nil && w.Weight.DType() == mlx.DTypeBFloat16
+}
+
+func denseExpertWeightsSupportSourceLayout(weights ...*stackedExpertWeights) bool {
+	for _, w := range weights {
+		if !denseExpertWeightSupportsSourceLayout(w) {
+			return false
+		}
+	}
+	return true
+}
+
 func canFuseQuantizedGateUp(gateW, upW *stackedExpertWeights) bool {
 	if gateW == nil || upW == nil || gateW.Scales == nil || upW.Scales == nil {
 		return false
@@ -604,6 +665,95 @@ func canFuseQuantizedGateUp(gateW, upW *stackedExpertWeights) bool {
 	return gateW.Weight.NumDims() == 3 && upW.Weight.NumDims() == 3
 }
 
+func canFuseDenseQuantizedLinears(a, b *nn.QuantizedLinear) bool {
+	if a == nil || b == nil || a.Scales == nil || b.Scales == nil {
+		return false
+	}
+	if a.QBiases != nil || b.QBiases != nil ||
+		a.Bias != nil || b.Bias != nil {
+		return false
+	}
+	if !isScalarGlobalScale(a.GlobalScale) || !isScalarGlobalScale(b.GlobalScale) {
+		return false
+	}
+	if a.Bits != b.Bits || a.GroupSize != b.GroupSize || a.Mode != b.Mode {
+		return false
+	}
+	if a.Weight.NumDims() != 2 || b.Weight.NumDims() != 2 ||
+		a.Scales.NumDims() != 2 || b.Scales.NumDims() != 2 {
+		return false
+	}
+	if a.Weight.Dim(1) != b.Weight.Dim(1) || a.Scales.Dim(1) != b.Scales.Dim(1) {
+		return false
+	}
+	return (a.Mode == "nvfp4" && a.Bits == 4 && a.GroupSize == 16) ||
+		(a.Mode == "mxfp8" && a.Bits == 8 && a.GroupSize == 32)
+}
+
+func isScalarGlobalScale(scale *mlx.Array) bool {
+	if scale == nil {
+		return true
+	}
+	return scale.NumDims() == 0 || (scale.NumDims() == 1 && scale.Dim(0) == 1)
+}
+
+func fuseDenseQuantizedLinears(a, b nn.LinearLayer) nn.LinearLayer {
+	aq, ok := a.(*nn.QuantizedLinear)
+	if !ok {
+		return nil
+	}
+	bq, ok := b.(*nn.QuantizedLinear)
+	if !ok {
+		return nil
+	}
+	if !canFuseDenseQuantizedLinears(aq, bq) {
+		return nil
+	}
+	return &nn.QuantizedLinear{
+		Weight:    fuseExpertStacks(aq.Weight, bq.Weight, 0),
+		Scales:    fuseExpertStacks(aq.Scales, bq.Scales, 0),
+		GroupSize: aq.GroupSize,
+		Bits:      aq.Bits,
+		Mode:      aq.Mode,
+	}
+}
+
+// fuseDenseGateUp fuses only the quantized weights and scales. Scalar global
+// scales from the original projections stay on DenseMLP and are applied after
+// the fused output is split back into gate/up halves.
+func fuseDenseGateUp(gate, up nn.LinearLayer) nn.LinearLayer {
+	return fuseDenseQuantizedLinears(gate, up)
+}
+
+func linearGlobalScale(l nn.LinearLayer) *mlx.Array {
+	if q, ok := l.(*nn.QuantizedLinear); ok {
+		return q.GlobalScale
+	}
+	return nil
+}
+
+func applyDenseGlobalScale(x, globalScale *mlx.Array) *mlx.Array {
+	if globalScale == nil {
+		return x
+	}
+	return mlx.Mul(x, globalScale).AsType(x.DType())
+}
+
+func splitLastDim(x *mlx.Array, first int32) (*mlx.Array, *mlx.Array) {
+	dims := x.Dims()
+	starts := make([]int32, len(dims))
+	leftStops := make([]int32, len(dims))
+	rightStarts := make([]int32, len(dims))
+	rightStops := make([]int32, len(dims))
+	for i, dim := range dims {
+		leftStops[i] = int32(dim)
+		rightStops[i] = int32(dim)
+	}
+	leftStops[len(leftStops)-1] = first
+	rightStarts[len(rightStarts)-1] = first
+	return mlx.SliceStartStop(x, starts, leftStops), mlx.SliceStartStop(x, rightStarts, rightStops)
+}
+
 func fuseExpertStacks(a, b *mlx.Array, axis int) *mlx.Array {
 	if a == nil || !a.Valid() || b == nil || !b.Valid() {
 		return nil
@@ -612,6 +762,77 @@ func fuseExpertStacks(a, b *mlx.Array, axis int) *mlx.Array {
 	mlx.Eval(out)
 	return out
 }
+
+func applyExpertGlobalScale(x, globalScale, idx *mlx.Array) *mlx.Array {
+	if globalScale == nil {
+		return x
+	}
+	if globalScale.NumDims() == 0 || (globalScale.NumDims() == 1 && globalScale.Dim(0) == 1) {
+		return mlx.Mul(x, globalScale).AsType(x.DType())
+	}
+	scale := mlx.ExpandDims(mlx.ExpandDims(mlx.Take(globalScale, idx, 0), -1), -1)
+	return mlx.Mul(x, scale).AsType(x.DType())
+}
+
+var lagunaSwiGLUGatheredGateScale = mlx.Compile(
+	"LagunaSwiGLUGatheredGateScale",
+	func(in ...*mlx.Array) []*mlx.Array {
+		gate := applyExpertGlobalScale(in[0], in[2], in[3])
+		return []*mlx.Array{mlx.SwiGLU(gate, in[1])}
+	},
+)
+
+func newLagunaSigmoidTopKRouter(name string, normalize, scaleScores bool) mlx.CompileFunc {
+	return mlx.Compile(name, func(in ...*mlx.Array) []*mlx.Array {
+		gates, bias := in[0].AsType(mlx.DTypeFloat32), in[1]
+		probs, neg := mlx.SigmoidRouter(gates, bias)
+		inds := mlx.Argpartition(neg, 7, -1)
+		inds = mlx.SliceStartStop(inds, []int32{0, 0}, []int32{int32(gates.Dim(0)), 8})
+		scores := mlx.TakeAlongAxis(probs, inds, -1)
+		if normalize {
+			scores = mlx.Div(scores, mlx.Sum(scores, -1, true))
+		}
+		if scaleScores {
+			scores = scaleScoresByExpert(scores, inds, in[2])
+			scores = scaleScoresByExpert(scores, inds, in[3])
+		}
+		return []*mlx.Array{scores, inds}
+	})
+}
+
+var (
+	lagunaSigmoidTopK8 = newLagunaSigmoidTopKRouter(
+		"LagunaSigmoidTopK8", false, false)
+	lagunaSigmoidTopK8Normalized = newLagunaSigmoidTopKRouter(
+		"LagunaSigmoidTopK8Normalized", true, false)
+	lagunaSigmoidTopK8Scaled = newLagunaSigmoidTopKRouter(
+		"LagunaSigmoidTopK8Scaled", false, true)
+	lagunaSigmoidTopK8ScaledNormalized = newLagunaSigmoidTopKRouter(
+		"LagunaSigmoidTopK8ScaledNormalized", true, true)
+)
+
+func lagunaWeightedSum(expert, scores, scale *mlx.Array) *mlx.Array {
+	weighted := mlx.Mul(expert, mlx.ExpandDims(scores.AsType(expert.DType()), -1))
+	weighted = mlx.Sum(weighted, 2, false)
+	return mlx.Mul(weighted, scale.AsType(weighted.DType()))
+}
+
+var (
+	lagunaMoEWeightedSumAdd = mlx.Compile(
+		"LagunaMoEWeightedSumAdd",
+		func(in ...*mlx.Array) []*mlx.Array {
+			y := lagunaWeightedSum(in[0], in[1], in[2]).AsType(in[3].DType())
+			return []*mlx.Array{mlx.Add(y, in[3])}
+		},
+	)
+	lagunaMoEWeightedSumAdd2 = mlx.Compile(
+		"LagunaMoEWeightedSumAdd2",
+		func(in ...*mlx.Array) []*mlx.Array {
+			y := lagunaWeightedSum(in[0], in[1], in[2]).AsType(in[3].DType())
+			return []*mlx.Array{mlx.Add(mlx.Add(y, in[3]), in[4])}
+		},
+	)
+)
 
 func combinedTensorGlobalScale(tensors map[string]*mlx.Array, key string) (*mlx.Array, []string) {
 	var names []string
@@ -715,26 +936,43 @@ func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, useQuanti
 		if w == nil {
 			continue
 		}
+		consumedKeys := []string{key}
 		s := tensors[key+"_scale"]
-		if s == nil {
-			s = tensors[key+".scale"]
+		if s != nil {
+			consumedKeys = append(consumedKeys, key+"_scale")
 		}
 		if s == nil {
+			s = tensors[key+".scale"]
+			if s != nil {
+				consumedKeys = append(consumedKeys, key+".scale")
+			}
+		}
+		if s == nil {
+			freeTensorKeys(tensors, consumedKeys...)
 			return &stackedExpertWeights{Weight: w}
 		}
 		qb := tensors[key+"_qbias"]
+		if qb != nil {
+			consumedKeys = append(consumedKeys, key+"_qbias")
+		}
 		if qb == nil {
 			qb = tensors[key+".bias"]
+			if qb != nil {
+				consumedKeys = append(consumedKeys, key+".bias")
+			}
 		}
-		globalScale, _ := combinedTensorGlobalScale(tensors, key)
+		globalScale, globalScaleKeys := combinedTensorGlobalScale(tensors, key)
+		consumedKeys = append(consumedKeys, globalScaleKeys...)
 		gs, b, m := model.ResolveLinearQuantParams(cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant, key, w, s)
 		if useQuantized && supportsGatherQMM(m, b) {
+			freeTensorKeys(tensors, consumedKeys...)
 			return &stackedExpertWeights{Weight: w, Scales: s, Biases: qb, GlobalScales: globalScale, Bits: b, GroupSize: gs, Mode: m}
 		}
 		deq := mlx.Dequantize(w, s, qb, gs, b, m)
 		if globalScale != nil {
 			deq = mlx.Mul(deq, globalScale)
 		}
+		freeTensorKeys(tensors, consumedKeys...)
 		return &stackedExpertWeights{Weight: deq, GlobalScales: globalScale, Bits: b, GroupSize: gs, Mode: m}
 	}
 	return nil
@@ -744,6 +982,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	prefix := resolveWeightPrefix(tensors)
 	cfg := m.Config
 	linears := model.NewLinearFactory(tensors, cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant)
+	routedScale := mlx.FromValue(cfg.MoeRoutedScalingFactor)
 
 	m.EmbedTokens = model.MakeEmbeddingLayer(tensors, prefix+"embed_tokens", cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant)
 	if m.EmbedTokens == nil {
@@ -814,7 +1053,10 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		}
 
 		if layerUsesMoE(cfg, i) {
-			moe := &SparseMoE{Gate: linears.Make(layerPrefix + ".mlp.gate")}
+			moe := &SparseMoE{
+				Gate:        linears.Make(layerPrefix + ".mlp.gate"),
+				RoutedScale: routedScale,
+			}
 			if moe.Gate == nil {
 				return fmt.Errorf("layer %d: missing moe gate", i)
 			}
@@ -849,13 +1091,8 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 				return fmt.Errorf("layer %d: missing moe expert weights", i)
 			}
 			sw := &SwitchMLP{}
-			if gateW.Scales != nil && upW.Scales != nil && downW.Scales != nil {
-				sw.UseQuantized = true
-				sw.DownWeightQ, sw.DownScales, sw.DownBiases = downW.Weight, downW.Scales, downW.Biases
-				sw.DownGlobalScale = downW.GlobalScales
-				sw.DownBits, sw.DownGroupSize, sw.DownMode = downW.Bits, downW.GroupSize, downW.Mode
+			if gateW.Scales != nil && upW.Scales != nil {
 				if canFuseQuantizedGateUp(gateW, upW) {
-					sw.UseFusedGateUp = true
 					sw.GateUpWeightQ = fuseExpertStacks(gateW.Weight, upW.Weight, 1)
 					sw.GateUpScales = fuseExpertStacks(gateW.Scales, upW.Scales, 1)
 					sw.GateUpBiases = fuseExpertStacks(gateW.Biases, upW.Biases, 1)
@@ -869,27 +1106,55 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 					sw.UpBits, sw.UpGroupSize, sw.UpMode = upW.Bits, upW.GroupSize, upW.Mode
 				}
 			} else {
-				sw.GateWeight = transposeExpertWeightForGatherMM(gateW.Weight)
-				sw.UpWeight = transposeExpertWeightForGatherMM(upW.Weight)
-				sw.DownWeight = transposeExpertWeightForGatherMM(downW.Weight)
-				sw.GateUpWeight = fuseExpertStacks(sw.GateWeight, sw.UpWeight, 2)
-				sw.UseFusedGateUp = sw.GateUpWeight != nil
+				sw.GateUpWeightsSourceLayout = denseExpertWeightsSupportSourceLayout(gateW, upW)
+				if sw.GateUpWeightsSourceLayout {
+					sw.GateWeight = denseExpertWeight(gateW)
+					sw.UpWeight = denseExpertWeight(upW)
+					// Avoid pre-fusing source-layout BF16 gate/up weights: the
+					// full-size concatenate can time out during model load.
+				} else {
+					sw.GateWeight = denseExpertWeightForGatherMM(gateW)
+					sw.UpWeight = denseExpertWeightForGatherMM(upW)
+					sw.GateUpWeight = fuseExpertStacks(sw.GateWeight, sw.UpWeight, 2)
+				}
+			}
+			if downW.Scales != nil {
+				sw.DownWeightQ, sw.DownScales, sw.DownBiases = downW.Weight, downW.Scales, downW.Biases
+				sw.DownGlobalScale = downW.GlobalScales
+				sw.DownBits, sw.DownGroupSize, sw.DownMode = downW.Bits, downW.GroupSize, downW.Mode
+			} else {
+				sw.DownWeightSourceLayout = denseExpertWeightSupportsSourceLayout(downW)
+				if sw.DownWeightSourceLayout {
+					sw.DownWeight = denseExpertWeight(downW)
+				} else {
+					sw.DownWeight = denseExpertWeightForGatherMM(downW)
+				}
 			}
 			moe.SwitchMLP = sw
+			sharedGate := linears.Make(layerPrefix + ".mlp.shared_expert.gate_proj")
+			sharedUp := linears.Make(layerPrefix + ".mlp.shared_expert.up_proj")
 			moe.SharedExpert = &DenseMLP{
-				GateProj: linears.Make(layerPrefix + ".mlp.shared_expert.gate_proj"),
-				UpProj:   linears.Make(layerPrefix + ".mlp.shared_expert.up_proj"),
-				DownProj: linears.Make(layerPrefix + ".mlp.shared_expert.down_proj"),
+				GateProj:        sharedGate,
+				UpProj:          sharedUp,
+				DownProj:        linears.Make(layerPrefix + ".mlp.shared_expert.down_proj"),
+				GateUpProj:      fuseDenseGateUp(sharedGate, sharedUp),
+				GateUpGateScale: linearGlobalScale(sharedGate),
+				GateUpUpScale:   linearGlobalScale(sharedUp),
 			}
 			if moe.SharedExpert.GateProj == nil || moe.SharedExpert.UpProj == nil || moe.SharedExpert.DownProj == nil {
 				return fmt.Errorf("layer %d: missing shared expert weights", i)
 			}
 			layer.MLP = moe
 		} else {
+			gate := linears.Make(layerPrefix + ".mlp.gate_proj")
+			up := linears.Make(layerPrefix + ".mlp.up_proj")
 			mlp := &DenseMLP{
-				GateProj: linears.Make(layerPrefix + ".mlp.gate_proj"),
-				UpProj:   linears.Make(layerPrefix + ".mlp.up_proj"),
-				DownProj: linears.Make(layerPrefix + ".mlp.down_proj"),
+				GateProj:        gate,
+				UpProj:          up,
+				DownProj:        linears.Make(layerPrefix + ".mlp.down_proj"),
+				GateUpProj:      fuseDenseGateUp(gate, up),
+				GateUpGateScale: linearGlobalScale(gate),
+				GateUpUpScale:   linearGlobalScale(up),
 			}
 			if mlp.GateProj == nil || mlp.UpProj == nil || mlp.DownProj == nil {
 				return fmt.Errorf("layer %d: missing dense mlp projections", i)
@@ -941,7 +1206,21 @@ func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positio
 }
 
 func (m *DenseMLP) Forward(x *mlx.Array, _ *Config) *mlx.Array {
+	if m.GateUpProj != nil {
+		gateUp := m.GateUpProj.Forward(x)
+		gate, up := splitLastDim(gateUp, int32(gateUp.Dim(len(gateUp.Dims())-1))/2)
+		gate = applyDenseGlobalScale(gate, m.GateUpGateScale)
+		up = applyDenseGlobalScale(up, m.GateUpUpScale)
+		return m.DownProj.Forward(mlx.SwiGLU(gate, up))
+	}
 	return m.DownProj.Forward(mlx.SwiGLU(m.GateProj.Forward(x), m.UpProj.Forward(x)))
+}
+
+func weightForGatherMM(w *mlx.Array, sourceLayout bool) *mlx.Array {
+	if sourceLayout {
+		return transposeExpertWeightViewForGatherMM(w)
+	}
+	return w
 }
 
 func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.Array {
@@ -964,44 +1243,41 @@ func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.
 		idxFlat = mlx.Reshape(mlx.Take(idxAll, order, 0), n, 1)
 	}
 
-	var gate, up, hidden, down *mlx.Array
-	if s.UseQuantized {
-		if s.UseFusedGateUp {
-			gateUp := mlx.GatherQMM(xFlat, s.GateUpWeightQ, s.GateUpScales, s.GateUpBiases, nil, idxFlat, true, s.GateUpGroupSize, s.GateUpBits, s.GateUpMode, doSort)
-			guDims := gateUp.Dims()
-			mid := int32(guDims[len(guDims)-1] / 2)
-			gate = mlx.SliceStartStop(gateUp, []int32{0, 0, 0, 0}, []int32{int32(guDims[0]), int32(guDims[1]), int32(guDims[2]), mid})
-			up = mlx.SliceStartStop(gateUp, []int32{0, 0, 0, mid}, []int32{int32(guDims[0]), int32(guDims[1]), int32(guDims[2]), int32(guDims[len(guDims)-1])})
-			hidden = mlx.SwiGLU(gate, up)
+	var gate, up, hidden *mlx.Array
+	switch {
+	case s.GateUpWeightQ != nil:
+		gateUp := mlx.GatherQMM(xFlat, s.GateUpWeightQ, s.GateUpScales, s.GateUpBiases, nil, idxFlat, true, s.GateUpGroupSize, s.GateUpBits, s.GateUpMode, doSort)
+		guDims := gateUp.Dims()
+		mid := int32(guDims[len(guDims)-1] / 2)
+		gate = mlx.SliceStartStop(gateUp, []int32{0, 0, 0, 0}, []int32{int32(guDims[0]), int32(guDims[1]), int32(guDims[2]), mid})
+		up = mlx.SliceStartStop(gateUp, []int32{0, 0, 0, mid}, []int32{int32(guDims[0]), int32(guDims[1]), int32(guDims[2]), int32(guDims[len(guDims)-1])})
+		hidden = mlx.SwiGLU(gate, up)
+	case s.GateWeightQ != nil && s.UpWeightQ != nil:
+		gate = mlx.GatherQMM(xFlat, s.GateWeightQ, s.GateScales, s.GateBiases, nil, idxFlat, true, s.GateGroupSize, s.GateBits, s.GateMode, doSort)
+		up = mlx.GatherQMM(xFlat, s.UpWeightQ, s.UpScales, s.UpBiases, nil, idxFlat, true, s.UpGroupSize, s.UpBits, s.UpMode, doSort)
+		if s.GateGlobalScale != nil {
+			hidden = lagunaSwiGLUGatheredGateScale(gate, up, s.GateGlobalScale, idxFlat)[0]
 		} else {
-			gate = mlx.GatherQMM(xFlat, s.GateWeightQ, s.GateScales, s.GateBiases, nil, idxFlat, true, s.GateGroupSize, s.GateBits, s.GateMode, doSort)
-			if s.GateGlobalScale != nil {
-				gate = mlx.Mul(gate, mlx.Take(s.GateGlobalScale, idxFlat, 0))
-			}
-			up = mlx.GatherQMM(xFlat, s.UpWeightQ, s.UpScales, s.UpBiases, nil, idxFlat, true, s.UpGroupSize, s.UpBits, s.UpMode, doSort)
-			if s.UpGlobalScale != nil {
-				up = mlx.Mul(up, mlx.Take(s.UpGlobalScale, idxFlat, 0))
-			}
 			hidden = mlx.SwiGLU(gate, up)
 		}
+	case s.GateUpWeight != nil:
+		gateUp := mlx.GatherMM(xFlat, s.GateUpWeight, nil, idxFlat, doSort)
+		guDims := gateUp.Dims()
+		mid := int32(guDims[len(guDims)-1] / 2)
+		gate = mlx.SliceStartStop(gateUp, []int32{0, 0, 0, 0}, []int32{int32(guDims[0]), int32(guDims[1]), int32(guDims[2]), mid})
+		up = mlx.SliceStartStop(gateUp, []int32{0, 0, 0, mid}, []int32{int32(guDims[0]), int32(guDims[1]), int32(guDims[2]), int32(guDims[len(guDims)-1])})
+		hidden = mlx.SwiGLU(gate, up)
+	default:
+		gate = mlx.GatherMM(xFlat, weightForGatherMM(s.GateWeight, s.GateUpWeightsSourceLayout), nil, idxFlat, doSort)
+		up = mlx.GatherMM(xFlat, weightForGatherMM(s.UpWeight, s.GateUpWeightsSourceLayout), nil, idxFlat, doSort)
+		hidden = mlx.SwiGLU(gate, up)
+	}
+
+	var down *mlx.Array
+	if s.DownWeightQ != nil {
 		down = mlx.GatherQMM(hidden, s.DownWeightQ, s.DownScales, s.DownBiases, nil, idxFlat, true, s.DownGroupSize, s.DownBits, s.DownMode, doSort)
-		if s.DownGlobalScale != nil {
-			down = mlx.Mul(down, mlx.Take(s.DownGlobalScale, idxFlat, 0))
-		}
 	} else {
-		if s.UseFusedGateUp && s.GateUpWeight != nil {
-			gateUp := mlx.GatherMM(xFlat, s.GateUpWeight, nil, idxFlat, doSort)
-			guDims := gateUp.Dims()
-			mid := int32(guDims[len(guDims)-1] / 2)
-			gate = mlx.SliceStartStop(gateUp, []int32{0, 0, 0, 0}, []int32{int32(guDims[0]), int32(guDims[1]), int32(guDims[2]), mid})
-			up = mlx.SliceStartStop(gateUp, []int32{0, 0, 0, mid}, []int32{int32(guDims[0]), int32(guDims[1]), int32(guDims[2]), int32(guDims[len(guDims)-1])})
-			hidden = mlx.SwiGLU(gate, up)
-		} else {
-			gate = mlx.GatherMM(xFlat, s.GateWeight, nil, idxFlat, doSort)
-			up = mlx.GatherMM(xFlat, s.UpWeight, nil, idxFlat, doSort)
-			hidden = mlx.SwiGLU(gate, up)
-		}
-		down = mlx.GatherMM(hidden, s.DownWeight, nil, idxFlat, doSort)
+		down = mlx.GatherMM(hidden, weightForGatherMM(s.DownWeight, s.DownWeightSourceLayout), nil, idxFlat, doSort)
 	}
 	if doSort {
 		down = mlx.Reshape(mlx.Take(mlx.Squeeze(mlx.Squeeze(down, 2), 1), invOrder, 0), B*L, topK, cfg.HiddenSize)
@@ -1011,12 +1287,45 @@ func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.
 	return mlx.Reshape(down, B, L, topK, cfg.HiddenSize)
 }
 
-func (m *SparseMoE) route(xFlat *mlx.Array, cfg *Config) (scores, inds *mlx.Array) {
-	gates := m.Gate.Forward(xFlat).AsType(mlx.DTypeFloat32)
+func scaleScoresByExpert(scores, inds, globalScale *mlx.Array) *mlx.Array {
+	if globalScale == nil {
+		return scores
+	}
+	scale := globalScale
+	if scale.DType() != scores.DType() {
+		scale = scale.AsType(scores.DType())
+	}
+	if scale.NumDims() == 0 || (scale.NumDims() == 1 && scale.Dim(0) == 1) {
+		return mlx.Mul(scores, scale)
+	}
+	return mlx.Mul(scores, mlx.Take(scale, inds, 0))
+}
+
+func (m *SparseMoE) route(xFlat *mlx.Array, cfg *Config) (scores, inds *mlx.Array, scalesFolded bool) {
+	gates := m.Gate.Forward(xFlat)
 	var probs, neg *mlx.Array
+	if m.EScoreCorrectionBias != nil && cfg.NumExpertsPerTok == 8 {
+		normalize := cfg.NormTopKProb
+		if m.SwitchMLP != nil && m.SwitchMLP.UpGlobalScale != nil && m.SwitchMLP.DownGlobalScale != nil {
+			fn := lagunaSigmoidTopK8Scaled
+			if normalize {
+				fn = lagunaSigmoidTopK8ScaledNormalized
+			}
+			out := fn(gates, m.EScoreCorrectionBias, m.SwitchMLP.UpGlobalScale, m.SwitchMLP.DownGlobalScale)
+			return out[0], out[1], true
+		}
+		fn := lagunaSigmoidTopK8
+		if normalize {
+			fn = lagunaSigmoidTopK8Normalized
+		}
+		out := fn(gates, m.EScoreCorrectionBias)
+		return out[0], out[1], false
+	}
 	if m.EScoreCorrectionBias != nil {
+		gates = gates.AsType(mlx.DTypeFloat32)
 		probs, neg = mlx.SigmoidRouter(gates, m.EScoreCorrectionBias)
 	} else {
+		gates = gates.AsType(mlx.DTypeFloat32)
 		probs = mlx.Sigmoid(gates)
 		neg = mlx.Neg(probs)
 	}
@@ -1026,37 +1335,108 @@ func (m *SparseMoE) route(xFlat *mlx.Array, cfg *Config) (scores, inds *mlx.Arra
 	if cfg.NormTopKProb && cfg.NumExpertsPerTok > 1 {
 		scores = mlx.Div(scores, mlx.Sum(scores, -1, true))
 	}
-	return scores, inds
+	return scores, inds, false
 }
 
 func (m *SparseMoE) Forward(x *mlx.Array, cfg *Config) *mlx.Array {
+	return m.forward(x, nil, cfg)
+}
+
+func (m *SparseMoE) ForwardAdd(x, residual *mlx.Array, cfg *Config) *mlx.Array {
+	return m.forward(x, residual, cfg)
+}
+
+func (m *SparseMoE) forward(x, residual *mlx.Array, cfg *Config) *mlx.Array {
 	dims := x.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	BL := B * L
 
 	shared := m.SharedExpert.Forward(x, cfg)
 	xFlat := mlx.Reshape(x, BL, cfg.HiddenSize)
-	scores, inds := m.route(xFlat, cfg)
-	scores = scores.AsType(x.DType())
+	scores, inds, scalesFolded := m.route(xFlat, cfg)
+	if !scalesFolded {
+		scores = scaleScoresByExpert(scores, inds, m.SwitchMLP.UpGlobalScale)
+		scores = scaleScoresByExpert(scores, inds, m.SwitchMLP.DownGlobalScale)
+	}
 
 	expertOut := m.SwitchMLP.Forward(x, inds, cfg)
-	routed := mlx.Sum(mlx.Mul(expertOut, mlx.ExpandDims(mlx.Reshape(scores, B, L, cfg.NumExpertsPerTok), -1)), 2, false)
-	if cfg.MoeRoutedScalingFactor != 1 {
-		routed = mlx.MulScalar(routed, cfg.MoeRoutedScalingFactor)
+	scoreDims := mlx.Reshape(scores, B, L, cfg.NumExpertsPerTok)
+	if residual != nil {
+		return moeWeightedSumAdd2(expertOut, scoreDims, m.RoutedScale, shared, residual)
 	}
-	return mlx.Add(routed, shared)
+	return moeWeightedSumAdd(expertOut, scoreDims, m.RoutedScale, shared)
+}
+
+func moeWeightedSumAdd(expertOut, scores, scale, shared *mlx.Array) *mlx.Array {
+	return lagunaMoEWeightedSumAdd(expertOut, scores, scale, shared)[0]
+}
+
+func moeWeightedSumAdd2(expertOut, scores, scale, addA, addB *mlx.Array) *mlx.Array {
+	return lagunaMoEWeightedSumAdd2(expertOut, scores, scale, addA, addB)[0]
 }
 
 func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
-	r := l.Attention.Forward(l.InputNorm.Forward(x, cfg.RMSNormEps), b, c, positions, B, L, l, cfg)
+	xn := l.InputNorm.Forward(x, cfg.RMSNormEps)
+	r := l.Attention.Forward(xn, b, c, positions, B, L, l, cfg)
 	h := mlx.Add(x, r)
-	r = l.MLP.Forward(l.PostAttentionNorm.Forward(h, cfg.RMSNormEps), cfg)
+	mn := l.PostAttentionNorm.Forward(h, cfg.RMSNormEps)
+	if mlp, ok := l.MLP.(MLPBlockAdder); ok {
+		return mlp.ForwardAdd(mn, h, cfg)
+	}
+	r = l.MLP.Forward(mn, cfg)
 	return mlx.Add(h, r)
 }
+
+// Laguna prefill is faster in cache-backed 512-token slices than in the
+// runner's larger default chunk because attention work grows with query span.
+const lagunaPrefillChunkSize = 512
 
 func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
+	// Keep Laguna's long prefill on the smaller attention shape that benchmarks
+	// well on Metal without changing the runner's global chunking contract.
+	if m.shouldChunkPrefill(b, caches, B, L) {
+		return m.forwardChunked(b, caches, int(L))
+	}
+
+	return m.forward(b, caches, B, L)
+}
+
+func (m *Model) shouldChunkPrefill(b *batch.Batch, caches []cache.Cache, B, L int32) bool {
+	if B != 1 || L <= lagunaPrefillChunkSize {
+		return false
+	}
+	if len(b.SeqOffsets) != 1 || len(b.SeqQueryLens) != 1 || b.SeqQueryLens[0] != L {
+		return false
+	}
+	if len(caches) < len(m.Layers) {
+		return false
+	}
+	for i := range m.Layers {
+		if caches[i] == nil {
+			return false
+		}
+	}
+	return true
+}
+
+func (m *Model) forwardChunked(b *batch.Batch, caches []cache.Cache, total int) *mlx.Array {
+	hidden := make([]*mlx.Array, 0, (total+lagunaPrefillChunkSize-1)/lagunaPrefillChunkSize)
+	for start := 0; start < total; start += lagunaPrefillChunkSize {
+		stop := min(start+lagunaPrefillChunkSize, total)
+		chunkIDs := mlx.SliceStartStop(b.InputIDs, []int32{0, int32(start)}, []int32{1, int32(stop)})
+		chunk := &batch.Batch{
+			InputIDs:     chunkIDs,
+			SeqOffsets:   []int32{b.SeqOffsets[0] + int32(start)},
+			SeqQueryLens: []int32{int32(stop - start)},
+		}
+		hidden = append(hidden, m.forward(chunk, caches, 1, int32(stop-start)))
+	}
+	return mlx.Concatenate(hidden, 1)
+}
+
+func (m *Model) forward(b *batch.Batch, caches []cache.Cache, B, L int32) *mlx.Array {
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
 	h := m.EmbedTokens.Forward(b.InputIDs)
 	for i, layer := range m.Layers {

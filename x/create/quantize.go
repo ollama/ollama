@@ -55,30 +55,7 @@ func quantizeBlobLocked(items []quantizeItem) ([]byte, error) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Blob metadata: a single quant_type/group_size when every quantized
-	// tensor matches, otherwise per-tensor entries.
-	uniform, mixed, hasQuant := "", false, false
-	for _, it := range items {
-		if it.quantize == "" {
-			if hasQuant {
-				mixed = true
-			}
-			continue
-		}
-		if !hasQuant {
-			hasQuant, uniform = true, it.quantize
-			continue
-		}
-		if it.quantize != uniform {
-			mixed = true
-		}
-	}
-	var metadata map[string]string
-	if hasQuant && !mixed {
-		if gs, _, _ := quant.Params(uniform); gs > 0 {
-			metadata = map[string]string{"quant_type": uniform, "group_size": strconv.Itoa(gs)}
-		}
-	}
+	metadata, mixed := quantizeBlobMetadata(items)
 
 	for _, it := range items {
 		if err := func() error {
@@ -118,6 +95,41 @@ func quantizeBlobLocked(items []quantizeItem) ([]byte, error) {
 		return nil, fmt.Errorf("failed to save blob: %w", err)
 	}
 	return os.ReadFile(outPath)
+}
+
+// quantizeBlobMetadata returns blob-level quantization metadata. A uniform
+// quant_type is valid only when every tensor in the blob is quantized the same
+// way; mixed blobs, including blobs with unquantized tensors, use per-tensor
+// metadata for the quantized tensors instead.
+func quantizeBlobMetadata(items []quantizeItem) (map[string]string, bool) {
+	var uniform string
+	var hasQuant, hasPlain, mixed bool
+	for _, it := range items {
+		if it.quantize == "" {
+			hasPlain = true
+			continue
+		}
+		if !hasQuant {
+			hasQuant, uniform = true, it.quantize
+			continue
+		}
+		if it.quantize != uniform {
+			mixed = true
+		}
+	}
+	if !hasQuant {
+		return nil, false
+	}
+	if hasPlain {
+		mixed = true
+	}
+	if mixed {
+		return nil, true
+	}
+	if gs, _, _ := quant.Params(uniform); gs > 0 {
+		return map[string]string{"quant_type": uniform, "group_size": strconv.Itoa(gs)}, false
+	}
+	return nil, false
 }
 
 func arraysForItem(all map[string]*mlx.Array, it quantizeItem) []*mlx.Array {
