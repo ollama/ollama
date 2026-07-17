@@ -65,7 +65,7 @@ func TestAgentSystemPromptIncludesSkillCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := agentSystemPromptAt(time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC), "model", "", catalog.SystemContext())
+	got := agentSystemPromptAtWithWorkingDir(time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC), "model", "", catalog.SystemContext(), "")
 	if !strings.Contains(got, "release-notes: Draft releases.") || !strings.Contains(got, "normal approval rules") {
 		t.Fatalf("system prompt missing skill context: %q", got)
 	}
