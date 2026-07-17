@@ -620,7 +620,23 @@ func cloneMessages(in []api.Message) []api.Message {
 				out[i].Images[j] = slices.Clone(image)
 			}
 		}
-		out[i].ToolCalls = slices.Clone(msg.ToolCalls)
+		out[i].ToolCalls = cloneToolCalls(msg.ToolCalls)
+	}
+	return out
+}
+
+func cloneToolCalls(in []api.ToolCall) []api.ToolCall {
+	if in == nil {
+		return nil
+	}
+	out := make([]api.ToolCall, len(in))
+	for i, call := range in {
+		out[i] = call
+		var args api.ToolCallFunctionArguments
+		for key, value := range call.Function.Arguments.All() {
+			args.Set(key, cloneAny(value))
+		}
+		out[i].Function.Arguments = args
 	}
 	return out
 }
