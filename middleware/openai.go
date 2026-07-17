@@ -493,8 +493,10 @@ func (w *ResponsesWriter) writeResponse(data []byte) (int, error) {
 	// Non-streaming response
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
 	response := openai.ToResponse(w.model, w.responseID, w.itemID, chatResponse, w.request)
-	completedAt := time.Now().Unix()
-	response.CompletedAt = &completedAt
+	if response.Status == "completed" {
+		completedAt := time.Now().Unix()
+		response.CompletedAt = &completedAt
+	}
 	return len(data), json.NewEncoder(w.ResponseWriter).Encode(response)
 }
 
