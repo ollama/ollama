@@ -302,14 +302,26 @@ endif()
 # Manually install CUDA runtime libraries that MLX loads via dlopen
 # (not detected by RUNTIME_DEPENDENCIES since they aren't link-time deps).
 if(CUDAToolkit_FOUND)
-    file(GLOB MLX_CUDA_LIBS
-        "${CUDAToolkit_LIBRARY_DIR}/libcudart.so*"
-        "${CUDAToolkit_LIBRARY_DIR}/libcublas.so*"
-        "${CUDAToolkit_LIBRARY_DIR}/libcublasLt.so*"
-        "${CUDAToolkit_LIBRARY_DIR}/libnvrtc.so*"
-        "${CUDAToolkit_LIBRARY_DIR}/libnvrtc-builtins.so*"
-        "${CUDAToolkit_LIBRARY_DIR}/libcufft.so*"
-        "${CUDAToolkit_LIBRARY_DIR}/libcudnn.so*")
+    set(_dlopen_libs
+        cudart
+        cublas
+        cublasLt
+        nvrtc
+        nvrtc-builtins
+        cufft
+        cudnn
+        cudnn_engines_tensor_ir
+    )
+    foreach(lib_name IN LISTS _dlopen_libs)
+        find_library(_CUDA_LIBRARY NAMES ${lib_name} HINTS ${CUDAToolkit_LIBRARY_DIR})
+        if(_CUDA_LIBRARY)
+            get_filename_component(_CUDA_LIBRARY_DIR "${_CUDA_LIBRARY}" DIRECTORY)
+            file(GLOB _CUDA_LIBRARY_DIR_LIBS "${_CUDA_LIBRARY_DIR}/lib${lib_name}.so*")
+            list(APPEND MLX_CUDA_LIBS ${_CUDA_LIBRARY_DIR_LIBS})
+        endif()
+        unset(_CUDA_LIBRARY CACHE)
+    endforeach()
+
     if(MLX_CUDA_LIBS)
         install(FILES ${MLX_CUDA_LIBS}
             DESTINATION ${OLLAMA_INSTALL_DIR}
