@@ -844,7 +844,7 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse,
 		ID:                 responseID,
 		Object:             "response",
 		CreatedAt:          chatResponse.CreatedAt.Unix(),
-		CompletedAt:        nil, // Set by middleware when writing final response
+		CompletedAt:        nil, // Set by middleware when writing completed responses; stays null for incomplete ones
 		Status:             status,
 		IncompleteDetails:  incompleteDetails,
 		Model:              model,
@@ -1379,7 +1379,7 @@ func (c *ResponsesStreamConverter) processCompletion(r api.ChatResponse) []Respo
 		}))
 	}
 
-	// response.completed
+	// terminal event: response.completed, or response.incomplete when truncated
 	usage := map[string]any{
 		"input_tokens":  r.PromptEvalCount,
 		"output_tokens": r.EvalCount,
