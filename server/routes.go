@@ -1573,11 +1573,13 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	delete(kvData, "tokenizer.chat_template")
 	resp.ModelInfo = kvData
 
-	tensorData := make([]api.Tensor, len(tensors.Items()))
-	for cnt, t := range tensors.Items() {
-		tensorData[cnt] = api.Tensor{Name: t.Name, Type: t.Type(), Shape: t.Shape}
+	if req.Verbose {
+		tensorData := make([]api.Tensor, len(tensors.Items()))
+		for cnt, t := range tensors.Items() {
+			tensorData[cnt] = api.Tensor{Name: t.Name, Type: t.Type(), Shape: t.Shape}
+		}
+		resp.Tensors = tensorData
 	}
-	resp.Tensors = tensorData
 
 	if len(m.ProjectorPaths) > 0 {
 		projectorData, _, err := getModelData(m.ProjectorPaths[0], req.Verbose)
