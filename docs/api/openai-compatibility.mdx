@@ -216,6 +216,12 @@ curl -X POST http://localhost:11434/v1/chat/completions \
 - [ ] `user`
 - [ ] `n`
 
+<Note>
+  OpenAI's `"minimal"` and `"xhigh"` reasoning effort values are not supported
+  and are rejected with an `invalid reasoning value` error. Use `"low"` or
+  `"max"` instead.
+</Note>
+
 ### `/v1/completions`
 
 #### Supported features
@@ -369,6 +375,8 @@ Ollama supports the [OpenAI Responses API](https://platform.openai.com/docs/api-
 - [x] `temperature`
 - [x] `top_p`
 - [x] `max_output_tokens`
+- [x] `reasoning`
+  - [x] `effort` (`"high"`, `"medium"`, `"low"`, `"max"`, `"none"`)
 - [ ] `previous_response_id` (stateful v1/responses not supported)
 - [ ] `conversation` (stateful v1/responses not supported)
 - [ ] `truncation`
