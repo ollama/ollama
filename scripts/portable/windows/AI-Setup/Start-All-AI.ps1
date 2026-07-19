@@ -44,6 +44,7 @@ if (-not (Test-OllamaReady)) {
 }
 
 Write-Host 'Ollama 服務已就緒。'
+Write-Host '提示：本腳本不會關閉 Ollama 服務，讓後續模型請求可直接使用。'
 
 $pythonExe = Join-Path $usbRoot 'python_embed\python.exe'
 $coreScript = Join-Path $usbRoot 'ai_core.py'

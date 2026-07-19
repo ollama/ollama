@@ -4,6 +4,11 @@ $ErrorActionPreference = 'Stop'
 $usbRoot = $PSScriptRoot
 Set-Location $usbRoot
 
+# Security requirements:
+# 1) Set PYTHON_EMBED_SHA256 to the official SHA256 of python-3.10.11-embed-amd64.zip
+# 2) Set GET_PIP_SHA256 to the official SHA256 of get-pip.py
+# Example (PowerShell): $env:PYTHON_EMBED_SHA256='...'; $env:GET_PIP_SHA256='...'
+
 Write-Host '[1/4] 檢查資料夾...'
 $dirs = @('input_media', 'output_result', 'python_embed', 'models', 'whisper_models', 'ollama')
 foreach ($dir in $dirs) {
@@ -22,7 +27,12 @@ function Invoke-DownloadFile {
     [string]$ExpectedSha256 = ''
   )
 
-  Invoke-WebRequest -Uri $Url -OutFile $OutFile
+  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+  try {
+    Invoke-WebRequest -Uri $Url -OutFile $OutFile
+  } catch {
+    throw "下載失敗: $Url，錯誤: $($_.Exception.Message)"
+  }
   if ($ExpectedSha256) {
     $actual = (Get-FileHash -Path $OutFile -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actual -ne $ExpectedSha256.ToLowerInvariant()) {
@@ -40,6 +50,9 @@ function Ensure-EmbeddedPython {
 
   Write-Host '[2/4] 下載可攜式 Python 3.10...'
   $zipFile = Join-Path $usbRoot 'python_embed.zip'
+  if (-not $env:PYTHON_EMBED_SHA256) {
+    throw "未提供 PYTHON_EMBED_SHA256。請先執行：`$env:PYTHON_EMBED_SHA256='官方 SHA256 值'"
+  }
   Invoke-DownloadFile `
     -Url 'https://www.python.org/ftp/python/3.10.11/python-3.10.11-embed-amd64.zip' `
     -OutFile $zipFile `
@@ -60,6 +73,9 @@ function Ensure-PipAndPythonDeps {
   if (-not (Test-Path $pipExe)) {
     $getPip = Join-Path $usbRoot 'python_embed\get-pip.py'
     Write-Host '[3/4] 安裝 pip...'
+    if (-not $env:GET_PIP_SHA256) {
+      throw "未提供 GET_PIP_SHA256。請先執行：`$env:GET_PIP_SHA256='官方 SHA256 值'"
+    }
     Invoke-DownloadFile -Url 'https://bootstrap.pypa.io/get-pip.py' -OutFile $getPip -ExpectedSha256 $env:GET_PIP_SHA256
     & $pythonExe $getPip --no-warn-script-location
     Remove-Item $getPip -Force
@@ -110,7 +126,11 @@ function Ensure-Ollama {
   }
 
   Write-Host '安裝 Ollama...'
-  Start-Process -FilePath $setup -ArgumentList '/VERYSILENT /NORESTART /SUPPRESSMSGBOXES' -Wait
+  $installLog = Join-Path $usbRoot 'ollama\install.log'
+  $proc = Start-Process -FilePath $setup -ArgumentList "/VERYSILENT /NORESTART /SUPPRESSMSGBOXES /LOG=`"$installLog`"" -Wait -PassThru
+  if ($proc.ExitCode -ne 0) {
+    throw "Ollama 安裝失敗，exit code: $($proc.ExitCode)"
+  }
 }
 
 function Write-AICoreScript {
@@ -126,12 +146,20 @@ INPUT_DIR = os.path.join(USB_ROOT, "input_media")
 OUTPUT_DIR = os.path.join(USB_ROOT, "output_result")
 OLLAMA_API_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "llama3"
+# 可透過環境變數覆寫：
+#   WHISPER_MODEL: 例如 base/small/medium/large-v3
+#   OLLAMA_TIMEOUT_SECONDS: Ollama API timeout 秒數
+WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "base")
+OLLAMA_TIMEOUT = int(os.environ.get("OLLAMA_TIMEOUT_SECONDS", "180"))
+MAX_PROMPT_LENGTH = 20000  # 超過會被截斷，避免單次請求過長導致本地 API 超時或記憶體壓力
 
 os.environ["HF_HOME"] = os.path.join(USB_ROOT, "whisper_models")
 os.environ["XDG_CACHE_HOME"] = os.path.join(USB_ROOT, "whisper_models")
 
 os.makedirs(INPUT_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+PROCESSED_DIR = os.path.join(INPUT_DIR, "processed")
+os.makedirs(PROCESSED_DIR, exist_ok=True)
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"🎬 啟動本地 Whisper... 硬體加速偵測: {device.upper()}")
@@ -139,9 +167,9 @@ if device == "cpu":
     print("⚠️ 警告：這台電腦未偵測到 NVIDIA 顯卡加速，將使用 CPU 慢速運算。")
 
 try:
-    model = whisper.load_model("large-v3", device=device)
+    model = whisper.load_model(WHISPER_MODEL, device=device)
 except Exception as e:
-    print(f"模型載入失敗，正在改用 base。錯誤: {e}")
+    print(f"模型 {WHISPER_MODEL} 載入失敗，正在改用 base。錯誤: {e}")
     model = whisper.load_model("base", device=device)
 
 files = [f for f in os.listdir(INPUT_DIR) if f.lower().endswith((".mp4", ".mp3", ".m4a", ".wav", ".mkv"))]
@@ -155,21 +183,28 @@ else:
         try:
             result = model.transcribe(file_path)
             raw_text = result["text"]
+            safe_text = raw_text.replace("\x00", "")[:MAX_PROMPT_LENGTH]
             with open(os.path.join(OUTPUT_DIR, f"{base_name}_原始逐字稿.txt"), "w", encoding="utf-8") as f:
                 f.write(raw_text)
             payload = {
                 "model": OLLAMA_MODEL,
-                "prompt": f"請將以下文本翻譯並潤飾為流暢的繁體中文（台灣商務口吻）：\n\n{raw_text}",
+                "prompt": f"請將以下文本翻譯並潤飾為流暢的繁體中文（台灣商務口吻）：\n\n{safe_text}",
                 "stream": False,
             }
-            res = requests.post(OLLAMA_API_URL, json=payload, timeout=120)
+            res = requests.post(OLLAMA_API_URL, json=payload, timeout=OLLAMA_TIMEOUT)
             res.raise_for_status()
             trans_text = res.json().get("response", "").strip()
         except Exception as e:
-            trans_text = f"Ollama 本地端未啟動或連線失敗，僅保留逐字稿。錯誤原因: {e}"
+            err = str(e)
+            if "timed out" in err.lower():
+                trans_text = f"Ollama 請求逾時（timeout={OLLAMA_TIMEOUT}s），僅保留逐字稿。錯誤: {err}"
+            elif "connection" in err.lower() or "refused" in err.lower():
+                trans_text = f"Ollama 連線失敗，請確認 ollama serve 已啟動。錯誤: {err}"
+            else:
+                trans_text = f"Ollama API 呼叫失敗，僅保留逐字稿。錯誤: {err}"
         with open(os.path.join(OUTPUT_DIR, f"{base_name}_最終繁中翻譯.txt"), "w", encoding="utf-8") as f:
             f.write(trans_text)
-        os.rename(file_path, os.path.join(INPUT_DIR, f"processed_{file_name}"))
+        os.rename(file_path, os.path.join(PROCESSED_DIR, file_name))
     print("\n🎉 隨身碟內所有影音檔案已全自動處理完畢！")
 '@
 

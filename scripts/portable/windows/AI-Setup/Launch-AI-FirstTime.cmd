@@ -13,7 +13,7 @@ echo ============================================================
 net session >nul 2>&1
 if not "%errorlevel%"=="0" (
   echo [系統] 需要系統管理員權限，正在重新啟動...
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%ComSpec%' -ArgumentList '/c ""%~f0"" --elevated' -Verb RunAs"
+  powershell -NoProfile -Command "Start-Process -FilePath '%ComSpec%' -ArgumentList '/c ""%~f0""' -Verb RunAs"
   exit /b 0
 )
 
@@ -25,7 +25,8 @@ if exist "%FLAG_FILE%" (
 )
 
 echo [狀態] 首次初始化中...
-powershell -NoProfile -ExecutionPolicy Bypass -File "%USB_DIR%Install-AI-Tools.ps1"
+echo [安全提醒] 目前以 ExecutionPolicy RemoteSigned 執行本地腳本，請只在可信任隨身碟上使用。
+powershell -NoProfile -ExecutionPolicy RemoteSigned -File "%USB_DIR%Install-AI-Tools.ps1"
 if not "%errorlevel%"=="0" (
   echo [錯誤] 初始化失敗，請檢查訊息後重試。
   pause
