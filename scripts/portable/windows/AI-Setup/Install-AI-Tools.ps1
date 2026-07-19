@@ -15,6 +15,22 @@ $env:HF_HOME = Join-Path $usbRoot 'whisper_models'
 $env:XDG_CACHE_HOME = Join-Path $usbRoot 'whisper_models'
 [Environment]::SetEnvironmentVariable('OLLAMA_MODELS', $env:OLLAMA_MODELS, 'User')
 
+function Invoke-DownloadFile {
+  param(
+    [Parameter(Mandatory = $true)][string]$Url,
+    [Parameter(Mandatory = $true)][string]$OutFile,
+    [string]$ExpectedSha256 = ''
+  )
+
+  Invoke-WebRequest -Uri $Url -OutFile $OutFile
+  if ($ExpectedSha256) {
+    $actual = (Get-FileHash -Path $OutFile -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actual -ne $ExpectedSha256.ToLowerInvariant()) {
+      throw "檔案雜湊驗證失敗: $OutFile"
+    }
+  }
+}
+
 function Ensure-EmbeddedPython {
   $pythonExe = Join-Path $usbRoot 'python_embed\python.exe'
   if (Test-Path $pythonExe) {
@@ -24,7 +40,10 @@ function Ensure-EmbeddedPython {
 
   Write-Host '[2/4] 下載可攜式 Python 3.10...'
   $zipFile = Join-Path $usbRoot 'python_embed.zip'
-  Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.10.11/python-3.10.11-embed-amd64.zip' -OutFile $zipFile
+  Invoke-DownloadFile `
+    -Url 'https://www.python.org/ftp/python/3.10.11/python-3.10.11-embed-amd64.zip' `
+    -OutFile $zipFile `
+    -ExpectedSha256 $env:PYTHON_EMBED_SHA256
   Expand-Archive -Path $zipFile -DestinationPath (Join-Path $usbRoot 'python_embed') -Force
   Remove-Item $zipFile -Force
 
@@ -41,19 +60,35 @@ function Ensure-PipAndPythonDeps {
   if (-not (Test-Path $pipExe)) {
     $getPip = Join-Path $usbRoot 'python_embed\get-pip.py'
     Write-Host '[3/4] 安裝 pip...'
-    Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile $getPip
+    Invoke-DownloadFile -Url 'https://bootstrap.pypa.io/get-pip.py' -OutFile $getPip -ExpectedSha256 $env:GET_PIP_SHA256
     & $pythonExe $getPip --no-warn-script-location
     Remove-Item $getPip -Force
   }
 
   Write-Host '[3/4] 安裝 AI Python 依賴...'
   & $pythonExe -m pip install --no-warn-script-location requests tqdm openai-whisper
-  try {
-    & $pythonExe -m pip install --no-warn-script-location torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-  } catch {
-    Write-Host 'CUDA 版本安裝失敗，改安裝 CPU 版本 PyTorch...'
-    & $pythonExe -m pip install --no-warn-script-location torch torchvision torchaudio
+  $hasNvidia = [bool](Get-Command nvidia-smi -ErrorAction SilentlyContinue)
+  if ($hasNvidia) {
+    try {
+      & $pythonExe -m pip install --no-warn-script-location torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+      return
+    } catch {
+      Write-Host 'CUDA 版本安裝失敗，改安裝 CPU 版本 PyTorch...'
+    }
+  } else {
+    Write-Host '未偵測到 NVIDIA 環境，安裝 CPU 版本 PyTorch...'
   }
+
+  & $pythonExe -m pip install --no-warn-script-location torch torchvision torchaudio
+}
+
+function Test-OllamaSetupSignature {
+  param([Parameter(Mandatory = $true)][string]$FilePath)
+  $sig = Get-AuthenticodeSignature -FilePath $FilePath
+  if ($sig.Status -ne 'Valid') {
+    return $false
+  }
+  return $sig.SignerCertificate.Subject -match '(^|, )O=Ollama Inc\.(,|$)'
 }
 
 function Ensure-Ollama {
@@ -65,14 +100,17 @@ function Ensure-Ollama {
   }
 
   $setup = Join-Path $usbRoot 'ollama\OllamaSetup.exe'
-  if (Test-Path $setup) {
-    Write-Host '使用隨身碟中的 OllamaSetup.exe 安裝...'
-    Start-Process -FilePath $setup -ArgumentList '/VERYSILENT /NORESTART /SUPPRESSMSGBOXES' -Wait
-    return
+  if (-not (Test-Path $setup)) {
+    Write-Host '下載官方 Ollama 安裝程式...'
+    Invoke-DownloadFile -Url 'https://ollama.com/download/OllamaSetup.exe' -OutFile $setup
   }
 
-  Write-Host '下載官方 Windows 安裝腳本安裝 Ollama...'
-  Invoke-Expression (Invoke-WebRequest -UseBasicParsing 'https://ollama.com/install.ps1').Content
+  if (-not (Test-OllamaSetupSignature -FilePath $setup)) {
+    throw 'Ollama 安裝程式簽章驗證失敗。'
+  }
+
+  Write-Host '安裝 Ollama...'
+  Start-Process -FilePath $setup -ArgumentList '/VERYSILENT /NORESTART /SUPPRESSMSGBOXES' -Wait
 }
 
 function Write-AICoreScript {

@@ -7,6 +7,8 @@ Set-Location $usbRoot
 $env:OLLAMA_MODELS = Join-Path $usbRoot 'models'
 $env:HF_HOME = Join-Path $usbRoot 'whisper_models'
 $env:XDG_CACHE_HOME = Join-Path $usbRoot 'whisper_models'
+$healthCheckTimeoutSeconds = 3
+$ollamaStartupTimeoutSeconds = 30
 
 function Get-OllamaCommand {
   $cmd = Get-Command ollama -ErrorAction SilentlyContinue
@@ -20,7 +22,7 @@ function Get-OllamaCommand {
 
 function Test-OllamaReady {
   try {
-    $null = Invoke-WebRequest -Uri 'http://localhost:11434/api/tags' -UseBasicParsing -TimeoutSec 3
+    $null = Invoke-WebRequest -Uri 'http://localhost:11434/api/tags' -UseBasicParsing -TimeoutSec $healthCheckTimeoutSeconds
     return $true
   } catch {
     return $false
@@ -31,7 +33,7 @@ $ollamaExe = Get-OllamaCommand
 if (-not (Test-OllamaReady)) {
   Write-Host '啟動 Ollama 服務...'
   Start-Process -FilePath $ollamaExe -ArgumentList 'serve' -WindowStyle Hidden
-  for ($i = 0; $i -lt 30; $i++) {
+  for ($i = 0; $i -lt $ollamaStartupTimeoutSeconds; $i++) {
     Start-Sleep -Seconds 1
     if (Test-OllamaReady) { break }
   }
