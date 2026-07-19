@@ -30,7 +30,7 @@ function Test-OllamaReady {
 $ollamaExe = Get-OllamaCommand
 if (-not (Test-OllamaReady)) {
   Write-Host '啟動 Ollama 服務...'
-  Start-Process -FilePath $ollamaExe -ArgumentList 'serve' -WindowStyle Hidden | Out-Null
+  Start-Process -FilePath $ollamaExe -ArgumentList 'serve' -WindowStyle Hidden
   for ($i = 0; $i -lt 30; $i++) {
     Start-Sleep -Seconds 1
     if (Test-OllamaReady) { break }

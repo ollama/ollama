@@ -30,7 +30,7 @@ function Ensure-EmbeddedPython {
 
   $pthFile = Join-Path $usbRoot 'python_embed\python310._pth'
   if (Test-Path $pthFile) {
-    (Get-Content $pthFile) -replace '#import site', 'import site' | Set-Content -Encoding utf8 $pthFile
+    (Get-Content $pthFile) -replace '#import site', 'import site' | Set-Content -Encoding ascii $pthFile
   }
 }
 
@@ -48,7 +48,12 @@ function Ensure-PipAndPythonDeps {
 
   Write-Host '[3/4] 安裝 AI Python 依賴...'
   & $pythonExe -m pip install --no-warn-script-location requests tqdm openai-whisper
-  & $pythonExe -m pip install --no-warn-script-location torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+  try {
+    & $pythonExe -m pip install --no-warn-script-location torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+  } catch {
+    Write-Host 'CUDA 版本安裝失敗，改安裝 CPU 版本 PyTorch...'
+    & $pythonExe -m pip install --no-warn-script-location torch torchvision torchaudio
+  }
 }
 
 function Ensure-Ollama {
@@ -110,7 +115,7 @@ else:
         base_name = os.path.splitext(file_name)[0]
         print(f"\n🚀 正在處理: {file_name}")
         try:
-            result = model.transcribe(file_path, beam_size=5)
+            result = model.transcribe(file_path)
             raw_text = result["text"]
             with open(os.path.join(OUTPUT_DIR, f"{base_name}_原始逐字稿.txt"), "w", encoding="utf-8") as f:
                 f.write(raw_text)
