@@ -2637,12 +2637,16 @@ func PredictServerVRAM(modelPath string, f *ggml.GGML, numCtx int) uint64 {
 //	MTL0_Mapped model buffer size =  1918.35 MiB
 //	ROCm0 model buffer size =  1918.35 MiB
 type memoryParsingWriter struct {
-	inner   io.Writer
-	runner  *llamaServerRunner
-	buffers map[memoryBufferKey]memoryBuffer
+	inner         io.Writer
+	runner        *llamaServerRunner
+	buffers       map[memoryBufferKey]memoryBuffer
+	modelInstance int
+	kvCache       int
 }
 
 type memoryBufferKey struct {
+	model     int
+	kvCache   int
 	component string
 	backend   string
 	kind      string
@@ -2662,6 +2666,9 @@ var deviceFreeRegex = regexp.MustCompile(`using device (\S+)\s+\(.*\)\s+-\s+(\d+
 // bufferSizeRegex matches llama-server buffer size lines and captures the
 // component so repeated fit/probe values can be replaced by the final load.
 var bufferSizeRegex = regexp.MustCompile(`(?m)(?:^|\n)[^\n:]*?([A-Za-z_][A-Za-z0-9_]*):\s+(\S+)\s+(model|KV|compute|output|RS)\s+buffer size\s*=\s*([\d.]+)\s*MiB`)
+
+var draftModelLoadMarker = []byte("loading draft model")
+var kvCacheStartRegex = regexp.MustCompile(`creating\s+(?:non-SWA|SWA)\s+KV cache`)
 
 var (
 	offloadedLayersRegex      = regexp.MustCompile(`offloaded\s+(\d+)/(\d+)\s+layers to GPU`)
@@ -2724,20 +2731,27 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 					w.runner.gpuLayerOverflow += int(overflowing)
 				}
 			}
-			for _, match := range bufferSizeRegex.FindAllSubmatch(b, -1) {
-				backendName := string(match[2])
-				if mib, err := strconv.ParseFloat(string(match[4]), 64); err == nil {
+			for _, match := range bufferSizeRegex.FindAllSubmatchIndex(b, -1) {
+				backendName := string(b[match[4]:match[5]])
+				if mib, err := strconv.ParseFloat(string(b[match[8]:match[9]]), 64); err == nil {
 					if w.buffers == nil {
 						w.buffers = make(map[memoryBufferKey]memoryBuffer)
 					}
-					w.buffers[memoryBufferKey{
-						component: string(match[1]),
+					key := memoryBufferKey{
+						model:     w.modelInstance + bytes.Count(b[:match[0]], draftModelLoadMarker),
+						component: string(b[match[2]:match[3]]),
 						backend:   backendName,
-						kind:      string(match[3]),
-					}] = memoryBuffer{bytes: uint64(mib * 1024 * 1024)}
+						kind:      string(b[match[6]:match[7]]),
+					}
+					if key.kind == "KV" {
+						key.kvCache = w.kvCache + len(kvCacheStartRegex.FindAllIndex(b[:match[0]], -1))
+					}
+					w.buffers[key] = memoryBuffer{bytes: uint64(mib * 1024 * 1024)}
 					w.updateRunnerMemoryLocked()
 				}
 			}
+			w.modelInstance += bytes.Count(b, draftModelLoadMarker)
+			w.kvCache += len(kvCacheStartRegex.FindAllIndex(b, -1))
 		}()
 	}
 	return w.inner.Write(b)
