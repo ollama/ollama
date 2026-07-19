@@ -437,6 +437,24 @@ type ToolProperty struct {
 	Enum        []any              `json:"enum,omitempty"`
 	Properties  *ToolPropertiesMap `json:"properties,omitempty"`
 	Required    []string           `json:"required,omitempty"`
+
+	// JSON-Schema validation keywords. Without these fields json.Unmarshal
+	// silently drops the constraints, so they never reach the model. Numeric
+	// bounds are pointers so a valid zero (e.g. "minimum":0) survives re-marshal
+	// instead of being erased by omitempty.
+	Default          any      `json:"default,omitempty"`
+	Const            any      `json:"const,omitempty"`
+	Format           string   `json:"format,omitempty"`
+	Pattern          string   `json:"pattern,omitempty"`
+	Minimum          *float64 `json:"minimum,omitempty"`
+	Maximum          *float64 `json:"maximum,omitempty"`
+	ExclusiveMinimum *float64 `json:"exclusiveMinimum,omitempty"`
+	ExclusiveMaximum *float64 `json:"exclusiveMaximum,omitempty"`
+	MultipleOf       *float64 `json:"multipleOf,omitempty"`
+	MinLength        *int     `json:"minLength,omitempty"`
+	MaxLength        *int     `json:"maxLength,omitempty"`
+	MinItems         *int     `json:"minItems,omitempty"`
+	MaxItems         *int     `json:"maxItems,omitempty"`
 }
 
 // ToTypeScriptType converts a ToolProperty to a TypeScript type string

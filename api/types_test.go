@@ -405,6 +405,54 @@ func TestToolFunctionParameters_MarshalJSON(t *testing.T) {
 	}
 }
 
+func TestToolProperty_ConstraintsSurviveRoundTrip(t *testing.T) {
+	// Regression for #17142: JSON-Schema validation keywords were silently
+	// dropped at unmarshal because ToolProperty had no fields for them, so they
+	// never reached the model. They must survive an unmarshal -> marshal round
+	// trip, including zero-valued bounds and a falsy default.
+	input := `{
+		"type":"integer",
+		"description":"Results per page.",
+		"minimum":0,
+		"maximum":100,
+		"exclusiveMinimum":0,
+		"exclusiveMaximum":100,
+		"multipleOf":0.01,
+		"default":false,
+		"const":42,
+		"format":"int32",
+		"pattern":"^[0-9]+$",
+		"minLength":1,
+		"maxLength":8,
+		"minItems":0,
+		"maxItems":5
+	}`
+
+	var prop ToolProperty
+	require.NoError(t, json.Unmarshal([]byte(input), &prop))
+
+	out, err := json.Marshal(prop)
+	require.NoError(t, err)
+
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(out, &got))
+
+	for _, key := range []string{
+		"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
+		"default", "const", "format", "pattern", "minLength", "maxLength", "minItems", "maxItems",
+	} {
+		if _, ok := got[key]; !ok {
+			t.Errorf("keyword %q dropped on round-trip; got %s", key, out)
+		}
+	}
+
+	// Zero-valued bounds must survive rather than be erased by omitempty.
+	assert.Equal(t, float64(0), got["minimum"], "minimum:0 must survive")
+	assert.Equal(t, float64(0), got["minItems"], "minItems:0 must survive")
+	// A falsy default must survive (nil interface is absent, false is present).
+	assert.Equal(t, false, got["default"], "default:false must survive")
+}
+
 func TestToolCallFunction_IndexAlwaysMarshals(t *testing.T) {
 	fn := ToolCallFunction{
 		Name:      "echo",
