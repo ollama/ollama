@@ -1366,21 +1366,25 @@ func getValue(header, key string) string {
 		return ""
 	}
 
-	// Move the index to the starting quote after the key.
-	startIdx += len(key) + 2
-	if startIdx > len(header) {
+	// Move past "key=" to the start of the value.
+	startIdx += len(key) + 1
+	if startIdx >= len(header) {
 		return ""
 	}
-	endIdx := startIdx
 
-	for endIdx < len(header) {
-		if header[endIdx] == '"' {
-			if endIdx+1 < len(header) && header[endIdx+1] != ',' { // If the next character isn't a comma, continue
-				endIdx++
-				continue
-			}
-			break
+	if header[startIdx] == '"' {
+		// Quoted value: skip the opening quote and read to the closing quote.
+		startIdx++
+		endIdx := startIdx
+		for endIdx < len(header) && header[endIdx] != '"' {
+			endIdx++
 		}
+		return header[startIdx:endIdx]
+	}
+
+	// Unquoted value: read to the next comma or the end of the header.
+	endIdx := startIdx
+	for endIdx < len(header) && header[endIdx] != ',' {
 		endIdx++
 	}
 	return header[startIdx:endIdx]

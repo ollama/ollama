@@ -2,6 +2,7 @@ package ggml
 
 import (
 	"bytes"
+	"encoding/binary"
 	"math/rand/v2"
 	"os"
 	"strings"
@@ -9,6 +10,20 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 )
+
+func TestReadGGUFV1StringRejectsTruncated(t *testing.T) {
+	llm := &gguf{containerGGUF: &containerGGUF{ByteOrder: binary.LittleEndian}}
+
+	// A v1 string is null-terminated, so a declared length of 0 has no
+	// terminator. Before the guard this panicked in bytes.Buffer.Truncate(-1).
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, binary.LittleEndian, uint64(0)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readGGUFV1String(llm, &buf); err == nil {
+		t.Errorf("readGGUFV1String(len=0): expected error, got nil")
+	}
+}
 
 func TestWriteGGUF(t *testing.T) {
 	tensorData := make([]byte, 2*3*4) // 6 F32 elements = 24 bytes

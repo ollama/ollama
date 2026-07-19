@@ -53,6 +53,9 @@ func TestParseRegistryChallenge(t *testing.T) {
 			"https://r.ollama.ai/v2/token", "ollama", "-",
 		},
 		{"", "", "", ""},
+		{"Bearer realm=", "", "", ""},                        // empty value, must not panic
+		{"Bearer realm=abc", "abc", "", ""},                  // unquoted value, keep the first char
+		{`Bearer realm="abc",service=svc`, "abc", "svc", ""}, // mixed quoted + unquoted
 	}
 
 	for _, tt := range tests {
