@@ -1223,15 +1223,30 @@ func pullModelManifest(ctx context.Context, n model.Name, regOpts *registryOptio
 
 	headers := make(http.Header)
 	headers.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json")
-	resp, err := makeRequestWithRetry(ctx, http.MethodGet, requestURL, headers, nil, regOpts)
-	if err != nil {
+
+	data, retryable, err := requestModelManifest(ctx, requestURL, headers, regOpts)
+	if err != nil && !retryable {
 		return nil, nil, err
 	}
-	defer resp.Body.Close()
-
-	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, nil, err
+		retryCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		backoff := newBackoff(2 * time.Second)
+
+		for err != nil {
+			slog.Warn("failed to pull model manifest; backing off and retrying", "error", err)
+			if backoffErr := backoff(retryCtx); backoffErr != nil {
+				if ctx.Err() != nil {
+					return nil, nil, ctx.Err()
+				}
+				return nil, nil, err
+			}
+
+			data, retryable, err = requestModelManifest(retryCtx, requestURL, headers, regOpts)
+			if err != nil && !retryable {
+				return nil, nil, err
+			}
+		}
 	}
 
 	var m manifest.Manifest
@@ -1239,7 +1254,20 @@ func pullModelManifest(ctx context.Context, n model.Name, regOpts *registryOptio
 		return nil, nil, err
 	}
 
-	return &m, data, err
+	return &m, data, nil
+}
+
+func requestModelManifest(ctx context.Context, requestURL *url.URL, headers http.Header, regOpts *registryOptions) ([]byte, bool, error) {
+	resp, err := makeRequestWithRetry(ctx, http.MethodGet, requestURL, headers, nil, regOpts)
+	if err != nil {
+		var urlErr *url.Error
+		retryable := errors.As(err, &urlErr) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+		return nil, retryable, err
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	return data, err != nil, err
 }
 
 // GetSHA256Digest returns the SHA256 hash of a given buffer and returns it, and the size of buffer
