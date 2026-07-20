@@ -786,6 +786,59 @@ func TestRenderMarkdownPreservesBareURLUnderscores(t *testing.T) {
 	}
 }
 
+func TestRenderMarkdownStrongAfterPunctuation(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		input    string
+		want     string
+		emphasis string
+	}{
+		{
+			name:     "colon",
+			input:    "Status: **ready**",
+			want:     "Status: ready",
+			emphasis: "ready",
+		},
+		{
+			name:     "dash",
+			input:    "Note-**important**",
+			want:     "Note-important",
+			emphasis: "important",
+		},
+		{
+			name:     "closing parenthesis",
+			input:    "Result) **complete**",
+			want:     "Result) complete",
+			emphasis: "complete",
+		},
+		{
+			name:  "identifier",
+			input: "value__with_delimiters__",
+			want:  "value__with_delimiters__",
+		},
+		{
+			name:  "URL",
+			input: "https://example.com/a__b__",
+			want:  "https://example.com/a__b__",
+		},
+		{
+			name:  "URL punctuation",
+			input: "https://example.com/a-**b**",
+			want:  "https://example.com/a-**b**",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rendered := renderMarkdownForView(test.input, 80)
+			if got := stripANSI(rendered); got != test.want {
+				t.Fatalf("rendered = %q, want %q", got, test.want)
+			}
+			if test.emphasis != "" && !strings.Contains(rendered, chatStrongStyle.Render(test.emphasis)) {
+				t.Fatalf("rendered output should emphasize %q: %q", test.emphasis, rendered)
+			}
+		})
+	}
+}
+
 func TestChatMouseWheelScrollsTranscriptWhileRunning(t *testing.T) {
 	m := chatModel{
 		width:         80,

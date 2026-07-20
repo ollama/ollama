@@ -159,12 +159,21 @@ func canOpenMarkdownStrong(out []markdownInlineRune) bool {
 	if len(out) == 0 {
 		return true
 	}
-	switch out[len(out)-1].r {
-	case '(', '[', '{', '"', '\'':
-		return true
-	default:
-		return unicode.IsSpace(out[len(out)-1].r)
+	previous := out[len(out)-1].r
+	return (unicode.IsSpace(previous) || unicode.IsPunct(previous)) && !markdownStrongInURL(out)
+}
+
+func markdownStrongInURL(out []markdownInlineRune) bool {
+	start := len(out)
+	for start > 0 && !unicode.IsSpace(out[start-1].r) {
+		start--
 	}
+
+	var token strings.Builder
+	for _, item := range out[start:] {
+		token.WriteRune(item.r)
+	}
+	return strings.Contains(token.String(), "://")
 }
 
 func appendMarkdownRunes(out []markdownInlineRune, text string, style markdownInlineStyle) []markdownInlineRune {
