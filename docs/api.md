@@ -1198,6 +1198,8 @@ If you are creating a model from a safetensors directory or from a GGUF file, yo
 - `files`: (optional) a dictionary of file names to SHA256 digests of blobs to create the model from
 - `adapters`: (optional) a dictionary of file names to SHA256 digests of blobs for LORA adapters
 - `template`: (optional) the prompt template for the model
+- `renderer`: (optional) the name of the renderer for the model
+- `parser`: (optional) the name of the parser for the model
 - `license`: (optional) a string or list of strings containing the license or licenses for the model
 - `system`: (optional) a string containing the system prompt for the model
 - `parameters`: (optional) a dictionary of parameters for the model (see [Modelfile](./modelfile.mdx#valid-parameters-and-values) for a list of parameters)

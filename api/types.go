@@ -706,7 +706,10 @@ type CreateRequest struct {
 	// Messages is a list of messages added to the model before chat and generation requests.
 	Messages []Message `json:"messages,omitempty"`
 
+	// Renderer is the name of the renderer used when constructing a request to the model.
 	Renderer string `json:"renderer,omitempty"`
+
+	// Parser is the name of the parser used to parse the output of the request.
 	Parser   string `json:"parser,omitempty"`
 
 	// Requires is the minimum version of Ollama required by the model.
