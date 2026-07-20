@@ -2,8 +2,11 @@ package chat
 
 import (
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 )
 
 func renderMarkdownForView(markdown string, width int) string {
@@ -34,7 +37,7 @@ func renderMarkdownForView(markdown string, width int) string {
 		}
 
 		if heading, ok := markdownHeading(trimmed); ok {
-			rendered = append(rendered, chatHeaderStyle.Render(heading))
+			rendered = append(rendered, chatHeaderStyle.Render(renderMarkdownRunes(parseMarkdownInline(heading))))
 			continue
 		}
 
@@ -42,9 +45,7 @@ func renderMarkdownForView(markdown string, width int) string {
 			rendered = append(rendered, "")
 			continue
 		}
-		for _, wrapped := range wrapChatText(line, width) {
-			rendered = append(rendered, renderMarkdownInline(wrapped))
-		}
+		rendered = append(rendered, wrapMarkdownInline(line, width)...)
 	}
 	return strings.Join(rendered, "\n")
 }
@@ -71,22 +72,148 @@ func markdownHeading(line string) (string, bool) {
 	return strings.TrimSpace(line[level:]), true
 }
 
-func renderMarkdownInline(line string) string {
+type markdownInlineStyle uint8
+
+const (
+	markdownPlain markdownInlineStyle = iota
+	markdownStrong
+	markdownCode
+)
+
+type markdownInlineRune struct {
+	r     rune
+	style markdownInlineStyle
+}
+
+// wrapMarkdownInline parses a complete source line before wrapping it. That
+// keeps emphasis intact when its opening and closing delimiters land on
+// different visual lines.
+func wrapMarkdownInline(line string, width int) []string {
+	return wrapInlineRunes(parseMarkdownInline(line), width)
+}
+
+func wrapInlineRunes(runes []markdownInlineRune, width int) []string {
+	if len(runes) == 0 {
+		return []string{""}
+	}
+
+	var rendered []string
+	for len(runes) > 0 {
+		hardCut, spaceCut, currentWidth := 0, 0, 0
+		for i, item := range runes {
+			nextWidth := currentWidth + runewidth.RuneWidth(item.r)
+			if nextWidth > width {
+				break
+			}
+			currentWidth = nextWidth
+			hardCut = i + 1
+			if unicode.IsSpace(item.r) && currentWidth > width/2 {
+				spaceCut = i
+			}
+		}
+		cut := hardCut
+		if spaceCut > 0 {
+			cut = spaceCut
+		}
+		if cut == 0 {
+			cut = 1
+		}
+
+		lineRunes := trimMarkdownSpace(runes[:cut])
+		rendered = append(rendered, renderMarkdownRunes(lineRunes))
+		runes = trimMarkdownSpace(runes[cut:])
+	}
+	return rendered
+}
+
+func parseMarkdownInline(line string) []markdownInlineRune {
+	var out []markdownInlineRune
+	for len(line) > 0 {
+		if strings.HasPrefix(line, "`") {
+			if end := strings.Index(line[1:], "`"); end >= 0 {
+				out = appendMarkdownRunes(out, line[1:end+1], markdownCode)
+				line = line[end+2:]
+				continue
+			}
+		}
+		if (strings.HasPrefix(line, "**") || strings.HasPrefix(line, "__")) && canOpenMarkdownStrong(out) {
+			delimiter := line[:2]
+			if end := strings.Index(line[2:], delimiter); end >= 0 {
+				out = appendMarkdownRunes(out, line[2:end+2], markdownStrong)
+				line = line[end+4:]
+				continue
+			}
+		}
+
+		r, size := utf8.DecodeRuneInString(line)
+		out = append(out, markdownInlineRune{r: r, style: markdownPlain})
+		line = line[size:]
+	}
+	return out
+}
+
+// canOpenMarkdownStrong keeps delimiter-like text in bare URLs and identifiers
+// literal, only treating ** / __ as strong emphasis at the common
+// whitespace- or punctuation-delimited form.
+func canOpenMarkdownStrong(out []markdownInlineRune) bool {
+	if len(out) == 0 {
+		return true
+	}
+	previous := out[len(out)-1].r
+	return (unicode.IsSpace(previous) || unicode.IsPunct(previous)) && !markdownStrongInURL(out)
+}
+
+func markdownStrongInURL(out []markdownInlineRune) bool {
+	start := len(out)
+	for start > 0 && !unicode.IsSpace(out[start-1].r) {
+		start--
+	}
+
+	var token strings.Builder
+	for _, item := range out[start:] {
+		token.WriteRune(item.r)
+	}
+	return strings.Contains(token.String(), "://")
+}
+
+func appendMarkdownRunes(out []markdownInlineRune, text string, style markdownInlineStyle) []markdownInlineRune {
+	for _, r := range text {
+		out = append(out, markdownInlineRune{r: r, style: style})
+	}
+	return out
+}
+
+func trimMarkdownSpace(runes []markdownInlineRune) []markdownInlineRune {
+	start, end := 0, len(runes)
+	for start < end && unicode.IsSpace(runes[start].r) {
+		start++
+	}
+	for end > start && unicode.IsSpace(runes[end-1].r) {
+		end--
+	}
+	return runes[start:end]
+}
+
+func renderMarkdownRunes(runes []markdownInlineRune) string {
 	var b strings.Builder
-	for {
-		before, rest, ok := strings.Cut(line, "`")
-		b.WriteString(before)
-		if !ok {
-			break
+	for start := 0; start < len(runes); {
+		end := start + 1
+		for end < len(runes) && runes[end].style == runes[start].style {
+			end++
 		}
-		code, after, ok := strings.Cut(rest, "`")
-		if !ok {
-			b.WriteString("`")
-			b.WriteString(rest)
-			break
+		var text strings.Builder
+		for _, item := range runes[start:end] {
+			text.WriteRune(item.r)
 		}
-		b.WriteString(chatInlineCodeStyle.Render(code))
-		line = after
+		switch runes[start].style {
+		case markdownStrong:
+			b.WriteString(chatStrongStyle.Render(text.String()))
+		case markdownCode:
+			b.WriteString(chatInlineCodeStyle.Render(text.String()))
+		default:
+			b.WriteString(text.String())
+		}
+		start = end
 	}
 	return b.String()
 }
@@ -130,7 +257,7 @@ func renderMarkdownTable(lines []string, width int) ([]string, int) {
 			if i < len(row) {
 				cell = row[i]
 			}
-			naturalWidths[i] = max(naturalWidths[i], lipglossWidth(cell))
+			naturalWidths[i] = max(naturalWidths[i], markdownInlineWidth(cell))
 		}
 	}
 	widths := markdownTableColumnWidths(naturalWidths, width)
@@ -232,19 +359,21 @@ func sumInts(values []int) int {
 }
 
 func wrapMarkdownTableCell(cell string, width int) []string {
-	width = max(1, width)
-	var out []string
-	line := strings.TrimSpace(cell)
-	for lipglossWidth(line) > width {
-		cut := chatDisplayWidthCut(line, width)
-		out = append(out, strings.TrimSpace(line[:cut]))
-		line = strings.TrimSpace(line[cut:])
-	}
-	out = append(out, line)
-	if len(out) == 0 {
+	lines := wrapInlineRunes(parseMarkdownInline(cell), max(1, width))
+	if len(lines) == 0 {
 		return []string{""}
 	}
-	return out
+	return lines
+}
+
+// markdownInlineWidth reports the visible width of a cell once Markdown
+// delimiters are parsed away, so columns size to rendered content.
+func markdownInlineWidth(cell string) int {
+	width := 0
+	for _, item := range parseMarkdownInline(cell) {
+		width += runewidth.RuneWidth(item.r)
+	}
+	return width
 }
 
 func looksLikeMarkdownTableRow(line string) bool {
