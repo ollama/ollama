@@ -36,7 +36,7 @@ func BenchmarkDownloadChunkCompletion(b *testing.B) {
 	for range b.N {
 		download := &blobDownload{Name: downloadPath, Digest: digest}
 		part := &blobDownloadPart{Size: int64(len(data)), blobDownload: download}
-		if err := download.downloadChunk(b.Context(), requestURL, io.Discard, part, downloadStallTimeout); err != nil {
+		if err := download.downloadChunk(b.Context(), requestURL, io.Discard, part); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -63,7 +63,7 @@ func TestDownloadChunkReturnsWhenTransferCompletes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
 	defer cancel()
 
-	if err := download.downloadChunk(ctx, requestURL, io.Discard, part, downloadStallTimeout); err != nil {
+	if err := download.downloadChunk(ctx, requestURL, io.Discard, part); err != nil {
 		t.Fatalf("downloadChunk() error = %v, want nil", err)
 	}
 }
@@ -89,9 +89,14 @@ func TestDownloadChunkDetectsStallBeforeFirstByte(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
-	const stallTimeout = 50 * time.Millisecond
+	originalStallTimeout := downloadStallTimeout
+	downloadStallTimeout = 50 * time.Millisecond
+	t.Cleanup(func() {
+		downloadStallTimeout = originalStallTimeout
+	})
+
 	started := time.Now()
-	err = download.downloadChunk(ctx, requestURL, io.Discard, part, stallTimeout)
+	err = download.downloadChunk(ctx, requestURL, io.Discard, part)
 	elapsed := time.Since(started)
 
 	select {
@@ -102,7 +107,7 @@ func TestDownloadChunkDetectsStallBeforeFirstByte(t *testing.T) {
 	if !errors.Is(err, errPartStalled) {
 		t.Fatalf("downloadChunk() error = %v after %v, want %v", err, elapsed, errPartStalled)
 	}
-	if elapsed >= 5*stallTimeout {
-		t.Fatalf("downloadChunk() detected the stall after %v, want less than %v", elapsed, 5*stallTimeout)
+	if elapsed >= 5*downloadStallTimeout {
+		t.Fatalf("downloadChunk() detected the stall after %v, want less than %v", elapsed, 5*downloadStallTimeout)
 	}
 }

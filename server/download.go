@@ -97,11 +97,12 @@ func (p *blobDownloadPart) UnmarshalJSON(b []byte) error {
 }
 
 const (
-	numDownloadParts           = 16
-	minDownloadPartSize  int64 = 100 * format.MegaByte
-	maxDownloadPartSize  int64 = 1000 * format.MegaByte
-	downloadStallTimeout       = 30 * time.Second
+	numDownloadParts          = 16
+	minDownloadPartSize int64 = 100 * format.MegaByte
+	maxDownloadPartSize int64 = 1000 * format.MegaByte
 )
+
+var downloadStallTimeout = 30 * time.Second
 
 func (p *blobDownloadPart) Name() string {
 	return strings.Join([]string{
@@ -285,7 +286,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 			var err error
 			for try := 0; try < maxRetries; try++ {
 				w := io.NewOffsetWriter(file, part.StartsAt())
-				err = b.downloadChunk(inner, directURL, w, part, downloadStallTimeout)
+				err = b.downloadChunk(inner, directURL, w, part)
 				switch {
 				case errors.Is(err, context.Canceled), errors.Is(err, syscall.ENOSPC):
 					// return immediately if the context is canceled or the device is out of space
@@ -329,7 +330,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 	return nil
 }
 
-func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w io.Writer, part *blobDownloadPart, stallTimeout time.Duration) error {
+func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w io.Writer, part *blobDownloadPart) error {
 	g, ctx := errgroup.WithContext(ctx)
 	attemptStarted := time.Now()
 	transferDone := make(chan struct{})
@@ -364,7 +365,7 @@ func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w
 	})
 
 	g.Go(func() error {
-		ticker := time.NewTicker(min(time.Second, stallTimeout/2))
+		ticker := time.NewTicker(min(time.Second, downloadStallTimeout/2))
 		defer ticker.Stop()
 		for {
 			select {
@@ -378,7 +379,7 @@ func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w
 					lastUpdated = attemptStarted
 				}
 
-				if time.Since(lastUpdated) > stallTimeout {
+				if time.Since(lastUpdated) > downloadStallTimeout {
 					const msg = "%s part %d stalled; retrying. If this persists, press ctrl-c to exit, then 'ollama pull' to find a faster connection."
 					slog.Info(fmt.Sprintf(msg, b.Digest[7:19], part.N))
 					// reset last updated
