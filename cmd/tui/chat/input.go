@@ -92,6 +92,9 @@ func (m *chatModel) applySlashCompletion() bool {
 	if !strings.HasPrefix(input, "/") {
 		return false
 	}
+	if _, _, known := slashCommandInvocation(input); known {
+		return false
+	}
 	completions := m.slashCompletions()
 	if len(completions) == 0 || !completionIsSelectable(completions) {
 		return false

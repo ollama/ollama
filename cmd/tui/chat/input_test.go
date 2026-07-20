@@ -897,6 +897,40 @@ func TestChatEnterFillsSelectedSlashCommandBeforeSubmitting(t *testing.T) {
 	}
 }
 
+func TestChatEnterSubmitsExactSlashCommandAliases(t *testing.T) {
+	t.Run("help", func(t *testing.T) {
+		m := chatModel{input: []rune("/?")}
+
+		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		if cmd != nil {
+			t.Fatal("help alias should not return a command")
+		}
+		m = updated.(chatModel)
+		if len(m.entries) != 1 || m.entries[0].role != "slash" {
+			t.Fatalf("entries = %#v, want help output", m.entries)
+		}
+		if got := string(m.input); got != "" {
+			t.Fatalf("input = %q, want cleared after submitting alias", got)
+		}
+	})
+
+	t.Run("exit", func(t *testing.T) {
+		m := chatModel{input: []rune("/exit")}
+
+		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		if cmd == nil {
+			t.Fatal("exit alias should return the quit command")
+		}
+		m = updated.(chatModel)
+		if !m.quitting {
+			t.Fatal("exit alias should quit without filling /bye first")
+		}
+		if got := string(m.input); got != "" {
+			t.Fatalf("input = %q, want cleared after submitting alias", got)
+		}
+	})
+}
+
 func TestChatSlashCommandsRunWhileModelResponds(t *testing.T) {
 	m := chatModel{running: true, input: []rune("/help")}
 
