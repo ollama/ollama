@@ -708,7 +708,7 @@ func TestSkillSlashNameResolvesAndRejectsArgsAndUnknown(t *testing.T) {
 }
 
 func TestChatDeletedSlashCommandsAreUnknown(t *testing.T) {
-	for _, command := range []string{"/copy", "/copy-all", "/launch", "/system", "/history", "/load", "/raw", "/resume", "/set", "/show", "/verbose"} {
+	for _, command := range []string{"/clear", "/copy", "/copy-all", "/launch", "/system", "/history", "/load", "/raw", "/resume", "/set", "/show", "/verbose"} {
 		t.Run(command, func(t *testing.T) {
 			m := chatModel{input: []rune(command)}
 
@@ -732,12 +732,12 @@ func TestChatViewRendersSlashCommandSuggestions(t *testing.T) {
 	}
 
 	view := stripANSI(m.View())
-	for _, want := range []string{"/clear", "/model", "/new", "/think", "/tools"} {
+	for _, want := range []string{"/model", "/new", "/think", "/tools", "/skills"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %s suggestion: %q", want, view)
 		}
 	}
-	for _, removed := range []string{"/copy", "/copy-all", "/history", "/load", "/raw", "/resume", "/set", "/show", "/verbose"} {
+	for _, removed := range []string{"/clear", "/copy", "/copy-all", "/history", "/load", "/raw", "/resume", "/set", "/show", "/verbose"} {
 		if strings.Contains(view, removed) {
 			t.Fatalf("bare slash should hide removed command %s: %q", removed, view)
 		}
@@ -872,17 +872,63 @@ func TestChatSlashCommandSuggestionsIncludeThink(t *testing.T) {
 	}
 }
 
-func TestChatEnterAcceptsSelectedSlashCommand(t *testing.T) {
+func TestChatEnterFillsSelectedSlashCommandBeforeSubmitting(t *testing.T) {
 	m := chatModel{input: []rune("/th")}
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(chatModel)
 	if cmd != nil {
+		t.Fatal("filling a slash command should not return a command")
+	}
+	if got := string(m.input); got != "/think" {
+		t.Fatalf("input = %q, want completed command", got)
+	}
+	if m.thinkPicker != nil {
+		t.Fatal("filling a slash command should not open its picker")
+	}
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(chatModel)
+	if cmd != nil {
 		t.Fatal("think command should not return a command")
 	}
 	if m.thinkPicker == nil {
-		t.Fatal("selected /think command should open picker")
+		t.Fatal("second enter should submit the completed /think command")
 	}
+}
+
+func TestChatEnterSubmitsExactSlashCommandAliases(t *testing.T) {
+	t.Run("help", func(t *testing.T) {
+		m := chatModel{input: []rune("/?")}
+
+		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		if cmd != nil {
+			t.Fatal("help alias should not return a command")
+		}
+		m = updated.(chatModel)
+		if len(m.entries) != 1 || m.entries[0].role != "slash" {
+			t.Fatalf("entries = %#v, want help output", m.entries)
+		}
+		if got := string(m.input); got != "" {
+			t.Fatalf("input = %q, want cleared after submitting alias", got)
+		}
+	})
+
+	t.Run("exit", func(t *testing.T) {
+		m := chatModel{input: []rune("/exit")}
+
+		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		if cmd == nil {
+			t.Fatal("exit alias should return the quit command")
+		}
+		m = updated.(chatModel)
+		if !m.quitting {
+			t.Fatal("exit alias should quit without filling /bye first")
+		}
+		if got := string(m.input); got != "" {
+			t.Fatalf("input = %q, want cleared after submitting alias", got)
+		}
+	})
 }
 
 func TestChatSlashCommandsRunWhileModelResponds(t *testing.T) {
