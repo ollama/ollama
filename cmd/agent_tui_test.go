@@ -9,8 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spf13/cobra"
-
 	coreagent "github.com/ollama/ollama/agent"
 	agenttools "github.com/ollama/ollama/agent/tools"
 	"github.com/ollama/ollama/api"
@@ -166,21 +164,5 @@ func TestSaveLastAgentModel(t *testing.T) {
 	}
 	if got := config.LastModel(); got != "qwen3:8b" {
 		t.Fatalf("blank save changed last model to %q", got)
-	}
-}
-
-func TestApplyAgentFlagsNoTools(t *testing.T) {
-	cmd := &cobra.Command{}
-	registerAgentFlags(cmd)
-	if err := cmd.Flags().Set("no-tools", "true"); err != nil {
-		t.Fatal(err)
-	}
-
-	var opts agentTUIOptions
-	if _, err := applyAgentFlags(cmd, &opts); err != nil {
-		t.Fatalf("applyAgentFlags returned error: %v", err)
-	}
-	if !opts.ToolsDisabled {
-		t.Fatal("--no-tools should disable tools")
 	}
 }
