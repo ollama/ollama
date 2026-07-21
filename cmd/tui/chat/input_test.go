@@ -30,6 +30,7 @@ func TestChatHelpCommandShowsV1Commands(t *testing.T) {
 		"**Commands**",
 		"- `/model`: switch models",
 		"- `/think`: set thinking mode",
+		"- `/system [on|off]`: show or set the built-in system prompt",
 		"- `/compact`: summarize older context",
 		"- `/help`: show commands",
 		"- `/bye`: exit",
@@ -803,7 +804,7 @@ func TestSkillSlashNameResolvesAndRejectsArgsAndUnknown(t *testing.T) {
 }
 
 func TestChatDeletedSlashCommandsAreUnknown(t *testing.T) {
-	for _, command := range []string{"/clear", "/copy", "/copy-all", "/launch", "/system", "/history", "/load", "/raw", "/resume", "/set", "/show", "/verbose"} {
+	for _, command := range []string{"/clear", "/copy", "/copy-all", "/launch", "/history", "/load", "/raw", "/resume", "/set", "/show", "/verbose"} {
 		t.Run(command, func(t *testing.T) {
 			m := chatModel{input: []rune(command)}
 
@@ -827,7 +828,7 @@ func TestChatViewRendersSlashCommandSuggestions(t *testing.T) {
 	}
 
 	view := stripANSI(m.View())
-	for _, want := range []string{"/model", "/new", "/think", "/tools", "/skills"} {
+	for _, want := range []string{"/model", "/new", "/think", "/tools", "/system"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %s suggestion: %q", want, view)
 		}
@@ -935,6 +936,127 @@ func TestChatToolsCommandUsage(t *testing.T) {
 	m = updated.(chatModel)
 	if m.status != "error" || len(m.entries) != 1 || !strings.Contains(m.entries[0].content, "usage: /tools") {
 		t.Fatalf("invalid /tools result = status:%q entries:%#v", m.status, m.entries)
+	}
+}
+
+func TestChatSystemCommandControlsBuiltInSystemPrompt(t *testing.T) {
+	client := &chatCaptureClient{}
+	m := chatModel{
+		ctx:   context.Background(),
+		input: []rune("/system"),
+		opts: Options{
+			Model:        "test",
+			Client:       client,
+			SystemPrompt: "canonical agent prompt",
+		},
+	}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("/system should not start a run")
+	}
+	m = updated.(chatModel)
+	if len(m.entries) != 1 || m.entries[0].role != "slash" || m.entries[0].content != "Built-in system prompt is on.\n\ncanonical agent prompt\n\nWarning: Changing the system prompt during a session breaks the prompt cache." {
+		t.Fatalf("/system entry = %#v", m.entries)
+	}
+
+	m.input = []rune("/system off")
+	updated, _ = m.handleSubmit()
+	m = updated.(chatModel)
+	if !m.systemPromptDisabled || m.status != "system prompt off" {
+		t.Fatalf("/system off state = disabled:%v status:%q", m.systemPromptDisabled, m.status)
+	}
+	m.input = []rune("/system")
+	updated, _ = m.handleSubmit()
+	m = updated.(chatModel)
+	if got := m.entries[len(m.entries)-1].content; got != "Built-in system prompt is off.\n\ncanonical agent prompt\n\nWarning: Changing the system prompt during a session breaks the prompt cache." {
+		t.Fatalf("/system off entry = %q", got)
+	}
+	updated, cmd = m.startRun("hello")
+	if cmd == nil {
+		t.Fatal("run after /system off should start")
+	}
+	m = updated.(chatModel)
+	if done := waitForRunDone(t, m.events); done.err != nil {
+		t.Fatalf("run after /system off: %v", done.err)
+	}
+	if len(client.requests) != 1 || len(client.requests[0].Messages) != 1 || client.requests[0].Messages[0].Role != "user" {
+		t.Fatalf("request after /system off = %#v", client.requests)
+	}
+
+	m.input = []rune("/system ON")
+	updated, _ = m.handleSubmit()
+	m = updated.(chatModel)
+	if m.systemPromptDisabled || m.status != "system prompt on" {
+		t.Fatalf("/system on state = disabled:%v status:%q", m.systemPromptDisabled, m.status)
+	}
+	updated, cmd = m.startRun("hello again")
+	if cmd == nil {
+		t.Fatal("run after /system on should start")
+	}
+	m = updated.(chatModel)
+	if done := waitForRunDone(t, m.events); done.err != nil {
+		t.Fatalf("run after /system on: %v", done.err)
+	}
+	if len(client.requests) != 2 {
+		t.Fatalf("client requests = %d, want 2", len(client.requests))
+	}
+	request := client.requests[1]
+	if len(request.Messages) != 2 || request.Messages[0].Role != "system" || request.Messages[0].Content != "canonical agent prompt" {
+		t.Fatalf("request after /system on = %#v", request.Messages)
+	}
+
+	m.input = []rune("/system sometimes")
+	updated, _ = m.handleSubmit()
+	m = updated.(chatModel)
+	if m.status != "error" || len(m.entries) == 0 || m.entries[len(m.entries)-1].content != "usage: /system [on|off]" {
+		t.Fatalf("invalid /system result = status:%q entries:%#v", m.status, m.entries)
+	}
+}
+
+func TestChatSystemCommandArgumentCompletions(t *testing.T) {
+	for _, tt := range []struct {
+		input string
+		want  []string
+	}{
+		{input: "/system ", want: []string{"/system on", "/system off"}},
+		{input: "/system o", want: []string{"/system on", "/system off"}},
+		{input: "/system on", want: []string{"/system on"}},
+	} {
+		t.Run(tt.input, func(t *testing.T) {
+			m := chatModel{input: []rune(tt.input)}
+			completions := m.slashCompletions()
+			if len(completions) != len(tt.want) {
+				t.Fatalf("completions = %#v, want %d", completions, len(tt.want))
+			}
+			for i, want := range tt.want {
+				if completions[i].value != want {
+					t.Fatalf("completion %d = %q, want %q", i, completions[i].value, want)
+				}
+			}
+		})
+	}
+
+	m := chatModel{input: []rune("/system ")}
+	lines := stripANSI(strings.Join(m.slashCommandLines(80), "\n"))
+	for _, want := range []string{"on", "enable the built-in system prompt", "off", "disable the built-in system prompt"} {
+		if !strings.Contains(lines, want) {
+			t.Fatalf("/system option suggestions missing %q: %q", want, lines)
+		}
+	}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatal("selecting /system on should not submit the command")
+	}
+	m = updated.(chatModel)
+	if got := string(m.input); got != "/system on" {
+		t.Fatalf("input = %q, want /system on", got)
+	}
+
+	m.input = []rune("/system maybe")
+	completions := m.slashCompletions()
+	if len(completions) != 1 || completions[0].label != "No matching options" {
+		t.Fatalf("invalid argument completions = %#v", completions)
 	}
 }
 
