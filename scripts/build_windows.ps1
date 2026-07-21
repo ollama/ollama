@@ -64,6 +64,16 @@ function normalizePathForCompare {
     return ([IO.Path]::GetFullPath($Path).TrimEnd('\')).Replace('/', '\').ToLowerInvariant()
 }
 
+function convertToCMakePath {
+    param([string]$Path)
+
+    if (-not $Path) {
+        return $Path
+    }
+
+    return ([IO.Path]::GetFullPath($Path)).Replace('\', '/')
+}
+
 function newCompilerPair($name, $cc, $cxx) {
     if ((Test-Path $cc) -and (Test-Path $cxx)) {
         return [pscustomobject]@{
@@ -99,39 +109,123 @@ function findWindowsCPUCompiler {
     return $null
 }
 
+function msvcArchName {
+    param([string]$Arch)
+
+    switch -Regex ($Arch) {
+        "^(arm64|aarch64)$" { return "arm64" }
+        "^(amd64|x64|x86_64)$" { return "x64" }
+        default { return $Arch }
+    }
+}
+
+function hostMsvcArchName {
+    try {
+        if ((Get-CimInstance Win32_Processor | Select-Object -First 1).Architecture -eq 12) {
+            return "arm64"
+        }
+    } catch {
+        return "x64"
+    }
+    return "x64"
+}
+
 function ensureMsvcForNinja {
+    param(
+        [string]$TargetArch = $script:ARCH,
+        [switch]$Optional
+    )
+
     if ($env:CMAKE_GENERATOR -notlike "Ninja*") {
+        if ($Optional) { return $true }
         return
     }
 
-    if (-not (Get-Command -Name "cl.exe" -ErrorAction SilentlyContinue)) {
+    $msvcTargetArch = msvcArchName $TargetArch
+    $cl = Get-Command -Name "cl.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+    $needDevShell = -not $cl
+    if ($cl -and $cl.Source -notmatch "[\\/]$msvcTargetArch[\\/]cl\.exe$") {
+        $needDevShell = $true
+    }
+
+    if ($needDevShell) {
         $vsInstall = findVisualStudioInstall
         if ($vsInstall) {
             $devShell = Join-Path $vsInstall "Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
             if (Test-Path $devShell) {
                 Import-Module $devShell
-                Enter-VsDevShell -VsInstallPath $vsInstall -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -no_logo"
+                $hostArch = hostMsvcArchName
+                Enter-VsDevShell -VsInstallPath $vsInstall -SkipAutomaticLocation -DevCmdArguments "-arch=$msvcTargetArch -host_arch=$hostArch -no_logo"
             }
         }
     }
 
-    if (-not (Get-Command -Name "cl.exe" -ErrorAction SilentlyContinue)) {
-        Write-Error "Ninja builds require MSVC cl.exe. Install Visual Studio C++ tools or run from a VS Developer shell."
+    $cl = Get-Command -Name "cl.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $cl) {
+        $message = "Ninja builds require MSVC cl.exe. Install Visual Studio C++ tools or run from a VS Developer shell."
+        if ($Optional) {
+            Write-Warning $message
+            return $false
+        }
+        Write-Error $message
         exit(1)
     }
-    Write-Output "MSVC cl.exe available for Ninja builds"
+    if ($cl.Source -notmatch "[\\/]$msvcTargetArch[\\/]cl\.exe$") {
+        $message = "Ninja build for $TargetArch requires MSVC $msvcTargetArch cl.exe, but PATH has $($cl.Source)"
+        if ($Optional) {
+            Write-Warning $message
+            return $false
+        }
+        Write-Error $message
+        exit(1)
+    }
+    if ($Optional) {
+        Write-Host "MSVC $msvcTargetArch cl.exe available for Ninja builds"
+        return $true
+    }
+    Write-Output "MSVC $msvcTargetArch cl.exe available for Ninja builds"
+}
+
+function saveEnvironment {
+    $snapshot = @{}
+    Get-ChildItem Env: | ForEach-Object {
+        $snapshot[$_.Name] = $_.Value
+    }
+    return $snapshot
+}
+
+function restoreEnvironment {
+    param($Snapshot)
+
+    foreach ($item in Get-ChildItem Env:) {
+        if (-not $Snapshot.ContainsKey($item.Name)) {
+            Remove-Item "Env:$($item.Name)" -ErrorAction SilentlyContinue
+        }
+    }
+    foreach ($name in $Snapshot.Keys) {
+        Set-Item "Env:$name" $Snapshot[$name]
+    }
 }
 
 function checkEnv {
     if ($null -ne $env:ARCH ) {
         $script:ARCH = $env:ARCH
     } else {
-        $arch=([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)
-        if ($null -ne $arch) {
-            $script:ARCH = ($arch.ToString().ToLower()).Replace("x64", "amd64")
-        } else {
-            Write-Output "WARNING: old powershell detected, assuming amd64 architecture - set `$env:ARCH to override"
-            $script:ARCH="amd64"
+        # RuntimeInformation.OSArchitecture can report X64 on ARM64 Windows
+        # when PowerShell itself is running under x64 emulation.
+        $procArch = (Get-CimInstance Win32_Processor).Architecture
+        switch ($procArch) {
+            12 { $script:ARCH = "arm64" }
+            9 { $script:ARCH = "amd64" }
+            default {
+                $arch=([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)
+                if ($null -ne $arch) {
+                    $script:ARCH = ($arch.ToString().ToLower()).Replace("x64", "amd64")
+                } else {
+                    Write-Output "WARNING: old powershell detected, assuming amd64 architecture - set `$env:ARCH to override"
+                    $script:ARCH="amd64"
+                }
+            }
         }
     }
     $script:TARGET_ARCH=$script:ARCH
@@ -352,7 +446,9 @@ function cpuArm64 {
     New-Item "${arm64DistDir}\lib\ollama\" -ItemType Directory -ea 0 | Out-Null
 
     # Cross-compile the Windows ARM64 CPU llama-server payload from an x64 host
-    # with llvm-mingw. GPU backends are not built for Windows ARM64.
+    # with llvm-mingw. Upstream ggml only supports ARM CPU variant matrices on
+    # Linux, Android, and Apple targets, so build one generic Windows ARM64 CPU
+    # backend here instead of GGML_CPU_ALL_VARIANTS.
     $oldCC = $env:CC
     $oldCXX = $env:CXX
     $oldGenerator = $env:CMAKE_GENERATOR
@@ -384,52 +480,237 @@ function cudaCMakeArgs {
         [string]$cuda
     )
 
-    $env:CUDACXX = "$cuda\bin\nvcc.exe"
+    $cudaRoot = convertToCMakePath $cuda
+    $nvcc = "$cudaRoot/bin/nvcc.exe"
+    $env:CUDACXX = $nvcc
     if ($env:CMAKE_GENERATOR -like "Ninja*") {
-        return @()
+        return @("-DCUDAToolkit_ROOT:PATH=$cudaRoot", "-DCMAKE_CUDA_COMPILER:FILEPATH=$nvcc")
     }
-    return @("-T", "cuda=$cuda", "-DCMAKE_CUDA_COMPILER=$cuda\bin\nvcc.exe")
+    return @("-T", "cuda=$cuda", "-DCUDAToolkit_ROOT:PATH=$cudaRoot", "-DCMAKE_CUDA_COMPILER:FILEPATH=$nvcc")
+}
+
+function findCudaRoot {
+    param (
+        [string]$MajorVer,
+        [string]$ExactVer
+    )
+
+    if ($ExactVer) {
+        $envName = "CUDA_PATH_V$($ExactVer.Replace('.', '_'))"
+        $candidates = @(
+            [Environment]::GetEnvironmentVariable($envName),
+            "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v$ExactVer"
+        )
+
+        foreach ($candidate in ($candidates | Where-Object { $_ } | Select-Object -Unique)) {
+            if (Test-Path -LiteralPath (Join-Path $candidate "bin\nvcc.exe")) {
+                return $candidate
+            }
+        }
+    }
+
+    if ("$script:CUDA_DIRS".Contains("v$MajorVer")) {
+        foreach ($d in $Script:CUDA_DIRS){
+            if ($d.FullName.Contains("v$MajorVer")) {
+                if (test-path -literalpath (join-path -path $d -childpath "nvcc.exe" ) ) {
+                    return ($d.FullName|split-path -parent)
+                }
+            }
+        }
+    }
+
+    return $null
+}
+
+function cudaArm64CMakeArgs {
+    param (
+        [string]$cuda
+    )
+
+    $cudaRoot = convertToCMakePath $cuda
+    $cudaArm64LibDir = Join-Path $cuda "lib\arm64"
+    if (-not (Test-Path -LiteralPath $cudaArm64LibDir)) {
+        Write-Error "CUDA at $cuda is missing Windows ARM64 import libraries under lib\arm64"
+        exit(1)
+    }
+
+    $requiredLibs = @("cudart.lib", "cudart_static.lib", "cuda.lib", "cublas.lib", "cublasLt.lib")
+    foreach ($lib in $requiredLibs) {
+        $libPath = Join-Path $cudaArm64LibDir $lib
+        if (-not (Test-Path -LiteralPath $libPath)) {
+            Write-Error "CUDA at $cuda is missing Windows ARM64 import library $libPath"
+            exit(1)
+        }
+    }
+
+    $cudaLib = convertToCMakePath $cudaArm64LibDir
+    $nvcc = "$cudaRoot/bin/nvcc.exe"
+    $cl = Get-Command -Name "cl.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $cl -or $cl.Source -notmatch "[\\/]arm64[\\/]cl\.exe$") {
+        Write-Error "CUDA Windows ARM64 builds require MSVC ARM64 cl.exe on PATH"
+        exit(1)
+    }
+    $env:CUDACXX = $nvcc
+    return @(
+        "-DCUDAToolkit_ROOT:PATH=$cudaRoot",
+        "-DCMAKE_CUDA_COMPILER:FILEPATH=$nvcc",
+        "-DCUDAToolkit_LIBRARY_DIR:PATH=$cudaLib",
+        "-DCUDA_CUDART:FILEPATH=$cudaLib/cudart.lib",
+        "-DCUDA_cudart_LIBRARY:FILEPATH=$cudaLib/cudart.lib",
+        "-DCUDA_cudart_static_LIBRARY:FILEPATH=$cudaLib/cudart_static.lib",
+        "-DCUDA_cuda_driver_LIBRARY:FILEPATH=$cudaLib/cuda.lib",
+        "-DCUDA_cublas_LIBRARY:FILEPATH=$cudaLib/cublas.lib",
+        "-DCUDA_cublasLt_LIBRARY:FILEPATH=$cudaLib/cublasLt.lib"
+    )
+}
+
+function cudaArm64UnavailableReason {
+    param (
+        [string]$cuda
+    )
+
+    $cudaArm64LibDir = Join-Path $cuda "lib\arm64"
+    if (-not (Test-Path -LiteralPath $cudaArm64LibDir)) {
+        return "missing Windows ARM64 import libraries under lib\arm64"
+    }
+
+    $requiredLibs = @("cudart.lib", "cudart_static.lib", "cuda.lib", "cublas.lib", "cublasLt.lib")
+    foreach ($lib in $requiredLibs) {
+        $libPath = Join-Path $cudaArm64LibDir $lib
+        if (-not (Test-Path -LiteralPath $libPath)) {
+            return "missing Windows ARM64 import library $libPath"
+        }
+    }
+
+    return $null
+}
+
+function cudaArm64ArchitectureArgs {
+    if ($env:OLLAMA_WOA_CUDA_ARCHITECTURES) {
+        Write-Output "Overriding Windows ARM64 CUDA architectures: $env:OLLAMA_WOA_CUDA_ARCHITECTURES"
+        return @("-DCMAKE_CUDA_ARCHITECTURES=$env:OLLAMA_WOA_CUDA_ARCHITECTURES")
+    }
+
+    return @()
 }
 
 function cudaCommon {
     param (
-        [string]$cudaMajorVer
+        [string]$cudaMajorVer,
+        [string]$cudaExactVer
     )
+
+    if ($script:ARCH -eq "arm64") {
+        Write-Error "Use cudaArm64Common for Windows ARM64 CUDA builds"
+        exit(1)
+    }
+
     mkdir -Force -path "${script:DIST_DIR}\" | Out-Null
-    if ($script:ARCH -ne "arm64") {
-        if ("$script:CUDA_DIRS".Contains("v$cudaMajorVer")) {
-            foreach ($d in $Script:CUDA_DIRS){
-                if ($d.FullName.Contains("v$cudaMajorVer")) {
-                    if (test-path -literalpath (join-path -path $d -childpath "nvcc.exe" ) ) {
-                        $cuda=($d.FullName|split-path -parent)
-                        break
-                    }
-                }
-            }
-            # Build llama-server CUDA backend from upstream source
-            Write-Output "Building llama-server CUDA v$cudaMajorVer backend"
-            $env:CUDAToolkit_ROOT=$cuda
-            $preset = "llama_cuda_v$($cudaMajorVer)_windows"
-            $cudaToolsetArgs = cudaCMakeArgs $cuda
-            $configureArgs = @("-S", "llama\server", "--preset", $preset) + $cudaToolsetArgs + @("--install-prefix", "$script:DIST_DIR")
-            & cmake @configureArgs
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --build "build\llama-server-cuda_v$cudaMajorVer" --config Release --parallel $script:JOBS
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --install "build\llama-server-cuda_v$cudaMajorVer" --component llama-server --strip
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+    $cuda = findCudaRoot $cudaMajorVer $cudaExactVer
+    if ($cuda) {
+        # Build llama-server CUDA backend from upstream source
+        Write-Output "Building llama-server CUDA v$cudaMajorVer backend $cuda"
+        $preset = "llama_cuda_v$($cudaMajorVer)_windows"
+        $cudaToolsetArgs = cudaCMakeArgs $cuda
+        $configureArgs = @("-S", "llama\server", "--preset", $preset) + $cudaToolsetArgs + @("--install-prefix", "$script:DIST_DIR")
+        & cmake @configureArgs
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        & cmake --build "build\llama-server-cuda_v$cudaMajorVer" --config Release --parallel $script:JOBS
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        & cmake --install "build\llama-server-cuda_v$cudaMajorVer" --component llama-server --strip
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+    } else {
+        if ($cudaExactVer) {
+            Write-Output "CUDA v$cudaExactVer not detected, skipping"
         } else {
             Write-Output "CUDA v$cudaMajorVer not detected, skipping"
         }
     }
 }
 
+function cudaArm64Common {
+    param (
+        [string]$cudaMajorVer,
+        [string]$cudaExactVer,
+        [switch]$Optional
+    )
+
+    $cuda = findCudaRoot $cudaMajorVer $cudaExactVer
+    if ($cuda) {
+        $arm64DistDir = "${script:SRC_DIR}\dist\windows-arm64"
+        mkdir -Force -path "${arm64DistDir}\lib\ollama\" | Out-Null
+
+        $unavailableReason = cudaArm64UnavailableReason $cuda
+        if ($Optional -and $unavailableReason) {
+            Write-Output "CUDA v$cudaMajorVer Windows ARM64 toolchain not detected ($unavailableReason), skipping"
+            return
+        }
+
+        Write-Output "Building llama-server CUDA v$cudaMajorVer backend for Windows ARM64 $cuda"
+        $oldEnvironment = saveEnvironment
+        $oldGenerator = $env:CMAKE_GENERATOR
+        try {
+            $env:CMAKE_GENERATOR = "Ninja"
+            if ($Optional -and -not (ensureMsvcForNinja "arm64" -Optional)) {
+                Write-Output "CUDA v$cudaMajorVer Windows ARM64 toolchain not detected, skipping"
+                return
+            }
+            if (-not $Optional) {
+                ensureMsvcForNinja "arm64"
+            }
+            $cudaArgs = cudaArm64CMakeArgs $cuda
+            $architectureArgs = cudaArm64ArchitectureArgs
+            $configureArgs = @(
+                "-S", "llama\server",
+                "--preset", "llama_cuda_v$($cudaMajorVer)_windows_arm64",
+                "-G", "Ninja",
+                "--install-prefix", "$arm64DistDir"
+            ) + $cudaArgs + $architectureArgs
+            & cmake @configureArgs
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --build "build\llama-server-cuda_v$($cudaMajorVer)_arm64" --target ggml-cuda --config Release --parallel $script:JOBS
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --install "build\llama-server-cuda_v$($cudaMajorVer)_arm64" --component llama-server --strip
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        } finally {
+            restoreEnvironment $oldEnvironment
+            $env:CMAKE_GENERATOR = $oldGenerator
+        }
+    } else {
+        if ($cudaExactVer) {
+            Write-Output "CUDA v$cudaExactVer not detected, skipping Windows ARM64 build"
+        } else {
+            Write-Output "CUDA v$cudaMajorVer not detected, skipping Windows ARM64 build"
+        }
+    }
+}
+
 function cuda12 {
+    if ($script:ARCH -eq "arm64") {
+        Write-Output "CUDA v12 is not supported on ARM64, skipping"
+        return
+    }
     cudaCommon("12")
 }
 
 function cuda13 {
-    cudaCommon("13")
+    if ($script:ARCH -eq "arm64") {
+        cudaArm64Common "13" "13.4"
+        return
+    }
+    cudaCommon "13" "13.0"
+}
+
+function cuda13Arm64 {
+    cudaArm64Common "13" "13.4"
+}
+
+function cuda13Arm64Cross {
+    cuda13Arm64
+}
+
+function cuda13Arm64IfAvailable {
+    cudaArm64Common "13" "13.4" -Optional
 }
 
 function rocm6 {
@@ -513,15 +794,9 @@ function mlxCuda13 {
     mkdir -Force -path "${script:DIST_DIR}\" | Out-Null
     $cudaMajorVer="13"
     if ($script:ARCH -ne "arm64") {
-        if ("$script:CUDA_DIRS".Contains("v$cudaMajorVer")) {
-            foreach ($d in $Script:CUDA_DIRS){
-                if ($d.FullName.Contains("v$cudaMajorVer")) {
-                    if (test-path -literalpath (join-path -path $d -childpath "nvcc.exe" ) ) {
-                        $cuda=($d.FullName|split-path -parent)
-                        break
-                    }
-                }
-            }
+        $cudaExactVer = if ($env:OLLAMA_MLX_CUDA_VERSION) { $env:OLLAMA_MLX_CUDA_VERSION } else { "$cudaMajorVer.0" }
+        $cuda = findCudaRoot $cudaMajorVer $cudaExactVer
+        if ($cuda) {
 
             # Check for cuDNN - required for MLX CUDA backend
             # Supports two layouts:
@@ -554,23 +829,34 @@ function mlxCuda13 {
             }
 
             Write-Output "Building MLX CUDA v$cudaMajorVer backend libraries $cuda"
+            $oldCudaPath = $env:CUDA_PATH
+            $oldCudaToolkitRoot = $env:CUDAToolkit_ROOT
+            $oldCudaCxx = $env:CUDACXX
+            $env:CUDA_PATH=$cuda
             $env:CUDAToolkit_ROOT=$cuda
-            $cudaFlags = @()
-            if ($env:OLLAMA_CMAKE_CUDA_FLAGS) {
-                $cudaFlags += "-DCMAKE_CUDA_FLAGS=$env:OLLAMA_CMAKE_CUDA_FLAGS"
+            try {
+                $cudaFlags = @()
+                if ($env:OLLAMA_CMAKE_CUDA_FLAGS) {
+                    $cudaFlags += "-DCMAKE_CUDA_FLAGS=$env:OLLAMA_CMAKE_CUDA_FLAGS"
+                }
+                $cudaToolsetArgs = cudaCMakeArgs $cuda
+                $configureArgs = @("-S", ".", "-B", "build\mlx_cuda_v$cudaMajorVer", "-DOLLAMA_MLX_BACKENDS=cuda_v$cudaMajorVer") + $cudaToolsetArgs + $cudaFlags + @("-DOLLAMA_PAYLOAD_INSTALL_PREFIX=$script:DIST_DIR", "--install-prefix", "$script:DIST_DIR")
+                & cmake @configureArgs
+                if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+                $buildArgs = @("--build", "build\mlx_cuda_v$cudaMajorVer", "--target", "ollama-mlx-cuda_v$cudaMajorVer", "--config", "Release", "--parallel", "$script:JOBS")
+                if ($env:CMAKE_GENERATOR -notlike "Ninja*") {
+                    $buildArgs += @("--", "/nodeReuse:false")
+                }
+                & cmake @buildArgs
+                if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            } finally {
+                $env:CUDA_PATH=$oldCudaPath
+                $env:CUDAToolkit_ROOT=$oldCudaToolkitRoot
+                $env:CUDACXX=$oldCudaCxx
             }
-            $cudaToolsetArgs = cudaCMakeArgs $cuda
-            $configureArgs = @("-S", ".", "-B", "build\mlx_cuda_v$cudaMajorVer", "-DOLLAMA_MLX_BACKENDS=cuda_v$cudaMajorVer") + $cudaToolsetArgs + $cudaFlags + @("-DOLLAMA_PAYLOAD_INSTALL_PREFIX=$script:DIST_DIR", "--install-prefix", "$script:DIST_DIR")
-            & cmake @configureArgs
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            $buildArgs = @("--build", "build\mlx_cuda_v$cudaMajorVer", "--target", "ollama-mlx-cuda_v$cudaMajorVer", "--config", "Release", "--parallel", "$script:JOBS")
-            if ($env:CMAKE_GENERATOR -notlike "Ninja*") {
-                $buildArgs += @("--", "/nodeReuse:false")
-            }
-            & cmake @buildArgs
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         } else {
-            Write-Output "CUDA v$cudaMajorVer not detected, skipping MLX build"
+            Write-Output "CUDA v$cudaExactVer not detected - set OLLAMA_MLX_CUDA_VERSION to use a different CUDA v$cudaMajorVer toolkit"
+            Write-Output "Skipping MLX build"
         }
     }
 }
@@ -867,6 +1153,57 @@ function newDependencyAuditJob($payloadDir, $label, $reportPath, $dependencyDirs
     } -ArgumentList $payloadDir, $label, $reportPath, $dumpbin, $dependencyDirText
 }
 
+function verifyWindowsArm64Binaries {
+    param (
+        [string]$payloadDir = "${script:SRC_DIR}\dist\windows-arm64"
+    )
+
+    $dumpbin = findDumpbin
+    if (-not $dumpbin) {
+        Write-Error "Unable to locate dumpbin.exe for Windows ARM64 binary verification"
+        exit(1)
+    }
+    if (-not (Test-Path -Path $payloadDir)) {
+        Write-Error "Windows ARM64 payload directory not found: $payloadDir"
+        exit(1)
+    }
+
+    $binaries = Get-ChildItem -Path $payloadDir -Recurse -File -Include *.dll,*.exe | Sort-Object FullName
+    if (-not $binaries) {
+        Write-Error "No Windows binaries found under $payloadDir"
+        exit(1)
+    }
+
+    $bad = [System.Collections.Generic.List[string]]::new()
+    $arm64xCount = 0
+    foreach ($binary in $binaries) {
+        $output = & $dumpbin /nologo /headers $binary.FullName 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            $bad.Add("$($binary.FullName): dumpbin failed with exit code $LASTEXITCODE")
+            continue
+        }
+
+        $machineLine = $output | Where-Object { $_ -match '^\s*[0-9A-Fa-f]+\s+machine\s+\(' } | Select-Object -First 1
+        if (-not $machineLine) {
+            $bad.Add("$($binary.FullName): unable to determine PE machine type")
+            continue
+        }
+        if ($machineLine -match '\(ARM64X\)') {
+            $arm64xCount++
+            continue
+        }
+        if ($machineLine -notmatch '^\s*AA64\s+machine\s+\(ARM64\)') {
+            $bad.Add("$($binary.FullName): $machineLine")
+        }
+    }
+
+    if ($bad.Count -gt 0) {
+        Write-Error "Windows ARM64 binary verification failed:`n$([string]::Join([Environment]::NewLine, $bad))"
+        exit(1)
+    }
+    Write-Output "Verified $($binaries.Count) Windows ARM64/ARM64X binaries under $payloadDir ($arm64xCount ARM64X)"
+}
+
 function stageComponents($mainDir, $stagingDir, $pattern, $readmePrefix) {
     $components = Get-ChildItem -Path "${mainDir}\lib\ollama" -Directory -Filter $pattern -ErrorAction SilentlyContinue
     if ($components) {
@@ -924,6 +1261,7 @@ function zip {
         $arm64Dir = "${distDir}\windows-arm64"
         if (Test-Path -Path $arm64Dir) {
             if ((Test-Path -Path "${arm64Dir}\ollama.exe") -and (Test-Path -Path "${arm64Dir}\lib\ollama\llama-server.exe")) {
+                verifyWindowsArm64Binaries $arm64Dir
                 Write-Output "Generating ${distDir}\ollama-windows-arm64.zip"
                 $jobs += newZipJob $arm64Dir "${distDir}\ollama-windows-arm64.zip"
                 $jobs += newDependencyAuditJob $arm64Dir "windows-arm64" "${distDir}\dependency-audit-windows-arm64.txt"
@@ -962,15 +1300,18 @@ checkEnv
 try {
     if ($($args.count) -eq 0) {
         cpu
+        cpuArm64
         cuda12
         cuda13
+        if ($script:ARCH -ne "arm64") {
+            cuda13Arm64IfAvailable
+        }
         rocm7
         vulkan
         mlxCuda13
         ollama
-        app
-        cpuArm64
         ollamaArm64
+        app
         appArm64
         deps
         sign
