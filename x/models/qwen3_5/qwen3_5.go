@@ -171,6 +171,10 @@ type SwitchMLP struct {
 	UpGroupSize   int
 	DownGroupSize int
 
+	GateMode string
+	UpMode   string
+	DownMode string
+
 	UseQuantized bool
 }
 
@@ -979,16 +983,19 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 				switchMLP.GateBiases = gateW.Biases
 				switchMLP.GateBits = gateW.Bits
 				switchMLP.GateGroupSize = gateW.GroupSize
+				switchMLP.GateMode = gateW.Mode
 				switchMLP.UpWeightQ = upW.Weight
 				switchMLP.UpScales = upW.Scales
 				switchMLP.UpBiases = upW.Biases
 				switchMLP.UpBits = upW.Bits
 				switchMLP.UpGroupSize = upW.GroupSize
+				switchMLP.UpMode = upW.Mode
 				switchMLP.DownWeightQ = downW.Weight
 				switchMLP.DownScales = downW.Scales
 				switchMLP.DownBiases = downW.Biases
 				switchMLP.DownBits = downW.Bits
 				switchMLP.DownGroupSize = downW.GroupSize
+				switchMLP.DownMode = downW.Mode
 			} else {
 				switchMLP.GateWeight = transposeExpertWeightForGatherMM(gateW.Weight)
 				switchMLP.UpWeight = transposeExpertWeightForGatherMM(upW.Weight)
@@ -1218,12 +1225,12 @@ func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.
 	var gate, up, hidden, down *mlx.Array
 	if s.UseQuantized {
 		gate = mlx.GatherQMM(xFlat, s.GateWeightQ, s.GateScales, s.GateBiases,
-			nil, idxFlat, true, s.GateGroupSize, s.GateBits, cfg.QuantMode, doSort)
+			nil, idxFlat, true, s.GateGroupSize, s.GateBits, s.GateMode, doSort)
 		up = mlx.GatherQMM(xFlat, s.UpWeightQ, s.UpScales, s.UpBiases,
-			nil, idxFlat, true, s.UpGroupSize, s.UpBits, cfg.QuantMode, doSort)
+			nil, idxFlat, true, s.UpGroupSize, s.UpBits, s.UpMode, doSort)
 		hidden = mlx.SwiGLU(gate, up)
 		down = mlx.GatherQMM(hidden, s.DownWeightQ, s.DownScales, s.DownBiases,
-			nil, idxFlat, true, s.DownGroupSize, s.DownBits, cfg.QuantMode, doSort)
+			nil, idxFlat, true, s.DownGroupSize, s.DownBits, s.DownMode, doSort)
 	} else {
 		gate = mlx.GatherMM(xFlat, s.GateWeight, nil, idxFlat, doSort)
 		up = mlx.GatherMM(xFlat, s.UpWeight, nil, idxFlat, doSort)
