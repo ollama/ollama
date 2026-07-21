@@ -220,12 +220,20 @@ func GenerateAgentTUI(cmd *cobra.Command, client *api.Client, opts agentTUIOptio
 		return agentContextWindowForModel(ctx, client, model, fallback)
 	}
 
-	skillCatalog, err := coreagent.LoadDefaultSkills(cwd)
-	if err != nil {
-		return fmt.Errorf("load agent skills: %w", err)
+	var skillCatalog *coreagent.SkillCatalog
+	reloadSkills := func() (*coreagent.SkillCatalog, error) {
+		catalog, err := coreagent.LoadDefaultSkills(cwd)
+		if err != nil {
+			return nil, err
+		}
+		for _, diagnostic := range catalog.Diagnostics() {
+			fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m ignored invalid agent skill: %v\n", diagnostic)
+		}
+		skillCatalog = catalog
+		return catalog, nil
 	}
-	for _, diagnostic := range skillCatalog.Diagnostics() {
-		fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m ignored invalid agent skill: %v\n", diagnostic)
+	if _, err := reloadSkills(); err != nil {
+		return fmt.Errorf("load agent skills: %w", err)
 	}
 	var registry *coreagent.Registry
 	registryForModel := func(ctx context.Context, model string) *coreagent.Registry {
@@ -236,7 +244,7 @@ func GenerateAgentTUI(cmd *cobra.Command, client *api.Client, opts agentTUIOptio
 	}
 	systemPrompt := agentSystemPromptWithWorkingDir(opts.Model, opts.System, agentSkillSystemContext(skillCatalog, registry, opts.ToolsDisabled), cwd)
 
-	_, err = agentchat.Run(cmd.Context(), agentchat.Options{
+	_, err := agentchat.Run(cmd.Context(), agentchat.Options{
 		Model:                opts.Model,
 		Client:               client,
 		Tools:                registry,
@@ -255,6 +263,8 @@ func GenerateAgentTUI(cmd *cobra.Command, client *api.Client, opts agentTUIOptio
 			return agentSystemPromptWithWorkingDir(model, agentSystemFromShow(ctx, client, model), agentSkillSystemContext(skillCatalog, registry, toolsDisabled), cwd)
 		},
 		Skills:              skillCatalog,
+		ImportSkills:        coreagent.ImportSkills,
+		ReloadSkills:        reloadSkills,
 		SystemPrompt:        systemPrompt,
 		WorkingDir:          cwd,
 		Format:              opts.Format,

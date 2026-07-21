@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -269,6 +271,350 @@ func installBundledSkillCreator() error {
 
 type skillRoot struct {
 	path string
+}
+
+// SkillImportResult describes one import attempt. Failed skills do not prevent
+// other valid skills in the same source root from being imported.
+type SkillImportResult struct {
+	Source      string
+	SourceDir   string
+	Destination string
+	Imported    []string
+	Existing    []string
+	Failures    []SkillImportFailure
+}
+
+// SkillImportFailure identifies a source skill that was deliberately skipped.
+// The destination is never changed for a failed skill.
+type SkillImportFailure struct {
+	Name string
+	Err  error
+}
+
+// ImportSkills imports skills from a conventional coding-agent source into the
+// canonical Ollama skills directory. Supported sources are codex, claude, and
+// pi. Existing skills are left untouched: an identical directory is reported
+// as existing, and a differing one is reported as a conflict.
+func ImportSkills(source string) (SkillImportResult, error) {
+	source = strings.ToLower(strings.TrimSpace(source))
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return SkillImportResult{}, fmt.Errorf("resolve home directory: %w", err)
+	}
+
+	var sourceDir string
+	switch source {
+	case "codex":
+		sourceDir = filepath.Join(home, ".codex", "skills")
+	case "claude":
+		sourceDir = filepath.Join(home, ".claude", "skills")
+	case "pi":
+		sourceDir = filepath.Join(home, ".pi", "agent", "skills")
+	default:
+		return SkillImportResult{}, fmt.Errorf("unknown skill source %q", source)
+	}
+
+	destination, err := SkillsDir()
+	if err != nil {
+		return SkillImportResult{}, fmt.Errorf("resolve Ollama skills directory: %w", err)
+	}
+	return importSkillsFromDir(source, sourceDir, destination)
+}
+
+func importSkillsFromDir(source, sourceDir, destination string) (SkillImportResult, error) {
+	result := SkillImportResult{Source: source, SourceDir: sourceDir, Destination: destination}
+	info, err := os.Lstat(sourceDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return result, nil
+	}
+	if err != nil {
+		return result, fmt.Errorf("inspect %s skills directory: %w", source, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return result, fmt.Errorf("inspect %s skills directory: symlinks are not supported", source)
+	}
+	if !info.IsDir() {
+		return result, fmt.Errorf("inspect %s skills directory: not a directory", source)
+	}
+
+	entries, err := os.ReadDir(sourceDir)
+	if err != nil {
+		return result, fmt.Errorf("read %s skills directory: %w", source, err)
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		path := filepath.Join(sourceDir, name)
+		if entry.Type()&os.ModeSymlink != 0 {
+			result.Failures = append(result.Failures, SkillImportFailure{Name: name, Err: errors.New("symlinked skill directories are not supported")})
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			result.Failures = append(result.Failures, SkillImportFailure{Name: name, Err: fmt.Errorf("inspect source: %w", err)})
+			continue
+		}
+		if !info.IsDir() {
+			continue
+		}
+		if !skillName.MatchString(name) {
+			result.Failures = append(result.Failures, SkillImportFailure{Name: name, Err: errors.New("invalid skill directory name")})
+			continue
+		}
+		if err := validateImportSkill(path, name); err != nil {
+			result.Failures = append(result.Failures, SkillImportFailure{Name: name, Err: err})
+			continue
+		}
+
+		state, err := importSkillDirectory(path, filepath.Join(destination, name))
+		if err != nil {
+			result.Failures = append(result.Failures, SkillImportFailure{Name: name, Err: err})
+			continue
+		}
+		if state == skillImportExisting {
+			result.Existing = append(result.Existing, name)
+		} else {
+			result.Imported = append(result.Imported, name)
+		}
+	}
+	return result, nil
+}
+
+func validateImportSkill(dir, name string) error {
+	manifest := filepath.Join(dir, skillFilename)
+	info, err := os.Lstat(manifest)
+	if err != nil {
+		return fmt.Errorf("inspect %s: %w", skillFilename, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return fmt.Errorf("%s must be a regular, non-symlinked file", skillFilename)
+	}
+	if _, err := parseSkill(manifest, name); err != nil {
+		return err
+	}
+	return walkImportTree(dir, func(path string, entry fs.DirEntry, info fs.FileInfo) error {
+		if info.IsDir() || path == dir {
+			return nil
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("only regular files may be imported: %s", path)
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", path, err)
+		}
+		return file.Close()
+	})
+}
+
+func walkImportTree(root string, visit func(string, fs.DirEntry, fs.FileInfo) error) error {
+	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("unsafe skill path %q", path)
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("symlinks may not be imported: %s", path)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		return visit(path, entry, info)
+	})
+}
+
+type skillImportState int
+
+const (
+	skillImportCopied skillImportState = iota
+	skillImportExisting
+)
+
+func importSkillDirectory(source, destination string) (skillImportState, error) {
+	if info, err := os.Lstat(destination); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return 0, errors.New("destination exists but is not a regular directory")
+		}
+		same, err := sameImportTree(source, destination)
+		if err != nil {
+			return 0, fmt.Errorf("inspect existing destination: %w", err)
+		}
+		if same {
+			return skillImportExisting, nil
+		}
+		return 0, errors.New("destination skill already exists with different contents")
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return 0, fmt.Errorf("inspect destination: %w", err)
+	}
+
+	if err := ensureImportDestination(filepath.Dir(destination)); err != nil {
+		return 0, err
+	}
+	stage, err := os.MkdirTemp(filepath.Dir(destination), "."+filepath.Base(destination)+".import-")
+	if err != nil {
+		return 0, fmt.Errorf("create import staging directory: %w", err)
+	}
+	defer os.RemoveAll(stage)
+	if err := copyImportTree(source, stage); err != nil {
+		return 0, err
+	}
+	if _, err := os.Lstat(destination); err == nil {
+		return 0, errors.New("destination skill was created during import")
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return 0, fmt.Errorf("inspect destination before install: %w", err)
+	}
+	if err := os.Rename(stage, destination); err != nil {
+		return 0, fmt.Errorf("install imported skill: %w", err)
+	}
+	return skillImportCopied, nil
+}
+
+func ensureImportDestination(dir string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create Ollama skills directory: %w", err)
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return fmt.Errorf("inspect Ollama skills directory: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return errors.New("Ollama skills directory must be a regular, non-symlinked directory")
+	}
+	return nil
+}
+
+func copyImportTree(source, destination string) error {
+	return walkImportTree(source, func(path string, entry fs.DirEntry, info fs.FileInfo) error {
+		rel, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		target := destination
+		if rel != "." {
+			target = filepath.Join(destination, rel)
+		}
+		if info.IsDir() {
+			if rel == "." {
+				return nil
+			}
+			return os.Mkdir(target, info.Mode().Perm())
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("only regular files may be imported: %s", path)
+		}
+		return copyImportFile(path, target, info.Mode().Perm())
+	})
+}
+
+func copyImportFile(source, destination string, mode fs.FileMode) error {
+	in, err := os.Open(source)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", source, err)
+	}
+	defer in.Close()
+	out, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		return fmt.Errorf("create %s: %w", destination, err)
+	}
+	_, copyErr := io.Copy(out, in)
+	closeErr := out.Close()
+	if copyErr != nil {
+		return fmt.Errorf("copy %s: %w", source, copyErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("write %s: %w", destination, closeErr)
+	}
+	return nil
+}
+
+func sameImportTree(source, destination string) (bool, error) {
+	seen := make(map[string]struct{})
+	var same = true
+	err := walkImportTree(source, func(path string, entry fs.DirEntry, info fs.FileInfo) error {
+		rel, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		seen[rel] = struct{}{}
+		other := destination
+		if rel != "." {
+			other = filepath.Join(destination, rel)
+		}
+		otherInfo, err := os.Lstat(other)
+		if errors.Is(err, fs.ErrNotExist) {
+			same = false
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if otherInfo.Mode()&os.ModeSymlink != 0 || otherInfo.IsDir() != info.IsDir() || (!info.IsDir() && !otherInfo.Mode().IsRegular()) {
+			same = false
+			return nil
+		}
+		if info.Mode().IsRegular() {
+			equal, err := sameImportFile(path, other)
+			if err != nil {
+				return err
+			}
+			if !equal {
+				same = false
+			}
+		}
+		return nil
+	})
+	if err != nil || !same {
+		return same, err
+	}
+	err = walkImportTree(destination, func(path string, entry fs.DirEntry, info fs.FileInfo) error {
+		rel, err := filepath.Rel(destination, path)
+		if err != nil {
+			return err
+		}
+		if _, ok := seen[rel]; !ok {
+			same = false
+		}
+		return nil
+	})
+	return same, err
+}
+
+func sameImportFile(first, second string) (bool, error) {
+	a, err := os.Open(first)
+	if err != nil {
+		return false, err
+	}
+	defer a.Close()
+	b, err := os.Open(second)
+	if err != nil {
+		return false, err
+	}
+	defer b.Close()
+
+	left := make([]byte, 32*1024)
+	right := make([]byte, len(left))
+	for {
+		n, errA := a.Read(left)
+		m, errB := b.Read(right)
+		if n != m || !bytes.Equal(left[:n], right[:m]) {
+			return false, nil
+		}
+		if errA == io.EOF && errB == io.EOF {
+			return true, nil
+		}
+		if errA != nil && errA != io.EOF {
+			return false, errA
+		}
+		if errB != nil && errB != io.EOF {
+			return false, errB
+		}
+		if errA == io.EOF || errB == io.EOF {
+			return false, nil
+		}
+	}
 }
 
 // defaultSkillRoots returns skill directories ordered lowest- to
