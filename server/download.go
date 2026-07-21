@@ -315,6 +315,18 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 		return err
 	}
 
+	// Verify the digest of the assembled file before renaming to detect
+	// corruption from bad HTTP responses, network issues, or disk errors.
+	if err := verifyBlobFile(file.Name(), b.Digest); err != nil {
+		// Remove the corrupted partial file and all part tracking files
+		// so a retry starts fresh instead of resuming from corrupt data.
+		os.Remove(file.Name())
+		for i := range b.Parts {
+			os.Remove(file.Name() + "-" + strconv.Itoa(i))
+		}
+		return err
+	}
+
 	for i := range b.Parts {
 		if err := os.Remove(file.Name() + "-" + strconv.Itoa(i)); err != nil {
 			return err
@@ -341,6 +353,12 @@ func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w
 			return err
 		}
 		defer resp.Body.Close()
+
+		// Validate response status code to prevent writing error pages or
+		// wrong content into the blob file, which causes digest mismatch.
+		if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("unexpected status code %d for range request", resp.StatusCode)
+		}
 
 		n, err := io.CopyN(w, io.TeeReader(resp.Body, part), part.Size-part.Completed.Load())
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.ErrUnexpectedEOF) {
@@ -506,4 +524,21 @@ func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ erro
 	}
 
 	return false, download.Wait(ctx, opts.fn)
+}
+
+// verifyBlobFile checks that the SHA256 digest of the file at path matches
+// the expected digest. This catches corruption before the partial file is
+// promoted to the final blob path.
+func verifyBlobFile(path string, expectedDigest string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	actualDigest, _ := GetSHA256Digest(f)
+	if actualDigest != expectedDigest {
+		return fmt.Errorf("%w: want %s, got %s", errDigestMismatch, expectedDigest, actualDigest)
+	}
+	return nil
 }
