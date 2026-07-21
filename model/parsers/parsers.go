@@ -94,6 +94,8 @@ func ParserForName(name string) Parser {
 		return &LFM2Parser{hasThinkingSupport: true}
 	case "laguna":
 		return &LagunaParser{}
+	case "laguna-v8":
+		return &LagunaV8Parser{}
 	case "cohere":
 		return &CohereParser{}
 	default:
