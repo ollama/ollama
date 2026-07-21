@@ -17,16 +17,22 @@ func renderMarkdownForView(markdown string, width int) string {
 	source := strings.Split(strings.TrimRight(markdown, "\n"), "\n")
 	var rendered []string
 	inCodeBlock := false
+	codeLanguage := ""
 	for i := 0; i < len(source); i++ {
 		line := strings.TrimRight(source[i], "\r")
 		trimmed := strings.TrimSpace(line)
 
 		if strings.HasPrefix(trimmed, "```") {
 			inCodeBlock = !inCodeBlock
+			if inCodeBlock {
+				codeLanguage = markdownCodeFenceLanguage(trimmed)
+			} else {
+				codeLanguage = ""
+			}
 			continue
 		}
 		if inCodeBlock {
-			rendered = append(rendered, renderMarkdownCodeLine(line, width)...)
+			rendered = append(rendered, renderMarkdownCodeLine(line, codeLanguage, width)...)
 			continue
 		}
 
@@ -218,13 +224,193 @@ func renderMarkdownRunes(runes []markdownInlineRune) string {
 	return b.String()
 }
 
-func renderMarkdownCodeLine(line string, width int) []string {
+func renderMarkdownCodeLine(line, language string, width int) []string {
 	codeWidth := max(1, width-2)
 	lines := wrapChatText(line, codeWidth)
 	for i, wrapped := range lines {
-		lines[i] = "  " + chatCodeBlockStyle.Render(wrapped)
+		lines[i] = "  " + chatCodeBlockStyle.Render(highlightMarkdownCodeLine(language, wrapped))
 	}
 	return lines
+}
+
+func markdownCodeFenceLanguage(fence string) string {
+	info := strings.TrimSpace(strings.TrimPrefix(fence, "```"))
+	if info == "" {
+		return ""
+	}
+	return normalizeMarkdownCodeLanguage(strings.Fields(info)[0])
+}
+
+func normalizeMarkdownCodeLanguage(language string) string {
+	switch strings.ToLower(strings.TrimSpace(language)) {
+	case "go", "golang":
+		return "go"
+	case "js", "javascript", "jsx", "ts", "typescript", "tsx":
+		return "javascript"
+	case "py", "python":
+		return "python"
+	case "sh", "shell", "bash", "zsh":
+		return "shell"
+	case "json":
+		return "json"
+	case "yaml", "yml":
+		return "yaml"
+	case "sql":
+		return "sql"
+	case "c", "h", "cpp", "c++", "cc", "cxx", "hpp", "java", "rust", "rs", "css", "swift":
+		return "clike"
+	default:
+		return ""
+	}
+}
+
+func highlightMarkdownCodeLine(language, line string) string {
+	if language == "" || line == "" {
+		return line
+	}
+
+	var rendered strings.Builder
+	for i := 0; i < len(line); {
+		if comment, ok := markdownCodeComment(language, line[i:]); ok {
+			rendered.WriteString(chatCodeCommentStyle.Render(comment))
+			break
+		}
+		if quote := line[i]; quote == '\'' || quote == '"' || (quote == '`' && language != "json") {
+			end := markdownCodeStringEnd(line, i, quote)
+			rendered.WriteString(chatCodeStringStyle.Render(line[i:end]))
+			i = end
+			continue
+		}
+		if isMarkdownCodeIdentifierStart(line[i]) {
+			end := i + 1
+			for end < len(line) && isMarkdownCodeIdentifierPart(line[end]) {
+				end++
+			}
+			word := line[i:end]
+			rendered.WriteString(renderMarkdownCodeToken(markdownCodeTokenKindFor(language, word, line[end:]), word))
+			i = end
+			continue
+		}
+		if line[i] >= '0' && line[i] <= '9' {
+			end := i + 1
+			for end < len(line) && isMarkdownCodeNumberPart(line[end]) {
+				end++
+			}
+			rendered.WriteString(chatCodeNumberStyle.Render(line[i:end]))
+			i = end
+			continue
+		}
+		rendered.WriteByte(line[i])
+		i++
+	}
+	return rendered.String()
+}
+
+func markdownCodeComment(language, line string) (string, bool) {
+	if strings.HasPrefix(line, "//") && language != "shell" && language != "yaml" {
+		return line, true
+	}
+	if strings.HasPrefix(line, "#") && (language == "shell" || language == "python" || language == "yaml") {
+		return line, true
+	}
+	if strings.HasPrefix(line, "--") && language == "sql" {
+		return line, true
+	}
+	if strings.HasPrefix(line, "/*") {
+		return line, true
+	}
+	return "", false
+}
+
+func markdownCodeStringEnd(line string, start int, quote byte) int {
+	for i := start + 1; i < len(line); i++ {
+		if line[i] == '\\' {
+			i++
+			continue
+		}
+		if line[i] == quote {
+			return i + 1
+		}
+	}
+	return len(line)
+}
+
+func isMarkdownCodeIdentifierStart(c byte) bool {
+	return c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
+func isMarkdownCodeIdentifierPart(c byte) bool {
+	return isMarkdownCodeIdentifierStart(c) || c >= '0' && c <= '9'
+}
+
+func isMarkdownCodeNumberPart(c byte) bool {
+	return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F' || c == '.' || c == '_' || c == 'x' || c == 'X'
+}
+
+func markdownCodeFunctionCall(rest string) bool {
+	return strings.HasPrefix(strings.TrimLeft(rest, " \t"), "(")
+}
+
+type markdownCodeTokenKind uint8
+
+const (
+	markdownCodeTokenPlain markdownCodeTokenKind = iota
+	markdownCodeTokenKeyword
+	markdownCodeTokenLiteral
+	markdownCodeTokenType
+	markdownCodeTokenFunction
+)
+
+func markdownCodeTokenKindFor(language, word, rest string) markdownCodeTokenKind {
+	switch {
+	case markdownCodeKeywords[language][word], markdownCodeKeywords["all"][word]:
+		return markdownCodeTokenKeyword
+	case markdownCodeLiterals[word]:
+		return markdownCodeTokenLiteral
+	case markdownCodeTypes[word]:
+		return markdownCodeTokenType
+	case markdownCodeFunctionCall(rest):
+		return markdownCodeTokenFunction
+	default:
+		return markdownCodeTokenPlain
+	}
+}
+
+func renderMarkdownCodeToken(kind markdownCodeTokenKind, text string) string {
+	switch kind {
+	case markdownCodeTokenKeyword:
+		return chatCodeKeywordStyle.Render(text)
+	case markdownCodeTokenLiteral:
+		return chatCodeNumberStyle.Render(text)
+	case markdownCodeTokenType:
+		return chatCodeTypeStyle.Render(text)
+	case markdownCodeTokenFunction:
+		return chatCodeFunctionStyle.Render(text)
+	default:
+		return text
+	}
+}
+
+var markdownCodeKeywords = map[string]map[string]bool{
+	"all": {
+		"break": true, "case": true, "catch": true, "class": true, "const": true, "continue": true, "default": true, "defer": true, "do": true, "else": true, "for": true, "func": true, "function": true, "if": true, "import": true, "in": true, "let": true, "new": true, "package": true, "private": true, "protected": true, "public": true, "return": true, "struct": true, "switch": true, "throw": true, "try": true, "var": true, "while": true,
+	},
+	"go":         {"chan": true, "go": true, "map": true, "range": true, "select": true, "type": true},
+	"javascript": {"async": true, "await": true, "export": true, "extends": true, "from": true, "interface": true, "of": true, "static": true, "typeof": true},
+	"python":     {"and": true, "as": true, "def": true, "del": true, "elif": true, "except": true, "finally": true, "global": true, "is": true, "lambda": true, "nonlocal": true, "not": true, "or": true, "pass": true, "raise": true, "with": true, "yield": true},
+	"shell":      {"done": true, "echo": true, "esac": true, "export": true, "fi": true, "local": true, "then": true},
+	"clike":      {"enum": true, "implements": true, "namespace": true, "template": true, "using": true},
+	"sql":        {"delete": true, "from": true, "insert": true, "into": true, "join": true, "select": true, "update": true, "where": true},
+	"json":       {},
+	"yaml":       {},
+}
+
+var markdownCodeLiterals = map[string]bool{
+	"false": true, "nil": true, "none": true, "null": true, "true": true, "undefined": true,
+}
+
+var markdownCodeTypes = map[string]bool{
+	"any": true, "bool": true, "boolean": true, "byte": true, "error": true, "float": true, "float32": true, "float64": true, "int": true, "int8": true, "int16": true, "int32": true, "int64": true, "number": true, "object": true, "rune": true, "string": true, "uint": true, "uint8": true, "uint16": true, "uint32": true, "uint64": true, "void": true,
 }
 
 func renderMarkdownTable(lines []string, width int) ([]string, int) {
