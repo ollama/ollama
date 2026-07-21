@@ -20,6 +20,23 @@ func lagunaTestTools() []api.Tool {
 	}}
 }
 
+func lagunaParseChunks(t *testing.T, parser Parser, chunks ...string) (string, string, []api.ToolCall) {
+	t.Helper()
+
+	var content, thinking string
+	var calls []api.ToolCall
+	for i, chunk := range chunks {
+		chunkContent, chunkThinking, chunkCalls, err := parser.Add(chunk, i == len(chunks)-1)
+		if err != nil {
+			t.Fatalf("Add(%q, done=%t): %v", chunk, i == len(chunks)-1, err)
+		}
+		content += chunkContent
+		thinking += chunkThinking
+		calls = append(calls, chunkCalls...)
+	}
+	return content, thinking, calls
+}
+
 func TestLagunaParserToolCall(t *testing.T) {
 	parser := ParserForName("laguna")
 	if parser == nil {
@@ -515,6 +532,27 @@ func TestLagunaParserNonAssistantLastMessageStillPrimesThinking(t *testing.T) {
 	}
 }
 
+func TestLagunaV8ParserAssistantHistoryStillPrimesThinking(t *testing.T) {
+	// Laguna v8 closes assistant history and emits a fresh generation prompt,
+	// so an assistant tail message must not switch the parser into prefill mode.
+	parser := ParserForName("laguna-v8")
+	if parser == nil {
+		t.Fatal("expected laguna-v8 parser")
+	}
+	if !parser.HasToolSupport() || !parser.HasThinkingSupport() {
+		t.Fatal("laguna-v8 parser should advertise tools and thinking")
+	}
+
+	parser.Init(nil, &api.Message{Role: "assistant", Content: "Previous."}, &api.ThinkValue{Value: true})
+	content, thinking, calls, err := parser.Add("Reasoning.</think>Answer.", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content != "Answer." || thinking != "Reasoning." || len(calls) != 0 {
+		t.Fatalf("content=%q thinking=%q calls=%d", content, thinking, len(calls))
+	}
+}
+
 func TestLagunaParserStripsLeadingContentWhitespace(t *testing.T) {
 	// No-think prompts prime </think>, so the model emits a leading newline
 	// before content; the parser drops it.
@@ -573,5 +611,91 @@ func TestLagunaParserSplitToolTag(t *testing.T) {
 	}
 	if content != "" || thinking != "" || len(calls) != 1 {
 		t.Fatalf("second chunk content=%q thinking=%q calls=%d", content, thinking, len(calls))
+	}
+}
+
+func TestLagunaParserPartialToolCallFakeoutInContent(t *testing.T) {
+	parser := ParserForName("laguna")
+	parser.Init(lagunaTestTools(), nil, nil)
+
+	content, thinking, calls := lagunaParseChunks(t, parser, "Document literal <tool_call", " fakeout")
+	if content != "Document literal <tool_call fakeout" || thinking != "" || len(calls) != 0 {
+		t.Fatalf("content=%q thinking=%q calls=%d", content, thinking, len(calls))
+	}
+}
+
+func TestLagunaParserPartialToolCallFakeoutInThinking(t *testing.T) {
+	parser := ParserForName("laguna")
+	parser.Init(lagunaTestTools(), nil, &api.ThinkValue{Value: true})
+
+	content, thinking, calls := lagunaParseChunks(t, parser, "<think>Document literal <tool_c", " fakeout")
+	if content != "" || thinking != "Document literal <tool_c fakeout" || len(calls) != 0 {
+		t.Fatalf("content=%q thinking=%q calls=%d", content, thinking, len(calls))
+	}
+}
+
+func TestLagunaParserPartialThinkOpenFakeoutInContent(t *testing.T) {
+	tests := []struct {
+		name       string
+		thinkValue *api.ThinkValue
+		last       *api.Message
+	}{
+		{
+			name: "default off",
+		},
+		{
+			name:       "explicit off",
+			thinkValue: &api.ThinkValue{Value: false},
+		},
+		{
+			name:       "enabled assistant prefill content",
+			thinkValue: &api.ThinkValue{Value: true},
+			last:       &api.Message{Role: "assistant", Content: "prefill"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := ParserForName("laguna")
+			parser.Init(nil, tt.last, tt.thinkValue)
+
+			content, thinking, calls := lagunaParseChunks(t, parser, "Document literal <think", " fakeout")
+			if content != "Document literal <think fakeout" || thinking != "" || len(calls) != 0 {
+				t.Fatalf("content=%q thinking=%q calls=%d", content, thinking, len(calls))
+			}
+		})
+	}
+}
+
+func TestLagunaParserPartialThinkCloseFakeoutAtContentStart(t *testing.T) {
+	tests := []struct {
+		name       string
+		thinkValue *api.ThinkValue
+		last       *api.Message
+	}{
+		{
+			name: "default off",
+		},
+		{
+			name:       "explicit off",
+			thinkValue: &api.ThinkValue{Value: false},
+		},
+		{
+			name:       "enabled assistant prefill content",
+			thinkValue: &api.ThinkValue{Value: true},
+			last:       &api.Message{Role: "assistant", Content: "prefill"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := ParserForName("laguna")
+			parser.Init(nil, tt.last, tt.thinkValue)
+
+			content, thinking, calls := lagunaParseChunks(t, parser, "</think", " fakeout")
+			if content != "</think fakeout" || thinking != "" || len(calls) != 0 {
+				t.Fatalf("content=%q thinking=%q calls=%d", content, thinking, len(calls))
+			}
+		})
 	}
 }
