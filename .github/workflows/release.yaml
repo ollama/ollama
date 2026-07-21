@@ -130,6 +130,7 @@ jobs:
             build-steps: cuda13Arm64Cross
             install: https://packages.nvidia.com/prerelease/cuda/13.4.0/local_installers/cuda_13.4.0_windows_x86_64.exe
             cuda-components:
+              - '"cudart"'
               - '"cudart_cross"'
               - '"nvcc"'
               - '"nvcc_cross"'
