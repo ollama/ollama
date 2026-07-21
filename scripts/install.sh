@@ -290,7 +290,20 @@ if [ "$IS_WSL2" = true ]; then
         status "Nvidia GPU detected."
     elif [ "$ROCDXG" = true ]; then
         download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-rocm"
-        status "AMD GPU (WSL2 / ROCDXG) ready."
+        # The systemd unit only covers the service; a manual `ollama serve` needs
+        # HSA_ENABLE_DXG_DETECTION too, and profile.d reaches login shells even
+        # when systemd is disabled (common on WSL2). /etc/environment would not:
+        # without systemd there is no PAM login to apply it.
+        echo 'export HSA_ENABLE_DXG_DETECTION=1' | $SUDO tee /etc/profile.d/ollama-rocdxg.sh >/dev/null
+        case "${SYSTEMCTL_RUNNING:-}" in
+            running|degraded)
+                status "AMD GPU (WSL2 / ROCDXG) ready."
+                ;;
+            *)
+                status "AMD GPU (WSL2 / ROCDXG) detected, but the ollama service is not running."
+                status "Run 'export HSA_ENABLE_DXG_DETECTION=1' before 'ollama serve' (new login shells set this automatically)."
+                ;;
+        esac
     fi
     install_success
     exit 0
