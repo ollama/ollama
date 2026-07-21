@@ -532,7 +532,7 @@ func copyImportFile(source, destination string, mode fs.FileMode) error {
 
 func sameImportTree(source, destination string) (bool, error) {
 	seen := make(map[string]struct{})
-	var same = true
+	same := true
 	err := walkImportTree(source, func(path string, entry fs.DirEntry, info fs.FileInfo) error {
 		rel, err := filepath.Rel(source, path)
 		if err != nil {
