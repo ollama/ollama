@@ -845,6 +845,34 @@ func TestToMessagesResponse_WithThinking(t *testing.T) {
 	}
 }
 
+func TestToMessagesResponse_EmptyMessage(t *testing.T) {
+	resp := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Role: "assistant",
+		},
+		Done:       true,
+		DoneReason: "stop",
+	}
+
+	result := ToMessagesResponse("msg_123", resp)
+
+	if result.Content == nil {
+		t.Fatal("expected non-nil content for empty message")
+	}
+	if len(result.Content) != 0 {
+		t.Fatalf("expected 0 content blocks, got %d", len(result.Content))
+	}
+
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("failed to marshal response: %v", err)
+	}
+	if !strings.Contains(string(data), `"content":[]`) {
+		t.Errorf(`expected "content":[] in JSON, got %s`, data)
+	}
+}
+
 func TestMapStopReason(t *testing.T) {
 	tests := []struct {
 		reason       string
