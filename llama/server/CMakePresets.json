@@ -211,6 +211,26 @@
       "binaryDir": "${sourceDir}/../../build/llama-server-rocm_v7_2"
     },
     {
+      "name": "rocm_v7_14_nightly_linux",
+      "inherits": ["rocm_v7_2_base"],
+      "description": "Bleeding-edge Linux ROCm backend using AMD TheRock 7.14 nightly artifacts",
+      "binaryDir": "${sourceDir}/../../build/llama-server-rocm_v7_14_nightly",
+      "cacheVariables": {
+        "AMDGPU_TARGETS": "gfx942;gfx950;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1200;gfx1201;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-",
+        "OLLAMA_RUNNER_DIR": "rocm_v7_14_nightly"
+      }
+    },
+    {
+      "name": "rocm_v7_14_nightly_windows",
+      "inherits": ["rocm_v7_2_base"],
+      "description": "Bleeding-edge Windows ROCm backend using AMD TheRock 7.14 nightly artifacts",
+      "binaryDir": "${sourceDir}/../../build/llama-server-rocm_v7_14_nightly",
+      "cacheVariables": {
+        "AMDGPU_TARGETS": "gfx942;gfx950;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1200;gfx1201",
+        "OLLAMA_RUNNER_DIR": "rocm_v7_14_nightly"
+      }
+    },
+    {
       "name": "vulkan",
       "inherits": ["default"],
       "binaryDir": "${sourceDir}/../../build/llama-server-vulkan",
@@ -310,6 +330,16 @@
     {
       "name": "rocm_v7_2_user_arch",
       "configurePreset": "rocm_v7_2_user_arch",
+      "targets": ["ggml-hip"]
+    },
+    {
+      "name": "rocm_v7_14_nightly_linux",
+      "configurePreset": "rocm_v7_14_nightly_linux",
+      "targets": ["ggml-hip"]
+    },
+    {
+      "name": "rocm_v7_14_nightly_windows",
+      "configurePreset": "rocm_v7_14_nightly_windows",
       "targets": ["ggml-hip"]
     },
     {

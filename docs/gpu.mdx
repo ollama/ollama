@@ -83,6 +83,15 @@ Ollama requires an AMD ROCm v7 / HIP7-capable driver stack on Windows.
 | AMD Radeon RX  | `7900 XTX` `7900 XT` `7900 GRE` `7800 XT` `7700 XT` `7600 XT` `7600`  |
 | AMD Radeon PRO | `W7900` `W7800` `W7700` `W7600` `W7500`                                |
 
+To add the experimental TheRock ROCm package to the default Windows install:
+
+```powershell
+$Ollama = "$env:LOCALAPPDATA\Programs\Ollama"; $Zip = "$env:TEMP\ollama-windows-amd64-rocm-nightly.zip"
+Invoke-WebRequest https://ollama.com/download/ollama-windows-amd64-rocm-nightly.zip -OutFile $Zip; Expand-Archive -Force $Zip $Ollama
+```
+
+TheRock may add experimental support for newer ROCm targets, including some Ryzen AI and Radeon RX 9000-class GPUs, but support depends on the installed AMD driver stack.
+
 ### Overrides on Linux
 
 Ollama leverages the AMD ROCm library, which does not support all AMD GPUs. In

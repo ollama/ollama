@@ -156,6 +156,61 @@ download_and_extract() {
         $SUDO tar -xzf - -C "${dest_dir}"
 }
 
+download_split_payload() {
+    local url_base="$1"
+    local dest_dir="$2"
+    local filename_prefix="$3"
+    local parts="$4"
+    local part=1
+    local filename
+
+    while [ "$part" -le "$parts" ]; do
+        filename="${filename_prefix}-${part}-of-${parts}"
+        if ! curl --fail --silent --head --location "${url_base}/${filename}.tar.zst${VER_PARAM}" >/dev/null 2>&1; then
+            return 1
+        fi
+        part=$((part + 1))
+    done
+
+    part=1
+    while [ "$part" -le "$parts" ]; do
+        filename="${filename_prefix}-${part}-of-${parts}"
+        download_and_extract "$url_base" "$dest_dir" "$filename" || return 2
+        part=$((part + 1))
+    done
+}
+
+download_rocm_payload() {
+    local url_base="$1"
+    local dest_dir="$2"
+    local therock="${OLLAMA_THEROCK:-0}"
+    local split_suffix
+    local split_status
+
+    case "$therock" in
+        1|true|TRUE|True|yes|YES|Yes) split_suffix="nightly" ;;
+        0|false|FALSE|False|no|NO|No|"") split_suffix="stable" ;;
+        *) error "Unsupported OLLAMA_THEROCK value: $therock. Use OLLAMA_THEROCK=1 to install TheRock ROCm." ;;
+    esac
+
+    if download_split_payload "$url_base" "$dest_dir" "ollama-linux-${ARCH}-rocm-${split_suffix}" 2; then
+        return 0
+    else
+        split_status=$?
+    fi
+
+    if [ "$split_status" -ne 1 ]; then
+        exit "$split_status"
+    fi
+
+    if [ "$split_suffix" = "nightly" ]; then
+        warning "TheRock ROCm payload not found for this version. Falling back to the legacy ROCm payload."
+    else
+        status "Split ROCm payload not found. Falling back to the legacy ROCm payload."
+    fi
+    download_and_extract "$url_base" "$dest_dir" "ollama-linux-${ARCH}-rocm"
+}
+
 for BINDIR in /usr/local/bin /usr/bin /bin; do
     echo $PATH | grep -q $BINDIR && break || continue
 done
@@ -303,7 +358,7 @@ if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdg
 fi
 
 if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
-    download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-rocm"
+    download_rocm_payload "https://ollama.com/download" "$OLLAMA_INSTALL_DIR"
 
     install_success
     status "AMD GPU ready."
