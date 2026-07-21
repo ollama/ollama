@@ -57,6 +57,63 @@ curl -X POST http://localhost:11434/v1/chat/completions \
 
 </CodeGroup>
 
+### Streaming `/v1/chat/completions` example
+
+Set `stream` to `true` and consume each content delta as it arrives.
+
+<CodeGroup dropdown>
+
+```python streaming.py
+from openai import OpenAI
+
+client = OpenAI(
+    base_url='http://localhost:11434/v1/',
+    api_key='ollama',  # required but ignored
+)
+
+stream = client.chat.completions.create(
+    model='gpt-oss:20b',
+    messages=[{'role': 'user', 'content': 'Explain why the sky is blue'}],
+    stream=True,
+)
+
+for chunk in stream:
+    print(chunk.choices[0].delta.content or '', end='', flush=True)
+print()
+```
+
+```javascript streaming.js
+import OpenAI from "openai";
+
+const openai = new OpenAI({
+  baseURL: "http://localhost:11434/v1/",
+  apiKey: "ollama", // required but ignored
+});
+
+const stream = await openai.chat.completions.create({
+  model: "gpt-oss:20b",
+  messages: [{ role: "user", content: "Explain why the sky is blue" }],
+  stream: true,
+});
+
+for await (const chunk of stream) {
+  process.stdout.write(chunk.choices[0]?.delta?.content ?? "");
+}
+process.stdout.write("\n");
+```
+
+```shell streaming.sh
+curl --no-buffer http://localhost:11434/v1/chat/completions \
+-H "Content-Type: application/json" \
+-d '{
+  "model": "gpt-oss:20b",
+  "messages": [{ "role": "user", "content": "Explain why the sky is blue" }],
+  "stream": true
+}'
+```
+
+</CodeGroup>
+
 ### Simple `/v1/responses` example
 
 <CodeGroup dropdown>
