@@ -654,7 +654,9 @@ func convertTool(t Tool) (api.Tool, bool, error) {
 
 // ToMessagesResponse converts an Ollama api.ChatResponse to an Anthropic MessagesResponse
 func ToMessagesResponse(id string, r api.ChatResponse) MessagesResponse {
-	var content []ContentBlock
+	// content must serialize as [] rather than null when the message is empty,
+	// matching the Anthropic API and the streaming message_start event
+	content := []ContentBlock{}
 
 	if r.Message.Thinking != "" {
 		content = append(content, ContentBlock{
