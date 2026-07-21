@@ -50,6 +50,25 @@ var (
 
 	chatCodeBlockStyle = lipgloss.NewStyle()
 
+	chatCodeCommentStyle = lipgloss.NewStyle().
+				Faint(true).
+				Foreground(lipgloss.AdaptiveColor{Light: "#6a737d", Dark: "#8b949e"})
+
+	chatCodeKeywordStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.AdaptiveColor{Light: "#a626a4", Dark: "#c678dd"})
+
+	chatCodeStringStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.AdaptiveColor{Light: "#50a14f", Dark: "#98c379"})
+
+	chatCodeNumberStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.AdaptiveColor{Light: "#c18401", Dark: "#d19a66"})
+
+	chatCodeFunctionStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.AdaptiveColor{Light: "#4078f2", Dark: "#61afef"})
+
+	chatCodeTypeStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.AdaptiveColor{Light: "#e45649", Dark: "#e06c75"})
+
 	chatTableBorderStyle = lipgloss.NewStyle().
 				Faint(true)
 
