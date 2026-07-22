@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	coreagent "github.com/ollama/ollama/agent"
 	"github.com/ollama/ollama/api"
@@ -2096,6 +2097,10 @@ func TestRenderMarkdownTableWrapsLongCells(t *testing.T) {
 }
 
 func TestRenderMarkdownCodeFencesHighlightLanguageTaggedCode(t *testing.T) {
+	profile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(profile)
+
 	markdown := strings.Join([]string{
 		"Use **greet** before running this code.",
 		"```go",
@@ -2128,10 +2133,20 @@ func TestRenderMarkdownCodeFencesHighlightLanguageTaggedCode(t *testing.T) {
 			t.Fatalf("rendered code line width = %d, want <= 72: %q", got, stripANSI(line))
 		}
 	}
-	if got := markdownCodeTokenKindFor("go", "package", " main"); got != markdownCodeTokenKeyword {
-		t.Fatalf("package token kind = %v, want keyword", got)
+	if got, ok := highlightMarkdownCodeLine("go", "package main"); !ok || !strings.Contains(got, "\x1b[") {
+		t.Fatalf("language-tagged code should use Chroma highlighting: %q", got)
 	}
-	if got := highlightMarkdownCodeLine("", "plain code stays plain"); got != "plain code stays plain" {
+	if got, ok := highlightMarkdownCodeLine("", "plain code stays plain"); ok || got != "plain code stays plain" {
 		t.Fatalf("untagged code = %q, want plain code", got)
+	}
+}
+
+func TestRenderMarkdownCodeFencesRespectNoColorTerminals(t *testing.T) {
+	profile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.Ascii)
+	defer lipgloss.SetColorProfile(profile)
+
+	if got, ok := highlightMarkdownCodeLine("go", "package main"); ok || got != "package main" {
+		t.Fatalf("no-color output = %q, highlighted = %t", got, ok)
 	}
 }
