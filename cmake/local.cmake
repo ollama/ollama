@@ -302,9 +302,12 @@ function(ollama_append_cuda_toolkit_args output backend)
         ollama_find_windows_cuda_root("${_cuda_major}" _cuda_root)
         if(NOT "${_cuda_root}" STREQUAL "")
             ollama_escape_cmake_list("${_cuda_root}" _value)
-            set(${output} ${${output}} "-DCUDAToolkit_ROOT=${_value}" PARENT_SCOPE)
+            list(APPEND ${output} "-DCUDAToolkit_ROOT=${_value}")
         endif()
     endif()
+    # ollama_append_cache_arg_if_set/list(APPEND) only update this function's
+    # scope; propagate the result to the caller.
+    set(${output} "${${output}}" PARENT_SCOPE)
 endfunction()
 
 function(ollama_llama_cuda_preset backend output)
