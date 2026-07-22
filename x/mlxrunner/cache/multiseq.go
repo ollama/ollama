@@ -25,18 +25,30 @@ func NewMultiSeq(seqs []Attention) *MultiSeq {
 // NumSeq returns the number of sequence slots.
 func (m *MultiSeq) NumSeq() int { return len(m.seqs) }
 
-// ResetSeq frees and replaces one sequence's cache with a fresh KVCache.
-// Only plain KVCache sequences are supported for parallel decode.
+// ResetSeq frees and replaces one sequence's Attention cache with a fresh
+// instance of the same type (KV or rotating).
 func (m *MultiSeq) ResetSeq(i int) error {
 	if i < 0 || i >= len(m.seqs) {
 		return fmt.Errorf("sequence %d out of range", i)
 	}
-	if _, ok := m.seqs[i].(*KVCache); !ok {
-		return fmt.Errorf("sequence %d is not a KVCache", i)
+	fresh, ok := cloneAttention(m.seqs[i])
+	if !ok {
+		return fmt.Errorf("sequence %d: unsupported attention cache %T", i, m.seqs[i])
 	}
 	m.seqs[i].Free()
-	m.seqs[i] = NewKVCache()
+	m.seqs[i] = fresh
 	return nil
+}
+
+func cloneAttention(c Attention) (Attention, bool) {
+	switch t := c.(type) {
+	case *KVCache:
+		return NewKVCache(), true
+	case *RotatingKVCache:
+		return NewRotatingKVCache(t.maxSize), true
+	default:
+		return nil, false
+	}
 }
 
 func (m *MultiSeq) seqIndex(b *batch.Batch, row int) int {
@@ -170,24 +182,40 @@ func (m *MultiSeq) Split(Snapshot, int) (Snapshot, Snapshot) {
 	panic("cache.MultiSeq: Split not supported")
 }
 
-// WrapParallelCaches replaces each plain KVCache layer with a MultiSeq of n
-// sequences. Returns ok=false when any layer is not a *KVCache.
+// WrapParallelCaches replaces each supported layer with an n-way multi-seq
+// cache. Supports *KVCache, *RotatingKVCache, and *RecurrentCache. Returns
+// ok=false when any layer type is unsupported.
 func WrapParallelCaches(caches []Cache, n int) ([]Cache, bool) {
 	if n <= 1 {
 		return caches, true
 	}
 	out := make([]Cache, len(caches))
 	for i, c := range caches {
-		kv, ok := c.(*KVCache)
-		if !ok {
+		switch t := c.(type) {
+		case *KVCache:
+			seqs := make([]Attention, n)
+			seqs[0] = t
+			for j := 1; j < n; j++ {
+				seqs[j] = NewKVCache()
+			}
+			out[i] = NewMultiSeq(seqs)
+		case *RotatingKVCache:
+			seqs := make([]Attention, n)
+			seqs[0] = t
+			for j := 1; j < n; j++ {
+				seqs[j] = NewRotatingKVCache(t.maxSize)
+			}
+			out[i] = NewMultiSeq(seqs)
+		case *RecurrentCache:
+			seqs := make([]*RecurrentCache, n)
+			seqs[0] = t
+			for j := 1; j < n; j++ {
+				seqs[j] = NewRecurrentCache(int32(t.convTail), int32(t.convDim), int32(t.numVHeads), int32(t.headVDim), int32(t.headKDim))
+			}
+			out[i] = NewMultiSeqRecurrent(seqs)
+		default:
 			return nil, false
 		}
-		seqs := make([]Attention, n)
-		seqs[0] = kv
-		for j := 1; j < n; j++ {
-			seqs[j] = NewKVCache()
-		}
-		out[i] = NewMultiSeq(seqs)
 	}
 	return out, true
 }

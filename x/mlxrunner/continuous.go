@@ -33,10 +33,7 @@ type genSlot struct {
 
 // runContinuousBatcher admits up to numParallel requests and fuses decode
 // steps across active slots. Prefills run one slot at a time into a shared
-// MultiSeq cache. Speculation and prefix-trie reuse are disabled.
-//
-// ponytail: rotating/recurrent caches are not wrapped — only enabled when
-// WrapParallelCaches succeeded.
+// multi-seq cache. Speculation and prefix-trie reuse are disabled.
 func (r *Runner) runContinuousBatcher(ctx context.Context) error {
 	slots := make([]*genSlot, r.numParallel)
 	caches := r.parallelCaches
@@ -138,12 +135,17 @@ func (r *Runner) failRequest(req Request, err error) {
 
 func (r *Runner) resetParallelSeq(caches []cache.Cache, seq int) error {
 	for _, c := range caches {
-		ms, ok := c.(*cache.MultiSeq)
-		if !ok {
-			return fmt.Errorf("expected MultiSeq cache")
-		}
-		if err := ms.ResetSeq(seq); err != nil {
-			return err
+		switch t := c.(type) {
+		case *cache.MultiSeq:
+			if err := t.ResetSeq(seq); err != nil {
+				return err
+			}
+		case *cache.MultiSeqRecurrent:
+			if err := t.ResetSeq(seq); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("expected multi-seq cache, got %T", c)
 		}
 	}
 	return nil
@@ -321,6 +323,20 @@ func (r *Runner) emitFinal(s *genSlot, reason int) {
 }
 
 func (r *Runner) finishSlot(s *genSlot) {
+	if s.err != nil {
+		var statusErr api.StatusError
+		if !errors.As(s.err, &statusErr) {
+			statusErr = api.StatusError{
+				StatusCode:   http.StatusInternalServerError,
+				ErrorMessage: s.err.Error(),
+			}
+		}
+		select {
+		case s.req.Responses <- CompletionResponse{Error: &statusErr}:
+		case <-s.req.Ctx.Done():
+		default:
+		}
+	}
 	close(s.req.Responses)
 	slog.Info("peak memory", "slot", s.id, "size", mlx.PrettyBytes(mlx.PeakMemory()))
 }

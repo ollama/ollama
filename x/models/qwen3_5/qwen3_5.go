@@ -1138,9 +1138,9 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, 
 		}, -1)
 	}
 	convTail := cfg.LinearConvKernelDim - 1
-	var rc *cache.RecurrentCache
+	var rc cache.Recurrent
 	opts := make([]nn.RecurrentOption, 0, 2)
-	if typed, ok := c.(*cache.RecurrentCache); ok {
+	if typed, ok := c.(cache.Recurrent); ok {
 		rc = typed
 		opts = append(opts, nn.WithRecurrentHistory(rc.Get(b, x.DType())))
 		// When the cache has scheduled per-token snapshots, segment the

@@ -280,6 +280,16 @@ func (c *Client) HasExited() bool {
 func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error) {
 	if len(gpus) > 0 {
 		modelSize := c.memory.Load()
+		// KV working set scales with parallel sequences × context.
+		// ponytail: ~2 KiB/token/seq is a coarse fit check, not exact accounting.
+		required := modelSize
+		if c.numParallel > 1 {
+			ctxLen := c.softContextLength
+			if ctxLen <= 0 {
+				ctxLen = 2048
+			}
+			required += uint64(c.numParallel) * uint64(ctxLen) * 2048
+		}
 		// We currently only use the first GPU with MLX
 		available := gpus[0].FreeMemory
 		overhead := gpus[0].MinimumMemory() + envconfig.GpuOverhead()
@@ -289,11 +299,11 @@ func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo
 			available = 0
 		}
 
-		if modelSize > available {
+		if required > available {
 			if requireFull {
 				return nil, llm.ErrLoadRequiredFull
 			}
-			return nil, fmt.Errorf("model requires %s but only %s are available (after %s overhead)", format.HumanBytes2(modelSize), format.HumanBytes2(available), format.HumanBytes2(overhead))
+			return nil, fmt.Errorf("model requires %s but only %s are available (after %s overhead)", format.HumanBytes2(required), format.HumanBytes2(available), format.HumanBytes2(overhead))
 		}
 	}
 
