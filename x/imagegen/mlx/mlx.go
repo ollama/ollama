@@ -1336,20 +1336,6 @@ func (a *Array) Data() []float32 {
 			restoreCast()
 		}()
 	}
-	// On non-Metal backends (CUDA), GPU-resident buffers are not host-accessible
-	// and mlx_array_data_float32 segfaults reading them (issue #14843). Note
-	// default_stream() is a cached GPU stream that ignores the default device,
-	// so the copy must be issued explicitly on the CPU stream to land in host
-	// memory.
-	var restoreCPU func()
-	if !MetalIsAvailable() {
-		arr = CopyToCPU(arr)
-		restoreCPU = keepDuringRead(arr)
-		arr.Eval()
-		defer func() {
-			restoreCPU()
-		}()
-	}
 	var restoreContiguous func()
 	if !arr.IsContiguous() {
 		arr = Contiguous(arr)
@@ -1396,19 +1382,7 @@ func (a *Array) DataInt32() []int32 {
 	if size == 0 {
 		return nil
 	}
-	arr := a
-	// On non-Metal backends, GPU-resident buffers are not host-accessible;
-	// materialize a CPU-stream copy before taking the data pointer (see Data).
-	var restoreCPU func()
-	if !MetalIsAvailable() {
-		arr = CopyToCPU(a)
-		restoreCPU = keepDuringRead(arr)
-		arr.Eval()
-		defer func() {
-			restoreCPU()
-		}()
-	}
-	ptr := C.mlx_array_data_int32(arr.c)
+	ptr := C.mlx_array_data_int32(a.c)
 	if ptr == nil {
 		return nil
 	}
@@ -1453,43 +1427,23 @@ func (a *Array) Bytes() []byte {
 		return nil
 	}
 
-	src := a
-	// On non-Metal backends, GPU-resident buffers are not host-accessible;
-	// materialize a CPU-stream copy before taking the data pointer (see Data).
-	var restoreCPU func()
-	if !MetalIsAvailable() {
-		src = CopyToCPU(a)
-		restoreCPU = keepDuringRead(src)
-		src.Eval()
-		defer func() {
-			restoreCPU()
-		}()
-	}
-
 	// Get raw pointer based on dtype
 	var ptr unsafe.Pointer
-	switch src.Dtype() {
+	switch a.Dtype() {
 	case DtypeFloat32:
-		ptr = unsafe.Pointer(C.mlx_array_data_float32(src.c))
+		ptr = unsafe.Pointer(C.mlx_array_data_float32(a.c))
 	case DtypeInt32:
-		ptr = unsafe.Pointer(C.mlx_array_data_int32(src.c))
+		ptr = unsafe.Pointer(C.mlx_array_data_int32(a.c))
 	case DtypeUint32:
-		ptr = unsafe.Pointer(C.mlx_array_data_uint32(src.c))
+		ptr = unsafe.Pointer(C.mlx_array_data_uint32(a.c))
 	case DtypeUint8:
-		ptr = unsafe.Pointer(C.mlx_array_data_uint8(src.c))
+		ptr = unsafe.Pointer(C.mlx_array_data_uint8(a.c))
 	default:
 		// For other types (bf16, f16, etc), convert to float32
-		arr := AsType(src, DtypeFloat32)
+		arr := AsType(a, DtypeFloat32)
 		restoreCast := keepDuringRead(arr)
 		arr.Eval()
 		defer restoreCast()
-		if !MetalIsAvailable() {
-			cpu := CopyToCPU(arr)
-			restoreCopy := keepDuringRead(cpu)
-			cpu.Eval()
-			defer restoreCopy()
-			arr = cpu
-		}
 		ptr = unsafe.Pointer(C.mlx_array_data_float32(arr.c))
 		nbytes = arr.Nbytes()
 	}
@@ -1969,9 +1923,61 @@ func RandomUniform(shape []int32, seed uint64) *Array {
 // input: [N, H, W, C], weight: [O, kH, kW, C]  (MLX uses NHWC layout)
 // Returns: [N, H', W', O]
 func Conv2d(input, weight *Array, stride, padding int32) *Array {
+	if out := conv2dChunked(input, weight, stride, padding); out != nil {
+		return out
+	}
+	return conv2dRaw(input, weight, stride, padding)
+}
+
+func conv2dRaw(input, weight *Array, stride, padding int32) *Array {
 	res := C.mlx_array_new()
 	C.mlx_conv2d(&res, input.c, weight.c, C.int(stride), C.int(stride), C.int(padding), C.int(padding), 1, 1, 1, C.default_stream())
 	return newArray(res)
+}
+
+// conv2dChunked works around a grid-size overflow in MLX's CUDA gemm-conv
+// fallback: the unfold kernel in mlx/backend/cuda/conv/gemm_conv.cu launches
+// with num_blocks.z = N*outH*outW, which exceeds CUDA's 65,535 grid-Z limit
+// for any convolution with >= 65,536 output positions (e.g. a 256x256 image)
+// and fails with "invalid argument". Inputs over the limit are convolved in
+// row strips (pre-padded once, each strip carrying a kH-1 halo) and the
+// outputs concatenated, which is numerically identical to a single call.
+// Returns nil when direct dispatch is safe.
+func conv2dChunked(input, weight *Array, stride, padding int32) *Array {
+	const maxGridZ = 65535
+	if MetalIsAvailable() {
+		return nil
+	}
+	xs, ws := input.Shape(), weight.Shape()
+	if len(xs) != 4 || len(ws) != 4 {
+		return nil
+	}
+	B, H, W := xs[0], xs[1], xs[2]
+	kH := ws[1]
+	outH := (H+2*padding-kH)/stride + 1
+	outW := (W+2*padding-ws[2])/stride + 1
+	if int64(B)*int64(outH)*int64(outW) <= maxGridZ {
+		return nil
+	}
+	if padding > 0 {
+		input = Pad(input, []int32{0, 0, padding, padding, padding, padding, 0, 0})
+	}
+	rowsPerChunk := maxGridZ / (B * outW)
+	if rowsPerChunk < 1 {
+		rowsPerChunk = 1
+	}
+	var parts []*Array
+	for r0 := int32(0); r0 < outH; r0 += rowsPerChunk {
+		r1 := r0 + rowsPerChunk
+		if r1 > outH {
+			r1 = outH
+		}
+		in0 := r0 * stride
+		in1 := (r1-1)*stride + kH
+		xi := SliceAxis(input, 1, in0, in1)
+		parts = append(parts, conv2dRaw(xi, weight, stride, 0))
+	}
+	return Concatenate(parts, 1)
 }
 
 // Conv3d performs 3D convolution
@@ -2301,15 +2307,6 @@ func FullDtype(value float32, dtype Dtype, shape ...int32) *Array {
 func AsType(a *Array, dtype Dtype) *Array {
 	res := C.mlx_array_new()
 	C.mlx_astype(&res, a.c, C.mlx_dtype(dtype), C.default_stream())
-	return newArray(res)
-}
-
-// CopyToCPU returns a copy of the array materialized on the CPU stream, so its
-// buffer is host-accessible. Note default_stream() is a cached GPU stream — ops
-// issued through it always produce device buffers regardless of the default device.
-func CopyToCPU(a *Array) *Array {
-	res := C.mlx_array_new()
-	C.mlx_copy(&res, a.c, C.cpu_stream())
 	return newArray(res)
 }
 
