@@ -13,6 +13,17 @@ import (
 )
 
 func renderMarkdownForView(markdown string, width int) string {
+	return renderMarkdownForViewWithCodeCache(markdown, width, nil)
+}
+
+type markdownCodeBlockCacheKey struct {
+	language  string
+	source    string
+	formatter string
+	style     string
+}
+
+func renderMarkdownForViewWithCodeCache(markdown string, width int, codeCache *map[markdownCodeBlockCacheKey]string) string {
 	if width < 20 {
 		width = 20
 	}
@@ -21,21 +32,25 @@ func renderMarkdownForView(markdown string, width int) string {
 	var rendered []string
 	inCodeBlock := false
 	codeLanguage := ""
+	var codeLines []string
 	for i := 0; i < len(source); i++ {
 		line := strings.TrimRight(source[i], "\r")
 		trimmed := strings.TrimSpace(line)
 
 		if strings.HasPrefix(trimmed, "```") {
-			inCodeBlock = !inCodeBlock
 			if inCodeBlock {
-				codeLanguage = markdownCodeFenceLanguage(trimmed)
-			} else {
+				rendered = append(rendered, renderMarkdownCodeBlock(codeLines, codeLanguage, width, codeCache, true)...)
+				codeLines = nil
+				inCodeBlock = false
 				codeLanguage = ""
+			} else {
+				inCodeBlock = true
+				codeLanguage = markdownCodeFenceLanguage(trimmed)
 			}
 			continue
 		}
 		if inCodeBlock {
-			rendered = append(rendered, renderMarkdownCodeLine(line, codeLanguage, width)...)
+			codeLines = append(codeLines, line)
 			continue
 		}
 
@@ -55,6 +70,9 @@ func renderMarkdownForView(markdown string, width int) string {
 			continue
 		}
 		rendered = append(rendered, wrapMarkdownInline(line, width)...)
+	}
+	if inCodeBlock {
+		rendered = append(rendered, renderMarkdownCodeBlock(codeLines, codeLanguage, width, codeCache, false)...)
 	}
 	return strings.Join(rendered, "\n")
 }
@@ -227,11 +245,12 @@ func renderMarkdownRunes(runes []markdownInlineRune) string {
 	return b.String()
 }
 
-func renderMarkdownCodeLine(line, language string, width int) []string {
+func renderMarkdownCodeBlock(source []string, language string, width int, codeCache *map[markdownCodeBlockCacheKey]string, complete bool) []string {
 	codeWidth := max(1, width-2)
-	lines := wrapChatText(line, codeWidth)
-	if highlighted, ok := highlightMarkdownCodeLine(language, line); ok {
-		lines = strings.Split(ansi.Hardwrap(highlighted, codeWidth, true), "\n")
+	code := strings.Join(source, "\n")
+	lines := wrapChatText(code, codeWidth)
+	if highlighted, ok := highlightMarkdownCodeBlock(language, code, codeCache, complete); ok {
+		lines = wrapHighlightedMarkdownCode(highlighted, codeWidth)
 	}
 	for i, wrapped := range lines {
 		lines[i] = "  " + chatCodeBlockStyle.Render(wrapped)
@@ -247,16 +266,81 @@ func markdownCodeFenceLanguage(fence string) string {
 	return strings.Fields(info)[0]
 }
 
-func highlightMarkdownCodeLine(language, line string) (string, bool) {
-	if language == "" || line == "" || lipgloss.ColorProfile() == termenv.Ascii {
-		return line, false
+func highlightMarkdownCodeBlock(language, source string, codeCache *map[markdownCodeBlockCacheKey]string, complete bool) (string, bool) {
+	if language == "" || source == "" || lipgloss.ColorProfile() == termenv.Ascii {
+		return source, false
+	}
+
+	key := markdownCodeBlockCacheKey{
+		language:  language,
+		source:    source,
+		formatter: markdownCodeFormatter(),
+		style:     markdownCodeStyle(),
+	}
+	if complete && codeCache != nil && *codeCache != nil {
+		if highlighted, ok := (*codeCache)[key]; ok {
+			return highlighted, true
+		}
 	}
 
 	var rendered strings.Builder
-	if err := quick.Highlight(&rendered, line, language, markdownCodeFormatter(), markdownCodeStyle()); err != nil {
-		return line, false
+	if err := quick.Highlight(&rendered, source, language, key.formatter, key.style); err != nil {
+		return source, false
 	}
-	return strings.TrimSuffix(rendered.String(), "\n"), true
+	highlighted := strings.TrimSuffix(rendered.String(), "\n")
+	if complete && codeCache != nil {
+		if *codeCache == nil {
+			*codeCache = make(map[markdownCodeBlockCacheKey]string)
+		}
+		(*codeCache)[key] = highlighted
+	}
+	return highlighted, true
+}
+
+func wrapHighlightedMarkdownCode(highlighted string, width int) []string {
+	lines := strings.Split(ansi.Hardwrap(highlighted, width, true), "\n")
+	activeStyle := ""
+	for i, line := range lines {
+		lines[i] = activeStyle + line
+		activeStyle = markdownCodeANSIStyle(activeStyle, line)
+		if activeStyle != "" && i < len(lines)-1 {
+			lines[i] += "\x1b[0m"
+		}
+	}
+	return lines
+}
+
+func markdownCodeANSIStyle(activeStyle, line string) string {
+	for {
+		start := strings.Index(line, "\x1b[")
+		if start < 0 {
+			return activeStyle
+		}
+		line = line[start+2:]
+		end := strings.IndexByte(line, 'm')
+		if end < 0 {
+			return activeStyle
+		}
+		sequence := line[:end]
+		if markdownCodeANSIReset(sequence) {
+			activeStyle = ""
+		} else {
+			activeStyle += "\x1b[" + sequence + "m"
+		}
+		line = line[end+1:]
+	}
+}
+
+func markdownCodeANSIReset(sequence string) bool {
+	if sequence == "" {
+		return true
+	}
+	for _, parameter := range strings.Split(sequence, ";") {
+		if parameter == "0" {
+			return true
+		}
+	}
+	return false
 }
 
 func markdownCodeFormatter() string {
