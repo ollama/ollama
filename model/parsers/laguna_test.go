@@ -535,12 +535,12 @@ func TestLagunaParserNonAssistantLastMessageStillPrimesThinking(t *testing.T) {
 func TestLagunaV8ParserAssistantHistoryStillPrimesThinking(t *testing.T) {
 	// Laguna v8 closes assistant history and emits a fresh generation prompt,
 	// so an assistant tail message must not switch the parser into prefill mode.
-	parser := ParserForName("laguna-v8")
+	parser := ParserForName("poolside-v1")
 	if parser == nil {
-		t.Fatal("expected laguna-v8 parser")
+		t.Fatal("expected poolside-v1 parser")
 	}
 	if !parser.HasToolSupport() || !parser.HasThinkingSupport() {
-		t.Fatal("laguna-v8 parser should advertise tools and thinking")
+		t.Fatal("poolside-v1 parser should advertise tools and thinking")
 	}
 
 	parser.Init(nil, &api.Message{Role: "assistant", Content: "Previous."}, &api.ThinkValue{Value: true})
