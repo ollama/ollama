@@ -21,6 +21,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/sync/semaphore"
+
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
@@ -36,6 +38,8 @@ type Client struct {
 	modelName         string
 	contextLength     atomic.Int64
 	softContextLength int // recommended limit to avoid poor performance
+	numParallel       int
+	sem               *semaphore.Weighted
 	memory            atomic.Uint64
 	done              chan struct{}
 	doneErr           error // valid after done is closed
@@ -47,14 +51,19 @@ type Client struct {
 
 // NewClient prepares a new MLX runner client for LLM models.
 // The subprocess is not started until Load() is called.
-func NewClient(modelName string, softContextLength int) (*Client, error) {
+func NewClient(modelName string, softContextLength, numParallel int) (*Client, error) {
 	if err := imagegen.CheckPlatformSupport(); err != nil {
 		return nil, err
+	}
+	if numParallel < 1 {
+		numParallel = 1
 	}
 
 	c := &Client{
 		modelName:         modelName,
 		softContextLength: softContextLength,
+		numParallel:       numParallel,
+		sem:               semaphore.NewWeighted(int64(numParallel)),
 		done:              make(chan struct{}),
 		client:            http.DefaultClient,
 	}
@@ -140,6 +149,11 @@ func (c *Client) Close() error {
 
 // Completion implements llm.LlamaServer.
 func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
+	if err := c.sem.Acquire(ctx, 1); err != nil {
+		return err
+	}
+	defer c.sem.Release(1)
+
 	creq := CompletionRequest{
 		Prompt:      req.Prompt,
 		Logprobs:    req.Logprobs,
@@ -305,8 +319,8 @@ func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo
 		exe = eval
 	}
 
-	// Spawn subprocess: ollama runner --mlx-engine --model <name> --port <port>
-	cmd := exec.Command(exe, "runner", "--mlx-engine", "--model", c.modelName, "--port", strconv.Itoa(port))
+	// Spawn subprocess: ollama runner --mlx-engine --model <name> --port <port> --parallel <n>
+	cmd := exec.Command(exe, "runner", "--mlx-engine", "--model", c.modelName, "--port", strconv.Itoa(port), "--parallel", strconv.Itoa(c.numParallel))
 	cmd.Env = os.Environ()
 
 	// Set library path environment variable for MLX libraries

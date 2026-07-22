@@ -594,7 +594,7 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 			if slices.Contains(req.model.Config.Capabilities, "image") {
 				llama, err = imagegen.NewServer(modelName)
 			} else {
-				llama, err = mlxrunner.NewClient(modelName, req.opts.NumCtx)
+				llama, err = mlxrunner.NewClient(modelName, req.opts.NumCtx, numParallel)
 			}
 		}
 		if err != nil {

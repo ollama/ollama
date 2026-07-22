@@ -12,6 +12,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/x/internal/mlxthread"
+	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
 	"github.com/ollama/ollama/x/mlxrunner/model/base"
@@ -44,6 +45,12 @@ type Runner struct {
 	// spec is the speculative-decoding subsystem. Nil when the model ships no
 	// draft head.
 	spec *speculation
+
+	// numParallel is the max concurrent sequences (OLLAMA_NUM_PARALLEL).
+	numParallel int
+	// parallelCaches is set when numParallel > 1 and caches were wrapped for
+	// multi-sequence continuous batching. Nil keeps the legacy serial path.
+	parallelCaches []cache.Cache
 }
 
 func (r *Runner) Load(modelName string) error {
@@ -106,8 +113,22 @@ func (r *Runner) Load(modelName string) error {
 	r.Tokenizer = m.Tokenizer()
 	r.contextLength = m.MaxContextLength()
 	r.cache = newPrefixCache(m)
+	if r.numParallel < 1 {
+		r.numParallel = 1
+	}
 	r.Sampler = sample.New(r.contextLength)
 	r.spec = newSpeculation(r, draftModel)
+
+	if r.numParallel > 1 {
+		if wrapped, ok := cache.WrapParallelCaches(r.cache.caches, r.numParallel); ok {
+			r.parallelCaches = wrapped
+			slog.Info("MLX continuous batching enabled", "parallel", r.numParallel)
+		} else {
+			slog.Warn("MLX model caches do not support parallel requests; using serial decode", "parallel", r.numParallel)
+			r.numParallel = 1
+			r.parallelCaches = nil
+		}
+	}
 
 	mlx.EnableCompile()
 
@@ -172,6 +193,11 @@ func (r *Runner) Run(host, port string, mux http.Handler) error {
 	g, ctx := errgroup.WithContext(context.Background())
 
 	g.Go(func() error {
+		if r.parallelCaches != nil {
+			return r.mlxThread.Do(ctx, func() error {
+				return r.runContinuousBatcher(ctx)
+			})
+		}
 		for {
 			select {
 			case <-ctx.Done():
