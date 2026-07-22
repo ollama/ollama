@@ -70,6 +70,24 @@ var skillsImportCompletions = []chatCompletion{
 	{value: "/skills import pi", label: "/skills import pi", description: "import from ~/.pi/agent/skills"},
 }
 
+// BuiltinSlashCommandNames returns the names reserved by built-in slash
+// commands, including aliases.
+func BuiltinSlashCommandNames() []string {
+	names := make(map[string]struct{})
+	for _, command := range chatSlashCommands {
+		names[strings.TrimPrefix(command.name, "/")] = struct{}{}
+		for _, alias := range command.aliases {
+			names[strings.TrimPrefix(alias, "/")] = struct{}{}
+		}
+	}
+	reserved := make([]string, 0, len(names))
+	for name := range names {
+		reserved = append(reserved, name)
+	}
+	sort.Strings(reserved)
+	return reserved
+}
+
 func (m *chatModel) handleSubmit() (tea.Model, tea.Cmd) {
 	m.syncInputPlaceholders()
 	input := strings.TrimSpace(string(m.input))

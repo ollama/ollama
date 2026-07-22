@@ -95,6 +95,39 @@ func TestAgentSkillSystemContextRequiresAvailableEnabledSkillTool(t *testing.T) 
 	}
 }
 
+func TestAgentSkillCommandCollisionsAreIgnored(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"release-notes", "system", "exit"} {
+		if err := os.Mkdir(filepath.Join(dir, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		content := "---\nname: " + name + "\ndescription: Test skill.\n---\nInstructions."
+		if err := os.WriteFile(filepath.Join(dir, name, "SKILL.md"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	catalog, err := coreagent.DiscoverSkills(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ignored := catalog.ExcludeNames(agentchat.BuiltinSlashCommandNames())
+	if got, want := strings.Join(ignored, ", "), "exit, system"; got != want {
+		t.Fatalf("ignored skills = %q, want %q", got, want)
+	}
+	if _, err := catalog.Load("release-notes"); err != nil {
+		t.Fatalf("non-conflicting skill should remain available: %v", err)
+	}
+	if context := catalog.SystemContext(); !strings.Contains(context, "release-notes: Test skill.") || strings.Contains(context, "system: Test skill.") || strings.Contains(context, "exit: Test skill.") {
+		t.Fatalf("skill context = %q", context)
+	}
+	for _, name := range []string{"system", "exit"} {
+		if _, err := catalog.Load(name); err == nil {
+			t.Fatalf("conflicting skill %q should be ignored", name)
+		}
+	}
+}
+
 func TestAgentSelectionItemsUseLaunchSections(t *testing.T) {
 	items := agentSelectionItems([]agentchat.ModelOption{
 		{Name: "glm-5.2:cloud", Description: "cloud", Recommended: true, Cloud: true},

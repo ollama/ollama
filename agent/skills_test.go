@@ -272,6 +272,30 @@ func TestLoadDefaultSkillsPrecedenceAndCollisions(t *testing.T) {
 	}
 }
 
+func TestSkillCatalogExcludeNames(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"release-notes", "system", "exit"} {
+		writeCatalogSkill(t, dir, name, "instructions")
+	}
+	catalog, err := DiscoverSkills(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := strings.Join(catalog.ExcludeNames([]string{"/system", "EXIT"}), ","), "exit,system"; got != want {
+		t.Fatalf("excluded skills = %q, want %q", got, want)
+	}
+	if _, err := catalog.Load("system"); err == nil {
+		t.Fatal("excluded system skill should not load")
+	}
+	if _, err := catalog.Load("exit"); err == nil {
+		t.Fatal("excluded exit skill should not load")
+	}
+	if _, err := catalog.Load("release-notes"); err != nil {
+		t.Fatalf("non-conflicting skill should remain available: %v", err)
+	}
+}
+
 func TestSkillContentListsDirectoryAndResources(t *testing.T) {
 	root := t.TempDir()
 	skillDir := filepath.Join(root, "pdf-processing")
