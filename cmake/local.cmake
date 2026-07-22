@@ -388,6 +388,18 @@ function(ollama_add_llama_server_build name)
         ${_llama_cache_args}
     )
 
+    # Forward the parent toolchain selection so the nested build uses the same
+    # compiler and flags. ExternalProject otherwise re-runs compiler detection
+    # and falls back to the default cc/c++, which breaks builds that rely on a
+    # non-default compiler (e.g. clang for ARM SME when the system gcc is too
+    # old).
+    ollama_append_cache_arg_if_set(_cmake_args CMAKE_C_COMPILER)
+    ollama_append_cache_arg_if_set(_cmake_args CMAKE_CXX_COMPILER)
+    ollama_append_cache_arg_if_set(_cmake_args CMAKE_C_FLAGS)
+    ollama_append_cache_arg_if_set(_cmake_args CMAKE_CXX_FLAGS)
+    ollama_append_cache_arg_if_set(_cmake_args CMAKE_EXE_LINKER_FLAGS)
+    ollama_append_cache_arg_if_set(_cmake_args CMAKE_SHARED_LINKER_FLAGS)
+
     if(APPLE)
         if(CMAKE_OSX_ARCHITECTURES)
             list(APPEND _cmake_args
