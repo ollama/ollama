@@ -1336,6 +1336,20 @@ func (a *Array) Data() []float32 {
 			restoreCast()
 		}()
 	}
+	// On non-Metal backends (CUDA), GPU-resident buffers are not host-accessible
+	// and mlx_array_data_float32 segfaults reading them (issue #14843). Note
+	// default_stream() is a cached GPU stream that ignores the default device,
+	// so the copy must be issued explicitly on the CPU stream to land in host
+	// memory.
+	var restoreCPU func()
+	if !MetalIsAvailable() {
+		arr = CopyToCPU(arr)
+		restoreCPU = keepDuringRead(arr)
+		arr.Eval()
+		defer func() {
+			restoreCPU()
+		}()
+	}
 	var restoreContiguous func()
 	if !arr.IsContiguous() {
 		arr = Contiguous(arr)
@@ -1382,7 +1396,19 @@ func (a *Array) DataInt32() []int32 {
 	if size == 0 {
 		return nil
 	}
-	ptr := C.mlx_array_data_int32(a.c)
+	arr := a
+	// On non-Metal backends, GPU-resident buffers are not host-accessible;
+	// materialize a CPU-stream copy before taking the data pointer (see Data).
+	var restoreCPU func()
+	if !MetalIsAvailable() {
+		arr = CopyToCPU(a)
+		restoreCPU = keepDuringRead(arr)
+		arr.Eval()
+		defer func() {
+			restoreCPU()
+		}()
+	}
+	ptr := C.mlx_array_data_int32(arr.c)
 	if ptr == nil {
 		return nil
 	}
@@ -1427,23 +1453,43 @@ func (a *Array) Bytes() []byte {
 		return nil
 	}
 
+	src := a
+	// On non-Metal backends, GPU-resident buffers are not host-accessible;
+	// materialize a CPU-stream copy before taking the data pointer (see Data).
+	var restoreCPU func()
+	if !MetalIsAvailable() {
+		src = CopyToCPU(a)
+		restoreCPU = keepDuringRead(src)
+		src.Eval()
+		defer func() {
+			restoreCPU()
+		}()
+	}
+
 	// Get raw pointer based on dtype
 	var ptr unsafe.Pointer
-	switch a.Dtype() {
+	switch src.Dtype() {
 	case DtypeFloat32:
-		ptr = unsafe.Pointer(C.mlx_array_data_float32(a.c))
+		ptr = unsafe.Pointer(C.mlx_array_data_float32(src.c))
 	case DtypeInt32:
-		ptr = unsafe.Pointer(C.mlx_array_data_int32(a.c))
+		ptr = unsafe.Pointer(C.mlx_array_data_int32(src.c))
 	case DtypeUint32:
-		ptr = unsafe.Pointer(C.mlx_array_data_uint32(a.c))
+		ptr = unsafe.Pointer(C.mlx_array_data_uint32(src.c))
 	case DtypeUint8:
-		ptr = unsafe.Pointer(C.mlx_array_data_uint8(a.c))
+		ptr = unsafe.Pointer(C.mlx_array_data_uint8(src.c))
 	default:
 		// For other types (bf16, f16, etc), convert to float32
-		arr := AsType(a, DtypeFloat32)
+		arr := AsType(src, DtypeFloat32)
 		restoreCast := keepDuringRead(arr)
 		arr.Eval()
 		defer restoreCast()
+		if !MetalIsAvailable() {
+			cpu := CopyToCPU(arr)
+			restoreCopy := keepDuringRead(cpu)
+			cpu.Eval()
+			defer restoreCopy()
+			arr = cpu
+		}
 		ptr = unsafe.Pointer(C.mlx_array_data_float32(arr.c))
 		nbytes = arr.Nbytes()
 	}
@@ -2255,6 +2301,15 @@ func FullDtype(value float32, dtype Dtype, shape ...int32) *Array {
 func AsType(a *Array, dtype Dtype) *Array {
 	res := C.mlx_array_new()
 	C.mlx_astype(&res, a.c, C.mlx_dtype(dtype), C.default_stream())
+	return newArray(res)
+}
+
+// CopyToCPU returns a copy of the array materialized on the CPU stream, so its
+// buffer is host-accessible. Note default_stream() is a cached GPU stream — ops
+// issued through it always produce device buffers regardless of the default device.
+func CopyToCPU(a *Array) *Array {
+	res := C.mlx_array_new()
+	C.mlx_copy(&res, a.c, C.cpu_stream())
 	return newArray(res)
 }
 
