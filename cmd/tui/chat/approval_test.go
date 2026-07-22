@@ -134,6 +134,31 @@ func TestChatApprovalUsesShellNameForPermissionPrompt(t *testing.T) {
 	}
 }
 
+func TestChatApprovalRendersSkillLoad(t *testing.T) {
+	request := coreagent.ApprovalRequest{
+		WorkingDir: "/repo",
+		Calls: []coreagent.ApprovalToolCall{{
+			ToolCallID:    "call-skill-1",
+			ToolName:      "skill",
+			Args:          map[string]any{"name": "release-notes"},
+			ApprovalScope: "skill",
+		}},
+	}
+
+	lines := stripANSI(strings.Join((&chatModel{approvalPrompt: &chatApprovalPrompt{request: request}}).renderApprovalPromptLines(80), "\n"))
+	for _, want := range []string{"name: release-notes", "2. Always allow skill"} {
+		if !strings.Contains(lines, want) {
+			t.Fatalf("skill approval prompt missing %q:\n%s", want, lines)
+		}
+	}
+
+	m := chatModel{}
+	m.upsertApprovalToolEntries(request)
+	if len(m.entries) != 1 || !strings.Contains(stripANSI(toolStatusLine(m.entries[0])), `skill("release-notes") needs approval`) {
+		t.Fatalf("skill approval entry = %#v", m.entries)
+	}
+}
+
 func TestChatApprovalPromptOmitsDuplicateBatchDetails(t *testing.T) {
 	request := coreagent.ApprovalRequest{
 		WorkingDir: "/repo",
