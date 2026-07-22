@@ -81,6 +81,56 @@ If your system is configured with the "noexec" flag where Ollama stores its temp
 
 If Ollama initially works on the GPU in a docker container, but then switches to running on CPU after some period of time with errors in the server log reporting GPU discovery failures, this can be resolved by disabling systemd cgroup management in Docker. Edit `/etc/docker/daemon.json` on the host and add `"exec-opts": ["native.cgroupdriver=cgroupfs"]` to the docker configuration.
 
+## Model Running Slower Than Expected
+
+If your model runs slower than expected, the most common cause is that the model is partially or fully running on CPU instead of GPU.
+
+### Check GPU utilization
+
+Run `ollama ps` to see how your model is loaded:
+
+```
+ollama ps
+```
+
+```
+NAME             ID              SIZE      PROCESSOR    CONTEXT    UNTIL
+llama3:8b        a2af6cc3eb7f    6.6 GB    100% GPU     4096       2 minutes from now
+```
+
+- **100% GPU**: Fully loaded on GPU (best performance)
+- **100% CPU**: Entirely on CPU (slowest)
+- **48%/52% CPU/GPU**: Split between CPU and GPU (GPU portion runs at GPU speed, CPU portion is slower)
+
+### Why did my model fall back to CPU?
+
+Ollama automatically offloads layers to CPU when GPU memory (VRAM) is insufficient. Common reasons:
+
+1. **Model too large for VRAM**: A 70B parameter model (4-bit quantization) needs ~32-40 GB VRAM
+2. **Context length too high**: Larger context windows require additional VRAM beyond the model weights
+3. **Other models already loaded**: Previously loaded models may still occupy VRAM (check `ollama ps`)
+
+### Approximate VRAM requirements (4-bit quantization)
+
+| Model Size | Min VRAM (4-bit) | With 8k Context | With 32k Context |
+|-----------|-----------------|-----------------|------------------|
+| 1-3B      | ~2 GB           | ~2.5 GB         | ~4 GB            |
+| 7-8B      | ~4 GB           | ~5 GB           | ~8 GB            |
+| 13B       | ~7 GB           | ~8 GB           | ~12 GB           |
+| 30-34B    | ~16 GB          | ~18 GB          | ~24 GB           |
+| 65-70B    | ~32 GB          | ~36 GB          | ~48 GB           |
+
+<Note>
+  These are approximate values. Actual requirements vary by model architecture and quantization method. Use `ollama ps` to verify actual memory usage after loading a model.
+</Note>
+
+### What to do if your model doesn't fit
+
+- **Use a smaller model**: Try a smaller parameter count (e.g., 8B instead of 70B)
+- **Use a more aggressive quantization**: e.g., `q4_0` instead of `q8_0`
+- **Reduce context length**: Set `OLLAMA_CONTEXT_LENGTH` to a lower value
+- **Unload other models**: Models stay loaded for 5 minutes by default; use `ollama stop <model>` to free VRAM
+
 ## NVIDIA GPU Discovery
 
 When Ollama starts up, it takes inventory of the GPUs present in the system to determine compatibility and how much VRAM is available. Sometimes this discovery can fail to find your GPUs. In general, running the latest driver will yield the best results.
