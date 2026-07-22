@@ -1204,3 +1204,51 @@ func TestWaitForStream(t *testing.T) {
 		})
 	}
 }
+
+func TestAllowedHost(t *testing.T) {
+	tests := []struct {
+		name     string
+		host     string
+		expected bool
+	}{
+		// Safe hosts — should be allowed
+		{"empty", "", true},
+		{"localhost", "localhost", true},
+		{"localhost uppercase", "LOCALHOST", true},
+		{"loopback IPv4", "127.0.0.1", false}, // IP handling is in middleware, not allowedHost
+		{"loopback IPv6", "[::1]", false},     // IP handling is in middleware, not allowedHost
+
+		// OS hostname — should be allowed
+		{"os hostname", func() string {
+			h, _ := os.Hostname()
+			return strings.ToLower(h)
+		}(), true},
+
+		// DNS rebinding via TLD suffix — must be REJECTED
+		// These TLDs are registrable / rebindable to 127.0.0.1, bypassing Host validation.
+		// See: https://github.com/ollama/ollama/issues/17308
+		{"evil.internal", "evil.internal", false},
+		{"attacker.local", "attacker.local", false},
+		{"subdomain.localhost", "subdomain.localhost", false},
+		{"evil.localhost", "evil.localhost", false},
+		{"deep.evil.internal", "deep.evil.internal", false},
+
+		// External hosts — must be rejected
+		{"external domain", "example.com", false},
+		{"external subdomain", "sub.example.com", false},
+		{"attacker.com spoofing localhost suffix", "attacker.com.localhost", false},
+
+		// Edge cases
+		{"trailing dot localhost", "localhost.", false},
+		{"localhost with port", "localhost:11434", false}, // allowedHost receives raw host; port stripping is in middleware
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := allowedHost(tt.host)
+			if got != tt.expected {
+				t.Errorf("allowedHost(%q) = %v, want %v", tt.host, got, tt.expected)
+			}
+		})
+	}
+}

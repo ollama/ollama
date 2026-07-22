@@ -1777,19 +1777,6 @@ func allowedHost(host string) bool {
 		return true
 	}
 
-	tlds := []string{
-		"localhost",
-		"local",
-		"internal",
-	}
-
-	// check if the host is a local TLD
-	for _, tld := range tlds {
-		if strings.HasSuffix(host, "."+tld) {
-			return true
-		}
-	}
-
 	return false
 }
 
