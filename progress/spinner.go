@@ -2,9 +2,13 @@ package progress
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
+
+	"golang.org/x/term"
 )
 
 type Spinner struct {
@@ -57,6 +61,16 @@ func (s *Spinner) String() string {
 		spinner := s.parts[s.value]
 		sb.WriteString(spinner)
 		sb.WriteString(" ")
+	}
+
+	// truncate to terminal width to prevent line wrapping
+	if line := sb.String(); len(line) > 0 {
+		if termWidth, _, err := term.GetSize(int(os.Stderr.Fd())); err == nil {
+			if w := utf8.RuneCountInString(line); w > termWidth {
+				line = string([]rune(line)[:termWidth])
+			}
+		}
+		return line
 	}
 
 	return sb.String()
