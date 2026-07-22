@@ -165,7 +165,9 @@ console.log(response.message.content);
 - [NextChat](https://github.com/ChatGPTNextWeb/ChatGPT-Next-Web) - Cross-platform ChatGPT UI ([docs](https://docs.nextchat.dev/models/ollama))
 - [Perplexica](https://github.com/ItzCrazyKns/Perplexica) - AI-powered search engine, open-source Perplexity alternative
 - [big-AGI](https://github.com/enricoros/big-AGI) - AI suite for professionals
+- [Lollms](https://github.com/ParisNeo/lollms) - Multi-model multi users web interface
 - [Lollms WebUI](https://github.com/ParisNeo/lollms-webui) - Multi-model web interface
+- [Lollms vs coder](https://github.com/ParisNeo/lollms-vs-coder) - A vscode extention for vibe coding
 - [ChatOllama](https://github.com/sugarforever/chat-ollama) - Chatbot with knowledge bases
 - [Bionic GPT](https://github.com/bionic-gpt/bionic-gpt) - On-premise AI platform
 - [Chatbot UI](https://github.com/ivanfioravanti/chatbot-ollama) - ChatGPT-style web interface
@@ -310,7 +312,7 @@ console.log(response.message.content);
 - [Vibe](https://github.com/thewh1teagle/vibe) - Transcribe and analyze meetings
 - [Page Assist](https://github.com/n4ze3m/page-assist) - Chrome extension for AI-powered browsing
 - [NativeMind](https://github.com/NativeMindBrowser/NativeMindExtension) - Private, on-device browser AI assistant
-- [Ollama Fortress](https://github.com/ParisNeo/ollama_proxy_server) - Security proxy for Ollama
+- [Lollms Hub](https://github.com/ParisNeo/lollms_hub) - Security amand management proxy for Ollama/vllm/llamacpp/openai services
 - [1Panel](https://github.com/1Panel-dev/1Panel/) - Web-based Linux server management
 - [Writeopia](https://github.com/Writeopia/Writeopia) - Text editor with Ollama integration
 - [QA-Pilot](https://github.com/reid41/QA-Pilot) - GitHub code repository understanding
