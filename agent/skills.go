@@ -296,27 +296,31 @@ type SkillImportFailure struct {
 // pi. Existing skills are left untouched: an identical directory is reported
 // as existing, and a differing one is reported as a conflict.
 func ImportSkills(source string) (SkillImportResult, error) {
-	source = strings.ToLower(strings.TrimSpace(source))
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return SkillImportResult{}, fmt.Errorf("resolve home directory: %w", err)
 	}
 
-	var sourceDir string
-	switch source {
-	case "codex":
-		sourceDir = filepath.Join(home, ".codex", "skills")
-	case "claude":
-		sourceDir = filepath.Join(home, ".claude", "skills")
-	case "pi":
-		sourceDir = filepath.Join(home, ".pi", "agent", "skills")
-	default:
-		return SkillImportResult{}, fmt.Errorf("unknown skill source %q", source)
-	}
-
 	destination, err := SkillsDir()
 	if err != nil {
 		return SkillImportResult{}, fmt.Errorf("resolve Ollama skills directory: %w", err)
+	}
+	return importSkillsFromRoots(source, conventionalSkillImportRoots(home), destination)
+}
+
+func conventionalSkillImportRoots(home string) map[string]string {
+	return map[string]string{
+		"codex":  filepath.Join(home, ".codex", "skills"),
+		"claude": filepath.Join(home, ".claude", "skills"),
+		"pi":     filepath.Join(home, ".pi", "agent", "skills"),
+	}
+}
+
+func importSkillsFromRoots(source string, roots map[string]string, destination string) (SkillImportResult, error) {
+	source = strings.ToLower(strings.TrimSpace(source))
+	sourceDir, ok := roots[source]
+	if !ok {
+		return SkillImportResult{}, fmt.Errorf("unknown skill source %q", source)
 	}
 	return importSkillsFromDir(source, sourceDir, destination)
 }

@@ -21,6 +21,21 @@ func writeCatalogSkill(t *testing.T, dir, name, content string) {
 	}
 }
 
+func writeImportFixtureSkill(t *testing.T, dir string) {
+	t.Helper()
+	contents, err := os.ReadFile(filepath.Join("testdata", "import", "release-notes", skillFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "release-notes", skillFilename)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, contents, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDiscoverAndLoadSkills(t *testing.T) {
 	dir := t.TempDir()
 	writeCatalogSkill(t, dir, "release-notes", "---\nname: release-notes\ndescription: Draft concise release notes.\nmetadata:\n  author: Ollama\n  labels:\n    - release\n    - docs\n---\n# Release notes\n\nUse short bullets.")
@@ -293,8 +308,25 @@ func TestSkillContentListsDirectoryAndResources(t *testing.T) {
 }
 
 func TestImportSkillsCopiesFixtureAndIsIdempotent(t *testing.T) {
-	source := filepath.Join("testdata", "import", "codex")
+	source := t.TempDir()
 	destination := t.TempDir()
+	writeImportFixtureSkill(t, source)
+	writeCatalogSkill(t, source, "broken", "---\nname: another-skill\ndescription: Deliberately invalid.\n---\nIgnore this.")
+	if err := os.MkdirAll(filepath.Join(source, "release-notes", "references"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "release-notes", "references", "style.txt"), []byte("Keep it short.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(source, "release-notes", "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "release-notes", "scripts", "prepare.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "ignored.md"), []byte("Ignored root file.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	result, err := importSkillsFromDir("codex", source, destination)
 	if err != nil {
@@ -303,10 +335,18 @@ func TestImportSkillsCopiesFixtureAndIsIdempotent(t *testing.T) {
 	if got, want := strings.Join(result.Imported, ","), "release-notes"; got != want {
 		t.Fatalf("imported = %q, want %q", got, want)
 	}
+	catalog, err := DiscoverSkills(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	skill, err := catalog.Load("release-notes")
+	if err != nil || skill.Description != "Draft concise release notes." {
+		t.Fatalf("imported skill = %#v, %v", skill, err)
+	}
 	if got := len(result.Failures); got != 1 || result.Failures[0].Name != "broken" {
 		t.Fatalf("failures = %#v, want broken fixture failure", result.Failures)
 	}
-	for _, file := range []string{skillFilename, filepath.Join("references", "style.md"), filepath.Join("scripts", "prepare.sh")} {
+	for _, file := range []string{skillFilename, filepath.Join("references", "style.txt"), filepath.Join("scripts", "prepare.sh")} {
 		if _, err := os.Stat(filepath.Join(destination, "release-notes", file)); err != nil {
 			t.Fatalf("imported fixture file %q: %v", file, err)
 		}
@@ -373,7 +413,7 @@ func TestImportSkillsRejectsSymlinkedRoot(t *testing.T) {
 	}
 }
 
-func TestImportSkillsMissingRootAndConventionalRoots(t *testing.T) {
+func TestImportSkillsMissingRootAndConfiguredRoots(t *testing.T) {
 	result, err := importSkillsFromDir("codex", filepath.Join(t.TempDir(), "missing"), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -382,23 +422,25 @@ func TestImportSkillsMissingRootAndConventionalRoots(t *testing.T) {
 		t.Fatalf("missing root result = %#v", result)
 	}
 
-	home := t.TempDir()
 	destination := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	t.Setenv(SkillsDirEnv, destination)
+	rootBase := t.TempDir()
+	roots := map[string]string{
+		"codex":  filepath.Join(rootBase, "codex"),
+		"claude": filepath.Join(rootBase, "claude"),
+		"pi":     filepath.Join(rootBase, "pi"),
+	}
 	for _, test := range []struct {
 		source string
 		root   string
 		name   string
 	}{
-		{source: "codex", root: filepath.Join(home, ".codex", "skills"), name: "from-codex"},
-		{source: "claude", root: filepath.Join(home, ".claude", "skills"), name: "from-claude"},
-		{source: "pi", root: filepath.Join(home, ".pi", "agent", "skills"), name: "from-pi"},
+		{source: "codex", root: roots["codex"], name: "from-codex"},
+		{source: "claude", root: roots["claude"], name: "from-claude"},
+		{source: "pi", root: roots["pi"], name: "from-pi"},
 	} {
 		t.Run(test.source, func(t *testing.T) {
 			writeCatalogSkill(t, test.root, test.name, "from "+test.source)
-			result, err = ImportSkills(test.source)
+			result, err = importSkillsFromRoots(test.source, roots, destination)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -409,6 +451,23 @@ func TestImportSkillsMissingRootAndConventionalRoots(t *testing.T) {
 				t.Fatalf("conventional source was not imported: %v", err)
 			}
 		})
+	}
+	if _, err := importSkillsFromRoots("unknown", roots, destination); err == nil || !strings.Contains(err.Error(), "unknown skill source") {
+		t.Fatalf("unknown source error = %v", err)
+	}
+}
+
+func TestConventionalSkillImportRoots(t *testing.T) {
+	home := t.TempDir()
+	roots := conventionalSkillImportRoots(home)
+	for source, want := range map[string]string{
+		"codex":  filepath.Join(home, ".codex", "skills"),
+		"claude": filepath.Join(home, ".claude", "skills"),
+		"pi":     filepath.Join(home, ".pi", "agent", "skills"),
+	} {
+		if got := roots[source]; got != want {
+			t.Fatalf("%s root = %q, want %q", source, got, want)
+		}
 	}
 }
 
