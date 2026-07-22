@@ -76,3 +76,29 @@ Then run:
 ```
 codex --profile ollama-launch
 ```
+## Reasoning effort
+
+If your Codex CLI configuration includes the `model_reasoning_effort` setting, make sure it uses a value supported by Ollama.
+
+Supported values are:
+
+- `none`
+- `low`
+- `medium`
+- `high`
+- `max`
+
+Values such as `minimal` and `xhigh` are not supported and will result in an error when sending requests through Ollama.
+
+For example, replace an unsupported value such as:
+
+```toml
+model_reasoning_effort = "minimal"
+```
+
+with a supported value:
+
+```toml
+model_reasoning_effort = "none"
+```
+
