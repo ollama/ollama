@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -113,4 +114,40 @@ func TestExtractFileDataWAV(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, imgs, 1)
 	assert.Equal(t, "before  after", cleaned)
+}
+
+func TestExtractFileDataRecognizesEscapedICloudImagePath(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "Mobile Documents", "com~apple~CloudDocs", "screenshots", "CleanShot 2025-04-17 at 21.26.40@2x.png")
+	if err := os.MkdirAll(filepath.Dir(fp), 0o755); err != nil {
+		t.Fatalf("failed to create nested directories: %v", err)
+	}
+
+	data := make([]byte, 600)
+	copy(data, []byte{
+		0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n',
+		0x00, 0x00, 0x00, 0x0d, 'I', 'H', 'D', 'R',
+		0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+		0x08, 0x02, 0x00, 0x00, 0x00,
+		0x90, 0x77, 0x53, 0xde,
+		0x00, 0x00, 0x00, 0x0c, 'I', 'D', 'A', 'T',
+		0x08, 0x99, 0x63, 0x60, 0x00, 0x00, 0x00, 0x02,
+		0x00, 0x01, 0xe2, 0x21, 0xbc, 0x33,
+		0x00, 0x00, 0x00, 0x00, 'I', 'E', 'N', 'D',
+		0xae, 'B', 0x60, 0x82,
+	})
+	if err := os.WriteFile(fp, data, 0o600); err != nil {
+		t.Fatalf("failed to write test image: %v", err)
+	}
+
+	escaped := strings.NewReplacer(
+		" ", "\\ ",
+		"~", "\\~",
+	).Replace(fp)
+	input := escaped + " "
+
+	cleaned, imgs, err := extractFileData(input)
+	assert.NoError(t, err)
+	assert.Len(t, imgs, 1)
+	assert.Empty(t, cleaned)
 }
