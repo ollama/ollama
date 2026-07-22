@@ -186,6 +186,25 @@ llama_model_laguna::graph::graph(const llama_model & model, const llm_graph_para
                     NULL, LLM_FFN_SILU, LLM_FFN_PAR, il);
             cb(cur, "ffn_out", il);
         } else {
+            ggml_tensor * up_scale = nullptr;
+            float expert_weights_scale = hparams.expert_weights_scale;
+
+#if defined(GGML_USE_METAL)
+            if (n_tokens >= 32 && ggml_is_quantized(model.layers[il].ffn_down_exps->type)) {
+                // ggml-metal switches MUL_MAT_ID from its range-safe
+                // matrix-vector kernel to FP16 matrix tiles at 32 tokens
+                // (ne21_mm_id_min in ggml_metal_op_mul_mat_id). Laguna's routed
+                // SwiGLU activations can overflow those tiles. Scale the linear
+                // up branch and fold the inverse power-of-two factor into the
+                // existing routing-weight scale. Revisit this guard if the
+                // Metal dispatch threshold changes.
+                constexpr float down_input_scale = 1.0f / 256.0f;
+                up_scale = ggml_fill(ctx0,
+                        model.layers[il].ffn_exp_probs_b, down_input_scale);
+                expert_weights_scale /= down_input_scale;
+            }
+#endif
+
             ggml_tensor * moe_out = build_moe_ffn(cur,
                     model.layers[il].ffn_gate_inp,
                     model.layers[il].ffn_up_exps,
@@ -194,9 +213,11 @@ llama_model_laguna::graph::graph(const llama_model & model, const llm_graph_para
                     model.layers[il].ffn_exp_probs_b,
                     n_expert, n_expert_used,
                     LLM_FFN_SILU, hparams.expert_weights_norm,
-                    hparams.expert_weights_scale,
+                    expert_weights_scale,
                     (llama_expert_gating_func_type) hparams.expert_gating_func,
-                    il);
+                    il,
+                    nullptr, nullptr,
+                    up_scale);
             cb(moe_out, "ffn_moe_out", il);
 
             ggml_tensor * ffn_shexp = build_ffn(cur,

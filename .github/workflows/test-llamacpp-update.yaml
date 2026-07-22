@@ -323,6 +323,22 @@ jobs:
             cuda-version: '13.0'
           - os: windows
             arch: amd64
+            preset: 'CUDA 13 ARM64'
+            build-steps: cuda13Arm64Cross
+            install: https://packages.nvidia.com/prerelease/cuda/13.4.0/local_installers/cuda_13.4.0_windows_x86_64.exe
+            cuda-components:
+              - '"cudart"'
+              - '"cudart_cross"'
+              - '"nvcc"'
+              - '"nvcc_cross"'
+              - '"cublas_cross"'
+              - '"cublas_dev"'
+              - '"crt"'
+              - '"nvvm"'
+              - '"nvptxcompiler"'
+            cuda-version: '13.4'
+          - os: windows
+            arch: amd64
             preset: 'ROCm 7'
             build-steps: rocm7
             install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-26.Q1-Win11-For-HIP.exe

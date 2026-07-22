@@ -45,7 +45,6 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v1.30.0
 	golang.org/x/image v0.22.0
 	golang.org/x/mod v0.30.0
-	golang.org/x/tools v0.38.0
 	gonum.org/v1/gonum v0.15.0
 )
 

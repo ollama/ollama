@@ -58,9 +58,10 @@ func TestIntegrationLookup(t *testing.T) {
 		{"claude desktop", "claude-desktop", true, "Claude Desktop"},
 		{"claude desktop alias", "claude-app", true, "Claude Desktop"},
 		{"codex", "codex", true, "Codex"},
-		{"codex app", "codex-app", true, "Codex App"},
-		{"codex app desktop alias", "codex-desktop", true, "Codex App"},
-		{"codex app gui alias", "codex-gui", true, "Codex App"},
+		{"chatgpt", "chatgpt", true, "ChatGPT"},
+		{"codex app legacy alias", "codex-app", true, "ChatGPT"},
+		{"codex app desktop alias", "codex-desktop", true, "ChatGPT"},
+		{"codex app gui alias", "codex-gui", true, "ChatGPT"},
 		{"hermes desktop", "hermes-desktop", true, "Hermes Desktop"},
 		{"kimi", "kimi", true, "Kimi Code CLI"},
 		{"droid", "droid", true, "Droid"},
@@ -85,7 +86,7 @@ func TestIntegrationLookup(t *testing.T) {
 }
 
 func TestIntegrationRegistry(t *testing.T) {
-	expectedIntegrations := []string{"claude", "claude-desktop", "cline", "codex", "codex-app", "kimi", "droid", "opencode", "omp", "hermes", "hermes-desktop", "pool", "qwen"}
+	expectedIntegrations := []string{"claude", "claude-desktop", "cline", "codex", "chatgpt", "kimi", "droid", "opencode", "omp", "hermes", "hermes-desktop", "pool", "qwen"}
 	for _, name := range expectedIntegrations {
 		t.Run(name, func(t *testing.T) {
 			r, ok := integrations[name]
@@ -96,6 +97,30 @@ func TestIntegrationRegistry(t *testing.T) {
 				t.Error("integration.String() should not be empty")
 			}
 		})
+	}
+}
+
+func TestChatGPTMigratesLegacyCodexAppLaunchConfig(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	if err := config.SaveIntegration(codexAppIntegrationName, []string{"qwen3.5"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.MarkIntegrationOnboarded(codexAppIntegrationName); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := loadStoredIntegrationConfig(chatGPTIntegrationName)
+	if err != nil {
+		t.Fatalf("loadStoredIntegrationConfig returned error: %v", err)
+	}
+	if diff := compareStrings(got.Models, []string{"qwen3.5"}); diff != "" {
+		t.Fatalf("migrated models mismatch: %s", diff)
+	}
+	if !got.Onboarded {
+		t.Fatal("migrated integration should remain onboarded")
+	}
+	if _, err := config.LoadIntegration(chatGPTIntegrationName); err != nil {
+		t.Fatalf("canonical ChatGPT config was not written: %v", err)
 	}
 }
 
@@ -1081,6 +1106,51 @@ func TestShowOrPullWithPolicy_CloudModelNotFound_FailsEarlyForAllPolicies(t *tes
 	}
 }
 
+func TestShowOrPullWithPolicy_CloudModelShowUnavailableAllowsSelection(t *testing.T) {
+	oldHook := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		t.Fatal("confirm prompt should not be called for explicit cloud models")
+		return false, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldHook }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprintf(w, `{"error":"temporary failure"}`)
+		case "/api/status":
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprintf(w, `{"error":"temporary failure"}`)
+		case "/api/pull":
+			t.Fatal("pull should not be called for explicit cloud models")
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	if err := showOrPullWithPolicy(context.Background(), client, "glm-5.1:cloud", missingModelFail, true); err != nil {
+		t.Fatalf("showOrPullWithPolicy returned error: %v", err)
+	}
+}
+
+func TestShowOrPullWithPolicy_CloudModelShowUnreachableAllowsSelection(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected request after server close: %s %s", r.Method, r.URL.Path)
+	}))
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+	srv.Close()
+
+	if err := showOrPullWithPolicy(context.Background(), client, "glm-5.1:cloud", missingModelFail, true); err != nil {
+		t.Fatalf("showOrPullWithPolicy returned error: %v", err)
+	}
+}
+
 func TestShowOrPullWithPolicy_CloudModelDisabled_FailsWithCloudDisabledError(t *testing.T) {
 	oldHook := DefaultConfirmPrompt
 	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
@@ -1743,9 +1813,9 @@ func TestIntegration_InstallHint(t *testing.T) {
 			wantURL: "https://developers.openai.com/codex/cli/",
 		},
 		{
-			name:    "codex app has hint",
-			input:   "codex-app",
-			wantURL: "https://developers.openai.com/codex/quickstart",
+			name:    "chatgpt has hint",
+			input:   "chatgpt",
+			wantURL: "https://chatgpt.com/download",
 		},
 		{
 			name:    "openclaw has hint",
@@ -1831,7 +1901,7 @@ func TestListIntegrationInfos(t *testing.T) {
 		if codexAppSupported() != nil {
 			filtered := make([]string, 0, len(want))
 			for _, name := range want {
-				if name != "codex-app" {
+				if name != "chatgpt" {
 					filtered = append(filtered, name)
 				}
 			}
@@ -1848,7 +1918,7 @@ func TestListIntegrationInfos(t *testing.T) {
 		for _, info := range infos {
 			got = append(got, info.Name)
 		}
-		wantPrefix := []string{"claude", "codex-app", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp"}
+		wantPrefix := []string{"claude", "chatgpt", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp"}
 		if codexAppSupported() != nil {
 			wantPrefix = []string{"claude", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp"}
 		}
@@ -1874,7 +1944,7 @@ func TestListIntegrationInfos(t *testing.T) {
 	t.Run("includes known integrations", func(t *testing.T) {
 		known := map[string]bool{"claude": false, "cline": false, "codex": false, "opencode": false, "omp": false}
 		if codexAppSupported() == nil {
-			known["codex-app"] = false
+			known["chatgpt"] = false
 		}
 		if poolsideGOOS != "windows" {
 			known["pool"] = false

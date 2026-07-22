@@ -351,6 +351,82 @@ func TestClientDo(t *testing.T) {
 	}
 }
 
+func TestClientWebSearchExperimentalUsesLocalRoute(t *testing.T) {
+	var gotPath string
+	var gotMethod string
+	var gotRequest WebSearchRequest
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		if err := json.NewDecoder(r.Body).Decode(&gotRequest); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.NewEncoder(w).Encode(WebSearchResponse{
+			Results: []WebSearchResult{{Title: "Ollama", URL: "https://ollama.com", Content: "models"}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}))
+	defer ts.Close()
+
+	client := NewClient(&url.URL{Scheme: "http", Host: ts.Listener.Addr().String()}, http.DefaultClient)
+	resp, err := client.WebSearchExperimental(t.Context(), &WebSearchRequest{Query: "ollama", MaxResults: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Fatalf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/experimental/web_search" {
+		t.Fatalf("path = %q, want /api/experimental/web_search", gotPath)
+	}
+	if gotRequest.Query != "ollama" || gotRequest.MaxResults != 3 {
+		t.Fatalf("request = %#v", gotRequest)
+	}
+	if len(resp.Results) != 1 || resp.Results[0].Title != "Ollama" {
+		t.Fatalf("response = %#v", resp)
+	}
+}
+
+func TestClientWebFetchExperimentalUsesLocalRoute(t *testing.T) {
+	var gotPath string
+	var gotMethod string
+	var gotRequest WebFetchRequest
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		if err := json.NewDecoder(r.Body).Decode(&gotRequest); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.NewEncoder(w).Encode(WebFetchResponse{
+			Title:   "Ollama",
+			Content: "models",
+			Links:   []string{"https://ollama.com/library"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}))
+	defer ts.Close()
+
+	client := NewClient(&url.URL{Scheme: "http", Host: ts.Listener.Addr().String()}, http.DefaultClient)
+	resp, err := client.WebFetchExperimental(t.Context(), &WebFetchRequest{URL: "https://ollama.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Fatalf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/experimental/web_fetch" {
+		t.Fatalf("path = %q, want /api/experimental/web_fetch", gotPath)
+	}
+	if gotRequest.URL != "https://ollama.com" {
+		t.Fatalf("request = %#v", gotRequest)
+	}
+	if resp.Title != "Ollama" || resp.Content != "models" {
+		t.Fatalf("response = %#v", resp)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {

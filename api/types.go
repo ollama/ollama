@@ -706,7 +706,10 @@ type CreateRequest struct {
 	// Messages is a list of messages added to the model before chat and generation requests.
 	Messages []Message `json:"messages,omitempty"`
 
+	// Renderer is the name of the renderer used when constructing a request to the model.
 	Renderer string `json:"renderer,omitempty"`
+
+	// Parser is the name of the parser used to parse the output of the request.
 	Parser   string `json:"parser,omitempty"`
 
 	// Requires is the minimum version of Ollama required by the model.
@@ -866,6 +869,36 @@ type CloudStatus struct {
 // StatusResponse is the response from [Client.CloudStatusExperimental].
 type StatusResponse struct {
 	Cloud CloudStatus `json:"cloud"`
+}
+
+// WebSearchRequest is the request for [Client.WebSearchExperimental].
+type WebSearchRequest struct {
+	Query      string `json:"query"`
+	MaxResults int    `json:"max_results,omitempty"`
+}
+
+// WebSearchResult is a single result from [Client.WebSearchExperimental].
+type WebSearchResult struct {
+	Title   string `json:"title"`
+	URL     string `json:"url"`
+	Content string `json:"content"`
+}
+
+// WebSearchResponse is the response from [Client.WebSearchExperimental].
+type WebSearchResponse struct {
+	Results []WebSearchResult `json:"results"`
+}
+
+// WebFetchRequest is the request for [Client.WebFetchExperimental].
+type WebFetchRequest struct {
+	URL string `json:"url"`
+}
+
+// WebFetchResponse is the response from [Client.WebFetchExperimental].
+type WebFetchResponse struct {
+	Title   string   `json:"title"`
+	Content string   `json:"content"`
+	Links   []string `json:"links,omitempty"`
 }
 
 // GenerateResponse is the response passed into [GenerateResponseFunc].

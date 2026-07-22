@@ -1,6 +1,8 @@
 package nn
 
 import (
+	"slices"
+
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
@@ -47,8 +49,6 @@ func WithSnapshotSplits(offsets []int) RecurrentOption {
 // seg is a half-open token range [start, end) within a forward.
 type seg struct{ start, end int32 }
 
-func (s seg) len() int32 { return s.end - s.start }
-
 // segmentRanges expands the interior cut offsets into consecutive [a,c) ranges
 // covering [0, L). Cuts are assumed sorted, deduped, and strictly interior; an
 // empty slice yields a single {0, L} segment.
@@ -62,21 +62,9 @@ func segmentRanges(splits []int, L int32) []seg {
 	return append(segs, seg{start, L})
 }
 
-// segmentLens returns each row's real query length within segment
-// [s.start, s.end): the portion of the row's full real length that falls
-// inside the segment, clamped to the segment width. Rows that already ended
-// before the segment contribute 0; rows extending past it are full.
-func segmentLens(b *batch.Batch, s seg) []int32 {
-	lens := make([]int32, len(b.SeqQueryLens))
-	for i := range lens {
-		lens[i] = min(max(b.SeqQueryLens[i]-s.start, 0), s.len())
-	}
-	return lens
-}
-
 // sliceSeg slices x to the segment's window [s.start, s.end) along the L axis
 // (axis 1), keeping all other axes whole. Works for any rank — [B, L],
-// [B, L, H], [B, L, H, D] — so the padding mask, conv/gate/beta, and q/k/v all
+// [B, L, H], [B, L, H, D] — so the padding mask, gate/beta, and q/k/v all
 // slice the same L range and stay aligned. Returns nil when x is nil (the
 // no-padding-mask fast path). Slicing the full-forward mask this way yields
 // the segment's own mask, so masks are built once per forward and reused
@@ -117,12 +105,7 @@ func resolveRecurrentConfig(opts []RecurrentOption) recurrentConfig {
 
 // CausalConv1D runs a depthwise causal 1D convolution with recurrent
 // state management. Prepends the prior conv state along axis 1 and runs
-// the conv.
-//
-// Conv selection: when conv is non-nil (a full nn.Conv1d layer), it
-// runs through conv.Forward. Otherwise weight is treated as the bare
-// depthwise kernel [C, K] and the fallback manual implementation runs.
-// Exactly one of conv or weight should be non-nil.
+// conv.Forward over the combined window.
 //
 // Shapes: input [B, L, D]; prior state [B, convTail, D]; output
 // [B, L, D] (the causal conv strips the prepended state).
@@ -132,10 +115,12 @@ func resolveRecurrentConfig(opts []RecurrentOption) recurrentConfig {
 //
 // Returns the output and the conv states at each boundary, ending with the
 // forward-end conv tail. Without WithSnapshotSplits there is one boundary (the
-// end), so states has length 1. With splits, the conv runs in segments and
-// states holds the conv tail at each interior split and at the end; out is
-// identical to the unsegmented conv.
-func CausalConv1D(b *batch.Batch, input *mlx.Array, conv *Conv1d, weight *mlx.Array, convTail int, opts ...RecurrentOption) (out *mlx.Array, states []*mlx.Array) {
+// end), so states has length 1. With splits, the conv still runs as a single
+// pass over the whole window and each boundary's conv tail is sliced out of the
+// shared input buffer (a boundary state is purely the trailing convTail input
+// positions, so no extra conv launch is needed); out is identical to the
+// unsegmented conv.
+func CausalConv1D(b *batch.Batch, input *mlx.Array, conv *Conv1d, convTail int, opts ...RecurrentOption) (out *mlx.Array, states []*mlx.Array) {
 	cfg := resolveRecurrentConfig(opts)
 	var prior *mlx.Array
 	if cfg.history != nil {
@@ -144,101 +129,62 @@ func CausalConv1D(b *batch.Batch, input *mlx.Array, conv *Conv1d, weight *mlx.Ar
 		prior = cfg.convState
 	}
 
+	// concat is [prior(convTail); input]; each boundary tail is sliced from it
+	// below.
 	L := int32(input.Dim(1))
-	mask := paddingMask(b, L) // built once per forward, sliced per segment
-	segs := segmentRanges(cfg.splits, L)
-	if len(segs) <= 1 {
-		out, end := causalConv1DSegment(input, prior, mask, b.SeqQueryLens, conv, weight, convTail)
-		return out, []*mlx.Array{end}
-	}
-
-	// Segmented conv: each piece prepends the prior piece's conv tail,
-	// recording the conv tail at every boundary (interior splits + end).
-	outs := make([]*mlx.Array, 0, len(segs))
-	states = make([]*mlx.Array, 0, len(segs))
-	state := prior
-	for _, s := range segs {
-		segOut, segNext := causalConv1DSegment(sliceSeg(input, s), state, sliceSeg(mask, s), segmentLens(b, s), conv, weight, convTail)
-		outs = append(outs, segOut)
-		state = segNext
-		states = append(states, segNext)
-	}
-	return mlx.Concatenate(outs, 1), states
-}
-
-// causalConv1DSegment convolves one segment: prepend prior, convolve, return
-// (output, conv tail). mask is the [B, L] padding mask for input (nil if no
-// row is padded); queryLens is each row's real query length (used to gather
-// the per-row conv tail when masking is in play).
-func causalConv1DSegment(input, prior *mlx.Array, mask *mlx.Array, queryLens []int32, conv *Conv1d, weight *mlx.Array, convTail int) (out, nextConv *mlx.Array) {
-	if mask != nil {
+	if mask := paddingMask(b, L); mask != nil {
 		zero := mlx.FromValue(float32(0)).AsType(input.DType())
 		input = mlx.Where(mlx.ExpandDims(mask, 2), input, zero)
 	}
-
 	concat := mlx.Concatenate([]*mlx.Array{prior, input}, 1)
-	if conv != nil {
-		out = conv.Forward(concat)
-	} else {
-		out = depthwiseCausalConv1d(concat, weight, int32(input.Dim(1)))
-	}
+	out = conv.Forward(concat)
 
+	// Snapshot the conv tail at each segment boundary: interior splits in
+	// ascending order, then the forward end at L. Each boundary at offset O
+	// captures input positions [O-convTail, O) — the trailing convTail rows of
+	// the window through token O.
+	segs := segmentRanges(cfg.splits, L)
+	states = make([]*mlx.Array, 0, len(segs))
+	for _, s := range segs {
+		st := convStateAt(concat, b.SeqQueryLens, convTail, s.end)
+		if L > 1 {
+			// Detach the small window from the forward-sized concat; at L==1 it's tiny.
+			st = mlx.Contiguous(st, false)
+		}
+		states = append(states, st)
+	}
+	return out, states
+}
+
+// convStateAt returns the conv state to cache at boundary: the trailing convTail
+// input positions ending at boundary, clamped per row to the row's real length so
+// a padded row freezes at its real end rather than capturing padding. The prior
+// prefixed in concat shifts those positions to columns [boundary, boundary+convTail).
+func convStateAt(concat *mlx.Array, queryLens []int32, convTail int, boundary int32) *mlx.Array {
 	B := int32(concat.Dim(0))
-	total := int32(concat.Dim(1))
 	D := int32(concat.Dim(2))
 
-	// Gather the tail from each of the non-padded sequence ends
-	if mask != nil && convTail > 0 {
+	// A row shorter than boundary ends its window at its own real length (inputs
+	// are right-padded), so when any row falls short we gather per row instead of
+	// one shared slice. boundary itself is still batch-wide — per-sequence
+	// boundaries (real batching) are a future change to this gather and the callers.
+	clamped := slices.ContainsFunc(queryLens, func(q int32) bool { return boundary > q })
+
+	if clamped && convTail > 0 {
 		offsets := make([]int32, int(B)*convTail)
-
 		for i := range int(B) {
-			end := queryLens[i]
-
+			end := min(boundary, queryLens[i])
 			for k := range convTail {
 				offsets[i*convTail+k] = end + int32(k)
 			}
 		}
-
 		positions := mlx.NewArrayInt32(offsets, []int32{B, int32(convTail), 1})
-		nextConv = mlx.TakeAlongAxis(concat, positions, 1)
-	} else {
-		nextConv = mlx.SliceStartStop(concat,
-			[]int32{0, total - int32(convTail), 0},
-			[]int32{B, total, D})
+		return mlx.TakeAlongAxis(concat, positions, 1)
 	}
 
-	return out, nextConv
-}
-
-// depthwiseCausalConv1d implements a depthwise 1D causal convolution
-// manually as a sum of kernel-offset multiplies. x has shape
-// [B, inLen, C], weight has shape [C, K]; output has shape [B, outLen, C]
-// where outLen = inLen - K + 1 (the caller passes outLen to avoid the
-// subtraction). Used as the fallback path in CausalConv1D when no
-// full Conv1d layer is configured.
-func depthwiseCausalConv1d(x, w *mlx.Array, outLen int32) *mlx.Array {
-	if x == nil || w == nil {
-		return nil
-	}
-	if w.NumDims() != 2 {
-		return nil
-	}
-	B := int32(x.Dim(0))
-	C := int32(w.Dim(0))
-	K := int32(w.Dim(1))
-	var out *mlx.Array
-	for i := range K {
-		seg := mlx.SliceStartStop(x, []int32{0, i, 0}, []int32{B, i + outLen, C})
-		wi := mlx.SliceStartStop(w, []int32{0, i}, []int32{C, i + 1})
-		wi = mlx.Reshape(wi, 1, 1, C)
-		term := mlx.Mul(seg, wi)
-		if out == nil {
-			out = term
-		} else {
-			out = mlx.Add(out, term)
-		}
-	}
-	return out
+	return mlx.SliceStartStop(concat,
+		[]int32{0, boundary, 0},
+		[]int32{B, boundary + int32(convTail), D})
 }
 
 // GatedDelta wraps mlx.FastGatedDelta with recurrent state management.
@@ -337,14 +283,7 @@ type paddingMaskInputs struct {
 func (in paddingMaskInputs) build() *mlx.Array {
 	B := len(in.batch.SeqQueryLens)
 
-	needed := false
-	for i := range B {
-		if in.batch.SeqQueryLens[i] < in.L {
-			needed = true
-			break
-		}
-	}
-	if !needed {
+	if !slices.ContainsFunc(in.batch.SeqQueryLens, func(q int32) bool { return q < in.L }) {
 		return nil
 	}
 

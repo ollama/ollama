@@ -1,29 +1,15 @@
 package model
 
 import (
-	"strings"
-
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/quant"
 )
 
-// QuantizationParams returns default groupSize, bits, and mode for a quantization type.
+// QuantizationParams returns default groupSize, bits, and mode for a
+// quantization type. The values live in the shared x/quant package so the
+// importer, the runtime loader, and `ollama show` agree on them.
 func QuantizationParams(quantization string) (groupSize, bits int, mode string) {
-	switch strings.ToUpper(quantization) {
-	case "NVFP4":
-		return 16, 4, "nvfp4"
-	case "MXFP4":
-		return 32, 4, "mxfp4"
-	case "FP4", "Q4", "INT4":
-		return 64, 4, "affine"
-	case "MXFP8":
-		return 32, 8, "mxfp8"
-	case "FP8", "Q8", "INT8":
-		return 64, 8, "affine"
-	case "":
-		return 0, 0, ""
-	default:
-		return 32, 8, "affine"
-	}
+	return quant.Params(quantization)
 }
 
 // TensorQuantParams resolves quant params for a tensor using per-tensor metadata

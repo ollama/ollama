@@ -446,6 +446,16 @@ func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, useQuanti
 	}
 }
 
+// loadStackedExperts resolves a stacked expert projection by its close-to-source
+// name (layers.N.mlp.experts.<proj>, which `ollama create` now writes) and falls
+// back to the legacy switch_mlp name that older imports produced.
+func loadStackedExperts(tensors map[string]*mlx.Array, cfg *Config, useQuantized bool, layerPrefix, proj string) *stackedExpertWeights {
+	if w := loadStackedProjection(tensors, cfg, useQuantized, layerPrefix+".mlp.experts."+proj); w != nil {
+		return w
+	}
+	return loadStackedProjection(tensors, cfg, useQuantized, layerPrefix+".mlp.switch_mlp."+proj)
+}
+
 // LoadWeights assigns tensors to model fields.
 func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	cfg := m.Config
@@ -527,11 +537,11 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 				return fmt.Errorf("layer %d: missing moe router gate", i)
 			}
 
-			gateW := loadStackedProjection(tensors, cfg, useQuantizedExperts, layerPrefix+".mlp.switch_mlp.gate_proj")
-			upW := loadStackedProjection(tensors, cfg, useQuantizedExperts, layerPrefix+".mlp.switch_mlp.up_proj")
-			downW := loadStackedProjection(tensors, cfg, useQuantizedExperts, layerPrefix+".mlp.switch_mlp.down_proj")
+			gateW := loadStackedExperts(tensors, cfg, useQuantizedExperts, layerPrefix, "gate_proj")
+			upW := loadStackedExperts(tensors, cfg, useQuantizedExperts, layerPrefix, "up_proj")
+			downW := loadStackedExperts(tensors, cfg, useQuantizedExperts, layerPrefix, "down_proj")
 			if gateW == nil || upW == nil || downW == nil {
-				return fmt.Errorf("layer %d: missing stacked switch_mlp expert weights (import the model with `ollama create`)", i)
+				return fmt.Errorf("layer %d: missing stacked expert weights (import the model with `ollama create`)", i)
 			}
 
 			switchMLP := &SwitchMLP{}

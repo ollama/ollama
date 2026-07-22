@@ -28,7 +28,6 @@ import (
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/openai"
-	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 	"github.com/stretchr/testify/assert"
@@ -521,22 +520,7 @@ func TestRoutes(t *testing.T) {
 		},
 	}
 
-	rc := &ollama.Registry{
-		// This is a temporary measure to allow us to move forward,
-		// surfacing any code contacting ollama.com we do not intended
-		// to.
-		//
-		// Currently, this only handles DELETE /api/delete, which
-		// should not make any contact with the ollama.com registry, so
-		// be clear about that.
-		//
-		// Tests that do need to contact the registry here, will be
-		// consumed into our new server/api code packages and removed
-		// from here.
-		HTTPClient: panicOnRoundTrip,
-	}
-
-	router, err := s.GenerateRoutes(rc)
+	router, err := s.GenerateRoutes()
 	if err != nil {
 		t.Fatalf("failed to generate routes: %v", err)
 	}
@@ -892,7 +876,7 @@ func TestShowCopilotUserAgentOverwritesExistingBasename(t *testing.T) {
 		t.Fatalf("expected status code 200 creating model, actual %d", w.Code)
 	}
 
-	h, err := s.GenerateRoutes(nil)
+	h, err := s.GenerateRoutes()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -949,7 +933,7 @@ func TestShowCopilotUserAgentSetsBasenameWhenModelInfoIsEmpty(t *testing.T) {
 		t.Fatalf("expected status code 200 creating model, actual %d", w.Code)
 	}
 
-	h, err := s.GenerateRoutes(nil)
+	h, err := s.GenerateRoutes()
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -152,6 +152,9 @@ func TestRecurrentCachePaddedRoundTrip(t *testing.T) {
 		return mlx.FromValues(vals, convDim, convTail+1)
 	}
 	weight := mkWeight(0.2)
+	// Build the depthwise causal Conv1d as the model does at load time: the
+	// [C, K] kernel becomes [C, K, 1] and the conv is grouped per channel.
+	conv := nn.NewConv1d(mlx.ExpandDims(weight, 2), nil, 1, 0, 1, convDim)
 
 	runForward := func(c *RecurrentCache, b *batch.Batch, T int) (*mlx.Array, *mlx.Array) {
 		var convInput *mlx.Array
@@ -164,7 +167,7 @@ func TestRecurrentCachePaddedRoundTrip(t *testing.T) {
 		}
 
 		history := c.Get(b, mlx.DTypeFloat32)
-		_, convStates := nn.CausalConv1D(b, convInput, nil, weight, convTail,
+		_, convStates := nn.CausalConv1D(b, convInput, conv, convTail,
 			nn.WithRecurrentHistory(history))
 
 		var q, k, v, g, beta *mlx.Array

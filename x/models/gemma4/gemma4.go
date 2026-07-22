@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
@@ -154,6 +155,17 @@ func firstNonNil(tensors map[string]*mlx.Array, keys ...string) *mlx.Array {
 	return nil
 }
 
+// firstTensorKey returns the first key present in tensors along with its
+// tensor, or "", nil if none of the keys are present.
+func firstTensorKey(tensors map[string]*mlx.Array, keys ...string) (string, *mlx.Array) {
+	for _, k := range keys {
+		if t := tensors[k]; t != nil {
+			return k, t
+		}
+	}
+	return "", nil
+}
+
 // sliceAxis1 slices a tensor along axis 1: a[:, start:stop, ...].
 func sliceAxis1(a *mlx.Array, start, stop int32) *mlx.Array {
 	dims := a.Dims()
@@ -243,44 +255,36 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *TextConfig, pre
 	return out
 }
 
-// loadFusedExperts populates moe with a stacked-3D fused gate_up + down expert
-// pair, choosing the quantized GatherQMM path when scale sidecars are present
-// and the dense GatherMM path otherwise. gateUpW/downW are the stacked tensors
-// and gateUpKey/downKey are their map keys, used to locate the _scale/_qbias
-// sidecars and per-tensor quant metadata. Shared by the .experts./.moe.
-// pre-stacked names and the .moe.switch_mlp. names so all fused layouts load
-// identically.
-func loadFusedExperts(tensors map[string]*mlx.Array, cfg *TextConfig, moe *MoEBlock, gateUpW *mlx.Array, gateUpKey string, downW *mlx.Array, downKey string) {
+// loadFusedExperts configures an MoE block from a fused, pre-stacked gate_up
+// projection and its down projection. It keeps the fused gate_up as a single
+// tensor and chooses GatherQMM (one quantized call) when scale companions are
+// present, or GatherMM otherwise. It is name-agnostic: callers resolve the
+// tensor keys, which may or may not carry a ".weight" suffix.
+func (m *Model) loadFusedExperts(moe *MoEBlock, tensors map[string]*mlx.Array, gateUpKey string, gateUp *mlx.Array, downKey string, down *mlx.Array) {
 	moe.UseFusedGateUp = true
 
 	gateUpScales := firstNonNil(tensors, gateUpKey+"_scale", gateUpKey+".scale")
 	downScales := firstNonNil(tensors, downKey+"_scale", downKey+".scale")
 	if gateUpScales == nil || downScales == nil {
-		// Unquantized: keep fused and transpose for GatherMM ([experts, in, out]).
-		moe.GateUpWeight = transposeForGatherMM(gateUpW)
-		moe.DownWeight = transposeForGatherMM(downW)
+		// Dense: keep gate_up fused and transpose for GatherMM.
+		moe.GateUpWeight = transposeForGatherMM(gateUp)
+		moe.DownWeight = transposeForGatherMM(down)
 		return
 	}
 
-	// Quantized (affine/nvfp4/mxfp8): keep fused as a single tensor for one
-	// GatherQMM call instead of two. No transpose. nvfp4/mxfp8 carry no qbias,
-	// and this path does not apply nvfp4's optional double-scale global_scale.
+	// Quantized: keep the fused gate_up packed for a single GatherQMM call.
 	moe.UseQuantized = true
-	moe.GateUpWeightQ = gateUpW
+	moe.GateUpWeightQ = gateUp
 	moe.GateUpScales = gateUpScales
 	moe.GateUpBiases = firstNonNil(tensors, gateUpKey+"_qbias", gateUpKey+".bias")
-	moe.DownWeightQ = downW
+	moe.DownWeightQ = down
 	moe.DownScales = downScales
 	moe.DownBiases = firstNonNil(tensors, downKey+"_qbias", downKey+".bias")
 
 	moe.GateUpGroupSize, moe.GateUpBits, moe.QuantMode = model.ResolveLinearQuantParams(
-		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode,
-		cfg.TensorQuant, gateUpKey, gateUpW, gateUpScales,
-	)
+		m.QuantGroupSize, m.QuantBits, m.QuantMode, m.TensorQuant, gateUpKey, gateUp, gateUpScales)
 	moe.DownGroupSize, moe.DownBits, moe.DownQuantMode = model.ResolveLinearQuantParams(
-		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode,
-		cfg.TensorQuant, downKey, downW, downScales,
-	)
+		m.QuantGroupSize, m.QuantBits, m.QuantMode, m.TensorQuant, downKey, down, downScales)
 }
 
 // Router implements Gemma 4's expert routing mechanism.
@@ -801,70 +805,34 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 
 			moe := &MoEBlock{PerExpertScale: perExpertScale}
 
-			// Check for pre-stacked tensors (BF16 or quantized HF format).
-			// Try .experts. first (new weight drop), fall back to .moe. (old
-			// format). Track the matched key so loadFusedExperts can find the
-			// quant sidecars.
-			gateUpKey := layerPrefix + ".experts.gate_up_proj"
-			gateUpW := tensors[gateUpKey]
-			if gateUpW == nil {
-				gateUpKey = layerPrefix + ".moe.gate_up_proj"
-				gateUpW = tensors[gateUpKey]
-			}
-			gateW := tensors[layerPrefix+".experts.gate_proj"]
-			if gateW == nil {
-				gateW = tensors[layerPrefix+".moe.gate_proj"]
-			}
-			if gateUpW != nil {
-				// Fused gate+up (dense or quantized): split happens at matmul time.
-				downKey := layerPrefix + ".experts.down_proj"
-				downW := tensors[downKey]
-				if downW == nil {
-					downKey = layerPrefix + ".moe.down_proj"
-					downW = tensors[downKey]
+			// Experts ship with gate+up fused into one pre-stacked tensor under
+			// a few different names: HF (.experts./.moe.) and the create
+			// pipeline (.moe.switch_mlp.), each with or without a ".weight"
+			// suffix. Resolve the gate_up projection once, then let
+			// loadFusedExperts decide quantized vs dense from its scales.
+			if gateUpKey, gateUp := firstTensorKey(tensors,
+				layerPrefix+".experts.gate_up_proj.weight", layerPrefix+".experts.gate_up_proj",
+				layerPrefix+".moe.gate_up_proj.weight", layerPrefix+".moe.gate_up_proj",
+				layerPrefix+".moe.switch_mlp.gate_up_proj.weight", layerPrefix+".moe.switch_mlp.gate_up_proj",
+			); gateUp != nil {
+				downKey := strings.Replace(gateUpKey, "gate_up_proj", "down_proj", 1)
+				down := tensors[downKey]
+				if down == nil {
+					return fmt.Errorf("layer %d: missing MoE down_proj for fused gate_up_proj %q", i, gateUpKey)
 				}
-				if downW == nil {
-					return fmt.Errorf("layer %d: missing MoE down_proj with fused gate_up_proj", i)
-				}
-				loadFusedExperts(tensors, m.TextConfig, moe, gateUpW, gateUpKey, downW, downKey)
-			} else if gateW != nil {
-				// Separate gate_proj and up_proj (older format). Transpose for GatherMM.
+				m.loadFusedExperts(moe, tensors, gateUpKey, gateUp, downKey, down)
+			} else if gateW := firstNonNil(tensors,
+				layerPrefix+".experts.gate_proj", layerPrefix+".moe.gate_proj"); gateW != nil {
+				// Separate (non-fused) pre-stacked gate/up projections (older HF
+				// layout, dense only). Transpose for GatherMM.
 				moe.GateWeight = transposeForGatherMM(gateW)
-				upW := tensors[layerPrefix+".experts.up_proj"]
-				if upW == nil {
-					upW = tensors[layerPrefix+".moe.up_proj"]
-				}
-				downW := tensors[layerPrefix+".experts.down_proj"]
-				if downW == nil {
-					downW = tensors[layerPrefix+".moe.down_proj"]
-				}
-				moe.UpWeight = transposeForGatherMM(upW)
-				moe.DownWeight = transposeForGatherMM(downW)
+				moe.UpWeight = transposeForGatherMM(firstNonNil(tensors,
+					layerPrefix+".experts.up_proj", layerPrefix+".moe.up_proj"))
+				moe.DownWeight = transposeForGatherMM(firstNonNil(tensors,
+					layerPrefix+".experts.down_proj", layerPrefix+".moe.down_proj"))
 				if moe.UpWeight == nil || moe.DownWeight == nil {
 					return fmt.Errorf("layer %d: incomplete pre-stacked MoE weights", i)
 				}
-			} else if switchGateUp := firstNonNil(tensors,
-				layerPrefix+".moe.switch_mlp.gate_up_proj.weight",
-				layerPrefix+".moe.switch_mlp.gate_up_proj"); switchGateUp != nil {
-				// Stacked switch_mlp format (from create pipeline with expert packing).
-				switchDown := firstNonNil(tensors,
-					layerPrefix+".moe.switch_mlp.down_proj.weight",
-					layerPrefix+".moe.switch_mlp.down_proj")
-				if switchDown == nil {
-					return fmt.Errorf("layer %d: missing switch_mlp down_proj", i)
-				}
-
-				// Resolve base keys: the scale/bias suffix attaches to whichever
-				// of .weight / bare matched the weight tensor.
-				gateUpKey := layerPrefix + ".moe.switch_mlp.gate_up_proj.weight"
-				if tensors[gateUpKey] == nil {
-					gateUpKey = layerPrefix + ".moe.switch_mlp.gate_up_proj"
-				}
-				downKey := layerPrefix + ".moe.switch_mlp.down_proj.weight"
-				if tensors[downKey] == nil {
-					downKey = layerPrefix + ".moe.switch_mlp.down_proj"
-				}
-				loadFusedExperts(tensors, m.TextConfig, moe, switchGateUp, gateUpKey, switchDown, downKey)
 			} else {
 				// Per-expert tensors (from create path).
 				// Try separate gate_proj/up_proj first, then fused gate_up_proj.

@@ -57,6 +57,14 @@ func (r *launcherSingleRunner) Run(model string, _ []LaunchModel, args []string)
 
 func (r *launcherSingleRunner) String() string { return "StubSingle" }
 
+func selectionItemNames(items []SelectionItem) []string {
+	names := make([]string, 0, len(items))
+	for _, item := range items {
+		names = append(names, item.Name)
+	}
+	return names
+}
+
 type launcherRestorableRunner struct {
 	launcherSingleRunner
 	restored              bool
@@ -302,6 +310,104 @@ func TestBuildLauncherState_ManagedSingleIntegrationUsesCurrentModel(t *testing.
 	}
 	if !state.Integrations["pi"].ModelUsable {
 		t.Fatal("expected managed current model to be usable")
+	}
+}
+
+func TestBuildLauncherState_DeprecatedSavedModelIsUsable(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+
+	if err := config.SetLastModel("qwen2.5:14b"); err != nil {
+		t.Fatalf("failed to seed last model: %v", err)
+	}
+	if err := config.SaveIntegration("codex", []string{"llama3.2:latest"}); err != nil {
+		t.Fatalf("failed to seed codex config: %v", err)
+	}
+
+	var showCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"qwen2.5:14b"},{"name":"llama3.2:latest"}]}`)
+		case "/api/show":
+			showCalls.Add(1)
+			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	state, err := BuildLauncherState(context.Background())
+	if err != nil {
+		t.Fatalf("BuildLauncherState returned error: %v", err)
+	}
+	if !state.RunModelUsable {
+		t.Fatal("expected deprecated saved run model to stay usable")
+	}
+	if state.Integrations["codex"].CurrentModel != "llama3.2:latest" {
+		t.Fatalf("expected saved integration model to remain visible, got %q", state.Integrations["codex"].CurrentModel)
+	}
+	if !state.Integrations["codex"].ModelUsable {
+		t.Fatal("expected deprecated saved integration model to stay usable")
+	}
+	if showCalls.Load() != 0 {
+		t.Fatalf("saved models present in tags should not require /api/show, got %d calls", showCalls.Load())
+	}
+}
+
+func TestLoadSelectableModelsFiltersDeprecatedModels(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[`+
+				`{"model":"qwen2.5-coder:32b","description":"old coding model"},`+
+				`{"model":"qwen3.5","description":"new local model"}`+
+				`]}`)
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[`+
+				`{"name":"qwen2.5:14b"},`+
+				`{"name":"llama3.2:latest"},`+
+				`{"name":"custom-local:latest"},`+
+				`{"name":"qwen3.5"}`+
+				`]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	client, err := newLauncherClient(defaultLaunchPolicy(true, false))
+	if err != nil {
+		t.Fatalf("newLauncherClient returned error: %v", err)
+	}
+	items, orderedChecked, err := client.loadSelectableModels(context.Background(), []string{"qwen2.5:14b", "custom-local"}, "qwen2.5:14b", "no models available")
+	if err != nil {
+		t.Fatalf("loadSelectableModels returned error: %v", err)
+	}
+
+	got := names(items)
+	for _, deprecated := range []string{"qwen2.5:14b", "llama3.2", "qwen2.5-coder:32b"} {
+		if slices.Contains(got, deprecated) {
+			t.Fatalf("deprecated model %q should be filtered from selectable models: %v", deprecated, got)
+		}
+	}
+	if !slices.Contains(got, "qwen3.5") {
+		t.Fatalf("expected newer recommendation to remain selectable, got %v", got)
+	}
+	if !slices.Contains(got, "custom-local") {
+		t.Fatalf("expected custom local model to remain selectable, got %v", got)
+	}
+	if slices.Contains(orderedChecked, "qwen2.5:14b") {
+		t.Fatalf("deprecated prechecked model should be filtered, got %v", orderedChecked)
+	}
+	if !slices.Contains(orderedChecked, "custom-local") {
+		t.Fatalf("non-deprecated prechecked model should remain, got %v", orderedChecked)
 	}
 }
 
@@ -1405,7 +1511,7 @@ func TestBuildLauncherState_InstalledAndCloudDisabled(t *testing.T) {
 	if err := config.SaveIntegration("claude", []string{"glm-5:cloud"}); err != nil {
 		t.Fatalf("failed to save claude config: %v", err)
 	}
-	if err := config.SaveIntegration("opencode", []string{"glm-5:cloud", "llama3.2"}); err != nil {
+	if err := config.SaveIntegration("opencode", []string{"glm-5:cloud", "sample-model"}); err != nil {
 		t.Fatalf("failed to save opencode config: %v", err)
 	}
 
@@ -1414,7 +1520,7 @@ func TestBuildLauncherState_InstalledAndCloudDisabled(t *testing.T) {
 		case "/api/experimental/model-recommendations":
 			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
-			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
+			fmt.Fprint(w, `{"models":[{"name":"sample-model"}]}`)
 		case "/api/status":
 			fmt.Fprint(w, `{"cloud":{"disabled":true,"source":"config"}}`)
 		default:
@@ -1444,7 +1550,7 @@ func TestBuildLauncherState_InstalledAndCloudDisabled(t *testing.T) {
 	if !state.Integrations["opencode"].ModelUsable {
 		t.Fatal("expected editor config with a remaining local model to stay usable")
 	}
-	if state.Integrations["opencode"].CurrentModel != "llama3.2" {
+	if state.Integrations["opencode"].CurrentModel != "sample-model" {
 		t.Fatalf("expected editor current model to fall back to remaining local model, got %q", state.Integrations["opencode"].CurrentModel)
 	}
 }
@@ -1453,10 +1559,10 @@ func TestBuildLauncherState_MigratesLegacyOpenclawAliasConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 
-	if err := config.SaveIntegration("clawdbot", []string{"llama3.2"}); err != nil {
+	if err := config.SaveIntegration("clawdbot", []string{"sample-model"}); err != nil {
 		t.Fatalf("failed to seed legacy alias config: %v", err)
 	}
-	if err := config.SaveAliases("clawdbot", map[string]string{"primary": "llama3.2"}); err != nil {
+	if err := config.SaveAliases("clawdbot", map[string]string{"primary": "sample-model"}); err != nil {
 		t.Fatalf("failed to seed legacy alias map: %v", err)
 	}
 	if err := config.MarkIntegrationOnboarded("clawdbot"); err != nil {
@@ -1468,7 +1574,7 @@ func TestBuildLauncherState_MigratesLegacyOpenclawAliasConfig(t *testing.T) {
 		case "/api/experimental/model-recommendations":
 			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
-			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
+			fmt.Fprint(w, `{"models":[{"name":"sample-model"}]}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1480,7 +1586,7 @@ func TestBuildLauncherState_MigratesLegacyOpenclawAliasConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildLauncherState returned error: %v", err)
 	}
-	if state.Integrations["openclaw"].CurrentModel != "llama3.2" {
+	if state.Integrations["openclaw"].CurrentModel != "sample-model" {
 		t.Fatalf("expected openclaw state to reuse legacy alias config, got %q", state.Integrations["openclaw"].CurrentModel)
 	}
 
@@ -1488,10 +1594,10 @@ func TestBuildLauncherState_MigratesLegacyOpenclawAliasConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected canonical config to be migrated, got %v", err)
 	}
-	if !slices.Equal(migrated.Models, []string{"llama3.2"}) {
+	if !slices.Equal(migrated.Models, []string{"sample-model"}) {
 		t.Fatalf("unexpected migrated models: %v", migrated.Models)
 	}
-	if migrated.Aliases["primary"] != "llama3.2" {
+	if migrated.Aliases["primary"] != "sample-model" {
 		t.Fatalf("expected aliases to migrate, got %v", migrated.Aliases)
 	}
 	if !migrated.Onboarded {
@@ -1503,7 +1609,7 @@ func TestBuildLauncherState_ToleratesInventoryFailure(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 
-	if err := config.SetLastModel("llama3.2"); err != nil {
+	if err := config.SetLastModel("sample-model"); err != nil {
 		t.Fatalf("failed to seed last model: %v", err)
 	}
 	if err := config.SaveIntegration("claude", []string{"qwen3:8b"}); err != nil {
@@ -1547,7 +1653,7 @@ func TestBuildLauncherState_UsesTagsInventoryWithoutShow(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 
-	if err := config.SetLastModel("llama3.2"); err != nil {
+	if err := config.SetLastModel("sample-model"); err != nil {
 		t.Fatalf("failed to seed last model: %v", err)
 	}
 	if err := config.SaveIntegration("codex", []string{"qwen3:8b"}); err != nil {
@@ -1559,7 +1665,7 @@ func TestBuildLauncherState_UsesTagsInventoryWithoutShow(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[`+
-				`{"name":"llama3.2","capabilities":["completion","tools"],"context_length":131072,"size":3200000000},`+
+				`{"name":"sample-model","capabilities":["completion","tools"],"context_length":131072,"size":3200000000},`+
 				`{"name":"qwen3:8b","capabilities":["completion","tools"],"context_length":65536,"size":4500000000}`+
 				`]}`)
 		case "/api/show":
@@ -1595,7 +1701,7 @@ func TestResolveRunModel_UsesSavedModelWithoutSelector(t *testing.T) {
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
 
-	if err := config.SetLastModel("llama3.2"); err != nil {
+	if err := config.SetLastModel("sample-model"); err != nil {
 		t.Fatalf("failed to save last model: %v", err)
 	}
 
@@ -1610,9 +1716,9 @@ func TestResolveRunModel_UsesSavedModelWithoutSelector(t *testing.T) {
 		case "/api/experimental/model-recommendations":
 			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
-			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
+			fmt.Fprint(w, `{"models":[{"name":"sample-model"}]}`)
 		case "/api/show":
-			fmt.Fprint(w, `{"model":"llama3.2"}`)
+			fmt.Fprint(w, `{"model":"sample-model"}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1624,7 +1730,7 @@ func TestResolveRunModel_UsesSavedModelWithoutSelector(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveRunModel returned error: %v", err)
 	}
-	if model != "llama3.2" {
+	if model != "sample-model" {
 		t.Fatalf("expected saved model, got %q", model)
 	}
 	if selectorCalled {
@@ -1657,7 +1763,7 @@ func TestResolveRunModel_HeadlessYesAutoPicksLastModel(t *testing.T) {
 		case "/api/experimental/model-recommendations":
 			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
-			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
+			fmt.Fprint(w, `{"models":[{"name":"sample-model"}]}`)
 		case "/api/show":
 			var req apiShowRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
@@ -1721,7 +1827,7 @@ func TestResolveRunModel_UsesRequestPolicy(t *testing.T) {
 		case "/api/experimental/model-recommendations":
 			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
-			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
+			fmt.Fprint(w, `{"models":[{"name":"sample-model"}]}`)
 		case "/api/show":
 			var req apiShowRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
@@ -1764,14 +1870,14 @@ func TestResolveRunModel_ForcePickerAlwaysUsesSelector(t *testing.T) {
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
 
-	if err := config.SetLastModel("llama3.2"); err != nil {
+	if err := config.SetLastModel("sample-model"); err != nil {
 		t.Fatalf("failed to save last model: %v", err)
 	}
 
 	var selectorCalls int
 	DefaultSingleSelector = func(title string, items []SelectionItem, current string) (string, error) {
 		selectorCalls++
-		if current != "llama3.2" {
+		if current != "sample-model" {
 			t.Fatalf("expected current selection to be last model, got %q", current)
 		}
 		return "qwen3:8b", nil
@@ -1782,7 +1888,7 @@ func TestResolveRunModel_ForcePickerAlwaysUsesSelector(t *testing.T) {
 		case "/api/experimental/model-recommendations":
 			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
-			fmt.Fprint(w, `{"models":[{"name":"llama3.2"},{"name":"qwen3:8b"}]}`)
+			fmt.Fprint(w, `{"models":[{"name":"sample-model"},{"name":"qwen3:8b"}]}`)
 		case "/api/show":
 			fmt.Fprint(w, `{"model":"qwen3:8b"}`)
 		default:
@@ -2064,7 +2170,7 @@ func TestResolveRunModel_UpgradeCancelledReturnsToModelSelector(t *testing.T) {
 		case 1:
 			return "kimi-k2.6:cloud", nil
 		case 2:
-			return "llama3.2", nil
+			return "sample-model", nil
 		default:
 			t.Fatalf("selector called too many times: %d", selectorCalls)
 			return "", nil
@@ -2079,7 +2185,7 @@ func TestResolveRunModel_UpgradeCancelledReturnsToModelSelector(t *testing.T) {
 		case "/api/experimental/model-recommendations":
 			fmt.Fprint(w, `{"recommendations":[{"model":"kimi-k2.6:cloud","description":"Coding","context_length":262144,"max_output_tokens":262144,"required_plan":"pro"}]}`)
 		case "/api/tags":
-			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
+			fmt.Fprint(w, `{"models":[{"name":"sample-model"}]}`)
 		case "/api/status":
 			w.WriteHeader(http.StatusNotFound)
 			fmt.Fprint(w, `{"error":"not found"}`)
@@ -2100,15 +2206,15 @@ func TestResolveRunModel_UpgradeCancelledReturnsToModelSelector(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveRunModel returned error: %v", err)
 	}
-	if model != "llama3.2" {
-		t.Fatalf("model = %q, want llama3.2", model)
+	if model != "sample-model" {
+		t.Fatalf("model = %q, want sample-model", model)
 	}
 	if selectorCalls != 2 {
 		t.Fatalf("selector calls = %d, want 2", selectorCalls)
 	}
 }
 
-func TestResolveRunModel_SubscriptionModelUnavailableWhoamiFailsGracefully(t *testing.T) {
+func TestResolveRunModel_SubscriptionModelUnavailableWhoamiAllowsSelection(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
@@ -2130,6 +2236,8 @@ func TestResolveRunModel_SubscriptionModelUnavailableWhoamiFailsGracefully(t *te
 		case "/api/status":
 			w.WriteHeader(http.StatusNotFound)
 			fmt.Fprint(w, `{"error":"not found"}`)
+		case "/api/show":
+			fmt.Fprint(w, `{"remote_model":"kimi-k2.6"}`)
 		case "/api/me":
 			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprint(w, `{"error":"temporary failure"}`)
@@ -2140,12 +2248,12 @@ func TestResolveRunModel_SubscriptionModelUnavailableWhoamiFailsGracefully(t *te
 	defer srv.Close()
 	t.Setenv("OLLAMA_HOST", srv.URL)
 
-	_, err := ResolveRunModel(context.Background(), RunModelRequest{ForcePicker: true})
-	if err == nil {
-		t.Fatal("expected plan verification error")
+	model, err := ResolveRunModel(context.Background(), RunModelRequest{ForcePicker: true})
+	if err != nil {
+		t.Fatalf("ResolveRunModel returned error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "Could not verify your plan. Try again in a moment.") {
-		t.Fatalf("unexpected error: %v", err)
+	if model != "kimi-k2.6:cloud" {
+		t.Fatalf("expected selected cloud model, got %q", model)
 	}
 }
 
@@ -2168,7 +2276,7 @@ func TestLaunchIntegration_EditorForceConfigure(t *testing.T) {
 	var multiCalled bool
 	DefaultMultiSelector = func(title string, items []SelectionItem, preChecked []string) ([]string, error) {
 		multiCalled = true
-		return []string{"llama3.2", "qwen3:8b"}, nil
+		return []string{"sample-model", "qwen3:8b"}, nil
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2176,7 +2284,7 @@ func TestLaunchIntegration_EditorForceConfigure(t *testing.T) {
 		case "/api/experimental/model-recommendations":
 			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
-			fmt.Fprint(w, `{"models":[{"name":"llama3.2"},{"name":"qwen3:8b"}]}`)
+			fmt.Fprint(w, `{"models":[{"name":"sample-model"},{"name":"qwen3:8b"}]}`)
 		case "/api/show":
 			var req apiShowRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
@@ -2198,17 +2306,17 @@ func TestLaunchIntegration_EditorForceConfigure(t *testing.T) {
 	if !multiCalled {
 		t.Fatal("expected multi selector to be used for forced editor configure")
 	}
-	if diff := compareStringSlices(editor.edited, [][]string{{"llama3.2", "qwen3:8b"}}); diff != "" {
+	if diff := compareStringSlices(editor.edited, [][]string{{"sample-model", "qwen3:8b"}}); diff != "" {
 		t.Fatalf("unexpected edited models (-want +got):\n%s", diff)
 	}
-	if editor.ranModel != "llama3.2" {
+	if editor.ranModel != "sample-model" {
 		t.Fatalf("expected launch to use first selected model, got %q", editor.ranModel)
 	}
 	saved, err := config.LoadIntegration("droid")
 	if err != nil {
 		t.Fatalf("failed to reload saved config: %v", err)
 	}
-	if diff := compareStrings(saved.Models, []string{"llama3.2", "qwen3:8b"}); diff != "" {
+	if diff := compareStrings(saved.Models, []string{"sample-model", "qwen3:8b"}); diff != "" {
 		t.Fatalf("unexpected saved models (-want +got):\n%s", diff)
 	}
 }
@@ -2222,7 +2330,7 @@ func TestLaunchIntegration_ClineRewritesWhenLiveProviderDrifted(t *testing.T) {
 	writeFakeBinary(t, binDir, "cline")
 	t.Setenv("PATH", binDir)
 
-	if err := config.SaveIntegration("cline", []string{"llama3.2"}); err != nil {
+	if err := config.SaveIntegration("cline", []string{"sample-model"}); err != nil {
 		t.Fatalf("failed to seed saved config: %v", err)
 	}
 
@@ -2285,8 +2393,8 @@ func TestLaunchIntegration_ClineRewritesWhenLiveProviderDrifted(t *testing.T) {
 	if settings["provider"] != clineLaunchProvider {
 		t.Fatalf("ollama settings.provider = %v, want %s", settings["provider"], clineLaunchProvider)
 	}
-	if settings["model"] != "llama3.2" {
-		t.Fatalf("ollama settings.model = %v, want llama3.2", settings["model"])
+	if settings["model"] != "sample-model" {
+		t.Fatalf("ollama settings.model = %v, want sample-model", settings["model"])
 	}
 	if settings["baseUrl"] != srv.URL+"/v1" {
 		t.Fatalf("ollama settings.baseUrl = %v, want %s/v1", settings["baseUrl"], srv.URL)
@@ -2302,7 +2410,7 @@ func TestLaunchIntegration_EditorForceConfigure_FloatsCheckedModelsInPicker(t *t
 	writeFakeBinary(t, binDir, "droid")
 	t.Setenv("PATH", binDir)
 
-	editor := &launcherEditorRunner{models: []string{"llama3.2", "missing-local"}}
+	editor := &launcherEditorRunner{models: []string{"sample-model", "missing-local"}}
 	withIntegrationOverride(t, "droid", editor)
 
 	if err := config.SaveIntegration("droid", []string{"qwen3.5:cloud", "qwen3.5"}); err != nil {
@@ -2376,7 +2484,7 @@ func TestLaunchIntegration_EditorModelOverridePreservesExtras(t *testing.T) {
 	editor := &launcherEditorRunner{}
 	withIntegrationOverride(t, "droid", editor)
 
-	if err := config.SaveIntegration("droid", []string{"llama3.2", "mistral"}); err != nil {
+	if err := config.SaveIntegration("droid", []string{"sample-model", "mistral"}); err != nil {
 		t.Fatalf("failed to seed config: %v", err)
 	}
 
@@ -2399,7 +2507,7 @@ func TestLaunchIntegration_EditorModelOverridePreservesExtras(t *testing.T) {
 		t.Fatalf("LaunchIntegration returned error: %v", err)
 	}
 
-	want := []string{"qwen3:8b", "llama3.2", "mistral"}
+	want := []string{"qwen3:8b", "sample-model", "mistral"}
 	saved, err := config.LoadIntegration("droid")
 	if err != nil {
 		t.Fatalf("failed to reload saved config: %v", err)
@@ -2434,7 +2542,7 @@ func TestLaunchIntegration_EditorCloudDisabledFallsBackToSelector(t *testing.T) 
 	var multiCalled bool
 	DefaultMultiSelector = func(title string, items []SelectionItem, preChecked []string) ([]string, error) {
 		multiCalled = true
-		return []string{"llama3.2"}, nil
+		return []string{"sample-model"}, nil
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2444,9 +2552,9 @@ func TestLaunchIntegration_EditorCloudDisabledFallsBackToSelector(t *testing.T) 
 		case "/api/experimental/model-recommendations":
 			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
-			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
+			fmt.Fprint(w, `{"models":[{"name":"sample-model"}]}`)
 		case "/api/show":
-			fmt.Fprint(w, `{"model":"llama3.2"}`)
+			fmt.Fprint(w, `{"model":"sample-model"}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -2556,7 +2664,7 @@ func TestLaunchIntegration_EditorConfigureMultiSkipsUnauthedCloudAndPersistsAcce
 	withIntegrationOverride(t, "droid", editor)
 
 	DefaultMultiSelector = func(title string, items []SelectionItem, preChecked []string) ([]string, error) {
-		return []string{"llama3.2", "glm-5:cloud"}, nil
+		return []string{"sample-model", "glm-5:cloud"}, nil
 	}
 	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		t.Fatalf("unexpected prompt: %q", prompt)
@@ -2571,7 +2679,7 @@ func TestLaunchIntegration_EditorConfigureMultiSkipsUnauthedCloudAndPersistsAcce
 		case "/api/experimental/model-recommendations":
 			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
-			fmt.Fprint(w, `{"models":[{"name":"llama3.2"},{"name":"glm-5:cloud","remote_model":"glm-5"}]}`)
+			fmt.Fprint(w, `{"models":[{"name":"sample-model"},{"name":"glm-5:cloud","remote_model":"glm-5"}]}`)
 		case "/api/status":
 			w.WriteHeader(http.StatusNotFound)
 			fmt.Fprint(w, `{"error":"not found"}`)
@@ -2579,8 +2687,8 @@ func TestLaunchIntegration_EditorConfigureMultiSkipsUnauthedCloudAndPersistsAcce
 			var req apiShowRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
 			switch req.Model {
-			case "llama3.2":
-				fmt.Fprint(w, `{"model":"llama3.2"}`)
+			case "sample-model":
+				fmt.Fprint(w, `{"model":"sample-model"}`)
 			case "glm-5:cloud":
 				fmt.Fprint(w, `{"remote_model":"glm-5"}`)
 			default:
@@ -2606,17 +2714,17 @@ func TestLaunchIntegration_EditorConfigureMultiSkipsUnauthedCloudAndPersistsAcce
 	if launchErr != nil {
 		t.Fatalf("LaunchIntegration returned error: %v", launchErr)
 	}
-	if editor.ranModel != "llama3.2" {
+	if editor.ranModel != "sample-model" {
 		t.Fatalf("expected launch to use local primary, got %q", editor.ranModel)
 	}
 	saved, err := config.LoadIntegration("droid")
 	if err != nil {
 		t.Fatalf("failed to reload saved config: %v", err)
 	}
-	if diff := compareStrings(saved.Models, []string{"llama3.2"}); diff != "" {
+	if diff := compareStrings(saved.Models, []string{"sample-model"}); diff != "" {
 		t.Fatalf("unexpected saved models (-want +got):\n%s", diff)
 	}
-	if diff := compareStringSlices(editor.edited, [][]string{{"llama3.2"}}); diff != "" {
+	if diff := compareStringSlices(editor.edited, [][]string{{"sample-model"}}); diff != "" {
 		t.Fatalf("unexpected edited models (-want +got):\n%s", diff)
 	}
 	if !strings.Contains(stderr, "Skipped glm-5:cloud: sign in was cancelled") {
@@ -2646,7 +2754,7 @@ func TestLaunchIntegration_EditorConfigureUpgradeCancelledReturnsToModelSelector
 			if diff := compareStrings(preChecked, []string{"kimi-k2.6:cloud"}); diff != "" {
 				t.Fatalf("second selector preChecked (-want +got):\n%s", diff)
 			}
-			return []string{"llama3.2"}, nil
+			return []string{"sample-model"}, nil
 		default:
 			t.Fatalf("selector called too many times: %d", selectorCalls)
 			return nil, nil
@@ -2668,7 +2776,7 @@ func TestLaunchIntegration_EditorConfigureUpgradeCancelledReturnsToModelSelector
 		case "/api/experimental/model-recommendations":
 			fmt.Fprint(w, `{"recommendations":[{"model":"kimi-k2.6:cloud","description":"Coding","context_length":262144,"max_output_tokens":262144,"required_plan":"pro"}]}`)
 		case "/api/tags":
-			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
+			fmt.Fprint(w, `{"models":[{"name":"sample-model"}]}`)
 		case "/api/status":
 			w.WriteHeader(http.StatusNotFound)
 			fmt.Fprint(w, `{"error":"not found"}`)
@@ -2694,10 +2802,10 @@ func TestLaunchIntegration_EditorConfigureUpgradeCancelledReturnsToModelSelector
 	if selectorCalls != 2 {
 		t.Fatalf("selector calls = %d, want 2", selectorCalls)
 	}
-	if editor.ranModel != "llama3.2" {
+	if editor.ranModel != "sample-model" {
 		t.Fatalf("expected launch to use local model, got %q", editor.ranModel)
 	}
-	if diff := compareStringSlices(editor.edited, [][]string{{"llama3.2"}}); diff != "" {
+	if diff := compareStringSlices(editor.edited, [][]string{{"sample-model"}}); diff != "" {
 		t.Fatalf("unexpected edited models (-want +got):\n%s", diff)
 	}
 }
@@ -2714,7 +2822,7 @@ func TestLaunchIntegration_EditorConfigureMultiRemovesReselectedFailingModel(t *
 	editor := &launcherEditorRunner{}
 	withIntegrationOverride(t, "droid", editor)
 
-	if err := config.SaveIntegration("droid", []string{"glm-5:cloud", "llama3.2"}); err != nil {
+	if err := config.SaveIntegration("droid", []string{"glm-5:cloud", "sample-model"}); err != nil {
 		t.Fatalf("failed to seed config: %v", err)
 	}
 	DefaultMultiSelector = func(title string, items []SelectionItem, preChecked []string) ([]string, error) {
@@ -2733,7 +2841,7 @@ func TestLaunchIntegration_EditorConfigureMultiRemovesReselectedFailingModel(t *
 		case "/api/experimental/model-recommendations":
 			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
-			fmt.Fprint(w, `{"models":[{"name":"glm-5:cloud","remote_model":"glm-5"},{"name":"llama3.2"}]}`)
+			fmt.Fprint(w, `{"models":[{"name":"glm-5:cloud","remote_model":"glm-5"},{"name":"sample-model"}]}`)
 		case "/api/status":
 			w.WriteHeader(http.StatusNotFound)
 			fmt.Fprint(w, `{"error":"not found"}`)
@@ -2744,8 +2852,8 @@ func TestLaunchIntegration_EditorConfigureMultiRemovesReselectedFailingModel(t *
 				fmt.Fprint(w, `{"remote_model":"glm-5"}`)
 				return
 			}
-			if req.Model == "llama3.2" {
-				fmt.Fprint(w, `{"model":"llama3.2"}`)
+			if req.Model == "sample-model" {
+				fmt.Fprint(w, `{"model":"sample-model"}`)
 				return
 			}
 			http.NotFound(w, r)
@@ -2769,17 +2877,17 @@ func TestLaunchIntegration_EditorConfigureMultiRemovesReselectedFailingModel(t *
 	if launchErr != nil {
 		t.Fatalf("LaunchIntegration returned error: %v", launchErr)
 	}
-	if editor.ranModel != "llama3.2" {
+	if editor.ranModel != "sample-model" {
 		t.Fatalf("expected launch to use surviving model, got %q", editor.ranModel)
 	}
-	if diff := compareStringSlices(editor.edited, [][]string{{"llama3.2"}}); diff != "" {
+	if diff := compareStringSlices(editor.edited, [][]string{{"sample-model"}}); diff != "" {
 		t.Fatalf("unexpected edited models (-want +got):\n%s", diff)
 	}
 	saved, loadErr := config.LoadIntegration("droid")
 	if loadErr != nil {
 		t.Fatalf("failed to reload saved config: %v", loadErr)
 	}
-	if diff := compareStrings(saved.Models, []string{"llama3.2"}); diff != "" {
+	if diff := compareStrings(saved.Models, []string{"sample-model"}); diff != "" {
 		t.Fatalf("unexpected saved models (-want +got):\n%s", diff)
 	}
 	if !strings.Contains(stderr, "Skipped glm-5:cloud: sign in was cancelled") {
@@ -2799,7 +2907,7 @@ func TestLaunchIntegration_EditorConfigureMultiAllFailuresKeepsExistingAndSkipsL
 	editor := &launcherEditorRunner{}
 	withIntegrationOverride(t, "droid", editor)
 
-	if err := config.SaveIntegration("droid", []string{"llama3.2"}); err != nil {
+	if err := config.SaveIntegration("droid", []string{"sample-model"}); err != nil {
 		t.Fatalf("failed to seed config: %v", err)
 	}
 
@@ -2857,7 +2965,7 @@ func TestLaunchIntegration_EditorConfigureMultiAllFailuresKeepsExistingAndSkipsL
 	if err != nil {
 		t.Fatalf("failed to reload saved config: %v", err)
 	}
-	if diff := compareStrings(saved.Models, []string{"llama3.2"}); diff != "" {
+	if diff := compareStrings(saved.Models, []string{"sample-model"}); diff != "" {
 		t.Fatalf("unexpected saved models (-want +got):\n%s", diff)
 	}
 	if !strings.Contains(stderr, "Skipped missing-local-a:") {
@@ -2877,10 +2985,10 @@ func TestLaunchIntegration_ConfiguredEditorLaunchValidatesPrimaryOnly(t *testing
 	writeFakeBinary(t, binDir, "droid")
 	t.Setenv("PATH", binDir)
 
-	editor := &launcherEditorRunner{models: []string{"llama3.2", "missing-local"}}
+	editor := &launcherEditorRunner{models: []string{"sample-model", "missing-local"}}
 	withIntegrationOverride(t, "droid", editor)
 
-	if err := config.SaveIntegration("droid", []string{"llama3.2", "missing-local"}); err != nil {
+	if err := config.SaveIntegration("droid", []string{"sample-model", "missing-local"}); err != nil {
 		t.Fatalf("failed to seed config: %v", err)
 	}
 
@@ -2898,8 +3006,8 @@ func TestLaunchIntegration_ConfiguredEditorLaunchValidatesPrimaryOnly(t *testing
 		var req apiShowRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		switch req.Model {
-		case "llama3.2":
-			fmt.Fprint(w, `{"model":"llama3.2"}`)
+		case "sample-model":
+			fmt.Fprint(w, `{"model":"sample-model"}`)
 		case "missing-local":
 			missingShowCalled = true
 			w.WriteHeader(http.StatusNotFound)
@@ -2917,7 +3025,7 @@ func TestLaunchIntegration_ConfiguredEditorLaunchValidatesPrimaryOnly(t *testing
 	if missingShowCalled {
 		t.Fatal("expected configured launch to validate only the primary model")
 	}
-	if editor.ranModel != "llama3.2" {
+	if editor.ranModel != "sample-model" {
 		t.Fatalf("expected launch to use saved primary model, got %q", editor.ranModel)
 	}
 	if len(editor.edited) != 0 {
@@ -2928,7 +3036,7 @@ func TestLaunchIntegration_ConfiguredEditorLaunchValidatesPrimaryOnly(t *testing
 	if err != nil {
 		t.Fatalf("failed to reload saved config: %v", err)
 	}
-	if diff := compareStrings(saved.Models, []string{"llama3.2", "missing-local"}); diff != "" {
+	if diff := compareStrings(saved.Models, []string{"sample-model", "missing-local"}); diff != "" {
 		t.Fatalf("unexpected saved models (-want +got):\n%s", diff)
 	}
 }
@@ -2946,10 +3054,10 @@ func TestLaunchIntegration_ConfiguredEditorLaunchSkipsReconfigure(t *testing.T) 
 	if err := os.WriteFile(settingsPath, []byte("{}"), 0o644); err != nil {
 		t.Fatalf("failed to seed editor settings: %v", err)
 	}
-	editor := &launcherEditorRunner{paths: []string{settingsPath}, models: []string{"llama3.2", "qwen3:8b"}}
+	editor := &launcherEditorRunner{paths: []string{settingsPath}, models: []string{"sample-model", "qwen3:8b"}}
 	withIntegrationOverride(t, "droid", editor)
 
-	if err := config.SaveIntegration("droid", []string{"llama3.2", "qwen3:8b"}); err != nil {
+	if err := config.SaveIntegration("droid", []string{"sample-model", "qwen3:8b"}); err != nil {
 		t.Fatalf("failed to seed config: %v", err)
 	}
 
@@ -2976,7 +3084,7 @@ func TestLaunchIntegration_ConfiguredEditorLaunchSkipsReconfigure(t *testing.T) 
 	if len(editor.edited) != 0 {
 		t.Fatalf("expected normal launch to skip editor rewrites, got %v", editor.edited)
 	}
-	if editor.ranModel != "llama3.2" {
+	if editor.ranModel != "sample-model" {
 		t.Fatalf("expected launch to use saved primary model, got %q", editor.ranModel)
 	}
 
@@ -2984,7 +3092,7 @@ func TestLaunchIntegration_ConfiguredEditorLaunchSkipsReconfigure(t *testing.T) 
 	if err != nil {
 		t.Fatalf("failed to reload saved config: %v", err)
 	}
-	if diff := compareStrings(saved.Models, []string{"llama3.2", "qwen3:8b"}); diff != "" {
+	if diff := compareStrings(saved.Models, []string{"sample-model", "qwen3:8b"}); diff != "" {
 		t.Fatalf("unexpected saved models (-want +got):\n%s", diff)
 	}
 }
@@ -3001,7 +3109,7 @@ func TestLaunchIntegration_ConfiguredEditorLaunchRewritesDriftedLiveConfig(t *te
 	editor := &launcherEditorRunner{models: []string{"qwen3:8b"}}
 	withIntegrationOverride(t, "droid", editor)
 
-	if err := config.SaveIntegration("droid", []string{"llama3.2", "mistral"}); err != nil {
+	if err := config.SaveIntegration("droid", []string{"sample-model", "mistral"}); err != nil {
 		t.Fatalf("failed to seed config: %v", err)
 	}
 
@@ -3025,10 +3133,10 @@ func TestLaunchIntegration_ConfiguredEditorLaunchRewritesDriftedLiveConfig(t *te
 	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "droid"}); err != nil {
 		t.Fatalf("LaunchIntegration returned error: %v", err)
 	}
-	if diff := cmp.Diff([][]string{{"llama3.2", "mistral"}}, editor.edited); diff != "" {
+	if diff := cmp.Diff([][]string{{"sample-model", "mistral"}}, editor.edited); diff != "" {
 		t.Fatalf("expected editor config rewrite when live config drifts (-want +got):\n%s", diff)
 	}
-	if editor.ranModel != "llama3.2" {
+	if editor.ranModel != "sample-model" {
 		t.Fatalf("expected launch to use saved primary model, got %q", editor.ranModel)
 	}
 
@@ -3036,7 +3144,7 @@ func TestLaunchIntegration_ConfiguredEditorLaunchRewritesDriftedLiveConfig(t *te
 	if err != nil {
 		t.Fatalf("failed to reload saved config: %v", err)
 	}
-	if diff := compareStrings(saved.Models, []string{"llama3.2", "mistral"}); diff != "" {
+	if diff := compareStrings(saved.Models, []string{"sample-model", "mistral"}); diff != "" {
 		t.Fatalf("unexpected saved models (-want +got):\n%s", diff)
 	}
 }
@@ -3050,10 +3158,10 @@ func TestLaunchIntegration_OpenclawPreservesExistingModelList(t *testing.T) {
 	writeFakeBinary(t, binDir, "openclaw")
 	t.Setenv("PATH", binDir)
 
-	editor := &launcherEditorRunner{models: []string{"llama3.2", "mistral"}}
+	editor := &launcherEditorRunner{models: []string{"sample-model", "mistral"}}
 	withIntegrationOverride(t, "openclaw", editor)
 
-	if err := config.SaveIntegration("openclaw", []string{"llama3.2", "mistral"}); err != nil {
+	if err := config.SaveIntegration("openclaw", []string{"sample-model", "mistral"}); err != nil {
 		t.Fatalf("failed to seed config: %v", err)
 	}
 
@@ -3075,7 +3183,7 @@ func TestLaunchIntegration_OpenclawPreservesExistingModelList(t *testing.T) {
 	if len(editor.edited) != 0 {
 		t.Fatalf("expected launch to preserve the existing OpenClaw config, got rewrites %v", editor.edited)
 	}
-	if editor.ranModel != "llama3.2" {
+	if editor.ranModel != "sample-model" {
 		t.Fatalf("expected launch to use first saved model, got %q", editor.ranModel)
 	}
 
@@ -3083,7 +3191,7 @@ func TestLaunchIntegration_OpenclawPreservesExistingModelList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to reload saved config: %v", err)
 	}
-	if diff := compareStrings(saved.Models, []string{"llama3.2", "mistral"}); diff != "" {
+	if diff := compareStrings(saved.Models, []string{"sample-model", "mistral"}); diff != "" {
 		t.Fatalf("unexpected saved models (-want +got):\n%s", diff)
 	}
 }
@@ -3101,7 +3209,7 @@ func TestLaunchIntegration_OpenclawInstallsBeforeConfigSideEffects(t *testing.T)
 	selectorCalled := false
 	DefaultMultiSelector = func(title string, items []SelectionItem, preChecked []string) ([]string, error) {
 		selectorCalled = true
-		return []string{"llama3.2"}, nil
+		return []string{"sample-model"}, nil
 	}
 
 	err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "openclaw"})
@@ -3135,7 +3243,7 @@ func TestLaunchIntegration_PiInstallsBeforeConfigSideEffects(t *testing.T) {
 	selectorCalled := false
 	DefaultMultiSelector = func(title string, items []SelectionItem, preChecked []string) ([]string, error) {
 		selectorCalled = true
-		return []string{"llama3.2"}, nil
+		return []string{"sample-model"}, nil
 	}
 
 	err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "pi"})
@@ -3166,7 +3274,7 @@ func TestLaunchIntegration_ConfigureOnlyDoesNotRequireInstalledBinary(t *testing
 	withIntegrationOverride(t, "droid", editor)
 
 	DefaultMultiSelector = func(title string, items []SelectionItem, preChecked []string) ([]string, error) {
-		return []string{"llama3.2"}, nil
+		return []string{"sample-model"}, nil
 	}
 
 	var prompts []string
@@ -3183,9 +3291,9 @@ func TestLaunchIntegration_ConfigureOnlyDoesNotRequireInstalledBinary(t *testing
 		case "/api/experimental/model-recommendations":
 			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
-			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
+			fmt.Fprint(w, `{"models":[{"name":"sample-model"}]}`)
 		case "/api/show":
-			fmt.Fprint(w, `{"model":"llama3.2"}`)
+			fmt.Fprint(w, `{"model":"sample-model"}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -3200,7 +3308,7 @@ func TestLaunchIntegration_ConfigureOnlyDoesNotRequireInstalledBinary(t *testing
 	}); err != nil {
 		t.Fatalf("LaunchIntegration returned error: %v", err)
 	}
-	if diff := compareStringSlices(editor.edited, [][]string{{"llama3.2"}}); diff != "" {
+	if diff := compareStringSlices(editor.edited, [][]string{{"sample-model"}}); diff != "" {
 		t.Fatalf("unexpected edited models (-want +got):\n%s", diff)
 	}
 	if editor.ranModel != "" {
@@ -3325,7 +3433,7 @@ func TestLaunchIntegration_ClaudeForceConfigureMissingSelectionDoesNotSave(t *te
 	writeFakeBinary(t, binDir, "claude")
 	t.Setenv("PATH", binDir)
 
-	if err := config.SaveIntegration("claude", []string{"llama3.2"}); err != nil {
+	if err := config.SaveIntegration("claude", []string{"sample-model"}); err != nil {
 		t.Fatalf("failed to seed config: %v", err)
 	}
 
@@ -3345,7 +3453,7 @@ func TestLaunchIntegration_ClaudeForceConfigureMissingSelectionDoesNotSave(t *te
 		case "/api/experimental/model-recommendations":
 			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
-			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
+			fmt.Fprint(w, `{"models":[{"name":"sample-model"}]}`)
 		case "/api/show":
 			var req apiShowRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
@@ -3374,7 +3482,7 @@ func TestLaunchIntegration_ClaudeForceConfigureMissingSelectionDoesNotSave(t *te
 	if loadErr != nil {
 		t.Fatalf("failed to reload saved config: %v", loadErr)
 	}
-	if diff := compareStrings(saved.Models, []string{"llama3.2"}); diff != "" {
+	if diff := compareStrings(saved.Models, []string{"sample-model"}); diff != "" {
 		t.Fatalf("unexpected saved models (-want +got):\n%s", diff)
 	}
 }
@@ -3447,6 +3555,278 @@ func TestLaunchIntegration_ClaudeModelOverrideSkipsSelector(t *testing.T) {
 	}
 }
 
+func TestLaunchIntegration_ClaudeModelOverrideDeprecatedDeclineOpensPicker(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, true)
+
+	binDir := t.TempDir()
+	writeFakeBinary(t, binDir, "claude")
+	t.Setenv("PATH", binDir)
+
+	var showCalls atomic.Int32
+	var prompt string
+	var promptOptions ConfirmOptions
+	DefaultConfirmPrompt = func(p string, options ConfirmOptions) (bool, error) {
+		prompt = p
+		promptOptions = options
+		return false, nil
+	}
+	var selectorCalls int
+	DefaultSingleSelector = func(title string, items []SelectionItem, current string) (string, error) {
+		selectorCalls++
+		if title != "Select model for Claude Code:" {
+			t.Fatalf("picker title = %q, want Claude Code model picker", title)
+		}
+		if current != "llama3.2" {
+			t.Fatalf("picker current = %q, want deprecated override", current)
+		}
+		itemNames := selectionItemNames(items)
+		if slices.Contains(itemNames, "llama3.2") {
+			t.Fatalf("expected deprecated override to be hidden from picker, got %v", itemNames)
+		}
+		for _, model := range []string{"best-cloud:cloud", "best-local"} {
+			if !slices.Contains(itemNames, model) {
+				t.Fatalf("expected compatible model %q in picker, got %v", model, itemNames)
+			}
+		}
+		return "best-local", nil
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[`+
+				`{"model":"best-cloud:cloud","description":"Cloud rec","context_length":262144,"max_output_tokens":32768},`+
+				`{"model":"best-local","description":"Local rec"}`+
+				`]}`)
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"llama3.2"},{"name":"best-local"}]}`)
+		case "/api/show":
+			showCalls.Add(1)
+			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+		Name:          "claude",
+		ModelOverride: "llama3.2",
+	}); err != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", err)
+	}
+	for _, want := range []string{"llama3.2 does not work well with Claude Code", "best-cloud:cloud", "best-local", "ollama launch claude --model best-cloud:cloud"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt %q does not contain %q", prompt, want)
+		}
+	}
+	if promptOptions.YesLabel != "Launch anyway" || promptOptions.NoLabel != "Pick another model" || promptOptions.Default != ConfirmDefaultNo {
+		t.Fatalf("unexpected deprecation prompt options: %+v", promptOptions)
+	}
+	if selectorCalls != 1 {
+		t.Fatalf("expected picker to open after declining override, got %d calls", selectorCalls)
+	}
+	if showCalls.Load() != 1 {
+		t.Fatalf("expected only replacement model readiness to call /api/show, got %d calls", showCalls.Load())
+	}
+	saved, err := config.LoadIntegration("claude")
+	if err != nil {
+		t.Fatalf("failed to reload saved config: %v", err)
+	}
+	if got := primaryModelFromConfig(saved); got != "best-local" {
+		t.Fatalf("expected picked model to replace deprecated override, got %q", got)
+	}
+}
+
+func TestLaunchIntegration_SavedDeprecatedDeclineOpensPicker(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, true)
+
+	if err := config.SaveIntegration("droid", []string{"llama3.2"}); err != nil {
+		t.Fatalf("failed to seed saved config: %v", err)
+	}
+
+	binDir := t.TempDir()
+	writeFakeBinary(t, binDir, "droid")
+	t.Setenv("PATH", binDir)
+
+	runner := &launcherSingleRunner{}
+	withIntegrationOverride(t, "droid", runner)
+
+	var prompt string
+	DefaultConfirmPrompt = func(p string, options ConfirmOptions) (bool, error) {
+		prompt = p
+		return false, nil
+	}
+
+	var selectorCalls int
+	var selectorCurrent string
+	DefaultSingleSelector = func(title string, items []SelectionItem, current string) (string, error) {
+		selectorCalls++
+		selectorCurrent = current
+		itemNames := selectionItemNames(items)
+		if slices.Contains(itemNames, "llama3.2") {
+			t.Fatalf("expected saved deprecated model to be hidden from picker, got %v", itemNames)
+		}
+		if !slices.Contains(itemNames, "best-local") {
+			t.Fatalf("expected replacement model to remain selectable, got %v", itemNames)
+		}
+		return "best-local", nil
+	}
+
+	var showCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[`+
+				`{"model":"best-cloud:cloud","description":"Cloud rec","context_length":262144,"max_output_tokens":32768},`+
+				`{"model":"best-local","description":"Local rec"}`+
+				`]}`)
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"llama3.2"},{"name":"best-local"}]}`)
+		case "/api/show":
+			showCalls.Add(1)
+			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "droid"}); err != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", err)
+	}
+	if !strings.Contains(prompt, "llama3.2 does not work well with StubSingle") {
+		t.Fatalf("expected saved deprecated model prompt before picker, got %q", prompt)
+	}
+	if selectorCalls != 1 {
+		t.Fatalf("expected picker to open after declining saved deprecated model, got %d calls", selectorCalls)
+	}
+	if selectorCurrent != "llama3.2" {
+		t.Fatalf("expected saved deprecated model as picker current value, got %q", selectorCurrent)
+	}
+	if showCalls.Load() != 1 {
+		t.Fatalf("expected only replacement model readiness to call /api/show, got %d calls", showCalls.Load())
+	}
+	if runner.ranModel != "best-local" {
+		t.Fatalf("expected integration to run with replacement model, got %q", runner.ranModel)
+	}
+	saved, err := config.LoadIntegration("droid")
+	if err != nil {
+		t.Fatalf("failed to reload saved config: %v", err)
+	}
+	if got := primaryModelFromConfig(saved); got != "best-local" {
+		t.Fatalf("expected replacement model to be saved, got %q", got)
+	}
+}
+
+func TestLaunchIntegration_ModelOverrideDeprecatedConfirmRuns(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, true)
+
+	binDir := t.TempDir()
+	writeFakeBinary(t, binDir, "droid")
+	t.Setenv("PATH", binDir)
+
+	runner := &launcherSingleRunner{}
+	withIntegrationOverride(t, "droid", runner)
+
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		if !strings.Contains(prompt, "qwen2.5-coder:32b does not work well with StubSingle") {
+			t.Fatalf("unexpected deprecated model prompt: %q", prompt)
+		}
+		return true, nil
+	}
+	var showCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[`+
+				`{"model":"best-cloud:cloud","description":"Cloud rec","context_length":262144,"max_output_tokens":32768},`+
+				`{"model":"best-local","description":"Local rec"}`+
+				`]}`)
+		case "/api/show":
+			showCalls.Add(1)
+			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+		Name:          "droid",
+		ModelOverride: "qwen2.5-coder:32b",
+	})
+	if err != nil {
+		t.Fatalf("expected deprecated model override confirmation to continue, got %v", err)
+	}
+	if showCalls.Load() == 0 {
+		t.Fatal("expected confirmed deprecated override to continue to /api/show")
+	}
+	if runner.ranModel != "qwen2.5-coder:32b" {
+		t.Fatalf("expected integration to run with confirmed deprecated model, got %q", runner.ranModel)
+	}
+}
+
+func TestLaunchIntegration_ModelOverrideDeprecatedSuggestsLocalWhenCloudDisabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, true)
+
+	binDir := t.TempDir()
+	writeFakeBinary(t, binDir, "droid")
+	t.Setenv("PATH", binDir)
+
+	runner := &launcherSingleRunner{}
+	withIntegrationOverride(t, "droid", runner)
+
+	var prompt string
+	DefaultConfirmPrompt = func(p string, options ConfirmOptions) (bool, error) {
+		prompt = p
+		return false, nil
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[`+
+				`{"model":"best-cloud:cloud","description":"Cloud rec","context_length":262144,"max_output_tokens":32768},`+
+				`{"model":"best-local","description":"Local rec"}`+
+				`]}`)
+		case "/api/status":
+			fmt.Fprint(w, `{"cloud":{"disabled":true,"source":"config"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+		Name:          "droid",
+		ModelOverride: "llama3.2",
+	})
+	if err == nil {
+		t.Fatal("expected deprecated model override to fail")
+	}
+	if !strings.Contains(prompt, "ollama launch droid --model best-local") {
+		t.Fatalf("expected local replacement command when cloud is disabled, got %q", prompt)
+	}
+	if strings.Contains(prompt, "ollama launch droid --model best-cloud:cloud") {
+		t.Fatalf("did not expect cloud replacement command when cloud is disabled, got %q", prompt)
+	}
+}
+
 func TestLaunchIntegration_ConfigureOnlyPrompt(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
@@ -3456,7 +3836,7 @@ func TestLaunchIntegration_ConfigureOnlyPrompt(t *testing.T) {
 	withIntegrationOverride(t, "stubsingle", runner)
 
 	DefaultSingleSelector = func(title string, items []SelectionItem, current string) (string, error) {
-		return "llama3.2", nil
+		return "sample-model", nil
 	}
 
 	var prompts []string
@@ -3473,9 +3853,9 @@ func TestLaunchIntegration_ConfigureOnlyPrompt(t *testing.T) {
 		case "/api/experimental/model-recommendations":
 			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
-			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
+			fmt.Fprint(w, `{"models":[{"name":"sample-model"}]}`)
 		case "/api/show":
-			fmt.Fprint(w, `{"model":"llama3.2"}`)
+			fmt.Fprint(w, `{"model":"sample-model"}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -3699,7 +4079,7 @@ func TestLaunchIntegration_HeadlessSelectorFlowFailsWithoutPrompt(t *testing.T) 
 		case "/api/experimental/model-recommendations":
 			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
-			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
+			fmt.Fprint(w, `{"models":[{"name":"sample-model"}]}`)
 		case "/api/show":
 			w.WriteHeader(http.StatusNotFound)
 			fmt.Fprint(w, `{"error":"model not found"}`)
