@@ -37,6 +37,7 @@ type chatEntry struct {
 	version     int
 	renderKey   chatEntryRenderKey
 	renderLines []string
+	codeBlocks  map[markdownCodeBlockCacheKey]string
 }
 
 const (
@@ -202,7 +203,11 @@ func (m chatModel) renderEntryLinesCached(index int, entry chatEntry, body strin
 		}
 	}
 
-	lines := m.renderEntryLines(entry, body, width)
+	var codeCache *map[markdownCodeBlockCacheKey]string
+	if index >= 0 && index < len(m.entries) {
+		codeCache = &m.entries[index].codeBlocks
+	}
+	lines := m.renderEntryLines(entry, body, width, codeCache)
 	if index >= 0 && index < len(m.entries) {
 		m.entries[index].renderKey = key
 		m.entries[index].renderLines = slices.Clone(lines)
@@ -493,20 +498,20 @@ func (m chatModel) renderEntry(entry chatEntry) (string, string) {
 	}
 }
 
-func (m chatModel) renderEntryLines(entry chatEntry, body string, width int) []string {
+func (m chatModel) renderEntryLines(entry chatEntry, body string, width int, codeCache *map[markdownCodeBlockCacheKey]string) []string {
 	if width < 20 {
 		width = 20
 	}
 	switch entry.role {
 	case "assistant":
 		innerWidth := max(1, width-lipgloss.Width(chatMessageIndent))
-		lines := indentLines(splitRenderedBody(renderMarkdownForView(body, innerWidth)), chatMessageIndent)
+		lines := indentLines(splitRenderedBody(renderMarkdownForViewWithCodeCache(body, innerWidth, codeCache)), chatMessageIndent)
 		lines = append(lines, indentLines(renderMetricsLines(entry.metrics, innerWidth), chatMessageIndent)...)
 		return lines
 	case "thinking":
 		return renderThinkingLines(entry, width)
 	case "system", "slash":
-		return splitRenderedBody(renderMarkdownForView(body, width))
+		return splitRenderedBody(renderMarkdownForViewWithCodeCache(body, width, codeCache))
 	case "user":
 		return renderUserMessageLines(body, width)
 	case "compaction_summary":
