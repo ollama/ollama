@@ -20,6 +20,10 @@ func (s *StepBar) Set(current int) {
 	s.current = current
 }
 
+func (s *StepBar) PlainString() string {
+	return fmt.Sprintf("%s %d/%d", s.message, s.current, s.total)
+}
+
 func (s *StepBar) String() string {
 	percent := float64(s.current) / float64(s.total) * 100
 	barWidth := s.total
