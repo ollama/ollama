@@ -50,7 +50,8 @@ func (r *Qwen35Renderer) LeadingBOS() string {
 
 func (r *Qwen35Renderer) renderContent(content api.Message, imageOffset int) (string, int) {
 	if r.useImgTags {
-		return renderContentWithImageTags(content.Content, len(content.Images), imageOffset)
+		// Keep independent images from being interpreted as consecutive video frames.
+		return renderContentWithImageTagSeparator(content.Content, len(content.Images), imageOffset, " ")
 	}
 
 	// This assumes all images are at the front of the message - same assumption as ollama/ollama/runner.go
