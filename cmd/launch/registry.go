@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"claude", "chatgpt", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "pi", "pool", "qwen"}
+var launcherIntegrationOrder = []string{"claude", "chatgpt", "hermes", "openclaw", "webbrain", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "pi", "pool", "qwen"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -196,6 +196,14 @@ var integrationSpecs = []*IntegrationSpec{
 				return err
 			},
 			URL: "https://docs.openclaw.ai",
+		},
+	},
+	{
+		Name:        "webbrain",
+		Runner:      &WebBrain{},
+		Description: "Browser agent extension for web tasks",
+		Install: IntegrationInstallSpec{
+			URL: "https://webbrain.one",
 		},
 	},
 	{

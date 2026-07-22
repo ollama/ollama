@@ -68,6 +68,7 @@ func TestIntegrationLookup(t *testing.T) {
 		{"opencode", "opencode", true, "OpenCode"},
 		{"omp", "omp", true, "OMP"},
 		{"pool", "pool", true, "Pool"},
+		{"webbrain", "webbrain", true, "WebBrain"},
 		{"unknown integration", "unknown", false, ""},
 		{"empty string", "", false, ""},
 	}
@@ -86,7 +87,7 @@ func TestIntegrationLookup(t *testing.T) {
 }
 
 func TestIntegrationRegistry(t *testing.T) {
-	expectedIntegrations := []string{"claude", "claude-desktop", "cline", "codex", "chatgpt", "kimi", "droid", "opencode", "omp", "hermes", "hermes-desktop", "pool", "qwen"}
+	expectedIntegrations := []string{"claude", "claude-desktop", "cline", "codex", "chatgpt", "kimi", "droid", "opencode", "omp", "hermes", "hermes-desktop", "pool", "qwen", "webbrain"}
 	for _, name := range expectedIntegrations {
 		t.Run(name, func(t *testing.T) {
 			r, ok := integrations[name]
@@ -1918,9 +1919,9 @@ func TestListIntegrationInfos(t *testing.T) {
 		for _, info := range infos {
 			got = append(got, info.Name)
 		}
-		wantPrefix := []string{"claude", "chatgpt", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp"}
+		wantPrefix := []string{"claude", "chatgpt", "hermes", "openclaw", "webbrain", "opencode", "hermes-desktop", "codex", "copilot", "omp"}
 		if codexAppSupported() != nil {
-			wantPrefix = []string{"claude", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp"}
+			wantPrefix = []string{"claude", "hermes", "openclaw", "webbrain", "opencode", "hermes-desktop", "codex", "copilot", "omp"}
 		}
 		if len(got) < len(wantPrefix) {
 			t.Fatalf("expected at least %d integrations, got %v", len(wantPrefix), got)
@@ -2078,6 +2079,7 @@ func TestIntegration_Editor(t *testing.T) {
 		{"claude-desktop", false},
 		{"codex", false},
 		{"omp", false},
+		{"webbrain", false},
 		{"nonexistent", false},
 	}
 	for _, tt := range tests {
