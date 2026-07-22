@@ -370,6 +370,36 @@ func TestChatPromptDebugMouseWheelScrolls(t *testing.T) {
 	}
 }
 
+func TestChatPromptDebugCachesLinesByWidth(t *testing.T) {
+	m := chatModel{
+		promptDebug: &chatPromptDebug{
+			request: api.ChatRequest{
+				Model: "llama3.2",
+				Messages: []api.Message{{
+					Role:    "user",
+					Content: strings.Repeat("a long prompt line ", 20),
+				}},
+			},
+		},
+	}
+
+	first := m.promptDebugLines(80)
+	if len(first) == 0 || m.promptDebug.linesWidth != 80 {
+		t.Fatalf("prompt cache = %#v, want lines cached at width 80", m.promptDebug)
+	}
+	if &first[0] != &m.promptDebugLines(80)[0] {
+		t.Fatal("prompt debug should reuse cached lines at the same width")
+	}
+
+	resized := m.promptDebugLines(120)
+	if m.promptDebug.linesWidth != 120 {
+		t.Fatalf("prompt cache width = %d, want 120", m.promptDebug.linesWidth)
+	}
+	if &first[0] == &resized[0] {
+		t.Fatal("prompt debug should rebuild lines after a width change")
+	}
+}
+
 func TestTruncateInputLineUsesDisplayWidth(t *testing.T) {
 	line := truncateInputLine(strings.Repeat("界", 10), 10)
 	if got := lipgloss.Width(line); got > 10 {
