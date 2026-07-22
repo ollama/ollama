@@ -1153,7 +1153,7 @@ func DefaultOptions() Options {
 // ThinkValue represents a value that can be a boolean or a string ("high", "medium", "low", "max")
 type ThinkValue struct {
 	// Value can be a bool or string
-	Value interface{}
+	Value any
 }
 
 // IsValid checks if the ThinkValue is valid
