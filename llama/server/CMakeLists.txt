@@ -542,6 +542,20 @@ else()
     # do not depend on host-global redistributables.
     ollama_install_windows_runtime_dlls("${_base_dest}")
 
+    # ZenDNN accelerates CPU inference, so its backend module and runtime
+    # dependencies live next to llama-server where ggml auto-loads them.
+    if(GGML_ZENDNN AND TARGET ggml-zendnn)
+        install(TARGETS ggml-zendnn
+            RUNTIME_DEPENDENCY_SET zendnn_deps
+            RUNTIME DESTINATION "${_base_dest}" COMPONENT llama-server
+            LIBRARY DESTINATION "${_base_dest}" COMPONENT llama-server)
+        install(RUNTIME_DEPENDENCY_SET zendnn_deps
+            PRE_INCLUDE_REGEXES zendnnl aoclutils aocl-dlp dnnl xsmm
+            PRE_EXCLUDE_REGEXES ".*"
+            RUNTIME DESTINATION "${_base_dest}" COMPONENT llama-server
+            LIBRARY DESTINATION "${_base_dest}" COMPONENT llama-server)
+    endif()
+
     # CPU backend modules (multiple variants from GGML_CPU_ALL_VARIANTS).
     # install(CODE) runs at install time so CMAKE_INSTALL_CONFIG_NAME is
     # available for multi-config generators. llama.cpp creates variant module
