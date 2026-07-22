@@ -106,7 +106,7 @@ const (
 
 // Capabilities returns the capabilities that the model supports
 func (m *Model) Capabilities() []model.Capability {
-	capabilities := m.capabilitiesForTemplate(templateCapabilitySelected, nil)
+	capabilities := m.capabilitiesForTemplate(templateCapabilitySelected)
 	if len(capabilities) == 0 {
 		slog.Warn("unknown capabilities for model", "model", m.Name)
 	}
@@ -114,12 +114,12 @@ func (m *Model) Capabilities() []model.Capability {
 	return capabilities
 }
 
-func (m *Model) capabilitiesForTemplate(source templateCapabilitySource, f *gguf.File) []model.Capability {
+func (m *Model) capabilitiesForTemplate(source templateCapabilitySource) []model.Capability {
 	capabilities := []model.Capability{}
 	var modelArch string
 
 	capabilities = m.configCapabilities(capabilities)
-	capabilities, modelArch = m.ggufCapabilities(capabilities, source, f)
+	capabilities, modelArch = m.ggufCapabilities(capabilities, source)
 	capabilities = m.projectorCapabilities(capabilities)
 	capabilities = m.templateCapabilities(capabilities, source)
 	capabilities = m.parserCapabilities(capabilities)
@@ -136,40 +136,36 @@ func (m *Model) configCapabilities(capabilities []model.Capability) []model.Capa
 	return capabilities
 }
 
-func (m *Model) ggufCapabilities(capabilities []model.Capability, source templateCapabilitySource, f *gguf.File) ([]model.Capability, string) {
+func (m *Model) ggufCapabilities(capabilities []model.Capability, source templateCapabilitySource) ([]model.Capability, string) {
 	if m.ModelPath == "" || !m.isGGUF() {
 		return capabilities, ""
 	}
 
-	if f == nil {
-		var err error
-		f, err = gguf.Open(m.ModelPath)
-		if err != nil {
-			slog.Error("couldn't open model file", "error", err)
-			return capabilities, ""
-		}
-		defer f.Close()
+	md, err := loadGGUFMetadata(m.ModelPath)
+	if err != nil {
+		slog.Error("couldn't open model file", "error", err)
+		return capabilities, ""
 	}
 
-	modelArch := f.KeyValue("general.architecture").String()
+	modelArch := md.architecture
 	switch source {
 	case templateCapabilitySelected:
 		if !usesOllamaRenderedChat(m) {
-			capabilities = chatTemplateCapabilities(capabilities, f.KeyValue("tokenizer.chat_template").String())
+			capabilities = chatTemplateCapabilities(capabilities, md.chatTemplate)
 		}
 	case templateCapabilityChat:
-		capabilities = chatTemplateCapabilities(capabilities, f.KeyValue("tokenizer.chat_template").String())
+		capabilities = chatTemplateCapabilities(capabilities, md.chatTemplate)
 	}
-	if f.KeyValue("pooling_type").Valid() {
+	if md.hasPooling {
 		capabilities = appendCapability(capabilities, model.CapabilityEmbedding)
 	} else {
 		// If no embedding is specified, we assume the model supports completion.
 		capabilities = appendCapability(capabilities, model.CapabilityCompletion)
 	}
-	if f.KeyValue("vision.block_count").Valid() {
+	if md.hasVision {
 		capabilities = appendCapability(capabilities, model.CapabilityVision)
 	}
-	if f.KeyValue("audio.block_count").Valid() {
+	if md.hasAudio {
 		capabilities = appendCapability(capabilities, model.CapabilityAudio)
 	}
 
@@ -339,28 +335,17 @@ func capabilityLogValue(present bool, capabilities []model.Capability) any {
 }
 
 func (m *Model) templateSelectionCapabilities(usesHarmony bool) (goTemplate, chatTemplate, harmony, rendererParser []model.Capability) {
-	var f *gguf.File
-	if m.ModelPath != "" && m.isGGUF() {
-		var err error
-		f, err = gguf.Open(m.ModelPath)
-		if err != nil {
-			slog.Error("couldn't open model file", "error", err)
-		} else {
-			defer f.Close()
-		}
-	}
-
 	if m.HasGoTemplate {
-		goTemplate = m.capabilitiesForTemplate(templateCapabilityGo, f)
+		goTemplate = m.capabilitiesForTemplate(templateCapabilityGo)
 	}
 	if m.HasChatTemplate {
-		chatTemplate = m.capabilitiesForTemplate(templateCapabilityChat, f)
+		chatTemplate = m.capabilitiesForTemplate(templateCapabilityChat)
 	}
 	if usesHarmony {
-		harmony = m.capabilitiesForTemplate(templateCapabilitySelected, f)
+		harmony = m.capabilitiesForTemplate(templateCapabilitySelected)
 	}
 	if m.Config.Renderer != "" || m.Config.Parser != "" {
-		rendererParser = m.capabilitiesForTemplate(templateCapabilitySelected, f)
+		rendererParser = m.capabilitiesForTemplate(templateCapabilitySelected)
 	}
 
 	return goTemplate, chatTemplate, harmony, rendererParser
@@ -682,15 +667,14 @@ func GetModel(name string) (*Model, error) {
 			m.ModelPath = filename
 			m.ParentModel = layer.From
 			if m.isGGUF() {
-				f, err := gguf.Open(filename)
+				md, err := loadGGUFMetadata(filename)
 				if err != nil {
 					slog.Error("couldn't open model file", "error", err)
 					break
 				}
-				ggufChatTemplate = f.KeyValue("tokenizer.chat_template").String()
+				ggufChatTemplate = md.chatTemplate
 				m.HasChatTemplate = ggufChatTemplate != ""
-				modelHasPooling = f.KeyValue("pooling_type").Valid()
-				f.Close()
+				modelHasPooling = md.hasPooling
 			}
 		case manifest.MediaTypeImageDraft:
 			m.DraftPath = filename
