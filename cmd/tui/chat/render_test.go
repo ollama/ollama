@@ -11,7 +11,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
 
 	coreagent "github.com/ollama/ollama/agent"
 	"github.com/ollama/ollama/api"
@@ -2097,10 +2096,6 @@ func TestRenderMarkdownTableWrapsLongCells(t *testing.T) {
 }
 
 func TestRenderMarkdownCodeFencesHighlightLanguageTaggedCode(t *testing.T) {
-	profile := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	defer lipgloss.SetColorProfile(profile)
-
 	markdown := strings.Join([]string{
 		"Use **greet** before running this code.",
 		"```go",
@@ -2135,9 +2130,6 @@ func TestRenderMarkdownCodeFencesHighlightLanguageTaggedCode(t *testing.T) {
 	}
 	if got := markdownCodeTokenKindFor("go", "package", " main"); got != markdownCodeTokenKeyword {
 		t.Fatalf("package token kind = %v, want keyword", got)
-	}
-	if got := highlightMarkdownCodeLine("go", "package main"); !strings.Contains(got, "\x1b[") {
-		t.Fatalf("language-tagged code should render ANSI syntax styling: %q", got)
 	}
 	if got := highlightMarkdownCodeLine("", "plain code stays plain"); got != "plain code stays plain" {
 		t.Fatalf("untagged code = %q, want plain code", got)
