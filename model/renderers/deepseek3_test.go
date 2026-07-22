@@ -169,10 +169,19 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 			expected:   `<｜begin▁of▁sentence｜><｜User｜>Get weather for Paris and London<｜Assistant｜></think><｜tool▁calls▁begin｜><｜tool▁call▁begin｜>get_weather<｜tool▁sep｜>{"location":"Paris"}<｜tool▁call▁end｜><｜tool▁call▁begin｜>get_weather<｜tool▁sep｜>{"location":"London"}<｜tool▁call▁end｜><｜tool▁calls▁end｜><｜end▁of▁sentence｜><｜tool▁output▁begin｜>Paris: 22°C, Sunny<｜tool▁output▁end｜><｜tool▁output▁begin｜>London: 18°C, Cloudy<｜tool▁output▁end｜>`,
 		},
 		{
-			name: "content with </think> tag removal",
+			name: "literal </think> in content is preserved",
 			messages: []api.Message{
 				{Role: "user", Content: "Think about this"},
 				{Role: "assistant", Content: "I'm thinking about this.</think>The answer is 42."},
+			},
+			thinkValue: &api.ThinkValue{Value: false},
+			expected:   `<｜begin▁of▁sentence｜><｜User｜>Think about this<｜Assistant｜></think>I'm thinking about this.</think>The answer is 42.<｜end▁of▁sentence｜>`,
+		},
+		{
+			name: "replayed reasoning block in content is stripped",
+			messages: []api.Message{
+				{Role: "user", Content: "Think about this"},
+				{Role: "assistant", Content: "<think>I'm thinking about this.</think>The answer is 42."},
 			},
 			thinkValue: &api.ThinkValue{Value: false},
 			expected:   `<｜begin▁of▁sentence｜><｜User｜>Think about this<｜Assistant｜></think>The answer is 42.<｜end▁of▁sentence｜>`,
@@ -263,10 +272,19 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 			expected:   `<｜begin▁of▁sentence｜>System instruction`,
 		},
 		{
-			name: "multiple think tags in content",
+			name: "multiple literal think tags in content are preserved",
 			messages: []api.Message{
 				{Role: "user", Content: "Complex question"},
 				{Role: "assistant", Content: "First thought</think>Second thought</think>Final answer"},
+			},
+			thinkValue: &api.ThinkValue{Value: false},
+			expected:   `<｜begin▁of▁sentence｜><｜User｜>Complex question<｜Assistant｜></think>First thought</think>Second thought</think>Final answer<｜end▁of▁sentence｜>`,
+		},
+		{
+			name: "replayed reasoning block with literal </think> after it",
+			messages: []api.Message{
+				{Role: "user", Content: "Complex question"},
+				{Role: "assistant", Content: "<think>First thought</think>Second thought</think>Final answer"},
 			},
 			thinkValue: &api.ThinkValue{Value: false},
 			expected:   `<｜begin▁of▁sentence｜><｜User｜>Complex question<｜Assistant｜></think>Second thought</think>Final answer<｜end▁of▁sentence｜>`,

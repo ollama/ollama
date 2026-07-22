@@ -3605,3 +3605,244 @@ func fakeRunningCmd() *exec.Cmd {
 	// SIGKILL children when the test process exits.
 	return cmd
 }
+
+func TestSegmentsNeedSplitTokenization(t *testing.T) {
+	newRunner := func(specials []string, firstChars string) *llamaServerRunner {
+		runner := &llamaServerRunner{}
+		runner.specialTokensOnce.Do(func() {
+			runner.specialTokens = specials
+			runner.specialTokenFirstChars = firstChars
+		})
+		return runner
+	}
+
+	cases := []struct {
+		name     string
+		specials []string
+		first    string
+		segments []PromptSegment
+		want     bool
+	}{
+		{
+			name: "no segments",
+		},
+		{
+			name:     "content without special literal",
+			specials: []string{"</think>", "<|user|>"},
+			first:    "<",
+			segments: []PromptSegment{
+				{Text: "<|user|>"},
+				{Text: "hello world", Content: true},
+			},
+			want: false,
+		},
+		{
+			name:     "content with special literal",
+			specials: []string{"</think>", "<|user|>"},
+			first:    "<",
+			segments: []PromptSegment{
+				{Text: "<|user|>"},
+				{Text: "hello </think> world", Content: true},
+			},
+			want: true,
+		},
+		{
+			name:     "special literal only in control segment",
+			specials: []string{"</think>", "<|user|>"},
+			first:    "<",
+			segments: []PromptSegment{
+				{Text: "<|assistant|></think>"},
+				{Text: "hello world", Content: true},
+			},
+			want: false,
+		},
+		{
+			name: "no special vocabulary available",
+			segments: []PromptSegment{
+				{Text: "hello </think> world", Content: true},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := newRunner(tt.specials, tt.first)
+			if got := runner.segmentsNeedSplitTokenization(tt.segments); got != tt.want {
+				t.Errorf("segmentsNeedSplitTokenization() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLlamaServerCompletionSegmentTokenization(t *testing.T) {
+	type tokenizeCall struct {
+		Content      string `json:"content"`
+		AddSpecial   bool   `json:"add_special"`
+		ParseSpecial *bool  `json:"parse_special"`
+	}
+
+	var tokenizeCalls []tokenizeCall
+	var capturedReq llamaServerCompletionRequest
+
+	next := 100
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			fmt.Fprint(w, `{"status":"ok"}`)
+		case "/tokenize":
+			var call tokenizeCall
+			if err := json.NewDecoder(r.Body).Decode(&call); err != nil {
+				t.Errorf("invalid tokenize request body: %v", err)
+				return
+			}
+			tokenizeCalls = append(tokenizeCalls, call)
+			// two distinct tokens per call so concatenation order is visible
+			fmt.Fprintf(w, `{"tokens":[%d,%d]}`, next, next+1)
+			next += 100
+		case "/completion":
+			if err := json.NewDecoder(r.Body).Decode(&capturedReq); err != nil {
+				t.Errorf("invalid completion request body: %v", err)
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"content":"ok","stop":true,"timings":{"prompt_n":6,"prompt_ms":1,"predicted_n":1,"predicted_ms":1}}`)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 4096}},
+	}
+	runner.specialTokensOnce.Do(func() {
+		runner.specialTokens = []string{"</think>", "<think>", "<|user|>", "<|assistant|>"}
+		runner.specialTokenFirstChars = "<"
+	})
+
+	segments := []PromptSegment{
+		{Text: "<|user|>"},
+		{Text: "hello </think> world", Content: true},
+		{Text: "<|assistant|><think>"},
+	}
+	var prompt strings.Builder
+	for _, seg := range segments {
+		prompt.WriteString(seg.Text)
+	}
+
+	opts := api.DefaultOptions()
+	err := runner.Completion(t.Context(), CompletionRequest{
+		Prompt:   prompt.String(),
+		Segments: segments,
+		Options:  &opts,
+		Truncate: true,
+	}, func(cr CompletionResponse) {})
+	if err != nil {
+		t.Fatalf("Completion error: %v", err)
+	}
+
+	if len(tokenizeCalls) != 3 {
+		t.Fatalf("tokenize calls = %d, want 3", len(tokenizeCalls))
+	}
+
+	if tokenizeCalls[0].Content != "<|user|>" || !tokenizeCalls[0].AddSpecial || tokenizeCalls[0].ParseSpecial != nil {
+		t.Errorf("control segment call = %+v, want add_special=true, parse_special unset", tokenizeCalls[0])
+	}
+	if tokenizeCalls[1].Content != "hello </think> world" || tokenizeCalls[1].AddSpecial ||
+		tokenizeCalls[1].ParseSpecial == nil || *tokenizeCalls[1].ParseSpecial {
+		t.Errorf("content segment call = %+v, want add_special=false, parse_special=false", tokenizeCalls[1])
+	}
+	if tokenizeCalls[2].Content != "<|assistant|><think>" || tokenizeCalls[2].AddSpecial || tokenizeCalls[2].ParseSpecial != nil {
+		t.Errorf("control segment call = %+v, want add_special=false, parse_special unset", tokenizeCalls[2])
+	}
+
+	got, ok := capturedReq.Prompt.([]any)
+	if !ok {
+		t.Fatalf("completion prompt = %T %v, want token array", capturedReq.Prompt, capturedReq.Prompt)
+	}
+	want := []float64{100, 101, 200, 201, 300, 301}
+	if len(got) != len(want) {
+		t.Fatalf("completion prompt tokens = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("completion prompt tokens = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestLlamaServerCompletionSegmentsWithoutSpecialLiteralUseStringPrompt(t *testing.T) {
+	tokenizeCalled := false
+	var capturedReq llamaServerCompletionRequest
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			fmt.Fprint(w, `{"status":"ok"}`)
+		case "/tokenize":
+			tokenizeCalled = true
+			fmt.Fprint(w, `{"tokens":[1,2,3]}`)
+		case "/completion":
+			if err := json.NewDecoder(r.Body).Decode(&capturedReq); err != nil {
+				t.Errorf("invalid completion request body: %v", err)
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"content":"ok","stop":true,"timings":{"prompt_n":6,"prompt_ms":1,"predicted_n":1,"predicted_ms":1}}`)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 4096}},
+	}
+	runner.specialTokensOnce.Do(func() {
+		runner.specialTokens = []string{"</think>", "<think>", "<|user|>", "<|assistant|>"}
+		runner.specialTokenFirstChars = "<"
+	})
+
+	segments := []PromptSegment{
+		{Text: "<|user|>"},
+		{Text: "hello world", Content: true},
+		{Text: "<|assistant|><think>"},
+	}
+	var prompt strings.Builder
+	for _, seg := range segments {
+		prompt.WriteString(seg.Text)
+	}
+
+	opts := api.DefaultOptions()
+	err := runner.Completion(t.Context(), CompletionRequest{
+		Prompt:   prompt.String(),
+		Segments: segments,
+		Options:  &opts,
+		Truncate: true,
+	}, func(cr CompletionResponse) {})
+	if err != nil {
+		t.Fatalf("Completion error: %v", err)
+	}
+
+	if tokenizeCalled {
+		t.Fatal("tokenize endpoint was called for a prompt without special-token literals in content")
+	}
+	if capturedReq.Prompt != prompt.String() {
+		t.Fatalf("completion prompt = %v, want %q", capturedReq.Prompt, prompt.String())
+	}
+}

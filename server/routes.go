@@ -507,6 +507,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	prompt := req.Prompt
 	var leadingBOS string
+	var promptSegments []llm.PromptSegment
 	if !req.Raw {
 		tmpl := m.Template
 		if req.Template != "" {
@@ -606,7 +607,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 					prompt = b.String()
 				}
 			} else {
-				prompt, media, err = chatPrompt(c.Request.Context(), m, r.Tokenize, optionsForPrompt(opts, r), values.Messages, []api.Tool{}, req.Think, genTruncate)
+				prompt, media, promptSegments, err = chatPrompt(c.Request.Context(), m, r.Tokenize, optionsForPrompt(opts, r), values.Messages, []api.Tool{}, req.Think, genTruncate)
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 					return
@@ -615,6 +616,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				if req.Context != nil {
 					b.WriteString(prompt)
 					prompt = b.String()
+					promptSegments = nil
 				}
 				leadingBOS = leadingBOSForModel(m)
 			}
@@ -663,6 +665,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		defer close(ch)
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:          prompt,
+			Segments:        promptSegments,
 			Media:           media,
 			Format:          req.Format,
 			Options:         opts,
@@ -2702,7 +2705,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		truncate = false
 	}
 	promptOpts := optionsForPrompt(opts, r)
-	prompt, media, err := chatPrompt(c.Request.Context(), m, r.Tokenize, promptOpts, msgs, processedTools, req.Think, truncate)
+	prompt, media, promptSegments, err := chatPrompt(c.Request.Context(), m, r.Tokenize, promptOpts, msgs, processedTools, req.Think, truncate)
 	if err != nil {
 		slog.Error("chat prompt error", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -2776,6 +2779,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 			err := r.Completion(ctx, llm.CompletionRequest{
 				Prompt:          prompt,
+				Segments:        promptSegments,
 				Media:           media,
 				Format:          currentFormat,
 				Options:         opts,
@@ -2915,7 +2919,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				}
 
 				msgs = append(msgs, msg)
-				prompt, _, err = chatPrompt(c.Request.Context(), m, r.Tokenize, promptOpts, msgs, processedTools, req.Think, truncate)
+				prompt, _, promptSegments, err = chatPrompt(c.Request.Context(), m, r.Tokenize, promptOpts, msgs, processedTools, req.Think, truncate)
 				if err != nil {
 					slog.Error("chat prompt error applying structured outputs", "error", err)
 					ch <- gin.H{"error": err.Error()}
@@ -2927,6 +2931,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				// TODO(parthsareen): consider adding prefill disambiguation logic to the renderer for structured outputs.
 				if shouldUseHarmony(m) || (builtinParser != nil && m.Config.Parser == "harmony") {
 					prompt += "<|end|><|start|>assistant<|channel|>final<|message|>"
+					if promptSegments != nil {
+						promptSegments = append(promptSegments, llm.PromptSegment{Text: "<|end|><|start|>assistant<|channel|>final<|message|>"})
+					}
 				}
 				continue
 			}

@@ -203,11 +203,26 @@ func MessageFromAPI(msg api.Message) Message {
 	}
 }
 
+// PromptSegment is a piece of a rendered prompt. Control segments carry
+// template markup whose special-token literals should be parsed as special
+// tokens. Content segments carry user- or tool-supplied message data whose
+// special-token-like literals (e.g. "</think>") must be tokenized as plain
+// text.
+type PromptSegment struct {
+	Text    string
+	Content bool
+}
+
 type CompletionRequest struct {
-	Prompt  string
-	Format  json.RawMessage
-	Media   []MediaData
-	Options *api.Options
+	Prompt string
+	// Segments optionally carries Prompt split into control/content segments.
+	// When set, the concatenated segment text equals Prompt. Runners may use
+	// it to avoid parsing special-token literals inside message content;
+	// runners that ignore it fall back to Prompt.
+	Segments []PromptSegment
+	Format   json.RawMessage
+	Media    []MediaData
+	Options  *api.Options
 
 	Grammar         string // set before sending the request to the subprocess
 	Shift           bool
