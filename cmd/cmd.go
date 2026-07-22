@@ -15,7 +15,9 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path"
 	"path/filepath"
@@ -34,6 +36,7 @@ import (
 	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/mod/semver"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
 
@@ -973,6 +976,145 @@ func SignoutHandler(cmd *cobra.Command, args []string) error {
 
 	fmt.Println("You have signed out of ollama.com")
 	fmt.Println()
+	return nil
+}
+
+type githubRelease struct {
+	TagName string `json:"tag_name"`
+}
+
+func getLatestRelease(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/repos/ollama/ollama/releases/latest", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s)", version.Version, runtime.GOARCH, runtime.GOOS))
+	resp, err := http.DefaultClient.Do(req)
+	if err == nil && resp.StatusCode == http.StatusOK {
+		defer resp.Body.Close()
+		var rel githubRelease
+		if json.NewDecoder(resp.Body).Decode(&rel) == nil && rel.TagName != "" {
+			return rel.TagName, nil
+		}
+	}
+	if resp != nil {
+		resp.Body.Close()
+	}
+
+	reqURL, err := url.Parse("https://ollama.com/api/update")
+	if err != nil {
+		return "", err
+	}
+	q := reqURL.Query()
+	q.Add("os", runtime.GOOS)
+	q.Add("arch", runtime.GOARCH)
+	q.Add("version", version.Version)
+	reqURL.RawQuery = q.Encode()
+
+	req, err = http.NewRequestWithContext(ctx, http.MethodGet, reqURL.String(), nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s)", version.Version, runtime.GOARCH, runtime.GOOS))
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNoContent {
+		return version.Version, nil
+	}
+	if resp.StatusCode == http.StatusOK {
+		var updateResp struct {
+			URL     string `json:"url"`
+			Version string `json:"version"`
+		}
+		if json.NewDecoder(resp.Body).Decode(&updateResp) == nil {
+			if updateResp.Version != "" {
+				return updateResp.Version, nil
+			}
+			if updateResp.URL != "" {
+				ver := path.Base(path.Dir(updateResp.URL))
+				if ver != "" && ver != "." {
+					return ver, nil
+				}
+			}
+		}
+	}
+	return "", fmt.Errorf("failed to fetch latest release: status %d", resp.StatusCode)
+}
+
+func UpdateHandler(cmd *cobra.Command, args []string) error {
+	checkOnly, _ := cmd.Flags().GetBool("check")
+
+	latestTag, err := getLatestRelease(cmd.Context())
+	if err != nil {
+		slog.Debug("failed to fetch latest release", "error", err)
+	}
+
+	current := version.Version
+	if !strings.HasPrefix(current, "v") {
+		current = "v" + current
+	}
+
+	latest := latestTag
+	if latest != "" && !strings.HasPrefix(latest, "v") {
+		latest = "v" + latest
+	}
+
+	isUpToDate := false
+	if latest != "" && semver.IsValid(latest) && semver.IsValid(current) {
+		if semver.Compare(current, latest) >= 0 {
+			isUpToDate = true
+		}
+	}
+
+	if isUpToDate {
+		fmt.Fprintf(cmd.OutOrStdout(), "Ollama is already up to date (%s)\n", version.Version)
+		return nil
+	}
+
+	if latestTag != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "A new version of Ollama is available: %s (current: %s)\n", latestTag, version.Version)
+	}
+
+	if checkOnly {
+		if runtime.GOOS == "linux" {
+			fmt.Fprintln(cmd.OutOrStdout(), "To update, run:")
+			fmt.Fprintln(cmd.OutOrStdout(), "  curl -fsSL https://ollama.com/install.sh | sh")
+		} else {
+			fmt.Fprintln(cmd.OutOrStdout(), "To update, download the latest version from:")
+			fmt.Fprintln(cmd.OutOrStdout(), "  https://ollama.com/download")
+		}
+		return nil
+	}
+
+	switch runtime.GOOS {
+	case "linux":
+		fmt.Fprintln(cmd.OutOrStdout(), "Updating Ollama...")
+		c := exec.CommandContext(cmd.Context(), "sh", "-c", "curl -fsSL https://ollama.com/install.sh | sh")
+		c.Stdout = cmd.OutOrStdout()
+		c.Stderr = cmd.ErrOrStderr()
+		c.Stdin = os.Stdin
+		if err := c.Run(); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Update failed: %v\n", err)
+			fmt.Fprintln(cmd.OutOrStdout(), "You can update manually by running:")
+			fmt.Fprintln(cmd.OutOrStdout(), "  curl -fsSL https://ollama.com/install.sh | sh")
+			return err
+		}
+	case "darwin":
+		fmt.Fprintln(cmd.OutOrStdout(), "Ollama on macOS updates automatically.")
+		fmt.Fprintln(cmd.OutOrStdout(), "Click on the Ollama menu bar icon and select \"Restart to update\".")
+		fmt.Fprintln(cmd.OutOrStdout(), "You can also download the latest release manually at:")
+		fmt.Fprintln(cmd.OutOrStdout(), "  https://ollama.com/download")
+	default:
+		fmt.Fprintln(cmd.OutOrStdout(), "Ollama on Windows updates automatically.")
+		fmt.Fprintln(cmd.OutOrStdout(), "Click on the Ollama taskbar icon and select \"Restart to update\".")
+		fmt.Fprintln(cmd.OutOrStdout(), "You can also download the latest release manually at:")
+		fmt.Fprintln(cmd.OutOrStdout(), "  https://ollama.com/download")
+	}
+
 	return nil
 }
 
@@ -2436,6 +2578,14 @@ func NewCLI() *cobra.Command {
 		RunE:    DeleteHandler,
 	}
 
+	updateCmd := &cobra.Command{
+		Use:     "update",
+		Aliases: []string{"upgrade"},
+		Short:   "Update Ollama to the latest version",
+		RunE:    UpdateHandler,
+	}
+	updateCmd.Flags().Bool("check", false, "Check for updates without installing")
+
 	runnerCmd := &cobra.Command{
 		Use:    "runner",
 		Hidden: true,
@@ -2524,6 +2674,7 @@ func NewCLI() *cobra.Command {
 		psCmd,
 		copyCmd,
 		deleteCmd,
+		updateCmd,
 		runnerCmd,
 		gpuDiscoverCmd,
 		launch.LaunchCmd(checkServerHeartbeat, runInteractiveTUI),
