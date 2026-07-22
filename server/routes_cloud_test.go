@@ -256,6 +256,48 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		}
 	})
 
+	t.Run("api chat glm-5.2 cloud preserves think", func(t *testing.T) {
+		upstream, capture := newUpstream(t, `{"message":{"role":"assistant","content":"ok","thinking":"reasoning"},"done":true}`)
+		defer upstream.Close()
+
+		original := cloudProxyBaseURL
+		cloudProxyBaseURL = upstream.URL
+		t.Cleanup(func() { cloudProxyBaseURL = original })
+
+		s := &Server{}
+		router, err := s.GenerateRoutes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		local := httptest.NewServer(router)
+		defer local.Close()
+
+		reqBody := `{"model":"glm-5.2:cloud","messages":[{"role":"user","content":"hello"}],"stream":false,"think":true}`
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, local.URL+"/api/chat", bytes.NewBufferString(reqBody))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := local.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected status 200, got %d (%s)", resp.StatusCode, string(body))
+		}
+
+		if !strings.Contains(capture.body, `"model":"glm-5.2"`) {
+			t.Fatalf("expected normalized model in upstream body, got %q", capture.body)
+		}
+		if !strings.Contains(capture.body, `"think":true`) {
+			t.Fatalf("expected think field preserved in upstream body, got %q", capture.body)
+		}
+	})
+
 	t.Run("api embed", func(t *testing.T) {
 		upstream, capture := newUpstream(t, `{"model":"kimi-k2.5:cloud","embeddings":[[0.1,0.2]]}`)
 		defer upstream.Close()
