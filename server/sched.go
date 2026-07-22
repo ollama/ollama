@@ -1395,6 +1395,13 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 	runner.refMu.Lock()
 	defer runner.refMu.Unlock()
 
+	// If the runner has been unloaded concurrently (e.g., expire timer
+	// fired between loadedMu.Unlock and refMu.Lock), signal that a reload
+	// is needed to avoid nil pointer dereference on runner.model fields.
+	if runner.llama == nil || runner.model == nil {
+		return true
+	}
+
 	// Check if runner type (imagegen vs mlxrunner) matches what's requested.
 	wantImagegen := slices.Contains(req.model.Config.Capabilities, "image")
 	if runner.isImagegen != wantImagegen {
