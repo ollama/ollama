@@ -165,41 +165,17 @@ func agentSkillSystemContext(catalog *coreagent.SkillCatalog, registry *coreagen
 	return catalog.SystemContext()
 }
 
-func selectAgentModel(ctx context.Context, client *api.Client, current string) (string, error) {
-	models, err := agentModelOptions(ctx, client)
-	if err != nil {
-		return "", err
-	}
-	if len(models) == 0 {
-		return "", errors.New("no models available, run 'ollama pull <model>' first")
-	}
-
-	items := agentSelectionItems(models)
-	switch {
-	case launch.DefaultSingleSelectorWithUpdates != nil:
-		return launch.DefaultSingleSelectorWithUpdates("Select model to run:", items, current, nil)
-	case launch.DefaultSingleSelector != nil:
-		return launch.DefaultSingleSelector("Select model to run:", items, current)
-	default:
-		return "", errors.New("no selector configured")
-	}
-}
-
 func agentSelectionItems(models []agentchat.ModelOption) []launch.SelectionItem {
 	items := make([]launch.SelectionItem, 0, len(models))
 	for _, model := range models {
 		items = append(items, launch.SelectionItem{
 			Name:              model.Name,
-			Description:       agentSelectionDescription(model),
+			Description:       strings.TrimSpace(model.Description),
 			Recommended:       model.Recommended,
 			AvailabilityBadge: model.AvailabilityBadge,
 		})
 	}
 	return items
-}
-
-func agentSelectionDescription(model agentchat.ModelOption) string {
-	return strings.TrimSpace(model.Description)
 }
 
 var agentGetwd = os.Getwd
