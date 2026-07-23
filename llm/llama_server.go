@@ -2735,15 +2735,52 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 			}
 			for _, match := range bufferSizeRegex.FindAllSubmatch(b, -1) {
 				backendName := string(match[2])
+				kind := string(match[3])
 				if mib, err := strconv.ParseFloat(string(match[4]), 64); err == nil {
 					if w.buffers == nil {
 						w.buffers = make(map[memoryBufferKey]memoryBuffer)
 					}
-					w.buffers[memoryBufferKey{
+					// llama-server logs buffer sizes twice: a fit probe and then
+					// the final load. A model buffer line arriving after compute
+					// buffers were recorded marks the start of that second pass.
+					// Non-KV buffers are keyed so the final value simply overwrites
+					// the probe's, but KV buffers accumulate (see below), so the
+					// probe's KV entries must be dropped first — otherwise the final
+					// KV sizes would be added on top of the probe's. Buffers that
+					// only appear in the probe (e.g. output) are left untouched.
+					if kind == "model" {
+						hasCompute := false
+						for existing := range w.buffers {
+							if existing.kind == "compute" {
+								hasCompute = true
+								break
+							}
+						}
+						if hasCompute {
+							for existing := range w.buffers {
+								if existing.kind == "KV" {
+									delete(w.buffers, existing)
+								}
+							}
+						}
+					}
+					key := memoryBufferKey{
 						component: string(match[1]),
 						backend:   backendName,
-						kind:      string(match[3]),
-					}] = memoryBuffer{bytes: uint64(mib * 1024 * 1024)}
+						kind:      kind,
+					}
+					bytes := uint64(mib * 1024 * 1024)
+					// Sliding-window-attention models (e.g. gemma2/gemma3) allocate
+					// two KV caches on the same device within one pass — a
+					// full-attention cache and a smaller sliding-window cache — each
+					// logged with an identical "<src>: <dev> KV buffer size" prefix,
+					// so they share this key. They are distinct allocations, so sum
+					// them instead of letting the second overwrite the first (which
+					// undercounts VRAM by a whole KV cache at long contexts).
+					if kind == "KV" {
+						bytes += w.buffers[key].bytes
+					}
+					w.buffers[key] = memoryBuffer{bytes: bytes}
 					w.updateRunnerMemoryLocked()
 				}
 			}

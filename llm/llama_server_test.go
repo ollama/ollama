@@ -3239,6 +3239,26 @@ func TestMemoryParsingWriterMemorySizeMmapPartialOffload(t *testing.T) {
 			wantTotalMiB: 6500 + 7000,
 			wantVRAMMiB:  6500,
 		},
+		{
+			// Sliding-window-attention models (gemma2/gemma3) allocate two KV
+			// caches on one GPU — a full-attention cache and a smaller
+			// sliding-window cache — both logged as "CUDA0 KV buffer size".
+			// They are distinct allocations and must be summed; before the fix
+			// the 174 line overwrote the 2560 line, undercounting VRAM by a whole
+			// KV cache. Captured from gemma3:4b @ 128K ctx on an RTX 5080.
+			name:          "sliding window attention sums both KV caches",
+			fileSizeBytes: 0,
+			lines: []string{
+				"load_tensors: offloaded 35/35 layers to GPU\n",
+				"load_tensors:        CUDA0 model buffer size =  2367.54 MiB\n",
+				"llama_kv_cache:      CUDA0 KV buffer size =  2560.00 MiB\n",
+				"llama_kv_cache:      CUDA0 KV buffer size =   174.00 MiB\n",
+				"sched_reserve:       CUDA0 compute buffer size =   203.52 MiB\n",
+			},
+			// full offload => total == vram; both KV caches counted.
+			wantTotalMiB: 2367.54 + 2560.00 + 174.00 + 203.52,
+			wantVRAMMiB:  2367.54 + 2560.00 + 174.00 + 203.52,
+		},
 	}
 
 	withinKiB := func(got, want uint64) bool {
