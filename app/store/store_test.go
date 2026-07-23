@@ -3,7 +3,10 @@
 package store
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -223,6 +226,189 @@ func TestStore(t *testing.T) {
 		}
 		if len(chats) != 1 {
 			t.Fatalf("expected 1 chat after deletion, got %d", len(chats))
+		}
+	})
+}
+
+func TestDeleteAllChats(t *testing.T) {
+	t.Run("deletes all chats and their messages", func(t *testing.T) {
+		s, cleanup := setupTestStore(t)
+		defer cleanup()
+
+		// Create several chats with messages
+		for i, id := range []string{"chat-a", "chat-b", "chat-c"} {
+			chat := NewChat(id)
+			chat.Messages = append(chat.Messages, NewMessage("user", fmt.Sprintf("msg %d", i), nil))
+			if err := s.SetChat(*chat); err != nil {
+				t.Fatalf("failed to save chat %s: %v", id, err)
+			}
+		}
+
+		chats, err := s.Chats()
+		if err != nil {
+			t.Fatalf("failed to list chats: %v", err)
+		}
+		if len(chats) != 3 {
+			t.Fatalf("expected 3 chats before delete, got %d", len(chats))
+		}
+
+		if err := s.DeleteAllChats(); err != nil {
+			t.Fatalf("DeleteAllChats() error = %v", err)
+		}
+
+		chats, err = s.Chats()
+		if err != nil {
+			t.Fatalf("failed to list chats after delete: %v", err)
+		}
+		if len(chats) != 0 {
+			t.Fatalf("expected 0 chats after DeleteAllChats, got %d", len(chats))
+		}
+	})
+
+	t.Run("empty store is a no-op", func(t *testing.T) {
+		s, cleanup := setupTestStore(t)
+		defer cleanup()
+
+		if err := s.DeleteAllChats(); err != nil {
+			t.Fatalf("DeleteAllChats() on empty store returned error: %v", err)
+		}
+
+		chats, err := s.Chats()
+		if err != nil {
+			t.Fatalf("failed to list chats: %v", err)
+		}
+		if len(chats) != 0 {
+			t.Fatalf("expected 0 chats, got %d", len(chats))
+		}
+	})
+
+	t.Run("cascades to messages, tool_calls, and attachments", func(t *testing.T) {
+		s, cleanup := setupTestStore(t)
+		defer cleanup()
+
+		chat := NewChat("cascade-test")
+		chat.Messages = append(chat.Messages,
+			NewMessage("user", "hello", nil),
+			NewMessage("assistant", "hi", &MessageOptions{Model: "llama4"}),
+		)
+		if err := s.SetChat(*chat); err != nil {
+			t.Fatalf("failed to save chat: %v", err)
+		}
+
+		if err := s.DeleteAllChats(); err != nil {
+			t.Fatalf("DeleteAllChats() error = %v", err)
+		}
+
+		// The chat should be gone
+		_, err := s.Chat("cascade-test")
+		if err == nil {
+			t.Error("expected error retrieving deleted chat, got nil")
+		}
+
+		// Verify messages were cascade-deleted via the database directly
+		var msgCount int
+		if err := s.db.conn.QueryRow("SELECT COUNT(*) FROM messages").Scan(&msgCount); err != nil {
+			t.Fatalf("failed to count messages: %v", err)
+		}
+		if msgCount != 0 {
+			t.Errorf("expected 0 messages after DeleteAllChats, got %d", msgCount)
+		}
+	})
+
+	t.Run("image directory is removed", func(t *testing.T) {
+		s, cleanup := setupTestStore(t)
+		defer cleanup()
+
+		// Create the images directory to simulate prior usage
+		imgDir := s.ImgDir()
+		if err := os.MkdirAll(imgDir, 0o755); err != nil {
+			t.Fatalf("failed to create image dir: %v", err)
+		}
+
+		if err := s.DeleteAllChats(); err != nil {
+			t.Fatalf("DeleteAllChats() error = %v", err)
+		}
+
+		if _, err := os.Stat(imgDir); !os.IsNotExist(err) {
+			t.Errorf("expected image directory to be removed, but it still exists")
+		}
+	})
+
+	t.Run("image directory missing is not an error", func(t *testing.T) {
+		s, cleanup := setupTestStore(t)
+		defer cleanup()
+
+		// Don't create the image directory — DeleteAllChats should still succeed
+		if err := s.DeleteAllChats(); err != nil {
+			t.Fatalf("DeleteAllChats() with missing image dir returned error: %v", err)
+		}
+	})
+
+	t.Run("image directory deletion failure is returned as an error", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("Unix permission semantics not available on Windows")
+		}
+		if os.Getuid() == 0 {
+			t.Skip("permission restrictions have no effect when running as root")
+		}
+
+		s, cleanup := setupTestStore(t)
+		defer cleanup()
+
+		// Build a directory tree that os.RemoveAll cannot fully remove:
+		// imgDir/locked/  (mode 0o000 after setup) contains a file so that
+		// RemoveAll must recurse into it — which requires execute permission.
+		// Without that permission RemoveAll returns EACCES.
+		imgDir := s.ImgDir()
+		lockedDir := filepath.Join(imgDir, "locked")
+		if err := os.MkdirAll(lockedDir, 0o700); err != nil {
+			t.Fatalf("failed to create locked dir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(lockedDir, "data"), []byte("x"), 0o600); err != nil {
+			t.Fatalf("failed to write file in locked dir: %v", err)
+		}
+		if err := os.Chmod(lockedDir, 0o000); err != nil {
+			t.Fatalf("failed to chmod locked dir: %v", err)
+		}
+		// Restore permissions so t.TempDir cleanup can remove the tree.
+		t.Cleanup(func() { os.Chmod(lockedDir, 0o755) })
+
+		err := s.DeleteAllChats()
+		if err == nil {
+			t.Error("DeleteAllChats() returned nil; expected an error when the image directory cannot be removed")
+		}
+	})
+
+	t.Run("store remains usable after delete", func(t *testing.T) {
+		s, cleanup := setupTestStore(t)
+		defer cleanup()
+
+		chat := NewChat("before")
+		chat.Messages = append(chat.Messages, NewMessage("user", "hello", nil))
+		if err := s.SetChat(*chat); err != nil {
+			t.Fatalf("failed to save initial chat: %v", err)
+		}
+
+		if err := s.DeleteAllChats(); err != nil {
+			t.Fatalf("DeleteAllChats() error = %v", err)
+		}
+
+		// Should be able to create a new chat after deleting all
+		newChat := NewChat("after")
+		newChat.Messages = append(newChat.Messages, NewMessage("user", "world", nil))
+		if err := s.SetChat(*newChat); err != nil {
+			t.Fatalf("failed to save new chat after DeleteAllChats: %v", err)
+		}
+
+		chats, err := s.Chats()
+		if err != nil {
+			t.Fatalf("failed to list chats: %v", err)
+		}
+		if len(chats) != 1 {
+			t.Fatalf("expected 1 chat after re-creating, got %d", len(chats))
+		}
+		if chats[0].ID != "after" {
+			t.Errorf("expected new chat ID 'after', got %q", chats[0].ID)
 		}
 	})
 }

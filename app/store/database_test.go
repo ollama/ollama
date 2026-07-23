@@ -481,3 +481,64 @@ func loadV2Schema(t *testing.T, dbPath string) *database {
 
 	return &database{conn: conn}
 }
+
+func TestDeleteAllChatsCascade(t *testing.T) {
+	t.Run("removes all chats and cascades to child rows", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		db, err := newDatabase(filepath.Join(tmpDir, "test.db"))
+		if err != nil {
+			t.Fatalf("newDatabase: %v", err)
+		}
+		defer db.Close()
+
+		// Insert two chats, each with two messages
+		for _, chatID := range []string{"all-del-1", "all-del-2"} {
+			chat := Chat{
+				ID:        chatID,
+				Title:     chatID,
+				CreatedAt: time.Now(),
+				Messages: []Message{
+					{Role: "user", Content: "hi", CreatedAt: time.Now(), UpdatedAt: time.Now()},
+					{Role: "assistant", Content: "hello", CreatedAt: time.Now(), UpdatedAt: time.Now()},
+				},
+			}
+			if err := db.saveChat(chat); err != nil {
+				t.Fatalf("saveChat(%s): %v", chatID, err)
+			}
+		}
+
+		if countRows(t, db, "chats") != 2 {
+			t.Fatal("expected 2 chats before deleteAllChats")
+		}
+		if countRows(t, db, "messages") != 4 {
+			t.Fatal("expected 4 messages before deleteAllChats")
+		}
+
+		if err := db.deleteAllChats(); err != nil {
+			t.Fatalf("deleteAllChats() error = %v", err)
+		}
+
+		if n := countRows(t, db, "chats"); n != 0 {
+			t.Errorf("expected 0 chats after deleteAllChats, got %d", n)
+		}
+		if n := countRows(t, db, "messages"); n != 0 {
+			t.Errorf("expected 0 messages after deleteAllChats cascade, got %d", n)
+		}
+	})
+
+	t.Run("empty table is a no-op", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		db, err := newDatabase(filepath.Join(tmpDir, "test.db"))
+		if err != nil {
+			t.Fatalf("newDatabase: %v", err)
+		}
+		defer db.Close()
+
+		if err := db.deleteAllChats(); err != nil {
+			t.Fatalf("deleteAllChats() on empty table: %v", err)
+		}
+		if n := countRows(t, db, "chats"); n != 0 {
+			t.Errorf("expected 0 chats, got %d", n)
+		}
+	})
+}
