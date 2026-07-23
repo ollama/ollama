@@ -815,6 +815,52 @@ func TestShow(t *testing.T) {
 	}
 }
 
+func TestShowTensorsOnlyPopulatedWhenVerbose(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	var s Server
+
+	_, digest := createBinFile(t, ggml.KV{"general.architecture": "test"}, []*ggml.Tensor{
+		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+	})
+
+	createRequest(t, s.CreateHandler, api.CreateRequest{
+		Name:  "show-tensors-verbose",
+		Files: map[string]string{"model.gguf": digest},
+	})
+
+	w := createRequest(t, s.ShowHandler, api.ShowRequest{
+		Name: "show-tensors-verbose",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d", w.Code)
+	}
+
+	var resp api.ShowResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Tensors) != 0 {
+		t.Fatalf("expected no tensors when verbose is false, got %d", len(resp.Tensors))
+	}
+
+	w = createRequest(t, s.ShowHandler, api.ShowRequest{
+		Name:    "show-tensors-verbose",
+		Verbose: true,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d", w.Code)
+	}
+
+	resp = api.ShowResponse{}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Tensors) != 1 {
+		t.Fatalf("expected 1 tensor when verbose is true, got %d", len(resp.Tensors))
+	}
+}
+
 func TestShowTemplateUsesSelectedRuntimeTemplate(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 	t.Setenv("OLLAMA_GO_TEMPLATE", "")
