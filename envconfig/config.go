@@ -232,6 +232,8 @@ var (
 	UseAuth = Bool("OLLAMA_AUTH")
 	// EnableVulkan controls Vulkan backend discovery.
 	EnableVulkan = BoolWithDefault("OLLAMA_VULKAN")
+	// AllowExternalLibraryPath allows OLLAMA_LIBRARY_PATH entries outside the Ollama install tree.
+	AllowExternalLibraryPath = Bool("OLLAMA_ALLOW_EXTERNAL_LIBRARY_PATH")
 	// EnableIntegratedGPU controls whether integrated GPUs may be selected.
 	EnableIntegratedGPU = BoolWithDefault("OLLAMA_IGPU_ENABLE")
 	// NoCloudEnv checks the OLLAMA_NO_CLOUD environment variable.
@@ -321,6 +323,7 @@ func AsMap() map[string]EnvVar {
 		"LLAMA_ARG_FIT_TARGET":        {"LLAMA_ARG_FIT_TARGET", String("LLAMA_ARG_FIT_TARGET")(), "Target free VRAM margin per device for llama.cpp fit (MiB)"},
 		"OLLAMA_HOST":                 {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
 		"OLLAMA_KEEP_ALIVE":           {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
+		"OLLAMA_ALLOW_EXTERNAL_LIBRARY_PATH": {"OLLAMA_ALLOW_EXTERNAL_LIBRARY_PATH", AllowExternalLibraryPath(), "Allow explicit OLLAMA_LIBRARY_PATH entries outside the Ollama install tree"},
 		"OLLAMA_LLM_LIBRARY":          {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},
 		"OLLAMA_LOAD_TIMEOUT":         {"OLLAMA_LOAD_TIMEOUT", LoadTimeout(), "How long to allow model loads to stall before giving up (default \"5m\")"},
 		"OLLAMA_MAX_LOADED_MODELS":    {"OLLAMA_MAX_LOADED_MODELS", MaxRunners(), "Maximum number of loaded models per GPU"},

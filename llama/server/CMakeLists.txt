@@ -239,6 +239,7 @@ endif()
 #
 # GPU build (OLLAMA_RUNNER_DIR="cuda_v12" etc.):
 #   lib/ollama/cuda_v12/libggml-cuda.so  (GPU backend only)
+#   lib/ollama/sycl/libggml-sycl.so      (SYCL backend only)
 
 set(OLLAMA_LIB_DIR "lib/ollama" CACHE STRING "Install destination for Ollama runtime payloads")
 set(_base_dest "${OLLAMA_LIB_DIR}")
@@ -512,6 +513,14 @@ if(OLLAMA_RUNNER_DIR)
     if(GGML_VULKAN)
         if(TARGET ggml-vulkan)
             install(TARGETS ggml-vulkan
+                RUNTIME DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
+                LIBRARY DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
+            )
+        endif()
+    endif()
+    if(GGML_SYCL)
+        if(TARGET ggml-sycl)
+            install(TARGETS ggml-sycl
                 RUNTIME DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
                 LIBRARY DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
             )
