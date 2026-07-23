@@ -439,10 +439,12 @@ export class Settings {
 }
 export class SettingsResponse {
     settings: Settings;
+    hasCompletedFirstRun: boolean;
 
     constructor(source: any = {}) {
         if ('string' === typeof source) source = JSON.parse(source);
         this.settings = this.convertValues(source["settings"], Settings);
+        this.hasCompletedFirstRun = source["hasCompletedFirstRun"];
     }
 
 	convertValues(a: any, classs: any, asMap: boolean = false): any {
