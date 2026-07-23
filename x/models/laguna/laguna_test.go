@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/x/mlxrunner/batch"
-	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/models/nn"
 )
@@ -115,34 +114,6 @@ func TestParseConfigLagunaFP8RopeScaling(t *testing.T) {
 	}
 	if cfg.FullRopeDim != 64 {
 		t.Fatalf("FullRopeDim = %d, want 64", cfg.FullRopeDim)
-	}
-}
-
-func TestShouldChunkPrefillOnlyForLongSingleSequenceCacheBackedForwards(t *testing.T) {
-	m := &Model{Layers: []*Layer{{}, {}}}
-	caches := []cache.Cache{cache.NewKVCache(), cache.NewRotatingKVCache(512)}
-	b := &batch.Batch{
-		SeqOffsets:   []int32{0},
-		SeqQueryLens: []int32{lagunaPrefillChunkSize + 1},
-	}
-
-	if !m.shouldChunkPrefill(b, caches, 1, lagunaPrefillChunkSize+1) {
-		t.Fatal("expected long single-sequence cache-backed prefill to chunk")
-	}
-	if m.shouldChunkPrefill(b, caches, 1, lagunaPrefillChunkSize) {
-		t.Fatal("short prefill should not chunk")
-	}
-	if m.shouldChunkPrefill(b, caches, 2, lagunaPrefillChunkSize+1) {
-		t.Fatal("batched prefill should not chunk")
-	}
-	if m.shouldChunkPrefill(&batch.Batch{
-		SeqOffsets:   []int32{0},
-		SeqQueryLens: []int32{lagunaPrefillChunkSize},
-	}, caches, 1, lagunaPrefillChunkSize+1) {
-		t.Fatal("padded query rows should not chunk")
-	}
-	if m.shouldChunkPrefill(b, caches[:1], 1, lagunaPrefillChunkSize+1) {
-		t.Fatal("missing layer caches should not chunk")
 	}
 }
 

@@ -132,15 +132,7 @@ func lagunaSharedExpertDownProjection(name string) bool {
 // class is small; routed expert down projections use the cadence to avoid
 // pushing the model too close to bf16 size.
 func lagunaPromoteExpertDown(layerIdx, numLayers int) bool {
-	if layerIdx < 0 || numLayers <= 0 {
-		return false
-	}
-	first := numLayers / 8
-	last := 7 * numLayers / 8
-	middleEnd := numLayers/2 - 4
-	return layerIdx < first ||
-		layerIdx >= last ||
-		(layerIdx >= first && layerIdx < middleEnd && (layerIdx-first)%3 == 2)
+	return useMoreBitsWithMiddleEnd(layerIdx, numLayers, numLayers/2-4)
 }
 
 func lagunaMLPProjectionWeight(name string) bool {
@@ -150,30 +142,21 @@ func lagunaMLPProjectionWeight(name string) bool {
 }
 
 func lagunaQuantizationType(name string, shape []int32, quantize string) string {
-	if !ShouldQuantize(name, "") {
-		return ""
+	q := GetTensorQuantization(name, shape, quantize)
+	// Laguna's architecture policy decides which sensitive tensors to
+	// promote. Undo the generic policy's blanket 4-to-8-bit promotion here.
+	if q != quantize && q == eightBit(quantize) {
+		return quantize
 	}
-	if len(shape) != 2 && len(shape) != 3 {
-		return ""
-	}
-
-	var elems int64 = 1
-	for _, d := range shape {
-		elems *= int64(d)
-	}
-	if elems < 1024 || !isAligned(shape, quantize) {
-		return ""
-	}
-
-	return quantize
+	return q
 }
 
 func lagunaSensitiveType(promote bool, name string, shape []int32, quantize string) string {
-	if !ShouldQuantize(name, "") {
-		return ""
-	}
 	if quantize == "mxfp8" {
 		return ""
 	}
-	return sensitiveType(promote, shape, quantize)
+	if promote {
+		return GetTensorQuantization(name, shape, quantize)
+	}
+	return lagunaQuantizationType(name, shape, quantize)
 }
