@@ -23,6 +23,7 @@ func TestQwenParserStreaming(t *testing.T) {
 
 	cases := []struct {
 		desc  string
+		tools []api.Tool
 		steps []step
 		only  bool
 	}{
@@ -60,6 +61,55 @@ func TestQwenParserStreaming(t *testing.T) {
 						qwenEventRawToolCall{raw: "in tool call 2"},
 						qwenEventContent{content: "after2"},
 					},
+				},
+			},
+		},
+		{
+			desc:  "bare function call for a known tool",
+			tools: []api.Tool{tool("write_file", nil)},
+			steps: []step{
+				{
+					input: "before<function=write_file>\n<parameter=path>\na.txt\n</parameter>\n</function>after",
+					wantEvents: []qwenEvent{
+						qwenEventContent{content: "before"},
+						qwenEventRawToolCall{raw: "<function=write_file>\n<parameter=path>\na.txt\n</parameter>\n</function>"},
+						qwenEventContent{content: "after"},
+					},
+				},
+			},
+		},
+		{
+			desc:  "bare function call streamed across chunks",
+			tools: []api.Tool{tool("write_file", nil)},
+			steps: []step{
+				{
+					input:      "before<func",
+					wantEvents: []qwenEvent{qwenEventContent{content: "before"}},
+				},
+				{
+					input:      "tion=write_",
+					wantEvents: []qwenEvent{},
+				},
+				{
+					input:      "file>\n<parameter=path>\na.txt\n</parameter>\n</func",
+					wantEvents: []qwenEvent{},
+				},
+				{
+					input: "tion>after",
+					wantEvents: []qwenEvent{
+						qwenEventRawToolCall{raw: "<function=write_file>\n<parameter=path>\na.txt\n</parameter>\n</function>"},
+						qwenEventContent{content: "after"},
+					},
+				},
+			},
+		},
+		{
+			desc:  "bare function for an unknown tool remains content",
+			tools: []api.Tool{tool("write_file", nil)},
+			steps: []step{
+				{
+					input:      "<function=delete_file></function>",
+					wantEvents: []qwenEvent{qwenEventContent{content: "<function=delete_file></function>"}},
 				},
 			},
 		},
@@ -359,6 +409,7 @@ func TestQwenParserStreaming(t *testing.T) {
 
 		t.Run(tc.desc, func(t *testing.T) {
 			parser := Qwen3CoderParser{}
+			parser.Init(tc.tools, nil, nil)
 
 			for i, step := range tc.steps {
 				parser.acc.WriteString(step.input)
@@ -1032,6 +1083,44 @@ func TestQwenToolCallValueParsing(t *testing.T) {
 				t.Errorf("got %v (type %T), want %v (type %T)", got, got, tc.want, tc.want)
 			}
 		})
+	}
+}
+
+func TestQwen3CoderParserBareFunctionCall(t *testing.T) {
+	parser := Qwen3CoderParser{}
+	parser.Init(
+		[]api.Tool{
+			tool("write_file", map[string]api.ToolProperty{
+				"path": {Type: api.PropertyType{"string"}},
+			}),
+		},
+		nil,
+		nil,
+	)
+
+	content, _, calls, err := parser.Add(
+		`<function=write_file><parameter=path>a.txt</parameter></function></tool_call>`,
+		true,
+	)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if content != "" {
+		t.Fatalf("expected no content, got %q", content)
+	}
+
+	want := api.ToolCall{
+		Function: api.ToolCallFunction{
+			Name:      "write_file",
+			Arguments: testArgs(map[string]any{"path": "a.txt"}),
+			Index:     0,
+		},
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	if !toolCallEqual(calls[0], want) {
+		t.Fatalf("call mismatch: got %#v, want %#v", calls[0], want)
 	}
 }
 

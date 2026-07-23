@@ -19,13 +19,16 @@ import (
 type qwenParserState int
 
 const (
-	toolOpenTag  = "<tool_call>"
-	toolCloseTag = "</tool_call>"
+	toolOpenTag          = "<tool_call>"
+	toolCloseTag         = "</tool_call>"
+	bareFunctionOpenTag  = "<function="
+	bareFunctionCloseTag = "</function>"
 )
 
 const (
 	qwenParserState_LookingForToolStart qwenParserState = iota
 	qwenParserState_CollectingToolContent
+	qwenParserState_CollectingBareFunction
 )
 
 type Qwen3CoderParser struct {
@@ -135,21 +138,36 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 
 	switch p.state {
 	case qwenParserState_LookingForToolStart:
-		if strings.Contains(p.acc.String(), toolOpenTag) {
-			// we found a full tool open tag, so we can emit the content before the
-			// tag, being sure to trim any trailing whitespace
-			split := strings.SplitN(p.acc.String(), toolOpenTag, 2)
-			before := split[0]
+		toolStart := strings.Index(p.acc.String(), toolOpenTag)
+		bareFunctionStart := p.bareFunctionStart(p.acc.String())
+		if bareFunctionStart >= 0 && (toolStart < 0 || bareFunctionStart < toolStart) {
+			// Some Qwen checkpoints omit the outer <tool_call> wrapper. Keep the
+			// function tag in the buffer so parseToolCall receives the same raw
+			// function XML as it does for wrapped calls.
+			before := p.acc.String()[:bareFunctionStart]
 			before = strings.TrimRightFunc(before, unicode.IsSpace)
 			if len(before) > 0 {
 				events = append(events, qwenEventContent{content: before})
 			}
-			after := split[1]
+			after := p.acc.String()[bareFunctionStart:]
+			p.acc.Reset()
+			p.acc.WriteString(after)
+			p.state = qwenParserState_CollectingBareFunction
+			return events, true
+		} else if toolStart >= 0 {
+			// we found a full tool open tag, so we can emit the content before the
+			// tag, being sure to trim any trailing whitespace
+			before := p.acc.String()[:toolStart]
+			before = strings.TrimRightFunc(before, unicode.IsSpace)
+			if len(before) > 0 {
+				events = append(events, qwenEventContent{content: before})
+			}
+			after := p.acc.String()[toolStart+len(toolOpenTag):]
 			p.acc.Reset()
 			p.acc.WriteString(after)
 			p.state = qwenParserState_CollectingToolContent
 			return events, true
-		} else if overlap := overlap(p.acc.String(), toolOpenTag); overlap > 0 {
+		} else if overlap := max(overlap(p.acc.String(), toolOpenTag), bareFunctionOverlap(p.acc.String())); overlap > 0 {
 			// we found a partial tool open tag, so we can emit the unambiguous part,
 			// which is the (trailing-whitespace trimmed) content before the partial
 			// tool open tag
@@ -199,9 +217,64 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 			// here
 			return events, false
 		}
+	case qwenParserState_CollectingBareFunction:
+		if strings.Contains(p.acc.String(), bareFunctionCloseTag) {
+			split := strings.SplitN(p.acc.String(), bareFunctionCloseTag, 2)
+			before := split[0]
+			after := strings.TrimLeftFunc(split[1], unicode.IsSpace)
+			// The malformed output usually omits only the opening wrapper, leaving
+			// its closing tag behind. Consume that orphaned tag with the implicit
+			// tool call instead of leaking it into assistant content.
+			after = strings.TrimPrefix(after, toolCloseTag)
+			after = strings.TrimLeftFunc(after, unicode.IsSpace)
+			p.acc.Reset()
+			p.acc.WriteString(after)
+			events = append(events, qwenEventRawToolCall{raw: before + bareFunctionCloseTag})
+			p.state = qwenParserState_LookingForToolStart
+			return events, true
+		}
+		return events, false
 	default:
 		panic("unreachable")
 	}
+}
+
+func (p *Qwen3CoderParser) bareFunctionStart(s string) int {
+	searchFrom := 0
+	for searchFrom < len(s) {
+		start := strings.Index(s[searchFrom:], bareFunctionOpenTag)
+		if start < 0 {
+			return -1
+		}
+		start += searchFrom
+		nameStart := start + len(bareFunctionOpenTag)
+		nameEnd := strings.IndexByte(s[nameStart:], '>')
+		if nameEnd < 0 {
+			return -1
+		}
+		nameEnd += nameStart
+		name := s[nameStart:nameEnd]
+		for _, tool := range p.tools {
+			if tool.Function.Name == name {
+				return start
+			}
+		}
+		searchFrom = nameEnd + 1
+	}
+	return -1
+}
+
+func bareFunctionOverlap(s string) int {
+	start := strings.LastIndexByte(s, '<')
+	if start < 0 {
+		return 0
+	}
+	suffix := s[start:]
+	if strings.HasPrefix(bareFunctionOpenTag, suffix) ||
+		(strings.HasPrefix(suffix, bareFunctionOpenTag) && !strings.ContainsRune(suffix, '>')) {
+		return len(suffix)
+	}
+	return 0
 }
 
 type XMLFunctionCall struct {
