@@ -38,9 +38,20 @@ func layerIndex(name string) int {
 // input grounding and final output refinement), plus every 3rd layer in between
 // to limit error accumulation through the residual stream.
 func useMoreBits(layerIdx, numLayers int) bool {
-	return layerIdx < numLayers/8 ||
-		layerIdx >= 7*numLayers/8 ||
-		(layerIdx-numLayers/8)%3 == 2
+	return useMoreBitsWithMiddleEnd(layerIdx, numLayers, 7*numLayers/8)
+}
+
+// useMoreBitsWithMiddleEnd applies the standard early/late promotion and
+// limits the every-third-layer cadence to layers before middleEnd.
+func useMoreBitsWithMiddleEnd(layerIdx, numLayers, middleEnd int) bool {
+	if layerIdx < 0 || numLayers <= 0 {
+		return false
+	}
+	first := numLayers / 8
+	last := 7 * numLayers / 8
+	return layerIdx < first ||
+		layerIdx >= last ||
+		(layerIdx >= first && layerIdx < middleEnd && (layerIdx-first)%3 == 2)
 }
 
 // eightBit returns the 8-bit quantization type in base's family: int8 for the

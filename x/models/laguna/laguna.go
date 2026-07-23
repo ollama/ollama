@@ -83,7 +83,8 @@ type Model struct {
 	Norm        *nn.RMSNorm
 	LMHead      nn.LinearLayer
 
-	tok *tokenizer.Tokenizer
+	tok             *tokenizer.Tokenizer
+	weightsResident bool
 	*Config
 }
 
@@ -1387,53 +1388,26 @@ func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *
 	return mlx.Add(h, r)
 }
 
-// Laguna prefill is faster in cache-backed 512-token slices than in the
-// runner's larger default chunk because attention work grows with query span.
-const lagunaPrefillChunkSize = 512
-
 func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
+	m.ensureWeightsResident()
+
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
-	// Keep Laguna's long prefill on the smaller attention shape that benchmarks
-	// well on Metal without changing the runner's global chunking contract.
-	if m.shouldChunkPrefill(b, caches, B, L) {
-		return m.forwardChunked(b, caches, int(L))
-	}
-
 	return m.forward(b, caches, B, L)
 }
 
-func (m *Model) shouldChunkPrefill(b *batch.Batch, caches []cache.Cache, B, L int32) bool {
-	if B != 1 || L <= lagunaPrefillChunkSize {
-		return false
+func (m *Model) ensureWeightsResident() {
+	if m.weightsResident {
+		return
 	}
-	if len(b.SeqOffsets) != 1 || len(b.SeqQueryLens) != 1 || b.SeqQueryLens[0] != L {
-		return false
-	}
-	if len(caches) < len(m.Layers) {
-		return false
-	}
-	for i := range m.Layers {
-		if caches[i] == nil {
-			return false
-		}
-	}
-	return true
-}
+	m.weightsResident = true
 
-func (m *Model) forwardChunked(b *batch.Batch, caches []cache.Cache, total int) *mlx.Array {
-	hidden := make([]*mlx.Array, 0, (total+lagunaPrefillChunkSize-1)/lagunaPrefillChunkSize)
-	for start := 0; start < total; start += lagunaPrefillChunkSize {
-		stop := min(start+lagunaPrefillChunkSize, total)
-		chunkIDs := mlx.SliceStartStop(b.InputIDs, []int32{0, int32(start)}, []int32{1, int32(stop)})
-		chunk := &batch.Batch{
-			InputIDs:     chunkIDs,
-			SeqOffsets:   []int32{b.SeqOffsets[0] + int32(start)},
-			SeqQueryLens: []int32{int32(stop - start)},
-		}
-		hidden = append(hidden, m.forward(chunk, caches, 1, int32(stop-start)))
-	}
-	return mlx.Concatenate(hidden, 1)
+	// Large Laguna expert stacks must remain resident or Metal repeatedly pages
+	// them during gathered MoE evaluation. This runs after the runner has
+	// materialized and swept the final weights, which is too late for
+	// LoadWeights. TODO: Move this policy into the runner if other model
+	// families demonstrate the same requirement.
+	mlx.SetWiredLimit(mlx.ActiveMemory())
 }
 
 func (m *Model) forward(b *batch.Batch, caches []cache.Cache, B, L int32) *mlx.Array {

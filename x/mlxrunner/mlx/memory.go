@@ -66,6 +66,20 @@ func ResetPeakMemory() {
 	C.mlx_reset_peak_memory()
 }
 
+// SetWiredLimit sets the amount of Metal memory MLX keeps resident.
+// It is a no-op unless the MLX runner selected the GPU.
+func SetWiredLimit(limit int) int {
+	if !defaultDeviceGPU {
+		return 0
+	}
+
+	var previous C.size_t
+	mlxCheck("mlx_set_wired_limit", func() C.int {
+		return C.mlx_set_wired_limit(&previous, C.size_t(limit))
+	})
+	return int(previous)
+}
+
 type Memory struct{}
 
 func (Memory) LogValue() slog.Value {

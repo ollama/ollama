@@ -91,6 +91,24 @@ func TestLagunaPlanExpertGroupUsesStackedDownProjectionPolicy(t *testing.T) {
 			t.Fatalf("planned quantization for %s = %q, want %q", tensor, got, want)
 		}
 	}
+
+	if _, ok := specByName(specs, "model.layers.1.mlp.experts"); ok {
+		t.Fatal("mixed layer 1 expert projections should use separate blobs")
+	}
+	for _, name := range []string{
+		"model.layers.1.mlp.experts.down_proj.weight",
+		"model.layers.1.mlp.experts.gate_proj.weight",
+	} {
+		spec, ok := specByName(specs, name)
+		if !ok || len(spec.Tensors) != 1 {
+			t.Fatalf("missing homogeneous blob %s; got %v", name, specNames(specs))
+		}
+	}
+
+	spec, ok := specByName(specs, "model.layers.5.mlp.experts")
+	if !ok || len(spec.Tensors) != 2 {
+		t.Fatalf("uniform layer 5 projections should share one blob; got %v", specNames(specs))
+	}
 }
 
 func quantizeForPlannedTensor(specs []BlobSpec, name string) string {
