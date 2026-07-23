@@ -1240,3 +1240,55 @@ func TestOverlapFunction(t *testing.T) {
 		})
 	}
 }
+
+// Regression for https://github.com/ollama/ollama/issues/16810: qwen models
+// (including qwen3.5, which delegates tool parsing here) sometimes emit
+// malformed tool-call xml. The stray second </parameter> below makes Go's
+// strict xml decoder fail with "element <function> closed by </parameter>",
+// which previously propagated out of Add and aborted the entire response. The
+// parser now recovers the function name and any well-formed parameters instead.
+func TestQwen3CoderParserRecoversMalformedToolCall(t *testing.T) {
+	parser := Qwen3CoderParser{}
+	parser.Init(nil, nil, nil)
+
+	input := "<tool_call>\n<function=web_search>\n<parameter=query>\nlunch menu Trnava\n</parameter>\n</parameter>\n</function>\n</tool_call>"
+	_, _, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("expected lenient recovery, got error: %v", err)
+	}
+
+	want := []api.ToolCall{
+		{Function: api.ToolCallFunction{Name: "web_search", Arguments: testArgs(map[string]any{"query": "lunch menu Trnava"}), Index: 0}},
+	}
+	if len(calls) != len(want) {
+		t.Fatalf("expected %d calls, got %d: %#v", len(want), len(calls), calls)
+	}
+	if !toolCallEqual(calls[0], want[0]) {
+		t.Fatalf("call mismatch:\n got %#v\nwant %#v", calls[0], want[0])
+	}
+}
+
+func TestRecoverFunctionCall(t *testing.T) {
+	t.Run("no function name returns false", func(t *testing.T) {
+		if _, ok := recoverFunctionCall("<parameter=query>oops</parameter>"); ok {
+			t.Fatal("expected ok=false when no function name is present")
+		}
+	})
+
+	t.Run("salvages name and well-formed params around a stray tag", func(t *testing.T) {
+		raw := "<function=web_search>\n<parameter=query>\nlunch menu\n</parameter>\n<parameter=count>\n3\n</parameter>\n</parameter>\n"
+		fc, ok := recoverFunctionCall(raw)
+		if !ok {
+			t.Fatal("expected ok=true")
+		}
+		if fc.Name != "web_search" {
+			t.Fatalf("name = %q, want %q", fc.Name, "web_search")
+		}
+		if len(fc.Parameters) != 2 {
+			t.Fatalf("got %d parameters, want 2: %#v", len(fc.Parameters), fc.Parameters)
+		}
+		if fc.Parameters[0].Name != "query" || fc.Parameters[1].Name != "count" {
+			t.Fatalf("parameter names = [%q, %q], want [query, count]", fc.Parameters[0].Name, fc.Parameters[1].Name)
+		}
+	})
+}
