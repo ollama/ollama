@@ -2072,6 +2072,8 @@ func versionHandler(cmd *cobra.Command, _ []string) {
 	serverVersion, err := client.Version(cmd.Context())
 	if err != nil {
 		fmt.Println("Warning: could not connect to a running Ollama instance")
+		fmt.Printf("ollama version is %s\n", version.Version)
+		return
 	}
 
 	if serverVersion != "" {
