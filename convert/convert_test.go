@@ -349,6 +349,66 @@ func TestConvertAdapter(t *testing.T) {
 	}
 }
 
+func TestCheckArchitecture(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     string // empty string = file should not exist
+		wantErr bool
+	}{
+		{
+			name:    "supported LlamaForCausalLM",
+			cfg:     `{"architectures":["LlamaForCausalLM"]}`,
+			wantErr: false,
+		},
+		{
+			name:    "supported Gemma3ForCausalLM",
+			cfg:     `{"architectures":["Gemma3ForCausalLM"]}`,
+			wantErr: false,
+		},
+		{
+			name:    "unsupported MistralForCausalLM",
+			cfg:     `{"architectures":["MistralForCausalLM"]}`,
+			wantErr: true,
+		},
+		{
+			name:    "unsupported unknown architecture",
+			cfg:     `{"architectures":["SomeNewModel"]}`,
+			wantErr: true,
+		},
+		{
+			name:    "empty architectures returns nil",
+			cfg:     `{"architectures":[]}`,
+			wantErr: false,
+		},
+		{
+			name:    "missing config.json returns nil",
+			cfg:     "",
+			wantErr: false,
+		},
+		{
+			name:    "invalid JSON returns nil",
+			cfg:     `not json at all`,
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.json")
+			if tt.cfg != "" {
+				if err := os.WriteFile(path, []byte(tt.cfg), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := CheckArchitecture(path)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("CheckArchitecture(%q) error = %v, wantErr %v", tt.cfg, err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func generateLoraTestData(t *testing.T, tempDir string) {
 	offset := 4096 * 8 * 4
 
