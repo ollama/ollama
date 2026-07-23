@@ -18,6 +18,9 @@ import (
 // ImageModel is the interface for image generation models.
 type ImageModel interface {
 	GenerateImage(ctx context.Context, prompt string, width, height int32, steps int, seed int64, progress func(step, total int)) (*mlx.Array, error)
+	// GenerateWithCFG generates an image using classifier-free guidance.
+	// Models that do not support CFG should return an error.
+	GenerateWithCFG(prompt, negativePrompt string, width, height int32, steps int, seed int64, cfgScale float32, progress func(step, total int)) (*mlx.Array, error)
 }
 
 var imageGenMu sync.Mutex
@@ -91,8 +94,14 @@ func (s *server) handleImageCompletion(w http.ResponseWriter, r *http.Request, r
 		flusher.Flush()
 	}
 
-	// Generate image
-	img, err := s.imageModel.GenerateImage(ctx, req.Prompt, req.Width, req.Height, req.Steps, req.Seed, progress)
+	// Generate image, using CFG path when a negative prompt is provided
+	var img *mlx.Array
+	var err error
+	if req.Negative != "" {
+		img, err = s.imageModel.GenerateWithCFG(req.Prompt, req.Negative, req.Width, req.Height, req.Steps, req.Seed, 0, progress)
+	} else {
+		img, err = s.imageModel.GenerateImage(ctx, req.Prompt, req.Width, req.Height, req.Steps, req.Seed, progress)
+	}
 	if err != nil {
 		// Don't send error for cancellation
 		if ctx.Err() != nil {
