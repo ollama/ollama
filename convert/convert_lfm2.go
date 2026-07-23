@@ -2,7 +2,11 @@ package convert
 
 import (
 	"cmp"
+	"encoding/json"
+	"errors"
 	"fmt"
+	iofs "io/fs"
+	"path"
 	"slices"
 	"strings"
 
@@ -32,12 +36,19 @@ type lfm2Model struct {
 	RoutedScalingFactor   float32  `json:"routed_scaling_factor"`
 	LayerTypes            []string `json:"layer_types"`
 	TieEmbedding          bool     `json:"tie_embedding"`
+	PoolingType           uint32
+	normalizeEmbeddings   bool
+	dense2FeatIn          uint32
+	dense2FeatOut         uint32
 	RopeParameters        struct {
 		RopeTheta float32 `json:"rope_theta"`
 	} `json:"rope_parameters"`
 }
 
-var _ ModelConverter = (*lfm2Model)(nil)
+var (
+	_ ModelConverter = (*lfm2Model)(nil)
+	_ moreParser     = (*lfm2Model)(nil)
+)
 
 const (
 	defaultMaxPositionEmbeddings = uint32(128_000)
@@ -106,6 +117,72 @@ func (p *lfm2Model) contextLength() uint32 {
 	return p.MaxPositionEmbeddings
 }
 
+func (p *lfm2Model) parseMore(fsys iofs.FS) error {
+	bts, err := iofs.ReadFile(fsys, "modules.json")
+	if errors.Is(err, iofs.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+
+	var modules []struct {
+		Type string `json:"type"`
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(bts, &modules); err != nil {
+		return err
+	}
+
+	var hasDense bool
+	for _, m := range modules {
+		switch {
+		case strings.HasSuffix(m.Type, ".Pooling"):
+			bts, err := iofs.ReadFile(fsys, path.Join(m.Path, "config.json"))
+			if err != nil {
+				return err
+			}
+
+			var pc struct {
+				PoolingModeMeanTokens bool `json:"pooling_mode_mean_tokens"`
+				PoolingModeCLSToken   bool `json:"pooling_mode_cls_token"`
+			}
+			if err := json.Unmarshal(bts, &pc); err != nil {
+				return err
+			}
+
+			if pc.PoolingModeMeanTokens {
+				p.PoolingType = 1
+			} else if pc.PoolingModeCLSToken {
+				p.PoolingType = 2
+			}
+		case strings.HasSuffix(m.Type, ".Normalize"):
+			p.normalizeEmbeddings = true
+		case strings.HasSuffix(m.Type, ".Dense"):
+			hasDense = true
+			bts, err := iofs.ReadFile(fsys, path.Join(m.Path, "config.json"))
+			if err != nil {
+				return err
+			}
+
+			var dc struct {
+				InFeatures  uint32 `json:"in_features"`
+				OutFeatures uint32 `json:"out_features"`
+			}
+			if err := json.Unmarshal(bts, &dc); err != nil {
+				return err
+			}
+			p.dense2FeatIn = dc.InFeatures
+			p.dense2FeatOut = dc.OutFeatures
+		}
+	}
+
+	if hasDense && p.PoolingType == 0 {
+		p.PoolingType = 1
+	}
+
+	return nil
+}
+
 func (p *lfm2Model) KV(t *Tokenizer) KV {
 	architecture := "lfm2"
 	if p.isMoE() {
@@ -148,6 +225,17 @@ func (p *lfm2Model) KV(t *Tokenizer) KV {
 
 	if ropeFreqBase := p.ropeFreqBase(); ropeFreqBase != 0 {
 		kv["rope.freq_base"] = ropeFreqBase
+	}
+
+	if p.PoolingType != 0 {
+		kv["pooling_type"] = p.PoolingType
+		kv["normalize_embeddings"] = p.normalizeEmbeddings
+	}
+	if p.dense2FeatIn != 0 {
+		kv["dense_2_feat_in"] = p.dense2FeatIn
+	}
+	if p.dense2FeatOut != 0 {
+		kv["dense_2_feat_out"] = p.dense2FeatOut
 	}
 
 	if p.isMoE() {
@@ -213,8 +301,13 @@ func (p *lfm2Model) Tensors(ts []Tensor) []*ggml.Tensor {
 func (p *lfm2Model) Replacements() []string {
 	return []string{
 		"model.embed_tokens", "token_embd",
+		"embed_tokens", "token_embd",
 		"model.embedding_norm", "token_embd_norm",
+		"embedding_norm", "token_embd_norm",
+		"2_Dense.linear", "dense_2",
+		"1_Dense.linear", "dense_2",
 		"model.layers", "blk",
+		"layers", "blk",
 		"operator_norm", "attn_norm",
 		"self_attn.q_proj", "attn_q",
 		"self_attn.k_proj", "attn_k",

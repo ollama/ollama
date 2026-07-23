@@ -32,7 +32,6 @@ type embeddingGemmaDenseModule struct {
 var (
 	_ ModelConverter    = (*embeddingGemmaModel)(nil)
 	_ moreParser        = (*embeddingGemmaModel)(nil)
-	_ extraTensorParser = (*embeddingGemmaModel)(nil)
 	_ tokenizerAdjuster = (*embeddingGemmaModel)(nil)
 )
 
@@ -214,29 +213,6 @@ func embeddingGemmaDenseTensorName(modulePath string) (string, bool) {
 	}
 }
 
-func (m *embeddingGemmaModel) extraTensors(fsys fs.FS) ([]Tensor, error) {
-	var extra []Tensor
-	for _, dense := range m.denseModules {
-		ts, err := parseSafetensors(fsys, strings.NewReplacer("linear.", dense.tensorName+"."), dense.path)
-		if err != nil {
-			return nil, err
-		}
-
-		foundWeight := false
-		for _, t := range ts {
-			if t.Name() == dense.tensorName+".weight" {
-				extra = append(extra, t)
-				foundWeight = true
-			}
-		}
-		if !foundWeight {
-			return nil, fmt.Errorf("embeddinggemma dense module %s missing linear.weight", dense.path)
-		}
-	}
-
-	return extra, nil
-}
-
 func (m *embeddingGemmaModel) Tensors(ts []Tensor) []*ggml.Tensor {
 	out := make([]*ggml.Tensor, 0, len(ts))
 	for _, t := range ts {
@@ -261,6 +237,8 @@ func (m *embeddingGemmaModel) Tensors(ts []Tensor) []*ggml.Tensor {
 
 func (m *embeddingGemmaModel) Replacements() []string {
 	return []string{
+		"2_Dense.linear", "dense_2",
+		"3_Dense.linear", "dense_3",
 		"embed_tokens.", "token_embd.",
 		"layers.", "blk.",
 		"input_layernorm", "attn_norm",
