@@ -2530,7 +2530,8 @@ func (s *llamaServerRunner) stopProcess() error {
 //   - System-reported: free VRAM from llama-server at load time minus our allocations
 //
 // The min-of-two approach handles both our own usage (accurate) and external
-// consumers (system-reported, may be optimistic on some platforms).
+// consumers (system-reported, may be optimistic on some platforms). Unified-memory
+// APUs are an exception and use our accounting directly; see the loop below.
 func (s *llamaServerRunner) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo {
 	if len(s.gpus) == 0 {
 		return nil
@@ -2561,8 +2562,18 @@ func (s *llamaServerRunner) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo 
 			}
 		}
 
-		// Take the minimum — never optimistic
-		infos[i].FreeMemory = min(accountedFree, systemFree)
+		// Take the minimum — never optimistic.
+		//
+		// Exception: on unified-memory APUs the VRAM is carved out of system RAM
+		// and the driver reports GPU free memory accurately. The system-reported
+		// value (systemFreeAtLoad - used) underestimates the real GPU free memory
+		// once the runner is loaded, because host page cache and other consumers
+		// shrink the captured baseline. Trust our own accounting instead.
+		if gpu.IsUnifiedMemoryAPU() {
+			infos[i].FreeMemory = accountedFree
+		} else {
+			infos[i].FreeMemory = min(accountedFree, systemFree)
+		}
 	}
 	return infos
 }
