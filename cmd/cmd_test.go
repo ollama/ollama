@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1393,6 +1394,191 @@ func TestListHandler(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), tt.expectedError) {
 					t.Errorf("expected error containing %q, got %v", tt.expectedError, err)
 				}
+			}
+		})
+	}
+}
+
+func TestUsageHandler(t *testing.T) {
+	startsAt := time.Date(2026, time.June, 29, 0, 0, 0, 0, time.UTC)
+	endsAt := time.Date(2026, time.July, 27, 0, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name          string
+		cloudDisabled bool
+		statusCode    int
+		response      any
+		want          string
+		wantErr       string
+	}{
+		{
+			name:       "team activity",
+			statusCode: http.StatusOK,
+			response: api.UsageResponse{
+				Activity: api.UsageActivity{
+					Cost: "12.34000",
+					Period: api.UsagePeriod{
+						Type:       "last_4_weeks",
+						StartingAt: startsAt,
+						EndingAt:   endsAt,
+					},
+					Models: []api.UsageActivityModel{
+						{Name: "gpt-oss:120b", RequestCount: 42, Cost: "10.25000"},
+						{Name: "qwen3-coder:480b", RequestCount: 7, Cost: "2.09000"},
+					},
+				},
+				Limits: api.UsageLimits{
+					Session: api.UsageLimit{Models: []api.UsageLimitModel{}},
+					Weekly:  api.UsageLimit{Models: []api.UsageLimitModel{}},
+				},
+			},
+			want: "Usage\n" +
+				"  Period  2026-06-29 to 2026-07-27\n" +
+				"  Spend   $12.34000\n\n" +
+				"Activity\n" +
+				"  Model             Requests  Spend\n" +
+				"  gpt-oss:120b      42        $10.25000\n" +
+				"  qwen3-coder:480b  7         $2.09000\n",
+		},
+		{
+			name:       "personal limits",
+			statusCode: http.StatusOK,
+			response: api.UsageResponse{
+				Activity: api.UsageActivity{
+					Cost:   "0.00000",
+					Period: api.UsagePeriod{Type: "last_4_weeks", StartingAt: startsAt, EndingAt: endsAt},
+					Models: []api.UsageActivityModel{{Name: "web fetch", RequestCount: 1, Cost: "0.00000"}},
+				},
+				Limits: api.UsageLimits{
+					Session: api.UsageLimit{Usage: 0.006, Models: []api.UsageLimitModel{{Name: "qwen3-coder:480b", RequestCount: 2}, {Name: "web search", RequestCount: 1}}},
+					Weekly:  api.UsageLimit{Usage: 0.002, Models: []api.UsageLimitModel{{Name: "qwen3-coder:480b", RequestCount: 2}, {Name: "web search", RequestCount: 1}}},
+				},
+			},
+			want: "Usage\n" +
+				"  Period  2026-06-29 to 2026-07-27\n" +
+				"  Spend   $0.00000\n\n" +
+				"Session\n" +
+				"  Used              0.6%\n" +
+				"  Model             Requests\n" +
+				"  qwen3-coder:480b  2\n" +
+				"  Web Search        1\n\n" +
+				"Weekly\n" +
+				"  Used              0.2%\n" +
+				"  Model             Requests\n" +
+				"  qwen3-coder:480b  2\n" +
+				"  Web Search        1\n",
+		},
+		{
+			name:       "no usage",
+			statusCode: http.StatusOK,
+			response: api.UsageResponse{
+				Activity: api.UsageActivity{
+					Cost:   "0.00000",
+					Period: api.UsagePeriod{Type: "last_4_weeks", StartingAt: startsAt, EndingAt: endsAt},
+					Models: []api.UsageActivityModel{},
+				},
+				Limits: api.UsageLimits{
+					Session: api.UsageLimit{Models: []api.UsageLimitModel{}},
+					Weekly:  api.UsageLimit{Models: []api.UsageLimitModel{}},
+				},
+			},
+			want: "Usage\n" +
+				"  Period  2026-06-29 to 2026-07-27\n" +
+				"  Spend   $0.00000\n\n" +
+				"No usage recorded for this period.\n",
+		},
+		{
+			name:          "cloud disabled",
+			cloudDisabled: true,
+			want:          "Ollama Cloud is disabled; usage is unavailable\n",
+		},
+		{
+			name:       "not signed in",
+			statusCode: http.StatusUnauthorized,
+			response:   map[string]string{"error": "unauthorized"},
+			want:       "You need to be signed in to Ollama to view usage.\n\n",
+		},
+		{
+			name:       "suspended account",
+			statusCode: http.StatusForbidden,
+			response:   map[string]string{"error": "account suspended"},
+			wantErr:    "account suspended",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var usageRequests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					t.Errorf("unexpected request to %s %s", r.Method, r.URL.Path)
+					http.NotFound(w, r)
+					return
+				}
+
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/status":
+					if err := json.NewEncoder(w).Encode(api.StatusResponse{Cloud: api.CloudStatus{Disabled: tt.cloudDisabled}}); err != nil {
+						t.Fatal(err)
+					}
+				case "/api/usage":
+					usageRequests.Add(1)
+					w.WriteHeader(tt.statusCode)
+					if err := json.NewEncoder(w).Encode(tt.response); err != nil {
+						t.Fatal(err)
+					}
+				default:
+					t.Errorf("unexpected request to %s %s", r.Method, r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+
+			t.Setenv("OLLAMA_HOST", server.URL)
+
+			cmd := &cobra.Command{}
+			cmd.SetContext(t.Context())
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+
+			err := UsageHandler(cmd, nil)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error = %v, want %q", err, tt.wantErr)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if got := out.String(); got != tt.want {
+				t.Errorf("unexpected output (-want +got):\n%s", cmp.Diff(tt.want, got))
+			}
+
+			wantUsageRequests := int32(1)
+			if tt.cloudDisabled {
+				wantUsageRequests = 0
+			}
+			if got := usageRequests.Load(); got != wantUsageRequests {
+				t.Errorf("usage requests = %d, want %d", got, wantUsageRequests)
+			}
+		})
+	}
+}
+
+func TestUsageModelName(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+	}{
+		{name: "web search", want: "Web Search"},
+		{name: "web fetch", want: "Web Fetch"},
+		{name: "qwen3-coder:480b", want: "qwen3-coder:480b"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := usageModelName(tt.name); got != tt.want {
+				t.Errorf("usageModelName(%q) = %q, want %q", tt.name, got, tt.want)
 			}
 		})
 	}
