@@ -28,7 +28,7 @@ type database struct {
 
 func newDatabase(dbPath string) (*database, error) {
 	// Open database connection
-	conn, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000&_txlock=immediate")
+	conn, err := sql.Open("sqlite3", dbPath+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000&_txlock=immediate&_secure_delete=on")
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
@@ -764,7 +764,13 @@ func (db *database) deleteChat(id string) error {
 		return fmt.Errorf("delete chat: %w", err)
 	}
 
+	// Checkpoint the WAL so deleted pages are moved back into the main database
+	// file, then VACUUM to reclaim and zero-fill those freed pages. Together with
+	// the _secure_delete=on connection option (which overwrites deleted content
+	// with zeros at the SQLite level), this ensures that chat data is not
+	// recoverable from the database file after deletion. See: #16544
 	_, _ = db.conn.Exec("PRAGMA wal_checkpoint(TRUNCATE);")
+	_, _ = db.conn.Exec("VACUUM;")
 
 	return nil
 }
