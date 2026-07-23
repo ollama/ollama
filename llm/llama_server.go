@@ -1648,11 +1648,12 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 			}
 
 			// Token repeat detection
+			token := strings.TrimSpace(lsResp.Content)
 			switch {
-			case strings.TrimSpace(lsResp.Content) == lastToken:
+			case token == lastToken:
 				tokenRepeat++
 			default:
-				lastToken = strings.TrimSpace(lsResp.Content)
+				lastToken = token
 				tokenRepeat = 0
 			}
 			if tokenRepeat > 30 {
