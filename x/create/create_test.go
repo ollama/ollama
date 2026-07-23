@@ -598,10 +598,10 @@ func TestGetTensorQuantization_MixedPrecisionPromotion(t *testing.T) {
 		// int8: already 8-bit, no promotion
 		{"v_proj int8 stays", "model.layers.0.self_attn.v_proj.weight", aligned, "int8", "int8"},
 
-		// lm_head stays at source precision for fp modes, quantizes for affine
-		{"lm_head nvfp4 kept", "lm_head.weight", aligned, "nvfp4", ""},
-		{"lm_head mxfp8 kept", "lm_head.weight", aligned, "mxfp8", ""},
-		{"lm_head int4 stays", "lm_head.weight", aligned, "int4", "int4"},
+		// lm_head resolves to the 8-bit type in the requested family
+		{"lm_head nvfp4 to mxfp8", "lm_head.weight", aligned, "nvfp4", "mxfp8"},
+		{"lm_head mxfp8 uniform", "lm_head.weight", aligned, "mxfp8", "mxfp8"},
+		{"lm_head int4 promoted", "lm_head.weight", aligned, "int4", "int8"},
 
 		// Expert tensors: down_proj also promoted for int4
 		{"expert down_proj int4", "model.layers.0.mlp.experts.down_proj.weight", []int32{128, 4096, 2816}, "int4", "int8"},
