@@ -636,6 +636,12 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		effort = *r.ReasoningEffort
 	}
 
+	// OpenAI's "minimal" reasoning effort has no direct ollama think level;
+	// "low" is the closest supported level (least thinking without disabling it).
+	if effort == "minimal" {
+		effort = "low"
+	}
+
 	if effort != "" {
 		if !slices.Contains([]string{"high", "medium", "low", "max", "none"}, effort) {
 			return nil, fmt.Errorf("invalid reasoning value: '%s' (must be \"high\", \"medium\", \"low\", \"max\", or \"none\")", effort)
