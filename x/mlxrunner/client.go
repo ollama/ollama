@@ -140,6 +140,18 @@ func (c *Client) Close() error {
 
 // Completion implements llm.LlamaServer.
 func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
+	// The MLX runner has no constrained sampling, so a format request would be
+	// silently ignored and the caller handed output that never conformed to
+	// its schema. Reject it up front instead.
+	switch string(req.Format) {
+	case ``, `null`, `""`:
+	default:
+		return api.StatusError{
+			StatusCode:   http.StatusBadRequest,
+			ErrorMessage: fmt.Sprintf("%q does not support structured outputs (format) on the MLX engine", c.modelName),
+		}
+	}
+
 	creq := CompletionRequest{
 		Prompt:      req.Prompt,
 		Logprobs:    req.Logprobs,
