@@ -13,7 +13,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/cmd/config"
@@ -2087,19 +2086,12 @@ func TestResolveRunModel_SubscriptionModelUsesUpgradeHook(t *testing.T) {
 
 	DefaultSingleSelectorWithUpdates = func(title string, items []SelectionItem, current string, updates <-chan []SelectionItem) (string, error) {
 		for _, item := range items {
-			if item.Name == "kimi-k2.6:cloud" && item.AvailabilityBadge != "" {
-				t.Fatalf("initial availability badge = %q, want empty before account update", item.AvailabilityBadge)
-			}
-		}
-		select {
-		case items = <-updates:
-		case <-time.After(time.Second):
-			t.Fatal("timed out waiting for selector item update")
-		}
-		for _, item := range items {
 			if item.Name == "kimi-k2.6:cloud" {
 				if item.AvailabilityBadge != "Upgrade required" {
 					t.Fatalf("availability badge = %q, want Upgrade required", item.AvailabilityBadge)
+				}
+				if updates != nil {
+					t.Fatal("expected no selector item update after synchronous account check")
 				}
 				return "kimi-k2.6:cloud", nil
 			}
