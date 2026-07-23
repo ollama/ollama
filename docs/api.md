@@ -335,6 +335,24 @@ curl http://localhost:11434/api/generate -d '{
 }
 ```
 
+#### Request (Audio Input)
+
+For models with audio support (e.g. `gemma4:e4b`, `gemma4:12b`), audio files can be passed via the `images` field as base64-encoded WAV or MP3 data. The audio format is auto-detected from file headers.
+
+> **Note:** Thinking mode is automatically disabled for audio inputs, since internal reasoning can consume the token budget and produce empty responses.
+
+```shell
+# Base64-encode a WAV file:
+# AUDIO_BASE64=$(base64 -w0 audio.wav)
+
+curl http://localhost:11434/api/generate -d '{
+  "model": "gemma4:12b",
+  "prompt": "Transcribe this audio exactly.",
+  "stream": false,
+  "images": ["<base64-encoded-wav>"]
+}'
+```
+
 #### Request (Raw Mode)
 
 In some cases, you may wish to bypass the templating system and provide a full prompt. In this case, you can use the `raw` parameter to disable templating. Also note that raw mode will not return a context.
@@ -1003,6 +1021,27 @@ curl http://localhost:11434/api/chat -d '{
   "eval_count": 83,
   "eval_duration": 1303285000
 }
+```
+
+#### Chat request (with audio)
+
+##### Request
+
+Send a chat message with audio input. For models with audio support (e.g. `gemma4:e4b`, `gemma4:12b`), audio files can be passed via the `images` field as base64-encoded WAV or MP3 data. The audio format is auto-detected from file headers.
+
+> **Note:** Thinking mode is automatically disabled for audio inputs, since internal reasoning can consume the token budget and produce empty responses. To override this, explicitly set `"think": true`.
+
+```shell
+curl http://localhost:11434/api/chat -d '{
+  "model": "gemma4:12b",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Transcribe this audio exactly.",
+      "images": ["<base64-encoded-wav>"]
+    }
+  ]
+}'
 ```
 
 #### Chat request (Reproducible outputs)
