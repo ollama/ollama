@@ -260,14 +260,15 @@ console.log(response.message.content);
 
 ### Frameworks & Agents
 
-- [AutoGPT](https://github.com/Significant-Gravitas/AutoGPT/blob/master/docs/content/platform/ollama.md) - Autonomous AI agent platform
-- [crewAI](https://github.com/crewAIInc/crewAI) - Multi-agent orchestration framework
-- [Strands Agents](https://github.com/strands-agents/sdk-python) - Model-driven agent building by AWS
-- [Cheshire Cat](https://github.com/cheshire-cat-ai/core) - AI assistant framework
 - [any-agent](https://github.com/mozilla-ai/any-agent) - Unified agent framework interface by Mozilla
-- [Stakpak](https://github.com/stakpak/agent) - Open source DevOps agent
+- [AutoGPT](https://github.com/Significant-Gravitas/AutoGPT/blob/master/docs/content/platform/ollama.md) - Autonomous AI agent platform
+- [Cheshire Cat](https://github.com/cheshire-cat-ai/core) - AI assistant framework
+- [crewAI](https://github.com/crewAIInc/crewAI) - Multi-agent orchestration framework
 - [Hexabot](https://github.com/hexastack/hexabot) - Conversational AI builder
 - [Neuro SAN](https://github.com/cognizant-ai-lab/neuro-san-studio) - Multi-agent orchestration ([docs](https://github.com/cognizant-ai-lab/neuro-san-studio/blob/main/docs/user_guide.md#ollama))
+- [OpenAgentic](https://github.com/agentic-work/openagentic) - Self-hosted AIOps agent platform with 9 built-in MCP servers (AWS/Azure/GCP/Kubernetes/Prometheus/Loki/Web/GitHub), no-code Flows, approval-gated + audit-logged tool calls, and zero telemetry
+- [Stakpak](https://github.com/stakpak/agent) - Open source DevOps agent
+- [Strands Agents](https://github.com/strands-agents/sdk-python) - Model-driven agent building by AWS
 
 ### RAG & Knowledge Bases
 
