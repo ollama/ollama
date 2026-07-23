@@ -23,6 +23,7 @@ import (
 )
 
 var recommendedModels = []ModelItem{
+	{Name: "mimo-v2.5-pro:cloud", Description: "Xiaomi's flagship MoE model for complex reasoning and agentic workflows", Recommended: true, Details: api.ModelDetails{ContextLength: 1_048_576}, MaxOutputTokens: 262_144},
 	{Name: "kimi-k2.6:cloud", Description: "State-of-the-art coding, long-horizon execution, and multimodal agent swarm capability", Recommended: true, Details: api.ModelDetails{ContextLength: 262_144}, MaxOutputTokens: 262_144},
 	{Name: "qwen3.5:cloud", Description: "Reasoning, coding, and agentic tool use with vision", Recommended: true, Details: api.ModelDetails{ContextLength: 262_144}, MaxOutputTokens: 32_768},
 	{Name: "glm-5.1:cloud", Description: "Reasoning and code generation", Recommended: true, Details: api.ModelDetails{ContextLength: 202_752}, MaxOutputTokens: 131_072},
@@ -66,6 +67,7 @@ var extraCloudModelLimits = map[string]cloudModelLimit{
 	"kimi-k2.5":           {Context: 262_144, Output: 262_144},
 	"kimi-k2.6":           {Context: 262_144, Output: 262_144},
 	"kimi-k2-thinking":    {Context: 262_144, Output: 262_144},
+	"mimo-v2.5-pro":       {Context: 1_048_576, Output: 262_144},
 	"nemotron-3-nano:30b": {Context: 1_048_576, Output: 131_072},
 	"qwen3-coder:480b":    {Context: 262_144, Output: 65_536},
 	"qwen3-coder-next":    {Context: 262_144, Output: 32_768},
