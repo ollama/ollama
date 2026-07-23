@@ -19,9 +19,7 @@ import (
 	"github.com/ollama/ollama/fs/ggml"
 	fsgguf "github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/manifest"
-	"github.com/ollama/ollama/model/parsers"
 	ollamatemplate "github.com/ollama/ollama/template"
-	"github.com/ollama/ollama/thinking"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -338,17 +336,18 @@ func buildModelListSummary(name model.Name, mf *manifest.Manifest) (modelListSum
 		},
 	}
 
-	modelPath, projectorCount, tmpl, err := readModelListLayers(mf, &summary)
+	modelPath, projectorPaths, tmpl, hasGoTemplate, err := readModelListLayers(mf, &summary)
 	if err != nil {
 		return modelListSummary{}, err
 	}
 
+	var info modelListGGUF
 	if cfg.RemoteHost == "" && cfg.RemoteModel == "" && modelPath != "" {
-		info, err := readModelListGGUF(modelPath)
+		info, err = readModelListGGUF(modelPath)
 		if err != nil {
 			slog.Debug("failed to read gguf model metadata", "model", name.String(), "error", err)
+			info = modelListGGUF{}
 		} else {
-			summary.Capabilities = appendModelListCapabilities(summary.Capabilities, info.Capabilities...)
 			if summary.Details.ContextLength == 0 {
 				summary.Details.ContextLength = info.ContextLength
 			}
@@ -361,41 +360,28 @@ func buildModelListSummary(name model.Name, mf *manifest.Manifest) (modelListSum
 		}
 	}
 
-	for _, c := range cfg.Capabilities {
-		summary.Capabilities = appendModelListCapability(summary.Capabilities, model.Capability(c))
+	// Derive capabilities with the same helpers Model.Capabilities uses so
+	// /api/tags reports the same capabilities as /api/show.
+	m := &Model{
+		Name:            name.String(),
+		Config:          cfg,
+		Template:        tmpl,
+		HasGoTemplate:   hasGoTemplate,
+		HasChatTemplate: info.ChatTemplate != "",
+		ProjectorPaths:  projectorPaths,
 	}
+	m.PreferChatTemplate = preferGGUFChatTemplate(m, info.ChatTemplate)
 
-	builtinParser := parsers.ParserForName(cfg.Parser)
-	if tmpl != nil {
-		vars, err := tmpl.Vars()
-		if err != nil {
-			slog.Warn("model template contains errors", "model", name.String(), "error", err)
-		}
-		if slices.Contains(vars, "tools") || (builtinParser != nil && builtinParser.HasToolSupport()) {
-			summary.Capabilities = appendModelListCapability(summary.Capabilities, model.CapabilityTools)
-		}
-		if slices.Contains(vars, "suffix") {
-			summary.Capabilities = appendModelListCapability(summary.Capabilities, model.CapabilityInsert)
-		}
-
-		openingTag, closingTag := thinking.InferTags(tmpl.Template)
-		hasTags := openingTag != "" && closingTag != ""
-		isGptoss := slices.Contains([]string{"gptoss", "gpt-oss"}, cfg.ModelFamily)
-		if !slices.Contains(summary.Capabilities, model.CapabilityThinking) &&
-			(hasTags || isGptoss || (builtinParser != nil && builtinParser.HasThinkingSupport())) {
-			summary.Capabilities = appendModelListCapability(summary.Capabilities, model.CapabilityThinking)
-		}
+	capabilities := m.configCapabilities(nil)
+	if !usesOllamaRenderedChat(m) {
+		capabilities = chatTemplateCapabilities(capabilities, info.ChatTemplate)
 	}
-
-	if projectorCount > 0 {
-		summary.Capabilities = appendModelListCapability(summary.Capabilities, model.CapabilityVision)
-	}
-
-	if cfg.ModelFormat == "safetensors" && isGemma4Renderer(cfg.Renderer) {
-		summary.Capabilities = slices.DeleteFunc(summary.Capabilities, func(c model.Capability) bool {
-			return c == model.CapabilityVision || c == model.CapabilityAudio
-		})
-	}
+	capabilities = appendModelListCapabilities(capabilities, info.Capabilities...)
+	capabilities = m.projectorCapabilities(capabilities)
+	capabilities = m.templateCapabilities(capabilities, templateCapabilitySelected)
+	capabilities = m.parserCapabilities(capabilities)
+	capabilities = m.modelFamilyCapabilities(capabilities)
+	summary.Capabilities = m.filterUnsupportedCapabilities(capabilities, info.Architecture)
 
 	return summary, nil
 }
@@ -419,9 +405,10 @@ func readModelListConfig(mf *manifest.Manifest) (model.ConfigV2, error) {
 	return cfg, nil
 }
 
-func readModelListLayers(mf *manifest.Manifest, summary *modelListSummary) (string, int, *ollamatemplate.Template, error) {
+func readModelListLayers(mf *manifest.Manifest, summary *modelListSummary) (string, []string, *ollamatemplate.Template, bool, error) {
 	var modelPath string
-	var projectorCount int
+	var projectorPaths []string
+	var hasGoTemplate bool
 	tmpl := ollamatemplate.DefaultTemplate
 
 	for _, layer := range mf.Layers {
@@ -429,35 +416,42 @@ func readModelListLayers(mf *manifest.Manifest, summary *modelListSummary) (stri
 		case "application/vnd.ollama.image.model":
 			filename, err := manifest.BlobsPath(layer.Digest)
 			if err != nil {
-				return "", 0, nil, err
+				return "", nil, nil, false, err
 			}
 			modelPath = filename
 			summary.Details.ParentModel = layer.From
 		case "application/vnd.ollama.image.projector":
-			projectorCount++
+			filename, err := manifest.BlobsPath(layer.Digest)
+			if err != nil {
+				return "", nil, nil, false, err
+			}
+			projectorPaths = append(projectorPaths, filename)
 		case "application/vnd.ollama.image.prompt",
 			"application/vnd.ollama.image.template":
 			filename, err := manifest.BlobsPath(layer.Digest)
 			if err != nil {
-				return "", 0, nil, err
+				return "", nil, nil, false, err
 			}
 			bts, err := os.ReadFile(filename)
 			if err != nil {
-				return "", 0, nil, err
+				return "", nil, nil, false, err
 			}
 
 			tmpl, err = ollamatemplate.Parse(string(bts))
 			if err != nil {
-				return "", 0, nil, err
+				return "", nil, nil, false, err
 			}
+			hasGoTemplate = true
 		}
 	}
 
-	return modelPath, projectorCount, tmpl, nil
+	return modelPath, projectorPaths, tmpl, hasGoTemplate, nil
 }
 
 type modelListGGUF struct {
 	Capabilities    []model.Capability
+	Architecture    string
+	ChatTemplate    string
 	ContextLength   int
 	EmbeddingLength int
 	FileType        string
@@ -484,9 +478,12 @@ const (
 	modelListGGUFTypeFloat64
 )
 
-// readModelListGGUF scans only the small GGUF header values launch needs
-// and stops before tokenizer arrays. Using gguf.File.KeyValue for missing keys
-// can otherwise advance through large arrays just to discover absence.
+// readModelListGGUF scans only the small GGUF header values launch needs.
+// Once tokenizer keys start it skips their values without decoding them,
+// stopping as soon as tokenizer.chat_template is found; capability detection
+// needs the chat template to match what /api/show reports. Using
+// gguf.File.KeyValue for missing keys can otherwise advance through large
+// arrays just to discover absence.
 func readModelListGGUF(path string) (modelListGGUF, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -538,7 +535,7 @@ func readModelListGGUF(path string) (modelListGGUF, error) {
 
 	info := modelListGGUF{}
 	var architecture string
-	var hasPoolingType bool
+	var hasPoolingType, hasVision, hasAudio bool
 
 	for range numKV {
 		key, err := readModelListGGUFString(r, byteOrder, version)
@@ -557,6 +554,7 @@ func readModelListGGUF(path string) (modelListGGUF, error) {
 				return modelListGGUF{}, err
 			}
 			architecture = value
+			info.Architecture = value
 			continue
 		}
 
@@ -570,7 +568,18 @@ func readModelListGGUF(path string) (modelListGGUF, error) {
 		}
 
 		if architecture != "" && strings.HasPrefix(key, "tokenizer.") {
-			break
+			if key == "tokenizer.chat_template" {
+				value, err := readModelListGGUFStringValue(r, byteOrder, version, valueType)
+				if err != nil {
+					return modelListGGUF{}, err
+				}
+				info.ChatTemplate = value
+				break
+			}
+			if err := skipModelListGGUFValue(r, byteOrder, version, valueType); err != nil {
+				return modelListGGUF{}, err
+			}
+			continue
 		}
 
 		if architecture != "" && strings.HasPrefix(key, architecture+".") {
@@ -578,9 +587,9 @@ func readModelListGGUF(path string) (modelListGGUF, error) {
 			case "pooling_type":
 				hasPoolingType = true
 			case "vision.block_count":
-				info.Capabilities = appendModelListCapability(info.Capabilities, model.CapabilityVision)
+				hasVision = true
 			case "audio.block_count":
-				info.Capabilities = appendModelListCapability(info.Capabilities, model.CapabilityAudio)
+				hasAudio = true
 			case "context_length":
 				value, err := readModelListGGUFIntValue(r, byteOrder, version, valueType)
 				if err != nil {
@@ -607,6 +616,12 @@ func readModelListGGUF(path string) (modelListGGUF, error) {
 		info.Capabilities = appendModelListCapability(info.Capabilities, model.CapabilityEmbedding)
 	} else {
 		info.Capabilities = appendModelListCapability(info.Capabilities, model.CapabilityCompletion)
+	}
+	if hasVision {
+		info.Capabilities = appendModelListCapability(info.Capabilities, model.CapabilityVision)
+	}
+	if hasAudio {
+		info.Capabilities = appendModelListCapability(info.Capabilities, model.CapabilityAudio)
 	}
 
 	return info, nil
