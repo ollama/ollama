@@ -1092,6 +1092,14 @@ func (s *llamaServerRunner) resetLoadAccounting() {
 	for k := range s.systemFreeAtLoad {
 		delete(s.systemFreeAtLoad, k)
 	}
+	// The runner memory fields above are recomputed from scratch on every parsed
+	// buffer line by summing s.output.buffers, so the raw map must be cleared too.
+	// Otherwise a retry (e.g. projector CPU offload) merges its buffers with the
+	// previous attempt's; entries whose device moved (GPU->CPU) keep a stale key
+	// and get double-counted, over-reporting VRAM.
+	if s.output != nil {
+		s.output.buffers = nil
+	}
 	if s.status != nil {
 		s.status.SetLastError("")
 	}

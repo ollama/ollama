@@ -3289,6 +3289,67 @@ func TestMemoryParsingWriterMemorySizeMmapPartialOffload(t *testing.T) {
 	}
 }
 
+func TestResetLoadAccountingClearsBuffersForMMProjRetry(t *testing.T) {
+	// llama-server's --fit can place text layers on GPU and then OOM while
+	// allocating the multimodal projector on GPU. Ollama retries once with the
+	// projector forced to CPU, calling resetLoadAccounting() before restarting.
+	// The retry's projector buffer moves CUDA0 -> CPU, so its parsed key changes.
+	// If the raw buffer map is not cleared on reset, the stale attempt-1 CUDA0
+	// projector entry is summed alongside the attempt-2 CPU entry and VRAM is
+	// over-reported.
+	runner := &llamaServerRunner{vramByDevice: make(map[string]uint64)}
+	w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+	runner.output = w
+
+	writeAll := func(lines []string) {
+		for _, line := range lines {
+			if _, err := w.Write([]byte(line)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	// Attempt 1: projector offloaded to GPU (the placement that OOMs).
+	writeAll([]string{
+		"load_tensors:        CUDA0 model buffer size =  2000.00 MiB\n",
+		"clip_model_loader:   CUDA0 model buffer size =   600.00 MiB\n",
+		"llama_kv_cache:      CUDA0 KV buffer size =    400.00 MiB\n",
+		"sched_reserve:       CUDA0 compute buffer size =   200.00 MiB\n",
+	})
+
+	// The OOM retry stops the process and resets accounting before restarting.
+	runner.resetLoadAccounting()
+
+	// Attempt 2: same text placement, projector now on CPU (--no-mmproj-offload).
+	writeAll([]string{
+		"load_tensors:        CUDA0 model buffer size =  2000.00 MiB\n",
+		"clip_model_loader:     CPU model buffer size =   600.00 MiB\n",
+		"llama_kv_cache:      CUDA0 KV buffer size =    400.00 MiB\n",
+		"sched_reserve:       CUDA0 compute buffer size =   200.00 MiB\n",
+	})
+
+	total, vram := runner.MemorySize()
+	// After the retry the projector (600) lives on CPU, so VRAM is only the text
+	// weights + KV + compute. Total counts every buffer once.
+	wantVRAM := uint64((2000 + 400 + 200) * 1024 * 1024)
+	wantTotal := uint64((2000 + 600 + 400 + 200) * 1024 * 1024)
+
+	withinKiB := func(got, want uint64) bool {
+		if got > want {
+			return got-want <= 1024
+		}
+		return want-got <= 1024
+	}
+	if !withinKiB(vram, wantVRAM) {
+		t.Errorf("VRAM = %.2f MiB, want %.2f MiB (stale pre-retry GPU projector was not cleared)",
+			float64(vram)/1024/1024, float64(wantVRAM)/1024/1024)
+	}
+	if !withinKiB(total, wantTotal) {
+		t.Errorf("total = %.2f MiB, want %.2f MiB",
+			float64(total)/1024/1024, float64(wantTotal)/1024/1024)
+	}
+}
+
 func TestVRAMByGPU(t *testing.T) {
 	runner := &llamaServerRunner{
 		vramByDevice: map[string]uint64{
