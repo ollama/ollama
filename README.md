@@ -288,6 +288,7 @@ console.log(response.message.content);
 - [Discord-Ollama Chat Bot](https://github.com/kevinthedang/discord-ollama) - TypeScript Discord bot
 - [Ollama Telegram Bot](https://github.com/ruecat/ollama-telegram) - Telegram bot
 - [LLM Telegram Bot](https://github.com/innightwolfsleep/llm_telegram_bot) - Telegram bot for roleplay
+- [CrustAI](https://github.com/DaveSimoes/CrustAI) - Self-hosted private AI assistant for Telegram, WhatsApp, Discord and Slack via Ollama, zero cloud
 
 ### Terminal & CLI
 
