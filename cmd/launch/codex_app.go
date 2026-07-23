@@ -283,6 +283,10 @@ func (c *CodexApp) RequiresInteractiveOnboarding() bool {
 	return false
 }
 
+func (c *CodexApp) EnrichModelMetadataFromShow() bool {
+	return true
+}
+
 func (c *CodexApp) RestoreHint() string {
 	return codexAppRestoreHint
 }
@@ -489,13 +493,30 @@ func codexAppDefaultModelMetadata() codexAppModelMetadata {
 
 func codexAppModelMetadataFromLaunchModel(model LaunchModel) codexAppModelMetadata {
 	metadata := codexAppDefaultModelMetadata()
-	if model.ContextLength > 0 {
+	if numCtx, ok := modelfileNumCtx(model.Parameters); ok {
+		metadata.contextWindow = numCtx
+	} else if model.ContextLength > 0 {
 		metadata.contextWindow = model.ContextLength
 	}
 	if model.HasCapability("vision") {
 		metadata.inputModalities = []string{"text", "image"}
 	}
 	return metadata
+}
+
+func modelfileNumCtx(parameters string) (int, bool) {
+	for _, line := range strings.Split(parameters, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) < 2 || strings.ToLower(fields[0]) != "num_ctx" {
+			continue
+		}
+		value := strings.Trim(fields[1], `"'`)
+		numCtx, err := strconv.Atoi(value)
+		if err == nil && numCtx > 0 {
+			return numCtx, true
+		}
+	}
+	return 0, false
 }
 
 func codexAppCatalogEntry(model string, metadata codexAppModelMetadata, priority int, baseInstructions string) map[string]any {
