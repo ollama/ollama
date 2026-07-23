@@ -570,6 +570,76 @@ func TestSkillCommandsListAndPersistSyntheticToolCall(t *testing.T) {
 	}
 }
 
+func TestSkillsImportReloadsCatalogRegistryAndSystemPrompt(t *testing.T) {
+	before := writeTestSkillCatalog(t)
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "from-codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "from-codex", "SKILL.md"), []byte("---\nname: from-codex\ndescription: Imported skill.\n---\nImported instructions."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	after, err := coreagent.DiscoverSkills(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := &coreagent.Registry{}
+	var reloaded, rebuilt, prompted bool
+	m := chatModel{
+		ctx: context.Background(),
+		opts: Options{
+			Model:  "test",
+			Skills: before,
+			ImportSkills: func(source string) (coreagent.SkillImportResult, error) {
+				if source != "codex" {
+					t.Fatalf("source = %q", source)
+				}
+				return coreagent.SkillImportResult{Source: source, SourceDir: "/source", Imported: []string{"from-codex"}}, nil
+			},
+			ReloadSkills: func() (*coreagent.SkillCatalog, error) {
+				reloaded = true
+				return after, nil
+			},
+			ToolRegistryForModel: func(context.Context, string) *coreagent.Registry {
+				rebuilt = true
+				return registry
+			},
+			SystemPromptForModel: func(_ context.Context, _ string, got *coreagent.Registry, _ bool) string {
+				prompted = got == registry
+				return after.SystemContext()
+			},
+		},
+		input: []rune("/skills import codex"),
+	}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("skills import should not start a model run")
+	}
+	m = updated.(chatModel)
+	if !reloaded || !rebuilt || !prompted {
+		t.Fatalf("reload=%v rebuilt=%v prompted=%v", reloaded, rebuilt, prompted)
+	}
+	if m.opts.Skills != after || m.opts.Tools != registry || !strings.Contains(m.opts.SystemPrompt, "from-codex") {
+		t.Fatalf("reloaded options = %#v", m.opts)
+	}
+	if m.status != "skills reloaded" || len(m.entries) != 1 || !strings.Contains(m.entries[0].content, "Imported 1 skill") {
+		t.Fatalf("import result = status %q entries %#v", m.status, m.entries)
+	}
+}
+
+func TestSkillsImportUsage(t *testing.T) {
+	m := chatModel{input: []rune("/skills import")}
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("invalid skills import should not start a model run")
+	}
+	m = updated.(chatModel)
+	if len(m.entries) != 1 || m.entries[0].role != "error" || !strings.Contains(m.entries[0].content, "usage: /skills [import codex|claude|pi]") {
+		t.Fatalf("entries = %#v", m.entries)
+	}
+}
+
 func TestSkillSlashCommandPromptBecomesUserMessage(t *testing.T) {
 	catalog := writeTestSkillCatalog(t)
 	m := chatModel{ctx: context.Background(), opts: Options{Model: "test", Skills: catalog, Client: chatTestClient{}}, input: []rune("/release-notes draft the v1.2 notes")}
@@ -662,6 +732,31 @@ func TestSkillSlashCommandAppearsInCompletions(t *testing.T) {
 	lines := stripANSI(strings.Join(m.slashCommandLines(80), "\n"))
 	if !strings.Contains(lines, "/release-notes") || !strings.Contains(lines, "Draft release notes.") {
 		t.Fatalf("suggestions missing /release-notes: %q", lines)
+	}
+}
+
+func TestSkillsImportSlashCompletions(t *testing.T) {
+	for _, test := range []struct {
+		input string
+		want  []string
+	}{
+		{input: "/skills", want: []string{"/skills", "/skills import"}},
+		{input: "/skills impo", want: []string{"/skills import"}},
+		{input: "/skills import ", want: []string{"/skills import codex", "/skills import claude", "/skills import pi"}},
+		{input: "/skills import c", want: []string{"/skills import codex", "/skills import claude"}},
+		{input: "/skills import pi", want: []string{"/skills import pi"}},
+	} {
+		t.Run(test.input, func(t *testing.T) {
+			m := chatModel{input: []rune(test.input)}
+			completions := m.slashCompletions()
+			got := make([]string, 0, len(completions))
+			for _, completion := range completions {
+				got = append(got, completion.value)
+			}
+			if strings.Join(got, "\n") != strings.Join(test.want, "\n") {
+				t.Fatalf("completions = %#v, want %#v", got, test.want)
+			}
+		})
 	}
 }
 

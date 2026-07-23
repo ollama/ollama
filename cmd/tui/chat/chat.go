@@ -55,6 +55,8 @@ type Options struct {
 	Client                      coreagent.ChatClient
 	Tools                       *coreagent.Registry
 	Skills                      *coreagent.SkillCatalog
+	ImportSkills                func(string) (coreagent.SkillImportResult, error)
+	ReloadSkills                func() (*coreagent.SkillCatalog, error)
 	ToolRegistryForModel        func(context.Context, string) *coreagent.Registry
 	ToolsDisabled               bool
 	MultiModalForModel          func(context.Context, string) bool
