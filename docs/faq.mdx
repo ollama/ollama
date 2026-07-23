@@ -30,7 +30,9 @@ This can be overridden with the `OLLAMA_CONTEXT_LENGTH` environment variable. Fo
 OLLAMA_CONTEXT_LENGTH=8192 ollama serve
 ```
 
-To change this when using `ollama run`, use `/set parameter`:
+If you used the installer, Ollama is likely running as a service and you may need to refer to [How do I configure Ollama server?](#how-do-i-configure-ollama-server) below.
+
+To change the context window size when using `ollama run`, use `/set parameter`:
 
 ```shell
 /set parameter num_ctx 4096
