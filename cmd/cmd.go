@@ -984,21 +984,21 @@ type githubRelease struct {
 }
 
 func getLatestRelease(ctx context.Context) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/repos/ollama/ollama/releases/latest", nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s)", version.Version, runtime.GOARCH, runtime.GOOS))
-	resp, err := http.DefaultClient.Do(req)
-	if err == nil && resp.StatusCode == http.StatusOK {
-		defer resp.Body.Close()
-		var rel githubRelease
-		if json.NewDecoder(resp.Body).Decode(&rel) == nil && rel.TagName != "" {
-			return rel.TagName, nil
+	if err == nil {
+		req.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s)", version.Version, runtime.GOARCH, runtime.GOOS))
+		if resp, err := http.DefaultClient.Do(req); err == nil {
+			defer resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				var rel githubRelease
+				if json.NewDecoder(resp.Body).Decode(&rel) == nil && rel.TagName != "" {
+					return rel.TagName, nil
+				}
+			}
 		}
-	}
-	if resp != nil {
-		resp.Body.Close()
 	}
 
 	reqURL, err := url.Parse("https://ollama.com/api/update")
@@ -1016,7 +1016,7 @@ func getLatestRelease(ctx context.Context) (string, error) {
 		return "", err
 	}
 	req.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s)", version.Version, runtime.GOARCH, runtime.GOOS))
-	resp, err = http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -1080,6 +1080,10 @@ func UpdateHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	if checkOnly {
+		if err != nil && latestTag == "" {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Error: could not check for updates: %v\n", err)
+			return err
+		}
 		if runtime.GOOS == "linux" {
 			fmt.Fprintln(cmd.OutOrStdout(), "To update, run:")
 			fmt.Fprintln(cmd.OutOrStdout(), "  curl -fsSL https://ollama.com/install.sh | sh")
@@ -2582,6 +2586,7 @@ func NewCLI() *cobra.Command {
 		Use:     "update",
 		Aliases: []string{"upgrade"},
 		Short:   "Update Ollama to the latest version",
+		Args:    cobra.NoArgs,
 		RunE:    UpdateHandler,
 	}
 	updateCmd.Flags().Bool("check", false, "Check for updates without installing")
