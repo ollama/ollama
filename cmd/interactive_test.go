@@ -64,6 +64,34 @@ d:\path with\spaces\thirteen.WEBP some ending
 	assert.Contains(t, res[12], "d:")
 }
 
+func TestExtractFilenamesTilde(t *testing.T) {
+	// ~/path style (typed by user or inserted by some terminals)
+	input := `~/Pictures/photo.jpg some text ~/Downloads/image.png`
+	res := extractFileNames(input)
+	assert.Len(t, res, 2)
+	assert.Contains(t, res[0], "photo.jpg")
+	assert.Contains(t, res[0], "~/")
+	assert.Contains(t, res[1], "image.png")
+
+	// Escaped spaces and tildes — macOS iCloud path (issue #10333)
+	input = `/Users/ollama/Library/Mobile\ Documents/com\~apple\~CloudDocs/screenshots/CleanShot\ 2025-04-17\ at\ 21.26.40@2x.png`
+	res = extractFileNames(input)
+	assert.Len(t, res, 1)
+	assert.Contains(t, res[0], "CleanShot")
+	assert.Contains(t, res[0], "@2x.png")
+}
+
+func TestExpandTilde(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("cannot determine home directory")
+	}
+
+	assert.Equal(t, filepath.Join(home, "Pictures/photo.jpg"), expandTilde("~/Pictures/photo.jpg"))
+	assert.Equal(t, "/absolute/path/image.png", expandTilde("/absolute/path/image.png"))
+	assert.Equal(t, "relative/path/image.png", expandTilde("relative/path/image.png"))
+}
+
 // Ensure that file paths wrapped in single quotes are removed with the quotes.
 func TestExtractFileDataRemovesQuotedFilepath(t *testing.T) {
 	dir := t.TempDir()
