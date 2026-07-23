@@ -2410,4 +2410,3 @@ func TestUpdateCommand(t *testing.T) {
 		}
 	})
 }
-
