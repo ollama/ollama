@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestClientFromEnvironment(t *testing.T) {
@@ -48,6 +49,68 @@ func TestClientFromEnvironment(t *testing.T) {
 				t.Fatalf("expected %s, got %s", v.expect, client.base.String())
 			}
 		})
+	}
+}
+
+func TestClientUsage(t *testing.T) {
+	startsAt := time.Date(2026, time.June, 29, 0, 0, 0, 0, time.UTC)
+	endsAt := time.Date(2026, time.July, 27, 0, 0, 0, 0, time.UTC)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %q, want GET", r.Method)
+		}
+		if r.URL.Path != "/api/usage" {
+			t.Errorf("path = %q, want /api/usage", r.URL.Path)
+		}
+
+		if err := json.NewEncoder(w).Encode(UsageResponse{
+			Activity: UsageActivity{
+				Cost: "0.00709",
+				Period: UsagePeriod{
+					Type:       "last_4_weeks",
+					StartingAt: startsAt,
+					EndingAt:   endsAt,
+				},
+				Models: []UsageActivityModel{{
+					Name:         "qwen3-coder:480b",
+					RequestCount: 1,
+					Cost:         "0.00709",
+				}},
+			},
+			Limits: UsageLimits{
+				Session: UsageLimit{Usage: 0.006, Models: []UsageLimitModel{{Name: "qwen3-coder:480b", RequestCount: 2}}},
+				Weekly:  UsageLimit{Usage: 0.002, Models: []UsageLimitModel{{Name: "web search", RequestCount: 1}}},
+			},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}))
+	defer ts.Close()
+
+	base, err := url.Parse(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := NewClient(base, ts.Client()).Usage(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Activity.Cost != "0.00709" {
+		t.Errorf("activity cost = %q, want 0.00709", got.Activity.Cost)
+	}
+	if got.Activity.Period.Type != "last_4_weeks" || !got.Activity.Period.StartingAt.Equal(startsAt) || !got.Activity.Period.EndingAt.Equal(endsAt) {
+		t.Errorf("period = %#v, want last four weeks from %v to %v", got.Activity.Period, startsAt, endsAt)
+	}
+	if len(got.Activity.Models) != 1 || got.Activity.Models[0].Name != "qwen3-coder:480b" || got.Activity.Models[0].RequestCount != 1 || got.Activity.Models[0].Cost != "0.00709" {
+		t.Errorf("activity models = %#v, want qwen activity", got.Activity.Models)
+	}
+	if got.Limits.Session.Usage != 0.006 || len(got.Limits.Session.Models) != 1 || got.Limits.Session.Models[0].Name != "qwen3-coder:480b" {
+		t.Errorf("session limit = %#v, want qwen usage at 0.006", got.Limits.Session)
+	}
+	if got.Limits.Weekly.Usage != 0.002 || len(got.Limits.Weekly.Models) != 1 || got.Limits.Weekly.Models[0].Name != "web search" {
+		t.Errorf("weekly limit = %#v, want web search usage at 0.002", got.Limits.Weekly)
 	}
 }
 

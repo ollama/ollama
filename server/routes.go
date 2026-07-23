@@ -56,11 +56,17 @@ import (
 
 const signinURLStr = "https://ollama.com/connect?name=%s&key=%s"
 
+var (
+	accountBaseURL = "https://ollama.com"
+	usageBaseURL   = "https://ollama.com"
+)
+
 const (
 	cloudErrRemoteInferenceUnavailable    = "remote model is unavailable"
 	cloudErrRemoteModelDetailsUnavailable = "remote model details are unavailable"
 	cloudErrWebSearchUnavailable          = "web search is unavailable"
 	cloudErrWebFetchUnavailable           = "web fetch is unavailable"
+	cloudErrUsageUnavailable              = "usage is unavailable"
 	copilotChatUserAgentPrefix            = "GitHubCopilotChat/"
 )
 
@@ -1882,7 +1888,7 @@ func (s *Server) GenerateRoutes() (http.Handler, error) {
 	r.DELETE("/api/delete", s.DeleteHandler)
 
 	r.POST("/api/me", s.WhoamiHandler)
-
+	r.GET("/api/usage", s.UsageHandler)
 	r.POST("/api/signout", s.SignoutHandler)
 	// deprecated
 	r.DELETE("/api/user/keys/:encodedKey", s.SignoutHandler)
@@ -2174,7 +2180,7 @@ func (s *Server) webExperimentalProxyHandler(c *gin.Context, proxyPath, disabled
 
 func (s *Server) WhoamiHandler(c *gin.Context) {
 	// todo allow other hosts
-	u, err := url.Parse("https://ollama.com")
+	u, err := url.Parse(accountBaseURL)
 	if err != nil {
 		slog.Error(err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "URL parse error"})
@@ -2226,6 +2232,53 @@ func (s *Server) WhoamiHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, user)
 }
 
+func (s *Server) UsageHandler(c *gin.Context) {
+	if internalcloud.Disabled() {
+		c.JSON(http.StatusForbidden, gin.H{"error": internalcloud.DisabledError(cloudErrUsageUnavailable)})
+		return
+	}
+
+	// todo allow other hosts
+	u, err := url.Parse(usageBaseURL)
+	if err != nil {
+		slog.Error(err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "URL parse error"})
+		return
+	}
+
+	client := api.NewClient(u, http.DefaultClient)
+	usage, err := client.Usage(c)
+	if err != nil {
+		var authErr api.AuthorizationError
+		if errors.As(err, &authErr) && authErr.StatusCode == http.StatusUnauthorized {
+			sURL := authErr.SigninURL
+			if sURL == "" {
+				var sErr error
+				sURL, sErr = signinURL()
+				if sErr != nil {
+					slog.Error(sErr.Error())
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "error getting authorization details"})
+					return
+				}
+			}
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "signin_url": sURL})
+			return
+		}
+
+		var statusErr api.StatusError
+		if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusForbidden {
+			c.JSON(http.StatusForbidden, gin.H{"error": statusErr.ErrorMessage})
+			return
+		}
+
+		slog.Error(err.Error())
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "account unavailable"})
+		return
+	}
+
+	c.JSON(http.StatusOK, usage)
+}
+
 func (s *Server) SignoutHandler(c *gin.Context) {
 	pubKey, err := auth.GetPublicKey()
 	if err != nil {
@@ -2237,7 +2290,7 @@ func (s *Server) SignoutHandler(c *gin.Context) {
 	encKey := base64.RawURLEncoding.EncodeToString([]byte(pubKey))
 
 	// todo allow other hosts
-	u, err := url.Parse("https://ollama.com")
+	u, err := url.Parse(accountBaseURL)
 	if err != nil {
 		slog.Error(err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "URL parse error"})
