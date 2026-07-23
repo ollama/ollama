@@ -7,6 +7,7 @@ import { Model } from "@/gotypes";
 import { getTotalVRAM } from "@/utils/vram.ts";
 import { getInferenceCompute } from "@/api";
 import { useCloudStatus } from "./useCloudStatus";
+import { getTurboMigrationCloudModel } from "@/utils/turboMigration";
 
 export function recommendDefaultModel(totalVRAM: number): string {
   const vram = Math.max(0, Number(totalVRAM) || 0);
@@ -33,7 +34,10 @@ export function useSelectedModel(currentChatId?: string, searchQuery?: string) {
     enabled: !settings.selectedModel, // Only fetch if no model is selected
   });
 
-  const inferenceComputes = inferenceComputeResponse?.inferenceComputes || [];
+  const inferenceComputes = useMemo(
+    () => inferenceComputeResponse?.inferenceComputes || [],
+    [inferenceComputeResponse?.inferenceComputes],
+  );
 
   const totalVRAM = useMemo(
     () => getTotalVRAM(inferenceComputes),
@@ -60,30 +64,18 @@ export function useSelectedModel(currentChatId?: string, searchQuery?: string) {
       );
     }
 
-    // Migration logic: if turboEnabled is true and selectedModel is a base model,
-    // migrate to the cloud version and disable turboEnabled permanently
-    // TODO: remove this logic in a future release
-    const baseModelsToMigrate = [
-      "gpt-oss:20b",
-      "gpt-oss:120b",
-      "deepseek-v3.1:671b",
-      "qwen3-coder:480b",
-    ];
-    const shouldMigrate =
-      !cloudDisabled &&
-      settings.turboEnabled &&
-      baseModelsToMigrate.includes(settings.selectedModel);
-
-    if (shouldMigrate) {
-      const cloudModel = `${settings.selectedModel}cloud`;
-      return (
-        models.find((m) => m.model === cloudModel) ||
-        new Model({
-          model: cloudModel,
-          cloud: true,
-          ollama_host: false,
-        })
-      );
+    if (!cloudDisabled && settings.turboEnabled) {
+      const cloudModel = getTurboMigrationCloudModel(settings.selectedModel);
+      if (cloudModel) {
+        return (
+          models.find((m) => m.model === cloudModel) ||
+          new Model({
+            model: cloudModel,
+            cloud: true,
+            ollama_host: false,
+          })
+        );
+      }
     }
 
     return (
@@ -99,6 +91,7 @@ export function useSelectedModel(currentChatId?: string, searchQuery?: string) {
   }, [
     models,
     settings.selectedModel,
+    settings.turboEnabled,
     cloudDisabled,
     recommendedModel,
   ]);
@@ -125,6 +118,8 @@ export function useSelectedModel(currentChatId?: string, searchQuery?: string) {
     selectedModel,
     cloudDisabled,
     settings.selectedModel,
+    settings.turboEnabled,
+    setSettings,
   ]);
 
   // Set model from chat history when chat data loads
@@ -190,9 +185,11 @@ export function useSelectedModel(currentChatId?: string, searchQuery?: string) {
   }, [
     isLoading,
     inferenceComputes.length,
-    models.length,
+    models,
+    recommendedModel,
     settings.selectedModel,
     cloudDisabled,
+    setSettings,
   ]);
 
   // Add the selected model to the models list if it's not already there
