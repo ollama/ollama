@@ -160,33 +160,54 @@ func (s *Server) CreateHandler(c *gin.Context) {
 				if err != nil {
 					ch <- gin.H{"error": err.Error()}
 				}
+			}
 
-				if err == nil && !remote {
-					mf, mErr := manifest.ParseNamedManifest(fromName)
-					if mErr == nil && mf.Config.Digest != "" {
-						configPath, pErr := manifest.BlobsPath(mf.Config.Digest)
-						if pErr == nil {
-							if cfgFile, fErr := os.Open(configPath); fErr == nil {
-								var baseConfig model.ConfigV2
-								if decErr := json.NewDecoder(cfgFile).Decode(&baseConfig); decErr == nil {
-									if config.Renderer == "" {
-										config.Renderer = baseConfig.Renderer
-									}
-									if config.Parser == "" {
-										config.Parser = baseConfig.Parser
-									}
-									if config.Requires == "" {
-										config.Requires = baseConfig.Requires
-									}
-									if config.ModelFormat == "" {
-										config.ModelFormat = baseConfig.ModelFormat
-									}
-									if len(config.Capabilities) == 0 {
-										config.Capabilities = baseConfig.Capabilities
-									}
+			if err == nil {
+				mf, mErr := manifest.ParseNamedManifest(fromName)
+				if mErr == nil && mf.Config.Digest != "" {
+					configPath, pErr := manifest.BlobsPath(mf.Config.Digest)
+					if pErr == nil {
+						if cfgFile, fErr := os.Open(configPath); fErr == nil {
+							var baseConfig model.ConfigV2
+							if decErr := json.NewDecoder(cfgFile).Decode(&baseConfig); decErr == nil {
+								if config.Renderer == "" {
+									config.Renderer = baseConfig.Renderer
 								}
-								cfgFile.Close()
+								if config.Parser == "" {
+									config.Parser = baseConfig.Parser
+								}
+								if config.Requires == "" {
+									config.Requires = baseConfig.Requires
+								}
+								if config.ModelFormat == "" {
+									config.ModelFormat = baseConfig.ModelFormat
+								}
+								if len(config.Capabilities) == 0 {
+									config.Capabilities = baseConfig.Capabilities
+								}
+								if config.ModelFamily == "" {
+									config.ModelFamily = baseConfig.ModelFamily
+								}
+								if len(config.ModelFamilies) == 0 {
+									config.ModelFamilies = baseConfig.ModelFamilies
+								}
+								if config.ModelType == "" {
+									config.ModelType = baseConfig.ModelType
+								}
+								if config.FileType == "" {
+									config.FileType = baseConfig.FileType
+								}
+								if config.ContextLen == 0 {
+									config.ContextLen = baseConfig.ContextLen
+								}
+								if config.EmbedLen == 0 {
+									config.EmbedLen = baseConfig.EmbedLen
+								}
+								if config.BaseName == "" {
+									config.BaseName = baseConfig.BaseName
+								}
 							}
+							cfgFile.Close()
 						}
 					}
 				}
@@ -793,7 +814,10 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 				config.ModelFamily = cmp.Or(config.ModelFamily, layer.GGML.KV().Architecture())
 				config.ModelType = cmp.Or(config.ModelType, format.HumanNumber(layer.GGML.KV().ParameterCount()))
 				config.FileType = cmp.Or(config.FileType, layer.GGML.KV().FileType().String())
-				config.ModelFamilies = append(config.ModelFamilies, layer.GGML.KV().Architecture())
+				arch := layer.GGML.KV().Architecture()
+				if !slices.Contains(config.ModelFamilies, arch) {
+					config.ModelFamilies = append(config.ModelFamilies, arch)
+				}
 
 				// Auto-detect renderer, parser, and stop tokens from GGUF architecture.
 				// TODO: abstract this into a registry/lookup table when multiple models
