@@ -1631,3 +1631,53 @@ func TestResponsesMiddlewareZstd(t *testing.T) {
 		})
 	}
 }
+
+func TestResponsesMiddlewareIncompleteOnLength(t *testing.T) {
+	tests := []struct {
+		name            string
+		doneReason      string
+		wantStatus      string
+		wantCompletedAt bool
+	}{
+		{name: "length truncation", doneReason: "length", wantStatus: "incomplete", wantCompletedAt: false},
+		{name: "natural stop", doneReason: "stop", wantStatus: "completed", wantCompletedAt: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			router := gin.New()
+			router.Use(ResponsesMiddleware())
+			router.Handle(http.MethodPost, "/v1/responses", func(c *gin.Context) {
+				c.JSON(http.StatusOK, api.ChatResponse{
+					Model:      "test-model",
+					Message:    api.Message{Role: "assistant", Content: "truncated tex"},
+					Done:       true,
+					DoneReason: tt.doneReason,
+				})
+			})
+
+			body := `{"model": "test-model", "input": "Hello", "max_output_tokens": 16}`
+			req, _ := http.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+
+			resp := httptest.NewRecorder()
+			router.ServeHTTP(resp, req)
+
+			if resp.Code != http.StatusOK {
+				t.Fatalf("expected status 200, got %d: %s", resp.Code, resp.Body.String())
+			}
+
+			var got map[string]any
+			if err := json.Unmarshal(resp.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got["status"] != tt.wantStatus {
+				t.Errorf("status = %q, want %q", got["status"], tt.wantStatus)
+			}
+			if (got["completed_at"] != nil) != tt.wantCompletedAt {
+				t.Errorf("completed_at = %v, want set=%v", got["completed_at"], tt.wantCompletedAt)
+			}
+		})
+	}
+}

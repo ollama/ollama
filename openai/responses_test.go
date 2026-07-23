@@ -2049,3 +2049,111 @@ func TestResponsesStreamConverter_FunctionCallStatus(t *testing.T) {
 		t.Errorf("output_item.done status = %q, want %q", doneItem["status"], "completed")
 	}
 }
+
+func TestToResponse_IncompleteOnLength(t *testing.T) {
+	chatResponse := api.ChatResponse{
+		Message:    api.Message{Role: "assistant", Content: "truncated tex"},
+		Done:       true,
+		DoneReason: "length",
+	}
+
+	response := ToResponse("gpt-oss:20b", "resp_123", "msg_456", chatResponse, ResponsesRequest{})
+	if response.Status != "incomplete" {
+		t.Errorf("status = %q, want %q", response.Status, "incomplete")
+	}
+	if response.IncompleteDetails == nil {
+		t.Fatal("incomplete_details = nil, want reason max_output_tokens")
+	}
+	if response.IncompleteDetails.Reason != "max_output_tokens" {
+		t.Errorf("incomplete_details.reason = %q, want %q", response.IncompleteDetails.Reason, "max_output_tokens")
+	}
+	if response.CompletedAt != nil {
+		t.Errorf("completed_at = %v, want nil", *response.CompletedAt)
+	}
+	if len(response.Output) != 1 {
+		t.Fatalf("output items = %d, want 1", len(response.Output))
+	}
+	if response.Output[0].Status != "incomplete" {
+		t.Errorf("output message status = %q, want %q", response.Output[0].Status, "incomplete")
+	}
+
+	chatResponse.DoneReason = "stop"
+	response = ToResponse("gpt-oss:20b", "resp_123", "msg_456", chatResponse, ResponsesRequest{})
+	if response.Status != "completed" {
+		t.Errorf("status = %q, want %q", response.Status, "completed")
+	}
+	if response.IncompleteDetails != nil {
+		t.Errorf("incomplete_details = %+v, want nil", response.IncompleteDetails)
+	}
+	if response.Output[0].Status != "completed" {
+		t.Errorf("output message status = %q, want %q", response.Output[0].Status, "completed")
+	}
+}
+
+func TestResponsesStreamConverter_IncompleteOnLength(t *testing.T) {
+	converter := NewResponsesStreamConverter("resp_123", "msg_456", "gpt-oss:20b", ResponsesRequest{})
+
+	converter.Process(api.ChatResponse{
+		Message: api.Message{Role: "assistant", Content: "partial"},
+	})
+	events := converter.Process(api.ChatResponse{
+		Message:    api.Message{Role: "assistant"},
+		Done:       true,
+		DoneReason: "length",
+	})
+
+	var terminalType string
+	var terminal map[string]any
+	var doneItem map[string]any
+	for _, event := range events {
+		data := event.Data.(map[string]any)
+		eventType, _ := data["type"].(string)
+		if eventType == "response.completed" || eventType == "response.incomplete" {
+			terminalType = eventType
+			terminal = data["response"].(map[string]any)
+		}
+		if eventType == "response.output_item.done" {
+			if item, ok := data["item"].(map[string]any); ok && item["type"] == "message" {
+				doneItem = item
+			}
+		}
+	}
+
+	if doneItem == nil {
+		t.Fatal("expected message output_item.done event")
+	}
+	if doneItem["status"] != "incomplete" {
+		t.Errorf("output_item.done message status = %q, want %q", doneItem["status"], "incomplete")
+	}
+
+	if terminal == nil {
+		t.Fatal("expected a terminal response event")
+	}
+	if terminalType != "response.incomplete" {
+		t.Errorf("terminal event type = %q, want %q", terminalType, "response.incomplete")
+	}
+	if terminal["status"] != "incomplete" {
+		t.Errorf("response.status = %q, want %q", terminal["status"], "incomplete")
+	}
+	details, ok := terminal["incomplete_details"].(map[string]any)
+	if !ok {
+		t.Fatalf("incomplete_details = %v, want object with reason", terminal["incomplete_details"])
+	}
+	if details["reason"] != "max_output_tokens" {
+		t.Errorf("incomplete_details.reason = %q, want %q", details["reason"], "max_output_tokens")
+	}
+	if terminal["completed_at"] != nil {
+		t.Errorf("completed_at = %v, want nil for incomplete response", terminal["completed_at"])
+	}
+	outputs, ok := terminal["output"].([]any)
+	if !ok || len(outputs) == 0 {
+		t.Fatalf("terminal response output = %v, want message item", terminal["output"])
+	}
+	finalMsg, ok := outputs[len(outputs)-1].(map[string]any)
+	if !ok || finalMsg["type"] != "message" {
+		t.Fatalf("last output item = %v, want message", outputs[len(outputs)-1])
+	}
+	if finalMsg["status"] != "incomplete" {
+		t.Errorf("final output message status = %q, want %q", finalMsg["status"], "incomplete")
+	}
+}

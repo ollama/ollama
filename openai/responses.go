@@ -768,6 +768,14 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse,
 		})
 	}
 
+	status := "completed"
+	var incompleteDetails *ResponsesIncompleteDetails
+	if chatResponse.DoneReason == "length" {
+		// Generation was cut off by the output token limit, not finished.
+		status = "incomplete"
+		incompleteDetails = &ResponsesIncompleteDetails{Reason: "max_output_tokens"}
+	}
+
 	if len(chatResponse.Message.ToolCalls) > 0 {
 		toolCalls := ToToolCalls(chatResponse.Message.ToolCalls)
 		for i, tc := range toolCalls {
@@ -784,7 +792,7 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse,
 		output = append(output, ResponsesOutputItem{
 			ID:     itemID,
 			Type:   "message",
-			Status: "completed",
+			Status: status,
 			Role:   "assistant",
 			Content: []ResponsesOutputContent{
 				{
@@ -836,9 +844,9 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse,
 		ID:                 responseID,
 		Object:             "response",
 		CreatedAt:          chatResponse.CreatedAt.Unix(),
-		CompletedAt:        nil, // Set by middleware when writing final response
-		Status:             "completed",
-		IncompleteDetails:  nil, // Only populated if response incomplete
+		CompletedAt:        nil, // Set by middleware when writing completed responses; stays null for incomplete ones
+		Status:             status,
+		IncompleteDetails:  incompleteDetails,
 		Model:              model,
 		PreviousResponseID: nil, // Not supported
 		Instructions:       instructions,
@@ -1275,7 +1283,10 @@ func (c *ResponsesStreamConverter) processTextContent(content string) []Response
 	return events
 }
 
-func (c *ResponsesStreamConverter) buildFinalOutput() []any {
+// buildFinalOutput assembles the final output items; messageStatus is the
+// status for the text message item ("completed", or "incomplete" when
+// generation was truncated).
+func (c *ResponsesStreamConverter) buildFinalOutput(messageStatus string) []any {
 	var output []any
 
 	// Add reasoning item if present
@@ -1298,7 +1309,7 @@ func (c *ResponsesStreamConverter) buildFinalOutput() []any {
 		output = append(output, map[string]any{
 			"id":     c.itemID,
 			"type":   "message",
-			"status": "completed",
+			"status": messageStatus,
 			"role":   "assistant",
 			"content": []map[string]any{{
 				"type":        "output_text",
@@ -1314,6 +1325,14 @@ func (c *ResponsesStreamConverter) buildFinalOutput() []any {
 
 func (c *ResponsesStreamConverter) processCompletion(r api.ChatResponse) []ResponsesStreamEvent {
 	var events []ResponsesStreamEvent
+
+	status := "completed"
+	eventType := "response.completed"
+	if r.DoneReason == "length" {
+		// Generation was cut off by the output token limit, not finished.
+		status = "incomplete"
+		eventType = "response.incomplete"
+	}
 
 	// Finish reasoning if not done
 	events = append(events, c.finishReasoning()...)
@@ -1348,7 +1367,7 @@ func (c *ResponsesStreamConverter) processCompletion(r api.ChatResponse) []Respo
 			"item": map[string]any{
 				"id":     c.itemID,
 				"type":   "message",
-				"status": "completed",
+				"status": status,
 				"role":   "assistant",
 				"content": []map[string]any{{
 					"type":        "output_text",
@@ -1360,7 +1379,7 @@ func (c *ResponsesStreamConverter) processCompletion(r api.ChatResponse) []Respo
 		}))
 	}
 
-	// response.completed
+	// terminal event: response.completed, or response.incomplete when truncated
 	usage := map[string]any{
 		"input_tokens":  r.PromptEvalCount,
 		"output_tokens": r.EvalCount,
@@ -1372,9 +1391,13 @@ func (c *ResponsesStreamConverter) processCompletion(r api.ChatResponse) []Respo
 			"reasoning_tokens": 0,
 		},
 	}
-	response := c.buildResponseObject("completed", c.buildFinalOutput(), usage)
-	response["completed_at"] = time.Now().Unix()
-	events = append(events, c.newEvent("response.completed", map[string]any{
+	response := c.buildResponseObject(status, c.buildFinalOutput(status), usage)
+	if status == "completed" {
+		response["completed_at"] = time.Now().Unix()
+	} else {
+		response["incomplete_details"] = map[string]any{"reason": "max_output_tokens"}
+	}
+	events = append(events, c.newEvent(eventType, map[string]any{
 		"response": response,
 	}))
 
