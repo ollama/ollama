@@ -70,6 +70,32 @@ func TestModelListCacheHydratesSummary(t *testing.T) {
 	}
 }
 
+func TestModelListCacheToolsFromGGUFChatTemplate(t *testing.T) {
+	// Regression for #16969: tool support declared only in the GGUF
+	// tokenizer.chat_template (as with deepseek-r1) must surface in /api/tags to
+	// match /api/show. The Ollama Go template below has no tools var and there's
+	// no builtin parser, so the chat template is the only source of the tools cap.
+	gin.SetMode(gin.TestMode)
+	setTestHome(t, t.TempDir())
+	createListCacheModel(t, "list-cache-tmpl-tools", map[string]any{
+		"test.context_length":     uint32(4096),
+		"tokenizer.chat_template": "{% for m in messages %}{{ m.content }}{% endfor %}{{ tool_call }}",
+	}, "{{ .prompt }}")
+
+	cache := newModelListCache()
+	if err := cache.hydrate(context.Background()); err != nil {
+		t.Fatalf("hydrate failed: %v", err)
+	}
+
+	summary, ok := cache.Get(model.ParseName("list-cache-tmpl-tools"))
+	if !ok {
+		t.Fatal("list summary missing")
+	}
+	if !slices.Contains(summary.Capabilities, model.CapabilityTools) {
+		t.Fatalf("capabilities = %v, want tools", summary.Capabilities)
+	}
+}
+
 func TestModelListCacheRefreshUpdatesEntry(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())

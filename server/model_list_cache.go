@@ -569,7 +569,22 @@ func readModelListGGUF(path string) (modelListGGUF, error) {
 			continue
 		}
 
-		if architecture != "" && strings.HasPrefix(key, "tokenizer.") {
+		// Template-only tool/thinking support (e.g. deepseek-r1) lives in
+		// tokenizer.chat_template, so /api/tags must read it to report the same
+		// capabilities as /api/show. It's the last KV we care about, so stop once
+		// we've seen it. Reaching it means skipping past the large tokenizer.ggml.*
+		// arrays; this could be made cheaper with a file seek if list latency regresses.
+		if architecture != "" && key == "tokenizer.chat_template" {
+			value, err := readModelListGGUFStringValue(r, byteOrder, version, valueType)
+			if err != nil {
+				return modelListGGUF{}, err
+			}
+			if chatTemplateHasToolSupport(value) {
+				info.Capabilities = appendModelListCapability(info.Capabilities, model.CapabilityTools)
+			}
+			if chatTemplateHasThinkingSupport(value) {
+				info.Capabilities = appendModelListCapability(info.Capabilities, model.CapabilityThinking)
+			}
 			break
 		}
 
