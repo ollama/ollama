@@ -55,6 +55,11 @@ var hopByHopHeaders = map[string]struct{}{
 	"upgrade":             {},
 }
 
+var openAIStreamUsagePaths = map[string]struct{}{
+	"/v1/chat/completions": {},
+	"/v1/completions":      {},
+}
+
 func init() {
 	baseURL, signingHost, overridden, err := resolveCloudProxyBaseURL(envconfig.Var(cloudProxyBaseURLEnv), mode)
 	if err != nil {
@@ -114,6 +119,13 @@ func cloudPassthroughMiddleware(disabledOperation string) gin.HandlerFunc {
 		}
 
 		normalizedBody, err := replaceJSONModelField(body, modelRef.Base)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			c.Abort()
+			return
+		}
+
+		normalizedBody, err = injectOpenAIStreamUsage(normalizedBody, c.Request.URL.Path)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			c.Abort()
@@ -286,6 +298,37 @@ func replaceJSONModelField(body []byte, model string) ([]byte, error) {
 	return json.Marshal(payload)
 }
 
+func injectOpenAIStreamUsage(body []byte, path string) ([]byte, error) {
+	if len(body) == 0 {
+		return body, nil
+	}
+	if _, ok := openAIStreamUsagePaths[path]; !ok {
+		return body, nil
+	}
+
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+
+	rawStream, ok := payload["stream"]
+	if !ok || isJSONNull(rawStream) {
+		return body, nil
+	}
+
+	var stream bool
+	if err := json.Unmarshal(rawStream, &stream); err != nil || !stream {
+		return body, nil
+	}
+
+	if rawOptions, ok := payload["stream_options"]; ok && !isJSONNull(rawOptions) {
+		return body, nil
+	}
+
+	payload["stream_options"] = json.RawMessage(`{"include_usage":true}`)
+	return json.Marshal(payload)
+}
+
 func readRequestBody(r *http.Request) ([]byte, error) {
 	if r.Body == nil {
 		return nil, nil
@@ -298,6 +341,13 @@ func readRequestBody(r *http.Request) ([]byte, error) {
 
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	return body, nil
+}
+
+func isJSONNull(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return true
+	}
+	return bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 }
 
 func extractModelField(body []byte) (string, bool) {
