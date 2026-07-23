@@ -18,6 +18,7 @@ warning() { echo "${red}WARNING:${plain} $*"; }
 TEMP_DIR=$(mktemp -d)
 cleanup() { rm -rf $TEMP_DIR; }
 trap cleanup EXIT
+INSTALL_COMPLETE=false
 
 available() { command -v $1 >/dev/null; }
 require() {
@@ -169,6 +170,7 @@ status "Installing ollama to $OLLAMA_INSTALL_DIR"
 $SUDO install -o0 -g0 -m755 -d $BINDIR
 $SUDO install -o0 -g0 -m755 -d "$OLLAMA_INSTALL_DIR/lib/ollama"
 download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}"
+INSTALL_COMPLETE=true
 
 if [ "$OLLAMA_INSTALL_DIR/bin/ollama" != "$BINDIR/ollama" ] ; then
     status "Making ollama accessible in the PATH in $BINDIR"
@@ -187,8 +189,11 @@ if [ -f /etc/nv_tegra_release ] ; then
 fi
 
 install_success() {
-    status 'The Ollama API is now available at 127.0.0.1:11434.'
-    status 'Install complete. Run "ollama" from the command line.'
+    if [ "$INSTALL_COMPLETE" = true ]; then
+        status 'The Ollama API is now available at 127.0.0.1:11434.'
+        status 'Install complete. Run "ollama" from the command line.'
+    fi
+    cleanup
 }
 trap install_success EXIT
 
@@ -235,7 +240,7 @@ EOF
             $SUDO systemctl daemon-reload
             $SUDO systemctl enable ollama
 
-            start_service() { $SUDO systemctl restart ollama; }
+            start_service() { $SUDO systemctl restart ollama || true; install_success; }
             trap start_service EXIT
             ;;
         *)
