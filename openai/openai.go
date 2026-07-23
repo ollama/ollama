@@ -637,6 +637,12 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	}
 
 	if effort != "" {
+		// OpenAI also accepts "minimal"; Ollama has no distinct minimal level so map it
+		// to the lowest thinking level instead of rejecting the request
+		if effort == "minimal" {
+			effort = "low"
+		}
+
 		if !slices.Contains([]string{"high", "medium", "low", "max", "none"}, effort) {
 			return nil, fmt.Errorf("invalid reasoning value: '%s' (must be \"high\", \"medium\", \"low\", \"max\", or \"none\")", effort)
 		}

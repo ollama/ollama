@@ -527,6 +527,12 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 
 	var think *api.ThinkValue
 	if effort := r.Reasoning.Effort; effort != "" {
+		// OpenAI also accepts "minimal"; Ollama has no distinct minimal level so map it
+		// to the lowest thinking level instead of rejecting the request
+		if effort == "minimal" {
+			effort = "low"
+		}
+
 		switch effort {
 		case "none":
 			think = &api.ThinkValue{Value: false}
