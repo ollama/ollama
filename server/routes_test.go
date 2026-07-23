@@ -76,20 +76,14 @@ func createTestFile(t *testing.T, name string) (string, string) {
 		t.Fatal(err)
 	}
 
-	if err := createLink(f.Name(), filepath.Join(modelDir, "blobs", fmt.Sprintf("sha256-%s", strings.TrimPrefix(digest, "sha256:")))); err != nil {
+	blobPath, err := manifest.BlobsPath(digest)
+	if err != nil {
 		t.Fatal(err)
 	}
+	linkOrCopyTestBlob(t, f.Name(), blobPath)
 
 	return f.Name(), digest
 }
-
-type panicTransport struct{}
-
-func (t *panicTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	panic("unexpected RoundTrip call")
-}
-
-var panicOnRoundTrip = &http.Client{Transport: &panicTransport{}}
 
 func TestRoutes(t *testing.T) {
 	modelsDir := t.TempDir()
@@ -130,7 +124,7 @@ func TestRoutes(t *testing.T) {
 
 		modelName := model.ParseName(name)
 
-		baseLayers, err := ggufLayers(digest, "test.gguf", fn)
+		baseLayers, err := ggufLayersWithMediaType(digest, "test.gguf", "", fn)
 		if err != nil {
 			t.Fatalf("failed to create model: %v", err)
 		}

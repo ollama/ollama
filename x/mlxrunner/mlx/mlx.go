@@ -35,7 +35,10 @@ package mlx
 // }
 import "C"
 
-import "runtime"
+import (
+	"errors"
+	"runtime"
+)
 
 func init() {
 	// Replace the default exit(-1) error handler with one that captures
@@ -51,11 +54,11 @@ func Version() string {
 	return C.GoString(C.mlx_string_data(str))
 }
 
-// mlxCheck locks the goroutine to its OS thread, clears the captured error
-// state, calls fn, and panics with the captured message if fn returns non-zero.
-// The thread lock ensures the thread-local error state is read from the same
-// thread that executed the call.
-func mlxCheck(fallback string, fn func() C.int) {
+// mlxErr locks the goroutine to its OS thread, clears the captured error state,
+// calls fn, and returns the captured message if fn returns non-zero. The thread
+// lock ensures the thread-local error state is read from the same thread that
+// executed the call.
+func mlxErr(fallback string, fn func() C.int) error {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
@@ -65,7 +68,16 @@ func mlxCheck(fallback string, fn func() C.int) {
 		if msg == "" {
 			msg = fallback
 		}
-		panic("mlx: " + msg)
+		return errors.New(msg)
+	}
+	return nil
+}
+
+// mlxCheck wraps mlxErr for existing call sites that surface MLX failures as
+// panics recovered by their caller.
+func mlxCheck(fallback string, fn func() C.int) {
+	if err := mlxErr(fallback, fn); err != nil {
+		panic("mlx: " + err.Error())
 	}
 }
 

@@ -126,13 +126,6 @@ func IsSafetensorsLLMModel(modelName string) bool {
 	return config.ModelFormat == "safetensors" && slices.Contains(config.Capabilities, "completion")
 }
 
-// IsTensorModelDir checks if the directory contains a diffusers-style tensor model
-// by looking for model_index.json, which is the standard diffusers pipeline config.
-func IsTensorModelDir(dir string) bool {
-	_, err := os.Stat(filepath.Join(dir, "model_index.json"))
-	return err == nil
-}
-
 // IsSafetensorsModelDir checks if the directory contains a standard safetensors model
 // by looking for config.json and at least one .safetensors file.
 func IsSafetensorsModelDir(dir string) bool {
@@ -171,15 +164,7 @@ type LayerCreator func(r io.Reader, mediaType, name string) (LayerInfo, error)
 // ManifestWriter writes the manifest file.
 type ManifestWriter func(modelName string, config LayerInfo, layers []LayerInfo) error
 
-// ShouldQuantize returns true if a tensor should be quantized.
-// For image gen models (component non-empty): quantizes linear weights, skipping VAE, embeddings, norms.
-// For LLM models (component empty): quantizes linear weights, skipping embeddings, norms, and small tensors.
-func ShouldQuantize(name, component string) bool {
-	// Image gen specific: skip VAE entirely
-	if component == "vae" {
-		return false
-	}
-
+func shouldQuantize(name string) bool {
 	// Skip audio encoder tensors (highly sensitive to quantization)
 	if strings.Contains(name, "audio_tower") || strings.Contains(name, "embed_audio") {
 		return false
@@ -268,7 +253,7 @@ func GetTensorQuantization(name string, shape []int32, quantize string) string {
 	stackedExpert := isStackedExpertWeight(name)
 
 	// Use basic name-based check first
-	if !stackedExpert && !ShouldQuantize(name, "") {
+	if !stackedExpert && !shouldQuantize(name) {
 		return ""
 	}
 
@@ -317,9 +302,7 @@ func GetTensorQuantization(name string, shape []int32, quantize string) string {
 	return quantNorm
 }
 
-var (
-	expertLayerPrefixRegexp = regexp.MustCompile(`^(?:model\.language_model\.|language_model(?:\.model)?\.|model\.)?layers\.\d+$`)
-)
+var expertLayerPrefixRegexp = regexp.MustCompile(`^(?:model\.language_model\.|language_model(?:\.model)?\.|model\.)?layers\.\d+$`)
 
 // ExpertGroupPrefix returns the group prefix for expert tensors that should be packed together.
 // For example:

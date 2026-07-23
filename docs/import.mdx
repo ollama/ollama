@@ -46,6 +46,10 @@ You can create the adapter using a fine tuning framework or tool which can outpu
 
 ## Importing a model from Safetensors weights
 
+Safetensors imports create MLX-backed Ollama models. These models are intended
+for systems that can run Ollama's MLX engine. On other platforms, creation is
+allowed but the resulting model may not be runnable locally.
+
 First, create a `Modelfile` with a `FROM` command which points to the directory containing your Safetensors weights:
 
 ```dockerfile
@@ -66,21 +70,22 @@ Lastly, test the model:
 ollama run my-model
 ```
 
-Ollama supports importing models for several different architectures including:
+Ollama supports importing Safetensors models for the architectures implemented by the MLX engine, including:
 
-- Llama (including Llama 2, Llama 3, Llama 3.1, and Llama 3.2);
-- Mistral (including Mistral 1, Mistral 2, and Mixtral);
-- Gemma (including Gemma 1 and Gemma 2); and
-- Phi3
+- Gemma 4
+- Laguna
+- Qwen3, Qwen3.5, and Qwen3Next dense and MoE models
 
 This includes importing foundation models as well as any fine tuned models which have been _fused_ with a foundation model.
 
 ## Importing a GGUF based model or adapter
 
-If you have a GGUF based model or adapter it is possible to import it into Ollama. You can obtain a GGUF model or adapter by:
+If you have a GGUF based model or adapter it is possible to import it into Ollama. GGUF inputs are imported as GGUF models; Ollama does not convert Safetensors weights to GGUF during `ollama create`.
 
-- converting a Safetensors model with the `convert_hf_to_gguf.py` from Llama.cpp;
-- converting a Safetensors adapter with the `convert_lora_to_gguf.py` from Llama.cpp; or
+You can obtain a GGUF model or adapter by:
+
+- converting a Safetensors model with `convert_hf_to_gguf.py` from [llama.cpp](https://github.com/ggml-org/llama.cpp);
+- converting a Safetensors adapter with `convert_lora_to_gguf.py` from [llama.cpp](https://github.com/ggml-org/llama.cpp); or
 - downloading a model or adapter from a place such as HuggingFace
 
 To import a GGUF model, create a `Modelfile` containing:
@@ -100,7 +105,6 @@ When importing a GGUF adapter, it's important to use the same base model as the 
 
 - a model from Ollama
 - a GGUF file
-- a Safetensors based model
 
 Once you have created your `Modelfile`, use the `ollama create` command to build the model.
 
@@ -108,38 +112,22 @@ Once you have created your `Modelfile`, use the `ollama create` command to build
 ollama create my-model
 ```
 
-## Quantizing a Model
+## Quantizing a GGUF model
 
 Quantizing a model allows you to run models faster and with less memory consumption but at reduced accuracy. This allows you to run a model on more modest hardware.
 
-Ollama can quantize FP16 and FP32 based models into different quantization levels using the `-q/--quantize` flag with the `ollama create` command.
-
-First, create a Modelfile with the FP16 or FP32 based model you wish to quantize.
-
-```dockerfile
-FROM /path/to/my/gemma/f16/model
-```
-
-Use `ollama create` to then create the quantized model.
+For GGUF models, quantize before importing into Ollama. Use the llama.cpp tools to convert and quantize the model, then import the resulting GGUF with `ollama create`.
 
 ```shell
-$ ollama create --quantize q4_K_M mymodel
-transferring model data
-quantizing F16 model to Q4_K_M
-creating new layer sha256:735e246cc1abfd06e9cdcf95504d6789a6cd1ad7577108a70d9902fef503c1bd
-creating new layer sha256:0853f0ad24e5865173bbf9ffcc7b0f5d56b66fd690ab1009867e45e7d2c4db0f
-writing manifest
-success
+python convert_hf_to_gguf.py /path/to/safetensors-model --outfile model-f16.gguf
+llama-quantize model-f16.gguf model-Q4_K_M.gguf Q4_K_M
 ```
 
-### Supported Quantizations
+Then create a `Modelfile` that references the quantized GGUF:
 
-- `q8_0`
-
-#### K-means Quantizations
-
-- `q4_K_S`
-- `q4_K_M`
+```dockerfile
+FROM /path/to/model-Q4_K_M.gguf
+```
 
 ## Sharing your model on ollama.com
 

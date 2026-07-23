@@ -7,7 +7,7 @@
 package client
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -138,7 +138,7 @@ type CreateOptions struct {
 
 // CreateModel imports a model from a local directory.
 // This creates blobs and manifest directly on disk, bypassing the HTTP API.
-// Automatically detects model type (safetensors LLM vs image gen) and routes accordingly.
+// Automatically detects safetensors source imports and existing safetensors base models.
 func CreateModel(opts CreateOptions, p *progress.Progress) error {
 	// Detect model type
 	isSafetensors := create.IsSafetensorsModelDir(opts.ModelDir)
@@ -188,6 +188,7 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 	var err error
 	if hasDraft {
 		draftLayers, err = create.CreateDraftLayers(
+			context.Background(),
 			opts.Modelfile.Draft,
 			"draft.",
 			"draft/",
@@ -218,6 +219,7 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 		writer = appendLayersManifestWriter(writer, draftLayers)
 	}
 	err = create.Create(
+		context.Background(),
 		opts.ModelName, opts.ModelDir, opts.Quantize,
 		create.StoreFromLayerCreator(newLayerCreator()),
 		writer,
@@ -238,40 +240,6 @@ func appendLayersManifestWriter(next create.ManifestWriter, extra []create.Layer
 		layers = append(layers, extra...)
 		return next(modelName, config, layers)
 	}
-}
-
-func draftMetadata(draftDir string) (*model.Draft, error) {
-	configPath := filepath.Join(draftDir, "config.json")
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read draft config %s: %w", configPath, err)
-	}
-
-	var cfg struct {
-		Architectures []string `json:"architectures"`
-		ModelType     string   `json:"model_type"`
-	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse draft config %s: %w", configPath, err)
-	}
-
-	arch := ""
-	if len(cfg.Architectures) > 0 {
-		arch = cfg.Architectures[0]
-	}
-	if arch == "" {
-		arch = cfg.ModelType
-	}
-	if arch == "" {
-		return nil, fmt.Errorf("draft architecture not found in %s", configPath)
-	}
-
-	return &model.Draft{
-		ModelFormat:  "safetensors",
-		Architecture: arch,
-		TensorPrefix: "draft.",
-		Config:       "draft/config.json",
-	}, nil
 }
 
 func createModelFromBaseWithDraft(opts CreateOptions, draftLayers []create.LayerInfo, progressFn func(string)) error {
@@ -376,81 +344,33 @@ func newLayerCreator() create.LayerCreator {
 
 // newManifestWriter returns a ManifestWriter callback for writing the model manifest.
 func newManifestWriter(opts CreateOptions, capabilities []string, parserName, rendererName string) create.ManifestWriter {
-	return func(modelName string, config create.LayerInfo, layers []create.LayerInfo) error {
-		name := model.ParseName(modelName)
-		if !name.IsValid() {
-			return fmt.Errorf("invalid model name: %s", modelName)
-		}
-
-		// TODO: find a better way to detect image input support
-		// For now, hardcode Flux2KleinPipeline as supporting vision (image input)
-		caps := capabilities
-		modelIndex := filepath.Join(opts.ModelDir, "model_index.json")
-		if data, err := os.ReadFile(modelIndex); err == nil {
-			var cfg struct {
-				ClassName string `json:"_class_name"`
-			}
-			if json.Unmarshal(data, &cfg) == nil && cfg.ClassName == "Flux2KleinPipeline" {
-				caps = append(caps, "vision")
-			}
-		}
-
-		// Create config blob with version requirement.
-		configData := model.ConfigV2{}
-		if opts.BaseConfig != nil {
-			configData = *opts.BaseConfig
-		}
-		configData.ModelFormat = "safetensors"
-		if opts.Quantize != "" || configData.FileType == "" {
-			configData.FileType = strings.ToLower(strings.TrimSpace(opts.Quantize))
-		}
-		configData.Capabilities = caps
-		configData.Requires = MinOllamaVersion
-		if opts.Modelfile != nil && opts.Modelfile.Requires != "" {
-			configData.Requires = opts.Modelfile.Requires
-		}
-		configData.Parser = resolveParserName(opts.Modelfile, parserName)
-		configData.Renderer = resolveRendererName(opts.Modelfile, rendererName)
-		if opts.Modelfile != nil && opts.Modelfile.Draft != "" {
-			draft, err := draftMetadata(opts.Modelfile.Draft)
-			if err != nil {
-				return err
-			}
-			configData.Draft = draft
-		}
-		configJSON, err := json.Marshal(configData)
-		if err != nil {
-			return fmt.Errorf("failed to marshal config: %w", err)
-		}
-
-		// Create config layer blob
-		configLayer, err := manifest.NewLayer(bytes.NewReader(configJSON), "application/vnd.docker.container.image.v1+json")
-		if err != nil {
-			return fmt.Errorf("failed to create config layer: %w", err)
-		}
-
-		// Convert LayerInfo to manifest.Layer
-		manifestLayers := make([]manifest.Layer, 0, len(layers))
-		for _, l := range layers {
-			manifestLayers = append(manifestLayers, manifest.Layer{
-				MediaType: l.MediaType,
-				Digest:    l.Digest,
-				Size:      l.Size,
-				Name:      l.Name,
-			})
-		}
-
-		// Add Modelfile layers if present
-		if opts.Modelfile != nil {
-			modelfileLayers, err := createModelfileLayers(opts.Modelfile)
-			if err != nil {
-				return err
-			}
-			manifestLayers = append(manifestLayers, modelfileLayers...)
-		}
-
-		return manifest.WriteManifest(name, configLayer, manifestLayers)
+	var template, system, license, requires, draftDir string
+	var parameters map[string]any
+	if opts.Modelfile != nil {
+		template = opts.Modelfile.Template
+		system = opts.Modelfile.System
+		license = opts.Modelfile.License
+		requires = opts.Modelfile.Requires
+		draftDir = opts.Modelfile.Draft
+		parameters = opts.Modelfile.Parameters
 	}
+	return create.NewSafetensorsManifestWriter(create.SafetensorsManifestOptions{
+		ModelDir:           opts.ModelDir,
+		BaseConfig:         opts.BaseConfig,
+		Quantize:           opts.Quantize,
+		Capabilities:       capabilities,
+		MinVersion:         MinOllamaVersion,
+		Requires:           requires,
+		Parser:             resolveParserName(opts.Modelfile, parserName),
+		Renderer:           resolveRendererName(opts.Modelfile, rendererName),
+		DraftDir:           draftDir,
+		Template:           template,
+		System:             system,
+		License:            license,
+		Parameters:         parameters,
+		ExtraLayers:        nil,
+		IncludeRootFSDiffs: false,
+	})
 }
 
 func resolveParserName(mf *ModelfileConfig, inferred string) string {
@@ -467,50 +387,6 @@ func resolveRendererName(mf *ModelfileConfig, inferred string) string {
 	}
 
 	return inferred
-}
-
-// createModelfileLayers creates layers for template, system, and license from Modelfile config.
-func createModelfileLayers(mf *ModelfileConfig) ([]manifest.Layer, error) {
-	var layers []manifest.Layer
-
-	if mf.Template != "" {
-		layer, err := manifest.NewLayer(bytes.NewReader([]byte(mf.Template)), "application/vnd.ollama.image.template")
-		if err != nil {
-			return nil, fmt.Errorf("failed to create template layer: %w", err)
-		}
-		layers = append(layers, layer)
-	}
-
-	if mf.System != "" {
-		layer, err := manifest.NewLayer(bytes.NewReader([]byte(mf.System)), "application/vnd.ollama.image.system")
-		if err != nil {
-			return nil, fmt.Errorf("failed to create system layer: %w", err)
-		}
-		layers = append(layers, layer)
-	}
-
-	if mf.License != "" {
-		layer, err := manifest.NewLayer(bytes.NewReader([]byte(mf.License)), "application/vnd.ollama.image.license")
-		if err != nil {
-			return nil, fmt.Errorf("failed to create license layer: %w", err)
-		}
-		layers = append(layers, layer)
-	}
-
-	if len(mf.Parameters) > 0 {
-		var b bytes.Buffer
-		if err := json.NewEncoder(&b).Encode(mf.Parameters); err != nil {
-			return nil, fmt.Errorf("failed to encode parameters: %w", err)
-		}
-
-		layer, err := manifest.NewLayer(&b, "application/vnd.ollama.image.params")
-		if err != nil {
-			return nil, fmt.Errorf("failed to create params layer: %w", err)
-		}
-		layers = append(layers, layer)
-	}
-
-	return layers, nil
 }
 
 // modelCapabilities holds the input-modality and reasoning capabilities a model

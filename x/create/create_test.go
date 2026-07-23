@@ -15,50 +15,6 @@ import (
 	st "github.com/ollama/ollama/x/safetensors"
 )
 
-func TestIsTensorModelDir(t *testing.T) {
-	tests := []struct {
-		name     string
-		setup    func(dir string) error
-		expected bool
-	}{
-		{
-			name: "valid diffusers model with model_index.json",
-			setup: func(dir string) error {
-				return os.WriteFile(filepath.Join(dir, "model_index.json"), []byte(`{"_class_name": "FluxPipeline"}`), 0o644)
-			},
-			expected: true,
-		},
-		{
-			name: "empty directory",
-			setup: func(dir string) error {
-				return nil
-			},
-			expected: false,
-		},
-		{
-			name: "directory with other files but no model_index.json",
-			setup: func(dir string) error {
-				return os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{}`), 0o644)
-			},
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
-			if err := tt.setup(dir); err != nil {
-				t.Fatalf("setup failed: %v", err)
-			}
-
-			got := IsTensorModelDir(dir)
-			if got != tt.expected {
-				t.Errorf("IsTensorModelDir() = %v, want %v", got, tt.expected)
-			}
-		})
-	}
-}
-
 func TestValidateScalarFloat32TensorData(t *testing.T) {
 	td := st.NewTensorDataFromBytes("linear.weight_scale_2", "F32", []int32{}, encodeFloat32s(2))
 
@@ -356,51 +312,42 @@ func TestManifest(t *testing.T) {
 	}
 }
 
-func TestShouldQuantize(t *testing.T) {
+func TestShouldQuantizePredicate(t *testing.T) {
 	tests := []struct {
-		name      string
-		tensor    string
-		component string
-		want      bool
+		name   string
+		tensor string
+		want   bool
 	}{
-		// VAE component should never be quantized
-		{"vae weight", "decoder.weight", "vae", false},
-		{"vae bias", "decoder.bias", "vae", false},
-
 		// Embeddings should not be quantized
-		{"embedding weight", "embed_tokens.weight", "", false},
-		{"embedding in name", "token_embedding.weight", "", false},
+		{"embedding weight", "embed_tokens.weight", false},
+		{"embedding in name", "token_embedding.weight", false},
 
 		// Norms should not be quantized
-		{"layer norm", "layer_norm.weight", "", false},
-		{"rms norm", "rms_norm.weight", "", false},
-		{"ln prefix", "ln_1.weight", "", false},
-		{"layernorm in name", "input_layernorm.weight", "", false},
+		{"layer norm", "layer_norm.weight", false},
+		{"rms norm", "rms_norm.weight", false},
+		{"ln prefix", "ln_1.weight", false},
+		{"layernorm in name", "input_layernorm.weight", false},
 
 		// Audio encoder tensors should not be quantized
-		{"audio tower weight", "model.audio_tower.layers.0.weight", "", false},
-		{"audio tower norm", "model.audio_tower.norm.weight", "", false},
-		{"embed audio weight", "embed_audio.weight", "", false},
+		{"audio tower weight", "model.audio_tower.layers.0.weight", false},
+		{"audio tower norm", "model.audio_tower.norm.weight", false},
+		{"embed audio weight", "embed_audio.weight", false},
 
 		// Biases should not be quantized
-		{"bias tensor", "attention.bias", "", false},
-		{"proj bias", "o_proj.bias", "", false},
+		{"bias tensor", "attention.bias", false},
+		{"proj bias", "o_proj.bias", false},
 
 		// Linear weights should be quantized
-		{"linear weight", "q_proj.weight", "", true},
-		{"attention weight", "self_attn.weight", "", true},
-		{"mlp weight", "mlp.gate_proj.weight", "", true},
-
-		// Transformer component weights should be quantized
-		{"transformer weight", "layers.0.weight", "transformer", true},
-		{"text_encoder weight", "encoder.weight", "text_encoder", true},
+		{"linear weight", "q_proj.weight", true},
+		{"attention weight", "self_attn.weight", true},
+		{"mlp weight", "mlp.gate_proj.weight", true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ShouldQuantize(tt.tensor, tt.component)
+			got := shouldQuantize(tt.tensor)
 			if got != tt.want {
-				t.Errorf("ShouldQuantize(%q, %q) = %v, want %v", tt.tensor, tt.component, got, tt.want)
+				t.Errorf("shouldQuantize(%q) = %v, want %v", tt.tensor, got, tt.want)
 			}
 		})
 	}

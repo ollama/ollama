@@ -710,7 +710,7 @@ type CreateRequest struct {
 	Renderer string `json:"renderer,omitempty"`
 
 	// Parser is the name of the parser used to parse the output of the request.
-	Parser   string `json:"parser,omitempty"`
+	Parser string `json:"parser,omitempty"`
 
 	// Requires is the minimum version of Ollama required by the model.
 	Requires string `json:"requires,omitempty"`
