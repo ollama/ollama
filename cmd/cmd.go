@@ -797,6 +797,10 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 	opts.WordWrap = !nowrap
 
+	if !term.IsTerminal(int(os.Stdout.Fd())) {
+		opts.WordWrap = false
+	}
+
 	// Fill out the rest of the options based on information about the
 	// model.
 	client, err := api.ClientFromEnvironment()
