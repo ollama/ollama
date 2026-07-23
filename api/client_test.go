@@ -2,11 +2,13 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -188,6 +190,51 @@ func TestClientStream(t *testing.T) {
 			}
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestClientStreamReportsEmptyBodyErrors(t *testing.T) {
+	testCases := []struct {
+		name       string
+		statusCode int
+		wantAuth   bool
+	}{
+		{name: "unauthorized", statusCode: http.StatusUnauthorized, wantAuth: true},
+		{name: "server error", statusCode: http.StatusInternalServerError},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/x-ndjson")
+				w.WriteHeader(tc.statusCode)
+			}))
+			defer ts.Close()
+
+			client := NewClient(&url.URL{Scheme: "http", Host: ts.Listener.Addr().String()}, http.DefaultClient)
+
+			err := client.stream(t.Context(), http.MethodPost, "/api/chat", nil, func([]byte) error {
+				return nil
+			})
+			if err == nil {
+				t.Fatalf("expected error for status %d with empty body, got nil", tc.statusCode)
+			}
+
+			var authErr AuthorizationError
+			if tc.wantAuth {
+				if !errors.As(err, &authErr) {
+					t.Fatalf("expected AuthorizationError, got %T: %v", err, err)
+				}
+				return
+			}
+
+			if errors.As(err, &authErr) {
+				t.Fatalf("did not expect AuthorizationError, got %v", err)
+			}
+			if !strings.Contains(err.Error(), strconv.Itoa(tc.statusCode)) {
+				t.Fatalf("expected error mentioning status %d, got %v", tc.statusCode, err)
 			}
 		})
 	}
