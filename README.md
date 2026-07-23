@@ -295,6 +295,7 @@ console.log(response.message.content);
 - [oterm](https://github.com/ggozad/oterm) - Terminal client for Ollama
 - [gollama](https://github.com/sammcj/gollama) - Go-based model manager for Ollama
 - [tlm](https://github.com/yusufcanb/tlm) - Local shell copilot
+- [ollmcp](https://github.com/jonigl/mcp-client-for-ollama) - Interactive MCP client for Ollama with tools, prompts, and resources
 - [tenere](https://github.com/pythops/tenere) - TUI for LLMs
 - [ParLlama](https://github.com/paulrobello/parllama) - TUI for Ollama
 - [llm-ollama](https://github.com/taketwo/llm-ollama) - Plugin for [Datasette's LLM CLI](https://llm.datasette.io/en/stable/)
