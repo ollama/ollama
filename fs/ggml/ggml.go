@@ -708,6 +708,25 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 	}
 	slog.Debug("default cache size estimate", "attention MiB", float32(kvSizeAttn)/(1024.*1024.), "attention bytes", kvSizeAttn, "recurrent MiB", float32(kvSizeRecurrent)/(1024.*1024.), "recurrent bytes", kvSizeRecurrent)
 
+	// Generic SWA correction: applies to any model that stores a per-layer bool array
+	// in attention.sliding_window_pattern (true = sliding/local layer, false = full-attention).
+	// Sliding layers cap their KV at the window size and may use smaller head dimensions
+	// (attention.key_length_swa / attention.value_length_swa). Without this correction,
+	// models like Gemma 4 (25/30 layers are sliding, window=1024) get KV budgets that are
+	// 4–14× too large at typical context lengths, starving GPU expert placement.
+	if swPattern := f.KV().Bools("attention.sliding_window_pattern"); len(swPattern) == len(kv) {
+		sw := uint64(numParallel)*uint64(f.KV().Uint("attention.sliding_window")) + batch
+		embKSwa := uint64(f.KV().Uint("attention.key_length_swa", uint32(embeddingHeadsK)))
+		embVSwa := uint64(f.KV().Uint("attention.value_length_swa", uint32(embeddingHeadsV)))
+		for i, isSliding := range swPattern {
+			if isSliding {
+				kvTotal -= kv[i]
+				kv[i] = uint64(float64(sw*(embKSwa+embVSwa)*headsKVArr[i]) * bytesPerElement)
+				kvTotal += kv[i]
+			}
+		}
+	}
+
 	switch f.KV().Architecture() {
 	case "llama", "llama4":
 		fullOffload = max(
