@@ -1655,11 +1655,12 @@ type displayResponseState struct {
 }
 
 func displayResponse(content string, wordWrap bool, state *displayResponseState) {
-	termWidth, _, _ := term.GetSize(int(os.Stdout.Fd()))
-	if termWidth == 0 {
-		termWidth = 80
-	}
-	if wordWrap && termWidth >= 10 {
+	termWidth, _, err := term.GetSize(int(os.Stdout.Fd()))
+	// Word-wrapping emits cursor-control escape sequences, which only make sense
+	// on a real terminal. When stdout is redirected to a file or pipe term.GetSize
+	// returns an error; fall through to plain output so the escape sequences don't
+	// leak into the redirected output (issue #16785).
+	if wordWrap && err == nil && termWidth >= 10 {
 		for _, ch := range content {
 			if state.lineLength+1 > termWidth-5 {
 				if runewidth.StringWidth(state.wordBuffer) > termWidth-10 {
