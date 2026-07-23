@@ -89,6 +89,9 @@ func GenerateAgentTUI(cmd *cobra.Command, client *api.Client, opts agentTUIOptio
 		if err != nil {
 			return nil, err
 		}
+		if ignored := catalog.ExcludeNames(agentchat.BuiltinSlashCommandNames()); len(ignored) > 0 {
+			fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m ignoring agent skill(s): %s\n", strings.Join(ignored, ", "))
+		}
 		for _, diagnostic := range catalog.Diagnostics() {
 			fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m ignored invalid agent skill: %v\n", diagnostic)
 		}

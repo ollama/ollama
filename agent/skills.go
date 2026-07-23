@@ -675,6 +675,31 @@ func (c *SkillCatalog) Diagnostics() []error {
 	return append([]error(nil), c.diagnostics...)
 }
 
+// ExcludeNames removes skills whose names are reserved by a caller. It returns
+// the excluded names in sorted order.
+func (c *SkillCatalog) ExcludeNames(names []string) []string {
+	if c == nil {
+		return nil
+	}
+	reserved := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		name = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(name)), "/")
+		if name != "" {
+			reserved[name] = struct{}{}
+		}
+	}
+	var excluded []string
+	for name := range c.skills {
+		if _, ok := reserved[name]; !ok {
+			continue
+		}
+		delete(c.skills, name)
+		excluded = append(excluded, name)
+	}
+	sort.Strings(excluded)
+	return excluded
+}
+
 func (c *SkillCatalog) Load(name string) (Skill, error) {
 	name = strings.TrimSpace(name)
 	if !skillName.MatchString(name) {

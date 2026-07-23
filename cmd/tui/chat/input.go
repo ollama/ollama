@@ -55,6 +55,7 @@ var chatSlashCommands = []chatSlashCommand{
 	{name: "/new", description: "start a new chat"},
 	{name: "/think", description: "set thinking mode"},
 	{name: "/tools", description: "toggle tools on or off"},
+	{name: "/system", usage: "/system [on|off]", description: "show or set the built-in system prompt"},
 	{name: "/skills", usage: "/skills [import codex|claude|pi]", description: "list or import skills"},
 	{name: "/compact", description: "summarize older context"},
 	{name: "/help", description: "show commands", aliases: []string{"/?"}},
@@ -67,6 +68,24 @@ var skillsImportCompletions = []chatCompletion{
 	{value: "/skills import codex", label: "/skills import codex", description: "import from ~/.codex/skills"},
 	{value: "/skills import claude", label: "/skills import claude", description: "import from ~/.claude/skills"},
 	{value: "/skills import pi", label: "/skills import pi", description: "import from ~/.pi/agent/skills"},
+}
+
+// BuiltinSlashCommandNames returns the names reserved by built-in slash
+// commands, including aliases.
+func BuiltinSlashCommandNames() []string {
+	names := make(map[string]struct{})
+	for _, command := range chatSlashCommands {
+		names[strings.TrimPrefix(command.name, "/")] = struct{}{}
+		for _, alias := range command.aliases {
+			names[strings.TrimPrefix(alias, "/")] = struct{}{}
+		}
+	}
+	reserved := make([]string, 0, len(names))
+	for name := range names {
+		reserved = append(reserved, name)
+	}
+	sort.Strings(reserved)
+	return reserved
 }
 
 func (m *chatModel) handleSubmit() (tea.Model, tea.Cmd) {
@@ -94,11 +113,12 @@ func (m *chatModel) handleSubmit() (tea.Model, tea.Cmd) {
 }
 
 func (m *chatModel) applySlashCompletion() bool {
-	input := strings.TrimSpace(string(m.input))
+	rawInput := string(m.input)
+	input := strings.TrimSpace(rawInput)
 	if !strings.HasPrefix(input, "/") {
 		return false
 	}
-	if _, _, known := slashCommandInvocation(input); known {
+	if _, _, known := slashCommandInvocation(input); known && !hasSystemCommandArgument(rawInput) {
 		return false
 	}
 	completions := m.slashCompletions()
@@ -106,7 +126,7 @@ func (m *chatModel) applySlashCompletion() bool {
 		return false
 	}
 	selected := completions[clamp(m.complete, 0, len(completions)-1)]
-	if selected.value == input {
+	if strings.EqualFold(selected.value, input) {
 		return false
 	}
 	// Reset prompt-history state: Up/Down is shared between history recall and
@@ -142,6 +162,8 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 		return m.handleThinkCommand(args)
 	case command == "/tools":
 		return m.handleToolsCommand(args)
+	case command == "/system":
+		return m.handleSystemCommand(args)
 	case command == "/skills":
 		return m.handleSkillsCommand(args)
 	case command == "/prompt":
@@ -298,6 +320,40 @@ func (m *chatModel) handleToolsCommand(args string) (tea.Model, tea.Cmd) {
 		m.opts.SystemPrompt = m.opts.SystemPromptForModel(m.ctx, m.opts.Model, m.opts.Tools, m.opts.ToolsDisabled)
 	}
 	return *m, nil
+}
+
+func (m *chatModel) handleSystemCommand(args string) (tea.Model, tea.Cmd) {
+	switch strings.ToLower(strings.TrimSpace(args)) {
+	case "":
+		m.entries = append(m.entries, newSlashEntry(m.systemCommandOutput()))
+	case "on":
+		m.systemPromptDisabled = false
+		m.status = "system prompt on"
+		m.entries = append(m.entries, newSlashEntry(m.systemCommandOutput()))
+	case "off":
+		m.systemPromptDisabled = true
+		m.status = "system prompt off"
+		m.entries = append(m.entries, newSlashEntry(m.systemCommandOutput()))
+	default:
+		m.status = "error"
+		m.entries = append(m.entries, newChatEntry(chatEntry{role: "error", content: "usage: /system [on|off]"}))
+	}
+	return *m, nil
+}
+
+func (m chatModel) systemPromptState() string {
+	if m.systemPromptDisabled {
+		return "off"
+	}
+	return "on"
+}
+
+func (m chatModel) systemCommandOutput() string {
+	prompt := strings.TrimSpace(m.opts.SystemPrompt)
+	if prompt == "" {
+		prompt = "(empty)"
+	}
+	return "Built-in system prompt is " + m.systemPromptState() + ".\n\n" + prompt + "\n\nWarning: Changing the system prompt during a session breaks the prompt cache."
 }
 
 func (m chatModel) slashInputIsMultimodalFile(input string) bool {
@@ -1184,6 +1240,9 @@ func (m chatModel) slashCompletions() []chatCompletion {
 	if !strings.HasPrefix(input, "/") {
 		return nil
 	}
+	if argument, ok := systemCommandArgument(rawInput); ok {
+		return systemCommandCompletions(argument)
+	}
 	if m.skillSlashPromptStarted(rawInput) {
 		return nil
 	}
@@ -1264,6 +1323,42 @@ func matchingSkillsImportCompletions(input string) []chatCompletion {
 	}
 	if len(completions) == 0 {
 		return []chatCompletion{{label: "No matching skill sources"}}
+	}
+	return completions
+}
+
+func hasSystemCommandArgument(input string) bool {
+	_, ok := systemCommandArgument(input)
+	return ok
+}
+
+func systemCommandArgument(input string) (string, bool) {
+	input = strings.TrimLeftFunc(input, unicode.IsSpace)
+	end := strings.IndexFunc(input, unicode.IsSpace)
+	if end < 0 {
+		return "", false
+	}
+	command, _, known := slashCommandInvocation(input[:end])
+	if !known || command != "/system" {
+		return "", false
+	}
+	return strings.TrimSpace(input[end:]), true
+}
+
+func systemCommandCompletions(argument string) []chatCompletion {
+	argument = strings.ToLower(argument)
+	options := []chatCompletion{
+		{value: "/system on", label: "on", description: "enable the built-in system prompt"},
+		{value: "/system off", label: "off", description: "disable the built-in system prompt"},
+	}
+	completions := make([]chatCompletion, 0, len(options))
+	for _, option := range options {
+		if strings.HasPrefix(option.label, argument) {
+			completions = append(completions, option)
+		}
+	}
+	if len(completions) == 0 {
+		return []chatCompletion{{label: "No matching options"}}
 	}
 	return completions
 }
@@ -1511,7 +1606,7 @@ func (m chatModel) helpSummary() string {
 
 func (m chatModel) systemPrompt(extra string) string {
 	var parts []string
-	if strings.TrimSpace(m.opts.SystemPrompt) != "" {
+	if !m.systemPromptDisabled && strings.TrimSpace(m.opts.SystemPrompt) != "" {
 		parts = append(parts, strings.TrimSpace(m.opts.SystemPrompt))
 	}
 	if strings.TrimSpace(extra) != "" {

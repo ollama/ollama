@@ -141,6 +141,8 @@ type chatModel struct {
 	permissionNotice   string
 	selection          chatSelection
 
+	systemPromptDisabled bool
+
 	width              int
 	height             int
 	status             string
