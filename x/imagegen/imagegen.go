@@ -94,6 +94,11 @@ func (s *server) handleImageCompletion(w http.ResponseWriter, r *http.Request, r
 	// Generate image
 	img, err := s.imageModel.GenerateImage(ctx, req.Prompt, req.Width, req.Height, req.Steps, req.Seed, progress)
 	if err != nil {
+		// Release the partial working set so the runner stays healthy for the
+		// next request — cancelled/failed generations otherwise leave their
+		// transient buffers cached and the next request starts near the VRAM
+		// ceiling.
+		mlx.ClearCache()
 		// Don't send error for cancellation
 		if ctx.Err() != nil {
 			return

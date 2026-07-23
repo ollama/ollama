@@ -73,6 +73,19 @@ func (s *Server) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo
 		s.vramSize = 8 * 1024 * 1024 * 1024
 	}
 
+	// Weights are only a fraction of the working set: denoising activations,
+	// JIT/cuDNN workspaces and the VAE-decode spike land on top (flux2-klein:4b
+	// reaches ~19.8 GiB at 1024x1024 vs 5.3 GiB of weights). Reporting bare
+	// weights lets the scheduler admit the runner alongside other models and
+	// the generation then OOMs, so pad the estimate with a working-set margin.
+	margin := uint64(15) << 30
+	if v := os.Getenv("OLLAMA_IMAGEGEN_VRAM_MARGIN"); v != "" {
+		if n, err := strconv.ParseUint(v, 10, 64); err == nil {
+			margin = n
+		}
+	}
+	s.vramSize += margin
+
 	if len(gpus) > 0 {
 		available := gpus[0].FreeMemory
 		overhead := gpus[0].MinimumMemory() + envconfig.GpuOverhead()
@@ -86,7 +99,16 @@ func (s *Server) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo
 			if requireFull {
 				return nil, llm.ErrLoadRequiredFull
 			}
-			return nil, fmt.Errorf("model requires %s but only %s are available (after %s overhead)", format.HumanBytes2(s.vramSize), format.HumanBytes2(available), format.HumanBytes2(overhead))
+			if weights := s.vramSize - margin; weights > available {
+				return nil, fmt.Errorf("model requires %s but only %s are available (after %s overhead)", format.HumanBytes2(weights), format.HumanBytes2(available), format.HumanBytes2(overhead))
+			}
+			// Nothing left to evict and the weights fit. The margin is a
+			// worst-case working set; smaller outputs can complete well under
+			// it, so proceed best-effort rather than refusing loads that
+			// used to be attempted.
+			slog.Warn("imagegen working set may exceed free VRAM, loading anyway",
+				"estimate", format.HumanBytes2(s.vramSize),
+				"available", format.HumanBytes2(available))
 		}
 	}
 

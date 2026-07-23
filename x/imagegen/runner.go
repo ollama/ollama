@@ -51,6 +51,12 @@ func Execute(args []string) error {
 			slog.Error("unable to initialize MLX", "error", err)
 			return err
 		}
+		// Restore strict error handling now that MLX is confirmed working, as
+		// cmd/engine does. Without this the silent init-mode handler swallows
+		// every MLX runtime error, and failed ops return arrays with nil
+		// buffers that segfault far from the actual failure (issue #14843:
+		// Buffer::raw_ptr() SIGSEGV inside mlx_array_data_float32).
+		mlx.RestoreDefaultErrorHandler()
 		slog.Info("MLX library initialized")
 		return nil
 	})
