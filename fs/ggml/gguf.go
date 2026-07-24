@@ -431,7 +431,7 @@ func writeGGUFString(w io.Writer, s string) error {
 		return err
 	}
 
-	_, err := io.Copy(w, strings.NewReader(s))
+	_, err := io.WriteString(w, s)
 	return err
 }
 
