@@ -653,9 +653,12 @@ func editInExternalEditor(content string) (string, error) {
 	}
 
 	// Check that the editor binary exists
-	name := strings.Fields(editor)[0]
-	if _, err := exec.LookPath(name); err != nil {
-		return "", fmt.Errorf("editor %q not found, set OLLAMA_EDITOR to the path of your preferred editor", name)
+	args := strings.Fields(editor)
+	if len(args) == 0 {
+		return "", fmt.Errorf("no editor configured, set OLLAMA_EDITOR to the path of your preferred editor")
+	}
+	if _, err := exec.LookPath(args[0]); err != nil {
+		return "", fmt.Errorf("editor %q not found, set OLLAMA_EDITOR to the path of your preferred editor", args[0])
 	}
 
 	tmpFile, err := os.CreateTemp("", "ollama-prompt-*.txt")
@@ -672,7 +675,6 @@ func editInExternalEditor(content string) (string, error) {
 	}
 	tmpFile.Close()
 
-	args := strings.Fields(editor)
 	args = append(args, tmpFile.Name())
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Stdin = os.Stdin
