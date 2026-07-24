@@ -52,7 +52,13 @@ func ResolveLinearQuantParams(
 
 	if mode == "affine" {
 		if inferredGroupSize, inferredBits, ok := InferAffineQuantParamsFromShapes(weight, scales, bits); ok {
-			if !fromTensor || groupSize == 0 || bits == 0 {
+			// Prefer shape inference when we have no trustworthy metadata, or when
+			// the metadata contradicts the packed weight/scale shapes. The latter
+			// happens with mixed-precision checkpoints whose container declares a
+			// single global quant type even though some layers (e.g. the MLP) are
+			// packed at a different bit width. The packed shapes are ground truth.
+			if !fromTensor || groupSize == 0 || bits == 0 ||
+				!affineShapeConsistent(weight, scales, groupSize, bits) {
 				groupSize = inferredGroupSize
 				bits = inferredBits
 			}
@@ -60,6 +66,29 @@ func ResolveLinearQuantParams(
 	}
 
 	return groupSize, bits, mode
+}
+
+// affineShapeConsistent reports whether (groupSize, bits) is compatible with the
+// packed weight and scale shapes of an affine quantized tensor. MLX packs the
+// last weight axis as uint32 words, so packed_cols*32 == scale_cols*groupSize*bits.
+func affineShapeConsistent(weight, scales *mlx.Array, groupSize, bits int) bool {
+	if weight == nil || scales == nil || groupSize <= 0 || bits <= 0 {
+		return false
+	}
+
+	weightShape := weight.Dims()
+	scaleShape := scales.Dims()
+	if len(weightShape) == 0 || len(scaleShape) == 0 {
+		return false
+	}
+
+	weightCols := weightShape[len(weightShape)-1]
+	scalesCols := scaleShape[len(scaleShape)-1]
+	if weightCols <= 0 || scalesCols <= 0 {
+		return false
+	}
+
+	return weightCols*32 == scalesCols*groupSize*bits
 }
 
 // InferAffineQuantParamsFromShapes infers (groupSize,bits) for affine quantized
