@@ -15,6 +15,8 @@ import (
 	"github.com/ollama/ollama/fs/ggml"
 )
 
+var qwen3VLDeepstackRe = regexp.MustCompile(`^v\.deepstack\.(\d+)\.(.+)$`)
+
 type qwen3VLModel struct {
 	qwen3Model `json:"text_config"`
 
@@ -214,8 +216,7 @@ func (m *qwen3VLModel) qwen3VLProjectorRename(name string) string {
 	}
 
 	if strings.HasPrefix(name, "v.deepstack.") {
-		re := regexp.MustCompile(`^v\.deepstack\.(\d+)\.(.+)$`)
-		if matches := re.FindStringSubmatch(name); matches != nil {
+		if matches := qwen3VLDeepstackRe.FindStringSubmatch(name); matches != nil {
 			seqIdx, err := strconv.Atoi(matches[1])
 			if err == nil && seqIdx < len(m.VisionModel.DeepstackVisualIndexes) {
 				blockIdx := m.VisionModel.DeepstackVisualIndexes[seqIdx]
