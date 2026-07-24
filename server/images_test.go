@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -782,4 +783,121 @@ func TestPullModelManifest(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPullModelManifestRetriesInterruptedResponse(t *testing.T) {
+	manifestData := `{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json","config":{"digest":"sha256:abc","mediaType":"application/vnd.docker.container.image.v1+json","size":50},"layers":[]}`
+	var requests atomic.Int32
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) == 1 {
+			w.Header().Set("Content-Length", fmt.Sprint(len(manifestData)))
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(manifestData[:len(manifestData)/2]))
+			return
+		}
+
+		w.Write([]byte(manifestData))
+	}))
+	defer ts.Close()
+
+	n := model.ParseName("test/model:latest")
+	n.ProtocolScheme = "http"
+	n.Host = strings.TrimPrefix(ts.URL, "http://")
+
+	_, data, err := pullModelManifest(t.Context(), n, &registryOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != manifestData {
+		t.Fatalf("manifest data = %q, want %q", data, manifestData)
+	}
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("requests = %d, want 2", got)
+	}
+}
+
+func TestPullModelManifestRetriesInterruptedRequest(t *testing.T) {
+	manifestData := `{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json","config":{"digest":"sha256:abc","mediaType":"application/vnd.docker.container.image.v1+json","size":50},"layers":[]}`
+	var requests atomic.Int32
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) == 1 {
+			conn, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Errorf("hijack connection: %v", err)
+				return
+			}
+			conn.Close()
+			return
+		}
+
+		w.Write([]byte(manifestData))
+	}))
+	defer ts.Close()
+
+	n := model.ParseName("test/model:latest")
+	n.ProtocolScheme = "http"
+	n.Host = strings.TrimPrefix(ts.URL, "http://")
+
+	_, data, err := pullModelManifest(t.Context(), n, &registryOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != manifestData {
+		t.Fatalf("manifest data = %q, want %q", data, manifestData)
+	}
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("requests = %d, want 2", got)
+	}
+}
+
+func BenchmarkPullModelManifest(b *testing.B) {
+	manifestData := `{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json","config":{"digest":"sha256:abc","mediaType":"application/vnd.docker.container.image.v1+json","size":50},"layers":[]}`
+
+	b.Run("healthy", func(b *testing.B) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte(manifestData))
+		}))
+		defer ts.Close()
+
+		n := model.ParseName("test/model:latest")
+		n.ProtocolScheme = "http"
+		n.Host = strings.TrimPrefix(ts.URL, "http://")
+		b.ReportAllocs()
+		b.ResetTimer()
+
+		for b.Loop() {
+			if _, _, err := pullModelManifest(b.Context(), n, &registryOptions{}); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("interrupted_response", func(b *testing.B) {
+		var requests atomic.Int32
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if requests.Add(1)%2 == 1 {
+				w.Header().Set("Content-Length", fmt.Sprint(len(manifestData)))
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(manifestData[:len(manifestData)/2]))
+				return
+			}
+
+			w.Write([]byte(manifestData))
+		}))
+		defer ts.Close()
+
+		n := model.ParseName("test/model:latest")
+		n.ProtocolScheme = "http"
+		n.Host = strings.TrimPrefix(ts.URL, "http://")
+		b.ReportAllocs()
+		b.ResetTimer()
+
+		for b.Loop() {
+			if _, _, err := pullModelManifest(b.Context(), n, &registryOptions{}); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
 }
