@@ -624,6 +624,9 @@ components:
           type: object
           description: Additional information about the model's format and family
           properties:
+            parent_model:
+              type: string
+              description: Name of the parent model this model was derived from, when applicable
             format:
               type: string
               description: Model file format (for example `gguf`)
@@ -641,6 +644,26 @@ components:
             quantization_level:
               type: string
               description: Quantization level used (for example `Q4_0`)
+            context_length:
+              type: integer
+              description: Maximum context length the model supports, when known
+            embedding_length:
+              type: integer
+              description: Embedding dimension of the model, when known
+        capabilities:
+          type: array
+          items:
+            type: string
+            enum:
+              - completion
+              - tools
+              - insert
+              - vision
+              - embedding
+              - thinking
+              - image
+              - audio
+          description: Capabilities the model supports
     ListResponse:
       type: object
       properties:
@@ -1160,12 +1183,18 @@ paths:
                     size: 9608350245
                     digest: "c6eb396dbd5992bbe3f5cdb947e8bbc0ee413d7c17e2beaae69f5d569cf982eb"
                     details:
+                      parent_model: ""
                       format: "gguf"
                       family: "gemma4"
                       families:
                         - "gemma4"
                       parameter_size: "8.0B"
                       quantization_level: "Q4_K_M"
+                      context_length: 131072
+                      embedding_length: 2560
+                    capabilities:
+                      - "completion"
+                      - "vision"
   /api/ps:
     get:
       summary: List running models
