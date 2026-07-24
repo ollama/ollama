@@ -513,7 +513,9 @@ func llamaServerBootstrapDevicesWithStatus(ctx context.Context, ollamaLibDirs []
 		return devices, status, nil
 	}
 
-	return filterUnsupportedROCmDevices(devices, ollamaLibDirs), status, nil
+	devices = filterUnsupportedROCmDevices(devices, ollamaLibDirs)
+	devices = filterInvisibleROCmDevices(devices, extraEnvs)
+	return devices, status, nil
 }
 
 // Ensure stderrPipe is fully consumed to avoid blocking

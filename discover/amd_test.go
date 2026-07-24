@@ -287,3 +287,96 @@ func writeFakeSysfsFile(t *testing.T, dir, name, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestFilterInvisibleROCmDevices(t *testing.T) {
+	tests := []struct {
+		name      string
+		devices   []ml.DeviceInfo
+		extraEnvs map[string]string
+		setEnv    map[string]string
+		want      int
+	}{
+		{
+			name: "no filtering when ROCR_VISIBLE_DEVICES not set",
+			devices: []ml.DeviceInfo{
+				{DeviceID: ml.DeviceID{ID: "0", Library: "ROCm"}, Name: "ROCm0"},
+				{DeviceID: ml.DeviceID{ID: "0", Library: "CUDA"}, Name: "CUDA0"},
+			},
+			want: 2,
+		},
+		{
+			name: "filter ROCm when ROCR_VISIBLE_DEVICES=-1",
+			devices: []ml.DeviceInfo{
+				{DeviceID: ml.DeviceID{ID: "0", Library: "ROCm"}, Name: "ROCm0"},
+				{DeviceID: ml.DeviceID{ID: "0", Library: "CUDA"}, Name: "CUDA0"},
+			},
+			extraEnvs: map[string]string{"ROCR_VISIBLE_DEVICES": "-1"},
+			want:      1,
+		},
+		{
+			name: "filter ROCm when HIP_VISIBLE_DEVICES=-1",
+			devices: []ml.DeviceInfo{
+				{DeviceID: ml.DeviceID{ID: "0", Library: "ROCm"}, Name: "ROCm0"},
+				{DeviceID: ml.DeviceID{ID: "0", Library: "CUDA"}, Name: "CUDA0"},
+			},
+			extraEnvs: map[string]string{"HIP_VISIBLE_DEVICES": "-1"},
+			want:      1,
+		},
+		{
+			name: "filter ROCm when GPU_DEVICE_ORDINAL=-1",
+			devices: []ml.DeviceInfo{
+				{DeviceID: ml.DeviceID{ID: "0", Library: "ROCm"}, Name: "ROCm0"},
+				{DeviceID: ml.DeviceID{ID: "0", Library: "CUDA"}, Name: "CUDA0"},
+			},
+			extraEnvs: map[string]string{"GPU_DEVICE_ORDINAL": "-1"},
+			want:      1,
+		},
+		{
+			name: "filter ROCm from process environment",
+			devices: []ml.DeviceInfo{
+				{DeviceID: ml.DeviceID{ID: "0", Library: "ROCm"}, Name: "ROCm0"},
+				{DeviceID: ml.DeviceID{ID: "0", Library: "CUDA"}, Name: "CUDA0"},
+			},
+			setEnv: map[string]string{"ROCR_VISIBLE_DEVICES": "-1"},
+			want:   1,
+		},
+		{
+			name: "no filtering when visibility set to valid device",
+			devices: []ml.DeviceInfo{
+				{DeviceID: ml.DeviceID{ID: "0", Library: "ROCm"}, Name: "ROCm0"},
+				{DeviceID: ml.DeviceID{ID: "0", Library: "CUDA"}, Name: "CUDA0"},
+			},
+			extraEnvs: map[string]string{"ROCR_VISIBLE_DEVICES": "0"},
+			want:      2,
+		},
+		{
+			name: "filter multiple ROCm devices",
+			devices: []ml.DeviceInfo{
+				{DeviceID: ml.DeviceID{ID: "0", Library: "ROCm"}, Name: "ROCm0"},
+				{DeviceID: ml.DeviceID{ID: "1", Library: "ROCm"}, Name: "ROCm1"},
+				{DeviceID: ml.DeviceID{ID: "0", Library: "CUDA"}, Name: "CUDA0"},
+			},
+			extraEnvs: map[string]string{"ROCR_VISIBLE_DEVICES": "-1"},
+			want:      1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for k, v := range tt.setEnv {
+				t.Setenv(k, v)
+			}
+
+			filtered := filterInvisibleROCmDevices(tt.devices, tt.extraEnvs)
+			if len(filtered) != tt.want {
+				t.Fatalf("got %d devices, want %d", len(filtered), tt.want)
+			}
+
+			for _, dev := range filtered {
+				if dev.Library == "ROCm" && tt.want < len(tt.devices) {
+					t.Fatalf("ROCm device %s should have been filtered", dev.Name)
+				}
+			}
+		})
+	}
+}

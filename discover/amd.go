@@ -475,6 +475,43 @@ func filterUnsupportedROCmDevices(devices []ml.DeviceInfo, libDirs []string) []m
 	return filtered
 }
 
+// filterInvisibleROCmDevices removes ROCm devices when visibility environment variables
+// are set to -1, which per documentation should "ignore the GPUs and force CPU usage" for
+// the ROCm backend. Checks ROCR_VISIBLE_DEVICES (Linux), HIP_VISIBLE_DEVICES, and
+// GPU_DEVICE_ORDINAL (Windows fallback).
+func filterInvisibleROCmDevices(devices []ml.DeviceInfo, extraEnvs map[string]string) []ml.DeviceInfo {
+	// Check visibility variables in order of preference for ROCm
+	visibilityVars := []string{"ROCR_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES", "GPU_DEVICE_ORDINAL"}
+	disableROCm := false
+
+	for _, envVar := range visibilityVars {
+		value := extraEnvs[envVar]
+		if value == "" {
+			value = os.Getenv(envVar)
+		}
+		if strings.TrimSpace(value) == "-1" {
+			disableROCm = true
+			slog.Debug("ROCm devices disabled via environment variable", "variable", envVar)
+			break
+		}
+	}
+
+	if !disableROCm {
+		return devices
+	}
+
+	var filtered []ml.DeviceInfo
+	for _, dev := range devices {
+		if dev.Library == "ROCm" {
+			slog.Debug("filtering ROCm device due to visibility environment variable set to -1",
+				"device", dev.Name, "id", dev.ID, "pci_id", dev.PCIID)
+			continue
+		}
+		filtered = append(filtered, dev)
+	}
+	return filtered
+}
+
 func detectOldAMDDriverWindows() {
 	if runtime.GOOS != "windows" {
 		return
