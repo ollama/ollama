@@ -29,11 +29,25 @@ type Progress struct {
 
 	ticker *time.Ticker
 	states []State
+	isTTY  bool
 }
 
 func NewProgress(w io.Writer) *Progress {
-	p := &Progress{w: bufio.NewWriter(w)}
-	go p.start()
+	// Check if the writer is a terminal
+	isTTY := false
+	if f, ok := w.(*os.File); ok {
+		isTTY = term.IsTerminal(int(f.Fd()))
+	}
+
+	p := &Progress{
+		w:     bufio.NewWriter(w),
+		isTTY: isTTY,
+	}
+
+	// Only start rendering if we have a TTY
+	if isTTY {
+		go p.start()
+	}
 	return p
 }
 
@@ -56,7 +70,7 @@ func (p *Progress) stop() bool {
 
 func (p *Progress) Stop() bool {
 	stopped := p.stop()
-	if stopped {
+	if stopped && p.isTTY {
 		fmt.Fprint(p.w, "\n")
 		p.w.Flush()
 	}
@@ -64,6 +78,10 @@ func (p *Progress) Stop() bool {
 }
 
 func (p *Progress) StopAndClear() bool {
+	if !p.isTTY {
+		return p.stop()
+	}
+
 	defer p.w.Flush()
 
 	fmt.Fprint(p.w, "\033[?25l")
@@ -91,6 +109,10 @@ func (p *Progress) Add(key string, state State) {
 }
 
 func (p *Progress) render() {
+	if !p.isTTY {
+		return
+	}
+
 	_, termHeight, err := term.GetSize(int(os.Stderr.Fd()))
 	if err != nil {
 		termHeight = defaultTermHeight
