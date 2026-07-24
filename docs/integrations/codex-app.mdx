@@ -75,8 +75,64 @@ The Codex CLI profile managed by `ollama launch codex` is left separate from the
 
 Before overwriting Codex App config files, Ollama Launch saves backups under `~/.ollama/backup/codex-app/`. On Windows, `~` resolves to your user profile directory.
 
+## Reasoning effort
+
+If your Codex configuration includes the `model_reasoning_effort` setting, make sure it uses a value supported by Ollama.
+
+Supported values are:
+
+- `none`
+- `low`
+- `medium`
+- `high`
+- `max`
+
+Values such as `minimal` and `xhigh` are not supported and will result in an error when sending requests through Ollama.
+
+For example, replace an unsupported value such as:
+
+```toml
+model_reasoning_effort = "xhigh"
+```
+
+with a supported value:
+
+```toml
+model_reasoning_effort = "max"
+```
+
 ## Troubleshooting
 
 If Codex App does not open after setup, open Codex manually once and run `ollama launch codex-app` again.
 
 If Codex App is already running and does not switch models, allow Ollama to restart it when prompted, or quit Codex App and run `ollama launch codex-app` again.
+
+### Invalid reasoning value
+
+If you see:
+
+```text
+invalid reasoning value: "xhigh"
+```
+
+your `model_reasoning_effort` setting uses a value that Ollama does not support. Update it to one of the supported values:
+
+- `none`
+- `low`
+- `medium`
+- `high`
+- `max`
+
+### Unknown integration
+
+If you see:
+
+```text
+Error: unknown integration: codex-app
+```
+
+your version of Ollama does not support the Codex App integration. Upgrade to a version of Ollama that supports Codex App, then run:
+
+```shell
+ollama launch codex-app
+```

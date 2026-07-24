@@ -365,6 +365,8 @@ Ollama supports the [OpenAI Responses API](https://platform.openai.com/docs/api-
 - [x] `input`
 - [x] `instructions`
 - [x] `tools`
+- [x] `reasoning`
+  - [x] `effort` (`"high"`, `"medium"`, `"low"`, `"max"`, `"none"`)
 - [x] `stream`
 - [x] `temperature`
 - [x] `top_p`
@@ -372,6 +374,18 @@ Ollama supports the [OpenAI Responses API](https://platform.openai.com/docs/api-
 - [ ] `previous_response_id` (stateful v1/responses not supported)
 - [ ] `conversation` (stateful v1/responses not supported)
 - [ ] `truncation`
+
+#### Notes
+
+For both `/v1/chat/completions` and `/v1/responses`, reasoning effort only supports the following values:
+
+- `"none"`
+- `"low"`
+- `"medium"`
+- `"high"`
+- `"max"`
+
+Values such as `"minimal"` and `"xhigh"` are not supported and will result in an error.
 
 ## Models
 
