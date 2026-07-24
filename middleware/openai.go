@@ -30,6 +30,7 @@ type ChatWriter struct {
 	streamOptions *openai.StreamOptions
 	id            string
 	toolCallSent  bool
+	roleSent      bool
 	BaseWriter
 }
 
@@ -83,6 +84,13 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 		chunks := openai.ToChunks(w.id, chatResponse, w.toolCallSent)
 		w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")
 		for _, c := range chunks {
+			if len(c.Choices) > 0 {
+				if w.roleSent {
+					c.Choices[0].Delta.Role = ""
+				} else {
+					w.roleSent = true
+				}
+			}
 			d, err := json.Marshal(c)
 			if err != nil {
 				return 0, err
