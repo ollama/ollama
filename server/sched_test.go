@@ -182,19 +182,31 @@ func TestSchedVisionContextFloor(t *testing.T) {
 		},
 	}
 
-	t.Run("automatic num_ctx is floored", func(t *testing.T) {
+	t.Run("automatic num_ctx is floored for vision tokens", func(t *testing.T) {
 		s := InitScheduler(ctx)
 		opts := api.DefaultOptions()
-		opts.NumCtx = 128
+		opts.NumCtx = 4096
 
 		s.getRunner(ctx, visionModel, opts, nil, true, false, nil)
 
 		req := <-s.pendingReqCh
-		require.Equal(t, 2048, req.opts.NumCtx)
+		require.Equal(t, 8192, req.opts.NumCtx)
 		require.True(t, req.numCtxAuto)
 	})
 
-	t.Run("explicit num_ctx is floored", func(t *testing.T) {
+	t.Run("automatic num_ctx above floor is kept", func(t *testing.T) {
+		s := InitScheduler(ctx)
+		opts := api.DefaultOptions()
+		opts.NumCtx = 32768
+
+		s.getRunner(ctx, visionModel, opts, nil, true, false, nil)
+
+		req := <-s.pendingReqCh
+		require.Equal(t, 32768, req.opts.NumCtx)
+		require.True(t, req.numCtxAuto)
+	})
+
+	t.Run("explicit num_ctx keeps the base floor", func(t *testing.T) {
 		s := InitScheduler(ctx)
 		opts := api.DefaultOptions()
 		opts.NumCtx = 128
