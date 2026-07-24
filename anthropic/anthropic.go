@@ -180,7 +180,9 @@ type Tool struct {
 	InputSchema json.RawMessage `json:"input_schema,omitempty"`
 
 	// Web search specific fields
-	MaxUses int `json:"max_uses,omitempty"`
+	MaxUses        int      `json:"max_uses,omitempty"`
+	AllowedDomains []string `json:"allowed_domains,omitempty"`
+	BlockedDomains []string `json:"blocked_domains,omitempty"`
 }
 
 // ToolChoice controls how the model uses tools
@@ -1276,4 +1278,81 @@ func ConvertOllamaToAnthropicResults(ollamaResults *OllamaWebSearchResponse) []W
 		})
 	}
 	return results
+}
+
+// ValidateDomainFilters returns an error when both allow and block lists are set.
+func ValidateDomainFilters(allowed, blocked []string) error {
+	if len(allowed) > 0 && len(blocked) > 0 {
+		return errors.New("allowed_domains and blocked_domains are mutually exclusive")
+	}
+	return nil
+}
+
+// WebSearchDomainFilters returns domain filters from the first web_search tool.
+func WebSearchDomainFilters(tools []Tool) (allowed, blocked []string, err error) {
+	for _, t := range tools {
+		if !strings.HasPrefix(t.Type, "web_search") {
+			continue
+		}
+		if err := ValidateDomainFilters(t.AllowedDomains, t.BlockedDomains); err != nil {
+			return nil, nil, err
+		}
+		return t.AllowedDomains, t.BlockedDomains, nil
+	}
+	return nil, nil, nil
+}
+
+// FilterOllamaWebSearchResults keeps or drops results by allowed/blocked domain entries.
+// Entries are bare hosts with an optional path (e.g. "example.com" or "example.com/blog").
+func FilterOllamaWebSearchResults(results []OllamaWebSearchResult, allowed, blocked []string) []OllamaWebSearchResult {
+	if len(allowed) == 0 && len(blocked) == 0 {
+		return results
+	}
+	out := make([]OllamaWebSearchResult, 0, len(results))
+	for _, r := range results {
+		if len(allowed) > 0 {
+			if !urlMatchesAnyDomain(r.URL, allowed) {
+				continue
+			}
+		} else if urlMatchesAnyDomain(r.URL, blocked) {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+func urlMatchesAnyDomain(rawURL string, entries []string) bool {
+	for _, entry := range entries {
+		if urlMatchesDomainEntry(rawURL, entry) {
+			return true
+		}
+	}
+	return false
+}
+
+func urlMatchesDomainEntry(rawURL, entry string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Hostname() == "" {
+		return false
+	}
+	entry = strings.TrimSpace(entry)
+	entry = strings.TrimPrefix(entry, "https://")
+	entry = strings.TrimPrefix(entry, "http://")
+	if entry == "" {
+		return false
+	}
+
+	hostPart, pathPart, hasPath := strings.Cut(entry, "/")
+	hostPart = strings.ToLower(strings.TrimSuffix(hostPart, "."))
+	host := strings.ToLower(u.Hostname())
+	if host != hostPart && !strings.HasSuffix(host, "."+hostPart) {
+		return false
+	}
+	if !hasPath || pathPart == "" {
+		return true
+	}
+	want := "/" + pathPart
+	path := u.EscapedPath()
+	return path == want || strings.HasPrefix(path, want+"/")
 }
