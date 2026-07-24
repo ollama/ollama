@@ -198,9 +198,40 @@ func usesAutomaticNumBatch(model *Model, requestOpts map[string]any) bool {
 	return true
 }
 
+func numBatchPolicyForRequest(model *Model, requestOpts map[string]any, embeddingBatchGrowable bool) numBatchPolicy {
+	if !usesAutomaticNumBatch(model, requestOpts) {
+		return numBatchFixed
+	}
+
+	if shouldApplyEmbeddingBatchDefault(model, requestOpts) {
+		if embeddingBatchGrowable {
+			return numBatchAutoGrowable
+		}
+		return numBatchFixed
+	}
+
+	return numBatchAuto
+}
+
+func (s *Server) validateEmbeddingBatchTokenCount(model *Model, requestOpts map[string]any, opts api.Options, tokenCount int) error {
+	return s.sched.validateEmbeddingBatchTokenCount(opts, numBatchPolicyForRequest(model, requestOpts, true), tokenCount)
+}
+
+type scheduleRunnerOptions struct {
+	embeddingTokenCount *int
+}
+
 // scheduleRunner schedules a runner after validating inputs such as capabilities and model options.
 // It returns the allocated runner, model instance, and consolidated options if successful and error otherwise.
 func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.Capability, requestOpts map[string]any, keepAlive *api.Duration, shift *bool) (llm.LlamaServer, *Model, *api.Options, error) {
+	return s.scheduleRunnerWithOptions(ctx, name, caps, requestOpts, keepAlive, shift, scheduleRunnerOptions{})
+}
+
+func (s *Server) scheduleEmbeddingRunner(ctx context.Context, name string, requestOpts map[string]any, keepAlive *api.Duration, tokenCount int) (llm.LlamaServer, *Model, *api.Options, error) {
+	return s.scheduleRunnerWithOptions(ctx, name, []model.Capability{}, requestOpts, keepAlive, nil, scheduleRunnerOptions{embeddingTokenCount: &tokenCount})
+}
+
+func (s *Server) scheduleRunnerWithOptions(ctx context.Context, name string, caps []model.Capability, requestOpts map[string]any, keepAlive *api.Duration, shift *bool, loadOptions scheduleRunnerOptions) (llm.LlamaServer, *Model, *api.Options, error) {
 	if name == "" {
 		return nil, nil, nil, fmt.Errorf("model %w", errRequired)
 	}
@@ -223,13 +254,19 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 
 	numCtxAuto := usesAutomaticNumCtx(model, requestOpts)
 	embeddingBatchDefault := shouldApplyEmbeddingBatchDefault(model, requestOpts)
-	numBatchAuto := usesAutomaticNumBatch(model, requestOpts) && !embeddingBatchDefault
+	numBatchPolicy := numBatchPolicyForRequest(model, requestOpts, loadOptions.embeddingTokenCount != nil)
 	opts, err := s.modelOptionsWithEmbeddingBatchDefault(model, requestOpts, embeddingBatchDefault)
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	if loadOptions.embeddingTokenCount != nil {
+		opts, err = s.sched.embeddingBatchOptionsForTokenCount(opts, numBatchPolicy, *loadOptions.embeddingTokenCount)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	}
 
-	runnerCh, errCh := s.sched.getRunner(ctx, model, opts, keepAlive, numCtxAuto, numBatchAuto, shift)
+	runnerCh, errCh := s.sched.getRunner(ctx, model, opts, keepAlive, numCtxAuto, numBatchPolicy, shift)
 	var runner *runnerRef
 	select {
 	case runner = <-runnerCh:
@@ -844,7 +881,10 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive, nil)
+	runnerCtx, releaseRunner := context.WithCancel(c.Request.Context())
+	defer releaseRunner()
+
+	r, m, opts, err := s.scheduleEmbeddingRunner(runnerCtx, name.String(), req.Options, req.KeepAlive, 0)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return
@@ -863,7 +903,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	ctx := c.Request.Context()
+	ctx := runnerCtx
 
 	adjustTokenLimit := func(tokens []int, limit int) int {
 		if bos := kvData.Uint("tokenizer.ggml.bos_token_id"); len(tokens) > 0 && tokens[0] != int(bos) && kvData.Bool("add_bos_token", true) {
@@ -874,6 +914,24 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		}
 		return limit
 	}
+
+	embeddingTokenCount := func(tokens []int) int {
+		return 2*len(tokens) - adjustTokenLimit(tokens, len(tokens))
+	}
+
+	embeddingTokenLimit := func(tokens []int, limit int) int {
+		if limit <= 0 {
+			return 0
+		}
+
+		tokenLimit := min(len(tokens), limit)
+		for tokenLimit > 0 && embeddingTokenCount(tokens[:tokenLimit]) > limit {
+			tokenLimit--
+		}
+		return tokenLimit
+	}
+
+	embeddingBatchPolicy := numBatchPolicyForRequest(m, req.Options, true)
 
 	inputTokensAndContext := func(text string) ([]int, int, error) {
 		tokens, err := r.Tokenize(ctx, text)
@@ -890,78 +948,88 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return tokens, adjustTokenLimit(tokens, ctxLen), nil
 	}
 
-	truncateInputToLimit := func(text string, limit int) (string, bool, error) {
+	prepareInput := func(text string) (string, int, error) {
 		tokens, ctxLen, err := inputTokensAndContext(text)
 		if err != nil {
-			return "", false, err
-		}
-		if limit > 0 {
-			ctxLen = min(ctxLen, adjustTokenLimit(tokens, limit))
+			return "", 0, err
 		}
 
 		if ctxLen <= 0 {
-			return "", false, fmt.Errorf("input after truncation exceeds maximum context length")
+			return "", 0, fmt.Errorf("input after truncation exceeds maximum context length")
 		}
-		if len(tokens) <= ctxLen {
-			return text, false, nil
-		}
-
-		truncated, err := r.Detokenize(ctx, tokens[:ctxLen])
-		if err != nil {
-			return "", false, err
-		}
-		return truncated, true, nil
-	}
-
-	truncateInput := func(text string) (string, bool, error) {
-		return truncateInputToLimit(text, 0)
-	}
-
-	embedWithRetry := func(text string) ([]float32, int, error) {
 		if req.Truncate != nil && !*req.Truncate {
-			tokens, ctxLen, err := inputTokensAndContext(text)
-			if err != nil {
-				return nil, 0, err
-			}
-			if ctxLen <= 0 {
-				return nil, 0, fmt.Errorf("input after truncation exceeds maximum context length")
-			}
 			if len(tokens) > ctxLen {
-				return nil, 0, api.StatusError{
+				return "", 0, api.StatusError{
 					StatusCode:   http.StatusBadRequest,
 					ErrorMessage: "the input length exceeds the context length",
 				}
 			}
-		} else {
-			var err error
-			text, _, err = truncateInput(text)
-			if err != nil {
-				return nil, 0, err
-			}
+			return text, embeddingTokenCount(tokens), nil
 		}
 
-		emb, tokCount, err := r.Embedding(ctx, text)
-		if err == nil {
-			return emb, tokCount, nil
+		tokenLimit := ctxLen
+		if embeddingBatchPolicy != numBatchAutoGrowable {
+			tokenLimit = min(tokenLimit, embeddingTokenLimit(tokens, opts.NumBatch))
 		}
 
-		var serr api.StatusError
-		if !errors.As(err, &serr) || serr.StatusCode != http.StatusBadRequest {
-			return nil, 0, err
-		}
-		if req.Truncate != nil && !*req.Truncate {
-			return nil, 0, err
+		if len(tokens) <= tokenLimit {
+			return text, embeddingTokenCount(tokens), nil
 		}
 
-		truncated, ok, err := truncateInputToLimit(text, opts.NumBatch)
+		truncatedTokens := tokens[:tokenLimit]
+		truncated, err := r.Detokenize(ctx, truncatedTokens)
 		if err != nil {
-			return nil, 0, err
+			return "", 0, err
 		}
-		if !ok {
-			return nil, 0, fmt.Errorf("input exceeds maximum context length and cannot be truncated further")
+		return truncated, embeddingTokenCount(truncatedTokens), nil
+	}
+
+	maxTokenCount := 0
+	for i, text := range input {
+		prepared, tokenCount, err := prepareInput(text)
+		if err != nil {
+			var serr api.StatusError
+			if errors.As(err, &serr) {
+				c.AbortWithStatusJSON(serr.StatusCode, gin.H{
+					"error": strings.TrimSpace(serr.ErrorMessage),
+				})
+				return
+			}
+
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+				"error": strings.TrimSpace(err.Error()),
+			})
+			return
+		}
+		input[i] = prepared
+		maxTokenCount = max(maxTokenCount, tokenCount)
+	}
+
+	if maxTokenCount > opts.NumBatch {
+		if err := s.validateEmbeddingBatchTokenCount(m, req.Options, *opts, maxTokenCount); err != nil {
+			handleScheduleError(c, req.Model, err)
+			return
 		}
 
-		return r.Embedding(ctx, truncated)
+		currentNumBatch := opts.NumBatch
+		releaseRunner()
+		runnerCtx, releaseRunner = context.WithCancel(c.Request.Context())
+		defer releaseRunner()
+		ctx = runnerCtx
+
+		r, _, opts, err = s.scheduleEmbeddingRunner(runnerCtx, name.String(), req.Options, req.KeepAlive, maxTokenCount)
+		if err != nil {
+			handleScheduleError(c, req.Model, err)
+			return
+		}
+		slog.Info(
+			"reloaded runner for larger embedding batch",
+			"model", req.Model,
+			"current_num_batch", currentNumBatch,
+			"next_num_batch", opts.NumBatch,
+			"required_tokens", maxTokenCount,
+		)
+		checkpointLoaded = time.Now()
 	}
 
 	var g errgroup.Group
@@ -969,7 +1037,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	var totalTokens uint64
 	for i, text := range input {
 		g.Go(func() error {
-			embedding, tokenCount, err := embedWithRetry(text)
+			embedding, tokenCount, err := r.Embedding(ctx, text)
 			if err != nil {
 				return err
 			}
@@ -3103,7 +3171,10 @@ func countChatImages(msgs []api.Message) int {
 }
 
 func handleScheduleError(c *gin.Context, name string, err error) {
+	var serr api.StatusError
 	switch {
+	case errors.As(err, &serr):
+		c.JSON(serr.StatusCode, gin.H{"error": strings.TrimSpace(serr.ErrorMessage)})
 	case errors.Is(err, errCapabilities), errors.Is(err, errRequired):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	case errors.Is(err, context.Canceled):
