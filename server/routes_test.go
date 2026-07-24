@@ -1121,6 +1121,18 @@ func TestFilterThinkTags(t *testing.T) {
 	}
 }
 
+func TestDefaultChatThink(t *testing.T) {
+	// Thinking-capable model, no tools, no client preference -> thinking on.
+	if v := defaultChatThink(false); v == nil || !v.Bool() {
+		t.Errorf("defaultChatThink(false) = %v, want think on", v)
+	}
+	// Tools requested with no client preference -> thinking off, so the model
+	// emits tool-call tokens instead of burying intent in <think> (#10976).
+	if v := defaultChatThink(true); v == nil || v.Bool() {
+		t.Errorf("defaultChatThink(true) = %v, want think off", v)
+	}
+}
+
 func TestWaitForStream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
