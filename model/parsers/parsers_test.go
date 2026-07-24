@@ -65,6 +65,7 @@ func TestBuiltInParsersStillWork(t *testing.T) {
 		{"lfm2"},
 		{"lfm2-thinking"},
 		{"qwen3.5"},
+		{"qwen3.5-instruct"},
 		{"ornith"},
 		{"harmony"},
 	}

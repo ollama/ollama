@@ -365,7 +365,12 @@ func buildModelListSummary(name model.Name, mf *manifest.Manifest) (modelListSum
 		summary.Capabilities = appendModelListCapability(summary.Capabilities, model.Capability(c))
 	}
 
-	builtinParser := parsers.ParserForName(cfg.Parser)
+	parserModel := Model{
+		Name:      name.String(),
+		ShortName: name.DisplayShortest(),
+		Config:    cfg,
+	}
+	builtinParser := parsers.ParserForName(resolveParserName(&parserModel))
 	if tmpl != nil {
 		vars, err := tmpl.Vars()
 		if err != nil {
