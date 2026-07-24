@@ -1,12 +1,14 @@
 package mlx
 
 // #include "generated.h"
+// #include <stdlib.h>
 import "C"
 
 import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"unsafe"
 )
 
 func (b Byte) String() string {
@@ -64,6 +66,46 @@ func PeakMemory() int {
 
 func ResetPeakMemory() {
 	C.mlx_reset_peak_memory()
+}
+
+// MaxRecommendedWorkingSetSize returns the device's recommended upper bound
+// for resident Metal allocations.
+func MaxRecommendedWorkingSetSize() (int, error) {
+	info := C.mlx_device_info_new()
+	if err := mlxCall("get device info failed", func() C.int {
+		return C.mlx_device_info_get(&info, DefaultDevice().ctx)
+	}); err != nil {
+		C.mlx_device_info_free(info)
+		return 0, err
+	}
+	defer C.mlx_device_info_free(info)
+
+	key := C.CString("max_recommended_working_set_size")
+	defer C.free(unsafe.Pointer(key))
+
+	var size C.size_t
+	if err := mlxCall("max recommended working set size unavailable", func() C.int {
+		return C.mlx_device_info_get_size(&size, info, key)
+	}); err != nil {
+		return 0, err
+	}
+	return int(size), nil
+}
+
+// SetWiredLimit sets the maximum amount of Metal memory MLX keeps resident and
+// returns the previous limit.
+func SetWiredLimit(limit int) (int, error) {
+	if limit < 0 {
+		return 0, fmt.Errorf("mlx: wired limit must be non-negative")
+	}
+
+	var previous C.size_t
+	if err := mlxCall("set wired limit failed", func() C.int {
+		return C.mlx_set_wired_limit(&previous, C.size_t(limit))
+	}); err != nil {
+		return 0, err
+	}
+	return int(previous), nil
 }
 
 type Memory struct{}
