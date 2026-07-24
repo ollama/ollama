@@ -95,6 +95,24 @@ endif()
 if(GGML_HIP AND OLLAMA_RUNNER_DIR MATCHES "^rocm_v")
     ollama_set_cache_default(CMAKE_HIP_FLAGS STRING
         "-parallel-jobs=4" "HIP compiler flags")
+    # Custom ROCm toolchains (TheRock, self-built, nightly) may keep the device
+    # bitcode at a non-standard layout, e.g. <rocm>/lib/llvm/amdgcn/bitcode
+    # instead of <rocm>/amdgcn/bitcode, which requires passing
+    # --rocm-device-lib-path to the HIP compiler. Expose it as a cache variable
+    # so users don't have to patch the vendored ggml-hip CMake.
+    set(OLLAMA_HIP_DEVICE_LIB_PATH "" CACHE STRING
+        "ROCm device library bitcode directory (--rocm-device-lib-path); only needed for non-standard ROCm layouts")
+    if(OLLAMA_HIP_DEVICE_LIB_PATH)
+        if(WIN32)
+            # ggml-hip builds with CXX_IS_HIPCC on Windows, so CMAKE_HIP_FLAGS is
+            # not consulted; route the flag through the C++ flags instead.
+            ollama_append_cache_flags(CMAKE_CXX_FLAGS
+                "--rocm-device-lib-path=${OLLAMA_HIP_DEVICE_LIB_PATH}")
+        else()
+            ollama_append_cache_flags(CMAKE_HIP_FLAGS
+                "--rocm-device-lib-path=${OLLAMA_HIP_DEVICE_LIB_PATH}")
+        endif()
+    endif()
     if(WIN32)
         # Windows ROCm split-load needs peer copies disabled for correctness.
         ollama_set_cache_default(GGML_CUDA_NO_PEER_COPY BOOL ON
