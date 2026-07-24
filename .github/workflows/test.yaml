@@ -25,7 +25,7 @@ jobs:
       app_changed: ${{ steps.changes.outputs.app_changed }}
       enginehash: ${{ steps.changes.outputs.enginehash }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
       - id: changes
@@ -62,7 +62,7 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Verify patches apply cleanly
         shell: bash
         run: |
@@ -121,7 +121,7 @@ jobs:
     runs-on: linux
     container: ${{ matrix.container }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - run: |
           [ -n "${{ matrix.container }}" ] || sudo=sudo
           $sudo apt-get update
@@ -149,7 +149,7 @@ jobs:
           GO_VERSION=$(awk '/^go / { print $2 }' go.mod)
           curl -fsSL "https://golang.org/dl/go${GO_VERSION}.linux-$(dpkg --print-architecture).tar.gz" | $sudo tar xz -C /usr/local
           echo "/usr/local/go/bin" >> $GITHUB_PATH
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: /github/home/.cache/ccache
           key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-${{ needs.changes.outputs.enginehash }}
@@ -238,7 +238,7 @@ jobs:
           }
       - if: matrix.preset == 'CUDA' || matrix.preset == 'ROCm' || matrix.preset == 'Vulkan' || matrix.preset == 'MLX CUDA 13'
         id: cache-install
-        uses: actions/cache/restore@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4 restore
         with:
           path: |
             C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
@@ -308,7 +308,7 @@ jobs:
           echo "CUDNN_LIBRARY_PATH=$cudnnRoot\lib\x64" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "$cudnnRoot\bin\x64" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - if: ${{ !cancelled() && steps.cache-install.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4 save
         with:
           path: |
             C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
@@ -316,12 +316,12 @@ jobs:
             C:\VulkanSDK
             C:\Program Files\NVIDIA\CUDNN
           key: ${{ matrix.install }}-${{ matrix.cudnn-install }}
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - if: matrix.superbuild_target == 'ollama-local' || matrix.install-go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: 'go.mod'
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ github.workspace }}\.ccache
           key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-${{ needs.changes.outputs.enginehash }}
@@ -358,7 +358,7 @@ jobs:
   go_mod_tidy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: check that 'go mod tidy' is clean
         run: go mod tidy --diff || (echo "Please run 'go mod tidy'." && exit 1)
 
@@ -371,8 +371,8 @@ jobs:
     env:
       CGO_ENABLED: '1'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: 'go.mod'
           cache-dependency-path: |
@@ -380,7 +380,7 @@ jobs:
             LLAMA_CPP_VERSION
             MLX_VERSION
             MLX_C_VERSION
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20'
       - name: Install UI dependencies
@@ -415,6 +415,6 @@ jobs:
         if: ${{ needs.changes.outputs.app_changed == 'True' && contains(fromJSON('["macos-latest","windows-latest"]'), matrix.os) }}
         run: go test -count=1 -tags updater_live ./app/...
 
-      - uses: golangci/golangci-lint-action@v9
+      - uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee # v9
         with:
           only-new-issues: true
