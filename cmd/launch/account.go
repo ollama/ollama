@@ -20,7 +20,7 @@ const (
 )
 
 var (
-	ErrPlanVerificationUnavailable = errors.New("Could not verify your plan. Try again in a moment.")
+	ErrPlanVerificationUnavailable = errors.New("Could not verify Ollama plan. Try again in a moment or use a local model.")
 	errUpgradeCancelled            = errors.New("upgrade cancelled")
 )
 
@@ -247,7 +247,7 @@ func (c *launcherClient) ensureCloudModelAccess(ctx context.Context, model strin
 		c.accountState = &state
 	}
 	if state.Status == accountStateUnknown {
-		return ErrPlanVerificationUnavailable
+		return nil
 	}
 
 	if state.Status == accountStateSignedOut {
@@ -259,7 +259,7 @@ func (c *launcherClient) ensureCloudModelAccess(ctx context.Context, model strin
 			c.accountState = &state
 		}
 		if state.Status == accountStateUnknown {
-			return ErrPlanVerificationUnavailable
+			return nil
 		}
 	}
 

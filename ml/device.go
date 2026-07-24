@@ -585,7 +585,7 @@ func FlashAttentionSupported(l []DeviceInfo) bool {
 
 func cudaFlashAttentionSupported(gpu DeviceInfo) bool {
 	if gpu.Library != "CUDA" ||
-		gpu.ComputeMajor < 7 ||
+		gpu.ComputeMajor < 6 ||
 		(gpu.ComputeMajor == 7 && gpu.ComputeMinor == 2) {
 		return false
 	}

@@ -418,6 +418,41 @@ type StackedExpertWeights struct {
 	GroupSize int
 }
 
+// loadStackedProjection loads an expert projection stored as a single stacked
+// 3D tensor, or nil if base isn't present.
+func loadStackedProjection(tensors map[string]*mlx.Array, base string, useQuantized bool, cfg *Config) *StackedExpertWeights {
+	key := base + ".weight"
+	w := tensors[key]
+	if w == nil {
+		return nil
+	}
+
+	scales := tensors[key+"_scale"]
+	if scales == nil {
+		return &StackedExpertWeights{Weight: w}
+	}
+
+	qbiases := tensors[key+"_qbias"]
+	groupSize, bits, mode := model.ResolveLinearQuantParams(
+		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant,
+		key, w, scales,
+	)
+	if useQuantized && supportsGatherQMM(mode, bits) {
+		return &StackedExpertWeights{Weight: w, Scales: scales, Biases: qbiases, Bits: bits, GroupSize: groupSize}
+	}
+
+	return &StackedExpertWeights{Weight: mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode)}
+}
+
+// loadStackedExperts loads a stacked expert projection by its .experts name,
+// falling back to the switch_mlp name older imports use.
+func loadStackedExperts(tensors map[string]*mlx.Array, prefix, projName string, useQuantized bool, cfg *Config) *StackedExpertWeights {
+	if w := loadStackedProjection(tensors, prefix+".mlp.experts."+projName, useQuantized, cfg); w != nil {
+		return w
+	}
+	return loadStackedProjection(tensors, prefix+".mlp.switch_mlp."+projName, useQuantized, cfg)
+}
+
 // collectAndStackExpertWeights loads and stacks expert weights for one projection type.
 func collectAndStackExpertWeights(
 	tensors map[string]*mlx.Array,
@@ -462,8 +497,15 @@ func collectAndStackExpertWeights(
 	return result
 }
 
-// sanitizeExpertWeights stacks individual expert weights into tensors.
+// sanitizeExpertWeights resolves the three MoE projections, preferring the
+// stacked on-disk layout and falling back to per-expert tensors.
 func sanitizeExpertWeights(tensors map[string]*mlx.Array, prefix string, numExperts int32, useQuantized bool, cfg *Config) (gate, up, down *StackedExpertWeights) {
+	gate = loadStackedExperts(tensors, prefix, "gate_proj", useQuantized, cfg)
+	up = loadStackedExperts(tensors, prefix, "up_proj", useQuantized, cfg)
+	down = loadStackedExperts(tensors, prefix, "down_proj", useQuantized, cfg)
+	if gate != nil && up != nil && down != nil {
+		return gate, up, down
+	}
 	gate = collectAndStackExpertWeights(tensors, prefix, "gate_proj", numExperts, useQuantized, cfg)
 	up = collectAndStackExpertWeights(tensors, prefix, "up_proj", numExperts, useQuantized, cfg)
 	down = collectAndStackExpertWeights(tensors, prefix, "down_proj", numExperts, useQuantized, cfg)

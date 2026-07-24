@@ -24,9 +24,55 @@ func (ti TensorInfo) NumValues() int64 {
 	return numItems
 }
 
+func (ti TensorInfo) numValues() (int64, bool) {
+	var numItems int64 = 1
+	for _, dim := range ti.Shape {
+		if dim > maxInt64() {
+			return 0, false
+		}
+		n := int64(dim)
+		if n != 0 && numItems > int64(maxInt64())/n {
+			return 0, false
+		}
+		numItems *= n
+	}
+	return numItems, true
+}
+
 // NumBytes returns the number of bytes in the tensor.
 func (ti TensorInfo) NumBytes() int64 {
 	return int64(float64(ti.NumValues()) * ti.Type.NumBytes())
+}
+
+func (ti TensorInfo) numBytes() (int64, bool) {
+	numValues, ok := ti.numValues()
+	if !ok {
+		return 0, false
+	}
+
+	typeSize := ti.Type.typeSize()
+	blockSize := ti.Type.blockSize()
+	if typeSize == 0 || blockSize == 0 {
+		return 0, false
+	}
+
+	rowSize := int64(1)
+	if len(ti.Shape) > 0 {
+		if ti.Shape[0] > maxInt64() {
+			return 0, false
+		}
+		rowSize = int64(ti.Shape[0])
+	}
+	if rowSize%blockSize != 0 {
+		return 0, false
+	}
+
+	blocks := numValues / blockSize
+	if blocks > int64(maxInt64())/typeSize {
+		return 0, false
+	}
+
+	return blocks * typeSize, true
 }
 
 func (ti TensorInfo) LogValue() slog.Value {

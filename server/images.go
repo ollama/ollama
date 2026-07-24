@@ -272,11 +272,30 @@ func hasMoreCapabilities(candidate, current []model.Capability) bool {
 	return len(candidate) > len(current)
 }
 
-func shouldPreferChatTemplate(chatTemplate string, chatTemplateCaps []model.Capability, goTemplate *template.Template, goTemplateCaps []model.Capability) bool {
-	if !hasMoreCapabilities(chatTemplateCaps, goTemplateCaps) {
+func sameCapabilities(candidate, current []model.Capability) bool {
+	if len(candidate) != len(current) {
 		return false
 	}
-	return !goTemplateHasToolRoundTrip(goTemplate) || chatTemplateHasToolRoundTrip(chatTemplate)
+	for _, c := range candidate {
+		if !slices.Contains(current, c) {
+			return false
+		}
+	}
+	return true
+}
+
+func shouldPreferChatTemplate(chatTemplate string, chatTemplateCaps []model.Capability, goTemplate *template.Template, goTemplateCaps []model.Capability) bool {
+	if hasMoreCapabilities(chatTemplateCaps, goTemplateCaps) {
+		return !goTemplateHasToolRoundTrip(goTemplate) || chatTemplateHasToolRoundTrip(chatTemplate)
+	}
+
+	if !sameCapabilities(chatTemplateCaps, goTemplateCaps) ||
+		!slices.Contains(chatTemplateCaps, model.CapabilityTools) ||
+		!slices.Contains(goTemplateCaps, model.CapabilityTools) {
+		return false
+	}
+
+	return chatTemplateHasToolRoundTrip(chatTemplate) && !goTemplateHasToolRoundTrip(goTemplate)
 }
 
 func goTemplateEnvSet() bool {

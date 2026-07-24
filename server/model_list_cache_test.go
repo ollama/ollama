@@ -1,15 +1,20 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"net/http"
+	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/ollama/ollama/api"
+	fsgguf "github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
 )
@@ -218,6 +223,67 @@ func TestModelListCacheSyncDropsStaleEntryOnRefreshFailure(t *testing.T) {
 	}
 }
 
+func TestReadModelListGGUFRejectsMalformedMetadata(t *testing.T) {
+	cases := []struct {
+		name string
+		data []byte
+		want string
+	}{
+		{
+			name: "oversized key string",
+			data: modelListGGUFTestFile(func(b *bytes.Buffer) {
+				writeModelListGGUFHeader(t, b, 1)
+				writeModelListGGUFUint64(t, b, fsgguf.MaxStringLength+1)
+			}),
+			want: "string",
+		},
+		{
+			name: "oversized skipped string",
+			data: modelListGGUFTestFile(func(b *bytes.Buffer) {
+				writeModelListGGUFHeader(t, b, 1)
+				writeModelListGGUFString(t, b, "unused")
+				writeModelListGGUFUint32(t, b, modelListGGUFTypeString)
+				writeModelListGGUFUint64(t, b, fsgguf.MaxStringLength+1)
+			}),
+			want: "string",
+		},
+		{
+			name: "oversized skipped array",
+			data: modelListGGUFTestFile(func(b *bytes.Buffer) {
+				writeModelListGGUFHeader(t, b, 1)
+				writeModelListGGUFString(t, b, "unused")
+				writeModelListGGUFUint32(t, b, modelListGGUFTypeArray)
+				writeModelListGGUFUint32(t, b, modelListGGUFTypeUint8)
+				writeModelListGGUFUint64(t, b, fsgguf.MaxArraySize+1)
+			}),
+			want: "array size",
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("readModelListGGUF panicked: %v", r)
+				}
+			}()
+
+			path := t.TempDir() + "/model.gguf"
+			if err := os.WriteFile(path, tt.data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := readModelListGGUF(path)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want substring %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func createListCacheModel(t *testing.T, name string, kv map[string]any, tmpl string) {
 	t.Helper()
 	_, digest := createBinFile(t, kv, nil)
@@ -235,5 +301,41 @@ func createListCacheModel(t *testing.T, name string, kv map[string]any, tmpl str
 	w := createRequest(t, s.CreateHandler, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("create model status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+}
+
+func modelListGGUFTestFile(fn func(*bytes.Buffer)) []byte {
+	var b bytes.Buffer
+	fn(&b)
+	return b.Bytes()
+}
+
+func writeModelListGGUFHeader(t *testing.T, b *bytes.Buffer, numKV uint64) {
+	t.Helper()
+	writeModelListGGUFUint32(t, b, modelListGGUFMagicLE)
+	writeModelListGGUFUint32(t, b, 3)
+	writeModelListGGUFUint64(t, b, 0)
+	writeModelListGGUFUint64(t, b, numKV)
+}
+
+func writeModelListGGUFString(t *testing.T, b *bytes.Buffer, s string) {
+	t.Helper()
+	writeModelListGGUFUint64(t, b, uint64(len(s)))
+	if _, err := b.WriteString(s); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeModelListGGUFUint32(t *testing.T, b *bytes.Buffer, v uint32) {
+	t.Helper()
+	if err := binary.Write(b, binary.LittleEndian, v); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeModelListGGUFUint64(t *testing.T, b *bytes.Buffer, v uint64) {
+	t.Helper()
+	if err := binary.Write(b, binary.LittleEndian, v); err != nil {
+		t.Fatal(err)
 	}
 }

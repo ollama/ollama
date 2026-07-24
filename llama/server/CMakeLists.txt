@@ -437,11 +437,25 @@ if(OLLAMA_RUNNER_DIR)
     # Bundle GPU runtime libraries (cublas, cudart, rocblas, etc.)
     # These are needed at runtime by the GPU backend .so
     if(GGML_CUDA AND CUDAToolkit_FOUND)
+        if(DEFINED OLLAMA_WINDOWS_RUNTIME_ARCH)
+            string(TOLOWER "${OLLAMA_WINDOWS_RUNTIME_ARCH}" _cuda_redist_arch)
+            if(_cuda_redist_arch MATCHES "^(x64|amd64|x86_64)$")
+                set(_cuda_redist_arch "x64")
+            elseif(_cuda_redist_arch MATCHES "^(arm64|aarch64)$")
+                set(_cuda_redist_arch "arm64")
+            endif()
+        elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM64|arm64|aarch64)$")
+            set(_cuda_redist_arch "arm64")
+        else()
+            set(_cuda_redist_arch "x64")
+        endif()
+        set(_cuda_redist_dir "${CUDAToolkit_BIN_DIR}/${_cuda_redist_arch}")
+
         # Find the actual ggml-cuda target to get its runtime dependencies
         if(TARGET ggml-cuda)
             install(TARGETS ggml-cuda
                 RUNTIME_DEPENDENCIES
-                    DIRECTORIES ${CUDAToolkit_BIN_DIR} ${CUDAToolkit_BIN_DIR}/x64 ${CUDAToolkit_LIBRARY_DIR}
+                    DIRECTORIES ${_cuda_redist_dir} ${CUDAToolkit_BIN_DIR} ${CUDAToolkit_LIBRARY_DIR}
                     PRE_INCLUDE_REGEXES cublas cublasLt cudart
                     PRE_EXCLUDE_REGEXES ".*"
                 RUNTIME DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
@@ -501,26 +515,6 @@ if(OLLAMA_RUNNER_DIR)
                 RUNTIME DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
                 LIBRARY DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
             )
-            if(WIN32)
-                # Bundle the system Vulkan loader, not an arbitrary SDK copy.
-                # The loader is supplied by the installed Vulkan runtime or
-                # GPU driver; using that copy avoids PATH-dependent SDK drift.
-                if(DEFINED ENV{SystemRoot})
-                    file(TO_CMAKE_PATH "$ENV{SystemRoot}" _ollama_windows_root)
-                else()
-                    set(_ollama_windows_root "C:/Windows")
-                endif()
-                find_file(_vulkan_loader_dll
-                    NAMES vulkan-1.dll
-                    HINTS "${_ollama_windows_root}/System32"
-                    NO_DEFAULT_PATH)
-                if(NOT _vulkan_loader_dll)
-                    message(FATAL_ERROR "Could not find vulkan-1.dll in the Windows Vulkan runtime. Install the Vulkan runtime from the GPU driver or VULKAN_SDK/Helpers/VulkanRT.exe.")
-                endif()
-                install(FILES "${_vulkan_loader_dll}"
-                    DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}"
-                    COMPONENT llama-server)
-            endif()
         endif()
     endif()
 else()

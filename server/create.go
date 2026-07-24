@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"maps"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -268,34 +269,65 @@ func (s *Server) CreateHandler(c *gin.Context) {
 				}
 			}
 
-			strFromInfo := func(k string) string {
+			strFromInfo := func(k string) (string, error) {
 				v, ok := r.Info[k]
 				if ok {
-					val := v.(string)
-					return val
+					val, ok := v.(string)
+					if !ok {
+						return "", fmt.Errorf("info field %q must be a string", k)
+					}
+					return val, nil
 				}
-				return ""
+				return "", nil
 			}
 
-			vFromInfo := func(k string) float64 {
+			intFromInfo := func(k string) (int, error) {
 				v, ok := r.Info[k]
 				if ok {
-					val := v.(float64)
-					return val
+					val, ok := v.(float64)
+					if !ok {
+						return 0, fmt.Errorf("info field %q must be a number", k)
+					}
+					if val < 0 || math.Trunc(val) != val || val > float64(maxCreateInfoInt()) {
+						return 0, fmt.Errorf("info field %q must be a non-negative integer", k)
+					}
+					return int(val), nil
 				}
-				return 0
+				return 0, nil
 			}
 
-			config.ModelFamily = strFromInfo("model_family")
+			if config.ModelFamily, err = strFromInfo("model_family"); err != nil {
+				ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+				return
+			}
 			if config.ModelFamily != "" {
 				config.ModelFamilies = []string{config.ModelFamily}
 			}
 
-			config.BaseName = strFromInfo("base_name")
-			config.FileType = strFromInfo("quantization_level")
-			config.ModelType = strFromInfo("parameter_size")
-			config.ContextLen = int(vFromInfo("context_length"))
-			config.EmbedLen = int(vFromInfo("embedding_length"))
+			if config.BaseName, err = strFromInfo("base_name"); err != nil {
+				ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+				return
+			}
+			if config.FileType, err = strFromInfo("quantization_level"); err != nil {
+				ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+				return
+			}
+			if config.ModelType, err = strFromInfo("parameter_size"); err != nil {
+				ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+				return
+			}
+			contextLen, err := intFromInfo("context_length")
+			if err != nil {
+				ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+				return
+			}
+			config.ContextLen = contextLen
+			embedLen, err := intFromInfo("embedding_length")
+			if err != nil {
+				ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+				return
+			}
+			config.EmbedLen = embedLen
 		}
 
 		if err := createModel(r, name, baseLayers, config, fn); err != nil {
@@ -438,6 +470,10 @@ func convertModelFromFilesWithMediaType(files map[string]string, baseLayers []*l
 	default:
 		return nil, errUnknownType
 	}
+}
+
+func maxCreateInfoInt() int {
+	return int(^uint(0) >> 1)
 }
 
 func detectModelTypeFromFiles(files map[string]string) string {

@@ -29,8 +29,20 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+func useMLXTestThread(t *testing.T) {
+	t.Helper()
+	runtime.LockOSThread()
+	t.Cleanup(func() {
+		mlx.ReleaseAll()
+		mlx.ClearCache()
+		runtime.UnlockOSThread()
+	})
+}
+
 // TestLinearNoBias verifies Linear without bias computes x @ w.T correctly.
 func TestLinearNoBias(t *testing.T) {
+	useMLXTestThread(t)
+
 	// Weight: [out=2, in=3] -> transposed at forward time
 	weight := mlx.NewArrayFloat32([]float32{
 		1, 2, 3, // row 0
@@ -56,6 +68,8 @@ func TestLinearNoBias(t *testing.T) {
 
 // TestLinearWithBias verifies Linear with bias computes x @ w.T + b correctly.
 func TestLinearWithBias(t *testing.T) {
+	useMLXTestThread(t)
+
 	weight := mlx.NewArrayFloat32([]float32{
 		1, 2, 3,
 		4, 5, 6,
@@ -80,6 +94,8 @@ func TestLinearWithBias(t *testing.T) {
 
 // TestLinearBatched verifies Linear works with batched input.
 func TestLinearBatched(t *testing.T) {
+	useMLXTestThread(t)
+
 	weight := mlx.NewArrayFloat32([]float32{
 		1, 0,
 		0, 1,
@@ -111,6 +127,8 @@ func TestLinearBatched(t *testing.T) {
 
 // TestRMSNorm verifies RMSNorm computation.
 func TestRMSNorm(t *testing.T) {
+	useMLXTestThread(t)
+
 	weight := mlx.NewArrayFloat32([]float32{1, 1, 1, 1}, []int32{4})
 	mlx.Eval(weight)
 
@@ -134,6 +152,8 @@ func TestRMSNorm(t *testing.T) {
 
 // TestRMSNormWithScale verifies RMSNorm applies weight scaling.
 func TestRMSNormWithScale(t *testing.T) {
+	useMLXTestThread(t)
+
 	weight := mlx.NewArrayFloat32([]float32{2, 2, 2, 2}, []int32{4})
 	mlx.Eval(weight)
 
@@ -156,6 +176,8 @@ func TestRMSNormWithScale(t *testing.T) {
 
 // TestEmbedding verifies embedding lookup.
 func TestEmbedding(t *testing.T) {
+	useMLXTestThread(t)
+
 	// Embedding table: 4 tokens, dim 3
 	weight := mlx.NewArrayFloat32([]float32{
 		0, 0, 0, // token 0
@@ -185,6 +207,8 @@ func TestEmbedding(t *testing.T) {
 
 // TestRepeatKV verifies K/V repetition for GQA.
 func TestRepeatKV(t *testing.T) {
+	useMLXTestThread(t)
+
 	// [B=1, num_kv_heads=2, S=2, head_dim=2]
 	x := mlx.NewArrayFloat32([]float32{
 		// head 0
@@ -222,6 +246,8 @@ func TestRepeatKV(t *testing.T) {
 
 // TestRepeatKVNoOp verifies RepeatKV with factor 1 returns input unchanged.
 func TestRepeatKVNoOp(t *testing.T) {
+	useMLXTestThread(t)
+
 	x := mlx.NewArrayFloat32([]float32{1, 2, 3, 4}, []int32{1, 1, 2, 2})
 	mlx.Eval(x)
 
@@ -234,6 +260,8 @@ func TestRepeatKVNoOp(t *testing.T) {
 
 // TestApplyCausalMask verifies causal masking.
 func TestApplyCausalMask(t *testing.T) {
+	useMLXTestThread(t)
+
 	// [B=1, heads=1, S=3, S=3] - all ones
 	scores := mlx.Ones(1, 1, 3, 3)
 	mlx.Eval(scores)
@@ -259,6 +287,8 @@ func TestApplyCausalMask(t *testing.T) {
 
 // TestApplyCausalMaskWithOffset verifies causal masking with cache offset.
 func TestApplyCausalMaskWithOffset(t *testing.T) {
+	useMLXTestThread(t)
+
 	// Simulating: cache has 2 tokens, adding 1 new query
 	// scores: [B=1, heads=1, queryLen=1, keyLen=3]
 	scores := mlx.Ones(1, 1, 1, 3)
@@ -276,6 +306,8 @@ func TestApplyCausalMaskWithOffset(t *testing.T) {
 
 // TestApplyCausalMaskWithOffsetZero verifies offset=0 falls back to regular causal.
 func TestApplyCausalMaskWithOffsetZero(t *testing.T) {
+	useMLXTestThread(t)
+
 	scores := mlx.Ones(1, 1, 2, 2)
 	mlx.Eval(scores)
 

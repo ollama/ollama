@@ -79,7 +79,7 @@ func TestExperimentalWebEndpointsPassthrough(t *testing.T) {
 			t.Cleanup(func() { cloudProxyBaseURL = original })
 
 			s := &Server{}
-			router, err := s.GenerateRoutes(nil)
+			router, err := s.GenerateRoutes()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -129,7 +129,7 @@ func TestExperimentalWebEndpointsMissingBody(t *testing.T) {
 	setTestHome(t, t.TempDir())
 
 	s := &Server{}
-	router, err := s.GenerateRoutes(nil)
+	router, err := s.GenerateRoutes()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestExperimentalWebEndpointsCloudDisabled(t *testing.T) {
 	t.Setenv("OLLAMA_NO_CLOUD", "1")
 
 	s := &Server{}
-	router, err := s.GenerateRoutes(nil)
+	router, err := s.GenerateRoutes()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestExperimentalWebEndpointSigningFailureReturnsUnauthorized(t *testing.T) 
 	})
 
 	s := &Server{}
-	router, err := s.GenerateRoutes(nil)
+	router, err := s.GenerateRoutes()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +303,7 @@ func TestExperimentalWebEndpointSigningFailureWithoutSigninURL(t *testing.T) {
 	})
 
 	s := &Server{}
-	router, err := s.GenerateRoutes(nil)
+	router, err := s.GenerateRoutes()
 	if err != nil {
 		t.Fatal(err)
 	}

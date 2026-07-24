@@ -38,6 +38,11 @@ done
 shift $(( $OPTIND - 1 ))
 
 _build_darwin() {
+    BUILD_CPUS=$(getconf _NPROCESSORS_ONLN)
+    BUILD_JOBS=${OLLAMA_BUILD_PARALLEL:-$BUILD_CPUS}
+    BUILD_LOAD=${OLLAMA_BUILD_LOAD:-$BUILD_CPUS}
+    status "Build parallelism: $BUILD_JOBS, load limit: $BUILD_LOAD"
+
     SOURCE_BUILD=build/darwin-sources
     status "Preparing shared native sources"
     cmake -S . -B "$SOURCE_BUILD" -DOLLAMA_MLX_BACKENDS=metal_v3 -DOLLAMA_LLAMA_BACKENDS=
@@ -81,7 +86,7 @@ _build_darwin() {
             $MLX_EXTRA_ARGS
 
         GOOS=darwin GOARCH=$ARCH CGO_ENABLED=1 CGO_CFLAGS="$MLX_CGO_CFLAGS" CGO_LDFLAGS="$MLX_CGO_LDFLAGS" \
-            cmake --build "$BUILD_DIR" --target ollama-local --target ollama-mlx-backends --parallel
+            cmake --build "$BUILD_DIR" --target ollama-local --target ollama-mlx-backends --parallel "$BUILD_JOBS" -- -l "$BUILD_LOAD"
     done
 }
 

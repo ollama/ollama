@@ -14,6 +14,13 @@ import (
 )
 
 const (
+	MaxStringLength = 16 << 20
+	MaxArraySize    = 64 << 20
+
+	MaxTensorDims = 4
+)
+
+const (
 	typeUint8 uint32 = iota
 	typeInt8
 	typeUint16
@@ -78,6 +85,9 @@ func Open(path string) (f *File, err error) {
 		offset := f.reader.offset
 
 		alignment := cmp.Or(f.KeyValue("general.alignment").Int(), 32)
+		if alignment <= 0 {
+			return fmt.Errorf("%w alignment %d", ErrUnsupported, alignment)
+		}
 		f.offset = offset + (alignment-offset%alignment)%alignment
 		return nil
 	}
@@ -100,6 +110,9 @@ func (f *File) readTensor() (TensorInfo, error) {
 	if err != nil {
 		return TensorInfo{}, err
 	}
+	if dims > MaxTensorDims {
+		return TensorInfo{}, fmt.Errorf("%w tensor dimensions %d exceeds maximum %d", ErrUnsupported, dims, MaxTensorDims)
+	}
 
 	shape := make([]uint64, dims)
 	for i := range dims {
@@ -119,12 +132,16 @@ func (f *File) readTensor() (TensorInfo, error) {
 		return TensorInfo{}, err
 	}
 
-	return TensorInfo{
+	ti := TensorInfo{
 		Name:   name,
 		Offset: offset,
 		Shape:  shape,
 		Type:   TensorType(type_),
-	}, nil
+	}
+	if _, ok := ti.numBytes(); !ok {
+		return TensorInfo{}, fmt.Errorf("%w tensor %q size overflows", ErrUnsupported, ti.Name)
+	}
+	return ti, nil
 }
 
 func (f *File) readKeyValue() (KeyValue, error) {
@@ -191,11 +208,16 @@ func readString(f *File) (string, error) {
 		return "", err
 	}
 
-	if int(n) > len(f.bts) {
-		f.bts = make([]byte, n)
+	length, err := checkedLength(n, "string", MaxStringLength)
+	if err != nil {
+		return "", err
 	}
 
-	bts := f.bts[:n]
+	if length > len(f.bts) {
+		f.bts = make([]byte, length)
+	}
+
+	bts := f.bts[:length]
 	if _, err := io.ReadFull(f.reader, bts); err != nil {
 		return "", err
 	}
@@ -246,8 +268,13 @@ func readArray(f *File) (any, error) {
 }
 
 func readArrayData[T any](f *File, n uint64) (s []T, err error) {
-	s = make([]T, n)
-	for i := range n {
+	size, err := checkedLength(n, "array size", MaxArraySize)
+	if err != nil {
+		return nil, err
+	}
+
+	s = make([]T, size)
+	for i := range size {
 		e, err := read[T](f)
 		if err != nil {
 			return nil, err
@@ -260,8 +287,13 @@ func readArrayData[T any](f *File, n uint64) (s []T, err error) {
 }
 
 func readArrayString(f *File, n uint64) (s []string, err error) {
-	s = make([]string, n)
-	for i := range n {
+	size, err := checkedLength(n, "array size", MaxArraySize)
+	if err != nil {
+		return nil, err
+	}
+
+	s = make([]string, size)
+	for i := range size {
 		e, err := readString(f)
 		if err != nil {
 			return nil, err
@@ -271,6 +303,24 @@ func readArrayString(f *File, n uint64) (s []string, err error) {
 	}
 
 	return s, nil
+}
+
+func checkedLength(n uint64, kind string, max uint64) (int, error) {
+	if n > uint64(maxInt()) {
+		return 0, fmt.Errorf("%s %d exceeds maximum %d", kind, n, maxInt())
+	}
+	if n > max {
+		return 0, fmt.Errorf("%s %d exceeds maximum %d", kind, n, max)
+	}
+	return int(n), nil
+}
+
+func maxInt() int {
+	return int(^uint(0) >> 1)
+}
+
+func maxInt64() uint64 {
+	return 1<<63 - 1
 }
 
 func (f *File) Close() error {
@@ -337,11 +387,57 @@ func (f *File) TensorInfos() iter.Seq2[int, TensorInfo] {
 
 func (f *File) TensorReader(name string) (TensorInfo, io.Reader, error) {
 	t := f.TensorInfo(name)
-	if t.NumBytes() == 0 {
+	if err := f.Err(); err != nil {
+		return TensorInfo{}, nil, err
+	}
+	if t.Name == "" {
+		return TensorInfo{}, nil, fmt.Errorf("tensor %s not found", name)
+	}
+	numBytes, ok := t.numBytes()
+	if !ok {
+		return TensorInfo{}, nil, fmt.Errorf("%w tensor %q size overflows", ErrUnsupported, t.Name)
+	}
+	if numBytes == 0 {
 		return TensorInfo{}, nil, fmt.Errorf("tensor %s not found", name)
 	}
 
 	// fast forward through tensor info if we haven't already
-	_ = f.tensors.rest()
-	return t, io.NewSectionReader(f.file, f.offset+int64(t.Offset), t.NumBytes()), nil
+	f.tensors.rest()
+	if err := f.Err(); err != nil {
+		return TensorInfo{}, nil, err
+	}
+
+	if t.Offset > maxInt64() {
+		return TensorInfo{}, nil, fmt.Errorf("%w tensor %q offset %d exceeds maximum %d", ErrUnsupported, t.Name, t.Offset, maxInt64())
+	}
+	offset := f.offset + int64(t.Offset)
+	if offset < f.offset {
+		return TensorInfo{}, nil, fmt.Errorf("%w tensor %q offset overflows", ErrUnsupported, t.Name)
+	}
+
+	fileInfo, err := f.file.Stat()
+	if err != nil {
+		return TensorInfo{}, nil, err
+	}
+	if numBytes > fileInfo.Size()-offset {
+		return TensorInfo{}, nil, fmt.Errorf("%w tensor %q offset+size exceeds file size", ErrUnsupported, t.Name)
+	}
+
+	return t, io.NewSectionReader(f.file, offset, numBytes), nil
+}
+
+func (f *File) Err() error {
+	// Key/value and tensor metadata are read lazily, so parse errors can surface
+	// after Open succeeds.
+	if f.keyValues != nil {
+		if err := f.keyValues.Err(); err != nil {
+			return err
+		}
+	}
+	if f.tensors != nil {
+		if err := f.tensors.Err(); err != nil {
+			return err
+		}
+	}
+	return nil
 }

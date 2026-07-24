@@ -1955,7 +1955,7 @@ func TestAppendFlashAttentionArgs(t *testing.T) {
 	supportedGPU := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 13, ComputeMajor: 8, ComputeMinor: 9}}
 	oldGPU := []ml.DeviceInfo{
 		{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 8, ComputeMinor: 9},
-		{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 6, ComputeMinor: 2},
+		{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 5, ComputeMinor: 0},
 	}
 
 	tests := []struct {
@@ -2121,13 +2121,22 @@ func TestAppendMMProjArgs(t *testing.T) {
 			want:         []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
 		},
 		{
-			name:         "integrated rocm gpu disables projector offload",
+			name:         "integrated rocm gpu keeps projector offload when projector fits",
 			projectors:   []string{"model.gguf"},
 			opts:         defaultOpts,
 			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "ROCm"}, Integrated: true, FreeMemory: 32 << 30}},
 			mmprojMemory: 933 << 20,
 			modelLayers:  81,
-			want:         []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
+			want:         []string{"base", "--mmproj", "model.gguf"},
+		},
+		{
+			name:         "integrated cuda gpu keeps projector offload",
+			projectors:   []string{"model.gguf"},
+			opts:         defaultOpts,
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, Integrated: true, FreeMemory: 32 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+			want:         []string{"base", "--mmproj", "model.gguf"},
 		},
 		{
 			name:         "integrated metal gpu keeps projector offload",
@@ -2193,6 +2202,75 @@ func TestAppendMMProjArgs(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMMProjFitTargetExtraEnvs(t *testing.T) {
+	t.Setenv(llamaArgFitTargetEnv, "")
+	_ = os.Unsetenv(llamaArgFitTargetEnv)
+
+	const (
+		projectorMemoryMiB = uint64(933)
+		projectorPadMiB    = projectorMemoryMiB + mmprojOffloadHeadroom/bytesPerMiB
+	)
+
+	fitTargetValue := func(mib uint64) string {
+		return fmt.Sprint(mib)
+	}
+
+	assertFitTarget := func(t *testing.T, got map[string]string, wantMiB uint64) {
+		t.Helper()
+		if got[llamaArgFitTargetEnv] != fitTargetValue(wantMiB) {
+			t.Fatalf("fit target = %q, want %d", got[llamaArgFitTargetEnv], wantMiB)
+		}
+	}
+
+	newLaunch := func(extraEnvs map[string]string) llamaServerLaunchConfig {
+		return llamaServerLaunchConfig{
+			projectors:   []string{"model.gguf"},
+			mmprojMemory: projectorMemoryMiB * bytesPerMiB,
+			opts:         api.DefaultOptions(),
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, Integrated: true, FreeMemory: 32 << 30}},
+			modelLayers:  81,
+			extraEnvs:    extraEnvs,
+		}
+	}
+
+	t.Run("sets projector pad when no fit target exists", func(t *testing.T) {
+		launch := newLaunch(map[string]string{"KEEP": "1"})
+
+		got := launch.extraEnvsForStart()
+		assertFitTarget(t, got, projectorPadMiB)
+		if _, ok := launch.extraEnvs[llamaArgFitTargetEnv]; ok {
+			t.Fatal("extraEnvsForStart mutated launch.extraEnvs")
+		}
+	})
+
+	for _, tt := range []struct {
+		name               string
+		launchFitTargetMiB uint64
+	}{
+		{name: "adds projector pad to existing launch fit target", launchFitTargetMiB: 2048},
+		{name: "adds projector pad to smaller launch fit target", launchFitTargetMiB: 512},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			launch := newLaunch(map[string]string{
+				llamaArgFitTargetEnv: fitTargetValue(tt.launchFitTargetMiB),
+			})
+
+			got := launch.extraEnvsForStart()
+			assertFitTarget(t, got, tt.launchFitTargetMiB+projectorPadMiB)
+		})
+	}
+
+	t.Run("preserves inherited user fit target", func(t *testing.T) {
+		t.Setenv(llamaArgFitTargetEnv, fitTargetValue(256))
+		launch := newLaunch(map[string]string{})
+
+		got := launch.extraEnvsForStart()
+		if _, ok := got[llamaArgFitTargetEnv]; ok {
+			t.Fatalf("user env should not be overridden, got extra env %q", got[llamaArgFitTargetEnv])
+		}
+	})
 }
 
 func TestMMProjMemoryRequirement(t *testing.T) {
@@ -3046,6 +3124,166 @@ func TestMemoryParsingWriterMemorySizeFullOffload(t *testing.T) {
 			total, vram := runner.MemorySize()
 			if total != tt.wantProcessTotal || vram != tt.wantProcessVRAM {
 				t.Fatalf("MemorySize() = %d/%d, want %d/%d", total, vram, tt.wantProcessTotal, tt.wantProcessVRAM)
+			}
+		})
+	}
+}
+
+func TestMemoryParsingWriterMemorySizeMmapPartialOffload(t *testing.T) {
+	tests := []struct {
+		name          string
+		fileSizeBytes int64 // sparse model file size; 0 means no model file on disk
+		lines         []string
+		wantTotalMiB  float64
+		wantVRAMMiB   float64
+	}{
+		{
+			// Numbers from https://github.com/ollama/ollama/issues/16637: a
+			// 13.26 GiB MoE GGUF offloaded 48/49 layers with mmap on. The
+			// CPU_Mapped buffer spans nearly the whole file because the first
+			// and last tensors stay on CPU, re-counting the weights already
+			// accounted to the CUDA0 buffer.
+			name:          "CUDA partial offload with mmap",
+			fileSizeBytes: 13578 * 1024 * 1024, // 13.26 GiB
+			lines: []string{
+				"load_tensors: offloaded 48/49 layers to GPU\n",
+				"load_tensors:        CUDA0 model buffer size = 12900.00 MiB\n",
+				"load_tensors:   CPU_Mapped model buffer size = 13260.00 MiB\n",
+				"llama_kv_cache:      CUDA0 KV buffer size =   460.00 MiB\n",
+				"sched_reserve:      CUDA0 compute buffer size =   350.00 MiB\n",
+				"sched_reserve:  CUDA_Host compute buffer size =   270.00 MiB\n",
+			},
+			// Weights counted once (13578) + KV + compute, not ~26.6 GiB.
+			wantTotalMiB: 13578 + 460 + 350 + 270,
+			wantVRAMMiB:  12900 + 460 + 350,
+		},
+		{
+			// Captured from llama-server on Apple Silicon (SmolLM2 360M Q8_0,
+			// 368.50 MiB GGUF, -ngl 20 of 33, mmap on): CPU_Mapped and
+			// MTL0_Mapped each span nearly the whole file.
+			name:          "Metal partial offload with mmap",
+			fileSizeBytes: 386400256, // 368.50 MiB
+			lines: []string{
+				"load_tensors: offloaded 20/33 layers to GPU\n",
+				"load_tensors:   CPU_Mapped model buffer size =   364.31 MiB\n",
+				"load_tensors:   CPU_REPACK model buffer size =   129.49 MiB\n",
+				"load_tensors:  MTL0_Mapped model buffer size =   366.80 MiB\n",
+				"llama_context:        CPU  output buffer size =     0.75 MiB\n",
+				"llama_kv_cache:        CPU KV buffer size =    32.50 MiB\n",
+				"llama_kv_cache:       MTL0 KV buffer size =    47.50 MiB\n",
+				"sched_reserve:       MTL0 compute buffer size =    20.76 MiB\n",
+				"sched_reserve:        CPU compute buffer size =    24.51 MiB\n",
+			},
+			// CPU_Mapped (364.31) and MTL0_Mapped (366.80) both span the file, so
+			// the file-backed overlap is 364.31+366.80-368.50 = 362.61; only that
+			// is trimmed from the reclaimable CPU_Mapped page cache. CPU_REPACK is
+			// a real copy and is kept. Result: file once + REPACK + output + KV +
+			// compute.
+			wantTotalMiB: 368.50 + 129.49 + 0.75 + 32.50 + 47.50 + 20.76 + 24.51,
+			wantVRAMMiB:  366.80 + 47.50 + 20.76,
+		},
+		{
+			// dhiltgen's llama3.2 CPU-only case (PR #16709 review): mmap on,
+			// nothing offloaded. CPU_Mapped equals the file and CPU_REPACK is a
+			// real repacked copy. With no device buffer to overlap, the repack
+			// must not be trimmed: report file + repack, not just the file.
+			name:          "CPU-only mmap with repack is not trimmed",
+			fileSizeBytes: 1919 * 1024 * 1024, // ~1918.35 MiB file, CPU_Mapped span fits within
+			lines: []string{
+				"load_tensors: offloaded 0/29 layers to GPU\n",
+				"load_tensors:   CPU_Mapped model buffer size =  1918.35 MiB\n",
+				"load_tensors:   CPU_REPACK model buffer size =  1299.38 MiB\n",
+				"llama_kv_cache:        CPU KV buffer size =   112.00 MiB\n",
+				"sched_reserve:        CPU compute buffer size =    72.00 MiB\n",
+			},
+			wantTotalMiB: 1918.35 + 1299.38 + 112.00 + 72.00,
+			wantVRAMMiB:  0,
+		},
+		{
+			// use_mmap=false: weights are copied into plain CPU buffers and
+			// the REPACK copy legitimately exceeds the file size. No trim.
+			name:          "no mmap is unchanged",
+			fileSizeBytes: 386404992,
+			lines: []string{
+				"load_tensors: offloaded 20/33 layers to GPU\n",
+				"load_tensors:          CPU model buffer size =   234.82 MiB\n",
+				"load_tensors:   CPU_REPACK model buffer size =   129.49 MiB\n",
+				"load_tensors:         MTL0 model buffer size =   132.00 MiB\n",
+				"llama_kv_cache:       MTL0 KV buffer size =    47.50 MiB\n",
+			},
+			wantTotalMiB: 234.82 + 129.49 + 132.00 + 47.50,
+			wantVRAMMiB:  132.00 + 47.50,
+		},
+		{
+			// Model file size unknown (stat failure): keep parsed sizes as-is.
+			name:          "missing model file is unchanged",
+			fileSizeBytes: 0,
+			lines: []string{
+				"load_tensors: offloaded 48/49 layers to GPU\n",
+				"load_tensors:        CUDA0 model buffer size = 12900.00 MiB\n",
+				"load_tensors:   CPU_Mapped model buffer size = 13260.00 MiB\n",
+			},
+			wantTotalMiB: 12900 + 13260,
+			wantVRAMMiB:  12900,
+		},
+		{
+			// Mapped buffers that fit within the file budget cover disjoint
+			// file ranges: nothing is double-counted, nothing to trim.
+			name:          "mapped buffers within file size are unchanged",
+			fileSizeBytes: 13578 * 1024 * 1024,
+			lines: []string{
+				"load_tensors: offloaded 24/49 layers to GPU\n",
+				"load_tensors:        CUDA0 model buffer size =  6500.00 MiB\n",
+				"load_tensors:   CPU_Mapped model buffer size =  7000.00 MiB\n",
+			},
+			wantTotalMiB: 6500 + 7000,
+			wantVRAMMiB:  6500,
+		},
+	}
+
+	withinKiB := func(got, want uint64) bool {
+		if got > want {
+			return got-want <= 1024
+		}
+		return want-got <= 1024
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &llamaServerRunner{vramByDevice: make(map[string]uint64)}
+			if tt.fileSizeBytes > 0 {
+				modelPath := filepath.Join(t.TempDir(), "model.gguf")
+				f, err := os.Create(modelPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := f.Truncate(tt.fileSizeBytes); err != nil {
+					f.Close()
+					t.Fatal(err)
+				}
+				if err := f.Close(); err != nil {
+					t.Fatal(err)
+				}
+				runner.modelPath = modelPath
+			}
+
+			w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+			for _, line := range tt.lines {
+				if _, err := w.Write([]byte(line)); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			total, vram := runner.MemorySize()
+			wantTotal := uint64(tt.wantTotalMiB * 1024 * 1024)
+			wantVRAM := uint64(tt.wantVRAMMiB * 1024 * 1024)
+			if !withinKiB(total, wantTotal) {
+				t.Errorf("MemorySize total = %d (%.2f MiB), want %d (%.2f MiB)",
+					total, float64(total)/1024/1024, wantTotal, tt.wantTotalMiB)
+			}
+			if !withinKiB(vram, wantVRAM) {
+				t.Errorf("MemorySize vram = %d (%.2f MiB), want %d (%.2f MiB)",
+					vram, float64(vram)/1024/1024, wantVRAM, tt.wantVRAMMiB)
 			}
 		})
 	}

@@ -43,8 +43,12 @@ func TestFromValues(t *testing.T) {
 }
 
 func TestComparisonOpsAndBernoulli(t *testing.T) {
-	skipIfNoMLX(t)
+	withMLXThread(t, func() {
+		testComparisonOpsAndBernoulli(t)
+	})
+}
 
+func testComparisonOpsAndBernoulli(t *testing.T) {
 	a := FromValues([]float32{1, 2, 3}, 3)
 	b := FromValues([]float32{1, 1, 4}, 3)
 	eq := a.Equal(b).AsType(DTypeInt32)

@@ -77,6 +77,14 @@ const (
 	openEndedGenerationContextMultiplier = 10
 )
 
+const (
+	llamaArgFitTargetEnv = "LLAMA_ARG_FIT_TARGET"
+	bytesPerMiB          = 1 << 20
+
+	// mmprojOffloadHeadroom leaves 1 GiB for backend buffers beyond projector weights.
+	mmprojOffloadHeadroom = 1 << 30
+)
+
 // DefaultEmbeddingNumBatchForContext caps the embedding batch default to the
 // active context length before it is passed to llama-server.
 func DefaultEmbeddingNumBatchForContext(numCtx int) int {
@@ -110,19 +118,21 @@ func boundedNumPredict(numPredict, numCtx int) int {
 // llamaServerRunner wraps an upstream llama-server process and implements the LlamaServer interface.
 // It communicates with llama-server over HTTP.
 type llamaServerRunner struct {
-	port             int
-	cmd              *exec.Cmd
-	done             chan struct{}
-	doneErr          error
-	client           *http.Client
-	memoryMu         sync.RWMutex
-	memTotal         uint64 // actual total buffer size parsed from llama-server logs (bytes)
-	memGPU           uint64 // actual GPU buffer size parsed from llama-server logs (bytes)
-	gpuLayers        uint64 // model layers loaded on GPU, parsed from llama-server logs
-	gpuLayerOverflow int    // number of GPU-selected layers partially overflowed to CPU
-	status           *StatusWriter
-	options          api.Options
-	modelPath        string
+	port               int
+	cmd                *exec.Cmd
+	done               chan struct{}
+	doneErr            error
+	client             *http.Client
+	memoryMu           sync.RWMutex
+	memTotal           uint64 // actual total buffer size parsed from llama-server logs (bytes)
+	memGPU             uint64 // actual GPU buffer size parsed from llama-server logs (bytes)
+	memModelFileBacked uint64 // model weight bytes whose buffers mirror the on-disk file (mmap views + direct device copies); excludes repacked copies like CPU_REPACK
+	memCPUMappedModel  uint64 // model weight bytes in mmap-backed CPU buffers (e.g. CPU_Mapped), parsed from llama-server logs
+	gpuLayers          uint64 // model layers loaded on GPU, parsed from llama-server logs
+	gpuLayerOverflow   int    // number of GPU-selected layers partially overflowed to CPU
+	status             *StatusWriter
+	options            api.Options
+	modelPath          string
 	// mediaMarker must match the LLAMA_MEDIA_MARKER value passed to llama-server.
 	// llama.cpp randomizes this by default; Ollama renders stable [img-N] markers
 	// and rewrites them before forwarding the request.
@@ -380,6 +390,15 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 		params = append(params, "--no-mmap")
 	}
 
+	// Direct I/O skips the page cache on load for integrated CUDA/ROCm GPUs, which
+	// share system memory with the CPU and would otherwise double-buffer weights.
+	for _, g := range launch.gpus {
+		if runtime.GOOS == "linux" && g.Integrated && (strings.EqualFold(g.Library, "CUDA") || strings.EqualFold(g.Library, "ROCm")) {
+			params = append(params, "--direct-io")
+			break
+		}
+	}
+
 	// KV cache type
 	if launch.kvCacheType != "" {
 		params = append(params, "--cache-type-k", launch.kvCacheType, "--cache-type-v", launch.kvCacheType)
@@ -418,7 +437,7 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 		cmd.Stderr = out
 	}
 	cmd.SysProcAttr = LlamaServerSysProcAttr
-	SetupLlamaServerCommandEnv(cmd, exe, launch.gpuLibs, launch.extraEnvs)
+	SetupLlamaServerCommandEnv(cmd, exe, launch.gpuLibs, launch.extraEnvsForStart())
 
 	slog.Info("starting llama-server", "cmd", cmd)
 	slog.Debug("subprocess", "", filteredEnv(cmd.Env))
@@ -619,11 +638,6 @@ func appendMainGPUArgs(params []string, opts api.Options) []string {
 	return append(params, "--split-mode", "none", "--main-gpu", strconv.Itoa(*opts.MainGPU))
 }
 
-const (
-	// mmprojOffloadHeadroom leaves 1 GiB for backend buffers beyond projector weights.
-	mmprojOffloadHeadroom = 1 << 30
-)
-
 func appendMMProjArgs(params []string, launch llamaServerLaunchConfig) []string {
 	if len(launch.projectors) == 0 {
 		return params
@@ -656,9 +670,6 @@ func shouldDisableMMProjOffload(opts api.Options, gpus []ml.DeviceInfo, modelLay
 	requiredMemory := mmprojMemory + mmprojOffloadHeadroom
 
 	for _, gpu := range gpus {
-		if gpu.Integrated && gpu.Library != "Metal" {
-			return true, "shared-memory-gpu"
-		}
 		memory := gpu.FreeMemory
 		if memory == 0 || (gpu.TotalMemory > 0 && gpu.TotalMemory < memory) {
 			memory = gpu.TotalMemory
@@ -669,6 +680,47 @@ func shouldDisableMMProjOffload(opts api.Options, gpus []ml.DeviceInfo, modelLay
 	}
 
 	return false, ""
+}
+
+func (launch llamaServerLaunchConfig) extraEnvsForStart() map[string]string {
+	pad, ok := launch.mmprojFitTargetMiB()
+	if !ok {
+		return launch.extraEnvs
+	}
+
+	if existing, ok := launch.extraEnvs[llamaArgFitTargetEnv]; ok {
+		existingTarget, err := strconv.ParseUint(existing, 10, 64)
+		if err != nil {
+			slog.Warn("invalid llama-server fit target", "env", llamaArgFitTargetEnv, "value", existing, "error", err)
+			return launch.extraEnvs
+		}
+
+		envs := cloneStringMap(launch.extraEnvs)
+		envs[llamaArgFitTargetEnv] = strconv.FormatUint(existingTarget+pad, 10)
+		return envs
+	}
+
+	if _, ok := os.LookupEnv(llamaArgFitTargetEnv); ok {
+		// Preserve an inherited user override. SetupLlamaServerCommandEnv
+		// will pass it through unless extraEnvs overrides it.
+		return launch.extraEnvs
+	}
+
+	envs := cloneStringMap(launch.extraEnvs)
+	envs[llamaArgFitTargetEnv] = strconv.FormatUint(pad, 10)
+	return envs
+}
+
+func (launch llamaServerLaunchConfig) mmprojFitTargetMiB() (uint64, bool) {
+	if len(launch.projectors) == 0 || launch.mmprojMemory == 0 {
+		return 0, false
+	}
+	if disable, _ := launch.mmprojOffloadDisabled(); disable {
+		return 0, false
+	}
+
+	requiredMemory := launch.mmprojMemory + mmprojOffloadHeadroom
+	return (requiredMemory + bytesPerMiB - 1) / bytesPerMiB, true
 }
 
 // mmprojMemoryRequirement is a stopgap until fit accounts for mmproj memory directly.
@@ -1030,6 +1082,8 @@ func (s *llamaServerRunner) resetLoadAccounting() {
 
 	s.memTotal = 0
 	s.memGPU = 0
+	s.memModelFileBacked = 0
+	s.memCPUMappedModel = 0
 	s.gpuLayers = 0
 	s.gpuLayerOverflow = 0
 	for k := range s.vramByDevice {
@@ -2519,6 +2573,8 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 	s.memoryMu.RLock()
 	memTotal := s.memTotal
 	memGPU := s.memGPU
+	memModelFileBacked := s.memModelFileBacked
+	memCPUMappedModel := s.memCPUMappedModel
 	totalLayers := s.totalLayers
 	gpuLayers := s.gpuLayers
 	gpuLayerOverflow := s.gpuLayerOverflow
@@ -2526,6 +2582,19 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 
 	if memTotal > 0 {
 		total, vram = memTotal, memGPU
+		// With mmap, llama-server reports each CPU_Mapped model buffer as the
+		// file-offset span of its CPU-resident tensors. During partial offload
+		// that span covers nearly the whole file (the first and last tensors
+		// stay on CPU), re-counting weights already held in device buffers.
+		// Only buffers that mirror the on-disk file can overlap this way;
+		// repacked copies such as CPU_REPACK are separate real allocations and
+		// must be left intact. Weights cannot exceed the model file on disk, so
+		// trim that overlap from the mmap-backed (reclaimable page cache) portion.
+		if memCPUMappedModel > 0 {
+			if info, err := os.Stat(s.modelPath); err == nil && memModelFileBacked > uint64(info.Size()) {
+				total -= min(memCPUMappedModel, memModelFileBacked-uint64(info.Size()))
+			}
+		}
 		if totalLayers > 0 && gpuLayers >= totalLayers && gpuLayerOverflow == 0 {
 			total = vram
 		}
@@ -2684,11 +2753,25 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 }
 
 func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
-	var total, gpu uint64
+	var total, gpu, modelFileBacked, cpuMappedModel uint64
 	byDevice := make(map[string]uint64)
 
 	for key, buffer := range w.buffers {
 		total += buffer.bytes
+		if key.kind == "model" {
+			onGPU := isGPUBuffer(key.backend)
+			mmapBacked := strings.HasSuffix(key.backend, "_Mapped")
+			// Device copies and mmap views mirror the on-disk weights, so their
+			// spans can overlap and double-count on partial offload. Repacked or
+			// host-pinned CPU copies (e.g. CPU_REPACK) are separate real
+			// allocations that never overlap the file, so keep them out of the base.
+			if onGPU || mmapBacked {
+				modelFileBacked += buffer.bytes
+			}
+			if !onGPU && mmapBacked {
+				cpuMappedModel += buffer.bytes
+			}
+		}
 		if isGPUBuffer(key.backend) {
 			gpu += buffer.bytes
 			byDevice[deviceName(key.backend)] += buffer.bytes
@@ -2697,6 +2780,8 @@ func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
 
 	w.runner.memTotal = total
 	w.runner.memGPU = gpu
+	w.runner.memModelFileBacked = modelFileBacked
+	w.runner.memCPUMappedModel = cpuMappedModel
 	w.runner.vramByDevice = byDevice
 }
 

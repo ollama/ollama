@@ -349,6 +349,46 @@ func TestHermesConfigureUsesLaunchResolvedHostForModelDiscovery(t *testing.T) {
 	}
 }
 
+func TestHermesConfigurePreservesExplicitCloudModel(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withHermesPlatform(t, "darwin")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"qwen3.5:cloud"},{"name":"gemma4"}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	withHermesOllamaURL(t, srv.URL)
+
+	if err := (&Hermes{}).Configure("qwen3.5:cloud"); err != nil {
+		t.Fatalf("Configure returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, ".hermes", "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var cfg map[string]any
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("failed to parse rewritten yaml: %v", err)
+	}
+	modelCfg, _ := cfg["model"].(map[string]any)
+	if got, _ := modelCfg["default"].(string); got != "qwen3.5:cloud" {
+		t.Fatalf("expected explicit cloud model to be preserved, got %q", got)
+	}
+	providers, _ := cfg["providers"].(map[string]any)
+	provider, _ := providers[hermesProviderKey].(map[string]any)
+	if got, _ := provider["default_model"].(string); got != "qwen3.5:cloud" {
+		t.Fatalf("expected provider default model to be preserved, got %q", got)
+	}
+}
+
 func TestHermesConfigureMigratesLegacyManagedAliases(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
@@ -630,7 +670,7 @@ func hermesDesktopTestExecutableRelativePath(goos string) string {
 func writeHermesDesktopTestBinary(t *testing.T, dir string) {
 	t.Helper()
 	bin := filepath.Join(dir, "hermes")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '[%s]\\n' \"$*\" >> \"$HOME/hermes-invocations.log\"\n"), 0o755); err != nil {
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf 'Hermes Agent v0.16.0 (2026.6.5)\\n'\n  exit 0\nfi\nprintf '[%s]\\n' \"$*\" >> \"$HOME/hermes-invocations.log\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -677,6 +717,13 @@ func TestHermesDesktopRun(t *testing.T) {
 			args:       []string{"--skip-build"},
 			hasPackage: true,
 			want:       "[desktop --skip-build]",
+		},
+		{
+			name:       "force build",
+			goos:       runtime.GOOS,
+			args:       []string{"--force-build"},
+			hasPackage: true,
+			want:       "[desktop --force-build]",
 		},
 		{
 			name:       "source mode",
@@ -730,6 +777,148 @@ func TestHermesDesktopRun(t *testing.T) {
 				t.Fatalf("expected %q, got %q", tt.want, got)
 			}
 		})
+	}
+}
+
+func writeHermesVersionedTestBinary(t *testing.T, dir, version string) {
+	t.Helper()
+	script := "#!/bin/sh\n" +
+		"case \"$1\" in\n" +
+		"  --version)\n" +
+		"    printf 'Hermes Agent " + version + " (test)\\n'\n" +
+		"    ;;\n" +
+		"  update)\n" +
+		"    printf 'update\\n' >> \"$HOME/hermes-update.log\"\n" +
+		"    ;;\n" +
+		"  *)\n" +
+		"    printf '[%s]\\n' \"$*\" >> \"$HOME/hermes-invocations.log\"\n" +
+		"    ;;\n" +
+		"esac\n"
+	bin := filepath.Join(dir, "hermes")
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestParseHermesVersion(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"standard release", "Hermes Agent v0.16.0 (2026.6.5)", "v0.16.0"},
+		{"newer release", "Hermes Agent v0.17.0 (2026.6.19)", "v0.17.0"},
+		{"older release", "Hermes Agent v0.15.1 (2026.5.29)", "v0.15.1"},
+		{"prerelease", "Hermes Agent v0.16.0-rc1 (2026.6.5)", "v0.16.0-rc1"},
+		{"no version token", "Hermes Agent", ""},
+		{"empty", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseHermesVersion(tt.input); got != tt.want {
+				t.Fatalf("parseHermesVersion(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHermesDesktopRun_UpdatesCliOlderThanMinVersion(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, true)
+	withHermesPlatform(t, runtime.GOOS)
+	clearHermesMessagingEnvVars(t)
+	clearHermesDesktopPackageEnvVars(t)
+	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	writeHermesVersionedTestBinary(t, tmpDir, "v0.15.1")
+
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		t.Fatalf("did not expect messaging prompt during desktop launch: %s", prompt)
+		return false, nil
+	}
+
+	if err := (&HermesDesktop{}).Run("", nil, []string{"--foreground"}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	updateLog, err := os.ReadFile(filepath.Join(tmpDir, "hermes-update.log"))
+	if err != nil {
+		t.Fatalf("expected hermes update to run for an older CLI: %v", err)
+	}
+	if strings.TrimSpace(string(updateLog)) != "update" {
+		t.Fatalf("expected update log 'update', got %q", updateLog)
+	}
+	if got := readHermesDesktopInvocations(t, tmpDir); got != "[desktop --foreground]" {
+		t.Fatalf("expected desktop launch after update, got %q", got)
+	}
+}
+
+func TestHermesDesktopRun_SkipsMinVersionCheckOnWindows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, true)
+	withHermesPlatform(t, "windows")
+	clearHermesMessagingEnvVars(t)
+	clearHermesDesktopPackageEnvVars(t)
+	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	writeHermesVersionedTestBinary(t, tmpDir, "v0.15.1")
+
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		t.Fatalf("did not expect messaging prompt during desktop launch: %s", prompt)
+		return false, nil
+	}
+
+	if err := (&HermesDesktop{}).Run("", nil, []string{"--foreground"}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(tmpDir, "hermes-update.log")); err == nil {
+		t.Fatal("expected hermes update NOT to run on Windows, but hermes-update.log exists")
+	}
+	if got := readHermesDesktopInvocations(t, tmpDir); got != "[desktop --foreground]" {
+		t.Fatalf("expected desktop launch without update, got %q", got)
+	}
+}
+
+func TestHermesDesktopRun_DoesNotUpdateCliAtOrAboveMinVersion(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, true)
+	withHermesPlatform(t, runtime.GOOS)
+	clearHermesMessagingEnvVars(t)
+	clearHermesDesktopPackageEnvVars(t)
+	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	writeHermesVersionedTestBinary(t, tmpDir, "v0.17.0")
+
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		t.Fatalf("did not expect messaging prompt during desktop launch: %s", prompt)
+		return false, nil
+	}
+
+	if err := (&HermesDesktop{}).Run("", nil, []string{"--foreground"}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(tmpDir, "hermes-update.log")); err == nil {
+		t.Fatal("expected hermes update NOT to run for a current CLI, but hermes-update.log exists")
+	}
+	if got := readHermesDesktopInvocations(t, tmpDir); got != "[desktop --foreground]" {
+		t.Fatalf("expected desktop launch without update, got %q", got)
 	}
 }
 

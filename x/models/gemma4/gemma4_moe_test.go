@@ -1,21 +1,44 @@
 package gemma4
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
+
+func useMLXTestThread(t *testing.T) {
+	t.Helper()
+
+	runtime.LockOSThread()
+	initialized := false
+	t.Cleanup(func() {
+		if initialized {
+			mlx.Sweep()
+			mlx.ClearCache()
+			if mlx.GPUIsAvailable() {
+				mlx.SetDefaultDeviceGPU()
+			}
+		}
+		runtime.UnlockOSThread()
+	})
+
+	if err := mlx.CheckInit(); err != nil {
+		t.Skipf("MLX not available: %v", err)
+	}
+	initialized = true
+	if mlx.GPUIsAvailable() {
+		mlx.SetDefaultDeviceGPU()
+	}
+}
 
 // onesLike creates a tensor of the given shape filled with a small constant.
 func onesLike(shape ...int) *mlx.Array {
 	return mlx.AddScalar(mlx.Zeros(mlx.DTypeBFloat16, shape...), 0.01)
 }
 
-func TestMoEForward(t *testing.T) {
-	skipIfNoMLX(t)
-
-	// Small config matching 26b architecture pattern.
-	cfg := &TextConfig{
+func tinyMoEConfig() *TextConfig {
+	return &TextConfig{
 		HiddenSize:             16, // tiny for testing
 		NumAttentionHeads:      2,
 		NumKeyValueHeads:       1,
@@ -31,73 +54,173 @@ func TestMoEForward(t *testing.T) {
 		SlidingScale:           1.0,
 		FullScale:              1.0,
 	}
+}
 
-	B, L := int32(1), int32(3)
-	x := onesLike(int(B), int(L), int(cfg.HiddenSize))
-
-	// Test Router.Forward.
-	router := &Router{
+func newRouter(cfg *TextConfig) *Router {
+	return &Router{
 		Proj:  linearFromWeight(onesLike(int(cfg.NumExperts), int(cfg.HiddenSize))),
 		Scale: onesLike(int(cfg.HiddenSize)),
 	}
+}
 
-	t.Run("Router", func(t *testing.T) {
-		scores, inds := router.Forward(x, cfg)
-		mlx.Eval(scores, inds)
-
-		sDims := scores.Dims()
-		iDims := inds.Dims()
-		t.Logf("scores shape: %v, inds shape: %v", sDims, iDims)
-
-		if len(sDims) != 2 || sDims[0] != int(B*L) || sDims[1] != int(cfg.TopKExperts) {
-			t.Errorf("scores shape = %v, want [%d, %d]", sDims, B*L, cfg.TopKExperts)
-		}
-		if len(iDims) != 2 || iDims[0] != int(B*L) || iDims[1] != int(cfg.TopKExperts) {
-			t.Errorf("inds shape = %v, want [%d, %d]", iDims, B*L, cfg.TopKExperts)
-		}
-	})
-
-	// Test MoEBlock.Forward.
-	moe := &MoEBlock{
+func newMoEBlock(cfg *TextConfig) *MoEBlock {
+	return &MoEBlock{
 		GateWeight:     onesLike(int(cfg.NumExperts), int(cfg.HiddenSize), int(cfg.ExpertIntermediateSize)),
 		UpWeight:       onesLike(int(cfg.NumExperts), int(cfg.HiddenSize), int(cfg.ExpertIntermediateSize)),
 		DownWeight:     onesLike(int(cfg.NumExperts), int(cfg.ExpertIntermediateSize), int(cfg.HiddenSize)),
 		PerExpertScale: onesLike(int(cfg.NumExperts)),
 	}
+}
 
-	t.Run("MoEBlock", func(t *testing.T) {
-		scores, inds := router.Forward(x, cfg)
-		mlx.Eval(scores, inds)
+func TestMoERouterForward(t *testing.T) {
+	useMLXTestThread(t)
 
-		out := moe.Forward(x, scores, inds, cfg)
-		mlx.Eval(out)
+	cfg := tinyMoEConfig()
+	B, L := int32(1), int32(3)
+	x := onesLike(int(B), int(L), int(cfg.HiddenSize))
+	router := newRouter(cfg)
 
-		outDims := out.Dims()
-		t.Logf("MoE output shape: %v", outDims)
+	scores, inds := router.Forward(x, cfg)
+	mlx.Eval(scores, inds)
 
-		if len(outDims) != 3 || outDims[0] != int(B) || outDims[1] != int(L) || outDims[2] != int(cfg.HiddenSize) {
-			t.Errorf("output shape = %v, want [%d, %d, %d]", outDims, B, L, cfg.HiddenSize)
-		}
-	})
+	sDims := scores.Dims()
+	iDims := inds.Dims()
+	t.Logf("scores shape: %v, inds shape: %v", sDims, iDims)
 
-	// Test with larger batch to exercise the sorted GatherMM path (B*L >= 64).
-	t.Run("MoEBlock_sorted", func(t *testing.T) {
-		bigB, bigL := int32(1), int32(128)
-		bigX := onesLike(int(bigB), int(bigL), int(cfg.HiddenSize))
+	if len(sDims) != 2 || sDims[0] != int(B*L) || sDims[1] != int(cfg.TopKExperts) {
+		t.Errorf("scores shape = %v, want [%d, %d]", sDims, B*L, cfg.TopKExperts)
+	}
+	if len(iDims) != 2 || iDims[0] != int(B*L) || iDims[1] != int(cfg.TopKExperts) {
+		t.Errorf("inds shape = %v, want [%d, %d]", iDims, B*L, cfg.TopKExperts)
+	}
+}
 
-		scores, inds := router.Forward(bigX, cfg)
-		mlx.Eval(scores, inds)
+func TestMoEBlockForward(t *testing.T) {
+	useMLXTestThread(t)
 
-		out := moe.Forward(bigX, scores, inds, cfg)
-		mlx.Eval(out)
+	cfg := tinyMoEConfig()
+	B, L := int32(1), int32(3)
+	x := onesLike(int(B), int(L), int(cfg.HiddenSize))
+	router := newRouter(cfg)
+	moe := newMoEBlock(cfg)
 
-		outDims := out.Dims()
-		t.Logf("MoE sorted output shape: %v", outDims)
+	scores, inds := router.Forward(x, cfg)
+	mlx.Eval(scores, inds)
 
-		if len(outDims) != 3 || outDims[0] != int(bigB) || outDims[1] != int(bigL) || outDims[2] != int(cfg.HiddenSize) {
-			t.Errorf("output shape = %v, want [%d, %d, %d]", outDims, bigB, bigL, cfg.HiddenSize)
-		}
-	})
+	out := moe.Forward(x, scores, inds, cfg)
+	mlx.Eval(out)
+
+	outDims := out.Dims()
+	t.Logf("MoE output shape: %v", outDims)
+
+	if len(outDims) != 3 || outDims[0] != int(B) || outDims[1] != int(L) || outDims[2] != int(cfg.HiddenSize) {
+		t.Errorf("output shape = %v, want [%d, %d, %d]", outDims, B, L, cfg.HiddenSize)
+	}
+}
+
+func TestMoEBlockSortedForward(t *testing.T) {
+	useMLXTestThread(t)
+
+	cfg := tinyMoEConfig()
+	B, L := int32(1), int32(128)
+	x := onesLike(int(B), int(L), int(cfg.HiddenSize))
+	router := newRouter(cfg)
+	moe := newMoEBlock(cfg)
+
+	scores, inds := router.Forward(x, cfg)
+	mlx.Eval(scores, inds)
+
+	out := moe.Forward(x, scores, inds, cfg)
+	mlx.Eval(out)
+
+	outDims := out.Dims()
+	t.Logf("MoE sorted output shape: %v", outDims)
+
+	if len(outDims) != 3 || outDims[0] != int(B) || outDims[1] != int(L) || outDims[2] != int(cfg.HiddenSize) {
+		t.Errorf("output shape = %v, want [%d, %d, %d]", outDims, B, L, cfg.HiddenSize)
+	}
+}
+
+// TestLoadFusedExpertsQuantized verifies that a quantized, fused gate_up
+// projection is loaded onto the GatherQMM path under every name the experts
+// ship as — including gemma's bare ".experts." name, which previously fell
+// through to the dense branch and was loaded unquantized (the memory bloat
+// bug this fix addresses).
+func TestLoadFusedExpertsQuantized(t *testing.T) {
+	skipIfNoMLX(t)
+
+	const E, I, H = 4, 8, 16
+	m := &Model{TextConfig: &TextConfig{QuantGroupSize: 16, QuantBits: 4, QuantMode: "nvfp4"}}
+
+	for _, prefix := range []string{
+		"model.language_model.layers.0.experts",        // gemma HF (bare .experts.)
+		"model.language_model.layers.0.moe.switch_mlp", // create pipeline
+	} {
+		t.Run(prefix, func(t *testing.T) {
+			gateUpKey := prefix + ".gate_up_proj"
+			downKey := prefix + ".down_proj"
+			tensors := map[string]*mlx.Array{
+				gateUpKey:            onesLike(E, 2*I, H),
+				gateUpKey + "_scale": onesLike(E, 2*I, H/16),
+				gateUpKey + "_qbias": onesLike(E, 2*I, H/16),
+				downKey:              onesLike(E, H, I),
+				downKey + "_scale":   onesLike(E, H, I/16),
+				downKey + "_qbias":   onesLike(E, H, I/16),
+			}
+
+			moe := &MoEBlock{}
+			m.loadFusedExperts(moe, tensors, gateUpKey, tensors[gateUpKey], downKey, tensors[downKey])
+
+			if !moe.UseQuantized {
+				t.Error("UseQuantized = false, want true")
+			}
+			if !moe.UseFusedGateUp {
+				t.Error("UseFusedGateUp = false, want true")
+			}
+			if moe.GateUpWeightQ == nil || moe.GateUpScales == nil || moe.GateUpBiases == nil {
+				t.Error("quantized gate_up weight/scale/bias not all set")
+			}
+			if moe.DownWeightQ == nil || moe.DownScales == nil || moe.DownBiases == nil {
+				t.Error("quantized down weight/scale/bias not all set")
+			}
+			// Dense fields must stay nil so Forward takes the GatherQMM path.
+			if moe.GateUpWeight != nil || moe.DownWeight != nil {
+				t.Error("dense weights set on a quantized block")
+			}
+		})
+	}
+}
+
+// TestLoadFusedExpertsDense verifies that a fused gate_up projection with no
+// scale companions is loaded onto the dense GatherMM path, kept fused.
+func TestLoadFusedExpertsDense(t *testing.T) {
+	skipIfNoMLX(t)
+
+	const E, I, H = 4, 8, 16
+	m := &Model{TextConfig: &TextConfig{}}
+
+	gateUpKey := "model.language_model.layers.0.experts.gate_up_proj"
+	downKey := "model.language_model.layers.0.experts.down_proj"
+	tensors := map[string]*mlx.Array{
+		gateUpKey: onesLike(E, 2*I, H),
+		downKey:   onesLike(E, I, H),
+	}
+
+	moe := &MoEBlock{}
+	m.loadFusedExperts(moe, tensors, gateUpKey, tensors[gateUpKey], downKey, tensors[downKey])
+
+	if moe.UseQuantized {
+		t.Error("UseQuantized = true, want false (no scales present)")
+	}
+	if !moe.UseFusedGateUp {
+		t.Error("UseFusedGateUp = false, want true")
+	}
+	if moe.GateUpWeight == nil || moe.DownWeight == nil {
+		t.Error("dense fused weights not set")
+	}
+	if moe.GateUpWeightQ != nil || moe.DownWeightQ != nil {
+		t.Error("quantized weights set on a dense block")
+	}
 }
 
 // TestRouterForwardMatchesLegacy verifies the optimized Router.Forward —
@@ -106,7 +229,7 @@ func TestMoEForward(t *testing.T) {
 // normalized scores as the legacy path that softmaxes over every expert
 // first, gathers the top-k probabilities, then renormalizes.
 func TestRouterForwardMatchesLegacy(t *testing.T) {
-	skipIfNoMLX(t)
+	useMLXTestThread(t)
 
 	cfg := &TextConfig{
 		HiddenSize:  8,

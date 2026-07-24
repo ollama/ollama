@@ -358,7 +358,23 @@ func (p *Parser) done() bool {
 	}
 
 	var count int
+	var inString, escaped bool
 	for _, c := range p.buffer {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if c == '\\' {
+			escaped = true
+			continue
+		}
+		if c == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
 		if c == byte(open) {
 			count++
 		} else if c == byte(close) {

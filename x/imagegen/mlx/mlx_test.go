@@ -26,8 +26,20 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+func useMLXTestThread(t *testing.T) {
+	t.Helper()
+	runtime.LockOSThread()
+	t.Cleanup(func() {
+		ReleaseAll()
+		ClearCache()
+		runtime.UnlockOSThread()
+	})
+}
+
 // TestBasicCleanup verifies non-kept arrays are freed and kept arrays survive.
 func TestBasicCleanup(t *testing.T) {
+	useMLXTestThread(t)
+
 	weight := NewArrayFloat32([]float32{1, 2, 3, 4}, []int32{2, 2})
 	Keep(weight)
 	weight.Eval()
@@ -62,6 +74,8 @@ func TestBasicCleanup(t *testing.T) {
 
 // TestKeptSurvives verifies kept arrays are not freed.
 func TestKeptSurvives(t *testing.T) {
+	useMLXTestThread(t)
+
 	a := NewArrayFloat32([]float32{1, 2}, []int32{2})
 	b := NewArrayFloat32([]float32{3, 4}, []int32{2})
 	result := Add(a, b)
@@ -81,6 +95,8 @@ func TestKeptSurvives(t *testing.T) {
 
 // TestEvalAutoKeeps verifies Eval automatically keeps its outputs.
 func TestEvalAutoKeeps(t *testing.T) {
+	useMLXTestThread(t)
+
 	a := NewArrayFloat32([]float32{1, 2}, []int32{2})
 	b := NewArrayFloat32([]float32{3, 4}, []int32{2})
 	result := Add(a, b)
@@ -110,6 +126,8 @@ func TestEvalAutoKeeps(t *testing.T) {
 
 // TestWeightsSurvive verifies kept arrays survive multiple Eval cycles.
 func TestWeightsSurvive(t *testing.T) {
+	useMLXTestThread(t)
+
 	weight := NewArrayFloat32([]float32{1, 2, 3, 4}, []int32{2, 2})
 	Keep(weight)
 	weight.Eval()
@@ -128,6 +146,8 @@ func TestWeightsSurvive(t *testing.T) {
 
 // TestAsyncEvalCleanup verifies AsyncEval cleans up and dispatches.
 func TestAsyncEvalCleanup(t *testing.T) {
+	useMLXTestThread(t)
+
 	weight := NewArrayFloat32([]float32{1, 0, 0, 1}, []int32{2, 2}) // Identity matrix
 	Keep(weight)
 	weight.Eval()
@@ -164,6 +184,8 @@ func TestAsyncEvalCleanup(t *testing.T) {
 
 // TestMultiOutput verifies multiple kept arrays survive.
 func TestMultiOutput(t *testing.T) {
+	useMLXTestThread(t)
+
 	a := NewArrayFloat32([]float32{1, 2, 3, 4}, []int32{2, 2})
 	sum := Add(a, a)
 	prod := Mul(a, a)
@@ -186,6 +208,8 @@ func TestMultiOutput(t *testing.T) {
 
 // TestChaining verifies output from one step can be used in next.
 func TestChaining(t *testing.T) {
+	useMLXTestThread(t)
+
 	weight := NewArrayFloat32([]float32{1, 0, 0, 1}, []int32{2, 2})
 	Keep(weight)
 	weight.Eval()
@@ -215,6 +239,8 @@ func TestChaining(t *testing.T) {
 
 // TestGenerationLoop simulates the LLM generation pattern with cache.
 func TestGenerationLoop(t *testing.T) {
+	useMLXTestThread(t)
+
 	weight := NewArrayFloat32([]float32{1, 0, 0, 1}, []int32{2, 2})
 	Keep(weight)
 	weight.Eval()
@@ -429,6 +455,8 @@ func gelu(x *Array) *Array {
 
 // TestCompileBasic verifies compiled function produces correct output.
 func TestCompileBasic(t *testing.T) {
+	useMLXTestThread(t)
+
 	x := NewArrayFloat32([]float32{-1, 0, 1, 2}, []int32{4})
 	Keep(x)
 	x.Eval()
@@ -464,6 +492,8 @@ func TestCompileBasic(t *testing.T) {
 
 // TestCompileMultipleInputs verifies compiled function with multiple inputs.
 func TestCompileMultipleInputs(t *testing.T) {
+	useMLXTestThread(t)
+
 	a := NewArrayFloat32([]float32{1, 2, 3, 4}, []int32{4})
 	b := NewArrayFloat32([]float32{5, 6, 7, 8}, []int32{4})
 	Keep(a, b)
@@ -489,6 +519,8 @@ func TestCompileMultipleInputs(t *testing.T) {
 
 // TestCompileReuse verifies compiled function can be called multiple times.
 func TestCompileReuse(t *testing.T) {
+	useMLXTestThread(t)
+
 	compiled := Compile(func(inputs []*Array) []*Array {
 		return []*Array{Add(inputs[0], inputs[0])}
 	})
@@ -551,6 +583,8 @@ func BenchmarkGELUCompiled(b *testing.B) {
 
 // TestCompileNoMemoryLeak verifies compiled functions don't leak memory.
 func TestCompileNoMemoryLeak(t *testing.T) {
+	useMLXTestThread(t)
+
 	x := RandomNormal([]int32{100, 100}, 42)
 	Keep(x)
 	x.Eval()
@@ -598,6 +632,8 @@ func TestCompileNoMemoryLeak(t *testing.T) {
 
 // TestCompileWithRandomState verifies compiled function can capture and update random state.
 func TestCompileWithRandomState(t *testing.T) {
+	useMLXTestThread(t)
+
 	// Simulate logits for sampling
 	logits := NewArrayFloat32([]float32{0.1, 0.2, 0.3, 0.4}, []int32{1, 4})
 	Keep(logits)
@@ -666,6 +702,8 @@ func swiGLU(gate, up *Array, alpha, limit float32) *Array {
 
 // TestCompileSwiGLU verifies compiled SwiGLU produces correct output.
 func TestCompileSwiGLU(t *testing.T) {
+	useMLXTestThread(t)
+
 	gate := NewArrayFloat32([]float32{-1, 0, 1, 2, 5, 10}, []int32{6})
 	up := NewArrayFloat32([]float32{-5, -1, 0, 1, 5, 10}, []int32{6})
 	Keep(gate, up)
@@ -900,6 +938,8 @@ func BenchmarkSampleTopPCompiled(b *testing.B) {
 
 // TestCompiledSamplerMemoryStable verifies compiled samplers don't leak memory.
 func TestCompiledSamplerMemoryStable(t *testing.T) {
+	useMLXTestThread(t)
+
 	vocabSize := int32(32000)
 	logits := RandomNormal([]int32{vocabSize}, 42)
 	key := RandomKey(42)
@@ -1096,6 +1136,8 @@ func BenchmarkCleanupIsolated(b *testing.B) {
 
 // TestMemoryStable verifies that cleanup doesn't cause unbounded memory growth.
 func TestMemoryStable(t *testing.T) {
+	useMLXTestThread(t)
+
 	if testing.Short() {
 		t.Skip("skipping memory test in short mode")
 	}
