@@ -28,6 +28,8 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"golang.org/x/image/webp"
 	"golang.org/x/sync/errgroup"
 
@@ -44,6 +46,7 @@ import (
 	"github.com/ollama/ollama/middleware"
 	"github.com/ollama/ollama/model/parsers"
 	"github.com/ollama/ollama/model/renderers"
+	"github.com/ollama/ollama/telemetry"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/thinking"
 	"github.com/ollama/ollama/tools"
@@ -52,6 +55,7 @@ import (
 	"github.com/ollama/ollama/version"
 	imagegenmanifest "github.com/ollama/ollama/x/imagegen/manifest"
 	xserver "github.com/ollama/ollama/x/server"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const signinURLStr = "https://ollama.com/connect?name=%s&key=%s"
@@ -101,6 +105,7 @@ type Server struct {
 	defaultNumCtx int
 	requestLogger *inferenceRequestLogger
 	modelCaches   *modelCaches
+	metrics       *telemetry.Metrics
 }
 
 func init() {
@@ -713,6 +718,18 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 
+				attrs := metric.WithAttributes(
+					attribute.String("model", req.Model),
+					attribute.String("reason", res.DoneReason),
+				)
+				s.metrics.TotalDuration.Add(c.Request.Context(), res.TotalDuration.Seconds(), attrs)
+				s.metrics.LoadDuration.Add(c.Request.Context(), res.LoadDuration.Seconds(), attrs)
+				s.metrics.PromptEvalCount.Add(c.Request.Context(), int64(cr.PromptEvalCount), attrs)
+				s.metrics.PromptEvalDuration.Add(c.Request.Context(), cr.PromptEvalDuration.Seconds(), attrs)
+				s.metrics.EvalCount.Add(c.Request.Context(), int64(cr.EvalCount), attrs)
+				s.metrics.EvalDuration.Add(c.Request.Context(), cr.EvalDuration.Seconds(), attrs)
+				// s.metrics.PeakMemory.Record(c.Request.Context(), int64(cr.PeakMemory), attrs)
+
 				if !req.Raw {
 					tokens, err := r.Tokenize(c.Request.Context(), prompt+sb.String())
 					if err != nil {
@@ -1013,6 +1030,16 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		LoadDuration:    checkpointLoaded.Sub(checkpointStart),
 		PromptEvalCount: int(totalTokens),
 	}
+
+	attrs := metric.WithAttributes(
+		attribute.String("model", req.Model),
+	)
+	s.metrics.TotalDuration.Add(c.Request.Context(), resp.TotalDuration.Seconds(), attrs)
+	s.metrics.LoadDuration.Add(c.Request.Context(), resp.LoadDuration.Seconds(), attrs)
+	s.metrics.PromptEvalCount.Add(c.Request.Context(), int64(resp.PromptEvalCount), attrs)
+	s.metrics.PromptEvalDuration.Add(c.Request.Context(), resp.TotalDuration.Seconds(), attrs)
+	// reset? s.metrics.PeakMemory.Record(c.Request.Context(), int64(resp.PeakMemory), attrs)
+
 	c.JSON(http.StatusOK, resp)
 }
 
@@ -1859,11 +1886,21 @@ func (s *Server) GenerateRoutes() (http.Handler, error) {
 	}
 	corsConfig.AllowOrigins = envconfig.AllowedOrigins()
 
+	m, err := telemetry.InitMetrics()
+	if err != nil {
+		slog.Warn(fmt.Sprintf("Metrics initialization failed with %s", err))
+	}
+	s.metrics = m
+	s.metrics.Start.Record(nil, time.Now().UnixMicro()/1e6, metric.WithAttributes(
+		attribute.String("version", version.Version),
+	))
+
 	r := gin.Default()
 	r.HandleMethodNotAllowed = true
 	r.Use(
 		cors.New(corsConfig),
 		allowedHostsMiddleware(s.addr),
+		prometheusMetricsMiddleware(s.metrics),
 	)
 
 	// General
@@ -1902,6 +1939,8 @@ func (s *Server) GenerateRoutes() (http.Handler, error) {
 	r.POST("/api/chat", s.withInferenceRequestLogging("/api/chat", s.ChatHandler)...)
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
+
+	r.GET("/metrics", s.MetricsHandler)
 
 	// Inference (OpenAI compatibility)
 	// TODO(cloud-stage-a): apply Modelfile overlay deltas for local models with cloud
@@ -2805,6 +2844,18 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					res.DoneReason = r.DoneReason.String()
 					res.TotalDuration = time.Since(checkpointStart)
 					res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+
+					attrs := metric.WithAttributes(
+						attribute.String("model", req.Model),
+						attribute.String("reason", res.DoneReason),
+					)
+					s.metrics.TotalDuration.Add(c.Request.Context(), res.TotalDuration.Seconds(), attrs)
+					s.metrics.LoadDuration.Add(c.Request.Context(), res.LoadDuration.Seconds(), attrs)
+					s.metrics.PromptEvalCount.Add(c.Request.Context(), int64(r.PromptEvalCount), attrs)
+					s.metrics.PromptEvalDuration.Add(c.Request.Context(), r.PromptEvalDuration.Seconds(), attrs)
+					s.metrics.EvalCount.Add(c.Request.Context(), int64(r.EvalCount), attrs)
+					s.metrics.EvalDuration.Add(c.Request.Context(), r.EvalDuration.Seconds(), attrs)
+					// s.metrics.PeakMemory.Record(c.Request.Context(), int64(r.PeakMemory), attrs)
 				}
 
 				if builtinParser != nil {
@@ -3143,6 +3194,50 @@ func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
 		}
 	}
 	return msgs
+}
+
+func prometheusMetricsMiddleware(m *telemetry.Metrics) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Call the next middleware/handler
+		c.Next()
+
+		responseStatus := c.Writer.Status()
+		statusText := http.StatusText(responseStatus)
+
+		route := c.FullPath()
+
+		m.RecordRequests(c.Request.Context(), "all", int64(responseStatus), statusText)
+
+		// Record the specific route action metric
+		if route != "" {
+			action := routeToAction(route)
+			m.RecordRequests(c.Request.Context(), action, int64(responseStatus), statusText)
+		}
+	}
+}
+
+// routeToAction converts a route pattern to an action string (e.g., `/api/pull` -> "pull").
+func routeToAction(route string) string {
+	// Customized mapping goes in the case statements.
+	switch route {
+	case "/api/chat", "/v1/chat/completions":
+		return "chat"
+	case "/api/embed", "/v1/embeddings":
+		return "embed"
+	default:
+		// Default action derived from the route itself (e.g., `/api/pull` -> "pull")
+		parts := strings.Split(route, "/")
+		if len(parts) > 2 {
+			return parts[len(parts)-1] // Use the last part of the route as the action
+		}
+
+		return "head"
+	}
+}
+
+// MetricsHandler returns the gin.HandlerFunc that provides the Prometheus metrics format on GET requests
+func (s *Server) MetricsHandler(c *gin.Context) {
+	promhttp.Handler().ServeHTTP(c.Writer, c.Request)
 }
 
 // handleImageGenerate handles image generation requests within GenerateHandler.
