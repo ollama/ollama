@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	coreagent "github.com/ollama/ollama/agent"
 	"github.com/ollama/ollama/api"
@@ -836,6 +837,25 @@ func TestRenderMarkdownStrongAfterPunctuation(t *testing.T) {
 				t.Fatalf("rendered output should emphasize %q: %q", test.emphasis, rendered)
 			}
 		})
+	}
+}
+
+func TestChatStreamingAssistantOutputRendersCodeFences(t *testing.T) {
+	m := chatModel{
+		width:   80,
+		height:  12,
+		running: true,
+	}
+
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventMessageDelta, Content: "```go\npackage"})
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventMessageDelta, Content: " main\n```"})
+
+	view := stripANSI(m.View())
+	if strings.Contains(view, "```") {
+		t.Fatalf("streamed fence markers should not render:\n%s", view)
+	}
+	if !strings.Contains(view, "package main") {
+		t.Fatalf("streamed code should remain visible:\n%s", view)
 	}
 }
 
@@ -2073,5 +2093,141 @@ func TestRenderMarkdownTableWrapsLongCells(t *testing.T) {
 		if got := lipgloss.Width(line); got > 72 {
 			t.Fatalf("rendered table line width = %d, want <= 72: %q\n%s", got, stripANSI(line), plain)
 		}
+	}
+}
+
+func TestRenderMarkdownCodeFencesHighlightLanguageTaggedCode(t *testing.T) {
+	profile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(profile)
+
+	markdown := strings.Join([]string{
+		"Use **greet** before running this code.",
+		"```go",
+		"package main",
+		"func greet(name string) string {",
+		"\treturn \"hello \" + name // greeting",
+		"}",
+		"```",
+		"",
+		"```",
+		"plain code stays plain",
+		"```",
+	}, "\n")
+
+	rendered := renderMarkdownForView(markdown, 72)
+	plain := stripANSI(rendered)
+	if strings.Contains(plain, "```") {
+		t.Fatalf("fence markers should not render:\n%s", plain)
+	}
+	for _, want := range []string{"package main", "func greet(name string) string {", "plain code stays plain"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("rendered code is missing %q:\n%s", want, plain)
+		}
+	}
+	if !strings.Contains(rendered, chatStrongStyle.Render("greet")) {
+		t.Fatalf("inline Markdown should remain styled alongside code fences: %q", rendered)
+	}
+	for _, line := range strings.Split(rendered, "\n") {
+		if got := lipgloss.Width(line); got > 72 {
+			t.Fatalf("rendered code line width = %d, want <= 72: %q", got, stripANSI(line))
+		}
+	}
+	if got, ok := highlightMarkdownCodeBlock("go", "package main", nil, false); !ok || !strings.Contains(got, "\x1b[") {
+		t.Fatalf("language-tagged code should use Chroma highlighting: %q", got)
+	}
+	if got, ok := highlightMarkdownCodeBlock("", "plain code stays plain", nil, false); ok || got != "plain code stays plain" {
+		t.Fatalf("untagged code = %q, want plain code", got)
+	}
+}
+
+func TestRenderMarkdownCodeFencesRespectNoColorTerminals(t *testing.T) {
+	profile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.Ascii)
+	defer lipgloss.SetColorProfile(profile)
+
+	if got, ok := highlightMarkdownCodeBlock("go", "package main", nil, false); ok || got != "package main" {
+		t.Fatalf("no-color output = %q, highlighted = %t", got, ok)
+	}
+}
+
+func TestRenderMarkdownCodeFencesHighlightMultilineConstructs(t *testing.T) {
+	profile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(profile)
+
+	rendered := renderMarkdownForView(strings.Join([]string{
+		"```go",
+		"/*",
+		" * This is a multi-line comment.",
+		" */",
+		"```",
+	}, "\n"), 72)
+
+	for _, line := range strings.Split(rendered, "\n") {
+		if strings.Contains(stripANSI(line), "multi-line comment") && !strings.Contains(line, "\x1b[") {
+			t.Fatalf("multiline comment should remain highlighted: %q", line)
+		}
+	}
+}
+
+func TestWrapHighlightedMarkdownCodePreservesANSIStyle(t *testing.T) {
+	lines := wrapHighlightedMarkdownCode("\x1b[31mabcdef\x1b[0m", 3)
+	if got, want := len(lines), 2; got != want {
+		t.Fatalf("wrapped lines = %d, want %d: %#v", got, want, lines)
+	}
+	if got, want := stripANSI(lines[0]), "abc"; got != want {
+		t.Fatalf("first line = %q, want %q", got, want)
+	}
+	if got, want := stripANSI(lines[1]), "def"; got != want {
+		t.Fatalf("continuation = %q, want %q", got, want)
+	}
+	if !strings.HasSuffix(lines[0], "\x1b[0m") || !strings.HasPrefix(lines[1], "\x1b[31m") {
+		t.Fatalf("ANSI style should reset and resume at the wrap boundary: %#v", lines)
+	}
+}
+
+func TestHighlightMarkdownCodeBlockCachesCompletedBlocks(t *testing.T) {
+	profile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(profile)
+
+	cache := map[markdownCodeBlockCacheKey]string{}
+	if _, ok := highlightMarkdownCodeBlock("go", "package main", &cache, true); !ok || len(cache) != 1 {
+		t.Fatalf("completed code block should be highlighted and cached: %#v", cache)
+	}
+	for key := range cache {
+		cache[key] = "cached highlighting"
+	}
+	if got, ok := highlightMarkdownCodeBlock("go", "package main", &cache, true); !ok || got != "cached highlighting" {
+		t.Fatalf("completed code block should use cached highlighting: %q", got)
+	}
+}
+
+func TestChatCompletedCodeBlockSurvivesLaterStreamingRender(t *testing.T) {
+	profile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(profile)
+
+	m := chatModel{entries: []chatEntry{newChatEntry(chatEntry{
+		role: "assistant",
+		content: strings.Join([]string{
+			"```go",
+			"package main",
+			"```",
+		}, "\n"),
+	})}}
+	m.renderTranscript(80)
+	if got := len(m.entries[0].codeBlocks); got != 1 {
+		t.Fatalf("completed block cache entries = %d, want 1", got)
+	}
+	for key := range m.entries[0].codeBlocks {
+		m.entries[0].codeBlocks[key] = "\x1b[31mcached code\x1b[0m"
+	}
+
+	m.entries[0].content += "\ncontinued response"
+	m.markEntryDirty(0)
+	if got := stripANSI(m.renderTranscript(80)); !strings.Contains(got, "cached code") {
+		t.Fatalf("later streamed content should reuse completed block highlighting: %q", got)
 	}
 }
