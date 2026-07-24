@@ -5,7 +5,7 @@ import { useMemo } from "react";
 import { useCloudStatus } from "./useCloudStatus";
 import { useFeaturedModels } from "./useFeaturedModels";
 
-export function useModels(searchQuery = "") {
+export function useModels(searchQuery = "", localOnly = false) {
   const { cloudDisabled } = useCloudStatus();
   const { data: recommendations, isLoading: recommendationsLoading } =
     useFeaturedModels();
@@ -34,11 +34,9 @@ export function useModels(searchQuery = "") {
     const rest = local.filter((m) => !featuredSet.has(m.model));
     const merged = [...recommended, ...rest];
 
-    const visible = cloudDisabled
-      ? merged.filter((m) => !m.isCloud())
-      : merged;
+    const visible = cloudDisabled || localOnly ? merged.filter((m) => !m.isCloud()) : merged;
     return filterBySearch(visible, searchQuery);
-  }, [localQuery.data, searchQuery, cloudDisabled, recommendations]);
+  }, [localQuery.data, searchQuery, cloudDisabled, recommendations, localOnly]);
 
   return {
     ...localQuery,
