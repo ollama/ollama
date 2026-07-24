@@ -322,11 +322,28 @@ func toChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChu
 	}
 }
 
+func hasChunkSignal(c ChatCompletionChunk) bool {
+	if len(c.Choices) == 0 {
+		return false
+	}
+
+	choice := c.Choices[0]
+	return choice.Delta.Content != "" ||
+		choice.Delta.Reasoning != "" ||
+		len(choice.Delta.ToolCalls) > 0 ||
+		choice.FinishReason != nil ||
+		choice.Logprobs != nil
+}
+
 // ToChunks converts an api.ChatResponse to one or more ChatCompletionChunk values.
 func ToChunks(id string, r api.ChatResponse, toolCallSent bool) []ChatCompletionChunk {
 	hasMixedResponse := r.Message.Thinking != "" && (r.Message.Content != "" || len(r.Message.ToolCalls) > 0)
 	if !hasMixedResponse {
-		return []ChatCompletionChunk{toChunk(id, r, toolCallSent)}
+		chunk := toChunk(id, r, toolCallSent)
+		if !hasChunkSignal(chunk) {
+			return nil
+		}
+		return []ChatCompletionChunk{chunk}
 	}
 
 	reasoningChunk := toChunk(id, r, toolCallSent)
