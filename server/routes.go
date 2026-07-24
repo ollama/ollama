@@ -2938,7 +2938,40 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	writeChatResponse(c, req, ch)
 }
 
+// escapeUserThinkCloseTag prevents Jinja2 chat templates that use
+// content.split('</think>') from corrupting user messages containing
+// literal </think> text (issue #17248).
+// The zero-width space (U+200B) after < in </think> breaks the
+// split() match without changing model semantics or output.
+func escapeUserThinkCloseTag(content string) string {
+	return strings.ReplaceAll(content, "</think>", "<\u200B/think>")
+}
+
+// applyUserThinkEscaping escapes </think> in user messages for models
+// whose native Jinja2 chat template splits content on </think>.
+// Only applicable to native chat path with thinking-capable models;
+// renderer-path models handle this in Go code.
+func applyUserThinkEscaping(msgs []api.Message, m *Model) []api.Message {
+	if chatModeForModel(m) != chatExecutionModeNative {
+		return msgs
+	}
+	if !slices.Contains(m.Capabilities(), model.CapabilityThinking) {
+		return msgs
+	}
+
+	result := make([]api.Message, len(msgs))
+	for i, msg := range msgs {
+		result[i] = msg
+		if msg.Role == "user" && strings.Contains(msg.Content, "</think>") {
+			result[i].Content = escapeUserThinkCloseTag(msg.Content)
+		}
+	}
+	return result
+}
+
 func prepareNativeChatRequest(ctx context.Context, m *Model, r llm.LlamaServer, opts *api.Options, nativeReq llm.ChatRequest, truncate bool) (llm.ChatRequest, error) {
+	nativeReq.Messages = applyUserThinkEscaping(nativeReq.Messages, m)
+
 	var err error
 	nativeReq.Messages, err = truncateNativeChatMessages(ctx, m, r, optionsForPrompt(opts, r), nativeReq, truncate)
 	return nativeReq, err

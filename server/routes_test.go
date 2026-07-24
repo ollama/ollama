@@ -1204,3 +1204,150 @@ func TestWaitForStream(t *testing.T) {
 		})
 	}
 }
+
+func TestEscapeUserThinkCloseTag(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "user message with </think>",
+			input:    "hello </think> world",
+			expected: "hello <\u200B/think> world",
+		},
+		{
+			name:     "multiple </think> occurrences",
+			input:    "</think> and </think>",
+			expected: "<\u200B/think> and <\u200B/think>",
+		},
+		{
+			name:     "message without </think> unchanged",
+			input:    "hello world",
+			expected: "hello world",
+		},
+		{
+			name:     "think without closing tag unchanged",
+			input:    "<think>reasoning...",
+			expected: "<think>reasoning...",
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := escapeUserThinkCloseTag(tt.input)
+			if result != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestApplyUserThinkEscaping(t *testing.T) {
+	nativeThinkingModel := &Model{
+		Name: "deepseek-v4-flash",
+		Config: model.ConfigV2{
+			ModelFamily:  "deepseek3",
+			Capabilities: []string{"thinking"},
+		},
+	}
+
+	renderedModel := &Model{
+		Name: "deepseek-v4-pro",
+		Config: model.ConfigV2{
+			Renderer: "deepseek3",
+		},
+	}
+
+	nonThinkingModel := &Model{
+		Name: "llama3",
+		Config: model.ConfigV2{
+			ModelFamily: "llama3",
+		},
+	}
+
+	tests := []struct {
+		name     string
+		msgs     []api.Message
+		model    *Model
+		expected []api.Message
+	}{
+		{
+			name: "user with </think> on native chat path gets escaped",
+			msgs: []api.Message{
+				{Role: "user", Content: "explain </think> tags"},
+			},
+			model: nativeThinkingModel,
+			expected: []api.Message{
+				{Role: "user", Content: "explain <\u200B/think> tags"},
+			},
+		},
+		{
+			name: "user without </think> unchanged",
+			msgs: []api.Message{
+				{Role: "user", Content: "hello world"},
+			},
+			model: nativeThinkingModel,
+			expected: []api.Message{
+				{Role: "user", Content: "hello world"},
+			},
+		},
+		{
+			name: "assistant message NOT escaped",
+			msgs: []api.Message{
+				{Role: "assistant", Content: "<think>reasoning</think>response"},
+			},
+			model: nativeThinkingModel,
+			expected: []api.Message{
+				{Role: "assistant", Content: "<think>reasoning</think>response"},
+			},
+		},
+		{
+			name: "system message NOT escaped",
+			msgs: []api.Message{
+				{Role: "system", Content: "use </think> for reasoning"},
+			},
+			model: nativeThinkingModel,
+			expected: []api.Message{
+				{Role: "system", Content: "use </think> for reasoning"},
+			},
+		},
+		{
+			name: "rendered path model does NOT escape user",
+			msgs: []api.Message{
+				{Role: "user", Content: "explain </think> tags"},
+			},
+			model: renderedModel,
+			expected: []api.Message{
+				{Role: "user", Content: "explain </think> tags"},
+			},
+		},
+		{
+			name: "non-thinking model does NOT escape user",
+			msgs: []api.Message{
+				{Role: "user", Content: "explain </think> tags"},
+			},
+			model: nonThinkingModel,
+			expected: []api.Message{
+				{Role: "user", Content: "explain </think> tags"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := applyUserThinkEscaping(tt.msgs, tt.model)
+			if !reflect.DeepEqual(result, tt.expected) {
+				for i := range tt.expected {
+					if i >= len(result) || result[i].Content != tt.expected[i].Content {
+						t.Errorf("msg[%d]: expected %q, got %q", i, tt.expected[i].Content, result[i].Content)
+					}
+				}
+			}
+		})
+	}
+}
