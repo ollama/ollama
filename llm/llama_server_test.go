@@ -2112,6 +2112,15 @@ func TestAppendMMProjArgs(t *testing.T) {
 			want:         []string{"base", "--mmproj", "model.gguf"},
 		},
 		{
+			name:         "small discrete gpu keeps small projector offload",
+			projectors:   []string{"small-mmproj.gguf"},
+			opts:         defaultOpts,
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, TotalMemory: 8 << 30}},
+			mmprojMemory: 512 << 20,
+			modelLayers:  81,
+			want:         []string{"base", "--mmproj", "small-mmproj.gguf"},
+		},
+		{
 			name:         "tight discrete gpu disables projector offload",
 			projectors:   []string{"model.gguf"},
 			opts:         defaultOpts,
