@@ -473,6 +473,75 @@ func TestChatHandlerHarmonyPreservesStructuralTokens(t *testing.T) {
 	}
 }
 
+func TestGenerateHandlerRawParserPreservesStructuralTokens(t *testing.T) {
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
+	gin.SetMode(gin.TestMode)
+
+	const rawContent = "<|channel>thought\nreason<channel|>answer"
+	mock := mockRunner{
+		CompletionResponse: llm.CompletionResponse{
+			Content:    rawContent,
+			Done:       true,
+			DoneReason: llm.DoneReasonStop,
+		},
+	}
+	s := newServerWithMockRunner(t, &mock)
+
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture":          "llama",
+		"llama.block_count":             uint32(1),
+		"llama.context_length":          uint32(8192),
+		"llama.embedding_length":        uint32(4096),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(8),
+		"tokenizer.ggml.tokens":         []string{""},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*ggml.Tensor{
+		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+	})
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:    "raw-gemma4-parser",
+		Files:    map[string]string{"file.gguf": digest},
+		Parser:   "gemma4",
+		Template: `{{ range .Messages }}<|channel>{{ .Thinking }}<channel|>{{ end }}`,
+		Stream:   &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("create: expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	streamRequest := false
+	w = createRequest(t, s.GenerateHandler, api.GenerateRequest{
+		Model:  "raw-gemma4-parser",
+		Prompt: "<bos><|turn>model\n",
+		Raw:    true,
+		Think:  &api.ThinkValue{Value: true},
+		Stream: &streamRequest,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("generate: expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	for _, token := range []string{"<|channel>", "<channel|>"} {
+		if !slices.Contains(mock.CompletionRequest.PreservedTokens, token) {
+			t.Fatalf("expected preserved tokens to contain %q, got %#v", token, mock.CompletionRequest.PreservedTokens)
+		}
+	}
+
+	var res api.GenerateResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.Response != rawContent {
+		t.Fatalf("response = %q, want raw content %q", res.Response, rawContent)
+	}
+	if res.Thinking != "" {
+		t.Fatalf("thinking = %q, want empty thinking for raw response", res.Thinking)
+	}
+}
+
 func TestGenerateHandlerChatTemplateRoute(t *testing.T) {
 	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
 	t.Setenv("OLLAMA_GO_TEMPLATE", "")
