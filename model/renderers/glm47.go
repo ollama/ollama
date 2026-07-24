@@ -43,24 +43,32 @@ func (r *GLM47Renderer) LeadingBOS() string {
 }
 
 func (r *GLM47Renderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
-	var sb strings.Builder
+	segments, err := r.RenderSegments(messages, tools, thinkValue)
+	if err != nil {
+		return "", err
+	}
+	return JoinSegments(segments), nil
+}
 
-	sb.WriteString("[gMASK]<sop>")
+func (r *GLM47Renderer) RenderSegments(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) ([]Segment, error) {
+	var sb segmentBuilder
+
+	sb.control("[gMASK]<sop>")
 
 	if len(tools) > 0 {
-		sb.WriteString("<|system|>\n")
-		sb.WriteString("# Tools\n\n")
-		sb.WriteString("You may call one or more functions to assist with the user query.\n\n")
-		sb.WriteString("You are provided with function signatures within <tools></tools> XML tags:\n")
-		sb.WriteString("<tools>\n")
+		sb.control("<|system|>\n")
+		sb.control("# Tools\n\n")
+		sb.control("You may call one or more functions to assist with the user query.\n\n")
+		sb.control("You are provided with function signatures within <tools></tools> XML tags:\n")
+		sb.control("<tools>\n")
 		for _, tool := range tools {
 			d, _ := json.Marshal(tool)
-			sb.WriteString(formatGLM47ToolJSON(d))
-			sb.WriteString("\n")
+			sb.content(formatGLM47ToolJSON(d))
+			sb.control("\n")
 		}
-		sb.WriteString("</tools>\n\n")
-		sb.WriteString("For each function call, output the function name and arguments within the following XML format:\n")
-		sb.WriteString("<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value><arg_key>{arg-key-2}</arg_key><arg_value>{arg-value-2}</arg_value>...</tool_call>")
+		sb.control("</tools>\n\n")
+		sb.control("For each function call, output the function name and arguments within the following XML format:\n")
+		sb.control("<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value><arg_key>{arg-key-2}</arg_key><arg_value>{arg-value-2}</arg_value>...</tool_call>")
 	}
 
 	think := true
@@ -71,52 +79,56 @@ func (r *GLM47Renderer) Render(messages []api.Message, tools []api.Tool, thinkVa
 	for i, message := range messages {
 		switch message.Role {
 		case "user":
-			sb.WriteString("<|user|>")
-			sb.WriteString(message.Content)
+			sb.control("<|user|>")
+			sb.content(message.Content)
 		case "assistant":
-			sb.WriteString("<|assistant|>")
+			sb.control("<|assistant|>")
 			if message.Thinking != "" {
-				sb.WriteString("<think>" + message.Thinking + "</think>")
+				sb.control("<think>")
+				sb.content(message.Thinking)
+				sb.control("</think>")
 			} else {
-				sb.WriteString("</think>")
+				sb.control("</think>")
 			}
 			if message.Content != "" {
-				sb.WriteString(message.Content)
+				sb.content(message.Content)
 			}
 			if len(message.ToolCalls) > 0 {
 				for _, toolCall := range message.ToolCalls {
-					sb.WriteString("<tool_call>" + toolCall.Function.Name)
-					sb.WriteString(renderGLM47ToolArguments(toolCall.Function.Arguments))
-					sb.WriteString("</tool_call>")
+					sb.control("<tool_call>")
+					sb.content(toolCall.Function.Name)
+					renderGLM47ToolArguments(&sb, toolCall.Function.Arguments)
+					sb.control("</tool_call>")
 				}
 			}
 		case "tool":
 			if i == 0 || messages[i-1].Role != "tool" {
-				sb.WriteString("<|observation|>")
+				sb.control("<|observation|>")
 			}
-			sb.WriteString("<tool_response>")
-			sb.WriteString(message.Content)
-			sb.WriteString("</tool_response>")
+			sb.control("<tool_response>")
+			sb.content(message.Content)
+			sb.control("</tool_response>")
 		case "system":
-			sb.WriteString("<|system|>")
-			sb.WriteString(message.Content)
+			sb.control("<|system|>")
+			sb.content(message.Content)
 		}
 	}
 
-	sb.WriteString("<|assistant|>")
+	sb.control("<|assistant|>")
 	if think {
-		sb.WriteString("<think>")
+		sb.control("<think>")
 	} else {
-		sb.WriteString("</think>")
+		sb.control("</think>")
 	}
 
-	return sb.String(), nil
+	return sb.Segments(), nil
 }
 
-func renderGLM47ToolArguments(args api.ToolCallFunctionArguments) string {
-	var sb strings.Builder
+func renderGLM47ToolArguments(sb *segmentBuilder, args api.ToolCallFunctionArguments) {
 	for key, value := range args.All() {
-		sb.WriteString("<arg_key>" + key + "</arg_key>")
+		sb.control("<arg_key>")
+		sb.content(key)
+		sb.control("</arg_key>")
 		var valueStr string
 		if str, ok := value.(string); ok {
 			valueStr = str
@@ -129,10 +141,10 @@ func renderGLM47ToolArguments(args api.ToolCallFunctionArguments) string {
 			}
 		}
 
-		sb.WriteString("<arg_value>" + valueStr + "</arg_value>")
+		sb.control("<arg_value>")
+		sb.content(valueStr)
+		sb.control("</arg_value>")
 	}
-
-	return sb.String()
 }
 
 func formatGLM47ToolJSON(raw []byte) string {

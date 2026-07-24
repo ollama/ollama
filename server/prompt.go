@@ -20,7 +20,11 @@ type tokenizeFunc func(context.Context, string) ([]int, error)
 // chatPrompt accepts a list of messages and returns the prompt and media that should be used for the next chat turn.
 // chatPrompt truncates any messages that exceed the context window of the model, making sure to always include 1) the
 // latest message and 2) system messages
-func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.Options, msgs []api.Message, tools []api.Tool, think *api.ThinkValue, truncate bool) (prompt string, media []llm.MediaData, _ error) {
+//
+// For models whose renderer distinguishes template markup from message
+// content, chatPrompt also returns the prompt as segments so runners can
+// tokenize message content without parsing special-token literals in it.
+func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.Options, msgs []api.Message, tools []api.Tool, think *api.ThinkValue, truncate bool) (prompt string, media []llm.MediaData, segments []llm.PromptSegment, _ error) {
 	var system []api.Message
 
 	// TODO: This is only a truncation heuristic; llama-server handles the
@@ -45,12 +49,12 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 
 			p, err := renderPrompt(m, append(system, msgs[i:]...), tools, think)
 			if err != nil {
-				return "", nil, err
+				return "", nil, nil, err
 			}
 
 			s, err := tokenize(ctx, p)
 			if err != nil {
-				return "", nil, err
+				return "", nil, nil, err
 			}
 
 			ctxLen := len(s)
@@ -79,16 +83,50 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 
 	renderMsgs, media, err := imageTaggedMessages(m, msgs, currMsgIdx, false)
 	if err != nil {
-		return "", nil, err
+		return "", nil, nil, err
 	}
 
 	// truncate any messages that do not fit into the context window
-	p, err := renderPrompt(m, append(system, renderMsgs[currMsgIdx:]...), tools, think)
+	finalMsgs := append(system, renderMsgs[currMsgIdx:]...)
+	segments, err = renderPromptSegments(m, finalMsgs, tools, think)
 	if err != nil {
-		return "", nil, err
+		return "", nil, nil, err
 	}
 
-	return p, media, nil
+	var p string
+	if segments != nil {
+		var sb strings.Builder
+		for _, s := range segments {
+			sb.WriteString(s.Text)
+		}
+		p = sb.String()
+	} else {
+		p, err = renderPrompt(m, finalMsgs, tools, think)
+		if err != nil {
+			return "", nil, nil, err
+		}
+	}
+
+	return p, media, segments, nil
+}
+
+// renderPromptSegments renders the prompt as control/content segments for
+// models whose renderer supports it. It returns nil for other models.
+func renderPromptSegments(m *Model, msgs []api.Message, tools []api.Tool, think *api.ThinkValue) ([]llm.PromptSegment, error) {
+	if m.Config.Renderer == "" {
+		return nil, nil
+	}
+
+	rendered, err := renderers.RenderSegmentsWithRenderer(resolveRendererName(m), msgs, tools, think)
+	if err != nil || rendered == nil {
+		return nil, err
+	}
+
+	segments := make([]llm.PromptSegment, len(rendered))
+	for i, s := range rendered {
+		segments[i] = llm.PromptSegment{Text: s.Text, Content: s.Content}
+	}
+	return segments, nil
 }
 
 func imageTaggedMessages(m *Model, msgs []api.Message, start int, clearImages bool) ([]api.Message, []llm.MediaData, error) {

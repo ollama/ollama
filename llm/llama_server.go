@@ -44,6 +44,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/ml"
 )
 
@@ -152,12 +153,18 @@ type llamaServerRunner struct {
 	// used to map DeviceIDs to device names for VRAMByGPU lookups.
 	gpus []ml.DeviceInfo
 
-	ggml          *ggml.GGML
-	totalLayers   uint64 // maximum offloadable model layers
-	loadStart     time.Time
-	loadActivity  atomic.Int64
-	loadTracking  atomic.Bool
-	rawEmbeddings bool
+	ggml        *ggml.GGML
+	totalLayers uint64 // maximum offloadable model layers
+
+	// special token literals from the model vocabulary, read lazily from the
+	// GGUF for segment-aware prompt tokenization
+	specialTokensOnce      sync.Once
+	specialTokens          []string
+	specialTokenFirstChars string
+	loadStart              time.Time
+	loadActivity           atomic.Int64
+	loadTracking           atomic.Bool
+	rawEmbeddings          bool
 
 	sem *semaphore.Weighted
 
@@ -275,17 +282,42 @@ func (s *llamaServerRunner) tokenizerAddsBOS() bool {
 
 func (s *llamaServerRunner) completionPromptForRequest(ctx context.Context, req CompletionRequest) (any, error) {
 	prompt := s.completionPrompt(req.Prompt, req.LeadingBOS)
-	if !req.Truncate || len(req.Media) > 0 || s.options.NumCtx <= 1 || len(prompt) < s.options.NumCtx {
+
+	// When the renderer marked which parts of the prompt are message content
+	// and any of them contains a special-token literal (e.g. "</think>"),
+	// tokenize the segments separately so the literal stays plain text
+	// instead of being parsed into a control token, and submit token IDs.
+	var tokens []int
+	haveTokens := false
+	if len(req.Media) == 0 && s.segmentsNeedSplitTokenization(req.Segments) {
+		var err error
+		tokens, err = s.tokenizeSegments(ctx, req.Segments, req.LeadingBOS)
+		if err != nil {
+			return nil, err
+		}
+		haveTokens = true
+	}
+
+	if !req.Truncate || len(req.Media) > 0 || s.options.NumCtx <= 1 || (!haveTokens && len(prompt) < s.options.NumCtx) {
+		if haveTokens {
+			return tokens, nil
+		}
 		return prompt, nil
 	}
 
-	tokens, err := s.tokenize(ctx, prompt, true, nil)
-	if err != nil {
-		return nil, err
+	if !haveTokens {
+		var err error
+		tokens, err = s.tokenize(ctx, prompt, true, nil)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	fullPromptLimit := s.options.NumCtx - 1
 	if len(tokens) <= fullPromptLimit {
+		if haveTokens {
+			return tokens, nil
+		}
 		return prompt, nil
 	}
 
@@ -313,6 +345,118 @@ func (s *llamaServerRunner) completionPromptForRequest(ctx context.Context, req 
 
 	slog.Warn("truncating input prompt", "limit", limit, "prompt", len(tokens), "keep", nKeep, "new", len(truncated))
 	return truncated, nil
+}
+
+// segmentsNeedSplitTokenization reports whether any content segment contains
+// a literal that the tokenizer would otherwise parse into a special token.
+// The common case — no special-token literal in message content — keeps the
+// plain string prompt path with no extra tokenize calls.
+func (s *llamaServerRunner) segmentsNeedSplitTokenization(segments []PromptSegment) bool {
+	if len(segments) == 0 {
+		return false
+	}
+
+	literals, firstChars := s.specialTokenLiterals()
+	if len(literals) == 0 {
+		return false
+	}
+
+	for _, seg := range segments {
+		if !seg.Content || !strings.ContainsAny(seg.Text, firstChars) {
+			continue
+		}
+		for _, literal := range literals {
+			if strings.Contains(seg.Text, literal) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// tokenizeSegments tokenizes a segmented prompt, parsing special-token
+// literals only in control segments. Content segments are tokenized with
+// parse_special disabled so user-supplied text like "</think>" is encoded
+// as plain text.
+func (s *llamaServerRunner) tokenizeSegments(ctx context.Context, segments []PromptSegment, leadingBOS string) ([]int, error) {
+	parseSpecialOff := false
+
+	var tokens []int
+	first := true
+	for i, seg := range segments {
+		text := seg.Text
+		if i == 0 && !seg.Content {
+			// mirror the textual BOS handling of the string prompt path
+			text = s.completionPrompt(text, leadingBOS)
+		}
+		if text == "" {
+			continue
+		}
+
+		var parseSpecial *bool
+		if seg.Content {
+			parseSpecial = &parseSpecialOff
+		}
+
+		t, err := s.tokenize(ctx, text, first, parseSpecial)
+		if err != nil {
+			return nil, err
+		}
+		first = false
+		tokens = append(tokens, t...)
+	}
+
+	return tokens, nil
+}
+
+// llama token types from the GGUF tokenizer.ggml.token_type metadata for
+// which llama.cpp parses the token's literal text as a special token.
+const (
+	ggufTokenTypeControl     = 3
+	ggufTokenTypeUserDefined = 4
+)
+
+// specialTokenLiterals returns the literal strings of vocabulary entries the
+// tokenizer parses as special tokens, along with the set of their first
+// characters (used as a cheap prescan filter). The vocabulary arrays are too
+// large to be retained in s.ggml, so they are read lazily from the GGUF once
+// per runner.
+func (s *llamaServerRunner) specialTokenLiterals() ([]string, string) {
+	s.specialTokensOnce.Do(func() {
+		f, err := gguf.Open(s.modelPath)
+		if err != nil {
+			slog.Warn("failed to open model to read special tokens", "model", s.modelPath, "error", err)
+			return
+		}
+		defer f.Close()
+
+		tokens := f.KeyValue("tokenizer.ggml.tokens").Strings()
+		types := f.KeyValue("tokenizer.ggml.token_type").Ints()
+		if len(tokens) == 0 || len(tokens) != len(types) {
+			return
+		}
+
+		firstChars := make(map[rune]struct{})
+		for i, typ := range types {
+			if typ != ggufTokenTypeControl && typ != ggufTokenTypeUserDefined {
+				continue
+			}
+			if tokens[i] == "" {
+				continue
+			}
+			s.specialTokens = append(s.specialTokens, tokens[i])
+			firstChars[[]rune(tokens[i])[0]] = struct{}{}
+		}
+
+		var sb strings.Builder
+		for r := range firstChars {
+			sb.WriteRune(r)
+		}
+		s.specialTokenFirstChars = sb.String()
+	})
+
+	return s.specialTokens, s.specialTokenFirstChars
 }
 
 func contextShiftPromptLimit(numCtx, numKeep int) int {
