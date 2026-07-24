@@ -78,9 +78,6 @@ const (
 )
 
 const (
-	llamaArgFitTargetEnv = "LLAMA_ARG_FIT_TARGET"
-	bytesPerMiB          = 1 << 20
-
 	// mmprojOffloadHeadroom leaves 1 GiB for backend buffers beyond projector weights.
 	mmprojOffloadHeadroom = 1 << 30
 )
@@ -437,7 +434,7 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 		cmd.Stderr = out
 	}
 	cmd.SysProcAttr = LlamaServerSysProcAttr
-	SetupLlamaServerCommandEnv(cmd, exe, launch.gpuLibs, launch.extraEnvsForStart())
+	SetupLlamaServerCommandEnv(cmd, exe, launch.gpuLibs, launch.extraEnvs)
 
 	slog.Info("starting llama-server", "cmd", cmd)
 	slog.Debug("subprocess", "", filteredEnv(cmd.Env))
@@ -682,48 +679,8 @@ func shouldDisableMMProjOffload(opts api.Options, gpus []ml.DeviceInfo, modelLay
 	return false, ""
 }
 
-func (launch llamaServerLaunchConfig) extraEnvsForStart() map[string]string {
-	pad, ok := launch.mmprojFitTargetMiB()
-	if !ok {
-		return launch.extraEnvs
-	}
-
-	if existing, ok := launch.extraEnvs[llamaArgFitTargetEnv]; ok {
-		existingTarget, err := strconv.ParseUint(existing, 10, 64)
-		if err != nil {
-			slog.Warn("invalid llama-server fit target", "env", llamaArgFitTargetEnv, "value", existing, "error", err)
-			return launch.extraEnvs
-		}
-
-		envs := cloneStringMap(launch.extraEnvs)
-		envs[llamaArgFitTargetEnv] = strconv.FormatUint(existingTarget+pad, 10)
-		return envs
-	}
-
-	if _, ok := os.LookupEnv(llamaArgFitTargetEnv); ok {
-		// Preserve an inherited user override. SetupLlamaServerCommandEnv
-		// will pass it through unless extraEnvs overrides it.
-		return launch.extraEnvs
-	}
-
-	envs := cloneStringMap(launch.extraEnvs)
-	envs[llamaArgFitTargetEnv] = strconv.FormatUint(pad, 10)
-	return envs
-}
-
-func (launch llamaServerLaunchConfig) mmprojFitTargetMiB() (uint64, bool) {
-	if len(launch.projectors) == 0 || launch.mmprojMemory == 0 {
-		return 0, false
-	}
-	if disable, _ := launch.mmprojOffloadDisabled(); disable {
-		return 0, false
-	}
-
-	requiredMemory := launch.mmprojMemory + mmprojOffloadHeadroom
-	return (requiredMemory + bytesPerMiB - 1) / bytesPerMiB, true
-}
-
-// mmprojMemoryRequirement is a stopgap until fit accounts for mmproj memory directly.
+// mmprojMemoryRequirement estimates whether projector GPU offload is worth
+// attempting. llama-server's fit pass accounts for mmproj memory directly.
 func mmprojMemoryRequirement(modelPath string, f *ggml.GGML, projectors []string) (uint64, error) {
 	if len(projectors) == 0 {
 		return 0, nil
@@ -884,11 +841,14 @@ func NewLlamaServerRunner(
 
 	mediaMarker := newLlamaServerMediaMarker()
 	extraEnvs := ml.GetDevicesEnv(gpus)
-	serverEnvs := make(map[string]string, len(extraEnvs)+1)
+	serverEnvs := make(map[string]string, len(extraEnvs)+2)
 	for k, v := range extraEnvs {
 		serverEnvs[k] = v
 	}
 	serverEnvs["LLAMA_MEDIA_MARKER"] = mediaMarker
+	if config.FitTargetMiB > 0 {
+		serverEnvs[llamaArgFitTargetEnv] = strconv.FormatUint(config.FitTargetMiB, 10)
+	}
 
 	launch := llamaServerLaunchConfig{
 		modelPath:    modelPath,
@@ -1102,6 +1062,16 @@ func (s *llamaServerRunner) hasParsedVRAM() bool {
 	defer s.memoryMu.RUnlock()
 
 	return len(s.vramByDevice) > 0
+}
+
+// LayerOffloadStatus returns the final model-layer placement parsed from
+// llama-server logs. overflow reports layers selected for GPU by fit that still
+// overflowed to CPU.
+func (s *llamaServerRunner) LayerOffloadStatus() (gpuLayers, totalLayers uint64, overflow int, ok bool) {
+	s.memoryMu.RLock()
+	defer s.memoryMu.RUnlock()
+
+	return s.gpuLayers, s.totalLayers, s.gpuLayerOverflow, s.totalLayers > 0
 }
 
 func (s *llamaServerRunner) startLoadTracking(t time.Time) {

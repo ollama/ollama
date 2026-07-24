@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,6 +29,8 @@ import (
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/manifest"
+	mlxmodel "github.com/ollama/ollama/x/mlxrunner/model"
+	"github.com/ollama/ollama/x/mlxrunner/model/base"
 )
 
 // Client wraps an MLX runner subprocess to implement llm.LlamaServer for LLM models.
@@ -43,12 +46,13 @@ type Client struct {
 	status            *llm.StatusWriter
 	mu                sync.Mutex
 	cmd               *exec.Cmd
+	gpus              []ml.DeviceID
 }
 
 // NewClient prepares a new MLX runner client for LLM models.
 // The subprocess is not started until Load() is called.
 func NewClient(modelName string, softContextLength int) (*Client, error) {
-	if err := imagegen.CheckPlatformSupport(); err != nil {
+	if err := CheckPlatformSupport(); err != nil {
 		return nil, err
 	}
 
@@ -59,13 +63,79 @@ func NewClient(modelName string, softContextLength int) (*Client, error) {
 		client:            http.DefaultClient,
 	}
 
-	modelManifest, err := manifest.LoadManifest(modelName)
+	memory, err := EstimateMemory(modelName)
 	if err != nil {
 		return nil, err
 	}
-	c.memory.Store(uint64(modelManifest.TotalTensorSize()))
+	c.memory.Store(memory)
 
 	return c, nil
+}
+
+// CheckPlatformSupport reports whether the local platform can run MLX models.
+func CheckPlatformSupport() error {
+	return imagegen.CheckPlatformSupport()
+}
+
+// LoadEstimate is MLX's current pre-load memory view for a proposed GPU set.
+type LoadEstimate struct {
+	ModelSize     uint64
+	ContextLength int
+	Available     uint64
+	GPUFree       uint64
+	Overhead      uint64
+	HasGPU        bool
+}
+
+func (e LoadEstimate) Fits() bool {
+	return !e.HasGPU || e.ModelSize <= e.Available
+}
+
+// EstimateMemory returns the tensor memory recorded in the MLX manifest.
+func EstimateMemory(modelName string) (uint64, error) {
+	modelManifest, err := manifest.LoadManifest(modelName)
+	if err != nil {
+		return 0, err
+	}
+	return uint64(modelManifest.TotalTensorSize()), nil
+}
+
+// EstimateLoad returns MLX's current best pre-load memory estimate.
+func EstimateLoad(modelName string, gpus []ml.DeviceInfo) (LoadEstimate, error) {
+	modelSize, contextLength, err := estimateModelMetadata(modelName)
+	if err != nil {
+		return LoadEstimate{}, err
+	}
+	return estimateLoadMemory(modelSize, contextLength, gpus), nil
+}
+
+func estimateModelMetadata(modelName string) (uint64, int, error) {
+	modelManifest, err := manifest.LoadManifest(modelName)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	model, err := base.New(&mlxmodel.Root{Manifest: modelManifest})
+	if err != nil {
+		return 0, 0, err
+	}
+
+	return uint64(modelManifest.TotalTensorSize()), model.MaxContextLength(), nil
+}
+
+func estimateLoadMemory(modelSize uint64, contextLength int, gpus []ml.DeviceInfo) LoadEstimate {
+	estimate := LoadEstimate{ModelSize: modelSize, ContextLength: contextLength}
+	if len(gpus) == 0 {
+		return estimate
+	}
+
+	estimate.HasGPU = true
+	estimate.GPUFree = gpus[0].FreeMemory
+	estimate.Overhead = gpus[0].MinimumMemory() + envconfig.GpuOverhead()
+	if estimate.GPUFree > estimate.Overhead {
+		estimate.Available = estimate.GPUFree - estimate.Overhead
+	}
+	return estimate
 }
 
 // WaitUntilRunning waits for the subprocess to be ready.
@@ -264,23 +334,13 @@ func (c *Client) HasExited() bool {
 
 // Load checks whether the model fits in GPU memory and starts the subprocess.
 func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error) {
-	if len(gpus) > 0 {
-		modelSize := c.memory.Load()
-		// We currently only use the first GPU with MLX
-		available := gpus[0].FreeMemory
-		overhead := gpus[0].MinimumMemory() + envconfig.GpuOverhead()
-		if available > overhead {
-			available -= overhead
-		} else {
-			available = 0
+	gpuIDs := mlxGPUIDs(gpus)
+	estimate := estimateLoadMemory(c.memory.Load(), 0, gpus)
+	if estimate.HasGPU && !estimate.Fits() {
+		if requireFull {
+			return nil, llm.ErrLoadRequiredFull
 		}
-
-		if modelSize > available {
-			if requireFull {
-				return nil, llm.ErrLoadRequiredFull
-			}
-			return nil, fmt.Errorf("model requires %s but only %s are available (after %s overhead)", format.HumanBytes2(modelSize), format.HumanBytes2(available), format.HumanBytes2(overhead))
-		}
+		return nil, fmt.Errorf("model requires %s but only %s are available (after %s overhead)", format.HumanBytes2(estimate.ModelSize), format.HumanBytes2(estimate.Available), format.HumanBytes2(estimate.Overhead))
 	}
 
 	// Find a free port
@@ -364,8 +424,6 @@ func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo
 		}
 	}
 
-	c.cmd = cmd
-
 	status := llm.NewStatusWriter(os.Stderr)
 	c.status = status
 	// os/exec serializes Write calls when shared, which keeps the status writer
@@ -378,13 +436,25 @@ func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo
 		return nil, fmt.Errorf("failed to start mlx runner: %w", err)
 	}
 
+	c.mu.Lock()
+	c.cmd = cmd
+	c.gpus = gpuIDs
+	c.mu.Unlock()
+
 	// Reap subprocess when it exits
 	go func() {
 		c.doneErr = cmd.Wait()
 		close(c.done)
 	}()
 
-	return nil, nil
+	return gpuIDs, nil
+}
+
+func mlxGPUIDs(gpus []ml.DeviceInfo) []ml.DeviceID {
+	if len(gpus) == 0 {
+		return nil
+	}
+	return []ml.DeviceID{gpus[0].DeviceID}
 }
 
 // ModelPath implements llm.LlamaServer.
@@ -474,6 +544,12 @@ func (c *Client) MemorySize() (total, vram uint64) {
 
 // VRAMByGPU implements llm.LlamaServer.
 func (c *Client) VRAMByGPU(id ml.DeviceID) uint64 {
+	c.mu.Lock()
+	loaded := slices.Contains(c.gpus, id)
+	c.mu.Unlock()
+	if !loaded {
+		return 0
+	}
 	return c.currentMemory()
 }
 

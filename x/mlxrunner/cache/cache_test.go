@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/ollama/ollama/x/mlxrunner/batch"
@@ -9,9 +10,18 @@ import (
 
 func skipIfNoMLX(t *testing.T) {
 	t.Helper()
+	runtime.LockOSThread()
+	t.Cleanup(runtime.UnlockOSThread)
 	if err := mlx.CheckInit(); err != nil {
 		t.Skipf("MLX not available: %v", err)
 	}
+	if mlx.GPUIsAvailable() {
+		mlx.SetDefaultDeviceGPU()
+	}
+	t.Cleanup(func() {
+		mlx.Sweep()
+		mlx.ClearCache()
+	})
 }
 
 // newKVBatch builds a B=1 batch at SeqOffsets=off with all-real
