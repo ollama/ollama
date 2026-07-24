@@ -18,8 +18,6 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
-var intermediateBlobs map[string]string = make(map[string]string)
-
 type layerGGML struct {
 	manifest.Layer
 	*ggml.GGML
