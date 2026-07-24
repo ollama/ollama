@@ -521,16 +521,26 @@ func TestRunHandlerRedirectedStdoutDisablesWordWrap(t *testing.T) {
 	cmd.Flags().Bool("hidethinking", false, "")
 
 	oldStdout := os.Stdout
-	r, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
 	os.Stdout = w
+	t.Cleanup(func() {
+		os.Stdout = oldStdout
+		_ = w.Close()
+		_ = r.Close()
+	})
 
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- RunHandler(cmd, []string{"test-model", "hello"})
 	}()
 
-	err := <-errCh
-	w.Close()
+	err = <-errCh
+	if closeErr := w.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
 	os.Stdout = oldStdout
 
 	if err != nil {
