@@ -1,27 +1,22 @@
 package server
 
 import (
-	"bufio"
 	"cmp"
 	"context"
-	"encoding/binary"
 	"encoding/json"
-	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/fs/ggml"
-	fsgguf "github.com/ollama/ollama/fs/gguf"
+	"github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/manifest"
+	modelcapabilities "github.com/ollama/ollama/model/capabilities"
 	"github.com/ollama/ollama/model/parsers"
 	ollamatemplate "github.com/ollama/ollama/template"
-	"github.com/ollama/ollama/thinking"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -367,22 +362,15 @@ func buildModelListSummary(name model.Name, mf *manifest.Manifest) (modelListSum
 
 	builtinParser := parsers.ParserForName(cfg.Parser)
 	if tmpl != nil {
-		vars, err := tmpl.Vars()
+		templateCapabilities, err := modelcapabilities.FromGoTemplate(tmpl)
 		if err != nil {
 			slog.Warn("model template contains errors", "model", name.String(), "error", err)
 		}
-		if slices.Contains(vars, "tools") || (builtinParser != nil && builtinParser.HasToolSupport()) {
-			summary.Capabilities = appendModelListCapability(summary.Capabilities, model.CapabilityTools)
-		}
-		if slices.Contains(vars, "suffix") {
-			summary.Capabilities = appendModelListCapability(summary.Capabilities, model.CapabilityInsert)
-		}
+		summary.Capabilities = appendModelListCapabilities(summary.Capabilities, templateCapabilities...)
+		summary.Capabilities = appendModelListCapabilities(summary.Capabilities, modelcapabilities.FromParser(builtinParser)...)
 
-		openingTag, closingTag := thinking.InferTags(tmpl.Template)
-		hasTags := openingTag != "" && closingTag != ""
 		isGptoss := slices.Contains([]string{"gptoss", "gpt-oss"}, cfg.ModelFamily)
-		if !slices.Contains(summary.Capabilities, model.CapabilityThinking) &&
-			(hasTags || isGptoss || (builtinParser != nil && builtinParser.HasThinkingSupport())) {
+		if !slices.Contains(summary.Capabilities, model.CapabilityThinking) && isGptoss {
 			summary.Capabilities = appendModelListCapability(summary.Capabilities, model.CapabilityThinking)
 		}
 	}
@@ -463,354 +451,58 @@ type modelListGGUF struct {
 	FileType        string
 }
 
-const (
-	modelListGGUFMagicLE = 0x46554747
-	modelListGGUFMagicBE = 0x47475546
-)
-
-const (
-	modelListGGUFTypeUint8 uint32 = iota
-	modelListGGUFTypeInt8
-	modelListGGUFTypeUint16
-	modelListGGUFTypeInt16
-	modelListGGUFTypeUint32
-	modelListGGUFTypeInt32
-	modelListGGUFTypeFloat32
-	modelListGGUFTypeBool
-	modelListGGUFTypeString
-	modelListGGUFTypeArray
-	modelListGGUFTypeUint64
-	modelListGGUFTypeInt64
-	modelListGGUFTypeFloat64
-)
-
-// readModelListGGUF scans only the small GGUF header values launch needs
-// and stops before tokenizer arrays. Using gguf.File.KeyValue for missing keys
-// can otherwise advance through large arrays just to discover absence.
 func readModelListGGUF(path string) (modelListGGUF, error) {
-	f, err := os.Open(path)
+	keyValues, err := gguf.ScanKeyValues(path, keepModelListGGUFKey)
 	if err != nil {
 		return modelListGGUF{}, err
 	}
-	defer f.Close()
 
-	r := bufio.NewReaderSize(f, 32<<10)
-	var magic uint32
-	if err := binary.Read(r, binary.LittleEndian, &magic); err != nil {
-		return modelListGGUF{}, err
-	}
-
-	var byteOrder binary.ByteOrder = binary.LittleEndian
-	switch magic {
-	case modelListGGUFMagicLE:
-	case modelListGGUFMagicBE:
-		byteOrder = binary.BigEndian
-	default:
-		return modelListGGUF{}, fmt.Errorf("invalid file magic")
-	}
-
-	var version uint32
-	if err := binary.Read(r, byteOrder, &version); err != nil {
-		return modelListGGUF{}, err
-	}
-
-	var numKV uint64
-	switch version {
-	case 1:
-		var header struct {
-			NumTensor uint32
-			NumKV     uint32
-		}
-		if err := binary.Read(r, byteOrder, &header); err != nil {
-			return modelListGGUF{}, err
-		}
-		numKV = uint64(header.NumKV)
-	default:
-		var header struct {
-			NumTensor uint64
-			NumKV     uint64
-		}
-		if err := binary.Read(r, byteOrder, &header); err != nil {
-			return modelListGGUF{}, err
-		}
-		numKV = header.NumKV
-	}
-
-	info := modelListGGUF{}
+	var info modelListGGUF
 	var architecture string
-	var hasPoolingType bool
-
-	for range numKV {
-		key, err := readModelListGGUFString(r, byteOrder, version)
-		if err != nil {
-			return modelListGGUF{}, err
-		}
-
-		var valueType uint32
-		if err := binary.Read(r, byteOrder, &valueType); err != nil {
-			return modelListGGUF{}, err
-		}
-
-		if key == "general.architecture" {
-			value, err := readModelListGGUFStringValue(r, byteOrder, version, valueType)
-			if err != nil {
-				return modelListGGUF{}, err
+	var metadata ggufArchitectureMetadata
+	byArchitecture := make(map[string]ggufArchitectureMetadata)
+	for _, kv := range keyValues {
+		switch kv.Key {
+		case ggufKeyGeneralArchitecture:
+			architecture = kv.String()
+			metadata = byArchitecture[architecture]
+		case ggufKeyGeneralFileType:
+			info.FileType = ggml.FileType(kv.Uint()).String()
+		case ggufKeyTokenizerChatTemplate:
+			info.Capabilities = modelcapabilities.AppendChatTemplate(info.Capabilities, kv.String())
+		default:
+			arch, suffix, _ := cutGGUFArchitectureKey(kv.Key)
+			value := byArchitecture[arch]
+			updateGGUFArchitectureMetadata(&value, suffix, kv.Value)
+			byArchitecture[arch] = value
+			if arch == architecture {
+				metadata = value
 			}
-			architecture = value
-			continue
-		}
-
-		if key == "general.file_type" {
-			value, err := readModelListGGUFIntValue(r, byteOrder, version, valueType)
-			if err != nil {
-				return modelListGGUF{}, err
-			}
-			info.FileType = ggml.FileType(value).String()
-			continue
-		}
-
-		if architecture != "" && strings.HasPrefix(key, "tokenizer.") {
-			break
-		}
-
-		if architecture != "" && strings.HasPrefix(key, architecture+".") {
-			switch strings.TrimPrefix(key, architecture+".") {
-			case "pooling_type":
-				hasPoolingType = true
-			case "vision.block_count":
-				info.Capabilities = appendModelListCapability(info.Capabilities, model.CapabilityVision)
-			case "audio.block_count":
-				info.Capabilities = appendModelListCapability(info.Capabilities, model.CapabilityAudio)
-			case "context_length":
-				value, err := readModelListGGUFIntValue(r, byteOrder, version, valueType)
-				if err != nil {
-					return modelListGGUF{}, err
-				}
-				info.ContextLength = value
-				continue
-			case "embedding_length":
-				value, err := readModelListGGUFIntValue(r, byteOrder, version, valueType)
-				if err != nil {
-					return modelListGGUF{}, err
-				}
-				info.EmbeddingLength = value
-				continue
-			}
-		}
-
-		if err := skipModelListGGUFValue(r, byteOrder, version, valueType); err != nil {
-			return modelListGGUF{}, err
 		}
 	}
 
-	if hasPoolingType {
-		info.Capabilities = appendModelListCapability(info.Capabilities, model.CapabilityEmbedding)
-	} else {
-		info.Capabilities = appendModelListCapability(info.Capabilities, model.CapabilityCompletion)
-	}
+	info.Capabilities = appendGGUFMetadataCapabilities(info.Capabilities, metadata)
+	info.ContextLength = metadata.ContextLength
+	info.EmbeddingLength = metadata.EmbeddingLength
 
 	return info, nil
 }
 
-func readModelListGGUFStringValue(r io.Reader, byteOrder binary.ByteOrder, version uint32, valueType uint32) (string, error) {
-	if valueType != modelListGGUFTypeString {
-		if err := skipModelListGGUFValue(r, byteOrder, version, valueType); err != nil {
-			return "", err
-		}
-		return "", fmt.Errorf("unexpected gguf string type %d", valueType)
-	}
-	return readModelListGGUFString(r, byteOrder, version)
-}
-
-func readModelListGGUFIntValue(r io.Reader, byteOrder binary.ByteOrder, version uint32, valueType uint32) (int, error) {
-	switch valueType {
-	case modelListGGUFTypeUint8:
-		var value uint8
-		if err := binary.Read(r, byteOrder, &value); err != nil {
-			return 0, err
-		}
-		return int(value), nil
-	case modelListGGUFTypeInt8:
-		var value int8
-		if err := binary.Read(r, byteOrder, &value); err != nil {
-			return 0, err
-		}
-		return int(value), nil
-	case modelListGGUFTypeUint16:
-		var value uint16
-		if err := binary.Read(r, byteOrder, &value); err != nil {
-			return 0, err
-		}
-		return int(value), nil
-	case modelListGGUFTypeInt16:
-		var value int16
-		if err := binary.Read(r, byteOrder, &value); err != nil {
-			return 0, err
-		}
-		return int(value), nil
-	case modelListGGUFTypeUint32:
-		var value uint32
-		if err := binary.Read(r, byteOrder, &value); err != nil {
-			return 0, err
-		}
-		return int(value), nil
-	case modelListGGUFTypeInt32:
-		var value int32
-		if err := binary.Read(r, byteOrder, &value); err != nil {
-			return 0, err
-		}
-		return int(value), nil
-	case modelListGGUFTypeUint64:
-		var value uint64
-		if err := binary.Read(r, byteOrder, &value); err != nil {
-			return 0, err
-		}
-		return int(value), nil
-	case modelListGGUFTypeInt64:
-		var value int64
-		if err := binary.Read(r, byteOrder, &value); err != nil {
-			return 0, err
-		}
-		return int(value), nil
-	default:
-		if err := skipModelListGGUFValue(r, byteOrder, version, valueType); err != nil {
-			return 0, err
-		}
-		return 0, fmt.Errorf("unexpected gguf integer type %d", valueType)
-	}
-}
-
-func skipModelListGGUFValue(r io.Reader, byteOrder binary.ByteOrder, version uint32, valueType uint32) error {
-	switch valueType {
-	case modelListGGUFTypeUint8, modelListGGUFTypeInt8, modelListGGUFTypeBool:
-		return discardModelListGGUFBytes(r, 1)
-	case modelListGGUFTypeUint16, modelListGGUFTypeInt16:
-		return discardModelListGGUFBytes(r, 2)
-	case modelListGGUFTypeUint32, modelListGGUFTypeInt32, modelListGGUFTypeFloat32:
-		return discardModelListGGUFBytes(r, 4)
-	case modelListGGUFTypeUint64, modelListGGUFTypeInt64, modelListGGUFTypeFloat64:
-		return discardModelListGGUFBytes(r, 8)
-	case modelListGGUFTypeString:
-		return skipModelListGGUFString(r, byteOrder, version)
-	case modelListGGUFTypeArray:
-		var arrayType uint32
-		if err := binary.Read(r, byteOrder, &arrayType); err != nil {
-			return err
-		}
-		var count uint64
-		if err := binary.Read(r, byteOrder, &count); err != nil {
-			return err
-		}
-		return skipModelListGGUFArray(r, byteOrder, version, arrayType, count)
-	default:
-		return fmt.Errorf("unsupported gguf value type %d", valueType)
-	}
-}
-
-func skipModelListGGUFArray(r io.Reader, byteOrder binary.ByteOrder, version uint32, arrayType uint32, count uint64) error {
-	if _, err := checkedModelListGGUFLength(count, "array size", fsgguf.MaxArraySize); err != nil {
-		return err
+func keepModelListGGUFKey(key string) bool {
+	switch key {
+	case ggufKeyGeneralArchitecture, ggufKeyGeneralFileType, ggufKeyTokenizerChatTemplate:
+		return true
 	}
 
-	var size uint64
-	switch arrayType {
-	case modelListGGUFTypeUint8, modelListGGUFTypeInt8, modelListGGUFTypeBool:
-		size = 1
-	case modelListGGUFTypeUint16, modelListGGUFTypeInt16:
-		size = 2
-	case modelListGGUFTypeUint32, modelListGGUFTypeInt32, modelListGGUFTypeFloat32:
-		size = 4
-	case modelListGGUFTypeUint64, modelListGGUFTypeInt64, modelListGGUFTypeFloat64:
-		size = 8
-	case modelListGGUFTypeString:
-		for range count {
-			if err := skipModelListGGUFString(r, byteOrder, version); err != nil {
-				return err
-			}
-		}
-		return nil
-	default:
-		return fmt.Errorf("unsupported gguf array type %d", arrayType)
-	}
-
-	if count > uint64(maxModelListGGUFInt64())/size {
-		return fmt.Errorf("gguf array byte length %d*%d exceeds maximum %d", count, size, maxModelListGGUFInt64())
-	}
-	return discardModelListGGUFBytes(r, int64(count*size))
-}
-
-func readModelListGGUFString(r io.Reader, byteOrder binary.ByteOrder, version uint32) (string, error) {
-	var length uint64
-	if err := binary.Read(r, byteOrder, &length); err != nil {
-		return "", err
-	}
-
-	n, err := checkedModelListGGUFLength(length, "string", fsgguf.MaxStringLength)
-	if err != nil {
-		return "", err
-	}
-
-	bts := make([]byte, n)
-	if _, err := io.ReadFull(r, bts); err != nil {
-		return "", err
-	}
-	if version == 1 && len(bts) > 0 && bts[len(bts)-1] == 0 {
-		bts = bts[:len(bts)-1]
-	}
-	return string(bts), nil
-}
-
-func skipModelListGGUFString(r io.Reader, byteOrder binary.ByteOrder, version uint32) error {
-	var length uint64
-	if err := binary.Read(r, byteOrder, &length); err != nil {
-		return err
-	}
-
-	n, err := checkedModelListGGUFLength(length, "string", fsgguf.MaxStringLength)
-	if err != nil {
-		return err
-	}
-	return discardModelListGGUFBytes(r, int64(n))
-}
-
-func discardModelListGGUFBytes(r io.Reader, n int64) error {
-	if n <= 0 {
-		return nil
-	}
-	_, err := io.CopyN(io.Discard, r, n)
-	return err
-}
-
-func checkedModelListGGUFLength(n uint64, kind string, max uint64) (int, error) {
-	if n > uint64(maxModelListGGUFInt()) {
-		return 0, fmt.Errorf("gguf %s %d exceeds maximum %d", kind, n, maxModelListGGUFInt())
-	}
-	if n > max {
-		return 0, fmt.Errorf("gguf %s %d exceeds maximum %d", kind, n, max)
-	}
-	return int(n), nil
-}
-
-func maxModelListGGUFInt() int {
-	return int(^uint(0) >> 1)
-}
-
-func maxModelListGGUFInt64() int64 {
-	return 1<<63 - 1
+	return isGGUFArchitectureMetadataKey(key)
 }
 
 func appendModelListCapabilities(capabilities []model.Capability, values ...model.Capability) []model.Capability {
-	for _, capability := range values {
-		capabilities = appendModelListCapability(capabilities, capability)
-	}
-	return capabilities
+	return modelcapabilities.AppendAll(capabilities, values...)
 }
 
 func appendModelListCapability(capabilities []model.Capability, capability model.Capability) []model.Capability {
-	if capability == "" || slices.Contains(capabilities, capability) {
-		return capabilities
-	}
-	return append(capabilities, capability)
+	return appendCapability(capabilities, capability)
 }
 
 func isUnknownQuantization(quantization string) bool {
