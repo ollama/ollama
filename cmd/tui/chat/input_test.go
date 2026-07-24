@@ -1155,3 +1155,44 @@ func TestChatFileMentionSuggestionsFilterAndComplete(t *testing.T) {
 		t.Fatalf("completed input = %q", got)
 	}
 }
+
+func TestChatEnterCompletesHighlightedFileMentionWithoutSubmitting(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "alpha.md"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "target.md"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := chatModel{
+		workingDir:     dir,
+		input:          []rune("review @ after this"),
+		inputCursor:    len([]rune("review @")),
+		inputCursorSet: true,
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(chatModel)
+	if got, want := m.complete, 1; got != want {
+		t.Fatalf("selected completion = %d, want %d", got, want)
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatal("selecting a file mention should not submit the prompt")
+	}
+	m = updated.(chatModel)
+	if got, want := string(m.input), "review @target.md after this"; got != want {
+		t.Fatalf("input = %q, want %q", got, want)
+	}
+	if got, want := m.inputCursor, len([]rune("review @target.md ")); got != want || !m.inputCursorSet {
+		t.Fatalf("cursor = %d (set=%v), want %d after the inserted mention", got, m.inputCursorSet, want)
+	}
+	if len(m.entries) != 0 || len(m.messages) != 0 {
+		t.Fatalf("selecting a file mention submitted the prompt: entries=%#v messages=%#v", m.entries, m.messages)
+	}
+	if completions := m.mentionCompletions(); completions != nil {
+		t.Fatalf("mention selector remained visible after selection: %#v", completions)
+	}
+}
