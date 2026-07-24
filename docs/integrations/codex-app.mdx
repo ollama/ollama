@@ -59,6 +59,21 @@ ollama launch codex-app --model gemma4:31b
 
 Running `ollama launch codex-app` is persistent and will have your model selected next time you open Codex.
 
+### Reasoning effort
+
+Codex controls how much a thinking model reasons through the `model_reasoning_effort` setting in `~/.codex/config.toml`. With Ollama, the value must be one of `low`, `medium`, `high`, `max`, or `none`.
+
+The OpenAI-only values `minimal` and `xhigh` are not supported. If your existing Codex profile sets one of them, requests fail with:
+
+```
+invalid reasoning value: "xhigh" (must be "high", "medium", "low", "max", or "none")
+```
+
+To fix this, edit `~/.codex/config.toml` and set a supported value, then restart Codex App:
+
+```toml
+model_reasoning_effort = "max"
+```
 
 ### Restore Codex App
 
@@ -80,3 +95,7 @@ Before overwriting Codex App config files, Ollama Launch saves backups under `~/
 If Codex App does not open after setup, open Codex manually once and run `ollama launch codex-app` again.
 
 If Codex App is already running and does not switch models, allow Ollama to restart it when prompted, or quit Codex App and run `ollama launch codex-app` again.
+
+If `ollama launch codex-app` fails with `Error: unknown integration: codex-app`, your installed Ollama is older than v0.24.0. Upgrade Ollama and run the command again.
+
+If requests fail with an `invalid reasoning value` error, see [Reasoning effort](#reasoning-effort).
