@@ -62,7 +62,7 @@ type Scheduler struct {
 	pendingReqCh  chan *LlmRequest
 	finishedReqCh chan *LlmRequest
 	expiredCh     chan *runnerRef
-	unloadedCh    chan any
+	unloadedCh    chan string
 
 	// loadedMu protects loaded and activeLoading
 	loadedMu sync.Mutex
@@ -94,7 +94,7 @@ func InitScheduler(ctx context.Context) *Scheduler {
 		pendingReqCh:    make(chan *LlmRequest, maxQueue),
 		finishedReqCh:   make(chan *LlmRequest, maxQueue),
 		expiredCh:       make(chan *runnerRef, maxQueue),
-		unloadedCh:      make(chan any, maxQueue),
+		unloadedCh:      make(chan string, maxQueue),
 		loaded:          make(map[string]*runnerRef),
 		newServerFn:     llm.NewLlamaServer,
 		getGpuFn:        discover.GPUDevices,
@@ -469,7 +469,7 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 				<-finished
 				runner.refMu.Unlock()
 				slog.Debug("sending an unloaded event", "runner", runner)
-				s.unloadedCh <- struct{}{}
+				s.unloadedCh <- runner.modelKey
 			}
 		}
 	}
@@ -1621,6 +1621,7 @@ func (s *Scheduler) evictAllAndWait(ctx context.Context, keepKey string) bool {
 	}
 
 	slog.Info("evicting all other loaded models for OOM retry", "count", len(runnersToExpire))
+	pending := make(map[string]struct{}, len(runnersToExpire))
 	for _, runner := range runnersToExpire {
 		runner.refMu.Lock()
 		if runner.expireTimer != nil {
@@ -1632,16 +1633,19 @@ func (s *Scheduler) evictAllAndWait(ctx context.Context, keepKey string) bool {
 			s.expiredCh <- runner
 		}
 		runner.refMu.Unlock()
+		pending[runner.modelKey] = struct{}{}
 	}
 
-	// Wait for every unload event. Each runner produces exactly one
-	// unloadedCh signal when its cleanup finishes.
-	for range runnersToExpire {
+	// Wait for every evicted runner to unload. Filter out unloadedCh
+	// events from runners we didn't expire (e.g. natural expirations)
+	// to avoid returning before memory is actually freed.
+	for len(pending) > 0 {
 		select {
 		case <-ctx.Done():
 			slog.Debug("shutting down scheduler during evict-all wait")
 			return false
-		case <-s.unloadedCh:
+		case key := <-s.unloadedCh:
+			delete(pending, key)
 		}
 	}
 	return true
