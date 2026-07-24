@@ -19,8 +19,6 @@ func (d Device) LogValue() slog.Value {
 var (
 	defaultDevice    Device
 	defaultDeviceSet bool
-	// SetDefaultDeviceGPU is the only GPU selector used by the MLX runner.
-	defaultDeviceGPU bool
 	defaultStream    Stream
 	defaultStreamSet bool
 )
@@ -55,7 +53,6 @@ func SetDefaultDeviceGPU() {
 	dev := C.mlx_device_new_type(C.MLX_GPU, 0)
 	C.mlx_set_default_device(dev)
 	C.mlx_device_free(dev)
-	defaultDeviceGPU = true
 	resetDefaultStreamCache()
 }
 
