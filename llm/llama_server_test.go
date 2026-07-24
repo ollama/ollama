@@ -2897,6 +2897,101 @@ func TestMemoryParsingWriter(t *testing.T) {
 	}
 }
 
+func TestAppendLlamaServerLogArgsKeepsSchedulerVerbosity(t *testing.T) {
+	params := appendLlamaServerLogArgs(nil)
+	for i, param := range params[:len(params)-1] {
+		if param == "--log-verbosity" && params[i+1] == "4" {
+			return
+		}
+	}
+	t.Fatalf("appendLlamaServerLogArgs() = %v, want --log-verbosity 4", params)
+}
+
+func TestMemoryParsingWriterFiltersNoisyRequestLogs(t *testing.T) {
+	t.Setenv("OLLAMA_DEBUG", "")
+
+	var out bytes.Buffer
+	runner := &llamaServerRunner{vramByDevice: make(map[string]uint64)}
+	w := &memoryParsingWriter{inner: &out, runner: runner}
+
+	input := strings.Join([]string{
+		"slot get_availabl: id  0 | task -1 | selected slot by LRU, t_last = -1",
+		"srv  get_availabl: updating prompt cache",
+		"srv  log_server_r: request: GET /health 127.0.0.1 200",
+		"srv  log_server_r: request: GET /health 127.0.0.1 503",
+		"srv  log_server_r: request: POST /completion 127.0.0.1 500",
+		"srv    operator(): got exception: {\"error\":\"boom\"}",
+		"slot launch_slot_: id  0 | task -1 | sampler params:",
+		"\trepeat_last_n = 64, repeat_penalty = 1.000, frequency_penalty = 0.000",
+		"\ttop_k = 20, top_p = 0.950, min_p = 0.000",
+		"load_tensors:        CUDA0 model buffer size =  1000.00 MiB",
+		"llama_kv_cache:      CUDA0 KV buffer size =  2000.00 MiB",
+		"llm_load_tensors: offloaded 33/33 layers to GPU",
+		"[GIN] 2026/06/25 - 20:47:16 | 200 |         1m28s |       127.0.0.1 | POST     \"/api/chat\"",
+		"[GIN] 2026/06/25 - 20:47:16 | 500 |         1m28s |       127.0.0.1 | POST     \"/api/chat\"",
+		"error: runner failed",
+	}, "\n") + "\n"
+
+	if n, err := w.Write([]byte(input)); err != nil {
+		t.Fatal(err)
+	} else if n != len(input) {
+		t.Fatalf("Write returned %d, want %d", n, len(input))
+	}
+
+	got := out.String()
+	for _, unexpected := range []string{
+		"slot get_availabl",
+		"srv  get_availabl",
+		"GET /health",
+		"sampler params",
+		"repeat_last_n",
+		`| 200 |`,
+	} {
+		if strings.Contains(got, unexpected) {
+			t.Fatalf("filtered output contains %q:\n%s", unexpected, got)
+		}
+	}
+	for _, expected := range []string{
+		"CUDA0 model buffer size",
+		"CUDA0 KV buffer size",
+		"offloaded 33/33 layers",
+		"POST /completion",
+		"got exception",
+		`| 500 |`,
+		"error: runner failed",
+	} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("filtered output missing %q:\n%s", expected, got)
+		}
+	}
+
+	if runner.memGPU != 3000*1024*1024 {
+		t.Fatalf("memGPU = %d, want %d", runner.memGPU, uint64(3000*1024*1024))
+	}
+	total, vram := runner.MemorySize()
+	if total != vram || total != 3000*1024*1024 {
+		t.Fatalf("MemorySize() = %d/%d, want %d/%d", total, vram, uint64(3000*1024*1024), uint64(3000*1024*1024))
+	}
+}
+
+func TestMemoryParsingWriterKeepsVerboseOutputWhenDebugEnabled(t *testing.T) {
+	t.Setenv("OLLAMA_DEBUG", "1")
+
+	var out bytes.Buffer
+	w := &memoryParsingWriter{inner: &out, runner: &llamaServerRunner{}}
+	input := "slot launch_slot_: id  0 | task -1 | sampler params:\n\trepeat_last_n = 64\n"
+
+	if n, err := w.Write([]byte(input)); err != nil {
+		t.Fatal(err)
+	} else if n != len(input) {
+		t.Fatalf("Write returned %d, want %d", n, len(input))
+	}
+
+	if got := out.String(); got != input {
+		t.Fatalf("output = %q, want %q", got, input)
+	}
+}
+
 func TestMemoryParsingWriterRecordsOutputActivityWithoutNewline(t *testing.T) {
 	runner := &llamaServerRunner{}
 	w := &memoryParsingWriter{inner: io.Discard, runner: runner}

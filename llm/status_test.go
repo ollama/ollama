@@ -27,6 +27,26 @@ func TestStatusWriterCapturesErrorLine(t *testing.T) {
 			want: "MLX: there was an error",
 		},
 		{
+			name: "srv request success",
+			log:  "srv  log_server_r: request: GET /health 127.0.0.1 200\n",
+			want: "",
+		},
+		{
+			name: "srv health loading",
+			log:  "srv  log_server_r: request: GET /health 127.0.0.1 503\n",
+			want: "",
+		},
+		{
+			name: "srv request failure",
+			log:  "srv  log_server_r: request: POST /completion 127.0.0.1 500\n",
+			want: "srv  log_server_r: request: POST /completion 127.0.0.1 500",
+		},
+		{
+			name: "srv exception",
+			log:  "srv    operator(): got exception: {\"error\":\"boom\"}\n",
+			want: "srv    operator(): got exception: {\"error\":\"boom\"}",
+		},
+		{
 			name: "panic header",
 			log: "time=2026-05-01T15:36:45.053Z level=INFO source=pipeline.go:71 msg=\"peak memory\" size=\"8.26 GiB\"\n" +
 				"panic: mlx: Failed to compile kernel: nvrtc: error: invalid value for --gpu-architecture (-arch)\n" +
