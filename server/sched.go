@@ -62,7 +62,7 @@ type Scheduler struct {
 	pendingReqCh  chan *LlmRequest
 	finishedReqCh chan *LlmRequest
 	expiredCh     chan *runnerRef
-	unloadedCh    chan any
+	unloadedCh    chan string // modelKey of the runner that finished unloading
 
 	// loadedMu protects loaded and activeLoading
 	loadedMu sync.Mutex
@@ -94,7 +94,7 @@ func InitScheduler(ctx context.Context) *Scheduler {
 		pendingReqCh:    make(chan *LlmRequest, maxQueue),
 		finishedReqCh:   make(chan *LlmRequest, maxQueue),
 		expiredCh:       make(chan *runnerRef, maxQueue),
-		unloadedCh:      make(chan any, maxQueue),
+		unloadedCh:      make(chan string, maxQueue),
 		loaded:          make(map[string]*runnerRef),
 		newServerFn:     llm.NewLlamaServer,
 		getGpuFn:        discover.GPUDevices,
@@ -352,20 +352,36 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					s.expiredCh <- runnerToExpire
 				}
 				runnerToExpire.refMu.Unlock()
-				// Wait for the unload to happen
+				// Wait for this runner's unload. Other models may unload
+				// concurrently and also signal unloadedCh — ignore those.
 				slog.Debug("waiting for pending requests to complete and unload to occur", "runner", runnerToExpire)
-				select {
-				case <-ctx.Done():
+				if !s.waitForUnload(ctx, runnerToExpire.modelKey) {
 					slog.Debug("shutting down scheduler pending loop")
 					return
-				case <-s.unloadedCh:
-					slog.Debug("unload completed", "runner", runnerToExpire)
-					continue
 				}
+				slog.Debug("unload completed", "runner", runnerToExpire)
+				continue
 			}
-		case <-s.unloadedCh:
+		case key := <-s.unloadedCh:
 			// An unload request when there are no pending request can be ignored
-			slog.Debug("ignoring unload event with no pending requests")
+			slog.Debug("ignoring unload event with no pending requests", "model", key)
+		}
+	}
+}
+
+// waitForUnload blocks until unloadedCh delivers waitKey. Unrelated unload
+// signals are discarded. Returns false if ctx is cancelled.
+func (s *Scheduler) waitForUnload(ctx context.Context, waitKey string) bool {
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case key := <-s.unloadedCh:
+			if key != waitKey {
+				slog.Debug("ignoring unload for different runner while waiting", "got", key, "want", waitKey)
+				continue
+			}
+			return true
 		}
 	}
 }
@@ -469,7 +485,7 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 				<-finished
 				runner.refMu.Unlock()
 				slog.Debug("sending an unloaded event", "runner", runner)
-				s.unloadedCh <- struct{}{}
+				s.unloadedCh <- runner.modelKey
 			}
 		}
 	}
@@ -1634,14 +1650,19 @@ func (s *Scheduler) evictAllAndWait(ctx context.Context, keepKey string) bool {
 		runner.refMu.Unlock()
 	}
 
-	// Wait for every unload event. Each runner produces exactly one
-	// unloadedCh signal when its cleanup finishes.
-	for range runnersToExpire {
+	// Wait until each expired runner has signaled. Concurrent idle unloads
+	// of unrelated runners are ignored.
+	remaining := make(map[string]struct{}, len(runnersToExpire))
+	for _, runner := range runnersToExpire {
+		remaining[runner.modelKey] = struct{}{}
+	}
+	for len(remaining) > 0 {
 		select {
 		case <-ctx.Done():
 			slog.Debug("shutting down scheduler during evict-all wait")
 			return false
-		case <-s.unloadedCh:
+		case key := <-s.unloadedCh:
+			delete(remaining, key)
 		}
 	}
 	return true
