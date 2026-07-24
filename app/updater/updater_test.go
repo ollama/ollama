@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -95,7 +96,59 @@ func TestIsNewReleaseAvailable(t *testing.T) {
 	}
 }
 
-func TestDownloadNewReleaseRejectsUnsafeHeaderFilename(t *testing.T) {
+func TestCheckForUpdatePreservesResponseVersion(t *testing.T) {
+	slog.SetLogLoggerLevel(slog.LevelDebug)
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/update.json" {
+			w.Write([]byte(
+				fmt.Sprintf(`{"version": "0.21.0", "url": "%s"}`,
+					server.URL+"/download/install.ps1")))
+			return
+		}
+		t.Errorf("unexpected request path %s", r.URL.Path)
+	}))
+	defer server.Close()
+
+	updater := &Updater{Store: &store.Store{DBPath: filepath.Join(t.TempDir(), "test.db")}}
+	defer updater.Store.Close()
+	UpdateCheckURLBase = server.URL + "/update.json"
+	updatePresent, resp := updater.checkForUpdate(t.Context())
+	if !updatePresent {
+		t.Fatal("expected update to be available")
+	}
+	if resp.UpdateVersion != "0.21.0" {
+		t.Fatalf("version = %q, want response version 0.21.0", resp.UpdateVersion)
+	}
+}
+
+func TestCheckForUpdateDoesNotInferVersionFromURL(t *testing.T) {
+	slog.SetLogLoggerLevel(slog.LevelDebug)
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/update.json" {
+			w.Write([]byte(
+				fmt.Sprintf(`{"url": "%s"}`,
+					server.URL+"/v0.24.0/OllamaSetup.exe")))
+			return
+		}
+		t.Errorf("unexpected request path %s", r.URL.Path)
+	}))
+	defer server.Close()
+
+	updater := &Updater{Store: &store.Store{DBPath: filepath.Join(t.TempDir(), "test.db")}}
+	defer updater.Store.Close()
+	UpdateCheckURLBase = server.URL + "/update.json"
+	updatePresent, resp := updater.checkForUpdate(t.Context())
+	if !updatePresent {
+		t.Fatal("expected update to be available")
+	}
+	if resp.UpdateVersion != "" {
+		t.Fatalf("version = %q, want empty when response omits version", resp.UpdateVersion)
+	}
+}
+
+func TestDownloadSingleFileReleaseRejectsUnsafeHeaderFilename(t *testing.T) {
 	UpdateStageDir = t.TempDir()
 	oldInstaller := Installer
 	oldVerifyDownload := VerifyDownload
@@ -126,7 +179,7 @@ func TestDownloadNewReleaseRejectsUnsafeHeaderFilename(t *testing.T) {
 	defer server.Close()
 
 	updater := &Updater{}
-	err := updater.DownloadNewRelease(t.Context(), UpdateResponse{UpdateURL: server.URL + "/download"})
+	err := updater.downloadSingleFileRelease(t.Context(), UpdateResponse{UpdateURL: server.URL + "/download"})
 	if err == nil || !strings.Contains(err.Error(), "unsafe update filename") {
 		t.Fatalf("expected unsafe filename error, got %v", err)
 	}
@@ -138,7 +191,7 @@ func TestDownloadNewReleaseRejectsUnsafeHeaderFilename(t *testing.T) {
 	}
 }
 
-func TestDownloadNewReleaseDoesNotUseRawETagAsPathComponent(t *testing.T) {
+func TestDownloadSingleFileReleaseDoesNotUseRawETagAsPathComponent(t *testing.T) {
 	UpdateStageDir = t.TempDir()
 	oldInstaller := Installer
 	oldVerifyDownload := VerifyDownload
@@ -165,7 +218,7 @@ func TestDownloadNewReleaseDoesNotUseRawETagAsPathComponent(t *testing.T) {
 	defer server.Close()
 
 	updater := &Updater{}
-	if err := updater.DownloadNewRelease(t.Context(), UpdateResponse{UpdateURL: server.URL + "/download"}); err != nil {
+	if err := updater.downloadSingleFileRelease(t.Context(), UpdateResponse{UpdateURL: server.URL + "/download"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -191,6 +244,10 @@ func TestDownloadNewReleaseDoesNotUseRawETagAsPathComponent(t *testing.T) {
 }
 
 func TestBackgroundCheckerSkipsAlreadyStagedETagDownload(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows update downloads are staged through install.ps1")
+	}
+
 	UpdateStageDir = t.TempDir()
 	oldInstaller := Installer
 	oldVerifyDownload := VerifyDownload
@@ -313,6 +370,10 @@ func TestBackgroundCheckerSkipsAlreadyStagedETagDownload(t *testing.T) {
 }
 
 func TestBackgoundChecker(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows update downloads are staged through install.ps1")
+	}
+
 	UpdateStageDir = t.TempDir()
 	haveUpdate := false
 	verified := false
@@ -437,6 +498,10 @@ func TestAutoUpdateDisabledSkipsDownload(t *testing.T) {
 }
 
 func TestAutoUpdateReenabledDownloadsUpdate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows update downloads are staged through install.ps1")
+	}
+
 	UpdateStageDir = t.TempDir()
 	var downloadAttempted atomic.Bool
 	callbackCalled := make(chan struct{}, 1)
@@ -513,7 +578,27 @@ func TestAutoUpdateReenabledDownloadsUpdate(t *testing.T) {
 	}
 }
 
+func TestCancelOngoingDownloadClearsRegisteredCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	updater := &Updater{cancelDownload: cancel}
+
+	updater.CancelOngoingDownload()
+
+	if updater.cancelDownload != nil {
+		t.Fatal("cancelDownload should be cleared after cancellation")
+	}
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("registered download context was not cancelled")
+	}
+}
+
 func TestCancelOngoingDownload(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows update downloads are staged through install.ps1")
+	}
+
 	UpdateStageDir = t.TempDir()
 	downloadStarted := make(chan struct{})
 	downloadCancelled := make(chan struct{})

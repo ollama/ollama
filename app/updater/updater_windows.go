@@ -1,10 +1,14 @@
 package updater
 
 import (
-	"crypto/x509"
+	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -17,30 +21,39 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-var runningInstaller string
-
-var (
-	crypt32              = windows.NewLazySystemDLL("crypt32.dll")
-	procCryptMsgGetParam = crypt32.NewProc("CryptMsgGetParam")
-	procCryptMsgClose    = crypt32.NewProc("CryptMsgClose")
+const (
+	installScriptName              = "install.ps1"
+	stagedCacheReadyFile           = "cache-ready"
+	windowsCreateNoWindow          = 0x08000000
+	installScriptModeCacheOnly     = "cache-only"
+	installScriptModeInstallCached = "install-cached"
 )
 
-const cmsgSignerInfoParam = 6
+var (
+	runningInstaller              string
+	installScriptInstallerLogFile string
+)
 
-type cmsgSignerInfo struct {
-	Version                 uint32
-	Issuer                  windows.CertNameBlob
-	SerialNumber            windows.CryptIntegerBlob
-	HashAlgorithm           windows.CryptAlgorithmIdentifier
-	HashEncryptionAlgorithm windows.CryptAlgorithmIdentifier
-	EncryptedHash           windows.CryptDataBlob
-	AuthAttrs               cryptAttributes
-	UnauthAttrs             cryptAttributes
+var (
+	verifyInstallScriptSignature = verifyPowerShellScriptSignature
+	runInstallScriptCacheOnly    = runInstallScriptCacheOnlyCommand
+	startInstallScriptInstall    = startInstallScriptInstallCommand
+	exitAfterStartingUpgrade     = os.Exit
+)
+
+type installScriptProcess interface {
+	// Release lets the app detach from the launched install.ps1 process before
+	// exiting; the interface keeps DoUpgradeAtStartup testable without starting
+	// a real installer.
+	Release() error
 }
 
-type cryptAttributes struct {
-	Count      uint32
-	Attributes unsafe.Pointer
+type installScriptCommand struct {
+	Program       string
+	Args          []string
+	Env           []string
+	Dir           string
+	CreationFlags uint32
 }
 
 type OSVERSIONINFOEXW struct {
@@ -68,11 +81,223 @@ func init() {
 	UpdateStageDir = filepath.Join(appDataDir, "updates_v2")
 
 	UpgradeLogFile = filepath.Join(appDataDir, "upgrade.log")
+	installScriptInstallerLogFile = filepath.Join(appDataDir, "OllamaSetup.log")
 	Installer = "OllamaSetup.exe"
 	runningInstaller = filepath.Join(appDataDir, Installer)
 	UpgradeMarkerFile = filepath.Join(appDataDir, "upgraded")
 
 	loadOSVersion()
+}
+
+func (u *Updater) downloadNewRelease(ctx context.Context, updateResp UpdateResponse) error {
+	return u.downloadInstallScriptRelease(ctx, updateResp)
+}
+
+func (u *Updater) downloadInstallScriptRelease(ctx context.Context, updateResp UpdateResponse) error {
+	scriptURL, err := installScriptURL(updateResp)
+	if err != nil {
+		return err
+	}
+
+	scriptPath, downloadedScript, err := downloadInstallScript(ctx, scriptURL, updateResp)
+	if err != nil {
+		return err
+	}
+	scriptStageDir := filepath.Dir(scriptPath)
+	version := normalizedUpdateVersion(updateResp)
+
+	if err := verifyInstallScriptSignature(scriptPath); err != nil {
+		_ = os.RemoveAll(scriptStageDir)
+		return fmt.Errorf("install.ps1 signature verification failed: %w", err)
+	}
+	if !installScriptSupportsCacheOnly(scriptPath) {
+		_ = os.RemoveAll(scriptStageDir)
+		return fmt.Errorf("install.ps1 does not support cache-only mode")
+	}
+	if !downloadedScript && isInstallScriptStageReady(scriptStageDir) {
+		slog.Info("update already downloaded", "script", scriptPath)
+		UpdateDownloaded = true
+		return nil
+	}
+
+	// Clear readiness before refreshing the cache so a failed cache-only run
+	// cannot leave startup upgrade stuck retrying stale or partial payloads.
+	_ = removeInstallScriptStageReady(scriptStageDir)
+	if err := runInstallScriptCacheOnly(ctx, scriptPath, scriptStageDir, version); err != nil {
+		_ = os.RemoveAll(scriptStageDir)
+		return err
+	}
+
+	if err := writeInstallScriptStageReady(scriptStageDir); err != nil {
+		_ = os.RemoveAll(scriptStageDir)
+		return err
+	}
+	UpdateDownloaded = true
+	return nil
+}
+
+func downloadInstallScript(ctx context.Context, scriptURL string, updateResp UpdateResponse) (string, bool, error) {
+	slog.Debug("checking install.ps1", "url", scriptURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, scriptURL, nil)
+	if err != nil {
+		return "", false, err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", false, fmt.Errorf("error checking install.ps1: %w", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", false, fmt.Errorf("unexpected status attempting to download install.ps1 %d", resp.StatusCode)
+	}
+
+	stageKey := strings.Join([]string{
+		resp.Header.Get("etag"),
+		normalizedUpdateVersion(updateResp),
+		updateResp.UpdateURL,
+	}, "\n")
+	stageFilename, err := updateStagePath(UpdateStageDir, stageKey, installScriptName)
+	if err != nil {
+		return "", false, err
+	}
+
+	if _, err := os.Stat(stageFilename); err == nil {
+		slog.Info("install.ps1 already downloaded", "script", stageFilename)
+		return stageFilename, false, nil
+	}
+
+	cleanupOldDownloads(UpdateStageDir)
+
+	slog.Debug("downloading install.ps1", "url", scriptURL, "script", stageFilename)
+	req, err = http.NewRequestWithContext(ctx, http.MethodGet, scriptURL, nil)
+	if err != nil {
+		return "", false, err
+	}
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		return "", false, fmt.Errorf("error downloading install.ps1: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", false, fmt.Errorf("unexpected status attempting to download install.ps1 %d", resp.StatusCode)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(stageFilename), 0o755); err != nil {
+		return "", false, fmt.Errorf("create update staging dir %s: %w", filepath.Dir(stageFilename), err)
+	}
+
+	tmpFilename := stageFilename + ".tmp"
+	fp, err := os.OpenFile(tmpFilename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return "", false, fmt.Errorf("write install.ps1 %s: %w", tmpFilename, err)
+	}
+	if _, err := io.Copy(fp, resp.Body); err != nil {
+		_ = fp.Close()
+		_ = os.Remove(tmpFilename)
+		return "", false, fmt.Errorf("write install.ps1 %s: %w", tmpFilename, err)
+	}
+	if err := fp.Close(); err != nil {
+		_ = os.Remove(tmpFilename)
+		return "", false, fmt.Errorf("close install.ps1 %s: %w", tmpFilename, err)
+	}
+	if err := os.Rename(tmpFilename, stageFilename); err != nil {
+		_ = os.Remove(tmpFilename)
+		return "", false, fmt.Errorf("stage install.ps1 %s: %w", stageFilename, err)
+	}
+
+	slog.Info("install.ps1 downloaded", "script", stageFilename)
+	return stageFilename, true, nil
+}
+
+func installScriptURL(updateResp UpdateResponse) (string, error) {
+	parsed, err := url.Parse(updateResp.UpdateURL)
+	if err != nil {
+		return "", fmt.Errorf("parse update URL: %w", err)
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return "", fmt.Errorf("invalid update URL: %s", updateResp.UpdateURL)
+	}
+	parsed.Path = path.Join(path.Dir(parsed.Path), installScriptName)
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String(), nil
+}
+
+func normalizedUpdateVersion(updateResp UpdateResponse) string {
+	return strings.TrimPrefix(strings.TrimSpace(updateResp.UpdateVersion), "v")
+}
+
+func windowsPowerShellPath() string {
+	systemDir, err := windows.GetSystemDirectory()
+	if err == nil && systemDir != "" {
+		return filepath.Join(systemDir, "WindowsPowerShell", "v1.0", "powershell.exe")
+	}
+	slog.Warn("unable to resolve Windows system directory for powershell.exe", "error", err)
+
+	systemRoot := os.Getenv("SystemRoot")
+	if systemRoot == "" {
+		systemRoot = os.Getenv("WINDIR")
+	}
+	if systemRoot == "" {
+		systemRoot = `C:\Windows`
+	}
+	return filepath.Join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+}
+
+func validateWindowsPowerShellPath(powerShellPath string) error {
+	info, err := os.Stat(powerShellPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("Windows PowerShell not found at %s; app upgrades require the system Windows PowerShell component", powerShellPath)
+		}
+		return fmt.Errorf("unable to access Windows PowerShell at %s: %w", powerShellPath, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("Windows PowerShell path is a directory: %s", powerShellPath)
+	}
+	return nil
+}
+
+func windowsPowerShellModulePath() string {
+	systemDir, err := windows.GetSystemDirectory()
+	if err == nil && systemDir != "" {
+		return filepath.Join(systemDir, "WindowsPowerShell", "v1.0", "Modules")
+	}
+	slog.Warn("unable to resolve Windows system directory for PowerShell module path", "error", err)
+
+	systemRoot := os.Getenv("SystemRoot")
+	if systemRoot == "" {
+		systemRoot = os.Getenv("WINDIR")
+	}
+	if systemRoot == "" {
+		systemRoot = `C:\Windows`
+	}
+	return filepath.Join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "Modules")
+}
+
+func withWindowsPowerShellModulePath(base []string) []string {
+	env := make([]string, 0, len(base)+1)
+	for _, entry := range base {
+		key, _, ok := strings.Cut(entry, "=")
+		if ok && strings.EqualFold(key, "PSModulePath") {
+			continue
+		}
+		env = append(env, entry)
+	}
+	// Force Windows PowerShell to its built-in module path. CI can inherit a
+	// PowerShell 7 PSModulePath that cannot load Windows PowerShell modules, and
+	// user-writable module paths should not participate in signature checks.
+	return append(env, "PSModulePath="+windowsPowerShellModulePath())
+}
+
+func installScriptSupportsCacheOnly(scriptPath string) bool {
+	data, err := os.ReadFile(scriptPath)
+	if err != nil {
+		slog.Warn("unable to read install.ps1 for capability check", "script", scriptPath, "error", err)
+		return false
+	}
+	return strings.Contains(string(data), "OLLAMA_CACHE_ONLY")
 }
 
 func loadOSVersion() {
@@ -99,99 +324,80 @@ func loadOSVersion() {
 	}
 }
 
-func getStagedUpdate() string {
+func getStagedInstallScript() string {
 	// When transitioning from old to new app, cleanup the update from the old staging dir
 	// This can eventually be removed once enough time has passed since the transition
 	cleanupOldDownloads(filepath.Join(os.Getenv("LOCALAPPDATA"), "Ollama", "updates"))
 
-	files, err := filepath.Glob(filepath.Join(UpdateStageDir, "*", "*.exe"))
+	files, err := filepath.Glob(filepath.Join(UpdateStageDir, "*", installScriptName))
 	if err != nil {
 		slog.Debug("failed to lookup downloads", "error", err)
 		return ""
 	}
-	if len(files) == 0 {
-		return ""
-	} else if len(files) > 1 {
-		// Shouldn't happen
-		slog.Warn("multiple update downloads found, using first one", "bundles", files)
+	readyFiles := files[:0]
+	for _, file := range files {
+		if isInstallScriptStageReady(filepath.Dir(file)) {
+			readyFiles = append(readyFiles, file)
+		}
 	}
-	return files[0]
+	if len(readyFiles) == 0 {
+		return ""
+	} else if len(readyFiles) > 1 {
+		// Shouldn't happen
+		slog.Warn("multiple update downloads found, using first one", "bundles", readyFiles)
+	}
+	return readyFiles[0]
 }
 
 func DoUpgrade(interactive bool) error {
-	bundle := getStagedUpdate()
-	if bundle == "" {
+	if script := getStagedInstallScript(); script != "" {
+		return doInstallScriptUpgrade(script, exitAfterStartingUpgrade)
+	}
+	return fmt.Errorf("failed to lookup downloads")
+}
+
+func doInstallScriptUpgrade(script string, exit func(int)) error {
+	if script == "" {
 		return fmt.Errorf("failed to lookup downloads")
 	}
 
 	if err := VerifyDownload(); err != nil {
-		_ = os.Remove(bundle)
-		slog.Warn("verification failure", "bundle", bundle, "error", err)
+		_ = os.RemoveAll(filepath.Dir(script))
+		slog.Warn("verification failure", "script", script, "error", err)
 		return fmt.Errorf("staged update verification failed: %w", err)
 	}
 
-	// We move the installer to ensure we don't race with multiple apps starting in quick succession
-	if err := os.Rename(bundle, runningInstaller); err != nil {
-		return fmt.Errorf("unable to rename %s -> %s : %w", bundle, runningInstaller, err)
-	}
-
-	slog.Info("upgrade log file " + UpgradeLogFile)
-
-	// make the upgrade show progress, but non interactive
-	installArgs := []string{
-		"/CLOSEAPPLICATIONS",                    // Quit the tray app if it's still running
-		"/LOG=" + filepath.Base(UpgradeLogFile), // Only relative seems reliable, so set pwd
-		"/FORCECLOSEAPPLICATIONS",               // Force close the tray app - might be needed
-		"/SP",                                   // Skip the "This will install... Do you wish to continue" prompt
-		"/NOCANCEL",                             // Disable the ability to cancel upgrade mid-flight to avoid partially installed upgrades
-		"/SILENT",
-	}
-
-	if !interactive {
-		// Add flags to make it totally silent without GUI
-		installArgs = append(installArgs, "/VERYSILENT", "/SUPPRESSMSGBOXES")
-	}
-
-	slog.Info("starting upgrade", "installer", runningInstaller, "args", installArgs)
-	os.Chdir(filepath.Dir(UpgradeLogFile)) //nolint:errcheck
-	cmd := exec.Command(runningInstaller, installArgs...)
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("unable to start ollama app %w", err)
-	}
-
-	if cmd.Process != nil {
-		err := cmd.Process.Release()
-		if err != nil {
-			slog.Error(fmt.Sprintf("failed to release server process: %s", err))
-		}
-	} else {
-		// TODO - some details about why it didn't start, or is this a pedantic error case?
-		return errors.New("installer process did not start")
-	}
-
-	// If the install fails to upgrade the system, and leaves a functional
-	// app, this marker file will cause us to remove the staged upgrade
-	// bundle, which will prevent trying again until we download again.
-	// If this becomes looping a problem, we may need to look for failures
-	// in the upgrade log in DoPostUpgradeCleanup and then not download
-	// the same version again.
-	f, err := os.OpenFile(UpgradeMarkerFile, os.O_RDONLY|os.O_CREATE, 0o666)
-	if err != nil {
+	scriptStageDir := filepath.Dir(script)
+	slog.Info("starting upgrade", "script", script, "stage", scriptStageDir)
+	if err := createUpgradeMarker(); err != nil {
 		slog.Warn("unable to create marker file", "file", UpgradeMarkerFile, "error", err)
 	}
-	f.Close()
 
-	// TODO should we linger for a moment and check to make sure it's actually running by checking the pid?
+	if err := removeInstallScriptStageReady(scriptStageDir); err != nil {
+		_ = os.Remove(UpgradeMarkerFile)
+		return fmt.Errorf("unable to clear staged update readiness: %w", err)
+	}
 
-	slog.Info("Installer started in background, exiting")
+	command := newInstallScriptCommand(script, scriptStageDir, "", installScriptModeInstallCached)
+	process, err := startInstallScriptInstall(command)
+	if err != nil {
+		_ = os.Remove(UpgradeMarkerFile)
+		return fmt.Errorf("unable to start install.ps1 upgrade: %w", err)
+	}
+	if err := process.Release(); err != nil {
+		slog.Error(fmt.Sprintf("failed to release installer process: %s", err))
+	}
 
-	os.Exit(0)
-	// Not reached
+	slog.Info("install.ps1 upgrade started in background, exiting")
+	exit(0)
 	return nil
 }
 
 func DoPostUpgradeCleanup() error {
+	if markerInfo, err := os.Stat(UpgradeMarkerFile); err == nil {
+		logInstallerFailuresSince(markerInfo.ModTime())
+	}
+
 	cleanupOldDownloads(UpdateStageDir)
 	err := os.Remove(UpgradeMarkerFile)
 	if err != nil {
@@ -199,6 +405,9 @@ func DoPostUpgradeCleanup() error {
 	}
 	err = os.Remove(runningInstaller)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		slog.Debug("failed to remove running installer on first attempt, backgrounding...", "installer", runningInstaller, "error", err)
 		go func() {
 			for range 10 {
@@ -214,156 +423,237 @@ func DoPostUpgradeCleanup() error {
 	return nil
 }
 
+func logInstallerFailuresSince(start time.Time) {
+	for _, logFile := range []string{installScriptInstallerLogFile} {
+		if logFile == "" {
+			continue
+		}
+		failed, err := windowsInstallerLogIndicatesFailure(logFile, start)
+		if err != nil {
+			slog.Debug("unable to inspect installer log", "log", logFile, "error", err)
+			continue
+		}
+		if failed {
+			slog.Warn("Windows installer reported upgrade failure", "log", logFile)
+		}
+	}
+}
+
+func windowsInstallerLogIndicatesFailure(logFile string, since time.Time) (bool, error) {
+	info, err := os.Stat(logFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if info.ModTime().Before(since) {
+		return false, nil
+	}
+
+	data, err := os.ReadFile(logFile)
+	if err != nil {
+		return false, err
+	}
+	logText := strings.ToLower(string(data))
+	for _, marker := range []string{
+		"installation process failed.",
+		"installation process was aborted.",
+		"user canceled the installation.",
+	} {
+		if strings.Contains(logText, marker) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func verifyDownload() error {
-	bundle := getStagedUpdate()
-	if bundle == "" {
+	script := getStagedInstallScript()
+	if script == "" {
 		return fmt.Errorf("failed to lookup downloads")
 	}
-	slog.Debug("verifying update", "bundle", bundle)
+	slog.Debug("verifying update", "script", script)
 
-	if err := verifyWindowsInstallerSignature(bundle); err != nil {
+	if err := verifyInstallScriptSignature(script); err != nil {
 		return fmt.Errorf("signature verification failed: %w", err)
 	}
+	if !installScriptSupportsCacheOnly(script) {
+		return fmt.Errorf("install.ps1 does not support cache-only mode")
+	}
 	return nil
 }
 
-func verifyWindowsInstallerSignature(filename string) error {
-	filename16, err := windows.UTF16PtrFromString(filename)
+func verifyPowerShellScriptSignature(filename string) error {
+	verificationScript := powerShellSignatureVerificationScript(filename)
+	powerShellPath := windowsPowerShellPath()
+	if err := validateWindowsPowerShellPath(powerShellPath); err != nil {
+		return err
+	}
+	cmd := exec.Command(
+		powerShellPath,
+		"-NoProfile",
+		"-NonInteractive",
+		"-Command",
+		verificationScript,
+	)
+	cmd.Env = withWindowsPowerShellModulePath(os.Environ())
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windowsCreateNoWindow}
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("Windows PowerShell signature verification failed using %s: %w: %s", powerShellPath, err, strings.TrimSpace(string(output)))
+	}
+	slog.Info("verified install.ps1 signature", "subject", strings.TrimSpace(string(output)))
+	return nil
+}
+
+func powerShellSignatureVerificationScript(filename string) string {
+	encodedFilename := base64.StdEncoding.EncodeToString([]byte(filename))
+	return fmt.Sprintf(`
+$ErrorActionPreference = 'Stop'
+$target = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('%s'))
+$sig = Get-AuthenticodeSignature -LiteralPath $target
+if ($sig.Status -ne 'Valid') {
+    throw "signature status: $($sig.Status)"
+}
+$subject = $sig.SignerCertificate.Subject
+if ($subject -notmatch '(^|, )O=Ollama Inc\.(,|$)') {
+    throw "unexpected signer: $subject"
+}
+Write-Output $subject
+`, encodedFilename)
+}
+
+func runInstallScriptCacheOnlyCommand(ctx context.Context, scriptPath, scriptStageDir, version string) error {
+	command := newInstallScriptCommand(scriptPath, scriptStageDir, version, installScriptModeCacheOnly)
+	if err := validateWindowsPowerShellPath(command.Program); err != nil {
+		return fmt.Errorf("install.ps1 cache phase failed: %w", err)
+	}
+	cmd := exec.CommandContext(ctx, command.Program, command.Args...)
+	cmd.Env = command.Env
+	cmd.Dir = command.Dir
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: command.CreationFlags}
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("install.ps1 cache phase failed using Windows PowerShell %s: %w: %s", command.Program, err, strings.TrimSpace(string(output)))
+	}
+	if len(output) > 0 {
+		slog.Debug("install.ps1 cache phase completed", "output", strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func startInstallScriptInstallCommand(command installScriptCommand) (installScriptProcess, error) {
+	if err := validateWindowsPowerShellPath(command.Program); err != nil {
+		return nil, err
+	}
+	cmd := exec.Command(command.Program, command.Args...)
+	cmd.Env = command.Env
+	cmd.Dir = command.Dir
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: command.CreationFlags}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	if cmd.Process == nil {
+		return nil, errors.New("install.ps1 process did not start")
+	}
+	return cmd.Process, nil
+}
+
+func newInstallScriptCommand(scriptPath, workingDir, version, mode string) installScriptCommand {
+	env := installScriptEnv(os.Environ(), version, mode)
+	return installScriptCommand{
+		Program: windowsPowerShellPath(),
+		Args: []string{
+			"-NoProfile",
+			// Execution policy is local machine/user policy, not our trust boundary.
+			// Official builds verify install.ps1 before launch; updater_unsigned
+			// test builds can disable only that verifier for local unsigned scripts.
+			"-ExecutionPolicy",
+			"Bypass",
+			"-File",
+			scriptPath,
+		},
+		Env:           env,
+		Dir:           workingDir,
+		CreationFlags: windowsCreateNoWindow,
+	}
+}
+
+func installScriptEnv(base []string, version, mode string) []string {
+	env := withWindowsPowerShellModulePath(filterInstallScriptEnv(base))
+	switch mode {
+	case installScriptModeCacheOnly:
+		env = append(env, "OLLAMA_CACHE_ONLY=1")
+		if version != "" {
+			env = append(env, "OLLAMA_VERSION="+version)
+		}
+	case installScriptModeInstallCached:
+		env = append(env, "OLLAMA_INSTALL_CACHED=1")
+	}
+	return env
+}
+
+func filterInstallScriptEnv(base []string) []string {
+	blocked := map[string]struct{}{
+		"OLLAMA_CACHE_ONLY":     {},
+		"OLLAMA_DEBUG":          {},
+		"OLLAMA_INSTALL_CACHED": {},
+		"OLLAMA_INSTALL_DIR":    {},
+		"OLLAMA_UNINSTALL":      {},
+		"OLLAMA_VERSION":        {},
+	}
+	env := make([]string, 0, len(base))
+	for _, entry := range base {
+		key, _, ok := strings.Cut(entry, "=")
+		if !ok {
+			env = append(env, entry)
+			continue
+		}
+		if _, found := blocked[strings.ToUpper(key)]; found {
+			continue
+		}
+		env = append(env, entry)
+	}
+	return env
+}
+
+func createUpgradeMarker() error {
+	if err := os.MkdirAll(filepath.Dir(UpgradeMarkerFile), 0o755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(UpgradeMarkerFile, os.O_RDONLY|os.O_CREATE, 0o666)
 	if err != nil {
 		return err
 	}
+	return f.Close()
+}
 
-	data := &windows.WinTrustData{
-		Size:             uint32(unsafe.Sizeof(windows.WinTrustData{})),
-		UIChoice:         windows.WTD_UI_NONE,
-		RevocationChecks: windows.WTD_REVOKE_WHOLECHAIN,
-		UnionChoice:      windows.WTD_CHOICE_FILE,
-		StateAction:      windows.WTD_STATEACTION_VERIFY,
-		UIContext:        windows.WTD_UICONTEXT_INSTALL,
-		FileOrCatalogOrBlobOrSgnrOrCert: unsafe.Pointer(&windows.WinTrustFileInfo{
-			Size:     uint32(unsafe.Sizeof(windows.WinTrustFileInfo{})),
-			FilePath: filename16,
-		}),
+func isInstallScriptStageReady(scriptStageDir string) bool {
+	if _, err := os.Stat(filepath.Join(scriptStageDir, stagedCacheReadyFile)); err != nil {
+		return false
 	}
+	return true
+}
 
-	verifyErr := windows.WinVerifyTrustEx(windows.InvalidHWND, &windows.WINTRUST_ACTION_GENERIC_VERIFY_V2, data)
-	data.StateAction = windows.WTD_STATEACTION_CLOSE
-	closeErr := windows.WinVerifyTrustEx(windows.InvalidHWND, &windows.WINTRUST_ACTION_GENERIC_VERIFY_V2, data)
-	if verifyErr != nil {
-		return verifyErr
-	}
-	if closeErr != nil {
-		return fmt.Errorf("close WinVerifyTrust state: %w", closeErr)
-	}
-
-	subject, err := windowsInstallerSignerSubject(filename)
-	if err != nil {
+func writeInstallScriptStageReady(scriptStageDir string) error {
+	if err := os.MkdirAll(scriptStageDir, 0o755); err != nil {
 		return err
 	}
-	slog.Debug("verified update signature", "subject", subject)
-	return nil
+	return os.WriteFile(filepath.Join(scriptStageDir, stagedCacheReadyFile), []byte("1\n"), 0o644)
 }
 
-func windowsInstallerSignerSubject(filename string) (string, error) {
-	filename16, err := windows.UTF16PtrFromString(filename)
-	if err != nil {
-		return "", err
+func removeInstallScriptStageReady(scriptStageDir string) error {
+	err := os.Remove(filepath.Join(scriptStageDir, stagedCacheReadyFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
 	}
-
-	var certStore windows.Handle
-	var msg windows.Handle
-	if err := windows.CryptQueryObject(
-		windows.CERT_QUERY_OBJECT_FILE,
-		unsafe.Pointer(filename16),
-		windows.CERT_QUERY_CONTENT_FLAG_PKCS7_SIGNED_EMBED,
-		windows.CERT_QUERY_FORMAT_FLAG_BINARY,
-		0,
-		nil,
-		nil,
-		nil,
-		&certStore,
-		&msg,
-		nil,
-	); err != nil {
-		return "", err
-	}
-	defer windows.CertCloseStore(certStore, 0) //nolint:errcheck
-	defer cryptMsgClose(msg)                   //nolint:errcheck
-
-	var signerInfoSize uint32
-	if err := cryptMsgGetParam(msg, cmsgSignerInfoParam, 0, nil, &signerInfoSize); err != nil {
-		return "", err
-	}
-	if signerInfoSize == 0 {
-		return "", fmt.Errorf("missing signer info")
-	}
-
-	signerInfoBuf := make([]byte, signerInfoSize)
-	if err := cryptMsgGetParam(msg, cmsgSignerInfoParam, 0, unsafe.Pointer(&signerInfoBuf[0]), &signerInfoSize); err != nil {
-		return "", err
-	}
-	signerInfo := (*cmsgSignerInfo)(unsafe.Pointer(&signerInfoBuf[0]))
-	certInfo := windows.CertInfo{
-		Issuer:       signerInfo.Issuer,
-		SerialNumber: signerInfo.SerialNumber,
-	}
-
-	cert, err := windows.CertFindCertificateInStore(
-		certStore,
-		windows.X509_ASN_ENCODING|windows.PKCS_7_ASN_ENCODING,
-		0,
-		windows.CERT_FIND_SUBJECT_CERT,
-		unsafe.Pointer(&certInfo),
-		nil,
-	)
-	if err != nil {
-		return "", err
-	}
-	defer windows.CertFreeCertificateContext(cert) //nolint:errcheck
-
-	parsed, err := x509.ParseCertificate(unsafe.Slice(cert.EncodedCert, cert.Length))
-	if err != nil {
-		return "", err
-	}
-
-	for _, org := range parsed.Subject.Organization {
-		if org == "Ollama Inc." {
-			return parsed.Subject.String(), nil
-		}
-	}
-	return "", fmt.Errorf("unexpected signer: %s", parsed.Subject.String())
-}
-
-func cryptMsgGetParam(msg windows.Handle, paramType, index uint32, data unsafe.Pointer, size *uint32) error {
-	r1, _, e1 := procCryptMsgGetParam.Call(
-		uintptr(msg),
-		uintptr(paramType),
-		uintptr(index),
-		uintptr(data),
-		uintptr(unsafe.Pointer(size)),
-	)
-	if r1 == 0 {
-		if e1 != syscall.Errno(0) {
-			return e1
-		}
-		return syscall.EINVAL
-	}
-	return nil
-}
-
-func cryptMsgClose(msg windows.Handle) error {
-	r1, _, e1 := procCryptMsgClose.Call(uintptr(msg))
-	if r1 == 0 {
-		if e1 != syscall.Errno(0) {
-			return e1
-		}
-		return syscall.EINVAL
-	}
-	return nil
+	return err
 }
 
 func IsUpdatePending() bool {
-	return getStagedUpdate() != ""
+	return getStagedInstallScript() != ""
 }
 
 func DoUpgradeAtStartup() error {
@@ -381,7 +671,11 @@ func IsProcRunning(procName string) []uint32 {
 		slog.Debug("failed to check for running installers", "error", err)
 		return nil
 	}
-	pids = pids[:ret]
+	pidCount := ret / uint32(unsafe.Sizeof(pids[0]))
+	if pidCount > uint32(len(pids)) {
+		pidCount = uint32(len(pids))
+	}
+	pids = pids[:pidCount]
 	matches := []uint32{}
 	for _, pid := range pids {
 		if pid == 0 {
