@@ -9,6 +9,8 @@
 # All native commands already check $LASTEXITCODE explicitly.
 $ErrorActionPreference = "Continue"
 
+. (Join-Path $PSScriptRoot "version.ps1")
+
 mkdir -Force -path .\dist | Out-Null
 
 function findVisualStudioInstall {
@@ -303,10 +305,7 @@ function checkEnv {
     Write-Output "Checking version"
     if (!$env:VERSION) {
         $data=(git describe --tags --first-parent --abbrev=7 --long --dirty --always)
-        $pattern="v(.+)"
-        if ($data -match $pattern) {
-            $script:VERSION=$matches[1]
-        }
+        $script:VERSION=Convert-GitDescribeVersion $data
     } else {
         $script:VERSION=$env:VERSION
     }
