@@ -3129,6 +3129,50 @@ func TestMemoryParsingWriterMemorySizeFullOffload(t *testing.T) {
 	}
 }
 
+func TestMemoryParsingWriterIncludesDraftModelBuffers(t *testing.T) {
+	lines := []string{
+		"load_tensors:      Vulkan0 model buffer size =  9000.00 MiB\n",
+		"llama_kv_cache_iswa: creating non-SWA KV cache, size = 262144 cells\n",
+		"llama_kv_cache:    Vulkan0 KV buffer size =  2000.00 MiB\n",
+		"llama_kv_cache_iswa: creating SWA KV cache, size = 1536 cells\n",
+		"llama_kv_cache:    Vulkan0 KV buffer size =   500.00 MiB\n",
+		"sched_reserve:     Vulkan0 compute buffer size =  1200.00 MiB\n",
+		"srv load_model: loading draft model 'draft.gguf'\n",
+		"load_tensors:      Vulkan0 model buffer size =   200.00 MiB\n",
+		"llama_kv_cache_iswa: creating non-SWA KV cache, size = 262144 cells\n",
+		"llama_kv_cache:    Vulkan0 KV buffer size =   100.00 MiB\n",
+		"llama_kv_cache_iswa: creating SWA KV cache, size = 1536 cells\n",
+		"llama_kv_cache:    Vulkan0 KV buffer size =    50.00 MiB\n",
+		"sched_reserve:     Vulkan0 compute buffer size =   300.00 MiB\n",
+		// llama-server can reserve the draft compute buffer more than once.
+		// The latest value replaces the earlier value within the same model.
+		"sched_reserve:     Vulkan0 compute buffer size =   350.00 MiB\n",
+	}
+	for _, tt := range []struct {
+		name   string
+		writes []string
+	}{
+		{name: "line by line", writes: lines},
+		{name: "single write", writes: []string{strings.Join(lines, "")}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &llamaServerRunner{}
+			w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+			for _, text := range tt.writes {
+				if _, err := w.Write([]byte(text)); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			total, vram := runner.MemorySize()
+			want := uint64(13400 * 1024 * 1024)
+			if total != want || vram != want {
+				t.Fatalf("MemorySize() = %d/%d, want %d/%d", total, vram, want, want)
+			}
+		})
+	}
+}
+
 func TestMemoryParsingWriterMemorySizeMmapPartialOffload(t *testing.T) {
 	tests := []struct {
 		name          string
