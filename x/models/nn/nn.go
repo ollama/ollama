@@ -89,6 +89,7 @@ type QuantizedLinear struct {
 	GroupSize   int
 	Bits        int
 	Mode        string
+	FastMatmul  bool
 }
 
 func NewQuantizedLinear(weight *mlx.Array, bias *mlx.Array, groupSize, bits int, mode string) *QuantizedLinear {
@@ -102,18 +103,24 @@ func NewQuantizedLinear(weight *mlx.Array, bias *mlx.Array, groupSize, bits int,
 		bias = bias.AsType(weight.DType())
 	}
 	return &QuantizedLinear{
-		Weight:    qw,
-		Scales:    scales,
-		QBiases:   qbiases,
-		Bias:      bias,
-		GroupSize: groupSize,
-		Bits:      bits,
-		Mode:      mode,
+		Weight:     qw,
+		Scales:     scales,
+		QBiases:    qbiases,
+		Bias:       bias,
+		GroupSize:  groupSize,
+		Bits:       bits,
+		Mode:       mode,
+		FastMatmul: mlx.SupportsFastQuantizedMatmulMode(mode),
 	}
 }
 
 func (ql *QuantizedLinear) Forward(x *mlx.Array) *mlx.Array {
-	out := mlx.QuantizedMatmul(x, ql.Weight, ql.Scales, ql.QBiases, true, ql.GroupSize, ql.Bits, ql.Mode)
+	var out *mlx.Array
+	if ql.FastMatmul {
+		out = mlx.FastQuantizedMatmul(x, ql.Weight, ql.Scales, ql.QBiases, true, ql.GroupSize, ql.Bits, ql.Mode)
+	} else {
+		out = mlx.QuantizedMatmul(x, ql.Weight, ql.Scales, ql.QBiases, true, ql.GroupSize, ql.Bits, ql.Mode)
+	}
 	if ql.GlobalScale != nil {
 		// Double-scale nvfp4 (e.g., NVIDIA ModelOpt): standard quantized_matmul
 		// followed by global_scale multiply. The global_scale is a per-tensor
@@ -207,6 +214,7 @@ func (qe *QuantizedEmbedding) AsLinear() LinearLayer {
 		GroupSize:   qe.GroupSize,
 		Bits:        qe.Bits,
 		Mode:        qe.Mode,
+		FastMatmul:  mlx.SupportsFastQuantizedMatmulMode(qe.Mode),
 	}
 }
 
