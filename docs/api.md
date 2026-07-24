@@ -110,6 +110,7 @@ The final response in the stream also includes additional data about the generat
 - `total_duration`: time spent generating the response
 - `load_duration`: time spent in nanoseconds loading the model
 - `prompt_eval_count`: number of tokens in the prompt
+- `prompt_eval_cached_count`: number of prompt tokens read from the prompt cache, when available
 - `prompt_eval_duration`: time spent in nanoseconds evaluating the prompt
 - `eval_count`: number of tokens in the response
 - `eval_duration`: time in nanoseconds spent generating the response

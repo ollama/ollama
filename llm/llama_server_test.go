@@ -291,6 +291,9 @@ func TestLlamaServerCompletionPromptEvalCountIncludesCache(t *testing.T) {
 	if responses[0].PromptEvalCount != 17 {
 		t.Errorf("PromptEvalCount = %d, want 17", responses[0].PromptEvalCount)
 	}
+	if responses[0].PromptEvalCachedCount != 12 {
+		t.Errorf("PromptEvalCachedCount = %d, want 12", responses[0].PromptEvalCachedCount)
+	}
 	if responses[0].PromptEvalDuration != 10*time.Millisecond {
 		t.Errorf("PromptEvalDuration = %s, want 10ms", responses[0].PromptEvalDuration)
 	}
@@ -340,6 +343,9 @@ func TestLlamaServerChatPromptEvalCountIncludesCache(t *testing.T) {
 	}
 	if responses[1].PromptEvalCount != 17 {
 		t.Errorf("PromptEvalCount = %d, want 17", responses[1].PromptEvalCount)
+	}
+	if responses[1].PromptEvalCachedCount != 12 {
+		t.Errorf("PromptEvalCachedCount = %d, want 12", responses[1].PromptEvalCachedCount)
 	}
 	if responses[1].PromptEvalDuration != 10*time.Millisecond {
 		t.Errorf("PromptEvalDuration = %s, want 10ms", responses[1].PromptEvalDuration)

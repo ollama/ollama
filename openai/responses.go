@@ -856,11 +856,10 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse,
 		Temperature:        derefFloat64(request.Temperature, 1.0),
 		Reasoning:          reasoning,
 		Usage: &ResponsesUsage{
-			InputTokens:  chatResponse.PromptEvalCount,
-			OutputTokens: chatResponse.EvalCount,
-			TotalTokens:  chatResponse.PromptEvalCount + chatResponse.EvalCount,
-			// TODO(drifkin): wire through the actual values
-			InputTokensDetails: ResponsesInputTokensDetails{CachedTokens: 0},
+			InputTokens:        chatResponse.PromptEvalCount,
+			OutputTokens:       chatResponse.EvalCount,
+			TotalTokens:        chatResponse.PromptEvalCount + chatResponse.EvalCount,
+			InputTokensDetails: ResponsesInputTokensDetails{CachedTokens: chatResponse.PromptEvalCachedCount},
 			// TODO(drifkin): wire through the actual values
 			OutputTokensDetails: ResponsesOutputTokensDetails{ReasoningTokens: 0},
 		},
@@ -1366,7 +1365,7 @@ func (c *ResponsesStreamConverter) processCompletion(r api.ChatResponse) []Respo
 		"output_tokens": r.EvalCount,
 		"total_tokens":  r.PromptEvalCount + r.EvalCount,
 		"input_tokens_details": map[string]any{
-			"cached_tokens": 0,
+			"cached_tokens": r.PromptEvalCachedCount,
 		},
 		"output_tokens_details": map[string]any{
 			"reasoning_tokens": 0,

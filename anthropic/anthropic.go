@@ -217,8 +217,30 @@ type MessagesResponse struct {
 
 // Usage contains token usage information
 type Usage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens              int `json:"input_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+}
+
+func UsageFromMetrics(metrics api.Metrics) Usage {
+	cached := metrics.PromptEvalCachedCount
+	if cached > metrics.PromptEvalCount {
+		cached = metrics.PromptEvalCount
+	}
+
+	return Usage{
+		InputTokens:          metrics.PromptEvalCount - cached,
+		CacheReadInputTokens: cached,
+		OutputTokens:         metrics.EvalCount,
+	}
+}
+
+func (u *Usage) Add(other Usage) {
+	u.InputTokens += other.InputTokens
+	u.CacheCreationInputTokens += other.CacheCreationInputTokens
+	u.CacheReadInputTokens += other.CacheReadInputTokens
+	u.OutputTokens += other.OutputTokens
 }
 
 // Streaming event types
@@ -273,8 +295,10 @@ type MessageDelta struct {
 
 // DeltaUsage contains cumulative token usage
 type DeltaUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens              int `json:"input_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
 }
 
 // MessageStopEvent signals the end of the message
@@ -688,10 +712,7 @@ func ToMessagesResponse(id string, r api.ChatResponse) MessagesResponse {
 		Model:      r.Model,
 		Content:    content,
 		StopReason: stopReason,
-		Usage: Usage{
-			InputTokens:  r.Metrics.PromptEvalCount,
-			OutputTokens: r.Metrics.EvalCount,
-		},
+		Usage:      UsageFromMetrics(r.Metrics),
 	}
 }
 
@@ -721,6 +742,8 @@ type StreamConverter struct {
 	firstWrite           bool
 	contentIndex         int
 	inputTokens          int
+	cacheCreationTokens  int
+	cacheReadTokens      int
 	outputTokens         int
 	estimatedInputTokens int // Estimated tokens from request (used when actual metrics are 0)
 	thinkingStarted      bool
@@ -753,7 +776,12 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 		c.firstWrite = false
 		// Use actual metrics if available, otherwise use estimate
 		c.inputTokens = r.Metrics.PromptEvalCount
-		if c.inputTokens == 0 && c.estimatedInputTokens > 0 {
+		c.cacheReadTokens = r.Metrics.PromptEvalCachedCount
+		if c.cacheReadTokens > c.inputTokens {
+			c.cacheReadTokens = c.inputTokens
+		}
+		c.inputTokens -= c.cacheReadTokens
+		if c.inputTokens == 0 && c.cacheReadTokens == 0 && c.estimatedInputTokens > 0 {
 			c.inputTokens = c.estimatedInputTokens
 		}
 
@@ -768,8 +796,10 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 					Model:   c.Model,
 					Content: []ContentBlock{},
 					Usage: Usage{
-						InputTokens:  c.inputTokens,
-						OutputTokens: 0,
+						InputTokens:              c.inputTokens,
+						CacheCreationInputTokens: c.cacheCreationTokens,
+						CacheReadInputTokens:     c.cacheReadTokens,
+						OutputTokens:             0,
 					},
 				},
 			},
@@ -951,6 +981,11 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 		}
 
 		c.inputTokens = r.Metrics.PromptEvalCount
+		c.cacheReadTokens = r.Metrics.PromptEvalCachedCount
+		if c.cacheReadTokens > c.inputTokens {
+			c.cacheReadTokens = c.inputTokens
+		}
+		c.inputTokens -= c.cacheReadTokens
 		c.outputTokens = r.Metrics.EvalCount
 		stopReason := mapStopReason(r.DoneReason, len(c.toolCallsSent) > 0)
 
@@ -962,8 +997,10 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 					StopReason: stopReason,
 				},
 				Usage: DeltaUsage{
-					InputTokens:  c.inputTokens,
-					OutputTokens: c.outputTokens,
+					InputTokens:              c.inputTokens,
+					CacheCreationInputTokens: c.cacheCreationTokens,
+					CacheReadInputTokens:     c.cacheReadTokens,
+					OutputTokens:             c.outputTokens,
 				},
 			},
 		})
