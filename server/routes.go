@@ -1942,7 +1942,12 @@ func (s *Server) ModelRecommendationsExperimentalHandler(c *gin.Context) {
 	})
 }
 
-func Serve(ln net.Listener) error {
+func Serve(listeners []net.Listener) error {
+	if len(listeners) == 0 {
+		return fmt.Errorf("at least one listener is required")
+	}
+
+	ln := listeners[0]
 	slog.SetDefault(logutil.NewLogger(os.Stderr, envconfig.LogLevel()))
 	slog.Info("server config", "env", envconfig.Values())
 	cloudDisabled, _ := internalcloud.Status()
@@ -2001,7 +2006,9 @@ func Serve(ln net.Listener) error {
 	s.sched = sched
 	s.modelCaches.Start(ctx)
 
-	slog.Info(fmt.Sprintf("Listening on %s (version %s)", ln.Addr(), version.Version))
+	for _, l := range listeners {
+		slog.Info(fmt.Sprintf("Listening on %s (version %s)", l.Addr(), version.Version))
+	}
 	srvr := &http.Server{
 		// Use http.DefaultServeMux so we get net/http/pprof for
 		// free.
@@ -2052,6 +2059,11 @@ func Serve(ln net.Listener) error {
 		s.defaultNumCtx = 4096
 	}
 	slog.Info("vram-based default context", "total_vram", format.HumanBytes2(totalVRAM), "default_num_ctx", s.defaultNumCtx)
+
+	// Serve additional listeners in goroutines
+	for _, l := range listeners[1:] {
+		go srvr.Serve(l)
+	}
 
 	err = srvr.Serve(ln)
 	// If server is closed from the signal handler, wait for the ctx to be done

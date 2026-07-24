@@ -1988,12 +1988,21 @@ func RunServer(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
-	ln, err := net.Listen("tcp", envconfig.Host().Host)
-	if err != nil {
-		return err
+	hosts := envconfig.Hosts()
+	listeners := make([]net.Listener, 0, len(hosts))
+	for _, h := range hosts {
+		ln, err := net.Listen("tcp", h.Host)
+		if err != nil {
+			// Close any listeners we already opened
+			for _, l := range listeners {
+				l.Close()
+			}
+			return err
+		}
+		listeners = append(listeners, ln)
 	}
 
-	err = server.Serve(ln)
+	err := server.Serve(listeners)
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
