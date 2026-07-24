@@ -83,8 +83,7 @@ type Model struct {
 	Norm        *nn.RMSNorm
 	LMHead      nn.LinearLayer
 
-	tok             *tokenizer.Tokenizer
-	weightsResident bool
+	tok *tokenizer.Tokenizer
 	*Config
 }
 
@@ -1389,25 +1388,9 @@ func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *
 }
 
 func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
-	m.ensureWeightsResident()
-
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	return m.forward(b, caches, B, L)
-}
-
-func (m *Model) ensureWeightsResident() {
-	if m.weightsResident {
-		return
-	}
-	m.weightsResident = true
-
-	// Large Laguna expert stacks must remain resident or Metal repeatedly pages
-	// them during gathered MoE evaluation. This runs after the runner has
-	// materialized and swept the final weights, which is too late for
-	// LoadWeights. TODO: Move this policy into the runner if other model
-	// families demonstrate the same requirement.
-	mlx.SetWiredLimit(mlx.ActiveMemory())
 }
 
 func (m *Model) forward(b *batch.Batch, caches []cache.Cache, B, L int32) *mlx.Array {
