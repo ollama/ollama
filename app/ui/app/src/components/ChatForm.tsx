@@ -179,12 +179,6 @@ function ChatForm({
     setSettings,
   ]);
 
-  useEffect(() => {
-    if (cloudDisabled && webSearchEnabled) {
-      setSettings({ WebSearchEnabled: false });
-    }
-  }, [cloudDisabled, webSearchEnabled, setSettings]);
-
   const removeFile = (index: number) => {
     setMessage((prev) => ({
       ...prev,
@@ -239,19 +233,18 @@ function ChatForm({
 
   // Determine if login banner should be shown
   const shouldShowLoginBanner =
-    !cloudDisabled &&
     !isLoadingUser &&
     !isAuthenticated &&
-    ((webSearchEnabled && supportsWebSearch) || selectedModel?.isCloud());
+    ((!cloudDisabled && selectedModel?.isCloud()) ||
+      (webSearchEnabled && supportsWebSearch));
 
   // Determine which feature to highlight in the banner
   const getActiveFeatureForBanner = () => {
-    if (cloudDisabled) return null;
     if (!isAuthenticated) {
       if (loginPromptFeature) return loginPromptFeature;
       if (webSearchEnabled && selectedModel?.isCloud()) return "webSearch";
       if (webSearchEnabled) return "webSearch";
-      if (selectedModel?.isCloud()) return "turbo";
+      if (!cloudDisabled && selectedModel?.isCloud()) return "turbo";
     }
     return null;
   };
@@ -274,8 +267,7 @@ function ChatForm({
   useEffect(() => {
     if (
       isAuthenticated ||
-      cloudDisabled ||
-      (!webSearchEnabled && !!selectedModel?.isCloud())
+      (!webSearchEnabled && (cloudDisabled || !selectedModel?.isCloud()))
     ) {
       setLoginPromptFeature(null);
     }
@@ -490,8 +482,7 @@ function ChatForm({
         data: att.data || new Uint8Array(0), // Empty data for existing files
       }));
 
-    const useWebSearch =
-      supportsWebSearch && webSearchEnabled && !cloudDisabled;
+    const useWebSearch = supportsWebSearch && webSearchEnabled;
     const useThink = modelSupportsThinkingLevels
       ? thinkLevel
       : supportsThinkToggling
@@ -927,7 +918,7 @@ function ChatForm({
                 )}
                 <WebSearchButton
                   ref={webSearchButtonRef}
-                  isVisible={supportsWebSearch && cloudDisabled === false}
+                  isVisible={supportsWebSearch}
                   isActive={webSearchEnabled}
                   onToggle={() => {
                     if (!webSearchEnabled && !isAuthenticated) {
