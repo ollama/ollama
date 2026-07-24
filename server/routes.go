@@ -75,6 +75,37 @@ func writeModelRefParseError(c *gin.Context, err error, fallbackStatus int, fall
 	}
 }
 
+func routeToAction(route string) string {
+	switch route {
+	case "/api/chat", "/v1/chat/completions":
+		return "chat"
+	case "/api/embed", "/v1/embeddings":
+		return "embed"
+	default:
+		parts := strings.Split(route, "/")
+		if len(parts) > 2 {
+			return parts[len(parts)-1]
+		}
+		return route
+	}
+}
+
+func (s *Server) metricsMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Next()
+
+		route := c.FullPath()
+		if route == "" {
+			return
+		}
+
+		responseStatus := c.Writer.Status()
+		if s.sched != nil {
+			s.sched.recordHTTPRequests(routeToAction(route), responseStatus, http.StatusText(responseStatus))
+		}
+	}
+}
+
 func shouldUseHarmony(model *Model) bool {
 	if slices.Contains([]string{"gptoss", "gpt-oss"}, model.Config.ModelFamily) {
 		// heuristic to check whether the template expects to be parsed via harmony:
@@ -712,6 +743,19 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				res.DoneReason = cr.DoneReason.String()
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+				peakMemoryTotal, _ := r.MemorySize()
+				s.sched.recordPromptAndEvalMetricsWithMemory(
+					req.Model,
+					res.DoneReason,
+					true,
+					res.TotalDuration,
+					res.LoadDuration,
+					cr.PromptEvalDuration,
+					cr.EvalDuration,
+					cr.PromptEvalCount,
+					cr.EvalCount,
+					peakMemoryTotal,
+				)
 
 				if !req.Raw {
 					tokens, err := r.Tokenize(c.Request.Context(), prompt+sb.String())
@@ -1013,6 +1057,19 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		LoadDuration:    checkpointLoaded.Sub(checkpointStart),
 		PromptEvalCount: int(totalTokens),
 	}
+	peakMemoryTotal, _ := r.MemorySize()
+	s.sched.recordPromptAndEvalMetricsWithMemory(
+		req.Model,
+		"",
+		false,
+		resp.TotalDuration,
+		resp.LoadDuration,
+		resp.TotalDuration,
+		0,
+		resp.PromptEvalCount,
+		0,
+		peakMemoryTotal,
+	)
 	c.JSON(http.StatusOK, resp)
 }
 
@@ -1861,10 +1918,14 @@ func (s *Server) GenerateRoutes() (http.Handler, error) {
 
 	r := gin.Default()
 	r.HandleMethodNotAllowed = true
-	r.Use(
+	middlewares := []gin.HandlerFunc{
 		cors.New(corsConfig),
 		allowedHostsMiddleware(s.addr),
-	)
+	}
+	if envconfig.Metrics() {
+		middlewares = append(middlewares, s.metricsMiddleware())
+	}
+	r.Use(middlewares...)
 
 	// General
 	r.HEAD("/", func(c *gin.Context) { c.String(http.StatusOK, "Ollama is running") })
@@ -1895,6 +1956,11 @@ func (s *Server) GenerateRoutes() (http.Handler, error) {
 	r.POST("/api/experimental/web_search", s.WebSearchExperimentalHandler)
 	r.POST("/api/experimental/web_fetch", s.WebFetchExperimentalHandler)
 	r.GET("/api/experimental/model-recommendations", s.ModelRecommendationsExperimentalHandler)
+
+	// Monitoring (Prometheus /metrics is opt-in via OLLAMA_METRICS)
+	if envconfig.Metrics() {
+		r.GET("/metrics", s.MetricsHandler)
+	}
 
 	// Inference
 	r.GET("/api/ps", s.PsHandler)
@@ -2786,31 +2852,44 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				PreservedTokens: preservedTokensForCompletion(builtinParser),
 				ToolCallTag:     toolCallTagForCompletion(toolParser),
 				LeadingBOS:      leadingBOSForModel(m),
-			}, func(r llm.CompletionResponse) {
+			}, func(cr llm.CompletionResponse) {
 				res := api.ChatResponse{
 					Model:     req.Model,
 					CreatedAt: time.Now().UTC(),
-					Message:   api.Message{Role: "assistant", Content: r.Content},
-					Done:      r.Done,
+					Message:   api.Message{Role: "assistant", Content: cr.Content},
+					Done:      cr.Done,
 					Metrics: api.Metrics{
-						PromptEvalCount:    r.PromptEvalCount,
-						PromptEvalDuration: r.PromptEvalDuration,
-						EvalCount:          r.EvalCount,
-						EvalDuration:       r.EvalDuration,
+						PromptEvalCount:    cr.PromptEvalCount,
+						PromptEvalDuration: cr.PromptEvalDuration,
+						EvalCount:          cr.EvalCount,
+						EvalDuration:       cr.EvalDuration,
 					},
-					Logprobs: toAPILogprobs(r.Logprobs),
+					Logprobs: toAPILogprobs(cr.Logprobs),
 				}
 
-				if r.Done {
-					res.DoneReason = r.DoneReason.String()
+				if cr.Done {
+					res.DoneReason = cr.DoneReason.String()
 					res.TotalDuration = time.Since(checkpointStart)
 					res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+					peakMemoryTotal, _ := r.MemorySize()
+					s.sched.recordPromptAndEvalMetricsWithMemory(
+						req.Model,
+						res.DoneReason,
+						true,
+						res.TotalDuration,
+						res.LoadDuration,
+						cr.PromptEvalDuration,
+						cr.EvalDuration,
+						cr.PromptEvalCount,
+						cr.EvalCount,
+						peakMemoryTotal,
+					)
 				}
 
 				if builtinParser != nil {
-					slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser input", "parser", m.Config.Parser, "content", r.Content)
+					slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser input", "parser", m.Config.Parser, "content", cr.Content)
 
-					content, thinking, toolCalls, err := builtinParser.Add(r.Content, r.Done)
+					content, thinking, toolCalls, err := builtinParser.Add(cr.Content, cr.Done)
 					if err != nil {
 						ch <- gin.H{"error": err.Error()}
 						return
@@ -2831,8 +2910,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 						return
 					}
 
-					if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || r.Done || len(res.Logprobs) > 0 {
-						slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser output", "parser", m.Config.Parser, "content", content, "thinking", thinking, "toolCalls", toolCalls, "done", r.Done)
+					if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || cr.Done || len(res.Logprobs) > 0 {
+						slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser output", "parser", m.Config.Parser, "content", content, "thinking", thinking, "toolCalls", toolCalls, "done", cr.Done)
 						ch <- res
 					} else {
 						slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser empty output", "parser", m.Config.Parser)
@@ -2842,7 +2921,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 				if thinkingState != nil {
 					thinkingContent, remainingContent := thinkingState.AddContent(res.Message.Content)
-					if thinkingContent == "" && remainingContent == "" && !r.Done {
+					if thinkingContent == "" && remainingContent == "" && !cr.Done {
 						// need to accumulate more to decide what to send
 						return
 					}
@@ -2874,14 +2953,14 @@ func (s *Server) ChatHandler(c *gin.Context) {
 						// don't return, fall through to send
 					} else {
 						//  Send logprobs while content is being buffered by the parser for tool calls
-						if len(res.Logprobs) > 0 && !r.Done {
+						if len(res.Logprobs) > 0 && !cr.Done {
 							logprobRes := res
 							logprobRes.Message.Content = ""
 							logprobRes.Message.ToolCalls = nil
 							ch <- logprobRes
 						}
 
-						if r.Done {
+						if cr.Done {
 							res.Message.Content = toolParser.Content()
 							ch <- res
 						}
@@ -2991,32 +3070,46 @@ func (s *Server) handleNativeChat(c *gin.Context, req api.ChatRequest, m *Model,
 	}
 
 	ch := make(chan any)
+	runner := r
 	go func() {
 		defer close(ch)
 
-		err := r.Chat(c.Request.Context(), nativeReq, func(r llm.ChatResponse) {
+		err := runner.Chat(c.Request.Context(), nativeReq, func(cr llm.ChatResponse) {
 			res := api.ChatResponse{
 				Model:     req.Model,
 				CreatedAt: time.Now().UTC(),
-				Message:   r.Message,
-				Done:      r.Done,
+				Message:   cr.Message,
+				Done:      cr.Done,
 				Metrics: api.Metrics{
-					PromptEvalCount:    r.PromptEvalCount,
-					PromptEvalDuration: r.PromptEvalDuration,
-					EvalCount:          r.EvalCount,
-					EvalDuration:       r.EvalDuration,
+					PromptEvalCount:    cr.PromptEvalCount,
+					PromptEvalDuration: cr.PromptEvalDuration,
+					EvalCount:          cr.EvalCount,
+					EvalDuration:       cr.EvalDuration,
 				},
-				Logprobs: toAPILogprobs(r.Logprobs),
+				Logprobs: toAPILogprobs(cr.Logprobs),
 			}
 
 			if res.Message.Role == "" {
 				res.Message.Role = "assistant"
 			}
 
-			if r.Done {
-				res.DoneReason = r.DoneReason.String()
+			if cr.Done {
+				res.DoneReason = cr.DoneReason.String()
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+				peakMemoryTotal, _ := runner.MemorySize()
+				s.sched.recordPromptAndEvalMetricsWithMemory(
+					req.Model,
+					res.DoneReason,
+					true,
+					res.TotalDuration,
+					res.LoadDuration,
+					cr.PromptEvalDuration,
+					cr.EvalDuration,
+					cr.PromptEvalCount,
+					cr.EvalCount,
+					peakMemoryTotal,
+				)
 			}
 
 			ch <- res

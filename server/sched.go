@@ -79,6 +79,205 @@ type Scheduler struct {
 	getGpuFn        func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo
 	getSystemInfoFn func() ml.SystemInfo
 	waitForRecovery time.Duration
+
+	metricsMu               sync.Mutex
+	httpRequestMetrics      map[httpRequestMetricKey]uint64
+	modelTotalDuration      map[modelMetricKey]uint64
+	modelLoadDuration       map[modelMetricKey]uint64
+	modelPromptEvalCount    map[modelMetricKey]uint64
+	modelPromptEvalDuration map[modelMetricKey]uint64
+	modelEvalCount          map[modelMetricKey]uint64
+	modelEvalDuration       map[modelMetricKey]uint64
+	modelPeakMemoryBytes    map[modelMetricKey]uint64
+	startTime               time.Time
+}
+
+// schedulerMetrics is a point-in-time snapshot of scheduler state for the /metrics endpoint.
+type schedulerMetrics struct {
+	requestsQueued int
+	queueCapacity  int
+	modelsLoaded   int
+
+	requestsTotal                 map[httpRequestMetricKey]uint64
+	totalDurationNanoseconds      map[modelMetricKey]uint64
+	loadDurationNanoseconds       map[modelMetricKey]uint64
+	promptEvalCount               map[modelMetricKey]uint64
+	promptEvalDurationNanoseconds map[modelMetricKey]uint64
+	evalCount                     map[modelMetricKey]uint64
+	evalDurationNanoseconds       map[modelMetricKey]uint64
+	modelPeakMemoryBytes          map[modelMetricKey]uint64
+	startUnix                     int64
+}
+
+type httpRequestMetricKey struct {
+	action     string
+	statusCode int
+	status     string
+}
+
+type modelMetricKey struct {
+	model     string
+	reasonSet bool
+	reason    string
+}
+
+// collectMetrics returns a snapshot of scheduler state and metrics values.
+// The pending queue is a buffered channel so its length is a race-safe read;
+// loaded is guarded by loadedMu.
+func (s *Scheduler) collectMetrics() schedulerMetrics {
+	s.loadedMu.Lock()
+	loaded := len(s.loaded)
+	s.loadedMu.Unlock()
+
+	s.metricsMu.Lock()
+	defer s.metricsMu.Unlock()
+
+	requestsTotal := make(map[httpRequestMetricKey]uint64, len(s.httpRequestMetrics))
+	for k, v := range s.httpRequestMetrics {
+		requestsTotal[k] = v
+	}
+
+	totalDuration := make(map[modelMetricKey]uint64, len(s.modelTotalDuration))
+	for k, v := range s.modelTotalDuration {
+		totalDuration[k] = v
+	}
+
+	loadDuration := make(map[modelMetricKey]uint64, len(s.modelLoadDuration))
+	for k, v := range s.modelLoadDuration {
+		loadDuration[k] = v
+	}
+
+	promptEvalCount := make(map[modelMetricKey]uint64, len(s.modelPromptEvalCount))
+	for k, v := range s.modelPromptEvalCount {
+		promptEvalCount[k] = v
+	}
+
+	promptEvalDuration := make(map[modelMetricKey]uint64, len(s.modelPromptEvalDuration))
+	for k, v := range s.modelPromptEvalDuration {
+		promptEvalDuration[k] = v
+	}
+
+	evalCount := make(map[modelMetricKey]uint64, len(s.modelEvalCount))
+	for k, v := range s.modelEvalCount {
+		evalCount[k] = v
+	}
+
+	evalDuration := make(map[modelMetricKey]uint64, len(s.modelEvalDuration))
+	for k, v := range s.modelEvalDuration {
+		evalDuration[k] = v
+	}
+
+	peakMemoryBytes := make(map[modelMetricKey]uint64, len(s.modelPeakMemoryBytes))
+	for k, v := range s.modelPeakMemoryBytes {
+		peakMemoryBytes[k] = v
+	}
+
+	return schedulerMetrics{
+		requestsQueued:                len(s.pendingReqCh),
+		queueCapacity:                 cap(s.pendingReqCh),
+		modelsLoaded:                  loaded,
+		requestsTotal:                 requestsTotal,
+		totalDurationNanoseconds:      totalDuration,
+		loadDurationNanoseconds:       loadDuration,
+		promptEvalCount:               promptEvalCount,
+		promptEvalDurationNanoseconds: promptEvalDuration,
+		evalCount:                     evalCount,
+		evalDurationNanoseconds:       evalDuration,
+		modelPeakMemoryBytes:          peakMemoryBytes,
+		startUnix:                     s.startTime.Unix(),
+	}
+}
+
+func (s *Scheduler) ensureMetricMaps() {
+	if s.httpRequestMetrics == nil {
+		s.httpRequestMetrics = make(map[httpRequestMetricKey]uint64)
+	}
+	if s.modelTotalDuration == nil {
+		s.modelTotalDuration = make(map[modelMetricKey]uint64)
+	}
+	if s.modelLoadDuration == nil {
+		s.modelLoadDuration = make(map[modelMetricKey]uint64)
+	}
+	if s.modelPromptEvalCount == nil {
+		s.modelPromptEvalCount = make(map[modelMetricKey]uint64)
+	}
+	if s.modelPromptEvalDuration == nil {
+		s.modelPromptEvalDuration = make(map[modelMetricKey]uint64)
+	}
+	if s.modelEvalCount == nil {
+		s.modelEvalCount = make(map[modelMetricKey]uint64)
+	}
+	if s.modelEvalDuration == nil {
+		s.modelEvalDuration = make(map[modelMetricKey]uint64)
+	}
+	if s.modelPeakMemoryBytes == nil {
+		s.modelPeakMemoryBytes = make(map[modelMetricKey]uint64)
+	}
+}
+
+func (s *Scheduler) recordHTTPRequests(action string, statusCode int, status string) {
+	if s == nil {
+		return
+	}
+
+	s.metricsMu.Lock()
+	defer s.metricsMu.Unlock()
+	s.ensureMetricMaps()
+
+	all := httpRequestMetricKey{
+		action:     "all",
+		statusCode: statusCode,
+		status:     status,
+	}
+	s.httpRequestMetrics[all]++
+
+	key := httpRequestMetricKey{
+		action:     action,
+		statusCode: statusCode,
+		status:     status,
+	}
+	s.httpRequestMetrics[key]++
+}
+
+func (s *Scheduler) recordPromptAndEvalMetrics(model string, reason string, includeReason bool, totalDuration, loadDuration, promptEvalDuration, evalDuration time.Duration, promptEvalCount, evalCount int) {
+	s.recordPromptAndEvalMetricsWithMemory(
+		model,
+		reason,
+		includeReason,
+		totalDuration,
+		loadDuration,
+		promptEvalDuration,
+		evalDuration,
+		promptEvalCount,
+		evalCount,
+		0,
+	)
+}
+
+func (s *Scheduler) recordPromptAndEvalMetricsWithMemory(model string, reason string, includeReason bool, totalDuration, loadDuration, promptEvalDuration, evalDuration time.Duration, promptEvalCount, evalCount int, peakMemoryBytes uint64) {
+	if s == nil {
+		return
+	}
+
+	key := modelMetricKey{
+		model:     model,
+		reasonSet: includeReason,
+		reason:    reason,
+	}
+
+	s.metricsMu.Lock()
+	defer s.metricsMu.Unlock()
+	s.ensureMetricMaps()
+
+	s.modelTotalDuration[key] += uint64(totalDuration.Nanoseconds())
+	s.modelLoadDuration[key] += uint64(loadDuration.Nanoseconds())
+	s.modelPromptEvalCount[key] += uint64(promptEvalCount)
+	s.modelPromptEvalDuration[key] += uint64(promptEvalDuration.Nanoseconds())
+	s.modelEvalCount[key] += uint64(evalCount)
+	s.modelEvalDuration[key] += uint64(evalDuration.Nanoseconds())
+	if peakMemoryBytes > 0 && s.modelPeakMemoryBytes[key] < peakMemoryBytes {
+		s.modelPeakMemoryBytes[key] = peakMemoryBytes
+	}
 }
 
 // Default automatic value for number of models we allow per GPU
@@ -91,15 +290,24 @@ var ErrMaxQueue = errors.New("server busy, please try again.  maximum pending re
 func InitScheduler(ctx context.Context) *Scheduler {
 	maxQueue := envconfig.MaxQueue()
 	sched := &Scheduler{
-		pendingReqCh:    make(chan *LlmRequest, maxQueue),
-		finishedReqCh:   make(chan *LlmRequest, maxQueue),
-		expiredCh:       make(chan *runnerRef, maxQueue),
-		unloadedCh:      make(chan any, maxQueue),
-		loaded:          make(map[string]*runnerRef),
-		newServerFn:     llm.NewLlamaServer,
-		getGpuFn:        discover.GPUDevices,
-		getSystemInfoFn: discover.GetSystemInfo,
-		waitForRecovery: 5 * time.Second,
+		pendingReqCh:            make(chan *LlmRequest, maxQueue),
+		finishedReqCh:           make(chan *LlmRequest, maxQueue),
+		expiredCh:               make(chan *runnerRef, maxQueue),
+		unloadedCh:              make(chan any, maxQueue),
+		loaded:                  make(map[string]*runnerRef),
+		httpRequestMetrics:      make(map[httpRequestMetricKey]uint64),
+		modelTotalDuration:      make(map[modelMetricKey]uint64),
+		modelLoadDuration:       make(map[modelMetricKey]uint64),
+		modelPromptEvalCount:    make(map[modelMetricKey]uint64),
+		modelPromptEvalDuration: make(map[modelMetricKey]uint64),
+		modelEvalCount:          make(map[modelMetricKey]uint64),
+		modelEvalDuration:       make(map[modelMetricKey]uint64),
+		modelPeakMemoryBytes:    make(map[modelMetricKey]uint64),
+		startTime:               time.Now(),
+		newServerFn:             llm.NewLlamaServer,
+		getGpuFn:                discover.GPUDevices,
+		getSystemInfoFn:         discover.GetSystemInfo,
+		waitForRecovery:         5 * time.Second,
 	}
 	sched.loadFn = sched.load
 	return sched
