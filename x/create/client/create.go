@@ -593,6 +593,23 @@ func isQwen35Family(s string) bool {
 	return strings.Contains(s, "qwen3_5") || strings.Contains(s, "qwen3next")
 }
 
+func lagunaRendererParserName(modelDir string) string {
+	const poolsideV1Marker = "laguna_glm_thinking_v8"
+
+	if strings.Contains(readChatTemplate(modelDir), poolsideV1Marker) {
+		return "poolside-v1"
+	}
+
+	// Poolside's tokenizer config includes the standalone template by name
+	// rather than embedding it, so inspect that file as well.
+	if data, err := os.ReadFile(filepath.Join(modelDir, "chat_template.jinja")); err == nil &&
+		strings.Contains(string(data), poolsideV1Marker) {
+		return "poolside-v1"
+	}
+
+	return "laguna"
+}
+
 // getParserName returns the parser name for a model based on its architecture.
 // This reads the config.json from the model directory and determines the appropriate parser.
 func getParserName(modelDir string) string {
@@ -614,7 +631,7 @@ func getParserName(modelDir string) string {
 	for _, arch := range cfg.Architectures {
 		archLower := strings.ToLower(arch)
 		if strings.Contains(archLower, "laguna") {
-			return "laguna"
+			return lagunaRendererParserName(modelDir)
 		}
 		if strings.Contains(archLower, "cohere2moe") || strings.Contains(archLower, "cohere2_moe") {
 			return "cohere"
@@ -640,7 +657,7 @@ func getParserName(modelDir string) string {
 	if cfg.ModelType != "" {
 		typeLower := strings.ToLower(cfg.ModelType)
 		if strings.Contains(typeLower, "laguna") {
-			return "laguna"
+			return lagunaRendererParserName(modelDir)
 		}
 		if strings.Contains(typeLower, "cohere2_moe") {
 			return "cohere"
@@ -686,7 +703,7 @@ func getRendererName(modelDir string) string {
 	for _, arch := range cfg.Architectures {
 		archLower := strings.ToLower(arch)
 		if strings.Contains(archLower, "laguna") {
-			return "laguna"
+			return lagunaRendererParserName(modelDir)
 		}
 		if strings.Contains(archLower, "cohere2moe") || strings.Contains(archLower, "cohere2_moe") {
 			return "cohere"
@@ -712,7 +729,7 @@ func getRendererName(modelDir string) string {
 	if cfg.ModelType != "" {
 		typeLower := strings.ToLower(cfg.ModelType)
 		if strings.Contains(typeLower, "laguna") {
-			return "laguna"
+			return lagunaRendererParserName(modelDir)
 		}
 		if strings.Contains(typeLower, "cohere2_moe") {
 			return "cohere"
