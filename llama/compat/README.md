@@ -27,6 +27,11 @@ intentionally skipped so a developer can iterate on a local llama.cpp tree.
   It currently touches `src/llama-model-loader.cpp` and `tools/mtmd/clip.cpp`.
 - `002-llama-cpp-ui-empty-assets.patch` - lets the llama.cpp UI embed helper
   generate an empty asset table when no UI assets are present.
+- `004-ggml-cpu-arm-march-guard.patch` - probes each ARM CPU backend variant's
+  `-march` value with `check_cxx_compiler_flag` before adding it, so
+  `GGML_CPU_ALL_VARIANTS=ON` skips variants an older toolchain cannot build
+  (e.g. the `armv9.2-a` variants on GCC 11) instead of failing the whole build.
+  Touches `ggml/src/CMakeLists.txt`.
 - `compat.cmake`, `apply-patch.cmake` - CMake glue and an idempotent applier
   (used by `llama/server/CMakeLists.txt`) that applies every `*.patch` under
   this directory by numeric filename order — the hooks patch plus each
