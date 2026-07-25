@@ -53,6 +53,44 @@ func TestLagunaImportTransformSameRecipeAcrossConfigs(t *testing.T) {
 	}
 }
 
+func TestLagunaPlanQuantizesEmbeddingAndHeadAtMXFP8(t *testing.T) {
+	policy, err := newLagunaImportTransform(json.RawMessage(`{
+		"num_hidden_layers": 40,
+		"mlp_only_layers": [0]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const (
+		embedding = "model.embed_tokens.weight"
+		head      = "lm_head.weight"
+	)
+	inv := Inventory{Tensors: map[string]SourceTensor{
+		embedding: {
+			Name:  embedding,
+			Dtype: "BF16",
+			Shape: []int32{100352, 2048},
+		},
+		head: {
+			Name:  head,
+			Dtype: "BF16",
+			Shape: []int32{100352, 2048},
+		},
+	}}
+
+	specs, err := Plan(inv, Classification{Kind: SourceFloat, Quantize: "nvfp4"}, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{embedding, head} {
+		if got := quantizeForPlannedTensor(specs, name); got != "mxfp8" {
+			t.Errorf("planned quantization for %s = %q, want mxfp8", name, got)
+		}
+	}
+}
+
 func TestLagunaPlanExpertGroupUsesStackedDownProjectionPolicy(t *testing.T) {
 	policy, err := newLagunaImportTransform(json.RawMessage(`{
 		"num_hidden_layers": 40,
@@ -371,18 +409,32 @@ func testLagunaQuantizationRecipe(t *testing.T, policy quantizePolicy) {
 			want:     "",
 		},
 		{
-			name:     "embedding stays source precision",
+			name:     "embedding promotes to mxfp8 for nvfp4",
 			tensor:   "model.embed_tokens.weight",
 			shape:    []int32{100352, 2048},
 			quantize: "nvfp4",
-			want:     "",
+			want:     "mxfp8",
 		},
 		{
-			name:     "lm head stays source precision",
+			name:     "embedding uses requested mxfp8",
+			tensor:   "model.embed_tokens.weight",
+			shape:    []int32{100352, 2048},
+			quantize: "mxfp8",
+			want:     "mxfp8",
+		},
+		{
+			name:     "lm head promotes to mxfp8 for nvfp4",
 			tensor:   "lm_head.weight",
 			shape:    []int32{100352, 2048},
 			quantize: "nvfp4",
-			want:     "",
+			want:     "mxfp8",
+		},
+		{
+			name:     "lm head uses requested mxfp8",
+			tensor:   "lm_head.weight",
+			shape:    []int32{100352, 2048},
+			quantize: "mxfp8",
+			want:     "mxfp8",
 		},
 	}
 

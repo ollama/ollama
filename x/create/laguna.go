@@ -58,9 +58,12 @@ func (t lagunaImportTransform) quantizationType(name string, shape []int32, quan
 		return GetTensorQuantization(name, shape, quantize)
 	}
 
-	// Laguna keeps the tied output head and router at source precision.
 	switch {
-	case strings.HasSuffix(name, "lm_head.weight") || strings.HasSuffix(name, ".mlp.gate.weight"):
+	case isEmbedTokensWeight(name) || strings.HasSuffix(name, "lm_head.weight"):
+		// Laguna has separate embedding and output weights. Both are large,
+		// quality-sensitive tensors, so keep them at 8-bit for FP quants.
+		return promoteEmbedding(shape, base)
+	case strings.HasSuffix(name, ".mlp.gate.weight"):
 		return ""
 	case base == "mxfp8" && lagunaAttentionProjection(name):
 		return ""
