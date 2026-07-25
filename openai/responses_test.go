@@ -426,6 +426,11 @@ func TestFromResponsesRequest_ReasoningEffort(t *testing.T) {
 			name: "unset",
 		},
 		{
+			name:      "minimal maps to low",
+			effort:    "minimal",
+			wantThink: "low",
+		},
+		{
 			name:      "low",
 			effort:    "low",
 			wantThink: "low",
