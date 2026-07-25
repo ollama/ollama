@@ -28,6 +28,8 @@ import (
 	"github.com/ollama/ollama/x/imagegen/manifest"
 )
 
+const imagegenHealthCheckTimeout = 200 * time.Millisecond
+
 // Server wraps an MLX runner subprocess to implement llm.LlamaServer.
 //
 // This implementation is compatible with Ollama's scheduler and can be loaded/unloaded
@@ -55,7 +57,7 @@ func NewServer(modelName string) (*Server, error) {
 	return &Server{
 		modelName: modelName,
 		done:      make(chan error, 1),
-		client:    &http.Client{Timeout: 10 * time.Minute},
+		client:    &http.Client{},
 	}, nil
 }
 
@@ -246,7 +248,10 @@ func (s *Server) WaitUntilRunning(ctx context.Context) error {
 			}
 			return errors.New("timeout waiting for mlx runner to start")
 		case <-ticker.C:
-			if err := s.Ping(ctx); err == nil {
+			pingCtx, cancel := context.WithTimeout(ctx, imagegenHealthCheckTimeout)
+			err := s.Ping(pingCtx)
+			cancel()
+			if err == nil {
 				slog.Info("mlx runner is ready", "port", s.port)
 				return nil
 			}

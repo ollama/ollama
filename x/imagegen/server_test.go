@@ -4,9 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ollama/ollama/llm"
 )
@@ -15,6 +20,60 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return fn(req)
+}
+
+func TestNewServerDoesNotSetFixedClientTimeout(t *testing.T) {
+	if err := CheckPlatformSupport(); err != nil {
+		t.Skip(err)
+	}
+
+	s, err := NewServer("test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.client.Timeout != 0 {
+		t.Fatalf("client timeout = %s, want no fixed timeout", s.client.Timeout)
+	}
+}
+
+func TestWaitUntilRunningHonorsLoadTimeoutWhenHealthHangs(t *testing.T) {
+	t.Setenv("OLLAMA_LOAD_TIMEOUT", "250ms")
+
+	healthServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer healthServer.Close()
+
+	u, err := url.Parse(healthServer.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, portString, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(portString)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server{
+		port:   port,
+		done:   make(chan error, 1),
+		client: &http.Client{},
+	}
+
+	start := time.Now()
+	err = s.WaitUntilRunning(context.Background())
+	if err == nil {
+		t.Fatal("expected timeout")
+	}
+	if !strings.Contains(err.Error(), "timeout waiting for mlx runner") {
+		t.Fatalf("error = %v, want timeout waiting for mlx runner", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("WaitUntilRunning took %s, want bounded by load timeout", elapsed)
+	}
 }
 
 func newCompletionTestServer(handler func(*http.Request) string) *Server {
