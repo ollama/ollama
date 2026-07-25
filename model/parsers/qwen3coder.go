@@ -80,6 +80,23 @@ func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking st
 
 	events := p.parseEvents()
 
+	// If the stream ended while we were still inside a bare <function=…>
+	// block that never closed, flush what we accumulated as content
+	// rather than dropping it silently. The block is not a valid tool
+	// call — we don't have </function> — so surfacing it as content is
+	// the closest thing to what the model actually tried to say. The
+	// tool-envelope case (CollectingToolContent) intentionally still
+	// drops on unterminated close, since <tool_call> is an unambiguous
+	// invocation attempt and emitting the raw envelope as content would
+	// be more confusing than helpful.
+	if done && p.state == qwenParserState_CollectingBareFunction {
+		if remaining := p.acc.String(); remaining != "" {
+			events = append(events, qwenEventContent{content: remaining})
+		}
+		p.acc.Reset()
+		p.state = qwenParserState_LookingForToolStart
+	}
+
 	var toolCalls []api.ToolCall
 	var sb strings.Builder
 	for _, event := range events {
@@ -190,8 +207,26 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 			p.acc.WriteString(acc[best+len(toolOpenTag):])
 			p.state = qwenParserState_CollectingToolContent
 			return events, true
-		case 2: // bare <function=>: emit content before it, KEEP the tag, collect to </function>
-			before := strings.TrimRightFunc(acc[:best], unicode.IsSpace)
+		case 2: // bare <function=>: only trigger when the tag stands alone
+			// Reject the trigger if the block appears mid-prose. Models asked
+			// to explain their own tool-call syntax happily emit inline
+			// examples like "you use <function=get_weather> to call it",
+			// and we don't want to consume those as real tool calls. A real
+			// drift-mode call is separated by a newline (or is at the start
+			// of the stream) — we treat anything mid-line as prose and let
+			// it pass through as content.
+			leading := acc[:best]
+			trimmedRight := strings.TrimRight(leading, " \t")
+			atCallBoundary := trimmedRight == "" || strings.HasSuffix(trimmedRight, "\n") || strings.HasSuffix(trimmedRight, ">")
+			if !atCallBoundary {
+				// Emit everything up to and including the tag as content,
+				// then keep scanning the remainder for a legitimate trigger.
+				events = append(events, qwenEventContent{content: acc[:best+len(funcOpenTag)]})
+				p.acc.Reset()
+				p.acc.WriteString(acc[best+len(funcOpenTag):])
+				return events, true
+			}
+			before := strings.TrimRightFunc(leading, unicode.IsSpace)
 			if len(before) > 0 {
 				events = append(events, qwenEventContent{content: before})
 			}
@@ -336,9 +371,15 @@ func parseToolCall(raw qwenEventRawToolCall, tools []api.Tool) (api.ToolCall, er
 	xmlString := transformToXML(extracted)
 
 	var functionCall XMLFunctionCall
-	err := xml.Unmarshal([]byte(xmlString), &functionCall)
-	if err != nil {
-		return api.ToolCall{}, err
+	if err := xml.Unmarshal([]byte(xmlString), &functionCall); err != nil {
+		// A malformed bare block (e.g. unterminated <parameter=…>) reaches
+		// us as a well-delimited slice but invalid XML. The old behavior
+		// propagated the error, which 500'd the whole chat request. Prefer
+		// the sentinel so the streaming caller skips this call silently,
+		// matching the empty-envelope behavior. The raw slice is logged so
+		// the drift is still traceable.
+		slog.Warn("qwen bare function block failed to parse; skipping", "error", err, "raw", raw.raw)
+		return api.ToolCall{}, errEmptyToolCall
 	}
 
 	toolCall.Function = api.ToolCallFunction{

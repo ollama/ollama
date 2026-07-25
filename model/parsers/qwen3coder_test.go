@@ -864,6 +864,113 @@ func TestQwenParserBareFunctionStreaming(t *testing.T) {
 	}
 }
 
+// TestQwenParserBareFunctionInProse covers reviewer feedback on #16398:
+// when the model writes documentation or code-in-prose examples containing
+// "<function=…>" fragments, the parser must not consume them as real tool
+// calls. Only blocks that appear at a call boundary (start of stream or
+// after a newline / closing tag) should trigger tool-call collection.
+func TestQwenParserBareFunctionInProse(t *testing.T) {
+	cases := []struct {
+		name      string
+		input     string
+		wantCalls int
+	}{
+		{
+			name:      "single inline example after a colon",
+			input:     "You would call it like this: <function=get_weather><parameter=location>Tokyo</parameter></function> and get a result.",
+			wantCalls: 0,
+		},
+		{
+			name: "reviewer's reproducer - three inline examples",
+			input: `Here are some examples:
+- Weather lookup: <function=get_weather><parameter=location>Tokyo</parameter></function>
+- Generic form: <function=function_name><parameter=arg>value</parameter></function>
+- File glob: <function=Glob><parameter=pattern>*.pdf</parameter></function>
+Those show the syntax.`,
+			wantCalls: 0,
+		},
+		{
+			name:      "inline mention with no complete block after",
+			input:     "The <function= tag opens a call, and </function> closes it.",
+			wantCalls: 0,
+		},
+		{
+			name:      "legitimate bare call after narration and newline still fires",
+			input:     "I'll check the weather now.\n<function=get_weather><parameter=location>Tokyo</parameter></function>",
+			wantCalls: 1,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := Qwen3CoderParser{}
+			p.Init(nil, nil, nil)
+			_, _, calls, err := p.Add(tc.input, true)
+			if err != nil {
+				t.Fatalf("Add returned error: %v", err)
+			}
+			if len(calls) != tc.wantCalls {
+				t.Errorf("got %d tool calls, want %d (calls=%+v)", len(calls), tc.wantCalls, calls)
+			}
+		})
+	}
+}
+
+// TestQwenParserMalformedBareBlockNoError covers reviewer feedback on #16398:
+// a bare <function=…></function> pair whose contents fail xml.Unmarshal must
+// not propagate the error (which would 500 the chat request). It should be
+// treated like an empty envelope — skipped silently with the streaming
+// caller returning cleanly.
+func TestQwenParserMalformedBareBlockNoError(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "unterminated parameter tag",
+			input: "<function=broken><parameter=arg>value oops</function>",
+		},
+		{
+			name:  "mismatched inner tag",
+			input: "<function=broken><parameter=arg>value</different></function>",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := Qwen3CoderParser{}
+			p.Init(nil, nil, nil)
+			_, _, calls, err := p.Add(tc.input, true)
+			if err != nil {
+				t.Fatalf("Add returned error for malformed bare block: %v", err)
+			}
+			if len(calls) != 0 {
+				t.Errorf("expected 0 tool calls for malformed block, got %d", len(calls))
+			}
+		})
+	}
+}
+
+// TestQwenParserIncompleteBareBlockFlushesAsContent covers reviewer feedback
+// on #16398: if the model opens a bare <function=…> block and the stream
+// ends before </function> arrives, the accumulated bytes must reach the
+// caller as content rather than being silently dropped.
+func TestQwenParserIncompleteBareBlockFlushesAsContent(t *testing.T) {
+	p := Qwen3CoderParser{}
+	p.Init(nil, nil, nil)
+	input := "<function=Glob><parameter=pattern>*.md</parameter>"
+	content, _, calls, err := p.Add(input, true)
+	if err != nil {
+		t.Fatalf("Add returned error: %v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected 0 tool calls (block never closed), got %d", len(calls))
+	}
+	if !strings.Contains(content, "<function=Glob>") || !strings.Contains(content, "*.md") {
+		t.Errorf("content = %q, expected it to preserve the unterminated block", content)
+	}
+}
+
 func TestTrailingWhitespaceLenUnicode(t *testing.T) {
 	cases := []struct {
 		name  string
