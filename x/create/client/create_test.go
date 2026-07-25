@@ -651,6 +651,11 @@ func TestInferSafetensorsCapabilitiesFromParser(t *testing.T) {
 			want:       []string{"completion", "tools", "thinking"},
 		},
 		{
+			name:       "poolside tools and thinking",
+			parserName: "poolside-v1",
+			want:       []string{"completion", "tools", "thinking"},
+		},
+		{
 			name:       "functiongemma tools only",
 			parserName: "functiongemma",
 			want:       []string{"completion", "tools"},
@@ -791,6 +796,47 @@ func TestGetRendererName(t *testing.T) {
 			dir := t.TempDir()
 			os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.configJSON), 0o644)
 
+			if got := getRendererName(dir); got != tt.want {
+				t.Errorf("getRendererName() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetLagunaRendererParserName(t *testing.T) {
+	tests := []struct {
+		name         string
+		chatTemplate string
+		want         string
+	}{
+		{
+			name:         "v5",
+			chatTemplate: `{#- Iteration on laguna_glm_thinking_v5/chat_template.jinja -#}`,
+			want:         "laguna",
+		},
+		{
+			name:         "v8",
+			chatTemplate: `{#- Iteration on laguna_glm_thinking_v8/chat_template.jinja -#}`,
+			want:         "poolside-v1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"architectures":["LagunaForCausalLM"],"model_type":"laguna"}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "tokenizer_config.json"), []byte(`{"chat_template":"{% include 'chat_template.jinja' %}"}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "chat_template.jinja"), []byte(tt.chatTemplate), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			if got := getParserName(dir); got != tt.want {
+				t.Errorf("getParserName() = %q, want %q", got, tt.want)
+			}
 			if got := getRendererName(dir); got != tt.want {
 				t.Errorf("getRendererName() = %q, want %q", got, tt.want)
 			}
