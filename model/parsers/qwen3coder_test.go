@@ -916,6 +916,118 @@ Those show the syntax.`,
 	}
 }
 
+// TestQwenParserBareFunctionInProseStreaming covers @ParthSareen's second-round
+// review on #16398: the single-call prose guard passes when input arrives
+// rune-by-rune because the preceding prose is emitted in earlier Add() calls
+// and by the time <function= is recognized the local buffer only has the
+// withheld partial tag. The guard has to remember line state across calls.
+func TestQwenParserBareFunctionInProseStreaming(t *testing.T) {
+	cases := []struct {
+		name      string
+		input     string
+		wantCalls int
+	}{
+		{
+			name:      "reviewer's exact streaming reproducer",
+			input:     "Use <function=get_weather><parameter=location>Tokyo</parameter></function> to get weather.",
+			wantCalls: 0,
+		},
+		{
+			name:      "prose across multiple sentences before an inline example",
+			input:     "Here is how it works. You call it like <function=Glob><parameter=pattern>*.md</parameter></function> and get files back.",
+			wantCalls: 0,
+		},
+		{
+			name:      "narration then newline then real bare call still fires",
+			input:     "I'll check the weather now.\n<function=get_weather><parameter=location>Tokyo</parameter></function>",
+			wantCalls: 1,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := Qwen3CoderParser{}
+			p.Init(nil, nil, nil)
+			var calls []api.ToolCall
+			runes := []rune(tc.input)
+			for i, r := range runes {
+				_, _, cl, err := p.Add(string(r), i == len(runes)-1)
+				if err != nil {
+					t.Fatalf("Add returned error at rune %d (%q): %v", i, string(r), err)
+				}
+				calls = append(calls, cl...)
+			}
+			if len(calls) != tc.wantCalls {
+				t.Errorf("streaming got %d tool calls, want %d (calls=%+v)", len(calls), tc.wantCalls, calls)
+			}
+		})
+	}
+}
+
+// TestQwenParserStrayCloseTagInProse covers @ParthSareen's second-round
+// review on #16398: a stray </tool_call> that appears in prose must not
+// collide adjacent words. The bare-function feature added stray-tag
+// dropping (needed for the #16686 malformation where a real drift-mode
+// call is trailed by a stray </tool_call>), but the drop trimmed
+// whitespace from both sides, turning "the </tool_call> tag" into
+// "thetag". The tag is only dropped when it appears at a call boundary
+// (trailing a completed tool call); prose mentions are preserved.
+func TestQwenParserStrayCloseTagInProse(t *testing.T) {
+	cases := []struct {
+		name          string
+		input         string
+		wantSubstring string // must appear verbatim in emitted content
+	}{
+		{
+			name:          "single-call: stray tag in prose preserves word boundaries",
+			input:         "The closing tag is </tool_call> and that's fine.",
+			wantSubstring: "tag is </tool_call> and",
+		},
+		{
+			name:          "single-call: no adjacent word collision",
+			input:         "You end with </tool_call> after a call.",
+			wantSubstring: "with </tool_call> after",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := Qwen3CoderParser{}
+			p.Init(nil, nil, nil)
+			content, _, calls, err := p.Add(tc.input, true)
+			if err != nil {
+				t.Fatalf("Add returned error: %v", err)
+			}
+			if len(calls) != 0 {
+				t.Errorf("expected 0 tool calls for prose mention, got %d", len(calls))
+			}
+			if !strings.Contains(content, tc.wantSubstring) {
+				t.Errorf("content = %q\n  did not contain %q", content, tc.wantSubstring)
+			}
+		})
+	}
+}
+
+// TestQwenParserStrayCloseTagAfterBareCall keeps the #16686 behavior alive:
+// when a bare drift-mode call leaves a trailing </tool_call>, it must still
+// be dropped rather than surface as content. Guards against regressing the
+// original malformation fix while adding the prose-preservation carve-out.
+func TestQwenParserStrayCloseTagAfterBareCall(t *testing.T) {
+	p := Qwen3CoderParser{}
+	p.Init(nil, nil, nil)
+	input := "<function=Glob><parameter=pattern>*.md</parameter></function></tool_call>"
+	content, _, calls, err := p.Add(input, true)
+	if err != nil {
+		t.Fatalf("Add returned error: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+	if content != "" {
+		t.Errorf("expected empty content, got %q (stray </tool_call> leaked)", content)
+	}
+}
+
 // TestQwenParserMalformedBareBlockNoError covers reviewer feedback on #16398:
 // a bare <function=…></function> pair whose contents fail xml.Unmarshal must
 // not propagate the error (which would 500 the chat request). It should be

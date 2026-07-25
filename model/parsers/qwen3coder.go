@@ -52,6 +52,14 @@ type Qwen3CoderParser struct {
 	acc       strings.Builder
 	tools     []api.Tool
 	callIndex int
+	// lineHasContent tracks whether the current output line has emitted
+	// any non-whitespace content yet. It persists across Add() calls so
+	// the bare-<function=> and stray-</tool_call> prose guards work
+	// under streaming input, where preceding prose is emitted in earlier
+	// calls and by the time the trigger arrives the local buffer only
+	// holds the withheld partial tag. Reset by a newline in emitted
+	// content, set by any non-whitespace rune.
+	lineHasContent bool
 }
 
 func (p *Qwen3CoderParser) HasToolSupport() bool {
@@ -72,7 +80,40 @@ func (p *Qwen3CoderParser) PreservedTokens() []string {
 func (p *Qwen3CoderParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
 	p.callIndex = 0
+	p.lineHasContent = false
 	return tools // Qwen doesn't modify tools
+}
+
+// recordEmitted updates lineHasContent to reflect the position we'd be at
+// after streaming s to the caller. A newline resets to false (fresh line);
+// any other non-whitespace rune sets to true.
+func (p *Qwen3CoderParser) recordEmitted(s string) {
+	for _, r := range s {
+		if r == '\n' {
+			p.lineHasContent = false
+		} else if !unicode.IsSpace(r) {
+			p.lineHasContent = true
+		}
+	}
+}
+
+// atCallBoundary reports whether appending leading to the already-emitted
+// stream would leave us at a call boundary — the start of a line (either
+// the stream start or after a newline) with no non-whitespace content
+// since. Used by the bare-<function=> and stray-</tool_call> guards to
+// distinguish real drift-mode calls (own-line) from prose mentions
+// (mid-line). Chained tool calls work via p.lineHasContent being reset
+// to false whenever Add() processes a tool-call event.
+func (p *Qwen3CoderParser) atCallBoundary(leading string) bool {
+	hasContent := p.lineHasContent
+	for _, r := range leading {
+		if r == '\n' {
+			hasContent = false
+		} else if !unicode.IsSpace(r) {
+			hasContent = true
+		}
+	}
+	return !hasContent
 }
 
 func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
@@ -102,6 +143,12 @@ func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking st
 	for _, event := range events {
 		switch event := event.(type) {
 		case qwenEventRawToolCall:
+			// A tool call — real or empty — is a semantic line break: the
+			// model is done with prose and won't be building on the same
+			// line. Reset so a follow-on bare <function=…> in a later
+			// Add() is recognized as at a call boundary even if there was
+			// non-whitespace content earlier in the turn.
+			p.lineHasContent = false
 			toolCall, err := parseToolCall(event, p.tools)
 			if errors.Is(err, errEmptyToolCall) {
 				// Model emitted an empty or non-tool <tool_call> envelope.
@@ -122,6 +169,7 @@ func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking st
 			// events, we naively append them together here. See the note below about
 			// `qwenEvent`s for more details
 			sb.WriteString(event.content)
+			p.recordEmitted(event.content)
 		}
 	}
 
@@ -215,10 +263,13 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 			// drift-mode call is separated by a newline (or is at the start
 			// of the stream) — we treat anything mid-line as prose and let
 			// it pass through as content.
+			//
+			// The check must combine per-call `leading` with cross-call
+			// `p.lineHasContent`, since under streaming input the preceding
+			// prose was already emitted in earlier Add() calls and `leading`
+			// alone would be empty.
 			leading := acc[:best]
-			trimmedRight := strings.TrimRight(leading, " \t")
-			atCallBoundary := trimmedRight == "" || strings.HasSuffix(trimmedRight, "\n") || strings.HasSuffix(trimmedRight, ">")
-			if !atCallBoundary {
+			if !p.atCallBoundary(leading) {
 				// Emit everything up to and including the tag as content,
 				// then keep scanning the remainder for a legitimate trigger.
 				events = append(events, qwenEventContent{content: acc[:best+len(funcOpenTag)]})
@@ -234,14 +285,28 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 			p.acc.WriteString(acc[best:])
 			p.state = qwenParserState_CollectingBareFunction
 			return events, true
-		case 3: // stray </tool_call>: emit content before it, drop the tag + trailing space
-			before := strings.TrimRightFunc(acc[:best], unicode.IsSpace)
-			if len(before) > 0 {
-				events = append(events, qwenEventContent{content: before})
+		case 3: // stray </tool_call>
+			// If we're at a call boundary (the tag is trailing a completed
+			// drift-mode tool call — the #16686 malformation always leaves
+			// one behind), drop it silently along with framing whitespace.
+			// Otherwise it's a prose mention of the tag: preserve it as
+			// content so words don't collide ("the </tool_call> tag" must
+			// not become "thetag"). This matches main's behavior of
+			// leaking unrecognized tags through as content.
+			leading := acc[:best]
+			if p.atCallBoundary(leading) {
+				before := strings.TrimRightFunc(leading, unicode.IsSpace)
+				if len(before) > 0 {
+					events = append(events, qwenEventContent{content: before})
+				}
+				rest := strings.TrimLeftFunc(acc[best+len(toolCloseTag):], unicode.IsSpace)
+				p.acc.Reset()
+				p.acc.WriteString(rest)
+				return events, true
 			}
-			rest := strings.TrimLeftFunc(acc[best+len(toolCloseTag):], unicode.IsSpace)
+			events = append(events, qwenEventContent{content: acc[:best+len(toolCloseTag)]})
 			p.acc.Reset()
-			p.acc.WriteString(rest)
+			p.acc.WriteString(acc[best+len(toolCloseTag):])
 			return events, true
 		}
 
