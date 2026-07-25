@@ -38,6 +38,112 @@ var (
 
 var blobDownloadManager sync.Map
 
+// bandwidthWindow tracks download speed over a rolling time window.
+type bandwidthWindow struct {
+	mu      sync.Mutex
+	samples []bandwidthSample
+	window  time.Duration
+}
+
+type bandwidthSample struct {
+	t     time.Time
+	bytes int64
+}
+
+// record adds a new byte-count sample at the current time.
+func (bw *bandwidthWindow) record(bytes int64) {
+	now := time.Now()
+	bw.mu.Lock()
+	defer bw.mu.Unlock()
+	cutoff := now.Add(-bw.window)
+	filtered := bw.samples[:0]
+	for _, s := range bw.samples {
+		if s.t.After(cutoff) {
+			filtered = append(filtered, s)
+		}
+	}
+	bw.samples = append(filtered, bandwidthSample{t: now, bytes: bytes})
+}
+
+// bytesPerSecond returns the average download speed in bytes/sec over the window.
+// Returns 0 if there are fewer than 2 samples (not enough data).
+func (bw *bandwidthWindow) bytesPerSecond() float64 {
+	now := time.Now()
+	bw.mu.Lock()
+	defer bw.mu.Unlock()
+	cutoff := now.Add(-bw.window)
+	var total int64
+	var oldest time.Time
+	for _, s := range bw.samples {
+		if s.t.After(cutoff) {
+			total += s.bytes
+			if oldest.IsZero() || s.t.Before(oldest) {
+				oldest = s.t
+			}
+		}
+	}
+	if oldest.IsZero() || len(bw.samples) < 2 {
+		return 0
+	}
+	elapsed := now.Sub(oldest).Seconds()
+	if elapsed < 0.5 {
+		return 0
+	}
+	return float64(total) / elapsed
+}
+
+// speedTier classifies a bytes/sec value into a named tier.
+type speedTier int
+
+const (
+	speedTierUnknown speedTier = iota
+	speedTierSlow              // < 10 KB/s
+	speedTierMedium            // 10–100 KB/s
+	speedTierFast              // > 100 KB/s
+)
+
+const (
+	thresholdFastBps   = 100 * 1024 // 100 KB/s
+	thresholdMediumBps = 10 * 1024  // 10 KB/s
+)
+
+func classifySpeed(bps float64) speedTier {
+	switch {
+	case bps <= 0:
+		return speedTierUnknown
+	case bps >= thresholdFastBps:
+		return speedTierFast
+	case bps >= thresholdMediumBps:
+		return speedTierMedium
+	default:
+		return speedTierSlow
+	}
+}
+
+// adaptiveStallTimeout returns the appropriate stall timeout for the measured speed.
+func adaptiveStallTimeout(bps float64) time.Duration {
+	switch classifySpeed(bps) {
+	case speedTierFast:
+		return 30 * time.Second
+	case speedTierMedium:
+		return 60 * time.Second
+	case speedTierSlow:
+		return 120 * time.Second
+	default:
+		// Unknown speed: use a generous default to avoid premature retries.
+		return 60 * time.Second
+	}
+}
+
+// adaptiveNumParts returns the number of parallel download parts appropriate
+// for the detected speed tier. On slow networks fewer parts reduce contention.
+func adaptiveNumParts(bps float64) int {
+	if classifySpeed(bps) == speedTierSlow {
+		return numDownloadPartsSlowNetwork
+	}
+	return numDownloadParts
+}
+
 type blobDownload struct {
 	Name   string
 	Digest string
@@ -52,6 +158,9 @@ type blobDownload struct {
 	done       chan struct{}
 	err        error
 	references atomic.Int32
+
+	// shared bandwidth monitor across all parts of this blob
+	bandwidth bandwidthWindow
 }
 
 type blobDownloadPart struct {
@@ -62,6 +171,9 @@ type blobDownloadPart struct {
 
 	lastUpdatedMu sync.Mutex
 	lastUpdated   time.Time
+
+	// stall stage tracks multi-stage stall validation to prevent false retries.
+	stallStage int // 0=normal, 1=warned, 2=prepare-retry
 
 	*blobDownload `json:"-"`
 }
@@ -97,12 +209,16 @@ func (p *blobDownloadPart) UnmarshalJSON(b []byte) error {
 }
 
 const (
-	numDownloadParts          = 16
-	minDownloadPartSize int64 = 100 * format.MegaByte
-	maxDownloadPartSize int64 = 1000 * format.MegaByte
+	numDownloadParts            = 16
+	numDownloadPartsSlowNetwork = 4
+	minDownloadPartSize   int64 = 100 * format.MegaByte
+	maxDownloadPartSize   int64 = 1000 * format.MegaByte
+	bandwidthWindowDur          = 10 * time.Second
 )
 
-var downloadStallTimeout = 30 * time.Second
+// downloadStallTimeout is the baseline timeout used before bandwidth data is
+// available. Once real speed data exists, adaptiveStallTimeout() overrides it.
+var downloadStallTimeout = 60 * time.Second
 
 func (p *blobDownloadPart) Name() string {
 	return strings.Join([]string{
@@ -121,6 +237,7 @@ func (p *blobDownloadPart) StopsAt() int64 {
 func (p *blobDownloadPart) Write(b []byte) (n int, err error) {
 	n = len(b)
 	p.blobDownload.Completed.Add(int64(n))
+	p.blobDownload.bandwidth.record(int64(n))
 	p.lastUpdatedMu.Lock()
 	p.lastUpdated = time.Now()
 	p.lastUpdatedMu.Unlock()
@@ -134,6 +251,7 @@ func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *r
 	}
 
 	b.done = make(chan struct{})
+	b.bandwidth = bandwidthWindow{window: bandwidthWindowDur}
 
 	for _, partFilePath := range partFilePaths {
 		part, err := b.readPart(partFilePath)
@@ -155,7 +273,10 @@ func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *r
 
 		b.Total, _ = strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
 
-		size := b.Total / numDownloadParts
+		// Initially plan with default part count; run() may reduce it once
+		// live speed data is available (Phase 3).
+		nParts := numDownloadParts
+		size := b.Total / int64(nParts)
 		switch {
 		case size < minDownloadPartSize:
 			size = minDownloadPartSize
@@ -274,8 +395,22 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 		return err
 	}
 
+	// Phase 3: Determine concurrency limit based on detected speed.
+	// After the first few seconds of downloading, bandwidth data will be
+	// populated; until then we use the full part count so fast networks
+	// are unaffected.
+	concurrencyLimit := func() int {
+		bps := b.bandwidth.bytesPerSecond()
+		n := adaptiveNumParts(bps)
+		if n < numDownloadParts {
+			slog.Info(fmt.Sprintf("%s slow network detected (%.1f KB/s); reducing parallel parts %d→%d",
+				b.Digest[7:19], bps/1024, numDownloadParts, n))
+		}
+		return n
+	}
+
 	g, inner := errgroup.WithContext(ctx)
-	g.SetLimit(numDownloadParts)
+	g.SetLimit(concurrencyLimit())
 	for i := range b.Parts {
 		part := b.Parts[i]
 		if part.Completed.Load() == part.Size {
@@ -365,11 +500,15 @@ func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w
 	})
 
 	g.Go(func() error {
-		ticker := time.NewTicker(min(time.Second, downloadStallTimeout/2))
+		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-transferDone:
+				// Reset stall stage on successful completion.
+				part.lastUpdatedMu.Lock()
+				part.stallStage = 0
+				part.lastUpdatedMu.Unlock()
 				return nil
 			case <-ticker.C:
 				part.lastUpdatedMu.Lock()
@@ -379,12 +518,45 @@ func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w
 					lastUpdated = attemptStarted
 				}
 
-				if time.Since(lastUpdated) > downloadStallTimeout {
-					const msg = "%s part %d stalled; retrying. If this persists, press ctrl-c to exit, then 'ollama pull' to find a faster connection."
-					slog.Info(fmt.Sprintf(msg, b.Digest[7:19], part.N))
-					// reset last updated
+				// Phase 1+2: compute adaptive timeout from live bandwidth data.
+				bps := b.bandwidth.bytesPerSecond()
+				timeout := adaptiveStallTimeout(bps)
+
+				if time.Since(lastUpdated) <= timeout {
+					continue
+				}
+
+				// Phase 4: multi-stage stall validation.
+				part.lastUpdatedMu.Lock()
+				stage := part.stallStage
+				part.lastUpdatedMu.Unlock()
+
+				switch stage {
+				case 0:
+					// Stage 1 — warn but keep going.
+					slog.Warn(fmt.Sprintf(
+						"%s part %d slow (%.1f KB/s, timeout %s); waiting before retry",
+						b.Digest[7:19], part.N, bps/1024, timeout))
+					part.lastUpdatedMu.Lock()
+					part.stallStage = 1
+					part.lastUpdated = time.Now() // reset timer for next stage
+					part.lastUpdatedMu.Unlock()
+				case 1:
+					// Stage 2 — prepare for retry (log but still hold off).
+					slog.Warn(fmt.Sprintf(
+						"%s part %d still stalled (%.1f KB/s); preparing retry",
+						b.Digest[7:19], part.N, bps/1024))
+					part.lastUpdatedMu.Lock()
+					part.stallStage = 2
+					part.lastUpdated = time.Now()
+					part.lastUpdatedMu.Unlock()
+				default:
+					// Stage 3 — confirmed stall; retry now.
+					const msg = "%s part %d confirmed stalled (%.1f KB/s); retrying. If this persists, press ctrl-c to exit, then 'ollama pull' to find a faster connection."
+					slog.Info(fmt.Sprintf(msg, b.Digest[7:19], part.N, bps/1024))
 					part.lastUpdatedMu.Lock()
 					part.lastUpdated = time.Time{}
+					part.stallStage = 0
 					part.lastUpdatedMu.Unlock()
 					return errPartStalled
 				}
