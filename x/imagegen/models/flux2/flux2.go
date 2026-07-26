@@ -175,6 +175,11 @@ func (m *Model) GenerateImage(ctx context.Context, prompt string, width, height 
 	})
 }
 
+// GenerateWithCFG is not supported by the Flux2 model.
+func (m *Model) GenerateWithCFG(prompt, negativePrompt string, width, height int32, steps int, seed int64, cfgScale float32, progress func(step, total int)) (*mlx.Array, error) {
+	return nil, fmt.Errorf("negative prompt is not supported by this model")
+}
+
 // GenerateImageWithInputs implements runner.ImageEditModel interface.
 // It generates an image conditioned on the provided input images for image editing.
 func (m *Model) GenerateImageWithInputs(ctx context.Context, prompt string, width, height int32, steps int, seed int64, inputImages []image.Image, progress func(step, total int)) (*mlx.Array, error) {

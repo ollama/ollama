@@ -269,12 +269,13 @@ func (s *Server) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 
 	// Build request for subprocess
 	creq := Request{
-		Prompt: req.Prompt,
-		Width:  req.Width,
-		Height: req.Height,
-		Steps:  int(req.Steps),
-		Seed:   seed,
-		Images: images,
+		Prompt:   req.Prompt,
+		Negative: req.Negative,
+		Width:    req.Width,
+		Height:   req.Height,
+		Steps:    int(req.Steps),
+		Seed:     seed,
+		Images:   images,
 	}
 
 	// Pass LLM options if present
