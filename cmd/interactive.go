@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/spf13/cobra"
 
@@ -609,7 +610,44 @@ func extractFileNames(input string) []string {
 	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav)\b`
 	re := regexp.MustCompile(regexPattern)
 
-	return re.FindAllString(input, -1)
+	var out []string
+	pos := 0
+	for pos < len(input) {
+		loc := re.FindStringIndex(input[pos:])
+		if loc == nil {
+			break
+		}
+		start, end := pos+loc[0], pos+loc[1]
+
+		// The extension match above is intentionally lazy so that several
+		// paths in one message (e.g. "compare a.png and b.jpg") are
+		// captured as separate matches. That means it can stop early if a
+		// parent directory happens to contain what looks like a valid
+		// extension, e.g. ".../vacation.png.bak/beach.jpg" would
+		// otherwise be fractured into "vacation.png" and "beach.jpg",
+		// neither of which is the real file. Detect that case: if the
+		// text right after the match runs straight into another path
+		// separator with no whitespace in between, this is almost
+		// certainly still the same path, so keep extending to the next
+		// extension boundary.
+		for end < len(input) {
+			rest := input[end:]
+			sep := strings.IndexAny(rest, `/\`)
+			ws := strings.IndexFunc(rest, unicode.IsSpace)
+			if sep == -1 || (ws != -1 && ws < sep) {
+				break
+			}
+			next := re.FindStringIndex(rest)
+			if next == nil {
+				break
+			}
+			end += next[1]
+		}
+
+		out = append(out, input[start:end])
+		pos = end
+	}
+	return out
 }
 
 func extractFileData(input string) (string, []api.ImageData, error) {
