@@ -280,6 +280,7 @@ console.log(response.message.content);
 - [Archyve](https://github.com/nickthecook/archyve) - RAG-enabling document library
 - [Casibase](https://casibase.org) - AI knowledge base with RAG and SSO
 - [BrainSoup](https://www.nurgo-software.com/products/brainsoup) - Native client with RAG and multi-agent automation
+- [COG-RAG](https://github.com/rapidarchitect/ollama-cog-rag-implementation) - Implementation of Cognitive-RAG research paper using Ollama
 
 ### Bots & Messaging
 
