@@ -38,15 +38,22 @@ func NewProgress(w io.Writer) *Progress {
 }
 
 func (p *Progress) stop() bool {
-	for _, state := range p.states {
+	p.mu.Lock()
+	states := p.states
+	ticker := p.ticker
+	if ticker != nil {
+		p.ticker = nil
+	}
+	p.mu.Unlock()
+
+	for _, state := range states {
 		if spinner, ok := state.(*Spinner); ok {
 			spinner.Stop()
 		}
 	}
 
-	if p.ticker != nil {
-		p.ticker.Stop()
-		p.ticker = nil
+	if ticker != nil {
+		ticker.Stop()
 		p.render()
 		return true
 	}
@@ -127,8 +134,13 @@ func (p *Progress) render() {
 }
 
 func (p *Progress) start() {
-	p.ticker = time.NewTicker(100 * time.Millisecond)
-	for range p.ticker.C {
+	ticker := time.NewTicker(100 * time.Millisecond)
+
+	p.mu.Lock()
+	p.ticker = ticker
+	p.mu.Unlock()
+
+	for range ticker.C {
 		p.render()
 	}
 }
