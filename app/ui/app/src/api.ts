@@ -180,11 +180,22 @@ export async function getModelCapabilities(
   modelName: string,
 ): Promise<ModelCapabilitiesResponse> {
   try {
-    const showResponse = await ollama.show({ model: modelName });
+    // Use fetch directly instead of ollama SDK because the SDK may not
+    // expose the capabilities field from the show response
+    const response = await fetch(`${API_BASE}/api/show`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: modelName }),
+    });
 
+    if (!response.ok) {
+      return new ModelCapabilitiesResponse({ capabilities: [] });
+    }
+
+    const data = await response.json();
     return new ModelCapabilitiesResponse({
-      capabilities: Array.isArray(showResponse.capabilities)
-        ? showResponse.capabilities
+      capabilities: Array.isArray(data.capabilities)
+        ? data.capabilities
         : [],
     });
   } catch (error) {
@@ -254,6 +265,52 @@ export async function* sendMessage(
         yield new ChatEvent(event);
         break;
     }
+  }
+}
+
+export interface GenerateImageEvent {
+  model: string;
+  created_at: string;
+  response?: string;
+  image?: string;
+  done: boolean;
+  done_reason?: string;
+  completed?: number;
+  total?: number;
+}
+
+export async function* generateImage(
+  model: string,
+  prompt: string,
+  signal?: AbortSignal,
+  options?: { width?: number; height?: number; steps?: number; seed?: number },
+): AsyncGenerator<GenerateImageEvent> {
+  const response = await fetch(`${API_BASE}/api/generate`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      prompt,
+      stream: true,
+      ...(options?.width ? { width: options.width } : {}),
+      ...(options?.height ? { height: options.height } : {}),
+      ...(options?.steps ? { steps: options.steps } : {}),
+      ...(options?.seed ? { options: { seed: options.seed } } : {}),
+    }),
+    signal,
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Failed to generate image: ${response.statusText}`);
+  }
+
+  for await (const event of parseJsonlFromResponse<GenerateImageEvent>(
+    response,
+  )) {
+    yield event;
   }
 }
 
