@@ -1308,7 +1308,6 @@ try {
         }
         rocm7
         vulkan
-        mlxCuda13
         ollama
         ollamaArm64
         app
