@@ -25,16 +25,16 @@ func HumanBytes(b int64) string {
 	switch {
 	case b >= TeraByte:
 		value = float64(b) / TeraByte
-		unit = "TB"
+		unit = "TiB"
 	case b >= GigaByte:
 		value = float64(b) / GigaByte
-		unit = "GB"
+		unit = "GiB"
 	case b >= MegaByte:
 		value = float64(b) / MegaByte
-		unit = "MB"
+		unit = "MiB"
 	case b >= KiloByte:
 		value = float64(b) / KiloByte
-		unit = "KB"
+		unit = "KiB"
 	default:
 		return fmt.Sprintf("%d B", b)
 	}
