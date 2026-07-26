@@ -1240,3 +1240,88 @@ func TestOverlapFunction(t *testing.T) {
 		})
 	}
 }
+
+// A tool parameter declared as a JSON Schema union must still be type-coerced.
+// Claude Code and the Anthropic SDK spell unions "oneOf"; before it was
+// modelled the property looked untyped and a nested object was handed back to
+// the caller as a JSON string.
+func TestQwenParseToolCallUnionParameter(t *testing.T) {
+	unionTool := func(keyword string) api.Tool {
+		return tool("send_structured", map[string]api.ToolProperty{
+			"to": {Type: api.PropertyType{"string"}},
+			"message": func() api.ToolProperty {
+				branches := []api.ToolProperty{
+					{Type: api.PropertyType{"string"}},
+					{Type: api.PropertyType{"object"}},
+				}
+				if keyword == "anyOf" {
+					return api.ToolProperty{AnyOf: branches}
+				}
+				return api.ToolProperty{OneOf: branches}
+			}(),
+		})
+	}
+
+	raw := `<function=send_structured>
+<parameter=to>
+agent-1
+</parameter>
+<parameter=message>
+{"type": "shutdown_response", "ok": true}
+</parameter>
+</function>`
+
+	want := api.ToolCall{
+		Function: api.ToolCallFunction{
+			Name: "send_structured",
+			Arguments: testArgs(map[string]any{
+				"to": "agent-1",
+				"message": map[string]any{
+					"type": "shutdown_response",
+					"ok":   true,
+				},
+			}),
+		},
+	}
+
+	for _, keyword := range []string{"anyOf", "oneOf"} {
+		t.Run(keyword, func(t *testing.T) {
+			got, err := parseToolCall(qwenEventRawToolCall{raw: raw}, []api.Tool{unionTool(keyword)})
+			if err != nil {
+				t.Fatalf("parseToolCall: %v", err)
+			}
+			if !toolCallEqual(got, want) {
+				t.Errorf("got %#v, want %#v", got, want)
+			}
+		})
+	}
+}
+
+// A union that admits both string and object still coerces a plain string.
+func TestQwenParseToolCallUnionParameterString(t *testing.T) {
+	tools := []api.Tool{tool("send_structured", map[string]api.ToolProperty{
+		"message": {OneOf: []api.ToolProperty{
+			{Type: api.PropertyType{"string"}},
+			{Type: api.PropertyType{"object"}},
+		}},
+	})}
+
+	got, err := parseToolCall(qwenEventRawToolCall{raw: `<function=send_structured>
+<parameter=message>
+just text
+</parameter>
+</function>`}, tools)
+	if err != nil {
+		t.Fatalf("parseToolCall: %v", err)
+	}
+
+	want := api.ToolCall{
+		Function: api.ToolCallFunction{
+			Name:      "send_structured",
+			Arguments: testArgs(map[string]any{"message": "just text"}),
+		},
+	}
+	if !toolCallEqual(got, want) {
+		t.Errorf("got %#v, want %#v", got, want)
+	}
+}
