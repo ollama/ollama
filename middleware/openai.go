@@ -30,6 +30,7 @@ type ChatWriter struct {
 	streamOptions *openai.StreamOptions
 	id            string
 	toolCallSent  bool
+	pending       []byte // buffers partial NDJSON lines from the cloud proxy
 	BaseWriter
 }
 
@@ -37,6 +38,7 @@ type CompleteWriter struct {
 	stream        bool
 	streamOptions *openai.StreamOptions
 	id            string
+	pending       []byte // buffers partial NDJSON lines from the cloud proxy
 	BaseWriter
 }
 
@@ -141,7 +143,27 @@ func (w *ChatWriter) Write(data []byte) (int, error) {
 		return w.writeError(data)
 	}
 
-	return w.writeResponse(data)
+	// Buffer incoming bytes and process one complete NDJSON line at a time.
+	// The cloud proxy streams raw bytes in 32 KB chunks, which can split a
+	// single JSON object across two Write calls. Without buffering, the
+	// partial JSON causes json.Unmarshal to fail and tool-call arguments get
+	// silently truncated.
+	w.pending = append(w.pending, data...)
+	for {
+		idx := bytes.IndexByte(w.pending, '\n')
+		if idx < 0 {
+			break
+		}
+		line := bytes.TrimSpace(w.pending[:idx])
+		w.pending = w.pending[idx+1:]
+		if len(line) == 0 {
+			continue
+		}
+		if _, err := w.writeResponse(line); err != nil {
+			return 0, err
+		}
+	}
+	return len(data), nil
 }
 
 func (w *CompleteWriter) writeResponse(data []byte) (int, error) {
@@ -207,7 +229,22 @@ func (w *CompleteWriter) Write(data []byte) (int, error) {
 		return w.writeError(data)
 	}
 
-	return w.writeResponse(data)
+	w.pending = append(w.pending, data...)
+	for {
+		idx := bytes.IndexByte(w.pending, '\n')
+		if idx < 0 {
+			break
+		}
+		line := bytes.TrimSpace(w.pending[:idx])
+		w.pending = w.pending[idx+1:]
+		if len(line) == 0 {
+			continue
+		}
+		if _, err := w.writeResponse(line); err != nil {
+			return 0, err
+		}
+	}
+	return len(data), nil
 }
 
 func (w *ListWriter) writeResponse(data []byte) (int, error) {
