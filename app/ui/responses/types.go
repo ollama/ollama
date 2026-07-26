@@ -94,7 +94,8 @@ type ErrorEvent struct {
 }
 
 type SettingsResponse struct {
-	Settings store.Settings `json:"settings"`
+	Settings      store.Settings `json:"settings"`
+	ModelsFromEnv bool           `json:"modelsFromEnv"`
 }
 
 type HealthResponse struct {

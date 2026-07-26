@@ -21,6 +21,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	// Drop ambient OLLAMA_MODELS so package helpers (ensureTestModelsDir) never
+	// write fixtures into a developer's real models directory (e.g. C:\models).
+	os.Unsetenv("OLLAMA_MODELS")
 	os.Setenv("OLLAMA_DEBUG", "1")
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	slog.SetDefault(logger)

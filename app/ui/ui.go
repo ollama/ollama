@@ -1442,8 +1442,12 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) error {
 		return fmt.Errorf("failed to load settings: %w", err)
 	}
 
-	// set default models directory if not set
-	if settings.Models == "" {
+	// Effective models path: OLLAMA_MODELS env wins over saved settings, then default.
+	modelsFromEnv := false
+	if modelsEnv := envconfig.Var("OLLAMA_MODELS"); modelsEnv != "" {
+		settings.Models = modelsEnv
+		modelsFromEnv = true
+	} else if settings.Models == "" {
 		settings.Models = envconfig.Models()
 	}
 
@@ -1454,7 +1458,8 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) error {
 
 	w.Header().Set("Content-Type", "application/json")
 	return json.NewEncoder(w).Encode(responses.SettingsResponse{
-		Settings: settings,
+		Settings:      settings,
+		ModelsFromEnv: modelsFromEnv,
 	})
 }
 
@@ -1467,6 +1472,18 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 	var settings store.Settings
 	if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
 		return fmt.Errorf("invalid request body: %w", err)
+	}
+
+	// Don't persist OLLAMA_MODELS into the DB. old.Models may be env-synthesized
+	// when the store is empty; only keep a path that differs from the env value.
+	modelsEnv := envconfig.Var("OLLAMA_MODELS")
+	modelsFromEnv := modelsEnv != ""
+	if modelsFromEnv {
+		if old.Models != "" && old.Models != modelsEnv {
+			settings.Models = old.Models
+		} else {
+			settings.Models = ""
+		}
 	}
 
 	if err := s.Store.SetSettings(settings); err != nil {
@@ -1491,15 +1508,22 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 
+	// Models changes are ignored while OLLAMA_MODELS owns the path.
+	modelsChanged := !modelsFromEnv && old.Models != settings.Models
 	if old.ContextLength != settings.ContextLength ||
-		old.Models != settings.Models ||
+		modelsChanged ||
 		old.Expose != settings.Expose {
 		s.Restart()
 	}
 
+	if modelsFromEnv {
+		settings.Models = modelsEnv
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	return json.NewEncoder(w).Encode(responses.SettingsResponse{
-		Settings: settings,
+		Settings:      settings,
+		ModelsFromEnv: modelsFromEnv,
 	})
 }
 

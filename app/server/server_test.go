@@ -41,9 +41,11 @@ func TestServerCmd(t *testing.T) {
 	}
 
 	tmpModels := t.TempDir()
+	envModels := t.TempDir()
 	tests := []struct {
 		name     string
 		settings store.Settings
+		env      map[string]string
 		want     []string
 		dont     []string
 	}{
@@ -91,10 +93,49 @@ func TestServerCmd(t *testing.T) {
 			},
 			dont: []string{},
 		},
+		{
+			name:     "env_models_overrides_settings",
+			settings: store.Settings{Models: tmpModels},
+			env:      map[string]string{"OLLAMA_MODELS": envModels},
+			want:     []string{"OLLAMA_MODELS=" + envModels},
+			dont:     []string{"OLLAMA_MODELS=" + tmpModels},
+		},
+		{
+			name:     "env_models_without_settings",
+			settings: store.Settings{},
+			env:      map[string]string{"OLLAMA_MODELS": envModels},
+			want:     []string{"OLLAMA_MODELS=" + envModels},
+			dont:     []string{"OLLAMA_MODELS=" + defaultModels},
+		},
+		{
+			name:     "env_whitespace_only_falls_back_to_settings",
+			settings: store.Settings{Models: tmpModels},
+			env:      map[string]string{"OLLAMA_MODELS": "   "},
+			want:     []string{"OLLAMA_MODELS=" + tmpModels},
+			dont:     []string{},
+		},
+		{
+			name:     "env_quoted_path_normalized",
+			settings: store.Settings{},
+			env:      map[string]string{"OLLAMA_MODELS": "\"" + envModels + "\""},
+			want:     []string{"OLLAMA_MODELS=" + envModels},
+			dont:     []string{"OLLAMA_MODELS=\"" + envModels + "\""},
+		},
+		{
+			name:     "env_spaced_path_normalized",
+			settings: store.Settings{},
+			env:      map[string]string{"OLLAMA_MODELS": " " + envModels + " "},
+			want:     []string{"OLLAMA_MODELS=" + envModels},
+			dont:     []string{},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+
 			tmpDir := t.TempDir()
 			st := &store.Store{DBPath: filepath.Join(tmpDir, "db.sqlite")}
 			defer st.Close() // Ensure database is closed before cleanup

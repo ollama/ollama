@@ -17,6 +17,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/app/store"
+	"github.com/ollama/ollama/app/ui/responses"
 	"github.com/ollama/ollama/app/updater"
 )
 
@@ -60,6 +61,7 @@ func TestHandlePostApiSettings(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OLLAMA_MODELS", "")
 			testStore := &store.Store{
 				DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
 			}
@@ -838,5 +840,138 @@ func TestSettingsToggleAutoUpdateOn_NoPendingUpdate_TriggersCheck(t *testing.T) 
 	// UpdateAvailableFunc should NOT be called since there's no pending update
 	if notificationCalled.Load() {
 		t.Fatal("UpdateAvailableFunc should not be called when there is no pending update")
+	}
+}
+
+func TestSettingsModelsFromEnvPreserved(t *testing.T) {
+	tmpDir := t.TempDir()
+	storedModels := filepath.Join(tmpDir, "stored")
+	envModels := filepath.Join(tmpDir, "env")
+
+	// Pre-populate the store with a user-chosen models path
+	testStore := &store.Store{
+		DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
+	}
+	defer testStore.Close()
+	if err := testStore.SetSettings(store.Settings{Models: storedModels}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate env var controlling the path
+	t.Setenv("OLLAMA_MODELS", envModels)
+
+	// POST a settings update that includes Models set to the env-derived value
+	// (mimicking the auto-save from the frontend when user changes another field)
+	reqBody, _ := json.Marshal(store.Settings{
+		Expose:  true,
+		Models:  envModels, // env-derived from GET response
+		Browser: false,
+	})
+
+	server := &Server{
+		Store:   testStore,
+		Restart: func() {},
+	}
+
+	req := httptest.NewRequest("POST", "/api/v1/settings", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	if err := server.settings(rr, req); err != nil {
+		t.Fatal(err)
+	}
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d", rr.Code)
+	}
+
+	// DB must still have the ORIGINAL path, not the env-derived one
+	saved, err := testStore.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Models != storedModels {
+		t.Errorf("Models persisted to DB: got %q, want %q (original stored path)", saved.Models, storedModels)
+	}
+
+	// Other fields should still be saved
+	if !saved.Expose {
+		t.Error("Expose should be saved")
+	}
+
+	// Response must report env is in charge with the env path
+	var resp responses.SettingsResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.ModelsFromEnv {
+		t.Error("response ModelsFromEnv should be true")
+	}
+	if resp.Settings.Models != envModels {
+		t.Errorf("response Settings.Models = %q, want %q (env path)", resp.Settings.Models, envModels)
+	}
+}
+
+func TestSettingsModelsFromEnvNotPersistedWhenStoreEmpty(t *testing.T) {
+	// Empty DB + OLLAMA_MODELS: saving another setting must not persist the env path.
+	envModels := filepath.Join(t.TempDir(), "env")
+	t.Setenv("OLLAMA_MODELS", envModels)
+
+	testStore := &store.Store{
+		DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
+	}
+	defer testStore.Close()
+
+	// store.Settings() synthesizes the env path when DB is empty.
+	before, err := testStore.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Models != envModels {
+		t.Fatalf("precondition: Settings().Models = %q, want synthesized env path %q", before.Models, envModels)
+	}
+
+	reqBody, _ := json.Marshal(store.Settings{
+		Expose: true,
+		Models: envModels,
+	})
+
+	server := &Server{
+		Store:   testStore,
+		Restart: func() {},
+	}
+
+	req := httptest.NewRequest("POST", "/api/v1/settings", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	if err := server.settings(rr, req); err != nil {
+		t.Fatal(err)
+	}
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d", rr.Code)
+	}
+
+	// Clear env so Settings() returns the real stored value.
+	t.Setenv("OLLAMA_MODELS", "")
+	saved, err := testStore.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Models == envModels {
+		t.Fatalf("env path was persisted to DB: got %q", saved.Models)
+	}
+	if !saved.Expose {
+		t.Error("Expose should be saved")
+	}
+
+	var resp responses.SettingsResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.ModelsFromEnv {
+		t.Error("response ModelsFromEnv should be true")
+	}
+	if resp.Settings.Models != envModels {
+		t.Fatalf("response Settings.Models = %q, want %q", resp.Settings.Models, envModels)
 	}
 }

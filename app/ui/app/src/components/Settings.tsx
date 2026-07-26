@@ -496,7 +496,11 @@ export default function Settings() {
                   <FolderIcon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
                   <div className="w-full">
                     <Label>Model location</Label>
-                    <Description>Location where models are stored.</Description>
+                    <Description>
+                      {settingsData?.modelsFromEnv
+                        ? "Using OLLAMA_MODELS. The path below is from the environment. Clear the variable and restart to choose a path here."
+                        : "Location where models are stored."}
+                    </Description>
                     <div className="mt-2 flex items-center space-x-2">
                       <Input
                         value={settings.Models || ""}
@@ -507,7 +511,11 @@ export default function Settings() {
                         type="button"
                         color="white"
                         className="px-2"
+                        disabled={settingsData?.modelsFromEnv}
                         onClick={async () => {
+                          if (settingsData?.modelsFromEnv) {
+                            return;
+                          }
                           if (window.webview?.selectModelsDirectory) {
                             try {
                               const directory =
