@@ -28,7 +28,7 @@ const (
 	defaultCloudProxyBaseURL      = "https://ollama.com:443"
 	defaultCloudProxySigningHost  = "ollama.com"
 	cloudProxyBaseURLEnv          = "OLLAMA_CLOUD_BASE_URL"
-	legacyCloudAnthropicKey       = "legacy_cloud_anthropic_web_search"
+	cloudAnthropicChatFallbackKey = "cloud_anthropic_chat_fallback"
 	cloudProxyClientVersionHeader = "X-Ollama-Client-Version"
 
 	// maxDecompressedBodySize limits the size of a decompressed request body
@@ -120,11 +120,12 @@ func cloudPassthroughMiddleware(disabledOperation string) gin.HandlerFunc {
 			return
 		}
 
-		// TEMP(drifkin): keep Anthropic web search requests on the local middleware
-		// path so WebSearchAnthropicWriter can orchestrate follow-up calls.
+		// Keep Anthropic requests that need Ollama-native handling on the local
+		// middleware path. Web search requires orchestration, while image blocks
+		// need conversion to the native chat image format.
 		if c.Request.URL.Path == "/v1/messages" {
-			if hasAnthropicWebSearchTool(body) {
-				c.Set(legacyCloudAnthropicKey, true)
+			if hasAnthropicWebSearchTool(body) || hasAnthropicBase64ImageBlock(body) {
+				c.Set(cloudAnthropicChatFallbackKey, true)
 				c.Next()
 				return
 			}
@@ -234,7 +235,7 @@ func proxyCloudRequestWithPath(c *gin.Context, body []byte, path string, disable
 	// into WebSearchAnthropicWriter, but this proxy copy loop may coalesce
 	// multiple jsonl records into one Write.  WebSearchAnthropicWriter currently
 	// unmarshals one JSON value per Write.
-	if path == "/api/chat" && resp.StatusCode == http.StatusOK && c.GetBool(legacyCloudAnthropicKey) {
+	if path == "/api/chat" && resp.StatusCode == http.StatusOK && c.GetBool(cloudAnthropicChatFallbackKey) {
 		framedWriter = &jsonlFramingResponseWriter{ResponseWriter: c.Writer}
 		bodyWriter = framedWriter
 	}
@@ -340,6 +341,54 @@ func hasAnthropicWebSearchTool(body []byte) bool {
 
 	for _, tool := range payload.Tools {
 		if strings.HasPrefix(strings.TrimSpace(tool.Type), "web_search") {
+			return true
+		}
+	}
+
+	return false
+}
+
+func hasAnthropicBase64ImageBlock(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+
+	var payload struct {
+		Messages []struct {
+			Content any `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return false
+	}
+
+	var containsImageBlock func(any) bool
+	containsImageBlock = func(value any) bool {
+		switch value := value.(type) {
+		case []any:
+			for _, item := range value {
+				if containsImageBlock(item) {
+					return true
+				}
+			}
+		case map[string]any:
+			if blockType, ok := value["type"].(string); ok && blockType == "image" {
+				source, ok := value["source"].(map[string]any)
+				if !ok {
+					return false
+				}
+				sourceType, ok := source["type"].(string)
+				return ok && sourceType == "base64"
+			}
+			if content, ok := value["content"]; ok && containsImageBlock(content) {
+				return true
+			}
+		}
+		return false
+	}
+
+	for _, message := range payload.Messages {
+		if containsImageBlock(message.Content) {
 			return true
 		}
 	}

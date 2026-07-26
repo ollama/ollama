@@ -599,6 +599,129 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		}
 	})
 
+	t.Run("v1 messages image fallback uses cloud api chat path", func(t *testing.T) {
+		upstream, capture := newUpstream(t, `{"model":"minimax-m3","created_at":"2024-01-01T00:00:00Z","message":{"role":"assistant","content":"red and white"},"done":true}`)
+		defer upstream.Close()
+
+		original := cloudProxyBaseURL
+		cloudProxyBaseURL = upstream.URL
+		t.Cleanup(func() { cloudProxyBaseURL = original })
+
+		s := &Server{}
+		router, err := s.GenerateRoutes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		local := httptest.NewServer(router)
+		defer local.Close()
+
+		reqBody := `{
+				"model":"minimax-m3:cloud",
+				"max_tokens":10,
+				"stream":false,
+				"messages":[{
+					"role":"user",
+					"content":[
+						{"type":"text","text":"What colors are in this image?"},
+						{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}}
+					]
+				}]
+			}`
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, local.URL+"/v1/messages", bytes.NewBufferString(reqBody))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := local.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected status 200, got %d (%s)", resp.StatusCode, string(body))
+		}
+
+		if capture.path != "/api/chat" {
+			t.Fatalf("expected upstream path /api/chat for image fallback, got %q", capture.path)
+		}
+
+		if !strings.Contains(capture.body, `"model":"minimax-m3"`) {
+			t.Fatalf("expected normalized model in upstream body, got %q", capture.body)
+		}
+
+		if !strings.Contains(capture.body, `"images":["aW1hZ2U="]`) {
+			t.Fatalf("expected converted image in upstream body, got %q", capture.body)
+		}
+
+		if !strings.Contains(capture.body, `"num_predict":10`) {
+			t.Fatalf("expected converted ollama options in upstream body, got %q", capture.body)
+		}
+
+		if !strings.Contains(string(body), `"type":"message"`) {
+			t.Fatalf("expected Anthropic response body, got %q", string(body))
+		}
+	})
+
+	t.Run("v1 messages non-base64 image bypasses conversion", func(t *testing.T) {
+		upstream, capture := newUpstream(t, `{"id":"msg_1","type":"message"}`)
+		defer upstream.Close()
+
+		original := cloudProxyBaseURL
+		cloudProxyBaseURL = upstream.URL
+		t.Cleanup(func() { cloudProxyBaseURL = original })
+
+		s := &Server{}
+		router, err := s.GenerateRoutes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		local := httptest.NewServer(router)
+		defer local.Close()
+
+		reqBody := `{
+				"model":"minimax-m3:cloud",
+				"max_tokens":10,
+				"messages":[{
+					"role":"user",
+					"content":[{
+						"type":"image",
+						"source":{"type":"url","url":"https://example.com/image.png"}
+					}]
+				}]
+			}`
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, local.URL+"/v1/messages", bytes.NewBufferString(reqBody))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := local.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected status 200, got %d (%s)", resp.StatusCode, string(body))
+		}
+
+		if capture.path != "/v1/messages" {
+			t.Fatalf("expected upstream path /v1/messages, got %q", capture.path)
+		}
+
+		if !strings.Contains(capture.body, `"type":"url"`) {
+			t.Fatalf("expected original Anthropic image source in upstream body, got %q", capture.body)
+		}
+
+		if strings.Contains(capture.body, `"options"`) {
+			t.Fatalf("expected no converted Ollama options in upstream body, got %q", capture.body)
+		}
+	})
+
 	t.Run("v1 messages web_search fallback uses legacy cloud /api/chat path", func(t *testing.T) {
 		upstream, capture := newUpstream(t, `{"model":"gpt-oss:120b","created_at":"2024-01-01T00:00:00Z","message":{"role":"assistant","content":"hello"},"done":true}`)
 		defer upstream.Close()
