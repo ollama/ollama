@@ -1246,20 +1246,13 @@ func TestOverlapFunction(t *testing.T) {
 // modelled the property looked untyped and a nested object was handed back to
 // the caller as a JSON string.
 func TestQwenParseToolCallUnionParameter(t *testing.T) {
-	unionTool := func(keyword string) api.Tool {
-		return tool("send_structured", map[string]api.ToolProperty{
-			"to": {Type: api.PropertyType{"string"}},
-			"message": func() api.ToolProperty {
-				branches := []api.ToolProperty{
-					{Type: api.PropertyType{"string"}},
-					{Type: api.PropertyType{"object"}},
-				}
-				if keyword == "anyOf" {
-					return api.ToolProperty{AnyOf: branches}
-				}
-				return api.ToolProperty{OneOf: branches}
-			}(),
-		})
+	branches := []api.ToolProperty{
+		{Type: api.PropertyType{"string"}},
+		{Type: api.PropertyType{"object"}},
+	}
+	unions := map[string]api.ToolProperty{
+		"anyOf": {AnyOf: branches},
+		"oneOf": {OneOf: branches},
 	}
 
 	raw := `<function=send_structured>
@@ -1286,7 +1279,12 @@ agent-1
 
 	for _, keyword := range []string{"anyOf", "oneOf"} {
 		t.Run(keyword, func(t *testing.T) {
-			got, err := parseToolCall(qwenEventRawToolCall{raw: raw}, []api.Tool{unionTool(keyword)})
+			tools := []api.Tool{tool("send_structured", map[string]api.ToolProperty{
+				"to":      {Type: api.PropertyType{"string"}},
+				"message": unions[keyword],
+			})}
+
+			got, err := parseToolCall(qwenEventRawToolCall{raw: raw}, tools)
 			if err != nil {
 				t.Fatalf("parseToolCall: %v", err)
 			}
