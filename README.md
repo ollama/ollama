@@ -4,6 +4,11 @@
   </a>
 </p>
 
+<p align="center">
+  <strong>English</strong> ·
+  <a href="README.zh.md">中文</a>
+</p>
+
 # Ollama
 
 Start building with open models.
