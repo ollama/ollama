@@ -1396,7 +1396,7 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 		return true
 	}
 
-	timeout := 10 * time.Second
+	timeout := envconfig.MLXPingTimeout()
 	if runner.loading {
 		timeout = 2 * time.Minute // Initial load can take a long time for big models on slow systems...
 	}
