@@ -57,6 +57,25 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 			libDirs[""] = struct{}{}
 		}
 
+		// Warn when the user explicitly enabled Vulkan (OLLAMA_VULKAN=1) but the
+		// Vulkan backend library was not found. This commonly happens when building
+		// from source without passing -DOLLAMA_LLAMA_BACKENDS=vulkan to CMake.
+		if envconfig.EnableVulkan(false) {
+			hasVulkanLib := false
+			for dir := range libDirs {
+				if strings.Contains(filepath.Base(dir), "vulkan") {
+					hasVulkanLib = true
+					break
+				}
+			}
+			if !hasVulkanLib {
+				slog.Warn("OLLAMA_VULKAN is set but no Vulkan backend library was found — " +
+					"inference will fall back to CPU. " +
+					"To build Vulkan support from source, re-run CMake with: " +
+					"-DOLLAMA_LLAMA_BACKENDS=vulkan")
+			}
+		}
+
 		slog.Info("discovering available GPUs...")
 		detectIncompatibleLibraries()
 		detectOldAMDDriverWindows()

@@ -2478,7 +2478,15 @@ func NewCLI() *cobra.Command {
 		switch cmd {
 		case runCmd:
 			imagegen.AppendFlagsDocs(cmd)
-			appendEnvDocs(cmd, []envconfig.EnvVar{envVars["OLLAMA_EDITOR"], envVars["OLLAMA_HOST"], envVars["OLLAMA_NOHISTORY"]})
+			appendEnvDocs(cmd, []envconfig.EnvVar{
+				envVars["OLLAMA_EDITOR"],
+				envVars["OLLAMA_HOST"],
+				envVars["OLLAMA_NOHISTORY"],
+				envVars["OLLAMA_LOCAL_SEMANTIC_MEMORY"],
+				envVars["OLLAMA_LOCAL_SEMANTIC_MEMORY_DIR"],
+				envVars["OLLAMA_LOCAL_SEMANTIC_MEMORY_MAX_FACTS"],
+				envVars["OLLAMA_LOCAL_SEMANTIC_MEMORY_PROFILE_FACTS"],
+			})
 		case serveCmd:
 			appendEnvDocs(cmd, []envconfig.EnvVar{
 				envVars["OLLAMA_DEBUG"],
