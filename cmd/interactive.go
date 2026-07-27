@@ -135,6 +135,17 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 	var sb strings.Builder
 	var multiline MultilineState
 	var thinkExplicitlySet bool = opts.Think != nil
+	memoryManager, err := newLocalSemanticMemoryManager()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: local semantic memory disabled: %v\n", err)
+		memoryManager = nil
+	}
+	if memoryManager != nil {
+		opts.Messages, err = memoryManager.injectSystemMessage(opts.Messages)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to load local semantic memory profile: %v\n", err)
+		}
+	}
 
 	for {
 		line, err := scanner.Readline()
@@ -522,6 +533,11 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 				newMessage.Content = msg
 				newMessage.Images = images
+			}
+			if memoryManager != nil {
+				if err := memoryManager.captureUserFact(newMessage.Content); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: failed to update local semantic memory: %v\n", err)
+				}
 			}
 
 			opts.Messages = append(opts.Messages, newMessage)
