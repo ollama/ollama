@@ -8,6 +8,7 @@ By default, these tests are disabled so `go test ./...` will exercise only unit 
 go test -tags=integration,fast -v -count 1 ./integration/
 go test -tags=integration,release -v -count 1 -timeout 30m ./integration/
 go test -tags=integration,library -v -count 1 -timeout 120m ./integration/
+go test -tags=integration,create -v -count 1 -timeout 30m ./integration/
 ```
 
 Tags:
@@ -15,8 +16,9 @@ Tags:
 - `fast`: quick runner/model smoke coverage.
 - `release`: release regression coverage.
 - `library`: broad library coverage requiring about 2.5 TiB of disk space.
+- `create`: model-creation flows (GGUF import, safetensors import, quantization).
 
-Scope wiring and model selections live in `integration/reg_fast_test.go`, `integration/reg_release_test.go`, and `integration/reg_library_test.go`.
+Scope wiring and model selections live in `integration/reg_fast_test.go`, `integration/reg_release_test.go`, `integration/reg_library_test.go`, and `integration/reg_create_test.go`.
 
 The integration tests have 2 modes of operating.
 

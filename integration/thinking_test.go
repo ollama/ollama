@@ -57,8 +57,6 @@ func runThinkingEnabled(t *testing.T) {
 					{Role: "user", Content: "What is 12 multiplied by 15? Give the final answer."},
 				},
 				Options: map[string]any{
-					"temperature": 0,
-					"seed":        42,
 					// Deep-thinking models can use several thousand tokens on
 					// simple problems before producing their final answer. Keep
 					// this high enough to verify a natural stop, not truncation.
@@ -128,8 +126,6 @@ func runThinkingSuppressed(t *testing.T) {
 					{Role: "user", Content: "What is the capital of Japan? Answer in one word."},
 				},
 				Options: map[string]any{
-					"temperature": 0,
-					"seed":        42,
 					"num_predict": 64,
 				},
 			}

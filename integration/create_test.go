@@ -206,7 +206,6 @@ func verifyTinyLlamaChat(ctx context.Context, t *testing.T, client *api.Client, 
 		},
 		Options: map[string]interface{}{
 			"num_predict": 20,
-			"temperature": 0.0,
 		},
 	}
 
@@ -302,7 +301,6 @@ func runCreateGGUF(t *testing.T) {
 		Prompt: "Write a short sentence about the weather.",
 		Options: map[string]interface{}{
 			"num_predict": 20,
-			"temperature": 0.0,
 		},
 	}
 

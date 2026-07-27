@@ -282,16 +282,13 @@ func PullIfMissing(ctx context.Context, client *api.Client, modelName string) er
 	}
 }
 
-var serverProcMutex sync.Mutex
-
 // Returns an Client, the testEndpoint, and a cleanup function, fails the test on errors
 // Starts the server if needed
 func InitServerConnection(ctx context.Context, t *testing.T) (*api.Client, string, func()) {
 	client, testEndpoint := GetTestEndpoint()
 	cleanup := func() {}
 	if os.Getenv("OLLAMA_TEST_EXISTING") == "" && runtime.GOOS != "windows" {
-		var err error
-		err = startServer(t, ctx, testEndpoint)
+		err := startServer(t, ctx, testEndpoint)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -319,7 +316,6 @@ func InitServerConnection(ctx context.Context, t *testing.T) (*api.Client, strin
 		select {
 		case <-ctx.Done():
 			t.Fatalf("context done before server ready: %v", ctx.Err())
-			break
 		default:
 		}
 		listCtx, cancel := context.WithDeadlineCause(
@@ -358,16 +354,27 @@ func ChatTestHelper(ctx context.Context, t *testing.T, req api.ChatRequest, anyR
 
 func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq api.GenerateRequest, anyResp []string, initialTimeout, streamTimeout time.Duration) []int {
 	stallTimer := time.NewTimer(initialTimeout)
+	// mu guards the fields written by the streaming callback, which runs on
+	// the client goroutine while the stall and ctx-done paths read them.
+	var mu sync.Mutex
 	var buf bytes.Buffer
+	var thinkBuf bytes.Buffer
+	var doneReason string
 	var context []int
 	fn := func(response api.GenerateResponse) error {
 		// fmt.Print(".")
+		mu.Lock()
 		buf.Write([]byte(response.Response))
-		if !stallTimer.Reset(streamTimeout) {
-			return errors.New("stall was detected while streaming response, aborting")
+		thinkBuf.WriteString(response.Thinking)
+		if response.Done {
+			doneReason = response.DoneReason
 		}
 		if len(response.Context) > 0 {
 			context = response.Context
+		}
+		mu.Unlock()
+		if !stallTimer.Reset(streamTimeout) {
+			return errors.New("stall was detected while streaming response, aborting")
 		}
 		return nil
 	}
@@ -381,21 +388,38 @@ func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq ap
 		done <- 0
 	}()
 
-	var response string
-	verify := func() {
+	verify := func() bool {
 		// Verify the response contains the expected data
-		response = buf.String()
-		if !containsExpectedResponse(response, anyResp) {
-			t.Fatalf("%s: none of %v found in %s", genReq.Model, anyResp, response)
+		mu.Lock()
+		response := buf.String()
+		thinking := thinkBuf.String()
+		reason := doneReason
+		mu.Unlock()
+		if containsExpectedResponse(response, anyResp) {
+			return true
 		}
+		if strings.TrimSpace(response) == "" {
+			if containsExpectedResponse(thinking, anyResp) {
+				slog.Warn("keywords found only in thinking; budget likely exhausted", "model", genReq.Model, "done_reason", reason)
+			}
+			t.Errorf("%s: model returned empty content (done_reason=%q)", genReq.Model, reason)
+			return false
+		}
+		t.Errorf("%s: none of %v found in %s", genReq.Model, anyResp, response)
+		return false
+	}
+	partial := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return buf.String()
 	}
 
 	select {
 	case <-stallTimer.C:
-		if buf.Len() == 0 {
+		if response := partial(); response == "" {
 			t.Errorf("generate never started.  Timed out after :%s", initialTimeout.String())
 		} else {
-			t.Errorf("generate stalled.  Response so far:%s", buf.String())
+			t.Errorf("generate stalled.  Response so far:%s", response)
 		}
 	case <-done:
 		if genErr != nil && strings.Contains(genErr.Error(), "model requires more system memory") {
@@ -403,10 +427,12 @@ func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq ap
 			return context
 		}
 		if genErr != nil {
-			t.Fatalf("%s failed with %s request prompt %s", genErr, genReq.Model, genReq.Prompt)
+			t.Errorf("%s failed with %s request prompt %s", genErr, genReq.Model, genReq.Prompt)
+			return context
 		}
-		verify()
-		slog.Info("test pass", "model", genReq.Model, "prompt", genReq.Prompt, "contains", anyResp, "response", response)
+		if verify() {
+			slog.Info("test pass", "model", genReq.Model, "prompt", genReq.Prompt, "contains", anyResp, "response", partial())
+		}
 	case <-ctx.Done():
 		// On slow systems, we might timeout before some models finish rambling, so check what we have so far to see
 		// if it's considered a pass - the stallTimer will detect hangs, but we want to consider slow systems a pass
@@ -414,6 +440,8 @@ func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq ap
 		slog.Warn("outer test context done while waiting for generate")
 		verify()
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	return context
 }
 
@@ -498,12 +526,23 @@ func summarizeMessages(msgs []api.Message) string {
 
 func DoChat(ctx context.Context, t *testing.T, client *api.Client, req api.ChatRequest, anyResp []string, initialTimeout, streamTimeout time.Duration) *api.Message {
 	stallTimer := time.NewTimer(initialTimeout)
+	// mu guards the fields written by the streaming callback, which runs on
+	// the client goroutine while the stall and ctx-done paths read them.
+	var mu sync.Mutex
 	var buf bytes.Buffer
+	var thinkBuf bytes.Buffer
+	var doneReason string
 	role := "assistant"
 	fn := func(response api.ChatResponse) error {
 		// fmt.Print(".")
+		mu.Lock()
 		role = response.Message.Role
 		buf.Write([]byte(response.Message.Content))
+		thinkBuf.WriteString(response.Message.Thinking)
+		if response.Done {
+			doneReason = response.DoneReason
+		}
+		mu.Unlock()
 		if !stallTimer.Reset(streamTimeout) {
 			return errors.New("stall was detected while streaming response, aborting")
 		}
@@ -519,21 +558,38 @@ func DoChat(ctx context.Context, t *testing.T, client *api.Client, req api.ChatR
 		done <- 0
 	}()
 
-	var response string
-	verify := func() {
+	verify := func() bool {
 		// Verify the response contains the expected data
-		response = buf.String()
-		if !containsExpectedResponse(response, anyResp) {
-			t.Fatalf("%s: none of %v found in \"%s\" -- request was:%s", req.Model, anyResp, response, summarizeMessages(req.Messages))
+		mu.Lock()
+		response := buf.String()
+		thinking := thinkBuf.String()
+		reason := doneReason
+		mu.Unlock()
+		if containsExpectedResponse(response, anyResp) {
+			return true
 		}
+		if strings.TrimSpace(response) == "" {
+			if containsExpectedResponse(thinking, anyResp) {
+				slog.Warn("keywords found only in thinking; budget likely exhausted", "model", req.Model, "done_reason", reason)
+			}
+			t.Errorf("%s: model returned empty content (done_reason=%q) -- request was:%s", req.Model, reason, summarizeMessages(req.Messages))
+			return false
+		}
+		t.Errorf("%s: none of %v found in \"%s\" -- request was:%s", req.Model, anyResp, response, summarizeMessages(req.Messages))
+		return false
+	}
+	msg := func() *api.Message {
+		mu.Lock()
+		defer mu.Unlock()
+		return &api.Message{Role: role, Content: buf.String()}
 	}
 
 	select {
 	case <-stallTimer.C:
-		if buf.Len() == 0 {
+		if response := msg().Content; response == "" {
 			t.Errorf("generate never started.  Timed out after :%s", initialTimeout.String())
 		} else {
-			t.Errorf("generate stalled.  Response so far:%s", buf.String())
+			t.Errorf("generate stalled.  Response so far:%s", response)
 		}
 	case <-done:
 		if genErr != nil && strings.Contains(genErr.Error(), "model requires more system memory") {
@@ -541,10 +597,12 @@ func DoChat(ctx context.Context, t *testing.T, client *api.Client, req api.ChatR
 			return nil
 		}
 		if genErr != nil {
-			t.Fatalf("%s failed with %s request prompt %s", genErr, req.Model, summarizeMessages(req.Messages))
+			t.Errorf("%s failed with %s request prompt %s", genErr, req.Model, summarizeMessages(req.Messages))
+			return msg()
 		}
-		verify()
-		slog.Info("test pass", "model", req.Model, "messages", summarizeMessages(req.Messages), "contains", anyResp, "response", response)
+		if verify() {
+			slog.Info("test pass", "model", req.Model, "messages", summarizeMessages(req.Messages), "contains", anyResp, "response", msg().Content)
+		}
 	case <-ctx.Done():
 		// On slow systems, we might timeout before some models finish rambling, so check what we have so far to see
 		// if it's considered a pass - the stallTimer will detect hangs, but we want to consider slow systems a pass
@@ -552,7 +610,7 @@ func DoChat(ctx context.Context, t *testing.T, client *api.Client, req api.ChatR
 		slog.Warn("outer test context done while waiting for chat")
 		verify()
 	}
-	return &api.Message{Role: role, Content: buf.String()}
+	return msg()
 }
 
 func containsExpectedResponse(response string, anyResp []string) bool {
@@ -671,43 +729,95 @@ func normalizeTargetGOARCH(goarch string) string {
 	}
 }
 
-// skipIfModelTooLargeForVRAM skips the test when the model's on-disk size
-// is larger than OLLAMA_MAX_VRAM by enough that even partial GPU offload
-// won't help. The 0.75x gate keeps vision/audio tests runnable on systems
-// where the model is slightly over VRAM and a portion legitimately spills to
-// CPU. No-op when OLLAMA_MAX_VRAM is unset.
-func skipIfModelTooLargeForVRAM(ctx context.Context, t *testing.T, client *api.Client, modelName string) {
+// vramGateWarning ensures the "VRAM gates disabled" warning is only
+// emitted once per test run.
+var vramGateWarning sync.Once
+
+// maxVRAMBytes returns the VRAM budget the VRAM gates test against, from the
+// OLLAMA_MAX_VRAM env var. Returns ok=false when it is unset, disabling the
+// gates; a one-time log line makes that visible in the run logs.
+// TODO derive this from a server API in the future.
+func maxVRAMBytes(t *testing.T) (uint64, bool) {
 	t.Helper()
 	s := os.Getenv("OLLAMA_MAX_VRAM")
 	if s == "" {
-		return
+		vramGateWarning.Do(func() {
+			slog.Warn("OLLAMA_MAX_VRAM not set - VRAM gates disabled, large models will be attempted")
+		})
+		return 0, false
 	}
 	maxVram, err := strconv.ParseUint(s, 10, 64)
 	if err != nil {
 		t.Fatalf("invalid OLLAMA_MAX_VRAM %v", err)
+	}
+	return maxVram, true
+}
+
+// modelNameMatches reports whether a model reference (possibly a bare name
+// without a tag, e.g. "gemma4") matches a listed model name (which is always
+// tagged, e.g. "gemma4:latest").
+func modelNameMatches(model, name string) bool {
+	if name == model {
+		return true
+	}
+	return !strings.Contains(model, ":") && strings.HasPrefix(name, model+":")
+}
+
+// skipIfModelSizeExceedsVRAM is the shared implementation for the VRAM size
+// gates: it skips the test when the model's on-disk size scaled by factor
+// exceeds OLLAMA_MAX_VRAM. No-op (with a one-time warning) when
+// OLLAMA_MAX_VRAM is unset.
+func skipIfModelSizeExceedsVRAM(ctx context.Context, t *testing.T, client *api.Client, modelName string, factor float32) {
+	t.Helper()
+	maxVram, ok := maxVRAMBytes(t)
+	if !ok {
+		return
+	}
+	// OLLAMA_MAX_VRAM=0 marks a CPU-only host: GPU-fit gating doesn't apply
+	// (the model runs from system RAM); the min-VRAM floors still bound
+	// model sizes there.
+	if maxVram == 0 {
+		return
 	}
 	resp, err := client.List(ctx)
 	if err != nil {
 		t.Fatalf("list models failed %v", err)
 	}
 	for _, m := range resp.Models {
-		if m.Name == modelName && float32(m.Size)*0.75 > float32(maxVram) {
-			t.Skipf("model %s is too large %s for available VRAM %s", modelName, format.HumanBytes(m.Size), format.HumanBytes(int64(maxVram)))
+		if modelNameMatches(modelName, m.Name) && float32(m.Size)*factor > float32(maxVram) {
+			t.Skipf("model %s is too large (%s on disk, x%.2f) for available VRAM %s", modelName, format.HumanBytes(m.Size), factor, format.HumanBytes(int64(maxVram)))
 		}
 	}
 }
 
+// skipIfModelTooLargeForVRAM skips the test when the model's on-disk size
+// is larger than OLLAMA_MAX_VRAM by enough that even partial GPU offload
+// won't help. The 0.75x factor keeps single-model tests (vision/audio)
+// runnable on systems where the model is slightly over VRAM and a portion
+// legitimately spills to CPU — partial offload is tolerable when only one
+// model is being exercised. No-op when OLLAMA_MAX_VRAM is unset.
+func skipIfModelTooLargeForVRAM(ctx context.Context, t *testing.T, client *api.Client, modelName string) {
+	t.Helper()
+	skipIfModelSizeExceedsVRAM(ctx, t, client, modelName, 0.75)
+}
+
+// skipIfModelTooLargeForSweepVRAM is the stricter gate used by model sweeps
+// (chat/embed/context cases that iterate many models). The 1.2x factor adds
+// headroom for KV cache and runtime overhead: sweeps must fit entirely in
+// VRAM or they run unacceptably slowly and time out the whole sweep, so any
+// model that would spill to CPU is skipped outright. No-op when
+// OLLAMA_MAX_VRAM is unset.
+func skipIfModelTooLargeForSweepVRAM(ctx context.Context, t *testing.T, client *api.Client, modelName string) {
+	t.Helper()
+	skipIfModelSizeExceedsVRAM(ctx, t, client, modelName, 1.2)
+}
+
 func skipUnderMinVRAM(t *testing.T, gb uint64) {
-	// TODO use info API in the future
-	if s := os.Getenv("OLLAMA_MAX_VRAM"); s != "" {
-		maxVram, err := strconv.ParseUint(s, 10, 64)
-		if err != nil {
-			t.Fatal(err)
-		}
+	// A value of 0 (CPU-only host) intentionally trips the floor, unlike
+	// the size gates: the floors bound model sizes on CPU-only systems.
+	if maxVram, ok := maxVRAMBytes(t); ok && maxVram < gb*format.GibiByte {
 		// Don't hammer on small VRAM cards...
-		if maxVram < gb*format.GibiByte {
-			t.Skip("skipping with small VRAM to avoid timeouts")
-		}
+		t.Skip("skipping with small VRAM to avoid timeouts")
 	}
 }
 
@@ -717,7 +827,7 @@ func skipIfNotGPULoaded(ctx context.Context, t *testing.T, client *api.Client, m
 	if gpuPercent < minPercent {
 		// Unload the model if we're going to skip
 		client.Generate(ctx, &api.GenerateRequest{Model: model, KeepAlive: &api.Duration{Duration: 0}}, func(rsp api.GenerateResponse) error { return nil })
-		t.Skip(fmt.Sprintf("test requires minimum %d%% GPU load, but model %s only has %d%%", minPercent, model, gpuPercent))
+		t.Skipf("test requires minimum %d%% GPU load, but model %s only has %d%%", minPercent, model, gpuPercent)
 	}
 }
 
@@ -729,14 +839,8 @@ func getGPUPercent(ctx context.Context, t *testing.T, client *api.Client, model 
 	loaded := []string{}
 	for _, m := range models.Models {
 		loaded = append(loaded, m.Name)
-		if strings.Contains(model, ":") {
-			if m.Name != model {
-				continue
-			}
-		} else if strings.Contains(m.Name, ":") {
-			if !strings.HasPrefix(m.Name, model+":") {
-				continue
-			}
+		if !modelNameMatches(model, m.Name) {
+			continue
 		}
 		gpuPercent := 0
 		switch {
