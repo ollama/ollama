@@ -986,9 +986,9 @@ type UsageResponse struct {
 
 // UsageActivity reports usage activity over a period.
 type UsageActivity struct {
-	Cost   string               `json:"cost"`
-	Period UsagePeriod          `json:"period"`
-	Models []UsageActivityModel `json:"models"`
+	Cost   string       `json:"cost"`
+	Period UsagePeriod  `json:"period"`
+	Models []UsageModel `json:"models"`
 }
 
 // UsagePeriod describes the time window the usage covers.
@@ -996,13 +996,6 @@ type UsagePeriod struct {
 	Type       string    `json:"type"`
 	StartingAt time.Time `json:"starting_at"`
 	EndingAt   time.Time `json:"ending_at"`
-}
-
-// UsageActivityModel reports per-model activity within a period.
-type UsageActivityModel struct {
-	Name         string `json:"name"`
-	RequestCount int    `json:"request_count"`
-	Cost         string `json:"cost"`
 }
 
 // UsageLimits reports included usage for the current session and week.
@@ -1013,14 +1006,15 @@ type UsageLimits struct {
 
 // UsageLimit reports the consumed fraction of an included-usage limit.
 type UsageLimit struct {
-	Usage  float64           `json:"usage"`
-	Models []UsageLimitModel `json:"models"`
+	Usage  float64      `json:"usage"`
+	Models []UsageModel `json:"models"`
 }
 
-// UsageLimitModel reports a model's contribution to an included-usage limit.
-type UsageLimitModel struct {
+// UsageModel reports a model's activity.
+type UsageModel struct {
 	Name         string `json:"name"`
 	RequestCount int    `json:"request_count"`
+	Cost         string `json:"cost,omitempty"`
 }
 
 // Tensor describes the metadata for a given tensor.

@@ -56,11 +56,6 @@ import (
 
 const signinURLStr = "https://ollama.com/connect?name=%s&key=%s"
 
-var (
-	accountBaseURL = "https://ollama.com"
-	usageBaseURL   = "https://ollama.com"
-)
-
 const (
 	cloudErrRemoteInferenceUnavailable    = "remote model is unavailable"
 	cloudErrRemoteModelDetailsUnavailable = "remote model details are unavailable"
@@ -2180,7 +2175,7 @@ func (s *Server) webExperimentalProxyHandler(c *gin.Context, proxyPath, disabled
 
 func (s *Server) WhoamiHandler(c *gin.Context) {
 	// todo allow other hosts
-	u, err := url.Parse(accountBaseURL)
+	u, err := url.Parse("https://ollama.com")
 	if err != nil {
 		slog.Error(err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "URL parse error"})
@@ -2233,50 +2228,7 @@ func (s *Server) WhoamiHandler(c *gin.Context) {
 }
 
 func (s *Server) UsageHandler(c *gin.Context) {
-	if internalcloud.Disabled() {
-		c.JSON(http.StatusForbidden, gin.H{"error": internalcloud.DisabledError(cloudErrUsageUnavailable)})
-		return
-	}
-
-	// todo allow other hosts
-	u, err := url.Parse(usageBaseURL)
-	if err != nil {
-		slog.Error(err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "URL parse error"})
-		return
-	}
-
-	client := api.NewClient(u, http.DefaultClient)
-	usage, err := client.Usage(c)
-	if err != nil {
-		var authErr api.AuthorizationError
-		if errors.As(err, &authErr) && authErr.StatusCode == http.StatusUnauthorized {
-			sURL := authErr.SigninURL
-			if sURL == "" {
-				var sErr error
-				sURL, sErr = signinURL()
-				if sErr != nil {
-					slog.Error(sErr.Error())
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "error getting authorization details"})
-					return
-				}
-			}
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "signin_url": sURL})
-			return
-		}
-
-		var statusErr api.StatusError
-		if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusForbidden {
-			c.JSON(http.StatusForbidden, gin.H{"error": statusErr.ErrorMessage})
-			return
-		}
-
-		slog.Error(err.Error())
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "account unavailable"})
-		return
-	}
-
-	c.JSON(http.StatusOK, usage)
+	proxyCloudRequest(c, nil, cloudErrUsageUnavailable)
 }
 
 func (s *Server) SignoutHandler(c *gin.Context) {
@@ -2290,7 +2242,7 @@ func (s *Server) SignoutHandler(c *gin.Context) {
 	encKey := base64.RawURLEncoding.EncodeToString([]byte(pubKey))
 
 	// todo allow other hosts
-	u, err := url.Parse(accountBaseURL)
+	u, err := url.Parse("https://ollama.com")
 	if err != nil {
 		slog.Error(err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "URL parse error"})

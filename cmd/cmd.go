@@ -30,7 +30,6 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/containerd/console"
 	"github.com/mattn/go-runewidth"
 	"github.com/olekukonko/tablewriter"
@@ -987,15 +986,6 @@ func UsageHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	status, err := client.CloudStatusExperimental(cmd.Context())
-	if err != nil {
-		return err
-	}
-	if status.Cloud.Disabled {
-		fmt.Fprintln(out, "Ollama Cloud is disabled; usage is unavailable")
-		return nil
-	}
-
 	usage, err := client.Usage(cmd.Context())
 	if err != nil {
 		var aErr api.AuthorizationError
@@ -1012,7 +1002,7 @@ func UsageHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Fprintln(out, usageHeading(out, "Usage"))
+	fmt.Fprintln(out, "Usage")
 	details := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	fmt.Fprintf(details, "  Period\t%s to %s\n", usage.Activity.Period.StartingAt.Format("2006-01-02"), usage.Activity.Period.EndingAt.Format("2006-01-02"))
 	fmt.Fprintf(details, "  Spend\t$%s\n", usage.Activity.Cost)
@@ -1020,17 +1010,15 @@ func UsageHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	hasLimits := usage.Limits.Session.Usage > 0 || len(usage.Limits.Session.Models) > 0 ||
-		usage.Limits.Weekly.Usage > 0 || len(usage.Limits.Weekly.Models) > 0
-	if len(usage.Activity.Models) == 0 && !hasLimits {
+	if len(usage.Activity.Models) == 0 && usageLimitEmpty(usage.Limits.Session) && usageLimitEmpty(usage.Limits.Weekly) {
 		fmt.Fprintln(out)
 		fmt.Fprintln(out, "No usage recorded for this period.")
 		return nil
 	}
 
-	if usage.Activity.Cost != "0.00000" && len(usage.Activity.Models) > 0 {
+	if len(usage.Activity.Models) > 0 {
 		fmt.Fprintln(out)
-		fmt.Fprintln(out, usageHeading(out, "Activity"))
+		fmt.Fprintln(out, "Activity")
 		table := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 		fmt.Fprintln(table, "  Model\tRequests\tSpend")
 		for _, m := range usage.Activity.Models {
@@ -1051,13 +1039,8 @@ func UsageHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-var usageTitleStyle = lipgloss.NewStyle().Bold(true)
-
-func usageHeading(out io.Writer, text string) string {
-	if f, ok := out.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
-		return usageTitleStyle.Render(text)
-	}
-	return text
+func usageLimitEmpty(limit api.UsageLimit) bool {
+	return limit.Usage == 0 && len(limit.Models) == 0
 }
 
 func usageModelName(name string) string {
@@ -1072,12 +1055,12 @@ func usageModelName(name string) string {
 }
 
 func writeUsageLimit(out io.Writer, name string, limit api.UsageLimit) error {
-	if limit.Usage == 0 && len(limit.Models) == 0 {
+	if usageLimitEmpty(limit) {
 		return nil
 	}
 
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, usageHeading(out, name))
+	fmt.Fprintln(out, name)
 	table := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	fmt.Fprintf(table, "  Used\t%.1f%%\n", limit.Usage*100)
 	if len(limit.Models) > 0 {
