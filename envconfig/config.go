@@ -143,6 +143,20 @@ func KeepAlive() (keepAlive time.Duration) {
 	return keepAlive
 }
 
+// MLXPingTimeout returns the timeout for pinging the MLX runner to check if it
+// is still alive. During large-context prefill the runner is busy and may not
+// respond within the default window; raise via OLLAMA_MLX_PING_TIMEOUT (e.g.
+// "60s"). Default is 10 seconds.
+func MLXPingTimeout() time.Duration {
+	d := 10 * time.Second
+	if s := Var("OLLAMA_MLX_PING_TIMEOUT"); s != "" {
+		if parsed, err := time.ParseDuration(s); err == nil && parsed > 0 {
+			d = parsed
+		}
+	}
+	return d
+}
+
 // LoadTimeout returns the duration for stall detection during model loads. LoadTimeout can be configured via the OLLAMA_LOAD_TIMEOUT environment variable.
 // Zero or Negative values are treated as infinite.
 // Default is 5 minutes.
@@ -323,6 +337,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_KEEP_ALIVE":           {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
 		"OLLAMA_LLM_LIBRARY":          {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},
 		"OLLAMA_LOAD_TIMEOUT":         {"OLLAMA_LOAD_TIMEOUT", LoadTimeout(), "How long to allow model loads to stall before giving up (default \"5m\")"},
+		"OLLAMA_MLX_PING_TIMEOUT":     {"OLLAMA_MLX_PING_TIMEOUT", MLXPingTimeout(), "Timeout for MLX runner health ping during large-context prefill (default \"10s\")"},
 		"OLLAMA_MAX_LOADED_MODELS":    {"OLLAMA_MAX_LOADED_MODELS", MaxRunners(), "Maximum number of loaded models per GPU"},
 		"OLLAMA_MAX_TRANSFER_STREAMS": {"OLLAMA_MAX_TRANSFER_STREAMS", MaxTransferStreams(), "Maximum parallel transfer streams for safetensors model pulls/pushes (default 4)"},
 		"OLLAMA_MAX_QUEUE":            {"OLLAMA_MAX_QUEUE", MaxQueue(), "Maximum number of queued requests"},
