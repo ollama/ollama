@@ -900,6 +900,54 @@ func TestSchedNeedsReload(t *testing.T) {
 	require.True(t, resp)
 }
 
+func TestSchedNeedsReloadNilFields(t *testing.T) {
+	t.Run("nil llama and model", func(t *testing.T) {
+		ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+		defer done()
+
+		// Runner that has been unloaded (llama and model set to nil by unload())
+		runner := &runnerRef{numParallel: 1}
+		req := &LlmRequest{
+			model: &Model{},
+			opts:  api.DefaultOptions(),
+		}
+		require.True(t, runner.needsReload(ctx, req),
+			"needsReload should return true when runner.llama and runner.model are nil")
+	})
+
+	t.Run("nil model only", func(t *testing.T) {
+		ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+		defer done()
+
+		runner := &runnerRef{
+			llama:       &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}},
+			numParallel: 1,
+		}
+		req := &LlmRequest{
+			model: &Model{},
+			opts:  api.DefaultOptions(),
+		}
+		require.True(t, runner.needsReload(ctx, req),
+			"needsReload should return true when runner.model is nil")
+	})
+
+	t.Run("nil llama only", func(t *testing.T) {
+		ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+		defer done()
+
+		runner := &runnerRef{
+			model:       &Model{},
+			numParallel: 1,
+		}
+		req := &LlmRequest{
+			model: &Model{},
+			opts:  api.DefaultOptions(),
+		}
+		require.True(t, runner.needsReload(ctx, req),
+			"needsReload should return true when runner.llama is nil")
+	})
+}
+
 func TestResolveContextShift(t *testing.T) {
 	trueValue := true
 	falseValue := false
