@@ -461,9 +461,13 @@ func SetupLlamaServerCommandEnv(cmd *exec.Cmd, exe string, gpuLibs []string, ext
 		envUpdates[k] = v
 	}
 
-	libraryPaths := llamaServerLibraryPaths(exe, gpuLibs, envUpdates)
+	libraryPaths, backends := llamaServerLibraryPaths(exe, gpuLibs, envUpdates)
 	pathEnv := llamaServerLibraryPathEnv()
 	envUpdates[pathEnv] = strings.Join(libraryPaths, string(filepath.ListSeparator))
+
+	if dir := llamaServerBackendWorkingDir(backends); dir != "" {
+		cmd.Dir = dir
+	}
 
 	applied := make(map[string]bool, len(envUpdates))
 	for i := range cmd.Env {
@@ -496,10 +500,15 @@ func llamaServerLibraryPathEnv() string {
 	}
 }
 
-func llamaServerLibraryPaths(exe string, gpuLibs []string, envUpdates map[string]string) []string {
+// llamaServerLibraryPaths returns the library search path for the subprocess and,
+// alongside it, every GPU backend it found across gpuLibs in order. The first is
+// published as GGML_BACKEND_PATH; the rest are the caller's problem, because ggml
+// takes only one path there — see llamaServerBackendWorkingDir.
+func llamaServerLibraryPaths(exe string, gpuLibs []string, envUpdates map[string]string) ([]string, []string) {
 	llamaDir := filepath.Dir(exe)
 	seen := map[string]bool{}
 	var libraryPaths []string
+	var backends []string
 	addPath := func(path string) {
 		if path == "" || seen[path] {
 			return
@@ -517,8 +526,9 @@ func llamaServerLibraryPaths(exe string, gpuLibs []string, envUpdates map[string
 		if dir == ml.LibOllamaPath || dir == llamaDir {
 			continue
 		}
-		if envUpdates["GGML_BACKEND_PATH"] == "" {
-			if backend := findLlamaServerGPUBackend(dir); backend != "" {
+		if backend := findLlamaServerGPUBackend(dir); backend != "" {
+			backends = append(backends, backend)
+			if envUpdates["GGML_BACKEND_PATH"] == "" {
 				envUpdates["GGML_BACKEND_PATH"] = backend
 			}
 		}
@@ -529,7 +539,38 @@ func llamaServerLibraryPaths(exe string, gpuLibs []string, envUpdates map[string
 			addPath(dir)
 		}
 	}
-	return adjustPlatformLibraryPaths(libraryPaths, gpuLibs)
+	return adjustPlatformLibraryPaths(libraryPaths, gpuLibs), backends
+}
+
+// llamaServerBackendWorkingDir returns the directory to run llama-server from so
+// that a second GPU backend is loaded, or "" when one backend is all there is.
+//
+// ggml loads the single library named by GGML_BACKEND_PATH, then scans two
+// directories for more: the one holding llama-server itself, and the process
+// working directory. Ollama ships each GPU backend in its own subdirectory of
+// lib/ollama, so the executable scan never turns up a GPU backend and the env var
+// is the only one that normally loads. A device list spanning libraries then dies
+// at startup with "invalid device: Vulkan1" -- the flag is right, the backend that
+// would name that device was never registered.
+//
+// The working directory is the one remaining search path a launcher can aim, so
+// aim it at the second backend. Adding the directory to PATH/LD_LIBRARY_PATH is
+// not equivalent: that resolves dependencies of a library already being loaded, it
+// does not make ggml discover one.
+//
+// Two is therefore the ceiling, and it is enough for the case that motivates this
+// (a CUDA discrete GPU plus a Vulkan iGPU). Anything beyond it is dropped loudly
+// rather than silently producing an unloadable device list.
+func llamaServerBackendWorkingDir(backends []string) string {
+	if len(backends) < 2 {
+		return ""
+	}
+	if len(backends) > 2 {
+		slog.Warn("llama-server can load at most two GPU backends; ignoring the rest",
+			"loading", backends[:2], "ignored", backends[2:])
+	}
+
+	return filepath.Dir(backends[1])
 }
 
 func findLlamaServerGPUBackend(dir string) string {
