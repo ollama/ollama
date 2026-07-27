@@ -463,6 +463,12 @@ jobs:
 
       - uses: golangci/golangci-lint-action@v9
 
+      - name: lint integration suites
+        if: ${{ startsWith(matrix.os, 'ubuntu') }}
+        uses: golangci/golangci-lint-action@v9
+        with:
+          args: --build-tags=integration,fast,release,library,create,generate ./integration/...
+
   race:
     strategy:
       matrix:
