@@ -24,15 +24,21 @@ func Execute(args []string) error {
 	slog.SetDefault(logutil.NewLogger(os.Stderr, envconfig.LogLevel()))
 
 	var (
-		modelName string
-		port      int
+		modelName  string
+		port       int
+		numParallel int
 	)
 
 	flagSet := flag.NewFlagSet("mlxrunner", flag.ExitOnError)
 	flagSet.StringVar(&modelName, "model", "", "Model name")
 	flagSet.IntVar(&port, "port", 0, "Port to listen on")
+	flagSet.IntVar(&numParallel, "parallel", 1, "Max parallel sequences (OLLAMA_NUM_PARALLEL)")
 	_ = flagSet.Bool("verbose", false, "Enable debug logging")
 	flagSet.Parse(args)
+
+	if numParallel < 1 {
+		numParallel = 1
+	}
 
 	worker, err := mlxthread.Start("mlxrunner", func() error {
 		if err := mlx.CheckInit(); err != nil {
@@ -59,8 +65,9 @@ func Execute(args []string) error {
 	defer cancelRunner()
 
 	runner := Runner{
-		Requests:  make(chan Request),
-		mlxThread: worker,
+		Requests:    make(chan Request),
+		mlxThread:   worker,
+		numParallel: numParallel,
 	}
 
 	if err := worker.Do(context.Background(), func() error {

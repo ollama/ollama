@@ -17,6 +17,10 @@ type Batch struct {
 	// Length equals the batch dimension of InputIDs.
 	SeqQueryLens []int32
 
+	// SeqIDs maps each batch row to a cache sequence index for multi-sequence
+	// caches. Nil means row i uses sequence i.
+	SeqIDs []int32
+
 	// Hidden is the target hidden state a draft model fuses with its input
 	// embedding for this step. It is nil for ordinary forward passes.
 	Hidden *mlx.Array
