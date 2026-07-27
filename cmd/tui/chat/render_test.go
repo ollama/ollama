@@ -2075,3 +2075,39 @@ func TestRenderMarkdownTableWrapsLongCells(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderMarkdownProseWithPipeExamplesIsNotTable(t *testing.T) {
+	markdown := strings.Join([]string{
+		"- **Regression confirmed** vs. `fdbe8d33`: the bare `< | open | >` remains prose.",
+		"| | |",
+		"- **Severity**: `< | close | >` is another inline example.",
+	}, "\n")
+
+	rendered := renderMarkdownForView(markdown, 120)
+	plain := stripANSI(rendered)
+	if !strings.Contains(plain, "| | |") || !strings.Contains(plain, "the bare < | open | > remains") || !strings.Contains(plain, "< | close | > is another") {
+		t.Fatalf("pipe-delimited prose rendered as a table:\n%s", plain)
+	}
+	if !strings.Contains(rendered, chatStrongStyle.Render("Regression confirmed")) {
+		t.Fatalf("bold prose was not emphasized: %q", rendered)
+	}
+	if !strings.Contains(rendered, chatInlineCodeStyle.Render("fdbe8d33")) {
+		t.Fatalf("inline code was not styled: %q", rendered)
+	}
+}
+
+func TestRenderMarkdownTablePreservesValidSeparator(t *testing.T) {
+	markdown := strings.Join([]string{
+		"| Name | State |",
+		"| --- | :---: |",
+		"| Ollama | Ready |",
+	}, "\n")
+
+	plain := stripANSI(renderMarkdownForView(markdown, 80))
+	if strings.Contains(plain, "---") {
+		t.Fatalf("table separator should not render as prose:\n%s", plain)
+	}
+	if !strings.Contains(plain, "Name") || !strings.Contains(plain, "Ollama") {
+		t.Fatalf("valid Markdown table was not rendered:\n%s", plain)
+	}
+}
