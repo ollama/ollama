@@ -342,6 +342,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					runnerToExpire.expireTimer.Stop()
 					runnerToExpire.expireTimer = nil
 				}
+				runnerToExpire.expiring = true
 				runnerToExpire.sessionDuration = 0
 				if runnerToExpire.refCount <= 0 {
 					s.expiredCh <- runnerToExpire
@@ -481,7 +482,7 @@ func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *Llm
 		runner.expireTimer.Stop()
 		runner.expireTimer = nil
 	}
-	if pending.sessionDuration != nil {
+	if pending.sessionDuration != nil && !runner.expiring {
 		runner.sessionDuration = pending.sessionDuration.Duration
 	}
 	pending.successCh <- runner
@@ -1344,6 +1345,7 @@ func (s *Scheduler) updateFreeSpace(allGpus []ml.DeviceInfo) {
 type runnerRef struct {
 	refMu    sync.Mutex
 	refCount uint // prevent unloading if > 0
+	expiring bool // prevents new requests from extending a runner marked for eviction
 
 	llama        llm.LlamaServer
 	pid          int
@@ -1389,6 +1391,9 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 	slog.Debug("evaluating already loaded", "model", schedulerModelKey(req.model))
 	runner.refMu.Lock()
 	defer runner.refMu.Unlock()
+	if runner.expiring {
+		return true
+	}
 
 	// Check if runner type (imagegen vs mlxrunner) matches what's requested.
 	wantImagegen := slices.Contains(req.model.Config.Capabilities, "image")
@@ -1623,6 +1628,7 @@ func (s *Scheduler) evictAllAndWait(ctx context.Context, keepKey string) bool {
 			runner.expireTimer = nil
 		}
 		runner.sessionDuration = 0
+		runner.expiring = true
 		if runner.refCount <= 0 {
 			s.expiredCh <- runner
 		}
@@ -1666,6 +1672,7 @@ func (s *Scheduler) expireRunnersForRuntimeOOM(model *Model, err error) {
 			runner.expireTimer = nil
 		}
 		runner.sessionDuration = 0
+		runner.expiring = true
 		if runner.refCount <= 0 {
 			s.expiredCh <- runner
 		}
@@ -1736,6 +1743,7 @@ func (s *Scheduler) expireRunner(model *Model) {
 			runner.expireTimer = nil
 		}
 		runner.sessionDuration = 0
+		runner.expiring = true
 		if runner.refCount <= 0 {
 			s.expiredCh <- runner
 		}
