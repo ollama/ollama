@@ -404,6 +404,12 @@ func (m *Model) generate(ctx context.Context, cfg *GenerateConfig) (*mlx.Array, 
 		ts.Free()
 	}
 
+	// Return the denoise loop's cached transient buffers (~6 GB at 1024x1024)
+	// before VAE decode allocates its own working set. On a warm runner the
+	// combined footprint can exceed VRAM, which degrades into unified-memory
+	// thrashing on CUDA and stalls the decode indefinitely.
+	mlx.ClearCache()
+
 	// VAE decode with tiling for larger images
 	fmt.Print("  Decoding VAE... ")
 	vaeStart := time.Now()

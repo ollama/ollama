@@ -315,7 +315,11 @@ func LoadMultiLinearLayer(weights WeightSource, path string) (nn.MultiLinearLaye
 			packFactor := 32 / bits
 			groupSize = weightCols * packFactor / scalesCols
 		}
-		weight = mlx.Dequantize(weight, scales, qbiases, groupSize, bits, "affine")
+		// Materialize the dequantized weight immediately: leaving the dequant
+		// graph lazy and letting it fuse into the first forward pass fails on
+		// the CUDA backend, yielding invalid arrays (empty Shape) that panic
+		// in the text encoder. See https://github.com/ollama/ollama/issues/14843
+		weight = mlx.Dequantize(weight, scales, qbiases, groupSize, bits, "affine").Eval()
 	}
 
 	return nn.NewMultiLinear(weight), nil
@@ -395,8 +399,12 @@ func LoadLinearLayer(weights WeightSource, path string) (nn.LinearLayer, error) 
 		}
 
 		// NVFP4 and MXFP8 don't have native quantized matmul kernels in MLX,
-		// so we always dequantize at load time. Affine modes (FP4, FP8) have kernel support.
-		if mlx.MetalIsAvailable() && mode != "nvfp4" && mode != "mxfp8" {
+		// so we always dequantize at load time. Affine modes (FP4, FP8) have
+		// kernel support on both Metal and CUDA, so keep those quantized on
+		// every backend: dequantizing all weights at load (~19.2 GB for
+		// flux2-klein:4b vs 5.3 GB quantized) exhausts VRAM on common GPUs and
+		// causes downstream MLX op failures (issue #14843).
+		if mode != "nvfp4" && mode != "mxfp8" {
 			return &nn.QuantizedLinear{
 				Weight:    weight,
 				Scales:    scales,
@@ -408,7 +416,8 @@ func LoadLinearLayer(weights WeightSource, path string) (nn.LinearLayer, error) 
 			}, nil
 		}
 
-		dequantized := mlx.Dequantize(weight, scales, qbiases, groupSize, bits, mode)
+		// Force materialization (see comment above / issue #14843)
+		dequantized := mlx.Dequantize(weight, scales, qbiases, groupSize, bits, mode).Eval()
 		return nn.NewLinear(dequantized, bias), nil
 	}
 
