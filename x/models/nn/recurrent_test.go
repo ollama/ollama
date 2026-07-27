@@ -30,84 +30,11 @@ func fromValues(seed float32, shape ...int) *mlx.Array {
 	return mlx.FromValues(vals, shape...)
 }
 
-// depthwiseCausalRef is a Go-side reference for the depthwise causal
-// 1D conv fallback. concat is [B, total, C], weight is [C, K], output
-// is [B, total-K+1, C]. Used to anchor the wrapper's parity tests.
-func depthwiseCausalRef(concat, weight *mlx.Array) []float32 {
-	mlx.Eval(concat, weight)
-	cVals := concat.Floats()
-	wVals := weight.Floats()
-	B := concat.Dim(0)
-	total := concat.Dim(1)
-	C := concat.Dim(2)
-	K := weight.Dim(1)
-	outLen := total - K + 1
-	out := make([]float32, B*outLen*C)
-	for bi := range B {
-		for q := range outLen {
-			for c := range C {
-				var sum float32
-				for k := range K {
-					x := cVals[bi*total*C+(q+k)*C+c]
-					w := wVals[c*K+k]
-					sum += x * w
-				}
-				out[bi*outLen*C+q*C+c] = sum
-			}
-		}
-	}
-	return out
-}
-
-// TestCausalConv1DParity drives the wrapper with non-trivial prior,
-// input, and weight values, then compares against a direct depthwise-
-// causal-conv reference.
-func TestCausalConv1DParity(t *testing.T) {
-	skipIfNoMLX(t)
-	B, L, D, convTail := 1, 4, 3, 2
-	K := convTail + 1
-
-	input := fromValues(0.5, B, L, D)
-	prior := fromValues(-0.3, B, convTail, D)
-	weight := fromValues(0.2, D, K)
-
-	out, convStates := CausalConv1D(&batch.Batch{}, input, nil, weight, convTail, WithRecurrentState(prior, nil))
-	nextConv := lastState(convStates)
-	mlx.Eval(out, nextConv)
-
-	concat := mlx.Concatenate([]*mlx.Array{prior, input}, 1)
-	want := depthwiseCausalRef(concat, weight)
-	got := out.Floats()
-	if len(got) != len(want) {
-		t.Fatalf("out len = %d, want %d", len(got), len(want))
-	}
-	for i := range want {
-		if math.Abs(float64(got[i]-want[i])) > 1e-5 {
-			t.Fatalf("out[%d]: got %v, want %v", i, got[i], want[i])
-		}
-	}
-
-	// nextConv (no padding) is the trailing convTail rows of concat.
-	mlx.Eval(concat)
-	cVals := concat.Floats()
-	total := concat.Dim(1)
-	wantTail := make([]float32, B*convTail*D)
-	for bi := range B {
-		for k := range convTail {
-			for d := range D {
-				wantTail[bi*convTail*D+k*D+d] = cVals[bi*total*D+(total-convTail+k)*D+d]
-			}
-		}
-	}
-	tail := nextConv.Floats()
-	if len(tail) != len(wantTail) {
-		t.Fatalf("nextConv len = %d, want %d", len(tail), len(wantTail))
-	}
-	for i := range wantTail {
-		if tail[i] != wantTail[i] {
-			t.Fatalf("nextConv[%d]: got %v, want %v", i, tail[i], wantTail[i])
-		}
-	}
+// convFromKernel builds the depthwise causal Conv1d the model constructs at
+// load time from a bare [C, K] kernel, so the wrapper tests drive the same
+// mlx.Conv1d path production runs.
+func convFromKernel(w *mlx.Array) *Conv1d {
+	return NewConv1d(mlx.ExpandDims(w, 2), nil, 1, 0, 1, int32(w.Dim(0)))
 }
 
 // TestCausalConv1DPaddedRowParity drives a B=2 batch with one short
@@ -122,6 +49,7 @@ func TestCausalConv1DPaddedRowParity(t *testing.T) {
 	K := convTail + 1
 
 	weight := fromValues(0.2, D, K)
+	conv := convFromKernel(weight)
 	priorFull := fromValues(0.5, 2, convTail, D)
 	priorShort := mlx.SliceStartStop(priorFull,
 		[]int32{1, 0, 0},
@@ -148,20 +76,20 @@ func TestCausalConv1DPaddedRowParity(t *testing.T) {
 		SeqQueryLens: []int32{int32(L), int32(qLenShort)},
 	}
 
-	out, convStates := CausalConv1D(b, input, nil, weight, convTail, WithRecurrentState(priorFull, nil))
+	out, convStates := CausalConv1D(b, input, conv, convTail, WithRecurrentState(priorFull, nil))
 	nextConv := lastState(convStates)
 	mlx.Eval(out, nextConv)
 
 	// Reference for row 0: B=1 unpadded length-L call.
 	refOut0, refConvStates0 := CausalConv1D(&batch.Batch{},
-		inputFull, nil, weight, convTail,
+		inputFull, conv, convTail,
 		WithRecurrentState(mlx.SliceStartStop(priorFull,
 			[]int32{0, 0, 0},
 			[]int32{1, int32(convTail), int32(D)}), nil))
 	refNextConv0 := lastState(refConvStates0)
 	// Reference for row 1: B=1 unpadded length-qLenShort call.
 	refOut1, refConvStates1 := CausalConv1D(&batch.Batch{},
-		inputShortReal, nil, weight, convTail,
+		inputShortReal, conv, convTail,
 		WithRecurrentState(priorShort, nil))
 	refNextConv1 := lastState(refConvStates1)
 	mlx.Eval(refOut0, refNextConv0, refOut1, refNextConv1)
@@ -413,15 +341,16 @@ func TestCausalConv1DSegmentEquivalence(t *testing.T) {
 	input := fromValues(0.5, B, L, D)
 	prior := fromValues(-0.3, B, convTail, D)
 	weight := fromValues(0.2, D, K)
+	conv := convFromKernel(weight)
 
 	full := &batch.Batch{SeqOffsets: []int32{0}, SeqQueryLens: []int32{int32(L)}}
 
-	refOut, refStates := CausalConv1D(full, input, nil, weight, convTail, WithRecurrentState(prior, nil))
+	refOut, refStates := CausalConv1D(full, input, conv, convTail, WithRecurrentState(prior, nil))
 	if len(refStates) != 1 {
 		t.Fatalf("unsegmented call returned %d states, want 1", len(refStates))
 	}
 
-	segOut, segStates := CausalConv1D(full, input, nil, weight, convTail,
+	segOut, segStates := CausalConv1D(full, input, conv, convTail,
 		WithRecurrentState(prior, nil), WithSnapshotSplits([]int{1, 2, 3}))
 	mlx.Eval(refOut, segOut)
 
@@ -437,7 +366,7 @@ func TestCausalConv1DSegmentEquivalence(t *testing.T) {
 		pb := &batch.Batch{SeqOffsets: []int32{0}, SeqQueryLens: []int32{n}}
 		_, want := CausalConv1D(pb,
 			mlx.SliceStartStop(input, []int32{0, 0, 0}, []int32{int32(B), n, int32(D)}),
-			nil, weight, convTail, WithRecurrentState(prior, nil))
+			conv, convTail, WithRecurrentState(prior, nil))
 		mlx.Eval(segStates[i], lastState(want))
 		floatsClose(t, "boundary conv", segStates[i].Floats(), lastState(want).Floats(), 1e-4)
 	}
@@ -445,7 +374,8 @@ func TestCausalConv1DSegmentEquivalence(t *testing.T) {
 
 // TestGatedDeltaSegmentEquivalenceBatched checks the segmented scan matches the
 // single-shot scan for B>1, including a ragged batch where rows have different
-// real lengths — segmentLens must clamp each row's per-segment query length.
+// real lengths — the per-segment sliced mask must zero each row's padded
+// positions so a short row's boundary state freezes at its real end.
 func TestGatedDeltaSegmentEquivalenceBatched(t *testing.T) {
 	skipIfNoMLX(t)
 	B, T, Hk, Dk, Hv, Dv := 2, 4, 1, 32, 1, 32
@@ -496,8 +426,10 @@ func TestGatedDeltaSegmentEquivalenceBatched(t *testing.T) {
 	}
 }
 
-// TestCausalConv1DSegmentEquivalenceBatched is the conv analog: segmented vs
-// single-shot for a ragged B>1 batch.
+// TestCausalConv1DSegmentEquivalenceBatched is the conv analog of the gated-delta
+// batched test: boundary tails from the single conv pass vs per-row single-shot
+// references for a ragged B>1 batch, where a short row must freeze its tail at
+// its real end rather than reach into padding.
 func TestCausalConv1DSegmentEquivalenceBatched(t *testing.T) {
 	skipIfNoMLX(t)
 	B, L, D, convTail := 2, 4, 3, 2
@@ -506,11 +438,12 @@ func TestCausalConv1DSegmentEquivalenceBatched(t *testing.T) {
 	input := fromValues(0.5, B, L, D)
 	prior := fromValues(-0.3, B, convTail, D)
 	weight := fromValues(0.2, D, K)
+	conv := convFromKernel(weight)
 
 	full := &batch.Batch{SeqOffsets: []int32{0, 0}, SeqQueryLens: []int32{int32(L), 3}}
 
-	refOut, refStates := CausalConv1D(full, input, nil, weight, convTail, WithRecurrentState(prior, nil))
-	segOut, segStates := CausalConv1D(full, input, nil, weight, convTail,
+	refOut, refStates := CausalConv1D(full, input, conv, convTail, WithRecurrentState(prior, nil))
+	segOut, segStates := CausalConv1D(full, input, conv, convTail,
 		WithRecurrentState(prior, nil), WithSnapshotSplits([]int{1, 2, 3}))
 	mlx.Eval(refOut, segOut, lastState(refStates), lastState(segStates))
 
@@ -532,7 +465,7 @@ func TestCausalConv1DSegmentEquivalenceBatched(t *testing.T) {
 				[]int32{int32(r), 0, 0}, []int32{int32(r) + 1, int32(convTail), int32(D)})
 			rowInput := mlx.SliceStartStop(input,
 				[]int32{int32(r), 0, 0}, []int32{int32(r) + 1, n, int32(D)})
-			_, want := CausalConv1D(&batch.Batch{}, rowInput, nil, weight, convTail,
+			_, want := CausalConv1D(&batch.Batch{}, rowInput, conv, convTail,
 				WithRecurrentState(rowPrior, nil))
 			gotRow := mlx.SliceStartStop(segStates[i],
 				[]int32{int32(r), 0, 0}, []int32{int32(r) + 1, int32(convTail), int32(D)})

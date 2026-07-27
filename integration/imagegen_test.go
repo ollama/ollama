@@ -13,7 +13,7 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-func TestImageGeneration(t *testing.T) {
+func runImageGeneration(t *testing.T) {
 	if testModel != "" {
 		t.Skip("uses hardcoded models, not applicable with model override")
 	}
@@ -51,6 +51,7 @@ func TestImageGeneration(t *testing.T) {
 			t.Logf("Generating image with prompt: %s", tc.prompt)
 			imageBase64, err := generateImage(ctx, client, tc.imageGenModel, tc.prompt)
 			if err != nil {
+				skipIfMLXUnsupported(t, err)
 				if strings.Contains(err.Error(), "image generation not available") {
 					t.Skip("Target system does not support image generation")
 				} else if strings.Contains(err.Error(), "executable file not found in") { // Windows pattern, not yet supported
@@ -79,10 +80,7 @@ func TestImageGeneration(t *testing.T) {
 			t.Logf("Generated image: %d bytes", len(imageData))
 
 			// Preload vision model and check GPU loading
-			err = client.Generate(ctx, &api.GenerateRequest{Model: tc.visionModel}, func(response api.GenerateResponse) error { return nil })
-			if err != nil {
-				t.Fatalf("failed to load vision model: %v", err)
-			}
+			preloadGenerateModel(ctx, t, client, api.GenerateRequest{Model: tc.visionModel})
 
 			// Use vision model to describe the image
 			chatReq := api.ChatRequest{

@@ -53,7 +53,24 @@ func (b *Bash) RequiresApproval(map[string]any) bool {
 	return true
 }
 
+// ApprovalScope scopes shell approval to the exact, trimmed command string
+// using a NUL separator: "<tool>\x00<command>". "Always allow this command"
+// matches ONLY that precise string — any whitespace, quoting, or casing
+// variant re-prompts. The NUL separator is safe because a shell command
+// string cannot contain a literal NUL.
+func (b *Bash) ApprovalScope(args map[string]any) string {
+	name := b.Name()
+	if command, ok := args["command"].(string); ok {
+		command = strings.TrimSpace(command)
+		if command != "" {
+			return name + "\x00" + command
+		}
+	}
+	return name
+}
+
 func (b *Bash) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[string]any) (agent.ToolResult, error) {
+	// TODO: use shared agent.RequiredStringArg for the "command" parameter (see agent package cleanup plan).
 	command, ok := args["command"].(string)
 	if !ok || strings.TrimSpace(command) == "" {
 		return agent.ToolResult{}, fmt.Errorf("command parameter is required")
@@ -133,6 +150,13 @@ func bashContentWithError(content, msg string) string {
 	return content + "\n\n" + msg
 }
 
+// rejectUnsafeShellCommand applies a best-effort blocklist for obviously
+// destructive or credential-exfiltrating commands. It is defense-in-depth
+// ONLY: the interactive approval prompt is the real security control, and
+// this check must not be relied upon as a sandbox. Sophisticated or novel
+// dangerous commands (e.g. find / -delete, dd, fork bombs, custom binaries)
+// are NOT caught here and will simply be routed through approval like any
+// other command. Keep the approval prompt as the gate.
 func rejectUnsafeShellCommand(command string) error {
 	switch {
 	case hasUnsafeRecursiveDelete(command):
@@ -145,16 +169,51 @@ func rejectUnsafeShellCommand(command string) error {
 }
 
 func hasUnsafeRecursiveDelete(command string) bool {
-	fields := shellSafetyFields(command)
-	for i, field := range fields {
-		if isRMCommand(field) && rmCommandDeletesUnsafeTarget(fields[i+1:]) {
-			return true
-		}
-		if isPowerShellDeleteCommand(field) && powerShellDeleteCommandDeletesUnsafeTarget(fields[i+1:]) {
-			return true
+	// Check each command segment independently. shellSafetyText flattens
+	// separators (; & | newlines) to spaces, which would otherwise let the
+	// rm target scan bleed across command boundaries — e.g.
+	// "rm -rf build && echo ~/.ssh/config" flattened to one token stream
+	// would treat the unrelated ~/.ssh/config (a ~/-prefixed "unsafe
+	// target") as an rm argument. Splitting on separators first restores
+	// command boundaries while still catching multi-target single commands
+	// like "rm -rf build /etc".
+	for _, segment := range shellSegments(command) {
+		fields := shellSafetyFields(segment)
+		for i, field := range fields {
+			if isRMCommand(field) && rmCommandDeletesUnsafeTarget(fields[i+1:]) {
+				return true
+			}
+			if isPowerShellDeleteCommand(field) && powerShellDeleteCommandDeletesUnsafeTarget(fields[i+1:]) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// shellSegments splits a command on shell control operators (;, &, |, &&,
+// ||) and newlines, returning the individual command segments. It operates on
+// the lowercased raw command before quote/separator normalization so that
+// command boundaries are preserved for per-segment checks. Subshell parens are
+// intentionally NOT treated as separators: splitting on them would fragment
+// command substitutions like "rm -rf $(echo /)" into "rm -rf $" and "echo /",
+// hiding the destructive "/" target from the per-segment scan. Empty segments
+// are dropped.
+func shellSegments(command string) []string {
+	command = strings.ToLower(command)
+	var segments []string
+	for _, segment := range strings.FieldsFunc(command, func(r rune) bool {
+		switch r {
+		case ';', '&', '|', '\n', '\r':
+			return true
+		}
+		return false
+	}) {
+		if segment = strings.TrimSpace(segment); segment != "" {
+			segments = append(segments, segment)
+		}
+	}
+	return segments
 }
 
 func rmCommandDeletesUnsafeTarget(fields []string) bool {
@@ -211,9 +270,17 @@ func readsCredentialPath(command string) bool {
 		"/.ssh/id_dsa",
 		"/.ssh/id_ecdsa",
 		"/.ssh/id_ed25519",
+		"/.ssh/config",
+		"/.ssh/known_hosts",
 		"/.aws/credentials",
+		"/.aws/config",
 		"/.config/gcloud/application_default_credentials.json",
 		"/.kube/config",
+		"/.netrc",
+		"/.npmrc",
+		"/.docker/config.json",
+		"/.config/gh/hosts.yml",
+		"/.gnupg/",
 		"/etc/shadow",
 	} {
 		if strings.Contains(normalized, fragment) {
@@ -227,6 +294,8 @@ func hasCredentialReadVerb(fields []string) bool {
 	for _, field := range fields {
 		switch field {
 		case "cat", "less", "more", "head", "tail", "type", "get-content", "gc", "select-string", "grep", "rg", "sed", "awk":
+			return true
+		case "env", "printenv":
 			return true
 		}
 	}
@@ -363,7 +432,7 @@ func (b *boundedOutput) String(label string) string {
 	if omitted == 0 {
 		return content
 	}
-	return content + fmt.Sprintf("\n\n[%s truncated: omitted ~%d tokens]", label, approximateTokensFromBytes(omitted))
+	return content + agent.TruncMarker(label, safeLen, 0, omitted, false, "")
 }
 
 func utf8SafePrefixLen(p []byte) int {
@@ -378,11 +447,4 @@ func utf8SafePrefixLen(p []byte) int {
 		i += size
 	}
 	return len(p)
-}
-
-func approximateTokensFromBytes(n int) int {
-	if n <= 0 {
-		return 0
-	}
-	return max(1, (n+3)/4)
 }

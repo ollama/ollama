@@ -59,7 +59,7 @@ function(ollama_macos_major_version output)
         RESULT_VARIABLE _macos_result
         ERROR_QUIET)
     if(_macos_result EQUAL 0)
-        string(REGEX MATCH "^[0-9]+" _macos_major "${_macos_version}")
+        string(REGEX MATCH "^[0-9]+(\\.[0-9]+)?" _macos_major "${_macos_version}")
     endif()
     set(${output} "${_macos_major}" PARENT_SCOPE)
 endfunction()
@@ -72,7 +72,7 @@ function(ollama_macos_sdk_major_version output)
         RESULT_VARIABLE _sdk_result
         ERROR_QUIET)
     if(_sdk_result EQUAL 0)
-        string(REGEX MATCH "^[0-9]+" _sdk_major "${_sdk_version}")
+        string(REGEX MATCH "^[0-9]+(\\.[0-9]+)?" _sdk_major "${_sdk_version}")
     endif()
     set(${output} "${_sdk_major}" PARENT_SCOPE)
 endfunction()
@@ -83,7 +83,9 @@ function(ollama_default_mlx_backends output)
         ollama_check_metal_toolchain(_metal_version)
         ollama_macos_major_version(_macos_major)
         ollama_macos_sdk_major_version(_sdk_major)
-        if(_macos_major AND _sdk_major AND _macos_major GREATER_EQUAL 26 AND _sdk_major GREATER_EQUAL 26)
+        if(_macos_major AND _sdk_major
+            AND _macos_major VERSION_GREATER_EQUAL 26.2
+            AND _sdk_major VERSION_GREATER_EQUAL 26.2)
             set(_backends "metal_v4")
         else()
             set(_backends "metal_v3")
@@ -751,14 +753,15 @@ foreach(_backend IN LISTS OLLAMA_MLX_BACKENDS)
         endif()
         ollama_check_metal_toolchain(_metal_version)
         ollama_macos_sdk_major_version(_ollama_mlx_sdk_major)
-        if(_ollama_mlx_sdk_major AND _ollama_mlx_sdk_major GREATER_EQUAL 26)
+        if(_ollama_mlx_sdk_major
+            AND _ollama_mlx_sdk_major VERSION_GREATER_EQUAL 26.2)
             ollama_add_mlx_build(metal_v4
                 PRESET mlx_metal_v4
                 RUNNER_DIR mlx_metal_v4)
             list(APPEND _mlx_targets ollama-mlx-metal_v4)
         else()
             message(FATAL_ERROR
-                "OLLAMA_MLX_BACKENDS=metal_v4 requires the macOS 26 SDK. "
+                "OLLAMA_MLX_BACKENDS=metal_v4 requires the macOS 26.2 SDK. "
                 "Install a newer Xcode or use OLLAMA_MLX_BACKENDS=metal_v3.")
         endif()
     else()

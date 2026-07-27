@@ -70,7 +70,7 @@ func NewClient(modelName string, softContextLength int) (*Client, error) {
 
 // WaitUntilRunning waits for the subprocess to be ready.
 func (c *Client) WaitUntilRunning(ctx context.Context) error {
-	timeout := time.After(2 * time.Minute)
+	timeout := time.After(envconfig.LoadTimeout())
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 

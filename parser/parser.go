@@ -380,6 +380,14 @@ func filesForModel(path string) ([]string, error) {
 	}
 	files = append(files, js...)
 
+	// Transformers stores a tokenizer's default template in this standalone
+	// file when it is not embedded in tokenizer_config.json.
+	chatTemplates, err := glob(filepath.Join(path, "chat_template.jinja"), "text/plain")
+	if err != nil {
+		return nil, err
+	}
+	files = append(files, chatTemplates...)
+
 	// add tokenizer.model if it exists (tokenizer.json is automatically picked up by the previous glob)
 	// tokenizer.model might be a unresolved git lfs reference; error if it is
 	if tks, _ := glob(filepath.Join(path, "tokenizer.model"), "application/octet-stream"); len(tks) > 0 {

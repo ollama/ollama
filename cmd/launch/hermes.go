@@ -152,7 +152,7 @@ func (h *HermesDesktop) launchArgs(args []string) []string {
 }
 
 func (h *HermesDesktop) shouldSkipDesktopBuild(args []string) bool {
-	if hermesDesktopHasFlag(args, "--skip-build", "--source", "--build-only", "--help", "-h") {
+	if hermesDesktopHasFlag(args, "--skip-build", "--force-build", "--source", "--build-only", "--help", "-h") {
 		return false
 	}
 	return h.packagedAppExists()

@@ -44,7 +44,7 @@ func TestBashBoundsOutputWhileRunning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result.Content, "[stdout truncated: omitted ~") || !strings.Contains(result.Content, " tokens]") {
+	if !strings.Contains(result.Content, "[stdout truncated: showing first ~") || !strings.Contains(result.Content, "omitted ~") || !strings.Contains(result.Content, " tokens.]") {
 		t.Fatalf("content = %q, want stdout truncation marker", result.Content)
 	}
 	if count, want := strings.Count(result.Content, "x"), shellTestCapturedXCount(); count != want {
@@ -162,10 +162,22 @@ func TestRejectUnsafeShellCommand(t *testing.T) {
 		{name: "ssh private key", command: "cat ~/.ssh/id_rsa", wantErr: true},
 		{name: "aws credentials", command: "Get-Content $HOME/.aws/credentials", wantErr: true},
 		{name: "shadow", command: "head /etc/shadow", wantErr: true},
+		{name: "netrc", command: "cat ~/.netrc", wantErr: true},
+		{name: "docker config", command: "cat ~/.docker/config.json", wantErr: true},
+		{name: "gnupg dir", command: "cat ~/.gnupg/private-keys-v1.d/key", wantErr: true},
+		{name: "gh hosts", command: "cat ~/.config/gh/hosts.yml", wantErr: true},
+		{name: "ssh config", command: "cat ~/.ssh/config", wantErr: true},
+		{name: "printenv dump", command: "printenv", wantErr: false},
 		{name: "delete build dir", command: "rm -rf build", wantErr: false},
 		{name: "read project file", command: "cat README.md", wantErr: false},
 		{name: "mention key text", command: "rg id_rsa docs", wantErr: false},
 		{name: "env example", command: "cat .env.example", wantErr: false},
+		{name: "rm build then unrelated tilde path", command: "rm -rf build && echo ~/.ssh/config", wantErr: false},
+		{name: "rm build then unrelated slash path", command: "rm -rf build; cat /etc/passwd", wantErr: false},
+		{name: "rm build then unrelated star glob", command: "rm -rf build && ls *.go", wantErr: false},
+		{name: "rm multiple targets one unsafe", command: "rm -rf build /etc", wantErr: true},
+		{name: "rm unsafe then safe piped", command: "rm -rf / | tee log", wantErr: true},
+		{name: "rm unsafe via command substitution", command: "rm -rf $(echo /)", wantErr: true},
 	}
 
 	for _, tt := range tests {

@@ -38,7 +38,7 @@ type Runner struct {
 	Tokenizer     *tokenizer.Tokenizer
 	Requests      chan Request
 	Sampler       *sample.Sampler
-	cache         kvCache
+	cache         *prefixCache
 	contextLength int
 	mlxThread     *mlxthread.Thread
 	// spec is the speculative-decoding subsystem. Nil when the model ships no
@@ -101,16 +101,53 @@ func (r *Runner) Load(modelName string) error {
 	}
 	mlx.Sweep()
 	mlx.Eval(collected...)
+	configureWiredMemory()
 
 	r.Model = m
 	r.Tokenizer = m.Tokenizer()
 	r.contextLength = m.MaxContextLength()
+	r.cache = newPrefixCache(m)
 	r.Sampler = sample.New(r.contextLength)
 	r.spec = newSpeculation(r, draftModel)
 
 	mlx.EnableCompile()
 
 	return nil
+}
+
+func configureWiredMemory() {
+	if !mlx.GPUIsAvailable() {
+		return
+	}
+
+	active := mlx.ActiveMemory()
+	maxRecommended, err := mlx.MaxRecommendedWorkingSetSize()
+	if err != nil {
+		slog.Warn("Unable to query MLX recommended working set; using pageable memory", "error", err)
+		return
+	}
+
+	limit := min(active, maxRecommended)
+	previous, err := mlx.SetWiredLimit(limit)
+	if err != nil {
+		slog.Warn("Unable to configure MLX wired memory; using pageable memory",
+			"active", mlx.PrettyBytes(active),
+			"limit", mlx.PrettyBytes(limit),
+			"error", err)
+		return
+	}
+
+	if active > maxRecommended {
+		slog.Warn("MLX model exceeds the recommended working set; performance may be degraded",
+			"active", mlx.PrettyBytes(active),
+			"recommended", mlx.PrettyBytes(maxRecommended))
+	}
+	// Limiting residency to the loaded model's active allocations avoids
+	// reserving the remaining capacity for growing KV caches.
+	slog.Debug("Configured MLX wired memory",
+		"active", mlx.PrettyBytes(active),
+		"limit", mlx.PrettyBytes(limit),
+		"previous", mlx.PrettyBytes(previous))
 }
 
 // loadTensorsFromManifest loads all tensor blobs from the manifest into a

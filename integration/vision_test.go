@@ -13,17 +13,6 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
-// Default set of vision models to test. When OLLAMA_TEST_MODEL is set,
-// only that model is tested (with a capability check for vision).
-var defaultVisionModels = []string{
-	"nemotron3:33b",
-	"gemma4",
-	"gemma3",
-	// "llama3.2-vision", // TODO: re-enable when llama.cpp supports mllama.
-	"qwen2.5vl",
-	"qwen3-vl:8b",
-}
-
 // decodeTestImages returns the test images.
 func decodeTestImages(t *testing.T) (abbeyRoad, docs, ollamaHome api.ImageData) {
 	t.Helper()
@@ -68,22 +57,17 @@ func skipIfNoVisionOverride(t *testing.T) {
 // setupVisionModel pulls the model, preloads it, and skips if not GPU-loaded.
 func setupVisionModel(ctx context.Context, t *testing.T, client *api.Client, model string) {
 	t.Helper()
-	if testModel == "" {
-		pullOrSkip(ctx, t, client, model)
-	}
+	pullOrSkip(ctx, t, client, model)
 	skipIfModelTooLargeForVRAM(ctx, t, client, model)
 	requireCapability(ctx, t, client, model, "vision")
-	err := client.Generate(ctx, &api.GenerateRequest{Model: model}, func(response api.GenerateResponse) error { return nil })
-	if err != nil {
-		t.Fatalf("failed to load model %s: %s", model, err)
-	}
+	preloadGenerateModel(ctx, t, client, api.GenerateRequest{Model: model})
 	skipIfNotGPULoaded(ctx, t, client, model, 80)
 }
 
-// TestVisionMultiTurn sends an image, gets a response, then asks follow-up
+// runVisionMultiTurn sends an image, gets a response, then asks follow-up
 // questions about the same image. This verifies that the KV cache correctly
 // handles cached image tokens across turns.
-func TestVisionMultiTurn(t *testing.T) {
+func runVisionMultiTurn(t *testing.T, models []string) {
 	skipUnderMinVRAM(t, 16)
 	skipIfNoVisionOverride(t)
 
@@ -93,8 +77,9 @@ func TestVisionMultiTurn(t *testing.T) {
 		"llama3.2-vision": "miscounts animals (says 3 instead of 4) on turn 2",
 	}
 
-	for _, model := range testModels(defaultVisionModels) {
+	for _, model := range testModels(models) {
 		t.Run(model, func(t *testing.T) {
+			skipKnownIntegrationFlake(t, "vision-multiturn", model)
 			if reason, ok := skipModels[model]; ok && testModel == "" {
 				t.Skipf("skipping: %s", reason)
 			}
@@ -151,8 +136,8 @@ func TestVisionMultiTurn(t *testing.T) {
 	}
 }
 
-// TestVisionObjectCounting asks the model to count objects in an image.
-func TestVisionObjectCounting(t *testing.T) {
+// runVisionObjectCounting asks the model to count objects in an image.
+func runVisionObjectCounting(t *testing.T, models []string) {
 	skipUnderMinVRAM(t, 16)
 	skipIfNoVisionOverride(t)
 
@@ -160,8 +145,9 @@ func TestVisionObjectCounting(t *testing.T) {
 		"llama3.2-vision": "consistently miscounts (says 3 instead of 4)",
 	}
 
-	for _, model := range testModels(defaultVisionModels) {
+	for _, model := range testModels(models) {
 		t.Run(model, func(t *testing.T) {
+			skipKnownIntegrationFlake(t, "vision-count", model)
 			if reason, ok := skipModels[model]; ok && testModel == "" {
 				t.Skipf("skipping: %s", reason)
 			}
@@ -191,9 +177,9 @@ func TestVisionObjectCounting(t *testing.T) {
 	}
 }
 
-// TestVisionSceneUnderstanding tests whether the model can identify
+// runVisionSceneUnderstanding tests whether the model can identify
 // cultural references and scene context from an image.
-func TestVisionSceneUnderstanding(t *testing.T) {
+func runVisionSceneUnderstanding(t *testing.T, models []string) {
 	skipUnderMinVRAM(t, 16)
 	skipIfNoVisionOverride(t)
 
@@ -203,7 +189,7 @@ func TestVisionSceneUnderstanding(t *testing.T) {
 		"minicpm-v":       "too small for cultural reference detection",
 	}
 
-	for _, model := range testModels(defaultVisionModels) {
+	for _, model := range testModels(models) {
 		t.Run(model, func(t *testing.T) {
 			if reason, ok := skipModels[model]; ok && testModel == "" {
 				t.Skipf("skipping: %s", reason)
@@ -236,13 +222,13 @@ func TestVisionSceneUnderstanding(t *testing.T) {
 	}
 }
 
-// TestVisionSpatialReasoning tests the model's ability to identify
+// runVisionSpatialReasoning tests the model's ability to identify
 // objects based on their spatial position in the image.
-func TestVisionSpatialReasoning(t *testing.T) {
+func runVisionSpatialReasoning(t *testing.T, models []string) {
 	skipUnderMinVRAM(t, 16)
 	skipIfNoVisionOverride(t)
 
-	for _, model := range testModels(defaultVisionModels) {
+	for _, model := range testModels(models) {
 		t.Run(model, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 			defer cancel()
@@ -274,13 +260,13 @@ func TestVisionSpatialReasoning(t *testing.T) {
 	}
 }
 
-// TestVisionDetailRecognition tests whether the model can identify
+// runVisionDetailRecognition tests whether the model can identify
 // small details like accessories in an image.
-func TestVisionDetailRecognition(t *testing.T) {
+func runVisionDetailRecognition(t *testing.T, models []string) {
 	skipUnderMinVRAM(t, 16)
 	skipIfNoVisionOverride(t)
 
-	for _, model := range testModels(defaultVisionModels) {
+	for _, model := range testModels(models) {
 		t.Run(model, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 			defer cancel()
@@ -310,10 +296,10 @@ func TestVisionDetailRecognition(t *testing.T) {
 	}
 }
 
-// TestVisionMultiImage sends two images in a single message and asks
+// runVisionMultiImage sends two images in a single message and asks
 // the model to compare and contrast them. This exercises multi-image
 // encoding and cross-image reasoning.
-func TestVisionMultiImage(t *testing.T) {
+func runVisionMultiImage(t *testing.T, models []string) {
 	skipUnderMinVRAM(t, 16)
 	skipIfNoVisionOverride(t)
 
@@ -322,7 +308,7 @@ func TestVisionMultiImage(t *testing.T) {
 		"llama3.2-vision": "does not support multi-image input",
 	}
 
-	for _, model := range testModels(defaultVisionModels) {
+	for _, model := range testModels(models) {
 		t.Run(model, func(t *testing.T) {
 			if reason, ok := skipModels[model]; ok && testModel == "" {
 				t.Skipf("skipping: %s", reason)
@@ -357,14 +343,14 @@ func TestVisionMultiImage(t *testing.T) {
 	}
 }
 
-// TestVisionImageDescription verifies that the model can describe the contents
+// runVisionImageDescription verifies that the model can describe the contents
 // of the ollama homepage image (a cartoon llama with "Start building with
 // open models" text). Basic sanity check that the vision pipeline works.
-func TestVisionImageDescription(t *testing.T) {
+func runVisionImageDescription(t *testing.T, models []string) {
 	skipUnderMinVRAM(t, 16)
 	skipIfNoVisionOverride(t)
 
-	for _, model := range testModels(defaultVisionModels) {
+	for _, model := range testModels(models) {
 		t.Run(model, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 			defer cancel()

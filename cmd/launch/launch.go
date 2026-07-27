@@ -287,7 +287,7 @@ Flags and extra arguments require an integration name.
 
 Supported integrations:
   claude          Claude Code
-  codex-app       Codex App (aliases: codex-desktop, codex-gui)
+  chatgpt         ChatGPT (aliases: codex-app, codex-desktop, codex-gui)
   hermes          Hermes Agent
   openclaw        OpenClaw (aliases: clawdbot, moltbot)
   opencode        OpenCode
@@ -307,8 +307,8 @@ Examples:
   ollama launch
   ollama launch claude
   ollama launch claude --model <model>
-  ollama launch codex-app
-  ollama launch codex-app --restore
+  ollama launch chatgpt
+  ollama launch chatgpt --restore
   ollama launch hermes
   ollama launch hermes-desktop
   ollama launch droid --config (does not auto-launch)
@@ -707,9 +707,12 @@ func (c *launcherClient) resolveRunModel(ctx context.Context, req RunModelReques
 		}
 		if usable {
 			if err := c.ensureModelsReady(ctx, []string{current}); err != nil {
-				return "", err
+				if !errors.Is(err, errDeprecatedLaunchModelDeclined) {
+					return "", err
+				}
+			} else {
+				return current, nil
 			}
-			return current, nil
 		}
 	}
 
@@ -726,7 +729,7 @@ func (c *launcherClient) resolveRunModel(ctx context.Context, req RunModelReques
 }
 
 func (c *launcherClient) launchSingleIntegration(ctx context.Context, name string, runner Runner, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
-	target, _, err := c.resolveSingleIntegrationTarget(ctx, runner, primaryModelFromConfig(saved), req)
+	target, _, err := c.resolveSingleIntegrationTarget(ctx, name, runner, primaryModelFromConfig(saved), req)
 	if err != nil {
 		return err
 	}
@@ -748,14 +751,22 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 	models, needsConfigure := c.resolveEditorLaunchModels(ctx, saved, req)
 
 	if needsConfigure {
-		selected, err := c.selectMultiModelsForIntegration(ctx, runner, models)
+		selected, err := c.selectMultiModelsForIntegration(ctx, name, runner, models)
 		if err != nil {
 			return err
 		}
 		models = selected
 	} else if len(models) > 0 {
-		if err := c.ensureModelsReady(ctx, models[:1]); err != nil {
-			return err
+		if err := c.ensureModelsReadyFor(ctx, models[:1], runner.String(), name); err != nil {
+			if !errors.Is(err, errDeprecatedLaunchModelDeclined) || req.ModelOverride != "" {
+				return err
+			}
+			selected, err := c.selectMultiModelsForIntegration(ctx, name, runner, models)
+			if err != nil {
+				return err
+			}
+			models = selected
+			needsConfigure = true
 		}
 	}
 
@@ -784,7 +795,7 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 		selectionCurrent = primaryModelFromConfig(saved)
 	}
 
-	target, needsConfigure, err := c.resolveSingleIntegrationTarget(ctx, runner, selectionCurrent, req)
+	target, needsConfigure, err := c.resolveSingleIntegrationTarget(ctx, name, runner, selectionCurrent, req)
 	if err != nil {
 		return err
 	}
@@ -954,7 +965,7 @@ func (c *launcherClient) managedSingleConfigureModels(ctx context.Context, manag
 	return dedupeModelList(models), nil
 }
 
-func (c *launcherClient) resolveSingleIntegrationTarget(ctx context.Context, runner Runner, current string, req IntegrationLaunchRequest) (string, bool, error) {
+func (c *launcherClient) resolveSingleIntegrationTarget(ctx context.Context, name string, runner Runner, current string, req IntegrationLaunchRequest) (string, bool, error) {
 	target := req.ModelOverride
 	needsConfigure := req.ForceConfigure
 	skipReadiness := false
@@ -978,14 +989,24 @@ func (c *launcherClient) resolveSingleIntegrationTarget(ctx context.Context, run
 	}
 
 	if needsConfigure && req.ModelOverride == "" {
-		selected, err := c.selectSingleModelWithSelectorReady(ctx, fmt.Sprintf("Select model for %s:", runner), target, DefaultSingleSelector, !skipReadiness)
+		selected, err := c.selectSingleModelWithSelectorReady(ctx, fmt.Sprintf("Select model for %s:", runner), target, DefaultSingleSelector, !skipReadiness, runner.String(), name)
 		if err != nil {
 			return "", false, err
 		}
 		target = selected
 	} else if !skipReadiness {
-		if err := c.ensureModelsReady(ctx, []string{target}); err != nil {
-			return "", false, err
+		if err := c.ensureModelsReadyFor(ctx, []string{target}, runner.String(), name); err != nil {
+			if !errors.Is(err, errDeprecatedLaunchModelDeclined) {
+				return "", false, err
+			}
+			// "Pick another model" is an interactive recovery path, including
+			// when --model supplied the initial target.
+			selected, err := c.selectSingleModelWithSelectorReady(ctx, fmt.Sprintf("Select model for %s:", runner), target, DefaultSingleSelector, true, runner.String(), name)
+			if err != nil {
+				return "", false, err
+			}
+			target = selected
+			needsConfigure = true
 		}
 	}
 
@@ -1023,7 +1044,7 @@ func managedRequiresInteractiveOnboarding(managed any) bool {
 }
 
 func (c *launcherClient) selectSingleModelWithSelector(ctx context.Context, title, current string, selector SingleSelector) (string, error) {
-	return c.selectSingleModelWithSelectorReady(ctx, title, current, selector, true)
+	return c.selectSingleModelWithSelectorReady(ctx, title, current, selector, true, "ollama launch", "")
 }
 
 func (c *launcherClient) latestAccountState() *AccountState {
@@ -1033,7 +1054,7 @@ func (c *launcherClient) latestAccountState() *AccountState {
 	return c.accountState
 }
 
-func (c *launcherClient) selectSingleModelWithSelectorReady(ctx context.Context, title, current string, selector SingleSelector, ensureReady bool) (string, error) {
+func (c *launcherClient) selectSingleModelWithSelectorReady(ctx context.Context, title, current string, selector SingleSelector, ensureReady bool, label, commandName string) (string, error) {
 	if selector == nil && DefaultSingleSelectorWithUpdates == nil {
 		return "", fmt.Errorf("no selector configured")
 	}
@@ -1058,8 +1079,12 @@ func (c *launcherClient) selectSingleModelWithSelectorReady(ctx context.Context,
 			return "", ErrCancelled
 		}
 		if ensureReady {
-			if err := c.ensureModelsReady(ctx, []string{selected}); err != nil {
+			if err := c.ensureModelsReadyFor(ctx, []string{selected}, label, commandName); err != nil {
 				if errors.Is(err, errUpgradeCancelled) {
+					current = selected
+					continue
+				}
+				if errors.Is(err, errDeprecatedLaunchModelDeclined) {
 					current = selected
 					continue
 				}
@@ -1070,7 +1095,7 @@ func (c *launcherClient) selectSingleModelWithSelectorReady(ctx context.Context,
 	}
 }
 
-func (c *launcherClient) selectMultiModelsForIntegration(ctx context.Context, runner Runner, preChecked []string) ([]string, error) {
+func (c *launcherClient) selectMultiModelsForIntegration(ctx context.Context, name string, runner Runner, preChecked []string) ([]string, error) {
 	if DefaultMultiSelector == nil && DefaultMultiSelectorWithUpdates == nil {
 		return nil, fmt.Errorf("no selector configured")
 	}
@@ -1092,9 +1117,13 @@ func (c *launcherClient) selectMultiModelsForIntegration(ctx context.Context, ru
 		if err != nil {
 			return nil, err
 		}
-		accepted, skipped, err := c.selectReadyModelsForSave(ctx, selected)
+		accepted, skipped, err := c.selectReadyModelsForSave(ctx, selected, runner.String(), name)
 		if err != nil {
 			if errors.Is(err, errUpgradeCancelled) {
+				orderedChecked = append([]string(nil), selected...)
+				continue
+			}
+			if errors.Is(err, errDeprecatedLaunchModelDeclined) {
 				orderedChecked = append([]string(nil), selected...)
 				continue
 			}
@@ -1136,6 +1165,8 @@ func (c *launcherClient) loadSelectableModels(ctx context.Context, preChecked []
 
 	cloudDisabled, _ := cloudStatusDisabled(ctx, c.apiClient)
 	items, orderedChecked, _, _ := buildModelListWithRecommendations(inventory, recommendations, preChecked, current)
+	items = filterDeprecatedLaunchModelItems(items)
+	orderedChecked = filterDeprecatedLaunchModelNames(orderedChecked)
 	if cloudDisabled {
 		items = filterCloudItems(items)
 		orderedChecked = c.filterDisabledCloudModels(ctx, orderedChecked)
@@ -1212,13 +1243,31 @@ func (c *launcherClient) requestRecommendations(ctx context.Context) ([]ModelIte
 }
 
 func (c *launcherClient) ensureModelsReady(ctx context.Context, models []string) error {
+	return c.ensureModelsReadyFor(ctx, models, "ollama launch", "")
+}
+
+func (c *launcherClient) ensureModelsReadyFor(ctx context.Context, models []string, label, commandName string) error {
 	models = dedupeModelList(models)
 	if len(models) == 0 {
 		return nil
 	}
+	cloudRec, localRec := c.agentCapableRecommendations(ctx)
 
 	cloudModels := make(map[string]bool, len(models))
 	for _, model := range models {
+		if prompt := deprecatedLaunchModelPrompt(model, label, commandName, cloudRec, localRec); prompt != "" {
+			ok, err := ConfirmPromptWithOptions(prompt, ConfirmOptions{
+				YesLabel: "Launch anyway",
+				NoLabel:  "Pick another model",
+				Default:  ConfirmDefaultNo,
+			})
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return errDeprecatedLaunchModelDeclined
+			}
+		}
 		isCloudModel := isCloudModelName(model)
 		if isCloudModel {
 			cloudModels[model] = true
@@ -1231,6 +1280,27 @@ func (c *launcherClient) ensureModelsReady(ctx context.Context, models []string)
 		}
 	}
 	return ensureAuth(ctx, c.apiClient, cloudModels, models)
+}
+
+func (c *launcherClient) agentCapableRecommendations(ctx context.Context) (cloud, local string) {
+	recs := c.recommendations(ctx)
+	cloudDisabled, known := cloudStatusDisabled(ctx, c.apiClient)
+	for _, rec := range recs {
+		if rec.Name == "" || isDeprecatedLaunchModel(rec.Name) {
+			continue
+		}
+		if isCloudModelName(rec.Name) {
+			if cloud == "" && !(known && cloudDisabled) {
+				cloud = rec.Name
+			}
+		} else if local == "" {
+			local = rec.Name
+		}
+		if cloud != "" && local != "" {
+			break
+		}
+	}
+	return cloud, local
 }
 
 func dedupeModelList(models []string) []string {
@@ -1251,14 +1321,17 @@ type skippedModel struct {
 	reason string
 }
 
-func (c *launcherClient) selectReadyModelsForSave(ctx context.Context, selected []string) ([]string, []skippedModel, error) {
+func (c *launcherClient) selectReadyModelsForSave(ctx context.Context, selected []string, label, commandName string) ([]string, []skippedModel, error) {
 	selected = dedupeModelList(selected)
 	accepted := make([]string, 0, len(selected))
 	skipped := make([]skippedModel, 0, len(selected))
 
 	for _, model := range selected {
-		if err := c.ensureModelsReady(ctx, []string{model}); err != nil {
+		if err := c.ensureModelsReadyFor(ctx, []string{model}, label, commandName); err != nil {
 			if errors.Is(err, errUpgradeCancelled) {
+				return nil, nil, err
+			}
+			if errors.Is(err, errDeprecatedLaunchModelDeclined) {
 				return nil, nil, err
 			}
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
