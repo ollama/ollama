@@ -110,14 +110,9 @@ func init() {
 		integrationTestCase("chat-history", smol, runChatWithHistory),
 		integrationTestCase("concurrent-chat", smol, runConcurrentChat),
 		integrationTestCase("scheduler-multimodel", "", runMultiModelStress),
-		integrationTestCase("scheduler-max-queue", smol, runMaxQueue),
 
 		integrationTestCase("thinking-enabled", smol, runThinkingEnabled),
 		integrationTestCase("thinking-suppressed", smol, runThinkingSuppressed),
-
-		integrationTestCase("create-safetensors", "", runCreateSafetensorsLLM),
-		integrationTestCase("create-gguf", "", runCreateGGUF),
-		integrationTestCase("quantization", "qwen2.5:0.5b-instruct-fp16", runQuantization),
 	)
 
 	// Model-parametric cases

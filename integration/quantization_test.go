@@ -1,4 +1,4 @@
-//go:build integration && release
+//go:build integration && create
 
 package integration
 
@@ -41,7 +41,7 @@ func runQuantization(t *testing.T) {
 		for _, quant := range quantizations {
 			newName := fmt.Sprintf("%s__%s", base, quant)
 			t.Run(newName, func(t *testing.T) {
-				if time.Now().Sub(started) > softTimeout {
+				if time.Since(started) > softTimeout {
 					t.Skip("skipping remaining tests to avoid excessive runtime")
 				}
 				req := &api.CreateRequest{
@@ -85,11 +85,7 @@ func runQuantization(t *testing.T) {
 						},
 					},
 					KeepAlive: &api.Duration{Duration: 3 * time.Second},
-					Options: map[string]any{
-						"seed":        42,
-						"temperature": 0.0,
-					},
-					Stream: &stream,
+					Stream:    &stream,
 				}
 				t.Logf("verifying: %s -> %s", base, quant)
 
@@ -129,7 +125,6 @@ func runQuantization(t *testing.T) {
 				}
 
 				t.Logf("passed")
-
 			})
 		}
 	}
