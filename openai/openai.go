@@ -497,6 +497,7 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 			}
 			messages = append(messages, api.Message{Role: msg.Role, Content: content, Thinking: msg.Reasoning, ToolCalls: toolCalls, ToolName: toolName, ToolCallID: msg.ToolCallID})
 		case []any:
+			first := len(messages)
 			for _, c := range content {
 				data, ok := c.(map[string]any)
 				if !ok {
@@ -545,17 +546,28 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 					return nil, errors.New("invalid message format")
 				}
 			}
-			// since we might have added multiple messages above, if we have tools
-			// calls we'll add them to the last message
-			if len(messages) > 0 && len(msg.ToolCalls) > 0 {
-				toolCalls, err := FromCompletionToolCall(msg.ToolCalls)
-				if err != nil {
-					return nil, err
+			toolCalls, err := FromCompletionToolCall(msg.ToolCalls)
+			if err != nil {
+				return nil, err
+			}
+
+			if len(messages) == first {
+				// there were no parts, so nothing was appended above. only emit
+				// a message if it carries metadata that would otherwise be lost
+				if len(toolCalls) == 0 && msg.Reasoning == "" && toolName == "" && msg.ToolCallID == "" {
+					continue
 				}
-				messages[len(messages)-1].ToolCalls = toolCalls
-				messages[len(messages)-1].ToolName = toolName
-				messages[len(messages)-1].ToolCallID = msg.ToolCallID
-				messages[len(messages)-1].Thinking = msg.Reasoning
+				messages = append(messages, api.Message{Role: msg.Role})
+			}
+
+			// the parts above may have produced multiple messages, so carry
+			// this message's metadata on the last of them
+			last := &messages[len(messages)-1]
+			last.Thinking = msg.Reasoning
+			last.ToolName = toolName
+			last.ToolCallID = msg.ToolCallID
+			if len(toolCalls) > 0 {
+				last.ToolCalls = toolCalls
 			}
 		default:
 			// content is only optional if tool calls are present
