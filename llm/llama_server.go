@@ -426,6 +426,8 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 
 	params = appendMainGPUArgs(params, launch.opts)
 
+	params = appendTensorSplitArgs(params, launch.opts, launch.gpus)
+
 	params = appendContextShiftArgs(params, launch.opts, launch.config.ContextShift)
 
 	// Set up library paths for GPU backend discovery
@@ -636,6 +638,101 @@ func appendMainGPUArgs(params []string, opts api.Options) []string {
 	}
 
 	return append(params, "--split-mode", "none", "--main-gpu", strconv.Itoa(*opts.MainGPU))
+}
+
+// appendTensorSplitArgs passes an explicit per-device split through to
+// llama-server. A per-request tensor_split option wins over the
+// OLLAMA_TENSOR_SPLIT server-wide default.
+//
+// This deliberately overrides Ollama's own placement decision. The scheduler
+// ranks devices by class and will spill the remainder of a model to CPU rather
+// than place it on a device it considers unhelpful (an iGPU, say); --tensor-split
+// is how a caller overrules that.
+//
+// The devices are named explicitly alongside the split. llama.cpp runs its own
+// device selection first and prunes integrated GPUs from the list, so
+// --tensor-split on its own is silently a no-op -- the proportions get applied
+// to a device list the iGPU was already dropped from. --device puts it back.
+func appendTensorSplitArgs(params []string, opts api.Options, gpus []ml.DeviceInfo) []string {
+	split := strings.TrimSpace(opts.TensorSplit)
+	if split == "" {
+		split = strings.TrimSpace(envconfig.TensorSplit())
+	}
+	if split == "" {
+		return params
+	}
+
+	// --main-gpu emits --split-mode none, which pins the whole model to one
+	// device and would silently discard the split. Refuse rather than emit
+	// contradictory flags.
+	if opts.MainGPU != nil {
+		slog.Warn("ignoring tensor_split because main_gpu pins the model to a single device",
+			"tensor_split", split, "main_gpu", *opts.MainGPU)
+		return params
+	}
+
+	normalized, err := normalizeTensorSplit(split)
+	if err != nil {
+		slog.Warn("ignoring invalid tensor_split", "value", split, "error", err)
+		return params
+	}
+
+	names := make([]string, 0, len(gpus))
+	for _, gpu := range gpus {
+		if gpu.Name != "" {
+			names = append(names, gpu.Name)
+		}
+	}
+	if len(names) == 0 {
+		slog.Warn("ignoring tensor_split: no GPU devices to split across", "tensor_split", normalized)
+		return params
+	}
+
+	// Not fatal: llama.cpp pads missing trailing proportions with zero and
+	// ignores extras. But a mismatch is usually a mistake worth surfacing.
+	if got, want := strings.Count(normalized, ",")+1, len(names); got != want {
+		slog.Warn("tensor_split proportion count does not match device count",
+			"proportions", got, "devices", want, "tensor_split", normalized)
+	}
+
+	params = append(params, "--device", strings.Join(names, ","))
+
+	return append(params, "--split-mode", "layer", "--tensor-split", normalized)
+}
+
+// normalizeTensorSplit validates a comma-separated proportion list. The values
+// are proportions rather than percentages -- llama.cpp normalizes them itself,
+// so "3,7" and "0.3,0.7" mean the same thing. Entries beyond the number of
+// available devices are ignored by llama.cpp, and missing trailing entries are
+// treated as zero.
+func normalizeTensorSplit(s string) (string, error) {
+	fields := strings.Split(s, ",")
+	out := make([]string, 0, len(fields))
+
+	var total float64
+	for _, f := range fields {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			return "", fmt.Errorf("empty proportion in %q", s)
+		}
+
+		v, err := strconv.ParseFloat(f, 64)
+		if err != nil {
+			return "", fmt.Errorf("%q is not a number", f)
+		}
+		if v < 0 {
+			return "", fmt.Errorf("proportion %q is negative", f)
+		}
+
+		total += v
+		out = append(out, f)
+	}
+
+	if total <= 0 {
+		return "", errors.New("proportions sum to zero")
+	}
+
+	return strings.Join(out, ","), nil
 }
 
 func appendMMProjArgs(params []string, launch llamaServerLaunchConfig) []string {
