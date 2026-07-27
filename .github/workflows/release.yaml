@@ -93,6 +93,7 @@ jobs:
   windows-depends:
     needs: setup-environment
     strategy:
+      fail-fast: false
       matrix:
         os: [windows]
         arch: [amd64]
@@ -450,6 +451,7 @@ jobs:
 
   linux-depends:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - arch: amd64
@@ -531,6 +533,7 @@ jobs:
   # and just assembles, runs the Go build, pushes the final image, and extracts release bundles.
   docker-build-push:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: linux
@@ -681,6 +684,7 @@ jobs:
   # Merge Docker images for the same flavor into a single multi-arch manifest
   docker-merge-push:
     strategy:
+      fail-fast: false
       matrix:
         suffix: ['', '-rocm']
     runs-on: linux
