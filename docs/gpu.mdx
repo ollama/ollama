@@ -71,11 +71,18 @@ the server a default; a per-request `tensor_split` overrides it. In a Modelfile:
 PARAMETER tensor_split 0.3,0.7
 ```
 
+A split may span backends. Normally Ollama picks one backend's devices and
+ignores the rest, which would leave a CUDA card and a Vulkan-only iGPU unable to
+share a model; setting `tensor_split` keeps every device Ollama discovered, so
+the proportions can address, say, a CUDA discrete GPU and a Vulkan integrated one
+at the same time. Devices that the same physical card exposes twice are still
+deduplicated during discovery, so each card appears once.
+
 Splitting is not automatically faster. Generation is bandwidth-bound, so an
 integrated GPU sharing system memory with the CPU offers little bandwidth the
-CPU does not already have, and forcing a discrete and an integrated GPU into a
-common backend so they can be split across may cost more than it gains. Measure
-before adopting it.
+CPU does not already have. Fully offloading a model that would otherwise spill to
+CPU can raise generation throughput while *lowering* prompt processing, since the
+CPU layers it replaces were compute-strong. Measure before adopting it.
 
 `tensor_split` is ignored when `main_gpu` is set, since that pins the model to a
 single device.
