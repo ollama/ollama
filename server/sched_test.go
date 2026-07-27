@@ -2246,3 +2246,29 @@ func TestImageGenSchedulerCoexistence(t *testing.T) {
 	expectedFree := uint64(24*format.GigaByte) - uint64(8*format.GigaByte) - uint64(4*format.GigaByte)
 	require.Equal(t, expectedFree, gpus[0].FreeMemory)
 }
+
+func TestWaitForUnloadIgnoresOtherRunners(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	s := InitScheduler(ctx)
+	done := make(chan bool, 1)
+	go func() {
+		done <- s.waitForUnload(ctx, "runner-a")
+	}()
+
+	s.unloadedCh <- "runner-b"
+	select {
+	case <-done:
+		t.Fatal("waitForUnload returned early on unrelated unload")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	s.unloadedCh <- "runner-a"
+	select {
+	case ok := <-done:
+		require.True(t, ok)
+	case <-time.After(time.Second):
+		t.Fatal("waitForUnload did not return after matching unload")
+	}
+}
