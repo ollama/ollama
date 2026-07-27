@@ -9,13 +9,6 @@ import (
 	"github.com/ollama/ollama/x/internal/mlxthread"
 )
 
-func skipIfNoMLX(t *testing.T) {
-	t.Helper()
-	if err := CheckInit(); err != nil {
-		t.Skipf("MLX not available: %v", err)
-	}
-}
-
 func startMLXThread(t *testing.T) *mlxthread.Thread {
 	t.Helper()
 
