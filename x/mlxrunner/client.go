@@ -24,6 +24,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/internal/posixspawn"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/x/imagegen"
@@ -374,7 +375,7 @@ func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo
 	cmd.Stderr = status
 
 	slog.Info("starting mlx runner subprocess", "model", c.modelName, "port", c.port)
-	if err := cmd.Start(); err != nil {
+	if err := posixspawn.StartCmd(cmd); err != nil {
 		return nil, fmt.Errorf("failed to start mlx runner: %w", err)
 	}
 

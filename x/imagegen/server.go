@@ -23,6 +23,7 @@ import (
 
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/internal/posixspawn"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/x/imagegen/manifest"
@@ -119,17 +120,20 @@ func (s *Server) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo
 
 	s.cmd = cmd
 
-	// Forward subprocess stdout/stderr to server logs
-	stdout, _ := cmd.StdoutPipe()
-	stderr, _ := cmd.StderrPipe()
+	// Use io.Pipe so that posixspawn.StartCmd (which copies child output to
+	// cmd.Stdout / cmd.Stderr) feeds our line-scanner goroutines.
+	outR, outW := io.Pipe()
+	cmd.Stdout = outW
 	go func() {
-		scanner := bufio.NewScanner(stdout)
+		scanner := bufio.NewScanner(outR)
 		for scanner.Scan() {
 			slog.Info("mlx-runner", "msg", scanner.Text())
 		}
 	}()
+	errR, errW := io.Pipe()
+	cmd.Stderr = errW
 	go func() {
-		scanner := bufio.NewScanner(stderr)
+		scanner := bufio.NewScanner(errR)
 		for scanner.Scan() {
 			line := scanner.Text()
 			slog.Warn("mlx-runner", "msg", line)
@@ -140,13 +144,16 @@ func (s *Server) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo
 	}()
 
 	slog.Info("starting mlx runner subprocess", "model", s.modelName, "port", s.port)
-	if err := cmd.Start(); err != nil {
+	if err := posixspawn.StartCmd(cmd); err != nil {
 		return nil, fmt.Errorf("failed to start mlx runner: %w", err)
 	}
 
-	// Reap subprocess when it exits
+	// Reap subprocess when it exits.
 	go func() {
 		err := cmd.Wait()
+		// Close the io.Pipe writers so the scanner goroutines see EOF.
+		outW.Close()
+		errW.Close()
 		s.done <- err
 	}()
 
