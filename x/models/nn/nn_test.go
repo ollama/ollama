@@ -166,7 +166,7 @@ func TestQuantizedLinearMXFP4MatchesDequantizedWeight(t *testing.T) {
 		t.Fatalf("mxfp4 qbiases = %v, want nil", ql.QBiases)
 	}
 
-	dequantizedWeight := mlx.Dequantize(ql.Weight, ql.Scales, ql.QBiases, 32, 4, "mxfp4")
+	dequantizedWeight := mlx.Dequantize(ql.Weight, ql.Scales, ql.QBiases, 32, 4, "mxfp4", nil)
 	mlx.Eval(dequantizedWeight)
 
 	qOut := ql.Forward(input).AsType(mlx.DTypeFloat32)

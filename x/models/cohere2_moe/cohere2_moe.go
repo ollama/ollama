@@ -439,7 +439,7 @@ func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, useQuanti
 	}
 
 	return &stackedExpertWeights{
-		Weight:    mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode),
+		Weight:    mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode, nil),
 		Bits:      bits,
 		GroupSize: groupSize,
 		Mode:      mode,

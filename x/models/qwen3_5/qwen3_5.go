@@ -501,11 +501,11 @@ func fuseGateUpProjections(gate, up *stackedExpertWeights) *stackedExpertWeights
 	}
 	gateWeight := gate.Weight
 	if gate.Scales != nil {
-		gateWeight = mlx.Dequantize(gate.Weight, gate.Scales, gate.Biases, gate.GroupSize, gate.Bits, gate.Mode)
+		gateWeight = mlx.Dequantize(gate.Weight, gate.Scales, gate.Biases, gate.GroupSize, gate.Bits, gate.Mode, nil)
 	}
 	upWeight := up.Weight
 	if up.Scales != nil {
-		upWeight = mlx.Dequantize(up.Weight, up.Scales, up.Biases, up.GroupSize, up.Bits, up.Mode)
+		upWeight = mlx.Dequantize(up.Weight, up.Scales, up.Biases, up.GroupSize, up.Bits, up.Mode, nil)
 	}
 	return &stackedExpertWeights{
 		Weight:    mlx.Concatenate([]*mlx.Array{gateWeight, upWeight}, 1),
@@ -552,7 +552,7 @@ func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, useQuanti
 			slog.Warn("dequantizing expert weights: no gather kernel for format", "tensor", key, "mode", mode, "bits", bits)
 		}
 		return &stackedExpertWeights{
-			Weight:    mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode),
+			Weight:    mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode, nil),
 			Bits:      bits,
 			GroupSize: groupSize,
 			Mode:      mode,
@@ -611,7 +611,7 @@ func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQ
 				biases = append(biases, qb)
 			}
 		} else {
-			weights = append(weights, mlx.Dequantize(w, s, qb, gs, b, m))
+			weights = append(weights, mlx.Dequantize(w, s, qb, gs, b, m, nil))
 			numDequantized++
 		}
 	}
@@ -676,7 +676,7 @@ func combinedGateUpProjection(tensors map[string]*mlx.Array, cfg *Config, useQua
 		slog.Warn("dequantizing expert weights: no gather kernel for format", "tensor", key, "mode", mode, "bits", bits)
 	}
 	return &stackedExpertWeights{
-		Weight:    mlx.Dequantize(gateUp, scales, qbiases, groupSize, bits, mode),
+		Weight:    mlx.Dequantize(gateUp, scales, qbiases, groupSize, bits, mode, nil),
 		Bits:      bits,
 		GroupSize: groupSize,
 		Mode:      mode,
