@@ -263,10 +263,9 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 		return err
 	}
 
-	// An error status with an empty (or newline-only) body yields no scannable
-	// lines, so the loop above never runs. Surface the status here so failures
-	// like an upstream cloud 401 aren't silently swallowed as a successful,
-	// empty response.
+	// An error status with an empty body yields no scannable lines, so the loop
+	// above never runs. Surface the status here so failures like an upstream
+	// cloud 401 aren't silently swallowed as a successful, empty response.
 	if response.StatusCode == http.StatusUnauthorized {
 		return AuthorizationError{
 			StatusCode: response.StatusCode,
