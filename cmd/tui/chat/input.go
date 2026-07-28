@@ -1419,8 +1419,7 @@ func slashCommandInvocation(input string) (string, string, bool) {
 }
 
 func (m chatModel) mentionCompletions() []chatCompletion {
-	input := string(m.input)
-	_, query, ok := activeMentionToken(input)
+	_, query, ok := activeMentionToken(m.input, m.normalizedInputCursor())
 	if !ok {
 		return nil
 	}
@@ -1484,13 +1483,13 @@ func (m chatModel) mentionCompletions() []chatCompletion {
 	return completions
 }
 
-func activeMentionToken(input string) (int, string, bool) {
-	runes := []rune(input)
-	start := len(runes)
-	for start > 0 && !unicode.IsSpace(runes[start-1]) {
+func activeMentionToken(input []rune, cursor int) (int, string, bool) {
+	cursor = clamp(cursor, 0, len(input))
+	start := cursor
+	for start > 0 && !unicode.IsSpace(input[start-1]) {
 		start--
 	}
-	token := string(runes[start:])
+	token := string(input[start:cursor])
 	if !strings.HasPrefix(token, "@") {
 		return 0, "", false
 	}
@@ -1548,6 +1547,7 @@ func (m *chatModel) applyCompletion() bool {
 	}
 	m.resetPromptHistoryCursor()
 	selected := completions[clamp(m.complete, 0, len(completions)-1)]
+	cursor := m.normalizedInputCursor()
 	input := string(m.input)
 	if strings.HasPrefix(strings.TrimSpace(input), "/") {
 		m.input = []rune(selected.value)
@@ -1557,20 +1557,33 @@ func (m *chatModel) applyCompletion() bool {
 		return true
 	}
 
-	start, _, ok := activeMentionToken(input)
+	start, _, ok := activeMentionToken(m.input, cursor)
 	if !ok {
 		return false
 	}
-	suffix := ""
-	if !selected.directory {
-		suffix = " "
+	completed := []rune("@" + selected.value)
+	if !selected.directory && (cursor == len(m.input) || !unicode.IsSpace(m.input[cursor])) {
+		completed = append(completed, ' ')
 	}
-	next := string([]rune(input)[:start]) + "@" + selected.value + suffix
-	m.input = []rune(next)
-	m.inputCursor = len(m.input)
+	next := make([]rune, 0, len(m.input)-cursor+start+len(completed))
+	next = append(next, m.input[:start]...)
+	next = append(next, completed...)
+	next = append(next, m.input[cursor:]...)
+	m.input = next
+	m.inputCursor = start + len(completed)
+	if !selected.directory && m.inputCursor < len(m.input) && unicode.IsSpace(m.input[m.inputCursor]) {
+		m.inputCursor++
+	}
 	m.inputCursorSet = true
 	m.complete = 0
 	return true
+}
+
+func (m *chatModel) applyMentionCompletion() bool {
+	if strings.HasPrefix(strings.TrimSpace(string(m.input)), "/") {
+		return false
+	}
+	return m.applyCompletion()
 }
 
 func completionIsSelectable(completions []chatCompletion) bool {
