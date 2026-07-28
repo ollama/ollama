@@ -41,6 +41,9 @@ type Runner struct {
 	cache         *prefixCache
 	contextLength int
 	mlxThread     *mlxthread.Thread
+	// disablePrefillSnapshots is set only on request-scoped runners whose
+	// cache is discarded when the request completes.
+	disablePrefillSnapshots bool
 	// spec is the speculative-decoding subsystem. Nil when the model ships no
 	// draft head.
 	spec *speculation
