@@ -126,13 +126,6 @@ func IsSafetensorsLLMModel(modelName string) bool {
 	return config.ModelFormat == "safetensors" && slices.Contains(config.Capabilities, "completion")
 }
 
-// IsTensorModelDir checks if the directory contains a diffusers-style tensor model
-// by looking for model_index.json, which is the standard diffusers pipeline config.
-func IsTensorModelDir(dir string) bool {
-	_, err := os.Stat(filepath.Join(dir, "model_index.json"))
-	return err == nil
-}
-
 // IsSafetensorsModelDir checks if the directory contains a standard safetensors model
 // by looking for config.json and at least one .safetensors file.
 func IsSafetensorsModelDir(dir string) bool {
