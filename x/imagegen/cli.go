@@ -519,8 +519,12 @@ func displayImageInTerminal(imagePath string) bool {
 
 // extractFileNames finds image file paths in the input string.
 func extractFileNames(input string) []string {
-	// Regex to match file paths with image extensions
-	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp)\b`
+	// Improved regex to match file paths with image extensions, including quoted paths
+	// This pattern handles:
+	// 1. Quoted paths: "C:\path with space\img.png"
+	// 2. Standard paths: /usr/local/img.jpg
+	// 3. Windows paths: C:\Users\img.webp
+	regexPattern := `(?:"[^"]+\.(?i:jpg|jpeg|png|webp)")|(?:(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp)\b)`
 	re := regexp.MustCompile(regexPattern)
 	return re.FindAllString(input, -1)
 }
@@ -531,12 +535,14 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 	filePaths := extractFileNames(input)
 	var imgs []api.ImageData
 
-	for _, fp := range filePaths {
-		// Normalize shell escapes
-		nfp := strings.ReplaceAll(fp, "\\ ", " ")
-		nfp = strings.ReplaceAll(nfp, "\\(", "(")
-		nfp = strings.ReplaceAll(nfp, "\\)", ")")
-		nfp = strings.ReplaceAll(nfp, "%20", " ")
+		for _, fp := range filePaths {
+			// Remove quotes if present
+			nfp := strings.Trim(fp, "\"")
+			// Normalize shell escapes
+			nfp = strings.ReplaceAll(nfp, "\\ ", " ")
+			nfp = strings.ReplaceAll(nfp, "\\(", "(")
+			nfp = strings.ReplaceAll(nfp, "\\)", ")")
+			nfp = strings.ReplaceAll(nfp, "%20", " ")
 
 		data, err := getImageData(nfp)
 		if errors.Is(err, os.ErrNotExist) {
