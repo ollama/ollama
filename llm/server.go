@@ -19,6 +19,8 @@ import (
 
 var ErrLoadRequiredFull = errors.New("unable to load full model on GPU")
 
+const llamaArgFitTargetEnv = "LLAMA_ARG_FIT_TARGET"
+
 type filteredEnv []string
 
 func (e filteredEnv) LogValue() slog.Value {
@@ -41,6 +43,7 @@ func filteredEnvLogKey(key string) bool {
 		strings.HasPrefix(key, "HSA_") ||
 		strings.HasPrefix(key, "GGML_") ||
 		slices.Contains([]string{
+			llamaArgFitTargetEnv,
 			"PATH",
 			"LD_LIBRARY_PATH",
 			"DYLD_LIBRARY_PATH",
@@ -82,6 +85,14 @@ type LlamaServerConfig struct {
 	ContextShift   bool
 	EnableMTP      bool
 	DraftModelPath string
+	// PredictedVRAM and AvailableVRAM are scheduler estimates used to tune
+	// llama-server startup policy before the subprocess can report fit data.
+	PredictedVRAM uint64
+	AvailableVRAM uint64
+	// FitTargetMiB sets LLAMA_ARG_FIT_TARGET for this launch so llama.cpp fit
+	// uses the same per-device reserve the scheduler used for placement. A
+	// zero value leaves the inherited environment or llama.cpp default in place.
+	FitTargetMiB uint64
 }
 
 // LoadModel will load a model from disk. The model must be in the GGML format.

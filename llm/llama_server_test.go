@@ -2204,71 +2204,45 @@ func TestAppendMMProjArgs(t *testing.T) {
 	}
 }
 
-func TestMMProjFitTargetExtraEnvs(t *testing.T) {
-	t.Setenv(llamaArgFitTargetEnv, "")
-	_ = os.Unsetenv(llamaArgFitTargetEnv)
+func TestSetupLlamaServerCommandEnvLeavesFitTargetToLlamaServer(t *testing.T) {
+	const fitTargetEnv = llamaArgFitTargetEnv
 
-	const (
-		projectorMemoryMiB = uint64(933)
-		projectorPadMiB    = projectorMemoryMiB + mmprojOffloadHeadroom/bytesPerMiB
-	)
+	t.Run("does not synthesize fit target", func(t *testing.T) {
+		t.Setenv(fitTargetEnv, "")
+		_ = os.Unsetenv(fitTargetEnv)
 
-	fitTargetValue := func(mib uint64) string {
-		return fmt.Sprint(mib)
-	}
+		cmd := exec.Command("llama-server")
+		SetupLlamaServerCommandEnv(cmd, "/tmp/llama-server", nil, map[string]string{"LLAMA_MEDIA_MARKER": "marker"})
 
-	assertFitTarget := func(t *testing.T, got map[string]string, wantMiB uint64) {
-		t.Helper()
-		if got[llamaArgFitTargetEnv] != fitTargetValue(wantMiB) {
-			t.Fatalf("fit target = %q, want %d", got[llamaArgFitTargetEnv], wantMiB)
-		}
-	}
-
-	newLaunch := func(extraEnvs map[string]string) llamaServerLaunchConfig {
-		return llamaServerLaunchConfig{
-			projectors:   []string{"model.gguf"},
-			mmprojMemory: projectorMemoryMiB * bytesPerMiB,
-			opts:         api.DefaultOptions(),
-			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, Integrated: true, FreeMemory: 32 << 30}},
-			modelLayers:  81,
-			extraEnvs:    extraEnvs,
-		}
-	}
-
-	t.Run("sets projector pad when no fit target exists", func(t *testing.T) {
-		launch := newLaunch(map[string]string{"KEEP": "1"})
-
-		got := launch.extraEnvsForStart()
-		assertFitTarget(t, got, projectorPadMiB)
-		if _, ok := launch.extraEnvs[llamaArgFitTargetEnv]; ok {
-			t.Fatal("extraEnvsForStart mutated launch.extraEnvs")
+		for _, env := range cmd.Env {
+			if strings.HasPrefix(env, fitTargetEnv+"=") {
+				t.Fatalf("unexpected synthesized fit target env: %q", env)
+			}
 		}
 	})
 
-	for _, tt := range []struct {
-		name               string
-		launchFitTargetMiB uint64
-	}{
-		{name: "adds projector pad to existing launch fit target", launchFitTargetMiB: 2048},
-		{name: "adds projector pad to smaller launch fit target", launchFitTargetMiB: 512},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			launch := newLaunch(map[string]string{
-				llamaArgFitTargetEnv: fitTargetValue(tt.launchFitTargetMiB),
-			})
-
-			got := launch.extraEnvsForStart()
-			assertFitTarget(t, got, tt.launchFitTargetMiB+projectorPadMiB)
-		})
-	}
-
 	t.Run("preserves inherited user fit target", func(t *testing.T) {
-		t.Setenv(llamaArgFitTargetEnv, fitTargetValue(256))
-		launch := newLaunch(map[string]string{})
+		t.Setenv(fitTargetEnv, "256")
 
-		got := launch.extraEnvsForStart()
-		if _, ok := got[llamaArgFitTargetEnv]; ok {
-			t.Fatalf("user env should not be overridden, got extra env %q", got[llamaArgFitTargetEnv])
+		cmd := exec.Command("llama-server")
+		SetupLlamaServerCommandEnv(cmd, "/tmp/llama-server", nil, map[string]string{"LLAMA_MEDIA_MARKER": "marker"})
+
+		if !slices.Contains(cmd.Env, fitTargetEnv+"=256") {
+			t.Fatalf("expected inherited %s to pass through", fitTargetEnv)
+		}
+	})
+
+	t.Run("applies load plan fit target", func(t *testing.T) {
+		t.Setenv(fitTargetEnv, "")
+
+		cmd := exec.Command("llama-server")
+		SetupLlamaServerCommandEnv(cmd, "/tmp/llama-server", nil, map[string]string{
+			"LLAMA_MEDIA_MARKER": "marker",
+			fitTargetEnv:         "2048",
+		})
+
+		if !slices.Contains(cmd.Env, fitTargetEnv+"=2048") {
+			t.Fatalf("expected load plan %s to be applied", fitTargetEnv)
 		}
 	})
 }
