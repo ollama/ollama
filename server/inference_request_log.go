@@ -79,8 +79,12 @@ func (l *inferenceRequestLogger) middleware(route string) gin.HandlerFunc {
 			}
 		}
 
-		c.Next()
+		// Log the request as soon as it arrives, not after the (potentially
+		// long-running) handler returns, so the log reflects incoming traffic
+		// in real time (#17437).
 		l.log(route, method, scheme, host, contentType, body)
+
+		c.Next()
 	}
 }
 
