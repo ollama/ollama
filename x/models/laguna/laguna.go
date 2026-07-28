@@ -613,7 +613,7 @@ func denseExpertWeight(w *stackedExpertWeights) *mlx.Array {
 	}
 	weight := w.Weight
 	if w.Scales != nil {
-		weight = mlx.Dequantize(w.Weight, w.Scales, w.Biases, w.GroupSize, w.Bits, w.Mode)
+		weight = mlx.Dequantize(w.Weight, w.Scales, w.Biases, w.GroupSize, w.Bits, w.Mode, nil)
 		if w.GlobalScales != nil {
 			scale := w.GlobalScales
 			if scale.DType() != weight.DType() {
@@ -907,7 +907,7 @@ func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQ
 				biases = append(biases, qb)
 			}
 		} else {
-			deq := mlx.Dequantize(w, s, qb, gs, b, m)
+			deq := mlx.Dequantize(w, s, qb, gs, b, m, nil)
 			if globalScale != nil {
 				deq = mlx.Mul(deq, globalScale)
 				globalScales = append(globalScales, globalScale)
@@ -968,7 +968,7 @@ func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, useQuanti
 			freeTensorKeys(tensors, consumedKeys...)
 			return &stackedExpertWeights{Weight: w, Scales: s, Biases: qb, GlobalScales: globalScale, Bits: b, GroupSize: gs, Mode: m}
 		}
-		deq := mlx.Dequantize(w, s, qb, gs, b, m)
+		deq := mlx.Dequantize(w, s, qb, gs, b, m, nil)
 		if globalScale != nil {
 			deq = mlx.Mul(deq, globalScale)
 		}

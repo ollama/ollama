@@ -403,7 +403,7 @@ func loadExpertWeight(tensors map[string]*mlx.Array, path string, useQuantized b
 			return &ExpertWeight{Weight: w, Scales: scales, Biases: qbiases, Bits: bits, GroupSize: groupSize}
 		}
 
-		return &ExpertWeight{Weight: mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode)}
+		return &ExpertWeight{Weight: mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode, nil)}
 	}
 
 	return &ExpertWeight{Weight: w}
@@ -441,7 +441,7 @@ func loadStackedProjection(tensors map[string]*mlx.Array, base string, useQuanti
 		return &StackedExpertWeights{Weight: w, Scales: scales, Biases: qbiases, Bits: bits, GroupSize: groupSize}
 	}
 
-	return &StackedExpertWeights{Weight: mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode)}
+	return &StackedExpertWeights{Weight: mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode, nil)}
 }
 
 // loadStackedExperts loads a stacked expert projection by its .experts name,
@@ -532,7 +532,7 @@ func sanitizeMLAWeights(tensors map[string]*mlx.Array, prefix string, cfg *Confi
 			w,
 			scales,
 		)
-		w = mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode)
+		w = mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode, nil)
 	}
 
 	headDim := cfg.QKNopeHeadDim + cfg.VHeadDim
