@@ -907,3 +907,67 @@ func TestFromImageEditRequest_InvalidImage(t *testing.T) {
 		t.Error("expected error for invalid image")
 	}
 }
+
+func TestFromChatRequest_NumCtx(t *testing.T) {
+	numCtx := 16000
+	req := ChatCompletionRequest{
+		Model:  "test-model",
+		Messages: []Message{
+			{Role: "user", Content: "hello"},
+		},
+		NumCtx: &numCtx,
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got, ok := result.Options["num_ctx"]
+	if !ok {
+		t.Fatal("expected num_ctx in options, but it was not set")
+	}
+	if got != 16000 {
+		t.Errorf("expected num_ctx=16000, got %v", got)
+	}
+}
+
+func TestFromChatRequest_NumCtxNil(t *testing.T) {
+	req := ChatCompletionRequest{
+		Model:  "test-model",
+		Messages: []Message{
+			{Role: "user", Content: "hello"},
+		},
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, ok := result.Options["num_ctx"]; ok {
+		t.Error("expected num_ctx to be absent when not set, but it was present")
+	}
+}
+
+func TestFromCompleteRequest_NumCtx(t *testing.T) {
+	numCtx := 8192
+	req := CompletionRequest{
+		Model:  "test-model",
+		Prompt: "hello",
+		NumCtx: &numCtx,
+	}
+
+	result, err := FromCompleteRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got, ok := result.Options["num_ctx"]
+	if !ok {
+		t.Fatal("expected num_ctx in options, but it was not set")
+	}
+	if got != 8192 {
+		t.Errorf("expected num_ctx=8192, got %v", got)
+	}
+}
