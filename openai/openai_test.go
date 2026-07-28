@@ -907,3 +907,80 @@ func TestFromImageEditRequest_InvalidImage(t *testing.T) {
 		t.Error("expected error for invalid image")
 	}
 }
+
+func TestFromChatRequest_ToolMessageWithContentParts(t *testing.T) {
+	weatherCall := ToolCall{ID: "call_1", Type: "function"}
+	weatherCall.Function.Name = "get_weather"
+	weatherCall.Function.Arguments = "{}"
+
+	req := ChatCompletionRequest{
+		Model: "test-model",
+		Messages: []Message{
+			{Role: "user", Content: "what's the weather?"},
+			{Role: "assistant", ToolCalls: []ToolCall{weatherCall}},
+			{
+				Role:       "tool",
+				ToolCallID: "call_1",
+				Content:    []any{map[string]any{"type": "text", "text": "sunny"}},
+			},
+		},
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Messages) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(result.Messages))
+	}
+
+	got := result.Messages[2]
+	if got.Content != "sunny" {
+		t.Errorf("expected content 'sunny', got %q", got.Content)
+	}
+
+	if got.ToolName != "get_weather" {
+		t.Errorf("expected tool name 'get_weather', got %q", got.ToolName)
+	}
+
+	if got.ToolCallID != "call_1" {
+		t.Errorf("expected tool call id 'call_1', got %q", got.ToolCallID)
+	}
+}
+
+func TestFromChatRequest_EmptyContentPartsKeepsToolCalls(t *testing.T) {
+	weatherCall := ToolCall{ID: "call_1", Type: "function"}
+	weatherCall.Function.Name = "get_weather"
+	weatherCall.Function.Arguments = "{}"
+
+	req := ChatCompletionRequest{
+		Model: "test-model",
+		Messages: []Message{
+			{Role: "user", Content: "what's the weather?"},
+			{Role: "assistant", Content: []any{}, ToolCalls: []ToolCall{weatherCall}},
+		},
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(result.Messages))
+	}
+
+	if len(result.Messages[0].ToolCalls) != 0 {
+		t.Errorf("expected user message to keep no tool calls, got %d", len(result.Messages[0].ToolCalls))
+	}
+
+	got := result.Messages[1]
+	if got.Role != "assistant" {
+		t.Errorf("expected role 'assistant', got %q", got.Role)
+	}
+
+	if len(got.ToolCalls) != 1 || got.ToolCalls[0].Function.Name != "get_weather" {
+		t.Errorf("expected assistant message to carry get_weather tool call, got %+v", got.ToolCalls)
+	}
+}
