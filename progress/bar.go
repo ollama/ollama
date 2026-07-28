@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/term"
@@ -12,6 +13,9 @@ import (
 )
 
 type Bar struct {
+	// mu guards all fields below: Set is called from download progress
+	// callbacks while String is called from the Progress render goroutine.
+	mu           sync.Mutex
 	message      string
 	messageWidth int
 
@@ -66,6 +70,9 @@ func (b *Bar) String() string {
 	if err != nil {
 		termWidth = defaultTermWidth
 	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
 
 	var pre strings.Builder
 	if len(b.message) > 0 {
@@ -150,6 +157,9 @@ func (b *Bar) String() string {
 }
 
 func (b *Bar) Set(value int64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	if value >= b.maxValue {
 		value = b.maxValue
 	}
@@ -171,6 +181,8 @@ func (b *Bar) Set(value int64) {
 		}
 	}
 }
+
+// percent and rate are called from String with b.mu held.
 
 func (b *Bar) percent() float64 {
 	if b.maxValue > 0 {

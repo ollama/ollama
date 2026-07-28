@@ -32,30 +32,37 @@ type Progress struct {
 }
 
 func NewProgress(w io.Writer) *Progress {
-	p := &Progress{w: bufio.NewWriter(w)}
-	go p.start()
+	p := &Progress{w: bufio.NewWriter(w), ticker: time.NewTicker(100 * time.Millisecond)}
+	// Pass the ticker's channel in rather than having start read p.ticker, so
+	// a concurrent stop clearing the field can't race the render loop.
+	go p.start(p.ticker.C)
 	return p
 }
 
-func (p *Progress) stop() bool {
+// stop halts the render loop, stopping any spinners first. It reports whether
+// rendering was active and how many lines were last rendered.
+func (p *Progress) stop() (bool, int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	for _, state := range p.states {
 		if spinner, ok := state.(*Spinner); ok {
 			spinner.Stop()
 		}
 	}
 
-	if p.ticker != nil {
-		p.ticker.Stop()
-		p.ticker = nil
-		p.render()
-		return true
+	if p.ticker == nil {
+		return false, p.pos
 	}
 
-	return false
+	p.ticker.Stop()
+	p.ticker = nil
+	p.renderLocked()
+	return true, p.pos
 }
 
 func (p *Progress) Stop() bool {
-	stopped := p.stop()
+	stopped, _ := p.stop()
 	if stopped {
 		fmt.Fprint(p.w, "\n")
 		p.w.Flush()
@@ -69,10 +76,10 @@ func (p *Progress) StopAndClear() bool {
 	fmt.Fprint(p.w, "\033[?25l")
 	defer fmt.Fprint(p.w, "\033[?25h")
 
-	stopped := p.stop()
+	stopped, pos := p.stop()
 	if stopped {
 		// clear all progress lines
-		for i := range p.pos {
+		for i := range pos {
 			if i > 0 {
 				fmt.Fprint(p.w, "\033[A")
 			}
@@ -91,13 +98,18 @@ func (p *Progress) Add(key string, state State) {
 }
 
 func (p *Progress) render() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.renderLocked()
+}
+
+// renderLocked renders with p.mu held.
+func (p *Progress) renderLocked() {
 	_, termHeight, err := term.GetSize(int(os.Stderr.Fd()))
 	if err != nil {
 		termHeight = defaultTermHeight
 	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
 
 	defer p.w.Flush()
 
@@ -126,9 +138,8 @@ func (p *Progress) render() {
 	p.pos = len(p.states)
 }
 
-func (p *Progress) start() {
-	p.ticker = time.NewTicker(100 * time.Millisecond)
-	for range p.ticker.C {
+func (p *Progress) start(c <-chan time.Time) {
+	for range c {
 		p.render()
 	}
 }
