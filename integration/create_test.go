@@ -19,7 +19,7 @@ import (
 const testdataModelsDir = "testdata/models"
 
 // skipIfRemote skips the test if OLLAMA_HOST points to a non-local server.
-// Safetensors/imagegen creation requires localhost since it reads model files
+// Safetensors creation requires localhost since it reads model files.
 // from disk and uses the --experimental CLI path.
 func skipIfRemote(t *testing.T) {
 	t.Helper()
@@ -43,7 +43,7 @@ func skipIfRemote(t *testing.T) {
 	if ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
 		return
 	}
-	t.Skipf("safetensors/imagegen creation requires a local server (OLLAMA_HOST=%s)", host)
+	t.Skipf("safetensors creation requires a local server (OLLAMA_HOST=%s)", host)
 }
 
 // findHFCLI returns the path to the HuggingFace CLI, or "" if not found.

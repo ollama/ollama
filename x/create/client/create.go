@@ -382,19 +382,6 @@ func newManifestWriter(opts CreateOptions, capabilities []string, parserName, re
 			return fmt.Errorf("invalid model name: %s", modelName)
 		}
 
-		// TODO: find a better way to detect image input support
-		// For now, hardcode Flux2KleinPipeline as supporting vision (image input)
-		caps := capabilities
-		modelIndex := filepath.Join(opts.ModelDir, "model_index.json")
-		if data, err := os.ReadFile(modelIndex); err == nil {
-			var cfg struct {
-				ClassName string `json:"_class_name"`
-			}
-			if json.Unmarshal(data, &cfg) == nil && cfg.ClassName == "Flux2KleinPipeline" {
-				caps = append(caps, "vision")
-			}
-		}
-
 		// Create config blob with version requirement.
 		configData := model.ConfigV2{}
 		if opts.BaseConfig != nil {
@@ -404,7 +391,7 @@ func newManifestWriter(opts CreateOptions, capabilities []string, parserName, re
 		if opts.Quantize != "" || configData.FileType == "" {
 			configData.FileType = strings.ToLower(strings.TrimSpace(opts.Quantize))
 		}
-		configData.Capabilities = caps
+		configData.Capabilities = capabilities
 		configData.Requires = MinOllamaVersion
 		if opts.Modelfile != nil && opts.Modelfile.Requires != "" {
 			configData.Requires = opts.Modelfile.Requires
