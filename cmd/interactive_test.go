@@ -64,6 +64,35 @@ d:\path with\spaces\thirteen.WEBP some ending
 	assert.Contains(t, res[12], "d:")
 }
 
+// Ensure a parent directory that itself contains a valid image extension
+// (e.g. "vacation.png.bak/") doesn't fracture the real path into two
+// nonexistent fragments, while paths to genuinely separate images in the
+// same message are still captured separately.
+func TestExtractFilenamesDoesNotFractureOnEmbeddedExtension(t *testing.T) {
+	input := `/Users/alex/vacation.png.bak/beach.jpg describe this photo`
+	res := extractFileNames(input)
+	assert.Len(t, res, 1)
+	assert.Equal(t, "/Users/alex/vacation.png.bak/beach.jpg", res[0])
+
+	input = `look at C:\Users\alex\shots.folder.png\final.jpg now`
+	res = extractFileNames(input)
+	assert.Len(t, res, 1)
+	assert.Equal(t, `C:\Users\alex\shots.folder.png\final.jpg`, res[0])
+
+	input = `open /a/one.png.bak/two.jpg.old/three.webp thanks`
+	res = extractFileNames(input)
+	assert.Len(t, res, 1)
+	assert.Equal(t, "/a/one.png.bak/two.jpg.old/three.webp", res[0])
+
+	// two real, separate images mentioned in the same message must not be
+	// merged together just because they're both path-like
+	input = `compare /Users/alex/cat.png and /Users/alex/dog.jpg please`
+	res = extractFileNames(input)
+	assert.Len(t, res, 2)
+	assert.Equal(t, "/Users/alex/cat.png", res[0])
+	assert.Equal(t, "/Users/alex/dog.jpg", res[1])
+}
+
 // Ensure that file paths wrapped in single quotes are removed with the quotes.
 func TestExtractFileDataRemovesQuotedFilepath(t *testing.T) {
 	dir := t.TempDir()
