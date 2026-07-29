@@ -1,3 +1,6 @@
+// Package mlxthread runs all MLX work through a single worker goroutine
+// locked to one OS thread, as the MLX threading contract requires (see
+// the x/mlxrunner/mlx package doc).
 package mlxthread
 
 import (

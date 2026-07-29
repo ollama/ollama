@@ -3,16 +3,10 @@ package cache
 import (
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
-
-func skipIfNoMLX(t *testing.T) {
-	t.Helper()
-	if err := mlx.CheckInit(); err != nil {
-		t.Skipf("MLX not available: %v", err)
-	}
-}
 
 // newKVBatch builds a B=1 batch at SeqOffsets=off with all-real
 // queries (SeqQueryLens=L) — the standard single-sequence cache
@@ -26,7 +20,7 @@ func newKVBatch(off, L int) *batch.Batch {
 }
 
 func TestKVCacheSnapshotRestoreNeedBase(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	c := NewKVCache()
 
 	for range 10 {
@@ -50,7 +44,7 @@ func TestKVCacheSnapshotRestoreNeedBase(t *testing.T) {
 // TestKVCacheDataSurvivesSnapshotRestore verifies that actual array data
 // is preserved through a snapshot→free→restore cycle.
 func TestKVCacheDataSurvivesSnapshotRestore(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	c := NewKVCache()
 
 	for range 10 {
@@ -90,7 +84,7 @@ func TestKVCacheDataSurvivesSnapshotRestore(t *testing.T) {
 // TestKVCacheSplitPreservesData verifies that split produces two snapshots
 // that can be sequentially restored to rebuild the original cache state.
 func TestKVCacheSplitPreservesData(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	c := NewKVCache()
 
 	for range 10 {
@@ -134,7 +128,7 @@ func TestKVCacheSplitPreservesData(t *testing.T) {
 // TestKVCacheSplitMergeRoundTripData verifies that splitting and merging back
 // produces a snapshot equivalent to the original.
 func TestKVCacheSplitMergeRoundTripData(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	c := NewKVCache()
 
 	for range 10 {
@@ -168,7 +162,7 @@ func TestKVCacheSplitMergeRoundTripData(t *testing.T) {
 }
 
 func TestRotatingKVCacheRestoreOutsideWindow(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	c := NewRotatingKVCache(4)
 
 	// Feed 10 tokens (window size 4, so positions 0-5 are evicted).
@@ -187,7 +181,7 @@ func TestRotatingKVCacheRestoreOutsideWindow(t *testing.T) {
 // TestRotatingKVCacheSnapshotPreservesWindow verifies that after restoring
 // from a snapshot, the rotating cache has the correct window of data.
 func TestRotatingKVCacheSnapshotPreservesWindow(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	c := NewRotatingKVCache(4)
 
 	// Feed 10 tokens one at a time. Window size 4, so only last 4 are kept.
@@ -232,7 +226,7 @@ func TestRotatingKVCacheSnapshotPreservesWindow(t *testing.T) {
 // snapshot correctly preserves the write position (idx), so subsequent
 // single-token updates land in the right buffer slot.
 func TestRotatingKVCacheRestoreFromSnapshot(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	c := NewRotatingKVCache(4)
 
 	// Fill the window: 6 tokens into a size-4 window.

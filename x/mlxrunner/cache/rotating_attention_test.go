@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/models/nn"
@@ -19,7 +20,7 @@ import (
 // applier's gather composing the caller's logical mask back into
 // storage order) must equal the logical-order reference.
 func TestRotatingKVCacheDecodeParity(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.SkipIfUnavailable(t)
 	const H, D = 1, 4
 	const window = 4
 	const totalWrites = 7 // past wrap (window=4); last write is the L=1 decode
@@ -94,8 +95,14 @@ func TestRotatingKVCacheDecodeParity(t *testing.T) {
 		{"array", nn.ArrayMask(logicalMask), "array", logicalMask},
 	}
 
+	// Materialize shared fixtures on this thread before fanning out to
+	// subtests: lazy arrays can't cross threads (MLX default streams are
+	// thread-local).
+	mlx.Eval(b.InputIDs, kLogical, vLogical, logicalMask, history.K(), history.V())
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			mlxtest.Setup(t)
+
 			got := nn.ScaledDotProductAttention(b, q, scale,
 				nn.WithKVHistory(history),
 				nn.WithMask(tc.model))
@@ -115,7 +122,7 @@ func TestRotatingKVCacheDecodeParity(t *testing.T) {
 }
 
 func TestAssistantSharedHistoryL1MasksMatchNoMask(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.SkipIfUnavailable(t)
 	if !mlx.MetalIsAvailable() {
 		t.Skip("MLX Metal not available")
 	}
@@ -152,8 +159,14 @@ func TestAssistantSharedHistoryL1MasksMatchNoMask(t *testing.T) {
 		{name: "sliding", h: sliding.View(b), mask: nn.CausalMask()},
 	}
 
+	// Materialize shared fixtures on this thread before fanning out to
+	// subtests: lazy arrays can't cross threads (MLX default streams are
+	// thread-local).
+	mlx.Eval(b.InputIDs, cases[0].h.K(), cases[0].h.V(), cases[1].h.K(), cases[1].h.V())
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			mlxtest.Setup(t)
+
 			got := nn.ScaledDotProductAttention(b, q, scale, nn.WithKVHistory(tc.h), nn.WithMask(tc.mask))
 			want := mlx.FastScaledDotProductAttention(q, tc.h.K(), tc.h.V(), scale, "", nil)
 
@@ -173,7 +186,7 @@ func TestAssistantSharedHistoryL1MasksMatchNoMask(t *testing.T) {
 // matches a reference computed from the same K/V with the model mask
 // and window restriction composed manually.
 func TestRotatingKVCachePrefillParity(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.SkipIfUnavailable(t)
 	const H, L, D = 1, 6, 4
 	const window = 4
 	const scale = 1.0
@@ -203,9 +216,15 @@ func TestRotatingKVCachePrefillParity(t *testing.T) {
 		{"causal+relax", nn.CausalMask().Relax(0, 1, 4, 2, 5), [][4]int{{1, 4, 2, 5}}, true},
 	}
 
+	// Materialize shared fixtures on this thread before fanning out to
+	// subtests: lazy arrays can't cross threads (MLX default streams are
+	// thread-local).
+	mlx.Eval(q, k, v, b.InputIDs)
 	negInf := float32(math.Inf(-1))
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			mlxtest.Setup(t)
+
 			c := NewRotatingKVCache(window)
 			history := c.Update(b, k, v)
 
@@ -257,7 +276,7 @@ func TestRotatingKVCachePrefillParity(t *testing.T) {
 // an identical write with no snapshots scheduled. Capture happens after the
 // write via lazy snapshots, so it must not perturb the write itself.
 func TestRotatingKVCacheScheduledSnapshotParity(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	const H, D = 1, 4
 	const window = 4
 	const before = 5 // past wrap before the batched write
@@ -337,7 +356,7 @@ func TestRotatingKVCacheScheduledSnapshotParity(t *testing.T) {
 // a manual reference. Pins the cache+MLA integration that
 // glm4_moe_lite uses in production.
 func TestRotatingKVCacheMLAParity(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	const H, L, D, valueDim = 1, 3, 6, 4
 	const scale = 1.0
 	const window = 8 // window >= L so no window restriction

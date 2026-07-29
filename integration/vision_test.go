@@ -103,7 +103,6 @@ func runVisionMultiTurn(t *testing.T, models []string) {
 				},
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options:   map[string]any{"temperature": 0.0, "seed": 42},
 			}
 			resp1 := DoChat(ctx, t, client, req, []string{
 				"llama", "cross", "walk", "road", "animal", "cartoon",
@@ -170,7 +169,6 @@ func runVisionObjectCounting(t *testing.T, models []string) {
 				},
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options:   map[string]any{"temperature": 0.0, "seed": 42},
 			}
 			DoChat(ctx, t, client, req, []string{"4", "four"}, 120*time.Second, 30*time.Second)
 		})
@@ -213,7 +211,6 @@ func runVisionSceneUnderstanding(t *testing.T, models []string) {
 				},
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options:   map[string]any{"temperature": 0.0, "seed": 42},
 			}
 			DoChat(ctx, t, client, req, []string{
 				"abbey road", "beatles", "abbey", "llama",
@@ -251,7 +248,6 @@ func runVisionSpatialReasoning(t *testing.T, models []string) {
 				},
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options:   map[string]any{"temperature": 0.0, "seed": 42},
 			}
 			DoChat(ctx, t, client, req, []string{
 				"laptop", "computer", "typing", "working", "desk", "writing", "pen", "glasses", "reading",
@@ -287,7 +283,6 @@ func runVisionDetailRecognition(t *testing.T, models []string) {
 				},
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options:   map[string]any{"temperature": 0.0, "seed": 42},
 			}
 			DoChat(ctx, t, client, req, []string{
 				"glasses", "spectacles", "eyeglasses",
@@ -332,7 +327,6 @@ func runVisionMultiImage(t *testing.T, models []string) {
 				},
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options:   map[string]any{"temperature": 0.0, "seed": 42},
 			}
 			// Both images feature cartoon llamas/alpacas — the model should
 			// note the common subject and the different settings.
@@ -371,7 +365,6 @@ func runVisionImageDescription(t *testing.T, models []string) {
 				},
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options:   map[string]any{"temperature": 0.0, "seed": 42},
 			}
 			DoChat(ctx, t, client, req, []string{
 				"llama", "animal", "build", "model", "open", "cartoon", "character",

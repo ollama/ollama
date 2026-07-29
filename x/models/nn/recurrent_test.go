@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
@@ -39,7 +40,7 @@ func convFromKernel(w *mlx.Array) *Conv1d {
 // short row must be the row's last convTail real positions (not the
 // padded tail), (c) the full row must be unaffected.
 func TestCausalConv1DPaddedRowParity(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	L, D, convTail := 4, 3, 2
 	qLenShort := 2
 	K := convTail + 1
@@ -183,7 +184,7 @@ func floatsClose(t *testing.T, label string, got, want []float32, tol float64) {
 // that each boundary state equals the single-shot state over the
 // corresponding prefix.
 func TestGatedDeltaSegmentEquivalence(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.SkipIfUnavailable(t)
 	B, T, Hk, Dk, Hv, Dv := 1, 5, 1, 32, 1, 32
 	packed, ba, dtBias, aExp := gatedDeltaPackedInputs(B, T, Hk, Dk, Hv, Dv)
 	prior := mlx.Zeros(mlx.DTypeFloat32, B, Hv, Dv, Dk)
@@ -201,8 +202,14 @@ func TestGatedDeltaSegmentEquivalence(t *testing.T) {
 		{"perToken", []int{1, 2, 3, 4}},
 		{"sparse", []int{2}},
 	}
+	// Materialize shared fixtures on this thread before fanning out to
+	// subtests: lazy arrays can't cross threads (MLX default streams are
+	// thread-local).
+	mlx.Eval(packed, ba, dtBias, aExp, prior, refOut)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			mlxtest.Setup(t)
+
 			segOut, segStates := GatedDelta(full, packed, ba, dtBias, aExp,
 				WithRecurrentState(nil, prior), WithSnapshotSplits(tc.splits))
 			mlx.Eval(refOut, segOut)
@@ -225,7 +232,7 @@ func TestGatedDeltaSegmentEquivalence(t *testing.T) {
 // TestCausalConv1DSegmentEquivalence checks the conv segmented path matches the
 // single-shot conv for output, final conv tail, and each boundary conv state.
 func TestCausalConv1DSegmentEquivalence(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	B, L, D, convTail := 1, 4, 3, 2
 	K := convTail + 1
 
@@ -269,7 +276,7 @@ func TestCausalConv1DSegmentEquivalence(t *testing.T) {
 // row's padded positions so a short row's boundary state freezes at its
 // real end.
 func TestGatedDeltaSegmentEquivalenceBatched(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.SkipIfUnavailable(t)
 	B, T, Hk, Dk, Hv, Dv := 2, 4, 1, 32, 1, 32
 	packed, ba, dtBias, aExp := gatedDeltaPackedInputs(B, T, Hk, Dk, Hv, Dv)
 	prior := mlx.Zeros(mlx.DTypeFloat32, B, Hv, Dv, Dk)
@@ -292,8 +299,14 @@ func TestGatedDeltaSegmentEquivalenceBatched(t *testing.T) {
 		{"perToken", []int{1, 2, 3}},
 		{"sparse", []int{2}},
 	}
+	// Materialize shared fixtures on this thread before fanning out to
+	// subtests: lazy arrays can't cross threads (MLX default streams are
+	// thread-local).
+	mlx.Eval(packed, ba, dtBias, aExp, prior, full.InputIDs, refOut, lastState(refStates))
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			mlxtest.Setup(t)
+
 			segOut, segStates := GatedDelta(full, packed, ba, dtBias, aExp,
 				WithRecurrentState(nil, prior), WithSnapshotSplits(tc.splits))
 			mlx.Eval(refOut, segOut, lastState(refStates), lastState(segStates))
@@ -329,7 +342,7 @@ func TestGatedDeltaSegmentEquivalenceBatched(t *testing.T) {
 // references for a ragged B>1 batch, where a short row must freeze its tail at
 // its real end rather than reach into padding.
 func TestCausalConv1DSegmentEquivalenceBatched(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	B, L, D, convTail := 2, 4, 3, 2
 	K := convTail + 1
 

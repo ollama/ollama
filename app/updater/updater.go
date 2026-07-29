@@ -328,6 +328,9 @@ type Updater struct {
 	cancelDownload     context.CancelFunc
 	cancelDownloadLock sync.Mutex
 	checkNow           chan struct{}
+	// checkerDone is closed when the background update checker goroutine
+	// returns, so callers can join it after cancelling its context.
+	checkerDone chan struct{}
 }
 
 // CancelOngoingDownload cancels any currently running download
@@ -355,7 +358,9 @@ func (u *Updater) TriggerImmediateCheck() {
 func (u *Updater) StartBackgroundUpdaterChecker(ctx context.Context, cb func(string) error) {
 	u.checkNow = make(chan struct{}, 1)
 	u.checkNow <- struct{}{} // Trigger first check after initial delay
+	u.checkerDone = make(chan struct{})
 	go func() {
+		defer close(u.checkerDone)
 		// Don't blast an update message immediately after startup
 		time.Sleep(UpdateCheckInitialDelay)
 		slog.Info("beginning update checker", "interval", UpdateCheckInterval)

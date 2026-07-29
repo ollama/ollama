@@ -3,7 +3,10 @@ package mlx
 // #include "generated.h"
 import "C"
 
-import "log/slog"
+import (
+	"log/slog"
+	"sync"
+)
 
 type Device struct {
 	ctx C.mlx_device
@@ -17,18 +20,32 @@ func (d Device) LogValue() slog.Value {
 }
 
 var (
+	// defaultDeviceMu guards defaultDevice/defaultDeviceSet, which are
+	// touched by SetDefaultDeviceGPU from every thread that initializes MLX.
+	defaultDeviceMu  sync.Mutex
 	defaultDevice    Device
 	defaultDeviceSet bool
-	defaultStream    Stream
-	defaultStreamSet bool
+
+	// defaultStreams caches the per-thread default streams. MLX default
+	// streams are thread-local (since MLX 0.31.2), so a single process-wide
+	// cache would hand a stream created on one thread to ops evaluated on
+	// another — which throws "There is no Stream(gpu, N) in current thread".
+	defaultStreams sync.Map // map[uint64]Stream, keyed by thread ID
 )
 
 func resetDefaultStreamCache() {
+	defaultDeviceMu.Lock()
 	defaultDeviceSet = false
-	defaultStreamSet = false
+	defaultDeviceMu.Unlock()
+	defaultStreams.Range(func(k, _ any) bool {
+		defaultStreams.Delete(k)
+		return true
+	})
 }
 
 func DefaultDevice() Device {
+	defaultDeviceMu.Lock()
+	defer defaultDeviceMu.Unlock()
 	if !defaultDeviceSet {
 		d := C.mlx_device_new()
 		C.mlx_get_default_device(&d)
@@ -67,13 +84,18 @@ func (s Stream) LogValue() slog.Value {
 	return slog.StringValue(C.GoString(C.mlx_string_data(str)))
 }
 
+// DefaultStream returns the calling thread's default stream. The result is
+// cached per thread: resolving a stream on the wrong thread records it into
+// arrays that can then only be evaluated on the stream's owning thread.
 func DefaultStream() Stream {
-	if !defaultStreamSet {
-		s := C.mlx_stream_new()
-		C.mlx_get_default_stream(&s, DefaultDevice().ctx)
-		defaultStream = Stream{s}
-		defaultStreamSet = true
+	tid := currentThreadID()
+	if s, ok := defaultStreams.Load(tid); ok {
+		return s.(Stream)
 	}
 
-	return defaultStream
+	s := C.mlx_stream_new()
+	C.mlx_get_default_stream(&s, DefaultDevice().ctx)
+	stream := Stream{s}
+	defaultStreams.Store(tid, stream)
+	return stream
 }

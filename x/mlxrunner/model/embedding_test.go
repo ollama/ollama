@@ -3,19 +3,13 @@ package model
 import (
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/models/nn"
 )
 
-func skipIfNoMLX(t *testing.T) {
-	t.Helper()
-	if err := mlx.CheckInit(); err != nil {
-		t.Skipf("MLX not available: %v", err)
-	}
-}
-
 func TestMakeEmbeddingLayerDense(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	weight := mlx.FromValues([]float32{
 		1, 2, 3, 4,
@@ -39,7 +33,7 @@ func TestMakeEmbeddingLayerDense(t *testing.T) {
 }
 
 func TestMakeEmbeddingLayerQuantized(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	denseWeight := mlx.FromValues(func() []float32 {
 		out := make([]float32, 2*64)

@@ -69,10 +69,6 @@ func chatModelRequest(model string) (api.ChatRequest, []string) {
 			},
 		},
 		KeepAlive: &api.Duration{Duration: 10 * time.Second},
-		Options: map[string]any{
-			"temperature": 0.1,
-			"seed":        123,
-		},
 	}
 	anyResp := blueSkyExpected
 
