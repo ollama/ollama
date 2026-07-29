@@ -9,4 +9,4 @@ Headers are automatically refreshed when you run a CMake build:
 cmake --preset 'MLX CUDA 13'
 ```
 
-See the [MLX Engine](../../../../../../../docs/development.md#mlx-engine-optional) section of the development docs for full build instructions.
+See the [MLX Engine](../../../../../docs/development.md#mlx-engine-optional) section of the development docs for full build instructions.
