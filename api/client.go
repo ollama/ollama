@@ -392,12 +392,14 @@ func (c *Client) ListRunning(ctx context.Context) (*ProcessResponse, error) {
 }
 
 // Copy copies a model - creating a model with another name from an existing
-// model.
-func (c *Client) Copy(ctx context.Context, req *CopyRequest) error {
-	if err := c.do(ctx, http.MethodPost, "/api/copy", req, nil); err != nil {
-		return err
+// model. Status carries a warning when the copy drops manifest list children
+// that are not held locally.
+func (c *Client) Copy(ctx context.Context, req *CopyRequest) (*ProgressResponse, error) {
+	var resp ProgressResponse
+	if err := c.do(ctx, http.MethodPost, "/api/copy", req, &resp); err != nil {
+		return nil, err
 	}
-	return nil
+	return &resp, nil
 }
 
 // Delete deletes a model and its data.
@@ -412,6 +414,21 @@ func (c *Client) Delete(ctx context.Context, req *DeleteRequest) error {
 func (c *Client) Show(ctx context.Context, req *ShowRequest) (*ShowResponse, error) {
 	var resp ShowResponse
 	if err := c.do(ctx, http.MethodPost, "/api/show", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// ShowManifests obtains model information for all manifests in a manifest list.
+func (c *Client) ShowManifests(ctx context.Context, req *ShowRequest) (*ShowManifestsResponse, error) {
+	showReq := &ShowRequest{AllManifests: true}
+	if req != nil {
+		*showReq = *req
+		showReq.AllManifests = true
+	}
+
+	var resp ShowManifestsResponse
+	if err := c.do(ctx, http.MethodPost, "/api/show", showReq, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil

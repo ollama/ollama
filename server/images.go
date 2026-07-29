@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -32,6 +33,8 @@ import (
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 	"github.com/ollama/ollama/x/transfer"
+
+	"golang.org/x/mod/semver"
 )
 
 // Blobs newer than this may belong to another process that has not written its
@@ -77,6 +80,8 @@ type Model struct {
 	System             string
 	License            []string
 	Digest             string
+	ManifestDigest     string
+	Runner             string
 	Options            map[string]any
 	GenerationDefaults model.GenerationDefaults
 	Messages           []api.Message
@@ -246,6 +251,15 @@ func chatTemplateHasToolRoundTrip(chatTemplate string) bool {
 		strings.Contains(chatTemplate, "ipython"))
 }
 
+// chatTemplateHasToolCallIDs detects Mistral-style templates that round-trip
+// tool-call IDs via the [CALL_ID] token. Go templates cannot carry the ID, so
+// these templates must win the renderer preference or multi-turn tool calls
+// break. This applies to any model with such a template, not just migrated
+// ones.
+func chatTemplateHasToolCallIDs(chatTemplate string) bool {
+	return strings.Contains(chatTemplate, "[CALL_ID]") && strings.Contains(chatTemplate, "tool_call.id")
+}
+
 func goTemplateCapabilities(t *template.Template) []model.Capability {
 	if t == nil {
 		return nil
@@ -314,6 +328,10 @@ func shouldPreferChatTemplate(chatTemplate string, chatTemplateCaps []model.Capa
 		!slices.Contains(chatTemplateCaps, model.CapabilityTools) ||
 		!slices.Contains(goTemplateCaps, model.CapabilityTools) {
 		return false
+	}
+
+	if chatTemplateHasToolCallIDs(chatTemplate) {
+		return true
 	}
 
 	return chatTemplateHasToolRoundTrip(chatTemplate) && !goTemplateHasToolRoundTrip(goTemplate)
@@ -653,18 +671,33 @@ func (m *Model) String() string {
 	return modelfile.String()
 }
 
+// GetModel loads a model without constraining the runner, letting manifest
+// lists resolve to the preferred child.
 func GetModel(name string) (*Model, error) {
+	return GetModelForRunner(name, "")
+}
+
+// GetModelForRunner returns model metadata for name, selecting runner from a
+// manifest list when one is specified.
+func GetModelForRunner(name, runner string) (*Model, error) {
 	n := model.ParseName(name)
-	mf, err := manifest.ParseNamedManifest(n)
+	mf, err := manifest.ParseNamedManifestForRunner(n, runner)
 	if err != nil {
 		return nil, err
 	}
 
+	manifestDigest := mf.SelectedDigest()
+	if manifestDigest == "" {
+		manifestDigest = mf.Digest()
+	}
+
 	m := &Model{
-		Name:      n.String(),
-		ShortName: n.DisplayShortest(),
-		Digest:    mf.Digest(),
-		Template:  template.DefaultTemplate,
+		Name:           n.String(),
+		ShortName:      n.DisplayShortest(),
+		Digest:         mf.Digest(),
+		ManifestDigest: manifestDigest,
+		Runner:         mf.Runner,
+		Template:       template.DefaultTemplate,
 	}
 
 	if mf.Config.Digest != "" {
@@ -803,79 +836,83 @@ func GetModel(name string) (*Model, error) {
 	return m, nil
 }
 
-func CopyModel(src, dst model.Name) error {
+// CopyModel copies src to dst, returning a warning when a manifest list is
+// narrowed to the children held locally.
+func CopyModel(src, dst model.Name) (string, error) {
 	if !dst.IsFullyQualified() {
-		return model.Unqualified(dst)
+		return "", model.Unqualified(dst)
 	}
 	if !src.IsFullyQualified() {
-		return model.Unqualified(src)
+		return "", model.Unqualified(src)
 	}
 
 	if src.Filepath() == dst.Filepath() {
-		return nil
+		return "", nil
 	}
 
-	manifests, err := manifest.Path()
+	data, err := manifest.ReadManifestData(src)
 	if err != nil {
-		return err
+		return "", err
 	}
 
-	dstpath := filepath.Join(manifests, dst.Filepath())
-	if err := os.MkdirAll(filepath.Dir(dstpath), 0o755); err != nil {
-		return err
-	}
-
-	srcpath := filepath.Join(manifests, src.Filepath())
-	srcfile, err := os.Open(srcpath)
+	data, warning, err := narrowManifestListToLocal(data)
 	if err != nil {
-		return err
+		return "", err
 	}
-	defer srcfile.Close()
 
-	dstfile, err := os.Create(dstpath)
-	if err != nil {
-		return err
-	}
-	defer dstfile.Close()
-
-	_, err = io.Copy(dstfile, srcfile)
-	return err
+	return warning, manifest.WriteManifestData(dst, data)
 }
 
-func deleteUnusedLayers(deleteMap map[string]struct{}) error {
-	// Ignore corrupt manifests to avoid blocking deletion of layers that are freshly orphaned
-	manifests, err := manifest.Manifests(true)
+// narrowManifestListToLocal drops manifest list children whose manifests are
+// not local, returning the rewritten document and a warning naming what went.
+func narrowManifestListToLocal(data []byte) ([]byte, string, error) {
+	var mf manifest.Manifest
+	if err := json.Unmarshal(data, &mf); err != nil {
+		return nil, "", err
+	}
+	if mf.MediaType != manifest.MediaTypeManifestList {
+		return data, "", nil
+	}
+
+	var kept []manifest.Manifest
+	var dropped []string
+	for _, child := range mf.Manifests {
+		if _, err := resolveShowManifestChild(child); err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				return nil, "", err
+			}
+			dropped = append(dropped, cmp.Or(child.Runner, "unknown"))
+			continue
+		}
+		kept = append(kept, child)
+	}
+
+	if len(dropped) == 0 {
+		return data, "", nil
+	}
+	if len(kept) == 0 {
+		return nil, "", fmt.Errorf("%w: pull one of %s before copying", manifest.ErrNoCompatibleManifest, strings.Join(dropped, ", "))
+	}
+
+	narrowed := mf
+	narrowed.Manifests = kept
+	out, err := json.Marshal(narrowed)
 	if err != nil {
-		return err
+		return nil, "", err
 	}
 
-	for _, manifest := range manifests {
-		for _, layer := range manifest.Layers {
-			delete(deleteMap, layer.Digest)
-		}
-
-		delete(deleteMap, manifest.Config.Digest)
+	var runners []string
+	for _, child := range kept {
+		runners = append(runners, cmp.Or(child.Runner, "unknown"))
 	}
+	warning := fmt.Sprintf("Warning: discarded %s (not pulled locally); copy contains %s",
+		strings.Join(dropped, ", "), strings.Join(runners, ", "))
 
-	// only delete the files which are still in the deleteMap
-	for k := range deleteMap {
-		fp, err := manifest.BlobsPath(k)
-		if err != nil {
-			slog.Info(fmt.Sprintf("couldn't get file path for '%s': %v", k, err))
-			continue
-		}
-		if err := os.Remove(fp); err != nil && !errors.Is(err, os.ErrNotExist) {
-			slog.Info(fmt.Sprintf("couldn't remove file '%s': %v", fp, err))
-			continue
-		}
-		removeGGUFMetadata(k)
-	}
-
-	return nil
+	return out, warning, nil
 }
 
 func PruneLayers() error {
-	deleteMap := make(map[string]struct{})
+	var candidates []string
 	p, err := manifest.BlobsPath("")
 	if err != nil {
 		return err
@@ -916,18 +953,19 @@ func PruneLayers() error {
 			continue
 		}
 
-		deleteMap[name] = struct{}{}
+		candidates = append(candidates, name)
 	}
 
-	slog.Info(fmt.Sprintf("total blobs: %d", len(deleteMap)))
+	slog.Info(fmt.Sprintf("total blobs: %d", len(candidates)))
 
-	if err := deleteUnusedLayers(deleteMap); err != nil {
+	removed, err := manifest.RemoveUnreferencedBlobs(candidates...)
+	if err != nil {
 		slog.Error(fmt.Sprintf("couldn't remove unused layers: %v", err))
 		return nil
 	}
 	pruneGGUFMetadata()
 
-	slog.Info(fmt.Sprintf("total unused blobs removed: %d", len(deleteMap)))
+	slog.Info(fmt.Sprintf("total unused blobs removed: %d", len(removed)))
 
 	return nil
 }
@@ -940,30 +978,50 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		return errInsecureProtocol
 	}
 
-	mf, err := manifest.ParseNamedManifest(n)
+	manifestJSON, err := manifest.ReadManifestData(n)
 	if err != nil {
 		fn(api.ProgressResponse{Status: "couldn't retrieve manifest"})
 		return err
 	}
 
+	var stored manifest.Manifest
+	if err := json.Unmarshal(manifestJSON, &stored); err != nil {
+		fn(api.ProgressResponse{Status: "couldn't retrieve manifest"})
+		return err
+	}
+
 	var layers []manifest.Layer
-	layers = append(layers, mf.Layers...)
-	if mf.Config.Digest != "" {
-		layers = append(layers, mf.Config)
+	manifestMediaType := manifest.MediaTypeManifest
+
+	if stored.MediaType == manifest.MediaTypeManifestList {
+		layers, err = pushLayersForManifestList(stored)
+		if err != nil {
+			return err
+		}
+		manifestMediaType = manifest.MediaTypeManifestList
+	} else {
+		mf, err := manifest.ParseNamedManifest(n)
+		if err != nil {
+			fn(api.ProgressResponse{Status: "couldn't retrieve manifest"})
+			return err
+		}
+
+		layers = append(layers, mf.Layers...)
+		if mf.Config.Digest != "" {
+			layers = append(layers, mf.Config)
+		}
+
+		if !hasTensorLayers(layers) {
+			manifestJSON, err = json.Marshal(mf)
+			if err != nil {
+				return err
+			}
+		}
 	}
 
 	// Use fast transfer for models with tensor layers (many small blobs)
 	if hasTensorLayers(layers) {
-		// Read raw manifest JSON to preserve tensor metadata fields
-		manifestPath, err := manifest.PathForName(n)
-		if err != nil {
-			return err
-		}
-		manifestJSON, err := os.ReadFile(manifestPath)
-		if err != nil {
-			return err
-		}
-		if err := pushWithTransfer(ctx, n, layers, manifestJSON, regOpts, fn); err != nil {
+		if err := pushWithTransfer(ctx, n, layers, manifestJSON, manifestMediaType, regOpts, fn); err != nil {
 			return err
 		}
 		fn(api.ProgressResponse{Status: "success"})
@@ -981,13 +1039,8 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	requestURL := n.BaseURL()
 	requestURL = requestURL.JoinPath("v2", n.DisplayNamespaceModel(), "manifests", n.Tag)
 
-	manifestJSON, err := json.Marshal(mf)
-	if err != nil {
-		return err
-	}
-
 	headers := make(http.Header)
-	headers.Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
+	headers.Set("Content-Type", manifestMediaType)
 	resp, err := makeRequestWithRetry(ctx, http.MethodPut, requestURL, headers, bytes.NewReader(manifestJSON), regOpts)
 	if err != nil {
 		return err
@@ -999,22 +1052,87 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	return nil
 }
 
-func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
+func pushLayersForManifestList(parent manifest.Manifest) ([]manifest.Layer, error) {
+	seen := make(map[string]struct{})
+	var layers []manifest.Layer
+
+	addLayer := func(layer manifest.Layer) error {
+		if layer.Digest == "" {
+			return nil
+		}
+		if _, ok := seen[layer.Digest]; ok {
+			return nil
+		}
+		if layer.Size == 0 {
+			p, err := manifest.BlobsPath(layer.Digest)
+			if err != nil {
+				return err
+			}
+			fi, err := os.Stat(p)
+			if err != nil {
+				return err
+			}
+			layer.Size = fi.Size()
+		}
+		seen[layer.Digest] = struct{}{}
+		layers = append(layers, layer)
+		return nil
+	}
+
+	for _, child := range parent.Manifests {
+		childDigest := child.BlobDigest()
+		if childDigest == "" {
+			return nil, errors.New("manifest list child is missing digest")
+		}
+		// Resolve before sizing the child: its descriptor carries no size, so
+		// addLayer would stat a missing blob and lose the actionable error.
+		resolved, err := resolveShowManifestChild(child)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				// pull materializes only the selected child; the others stay
+				// bare references until pulled explicitly.
+				return nil, fmt.Errorf("manifest child for runner %q is not local; pull it with --runner %s before pushing", child.Runner, child.Runner)
+			}
+			return nil, err
+		}
+
+		if err := addLayer(manifest.Layer{
+			MediaType: manifest.MediaTypeManifest,
+			Digest:    childDigest,
+		}); err != nil {
+			return nil, err
+		}
+
+		for _, layer := range resolved.Layers {
+			if err := addLayer(layer); err != nil {
+				return nil, err
+			}
+		}
+		if err := addLayer(resolved.Config); err != nil {
+			return nil, err
+		}
+	}
+
+	return layers, nil
+}
+
+func PullModel(ctx context.Context, name string, runner string, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
 	n := model.ParseName(name)
 
 	// build deleteMap to prune unused layers
 	deleteMap := make(map[string]struct{})
-	existingMf, err := manifest.ParseNamedManifest(n)
+	existingDigests, err := manifest.ReferencedBlobDigestsForName(n)
 	if errors.Is(err, os.ErrNotExist) {
 		// noop
 	} else if err != nil {
 		slog.Warn("pulling model with bad existing manifest", "name", name, "error", err)
 	} else {
-		for _, l := range existingMf.Layers {
-			deleteMap[l.Digest] = struct{}{}
-		}
-		if existingMf.Config.Digest != "" {
-			deleteMap[existingMf.Config.Digest] = struct{}{}
+		for _, digest := range existingDigests {
+			if blob, err := manifest.BlobsPath(digest); err == nil {
+				if _, err := os.Stat(blob); err == nil {
+					deleteMap[digest] = struct{}{}
+				}
+			}
 		}
 	}
 
@@ -1028,11 +1146,36 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	if err != nil {
 		return fmt.Errorf("pull model manifest: %s", err)
 	}
-	if hasTensorLayers(mf.Layers) {
+	selectedChildDigest := ""
+	if mf.MediaType == manifest.MediaTypeManifestList {
+		var childDigest string
+		mf, childDigest, err = pullSelectedManifest(ctx, n, mf, runner, regOpts, fn)
+		if err != nil {
+			return err
+		}
+		selectedChildDigest = childDigest
+	} else if runner != "" {
+		// The registry served a plain manifest, so there is no variant to
+		// select. Honor an explicit runner request by rejecting a declared
+		// mismatch instead of silently pulling whatever is stored. Manifests
+		// without runner metadata cannot be checked before their config blob
+		// is local, so they proceed as before.
+		if mf.Runner != "" && !strings.EqualFold(mf.Runner, runner) {
+			return fmt.Errorf("%w for runners: %s", manifest.ErrNoCompatibleManifest, runner)
+		}
+	}
+
+	// Checked against the selected child: a manifest list carries no layers of
+	// its own, so testing the parent would skip the gate entirely.
+	if requiresMLX(mf) {
 		if err := mlx.CheckInit(); err != nil {
 			slog.Debug("MLX is unavailable for safetensors model pull", "error", err)
 			return errors.New("this model requires MLX support, but the MLX runtime is not available")
 		}
+	}
+
+	if err := checkModelRequires(ctx, n, mf, regOpts); err != nil {
+		return err
 	}
 
 	var layers []manifest.Layer
@@ -1046,6 +1189,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		if err := pullWithTransfer(ctx, n, layers, manifestData, regOpts, fn); err != nil {
 			return err
 		}
+		writePullDowngradeAnchor(n, mf, manifestData, selectedChildDigest)
 		fn(api.ProgressResponse{Status: "success"})
 		return nil
 	}
@@ -1101,25 +1245,18 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 
 	fn(api.ProgressResponse{Status: "writing manifest"})
 
-	fp, err := manifest.PathForName(n)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(fp), 0o755); err != nil {
+	if err := manifest.WriteManifestData(n, manifestData); err != nil {
+		slog.Info(fmt.Sprintf("couldn't write manifest for %s", n.DisplayShortest()))
 		return err
 	}
 
-	err = os.WriteFile(fp, manifestData, 0o644)
-	if err != nil {
-		slog.Info(fmt.Sprintf("couldn't write to %s", fp))
-		return err
-	}
+	writePullDowngradeAnchor(n, mf, manifestData, selectedChildDigest)
 
-	slog.Debug("manifest written", "path", fp, "sha256", fmt.Sprintf("%x", sha256.Sum256(manifestData)), "size", len(manifestData))
+	slog.Debug("manifest written", "name", n.DisplayShortest(), "sha256", fmt.Sprintf("%x", sha256.Sum256(manifestData)), "size", len(manifestData))
 
 	if !envconfig.NoPrune() && len(deleteMap) > 0 {
 		fn(api.ProgressResponse{Status: "removing unused layers"})
-		if err := deleteUnusedLayers(deleteMap); err != nil {
+		if _, err := manifest.RemoveUnreferencedBlobs(candidateBlobDigests(deleteMap)...); err != nil {
 			fn(api.ProgressResponse{Status: fmt.Sprintf("couldn't remove unused layers: %v", err)})
 		}
 	}
@@ -1127,6 +1264,16 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	fn(api.ProgressResponse{Status: "success"})
 
 	return nil
+}
+
+// requiresMLX reports whether serving mf needs the MLX runtime. A declared
+// runner is authoritative; manifests predating runner metadata are judged by
+// their tensor layers.
+func requiresMLX(mf *manifest.Manifest) bool {
+	if mf.Runner != "" {
+		return strings.EqualFold(mf.Runner, manifest.RunnerMLX)
+	}
+	return hasTensorLayers(mf.Layers)
 }
 
 // hasTensorLayers checks if any layer has tensor media type.
@@ -1139,8 +1286,144 @@ func hasTensorLayers(layers []manifest.Layer) bool {
 	return false
 }
 
-// pullWithTransfer uses the simplified x/transfer package for downloading blobs.
-func pullWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer, manifestData []byte, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
+func candidateBlobDigests(m map[string]struct{}) []string {
+	digests := make([]string, 0, len(m))
+	for digest := range m {
+		digests = append(digests, digest)
+	}
+
+	return digests
+}
+
+// checkModelRequires makes sure the model is compatible with the local
+// Ollama version before any model layers are downloaded.
+func checkModelRequires(ctx context.Context, n model.Name, mf *manifest.Manifest, regOpts *registryOptions) error {
+	if mf == nil || mf.Config.Digest == "" {
+		return nil
+	}
+
+	if err := verifyBlob(mf.Config.Digest); err != nil {
+		if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, errDigestMismatch) {
+			return err
+		}
+		if err := downloadWithTransfer(ctx, n, []manifest.Layer{mf.Config}, regOpts, func(api.ProgressResponse) {}); err != nil {
+			slog.Debug("skipping requires check: config fetch failed", "model", n.DisplayShortest(), "error", err)
+			return nil
+		}
+		if err := verifyBlob(mf.Config.Digest); err != nil {
+			slog.Debug("skipping requires check: config verify failed", "model", n.DisplayShortest(), "error", err)
+			return nil
+		}
+	}
+
+	blobPath, err := manifest.BlobsPath(mf.Config.Digest)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(blobPath)
+	if err != nil {
+		return err
+	}
+
+	var cfg model.ConfigV2
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return err
+	}
+
+	return checkPullRequires(cfg.Requires, version.Version)
+}
+
+// checkPullRequires reports whether the pulling client satisfies the model's
+// declared minimum version.
+func checkPullRequires(requires, clientVersion string) error {
+	if requires == "" {
+		return nil
+	}
+	if clientVersion == "0.0.0" {
+		return nil
+	}
+	requires = "v" + strings.TrimPrefix(requires, "v")
+	if !semver.IsValid(requires) {
+		slog.Debug("ignoring malformed requires version", "requires", requires)
+		return nil
+	}
+	if semver.Compare(requires, "v"+clientVersion) > 0 {
+		return fmt.Errorf("model requires ollama version %s or newer (this client is v%s)", requires, clientVersion)
+	}
+	return nil
+}
+
+func pullSelectedManifest(ctx context.Context, n model.Name, parent *manifest.Manifest, runner string, regOpts *registryOptions, fn func(api.ProgressResponse)) (*manifest.Manifest, string, error) {
+	child, err := manifest.SelectManifestReferenceForRunner(parent.Manifests, runner)
+	if err != nil {
+		return nil, "", err
+	}
+
+	childDigest := child.BlobDigest()
+	if childDigest == "" {
+		return nil, "", errors.New("manifest list child is missing digest")
+	}
+
+	layer, err := remoteBlobLayer(ctx, n, childDigest, manifest.MediaTypeManifest, regOpts)
+	if err != nil {
+		return nil, "", err
+	}
+
+	// The child manifest is metadata; model progress starts with its layers.
+	if err := downloadWithTransfer(ctx, n, []manifest.Layer{layer}, regOpts, func(api.ProgressResponse) {}); err != nil {
+		return nil, "", err
+	}
+
+	if err := verifyBlob(childDigest); err != nil {
+		return nil, "", err
+	}
+	blobPath, err := manifest.BlobsPath(childDigest)
+	if err != nil {
+		return nil, "", err
+	}
+	data, err := os.ReadFile(blobPath)
+	if err != nil {
+		return nil, "", err
+	}
+
+	var mf manifest.Manifest
+	if err := json.Unmarshal(data, &mf); err != nil {
+		return nil, "", err
+	}
+	if mf.MediaType == manifest.MediaTypeManifestList {
+		return nil, "", errors.New("nested manifest lists are not supported")
+	}
+	if mf.Runner == "" {
+		mf.Runner = child.Runner
+	}
+	if mf.Format == "" {
+		mf.Format = child.Format
+	}
+
+	return &mf, childDigest, nil
+}
+
+func remoteBlobLayer(ctx context.Context, n model.Name, digest, mediaType string, regOpts *registryOptions) (manifest.Layer, error) {
+	requestURL := n.BaseURL().JoinPath("v2", n.DisplayNamespaceModel(), "blobs", digest)
+	resp, err := makeRequestWithRetry(ctx, http.MethodHead, requestURL, nil, nil, regOpts)
+	if err != nil {
+		return manifest.Layer{}, err
+	}
+	defer resp.Body.Close()
+
+	size, err := strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
+	if err != nil {
+		return manifest.Layer{}, err
+	}
+
+	return manifest.Layer{
+		MediaType: mediaType,
+		Digest:    digest,
+		Size:      size,
+	}, nil
+}
+
+func downloadWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
 	blobs := make([]transfer.Blob, len(layers))
 	for i, layer := range layers {
 		blobs[i] = transfer.Blob{
@@ -1197,27 +1480,43 @@ func pullWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer
 		return err
 	}
 
+	return nil
+}
+
+// writePullDowngradeAnchor writes a legacy manifest at the pulled name so a
+// pre-manifest-list daemon can load the model and its garbage collector
+// retains the referenced blobs.
+func writePullDowngradeAnchor(n model.Name, mf *manifest.Manifest, manifestData []byte, selectedChildDigest string) {
+	manifestDigests := []string{fmt.Sprintf("sha256:%x", sha256.Sum256(manifestData))}
+	if selectedChildDigest != "" {
+		manifestDigests = append(manifestDigests, selectedChildDigest)
+	}
+	// Best effort: the pull itself succeeded, so a failed downgrade anchor is
+	// logged rather than failing the request.
+	if err := manifest.WriteLegacyAnchor(n, mf, manifestDigests...); err != nil {
+		slog.Warn("couldn't write downgrade anchor for pulled model", "model", n.DisplayShortest(), "error", err)
+	}
+}
+
+// pullWithTransfer uses the simplified x/transfer package for downloading blobs.
+func pullWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer, manifestData []byte, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
+	if err := downloadWithTransfer(ctx, n, layers, regOpts, fn); err != nil {
+		return err
+	}
+
 	// Write manifest
 	fn(api.ProgressResponse{Status: "writing manifest"})
 
-	fp, err := manifest.PathForName(n)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(fp), 0o755); err != nil {
+	if err := manifest.WriteManifestData(n, manifestData); err != nil {
 		return err
 	}
 
-	if err := os.WriteFile(fp, manifestData, 0o644); err != nil {
-		return err
-	}
-
-	slog.Debug("manifest written", "path", fp, "sha256", fmt.Sprintf("%x", sha256.Sum256(manifestData)), "size", len(manifestData))
+	slog.Debug("manifest written", "name", n.DisplayShortest(), "sha256", fmt.Sprintf("%x", sha256.Sum256(manifestData)), "size", len(manifestData))
 	return nil
 }
 
 // pushWithTransfer uses the simplified x/transfer package for uploading blobs and manifest.
-func pushWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer, manifestJSON []byte, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
+func pushWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer, manifestJSON []byte, manifestMediaType string, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
 	blobs := make([]transfer.Blob, len(layers))
 	for i, layer := range layers {
 		blobs[i] = transfer.Blob{
@@ -1270,6 +1569,7 @@ func pushWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer
 		GetToken:          getToken,
 		Logger:            slog.Default(),
 		Manifest:          manifestJSON,
+		ManifestMediaType: manifestMediaType,
 		ManifestRef:       n.Tag,
 		Repository:        n.DisplayNamespaceModel(),
 		AllowPrivateHosts: regOpts != nil && regOpts.Insecure,
@@ -1280,7 +1580,7 @@ func pullModelManifest(ctx context.Context, n model.Name, regOpts *registryOptio
 	requestURL := n.BaseURL().JoinPath("v2", n.DisplayNamespaceModel(), "manifests", n.Tag)
 
 	headers := make(http.Header)
-	headers.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json")
+	headers.Set("Accept", strings.Join([]string{manifest.MediaTypeManifestList, manifest.MediaTypeManifest}, ", "))
 	resp, err := makeRequestWithRetry(ctx, http.MethodGet, requestURL, headers, nil, regOpts)
 	if err != nil {
 		return nil, nil, err
