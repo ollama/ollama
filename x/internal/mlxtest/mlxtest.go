@@ -27,10 +27,8 @@ func SkipIfUnavailable(t *testing.T) {
 // race detector's scheduler in particular) otherwise panics with
 // "There is no Stream(gpu, 0) in current thread".
 //
-// Setup deliberately does not switch devices or sweep caches: switching the
-// default device re-creates the process-wide default stream, and sweeping the
-// allocator cache between tests changes allocator reuse — both perturbed
-// tests that share lazy arrays with subtests running on other threads.
+// Setup leaves device and allocator state unchanged because some tests share
+// materialized arrays with subtests running on other threads.
 func Setup(t *testing.T) {
 	t.Helper()
 

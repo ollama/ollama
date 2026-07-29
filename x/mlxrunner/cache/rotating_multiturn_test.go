@@ -3,6 +3,7 @@ package cache
 import (
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
@@ -75,7 +76,7 @@ func feedSingle(c *RotatingKVCache, id float32) {
 // pre-existing tokens in logical order so the first Q of the new batch
 // has a full sliding window.
 func TestRotatingKVCacheConcatMidRotationPreservesContext(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	const window = 4
 	c := NewRotatingKVCache(window)
@@ -108,7 +109,7 @@ func TestRotatingKVCacheConcatMidRotationPreservesContext(t *testing.T) {
 // tokens plus the full new batch. This is the chunked-prefill contract
 // x/mlxrunner/pipeline.go relies on.
 func TestRotatingKVCacheConcatAlignedInvariant(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	const window = 4
 	c := NewRotatingKVCache(window)
@@ -148,7 +149,7 @@ func TestRotatingKVCacheConcatAlignedInvariant(t *testing.T) {
 // has not wrapped. Those trailing slots are zero padding and must not
 // be pulled back into the live window on the next concat.
 func TestRotatingKVCacheConcatAfterDecodeGrowsBuffer(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	const window = 512
 	c := NewRotatingKVCache(window)
@@ -171,7 +172,7 @@ func TestRotatingKVCacheConcatAfterDecodeGrowsBuffer(t *testing.T) {
 // tokens. A subsequent concat must drop those, not treat them as wrapped
 // window content.
 func TestRotatingKVCacheConcatAfterLiveRewind(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	const window = 8
 	c := NewRotatingKVCache(window)
@@ -206,7 +207,7 @@ func TestRotatingKVCacheConcatAfterLiveRewind(t *testing.T) {
 // TestRotatingKVCacheConcatGrowingBuffer: when oldLen < maxSize the trim
 // formula drops to non-positive and all pre-existing tokens are kept.
 func TestRotatingKVCacheConcatGrowingBuffer(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	const window = 4
 	c := NewRotatingKVCache(window)
@@ -225,7 +226,7 @@ func TestRotatingKVCacheConcatGrowingBuffer(t *testing.T) {
 // repeated L>1 Update() calls on a single cache. Scaled-down proxy for
 // the Gemma 4 26B case (sliding_window=1024, prefillChunkSize=2048).
 func TestRotatingKVCacheRunnerChunkedPrefill(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	const window = 4
 	c := NewRotatingKVCache(window)
@@ -270,7 +271,7 @@ func TestRotatingKVCacheRunnerChunkedPrefill(t *testing.T) {
 // prefill sequence and checks that each new prefill retains the last
 // (maxSize-1) pre-existing tokens in logical order.
 func TestRotatingKVCacheMultiTurnChatSimulation(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	const window = 4
 	c := NewRotatingKVCache(window)
@@ -312,7 +313,7 @@ func TestRotatingKVCacheMultiTurnChatSimulation(t *testing.T) {
 // token count through any mix of Update() calls — Gemma 4 uses
 // donorEntry.Offset - L for the consumer's RoPE offset.
 func TestRotatingKVCacheOffsetTracking(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	c := NewRotatingKVCache(4)
 	nextID := feedMulti(c, 1, 3)

@@ -3,16 +3,10 @@ package qwen3_5
 import (
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
-
-func skipIfNoMLX(t *testing.T) {
-	t.Helper()
-	if err := mlx.CheckInit(); err != nil {
-		t.Skipf("MLX not available: %v", err)
-	}
-}
 
 func TestParseConfigNestedDefaults(t *testing.T) {
 	data := []byte(`{
@@ -186,7 +180,7 @@ func TestNewCachesLayout(t *testing.T) {
 }
 
 func TestLoadWeightsPreservesLinearAttentionNormWeightDType(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	cfg := &Config{
 		HiddenSize:            4,

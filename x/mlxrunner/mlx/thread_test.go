@@ -61,6 +61,23 @@ func withMLXThread(t *testing.T, fn func()) {
 	}
 }
 
+func TestDefaultStreamPerThread(t *testing.T) {
+	first := startMLXThread(t)
+	defer stopMLXThread(t, first)
+	second := startMLXThread(t)
+	defer stopMLXThread(t, second)
+
+	for _, thread := range []*mlxthread.Thread{first, second} {
+		if err := thread.Do(context.Background(), func() error {
+			a := FromValues([]float32{1, 2, 3, 4}, 2, 2)
+			Eval(Matmul(a, a))
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestThreadedMLXOperations(t *testing.T) {
 	thread := startMLXThread(t)
 	defer stopMLXThread(t, thread)
