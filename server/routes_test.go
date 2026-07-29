@@ -83,14 +83,6 @@ func createTestFile(t *testing.T, name string) (string, string) {
 	return f.Name(), digest
 }
 
-type panicTransport struct{}
-
-func (t *panicTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	panic("unexpected RoundTrip call")
-}
-
-var panicOnRoundTrip = &http.Client{Transport: &panicTransport{}}
-
 func TestRoutes(t *testing.T) {
 	modelsDir := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", modelsDir)
