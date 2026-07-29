@@ -416,5 +416,3 @@ jobs:
         run: go test -count=1 -tags updater_live ./app/...
 
       - uses: golangci/golangci-lint-action@v9
-        with:
-          only-new-issues: true
