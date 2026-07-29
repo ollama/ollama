@@ -97,6 +97,42 @@ Rollback: `image: ollama/ollama:latest` + `pull_policy: always`, same command.
 First call after container start ≈ 323 s (139 s model load + llama-server/CUDA
 warmup) — warm up before timing anything.
 
+## The budget is a pixel ceiling, not a token count (2026-07-29)
+
+`image_max_tokens` does **not** set a token count directly. The server converts it to
+`image_max_pixels`, logged at model load:
+
+```
+load_hparams: image_min_pixels:   92160 (custom value)
+load_hparams: image_max_pixels: 2580480 (custom value)   # at budget 1120
+```
+
+An image is downscaled only if its **total pixel count** exceeds that ceiling. Aspect
+ratio therefore decides how much of the budget you can actually spend. Measured against
+the deployed image, warm, four generated colour-band images:
+
+| image | pixels | @1120 | @280 |
+|---|---|---|---|
+| 4032x189 (21:1) | 762,048 | 393 prompt_eval (~334 img tok) | 288 (~229) |
+| 8000x100 (80:1) | 800,000 | 391 (~361) | — |
+| 189x4032 (tall) | 762,048 | 393 (~336) | — |
+| 4000x4000 | 16,000,000 | **1146 (~1089)** | 313 (~256) |
+
+Raising 280 → 1120 buys the 4000x4000 image **+325%** tokens but a panorama only **+46%**:
+wide images run out of pixels before they run out of budget, so a high ceiling does almost
+nothing for them. The 2,233 figure in the section above came from a normal-aspect image,
+which is why it saw the full benefit. **Tune by total pixel count, not by how large one
+dimension looks.**
+
+### Vision correctness at 1120 — the open risk did not materialise
+
+`docs/design/gemma4-vision-token-budgets-upstream-rebase.md` flagged a possible unclamped
+vision position-embedding lookup at high budgets, and recommended a wide-image smoke test.
+Run 2026-07-29: all four images above returned the correct four colours **and** the correct
+orientation (including "top-to-bottom" for the tall one) at budget 1120. No crash, no
+`GGML_ASSERT`, no garbling, up to 80:1. That risk was in `model/models/gemma4/model_vision.go`,
+Go-runner code that no longer exists; nothing equivalent bites on the llama-server path.
+
 ## Gotchas
 
 - `pull_policy: always` + a local-only tag = compose tries a registry pull and
@@ -106,3 +142,14 @@ warmup) — warm up before timing anything.
   throwaway builds, wrong for deployed ones.
 - To use the image on another host without rebuilding: `docker push` to GHCR
   (`ghcr.io/maxusai/ollama`) — as of 2026-07-17 no registry has it.
+- **A low `num_predict` looks exactly like a broken vision path.** gemma4 selects a
+  thinking-capable parser (`renderer_parser="[completion vision tools thinking]"`). At
+  `num_predict=120` three of the four test images returned `"response": ""` with
+  `eval_count` of exactly 120 — the whole allowance went into an unclosed thinking block.
+  At 600 they all answered correctly. Check `thinking` as well as `response`, and don't
+  diagnose an empty reply as an image failure until `eval_count < num_predict`.
+- **Changing the budget forces a runner reload.** That is by design (`image_min_tokens` /
+  `image_max_tokens` participate in the scheduler's reload comparison), but it means a
+  budget change costs a full model reload. On 10.8.0.6 with concurrent open-webui traffic
+  one such request exceeded a 600 s client timeout. Keep the budget fixed per server;
+  don't vary it per request on a loaded host.
