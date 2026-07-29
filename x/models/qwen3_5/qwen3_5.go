@@ -1039,7 +1039,8 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, 
 	alpha := mlx.SliceStartStop(mixedBA, []int32{0, 0, cfg.LinearNumValueHeads}, []int32{B, L, 2 * cfg.LinearNumValueHeads})
 	convTail := cfg.LinearConvKernelDim - 1
 	var rc *cache.RecurrentCache
-	opts := make([]nn.RecurrentOption, 0, 2)
+	opts := make([]nn.RecurrentOption, 0, 3)
+	opts = append(opts, nn.WithConvSiLU())
 	if typed, ok := c.(*cache.RecurrentCache); ok {
 		rc = typed
 		opts = append(opts, nn.WithRecurrentHistory(rc.Get(b, x.DType())))
@@ -1057,7 +1058,6 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, 
 	}
 
 	convOut, convStates := nn.CausalConv1D(b, qkv, g.Conv1D, int(convTail), opts...)
-	convOut = mlx.SiLU(convOut)
 
 	q := mlx.SliceStartStop(convOut, []int32{0, 0, 0}, []int32{B, L, keyDim})
 	k := mlx.SliceStartStop(convOut, []int32{0, 0, keyDim}, []int32{B, L, 2 * keyDim})

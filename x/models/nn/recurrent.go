@@ -18,6 +18,7 @@ type recurrentConfig struct {
 	convState  *mlx.Array
 	deltaState *mlx.Array
 	splits     []int
+	convSiLU   bool
 }
 
 // WithRecurrentHistory supplies a cache's per-layer view of conv and
@@ -35,6 +36,13 @@ func WithRecurrentState(convState, deltaState *mlx.Array) RecurrentOption {
 		c.convState = convState
 		c.deltaState = deltaState
 	}
+}
+
+// WithConvSiLU applies SiLU to the conv output inside CausalConv1D,
+// fused into the conv kernel when the conv fits its contract. GatedDelta
+// ignores it, so it can ride a shared option list.
+func WithConvSiLU() RecurrentOption {
+	return func(c *recurrentConfig) { c.convSiLU = true }
 }
 
 // WithSnapshotSplits requests that the scan run in segments cut at the given
@@ -105,7 +113,7 @@ func resolveRecurrentConfig(opts []RecurrentOption) recurrentConfig {
 
 // CausalConv1D runs a depthwise causal 1D convolution with recurrent
 // state management. Prepends the prior conv state along axis 1 and runs
-// conv.Forward over the combined window.
+// the conv over the combined window.
 //
 // Shapes: input [B, L, D]; prior state [B, convTail, D]; output
 // [B, L, D] (the causal conv strips the prepended state).
@@ -137,7 +145,15 @@ func CausalConv1D(b *batch.Batch, input *mlx.Array, conv *Conv1d, convTail int, 
 		input = mlx.Where(mlx.ExpandDims(mask, 2), input, zero)
 	}
 	concat := mlx.Concatenate([]*mlx.Array{prior, input}, 1)
-	out = conv.Forward(concat)
+	if cfg.convSiLU {
+		if w := depthwiseConvWeight(conv); w != nil {
+			out = mlx.DepthwiseConvSiLU(concat, w, int(L))
+		} else {
+			out = mlx.SiLU(conv.Forward(concat))
+		}
+	} else {
+		out = conv.Forward(concat)
+	}
 
 	// Snapshot the conv tail at each segment boundary: interior splits in
 	// ascending order, then the forward end at L. Each boundary at offset O
@@ -154,6 +170,18 @@ func CausalConv1D(b *batch.Batch, input *mlx.Array, conv *Conv1d, convTail int, 
 		states = append(states, st)
 	}
 	return out, states
+}
+
+// depthwiseConvWeight returns the [C, K] weight view the fused conv kernel
+// takes, or nil when the conv is not a plain depthwise causal conv.
+func depthwiseConvWeight(c *Conv1d) *mlx.Array {
+	if c.Bias != nil || c.Stride != 1 || c.Padding != 0 || c.Dilation != 1 {
+		return nil
+	}
+	if c.Weight.NumDims() != 3 || c.Weight.Dim(2) != 1 || int(c.Groups) != c.Weight.Dim(0) {
+		return nil
+	}
+	return mlx.Reshape(c.Weight, int32(c.Weight.Dim(0)), int32(c.Weight.Dim(1)))
 }
 
 // convStateAt returns the conv state to cache at boundary: the trailing convTail
