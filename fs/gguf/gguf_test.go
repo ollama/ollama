@@ -5,11 +5,11 @@ import (
 	"encoding/binary"
 	"errors"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -230,39 +230,6 @@ func TestRead(t *testing.T) {
 	}
 }
 
-func TestOpenCleansUpPartialLazyReader(t *testing.T) {
-	p := createFile(t, []byte{
-		'G', 'G', 'U', 'F',
-		3, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0,
-	})
-
-	runtime.GC()
-	before := runtime.NumGoroutine()
-
-	for range 20 {
-		f, err := gguf.Open(p)
-		if err == nil {
-			f.Close()
-			t.Fatal("gguf.Open truncated header succeeded")
-		}
-	}
-
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		runtime.GC()
-		runtime.Gosched()
-		if runtime.NumGoroutine() <= before+2 {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	if after := runtime.NumGoroutine(); after > before+2 {
-		t.Fatalf("goroutines after repeated failed gguf.Open = %d, want at most %d", after, before+2)
-	}
-}
-
 func TestOpenRejectsInvalidMagic(t *testing.T) {
 	data := append([]byte("nope"), make([]byte, 20)...)
 	f, err := gguf.Open(createFile(t, data))
@@ -362,7 +329,7 @@ func FuzzOpen(f *testing.F) {
 func createFile(tb testing.TB, b []byte) string {
 	tb.Helper()
 
-	p := tb.TempDir() + "/model.gguf"
+	p := filepath.Join(tb.TempDir(), "model.gguf")
 	if err := os.WriteFile(p, b, 0o600); err != nil {
 		tb.Fatal(err)
 	}

@@ -350,3 +350,39 @@ func oversized(v any) bool {
 	}
 	return false
 }
+
+// jsonSafeValues returns the metadata values json.Marshal can represent.
+// Real GGUF files carry non-finite floats (e.g. gemma3n pads
+// activation_sparsity_scale with -Inf), which would otherwise fail the whole
+// show response.
+func jsonSafeValues(m *fsgguf.Metadata) map[string]any {
+	values := m.Values()
+	for key, value := range values {
+		if !jsonRepresentable(value) {
+			delete(values, key)
+		}
+	}
+	return values
+}
+
+func jsonRepresentable(v any) bool {
+	switch v := v.(type) {
+	case float32:
+		return finite(float64(v))
+	case float64:
+		return finite(v)
+	case []float32:
+		for _, f := range v {
+			if !finite(float64(f)) {
+				return false
+			}
+		}
+	case []float64:
+		for _, f := range v {
+			if !finite(f) {
+				return false
+			}
+		}
+	}
+	return true
+}

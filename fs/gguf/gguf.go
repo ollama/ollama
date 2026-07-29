@@ -485,6 +485,22 @@ func (f *File) NumTensors() int {
 	return int(f.tensors.count)
 }
 
+// TensorDataOffset returns the byte offset at which tensor data begins. The
+// offset is only known after all tensor metadata has been read because GGUF
+// stores it after the tensor-info table.
+func (f *File) TensorDataOffset() int64 {
+	_ = f.keyValues.rest()
+	_ = f.tensors.rest()
+	return f.offset
+}
+
+// ReaderAt returns a re-readable reader over the whole file. Together with
+// TensorDataOffset it lets callers build section readers for individual
+// tensor payloads.
+func (f *File) ReaderAt() io.ReaderAt {
+	return f.file
+}
+
 func (f *File) TensorInfos() iter.Seq2[int, TensorInfo] {
 	// fast forward through key values if we haven't already
 	f.keyValues.rest()

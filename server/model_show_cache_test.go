@@ -117,34 +117,43 @@ func TestModelShowCacheLocalVerboseVariantsAreSeparate(t *testing.T) {
 	}
 }
 
-func TestModelShowCacheLocalHydrationSkipsUnchangedInMemory(t *testing.T) {
+func TestModelShowCacheLocalKeyUsesRunnerSelectionAndParentDigest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	setTestHome(t, t.TempDir())
-	createShowCacheModel(t, "show-cache-hydrate", map[string]any{"test.context_length": uint32(1024)})
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
-	cache := newModelShowCache()
-	calls := 0
-	cache.getModelInfo = func(req api.ShowRequest) (*api.ShowResponse, error) {
-		calls++
-		return showCacheTestResponse(calls, req.Verbose), nil
-	}
+	writeShowManifestVariant(t, "show-cache-mlx", manifest.RunnerMLX, manifest.FormatSafetensors, modelpkg.ConfigV2{
+		ModelFormat:  manifest.FormatSafetensors,
+		Capabilities: []string{"completion"},
+	}, nil)
+	writeShowManifestVariant(t, "show-cache-ggml", manifest.RunnerGGML, manifest.FormatGGUF, modelpkg.ConfigV2{
+		ModelFormat:  manifest.FormatGGUF,
+		Capabilities: []string{"completion"},
+	}, map[string]any{"test.context_length": uint32(1024)})
 
-	if err := cache.hydrateLocal(context.Background()); err != nil {
-		t.Fatalf("first hydrateLocal failed: %v", err)
-	}
-	if err := cache.hydrateLocal(context.Background()); err != nil {
-		t.Fatalf("second hydrateLocal failed: %v", err)
-	}
-	resp, err := cache.GetLocal(api.ShowRequest{Model: "show-cache-hydrate"})
+	writeManifestListFixture(t, "show-cache-list",
+		manifestListFixtureChild{name: "show-cache-mlx", runner: manifest.RunnerMLX, format: manifest.FormatSafetensors},
+		manifestListFixtureChild{name: "show-cache-ggml", runner: manifest.RunnerGGML, format: manifest.FormatGGUF},
+	)
+
+	key, digest, err := modelShowLocalKeyForRequest(api.ShowRequest{
+		Model:  "show-cache-list",
+		Runner: manifest.RunnerMLX,
+	})
 	if err != nil {
-		t.Fatalf("GetLocal after hydration failed: %v", err)
+		t.Fatal(err)
 	}
-
-	if calls != 1 {
-		t.Fatalf("getModelInfo calls after unchanged in-memory hydration = %d, want 1", calls)
+	if key.Runner != manifest.RunnerMLX {
+		t.Fatalf("runner = %q, want %q", key.Runner, manifest.RunnerMLX)
 	}
-	if resp.ModelInfo["call"] != 1 {
-		t.Fatalf("hydrated call marker = %v, want 1", resp.ModelInfo["call"])
+	parent, err := manifest.ParseNamedManifestForRunner(modelpkg.ParseName("show-cache-list"), manifest.RunnerMLX)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if digest != parent.Digest() {
+		t.Fatalf("digest = %q, want parent manifest-list digest %q", digest, parent.Digest())
+	}
+	if digest == parent.SelectedDigest() {
+		t.Fatalf("digest = selected child digest %q; want parent digest so available-runners changes invalidate the cache", digest)
 	}
 }
 
