@@ -77,3 +77,10 @@ func (s *Spinner) Stop() {
 		s.stopped = time.Now()
 	}
 }
+
+func (s *Spinner) PlainString() string {
+	if m, ok := s.message.Load().(string); ok {
+		return strings.TrimSpace(m)
+	}
+	return ""
+}
