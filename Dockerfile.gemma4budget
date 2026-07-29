@@ -1,30 +1,36 @@
 # Patched-binary overlay build for the MaxusAI/ollama fork (gemma4 visual token budget).
 #
 # Produces the image deployed on 10.8.0.6 as maxusai/ollama:<sha>-gemma4-budget:
-# official ollama/ollama:0.32.1 with ONLY /usr/bin/ollama replaced by a binary
-# built from this fork (85ebcb79 = PR #2 merge: DefaultImageMin/MaxTokens 40/1120
-# + per-request image_min_tokens/image_max_tokens, passed to llama-server as
+# official ollama/ollama:0.32.5 with ONLY /usr/bin/ollama replaced by a binary
+# built from this fork (DefaultImageMin/MaxTokens 40/1120 + per-request
+# image_min_tokens/image_max_tokens, passed to llama-server as
 # --image-min-tokens/--image-max-tokens for the gemma4 arch).
 #
 # Why not the repo's own Dockerfile: the v0.32 Dockerfile builds every backend
 # (rocm-complete base + CUDA 12.8 + CUDA 13 + Vulkan + MLX) and needs ~45-70 GB
 # of docker scratch. The fork's patch changes ONLY Go code (api/types.go,
-# llm/llama_server.go). Equivalence proof — this diff is EMPTY:
+# llm/llama_server.go). Equivalence proof — this diff must be EMPTY, and the tag
+# must match the FROM below:
 #
-#   git diff 4f7786d0 v0.32.1 -- LLAMA_CPP_VERSION llama/ ml/ CMakeLists.txt \
+#   git diff HEAD v0.32.5 -- LLAMA_CPP_VERSION llama/ ml/ CMakeLists.txt \
 #       CMakePresets.json MLX_VERSION MLX_C_VERSION cmake/ x/imagegen/mlx
 #
-# (4f7786d0 = the fork's merge base), so the official 0.32.1 image's
-# llama-server/GGML/MLX payload is byte-equivalent to what this fork's
-# Dockerfile would produce. Rebuild the Go binary, overlay it, done.
+# Empty means the official 0.32.5 image's llama-server/GGML/MLX payload is
+# byte-equivalent to what this fork's Dockerfile would produce. Rebuild the Go
+# binary, overlay it, done.
+#
+# KEEPING THIS VALID: sync the fork by merging an upstream *tag* that has a
+# published ollama/ollama image, then bump both the tag above and the FROM below
+# together. Merging upstream `main` instead leaves the tree ahead of every
+# published tag, the proof non-empty, and the overlay unusable.
 #
 # Build + verify (see docs/maxusai/gemma4-budget-image.md for the full runbook):
 #   SHA=$(git rev-parse --short=8 HEAD)
 #   docker build -f Dockerfile.gemma4budget \
-#     --build-arg OLLAMA_VERSION=0.32.1-gemma4budget-$SHA \
+#     --build-arg OLLAMA_VERSION=0.32.5-gemma4budget-$SHA \
 #     -t maxusai/ollama:$SHA-gemma4-budget -t maxusai/ollama:latest .
 #   docker run --rm maxusai/ollama:$SHA-gemma4-budget --version
-#     # -> client version is 0.32.1-gemma4budget-<sha>
+#     # -> client version is 0.32.5-gemma4budget-<sha>
 
 FROM golang:1.26 AS build
 WORKDIR /go/src/github.com/ollama/ollama
@@ -32,12 +38,12 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 ENV CGO_ENABLED=1
-ARG OLLAMA_VERSION=0.32.1-gemma4budget
+ARG OLLAMA_VERSION=0.32.5-gemma4budget
 RUN go build -trimpath -buildmode=pie \
       -ldflags="-w -s -X=github.com/ollama/ollama/version.Version=${OLLAMA_VERSION}" \
       -o /bin/ollama . \
     && /bin/ollama --version || true
 
-FROM ollama/ollama:0.32.1
+FROM ollama/ollama:0.32.5
 # ubuntu 24.04 base: /bin is a symlink to /usr/bin, ENTRYPOINT is /bin/ollama
 COPY --from=build /bin/ollama /usr/bin/ollama

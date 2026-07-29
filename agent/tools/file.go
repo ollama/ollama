@@ -58,6 +58,7 @@ func (r *Read) RequiresApproval(map[string]any) bool {
 }
 
 func (r *Read) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[string]any) (agent.ToolResult, error) {
+	// TODO: use shared agent.RequiredStringArg / agent.OptionalIntArg for args (see agent package cleanup plan).
 	path, ok := args["path"].(string)
 	if !ok || strings.TrimSpace(path) == "" {
 		return agent.ToolResult{}, fmt.Errorf("path parameter is required")
@@ -141,6 +142,7 @@ func (e *Edit) RequiresApproval(map[string]any) bool {
 }
 
 func (e *Edit) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[string]any) (agent.ToolResult, error) {
+	// TODO: use shared agent.RequiredStringArg / agent.OptionalBoolArg for args (see agent package cleanup plan).
 	path, ok := args["path"].(string)
 	if !ok || strings.TrimSpace(path) == "" {
 		return agent.ToolResult{}, fmt.Errorf("path parameter is required")

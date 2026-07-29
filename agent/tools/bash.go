@@ -53,7 +53,24 @@ func (b *Bash) RequiresApproval(map[string]any) bool {
 	return true
 }
 
+// ApprovalScope scopes shell approval to the exact, trimmed command string
+// using a NUL separator: "<tool>\x00<command>". "Always allow this command"
+// matches ONLY that precise string — any whitespace, quoting, or casing
+// variant re-prompts. The NUL separator is safe because a shell command
+// string cannot contain a literal NUL.
+func (b *Bash) ApprovalScope(args map[string]any) string {
+	name := b.Name()
+	if command, ok := args["command"].(string); ok {
+		command = strings.TrimSpace(command)
+		if command != "" {
+			return name + "\x00" + command
+		}
+	}
+	return name
+}
+
 func (b *Bash) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[string]any) (agent.ToolResult, error) {
+	// TODO: use shared agent.RequiredStringArg for the "command" parameter (see agent package cleanup plan).
 	command, ok := args["command"].(string)
 	if !ok || strings.TrimSpace(command) == "" {
 		return agent.ToolResult{}, fmt.Errorf("command parameter is required")
@@ -415,7 +432,7 @@ func (b *boundedOutput) String(label string) string {
 	if omitted == 0 {
 		return content
 	}
-	return content + fmt.Sprintf("\n\n[%s truncated: omitted ~%d tokens]", label, approximateTokensFromBytes(omitted))
+	return content + agent.TruncMarker(label, safeLen, 0, omitted, false, "")
 }
 
 func utf8SafePrefixLen(p []byte) int {
@@ -430,11 +447,4 @@ func utf8SafePrefixLen(p []byte) int {
 		i += size
 	}
 	return len(p)
-}
-
-func approximateTokensFromBytes(n int) int {
-	if n <= 0 {
-		return 0
-	}
-	return max(1, (n+3)/4)
 }

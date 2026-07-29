@@ -295,8 +295,12 @@ func GetTensorQuantization(name string, shape []int32, quantize string) string {
 		return ""
 	}
 
-	// lm_head is too sensitive for the fp quant modes; keep it at source precision.
-	if strings.HasSuffix(name, "lm_head.weight") && (quantNorm == "nvfp4" || quantNorm == "mxfp4" || quantNorm == "mxfp8") {
+	// lm_head is too sensitive for 4-bit types; the 8-bit type in the requested
+	// family keeps quality close to bf16 while saving decode bandwidth.
+	if strings.HasSuffix(name, "lm_head.weight") {
+		if e := eightBit(quantNorm); isAligned(shape, e) {
+			return e
+		}
 		return ""
 	}
 

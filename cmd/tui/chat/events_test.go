@@ -61,7 +61,7 @@ func TestApplyAgentEventRendersDeniedCommandAsDenied(t *testing.T) {
 
 	m.applyAgentEvent(coreagent.Event{
 		Type:       coreagent.EventToolFinished,
-		Status:     "denied",
+		ToolStatus: coreagent.ToolStatusDenied,
 		ToolCallID: "call-1",
 		ToolName:   "bash",
 		Args:       args,
@@ -341,8 +341,8 @@ func TestApplyAgentEventGroupsPreviouslyDeniedCommandsAtNextToolBoundary(t *test
 	secondArgs := map[string]any{"command": "ls"}
 	thirdArgs := map[string]any{"command": "date"}
 
-	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventToolFinished, Status: "denied", ToolCallID: "call-1", ToolName: "bash", Args: firstArgs, Content: "Tool execution denied.", Error: "Tool execution denied."})
-	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventToolFinished, Status: "denied", ToolCallID: "call-2", ToolName: "bash", Args: secondArgs, Content: "Tool execution denied.", Error: "Tool execution denied."})
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventToolFinished, ToolStatus: coreagent.ToolStatusDenied, ToolCallID: "call-1", ToolName: "bash", Args: firstArgs, Content: "Tool execution denied.", Error: "Tool execution denied."})
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventToolFinished, ToolStatus: coreagent.ToolStatusDenied, ToolCallID: "call-2", ToolName: "bash", Args: secondArgs, Content: "Tool execution denied.", Error: "Tool execution denied."})
 
 	if len(m.entries) != 2 {
 		t.Fatalf("entries = %d, want two stable denied command rows: %#v", len(m.entries), m.entries)

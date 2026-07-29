@@ -20,7 +20,7 @@ import (
 )
 
 // Send multiple requests in parallel (concurrently) to a single model and ensure responses are expected
-func TestConcurrentChat(t *testing.T) {
+func runConcurrentChat(t *testing.T) {
 	// Assumes all requests have the same model
 	req, resp := ChatRequests()
 	numParallel := int(envconfig.NumParallel() + 1)
@@ -31,16 +31,10 @@ func TestConcurrentChat(t *testing.T) {
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
+	pullOrSkip(ctx, t, client, req[0].Model)
 
 	// Get the server running (if applicable) warm the model up with a single initial request
-	slog.Info("loading", "model", req[0].Model)
-	err := client.Generate(ctx,
-		&api.GenerateRequest{Model: req[0].Model, KeepAlive: &api.Duration{Duration: 10 * time.Second}},
-		func(response api.GenerateResponse) error { return nil },
-	)
-	if err != nil {
-		t.Fatalf("failed to load model %s: %s", req[0].Model, err)
-	}
+	preloadGenerateModel(ctx, t, client, api.GenerateRequest{Model: req[0].Model, KeepAlive: &api.Duration{Duration: 10 * time.Second}})
 
 	var wg sync.WaitGroup
 	r := rand.New(rand.NewSource(0))
@@ -66,7 +60,7 @@ func TestConcurrentChat(t *testing.T) {
 
 // Stress the scheduler and attempt to load more models than will fit to cause thrashing
 // This test will always load at least 2 models even on CPU based systems
-func TestMultiModelStress(t *testing.T) {
+func runMultiModelStress(t *testing.T) {
 	if testModel != "" {
 		t.Skip("uses hardcoded models, not applicable with model override")
 	}
@@ -85,7 +79,6 @@ func TestMultiModelStress(t *testing.T) {
 		"llama3.2:1b",
 		"qwen3:0.6b",
 		"gemma2:2b",
-		"deepseek-r1:1.5b", // qwen2 arch
 		"gemma3:270m",
 	}
 	mediumModels := []string{
@@ -126,12 +119,8 @@ func TestMultiModelStress(t *testing.T) {
 	slog.Info("Loading models to find how many can fit in VRAM before overflowing")
 chooseModels:
 	for i, model := range chosenModels {
-		req := &api.GenerateRequest{Model: model} // Leave KeepAlive unset so they stay loaded until the scheduler decides to unload them
-		slog.Info("loading", "model", model)
-		err = client.Generate(ctx, req, func(response api.GenerateResponse) error { return nil })
-		if err != nil {
-			t.Fatalf("failed to load model %s: %s", model, err)
-		}
+		// Leave KeepAlive unset so they stay loaded until the scheduler decides to unload them.
+		preloadGenerateModel(ctx, t, client, api.GenerateRequest{Model: model})
 		targetLoadCount++
 		if i > 0 {
 			models, err := client.ListRunning(ctx)

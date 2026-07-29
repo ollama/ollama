@@ -54,12 +54,15 @@ type Options struct {
 	Messages                    []api.Message
 	Client                      coreagent.ChatClient
 	Tools                       *coreagent.Registry
+	Skills                      *coreagent.SkillCatalog
+	ImportSkills                func(string) (coreagent.SkillImportResult, error)
+	ReloadSkills                func() (*coreagent.SkillCatalog, error)
 	ToolRegistryForModel        func(context.Context, string) *coreagent.Registry
 	ToolsDisabled               bool
 	MultiModalForModel          func(context.Context, string) bool
 	ModelOptions                func(context.Context) ([]ModelOption, error)
 	OnModelSelected             func(context.Context, string) error
-	SystemPromptForModel        func(context.Context, string, *coreagent.Registry) string
+	SystemPromptForModel        func(context.Context, string, *coreagent.Registry, bool) string
 	ApprovalPrompter            coreagent.ApprovalPrompter
 	EventSinks                  []coreagent.EventSink
 	AllowAllTools               bool
@@ -137,6 +140,8 @@ type chatModel struct {
 	defaultAllowAll    bool
 	permissionNotice   string
 	selection          chatSelection
+
+	systemPromptDisabled bool
 
 	width              int
 	height             int
@@ -223,9 +228,11 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	m.nextImageID, m.nextAudioID = nextInputAttachmentIDsFromMessages(m.messages)
 	m.nextPastedTextID = nextInputPastedTextIDFromMessages(m.messages)
 	m.entries = entriesFromMessages(m.messages)
-	if !m.openModelOnInit {
-		m.refreshContextWindowTokens(m.opts.Model)
-	}
+	// Context window is resolved post-load (chatModelPreloadDoneMsg) rather than
+	// here: for local models /api/ps only reports the running num_ctx after the
+	// model loads, and opts.ContextWindowTokens already holds Show's max as a
+	// pre-load fallback. Refreshing now would just re-derive that same value
+	// (and block construction on a network call).
 	m.contextTokens = m.estimatePromptTokens(m.messages, "")
 	m.contextEstimate = true
 	if m.openModelOnInit {
@@ -374,7 +381,8 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.result.WorkingDir != "" {
 				m.workingDir = msg.result.WorkingDir
 			}
-			m.refreshContextWindowTokens(m.responseModelName(&msg.result.Latest))
+			// Context window is settled by preload (local num_ctx) or is
+			// static (cloud); no refresh needed post-run.
 			m.contextTokens = m.estimatePromptTokens(m.messages, "")
 			m.contextEstimate = true
 			if !messagesEndWithCompactionResult(m.messages) {
@@ -586,6 +594,9 @@ func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyEnter:
 		if msg.Alt {
 			m.insertInputNewline()
+			return m, nil
+		}
+		if m.applySlashCompletion() {
 			return m, nil
 		}
 		return m.handleSubmit()
@@ -1014,7 +1025,7 @@ func (m *chatModel) startRun(input string) (tea.Model, tea.Cmd) {
 		m.status = "error"
 		return *m, nil
 	}
-	return m.startRunWithMessages(displayInput, message.Content, []api.Message{message}, "")
+	return m.startRunWithMessages(displayInput, message.Content, []api.Message{message}, "", "")
 }
 
 func (m *chatModel) userMessageFromInput(displayInput, userInput string) (string, api.Message, error) {
@@ -1073,8 +1084,25 @@ func pluralSuffix(count int) string {
 	return "s"
 }
 
-func (m *chatModel) startRunWithMessages(displayInput, historyInput string, newMessages []api.Message, extraSystemPrompt string) (tea.Model, tea.Cmd) {
-	m.refreshContextWindowTokens(m.opts.Model)
+func (m *chatModel) startSkillRun(name, prompt string) (tea.Model, tea.Cmd) {
+	name = strings.TrimSpace(name)
+	prompt = strings.TrimSpace(prompt)
+	// The skill instructions are delivered via the synthetic tool result that
+	// follows this user turn, so this message orients the model rather than
+	// re-requesting the skill. When a prompt is supplied it becomes the task.
+	content := prompt
+	if content == "" {
+		content = "The " + name + " skill is loaded; follow its instructions for this request."
+	}
+	message := api.Message{Role: "user", Content: content}
+	displayInput := "/" + name
+	if prompt != "" {
+		displayInput = "/" + name + " " + prompt
+	}
+	return m.startRunWithMessages(displayInput, "", []api.Message{message}, "", name)
+}
+
+func (m *chatModel) startRunWithMessages(displayInput, historyInput string, newMessages []api.Message, extraSystemPrompt, skillName string) (tea.Model, tea.Cmd) {
 	m.addPromptHistory(historyInput)
 	m.entries = append(m.entries, newChatEntry(chatEntry{role: "user", content: displayInput}))
 	if len(newMessages) > 1 {
@@ -1108,6 +1136,7 @@ func (m *chatModel) startRunWithMessages(displayInput, historyInput string, newM
 		Client:           m.opts.Client,
 		EventSinks:       eventSinks,
 		Tools:            m.opts.Tools,
+		Skills:           m.opts.Skills,
 		DisableTools:     m.opts.ToolsDisabled,
 		ApprovalPrompter: m.approvalPrompterForRun(m.approvalController),
 		ApprovalState:    m.ensureApprovalState(),
@@ -1124,6 +1153,7 @@ func (m *chatModel) startRunWithMessages(displayInput, historyInput string, newM
 		Options:      m.opts.Options,
 		Think:        m.opts.Think,
 		KeepAlive:    m.opts.KeepAlive,
+		SkillName:    skillName,
 	}
 
 	persistedMessages := make([]api.Message, 0, len(m.messages)+len(newMessages))

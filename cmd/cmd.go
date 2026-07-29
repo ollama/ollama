@@ -16,7 +16,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path"
 	"path/filepath"
@@ -2099,40 +2098,6 @@ Environment Variables:
 	cmd.SetUsageTemplate(cmd.UsageTemplate() + envUsage)
 }
 
-// ensureServerRunning checks if the ollama server is running and starts it in the background if not.
-func ensureServerRunning(ctx context.Context) error {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return err
-	}
-
-	// Check if server is already running
-	if err := client.Heartbeat(ctx); err == nil {
-		return nil // server is already running
-	}
-
-	// Server not running, start it in the background
-	exe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("could not find executable: %w", err)
-	}
-
-	serverCmd := exec.CommandContext(ctx, exe, "serve")
-	serverCmd.Env = os.Environ()
-	serverCmd.SysProcAttr = backgroundServerSysProcAttr()
-	if err := serverCmd.Start(); err != nil {
-		return fmt.Errorf("failed to start server: %w", err)
-	}
-
-	// Wait for the server to be ready
-	for {
-		time.Sleep(500 * time.Millisecond)
-		if err := client.Heartbeat(ctx); err == nil {
-			return nil // server has started
-		}
-	}
-}
-
 func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -2166,9 +2131,9 @@ func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
 
 // runInteractiveTUI runs the main interactive TUI menu.
 func runInteractiveTUI(cmd *cobra.Command) {
-	// Ensure the server is running before showing the TUI
-	if err := ensureServerRunning(cmd.Context()); err != nil {
-		fmt.Fprintf(os.Stderr, "Error starting server: %v\n", err)
+	// Ensure the server is running via the shared checkServerHeartbeat path.
+	if err := checkServerHeartbeat(cmd, nil); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return
 	}
 
@@ -2371,15 +2336,6 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("imagegen", false, "Use the imagegen runner for LLM inference")
 	runCmd.Flags().MarkHidden("imagegen")
 
-	agentCmd := &cobra.Command{
-		Use:     "agent",
-		Short:   "Run an agent",
-		Args:    cobra.ExactArgs(0),
-		PreRunE: checkServerHeartbeat,
-		RunE:    AgentHandler,
-	}
-	registerAgentFlags(agentCmd)
-
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
 		Short:   "Stop a running model",
@@ -2510,7 +2466,6 @@ func NewCLI() *cobra.Command {
 		createCmd,
 		showCmd,
 		runCmd,
-		agentCmd,
 		stopCmd,
 		pullCmd,
 		pushCmd,
@@ -2558,7 +2513,6 @@ func NewCLI() *cobra.Command {
 		createCmd,
 		showCmd,
 		runCmd,
-		agentCmd,
 		stopCmd,
 		pullCmd,
 		pushCmd,

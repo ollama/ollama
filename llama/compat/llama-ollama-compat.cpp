@@ -118,6 +118,43 @@ void fix_glm4moelite_eog_token_ids(gguf_context * meta) {
     }
 }
 
+// =========================================================================
+// laguna (text side)
+// =========================================================================
+
+bool detect_ollama_laguna(const gguf_context * meta, const ggml_context * ctx) {
+    const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
+    if (arch_kid < 0 || std::strcmp(gguf_get_val_str(meta, arch_kid), "laguna") != 0) return false;
+
+    return has_key(meta, "laguna.rope.swa.dimension_count")
+        || has_key(meta, "laguna.rope.swa.freq_base")
+        || ggml_get_tensor(const_cast<ggml_context *>(ctx), "blk.0.attn_g.weight") != nullptr;
+}
+
+void handle_laguna(gguf_context * meta, ggml_context * ctx) {
+    if (!detect_ollama_laguna(meta, ctx)) return;
+
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format laguna GGUF; applying compatibility fixes\n", __func__);
+
+    copy_u32_kv(meta, "laguna.rope.swa.dimension_count", "laguna.rope.dimension_count_swa");
+    copy_f32_kv(meta, "laguna.rope.swa.freq_base",       "laguna.rope.freq_base_swa");
+
+    std::vector<std::pair<std::string, std::string>> renames;
+    const int64_t n = gguf_get_n_tensors(meta);
+    constexpr const char * old_suffix = ".attn_g.weight";
+    constexpr const char * new_suffix = ".attn_gate.weight";
+    for (int64_t i = 0; i < n; ++i) {
+        const std::string name(gguf_get_tensor_name(meta, i));
+        const size_t pos = name.rfind(old_suffix);
+        if (pos != std::string::npos && pos + std::strlen(old_suffix) == name.size()) {
+            renames.emplace_back(name, name.substr(0, pos) + new_suffix);
+        }
+    }
+    for (const auto & [from, to] : renames) {
+        rename_tensor(meta, ctx, from.c_str(), to.c_str());
+    }
+}
+
 bool get_u32_kv(const gguf_context * meta, const char * key, uint32_t & out) {
     const int64_t kid = gguf_find_key(meta, key);
     if (kid < 0) return false;
@@ -3221,6 +3258,7 @@ bool translate_metadata(const llama_model_loader * ml,
     if (arch_name == "qwen35moe") handle_qwen35moe(ml, meta, ctx);
     if (arch_name == "qwen35")    handle_qwen35   (ml, meta, ctx);
     if (arch_name == "qwen3next") handle_qwen3next(meta, ctx);
+    if (arch_name == "laguna")   handle_laguna   (meta, ctx);
     if (arch_name == "gptoss")        handle_gptoss        (ml, meta, ctx, arch_name);
     if (arch_name == "lfm2")          handle_lfm2          (ml, meta, ctx);
     if (arch_name == "olmo3")         handle_olmo3         (meta, arch_name);

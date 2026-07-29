@@ -13,16 +13,13 @@ import (
 	internalcloud "github.com/ollama/ollama/internal/cloud"
 )
 
-var (
-	ErrWebSearchAuthRequired = errors.New("web search requires authentication")
-	ErrWebFetchAuthRequired  = errors.New("web fetch requires authentication")
-)
-
 const (
 	maxWebFetchContentRunes = 60_000
 	webSearchTimeout        = 15 * time.Second
 	webFetchTimeout         = 30 * time.Second
 )
+
+var ErrWebAuthRequired = errors.New("Not authenticated. Run `ollama signin` and try again.")
 
 type WebSearch struct{}
 
@@ -56,6 +53,7 @@ func (w *WebSearch) RequiresApproval(map[string]any) bool {
 }
 
 func (w *WebSearch) Execute(ctx context.Context, _ agent.ToolContext, args map[string]any) (agent.ToolResult, error) {
+	// TODO: use shared agent.RequiredStringArg for the "query" parameter (see agent package cleanup plan).
 	if internalcloud.Disabled() {
 		return agent.ToolResult{}, errors.New(internalcloud.DisabledError("web search is unavailable"))
 	}
@@ -76,7 +74,7 @@ func (w *WebSearch) Execute(ctx context.Context, _ agent.ToolContext, args map[s
 	if err != nil {
 		var authErr api.AuthorizationError
 		if errors.As(err, &authErr) {
-			return agent.ToolResult{}, fmt.Errorf("%w: %s", ErrWebSearchAuthRequired, authErr)
+			return agent.ToolResult{}, ErrWebAuthRequired
 		}
 		return agent.ToolResult{}, err
 	}
@@ -133,6 +131,7 @@ func (w *WebFetch) RequiresApproval(map[string]any) bool {
 }
 
 func (w *WebFetch) Execute(ctx context.Context, _ agent.ToolContext, args map[string]any) (agent.ToolResult, error) {
+	// TODO: use shared agent.RequiredStringArg for the "url" parameter (see agent package cleanup plan).
 	if internalcloud.Disabled() {
 		return agent.ToolResult{}, errors.New(internalcloud.DisabledError("web fetch is unavailable"))
 	}
@@ -160,7 +159,7 @@ func (w *WebFetch) Execute(ctx context.Context, _ agent.ToolContext, args map[st
 	if err != nil {
 		var authErr api.AuthorizationError
 		if errors.As(err, &authErr) {
-			return agent.ToolResult{}, fmt.Errorf("%w: %s", ErrWebFetchAuthRequired, authErr)
+			return agent.ToolResult{}, ErrWebAuthRequired
 		}
 		return agent.ToolResult{}, err
 	}
@@ -179,21 +178,9 @@ func (w *WebFetch) Execute(ctx context.Context, _ agent.ToolContext, args map[st
 }
 
 func truncateWebFetchContent(content string) string {
-	runes := []rune(content)
-	if len(runes) <= maxWebFetchContentRunes {
-		return content
-	}
-	omitted := len(runes) - maxWebFetchContentRunes
-	return string(runes[:maxWebFetchContentRunes]) + fmt.Sprintf(
-		"\n\n[tool output truncated: showing first ~%d tokens; omitted ~%d tokens. Use a narrower request or search query if more detail is needed.]",
-		approximateToolTokensFromRunes(maxWebFetchContentRunes),
-		approximateToolTokensFromRunes(omitted),
-	)
-}
-
-func approximateToolTokensFromRunes(n int) int {
-	if n <= 0 {
-		return 0
-	}
-	return max(1, (n+3)/4)
+	return agent.Truncate(content, agent.TruncateConfig{
+		MaxRunes: maxWebFetchContentRunes,
+		Label:    "tool output",
+		Hint:     "Use a narrower request or search query if more detail is needed.",
+	})
 }

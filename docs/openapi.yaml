@@ -483,6 +483,12 @@ components:
         template:
           type: string
           description: Prompt template to use for the model
+        renderer:
+          type: string
+          description: Name of the renderer for the model
+        parser:
+          type: string
+          description: Name of the parser for the model
         license:
           oneOf:
             - type: string

@@ -2,84 +2,49 @@
 title: VS Code
 ---
 
-VS Code includes built-in AI chat through GitHub Copilot Chat. Ollama models can be used directly in the Copilot Chat model picker.
+Use Ollama models in VS Code Chat with the [Ollama extension](https://marketplace.visualstudio.com/items?itemName=Ollama.ollama).
 
+## Requirements
 
-![VS Code with Ollama](/images/vscode.png)
+- [Visual Studio Code 1.120 or newer](https://code.visualstudio.com/download)
+- Ollama installed and running
+- At least one local or cloud model available in Ollama
 
+Ollama 0.17.6 or newer is recommended for cloud model sign-in and richer model metadata. Older versions may still work with local models.
 
-## Prerequisites
+## Install the extension
 
-- Ollama v0.18.3+
-- [VS Code 1.113+](https://code.visualstudio.com/download)
-- [GitHub Copilot Chat extension 0.41.0+](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot-chat)
+1. Install the [Ollama extension](https://marketplace.visualstudio.com/items?itemName=Ollama.ollama) from the VS Code Marketplace.
+2. Open Chat in VS Code.
+3. Open the model picker at the bottom of the chat input.
+4. Choose a model from the **Ollama** section.
 
-<Note> VS Code requires you to be logged in to use its model selector, even for custom models. This doesn't require a paid GitHub Copilot account; GitHub Copilot Free will enable model selection for custom models.</Note>
+The extension discovers models from `http://127.0.0.1:11434` by default.
 
-## Quick setup
+## Add a model
 
-```shell
-ollama launch vscode
-```
-
-Recommended models will be shown after running the command. See the latest models at [ollama.com](https://ollama.com/search?c=tools).
-
-Make sure **Local** is selected at the bottom of the Copilot Chat panel to use your Ollama models.
-<div style={{ display: "flex", justifyContent: "center" }}>
-  <img
-    src="/images/local.png"
-    alt="Ollama Local Models"
-    width="60%"
-    style={{ borderRadius: "4px", marginTop: "10px", marginBottom: "10px" }}
-  />
-</div>
-
-
-## Run directly with a model
+Pull a local model:
 
 ```shell
-ollama launch vscode --model qwen3.5:cloud
+ollama pull qwen3.6
 ```
-Cloud models are also available at [ollama.com](https://ollama.com/search?c=cloud).
 
-## Manual setup
+To use a cloud model, pull it and sign in:
 
-To configure Ollama manually without `ollama launch`:
+```shell
+ollama pull kimi-k2.6:cloud
+ollama signin
+```
 
-1. Open the **Copilot Chat** side bar from the top right corner
-   <div style={{ display: "flex", justifyContent: "center" }}>
-     <img
-       src="/images/vscode-sidebar.png"
-       alt="VS Code chat Sidebar"
-       width="75%"
-       style={{ borderRadius: "4px" }}
-     />
-   </div>
-2. Click the **settings gear icon** (<Icon icon="gear" />) to bring up the Language Models window
-   <div style={{ display: "flex", justifyContent: "center" }}>
-     <img
-       src="/images/vscode-other-models.png"
-       alt="VS Code model picker"
-       width="75%"
-       style={{ borderRadius: "4px" }}
-     />
-   </div>
-3. Click **Add Models** and select **Ollama** to load all your Ollama models into VS Code
-   <div style={{ display: "flex", justifyContent: "center" }}>
-     <img
-       src="/images/vscode-add-ollama.png"
-       alt="VS Code model options dropdown to add ollama models"
-       width="75%"
-       style={{ borderRadius: "4px" }}
-     />
-   </div>
+Local models do not require sign-in.
 
-4. Click the **Unhide** button in the model picker to show your Ollama models  
-   <div style={{ display: "flex", justifyContent: "center" }}>
-     <img
-       src="/images/vscode-unhide.png"
-       alt="VS Code unhide models button"
-       width="75%"
-       style={{ borderRadius: "4px" }}
-     />
-   </div>
+## Troubleshooting
+
+If Ollama models do not appear in the model picker:
+
+1. Make sure Ollama is running.
+2. Run `ollama list` and confirm that models are available.
+3. Run **Ollama: Refresh Models** from the Command Palette.
+4. Run **Ollama: Diagnose Models** and check the **Ollama** output channel.
+
+If a cloud model asks you to sign in, run `ollama signin`.
