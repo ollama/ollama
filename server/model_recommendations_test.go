@@ -27,6 +27,7 @@ func TestModelRecommendationsDefaultOrder(t *testing.T) {
 		"kimi-k2.6:cloud",
 		"glm-5.1:cloud",
 		"qwen3.5:cloud",
+		"minimax-m3:cloud",
 		"minimax-m2.7:cloud",
 		"gemma4",
 		"qwen3.5",
