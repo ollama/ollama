@@ -306,6 +306,95 @@ func TestMessage_UnmarshalJSON(t *testing.T) {
 	}
 }
 
+func TestToolProperty_SchemaConstraints_UnmarshalJSON(t *testing.T) {
+	t.Run("numeric bounds and default", func(t *testing.T) {
+		input := `{
+			"type": "integer",
+			"description": "Results per page.",
+			"minimum": 1,
+			"maximum": 100,
+			"default": 20
+		}`
+
+		var prop ToolProperty
+		require.NoError(t, json.Unmarshal([]byte(input), &prop))
+
+		require.NotNil(t, prop.Minimum)
+		assert.Equal(t, float64(1), *prop.Minimum)
+		require.NotNil(t, prop.Maximum)
+		assert.Equal(t, float64(100), *prop.Maximum)
+		assert.Equal(t, float64(20), prop.Default)
+
+		roundTrip, err := json.Marshal(prop)
+		require.NoError(t, err)
+
+		var decoded map[string]any
+		require.NoError(t, json.Unmarshal(roundTrip, &decoded))
+		assert.Equal(t, float64(1), decoded["minimum"])
+		assert.Equal(t, float64(100), decoded["maximum"])
+		assert.Equal(t, float64(20), decoded["default"])
+	})
+
+	t.Run("full tool request preserves schema keywords", func(t *testing.T) {
+		input := `{
+			"name": "search_records",
+			"description": "Search records.",
+			"parameters": {
+				"type": "object",
+				"properties": {
+					"page_limit": {
+						"type": "integer",
+						"description": "Results per page.",
+						"minimum": 1,
+						"maximum": 100,
+						"default": 20
+					},
+					"threshold": {
+						"type": "number",
+						"description": "Similarity cutoff.",
+						"minimum": 0.0,
+						"maximum": 1.0,
+						"exclusiveMinimum": 0.0,
+						"multipleOf": 0.01
+					},
+					"mode": {
+						"type": "string",
+						"description": "Search mode.",
+						"enum": ["fuzzy", "exact"]
+					},
+					"tags": {
+						"anyOf": [{"type": "string"}, {"type": "array"}],
+						"description": "Tag filter."
+					}
+				},
+				"required": ["page_limit"]
+			}
+		}`
+
+		var tf ToolFunction
+		require.NoError(t, json.Unmarshal([]byte(input), &tf))
+
+		pageLimit, ok := tf.Parameters.Properties.Get("page_limit")
+		require.True(t, ok)
+		require.NotNil(t, pageLimit.Minimum)
+		require.NotNil(t, pageLimit.Maximum)
+		assert.Equal(t, float64(20), pageLimit.Default)
+
+		threshold, ok := tf.Parameters.Properties.Get("threshold")
+		require.True(t, ok)
+		require.NotNil(t, threshold.ExclusiveMinimum)
+		assert.Equal(t, float64(0), threshold.ExclusiveMinimum)
+		require.NotNil(t, threshold.MultipleOf)
+		assert.InDelta(t, 0.01, *threshold.MultipleOf, 1e-9)
+
+		serialized := tf.String()
+		assert.Contains(t, serialized, `"minimum":1`)
+		assert.Contains(t, serialized, `"default":20`)
+		assert.Contains(t, serialized, `"exclusiveMinimum":0`)
+		assert.Contains(t, serialized, `"multipleOf":0.01`)
+	})
+}
+
 func TestToolFunction_UnmarshalJSON(t *testing.T) {
 	tests := []struct {
 		name    string
