@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ollama/ollama/manifest"
 	modeltypes "github.com/ollama/ollama/types/model"
-	"github.com/ollama/ollama/x/imagegen/manifest"
 )
 
 // TensorQuantInfo describes per-tensor quantization metadata.
@@ -20,9 +20,9 @@ type TensorQuantInfo struct {
 	GroupSize int
 }
 
-// Root wraps a ModelManifest with pre-scanned quantization metadata.
+// Root wraps a model manifest with pre-scanned quantization metadata.
 type Root struct {
-	Manifest *manifest.ModelManifest
+	Manifest *manifest.Manifest
 	Draft    *modeltypes.Draft
 
 	// Backwards-compatible model-level quant metadata (first tensor blob).
@@ -36,7 +36,7 @@ type Root struct {
 // Open loads a manifest for the given model name and scans tensor blobs for
 // quantization metadata.
 func Open(modelName string) (*Root, error) {
-	m, err := manifest.LoadManifest(modelName)
+	m, err := manifest.ParseNamedManifest(modeltypes.ParseName(modelName))
 	if err != nil {
 		return nil, err
 	}
@@ -47,8 +47,11 @@ func Open(modelName string) (*Root, error) {
 	}
 	root.Draft = readDraftConfig(m)
 
-	for _, layer := range m.GetTensorLayers("") {
-		blobPath := m.BlobPath(layer.Digest)
+	for _, layer := range m.TensorLayers() {
+		blobPath, err := manifest.BlobsPath(layer.Digest)
+		if err != nil {
+			continue
+		}
 
 		infos, blobQuantType, blobGroupSize, err := readBlobTensorQuantInfo(blobPath)
 		if err != nil {
@@ -71,12 +74,16 @@ func Open(modelName string) (*Root, error) {
 	return root, nil
 }
 
-func readDraftConfig(m *manifest.ModelManifest) *modeltypes.Draft {
-	if m == nil || m.Manifest == nil || m.Manifest.Config.Digest == "" {
+func readDraftConfig(m *manifest.Manifest) *modeltypes.Draft {
+	if m == nil || m.Config.Digest == "" {
 		return nil
 	}
 
-	data, err := os.ReadFile(m.BlobPath(m.Manifest.Config.Digest))
+	blobPath, err := manifest.BlobsPath(m.Config.Digest)
+	if err != nil {
+		return nil
+	}
+	data, err := os.ReadFile(blobPath)
 	if err != nil {
 		return nil
 	}
@@ -89,7 +96,7 @@ func readDraftConfig(m *manifest.ModelManifest) *modeltypes.Draft {
 		return cfg.Draft
 	}
 
-	if m.GetConfigLayer("draft/config.json") != nil {
+	if m.ConfigLayer("draft/config.json") != nil {
 		return &modeltypes.Draft{
 			ModelFormat:  "safetensors",
 			TensorPrefix: "draft.",

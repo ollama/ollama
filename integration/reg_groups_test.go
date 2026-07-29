@@ -137,10 +137,6 @@ func TestQuantization(t *testing.T) {
 	runIntegrationGroup(t, "quantization")
 }
 
-func TestImageGeneration(t *testing.T) {
-	runIntegrationGroup(t, "image-generation")
-}
-
 func testName(s string) string {
 	return strings.NewReplacer("/", "~", " ", "_").Replace(s)
 }

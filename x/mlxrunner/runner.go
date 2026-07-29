@@ -13,6 +13,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/x/internal/mlxthread"
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
@@ -235,12 +236,15 @@ func loadTensorsFromManifest(root *model.Root) (map[string]*mlx.Array, error) {
 	// Phase 1: Load all tensors raw from all blobs
 	rawTensors := make(map[string]*mlx.Array)
 	seen := make(map[string]bool)
-	for _, layer := range root.Manifest.GetTensorLayers("") {
+	for _, layer := range root.Manifest.TensorLayers() {
 		if seen[layer.Digest] {
 			continue
 		}
 		seen[layer.Digest] = true
-		blobPath := root.Manifest.BlobPath(layer.Digest)
+		blobPath, err := manifest.BlobsPath(layer.Digest)
+		if err != nil {
+			return nil, err
+		}
 		for name, arr := range mlx.Load(blobPath) {
 			rawTensors[name] = arr
 		}

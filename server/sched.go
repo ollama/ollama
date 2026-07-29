@@ -22,6 +22,7 @@ import (
 	"github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/x/mlxrunner"
@@ -107,7 +108,8 @@ func InitScheduler(ctx context.Context) *Scheduler {
 
 // schedulerModelKey returns the scheduler map key for a model.
 // GGUF-backed models use ModelPath; safetensors/image models without a
-// ModelPath use manifest digest so distinct models don't collide.
+// ModelPath use the selected manifest digest so distinct child manifests don't
+// collide.
 func schedulerModelKey(m *Model) string {
 	if m == nil {
 		return ""
@@ -118,6 +120,9 @@ func schedulerModelKey(m *Model) string {
 			return strings.Join(m.modelPaths(), "\x00")
 		}
 		return m.ModelPath
+	}
+	if m.ManifestDigest != "" {
+		return "manifest:" + m.ManifestDigest
 	}
 	if m.Digest != "" {
 		return "digest:" + m.Digest
@@ -698,6 +703,14 @@ iGPUScan:
 		req.opts.NumCtx = effectiveNumCtx
 		req.contextShift = resolveContextShift(req.shift, req.model)
 	}
+	runnerName := req.model.Runner
+	if req.model.IsMLX() && runnerName == "" {
+		runnerName = manifest.RunnerMLX
+	} else if llm.IsLlamaCPP(llama) {
+		// The loaded process is authoritative: a llama.cpp server may serve
+		// the model even when the manifest metadata says ggml.
+		runnerName = manifest.RunnerLlamaCPP
+	}
 	runner := &runnerRef{
 		model:           req.model,
 		modelPath:       req.model.ModelPath,
@@ -707,6 +720,7 @@ iGPUScan:
 		sessionDuration: sessionDuration,
 		gpus:            gpuIDs,
 		discreteGPUs:    discreteGPUs,
+		runner:          runnerName,
 		totalSize:       totalSize,
 		vramSize:        vramSize,
 		loading:         true,
@@ -1353,6 +1367,7 @@ type runnerRef struct {
 	loading      bool          // True only during initial load, then false forever
 	gpus         []ml.DeviceID // Recorded at time of provisioning
 	discreteGPUs bool          // True if all devices are discrete GPUs - used to skip VRAM recovery check for iGPUs
+	runner       string
 	vramSize     uint64
 	totalSize    uint64
 
@@ -1727,10 +1742,21 @@ func (s *Scheduler) unloadAllRunners() {
 
 func (s *Scheduler) expireRunner(model *Model) {
 	modelKey := schedulerModelKey(model)
+	var runners []*runnerRef
+
 	s.loadedMu.Lock()
-	runner, ok := s.loaded[modelKey]
+	if runner, ok := s.loaded[modelKey]; ok {
+		runners = append(runners, runner)
+	} else if model != nil && model.Name != "" {
+		for _, runner := range s.loaded {
+			if runner.model != nil && runner.model.Name == model.Name {
+				runners = append(runners, runner)
+			}
+		}
+	}
 	s.loadedMu.Unlock()
-	if ok {
+
+	for _, runner := range runners {
 		runner.refMu.Lock()
 		runner.expiresAt = time.Now()
 		if runner.expireTimer != nil {
@@ -1749,6 +1775,7 @@ func (s *Scheduler) expireRunner(model *Model) {
 // use without holding any scheduler locks.
 type loadedModel struct {
 	model         *Model
+	runner        string
 	size          int64
 	sizeVRAM      int64
 	contextLength int
@@ -1777,6 +1804,7 @@ func (s *Scheduler) loadedModels() []loadedModel {
 		}
 		lm := loadedModel{
 			model:     r.model,
+			runner:    r.runner,
 			size:      int64(r.totalSize),
 			sizeVRAM:  int64(r.vramSize),
 			expiresAt: r.expiresAt,

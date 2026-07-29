@@ -80,14 +80,14 @@ func cloudSuggestionName(name string, insecure bool) (string, bool) {
 // a confirmation prompt, or by augmenting the returned error when not at a
 // terminal. It returns the name that was actually pulled. `verb` is the
 // user-facing command ("run" or "pull") used in the hint text.
-func pullWithCloudSuggestion(ctx context.Context, client *api.Client, name string, insecure bool, verb string) (string, error) {
+func pullWithCloudSuggestion(ctx context.Context, client *api.Client, name, runner string, insecure bool, verb string) (string, error) {
 	// If a suggestion prompt may follow a failed pull, erase the failed
 	// attempt's progress display instead of leaving its "pulling manifest"
 	// line to stack up against the accepted pull's identical one.
 	_, eligible := cloudSuggestionName(name, insecure)
 	clearNotFound := eligible && isInteractiveTerminal()
 
-	pullErr := pullModelWithProgress(ctx, client, name, insecure, clearNotFound)
+	pullErr := pullModelWithProgress(ctx, client, name, runner, insecure, clearNotFound)
 	if pullErr == nil {
 		return name, nil
 	}
@@ -100,7 +100,7 @@ func pullWithCloudSuggestion(ctx context.Context, client *api.Client, name strin
 	// Showing a ":cloud" model is proxied to ollama.com and mirrors its status,
 	// so this reliably answers "does a cloud version exist?". Any error (no
 	// cloud tag, cloud disabled, older server, offline) means no suggestion.
-	if _, err := client.Show(ctx, &api.ShowRequest{Model: cloudName}); err != nil {
+	if _, err := client.Show(ctx, &api.ShowRequest{Model: cloudName, Runner: runner}); err != nil {
 		return "", pullErr
 	}
 
@@ -114,7 +114,7 @@ func pullWithCloudSuggestion(ctx context.Context, client *api.Client, name strin
 		return "", pullErr
 	}
 
-	if err := pullModelWithProgress(ctx, client, cloudName, insecure, false); err != nil {
+	if err := pullModelWithProgress(ctx, client, cloudName, runner, insecure, false); err != nil {
 		return "", err
 	}
 	return cloudName, nil
