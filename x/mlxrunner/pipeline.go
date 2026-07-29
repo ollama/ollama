@@ -71,7 +71,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 
 	inputs := request.Tokens
 
-	session := r.cache.begin(r.Model, inputs)
+	session := r.cache.begin(inputs)
 	defer session.close()
 	caches := session.caches
 
@@ -92,7 +92,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	if spec != nil {
 		d = spec.decoder(seed, position)
 	} else {
-		d = r.pipelinedDecoder(nil, caches, mlx.FromValues(seed, 1, len(seed)), position)
+		d = r.pipelinedDecoder(nil, caches, seed.ExpandDims(-1), position)
 	}
 	defer d.close()
 	return r.decode(ctx, request, session, d, promptEval)
@@ -100,8 +100,8 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 
 // prefill evaluates the prompt in chunks, leaving one token for decode to
 // seed from, and schedules the prompt's periodic snapshots. It returns the
-// seed tokens, the resume position, and the prompt-evaluation duration.
-func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *speculationSession) ([]int32, int, time.Duration, error) {
+// seed token, the resume position, and the prompt-evaluation duration.
+func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *speculationSession) (*mlx.Array, int, time.Duration, error) {
 	start := time.Now()
 	inputs := session.inputs
 	tokens := session.remaining
@@ -161,13 +161,14 @@ func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *specu
 		mlx.ClearCache()
 	}
 
-	// Flush before attaching: snapshots attach only at offsets every cache
-	// has crossed, and a drafter with draft caches keeps buffered pairs that
-	// would otherwise hold those caches short of the scheduled offsets.
-	spec.flush()
+	// Settle before attaching: snapshots attach only at offsets every cache
+	// has crossed, and the draft caches stay a pair short of the target
+	// until the seed completes the frontier pair.
+	seed := mlx.FromValues(tokens[processed:], 1)
+	spec.settle(seed)
 	session.attachPrefillSnapshots()
 
-	return tokens[processed:], position, time.Since(start), nil
+	return seed, position, time.Since(start), nil
 }
 
 // A decoder produces each run of tokens to emit, owning its own dispatch and
@@ -175,6 +176,12 @@ func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *specu
 // cancellation. next may return none while its first tokens are in flight.
 type decoder interface {
 	next(remaining int) ([]sampler.Result, error)
+
+	// drain ends production, returning any results sampled but never
+	// delivered through next and the position the next forward would have
+	// taken; the decoder remains closeable.
+	drain() ([]sampler.Result, int)
+
 	close()
 }
 
@@ -183,6 +190,14 @@ type decoder interface {
 // never rest ahead of session.outputs; tokens past the stop are recorded but
 // not streamed or counted.
 func (r *Runner) decode(ctx context.Context, request Request, session *cacheSession, d decoder, promptEval time.Duration) error {
+	// A sampled-but-undelivered result is still a produced token; record it.
+	defer func() {
+		results, _ := d.drain()
+		for _, res := range results {
+			session.outputs = append(session.outputs, int32(res.Token.Int()))
+		}
+	}()
+
 	detok := detokenizer{
 		tokenizer:       r.Tokenizer,
 		wantLogprobs:    request.SamplerOpts.Logprobs,
@@ -276,7 +291,6 @@ type pipelinedDecoder struct {
 	caches   []cache.Cache
 	position int
 	sample   sampler.Result // in flight: sampled, not yet forwarded
-	emitted  sampler.Result // last call's result, pinned until the next call
 }
 
 func (r *Runner) pipelinedDecoder(spec *speculationSession, caches []cache.Cache, seed *mlx.Array, position int) *pipelinedDecoder {
@@ -305,25 +319,23 @@ func (t *pipelinedDecoder) dispatch(token *mlx.Array) sampler.Result {
 }
 
 func (t *pipelinedDecoder) next(int) ([]sampler.Result, error) {
-	mlx.Unpin(t.emitted.Arrays()...)
-	t.emitted, t.sample = t.sample, t.dispatch(t.sample.Token.ExpandDims(-1))
-	return []sampler.Result{t.emitted}, nil
+	out := t.sample
+	t.sample = t.dispatch(out.Token.ExpandDims(-1))
+	mlx.Unpin(out.Arrays()...)
+	return []sampler.Result{out}, nil
 }
 
-// detach ends a parked stretch: it hands the in-flight sample (sampled but
-// never forwarded) and the resume position to the caller, releasing the
-// decoder's emitted pin but not settling the drafter. The caller drafts from
-// the sample next, and that round completes the still-open frontier pair.
-func (t *pipelinedDecoder) detach() (sampler.Result, int) {
-	mlx.Unpin(t.emitted.Arrays()...)
-	return t.sample, t.position
+// drain ends production: it returns the in-flight sample (sampled but never
+// forwarded) and the position its forward would have taken. The decoder
+// keeps the sample for close.
+func (t *pipelinedDecoder) drain() ([]sampler.Result, int) {
+	return []sampler.Result{t.sample}, t.position
 }
 
 func (t *pipelinedDecoder) close() {
 	// The in-flight sample's forward was never dispatched; its report settles
 	// the drafter level with the caches' resting offset.
-	t.spec.finish(t.sample.Token)
-	mlx.Unpin(t.emitted.Arrays()...)
+	t.spec.settle(t.sample.Token)
 	mlx.Unpin(t.sample.Arrays()...)
 }
 

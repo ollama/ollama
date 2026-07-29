@@ -88,6 +88,7 @@ This table tracks the dispatch surface. Keep it brief; the handler comments in
 | `deepseekocr` | Maps to `deepseek2-ocr`, injects missing OCR/MoE metadata, and hides embedded SAM/vision/projector tensors. | DeepSeek OCR projector translation. |
 | `glmocr` | Maps GLM OCR metadata/tensors to the llama.cpp-compatible view. | GLM OCR projector translation. |
 | `glm4moelite` | Maps GLM-4.7 Flash MLA metadata to the `deepseek2` path and fixes special-token metadata. | n/a |
+| `laguna` | Renames legacy attention-gate tensors and SWA RoPE metadata to current llama.cpp names. | n/a |
 | `nemotron_h_moe` | Fixes latent-FFN variants and hides MTP tensors. | n/a |
 | `nemotron_h_omni` | Selects the Nemotron text loader and hides audio/vision/projector tensors from the text loader. | Nemotron V2 VL projector translation; audio remains disabled. |
 | `llama` with Llama 3 markers | Fixes Llama 3 tokenizer metadata. | n/a |

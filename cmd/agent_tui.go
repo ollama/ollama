@@ -28,7 +28,6 @@ import (
 
 type agentTUIOptions struct {
 	Model               string
-	OpenModelPicker     bool
 	System              string
 	Format              string
 	Options             map[string]any
@@ -38,142 +37,6 @@ type agentTUIOptions struct {
 	AllowAllTools       bool
 	ToolsDisabled       bool
 	MultiModal          bool
-}
-
-func registerAgentFlags(cmd *cobra.Command) {
-	cmd.Flags().String("model", "", "Model to use")
-	cmd.Flags().String("keepalive", "", "Duration to keep a model loaded (e.g. 5m)")
-	cmd.Flags().String("format", "", "Response format (e.g. json)")
-	cmd.Flags().String("think", "", "Enable thinking mode: true/false or high/medium/low for supported models")
-	cmd.Flags().Lookup("think").NoOptDefVal = "true"
-	cmd.Flags().Bool("auto-approve-tools", false, "Allow agent tools to run without prompting")
-	cmd.Flags().Bool("yolo", false, "Alias for --auto-approve-tools")
-	cmd.Flags().Bool("no-tools", false, "Disable agent tools")
-}
-
-func AgentHandler(cmd *cobra.Command, _ []string) error {
-	opts := agentTUIOptions{
-		Model:   strings.TrimSpace(config.LastModel()),
-		Options: map[string]any{},
-	}
-	thinkExplicit, err := applyAgentFlags(cmd, &opts)
-	if err != nil {
-		return err
-	}
-
-	if strings.TrimSpace(opts.Model) == "" {
-		opts.OpenModelPicker = true
-	} else if cmd.Flags().Lookup("model") == nil || !cmd.Flags().Lookup("model").Changed {
-		opts.OpenModelPicker = true
-	}
-
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return err
-	}
-
-	if opts.OpenModelPicker {
-		modelName, err := selectAgentModel(cmd.Context(), client, opts.Model)
-		if errors.Is(err, launch.ErrCancelled) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		opts.Model = modelName
-		opts.OpenModelPicker = false
-	}
-
-	if strings.TrimSpace(opts.Model) != "" {
-		info, err := prepareAgentModel(cmd, client, &opts, thinkExplicit)
-		if err != nil {
-			if handleCloudAuthorizationError(err) {
-				return nil
-			}
-			return err
-		}
-		opts.System = info.System
-		if err := saveLastAgentModel(opts.Model); err != nil {
-			return err
-		}
-	}
-
-	if err := GenerateAgentTUI(cmd, client, opts); err != nil {
-		if handleCloudAuthorizationError(err) {
-			return nil
-		}
-		return fmt.Errorf("error running agent: %w", err)
-	}
-	return nil
-}
-
-func applyAgentFlags(cmd *cobra.Command, opts *agentTUIOptions) (bool, error) {
-	if flag := cmd.Flags().Lookup("model"); flag != nil && flag.Changed {
-		modelName, err := cmd.Flags().GetString("model")
-		if err != nil {
-			return false, err
-		}
-		modelName = strings.TrimSpace(modelName)
-		if modelName == "" {
-			return false, errors.New("--model cannot be empty")
-		}
-		opts.Model = modelName
-		opts.OpenModelPicker = false
-	}
-
-	format, err := cmd.Flags().GetString("format")
-	if err != nil {
-		return false, err
-	}
-	opts.Format = format
-
-	thinkExplicit := false
-	thinkFlag := cmd.Flags().Lookup("think")
-	if thinkFlag != nil && thinkFlag.Changed {
-		thinkExplicit = true
-		thinkStr, err := cmd.Flags().GetString("think")
-		if err != nil {
-			return false, err
-		}
-		switch thinkStr {
-		case "", "true":
-			opts.Think = &api.ThinkValue{Value: true}
-		case "false":
-			opts.Think = &api.ThinkValue{Value: false}
-		case "high", "medium", "low", "max":
-			opts.Think = &api.ThinkValue{Value: thinkStr}
-		default:
-			return false, fmt.Errorf("invalid value for --think: %q (must be true, false, high, medium, low, or max)", thinkStr)
-		}
-	}
-
-	keepAlive, err := cmd.Flags().GetString("keepalive")
-	if err != nil {
-		return false, err
-	}
-	if keepAlive != "" {
-		d, err := time.ParseDuration(keepAlive)
-		if err != nil {
-			return false, err
-		}
-		opts.KeepAlive = &api.Duration{Duration: d}
-	}
-
-	autoApprove, err := cmd.Flags().GetBool("auto-approve-tools")
-	if err != nil {
-		return false, err
-	}
-	yolo, err := cmd.Flags().GetBool("yolo")
-	if err != nil {
-		return false, err
-	}
-	opts.AllowAllTools = autoApprove || yolo
-	toolsDisabled, err := cmd.Flags().GetBool("no-tools")
-	if err != nil {
-		return false, err
-	}
-	opts.ToolsDisabled = toolsDisabled
-	return thinkExplicit, nil
 }
 
 func saveLastAgentModel(model string) error {
@@ -215,24 +78,39 @@ func prepareAgentModel(cmd *cobra.Command, client *api.Client, opts *agentTUIOpt
 }
 
 func GenerateAgentTUI(cmd *cobra.Command, client *api.Client, opts agentTUIOptions) error {
-	cwd, err := os.Getwd()
-	if err != nil {
-		cwd = ""
-	}
+	cwd := agentWorkingDir()
 	contextWindowForModel := func(ctx context.Context, model string, fallback int) int {
 		return agentContextWindowForModel(ctx, client, model, fallback)
 	}
 
+	var skillCatalog *coreagent.SkillCatalog
+	reloadSkills := func() (*coreagent.SkillCatalog, error) {
+		catalog, err := coreagent.LoadDefaultSkills(cwd)
+		if err != nil {
+			return nil, err
+		}
+		if ignored := catalog.ExcludeNames(agentchat.BuiltinSlashCommandNames()); len(ignored) > 0 {
+			fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m ignoring agent skill(s): %s\n", strings.Join(ignored, ", "))
+		}
+		for _, diagnostic := range catalog.Diagnostics() {
+			fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m ignored invalid agent skill: %v\n", diagnostic)
+		}
+		skillCatalog = catalog
+		return catalog, nil
+	}
+	if _, err := reloadSkills(); err != nil {
+		return fmt.Errorf("load agent skills: %w", err)
+	}
 	var registry *coreagent.Registry
 	registryForModel := func(ctx context.Context, model string) *coreagent.Registry {
-		return agentToolsRegistry(ctx, client, model)
+		return agentToolsRegistry(ctx, client, model, skillCatalog)
 	}
 	if opts.Model != "" {
-		registry = agentToolsRegistry(cmd.Context(), client, opts.Model)
+		registry = agentToolsRegistry(cmd.Context(), client, opts.Model, skillCatalog)
 	}
-	systemPrompt := agentSystemPrompt(opts.Model, opts.System, "")
+	systemPrompt := agentSystemPromptWithWorkingDir(opts.Model, opts.System, agentSkillSystemContext(skillCatalog, registry, opts.ToolsDisabled), cwd)
 
-	_, err = agentchat.Run(cmd.Context(), agentchat.Options{
+	_, err := agentchat.Run(cmd.Context(), agentchat.Options{
 		Model:                opts.Model,
 		Client:               client,
 		Tools:                registry,
@@ -247,9 +125,12 @@ func GenerateAgentTUI(cmd *cobra.Command, client *api.Client, opts agentTUIOptio
 		OnModelSelected: func(_ context.Context, model string) error {
 			return config.SetLastModel(model)
 		},
-		SystemPromptForModel: func(ctx context.Context, model string, registry *coreagent.Registry) string {
-			return agentSystemPrompt(model, agentSystemFromShow(ctx, client, model), "")
+		SystemPromptForModel: func(ctx context.Context, model string, registry *coreagent.Registry, toolsDisabled bool) string {
+			return agentSystemPromptWithWorkingDir(model, agentSystemFromShow(ctx, client, model), agentSkillSystemContext(skillCatalog, registry, toolsDisabled), cwd)
 		},
+		Skills:              skillCatalog,
+		ImportSkills:        coreagent.ImportSkills,
+		ReloadSkills:        reloadSkills,
 		SystemPrompt:        systemPrompt,
 		WorkingDir:          cwd,
 		Format:              opts.Format,
@@ -285,6 +166,16 @@ func GenerateAgentTUI(cmd *cobra.Command, client *api.Client, opts agentTUIOptio
 		},
 	})
 	return err
+}
+
+func agentSkillSystemContext(catalog *coreagent.SkillCatalog, registry *coreagent.Registry, toolsDisabled bool) string {
+	if toolsDisabled || registry == nil {
+		return ""
+	}
+	if _, ok := registry.Get("skill"); !ok {
+		return ""
+	}
+	return catalog.SystemContext()
 }
 
 func selectAgentModel(ctx context.Context, client *api.Client, current string) (string, error) {
@@ -324,13 +215,23 @@ func agentSelectionDescription(model agentchat.ModelOption) string {
 	return strings.TrimSpace(model.Description)
 }
 
-func agentSystemPrompt(modelName string, modelSystem string, extra string) string {
-	return agentSystemPromptAt(time.Now(), modelName, modelSystem, extra)
+var agentGetwd = os.Getwd
+
+func agentWorkingDir() string {
+	cwd, err := agentGetwd()
+	if err != nil {
+		return ""
+	}
+	return cwd
 }
 
-func agentSystemPromptAt(now time.Time, modelName string, modelSystem string, extra string) string {
+func agentSystemPromptWithWorkingDir(modelName string, modelSystem string, extra string, workingDir string) string {
+	return agentSystemPromptAtWithWorkingDir(time.Now(), modelName, modelSystem, extra, workingDir)
+}
+
+func agentSystemPromptAtWithWorkingDir(now time.Time, modelName string, modelSystem string, extra string, workingDir string) string {
 	var parts []string
-	parts = append(parts, agentDefaultSystemPrompt(now, modelName))
+	parts = append(parts, agentDefaultSystemPromptWithWorkingDir(now, modelName, workingDir))
 	if strings.TrimSpace(modelSystem) != "" {
 		parts = append(parts, strings.TrimSpace(modelSystem))
 	}
@@ -340,23 +241,29 @@ func agentSystemPromptAt(now time.Time, modelName string, modelSystem string, ex
 	return strings.Join(parts, "\n\n")
 }
 
-func agentDefaultSystemPrompt(now time.Time, modelName string) string {
+func agentDefaultSystemPromptWithWorkingDir(now time.Time, modelName string, workingDir string) string {
 	date := now.Format("Monday, January 2, 2006")
 	shellName := "bash"
 	if runtime.GOOS == "windows" {
 		shellName = "PowerShell"
 	}
-	return strings.Join([]string{
+	parts := []string{
 		"You are running in Ollama, in a harness to help the user accomplish tasks, and the model is " + modelName + ".",
 		"",
 		"Current date: " + date + ".",
 		"",
+	}
+	parts = append(parts,
 		"Be concise, practical, and action-oriented. Use tools when they materially help. Verify current or fast-changing facts with web tools when available; otherwise state uncertainty.",
 		"",
-		"Use " + shellName + " carefully. Prefer read-only inspection first. Stay within the current working directory unless explicitly asked. Surface intent before risky actions such as writes, deletes, moves, installs, git state changes, service changes, sudo, secrets access, network scripts, or commands outside the working directory. Request approval when required and do not work around denied approvals.",
+		"Use "+shellName+" carefully. Prefer read-only inspection first. Stay within the current working directory unless explicitly asked. Surface intent before risky actions such as writes, deletes, moves, installs, git state changes, service changes, sudo, secrets access, network scripts, or commands outside the working directory. Request approval when required and do not work around denied approvals.",
 		"",
 		"Tell the user about meaningful changes, verification, failures, blockers, assumptions, and risks. Summarize routine tool output instead of dumping it.",
-	}, "\n")
+	)
+	if workingDir != "" {
+		parts = append(parts, "Current working directory: "+strconv.Quote(workingDir)+".")
+	}
+	return strings.Join(parts, "\n")
 }
 
 func agentSystemFromShow(ctx context.Context, client *api.Client, modelName string) string {
@@ -371,7 +278,7 @@ func agentSystemFromShow(ctx context.Context, client *api.Client, modelName stri
 	return resp.System
 }
 
-func agentToolsRegistry(ctx context.Context, client *api.Client, modelName string) *coreagent.Registry {
+func agentToolsRegistry(ctx context.Context, client *api.Client, modelName string, skillCatalog *coreagent.SkillCatalog) *coreagent.Registry {
 	supportsTools, err := agentModelSupportsTools(ctx, client, modelName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m could not check model capabilities: %v\n", err)
@@ -386,6 +293,9 @@ func agentToolsRegistry(ctx context.Context, client *api.Client, modelName strin
 	}
 	registry.Register(&agenttools.Read{})
 	registry.Register(&agenttools.Edit{})
+	if len(skillCatalog.List()) > 0 {
+		registry.Register(&agenttools.Skill{Catalog: skillCatalog})
+	}
 
 	if os.Getenv("OLLAMA_AGENT_DISABLE_WEBSEARCH") == "" {
 		if disabled, known := agentCloudStatusDisabled(ctx, client); !known || !disabled {

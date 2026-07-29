@@ -6,8 +6,15 @@ Blackwell workstation (10.8.0.6).
 
 ## What the image is
 
-Official `ollama/ollama:0.32.1` with a single file replaced: `/usr/bin/ollama`,
-rebuilt from this fork at `85ebcb79` (merge of PR #2, `feat/gemma4-image-max-tokens`).
+An official `ollama/ollama` image with a single file replaced: `/usr/bin/ollama`,
+rebuilt from this fork. The base tag tracks whatever upstream tag the fork is
+synced to — **`0.32.5`** as of the 2026-07-29 sync.
+
+> The image currently deployed on 10.8.0.6, `maxusai/ollama:85ebcb79-gemma4-budget`,
+> was built at fork commit `85ebcb79` on the **`0.32.1`** base and is unaffected by the
+> sync — it stays valid until someone rebuilds. The measurements further down were taken
+> against it. A rebuild from current `main` produces a `0.32.5`-based image.
+
 The patch raises the gemma4 vision budget from llama.cpp's hardcoded
 `set_limit_image_tokens(40, 280)` (upstream issue ollama/ollama#15626) to
 **40..1120**, and exposes `image_min_tokens` / `image_max_tokens` as per-request
@@ -21,16 +28,25 @@ Patch surface is Go-only: `api/types.go`, `llm/llama_server.go` (+ tests).
 The v0.32 Dockerfile bases every stage on `rocm/dev-almalinux-8:7.2.1-complete`
 (8.8 GB compressed) and builds CUDA 12.8 + CUDA 13 + Vulkan + MLX — ~45–70 GB of
 docker scratch. The overlay needs ~7 GB. It is valid because the fork's C++/CUDA/MLX
-payload is untouched — this diff is **empty** (`4f7786d0` = the fork's merge base,
-contained in v0.32.1):
+payload is untouched — this diff is **empty**, where the tag matches the `FROM` in
+`Dockerfile.gemma4budget`:
 
 ```bash
-git diff 4f7786d0 v0.32.1 -- LLAMA_CPP_VERSION llama/ ml/ CMakeLists.txt \
+git diff HEAD v0.32.5 -- LLAMA_CPP_VERSION llama/ ml/ CMakeLists.txt \
     CMakePresets.json MLX_VERSION MLX_C_VERSION cmake/ x/imagegen/mlx
 ```
 
-If a future rebase makes that diff non-empty, the overlay shortcut is dead — build
-the full Dockerfile (or re-prove equivalence against the new upstream tag).
+Run it before every rebuild. If it is non-empty the overlay is invalid for that base
+and you must re-prove against a newer tag (or build the full Dockerfile).
+
+### Keeping it valid when syncing upstream
+
+**Sync by merging an upstream tag that has a published `ollama/ollama` image, then bump
+the tag in the proof command and the `FROM` together.** Merging upstream `main` instead
+leaves the tree ahead of every published tag — the payload proof goes non-empty against
+`0.32.5` purely because upstream landed post-tag commits, with no fork change involved,
+and there is no image to overlay onto. That failure mode is what makes the shortcut look
+"dead" when it isn't: the fork's own payload delta has stayed **0 lines** throughout.
 
 CUDA/Blackwell: the payload ships upstream's `cuda_v12` + `cuda_v13` backends.
 Verified on the RTX PRO 6000 Blackwell (compute 12.0): selects `cuda_v13`, native
@@ -44,19 +60,20 @@ From a clean checkout of the commit you want (tags embed the sha — keep them h
 cd /opt/github/MaxusAI/ollama
 SHA=$(git rev-parse --short=8 HEAD)
 docker build -f Dockerfile.gemma4budget \
-  --build-arg OLLAMA_VERSION=0.32.1-gemma4budget-$SHA \
+  --build-arg OLLAMA_VERSION=0.32.5-gemma4budget-$SHA \
   -t maxusai/ollama:$SHA-gemma4-budget -t maxusai/ollama:latest .
 ```
 
-~4.81 GB image, ~44 MB unique layer over `ollama/ollama:0.32.1`.
+~4.81 GB image, ~44 MB unique layer over the base (measured on `0.32.1`; `0.32.5`
+is a 3.26 GB pull, so expect the total to differ).
 
 ## Verify
 
 ```bash
 docker run --rm maxusai/ollama:$SHA-gemma4-budget --version
-# client version is 0.32.1-gemma4budget-<sha>
+# client version is 0.32.5-gemma4budget-<sha>
 
-# differential patch marker (stock 0.32.1 has ZERO occurrences):
+# differential patch marker (a stock ollama/ollama image has ZERO occurrences):
 docker run --rm --entrypoint sh maxusai/ollama:$SHA-gemma4-budget \
   -c "grep -c -- --image-max-tokens /usr/bin/ollama"
 ```
@@ -102,7 +119,7 @@ warmup) — warm up before timing anything.
 - `pull_policy: always` + a local-only tag = compose tries a registry pull and
   fails. Keep `never` (it also prevents silent image swaps).
 - The version string is baked at build time via `--build-arg OLLAMA_VERSION=…`;
-  without it you get the ARG default `0.32.1-gemma4budget` (no sha) — fine for
+  without it you get the ARG default `0.32.5-gemma4budget` (no sha) — fine for
   throwaway builds, wrong for deployed ones.
 - To use the image on another host without rebuilding: `docker push` to GHCR
   (`ghcr.io/maxusai/ollama`) — as of 2026-07-17 no registry has it.

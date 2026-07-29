@@ -31,269 +31,17 @@ import (
 )
 
 var (
-	smol   = "llama3.2:1b"
-	stream = false
-
 	// testModel is set via OLLAMA_TEST_MODEL env var. When set, all tests
 	// that loop over model lists will test only this model, and smol is
 	// also overridden to use it.
-	testModel string
+	testModel = os.Getenv("OLLAMA_TEST_MODEL")
+
+	smol   = defaultTestModel("llama3.2:1b")
+	stream = false
 )
 
 var (
 	started = time.Now()
-
-	// Note: add newer models at the top of the list to test them first
-	ollamaEngineChatModels = []string{
-		"nemotron3:33b",
-		// "laguna-xs.2:q4_K_M", // TODO: re-enable when llama.cpp supports laguna.
-		"gemma4",
-		"lfm2.5-thinking",
-		"ministral-3",
-		"qwen3-coder:30b",
-		"gpt-oss:20b",
-		"gemma3n:e2b",
-		"mistral-small3.2:latest",
-		"deepseek-r1:1.5b",
-		// "llama3.2-vision:latest", // TODO: re-enable when llama.cpp supports mllama.
-		"qwen2.5-coder:latest",
-		"qwen2.5vl:3b",
-		"qwen3:0.6b", // dense
-		"qwen3:1.7b", // dense
-		"qwen3:30b",  // MOE
-		"gemma3:1b",
-		"llama3.1:latest",
-		"llama3.2:latest",
-		"gemma2:latest",
-		"minicpm-v:latest",    // arch=qwen2
-		"granite-code:latest", // arch=llama
-	}
-	// MLX-backed safetensors tags. These exercise the mlxrunner subprocess
-	// on platforms where MLX is available (today: macOS; Linux/Windows CUDA
-	// coming). On other platforms, skipIfMLXUnsupported turns the load
-	// failure into a test skip.
-	mlxEngineChatModels = []string{
-		"laguna-xs.2:nvfp4",
-		"qwen3.5:2b-nvfp4", // ~2.5GB, Qwen3_5 arch
-		"gemma4:e2b-nvfp4", // ~7.1GB, Gemma4 arch (skipped under low VRAM)
-	}
-	llamaRunnerChatModels = []string{
-		"mistral:latest",
-		"falcon3:latest",
-		"granite3-moe:latest",
-		"command-r:latest",
-		"nemotron-mini:latest",
-		"phi3.5:latest",
-		"internlm2:latest",
-		"codellama:latest", // arch=llama
-		"phi3:latest",
-	}
-
-	// Some library models are quite large - ensure large VRAM and sufficient disk space
-	// before running scenarios based on this set
-	libraryChatModels = []string{
-		"alfred",
-		"athene-v2",
-		"aya-expanse",
-		"aya",
-		"bakllava",
-		"bespoke-minicheck",
-		"codebooga",
-		"codegeex4",
-		"codegemma",
-		"codellama",
-		"codeqwen",
-		"codestral",
-		"codeup",
-		"cogito",
-		"command-a",
-		"command-r-plus",
-		"command-r",
-		"command-r7b-arabic",
-		"command-r7b",
-		"dbrx",
-		"deepcoder",
-		"deepscaler",
-		"deepseek-coder-v2",
-		"deepseek-coder",
-		"deepseek-llm",
-		"deepseek-r1",
-		// "deepseek-v2.5", // requires 155 GB VRAM
-		"deepseek-v2",
-		// "deepseek-v3", // requires 482 GB VRAM
-		"devstral",
-		"dolphin-llama3",
-		"dolphin-mistral",
-		"dolphin-mixtral",
-		"dolphin-phi",
-		"dolphin3",
-		"dolphincoder",
-		"duckdb-nsql",
-		"everythinglm",
-		"exaone-deep",
-		"exaone3.5",
-		"falcon",
-		"falcon2",
-		"falcon3",
-		"firefunction-v2",
-		"gemma",
-		"gemma2",
-		"gemma3",
-		"gemma3n",
-		"gemma4",
-		"glm4",
-		"goliath",
-		"gpt-oss:20b",
-		"granite-code",
-		"granite3-dense",
-		"granite3-guardian",
-		"granite3-moe",
-		"granite3.1-dense",
-		"granite3.1-moe",
-		"granite3.2-vision",
-		"granite3.2",
-		"granite3.3",
-		"hermes3",
-		"internlm2",
-		"lfm2.5-thinking",
-		"llama-guard3",
-		"llama-pro",
-		"llama2-chinese",
-		"llama2-uncensored",
-		"llama2",
-		"llama3-chatqa",
-		"llama3-gradient",
-		"llama3-groq-tool-use",
-		"llama3.1",
-		// "llama3.2-vision", // TODO: re-enable when llama.cpp supports mllama.
-		"llama3.2",
-		"llama3.3",
-		"llama3",
-		"llama4",
-		"llava-llama3",
-		"llava-phi3",
-		"llava",
-		"magicoder",
-		"magistral",
-		"marco-o1",
-		"mathstral",
-		"meditron",
-		"medllama2",
-		"megadolphin",
-		"minicpm-v",
-		"ministral-3",
-		"mistral-large",
-		"mistral-nemo",
-		"mistral-openorca",
-		"mistral-small",
-		"mistral-small3.1",
-		"mistral-small3.2",
-		"mistral",
-		"mistrallite",
-		"mixtral",
-		"moondream",
-		"nemotron-mini",
-		"nemotron",
-		"neural-chat",
-		"nexusraven",
-		"notus",
-		"nous-hermes",
-		"nous-hermes2-mixtral",
-		"nous-hermes2",
-		"nuextract",
-		"olmo2",
-		"open-orca-platypus2",
-		"openchat",
-		"opencoder",
-		"openhermes",
-		"openthinker",
-		"orca-mini",
-		"orca2",
-		// "phi", // unreliable
-		"phi3.5",
-		"phi3",
-		"phi4-mini-reasoning",
-		"phi4-mini",
-		"phi4-reasoning",
-		"phi4",
-		"phind-codellama",
-		"qwen",
-		"qwen2-math",
-		"qwen2.5-coder",
-		"qwen2.5",
-		"qwen2.5vl",
-		"qwen2",
-		"qwen3:0.6b", // dense
-		"qwen3:30b",  // MOE
-		"qwq",
-		"r1-1776",
-		"reader-lm",
-		"reflection",
-		"sailor2",
-		"samantha-mistral",
-		"shieldgemma",
-		"smallthinker",
-		"smollm",
-		"smollm2",
-		"solar",
-		"sqlcoder",
-		"stable-beluga",
-		"stable-code",
-		"stablelm-zephyr",
-		"stablelm2",
-		"starcoder",
-		"starcoder2",
-		"starling-lm",
-		"tinydolphin",
-		"tinyllama",
-		"tulu3",
-		"vicuna",
-		"wizard-math",
-		"wizard-vicuna-uncensored",
-		"wizard-vicuna",
-		"wizardcoder",
-		"wizardlm-uncensored",
-		"wizardlm2",
-		"xwinlm",
-		"yarn-llama2",
-		"yarn-mistral",
-		"yi-coder",
-		"yi",
-		"zephyr",
-	}
-	libraryEmbedModels = []string{
-		"embeddinggemma",
-		"nomic-embed-text",
-		"all-minilm",
-		"bge-large",
-		"bge-m3",
-		"granite-embedding",
-		"mxbai-embed-large",
-		"paraphrase-multilingual",
-		"snowflake-arctic-embed",
-		"snowflake-arctic-embed2",
-		"qwen3-embedding",
-	}
-	libraryToolsModels = []string{
-		"nemotron3:33b",
-		// "laguna-xs.2", // TODO: re-enable when llama.cpp supports laguna.
-		"gemma4",
-		"lfm2.5-thinking",
-		"qwen3-vl",
-		"gpt-oss:20b",
-		"gpt-oss:120b",
-		"qwen3",
-		"llama3.1",
-		"llama3.2",
-		"mistral",
-		"qwen2.5",
-		"ministral-3",
-		"mistral-nemo",
-		"mistral-small",
-		"mixtral:8x22b",
-		"qwq",
-		"granite3.3",
-	}
 
 	blueSkyPrompt   = "why is the sky blue? Be brief but factual in your reply"
 	blueSkyExpected = []string{"rayleigh", "scatter", "atmosphere", "nitrogen", "oxygen", "wavelength", "interact"}
@@ -314,11 +62,16 @@ func init() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	slog.SetDefault(logger)
 
-	testModel = os.Getenv("OLLAMA_TEST_MODEL")
 	if testModel != "" {
 		slog.Info("test model override", "model", testModel)
-		smol = testModel
 	}
+}
+
+func defaultTestModel(model string) string {
+	if testModel != "" {
+		return testModel
+	}
+	return model
 }
 
 // testModels returns the override model as a single-element slice when
@@ -500,7 +253,7 @@ func PullIfMissing(ctx context.Context, client *api.Client, modelName string) er
 	}
 	slog.Info("model missing", "model", modelName)
 
-	stallDuration := 60 * time.Second // This includes checksum verification, which can take a while on larger models, and slower systems
+	stallDuration := 2 * time.Minute // Includes checksum verification, which can take a while on larger models and slower systems.
 	stallTimer := time.NewTimer(stallDuration)
 	fn := func(resp api.ProgressResponse) error {
 		// fmt.Print(".")
@@ -632,14 +385,7 @@ func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq ap
 	verify := func() {
 		// Verify the response contains the expected data
 		response = buf.String()
-		atLeastOne := false
-		for _, resp := range anyResp {
-			if strings.Contains(strings.ToLower(response), resp) {
-				atLeastOne = true
-				break
-			}
-		}
-		if !atLeastOne {
+		if !containsExpectedResponse(response, anyResp) {
 			t.Fatalf("%s: none of %v found in %s", genReq.Model, anyResp, response)
 		}
 	}
@@ -777,14 +523,7 @@ func DoChat(ctx context.Context, t *testing.T, client *api.Client, req api.ChatR
 	verify := func() {
 		// Verify the response contains the expected data
 		response = buf.String()
-		atLeastOne := false
-		for _, resp := range anyResp {
-			if strings.Contains(strings.ToLower(response), resp) {
-				atLeastOne = true
-				break
-			}
-		}
-		if !atLeastOne {
+		if !containsExpectedResponse(response, anyResp) {
 			t.Fatalf("%s: none of %v found in \"%s\" -- request was:%s", req.Model, anyResp, response, summarizeMessages(req.Messages))
 		}
 	}
@@ -816,6 +555,24 @@ func DoChat(ctx context.Context, t *testing.T, client *api.Client, req api.ChatR
 	return &api.Message{Role: role, Content: buf.String()}
 }
 
+func containsExpectedResponse(response string, anyResp []string) bool {
+	lowerResponse := strings.ToLower(response)
+	normalizedResponse := normalizeResponseText(response)
+	for _, resp := range anyResp {
+		if strings.Contains(lowerResponse, strings.ToLower(resp)) {
+			return true
+		}
+		if strings.Contains(normalizedResponse, normalizeResponseText(resp)) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeResponseText(s string) string {
+	return strings.Join(strings.Fields(strings.ToLower(s)), " ")
+}
+
 func ChatRequests() ([]api.ChatRequest, [][]string) {
 	genReqs, results := GenerateRequests()
 	reqs := make([]api.ChatRequest, len(genReqs))
@@ -835,6 +592,16 @@ func ChatRequests() ([]api.ChatRequest, [][]string) {
 	return reqs, results
 }
 
+func preloadGenerateModel(ctx context.Context, t *testing.T, client *api.Client, req api.GenerateRequest) {
+	t.Helper()
+	slog.Info("loading", "model", req.Model)
+	err := client.Generate(ctx, &req, func(response api.GenerateResponse) error { return nil })
+	if err != nil {
+		skipIfMLXUnsupported(t, err)
+		t.Fatalf("failed to load model %s: %s", req.Model, err)
+	}
+}
+
 // skipIfMLXUnsupported converts an MLX runner startup error into a test skip
 // when the fingerprint matches "the MLX stack is not wired up on this host",
 // and only on platforms where MLX is not yet expected to work. On Apple
@@ -851,7 +618,8 @@ func skipIfMLXUnsupported(t *testing.T, err error) {
 	if err == nil {
 		return
 	}
-	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
+	targetGOOS, targetGOARCH := targetPlatform()
+	if targetGOOS == "darwin" && targetGOARCH == "arm64" {
 		return
 	}
 	msg := err.Error()
@@ -863,17 +631,52 @@ func skipIfMLXUnsupported(t *testing.T, err error) {
 		"image generation is not supported on",
 	} {
 		if strings.Contains(msg, s) {
-			t.Skipf("MLX not available on %s/%s: %v", runtime.GOOS, runtime.GOARCH, err)
+			t.Skipf("MLX not available on target %s/%s (runner %s/%s): %v", targetGOOS, targetGOARCH, runtime.GOOS, runtime.GOARCH, err)
 		}
+	}
+}
+
+func targetPlatform() (goos, goarch string) {
+	goos = normalizeTargetGOOS(os.Getenv("OLLAMA_TEST_HOST_OS"))
+	goarch = normalizeTargetGOARCH(os.Getenv("OLLAMA_TEST_HOST_ARCH"))
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	if goarch == "" {
+		goarch = runtime.GOARCH
+	}
+	return goos, goarch
+}
+
+func normalizeTargetGOOS(goos string) string {
+	switch strings.ToLower(goos) {
+	case "darwin":
+		return "darwin"
+	case "linux":
+		return "linux"
+	case "windows", "win32nt":
+		return "windows"
+	default:
+		return strings.ToLower(goos)
+	}
+}
+
+func normalizeTargetGOARCH(goarch string) string {
+	switch strings.ToLower(goarch) {
+	case "aarch64", "arm64":
+		return "arm64"
+	case "x86_64", "amd64":
+		return "amd64"
+	default:
+		return strings.ToLower(goarch)
 	}
 }
 
 // skipIfModelTooLargeForVRAM skips the test when the model's on-disk size
 // is larger than OLLAMA_MAX_VRAM by enough that even partial GPU offload
-// won't help. Uses the same 0.75x gate as TestPerfModels (model_perf_test.go)
-// so vision/audio tests stay runnable on systems where the model is slightly
-// over VRAM and a portion legitimately spills to CPU. No-op when
-// OLLAMA_MAX_VRAM is unset.
+// won't help. The 0.75x gate keeps vision/audio tests runnable on systems
+// where the model is slightly over VRAM and a portion legitimately spills to
+// CPU. No-op when OLLAMA_MAX_VRAM is unset.
 func skipIfModelTooLargeForVRAM(ctx context.Context, t *testing.T, client *api.Client, modelName string) {
 	t.Helper()
 	s := os.Getenv("OLLAMA_MAX_VRAM")

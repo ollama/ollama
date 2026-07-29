@@ -349,6 +349,46 @@ func TestHermesConfigureUsesLaunchResolvedHostForModelDiscovery(t *testing.T) {
 	}
 }
 
+func TestHermesConfigurePreservesExplicitCloudModel(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withHermesPlatform(t, "darwin")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"qwen3.5:cloud"},{"name":"gemma4"}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	withHermesOllamaURL(t, srv.URL)
+
+	if err := (&Hermes{}).Configure("qwen3.5:cloud"); err != nil {
+		t.Fatalf("Configure returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, ".hermes", "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var cfg map[string]any
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("failed to parse rewritten yaml: %v", err)
+	}
+	modelCfg, _ := cfg["model"].(map[string]any)
+	if got, _ := modelCfg["default"].(string); got != "qwen3.5:cloud" {
+		t.Fatalf("expected explicit cloud model to be preserved, got %q", got)
+	}
+	providers, _ := cfg["providers"].(map[string]any)
+	provider, _ := providers[hermesProviderKey].(map[string]any)
+	if got, _ := provider["default_model"].(string); got != "qwen3.5:cloud" {
+		t.Fatalf("expected provider default model to be preserved, got %q", got)
+	}
+}
+
 func TestHermesConfigureMigratesLegacyManagedAliases(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
@@ -677,6 +717,13 @@ func TestHermesDesktopRun(t *testing.T) {
 			args:       []string{"--skip-build"},
 			hasPackage: true,
 			want:       "[desktop --skip-build]",
+		},
+		{
+			name:       "force build",
+			goos:       runtime.GOOS,
+			args:       []string{"--force-build"},
+			hasPackage: true,
+			want:       "[desktop --force-build]",
 		},
 		{
 			name:       "source mode",

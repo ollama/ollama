@@ -437,11 +437,25 @@ if(OLLAMA_RUNNER_DIR)
     # Bundle GPU runtime libraries (cublas, cudart, rocblas, etc.)
     # These are needed at runtime by the GPU backend .so
     if(GGML_CUDA AND CUDAToolkit_FOUND)
+        if(DEFINED OLLAMA_WINDOWS_RUNTIME_ARCH)
+            string(TOLOWER "${OLLAMA_WINDOWS_RUNTIME_ARCH}" _cuda_redist_arch)
+            if(_cuda_redist_arch MATCHES "^(x64|amd64|x86_64)$")
+                set(_cuda_redist_arch "x64")
+            elseif(_cuda_redist_arch MATCHES "^(arm64|aarch64)$")
+                set(_cuda_redist_arch "arm64")
+            endif()
+        elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM64|arm64|aarch64)$")
+            set(_cuda_redist_arch "arm64")
+        else()
+            set(_cuda_redist_arch "x64")
+        endif()
+        set(_cuda_redist_dir "${CUDAToolkit_BIN_DIR}/${_cuda_redist_arch}")
+
         # Find the actual ggml-cuda target to get its runtime dependencies
         if(TARGET ggml-cuda)
             install(TARGETS ggml-cuda
                 RUNTIME_DEPENDENCIES
-                    DIRECTORIES ${CUDAToolkit_BIN_DIR} ${CUDAToolkit_BIN_DIR}/x64 ${CUDAToolkit_LIBRARY_DIR}
+                    DIRECTORIES ${_cuda_redist_dir} ${CUDAToolkit_BIN_DIR} ${CUDAToolkit_LIBRARY_DIR}
                     PRE_INCLUDE_REGEXES cublas cublasLt cudart
                     PRE_EXCLUDE_REGEXES ".*"
                 RUNTIME DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server

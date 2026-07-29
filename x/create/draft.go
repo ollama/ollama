@@ -1,6 +1,9 @@
 package create
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // CreateDraftLayers imports a draft (speculative-decoding / MTP assistant)
 // safetensors model into prefixed tensor and config blobs and returns the
@@ -69,14 +72,17 @@ func prefixSpecs(specs []BlobSpec, prefix string) []BlobSpec {
 	return out
 }
 
-// draftPolicy wraps an architecture policy to keep a draft model's token
-// embedding at source precision (drafts start with unquantized embeddings; this
-// may change later). Every other tensor follows the wrapped policy. It is given
-// unprefixed source names, since planning runs before prefixSpecs.
+// draftPolicy wraps an architecture policy to give a draft model's output head
+// (tied token embedding or separate lm_head) the requested type directly: draft
+// quality only affects acceptance, so the target head's 8-bit promotion buys
+// nothing. It is given unprefixed source names; planning runs before prefixSpecs.
 type draftPolicy struct{ inner quantizePolicy }
 
 func (p draftPolicy) quantizationType(name string, shape []int32, requested string) string {
-	if isEmbedTokensWeight(name) {
+	if isEmbedTokensWeight(name) || strings.HasSuffix(name, "lm_head.weight") {
+		if q := normalizeQuantType(requested); isAligned(shape, q) {
+			return q
+		}
 		return ""
 	}
 	return p.inner.quantizationType(name, shape, requested)

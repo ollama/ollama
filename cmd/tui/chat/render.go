@@ -1084,9 +1084,9 @@ func toolActionPhrase(action string, count int) string {
 		return "Fetched a URL"
 	case "skill":
 		if plural {
-			return fmt.Sprintf("Ran %d skills", count)
+			return fmt.Sprintf("Loaded %d skills", count)
 		}
-		return "Ran a skill"
+		return "Loaded a skill"
 	default:
 		if plural {
 			return fmt.Sprintf("Used %d tools", count)
@@ -1433,18 +1433,6 @@ func (m *chatModel) updateContextWindowTokens(tokens int) {
 	if compactor, ok := m.opts.Compactor.(*coreagent.SimpleCompactor); ok && compactor != nil {
 		compactor.Options.ContextWindowTokens = tokens
 	}
-}
-
-func (m chatModel) responseModelName(response *api.ChatResponse) string {
-	if response != nil {
-		if strings.TrimSpace(response.Model) != "" {
-			return response.Model
-		}
-		if strings.TrimSpace(response.RemoteModel) != "" {
-			return response.RemoteModel
-		}
-	}
-	return m.opts.Model
 }
 
 func (m chatModel) currentWorkingDir() string {

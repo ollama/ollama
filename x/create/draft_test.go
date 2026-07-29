@@ -62,12 +62,19 @@ func TestPrefixSpecs(t *testing.T) {
 	}
 }
 
-func TestDraftPolicyKeepsEmbeddingsUnquantized(t *testing.T) {
+func TestDraftPolicyQuantizesOutputHead(t *testing.T) {
 	p := draftPolicy{defaultQuantPolicy{}}
 
-	// Draft token embeddings start unquantized regardless of the request.
-	if got := p.quantizationType("model.embed_tokens.weight", []int32{4096, 2048}, "int8"); got != "" {
-		t.Errorf("draft embed_tokens quant = %q, want \"\"", got)
+	// The output head takes the requested type: tied embedding or separate lm_head.
+	if got := p.quantizationType("model.embed_tokens.weight", []int32{4096, 2048}, "int8"); got != "int8" {
+		t.Errorf("draft embed_tokens quant = %q, want \"int8\"", got)
+	}
+	if got := p.quantizationType("lm_head.weight", []int32{4096, 2048}, "nvfp4"); got != "nvfp4" {
+		t.Errorf("draft lm_head quant = %q, want \"nvfp4\"", got)
+	}
+	// A head shape that does not fit the requested group stays at source precision.
+	if got := p.quantizationType("model.embed_tokens.weight", []int32{4096, 2049}, "int8"); got != "" {
+		t.Errorf("unaligned draft embed_tokens quant = %q, want \"\"", got)
 	}
 	// Other eligible weights still follow the wrapped policy.
 	if got := p.quantizationType("model.layers.0.mlp.down_proj.weight", []int32{2048, 2048}, "int8"); got == "" {

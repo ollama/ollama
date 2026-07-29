@@ -213,7 +213,7 @@ func (m *chatModel) applyModelSelection(modelName string, persist bool) error {
 		m.opts.Tools = m.opts.ToolRegistryForModel(m.ctx, modelName)
 	}
 	if m.opts.SystemPromptForModel != nil {
-		m.opts.SystemPrompt = m.opts.SystemPromptForModel(m.ctx, modelName, m.opts.Tools)
+		m.opts.SystemPrompt = m.opts.SystemPromptForModel(m.ctx, modelName, m.opts.Tools, m.opts.ToolsDisabled)
 	}
 	if m.opts.MultiModalForModel != nil {
 		ctx := m.ctx

@@ -2,8 +2,21 @@
 
 This directory contains integration tests to exercise Ollama end-to-end to verify behavior
 
-By default, these tests are disabled so `go test ./...` will exercise only unit tests.  To run integration tests you must pass the integration tag.  `go test -tags=integration ./...` Some tests require additional tags to enable to allow scoped testing to keep the duration reasonable.  For example, testing a broad set of models requires `-tags=integration,models` and a longer timeout (~60m or more depending on the speed of your GPU.). To view the current set of tag combinations use `find integration -type f | xargs grep "go:build"`
+By default, these tests are disabled so `go test ./...` will exercise only unit tests. To run integration tests, pass the `integration` tag and one of the scoped tags:
 
+```bash
+go test -tags=integration,fast -v -count 1 ./integration/
+go test -tags=integration,release -v -count 1 -timeout 30m ./integration/
+go test -tags=integration,library -v -count 1 -timeout 120m ./integration/
+```
+
+Tags:
+
+- `fast`: quick runner/model smoke coverage.
+- `release`: release regression coverage.
+- `library`: broad library coverage requiring about 2.5 TiB of disk space.
+
+Scope wiring and model selections live in `integration/reg_fast_test.go`, `integration/reg_release_test.go`, and `integration/reg_library_test.go`.
 
 The integration tests have 2 modes of operating.
 
@@ -21,12 +34,12 @@ harness starts the server.
 ## Testing a New Model
 
 When implementing new model architecture, use `OLLAMA_TEST_MODEL` to run the
-integration suite against your model.
+integration suite against your model with either the `fast` or `release` coverage.
 
 ```bash
 # Build the binary first
 go build .
 
 # Run integration tests against it
-OLLAMA_TEST_MODEL=mymodel go test -tags integration -v -count 1 -timeout 15m ./integration/
+OLLAMA_TEST_MODEL=mymodel go test -tags=integration,fast -v -count 1 ./integration/
 ```

@@ -160,20 +160,20 @@ func planFloat(inv Inventory, quantize string, policy quantizePolicy) ([]BlobSpe
 	}
 
 	for _, gp := range sortedKeys(groups) {
-		spec, err := planExpertGroup(gp, groups[gp], quantize, policy)
+		groupSpecs, err := planExpertGroup(gp, groups[gp], quantize, policy)
 		if err != nil {
 			return nil, err
 		}
-		specs = append(specs, spec)
+		specs = append(specs, groupSpecs...)
 	}
 	return specs, nil
 }
 
-// planExpertGroup packs a layer's per-expert weights into one blob: the experts
-// of each projection are stacked into a single [experts, out, in] tensor and
-// quantized per the policy. Output tensor names keep the source's ".experts."
-// path; only the per-expert index is dropped.
-func planExpertGroup(groupPrefix string, tensors []SourceTensor, quantize string, policy quantizePolicy) (BlobSpec, error) {
+// planExpertGroup stacks each projection's per-expert weights into an
+// [experts, out, in] tensor. Uniform projections share one blob; mixed
+// precisions use one blob per projection so safetensors quantization metadata
+// always describes the entire blob.
+func planExpertGroup(groupPrefix string, tensors []SourceTensor, quantize string, policy quantizePolicy) ([]BlobSpec, error) {
 	type expert struct {
 		idx int
 		t   SourceTensor
@@ -182,12 +182,12 @@ func planExpertGroup(groupPrefix string, tensors []SourceTensor, quantize string
 	for _, t := range tensors {
 		idx, proj, err := parseExpertTensor(groupPrefix, t.Name)
 		if err != nil {
-			return BlobSpec{}, err
+			return nil, err
 		}
 		byProj[proj] = append(byProj[proj], expert{idx: idx, t: t})
 	}
 
-	spec := BlobSpec{Name: groupPrefix}
+	var tensorSpecs []TensorSpec
 	for _, proj := range sortedKeys(byProj) {
 		experts := byProj[proj]
 		sort.Slice(experts, func(i, j int) bool { return experts[i].idx < experts[j].idx })
@@ -196,7 +196,7 @@ func planExpertGroup(groupPrefix string, tensors []SourceTensor, quantize string
 		sources := make([]SourceTensor, len(experts))
 		for i, e := range experts {
 			if e.t.Dtype != base.Dtype || !slices.Equal(e.t.Shape, base.Shape) {
-				return BlobSpec{}, fmt.Errorf("expert group %s projection %s has mismatched expert layout (%s %v vs %s %v)",
+				return nil, fmt.Errorf("expert group %s projection %s has mismatched expert layout (%s %v vs %s %v)",
 					groupPrefix, proj, base.Dtype, base.Shape, e.t.Dtype, e.t.Shape)
 			}
 			sources[i] = e.t
@@ -208,7 +208,7 @@ func planExpertGroup(groupPrefix string, tensors []SourceTensor, quantize string
 		if quantize != "" {
 			q = policy.quantizationType(stackedName, stackedShape, quantize)
 		}
-		spec.Tensors = append(spec.Tensors, TensorSpec{
+		tensorSpecs = append(tensorSpecs, TensorSpec{
 			Name:      stackedName,
 			Sources:   sources,
 			Transform: TransformStackExperts,
@@ -217,7 +217,26 @@ func planExpertGroup(groupPrefix string, tensors []SourceTensor, quantize string
 			OutShape:  stackedShape,
 		})
 	}
-	return spec, nil
+	return homogeneousExpertBlobs(groupPrefix, tensorSpecs), nil
+}
+
+func homogeneousExpertBlobs(groupPrefix string, tensors []TensorSpec) []BlobSpec {
+	if len(tensors) == 0 {
+		return nil
+	}
+
+	quantize := tensors[0].Quantize
+	for _, tensor := range tensors[1:] {
+		if tensor.Quantize != quantize {
+			blobs := make([]BlobSpec, len(tensors))
+			for i, tensor := range tensors {
+				blobs[i] = BlobSpec{Name: tensor.Name, Tensors: []TensorSpec{tensor}}
+			}
+			return blobs
+		}
+	}
+
+	return []BlobSpec{{Name: groupPrefix, Tensors: tensors}}
 }
 
 // parseExpertTensor splits a per-expert weight name of the form
