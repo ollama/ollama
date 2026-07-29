@@ -13,6 +13,7 @@ const defaultMetadataArraySize = 1024
 // the underlying file has been closed.
 type Metadata struct {
 	values         map[string]Value
+	keys           []string // file order
 	tensors        []TensorInfo
 	omitted        []string
 	parameterCount uint64
@@ -37,6 +38,7 @@ func ReadFileMetadata(path string, maxArraySize int) (_ *Metadata, err error) {
 
 	m := &Metadata{values: make(map[string]Value)}
 	for _, kv := range f.KeyValues() {
+		m.keys = append(m.keys, kv.Key)
 		m.values[kv.Key] = kv.Value
 		if _, ok := kv.Value.value.(skippedArray); ok {
 			m.omitted = append(m.omitted, kv.Key)
@@ -89,6 +91,15 @@ func (m *Metadata) KeyValue(key string) KeyValue {
 
 func (m *Metadata) Has(key string) bool {
 	return m.KeyValue(key).Valid()
+}
+
+// IsGGML reports whether the GGUF was written by Ollama rather than llama.cpp tooling:
+// Ollama's writers byte-sort keys and its quantizer adds general.parameter_count.
+func (m *Metadata) IsGGML() bool {
+	if m == nil || len(m.keys) == 0 {
+		return false
+	}
+	return m.ExactKeyValue("general.parameter_count").Valid() || slices.IsSorted(m.keys)
 }
 
 func (m *Metadata) NumTensors() int {

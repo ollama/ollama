@@ -88,33 +88,40 @@ func runAudioResponse(t *testing.T, models []string) {
 			defer cleanup()
 
 			setupAudioModel(ctx, t, client, model)
-			audio := decodeTestAudio(t)
-			noThink := &api.ThinkValue{Value: false}
-
-			req := api.ChatRequest{
-				Model: model,
-				Think: noThink,
-				Messages: []api.Message{
-					{
-						Role:    "user",
-						Content: "",
-						Images:  []api.ImageData{audio},
-					},
-				},
-				Stream: &stream,
-				Options: map[string]any{
-					"temperature": 0,
-					"seed":        123,
-					"num_predict": 200,
-				},
-			}
-
-			// The audio asks "Why is the sky blue?" — expect an answer about light/scattering.
-			DoChat(ctx, t, client, req, []string{
-				"scatter", "light", "blue", "atmosphere", "wavelength", "rayleigh",
-			}, 60*time.Second, 10*time.Second)
+			testAudioResponseForModel(t, ctx, client, model, 10*time.Second, 60*time.Second, 10*time.Second)
 		})
 	}
+}
+
+func testAudioResponseForModel(t *testing.T, ctx context.Context, client *api.Client, model string, keepAlive time.Duration, initialTimeout, streamTimeout time.Duration) {
+	t.Helper()
+
+	audio := decodeTestAudio(t)
+	noThink := &api.ThinkValue{Value: false}
+
+	req := api.ChatRequest{
+		Model: model,
+		Think: noThink,
+		Messages: []api.Message{
+			{
+				Role:    "user",
+				Content: "",
+				Images:  []api.ImageData{audio},
+			},
+		},
+		Stream:    &stream,
+		KeepAlive: &api.Duration{Duration: keepAlive},
+		Options: map[string]any{
+			"temperature": 0,
+			"seed":        123,
+			"num_predict": 200,
+		},
+	}
+
+	// The audio asks "Why is the sky blue?" — expect an answer about light/scattering.
+	DoChat(ctx, t, client, req, []string{
+		"scatter", "light", "blue", "atmosphere", "wavelength", "rayleigh",
+	}, initialTimeout, streamTimeout)
 }
 
 // runOpenAIAudioTranscription tests the /v1/audio/transcriptions endpoint.
