@@ -237,15 +237,41 @@ func (t *Array) DType() DType {
 // data utilities
 
 func (t *Array) Int() int {
-	var item C.int64_t
-	C.mlx_array_item_int64(&item, t.ctx)
-	return int(item)
+	switch dt := t.DType(); dt {
+	case DTypeInt32:
+		var item C.int32_t
+		C.mlx_array_item_int32(&item, t.ctx)
+		return int(item)
+	case DTypeUint32:
+		var item C.uint32_t
+		C.mlx_array_item_uint32(&item, t.ctx)
+		return int(item)
+	case DTypeInt64:
+		var item C.int64_t
+		C.mlx_array_item_int64(&item, t.ctx)
+		return int(item)
+	case DTypeUint64:
+		var item C.uint64_t
+		C.mlx_array_item_uint64(&item, t.ctx)
+		return int(item)
+	default:
+		panic(fmt.Sprintf("mlx: Int requires an integer array, got %v", dt))
+	}
 }
 
 func (t *Array) Float() float64 {
-	var item C.double
-	C.mlx_array_item_float64(&item, t.ctx)
-	return float64(item)
+	switch dt := t.DType(); dt {
+	case DTypeFloat32:
+		var item C.float
+		C.mlx_array_item_float32(&item, t.ctx)
+		return float64(item)
+	case DTypeFloat64:
+		var item C.double
+		C.mlx_array_item_float64(&item, t.ctx)
+		return float64(item)
+	default:
+		panic(fmt.Sprintf("mlx: Float requires a float32 or float64 array, got %v", dt))
+	}
 }
 
 func (t *Array) Ints() []int {
