@@ -1,23 +1,17 @@
 package mlx
 
-// #include <stdlib.h>
-// #include "generated.h"
-import "C"
-
-import (
-	"sync"
-	"unsafe"
-)
-
-var (
-	gatedDeltaMetalKernelOnce sync.Once
-	gatedDeltaMetalKernel     C.mlx_fast_metal_kernel
-	gatedDeltaMetalDisabled   bool
-
-	gatedDeltaCUDAKernelOnce sync.Once
-	gatedDeltaCUDAKernel     C.mlx_fast_cuda_kernel
-	gatedDeltaCUDADisabled   bool
-)
+var gatedDelta = &gpuKernel{
+	name:    "gated_delta_step",
+	inputs:  []string{"q", "k", "v", "g", "beta", "state_in", "T"},
+	outputs: []string{"y", "state_out"},
+	metal:   gpuSource{source: gatedDeltaMetalKernelSource},
+	cuda:    gpuSource{source: gatedDeltaCUDAKernelSource},
+	fallback: func(launch gpuLaunch) []*Array {
+		in := launch.inputs
+		y, state := gatedDeltaFallback(in[0], in[1], in[2], in[3], in[4], in[5])
+		return []*Array{y, state}
+	},
+}
 
 const gatedDeltaMetalKernelSource = `
 auto n = thread_position_in_grid.z;
@@ -167,196 +161,49 @@ for (int i = 0; i < n_per_t; ++i) {
 }
 `
 
-func cStringVector(values []string) (C.mlx_vector_string, func(), bool) {
-	vec := C.mlx_vector_string_new()
-	ok := true
-	for _, s := range values {
-		cs := C.CString(s)
-		if C.mlx_vector_string_append_value(vec, cs) != 0 {
-			ok = false
-		}
-		C.free(unsafe.Pointer(cs))
-		if !ok {
-			break
-		}
-	}
-	cleanup := func() {
-		C.mlx_vector_string_free(vec)
-	}
-	return vec, cleanup, ok
+// gatedDeltaDims are the batch and head geometry of one scan, recovered
+// from the input shapes.
+type gatedDeltaDims struct {
+	B, T, Hk, Dk, Hv, Dv int
 }
 
-func initGatedDeltaMetalKernel() {
-	inputs, freeInputs, ok := cStringVector([]string{"q", "k", "v", "g", "beta", "state_in", "T"})
-	if !ok {
-		gatedDeltaMetalDisabled = true
-		freeInputs()
-		return
-	}
-	defer freeInputs()
-
-	outputs, freeOutputs, ok := cStringVector([]string{"y", "state_out"})
-	if !ok {
-		gatedDeltaMetalDisabled = true
-		freeOutputs()
-		return
-	}
-	defer freeOutputs()
-
-	cName := C.CString("gated_delta_step")
-	defer C.free(unsafe.Pointer(cName))
-	cSource := C.CString(gatedDeltaMetalKernelSource)
-	defer C.free(unsafe.Pointer(cSource))
-	cHeader := C.CString("")
-	defer C.free(unsafe.Pointer(cHeader))
-
-	gatedDeltaMetalKernel = C.mlx_fast_metal_kernel_new(
-		cName,
-		inputs,
-		outputs,
-		cSource,
-		cHeader,
-		C.bool(true),
-		C.bool(false),
-	)
-}
-
-// gatedDeltaKernel runs a fused Metal kernel for the qwen3.5 recurrent update.
-// It returns ok=false on unsupported shapes/devices or kernel setup/apply failure.
-func gatedDeltaKernel(q, k, v, g, beta, state *Array) (y, nextState *Array, ok bool) {
-	if gatedDeltaMetalDisabled {
-		return nil, nil, false
-	}
+// resolveGatedDeltaDims validates the inputs against the GPU kernels'
+// contract and recovers the launch geometry. ok=false routes to the graph
+// fallback: shapes that disagree, Dk not a multiple of the 32-lane simd
+// width, or mixed input dtypes.
+func resolveGatedDeltaDims(q, k, v, g, beta, state *Array) (gatedDeltaDims, bool) {
+	var dims gatedDeltaDims
 	if q == nil || k == nil || v == nil || g == nil || beta == nil || state == nil {
-		return nil, nil, false
+		return dims, false
 	}
-
-	qd := q.Dims()
-	kd := k.Dims()
-	vd := v.Dims()
-	gd := g.Dims()
-	bd := beta.Dims()
-	sd := state.Dims()
+	qd, kd, vd, gd, bd, sd := q.Dims(), k.Dims(), v.Dims(), g.Dims(), beta.Dims(), state.Dims()
 	if len(qd) != 4 || len(kd) != 4 || len(vd) != 4 || len(gd) != 3 || len(bd) != 3 || len(sd) != 4 {
-		return nil, nil, false
+		return dims, false
 	}
-
-	B, T, Hk, Dk := qd[0], qd[1], qd[2], qd[3]
-	if T <= 0 || Hk <= 0 || Dk <= 0 || Dk%32 != 0 {
-		return nil, nil, false
+	dims.B, dims.T, dims.Hk, dims.Dk = qd[0], qd[1], qd[2], qd[3]
+	if dims.T <= 0 || dims.Hk <= 0 || dims.Dk <= 0 || dims.Dk%32 != 0 {
+		return dims, false
 	}
-	if kd[0] != B || kd[1] != T || kd[2] != Hk || kd[3] != Dk {
-		return nil, nil, false
+	if kd[0] != dims.B || kd[1] != dims.T || kd[2] != dims.Hk || kd[3] != dims.Dk {
+		return dims, false
 	}
-	Hv, Dv := vd[2], vd[3]
-	if vd[0] != B || vd[1] != T || Hv <= 0 || Dv <= 0 || Hv%Hk != 0 {
-		return nil, nil, false
+	dims.Hv, dims.Dv = vd[2], vd[3]
+	if vd[0] != dims.B || vd[1] != dims.T || dims.Hv <= 0 || dims.Dv <= 0 || dims.Hv%dims.Hk != 0 {
+		return dims, false
 	}
-	if gd[0] != B || gd[1] != T || gd[2] != Hv {
-		return nil, nil, false
+	if gd[0] != dims.B || gd[1] != dims.T || gd[2] != dims.Hv {
+		return dims, false
 	}
-	if bd[0] != B || bd[1] != T || bd[2] != Hv {
-		return nil, nil, false
+	if bd[0] != dims.B || bd[1] != dims.T || bd[2] != dims.Hv {
+		return dims, false
 	}
-	if sd[0] != B || sd[1] != Hv || sd[2] != Dv || sd[3] != Dk {
-		return nil, nil, false
+	if sd[0] != dims.B || sd[1] != dims.Hv || sd[2] != dims.Dv || sd[3] != dims.Dk {
+		return dims, false
 	}
-
-	inputDType := q.DType()
-	stateDType := state.DType()
-	if k.DType() != inputDType || v.DType() != inputDType || g.DType() != inputDType || beta.DType() != inputDType {
-		return nil, nil, false
+	if k.DType() != q.DType() || v.DType() != q.DType() || g.DType() != q.DType() || beta.DType() != q.DType() {
+		return dims, false
 	}
-
-	gatedDeltaMetalKernelOnce.Do(initGatedDeltaMetalKernel)
-	if gatedDeltaMetalDisabled {
-		return nil, nil, false
-	}
-
-	cfg := C.mlx_fast_metal_kernel_config_new()
-	defer C.mlx_fast_metal_kernel_config_free(cfg)
-
-	cInT := C.CString("InT")
-	defer C.free(unsafe.Pointer(cInT))
-	if C.mlx_fast_metal_kernel_config_add_template_arg_dtype(cfg, cInT, C.mlx_dtype(inputDType)) != 0 {
-		gatedDeltaMetalDisabled = true
-		return nil, nil, false
-	}
-	cStT := C.CString("StT")
-	defer C.free(unsafe.Pointer(cStT))
-	if C.mlx_fast_metal_kernel_config_add_template_arg_dtype(cfg, cStT, C.mlx_dtype(stateDType)) != 0 {
-		gatedDeltaMetalDisabled = true
-		return nil, nil, false
-	}
-	for _, tpl := range []struct {
-		name  string
-		value int
-	}{
-		{name: "Dk", value: Dk},
-		{name: "Dv", value: Dv},
-		{name: "Hk", value: Hk},
-		{name: "Hv", value: Hv},
-	} {
-		cn := C.CString(tpl.name)
-		rc := C.mlx_fast_metal_kernel_config_add_template_arg_int(cfg, cn, C.int(tpl.value))
-		C.free(unsafe.Pointer(cn))
-		if rc != 0 {
-			gatedDeltaMetalDisabled = true
-			return nil, nil, false
-		}
-	}
-
-	yShape := []C.int{C.int(B), C.int(T), C.int(Hv), C.int(Dv)}
-	stateShape := []C.int{C.int(B), C.int(Hv), C.int(Dv), C.int(Dk)}
-	if C.mlx_fast_metal_kernel_config_add_output_arg(cfg, unsafe.SliceData(yShape), C.size_t(len(yShape)), C.mlx_dtype(inputDType)) != 0 {
-		gatedDeltaMetalDisabled = true
-		return nil, nil, false
-	}
-	if C.mlx_fast_metal_kernel_config_add_output_arg(cfg, unsafe.SliceData(stateShape), C.size_t(len(stateShape)), C.mlx_dtype(stateDType)) != 0 {
-		gatedDeltaMetalDisabled = true
-		return nil, nil, false
-	}
-	if C.mlx_fast_metal_kernel_config_set_grid(cfg, 32, C.int(Dv), C.int(B*Hv)) != 0 {
-		gatedDeltaMetalDisabled = true
-		return nil, nil, false
-	}
-	threadY := Dv
-	if threadY > 4 {
-		threadY = 4
-	}
-	if C.mlx_fast_metal_kernel_config_set_thread_group(cfg, 32, C.int(threadY), 1) != 0 {
-		gatedDeltaMetalDisabled = true
-		return nil, nil, false
-	}
-
-	tScalar := FromValue(T)
-	inputs := []C.mlx_array{
-		q.ctx,
-		k.ctx,
-		v.ctx,
-		g.ctx,
-		beta.ctx,
-		state.ctx,
-		tScalar.ctx,
-	}
-	inVec := C.mlx_vector_array_new_data(unsafe.SliceData(inputs), C.size_t(len(inputs)))
-	defer C.mlx_vector_array_free(inVec)
-
-	outVec := C.mlx_vector_array_new()
-	defer C.mlx_vector_array_free(outVec)
-	if C.mlx_fast_metal_kernel_apply(&outVec, gatedDeltaMetalKernel, inVec, cfg, DefaultStream().ctx) != 0 {
-		gatedDeltaMetalDisabled = true
-		return nil, nil, false
-	}
-	if int(C.mlx_vector_array_size(outVec)) < 2 {
-		return nil, nil, false
-	}
-
-	y = New("GATED_DELTA_METAL_Y")
-	nextState = New("GATED_DELTA_METAL_STATE")
-	C.mlx_vector_array_get(&y.ctx, outVec, 0)
-	C.mlx_vector_array_get(&nextState.ctx, outVec, 1)
-	return y, nextState, true
+	return dims, true
 }
 
 func repeatHeadsForGatedDelta(x *Array, repeatFactor int) *Array {
@@ -443,183 +290,6 @@ func gatedDeltaFallback(q, k, v, g, beta, state *Array) (y, nextState *Array) {
 	return Concatenate(outs, 1), nextState
 }
 
-func initGatedDeltaCUDAKernel() {
-	var cudaAvail C.bool
-	if C.mlx_cuda_is_available(&cudaAvail) != 0 || !bool(cudaAvail) {
-		gatedDeltaCUDADisabled = true
-		return
-	}
-
-	inputs, freeInputs, ok := cStringVector([]string{"q", "k", "v", "g", "beta", "state_in", "T"})
-	if !ok {
-		gatedDeltaCUDADisabled = true
-		freeInputs()
-		return
-	}
-	defer freeInputs()
-
-	outputs, freeOutputs, ok := cStringVector([]string{"y", "state_out"})
-	if !ok {
-		gatedDeltaCUDADisabled = true
-		freeOutputs()
-		return
-	}
-	defer freeOutputs()
-
-	cName := C.CString("gated_delta_step")
-	defer C.free(unsafe.Pointer(cName))
-	cSource := C.CString(gatedDeltaCUDAKernelSource)
-	defer C.free(unsafe.Pointer(cSource))
-	cHeader := C.CString("")
-	defer C.free(unsafe.Pointer(cHeader))
-
-	gatedDeltaCUDAKernel = C.mlx_fast_cuda_kernel_new(
-		cName,
-		inputs,
-		outputs,
-		cSource,
-		cHeader,
-		C.bool(true),
-		C.int(0),
-	)
-}
-
-func gatedDeltaCUDAKernelApply(q, k, v, g, beta, state *Array) (y, nextState *Array, ok bool) {
-	if gatedDeltaCUDADisabled {
-		return nil, nil, false
-	}
-	if q == nil || k == nil || v == nil || g == nil || beta == nil || state == nil {
-		return nil, nil, false
-	}
-
-	qd := q.Dims()
-	kd := k.Dims()
-	vd := v.Dims()
-	gd := g.Dims()
-	bd := beta.Dims()
-	sd := state.Dims()
-	if len(qd) != 4 || len(kd) != 4 || len(vd) != 4 || len(gd) != 3 || len(bd) != 3 || len(sd) != 4 {
-		return nil, nil, false
-	}
-
-	B, T, Hk, Dk := qd[0], qd[1], qd[2], qd[3]
-	if T <= 0 || Hk <= 0 || Dk <= 0 || Dk%32 != 0 {
-		return nil, nil, false
-	}
-	if kd[0] != B || kd[1] != T || kd[2] != Hk || kd[3] != Dk {
-		return nil, nil, false
-	}
-	Hv, Dv := vd[2], vd[3]
-	if vd[0] != B || vd[1] != T || Hv <= 0 || Dv <= 0 || Hv%Hk != 0 {
-		return nil, nil, false
-	}
-	if gd[0] != B || gd[1] != T || gd[2] != Hv {
-		return nil, nil, false
-	}
-	if bd[0] != B || bd[1] != T || bd[2] != Hv {
-		return nil, nil, false
-	}
-	if sd[0] != B || sd[1] != Hv || sd[2] != Dv || sd[3] != Dk {
-		return nil, nil, false
-	}
-
-	inputDType := q.DType()
-	stateDType := state.DType()
-	if k.DType() != inputDType || v.DType() != inputDType || g.DType() != inputDType || beta.DType() != inputDType {
-		return nil, nil, false
-	}
-
-	gatedDeltaCUDAKernelOnce.Do(initGatedDeltaCUDAKernel)
-	if gatedDeltaCUDADisabled {
-		return nil, nil, false
-	}
-
-	cfg := C.mlx_fast_cuda_kernel_config_new()
-	defer C.mlx_fast_cuda_kernel_config_free(cfg)
-
-	cInT := C.CString("InT")
-	defer C.free(unsafe.Pointer(cInT))
-	if C.mlx_fast_cuda_kernel_config_add_template_arg_dtype(cfg, cInT, C.mlx_dtype(inputDType)) != 0 {
-		gatedDeltaCUDADisabled = true
-		return nil, nil, false
-	}
-	cStT := C.CString("StT")
-	defer C.free(unsafe.Pointer(cStT))
-	if C.mlx_fast_cuda_kernel_config_add_template_arg_dtype(cfg, cStT, C.mlx_dtype(stateDType)) != 0 {
-		gatedDeltaCUDADisabled = true
-		return nil, nil, false
-	}
-	for _, tpl := range []struct {
-		name  string
-		value int
-	}{
-		{name: "Dk", value: Dk},
-		{name: "Dv", value: Dv},
-		{name: "Hk", value: Hk},
-		{name: "Hv", value: Hv},
-	} {
-		cn := C.CString(tpl.name)
-		rc := C.mlx_fast_cuda_kernel_config_add_template_arg_int(cfg, cn, C.int(tpl.value))
-		C.free(unsafe.Pointer(cn))
-		if rc != 0 {
-			gatedDeltaCUDADisabled = true
-			return nil, nil, false
-		}
-	}
-
-	yShape := []C.int{C.int(B), C.int(T), C.int(Hv), C.int(Dv)}
-	stateShape := []C.int{C.int(B), C.int(Hv), C.int(Dv), C.int(Dk)}
-	if C.mlx_fast_cuda_kernel_config_add_output_arg(cfg, unsafe.SliceData(yShape), C.size_t(len(yShape)), C.mlx_dtype(inputDType)) != 0 {
-		gatedDeltaCUDADisabled = true
-		return nil, nil, false
-	}
-	if C.mlx_fast_cuda_kernel_config_add_output_arg(cfg, unsafe.SliceData(stateShape), C.size_t(len(stateShape)), C.mlx_dtype(stateDType)) != 0 {
-		gatedDeltaCUDADisabled = true
-		return nil, nil, false
-	}
-	if C.mlx_fast_cuda_kernel_config_set_grid(cfg, 32, C.int(Dv), C.int(B*Hv)) != 0 {
-		gatedDeltaCUDADisabled = true
-		return nil, nil, false
-	}
-	threadY := Dv
-	if threadY > 4 {
-		threadY = 4
-	}
-	if C.mlx_fast_cuda_kernel_config_set_thread_group(cfg, 32, C.int(threadY), 1) != 0 {
-		gatedDeltaCUDADisabled = true
-		return nil, nil, false
-	}
-
-	tScalar := FromValue(T)
-	inputs := []C.mlx_array{
-		q.ctx,
-		k.ctx,
-		v.ctx,
-		g.ctx,
-		beta.ctx,
-		state.ctx,
-		tScalar.ctx,
-	}
-	inVec := C.mlx_vector_array_new_data(unsafe.SliceData(inputs), C.size_t(len(inputs)))
-	defer C.mlx_vector_array_free(inVec)
-
-	outVec := C.mlx_vector_array_new()
-	defer C.mlx_vector_array_free(outVec)
-	if C.mlx_fast_cuda_kernel_apply(&outVec, gatedDeltaCUDAKernel, inVec, cfg, DefaultStream().ctx) != 0 {
-		gatedDeltaCUDADisabled = true
-		return nil, nil, false
-	}
-	if int(C.mlx_vector_array_size(outVec)) < 2 {
-		return nil, nil, false
-	}
-
-	y = New("GATED_DELTA_CUDA_Y")
-	nextState = New("GATED_DELTA_CUDA_STATE")
-	C.mlx_vector_array_get(&y.ctx, outVec, 0)
-	C.mlx_vector_array_get(&nextState.ctx, outVec, 1)
-	return y, nextState, true
-}
-
 // FastGatedDelta runs the recurrent update operation.
 //
 // When mask is non-nil, it must be a [B, T] bool tensor identifying real
@@ -628,8 +298,9 @@ func gatedDeltaCUDAKernelApply(q, k, v, g, beta, state *Array) (y, nextState *Ar
 // kernel iteration is a no-op — state passes through unchanged and the
 // final state equals the state after the last real token of each row.
 //
-// It tries the fused CUDA kernel first, then Metal, then falls back to a
-// backend-agnostic MLX implementation with identical inputs/outputs.
+// Inputs that fit the GPU kernels' contract run there (CUDA or Metal, with
+// the graph implementation covering boxes where neither can run); anything
+// else runs the graph implementation directly.
 func FastGatedDelta(q, k, v, g, beta, state, mask *Array) (y, nextState *Array) {
 	// TODO: handle this more efficiently with a masked kernel (MLX-LM has one).
 	if mask != nil {
@@ -649,12 +320,21 @@ func FastGatedDelta(q, k, v, g, beta, state, mask *Array) (y, nextState *Array) 
 		g = Where(m3, g, oneG)
 	}
 
-	if y, nextState, ok := gatedDeltaCUDAKernelApply(q, k, v, g, beta, state); ok {
-		return y, nextState
+	if dims, ok := resolveGatedDeltaDims(q, k, v, g, beta, state); ok {
+		outs := gatedDelta.run(gpuLaunch{
+			dtypes: []gpuDTypeArg{{"InT", q.DType()}, {"StT", state.DType()}},
+			ints:   []gpuIntArg{{"Dk", dims.Dk}, {"Dv", dims.Dv}, {"Hk", dims.Hk}, {"Hv", dims.Hv}},
+			outputs: []gpuOutputSpec{
+				{"GATED_DELTA_Y", []int32{int32(dims.B), int32(dims.T), int32(dims.Hv), int32(dims.Dv)}, q.DType()},
+				{"GATED_DELTA_STATE", []int32{int32(dims.B), int32(dims.Hv), int32(dims.Dv), int32(dims.Dk)}, state.DType()},
+			},
+			grid:        [3]int{32, dims.Dv, dims.B * dims.Hv},
+			threadGroup: [3]int{32, min(dims.Dv, 4), 1},
+			inputs:      []*Array{q, k, v, g, beta, state, FromValue(dims.T)},
+		})
+		return outs[0], outs[1]
 	}
-	if y, nextState, ok := gatedDeltaKernel(q, k, v, g, beta, state); ok {
-		return y, nextState
-	}
+
 	y, nextState = gatedDeltaFallback(q, k, v, g, beta, state)
 	if y == nil || nextState == nil {
 		panic("mlx.FastGatedDelta: fallback failed (invalid inputs or unsupported shapes)")
