@@ -48,8 +48,7 @@ func WithConvSiLU() RecurrentOption {
 // WithSnapshotSplits requests that the scan run in segments cut at the given
 // offsets within this forward (0 < offset < L), capturing the recurrent state
 // at each boundary. The wrapper returns those per-boundary states to the
-// caller. Offsets must be sorted ascending and strictly interior; out-of-range
-// or duplicate offsets are ignored.
+// caller. Offsets must be sorted ascending, unique, and strictly interior.
 func WithSnapshotSplits(offsets []int) RecurrentOption {
 	return func(c *recurrentConfig) { c.splits = offsets }
 }
@@ -72,7 +71,7 @@ func segmentRanges(splits []int, L int32) []seg {
 
 // sliceSeg slices x to the segment's window [s.start, s.end) along the L axis
 // (axis 1), keeping all other axes whole. Works for any rank — [B, L],
-// [B, L, H], [B, L, H, D] — so the padding mask, gate/beta, and q/k/v all
+// [B, L, H], [B, L, H, D] — so the padding mask and the packed projections
 // slice the same L range and stay aligned. Returns nil when x is nil (the
 // no-padding-mask fast path). Slicing the full-forward mask this way yields
 // the segment's own mask, so masks are built once per forward and reused
@@ -215,57 +214,42 @@ func convStateAt(concat *mlx.Array, queryLens []int32, convTail int, boundary in
 		[]int32{B, boundary + int32(convTail), D})
 }
 
-// GatedDelta wraps mlx.FastGatedDelta with recurrent state management.
-// Reads prior delta state from the supplied option and returns the output
-// and the delta states at each boundary. The boundary states end with the
-// forward-end state. Without WithSnapshotSplits there is one boundary (the
-// end), so states has length 1.
-//
-// Shape conventions:
-//
-//	q:     [B, L, numKeyHeads,   headKDim]
-//	k:     [B, L, numKeyHeads,   headKDim]
-//	v:     [B, L, numValueHeads, headVDim]
-//	state: [B, numValueHeads,    headVDim, headKDim]
-//
-// Prior state comes from exactly one of WithRecurrentHistory (cache
-// path) or WithRecurrentState (no-cache path).
-//
-// When WithSnapshotSplits supplies interior offsets, the scan runs in
-// segments cut at those offsets, threading delta state between them; states
-// holds the delta state at each interior split and at the end. out is
-// identical to the unsegmented scan.
-func GatedDelta(b *batch.Batch, q, k, v, gDecay, beta *mlx.Array, opts ...RecurrentOption) (out *mlx.Array, states []*mlx.Array) {
+// GatedDelta runs the whole gated-delta step over the activated causal-conv
+// output: q/k norms, decay gate, and the scan. convOut rows are packed
+// [q | k | v]; ba is the packed [beta | alpha] projection output. Per-token
+// splits map to the kernels' captureAll shape — one launch emitting every
+// interior state — and any other split pattern composes mlx.GatedDelta per
+// segment, threading the delta state, so each segment runs the fused kernel
+// when it fits. Returns the output and the delta states at each boundary,
+// ending with the forward-end state; without WithSnapshotSplits there is one
+// boundary (the end), so states has length 1.
+func GatedDelta(b *batch.Batch, convOut, ba, dtBias, aExp *mlx.Array, opts ...RecurrentOption) (*mlx.Array, []*mlx.Array) {
 	cfg := resolveRecurrentConfig(opts)
-	var prior *mlx.Array
+	prior := cfg.deltaState
 	if cfg.history != nil {
 		prior = cfg.history.DeltaState()
-	} else {
-		prior = cfg.deltaState
 	}
 
-	L := int32(q.Dim(1))
-	mask := paddingMask(b, L) // built once per forward, sliced per segment
+	L := int32(convOut.Dim(1))
+	mask := paddingMask(b, L)
+
+	// No splits and per-token splits are both a single whole-forward call:
+	// len(splits) == L-1 means the sorted interior offsets are exactly
+	// 1..L-1, the kernels' captureAll shape.
+	if n := len(cfg.splits); n == 0 || n == int(L)-1 {
+		y, end, interior := mlx.GatedDelta(convOut, ba, dtBias, aExp, prior, mask, n > 0)
+		return y, append(interior, end)
+	}
+
 	segs := segmentRanges(cfg.splits, L)
-	if len(segs) <= 1 {
-		out, end := mlx.FastGatedDelta(q, k, v, gDecay, beta, prior, mask)
-		return out, []*mlx.Array{end}
-	}
-
-	// Segmented scan: run each [a,c) piece with the prior segment's state,
-	// recording the delta state at every boundary (interior splits + end).
 	outs := make([]*mlx.Array, 0, len(segs))
-	states = make([]*mlx.Array, 0, len(segs))
+	states := make([]*mlx.Array, 0, len(segs))
 	state := prior
 	for _, seg := range segs {
-		segOut, segState := mlx.FastGatedDelta(
-			sliceSeg(q, seg), sliceSeg(k, seg), sliceSeg(v, seg),
-			sliceSeg(gDecay, seg), sliceSeg(beta, seg),
-			state, sliceSeg(mask, seg),
-		)
-		outs = append(outs, segOut)
-		state = segState
-		states = append(states, segState)
+		var y *mlx.Array
+		y, state, _ = mlx.GatedDelta(sliceSeg(convOut, seg), sliceSeg(ba, seg), dtBias, aExp, state, sliceSeg(mask, seg), false)
+		outs = append(outs, y)
+		states = append(states, state)
 	}
 	return mlx.Concatenate(outs, 1), states
 }

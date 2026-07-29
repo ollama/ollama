@@ -89,52 +89,28 @@ func TestRecurrentCachePaddedRoundTrip(t *testing.T) {
 	const L = 4
 	const qLen = 2
 
-	// Use distinct values for the real prefix and the padded tail so
-	// we can detect any leak from padded positions into the result.
-	makeQKV := func(seed float32, T int) (q, k, v *mlx.Array) {
-		mkLast := func(off float32, T, n, d int) *mlx.Array {
-			vals := make([]float32, 1*T*n*d)
-			for i := range vals {
-				vals[i] = off + 0.05*float32(i)
-			}
-			return mlx.FromValues(vals, 1, T, n, d)
+	// Distinct values for the real prefix and large junk in the padded
+	// tail so any leak from padded positions is visible.
+	const packedDim = 2*headKDim + numVHeads*headVDim
+	mkPacked := func(seed float32, T int) (packed, ba *mlx.Array) {
+		pv := make([]float32, T*packedDim)
+		bv := make([]float32, T*2*numVHeads)
+		for i := range pv {
+			pv[i] = seed + 0.05*float32(i)
 		}
-		q = mkLast(seed, T, 1, headKDim)
-		k = mkLast(seed+0.1, T, 1, headKDim)
-		v = mkLast(seed+0.2, T, numVHeads, headVDim)
-		return
-	}
-	makeGB := func(seed float32, T int) (g, beta *mlx.Array) {
-		gVals := make([]float32, 1*T*numVHeads)
-		bVals := make([]float32, 1*T*numVHeads)
-		for i := range gVals {
-			gVals[i] = seed + 0.01*float32(i)
-			bVals[i] = seed - 0.02*float32(i)
+		for i := range bv {
+			bv[i] = seed - 0.02*float32(i)
 		}
-		g = mlx.FromValues(gVals, 1, T, numVHeads)
-		beta = mlx.FromValues(bVals, 1, T, numVHeads)
-		return
+		return mlx.FromValues(pv, 1, T, packedDim), mlx.FromValues(bv, 1, T, 2*numVHeads)
 	}
-	makeQKVPadded := func() (q, k, v *mlx.Array) {
-		qReal, kReal, vReal := makeQKV(0.3, qLen)
-		// Distinct, large junk values in the padded tail to surface
-		// any leak (real outputs are O(1)).
-		qPad := mlx.AddScalar(mlx.Zeros(mlx.DTypeFloat32, 1, L-qLen, 1, headKDim), 99)
-		kPad := mlx.AddScalar(mlx.Zeros(mlx.DTypeFloat32, 1, L-qLen, 1, headKDim), 99)
-		vPad := mlx.AddScalar(mlx.Zeros(mlx.DTypeFloat32, 1, L-qLen, numVHeads, headVDim), 99)
-		q = mlx.Concatenate([]*mlx.Array{qReal, qPad}, 1)
-		k = mlx.Concatenate([]*mlx.Array{kReal, kPad}, 1)
-		v = mlx.Concatenate([]*mlx.Array{vReal, vPad}, 1)
-		return
+	mkPackedPadded := func() (packed, ba *mlx.Array) {
+		pReal, baReal := mkPacked(0.3, qLen)
+		pPad := mlx.AddScalar(mlx.Zeros(mlx.DTypeFloat32, 1, L-qLen, packedDim), 99)
+		baPad := mlx.AddScalar(mlx.Zeros(mlx.DTypeFloat32, 1, L-qLen, 2*numVHeads), 99)
+		return mlx.Concatenate([]*mlx.Array{pReal, pPad}, 1), mlx.Concatenate([]*mlx.Array{baReal, baPad}, 1)
 	}
-	makeGBPadded := func() (g, beta *mlx.Array) {
-		gReal, betaReal := makeGB(0.1, qLen)
-		gPad := mlx.AddScalar(mlx.Zeros(mlx.DTypeFloat32, 1, L-qLen, numVHeads), 99)
-		betaPad := mlx.AddScalar(mlx.Zeros(mlx.DTypeFloat32, 1, L-qLen, numVHeads), 99)
-		g = mlx.Concatenate([]*mlx.Array{gReal, gPad}, 1)
-		beta = mlx.Concatenate([]*mlx.Array{betaReal, betaPad}, 1)
-		return
-	}
+	dtBias := mlx.FromValues([]float32{0.3}, numVHeads)
+	aExp := mlx.FromValues([]float32{0.12}, numVHeads)
 
 	// The conv input dimension must match the cache's convDim.
 	mkConvInput := func(seed float32, T int) *mlx.Array {
@@ -170,16 +146,13 @@ func TestRecurrentCachePaddedRoundTrip(t *testing.T) {
 		_, convStates := nn.CausalConv1D(b, convInput, conv, convTail,
 			nn.WithRecurrentHistory(history))
 
-		var q, k, v, g, beta *mlx.Array
+		var packed, ba *mlx.Array
 		if T == L {
-			q, k, v = makeQKVPadded()
-			g, beta = makeGBPadded()
+			packed, ba = mkPackedPadded()
 		} else {
-			q, k, v = makeQKV(0.3, T)
-			g, beta = makeGB(0.1, T)
+			packed, ba = mkPacked(0.3, T)
 		}
-		_, deltaStates := nn.GatedDelta(b, q, k, v, g, beta,
-			nn.WithRecurrentHistory(history))
+		_, deltaStates := nn.GatedDelta(b, packed, ba, dtBias, aExp, nn.WithRecurrentHistory(history))
 
 		c.Put(b, convStates, deltaStates)
 		return convStates[len(convStates)-1], deltaStates[len(deltaStates)-1]
