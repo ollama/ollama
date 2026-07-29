@@ -90,12 +90,13 @@ Adversarial verification (four independent checks) on `580ca88e`:
 
 ### Known risk (pre-existing, not introduced by the rebase)
 
-> **Moot for the shipped path, but the underlying question is still open.** The unclamped
-> lookup described below is in `model/models/gemma4/model_vision.go`, which no longer
-> exists — the shipped path resizes and tokenizes inside llama.cpp `mtmd`/`clip` instead.
-> The deployed 1120-budget config has been exercised on a real gemma4:31b vision request
-> without incident, but that is **one image**, not the wide/extreme-aspect-ratio case this
-> warns about. The suggested smoke test is still worth doing against the shipped path.
+> **Resolved — the smoke test was run, and it passed.** The unclamped lookup described
+> below is in `model/models/gemma4/model_vision.go`, which no longer exists; the shipped
+> path resizes and tokenizes inside llama.cpp `mtmd`/`clip` instead. On 2026-07-29 the
+> recommended wide/extreme-aspect-ratio test was run against the deployed image at budget
+> 1120, up to an 80:1 ratio: correct colours and correct orientation every time, no crash,
+> no `GGML_ASSERT`, no garbling. Details and the measurement table are in
+> `docs/maxusai/gemma4-budget-image.md`. Nothing further is outstanding here.
 
 The feature raises the default max visual-token budget to **560** (worst case **1120**),
 2–4× the base gemma4's documented reference max of **280**. The vision
