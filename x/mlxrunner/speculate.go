@@ -147,7 +147,6 @@ func (s *speculation) open(request Request, caches []cache.Cache) *speculationSe
 func (s *speculationSession) beginRound() {
 	now := time.Now()
 	if !s.lastRoundStart.IsZero() && s.roundDrafts >= 0 {
-		s.stats.recordRound(s.roundDrafts)
 		if s.roundDrafts == s.prevDrafts {
 			s.spec.depth.cost.observe(s.roundDrafts, now.Sub(s.lastRoundStart))
 		}
@@ -162,6 +161,7 @@ func (s *speculationSession) beginRound() {
 // positions past it (a terminator, not a target rejection).
 func (s *speculationSession) endRound(drafted, accepted, observed int) {
 	s.roundDrafts = drafted
+	s.stats.recordRound(drafted)
 	s.stats.iterations++
 	s.stats.drafted += drafted
 	s.stats.accepted += accepted
@@ -277,7 +277,10 @@ func (st *speculativeDecoder) resume() []sampler.Result {
 	st.position = position
 	st.inner.close()
 	st.inner = nil
-	// No round spans this call, so the next beginRound attributes no cost.
+	// The drained emission counts as one more plain round, but no round spans
+	// this call, so the next beginRound attributes no cost.
+	st.s.stats.recordRound(0)
+	st.s.stats.iterations++
 	st.s.roundDrafts = -1
 	return next
 }
