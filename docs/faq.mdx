@@ -158,7 +158,7 @@ docker run -d -e HTTPS_PROXY=https://my.proxy.example.com -p 11434:11434 ollama-
 
 ## Does Ollama send my prompts and answers back to ollama.com?
 
-Ollama runs locally. We don't see your prompts or data when you run locally. When using cloud-hosted models, we process your prompts and responses to provide the service but do not store or log that content and never train on it. We collect basic account info and limited usage metadata to provide the service that does not include prompt or response content. We don't sell your data. You can delete your account anytime.
+Ollama runs locally. We don't see your prompts or data when you run locally. The desktop application periodically checks for updates at ollama.com/api/update; each check includes a unique, stable per-installation identifier (an ed25519 public key) alongside the OS, architecture, and version needed to serve the correct update. Update checks can be disabled in the desktop application's Settings. When using cloud-hosted models, we process your prompts and responses to provide the service but do not store or log that content and never train on it. We collect basic account info and limited usage metadata to provide the service that does not include prompt or response content. We don't sell your data. You can delete your account anytime.
 
 ## How do I disable Ollama's cloud features?
 
