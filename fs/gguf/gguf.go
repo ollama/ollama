@@ -51,19 +51,12 @@ type File struct {
 	bts    []byte
 }
 
-func Open(path string) (_ *File, err error) {
-	f := &File{bts: make([]byte, 4096)}
+func Open(path string) (f *File, err error) {
+	f = &File{bts: make([]byte, 4096)}
 	f.file, err = os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if err != nil {
-			if closeErr := f.close(); closeErr != nil {
-				err = errors.Join(err, closeErr)
-			}
-		}
-	}()
 
 	f.reader = newBufferedReader(f.file, 32<<10)
 
@@ -333,19 +326,8 @@ func maxInt64() uint64 {
 }
 
 func (f *File) Close() error {
-	return f.close()
-}
-
-func (f *File) close() error {
-	if f.keyValues != nil {
-		f.keyValues.stop()
-	}
-	if f.tensors != nil {
-		f.tensors.stop()
-	}
-	if f.file == nil {
-		return nil
-	}
+	f.keyValues.stop()
+	f.tensors.stop()
 	return f.file.Close()
 }
 
@@ -397,6 +379,18 @@ func (f *File) TensorInfo(name string) TensorInfo {
 
 func (f *File) NumTensors() int {
 	return int(f.tensors.count)
+}
+
+func (f *File) TensorDataOffset() int64 {
+	// The tensor data base offset is only known after all tensor metadata has
+	// been read because GGUF stores it after the tensor-info table.
+	_ = f.keyValues.rest()
+	_ = f.tensors.rest()
+	return f.offset
+}
+
+func (f *File) ReaderAt() io.ReaderAt {
+	return f.file
 }
 
 func (f *File) TensorInfos() iter.Seq2[int, TensorInfo] {

@@ -37,8 +37,10 @@ type inferenceModelCacheEntry struct {
 
 func newInferenceModelCache() *inferenceModelCache {
 	return &inferenceModelCache{
-		entries:   make(map[inferenceModelCacheKey]inferenceModelCacheEntry),
-		loadModel: GetModel,
+		entries: make(map[inferenceModelCacheKey]inferenceModelCacheEntry),
+		loadModel: func(name string) (*Model, error) {
+			return GetModelForRunner(name, "")
+		},
 	}
 }
 
@@ -117,5 +119,5 @@ func (s *Server) getModel(name string) (*Model, error) {
 	if s != nil && s.modelCaches != nil && s.modelCaches.inference != nil {
 		return s.modelCaches.inference.Get(name)
 	}
-	return GetModel(name)
+	return GetModelForRunner(name, "")
 }

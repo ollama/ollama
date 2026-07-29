@@ -182,7 +182,13 @@ SYSTEM """<system message>"""
 
 ### ADAPTER
 
-The `ADAPTER` instruction applies a GGUF LoRA adapter to the base model specified by `FROM`. The adapter must be trained from the same base model.
+The `ADAPTER` instruction specifies a fine tuned GGUF LoRA adapter that should apply to the base model. The value of the adapter should be an absolute path or a path relative to the Modelfile. The base model should be specified with a `FROM` instruction. If the base model is not the same as the base model that the adapter was tuned from, the behavior will be erratic.
+
+#### Safetensors adapter
+
+Safetensors adapters must be converted to GGUF before importing. Use `convert_lora_to_gguf.py` from llama.cpp, then reference the converted adapter:
+
+#### GGUF adapter
 
 ```
 ADAPTER ./ollama-lora.gguf

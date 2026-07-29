@@ -4,11 +4,44 @@ title: Importing a Model
 
 ## Table of Contents
 
+- [Importing an adapter](#importing-a-fine-tuned-adapter)
 - [Importing a Safetensors model](#importing-a-model-from-safetensors-weights)
-- [Importing a GGUF file](#importing-a-gguf-file)
+- [Importing a GGUF file](#importing-a-gguf-based-model-or-adapter)
+- [Quantizing a GGUF model](#quantizing-a-gguf-model)
 - [Sharing models on ollama.com](#sharing-your-model-on-ollama-com)
 
-Safetensors imports use MLX. Prepare GGUF files with community tools before importing them; `ollama create` does not convert or quantize GGUF files.
+## Importing a fine tuned adapter
+
+First, create a `Modelfile` with a `FROM` command pointing at the base model you used for fine tuning, and an `ADAPTER` command which points to your GGUF adapter:
+
+```dockerfile
+FROM <base model name>
+ADAPTER /path/to/adapter.gguf
+```
+
+Make sure that you use the same base model in the `FROM` command as you used to create the adapter otherwise you will get erratic results. Most frameworks use different quantization methods, so it's best to use non-quantized (i.e. non-QLoRA) adapters. If your adapter is in the same directory as your `Modelfile`, use `ADAPTER .` to specify the adapter path.
+
+Now run `ollama create` from the directory where the `Modelfile` was created:
+
+```shell
+ollama create my-model
+```
+
+Lastly, test the model:
+
+```shell
+ollama run my-model
+```
+
+Ollama supports importing adapters based on several different model architectures including:
+
+- Llama (including Llama 2, Llama 3, Llama 3.1, and Llama 3.2);
+- Mistral (including Mistral 1, Mistral 2, and Mixtral); and
+- Gemma (including Gemma 1 and Gemma 2)
+
+Safetensors adapters must be converted to GGUF before importing. Use `convert_lora_to_gguf.py` from [llama.cpp](https://github.com/ggml-org/llama.cpp), then reference the converted GGUF adapter from `ADAPTER`.
+
+You can create the source adapter using a fine tuning framework or tool such as the Hugging Face [fine tuning framework](https://huggingface.co/docs/transformers/en/training), [Unsloth](https://github.com/unslothai/unsloth), or [MLX](https://github.com/ml-explore/mlx).
 
 ## Importing a model from Safetensors weights
 

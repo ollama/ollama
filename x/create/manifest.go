@@ -109,7 +109,7 @@ func NewSafetensorsManifestWriter(opts SafetensorsManifestOptions) ManifestWrite
 		if err := checkContext(ctx); err != nil {
 			return err
 		}
-		return manifest.WriteManifest(name, configLayer, manifestLayers)
+		return manifest.WriteManifestWithMetadata(name, configLayer, manifestLayers, manifest.RunnerMLX, manifest.FormatSafetensors)
 	}
 }
 
@@ -139,7 +139,7 @@ func safetensorsConfigLayer(config model.ConfigV2) (manifest.Layer, error) {
 	if err := json.NewEncoder(&b).Encode(config); err != nil {
 		return manifest.Layer{}, fmt.Errorf("failed to encode config: %w", err)
 	}
-	layer, err := manifest.NewLayer(&b, "application/vnd.docker.container.image.v1+json")
+	layer, err := manifest.NewLayer(&b, manifest.MediaTypeImageConfig)
 	if err != nil {
 		return manifest.Layer{}, fmt.Errorf("failed to create config layer: %w", err)
 	}

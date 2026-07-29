@@ -25,6 +25,7 @@ import (
 	gocmpopts "github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
@@ -645,10 +646,42 @@ func checkFileExists(t *testing.T, p string, expect []string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if strings.HasSuffix(filepath.ToSlash(p), "/blobs/*") {
+		actual = slices.DeleteFunc(actual, isManifestBlobForTest)
+	}
 
 	if diff := gocmp.Diff(expect, actual, gocmpopts.SortSlices(strings.Compare), gocmpopts.EquateEmpty()); diff != "" {
 		t.Errorf("file exists mismatch (-want +got):\n%s", diff)
 	}
+}
+
+func checkManifestFiles(t *testing.T, names ...string) {
+	t.Helper()
+
+	expect := make([]string, len(names))
+	for i, name := range names {
+		p, err := manifest.V2PathForName(model.ParseName(name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		expect[i] = p
+	}
+
+	checkFileExists(t, filepath.Join(envconfig.Models(), "manifests-v2", "*", "*", "*", "*"), expect)
+}
+
+func isManifestBlobForTest(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+
+	var m manifest.Manifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		return false
+	}
+
+	return m.SchemaVersion != 0 && m.MediaType != "" && (m.Config.Digest != "" || len(m.Layers) > 0)
 }
 
 func TestCreateFromBin(t *testing.T) {
@@ -672,9 +705,7 @@ func TestCreateFromBin(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
@@ -732,9 +763,7 @@ func TestCreateFromModel(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:   "test2",
@@ -746,10 +775,7 @@ func TestCreateFromModel(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test2", "latest"),
-	})
+	checkManifestFiles(t, "test", "test2")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
@@ -846,9 +872,7 @@ func TestCreateRemovesLayers(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
@@ -867,15 +891,229 @@ func TestCreateRemovesLayers(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 		filepath.Join(p, "blobs", "sha256-fe7ac77b725cda2ccad03f88a880ecdfd7a33192d6cae08fce2c0ee1455991ed"),
 	})
+}
+
+func writeManifestListVariant(t *testing.T, name, modelFormat string) {
+	t.Helper()
+
+	configData, err := json.Marshal(model.ConfigV2{
+		ModelFormat:  modelFormat,
+		Capabilities: []string{"completion"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	configLayer, err := manifest.NewLayer(bytes.NewReader(configData), "application/vnd.docker.container.image.v1+json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	modelLayer, err := manifest.NewLayer(strings.NewReader(name+" layer"), "application/vnd.ollama.image.license")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := manifest.WriteManifest(model.ParseName(name), configLayer, []manifest.Layer{modelLayer}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCreateManifestList(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	writeManifestListVariant(t, "test-gguf", manifest.FormatGGUF)
+	writeManifestListVariant(t, "test-safetensors", manifest.FormatSafetensors)
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:  "test-list",
+		List:   []string{"test-gguf", "test-safetensors"},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d: %s", w.Code, w.Body.String())
+	}
+
+	data, err := manifest.ReadManifestData(model.ParseName("test-list"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var parent manifest.Manifest
+	if err := json.Unmarshal(data, &parent); err != nil {
+		t.Fatal(err)
+	}
+	if parent.MediaType != manifest.MediaTypeManifestList {
+		t.Fatalf("mediaType = %q, want %q", parent.MediaType, manifest.MediaTypeManifestList)
+	}
+	if len(parent.Manifests) != 2 {
+		t.Fatalf("manifest count = %d, want 2", len(parent.Manifests))
+	}
+
+	selected, err := manifest.ParseNamedManifest(model.ParseName("test-list"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Config.Digest == "" {
+		t.Fatal("selected manifest is missing config")
+	}
+
+	mlxInfo, err := GetModelInfo(api.ShowRequest{Model: "test-list", Runner: manifest.RunnerMLX})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mlxInfo.Details.Format != manifest.FormatSafetensors {
+		t.Fatalf("mlx show format = %q, want %q", mlxInfo.Details.Format, manifest.FormatSafetensors)
+	}
+
+	want := map[string]string{
+		manifest.RunnerGGML: manifest.FormatGGUF,
+		manifest.RunnerMLX:  manifest.FormatSafetensors,
+	}
+	for _, child := range parent.Manifests {
+		if got := want[child.Runner]; got != child.Format {
+			t.Fatalf("child runner/format = %q/%q, want one of %v", child.Runner, child.Format, want)
+		}
+		if child.BlobDigest() == "" {
+			t.Fatal("child manifest reference is missing digest")
+		}
+		if child.Config.Digest != "" || len(child.Layers) != 0 {
+			t.Fatalf("child manifest reference embedded config/layers: config=%q layers=%d", child.Config.Digest, len(child.Layers))
+		}
+
+		childBlob, err := manifest.BlobsPath(child.BlobDigest())
+		if err != nil {
+			t.Fatal(err)
+		}
+		childData, err := os.ReadFile(childBlob)
+		if err != nil {
+			t.Fatalf("child manifest blob missing: %v", err)
+		}
+		var resolved manifest.Manifest
+		if err := json.Unmarshal(childData, &resolved); err != nil {
+			t.Fatal(err)
+		}
+		if resolved.Config.Digest == "" || len(resolved.Layers) == 0 {
+			t.Fatalf("resolved child manifest missing config/layers: config=%q layers=%d", resolved.Config.Digest, len(resolved.Layers))
+		}
+	}
+}
+
+func TestCreateManifestListRejectsAmbiguousChildren(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	for _, tt := range []struct {
+		name      string
+		models    []string
+		wantError string
+	}{
+		{
+			name:      "duplicate digest",
+			models:    []string{"test-gguf-a", "test-gguf-a"},
+			wantError: "resolve to the same manifest",
+		},
+		{
+			name:      "duplicate runner",
+			models:    []string{"test-gguf-a", "test-gguf-b"},
+			wantError: "use the same runner",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OLLAMA_MODELS", t.TempDir())
+			var s Server
+
+			writeManifestListVariant(t, "test-gguf-a", manifest.FormatGGUF)
+			writeManifestListVariant(t, "test-gguf-b", manifest.FormatGGUF)
+
+			w := createRequest(t, s.CreateHandler, api.CreateRequest{
+				Model:  "test-list",
+				List:   tt.models,
+				Stream: &stream,
+			})
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status code = %d, want 400: %s", w.Code, w.Body.String())
+			}
+			if !strings.Contains(w.Body.String(), tt.wantError) {
+				t.Fatalf("error = %s, want substring %q", w.Body.String(), tt.wantError)
+			}
+		})
+	}
+}
+
+func TestCreateManifestListRejectsInvalidRequests(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		req       api.CreateRequest
+		wantError string
+	}{
+		{
+			name:      "empty list",
+			req:       api.CreateRequest{},
+			wantError: "must contain at least one model",
+		},
+		{
+			name: "from",
+			req: api.CreateRequest{
+				List: []string{"test-gguf", "test-safetensors"},
+				From: "base-model",
+			},
+			wantError: "cannot be combined",
+		},
+		{
+			name: "draft files",
+			req: api.CreateRequest{
+				List:       []string{"test-gguf", "test-safetensors"},
+				DraftFiles: map[string]string{"draft.gguf": "sha256-test"},
+			},
+			wantError: "cannot be combined",
+		},
+		{
+			name: "template",
+			req: api.CreateRequest{
+				List:     []string{"test-gguf", "test-safetensors"},
+				Template: "{{ .Prompt }}",
+			},
+			wantError: "cannot be combined",
+		},
+		{
+			name: "renderer",
+			req: api.CreateRequest{
+				List:     []string{"test-gguf", "test-safetensors"},
+				Renderer: "qwen3",
+			},
+			wantError: "cannot be combined",
+		},
+		{
+			name: "quantize",
+			req: api.CreateRequest{
+				List:     []string{"test-gguf", "test-safetensors"},
+				Quantize: "Q4_K_M",
+			},
+			wantError: "cannot be combined",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateCreateManifestListRequest(tt.req)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("error = %v, want substring %q", err, tt.wantError)
+			}
+			var requestErr manifestListRequestError
+			if !errors.As(err, &requestErr) {
+				t.Fatalf("error = %T, want manifestListRequestError so CreateHandler responds with %d", err, http.StatusBadRequest)
+			}
+		})
+	}
 }
 
 func TestCreateUnsetsSystem(t *testing.T) {
@@ -897,9 +1135,7 @@ func TestCreateUnsetsSystem(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
@@ -918,9 +1154,7 @@ func TestCreateUnsetsSystem(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
@@ -951,9 +1185,7 @@ func TestCreateMergeParameters(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-1d0ad71299d48c2fb7ae2b98e683643e771f8a5b72be34942af90d97a91c1e37"),
@@ -976,10 +1208,7 @@ func TestCreateMergeParameters(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test2", "latest"),
-	})
+	checkManifestFiles(t, "test", "test2")
 
 	// Display contents of each blob in the directory
 	blobDir := filepath.Join(p, "blobs")
@@ -1034,10 +1263,7 @@ func TestCreateMergeParameters(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test2", "latest"),
-	})
+	checkManifestFiles(t, "test", "test2")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-12f58bb75cb3042d69a7e013ab87fb3c3c7088f50ddc62f0c77bd332f0d44d35"),
@@ -1093,9 +1319,7 @@ func TestCreateReplacesMessages(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-298baeaf6928a60cf666d88d64a1ba606feb43a2865687c39e40652e407bffc4"),
@@ -1127,10 +1351,7 @@ func TestCreateReplacesMessages(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test2", "latest"),
-	})
+	checkManifestFiles(t, "test", "test2")
 
 	// Old layers will not have been pruned
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
@@ -1187,9 +1408,7 @@ func TestCreateTemplateSystem(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
@@ -1414,9 +1633,7 @@ func TestCreateLicenses(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-2af71558e438db0b73a20beab92dc278a94e1bbe974c00c1a33e3ab62d53a608"),
@@ -1718,15 +1935,34 @@ func TestDetectModelTypeFromFiles(t *testing.T) {
 		}
 	})
 
-	t.Run("mixed model types", func(t *testing.T) {
+	t.Run("safetensors file with sidecars", func(t *testing.T) {
+		p := t.TempDir()
+		t.Setenv("OLLAMA_MODELS", p)
+
+		configDigest := createTestBlob(t, []byte(`{"model_type":"test"}`))
 		files := map[string]string{
-			"model.gguf":        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			"model.safetensors": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			"model.safetensors": "sha256:abc123",
+			"config.json":       configDigest,
+		}
+
+		modelType, err := detectModelTypeFromFiles(files)
+		if err != nil {
+			t.Fatalf("detectModelTypeFromFiles() error = %v", err)
+		}
+		if modelType != "safetensors" {
+			t.Fatalf("expected model type 'safetensors', got %q", modelType)
+		}
+	})
+
+	t.Run("mixed file types", func(t *testing.T) {
+		files := map[string]string{
+			"model.gguf":        "sha256:abc123",
+			"model.safetensors": "sha256:def456",
 		}
 
 		_, err := detectModelTypeFromFiles(files)
-		if !errors.Is(err, errMixedModelTypes) {
-			t.Fatalf("detectModelTypeFromFiles() error = %v, want errMixedModelTypes", err)
+		if !errors.Is(err, errMixedModelFiles) {
+			t.Fatalf("detectModelTypeFromFiles() error = %v, want errMixedModelFiles", err)
 		}
 	})
 

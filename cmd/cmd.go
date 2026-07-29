@@ -139,11 +139,11 @@ func convertSelectionItemUpdates(updates <-chan []launch.SelectionItem) <-chan [
 const ConnectInstructions = "If your browser did not open, navigate to:\n    %s\n\n"
 
 // ensureThinkingSupport emits a warning if the model does not advertise thinking support
-func ensureThinkingSupport(ctx context.Context, client *api.Client, name string) {
+func ensureThinkingSupport(ctx context.Context, client *api.Client, name, runner string) {
 	if name == "" {
 		return
 	}
-	resp, err := client.Show(ctx, &api.ShowRequest{Model: name})
+	resp, err := client.Show(ctx, &api.ShowRequest{Model: name, Runner: runner})
 	if err != nil {
 		return
 	}
@@ -305,6 +305,42 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	name := model.ParseName(modelName)
 	if !name.IsValid() {
 		return fmt.Errorf("invalid model name: %s", modelName)
+	}
+
+	list, _ := cmd.Flags().GetStringSlice("combine")
+	if len(list) > 0 {
+		if quantize, _ := cmd.Flags().GetString("quantize"); quantize != "" {
+			return errors.New("--combine cannot be used with --quantize")
+		}
+		if cmd.Flags().Changed("file") {
+			return errors.New("--combine cannot be used with --file")
+		}
+
+		client, err := api.ClientFromEnvironment()
+		if err != nil {
+			return err
+		}
+
+		req := &api.CreateRequest{
+			Model: modelName,
+			List:  list,
+		}
+
+		status := "creating manifest list"
+		spinner := progress.NewSpinner(status)
+		p.Add(status, spinner)
+
+		fn := func(resp api.ProgressResponse) error {
+			if status != resp.Status {
+				spinner.Stop()
+				status = resp.Status
+				spinner = progress.NewSpinner(status)
+				p.Add(status, spinner)
+			}
+			return nil
+		}
+
+		return client.Create(cmd.Context(), req, fn)
 	}
 
 	draftQuantize, _ := cmd.Flags().GetString("draft-quantize")
@@ -584,7 +620,7 @@ func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions) error {
 
 	requestedCloud := modelref.HasExplicitCloudSource(opts.Model)
 
-	if info, err := client.Show(cmd.Context(), &api.ShowRequest{Model: opts.Model}); err != nil {
+	if info, err := client.Show(cmd.Context(), &api.ShowRequest{Model: opts.Model, Runner: opts.Runner}); err != nil {
 		return err
 	} else if info.RemoteHost != "" || requestedCloud {
 		// Cloud model, no need to load/unload
@@ -616,6 +652,7 @@ func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions) error {
 
 	req := &api.GenerateRequest{
 		Model:     opts.Model,
+		Runner:    opts.Runner,
 		KeepAlive: opts.KeepAlive,
 
 		// pass Think here so we fail before getting to the chat prompt if the model doesn't support it
@@ -743,8 +780,8 @@ func hasListedModelName(models []api.ListModelResponse, name string) bool {
 // pullWithCloudSuggestion), in which case the returned name is the cloud
 // name the caller should continue with. verb is the user-facing command
 // ("run" or "pull") used in hint text.
-func showOrPullModel(cmd *cobra.Command, client *api.Client, name string, insecure bool, verb string) (*api.ShowResponse, string, error) {
-	info, err := client.Show(cmd.Context(), &api.ShowRequest{Model: name})
+func showOrPullModel(cmd *cobra.Command, client *api.Client, name, runner string, insecure bool, verb string) (*api.ShowResponse, string, error) {
+	info, err := client.Show(cmd.Context(), &api.ShowRequest{Model: name, Runner: runner})
 	if err == nil {
 		return info, name, nil
 	}
@@ -754,12 +791,12 @@ func showOrPullModel(cmd *cobra.Command, client *api.Client, name string, insecu
 		return nil, name, err
 	}
 
-	resolved, err := pullWithCloudSuggestion(cmd.Context(), client, name, insecure, verb)
+	resolved, err := pullWithCloudSuggestion(cmd.Context(), client, name, runner, insecure, verb)
 	if err != nil {
 		return nil, name, err
 	}
 
-	info, err = client.Show(cmd.Context(), &api.ShowRequest{Model: resolved})
+	info, err = client.Show(cmd.Context(), &api.ShowRequest{Model: resolved, Runner: runner})
 	return info, resolved, err
 }
 
@@ -771,6 +808,14 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		WordWrap:    os.Getenv("TERM") == "xterm-256color",
 		Options:     map[string]any{},
 		ShowConnect: true,
+	}
+
+	if flag := cmd.Flags().Lookup("runner"); flag != nil {
+		runner, err := cmd.Flags().GetString("runner")
+		if err != nil {
+			return err
+		}
+		opts.Runner = runner
 	}
 
 	format, err := cmd.Flags().GetString("format")
@@ -863,7 +908,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	info, name, err := showOrPullModel(cmd, client, args[0], insecure, "run")
+	info, name, err := showOrPullModel(cmd, client, args[0], opts.Runner, insecure, "run")
 	if err != nil {
 		if handleCloudAuthorizationError(err) {
 			return nil
@@ -1188,12 +1233,12 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 				until = format.HumanTime(m.ExpiresAt, "Never")
 			}
 			ctxStr := strconv.Itoa(m.ContextLength)
-			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), procStr, ctxStr, until})
+			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), procStr, ctxStr, m.Runner, until})
 		}
 	}
 
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"NAME", "ID", "SIZE", "PROCESSOR", "CONTEXT", "UNTIL"})
+	table.SetHeader([]string{"NAME", "ID", "SIZE", "PROCESSOR", "CONTEXT", "RUNNER", "UNTIL"})
 	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
 	table.SetAlignment(tablewriter.ALIGN_LEFT)
 	table.SetHeaderLine(false)
@@ -1312,6 +1357,25 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 	return showInfo(resp, verbose, os.Stdout)
 }
 
+func showHeadRows(s string, n int) (rows [][]string) {
+	scanner := bufio.NewScanner(strings.NewReader(s))
+	count := 0
+	for scanner.Scan() {
+		text := strings.TrimSpace(scanner.Text())
+		if text == "" {
+			continue
+		}
+		count++
+		if n < 0 || count <= n {
+			rows = append(rows, []string{"", text})
+		}
+	}
+	if n >= 0 && count > n {
+		rows = append(rows, []string{"", "..."})
+	}
+	return
+}
+
 func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 	tableRender := func(header string, rows func() [][]string) {
 		fmt.Fprintln(w, " ", header)
@@ -1373,6 +1437,14 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 		rows = append(rows, []string{"", "quantization", resp.Details.QuantizationLevel})
 		if resp.Requires != "" {
 			rows = append(rows, []string{"", "requires", resp.Requires})
+		}
+		if len(resp.Manifests) > 0 {
+			if runner, ok := showSelectedRunner(resp.Manifests); ok {
+				rows = append(rows, []string{"", "runner", runner})
+			}
+			if runners := showAvailableRunners(resp.Manifests); runners != "" {
+				rows = append(rows, []string{"", "available runners", runners})
+			}
 		}
 		return
 	})
@@ -1494,38 +1566,75 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 		})
 	}
 
-	head := func(s string, n int) (rows [][]string) {
-		scanner := bufio.NewScanner(strings.NewReader(s))
-		count := 0
-		for scanner.Scan() {
-			text := strings.TrimSpace(scanner.Text())
-			if text == "" {
-				continue
-			}
-			count++
-			if n < 0 || count <= n {
-				rows = append(rows, []string{"", text})
-			}
-		}
-		if n >= 0 && count > n {
-			rows = append(rows, []string{"", "..."})
-		}
-		return
-	}
-
 	if resp.System != "" {
 		tableRender("System", func() [][]string {
-			return head(resp.System, 2)
+			return showHeadRows(resp.System, 2)
 		})
 	}
 
 	if resp.License != "" {
 		tableRender("License", func() [][]string {
-			return head(resp.License, 2)
+			return showHeadRows(resp.License, 2)
 		})
 	}
 
 	return nil
+}
+
+func showSelectedRunner(manifests []api.ManifestSummary) (string, bool) {
+	for _, m := range manifests {
+		if m.Selected {
+			return showRunnerName(m), true
+		}
+	}
+	if len(manifests) == 1 {
+		return showRunnerName(manifests[0]), true
+	}
+	return "", false
+}
+
+func showAvailableRunners(manifests []api.ManifestSummary) string {
+	parts := make([]string, 0, len(manifests))
+	for _, m := range manifests {
+		if m.Selected {
+			parts = append(parts, showRunnerSummary(m))
+		}
+	}
+	for _, m := range manifests {
+		if m.Selected {
+			continue
+		}
+		parts = append(parts, showRunnerSummary(m))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func showRunnerName(m api.ManifestSummary) string {
+	if m.Runner != "" {
+		return m.Runner
+	}
+	return "runner"
+}
+
+func showRunnerSummary(m api.ManifestSummary) string {
+	label := showRunnerName(m)
+	digest := showDigestSummary(m.Digest)
+	if digest != "" {
+		label += ":" + digest
+	}
+	return label
+}
+
+func showDigestSummary(digest string) string {
+	digest = strings.ToLower(strings.Replace(digest, "-", ":", 1))
+	algo, value, ok := strings.Cut(digest, ":")
+	if !ok || algo == "" || value == "" {
+		return ""
+	}
+	if len(value) > 12 {
+		value = value[:12]
+	}
+	return algo + ":" + value
 }
 
 func CopyHandler(cmd *cobra.Command, args []string) error {
@@ -1547,13 +1656,20 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	runner := ""
+	if flag := cmd.Flags().Lookup("runner"); flag != nil {
+		runner, err = cmd.Flags().GetString("runner")
+		if err != nil {
+			return err
+		}
+	}
 
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
 
-	_, err = pullWithCloudSuggestion(cmd.Context(), client, args[0], insecure, "pull")
+	_, err = pullWithCloudSuggestion(cmd.Context(), client, args[0], runner, insecure, "pull")
 	return err
 }
 
@@ -1561,7 +1677,7 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 // clearNotFound is set and the pull fails because the model doesn't exist,
 // the progress display is erased rather than left behind; callers set it
 // when a ":cloud" suggestion prompt may immediately follow the failure.
-func pullModelWithProgress(ctx context.Context, client *api.Client, name string, insecure, clearNotFound bool) error {
+func pullModelWithProgress(ctx context.Context, client *api.Client, name, runner string, insecure, clearNotFound bool) error {
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
 
@@ -1622,7 +1738,7 @@ func pullModelWithProgress(ctx context.Context, client *api.Client, name string,
 		return nil
 	}
 
-	request := api.PullRequest{Name: name, Insecure: insecure}
+	request := api.PullRequest{Name: name, Runner: runner, Insecure: insecure}
 	err := client.Pull(ctx, &request, fn)
 	if clearNotFound && isPullNotFoundErr(err) {
 		// The deferred Stop becomes a no-op after this.
@@ -1635,6 +1751,7 @@ type generateContextKey string
 
 type runOptions struct {
 	Model          string
+	Runner         string
 	ParentModel    string
 	LoadedMessages []api.Message
 	Prompt         string
@@ -1686,6 +1803,7 @@ func (r runOptions) Copy() runOptions {
 
 	return runOptions{
 		Model:          r.Model,
+		Runner:         r.Runner,
 		ParentModel:    r.ParentModel,
 		LoadedMessages: loadedMessages,
 		Prompt:         r.Prompt,
@@ -1869,6 +1987,7 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 
 	req := &api.ChatRequest{
 		Model:    opts.Model,
+		Runner:   opts.Runner,
 		Messages: opts.Messages,
 		Format:   json.RawMessage(opts.Format),
 		Options:  opts.Options,
@@ -2001,6 +2120,7 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 
 	request := api.GenerateRequest{
 		Model:     opts.Model,
+		Runner:    opts.Runner,
 		Prompt:    opts.Prompt,
 		Context:   generateContext,
 		Images:    opts.Images,
@@ -2345,6 +2465,7 @@ func NewCLI() *cobra.Command {
 
 	createCmd.Flags().StringP("file", "f", "", "Name of the Modelfile (default \"Modelfile\")")
 	createCmd.Flags().StringP("quantize", "q", "", "Quantize safetensors model to this level (e.g. nvfp4)")
+	createCmd.Flags().StringSlice("combine", nil, "Create a manifest list from comma-separated local models")
 	createCmd.Flags().String("draft-quantize", "", "Quantize safetensors draft model to this level")
 	createCmd.Flags().Bool("force", false, "Continue local creation when MLX validation fails")
 	createCmd.Flags().Bool("experimental", false, "Deprecated no-op")
@@ -2378,6 +2499,8 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
 	runCmd.Flags().String("format", "", "Response format (e.g. json)")
+	runCmd.Flags().String("runner", "", "Runner to use for manifest list selection (mlx, ggml, llamacpp)")
+	runCmd.Flags().MarkHidden("runner")
 	runCmd.Flags().String("think", "", "Enable thinking mode: true/false or high/medium/low for supported models")
 	runCmd.Flags().Lookup("think").NoOptDefVal = "true"
 	runCmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
@@ -2409,6 +2532,8 @@ func NewCLI() *cobra.Command {
 	}
 
 	pullCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	pullCmd.Flags().String("runner", "", "Runner to use for manifest list selection (mlx, ggml, llamacpp)")
+	pullCmd.Flags().MarkHidden("runner")
 
 	pushCmd := &cobra.Command{
 		Use:     "push MODEL",

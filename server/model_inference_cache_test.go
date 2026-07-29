@@ -24,7 +24,7 @@ func TestInferenceModelCache(t *testing.T) {
 	loadCount := 0
 	cache.loadModel = func(name string) (*Model, error) {
 		loadCount++
-		return GetModel(name)
+		return GetModelForRunner(name, "")
 	}
 
 	first, err := cache.Get("inference-cache")
@@ -94,7 +94,7 @@ func TestInferenceModelCacheConcurrentMiss(t *testing.T) {
 	cache.loadModel = func(name string) (*Model, error) {
 		loadCount.Add(1)
 		time.Sleep(10 * time.Millisecond)
-		return GetModel(name)
+		return GetModelForRunner(name, "")
 	}
 
 	var wg sync.WaitGroup
