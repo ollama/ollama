@@ -72,8 +72,11 @@ func runAPIToolCallingModelWithClient(t *testing.T, ctx context.Context, client 
 		skipUnderMinVRAM(t, v)
 	}
 	requireCapability(ctx, t, client, model, "tools")
+	testBasicToolCall(t, ctx, client, model, initialTimeout, streamTimeout)
+}
 
-	tools := []api.Tool{
+func basicToolCallTools() []api.Tool {
+	return []api.Tool{
 		{
 			Type: "function",
 			Function: api.ToolFunction{
@@ -92,6 +95,22 @@ func runAPIToolCallingModelWithClient(t *testing.T, ctx context.Context, client 
 			},
 		},
 	}
+}
+
+func testBasicToolCall(t *testing.T, ctx context.Context, client *api.Client, model string, initialTimeout, streamTimeout time.Duration) {
+	t.Helper()
+	testBasicToolCallWithNumPredict(t, ctx, client, model, initialTimeout, streamTimeout, 0)
+}
+
+func testBasicToolCallWithNumPredict(t *testing.T, ctx context.Context, client *api.Client, model string, initialTimeout, streamTimeout time.Duration, numPredict int) {
+	t.Helper()
+
+	options := map[string]any{
+		"temperature": 0,
+	}
+	if numPredict > 0 {
+		options["num_predict"] = numPredict
+	}
 
 	req := api.ChatRequest{
 		Model: model,
@@ -101,10 +120,8 @@ func runAPIToolCallingModelWithClient(t *testing.T, ctx context.Context, client 
 				Content: "Call get_weather with location set to San Francisco.",
 			},
 		},
-		Tools: tools,
-		Options: map[string]any{
-			"temperature": 0,
-		},
+		Tools:     basicToolCallTools(),
+		Options:   options,
 		KeepAlive: &api.Duration{Duration: 10 * time.Second},
 	}
 

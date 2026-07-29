@@ -26,10 +26,11 @@ func useMLXTestThread(t *testing.T) {
 	if err := mlx.CheckInit(); err != nil {
 		t.Skipf("MLX not available: %v", err)
 	}
-	initialized = true
-	if mlx.GPUIsAvailable() {
-		mlx.SetDefaultDeviceGPU()
+	if !mlx.GPUIsAvailable() {
+		t.Skip("MLX GPU not available")
 	}
+	initialized = true
+	mlx.SetDefaultDeviceGPU()
 }
 
 // onesLike creates a tensor of the given shape filled with a small constant.

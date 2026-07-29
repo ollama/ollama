@@ -29,10 +29,11 @@ metadata, quantization details, remote metadata, and model-specific fields.
 TODO(parthsareen): Consider removing show cache if /api/tags grows to cover
 the remaining callers.
 
-Local model entries are stored lazily by canonical model name and verbose flag,
-with the manifest digest recorded in the entry. The manifest digest is the
-freshness boundary: if the model content changes, the digest changes, so the
-previous response is replaced instead of accumulating under an old digest key.
+Local model entries are stored lazily by canonical model name, runner, and
+verbose flag, with the manifest digest recorded in the entry. The manifest
+digest is the freshness boundary: if the model content changes, the digest
+changes, so the previous response is replaced instead of accumulating under an
+old digest key.
 Requests with System or Options overlays bypass the cache because those overlays
 mutate the effective show response.
 
@@ -87,6 +88,7 @@ type modelShowCache struct {
 // served and disappear on process restart.
 type modelShowLocalKey struct {
 	Model   string
+	Runner  string
 	Verbose bool
 }
 
@@ -203,11 +205,16 @@ func (c *modelShowCache) setLocal(key modelShowLocalKey, digest string, resp *ap
 	c.mu.Unlock()
 }
 
-func (c *modelShowCache) hasLocal(key modelShowLocalKey, digest string) bool {
-	c.mu.RLock()
-	entry, ok := c.local[key]
-	c.mu.RUnlock()
-	return ok && entry.Digest == digest && entry.Response != nil
+func (c *modelShowCache) invalidateLocal(name model.Name) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	modelName := name.String()
+	for key := range c.local {
+		if key.Model == modelName {
+			delete(c.local, key)
+		}
+	}
 }
 
 func (c *modelShowCache) getCloud(key modelShowCloudKey) (*api.ShowResponse, bool) {
@@ -287,48 +294,6 @@ func (c *modelShowCache) refreshCloud(ctx context.Context, key modelShowCloudKey
 	}
 
 	c.setCloud(key, resp)
-	return nil
-}
-
-// hydrateLocal scans manifests at startup and refreshes only entries missing
-// for the current digest. It hydrates non-verbose responses only, avoiding an
-// expensive tensor walk for users who have never asked for verbose show data.
-func (c *modelShowCache) hydrateLocal(ctx context.Context) error {
-	manifests, err := manifest.Manifests(true)
-	if err != nil {
-		return err
-	}
-
-	for name, mf := range manifests {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
-		if modelShowManifestIsRemote(mf) {
-			continue
-		}
-
-		modelName := name.String()
-		digest := mf.Digest()
-		key := modelShowLocalKey{
-			Model:   modelName,
-			Verbose: false,
-		}
-		if c.hasLocal(key, digest) {
-			continue
-		}
-
-		resp, err := c.getModelInfo(api.ShowRequest{Model: modelName})
-		if err != nil {
-			slog.Warn("failed to hydrate local model show cache", "model", modelName, "error", err)
-			continue
-		}
-		if resp.RemoteHost != "" {
-			continue
-		}
-
-		c.setLocal(key, digest, resp)
-	}
 	return nil
 }
 
@@ -525,22 +490,28 @@ func modelShowStatusError(resp *http.Response, body []byte) error {
 // on-disk model name and returns the current manifest digest used to validate
 // the cached entry.
 func modelShowLocalKeyForRequest(req api.ShowRequest) (modelShowLocalKey, string, error) {
-	name := model.ParseName(req.Model)
-	if !name.IsValid() {
-		return modelShowLocalKey{}, "", model.Unqualified(name)
-	}
-	name, err := getExistingName(name)
+	runner, err := normalizeRunner(req.Runner)
 	if err != nil {
 		return modelShowLocalKey{}, "", err
 	}
 
-	mf, err := manifest.ParseNamedManifest(name)
+	name := model.ParseName(req.Model)
+	if !name.IsValid() {
+		return modelShowLocalKey{}, "", model.Unqualified(name)
+	}
+	name, err = getExistingName(name)
+	if err != nil {
+		return modelShowLocalKey{}, "", err
+	}
+
+	mf, err := manifest.ParseNamedManifestForRunner(name, runner)
 	if err != nil {
 		return modelShowLocalKey{}, "", err
 	}
 
 	return modelShowLocalKey{
 		Model:   name.String(),
+		Runner:  runner,
 		Verbose: req.Verbose,
 	}, mf.Digest(), nil
 }
@@ -565,30 +536,6 @@ func modelShowNormalizeCloudModel(modelName string) string {
 	return modelName
 }
 
-// modelShowManifestIsRemote checks whether a manifest represents a local stub
-// for a remote model. Startup hydration skips these so the local content cache
-// does not store entries whose freshness is governed by cloud state.
-func modelShowManifestIsRemote(mf *manifest.Manifest) bool {
-	if mf == nil || mf.Config.Digest == "" {
-		return false
-	}
-
-	f, err := mf.Config.Open()
-	if err != nil {
-		slog.Warn("failed to open manifest config while checking model show cache eligibility", "error", err)
-		return false
-	}
-	defer f.Close()
-
-	var cfg model.ConfigV2
-	if err := json.NewDecoder(f).Decode(&cfg); err != nil {
-		slog.Warn("failed to decode manifest config while checking model show cache eligibility", "error", err)
-		return false
-	}
-
-	return cfg.RemoteHost != "" || cfg.RemoteModel != ""
-}
-
 // cloneShowResponse deep-copies mutable fields of api.ShowResponse before
 // storing or returning cached entries. The response contains maps and slices,
 // and some handlers mutate ModelInfo before writing JSON.
@@ -601,6 +548,7 @@ func cloneShowResponse(in *api.ShowResponse) *api.ShowResponse {
 	out.Details.Families = slices.Clone(in.Details.Families)
 	out.Messages = cloneMessages(in.Messages)
 	out.Capabilities = slices.Clone(in.Capabilities)
+	out.Manifests = slices.Clone(in.Manifests)
 	out.ModelInfo = cloneAnyMap(in.ModelInfo)
 	out.ProjectorInfo = cloneAnyMap(in.ProjectorInfo)
 	out.Tensors = cloneTensors(in.Tensors)

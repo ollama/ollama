@@ -3,44 +3,7 @@ package server
 import (
 	"errors"
 	"testing"
-
-	"github.com/gin-gonic/gin"
 )
-
-func TestRecoverCreatePanic(t *testing.T) {
-	var sent any
-	func() {
-		defer recoverCreatePanic(func(resp any) bool {
-			sent = resp
-			return true
-		})
-
-		panic("boom")
-	}()
-
-	h, ok := sent.(gin.H)
-	if !ok {
-		t.Fatalf("sent response type = %T, want gin.H", sent)
-	}
-
-	if got, want := h["error"], "internal server error"; got != want {
-		t.Fatalf("sent error = %q, want %q", got, want)
-	}
-}
-
-func TestRecoverCreatePanicNoPanic(t *testing.T) {
-	called := false
-	func() {
-		defer recoverCreatePanic(func(resp any) bool {
-			called = true
-			return true
-		})
-	}()
-
-	if called {
-		t.Fatal("recoverCreatePanic sent a response without a panic")
-	}
-}
 
 func TestRemoteURL(t *testing.T) {
 	tests := []struct {

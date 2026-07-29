@@ -2,12 +2,12 @@ package gguf_test
 
 import (
 	"bytes"
+	"encoding/binary"
 	"os"
-	"runtime"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -228,48 +228,73 @@ func TestRead(t *testing.T) {
 	}
 }
 
-func TestOpenCleansUpPartialLazyReader(t *testing.T) {
-	p := createFile(t, []byte{
-		'G', 'G', 'U', 'F',
-		3, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0,
-	})
-
-	runtime.GC()
-	before := runtime.NumGoroutine()
-
-	for range 20 {
-		f, err := gguf.Open(p)
-		if err == nil {
-			f.Close()
-			t.Fatal("gguf.Open truncated header succeeded")
-		}
+func TestScanMetadata(t *testing.T) {
+	info, err := gguf.ScanMetadata(createBinFile(t))
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		runtime.GC()
-		runtime.Gosched()
-		if runtime.NumGoroutine() <= before+2 {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+	if info.Architecture != "llama" {
+		t.Fatalf("architecture = %q, want llama", info.Architecture)
 	}
-
-	if after := runtime.NumGoroutine(); after > before+2 {
-		t.Fatalf("goroutines after repeated failed gguf.Open = %d, want at most %d", after, before+2)
+	if info.EmbeddingLength != 3 {
+		t.Fatalf("embedding length = %d, want 3", info.EmbeddingLength)
+	}
+	if info.HasFileType {
+		t.Fatalf("has file type = true, want false: %+v", info)
+	}
+	if info.HasEmbedding || info.HasVision || info.HasAudio {
+		t.Fatalf("unexpected capability metadata: %+v", info)
 	}
 }
 
-func createFile(tb testing.TB, b []byte) string {
-	tb.Helper()
-
-	p := tb.TempDir() + "/model.gguf"
-	if err := os.WriteFile(p, b, 0o600); err != nil {
-		tb.Fatal(err)
+func TestScanMetadataCorrupt(t *testing.T) {
+	le32 := func(v uint32) []byte {
+		var b [4]byte
+		binary.LittleEndian.PutUint32(b[:], v)
+		return b[:]
+	}
+	le64 := func(v uint64) []byte {
+		var b [8]byte
+		binary.LittleEndian.PutUint64(b[:], v)
+		return b[:]
+	}
+	str := func(s string) []byte {
+		return append(le64(uint64(len(s))), s...)
+	}
+	// GGUF v3 little-endian header with zero tensors and one metadata entry.
+	header := func(entry []byte) []byte {
+		var b []byte
+		b = append(b, le32(0x46554747)...) // magic
+		b = append(b, le32(3)...)          // version
+		b = append(b, le64(0)...)          // tensor count
+		b = append(b, le64(1)...)          // kv count
+		return append(b, entry...)
 	}
 
-	return p
+	// Value type ids from the GGUF spec: 8=string, 9=array, 10=uint64.
+	cases := map[string][]byte{
+		// Read path: a string value whose declared length would allocate
+		// exabytes must fail the MaxStringLength check, not make([]byte, n).
+		"huge string value": header(append(append(str("general.architecture"), le32(8)...), le64(1<<62)...)),
+		// Skip path: an array whose count*size multiply would overflow into a
+		// negative skip must fail the MaxArraySize check, not silently no-op.
+		"huge array count": header(append(append(append(str("tokenizer.ggml.tokens"), le32(9)...), le32(10)...), le64(1<<61)...)),
+		// Skip path: a skipped string with an absurd length must not desync.
+		"huge skipped string": header(append(append(str("some.ignored.key"), le32(8)...), le64(1<<62)...)),
+	}
+
+	for name, data := range cases {
+		t.Run(name, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "corrupt.gguf")
+			if err := os.WriteFile(p, data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := gguf.ScanMetadata(p); err == nil {
+				t.Fatal("expected error scanning corrupt metadata, got nil")
+			}
+		})
+	}
 }
 
 func BenchmarkRead(b *testing.B) {

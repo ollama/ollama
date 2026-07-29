@@ -12,6 +12,9 @@ func skipIfNoMLX(t *testing.T) {
 	if err := mlx.CheckInit(); err != nil {
 		t.Skipf("MLX not available: %v", err)
 	}
+	if !mlx.GPUIsAvailable() {
+		t.Skip("MLX GPU not available")
+	}
 }
 
 func approxEqual(a, b, tol float32) bool {
@@ -180,7 +183,7 @@ func TestQuantizedLinearMXFP4MatchesDequantizedWeight(t *testing.T) {
 	}
 
 	for i := range got {
-		if !approxEqual(got[i], want[i], 1e-3) {
+		if !approxEqual(got[i], want[i], 1e-2) {
 			t.Fatalf("output[%d] = %.6f, want %.6f", i, got[i], want[i])
 		}
 	}

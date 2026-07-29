@@ -2,6 +2,7 @@ package mlx
 
 import (
 	"context"
+	"fmt"
 	"runtime"
 	"sync"
 	"testing"
@@ -14,6 +15,9 @@ func skipIfNoMLX(t *testing.T) {
 	if err := CheckInit(); err != nil {
 		t.Skipf("MLX not available: %v", err)
 	}
+	if !GPUIsAvailable() {
+		t.Skip("MLX GPU not available")
+	}
 }
 
 func startMLXThread(t *testing.T) *mlxthread.Thread {
@@ -23,9 +27,10 @@ func startMLXThread(t *testing.T) *mlxthread.Thread {
 		if err := CheckInit(); err != nil {
 			return err
 		}
-		if GPUIsAvailable() {
-			SetDefaultDeviceGPU()
+		if !GPUIsAvailable() {
+			return fmt.Errorf("MLX GPU not available")
 		}
+		SetDefaultDeviceGPU()
 		return nil
 	})
 	if err != nil {

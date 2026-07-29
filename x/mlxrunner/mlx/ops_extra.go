@@ -19,7 +19,7 @@ func Quantize(w *Array, groupSize, bits int, mode string) (weights, scales, bias
 	res := C.mlx_vector_array_new()
 	defer C.mlx_vector_array_free(res)
 	var globalScale C.mlx_array
-	if err := mlxCall("quantize failed", func() C.int {
+	if err := mlxErr("quantize failed", func() C.int {
 		return C.mlx_quantize(&res, w.ctx, optGroupSize, optBits, cMode, globalScale, DefaultStream().ctx)
 	}); err != nil {
 		return nil, nil, nil, err

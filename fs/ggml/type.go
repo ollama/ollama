@@ -1,9 +1,7 @@
 package ggml
 
 import (
-	"fmt"
 	"log/slog"
-	"strings"
 )
 
 // FileType is the Go equivalent to llama_ftype used for gguf file typing
@@ -54,40 +52,6 @@ const (
 
 	FileTypeUnknown = 1024
 )
-
-// ParseFileType parses the provided GGUF file type
-// Only Ollama supported types are considered valid
-func ParseFileType(s string) (FileType, error) {
-	switch s {
-	case "F32":
-		return FileTypeF32, nil
-	case "F16":
-		return FileTypeF16, nil
-	case "Q8_0":
-		return FileTypeQ8_0, nil
-	case "Q4_K_S":
-		return FileTypeQ4_K_S, nil
-	case "Q4_K_M", "Q4_K":
-		return FileTypeQ4_K_M, nil
-	case "BF16":
-		return FileTypeBF16, nil
-	default:
-		supportedFileTypes := []FileType{
-			FileTypeF32,
-			FileTypeF16,
-			FileTypeQ4_K_S,
-			FileTypeQ4_K_M,
-			FileTypeQ8_0,
-			// fsggml.FileTypeBF16, // TODO
-		}
-		strs := make([]string, len(supportedFileTypes))
-		for i := range supportedFileTypes {
-			strs[i] = supportedFileTypes[i].String()
-		}
-
-		return FileTypeUnknown, fmt.Errorf("unsupported quantization type %s - supported types are %s", s, strings.Join(strs, ", "))
-	}
-}
 
 func (t FileType) String() string {
 	// Note: this routine will return a broader set of file types for existing models
@@ -293,49 +257,6 @@ const (
 	TensorTypeNVFP4
 	TensorTypeQ1_0
 )
-
-// ParseTensorType parses the provided GGUF tensor type
-// Only Ollama supported types are considered valid
-func ParseTensorType(s string) (TensorType, error) {
-	switch s {
-	case "F32":
-		return TensorTypeF32, nil
-	case "F16":
-		return TensorTypeF16, nil
-	case "Q4_0":
-		return TensorTypeQ4_0, nil
-	case "Q4_1":
-		return TensorTypeQ4_1, nil
-	case "Q5_0":
-		return TensorTypeQ5_0, nil
-	case "Q5_1":
-		return TensorTypeQ5_1, nil
-	case "Q8_0":
-		return TensorTypeQ8_0, nil
-	case "Q8_1":
-		return TensorTypeQ8_1, nil
-	case "Q2_K":
-		return TensorTypeQ2_K, nil
-	case "Q3_K":
-		return TensorTypeQ3_K, nil
-	case "Q4_K":
-		return TensorTypeQ4_K, nil
-	case "Q5_K":
-		return TensorTypeQ5_K, nil
-	case "Q6_K":
-		return TensorTypeQ6_K, nil
-	case "Q8_K":
-		return TensorTypeQ8_K, nil
-	case "F64":
-		return TensorTypeF64, nil
-	case "BF16":
-		return TensorTypeBF16, nil
-	case "MXFP4":
-		return TensorTypeMXFP4, nil
-	default:
-		return 0, fmt.Errorf("unsupported quantization type %s", s)
-	}
-}
 
 func (t TensorType) IsQuantized() bool {
 	switch t {

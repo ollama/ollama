@@ -10,7 +10,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -19,7 +18,6 @@ import (
 	"golang.org/x/mod/semver"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/manifest"
 	modelparsers "github.com/ollama/ollama/model/parsers"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
@@ -193,7 +191,7 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 			"draft.",
 			"draft/",
 			opts.DraftQuantize,
-			create.StoreFromLayerCreator(newLayerCreator()),
+			create.StoreFromLayerCreator(create.ManifestLayerCreator()),
 			progressFn,
 		)
 		if err != nil {
@@ -221,7 +219,7 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 	err = create.Create(
 		context.Background(),
 		opts.ModelName, opts.ModelDir, opts.Quantize,
-		create.StoreFromLayerCreator(newLayerCreator()),
+		create.StoreFromLayerCreator(create.ManifestLayerCreator()),
 		writer,
 		progressFn,
 	)
@@ -323,23 +321,6 @@ func inferSafetensorsCapabilities(modelDir, parserName string) []string {
 	}
 
 	return capabilities
-}
-
-// newLayerCreator returns a LayerCreator callback for creating config/JSON layers.
-func newLayerCreator() create.LayerCreator {
-	return func(r io.Reader, mediaType, name string) (create.LayerInfo, error) {
-		layer, err := manifest.NewLayer(r, mediaType)
-		if err != nil {
-			return create.LayerInfo{}, err
-		}
-
-		return create.LayerInfo{
-			Digest:    layer.Digest,
-			Size:      layer.Size,
-			MediaType: layer.MediaType,
-			Name:      name,
-		}, nil
-	}
 }
 
 // newManifestWriter returns a ManifestWriter callback for writing the model manifest.

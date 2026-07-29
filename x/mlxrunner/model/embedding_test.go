@@ -12,6 +12,9 @@ func skipIfNoMLX(t *testing.T) {
 	if err := mlx.CheckInit(); err != nil {
 		t.Skipf("MLX not available: %v", err)
 	}
+	if !mlx.GPUIsAvailable() {
+		t.Skip("MLX GPU not available")
+	}
 }
 
 func TestMakeEmbeddingLayerDense(t *testing.T) {

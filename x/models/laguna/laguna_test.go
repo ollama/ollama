@@ -11,6 +11,15 @@ import (
 	"github.com/ollama/ollama/x/models/nn"
 )
 
+func mustQuantize(t *testing.T, w *mlx.Array, groupSize, bits int, mode string) (weights, scales, biases *mlx.Array) {
+	t.Helper()
+	weights, scales, biases, err := mlx.Quantize(w, groupSize, bits, mode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return weights, scales, biases
+}
+
 func TestParseConfigLagunaXS(t *testing.T) {
 	skipIfNoMLX(t)
 	cfg, err := parseConfig([]byte(`{
@@ -395,14 +404,14 @@ func TestTinyLagunaLoadWeightsKeepsMixedExpertPrecision(t *testing.T) {
 	skipIfNoMLX(t)
 	cfg := &Config{
 		HiddenSize:                32,
-		IntermediateSize:          32,
+		IntermediateSize:          36,
 		MoeIntermediateSize:       32,
 		SharedExpertIntermediate:  32,
 		NumHiddenLayers:           2,
-		NumAttentionHeads:         2,
-		NumAttentionHeadsPerLayer: []int32{2, 2},
+		NumAttentionHeads:         4,
+		NumAttentionHeadsPerLayer: []int32{4, 4},
 		NumKeyValueHeads:          1,
-		HeadDim:                   16,
+		HeadDim:                   8,
 		VocabSize:                 16,
 		LayerTypes:                []string{"full_attention", "sliding_attention"},
 		MLPOnlyLayers:             []int32{0},
@@ -416,15 +425,12 @@ func TestTinyLagunaLoadWeightsKeepsMixedExpertPrecision(t *testing.T) {
 		QuantMode:                 "affine",
 	}
 
-	tensors := lagunaTensors(16, 32, 32, 32, 32, 16)
+	tensors := lagunaTensors(32, 36, 32, 32, 16, 4, 1, 8)
 	for expert := range 2 {
 		prefix := "model.layers.1.mlp.experts." + string(rune('0'+expert))
 		for _, proj := range []string{"gate_proj", "up_proj"} {
 			key := prefix + "." + proj + ".weight"
-			weight, scales, biases, err := mlx.Quantize(tensors[key], cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode)
-			if err != nil {
-				t.Fatalf("Quantize(%s) error = %v", key, err)
-			}
+			weight, scales, biases := mustQuantize(t, tensors[key], cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode)
 			tensors[key] = weight
 			tensors[key+"_scale"] = scales
 			tensors[key+"_qbias"] = biases
@@ -651,14 +657,8 @@ func TestSwitchMLPMixedQuantizedGateUpDenseDownMatchesDense(t *testing.T) {
 	gateWeight := makePatternExpertWeight(2, 32, 32, 0.011)
 	upWeight := makePatternExpertWeight(2, 32, 32, 0.017)
 	downWeight := makePatternExpertWeight(2, 32, 32, 0.013)
-	gateQ, gateScales, gateBiases, err := mlx.Quantize(gateWeight, 32, 8, "mxfp8")
-	if err != nil {
-		t.Fatalf("Quantize(gateWeight) error = %v", err)
-	}
-	upQ, upScales, upBiases, err := mlx.Quantize(upWeight, 32, 8, "mxfp8")
-	if err != nil {
-		t.Fatalf("Quantize(upWeight) error = %v", err)
-	}
+	gateQ, gateScales, gateBiases := mustQuantize(t, gateWeight, 32, 8, "mxfp8")
+	upQ, upScales, upBiases := mustQuantize(t, upWeight, 32, 8, "mxfp8")
 	mlx.Eval(gateQ, gateScales, upQ, upScales)
 
 	mixed := &SwitchMLP{
@@ -688,10 +688,7 @@ func TestSwitchMLPMixedQuantizedGateUpDenseDownMatchesDense(t *testing.T) {
 func TestDenseExpertWeightForGatherMMDequantizesQuantizedWeight(t *testing.T) {
 	skipIfNoMLX(t)
 	weight := makePatternExpertWeight(2, 4, 32, 0.011)
-	qweight, scales, qbiases, err := mlx.Quantize(weight, 32, 8, "mxfp8")
-	if err != nil {
-		t.Fatalf("Quantize(weight) error = %v", err)
-	}
+	qweight, scales, qbiases := mustQuantize(t, weight, 32, 8, "mxfp8")
 	mlx.Eval(qweight, scales)
 
 	got := denseExpertWeightForGatherMM(&stackedExpertWeights{
@@ -734,10 +731,10 @@ func TestCombinedTensorGlobalScaleIgnoresInputGlobalScale(t *testing.T) {
 }
 
 func tinyLagunaTensors() map[string]*mlx.Array {
-	return lagunaTensors(16, 8, 12, 4, 4, 4)
+	return lagunaTensors(8, 12, 4, 4, 16, 2, 1, 4)
 }
 
-func lagunaTensors(vocab, hidden, intermediate, moeIntermediate, sharedExpertIntermediate, headDim int) map[string]*mlx.Array {
+func lagunaTensors(hidden, intermediate, moeIntermediate, sharedExpertIntermediate, vocab, heads, kvHeads, headDim int) map[string]*mlx.Array {
 	tensors := map[string]*mlx.Array{
 		"model.embed_tokens.weight": weights(vocab, hidden),
 		"model.norm.weight":         ones(hidden),
@@ -747,11 +744,11 @@ func lagunaTensors(vocab, hidden, intermediate, moeIntermediate, sharedExpertInt
 		prefix := "model.layers." + string(rune('0'+layer))
 		tensors[prefix+".input_layernorm.weight"] = ones(hidden)
 		tensors[prefix+".post_attention_layernorm.weight"] = ones(hidden)
-		tensors[prefix+".self_attn.q_proj.weight"] = weights(hidden, hidden)
-		tensors[prefix+".self_attn.k_proj.weight"] = weights(headDim, hidden)
-		tensors[prefix+".self_attn.v_proj.weight"] = weights(headDim, hidden)
-		tensors[prefix+".self_attn.o_proj.weight"] = weights(hidden, hidden)
-		tensors[prefix+".self_attn.g_proj.weight"] = weights(2, hidden)
+		tensors[prefix+".self_attn.q_proj.weight"] = weights(heads*headDim, hidden)
+		tensors[prefix+".self_attn.k_proj.weight"] = weights(kvHeads*headDim, hidden)
+		tensors[prefix+".self_attn.v_proj.weight"] = weights(kvHeads*headDim, hidden)
+		tensors[prefix+".self_attn.o_proj.weight"] = weights(hidden, heads*headDim)
+		tensors[prefix+".self_attn.g_proj.weight"] = weights(heads, hidden)
 		tensors[prefix+".self_attn.q_norm.weight"] = ones(headDim)
 		tensors[prefix+".self_attn.k_norm.weight"] = ones(headDim)
 	}
@@ -818,5 +815,8 @@ func skipIfNoMLX(t *testing.T) {
 	t.Helper()
 	if err := mlx.CheckInit(); err != nil {
 		t.Skipf("MLX not available: %v", err)
+	}
+	if !mlx.GPUIsAvailable() {
+		t.Skip("MLX GPU not available")
 	}
 }

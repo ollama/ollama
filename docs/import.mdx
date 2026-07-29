@@ -4,18 +4,18 @@ title: Importing a Model
 
 ## Table of Contents
 
-- [Importing a Safetensors adapter](#Importing-a-fine-tuned-adapter-from-Safetensors-weights)
+- [Importing an adapter](#Importing-a-fine-tuned-adapter)
 - [Importing a Safetensors model](#Importing-a-model-from-Safetensors-weights)
 - [Importing a GGUF file](#Importing-a-GGUF-based-model-or-adapter)
 - [Sharing models on ollama.com](#Sharing-your-model-on-ollamacom)
 
-## Importing a fine tuned adapter from Safetensors weights
+## Importing a fine tuned adapter
 
-First, create a `Modelfile` with a `FROM` command pointing at the base model you used for fine tuning, and an `ADAPTER` command which points to the directory with your Safetensors adapter:
+First, create a `Modelfile` with a `FROM` command pointing at the base model you used for fine tuning, and an `ADAPTER` command which points to your GGUF adapter:
 
 ```dockerfile
 FROM <base model name>
-ADAPTER /path/to/safetensors/adapter/directory
+ADAPTER /path/to/adapter.gguf
 ```
 
 Make sure that you use the same base model in the `FROM` command as you used to create the adapter otherwise you will get erratic results. Most frameworks use different quantization methods, so it's best to use non-quantized (i.e. non-QLoRA) adapters. If your adapter is in the same directory as your `Modelfile`, use `ADAPTER .` to specify the adapter path.
@@ -38,11 +38,9 @@ Ollama supports importing adapters based on several different model architecture
 - Mistral (including Mistral 1, Mistral 2, and Mixtral); and
 - Gemma (including Gemma 1 and Gemma 2)
 
-You can create the adapter using a fine tuning framework or tool which can output adapters in the Safetensors format, such as:
+Safetensors adapters must be converted to GGUF before importing. Use `convert_lora_to_gguf.py` from [llama.cpp](https://github.com/ggml-org/llama.cpp), then reference the converted GGUF adapter from `ADAPTER`.
 
-- Hugging Face [fine tuning framework](https://huggingface.co/docs/transformers/en/training)
-- [Unsloth](https://github.com/unslothai/unsloth)
-- [MLX](https://github.com/ml-explore/mlx)
+You can create the source adapter using a fine tuning framework or tool such as the Hugging Face [fine tuning framework](https://huggingface.co/docs/transformers/en/training), [Unsloth](https://github.com/unslothai/unsloth), or [MLX](https://github.com/ml-explore/mlx).
 
 ## Importing a model from Safetensors weights
 

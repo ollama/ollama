@@ -84,6 +84,13 @@ type LlamaServerConfig struct {
 	DraftModelPath string
 }
 
+// IsLlamaCPP reports whether the server is backed by the llama.cpp
+// llama-server runner implementation.
+func IsLlamaCPP(s LlamaServer) bool {
+	_, ok := s.(*llamaServerRunner)
+	return ok
+}
+
 // LoadModel will load a model from disk. The model must be in the GGML format.
 //
 // It collects array values for arrays with a size less than or equal to

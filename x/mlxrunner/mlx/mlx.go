@@ -36,6 +36,7 @@ package mlx
 import "C"
 
 import (
+	"errors"
 	"fmt"
 	"runtime"
 )
@@ -54,9 +55,11 @@ func Version() string {
 	return C.GoString(C.mlx_string_data(str))
 }
 
-// mlxCall locks the goroutine to its OS thread so the thread-local error state
-// is read from the same thread that executed fn.
-func mlxCall(fallback string, fn func() C.int) error {
+// mlxErr locks the goroutine to its OS thread, clears the captured error state,
+// calls fn, and returns the captured message if fn returns non-zero. The thread
+// lock ensures the thread-local error state is read from the same thread that
+// executed the call.
+func mlxErr(fallback string, fn func() C.int) error {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
@@ -66,16 +69,24 @@ func mlxCall(fallback string, fn func() C.int) error {
 		if msg == "" {
 			msg = fallback
 		}
-		return fmt.Errorf("mlx: %s", msg)
+		return errors.New(msg)
 	}
 	return nil
 }
 
-// mlxCheck panics with the captured MLX error. Most array operations cannot
-// recover from a failed graph construction or evaluation.
+// mlxCall wraps mlxErr for callers that return MLX failures as errors.
+func mlxCall(fallback string, fn func() C.int) error {
+	if err := mlxErr(fallback, fn); err != nil {
+		return fmt.Errorf("mlx: %w", err)
+	}
+	return nil
+}
+
+// mlxCheck wraps mlxErr for existing call sites that surface MLX failures as
+// panics recovered by their caller.
 func mlxCheck(fallback string, fn func() C.int) {
-	if err := mlxCall(fallback, fn); err != nil {
-		panic(err.Error())
+	if err := mlxErr(fallback, fn); err != nil {
+		panic("mlx: " + err.Error())
 	}
 }
 

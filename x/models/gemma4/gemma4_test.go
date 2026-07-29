@@ -644,9 +644,7 @@ func TestNewCachesAssistantSharedHistoryOrdering(t *testing.T) {
 }
 
 func TestResolveWeightPrefix(t *testing.T) {
-	if err := mlx.CheckInit(); err != nil {
-		t.Skipf("MLX not available: %v", err)
-	}
+	skipIfNoMLX(t)
 
 	tests := []struct {
 		name    string
@@ -675,5 +673,8 @@ func skipIfNoMLX(t *testing.T) {
 	t.Helper()
 	if err := mlx.CheckInit(); err != nil {
 		t.Skipf("MLX not available: %v", err)
+	}
+	if !mlx.GPUIsAvailable() {
+		t.Skip("MLX GPU not available")
 	}
 }

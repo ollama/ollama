@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -98,14 +99,32 @@ func NewSafetensorsManifestWriter(opts SafetensorsManifestOptions) ManifestWrite
 			}
 		}
 
-		configLayer, err := safetensorsConfigLayer(manifestLayers, config, opts.IncludeRootFSDiffs)
+		configLayer, err := manifest.NewConfigLayer(config, manifestLayers, manifest.RootFSDiffIDs(opts.IncludeRootFSDiffs))
 		if err != nil {
 			return err
 		}
 		if opts.BeforeWriteManifest != nil {
 			opts.BeforeWriteManifest()
 		}
-		return manifest.WriteManifest(name, configLayer, manifestLayers)
+		return manifest.WriteManifestWithMetadata(name, configLayer, manifestLayers, manifest.RunnerMLX, manifest.FormatSafetensors)
+	}
+}
+
+// ManifestLayerCreator returns a LayerCreator that stores blobs in the local
+// manifest blob store.
+func ManifestLayerCreator() LayerCreator {
+	return func(r io.Reader, mediaType, name string) (LayerInfo, error) {
+		layer, err := manifest.NewLayer(r, mediaType)
+		if err != nil {
+			return LayerInfo{}, err
+		}
+
+		return LayerInfo{
+			Digest:    layer.Digest,
+			Size:      layer.Size,
+			MediaType: layer.MediaType,
+			Name:      name,
+		}, nil
 	}
 }
 
@@ -120,26 +139,6 @@ func layerInfoToManifestLayers(layers []LayerInfo) []manifest.Layer {
 		})
 	}
 	return out
-}
-
-func safetensorsConfigLayer(layers []manifest.Layer, config model.ConfigV2, includeRootFSDiffs bool) (manifest.Layer, error) {
-	if includeRootFSDiffs {
-		digests := make([]string, len(layers))
-		for i, layer := range layers {
-			digests[i] = layer.Digest
-		}
-		config.RootFS.DiffIDs = digests
-	}
-
-	var b bytes.Buffer
-	if err := json.NewEncoder(&b).Encode(config); err != nil {
-		return manifest.Layer{}, fmt.Errorf("failed to encode config: %w", err)
-	}
-	layer, err := manifest.NewLayer(&b, "application/vnd.docker.container.image.v1+json")
-	if err != nil {
-		return manifest.Layer{}, fmt.Errorf("failed to create config layer: %w", err)
-	}
-	return layer, nil
 }
 
 func safetensorsDraftMetadata(draftDir string) (*model.Draft, error) {

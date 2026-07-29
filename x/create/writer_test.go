@@ -19,8 +19,20 @@ type captureStore struct{ blobs map[string][]byte }
 
 func newCaptureStore() *captureStore { return &captureStore{blobs: make(map[string][]byte)} }
 
-func quantizeSupported() bool {
-	return mlx.CheckInit() == nil
+func quantizeSupported() error {
+	if err := mlx.CheckInit(); err != nil {
+		return err
+	}
+	return runOnMLXThread(func() error {
+		a := mlx.FromValues(make([]float32, 128*128), 128, 128)
+		mlx.Eval(a)
+		q, scales, _, err := mlx.Quantize(a, 64, 4, "affine")
+		if err != nil {
+			return err
+		}
+		mlx.Eval(q, scales)
+		return nil
+	})
 }
 
 func (c *captureStore) WriteBlob(r io.Reader, mediaType, name string) (LayerInfo, error) {
@@ -137,8 +149,8 @@ func TestWriteBlobsCompressedNVFP4(t *testing.T) {
 }
 
 func TestWriteBlobsQuantizeFloat(t *testing.T) {
-	if !quantizeSupported() {
-		t.Skip("MLX unavailable")
+	if err := quantizeSupported(); err != nil {
+		t.Skipf("MLX quantization unavailable: %v", err)
 	}
 	for _, quantize := range []string{"int4", "nvfp4", "mxfp8"} {
 		t.Run(quantize, func(t *testing.T) {
@@ -186,8 +198,8 @@ func TestWriteBlobsQuantizeFloat(t *testing.T) {
 }
 
 func TestWriteBlobsBlockFP8Decode(t *testing.T) {
-	if !quantizeSupported() {
-		t.Skip("MLX unavailable")
+	if err := quantizeSupported(); err != nil {
+		t.Skipf("MLX quantization unavailable: %v", err)
 	}
 	dir := t.TempDir()
 	writeConfigJSON(t, dir, `{"architectures":["TestModel"]}`)
