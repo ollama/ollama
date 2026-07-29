@@ -986,6 +986,14 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 
 	mf, manifestData, err := pullModelManifest(ctx, n, regOpts)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			suggestions, suggestionErr := getModelTagSuggestions(ctx, n, regOpts)
+			if suggestionErr != nil {
+				slog.Debug("failed to get model tag suggestions", "model", n.DisplayShortest(), "error", suggestionErr)
+			} else if len(suggestions) > 0 {
+				return fmt.Errorf("pull model manifest: %s\n\nTry one of these models:\n  %s", err, strings.Join(suggestions, "\n  "))
+			}
+		}
 		return fmt.Errorf("pull model manifest: %s", err)
 	}
 

@@ -782,6 +782,56 @@ func TestRunHandler_CloudAuthErrorOnShow_PrintsSigninMessage(t *testing.T) {
 	}
 }
 
+func TestRunHandler_ModelNotFoundSuggestsAvailableTags(t *testing.T) {
+	var showRequests, pullRequests int
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/show" && r.Method == http.MethodPost:
+			showRequests++
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":"model 'ministral-3:missing' not found"}`)
+		case r.URL.Path == "/api/pull" && r.Method == http.MethodPost:
+			pullRequests++
+			if err := json.NewEncoder(w).Encode(map[string]string{
+				"error": "pull model manifest: file does not exist\n\nTry one of these models:\n  ministral-3:3b\n  ministral-3:8b",
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer mockServer.Close()
+
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("keepalive", "", "")
+	cmd.Flags().Bool("truncate", false, "")
+	cmd.Flags().Int("dimensions", 0, "")
+	cmd.Flags().Bool("verbose", false, "")
+	cmd.Flags().Bool("insecure", false, "")
+	cmd.Flags().Bool("nowordwrap", false, "")
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("think", "", "")
+	cmd.Flags().Bool("hidethinking", false, "")
+
+	err := RunHandler(cmd, []string{"ministral-3:missing", "hello"})
+	if err == nil {
+		t.Fatal("RunHandler() returned nil, want an error")
+	}
+	if want := "Try one of these models:\n  ministral-3:3b\n  ministral-3:8b"; !strings.Contains(err.Error(), want) {
+		t.Fatalf("RunHandler() error = %q, want it to contain %q", err, want)
+	}
+	if showRequests != 1 {
+		t.Errorf("show requests = %d, want 1", showRequests)
+	}
+	if pullRequests != 1 {
+		t.Errorf("pull requests = %d, want 1", pullRequests)
+	}
+}
+
 func TestRunHandler_CloudAuthErrorOnGenerate_PrintsSigninMessage(t *testing.T) {
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
