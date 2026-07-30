@@ -26,7 +26,6 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
-	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/manifest"
 )
 
@@ -48,7 +47,7 @@ type Client struct {
 // NewClient prepares a new MLX runner client for LLM models.
 // The subprocess is not started until Load() is called.
 func NewClient(modelName string, softContextLength int) (*Client, error) {
-	if err := imagegen.CheckPlatformSupport(); err != nil {
+	if err := checkPlatformSupport(); err != nil {
 		return nil, err
 	}
 
@@ -66,6 +65,20 @@ func NewClient(modelName string, softContextLength int) (*Client, error) {
 	c.memory.Store(uint64(modelManifest.TotalTensorSize()))
 
 	return c, nil
+}
+
+func checkPlatformSupport() error {
+	switch runtime.GOOS {
+	case "darwin":
+		if runtime.GOARCH != "arm64" {
+			return fmt.Errorf("MLX on macOS requires Apple Silicon (arm64), got %s", runtime.GOARCH)
+		}
+		return nil
+	case "linux", "windows":
+		return nil
+	default:
+		return fmt.Errorf("MLX is not supported on %s", runtime.GOOS)
+	}
 }
 
 // WaitUntilRunning waits for the subprocess to be ready.

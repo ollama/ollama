@@ -126,13 +126,6 @@ func IsSafetensorsLLMModel(modelName string) bool {
 	return config.ModelFormat == "safetensors" && slices.Contains(config.Capabilities, "completion")
 }
 
-// IsTensorModelDir checks if the directory contains a diffusers-style tensor model
-// by looking for model_index.json, which is the standard diffusers pipeline config.
-func IsTensorModelDir(dir string) bool {
-	_, err := os.Stat(filepath.Join(dir, "model_index.json"))
-	return err == nil
-}
-
 // IsSafetensorsModelDir checks if the directory contains a standard safetensors model
 // by looking for config.json and at least one .safetensors file.
 func IsSafetensorsModelDir(dir string) bool {
@@ -295,8 +288,12 @@ func GetTensorQuantization(name string, shape []int32, quantize string) string {
 		return ""
 	}
 
-	// lm_head is too sensitive for the fp quant modes; keep it at source precision.
-	if strings.HasSuffix(name, "lm_head.weight") && (quantNorm == "nvfp4" || quantNorm == "mxfp4" || quantNorm == "mxfp8") {
+	// lm_head is too sensitive for 4-bit types; the 8-bit type in the requested
+	// family keeps quality close to bf16 while saving decode bandwidth.
+	if strings.HasSuffix(name, "lm_head.weight") {
+		if e := eightBit(quantNorm); isAligned(shape, e) {
+			return e
+		}
 		return ""
 	}
 
@@ -317,9 +314,7 @@ func GetTensorQuantization(name string, shape []int32, quantize string) string {
 	return quantNorm
 }
 
-var (
-	expertLayerPrefixRegexp = regexp.MustCompile(`^(?:model\.language_model\.|language_model(?:\.model)?\.|model\.)?layers\.\d+$`)
-)
+var expertLayerPrefixRegexp = regexp.MustCompile(`^(?:model\.language_model\.|language_model(?:\.model)?\.|model\.)?layers\.\d+$`)
 
 // ExpertGroupPrefix returns the group prefix for expert tensors that should be packed together.
 // For example:

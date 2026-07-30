@@ -2,13 +2,15 @@ package cmd
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/spf13/cobra"
-
+	coreagent "github.com/ollama/ollama/agent"
+	agenttools "github.com/ollama/ollama/agent/tools"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
 	agentchat "github.com/ollama/ollama/cmd/tui/chat"
@@ -46,6 +48,83 @@ func TestAgentWorkingDirIgnoresGetwdFailure(t *testing.T) {
 
 	if got := agentWorkingDir(); got != "" {
 		t.Fatalf("working directory = %q, want empty on getwd failure", got)
+	}
+}
+
+func TestAgentSystemPromptIncludesSkillCatalog(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "release-notes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "release-notes", "SKILL.md"), []byte("---\nname: release-notes\ndescription: Draft releases.\n---\nUse bullets."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := coreagent.DiscoverSkills(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := agentSystemPromptAtWithWorkingDir(time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC), "model", "", catalog.SystemContext(), "")
+	if !strings.Contains(got, "release-notes: Draft releases.") || !strings.Contains(got, "normal approval rules") {
+		t.Fatalf("system prompt missing skill context: %q", got)
+	}
+}
+
+func TestAgentSkillSystemContextRequiresAvailableEnabledSkillTool(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "release-notes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "release-notes", "SKILL.md"), []byte("---\nname: release-notes\ndescription: Draft releases.\n---\nUse bullets."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := coreagent.DiscoverSkills(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := &coreagent.Registry{}
+	registry.Register(&agenttools.Skill{Catalog: catalog})
+
+	if got := agentSkillSystemContext(catalog, registry, false); !strings.Contains(got, "release-notes: Draft releases.") {
+		t.Fatalf("enabled skill context = %q", got)
+	}
+	if got := agentSkillSystemContext(catalog, registry, true); got != "" {
+		t.Fatalf("disabled tools should omit skill context, got %q", got)
+	}
+	if got := agentSkillSystemContext(catalog, &coreagent.Registry{}, false); got != "" {
+		t.Fatalf("unavailable skill tool should omit skill context, got %q", got)
+	}
+}
+
+func TestAgentSkillCommandCollisionsAreIgnored(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"release-notes", "system", "exit"} {
+		if err := os.Mkdir(filepath.Join(dir, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		content := "---\nname: " + name + "\ndescription: Test skill.\n---\nInstructions."
+		if err := os.WriteFile(filepath.Join(dir, name, "SKILL.md"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	catalog, err := coreagent.DiscoverSkills(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ignored := catalog.ExcludeNames(agentchat.BuiltinSlashCommandNames())
+	if got, want := strings.Join(ignored, ", "), "exit, system"; got != want {
+		t.Fatalf("ignored skills = %q, want %q", got, want)
+	}
+	if _, err := catalog.Load("release-notes"); err != nil {
+		t.Fatalf("non-conflicting skill should remain available: %v", err)
+	}
+	if context := catalog.SystemContext(); !strings.Contains(context, "release-notes: Test skill.") || strings.Contains(context, "system: Test skill.") || strings.Contains(context, "exit: Test skill.") {
+		t.Fatalf("skill context = %q", context)
+	}
+	for _, name := range []string{"system", "exit"} {
+		if _, err := catalog.Load(name); err == nil {
+			t.Fatalf("conflicting skill %q should be ignored", name)
+		}
 	}
 }
 
@@ -118,21 +197,5 @@ func TestSaveLastAgentModel(t *testing.T) {
 	}
 	if got := config.LastModel(); got != "qwen3:8b" {
 		t.Fatalf("blank save changed last model to %q", got)
-	}
-}
-
-func TestApplyAgentFlagsNoTools(t *testing.T) {
-	cmd := &cobra.Command{}
-	registerAgentFlags(cmd)
-	if err := cmd.Flags().Set("no-tools", "true"); err != nil {
-		t.Fatal(err)
-	}
-
-	var opts agentTUIOptions
-	if _, err := applyAgentFlags(cmd, &opts); err != nil {
-		t.Fatalf("applyAgentFlags returned error: %v", err)
-	}
-	if !opts.ToolsDisabled {
-		t.Fatal("--no-tools should disable tools")
 	}
 }

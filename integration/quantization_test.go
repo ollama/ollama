@@ -1,4 +1,4 @@
-//go:build integration && models
+//go:build integration && release
 
 package integration
 
@@ -14,7 +14,11 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-func TestQuantization(t *testing.T) {
+func runQuantization(t *testing.T) {
+	if testModel != "" {
+		t.Skip("exercises quantization with a fixed source model, not applicable with model override")
+	}
+
 	sourceModels := []string{
 		"qwen2.5:0.5b-instruct-fp16",
 	}

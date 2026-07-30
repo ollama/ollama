@@ -186,7 +186,7 @@ func TestSimpleCompactorAddsContinueTaskInstructionOnlyToToolResult(t *testing.T
 }
 
 func TestSimpleCompactorTruncatesOversizedSummary(t *testing.T) {
-	longSummary := strings.Repeat("x", maxCompactionSummaryBytes+1024)
+	longSummary := strings.Repeat("x", maxCompactionSummaryRunes+1024)
 	client := &fakeClient{
 		responses: [][]api.ChatResponse{{
 			{Message: api.Message{Role: "assistant", Content: longSummary}},
@@ -214,13 +214,13 @@ func TestSimpleCompactorTruncatesOversizedSummary(t *testing.T) {
 	if !result.Compacted {
 		t.Fatal("expected compaction")
 	}
-	if len(result.Summary) > maxCompactionSummaryBytes {
-		t.Fatalf("summary bytes = %d, want <= %d", len(result.Summary), maxCompactionSummaryBytes)
+	if runeCount := len([]rune(result.Summary)); runeCount > maxCompactionSummaryRunes+200 {
+		t.Fatalf("summary runes = %d, want <= %d (plus marker)", runeCount, maxCompactionSummaryRunes)
 	}
-	if !strings.HasSuffix(result.Summary, compactionSummaryTruncated) {
-		t.Fatalf("summary missing truncation marker")
+	if !strings.Contains(result.Summary, "[summary truncated:") {
+		t.Fatalf("summary missing truncation marker: %q", result.Summary)
 	}
-	if !strings.Contains(result.Messages[1].Content, compactionSummaryTruncated) {
+	if !strings.Contains(result.Messages[1].Content, "[summary truncated:") {
 		t.Fatalf("compacted message missing truncation marker: %#v", result.Messages)
 	}
 }

@@ -66,7 +66,7 @@ func benchmarkMiniLlamaPath(tb testing.TB) string {
 		tb.Fatal("failed to resolve benchmark file path")
 	}
 
-	return filepath.Join(filepath.Dir(filename), "..", "imagegen", "tokenizer", "testdata", "mini_llama.json")
+	return filepath.Join(filepath.Dir(filename), "testdata", "mini_llama.json")
 }
 
 func benchmarkLoadMiniLlama(tb testing.TB) *Tokenizer {

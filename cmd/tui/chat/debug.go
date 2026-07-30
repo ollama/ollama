@@ -16,9 +16,11 @@ import (
 )
 
 type chatPromptDebug struct {
-	request api.ChatRequest
-	tokens  int
-	scroll  int
+	request    api.ChatRequest
+	tokens     int
+	scroll     int
+	lines      []string
+	linesWidth int
 }
 
 const maxPromptDebugToolResultRunes = 400
@@ -220,9 +222,12 @@ func (m chatModel) previewChatRequest(opts coreagent.RunOptions, messages []api.
 	return req
 }
 
-func (m chatModel) promptDebugLines(width int) []string {
+func (m *chatModel) promptDebugLines(width int) []string {
 	if m.promptDebug == nil {
 		return nil
+	}
+	if m.promptDebug.lines != nil && m.promptDebug.linesWidth == width {
+		return m.promptDebug.lines
 	}
 	req := m.promptDebug.request
 	innerWidth := max(20, width-2)
@@ -259,15 +264,17 @@ func (m chatModel) promptDebugLines(width int) []string {
 	lines = append(lines, "", chatHeaderStyle.Render("Tools"))
 	if len(req.Tools) == 0 {
 		lines = append(lines, chatMetaStyle.Render("none"))
-		return lines
-	}
-	for i, tool := range req.Tools {
-		if i > 0 {
-			lines = append(lines, "")
+	} else {
+		for i, tool := range req.Tools {
+			if i > 0 {
+				lines = append(lines, "")
+			}
+			lines = append(lines, promptDebugToolLines(i+1, tool, innerWidth)...)
 		}
-		lines = append(lines, promptDebugToolLines(i+1, tool, innerWidth)...)
 	}
-	return lines
+	m.promptDebug.lines = lines
+	m.promptDebug.linesWidth = width
+	return m.promptDebug.lines
 }
 
 func promptDebugFieldLine(label, value string, width int) string {

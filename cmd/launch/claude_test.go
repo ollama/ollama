@@ -322,6 +322,7 @@ func TestClaudeArgs(t *testing.T) {
 		{"with model and verbose", "llama3.2", []string{"--verbose"}, []string{"--model", "llama3.2", "--verbose"}},
 		{"empty model with help", "", []string{"--help"}, []string{"--help"}},
 		{"with allowed tools", "llama3.2", []string{"--allowedTools", "Read,Write,Bash"}, []string{"--model", "llama3.2", "--allowedTools", "Read,Write,Bash"}},
+		{"with channels", "llama3.2", []string{"--channels", "plugin:telegram@claude-plugins-official"}, []string{"--model", "llama3.2", "--channels", "plugin:telegram@claude-plugins-official"}},
 	}
 
 	for _, tt := range tests {
@@ -348,22 +349,27 @@ func TestClaudeEnvVars(t *testing.T) {
 
 	got := envMap(c.envVars("llama3.2"))
 	for key, want := range map[string]string{
-		"ANTHROPIC_BASE_URL":                       envconfig.Host().String(),
-		"ANTHROPIC_API_KEY":                        "",
-		"ANTHROPIC_AUTH_TOKEN":                     "ollama",
-		"CLAUDE_CODE_ATTRIBUTION_HEADER":           "0",
-		"DISABLE_TELEMETRY":                        "1",
-		"DISABLE_ERROR_REPORTING":                  "1",
-		"DISABLE_FEEDBACK_COMMAND":                 "1",
-		"CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY":      "1",
-		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-		"ANTHROPIC_DEFAULT_OPUS_MODEL":             "llama3.2",
-		"ANTHROPIC_DEFAULT_SONNET_MODEL":           "llama3.2",
-		"ANTHROPIC_DEFAULT_HAIKU_MODEL":            "llama3.2",
-		"CLAUDE_CODE_SUBAGENT_MODEL":               "llama3.2",
+		"ANTHROPIC_BASE_URL":                  envconfig.Host().String(),
+		"ANTHROPIC_API_KEY":                   "",
+		"ANTHROPIC_AUTH_TOKEN":                "ollama",
+		"CLAUDE_CODE_ATTRIBUTION_HEADER":      "0",
+		"DISABLE_ERROR_REPORTING":             "1",
+		"DISABLE_FEEDBACK_COMMAND":            "1",
+		"CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL":        "llama3.2",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL":      "llama3.2",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL":       "llama3.2",
+		"CLAUDE_CODE_SUBAGENT_MODEL":          "llama3.2",
 	} {
 		if got[key] != want {
 			t.Errorf("%s = %q, want %q", key, got[key], want)
+		}
+	}
+
+	// Both variables disable Claude Code feature-flag evaluation, which keeps Channels unavailable.
+	for _, key := range []string{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "DISABLE_TELEMETRY"} {
+		if _, ok := got[key]; ok {
+			t.Errorf("%s must not be set by Ollama", key)
 		}
 	}
 }

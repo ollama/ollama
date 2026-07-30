@@ -109,7 +109,6 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		contextChanged = true
 	case coreagent.EventToolStarted:
 		m.resetStreamingState()
-		m.refreshContextWindowTokens(m.opts.Model)
 		startedAt := time.Now()
 		idx := m.findActiveToolEntry(event.ToolCallID)
 		if idx < 0 {
@@ -127,7 +126,6 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 		m.markEntryDirty(idx)
 	case coreagent.EventToolFinished:
 		m.resetStreamingState()
-		m.refreshContextWindowTokens(m.opts.Model)
 		if event.WorkingDir != "" {
 			m.workingDir = event.WorkingDir
 		}
@@ -233,16 +231,15 @@ func (m *chatModel) addDetectedToolCalls(calls []api.ToolCall) {
 }
 
 func toolFinishedStatus(event coreagent.Event) string {
-	switch strings.TrimSpace(event.Status) {
-	case "denied":
+	switch event.ToolStatus {
+	case coreagent.ToolStatusDenied:
 		return "denied"
-	case "disabled":
+	case coreagent.ToolStatusDisabled:
 		return "disabled"
-	case "done":
+	case coreagent.ToolStatusDone:
 		return "done"
-	case "error":
-		return "error"
 	}
+	// failed/skipped/unknown: derive from content and error fields.
 	if isDeniedToolResult(event.Content) || isDeniedToolResult(event.Error) {
 		return "denied"
 	}

@@ -16,7 +16,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path"
 	"path/filepath"
@@ -57,7 +56,6 @@ import (
 	"github.com/ollama/ollama/version"
 	xcreate "github.com/ollama/ollama/x/create"
 	xcreateclient "github.com/ollama/ollama/x/create/client"
-	"github.com/ollama/ollama/x/imagegen"
 )
 
 func init() {
@@ -193,7 +191,7 @@ func resolveExperimentalLocalModelDir(ref, filename string) string {
 	}
 
 	candidate := filepath.Join(filepath.Dir(filename), ref)
-	if xcreate.IsSafetensorsModelDir(candidate) || xcreate.IsTensorModelDir(candidate) {
+	if xcreate.IsSafetensorsModelDir(candidate) {
 		return candidate
 	}
 
@@ -231,8 +229,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid model name: %s", modelName)
 	}
 
-	// Check for --experimental flag for safetensors model creation
-	// This gates both safetensors LLM and imagegen model creation
+	// Check for --experimental flag for safetensors model creation.
 	experimental, _ := cmd.Flags().GetBool("experimental")
 	draftQuantize, _ := cmd.Flags().GetString("draft-quantize")
 	if experimental {
@@ -878,12 +875,8 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return generateEmbedding(cmd, name, opts.Prompt, opts.KeepAlive, truncate, dimensions)
 	}
 
-	// Check if this is an image generation model
 	if slices.Contains(info.Capabilities, model.CapabilityImage) {
-		if opts.Prompt == "" && !interactive {
-			return errors.New("image generation models require a prompt. Usage: ollama run " + name + " \"your prompt here\"")
-		}
-		return imagegen.RunCLI(cmd, name, opts.Prompt, interactive, opts.KeepAlive)
+		return errors.New("image generation models are not currently supported")
 	}
 
 	if interactive {
@@ -1246,6 +1239,10 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 	resp, err := client.Show(cmd.Context(), &req)
 	if err != nil {
 		return err
+	}
+
+	if slices.Contains(resp.Capabilities, model.CapabilityImage) {
+		return errors.New("image generation models are not currently supported")
 	}
 
 	if flagsSet == 1 {
@@ -2099,40 +2096,6 @@ Environment Variables:
 	cmd.SetUsageTemplate(cmd.UsageTemplate() + envUsage)
 }
 
-// ensureServerRunning checks if the ollama server is running and starts it in the background if not.
-func ensureServerRunning(ctx context.Context) error {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return err
-	}
-
-	// Check if server is already running
-	if err := client.Heartbeat(ctx); err == nil {
-		return nil // server is already running
-	}
-
-	// Server not running, start it in the background
-	exe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("could not find executable: %w", err)
-	}
-
-	serverCmd := exec.CommandContext(ctx, exe, "serve")
-	serverCmd.Env = os.Environ()
-	serverCmd.SysProcAttr = backgroundServerSysProcAttr()
-	if err := serverCmd.Start(); err != nil {
-		return fmt.Errorf("failed to start server: %w", err)
-	}
-
-	// Wait for the server to be ready
-	for {
-		time.Sleep(500 * time.Millisecond)
-		if err := client.Heartbeat(ctx); err == nil {
-			return nil // server has started
-		}
-	}
-}
-
 func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -2166,9 +2129,9 @@ func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
 
 // runInteractiveTUI runs the main interactive TUI menu.
 func runInteractiveTUI(cmd *cobra.Command) {
-	// Ensure the server is running before showing the TUI
-	if err := ensureServerRunning(cmd.Context()); err != nil {
-		fmt.Fprintf(os.Stderr, "Error starting server: %v\n", err)
+	// Ensure the server is running via the shared checkServerHeartbeat path.
+	if err := checkServerHeartbeat(cmd, nil); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return
 	}
 
@@ -2365,21 +2328,6 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("truncate", false, "For embedding models: truncate inputs exceeding context length (default: true). Set --truncate=false to error instead")
 	runCmd.Flags().Int("dimensions", 0, "Truncate output embeddings to specified dimension (embedding models only)")
 
-	// Image generation flags (width, height, steps, seed, etc.)
-	imagegen.RegisterFlags(runCmd)
-
-	runCmd.Flags().Bool("imagegen", false, "Use the imagegen runner for LLM inference")
-	runCmd.Flags().MarkHidden("imagegen")
-
-	agentCmd := &cobra.Command{
-		Use:     "agent",
-		Short:   "Run an agent",
-		Args:    cobra.ExactArgs(0),
-		PreRunE: checkServerHeartbeat,
-		RunE:    AgentHandler,
-	}
-	registerAgentFlags(agentCmd)
-
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
 		Short:   "Stop a running model",
@@ -2510,7 +2458,6 @@ func NewCLI() *cobra.Command {
 		createCmd,
 		showCmd,
 		runCmd,
-		agentCmd,
 		stopCmd,
 		pullCmd,
 		pushCmd,
@@ -2522,7 +2469,6 @@ func NewCLI() *cobra.Command {
 	} {
 		switch cmd {
 		case runCmd:
-			imagegen.AppendFlagsDocs(cmd)
 			appendEnvDocs(cmd, []envconfig.EnvVar{envVars["OLLAMA_EDITOR"], envVars["OLLAMA_HOST"], envVars["OLLAMA_NOHISTORY"]})
 		case serveCmd:
 			appendEnvDocs(cmd, []envconfig.EnvVar{
@@ -2558,7 +2504,6 @@ func NewCLI() *cobra.Command {
 		createCmd,
 		showCmd,
 		runCmd,
-		agentCmd,
 		stopCmd,
 		pullCmd,
 		pushCmd,

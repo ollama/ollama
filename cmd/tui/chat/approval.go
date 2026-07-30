@@ -57,11 +57,15 @@ func (m chatModel) allowAllToolsEnabled() bool {
 	if m.approvalState == nil {
 		return m.defaultAllowAll
 	}
-	return m.approvalState.AllowAll()
+	return m.approvalState.AllGranted()
 }
 
 func (m *chatModel) setAllowAllTools(allowAll bool) {
-	m.ensureApprovalState().SetAllowAll(allowAll)
+	if allowAll {
+		m.ensureApprovalState().GrantAll()
+	} else {
+		m.ensureApprovalState().Set(false, nil)
+	}
 	m.opts.AllowAllTools = allowAll
 }
 
@@ -176,7 +180,7 @@ func (m chatModel) resolveApprovalPrompt(choice chatApprovalChoice) (tea.Model, 
 	}
 	allowScopes := approvalScopes(prompt.request)
 	if choice.allowTools {
-		m.ensureApprovalState().AllowScopes(allowScopes)
+		m.ensureApprovalState().GrantScopes(allowScopes)
 	}
 	for _, call := range prompt.request.Calls {
 		if idx := m.findToolEntry(call.ToolCallID); idx >= 0 && m.entries[idx].status == "approval" {
@@ -386,7 +390,7 @@ func (c *chatApprovalController) preapproved(request coreagent.ApprovalRequest) 
 	if c == nil {
 		return coreagent.Approval{}, false
 	}
-	if c.state.AllowAll() {
+	if c.state.AllGranted() {
 		return coreagent.Approval{Allow: true, AllowAll: true}, true
 	}
 	scopes := approvalScopes(request)
