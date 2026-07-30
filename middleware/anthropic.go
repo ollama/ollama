@@ -29,7 +29,11 @@ type AnthropicWriter struct {
 	converter *anthropic.StreamConverter
 }
 
-func (w *AnthropicWriter) writeError(data []byte) (int, error) {
+type AnthropicCountTokensWriter struct {
+	BaseWriter
+}
+
+func writeAnthropicError(w gin.ResponseWriter, data []byte) (int, error) {
 	var errData struct {
 		Error string `json:"error"`
 	}
@@ -39,12 +43,16 @@ func (w *AnthropicWriter) writeError(data []byte) (int, error) {
 		errData.Error = string(data)
 	}
 
-	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w.ResponseWriter).Encode(anthropic.NewError(w.Status(), errData.Error)); err != nil {
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(anthropic.NewError(w.Status(), errData.Error)); err != nil {
 		return 0, err
 	}
 
 	return len(data), nil
+}
+
+func (w *AnthropicWriter) writeError(data []byte) (int, error) {
+	return writeAnthropicError(w.ResponseWriter, data)
 }
 
 func (w *AnthropicWriter) writeEvent(eventType string, data any) error {
@@ -81,6 +89,38 @@ func (w *AnthropicWriter) Write(data []byte) (int, error) {
 	code := w.ResponseWriter.Status()
 	if code != http.StatusOK {
 		return w.writeError(data)
+	}
+
+	return w.writeResponse(data)
+}
+
+func (w *AnthropicCountTokensWriter) writeInputTokensError(message string) (int, error) {
+	w.ResponseWriter.Header().Set("Content-Type", "application/json")
+	w.ResponseWriter.WriteHeader(http.StatusInternalServerError)
+	return 0, json.NewEncoder(w.ResponseWriter).Encode(anthropic.NewError(http.StatusInternalServerError, message))
+}
+
+func (w *AnthropicCountTokensWriter) writeResponse(data []byte) (int, error) {
+	var chatResponse api.ChatResponse
+	if err := json.Unmarshal(data, &chatResponse); err != nil {
+		return 0, err
+	}
+	if chatResponse.DebugInfo == nil {
+		return w.writeInputTokensError("input token count response missing debug info")
+	}
+	if chatResponse.DebugInfo.InputTokens == nil {
+		return w.writeInputTokensError("input token count response missing input tokens")
+	}
+
+	w.ResponseWriter.Header().Set("Content-Type", "application/json")
+	return len(data), json.NewEncoder(w.ResponseWriter).Encode(anthropic.CountTokensResponse{
+		InputTokens: *chatResponse.DebugInfo.InputTokens,
+	})
+}
+
+func (w *AnthropicCountTokensWriter) Write(data []byte) (int, error) {
+	if w.ResponseWriter.Status() != http.StatusOK {
+		return writeAnthropicError(w.ResponseWriter, data)
 	}
 
 	return w.writeResponse(data)
@@ -807,6 +847,71 @@ func (w *WebSearchAnthropicWriter) sendError(errorCode, query string, usage anth
 	response := w.webSearchErrorResponse(errorCode, query, usage)
 	logutil.Trace("anthropic middleware: web_search error", "code", errorCode, "query", query, "usage", usage)
 	return w.writeTerminalResponse(response)
+}
+
+func prepareAnthropicCountTokensRequest(c *gin.Context, chatReq *api.ChatRequest) bool {
+	// ChatHandler answers a request with no messages by reporting a model load,
+	// which carries no count for the writer to convert.
+	if len(chatReq.Messages) == 0 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, anthropic.NewError(http.StatusBadRequest, "messages is required"))
+		return false
+	}
+
+	stream := false
+	chatReq.Stream = &stream
+	chatReq.DebugRenderOnly = true
+	// Count what the caller sent. Truncation defaults to on, which would drop
+	// leading messages until the render fits the context window and report the
+	// count of what survived - the opposite of what a caller asking "how big is
+	// my input" needs.
+	truncate := false
+	chatReq.Truncate = &truncate
+
+	var b bytes.Buffer
+	if err := json.NewEncoder(&b).Encode(chatReq); err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, anthropic.NewError(http.StatusInternalServerError, err.Error()))
+		return false
+	}
+
+	c.Request.Body = io.NopCloser(&b)
+	c.Writer = &AnthropicCountTokensWriter{
+		BaseWriter: BaseWriter{ResponseWriter: c.Writer},
+	}
+	return true
+}
+
+// AnthropicCountTokensMiddleware handles Anthropic count_tokens requests.
+func AnthropicCountTokensMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req anthropic.CountTokensRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, anthropic.NewError(http.StatusBadRequest, err.Error()))
+			return
+		}
+
+		if req.Model == "" {
+			c.AbortWithStatusJSON(http.StatusBadRequest, anthropic.NewError(http.StatusBadRequest, "model is required"))
+			return
+		}
+
+		if len(req.Messages) == 0 {
+			c.AbortWithStatusJSON(http.StatusBadRequest, anthropic.NewError(http.StatusBadRequest, "messages is required"))
+			return
+		}
+
+		chatReq, err := anthropic.FromCountTokensRequest(req)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, anthropic.NewError(http.StatusBadRequest, err.Error()))
+			return
+		}
+
+		c.Set("relax_thinking", true)
+		if !prepareAnthropicCountTokensRequest(c, chatReq) {
+			return
+		}
+
+		c.Next()
+	}
 }
 
 // AnthropicMessagesMiddleware handles Anthropic Messages API requests

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -48,6 +49,46 @@ func TestClientFromEnvironment(t *testing.T) {
 				t.Fatalf("expected %s, got %s", v.expect, client.base.String())
 			}
 		})
+	}
+}
+
+func TestClientChatInputTokens(t *testing.T) {
+	inputTokens := 42
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/chat" {
+			t.Fatalf("path = %q, want /api/chat", r.URL.Path)
+		}
+		var req ChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		if !req.DebugRenderOnly {
+			t.Fatal("DebugRenderOnly = false, want true")
+		}
+		if req.Stream == nil || *req.Stream {
+			t.Fatalf("Stream = %v, want false", req.Stream)
+		}
+		_ = json.NewEncoder(w).Encode(ChatResponse{
+			DebugInfo: &DebugInfo{InputTokens: &inputTokens},
+		})
+	}))
+	defer server.Close()
+
+	u, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := NewClient(u, server.Client())
+
+	resp, err := client.ChatInputTokens(context.Background(), &ChatRequest{
+		Model:    "test-model",
+		Messages: []Message{{Role: "user", Content: "hello"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.InputTokens != 42 {
+		t.Fatalf("InputTokens = %d, want 42", resp.InputTokens)
 	}
 }
 

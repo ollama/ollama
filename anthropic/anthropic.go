@@ -1073,6 +1073,22 @@ type CountTokensRequest struct {
 	Thinking *ThinkingConfig `json:"thinking,omitempty"`
 }
 
+// FromCountTokensRequest converts an Anthropic count_tokens request to an Ollama chat request.
+// count_tokens carries no max_tokens, but FromMessagesRequest maps it straight to
+// num_predict, where 0 means "generate nothing" rather than "unset", so ask for the
+// smallest non-degenerate value. Nothing is generated either way - the caller sets
+// DebugRenderOnly.
+func FromCountTokensRequest(r CountTokensRequest) (*api.ChatRequest, error) {
+	return FromMessagesRequest(MessagesRequest{
+		Model:     r.Model,
+		MaxTokens: 1,
+		Messages:  r.Messages,
+		System:    r.System,
+		Tools:     r.Tools,
+		Thinking:  r.Thinking,
+	})
+}
+
 // EstimateInputTokens estimates input tokens from a MessagesRequest (reuses CountTokensRequest logic)
 func EstimateInputTokens(req MessagesRequest) int {
 	return estimateTokens(CountTokensRequest{
