@@ -302,6 +302,7 @@ console.log(response.message.content);
 - [LLM-X](https://github.com/mrdjohnson/llm-x) - Progressive web app for LLMs
 - [cmdh](https://github.com/pgibler/cmdh) - Natural language to shell commands
 - [VT](https://github.com/vinhnx/vt.ai) - Minimal multimodal AI chat app
+- [spell](https://github.com/rockscy/spell) - Inline AI command palette: type plain English, get a shell command in the same input box, edit and run
 
 ### Productivity & Apps
 
