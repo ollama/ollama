@@ -28,7 +28,8 @@
 #   SHA=$(git rev-parse --short=8 HEAD)
 #   docker build -f Dockerfile.gemma4budget \
 #     --build-arg OLLAMA_VERSION=0.32.5-gemma4budget-$SHA \
-#     -t maxusai/ollama:$SHA-gemma4-budget -t maxusai/ollama:latest .
+#     -t maxusai/ollama:$SHA-gemma4-budget .
+#   # sha tag only — moving :latest here retires the known-good image it points at
 #   docker run --rm maxusai/ollama:$SHA-gemma4-budget --version
 #     # -> client version is 0.32.5-gemma4budget-<sha>
 

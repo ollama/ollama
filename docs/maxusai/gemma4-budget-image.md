@@ -10,10 +10,16 @@ An official `ollama/ollama` image with a single file replaced: `/usr/bin/ollama`
 rebuilt from this fork. The base tag tracks whatever upstream tag the fork is
 synced to — **`0.32.5`** as of the 2026-07-29 sync.
 
-> The image currently deployed on 10.8.0.6, `maxusai/ollama:85ebcb79-gemma4-budget`,
-> was built at fork commit `85ebcb79` on the **`0.32.1`** base and is unaffected by the
-> sync — it stays valid until someone rebuilds. The measurements further down were taken
-> against it. A rebuild from current `main` produces a `0.32.5`-based image.
+### Image inventory (10.8.0.6, as of 2026-07-29)
+
+| tag | fork commit | base | image id | status |
+|---|---|---|---|---|
+| `maxusai/ollama:85ebcb79-gemma4-budget` | `85ebcb79` | `0.32.1` | `6589c114137c` | **deployed** — also carries `:latest` |
+| `maxusai/ollama:40f45419-gemma4-budget` | `40f45419` | `0.32.5` | `f83473a3874c` | built + verified, **not deployed** |
+
+Both are local-only; no registry has either. `:latest` deliberately still points at the
+deployed 0.32.1 image so it stays usable as a rollback target — the 0.32.5 build was
+tagged by sha only. Do not move `:latest` onto an image you have not exercised.
 
 The patch raises the gemma4 vision budget from llama.cpp's hardcoded
 `set_limit_image_tokens(40, 280)` (upstream issue ollama/ollama#15626) to
@@ -61,11 +67,16 @@ cd /opt/github/MaxusAI/ollama
 SHA=$(git rev-parse --short=8 HEAD)
 docker build -f Dockerfile.gemma4budget \
   --build-arg OLLAMA_VERSION=0.32.5-gemma4budget-$SHA \
-  -t maxusai/ollama:$SHA-gemma4-budget -t maxusai/ollama:latest .
+  -t maxusai/ollama:$SHA-gemma4-budget .
 ```
 
-~4.81 GB image, ~44 MB unique layer over the base (measured on `0.32.1`; `0.32.5`
-is a 3.26 GB pull, so expect the total to differ).
+**Tag by sha only.** The `-t maxusai/ollama:latest` this command used to carry moves
+`:latest` onto the image you just built — which silently retires whatever known-good
+image it pointed at. Promote `:latest` by hand once the build is exercised, if at all.
+
+Measured: `0.32.1` base → 4.81 GB image / ~44 MB unique layer; `0.32.5` base → 4.8 GB
+image / 38.8 MB unique layer, ~5 min wall (dominated by the 3.11 GB base pull and its
+79 s extract, not the Go build).
 
 ## Verify
 
@@ -102,7 +113,28 @@ pull_policy: never
 then `docker compose up -d --no-deps ollama`. The `ollama_data` models volume
 survives the version jump (verified 0.22.1 → 0.32.1, 50 models).
 
-Rollback: `image: ollama/ollama:latest` + `pull_policy: always`, same command.
+Rollback: `image: ollama/ollama:latest` + `pull_policy: always`, same command. To roll
+back to the previous *patched* image instead, pin `85ebcb79-gemma4-budget` — it is kept
+on the box for exactly this.
+
+### Promoting the 0.32.5 build — not yet done
+
+`40f45419-gemma4-budget` is built and verified but deliberately undeployed. Before
+promoting it, re-measure rather than assuming the numbers below carry over: that build
+moves llama.cpp from `b9888` to `b10091` (~200 upstream builds). Gemma's handling in
+`tools/mtmd/clip.cpp` is **byte-identical** between those two tags, so the budget
+behaviour is expected to hold — but that is read from source, not measured on the binary.
+
+Cheapest check is a side-by-side on a spare port, leaving the live service alone:
+
+```bash
+docker run --rm --gpus all -v ollama_data:/root/.ollama -p 11435:11434 \
+  maxusai/ollama:40f45419-gemma4-budget
+```
+
+Then confirm on `:11435` that the llama-server launch line still contains
+`--image-min-tokens 40 --image-max-tokens 1120`, and that a gemma4:31b request at the
+full budget still lands near `prompt_eval_count` 2,233 for the reference prompt.
 
 ## Measured (2026-07-17, gemma4:31b-it-q4_K_M, 1,218-token prompt + 1 image)
 
