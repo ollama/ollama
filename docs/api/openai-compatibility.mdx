@@ -306,6 +306,36 @@ Ollama supports the [OpenAI Responses API](https://platform.openai.com/docs/api-
 - [ ] `conversation` (stateful v1/responses not supported)
 - [ ] `truncation`
 
+### `/v1/chat/completions/input_tokens` and `/v1/responses/input_tokens`
+
+Ollama extensions, with no counterpart in the OpenAI API. Each accepts the same
+request body as the endpoint it hangs off and returns the number of input tokens
+that request would consume, without generating anything:
+
+```shell
+curl -X POST http://localhost:11434/v1/chat/completions/input_tokens \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llama3.2",
+    "messages": [{"role": "user", "content": "Hello"}]
+  }'
+```
+
+```json
+{
+  "object": "response.input_tokens",
+  "input_tokens": 11
+}
+```
+
+The count is of the prompt rendered from the whole request, so it reflects the
+chat template and the tool definitions, not just the message text. Unlike the
+generating endpoints, the request is never truncated to fit the context window,
+so the count can legitimately exceed it.
+
+Requests containing images are counted as text only: the image markers in the
+rendered prompt are counted, the image embeddings they stand for are not.
+
 ## Models
 
 Before using a model, pull it locally `ollama pull`:

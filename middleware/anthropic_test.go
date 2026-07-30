@@ -402,6 +402,135 @@ func TestAnthropicMessagesMiddleware_Headers(t *testing.T) {
 	})
 }
 
+func TestAnthropicCountTokensMiddleware(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var capturedRequest api.ChatRequest
+	var flagSet bool
+	inputTokens := 42
+
+	router := gin.New()
+	router.Use(AnthropicCountTokensMiddleware(), captureAnthropicRequest(&capturedRequest))
+	router.POST("/v1/messages/count_tokens", func(c *gin.Context) {
+		_, flagSet = c.Get("relax_thinking")
+		c.JSON(http.StatusOK, api.ChatResponse{
+			DebugInfo: &api.DebugInfo{InputTokens: &inputTokens},
+		})
+	})
+
+	body := `{
+		"model": "test-model",
+		"system": "You are helpful.",
+		"messages": [{"role": "user", "content": "Hi"}],
+		"tools": [{
+			"name": "lookup",
+			"description": "Look up a value",
+			"input_schema": {"type": "object"}
+		}],
+		"thinking": {"type": "enabled", "budget_tokens": 1024}
+	}`
+	req, _ := http.NewRequest(http.MethodPost, "/v1/messages/count_tokens", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+
+	var result anthropic.CountTokensResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	if result.InputTokens != inputTokens {
+		t.Fatalf("expected input_tokens %d, got %d", inputTokens, result.InputTokens)
+	}
+
+	if !flagSet {
+		t.Error("expected relax_thinking flag to be set in context")
+	}
+	if !capturedRequest.DebugRenderOnly {
+		t.Error("expected debug_render_only to be set")
+	}
+	if capturedRequest.Stream == nil || *capturedRequest.Stream {
+		t.Fatalf("expected stream false, got %v", capturedRequest.Stream)
+	}
+	if capturedRequest.Model != "test-model" {
+		t.Fatalf("expected model test-model, got %q", capturedRequest.Model)
+	}
+	if len(capturedRequest.Messages) != 2 {
+		t.Fatalf("expected system and user messages, got %d", len(capturedRequest.Messages))
+	}
+	if capturedRequest.Messages[0].Role != "system" || capturedRequest.Messages[0].Content != "You are helpful." {
+		t.Fatalf("unexpected system message: %+v", capturedRequest.Messages[0])
+	}
+	if capturedRequest.Messages[1].Role != "user" || capturedRequest.Messages[1].Content != "Hi" {
+		t.Fatalf("unexpected user message: %+v", capturedRequest.Messages[1])
+	}
+	if len(capturedRequest.Tools) != 1 || capturedRequest.Tools[0].Function.Name != "lookup" {
+		t.Fatalf("unexpected tools: %+v", capturedRequest.Tools)
+	}
+	if capturedRequest.Think == nil || capturedRequest.Think.Value != true {
+		t.Fatalf("expected thinking enabled, got %+v", capturedRequest.Think)
+	}
+	if got, ok := capturedRequest.Options["num_predict"].(float64); !ok || got != 1 {
+		t.Fatalf("expected num_predict 1, got %#v", capturedRequest.Options["num_predict"])
+	}
+}
+
+func TestAnthropicCountTokensMiddleware_InvalidRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name        string
+		body        string
+		wantMessage string
+	}{
+		{
+			name:        "missing model",
+			body:        `{"messages":[{"role":"user","content":"Hi"}]}`,
+			wantMessage: "model is required",
+		},
+		{
+			name:        "missing messages",
+			body:        `{"model":"test-model"}`,
+			wantMessage: "messages is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := gin.New()
+			router.Use(AnthropicCountTokensMiddleware())
+			router.POST("/v1/messages/count_tokens", func(c *gin.Context) {
+				t.Fatal("handler should not be called")
+			})
+
+			req, _ := http.NewRequest(http.MethodPost, "/v1/messages/count_tokens", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+
+			resp := httptest.NewRecorder()
+			router.ServeHTTP(resp, req)
+
+			if resp.Code != http.StatusBadRequest {
+				t.Fatalf("expected status 400, got %d: %s", resp.Code, resp.Body.String())
+			}
+
+			var errResp anthropic.ErrorResponse
+			if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
+				t.Fatalf("failed to unmarshal error response: %v", err)
+			}
+			if errResp.Error.Type != "invalid_request_error" {
+				t.Fatalf("expected invalid_request_error, got %q", errResp.Error.Type)
+			}
+			if errResp.Error.Message != tt.wantMessage {
+				t.Fatalf("expected message %q, got %q", tt.wantMessage, errResp.Error.Message)
+			}
+		})
+	}
+}
+
 func TestAnthropicMessagesMiddleware_InvalidJSON(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()

@@ -447,6 +447,107 @@ func ChatMiddleware() gin.HandlerFunc {
 	}
 }
 
+type InputTokensWriter struct {
+	object string
+	BaseWriter
+}
+
+func (w *InputTokensWriter) writeInputTokensError(message string) (int, error) {
+	w.ResponseWriter.Header().Set("Content-Type", "application/json")
+	w.ResponseWriter.WriteHeader(http.StatusInternalServerError)
+	return 0, json.NewEncoder(w.ResponseWriter).Encode(openai.NewError(http.StatusInternalServerError, message))
+}
+
+func (w *InputTokensWriter) writeResponse(data []byte) (int, error) {
+	var chatResponse api.ChatResponse
+	if err := json.Unmarshal(data, &chatResponse); err != nil {
+		return 0, err
+	}
+	// ChatHandler always populates both on a 200 for a debug_render_only
+	// request, and a failure to count is a non-200 handled by Write. Should
+	// never happen, but reporting no count beats reporting a zero one.
+	if chatResponse.DebugInfo == nil {
+		return w.writeInputTokensError("input token count response missing debug info")
+	}
+	if chatResponse.DebugInfo.InputTokens == nil {
+		return w.writeInputTokensError("input token count response missing input tokens")
+	}
+
+	w.ResponseWriter.Header().Set("Content-Type", "application/json")
+	return len(data), json.NewEncoder(w.ResponseWriter).Encode(openai.InputTokensResponse{
+		Object:      w.object,
+		InputTokens: *chatResponse.DebugInfo.InputTokens,
+	})
+}
+
+func (w *InputTokensWriter) Write(data []byte) (int, error) {
+	code := w.ResponseWriter.Status()
+	if code != http.StatusOK {
+		return w.writeError(data)
+	}
+
+	return w.writeResponse(data)
+}
+
+func prepareInputTokensChatRequest(c *gin.Context, chatReq *api.ChatRequest) bool {
+	// ChatHandler answers a request with no messages by reporting a model load,
+	// which carries no count for the writer to convert.
+	if len(chatReq.Messages) == 0 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, "[] is too short - 'messages'"))
+		return false
+	}
+
+	stream := false
+	chatReq.Stream = &stream
+	chatReq.DebugRenderOnly = true
+	// Count what the caller sent. Truncation defaults to on, which would drop
+	// leading messages until the render fits the context window and report the
+	// count of what survived - the opposite of what a caller asking "how big is
+	// my input" needs.
+	truncate := false
+	chatReq.Truncate = &truncate
+
+	var b bytes.Buffer
+	if err := json.NewEncoder(&b).Encode(chatReq); err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, openai.NewError(http.StatusInternalServerError, err.Error()))
+		return false
+	}
+
+	c.Request.Body = io.NopCloser(&b)
+	c.Writer = &InputTokensWriter{
+		BaseWriter: BaseWriter{ResponseWriter: c.Writer},
+		object:     "response.input_tokens",
+	}
+	return true
+}
+
+func ChatInputTokensMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req openai.ChatCompletionRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
+			return
+		}
+
+		if len(req.Messages) == 0 {
+			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, "[] is too short - 'messages'"))
+			return
+		}
+
+		chatReq, err := openai.FromChatRequest(req)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
+			return
+		}
+
+		if !prepareInputTokensChatRequest(c, chatReq) {
+			return
+		}
+
+		c.Next()
+	}
+}
+
 type ResponsesWriter struct {
 	BaseWriter
 	converter  *openai.ResponsesStreamConverter
@@ -506,18 +607,29 @@ func (w *ResponsesWriter) Write(data []byte) (int, error) {
 	return w.writeResponse(data)
 }
 
+func decompressZstdRequestBody(c *gin.Context) (func(), bool) {
+	if c.GetHeader("Content-Encoding") != "zstd" {
+		return func() {}, true
+	}
+
+	reader, err := zstd.NewReader(c.Request.Body, zstd.WithDecoderMaxMemory(8<<20))
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, "failed to decompress zstd body"))
+		return nil, false
+	}
+
+	c.Request.Body = http.MaxBytesReader(c.Writer, io.NopCloser(reader), maxDecompressedBodySize)
+	c.Request.Header.Del("Content-Encoding")
+	return reader.Close, true
+}
+
 func ResponsesMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if c.GetHeader("Content-Encoding") == "zstd" {
-			reader, err := zstd.NewReader(c.Request.Body, zstd.WithDecoderMaxMemory(8<<20))
-			if err != nil {
-				c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, "failed to decompress zstd body"))
-				return
-			}
-			defer reader.Close()
-			c.Request.Body = http.MaxBytesReader(c.Writer, io.NopCloser(reader), maxDecompressedBodySize)
-			c.Request.Header.Del("Content-Encoding")
+		closeBody, ok := decompressZstdRequestBody(c)
+		if !ok {
+			return
 		}
+		defer closeBody()
 
 		var req openai.ResponsesRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -566,6 +678,34 @@ func ResponsesMiddleware() gin.HandlerFunc {
 		}
 
 		c.Writer = w
+		c.Next()
+	}
+}
+
+func ResponsesInputTokensMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		closeBody, ok := decompressZstdRequestBody(c)
+		if !ok {
+			return
+		}
+		defer closeBody()
+
+		var req openai.ResponsesRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
+			return
+		}
+
+		chatReq, err := openai.FromResponsesRequest(req)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
+			return
+		}
+
+		if !prepareInputTokensChatRequest(c, chatReq) {
+			return
+		}
+
 		c.Next()
 	}
 }

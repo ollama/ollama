@@ -548,10 +548,15 @@ type ChatResponse struct {
 	Metrics
 }
 
-// DebugInfo contains debug information for template rendering
+// DebugInfo contains debug information for template rendering.
 type DebugInfo struct {
 	RenderedTemplate string `json:"rendered_template"`
 	ImageCount       int    `json:"image_count,omitempty"`
+	InputTokens      *int   `json:"input_tokens,omitempty"`
+}
+
+type InputTokensResponse struct {
+	InputTokens int `json:"input_tokens"`
 }
 
 type Metrics struct {
