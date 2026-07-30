@@ -29,6 +29,12 @@ passes `--image-min-tokens` / `--image-max-tokens` to llama-server (mtmd).
 
 Patch surface is Go-only: `api/types.go`, `llm/llama_server.go` (+ tests).
 
+> 🛑 **The budget flags are arch-gated.** `visionServerArgs()` switches on `modelArch`, so
+> `image_min_tokens` / `image_max_tokens` do nothing for an arch that is not in that switch —
+> and for some projectors (notably `nemotron_h_omni`) they are inert even if you add one.
+> See [vision-token-budgets-by-arch.md](vision-token-budgets-by-arch.md) before assuming this
+> knob applies to any model other than gemma4.
+
 ## Why an overlay instead of the repo Dockerfile
 
 The v0.32 Dockerfile bases every stage on `rocm/dev-almalinux-8:7.2.1-complete`
@@ -150,6 +156,14 @@ warmup) — warm up before timing anything.
 
 `image_max_tokens` does **not** set a token count directly. The server converts it to
 `image_max_pixels`, logged at model load:
+
+> **Precision note (2026-07-30).** The heading is a useful mnemonic but slightly overstates
+> the distinction: `image_max_pixels = max_tokens × S²` where `S = patch_size × n_merge` (48
+> for gemma4), and token count is `area / S²` — so the pixel ceiling and the token ceiling are
+> the *same* constraint in different units, not two different limits. 1120 × 48² = 2,580,480,
+> exactly the logged value. The practical advice below is unaffected and correct: a wide image
+> runs out of *pixels* long before it reaches the ceiling, so tune by total area. See
+> [vision-token-budgets-by-arch.md](vision-token-budgets-by-arch.md).
 
 ```
 load_hparams: image_min_pixels:   92160 (custom value)
