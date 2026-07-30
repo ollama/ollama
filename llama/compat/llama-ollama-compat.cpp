@@ -2496,6 +2496,37 @@ void handle_nemotron_h_omni_clip(gguf_context * meta, ggml_context * ctx) {
     copy_kv    (meta, "nemotron_h_omni.vision.image_mean",                  "clip.vision.image_mean");
     copy_kv    (meta, "nemotron_h_omni.vision.image_std",                   "clip.vision.image_std");
 
+    // Carried for provenance only — upstream clip.cpp reads NONE of these six keys, so they
+    // have no effect on how an image is preprocessed or how many visual tokens it costs.
+    // Verified against the pinned LLAMA_CPP_VERSION (b10091): the
+    // PROJECTOR_TYPE_NEMOTRON_V2_VL hparams branch reads only KEY_PROJ_SCALE_FACTOR, and
+    // mtmd dispatches that projector to mtmd_image_preprocessor_fixed_size, which resizes
+    // every image onto one image_size x image_size canvas. nemotron's visual cost is
+    // therefore structural and constant:
+    //
+    //     (image_size / patch_size)^2 / n_merge^2  =  (512 / 16)^2 / 2^2  =  256 tokens
+    //
+    // Keep them anyway: the values are the only in-tree record that this model *ships* a
+    // dynamic-tiling configuration (max_tiles=12, use_thumbnail=true, and 1024..13312
+    // patches = 1..13 tiles' worth), which is what a future tiling patch would need.
+    //
+    // Wiring them up is NOT possible from this translation layer. It requires a
+    // llama/compat/*.patch against clip.cpp + mtmd.cpp, and that patch must beware:
+    //   * the keys clip.cpp would read are clip.vision.preproc_{min,max}_tiles
+    //     (KEY_PREPROC_{MIN,MAX}_TILES), not the names below;
+    //   * the units differ. preproc_*_tiles are TILE counts (InternVL uses 1 and 12) while
+    //     min/max_num_patches below are PATCH counts, so they need dividing by
+    //     (image_size/patch_size)^2 = 1024 first. Renaming alone would feed 13312 into a
+    //     tile count and trip the min<=max/INT32_MAX assertion at clip.cpp:1335;
+    //   * whether the tile budget should be 12 (max_tiles, thumbnail excluded, as InternVL
+    //     counts it) or 13 (max_num_patches/1024, thumbnail included) is genuinely
+    //     ambiguous here, so it is left for the patch author to resolve rather than guessed
+    //     at in this layer;
+    //   * re-pointing clip.projector_type at "internvl" to borrow its tiling is a dead end:
+    //     the INTERNVL tensor loader requires mm_0_b/mm_1_b/mm_3_b biases that the nemotron
+    //     projector does not have, so model load would fail.
+    //
+    // use_thumbnail is deliberately not forwarded — same reason, and nothing reads it.
     for (const char * key : {
         "image_token_id",
         "image_start_token_id",
