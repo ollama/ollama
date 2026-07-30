@@ -779,6 +779,116 @@ func (w *WebSearchAnthropicWriter) sendError(errorCode, query string, usage anth
 }
 
 // AnthropicMessagesMiddleware handles Anthropic Messages API requests
+type AnthropicCountTokensWriter struct {
+	BaseWriter
+}
+
+func (w *AnthropicCountTokensWriter) writeJSONError(status int, message string) (int, error) {
+	w.ResponseWriter.Header().Set("Content-Type", "application/json")
+	w.ResponseWriter.WriteHeader(status)
+	return 0, json.NewEncoder(w.ResponseWriter).Encode(anthropic.NewError(status, message))
+}
+
+func (w *AnthropicCountTokensWriter) writeResponse(data []byte) (int, error) {
+	var chatResponse api.ChatResponse
+	if err := json.Unmarshal(data, &chatResponse); err != nil {
+		return 0, err
+	}
+	if chatResponse.DebugInfo == nil {
+		return w.writeJSONError(http.StatusInternalServerError, "input token count response missing debug info")
+	}
+	if chatResponse.DebugInfo.InputTokens == nil {
+		return w.writeJSONError(http.StatusInternalServerError, "input token count response missing input tokens")
+	}
+
+	w.ResponseWriter.Header().Set("Content-Type", "application/json")
+	return len(data), json.NewEncoder(w.ResponseWriter).Encode(anthropic.CountTokensResponse{
+		InputTokens: *chatResponse.DebugInfo.InputTokens,
+	})
+}
+
+func (w *AnthropicCountTokensWriter) Write(data []byte) (int, error) {
+	if status := w.ResponseWriter.Status(); status != http.StatusOK {
+		var errData struct {
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal(data, &errData); err != nil {
+			errData.Error = string(data)
+		}
+		if _, err := w.writeJSONError(status, errData.Error); err != nil {
+			return 0, err
+		}
+		return len(data), nil
+	}
+
+	return w.writeResponse(data)
+}
+
+func prepareAnthropicCountTokensRequest(c *gin.Context, chatReq *api.ChatRequest) bool {
+	// ChatHandler answers a request with no messages by reporting a model load,
+	// which carries no count for the writer to convert.
+	if len(chatReq.Messages) == 0 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, anthropic.NewError(http.StatusBadRequest, "messages is required"))
+		return false
+	}
+
+	stream := false
+	chatReq.Stream = &stream
+	chatReq.DebugRenderOnly = true
+	// Count what the caller sent. Truncation defaults to on, which would drop
+	// leading messages until the render fits the context window and report the
+	// count of what survived - the opposite of what a caller asking "how big is
+	// my input" needs.
+	truncate := false
+	chatReq.Truncate = &truncate
+
+	var b bytes.Buffer
+	if err := json.NewEncoder(&b).Encode(chatReq); err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, anthropic.NewError(http.StatusInternalServerError, err.Error()))
+		return false
+	}
+
+	c.Request.Body = io.NopCloser(&b)
+	c.Writer = &AnthropicCountTokensWriter{
+		BaseWriter: BaseWriter{ResponseWriter: c.Writer},
+	}
+	return true
+}
+
+// AnthropicCountTokensMiddleware handles Anthropic count_tokens requests.
+func AnthropicCountTokensMiddleware(thinkingLookup ...ThinkingLookup) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req anthropic.CountTokensRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, anthropic.NewError(http.StatusBadRequest, err.Error()))
+			return
+		}
+
+		if req.Model == "" {
+			c.AbortWithStatusJSON(http.StatusBadRequest, anthropic.NewError(http.StatusBadRequest, "model is required"))
+			return
+		}
+
+		if len(req.Messages) == 0 {
+			c.AbortWithStatusJSON(http.StatusBadRequest, anthropic.NewError(http.StatusBadRequest, "messages is required"))
+			return
+		}
+
+		chatReq, err := anthropic.FromCountTokensRequest(req, modelThinking(thinkingLookup, req.Model))
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, anthropic.NewError(http.StatusBadRequest, err.Error()))
+			return
+		}
+
+		c.Set("relax_thinking", true)
+		if !prepareAnthropicCountTokensRequest(c, chatReq) {
+			return
+		}
+
+		c.Next()
+	}
+}
+
 func AnthropicMessagesMiddleware(thinkingLookup ...ThinkingLookup) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		requestCtx := c.Request.Context()
