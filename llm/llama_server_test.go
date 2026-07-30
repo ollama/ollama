@@ -1602,6 +1602,27 @@ func TestVisionServerArgs(t *testing.T) {
 			want: []string{"--image-min-tokens", "1024"},
 		},
 		{
+			// Loads as PROJECTOR_TYPE_QWEN3VL via handle_qwen35_like_clip()'s
+			// clip.projector_type = "qwen3vl_merger", so it needs the same floor.
+			name: "qwen35",
+			arch: "qwen35",
+			want: []string{"--image-min-tokens", "1024"},
+		},
+		{
+			name: "qwen35moe",
+			arch: "qwen35moe",
+			want: []string{"--image-min-tokens", "1024"},
+		},
+		{
+			// nemotron_h_omni is in compatClipArches but must NOT get budget flags:
+			// PROJECTOR_TYPE_NEMOTRON_V2_VL never calls set_limit_image_tokens(), so
+			// --image-min/max-tokens are inert for it and passing them would only
+			// suggest a knob that does nothing. Its cost is a structural 256/image.
+			name: "nemotron_h_omni",
+			arch: "nemotron_h_omni",
+			want: nil,
+		},
+		{
 			name: "other model",
 			arch: "llama",
 			want: nil,

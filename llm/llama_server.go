@@ -993,9 +993,17 @@ func (s *llamaServerRunner) startProcess() error {
 
 func visionServerArgs(modelArch string, opts api.Options) []string {
 	switch modelArch {
-	case "qwen2vl", "qwen25vl", "qwen3vl", "qwen3vlmoe":
+	case "qwen2vl", "qwen25vl", "qwen3vl", "qwen3vlmoe", "qwen35", "qwen35moe":
 		// Upstream mtmd warns that Qwen-VL needs at least 1024 image tokens for
 		// correct grounding/counting behavior; the GGUF metadata default is too low.
+		//
+		// qwen35/qwen35moe belong here too: llama/compat's handle_qwen35_like_clip()
+		// sets clip.projector_type = "qwen3vl_merger", so they load as
+		// PROJECTOR_TYPE_QWEN3VL — the same branch that calls
+		// set_limit_image_tokens(8, 4096) and then logs the "requires at minimum 1024
+		// image tokens" warning because 8*1024 px is far below its 1024-token
+		// threshold. Without this they were the only vision arches in
+		// compatClipArches that llama-server never heard the floor for.
 		return []string{"--image-min-tokens", "1024"}
 	case "gemma4":
 		// Gemma 4 vision (gemma4v projector) image-token budget. llama.cpp
