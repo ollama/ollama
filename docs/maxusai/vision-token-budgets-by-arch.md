@@ -38,11 +38,68 @@ lowered. Attaching N images costs exactly N × 256.
 
 **So do not add `case "nemotron_h_omni"` to `visionServerArgs()`.** There is a regression
 test asserting it stays absent (`TestVisionServerArgs/nemotron_h_omni`). Lifting the cap
-needs a `llama/compat/*.patch` against clip.cpp + mtmd.cpp — see the notes in
-`handle_nemotron_h_omni_clip()` ([`llama/compat/llama-ollama-compat.cpp`](../../llama/compat/llama-ollama-compat.cpp)),
-which document what a patch must convert and which route is a dead end. Upstream `master`
+needs a `llama/compat/*.patch` against clip.cpp + mtmd.cpp — see
+[Notes for a future tiling patch](#notes-for-a-future-tiling-patch) below. Upstream `master`
 was unchanged on the relevant lines as of 2026-07-30, so a `LLAMA_CPP_VERSION` bump would
 not have fixed it either — re-check before writing a patch.
+
+## Notes for a future tiling patch
+
+`handle_nemotron_h_omni_clip()` in `llama/compat/llama-ollama-compat.cpp` forwards six
+`nemotron_h_omni.vision.*` keys into the `clip.vision.*` namespace — `image_token_id`,
+`image_start_token_id`, `image_end_token_id`, `max_tiles`, `min_num_patches`,
+`max_num_patches`. **Nothing reads any of them**, so the block reads like dynamic tiling is
+wired up when it is not.
+
+> 🛑 These notes live here rather than as a comment in that file **on purpose**. `llama/` is
+> under a byte-equality invariant against the upstream tag — it is upstream's code, and the
+> overlay image in [gemma4-budget-image.md](gemma4-budget-image.md) is only valid because the
+> fork's payload is identical to the base image's. A comment there is enough to make the
+> pre-rebuild payload proof non-empty and block a rebuild. **Do not document things inside
+> `llama/`.**
+
+The values are worth knowing, because they are the record that this model *ships* a
+dynamic-tiling configuration that llama.cpp does not implement:
+
+```
+max_tiles        = 12          use_thumbnail   = true      (not forwarded; nothing reads it)
+min_num_patches  = 1024        =  1 tile  × (512/16)²
+max_num_patches  = 13312       = 13 tiles × (512/16)²      = 12 tiles + 1 thumbnail
+```
+
+After the 2×2 merge that is 13,312 / 4 = **3,328 visual tokens**, 13× what it gets today. A
+patch would need to:
+
+1. **Dispatch to a tiling preprocessor** in `mtmd.cpp` instead of `fixed_size` —
+   `mtmd_image_preprocessor_internvl` is the natural candidate, being the llava-uhd subclass
+   nemotron is already grouped with elsewhere in clip.cpp.
+2. **Read tile bounds** in the `PROJECTOR_TYPE_NEMOTRON_V2_VL` hparams branch and populate
+   `image_res_candidates`, as the `INTERNVL` branch does.
+3. **Convert the units.** clip.cpp reads `clip.vision.preproc_{min,max}_tiles`
+   (`KEY_PREPROC_{MIN,MAX}_TILES`), and **those are tile counts** — InternVL's defaults are 1
+   and 12 — whereas `min/max_num_patches` above are **patch counts**. Divide by
+   `(image_size/patch_size)² = 1024` first. A rename alone feeds `13312` into a tile count and
+   trips the `min <= max && max < INT32_MAX` assertion at `clip.cpp:1335`.
+4. **Emit tile markers.** nemotron sets no `img_beg`/`img_end` in mtmd today; multi-tile input
+   needs the begin/end and per-tile markers the LLM was trained on.
+
+Two things deliberately left open, because guessing them in the translation layer would be
+worse than leaving them visible:
+
+- **12 vs 13.** Should the tile budget be 12 (`max_tiles`, thumbnail excluded, as InternVL
+  counts it) or 13 (`max_num_patches/1024`, thumbnail included)? Genuinely ambiguous from the
+  metadata alone.
+- **The graph side needs no change** — tiles are each 512², so `clip_graph_nemotron_v2_vl` and
+  the ViT position embeddings are used exactly as now, just N times. That is what makes this
+  tractable at all.
+
+One tempting shortcut is a **dead end**: re-pointing `clip.projector_type` at `"internvl"` to
+borrow its tiling fails, because the INTERNVL tensor loader requires `mm_0_b`/`mm_1_b`/`mm_3_b`
+biases that the nemotron projector does not have, so model load aborts.
+
+⚠️ Also note a patch here **cannot ship via the overlay image**. `Dockerfile.gemma4budget`
+rebuilds only the Go binary and takes the C++/CUDA payload from the `ollama/ollama` base, so a
+clip.cpp/mtmd.cpp change needs a full Dockerfile build.
 
 ⚠️ nemotron also **letterboxes** onto its square canvas (`PAD_CEIL` + black, the
 `clip_hparams` defaults it never overrides). Aspect ratio is preserved, but for a 16:9
