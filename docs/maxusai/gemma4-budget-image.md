@@ -4,6 +4,15 @@ MaxusAI-fork runbook (this file and `Dockerfile.gemma4budget` are fork-only; the
 not exist upstream). Written 2026-07-17 after the first build + deployment on the
 Blackwell workstation (10.8.0.6).
 
+> 🛑 **AMD / gfx1151 is gated at 0.32.1 — do not bump the base for that host.**
+> `0.32.5` produced degenerate vision output there and was rolled back on 2026-07-31.
+> Blockers: [#17459](https://github.com/ollama/ollama/issues/17459),
+> [#17475](https://github.com/ollama/ollama/issues/17475), and the unconditional
+> `--direct-io` that upstream now applies to ROCm iGPUs. Read
+> **[amd-upgrade-gate.md](amd-upgrade-gate.md)** before changing `OLLAMA_VERSION`, the
+> `FROM` tag, or the proof tag for an AMD deployment. CUDA hosts are not covered by the
+> dio clause, but #17475 was reported on CUDA and still applies.
+
 ## What the image is
 
 An official `ollama/ollama` image with a single file replaced: `/usr/bin/ollama`,
