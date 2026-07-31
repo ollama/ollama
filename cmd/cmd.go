@@ -1527,7 +1527,11 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 	return err
 }
 
-func pullModelWithProgress(ctx context.Context, client *api.Client, name string, insecure bool) error {
+// pullModelWithProgress pulls name, rendering progress to stderr. When
+// clearNotFound is set and the pull fails because the model doesn't exist,
+// the progress display is erased rather than left behind; callers set it
+// when a ":cloud" suggestion prompt may immediately follow the failure.
+func pullModelWithProgress(ctx context.Context, client *api.Client, name string, insecure, clearNotFound bool) error {
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
 
@@ -1589,7 +1593,12 @@ func pullModelWithProgress(ctx context.Context, client *api.Client, name string,
 	}
 
 	request := api.PullRequest{Name: name, Insecure: insecure}
-	return client.Pull(ctx, &request, fn)
+	err := client.Pull(ctx, &request, fn)
+	if clearNotFound && isPullNotFoundErr(err) {
+		// The deferred Stop becomes a no-op after this.
+		p.StopAndClear()
+	}
+	return err
 }
 
 type generateContextKey string

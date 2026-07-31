@@ -26,15 +26,31 @@ var (
 	}
 )
 
+// pullModelNotFoundMessage is how a registry 404 during pull surfaces to
+// clients: os.ErrNotExist wrapped server-side and flattened into the error
+// string of the pull stream.
+const pullModelNotFoundMessage = "pull model manifest: file does not exist"
+
+// isPullNotFoundErr reports whether err is a pull failure caused by the
+// requested model or tag not existing in the registry.
+func isPullNotFoundErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), pullModelNotFoundMessage)
+}
+
 // cloudSuggestionCandidate reports whether a failed pull of name should
 // trigger a ":cloud" suggestion, and if so returns the cloud model name to
 // suggest. It only applies to default-tag lookups (e.g. "kimi-k3") against
 // the default registry whose pull failed because the tag doesn't exist.
 func cloudSuggestionCandidate(name string, pullErr error, insecure bool) (string, bool) {
-	if pullErr == nil || !strings.Contains(pullErr.Error(), "pull model manifest: file does not exist") {
+	if !isPullNotFoundErr(pullErr) {
 		return "", false
 	}
+	return cloudSuggestionName(name, insecure)
+}
 
+// cloudSuggestionName applies the name-based eligibility checks for the
+// ":cloud" suggestion, returning the cloud model name to suggest.
+func cloudSuggestionName(name string, insecure bool) (string, bool) {
 	// --insecure implies a non-default registry, where an ollama.com cloud
 	// model wouldn't be a meaningful suggestion.
 	if insecure {
@@ -65,7 +81,13 @@ func cloudSuggestionCandidate(name string, pullErr error, insecure bool) (string
 // terminal. It returns the name that was actually pulled. `verb` is the
 // user-facing command ("run" or "pull") used in the hint text.
 func pullWithCloudSuggestion(ctx context.Context, client *api.Client, name string, insecure bool, verb string) (string, error) {
-	pullErr := pullModelWithProgress(ctx, client, name, insecure)
+	// If a suggestion prompt may follow a failed pull, erase the failed
+	// attempt's progress display instead of leaving its "pulling manifest"
+	// line to stack up against the accepted pull's identical one.
+	_, eligible := cloudSuggestionName(name, insecure)
+	clearNotFound := eligible && isInteractiveTerminal()
+
+	pullErr := pullModelWithProgress(ctx, client, name, insecure, clearNotFound)
 	if pullErr == nil {
 		return name, nil
 	}
@@ -92,7 +114,7 @@ func pullWithCloudSuggestion(ctx context.Context, client *api.Client, name strin
 		return "", pullErr
 	}
 
-	if err := pullModelWithProgress(ctx, client, cloudName, insecure); err != nil {
+	if err := pullModelWithProgress(ctx, client, cloudName, insecure, false); err != nil {
 		return "", err
 	}
 	return cloudName, nil
