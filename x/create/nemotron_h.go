@@ -3,8 +3,6 @@ package create
 import (
 	"encoding/json"
 	"fmt"
-	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -47,8 +45,6 @@ func nemotronHShouldKeepBF16ForDirectNonAffine(name string) bool {
 	}
 }
 
-var nemotronHLayerIndexRe = regexp.MustCompile(`\.layers\.(\d+)\.`)
-
 func (t nemotronHImportTransform) quantizationType(name string, shape []int32, quantize string) string {
 	if nemotronHIsUnsupportedModalityTensor(name) || nemotronHShouldKeepBF16ForDirectNonAffine(name) {
 		return ""
@@ -60,20 +56,10 @@ func (t nemotronHImportTransform) quantizationType(name string, shape []int32, q
 	// promote them to 8-bit in the requested quant family when the
 	// shape fits, otherwise keep them at source precision.
 	if strings.HasSuffix(name, "embeddings.weight") || strings.HasSuffix(name, "lm_head.weight") {
-		if e := eightBit(quantNorm); isAligned(shape, e) {
-			return e
-		}
-		return ""
+		return promoteEmbedding(shape, quantNorm)
 	}
 
 	if quantNorm == "nvfp4" || quantNorm == "mxfp4" {
-		layerIdx := -1
-		if m := nemotronHLayerIndexRe.FindStringSubmatch(name); m != nil {
-			if idx, err := strconv.Atoi(m[1]); err == nil {
-				layerIdx = idx
-			}
-		}
-
 		isSensitive := strings.HasSuffix(name, ".mixer.out_proj.weight") ||
 			strings.HasSuffix(name, ".mixer.o_proj.weight") ||
 			strings.HasSuffix(name, ".mixer.v_proj.weight") ||
@@ -81,6 +67,7 @@ func (t nemotronHImportTransform) quantizationType(name string, shape []int32, q
 			strings.Contains(name, ".mixer.experts.") && strings.HasSuffix(name, ".down_proj.weight") ||
 			strings.HasSuffix(name, ".mixer.shared_experts.down_proj.weight")
 		if isSensitive {
+			layerIdx := layerIndex(name)
 			if isAligned(shape, "mxfp8") && (layerIdx < 0 || useMoreBits(layerIdx, t.numLayers)) {
 				return "mxfp8"
 			}

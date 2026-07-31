@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/x/mlxrunner/batch"
@@ -96,7 +95,6 @@ type Mamba2 struct {
 	OutProj nn.LinearLayer
 
 	Conv1D     *nn.Conv1d
-	ConvWeight *mlx.Array
 	ConvBias   *mlx.Array
 	DtBias     *mlx.Array
 	A          *mlx.Array
@@ -371,6 +369,46 @@ func freeTensorKeys(tensors map[string]*mlx.Array, keys ...string) {
 	}
 }
 
+func combinedTensorGlobalScale(tensors map[string]*mlx.Array, key string) (*mlx.Array, []string) {
+	var keys []string
+	weightGlobal := tensors[key+".global_scale"]
+	if weightGlobal == nil {
+		weightGlobal = tensors[key+".weight.global_scale"]
+	}
+	if weightGlobal != nil {
+		keys = append(keys, key+".global_scale", key+".weight.global_scale")
+	}
+	if tensors[key+".input_global_scale"] != nil || tensors[key+".weight.input_global_scale"] != nil {
+		keys = append(keys, key+".input_global_scale", key+".weight.input_global_scale")
+	}
+	return weightGlobal, keys
+}
+
+func applyExpertWeightGlobalScale(weight, scale *mlx.Array) *mlx.Array {
+	if scale == nil {
+		return weight
+	}
+	if scale.DType() != weight.DType() {
+		scale = scale.AsType(weight.DType())
+	}
+	switch scale.NumDims() {
+	case 1:
+		if scale.Dim(0) == 1 {
+			break
+		}
+		if weight.NumDims() == 3 && scale.Dim(0) == weight.Dim(0) {
+			scale = mlx.Reshape(scale, int32(scale.Dim(0)), 1, 1)
+		} else if weight.NumDims() == 2 && scale.Dim(0) == weight.Dim(0) {
+			scale = mlx.Reshape(scale, int32(scale.Dim(0)), 1)
+		}
+	case 2:
+		if weight.NumDims() == 3 && scale.Dim(0) == weight.Dim(0) && scale.Dim(1) == weight.Dim(1) {
+			scale = mlx.ExpandDims(scale, -1)
+		}
+	}
+	return mlx.Mul(weight, scale)
+}
+
 func transposeExpertWeightForGatherMM(w *mlx.Array) *mlx.Array {
 	if w == nil || !w.Valid() || w.NumDims() != 3 {
 		return w
@@ -562,9 +600,10 @@ func loadStackedExpertProjection(tensors map[string]*mlx.Array, cfg *Config, use
 	}
 
 	scales := tensors[key+"_scale"]
+	globalScale, globalScaleKeys := combinedTensorGlobalScale(tensors, key)
 	if scales == nil {
-		freeTensorKeys(tensors, key)
-		return &stackedExpertWeights{Weight: w}
+		freeTensorKeys(tensors, append([]string{key}, globalScaleKeys...)...)
+		return &stackedExpertWeights{Weight: applyExpertWeightGlobalScale(w, globalScale)}
 	}
 
 	qbiases := tensors[key+"_qbias"]
@@ -573,12 +612,12 @@ func loadStackedExpertProjection(tensors map[string]*mlx.Array, cfg *Config, use
 		key, w, scales,
 	)
 
-	freeTensorKeys(tensors, key, key+"_scale")
+	freeTensorKeys(tensors, append([]string{key, key + "_scale"}, globalScaleKeys...)...)
 	if qbiases != nil {
 		freeTensorKeys(tensors, key+"_qbias")
 	}
 
-	if useQuantized && supportsGatherQMM(mode, bits) {
+	if useQuantized && supportsGatherQMM(mode, bits) && globalScale == nil {
 		return &stackedExpertWeights{
 			Weight:    w,
 			Scales:    scales,
@@ -590,7 +629,7 @@ func loadStackedExpertProjection(tensors map[string]*mlx.Array, cfg *Config, use
 	}
 
 	return &stackedExpertWeights{
-		Weight:    mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode),
+		Weight:    applyExpertWeightGlobalScale(mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode, nil), globalScale),
 		Bits:      bits,
 		GroupSize: groupSize,
 		Mode:      mode,
@@ -627,6 +666,8 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQuan
 		if qbias != nil {
 			consumed = append(consumed, qbiasKey)
 		}
+		globalScale, globalScaleKeys := combinedTensorGlobalScale(tensors, key)
+		consumed = append(consumed, globalScaleKeys...)
 
 		gs, b, m := model.ResolveLinearQuantParams(
 			cfg.QuantGroupSize,
@@ -642,7 +683,7 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQuan
 			groupSize = gs
 			mode = m
 		}
-		if useQuantized && supportsGatherQMM(m, b) {
+		if useQuantized && supportsGatherQMM(m, b) && globalScale == nil {
 			weights = append(weights, w)
 			scales = append(scales, scale)
 			if qbias != nil {
@@ -651,7 +692,7 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQuan
 			continue
 		}
 
-		weights = append(weights, mlx.Dequantize(w, scale, qbias, gs, b, m))
+		weights = append(weights, applyExpertWeightGlobalScale(mlx.Dequantize(w, scale, qbias, gs, b, m, nil), globalScale))
 	}
 
 	out := &stackedExpertWeights{
@@ -731,7 +772,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 			mamba := &Mamba2{}
 			mamba.InProj = linears.Make(mixerPrefix + ".in_proj")
 			mamba.OutProj = linears.Make(mixerPrefix + ".out_proj")
-			mamba.ConvWeight = sanitizeConvWeight(tensors[mixerPrefix+".conv1d.weight"])
+			convWeight := sanitizeConvWeight(tensors[mixerPrefix+".conv1d.weight"])
 			mamba.ConvBias = tensors[mixerPrefix+".conv1d.bias"]
 			mamba.DtBias = tensors[mixerPrefix+".dt_bias"]
 			aLog := tensors[mixerPrefix+".A_log"]
@@ -740,13 +781,13 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 			}
 			mamba.D = tensors[mixerPrefix+".D"]
 			mamba.NormWeight = tensors[mixerPrefix+".norm.weight"]
-			if mamba.InProj == nil || mamba.OutProj == nil || mamba.ConvWeight == nil || mamba.DtBias == nil || mamba.A == nil || mamba.D == nil || mamba.NormWeight == nil {
+			if mamba.InProj == nil || mamba.OutProj == nil || convWeight == nil || mamba.DtBias == nil || mamba.A == nil || mamba.D == nil || mamba.NormWeight == nil {
 				return fmt.Errorf("layer %d: missing mamba2 tensors", i)
 			}
-			if mamba.ConvWeight.NumDims() != 2 {
-				return fmt.Errorf("layer %d: conv1d weight must be 2D after sanitization, got %dD", i, mamba.ConvWeight.NumDims())
+			if convWeight.NumDims() != 2 {
+				return fmt.Errorf("layer %d: conv1d weight must be 2D after sanitization, got %dD", i, convWeight.NumDims())
 			}
-			mamba.Conv1D = nn.NewConv1d(mlx.ExpandDims(mamba.ConvWeight, 2), nil, 1, 0, 1, int32(mamba.ConvWeight.Dim(0)))
+			mamba.Conv1D = nn.NewConv1d(mlx.ExpandDims(convWeight, 2), nil, 1, 0, 1, int32(convWeight.Dim(0)))
 			layer.Mamba = mamba
 		case '*', 'A':
 			mixerPrefix := layerPrefix + ".mixer"
@@ -828,34 +869,6 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	return nil
 }
 
-func reluSquared(x *mlx.Array) *mlx.Array {
-	zero := mlx.NewScalarArray(float32(0)).AsType(x.DType())
-	x = mlx.Maximum(x, zero)
-	return mlx.Mul(x, x)
-}
-
-func depthwiseCausalConv1d(x, w *mlx.Array, outLen int32) *mlx.Array {
-	if x == nil || w == nil || w.NumDims() != 2 {
-		return nil
-	}
-	B := int32(x.Dim(0))
-	C := int32(w.Dim(0))
-	K := int32(w.Dim(1))
-	var out *mlx.Array
-	for i := range K {
-		seg := mlx.SliceStartStop(x, []int32{0, i, 0}, []int32{B, i + outLen, C})
-		wi := mlx.SliceStartStop(w, []int32{0, i}, []int32{C, i + 1})
-		wi = mlx.Reshape(wi, 1, 1, C)
-		term := mlx.Mul(seg, wi)
-		if out == nil {
-			out = term
-		} else {
-			out = mlx.Add(out, term)
-		}
-	}
-	return out
-}
-
 func repeatGroups(x *mlx.Array, repeats int32) *mlx.Array {
 	if repeats <= 1 {
 		return x
@@ -879,7 +892,7 @@ func sliceTime(x *mlx.Array, t int32) *mlx.Array {
 	return mlx.Squeeze(mlx.SliceStartStop(x, start, stop), 1)
 }
 
-func mamba2LoopScan(hidden, bState, cState, dt, state, a, d, dtBias *mlx.Array, B, L int32, cfg *Config, splits []int, aggressiveDetach bool) (*mlx.Array, *mlx.Array, []*mlx.Array) {
+func mamba2LoopScan(hidden, bState, cState, dt, state, a, d, dtBias, mask *mlx.Array, B, L int32, cfg *Config, splits []int) (*mlx.Array, *mlx.Array, []*mlx.Array) {
 	outs := make([]*mlx.Array, 0, L)
 	deltaStates := make([]*mlx.Array, 0, len(splits)+1)
 	splitIdx := 0
@@ -898,17 +911,20 @@ func mamba2LoopScan(hidden, bState, cState, dt, state, a, d, dtBias *mlx.Array, 
 		dA := mlx.Exp(product)
 		dB := mlx.Mul(mlx.Reshape(dtt, B, cfg.MambaNumHeads, 1), bt)
 		dBx := mlx.Mul(mlx.ExpandDims(xt, -1), mlx.ExpandDims(dB, 2))
-		state = mlx.Add(mlx.Mul(state, dA), dBx)
-		if aggressiveDetach {
-			state = state.Clone()
-			mlx.Eval(state)
+		nextState := mlx.Add(mlx.Mul(state, dA), dBx)
+		if mask != nil {
+			valid := sliceTime(mask, t)
+			state = mlx.Where(mlx.Reshape(valid, B, 1, 1, 1), nextState, state)
+		} else {
+			state = nextState
 		}
 
 		y := mlx.Sum(mlx.Mul(state, mlx.ExpandDims(ct, 2)), 3, false)
 		y = mlx.Add(y, mlx.Mul(xt, d))
-		if aggressiveDetach {
-			y = y.Clone()
-			mlx.Eval(y)
+		if mask != nil {
+			valid := sliceTime(mask, t)
+			zero := mlx.Zeros(y.DType(), int(B), int(cfg.MambaNumHeads), int(cfg.MambaHeadDim))
+			y = mlx.Where(mlx.Reshape(valid, B, 1, 1), y, zero)
 		}
 		outs = append(outs, y)
 		if splitIdx < len(splits) && int(t+1) == splits[splitIdx] {
@@ -923,7 +939,10 @@ func mamba2LoopScan(hidden, bState, cState, dt, state, a, d, dtBias *mlx.Array, 
 // mamba2ScanWithSnapshots uses optional fused scan helpers when they support
 // the current backend and shapes. It returns ok=false when the caller should
 // use the backend-neutral loop fallback.
-func mamba2ScanWithSnapshots(hidden, bState, cState, dt, state, a, d, dtBias *mlx.Array, B, L int32, cfg *Config, splits []int) (*mlx.Array, *mlx.Array, []*mlx.Array, bool) {
+func mamba2ScanWithSnapshots(hidden, bState, cState, dt, state, a, d, dtBias, mask *mlx.Array, B, L int32, cfg *Config, splits []int) (*mlx.Array, *mlx.Array, []*mlx.Array, bool) {
+	if mask != nil {
+		return nil, nil, nil, false
+	}
 	if len(splits) == 1 && splits[0] > 0 && splits[0] < int(L) {
 		y, nextState, snapshotState, ok := mlx.FastMamba2ScanWithSnapshot(hidden, bState, cState, dt, state, a, d, dtBias, splits[0])
 		if ok {
@@ -976,58 +995,50 @@ func mamba2ScanWithSnapshots(hidden, bState, cState, dt, state, a, d, dtBias *ml
 
 func (m *Mamba2) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
 	dtype := x.DType()
-	aggressiveDetach := c == nil
 	projected := m.InProj.Forward(x)
 	inner := cfg.MambaNumHeads * cfg.MambaHeadDim
 	convDim := inner + 2*cfg.NGroups*cfg.SSMStateSize
 
 	gate := mlx.SliceStartStop(projected, []int32{0, 0, 0}, []int32{B, L, inner})
-	if aggressiveDetach {
-		gate = gate.Clone()
-		mlx.Eval(gate)
-	}
 	xBC := mlx.SliceStartStop(projected, []int32{0, 0, inner}, []int32{B, L, inner + convDim}).AsType(mlx.DTypeFloat32)
 	dt := mlx.SliceStartStop(projected, []int32{0, 0, inner + convDim}, []int32{B, L, inner + convDim + cfg.MambaNumHeads})
-	if aggressiveDetach {
-		dt = dt.Clone()
-		mlx.Eval(dt)
-	}
+	mask := nn.PaddingMask(b, L)
 
 	convTail := cfg.ConvKernel - 1
 	var rc *cache.RecurrentCache
-	var convState *mlx.Array
+	var history *nn.RecurrentHistory
 	var state *mlx.Array
 	var splits []int
 	if c != nil {
 		if typed, ok := c.(*cache.RecurrentCache); ok {
 			rc = typed
-			history := rc.Get(b, mlx.DTypeFloat32)
-			convState = history.ConvState()
+			history = rc.Get(b, mlx.DTypeFloat32)
 			state = history.DeltaState()
 			splits = rc.SnapshotSplits(int(L))
 		}
-	}
-	if convState == nil {
-		convState = mlx.Zeros(mlx.DTypeFloat32, int(B), int(convTail), int(convDim))
 	}
 	if state == nil {
 		state = mlx.Zeros(mlx.DTypeFloat32, int(B), int(cfg.MambaNumHeads), int(cfg.MambaHeadDim), int(cfg.SSMStateSize))
 	}
 
-	convInput := mlx.Concatenate([]*mlx.Array{convState, xBC}, 1)
-	convWeight := m.ConvWeight.AsType(mlx.DTypeFloat32)
 	var convOut *mlx.Array
-	if m.ConvBias != nil {
-		if customConvOut, ok := mlx.FastMambaDepthwiseConvSiLU(convInput, convWeight, m.ConvBias.AsType(mlx.DTypeFloat32), int(L)); ok {
-			convOut = customConvOut
-		}
+	var convStates []*mlx.Array
+	convSiLUInHelper := m.ConvBias == nil
+	opts := make([]nn.RecurrentOption, 0, 3)
+	if history != nil {
+		opts = append(opts, nn.WithRecurrentHistory(history))
+	} else {
+		convState := mlx.Zeros(mlx.DTypeFloat32, int(B), int(convTail), int(convDim))
+		opts = append(opts, nn.WithRecurrentState(convState, nil))
 	}
-	if convOut == nil {
-		if m.Conv1D != nil {
-			convOut = m.Conv1D.Forward(convInput)
-		} else {
-			convOut = depthwiseCausalConv1d(convInput, convWeight, L)
-		}
+	if len(splits) > 0 {
+		opts = append(opts, nn.WithSnapshotSplits(splits))
+	}
+	if convSiLUInHelper {
+		opts = append(opts, nn.WithConvSiLU())
+	}
+	convOut, convStates = nn.CausalConv1D(b, xBC, m.Conv1D, int(convTail), opts...)
+	if !convSiLUInHelper {
 		if m.ConvBias != nil {
 			convOut = mlx.Add(convOut, m.ConvBias.AsType(mlx.DTypeFloat32))
 		}
@@ -1035,6 +1046,10 @@ func (m *Mamba2) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, L int32
 	}
 	if dtype != mlx.DTypeFloat32 {
 		convOut = convOut.AsType(dtype).AsType(mlx.DTypeFloat32)
+	}
+	if mask != nil {
+		zero := mlx.FromValue(float32(0)).AsType(convOut.DType())
+		convOut = mlx.Where(mlx.ExpandDims(mask, 2), convOut, zero)
 	}
 
 	hidden := mlx.SliceStartStop(convOut, []int32{0, 0, 0}, []int32{B, L, inner})
@@ -1044,12 +1059,6 @@ func (m *Mamba2) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, L int32
 	hidden = mlx.Reshape(hidden, B, L, cfg.MambaNumHeads, cfg.MambaHeadDim)
 	bState = mlx.Reshape(bState, B, L, cfg.NGroups, cfg.SSMStateSize)
 	cState = mlx.Reshape(cState, B, L, cfg.NGroups, cfg.SSMStateSize)
-	if aggressiveDetach {
-		hidden = hidden.Clone()
-		bState = bState.Clone()
-		cState = cState.Clone()
-		mlx.Eval(hidden, bState, cState)
-	}
 
 	var y *mlx.Array
 	var deltaStates []*mlx.Array
@@ -1062,6 +1071,7 @@ func (m *Mamba2) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, L int32
 		mlx.Reshape(m.A.AsType(mlx.DTypeFloat32), cfg.MambaNumHeads),
 		mlx.Reshape(m.D.AsType(mlx.DTypeFloat32), cfg.MambaNumHeads),
 		mlx.Reshape(m.DtBias.AsType(mlx.DTypeFloat32), cfg.MambaNumHeads),
+		mask,
 		B,
 		L,
 		cfg,
@@ -1074,58 +1084,19 @@ func (m *Mamba2) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, L int32
 		repeats := cfg.MambaNumHeads / cfg.NGroups
 		bState = repeatGroups(bState, repeats)
 		cState = repeatGroups(cState, repeats)
-		if aggressiveDetach {
-			bState = bState.Clone()
-			cState = cState.Clone()
-			mlx.Eval(bState, cState)
-		}
 		a := mlx.Reshape(m.A, 1, cfg.MambaNumHeads, 1, 1)
 		d := mlx.Reshape(m.D.AsType(mlx.DTypeFloat32), 1, cfg.MambaNumHeads, 1)
 		dtBias := mlx.Tile(mlx.Reshape(m.DtBias.AsType(mlx.DTypeFloat32), 1, cfg.MambaNumHeads), []int32{B, 1})
-		y, state, deltaStates = mamba2LoopScan(hidden, bState, cState, dt, state, a, d, dtBias, B, L, cfg, splits, aggressiveDetach)
+		y, state, deltaStates = mamba2LoopScan(hidden, bState, cState, dt, state, a, d, dtBias, mask, B, L, cfg, splits)
 	}
 	y = mlx.Reshape(y, B, L, inner)
 	y = gatedGroupRMSNormAsType(y, gate, m.NormWeight, cfg, dtype)
 	out := m.OutProj.Forward(y)
 	if rc != nil {
-		convStates := make([]*mlx.Array, 0, len(splits)+1)
-		for _, split := range splits {
-			st := mambaConvStateAt(convInput, b.SeqQueryLens, convTail, int32(split))
-			if L > 1 {
-				st = mlx.Contiguous(st, false)
-			}
-			convStates = append(convStates, st)
-		}
-		st := mambaConvStateAt(convInput, b.SeqQueryLens, convTail, L)
-		if L > 1 {
-			st = mlx.Contiguous(st, false)
-		}
-		convStates = append(convStates, st)
 		deltaStates = append(deltaStates, state)
 		rc.Put(b, convStates, deltaStates)
 	}
 	return out
-}
-
-func mambaConvStateAt(concat *mlx.Array, queryLens []int32, convTail, boundary int32) *mlx.Array {
-	B := int32(concat.Dim(0))
-	D := int32(concat.Dim(2))
-
-	if convTail > 0 && slices.ContainsFunc(queryLens, func(q int32) bool { return boundary > q }) {
-		offsets := make([]int32, int(B*convTail))
-		for i := range int(B) {
-			end := min(boundary, queryLens[i])
-			for k := range int(convTail) {
-				offsets[i*int(convTail)+k] = end + int32(k)
-			}
-		}
-		positions := mlx.NewArrayInt32(offsets, []int32{B, convTail, 1})
-		return mlx.TakeAlongAxis(concat, positions, 1)
-	}
-
-	return mlx.SliceStartStop(concat,
-		[]int32{0, boundary, 0},
-		[]int32{B, boundary + convTail, D})
 }
 
 func gatedGroupRMSNormAsType(y, gate, weight *mlx.Array, cfg *Config, dtype mlx.DType) *mlx.Array {
@@ -1178,7 +1149,7 @@ func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, L in
 
 func (m *DenseMLP) Forward(x *mlx.Array) *mlx.Array {
 	up := m.UpProj.Forward(x)
-	hidden := reluSquared(up)
+	hidden := mlx.ReLUSquared(up)
 	out := m.DownProj.Forward(hidden)
 	return out
 }
@@ -1248,7 +1219,7 @@ func (m *SparseMoE) expertForward(x *mlx.Array, indices *mlx.Array, cfg *Config)
 
 	up := m.gatherExpertUp(xFlat, idxFlat, doSort)
 
-	hidden := reluSquared(up)
+	hidden := mlx.ReLUSquared(up)
 	if hidden.DType() != up.DType() {
 		// Keep the activation in the projection dtype so dense and quantized
 		// down projections stay on the BF16 fast path.
@@ -1303,7 +1274,7 @@ func (m *SparseMoE) Forward(x *mlx.Array, cfg *Config) *mlx.Array {
 	}
 
 	sharedUp := m.SharedUp.Forward(x)
-	sharedHidden := reluSquared(sharedUp)
+	sharedHidden := mlx.ReLUSquared(sharedUp)
 	shared := m.SharedDown.Forward(sharedHidden)
 	y = mlx.Add(y, shared)
 	return mlx.Reshape(y, B, L, cfg.HiddenSize)
@@ -1403,21 +1374,12 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
 	B, L := int32(dims[0]), int32(dims[1])
 
 	h := m.EmbedTokens.Forward(tokens)
-	noCacheDetach := caches == nil
-	if noCacheDetach {
-		h = h.Clone()
-		mlx.Eval(h)
-	}
 	for i, layer := range m.Layers {
 		var c cache.Cache
 		if caches != nil && i < len(caches) {
 			c = caches[i]
 		}
 		h = layer.Forward(h, b, c, B, L, m.Config)
-		if noCacheDetach {
-			h = h.Clone()
-			mlx.Eval(h)
-		}
 	}
 	h = m.Norm.Forward(h, m.LayerNormEpsilon)
 	return h

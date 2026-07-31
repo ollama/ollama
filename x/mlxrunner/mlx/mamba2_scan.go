@@ -1,22 +1,18 @@
 package mlx
 
-// #include <stdlib.h>
-// #include "generated.h"
-import "C"
-
-import (
-	"sync"
-	"unsafe"
-)
-
 var (
-	mamba2ScanMetalKernelOnce sync.Once
-	mamba2ScanMetalKernel     C.mlx_fast_metal_kernel
-	mamba2ScanMetalDisabled   bool
-
-	mamba2ScanSnapshotMetalKernelOnce sync.Once
-	mamba2ScanSnapshotMetalKernel     C.mlx_fast_metal_kernel
-	mamba2ScanSnapshotMetalDisabled   bool
+	mamba2Scan = &gpuKernel{
+		name:    "mamba2_scan",
+		inputs:  []string{"hidden", "b_state", "c_state", "dt", "state_in", "a", "d", "dt_bias", "T"},
+		outputs: []string{"y", "state_out"},
+		metal:   gpuSource{source: mamba2ScanMetalKernelSource},
+	}
+	mamba2ScanSnapshot = &gpuKernel{
+		name:    "mamba2_scan_snapshot",
+		inputs:  []string{"hidden", "b_state", "c_state", "dt", "state_in", "a", "d", "dt_bias", "T", "split"},
+		outputs: []string{"y", "states_out"},
+		metal:   gpuSource{source: mamba2ScanSnapshotMetalKernelSource},
+	}
 )
 
 const mamba2ScanMetalKernelSource = `
@@ -119,76 +115,6 @@ for (int i = 0; i < n_per_t; ++i) {
 }
 `
 
-func initMamba2ScanMetalKernel() {
-	inputs, freeInputs, ok := cStringVector([]string{"hidden", "b_state", "c_state", "dt", "state_in", "a", "d", "dt_bias", "T"})
-	if !ok {
-		mamba2ScanMetalDisabled = true
-		freeInputs()
-		return
-	}
-	defer freeInputs()
-
-	outputs, freeOutputs, ok := cStringVector([]string{"y", "state_out"})
-	if !ok {
-		mamba2ScanMetalDisabled = true
-		freeOutputs()
-		return
-	}
-	defer freeOutputs()
-
-	cName := C.CString("mamba2_scan")
-	defer C.free(unsafe.Pointer(cName))
-	cSource := C.CString(mamba2ScanMetalKernelSource)
-	defer C.free(unsafe.Pointer(cSource))
-	cHeader := C.CString("")
-	defer C.free(unsafe.Pointer(cHeader))
-
-	mamba2ScanMetalKernel = C.mlx_fast_metal_kernel_new(
-		cName,
-		inputs,
-		outputs,
-		cSource,
-		cHeader,
-		C.bool(true),
-		C.bool(false),
-	)
-}
-
-func initMamba2ScanSnapshotMetalKernel() {
-	inputs, freeInputs, ok := cStringVector([]string{"hidden", "b_state", "c_state", "dt", "state_in", "a", "d", "dt_bias", "T", "split"})
-	if !ok {
-		mamba2ScanSnapshotMetalDisabled = true
-		freeInputs()
-		return
-	}
-	defer freeInputs()
-
-	outputs, freeOutputs, ok := cStringVector([]string{"y", "states_out"})
-	if !ok {
-		mamba2ScanSnapshotMetalDisabled = true
-		freeOutputs()
-		return
-	}
-	defer freeOutputs()
-
-	cName := C.CString("mamba2_scan_snapshot")
-	defer C.free(unsafe.Pointer(cName))
-	cSource := C.CString(mamba2ScanSnapshotMetalKernelSource)
-	defer C.free(unsafe.Pointer(cSource))
-	cHeader := C.CString("")
-	defer C.free(unsafe.Pointer(cHeader))
-
-	mamba2ScanSnapshotMetalKernel = C.mlx_fast_metal_kernel_new(
-		cName,
-		inputs,
-		outputs,
-		cSource,
-		cHeader,
-		C.bool(true),
-		C.bool(false),
-	)
-}
-
 func mamba2ScanValidate(hidden, bState, cState, dt, state, a, d, dtBias *Array) (B, T, H, G, D, S int, ok bool) {
 	if hidden == nil || bState == nil || cState == nil || dt == nil || state == nil || a == nil || d == nil || dtBias == nil {
 		return 0, 0, 0, 0, 0, 0, false
@@ -235,172 +161,60 @@ func mamba2ScanValidate(hidden, bState, cState, dt, state, a, d, dtBias *Array) 
 	return B, T, H, G, D, S, true
 }
 
-func addMamba2ScanMetalTemplateArgs(cfg C.mlx_fast_metal_kernel_config, B, H, G, D, S int) bool {
-	for _, tpl := range []struct {
-		name  string
-		value int
-	}{
-		{name: "B", value: B},
-		{name: "H", value: H},
-		{name: "G", value: G},
-		{name: "D", value: D},
-		{name: "S", value: S},
-	} {
-		cn := C.CString(tpl.name)
-		rc := C.mlx_fast_metal_kernel_config_add_template_arg_int(cfg, cn, C.int(tpl.value))
-		C.free(unsafe.Pointer(cn))
-		if rc != 0 {
-			return false
-		}
+func mamba2ScanTemplateArgs(B, H, G, D, S int) []gpuIntArg {
+	return []gpuIntArg{
+		{"B", B},
+		{"H", H},
+		{"G", G},
+		{"D", D},
+		{"S", S},
 	}
-	return true
 }
 
 func mamba2ScanMetalKernelApply(hidden, bState, cState, dt, state, a, d, dtBias *Array) (y, nextState *Array, ok bool) {
-	if !MetalIsAvailable() {
-		return nil, nil, false
-	}
-	if mamba2ScanMetalDisabled {
-		return nil, nil, false
-	}
 	B, T, H, G, D, S, ok := mamba2ScanValidate(hidden, bState, cState, dt, state, a, d, dtBias)
 	if !ok {
 		return nil, nil, false
 	}
 
-	mamba2ScanMetalKernelOnce.Do(initMamba2ScanMetalKernel)
-	if mamba2ScanMetalDisabled {
+	outs, ok := mamba2Scan.applyMetal(gpuLaunch{
+		ints: mamba2ScanTemplateArgs(B, H, G, D, S),
+		outputs: []gpuOutputSpec{
+			{"MAMBA2_SCAN_Y", []int32{int32(B), int32(T), int32(H), int32(D)}, DTypeFloat32},
+			{"MAMBA2_SCAN_STATE", []int32{int32(B), int32(H), int32(D), int32(S)}, DTypeFloat32},
+		},
+		grid:        [3]int{32, D, B * H},
+		threadGroup: [3]int{32, min(D, 4), 1},
+		inputs:      []*Array{hidden, bState, cState, dt, state, a, d, dtBias, FromValue(T)},
+	})
+	if !ok {
 		return nil, nil, false
 	}
-
-	cfg := C.mlx_fast_metal_kernel_config_new()
-	defer C.mlx_fast_metal_kernel_config_free(cfg)
-	if !addMamba2ScanMetalTemplateArgs(cfg, B, H, G, D, S) {
-		return nil, nil, false
-	}
-
-	yShape := []C.int{C.int(B), C.int(T), C.int(H), C.int(D)}
-	stateShape := []C.int{C.int(B), C.int(H), C.int(D), C.int(S)}
-	if C.mlx_fast_metal_kernel_config_add_output_arg(cfg, unsafe.SliceData(yShape), C.size_t(len(yShape)), C.mlx_dtype(DTypeFloat32)) != 0 {
-		return nil, nil, false
-	}
-	if C.mlx_fast_metal_kernel_config_add_output_arg(cfg, unsafe.SliceData(stateShape), C.size_t(len(stateShape)), C.mlx_dtype(DTypeFloat32)) != 0 {
-		return nil, nil, false
-	}
-	if C.mlx_fast_metal_kernel_config_set_grid(cfg, 32, C.int(D), C.int(B*H)) != 0 {
-		return nil, nil, false
-	}
-	threadY := D
-	if threadY > 4 {
-		threadY = 4
-	}
-	if C.mlx_fast_metal_kernel_config_set_thread_group(cfg, 32, C.int(threadY), 1) != 0 {
-		return nil, nil, false
-	}
-
-	tScalar := FromValue(T)
-	inputs := []C.mlx_array{
-		hidden.ctx,
-		bState.ctx,
-		cState.ctx,
-		dt.ctx,
-		state.ctx,
-		a.ctx,
-		d.ctx,
-		dtBias.ctx,
-		tScalar.ctx,
-	}
-	inVec := C.mlx_vector_array_new_data(unsafe.SliceData(inputs), C.size_t(len(inputs)))
-	defer C.mlx_vector_array_free(inVec)
-
-	outVec := C.mlx_vector_array_new()
-	defer C.mlx_vector_array_free(outVec)
-	if C.mlx_fast_metal_kernel_apply(&outVec, mamba2ScanMetalKernel, inVec, cfg, DefaultStream().ctx) != 0 {
-		return nil, nil, false
-	}
-	if int(C.mlx_vector_array_size(outVec)) < 2 {
-		return nil, nil, false
-	}
-
-	y = New("MAMBA2_SCAN_Y")
-	nextState = New("MAMBA2_SCAN_STATE")
-	C.mlx_vector_array_get(&y.ctx, outVec, 0)
-	C.mlx_vector_array_get(&nextState.ctx, outVec, 1)
-	return y, nextState, true
+	return outs[0], outs[1], true
 }
 
 func mamba2ScanSnapshotMetalKernelApply(hidden, bState, cState, dt, state, a, d, dtBias *Array, split int) (y, nextState, snapshotState *Array, ok bool) {
-	if !MetalIsAvailable() {
-		return nil, nil, nil, false
-	}
-	if mamba2ScanSnapshotMetalDisabled {
-		return nil, nil, nil, false
-	}
 	B, T, H, G, D, S, ok := mamba2ScanValidate(hidden, bState, cState, dt, state, a, d, dtBias)
 	if !ok || split <= 0 || split >= T {
 		return nil, nil, nil, false
 	}
 
-	mamba2ScanSnapshotMetalKernelOnce.Do(initMamba2ScanSnapshotMetalKernel)
-	if mamba2ScanSnapshotMetalDisabled {
+	outs, ok := mamba2ScanSnapshot.applyMetal(gpuLaunch{
+		ints: mamba2ScanTemplateArgs(B, H, G, D, S),
+		outputs: []gpuOutputSpec{
+			{"MAMBA2_SCAN_SNAPSHOT_Y", []int32{int32(B), int32(T), int32(H), int32(D)}, DTypeFloat32},
+			{"MAMBA2_SCAN_SNAPSHOT_STATES", []int32{2, int32(B), int32(H), int32(D), int32(S)}, DTypeFloat32},
+		},
+		grid:        [3]int{32, D, B * H},
+		threadGroup: [3]int{32, min(D, 4), 1},
+		inputs:      []*Array{hidden, bState, cState, dt, state, a, d, dtBias, FromValue(T), FromValue(split)},
+	})
+	if !ok {
 		return nil, nil, nil, false
 	}
 
-	cfg := C.mlx_fast_metal_kernel_config_new()
-	defer C.mlx_fast_metal_kernel_config_free(cfg)
-	if !addMamba2ScanMetalTemplateArgs(cfg, B, H, G, D, S) {
-		return nil, nil, nil, false
-	}
-
-	yShape := []C.int{C.int(B), C.int(T), C.int(H), C.int(D)}
-	statesShape := []C.int{2, C.int(B), C.int(H), C.int(D), C.int(S)}
-	if C.mlx_fast_metal_kernel_config_add_output_arg(cfg, unsafe.SliceData(yShape), C.size_t(len(yShape)), C.mlx_dtype(DTypeFloat32)) != 0 {
-		return nil, nil, nil, false
-	}
-	if C.mlx_fast_metal_kernel_config_add_output_arg(cfg, unsafe.SliceData(statesShape), C.size_t(len(statesShape)), C.mlx_dtype(DTypeFloat32)) != 0 {
-		return nil, nil, nil, false
-	}
-	if C.mlx_fast_metal_kernel_config_set_grid(cfg, 32, C.int(D), C.int(B*H)) != 0 {
-		return nil, nil, nil, false
-	}
-	threadY := D
-	if threadY > 4 {
-		threadY = 4
-	}
-	if C.mlx_fast_metal_kernel_config_set_thread_group(cfg, 32, C.int(threadY), 1) != 0 {
-		return nil, nil, nil, false
-	}
-
-	tScalar := FromValue(T)
-	splitScalar := FromValue(split)
-	inputs := []C.mlx_array{
-		hidden.ctx,
-		bState.ctx,
-		cState.ctx,
-		dt.ctx,
-		state.ctx,
-		a.ctx,
-		d.ctx,
-		dtBias.ctx,
-		tScalar.ctx,
-		splitScalar.ctx,
-	}
-	inVec := C.mlx_vector_array_new_data(unsafe.SliceData(inputs), C.size_t(len(inputs)))
-	defer C.mlx_vector_array_free(inVec)
-
-	outVec := C.mlx_vector_array_new()
-	defer C.mlx_vector_array_free(outVec)
-	if C.mlx_fast_metal_kernel_apply(&outVec, mamba2ScanSnapshotMetalKernel, inVec, cfg, DefaultStream().ctx) != 0 {
-		return nil, nil, nil, false
-	}
-	if int(C.mlx_vector_array_size(outVec)) < 2 {
-		return nil, nil, nil, false
-	}
-
-	y = New("MAMBA2_SCAN_SNAPSHOT_Y")
-	states := New("MAMBA2_SCAN_SNAPSHOT_STATES")
-	C.mlx_vector_array_get(&y.ctx, outVec, 0)
-	C.mlx_vector_array_get(&states.ctx, outVec, 1)
+	y = outs[0]
+	states := outs[1]
 	snapshotState = Squeeze(
 		SliceStartStop(states, []int32{0, 0, 0, 0, 0}, []int32{1, int32(B), int32(H), int32(D), int32(S)}),
 		0,

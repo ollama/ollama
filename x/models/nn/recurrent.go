@@ -161,7 +161,7 @@ func CausalConv1D(b *batch.Batch, input *mlx.Array, conv *Conv1d, convTail int, 
 	segs := segmentRanges(cfg.splits, L)
 	states = make([]*mlx.Array, 0, len(segs))
 	for _, s := range segs {
-		st := convStateAt(concat, b.SeqQueryLens, convTail, s.end)
+		st := CausalConvStateAt(concat, b.SeqQueryLens, convTail, s.end)
 		if L > 1 {
 			// Detach the small window from the forward-sized concat; at L==1 it's tiny.
 			st = mlx.Contiguous(st, false)
@@ -183,11 +183,12 @@ func depthwiseConvWeight(c *Conv1d) *mlx.Array {
 	return mlx.Reshape(c.Weight, int32(c.Weight.Dim(0)), int32(c.Weight.Dim(1)))
 }
 
-// convStateAt returns the conv state to cache at boundary: the trailing convTail
-// input positions ending at boundary, clamped per row to the row's real length so
-// a padded row freezes at its real end rather than capturing padding. The prior
-// prefixed in concat shifts those positions to columns [boundary, boundary+convTail).
-func convStateAt(concat *mlx.Array, queryLens []int32, convTail int, boundary int32) *mlx.Array {
+// CausalConvStateAt returns the conv state to cache at boundary: the trailing
+// convTail input positions ending at boundary, clamped per row to the row's
+// real length so a padded row freezes at its real end rather than capturing
+// padding. The prior prefixed in concat shifts those positions to columns
+// [boundary, boundary+convTail).
+func CausalConvStateAt(concat *mlx.Array, queryLens []int32, convTail int, boundary int32) *mlx.Array {
 	B := int32(concat.Dim(0))
 	D := int32(concat.Dim(2))
 
@@ -327,4 +328,10 @@ func paddingMask(b *batch.Batch, L int32) *mlx.Array {
 	b.Memo.Put(inputs, mask)
 
 	return mask
+}
+
+// PaddingMask derives a [B, L] bool mask from b.SeqQueryLens for right-padded
+// recurrent inputs. It returns nil when every row is full.
+func PaddingMask(b *batch.Batch, L int32) *mlx.Array {
+	return paddingMask(b, L)
 }
