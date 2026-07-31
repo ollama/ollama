@@ -5,10 +5,14 @@ import "C"
 
 import (
 	"reflect"
+	"strings"
+	"sync/atomic"
 	"unsafe"
 )
 
 // Quantization operations
+
+var fastQuantizedMatmulBackendState atomic.Int32 // 0 unknown, 1 unsupported, 2 supported
 
 func Quantize(w *Array, groupSize, bits int, mode string) (weights, scales, biases *Array) {
 	cMode := C.CString(mode)
@@ -77,6 +81,86 @@ func QuantizedMatmul(x, w, scales, biases *Array, transpose bool, groupSize, bit
 	out := New("QUANTIZED_MATMUL")
 	C.mlx_quantized_matmul(&out.ctx, x.ctx, w.ctx, scales.ctx, b, C.bool(transpose), optGroupSize, optBits, cMode, DefaultStream().ctx)
 	return out
+}
+
+func FastQuantizedMatmul(x, w, scales, biases *Array, transpose bool, groupSize, bits int, mode string) *Array {
+	if transpose && biases == nil && supportsQQMatmul(x, mode) {
+		return qqMatmul(x, w, scales, nil, nil, groupSize, bits, mode)
+	}
+	return QuantizedMatmul(x, w, scales, biases, transpose, groupSize, bits, mode)
+}
+
+func SupportsFastQuantizedMatmulMode(mode string) bool {
+	switch strings.ToLower(mode) {
+	case "nvfp4", "mxfp8":
+		return supportsFastQuantizedMatmulBackend()
+	default:
+		return false
+	}
+}
+
+func supportsFastQuantizedMatmulBackend() bool {
+	switch fastQuantizedMatmulBackendState.Load() {
+	case 1:
+		return false
+	case 2:
+		return true
+	}
+	if CheckInit() != nil {
+		fastQuantizedMatmulBackendState.Store(1)
+		return false
+	}
+
+	supported := !MetalIsAvailable() && CUDAIsAvailable() && cudaComputeCapabilityAtLeast(10, 0)
+	if supported {
+		fastQuantizedMatmulBackendState.Store(2)
+	} else {
+		fastQuantizedMatmulBackendState.Store(1)
+	}
+	return supported
+}
+
+func resetFastQuantizedMatmulBackendCache() {
+	fastQuantizedMatmulBackendState.Store(0)
+}
+
+func qqMatmul(x, w, scales, globalScaleX, globalScaleW *Array, groupSize, bits int, mode string) *Array {
+	cMode := C.CString(mode)
+	defer C.free(unsafe.Pointer(cMode))
+	optGroupSize := C.mlx_optional_int{value: C.int(groupSize), has_value: true}
+	optBits := C.mlx_optional_int{value: C.int(bits), has_value: true}
+
+	var s, gsX, gsW C.mlx_array
+	if scales != nil {
+		s = scales.ctx
+	}
+	if globalScaleX != nil {
+		gsX = globalScaleX.ctx
+	}
+	if globalScaleW != nil {
+		gsW = globalScaleW.ctx
+	}
+
+	out := New("QQMM")
+	C.mlx_qqmm(&out.ctx, x.ctx, w.ctx, s, optGroupSize, optBits, cMode, gsX, gsW, DefaultStream().ctx)
+	return out
+}
+
+func supportsQQMatmul(x *Array, mode string) bool {
+	if x == nil || !x.Valid() || x.NumDims() == 0 {
+		return false
+	}
+	if !SupportsFastQuantizedMatmulMode(mode) {
+		return false
+	}
+	lastDim := x.Dim(x.NumDims() - 1)
+	if lastDim <= 0 {
+		return false
+	}
+	// MLX CUDA routes QQMM vector inputs back through a qmv-shaped path. Keep
+	// decode and small prompts on QuantizedMatmul so this fast path targets
+	// large prompt/prefill batches where block-scaled matmul can amortize setup.
+	return x.Size()/lastDim >= 128
 }
 
 func GatherQMM(x, w, scales *Array, biases, lhsIndices, rhsIndices *Array, transpose bool, groupSize, bits int, mode string, sortedIndices bool) *Array {
