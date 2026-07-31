@@ -2399,9 +2399,10 @@ func NewCLI() *cobra.Command {
 	}
 
 	listCmd := &cobra.Command{
-		Use:     "list",
+		Use:     "list [MODEL_PREFIX]",
 		Aliases: []string{"ls"},
 		Short:   "List models",
+		Args:    cobra.MaximumNArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    ListHandler,
 	}
