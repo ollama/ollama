@@ -10,6 +10,10 @@ input size, and finding that `--image-max-tokens` cannot change it.
 > arch that is not in that switch gets no flags at all. Adding an arch to the switch is only
 > half the job — the projector must also *consume* the flags on the llama.cpp side.
 
+For what each arch actually **costs** at real image sizes — stock vs fork vs pinned, in
+visual tokens and pixels-per-token — plus the routing policy that follows, see
+[vision-token-budget-measurements.md](vision-token-budget-measurements.md).
+
 ## What each arch actually gets
 
 | `modelArch` | flags ollama passes | effective budget | set by |
