@@ -693,9 +693,11 @@ func (c *launcherClient) launcherManagedAutodiscoveryState(ctx context.Context, 
 func (c *launcherClient) resolveRunModel(ctx context.Context, req RunModelRequest) (string, error) {
 	current := config.LastModel()
 	if !req.ForcePicker && current != "" && c.policy.Confirm == LaunchConfirmAutoApprove && !isInteractiveSession() {
-		if err := c.ensureModelsReady(ctx, []string{current}); err != nil {
+		ready, err := c.ensureModelsReady(ctx, []string{current})
+		if err != nil {
 			return "", err
 		}
+		current = ready[0]
 		fmt.Fprintf(os.Stderr, "Headless mode: auto-selected last used model %q\n", current)
 		return current, nil
 	}
@@ -706,12 +708,12 @@ func (c *launcherClient) resolveRunModel(ctx context.Context, req RunModelReques
 			return "", err
 		}
 		if usable {
-			if err := c.ensureModelsReady(ctx, []string{current}); err != nil {
+			if ready, err := c.ensureModelsReady(ctx, []string{current}); err != nil {
 				if !errors.Is(err, errDeprecatedLaunchModelDeclined) {
 					return "", err
 				}
 			} else {
-				return current, nil
+				return ready[0], nil
 			}
 		}
 	}
@@ -757,7 +759,7 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 		}
 		models = selected
 	} else if len(models) > 0 {
-		if err := c.ensureModelsReadyFor(ctx, models[:1], runner.String(), name); err != nil {
+		if ready, err := c.ensureModelsReadyFor(ctx, models[:1], runner.String(), name); err != nil {
 			if !errors.Is(err, errDeprecatedLaunchModelDeclined) || req.ModelOverride != "" {
 				return err
 			}
@@ -767,6 +769,8 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 			}
 			models = selected
 			needsConfigure = true
+		} else {
+			models[0] = ready[0]
 		}
 	}
 
@@ -995,7 +999,7 @@ func (c *launcherClient) resolveSingleIntegrationTarget(ctx context.Context, nam
 		}
 		target = selected
 	} else if !skipReadiness {
-		if err := c.ensureModelsReadyFor(ctx, []string{target}, runner.String(), name); err != nil {
+		if ready, err := c.ensureModelsReadyFor(ctx, []string{target}, runner.String(), name); err != nil {
 			if !errors.Is(err, errDeprecatedLaunchModelDeclined) {
 				return "", false, err
 			}
@@ -1007,6 +1011,8 @@ func (c *launcherClient) resolveSingleIntegrationTarget(ctx context.Context, nam
 			}
 			target = selected
 			needsConfigure = true
+		} else {
+			target = ready[0]
 		}
 	}
 
@@ -1079,7 +1085,8 @@ func (c *launcherClient) selectSingleModelWithSelectorReady(ctx context.Context,
 			return "", ErrCancelled
 		}
 		if ensureReady {
-			if err := c.ensureModelsReadyFor(ctx, []string{selected}, label, commandName); err != nil {
+			ready, err := c.ensureModelsReadyFor(ctx, []string{selected}, label, commandName)
+			if err != nil {
 				if errors.Is(err, errUpgradeCancelled) {
 					current = selected
 					continue
@@ -1090,6 +1097,7 @@ func (c *launcherClient) selectSingleModelWithSelectorReady(ctx context.Context,
 				}
 				return "", err
 			}
+			selected = ready[0]
 		}
 		return selected, nil
 	}
@@ -1242,19 +1250,23 @@ func (c *launcherClient) requestRecommendations(ctx context.Context) ([]ModelIte
 	return items, nil
 }
 
-func (c *launcherClient) ensureModelsReady(ctx context.Context, models []string) error {
+func (c *launcherClient) ensureModelsReady(ctx context.Context, models []string) ([]string, error) {
 	return c.ensureModelsReadyFor(ctx, models, "ollama launch", "")
 }
 
-func (c *launcherClient) ensureModelsReadyFor(ctx context.Context, models []string, label, commandName string) error {
+// ensureModelsReadyFor returns the models to continue with, which differ
+// from the requested ones when a missing default tag was resolved to its
+// ":cloud" variant (see showOrPullWithPolicy).
+func (c *launcherClient) ensureModelsReadyFor(ctx context.Context, models []string, label, commandName string) ([]string, error) {
 	models = dedupeModelList(models)
 	if len(models) == 0 {
-		return nil
+		return models, nil
 	}
 	cloudRec, localRec := c.agentCapableRecommendations(ctx)
 
+	retryCommand := launchRetryCommand(commandName)
 	cloudModels := make(map[string]bool, len(models))
-	for _, model := range models {
+	for i, model := range models {
 		if prompt := deprecatedLaunchModelPrompt(model, label, commandName, cloudRec, localRec); prompt != "" {
 			ok, err := ConfirmPromptWithOptions(prompt, ConfirmOptions{
 				YesLabel: "Launch anyway",
@@ -1262,24 +1274,34 @@ func (c *launcherClient) ensureModelsReadyFor(ctx context.Context, models []stri
 				Default:  ConfirmDefaultNo,
 			})
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if !ok {
-				return errDeprecatedLaunchModelDeclined
+				return nil, errDeprecatedLaunchModelDeclined
 			}
 		}
 		isCloudModel := isCloudModelName(model)
 		if isCloudModel {
 			cloudModels[model] = true
 			if err := c.ensureCloudModelAccess(ctx, model); err != nil {
-				return err
+				return nil, err
 			}
 		}
-		if err := showOrPullWithPolicy(ctx, c.apiClient, model, c.policy.missingModelPolicy(), isCloudModel); err != nil {
-			return err
+		resolved, err := showOrPullWithPolicy(ctx, c.apiClient, model, c.policy.missingModelPolicy(), isCloudModel, retryCommand)
+		if err != nil {
+			return nil, err
+		}
+		if resolved != model {
+			// The user accepted the ":cloud" variant, so apply the cloud
+			// bookkeeping the original name skipped.
+			models[i] = resolved
+			cloudModels[resolved] = true
+			if err := c.ensureCloudModelAccess(ctx, resolved); err != nil {
+				return nil, err
+			}
 		}
 	}
-	return ensureAuth(ctx, c.apiClient, cloudModels, models)
+	return models, ensureAuth(ctx, c.apiClient, cloudModels, models)
 }
 
 func (c *launcherClient) agentCapableRecommendations(ctx context.Context) (cloud, local string) {
@@ -1327,7 +1349,8 @@ func (c *launcherClient) selectReadyModelsForSave(ctx context.Context, selected 
 	skipped := make([]skippedModel, 0, len(selected))
 
 	for _, model := range selected {
-		if err := c.ensureModelsReadyFor(ctx, []string{model}, label, commandName); err != nil {
+		ready, err := c.ensureModelsReadyFor(ctx, []string{model}, label, commandName)
+		if err != nil {
 			if errors.Is(err, errUpgradeCancelled) {
 				return nil, nil, err
 			}
@@ -1343,7 +1366,7 @@ func (c *launcherClient) selectReadyModelsForSave(ctx context.Context, selected 
 			})
 			continue
 		}
-		accepted = append(accepted, model)
+		accepted = append(accepted, ready[0])
 	}
 
 	return accepted, skipped, nil
