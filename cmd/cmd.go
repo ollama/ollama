@@ -707,6 +707,32 @@ func hasListedModelName(models []api.ListModelResponse, name string) bool {
 	return false
 }
 
+// showOrPullModel returns model info for name, pulling the model if it isn't
+// available locally. If the pull finds no default tag but a ":cloud" tag
+// exists, the user may be offered the cloud model instead (see
+// pullWithCloudSuggestion), in which case the returned name is the cloud
+// name the caller should continue with. verb is the user-facing command
+// ("run" or "pull") used in hint text.
+func showOrPullModel(cmd *cobra.Command, client *api.Client, name string, insecure bool, verb string) (*api.ShowResponse, string, error) {
+	info, err := client.Show(cmd.Context(), &api.ShowRequest{Model: name})
+	if err == nil {
+		return info, name, nil
+	}
+
+	var se api.StatusError
+	if !errors.As(err, &se) || se.StatusCode != http.StatusNotFound || modelref.HasExplicitCloudSource(name) {
+		return nil, name, err
+	}
+
+	resolved, err := pullWithCloudSuggestion(cmd.Context(), client, name, insecure, verb)
+	if err != nil {
+		return nil, name, err
+	}
+
+	info, err = client.Show(cmd.Context(), &api.ShowRequest{Model: resolved})
+	return info, resolved, err
+}
+
 func RunHandler(cmd *cobra.Command, args []string) error {
 	interactive := true
 
@@ -802,30 +828,21 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	name := args[0]
-	requestedCloud := modelref.HasExplicitCloudSource(name)
+	insecure, err := cmd.Flags().GetBool("insecure")
+	if err != nil {
+		return err
+	}
 
-	info, err := func() (*api.ShowResponse, error) {
-		showReq := &api.ShowRequest{Name: name}
-		info, err := client.Show(cmd.Context(), showReq)
-		var se api.StatusError
-		if errors.As(err, &se) && se.StatusCode == http.StatusNotFound {
-			if requestedCloud {
-				return nil, err
-			}
-			if err := PullHandler(cmd, []string{name}); err != nil {
-				return nil, err
-			}
-			return client.Show(cmd.Context(), &api.ShowRequest{Name: name})
-		}
-		return info, err
-	}()
+	info, name, err := showOrPullModel(cmd, client, args[0], insecure, "run")
 	if err != nil {
 		if handleCloudAuthorizationError(err) {
 			return nil
 		}
 		return err
 	}
+	// The model may have been resolved to a different name (e.g. its ":cloud"
+	// variant), so make sure downstream requests use it.
+	opts.Model = name
 
 	ensureCloudStub(cmd.Context(), client, name)
 
@@ -1506,6 +1523,15 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	_, err = pullWithCloudSuggestion(cmd.Context(), client, args[0], insecure, "pull")
+	return err
+}
+
+// pullModelWithProgress pulls name, rendering progress to stderr. When
+// clearNotFound is set and the pull fails because the model doesn't exist,
+// the progress display is erased rather than left behind; callers set it
+// when a ":cloud" suggestion prompt may immediately follow the failure.
+func pullModelWithProgress(ctx context.Context, client *api.Client, name string, insecure, clearNotFound bool) error {
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
 
@@ -1566,8 +1592,13 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	request := api.PullRequest{Name: args[0], Insecure: insecure}
-	return client.Pull(cmd.Context(), &request, fn)
+	request := api.PullRequest{Name: name, Insecure: insecure}
+	err := client.Pull(ctx, &request, fn)
+	if clearNotFound && isPullNotFoundErr(err) {
+		// The deferred Stop becomes a no-op after this.
+		p.StopAndClear()
+	}
+	return err
 }
 
 type generateContextKey string

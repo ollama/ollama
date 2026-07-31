@@ -48,24 +48,16 @@ func saveLastAgentModel(model string) error {
 }
 
 func prepareAgentModel(cmd *cobra.Command, client *api.Client, opts *agentTUIOptions, thinkExplicit bool) (*api.ShowResponse, error) {
-	requestedCloud := modelref.HasExplicitCloudSource(opts.Model)
-	info, err := func() (*api.ShowResponse, error) {
-		info, err := client.Show(cmd.Context(), &api.ShowRequest{Model: opts.Model})
-		var se api.StatusError
-		if errors.As(err, &se) && se.StatusCode == http.StatusNotFound {
-			if requestedCloud {
-				return nil, err
-			}
-			if err := PullHandler(cmd, []string{opts.Model}); err != nil {
-				return nil, err
-			}
-			return client.Show(cmd.Context(), &api.ShowRequest{Model: opts.Model})
-		}
-		return info, err
-	}()
+	// Unlike `ollama run`, the bare `ollama` root command doesn't define
+	// --insecure, so GetBool would error; treat it as false.
+	insecure, _ := cmd.Flags().GetBool("insecure")
+	info, resolved, err := showOrPullModel(cmd, client, opts.Model, insecure, "run")
 	if err != nil {
 		return nil, err
 	}
+	// The model may have been resolved to a different name (e.g. its
+	// ":cloud" variant).
+	opts.Model = resolved
 
 	ensureCloudStub(cmd.Context(), client, opts.Model)
 	opts.Think, err = inferThinkingOption(&info.Capabilities, &runOptions{Model: opts.Model, Think: opts.Think}, thinkExplicit)
