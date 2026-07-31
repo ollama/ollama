@@ -3,6 +3,7 @@ package base
 import (
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
@@ -29,6 +30,8 @@ func TestMediaFeatureKey(t *testing.T) {
 }
 
 func TestMediaFeatureCacheLeaseLifetime(t *testing.T) {
+	mlxtest.Setup(t)
+
 	cache := newMediaFeatureCache(1, 4)
 	features := mlx.FromValues([]float32{1}, 1, 1)
 	lease := cache.Store(NewMediaFeatureKey([]byte("a"), ""), features, 1)
@@ -48,6 +51,8 @@ func TestMediaFeatureCacheLeaseLifetime(t *testing.T) {
 }
 
 func TestMediaFeatureCacheLRU(t *testing.T) {
+	mlxtest.Setup(t)
+
 	cache := newMediaFeatureCache(2, 1<<20)
 	keys := []MediaFeatureKey{
 		NewMediaFeatureKey([]byte("a"), ""),
@@ -85,6 +90,8 @@ func TestMediaFeatureCacheLRU(t *testing.T) {
 }
 
 func TestMediaFeatureCacheByteLimit(t *testing.T) {
+	mlxtest.Setup(t)
+
 	cache := newMediaFeatureCache(4, 4)
 	first := mlx.FromValues([]float32{1}, 1, 1)
 	firstLease := cache.Store(NewMediaFeatureKey([]byte("a"), ""), first, 1)
@@ -107,6 +114,8 @@ func TestMediaFeatureCacheByteLimit(t *testing.T) {
 }
 
 func TestMediaFeatureCacheMultipleLeases(t *testing.T) {
+	mlxtest.Setup(t)
+
 	cache := newMediaFeatureCache(1, 4)
 	key := NewMediaFeatureKey([]byte("a"), "")
 	features := mlx.FromValues([]float32{1}, 1, 1)
@@ -131,6 +140,8 @@ func TestMediaFeatureCacheMultipleLeases(t *testing.T) {
 }
 
 func TestMediaFeatureCacheStoreExisting(t *testing.T) {
+	mlxtest.Setup(t)
+
 	cache := newMediaFeatureCache(1, 1<<20)
 	key := NewMediaFeatureKey([]byte("a"), "")
 	firstFeatures := mlx.FromValues([]float32{1}, 1, 1)
