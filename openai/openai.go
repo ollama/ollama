@@ -637,6 +637,13 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	}
 
 	if effort != "" {
+		// OpenAI's GPT-5 series accepts "minimal" as a reasoning_effort value.
+		// Ollama has no distinct minimal think level, so treat it as the
+		// closest equivalent ("low") rather than rejecting the request.
+		if effort == "minimal" {
+			effort = "low"
+		}
+
 		if !slices.Contains([]string{"high", "medium", "low", "max", "none"}, effort) {
 			return nil, fmt.Errorf("invalid reasoning value: '%s' (must be \"high\", \"medium\", \"low\", \"max\", or \"none\")", effort)
 		}

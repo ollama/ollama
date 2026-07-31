@@ -65,6 +65,7 @@ func TestFromChatRequest_ReasoningEffort(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "unset", effort: nil, want: nil},
+		{name: "minimal maps to low", effort: effort("minimal"), want: "low"},
 		{name: "high", effort: effort("high"), want: "high"},
 		{name: "medium", effort: effort("medium"), want: "medium"},
 		{name: "low", effort: effort("low"), want: "low"},
