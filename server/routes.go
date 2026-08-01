@@ -3057,6 +3057,8 @@ func truncateNativeChatMessages(ctx context.Context, m *Model, r llm.LlamaServer
 	currMsgIdx := 0
 	var system []api.Message
 
+	imageNumTokens := imageTokenCosts(m, opts, req.Messages)
+
 	for i := 0; i <= lastMsgIdx; i++ {
 		system = system[:0]
 		for j := range i {
@@ -3077,11 +3079,16 @@ func truncateNativeChatMessages(ctx context.Context, m *Model, r llm.LlamaServer
 			return nil, err
 		}
 
+		// renderReq.Messages is the collected system prefix plus the tail, so
+		// charge image costs for exactly those messages.
 		ctxLen := len(tokens)
-		if m != nil && m.ProjectorPaths != nil {
-			for _, msg := range renderReq.Messages {
-				ctxLen += 768 * len(msg.Images)
+		for j := range i {
+			if req.Messages[j].Role == "system" {
+				ctxLen += imageNumTokens[j]
 			}
+		}
+		for _, t := range imageNumTokens[i:] {
+			ctxLen += t
 		}
 
 		if ctxLen <= opts.NumCtx {

@@ -25,8 +25,11 @@ intentionally skipped so a developer can iterate on a local llama.cpp tree.
   small tensor repacking primitives.
 - `001-llama-cpp-hooks.patch` - small additive call-site edits in llama.cpp files.
   It currently touches `src/llama-model-loader.cpp` and `tools/mtmd/clip.cpp`.
-- `002-llama-cpp-ui-empty-assets.patch` - lets the llama.cpp UI embed helper
-  generate an empty asset table when no UI assets are present.
+- `002-llama-cpp-nemotron-dynres.patch` - switches the nemotron_v2_vl projector
+  from a fixed 512x512 canvas (256 tokens/image) to native-aspect dynamic
+  resolution (256..3328 tokens, `<img>`/`</img>` markers, interpolated position
+  embeddings). Fork-carried port of llama.cpp PR #23638; see
+  `docs/maxusai/nemotron-dynres-patch.md`.
 - `compat.cmake`, `apply-patch.cmake` - CMake glue and an idempotent applier
   (used by `llama/server/CMakeLists.txt`) that applies every `*.patch` under
   this directory by numeric filename order — the hooks patch plus each

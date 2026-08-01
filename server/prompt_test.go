@@ -3,6 +3,8 @@ package server
 import (
 	"bytes"
 	"context"
+	"image"
+	"image/png"
 	"strings"
 	"testing"
 
@@ -12,6 +14,17 @@ import (
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/model"
 )
+
+// testPNG returns an encoded width×height PNG whose header
+// imageTokenCost can size.
+func testPNG(t *testing.T, width, height int) api.ImageData {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, width, height))); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
 
 func testConfigWithRenderer(renderer string) model.ConfigV2 {
 	return model.ConfigV2{Renderer: renderer}
@@ -36,6 +49,12 @@ func TestChatPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 	visionModel := Model{Template: tmpl, ProjectorPaths: []string{"vision"}}
+
+	// Ollama-format models whose vision tensors live inline in the main GGUF:
+	// no projector layer, recognized by architecture instead.
+	nemotronModel := Model{Template: tmpl, Config: model.ConfigV2{ModelFamily: "nemotron_h_omni", ModelFamilies: []string{"nemotron_h_omni"}}}
+	gemma4Model := Model{Template: tmpl, Config: model.ConfigV2{ModelFamily: "gemma4", ModelFamilies: []string{"gemma4"}}}
+	textModel := Model{Template: tmpl}
 
 	cases := []struct {
 		name     string
@@ -237,6 +256,127 @@ func TestChatPrompt(t *testing.T) {
 			},
 			expect: expect{
 				prompt: "You're a test, Harry! I-I'm a what? A test. And a thumping good one at that, I'd wager. ",
+			},
+		},
+		{
+			// Inline-vision arch with no projector layer: images must count
+			// against the context (3330/image for nemotron_h_omni), so two
+			// images cannot fit in 4096 and history is trimmed. Before
+			// maxImageTokens, the ProjectorPaths gate counted these as zero.
+			name:     "truncate images on inline-vision nemotron",
+			model:    nemotronModel,
+			limit:    4096,
+			truncate: true,
+			msgs: []api.Message{
+				{Role: "user", Content: "You're a test, Harry!", Images: []api.ImageData{[]byte("something")}},
+				{Role: "assistant", Content: "I-I'm a what?"},
+				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager.", Images: []api.ImageData{[]byte("somethingelse")}},
+			},
+			expect: expect{
+				prompt: "I-I'm a what? [img-0]A test. And a thumping good one at that, I'd wager. ",
+				images: [][]byte{
+					[]byte("somethingelse"),
+				},
+			},
+		},
+		{
+			name:     "images on inline-vision nemotron fit larger context",
+			model:    nemotronModel,
+			limit:    8192,
+			truncate: true,
+			msgs: []api.Message{
+				{Role: "user", Content: "You're a test, Harry!", Images: []api.ImageData{[]byte("something")}},
+				{Role: "assistant", Content: "I-I'm a what?"},
+				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager.", Images: []api.ImageData{[]byte("somethingelse")}},
+			},
+			expect: expect{
+				prompt: "[img-0]You're a test, Harry! I-I'm a what? [img-1]A test. And a thumping good one at that, I'd wager. ",
+				images: [][]byte{
+					[]byte("something"),
+					[]byte("somethingelse"),
+				},
+			},
+		},
+		{
+			// gemma4 stores vision inline too; its default ceiling resolves to
+			// 1122/image, so two images exceed 2048.
+			name:     "truncate images on inline-vision gemma4",
+			model:    gemma4Model,
+			limit:    2048,
+			truncate: true,
+			msgs: []api.Message{
+				{Role: "user", Content: "You're a test, Harry!", Images: []api.ImageData{[]byte("something")}},
+				{Role: "assistant", Content: "I-I'm a what?"},
+				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager.", Images: []api.ImageData{[]byte("somethingelse")}},
+			},
+			expect: expect{
+				prompt: "I-I'm a what? [img-0]A test. And a thumping good one at that, I'd wager. ",
+				images: [][]byte{
+					[]byte("somethingelse"),
+				},
+			},
+		},
+		{
+			// Size-aware accounting: two 640×480 images cost 302 tokens each
+			// on nemotron (20×15 grid + 2 markers), not the 3330 worst case,
+			// so the whole conversation fits a context the flat estimate
+			// would have truncated.
+			name:     "small images priced by size on inline-vision nemotron",
+			model:    nemotronModel,
+			limit:    1024,
+			truncate: true,
+			msgs: []api.Message{
+				{Role: "user", Content: "You're a test, Harry!", Images: []api.ImageData{testPNG(t, 640, 480)}},
+				{Role: "assistant", Content: "I-I'm a what?"},
+				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager.", Images: []api.ImageData{testPNG(t, 640, 480)}},
+			},
+			expect: expect{
+				prompt: "[img-0]You're a test, Harry! I-I'm a what? [img-1]A test. And a thumping good one at that, I'd wager. ",
+				images: [][]byte{
+					testPNG(t, 640, 480),
+					testPNG(t, 640, 480),
+				},
+			},
+		},
+		{
+			// A 1920×1080 image is 2042 tokens on nemotron: with a 640×480
+			// (302 tokens) in the latest message it cannot fit 2048, so the
+			// older message is trimmed.
+			name:     "large image priced by size still truncates",
+			model:    nemotronModel,
+			limit:    2048,
+			truncate: true,
+			msgs: []api.Message{
+				{Role: "user", Content: "You're a test, Harry!", Images: []api.ImageData{testPNG(t, 1920, 1080)}},
+				{Role: "assistant", Content: "I-I'm a what?"},
+				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager.", Images: []api.ImageData{testPNG(t, 640, 480)}},
+			},
+			expect: expect{
+				prompt: "I-I'm a what? [img-0]A test. And a thumping good one at that, I'd wager. ",
+				images: [][]byte{
+					testPNG(t, 640, 480),
+				},
+			},
+		},
+		{
+			// A model with no projector and no inline-vision arch has no image
+			// input path: images stay free, so this fits a context the text
+			// alone nearly fills.
+			name:     "images free on model without image input path",
+			model:    textModel,
+			limit:    20,
+			truncate: true,
+			msgs: []api.Message{
+				{Role: "user", Content: "You're a test, Harry!", Images: []api.ImageData{[]byte("something")}},
+				{Role: "assistant", Content: "I-I'm a what?"},
+				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager.", Images: []api.ImageData{[]byte("somethingelse")}},
+			},
+			expect: expect{
+				prompt: "[img-0]You're a test, Harry! I-I'm a what? [img-1]A test. And a thumping good one at that, I'd wager. ",
+				images: [][]byte{
+					[]byte("something"),
+					[]byte("somethingelse"),
+				},
 			},
 		},
 	}
@@ -602,5 +742,110 @@ func TestRenderPromptResolvesDynamicGemma4Renderer(t *testing.T) {
 				t.Fatalf("rendered prompt mismatch (-got +want):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestMaxImageTokensModelGating(t *testing.T) {
+	opts := &api.Options{Runner: api.Runner{NumCtx: 4096}}
+
+	cases := []struct {
+		name string
+		m    *Model
+		opts *api.Options
+		want int
+	}{
+		{
+			name: "nil model",
+			m:    nil,
+			opts: opts,
+			want: 0,
+		},
+		{
+			name: "nil opts",
+			m:    &Model{ProjectorPaths: []string{"vision"}},
+			opts: nil,
+			want: 0,
+		},
+		{
+			name: "text-only model has no image input path",
+			m:    &Model{Config: model.ConfigV2{ModelFamily: "llama", ModelFamilies: []string{"llama"}}},
+			opts: opts,
+			want: 0,
+		},
+		{
+			name: "projector model without known arch keeps clip heuristic",
+			m:    &Model{ProjectorPaths: []string{"vision"}},
+			opts: opts,
+			want: 768,
+		},
+		{
+			name: "projector model with qwen arch charges qwen ceiling",
+			m:    &Model{ProjectorPaths: []string{"vision"}, Config: model.ConfigV2{ModelFamily: "qwen25vl", ModelFamilies: []string{"qwen25vl"}}},
+			opts: opts,
+			want: 4098,
+		},
+		{
+			name: "inline nemotron via ModelFamily",
+			m:    &Model{Config: model.ConfigV2{ModelFamily: "nemotron_h_omni"}},
+			opts: opts,
+			want: 3330,
+		},
+		{
+			// create.go can leave the vision arch only in ModelFamilies;
+			// mirror images.go's suppressAudioCapability and scan both.
+			name: "inline nemotron via ModelFamilies only",
+			m:    &Model{Config: model.ConfigV2{ModelFamily: "nemotron", ModelFamilies: []string{"nemotron", "nemotron_h_omni"}}},
+			opts: opts,
+			want: 3330,
+		},
+		{
+			name: "inline gemma4 resolves ceiling from opts",
+			m:    &Model{Config: model.ConfigV2{ModelFamily: "gemma4", ModelFamilies: []string{"gemma4"}}},
+			opts: &api.Options{Runner: api.Runner{ImageMinTokens: 70, ImageMaxTokens: 560}},
+			want: 562,
+		},
+		{
+			name: "inline gemma3 charges its structural cost",
+			m:    &Model{Config: model.ConfigV2{ModelFamily: "gemma3", ModelFamilies: []string{"gemma3"}}},
+			opts: opts,
+			want: 258,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := maxImageTokens(tt.m, tt.opts); got != tt.want {
+				t.Fatalf("maxImageTokens() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestImageTokenCosts(t *testing.T) {
+	nemotron := &Model{Config: model.ConfigV2{ModelFamily: "nemotron_h_omni", ModelFamilies: []string{"nemotron_h_omni"}}}
+	opts := &api.Options{Runner: api.Runner{NumCtx: 8192}}
+
+	msgs := []api.Message{
+		// One sized image (302) plus one undecodable blob (worst case 3330).
+		{Role: "user", Images: []api.ImageData{testPNG(t, 640, 480), api.ImageData("not an image")}},
+		{Role: "assistant", Content: "text only"},
+		// Ceiling-exact 2048×1664 → 64×52 grid + 2 markers.
+		{Role: "user", Images: []api.ImageData{testPNG(t, 2048, 1664)}},
+	}
+
+	if diff := cmp.Diff(imageTokenCosts(nemotron, opts, msgs), []int{302 + 3330, 0, 3330}); diff != "" {
+		t.Errorf("nemotron costs mismatch (-got +want):\n%s", diff)
+	}
+
+	textOnly := &Model{Config: model.ConfigV2{ModelFamily: "llama"}}
+	if diff := cmp.Diff(imageTokenCosts(textOnly, opts, msgs), []int{0, 0, 0}); diff != "" {
+		t.Errorf("text-only costs mismatch (-got +want):\n%s", diff)
+	}
+
+	// A projector-layer model with an unreplicated arch stays on the flat
+	// clip heuristic for every image, sized or not.
+	projector := &Model{ProjectorPaths: []string{"vision"}}
+	if diff := cmp.Diff(imageTokenCosts(projector, opts, msgs), []int{768 * 2, 0, 768}); diff != "" {
+		t.Errorf("projector costs mismatch (-got +want):\n%s", diff)
 	}
 }

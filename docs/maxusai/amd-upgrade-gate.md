@@ -41,6 +41,17 @@ throughout rather than silently skipped.
 of the test, and a container restart alone clearing the state cannot be excluded. It is
 recorded as strong evidence, not proof.
 
+## Ground-truth reproduction (2026-08-01)
+
+The failure class was reproduced deterministically on this host with the ground-truth
+vision suite in [nemotron-test-image.md](nemotron-test-image.md): on a b10091-payload
+build, `gemma4:31b` — at budgets identical to the gated 0.32.1 build — dropped from
+6/6 labels + a perfect invoice extraction + 5/5 chart values to 3/6 / 0/5 / 0/5, emitted
+degenerate token salad on the multi-image test, and twice produced responses describing
+a **previous request's** image (the #17475 shared-slot signature, also seen on
+nemotron3). Temperature 0, same model blob, same prompts. The gate's "degenerate vision
+output" observation is therefore not workload-specific and is now regression-testable.
+
 ## Corroborating upstream reports
 
 Both open, both 0.32.5-specific, both matching this deployment:

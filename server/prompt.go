@@ -5,9 +5,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
 	"log/slog"
 	"slices"
 	"strings"
+
+	// Image formats imageTokenCost can size from the header; anything else
+	// (llama.cpp's stb decoder also accepts e.g. bmp/tga) falls back to the
+	// worst-case estimate.
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
@@ -23,11 +31,10 @@ type tokenizeFunc func(context.Context, string) ([]int, error)
 func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.Options, msgs []api.Message, tools []api.Tool, think *api.ThinkValue, truncate bool) (prompt string, media []llm.MediaData, _ error) {
 	var system []api.Message
 
-	// TODO: This is only a truncation heuristic; llama-server handles the
-	// actual image/media inputs. Replace this with projector/model-aware media
-	// token accounting so image history is neither over-packed nor over-trimmed.
-	// Clip images are represented as 768 tokens, each an embedding.
-	imageNumTokens := 768
+	// This is only a truncation heuristic; llama-server handles the actual
+	// image/media inputs. Costs are per-arch and, where the arch's resize
+	// math is replicated in llm.ImageTokensForSize, per-image-size.
+	imageNumTokens := imageTokenCosts(m, opts, msgs)
 
 	lastMsgIdx := len(msgs) - 1
 	currMsgIdx := 0
@@ -54,10 +61,8 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 			}
 
 			ctxLen := len(s)
-			if m.ProjectorPaths != nil {
-				for _, msg := range msgs[i:] {
-					ctxLen += imageNumTokens * len(msg.Images)
-				}
+			for _, t := range imageNumTokens[i:] {
+				ctxLen += t
 			}
 
 			if ctxLen <= opts.NumCtx {
@@ -89,6 +94,98 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 	}
 
 	return p, media, nil
+}
+
+// visionTokenArch returns the architecture used for image-token accounting
+// and whether the model has an image input path at all.
+//
+// Vision models come in two layouts: a separate projector layer
+// (ProjectorPaths), or — for the llm.InlineVisionArch architectures — vision
+// tensors inline in the main GGUF with no projector layer at all, which the
+// runner self-references as --mmproj. The latter used to be invisible to the
+// ProjectorPaths check here, so their images were counted as zero tokens and
+// multi-image chats could pass the context-fit check yet overflow
+// llama-server's context.
+//
+// The arch gate can over-charge a text-only variant of an inline-vision arch
+// (e.g. a gemma3 GGUF without vision tensors): the charge only applies to
+// requests that actually attach images, which such a model cannot process
+// anyway, and checking real vision capability here would mean reopening the
+// GGUF on every request.
+func visionTokenArch(m *Model) (string, bool) {
+	if m == nil {
+		return "", false
+	}
+
+	arch := m.Config.ModelFamily
+	if !llm.InlineVisionArch(arch) {
+		for _, family := range m.Config.ModelFamilies {
+			if llm.InlineVisionArch(family) {
+				arch = family
+				break
+			}
+		}
+	}
+
+	if len(m.ProjectorPaths) == 0 && !llm.InlineVisionArch(arch) {
+		return "", false
+	}
+
+	return arch, true
+}
+
+// maxImageTokens returns the worst-case per-image token cost the chat
+// truncation heuristics charge against the context window, or 0 for a model
+// with no image input path.
+func maxImageTokens(m *Model, opts *api.Options) int {
+	if opts == nil {
+		return 0
+	}
+
+	arch, ok := visionTokenArch(m)
+	if !ok {
+		return 0
+	}
+
+	return llm.MaxImageTokens(arch, *opts)
+}
+
+// imageTokenCosts returns, per message, the token cost the truncation
+// heuristics charge for that message's images: the size-aware per-arch cost
+// when the image header decodes and the arch's preprocessing is replicated in
+// llm.ImageTokensForSize, and the flat per-arch worst case otherwise. The
+// slice is all zeros when the model has no image input path.
+func imageTokenCosts(m *Model, opts *api.Options, msgs []api.Message) []int {
+	costs := make([]int, len(msgs))
+
+	worstCase := maxImageTokens(m, opts)
+	if worstCase == 0 {
+		return costs
+	}
+	arch, _ := visionTokenArch(m)
+
+	for i, msg := range msgs {
+		for _, img := range msg.Images {
+			costs[i] += imageTokenCost(arch, *opts, img, worstCase)
+		}
+	}
+
+	return costs
+}
+
+// imageTokenCost returns the token cost of one image. Dimensions come from
+// the image header alone (image.DecodeConfig); formats Go cannot identify
+// fall back to worstCase, which over-trims rather than overflows.
+func imageTokenCost(arch string, opts api.Options, img api.ImageData, worstCase int) int {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(img))
+	if err != nil {
+		return worstCase
+	}
+
+	if n, ok := llm.ImageTokensForSize(arch, opts, cfg.Width, cfg.Height); ok {
+		return n
+	}
+	return worstCase
 }
 
 func imageTaggedMessages(m *Model, msgs []api.Message, start int, clearImages bool) ([]api.Message, []llm.MediaData, error) {
