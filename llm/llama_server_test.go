@@ -3715,6 +3715,10 @@ func TestLlamaServerCompletionDeferredFormat(t *testing.T) {
 			fmt.Fprint(w, `{"status":"ok"}`)
 			return
 		}
+		if r.URL.Path == "/tokenize" {
+			fmt.Fprint(w, `{"tokens":[1,2,3,4,5]}`)
+			return
+		}
 		if r.URL.Path != "/completion" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 			return
@@ -3819,8 +3823,79 @@ func TestLlamaServerCompletionDeferredFormat(t *testing.T) {
 	if final.EvalCount != 10 {
 		t.Errorf("EvalCount = %d, want 10 (4 thinking + 6 constrained)", final.EvalCount)
 	}
-	if final.PromptEvalCount != 15 {
-		t.Errorf("PromptEvalCount = %d, want 15 (14 cached + 1)", final.PromptEvalCount)
+	// The true prompt is pass one's; the continuation's prefill re-reads pass
+	// one's output from cache and must not inflate the reported count.
+	if final.PromptEvalCount != 10 {
+		t.Errorf("PromptEvalCount = %d, want 10 (pass one's prompt)", final.PromptEvalCount)
+	}
+}
+
+// TestLlamaServerCompletionDeferredFormatContextFull covers thinking that
+// leaves no room for the constrained continuation: the completion ends as a
+// length-limited thinking-only result instead of a llama-server error.
+func TestLlamaServerCompletionDeferredFormatContextFull(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			fmt.Fprint(w, `{"status":"ok"}`)
+		case "/tokenize":
+			// Longer than NumCtx below: the continuation cannot fit.
+			tokens := make([]string, 2048)
+			for i := range tokens {
+				tokens[i] = "1"
+			}
+			fmt.Fprintf(w, `{"tokens":[%s]}`, strings.Join(tokens, ","))
+		case "/completion":
+			requests++
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"content":"deep pondering","stop":false}`)
+			fmt.Fprintln(w, ``)
+			fmt.Fprintln(w, `data: {"content":"","stop":true,"stop_type":"word","stopping_word":"</think>","timings":{"prompt_n":10,"prompt_ms":100,"predicted_n":2000,"predicted_ms":40000}}`)
+			fmt.Fprintln(w, ``)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+	}
+
+	var responses []CompletionResponse
+	opts := api.DefaultOptions()
+	err := runner.Completion(t.Context(), CompletionRequest{
+		Prompt:        "test prompt",
+		Format:        []byte(`"json"`),
+		ThinkCloseTag: "</think>",
+		Options:       &opts,
+	}, func(cr CompletionResponse) {
+		responses = append(responses, cr)
+	})
+	if err != nil {
+		t.Fatalf("Completion error: %v", err)
+	}
+
+	if requests != 1 {
+		t.Fatalf("got %d completion requests, want 1 (no continuation)", requests)
+	}
+	final := responses[len(responses)-1]
+	if !final.Done {
+		t.Fatal("last response should be done")
+	}
+	if final.DoneReason != DoneReasonLength {
+		t.Errorf("DoneReason = %v, want %v", final.DoneReason, DoneReasonLength)
+	}
+	if final.Content != "" {
+		t.Errorf("final content = %q, want empty (already emitted with the marker)", final.Content)
 	}
 }
 

@@ -1610,19 +1610,46 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 		// so downstream parsers see the thinking close.
 		fn(CompletionResponse{Content: result.final.Content + req.ThinkCloseTag})
 
+		contPrompt := promptStr + result.content + req.ThinkCloseTag
+
+		// The continuation re-submits the thinking as prompt. If that no
+		// longer fits the context window, there is no room to generate the
+		// constrained answer: end honestly as a length-limited generation
+		// instead of letting llama-server reject the request.
+		if tokens, err := s.tokenize(ctx, contPrompt, true, nil); err == nil && len(tokens) >= s.options.NumCtx-llamaServerContinuationHeadroom {
+			slog.Warn("thinking filled the context window, skipping format-constrained continuation", "tokens", len(tokens), "num_ctx", s.options.NumCtx)
+			result.final.DoneReason = DoneReasonLength
+			result.final.Content = ""
+			fn(result.final)
+			return nil
+		}
+
 		cont, err := s.runCompletionPhase(ctx, req, llamaServerCompletionPhase{
-			prompt:      promptStr + result.content + req.ThinkCloseTag,
+			prompt:      contPrompt,
 			applyFormat: true,
 		}, fn)
+		var serr api.StatusError
+		if errors.As(err, &serr) && serr.StatusCode == http.StatusBadRequest {
+			// Defensive: llama-server rejected the continuation (e.g. context
+			// overflow the pre-check missed). Phase one completed, so degrade
+			// to a length-limited result rather than failing the request.
+			slog.Warn("format-constrained continuation rejected, returning thinking-only result", "error", serr.ErrorMessage)
+			result.final.DoneReason = DoneReasonLength
+			result.final.Content = ""
+			fn(result.final)
+			return nil
+		}
 		if err != nil {
 			return err
 		}
 		if !cont.finished {
 			return nil
 		}
-		// Report generated tokens and durations from both passes. The
-		// continuation's prompt eval is a cache hit over the first pass, so
-		// its count already reflects the true context size.
+		// Report generated tokens and durations from both passes, each counted
+		// once: the prompt eval is pass one's (the true prompt), since the
+		// continuation's prefill re-reads pass one's output from cache, and
+		// eval is the sum of both passes' generated tokens.
+		cont.final.PromptEvalCount = result.final.PromptEvalCount
 		cont.final.EvalCount += result.final.EvalCount
 		cont.final.EvalDuration += result.final.EvalDuration
 		cont.final.PromptEvalDuration += result.final.PromptEvalDuration
@@ -1635,6 +1662,11 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 	}
 	return nil
 }
+
+// llamaServerContinuationHeadroom is the minimum number of context slots that
+// must remain after the continuation prompt for constrained generation to be
+// worth attempting.
+const llamaServerContinuationHeadroom = 8
 
 // llamaServerCompletionPhase is one /completion request within a completion.
 // Format-constrained requests for implicit-thinking models run as two phases:
