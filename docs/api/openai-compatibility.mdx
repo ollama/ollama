@@ -216,6 +216,11 @@ curl -X POST http://localhost:11434/v1/chat/completions \
 - [ ] `user`
 - [ ] `n`
 
+#### Notes
+
+- Thinking is controlled with `reasoning_effort` on this endpoint. Use `"none"` to disable it.
+- The native `/api/chat` endpoint uses a `think` field for the same purpose, and the two are not interchangeable: `reasoning_effort` does not accept `true` or `false`, and `think` does not accept `"none"`. Both accept `"high"`, `"medium"`, `"low"`, and `"max"`.
+
 ### `/v1/completions`
 
 #### Supported features
