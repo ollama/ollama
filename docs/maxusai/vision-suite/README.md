@@ -42,9 +42,16 @@ Reproducible ground-truth benchmarks behind the measured tables in
   regardless of prompt instructions — qwen3.6 answers in 0-1000 normalized (IoU ~0.95
   once decoded; near-perfect grounding), nemotron3 with reasoning answers in pixels
   (center-accurate, IoU ~0.3). The scorer tries both spaces, keeps the better, and
-  reports `bbox_space` + `bbox_mean_iou` alongside center-hits. Both schema-key
-  dialects (`bbox`/`bbox_2d`, `name_bbox`/`name_bbox_2d`) are accepted; measured
-  2026-08-02: the key choice did not change qwen's quality, the space decode did.
+  reports `bbox_space` + `bbox_mean_iou` alongside center-hits. Accepted schema-key
+  dialects: `bbox`, `bbox_2d` (qwen, and nemotron's self-chosen key), `box_2d`
+  (gemma4/Gemini — note its [y1,x1,y2,x2] order, searched automatically), plus
+  `name_bbox`/`name_bbox_2d` on the invoice. Measured dialect map (2026-08-02):
+  qwen3.6 = bbox_2d, xyxy, norm-1000 (IoU ~0.95); gemma4 = box_2d, yxyx, norm-1000
+  (IoU ~0.78); nemotron3 = bbox_2d, xyxy, norm-1000 of its input canvas — on the
+  unpatched 512-letterbox payload the y-axis carries the padding offset, on dynres
+  payloads the canvas is the image itself; under prompted reasoning it can emit
+  coarse pixel-space boxes instead. Key choice alone did not change quality; the
+  space/order decode did.
 
 ## Example: full grid against an isolated test server
 

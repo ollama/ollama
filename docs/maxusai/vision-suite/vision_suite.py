@@ -121,7 +121,7 @@ def center_in(pred, gtb):
 
 def get_bbox(o):
     # Models speak different schema dialects: qwen-vl grounding uses "bbox_2d".
-    for k in ("bbox", "bbox_2d"):
+    for k in ("bbox", "bbox_2d", "box_2d"):
         if o.get(k):
             return o[k]
     return []
@@ -162,14 +162,16 @@ def score_scene(resp_text):
     # Score both spaces and keep the better one — report which.
     best = (0, 0.0, None)
     for space, fx, fy in (("pixel", 1.0, 1.0), ("norm1000", W/1000.0, H/1000.0)):
-        hits, ious = 0, []
-        for bb, gtb in matched:
-            px = [bb[0]*fx, bb[1]*fy, bb[2]*fx, bb[3]*fy]
-            hits += center_in(px, gtb)
-            ious.append(iou(px, gtb))
-        mean_iou = round(sum(ious)/len(ious), 3) if ious else 0.0
-        if (mean_iou, hits) > (best[1], best[0]):
-            best = (hits, mean_iou, space)
+        for order in ("xyxy", "yxyx"):  # gemma4/Gemini box_2d is [y1,x1,y2,x2]
+            hits, ious = 0, []
+            for bb, gtb in matched:
+                x1, y1, x2, y2 = (bb[0], bb[1], bb[2], bb[3]) if order == "xyxy" else (bb[1], bb[0], bb[3], bb[2])
+                px = [x1*fx, y1*fy, x2*fx, y2*fy]
+                hits += center_in(px, gtb)
+                ious.append(iou(px, gtb))
+            mean_iou = round(sum(ious)/len(ious), 3) if ious else 0.0
+            if (mean_iou, hits) > (best[1], best[0]):
+                best = (hits, mean_iou, f"{space}/{order}")
     s["bbox_hits"], s["bbox_mean_iou"], s["bbox_space"] = best
     if not s["serial_found"]:
         s["serial_found"] = g["serial"] in json.dumps(r)
