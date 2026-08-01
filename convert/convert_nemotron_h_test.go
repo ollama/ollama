@@ -353,7 +353,7 @@ func TestNemotronHNanoOmniReasoningV3LoadModelMetadata(t *testing.T) {
 		"vit_hidden_size": 1280,
 		"projector_hidden_size": 4096,
 		"vision_config": {
-			"version": "radio_v2.5-h",
+			"version": "c-radio_v4-h",
 			"patch_size": 16,
 			"min_num_patches": 1024,
 			"max_num_patches": 13312,
@@ -432,6 +432,42 @@ func TestNemotronHNanoOmniReasoningV3LoadModelMetadata(t *testing.T) {
 	}
 	if got, want := kv["audio.sound_token_id"], uint32(27); got != want {
 		t.Fatalf("unexpected audio token id: got %v want %v", got, want)
+	}
+}
+
+func TestNemotronHNanoVLRadioVersions(t *testing.T) {
+	for version, wantErr := range map[string]bool{
+		"":              false,
+		"radio_v2.5-h":  false,
+		"c-radio_v4-h":  false,
+		" c-radio_v4-h": false,
+		"radio_v1":      true,
+		"c-radio_v4-b":  true,
+	} {
+		m := &nemotronHNanoVLModel{
+			LLMConfig: nemotronHModel{
+				NumHiddenLayers:       4,
+				HiddenSize:            512,
+				NumAttentionHeads:     8,
+				ConvKernel:            4,
+				SSMStateSize:          128,
+				MambaNumHeads:         16,
+				MambaHeadDim:          32,
+				HybridOverridePattern: "ME*M",
+				NRoutedExperts:        16,
+				NumExpertsPerTok:      4,
+				MoEIntermediateSize:   256,
+			},
+		}
+		m.VisionConfig.Version = version
+
+		err := m.parseMore(os.DirFS(t.TempDir()))
+		if wantErr && err == nil {
+			t.Fatalf("expected error for RADIO version %q", version)
+		}
+		if !wantErr && err != nil {
+			t.Fatalf("unexpected error for RADIO version %q: %v", version, err)
+		}
 	}
 }
 
