@@ -28,7 +28,52 @@ visual tokens and pixels-per-token — plus the routing policy that follows, see
 | `gemma4` | `--image-min-tokens` / `--image-max-tokens`, defaults **40 / 1120** | 40 … 1,120 tokens | `set_limit_image_tokens(40, 280)`, ceiling raised by our flags |
 | `qwen2vl`, `qwen25vl`, `qwen3vl`, `qwen3vlmoe`, `qwen35`, `qwen35moe` | `--image-min-tokens 1024` (fixed) | 1,024 … 4,096 tokens | `set_limit_image_tokens(8, 4096)`, floor raised by our flag |
 | **`nemotron_h_omni`** | `--image-min-tokens` / `--image-max-tokens`, defaults **256 / 3328** | 256 … 3,328 with the 002 patch; **exactly 256 (flags inert) on an unpatched payload** | `set_limit_image_tokens(256, 3328)` added by `llama/compat/002-llama-cpp-nemotron-dynres.patch` |
+| `mistral3` | none | 8 … 1,024 **grid** tokens; per-image cost is grid + rows (see below), worst case **2,048** | `set_limit_image_tokens(8, 1024)` (pixtral projector) |
+| `glmocr` | none | 8 … 4,096 tokens | `set_limit_image_tokens(8, 4096)` (glm4v projector) |
+| `llama4` | none | structural: 144 per 336² tile + 144 overview + 2 markers ⇒ 146 (untiled) … 1,442 (3×3 grid) | 336² tiling (`set_llava_uhd_res_candidates(3)`), not a pixel budget |
+| `deepseekocr` | none | structural: 273 + fused rows + 1 ⇒ 274 … 1,264 | hardcoded 1024² global + 640² tiles (2…9), not a pixel budget |
 | everything else | none | whatever the projector defaults to | llama.cpp |
+
+## The non-budgeted compat arches (traced 2026-08-01, llama.cpp b10091)
+
+None of these four consume `--image-{min,max}-tokens`, so `api.Options.ImageMinTokens` /
+`ImageMaxTokens` are dead knobs for them (`visionServerArgs()` passes nothing). Exact
+per-image context cost — replicated by `llm.ImageTokensForSize()` and pinned by
+`TestImageTokensForSize`; the replication was byte-diffed against the verbatim b10091
+C++ over a ~5,500-size sweep:
+
+- **`mistral3`** (PROJECTOR_TYPE_PIXTRAL via `handle_mistral3_clip`): dyn_size
+  `smart_resize` on a 28 px grid (patch 14 × `mistral3.spatial_merge_size` 2), budget
+  8…1,024 grid tokens. Cost = `cols·rows + rows`: the grid, **plus one `[IMG_BREAK]`
+  embedding per row except the last, plus a lone `[IMG_END]` text token** (there is no
+  image-begin marker) — not grid + 2. A 1024×1024 image costs 32×32 + 32 = 1,056; the
+  worst case is a one-column strip at the pixel budget, 1,024 + 1,024 = 2,048. The old
+  flat 768/image heuristic under-counted large images by ~40%.
+- **`glmocr`** (PROJECTOR_TYPE_GLM4V via `handle_glmocr_clip`): qwen-shaped dyn_size on
+  the same 28 px grid (patch 14 × merge 2) but with the stock floor of 8 — this arch
+  does **not** get the qwen `--image-min-tokens 1024` pin. Cost = grid + 2, ceiling
+  4,096 + 2. At 1920×1080 that is 69×39 + 2 = 2,693 — 3.5× the old 768 heuristic.
+- **`llama4`** (PROJECTOR_TYPE_LLAMA4 via `handle_llama4_clip`): llava_uhd tiling, 336²
+  tiles of (336/14)²/2² = 144 embeddings. ≤ 336² ⇒ overview only (146 with markers);
+  larger images pick the best-fit grid from (x·336, y·336), x,y ∈ 1…3 minus 1×1, and pay
+  144 per tile plus the trailing 144-token overview. **At b10091 the
+  `MTMD_SLICE_TMPL_LLAMA4` tile separators are gone from `mtmd.cpp`** — only
+  `<|image_start|>`/`<|image_end|>` wrap the embeddings. Ceiling 144·10 + 2 = 1,442.
+- **`deepseekocr`** (PROJECTOR_TYPE_DEEPSEEKOCR via `handle_deepseekocr_clip`): geometry
+  hardcoded in `clip.cpp` (patch 16, base 1024, tile 640, 2…9 tiles), so GGUF KVs cannot
+  move it. Every image pays the padded 1024² global view: 16² grid + 16 image-newlines +
+  1 view separator = 273 embeddings. Images over 640 px in either dimension add the
+  closest-aspect tile grid as **fused rows** of (10·gridW + 1)·10 embeddings each. The
+  only text marker is a trailing `"\n"`. Ceiling is the 1×9 grid: 273 + 9·110 + 1 =
+  1,264. Note the cost is *not* monotonic in image size — the grid choice tracks aspect
+  ratio, not area, so 800×600 (3×2 grid, 894) costs more than the larger 1000×1000
+  (2×2 grid, 694).
+
+These are analytical values validated against the b10091 source, not yet end-to-end
+measurements; when one of these models is next served, spot-check with the
+`prompt_eval_count` method in
+[vision-token-budget-measurements.md](vision-token-budget-measurements.md) and extend its
+tables.
 
 ## Why nemotron was stuck at 256 (mechanism; applies to unpatched payloads)
 

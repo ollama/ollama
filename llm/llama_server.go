@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"math/rand"
 	"net"
 	"net/http"
@@ -824,6 +825,40 @@ func hasLegacyQwenMTPDraft(arch string, tensors []*ggml.Tensor) bool {
 	}
 }
 
+// Older Ollama-format GGUFs store vision tensors (v.*, mm.*) inline in
+// the main model file rather than in a separate projector layer. When
+// the arch has a llama/compat clip handler, we can point --mmproj at
+// the same file and the in-process shim translates the two views.
+//
+// If we auto-enable --mmproj for an arch whose clip handler doesn't
+// exist yet, upstream's clip loader sees un-translated Ollama tensors
+// and aborts model load. So gate on an explicit allowlist that mirrors
+// the compat layer's clip-side coverage in llama/compat/.
+var compatClipArches = map[string]bool{
+	"gemma3":          true,
+	"gemma4":          true,
+	"qwen35":          true,
+	"qwen35moe":       true,
+	"qwen25vl":        true,
+	"qwen3vl":         true,
+	"qwen3vlmoe":      true,
+	"mistral3":        true,
+	"deepseekocr":     true,
+	"glmocr":          true,
+	"llama4":          true,
+	"nemotron_h_omni": true,
+	// Add entries as llama/compat grows clip handlers.
+}
+
+// InlineVisionArch reports whether modelArch is one of the Ollama-format
+// architectures whose vision tensors may live inline in the main GGUF blob
+// with no projector layer at all — the arches NewLlamaServerRunner
+// self-references as --mmproj via the llama/compat clip shim. Callers that
+// gate image handling on ProjectorPaths must also consider these arches.
+func InlineVisionArch(modelArch string) bool {
+	return compatClipArches[modelArch]
+}
+
 // NewLlamaServerRunner creates a new llama-server runner that wraps the upstream llama-server binary.
 func NewLlamaServerRunner(
 	gpus []ml.DeviceInfo,
@@ -839,30 +874,6 @@ func NewLlamaServerRunner(
 	arch := f.KV().Architecture()
 	_, isEmbedding := f.KV()[fmt.Sprintf("%s.pooling_type", arch)]
 
-	// Older Ollama-format GGUFs store vision tensors (v.*, mm.*) inline in
-	// the main model file rather than in a separate projector layer. When
-	// the arch has a llama/compat clip handler, we can point --mmproj at
-	// the same file and the in-process shim translates the two views.
-	//
-	// If we auto-enable --mmproj for an arch whose clip handler doesn't
-	// exist yet, upstream's clip loader sees un-translated Ollama tensors
-	// and aborts model load. So gate on an explicit allowlist that mirrors
-	// the compat layer's clip-side coverage in llama/compat/.
-	compatClipArches := map[string]bool{
-		"gemma3":          true,
-		"gemma4":          true,
-		"qwen35":          true,
-		"qwen35moe":       true,
-		"qwen25vl":        true,
-		"qwen3vl":         true,
-		"qwen3vlmoe":      true,
-		"mistral3":        true,
-		"deepseekocr":     true,
-		"glmocr":          true,
-		"llama4":          true,
-		"nemotron_h_omni": true,
-		// Add entries as llama/compat grows clip handlers.
-	}
 	if len(projectors) == 0 &&
 		len(f.Tensors().Items("v.")) > 0 &&
 		compatClipArches[arch] {
@@ -1004,7 +1015,7 @@ func visionServerArgs(modelArch string, opts api.Options) []string {
 		// image tokens" warning because 8*1024 px is far below its 1024-token
 		// threshold. Without this they were the only vision arches in
 		// compatClipArches that llama-server never heard the floor for.
-		return []string{"--image-min-tokens", "1024"}
+		return []string{"--image-min-tokens", strconv.Itoa(qwenVLImageMinTokens)}
 	case "gemma4":
 		// Gemma 4 vision (gemma4v projector) image-token budget. llama.cpp
 		// defaults to set_limit_image_tokens(40, 280); we expose both bounds as
@@ -1086,6 +1097,320 @@ func nemotronImageTokenBudget(opts api.Options) (minTok, maxTok int) {
 		minTok = maxTok
 	}
 	return minTok, maxTok
+}
+
+const (
+	// imageMarkerTokens is the begin/end marker token pair mtmd wraps around
+	// each image's embeddings; measured prompt_eval_count is the embedding
+	// grid product plus this constant across the budgeted arches.
+	imageMarkerTokens = 2
+
+	// qwenVLImageMinTokens is the floor visionServerArgs always passes for
+	// the qwen VL projector family via --image-min-tokens, overriding
+	// llama.cpp's set_limit_image_tokens(8, 4096) default floor.
+	qwenVLImageMinTokens = 1024
+
+	// qwenVLImageMaxTokens is the structural ceiling from llama.cpp's
+	// set_limit_image_tokens(8, 4096) for the qwen VL projector family; it is
+	// not tunable through --image-max-tokens.
+	qwenVLImageMaxTokens = 4096
+
+	// gemma3ImageTokens is gemma3's structural per-image cost: the fixed-size
+	// preprocessor squashes every image to 896², giving (896/14)²/4² = 256
+	// embeddings regardless of input size or opts.
+	gemma3ImageTokens = 256
+
+	// defaultImageTokensEstimate is the historical clip heuristic charged for
+	// arches with no known budget.
+	defaultImageTokensEstimate = 768
+)
+
+// MaxImageTokens returns a conservative worst-case estimate of the context
+// cost of one image for modelArch, for the server-side truncation heuristics.
+// It charges the ceiling the projector enforces (resolved from opts exactly as
+// visionServerArgs resolves the flags it passes) plus the image begin/end
+// markers, so a chat that passes the Go-side context-fit check cannot
+// overflow llama-server. Actual cost is size-dependent and usually lower —
+// use ImageTokensForSize when the image dimensions are known. On a payload
+// without llama/compat/002-llama-cpp-nemotron-dynres.patch, nemotron_h_omni
+// images cost a flat 256 and both functions deliberately over-charge.
+func MaxImageTokens(modelArch string, opts api.Options) int {
+	switch modelArch {
+	case "qwen2vl", "qwen25vl", "qwen3vl", "qwen3vlmoe", "qwen35", "qwen35moe":
+		return qwenVLImageMaxTokens + imageMarkerTokens
+	case "gemma3":
+		return gemma3ImageTokens + imageMarkerTokens
+	case "gemma4":
+		_, maxTok := gemma4ImageTokenBudget(opts)
+		return maxTok + imageMarkerTokens
+	case "nemotron_h_omni":
+		_, maxTok := nemotronImageTokenBudget(opts)
+		return maxTok + imageMarkerTokens
+	case "mistral3":
+		// Pixtral charges the embedding grid (≤ 1024 by the token budget)
+		// plus one [IMG_BREAK] per row except the last and a trailing
+		// [IMG_END]; rows ≤ grid, so the worst case is a one-column strip:
+		// 1024 grid + 1023 breaks + 1 end = 2 × the budget.
+		return 2 * pixtralImageMaxTokens
+	case "glmocr":
+		return glmocrImageMaxTokens + imageMarkerTokens
+	case "llama4":
+		// Worst grid is 3×3 tiles plus the overview image, 144 each.
+		return llama4TileTokens*(llama4MaxTilesPerSide*llama4MaxTilesPerSide+1) + imageMarkerTokens
+	case "deepseekocr":
+		// Worst fused-row layout is the 1×9 grid (9 single-tile rows), on
+		// top of the global view and the single "\n" end marker.
+		return deepseekocrGlobalViewTokens + deepseekocrMaxTiles*deepseekocrRowTokens(1) + 1
+	default:
+		return defaultImageTokensEstimate
+	}
+}
+
+// Grid alignment (patch_size × n_merge pixels per token-grid cell) for the
+// arches whose preprocessing ImageTokensForSize replicates.
+const (
+	qwen2VLImageAlign  = 28 // ViT patch 14 × spatial merge 2 (qwen2vl, qwen25vl)
+	qwen3VLImageAlign  = 32 // ViT patch 16 × spatial merge 2 (qwen3vl family, incl. qwen35 via qwen3vl_merger)
+	gemma4ImageAlign   = 48 // ViT patch 16 × pooling kernel 3
+	nemotronImageAlign = 32 // ViT patch 16 × pixel-shuffle merge 2
+)
+
+// mistral3 loads as PROJECTOR_TYPE_PIXTRAL (llama/compat's
+// handle_mistral3_clip), whose dyn_size preprocessor runs smart_resize under
+// set_limit_image_tokens(8, 1024) on a patch 14 × spatial-merge 2 grid
+// (Mistral Small 3.x GGUFs carry mistral3.vision.patch_size=14 and
+// mistral3.spatial_merge_size=2). Unlike the other dyn_size arches, pixtral's
+// clip_n_output_tokens adds one [IMG_BREAK] embedding per grid row except the
+// last, and mtmd appends a lone [IMG_END] text token with no image-begin
+// marker — so the per-image cost is grid + rows, not grid + 2.
+const (
+	pixtralImageAlign     = 28
+	pixtralImageMinTokens = 8
+	pixtralImageMaxTokens = 1024
+)
+
+// glmocr loads as PROJECTOR_TYPE_GLM4V (handle_glmocr_clip): dyn_size
+// smart_resize under set_limit_image_tokens(8, 4096), patch 14 × merge 2
+// (convert_glmocr.go defaults). Counted like the qwen family, but with the
+// stock floor of 8 — visionServerArgs passes no --image-min-tokens for it.
+const (
+	glmocrImageAlign     = 28
+	glmocrImageMinTokens = 8
+	glmocrImageMaxTokens = 4096
+)
+
+// llama4 uses llava_uhd tiling over image_size² = 336² tiles: each tile (and
+// the trailing 336² overview image) costs (336/14 patches)² / 2² pixel-shuffle
+// = 144 embeddings, and the tile grid is chosen from the
+// set_llava_uhd_res_candidates(3) list — (x·336, y·336) for x,y in 1..3 minus
+// the 1×1 entry. At b10091 the MTMD_SLICE_TMPL_LLAMA4 separators are gone
+// from mtmd.cpp's dispatch, so only the <|image_start|>/<|image_end|> pair
+// wraps the embeddings.
+const (
+	llama4TileSize        = 336
+	llama4TileTokens      = 144
+	llama4MaxTilesPerSide = 3
+)
+
+// deepseekocr's geometry is hardcoded in clip.cpp's PROJECTOR_TYPE_DEEPSEEKOCR
+// branch (patch 16, base 1024, tile 640, 2..9 tiles) and its preprocessor
+// fuses each tile row into one image. The 1024² global view costs
+// 16·(16+1)+1 = 273 embeddings (16² grid + one image-newline per row + view
+// separator); a fused row of gridW tiles costs (10·gridW + 1)·10 (10 = 640 /
+// (16 patch × 4 SAM downsample)). mtmd emits no image-begin marker and a
+// single "\n" as the image-end text token.
+const (
+	deepseekocrTileSize         = 640
+	deepseekocrGlobalViewTokens = 273
+	deepseekocrMinTiles         = 2
+	deepseekocrMaxTiles         = 9
+	deepseekocrRowSideTokens    = 10
+)
+
+// ImageTokensForSize returns the exact context cost of one width×height image
+// for modelArch — embedding grid or tile layout plus that arch's marker and
+// separator text tokens — replicating the llama.cpp b10091 preprocessing. For
+// the budgeted dyn_size arches the budget is resolved from opts exactly as
+// visionServerArgs resolves the flags it passes, so the result matches what
+// llama-server will charge. Returns ok=false for arches whose preprocessing
+// is not replicated here (callers should fall back to MaxImageTokens) and for
+// non-positive dimensions.
+func ImageTokensForSize(modelArch string, opts api.Options, width, height int) (n int, ok bool) {
+	if width <= 0 || height <= 0 {
+		return 0, false
+	}
+	switch modelArch {
+	case "qwen2vl", "qwen25vl":
+		return smartResizeTokens(width, height, qwen2VLImageAlign, qwenVLImageMinTokens, qwenVLImageMaxTokens) + imageMarkerTokens, true
+	case "qwen3vl", "qwen3vlmoe", "qwen35", "qwen35moe":
+		return smartResizeTokens(width, height, qwen3VLImageAlign, qwenVLImageMinTokens, qwenVLImageMaxTokens) + imageMarkerTokens, true
+	case "gemma4":
+		minTok, maxTok := gemma4ImageTokenBudget(opts)
+		return smartResizeTokens(width, height, gemma4ImageAlign, minTok, maxTok) + imageMarkerTokens, true
+	case "nemotron_h_omni":
+		minTok, maxTok := nemotronImageTokenBudget(opts)
+		return smartResizeTokens(width, height, nemotronImageAlign, minTok, maxTok) + imageMarkerTokens, true
+	case "mistral3":
+		cols, rows := smartResizeGrid(width, height, pixtralImageAlign, pixtralImageMinTokens, pixtralImageMaxTokens)
+		// grid + (rows-1) [IMG_BREAK] embeddings + the [IMG_END] text token.
+		return cols*rows + rows, true
+	case "glmocr":
+		return smartResizeTokens(width, height, glmocrImageAlign, glmocrImageMinTokens, glmocrImageMaxTokens) + imageMarkerTokens, true
+	case "llama4":
+		return llama4ImageTokens(width, height) + imageMarkerTokens, true
+	case "deepseekocr":
+		// Only the "\n" image-end text token; there is no begin marker.
+		return deepseekocrImageTokens(width, height) + 1, true
+	default:
+		return 0, false
+	}
+}
+
+// llama4ImageTokens replicates mtmd_image_preprocessor_llava_uhd for the
+// llama4 projector: an image within one 336² tile costs just the overview
+// image; anything larger picks a tile grid via llama4BestGrid and costs one
+// tile per grid cell plus the trailing overview.
+func llama4ImageTokens(width, height int) int {
+	if width <= llama4TileSize && height <= llama4TileSize {
+		return llama4TileTokens
+	}
+	gridW, gridH := llama4BestGrid(width, height)
+	return llama4TileTokens * (gridW*gridH + 1)
+}
+
+// llama4BestGrid replicates select_best_resolution over the
+// set_llava_uhd_res_candidates(3) list: candidates (x·336, y·336) for x,y in
+// 1..3 minus 1×1, scanned in x-major order. The candidate with the highest
+// effective resolution (aspect-fitted area, capped at the original area)
+// wins; ties go to the least wasted candidate area, with the earliest
+// candidate kept on exact ties, mirroring the C++ strict comparisons and
+// float32 arithmetic.
+func llama4BestGrid(width, height int) (gridW, gridH int) {
+	bestEff, bestWaste := -1, 0
+	for x := 1; x <= llama4MaxTilesPerSide; x++ {
+		for y := 1; y <= llama4MaxTilesPerSide; y++ {
+			if x == 1 && y == 1 {
+				continue
+			}
+			cw, ch := x*llama4TileSize, y*llama4TileSize
+			scale := min(float32(cw)/float32(width), float32(ch)/float32(height))
+			eff := min(int(float32(width)*scale)*int(float32(height)*scale), width*height)
+			waste := cw*ch - eff
+			if eff > bestEff || (eff == bestEff && waste < bestWaste) {
+				bestEff, bestWaste = eff, waste
+				gridW, gridH = x, y
+			}
+		}
+	}
+	return gridW, gridH
+}
+
+// deepseekocrRowTokens is the embedding cost of one fused tile row: gridW
+// tiles of 10×10 output cells concatenated side by side, plus one
+// image-newline per output row.
+func deepseekocrRowTokens(gridW int) int {
+	return (deepseekocrRowSideTokens*gridW + 1) * deepseekocrRowSideTokens
+}
+
+// deepseekocrImageTokens replicates mtmd_image_preprocessor_deepseekocr: the
+// padded 1024² global view is always charged, and images larger than one 640²
+// tile in either dimension add gridH fused tile rows of gridW tiles each.
+func deepseekocrImageTokens(width, height int) int {
+	n := deepseekocrGlobalViewTokens
+	if width > deepseekocrTileSize || height > deepseekocrTileSize {
+		gridW, gridH := deepseekocrBestGrid(width, height)
+		n += gridH * deepseekocrRowTokens(gridW)
+	}
+	return n
+}
+
+// deepseekocrBestGrid replicates find_closest_aspect_ratio over every grid
+// with 2..9 tiles, generated in the C++ nesting order and sorted ascending by
+// tile count: the grid whose aspect ratio is float32-closest to the image's
+// wins, and on exact ties a later (larger) grid replaces the incumbent when
+// the image area exceeds half that grid's pixel area. (The C++ sort is
+// unstable for equal tile counts; a stable sort only diverges when two
+// equal-area grids tie on aspect distance to float32 precision, which real
+// image sizes do not hit.)
+func deepseekocrBestGrid(width, height int) (gridW, gridH int) {
+	type grid struct{ w, h int }
+	var candidates []grid
+	seen := make(map[grid]bool)
+	for n := deepseekocrMinTiles; n <= deepseekocrMaxTiles; n++ {
+		for w := 1; w <= n; w++ {
+			for h := 1; h <= n; h++ {
+				g := grid{w, h}
+				if w*h < deepseekocrMinTiles || w*h > deepseekocrMaxTiles || seen[g] {
+					continue
+				}
+				seen[g] = true
+				candidates = append(candidates, g)
+			}
+		}
+	}
+	slices.SortStableFunc(candidates, func(a, b grid) int {
+		return a.w*a.h - b.w*b.h
+	})
+
+	aspect := float32(width) / float32(height)
+	area := float32(width) * float32(height)
+	best := grid{1, 1}
+	bestDiff := float32(math.MaxFloat32)
+	for _, g := range candidates {
+		diff := aspect - float32(g.w)/float32(g.h)
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff < bestDiff {
+			bestDiff = diff
+			best = g
+		} else if diff == bestDiff {
+			target := float32(deepseekocrTileSize) * float32(deepseekocrTileSize) * float32(g.w*g.h)
+			if area > 0.5*target {
+				best = g
+			}
+		}
+	}
+	return best.w, best.h
+}
+
+// smartResizeTokens replicates img_tool::calc_size_preserved_ratio (the
+// "smart_resize" in tools/mtmd/mtmd-image.cpp): the image is aspect-preserved
+// resized so that minTokens ≤ pixels/align² ≤ maxTokens with both dimensions
+// aligned to multiples of align, and the token count is the resulting grid
+// product. Like the original, degenerate aspect ratios can exceed maxTokens:
+// the per-dimension floor of one align unit is applied after the pixel budget.
+func smartResizeTokens(width, height, align, minTokens, maxTokens int) int {
+	cols, rows := smartResizeGrid(width, height, align, minTokens, maxTokens)
+	return cols * rows
+}
+
+// smartResizeGrid is smartResizeTokens' underlying token grid, exposed as
+// (cols, rows) for arches whose per-row separator tokens make the row count
+// part of the cost (pixtral). Arithmetic mirrors the C++ float32 operations
+// so grid-boundary rounding matches llama-server exactly.
+func smartResizeGrid(width, height, align, minTokens, maxTokens int) (cols, rows int) {
+	minPixels := minTokens * align * align
+	maxPixels := maxTokens * align * align
+
+	roundBy := func(x float32) int { return int(math.Round(float64(x/float32(align)))) * align }
+	ceilBy := func(x float32) int { return int(math.Ceil(float64(x/float32(align)))) * align }
+	floorBy := func(x float32) int { return int(math.Floor(float64(x/float32(align)))) * align }
+
+	hBar := max(align, roundBy(float32(height)))
+	wBar := max(align, roundBy(float32(width)))
+
+	if hBar*wBar > maxPixels {
+		beta := float32(math.Sqrt(float64(float32(height*width) / float32(maxPixels))))
+		hBar = max(align, floorBy(float32(height)/beta))
+		wBar = max(align, floorBy(float32(width)/beta))
+	} else if hBar*wBar < minPixels {
+		beta := float32(math.Sqrt(float64(float32(minPixels) / float32(height*width))))
+		hBar = ceilBy(float32(height) * beta)
+		wBar = ceilBy(float32(width) * beta)
+	}
+
+	return wBar / align, hBar / align
 }
 
 // Load waits for llama-server to finish loading the model. llama-server loads

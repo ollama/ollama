@@ -60,6 +60,13 @@ The `nemotron3` row is **pre-002-patch** (all deployed payloads to date). With
 arches: ≈302 at 640×480, ≈2042 at 1920×1080, ≈3330 at the ceiling — re-measure and extend
 this table when a patched payload ships.
 
+**These rows are now executable.** `llm.ImageTokensForSize()`
+([`llm/llama_server.go`](../../llm/llama_server.go)) replicates llama.cpp b10091's
+`smart_resize` (float32-faithful) for the server-side truncation heuristics, and
+`TestImageTokensForSize` pins it to every fork-default and pinned row above plus the
+patched-nemotron predictions. If a `LLAMA_CPP_VERSION` bump changes preprocessing,
+re-measure and update both the table and that test together.
+
 ## Measurements — pixels encoded per visual token
 
 Source pixels ÷ measured visual tokens. **Lower is finer detail retained.** This is the

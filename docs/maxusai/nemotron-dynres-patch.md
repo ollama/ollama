@@ -165,9 +165,22 @@ cases (defaults, sentinel substitution, custom budget, min-clamped-to-max).
     another reason the production artifact must come from the 0.32.1-era Go, not this
     branch as-is.
 - Expect per-image context cost up to 3,328 tokens (plus 2 markers). Ollama's Go-side
-  truncation heuristics count images as **zero** tokens for this arch (no projector
-  layer ⇒ `ProjectorPaths` empty ⇒ the 768/image heuristic never applies), so budget
-  `num_ctx` for image-heavy workloads explicitly.
+  truncation heuristics used to count images as **zero** tokens for this arch (no
+  projector layer ⇒ `ProjectorPaths` empty ⇒ the 768/image heuristic never applied), so
+  multi-image chats could pass the Go-side context-fit check yet overflow llama-server's
+  context. Fixed 2026-08-01: `chatPrompt()` and `truncateNativeChatMessages()` charge
+  per-arch costs via `imageTokenCosts()` ([`server/prompt.go`](../../server/prompt.go)),
+  with inline-vision arches recognized by architecture (`llm.InlineVisionArch`) instead
+  of `ProjectorPaths`. When the image header decodes (PNG/JPEG/GIF),
+  `llm.ImageTokensForSize()` replicates llama.cpp b10091's `smart_resize` in float32 and
+  charges the **exact** patched cost (302 for 640×480, 2,042 for 1920×1080, ceiling
+  3,330), honoring `image_{min,max}_tokens` exactly as `visionServerArgs()` resolves the
+  flags; `TestImageTokensForSize` pins the replication to the measured values in
+  [vision-token-budget-measurements.md](vision-token-budget-measurements.md). Other
+  formats fall back to `llm.MaxImageTokens()` — the resolved ceiling + 2, default
+  **3,330**/image. On an **unpatched** payload (flat 256/image) both charges over-trim
+  history rather than overflow — still budget `num_ctx` for image-heavy workloads
+  explicitly.
 
 ## Validation checklist
 
