@@ -1061,15 +1061,25 @@ const (
 // nemotronImageTokenBudget resolves the nemotron_h_omni image-token budget
 // from opts. The shared ImageMinTokens/ImageMaxTokens options arrive carrying
 // the gemma4-shaped DefaultOptions values (40/1120) whenever the caller left
-// them alone, and those exact values cannot be distinguished from an explicit
-// request — treat them, like <= 0, as unset and substitute this arch's native
-// bounds. Min is clamped down to max like gemma4's resolver.
+// them alone; at this layer those are not distinguishable from an explicit
+// request (server/routes.go's hasOption pattern could tell them apart if that
+// ever matters), so treat them, like <= 0, as unset and substitute this
+// arch's native bounds. Consequences: explicit 40/1120 are not expressible
+// for this arch, and a client that explicitly sends 256/3328 stores different
+// option values than the sentinels, forcing a runner reload for identical
+// flags. Min is clamped down to max like gemma4's resolver.
 func nemotronImageTokenBudget(opts api.Options) (minTok, maxTok int) {
 	minTok, maxTok = opts.ImageMinTokens, opts.ImageMaxTokens
 	if minTok <= 0 || minTok == api.DefaultImageMinTokens {
 		minTok = defaultNemotronImageMinTokens
 	}
 	if maxTok <= 0 || maxTok == api.DefaultImageMaxTokens {
+		maxTok = defaultNemotronImageMaxTokens
+	}
+	// 3328 is the model's trained ceiling (13312 pre-merge patches); raising
+	// it buys nothing, and values >= 2,097,152 would overflow the int32 pixel
+	// math in llama.cpp's set_limit_image_tokens.
+	if maxTok > defaultNemotronImageMaxTokens {
 		maxTok = defaultNemotronImageMaxTokens
 	}
 	if minTok > maxTok {

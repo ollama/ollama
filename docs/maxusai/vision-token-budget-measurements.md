@@ -99,12 +99,14 @@ upstream and is dropped. A client cannot tell it had no effect.
 floor. The gain is 302 → 1038 at 640×480 (3.4×) and 786 → 1026 at 896² (1.3×). At
 3000×2000 it sits at 4058, effectively the 4096 ceiling.
 
-**nemotron is fixed at 256 and cannot be moved.** Constant across a 19.6× area range
+**nemotron is fixed at 256 and cannot be moved — on unpatched payloads** (every deployed
+payload when these rows were measured). Constant across a 19.6× area range
 (307 kpx → 6 Mpx), and `image_min_tokens`/`image_max_tokens` at 4096 *and* 64 both leave it
 at exactly 256 — it cannot even be lowered. It also letterboxes onto a square canvas, so
 for 16:9 roughly 44% of those 256 tokens encode black bars. See
-[vision-token-budgets-by-arch.md](vision-token-budgets-by-arch.md) for why, and why adding
-a `visionServerArgs()` case would be a no-op.
+[vision-token-budgets-by-arch.md](vision-token-budgets-by-arch.md) for the mechanism;
+with `llama/compat/002-llama-cpp-nemotron-dynres.patch` all of this changes — dynamic
+256…3,328, no letterbox, live flags ([nemotron-dynres-patch.md](nemotron-dynres-patch.md)).
 
 ## Spec — normative behaviour
 
@@ -120,7 +122,10 @@ For `modelArch` in `visionServerArgs()` ([`llm/llama_server.go`](../../llm/llama
 Option resolution: `ImageMinTokens` / `ImageMaxTokens` are plain `int` with `omitempty`.
 `gemma4ImageTokenBudget()` treats `<= 0` as unset and substitutes the defaults, so a JSON
 `null` — or an omitted field — yields **40 / 1120**, not "no limit". Both are **Runner**
-options: changing either reloads the runner.
+options: changing either reloads the runner. `nemotronImageTokenBudget()` additionally
+treats the exact gemma4-shaped defaults (40/1120) as unset — explicit 40 or 1120 is not
+expressible for that arch — and clamps the ceiling to the trained 3,328; see the
+[normative spec in nemotron-dynres-patch.md](nemotron-dynres-patch.md#spec--normative-behaviour).
 
 ## Decision record
 

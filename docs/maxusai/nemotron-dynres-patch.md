@@ -70,7 +70,13 @@ so the fork does not carry 002 forever.
    `--image-{min,max}-tokens` flags become **live** for nemotron, matching how gemma4 and
    the qwen family are wired. It also sets `warmup_image_size` to the ceiling (~1846 px),
    so warmup exercises the worst case at load — fail-fast for memory, but expect a heavier
-   model load than the old 512² warmup.
+   model load than the old 512² warmup. A second deliberate omission: the patch does
+   **not** read the GGUF's forwarded `clip.vision.{min,max}_num_patches` keys (which for
+   the shipped model equal the hardcoded 1024/13312 exactly). Binding the budget to model
+   metadata would let a future variant GGUF silently declare bounds the graph was never
+   validated at; a variant with genuinely different bounds should get a deliberate edit
+   here, and upstream's `KEY_IMAGE_MIN/MAX_PIXELS` override pattern remains the right
+   shape for an upstream resubmission.
 2. **`tools/mtmd/mtmd.cpp`** — dispatch to `mtmd_image_preprocessor_dyn_size` (replacing
    `fixed_size`), and set `img_beg="<img>"` / `img_end="</img>"`. Each image now costs
    its grid product + 2 marker tokens, like the other arches.
@@ -109,6 +115,28 @@ Keeping the 128×128 grid through the compat layer and interpolating from it wou
 `TestVisionServerArgs` was updated accordingly — the old `nemotron_h_omni → nil` case and
 its "must stay absent" rationale are gone.
 
+## Spec — normative behaviour
+
+For `modelArch == "nemotron_h_omni"` on a payload carrying the 002 patch:
+
+| surface | behaviour |
+|---|---|
+| flags | `visionServerArgs()` always passes `--image-min-tokens` / `--image-max-tokens` |
+| defaults | **256 / 3328** (= the model's 1024/13312 pre-merge patch bounds ÷ 4) |
+| option resolution | `ImageMinTokens`/`ImageMaxTokens` ≤ 0 **or exactly equal to the gemma4-shaped DefaultOptions values (40/1120)** are treated as unset; min clamps down to max; both are **Runner** options — changing either reloads the runner |
+| per-image cost | `round(w/32) × round(h/32)` post-resize grid cells **+ 2** marker tokens (`<img>`/`</img>`), where the resize maps the image, aspect-preserved, into 262,144…3,407,872 px; small images are **upscaled** to the floor |
+| bounds | floor 256, ceiling 3,328 visual tokens; the 32px floor-alignment lands most shapes slightly under the ceiling (3000×2000 → 3,290), which is exact only when scaled dims hit multiples of 32 (2048×1664 → 3,328) |
+| ceiling caveat | the pixel budget is enforced before the per-dimension 32px minimum clamp, so **degenerate aspect ratios (≈100:1 and beyond) can exceed it** — e.g. a 4,000,000×1 input targets ~118 MPx and would exhaust memory. Inherited `dyn_size`-family behavior (qwen/kimivl/dots_ocr share it; nemotron was previously immune only because it squashed everything to 512²). Reject absurd-aspect images upstream of Ollama |
+| warmup | load-time warmup probes the ceiling (`warmup_image_size` ≈ 1846) |
+| unpatched payload | flags are parsed by llama-server but never consumed: exactly 256 tokens/image, no markers, letterboxed — byte-identical to today |
+| audio | unaffected (compat force-sets `clip.has_audio_encoder=false`) |
+| not expressible | an explicit request of exactly 40 or 1120 (collides with the DefaultOptions sentinels; a `hasOption`-style check at the routes layer could lift this if it ever matters) |
+| ceiling clamp | `image_max_tokens` > 3328 clamps down to 3328 — the trained maximum, and a guard against the int32 pixel-math overflow at ≥ 2,097,152 in `set_limit_image_tokens` |
+
+Regression tests: `TestVisionServerArgs/nemotron_h_omni_*` in
+[`llm/llama_server_test.go`](../../llm/llama_server_test.go) pin the four option-resolution
+cases (defaults, sentinel substitution, custom budget, min-clamped-to-max).
+
 ## Deployment constraints
 
 - **Cannot ship via the overlay image.** `Dockerfile.gemma4budget` copies the C++ payload
@@ -117,10 +145,22 @@ its "must stay absent" rationale are gone.
   (`git diff HEAD v0.32.5 -- LLAMA_CPP_VERSION llama/ …`) non-empty — a **true positive**:
   do not build overlays from a tree containing 002.
 - **The gfx1151 host is gated at 0.32.1** (payload = llama.cpp `b9888`) per
-  [amd-upgrade-gate.md](amd-upgrade-gate.md). The 002 hunks were generated against
-  `b10091`; the three touched regions are identical at `b9888`, but `mtmd-image.cpp`
-  differs between the tags, so **re-run `git apply --check` against the exact payload tag
-  you build** (for a 0.32.1-era build, apply onto `b9888` and regenerate if fuzz).
+  [amd-upgrade-gate.md](amd-upgrade-gate.md) — and the gate is not theoretical: the
+  0.32.5/b10091 payload **produced degenerate vision output on that host and was rolled
+  back the same day** (2026-07-31; see `~/deployments/ollama/README.md`, upstream #17459,
+  #17475). Consequences for this patch:
+  - The [`ollama-rocm-nemotron` test image](nemotron-test-image.md), built from this
+    branch (0.32.5-synced, b10091), is for **mechanics validation only** — token budget,
+    markers, bicubic-on-ROCm, warmup. Output-quality conclusions on that host carry the
+    known b10091 degeneration confound.
+  - A **production** build for that host must put 002 onto the 0.32.1 lineage: branch
+    from `85ebcb79`, cherry-pick the patch + Go commits, `git apply --check` the 002
+    hunks against `b9888` (the three touched regions are identical there, but
+    `mtmd-image.cpp` differs between tags — regenerate on fuzz), and full-build against
+    the 0.32.1-era tree. Note the deployment repo's `make gate` refuses Go checkouts that
+    emit `--direct-io`; this branch's Go (0.32.5-era) emits it on ROCm iGPUs, which is
+    another reason the production artifact must come from the 0.32.1-era Go, not this
+    branch as-is.
 - Expect per-image context cost up to 3,328 tokens (plus 2 markers). Ollama's Go-side
   truncation heuristics count images as **zero** tokens for this arch (no projector
   layer ⇒ `ProjectorPaths` empty ⇒ the 768/image heuristic never applies), so budget
@@ -136,9 +176,12 @@ Runtime (required before the deploy gate, on the ROCm host, per the A/B discipli
 [gemma4-budget-image.md](gemma4-budget-image.md)):
 
 1. **Token counts** via `prompt_eval_count` minus the 18-token text baseline: expect
-   ≈ grid product + 2, e.g. 640×480 → 40×30/4 + 2 = **302**, 1920×1080 → ≈ 2042,
-   1568×1568 → ≈ 2404, 3000×2000 → ceiling ≈ 3330. (The PR author measured 2040 visual
-   tokens at 1920×1080 on CUDA.) Constant-256 means the payload is unpatched.
+   ≈ grid product + 2, e.g. 640×480 → 20×15 + 2 = **302**, 1920×1080 → **≈2,042**,
+   1568×1568 → 49×49 + 2 = **2,403**, 3000×2000 → 70×47 + 2 = **≈3,292** (the 32px
+   floor-alignment lands most shapes a little under the 3,328 ceiling; the ceiling is
+   exactly attainable only when the scaled dims hit multiples of 32, e.g. 2048×1664 →
+   64×52 = 3,328). The PR author measured 2040 visual tokens at 1920×1080 on CUDA.
+   Constant-256 means the payload is unpatched.
 2. **`ggml_interpolate` bicubic on ROCm/gfx1151** — exercised at every non-512² grid via
    `resize_position_embeddings`; watch for backend fallback or garbage output.
 3. **Load-time warmup** at ~1846²: VRAM headroom and load latency on the 8060S.
@@ -149,6 +192,10 @@ Runtime (required before the deploy gate, on the ROCm host, per the A/B discipli
    helper chunks it (llama.cpp behavior, unverified in code review).
 6. **Audio unaffected**: compat force-sets `clip.has_audio_encoder=false`; smoke-test an
    audio prompt anyway if audio is ever enabled.
+7. **Degenerate aspect ratios**: a ≈100:1 test image should still produce a bounded count;
+   an absurd one (thousands×1) is expected to blow past the pixel budget (see the spec's
+   ceiling caveat) — verify the runner fails without taking the host down, and filter such
+   inputs upstream.
 
 ## See also
 

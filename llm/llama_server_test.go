@@ -1643,6 +1643,37 @@ func TestVisionServerArgs(t *testing.T) {
 			want: []string{"--image-min-tokens", "512", "--image-max-tokens", "512"},
 		},
 		{
+			// The production-realistic shape: a Modelfile sets only one param, so the
+			// other arrives at its DefaultOptions sentinel and must be substituted
+			// per-field, not only when both are sentinels.
+			name: "nemotron_h_omni max explicit, min at sentinel",
+			arch: "nemotron_h_omni",
+			opts: api.Options{Runner: api.Runner{ImageMinTokens: api.DefaultImageMinTokens, ImageMaxTokens: 2048}},
+			want: []string{"--image-min-tokens", "256", "--image-max-tokens", "2048"},
+		},
+		{
+			name: "nemotron_h_omni min explicit, max at sentinel",
+			arch: "nemotron_h_omni",
+			opts: api.Options{Runner: api.Runner{ImageMinTokens: 1024, ImageMaxTokens: api.DefaultImageMaxTokens}},
+			want: []string{"--image-min-tokens", "1024", "--image-max-tokens", "3328"},
+		},
+		{
+			// The ceiling is the trained maximum and also guards the int32 pixel math
+			// in set_limit_image_tokens: values above 3328 clamp down.
+			name: "nemotron_h_omni max clamped to trained ceiling",
+			arch: "nemotron_h_omni",
+			opts: api.Options{Runner: api.Runner{ImageMinTokens: 0, ImageMaxTokens: 100000}},
+			want: []string{"--image-min-tokens", "256", "--image-max-tokens", "3328"},
+		},
+		{
+			// Substitution happens before clamping: explicit min above the substituted
+			// ceiling lands on 3328/3328.
+			name: "nemotron_h_omni min above substituted ceiling",
+			arch: "nemotron_h_omni",
+			opts: api.Options{Runner: api.Runner{ImageMinTokens: 3500, ImageMaxTokens: api.DefaultImageMaxTokens}},
+			want: []string{"--image-min-tokens", "3328", "--image-max-tokens", "3328"},
+		},
+		{
 			name: "other model",
 			arch: "llama",
 			want: nil,
