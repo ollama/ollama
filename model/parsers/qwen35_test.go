@@ -513,3 +513,38 @@ func TestQwen35ParserThinkingTruncatedWithoutCloseTag(t *testing.T) {
 		t.Fatalf("expected no tool calls, got %d", len(calls))
 	}
 }
+
+func TestQwen35ParserThinkingCloseMarker(t *testing.T) {
+	t.Run("reports marker when starting in thinking", func(t *testing.T) {
+		p := &Qwen35Parser{}
+		p.Init(nil, nil, &api.ThinkValue{Value: true})
+		if got := p.ThinkingCloseMarker(); got != qwen35ThinkingCloseTag {
+			t.Errorf("expected %q, got %q", qwen35ThinkingCloseTag, got)
+		}
+	})
+
+	t.Run("reports marker when thinkValue is nil (thinking defaults on)", func(t *testing.T) {
+		p := &Qwen35Parser{}
+		p.Init(nil, nil, nil)
+		if got := p.ThinkingCloseMarker(); got != qwen35ThinkingCloseTag {
+			t.Errorf("expected %q, got %q", qwen35ThinkingCloseTag, got)
+		}
+	})
+
+	t.Run("empty when thinking disabled", func(t *testing.T) {
+		p := &Qwen35Parser{}
+		p.Init(nil, nil, &api.ThinkValue{Value: false})
+		if got := p.ThinkingCloseMarker(); got != "" {
+			t.Errorf("expected empty marker, got %q", got)
+		}
+	})
+
+	t.Run("empty with assistant content prefill", func(t *testing.T) {
+		p := &Qwen35Parser{}
+		prefill := &api.Message{Role: "assistant", Content: "partial answer"}
+		p.Init(nil, prefill, &api.ThinkValue{Value: true})
+		if got := p.ThinkingCloseMarker(); got != "" {
+			t.Errorf("expected empty marker, got %q", got)
+		}
+	})
+}

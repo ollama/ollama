@@ -75,6 +75,15 @@ func (p *Qwen35Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkVal
 	return tools
 }
 
+// ThinkingCloseMarker reports the implicit-thinking close marker while the
+// parser is still collecting thinking from the start of generation.
+func (p *Qwen35Parser) ThinkingCloseMarker() string {
+	if p.state == qwen35ParserStateCollectingThinking {
+		return qwen35ThinkingCloseTag
+	}
+	return ""
+}
+
 type qwen35Event interface {
 	isQwen35Event()
 }

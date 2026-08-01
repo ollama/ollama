@@ -642,6 +642,15 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	// thinkCloseTag marks generation that starts inside thinking. Passed with
+	// Format so the grammar is applied lazily (triggered by the marker) instead
+	// of from the first token, which would suppress the marker and leave the
+	// entire constrained output classified as thinking.
+	var thinkCloseTag string
+	if itp, ok := builtinParser.(parsers.ImplicitThinkingParser); ok {
+		thinkCloseTag = itp.ThinkingCloseMarker()
+	}
+
 	var thinkingState *thinking.Parser
 	if builtinParser == nil {
 		openingTag, closingTag := thinking.InferTags(m.Template.Template)
@@ -652,6 +661,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			}
 			if strings.HasSuffix(strings.TrimSpace(prompt), openingTag) {
 				thinkingState.AddContent(openingTag)
+				thinkCloseTag = closingTag
 			}
 		}
 	}
@@ -672,6 +682,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			TopLogprobs:     req.TopLogprobs,
 			PreservedTokens: preservedTokensForCompletion(builtinParser),
 			LeadingBOS:      leadingBOS,
+			ThinkCloseTag:   thinkCloseTag,
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
 				Model:     req.Model,
@@ -783,12 +794,28 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		r.Thinking = sbThinking.String()
 		r.Response = sbContent.String()
 		r.Logprobs = allLogprobs
+		r.Thinking, r.Response = reclassifyConstrainedThinking(req.Format, r.DoneReason, r.Thinking, r.Response)
 
 		c.JSON(http.StatusOK, r)
 		return
 	}
 
 	streamResponse(c, ch)
+}
+
+// reclassifyConstrainedThinking is a safety net for format-constrained
+// generation with implicit-thinking models on runners without lazy-grammar
+// support: an eager grammar makes the think-close marker unreachable, so the
+// parser classifies the entire grammar-shaped output as thinking. When
+// constraining was requested and the full completion came back as thinking
+// that is itself valid JSON, it is the response.
+func reclassifyConstrainedThinking(format json.RawMessage, doneReason, thinking, response string) (string, string) {
+	if len(format) > 0 && string(format) != `null` && string(format) != `""` &&
+		response == "" && thinking != "" && doneReason == llm.DoneReasonStop.String() &&
+		json.Valid([]byte(thinking)) {
+		return "", thinking
+	}
+	return thinking, response
 }
 
 func (s *Server) EmbedHandler(c *gin.Context) {

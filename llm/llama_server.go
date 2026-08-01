@@ -1412,6 +1412,28 @@ type llamaServerCompletionRequest struct {
 	PreservedTokens []string        `json:"preserved_tokens,omitempty"`
 }
 
+// applyCompletionFormat sets grammar constraining on the llama-server request:
+// a JSON grammar or schema for Format, or a raw grammar passthrough.
+func applyCompletionFormat(req CompletionRequest, lsReq *llamaServerCompletionRequest) error {
+	if len(req.Format) > 0 {
+		switch string(req.Format) {
+		case `null`, `""`:
+			// not set
+		case `"json"`:
+			lsReq.Grammar = grammarJSON
+		default:
+			if req.Format[0] == '{' {
+				lsReq.JsonSchema = req.Format
+			} else {
+				return fmt.Errorf("invalid format: %q; expected \"json\" or a valid JSON Schema object", req.Format)
+			}
+		}
+	} else if req.Grammar != "" {
+		lsReq.Grammar = req.Grammar
+	}
+	return nil
+}
+
 func llamaServerPreservedTokens(parserTokens []string, toolCallTag string) []string {
 	tokens := append([]string{}, parserTokens...)
 	tokens = append(tokens, llamaServerPreservedTokensForToolTag(toolCallTag)...)
@@ -1468,6 +1490,7 @@ type llamaServerCompletionResponse struct {
 	Content                 string                 `json:"content"`
 	Stop                    bool                   `json:"stop"`
 	StopType                string                 `json:"stop_type"`
+	StoppingWord            string                 `json:"stopping_word"`
 	Timings                 llamaServerTimings     `json:"timings"`
 	CompletionProbabilities []llamaServerTokenProb `json:"completion_probabilities"`
 }
@@ -1553,9 +1576,90 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 		return err
 	}
 
-	// Build the llama-server request
+	// Validate the format up front and detect whether it constrains output.
+	var formatProbe llamaServerCompletionRequest
+	if err := applyCompletionFormat(req, &formatProbe); err != nil {
+		return err
+	}
+	constrains := formatProbe.Grammar != "" || len(formatProbe.JsonSchema) > 0
+
+	// Implicit-thinking models start generation inside thinking and leave it
+	// with a close marker. An eager grammar makes that marker unreachable, so
+	// the model could never leave thinking and its entire constrained output
+	// would be classified as thinking. Defer constraining instead: generate
+	// unconstrained with the marker as a stop string, then continue the same
+	// prompt plus the emitted thinking and marker with the grammar applied.
+	// The continuation prefill is a prompt cache hit, so it is nearly free.
+	// Prompts truncated to tokens by context shift cannot be continued
+	// textually and constrain eagerly as before.
+	promptStr, promptIsString := prompt.(string)
+	deferFormat := constrains && req.ThinkCloseTag != "" && promptIsString
+
+	phase := llamaServerCompletionPhase{prompt: prompt, applyFormat: true}
+	if deferFormat {
+		phase = llamaServerCompletionPhase{prompt: prompt, extraStop: req.ThinkCloseTag}
+	}
+
+	result, err := s.runCompletionPhase(ctx, req, phase, fn)
+	if err != nil {
+		return err
+	}
+
+	if deferFormat && result.finished && result.stoppingWord == req.ThinkCloseTag {
+		// Emit any content held back in the stop chunk plus the marker itself
+		// so downstream parsers see the thinking close.
+		fn(CompletionResponse{Content: result.final.Content + req.ThinkCloseTag})
+
+		cont, err := s.runCompletionPhase(ctx, req, llamaServerCompletionPhase{
+			prompt:      promptStr + result.content + req.ThinkCloseTag,
+			applyFormat: true,
+		}, fn)
+		if err != nil {
+			return err
+		}
+		if !cont.finished {
+			return nil
+		}
+		// Report generated tokens and durations from both passes. The
+		// continuation's prompt eval is a cache hit over the first pass, so
+		// its count already reflects the true context size.
+		cont.final.EvalCount += result.final.EvalCount
+		cont.final.EvalDuration += result.final.EvalDuration
+		cont.final.PromptEvalDuration += result.final.PromptEvalDuration
+		fn(cont.final)
+		return nil
+	}
+
+	if result.finished {
+		fn(result.final)
+	}
+	return nil
+}
+
+// llamaServerCompletionPhase is one /completion request within a completion.
+// Format-constrained requests for implicit-thinking models run as two phases:
+// unconstrained thinking stopped at the think-close marker, then a constrained
+// continuation.
+type llamaServerCompletionPhase struct {
+	prompt      any // string, or []int for prompts truncated by context shift
+	applyFormat bool
+	extraStop   string
+}
+
+type llamaServerPhaseResult struct {
+	content      string             // all text generated in this phase
+	stoppingWord string             // stop string that ended generation, if any
+	final        CompletionResponse // the done response; not delivered to fn
+	finished     bool               // whether the stream produced a done response
+}
+
+// runCompletionPhase issues a single /completion request and streams
+// intermediate chunks to fn. The final done response is returned rather than
+// delivered so the caller can either forward it or continue with another
+// phase.
+func (s *llamaServerRunner) runCompletionPhase(ctx context.Context, req CompletionRequest, phase llamaServerCompletionPhase, fn func(CompletionResponse)) (result llamaServerPhaseResult, _ error) {
 	lsReq := llamaServerCompletionRequest{
-		Prompt:          prompt,
+		Prompt:          phase.prompt,
 		Stream:          true,
 		CachePrompt:     true,
 		NPredict:        req.Options.NumPredict,
@@ -1574,26 +1678,18 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 		PreservedTokens: llamaServerPreservedTokens(req.PreservedTokens, req.ToolCallTag),
 	}
 
+	if phase.extraStop != "" {
+		lsReq.Stop = append(append([]string{}, req.Options.Stop...), phase.extraStop)
+	}
+
 	if req.Logprobs {
 		lsReq.NProbs = max(req.TopLogprobs, 1)
 	}
 
-	// Handle format: pass JSON schema directly to llama-server, or use grammar
-	if len(req.Format) > 0 {
-		switch string(req.Format) {
-		case `null`, `""`:
-			// not set
-		case `"json"`:
-			lsReq.Grammar = grammarJSON
-		default:
-			if req.Format[0] == '{' {
-				lsReq.JsonSchema = req.Format
-			} else {
-				return fmt.Errorf("invalid format: %q; expected \"json\" or a valid JSON Schema object", req.Format)
-			}
+	if phase.applyFormat {
+		if err := applyCompletionFormat(req, &lsReq); err != nil {
+			return result, err
 		}
-	} else if req.Grammar != "" {
-		lsReq.Grammar = req.Grammar
 	}
 
 	// Convert media: replace Ollama's stable [img-N] markers with the per-process
@@ -1616,54 +1712,52 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 	enc := json.NewEncoder(buffer)
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(lsReq); err != nil {
-		return fmt.Errorf("failed to marshal completion request: %v", err)
+		return result, fmt.Errorf("failed to marshal completion request: %v", err)
 	}
 
 	endpoint := fmt.Sprintf("http://127.0.0.1:%d/completion", s.port)
 	serverReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, buffer)
 	if err != nil {
-		return fmt.Errorf("error creating completion request: %v", err)
+		return result, fmt.Errorf("error creating completion request: %v", err)
 	}
 	serverReq.Header.Set("Content-Type", "application/json")
 
 	res, err := s.httpClient().Do(serverReq)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			return err
+			return result, err
 		}
 		slog.Error("llama-server completion error", "error", err)
 		if msg := s.lastErrMsg(); msg != "" {
-			return fmt.Errorf("model runner has unexpectedly stopped, this may be due to resource limitations or an internal error, check ollama server logs for details: %s", msg)
+			return result, fmt.Errorf("model runner has unexpectedly stopped, this may be due to resource limitations or an internal error, check ollama server logs for details: %s", msg)
 		}
-		return errors.New("model runner has unexpectedly stopped, this may be due to resource limitations or an internal error, check ollama server logs for details")
+		return result, errors.New("model runner has unexpectedly stopped, this may be due to resource limitations or an internal error, check ollama server logs for details")
 	}
 	defer res.Body.Close()
 
 	if res.StatusCode >= 400 {
 		bodyBytes, err := io.ReadAll(res.Body)
 		if err != nil {
-			return fmt.Errorf("failed reading llama-server error response: %w", err)
+			return result, fmt.Errorf("failed reading llama-server error response: %w", err)
 		}
 
-		return api.StatusError{StatusCode: res.StatusCode, ErrorMessage: s.statusErrorMessage(bodyBytes)}
+		return result, api.StatusError{StatusCode: res.StatusCode, ErrorMessage: s.statusErrorMessage(bodyBytes)}
 	}
 
-	// Parse SSE stream from llama-server. Delay the final Done callback until
-	// after the response body is closed because routes may tokenize from that
-	// callback to build the final Generate context.
+	// Parse SSE stream from llama-server. The final Done response is returned
+	// after the response body is closed (not delivered to fn) because callers
+	// may tokenize from that callback to build the final Generate context.
 	scanner := bufio.NewScanner(res.Body)
 	buf := make([]byte, 0, llamaServerStreamInitialBufferSize)
 	scanner.Buffer(buf, llamaServerStreamMaxBufferSize)
 
 	var lastToken string
 	var tokenRepeat int
-	var finalResp CompletionResponse
-	var hasFinalResp bool
 
 	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return result, ctx.Err()
 		default:
 			line := scanner.Bytes()
 			if len(line) == 0 {
@@ -1680,7 +1774,7 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 
 			var lsResp llamaServerCompletionResponse
 			if err := json.Unmarshal(evt, &lsResp); err != nil {
-				return fmt.Errorf("error unmarshalling llama-server response: %v", err)
+				return result, fmt.Errorf("error unmarshalling llama-server response: %v", err)
 			}
 
 			// Token repeat detection
@@ -1693,8 +1787,10 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 			}
 			if tokenRepeat > 30 {
 				slog.Debug("prediction aborted, token repeat limit reached")
-				return ctx.Err()
+				return result, ctx.Err()
 			}
+
+			result.content += lsResp.Content
 
 			if lsResp.Content != "" && !lsResp.Stop {
 				resp := CompletionResponse{
@@ -1710,7 +1806,7 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 					doneReason = DoneReasonLength
 				}
 
-				finalResp = CompletionResponse{
+				result.final = CompletionResponse{
 					Content:            lsResp.Content,
 					Done:               true,
 					DoneReason:         doneReason,
@@ -1719,37 +1815,37 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 					EvalCount:          lsResp.Timings.PredictN,
 					EvalDuration:       time.Duration(lsResp.Timings.PredictMS * float64(time.Millisecond)),
 				}
-				hasFinalResp = true
+				result.stoppingWord = lsResp.StoppingWord
+				result.finished = true
 			}
 		}
 
-		if hasFinalResp {
+		if result.finished {
 			break
 		}
 	}
 
-	if hasFinalResp {
+	if result.finished {
 		for scanner.Scan() {
 		}
 
 		if err := scanner.Err(); err != nil {
 			if err := llamaServerStreamLimitError("response", err); err != nil {
-				return err
+				return result, err
 			}
-			return fmt.Errorf("error reading llama-server response: %v", err)
+			return result, fmt.Errorf("error reading llama-server response: %v", err)
 		}
 
 		if err := res.Body.Close(); err != nil {
-			return fmt.Errorf("error closing llama-server response: %v", err)
+			return result, fmt.Errorf("error closing llama-server response: %v", err)
 		}
 
-		fn(finalResp)
-		return nil
+		return result, nil
 	}
 
 	if err := scanner.Err(); err != nil {
 		if err := llamaServerStreamLimitError("response", err); err != nil {
-			return err
+			return result, err
 		}
 		if strings.Contains(err.Error(), "unexpected EOF") || strings.Contains(err.Error(), "forcibly closed") {
 			s.Close()
@@ -1757,12 +1853,12 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 			if msg == "" {
 				msg = err.Error()
 			}
-			return fmt.Errorf("an error was encountered while running the model: %s", msg)
+			return result, fmt.Errorf("an error was encountered while running the model: %s", msg)
 		}
-		return fmt.Errorf("error reading llama-server response: %v", err)
+		return result, fmt.Errorf("error reading llama-server response: %v", err)
 	}
 
-	return nil
+	return result, nil
 }
 
 func llamaServerStreamLimitError(label string, err error) error {

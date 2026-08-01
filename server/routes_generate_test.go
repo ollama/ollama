@@ -3403,3 +3403,89 @@ func TestImageGenerateStreamingErrorAfterProgress(t *testing.T) {
 		t.Fatalf("error = %q, want runner died", errorResponse.Error)
 	}
 }
+
+func TestReclassifyConstrainedThinking(t *testing.T) {
+	cases := []struct {
+		name         string
+		format       string
+		doneReason   string
+		thinking     string
+		response     string
+		wantThinking string
+		wantResponse string
+	}{
+		{
+			name:         "constrained output misclassified as thinking is reclassified",
+			format:       `"json"`,
+			doneReason:   "stop",
+			thinking:     `{"capital": "Paris"}`,
+			wantThinking: "",
+			wantResponse: `{"capital": "Paris"}`,
+		},
+		{
+			name:         "schema format reclassifies too",
+			format:       `{"type":"object"}`,
+			doneReason:   "stop",
+			thinking:     `{"a": 1}`,
+			wantThinking: "",
+			wantResponse: `{"a": 1}`,
+		},
+		{
+			name:         "no format leaves thinking alone",
+			format:       "",
+			doneReason:   "stop",
+			thinking:     `{"a": 1}`,
+			wantThinking: `{"a": 1}`,
+			wantResponse: "",
+		},
+		{
+			name:         "non-JSON thinking is genuine reasoning, not reclassified",
+			format:       `"json"`,
+			doneReason:   "stop",
+			thinking:     "the user wants JSON, so I should answer with...",
+			wantThinking: "the user wants JSON, so I should answer with...",
+			wantResponse: "",
+		},
+		{
+			name:         "truncated generation is not reclassified",
+			format:       `"json"`,
+			doneReason:   "length",
+			thinking:     `{"a": 1}`,
+			wantThinking: `{"a": 1}`,
+			wantResponse: "",
+		},
+		{
+			name:         "existing response is kept",
+			format:       `"json"`,
+			doneReason:   "stop",
+			thinking:     "planning the object",
+			response:     `{"a": 1}`,
+			wantThinking: "planning the object",
+			wantResponse: `{"a": 1}`,
+		},
+		{
+			name:         "null format is not constraining",
+			format:       `null`,
+			doneReason:   "stop",
+			thinking:     `{"a": 1}`,
+			wantThinking: `{"a": 1}`,
+			wantResponse: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var format json.RawMessage
+			if tc.format != "" {
+				format = json.RawMessage(tc.format)
+			}
+			gotThinking, gotResponse := reclassifyConstrainedThinking(format, tc.doneReason, tc.thinking, tc.response)
+			if gotThinking != tc.wantThinking {
+				t.Errorf("thinking: got %q, want %q", gotThinking, tc.wantThinking)
+			}
+			if gotResponse != tc.wantResponse {
+				t.Errorf("response: got %q, want %q", gotResponse, tc.wantResponse)
+			}
+		})
+	}
+}

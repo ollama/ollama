@@ -3644,3 +3644,238 @@ func fakeRunningCmd() *exec.Cmd {
 	// SIGKILL children when the test process exits.
 	return cmd
 }
+
+func TestApplyCompletionFormat(t *testing.T) {
+	cases := []struct {
+		name        string
+		req         CompletionRequest
+		wantGrammar string
+		wantSchema  string
+		wantErr     bool
+	}{
+		{
+			name:        "json format sets the JSON grammar",
+			req:         CompletionRequest{Format: []byte(`"json"`)},
+			wantGrammar: grammarJSON,
+		},
+		{
+			name:       "schema format passes through as json_schema",
+			req:        CompletionRequest{Format: []byte(`{"type":"object"}`)},
+			wantSchema: `{"type":"object"}`,
+		},
+		{
+			name: "empty and null formats do not constrain",
+			req:  CompletionRequest{Format: []byte(`null`)},
+		},
+		{
+			name:        "raw grammar passthrough",
+			req:         CompletionRequest{Grammar: "root ::= \"x\""},
+			wantGrammar: "root ::= \"x\"",
+		},
+		{
+			name:    "invalid format errors",
+			req:     CompletionRequest{Format: []byte(`"yaml"`)},
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var lsReq llamaServerCompletionRequest
+			err := applyCompletionFormat(tc.req, &lsReq)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if lsReq.Grammar != tc.wantGrammar {
+				t.Errorf("grammar: got %q, want %q", lsReq.Grammar, tc.wantGrammar)
+			}
+			if string(lsReq.JsonSchema) != tc.wantSchema {
+				t.Errorf("json_schema: got %q, want %q", lsReq.JsonSchema, tc.wantSchema)
+			}
+		})
+	}
+}
+
+// TestLlamaServerCompletionDeferredFormat exercises the two-phase completion
+// used for format requests on implicit-thinking models: pass one runs without
+// a grammar and stops at the think-close marker, pass two continues the same
+// prompt plus the emitted thinking with the grammar applied.
+func TestLlamaServerCompletionDeferredFormat(t *testing.T) {
+	var phase1Req, phase2Req llamaServerCompletionRequest
+	requests := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			fmt.Fprint(w, `{"status":"ok"}`)
+			return
+		}
+		if r.URL.Path != "/completion" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			return
+		}
+
+		requests++
+		w.Header().Set("Content-Type", "text/event-stream")
+		switch requests {
+		case 1:
+			if err := json.NewDecoder(r.Body).Decode(&phase1Req); err != nil {
+				t.Errorf("invalid phase 1 body: %v", err)
+				return
+			}
+			fmt.Fprintln(w, `data: {"content":"pondering","stop":false}`)
+			fmt.Fprintln(w, ``)
+			fmt.Fprintln(w, `data: {"content":"","stop":true,"stop_type":"word","stopping_word":"</think>","timings":{"prompt_n":10,"prompt_ms":100,"predicted_n":4,"predicted_ms":40}}`)
+			fmt.Fprintln(w, ``)
+		case 2:
+			if err := json.NewDecoder(r.Body).Decode(&phase2Req); err != nil {
+				t.Errorf("invalid phase 2 body: %v", err)
+				return
+			}
+			fmt.Fprintln(w, `data: {"content":"{\"a\": 1}","stop":false}`)
+			fmt.Fprintln(w, ``)
+			fmt.Fprintln(w, `data: {"content":"","stop":true,"stop_type":"eos","timings":{"cache_n":14,"prompt_n":1,"prompt_ms":5,"predicted_n":6,"predicted_ms":60}}`)
+			fmt.Fprintln(w, ``)
+		default:
+			t.Errorf("unexpected request %d", requests)
+		}
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+	}
+
+	var responses []CompletionResponse
+	opts := api.DefaultOptions()
+	err := runner.Completion(t.Context(), CompletionRequest{
+		Prompt:        "test prompt",
+		Format:        []byte(`"json"`),
+		ThinkCloseTag: "</think>",
+		Options:       &opts,
+	}, func(cr CompletionResponse) {
+		responses = append(responses, cr)
+	})
+	if err != nil {
+		t.Fatalf("Completion error: %v", err)
+	}
+
+	if requests != 2 {
+		t.Fatalf("got %d requests, want 2", requests)
+	}
+
+	// Pass one must be unconstrained with the marker added as a stop string.
+	if phase1Req.Grammar != "" || len(phase1Req.JsonSchema) > 0 {
+		t.Errorf("phase 1 should not be constrained, got grammar=%q json_schema=%q", phase1Req.Grammar, phase1Req.JsonSchema)
+	}
+	if !slices.Contains(phase1Req.Stop, "</think>") {
+		t.Errorf("phase 1 stop = %v, want it to contain </think>", phase1Req.Stop)
+	}
+
+	// Pass two continues the prompt with the thinking and marker appended,
+	// constrained, and without the extra stop string.
+	if want := "test prompt" + "pondering" + "</think>"; phase2Req.Prompt != want {
+		t.Errorf("phase 2 prompt = %q, want %q", phase2Req.Prompt, want)
+	}
+	if phase2Req.Grammar != grammarJSON {
+		t.Errorf("phase 2 grammar = %q, want the JSON grammar", phase2Req.Grammar)
+	}
+	if slices.Contains(phase2Req.Stop, "</think>") {
+		t.Errorf("phase 2 stop = %v, must not contain </think>", phase2Req.Stop)
+	}
+
+	// The stream seen by the caller: thinking, the injected marker, the
+	// constrained content, then a single merged final response.
+	var contents []string
+	for _, r := range responses[:len(responses)-1] {
+		contents = append(contents, r.Content)
+		if r.Done {
+			t.Error("only the last response should be done")
+		}
+	}
+	if want := []string{"pondering", "</think>", `{"a": 1}`}; !slices.Equal(contents, want) {
+		t.Errorf("streamed contents = %q, want %q", contents, want)
+	}
+
+	final := responses[len(responses)-1]
+	if !final.Done {
+		t.Fatal("last response should be done")
+	}
+	if final.DoneReason != DoneReasonStop {
+		t.Errorf("DoneReason = %v, want %v", final.DoneReason, DoneReasonStop)
+	}
+	if final.EvalCount != 10 {
+		t.Errorf("EvalCount = %d, want 10 (4 thinking + 6 constrained)", final.EvalCount)
+	}
+	if final.PromptEvalCount != 15 {
+		t.Errorf("PromptEvalCount = %d, want 15 (14 cached + 1)", final.PromptEvalCount)
+	}
+}
+
+// TestLlamaServerCompletionDeferredFormatThinkingOnly covers the model closing
+// generation without ever leaving thinking: the first pass ends on EOS rather
+// than the marker, so there is no constrained continuation.
+func TestLlamaServerCompletionDeferredFormatThinkingOnly(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			fmt.Fprint(w, `{"status":"ok"}`)
+			return
+		}
+		requests++
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"content":"endless pondering","stop":false}`)
+		fmt.Fprintln(w, ``)
+		fmt.Fprintln(w, `data: {"content":"","stop":true,"stop_type":"limit","timings":{"prompt_n":10,"prompt_ms":100,"predicted_n":4,"predicted_ms":40}}`)
+		fmt.Fprintln(w, ``)
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+	}
+
+	var responses []CompletionResponse
+	opts := api.DefaultOptions()
+	err := runner.Completion(t.Context(), CompletionRequest{
+		Prompt:        "test prompt",
+		Format:        []byte(`"json"`),
+		ThinkCloseTag: "</think>",
+		Options:       &opts,
+	}, func(cr CompletionResponse) {
+		responses = append(responses, cr)
+	})
+	if err != nil {
+		t.Fatalf("Completion error: %v", err)
+	}
+
+	if requests != 1 {
+		t.Fatalf("got %d requests, want 1", requests)
+	}
+	final := responses[len(responses)-1]
+	if !final.Done {
+		t.Fatal("last response should be done")
+	}
+	if final.DoneReason != DoneReasonLength {
+		t.Errorf("DoneReason = %v, want %v", final.DoneReason, DoneReasonLength)
+	}
+}
