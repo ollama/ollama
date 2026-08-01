@@ -2,7 +2,9 @@
 
 - **Status:** accepted, validated 2026-08-01 on fork `main` (b10091 runners) and
   `release/0.32.1-dynres` (b9888+002 runners). Full evidence in
-  [generate-think-format-empty-response.md](../generate-think-format-empty-response.md).
+  [generate-think-format-empty-response.md](../generate-think-format-empty-response.md);
+  the resulting contract is specified in
+  [SPEC: structured output combined with thinking](../spec/structured-output-with-thinking.md).
 - **Date:** 2026-08-01
 - **Deciders:** MaxusAI fork maintainers
 
