@@ -1016,6 +1016,19 @@ func visionServerArgs(modelArch string, opts api.Options) []string {
 			"--image-min-tokens", strconv.Itoa(minTok),
 			"--image-max-tokens", strconv.Itoa(maxTok),
 		}
+	case "nemotron_h_omni":
+		// Nemotron 3 Nano Omni vision budget. Stock llama.cpp encodes every
+		// image at a structural 256 tokens; the fork's
+		// llama/compat/002-llama-cpp-nemotron-dynres.patch switches the
+		// projector to native-aspect dynamic resolution with
+		// set_limit_image_tokens(256, 3328), which makes these flags live. On
+		// an unpatched payload llama-server parses them but the projector
+		// never consumes them, so they are harmless there.
+		minTok, maxTok := nemotronImageTokenBudget(opts)
+		return []string{
+			"--image-min-tokens", strconv.Itoa(minTok),
+			"--image-max-tokens", strconv.Itoa(maxTok),
+		}
 	default:
 		return nil
 	}
@@ -1031,6 +1044,33 @@ func gemma4ImageTokenBudget(opts api.Options) (minTok, maxTok int) {
 	}
 	if maxTok <= 0 {
 		maxTok = api.DefaultImageMaxTokens
+	}
+	if minTok > maxTok {
+		minTok = maxTok
+	}
+	return minTok, maxTok
+}
+
+// Nemotron 3 Nano Omni's native visual-token budget: 1024…13312 pre-merge
+// 16px patches per image = 256…3328 tokens after the 2×2 merge.
+const (
+	defaultNemotronImageMinTokens = 256
+	defaultNemotronImageMaxTokens = 3328
+)
+
+// nemotronImageTokenBudget resolves the nemotron_h_omni image-token budget
+// from opts. The shared ImageMinTokens/ImageMaxTokens options arrive carrying
+// the gemma4-shaped DefaultOptions values (40/1120) whenever the caller left
+// them alone, and those exact values cannot be distinguished from an explicit
+// request — treat them, like <= 0, as unset and substitute this arch's native
+// bounds. Min is clamped down to max like gemma4's resolver.
+func nemotronImageTokenBudget(opts api.Options) (minTok, maxTok int) {
+	minTok, maxTok = opts.ImageMinTokens, opts.ImageMaxTokens
+	if minTok <= 0 || minTok == api.DefaultImageMinTokens {
+		minTok = defaultNemotronImageMinTokens
+	}
+	if maxTok <= 0 || maxTok == api.DefaultImageMaxTokens {
+		maxTok = defaultNemotronImageMaxTokens
 	}
 	if minTok > maxTok {
 		minTok = maxTok

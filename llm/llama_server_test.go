@@ -1614,13 +1614,33 @@ func TestVisionServerArgs(t *testing.T) {
 			want: []string{"--image-min-tokens", "1024"},
 		},
 		{
-			// nemotron_h_omni is in compatClipArches but must NOT get budget flags:
-			// PROJECTOR_TYPE_NEMOTRON_V2_VL never calls set_limit_image_tokens(), so
-			// --image-min/max-tokens are inert for it and passing them would only
-			// suggest a knob that does nothing. Its cost is a structural 256/image.
-			name: "nemotron_h_omni",
+			// With llama/compat/002-llama-cpp-nemotron-dynres.patch the projector
+			// calls set_limit_image_tokens(256, 3328), so the flags are live. On an
+			// unpatched payload llama-server still parses them but the projector
+			// never consumes them, so they are inert there, not an error.
+			name: "nemotron_h_omni defaults (unset opts fall back)",
 			arch: "nemotron_h_omni",
-			want: nil,
+			want: []string{"--image-min-tokens", "256", "--image-max-tokens", "3328"},
+		},
+		{
+			// The gemma4-shaped DefaultOptions values (40/1120) mean "untouched" and
+			// must map to the nemotron-native bounds, not be forwarded literally.
+			name: "nemotron_h_omni DefaultOptions values treated as unset",
+			arch: "nemotron_h_omni",
+			opts: api.Options{Runner: api.Runner{ImageMinTokens: api.DefaultImageMinTokens, ImageMaxTokens: api.DefaultImageMaxTokens}},
+			want: []string{"--image-min-tokens", "256", "--image-max-tokens", "3328"},
+		},
+		{
+			name: "nemotron_h_omni custom budget",
+			arch: "nemotron_h_omni",
+			opts: api.Options{Runner: api.Runner{ImageMinTokens: 512, ImageMaxTokens: 2048}},
+			want: []string{"--image-min-tokens", "512", "--image-max-tokens", "2048"},
+		},
+		{
+			name: "nemotron_h_omni min clamped to max",
+			arch: "nemotron_h_omni",
+			opts: api.Options{Runner: api.Runner{ImageMinTokens: 3000, ImageMaxTokens: 512}},
+			want: []string{"--image-min-tokens", "512", "--image-max-tokens", "512"},
 		},
 		{
 			name: "other model",

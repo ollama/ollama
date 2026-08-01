@@ -1,0 +1,57 @@
+diff --git a/tools/mtmd/clip.cpp b/tools/mtmd/clip.cpp
+index b88665064..43abd4958 100644
+--- a/tools/mtmd/clip.cpp
++++ b/tools/mtmd/clip.cpp
+@@ -1337,7 +1337,15 @@ struct clip_model_loader {
+                     } break;
+                 case PROJECTOR_TYPE_NEMOTRON_V2_VL:
+                     {
++                        // Nemotron 3 Nano Omni uses native-aspect dynamic resolution (no
++                        // tiling): one image resized within a visual-patch budget, with the
++                        // C-RADIOv4 encoder's position embeddings interpolated to the patch
++                        // grid in-graph. Budget: 1024..13312 patches of 16px (512^2 ..
++                        // ~1846^2 px) = 256..3328 tokens after the 2x2 merge, overridable
++                        // via --image-{min,max}-tokens.
++                        // ref: image_processing.py in nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning
+                         get_u32(KEY_PROJ_SCALE_FACTOR, hparams.n_merge, false);
++                        hparams.set_limit_image_tokens(256, 3328);
+                     } break;
+                 case PROJECTOR_TYPE_IDEFICS3:
+                     {
+diff --git a/tools/mtmd/models/nemotron-v2-vl.cpp b/tools/mtmd/models/nemotron-v2-vl.cpp
+index 03094be1b..28b6d88f2 100644
+--- a/tools/mtmd/models/nemotron-v2-vl.cpp
++++ b/tools/mtmd/models/nemotron-v2-vl.cpp
+@@ -9,8 +9,10 @@ ggml_cgraph * clip_graph_nemotron_v2_vl::build() {
+ 
+     ggml_tensor * inp = build_inp();
+ 
+-    // add position embeddings (pre-downsampled during GGUF conversion for fixed 512x512 input)
+-    inp = ggml_add(ctx0, inp, model.position_embeddings);
++    // add position embeddings, bicubic-interpolated from the baked 32x32 (512px) grid to the
++    // input's patch grid (a no-op when the input is 512x512, matching the original behavior).
++    ggml_tensor * pos_embd = resize_position_embeddings(GGML_SCALE_MODE_BICUBIC);
++    inp = ggml_add(ctx0, inp, pos_embd);
+     cb(inp, "inp_pos", -1);
+ 
+     inp = ggml_concat(ctx0, model.class_embedding, inp, 1);
+diff --git a/tools/mtmd/mtmd.cpp b/tools/mtmd/mtmd.cpp
+index e10ccf186..f0120995b 100644
+--- a/tools/mtmd/mtmd.cpp
++++ b/tools/mtmd/mtmd.cpp
+@@ -576,7 +576,14 @@ struct mtmd_context {
+                 } break;
+             case PROJECTOR_TYPE_NEMOTRON_V2_VL:
+                 {
+-                    image_preproc = std::make_unique<mtmd_image_preprocessor_fixed_size>(ctx_v);
++                    // <img> ... (image embeddings) ... </img>
++                    // native-aspect dynamic resolution (no tiling); the position embeddings
++                    // are interpolated to the input patch grid in the graph.
++                    // ref: processing.py / image_processing.py in
++                    // nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning
++                    img_beg = "<img>";
++                    img_end = "</img>";
++                    image_preproc = std::make_unique<mtmd_image_preprocessor_dyn_size>(ctx_v);
+                 } break;
+             case PROJECTOR_TYPE_LFM2:
+                 {
