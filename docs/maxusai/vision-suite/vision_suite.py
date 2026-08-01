@@ -119,10 +119,26 @@ def center_in(pred, gtb):
     except Exception:
         return False
 
+def get_bbox(o):
+    # Models speak different schema dialects: qwen-vl grounding uses "bbox_2d".
+    for k in ("bbox", "bbox_2d"):
+        if o.get(k):
+            return o[k]
+    return []
+
+def iou(a, b):
+    ix = max(0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    union = (a[2]-a[0])*(a[3]-a[1]) + (b[2]-b[0])*(b[3]-b[1]) - inter
+    return inter / union if union > 0 else 0.0
+
 def score_scene(resp_text):
     g = GT["scene_hd"]
+    W, H = g["size"]
     s = {"json_valid": False, "labels_found": 0, "labels_total": len(g["objects"]),
-         "bbox_hits": 0, "colors_right": 0, "serial_found": g["serial"] in resp_text,
+         "bbox_hits": 0, "bbox_mean_iou": 0.0, "bbox_space": None,
+         "colors_right": 0, "serial_found": g["serial"] in resp_text,
          "object_count": None}
     try:
         r = json.loads(resp_text); s["json_valid"] = True
@@ -131,14 +147,30 @@ def score_scene(resp_text):
     objs = r.get("objects") or []
     s["object_count"] = len(objs)
     by_label = {o.get("label"): o for o in objs if o.get("label")}
+    matched = []
     for gto in g["objects"]:
         o = by_label.get(gto["label"])
         if o:
             s["labels_found"] += 1
-            if center_in(o.get("bbox") or [], gto["bbox"]):
-                s["bbox_hits"] += 1
             if (o.get("color") or "").lower() == gto["color"]:
                 s["colors_right"] += 1
+            bb = get_bbox(o)
+            if len(bb) == 4:
+                matched.append((bb, gto["bbox"]))
+    # Models emit boxes in different coordinate spaces regardless of prompt
+    # instructions (qwen3.6: 0-1000 normalized; nemotron w/ reasoning: pixels).
+    # Score both spaces and keep the better one — report which.
+    best = (0, 0.0, None)
+    for space, fx, fy in (("pixel", 1.0, 1.0), ("norm1000", W/1000.0, H/1000.0)):
+        hits, ious = 0, []
+        for bb, gtb in matched:
+            px = [bb[0]*fx, bb[1]*fy, bb[2]*fx, bb[3]*fy]
+            hits += center_in(px, gtb)
+            ious.append(iou(px, gtb))
+        mean_iou = round(sum(ious)/len(ious), 3) if ious else 0.0
+        if (mean_iou, hits) > (best[1], best[0]):
+            best = (hits, mean_iou, space)
+    s["bbox_hits"], s["bbox_mean_iou"], s["bbox_space"] = best
     if not s["serial_found"]:
         s["serial_found"] = g["serial"] in json.dumps(r)
     return s
@@ -164,7 +196,7 @@ def score_doc(resp_text):
                     s["qty_price_right"] += 1
             except Exception:
                 pass
-            bb = m.get("name_bbox") or []
+            bb = m.get("name_bbox") or m.get("name_bbox_2d") or []
             if len(bb) == 4 and bb[1] > 250 and bb[3] < 700 and bb[0] < 500:
                 s["name_bbox_hits"] += 1
     try:
