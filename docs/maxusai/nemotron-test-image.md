@@ -137,28 +137,68 @@ blob, both served via llama-server+mtmd (verified in launch logs):
 | chart: values read (multi) | 2/5 | **5/5** |
 | multi: cross-image q1 (find INV code) | right | right |
 
-**Reading:** the budget lift delivers exactly what it promises on *fine text* (labels,
-serial, fine print — all invisible at 256 tokens), but on this payload **global spatial
-structure degrades** (objects missed, attributes scrambled, confabulated line items).
-Two independent causes identified:
+**Reading (revised after the control matrix below):** the budget lift delivers exactly
+what it promises on *fine text* (labels, serial, fine print — all invisible at 256
+tokens), but on this payload **global spatial structure degrades** (objects missed,
+attributes scrambled, confabulated line items). Cause attribution, in order of proof:
 
-1. **Cross-request contamination on b10091** — the warm-server document run contained
-   labels from the *previous request's* image; a cold-restart rerun did not. That is the
-   [#17475](https://github.com/ollama/ollama/issues/17475) shared-slot signature,
-   reproduced here, independently reinforcing [amd-upgrade-gate.md](amd-upgrade-gate.md).
-2. **Position-embedding fidelity (hypothesis, fix identified):** the compat layer bakes
-   the 128×128 RADIO grid down to 32×32 at load, and the 002 graph bicubic-upsamples
-   that 32² intermediate to grids up to 115×115 — a double resample the reference never
-   does (it interpolates 128²→target directly, and for non-square grids interpolates to
-   the max dim then crops). Symptoms match: fine texture readable, global layout
-   scrambled, worst on the most non-square grid (60×34 scene). Fix is fork-local
-   (keep the native 128² grid in `handle_nemotron_h_omni_clip()`'s pos-embed load-op;
-   no new llama.cpp patch) — the planned follow-up experiment. Grammar constraint and
-   reasoning mode were ruled out as causes (identical scores without `format:"json"`).
+1. **The b10091 payload is vision-broken independently of 002 — proven by the gemma4
+   control.** gemma4:31b ran the same suite at *identical* budgets on both payloads
+   (prompt counts equal; 002 does not touch gemma4) and collapsed only on b10091:
+   scene 6/6→3/6 labels, invoice 5/5-items-perfect→0/5 with a confabulated refusal,
+   chart 5/5→0/5, output lengths 993→42 tokens, including outright degenerate token
+   salad (`{"thought}<channel|>...`) — the same "degenerate vision output" that forced
+   the 2026-07-31 rollback, now reproduced cold on ground truth. The nemotron
+   structural regression above is therefore confounded and must be re-measured on
+   **b9888+002** (the production candidate) before further attribution.
+2. **Cross-request contamination on b10091, reproduced on two models** — the warm
+   nemotron document run contained the *previous request's* scene labels (cold rerun
+   did not), and the gemma4-patched document response described the scene image
+   outright. That is the [#17475](https://github.com/ollama/ollama/issues/17475)
+   shared-slot signature, independently reinforcing
+   [amd-upgrade-gate.md](amd-upgrade-gate.md).
+3. **Position-embedding fidelity (now an unproven secondary hypothesis):** the compat
+   layer bakes the 128×128 RADIO grid to 32×32 at load and the 002 graph
+   bicubic-upsamples that intermediate to grids up to 115×115, where the reference
+   interpolates 128²→target directly (max-dim-then-crop for non-square). Symptoms were
+   consistent (fine texture readable, layout scrambled, worst on the 60×34 grid), but
+   the gemma4 control shows the payload alone explains most of it. Keep the fork-local
+   fix (native 128² grid in `handle_nemotron_h_omni_clip()`'s pos-embed load-op) as an
+   experiment to run on b9888+002 only if structure has not recovered there. Grammar
+   constraint and reasoning mode were ruled out (identical scores without
+   `format:"json"`).
+
+### Control matrix: gemma4 + qwen3.6, same suite, both payloads
+
+Both models run at **identical budgets on both payloads** (equal `prompt_eval_count`
+per test; 002 touches neither arch), so these columns isolate the payload version.
+gemma4 with model-default reasoning; qwen3.6 with `think:false` (with reasoning on,
+both payloads returned empty responses — thinking consumed `num_predict`; harness
+note, not a payload signal).
+
+| metric | gemma4:31b b9888-live | gemma4:31b b10091 | qwen3.6:35b b9888-live | qwen3.6:35b b10091 |
+|---|---|---|---|---|
+| scene labels (20px) | **6/6** | 3/6 | **6/6** | 3/6 |
+| scene colors | **6/6** | 3/6 | **6/6** | 2/6 |
+| scene serial (14px) | – | found | **found** | found |
+| invoice line items | **5/5**, qty/price 5/5, total exact | 0/5 (described the *previous request's image*) | **5/5**, qty/price 5/5, total exact | 0/5 (142-token collapse) |
+| chart values | **5/5** | 0/5 (degenerate token salad) | **5/5** | 4/5 |
+| cross-image q1/q2 | right/right | wrong/wrong | right/right | right/wrong |
+
+**Conclusion:** the b10091 payload degrades vision quality across all three models with
+one signature — half the objects, collapsed/confabulated outputs, cross-request
+leakage — at unchanged token budgets. This (a) reproduces the AMD gate's rollback
+rationale deterministically ([amd-upgrade-gate.md](amd-upgrade-gate.md)), (b) confounds
+the nemotron structural regression above, and (c) makes **b9888+002** the decisive next
+build: it escapes the broken payload, tests 002 on a healthy substrate, and is the
+production candidate anyway. On the healthy b9888 payload, gemma4:31b and qwen3.6:35b
+both ace this suite — consistent with the routing policy in
+[vision-token-budget-measurements.md](vision-token-budget-measurements.md) — while
+nemotron's 256-token cap leaves it structure-capable but fine-text-blind there.
 
 Suite + images: `gen_scenes.py` / `vision_suite.py` (session scratchpad; ground truth
-embedded). Re-run both sides after the pos-embed experiment and on the b9888+002
-production candidate — fine-text gains should persist and structure should recover.
+embedded). Re-run all three models on b9888+002; run the pos-embed experiment only if
+nemotron structure has not recovered there.
 
 **2026-08-01 — containerized run, `ollama-rocm-nemotron:gfx1151-host-8d97cdea`** (the
 host-artifact image variant: ubuntu:24.04 final stage + the native build's payload,

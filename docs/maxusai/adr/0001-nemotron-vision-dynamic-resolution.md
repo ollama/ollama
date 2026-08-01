@@ -106,9 +106,13 @@ gemma4-shaped DefaultOptions values 40/1120 are treated as unset). Normative beh
   **materialized**: fine-text reading improves exactly as intended (20px labels, 14px
   serial, 17px fine print — all blind at 256 tokens), while global spatial structure
   degrades on the b10091+002 payload (missed objects, scrambled attributes,
-  confabulated line items). Primary suspect is the double resample (128²→32² baked at
-  load, then 32²→up-to-115² in-graph) plus anisotropic W×H interpolation where RADIO's
-  reference interpolates to the max dim and crops. The follow-up is fork-local — keep
-  the native 128² grid in `handle_nemotron_h_omni_clip()`'s pos-embed load-op — and
-  gates any quality-positive deployment. Cross-request contamination (#17475 signature)
-  was also reproduced on b10091, independent of 002.
+  confabulated line items). The gemma4 control (same suite, identical budgets on both
+  payloads, 002 not involved) collapsed the same way only on b10091 — including
+  degenerate token output and cross-request leakage (#17475 signature, on two models) —
+  so the **primary cause is the b10091 payload regression the AMD gate exists for**,
+  and the structural result must be re-measured on b9888+002 (the production
+  candidate). The position-embedding double-resample (128²→32² baked, then 32²→115²
+  in-graph, anisotropic where RADIO's reference does max-dim-then-crop) remains a
+  plausible secondary factor; its fork-local fix (keep the native 128² grid in
+  `handle_nemotron_h_omni_clip()`'s pos-embed load-op) is the queued experiment if
+  b9888+002 does not recover structure.
