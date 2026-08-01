@@ -291,7 +291,11 @@ the final implementation including `925a669a`:
 > The eager grammar admits no `</think>` token, so the model can never leave thinking
 > and the marker-based parser files the entire grammar-forced answer as reasoning.
 > `/api/chat` escapes this via the #12460 double-request; generate never got the
-> equivalent, on the llama-server runner or the old Go engine before it.
+> equivalent, on the llama-server runner or the old Go engine before it. Worth noting
+> the blast radius is wider than the native endpoint: `/v1/completions` also routes to
+> `GenerateHandler`, so the OpenAI-compat completions API is affected too, while
+> `/v1/chat/completions`, `/v1/responses` and `/v1/messages` all reach `ChatHandler`
+> and are fine — which is why this has stayed invisible to most users.
 >
 > We ship a downstream fix that takes a different shape from the double-request, and
 > it may be worth considering alongside this PR. Instead of re-rendering the prompt
