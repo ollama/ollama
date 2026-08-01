@@ -196,9 +196,38 @@ both ace this suite — consistent with the routing policy in
 [vision-token-budget-measurements.md](vision-token-budget-measurements.md) — while
 nemotron's 256-token cap leaves it structure-capable but fine-text-blind there.
 
-Suite + images: `gen_scenes.py` / `vision_suite.py` (session scratchpad; ground truth
-embedded). Re-run all three models on b9888+002; run the pos-embed experiment only if
-nemotron structure has not recovered there.
+Suite + images: [`vision-suite/`](vision-suite/) (committed; ground truth embedded).
+
+### VERDICT — b9888+002 (2026-08-01, native build from `feat/nemotron-dynres-0321`)
+
+Token protocol: **byte-identical** to the b10091+002 runs (270…3,332 dynamic, exact
+ceiling at 2048×1664, knob 2,044→1,012) — the 002 patch behaves the same on b9888.
+Ground-truth suite (`think:false`, cold):
+
+| test | b9888 stock (256 cap) | b10091+002 | **b9888+002** |
+|---|---|---|---|
+| nemotron scene labels / colors / objects | 0/6, 0/6, 6 | 3/6, 1/6, 3 | **6/6, 6/6, 6 (+serial exact)** |
+| nemotron invoice | partial, totals only | 0/5 hallucinated | **5/5 items, 5/5 qty/price, total exact** |
+| nemotron chart (multi) + q1/q2 | 5/5, right/right | 2/5, right/wrong | **5/5, right/right** |
+
+Controls on the same b9888+002 build: gemma4:31b and qwen3.6:35b (`think:false`) both
+score **perfect** — gemma4 identical to b9888-live cell-for-cell (build is healthy), and
+both even pick up the 14px serial. Conclusions:
+
+1. **b9888+002 is quality-positive on every axis**: the good payload's structure plus
+   the patch's fine-text gains. It is the validated production candidate.
+2. **The pos-embed double-resample hypothesis is refuted as a blocker** — structure is
+   fully intact with the baked-32² interpolation. The queued compat experiment is
+   closed unless future OCR-grade grounding work reopens it.
+3. **Think-mode finding (all payloads):** `think:true` + `format:"json"` returns an
+   empty `response` for nemotron3 and qwen3.6 (thinking ends without a JSON body,
+   eval 500–1,200 « the 4,000 budget); gemma4 works in both modes, and gemma4
+   `think:false` shows no #17459 degeneration on b9888. For JSON extraction on the
+   reasoning models, serve with `think:false`.
+4. Known residual: pixel-bbox localization is weak across **all** models and payloads
+   here (0–1 center-hits) — the models emit their trained coordinate conventions
+   rather than requested absolute pixels; a prompt/rescaling iteration, not a payload
+   issue.
 
 **2026-08-01 — containerized run, `ollama-rocm-nemotron:gfx1151-host-8d97cdea`** (the
 host-artifact image variant: ubuntu:24.04 final stage + the native build's payload,

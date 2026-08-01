@@ -146,6 +146,14 @@ in July 2026 misread the floor as a wrong or unpinned build.
 1. **Route by image size, not by model reputation.** Above ~1 MP prefer `qwen3.5`/`qwen3.6`
    (up to 4,096) or patched `gemma4` (up to 1,120). Do not send large or detail-critical
    images to `nemotron3`.
+
+   > **Amended 2026-08-01:** on a payload carrying the 002 dynres patch (b9888+002
+   > lineage), `nemotron3` is no longer the weak router target — it scored 6/6 labels,
+   > exact 14px-serial read, and a perfect invoice extraction on the ground-truth suite
+   > ([nemotron-test-image.md](nemotron-test-image.md)), competitive with gemma4/qwen3.6
+   > up to its 3,328-token ceiling. The "never send large images" rule stands only for
+   > unpatched payloads. For JSON extraction serve the reasoning models with
+   > `think:false`.
 2. **Pin the floor server-side when uniformity matters**, via a model manifest rather than
    per-request options, so clients may keep sending `null`:
    ```bash
