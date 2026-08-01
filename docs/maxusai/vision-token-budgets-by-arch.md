@@ -211,8 +211,44 @@ Consequences worth knowing:
    being > 0, and a projector that never calls `set_limit_image_tokens()` leaves them at the
    `-1` sentinel.
 
+## The qwen floor, measured (2026-08-02, b9888 + 002)
+
+The `qwen35`/`qwen35moe` row above was added on `main` in `87cf1100` from the projector
+warning alone. It has since been confirmed empirically on the release lineage, using the
+fingerprint method (`/api/generate`, `num_predict: 1`, minus a 14-token text-only
+baseline; `qwen3.6:35b-a3b-q4_K_M`, arch `qwen35moe`):
+
+| image | no flag | `--image-min-tokens 1024` |
+|---|---|---|
+| 224×224 | 51 | **1026** |
+| 448×448 | 198 | **1026** |
+| 896×896 | 786 | **1026** |
+| 1920×1080 (`scene_hd`) | — | 2042 — above the floor, unaffected |
+| 1568×1568 (`document`) | — | 2403 — above the floor, unaffected |
+
+So the flag genuinely binds for this projector: sub-1MP inputs were costing as little as
+51 visual tokens against a projector that asks for 1,024, and corpus-sized inputs are
+untouched — every vision measurement recorded on this lineage still stands.
+
+`release/0.32.1-dynres` carried the switch **without** `qwen35`/`qwen35moe` until
+`a4788474`, so qwen3.6 ran with no floor there. Only the qwen half of `87cf1100` was
+taken: its `nemotron_h_omni`-gets-no-flags guard described `main`'s `llama/` only while
+that tree was pristine (`5ad093b0` … `2487dd56`) and was false on any compat/002
+payload — including `main` itself today. Policy and the generalised procedure:
+[ADR 0003](adr/0003-vision-image-token-budget-policy.md) and
+[SPEC: vision image-token budgets](spec/vision-image-token-budgets.md).
+
+Because these are launch-time flags, the same costs apply on `/api/chat`,
+`/api/generate` and the `/v1` endpoints alike — measured on nemotron3 + dynres, where a
+1920×1080 image gave `prompt_eval_count` 2061 through both `/api/generate` and
+`/api/chat`.
+
 ## See also
 
+- [SPEC: vision image-token budgets](spec/vision-image-token-budgets.md) — the normative
+  contract and the procedure for adding an arch.
+- [ADR 0003](adr/0003-vision-image-token-budget-policy.md) — why budgets are opt-in and
+  how backports cross lineages.
 - [`gemma4-budget-image.md`](gemma4-budget-image.md) — building/deploying the patched image,
   and the measured gemma4 budget behaviour.
 - [`../design/gemma4-vision-token-budgets-upstream-rebase.md`](../design/gemma4-vision-token-budgets-upstream-rebase.md)

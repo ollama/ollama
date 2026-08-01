@@ -1,7 +1,9 @@
 # `/api/generate` + `think` + `format` returned an empty response — root cause and fix
 
 MaxusAI-fork investigation and fix (2026-08-01). Companion to
-[ADR 0002](adr/0002-deferred-format-constraining.md). Fix branch:
+[ADR 0002](adr/0002-deferred-format-constraining.md) (the decision) and
+[SPEC: structured output combined with thinking](spec/structured-output-with-thinking.md)
+(the normative contract this behaviour must satisfy). Fix branch:
 `fix/generate-think-format-lazy-grammar` (off `main`), cherry-picked to
 `release/0.32.1-dynres`.
 

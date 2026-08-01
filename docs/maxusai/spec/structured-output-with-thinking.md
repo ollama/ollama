@@ -1,0 +1,131 @@
+# SPEC: structured output combined with thinking
+
+MaxusAI-fork specification. Status: **implemented** (fork `main` lineage and
+`release/0.32.1-dynres`). Written 2026-08-02.
+
+Normative contract for requests that set `format` **and** run a model that emits
+reasoning. Rationale and history live in
+[generate-think-format-empty-response.md](../generate-think-format-empty-response.md);
+the design decision is [ADR 0002](../adr/0002-deferred-format-constraining.md). This
+document states only what the implementation must do, so it can be verified or
+re-implemented without reading either.
+
+Key words MUST / MUST NOT / SHOULD follow their usual RFC-2119 sense.
+
+## 1. Scope
+
+Applies when a request sets `format` to `"json"` or a JSON Schema object, and the
+model either has a builtin parser with thinking support or a template whose thinking
+tags `thinking.InferTags` recognises.
+
+Two model shapes matter:
+
+- **implicit-open** — generation begins *inside* thinking; no opening marker is
+  emitted; thinking ends at a close marker (`</think>`). Parsers `nemotron-3-nano`,
+  `qwen3.5`, and any template model whose prompt prefills the opening tag.
+- **explicit-open** — the model emits an opening marker first, so a grammar that
+  excludes it simply suppresses thinking.
+
+The failure this contract exists to prevent is specific to implicit-open models: a
+grammar applied from the first token makes the close marker unreachable, so the model
+can never leave thinking and the whole grammar-shaped answer is classified as
+reasoning.
+
+## 2. Requirements
+
+**R1 — Reasoning MUST be unconstrained.** No grammar or schema may restrict sampling
+while the model is producing reasoning. A conforming implementation MUST NOT rely on
+a grammar whose root merely *tolerates* the reasoning span if that grammar can still
+reject a freely sampled reasoning token.
+
+**R2 — The response MUST satisfy the format.** Once reasoning has ended, generation
+MUST be constrained so the emitted content conforms to `format`.
+
+**R3 — Fields MUST be separated.** Reasoning MUST be reported in `thinking`
+(`message.thinking` on chat) and the constrained answer in `response`
+(`message.content`). A completion that satisfies the format MUST NOT be reported as
+thinking.
+
+**R4 — Marker semantics MUST match the parsers.** The boundary between reasoning and
+content is the **first textual occurrence** of the close marker, whether the model
+emits it as a special token or spells out its characters. Constraining MUST begin at
+exactly the boundary the parser uses; the two MUST NOT be able to disagree.
+
+**R5 — Termination MUST be honest.** If reasoning consumes the token budget or the
+context window, the request MUST end with `done_reason: "length"` and MUST NOT report
+`"stop"`. Exhaustion MUST NOT surface as a transport or runner error after content
+has already been streamed.
+
+**R6 — Metrics MUST count each token once.** `prompt_eval_count` MUST report the
+tokens of the request's own prompt. Reasoning tokens MUST appear in `eval_count` and
+MUST NOT also appear in `prompt_eval_count`, even when an implementation re-submits
+reasoning as prompt text internally. `eval_count` MUST be the total generated across
+any internal passes.
+
+**R7 — Streaming order MUST be preserved.** Reasoning MUST stream to the client as it
+is produced, before any content. The close marker MUST reach downstream parsers so
+they transition states at the right point.
+
+**R8 — Endpoint behaviour MUST be uniform.** All endpoints MUST satisfy R1–R7:
+
+| endpoint | handler | mechanism |
+|---|---|---|
+| `/api/chat` | `ChatHandler` | double request (upstream #12460) |
+| `/v1/chat/completions`, `/v1/responses`, `/v1/messages` | `ChatHandler` | as above |
+| `/api/generate` | `GenerateHandler` | deferred constraining (ADR 0002) |
+| `/v1/completions` | `GenerateHandler` | as above |
+
+**R9 — Non-thinking paths MUST be unchanged.** With thinking disabled or absent, or
+with no `format`, generation MUST behave exactly as it did before: a single
+completion, constrained from the first token when `format` is set.
+
+## 3. Implementation on the llama-server runner
+
+Satisfied by a two-pass split (ADR 0002): pass one generates unconstrained with the
+close marker as an extra stop string; if `stopping_word` reports that marker, pass two
+continues `prompt + reasoning + marker` with the grammar applied eagerly.
+`cache_prompt` makes the second prefill a cache hit.
+
+Requirements on that implementation:
+
+- The second pass MUST NOT carry the marker as a stop string (R2: a JSON string value
+  containing the marker must not truncate the answer).
+- Before the second pass, the continuation prompt MUST be checked against the context
+  window; if it does not fit, the request ends per R5.
+- Prompts that context-shift has reduced to a token array cannot be continued
+  textually; such requests MAY fall back to eager constraining, and the reclassifier
+  below then applies.
+
+## 4. Defensive reclassification
+
+For runners that do not implement §3 (e.g. MLX), a non-streaming generate response
+that has `format` active, `done_reason: "stop"`, an empty response, and thinking that
+is itself valid JSON MUST be reclassified so the thinking becomes the response. This
+is a safety net for R3 only; it does not satisfy R1, because such a generation was
+constrained throughout.
+
+## 5. Conformance
+
+Automated:
+
+- `TestLlamaServerCompletionDeferredFormat` — pass one unconstrained and stopped on
+  the marker, pass two's prompt and grammar, streamed order (R1, R2, R4, R7),
+  metrics (R6).
+- `TestLlamaServerCompletionDeferredFormatContextFull` — R5.
+- `TestLlamaServerCompletionDeferredFormatThinkingOnly` — budget exhaustion inside
+  reasoning (R5).
+- `TestApplyCompletionFormat` — format translation and the untouched non-thinking
+  path (R9).
+- `Test{Nemotron3Nano,Qwen35}Parser*ThinkingCloseMarker` — marker exposure (R4).
+- `TestReclassifyConstrainedThinking` — §4.
+
+Manual probe (any implicit-open model, temperature 0): `/api/generate` with
+`think:true` and `format:"json"` must return reasoning in `thinking` and parseable
+JSON in `response`, with `done_reason:"stop"`; repeat with a JSON Schema, with
+`stream:true`, and against `/api/chat` and `/v1/chat/completions`.
+
+## 6. Non-goals
+
+Tool calls combined with `format` on `/api/generate` (generate has no tools);
+guaranteeing that a model's reasoning is *useful*; and constraining reasoning itself
+to any grammar — R1 forbids it.
