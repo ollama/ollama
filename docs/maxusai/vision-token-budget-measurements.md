@@ -153,7 +153,8 @@ in July 2026 misread the floor as a wrong or unpinned build.
    > ([nemotron-test-image.md](nemotron-test-image.md)), competitive with gemma4/qwen3.6
    > up to its 3,328-token ceiling. The "never send large images" rule stands only for
    > unpatched payloads. For JSON extraction serve the reasoning models with
-   > `think:false`.
+   > `think:false` — or, on builds carrying the generate think+format fix (ADR 0002,
+   > merged 2026-08-02), `think:true` also works and improves nemotron's grounding.
 2. **Pin the floor server-side when uniformity matters**, via a model manifest rather than
    per-request options, so clients may keep sending `null`:
    ```bash

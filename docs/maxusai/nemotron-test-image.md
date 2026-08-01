@@ -224,10 +224,14 @@ both even pick up the 14px serial. Conclusions:
    eval 500–1,200 « the 4,000 budget); gemma4 works in both modes, and gemma4
    `think:false` shows no #17459 degeneration on b9888. For JSON extraction on the
    reasoning models, serve with `think:false`.
-4. Known residual: pixel-bbox localization is weak across **all** models and payloads
-   here (0–1 center-hits) — the models emit their trained coordinate conventions
-   rather than requested absolute pixels; a prompt/rescaling iteration, not a payload
-   issue.
+4. ~~Known residual: pixel-bbox localization is weak~~ **Superseded 2026-08-02**: the
+   weak bbox scores were a scorer decode artifact — each model answers in its trained
+   coordinate dialect regardless of instructions (qwen3.6: `bbox_2d` xyxy norm-1000,
+   IoU ≈ 0.95; gemma4: Gemini `box_2d` **yxyx** norm-1000, IoU ≈ 0.78; nemotron3:
+   self-chosen `bbox_2d` xyxy norm-1000 **of its input canvas**, so stock letterboxed
+   payloads skew the y-axis by the padding — another point for dynres). The suite
+   scorer now searches key × space × order ([vision-suite/](vision-suite/) README has
+   the dialect map).
 
 **2026-08-01 — containerized run, `ollama-rocm-nemotron:gfx1151-host-8d97cdea`** (the
 host-artifact image variant: ubuntu:24.04 final stage + the native build's payload,
@@ -246,3 +250,28 @@ host is 002 + the Go commits cherry-picked onto the **`85ebcb79` / 0.32.1 / `b98
 lineage (re-`git apply --check` the patch against `b9888`), full-built, then taken
 through the deploy gate in [amd-upgrade-gate.md](amd-upgrade-gate.md) including the
 output-quality A/B — on a payload without the b10091 degeneration confound.
+
+### Addendum 2026-08-02 — think:on cells resolved (generate think+format fix)
+
+The misfiled think:on cells were an Ollama bug, not model failures:
+`/api/generate` (+`/v1/completions`) with thinking + `format` never worked in any
+release — root cause, fix (two-pass stop-split), and history in
+[generate-think-format-empty-response.md](generate-think-format-empty-response.md)
+and [ADR 0002](adr/0002-generate-think-format-two-pass.md); fix merged to main
+(PR #22) and cherry-picked to `release/0.32.1-dynres`.
+
+On the fixed b9888+002 build (`ollama-dynres-genfix*`), think:on + format:json,
+temperature 0:
+
+| test | nemotron3 | qwen3.6 |
+|---|---|---|
+| scene | 6/6 labels, 6/6 colors, serial exact, **5/6 bbox center-hits** (pixel-space, IoU ≈ 0.3) | 6/6 + serial, bbox IoU ≈ 0.95 once norm-1000-decoded |
+| invoice | 5/5 items, 5/5 qty/price, total exact, **5/5 name-bbox** | 5/5 + total exact |
+| 3-image | all answers right — needs a ≈16K generation budget | all right — needs > 8K |
+
+Reasoning materially improves nemotron's localization (centers 0–1 → 5/6) at 4–16×
+generation cost. Completing the earlier matrix: nemotron stock think:on also misfiles
+(the bug exists on 0.32.1 — it predates every payload here); gemma4 b9888 think:off is
+perfect including the serial; gemma4 b10091 think:off collapses on scene/invoice with
+the multi test partly intact. Serving guidance: on fixed builds, think:on + format is
+legitimate and preferred when grounding matters; on unfixed builds keep `think:false`.
