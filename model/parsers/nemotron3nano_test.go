@@ -432,3 +432,38 @@ func TestNemotron3NanoParser_ToolCallWithoutThinkClose(t *testing.T) {
 		t.Errorf("calls mismatch (-got +want):\n%s", diff)
 	}
 }
+
+func TestNemotron3NanoParser_ThinkingCloseMarker(t *testing.T) {
+	t.Run("reports marker when starting in thinking", func(t *testing.T) {
+		p := &Nemotron3NanoParser{}
+		p.Init(nil, nil, &api.ThinkValue{Value: true})
+		if got := p.ThinkingCloseMarker(); got != nemotronThinkClose {
+			t.Errorf("expected %q, got %q", nemotronThinkClose, got)
+		}
+	})
+
+	t.Run("reports marker when thinkValue is nil (thinking defaults on)", func(t *testing.T) {
+		p := &Nemotron3NanoParser{}
+		p.Init(nil, nil, nil)
+		if got := p.ThinkingCloseMarker(); got != nemotronThinkClose {
+			t.Errorf("expected %q, got %q", nemotronThinkClose, got)
+		}
+	})
+
+	t.Run("empty when thinking disabled", func(t *testing.T) {
+		p := &Nemotron3NanoParser{}
+		p.Init(nil, nil, &api.ThinkValue{Value: false})
+		if got := p.ThinkingCloseMarker(); got != "" {
+			t.Errorf("expected empty marker, got %q", got)
+		}
+	})
+
+	t.Run("empty with assistant content prefill", func(t *testing.T) {
+		p := &Nemotron3NanoParser{}
+		prefill := &api.Message{Role: "assistant", Content: "Starting..."}
+		p.Init(nil, prefill, &api.ThinkValue{Value: true})
+		if got := p.ThinkingCloseMarker(); got != "" {
+			t.Errorf("expected empty marker, got %q", got)
+		}
+	})
+}

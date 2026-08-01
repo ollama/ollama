@@ -216,6 +216,14 @@ type CompletionRequest struct {
 	ToolCallTag     string   // raw generic tool parser tag, if any
 	LeadingBOS      string   // textual BOS emitted by Go rendering, if any
 
+	// ThinkCloseTag is the marker that ends thinking for models whose
+	// generation starts inside thinking. When set together with Format,
+	// constraining is deferred: reasoning runs unconstrained until this marker,
+	// then generation continues with the format grammar applied. Without it an
+	// eager grammar would make the marker unreachable and the entire
+	// constrained output would be classified as thinking.
+	ThinkCloseTag string
+
 	// Logprobs specifies whether to include log probabilities in the response
 	Logprobs bool
 

@@ -61,6 +61,15 @@ func (p *Nemotron3NanoParser) Init(tools []api.Tool, lastMessage *api.Message, t
 	return tools
 }
 
+// ThinkingCloseMarker reports the implicit-thinking close marker while the
+// parser is still collecting thinking from the start of generation.
+func (p *Nemotron3NanoParser) ThinkingCloseMarker() string {
+	if p.state == Nemotron3NanoCollectingThinking {
+		return nemotronThinkClose
+	}
+	return ""
+}
+
 func (p *Nemotron3NanoParser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
 	if p.state == Nemotron3NanoCollectingContent {
 		return p.toolParser.Add(s, done)
