@@ -90,6 +90,9 @@ func parseSafetensors(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]T
 					return nil, fmt.Errorf("duplicate tensor name '%s' was found for this model", ggufName)
 				}
 				names[ggufName] = struct{}{}
+				if err := validateSafetensorsOffsets(key, value.Offsets); err != nil {
+					return nil, err
+				}
 				ts = append(ts, safetensor{
 					fs:       fsys,
 					path:     p,
@@ -108,6 +111,20 @@ func parseSafetensors(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]T
 	}
 
 	return ts, nil
+}
+
+// validateSafetensorsOffsets ensures a tensor's data_offsets field is the
+// well-formed [begin, end] pair the rest of the parser assumes. The field is
+// attacker-controlled JSON, so an empty, short, or descending pair must be
+// rejected instead of panicking with an index-out-of-range on Offsets[0:2].
+func validateSafetensorsOffsets(name string, offsets []int64) error {
+	if len(offsets) != 2 {
+		return fmt.Errorf("tensor %q has malformed data_offsets %v (expected [begin, end])", name, offsets)
+	}
+	if offsets[0] < 0 || offsets[1] < offsets[0] {
+		return fmt.Errorf("tensor %q has invalid data_offsets %v", name, offsets)
+	}
+	return nil
 }
 
 // safetensorsPad returns the padded size of the safetensors file given a length n and offset s
@@ -306,6 +323,9 @@ func collectSafetensorsFP8Scales(n int64, headers map[string]safetensorMetadata)
 		}
 		if _, ok := scales.consumed[scaleKey]; ok {
 			return safetensorsFP8Scales{}, fmt.Errorf("fp8 scale companion %q is used by multiple tensors", scaleKey)
+		}
+		if err := validateSafetensorsOffsets(scaleKey, scaleValue.Offsets); err != nil {
+			return safetensorsFP8Scales{}, err
 		}
 
 		scales.byWeight[key] = &safetensorScale{
