@@ -38,9 +38,13 @@ Reproducible ground-truth benchmarks behind the measured tables in
   empty cells as data.
 - Subtract each model's text-only baseline when reading `prompt_eval_count`
   (nemotron3: 18); counts are grid-quantised — ignore ±2.
-- Bbox caveat: all tested models emit their trained coordinate conventions rather than
-  requested absolute pixels, so `bbox_hits` is a weak signal pending a
-  normalized-coordinate prompt iteration.
+- Bbox scoring is dual-space: models emit their trained coordinate conventions
+  regardless of prompt instructions — qwen3.6 answers in 0-1000 normalized (IoU ~0.95
+  once decoded; near-perfect grounding), nemotron3 with reasoning answers in pixels
+  (center-accurate, IoU ~0.3). The scorer tries both spaces, keeps the better, and
+  reports `bbox_space` + `bbox_mean_iou` alongside center-hits. Both schema-key
+  dialects (`bbox`/`bbox_2d`, `name_bbox`/`name_bbox_2d`) are accepted; measured
+  2026-08-02: the key choice did not change qwen's quality, the space decode did.
 
 ## Example: full grid against an isolated test server
 
