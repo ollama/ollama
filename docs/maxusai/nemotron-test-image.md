@@ -119,6 +119,47 @@ cap is lifted — mechanics behave exactly as specified.**
   captured server log at `OLLAMA_DEBUG=1`; use `prompt_eval_count` as the fingerprint
   instead (flat 256 = unpatched).
 
+### Content-quality A/B (2026-08-01, ground-truth suite)
+
+Long-prompt JSON+bbox suite (`vision_suite.py`, three synthetic ground-truth images) run
+at temperature 0 / `think:false` / `format:"json"` against both payloads — same model
+blob, both served via llama-server+mtmd (verified in launch logs):
+
+| metric | patched (dynres, b10091) | unpatched (512² fixed, b9888 live) |
+|---|---|---|
+| scene: 20px labels read | **3/6** | 0/6 |
+| scene: 14px serial | near-miss (`SN-4921-KK`) | not seen |
+| scene: objects enumerated | 3/6 | **6/6** |
+| scene: bbox hits / colors | 0 / 1 | 0 / 0 |
+| invoice: header + invoice-no | **exact** | exact |
+| invoice: 17px fine print | **verbatim** (multi run) | not seen |
+| invoice: line items faithful | 0/5 (hallucinated names) | **3/5 partial, total exact** |
+| chart: values read (multi) | 2/5 | **5/5** |
+| multi: cross-image q1 (find INV code) | right | right |
+
+**Reading:** the budget lift delivers exactly what it promises on *fine text* (labels,
+serial, fine print — all invisible at 256 tokens), but on this payload **global spatial
+structure degrades** (objects missed, attributes scrambled, confabulated line items).
+Two independent causes identified:
+
+1. **Cross-request contamination on b10091** — the warm-server document run contained
+   labels from the *previous request's* image; a cold-restart rerun did not. That is the
+   [#17475](https://github.com/ollama/ollama/issues/17475) shared-slot signature,
+   reproduced here, independently reinforcing [amd-upgrade-gate.md](amd-upgrade-gate.md).
+2. **Position-embedding fidelity (hypothesis, fix identified):** the compat layer bakes
+   the 128×128 RADIO grid down to 32×32 at load, and the 002 graph bicubic-upsamples
+   that 32² intermediate to grids up to 115×115 — a double resample the reference never
+   does (it interpolates 128²→target directly, and for non-square grids interpolates to
+   the max dim then crops). Symptoms match: fine texture readable, global layout
+   scrambled, worst on the most non-square grid (60×34 scene). Fix is fork-local
+   (keep the native 128² grid in `handle_nemotron_h_omni_clip()`'s pos-embed load-op;
+   no new llama.cpp patch) — the planned follow-up experiment. Grammar constraint and
+   reasoning mode were ruled out as causes (identical scores without `format:"json"`).
+
+Suite + images: `gen_scenes.py` / `vision_suite.py` (session scratchpad; ground truth
+embedded). Re-run both sides after the pos-embed experiment and on the b9888+002
+production candidate — fine-text gains should persist and structure should recover.
+
 **2026-08-01 — containerized run, `ollama-rocm-nemotron:gfx1151-host-8d97cdea`** (the
 host-artifact image variant: ubuntu:24.04 final stage + the native build's payload,
 because the canonical almalinux toolchain pull was hours from completing; provenance in
