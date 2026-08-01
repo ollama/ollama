@@ -281,20 +281,64 @@ grammar, merged metrics), `TestLlamaServerCompletionDeferredFormatThinkingOnly`
 ## Upstream engagement draft
 
 Comment for [PR #14288](https://github.com/ollama/ollama/pull/14288) (do not open a
-new issue — #10538/#11691 already track this and #14288 is the pending fix):
+new issue — #10538/#11691 already track this and #14288 is the pending fix). Reflects
+the final implementation including `925a669a`:
 
-> Confirming this is still needed: on v0.32.x, `/api/generate` + `think:true` +
-> `format:"json"` returns `{"response":"", "thinking":"{…the JSON…}"}` for
-> implicit-thinking parsers (nemotron3, qwen3.5/3.6) — the eager grammar makes
-> `</think>` unemittable so the parser files everything as thinking. We ship a
-> downstream fix that differs from the double-request: the runner runs the completion
-> unconstrained with the parser's think-close marker as an extra stop string, then
-> continues `prompt + thinking + marker` with the grammar applied eagerly
-> (`cache_prompt` makes the continuation prefill free, `stopping_word` distinguishes
-> the marker from user stops). One mechanism covers `format:"json"` and schema
-> formats, streams thinking live, needs no template re-render (so it also works for
-> raw-prompt generates), and merges metrics across passes. Happy to upstream it if
-> maintainers prefer that shape.
+> Confirming this is still needed on v0.32.x, and that the failure is worse than
+> "garbage output" for one class of model: with `/api/generate` + `think:true` +
+> `format:"json"`, models whose parser starts *inside* thinking (nemotron3,
+> qwen3.5/3.6) return `{"response": "", "thinking": "{…the model's correct JSON…}"}`.
+> The eager grammar admits no `</think>` token, so the model can never leave thinking
+> and the marker-based parser files the entire grammar-forced answer as reasoning.
+> `/api/chat` escapes this via the #12460 double-request; generate never got the
+> equivalent, on the llama-server runner or the old Go engine before it.
+>
+> We ship a downstream fix that takes a different shape from the double-request, and
+> it may be worth considering alongside this PR. Instead of re-rendering the prompt
+> with an assistant thinking message, the llama-server runner splits the completion
+> in two passes over one text prompt:
+>
+> 1. generate unconstrained with the parser's think-close marker added as an extra
+>    stop string;
+> 2. if generation stopped on that marker (`stopping_word` distinguishes it from a
+>    user stop), continue `prompt + thinking + marker` with the grammar/schema applied
+>    eagerly. With `cache_prompt` the continuation prefill is a KV-cache hit.
+>
+> Properties that differ from the re-render approach:
+>
+> - **One mechanism for `format:"json"` and JSON schemas** — the constrained pass is
+>   an ordinary constrained request, so nothing needs to know how the schema becomes
+>   a grammar.
+> - **No template/renderer involvement**, so it also works for `raw` and
+>   template-less generates, and there is no "continue thinking vs answer now"
+>   ambiguity to disambiguate per model (the reason gpt-oss needs an explicit prefill
+>   hack in the chat path).
+> - **Thinking streams live** to the client during pass one; the marker is injected
+>   into the stream between passes so parsers close thinking exactly where they would
+>   have.
+> - **Honest termination**: if reasoning fills the context window, the continuation is
+>   skipped (pre-checked via `/tokenize`, plus a fallback if llama-server still
+>   rejects it) and the request ends as `done_reason: "length"` rather than surfacing
+>   a 500 after tokens were already streamed.
+> - **Metrics count each token once**: `prompt_eval_count` is pass one's real prompt,
+>   `eval_count` sums both passes' generated tokens — the continuation's
+>   cache-inclusive prefill is not re-counted.
+>
+> Parsers opt in through a small `ImplicitThinkingParser` interface (currently
+> `nemotron-3-nano` and `qwen3.5`); the generic template parser participates when the
+> prompt prefills the opening tag. `/api/chat` is untouched. There is also a
+> defensive reclassification in `GenerateHandler` for runners without the deferral
+> (MLX): non-streaming, `format` active, `done_reason: "stop"`, empty response, and
+> valid-JSON thinking → the thinking is the response.
+>
+> Branch against current main is ready if useful (+704/−45 across 10 files, of which
+> ~466 lines are tests); validated end-to-end on nemotron3 and qwen3.6 for `"json"`
+> and schema formats, streaming and non-streaming. Happy to open it as a PR or fold
+> the approach into this one — whichever maintainers prefer.
+
+The ready branch is `feat/upstream-generate-think-format` (worktree; commits
+`2aff0a70` + `b6efb50a` on top of upstream `8d8c701d`): full `llm` + `server` +
+`model/parsers` suites pass, and it excludes these fork-only docs.
 
 ## What if the model *mentions* `</think>` inside its thinking?
 
