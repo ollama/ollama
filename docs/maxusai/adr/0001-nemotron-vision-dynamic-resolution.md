@@ -1,7 +1,10 @@
 # ADR 0001: Lift the nemotron 256-token vision cap with native dynamic resolution, not tiling
 
-- **Status:** accepted — implemented on `feat/nemotron-dynres-vision-budget`; runtime
-  validation tracked in [nemotron-test-image.md](../nemotron-test-image.md)
+- **Status:** accepted — implemented on `feat/nemotron-dynres-vision-budget`; **mechanics
+  validated on gfx1151/ROCm 2026-08-01** (dynamic 270…3,332 tokens measured, ceiling exact,
+  knob live, bicubic interpolation correct — results in
+  [nemotron-test-image.md](../nemotron-test-image.md)); containerized re-run and
+  output-quality A/B on the b9888 lineage still pending
 - **Date:** 2026-08-01
 - **Deciders:** MaxusAI fork maintainers
 - **Supersedes:** the "Notes for a future tiling patch" plan in

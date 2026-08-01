@@ -1,8 +1,11 @@
 # Nemotron dynamic-resolution patch: lifting the fixed 256-token vision budget
 
 MaxusAI-fork reference (fork-only; does not exist upstream). Written 2026-08-01.
-Status: **implemented on `feat/nemotron-dynres-vision-budget`, build-verified, not yet
-runtime-validated** — see [Validation checklist](#validation-checklist) before deploying.
+Status: **implemented on `feat/nemotron-dynres-vision-budget`; mechanics
+runtime-validated on gfx1151/ROCm 2026-08-01** (native build; measured results in
+[nemotron-test-image.md](nemotron-test-image.md)). Still pending: containerized re-run,
+and the output-quality A/B on the b9888/0.32.1 lineage — see
+[Validation checklist](#validation-checklist) before deploying.
 
 > **The one thing to take away:** Nemotron 3 Nano Omni does **not** tile. The tiling patch
 > sketched in [vision-token-budgets-by-arch.md](vision-token-budgets-by-arch.md) targeted

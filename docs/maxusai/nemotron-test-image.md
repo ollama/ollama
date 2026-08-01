@@ -84,7 +84,40 @@ text-only baseline (nemotron3 baseline: 18). Grid-quantised — do not read smal
 
 ## Results
 
-*(to be filled from the first run of this image)*
+**2026-08-01 — native host build (same branch `fe261904`, same 001+002 patches, gfx1151-only
+`rocm_v7_2_user_arch` preset), served via `go`-built binary on :11435, gfx1151/ROCm 7.2,
+`nemotron3:33b-q4_K_M`, `OLLAMA_FLASH_ATTENTION=1`, `OLLAMA_KV_CACHE_TYPE=q8_0`.**
+This validates the patch mechanics on the exact target GPU; the containerized
+`ollama-rocm-nemotron` run should reproduce these numbers (append below when run).
+
+Text-only baseline: 18. `visual+markers` = `prompt_eval_count` − 18. **VERDICT: the 256
+cap is lifted — mechanics behave exactly as specified.**
+
+| image | measured | expected | note |
+|---|---|---|---|
+| 320×240 | **270** | floor upscale | pre-patch: 256 flat |
+| 640×480 | **304** | ≈302 | |
+| 896×896 | **788** | ≈786 | |
+| 1568×1568 | **2,405** | ≈2,403 | 9.4× pre-patch |
+| 1920×1080 | **2,044** | ≈2,042 | PR author measured 2,040 visual on CUDA |
+| 2048×1664 | **3,332** | 3,330 | **exact 3,328 ceiling reached** |
+| 3000×2000 | **3,294** | ≈3,292 | 12.9× pre-patch |
+| 3200×32 (100:1) | **324** | bounded | no degenerate-aspect blowup at this ratio |
+| 1920×1080 @ `image_max_tokens=1024` | **1,012** | ≈1,010 | **knob live** (2,044 → 1,012); silently ignored pre-patch |
+
+- Every row sits a constant +2 above the pure grid+2 arithmetic — one extra token pair
+  from prompt assembly, grid-quantisation-level noise, consistent across all sizes.
+- Bicubic `resize_position_embeddings` exercised on ROCm at every non-512² grid
+  (all counts correct, output coherent) — no fallback, no garbage.
+- Coherence smoke (`think:false`, solid-red 1920×1080): "The image is predominantly red
+  with a black border." Correct color, fluent, no repetition. (With default reasoning on,
+  small `num_predict` is consumed by thinking and `response` comes back empty — use
+  `think:false` or read the `thinking` field when smoke-testing.) Not a quality verdict —
+  the b10091 confound still applies to sustained workloads.
+- VRAM with model resident after worst-case warmup: **27.2 GiB** of the 96 GiB pool.
+- The `image_min_pixels`/`image_max_pixels` load lines were not visible in Ollama's
+  captured server log at `OLLAMA_DEBUG=1`; use `prompt_eval_count` as the fingerprint
+  instead (flat 256 = unpatched).
 
 ## Promotion path (do not skip)
 
