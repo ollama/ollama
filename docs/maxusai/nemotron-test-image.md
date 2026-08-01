@@ -119,6 +119,16 @@ cap is lifted — mechanics behave exactly as specified.**
   captured server log at `OLLAMA_DEBUG=1`; use `prompt_eval_count` as the fingerprint
   instead (flat 256 = unpatched).
 
+**2026-08-01 — containerized run, `ollama-rocm-nemotron:gfx1151-host-8d97cdea`** (the
+host-artifact image variant: ubuntu:24.04 final stage + the native build's payload,
+because the canonical almalinux toolchain pull was hours from completing; provenance in
+the image LABELs). Run with the isolated recipe above (port 11435, models `:ro`).
+**Every measurement byte-for-byte identical to the native run** — all eight geometries,
+the knob (2,044 → 1,012), and the coherence sample ("predominantly red with a thin black
+border", `think:false`). gfx1151 discovered from inside the container
+(`library=ROCm compute=gfx1151`, 96 GiB pool). Append the canonical all-target image's
+run here when its build lands; expect identical numbers.
+
 ## Promotion path (do not skip)
 
 Passing here proves the mechanism, not deployability. The deployable artifact for this
