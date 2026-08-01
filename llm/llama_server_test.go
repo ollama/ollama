@@ -1614,13 +1614,64 @@ func TestVisionServerArgs(t *testing.T) {
 			want: []string{"--image-min-tokens", "1024"},
 		},
 		{
-			// nemotron_h_omni is in compatClipArches but must NOT get budget flags:
-			// PROJECTOR_TYPE_NEMOTRON_V2_VL never calls set_limit_image_tokens(), so
-			// --image-min/max-tokens are inert for it and passing them would only
-			// suggest a knob that does nothing. Its cost is a structural 256/image.
-			name: "nemotron_h_omni",
+			// With llama/compat/002-llama-cpp-nemotron-dynres.patch the projector
+			// calls set_limit_image_tokens(256, 3328), so the flags are live. On an
+			// unpatched payload llama-server still parses them but the projector
+			// never consumes them, so they are inert there, not an error.
+			name: "nemotron_h_omni defaults (unset opts fall back)",
 			arch: "nemotron_h_omni",
-			want: nil,
+			want: []string{"--image-min-tokens", "256", "--image-max-tokens", "3328"},
+		},
+		{
+			// The gemma4-shaped DefaultOptions values (40/1120) mean "untouched" and
+			// must map to the nemotron-native bounds, not be forwarded literally.
+			name: "nemotron_h_omni DefaultOptions values treated as unset",
+			arch: "nemotron_h_omni",
+			opts: api.Options{Runner: api.Runner{ImageMinTokens: api.DefaultImageMinTokens, ImageMaxTokens: api.DefaultImageMaxTokens}},
+			want: []string{"--image-min-tokens", "256", "--image-max-tokens", "3328"},
+		},
+		{
+			name: "nemotron_h_omni custom budget",
+			arch: "nemotron_h_omni",
+			opts: api.Options{Runner: api.Runner{ImageMinTokens: 512, ImageMaxTokens: 2048}},
+			want: []string{"--image-min-tokens", "512", "--image-max-tokens", "2048"},
+		},
+		{
+			name: "nemotron_h_omni min clamped to max",
+			arch: "nemotron_h_omni",
+			opts: api.Options{Runner: api.Runner{ImageMinTokens: 3000, ImageMaxTokens: 512}},
+			want: []string{"--image-min-tokens", "512", "--image-max-tokens", "512"},
+		},
+		{
+			// The production-realistic shape: a Modelfile sets only one param, so the
+			// other arrives at its DefaultOptions sentinel and must be substituted
+			// per-field, not only when both are sentinels.
+			name: "nemotron_h_omni max explicit, min at sentinel",
+			arch: "nemotron_h_omni",
+			opts: api.Options{Runner: api.Runner{ImageMinTokens: api.DefaultImageMinTokens, ImageMaxTokens: 2048}},
+			want: []string{"--image-min-tokens", "256", "--image-max-tokens", "2048"},
+		},
+		{
+			name: "nemotron_h_omni min explicit, max at sentinel",
+			arch: "nemotron_h_omni",
+			opts: api.Options{Runner: api.Runner{ImageMinTokens: 1024, ImageMaxTokens: api.DefaultImageMaxTokens}},
+			want: []string{"--image-min-tokens", "1024", "--image-max-tokens", "3328"},
+		},
+		{
+			// The ceiling is the trained maximum and also guards the int32 pixel math
+			// in set_limit_image_tokens: values above 3328 clamp down.
+			name: "nemotron_h_omni max clamped to trained ceiling",
+			arch: "nemotron_h_omni",
+			opts: api.Options{Runner: api.Runner{ImageMinTokens: 0, ImageMaxTokens: 100000}},
+			want: []string{"--image-min-tokens", "256", "--image-max-tokens", "3328"},
+		},
+		{
+			// Substitution happens before clamping: explicit min above the substituted
+			// ceiling lands on 3328/3328.
+			name: "nemotron_h_omni min above substituted ceiling",
+			arch: "nemotron_h_omni",
+			opts: api.Options{Runner: api.Runner{ImageMinTokens: 3500, ImageMaxTokens: api.DefaultImageMaxTokens}},
+			want: []string{"--image-min-tokens", "3328", "--image-max-tokens", "3328"},
 		},
 		{
 			name: "other model",
@@ -1635,6 +1686,252 @@ func TestVisionServerArgs(t *testing.T) {
 				t.Fatalf("visionServerArgs(%q, %+v) = %v, want %v", tt.arch, tt.opts, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestMaxImageTokens(t *testing.T) {
+	tests := []struct {
+		name string
+		arch string
+		opts api.Options
+		want int
+	}{
+		{
+			// Arches without a known budget keep the historical clip heuristic.
+			name: "unknown arch",
+			arch: "llama",
+			want: 768,
+		},
+		{
+			// gemma3's fixed-size preprocessor makes the cost structural:
+			// (896/14)²/4² = 256 embeddings + 2 markers, regardless of size.
+			name: "gemma3",
+			arch: "gemma3",
+			want: 258,
+		},
+		{
+			// Structural set_limit_image_tokens(8, 4096) ceiling, plus markers.
+			name: "qwen2vl",
+			arch: "qwen2vl",
+			want: 4098,
+		},
+		{
+			name: "qwen35",
+			arch: "qwen35",
+			want: 4098,
+		},
+		{
+			// The qwen ceiling is not tunable via ImageMaxTokens.
+			name: "qwen35 ignores ImageMaxTokens",
+			arch: "qwen35",
+			opts: api.Options{Runner: api.Runner{ImageMaxTokens: 64}},
+			want: 4098,
+		},
+		{
+			name: "gemma4 defaults",
+			arch: "gemma4",
+			want: 1122,
+		},
+		{
+			// Tracks the same resolver that produces the --image-max-tokens flag.
+			name: "gemma4 custom ceiling",
+			arch: "gemma4",
+			opts: api.Options{Runner: api.Runner{ImageMinTokens: 70, ImageMaxTokens: 560}},
+			want: 562,
+		},
+		{
+			name: "nemotron_h_omni defaults",
+			arch: "nemotron_h_omni",
+			want: 3330,
+		},
+		{
+			// The gemma4-shaped DefaultOptions sentinels mean "untouched".
+			name: "nemotron_h_omni DefaultOptions values treated as unset",
+			arch: "nemotron_h_omni",
+			opts: api.Options{Runner: api.Runner{ImageMinTokens: api.DefaultImageMinTokens, ImageMaxTokens: api.DefaultImageMaxTokens}},
+			want: 3330,
+		},
+		{
+			name: "nemotron_h_omni custom ceiling",
+			arch: "nemotron_h_omni",
+			opts: api.Options{Runner: api.Runner{ImageMaxTokens: 2048}},
+			want: 2050,
+		},
+		{
+			name: "nemotron_h_omni ceiling clamped to trained maximum",
+			arch: "nemotron_h_omni",
+			opts: api.Options{Runner: api.Runner{ImageMaxTokens: 100000}},
+			want: 3330,
+		},
+		{
+			// Pixtral's 1024-token grid budget doubles in the worst case:
+			// a one-column strip pays one [IMG_BREAK] per row plus [IMG_END].
+			name: "mistral3",
+			arch: "mistral3",
+			want: 2048,
+		},
+		{
+			// No visionServerArgs case for this arch, so the ceiling is not
+			// tunable via ImageMaxTokens.
+			name: "mistral3 ignores ImageMaxTokens",
+			arch: "mistral3",
+			opts: api.Options{Runner: api.Runner{ImageMaxTokens: 64}},
+			want: 2048,
+		},
+		{
+			// Structural set_limit_image_tokens(8, 4096) ceiling, plus markers.
+			name: "glmocr",
+			arch: "glmocr",
+			want: 4098,
+		},
+		{
+			// 3×3 tiles + overview, 144 embeddings each, plus markers.
+			name: "llama4",
+			arch: "llama4",
+			want: 1442,
+		},
+		{
+			// 273 global view + 9 single-tile fused rows (110 each) + "\n".
+			name: "deepseekocr",
+			arch: "deepseekocr",
+			want: 1264,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := MaxImageTokens(tt.arch, tt.opts); got != tt.want {
+				t.Fatalf("MaxImageTokens(%q, %+v) = %d, want %d", tt.arch, tt.opts, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestImageTokensForSize pins the smart_resize replication against the
+// end-to-end prompt_eval_count measurements in
+// docs/maxusai/vision-token-budget-measurements.md (all values are visual
+// tokens including the 2 marker tokens; text baselines already subtracted)
+// and the worked examples in docs/maxusai/nemotron-dynres-patch.md.
+func TestImageTokensForSize(t *testing.T) {
+	pinned := api.Options{Runner: api.Runner{ImageMinTokens: 1088, ImageMaxTokens: 1120}}
+
+	tests := []struct {
+		name   string
+		arch   string
+		opts   api.Options
+		w, h   int
+		want   int
+		wantOK bool
+	}{
+		// gemma4, fork defaults 40/1120 (measured row "fork, default").
+		{name: "gemma4 640x480", arch: "gemma4", w: 640, h: 480, want: 132, wantOK: true},
+		{name: "gemma4 896x896", arch: "gemma4", w: 896, h: 896, want: 363, wantOK: true},
+		{name: "gemma4 1920x1080", arch: "gemma4", w: 1920, h: 1080, want: 922, wantOK: true},
+		{name: "gemma4 1568x1568", arch: "gemma4", w: 1568, h: 1568, want: 1091, wantOK: true},
+		{name: "gemma4 3000x2000", arch: "gemma4", w: 3000, h: 2000, want: 1082, wantOK: true},
+		// gemma4, pinned 1088/1120 (measured row "fork, pinned").
+		{name: "gemma4 pinned 640x480", arch: "gemma4", opts: pinned, w: 640, h: 480, want: 1133, wantOK: true},
+		{name: "gemma4 pinned 896x896", arch: "gemma4", opts: pinned, w: 896, h: 896, want: 1091, wantOK: true},
+		{name: "gemma4 pinned 1920x1080", arch: "gemma4", opts: pinned, w: 1920, h: 1080, want: 1102, wantOK: true},
+		{name: "gemma4 pinned 1568x1568", arch: "gemma4", opts: pinned, w: 1568, h: 1568, want: 1091, wantOK: true},
+		{name: "gemma4 pinned 3000x2000", arch: "gemma4", opts: pinned, w: 3000, h: 2000, want: 1082, wantOK: true},
+		// qwen35 with the 1024 floor (measured row "after 87cf1100").
+		{name: "qwen35 640x480", arch: "qwen35", w: 640, h: 480, want: 1038, wantOK: true},
+		{name: "qwen35 896x896", arch: "qwen35", w: 896, h: 896, want: 1026, wantOK: true},
+		{name: "qwen35 1920x1080", arch: "qwen35", w: 1920, h: 1080, want: 2042, wantOK: true},
+		{name: "qwen35 1568x1568", arch: "qwen35", w: 1568, h: 1568, want: 2403, wantOK: true},
+		{name: "qwen35 3000x2000", arch: "qwen35", w: 3000, h: 2000, want: 4058, wantOK: true},
+		// qwen25vl: same budget on a 28px grid (patch 14 × merge 2).
+		{name: "qwen25vl 640x480", arch: "qwen25vl", w: 640, h: 480, want: 1038, wantOK: true},
+		{name: "qwen25vl 1920x1080", arch: "qwen25vl", w: 1920, h: 1080, want: 2693, wantOK: true},
+		// nemotron_h_omni with the 002 dynres patch (worked examples in
+		// nemotron-dynres-patch.md's validation checklist).
+		{name: "nemotron 640x480", arch: "nemotron_h_omni", w: 640, h: 480, want: 302, wantOK: true},
+		{name: "nemotron 1920x1080", arch: "nemotron_h_omni", w: 1920, h: 1080, want: 2042, wantOK: true},
+		{name: "nemotron 1568x1568", arch: "nemotron_h_omni", w: 1568, h: 1568, want: 2403, wantOK: true},
+		{name: "nemotron 3000x2000", arch: "nemotron_h_omni", w: 3000, h: 2000, want: 3292, wantOK: true},
+		{name: "nemotron ceiling-exact 2048x1664", arch: "nemotron_h_omni", w: 2048, h: 1664, want: 3330, wantOK: true},
+		{name: "nemotron upscaled to floor 320x240", arch: "nemotron_h_omni", w: 320, h: 240, want: 268, wantOK: true},
+		{
+			name: "nemotron custom ceiling 3000x2000",
+			arch: "nemotron_h_omni",
+			opts: api.Options{Runner: api.Runner{ImageMaxTokens: 2048}},
+			w:    3000, h: 2000,
+			want:   1982,
+			wantOK: true,
+		},
+		// mistral3 (pixtral): 28px grid under set_limit_image_tokens(8, 1024);
+		// cost = grid + rows ([IMG_BREAK] per row except the last + [IMG_END]).
+		// 640×480 → 23×17 grid: 391 + 17.
+		{name: "mistral3 640x480", arch: "mistral3", w: 640, h: 480, want: 408, wantOK: true},
+		// 1024×1024 rounds to 37×37 cells = 1,073,296 px > the 802,816 budget,
+		// scaling down to exactly 32×32: 1024 + 32.
+		{name: "mistral3 1024x1024", arch: "mistral3", w: 1024, h: 1024, want: 1056, wantOK: true},
+		// 3000×2000 scales down to 39×26: 1014 + 26.
+		{name: "mistral3 3000x2000", arch: "mistral3", w: 3000, h: 2000, want: 1040, wantOK: true},
+		// 100×100 rounds up to the 4×4 grid: 16 + 4.
+		{name: "mistral3 100x100", arch: "mistral3", w: 100, h: 100, want: 20, wantOK: true},
+		// 10×10 upscales to the 6,272px floor (3×3 cells): 9 + 3.
+		{name: "mistral3 upscaled to floor 10x10", arch: "mistral3", w: 10, h: 10, want: 12, wantOK: true},
+		// A one-column strip at exactly the pixel budget hits the
+		// MaxImageTokens worst case: 1×1024 grid + 1024 rows.
+		{name: "mistral3 worst-case strip 28x28672", arch: "mistral3", w: 28, h: 28672, want: 2048, wantOK: true},
+		// glmocr: qwen-shaped 28px grid but with the stock floor of 8.
+		{name: "glmocr 640x480", arch: "glmocr", w: 640, h: 480, want: 393, wantOK: true},
+		{name: "glmocr 1920x1080", arch: "glmocr", w: 1920, h: 1080, want: 2693, wantOK: true},
+		// 3000×2000 exceeds the 4096-token budget and scales to 78×52.
+		{name: "glmocr 3000x2000", arch: "glmocr", w: 3000, h: 2000, want: 4058, wantOK: true},
+		// 56×56 is 4 cells, below the floor of 8; upscales to 3×3 = 9. The
+		// qwen arches would push the same image to ≥ 1024.
+		{name: "glmocr upscaled to floor 56x56", arch: "glmocr", w: 56, h: 56, want: 11, wantOK: true},
+		// llama4: 144 embeddings per 336² tile plus a 336² overview.
+		{name: "llama4 within one tile 300x200", arch: "llama4", w: 300, h: 200, want: 146, wantOK: true},
+		// 400×300 fits the 672×336 candidate best: 2 tiles + overview.
+		{name: "llama4 400x300", arch: "llama4", w: 400, h: 300, want: 434, wantOK: true},
+		// 800×600 and 3000×2000 both pick the 1008×672 candidate (3×2 grid):
+		// 6 tiles + overview.
+		{name: "llama4 800x600", arch: "llama4", w: 800, h: 600, want: 1010, wantOK: true},
+		{name: "llama4 3000x2000", arch: "llama4", w: 3000, h: 2000, want: 1010, wantOK: true},
+		// deepseekocr: 273-token global view + fused tile rows + "\n".
+		{name: "deepseekocr within one tile 640x640", arch: "deepseekocr", w: 640, h: 640, want: 274, wantOK: true},
+		// 800×600 picks the 3×2 grid: 273 + 2·(10·3+1)·10.
+		{name: "deepseekocr 800x600", arch: "deepseekocr", w: 800, h: 600, want: 894, wantOK: true},
+		// 1000×1000 ties 2×2 against 3×3 on aspect; the area check keeps 2×2.
+		{name: "deepseekocr 1000x1000", arch: "deepseekocr", w: 1000, h: 1000, want: 694, wantOK: true},
+		// 2000×2000 crosses the half-area threshold and upgrades to 3×3.
+		{name: "deepseekocr 2000x2000", arch: "deepseekocr", w: 2000, h: 2000, want: 1204, wantOK: true},
+		// Extreme panorama snaps to the 9×1 grid: one 9-tile fused row.
+		{name: "deepseekocr 5000x500", arch: "deepseekocr", w: 5000, h: 500, want: 1184, wantOK: true},
+		// Not replicated: callers fall back to MaxImageTokens.
+		{name: "unknown arch", arch: "llama", w: 640, h: 480, wantOK: false},
+		{name: "gemma3 is size-independent", arch: "gemma3", w: 640, h: 480, wantOK: false},
+		{name: "non-positive dimensions", arch: "nemotron_h_omni", w: 0, h: 480, wantOK: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := ImageTokensForSize(tt.arch, tt.opts, tt.w, tt.h)
+			if ok != tt.wantOK || (ok && got != tt.want) {
+				t.Fatalf("ImageTokensForSize(%q, %+v, %d, %d) = (%d, %v), want (%d, %v)",
+					tt.arch, tt.opts, tt.w, tt.h, got, ok, tt.want, tt.wantOK)
+			}
+		})
+	}
+}
+
+func TestInlineVisionArch(t *testing.T) {
+	for arch, want := range map[string]bool{
+		"nemotron_h_omni": true,
+		"gemma3":          true,
+		"gemma4":          true,
+		"qwen35":          true,
+		"llama":           false,
+		"mllama":          false,
+		"":                false,
+	} {
+		if got := InlineVisionArch(arch); got != want {
+			t.Errorf("InlineVisionArch(%q) = %v, want %v", arch, got, want)
+		}
 	}
 }
 

@@ -55,6 +55,18 @@ The 1920×1080 row above is that doc's own worked 16:9 example.
 Stock never exceeds 266 — the 280 ceiling, landing just under it on the patch grid.
 Verified on `ollama/ollama:0.32.5-rocm`, which reports version `0.32.5`.
 
+The `nemotron3` row is **pre-002-patch** (all deployed payloads to date). With
+[the 002 dynamic-resolution patch](nemotron-dynres-patch.md) expect grid+2 like the other
+arches: ≈302 at 640×480, ≈2042 at 1920×1080, ≈3330 at the ceiling — re-measure and extend
+this table when a patched payload ships.
+
+**These rows are now executable.** `llm.ImageTokensForSize()`
+([`llm/llama_server.go`](../../llm/llama_server.go)) replicates llama.cpp b10091's
+`smart_resize` (float32-faithful) for the server-side truncation heuristics, and
+`TestImageTokensForSize` pins it to every fork-default and pinned row above plus the
+patched-nemotron predictions. If a `LLAMA_CPP_VERSION` bump changes preprocessing,
+re-measure and update both the table and that test together.
+
 ## Measurements — pixels encoded per visual token
 
 Source pixels ÷ measured visual tokens. **Lower is finer detail retained.** This is the
@@ -94,12 +106,14 @@ upstream and is dropped. A client cannot tell it had no effect.
 floor. The gain is 302 → 1038 at 640×480 (3.4×) and 786 → 1026 at 896² (1.3×). At
 3000×2000 it sits at 4058, effectively the 4096 ceiling.
 
-**nemotron is fixed at 256 and cannot be moved.** Constant across a 19.6× area range
+**nemotron is fixed at 256 and cannot be moved — on unpatched payloads** (every deployed
+payload when these rows were measured). Constant across a 19.6× area range
 (307 kpx → 6 Mpx), and `image_min_tokens`/`image_max_tokens` at 4096 *and* 64 both leave it
 at exactly 256 — it cannot even be lowered. It also letterboxes onto a square canvas, so
 for 16:9 roughly 44% of those 256 tokens encode black bars. See
-[vision-token-budgets-by-arch.md](vision-token-budgets-by-arch.md) for why, and why adding
-a `visionServerArgs()` case would be a no-op.
+[vision-token-budgets-by-arch.md](vision-token-budgets-by-arch.md) for the mechanism;
+with `llama/compat/002-llama-cpp-nemotron-dynres.patch` all of this changes — dynamic
+256…3,328, no letterbox, live flags ([nemotron-dynres-patch.md](nemotron-dynres-patch.md)).
 
 ## Spec — normative behaviour
 
@@ -109,13 +123,16 @@ For `modelArch` in `visionServerArgs()` ([`llm/llama_server.go`](../../llm/llama
 |---|---|---|
 | `gemma4` | `--image-min-tokens` / `--image-max-tokens`, from `api.Options`, defaulting **40 / 1120** | 40 … 1,120 |
 | `qwen2vl`, `qwen25vl`, `qwen3vl`, `qwen3vlmoe`, `qwen35`, `qwen35moe` | `--image-min-tokens 1024` (fixed, not tunable) | 1,024 … 4,096 |
-| `nemotron_h_omni` | none, deliberately | exactly 256, always |
+| `nemotron_h_omni` | `--image-min-tokens` / `--image-max-tokens`, defaults **256 / 3328** | 256 … 3,328 on a payload with the 002 patch; exactly 256 (flags inert) unpatched — see [nemotron-dynres-patch.md](nemotron-dynres-patch.md) |
 | everything else | none | projector default |
 
 Option resolution: `ImageMinTokens` / `ImageMaxTokens` are plain `int` with `omitempty`.
 `gemma4ImageTokenBudget()` treats `<= 0` as unset and substitutes the defaults, so a JSON
 `null` — or an omitted field — yields **40 / 1120**, not "no limit". Both are **Runner**
-options: changing either reloads the runner.
+options: changing either reloads the runner. `nemotronImageTokenBudget()` additionally
+treats the exact gemma4-shaped defaults (40/1120) as unset — explicit 40 or 1120 is not
+expressible for that arch — and clamps the ceiling to the trained 3,328; see the
+[normative spec in nemotron-dynres-patch.md](nemotron-dynres-patch.md#spec--normative-behaviour).
 
 ## Decision record
 
@@ -129,6 +146,14 @@ in July 2026 misread the floor as a wrong or unpinned build.
 1. **Route by image size, not by model reputation.** Above ~1 MP prefer `qwen3.5`/`qwen3.6`
    (up to 4,096) or patched `gemma4` (up to 1,120). Do not send large or detail-critical
    images to `nemotron3`.
+
+   > **Amended 2026-08-01:** on a payload carrying the 002 dynres patch (b9888+002
+   > lineage), `nemotron3` is no longer the weak router target — it scored 6/6 labels,
+   > exact 14px-serial read, and a perfect invoice extraction on the ground-truth suite
+   > ([nemotron-test-image.md](nemotron-test-image.md)), competitive with gemma4/qwen3.6
+   > up to its 3,328-token ceiling. The "never send large images" rule stands only for
+   > unpatched payloads. For JSON extraction serve the reasoning models with
+   > `think:false`.
 2. **Pin the floor server-side when uniformity matters**, via a model manifest rather than
    per-request options, so clients may keep sending `null`:
    ```bash
@@ -141,6 +166,14 @@ in July 2026 misread the floor as a wrong or unpinned build.
    consumes the flags, so it would ship a knob that does nothing.
    `TestVisionServerArgs/nemotron_h_omni` asserts it stays absent. For nemotron, recover
    detail by tiling — each attached image costs a flat 256, so N square crops cost N × 256.
+
+   > **Superseded 2026-08-01.** The case now exists and the flags are live on payloads
+   > carrying `llama/compat/002-llama-cpp-nemotron-dynres.patch`
+   > ([nemotron-dynres-patch.md](nemotron-dynres-patch.md)); the regression test now
+   > asserts the flags are *present* (defaults 256/3328). The N-square-crops workaround
+   > remains valid for unpatched payloads only — the model was not trained on tiles, so
+   > prefer the patch. Decision 1's "do not send large images to nemotron3" also needs
+   > re-measuring once a patched payload ships.
 4. **Treat "budget → constant token count" as false.** Pinning tightens the spread from
    132–1091 (Δ959) to 1082–1162 (Δ80); it does not flatten it. Cost tracks pixel **area**,
    not orientation — every transposed pair measured identical (1920×1080 ≡ 1080×1920).

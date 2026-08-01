@@ -3403,3 +3403,112 @@ func TestImageGenerateStreamingErrorAfterProgress(t *testing.T) {
 		t.Fatalf("error = %q, want runner died", errorResponse.Error)
 	}
 }
+
+func TestTruncateNativeChatMessages(t *testing.T) {
+	mock := &mockRunner{
+		TemplateFn: func(_ context.Context, r llm.ChatRequest) (string, error) {
+			var sb strings.Builder
+			for _, msg := range r.Messages {
+				sb.WriteString(msg.Content)
+				sb.WriteString(" ")
+			}
+			return sb.String(), nil
+		},
+	}
+
+	// 8 words of content total; 5 words from the second message on. The image
+	// blobs are undecodable, so they cost the flat worst case (3330 each on
+	// nemotron_h_omni).
+	msgs := []api.Message{
+		{Role: "user", Content: "one two three", Images: []api.ImageData{[]byte("a")}},
+		{Role: "assistant", Content: "four five"},
+		{Role: "user", Content: "six seven eight", Images: []api.ImageData{[]byte("b")}},
+	}
+
+	// Same conversation with sized images: 640×480 costs 302 on nemotron and
+	// 1920×1080 costs 2042.
+	smallImgMsgs := []api.Message{
+		{Role: "user", Content: "one two three", Images: []api.ImageData{testPNG(t, 640, 480)}},
+		{Role: "assistant", Content: "four five"},
+		{Role: "user", Content: "six seven eight", Images: []api.ImageData{testPNG(t, 640, 480)}},
+	}
+	largeImgMsgs := []api.Message{
+		{Role: "user", Content: "one two three", Images: []api.ImageData{testPNG(t, 1920, 1080)}},
+		{Role: "assistant", Content: "four five"},
+		{Role: "user", Content: "six seven eight", Images: []api.ImageData{testPNG(t, 640, 480)}},
+	}
+
+	nemotron := &Model{Config: model.ConfigV2{ModelFamily: "nemotron_h_omni", ModelFamilies: []string{"nemotron_h_omni"}}}
+	textOnly := &Model{Config: model.ConfigV2{ModelFamily: "llama", ModelFamilies: []string{"llama"}}}
+
+	cases := []struct {
+		name   string
+		m      *Model
+		numCtx int
+		msgs   []api.Message
+		want   []api.Message
+	}{
+		{
+			// Inline-vision arch: 3330 tokens/image, so two images (6660) plus
+			// 8 text tokens exceed 4096 while one image plus 5 text tokens fit.
+			// The ProjectorPaths gate used to count these images as zero and
+			// keep all three messages.
+			name:   "inline-vision images force truncation",
+			m:      nemotron,
+			numCtx: 4096,
+			msgs:   msgs,
+			want:   msgs[1:],
+		},
+		{
+			name:   "inline-vision images fit larger context",
+			m:      nemotron,
+			numCtx: 8192,
+			msgs:   msgs,
+			want:   msgs,
+		},
+		{
+			// Size-aware: two 640×480 images cost 604 tokens total, not 6660,
+			// so the whole conversation fits a 700-token context.
+			name:   "small sized images fit where worst case would not",
+			m:      nemotron,
+			numCtx: 700,
+			msgs:   smallImgMsgs,
+			want:   smallImgMsgs,
+		},
+		{
+			// 2042 + 302 + 8 text exceeds 2100; the tail's 302 + 5 text fits.
+			name:   "large sized image still truncates",
+			m:      nemotron,
+			numCtx: 2100,
+			msgs:   largeImgMsgs,
+			want:   largeImgMsgs[1:],
+		},
+		{
+			name:   "no image input path leaves messages untouched",
+			m:      textOnly,
+			numCtx: 16,
+			msgs:   msgs,
+			want:   msgs,
+		},
+		{
+			name:   "nil model leaves messages untouched",
+			m:      nil,
+			numCtx: 16,
+			msgs:   msgs,
+			want:   msgs,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := &api.Options{Runner: api.Runner{NumCtx: tt.numCtx}}
+			got, err := truncateNativeChatMessages(t.Context(), tt.m, mock, opts, llm.ChatRequest{Messages: tt.msgs}, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(got, tt.want); diff != "" {
+				t.Fatalf("messages mismatch (-got +want):\n%s", diff)
+			}
+		})
+	}
+}

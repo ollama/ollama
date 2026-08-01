@@ -40,7 +40,9 @@ Patch surface is Go-only: `api/types.go`, `llm/llama_server.go` (+ tests).
 
 > 🛑 **The budget flags are arch-gated.** `visionServerArgs()` switches on `modelArch`, so
 > `image_min_tokens` / `image_max_tokens` do nothing for an arch that is not in that switch —
-> and for some projectors (notably `nemotron_h_omni`) they are inert even if you add one.
+> and for some projectors (notably `nemotron_h_omni` on payloads **without**
+> `llama/compat/002-llama-cpp-nemotron-dynres.patch`, i.e. every overlay-served payload)
+> they are inert even if you add one.
 > See [vision-token-budgets-by-arch.md](vision-token-budgets-by-arch.md) before assuming this
 > knob applies to any model other than gemma4.
 
@@ -60,6 +62,13 @@ git diff HEAD v0.32.5 -- LLAMA_CPP_VERSION llama/ ml/ CMakeLists.txt \
 Run it before every rebuild. If it is non-empty the overlay is invalid for that base
 and you must re-prove against a newer tag (or build the full Dockerfile).
 
+> ⚠️ **This proof goes permanently non-empty once the nemotron dynres patch merges**:
+> `llama/compat/002-llama-cpp-nemotron-dynres.patch` is inside the pathspec and genuinely
+> changes the compiled payload — a true positive, not a doc-comment false alarm like the
+> one `5ad093b0` reverted. From that point, overlay builds must come from a pre-002 ref,
+> or the fork ships full builds only. See
+> [nemotron-dynres-patch.md](nemotron-dynres-patch.md#deployment-constraints).
+
 ### Keeping it valid when syncing upstream
 
 **Sync by merging an upstream tag that has a published `ollama/ollama` image, then bump
@@ -67,7 +76,8 @@ the tag in the proof command and the `FROM` together.** Merging upstream `main` 
 leaves the tree ahead of every published tag — the payload proof goes non-empty against
 `0.32.5` purely because upstream landed post-tag commits, with no fork change involved,
 and there is no image to overlay onto. That failure mode is what makes the shortcut look
-"dead" when it isn't: the fork's own payload delta has stayed **0 lines** throughout.
+"dead" when it isn't: the fork's own payload delta had stayed **0 lines** throughout —
+until the nemotron 002 patch, whose non-empty delta is intentional (see the warning above).
 
 CUDA/Blackwell: the payload ships upstream's `cuda_v12` + `cuda_v13` backends.
 Verified on the RTX PRO 6000 Blackwell (compute 12.0): selects `cuda_v13`, native
