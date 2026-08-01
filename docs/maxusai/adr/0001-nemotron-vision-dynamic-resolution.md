@@ -100,8 +100,15 @@ gemma4-shaped DefaultOptions values 40/1120 are treated as unset). Normative beh
   degenerate aspect ratios (≈100:1+) can exceed it and exhaust memory — an inherited
   `dyn_size`-family edge (qwen/kimivl share it) that nemotron was previously immune to;
   absurd-aspect inputs must be filtered upstream of Ollama.
-- Risks accepted pending runtime validation: `ggml_interpolate` bicubic on ROCm/gfx1151;
-  interpolated-position-embedding quality vs the reference's 128×128-grid interpolation
-  (a possible follow-up: keep the full grid through the compat layer); rounding-parity
-  differences between `calc_size_preserved_ratio` and NVIDIA's exact snap algorithm
-  (token counts land close but not always identical to the reference).
+- Risk status after the 2026-08-01 ground-truth A/B
+  ([nemotron-test-image.md](../nemotron-test-image.md)): bicubic-on-ROCm **works**;
+  rounding parity is within one grid cell as expected. But the position-embedding risk
+  **materialized**: fine-text reading improves exactly as intended (20px labels, 14px
+  serial, 17px fine print — all blind at 256 tokens), while global spatial structure
+  degrades on the b10091+002 payload (missed objects, scrambled attributes,
+  confabulated line items). Primary suspect is the double resample (128²→32² baked at
+  load, then 32²→up-to-115² in-graph) plus anisotropic W×H interpolation where RADIO's
+  reference interpolates to the max dim and crops. The follow-up is fork-local — keep
+  the native 128² grid in `handle_nemotron_h_omni_clip()`'s pos-embed load-op — and
+  gates any quality-positive deployment. Cross-request contamination (#17475 signature)
+  was also reproduced on b10091, independent of 002.
