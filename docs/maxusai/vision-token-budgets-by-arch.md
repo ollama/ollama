@@ -4,6 +4,13 @@ MaxusAI-fork reference (fork-only; does not exist upstream). Written 2026-07-30 
 tracing why `nemotron3` charges exactly 256 visual tokens for every image regardless of
 input size, and finding that `--image-max-tokens` cannot change it.
 
+> **Update 2026-08-01:** the nemotron cap is now lifted by
+> `llama/compat/002-llama-cpp-nemotron-dynres.patch` — and the fix is **not** the tiling
+> patch sketched below; the model natively uses single-image dynamic resolution. See
+> [nemotron-dynres-patch.md](nemotron-dynres-patch.md). The mechanism analysis in this doc
+> remains correct for unpatched payloads; the [tiling notes](#notes-for-a-future-tiling-patch)
+> are superseded and kept as a historical record with corrections annotated inline.
+
 > **The one thing to take away:** `api.Options.ImageMinTokens` / `ImageMaxTokens` read like
 > a general vision-budget control. They are not. `visionServerArgs()`
 > ([`llm/llama_server.go`](../../llm/llama_server.go)) switches on **`modelArch`**, and an
@@ -20,10 +27,10 @@ visual tokens and pixels-per-token — plus the routing policy that follows, see
 |---|---|---|---|
 | `gemma4` | `--image-min-tokens` / `--image-max-tokens`, defaults **40 / 1120** | 40 … 1,120 tokens | `set_limit_image_tokens(40, 280)`, ceiling raised by our flags |
 | `qwen2vl`, `qwen25vl`, `qwen3vl`, `qwen3vlmoe`, `qwen35`, `qwen35moe` | `--image-min-tokens 1024` (fixed) | 1,024 … 4,096 tokens | `set_limit_image_tokens(8, 4096)`, floor raised by our flag |
-| **`nemotron_h_omni`** | **none, deliberately** | **exactly 256 tokens, always** | nothing — see below |
+| **`nemotron_h_omni`** | `--image-min-tokens` / `--image-max-tokens`, defaults **256 / 3328** | 256 … 3,328 with the 002 patch; **exactly 256 (flags inert) on an unpatched payload** | `set_limit_image_tokens(256, 3328)` added by `llama/compat/002-llama-cpp-nemotron-dynres.patch` |
 | everything else | none | whatever the projector defaults to | llama.cpp |
 
-## Why nemotron gets nothing, and why adding a case would be a no-op
+## Why nemotron was stuck at 256 (mechanism; applies to unpatched payloads)
 
 `--image-{min,max}-tokens` land in `hparams.custom_image_{min,max}_tokens`, and the only
 consumer that affects behaviour is `clip_hparams::set_limit_image_tokens()`. The
@@ -40,14 +47,28 @@ Measured end to end on `nemotron3:33b-q4_K_M`: constant across a 576× area rang
 `image_max_tokens` at 2048, 4096 and even 64 all left it at exactly 256 — it cannot even be
 lowered. Attaching N images costs exactly N × 256.
 
-**So do not add `case "nemotron_h_omni"` to `visionServerArgs()`.** There is a regression
-test asserting it stays absent (`TestVisionServerArgs/nemotron_h_omni`). Lifting the cap
-needs a `llama/compat/*.patch` against clip.cpp + mtmd.cpp — see
-[Notes for a future tiling patch](#notes-for-a-future-tiling-patch) below. Upstream `master`
-was unchanged on the relevant lines as of 2026-07-30, so a `LLAMA_CPP_VERSION` bump would
-not have fixed it either — re-check before writing a patch.
+**Superseded 2026-08-01:** `visionServerArgs()` now *does* have a `case "nemotron_h_omni"`,
+because the 002 patch makes the projector consume the flags (the old
+`TestVisionServerArgs/nemotron_h_omni` want-nil case is gone). On an unpatched payload the
+flags are parsed but inert — the same silent no-op the measurements doc records for stock
+gemma4. Upstream `master` was re-checked 2026-08-01: still unchanged on every relevant line
+(the one upstream fix, PR #23638, was closed unmerged on process grounds; issue #25317 sits
+uncommented), so a `LLAMA_CPP_VERSION` bump alone still cannot fix it.
 
 ## Notes for a future tiling patch
+
+> **Superseded 2026-08-01 — kept as a historical record.** The shipped fix
+> ([nemotron-dynres-patch.md](nemotron-dynres-patch.md), `llama/compat/002-…`) is *not*
+> this tiling design: NVIDIA's reference does a single dynamic-resolution resize, no
+> tiles, no thumbnail. Specific corrections to the notes below, verified against code:
+> **(a)** the "12 vs 13" question dissolves — 13312 is a per-image patch cap, and the
+> GGUF's `max_tiles=12` is a converter-fabricated default; **(b)** feeding 13312 into the
+> tile-count keys would *pass* the `GGML_ASSERT` (1024 ≤ 13312 < INT32_MAX) — the real
+> failure is an empty `image_res_candidates` aborting later in
+> `mtmd_image_preprocessor_internvl::preprocess`; **(c)** "the graph side needs no
+> change" held only for this tiling design — the shipped fix must interpolate the baked
+> 32×32 position embeddings (`resize_position_embeddings`); **(d)** the model wraps every
+> image in `<img>`/`</img>` (token ids 19/20), which stock llama.cpp omits entirely.
 
 `handle_nemotron_h_omni_clip()` in `llama/compat/llama-ollama-compat.cpp` forwards six
 `nemotron_h_omni.vision.*` keys into the `clip.vision.*` namespace — `image_token_id`,

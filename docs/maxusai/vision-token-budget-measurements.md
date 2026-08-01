@@ -55,6 +55,11 @@ The 1920×1080 row above is that doc's own worked 16:9 example.
 Stock never exceeds 266 — the 280 ceiling, landing just under it on the patch grid.
 Verified on `ollama/ollama:0.32.5-rocm`, which reports version `0.32.5`.
 
+The `nemotron3` row is **pre-002-patch** (all deployed payloads to date). With
+[the 002 dynamic-resolution patch](nemotron-dynres-patch.md) expect grid+2 like the other
+arches: ≈302 at 640×480, ≈2042 at 1920×1080, ≈3330 at the ceiling — re-measure and extend
+this table when a patched payload ships.
+
 ## Measurements — pixels encoded per visual token
 
 Source pixels ÷ measured visual tokens. **Lower is finer detail retained.** This is the
@@ -109,7 +114,7 @@ For `modelArch` in `visionServerArgs()` ([`llm/llama_server.go`](../../llm/llama
 |---|---|---|
 | `gemma4` | `--image-min-tokens` / `--image-max-tokens`, from `api.Options`, defaulting **40 / 1120** | 40 … 1,120 |
 | `qwen2vl`, `qwen25vl`, `qwen3vl`, `qwen3vlmoe`, `qwen35`, `qwen35moe` | `--image-min-tokens 1024` (fixed, not tunable) | 1,024 … 4,096 |
-| `nemotron_h_omni` | none, deliberately | exactly 256, always |
+| `nemotron_h_omni` | `--image-min-tokens` / `--image-max-tokens`, defaults **256 / 3328** | 256 … 3,328 on a payload with the 002 patch; exactly 256 (flags inert) unpatched — see [nemotron-dynres-patch.md](nemotron-dynres-patch.md) |
 | everything else | none | projector default |
 
 Option resolution: `ImageMinTokens` / `ImageMaxTokens` are plain `int` with `omitempty`.
@@ -141,6 +146,14 @@ in July 2026 misread the floor as a wrong or unpinned build.
    consumes the flags, so it would ship a knob that does nothing.
    `TestVisionServerArgs/nemotron_h_omni` asserts it stays absent. For nemotron, recover
    detail by tiling — each attached image costs a flat 256, so N square crops cost N × 256.
+
+   > **Superseded 2026-08-01.** The case now exists and the flags are live on payloads
+   > carrying `llama/compat/002-llama-cpp-nemotron-dynres.patch`
+   > ([nemotron-dynres-patch.md](nemotron-dynres-patch.md)); the regression test now
+   > asserts the flags are *present* (defaults 256/3328). The N-square-crops workaround
+   > remains valid for unpatched payloads only — the model was not trained on tiles, so
+   > prefer the patch. Decision 1's "do not send large images to nemotron3" also needs
+   > re-measuring once a patched payload ships.
 4. **Treat "budget → constant token count" as false.** Pinning tightens the spread from
    132–1091 (Δ959) to 1082–1162 (Δ80); it does not flatten it. Cost tracks pixel **area**,
    not orientation — every transposed pair measured identical (1920×1080 ≡ 1080×1920).
