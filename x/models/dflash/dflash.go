@@ -20,6 +20,9 @@ func init() {
 	base.RegisterDraft("DFlashDraftModel", func(root *model.Root, target base.Model) (base.DraftModel, error) {
 		return newModel(root, target, false)
 	})
+	base.RegisterDraft("DFlashLagunaForCausalLM", func(root *model.Root, target base.Model) (base.DraftModel, error) {
+		return newModel(root, target, true)
+	})
 }
 
 var _ base.BlockDraft = (*Model)(nil)
