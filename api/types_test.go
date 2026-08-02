@@ -1100,6 +1100,25 @@ func TestThinkBudgetOption(t *testing.T) {
 	assert.Error(t, opts.FromMap(map[string]any{"think_budget": "enormous"}))
 }
 
+func TestThinkBudgetMessageOption(t *testing.T) {
+	// think_budget_message ships with a model the same way the budget does, and
+	// is free text: whatever wording works for that model.
+	const message = "Considering the limited time by the user, I have to give the solution based on the thinking directly now."
+
+	params, err := FormatParams(map[string][]string{"think_budget_message": {message}})
+	require.NoError(t, err)
+
+	for _, value := range []any{params["think_budget_message"], message} {
+		opts := DefaultOptions()
+		require.NoError(t, opts.FromMap(map[string]any{"think_budget_message": value}), "value %#v", value)
+		assert.Equal(t, message, opts.ThinkBudgetMessage)
+	}
+
+	// unset means the bare closing tag is forced, which is what every runner
+	// does today
+	assert.Empty(t, DefaultOptions().ThinkBudgetMessage)
+}
+
 func TestThinkValueLevel(t *testing.T) {
 	// Level is what a model that consumes effort levels directly receives.
 	tests := []struct {

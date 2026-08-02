@@ -592,6 +592,12 @@ type Options struct {
 	// length by default can ship a bound with `PARAMETER think_budget`; a think
 	// value that carries its own budget takes precedence.
 	ThinkBudget *ThinkValue `json:"think_budget,omitempty"`
+
+	// ThinkBudgetMessage is written into the thinking block just before the
+	// closing tag is forced, so the model reads that it has to answer now
+	// rather than being cut off mid-sentence with no explanation. Empty means
+	// force the bare closing tag. Only meaningful alongside a budget.
+	ThinkBudgetMessage string `json:"think_budget_message,omitempty"`
 }
 
 // Runner options which must be set when the model is loaded into memory
