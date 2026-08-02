@@ -50,6 +50,15 @@ func (p *Gemma4Parser) HasThinkingSupport() bool {
 	return p.hasThinkingSupport
 }
 
+// ThinkingTags reports the delimiters of this parser's thinking block so a
+// thinking-token budget can force the block closed. The opening tag is the
+// bare <|channel> special token rather than the "<|channel>thought" header
+// llama.cpp matches on: both open the block, but a single special token cannot
+// be split differently by the tokenizer, so the budget always engages.
+func (p *Gemma4Parser) ThinkingTags() (string, string) {
+	return gemma4ThinkingOpenTag, gemma4ThinkingCloseTag
+}
+
 func (p *Gemma4Parser) PreservedTokens() []string {
 	return []string{
 		gemma4ThinkingOpenTag,

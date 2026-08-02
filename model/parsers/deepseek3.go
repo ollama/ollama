@@ -20,6 +20,7 @@ const (
 )
 
 const (
+	deepseekThinkingOpenTag    = "<think>"
 	deepseekThinkingCloseTag   = "</think>"
 	deepseekToolCallsBeginTag  = "<｜tool▁calls▁begin｜>"
 	deepseekToolCallsEndTag    = "<｜tool▁calls▁end｜>"
@@ -43,6 +44,12 @@ func (p *DeepSeek3Parser) HasToolSupport() bool {
 
 func (p *DeepSeek3Parser) HasThinkingSupport() bool {
 	return p.hasThinkingSupport
+}
+
+// ThinkingTags reports the delimiters of this parser's thinking block so a
+// thinking-token budget can force the block closed.
+func (p *DeepSeek3Parser) ThinkingTags() (string, string) {
+	return deepseekThinkingOpenTag, deepseekThinkingCloseTag
 }
 
 func (p *DeepSeek3Parser) PreservedTokens() []string {

@@ -52,6 +52,12 @@ func (p *Qwen3Parser) HasThinkingSupport() bool {
 	return p.hasThinkingSupport
 }
 
+// ThinkingTags reports the delimiters of this parser's thinking block so a
+// thinking-token budget can force the block closed.
+func (p *Qwen3Parser) ThinkingTags() (string, string) {
+	return qwen3ThinkingOpenTag, qwen3ThinkingCloseTag
+}
+
 func (p *Qwen3Parser) PreservedTokens() []string {
 	return []string{
 		qwen3ThinkingOpenTag,
