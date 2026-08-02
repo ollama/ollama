@@ -310,3 +310,20 @@ baseline corrected to genuine `ollama/ollama:0.32.1-rocm`, dialect-corrected Q4
 scoring, max-context arm, and the qwen runaway root cause: q8_0 KV cache) is
 consolidated in [vision-campaign-2026-08-02.md](vision-campaign-2026-08-02.md),
 with raw logs and parsed JSON under [vision-suite/runs/](vision-suite/runs/).
+
+### Addendum 2026-08-03 — kv_cache_type image built, canaried, promoted; f16 fleet-wide
+
+Green-lit deploy: overlay image **`maxusai-ollama:0.32.1-rocm-dynres-258534eb`**
+(tag `v0.32.1-dynres.2`; Dockerfile.overlay on base `…-a4788474`, payload
+bit-identical; Go binary carries the routes-layer v2 think+format fix and the
+per-model/request `kv_cache_type` option incl. K/V pair syntax). Canary on
+:11442: version stamp OK; default emits NO `--cache-type` flags (llama-server
+f16 default); `options.kv_cache_type="q8_0/f16"` → `--cache-type-k q8_0
+--cache-type-v f16` on the live runner; nemotron generate+think+`"json"` →
+valid JSON with thinking intact. Promoted to the canonical container on
+**:11435** with explicit `OLLAMA_KV_CACHE_TYPE=f16` and a durable home dir
+(`~/deployments/ollama/homes/canonical-11435`). Prod **:11434** recreated by
+the operator with `OLLAMA_KV_CACHE_TYPE=f16` (same gemma4budget image;
+rollback container `ollama-rocm-q8backup` retained). The q8_0 reasoning-
+inflation exposure (campaign §6) is closed fleet-wide; q8_0 remains available
+per-request via the pair syntax where memory matters.
