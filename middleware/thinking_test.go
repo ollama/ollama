@@ -28,7 +28,7 @@ func TestThinkingCompatibilityScope(t *testing.T) {
 		legacyError             bool
 	}{
 		{"chat xhigh", ChatMiddleware, `"messages":[{"role":"user","content":"hi"}],"reasoning_effort":"xhigh"`, "xhigh", "max", false},
-		{"chat minimal", ChatMiddleware, `"messages":[{"role":"user","content":"hi"}],"reasoning_effort":"minimal"`, "minimal", "low", false},
+		{"chat minimal", ChatMiddleware, `"messages":[{"role":"user","content":"hi"}],"reasoning_effort":"minimal"`, "minimal", "minimal", false},
 		{"chat future", ChatMiddleware, `"messages":[{"role":"user","content":"hi"}],"reasoning_effort":"future"`, "future", nil, true},
 		{"chat off", ChatMiddleware, `"messages":[{"role":"user","content":"hi"}],"reasoning_effort":"none"`, false, false, false},
 		{"chat nested precedence", ChatMiddleware, `"messages":[{"role":"user","content":"hi"}],"reasoning_effort":"low","reasoning":{"effort":"xhigh"}`, "xhigh", "max", false},

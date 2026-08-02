@@ -32,7 +32,7 @@ func TestThinkingConversionMetadata(t *testing.T) {
 				{"supported", `,"reasoning":{"effort":"max"}`, "max", "max", false},
 				{"unsupported", `,"reasoning":{"effort":"low"}`, "low", "low", false},
 				{"xhigh", `,"reasoning":{"effort":"xhigh"}`, "xhigh", "max", false},
-				{"minimal", `,"reasoning":{"effort":"minimal"}`, "minimal", "low", false},
+				{"minimal", `,"reasoning":{"effort":"minimal"}`, "minimal", "minimal", false},
 				{"future", `,"reasoning":{"effort":"future"}`, "future", nil, true},
 				{"exact spelling", `,"reasoning":{"effort":" HIGH "}`, " HIGH ", nil, true},
 				{"nested precedence", `,"reasoning_effort":"low","reasoning":{"effort":"xhigh"}`, "xhigh", "max", false},
@@ -104,7 +104,9 @@ func TestResponsesThinkingOverrideWithMetadata(t *testing.T) {
 				req := ResponsesRequest{Input: ResponsesInput{Text: "hi"}, Think: &api.ThinkValue{Value: value}}
 				req.Reasoning.Effort = "xhigh"
 				got, err := FromResponsesRequest(req, metadata.thinking)
-				wantErr := value == 75 || (!metadata.thinking.Valid() && (value == "" || value == "xhigh" || value == "minimal" || value == "future"))
+				// An integer is a thinking-token budget and "minimal" a budget level, so
+				// both are valid overrides whatever the model advertises.
+				wantErr := !metadata.thinking.Valid() && (value == "" || value == "xhigh" || value == "future")
 				if wantErr {
 					if err == nil {
 						t.Fatal("invalid override must fail")
