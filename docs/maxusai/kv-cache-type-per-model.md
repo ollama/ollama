@@ -71,3 +71,30 @@ quantization.
 
 Prod keeps `OLLAMA_KV_CACHE_TYPE=q8_0`; qwen3.6 reasoning models get
 `PARAMETER kv_cache_type f16`. KV cost at 32,768 ctx: ~3 GB → ~6 GB.
+
+## Attribution results (2026-08-02, run via this feature)
+
+The K/V pair syntax ran the attribution experiment on the release lineage
+(`258534eb` cherry-pick, native b9888 binary, env q8_0, per-request overrides;
+raw log `vision-suite/runs/kv-attrib-2026-08-02.log`). Thinking tokens to
+natural convergence, qwen3.6 think-on, generate, temp 0:
+
+| prompt | f16/f16 | q8_0-K/f16-V | f16-K/q8_0-V | q8_0/q8_0 |
+|---|---|---|---|---|
+| scene | 3,320 (IoU .927) | 2,488 (.969) | 4,472 (.958) | 19,160 |
+| multi | 9,050 | 6,687 | 3,655 | >131,072 (never) |
+
+**Neither cache alone causes the inflation — only both quantized.** The
+effect is superadditive: each single-sided arm converges promptly (with
+equal-or-better box quality than pure f16), so the reasoning chain tolerates
+one noise source but not the combined error. Operationally, **`kv_cache_type
+q8_0/f16` is the sweet spot for qwen reasoning**: half the KV memory of f16,
+no flash-attention requirement (V stays f16), and no inflation on either the
+mild or the severe prompt. Pure f16 remains the conservative default.
+
+Live canary (same log): env default honored, option override reloads the
+runner (`--cache-type-k f16 --cache-type-v f16` observed), pair splits
+correctly (`--cache-type-k q8_0 --cache-type-v f16`), invalid value warns
+once and falls back to env. The first canary attempt caught a real defect —
+an incomplete cherry-pick that silently dropped the pair-syntax commit —
+before anything shipped.

@@ -1,0 +1,69 @@
+version: {"version":"0.0.0"}
+CANARY[env-default-q8_0] --cache-type-k q8_0 --cache-type-v q8_0
+CANARY[option-f16] --cache-type-k f16 --cache-type-v f16
+CANARY[pair-k-q8_0-v-f16] --cache-type-k q8_0 --cache-type-v f16
+CANARY[invalid-fallback] --cache-type-k q8_0 --cache-type-v q8_0
+CANARY warn-lines: 1
+===== CANARY DONE =====
+===== ATTRIB q8_0-K/f16-V START 20:25:25 =====
+--- scene_single [attrib-kq8-vf16] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.969,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 2613,
+ "eval_count": 2488
+}
+SUITE DONE attrib-kq8-vf16
+===== ATTRIB f16-K/q8_0-V START 20:26:55 =====
+--- scene_single [attrib-kf16-vq8] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.958,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 2613,
+ "eval_count": 4472
+}
+SUITE DONE attrib-kf16-vq8
+ATTRIB COMPLETE 20:29:41
+===== ATTRIB-MULTI q8_0/f16 START 20:30:27 =====
+--- multi_3img [attribmulti-q8_0-f16] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": true,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "q4_bbox_space": "norm1000/xyxy",
+ "prompt_eval_count": 6134,
+ "eval_count": 6687
+}
+SUITE DONE attribmulti-q8_0-f16
+===== ATTRIB-MULTI f16/q8_0 START 20:35:44 =====
+--- multi_3img [attribmulti-f16-q8_0] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": true,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "q4_bbox_space": "norm1000/xyxy",
+ "prompt_eval_count": 6134,
+ "eval_count": 3655
+}
+SUITE DONE attribmulti-f16-q8_0
+ATTRIB-MULTI COMPLETE 20:38:52

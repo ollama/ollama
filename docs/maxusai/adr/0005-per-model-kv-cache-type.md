@@ -24,9 +24,10 @@ at 32K ctx.
    llama.cpp's independent `--cache-type-k`/`--cache-type-v` (quantized V
    requires flash attention; K does not).
 2. **Policy on gfx1151**: the instance may keep `q8_0` as its default;
-   reasoning models — today qwen3.6 — get `kv_cache_type f16` at the model
-   level (interim, until the feature is deployed: a dedicated f16 instance or
-   `num_predict` budgets > ~27K for qwen think-mode).
+   reasoning models — today qwen3.6 — get `kv_cache_type f16` (conservative)
+   or `q8_0/f16` (validated sweet spot: half the KV memory, no FA
+   requirement, no measured inflation — see the SPEC's attribution results)
+   at the model level.
 3. **Suite guardrail**: benchmark runs must record the KV type; think-mode
    qwen results under q8_0 with caps below ~27K are censored and must not be
    read as model failures.
@@ -38,8 +39,8 @@ at 32K ctx.
 - Changing `kv_cache_type` between requests respawns the runner (Runner-block
   comparison) — same cost profile as a `num_ctx` change; per-request toggling
   is possible but load-heavy, so per-model defaults are the intended use.
-- The K/V pair syntax enables attributing the qwen degradation to K- vs
-  V-quantization (`q8_0/f16` vs `f16/q8_0`) once a build with the feature is
-  on the b9888 lineage.
+- The K/V pair syntax attributed the qwen degradation same-day: neither side
+  alone inflates; only combined q8_0 does (superadditive). `q8_0/f16` is
+  validated clean on both the mild and severe prompts.
 - Other reasoning models may have undiscovered q8_0 cliffs; the vision suite
   plus this knob make that a one-command check per model.
