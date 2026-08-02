@@ -3783,11 +3783,26 @@ func TestLlamaServerCompletionReasoningBudget(t *testing.T) {
 			wantGenerationPrompt: "<think>",
 		},
 		{
+			name: "wrap-up message is forced ahead of the closing tag",
+			req: CompletionRequest{
+				Prompt:             "<bos><|turn>user\nhi<turn|>\n<|turn>model\n",
+				ThinkBudget:        512,
+				ThinkBudgetMessage: "\n\nTime to answer now.\n",
+				ThinkingStartTag:   "<|channel>",
+				ThinkingEndTag:     "<channel|>",
+			},
+			wantBudget:  float64(512),
+			wantStart:   "<|channel>",
+			wantEnd:     "<channel|>",
+			wantMessage: "\n\nTime to answer now.\n",
+		},
+		{
 			name: "no budget",
 			req: CompletionRequest{
-				Prompt:           "test prompt",
-				ThinkingStartTag: "<think>",
-				ThinkingEndTag:   "</think>",
+				Prompt:             "test prompt",
+				ThinkBudgetMessage: "ignored without a budget",
+				ThinkingStartTag:   "<think>",
+				ThinkingEndTag:     "</think>",
 			},
 		},
 		{
