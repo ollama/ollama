@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math"
 	"os"
 	"sync"
 	"testing"
@@ -2234,4 +2235,83 @@ func TestSchedulerTracksMultipleLoadedRunners(t *testing.T) {
 
 	expectedFree := uint64(24*format.GigaByte) - uint64(8*format.GigaByte) - uint64(4*format.GigaByte)
 	require.Equal(t, expectedFree, gpus[0].FreeMemory)
+}
+
+// TestSchedExpiredRunnerNotResurrected reproduces the deadlock from
+// https://github.com/ollama/ollama/issues/17408. When the scheduler marks a
+// runner for expiration (e.g. to evict it and make room for another model)
+// while a request is still in flight, a concurrent request taking the fast
+// path must not overwrite the runner's session duration. If it did, the
+// runner would be "resurrected" with a long-lived expiration timer, the
+// scheduler's unload wait would never complete, and all subsequent loads
+// would hang forever.
+func TestSchedExpiredRunnerNotResurrected(t *testing.T) {
+	ctx, done := context.WithCancel(t.Context())
+	defer done()
+
+	s := InitScheduler(ctx)
+	s.waitForRecovery = 10 * time.Millisecond
+
+	llm := &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}}
+	runner := &runnerRef{
+		llama:           llm,
+		sessionDuration: 2 * time.Second,
+		numParallel:     1,
+	}
+
+	// Simulate the scheduler marking this runner for eviction while a
+	// request is still in flight (refCount > 0, so it cannot be unloaded
+	// yet). This is exactly the state processPending reaches before it
+	// blocks waiting for the unload.
+	runner.refMu.Lock()
+	runner.refCount = 1
+	runner.markForExpiration()
+	runner.refMu.Unlock()
+	require.True(t, runner.expiring)
+	require.Equal(t, time.Duration(0), runner.sessionDuration)
+
+	// A concurrent request arrives and takes the fast path. With the bug,
+	// useLoadedRunner would overwrite sessionDuration with the request's
+	// keep-alive (e.g. MaxInt64 for keep_alive=-1), resurrecting the runner.
+	req := &LlmRequest{
+		ctx:             ctx,
+		opts:            api.DefaultOptions(),
+		sessionDuration: &api.Duration{Duration: time.Duration(math.MaxInt64)},
+		successCh:       make(chan *runnerRef, 1),
+	}
+	finished := make(chan *LlmRequest, 1)
+	req.useLoadedRunner(runner, finished)
+
+	// The runner must still be marked for expiration with a zero session
+	// duration so that once it goes idle the finished handler unloads it
+	// instead of arming a ~292-year timer.
+	require.True(t, runner.expiring)
+	require.Equal(t, time.Duration(0), runner.sessionDuration)
+	require.Equal(t, uint(2), runner.refCount)
+
+	// Complete the in-flight request, then let the fast-path request finish.
+	runner.refMu.Lock()
+	runner.refCount = 1
+	runner.refMu.Unlock()
+	done()
+	fin := <-finished
+	require.Equal(t, req, fin)
+}
+
+// TestSchedMarkForExpiration verifies that markForExpiration stops any
+// pending expiration timer, zeroes the session duration, and sets the
+// expiring flag so concurrent requests cannot resurrect the runner.
+func TestSchedMarkForExpiration(t *testing.T) {
+	runner := &runnerRef{
+		sessionDuration: 5 * time.Minute,
+		expireTimer:     time.AfterFunc(time.Hour, func() {}),
+	}
+
+	runner.refMu.Lock()
+	runner.markForExpiration()
+	runner.refMu.Unlock()
+
+	require.True(t, runner.expiring)
+	require.Equal(t, time.Duration(0), runner.sessionDuration)
+	require.Nil(t, runner.expireTimer)
 }
