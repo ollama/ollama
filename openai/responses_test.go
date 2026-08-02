@@ -669,9 +669,11 @@ func TestFromResponsesRequest_ReasoningEffort(t *testing.T) {
 			wantThink: "max",
 		},
 		{
-			name:      "minimal clamps to low",
+			// A level of ours rather than one to clamp: it resolves to a
+			// sixteenth of the response, where "low" is an eighth.
+			name:      "minimal",
 			effort:    "minimal",
-			wantThink: "low",
+			wantThink: "minimal",
 		},
 		{
 			name:      "xhigh clamps to max",

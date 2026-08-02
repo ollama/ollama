@@ -1413,6 +1413,18 @@ type llamaServerCompletionRequest struct {
 	NProbs          int             `json:"n_probs,omitempty"`
 	PreservedTokens []string        `json:"preserved_tokens,omitempty"`
 	TimingsPerToken bool            `json:"timings_per_token,omitempty"`
+
+	// Reasoning budget sampler. llama-server activates it once it sees
+	// ReasoningBudgetStartTag generated (or present in GenerationPrompt), then
+	// forces ReasoningBudgetEndTag after ReasoningBudgetTokens tokens.
+	ReasoningBudgetTokens   int    `json:"reasoning_budget_tokens,omitempty"`
+	ReasoningBudgetStartTag string `json:"reasoning_budget_start_tag,omitempty"`
+	ReasoningBudgetEndTag   string `json:"reasoning_budget_end_tag,omitempty"`
+	// ReasoningBudgetMessage must be sent even when empty: llama-server builds
+	// the sequence it forces from message+end_tag, and only does so when this
+	// field is present. A pointer keeps the empty string on the wire.
+	ReasoningBudgetMessage *string `json:"reasoning_budget_message,omitempty"`
+	GenerationPrompt       string  `json:"generation_prompt,omitempty"`
 }
 
 func llamaServerPreservedTokens(parserTokens []string, toolCallTag string) []string {
@@ -1583,6 +1595,26 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 
 	if req.Logprobs {
 		lsReq.NProbs = max(req.TopLogprobs, 1)
+	}
+
+	// Cap thinking. llama-server's reasoning budget sampler needs both
+	// delimiters: it starts counting at the opening tag and forces the closing
+	// tag once the budget runs out.
+	if req.ThinkBudget > 0 && req.ThinkingStartTag != "" && req.ThinkingEndTag != "" {
+		lsReq.ReasoningBudgetTokens = req.ThinkBudget
+		lsReq.ReasoningBudgetStartTag = req.ThinkingStartTag
+		lsReq.ReasoningBudgetEndTag = req.ThinkingEndTag
+		// Without this the forced sequence is empty and the budget expires
+		// silently, leaving the thinking block open.
+		lsReq.ReasoningBudgetMessage = new(string)
+
+		// The sampler only sees tokens the model generates, so a template that
+		// primes thinking by ending the prompt with the opening tag would never
+		// activate it. Hand that tag over as the generation prompt instead:
+		// llama-server replays it into the sampler before decoding starts.
+		if strings.HasSuffix(strings.TrimRight(req.Prompt, " \t\r\n"), req.ThinkingStartTag) {
+			lsReq.GenerationPrompt = req.ThinkingStartTag
+		}
 	}
 
 	// Handle format: pass JSON schema directly to llama-server, or use grammar
@@ -2187,6 +2219,15 @@ func (s *llamaServerRunner) llamaServerChatRequest(req ChatRequest, stream bool)
 	if kwargs := llamaServerChatTemplateKwargs(req.Think); kwargs != nil {
 		body["chat_template_kwargs"] = kwargs
 	}
+	// llama-server owns the chat template on this path, so it already knows the
+	// thinking delimiters and only needs the budget.
+	budget := req.Think.BudgetTokens(s.ContextLength())
+	if budget <= 0 {
+		budget = req.Options.ThinkBudget.BudgetTokens(s.ContextLength())
+	}
+	if budget > 0 {
+		body["thinking_budget_tokens"] = budget
+	}
 	if format, err := llamaServerChatResponseFormat(req.Format); err != nil {
 		return nil, err
 	} else if format != nil {
@@ -2205,7 +2246,7 @@ func llamaServerChatTemplateKwargs(think *api.ThinkValue) map[string]any {
 		"enable_thinking": think.Bool(),
 	}
 	if think.IsString() {
-		if effort := think.String(); effort != "" {
+		if effort := think.Level(); effort != "" {
 			kwargs["reasoning_effort"] = effort
 		}
 	}

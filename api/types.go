@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -102,8 +103,9 @@ type GenerateRequest struct {
 	Options map[string]any `json:"options"`
 
 	// Think controls whether thinking/reasoning models will think before
-	// responding. Can be a boolean (true/false) or a string ("high", "medium", "low")
-	// for supported models. Needs to be a pointer so we can distinguish between false
+	// responding. For supported models it can be a boolean (true/false), a
+	// string ("high", "medium", "low", "max") or a positive integer giving an
+	// explicit thinking-token budget. Needs to be a pointer so we can distinguish between false
 	// (request that thinking _not_ be used) and unset (use the old behavior
 	// before this option was introduced)
 	Think *ThinkValue `json:"think,omitempty"`
@@ -154,8 +156,9 @@ type ChatRequest struct {
 	Options map[string]any `json:"options"`
 
 	// Think controls whether thinking/reasoning models will think before
-	// responding. Can be a boolean (true/false) or a string ("high", "medium", "low")
-	// for supported models.
+	// responding. For supported models it can be a boolean (true/false), a
+	// string ("high", "medium", "low", "max") or a positive integer giving an
+	// explicit thinking-token budget.
 	Think *ThinkValue `json:"think,omitempty"`
 
 	// Truncate is a boolean that, when set to true, truncates the chat history messages
@@ -583,6 +586,12 @@ type Options struct {
 	PresencePenalty  float32  `json:"presence_penalty,omitempty"`
 	FrequencyPenalty float32  `json:"frequency_penalty,omitempty"`
 	Stop             []string `json:"stop,omitempty"`
+
+	// ThinkBudget bounds how many tokens the model may spend inside a thinking
+	// block, as either a token count or an effort level. Models that reason at
+	// length by default can ship a bound with `PARAMETER think_budget`; a think
+	// value that carries its own budget takes precedence.
+	ThinkBudget *ThinkValue `json:"think_budget,omitempty"`
 }
 
 // Runner options which must be set when the model is loaded into memory
@@ -1034,6 +1043,22 @@ func (opts *Options) FromMap(m map[string]any) error {
 				continue
 			}
 
+			// Options that accept more than one JSON type decode themselves,
+			// so re-encode the value and hand it to the field's unmarshaler.
+			if field.Kind() == reflect.Pointer && field.Type().Implements(jsonUnmarshalerType) {
+				data, err := json.Marshal(val)
+				if err != nil {
+					return fmt.Errorf("option %q could not be re-encoded: %w", key, err)
+				}
+
+				decoded := reflect.New(field.Type().Elem())
+				if err := json.Unmarshal(data, decoded.Interface()); err != nil {
+					return fmt.Errorf("option %q: %w", key, err)
+				}
+				field.Set(decoded)
+				continue
+			}
+
 			switch field.Kind() {
 			case reflect.Int:
 				switch t := val.(type) {
@@ -1142,10 +1167,50 @@ func DefaultOptions() Options {
 	}
 }
 
-// ThinkValue represents a value that can be a boolean or a string ("high", "medium", "low", "max")
+// ThinkValue represents a value that can be a boolean, a string ("high",
+// "medium", "low", "max") or a positive integer thinking-token budget
 type ThinkValue struct {
-	// Value can be a bool or string
+	// Value can be a bool, string or int
 	Value interface{}
+}
+
+// thinkLevels are the effort levels think accepts. Models that understand a
+// level directly are handed it as a string, so a level is checked against this
+// set and never against the budget table below, which it does not have to
+// appear in.
+var thinkLevels = []string{"minimal", "low", "medium", "high", "max"}
+
+// thinkBudgetFraction maps an effort level to the share of the context window
+// the model is allowed to spend on thinking. Without a cap, models that
+// support long reasoning traces can loop until the context is exhausted and
+// never emit an answer. The steps halve rather than crowding the top of the
+// range: how long a model thinks depends on the prompt, not on how much room
+// it was given, so shares near the whole context stop bounding anything once
+// the context is large. A level absent from this table stays valid: it reaches
+// the model as a string and simply carries no budget.
+var thinkBudgetFraction = map[string][2]int{
+	"max":     {4, 5},
+	"high":    {1, 2},
+	"medium":  {1, 4},
+	"low":     {1, 8},
+	"minimal": {1, 16},
+}
+
+func isThinkLevel(level string) bool {
+	return slices.Contains(thinkLevels, level)
+}
+
+// ThinkLevels returns the effort levels think accepts, weakest first. The
+// OpenAI- and Anthropic-compatible endpoints validate their own effort fields
+// against this so a level cannot be accepted by one entry point and rejected
+// by another.
+func ThinkLevels() []string {
+	return slices.Clone(thinkLevels)
+}
+
+// IsThinkLevel reports whether a string is an effort level think accepts.
+func IsThinkLevel(level string) bool {
+	return isThinkLevel(level)
 }
 
 // IsValid checks if the ThinkValue is valid
@@ -1158,7 +1223,9 @@ func (t *ThinkValue) IsValid() bool {
 	case bool:
 		return true
 	case string:
-		return v == "high" || v == "medium" || v == "low" || v == "max"
+		return isThinkLevel(v)
+	case int:
+		return v > 0
 	default:
 		return false
 	}
@@ -1182,6 +1249,15 @@ func (t *ThinkValue) IsString() bool {
 	return ok
 }
 
+// IsInt returns true if the value is an explicit thinking-token budget
+func (t *ThinkValue) IsInt() bool {
+	if t == nil || t.Value == nil {
+		return false
+	}
+	_, ok := t.Value.(int)
+	return ok
+}
+
 // Bool returns the value as a bool (true if enabled in any way)
 func (t *ThinkValue) Bool() bool {
 	if t == nil || t.Value == nil {
@@ -1192,10 +1268,58 @@ func (t *ThinkValue) Bool() bool {
 	case bool:
 		return v
 	case string:
-		// Any string value ("high", "medium", "low", "max") means thinking is enabled
-		return v == "high" || v == "medium" || v == "low" || v == "max"
+		// Any level means thinking is enabled
+		return isThinkLevel(v)
+	case int:
+		// A budget only makes sense when thinking is on
+		return v > 0
 	default:
 		return false
+	}
+}
+
+// BudgetTokens returns the number of tokens the model may spend inside a
+// thinking block, or 0 when thinking is unrestricted. An explicit integer
+// value is used as-is; effort levels are resolved against numCtx, the context
+// length the request actually runs with.
+func (t *ThinkValue) BudgetTokens(numCtx int) int {
+	if t == nil || t.Value == nil {
+		return 0
+	}
+
+	switch v := t.Value.(type) {
+	case int:
+		if v > 0 {
+			return v
+		}
+	case string:
+		frac, ok := thinkBudgetFraction[v]
+		if !ok || numCtx <= 0 {
+			return 0
+		}
+		// Round down so the budget never consumes the whole window
+		if budget := numCtx * frac[0] / frac[1]; budget > 0 {
+			return budget
+		}
+	}
+
+	return 0
+}
+
+// Level returns the effort level to hand a model that consumes levels
+// directly, or "" when there is none to send. Models that take a level as a
+// string recognise low, medium and high, and gpt-oss writes whatever it is
+// given straight into its system prompt, so the levels outside that range are
+// reported as the nearest one they know. The budget is unaffected and keeps
+// the share of the context the requested level asked for.
+func (t *ThinkValue) Level() string {
+	switch level := t.String(); level {
+	case "max":
+		return "high"
+	case "minimal":
+		return "low"
+	default:
+		return level
 	}
 }
 
@@ -1231,14 +1355,24 @@ func (t *ThinkValue) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err == nil {
 		// Validate string values
-		if s != "high" && s != "medium" && s != "low" && s != "max" {
+		if !isThinkLevel(s) {
 			return fmt.Errorf("invalid think value: %q (must be \"high\", \"medium\", \"low\", \"max\", true, or false)", s)
 		}
 		t.Value = s
 		return nil
 	}
 
-	return fmt.Errorf("think must be a boolean or string (\"high\", \"medium\", \"low\", \"max\", true, or false)")
+	// Try to unmarshal as an explicit thinking-token budget
+	var n int
+	if err := json.Unmarshal(data, &n); err == nil {
+		if n <= 0 {
+			return fmt.Errorf("invalid think budget: %d (must be greater than 0; use false to disable thinking)", n)
+		}
+		t.Value = n
+		return nil
+	}
+
+	return fmt.Errorf("think must be a boolean, a string (\"high\", \"medium\", \"low\", \"max\") or a positive thinking-token budget")
 }
 
 // MarshalJSON implements json.Marshaler
@@ -1289,6 +1423,8 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 
 	return nil
 }
+
+var jsonUnmarshalerType = reflect.TypeOf((*json.Unmarshaler)(nil)).Elem()
 
 // FormatParams converts specified parameter options to their correct types
 func FormatParams(params map[string][]string) (map[string]any, error) {
@@ -1341,6 +1477,16 @@ func FormatParams(params map[string][]string) (map[string]any, error) {
 					// TODO: only string slices are supported right now
 					out[key] = vals
 				case reflect.Pointer:
+					if field.Type().Implements(jsonUnmarshalerType) {
+						// Either a number or a word, decided by the field
+						if intVal, err := strconv.ParseInt(vals[0], 10, 64); err == nil {
+							out[key] = intVal
+						} else {
+							out[key] = vals[0]
+						}
+						break
+					}
+
 					switch field.Type().Elem().Kind() {
 					case reflect.Bool:
 						boolVal, err := strconv.ParseBool(vals[0])
