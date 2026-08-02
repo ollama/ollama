@@ -619,6 +619,11 @@ type Runner struct {
 	// projector). 0 = unset; DefaultOptions supplies the defaults above.
 	ImageMinTokens int `json:"image_min_tokens,omitempty"`
 	ImageMaxTokens int `json:"image_max_tokens,omitempty"`
+
+	// KVCacheType overrides OLLAMA_KV_CACHE_TYPE for this model load
+	// (llama-server --cache-type-k/--cache-type-v; e.g. f16, q8_0, q4_0).
+	// Empty means the server-wide environment value applies.
+	KVCacheType string `json:"kv_cache_type,omitempty"`
 }
 
 // EmbedRequest is the request passed to [Client.Embed].
@@ -722,7 +727,7 @@ type CreateRequest struct {
 	Renderer string `json:"renderer,omitempty"`
 
 	// Parser is the name of the parser used to parse the output of the request.
-	Parser   string `json:"parser,omitempty"`
+	Parser string `json:"parser,omitempty"`
 
 	// Requires is the minimum version of Ollama required by the model.
 	Requires string `json:"requires,omitempty"`
