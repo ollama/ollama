@@ -1387,13 +1387,13 @@ func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *
 	return mlx.Add(h, r)
 }
 
-func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
+func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	return m.forward(b, caches, B, L)
 }
 
-func (m *Model) forward(b *batch.Batch, caches []cache.Cache, B, L int32) *mlx.Array {
+func (m *Model) forward(b *batch.Batch, caches []cache.Cache, B, L int32) (hidden, auxHidden *mlx.Array) {
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
 	h := m.EmbedTokens.Forward(b.InputIDs)
 	for i, layer := range m.Layers {
@@ -1403,7 +1403,8 @@ func (m *Model) forward(b *batch.Batch, caches []cache.Cache, B, L int32) *mlx.A
 		}
 		h = layer.Forward(h, b, c, positions, B, L, m.Config)
 	}
-	return m.Norm.Forward(h, m.RMSNormEps)
+	out := m.Norm.Forward(h, m.RMSNormEps)
+	return out, out
 }
 
 func (m *Model) Unembed(x *mlx.Array) *mlx.Array {

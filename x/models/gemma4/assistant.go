@@ -277,7 +277,7 @@ func (m *AssistantModel) DraftCaches([]cache.Cache) []cache.Cache { return nil }
 // last target-seen position, so it anchors RoPE and the mask there — from the
 // non-moving target full-attention cache — regardless of the advancing offset
 // in b. The input fuses the target's scaled token embedding with b.Hidden.
-func (m *AssistantModel) Draft(b *batch.Batch, caches []cache.Cache) (hidden, projected *mlx.Array) {
+func (m *AssistantModel) Draft(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
 	inputsEmbeds := m.target.TokenEmbeddings(b.InputIDs).Concatenate(-1, b.Hidden)
 	dims := inputsEmbeds.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
@@ -303,8 +303,8 @@ func (m *AssistantModel) Draft(b *batch.Batch, caches []cache.Cache) (hidden, pr
 	}
 
 	hidden = mlx.RMSNormFn(h, m.NormScaled, m.TextConfig.RMSNormEps)
-	projected = m.PostProjection.Forward(hidden)
-	return hidden, projected
+	auxHidden = m.PostProjection.Forward(hidden)
+	return hidden, auxHidden
 }
 
 func (m *AssistantModel) sharedHistories(b *batch.Batch, caches []cache.Cache) (sliding, full *nn.KVHistory) {
