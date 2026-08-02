@@ -29,9 +29,13 @@ func newMTPDrafter(s *speculation) *mtpDrafter {
 	return &mtpDrafter{spec: s}
 }
 
+// draftLimit reports no bound; the head makes one call per draft token, so
+// any depth is reachable.
+func (d *mtpDrafter) draftLimit() int { return 0 }
+
 // open returns the drafting session for one request, its pairing frontier
 // synced to the draft caches' restored offset.
-func (d *mtpDrafter) open() *mtpDraftSession {
+func (d *mtpDrafter) open() draftSession {
 	s := &mtpDraftSession{drafter: d}
 	if kv := d.spec.draftKV; len(kv) > 0 {
 		// A restored prefix arrives with the draft caches already written;

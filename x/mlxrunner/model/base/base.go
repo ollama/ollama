@@ -52,6 +52,17 @@ type DraftModel interface {
 	Unembed(x *mlx.Array) *mlx.Array
 }
 
+// BlockDraft is a DraftModel that drafts a whole block per forward (block
+// diffusion), conditioned on features tapped from target layers rather than
+// the final hidden state.
+type BlockDraft interface {
+	DraftModel
+
+	// BlockParams returns the trained block length and the mask token
+	// standing in for undrafted positions.
+	BlockParams() (blockSize int, maskToken int32)
+}
+
 // SelfDraft is implemented by models whose draft head ships inline with the
 // target weights; it returns the head, or nil when the checkpoint shipped none.
 type SelfDraft interface {
