@@ -1951,85 +1951,9 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 		return err
 	}
 
-	// Validate the format up front and detect whether it constrains output.
-	var formatProbe llamaServerCompletionRequest
-	if err := applyCompletionFormat(req, &formatProbe); err != nil {
-		return err
-	}
-	constrains := formatProbe.Grammar != "" || len(formatProbe.JsonSchema) > 0
-
-	// Implicit-thinking models start generation inside thinking and leave it
-	// with a close marker. An eager grammar makes that marker unreachable, so
-	// the model could never leave thinking and its entire constrained output
-	// would be classified as thinking. Defer constraining instead: generate
-	// unconstrained with the marker as a stop string, then continue the same
-	// prompt plus the emitted thinking and marker with the grammar applied.
-	// The continuation prefill is a prompt cache hit, so it is nearly free.
-	// Prompts truncated to tokens by context shift cannot be continued
-	// textually and constrain eagerly as before.
-	promptStr, promptIsString := prompt.(string)
-	deferFormat := constrains && req.ThinkCloseTag != "" && promptIsString
-
-	phase := llamaServerCompletionPhase{prompt: prompt, applyFormat: true}
-	if deferFormat {
-		phase = llamaServerCompletionPhase{prompt: prompt, extraStop: req.ThinkCloseTag}
-	}
-
-	result, err := s.runCompletionPhase(ctx, req, phase, fn)
+	result, err := s.runCompletionPhase(ctx, req, llamaServerCompletionPhase{prompt: prompt}, fn)
 	if err != nil {
 		return err
-	}
-
-	if deferFormat && result.finished && result.stoppingWord == req.ThinkCloseTag {
-		// Emit any content held back in the stop chunk plus the marker itself
-		// so downstream parsers see the thinking close.
-		fn(CompletionResponse{Content: result.final.Content + req.ThinkCloseTag})
-
-		contPrompt := promptStr + result.content + req.ThinkCloseTag
-
-		// The continuation re-submits the thinking as prompt. If that no
-		// longer fits the context window, there is no room to generate the
-		// constrained answer: end honestly as a length-limited generation
-		// instead of letting llama-server reject the request.
-		if tokens, err := s.tokenize(ctx, contPrompt, true, nil); err == nil && len(tokens) >= s.options.NumCtx-llamaServerContinuationHeadroom {
-			slog.Warn("thinking filled the context window, skipping format-constrained continuation", "tokens", len(tokens), "num_ctx", s.options.NumCtx)
-			result.final.DoneReason = DoneReasonLength
-			result.final.Content = ""
-			fn(result.final)
-			return nil
-		}
-
-		cont, err := s.runCompletionPhase(ctx, req, llamaServerCompletionPhase{
-			prompt:      contPrompt,
-			applyFormat: true,
-		}, fn)
-		var serr api.StatusError
-		if errors.As(err, &serr) && serr.StatusCode == http.StatusBadRequest {
-			// Defensive: llama-server rejected the continuation (e.g. context
-			// overflow the pre-check missed). Phase one completed, so degrade
-			// to a length-limited result rather than failing the request.
-			slog.Warn("format-constrained continuation rejected, returning thinking-only result", "error", serr.ErrorMessage)
-			result.final.DoneReason = DoneReasonLength
-			result.final.Content = ""
-			fn(result.final)
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if !cont.finished {
-			return nil
-		}
-		// Report generated tokens and durations from both passes, each counted
-		// once: the prompt eval is pass one's (the true prompt), since the
-		// continuation's prefill re-reads pass one's output from cache, and
-		// eval is the sum of both passes' generated tokens.
-		cont.final.PromptEvalCount = result.final.PromptEvalCount
-		cont.final.EvalCount += result.final.EvalCount
-		cont.final.EvalDuration += result.final.EvalDuration
-		cont.final.PromptEvalDuration += result.final.PromptEvalDuration
-		fn(cont.final)
-		return nil
 	}
 
 	if result.finished {
@@ -2038,26 +1962,14 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 	return nil
 }
 
-// llamaServerContinuationHeadroom is the minimum number of context slots that
-// must remain after the continuation prompt for constrained generation to be
-// worth attempting.
-const llamaServerContinuationHeadroom = 8
-
 // llamaServerCompletionPhase is one /completion request within a completion.
-// Format-constrained requests for implicit-thinking models run as two phases:
-// unconstrained thinking stopped at the think-close marker, then a constrained
-// continuation.
 type llamaServerCompletionPhase struct {
-	prompt      any // string, or []int for prompts truncated by context shift
-	applyFormat bool
-	extraStop   string
+	prompt any // string, or []int for prompts truncated by context shift
 }
 
 type llamaServerPhaseResult struct {
-	content      string             // all text generated in this phase
-	stoppingWord string             // stop string that ended generation, if any
-	final        CompletionResponse // the done response; not delivered to fn
-	finished     bool               // whether the stream produced a done response
+	final    CompletionResponse // the done response; not delivered to fn
+	finished bool               // whether the stream produced a done response
 }
 
 // runCompletionPhase issues a single /completion request and streams
@@ -2085,18 +1997,12 @@ func (s *llamaServerRunner) runCompletionPhase(ctx context.Context, req Completi
 		PreservedTokens: llamaServerPreservedTokens(req.PreservedTokens, req.ToolCallTag),
 	}
 
-	if phase.extraStop != "" {
-		lsReq.Stop = append(append([]string{}, req.Options.Stop...), phase.extraStop)
-	}
-
 	if req.Logprobs {
 		lsReq.NProbs = max(req.TopLogprobs, 1)
 	}
 
-	if phase.applyFormat {
-		if err := applyCompletionFormat(req, &lsReq); err != nil {
-			return result, err
-		}
+	if err := applyCompletionFormat(req, &lsReq); err != nil {
+		return result, err
 	}
 
 	// Convert media: replace Ollama's stable [img-N] markers with the per-process
@@ -2197,8 +2103,6 @@ func (s *llamaServerRunner) runCompletionPhase(ctx context.Context, req Completi
 				return result, ctx.Err()
 			}
 
-			result.content += lsResp.Content
-
 			if lsResp.Content != "" && !lsResp.Stop {
 				resp := CompletionResponse{
 					Content: lsResp.Content,
@@ -2222,7 +2126,6 @@ func (s *llamaServerRunner) runCompletionPhase(ctx context.Context, req Completi
 					EvalCount:          lsResp.Timings.PredictN,
 					EvalDuration:       time.Duration(lsResp.Timings.PredictMS * float64(time.Millisecond)),
 				}
-				result.stoppingWord = lsResp.StoppingWord
 				result.finished = true
 			}
 		}

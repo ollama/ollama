@@ -3744,9 +3744,6 @@ func TestGenerateThinkFormatMarkerFlow(t *testing.T) {
 	if !slices.Contains(requests[0].Options.Stop, "</think>") {
 		t.Errorf("expected first completion stop strings to contain the think-close marker, got %v", requests[0].Options.Stop)
 	}
-	if requests[0].ThinkCloseTag != "" {
-		t.Errorf("expected no runner-layer ThinkCloseTag, got %q", requests[0].ThinkCloseTag)
-	}
 
 	if !bytes.Equal([]byte(format), []byte(requests[1].Format)) {
 		t.Errorf("expected second completion format to match original format")
