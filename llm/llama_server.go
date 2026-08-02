@@ -1566,9 +1566,12 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 		lsReq.ReasoningBudgetTokens = req.ThinkBudget
 		lsReq.ReasoningBudgetStartTag = req.ThinkingStartTag
 		lsReq.ReasoningBudgetEndTag = req.ThinkingEndTag
-		// Without this the forced sequence is empty and the budget expires
-		// silently, leaving the thinking block open.
-		lsReq.ReasoningBudgetMessage = new(string)
+		// Sent even when empty. llama-server builds the sequence it forces
+		// from message+end_tag, and on the pinned runtime it builds it in this
+		// field's handler, so an absent field is a handler that never runs:
+		// the budget expires with nothing to force, the sampler logs its usual
+		// states, and the thinking block is left open.
+		lsReq.ReasoningBudgetMessage = &req.ThinkBudgetMessage
 
 		// The sampler only sees tokens the model generates, so a template that
 		// primes thinking by ending the prompt with the opening tag would never
@@ -2180,6 +2183,9 @@ func (s *llamaServerRunner) llamaServerChatRequest(req ChatRequest, stream bool)
 	}
 	if budget > 0 {
 		body["thinking_budget_tokens"] = budget
+		// llama-server reads this from the chat body too, and needs it present
+		// to build the sequence it forces
+		body["reasoning_budget_message"] = req.Options.ThinkBudgetMessage
 	}
 	if format, err := llamaServerChatResponseFormat(req.Format); err != nil {
 		return nil, err
