@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 
@@ -680,8 +679,8 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	}
 
 	if effort != "" {
-		if !slices.Contains([]string{"high", "medium", "low", "max", "none"}, effort) {
-			return nil, fmt.Errorf("invalid reasoning value: '%s' (must be \"high\", \"medium\", \"low\", \"max\", or \"none\")", effort)
+		if effort != "none" && !api.IsThinkLevel(effort) {
+			return nil, fmt.Errorf("invalid reasoning value: '%s' (must be %q, or \"none\")", effort, api.ThinkLevels())
 		}
 
 		if effort == "none" {

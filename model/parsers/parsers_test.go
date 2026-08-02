@@ -311,3 +311,41 @@ func TestSplitAtTag(t *testing.T) {
 		})
 	}
 }
+
+func TestThinkingTagsForParser(t *testing.T) {
+	tests := []struct {
+		name      string
+		parser    Parser
+		wantStart string
+		wantEnd   string
+	}{
+		{name: "nil parser", parser: nil},
+		{name: "gemma4", parser: &Gemma4Parser{hasThinkingSupport: true}, wantStart: "<|channel>", wantEnd: "<channel|>"},
+		{name: "gemma4 without thinking support", parser: &Gemma4Parser{}},
+		{name: "qwen3-thinking", parser: &Qwen3Parser{hasThinkingSupport: true}, wantStart: "<think>", wantEnd: "</think>"},
+		{name: "qwen3 non-thinking", parser: &Qwen3Parser{}},
+		{name: "qwen3.5", parser: &Qwen35Parser{}, wantStart: "<think>", wantEnd: "</think>"},
+		{name: "laguna", parser: &LagunaParser{}, wantStart: "<think>", wantEnd: "</think>"},
+		{name: "deepseek3", parser: &DeepSeek3Parser{hasThinkingSupport: true}, wantStart: "<think>", wantEnd: "</think>"},
+		{name: "deepseek3 non-thinking", parser: &DeepSeek3Parser{}},
+		{name: "cogito", parser: &CogitoParser{}, wantStart: "<think>", wantEnd: "</think>"},
+		{name: "olmo3-think", parser: &Olmo3ThinkParser{}, wantStart: "<think>", wantEnd: "</think>"},
+		{name: "qwen3-vl-thinking", parser: &Qwen3VLParser{hasThinkingSupport: true}, wantStart: "<think>", wantEnd: "</think>"},
+		{name: "qwen3-vl-instruct", parser: &Qwen3VLParser{}},
+		{name: "glm-4.6", parser: &GLM46Parser{}, wantStart: "<think>", wantEnd: "</think>"},
+		{name: "glm-4.7 inherits from glm-4.6", parser: &GLM47Parser{}, wantStart: "<think>", wantEnd: "</think>"},
+		{name: "lfm2-thinking", parser: &LFM2Parser{hasThinkingSupport: true}, wantStart: "<think>", wantEnd: "</think>"},
+		{name: "lfm2", parser: &LFM2Parser{}},
+		{name: "nemotron-3-nano", parser: &Nemotron3NanoParser{}, wantStart: "<think>", wantEnd: "</think>"},
+		{name: "parser without thinking tags", parser: &PassthroughParser{}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			start, end := ThinkingTagsForParser(test.parser)
+			if start != test.wantStart || end != test.wantEnd {
+				t.Errorf("ThinkingTagsForParser() = (%q, %q), want (%q, %q)", start, end, test.wantStart, test.wantEnd)
+			}
+		})
+	}
+}

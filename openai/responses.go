@@ -527,13 +527,13 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 
 	var think *api.ThinkValue
 	if effort := r.Reasoning.Effort; effort != "" {
-		switch effort {
-		case "none":
+		switch {
+		case effort == "none":
 			think = &api.ThinkValue{Value: false}
-		case "low", "medium", "high", "max":
+		case api.IsThinkLevel(effort):
 			think = &api.ThinkValue{Value: effort}
 		default:
-			return nil, fmt.Errorf("invalid reasoning value: %q (must be \"high\", \"medium\", \"low\", \"max\", or \"none\")", effort)
+			return nil, fmt.Errorf("invalid reasoning value: %q (must be %q, or \"none\")", effort, api.ThinkLevels())
 		}
 	}
 
