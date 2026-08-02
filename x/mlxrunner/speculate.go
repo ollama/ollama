@@ -11,9 +11,9 @@ import (
 	sampler "github.com/ollama/ollama/x/mlxrunner/sample"
 )
 
-// drafter proposes speculative tokens for the engine to validate, learning
-// the conversation through the committed-stream reports.
-type drafter interface {
+// draftSession proposes speculative tokens for one request, learning the
+// conversation through the committed-stream reports.
+type draftSession interface {
 	// propose returns up to maxTokens draft tokens with their proposal
 	// distributions, or nil to decode this round plainly.
 	propose(current *mlx.Array, maxTokens int) *draftCandidates
@@ -43,18 +43,30 @@ type speculation struct {
 	r     *Runner
 	draft base.DraftModel
 
-	// targets are the model's slots — what speculation snapshots and rolls
-	// back; draftKV the drafter's. Built at load, stable for the model's life.
+	// targets are the model's cache slots, which speculation snapshots and
+	// rolls back; draftKV are the drafter's. Both are built at load and
+	// never change.
 	targets []cache.Cache
 	draftKV []cache.Cache
 
-	// drafter is the persistent half of the MTP drafting machinery; each
+	// drafter is the persistent half of the drafting machinery; each
 	// request's session comes from drafter.open.
-	drafter *mtpDrafter
+	drafter drafter
 
 	// depth selects each request's draft length and owns the cost/acceptance
 	// models and probe cadence it learns across requests.
 	depth *depthController
+}
+
+// drafter is the per-model half of a drafting implementation, opening each
+// request's drafting session.
+type drafter interface {
+	open() draftSession
+
+	// draftLimit is the deepest draft this drafter can produce, 0 when nothing
+	// bounds it. A depth past it is never measured, so the depth search must
+	// not schedule one.
+	draftLimit() int
 }
 
 // newSpeculation builds the speculative-decoding subsystem for a loaded model,
@@ -64,7 +76,12 @@ func newSpeculation(r *Runner, draft base.DraftModel, targets, draftKV []cache.C
 		return nil
 	}
 	s := &speculation{r: r, draft: draft, targets: targets, draftKV: draftKV, depth: newDepthController()}
-	s.drafter = newMTPDrafter(s)
+	if bd, ok := draft.(base.BlockDraft); ok {
+		s.drafter = newDFlashDrafter(s, bd)
+	} else {
+		s.drafter = newMTPDrafter(s)
+	}
+	s.depth.drafterLimit = s.drafter.draftLimit()
 	return s
 }
 
@@ -73,7 +90,7 @@ func newSpeculation(r *Runner, draft base.DraftModel, targets, draftKV []cache.C
 // decode.
 type speculationSession struct {
 	spec    *speculation
-	drafter drafter
+	drafter draftSession
 	enabled bool // whether this request drafts; false parks (maintain-only)
 	limit   int  // current draft length
 	stats   specStats
@@ -102,7 +119,6 @@ func (s *speculation) open(request Request) *speculationSession {
 	spec := &speculationSession{spec: s, drafter: d, enabled: enabled, prevDrafts: -1, roundDrafts: -1}
 	if enabled {
 		spec.limit = s.depth.scheduled
-		spec.stats.maxDraft = spec.limit
 	}
 	return spec
 }
@@ -126,6 +142,7 @@ func (s *speculationSession) beginRound() {
 // positions past it (a terminator, not a target rejection).
 func (s *speculationSession) endRound(drafted, accepted, observed int) {
 	s.roundDrafts = drafted
+	s.stats.maxDraft = max(s.stats.maxDraft, drafted)
 	s.stats.recordRound(drafted)
 	s.stats.iterations++
 	s.stats.drafted += drafted
@@ -135,7 +152,6 @@ func (s *speculationSession) endRound(drafted, accepted, observed int) {
 			s.spec.depth.acc.observe(observed, accepted)
 		}
 		s.limit = s.spec.depth.next()
-		s.stats.maxDraft = max(s.stats.maxDraft, s.limit)
 	}
 }
 
