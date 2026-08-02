@@ -1,0 +1,141 @@
+{
+ "scene_hd": {
+  "objects": [
+   {
+    "label": "ANCHOR",
+    "kind": "rectangle",
+    "color": "red",
+    "bbox": [
+     140,
+     160,
+     420,
+     360
+    ]
+   },
+   {
+    "label": "BEACON",
+    "kind": "ellipse",
+    "color": "blue",
+    "bbox": [
+     620,
+     120,
+     900,
+     330
+    ]
+   },
+   {
+    "label": "CIPHER",
+    "kind": "rectangle",
+    "color": "green",
+    "bbox": [
+     1150,
+     180,
+     1500,
+     420
+    ]
+   },
+   {
+    "label": "DYNAMO",
+    "kind": "ellipse",
+    "color": "orange",
+    "bbox": [
+     220,
+     600,
+     480,
+     860
+    ]
+   },
+   {
+    "label": "EMBER",
+    "kind": "rectangle",
+    "color": "purple",
+    "bbox": [
+     760,
+     640,
+     1040,
+     920
+    ]
+   },
+   {
+    "label": "FALCON",
+    "kind": "ellipse",
+    "color": "teal",
+    "bbox": [
+     1350,
+     620,
+     1720,
+     880
+    ]
+   }
+  ],
+  "serial": "SN-4921-XK",
+  "size": [
+   1920,
+   1080
+  ]
+ },
+ "document": {
+  "invoice_no": "INV-2026-0801",
+  "items": [
+   {
+    "name": "Hydraulic actuator HA-220",
+    "qty": 3,
+    "unit_price": 412.5
+   },
+   {
+    "name": "Thermal camera module TC-9",
+    "qty": 1,
+    "unit_price": 1289.0
+   },
+   {
+    "name": "Cable loom, 12-way shielded",
+    "qty": 8,
+    "unit_price": 37.85
+   },
+   {
+    "name": "Torque wrench 5-60 Nm",
+    "qty": 2,
+    "unit_price": 148.2
+   },
+   {
+    "name": "Bearing kit BK-7731",
+    "qty": 5,
+    "unit_price": 64.4
+   }
+  ],
+  "total": 3447.7,
+  "size": [
+   1568,
+   1568
+  ]
+ },
+ "chart": {
+  "bars": [
+   {
+    "label": "Q1",
+    "value": 62
+   },
+   {
+    "label": "Q2",
+    "value": 91
+   },
+   {
+    "label": "Q3",
+    "value": 47
+   },
+   {
+    "label": "Q4",
+    "value": 128
+   },
+   {
+    "label": "Q5*",
+    "value": 73
+   }
+  ],
+  "tallest": "Q4",
+  "size": [
+   1280,
+   960
+  ]
+ }
+}

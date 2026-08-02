@@ -278,3 +278,27 @@ generation cost. Completing the earlier matrix: nemotron stock think:on also mis
 perfect including the serial; gemma4 b10091 think:off collapses on scene/invoice with
 the multi test partly intact. Serving guidance: on fixed builds, think:on + format is
 legitimate and preferred when grounding matters; on unfixed builds keep `think:false`.
+
+### Addendum 2026-08-02 (2) — routes-layer fix cherry-picked, image rebuilt + canaried
+
+The think+format mechanism moved to the routes layer
+([ADR 0004](adr/0004-routes-layer-think-format-double-request.md), fork PR #31):
+`release/0.32.1-dynres` now carries `82158bd8` (routes-layer double request) +
+`ae797815` (runner-split removal) on top of the earlier v1 cherry-picks. Full
+`server`/`llm`/`model/parsers` suites pass on the branch.
+
+Image: **`maxusai-ollama:0.32.1-rocm-dynres-ae797815`** — built with the overlay
+recipe (`Dockerfile.overlay`, Go binary only) on base
+`maxusai-ollama:0.32.1-rocm-dynres-a4788474`, so the b9888+002 llama-server
+payload is bit-identical to the canonical image and every payload-level verdict
+above stands. Canaried per the isolation recipe (own name, port 11442, models
+`:ro`), then removed:
+
+| probe (temp 0) | result |
+|---|---|
+| nemotron3 `/api/generate` think+`"json"` | thinking (309 chars) + `{"capital": "Paris"}`, stop, prompt_eval 31 / eval 85 |
+| qwen3.6 `/api/chat` think+`"json"` | thinking (817 chars) + `{"capital": "Paris"}`, stop, **prompt_eval 24** (honest — pre-fix chat reported the cache-inclusive continuation prefill) / eval 247 |
+| qwen3.6 `/v1/completions` `json_object` | valid JSON, stop, usage 24/223/247 |
+
+The canonical container on :11435 still runs `…-a4788474`; promoting
+`…-ae797815` into it goes through the usual deploy gate, not this doc.
