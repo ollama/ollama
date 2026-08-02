@@ -498,7 +498,8 @@ same text-level, first-occurrence semantics every other layer already uses:
   (nemotron-test-image.md, 2026-08-01) is lifted by this fix on builds that carry it;
   keep it for any binary without the fix.
 - `release/0.32.1-dynres` carried v1 as `d1ef5557` (cherry-pick of `928c7494`);
-  the v2 routes-layer commits are cherry-picked on top (see the branch log) and
-  the image rebuilt per
-  [nemotron-test-image.md](nemotron-test-image.md) conventions — llama-server
-  payload untouched (b9888+002), so existing quality verdicts stand.
+  the v2 routes-layer commits are cherry-picked on top (`82158bd8` + `ae797815`)
+  and the image rebuilt as `maxusai-ollama:0.32.1-rocm-dynres-ae797815`
+  (overlay, canaried — see
+  [nemotron-test-image.md](nemotron-test-image.md)) — llama-server payload
+  untouched (b9888+002), so existing quality verdicts stand.
