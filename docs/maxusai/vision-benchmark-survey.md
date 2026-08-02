@@ -298,8 +298,19 @@ Model identities first, since the ollama tags do not name the upstream releases:
 | `qwen3.6:35b-a3b` | **Qwen/Qwen3.6-35B-A3B** — natively multimodal MoE, 35B/3B active, thinking on by default | [HF card](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) |
 
 **Nemotron-3-Nano-Omni is the only one of the three that publishes both reasoning modes** —
-a direct official analogue of our `think` axis (tech report Table 7). Critically, NVIDIA
-states these were measured with **VLMEvalKit on a vLLM backend**, so the harness is known:
+a direct official analogue of our `think` axis. Critically, NVIDIA states these were measured
+with **VLMEvalKit on a vLLM backend**, so the harness is known.
+
+> **Read the tech report, not the model card.** The two disagree in scope, and the card is the
+> one people check. The HF card's evaluation table contains only OCRBench**V2** (EN) 67.04,
+> CharXiv-Reasoning 63.6, MathVista-mini 82.8, OCR-Reasoning 54.14, CVBench2D 83.95,
+> MMLongBench-Doc 57.5, OSWorld 47.4, Video-MME 72.2 — reasoning-mode only, with **no
+> OCRBench v1, DocVQA, ChartQA, TextVQA, AI2D, MMMU or RefCOCO rows at all** (DocVQA and
+> ChartQA appear on that page only in the *training-data* table). Everything below comes from
+> **Table 7 of the tech report**, verified directly against
+> [arxiv.org/html/2604.24954v2](https://arxiv.org/html/2604.24954v2). Note also that OCRBench
+> v1 (scored /1000) and OCRBench v2 (0–100, EN/ZH split) are different benchmarks — never put
+> them in one column.
 
 | benchmark | reasoning OFF | reasoning ON | locally reproducible? |
 |---|---|---|---|
@@ -399,6 +410,18 @@ models has a published number *and* it can be scored locally without a judge LLM
 
 \* = measured by the Qwen team, not the model's own vendor.
 
+**There is no public leaderboard to fill the remaining holes.** The OpenVLM Leaderboard is the
+obvious candidate and it does not have our models: its backing `OpenVLM.json` was last modified
+2026-02-27 (285 models, newest evaluation dated 2026/02/13), and greps for `qwen3.6` and
+`nemotron` return nothing while the only Gemma entries are Gemma 3 and PaliGemma — both our 2026
+releases post-date the last refresh by months. Its schema also has **no DocVQA and no
+CountBenchQA column at all**, so it could not have filled those holes even if current.
+VLMEvalKit registers Gemma-4 (`vlmeval/config.py`, class `vlm.Gemma4`) but has **no Qwen3.6
+entry**, and lmms-eval has neither. Consequently **no third-party measured OCRBench, DocVQA,
+ChartQA, TextVQA or CountBenchQA number exists for gemma4:31b or qwen3.6 at all** — for those
+cells, a first local baseline *is* the reference, which is the main argument for Layer 4 being
+part of the battery rather than a one-off.
+
 Two traps in that table are worth stating plainly. **OmniDocBench looks like a two-model anchor
 and is not** — different benchmark version, incompatible metrics. And **MMLongBench-Doc numbers
 are harness-dependent**: lmms-eval scores it rule-based, VLMEvalKit uses GPT-4 extraction, so
@@ -407,15 +430,31 @@ the VLMEvalKit path.
 
 #### Caveats that apply to every row
 
-1. **Precision.** All official numbers are BF16 (Nemotron also FP8/NVFP4); we serve q4_K_M.
-   Nemotron's own quantization table shows FP8 and NVFP4 staying within ~1 point of BF16 on
-   average — but that was measured in **non-reasoning mode only**, and NVFP4 is milder than
-   q4_K_M. No vision-benchmark quantization data exists for gemma4 or qwen3.6 at Q4.
-2. **Therefore thresholds must be self-anchored.** Set the pass band from a first q4_K_M
-   baseline run on our own hardware and gate on release-over-release drift; use the official
-   BF16 numbers as *direction-only* sanity bounds. A drop of 2–3 points from official is
-   expected and uninformative; a drop of 20 points means preprocessing or token budget, not
-   quantization.
+1. **Precision — the quantization penalty is small, and smaller than it looks.** All official
+   numbers are BF16; we serve q4_K_M. Two pieces of evidence bound the gap:
+   - NVIDIA's own 4-bit table for *this exact model*: across 9 multimodal benchmarks, NVFP4
+     costs a mean **−0.38** vs BF16 (worst cell −1.2 on Video-MME; OCRBenchV2 −0.03; CVBench2D
+     actually +1.07). Measured in non-reasoning mode; NVFP4 ≈ 4.98 bpw.
+   - A weight-only W4 study on LLaVA-Next-8B ([arXiv:2404.14047](https://arxiv.org/abs/2404.14047),
+     Table 12), which quantizes the LLM and leaves the vision encoder alone — the same shape as
+     our setup: AI2D −1.0 to −1.3, DocVQA −0.8 to −1.2, ChartQA −1.2 to −3.5, MMBench −1.1 to
+     −2.1. Naive RTN costs roughly 3× a calibrated method on ChartQA.
+
+   **Why that transfers to us:** ollama never quantizes the projector. `createModel` routes only
+   `application/vnd.ollama.image.model` and the draft layer to `quantizeLayer`
+   ([server/create.go:739–761](../../server/create.go)); `application/vnd.ollama.image.projector`
+   is a separate layer that is never touched, and published GGUFs ship `mmproj` at BF16/F16/F32
+   only. So our vision tower stays at source precision, exactly as in NVIDIA's recipe.
+   **Working band: expect ≤2–3 points from quantization on rule-scored vision benchmarks.**
+2. **Do not confuse W4A4 results with ours.** Weight+activation 4-bit collapses VLMs
+   catastrophically (Qwen2.5-VL-7B OCRBench 83.8 → 0.2–13.2 under naive W4A4). GGUF Q4_K_M is
+   weight-only with FP16 activations. Those papers are a warning against a *different* method,
+   not a tolerance for ours. Relatedly, unsloth's `UD-Q4_K_M` is not vanilla Q4_K_M — if a blob
+   was built with `ollama create --quantize q4_K_M`, published UD numbers do not describe it.
+3. **Thresholds should still be self-anchored.** Set the pass band from a first q4_K_M baseline
+   on our own hardware and gate on release-over-release drift; use official BF16 numbers as
+   direction-only bounds. With the band above, a 2–3 point gap is expected and uninformative,
+   while a 20-point gap means preprocessing or token budget — not quantization.
 3. **Split and mode mismatches.** Nemotron's DocVQA/ChartQA are **test** split; locally only
    `docvqa_val` scores without an external submission. Gemma 4's numbers are thinking-ON at
    max resolution. Comparing a val-split, q4_K_M, think-off run against a test-split, BF16,
