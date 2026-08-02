@@ -85,7 +85,9 @@ func TestThinkValueAccessors(t *testing.T) {
 		{"on", &ThinkValue{Value: true}, true, true, false, true, "medium"},
 		{"named", &ThinkValue{Value: "xhigh"}, true, false, true, true, "xhigh"},
 		{"empty name", &ThinkValue{Value: ""}, true, false, true, true, ""},
-		{"integer", &ThinkValue{Value: 75}, false, false, false, false, ""},
+		{"budget", &ThinkValue{Value: 75}, true, false, false, true, ""},
+		{"zero budget", &ThinkValue{Value: 0}, false, false, false, false, ""},
+		{"fraction", &ThinkValue{Value: 0.75}, false, false, false, false, ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.value.IsValid() != tt.valid || tt.value.IsBool() != tt.isBool || tt.value.IsString() != tt.isString || tt.value.Bool() != tt.on || tt.value.String() != tt.level {
