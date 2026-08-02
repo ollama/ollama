@@ -410,7 +410,7 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 		case runner := <-s.expiredCh:
 			slog.Debug("runner expired event received", "runner", runner)
 			runner.refMu.Lock()
-			if runner.refCount > 0 {
+			if runner.refCount > 0 && !runner.HasExited() {
 				slog.Debug("expired event with positive ref count, retrying", "runner", runner, "refCount", runner.refCount)
 				go func(runner *runnerRef) {
 					// We can't unload yet, but want to as soon as the current request completes
@@ -729,6 +729,18 @@ iGPUScan:
 	s.loaded[runner.modelKey] = runner
 	slog.Info("loaded runners", "count", len(s.loaded))
 	s.loadedMu.Unlock()
+
+	// Watch for the llama-server process dying while this runner is still
+	// considered loaded. Without this, a crashed runner stays in s.loaded
+	// (ollama ps keeps reporting it) and subsequent requests hang against a
+	// dead process — see #17428 / #17509. On exit we evict the runner
+	// through the same expiredCh path used by idle timeouts and evictions.
+	go func(runner *runnerRef, llama llm.LlamaServer) {
+		<-llama.Done()
+		slog.Warn("llama-server process exited while loaded; evicting runner",
+			"model", runner.modelKey, "pid", runner.pid)
+		s.expiredCh <- runner
+	}(runner, llama)
 
 	go func() {
 		defer runner.refMu.Unlock()

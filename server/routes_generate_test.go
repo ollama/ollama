@@ -110,6 +110,10 @@ func (mockRunner) Ping(_ context.Context) error { return nil }
 
 func (m mockRunner) ContextLength() int { return m.contextLength }
 
+// Done implements llm.LlamaServer. Returns nil so the scheduler's crash
+// watcher never fires for the mock.
+func (mockRunner) Done() <-chan struct{} { return nil }
+
 func TestOptionsForPromptUsesEffectiveContextLength(t *testing.T) {
 	opts := &api.Options{Runner: api.Runner{NumCtx: 4096}}
 
