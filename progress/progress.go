@@ -7,6 +7,7 @@ import (
 	"os"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/term"
 )
@@ -91,8 +92,9 @@ func (p *Progress) Add(key string, state State) {
 }
 
 func (p *Progress) render() {
-	_, termHeight, err := term.GetSize(int(os.Stderr.Fd()))
+	termWidth, termHeight, err := term.GetSize(int(os.Stderr.Fd()))
 	if err != nil {
+		termWidth = defaultTermWidth
 		termHeight = defaultTermHeight
 	}
 
@@ -117,7 +119,13 @@ func (p *Progress) render() {
 	// render progress lines
 	maxHeight := min(len(p.states), termHeight)
 	for i := len(p.states) - maxHeight; i < len(p.states); i++ {
-		fmt.Fprint(p.w, p.states[i].String(), "\033[K")
+		line := p.states[i].String()
+		// truncate to terminal width to prevent line wrapping, which breaks
+		// ANSI cursor-up positioning and causes duplicate lines
+		if w := utf8.RuneCountInString(line); w > termWidth {
+			line = string([]rune(line)[:termWidth])
+		}
+		fmt.Fprint(p.w, line, "\033[K")
 		if i < len(p.states)-1 {
 			fmt.Fprint(p.w, "\n")
 		}
