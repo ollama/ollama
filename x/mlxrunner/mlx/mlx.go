@@ -5,6 +5,10 @@ package mlx
 // #cgo CXXFLAGS: -std=c++17
 // #cgo CPPFLAGS: -I${SRCDIR}/include
 // #cgo LDFLAGS: -lstdc++
+// // dynamic.c calls dlopen/dlsym/dlclose, which only moved into libc in glibc
+// // 2.34. Older distributions keep them in libdl, where the linker will not
+// // find them unless it is asked to.
+// #cgo linux LDFLAGS: -ldl
 // #cgo darwin LDFLAGS: -framework Foundation -framework Metal -framework Accelerate
 // #include "generated.h"
 // #include <string.h>
