@@ -507,6 +507,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	prompt := req.Prompt
 	var leadingBOS string
+	// generateMsgs is set when the chat-like rendered flow built the prompt;
+	// it enables re-rendering the prompt with the emitted thinking appended for
+	// the structured-outputs double request (transition flow).
+	var generateMsgs []api.Message
 	if !req.Raw {
 		tmpl := m.Template
 		if req.Template != "" {
@@ -611,6 +615,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 					return
 				}
+				generateMsgs = values.Messages
 				// TEMP(drifkin): req.Context will be removed very soon, but we're temporarily supporting it in this flow here
 				if req.Context != nil {
 					b.WriteString(prompt)
@@ -642,10 +647,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	// thinkCloseTag marks generation that starts inside thinking. Passed with
-	// Format so the grammar is applied lazily (triggered by the marker) instead
-	// of from the first token, which would suppress the marker and leave the
-	// entire constrained output classified as thinking.
+	// thinkCloseTag marks generation that starts inside thinking: the model's
+	// first tokens are reasoning and this marker ends it. With format set,
+	// constraining must wait for the marker — a grammar applied from the first
+	// token makes the marker unreachable and the entire constrained output is
+	// classified as thinking.
 	var thinkCloseTag string
 	if itp, ok := builtinParser.(parsers.ImplicitThinkingParser); ok {
 		thinkCloseTag = itp.ThinkingCloseMarker()
@@ -666,94 +672,291 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 	}
 
+	type structuredOutputsState int
+	const (
+		structuredOutputsState_None structuredOutputsState = iota
+		structuredOutputsState_ReadyToApply
+		structuredOutputsState_Applying
+	)
+
+	// Structured outputs for thinking models run as a double request, mirroring
+	// /api/chat (#12460): pass one generates the reasoning unconstrained, pass
+	// two continues with the format applied. Models with a known think-close
+	// marker stop pass one exactly at the marker (a stop string) and continue
+	// the token stream textually — no template round-trip, prompt-cache
+	// friendly, and a model that never closes its thinking cannot burn to
+	// num_predict emitting content that would be thrown away. Models without a
+	// marker fall back to cancelling at the thinking→content transition and
+	// re-rendering the prompt with the thinking as an assistant message.
+	constrains := formatConstrains(req.Format)
+	forceImmediate := builtinParser != nil && builtinParser.HasThinkingSupport() && req.Think != nil && !req.Think.Bool()
+	deferViaMarker := constrains && !forceImmediate && thinkCloseTag != ""
+	deferViaTransition := constrains && !forceImmediate && !deferViaMarker &&
+		generateMsgs != nil && (builtinParser != nil || thinkingState != nil) &&
+		slices.Contains(m.Capabilities(), model.CapabilityThinking)
+
+	truncate := req.Truncate == nil || *req.Truncate
+	promptOpts := optionsForPrompt(opts, r)
+
 	ch := make(chan any)
 	go func() {
 		// TODO (jmorganca): avoid building the response twice both here and below
 		var sb strings.Builder
 		defer close(ch)
-		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
-			Prompt:          prompt,
-			Media:           media,
-			Format:          req.Format,
-			Options:         opts,
-			Shift:           req.Shift == nil || *req.Shift,
-			Truncate:        req.Truncate == nil || *req.Truncate,
-			Logprobs:        req.Logprobs,
-			TopLogprobs:     req.TopLogprobs,
-			PreservedTokens: preservedTokensForCompletion(builtinParser),
-			LeadingBOS:      leadingBOS,
-			ThinkCloseTag:   thinkCloseTag,
-		}, func(cr llm.CompletionResponse) {
-			res := api.GenerateResponse{
-				Model:     req.Model,
-				CreatedAt: time.Now().UTC(),
-				Response:  cr.Content,
-				Done:      cr.Done,
-				Metrics: api.Metrics{
-					PromptEvalCount:    cr.PromptEvalCount,
-					PromptEvalDuration: cr.PromptEvalDuration,
-					EvalCount:          cr.EvalCount,
-					EvalDuration:       cr.EvalDuration,
-				},
-				Logprobs: toAPILogprobs(cr.Logprobs),
+
+		state := structuredOutputsState_None
+		var pass1 *llm.CompletionResponse // pass-one final metrics in the marker flow
+		var continueViaMarker bool
+		var contentStarted bool
+		// contextPrompt is what the final Context field is tokenized against;
+		// it stays the original prompt for the textual continuation and is
+		// retargeted to the re-rendered prompt in the transition flow.
+		contextPrompt := prompt
+
+		for {
+			var tb strings.Builder
+
+			currentFormat := req.Format
+			passOpts := opts
+			deferring := state == structuredOutputsState_None && (deferViaMarker || deferViaTransition)
+			if deferring {
+				currentFormat = nil
+				if deferViaMarker {
+					o := *opts
+					o.Stop = append(slices.Clone(opts.Stop), thinkCloseTag)
+					passOpts = &o
+				}
 			}
 
-			if builtinParser != nil {
-				content, thinking, toolCalls, err := builtinParser.Add(cr.Content, cr.Done)
-				if err != nil {
+			ctx, cancel := context.WithCancel(c.Request.Context())
+
+			err := r.Completion(ctx, llm.CompletionRequest{
+				Prompt:          prompt,
+				Media:           media,
+				Format:          currentFormat,
+				Options:         passOpts,
+				Shift:           req.Shift == nil || *req.Shift,
+				Truncate:        truncate,
+				Logprobs:        req.Logprobs,
+				TopLogprobs:     req.TopLogprobs,
+				PreservedTokens: preservedTokensForCompletion(builtinParser),
+				LeadingBOS:      leadingBOS,
+			}, func(cr llm.CompletionResponse) {
+				res := api.GenerateResponse{
+					Model:     req.Model,
+					CreatedAt: time.Now().UTC(),
+					Response:  cr.Content,
+					Done:      cr.Done,
+					Metrics: api.Metrics{
+						PromptEvalCount:    cr.PromptEvalCount,
+						PromptEvalDuration: cr.PromptEvalDuration,
+						EvalCount:          cr.EvalCount,
+						EvalDuration:       cr.EvalDuration,
+					},
+					Logprobs: toAPILogprobs(cr.Logprobs),
+				}
+
+				if _, err := sb.WriteString(cr.Content); err != nil {
 					ch <- gin.H{"error": err.Error()}
 					return
 				}
-				res.Response = content
-				res.Thinking = thinking
-				if cr.Done && len(toolCalls) > 0 {
-					res.ToolCalls = toolCalls
+
+				// Pass one of the marker flow ended at the injected stop string
+				// (or on an EOS still inside thinking): close the thinking for
+				// the parser, keep the metrics, and continue constrained
+				// instead of finishing.
+				if deferring && deferViaMarker && cr.Done && cr.DoneReason == llm.DoneReasonStop && !contentStarted {
+					final := cr
+					pass1 = &final
+					state = structuredOutputsState_ReadyToApply
+					continueViaMarker = true
+
+					sb.WriteString(thinkCloseTag)
+					res.Done = false
+					res.Metrics = api.Metrics{}
+					if builtinParser != nil {
+						content, thinkingText, _, err := builtinParser.Add(cr.Content+thinkCloseTag, false)
+						if err != nil {
+							ch <- gin.H{"error": err.Error()}
+							return
+						}
+						res.Response = content
+						res.Thinking = thinkingText
+					} else if thinkingState != nil {
+						thinkingText, content := thinkingState.AddContent(cr.Content + thinkCloseTag)
+						res.Thinking = thinkingText
+						res.Response = content
+					}
+					if res.Response != "" || res.Thinking != "" || len(res.Logprobs) > 0 {
+						ch <- res
+					}
+					return
 				}
-			} else if thinkingState != nil {
-				thinking, content := thinkingState.AddContent(cr.Content)
-				res.Thinking = thinking
-				res.Response = content
-			}
 
-			if _, err := sb.WriteString(cr.Content); err != nil {
-				ch <- gin.H{"error": err.Error()}
-			}
-
-			if cr.Done {
-				res.DoneReason = cr.DoneReason.String()
-				res.TotalDuration = time.Since(checkpointStart)
-				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
-
-				if !req.Raw {
-					tokens, err := r.Tokenize(c.Request.Context(), prompt+sb.String())
+				if builtinParser != nil {
+					content, thinkingText, toolCalls, err := builtinParser.Add(cr.Content, cr.Done)
 					if err != nil {
 						ch <- gin.H{"error": err.Error()}
 						return
 					}
-					res.Context = tokens
+					res.Response = content
+					res.Thinking = thinkingText
+					if cr.Done && len(toolCalls) > 0 {
+						res.ToolCalls = toolCalls
+					}
+					if content != "" {
+						contentStarted = true
+					}
+					tb.WriteString(thinkingText)
+					// the model is producing content: emit the thinking, then
+					// restart with the format applied
+					if deferring && !deferViaMarker && state == structuredOutputsState_None && tb.String() != "" && content != "" {
+						state = structuredOutputsState_ReadyToApply
+						cancel()
+						return
+					}
+				} else if thinkingState != nil {
+					thinkingText, content := thinkingState.AddContent(cr.Content)
+					res.Thinking = thinkingText
+					tb.WriteString(thinkingText)
+					if content != "" {
+						contentStarted = true
+					}
+					if deferring && !deferViaMarker && state == structuredOutputsState_None && tb.String() != "" && content != "" {
+						state = structuredOutputsState_ReadyToApply
+						res.Response = ""
+						ch <- res
+						cancel()
+						return
+					}
+					res.Response = content
+				}
+
+				if cr.Done {
+					res.DoneReason = cr.DoneReason.String()
+					if pass1 != nil {
+						// Each token counted once across the two passes: the
+						// true prompt cost from pass one (the continuation
+						// prefill re-reads pass one's output from cache),
+						// generated tokens and durations summed.
+						res.Metrics.PromptEvalCount = pass1.PromptEvalCount
+						res.Metrics.PromptEvalDuration += pass1.PromptEvalDuration
+						res.Metrics.EvalCount += pass1.EvalCount
+						res.Metrics.EvalDuration += pass1.EvalDuration
+					}
+					res.TotalDuration = time.Since(checkpointStart)
+					res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+
+					if !req.Raw {
+						tokens, err := r.Tokenize(c.Request.Context(), contextPrompt+sb.String())
+						if err != nil {
+							ch <- gin.H{"error": err.Error()}
+							return
+						}
+						res.Context = tokens
+					}
+				}
+
+				if builtinParser != nil {
+					// Emit chunks that carry logprobs even if the parser is still buffering
+					// visible content, otherwise generate logprobs disappear for models with
+					// builtin thinking/tool parsers.
+					if res.Response != "" || res.Thinking != "" || res.Done || len(res.ToolCalls) > 0 || len(res.Logprobs) > 0 {
+						ch <- res
+					}
+
+					return
+				}
+
+				ch <- res
+			})
+			if err != nil {
+				if state == structuredOutputsState_ReadyToApply && strings.Contains(err.Error(), "context canceled") && c.Request.Context().Err() == nil {
+					// cancellation we induced to switch on structured outputs
+				} else {
+					s.sched.expireRunnersForRuntimeOOM(m, err)
+					var serr api.StatusError
+					if errors.As(err, &serr) {
+						ch <- gin.H{"error": serr.ErrorMessage, "status": serr.StatusCode}
+					} else {
+						ch <- gin.H{"error": err.Error()}
+					}
+					return
 				}
 			}
 
-			if builtinParser != nil {
-				// Emit chunks that carry logprobs even if the parser is still buffering
-				// visible content, otherwise generate logprobs disappear for models with
-				// builtin thinking/tool parsers.
-				if res.Response != "" || res.Thinking != "" || res.Done || len(res.ToolCalls) > 0 || len(res.Logprobs) > 0 {
+			if state == structuredOutputsState_ReadyToApply {
+				state = structuredOutputsState_Applying
+
+				if continueViaMarker {
+					// Continue the exact token stream: the prompt plus
+					// everything generated plus the marker (already in sb).
+					prompt = contextPrompt + sb.String()
+				} else {
+					msg := api.Message{
+						Role:     "assistant",
+						Thinking: tb.String(),
+					}
+
+					generateMsgs = append(generateMsgs, msg)
+					prompt, _, err = chatPrompt(c.Request.Context(), m, r.Tokenize, promptOpts, generateMsgs, []api.Tool{}, req.Think, truncate)
+					if err != nil {
+						slog.Error("generate prompt error applying structured outputs", "error", err)
+						ch <- gin.H{"error": err.Error()}
+						return
+					}
+					// force constraining by terminating the thinking header; the
+					// harmony renderer cannot otherwise disambiguate between
+					// continuing to think and answering now.
+					if shouldUseHarmony(m) || (builtinParser != nil && m.Config.Parser == "harmony") {
+						prompt += "<|end|><|start|>assistant<|channel|>final<|message|>"
+					}
+					contextPrompt = prompt
+					sb.Reset()
+				}
+
+				// The continuation re-submits the thinking as prompt. If that
+				// no longer fits the context window, there is no room to
+				// generate the constrained answer: end honestly as a
+				// length-limited thinking-only result instead of letting the
+				// runner reject the request after thinking already streamed.
+				// The loaded runner's context length is authoritative; request
+				// options may still hold 0 (auto).
+				numCtx := promptOpts.NumCtx
+				if ctxLen := r.ContextLength(); ctxLen > 0 {
+					numCtx = ctxLen
+				}
+				if tokens, terr := r.Tokenize(c.Request.Context(), prompt); terr == nil && numCtx > 0 && len(tokens) >= numCtx-thinkingContinuationHeadroom {
+					slog.Warn("thinking filled the context window, skipping format-constrained continuation", "tokens", len(tokens), "num_ctx", numCtx)
+					res := api.GenerateResponse{
+						Model:      req.Model,
+						CreatedAt:  time.Now().UTC(),
+						Done:       true,
+						DoneReason: llm.DoneReasonLength.String(),
+					}
+					if pass1 != nil {
+						res.Metrics = api.Metrics{
+							PromptEvalCount:    pass1.PromptEvalCount,
+							PromptEvalDuration: pass1.PromptEvalDuration,
+							EvalCount:          pass1.EvalCount,
+							EvalDuration:       pass1.EvalDuration,
+						}
+					}
+					res.TotalDuration = time.Since(checkpointStart)
+					res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+					if !req.Raw {
+						if ctxTokens, err := r.Tokenize(c.Request.Context(), contextPrompt+sb.String()); err == nil {
+							res.Context = ctxTokens
+						}
+					}
 					ch <- res
+					return
 				}
 
-				return
+				continue
 			}
 
-			ch <- res
-		}); err != nil {
-			s.sched.expireRunnersForRuntimeOOM(m, err)
-			var serr api.StatusError
-			if errors.As(err, &serr) {
-				ch <- gin.H{"error": serr.ErrorMessage, "status": serr.StatusCode}
-			} else {
-				ch <- gin.H{"error": err.Error()}
-			}
+			break
 		}
 	}()
 
@@ -803,14 +1006,25 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
+// formatConstrains reports whether a format value actually constrains
+// generation: non-empty and neither JSON null nor the empty string.
+func formatConstrains(format json.RawMessage) bool {
+	return len(format) > 0 && string(format) != `null` && string(format) != `""`
+}
+
+// thinkingContinuationHeadroom is the minimum number of context slots that
+// must remain after the continuation prompt of a structured-outputs double
+// request for constrained generation to be worth attempting.
+const thinkingContinuationHeadroom = 8
+
 // reclassifyConstrainedThinking is a safety net for format-constrained
-// generation with implicit-thinking models on runners without lazy-grammar
-// support: an eager grammar makes the think-close marker unreachable, so the
-// parser classifies the entire grammar-shaped output as thinking. When
-// constraining was requested and the full completion came back as thinking
-// that is itself valid JSON, it is the response.
+// generation that ran with an eager grammar anyway (e.g. flows the double
+// request does not cover): the grammar makes the think-close marker
+// unreachable, so the parser classifies the entire grammar-shaped output as
+// thinking. When constraining was requested and the full completion came back
+// as thinking that is itself valid JSON, it is the response.
 func reclassifyConstrainedThinking(format json.RawMessage, doneReason, thinking, response string) (string, string) {
-	if len(format) > 0 && string(format) != `null` && string(format) != `""` &&
+	if formatConstrains(format) &&
 		response == "" && thinking != "" && doneReason == llm.DoneReasonStop.String() &&
 		json.Valid([]byte(thinking)) {
 		return "", thinking
@@ -2748,6 +2962,21 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 	}
 
+	// thinkCloseTag marks generation that starts inside thinking: the model's
+	// first tokens are reasoning and this marker ends it. Pass one of the
+	// structured-outputs double request stops exactly at the marker instead of
+	// waiting for the model to produce unconstrained content — a model that
+	// never closes its thinking would otherwise burn to num_predict. Not used
+	// with tools: the stop would preempt a tool call that follows the marker.
+	var thinkCloseTag string
+	if len(req.Tools) == 0 {
+		if itp, ok := builtinParser.(parsers.ImplicitThinkingParser); ok {
+			thinkCloseTag = itp.ThinkingCloseMarker()
+		} else if thinkingState != nil && strings.HasSuffix(strings.TrimSpace(prompt), openingTag) {
+			thinkCloseTag = closingTag
+		}
+	}
+
 	var toolParser *tools.Parser
 	if len(req.Tools) > 0 && (builtinParser == nil || !builtinParser.HasToolSupport()) {
 		toolParser = tools.NewParser(m.Template.Template, req.Tools)
@@ -2765,23 +2994,35 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		defer close(ch)
 
 		structuredOutputsState := structuredOutputsState_None
+		var pass1 *llm.CompletionResponse // pass-one final metrics in the marker flow
+		var contentStarted bool
 
 		for {
 			var tb strings.Builder
 
 			currentFormat := req.Format
+			passOpts := opts
 			// structured outputs via double request is enabled when:
 			// 1. the model supports the thinking capability and
 			// 2. it uses a built-in parser or our generic thinking parser
 
-			// Note that the current approach does not work for (potential future)
-			// non-thinking models that emit anything before actual content. This
-			// current approach uses the transition from parsed thinking content to
-			// parsed non-thinking content as the signal to turn constraining on
+			// Models with a known think-close marker stop pass one exactly at
+			// the marker (a stop string). Models without one use the
+			// transition from parsed thinking content to parsed non-thinking
+			// content as the signal to turn constraining on; that transition
+			// never comes for a model that never closes its thinking, which
+			// burns to num_predict.
 
 			forceImmediate := builtinParser != nil && builtinParser.HasThinkingSupport() && req.Think != nil && !req.Think.Bool()
+			deferring := false
 			if req.Format != nil && structuredOutputsState == structuredOutputsState_None && !forceImmediate && ((builtinParser != nil || thinkingState != nil) && slices.Contains(m.Capabilities(), model.CapabilityThinking)) {
 				currentFormat = nil
+				deferring = true
+				if thinkCloseTag != "" {
+					o := *opts
+					o.Stop = append(slices.Clone(opts.Stop), thinkCloseTag)
+					passOpts = &o
+				}
 			}
 
 			// sets up new context given parent context per request
@@ -2791,7 +3032,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				Prompt:          prompt,
 				Media:           media,
 				Format:          currentFormat,
-				Options:         opts,
+				Options:         passOpts,
 				Shift:           req.Shift == nil || *req.Shift,
 				Truncate:        truncate,
 				Logprobs:        req.Logprobs,
@@ -2816,8 +3057,55 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 				if r.Done {
 					res.DoneReason = r.DoneReason.String()
+					if pass1 != nil {
+						// Each token counted once across the two passes: the
+						// true prompt cost from pass one (the continuation
+						// re-submits pass one's output as prompt), generated
+						// tokens and durations summed.
+						res.Metrics.PromptEvalCount = pass1.PromptEvalCount
+						res.Metrics.PromptEvalDuration += pass1.PromptEvalDuration
+						res.Metrics.EvalCount += pass1.EvalCount
+						res.Metrics.EvalDuration += pass1.EvalDuration
+					}
 					res.TotalDuration = time.Since(checkpointStart)
 					res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+				}
+
+				// Pass one of the marker flow ended at the injected stop string
+				// (or on an EOS still inside thinking): close the thinking for
+				// the parser, keep the metrics, and continue constrained
+				// instead of finishing.
+				if deferring && thinkCloseTag != "" && r.Done && r.DoneReason == llm.DoneReasonStop &&
+					structuredOutputsState == structuredOutputsState_None && !contentStarted {
+					final := r
+					pass1 = &final
+					structuredOutputsState = structuredOutputsState_ReadyToApply
+
+					closed := r.Content + thinkCloseTag
+					var content, thinkingText string
+					if builtinParser != nil {
+						var perr error
+						content, thinkingText, _, perr = builtinParser.Add(closed, false)
+						if perr != nil {
+							ch <- gin.H{"error": perr.Error()}
+							return
+						}
+					} else if thinkingState != nil {
+						thinkingText, content = thinkingState.AddContent(closed)
+					}
+					res.Message.Content = content
+					res.Message.Thinking = thinkingText
+					res.Message.ToolCalls = nil
+					res.Done = false
+					res.DoneReason = ""
+					res.Metrics = api.Metrics{}
+					res.TotalDuration = 0
+					res.LoadDuration = 0
+					tb.WriteString(thinkingText)
+					if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Logprobs) > 0 {
+						ch <- res
+					}
+					return
 				}
 
 				if builtinParser != nil {
@@ -2835,6 +3123,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 						toolCalls[i].ID = toolCallId()
 					}
 					res.Message.ToolCalls = toolCalls
+					if content != "" || len(toolCalls) > 0 {
+						contentStarted = true
+					}
 
 					tb.WriteString(thinking)
 					// we are now receiving content from the model - we should start applying structured outputs
@@ -2861,6 +3152,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					}
 					res.Message.Thinking = thinkingContent
 					tb.WriteString(thinkingContent)
+					if remainingContent != "" {
+						contentStarted = true
+					}
 					// emit the collected thinking text before restarting with structured outputs and clear unstructured content
 					// to avoid leaking mixed tokens like "</think>Hello"
 					if structuredOutputsState == structuredOutputsState_None && req.Format != nil && tb.String() != "" && remainingContent != "" {
@@ -2940,6 +3234,40 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				// TODO(parthsareen): consider adding prefill disambiguation logic to the renderer for structured outputs.
 				if shouldUseHarmony(m) || (builtinParser != nil && m.Config.Parser == "harmony") {
 					prompt += "<|end|><|start|>assistant<|channel|>final<|message|>"
+				}
+
+				// The continuation re-submits the thinking as prompt. If that
+				// no longer fits the context window, there is no room to
+				// generate the constrained answer: end honestly as a
+				// length-limited thinking-only result instead of letting the
+				// runner reject the request after thinking already streamed.
+				// The loaded runner's context length is authoritative; request
+				// options may still hold 0 (auto).
+				numCtx := promptOpts.NumCtx
+				if ctxLen := r.ContextLength(); ctxLen > 0 {
+					numCtx = ctxLen
+				}
+				if tokens, terr := r.Tokenize(c.Request.Context(), prompt); terr == nil && numCtx > 0 && len(tokens) >= numCtx-thinkingContinuationHeadroom {
+					slog.Warn("thinking filled the context window, skipping format-constrained continuation", "tokens", len(tokens), "num_ctx", numCtx)
+					res := api.ChatResponse{
+						Model:      req.Model,
+						CreatedAt:  time.Now().UTC(),
+						Message:    api.Message{Role: "assistant"},
+						Done:       true,
+						DoneReason: llm.DoneReasonLength.String(),
+					}
+					if pass1 != nil {
+						res.Metrics = api.Metrics{
+							PromptEvalCount:    pass1.PromptEvalCount,
+							PromptEvalDuration: pass1.PromptEvalDuration,
+							EvalCount:          pass1.EvalCount,
+							EvalDuration:       pass1.EvalDuration,
+						}
+					}
+					res.TotalDuration = time.Since(checkpointStart)
+					res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+					ch <- res
+					return
 				}
 				continue
 			}
