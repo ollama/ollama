@@ -115,17 +115,23 @@ var validKVCacheTypes = map[string]bool{
 // resolveKVCacheType picks the K/V cache quantization for a runner launch.
 // The per-model/request kv_cache_type option overrides OLLAMA_KV_CACHE_TYPE;
 // an invalid option falls back to the environment value so a Modelfile typo
-// cannot make the model unloadable.
+// cannot make the model unloadable. A single type applies to both caches; a
+// "K/V" pair (e.g. "q8_0/f16") sets them independently — llama.cpp only
+// constrains the V side (quantized V requires flash attention).
 func resolveKVCacheType(envVal, optVal string) string {
 	opt := strings.ToLower(strings.TrimSpace(optVal))
 	if opt == "" {
 		return strings.ToLower(envVal)
 	}
-	if !validKVCacheTypes[opt] {
-		slog.Warn("ignoring invalid kv_cache_type option, using server default", "kv_cache_type", optVal)
-		return strings.ToLower(envVal)
+	if k, v, ok := strings.Cut(opt, "/"); ok {
+		if validKVCacheTypes[k] && validKVCacheTypes[v] {
+			return opt
+		}
+	} else if validKVCacheTypes[opt] {
+		return opt
 	}
-	return opt
+	slog.Warn("ignoring invalid kv_cache_type option, using server default", "kv_cache_type", optVal)
+	return strings.ToLower(envVal)
 }
 
 // NewLlamaServer creates a new llama-server runner for the given model.

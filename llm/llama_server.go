@@ -402,7 +402,8 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 
 	// KV cache type
 	if launch.kvCacheType != "" {
-		params = append(params, "--cache-type-k", launch.kvCacheType, "--cache-type-v", launch.kvCacheType)
+		ctk, ctv := kvCacheFlagValues(launch.kvCacheType)
+		params = append(params, "--cache-type-k", ctk, "--cache-type-v", ctv)
 	}
 
 	params = appendFlashAttentionArgs(params, launch.gpus)
@@ -618,6 +619,16 @@ func LlamaServerFlashAttention(gpus []ml.DeviceInfo) ml.FlashAttentionType {
 		return ml.FlashAttentionDisabled
 	}
 	return ml.FlashAttentionAuto
+}
+
+// kvCacheFlagValues maps a resolved kv cache type onto llama-server's two
+// independent flags: a plain type applies to both K and V, a "K/V" pair
+// (e.g. "q8_0/f16") sets them separately.
+func kvCacheFlagValues(kvct string) (ctk, ctv string) {
+	if k, v, ok := strings.Cut(kvct, "/"); ok {
+		return k, v
+	}
+	return kvct, kvct
 }
 
 func appendFlashAttentionArgs(params []string, gpus []ml.DeviceInfo) []string {

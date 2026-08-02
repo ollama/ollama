@@ -31,6 +31,31 @@ should not have to choose one KV type for every model on an instance.
   `kv_cache_type` between requests respawns the runner exactly like a
   `num_ctx` change.
 
+## K and V independence (source-verified at the b9888 pin)
+
+`--cache-type-k` and `--cache-type-v` are fully independent llama-server
+flags backed by separate params (`common/arg.cpp:2174,2187`); **different
+types for K and V are legal**. There is no combined `--cache-type-kv` flag —
+"KV cache type" being one value is an *ollama* convention (the env applies a
+single type to both), not a llama.cpp constraint. The one asymmetry
+(`src/llama-context.cpp:3550`): **a quantized V cache requires flash
+attention** — llama-server errors with "V cache quantization requires
+flash_attn" otherwise. K-only quantization has no FA requirement (only the V
+cache is stored transposed in the non-FA path, `src/llama-kv-cache.cpp:1501`),
+so `q8_0/f16` (K quantized, V full) is the classic "half the memory savings,
+no FA needed" configuration.
+
+This fork's `kv_cache_type` option therefore accepts both forms:
+
+- `PARAMETER kv_cache_type f16` — one type for both caches (env parity);
+- `PARAMETER kv_cache_type q8_0/f16` — `K/V` pair, mapped onto the two flags.
+
+Both halves of a pair are validated against the allowlist; any invalid half
+falls back to the env value as a whole. The pair syntax also enables the
+attribution experiment for the qwen finding: `q8_0/f16` vs `f16/q8_0`
+determines whether the ~6× reasoning degradation comes from K or V
+quantization.
+
 ## Caveats
 
 - Quantized **V**-cache requires flash attention in llama.cpp; the value is
