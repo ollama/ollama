@@ -2,7 +2,6 @@ package mlxrunner
 
 import (
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/ollama/ollama/x/mlxrunner/batch"
@@ -44,14 +43,10 @@ type speculation struct {
 	r     *Runner
 	draft base.DraftModel
 
-	// caches is the whole persistent slice, passed to every forward; draftKV
-	// are the draft head's own caches and targets are the rest — the caches the
-	// target forward writes, which speculation snapshots and rollback cover.
-	// Bound the first time the caches exist (the Runner reuses one cache slice
-	// for its life) and stable thereafter.
-	caches  []cache.Cache
-	draftKV []cache.Cache
+	// targets are the model's slots — what speculation snapshots and rolls
+	// back; draftKV the drafter's. Built at load, stable for the model's life.
 	targets []cache.Cache
+	draftKV []cache.Cache
 
 	// drafter is the persistent half of the MTP drafting machinery; each
 	// request's session comes from drafter.open.
@@ -64,42 +59,13 @@ type speculation struct {
 
 // newSpeculation builds the speculative-decoding subsystem for a loaded model,
 // or nil when the checkpoint ships no draft head.
-func newSpeculation(r *Runner, draft base.DraftModel) *speculation {
+func newSpeculation(r *Runner, draft base.DraftModel, targets, draftKV []cache.Cache) *speculation {
 	if draft == nil {
 		return nil
 	}
-	s := &speculation{r: r, draft: draft, depth: newDepthController()}
-	s.bind(r.cache.caches)
+	s := &speculation{r: r, draft: draft, targets: targets, draftKV: draftKV, depth: newDepthController()}
 	s.drafter = newMTPDrafter(s)
 	return s
-}
-
-// bind computes the draft/target cache partition the first time the persistent
-// caches exist; later requests reuse the same slice, so it runs once.
-func (s *speculation) bind(caches []cache.Cache) {
-	if s.caches != nil {
-		if !slices.Equal(s.caches, caches) {
-			panic("speculation: cache slice changed between requests")
-		}
-		return
-	}
-	draftKV := s.draft.DraftCaches(caches)
-
-	// Partition caches into target slots (everything not in draftKV) in one
-	// pass. The count check rejects a draft slot that isn't a member of caches.
-	targets := make([]cache.Cache, 0, len(caches))
-	for _, c := range caches {
-		if !slices.Contains(draftKV, c) {
-			targets = append(targets, c)
-		}
-	}
-	if len(caches)-len(targets) != len(draftKV) {
-		panic("speculation: DraftCaches must select slots of the cache slice")
-	}
-
-	s.caches = caches
-	s.draftKV = draftKV
-	s.targets = targets
 }
 
 // speculationSession is the per-request cursor over the persistent speculation:
@@ -122,11 +88,10 @@ type speculationSession struct {
 
 // open returns the speculation cursor for this request or nil when the model ships
 // no draft head (a nil receiver), which decodes plainly.
-func (s *speculation) open(request Request, caches []cache.Cache) *speculationSession {
+func (s *speculation) open(request Request) *speculationSession {
 	if s == nil {
 		return nil
 	}
-	s.bind(caches)
 	d := s.drafter.open()
 
 	// Logprobs are not yet supported, so a logprobs request keeps a speculationSession
@@ -291,7 +256,7 @@ func (st *speculativeDecoder) resume() []sampler.Result {
 func (st *speculativeDecoder) park(remaining int) ([]sampler.Result, error) {
 	s := st.s
 	if st.inner == nil {
-		st.inner = s.spec.r.pipelinedDecoder(s, s.spec.caches, st.current.Token.ExpandDims(-1), st.position)
+		st.inner = s.spec.r.pipelinedDecoder(s, s.spec.targets, st.current.Token.ExpandDims(-1), st.position)
 	}
 	return st.inner.next(remaining)
 }
@@ -417,7 +382,7 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 		InputIDs:     current.Token.ExpandDims(-1).Concatenate(1, candidates.tokens),
 		SeqOffsets:   []int32{int32(before)},
 		SeqQueryLens: []int32{int32(draftCount + 1)},
-	}, s.spec.caches)
+	}, s.spec.targets)
 
 	// Row i of the fused hidden is the state after the token at before+i, so
 	// the rows already line up with the drafts: row 0 (current's state)

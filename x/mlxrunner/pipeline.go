@@ -77,7 +77,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 
 	// Built before prefill so a drafter with draft caches follows the prompt
 	// through prefill alongside the target.
-	spec := r.spec.open(request, caches)
+	spec := r.spec.open(request)
 	defer spec.close()
 
 	seed, position, promptEval, err := r.prefill(ctx, session, spec)

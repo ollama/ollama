@@ -15,36 +15,41 @@ import (
 
 // Model is the interface that model implementations must satisfy.
 type Model interface {
-	// Forward returns the hidden state to unembed and the state a draft
-	// model conditions on; plain models return the final hidden for both.
-	Forward(b *batch.Batch, cache []cache.Cache) (hidden, auxHidden *mlx.Array)
-	Unembed(x *mlx.Array) *mlx.Array
-	NumLayers() int
-	Tokenizer() *tokenizer.Tokenizer
-	MaxContextLength() int
-
 	// LoadWeights receives all tensors loaded from the manifest and assigns
 	// them to model fields. Model-specific logic (MLA absorption, expert
 	// stacking, quantized layer creation) happens here.
 	LoadWeights(tensors map[string]*mlx.Array) error
+
+	// NewCaches builds the cache slots this model's layers need.
+	NewCaches() []cache.Cache
+
+	// Forward returns the hidden state to unembed and the state a draft
+	// model conditions on; plain models return the final hidden for both.
+	Forward(b *batch.Batch, cache []cache.Cache) (hidden, auxHidden *mlx.Array)
+	Unembed(x *mlx.Array) *mlx.Array
+
+	Tokenizer() *tokenizer.Tokenizer
+	MaxContextLength() int
 }
 
 // DraftModel is an auxiliary model alongside a target that proposes speculative
 // tokens.
 type DraftModel interface {
-	// Draft fuses b.Hidden (the target hidden state) into its own forward and
-	// returns the head's hidden plus the aux hidden seeding the next step.
-	Draft(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array)
+	// LoadWeights assigns manifest tensors to the draft model's fields. An
+	// inline head has nothing to do here; its weights load with the target's.
+	LoadWeights(tensors map[string]*mlx.Array) error
+
+	// NewCaches builds the cache slots this draft model writes, or nil
+	// when it keeps no KV.
+	NewCaches() []cache.Cache
+
+	// Forward consumes b.Hidden (the draft-conditioning state) and returns
+	// its hidden plus the aux hidden that seeds the next step. targetCaches
+	// is read-only, for drafts that attend over the target's history.
+	Forward(b *batch.Batch, targetCaches, draftCaches []cache.Cache) (hidden, auxHidden *mlx.Array)
 
 	// Unembed projects a hidden state to vocabulary logits.
 	Unembed(x *mlx.Array) *mlx.Array
-
-	// DraftCaches selects the draft model's own KV caches from the full
-	// per-request slice — any subset, or nil when the draft keeps no KV.
-	DraftCaches(caches []cache.Cache) []cache.Cache
-
-	// LoadWeights assigns manifest tensors to the draft head's fields.
-	LoadWeights(tensors map[string]*mlx.Array) error
 }
 
 // SelfDraft is implemented by models whose draft head ships inline with the

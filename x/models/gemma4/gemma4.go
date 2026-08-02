@@ -1081,10 +1081,6 @@ func suppressTokenLogits(logits, bias *mlx.Array) *mlx.Array {
 	return logits.Add(bias.AsType(logits.DType()))
 }
 
-func (m *Model) NumLayers() int {
-	return len(m.Layers)
-}
-
 func (m *Model) MaxContextLength() int {
 	return int(m.MaxPositionEmbeddings)
 }
