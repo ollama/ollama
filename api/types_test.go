@@ -575,6 +575,29 @@ func TestThinking_UnmarshalJSON(t *testing.T) {
 			input:            `{ "think": "future-level" }`,
 			expectedThinking: &ThinkValue{Value: "future-level"},
 		},
+		{
+			name:             "budget",
+			input:            `{ "think": 8192 }`,
+			expectedThinking: &ThinkValue{Value: 8192},
+		},
+		{
+			name:             "zero_budget",
+			input:            `{ "think": 0 }`,
+			expectedThinking: nil,
+			expectedError:    true,
+		},
+		{
+			name:             "negative_budget",
+			input:            `{ "think": -1 }`,
+			expectedThinking: nil,
+			expectedError:    true,
+		},
+		{
+			name:             "fractional_budget",
+			input:            `{ "think": 1.5 }`,
+			expectedThinking: nil,
+			expectedError:    true,
+		},
 	}
 
 	for _, test := range tests {
@@ -998,7 +1021,7 @@ func TestValidateLegacyThinking(t *testing.T) {
 		{`"high"`, true},
 		{`"max"`, true},
 		{`"xhigh"`, false},
-		{`"minimal"`, false},
+		{`"minimal"`, true},
 		{`"future"`, false},
 		{`""`, false},
 		{`"HIGH"`, false},
@@ -1019,6 +1042,34 @@ func TestValidateLegacyThinking(t *testing.T) {
 	}
 }
 
+func TestThinkValueBudgetTokens(t *testing.T) {
+	tests := []struct {
+		name     string
+		think    *ThinkValue
+		numCtx   int
+		expected int
+	}{
+		{name: "unset", think: nil, numCtx: 32768, expected: 0},
+		{name: "true is unrestricted", think: &ThinkValue{Value: true}, numCtx: 32768, expected: 0},
+		{name: "false is unrestricted", think: &ThinkValue{Value: false}, numCtx: 32768, expected: 0},
+		{name: "explicit budget", think: &ThinkValue{Value: 8192}, numCtx: 32768, expected: 8192},
+		{name: "explicit budget ignores context", think: &ThinkValue{Value: 8192}, numCtx: 0, expected: 8192},
+		{name: "max is four fifths", think: &ThinkValue{Value: "max"}, numCtx: 32768, expected: 26214},
+		{name: "high is one half", think: &ThinkValue{Value: "high"}, numCtx: 32768, expected: 16384},
+		{name: "medium is one quarter", think: &ThinkValue{Value: "medium"}, numCtx: 32768, expected: 8192},
+		{name: "low is one eighth", think: &ThinkValue{Value: "low"}, numCtx: 32768, expected: 4096},
+		{name: "minimal is one sixteenth", think: &ThinkValue{Value: "minimal"}, numCtx: 32768, expected: 2048},
+		{name: "effort without context", think: &ThinkValue{Value: "high"}, numCtx: 0, expected: 0},
+		{name: "effort with tiny context", think: &ThinkValue{Value: "low"}, numCtx: 2, expected: 0},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.expected, test.think.BudgetTokens(test.numCtx))
+		})
+	}
+}
+
 func TestThinkValueTransportTypes(t *testing.T) {
 	for _, tt := range []struct {
 		input   string
@@ -1031,7 +1082,9 @@ func TestThinkValueTransportTypes(t *testing.T) {
 		{`"xhigh"`, "xhigh", false},
 		{`"minimal"`, "minimal", false},
 		{`""`, "", false},
-		{`75`, nil, true},
+		{`75`, 75, false},
+		{`0`, nil, true},
+		{`-1`, nil, true},
 		{`0.75`, nil, true},
 		{`[]`, nil, true},
 		{`{}`, nil, true},
@@ -1053,5 +1106,113 @@ func TestThinkValueTransportTypes(t *testing.T) {
 				t.Fatal("named effort must express intent to think")
 			}
 		})
+	}
+}
+
+func TestThinkValueIsValid(t *testing.T) {
+	valid := []*ThinkValue{nil, {Value: nil}, {Value: true}, {Value: false}, {Value: "max"}, {Value: "low"}, {Value: "minimal"}, {Value: "future"}, {Value: 1}}
+	for _, think := range valid {
+		assert.True(t, think.IsValid(), "expected %v to be valid", think)
+	}
+
+	invalid := []*ThinkValue{{Value: 0}, {Value: -1}, {Value: 1.5}}
+	for _, think := range invalid {
+		assert.False(t, think.IsValid(), "expected %v to be invalid", think)
+	}
+}
+
+func TestThinkBudgetOption(t *testing.T) {
+	// think_budget is set as a model default with `PARAMETER think_budget`,
+	// which reaches Options through the generic parameter map. It takes either
+	// a token count or an effort level.
+	tests := []struct {
+		name     string
+		param    string // as written in a Modelfile
+		fromMap  []any  // equivalent values arriving through FromMap
+		expected any    // ThinkValue.Value once decoded
+		budget   int    // resolved against a 32768 token context
+	}{
+		{
+			name:     "token count",
+			param:    "8192",
+			fromMap:  []any{int64(8192), float64(8192)},
+			expected: 8192,
+			budget:   8192,
+		},
+		{
+			name:     "effort level",
+			param:    "high",
+			fromMap:  []any{"high"},
+			expected: "high",
+			budget:   16384,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			params, err := FormatParams(map[string][]string{"think_budget": {test.param}})
+			require.NoError(t, err)
+
+			// what FormatParams produces must itself be decodable
+			values := append([]any{params["think_budget"]}, test.fromMap...)
+			for _, value := range values {
+				opts := DefaultOptions()
+				require.NoError(t, opts.FromMap(map[string]any{"think_budget": value}), "value %#v", value)
+				require.NotNil(t, opts.ThinkBudget)
+				assert.Equal(t, test.expected, opts.ThinkBudget.Value)
+				assert.Equal(t, test.budget, opts.ThinkBudget.BudgetTokens(32768))
+			}
+		})
+	}
+
+	assert.Nil(t, DefaultOptions().ThinkBudget)
+	assert.Equal(t, 0, DefaultOptions().ThinkBudget.BudgetTokens(32768))
+
+	// A level the budget table has no share for is a model-defined level: it
+	// decodes, and carries no budget.
+	opts := DefaultOptions()
+	require.NoError(t, opts.FromMap(map[string]any{"think_budget": "enormous"}))
+	assert.Equal(t, 0, opts.ThinkBudget.BudgetTokens(32768))
+	assert.Error(t, opts.FromMap(map[string]any{"think_budget": 0}))
+}
+
+func TestThinkValueLevel(t *testing.T) {
+	// Level is what a model that consumes effort levels directly receives.
+	tests := []struct {
+		name  string
+		think *ThinkValue
+		level string
+	}{
+		{name: "unset", think: nil, level: ""},
+		{name: "low", think: &ThinkValue{Value: "low"}, level: "low"},
+		{name: "medium", think: &ThinkValue{Value: "medium"}, level: "medium"},
+		{name: "high", think: &ThinkValue{Value: "high"}, level: "high"},
+		{name: "max is reported as high", think: &ThinkValue{Value: "max"}, level: "high"},
+		{name: "minimal is reported as low", think: &ThinkValue{Value: "minimal"}, level: "low"},
+		{name: "true", think: &ThinkValue{Value: true}, level: "medium"},
+		{name: "false", think: &ThinkValue{Value: false}, level: ""},
+		{name: "a budget carries no level", think: &ThinkValue{Value: 8192}, level: ""},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.level, test.think.Level())
+		})
+	}
+
+	// Reporting a level as its nearest neighbour must not change the budget it
+	// asked for, or the requested level itself
+	for _, test := range []struct {
+		requested string
+		reported  string
+		budget    int
+	}{
+		{requested: "max", reported: "high", budget: 26214},
+		{requested: "minimal", reported: "low", budget: 2048},
+	} {
+		think := &ThinkValue{Value: test.requested}
+		assert.Equal(t, test.reported, think.Level())
+		assert.Equal(t, test.budget, think.BudgetTokens(32768))
+		assert.Equal(t, test.requested, think.String(), "the requested level is preserved")
 	}
 }

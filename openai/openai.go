@@ -589,9 +589,9 @@ func ThinkingFromReasoningEffort(effort string, thinking ...*model.Thinking) (*a
 		return &api.ThinkValue{Value: false}, nil
 	}
 	requestedEffort := effort
+	// "minimal" is not clamped, because it is a level of ours: it resolves to a
+	// sixteenth of the response rather than to "low"'s eighth.
 	switch effort {
-	case "minimal":
-		effort = "low"
 	case "xhigh", "ultra":
 		effort = "max"
 	}
