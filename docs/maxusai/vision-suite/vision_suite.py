@@ -23,6 +23,8 @@ def gen(prompt, images, num_predict=None, num_ctx=None):
         "stream": False, "format": "json",
         "options": {"num_predict": num_predict, "num_ctx": num_ctx, "temperature": 0},
     }
+    if os.environ.get("KV_CACHE_TYPE"):
+        payload["options"]["kv_cache_type"] = os.environ["KV_CACHE_TYPE"]
     if os.environ.get("THINK", "false") != "on":
         payload["think"] = False
     endpoint = os.environ.get("ENDPOINT", "generate")

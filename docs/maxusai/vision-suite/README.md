@@ -93,7 +93,9 @@ passthrough) is in [nemotron-test-image.md](../nemotron-test-image.md).
   the published matrix.
 - `ONLY_TESTS=scene_single[,document_single,...]` runs a subset of the suite —
   used by the bisect harness. `HTTP_TIMEOUT` (seconds, default 1800) bounds a
-  single request — raise it for uncapped think-mode probes.
+  single request — raise it for uncapped think-mode probes. `KV_CACHE_TYPE`
+  passes a per-request `options.kv_cache_type` (fork feature, ADR 0005) —
+  single type or K/V pair like `q8_0/f16`.
 - Multi-image Q4 is scored dialect-aware like scene boxes (`q4_bbox_space`
   reports the matched space); models answer norm-1000 regardless of prompt.
 - Caveat: with `OLLAMA_KV_CACHE_TYPE=q8_0`, qwen3.6 think-on inflates
