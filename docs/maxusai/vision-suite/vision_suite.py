@@ -31,14 +31,14 @@ def gen(prompt, images, num_predict=None, num_ctx=None):
                                 "images": payload.pop("images")}]
         req = urllib.request.Request(HOST + "/api/chat",
             data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
-        r = json.load(urllib.request.urlopen(req, timeout=1800))
+        r = json.load(urllib.request.urlopen(req, timeout=int(os.environ.get("HTTP_TIMEOUT", "1800"))))
         msg = r.get("message") or {}
         r["response"] = msg.get("content", "")
         r["thinking"] = msg.get("thinking", "")
         return r
     req = urllib.request.Request(HOST + "/api/generate",
         data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
-    return json.load(urllib.request.urlopen(req, timeout=1800))
+    return json.load(urllib.request.urlopen(req, timeout=int(os.environ.get("HTTP_TIMEOUT", "1800"))))
 
 SCENE_PROMPT = """You are a precision visual inspection system deployed in an industrial
 quality-assurance pipeline. Your task on this frame is exhaustive object detection,
