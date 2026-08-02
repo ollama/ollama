@@ -16,8 +16,11 @@ Reproducible ground-truth benchmarks behind the measured tables in
   extractions (single scene w/ pixel bboxes, single invoice, 3-image cross-analysis)
   and scores objectively (label recall, color accuracy, qty/price exactness, bbox
   center-hits, cross-image answers). Env: `THINK=on|false` (default `false`),
-  `NUM_PREDICT` (default 2200; use ≥4000 with `THINK=on`). Writes
-  `resp_<tag>_<test>.json` + `scores_<tag>.json` beside the script.
+  `NUM_PREDICT` (default 2200; ≥4000 with `THINK=on`, 16000 for think-on multi-image),
+  `ENDPOINT=generate|chat` (default `generate` — `/api/chat` is what OpenWebUI and
+  ChatOllama use, and it has carried the upstream think+format two-pass fix since
+  v0.12.4, so think-on cells differ by endpoint on builds without the generate-side
+  fix). Writes `resp_<tag>_<test>.json` + `scores_<tag>.json` beside the script.
 - `measure.py <host> [model]` — the token-budget protocol: `prompt_eval_count` with
   `num_predict:1` minus the text-only baseline, over 8 geometries + the
   `image_max_tokens` knob check. Flat 256 on nemotron = unpatched payload.
