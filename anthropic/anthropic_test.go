@@ -630,6 +630,27 @@ func TestFromMessagesRequest_WithThinking(t *testing.T) {
 	if result.Think == nil {
 		t.Fatal("expected Think to be set")
 	}
+	if v, ok := result.Think.Value.(int); !ok || v != 1000 {
+		t.Errorf("expected Think.Value to be the 1000 token budget, got %v", result.Think.Value)
+	}
+}
+
+func TestFromMessagesRequest_ThinkingWithoutBudget(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "test-model",
+		MaxTokens: 1024,
+		Messages:  []MessageParam{{Role: "user", Content: textContent("Hello")}},
+		Thinking:  &ThinkingConfig{Type: "enabled"},
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Think == nil {
+		t.Fatal("expected Think to be set")
+	}
 	if v, ok := result.Think.Value.(bool); !ok || !v {
 		t.Errorf("expected Think.Value to be true, got %v", result.Think.Value)
 	}

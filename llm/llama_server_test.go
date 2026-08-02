@@ -3744,3 +3744,130 @@ func fakeRunningCmd() *exec.Cmd {
 	// SIGKILL children when the test process exits.
 	return cmd
 }
+
+func TestLlamaServerCompletionReasoningBudget(t *testing.T) {
+	tests := []struct {
+		name                 string
+		req                  CompletionRequest
+		wantBudget           any
+		wantStart            any
+		wantEnd              any
+		wantMessage          any
+		wantGenerationPrompt any
+	}{
+		{
+			name: "budget with model-emitted opening tag",
+			req: CompletionRequest{
+				Prompt:           "<bos><|turn>user\nhi<turn|>\n<|turn>model\n",
+				ThinkBudget:      512,
+				ThinkingStartTag: "<|channel>",
+				ThinkingEndTag:   "<channel|>",
+			},
+			wantBudget:  float64(512),
+			wantStart:   "<|channel>",
+			wantEnd:     "<channel|>",
+			wantMessage: "",
+		},
+		{
+			name: "primed thinking block is replayed as the generation prompt",
+			req: CompletionRequest{
+				Prompt:           "<|im_start|>assistant\n<think>\n",
+				ThinkBudget:      512,
+				ThinkingStartTag: "<think>",
+				ThinkingEndTag:   "</think>",
+			},
+			wantBudget:           float64(512),
+			wantStart:            "<think>",
+			wantEnd:              "</think>",
+			wantMessage:          "",
+			wantGenerationPrompt: "<think>",
+		},
+		{
+			name: "no budget",
+			req: CompletionRequest{
+				Prompt:           "test prompt",
+				ThinkingStartTag: "<think>",
+				ThinkingEndTag:   "</think>",
+			},
+		},
+		{
+			name: "budget without tags is not enforceable",
+			req: CompletionRequest{
+				Prompt:      "test prompt",
+				ThinkBudget: 512,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var completionBody map[string]any
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/health":
+					fmt.Fprint(w, `{"status":"ok"}`)
+				case "/completion":
+					body, err := io.ReadAll(r.Body)
+					if err != nil {
+						t.Errorf("reading completion request body: %v", err)
+						return
+					}
+					if err := json.Unmarshal(body, &completionBody); err != nil {
+						t.Errorf("invalid completion request body %q: %v", body, err)
+						return
+					}
+					w.Header().Set("Content-Type", "text/event-stream")
+					fmt.Fprintln(w, `data: {"content":"","stop":true}`)
+				default:
+					t.Errorf("unexpected path: %s", r.URL.Path)
+				}
+			}))
+			defer srv.Close()
+
+			parts := strings.Split(srv.URL, ":")
+			var portInt int
+			fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+			runner := &llamaServerRunner{
+				port:    portInt,
+				cmd:     fakeRunningCmd(),
+				sem:     semaphore.NewWeighted(1),
+				options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+			}
+
+			opts := api.DefaultOptions()
+			req := test.req
+			req.Options = &opts
+			if err := runner.Completion(t.Context(), req, func(CompletionResponse) {}); err != nil {
+				t.Fatalf("Completion error: %v", err)
+			}
+
+			for field, want := range map[string]any{
+				"reasoning_budget_tokens":    test.wantBudget,
+				"reasoning_budget_start_tag": test.wantStart,
+				"reasoning_budget_end_tag":   test.wantEnd,
+				// llama-server builds the sequence it forces from
+				// message+end_tag, and only when this field is present, so an
+				// empty message still has to reach the wire
+				"reasoning_budget_message": test.wantMessage,
+				"generation_prompt":        test.wantGenerationPrompt,
+			} {
+				got, ok := completionBody[field]
+				if want == nil {
+					if ok {
+						t.Errorf("%s = %v, want it omitted", field, got)
+					}
+					continue
+				}
+				if !ok {
+					t.Errorf("%s missing from llama-server completion request", field)
+					continue
+				}
+				if got != want {
+					t.Errorf("%s = %v, want %v", field, got, want)
+				}
+			}
+		})
+	}
+}

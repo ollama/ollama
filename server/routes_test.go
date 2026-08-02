@@ -27,6 +27,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/model/parsers"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
@@ -1191,5 +1192,162 @@ func TestWaitForStream(t *testing.T) {
 				t.Errorf("body mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestThinkBudgetForCompletion(t *testing.T) {
+	thinkingParser := parsers.ParserForName("gemma4")
+	if thinkingParser == nil || !thinkingParser.HasThinkingSupport() {
+		t.Fatalf("expected a gemma4 parser with thinking support, got %#v", thinkingParser)
+	}
+
+	tests := []struct {
+		name          string
+		parser        parsers.Parser
+		templateStart string
+		templateEnd   string
+		think         *api.ThinkValue
+		opts          *api.Options
+		wantBudget    int
+		wantTags      bool
+	}{
+		{
+			// models without a built-in parser split thinking with tags
+			// inferred from the Go template, and must still be bounded
+			name:          "tags inferred from the template",
+			templateStart: "<think>",
+			templateEnd:   "</think>",
+			think:         &api.ThinkValue{Value: 8192},
+			opts:          &api.Options{Runner: api.Runner{NumCtx: 32768}},
+			wantBudget:    8192,
+			wantTags:      true,
+		},
+		{
+			name:  "no tags anywhere",
+			think: &api.ThinkValue{Value: 8192},
+			opts:  &api.Options{Runner: api.Runner{NumCtx: 32768}},
+		},
+		{
+			// a parser that reports its own delimiters wins
+			name:          "parser tags take precedence over the template",
+			parser:        thinkingParser,
+			templateStart: "<think>",
+			templateEnd:   "</think>",
+			think:         &api.ThinkValue{Value: 8192},
+			opts:          &api.Options{Runner: api.Runner{NumCtx: 32768}},
+			wantBudget:    8192,
+			wantTags:      true,
+		},
+		{
+			name:       "effort resolves against the context length",
+			parser:     thinkingParser,
+			think:      &api.ThinkValue{Value: "medium"},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}},
+			wantBudget: 8192,
+			wantTags:   true,
+		},
+		{
+			name:       "explicit budget is used verbatim",
+			parser:     thinkingParser,
+			think:      &api.ThinkValue{Value: 8192},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}},
+			wantBudget: 8192,
+			wantTags:   true,
+		},
+		{
+			name:   "think true stays unrestricted",
+			parser: thinkingParser,
+			think:  &api.ThinkValue{Value: true},
+			opts:   &api.Options{Runner: api.Runner{NumCtx: 32768}},
+		},
+		{
+			name:   "no parser means no tags to bound",
+			parser: nil,
+			think:  &api.ThinkValue{Value: "medium"},
+			opts:   &api.Options{Runner: api.Runner{NumCtx: 32768}},
+		},
+		{
+			name:   "no options",
+			parser: thinkingParser,
+			think:  &api.ThinkValue{Value: "medium"},
+		},
+		{
+			name:       "model think_budget parameter applies when the request has no budget",
+			parser:     thinkingParser,
+			think:      &api.ThinkValue{Value: true},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkValue{Value: 4096}},
+			wantBudget: 4096,
+			wantTags:   true,
+		},
+		{
+			name:       "explicit request budget overrides the model parameter",
+			parser:     thinkingParser,
+			think:      &api.ThinkValue{Value: 512},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkValue{Value: 4096}},
+			wantBudget: 512,
+			wantTags:   true,
+		},
+		{
+			name:       "request effort overrides the model parameter",
+			parser:     thinkingParser,
+			think:      &api.ThinkValue{Value: "low"},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkValue{Value: 999}},
+			wantBudget: 4096,
+			wantTags:   true,
+		},
+		{
+			name:       "model think_budget parameter applies without a think value",
+			parser:     thinkingParser,
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkValue{Value: 4096}},
+			wantBudget: 4096,
+			wantTags:   true,
+		},
+		{
+			name:       "model think_budget parameter accepts an effort level",
+			parser:     thinkingParser,
+			think:      &api.ThinkValue{Value: true},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkValue{Value: "low"}},
+			wantBudget: 4096,
+			wantTags:   true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			budget, start, end := thinkBudgetForCompletion(test.parser, test.templateStart, test.templateEnd, test.think, test.opts)
+			if budget != test.wantBudget {
+				t.Errorf("budget = %d, want %d", budget, test.wantBudget)
+			}
+			if hasTags := start != "" && end != ""; hasTags != test.wantTags {
+				t.Errorf("tags = (%q, %q), wantTags %v", start, end, test.wantTags)
+			}
+		})
+	}
+}
+
+func TestThinkBudgetForCompletionHarmony(t *testing.T) {
+	// gpt-oss reasons in the analysis channel, so a budget has to reach it too
+	harmonyParser := parsers.ParserForName("harmony")
+	if harmonyParser == nil || !harmonyParser.HasThinkingSupport() {
+		t.Fatalf("expected a harmony parser with thinking support, got %#v", harmonyParser)
+	}
+
+	opts := &api.Options{Runner: api.Runner{NumCtx: 32768}}
+
+	budget, start, end := thinkBudgetForCompletion(harmonyParser, "", "", &api.ThinkValue{Value: "high"}, opts)
+	if budget != 16384 {
+		t.Errorf("budget = %d, want 16384", budget)
+	}
+	// <|channel|> alone would also match the final channel, and forcing the
+	// end tag there would truncate the answer instead of the reasoning
+	if start != "<|channel|>analysis<|message|>" {
+		t.Errorf("start tag = %q, want the analysis channel header", start)
+	}
+	if end != "<|end|>" {
+		t.Errorf("end tag = %q, want %q", end, "<|end|>")
+	}
+
+	if budget, _, _ := thinkBudgetForCompletion(harmonyParser, "", "", &api.ThinkValue{Value: true}, opts); budget != 0 {
+		t.Errorf("think true budget = %d, want 0 (unrestricted)", budget)
 	}
 }

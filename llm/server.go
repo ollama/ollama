@@ -216,6 +216,14 @@ type CompletionRequest struct {
 	ToolCallTag     string   // raw generic tool parser tag, if any
 	LeadingBOS      string   // textual BOS emitted by Go rendering, if any
 
+	// ThinkBudget caps the number of tokens the model may spend inside a
+	// thinking block. Zero leaves thinking unrestricted. Enforcing it requires
+	// the thinking delimiters below; runners without a reasoning-budget sampler
+	// ignore all three.
+	ThinkBudget      int
+	ThinkingStartTag string
+	ThinkingEndTag   string
+
 	// Logprobs specifies whether to include log probabilities in the response
 	Logprobs bool
 
