@@ -105,7 +105,8 @@ type GenerateRequest struct {
 	Options map[string]any `json:"options"`
 
 	// Think controls whether thinking/reasoning models will think before
-	// responding. Can be a boolean (true/false) or a model-defined thinking level.
+	// responding. Can be a boolean (true/false), a model-defined thinking level,
+	// or a positive integer giving an explicit thinking-token budget.
 	// Needs to be a pointer so we can distinguish between false (request that
 	// thinking _not_ be used) and unset (use the old behavior
 	// before this option was introduced)
@@ -160,7 +161,8 @@ type ChatRequest struct {
 	Options map[string]any `json:"options"`
 
 	// Think controls whether thinking/reasoning models will think before
-	// responding. Can be a boolean (true/false) or a model-defined thinking level.
+	// responding. Can be a boolean (true/false), a model-defined thinking level,
+	// or a positive integer giving an explicit thinking-token budget.
 	Think *ThinkValue `json:"think,omitempty"`
 
 	// Truncate is a boolean that, when set to true, truncates the chat history messages
@@ -588,6 +590,12 @@ type Options struct {
 	PresencePenalty  float32  `json:"presence_penalty,omitempty"`
 	FrequencyPenalty float32  `json:"frequency_penalty,omitempty"`
 	Stop             []string `json:"stop,omitempty"`
+
+	// ThinkBudget bounds how many tokens the model may spend inside a thinking
+	// block, as either a token count or an effort level. Models that reason at
+	// length by default can ship a bound with `PARAMETER think_budget`; a think
+	// value that carries its own budget takes precedence.
+	ThinkBudget *ThinkValue `json:"think_budget,omitempty"`
 }
 
 // Runner options which must be set when the model is loaded into memory
@@ -1094,6 +1102,22 @@ func (opts *Options) FromMap(m map[string]any) error {
 				continue
 			}
 
+			// Options that accept more than one JSON type decode themselves,
+			// so re-encode the value and hand it to the field's unmarshaler.
+			if field.Kind() == reflect.Pointer && field.Type().Implements(jsonUnmarshalerType) {
+				data, err := json.Marshal(val)
+				if err != nil {
+					return fmt.Errorf("option %q could not be re-encoded: %w", key, err)
+				}
+
+				decoded := reflect.New(field.Type().Elem())
+				if err := json.Unmarshal(data, decoded.Interface()); err != nil {
+					return fmt.Errorf("option %q: %w", key, err)
+				}
+				field.Set(decoded)
+				continue
+			}
+
 			switch field.Kind() {
 			case reflect.Int:
 				switch t := val.(type) {
@@ -1202,7 +1226,8 @@ func DefaultOptions() Options {
 	}
 }
 
-// ThinkValue represents a boolean or model-defined thinking level.
+// ThinkValue represents a boolean, a model-defined thinking level, or a
+// positive integer thinking-token budget.
 type ThinkValue = model.ThinkValue
 
 // ValidateLegacyThinking checks named levels for models without thinking metadata.
@@ -1212,11 +1237,24 @@ func ValidateLegacyThinking(think *ThinkValue) error {
 		return nil
 	}
 	switch think.String() {
-	case "low", "medium", "high", "max":
+	case "minimal", "low", "medium", "high", "max":
 		return nil
 	default:
-		return fmt.Errorf("invalid think value: %q (must be \"high\", \"medium\", \"low\", \"max\", true, or false)", think.String())
+		return fmt.Errorf("invalid think value: %q (must be one of %q, true, false, or a positive thinking-token budget)", think.String(), ThinkLevels())
 	}
+}
+
+// ThinkLevels returns the effort levels that carry a thinking budget, weakest
+// first. The OpenAI- and Anthropic-compatible endpoints validate their own
+// effort fields against this for models without thinking metadata, so a level
+// cannot be accepted by one entry point and rejected by another.
+func ThinkLevels() []string {
+	return model.ThinkLevels()
+}
+
+// IsThinkLevel reports whether a string is an effort level with a budget.
+func IsThinkLevel(level string) bool {
+	return model.IsThinkLevel(level)
 }
 
 type Duration struct {
@@ -1259,6 +1297,8 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 
 	return nil
 }
+
+var jsonUnmarshalerType = reflect.TypeOf((*json.Unmarshaler)(nil)).Elem()
 
 // FormatParams converts specified parameter options to their correct types
 func FormatParams(params map[string][]string) (map[string]any, error) {
@@ -1311,6 +1351,16 @@ func FormatParams(params map[string][]string) (map[string]any, error) {
 					// TODO: only string slices are supported right now
 					out[key] = vals
 				case reflect.Pointer:
+					if field.Type().Implements(jsonUnmarshalerType) {
+						// Either a number or a word, decided by the field
+						if intVal, err := strconv.ParseInt(vals[0], 10, 64); err == nil {
+							out[key] = intVal
+						} else {
+							out[key] = vals[0]
+						}
+						break
+					}
+
 					switch field.Type().Elem().Kind() {
 					case reflect.Bool:
 						boolVal, err := strconv.ParseBool(vals[0])
