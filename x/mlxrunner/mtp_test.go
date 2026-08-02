@@ -57,7 +57,7 @@ type forwardCall struct {
 	n      int32
 }
 
-func (m *fakeMTPModel) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
+func (m *fakeMTPModel) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
 	mlx.Eval(b.InputIDs)
 	ids := b.InputIDs.Ints()
 	m.forwards = append(m.forwards, forwardCall{offset: b.SeqOffsets[0], n: int32(len(ids))})
@@ -78,7 +78,8 @@ func (m *fakeMTPModel) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array 
 	for i, id := range ids {
 		preds[i] = m.predict[int32(id)]
 	}
-	return oneHotLogits(preds)
+	out := oneHotLogits(preds)
+	return out, out
 }
 
 func (m *fakeMTPModel) Unembed(x *mlx.Array) *mlx.Array { return x }
@@ -108,7 +109,7 @@ func (d *fakeMTPDraft) LoadWeights(map[string]*mlx.Array) error { return nil }
 
 func (d *fakeMTPDraft) DraftCaches([]cache.Cache) []cache.Cache { return nil }
 
-func (d *fakeMTPDraft) Draft(b *batch.Batch, caches []cache.Cache) (hidden, projected *mlx.Array) {
+func (d *fakeMTPDraft) Draft(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
 	mlx.Eval(b.InputIDs)
 	prev := int32(b.InputIDs.Ints()[0])
 	d.calls = append(d.calls, draftCall{position: b.SeqOffsets[0], from: prev})
@@ -125,7 +126,7 @@ var _ base.DraftModel = (*fakeMTPDraft)(nil)
 // offset like a real KV write), and records each call's offset, ids, and
 // the identity of every fused hidden row. A target hidden row is one-hot
 // (its hot index identifies which position it came from); the head's own
-// projected hidden is all-zero and records as -1.
+// aux hidden is all-zero and records as -1.
 type fakeKVDraft struct {
 	predict map[int32]int32
 	extends []extendCall
@@ -133,7 +134,7 @@ type fakeKVDraft struct {
 
 // extendCall is one recorded Draft call: the absolute slot of the first
 // entry written, the look-ahead token ids, and the hot index of each fused
-// hidden row (-1 for the head's own projected hidden).
+// hidden row (-1 for the head's own aux hidden).
 type extendCall struct {
 	offset  int32
 	ids     []int32
@@ -146,7 +147,7 @@ func (d *fakeKVDraft) DraftCaches(caches []cache.Cache) []cache.Cache {
 	return caches[len(caches)-1:]
 }
 
-func (d *fakeKVDraft) Draft(b *batch.Batch, caches []cache.Cache) (hidden, projected *mlx.Array) {
+func (d *fakeKVDraft) Draft(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
 	mlx.Eval(b.InputIDs, b.Hidden)
 	rawIDs := b.InputIDs.Ints()
 	ids := make([]int32, len(rawIDs))

@@ -145,12 +145,12 @@ func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *specu
 		n := min(prefillChunk, total-processed-1)
 
 		chunkIDs := mlx.FromValues(tokens[processed:processed+n], 1, n)
-		hidden := r.Model.Forward(&batch.Batch{
+		_, auxHidden := r.Model.Forward(&batch.Batch{
 			InputIDs:     chunkIDs,
 			SeqOffsets:   []int32{int32(position)},
 			SeqQueryLens: []int32{int32(n)},
 		}, caches)
-		spec.committed(chunkIDs, hidden, position)
+		spec.committed(chunkIDs, auxHidden, position)
 		mlx.Sweep()
 		materializeCaches()
 		processed += n
@@ -303,12 +303,12 @@ func (r *Runner) pipelinedDecoder(spec *speculationSession, caches []cache.Cache
 // value, so it is in flight before the previous token is synchronized.
 func (t *pipelinedDecoder) dispatch(token *mlx.Array) sampler.Result {
 	r := t.r
-	hidden := r.Model.Forward(&batch.Batch{
+	hidden, auxHidden := r.Model.Forward(&batch.Batch{
 		InputIDs:     token,
 		SeqOffsets:   []int32{int32(t.position)},
 		SeqQueryLens: []int32{int32(token.Dim(1))},
 	}, t.caches)
-	t.spec.committed(token, hidden, t.position)
+	t.spec.committed(token, auxHidden, t.position)
 	t.position += token.Dim(1)
 	logits := r.Model.Unembed(hidden)
 	next := r.Sampler.Sample([]int{pipelineSlot}, logits.Slice(mlx.Slice(), mlx.Slice(logits.Dim(1)-1), mlx.Slice()).Squeeze(1))

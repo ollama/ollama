@@ -413,7 +413,7 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 	}
 	defer commit(0)
 
-	hiddenSeq := r.Model.Forward(&batch.Batch{
+	hiddenSeq, auxHiddenSeq := r.Model.Forward(&batch.Batch{
 		InputIDs:     current.Token.ExpandDims(-1).Concatenate(1, candidates.tokens),
 		SeqOffsets:   []int32{int32(before)},
 		SeqQueryLens: []int32{int32(draftCount + 1)},
@@ -439,7 +439,7 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 	// chain and this validation forward's intermediates are freed as the eval
 	// consumes them, the way the plain decode dispatch sweeps before its eval.
 	// current and the candidate tokens stay pinned by the caller across the call.
-	live := []*mlx.Array{hiddenSeq, acceptedMask, residualTokens, bonusToken}
+	live := []*mlx.Array{hiddenSeq, auxHiddenSeq, acceptedMask, residualTokens, bonusToken}
 	mlx.Pin(live...)
 	defer mlx.Unpin(live...)
 	mlx.Sweep()
@@ -488,7 +488,7 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 	runIDs := append([]int32{int32(current.Token.Int())}, commitIDs[:keep]...)
 	s.drafter.committed(
 		mlx.FromValues(runIDs, 1, len(runIDs)),
-		hiddenSeq.Slice(mlx.Slice(), mlx.Slice(0, len(runIDs)), mlx.Slice()),
+		auxHiddenSeq.Slice(mlx.Slice(), mlx.Slice(0, len(runIDs)), mlx.Slice()),
 		before)
 
 	results = draftResults(draftIDs[:accepted])
