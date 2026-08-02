@@ -1,11 +1,15 @@
 # `/api/generate` + `think` + `format` returned an empty response — root cause and fix
 
 MaxusAI-fork investigation and fix (2026-08-01). Companion to
-[ADR 0002](adr/0002-deferred-format-constraining.md) (the decision) and
-[SPEC: structured output combined with thinking](spec/structured-output-with-thinking.md)
-(the normative contract this behaviour must satisfy). Fix branch:
-`fix/generate-think-format-lazy-grammar` (off `main`), cherry-picked to
-`release/0.32.1-dynres`.
+[ADR 0002](adr/0002-deferred-format-constraining.md) (the original runner-layer
+decision), [ADR 0004](adr/0004-routes-layer-think-format-double-request.md)
+(the 2026-08-02 move to the routes layer — the current architecture, described
+in [its own section below](#the-fix-v2--routes-layer-double-request-2026-08-02)),
+and [SPEC: structured output combined with thinking](spec/structured-output-with-thinking.md)
+(the normative contract this behaviour must satisfy). Fix branches:
+`fix/generate-think-format-lazy-grammar` (runner layer, 2026-08-01) then
+`fix/generate-think-format-routes-layer` (routes layer, 2026-08-02), both off
+`main`, cherry-picked to `release/0.32.1-dynres`.
 
 > **The one thing to take away:** with thinking enabled and `format` set,
 > `/api/generate` constrained the model with the format grammar from the very first
@@ -164,9 +168,16 @@ character-class expansion llama.cpp generates programmatically), but impossible 
 the pragmatic equivalent one layer down, with the bonus that reasoning runs with no
 grammar in the sampler at all.
 
-## The fix — deferred constraining in the llama-server runner
+## The fix v1 — deferred constraining in the llama-server runner (historical)
 
-`llm/llama_server.go` now runs a format-constrained completion for an
+> **Superseded 2026-08-02** by the routes-layer double request
+> ([next section](#the-fix-v2--routes-layer-double-request-2026-08-02),
+> [ADR 0004](adr/0004-routes-layer-think-format-double-request.md)). The
+> semantics below carried over; the mechanism moved up a layer and the runner
+> code was removed. Kept for the mechanism record and because the lazy-grammar
+> analysis still applies.
+
+`llm/llama_server.go` ran a format-constrained completion for an
 implicit-thinking generation in **two passes over one prompt**:
 
 1. **Pass 1 — think free:** the completion runs *unconstrained* with the parser's
@@ -225,6 +236,57 @@ The stop-split needs only stop strings + `stopping_word` + `cache_prompt` — fe
 b9888 and b10091 both have — and fixes `"json"` and schema formats identically. Full
 trade-off record in [ADR 0002](adr/0002-deferred-format-constraining.md).
 
+## The fix v2 — routes-layer double request (2026-08-02)
+
+The mechanism moved from the runner to `server/routes.go`
+([ADR 0004](adr/0004-routes-layer-think-format-double-request.md)): upstream
+fixed chat at the routes layer (#12460) and the open generate port
+([#14288](https://github.com/ollama/ollama/pull/14288)) mirrors it, so that is
+the architecture upstream will accept — and it covers every engine, not just
+the llama-server runner. The fork's version is a **superset of #14288**: same
+state machine, plus the three hardenings the upstream PR lacks.
+
+**GenerateHandler** loops chat-style over up to two completion requests:
+
+1. When the model's think-close marker is known — `parsers.ImplicitThinkingParser`
+   (`nemotron-3-nano`, `qwen3.5`) or the generic thinking parser with a
+   prefilled opening tag — **pass one strips `format` and injects the marker as
+   a stop string** (per-request `Options.Stop` copy; `PreservedTokens` already
+   keeps the marker textual). On `done_reason:"stop"` with no parsed content,
+   the handler feeds the held-back content plus the marker through the parser
+   (thinking closes exactly where it would have), then continues with
+   `prompt + raw pass-one output + marker` and the format applied — the same
+   textual continuation as v1, now built at the routes layer. An EOS still
+   inside thinking takes the same path (recovery the v1 split left to the
+   reclassify net); `length` ends honestly with no continuation.
+2. Models without a marker (harmony/explicit thinking) use exactly upstream's
+   flow: cancel at the thinking→content transition, re-render via `chatPrompt`
+   with the thinking as an assistant message (+ the harmony final-channel
+   prefill), rerun constrained.
+
+**ChatHandler** keeps its accepted double request and gains the marker stop on
+pass one — the fix for the measured qwen3.6 chat runaway (a model that never
+closes thinking has no thinking→content transition to trigger on, so pass one
+burned to `num_predict`: eval pinned at 16000, empty response, ~16k reported as
+`prompt_eval_count`). Tools requests keep the transition flow: a stop at the
+marker would preempt a tool call that follows `</think>`.
+
+**Hardenings, both handlers** (carried from v1, now engine-agnostic):
+
+- Continuation pre-checked with `Tokenize` against the **loaded runner's
+  `ContextLength()`** (request options may still hold `0` = auto — using them
+  raw would trip the check on every request); if the thinking filled the
+  window, the request ends `done_reason:"length"` with the streamed thinking
+  preserved instead of a 500.
+- Final metrics count each token once: pass one's `prompt_eval_count`, summed
+  `eval_count`/durations. On chat this fixes the 16,181-vs-~888 inflation; the
+  cancel-path (no pass-one final) keeps upstream's raw forwarding.
+
+The runner-layer split was removed in the follow-up commit (routes stopped
+passing `ThinkCloseTag`, making it unreachable; then the field and machinery
+went away, −367 lines). `reclassifyConstrainedThinking` remains as the net for
+flows the double request does not cover.
+
 ## Validation
 
 Functional matrix (temperature 0, `num_predict` 512, both fixed builds:
@@ -273,78 +335,128 @@ thinking (honest `done_reason:"length"`, empty response — the same would happe
 correctness workaround anymore; size `num_predict` (and `num_ctx`) for reasoning +
 answer.
 
-Unit tests: `TestLlamaServerCompletionDeferredFormat` (two-pass orchestration against
-a fake llama-server: pass-1 unconstrained + marker stop, pass-2 continuation prompt +
-grammar, merged metrics), `TestLlamaServerCompletionDeferredFormatThinkingOnly`
-(EOS/limit mid-thinking → single pass), `TestApplyCompletionFormat`,
+Unit tests (v1, removed with the runner split): `TestLlamaServerCompletionDeferredFormat`
+(+`ContextFull`, `ThinkingOnly`). Still present: `TestApplyCompletionFormat`,
 `Test{Nemotron3Nano,Qwen35}Parser*ThinkingCloseMarker`, and
 `TestReclassifyConstrainedThinking`.
+
+### Validation v2 — routes layer (2026-08-02)
+
+Fork-`main` Go binary served over the b9888+002 payload
+(`/opt/github/MaxusAI/ollama-0321/build/lib/ollama`, test server :11441,
+gfx1151/ROCm, `OLLAMA_FLASH_ATTENTION=1`, `OLLAMA_KV_CACHE_TYPE=q8_0`); suite
+as committed, `THINK=on NUM_PREDICT=16000`, temperature 0, `format:"json"`.
+Raw scores/responses archived in the session's `validation-11441/`.
+
+| cell (think:on) | ENDPOINT=generate | ENDPOINT=chat |
+|---|---|---|
+| nemotron scene: json / labels / colors / bbox-hits / IoU / serial | **valid / 6/6 / 6/6 / 6/6 / 0.768 / found** | **identical, same counts** |
+| nemotron scene counts (prompt / eval) | 2,674 / 11,373 | 2,674 / 11,373 |
+| qwen3.6 invoice: json / items / qty-price / total / name-bbox | **valid / 5/5 / 5/5 / exact / 4/5** | **valid / 5/5 / 5/5 / exact / 4/5** |
+| qwen3.6 invoice counts (prompt / eval) | 2,741 / 7,322 | 2,741 / 3,139 |
+
+- Nemotron's chat and generate cells are literally identical — the two
+  continuation styles (textual vs `chatPrompt` re-render) converge at temp 0.
+  Its bbox line improved over the v1 record (6/6 center-hits, IoU 0.768,
+  norm-1000; v1 recorded 5/6 pixel-space IoU ≈ 0.3).
+- **Chat runaway fixed and honest:** the scene prompt drives qwen3.6 chat into
+  a marker-stop pass one that ended at 13,515 generated tokens (< 16,000 —
+  previously pinned at exactly 16000) followed by a real constrained
+  continuation, with `prompt_eval_count` reported as the true **2,613** (the
+  pre-fix measurement reported 16,181 vs ~888 real on a smaller prompt — the
+  continuation's cache-inclusive prefill).
+- **Honest residuals, reported as data:** qwen3.6 + this scene prompt at
+  temp 0 is a pathological thinker — at `num_ctx 32768` it produced 16,000
+  thinking tokens without ever emitting `</think>` (honest
+  `done_reason:"length"`, empty response, true counts); at `num_ctx 16384` the
+  continuation started legally with ~250 tokens of headroom and was cut by the
+  window mid-JSON. Neither is the bug: the first is the model never closing
+  (nothing can force a close the model won't emit — only `num_predict` bounds
+  it now), the second is the documented size-`num_ctx`-for-thinking+answer
+  trade. The invoice cells show the same model+endpoints producing perfect
+  constrained output when its thinking terminates.
+
+Unit tests (v2): `TestGenerateThinkFormatMarkerFlow` (+`Streaming`,
+`ContextFull`) and `TestChatThinkFormatMarkerStop` /
+`TestChatThinkFormatLengthNoContinuation` in `server/routes_generate_test.go` —
+pass-one format-strip + marker-stop assertions, continuation prompt equality,
+merged metrics, context-full length end, and the no-continuation-on-length
+rule, against the mock runner. The pre-existing chat `structured outputs
+restart` tests cover the transition fallback unchanged.
 
 ## Upstream engagement draft
 
 Comment for [PR #14288](https://github.com/ollama/ollama/pull/14288) (do not open a
-new issue — #10538/#11691 already track this and #14288 is the pending fix). Reflects
-the final implementation including `925a669a`:
+new issue — #10538/#11691 already track this and #14288 is the pending fix).
+Positioned as a **collaborative superset of #14288**: we adopted its routes-layer
+double-request architecture and carry three hardenings on top, each backed by a
+measurement. Rewritten 2026-08-02 for the routes-layer implementation
+(supersedes the earlier runner-layer pitch). **Do not post without Glenn's
+explicit go.**
 
-> Confirming this is still needed on v0.32.x, and that the failure is worse than
-> "garbage output" for one class of model: with `/api/generate` + `think:true` +
+> Confirming this is still needed on v0.32.x, and adding measurements from a
+> downstream deployment that shipped exactly this PR's architecture — plus three
+> hardenings we needed in practice. First, the failure is worse than "garbage
+> output" for one class of model: with `/api/generate` + `think:true` +
 > `format:"json"`, models whose parser starts *inside* thinking (nemotron3,
 > qwen3.5/3.6) return `{"response": "", "thinking": "{…the model's correct JSON…}"}`.
 > The eager grammar admits no `</think>` token, so the model can never leave thinking
 > and the marker-based parser files the entire grammar-forced answer as reasoning.
-> `/api/chat` escapes this via the #12460 double-request; generate never got the
-> equivalent, on the llama-server runner or the old Go engine before it. Worth noting
-> the blast radius is wider than the native endpoint: `/v1/completions` also routes to
-> `GenerateHandler`, so the OpenAI-compat completions API is affected too, while
+> The blast radius is wider than the native endpoint: `/v1/completions` also routes
+> to `GenerateHandler`, so the OpenAI-compat completions API is affected too, while
 > `/v1/chat/completions`, `/v1/responses` and `/v1/messages` all reach `ChatHandler`
 > and are fine — which is why this has stayed invisible to most users.
 >
-> We ship a downstream fix that takes a different shape from the double-request, and
-> it may be worth considering alongside this PR. Instead of re-rendering the prompt
-> with an assistant thinking message, the llama-server runner splits the completion
-> in two passes over one text prompt:
+> We run this PR's double-request shape in production and suggest folding in three
+> hardenings, each of which corresponds to a failure we hit:
 >
-> 1. generate unconstrained with the parser's think-close marker added as an extra
->    stop string;
-> 2. if generation stopped on that marker (`stopping_word` distinguishes it from a
->    user stop), continue `prompt + thinking + marker` with the grammar/schema applied
->    eagerly. With `cache_prompt` the continuation prefill is a KV-cache hit.
+> 1. **Stop pass one at the think-close marker instead of waiting for content.**
+>    The transition signal (parsed thinking → parsed content) never comes for a
+>    model that never closes its thinking, and pass one burns to `num_predict`
+>    unconstrained — we measured qwen3.6 on `/api/chat` (which has this same gap
+>    since #12460) pinned at eval_count 16000 with an empty response,
+>    prompt-dependently 2 runs out of 3. Parsers that know their marker expose it
+>    (a one-method `ImplicitThinkingParser` interface on the parser registry:
+>    `nemotron-3-nano`, `qwen3.5`; the generic thinking parser participates when
+>    the prompt prefills the opening tag), and pass one carries it as a stop
+>    string. Generation then ends the moment reasoning closes — also saving the
+>    throwaway unconstrained content the cancel flow generates — and the handler
+>    feeds the marker through the parser and continues. A model that still never
+>    closes ends as an honest `done_reason:"length"`. The same one-line stop fixes
+>    the chat handler's runaway.
+> 2. **Pre-check the continuation against the context window.** If the thinking
+>    (re-submitted as prompt for pass two) no longer fits `num_ctx`, the runner
+>    rejects the request and the client gets a 500 *after* thinking already
+>    streamed — reproduced live. A `Tokenize` pre-check (against the loaded
+>    runner's context length, not request options, which may still hold 0=auto)
+>    turns that into a clean `done_reason:"length"` with the thinking preserved.
+> 3. **Merge metrics so each token is counted once.** Forwarding pass-two's
+>    counts reports the continuation's cache-inclusive prefill as
+>    `prompt_eval_count` — we measured 16,181 reported vs ~888 real on chat.
+>    Report pass one's `prompt_eval_count` and sum `eval_count`/durations.
 >
-> Properties that differ from the re-render approach:
+> One shape difference worth discussing: for models with a known marker, pass two
+> can continue **textually** (`prompt + emitted thinking + marker`, format
+> applied) instead of re-rendering with an assistant thinking message. That keeps
+> the continuation an exact prompt-cache hit, is independent of whether a
+> template round-trips thinking, and needs no per-model "continue thinking vs
+> answer now" disambiguation (the reason gpt-oss needs the final-channel prefill
+> hack). Models without a marker (harmony) keep this PR's re-render flow — the
+> two compose cleanly as fast path + fallback; in our validation both styles
+> produced identical outputs and identical merged counts on nemotron3.
 >
-> - **One mechanism for `format:"json"` and JSON schemas** — the constrained pass is
->   an ordinary constrained request, so nothing needs to know how the schema becomes
->   a grammar.
-> - **No template/renderer involvement**, so it also works for `raw` and
->   template-less generates, and there is no "continue thinking vs answer now"
->   ambiguity to disambiguate per model (the reason gpt-oss needs an explicit prefill
->   hack in the chat path).
-> - **Thinking streams live** to the client during pass one; the marker is injected
->   into the stream between passes so parsers close thinking exactly where they would
->   have.
-> - **Honest termination**: if reasoning fills the context window, the continuation is
->   skipped (pre-checked via `/tokenize`, plus a fallback if llama-server still
->   rejects it) and the request ends as `done_reason: "length"` rather than surfacing
->   a 500 after tokens were already streamed.
-> - **Metrics count each token once**: `prompt_eval_count` is pass one's real prompt,
->   `eval_count` sums both passes' generated tokens — the continuation's
->   cache-inclusive prefill is not re-counted.
->
-> Parsers opt in through a small `ImplicitThinkingParser` interface (currently
-> `nemotron-3-nano` and `qwen3.5`); the generic template parser participates when the
-> prompt prefills the opening tag. `/api/chat` is untouched. There is also a
-> defensive reclassification in `GenerateHandler` for runners without the deferral
-> (MLX): non-streaming, `format` active, `done_reason: "stop"`, empty response, and
-> valid-JSON thinking → the thinking is the response.
->
-> Branch against current main is ready if useful (+704/−45 across 10 files, of which
-> ~466 lines are tests); validated end-to-end on nemotron3 and qwen3.6 for `"json"`
-> and schema formats, streaming and non-streaming. Happy to open it as a PR or fold
-> the approach into this one — whichever maintainers prefer.
+> Validated end-to-end over a ground-truth vision-extraction suite (nemotron3 +
+> qwen3.6, `"json"` and schema formats, streaming and non-streaming, both
+> endpoints): think-on structured output goes from empty responses to valid JSON
+> at full extraction quality, with reasoning measurably improving nemotron's
+> bbox grounding. A branch with the combined shape (this PR + the three
+> hardenings + regression tests for the chat runaway, context-full end, and
+> metrics merge) is ready — happy to PR it, or to break any subset into this one,
+> whichever the maintainers prefer.
 
-The ready branch is `feat/upstream-generate-think-format` (worktree; commits
-`2aff0a70` + `b6efb50a` on top of upstream `8d8c701d`): full `llm` + `server` +
-`model/parsers` suites pass, and it excludes these fork-only docs.
+The ready branch is `feat/upstream-generate-think-format`, rebased onto current
+upstream `main` with the routes-layer shape (see ADR 0004); full `llm` +
+`server` + `model/parsers` suites pass, and it excludes these fork-only docs.
 
 ## What if the model *mentions* `</think>` inside its thinking?
 
@@ -375,13 +487,18 @@ same text-level, first-occurrence semantics every other layer already uses:
   terminator. `/api/generate` has no tools, so phase 1 does not stop on it; if a
   model ever emitted it mid-thinking under format, phase 1 would run to its natural
   end and the output would degrade to pre-fix classification for that request (no
-  crash). Revisit if generate grows tool support.
+  crash). On `/api/chat` the v2 marker flow is disabled whenever the request
+  carries tools (the stop would preempt a tool call that follows `</think>`);
+  those requests keep the upstream transition flow. Revisit if generate grows
+  tool support.
 
 ## Operational notes
 
 - The routing-policy amendment "serve JSON extraction with `think:false`"
   (nemotron-test-image.md, 2026-08-01) is lifted by this fix on builds that carry it;
   keep it for any binary without the fix.
-- `release/0.32.1-dynres` carries the fix as `d1ef5557` (cherry-pick of `928c7494`);
-  Go binary rebuilt as `ollama-dynres-genfix` — llama-server payload untouched
-  (b9888+002), so existing quality verdicts stand.
+- `release/0.32.1-dynres` carried v1 as `d1ef5557` (cherry-pick of `928c7494`);
+  the v2 routes-layer commits are cherry-picked on top (see the branch log) and
+  the image rebuilt per
+  [nemotron-test-image.md](nemotron-test-image.md) conventions — llama-server
+  payload untouched (b9888+002), so existing quality verdicts stand.

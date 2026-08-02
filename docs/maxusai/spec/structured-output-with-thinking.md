@@ -79,26 +79,32 @@ they transition states at the right point.
 with no `format`, generation MUST behave exactly as it did before: a single
 completion, constrained from the first token when `format` is set.
 
-## 3. Implementation on the llama-server runner
+## 3. Implementation at the routes layer
 
-Satisfied by a two-pass split (ADR 0002): pass one generates unconstrained with the
-close marker as an extra stop string; if `stopping_word` reports that marker, pass two
-continues `prompt + reasoning + marker` with the grammar applied eagerly.
-`cache_prompt` makes the second prefill a cache hit.
+Satisfied by a two-request split in `GenerateHandler`/`ChatHandler` (ADR 0004,
+originally a runner-layer split per ADR 0002): pass one strips `format` and, when
+the model's close marker is known (`parsers.ImplicitThinkingParser`, or the
+generic thinking parser with a prefilled opening tag), carries the marker as an
+extra stop string; on `done_reason:"stop"` with no parsed content, pass two
+continues `prompt + reasoning + marker` (generate) or the re-rendered prompt
+with the reasoning as an assistant message (chat) with the grammar applied
+eagerly. Prompt caching makes the second prefill a cache hit in the textual
+form. Models without a known marker use the thinking→content transition with a
+re-rendered continuation (upstream #12460/#14288 flow).
 
 Requirements on that implementation:
 
 - The second pass MUST NOT carry the marker as a stop string (R2: a JSON string value
   containing the marker must not truncate the answer).
-- Before the second pass, the continuation prompt MUST be checked against the context
-  window; if it does not fit, the request ends per R5.
-- Prompts that context-shift has reduced to a token array cannot be continued
-  textually; such requests MAY fall back to eager constraining, and the reclassifier
-  below then applies.
+- Before the second pass, the continuation prompt MUST be checked against the loaded
+  runner's context length (request options may report 0 = auto); if it does not fit,
+  the request ends per R5.
+- On `/api/chat`, requests carrying tools MUST NOT use the marker stop (it would
+  preempt a tool call following the marker); they keep the transition flow.
 
 ## 4. Defensive reclassification
 
-For runners that do not implement §3 (e.g. MLX), a non-streaming generate response
+For flows the double request does not cover, a non-streaming generate response
 that has `format` active, `done_reason: "stop"`, an empty response, and thinking that
 is itself valid JSON MUST be reclassified so the thinking becomes the response. This
 is a safety net for R3 only; it does not satisfy R1, because such a generation was
@@ -106,16 +112,17 @@ constrained throughout.
 
 ## 5. Conformance
 
-Automated:
+Automated (`server/routes_generate_test.go`):
 
-- `TestLlamaServerCompletionDeferredFormat` — pass one unconstrained and stopped on
-  the marker, pass two's prompt and grammar, streamed order (R1, R2, R4, R7),
-  metrics (R6).
-- `TestLlamaServerCompletionDeferredFormatContextFull` — R5.
-- `TestLlamaServerCompletionDeferredFormatThinkingOnly` — budget exhaustion inside
+- `TestGenerateThinkFormatMarkerFlow` (+`Streaming`) — pass one format-free and
+  marker-stopped, pass two's continuation prompt and format, streamed order
+  (R1, R2, R4, R7), metrics (R6).
+- `TestGenerateThinkFormatContextFull` — R5.
+- `TestChatThinkFormatMarkerStop` — the chat marker flow and metrics (R6).
+- `TestChatThinkFormatLengthNoContinuation` — budget exhaustion inside
   reasoning (R5).
-- `TestApplyCompletionFormat` — format translation and the untouched non-thinking
-  path (R9).
+- The pre-existing chat `structured outputs restart` tests — the transition
+  fallback.
 - `Test{Nemotron3Nano,Qwen35}Parser*ThinkingCloseMarker` — marker exposure (R4).
 - `TestReclassifyConstrainedThinking` — §4.
 

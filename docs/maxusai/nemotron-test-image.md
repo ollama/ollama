@@ -257,8 +257,11 @@ The misfiled think:on cells were an Ollama bug, not model failures:
 `/api/generate` (+`/v1/completions`) with thinking + `format` never worked in any
 release — root cause, fix (two-pass stop-split), and history in
 [generate-think-format-empty-response.md](generate-think-format-empty-response.md)
-and [ADR 0002](adr/0002-generate-think-format-two-pass.md); fix merged to main
-(PR #22) and cherry-picked to `release/0.32.1-dynres`.
+and [ADR 0002](adr/0002-deferred-format-constraining.md) (mechanism since moved
+to the routes layer,
+[ADR 0004](adr/0004-routes-layer-think-format-double-request.md)); fix merged to
+main (PR #22, re-architected in the routes-layer PR) and cherry-picked to
+`release/0.32.1-dynres`.
 
 On the fixed b9888+002 build (`ollama-dynres-genfix*`), think:on + format:json,
 temperature 0:
