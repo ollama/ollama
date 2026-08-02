@@ -23,6 +23,17 @@ def gen(prompt, images, num_predict=None, num_ctx=16384):
     }
     if os.environ.get("THINK", "false") != "on":
         payload["think"] = False
+    endpoint = os.environ.get("ENDPOINT", "generate")
+    if endpoint == "chat":
+        payload["messages"] = [{"role": "user", "content": payload.pop("prompt"),
+                                "images": payload.pop("images")}]
+        req = urllib.request.Request(HOST + "/api/chat",
+            data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
+        r = json.load(urllib.request.urlopen(req, timeout=1800))
+        msg = r.get("message") or {}
+        r["response"] = msg.get("content", "")
+        r["thinking"] = msg.get("thinking", "")
+        return r
     req = urllib.request.Request(HOST + "/api/generate",
         data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
     return json.load(urllib.request.urlopen(req, timeout=1800))
