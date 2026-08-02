@@ -1,7 +1,12 @@
 # ADR 0002: Defer `format` constraining for implicit-thinking generates via a stop-split continuation, not lazy grammars
 
-- **Status:** accepted, validated 2026-08-01 on fork `main` (b10091 runners) and
-  `release/0.32.1-dynres` (b9888+002 runners). Full evidence in
+- **Status:** superseded by
+  [ADR 0004](0004-routes-layer-think-format-double-request.md) (2026-08-02) —
+  the deferral mechanism moved from the llama-server runner to the routes
+  layer; the problem analysis and the alternatives record below remain the
+  reference. Originally accepted and validated 2026-08-01 on fork `main`
+  (b10091 runners) and `release/0.32.1-dynres` (b9888+002 runners). Full
+  evidence in
   [generate-think-format-empty-response.md](../generate-think-format-empty-response.md);
   the resulting contract is specified in
   [SPEC: structured output combined with thinking](../spec/structured-output-with-thinking.md).

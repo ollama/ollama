@@ -3598,3 +3598,473 @@ func TestTruncateNativeChatMessages(t *testing.T) {
 		})
 	}
 }
+
+// setupImplicitThinkingModel creates a scheduler-wired server around mock and
+// registers a model that uses the given implicit-thinking builtin parser.
+func setupImplicitThinkingModel(t *testing.T, mock *mockRunner, modelName, parser string) *Server {
+	t.Helper()
+
+	s := &Server{
+		sched: &Scheduler{
+			pendingReqCh:    make(chan *LlmRequest, 1),
+			finishedReqCh:   make(chan *LlmRequest, 1),
+			expiredCh:       make(chan *runnerRef, 1),
+			unloadedCh:      make(chan any, 1),
+			loaded:          make(map[string]*runnerRef),
+			newServerFn:     newMockServer(mock),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+			waitForRecovery: 250 * time.Millisecond,
+			loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				req.successCh <- &runnerRef{llama: mock}
+				return false
+			},
+		},
+	}
+
+	go s.sched.Run(t.Context())
+
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture":          "llama",
+		"llama.block_count":             uint32(1),
+		"llama.context_length":          uint32(8192),
+		"llama.embedding_length":        uint32(4096),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(8),
+		"tokenizer.ggml.tokens":         []string{""},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*ggml.Tensor{
+		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+	})
+
+	if w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:    modelName,
+		Files:    map[string]string{"file.gguf": digest},
+		Parser:   parser,
+		Template: `{{ if .Prompt }}{{ .Prompt }} {{ end }}{{ .Response }}`,
+		Stream:   &stream,
+	}); w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	return s
+}
+
+// TestGenerateThinkFormatMarkerFlow exercises the structured-outputs double
+// request on /api/generate for an implicit-thinking model: pass one runs
+// without the format and with the think-close marker as a stop string, pass
+// two continues the exact token stream with the format applied, and the final
+// metrics count every token once.
+func TestGenerateThinkFormatMarkerFlow(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mock := &mockRunner{}
+	s := setupImplicitThinkingModel(t, mock, "test-implicit-thinking", "qwen3.5")
+
+	format := json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}}}`)
+
+	var (
+		requestsMu sync.Mutex
+		requests   []llm.CompletionRequest
+	)
+
+	mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+		requestsMu.Lock()
+		requests = append(requests, r)
+		callNum := len(requests)
+		requestsMu.Unlock()
+
+		switch callNum {
+		case 1:
+			fn(llm.CompletionResponse{
+				Content: "Reasoning about the answer.",
+				Done:    false,
+			})
+			// llama-server ends the stream when the stop string fires; the
+			// marker itself is not part of the emitted content.
+			fn(llm.CompletionResponse{
+				Content:            "",
+				Done:               true,
+				DoneReason:         llm.DoneReasonStop,
+				PromptEvalCount:    7,
+				PromptEvalDuration: 70,
+				EvalCount:          50,
+				EvalDuration:       500,
+			})
+			return nil
+		case 2:
+			fn(llm.CompletionResponse{
+				Content:            `{"answer":"42"}`,
+				Done:               true,
+				DoneReason:         llm.DoneReasonStop,
+				PromptEvalCount:    60, // cache-inclusive prefill count that must not be reported
+				PromptEvalDuration: 30,
+				EvalCount:          9,
+				EvalDuration:       90,
+			})
+			return nil
+		default:
+			t.Errorf("unexpected number of completion calls: %d", callNum)
+			return nil
+		}
+	}
+
+	think := true
+	streamRequest := false
+	w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+		Model:  "test-implicit-thinking",
+		Prompt: "Why is the sky blue?",
+		Think:  &api.ThinkValue{Value: think},
+		Stream: &streamRequest,
+		Format: format,
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	if len(requests) != 2 {
+		t.Fatalf("expected two completion calls, got %d", len(requests))
+	}
+
+	if requests[0].Format != nil {
+		t.Errorf("expected first completion format to be nil, got %q", requests[0].Format)
+	}
+	if !slices.Contains(requests[0].Options.Stop, "</think>") {
+		t.Errorf("expected first completion stop strings to contain the think-close marker, got %v", requests[0].Options.Stop)
+	}
+
+	if !bytes.Equal([]byte(format), []byte(requests[1].Format)) {
+		t.Errorf("expected second completion format to match original format")
+	}
+	if slices.Contains(requests[1].Options.Stop, "</think>") {
+		t.Errorf("expected second completion stop strings to not contain the think-close marker, got %v", requests[1].Options.Stop)
+	}
+	wantContinuation := requests[0].Prompt + "Reasoning about the answer." + "</think>"
+	if requests[1].Prompt != wantContinuation {
+		t.Errorf("expected continuation prompt %q, got %q", wantContinuation, requests[1].Prompt)
+	}
+
+	var resp api.GenerateResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.Thinking != "Reasoning about the answer." {
+		t.Errorf("expected thinking %q, got %q", "Reasoning about the answer.", resp.Thinking)
+	}
+	if resp.Response != `{"answer":"42"}` {
+		t.Errorf("expected response %q, got %q", `{"answer":"42"}`, resp.Response)
+	}
+	if resp.DoneReason != "stop" {
+		t.Errorf("expected done reason stop, got %s", resp.DoneReason)
+	}
+	if resp.PromptEvalCount != 7 {
+		t.Errorf("expected prompt eval count 7 (pass one), got %d", resp.PromptEvalCount)
+	}
+	if resp.EvalCount != 59 {
+		t.Errorf("expected eval count 59 (both passes), got %d", resp.EvalCount)
+	}
+}
+
+// TestGenerateThinkFormatMarkerFlowStreaming verifies chunk cadence for the
+// double request when streaming: thinking chunks first, then constrained
+// content, one final done chunk with merged metrics.
+func TestGenerateThinkFormatMarkerFlowStreaming(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mock := &mockRunner{}
+	s := setupImplicitThinkingModel(t, mock, "test-implicit-thinking-stream", "qwen3.5")
+
+	format := json.RawMessage(`"json"`)
+
+	var calls int
+	mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+		calls++
+		switch calls {
+		case 1:
+			fn(llm.CompletionResponse{Content: "Thinking hard.", Done: false})
+			fn(llm.CompletionResponse{Content: "", Done: true, DoneReason: llm.DoneReasonStop, PromptEvalCount: 5, EvalCount: 20})
+		case 2:
+			fn(llm.CompletionResponse{Content: `{"ok":true}`, Done: false})
+			fn(llm.CompletionResponse{Content: "", Done: true, DoneReason: llm.DoneReasonStop, PromptEvalCount: 25, EvalCount: 6})
+		}
+		return nil
+	}
+
+	think := true
+	w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+		Model:  "test-implicit-thinking-stream",
+		Prompt: "Answer in JSON.",
+		Think:  &api.ThinkValue{Value: think},
+		Format: format,
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var sawThinking, sawContent bool
+	var final api.GenerateResponse
+	dec := json.NewDecoder(w.Body)
+	for {
+		var chunk api.GenerateResponse
+		if err := dec.Decode(&chunk); err == io.EOF {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		if chunk.Thinking != "" {
+			sawThinking = true
+			if sawContent {
+				t.Errorf("thinking chunk arrived after content started")
+			}
+		}
+		if chunk.Response != "" {
+			sawContent = true
+		}
+		if chunk.Done {
+			final = chunk
+		}
+	}
+
+	if calls != 2 {
+		t.Fatalf("expected two completion calls, got %d", calls)
+	}
+	if !sawThinking || !sawContent {
+		t.Fatalf("expected both thinking and content chunks, got thinking=%v content=%v", sawThinking, sawContent)
+	}
+	if !final.Done || final.DoneReason != "stop" {
+		t.Fatalf("expected a final stop chunk, got done=%v reason=%q", final.Done, final.DoneReason)
+	}
+	if final.PromptEvalCount != 5 {
+		t.Errorf("expected prompt eval count 5 (pass one), got %d", final.PromptEvalCount)
+	}
+	if final.EvalCount != 26 {
+		t.Errorf("expected eval count 26 (both passes), got %d", final.EvalCount)
+	}
+}
+
+// TestGenerateThinkFormatContextFull verifies that when the thinking fills the
+// context window, the double request ends as an honest length-limited
+// thinking-only result instead of attempting a continuation the runner would
+// reject.
+func TestGenerateThinkFormatContextFull(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mock := &mockRunner{contextLength: 20}
+	s := setupImplicitThinkingModel(t, mock, "test-implicit-thinking-full", "qwen3.5")
+
+	longThinking := strings.Repeat("word ", 30)
+
+	var calls int
+	mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+		calls++
+		fn(llm.CompletionResponse{Content: longThinking, Done: false})
+		fn(llm.CompletionResponse{Content: "", Done: true, DoneReason: llm.DoneReasonStop, PromptEvalCount: 7, EvalCount: 30})
+		return nil
+	}
+
+	think := true
+	streamRequest := false
+	w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+		Model:  "test-implicit-thinking-full",
+		Prompt: "Why?",
+		Think:  &api.ThinkValue{Value: think},
+		Stream: &streamRequest,
+		Format: json.RawMessage(`"json"`),
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	if calls != 1 {
+		t.Fatalf("expected a single completion call, got %d", calls)
+	}
+
+	var resp api.GenerateResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.DoneReason != "length" {
+		t.Errorf("expected done reason length, got %q", resp.DoneReason)
+	}
+	if resp.Response != "" {
+		t.Errorf("expected empty response, got %q", resp.Response)
+	}
+	if resp.Thinking == "" {
+		t.Errorf("expected the emitted thinking to be preserved")
+	}
+	if resp.PromptEvalCount != 7 || resp.EvalCount != 30 {
+		t.Errorf("expected pass-one metrics 7/30, got %d/%d", resp.PromptEvalCount, resp.EvalCount)
+	}
+}
+
+// TestChatThinkFormatMarkerStop is the regression test for the chat runaway:
+// with format set and an implicit-thinking model, pass one must carry the
+// think-close marker as a stop string so a model that never emits content
+// (never closes thinking on its own) cannot burn to num_predict. The final
+// metrics count every token once.
+func TestChatThinkFormatMarkerStop(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mock := &mockRunner{}
+	s := setupImplicitThinkingModel(t, mock, "test-implicit-thinking-chat", "qwen3.5")
+
+	format := json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}}}`)
+
+	var (
+		requestsMu sync.Mutex
+		requests   []llm.CompletionRequest
+	)
+
+	mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+		requestsMu.Lock()
+		requests = append(requests, r)
+		callNum := len(requests)
+		requestsMu.Unlock()
+
+		switch callNum {
+		case 1:
+			fn(llm.CompletionResponse{Content: "Chat reasoning.", Done: false})
+			// the stop string fires at the marker: stream ends with no content
+			// and pass-one metrics
+			fn(llm.CompletionResponse{
+				Content:            "",
+				Done:               true,
+				DoneReason:         llm.DoneReasonStop,
+				PromptEvalCount:    11,
+				PromptEvalDuration: 110,
+				EvalCount:          100,
+				EvalDuration:       1000,
+			})
+			return nil
+		case 2:
+			fn(llm.CompletionResponse{
+				Content:            `{"answer":"42"}`,
+				Done:               true,
+				DoneReason:         llm.DoneReasonStop,
+				PromptEvalCount:    120, // cache-inclusive prefill count that must not be reported
+				PromptEvalDuration: 60,
+				EvalCount:          9,
+				EvalDuration:       90,
+			})
+			return nil
+		default:
+			t.Errorf("unexpected number of completion calls: %d", callNum)
+			return nil
+		}
+	}
+
+	think := true
+	streamRequest := false
+	w := createRequest(t, s.ChatHandler, api.ChatRequest{
+		Model:    "test-implicit-thinking-chat",
+		Messages: []api.Message{{Role: "user", Content: "Please respond in JSON."}},
+		Think:    &api.ThinkValue{Value: think},
+		Stream:   &streamRequest,
+		Format:   format,
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	if len(requests) != 2 {
+		t.Fatalf("expected two completion calls, got %d", len(requests))
+	}
+
+	if requests[0].Format != nil {
+		t.Errorf("expected first completion format to be nil, got %q", requests[0].Format)
+	}
+	if !slices.Contains(requests[0].Options.Stop, "</think>") {
+		t.Errorf("expected first completion stop strings to contain the think-close marker, got %v", requests[0].Options.Stop)
+	}
+	if !bytes.Equal([]byte(format), []byte(requests[1].Format)) {
+		t.Errorf("expected second completion format to match original format")
+	}
+	if slices.Contains(requests[1].Options.Stop, "</think>") {
+		t.Errorf("expected second completion stop strings to not contain the think-close marker, got %v", requests[1].Options.Stop)
+	}
+
+	var resp api.ChatResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.Message.Thinking != "Chat reasoning." {
+		t.Errorf("expected thinking %q, got %q", "Chat reasoning.", resp.Message.Thinking)
+	}
+	if resp.Message.Content != `{"answer":"42"}` {
+		t.Errorf("expected content %q, got %q", `{"answer":"42"}`, resp.Message.Content)
+	}
+	if resp.DoneReason != "stop" {
+		t.Errorf("expected done reason stop, got %s", resp.DoneReason)
+	}
+	if resp.PromptEvalCount != 11 {
+		t.Errorf("expected prompt eval count 11 (pass one), got %d", resp.PromptEvalCount)
+	}
+	if resp.EvalCount != 109 {
+		t.Errorf("expected eval count 109 (both passes), got %d", resp.EvalCount)
+	}
+}
+
+// TestChatThinkFormatLengthNoContinuation verifies that a pass one that ran
+// out of num_predict while still thinking ends honestly as a length-limited
+// result without a constrained continuation.
+func TestChatThinkFormatLengthNoContinuation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mock := &mockRunner{}
+	s := setupImplicitThinkingModel(t, mock, "test-implicit-thinking-len", "qwen3.5")
+
+	var calls int
+	mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+		calls++
+		fn(llm.CompletionResponse{Content: "Endless reasoning", Done: false})
+		fn(llm.CompletionResponse{Content: "", Done: true, DoneReason: llm.DoneReasonLength, PromptEvalCount: 3, EvalCount: 16})
+		return nil
+	}
+
+	think := true
+	streamRequest := false
+	w := createRequest(t, s.ChatHandler, api.ChatRequest{
+		Model:    "test-implicit-thinking-len",
+		Messages: []api.Message{{Role: "user", Content: "Please respond in JSON."}},
+		Think:    &api.ThinkValue{Value: think},
+		Stream:   &streamRequest,
+		Format:   json.RawMessage(`"json"`),
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	if calls != 1 {
+		t.Fatalf("expected a single completion call, got %d", calls)
+	}
+
+	var resp api.ChatResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.DoneReason != "length" {
+		t.Errorf("expected done reason length, got %q", resp.DoneReason)
+	}
+	if resp.Message.Content != "" {
+		t.Errorf("expected empty content, got %q", resp.Message.Content)
+	}
+}
