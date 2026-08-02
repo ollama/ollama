@@ -147,7 +147,7 @@ func renderPrompt(m *Model, msgs []api.Message, tools []api.Tool, think *api.Thi
 	thinkLevel := ""
 	if think != nil {
 		thinkVal = think.Bool()
-		thinkLevel = think.String()
+		thinkLevel = think.Level()
 	}
 	if err := m.Template.Execute(&b, template.Values{Messages: msgs, Tools: tools, Think: thinkVal, ThinkLevel: thinkLevel, IsThinkSet: think != nil}); err != nil {
 		return "", err

@@ -26,7 +26,7 @@ func TestThinkingConversionMetadata(t *testing.T) {
 			{"supported", `,"output_config":{"effort":"max"}`, "max", "max"},
 			{"unsupported", `,"output_config":{"effort":"low"}`, "low", "low"},
 			{"xhigh", `,"output_config":{"effort":"xhigh"}`, "xhigh", "high"},
-			{"minimal", `,"output_config":{"effort":"minimal"}`, "minimal", nil},
+			{"minimal", `,"output_config":{"effort":"minimal"}`, "minimal", "minimal"},
 			{"future", `,"output_config":{"effort":"future"}`, "future", nil},
 			{"exact spelling", `,"output_config":{"effort":" HIGH "}`, " HIGH ", "high"},
 			{"adaptive", `,"thinking":{"type":"adaptive"},"output_config":{"effort":"xhigh"}`, "xhigh", "high"},
