@@ -1,0 +1,8 @@
+# Generated inputs and run outputs — regenerate with gen_scenes.py / gen_geoms.py.
+visimgs/
+testimgs/
+extimgs/
+resp_*.json
+scores_*.json
+ext_*.json
+__pycache__/
