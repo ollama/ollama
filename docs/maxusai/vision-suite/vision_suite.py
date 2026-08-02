@@ -13,7 +13,9 @@ GT = json.load(open(f"{IMG}/ground_truth.json"))
 def b64(name):
     return base64.b64encode(open(f"{IMG}/{name}", "rb").read()).decode()
 
-def gen(prompt, images, num_predict=None, num_ctx=16384):
+def gen(prompt, images, num_predict=None, num_ctx=None):
+    if num_ctx is None:
+        num_ctx = int(os.environ.get("NUM_CTX", "16384"))
     if num_predict is None:
         num_predict = int(os.environ.get("NUM_PREDICT", "2200"))
     payload = {
