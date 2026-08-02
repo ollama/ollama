@@ -1,0 +1,478 @@
+===== CTXBLOCK nemo/ctx131072/think-false START 12:44:56 vram_idle=502366208 =====
+--- scene_single [canon-nemo-ctx131072-tfalse-generate] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.84,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 2674,
+ "eval_count": 506
+}
+--- document_single [canon-nemo-ctx131072-tfalse-generate] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 3,
+ "prompt_eval_count": 2799,
+ "eval_count": 480
+}
+--- multi_3img [canon-nemo-ctx131072-tfalse-generate] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": false,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "prompt_eval_count": 6203,
+ "eval_count": 1013
+}
+SUITE DONE canon-nemo-ctx131072-tfalse-generate
+vram_loaded=28773523456 first_pass_secs=89
+--- scene_single [canon-nemo-ctx131072-tfalse-chat] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.84,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 2674,
+ "eval_count": 506
+}
+--- document_single [canon-nemo-ctx131072-tfalse-chat] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 2799,
+ "eval_count": 481
+}
+--- multi_3img [canon-nemo-ctx131072-tfalse-chat] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": false,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "prompt_eval_count": 6203,
+ "eval_count": 1019
+}
+SUITE DONE canon-nemo-ctx131072-tfalse-chat
+===== CTXBLOCK nemo/ctx131072/think-false DONE =====
+===== CTXBLOCK gemma/ctx262144/think-false START 12:47:20 vram_idle=502366208 =====
+--- scene_single [canon-gemma-ctx262144-tfalse-generate] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.781,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 1504,
+ "eval_count": 530
+}
+--- document_single [canon-gemma-ctx262144-tfalse-generate] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 1447,
+ "eval_count": 499
+}
+--- multi_3img [canon-gemma-ctx262144-tfalse-generate] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": false,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "prompt_eval_count": 3058,
+ "eval_count": 1143
+}
+SUITE DONE canon-gemma-ctx262144-tfalse-generate
+vram_loaded=30289141760 first_pass_secs=443
+--- scene_single [canon-gemma-ctx262144-tfalse-chat] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.781,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 1504,
+ "eval_count": 530
+}
+--- document_single [canon-gemma-ctx262144-tfalse-chat] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 1447,
+ "eval_count": 499
+}
+--- multi_3img [canon-gemma-ctx262144-tfalse-chat] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": false,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "prompt_eval_count": 3058,
+ "eval_count": 1147
+}
+SUITE DONE canon-gemma-ctx262144-tfalse-chat
+===== CTXBLOCK gemma/ctx262144/think-false DONE =====
+===== CTXBLOCK qwen/ctx262144/think-false START 13:02:05 vram_idle=22817136640 =====
+--- scene_single [canon-qwen-ctx262144-tfalse-generate] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.973,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 2615,
+ "eval_count": 550
+}
+--- document_single [canon-qwen-ctx262144-tfalse-generate] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 2743,
+ "eval_count": 487
+}
+--- multi_3img [canon-qwen-ctx262144-tfalse-generate] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": false,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "prompt_eval_count": 6136,
+ "eval_count": 1167
+}
+SUITE DONE canon-qwen-ctx262144-tfalse-generate
+vram_loaded=48258936832 first_pass_secs=142
+--- scene_single [canon-qwen-ctx262144-tfalse-chat] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.971,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 2615,
+ "eval_count": 550
+}
+--- document_single [canon-qwen-ctx262144-tfalse-chat] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 2743,
+ "eval_count": 487
+}
+--- multi_3img [canon-qwen-ctx262144-tfalse-chat] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": false,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "prompt_eval_count": 6136,
+ "eval_count": 1167
+}
+SUITE DONE canon-qwen-ctx262144-tfalse-chat
+===== CTXBLOCK qwen/ctx262144/think-false DONE =====
+===== CTXBLOCK nemo/ctx131072/think-on START 13:06:09 vram_idle=22831497216 =====
+--- scene_single [canon-nemo-ctx131072-ton-generate] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.839,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 2674,
+ "eval_count": 4613
+}
+--- document_single [canon-nemo-ctx131072-ton-generate] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 4,
+ "items_total": 5,
+ "qty_price_right": 4,
+ "total_right": true,
+ "name_bbox_hits": 0,
+ "prompt_eval_count": 2799,
+ "eval_count": 9244
+}
+--- multi_3img [canon-nemo-ctx131072-ton-generate] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": false,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "prompt_eval_count": 6203,
+ "eval_count": 8954
+}
+SUITE DONE canon-nemo-ctx131072-ton-generate
+vram_loaded=49708027904 first_pass_secs=992
+--- scene_single [canon-nemo-ctx131072-ton-chat] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.839,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 7339,
+ "eval_count": 498
+}
+--- document_single [canon-nemo-ctx131072-ton-chat] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 4,
+ "items_total": 5,
+ "qty_price_right": 4,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 10350,
+ "eval_count": 468
+}
+--- multi_3img [canon-nemo-ctx131072-ton-chat] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": true,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "q4_bbox_space": "norm1000/xyxy",
+ "prompt_eval_count": 16377,
+ "eval_count": 1048
+}
+SUITE DONE canon-nemo-ctx131072-ton-chat
+===== CTXBLOCK nemo/ctx131072/think-on DONE =====
+===== CTXBLOCK gemma/ctx262144/think-on START 13:40:00 vram_idle=24594305024 =====
+--- scene_single [canon-gemma-ctx262144-ton-generate] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.781,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": false,
+ "object_count": 6,
+ "prompt_eval_count": 1507,
+ "eval_count": 403
+}
+--- document_single [canon-gemma-ctx262144-ton-generate] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 1450,
+ "eval_count": 499
+}
+--- multi_3img [canon-gemma-ctx262144-ton-generate] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": true,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "q4_bbox_space": "norm1000/xyxy",
+ "prompt_eval_count": 3061,
+ "eval_count": 1209
+}
+SUITE DONE canon-gemma-ctx262144-ton-generate
+vram_loaded=24439029760 first_pass_secs=724
+--- scene_single [canon-gemma-ctx262144-ton-chat] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.78,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 1512,
+ "eval_count": 425
+}
+--- document_single [canon-gemma-ctx262144-ton-chat] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 1455,
+ "eval_count": 401
+}
+--- multi_3img [canon-gemma-ctx262144-ton-chat] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": true,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "q4_bbox_space": "norm1000/xyxy",
+ "prompt_eval_count": 3066,
+ "eval_count": 1219
+}
+SUITE DONE canon-gemma-ctx262144-ton-chat
+===== CTXBLOCK gemma/ctx262144/think-on DONE =====
+===== CTXBLOCK qwen/ctx262144/think-on START 14:18:15 vram_idle=502366208 =====
+--- scene_single [canon-qwen-ctx262144-ton-generate] ---
+{
+ "json_valid": false,
+ "labels_found": 0,
+ "labels_total": 6,
+ "bbox_hits": 0,
+ "bbox_mean_iou": 0.0,
+ "bbox_space": null,
+ "colors_right": 0,
+ "serial_found": false,
+ "object_count": null,
+ "prompt_eval_count": 2613,
+ "eval_count": 16000
+}
+--- document_single [canon-qwen-ctx262144-ton-generate] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 2741,
+ "eval_count": 3139
+}
+--- multi_3img [canon-qwen-ctx262144-ton-generate] ---
+{
+ "json_valid": false,
+ "q1_right": false,
+ "q2_right": false,
+ "q4_bbox_hit": false,
+ "chart_values_found": 0,
+ "chart_total": 5,
+ "prompt_eval_count": 6134,
+ "eval_count": 16000
+}
+SUITE DONE canon-qwen-ctx262144-ton-generate
+vram_loaded=29174992896 first_pass_secs=818
+--- scene_single [canon-qwen-ctx262144-ton-chat] ---
+{
+ "json_valid": false,
+ "labels_found": 0,
+ "labels_total": 6,
+ "bbox_hits": 0,
+ "bbox_mean_iou": 0.0,
+ "bbox_space": null,
+ "colors_right": 0,
+ "serial_found": false,
+ "object_count": null,
+ "prompt_eval_count": 2613,
+ "eval_count": 16000
+}
+--- document_single [canon-qwen-ctx262144-ton-chat] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 5339,
+ "eval_count": 542
+}
+--- multi_3img [canon-qwen-ctx262144-ton-chat] ---
+{
+ "json_valid": false,
+ "q1_right": false,
+ "q2_right": false,
+ "q4_bbox_hit": false,
+ "chart_values_found": 0,
+ "chart_total": 5,
+ "prompt_eval_count": 6134,
+ "eval_count": 16000
+}
+SUITE DONE canon-qwen-ctx262144-ton-chat
+===== CTXBLOCK qwen/ctx262144/think-on DONE =====
+CTX EXTENSION COMPLETE 14:45:09

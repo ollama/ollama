@@ -1,0 +1,212 @@
+version: {"version":"0.32.1"}
+===== BLOCK ustock/qwen/think-on-chat-RETRY START 15:31:30 =====
+--- scene_single [ustock-qwen-ton-chat] ---
+{
+ "json_valid": false,
+ "labels_found": 0,
+ "labels_total": 6,
+ "bbox_hits": 0,
+ "bbox_mean_iou": 0.0,
+ "bbox_space": null,
+ "colors_right": 0,
+ "serial_found": false,
+ "object_count": null,
+ "prompt_eval_count": 2613,
+ "eval_count": 16000
+}
+--- document_single [ustock-qwen-ton-chat] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 5339,
+ "eval_count": 542
+}
+--- multi_3img [ustock-qwen-ton-chat] ---
+{
+ "json_valid": false,
+ "q1_right": false,
+ "q2_right": false,
+ "q4_bbox_hit": false,
+ "chart_values_found": 0,
+ "chart_total": 5,
+ "prompt_eval_count": 6134,
+ "eval_count": 16000
+}
+SUITE DONE ustock-qwen-ton-chat
+===== BLOCK ustock/qwen/think-on-chat-RETRY DONE =====
+===== BISECT genfix-d1ef5557/ctx16384 START 15:45:10 =====
+--- scene_single [bisect-genfix-d1ef5557-ctx16384] ---
+{
+ "json_valid": false,
+ "labels_found": 0,
+ "labels_total": 6,
+ "bbox_hits": 0,
+ "bbox_mean_iou": 0.0,
+ "bbox_space": null,
+ "colors_right": 0,
+ "serial_found": false,
+ "object_count": null,
+ "prompt_eval_count": 2613,
+ "eval_count": 13771
+}
+SUITE DONE bisect-genfix-d1ef5557-ctx16384
+===== BISECT genfix-d1ef5557/ctx16384 DONE =====
+===== BISECT genfix2-925a669a/ctx16384 START 15:50:31 =====
+--- scene_single [bisect-genfix2-925a669a-ctx16384] ---
+{
+ "json_valid": false,
+ "labels_found": 0,
+ "labels_total": 6,
+ "bbox_hits": 0,
+ "bbox_mean_iou": 0.0,
+ "bbox_space": null,
+ "colors_right": 0,
+ "serial_found": false,
+ "object_count": null,
+ "prompt_eval_count": 2613,
+ "eval_count": 13771
+}
+SUITE DONE bisect-genfix2-925a669a-ctx16384
+===== BISECT genfix2-925a669a/ctx16384 DONE =====
+===== BISECT genfix3-routes/ctx16384 START 15:55:49 =====
+--- scene_single [bisect-genfix3-routes-ctx16384] ---
+{
+ "json_valid": false,
+ "labels_found": 0,
+ "labels_total": 6,
+ "bbox_hits": 0,
+ "bbox_mean_iou": 0.0,
+ "bbox_space": null,
+ "colors_right": 0,
+ "serial_found": false,
+ "object_count": null,
+ "prompt_eval_count": 2613,
+ "eval_count": 13771
+}
+SUITE DONE bisect-genfix3-routes-ctx16384
+===== BISECT genfix3-routes/ctx16384 DONE =====
+===== BISECT canonical-a4788474/ctx16384 START 16:01:10 =====
+--- scene_single [bisect-canonical-ctx16384] ---
+{
+ "json_valid": false,
+ "labels_found": 0,
+ "labels_total": 6,
+ "bbox_hits": 0,
+ "bbox_mean_iou": 0.0,
+ "bbox_space": null,
+ "colors_right": 0,
+ "serial_found": false,
+ "object_count": null,
+ "prompt_eval_count": 2613,
+ "eval_count": 13771
+}
+SUITE DONE bisect-canonical-ctx16384
+===== BISECT canonical-a4788474/ctx16384 DONE =====
+===== BISECT genfix-d1ef5557/ctx32768 START 16:06:28 =====
+--- scene_single [bisect-genfix-d1ef5557-ctx32768] ---
+{
+ "json_valid": false,
+ "labels_found": 0,
+ "labels_total": 6,
+ "bbox_hits": 0,
+ "bbox_mean_iou": 0.0,
+ "bbox_space": null,
+ "colors_right": 0,
+ "serial_found": false,
+ "object_count": null,
+ "prompt_eval_count": 2613,
+ "eval_count": 16000
+}
+SUITE DONE bisect-genfix-d1ef5557-ctx32768
+===== BISECT genfix-d1ef5557/ctx32768 DONE =====
+===== BISECT genfix2-925a669a/ctx32768 START 16:12:22 =====
+--- scene_single [bisect-genfix2-925a669a-ctx32768] ---
+{
+ "json_valid": false,
+ "labels_found": 0,
+ "labels_total": 6,
+ "bbox_hits": 0,
+ "bbox_mean_iou": 0.0,
+ "bbox_space": null,
+ "colors_right": 0,
+ "serial_found": false,
+ "object_count": null,
+ "prompt_eval_count": 2613,
+ "eval_count": 16000
+}
+SUITE DONE bisect-genfix2-925a669a-ctx32768
+===== BISECT genfix2-925a669a/ctx32768 DONE =====
+===== BISECT genfix3-routes/ctx32768 START 16:18:32 =====
+--- scene_single [bisect-genfix3-routes-ctx32768] ---
+{
+ "json_valid": false,
+ "labels_found": 0,
+ "labels_total": 6,
+ "bbox_hits": 0,
+ "bbox_mean_iou": 0.0,
+ "bbox_space": null,
+ "colors_right": 0,
+ "serial_found": false,
+ "object_count": null,
+ "prompt_eval_count": 2613,
+ "eval_count": 16000
+}
+SUITE DONE bisect-genfix3-routes-ctx32768
+===== BISECT genfix3-routes/ctx32768 DONE =====
+===== BISECT canonical-a4788474/ctx32768 START 16:24:41 =====
+--- scene_single [bisect-canonical-ctx32768] ---
+{
+ "json_valid": false,
+ "labels_found": 0,
+ "labels_total": 6,
+ "bbox_hits": 0,
+ "bbox_mean_iou": 0.0,
+ "bbox_space": null,
+ "colors_right": 0,
+ "serial_found": false,
+ "object_count": null,
+ "prompt_eval_count": 2613,
+ "eval_count": 16000
+}
+SUITE DONE bisect-canonical-ctx32768
+===== BISECT canonical-a4788474/ctx32768 DONE =====
+BISECT COMPLETE 16:30:50
+===== CONTROL f16-kv genfix-d1ef5557/ctx16384 START 16:31:08 =====
+--- scene_single [control-f16kv-ctx16384] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.927,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 5325,
+ "eval_count": 3320
+}
+SUITE DONE control-f16kv-ctx16384
+===== CONTROL f16-kv DONE =====
+===== CONTROL f16-kv CANONICAL-IMAGE ctx32768 START 16:33:35 =====
+--- scene_single [control-f16kv-canonical-ctx32768] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.927,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 2613,
+ "eval_count": 3320
+}
+SUITE DONE control-f16kv-canonical-ctx32768
+===== CONTROL f16-kv CANONICAL-IMAGE DONE =====

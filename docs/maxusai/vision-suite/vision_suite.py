@@ -274,7 +274,12 @@ def main():
     MODEL = sys.argv[3] if len(sys.argv) > 3 else "nemotron3:33b-q4_K_M"
     only = sys.argv[4] if len(sys.argv) > 4 else None
     results = {}
-    for name, prompt, images, scorer in tests:
+    run_tests = tests
+    only = os.environ.get("ONLY_TESTS")
+    if only:
+        keep = set(only.split(","))
+        run_tests = [t for t in run_tests if t[0] in keep]
+    for name, prompt, images, scorer in run_tests:
         if only and name != only:
             continue
         print(f"--- {name} [{TAG}] ---", flush=True)

@@ -302,3 +302,11 @@ above stands. Canaried per the isolation recipe (own name, port 11442, models
 
 The canonical container on :11435 still runs `…-a4788474`; promoting
 `…-ae797815` into it goes through the usual deploy gate, not this doc.
+
+### Addendum 2026-08-02 (3) — full-factorial campaign vs genuine upstream
+
+The complete build × model × thinking × endpoint × num_ctx campaign (144 cells,
+baseline corrected to genuine `ollama/ollama:0.32.1-rocm`, dialect-corrected Q4
+scoring, max-context arm, and the qwen runaway root cause: q8_0 KV cache) is
+consolidated in [vision-campaign-2026-08-02.md](vision-campaign-2026-08-02.md),
+with raw logs and parsed JSON under [vision-suite/runs/](vision-suite/runs/).

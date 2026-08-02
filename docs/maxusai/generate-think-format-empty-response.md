@@ -503,3 +503,16 @@ same text-level, first-occurrence semantics every other layer already uses:
   (overlay, canaried — see
   [nemotron-test-image.md](nemotron-test-image.md)) — llama-server payload
   untouched (b9888+002), so existing quality verdicts stand.
+
+## Addendum 2026-08-02 — runaway bisect exonerates the fix lineage
+
+The canonical-image qwen scene/multi think-on runaways triggered a bisect:
+scene cell × {`d1ef5557`, `925a669a`, routes `ae797815`, canonical image} ×
+num_ctx {16,384, 32,768}. All eight q8_0 arms ran away with token-identical
+trajectories (13,771 to ctx-full at 16K; 16,000 to num_predict at 32K) — no
+fix version changes the outcome, because the model never emits the think-close
+marker at all under `OLLAMA_KV_CACHE_TYPE=q8_0`. With f16 KV the same cell
+terminates cleanly at 3,320 evals (IoU 0.927) on both a native binary and the
+canonical image. The stop-split/marker mechanics were never the cause; serve
+qwen3.6 vision+reasoning with f16 KV. Full data:
+[vision-campaign-2026-08-02.md](vision-campaign-2026-08-02.md) §6.
