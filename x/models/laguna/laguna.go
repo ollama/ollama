@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/x/mlxrunner/batch"
@@ -82,6 +83,9 @@ type Model struct {
 	Layers      []*Layer
 	Norm        *nn.RMSNorm
 	LMHead      nn.LinearLayer
+
+	// auxHiddenLayers are the tapped layers; empty means the final hidden.
+	auxHiddenLayers []int
 
 	tok *tokenizer.Tokenizer
 	*Config
@@ -1395,6 +1399,7 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden
 
 func (m *Model) forward(b *batch.Batch, caches []cache.Cache, B, L int32) (hidden, auxHidden *mlx.Array) {
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
+	var features []*mlx.Array
 	h := m.EmbedTokens.Forward(b.InputIDs)
 	for i, layer := range m.Layers {
 		var c cache.Cache
@@ -1402,9 +1407,32 @@ func (m *Model) forward(b *batch.Batch, caches []cache.Cache, B, L int32) (hidde
 			c = caches[i]
 		}
 		h = layer.Forward(h, b, c, positions, B, L, m.Config)
+		if slices.Contains(m.auxHiddenLayers, i) {
+			features = append(features, h)
+		}
 	}
 	out := m.Norm.Forward(h, m.RMSNormEps)
+	if features != nil {
+		return out, mlx.Concatenate(features, -1)
+	}
 	return out, out
+}
+
+// SetAuxHiddenLayers taps the listed layers' outputs, which Forward then
+// returns as the draft-conditioning state in place of the final hidden.
+func (m *Model) SetAuxHiddenLayers(layers []int) {
+	m.auxHiddenLayers = layers
+}
+
+// TokenEmbeddings is the raw lookup, for a draft that embeds with the
+// target's table.
+func (m *Model) TokenEmbeddings(ids *mlx.Array) *mlx.Array {
+	return m.EmbedTokens.Forward(ids)
+}
+
+// RawLogits matches Unembed: this head applies no output decoration.
+func (m *Model) RawLogits(hidden *mlx.Array) *mlx.Array {
+	return m.LMHead.Forward(hidden)
 }
 
 func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
