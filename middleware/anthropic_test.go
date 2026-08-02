@@ -231,6 +231,26 @@ func TestAnthropicMessagesMiddleware(t *testing.T) {
 				},
 				Options: map[string]any{"num_predict": 1024},
 				Stream:  &False,
+				Think:   &api.ThinkValue{Value: 1000},
+			},
+		},
+		{
+			name: "with thinking enabled and no budget",
+			body: `{
+				"model": "test-model",
+				"max_tokens": 1024,
+				"thinking": {"type": "enabled"},
+				"messages": [
+					{"role": "user", "content": "Hello"}
+				]
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{Role: "user", Content: "Hello"},
+				},
+				Options: map[string]any{"num_predict": 1024},
+				Stream:  &False,
 				Think:   &api.ThinkValue{Value: true},
 			},
 		},
