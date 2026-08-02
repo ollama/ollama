@@ -144,6 +144,43 @@ below a ~19K natural convergence (the 16,384-ctx arms were additionally
 window-bound). Uncapped matrix for both builds/endpoints plus the f16
 comparison: `runs/uncapped-2026-08-02.log`.
 
+### Prior art (searched 2026-08-02; no exact prior report found)
+
+No published report combines KV-cache-only q8_0, thinking-length inflation
+(rather than accuracy loss or premature stop), a Qwen3.5/3.6-class model, and
+task-dependence (grounding affected, extraction not). Nearest neighbors:
+
+- **Mechanism, academic:** [arXiv 2606.00206](https://arxiv.org/abs/2606.00206)
+  — quantization noise at high-entropy positions over-samples hesitation
+  tokens and inflates CoT up to 4.5× on R1-distills/QwQ (weight/end-to-end
+  PTQ, KV never isolated); [arXiv 2606.25519](https://arxiv.org/abs/2606.25519)
+  — "CoT token inflation" up to ~2.9× at INT3 incl. Qwen3-30B-A3B-Thinking
+  (weight-only). Our result is the KV-cache-only instance of this phenomenon.
+- **Same arch/knob/backend, inverse symptom:**
+  [ollama#17347](https://github.com/ollama/ollama/issues/17347) — quantized KV
+  on qwen35/qwen35moe under ROCm flips the stop decision the other way
+  (premature EOS mid-turn). Natural cross-reference if we file upstream.
+- **Counter-evidence that sharpens novelty:**
+  [arXiv 2504.04823](https://arxiv.org/abs/2504.04823) finds KV8/KV4
+  near-lossless with *no* length inflation on reasoning benchmarks (text-only,
+  no vision grounding, moderate lengths);
+  [llama.cpp#21385](https://github.com/ggml-org/llama.cpp/issues/21385)
+  reports q4_0 KV "lossless" on Qwen3.5-9B — noting only 8/32 layers carry KV
+  in the hybrid arch — on multi-turn chat, not 19K-token reasoning chains.
+  A single-step KL benchmark ([r/LocalLLaMA](https://www.reddit.com/r/LocalLLaMA/comments/1suh3sz/gemma_4_and_qwen_36_with_q8_0_and_q4_0_kv_cache/))
+  measured qwen3.6 KL &lt; 0.04 at q8_0 — consistent with our view that the
+  effect is accumulation over a long chain, invisible single-step.
+- **Confound ruled out:** [Qwen3#1700](https://github.com/QwenLM/Qwen3/issues/1700)
+  shows JSON-constrained non-termination *without* KV quantization exists as a
+  separate failure class — our f16 control (same grammar, terminates at 3,320)
+  excludes it here.
+- **Related per-phase sensitivity:**
+  [llama.cpp#21679](https://github.com/ggml-org/llama.cpp/issues/21679)
+  measured think-phase KV entries as more quantization-sensitive than
+  answer-phase on R1-distill — an independent hint toward per-phase or
+  per-model KV precision, which our `kv_cache_type` option (ADR 0005) now
+  makes operable per model.
+
 **Operational recommendation (gfx1151 prod runs q8_0):** serve qwen3.6
 vision+reasoning workloads with `OLLAMA_KV_CACHE_TYPE=f16` (or per-model
 override once available). Nemotron and gemma showed no q8_0 sensitivity in 96
