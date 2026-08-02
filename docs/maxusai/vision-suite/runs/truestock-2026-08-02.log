@@ -1,0 +1,447 @@
+version: {"version":"0.32.1"}
+===== BLOCK ustock/gemma/think-false START 14:45:48 =====
+--- scene_single [ustock-gemma-tfalse-generate] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.898,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 848,
+ "eval_count": 530
+}
+--- document_single [ustock-gemma-tfalse-generate] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 3,
+ "prompt_eval_count": 614,
+ "eval_count": 401
+}
+--- multi_3img [ustock-gemma-tfalse-generate] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": true,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "q4_bbox_space": "norm1000/xyxy",
+ "prompt_eval_count": 1295,
+ "eval_count": 1148
+}
+SUITE DONE ustock-gemma-tfalse-generate
+--- scene_single [ustock-gemma-tfalse-chat] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.899,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 848,
+ "eval_count": 530
+}
+--- document_single [ustock-gemma-tfalse-chat] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 3,
+ "prompt_eval_count": 614,
+ "eval_count": 401
+}
+--- multi_3img [ustock-gemma-tfalse-chat] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": true,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "q4_bbox_space": "norm1000/xyxy",
+ "prompt_eval_count": 1295,
+ "eval_count": 1148
+}
+SUITE DONE ustock-gemma-tfalse-chat
+===== BLOCK ustock/gemma/think-false DONE =====
+===== BLOCK ustock/gemma/think-on START 14:54:01 =====
+--- scene_single [ustock-gemma-ton-generate] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.9,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": false,
+ "object_count": 7,
+ "prompt_eval_count": 851,
+ "eval_count": 464
+}
+--- document_single [ustock-gemma-ton-generate] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 4,
+ "items_total": 5,
+ "qty_price_right": 4,
+ "total_right": true,
+ "name_bbox_hits": 1,
+ "prompt_eval_count": 617,
+ "eval_count": 509
+}
+--- multi_3img [ustock-gemma-ton-generate] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": true,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "q4_bbox_space": "norm1000/xyxy",
+ "prompt_eval_count": 1298,
+ "eval_count": 1102
+}
+SUITE DONE ustock-gemma-ton-generate
+--- scene_single [ustock-gemma-ton-chat] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.893,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 3033,
+ "eval_count": 530
+}
+--- document_single [ustock-gemma-ton-chat] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 3,
+ "prompt_eval_count": 3858,
+ "eval_count": 499
+}
+--- multi_3img [ustock-gemma-ton-chat] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": true,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "q4_bbox_space": "norm1000/xyxy",
+ "prompt_eval_count": 3407,
+ "eval_count": 1164
+}
+SUITE DONE ustock-gemma-ton-chat
+===== BLOCK ustock/gemma/think-on DONE =====
+===== BLOCK ustock/nemo/think-false START 15:16:14 =====
+--- scene_single [ustock-nemo-tfalse-generate] ---
+{
+ "json_valid": true,
+ "labels_found": 0,
+ "labels_total": 6,
+ "bbox_hits": 0,
+ "bbox_mean_iou": 0.0,
+ "bbox_space": null,
+ "colors_right": 0,
+ "serial_found": false,
+ "object_count": 6,
+ "prompt_eval_count": 888,
+ "eval_count": 555
+}
+--- document_single [ustock-nemo-tfalse-generate] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 3,
+ "items_total": 5,
+ "qty_price_right": 0,
+ "total_right": true,
+ "name_bbox_hits": 2,
+ "prompt_eval_count": 652,
+ "eval_count": 486
+}
+--- multi_3img [ustock-nemo-tfalse-generate] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": true,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "q4_bbox_space": "pixel/xyxy",
+ "prompt_eval_count": 1324,
+ "eval_count": 984
+}
+SUITE DONE ustock-nemo-tfalse-generate
+--- scene_single [ustock-nemo-tfalse-chat] ---
+{
+ "json_valid": true,
+ "labels_found": 0,
+ "labels_total": 6,
+ "bbox_hits": 0,
+ "bbox_mean_iou": 0.0,
+ "bbox_space": null,
+ "colors_right": 0,
+ "serial_found": false,
+ "object_count": 6,
+ "prompt_eval_count": 888,
+ "eval_count": 555
+}
+--- document_single [ustock-nemo-tfalse-chat] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 3,
+ "items_total": 5,
+ "qty_price_right": 0,
+ "total_right": true,
+ "name_bbox_hits": 2,
+ "prompt_eval_count": 652,
+ "eval_count": 486
+}
+--- multi_3img [ustock-nemo-tfalse-chat] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": true,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "q4_bbox_space": "pixel/xyxy",
+ "prompt_eval_count": 1324,
+ "eval_count": 984
+}
+SUITE DONE ustock-nemo-tfalse-chat
+===== BLOCK ustock/nemo/think-false DONE =====
+===== BLOCK ustock/nemo/think-on START 15:18:10 =====
+--- scene_single [ustock-nemo-ton-generate] ---
+{
+ "json_valid": false,
+ "labels_found": 0,
+ "labels_total": 6,
+ "bbox_hits": 0,
+ "bbox_mean_iou": 0.0,
+ "bbox_space": null,
+ "colors_right": 0,
+ "serial_found": false,
+ "object_count": null,
+ "prompt_eval_count": 888,
+ "eval_count": 546
+}
+--- document_single [ustock-nemo-ton-generate] ---
+{
+ "json_valid": false,
+ "invoice_no": false,
+ "items_found": 0,
+ "items_total": 5,
+ "qty_price_right": 0,
+ "total_right": false,
+ "name_bbox_hits": 0,
+ "prompt_eval_count": 652,
+ "eval_count": 486
+}
+--- multi_3img [ustock-nemo-ton-generate] ---
+{
+ "json_valid": false,
+ "q1_right": false,
+ "q2_right": false,
+ "q4_bbox_hit": false,
+ "chart_values_found": 0,
+ "chart_total": 5,
+ "prompt_eval_count": 1324,
+ "eval_count": 880
+}
+SUITE DONE ustock-nemo-ton-generate
+--- scene_single [ustock-nemo-ton-chat] ---
+{
+ "json_valid": true,
+ "labels_found": 0,
+ "labels_total": 6,
+ "bbox_hits": 0,
+ "bbox_mean_iou": 0.0,
+ "bbox_space": null,
+ "colors_right": 0,
+ "serial_found": false,
+ "object_count": 6,
+ "prompt_eval_count": 16181,
+ "eval_count": 516
+}
+--- document_single [ustock-nemo-ton-chat] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 3,
+ "items_total": 5,
+ "qty_price_right": 3,
+ "total_right": true,
+ "name_bbox_hits": 3,
+ "prompt_eval_count": 4137,
+ "eval_count": 463
+}
+--- multi_3img [ustock-nemo-ton-chat] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": false,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "prompt_eval_count": 4729,
+ "eval_count": 968
+}
+SUITE DONE ustock-nemo-ton-chat
+===== BLOCK ustock/nemo/think-on DONE =====
+===== BLOCK ustock/qwen/think-false START 15:26:10 =====
+--- scene_single [ustock-qwen-tfalse-generate] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.953,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 2615,
+ "eval_count": 550
+}
+--- document_single [ustock-qwen-tfalse-generate] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 2743,
+ "eval_count": 487
+}
+--- multi_3img [ustock-qwen-tfalse-generate] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": true,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "q4_bbox_space": "norm1000/xyxy",
+ "prompt_eval_count": 6136,
+ "eval_count": 944
+}
+SUITE DONE ustock-qwen-tfalse-generate
+--- scene_single [ustock-qwen-tfalse-chat] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.953,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 2615,
+ "eval_count": 550
+}
+--- document_single [ustock-qwen-tfalse-chat] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 2743,
+ "eval_count": 487
+}
+--- multi_3img [ustock-qwen-tfalse-chat] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": true,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "q4_bbox_space": "norm1000/xyxy",
+ "prompt_eval_count": 6136,
+ "eval_count": 944
+}
+SUITE DONE ustock-qwen-tfalse-chat
+===== BLOCK ustock/qwen/think-false DONE =====
+===== BLOCK ustock/qwen/think-on START 15:28:30 =====
+--- scene_single [ustock-qwen-ton-generate] ---
+{
+ "json_valid": false,
+ "labels_found": 0,
+ "labels_total": 6,
+ "bbox_hits": 0,
+ "bbox_mean_iou": 0.0,
+ "bbox_space": null,
+ "colors_right": 0,
+ "serial_found": false,
+ "object_count": null,
+ "prompt_eval_count": 2613,
+ "eval_count": 606
+}
+--- document_single [ustock-qwen-ton-generate] ---
+{
+ "json_valid": false,
+ "invoice_no": false,
+ "items_found": 0,
+ "items_total": 5,
+ "qty_price_right": 0,
+ "total_right": false,
+ "name_bbox_hits": 0,
+ "prompt_eval_count": 2741,
+ "eval_count": 492
+}
+--- multi_3img [ustock-qwen-ton-generate] ---
+{
+ "json_valid": false,
+ "q1_right": false,
+ "q2_right": false,
+ "q4_bbox_hit": false,
+ "chart_values_found": 0,
+ "chart_total": 5,
+ "prompt_eval_count": 6134,
+ "eval_count": 950
+}
+SUITE DONE ustock-qwen-ton-generate
+Traceback (most recent call last):
+  File "/tmp/claude-1000/-opt-github-MaxusAI-ollama/1fb86790-e83d-4ddc-acbf-64102faedb27/scratchpad/vision_suite.py", line 303, in <module>
+    main()
+  File "/tmp/claude-1000/-opt-github-MaxusAI-ollama/1fb86790-e83d-4ddc-acbf-64102faedb27/scratchpad/vision_suite.py", line 281, in main
+    for name, prompt, images, scorer in tests:
+                                        ^^^^^
+UnboundLocalError: cannot access local variable 'tests' where it is not associated with a value
+===== BLOCK ustock/qwen/think-on DONE =====
+TRUESTOCK COMPLETE 15:29:55

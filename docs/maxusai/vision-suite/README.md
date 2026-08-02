@@ -67,3 +67,22 @@ RESTART_CMD="docker restart my-test-container" \
 
 The isolated-container recipe (own port, model store mounted read-only, GPU
 passthrough) is in [nemotron-test-image.md](../nemotron-test-image.md).
+
+## Runs archive and harness knobs (2026-08-02)
+
+- `runs/` holds raw campaign logs plus `*.parsed.json` (one object per scored
+  cell) for the 2026-08-02 campaign, max-context arm, true-stock baseline,
+  and runaway bisect; as-run parsed files keep the scorer outputs of their
+  time (Q4 is pre-correction in blocks scored before the dialect fix);
+  `final-matrix-2026-08-02.json` is the merged, Q4-corrected dataset behind
+  the published matrix.
+- `ONLY_TESTS=scene_single[,document_single,...]` runs a subset of the suite —
+  used by the bisect harness. `HTTP_TIMEOUT` (seconds, default 1800) bounds a
+  single request — raise it for uncapped think-mode probes.
+- Multi-image Q4 is scored dialect-aware like scene boxes (`q4_bbox_space`
+  reports the matched space); models answer norm-1000 regardless of prompt.
+- Caveat: with `OLLAMA_KV_CACHE_TYPE=q8_0`, qwen3.6 think-on inflates
+  prompt-dependently: document unaffected, scene ~19K thinking tokens (vs
+  3.3K at f16), multi no convergence within 131K (vs 9.0K at f16). Use f16
+  KV for qwen reasoning runs; no practical num_predict rescues multi on
+  q8_0. See vision-campaign-2026-08-02.md §6.

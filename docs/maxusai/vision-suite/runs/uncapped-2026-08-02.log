@@ -1,0 +1,347 @@
+===== PROBE q8_0 canon scene on-gen NUM_PREDICT=131072 NUM_CTX=262144 START 16:53:31 =====
+--- scene_single [probe-q8uncap-canon] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.962,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 2613,
+ "eval_count": 19160
+}
+SUITE DONE probe-q8uncap-canon
+===== PROBE DONE eval_count=19160 =====
+===== CEILING FOUND at 19160 — backfilling q8_0 matrix with cap 27352 =====
+--- scene_single [uncap-q8-canon-generate] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.962,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 2613,
+ "eval_count": 19160
+}
+--- document_single [uncap-q8-canon-generate] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 2741,
+ "eval_count": 3139
+}
+--- multi_3img [uncap-q8-canon-generate] ---
+{
+ "json_valid": false,
+ "q1_right": false,
+ "q2_right": false,
+ "q4_bbox_hit": false,
+ "chart_values_found": 0,
+ "chart_total": 5,
+ "prompt_eval_count": 6134,
+ "eval_count": 27352
+}
+SUITE DONE uncap-q8-canon-generate
+--- scene_single [uncap-q8-canon-chat] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.962,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 21211,
+ "eval_count": 613
+}
+--- document_single [uncap-q8-canon-chat] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 5339,
+ "eval_count": 542
+}
+--- multi_3img [uncap-q8-canon-chat] ---
+{
+ "json_valid": false,
+ "q1_right": false,
+ "q2_right": false,
+ "q4_bbox_hit": false,
+ "chart_values_found": 0,
+ "chart_total": 5,
+ "prompt_eval_count": 6134,
+ "eval_count": 27352
+}
+SUITE DONE uncap-q8-canon-chat
+--- scene_single [uncap-q8-ustock-generate] ---
+{
+ "json_valid": false,
+ "labels_found": 0,
+ "labels_total": 6,
+ "bbox_hits": 0,
+ "bbox_mean_iou": 0.0,
+ "bbox_space": null,
+ "colors_right": 0,
+ "serial_found": false,
+ "object_count": null,
+ "prompt_eval_count": 2613,
+ "eval_count": 606
+}
+--- document_single [uncap-q8-ustock-generate] ---
+{
+ "json_valid": false,
+ "invoice_no": false,
+ "items_found": 0,
+ "items_total": 5,
+ "qty_price_right": 0,
+ "total_right": false,
+ "name_bbox_hits": 0,
+ "prompt_eval_count": 2741,
+ "eval_count": 492
+}
+--- multi_3img [uncap-q8-ustock-generate] ---
+{
+ "json_valid": false,
+ "q1_right": false,
+ "q2_right": false,
+ "q4_bbox_hit": false,
+ "chart_values_found": 0,
+ "chart_total": 5,
+ "prompt_eval_count": 6134,
+ "eval_count": 951
+}
+SUITE DONE uncap-q8-ustock-generate
+--- scene_single [uncap-q8-ustock-chat] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.951,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 25391,
+ "eval_count": 628
+}
+--- document_single [uncap-q8-ustock-chat] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 3,
+ "prompt_eval_count": 4248,
+ "eval_count": 542
+}
+--- multi_3img [uncap-q8-ustock-chat] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": true,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "q4_bbox_space": "norm1000/xyxy",
+ "prompt_eval_count": 11029,
+ "eval_count": 1228
+}
+SUITE DONE uncap-q8-ustock-chat
+===== F16 MATRIX START 17:58:26 =====
+--- scene_single [uncap-f16-canon-generate] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.927,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 2613,
+ "eval_count": 3320
+}
+--- document_single [uncap-f16-canon-generate] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 3,
+ "prompt_eval_count": 2741,
+ "eval_count": 4384
+}
+--- multi_3img [uncap-f16-canon-generate] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": true,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "q4_bbox_space": "norm1000/xyxy",
+ "prompt_eval_count": 6134,
+ "eval_count": 9050
+}
+SUITE DONE uncap-f16-canon-generate
+--- scene_single [uncap-f16-canon-chat] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.927,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 5326,
+ "eval_count": 608
+}
+--- document_single [uncap-f16-canon-chat] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 3,
+ "prompt_eval_count": 6584,
+ "eval_count": 542
+}
+--- multi_3img [uncap-f16-canon-chat] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": true,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "q4_bbox_space": "norm1000/xyxy",
+ "prompt_eval_count": 13959,
+ "eval_count": 1226
+}
+SUITE DONE uncap-f16-canon-chat
+--- scene_single [uncap-f16-ustock-generate] ---
+{
+ "json_valid": false,
+ "labels_found": 0,
+ "labels_total": 6,
+ "bbox_hits": 0,
+ "bbox_mean_iou": 0.0,
+ "bbox_space": null,
+ "colors_right": 0,
+ "serial_found": false,
+ "object_count": null,
+ "prompt_eval_count": 2613,
+ "eval_count": 606
+}
+--- document_single [uncap-f16-ustock-generate] ---
+{
+ "json_valid": false,
+ "invoice_no": false,
+ "items_found": 0,
+ "items_total": 5,
+ "qty_price_right": 0,
+ "total_right": false,
+ "name_bbox_hits": 0,
+ "prompt_eval_count": 2741,
+ "eval_count": 487
+}
+--- multi_3img [uncap-f16-ustock-generate] ---
+{
+ "json_valid": false,
+ "q1_right": false,
+ "q2_right": false,
+ "q4_bbox_hit": false,
+ "chart_values_found": 0,
+ "chart_total": 5,
+ "prompt_eval_count": 6134,
+ "eval_count": 1157
+}
+SUITE DONE uncap-f16-ustock-generate
+--- scene_single [uncap-f16-ustock-chat] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.927,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 5326,
+ "eval_count": 608
+}
+--- document_single [uncap-f16-ustock-chat] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 3,
+ "prompt_eval_count": 6584,
+ "eval_count": 542
+}
+--- multi_3img [uncap-f16-ustock-chat] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": true,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "q4_bbox_space": "norm1000/xyxy",
+ "prompt_eval_count": 13959,
+ "eval_count": 1226
+}
+SUITE DONE uncap-f16-ustock-chat
+UNCAPPED COMPLETE 18:18:58
+===== MULTI PROBE q8_0 canon on-gen NUM_PREDICT=131072 NUM_CTX=262144 START 18:19:17 =====
+--- multi_3img [probe-q8uncap-multi-canon] ---
+ERROR: timed out
+SUITE DONE probe-q8uncap-multi-canon
+MULTI PROBE COMPLETE 18:49:25
+===== MULTI PROBE q8_0 canon on-gen NUM_PREDICT=131072 NUM_CTX=262144 START 18:50:25 =====
+--- multi_3img [probe-q8uncap-multi-canon] ---
+{
+ "json_valid": false,
+ "q1_right": false,
+ "q2_right": false,
+ "q4_bbox_hit": false,
+ "chart_values_found": 0,
+ "chart_total": 5,
+ "prompt_eval_count": 6134,
+ "eval_count": 131072
+}
+SUITE DONE probe-q8uncap-multi-canon
+MULTI PROBE COMPLETE 20:03:21

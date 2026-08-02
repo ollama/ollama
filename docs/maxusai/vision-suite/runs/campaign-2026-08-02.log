@@ -1,0 +1,961 @@
+===== BLOCK stock/nemo/think-false/generate START 10:17:57 =====
+--- scene_single [stock-nemo-tfalse-generate] ---
+{
+ "json_valid": true,
+ "labels_found": 0,
+ "labels_total": 6,
+ "bbox_hits": 0,
+ "bbox_mean_iou": 0.0,
+ "bbox_space": null,
+ "colors_right": 0,
+ "serial_found": false,
+ "object_count": 6,
+ "prompt_eval_count": 888,
+ "eval_count": 555
+}
+--- document_single [stock-nemo-tfalse-generate] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 3,
+ "items_total": 5,
+ "qty_price_right": 0,
+ "total_right": true,
+ "name_bbox_hits": 2,
+ "prompt_eval_count": 652,
+ "eval_count": 486
+}
+--- multi_3img [stock-nemo-tfalse-generate] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": true,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "prompt_eval_count": 1324,
+ "eval_count": 985
+}
+SUITE DONE stock-nemo-tfalse-generate
+===== BLOCK stock/nemo/think-false/generate DONE =====
+===== BLOCK stock/nemo/think-false/chat START 10:18:44 =====
+--- scene_single [stock-nemo-tfalse-chat] ---
+{
+ "json_valid": true,
+ "labels_found": 0,
+ "labels_total": 6,
+ "bbox_hits": 0,
+ "bbox_mean_iou": 0.0,
+ "bbox_space": null,
+ "colors_right": 0,
+ "serial_found": false,
+ "object_count": 6,
+ "prompt_eval_count": 888,
+ "eval_count": 555
+}
+--- document_single [stock-nemo-tfalse-chat] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 3,
+ "items_total": 5,
+ "qty_price_right": 0,
+ "total_right": true,
+ "name_bbox_hits": 2,
+ "prompt_eval_count": 652,
+ "eval_count": 486
+}
+--- multi_3img [stock-nemo-tfalse-chat] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": true,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "prompt_eval_count": 1324,
+ "eval_count": 985
+}
+SUITE DONE stock-nemo-tfalse-chat
+===== BLOCK stock/nemo/think-false/chat DONE =====
+===== BLOCK stock/nemo/think-on/generate START 10:19:31 =====
+--- scene_single [stock-nemo-ton-generate] ---
+{
+ "json_valid": false,
+ "labels_found": 0,
+ "labels_total": 6,
+ "bbox_hits": 0,
+ "bbox_mean_iou": 0.0,
+ "bbox_space": null,
+ "colors_right": 0,
+ "serial_found": false,
+ "object_count": null,
+ "prompt_eval_count": 888,
+ "eval_count": 546
+}
+--- document_single [stock-nemo-ton-generate] ---
+{
+ "json_valid": false,
+ "invoice_no": false,
+ "items_found": 0,
+ "items_total": 5,
+ "qty_price_right": 0,
+ "total_right": false,
+ "name_bbox_hits": 0,
+ "prompt_eval_count": 652,
+ "eval_count": 486
+}
+--- multi_3img [stock-nemo-ton-generate] ---
+{
+ "json_valid": false,
+ "q1_right": false,
+ "q2_right": false,
+ "q4_bbox_hit": false,
+ "chart_values_found": 0,
+ "chart_total": 5,
+ "prompt_eval_count": 1324,
+ "eval_count": 880
+}
+SUITE DONE stock-nemo-ton-generate
+===== BLOCK stock/nemo/think-on/generate DONE =====
+===== BLOCK stock/nemo/think-on/chat START 10:20:16 =====
+--- scene_single [stock-nemo-ton-chat] ---
+{
+ "json_valid": true,
+ "labels_found": 0,
+ "labels_total": 6,
+ "bbox_hits": 0,
+ "bbox_mean_iou": 0.0,
+ "bbox_space": null,
+ "colors_right": 0,
+ "serial_found": false,
+ "object_count": 6,
+ "prompt_eval_count": 16181,
+ "eval_count": 516
+}
+--- document_single [stock-nemo-ton-chat] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 3,
+ "items_total": 5,
+ "qty_price_right": 3,
+ "total_right": true,
+ "name_bbox_hits": 3,
+ "prompt_eval_count": 4137,
+ "eval_count": 463
+}
+--- multi_3img [stock-nemo-ton-chat] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": false,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "prompt_eval_count": 4729,
+ "eval_count": 968
+}
+SUITE DONE stock-nemo-ton-chat
+===== BLOCK stock/nemo/think-on/chat DONE =====
+===== BLOCK stock/gemma/think-false/generate START 10:27:30 =====
+--- scene_single [stock-gemma-tfalse-generate] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.781,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 1504,
+ "eval_count": 530
+}
+--- document_single [stock-gemma-tfalse-generate] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 1447,
+ "eval_count": 499
+}
+--- multi_3img [stock-gemma-tfalse-generate] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": false,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "prompt_eval_count": 3058,
+ "eval_count": 1143
+}
+SUITE DONE stock-gemma-tfalse-generate
+===== BLOCK stock/gemma/think-false/generate DONE =====
+===== BLOCK stock/gemma/think-false/chat START 10:32:29 =====
+--- scene_single [stock-gemma-tfalse-chat] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.781,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 1504,
+ "eval_count": 530
+}
+--- document_single [stock-gemma-tfalse-chat] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 1447,
+ "eval_count": 499
+}
+--- multi_3img [stock-gemma-tfalse-chat] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": false,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "prompt_eval_count": 3058,
+ "eval_count": 1143
+}
+SUITE DONE stock-gemma-tfalse-chat
+===== BLOCK stock/gemma/think-false/chat DONE =====
+===== BLOCK stock/gemma/think-on/generate START 10:36:51 =====
+--- scene_single [stock-gemma-ton-generate] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.78,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": false,
+ "object_count": 6,
+ "prompt_eval_count": 1507,
+ "eval_count": 403
+}
+--- document_single [stock-gemma-ton-generate] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 1450,
+ "eval_count": 499
+}
+--- multi_3img [stock-gemma-ton-generate] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": false,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "prompt_eval_count": 3061,
+ "eval_count": 993
+}
+SUITE DONE stock-gemma-ton-generate
+===== BLOCK stock/gemma/think-on/generate DONE =====
+===== BLOCK stock/gemma/think-on/chat START 10:41:12 =====
+--- scene_single [stock-gemma-ton-chat] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.784,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 1512,
+ "eval_count": 425
+}
+--- document_single [stock-gemma-ton-chat] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 1455,
+ "eval_count": 401
+}
+--- multi_3img [stock-gemma-ton-chat] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": false,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "prompt_eval_count": 3066,
+ "eval_count": 1209
+}
+SUITE DONE stock-gemma-ton-chat
+===== BLOCK stock/gemma/think-on/chat DONE =====
+===== BLOCK stock/qwen/think-false/generate START 10:59:34 =====
+--- scene_single [stock-qwen-tfalse-generate] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.953,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 2615,
+ "eval_count": 550
+}
+--- document_single [stock-qwen-tfalse-generate] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 2743,
+ "eval_count": 487
+}
+--- multi_3img [stock-qwen-tfalse-generate] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": false,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "prompt_eval_count": 6136,
+ "eval_count": 944
+}
+SUITE DONE stock-qwen-tfalse-generate
+===== BLOCK stock/qwen/think-false/generate DONE =====
+===== BLOCK stock/qwen/think-false/chat START 11:00:57 =====
+--- scene_single [stock-qwen-tfalse-chat] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.953,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 2615,
+ "eval_count": 550
+}
+--- document_single [stock-qwen-tfalse-chat] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 2743,
+ "eval_count": 487
+}
+--- multi_3img [stock-qwen-tfalse-chat] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": false,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "prompt_eval_count": 6136,
+ "eval_count": 944
+}
+SUITE DONE stock-qwen-tfalse-chat
+===== BLOCK stock/qwen/think-false/chat DONE =====
+===== BLOCK stock/qwen/think-on/generate START 11:01:54 =====
+--- scene_single [stock-qwen-ton-generate] ---
+{
+ "json_valid": false,
+ "labels_found": 0,
+ "labels_total": 6,
+ "bbox_hits": 0,
+ "bbox_mean_iou": 0.0,
+ "bbox_space": null,
+ "colors_right": 0,
+ "serial_found": false,
+ "object_count": null,
+ "prompt_eval_count": 2613,
+ "eval_count": 606
+}
+--- document_single [stock-qwen-ton-generate] ---
+{
+ "json_valid": false,
+ "invoice_no": false,
+ "items_found": 0,
+ "items_total": 5,
+ "qty_price_right": 0,
+ "total_right": false,
+ "name_bbox_hits": 0,
+ "prompt_eval_count": 2741,
+ "eval_count": 492
+}
+--- multi_3img [stock-qwen-ton-generate] ---
+{
+ "json_valid": false,
+ "q1_right": false,
+ "q2_right": false,
+ "q4_bbox_hit": false,
+ "chart_values_found": 0,
+ "chart_total": 5,
+ "prompt_eval_count": 6134,
+ "eval_count": 950
+}
+SUITE DONE stock-qwen-ton-generate
+===== BLOCK stock/qwen/think-on/generate DONE =====
+===== BLOCK stock/qwen/think-on/chat START 11:03:18 =====
+--- scene_single [stock-qwen-ton-chat] ---
+{
+ "json_valid": false,
+ "labels_found": 0,
+ "labels_total": 6,
+ "bbox_hits": 0,
+ "bbox_mean_iou": 0.0,
+ "bbox_space": null,
+ "colors_right": 0,
+ "serial_found": false,
+ "object_count": null,
+ "prompt_eval_count": 2613,
+ "eval_count": 16000
+}
+--- document_single [stock-qwen-ton-chat] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 5339,
+ "eval_count": 542
+}
+--- multi_3img [stock-qwen-ton-chat] ---
+{
+ "json_valid": false,
+ "q1_right": false,
+ "q2_right": false,
+ "q4_bbox_hit": false,
+ "chart_values_found": 0,
+ "chart_total": 5,
+ "prompt_eval_count": 6134,
+ "eval_count": 16000
+}
+SUITE DONE stock-qwen-ton-chat
+===== BLOCK stock/qwen/think-on/chat DONE =====
+===== BLOCK canon/nemo/think-false/generate START 11:16:33 =====
+--- scene_single [canon-nemo-tfalse-generate] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.84,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 2674,
+ "eval_count": 506
+}
+--- document_single [canon-nemo-tfalse-generate] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 3,
+ "prompt_eval_count": 2799,
+ "eval_count": 480
+}
+--- multi_3img [canon-nemo-tfalse-generate] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": false,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "prompt_eval_count": 6203,
+ "eval_count": 1013
+}
+SUITE DONE canon-nemo-tfalse-generate
+===== BLOCK canon/nemo/think-false/generate DONE =====
+===== BLOCK canon/nemo/think-false/chat START 11:18:16 =====
+--- scene_single [canon-nemo-tfalse-chat] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.84,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 2674,
+ "eval_count": 506
+}
+--- document_single [canon-nemo-tfalse-chat] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 2799,
+ "eval_count": 481
+}
+--- multi_3img [canon-nemo-tfalse-chat] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": false,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "prompt_eval_count": 6203,
+ "eval_count": 1012
+}
+SUITE DONE canon-nemo-tfalse-chat
+===== BLOCK canon/nemo/think-false/chat DONE =====
+===== BLOCK canon/nemo/think-on/generate START 11:19:21 =====
+--- scene_single [canon-nemo-ton-generate] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 4,
+ "bbox_mean_iou": 0.391,
+ "bbox_space": "pixel/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 2674,
+ "eval_count": 11749
+}
+--- document_single [canon-nemo-ton-generate] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 4,
+ "items_total": 5,
+ "qty_price_right": 4,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 2799,
+ "eval_count": 8462
+}
+--- multi_3img [canon-nemo-ton-generate] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": false,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "prompt_eval_count": 6203,
+ "eval_count": 7492
+}
+SUITE DONE canon-nemo-ton-generate
+===== BLOCK canon/nemo/think-on/generate DONE =====
+===== BLOCK canon/nemo/think-on/chat START 11:29:10 =====
+--- scene_single [canon-nemo-ton-chat] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 4,
+ "bbox_mean_iou": 0.391,
+ "bbox_space": "pixel/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 15427,
+ "eval_count": 518
+}
+--- document_single [canon-nemo-ton-chat] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 5,
+ "prompt_eval_count": 18411,
+ "eval_count": 459
+}
+--- multi_3img [canon-nemo-ton-chat] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": false,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "prompt_eval_count": 16607,
+ "eval_count": 1009
+}
+SUITE DONE canon-nemo-ton-chat
+===== BLOCK canon/nemo/think-on/chat DONE =====
+===== BLOCK canon/gemma/think-false/generate START 11:41:48 =====
+--- scene_single [canon-gemma-tfalse-generate] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.781,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 1504,
+ "eval_count": 530
+}
+--- document_single [canon-gemma-tfalse-generate] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 1447,
+ "eval_count": 499
+}
+--- multi_3img [canon-gemma-tfalse-generate] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": false,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "prompt_eval_count": 3058,
+ "eval_count": 1143
+}
+SUITE DONE canon-gemma-tfalse-generate
+===== BLOCK canon/gemma/think-false/generate DONE =====
+===== BLOCK canon/gemma/think-false/chat START 11:46:46 =====
+--- scene_single [canon-gemma-tfalse-chat] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.781,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 1504,
+ "eval_count": 530
+}
+--- document_single [canon-gemma-tfalse-chat] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 1447,
+ "eval_count": 499
+}
+--- multi_3img [canon-gemma-tfalse-chat] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": false,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "prompt_eval_count": 3058,
+ "eval_count": 1143
+}
+SUITE DONE canon-gemma-tfalse-chat
+===== BLOCK canon/gemma/think-false/chat DONE =====
+===== BLOCK canon/gemma/think-on/generate START 11:51:08 =====
+--- scene_single [canon-gemma-ton-generate] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.78,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": false,
+ "object_count": 6,
+ "prompt_eval_count": 1507,
+ "eval_count": 403
+}
+--- document_single [canon-gemma-ton-generate] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 1450,
+ "eval_count": 499
+}
+--- multi_3img [canon-gemma-ton-generate] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": false,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "prompt_eval_count": 3061,
+ "eval_count": 993
+}
+SUITE DONE canon-gemma-ton-generate
+===== BLOCK canon/gemma/think-on/generate DONE =====
+===== BLOCK canon/gemma/think-on/chat START 11:55:29 =====
+--- scene_single [canon-gemma-ton-chat] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.784,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 1512,
+ "eval_count": 425
+}
+--- document_single [canon-gemma-ton-chat] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 1455,
+ "eval_count": 401
+}
+--- multi_3img [canon-gemma-ton-chat] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": false,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "prompt_eval_count": 3066,
+ "eval_count": 1209
+}
+SUITE DONE canon-gemma-ton-chat
+===== BLOCK canon/gemma/think-on/chat DONE =====
+===== BLOCK canon/qwen/think-false/generate START 12:13:50 =====
+--- scene_single [canon-qwen-tfalse-generate] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.953,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 2615,
+ "eval_count": 550
+}
+--- document_single [canon-qwen-tfalse-generate] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 2743,
+ "eval_count": 487
+}
+--- multi_3img [canon-qwen-tfalse-generate] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": false,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "prompt_eval_count": 6136,
+ "eval_count": 944
+}
+SUITE DONE canon-qwen-tfalse-generate
+===== BLOCK canon/qwen/think-false/generate DONE =====
+===== BLOCK canon/qwen/think-false/chat START 12:15:13 =====
+--- scene_single [canon-qwen-tfalse-chat] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.953,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 2615,
+ "eval_count": 550
+}
+--- document_single [canon-qwen-tfalse-chat] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 2743,
+ "eval_count": 487
+}
+--- multi_3img [canon-qwen-tfalse-chat] ---
+{
+ "json_valid": true,
+ "q1_right": true,
+ "q2_right": true,
+ "q4_bbox_hit": false,
+ "chart_values_found": 5,
+ "chart_total": 5,
+ "prompt_eval_count": 6136,
+ "eval_count": 944
+}
+SUITE DONE canon-qwen-tfalse-chat
+===== BLOCK canon/qwen/think-false/chat DONE =====
+===== BLOCK canon/qwen/think-on/generate START 12:16:11 =====
+--- scene_single [canon-qwen-ton-generate] ---
+{
+ "json_valid": false,
+ "labels_found": 0,
+ "labels_total": 6,
+ "bbox_hits": 0,
+ "bbox_mean_iou": 0.0,
+ "bbox_space": null,
+ "colors_right": 0,
+ "serial_found": false,
+ "object_count": null,
+ "prompt_eval_count": 2613,
+ "eval_count": 16000
+}
+--- document_single [canon-qwen-ton-generate] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 2741,
+ "eval_count": 3139
+}
+--- multi_3img [canon-qwen-ton-generate] ---
+{
+ "json_valid": false,
+ "q1_right": false,
+ "q2_right": false,
+ "q4_bbox_hit": false,
+ "chart_values_found": 0,
+ "chart_total": 5,
+ "prompt_eval_count": 6134,
+ "eval_count": 16000
+}
+SUITE DONE canon-qwen-ton-generate
+===== BLOCK canon/qwen/think-on/generate DONE =====
+===== BLOCK canon/qwen/think-on/chat START 12:29:44 =====
+--- scene_single [canon-qwen-ton-chat] ---
+{
+ "json_valid": false,
+ "labels_found": 0,
+ "labels_total": 6,
+ "bbox_hits": 0,
+ "bbox_mean_iou": 0.0,
+ "bbox_space": null,
+ "colors_right": 0,
+ "serial_found": false,
+ "object_count": null,
+ "prompt_eval_count": 2613,
+ "eval_count": 16000
+}
+--- document_single [canon-qwen-ton-chat] ---
+{
+ "json_valid": true,
+ "invoice_no": true,
+ "items_found": 5,
+ "items_total": 5,
+ "qty_price_right": 5,
+ "total_right": true,
+ "name_bbox_hits": 4,
+ "prompt_eval_count": 5339,
+ "eval_count": 542
+}
+--- multi_3img [canon-qwen-ton-chat] ---
+{
+ "json_valid": false,
+ "q1_right": false,
+ "q2_right": false,
+ "q4_bbox_hit": false,
+ "chart_values_found": 0,
+ "chart_total": 5,
+ "prompt_eval_count": 6134,
+ "eval_count": 16000
+}
+SUITE DONE canon-qwen-ton-chat
+===== BLOCK canon/qwen/think-on/chat DONE =====
+CAMPAIGN COMPLETE 12:42:53

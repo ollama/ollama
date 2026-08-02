@@ -31,14 +31,14 @@ def gen(prompt, images, num_predict=None, num_ctx=None):
                                 "images": payload.pop("images")}]
         req = urllib.request.Request(HOST + "/api/chat",
             data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
-        r = json.load(urllib.request.urlopen(req, timeout=1800))
+        r = json.load(urllib.request.urlopen(req, timeout=int(os.environ.get("HTTP_TIMEOUT", "1800"))))
         msg = r.get("message") or {}
         r["response"] = msg.get("content", "")
         r["thinking"] = msg.get("thinking", "")
         return r
     req = urllib.request.Request(HOST + "/api/generate",
         data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
-    return json.load(urllib.request.urlopen(req, timeout=1800))
+    return json.load(urllib.request.urlopen(req, timeout=int(os.environ.get("HTTP_TIMEOUT", "1800"))))
 
 SCENE_PROMPT = """You are a precision visual inspection system deployed in an industrial
 quality-assurance pipeline. Your task on this frame is exhaustive object detection,
@@ -238,7 +238,23 @@ def score_multi(resp_text):
     except Exception:
         pass
     dyn = next(o for o in g["scene_hd"]["objects"] if o["label"] == "DYNAMO")
-    s["q4_bbox_hit"] = center_in(a.get("q4") or [], dyn["bbox"])
+    # q4 gets the same coordinate-dialect tolerance as scene boxes (score_scene):
+    # models answer in their native space (norm-1000) regardless of the prompt.
+    q4 = a.get("q4") or []
+    if isinstance(q4, list) and len(q4) == 4:
+        W, H = g["scene_hd"]["size"]
+        try:
+            for space, fx, fy in (("pixel", 1.0, 1.0), ("norm1000", W/1000.0, H/1000.0)):
+                for order in ("xyxy", "yxyx"):
+                    x1, y1, x2, y2 = (q4[0], q4[1], q4[2], q4[3]) if order == "xyxy" else (q4[1], q4[0], q4[3], q4[2])
+                    if center_in([x1*fx, y1*fy, x2*fx, y2*fy], dyn["bbox"]):
+                        s["q4_bbox_hit"] = True
+                        s["q4_bbox_space"] = space + "/" + order
+                        raise StopIteration
+        except StopIteration:
+            pass
+        except Exception:
+            pass
     blob = json.dumps(r)
     for b in g["chart"]["bars"]:
         if str(b["value"]) in blob:
@@ -258,7 +274,12 @@ def main():
     MODEL = sys.argv[3] if len(sys.argv) > 3 else "nemotron3:33b-q4_K_M"
     only = sys.argv[4] if len(sys.argv) > 4 else None
     results = {}
-    for name, prompt, images, scorer in tests:
+    run_tests = tests
+    only = os.environ.get("ONLY_TESTS")
+    if only:
+        keep = set(only.split(","))
+        run_tests = [t for t in run_tests if t[0] in keep]
+    for name, prompt, images, scorer in run_tests:
         if only and name != only:
             continue
         print(f"--- {name} [{TAG}] ---", flush=True)
