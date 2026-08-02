@@ -21,9 +21,24 @@ Reproducible ground-truth benchmarks behind the measured tables in
   ChatOllama use, and it has carried the upstream think+format two-pass fix since
   v0.12.4, so think-on cells differ by endpoint on builds without the generate-side
   fix). Writes `resp_<tag>_<test>.json` + `scores_<tag>.json` beside the script.
+- `gen_geoms.py [outdir]` — renders the eight geometries `measure.py` reads into `testimgs/`
+  (deterministic noise + gridlines + corner markers, so the payload size is realistic and
+  letterboxing is visible). Run it before `measure.py`; needs Pillow.
 - `measure.py <host> [model]` — the token-budget protocol: `prompt_eval_count` with
   `num_predict:1` minus the text-only baseline, over 8 geometries + the
-  `image_max_tokens` knob check. Flat 256 on nemotron = unpatched payload.
+  `image_max_tokens` knob check. Flat 256 on nemotron = unpatched payload. It *reports*
+  rather than asserts — for a pass/fail gate on the same formulas with no GPU and no server,
+  use `go test ./llm/ -run TestImageTokensForSize`. Note the `image_max_tokens` probe is a
+  Runner option, so it forces a full model reload.
+- `extbench.py <host> <tag> [model] [benchmark]` — slices of four external benchmarks
+  (`ocrbench`, `countbenchqa`, `chartqa`, `refcoco`) pulled from the HF datasets-server REST
+  API (stdlib only, no `datasets`, no HF token) and scored locally: contains-match, integer
+  match, relaxed accuracy, and dialect-aware bbox IoU respectively. Env: `LIMIT` (50),
+  `OFFSET`, `SLEEP` (yield the GPU between requests), plus the same `THINK` / `ENDPOINT` /
+  `NUM_PREDICT` / `NUM_CTX` knobs as `vision_suite.py`. Writes `ext_<tag>_<bench>.json`. The
+  `refcoco` mode reports the winning coordinate dialect and JSON key per item, so it doubles
+  as a dialect probe. See [../vision-benchmark-survey.md](../vision-benchmark-survey.md) for
+  why the external harnesses' own grounding scorers cannot be trusted with our models.
 - `run_grid.sh` — model × think-mode grid against one host, with an optional restart
   hook between runs (see below).
 - `variants.py <host> <nogrammar|thinkon> [model]` — scene-test probes that isolate
