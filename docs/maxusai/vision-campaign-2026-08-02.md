@@ -42,8 +42,8 @@ Scene photo 1920×1080, think off (identical on both endpoints):
 | px per visual token | 8,100 | 1,015 |
 
 Multi-image keeps full per-image budgets on canonical (2,042 + 2,403 + ~1,200
-visual tokens = measured prompt 6,203 vs upstream 1,324) and answers every
-cross-reference question. The one canonical "regression" ever observed (multi
+visual + ~556 text tokens = measured prompt 6,203; upstream's 1,324 is the same
+text + 3×256 visual) and answers every cross-reference question. The one canonical "regression" ever observed (multi
 Q4 bbox) was a scorer artifact — see §5.
 
 ## 2. The generate think+format misfiling is an upstream bug, now proven on upstream
@@ -84,6 +84,10 @@ Genuine upstream gemma runs this suite at roughly half the prompt tokens
 | Document (think on, generate) | 4/5 items, 1 name box | **5/5 items, 4 name boxes** |
 | Multi-image | all correct | all correct |
 
+(Multi-image Q4 verdicts here use the corrected scoring of §5; the as-run
+`campaign-*.parsed.json` predates the scorer fix — `final-matrix-2026-08-02.json`
+is the authoritative dataset for Q4.)
+
 Upstream wins box sharpness; the patch wins fine-text under thinking. Nothing
 here reproduces a decisive uplift on synthetic clean imagery. Action: either
 produce the dense fine-text case that motivated the 280→1120 budget as a suite
@@ -98,8 +102,14 @@ prompt instructions. All three models on canonical answered ~[115, 552, 252,
 Upstream nemotron's apparent "hit" was a garbage box whose center landed inside
 the target. Fixed in `vision_suite.py` (same dialect search as scene boxes,
 reported as `q4_bbox_space`); 16 historical cells re-scored. After correction,
-**every valid multi-image response hits Q4** except upstream nemotron
-think-on/chat, which answers `null` (label illegible at 256 tokens).
+**every valid multi-image response in the main + true-stock datasets
+(`final-matrix-2026-08-02.json`) hits Q4**, with two exceptions: upstream
+nemotron think-on/chat answers `null` (label illegible at 256 tokens), and in
+the ctx arm nemotron think-on at 131,072/generate produced one genuinely wrong
+box under both dialects — think-mode boxes remain nemotron's noisiest metric
+(cf. IoU 0.39 in §1). As-run parsed files for blocks scored before the fix
+landed (~13:05) keep pre-correction Q4 values; `final-matrix-2026-08-02.json`
+carries the corrected scores.
 
 ## 6. Qwen think-runaway: root cause is q8_0 KV cache quantization
 
@@ -116,14 +126,17 @@ images, and num_ctx up to 262,144 — and was NOT a code regression:
 | canonical image · ctx 16,384 | q8_0 | runaway, identical 13,771 |
 | all four · ctx 32,768 | q8_0 | runaway to num_predict (16,000) |
 | genfix `d1ef5557` · ctx 16,384 | **f16** | **valid, 3,320 evals, 6/6, IoU 0.927** |
-| canonical image · ctx 32,768 | **f16** | **valid, 3,320 evals (token-identical), IoU 0.927** |
+| canonical image · ctx 32,768 | **f16** | **valid, 3,320 evals (same count), IoU 0.927** |
 
-Minimal pair: the only variable separating runaway from clean termination is
-`OLLAMA_KV_CACHE_TYPE`. Under q8_0 KV quantization, qwen3.6's reasoning
-degenerates into a non-terminating loop on grounding-heavy prompts; under f16
-it terminates at ~3.3K tokens with its best think-on quality measured. The
-f16 trajectories are token-identical across a native binary at 16K ctx and the
-docker image at 32K ctx.
+The exact minimal pair is the canonical image at 32,768: identical prompt
+(2,613 tokens) with only `OLLAMA_KV_CACHE_TYPE` flipped — q8_0 runs away to
+16,000, f16 terminates at 3,320 with valid output. The native `d1ef5557` f16
+run confirms the effect on a second build with the same eval_count and IoU
+(its reported prompt_eval of 5,325 is that binary's known double-counted
+pass-2 prefill; the q8_0 arm shows 2,613 precisely because pass 2 never ran).
+Under q8_0 KV quantization, qwen3.6's reasoning degenerates into a
+non-terminating loop on grounding-heavy prompts; under f16 it terminates at
+~3.3K tokens with its best think-on quality measured.
 
 **Operational recommendation (gfx1151 prod runs q8_0):** serve qwen3.6
 vision+reasoning workloads with `OLLAMA_KV_CACHE_TYPE=f16` (or per-model
@@ -133,8 +146,12 @@ proportionally less at 32K).
 
 ## 7. Max-context arm: quality-free, pay in load time and VRAM
 
-At per-model max ctx (nemotron 131,072; gemma/qwen 262,144), every think-false
-result is token-identical to 32,768. The mamba-hybrid dividend is real:
+At per-model max ctx (nemotron 131,072; gemma/qwen 262,144), 12 of 18
+think-false cells are token-identical to 32,768, and the six that differ are
+equal or better: qwen scene keeps 6/6 hits with IoU rising 0.953 → 0.973/0.971,
+qwen multi gives the same all-correct answers at +223 output tokens, and the
+nemo/gemma chat multi cells drift by ≤7 tokens with identical scores. No cell
+regresses. The mamba-hybrid dividend is real:
 
 | Model · ctx | VRAM loaded | first pass (load + 3 tests) |
 |---|---|---|

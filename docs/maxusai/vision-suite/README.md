@@ -72,8 +72,10 @@ passthrough) is in [nemotron-test-image.md](../nemotron-test-image.md).
 
 - `runs/` holds raw campaign logs plus `*.parsed.json` (one object per scored
   cell) for the 2026-08-02 campaign, max-context arm, true-stock baseline,
-  and runaway bisect; `final-matrix-2026-08-02.json` is the merged,
-  Q4-corrected dataset behind the published matrix.
+  and runaway bisect; as-run parsed files keep the scorer outputs of their
+  time (Q4 is pre-correction in blocks scored before the dialect fix);
+  `final-matrix-2026-08-02.json` is the merged, Q4-corrected dataset behind
+  the published matrix.
 - `ONLY_TESTS=scene_single[,document_single,...]` runs a subset of the suite —
   used by the bisect harness.
 - Multi-image Q4 is scored dialect-aware like scene boxes (`q4_bbox_space`
