@@ -1,0 +1,105 @@
+--- finetext [ft-ustock-tfalse-generate] ---
+{
+ "tag": "ft-ustock-tfalse-generate",
+ "json_valid": true,
+ "prompt_eval_count": 340,
+ "eval_count": 244,
+ "recall_22px": 4,
+ "recall_16px": 2,
+ "recall_12px": 0,
+ "recall_9px": 0,
+ "recall_7px": 0,
+ "total_found": 18
+}
+--- finetext [ft-ustock-tfalse-chat] ---
+{
+ "tag": "ft-ustock-tfalse-chat",
+ "json_valid": true,
+ "prompt_eval_count": 340,
+ "eval_count": 243,
+ "recall_22px": 4,
+ "recall_16px": 2,
+ "recall_12px": 0,
+ "recall_9px": 0,
+ "recall_7px": 0,
+ "total_found": 18
+}
+--- finetext [ft-ustock-ton-generate] ---
+{
+ "tag": "ft-ustock-ton-generate",
+ "json_valid": true,
+ "prompt_eval_count": 343,
+ "eval_count": 244,
+ "recall_22px": 4,
+ "recall_16px": 2,
+ "recall_12px": 0,
+ "recall_9px": 0,
+ "recall_7px": 0,
+ "total_found": 18
+}
+--- finetext [ft-ustock-ton-chat] ---
+{
+ "tag": "ft-ustock-ton-chat",
+ "json_valid": true,
+ "prompt_eval_count": 4777,
+ "eval_count": 312,
+ "recall_22px": 4,
+ "recall_16px": 1,
+ "recall_12px": 0,
+ "recall_9px": 0,
+ "recall_7px": 0,
+ "total_found": 20
+}
+--- finetext [ft-canon-tfalse-generate] ---
+{
+ "tag": "ft-canon-tfalse-generate",
+ "json_valid": true,
+ "prompt_eval_count": 1173,
+ "eval_count": 264,
+ "recall_22px": 4,
+ "recall_16px": 4,
+ "recall_12px": 4,
+ "recall_9px": 4,
+ "recall_7px": 3,
+ "total_found": 20
+}
+--- finetext [ft-canon-tfalse-chat] ---
+{
+ "tag": "ft-canon-tfalse-chat",
+ "json_valid": true,
+ "prompt_eval_count": 1173,
+ "eval_count": 264,
+ "recall_22px": 4,
+ "recall_16px": 4,
+ "recall_12px": 4,
+ "recall_9px": 4,
+ "recall_7px": 3,
+ "total_found": 20
+}
+--- finetext [ft-canon-ton-generate] ---
+{
+ "tag": "ft-canon-ton-generate",
+ "json_valid": true,
+ "prompt_eval_count": 1176,
+ "eval_count": 264,
+ "recall_22px": 4,
+ "recall_16px": 4,
+ "recall_12px": 4,
+ "recall_9px": 4,
+ "recall_7px": 3,
+ "total_found": 20
+}
+--- finetext [ft-canon-ton-chat] ---
+{
+ "tag": "ft-canon-ton-chat",
+ "json_valid": true,
+ "prompt_eval_count": 1181,
+ "eval_count": 264,
+ "recall_22px": 4,
+ "recall_16px": 4,
+ "recall_12px": 4,
+ "recall_9px": 4,
+ "recall_7px": 2,
+ "total_found": 20
+}
+FINETEXT COMPLETE 21:31:23

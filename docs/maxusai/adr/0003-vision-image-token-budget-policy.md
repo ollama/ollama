@@ -91,3 +91,11 @@ Two facts forced this decision:
   was ported forward in `2487dd56`, `release/0.32.1-dynres` at b9888. Which payload may
   ship to the gfx1151 host remains governed by
   [amd-upgrade-gate.md](../amd-upgrade-gate.md), independently of this policy.
+
+## Validation addendum (2026-08-02)
+
+The gemma4 280→1120 budget was re-validated against genuine upstream with the
+dense fine-text A/B: upstream reads nothing below 16px on a 1568² page and
+confabulates code-like strings; the budgeted build transcribes correctly to
+7–9px. Cost: ~0.12 mean IoU on synthetic shape boxes. Policy stands. Details:
+[vision-campaign-2026-08-02.md](../vision-campaign-2026-08-02.md) §4.

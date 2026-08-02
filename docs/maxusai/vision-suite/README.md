@@ -103,3 +103,15 @@ passthrough) is in [nemotron-test-image.md](../nemotron-test-image.md).
   3.3K at f16), multi no convergence within 131K (vs 9.0K at f16). Use f16
   KV for qwen reasoning runs; no practical num_predict rescues multi on
   q8_0. See vision-campaign-2026-08-02.md §6.
+
+## Fine-text probe and coordinate-dialect guidance (2026-08-02)
+
+- `finetext_probe.py` generates a 1568² dense-text page (20 reference codes at
+  22/16/12/9/7 px, seeded) and scores exact-match recall per size tier — the
+  test that separates real transcription from confabulation. `gen` regenerates
+  the image; run form matches vision_suite env knobs.
+- Prompt bounding boxes in **norm-1000**, not pixels: all three models answer
+  norm-1000 natively; nemotron additionally OBEYS a pixel instruction when
+  thinking and loses geometry doing so (IoU .39 pixel-prompt vs .81
+  norm-1000-prompt, think on). The scorer's `bbox_space` field verifies what
+  came back.

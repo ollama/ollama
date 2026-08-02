@@ -1,0 +1,33 @@
+===== DIALECT n1000 nemo think-false START 21:31:49 =====
+--- scene_single [dialect-n1000-nemo-tfalse] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.864,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 2688,
+ "eval_count": 510
+}
+SUITE DONE dialect-n1000-nemo-tfalse
+===== DIALECT n1000 nemo think-on START 21:32:53 =====
+--- scene_single [dialect-n1000-nemo-ton] ---
+{
+ "json_valid": true,
+ "labels_found": 6,
+ "labels_total": 6,
+ "bbox_hits": 6,
+ "bbox_mean_iou": 0.812,
+ "bbox_space": "norm1000/xyxy",
+ "colors_right": 6,
+ "serial_found": true,
+ "object_count": 6,
+ "prompt_eval_count": 2688,
+ "eval_count": 4083
+}
+SUITE DONE dialect-n1000-nemo-ton
+DIALECT PROBE COMPLETE 21:34:14
