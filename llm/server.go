@@ -221,9 +221,10 @@ type CompletionRequest struct {
 	// thinking block. Zero leaves thinking unrestricted. Enforcing it requires
 	// the thinking delimiters below; runners without a reasoning-budget sampler
 	// ignore all three.
-	ThinkBudget      int
-	ThinkingStartTag string
-	ThinkingEndTag   string
+	ThinkBudget        int
+	ThinkBudgetMessage string
+	ThinkingStartTag   string
+	ThinkingEndTag     string
 
 	// Logprobs specifies whether to include log probabilities in the response
 	Logprobs bool
