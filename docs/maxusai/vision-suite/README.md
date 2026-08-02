@@ -80,6 +80,8 @@ passthrough) is in [nemotron-test-image.md](../nemotron-test-image.md).
   used by the bisect harness.
 - Multi-image Q4 is scored dialect-aware like scene boxes (`q4_bbox_space`
   reports the matched space); models answer norm-1000 regardless of prompt.
-- Caveat: with `OLLAMA_KV_CACHE_TYPE=q8_0`, qwen3.6 think-on runs away on the
-  grounding-heavy prompts (scene, multi) on every build — use f16 KV for qwen
-  reasoning runs. See vision-campaign-2026-08-02.md §6.
+- Caveat: with `OLLAMA_KV_CACHE_TYPE=q8_0`, qwen3.6 think-on needs ~19K
+  thinking tokens on the grounding-heavy prompts (scene, multi) vs ~3.3K at
+  f16 — a 16,000-token num_predict censors those cells on every build. Use
+  f16 KV for qwen reasoning runs, or budget num_predict accordingly. See
+  vision-campaign-2026-08-02.md §6.

@@ -134,9 +134,15 @@ The exact minimal pair is the canonical image at 32,768: identical prompt
 run confirms the effect on a second build with the same eval_count and IoU
 (its reported prompt_eval of 5,325 is that binary's known double-counted
 pass-2 prefill; the q8_0 arm shows 2,613 precisely because pass 2 never ran).
-Under q8_0 KV quantization, qwen3.6's reasoning degenerates into a
-non-terminating loop on grounding-heavy prompts; under f16 it terminates at
-~3.3K tokens with its best think-on quality measured.
+**Uncapped follow-up (same day):** raising num_predict to 131,072 (ctx
+262,144) shows q8_0 reasoning is NOT a non-terminating loop — it converges at
+**19,160 evals with valid JSON** (canonical scene cell; reproduced eval-exact
+in the backfill), vs 3,320 under f16. The correct statement is a **~5.8×
+thinking-cost degradation under q8_0**, and every "runaway" cell in the
+matrices above is a censoring artifact of the arbitrary 16,000 cap sitting
+below a ~19K natural convergence (the 16,384-ctx arms were additionally
+window-bound). Uncapped matrix for both builds/endpoints plus the f16
+comparison: `runs/uncapped-2026-08-02.log`.
 
 **Operational recommendation (gfx1151 prod runs q8_0):** serve qwen3.6
 vision+reasoning workloads with `OLLAMA_KV_CACHE_TYPE=f16` (or per-model
@@ -164,9 +170,11 @@ regresses. The mamba-hybrid dividend is real:
 Every invalid cell in 144 has exactly one of two explanations:
 1. **Upstream generate misfiling** (§2): 6 upstream cells (nemo 3, qwen 3),
    fixed on canonical (4 of 6 rescued; the other 2 fall into class 2).
-2. **q8_0-KV qwen reasoning runaway** (§6): scene+multi with think on, on both
-   builds and endpoints (chat runs away on upstream too — it is not caused by
-   any fork code, and the canonical build merely fails at higher token cost).
+2. **q8_0-KV-degraded qwen reasoning exceeding the 16,000 cap** (§6):
+   scene+multi with think on, on both builds and endpoints (upstream chat
+   included — not caused by any fork code). Uncapped, these cells converge at
+   ~19K evals; the "failures" are cap censoring of a q8_0-inflated but finite
+   reasoning phase.
 
 Zero unexplained failures. Determinism throughout: temp-0 repeats were
 token-identical across builds sharing a code path (e.g. qwen chat document:
