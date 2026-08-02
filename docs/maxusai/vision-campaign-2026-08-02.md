@@ -43,7 +43,17 @@ Scene photo 1920×1080, think off (identical on both endpoints):
 
 Multi-image keeps full per-image budgets on canonical (2,042 + 2,403 + ~1,200
 visual + ~556 text tokens = measured prompt 6,203; upstream's 1,324 is the same
-text + 3×256 visual) and answers every cross-reference question. The one canonical "regression" ever observed (multi
+text + 3×256 visual) and answers every cross-reference question.
+
+**Think-mode grounding addendum (dialect probe, `runs/dialect-2026-08-02.log`):**
+the think-on box degradation (6/6 · IoU 0.84 → 4/6 · 0.39) is NOT a reasoning
+deficit — it is prompt-dialect obedience. Only reasoning obeys the prompt's
+pixel-coordinate instruction; nemotron's pixel-space geometry is weak. Asking
+for its native **norm-1000** coordinates instead restores think-on to
+**6/6 · IoU 0.812** (think-off control 0.864) and cuts thinking from 11,749 to
+4,083 tokens — the chain no longer does coordinate arithmetic. Suite guidance:
+prompt bounding boxes in norm-1000 for all three models (each answers in it
+natively regardless; the scorer verifies via `bbox_space`). The one canonical "regression" ever observed (multi
 Q4 bbox) was a scorer artifact — see §5.
 
 ## 2. The generate think+format misfiling is an upstream bug, now proven on upstream
@@ -88,10 +98,22 @@ Genuine upstream gemma runs this suite at roughly half the prompt tokens
 `campaign-*.parsed.json` predates the scorer fix — `final-matrix-2026-08-02.json`
 is the authoritative dataset for Q4.)
 
-Upstream wins box sharpness; the patch wins fine-text under thinking. Nothing
-here reproduces a decisive uplift on synthetic clean imagery. Action: either
-produce the dense fine-text case that motivated the 280→1120 budget as a suite
-scene, or drop the patch from the release lineage.
+Upstream wins box sharpness on these clean synthetic images; the patch wins
+fine-text under thinking. **Verdict settled same day by the dense fine-text
+A/B** (`vision-suite/finetext_probe.py`, 20 codes at 22/16/12/9/7 px on a
+1568² page, `runs/finetext-2026-08-02.log`):
+
+| exact-match recall | 22px | 16px | 12px | 9px | 7px |
+|---|---|---|---|---|---|
+| upstream (280 visual tokens) | 4/4 | 2/4 | 0/4 | 0/4 | 0/4 |
+| canonical (1,120 visual tokens) | 4/4 | 4/4 | 4/4 | 4/4 | 3/4 |
+
+Identical across endpoints and think modes. Upstream is blind below 16px and
+**confabulates** — it still returns 18 plausible-looking codes, i.e. silent
+misreads, and think-on burns ~4,400 hidden tokens without gaining a single
+small-tier code. **The budget patch is re-justified**: ~0.12 IoU on synthetic
+shape boxes buys correct dense-text transcription down to 7–9px without
+confabulation. It stays in the release lineage (ADR 0003 policy).
 
 ## 5. Q4 scorer correction (affects earlier reported matrices)
 
