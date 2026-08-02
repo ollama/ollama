@@ -767,8 +767,14 @@ func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 	return m.LMHead.Forward(x)
 }
 
-// NumLayers returns the number of transformer layers
-func (m *Model) NumLayers() int { return len(m.Layers) }
+// NewCaches builds a KV cache per layer.
+func (m *Model) NewCaches() []cache.Cache {
+	caches := make([]cache.Cache, len(m.Layers))
+	for i := range caches {
+		caches[i] = cache.NewKVCache()
+	}
+	return caches
+}
 
 // MaxContextLength returns the maximum context length
 func (m *Model) MaxContextLength() int { return int(m.MaxPositionEmbeddings) }

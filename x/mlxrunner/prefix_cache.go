@@ -27,7 +27,6 @@ import (
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
-	"github.com/ollama/ollama/x/mlxrunner/model/base"
 )
 
 const maxPagedOutBytes int64 = 8 << 30 // 8 GiB eviction threshold for paged-out snapshot memory
@@ -66,17 +65,9 @@ type cacheSession struct {
 	pendingSnapshots []pendingSnapshot
 }
 
-func newPrefixCache(m base.Model) *prefixCache {
-	c := &prefixCache{}
-	if cacheFactory, ok := m.(interface{ NewCaches() []cache.Cache }); ok {
-		c.caches = cacheFactory.NewCaches()
-		return c
-	}
-	c.caches = make([]cache.Cache, m.NumLayers())
-	for i := range c.caches {
-		c.caches[i] = cache.NewKVCache()
-	}
-	return c
+// newPrefixCache manages the given cache slots for the model's life.
+func newPrefixCache(caches []cache.Cache) *prefixCache {
+	return &prefixCache{caches: caches}
 }
 
 func (c *prefixCache) ensureRoot() {

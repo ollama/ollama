@@ -151,12 +151,12 @@ func (d *mtpDraftSession) flush() {
 
 	ids := mlx.Concatenate(d.pendingTokens, 1)
 	hiddens := mlx.Concatenate(d.pendingHiddens, 1)
-	hidden, auxHidden := spec.draft.Draft(&batch.Batch{
+	hidden, auxHidden := spec.draft.Forward(&batch.Batch{
 		InputIDs:     ids,
 		SeqOffsets:   []int32{int32(d.committedDraftOffset)},
 		SeqQueryLens: []int32{int32(ids.Dim(1))},
 		Hidden:       hiddens,
-	}, spec.caches)
+	}, spec.targets, spec.draftKV)
 	d.setHeld(lastHiddenRow(hidden), lastHiddenRow(auxHidden))
 	d.committedDraftOffset += ids.Dim(1)
 
@@ -226,12 +226,12 @@ func (d *mtpDraftSession) propose(current *mlx.Array, maxTokens int) *draftCandi
 			if len(spec.draftKV) > 0 {
 				pos = d.frontier - 1 + i
 			}
-			hidden, auxHidden = spec.draft.Draft(&batch.Batch{
+			hidden, auxHidden = spec.draft.Forward(&batch.Batch{
 				InputIDs:     lastToken,
 				SeqOffsets:   []int32{int32(pos)},
 				SeqQueryLens: []int32{1},
 				Hidden:       lastHidden,
-			}, spec.caches)
+			}, spec.targets, spec.draftKV)
 		}
 		// Unembed only the row being sampled, never the batch.
 		stepLogits := spec.draft.Unembed(hidden).Squeeze(1)

@@ -6,12 +6,14 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/x/internal/mlxthread"
+	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
 	"github.com/ollama/ollama/x/mlxrunner/model/base"
@@ -106,13 +108,23 @@ func (r *Runner) Load(modelName string) error {
 	r.Model = m
 	r.Tokenizer = m.Tokenizer()
 	r.contextLength = m.MaxContextLength()
-	r.cache = newPrefixCache(m)
+	caches := m.NewCaches()
+	draftCaches := newDraftCaches(draftModel)
+	r.cache = newPrefixCache(slices.Concat(caches, draftCaches))
 	r.Sampler = sample.New(r.contextLength)
-	r.spec = newSpeculation(r, draftModel)
+	r.spec = newSpeculation(r, draftModel, caches, draftCaches)
 
 	mlx.EnableCompile()
 
 	return nil
+}
+
+// newDraftCaches returns nil when the model ships no draft.
+func newDraftCaches(draft base.DraftModel) []cache.Cache {
+	if draft == nil {
+		return nil
+	}
+	return draft.NewCaches()
 }
 
 func configureWiredMemory() {

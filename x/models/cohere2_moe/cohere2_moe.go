@@ -754,10 +754,6 @@ func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 	return logits
 }
 
-func (m *Model) NumLayers() int {
-	return len(m.Layers)
-}
-
 func (m *Model) MaxContextLength() int {
 	return int(m.MaxPositionEmbeddings)
 }
