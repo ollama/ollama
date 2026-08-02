@@ -446,8 +446,8 @@ func (s *Sampler) Sample(seqIDs []int, logits *mlx.Array) Result {
 // mutating sampler state. Rows align with the end of the draft chain: the
 // final row is built as if every draft token had already been appended to
 // the slot history, each earlier row with one fewer. Validation passes
-// len(draftTokens)+1 rows, so row i sees draftTokens[:i]; a proposal step
-// passes a single row, which sees the whole chain so far. logits must be
+// len(draftTokens)+1 rows, so row i sees draftTokens[:i]; a proposal passes
+// no chain and every row sees the slot history as it stands. logits must be
 // [R,V] or [1,R,V].
 func (s *Sampler) Distribution(seqID int, logits *mlx.Array, draftTokens *mlx.Array) Distribution {
 	slot, logits, draftTokens := s.speculativeInputs("Distribution", seqID, logits, draftTokens)
@@ -529,14 +529,10 @@ func (s *Sampler) speculativeInputs(caller string, seqID int, logits *mlx.Array,
 	}
 
 	// Rows align with the end of the draft chain, so the earliest row sees
-	// draftCount-rows+1 prior drafts. More rows than draftCount+1 would make
-	// that count negative and silently drop the prefix; reject it loudly.
-	draftCount := 0
-	if draftTokens != nil {
-		draftCount = draftTokens.Dim(1)
-	}
-	if logits.Dim(0) > draftCount+1 {
-		panic(fmt.Sprintf("sample.Sampler.%s: %d logit rows exceed the %d-token draft chain", caller, logits.Dim(0), draftCount))
+	// draftCount-rows+1 prior drafts; more rows than that would silently drop
+	// prefix — reject loudly. Without a chain, rows see the history unchanged.
+	if draftTokens != nil && logits.Dim(0) > draftTokens.Dim(1)+1 {
+		panic(fmt.Sprintf("sample.Sampler.%s: %d logit rows exceed the %d-token draft chain", caller, logits.Dim(0), draftTokens.Dim(1)))
 	}
 	return slot, logits, draftTokens
 }
