@@ -1276,9 +1276,9 @@ func (t *ThinkValue) Bool() bool {
 
 // BudgetTokens returns the number of tokens the model may spend inside a
 // thinking block, or 0 when thinking is unrestricted. An explicit integer
-// value is used as-is; effort levels are resolved against numCtx, the context
-// length the request actually runs with.
-func (t *ThinkValue) BudgetTokens(numCtx int) int {
+// value is used as-is; effort levels are a share of window, the room the
+// response has to work in — see ThinkBudgetWindow.
+func (t *ThinkValue) BudgetTokens(window int) int {
 	if t == nil || t.Value == nil {
 		return 0
 	}
@@ -1290,16 +1290,32 @@ func (t *ThinkValue) BudgetTokens(numCtx int) int {
 		}
 	case string:
 		frac, ok := thinkBudgetFraction[v]
-		if !ok || numCtx <= 0 {
+		if !ok || window <= 0 {
 			return 0
 		}
 		// Round down so the budget never consumes the whole window
-		if budget := numCtx * frac[0] / frac[1]; budget > 0 {
+		if budget := window * frac[0] / frac[1]; budget > 0 {
 			return budget
 		}
 	}
 
 	return 0
+}
+
+// ThinkBudgetWindow returns the room a level is a share of. A level bounds
+// thinking so a model still has room left to answer, which makes the response
+// length the thing to divide: when the caller caps it with num_predict, a share
+// of the context length can equal or exceed that cap and then bounds nothing —
+// the model can spend the whole response thinking and stop at the cap with no
+// answer. Prefer num_predict when it is set, and never exceed the context.
+func ThinkBudgetWindow(numCtx, numPredict int) int {
+	if numPredict <= 0 {
+		return numCtx
+	}
+	if numCtx > 0 {
+		return min(numPredict, numCtx)
+	}
+	return numPredict
 }
 
 // Level returns the effort level to hand a model that consumes levels

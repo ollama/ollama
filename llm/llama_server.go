@@ -2247,9 +2247,10 @@ func (s *llamaServerRunner) llamaServerChatRequest(req ChatRequest, stream bool)
 	}
 	// llama-server owns the chat template on this path, so it already knows the
 	// thinking delimiters and only needs the budget.
-	budget := req.Think.BudgetTokens(s.ContextLength())
+	window := api.ThinkBudgetWindow(s.ContextLength(), req.Options.NumPredict)
+	budget := req.Think.BudgetTokens(window)
 	if budget <= 0 {
-		budget = req.Options.ThinkBudget.BudgetTokens(s.ContextLength())
+		budget = req.Options.ThinkBudget.BudgetTokens(window)
 	}
 	if budget > 0 {
 		body["thinking_budget_tokens"] = budget

@@ -2321,9 +2321,10 @@ func thinkBudgetForCompletion(builtinParser parsers.Parser, templateStart, templ
 		return 0, "", ""
 	}
 
-	budget = think.BudgetTokens(opts.NumCtx)
+	window := api.ThinkBudgetWindow(opts.NumCtx, opts.NumPredict)
+	budget = think.BudgetTokens(window)
 	if budget <= 0 {
-		budget = opts.ThinkBudget.BudgetTokens(opts.NumCtx)
+		budget = opts.ThinkBudget.BudgetTokens(window)
 	}
 	if budget <= 0 {
 		return 0, "", ""
