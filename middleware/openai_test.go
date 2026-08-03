@@ -715,6 +715,60 @@ func TestChatWriter_StreamMetricsTrailerSkipsEmptyContentChunk(t *testing.T) {
 	}
 }
 
+func TestChatWriter_StreamDoneWithLogprobsNotTreatedAsTrailer(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+
+	writer := &ChatWriter{
+		stream:     true,
+		id:         "chatcmpl-test",
+		BaseWriter: BaseWriter{ResponseWriter: context.Writer},
+	}
+
+	content := api.ChatResponse{
+		Model:   "test-model",
+		Message: api.Message{Content: "Hi"},
+	}
+	data, err := json.Marshal(content)
+	if err != nil {
+		t.Fatalf("marshal content: %v", err)
+	}
+	if _, err := writer.Write(data); err != nil {
+		t.Fatalf("write content: %v", err)
+	}
+
+	// A final response can carry the last token's logprobs with an empty
+	// message; its logprobs must be streamed, not dropped with the trailer.
+	final := api.ChatResponse{
+		Model:      "test-model",
+		Done:       true,
+		DoneReason: "stop",
+		Logprobs: []api.Logprob{
+			{TokenLogprob: api.TokenLogprob{Token: "Hi", Logprob: -0.1}},
+		},
+	}
+	data, err = json.Marshal(final)
+	if err != nil {
+		t.Fatalf("marshal final: %v", err)
+	}
+	if _, err := writer.Write(data); err != nil {
+		t.Fatalf("write final: %v", err)
+	}
+
+	frames := sseDataFrames(recorder.Body.String())
+	// content + logprobs chunk + finish + [DONE]
+	if len(frames) != 4 {
+		t.Fatalf("expected 4 SSE data frames (content + logprobs + finish + [DONE]), got %d:\n%s", len(frames), recorder.Body.String())
+	}
+	if !strings.Contains(frames[1], `"logprob":-0.1`) {
+		t.Fatalf("expected logprobs chunk to carry the logprobs, got %s", frames[1])
+	}
+	if !strings.Contains(frames[2], `"delta":{}`) || !strings.Contains(frames[2], `"finish_reason":"stop"`) {
+		t.Fatalf("expected finish frame with empty delta and stop reason, got %s", frames[2])
+	}
+}
+
 func TestChatWriter_StreamEmptyCompletionStillEmitsRoleChunk(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()

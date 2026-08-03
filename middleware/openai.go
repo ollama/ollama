@@ -103,7 +103,8 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 		isEmptyTrailer := chatResponse.Done && w.firstChunkSent &&
 			chatResponse.Message.Content == "" &&
 			chatResponse.Message.Thinking == "" &&
-			len(chatResponse.Message.ToolCalls) == 0
+			len(chatResponse.Message.ToolCalls) == 0 &&
+			len(chatResponse.Logprobs) == 0
 
 		if !isEmptyTrailer {
 			includeRole := !w.firstChunkSent
