@@ -1263,6 +1263,22 @@ func IsThinkLevel(level string) bool {
 	return model.IsThinkLevel(level)
 }
 
+// ThinkBudgetWindow returns the room a level is a share of. A level bounds
+// thinking so a model still has room left to answer, which makes the response
+// length the thing to divide: when the caller caps it with num_predict, a share
+// of the context length can equal or exceed that cap and then bounds nothing —
+// the model can spend the whole response thinking and stop at the cap with no
+// answer. Prefer num_predict when it is set, and never exceed the context.
+func ThinkBudgetWindow(numCtx, numPredict int) int {
+	if numPredict <= 0 {
+		return numCtx
+	}
+	if numCtx > 0 {
+		return min(numPredict, numCtx)
+	}
+	return numPredict
+}
+
 type Duration struct {
 	time.Duration
 }
