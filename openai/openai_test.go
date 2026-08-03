@@ -808,6 +808,18 @@ func TestFinishChunk(t *testing.T) {
 			toolCallSent:   false,
 			expectedReason: "stop",
 		},
+		{
+			name:           "unknown_reason_passes_through",
+			doneReason:     "unload",
+			toolCallSent:   false,
+			expectedReason: "unload",
+		},
+		{
+			name:           "unknown_reason_not_relabeled_tool_calls",
+			doneReason:     "unload",
+			toolCallSent:   true,
+			expectedReason: "unload",
+		},
 	}
 
 	for _, tt := range tests {

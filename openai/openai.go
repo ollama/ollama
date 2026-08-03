@@ -3,6 +3,7 @@ package openai
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -367,12 +368,12 @@ func ToStreamChunks(id string, r api.ChatResponse, includeRole bool) []ChatCompl
 // FinishChunk creates a dedicated finish-reason chunk with an empty delta,
 // matching the OpenAI spec where finish_reason is sent on its own chunk.
 func FinishChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChunk {
-	reason := r.DoneReason
-	if reason != "length" && toolCallSent {
+	// Only remap known terminal reasons; pass anything else through untouched.
+	// tool_calls only overrides stop — an unfinished or unknown done reason
+	// must not be relabeled tool_calls.
+	reason := cmp.Or(r.DoneReason, "stop")
+	if reason == "stop" && toolCallSent {
 		reason = "tool_calls"
-	}
-	if reason == "" {
-		reason = "stop"
 	}
 	// Stamp the chunk with the completion's timestamp like OpenAI does; fall
 	// back to now when the response carries none (e.g. synthetic responses).
