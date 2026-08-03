@@ -3804,7 +3804,52 @@ func TestLlamaServerCompletionReasoningBudget(t *testing.T) {
 			wantStart:            "<think>",
 			wantEnd:              "</think>",
 			wantMessage:          "",
-			wantGenerationPrompt: "<think>",
+			wantGenerationPrompt: "<think>\n",
+		},
+		{
+			// gemma4 primes the block with a channel name after a tool
+			// response, so the prompt ends past the opening tag rather than
+			// with it
+			name: "primed block is replayed past the opening tag",
+			req: CompletionRequest{
+				Prompt:           "<|tool_response>12:00<turn|>\n<|channel>thought\n",
+				ThinkBudget:      512,
+				ThinkingStartTag: "<|channel>",
+				ThinkingEndTag:   "<channel|>",
+			},
+			wantBudget:           float64(512),
+			wantStart:            "<|channel>",
+			wantEnd:              "<channel|>",
+			wantMessage:          "",
+			wantGenerationPrompt: "<|channel>thought\n",
+		},
+		{
+			name: "closed thinking block is not replayed",
+			req: CompletionRequest{
+				Prompt:           "<|turn>model\n<|channel>thought\nhm<channel|>done<turn|>\n<|turn>model\n",
+				ThinkBudget:      512,
+				ThinkingStartTag: "<|channel>",
+				ThinkingEndTag:   "<channel|>",
+			},
+			wantBudget:  float64(512),
+			wantStart:   "<|channel>",
+			wantEnd:     "<channel|>",
+			wantMessage: "",
+		},
+		{
+			// an opening tag this far from the end came from message content,
+			// not from the template priming the turn
+			name: "opening tag inside message content is not replayed",
+			req: CompletionRequest{
+				Prompt:           "<|im_start|>user\nwhy does <think> not close in this quoted example I pasted<|im_end|>\n<|im_start|>assistant\n",
+				ThinkBudget:      512,
+				ThinkingStartTag: "<think>",
+				ThinkingEndTag:   "</think>",
+			},
+			wantBudget:  float64(512),
+			wantStart:   "<think>",
+			wantEnd:     "</think>",
+			wantMessage: "",
 		},
 		{
 			name: "wrap-up message is forced ahead of the closing tag",
