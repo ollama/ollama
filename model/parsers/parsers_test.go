@@ -342,11 +342,11 @@ func TestThinkingTagsForParser(t *testing.T) {
 		{name: "parser without thinking tags", parser: &PassthroughParser{}},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			start, end := ThinkingTagsForParser(test.parser)
-			if start != test.wantStart || end != test.wantEnd {
-				t.Errorf("ThinkingTagsForParser() = (%q, %q), want (%q, %q)", start, end, test.wantStart, test.wantEnd)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			start, end := ThinkingTagsForParser(tt.parser)
+			if start != tt.wantStart || end != tt.wantEnd {
+				t.Errorf("ThinkingTagsForParser() = (%q, %q), want (%q, %q)", start, end, tt.wantStart, tt.wantEnd)
 			}
 		})
 	}
