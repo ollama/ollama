@@ -2390,3 +2390,41 @@ func TestIsLocalhost(t *testing.T) {
 		})
 	}
 }
+
+func TestParseThinkFlag(t *testing.T) {
+	tests := []struct {
+		value   string
+		want    any
+		wantErr bool
+	}{
+		{value: "", want: true},
+		{value: "true", want: true},
+		{value: "false", want: false},
+		{value: "minimal", want: "minimal"},
+		{value: "low", want: "low"},
+		{value: "max", want: "max"},
+		{value: "8192", want: 8192},
+		{value: "0", wantErr: true},
+		{value: "-1", wantErr: true},
+		{value: "none", wantErr: true},
+		{value: "8192.5", wantErr: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.value, func(t *testing.T) {
+			think, err := parseThinkFlag(test.value)
+			if test.wantErr {
+				if err == nil {
+					t.Fatalf("parseThinkFlag(%q) = %v, want an error", test.value, think.Value)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseThinkFlag(%q): %v", test.value, err)
+			}
+			if think.Value != test.want {
+				t.Errorf("parseThinkFlag(%q) = %v, want %v", test.value, think.Value, test.want)
+			}
+		})
+	}
+}

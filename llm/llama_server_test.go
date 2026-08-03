@@ -3927,16 +3927,23 @@ func TestLlamaServerCompletionReasoningBudget(t *testing.T) {
 				t.Fatalf("Completion error: %v", err)
 			}
 
-			for field, want := range map[string]any{
-				"reasoning_budget_tokens":    test.wantBudget,
-				"reasoning_budget_start_tag": test.wantStart,
-				"reasoning_budget_end_tag":   test.wantEnd,
+			// a nil want means the field must not reach the wire at all
+			expected := []struct {
+				field string
+				want  any
+			}{
+				{"reasoning_budget_tokens", test.wantBudget},
+				{"reasoning_budget_start_tag", test.wantStart},
+				{"reasoning_budget_end_tag", test.wantEnd},
 				// llama-server builds the sequence it forces from
 				// message+end_tag, and only when this field is present, so an
 				// empty message still has to reach the wire
-				"reasoning_budget_message": test.wantMessage,
-				"generation_prompt":        test.wantGenerationPrompt,
-			} {
+				{"reasoning_budget_message", test.wantMessage},
+				{"generation_prompt", test.wantGenerationPrompt},
+			}
+
+			for _, expect := range expected {
+				field, want := expect.field, expect.want
 				got, ok := completionBody[field]
 				if want == nil {
 					if ok {
