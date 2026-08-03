@@ -1315,14 +1315,14 @@ func TestThinkBudgetForCompletion(t *testing.T) {
 		},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			budget, start, end := thinkBudgetForCompletion(test.parser, test.templateStart, test.templateEnd, test.think, test.opts)
-			if budget != test.wantBudget {
-				t.Errorf("budget = %d, want %d", budget, test.wantBudget)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			budget, start, end := thinkBudgetForCompletion(tt.parser, tt.templateStart, tt.templateEnd, tt.think, tt.opts)
+			if budget != tt.wantBudget {
+				t.Errorf("budget = %d, want %d", budget, tt.wantBudget)
 			}
-			if hasTags := start != "" && end != ""; hasTags != test.wantTags {
-				t.Errorf("tags = (%q, %q), wantTags %v", start, end, test.wantTags)
+			if hasTags := start != "" && end != ""; hasTags != tt.wantTags {
+				t.Errorf("tags = (%q, %q), wantTags %v", start, end, tt.wantTags)
 			}
 		})
 	}

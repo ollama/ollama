@@ -2410,20 +2410,20 @@ func TestParseThinkFlag(t *testing.T) {
 		{value: "8192.5", wantErr: true},
 	}
 
-	for _, test := range tests {
-		t.Run(test.value, func(t *testing.T) {
-			think, err := parseThinkFlag(test.value)
-			if test.wantErr {
+	for _, tt := range tests {
+		t.Run(tt.value, func(t *testing.T) {
+			think, err := parseThinkFlag(tt.value)
+			if tt.wantErr {
 				if err == nil {
-					t.Fatalf("parseThinkFlag(%q) = %v, want an error", test.value, think.Value)
+					t.Fatalf("parseThinkFlag(%q) = %v, want an error", tt.value, think.Value)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("parseThinkFlag(%q): %v", test.value, err)
+				t.Fatalf("parseThinkFlag(%q): %v", tt.value, err)
 			}
-			if think.Value != test.want {
-				t.Errorf("parseThinkFlag(%q) = %v, want %v", test.value, think.Value, test.want)
+			if think.Value != tt.want {
+				t.Errorf("parseThinkFlag(%q) = %v, want %v", tt.value, think.Value, tt.want)
 			}
 		})
 	}
