@@ -104,7 +104,7 @@ type GenerateRequest struct {
 
 	// Think controls whether thinking/reasoning models will think before
 	// responding. For supported models it can be a boolean (true/false), a
-	// string ("high", "medium", "low", "max") or a positive integer giving an
+	// string ("minimal", "low", "medium", "high", "max") or a positive integer giving an
 	// explicit thinking-token budget. Needs to be a pointer so we can distinguish between false
 	// (request that thinking _not_ be used) and unset (use the old behavior
 	// before this option was introduced)
@@ -157,7 +157,7 @@ type ChatRequest struct {
 
 	// Think controls whether thinking/reasoning models will think before
 	// responding. For supported models it can be a boolean (true/false), a
-	// string ("high", "medium", "low", "max") or a positive integer giving an
+	// string ("minimal", "low", "medium", "high", "max") or a positive integer giving an
 	// explicit thinking-token budget.
 	Think *ThinkValue `json:"think,omitempty"`
 
@@ -1153,8 +1153,8 @@ func DefaultOptions() Options {
 	}
 }
 
-// ThinkValue represents a value that can be a boolean, a string ("high",
-// "medium", "low", "max") or a positive integer thinking-token budget
+// ThinkValue represents a value that can be a boolean, a level ("minimal",
+// "low", "medium", "high", "max") or a positive integer thinking-token budget
 type ThinkValue struct {
 	// Value can be a bool, string or int
 	Value interface{}
@@ -1184,6 +1184,16 @@ var thinkBudgetFraction = map[string][2]int{
 
 func isThinkLevel(level string) bool {
 	return slices.Contains(thinkLevels, level)
+}
+
+// quotedThinkLevels renders the accepted levels for an error message, so a
+// level added to thinkLevels cannot go missing from what a caller is told.
+func quotedThinkLevels() string {
+	quoted := make([]string, len(thinkLevels))
+	for i, level := range thinkLevels {
+		quoted[i] = strconv.Quote(level)
+	}
+	return strings.Join(quoted, ", ")
 }
 
 // ThinkLevels returns the effort levels think accepts, weakest first. The
@@ -1342,7 +1352,7 @@ func (t *ThinkValue) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &s); err == nil {
 		// Validate string values
 		if !isThinkLevel(s) {
-			return fmt.Errorf("invalid think value: %q (must be \"high\", \"medium\", \"low\", \"max\", true, or false)", s)
+			return fmt.Errorf("invalid think value: %q (must be one of %s, true, or false)", s, quotedThinkLevels())
 		}
 		t.Value = s
 		return nil
@@ -1358,7 +1368,7 @@ func (t *ThinkValue) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 
-	return fmt.Errorf("think must be a boolean, a string (\"high\", \"medium\", \"low\", \"max\") or a positive thinking-token budget")
+	return fmt.Errorf("think must be a boolean, one of %s, or a positive thinking-token budget", quotedThinkLevels())
 }
 
 // MarshalJSON implements json.Marshaler
