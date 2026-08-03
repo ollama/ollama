@@ -1400,6 +1400,7 @@ type ResponsesStreamConverter struct {
 	toolCallsSent   bool
 	accumulatedText string
 	sequenceNumber  int
+	terminated      bool
 
 	// Reasoning/thinking state
 	accumulatedThinking string
@@ -1441,12 +1442,7 @@ func (c *ResponsesStreamConverter) Process(r api.ChatResponse) []ResponsesStream
 	hasToolCalls := len(r.Message.ToolCalls) > 0
 	hasThinking := r.Message.Thinking != ""
 
-	// First chunk - emit initial events
-	if c.firstWrite {
-		c.firstWrite = false
-		events = append(events, c.createResponseCreatedEvent())
-		events = append(events, c.createResponseInProgressEvent())
-	}
+	events = append(events, c.openStream()...)
 
 	// Handle reasoning/thinking (before other content)
 	if hasThinking {
@@ -1467,9 +1463,22 @@ func (c *ResponsesStreamConverter) Process(r api.ChatResponse) []ResponsesStream
 	// Done - emit closing events
 	if r.Done {
 		events = append(events, c.processCompletion(r)...)
+		c.terminated = true
 	}
 
 	return events
+}
+
+// ProcessError ends the stream on a mid-stream generation error. Output is
+// empty because the partial content already went out as deltas.
+func (c *ResponsesStreamConverter) ProcessError(message string) []ResponsesStreamEvent {
+	response := c.buildResponseObject("failed", []any{}, nil)
+	response["error"] = map[string]any{
+		"code":    "server_error",
+		"message": message,
+	}
+
+	return c.ResponseFailed(response)
 }
 
 // buildResponseObject creates a full response object with all required fields for streaming events.
@@ -1564,6 +1573,17 @@ func (c *ResponsesStreamConverter) buildResponseObject(status string, output []a
 		"safety_identifier":    nil,
 		"prompt_cache_key":     nil,
 	}
+}
+
+// openStream returns the events that open a stream, or nil if it is already
+// open. Both the success and the failure path start a stream this way.
+func (c *ResponsesStreamConverter) openStream() []ResponsesStreamEvent {
+	if !c.firstWrite {
+		return nil
+	}
+	c.firstWrite = false
+
+	return []ResponsesStreamEvent{c.createResponseCreatedEvent(), c.createResponseInProgressEvent()}
 }
 
 func (c *ResponsesStreamConverter) createResponseCreatedEvent() ResponsesStreamEvent {
@@ -1785,9 +1805,27 @@ func (c *ResponsesStreamConverter) FinishWebSearchCall(call ResponsesWebSearchCa
 	}
 }
 
-// ResponseFailed emits a terminal failure using this stream's sequence counter.
-func (c *ResponsesStreamConverter) ResponseFailed(response map[string]any) ResponsesStreamEvent {
-	return c.newEvent("response.failed", map[string]any{"response": response})
+// ResponseFailed closes any open items and emits the terminal response.failed
+// event, or nothing if the stream has already ended.
+func (c *ResponsesStreamConverter) ResponseFailed(response map[string]any) []ResponsesStreamEvent {
+	if c.terminated {
+		return nil
+	}
+	c.terminated = true
+
+	// A generation can fail before it produces a single token, in which case
+	// Process never ran and the stream is not open yet.
+	events := c.openStream()
+
+	// Close open items so the client is not left holding one (#17118). A
+	// failed generation did not complete its message, so that closes as
+	// incomplete. The guard matches the one processCompletion uses.
+	events = append(events, c.finishReasoning()...)
+	if !c.toolCallsSent {
+		events = append(events, c.finishMessageItem("incomplete")...)
+	}
+
+	return append(events, c.newEvent("response.failed", map[string]any{"response": response}))
 }
 
 func webSearchCallMap(call ResponsesWebSearchCall) map[string]any {
@@ -1804,6 +1842,11 @@ func webSearchCallMap(call ResponsesWebSearchCall) map[string]any {
 // and reserves its place in the final output. This allows pre-search content
 // to be emitted as a distinct message item before web_search_call events.
 func (c *ResponsesStreamConverter) FinishMessageItem() []ResponsesStreamEvent {
+	return c.finishMessageItem("completed")
+}
+
+// finishMessageItem closes the current text message item with the given status.
+func (c *ResponsesStreamConverter) finishMessageItem(status string) []ResponsesStreamEvent {
 	if !c.contentStarted {
 		return nil
 	}
@@ -1817,7 +1860,7 @@ func (c *ResponsesStreamConverter) FinishMessageItem() []ResponsesStreamEvent {
 	item := map[string]any{
 		"id":     itemID,
 		"type":   "message",
-		"status": "completed",
+		"status": status,
 		"role":   "assistant",
 		"content": []map[string]any{{
 			"type":        "output_text",
