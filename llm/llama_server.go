@@ -390,14 +390,7 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 		params = append(params, "--no-mmap")
 	}
 
-	// Direct I/O skips the page cache on load for integrated CUDA/ROCm GPUs, which
-	// share system memory with the CPU and would otherwise double-buffer weights.
-	for _, g := range launch.gpus {
-		if runtime.GOOS == "linux" && g.Integrated && (strings.EqualFold(g.Library, "CUDA") || strings.EqualFold(g.Library, "ROCm")) {
-			params = append(params, "--direct-io")
-			break
-		}
-	}
+	params = appendDirectIOArgs(params, launch.gpus, runtime.GOOS)
 
 	// KV cache type
 	if launch.kvCacheType != "" {
@@ -628,6 +621,29 @@ func appendFlashAttentionArgs(params []string, gpus []ml.DeviceInfo) []string {
 	default:
 		return append(params, "--flash-attn", "auto")
 	}
+}
+
+func appendDirectIOArgs(params []string, gpus []ml.DeviceInfo, goos string) []string {
+	if goos != "linux" {
+		return params
+	}
+
+	// Direct I/O skips the page cache on load for integrated GPUs, which share
+	// system memory with the CPU and would otherwise double-buffer weights.
+	for _, g := range gpus {
+		if !g.Integrated {
+			continue
+		}
+
+		switch {
+		case strings.EqualFold(g.Library, "CUDA"),
+			strings.EqualFold(g.Library, "ROCm"),
+			strings.EqualFold(g.Library, "Vulkan"):
+			return append(params, "--direct-io")
+		}
+	}
+
+	return params
 }
 
 func appendMainGPUArgs(params []string, opts api.Options) []string {

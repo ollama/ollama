@@ -2036,6 +2036,76 @@ func TestAppendFlashAttentionArgs(t *testing.T) {
 	}
 }
 
+func TestAppendDirectIOArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		goos string
+		gpus []ml.DeviceInfo
+		want []string
+	}{
+		{
+			name: "linux integrated CUDA",
+			goos: "linux",
+			gpus: []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, Integrated: true}},
+			want: []string{"base", "--direct-io"},
+		},
+		{
+			name: "linux integrated ROCm",
+			goos: "linux",
+			gpus: []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "ROCm"}, Integrated: true}},
+			want: []string{"base", "--direct-io"},
+		},
+		{
+			name: "linux integrated Vulkan",
+			goos: "linux",
+			gpus: []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Vulkan"}, Integrated: true}},
+			want: []string{"base", "--direct-io"},
+		},
+		{
+			name: "library match is case insensitive",
+			goos: "linux",
+			gpus: []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "vulkan"}, Integrated: true}},
+			want: []string{"base", "--direct-io"},
+		},
+		{
+			name: "linux discrete Vulkan",
+			goos: "linux",
+			gpus: []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Vulkan"}}},
+			want: []string{"base"},
+		},
+		{
+			name: "non-linux integrated Vulkan",
+			goos: "windows",
+			gpus: []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Vulkan"}, Integrated: true}},
+			want: []string{"base"},
+		},
+		{
+			name: "unsupported integrated backend",
+			goos: "linux",
+			gpus: []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Metal"}, Integrated: true}},
+			want: []string{"base"},
+		},
+		{
+			name: "multiple eligible GPUs append one flag",
+			goos: "linux",
+			gpus: []ml.DeviceInfo{
+				{DeviceID: ml.DeviceID{Library: "Vulkan"}, Integrated: true},
+				{DeviceID: ml.DeviceID{Library: "ROCm"}, Integrated: true},
+			},
+			want: []string{"base", "--direct-io"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := appendDirectIOArgs([]string{"base"}, tt.gpus, tt.goos)
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("appendDirectIOArgs = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAppendMainGPUArgs(t *testing.T) {
 	tests := []struct {
 		name string
