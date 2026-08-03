@@ -30,6 +30,9 @@ type ChatWriter struct {
 	id             string
 	toolCallSent   bool
 	firstChunkSent bool
+	// createdAt pins the shared timestamp for every chunk in the stream,
+	// captured from the first response.
+	createdAt time.Time
 	BaseWriter
 }
 
@@ -81,6 +84,16 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 	// chat chunk
 	if w.stream {
 		w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")
+
+		// OpenAI stamps one created value on every chunk in a stream; pin the
+		// timestamp from the first response (the server stamps each response).
+		if chatResponse.CreatedAt.IsZero() {
+			chatResponse.CreatedAt = time.Now().UTC()
+		}
+		if w.createdAt.IsZero() {
+			w.createdAt = chatResponse.CreatedAt
+		}
+		chatResponse.CreatedAt = w.createdAt
 
 		// A Done response with an empty message is the metrics-only trailer.
 		// OpenAI goes straight from the last content chunk to the finish chunk,

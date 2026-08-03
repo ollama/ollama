@@ -492,6 +492,69 @@ func TestChatWriter_StreamRoleOnlyOnFirstChunk(t *testing.T) {
 	}
 }
 
+func TestChatWriter_StreamSharesOneTimestamp(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+
+	writer := &ChatWriter{
+		stream:     true,
+		id:         "chatcmpl-test",
+		BaseWriter: BaseWriter{ResponseWriter: context.Writer},
+	}
+
+	first := api.ChatResponse{
+		Model:     "test-model",
+		CreatedAt: time.Unix(1700000000, 0),
+		Message:   api.Message{Content: "Hello"},
+		Done:      false,
+	}
+	data, _ := json.Marshal(first)
+	if _, err := writer.Write(data); err != nil {
+		t.Fatalf("write first: %v", err)
+	}
+
+	// The server stamps each streamed response; later responses must not
+	// change the stream's created value.
+	second := api.ChatResponse{
+		Model:     "test-model",
+		CreatedAt: time.Unix(1700000010, 0),
+		Message:   api.Message{Content: " world"},
+		Done:      false,
+	}
+	data, _ = json.Marshal(second)
+	if _, err := writer.Write(data); err != nil {
+		t.Fatalf("write second: %v", err)
+	}
+
+	third := api.ChatResponse{
+		Model:      "test-model",
+		CreatedAt:  time.Unix(1700000020, 0),
+		Done:       true,
+		DoneReason: "stop",
+	}
+	data, _ = json.Marshal(third)
+	if _, err := writer.Write(data); err != nil {
+		t.Fatalf("write third: %v", err)
+	}
+
+	frames := sseDataFrames(recorder.Body.String())
+	// chunk1 + chunk2 + finish + [DONE]
+	if len(frames) != 4 {
+		t.Fatalf("expected 4 SSE data frames, got %d:\n%s", len(frames), recorder.Body.String())
+	}
+
+	for _, frame := range frames[:3] {
+		var raw map[string]any
+		if err := json.Unmarshal([]byte(frame), &raw); err != nil {
+			t.Fatalf("unmarshal frame: %v", err)
+		}
+		if got := raw["created"]; got != float64(1700000000) {
+			t.Fatalf("expected all chunks to share created=1700000000, got %v in %s", got, frame)
+		}
+	}
+}
+
 func TestChatWriter_StreamFinishReasonLength(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
