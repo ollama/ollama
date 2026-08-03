@@ -1030,9 +1030,9 @@ func TestThinkValueBudgetTokens(t *testing.T) {
 		{name: "effort with tiny context", think: &ThinkValue{Value: "low"}, numCtx: 2, expected: 0},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			assert.Equal(t, test.expected, test.think.BudgetTokens(test.numCtx))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tt.think.BudgetTokens(tt.numCtx))
 		})
 	}
 }
@@ -1076,19 +1076,19 @@ func TestThinkBudgetOption(t *testing.T) {
 		},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			params, err := FormatParams(map[string][]string{"think_budget": {test.param}})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params, err := FormatParams(map[string][]string{"think_budget": {tt.param}})
 			require.NoError(t, err)
 
 			// what FormatParams produces must itself be decodable
-			values := append([]any{params["think_budget"]}, test.fromMap...)
+			values := append([]any{params["think_budget"]}, tt.fromMap...)
 			for _, value := range values {
 				opts := DefaultOptions()
 				require.NoError(t, opts.FromMap(map[string]any{"think_budget": value}), "value %#v", value)
 				require.NotNil(t, opts.ThinkBudget)
-				assert.Equal(t, test.expected, opts.ThinkBudget.Value)
-				assert.Equal(t, test.budget, opts.ThinkBudget.BudgetTokens(32768))
+				assert.Equal(t, tt.expected, opts.ThinkBudget.Value)
+				assert.Equal(t, tt.budget, opts.ThinkBudget.BudgetTokens(32768))
 			}
 		})
 	}
@@ -1137,15 +1137,15 @@ func TestThinkValueLevel(t *testing.T) {
 		{name: "a budget carries no level", think: &ThinkValue{Value: 8192}, level: ""},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			assert.Equal(t, test.level, test.think.Level())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.level, tt.think.Level())
 		})
 	}
 
 	// Reporting a level as its nearest neighbour must not change the budget it
 	// asked for, or the requested level itself
-	for _, test := range []struct {
+	for _, tt := range []struct {
 		requested string
 		reported  string
 		budget    int
@@ -1153,10 +1153,10 @@ func TestThinkValueLevel(t *testing.T) {
 		{requested: "max", reported: "high", budget: 26214},
 		{requested: "minimal", reported: "low", budget: 2048},
 	} {
-		think := &ThinkValue{Value: test.requested}
-		assert.Equal(t, test.reported, think.Level())
-		assert.Equal(t, test.budget, think.BudgetTokens(32768))
-		assert.Equal(t, test.requested, think.String(), "the requested level is preserved")
+		think := &ThinkValue{Value: tt.requested}
+		assert.Equal(t, tt.reported, think.Level())
+		assert.Equal(t, tt.budget, think.BudgetTokens(32768))
+		assert.Equal(t, tt.requested, think.String(), "the requested level is preserved")
 	}
 }
 

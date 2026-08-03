@@ -736,26 +736,26 @@ func showOrPullModel(cmd *cobra.Command, client *api.Client, name string, insecu
 // parseThinkFlag reads the value of --think, which accepts the same three
 // forms the API does: a boolean, an effort level, or a thinking-token budget.
 // A bare --think means true.
-func parseThinkFlag(value string) (*api.ThinkValue, error) {
-	switch value {
+func parseThinkFlag(thinkStr string) (*api.ThinkValue, error) {
+	switch thinkStr {
 	case "", "true":
 		return &api.ThinkValue{Value: true}, nil
 	case "false":
 		return &api.ThinkValue{Value: false}, nil
 	}
 
-	if api.IsThinkLevel(value) {
-		return &api.ThinkValue{Value: value}, nil
+	if api.IsThinkLevel(thinkStr) {
+		return &api.ThinkValue{Value: thinkStr}, nil
 	}
 
-	if budget, err := strconv.Atoi(value); err == nil {
+	if budget, err := strconv.Atoi(thinkStr); err == nil {
 		if budget <= 0 {
 			return nil, fmt.Errorf("invalid value for --think: %d (a budget must be greater than 0; use false to disable thinking)", budget)
 		}
 		return &api.ThinkValue{Value: budget}, nil
 	}
 
-	return nil, fmt.Errorf("invalid value for --think: %q (must be true, false, one of %s, or a positive thinking-token budget)", value, strings.Join(api.ThinkLevels(), ", "))
+	return nil, fmt.Errorf("invalid value for --think: %q (must be true, false, one of %s, or a positive thinking-token budget)", thinkStr, strings.Join(api.ThinkLevels(), ", "))
 }
 
 func RunHandler(cmd *cobra.Command, args []string) error {
