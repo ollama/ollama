@@ -330,10 +330,10 @@ func toChunk(id string, r api.ChatResponse, includeRole bool) ChatCompletionChun
 	}
 }
 
-// ToChunks converts an api.ChatResponse to one or more ChatCompletionChunk values.
+// ToStreamChunks converts an api.ChatResponse to one or more ChatCompletionChunk values.
 // includeRole controls whether the "role" field appears in the delta (should be true
 // only for the first chunk in a stream, matching the OpenAI spec).
-func ToChunks(id string, r api.ChatResponse, includeRole bool) []ChatCompletionChunk {
+func ToStreamChunks(id string, r api.ChatResponse, includeRole bool) []ChatCompletionChunk {
 	hasMixedResponse := r.Message.Thinking != "" && (r.Message.Content != "" || len(r.Message.ToolCalls) > 0)
 	if !hasMixedResponse {
 		return []ChatCompletionChunk{toChunk(id, r, includeRole)}

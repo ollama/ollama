@@ -507,7 +507,7 @@ func TestToChatCompletion_WithoutLogprobs(t *testing.T) {
 	}
 }
 
-func TestToChunks_SplitsThinkingAndContent(t *testing.T) {
+func TestToStreamChunks_SplitsThinkingAndContent(t *testing.T) {
 	resp := api.ChatResponse{
 		Model: "test-model",
 		Message: api.Message{
@@ -518,7 +518,7 @@ func TestToChunks_SplitsThinkingAndContent(t *testing.T) {
 		DoneReason: "stop",
 	}
 
-	chunks := ToChunks("test-id", resp, true)
+	chunks := ToStreamChunks("test-id", resp, true)
 	if len(chunks) != 2 {
 		t.Fatalf("expected 2 chunks, got %d", len(chunks))
 	}
@@ -555,7 +555,7 @@ func TestToChunks_SplitsThinkingAndContent(t *testing.T) {
 	}
 }
 
-func TestToChunks_SplitsThinkingAndToolCalls(t *testing.T) {
+func TestToStreamChunks_SplitsThinkingAndToolCalls(t *testing.T) {
 	resp := api.ChatResponse{
 		Model: "test-model",
 		Message: api.Message{
@@ -577,7 +577,7 @@ func TestToChunks_SplitsThinkingAndToolCalls(t *testing.T) {
 		DoneReason: "stop",
 	}
 
-	chunks := ToChunks("test-id", resp, true)
+	chunks := ToStreamChunks("test-id", resp, true)
 	if len(chunks) != 2 {
 		t.Fatalf("expected 2 chunks, got %d", len(chunks))
 	}
@@ -608,7 +608,7 @@ func TestToChunks_SplitsThinkingAndToolCalls(t *testing.T) {
 	}
 }
 
-func TestToChunks_SingleChunkForNonMixedResponses(t *testing.T) {
+func TestToStreamChunks_SingleChunkForNonMixedResponses(t *testing.T) {
 	toolCalls := []api.ToolCall{
 		{
 			ID: "call_456",
@@ -647,7 +647,7 @@ func TestToChunks_SingleChunkForNonMixedResponses(t *testing.T) {
 				Message: tt.message,
 			}
 
-			chunks := ToChunks("test-id", resp, true)
+			chunks := ToStreamChunks("test-id", resp, true)
 			if len(chunks) != 1 {
 				t.Fatalf("expected 1 chunk, got %d", len(chunks))
 			}
@@ -655,7 +655,7 @@ func TestToChunks_SingleChunkForNonMixedResponses(t *testing.T) {
 	}
 }
 
-func TestToChunks_SplitsThinkingAndToolCallsWhenNotDone(t *testing.T) {
+func TestToStreamChunks_SplitsThinkingAndToolCallsWhenNotDone(t *testing.T) {
 	resp := api.ChatResponse{
 		Model: "test-model",
 		Message: api.Message{
@@ -676,7 +676,7 @@ func TestToChunks_SplitsThinkingAndToolCallsWhenNotDone(t *testing.T) {
 		Done: false,
 	}
 
-	chunks := ToChunks("test-id", resp, true)
+	chunks := ToStreamChunks("test-id", resp, true)
 	if len(chunks) != 2 {
 		t.Fatalf("expected 2 chunks, got %d", len(chunks))
 	}
@@ -701,7 +701,7 @@ func TestToChunks_SplitsThinkingAndToolCallsWhenNotDone(t *testing.T) {
 	}
 }
 
-func TestToChunks_SplitsThinkingAndContentWhenNotDone(t *testing.T) {
+func TestToStreamChunks_SplitsThinkingAndContentWhenNotDone(t *testing.T) {
 	resp := api.ChatResponse{
 		Model: "test-model",
 		Message: api.Message{
@@ -711,7 +711,7 @@ func TestToChunks_SplitsThinkingAndContentWhenNotDone(t *testing.T) {
 		Done: false,
 	}
 
-	chunks := ToChunks("test-id", resp, true)
+	chunks := ToStreamChunks("test-id", resp, true)
 	if len(chunks) != 2 {
 		t.Fatalf("expected 2 chunks, got %d", len(chunks))
 	}
@@ -733,7 +733,7 @@ func TestToChunks_SplitsThinkingAndContentWhenNotDone(t *testing.T) {
 	}
 }
 
-func TestToChunks_SplitSendsLogprobsOnlyOnFirstChunk(t *testing.T) {
+func TestToStreamChunks_SplitSendsLogprobsOnlyOnFirstChunk(t *testing.T) {
 	resp := api.ChatResponse{
 		Model: "test-model",
 		Message: api.Message{
@@ -752,7 +752,7 @@ func TestToChunks_SplitSendsLogprobsOnlyOnFirstChunk(t *testing.T) {
 		DoneReason: "stop",
 	}
 
-	chunks := ToChunks("test-id", resp, true)
+	chunks := ToStreamChunks("test-id", resp, true)
 	if len(chunks) != 2 {
 		t.Fatalf("expected 2 chunks, got %d", len(chunks))
 	}
@@ -854,32 +854,32 @@ func TestFinishChunk_JSONDeltaEmpty(t *testing.T) {
 	}
 }
 
-func TestToChunks_RoleOnlyWhenRequested(t *testing.T) {
+func TestToStreamChunks_RoleOnlyWhenRequested(t *testing.T) {
 	resp := api.ChatResponse{
 		Model:   "test-model",
 		Message: api.Message{Content: "hello"},
 	}
 
 	// With includeRole=true, delta should have role
-	withRole := ToChunks("test-id", resp, true)
+	withRole := ToStreamChunks("test-id", resp, true)
 	if withRole[0].Choices[0].Delta.Role != "assistant" {
 		t.Fatalf("expected role %q, got %q", "assistant", withRole[0].Choices[0].Delta.Role)
 	}
 
 	// With includeRole=false, delta should omit role
-	withoutRole := ToChunks("test-id", resp, false)
+	withoutRole := ToStreamChunks("test-id", resp, false)
 	if withoutRole[0].Choices[0].Delta.Role != "" {
 		t.Fatalf("expected empty role, got %q", withoutRole[0].Choices[0].Delta.Role)
 	}
 }
 
-func TestToChunks_ContentChunkJSON(t *testing.T) {
+func TestToStreamChunks_ContentChunkJSON(t *testing.T) {
 	resp := api.ChatResponse{
 		Model:   "test-model",
 		Message: api.Message{Content: "Hi"},
 	}
 
-	chunks := ToChunks("test-id", resp, false)
+	chunks := ToStreamChunks("test-id", resp, false)
 	d, err := json.Marshal(chunks[0])
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -906,13 +906,13 @@ func TestToChunks_ContentChunkJSON(t *testing.T) {
 	}
 }
 
-func TestToChunks_EmptyContentChunkJSON(t *testing.T) {
+func TestToStreamChunks_EmptyContentChunkJSON(t *testing.T) {
 	resp := api.ChatResponse{
 		Model:   "test-model",
 		Message: api.Message{Content: ""},
 	}
 
-	chunks := ToChunks("test-id", resp, true)
+	chunks := ToStreamChunks("test-id", resp, true)
 	if len(chunks) != 1 {
 		t.Fatalf("expected 1 chunk, got %d", len(chunks))
 	}

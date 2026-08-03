@@ -94,7 +94,7 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 
 		if !isEmptyTrailer {
 			includeRole := !w.firstChunkSent
-			chunks := openai.ToChunks(w.id, chatResponse, includeRole)
+			chunks := openai.ToStreamChunks(w.id, chatResponse, includeRole)
 			for _, c := range chunks {
 				d, err := json.Marshal(c)
 				if err != nil {
@@ -109,7 +109,7 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 				}
 			}
 
-			// ToChunks always emits at least one chunk.
+			// ToStreamChunks always emits at least one chunk.
 			w.firstChunkSent = true
 		}
 
