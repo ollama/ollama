@@ -408,6 +408,91 @@ func TestTruncateInputLineUsesDisplayWidth(t *testing.T) {
 	}
 }
 
+func TestRenderInputBoxLinesWithCaret(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		cursor      int
+		width       int
+		maxBody     int
+		placeholder string
+		want        inputBoxCaret
+	}{
+		{
+			name:    "ascii mid",
+			input:   "hello",
+			cursor:  2,
+			width:   40,
+			maxBody: 12,
+			want:    inputBoxCaret{lineIdx: 1, col: 1 + inputBoxHorizontalPadding + 2, ok: true},
+		},
+		{
+			name:    "ascii end blank cell",
+			input:   "hello",
+			cursor:  5,
+			width:   40,
+			maxBody: 12,
+			want:    inputBoxCaret{lineIdx: 1, col: 1 + inputBoxHorizontalPadding + 5, ok: true},
+		},
+		{
+			name:    "cjk wide runes before caret",
+			input:   "こんにちは",
+			cursor:  2,
+			width:   40,
+			maxBody: 12,
+			// Each of the first two runes is 2 display cells wide.
+			want: inputBoxCaret{lineIdx: 1, col: 1 + inputBoxHorizontalPadding + 4, ok: true},
+		},
+		{
+			name:    "multiline caret on second line",
+			input:   "ab\ncd",
+			cursor:  4,
+			width:   40,
+			maxBody: 12,
+			want:    inputBoxCaret{lineIdx: 2, col: 1 + inputBoxHorizontalPadding + 1, ok: true},
+		},
+		{
+			name:        "placeholder caret at first cell",
+			input:       "",
+			cursor:      0,
+			width:       40,
+			maxBody:     12,
+			placeholder: "type something",
+			want:        inputBoxCaret{lineIdx: 1, col: 1 + inputBoxHorizontalPadding, ok: true},
+		},
+		{
+			name:    "cursor -1 with no placeholder has no caret",
+			input:   "abc",
+			cursor:  -1,
+			width:   40,
+			maxBody: 12,
+			want:    inputBoxCaret{},
+		},
+		{
+			name:    "caret line truncated away",
+			input:   "first line\nsecond line\nthird line",
+			cursor:  0,
+			width:   40,
+			maxBody: 1,
+			want:    inputBoxCaret{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lines, caret := renderInputBoxLinesWithCaret(tt.input, tt.cursor, tt.width, tt.maxBody, tt.placeholder)
+			if caret != tt.want {
+				t.Fatalf("caret = %+v, want %+v", caret, tt.want)
+			}
+
+			plain := renderInputBoxLines(tt.input, tt.cursor, tt.width, tt.maxBody, tt.placeholder)
+			if strings.Join(lines, "\n") != strings.Join(plain, "\n") {
+				t.Fatalf("renderInputBoxLinesWithCaret output diverges from renderInputBoxLines")
+			}
+		})
+	}
+}
+
 func TestRenderInputBoxTruncationUsesSingleContinuationMarker(t *testing.T) {
 	lines := renderInputBoxLines("one two three four five six seven", len("one two three four five six seven"), 16, 1, "")
 	rendered := strings.Join(lines, "\n")

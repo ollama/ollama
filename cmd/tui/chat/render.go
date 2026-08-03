@@ -285,6 +285,14 @@ func (m chatModel) maxScroll() int {
 }
 
 func (m chatModel) bottomLines(width, maxHeight int) []string {
+	lines, _ := m.bottomLinesWithCaret(width, maxHeight)
+	return lines
+}
+
+// bottomLinesWithCaret behaves like bottomLines but also reports the input
+// caret's on-screen cell, relative to the last line returned. See
+// publishCaret and cursorSyncWriter for why this is tracked.
+func (m chatModel) bottomLinesWithCaret(width, maxHeight int) ([]string, caretPos) {
 	var lines []string
 	if m.modelPicker != nil {
 		lines = append(lines, m.renderInlineModelPicker(width)...)
@@ -320,11 +328,22 @@ func (m chatModel) bottomLines(width, maxHeight int) []string {
 	if m.approvalPrompt != nil || m.cloudAuthPrompt != nil {
 		inputCursor = -1
 	}
-	lines = append(lines, renderInputBoxLines(string(m.input), inputCursor, width, inputBodyLines, m.emptyInputPlaceholder())...)
+	boxStart := len(lines)
+	boxLines, boxCaret := renderInputBoxLinesWithCaret(string(m.input), inputCursor, width, inputBodyLines, m.emptyInputPlaceholder())
+	lines = append(lines, boxLines...)
 	if len(modelLines) > 0 {
 		lines = append(lines, modelLines...)
 	}
-	return lines
+
+	var caret caretPos
+	if boxCaret.ok {
+		caret = caretPos{
+			rowsUp: len(lines) - 1 - (boxStart + boxCaret.lineIdx),
+			col:    boxCaret.col,
+			ok:     true,
+		}
+	}
+	return lines, caret
 }
 
 func (m chatModel) renderModelStatusLines(width int) []string {
