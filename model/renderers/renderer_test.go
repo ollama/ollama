@@ -124,32 +124,32 @@ func TestThinkingPromptPrefill(t *testing.T) {
 		renderer string
 		openTag  string
 		closeTag string
-		// prefilled records whether the prompt is left inside a thinking block
+		// primes records whether the prompt is left inside a thinking block
 		// once thinking is on, so the model never emits the opening tag
-		prefilled bool
+		primes bool
 		// primesAfterToolResponse is the same for a turn that resumes after a
 		// tool response, which is where gemma4 differs from the rest and where
 		// an agent loop spends nearly every request
 		primesAfterToolResponse bool
-		// alwaysPrefilled marks renderers that prime the block even when
+		// primesWithThinkingOff marks renderers that prime the block even when
 		// thinking is off, because the model always reasons
-		alwaysPrefilled bool
+		primesWithThinkingOff bool
 	}{
 		{renderer: "gemma4", openTag: "<|channel>", closeTag: "<channel|>", primesAfterToolResponse: true},
-		{renderer: "qwen3.5", openTag: "<think>", closeTag: "</think>", prefilled: true, primesAfterToolResponse: true},
-		{renderer: "qwen3-vl-thinking", openTag: "<think>", closeTag: "</think>", prefilled: true, primesAfterToolResponse: true},
-		{renderer: "qwen3-vl-instruct", openTag: "<think>", closeTag: "</think>", prefilled: true, primesAfterToolResponse: true},
-		{renderer: "deepseek3.1", openTag: "<think>", closeTag: "</think>", prefilled: true},
-		{renderer: "cogito", openTag: "<think>", closeTag: "</think>", prefilled: true, primesAfterToolResponse: true},
-		{renderer: "glm-4.7", openTag: "<think>", closeTag: "</think>", prefilled: true, primesAfterToolResponse: true},
-		{renderer: "laguna", openTag: "<think>", closeTag: "</think>", prefilled: true, primesAfterToolResponse: true},
-		{renderer: "poolside-v1", openTag: "<think>", closeTag: "</think>", prefilled: true, primesAfterToolResponse: true},
-		{renderer: "ornith", openTag: "<think>", closeTag: "</think>", prefilled: true, primesAfterToolResponse: true},
-		{renderer: "nemotron-3-nano", openTag: "<think>", closeTag: "</think>", prefilled: true, primesAfterToolResponse: true},
-		{renderer: "cohere", openTag: "<|START_THINKING|>", closeTag: "<|END_THINKING|>", prefilled: true, primesAfterToolResponse: true},
-		{renderer: "olmo3-think", openTag: "<think>", closeTag: "</think>", prefilled: true, primesAfterToolResponse: true, alwaysPrefilled: true},
-		{renderer: "olmo3-32b-think", openTag: "<think>", closeTag: "</think>", prefilled: true, primesAfterToolResponse: true, alwaysPrefilled: true},
-		{renderer: "lfm2-thinking", openTag: "<think>", closeTag: "</think>", prefilled: false},
+		{renderer: "qwen3.5", openTag: "<think>", closeTag: "</think>", primes: true, primesAfterToolResponse: true},
+		{renderer: "qwen3-vl-thinking", openTag: "<think>", closeTag: "</think>", primes: true, primesAfterToolResponse: true},
+		{renderer: "qwen3-vl-instruct", openTag: "<think>", closeTag: "</think>", primes: true, primesAfterToolResponse: true},
+		{renderer: "deepseek3.1", openTag: "<think>", closeTag: "</think>", primes: true},
+		{renderer: "cogito", openTag: "<think>", closeTag: "</think>", primes: true, primesAfterToolResponse: true},
+		{renderer: "glm-4.7", openTag: "<think>", closeTag: "</think>", primes: true, primesAfterToolResponse: true},
+		{renderer: "laguna", openTag: "<think>", closeTag: "</think>", primes: true, primesAfterToolResponse: true},
+		{renderer: "poolside-v1", openTag: "<think>", closeTag: "</think>", primes: true, primesAfterToolResponse: true},
+		{renderer: "ornith", openTag: "<think>", closeTag: "</think>", primes: true, primesAfterToolResponse: true},
+		{renderer: "nemotron-3-nano", openTag: "<think>", closeTag: "</think>", primes: true, primesAfterToolResponse: true},
+		{renderer: "cohere", openTag: "<|START_THINKING|>", closeTag: "<|END_THINKING|>", primes: true, primesAfterToolResponse: true},
+		{renderer: "olmo3-think", openTag: "<think>", closeTag: "</think>", primes: true, primesAfterToolResponse: true, primesWithThinkingOff: true},
+		{renderer: "olmo3-32b-think", openTag: "<think>", closeTag: "</think>", primes: true, primesAfterToolResponse: true, primesWithThinkingOff: true},
+		{renderer: "lfm2-thinking", openTag: "<think>", closeTag: "</think>", primes: false},
 	}
 
 	// primesThinking mirrors how the runner decides to replay a primed block
@@ -171,8 +171,8 @@ func TestThinkingPromptPrefill(t *testing.T) {
 		{Role: "tool", Content: "12:00", ToolName: "get_time"},
 	}
 
-	for _, test := range tests {
-		t.Run(test.renderer, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.renderer, func(t *testing.T) {
 			for _, shape := range []struct {
 				name     string
 				msgs     []api.Message
@@ -180,21 +180,21 @@ func TestThinkingPromptPrefill(t *testing.T) {
 				thinking bool
 				want     bool
 			}{
-				{"thinking on", msgs, nil, true, test.prefilled},
-				{"thinking on, after a tool response", afterToolResponse, tools, true, test.primesAfterToolResponse},
+				{"thinking on", msgs, nil, true, tt.primes},
+				{"thinking on, after a tool response", afterToolResponse, tools, true, tt.primesAfterToolResponse},
 				// With thinking off the tag must not be left dangling, or the
 				// budget would engage on a block the model never opens. The
 				// exception is renderers whose model always reasons.
-				{"thinking off", msgs, nil, false, test.alwaysPrefilled},
-				{"thinking off, after a tool response", afterToolResponse, tools, false, test.alwaysPrefilled},
+				{"thinking off", msgs, nil, false, tt.primesWithThinkingOff},
+				{"thinking off, after a tool response", afterToolResponse, tools, false, tt.primesWithThinkingOff},
 			} {
-				prompt, err := RenderWithRenderer(test.renderer, shape.msgs, shape.tools, &api.ThinkValue{Value: shape.thinking})
+				prompt, err := RenderWithRenderer(tt.renderer, shape.msgs, shape.tools, &api.ThinkValue{Value: shape.thinking})
 				if err != nil {
 					t.Fatalf("%s: %v", shape.name, err)
 				}
-				if got := primesThinking(prompt, test.openTag, test.closeTag); got != shape.want {
+				if got := primesThinking(prompt, tt.openTag, tt.closeTag); got != shape.want {
 					t.Errorf("%s: prompt primes %q = %v, want %v\nprompt tail: %q",
-						shape.name, test.openTag, got, shape.want, tail(prompt))
+						shape.name, tt.openTag, got, shape.want, tail(prompt))
 				}
 			}
 		})
