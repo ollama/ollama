@@ -123,54 +123,79 @@ func TestThinkingPromptPrefill(t *testing.T) {
 	tests := []struct {
 		renderer string
 		openTag  string
-		// prefilled records whether the prompt ends with openTag once thinking
-		// is on, so the model never emits it
+		closeTag string
+		// prefilled records whether the prompt is left inside a thinking block
+		// once thinking is on, so the model never emits the opening tag
 		prefilled bool
+		// primesAfterToolResponse is the same for a turn that resumes after a
+		// tool response, which is where gemma4 differs from the rest and where
+		// an agent loop spends nearly every request
+		primesAfterToolResponse bool
 		// alwaysPrefilled marks renderers that prime the block even when
 		// thinking is off, because the model always reasons
 		alwaysPrefilled bool
 	}{
-		{renderer: "gemma4", openTag: "<|channel>", prefilled: false},
-		{renderer: "qwen3.5", openTag: "<think>", prefilled: true},
-		{renderer: "qwen3-vl-thinking", openTag: "<think>", prefilled: true},
-		{renderer: "deepseek3.1", openTag: "<think>", prefilled: true},
-		{renderer: "cogito", openTag: "<think>", prefilled: true},
-		{renderer: "glm-4.7", openTag: "<think>", prefilled: true},
-		{renderer: "laguna", openTag: "<think>", prefilled: true},
-		{renderer: "nemotron-3-nano", openTag: "<think>", prefilled: true},
-		{renderer: "olmo3-think", openTag: "<think>", prefilled: true, alwaysPrefilled: true},
-		{renderer: "olmo3-32b-think", openTag: "<think>", prefilled: true, alwaysPrefilled: true},
-		{renderer: "lfm2-thinking", openTag: "<think>", prefilled: false},
+		{renderer: "gemma4", openTag: "<|channel>", closeTag: "<channel|>", primesAfterToolResponse: true},
+		{renderer: "qwen3.5", openTag: "<think>", closeTag: "</think>", prefilled: true, primesAfterToolResponse: true},
+		{renderer: "qwen3-vl-thinking", openTag: "<think>", closeTag: "</think>", prefilled: true, primesAfterToolResponse: true},
+		{renderer: "qwen3-vl-instruct", openTag: "<think>", closeTag: "</think>", prefilled: true, primesAfterToolResponse: true},
+		{renderer: "deepseek3.1", openTag: "<think>", closeTag: "</think>", prefilled: true},
+		{renderer: "cogito", openTag: "<think>", closeTag: "</think>", prefilled: true, primesAfterToolResponse: true},
+		{renderer: "glm-4.7", openTag: "<think>", closeTag: "</think>", prefilled: true, primesAfterToolResponse: true},
+		{renderer: "laguna", openTag: "<think>", closeTag: "</think>", prefilled: true, primesAfterToolResponse: true},
+		{renderer: "poolside-v1", openTag: "<think>", closeTag: "</think>", prefilled: true, primesAfterToolResponse: true},
+		{renderer: "ornith", openTag: "<think>", closeTag: "</think>", prefilled: true, primesAfterToolResponse: true},
+		{renderer: "nemotron-3-nano", openTag: "<think>", closeTag: "</think>", prefilled: true, primesAfterToolResponse: true},
+		{renderer: "cohere", openTag: "<|START_THINKING|>", closeTag: "<|END_THINKING|>", prefilled: true, primesAfterToolResponse: true},
+		{renderer: "olmo3-think", openTag: "<think>", closeTag: "</think>", prefilled: true, primesAfterToolResponse: true, alwaysPrefilled: true},
+		{renderer: "olmo3-32b-think", openTag: "<think>", closeTag: "</think>", prefilled: true, primesAfterToolResponse: true, alwaysPrefilled: true},
+		{renderer: "lfm2-thinking", openTag: "<think>", closeTag: "</think>", prefilled: false},
 	}
 
-	// primesThinking mirrors how a runner decides to replay the opening tag
-	primesThinking := func(prompt, openTag string) bool {
-		return strings.HasSuffix(strings.TrimRight(prompt, " \t\r\n"), openTag)
+	// primesThinking mirrors how the runner decides to replay a primed block
+	// into the sampler; llm.thinkingGenerationPrompt is the authority
+	primesThinking := func(prompt, openTag, closeTag string) bool {
+		i := strings.LastIndex(prompt, openTag)
+		if i == -1 {
+			return false
+		}
+		rest := prompt[i:]
+		return !strings.Contains(rest[len(openTag):], closeTag) && len(rest) <= 64
 	}
 
 	msgs := []api.Message{{Role: "user", Content: "hi"}}
+	tools := []api.Tool{{Type: "function", Function: api.ToolFunction{Name: "get_time", Description: "the time"}}}
+	afterToolResponse := []api.Message{
+		{Role: "user", Content: "what time is it"},
+		{Role: "assistant", ToolCalls: []api.ToolCall{{Function: api.ToolCallFunction{Name: "get_time", Arguments: api.ToolCallFunctionArguments{}}}}},
+		{Role: "tool", Content: "12:00", ToolName: "get_time"},
+	}
 
 	for _, test := range tests {
 		t.Run(test.renderer, func(t *testing.T) {
-			thinking, err := RenderWithRenderer(test.renderer, msgs, nil, &api.ThinkValue{Value: true})
-			if err != nil {
-				t.Fatalf("rendering with thinking on: %v", err)
-			}
-			if got := primesThinking(thinking, test.openTag); got != test.prefilled {
-				t.Errorf("thinking on: prompt primes %q = %v, want %v\nprompt tail: %q",
-					test.openTag, got, test.prefilled, tail(thinking))
-			}
-
-			// With thinking off the tag must not be left dangling, or the
-			// budget would engage on a block the model never opens. The
-			// exception is renderers whose model always reasons.
-			notThinking, err := RenderWithRenderer(test.renderer, msgs, nil, &api.ThinkValue{Value: false})
-			if err != nil {
-				t.Fatalf("rendering with thinking off: %v", err)
-			}
-			if got := primesThinking(notThinking, test.openTag); got != test.alwaysPrefilled {
-				t.Errorf("thinking off: prompt primes %q = %v, want %v\nprompt tail: %q",
-					test.openTag, got, test.alwaysPrefilled, tail(notThinking))
+			for _, shape := range []struct {
+				name     string
+				msgs     []api.Message
+				tools    []api.Tool
+				thinking bool
+				want     bool
+			}{
+				{"thinking on", msgs, nil, true, test.prefilled},
+				{"thinking on, after a tool response", afterToolResponse, tools, true, test.primesAfterToolResponse},
+				// With thinking off the tag must not be left dangling, or the
+				// budget would engage on a block the model never opens. The
+				// exception is renderers whose model always reasons.
+				{"thinking off", msgs, nil, false, test.alwaysPrefilled},
+				{"thinking off, after a tool response", afterToolResponse, tools, false, test.alwaysPrefilled},
+			} {
+				prompt, err := RenderWithRenderer(test.renderer, shape.msgs, shape.tools, &api.ThinkValue{Value: shape.thinking})
+				if err != nil {
+					t.Fatalf("%s: %v", shape.name, err)
+				}
+				if got := primesThinking(prompt, test.openTag, test.closeTag); got != shape.want {
+					t.Errorf("%s: prompt primes %q = %v, want %v\nprompt tail: %q",
+						shape.name, test.openTag, got, shape.want, tail(prompt))
+				}
 			}
 		})
 	}
