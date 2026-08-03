@@ -1184,3 +1184,51 @@ func TestThinkLevelsAreIndependentOfBudgets(t *testing.T) {
 	assert.Equal(t, "exhaustive", budgetless.Level(), "the level still reaches the model")
 	assert.Equal(t, 0, budgetless.BudgetTokens(32768), "and simply carries no budget")
 }
+
+func TestThinkBudgetWindow(t *testing.T) {
+	tests := []struct {
+		name       string
+		numCtx     int
+		numPredict int
+		want       int
+	}{
+		{name: "no cap on the response", numCtx: 128000, numPredict: -1, want: 128000},
+		{name: "unset num_predict", numCtx: 128000, numPredict: 0, want: 128000},
+		// the case this exists for: a level resolved against the context would
+		// have matched num_predict exactly and bounded nothing
+		{name: "response capped below the context", numCtx: 128000, numPredict: 32000, want: 32000},
+		{name: "response cap above the context", numCtx: 8192, numPredict: 32000, want: 8192},
+		{name: "no context length known", numCtx: 0, numPredict: 4096, want: 4096},
+		{name: "neither known", numCtx: 0, numPredict: 0, want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ThinkBudgetWindow(tt.numCtx, tt.numPredict); got != tt.want {
+				t.Errorf("ThinkBudgetWindow(%d, %d) = %d, want %d", tt.numCtx, tt.numPredict, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestThinkLevelSharesTheResponseNotTheContext(t *testing.T) {
+	// Cline sends num_ctx 128000 with num_predict 32000, where "medium" as a
+	// quarter of the context is exactly the response cap: the model can spend
+	// every token it is allowed to emit inside the thinking block and stop with
+	// no answer at all.
+	const numCtx, numPredict = 128000, 32000
+
+	think := &ThinkValue{Value: "medium"}
+	if got := think.BudgetTokens(numCtx); got != numPredict {
+		t.Fatalf("premise changed: a quarter of %d is %d, not the response cap %d", numCtx, got, numPredict)
+	}
+
+	window := ThinkBudgetWindow(numCtx, numPredict)
+	budget := think.BudgetTokens(window)
+	if budget >= numPredict {
+		t.Errorf("budget %d does not leave room to answer within num_predict %d", budget, numPredict)
+	}
+	if want := numPredict / 4; budget != want {
+		t.Errorf("budget = %d, want %d (a quarter of the response)", budget, want)
+	}
+}

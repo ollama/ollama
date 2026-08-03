@@ -1247,6 +1247,51 @@ func TestThinkBudgetForCompletion(t *testing.T) {
 			wantTags:   true,
 		},
 		{
+			// num_predict caps the response, so a level takes its share of
+			// that. Against the context length medium would be 32000 here,
+			// exactly the response cap, and the budget would never fire
+			name:       "effort resolves against num_predict when the request sets one",
+			parser:     thinkingParser,
+			think:      &api.ThinkValue{Value: "medium"},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 128000}, NumPredict: 32000},
+			wantBudget: 8000,
+			wantTags:   true,
+		},
+		{
+			name:       "effort resolves against the context when num_predict is past it",
+			parser:     thinkingParser,
+			think:      &api.ThinkValue{Value: "medium"},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, NumPredict: 128000},
+			wantBudget: 8192,
+			wantTags:   true,
+		},
+		{
+			// -1 and 0 both mean "no cap on the response"
+			name:       "effort resolves against the context when num_predict is unlimited",
+			parser:     thinkingParser,
+			think:      &api.ThinkValue{Value: "medium"},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, NumPredict: -1},
+			wantBudget: 8192,
+			wantTags:   true,
+		},
+		{
+			name:       "the model think_budget level resolves against num_predict too",
+			parser:     thinkingParser,
+			think:      &api.ThinkValue{Value: true},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 128000}, NumPredict: 32000, ThinkBudget: &api.ThinkValue{Value: "medium"}},
+			wantBudget: 8000,
+			wantTags:   true,
+		},
+		{
+			// an explicit token count is what the caller asked for, not a share
+			name:       "an explicit budget ignores num_predict",
+			parser:     thinkingParser,
+			think:      &api.ThinkValue{Value: 16000},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 128000}, NumPredict: 32000},
+			wantBudget: 16000,
+			wantTags:   true,
+		},
+		{
 			name:       "explicit budget is used verbatim",
 			parser:     thinkingParser,
 			think:      &api.ThinkValue{Value: 8192},
