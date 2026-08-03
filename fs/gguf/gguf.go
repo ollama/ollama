@@ -58,6 +58,12 @@ func Open(path string) (f *File, err error) {
 		return nil, err
 	}
 
+	defer func() {
+		if err != nil {
+			f.file.Close()
+		}
+	}()
+
 	f.reader = newBufferedReader(f.file, 32<<10)
 
 	if err := binary.Read(f.reader, binary.LittleEndian, &f.Magic); err != nil {
