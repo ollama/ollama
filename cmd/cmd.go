@@ -851,27 +851,27 @@ func showOrPullModel(cmd *cobra.Command, client *api.Client, name, runner string
 // parseThinkFlag reads the value of --think, which accepts the same three
 // forms the API does: a boolean, a thinking level, or a thinking-token budget.
 // A bare --think means true.
-func parseThinkFlag(value string) (*api.ThinkValue, error) {
-	switch value {
+func parseThinkFlag(thinkStr string) (*api.ThinkValue, error) {
+	switch thinkStr {
 	case "", "true":
 		return &api.ThinkValue{Value: true}, nil
 	case "false":
 		return &api.ThinkValue{Value: false}, nil
 	}
 
-	if budget, err := strconv.Atoi(value); err == nil {
+	if budget, err := strconv.Atoi(thinkStr); err == nil {
 		if budget <= 0 {
 			return nil, fmt.Errorf("invalid value for --think: %d (a budget must be greater than 0; use false to disable thinking)", budget)
 		}
 		return &api.ThinkValue{Value: budget}, nil
 	}
-	if _, err := strconv.ParseFloat(value, 64); err == nil {
-		return nil, fmt.Errorf("invalid value for --think: %s (a budget must be a whole number of tokens)", value)
+	if _, err := strconv.ParseFloat(thinkStr, 64); err == nil {
+		return nil, fmt.Errorf("invalid value for --think: %s (a budget must be a whole number of tokens)", thinkStr)
 	}
 
 	// Any other value is a level. The model defines which ones it has, so it
 	// is the server that accepts or refuses it, as for the API's own think.
-	return &api.ThinkValue{Value: value}, nil
+	return &api.ThinkValue{Value: thinkStr}, nil
 }
 
 func RunHandler(cmd *cobra.Command, args []string) error {
