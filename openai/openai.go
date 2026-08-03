@@ -285,7 +285,7 @@ func ToChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 			Index:   0,
 			Message: Message{Role: r.Message.Role, Content: r.Message.Content, ToolCalls: toolCalls, Reasoning: r.Message.Thinking},
 			FinishReason: func(reason string) *string {
-				if len(toolCalls) > 0 && reason != "length" {
+				if reason == "stop" && len(toolCalls) > 0 {
 					reason = "tool_calls"
 				}
 				if len(reason) > 0 {

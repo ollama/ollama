@@ -989,6 +989,10 @@ func TestToChatCompletion_FinishReasonPrecedence(t *testing.T) {
 	if got := *ToChatCompletion("test-id", newToolCallResponse("stop")).Choices[0].FinishReason; got != "tool_calls" {
 		t.Fatalf("expected finish reason %q for completed tool-call response, got %q", "tool_calls", got)
 	}
+	// An unrelated finish reason passes through unchanged.
+	if got := *ToChatCompletion("test-id", newToolCallResponse("unload")).Choices[0].FinishReason; got != "unload" {
+		t.Fatalf("expected unknown finish reason %q to pass through, got %q", "unload", got)
+	}
 }
 
 func TestFinishChunk_UsesResponseCreatedAt(t *testing.T) {
