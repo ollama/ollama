@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/cmd/config"
 )
 
 // newCloudSuggestTestClient serves a daemon where "some-model" doesn't exist
@@ -50,6 +51,10 @@ func newCloudSuggestTestClient(t *testing.T, pulled *[]string) *api.Client {
 			}
 		case "/api/me":
 			if err := json.NewEncoder(w).Encode(api.UserResponse{Name: "tester"}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+		case "/api/tags":
+			if err := json.NewEncoder(w).Encode(api.ListResponse{}); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 			}
 		default:
@@ -92,6 +97,69 @@ func TestReadyModel_CloudSuggestionRename(t *testing.T) {
 	}
 	if len(pulled) != 1 {
 		t.Fatalf("pull requests = %v, want just the original attempt", pulled)
+	}
+}
+
+// TestResolveRunModel_CloudSuggestionPersistsResolvedModel covers the
+// last_model lifecycle across an accepted suggestion: a saved model that no
+// longer resolves routes to the picker, picking a default-tag name whose
+// pull fails accepts the ":cloud" variant, the resolved name is what gets
+// persisted, and a rerun reuses it without prompting again.
+func TestResolveRunModel_CloudSuggestionPersistsResolvedModel(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	var pulled []string
+	client := newCloudSuggestTestClient(t, &pulled)
+
+	if err := config.SetLastModel("some-model"); err != nil {
+		t.Fatal(err)
+	}
+
+	oldSelector, oldHook := DefaultSingleSelector, DefaultCloudSuggest
+	t.Cleanup(func() { DefaultSingleSelector, DefaultCloudSuggest = oldSelector, oldHook })
+
+	var selectorCalls, hookCalls int
+	DefaultSingleSelector = func(title string, items []SelectionItem, current string) (string, error) {
+		selectorCalls++
+		return "some-model", nil
+	}
+	DefaultCloudSuggest = func(ctx context.Context, c *api.Client, model string, pullErr error) (string, error) {
+		hookCalls++
+		return model + ":cloud", nil
+	}
+
+	c := &launcherClient{apiClient: client, policy: LaunchPolicy{MissingModel: LaunchMissingModelAutoPull}}
+	model, err := c.resolveRunModel(context.Background(), RunModelRequest{})
+	if err != nil {
+		t.Fatalf("resolveRunModel returned error: %v", err)
+	}
+	if model != "some-model:cloud" {
+		t.Fatalf("model = %q, want %q", model, "some-model:cloud")
+	}
+	if selectorCalls != 1 || hookCalls != 1 {
+		t.Fatalf("selector calls = %d, hook calls = %d, want 1 and 1", selectorCalls, hookCalls)
+	}
+	if got := config.LastModel(); got != "some-model:cloud" {
+		t.Fatalf("saved last model = %q, want %q", got, "some-model:cloud")
+	}
+
+	// Rerunning with the persisted cloud name must not open the picker or
+	// re-prompt the suggestion.
+	DefaultSingleSelector = func(title string, items []SelectionItem, current string) (string, error) {
+		t.Error("unexpected model picker on rerun")
+		return "", ErrCancelled
+	}
+	DefaultCloudSuggest = func(ctx context.Context, c *api.Client, model string, pullErr error) (string, error) {
+		t.Error("unexpected cloud suggestion on rerun")
+		return "", pullErr
+	}
+
+	rerun := &launcherClient{apiClient: client, policy: LaunchPolicy{MissingModel: LaunchMissingModelAutoPull}}
+	model, err = rerun.resolveRunModel(context.Background(), RunModelRequest{})
+	if err != nil {
+		t.Fatalf("rerun resolveRunModel returned error: %v", err)
+	}
+	if model != "some-model:cloud" {
+		t.Fatalf("rerun model = %q, want %q", model, "some-model:cloud")
 	}
 }
 
