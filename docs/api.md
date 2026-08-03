@@ -45,7 +45,7 @@ Generate a response for a given prompt with a provided model. This is a streamin
 - `prompt`: the prompt to generate a response for
 - `suffix`: the text after the model response
 - `images`: (optional) a list of base64-encoded images (for multimodal models such as `llava`)
-- `think`: (for thinking models) should the model think before responding? Can be a boolean, a thinking level (`"minimal"`, `"low"`, `"medium"`, `"high"`, or `"max"`), or a positive integer capping how many tokens the model may spend thinking. Thinking levels resolve to a share of the context length: `"minimal"` a sixteenth, `"low"` an eighth, `"medium"` a quarter, `"high"` a half and `"max"` four fifths. Models that read the level themselves are given the nearest one they recognise, so `"max"` reaches them as `"high"` and `"minimal"` as `"low"`, while the budget keeps the share that was asked for. `true` leaves thinking unrestricted, which lets a model loop until the context runs out without answering. When a budget applies, the `think_budget_message` option sets the text written into the thinking block just before the closing tag is forced; without it the model is cut off mid-sentence and may carry on reasoning in its visible answer.
+- `think`: (for thinking models) should the model think before responding? Can be a boolean, a thinking level (`"minimal"`, `"low"`, `"medium"`, `"high"`, or `"max"`), or a positive integer capping how many tokens the model may spend thinking. Levels are a share of the context length, from a sixteenth for `"minimal"` to four fifths for `"max"`; `true` leaves thinking unbounded. See [`think_budget`](./modelfile.mdx#valid-parameters-and-values) for the model-level form and for the wrap-up message.
 
 Advanced parameters (optional):
 
@@ -495,7 +495,7 @@ Generate the next message in a chat with a provided model. This is a streaming e
 - `model`: (required) the [model name](#model-names)
 - `messages`: the messages of the chat, this can be used to keep a chat memory
 - `tools`: list of tools in JSON for the model to use if supported
-- `think`: (for thinking models) should the model think before responding? Can be a boolean, a thinking level (`"minimal"`, `"low"`, `"medium"`, `"high"`, or `"max"`), or a positive integer capping how many tokens the model may spend thinking. Thinking levels resolve to a share of the context length: `"minimal"` a sixteenth, `"low"` an eighth, `"medium"` a quarter, `"high"` a half and `"max"` four fifths. Models that read the level themselves are given the nearest one they recognise, so `"max"` reaches them as `"high"` and `"minimal"` as `"low"`, while the budget keeps the share that was asked for. `true` leaves thinking unrestricted, which lets a model loop until the context runs out without answering. When a budget applies, the `think_budget_message` option sets the text written into the thinking block just before the closing tag is forced; without it the model is cut off mid-sentence and may carry on reasoning in its visible answer.
+- `think`: (for thinking models) should the model think before responding? Can be a boolean, a thinking level (`"minimal"`, `"low"`, `"medium"`, `"high"`, or `"max"`), or a positive integer capping how many tokens the model may spend thinking. Levels are a share of the context length, from a sixteenth for `"minimal"` to four fifths for `"max"`; `true` leaves thinking unbounded. See [`think_budget`](./modelfile.mdx#valid-parameters-and-values) for the model-level form and for the wrap-up message.
 
 The `message` object has the following fields:
 

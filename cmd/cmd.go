@@ -733,6 +733,31 @@ func showOrPullModel(cmd *cobra.Command, client *api.Client, name string, insecu
 	return info, resolved, err
 }
 
+// parseThinkFlag reads the value of --think, which accepts the same three
+// forms the API does: a boolean, an effort level, or a thinking-token budget.
+// A bare --think means true.
+func parseThinkFlag(value string) (*api.ThinkValue, error) {
+	switch value {
+	case "", "true":
+		return &api.ThinkValue{Value: true}, nil
+	case "false":
+		return &api.ThinkValue{Value: false}, nil
+	}
+
+	if api.IsThinkLevel(value) {
+		return &api.ThinkValue{Value: value}, nil
+	}
+
+	if budget, err := strconv.Atoi(value); err == nil {
+		if budget <= 0 {
+			return nil, fmt.Errorf("invalid value for --think: %d (a budget must be greater than 0; use false to disable thinking)", budget)
+		}
+		return &api.ThinkValue{Value: budget}, nil
+	}
+
+	return nil, fmt.Errorf("invalid value for --think: %q (must be true, false, one of %s, or a positive thinking-token budget)", value, strings.Join(api.ThinkLevels(), ", "))
+}
+
 func RunHandler(cmd *cobra.Command, args []string) error {
 	interactive := true
 
@@ -756,18 +781,11 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 			return err
 		}
 
-		// Handle different values for --think
-		switch thinkStr {
-		case "", "true":
-			// --think or --think=true
-			opts.Think = &api.ThinkValue{Value: true}
-		case "false":
-			opts.Think = &api.ThinkValue{Value: false}
-		case "high", "medium", "low", "max":
-			opts.Think = &api.ThinkValue{Value: thinkStr}
-		default:
-			return fmt.Errorf("invalid value for --think: %q (must be true, false, high, medium, low, or max)", thinkStr)
+		think, err := parseThinkFlag(thinkStr)
+		if err != nil {
+			return err
 		}
+		opts.Think = think
 	} else {
 		opts.Think = nil
 	}
