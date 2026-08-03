@@ -2049,3 +2049,118 @@ func TestResponsesStreamConverter_FunctionCallStatus(t *testing.T) {
 		t.Errorf("output_item.done status = %q, want %q", doneItem["status"], "completed")
 	}
 }
+
+func TestResponsesStreamConverter_ProcessError(t *testing.T) {
+	t.Run("mid stream", func(t *testing.T) {
+		converter := NewResponsesStreamConverter("resp_123", "msg_456", "gpt-oss:20b", ResponsesRequest{})
+
+		// Stream a reasoning delta so the error arrives once the stream is underway.
+		events := converter.Process(api.ChatResponse{
+			Message: api.Message{
+				Thinking: "Let me think...",
+			},
+		})
+		if len(events) != 4 {
+			t.Fatalf("expected 4 events, got %d", len(events))
+		}
+
+		// The reasoning item opened above has to be closed before the stream
+		// ends, otherwise the client is left holding an item that never
+		// finishes.
+		events = converter.ProcessError("error parsing tool call")
+		want := []string{"response.reasoning_summary_text.done", "response.output_item.done", "response.failed"}
+		if len(events) != len(want) {
+			t.Fatalf("expected %d events, got %d", len(want), len(events))
+		}
+		for i, event := range events {
+			if event.Event != want[i] {
+				t.Errorf("event %d = %q, want %q", i, event.Event, want[i])
+			}
+			if data := event.Data.(map[string]any); data["sequence_number"] != 4+i {
+				t.Errorf("event %d sequence_number = %v, want %d", i, data["sequence_number"], 4+i)
+			}
+		}
+
+		data := events[len(events)-1].Data.(map[string]any)
+
+		response := data["response"].(map[string]any)
+		if response["status"] != "failed" {
+			t.Errorf("status = %q, want %q", response["status"], "failed")
+		}
+		if response["completed_at"] != nil {
+			t.Errorf("completed_at = %v, want nil", response["completed_at"])
+		}
+		// The partial content already went out as deltas, and every item
+		// buildFinalOutput produces is marked completed, which a failed
+		// generation did not do.
+		if output, ok := response["output"].([]any); !ok || output == nil || len(output) != 0 {
+			t.Errorf("output = %v, want empty", response["output"])
+		}
+
+		responseError, ok := response["error"].(map[string]any)
+		if !ok {
+			t.Fatalf("error = %v, want an object", response["error"])
+		}
+		if responseError["message"] != "error parsing tool call" {
+			t.Errorf("error.message = %q, want %q", responseError["message"], "error parsing tool call")
+		}
+		if responseError["code"] != "server_error" {
+			t.Errorf("error.code = %q, want %q", responseError["code"], "server_error")
+		}
+	})
+
+	t.Run("does not complete an open message item", func(t *testing.T) {
+		converter := NewResponsesStreamConverter("resp_123", "msg_456", "gpt-oss:20b", ResponsesRequest{})
+
+		converter.Process(api.ChatResponse{
+			Message: api.Message{Content: "partial answer"},
+		})
+
+		// The only close for a message item reports it completed, so a failed
+		// generation leaves it open rather than claiming it finished. The
+		// terminal event is still the one thing the stream has to end on.
+		events := converter.ProcessError("error parsing tool call")
+		if len(events) != 1 {
+			t.Fatalf("expected 1 event, got %d", len(events))
+		}
+		if events[0].Event != "response.failed" {
+			t.Errorf("event = %q, want %q", events[0].Event, "response.failed")
+		}
+	})
+
+	t.Run("before any content", func(t *testing.T) {
+		converter := NewResponsesStreamConverter("resp_123", "msg_456", "gpt-oss:20b", ResponsesRequest{})
+
+		// A failure with no preceding content still has to open the stream, so
+		// a client that keys off response.created is not handed a lone
+		// terminal event.
+		events := converter.ProcessError("model runner exited")
+		want := []string{"response.created", "response.in_progress", "response.failed"}
+		if len(events) != len(want) {
+			t.Fatalf("expected %d events, got %d", len(want), len(events))
+		}
+		for i, event := range events {
+			if event.Event != want[i] {
+				t.Errorf("event %d = %q, want %q", i, event.Event, want[i])
+			}
+			if data := event.Data.(map[string]any); data["sequence_number"] != i {
+				t.Errorf("event %d sequence_number = %v, want %d", i, data["sequence_number"], i)
+			}
+		}
+	})
+
+	t.Run("after completion", func(t *testing.T) {
+		converter := NewResponsesStreamConverter("resp_123", "msg_456", "gpt-oss:20b", ResponsesRequest{})
+
+		converter.Process(api.ChatResponse{
+			Message: api.Message{Content: "The answer is 42"},
+			Done:    true,
+		})
+
+		// The stream already ended with response.completed, so a late error
+		// must not add a second terminal event.
+		if events := converter.ProcessError("model runner exited"); events != nil {
+			t.Errorf("expected no events after completion, got %d", len(events))
+		}
+	})
+}

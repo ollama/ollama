@@ -901,6 +901,7 @@ type ResponsesStreamConverter struct {
 	toolCallsSent   bool
 	accumulatedText string
 	sequenceNumber  int
+	terminated      bool
 
 	// Reasoning/thinking state
 	accumulatedThinking string
@@ -943,12 +944,7 @@ func (c *ResponsesStreamConverter) Process(r api.ChatResponse) []ResponsesStream
 	hasToolCalls := len(r.Message.ToolCalls) > 0
 	hasThinking := r.Message.Thinking != ""
 
-	// First chunk - emit initial events
-	if c.firstWrite {
-		c.firstWrite = false
-		events = append(events, c.createResponseCreatedEvent())
-		events = append(events, c.createResponseInProgressEvent())
-	}
+	events = append(events, c.openStream()...)
 
 	// Handle reasoning/thinking (before other content)
 	if hasThinking {
@@ -969,9 +965,44 @@ func (c *ResponsesStreamConverter) Process(r api.ChatResponse) []ResponsesStream
 	// Done - emit closing events
 	if r.Done {
 		events = append(events, c.processCompletion(r)...)
+		c.terminated = true
 	}
 
 	return events
+}
+
+// ProcessError returns the events that end a stream on a generation error.
+// Every accepted stream ends with exactly one terminal event, so callers that
+// stop early emit these instead of closing the stream silently, and nothing is
+// emitted once Process has already closed the stream. Output is left empty
+// because the partial content was already delivered as deltas, and the items
+// buildFinalOutput produces are marked completed.
+func (c *ResponsesStreamConverter) ProcessError(message string) []ResponsesStreamEvent {
+	if c.terminated {
+		return nil
+	}
+	c.terminated = true
+
+	// A generation can fail before it produces a single token, in which case
+	// Process never ran and the stream is not open yet.
+	events := c.openStream()
+
+	// Reasoning that was streaming when the failure arrived still has an open
+	// item. Close it so the client is not left holding one, which is the
+	// missing reasoning_summary_text.done reported in #17118. An open message
+	// item is left as it is: the only close for one reports the item as
+	// completed, and a generation that failed did not complete it.
+	events = append(events, c.finishReasoning()...)
+
+	response := c.buildResponseObject("failed", []any{}, nil)
+	response["error"] = map[string]any{
+		"code":    "server_error",
+		"message": message,
+	}
+
+	return append(events, c.newEvent("response.failed", map[string]any{
+		"response": response,
+	}))
 }
 
 // buildResponseObject creates a full response object with all required fields for streaming events.
@@ -1077,6 +1108,17 @@ func (c *ResponsesStreamConverter) buildResponseObject(status string, output []a
 		"safety_identifier":    nil,
 		"prompt_cache_key":     nil,
 	}
+}
+
+// openStream returns the events that open a stream, or nil if it is already
+// open. Both the success and the failure path start a stream this way.
+func (c *ResponsesStreamConverter) openStream() []ResponsesStreamEvent {
+	if !c.firstWrite {
+		return nil
+	}
+	c.firstWrite = false
+
+	return []ResponsesStreamEvent{c.createResponseCreatedEvent(), c.createResponseInProgressEvent()}
 }
 
 func (c *ResponsesStreamConverter) createResponseCreatedEvent() ResponsesStreamEvent {
