@@ -1437,6 +1437,41 @@ func leadingSpecialTokenCandidate(tag string) string {
 	return tag[:end+1]
 }
 
+// maxThinkingGenerationPrompt bounds how much of the prompt is replayed into
+// the budget sampler. Every renderer that primes thinking does so with the
+// opening tag and at most a channel name, so a longer run means the tag came
+// from message content rather than the template: replaying that would activate
+// the budget against text the model never generated.
+const maxThinkingGenerationPrompt = 64
+
+// thinkingGenerationPrompt returns the part of the prompt that already sits
+// inside an unclosed thinking block, for llama-server to replay into the
+// reasoning-budget sampler before decoding.
+//
+// The sampler leaves its idle state only when the opening tag passes through
+// it, so a template that primes thinking — by ending the prompt with the tag,
+// or with the tag plus a channel name, as gemma4 does after a tool response —
+// otherwise leaves the budget silently inert for the whole turn. Matching the
+// unclosed opening rather than the exact suffix keeps that from depending on
+// how much a renderer writes after the tag.
+func thinkingGenerationPrompt(prompt, startTag, endTag string) string {
+	if startTag == "" || endTag == "" {
+		return ""
+	}
+
+	start := strings.LastIndex(prompt, startTag)
+	if start == -1 {
+		return ""
+	}
+
+	tail := prompt[start:]
+	if strings.Contains(tail[len(startTag):], endTag) || len(tail) > maxThinkingGenerationPrompt {
+		return ""
+	}
+
+	return tail
+}
+
 // llamaServerMultimodalPrompt is used when images are present.
 // llama-server's /completion endpoint accepts this as the "prompt" field.
 type llamaServerMultimodalPrompt struct {
@@ -1574,12 +1609,10 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 		lsReq.ReasoningBudgetMessage = &req.ThinkBudgetMessage
 
 		// The sampler only sees tokens the model generates, so a template that
-		// primes thinking by ending the prompt with the opening tag would never
-		// activate it. Hand that tag over as the generation prompt instead:
-		// llama-server replays it into the sampler before decoding starts.
-		if strings.HasSuffix(strings.TrimRight(req.Prompt, " \t\r\n"), req.ThinkingStartTag) {
-			lsReq.GenerationPrompt = req.ThinkingStartTag
-		}
+		// primes thinking by ending the prompt inside a thinking block would
+		// never activate it. Hand that opening over as the generation prompt
+		// instead: llama-server replays it into the sampler before decoding.
+		lsReq.GenerationPrompt = thinkingGenerationPrompt(req.Prompt, req.ThinkingStartTag, req.ThinkingEndTag)
 	}
 
 	// Handle format: pass JSON schema directly to llama-server, or use grammar
