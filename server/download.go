@@ -102,7 +102,10 @@ const (
 	maxDownloadPartSize int64 = 1000 * format.MegaByte
 )
 
-var downloadStallTimeout = 30 * time.Second
+var (
+	downloadStallTimeout    = 30 * time.Second
+	directURLAttemptTimeout = 10 * time.Second
+)
 
 func (p *blobDownloadPart) Name() string {
 	return strings.Join([]string{
@@ -255,7 +258,9 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 				return http.ErrUseLastResponse
 			}
 
-			resp, err := makeRequestWithRetry(ctx, http.MethodGet, requestURL, nil, nil, newOpts)
+			attemptCtx, cancel := context.WithTimeout(ctx, directURLAttemptTimeout)
+			resp, err := makeRequestWithRetry(attemptCtx, http.MethodGet, requestURL, nil, nil, newOpts)
+			cancel()
 			if err != nil {
 				slog.Warn("failed to get direct URL; backing off and retrying", "err", err)
 				if err := backoff(ctx); err != nil {
