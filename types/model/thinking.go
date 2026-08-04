@@ -86,6 +86,24 @@ var thinkBudgetFraction = map[string][2]int{
 	"minimal": {1, 16},
 }
 
+// thinkLevelAliases are alternative spellings of a level in thinkLevels. The
+// AI SDK calls the top of its effort scale "xhigh", which is the position
+// "max" holds here, so a client built on that vocabulary sends it verbatim.
+// Rejecting it would put the strongest level out of reach over spelling.
+var thinkLevelAliases = map[string]string{
+	"xhigh": "max",
+}
+
+// canonicalThinkLevel resolves an alias to the level it names and leaves
+// everything else alone, so the tables above only ever have to carry one entry
+// per level.
+func canonicalThinkLevel(level string) string {
+	if canonical, ok := thinkLevelAliases[level]; ok {
+		return canonical
+	}
+	return level
+}
+
 // ThinkLevels returns the effort levels that carry a thinking budget, weakest
 // first.
 func ThinkLevels() []string {
@@ -94,7 +112,7 @@ func ThinkLevels() []string {
 
 // IsThinkLevel reports whether a string is an effort level with a budget.
 func IsThinkLevel(level string) bool {
-	return slices.Contains(thinkLevels, level)
+	return slices.Contains(thinkLevels, canonicalThinkLevel(level))
 }
 
 // IsValid checks the transport type. The model resolves supported effort names.
@@ -177,7 +195,7 @@ func (t *ThinkValue) BudgetTokens(window int) int {
 			return v
 		}
 	case string:
-		frac, ok := thinkBudgetFraction[v]
+		frac, ok := thinkBudgetFraction[canonicalThinkLevel(v)]
 		if !ok || window <= 0 {
 			return 0
 		}
@@ -197,7 +215,7 @@ func (t *ThinkValue) BudgetTokens(window int) int {
 // reported as the nearest one they know. The budget is unaffected and keeps
 // the share of the context the requested level asked for.
 func (t *ThinkValue) Level() string {
-	switch level := t.String(); level {
+	switch level := canonicalThinkLevel(t.String()); level {
 	case "max":
 		return "high"
 	case "minimal":
