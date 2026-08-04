@@ -130,6 +130,46 @@ func TestApertus15ParserAcceptsConsumedToolSuffix(t *testing.T) {
 	}
 }
 
+func TestApertus15ParserMultipleToolEnvelopesWithContent(t *testing.T) {
+	parser := &Apertus15Parser{}
+	parser.Init(nil, nil, nil)
+	content, thinking, calls, err := parser.Add(
+		"Before."+
+			apertus15ToolsStart+`[{"first":{"x":1}}]`+apertus15ToolsEnd+
+			"Between."+
+			apertus15ToolsStart+`[{"second":{"y":2}}]`+apertus15ToolsEnd+
+			"After.",
+		true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content != "Before.Between.After." || thinking != "" {
+		t.Fatalf("content = %q, thinking = %q", content, thinking)
+	}
+	if len(calls) != 2 || calls[0].Function.Index != 0 || calls[0].Function.Name != "first" ||
+		calls[1].Function.Index != 1 || calls[1].Function.Name != "second" {
+		t.Fatalf("tool calls = %#v", calls)
+	}
+}
+
+func TestApertus15ParserInitResetsToolCallIndexes(t *testing.T) {
+	parser := &Apertus15Parser{}
+	for _, name := range []string{"first", "second"} {
+		parser.Init(nil, nil, nil)
+		_, _, calls, err := parser.Add(
+			apertus15ToolsStart+`[{"`+name+`":{}}]`+apertus15ToolsEnd,
+			true,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(calls) != 1 || calls[0].Function.Index != 0 || calls[0].Function.Name != name {
+			t.Fatalf("tool calls after Init = %#v", calls)
+		}
+	}
+}
+
 func TestApertus15ParserEveryByteBoundary(t *testing.T) {
 	raw := apertus15AssistantStart +
 		apertus15InnerStart + "Think." + apertus15InnerEnd +
@@ -194,6 +234,8 @@ func TestApertus15ParserRejectsMalformedToolCalls(t *testing.T) {
 		apertus15ToolsStart + `[{"lookup":` + apertus15ToolsEnd,
 		apertus15ToolsStart + `[{"one":{},"two":{}}]` + apertus15ToolsEnd,
 		apertus15ToolsStart + `[{"lookup":"not-an-object"}]` + apertus15ToolsEnd,
+		apertus15ToolsStart + `[{"lookup":[1,2]}]` + apertus15ToolsEnd,
+		apertus15ToolsStart + `[{"lookup":null}]` + apertus15ToolsEnd,
 	}
 	for _, raw := range tests {
 		parser := &Apertus15Parser{}

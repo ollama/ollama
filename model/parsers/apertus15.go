@@ -175,6 +175,10 @@ func (p *Apertus15Parser) parseToolCalls(payload string) ([]api.ToolCall, error)
 			if name == "" {
 				return nil, fmt.Errorf("parse apertus 1.5 tool call: empty function name")
 			}
+			argumentJSON := strings.TrimSpace(string(rawArguments))
+			if !strings.HasPrefix(argumentJSON, "{") || !strings.HasSuffix(argumentJSON, "}") {
+				return nil, fmt.Errorf("parse apertus 1.5 tool call %q arguments: expected object", name)
+			}
 			var arguments api.ToolCallFunctionArguments
 			if err := json.Unmarshal(rawArguments, &arguments); err != nil {
 				return nil, fmt.Errorf("parse apertus 1.5 tool call %q arguments: %w", name, err)
