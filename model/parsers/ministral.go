@@ -304,6 +304,20 @@ func (p *MinistralParser) Add(s string, done bool) (content string, thinking str
 		p.callIndex++
 	}
 
+	// The stream ended midway through a tool call. Nothing here is safe to
+	// recover: a complete argument object would already have been emitted by
+	// eat, so guessing at the rest could invent a mutating call. Report it
+	// instead of returning a successful empty response.
+	if done {
+		switch p.state {
+		case ministralCollectingToolName:
+			return "", "", nil, fmt.Errorf("incomplete tool call: stream ended before %s, name so far %q",
+				ministralArgsTag, strings.TrimSpace(p.buffer.String()))
+		case ministralCollectingToolArgs:
+			return "", "", nil, fmt.Errorf("incomplete tool call: truncated arguments for %q", p.pendingToolName)
+		}
+	}
+
 	return contentBuilder.String(), thinkingBuilder.String(), toolCalls, nil
 }
 
