@@ -46,7 +46,7 @@ Generate a response for a given prompt with a provided model. This is a streamin
 - `prompt`: the prompt to generate a response for
 - `suffix`: the text after the model response
 - `images`: (optional) a list of base64-encoded images (for multimodal models such as `llava`)
-- `think`: (for thinking models) should the model think before responding? Can be a boolean, a thinking level (`"minimal"`, `"low"`, `"medium"`, `"high"`, or `"max"`), or a positive integer capping how many tokens the model may spend thinking. Levels are a share of the room the response has - `num_predict` when the request caps it, the context length otherwise - from a sixteenth for `"minimal"` to four fifths for `"max"`; `true` leaves thinking unbounded. See [`think_budget`](./modelfile.mdx#valid-parameters-and-values) for the model-level form and for the wrap-up message.
+- `think`: (for thinking models) should the model think before responding? Can be a boolean, a thinking level (`"minimal"`, `"low"`, `"medium"`, `"high"`, or `"max"`), or a positive integer capping how many tokens the model may spend thinking. Levels are a share of the room the response has - `num_predict` when the request caps it, the context length otherwise - from a sixteenth for `"minimal"` to four fifths for `"max"`; `true` leaves thinking unbounded. `"xhigh"` is accepted as another name for `"max"`, for clients whose effort scale ends there. See [`think_budget`](./modelfile.mdx#valid-parameters-and-values) for the model-level form and for the wrap-up message.
 
 Advanced parameters (optional):
 
@@ -495,7 +495,7 @@ Generate the next message in a chat with a provided model. This is a streaming e
 - `model`: (required) the [model name](#model-names)
 - `messages`: the messages of the chat, this can be used to keep a chat memory
 - `tools`: list of tools in JSON for the model to use if supported
-- `think`: (for thinking models) should the model think before responding? Can be a boolean, a thinking level (`"minimal"`, `"low"`, `"medium"`, `"high"`, or `"max"`), or a positive integer capping how many tokens the model may spend thinking. Levels are a share of the room the response has - `num_predict` when the request caps it, the context length otherwise - from a sixteenth for `"minimal"` to four fifths for `"max"`; `true` leaves thinking unbounded. See [`think_budget`](./modelfile.mdx#valid-parameters-and-values) for the model-level form and for the wrap-up message.
+- `think`: (for thinking models) should the model think before responding? Can be a boolean, a thinking level (`"minimal"`, `"low"`, `"medium"`, `"high"`, or `"max"`), or a positive integer capping how many tokens the model may spend thinking. Levels are a share of the room the response has - `num_predict` when the request caps it, the context length otherwise - from a sixteenth for `"minimal"` to four fifths for `"max"`; `true` leaves thinking unbounded. `"xhigh"` is accepted as another name for `"max"`, for clients whose effort scale ends there. See [`think_budget`](./modelfile.mdx#valid-parameters-and-values) for the model-level form and for the wrap-up message.
 
 The `message` object has the following fields:
 

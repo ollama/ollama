@@ -1141,6 +1141,26 @@ func TestThinkValueLevel(t *testing.T) {
 	}
 }
 
+func TestThinkLevelAliases(t *testing.T) {
+	// "xhigh" is what the AI SDK calls the top of its effort scale, which is
+	// the position "max" holds here. A client built on that vocabulary sends
+	// it verbatim, so it has to resolve to the same budget, the same reported
+	// level, and the same validity as the name it aliases.
+	alias := &ThinkValue{Value: "xhigh"}
+	canonical := &ThinkValue{Value: "max"}
+
+	assert.True(t, alias.IsValid(), "an alias is a valid level")
+	assert.True(t, IsThinkLevel("xhigh"))
+	assert.Equal(t, canonical.BudgetTokens(32768), alias.BudgetTokens(32768))
+	assert.Equal(t, canonical.Level(), alias.Level())
+	assert.Equal(t, "xhigh", alias.String(), "the requested spelling is preserved")
+
+	// The canonical set is what a caller is told about; the alias does not
+	// appear twice in the scale or in an error message.
+	assert.NotContains(t, ThinkLevels(), "xhigh")
+	assert.False(t, IsThinkLevel("xlow"), "only the aliases we define resolve")
+}
+
 func TestThinkLevelsAreIndependentOfBudgets(t *testing.T) {
 	// A level a model understands does not have to carry a budget. Tying the
 	// two together would reject any level that exists only to be handed to the
