@@ -1572,6 +1572,79 @@ func TestFromResponsesRequest_MaxOutputTokens(t *testing.T) {
 	}
 }
 
+func TestFromResponsesRequest_ReasoningEffort(t *testing.T) {
+	tests := []struct {
+		name      string
+		reqJSON   string
+		wantThink *api.ThinkValue
+		wantErr   bool
+	}{
+		{
+			name:      "effort none disables thinking",
+			reqJSON:   `{"model": "gpt-oss:20b", "input": "hi", "reasoning": {"effort": "none"}}`,
+			wantThink: &api.ThinkValue{Value: false},
+		},
+		{
+			name:      "effort low sets string value",
+			reqJSON:   `{"model": "gpt-oss:20b", "input": "hi", "reasoning": {"effort": "low"}}`,
+			wantThink: &api.ThinkValue{Value: "low"},
+		},
+		{
+			name:      "effort medium sets string value",
+			reqJSON:   `{"model": "gpt-oss:20b", "input": "hi", "reasoning": {"effort": "medium"}}`,
+			wantThink: &api.ThinkValue{Value: "medium"},
+		},
+		{
+			name:      "effort high sets string value",
+			reqJSON:   `{"model": "gpt-oss:20b", "input": "hi", "reasoning": {"effort": "high"}}`,
+			wantThink: &api.ThinkValue{Value: "high"},
+		},
+		{
+			name:      "missing reasoning leaves Think unset",
+			reqJSON:   `{"model": "gpt-oss:20b", "input": "hi"}`,
+			wantThink: nil,
+		},
+		{
+			name:    "invalid effort returns error",
+			reqJSON: `{"model": "gpt-oss:20b", "input": "hi", "reasoning": {"effort": "maximum"}}`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var req ResponsesRequest
+			if err := json.Unmarshal([]byte(tt.reqJSON), &req); err != nil {
+				t.Fatalf("failed to unmarshal request: %v", err)
+			}
+
+			chatReq, err := FromResponsesRequest(req)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("failed to convert request: %v", err)
+			}
+
+			if tt.wantThink == nil {
+				if chatReq.Think != nil {
+					t.Errorf("Think = %+v, want nil", chatReq.Think)
+				}
+				return
+			}
+			if chatReq.Think == nil {
+				t.Fatal("expected Think to be set")
+			}
+			if chatReq.Think.Value != tt.wantThink.Value {
+				t.Errorf("Think.Value = %v, want %v", chatReq.Think.Value, tt.wantThink.Value)
+			}
+		})
+	}
+}
+
 func TestFromResponsesRequest_TextFormatJsonSchema(t *testing.T) {
 	reqJSON := `{
 		"model": "gpt-oss:20b",
