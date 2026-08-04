@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -2386,6 +2387,137 @@ func TestIsLocalhost(t *testing.T) {
 			got := isLocalhost()
 			if got != tt.expected {
 				t.Errorf("isLocalhost() with OLLAMA_HOST=%q = %v, want %v", tt.host, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestLoadHandler(t *testing.T) {
+	tests := []struct {
+		name            string
+		model           string
+		keepaliveFlag   string
+		showStatus      int
+		remoteHost      string
+		expectError     string
+		expectGenerate  bool
+		expectKeepAlive *api.Duration
+	}{
+		{
+			name:           "local model with default keepalive sends nil so server default applies",
+			model:          "test-model",
+			expectGenerate: true,
+		},
+		{
+			name:            "local model with explicit keepalive is forwarded to generate",
+			model:           "test-model",
+			keepaliveFlag:   "10m",
+			expectGenerate:  true,
+			expectKeepAlive: &api.Duration{Duration: 10 * time.Minute},
+		},
+		{
+			name:          "invalid keepalive returns parse error before contacting server",
+			model:         "test-model",
+			keepaliveFlag: "garbage",
+			expectError:   "invalid duration",
+		},
+		{
+			name:          "zero keepalive is rejected to avoid silently unloading",
+			model:         "test-model",
+			keepaliveFlag: "0",
+			expectError:   "would immediately unload",
+		},
+		{
+			// api.Duration.MarshalJSON encodes any negative Duration as the
+			// literal -1, and the server's UnmarshalJSON maps that to
+			// math.MaxInt64 (the "keep loaded indefinitely" sentinel).
+			name:            "negative keepalive is forwarded as indefinite",
+			model:           "test-model",
+			keepaliveFlag:   "-1s",
+			expectGenerate:  true,
+			expectKeepAlive: &api.Duration{Duration: time.Duration(math.MaxInt64)},
+		},
+		{
+			name:        "missing model surfaces helpful error message",
+			model:       "missing-model",
+			showStatus:  http.StatusNotFound,
+			expectError: "couldn't find model",
+		},
+		{
+			name:           "non-ollama.com remote model skips generate",
+			model:          "remote-model",
+			remoteHost:     "https://other-remote.com",
+			expectGenerate: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			generateCalled := false
+			var sentKeepAlive *api.Duration
+
+			mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/show":
+					if tt.showStatus != 0 && tt.showStatus != http.StatusOK {
+						w.WriteHeader(tt.showStatus)
+						_ = json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(api.ShowResponse{RemoteHost: tt.remoteHost})
+				case "/api/generate":
+					generateCalled = true
+					var req api.GenerateRequest
+					if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+						sentKeepAlive = req.KeepAlive
+					}
+					w.WriteHeader(http.StatusOK)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer mockServer.Close()
+
+			t.Setenv("OLLAMA_HOST", mockServer.URL)
+
+			cmd := &cobra.Command{}
+			cmd.Flags().String("keepalive", "", "")
+			cmd.SetContext(t.Context())
+			if tt.keepaliveFlag != "" {
+				if err := cmd.Flags().Set("keepalive", tt.keepaliveFlag); err != nil {
+					t.Fatalf("set keepalive flag: %v", err)
+				}
+			}
+
+			err := LoadHandler(cmd, []string{tt.model})
+
+			if tt.expectError != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.expectError)
+				}
+				if !strings.Contains(err.Error(), tt.expectError) {
+					t.Fatalf("expected error containing %q, got %v", tt.expectError, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if generateCalled != tt.expectGenerate {
+				t.Errorf("generate called = %v, want %v", generateCalled, tt.expectGenerate)
+			}
+			switch {
+			case tt.expectKeepAlive != nil:
+				if sentKeepAlive == nil {
+					t.Errorf("expected keepalive %v, got nil", tt.expectKeepAlive)
+				} else if sentKeepAlive.Duration != tt.expectKeepAlive.Duration {
+					t.Errorf("expected keepalive %v, got %v", tt.expectKeepAlive, sentKeepAlive)
+				}
+			case tt.expectGenerate:
+				if sentKeepAlive != nil {
+					t.Errorf("expected nil keepalive (server default), got %v", sentKeepAlive)
+				}
 			}
 		})
 	}
