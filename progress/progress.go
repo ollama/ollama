@@ -38,6 +38,9 @@ func NewProgress(w io.Writer) *Progress {
 }
 
 func (p *Progress) stop() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	for _, state := range p.states {
 		if spinner, ok := state.(*Spinner); ok {
 			spinner.Stop()
@@ -47,7 +50,7 @@ func (p *Progress) stop() bool {
 	if p.ticker != nil {
 		p.ticker.Stop()
 		p.ticker = nil
-		p.render()
+		p.renderLocked()
 		return true
 	}
 
@@ -71,6 +74,7 @@ func (p *Progress) StopAndClear() bool {
 
 	stopped := p.stop()
 	if stopped {
+		p.mu.Lock()
 		// clear all progress lines
 		for i := range p.pos {
 			if i > 0 {
@@ -78,6 +82,7 @@ func (p *Progress) StopAndClear() bool {
 			}
 			fmt.Fprint(p.w, "\033[2K\033[1G")
 		}
+		p.mu.Unlock()
 	}
 
 	return stopped
@@ -91,13 +96,17 @@ func (p *Progress) Add(key string, state State) {
 }
 
 func (p *Progress) render() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.renderLocked()
+}
+
+// renderLocked performs the actual render. The caller must hold p.mu.
+func (p *Progress) renderLocked() {
 	_, termHeight, err := term.GetSize(int(os.Stderr.Fd()))
 	if err != nil {
 		termHeight = defaultTermHeight
 	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
 
 	defer p.w.Flush()
 
@@ -127,7 +136,9 @@ func (p *Progress) render() {
 }
 
 func (p *Progress) start() {
+	p.mu.Lock()
 	p.ticker = time.NewTicker(100 * time.Millisecond)
+	p.mu.Unlock()
 	for range p.ticker.C {
 		p.render()
 	}
