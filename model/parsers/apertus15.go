@@ -32,11 +32,16 @@ type Apertus15Parser struct {
 	callIndex       int
 }
 
-func (p *Apertus15Parser) Init(tools []api.Tool, _ *api.Message, thinkValue *api.ThinkValue) []api.Tool {
+func (p *Apertus15Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.state = apertus15ParserContent
 	p.buffer.Reset()
 	p.thinkingEnabled = thinkValue != nil && thinkValue.Bool()
 	p.callIndex = 0
+
+	if lastMessage != nil && lastMessage.Role == "assistant" && lastMessage.Thinking != "" && lastMessage.Content == "" {
+		p.state = apertus15ParserThinking
+	}
+
 	return tools
 }
 

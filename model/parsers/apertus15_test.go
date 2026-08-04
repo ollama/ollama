@@ -71,6 +71,28 @@ func TestApertus15ParserSuppressesUnexpectedThinking(t *testing.T) {
 	}
 }
 
+func TestApertus15ParserContinuesThinkingPrefill(t *testing.T) {
+	parser := &Apertus15Parser{}
+	parser.Init(nil, &api.Message{
+		Role:     "assistant",
+		Thinking: "Existing reasoning.",
+	}, &api.ThinkValue{Value: true})
+
+	content, thinking, calls, err := parser.Add(
+		" Continued reasoning."+apertus15InnerEnd+"Answer.",
+		true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content != "Answer." || thinking != " Continued reasoning." {
+		t.Fatalf("content = %q, thinking = %q", content, thinking)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("tool calls = %d, want 0", len(calls))
+	}
+}
+
 func TestApertus15ParserToolCalls(t *testing.T) {
 	parser := &Apertus15Parser{}
 	parser.Init(nil, nil, &api.ThinkValue{Value: true})
