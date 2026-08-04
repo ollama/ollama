@@ -127,11 +127,6 @@ func schedulerModelKey(m *Model) string {
 	return ""
 }
 
-// context must be canceled to decrement ref count and release the runner
-func (s *Scheduler) GetRunner(c context.Context, m *Model, opts api.Options, sessionDuration *api.Duration) (chan *runnerRef, chan error) {
-	return s.getRunner(c, m, opts, sessionDuration, false, false, nil)
-}
-
 func resolveContextShift(shift *bool, m *Model) bool {
 	if shift != nil {
 		return *shift
@@ -1746,4 +1741,58 @@ func (s *Scheduler) expireRunner(model *Model) {
 		}
 		runner.refMu.Unlock()
 	}
+}
+
+// loadedModel is a point-in-time snapshot of a loaded runner's state, safe to
+// use without holding any scheduler locks.
+type loadedModel struct {
+	model         *Model
+	size          int64
+	sizeVRAM      int64
+	contextLength int
+	expiresAt     time.Time
+}
+
+// loadedModels returns a snapshot of the currently loaded models for status
+// reporting without exposing the scheduler's internal runner bookkeeping.
+func (s *Scheduler) loadedModels() []loadedModel {
+	s.loadedMu.Lock()
+	runners := make([]*runnerRef, 0, len(s.loaded))
+	for _, r := range s.loaded {
+		runners = append(runners, r)
+	}
+	s.loadedMu.Unlock()
+
+	// refMu must not be acquired while holding loadedMu: the expiration path
+	// locks them in the opposite order.
+	models := make([]loadedModel, 0, len(runners))
+	for _, r := range runners {
+		r.refMu.Lock()
+		if r.model == nil {
+			// Unloaded after the snapshot above was taken
+			r.refMu.Unlock()
+			continue
+		}
+		lm := loadedModel{
+			model:     r.model,
+			size:      int64(r.totalSize),
+			sizeVRAM:  int64(r.vramSize),
+			expiresAt: r.expiresAt,
+		}
+		if r.llama != nil {
+			lm.contextLength = r.llama.ContextLength()
+			total, vram := r.llama.MemorySize()
+			lm.size = int64(total)
+			lm.sizeVRAM = int64(vram)
+		}
+		// The scheduler waits to set expiresAt, so a model that is still
+		// loading may have the zero value. Estimate expiration from the
+		// session duration instead.
+		if lm.expiresAt.IsZero() {
+			lm.expiresAt = time.Now().Add(r.sessionDuration)
+		}
+		r.refMu.Unlock()
+		models = append(models, lm)
+	}
+	return models
 }

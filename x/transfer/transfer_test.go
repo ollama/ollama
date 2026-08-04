@@ -860,11 +860,21 @@ func verifyBlob(t *testing.T, dir string, blob Blob, expected []byte) {
 // ==================== Parallelism Tests ====================
 
 func TestDownloadParallelism(t *testing.T) {
-	// Create many blobs to test parallelism
 	serverDir := t.TempDir()
 	numBlobs := 10
 	blobs := make([]Blob, numBlobs)
 	blobData := make([][]byte, numBlobs)
+
+	const (
+		concurrency    = 4
+		perBlobLatency = 100 * time.Millisecond
+		// Download issues two requests per blob: a resolve GET then the body GET.
+		requestsPerBlob = 2
+	)
+	// serialBaseline is the time a strictly serial run would take. 100ms is
+	// large enough that Windows' ~15ms timer granularity is a small fraction
+	// of each delay; the elapsed check only needs to beat this by a wide margin.
+	serialBaseline := time.Duration(numBlobs*requestsPerBlob) * perBlobLatency
 
 	for i := range numBlobs {
 		blobs[i], blobData[i] = createTestBlob(t, serverDir, 1024+i*100)
@@ -886,7 +896,7 @@ func TestDownloadParallelism(t *testing.T) {
 		}
 
 		// Simulate network latency to ensure parallelism is visible
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(perBlobLatency)
 
 		digest := filepath.Base(r.URL.Path)
 		path := filepath.Join(serverDir, digestToPath(digest))
@@ -907,8 +917,8 @@ func TestDownloadParallelism(t *testing.T) {
 		Blobs:           blobs,
 		BaseURL:         server.URL,
 		DestDir:         clientDir,
-		Concurrency:     4,
-		BodyConcurrency: 4,
+		Concurrency:     concurrency,
+		BodyConcurrency: concurrency,
 	})
 	elapsed := time.Since(start)
 
@@ -926,10 +936,12 @@ func TestDownloadParallelism(t *testing.T) {
 		t.Errorf("Max concurrent requests was %d, expected at least 2 for parallelism", maxConcurrent.Load())
 	}
 
-	// With 10 blobs at 50ms each, sequential would take ~500ms
-	// Parallel with 4 workers should take ~150ms (relax to 1s for CI variance)
-	if elapsed > time.Second {
-		t.Errorf("Downloads took %v, expected faster with parallelism", elapsed)
+	// Require finishing under 75% of the serial baseline so the check still
+	// proves parallelism, with room for Windows timer granularity and runner
+	// jitter. maxConcurrent above is the real gate that parallelism occurred.
+	parallelBudget := serialBaseline * 3 / 4
+	if elapsed > parallelBudget {
+		t.Errorf("Downloads took %v, expected faster with parallelism (serial baseline %v, budget %v)", elapsed, serialBaseline, parallelBudget)
 	}
 
 	t.Logf("Downloaded %d blobs in %v with max %d concurrent requests", numBlobs, elapsed, maxConcurrent.Load())

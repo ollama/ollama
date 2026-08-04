@@ -9,8 +9,9 @@ import (
 )
 
 // Skill is the model-facing adapter for the core agent skill catalog.
-// It only supplies instructions; regular tools retain their own approval
-// requirements for filesystem or network access.
+// Model-initiated loads require approval because a skill's instructions can
+// influence the rest of the run. Explicit user activation is handled by the
+// session's synthetic skill call and bypasses this adapter.
 type Skill struct{ Catalog *agent.SkillCatalog }
 
 func (t *Skill) Name() string { return "skill" }
@@ -24,6 +25,8 @@ func (t *Skill) Schema() api.ToolFunction {
 	props.Set("name", api.ToolProperty{Type: api.PropertyType{"string"}, Description: "Name of the skill to load."})
 	return api.ToolFunction{Name: t.Name(), Description: t.Description(), Parameters: api.ToolFunctionParameters{Type: "object", Properties: props, Required: []string{"name"}}}
 }
+
+func (t *Skill) RequiresApproval(map[string]any) bool { return true }
 
 func (t *Skill) Execute(_ context.Context, _ agent.ToolContext, args map[string]any) (agent.ToolResult, error) {
 	name, ok := args["name"].(string)

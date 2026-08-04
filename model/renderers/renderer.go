@@ -109,7 +109,7 @@ func rendererForName(name string) Renderer {
 		return &LFM2Renderer{IsThinking: true, useImgTags: RenderImgTags}
 	case "laguna":
 		return &LagunaRenderer{}
-	case "laguna-v8":
+	case "poolside-v1":
 		return &LagunaV8Renderer{}
 	case "cohere":
 		return &CohereRenderer{}
