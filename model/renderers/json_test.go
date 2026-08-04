@@ -343,3 +343,15 @@ func TestMarshalWithSpaces(t *testing.T) {
 		})
 	}
 }
+
+func TestMarshalWithSpacesNoHTMLEscape(t *testing.T) {
+	got, err := marshalWithSpacesNoHTMLEscape(map[string]any{
+		"value": "<tag>&value</tag>",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"value": "<tag>&value</tag>"}`; string(got) != want {
+		t.Fatalf("marshalWithSpacesNoHTMLEscape() = %q, want %q", got, want)
+	}
+}

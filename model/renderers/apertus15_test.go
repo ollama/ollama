@@ -158,6 +158,113 @@ func TestApertus15RendererAnyOfMatchesTemplateFallback(t *testing.T) {
 	}
 }
 
+func TestApertus15RendererUsesJinjaEnumStrings(t *testing.T) {
+	var tool api.Tool
+	if err := json.Unmarshal([]byte(`{
+		"type": "function",
+		"function": {
+			"name": "choose",
+			"description": "Choose a value.",
+			"parameters": {
+				"type": "object",
+				"properties": {
+					"value": {"type": "string", "enum": [true, false, null, 1]}
+				},
+				"required": ["value"]
+			}
+		}
+	}`), &tool); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := (&Apertus15Renderer{}).Render([]api.Message{{Role: "user", Content: "Choose."}}, []api.Tool{tool}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `value: "True" | "False" | "None" | "1"`) {
+		t.Fatalf("enum values do not match Jinja string conversion:\n%s", got)
+	}
+}
+
+func TestApertus15RendererDoesNotEscapeHTMLToolArguments(t *testing.T) {
+	call := apertus15ToolCall("echo", map[string]any{"value": "<tag>&value</tag>"})
+	got, err := (&Apertus15Renderer{}).Render([]api.Message{
+		{Role: "user", Content: "Echo"},
+		{Role: "assistant", ToolCalls: []api.ToolCall{call}},
+	}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `[{"echo": {"value": "<tag>&value</tag>"}}]`) {
+		t.Fatalf("tool arguments do not match Jinja escaping:\n%s", got)
+	}
+}
+
+func TestApertus15RendererPreservesToolNameAndTopLevelArgumentOrder(t *testing.T) {
+	arguments := api.NewToolCallFunctionArguments()
+	arguments.Set("zeta", "<tag>&value")
+	arguments.Set("alpha", 2)
+	call := api.ToolCall{Function: api.ToolCallFunction{
+		Name:      "echo<tag>",
+		Arguments: arguments,
+	}}
+
+	got, err := (&Apertus15Renderer{}).Render([]api.Message{
+		{Role: "user", Content: "Echo"},
+		{Role: "assistant", ToolCalls: []api.ToolCall{call}},
+	}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `[{"echo<tag>": {"zeta": "<tag>&value", "alpha": 2}}]`) {
+		t.Fatalf("tool call does not match Jinja spelling and order:\n%s", got)
+	}
+}
+
+func TestApertus15RendererPreservesAdjacentAssistantBlockOrder(t *testing.T) {
+	call := apertus15ToolCall("lookup", map[string]any{"id": "42"})
+	got, err := (&Apertus15Renderer{}).Render([]api.Message{
+		{Role: "user", Content: "Look up"},
+		{Role: "assistant", ToolCalls: []api.ToolCall{call}},
+		{Role: "assistant", Thinking: "Reconsider."},
+		{Role: "assistant", Content: "Done."},
+		{Role: "user", Content: "Next"},
+	}, nil, &api.ThinkValue{Value: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := apertus15AssistantStart +
+		apertus15ToolsStart + `[{"lookup": {"id": "42"}}]` + apertus15ToolsEnd +
+		apertus15InnerStart + "Reconsider." + apertus15InnerEnd + "Done." +
+		apertus15AssistantEnd + apertus15UserStart + "Next" + apertus15UserEnd
+	if !strings.Contains(got, want) {
+		t.Fatalf("adjacent assistant messages lost block order\nwant fragment: %q\nrendered: %s", want, got)
+	}
+}
+
+func TestApertus15RendererPreservesRepeatedToolOutputBlocks(t *testing.T) {
+	got, err := (&Apertus15Renderer{}).Render([]api.Message{
+		{Role: "user", Content: "Observe"},
+		{Role: "assistant"},
+		{Role: "tool", Content: "one"},
+		{Role: "assistant"},
+		{Role: "tool", Content: "two"},
+		{Role: "user", Content: "Next"},
+	}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := apertus15AssistantStart +
+		apertus15ToolOutputStart + "one" + apertus15ToolOutputEnd +
+		apertus15ToolOutputStart + "two" + apertus15ToolOutputEnd +
+		apertus15AssistantEnd
+	if !strings.Contains(got, want) {
+		t.Fatalf("repeated tool output boundaries were merged\nwant fragment: %q\nrendered: %s", want, got)
+	}
+}
+
 func TestApertus15RendererThinkingWithDisplayAnswers(t *testing.T) {
 	call := apertus15ToolCall("display_answers", map[string]any{"answer": "Done"})
 	got, err := (&Apertus15Renderer{}).Render([]api.Message{

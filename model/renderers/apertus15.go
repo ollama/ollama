@@ -266,7 +266,7 @@ func apertus15TypeScriptType(property api.ToolProperty) (string, error) {
 		}
 		values := make([]string, 0, len(property.Enum))
 		for _, value := range property.Enum {
-			values = append(values, fmt.Sprintf("\"%v\"", value))
+			values = append(values, fmt.Sprintf("\"%s\"", apertus15JinjaString(value)))
 		}
 		return strings.Join(values, " | "), nil
 	case "number", "integer":
@@ -280,6 +280,20 @@ func apertus15TypeScriptType(property api.ToolProperty) (string, error) {
 		return apertus15ObjectType(property.Properties, property.Required)
 	default:
 		return "any", nil
+	}
+}
+
+func apertus15JinjaString(value any) string {
+	switch value := value.(type) {
+	case bool:
+		if value {
+			return "True"
+		}
+		return "False"
+	case nil:
+		return "None"
+	default:
+		return fmt.Sprint(value)
 	}
 }
 
@@ -319,21 +333,42 @@ func renderApertus15ToolCalls(sb *strings.Builder, calls []api.ToolCall) error {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
-		name, err := json.Marshal(call.Function.Name)
+		arguments, err := marshalApertus15Arguments(call.Function.Arguments)
 		if err != nil {
 			return err
 		}
-		arguments, err := marshalWithSpaces(call.Function.Arguments)
-		if err != nil {
-			return err
-		}
-		sb.WriteByte('{')
-		sb.Write(name)
-		sb.WriteString(": ")
+		sb.WriteString("{\"")
+		sb.WriteString(call.Function.Name)
+		sb.WriteString("\": ")
 		sb.Write(arguments)
 		sb.WriteByte('}')
 	}
 	sb.WriteByte(']')
 	sb.WriteString(apertus15ToolsEnd)
 	return nil
+}
+
+func marshalApertus15Arguments(arguments api.ToolCallFunctionArguments) ([]byte, error) {
+	var sb strings.Builder
+	sb.WriteByte('{')
+	index := 0
+	for name, value := range arguments.All() {
+		if index > 0 {
+			sb.WriteString(", ")
+		}
+		encodedName, err := marshalWithSpacesNoHTMLEscape(name)
+		if err != nil {
+			return nil, err
+		}
+		encodedValue, err := marshalWithSpacesNoHTMLEscape(value)
+		if err != nil {
+			return nil, err
+		}
+		sb.Write(encodedName)
+		sb.WriteString(": ")
+		sb.Write(encodedValue)
+		index++
+	}
+	sb.WriteByte('}')
+	return []byte(sb.String()), nil
 }
