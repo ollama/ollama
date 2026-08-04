@@ -580,6 +580,11 @@ func isQwen35Family(s string) bool {
 	return strings.Contains(s, "qwen3_5") || strings.Contains(s, "qwen3next")
 }
 
+func isApertus15Family(s string) bool {
+	s = strings.ToLower(s)
+	return strings.Contains(s, "apertus1p5") || strings.Contains(s, "apertus1_5")
+}
+
 func lagunaRendererParserName(modelDir string) string {
 	const poolsideV1Marker = "laguna_glm_thinking_v8"
 
@@ -617,6 +622,9 @@ func getParserName(modelDir string) string {
 	// Check architectures for known parsers
 	for _, arch := range cfg.Architectures {
 		archLower := strings.ToLower(arch)
+		if isApertus15Family(archLower) {
+			return "apertus1.5"
+		}
 		if strings.Contains(archLower, "laguna") {
 			return lagunaRendererParserName(modelDir)
 		}
@@ -643,6 +651,9 @@ func getParserName(modelDir string) string {
 	// Also check model_type
 	if cfg.ModelType != "" {
 		typeLower := strings.ToLower(cfg.ModelType)
+		if isApertus15Family(typeLower) {
+			return "apertus1.5"
+		}
 		if strings.Contains(typeLower, "laguna") {
 			return lagunaRendererParserName(modelDir)
 		}
@@ -689,6 +700,9 @@ func getRendererName(modelDir string) string {
 	// Check architectures for known renderers
 	for _, arch := range cfg.Architectures {
 		archLower := strings.ToLower(arch)
+		if isApertus15Family(archLower) {
+			return "apertus1.5"
+		}
 		if strings.Contains(archLower, "laguna") {
 			return lagunaRendererParserName(modelDir)
 		}
@@ -715,6 +729,9 @@ func getRendererName(modelDir string) string {
 	// Also check model_type
 	if cfg.ModelType != "" {
 		typeLower := strings.ToLower(cfg.ModelType)
+		if isApertus15Family(typeLower) {
+			return "apertus1.5"
+		}
 		if strings.Contains(typeLower, "laguna") {
 			return lagunaRendererParserName(modelDir)
 		}
