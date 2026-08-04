@@ -18,9 +18,12 @@ type Spinner struct {
 
 	value int
 
-	ticker  *time.Ticker
 	started time.Time
 	stopped time.Time
+
+	stopOnce sync.Once
+	// done is closed to tell the animation loop to exit.
+	done chan struct{}
 }
 
 func NewSpinner(message string) *Spinner {
@@ -29,12 +32,10 @@ func NewSpinner(message string) *Spinner {
 			"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
 		},
 		started: time.Now(),
-		ticker:  time.NewTicker(100 * time.Millisecond),
+		done:    make(chan struct{}),
 	}
 	s.SetMessage(message)
-	// Pass the ticker's channel in rather than having start read s.ticker, so
-	// the goroutine never races with other accessors of the struct.
-	go s.start(s.ticker.C)
+	go s.start()
 	return s
 }
 
@@ -71,22 +72,28 @@ func (s *Spinner) String() string {
 	return sb.String()
 }
 
-func (s *Spinner) start(c <-chan time.Time) {
-	for range c {
-		s.mu.Lock()
-		s.value = (s.value + 1) % len(s.parts)
-		stopped := !s.stopped.IsZero()
-		s.mu.Unlock()
-		if stopped {
+func (s *Spinner) start() {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.done:
 			return
+		case <-ticker.C:
+			s.mu.Lock()
+			s.value = (s.value + 1) % len(s.parts)
+			s.mu.Unlock()
 		}
 	}
 }
 
 func (s *Spinner) Stop() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.stopped.IsZero() {
 		s.stopped = time.Now()
 	}
+	s.mu.Unlock()
+
+	s.stopOnce.Do(func() { close(s.done) })
 }

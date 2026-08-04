@@ -27,21 +27,28 @@ type Progress struct {
 
 	pos int
 
-	ticker *time.Ticker
 	states []State
+
+	stopOnce sync.Once
+	// done is closed to tell the render loop to exit.
+	done chan struct{}
 }
 
 func NewProgress(w io.Writer) *Progress {
-	p := &Progress{w: bufio.NewWriter(w), ticker: time.NewTicker(100 * time.Millisecond)}
-	// Pass the ticker's channel in rather than having start read p.ticker, so
-	// a concurrent stop clearing the field can't race the render loop.
-	go p.start(p.ticker.C)
+	p := &Progress{w: bufio.NewWriter(w), done: make(chan struct{})}
+	go p.start()
 	return p
 }
 
 // stop halts the render loop, stopping any spinners first. It reports whether
 // rendering was active and how many lines were last rendered.
 func (p *Progress) stop() (bool, int) {
+	var stopped bool
+	p.stopOnce.Do(func() {
+		close(p.done)
+		stopped = true
+	})
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -51,14 +58,10 @@ func (p *Progress) stop() (bool, int) {
 		}
 	}
 
-	if p.ticker == nil {
-		return false, p.pos
+	if stopped {
+		p.renderLocked()
 	}
-
-	p.ticker.Stop()
-	p.ticker = nil
-	p.renderLocked()
-	return true, p.pos
+	return stopped, p.pos
 }
 
 func (p *Progress) Stop() bool {
@@ -138,8 +141,16 @@ func (p *Progress) renderLocked() {
 	p.pos = len(p.states)
 }
 
-func (p *Progress) start(c <-chan time.Time) {
-	for range c {
-		p.render()
+func (p *Progress) start() {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-p.done:
+			return
+		case <-ticker.C:
+			p.render()
+		}
 	}
 }

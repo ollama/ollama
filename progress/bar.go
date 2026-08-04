@@ -182,8 +182,7 @@ func (b *Bar) Set(value int64) {
 	}
 }
 
-// percent and rate are called from String with b.mu held.
-
+// percent must be called with b.mu held.
 func (b *Bar) percent() float64 {
 	if b.maxValue > 0 {
 		return float64(b.currentValue) / float64(b.maxValue) * 100
@@ -192,6 +191,7 @@ func (b *Bar) percent() float64 {
 	return 0
 }
 
+// rate must be called with b.mu held.
 func (b *Bar) rate() float64 {
 	var numerator, denominator float64
 
