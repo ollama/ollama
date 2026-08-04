@@ -1661,8 +1661,8 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 	buf := make([]byte, 0, llamaServerStreamInitialBufferSize)
 	scanner.Buffer(buf, llamaServerStreamMaxBufferSize)
 
-	var lastToken string
-	var tokenRepeat int
+	var repeat repeatGuard
+	var evalCount int
 	var finalResp CompletionResponse
 	var hasFinalResp bool
 
@@ -1689,17 +1689,26 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 				return fmt.Errorf("error unmarshalling llama-server response: %v", err)
 			}
 
-			// Token repeat detection
-			switch {
-			case strings.TrimSpace(lsResp.Content) == lastToken:
-				tokenRepeat++
-			default:
-				lastToken = strings.TrimSpace(lsResp.Content)
-				tokenRepeat = 0
+			if lsResp.Content != "" {
+				evalCount++
 			}
-			if tokenRepeat > 30 {
-				slog.Debug("prediction aborted, token repeat limit reached")
-				return ctx.Err()
+
+			// A generation that has come apart repeats one short unit until
+			// something stops it. Cut it off, and say so: the response is
+			// already partly streamed, so it ends as a normal completion with
+			// a reason the caller can act on.
+			if repeat.observe(lsResp.Content) {
+				slog.Warn("stopping generation, output repeated the same sequence past the limit",
+					"period", repeat.period(), "bytes", repeatGuardBudgetBytes)
+				if err := res.Body.Close(); err != nil {
+					return fmt.Errorf("error closing llama-server response: %v", err)
+				}
+				fn(CompletionResponse{
+					Done:       true,
+					DoneReason: DoneReasonRepeat,
+					EvalCount:  evalCount,
+				})
+				return nil
 			}
 
 			if lsResp.Content != "" && !lsResp.Stop {
