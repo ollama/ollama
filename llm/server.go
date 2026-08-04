@@ -248,6 +248,9 @@ const (
 	DoneReasonStop DoneReason = iota
 	DoneReasonLength
 	DoneReasonConnectionClosed
+	// DoneReasonRepeat is reported when a generation was stopped because it
+	// had degenerated into repeating the same short sequence.
+	DoneReasonRepeat
 )
 
 func (d DoneReason) String() string {
@@ -256,6 +259,8 @@ func (d DoneReason) String() string {
 		return "length"
 	case DoneReasonStop:
 		return "stop"
+	case DoneReasonRepeat:
+		return "repeat"
 	default:
 		return ""
 	}
