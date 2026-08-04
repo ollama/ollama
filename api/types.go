@@ -1242,12 +1242,10 @@ func ValidateLegacyThinking(think *ThinkValue) error {
 	if !think.IsString() {
 		return nil
 	}
-	switch think.String() {
-	case "minimal", "low", "medium", "high", "max":
+	if IsThinkLevel(think.String()) {
 		return nil
-	default:
-		return fmt.Errorf("invalid think value: %q (must be one of %q, true, false, or a positive thinking-token budget)", think.String(), ThinkLevels())
 	}
+	return fmt.Errorf("invalid think value: %q (must be one of %q, true, false, or a positive thinking-token budget)", think.String(), ThinkLevels())
 }
 
 // ThinkLevels returns the effort levels that carry a thinking budget, weakest

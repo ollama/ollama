@@ -104,9 +104,10 @@ func TestResponsesThinkingOverrideWithMetadata(t *testing.T) {
 				req := ResponsesRequest{Input: ResponsesInput{Text: "hi"}, Think: &api.ThinkValue{Value: value}}
 				req.Reasoning.Effort = "xhigh"
 				got, err := FromResponsesRequest(req, metadata.thinking)
-				// An integer is a thinking-token budget and "minimal" a budget level, so
+				// An integer is a thinking-token budget, "minimal" a budget level and
+				// "xhigh" another name for "max", so
 				// both are valid overrides whatever the model advertises.
-				wantErr := !metadata.thinking.Valid() && (value == "" || value == "xhigh" || value == "future")
+				wantErr := !metadata.thinking.Valid() && (value == "" || value == "future")
 				if wantErr {
 					if err == nil {
 						t.Fatal("invalid override must fail")
