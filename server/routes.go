@@ -3340,6 +3340,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 				res.Message.Content = content
 				res.Message.Thinking = thinking
+				toolCalls = completeToolCalls(toolCalls, req.Tools, r.Done && r.DoneReason == llm.DoneReasonLength)
 				for i := range toolCalls {
 					toolCalls[i].ID = toolCallId()
 				}
@@ -3366,6 +3367,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 			if len(req.Tools) > 0 {
 				toolCalls, content := toolParser.Add(res.Message.Content)
+				toolCalls = completeToolCalls(toolCalls, req.Tools, r.Done && r.DoneReason == llm.DoneReasonLength)
 				if len(content) > 0 {
 					res.Message.Content = content
 				} else if len(toolCalls) > 0 {
