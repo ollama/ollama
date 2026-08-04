@@ -2,6 +2,7 @@ package nemotron_h
 
 import (
 	"math"
+	"slices"
 	"strings"
 	"testing"
 
@@ -109,6 +110,193 @@ func TestNewCachesLayout(t *testing.T) {
 	}
 	if caches[2] != nil || caches[3] != nil {
 		t.Fatalf("MLP-only caches = %T/%T, want nil/nil", caches[2], caches[3])
+	}
+}
+
+func TestNewCachesLayoutWithAttentionMTP(t *testing.T) {
+	m := &Model{
+		Config: &Config{
+			ConvKernel:    4,
+			MambaNumHeads: 2,
+			MambaHeadDim:  2,
+			SSMStateSize:  3,
+			NGroups:       1,
+		},
+		Layers: []*Layer{
+			{Type: 'M'},
+			{Type: 'A'},
+			{Type: 'E'},
+			{Type: '-'},
+		},
+		MTP: &MTPHead{Layers: []*Layer{{Type: 'A'}, {Type: 'E'}}},
+	}
+
+	caches := m.NewCaches()
+	if got, want := len(caches), 5; got != want {
+		t.Fatalf("len(NewCaches()) = %d, want %d", got, want)
+	}
+	draftCaches := m.DraftCaches(caches)
+	if got, want := len(draftCaches), 1; got != want {
+		t.Fatalf("len(DraftCaches()) = %d, want %d", got, want)
+	}
+	if _, ok := draftCaches[0].(*cache.KVCache); !ok {
+		t.Fatalf("DraftCaches()[0] = %T, want *cache.KVCache", draftCaches[0])
+	}
+	if got := m.SelfDraft(); got != m {
+		t.Fatalf("SelfDraft() = %T, want model", got)
+	}
+}
+
+func TestNewCachesLayoutWithCachelessMTP(t *testing.T) {
+	m := &Model{
+		Config: &Config{
+			ConvKernel:    4,
+			MambaNumHeads: 2,
+			MambaHeadDim:  2,
+			SSMStateSize:  3,
+			NGroups:       1,
+		},
+		Layers: []*Layer{
+			{Type: 'M'},
+			{Type: 'A'},
+			{Type: 'E'},
+			{Type: '-'},
+		},
+		MTP: &MTPHead{Layers: []*Layer{{Type: 'E'}}},
+	}
+
+	caches := m.NewCaches()
+	if got, want := len(caches), 4; got != want {
+		t.Fatalf("len(NewCaches()) = %d, want %d", got, want)
+	}
+	if draftCaches := m.DraftCaches(caches); draftCaches != nil {
+		t.Fatalf("DraftCaches() = %v, want nil for cacheless MTP", draftCaches)
+	}
+	if got := m.SelfDraft(); got != m {
+		t.Fatalf("SelfDraft() = %T, want model", got)
+	}
+}
+
+func TestDetectMTPLayerType(t *testing.T) {
+	present := &mlx.Array{}
+	for _, tt := range []struct {
+		name    string
+		tensors map[string]*mlx.Array
+		want    byte
+		wantErr string
+	}{
+		{
+			name:    "attention",
+			tensors: map[string]*mlx.Array{"mtp.layers.0.mixer.q_proj.weight": present},
+			want:    'A',
+		},
+		{
+			name:    "moe",
+			tensors: map[string]*mlx.Array{"mtp.layers.0.mixer.experts.0.up_proj.weight": present},
+			want:    'E',
+		},
+		{
+			name:    "dense",
+			tensors: map[string]*mlx.Array{"mtp.layers.0.mixer.up_proj.weight": present},
+			want:    '-',
+		},
+		{
+			name:    "recurrent unsupported",
+			tensors: map[string]*mlx.Array{"mtp.layers.0.mixer.in_proj.weight": present},
+			wantErr: "recurrent MTP layers are not supported",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := detectMTPLayerType(tt.tensors, "mtp.layers.0")
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("detectMTPLayerType error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("detectMTPLayerType returned error: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("detectMTPLayerType = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMTPLayerPrefixes(t *testing.T) {
+	present := &mlx.Array{}
+	for _, tt := range []struct {
+		name    string
+		tensors map[string]*mlx.Array
+		want    []string
+		wantErr string
+	}{
+		{
+			name:    "nonzero layer index",
+			tensors: map[string]*mlx.Array{"mtp.layers.1.mixer.experts.0.up_proj.weight": present},
+			want:    []string{"mtp.layers.1"},
+		},
+		{
+			name: "multiple layers",
+			tensors: map[string]*mlx.Array{
+				"mtp.layers.0.mixer.q_proj.weight":            present,
+				"mtp.layers.1.mixer.experts.0.up_proj.weight": present,
+			},
+			want: []string{"mtp.layers.0", "mtp.layers.1"},
+		},
+		{
+			name:    "missing layer",
+			tensors: map[string]*mlx.Array{"mtp.fc.weight": present},
+			wantErr: "missing MTP layer tensors",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := mtpLayerPrefixes(tt.tensors)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("mtpLayerPrefixes error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("mtpLayerPrefixes returned error: %v", err)
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("mtpLayerPrefixes = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHasMTPHeadTensors(t *testing.T) {
+	present := &mlx.Array{}
+	for _, tt := range []struct {
+		name    string
+		tensors map[string]*mlx.Array
+		want    bool
+	}{
+		{
+			name:    "qwen style",
+			tensors: map[string]*mlx.Array{"mtp.fc.weight": present},
+			want:    true,
+		},
+		{
+			name:    "nemotron native",
+			tensors: map[string]*mlx.Array{"mtp.layers.0.eh_proj.weight": present},
+			want:    true,
+		},
+		{
+			name:    "mtp layer without fusion",
+			tensors: map[string]*mlx.Array{"mtp.layers.0.mixer.q_proj.weight": present},
+			want:    false,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hasMTPHeadTensors(tt.tensors); got != tt.want {
+				t.Fatalf("hasMTPHeadTensors() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

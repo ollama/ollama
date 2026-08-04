@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/ollama/ollama/x/mlxrunner/batch"
@@ -22,7 +24,11 @@ func init() {
 	base.Register("NemotronHForCausalLM", newModel)
 }
 
-var _ base.Model = (*Model)(nil)
+var (
+	_ base.Model      = (*Model)(nil)
+	_ base.SelfDraft  = (*Model)(nil)
+	_ base.DraftModel = (*Model)(nil)
+)
 
 type Config struct {
 	ModelType             string  `json:"model_type"`
@@ -74,10 +80,20 @@ type Model struct {
 	Norm        *nn.RMSNorm
 	LMHead      nn.LinearLayer
 
+	MTP *MTPHead
+
 	tok *tokenizer.Tokenizer
 	*Config
 
 	weightPrefix string
+}
+
+type MTPHead struct {
+	Enorm  *nn.RMSNorm
+	Hnorm  *nn.RMSNorm
+	FC     nn.LinearLayer
+	Layers []*Layer
+	Norm   *nn.RMSNorm
 }
 
 type Layer struct {
@@ -711,6 +727,264 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQuan
 	return out
 }
 
+func loadRMSNorm(tensors map[string]*mlx.Array, key string, eps float32) *nn.RMSNorm {
+	if weight := tensors[key]; weight != nil {
+		return nn.NewRMSNorm(weight, eps)
+	}
+	return nil
+}
+
+func loadRMSNormAny(tensors map[string]*mlx.Array, eps float32, keys ...string) *nn.RMSNorm {
+	for _, key := range keys {
+		if norm := loadRMSNorm(tensors, key, eps); norm != nil {
+			return norm
+		}
+	}
+	return nil
+}
+
+func makeLinearAny(linears model.LinearFactory, bases ...string) nn.LinearLayer {
+	for _, base := range bases {
+		if l := linears.Make(base); l != nil {
+			return l
+		}
+	}
+	return nil
+}
+
+func hasTensorByBase(tensors map[string]*mlx.Array, base string) bool {
+	t, _ := tensorByBase(tensors, base)
+	return t != nil
+}
+
+func hasMTPHeadTensors(tensors map[string]*mlx.Array) bool {
+	if hasTensorByBase(tensors, "mtp.fc") {
+		return true
+	}
+	for name, tensor := range tensors {
+		if tensor != nil && strings.HasPrefix(name, "mtp.layers.") && strings.HasSuffix(name, ".eh_proj.weight") {
+			return true
+		}
+	}
+	return false
+}
+
+func detectMTPLayerType(tensors map[string]*mlx.Array, layerPrefix string) (byte, error) {
+	mixerPrefix := layerPrefix + ".mixer"
+	switch {
+	case hasTensorByBase(tensors, mixerPrefix+".q_proj") ||
+		hasTensorByBase(tensors, mixerPrefix+".k_proj") ||
+		hasTensorByBase(tensors, mixerPrefix+".v_proj") ||
+		hasTensorByBase(tensors, mixerPrefix+".o_proj"):
+		return 'A', nil
+	case hasTensorByBase(tensors, mixerPrefix+".gate") ||
+		hasTensorByBase(tensors, mixerPrefix+".experts.up_proj") ||
+		tensors[mixerPrefix+".experts.0.up_proj.weight"] != nil:
+		return 'E', nil
+	case hasTensorByBase(tensors, mixerPrefix+".up_proj") ||
+		hasTensorByBase(tensors, mixerPrefix+".down_proj"):
+		return '-', nil
+	case hasTensorByBase(tensors, mixerPrefix+".in_proj") ||
+		tensors[mixerPrefix+".conv1d.weight"] != nil:
+		return 0, fmt.Errorf("recurrent MTP layers are not supported")
+	default:
+		return 0, fmt.Errorf("missing supported MTP mixer tensors")
+	}
+}
+
+func mtpLayerPrefixes(tensors map[string]*mlx.Array) ([]string, error) {
+	const prefix = "mtp.layers."
+	indices := map[int]struct{}{}
+
+	for name, tensor := range tensors {
+		if tensor == nil || !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(name, prefix)
+		indexText, _, ok := strings.Cut(rest, ".")
+		if !ok {
+			continue
+		}
+		index, err := strconv.Atoi(indexText)
+		if err != nil {
+			continue
+		}
+		indices[index] = struct{}{}
+	}
+
+	if len(indices) == 0 {
+		return nil, fmt.Errorf("missing MTP layer tensors")
+	}
+	sorted := make([]int, 0, len(indices))
+	for index := range indices {
+		sorted = append(sorted, index)
+	}
+	sort.Ints(sorted)
+
+	prefixes := make([]string, len(sorted))
+	for i, index := range sorted {
+		prefixes[i] = fmt.Sprintf("mtp.layers.%d", index)
+	}
+	return prefixes, nil
+}
+
+func loadLayer(linears model.LinearFactory, tensors map[string]*mlx.Array, cfg *Config, layerPrefix string, typ byte, useQuantizedExperts bool) (*Layer, error) {
+	layer := &Layer{Type: typ}
+
+	norm := loadRMSNorm(tensors, layerPrefix+".norm.weight", cfg.LayerNormEpsilon)
+	if norm == nil {
+		return nil, fmt.Errorf("missing norm weight")
+	}
+	layer.Norm = norm
+
+	mixerPrefix := layerPrefix + ".mixer"
+	switch layer.Type {
+	case 'M':
+		mamba := &Mamba2{}
+		mamba.InProj = linears.Make(mixerPrefix + ".in_proj")
+		mamba.OutProj = linears.Make(mixerPrefix + ".out_proj")
+		convWeight := sanitizeConvWeight(tensors[mixerPrefix+".conv1d.weight"])
+		mamba.ConvBias = tensors[mixerPrefix+".conv1d.bias"]
+		mamba.DtBias = tensors[mixerPrefix+".dt_bias"]
+		aLog := tensors[mixerPrefix+".A_log"]
+		if aLog != nil {
+			mamba.A = mlx.Neg(mlx.Exp(aLog.AsType(mlx.DTypeFloat32)))
+		}
+		mamba.D = tensors[mixerPrefix+".D"]
+		mamba.NormWeight = tensors[mixerPrefix+".norm.weight"]
+		if mamba.InProj == nil || mamba.OutProj == nil || convWeight == nil || mamba.DtBias == nil || mamba.A == nil || mamba.D == nil || mamba.NormWeight == nil {
+			return nil, fmt.Errorf("missing mamba2 tensors")
+		}
+		if convWeight.NumDims() != 2 {
+			return nil, fmt.Errorf("conv1d weight must be 2D after sanitization, got %dD", convWeight.NumDims())
+		}
+		mamba.Conv1D = nn.NewConv1d(mlx.ExpandDims(convWeight, 2), nil, 1, 0, 1, int32(convWeight.Dim(0)))
+		layer.Mamba = mamba
+	case '*', 'A':
+		attn := &Attention{
+			QProj: linears.Make(mixerPrefix + ".q_proj"),
+			KProj: linears.Make(mixerPrefix + ".k_proj"),
+			VProj: linears.Make(mixerPrefix + ".v_proj"),
+			OProj: linears.Make(mixerPrefix + ".o_proj"),
+		}
+		if attn.QProj == nil || attn.KProj == nil || attn.VProj == nil || attn.OProj == nil {
+			return nil, fmt.Errorf("missing attention projections")
+		}
+		layer.Attention = attn
+	case '-':
+		dense := &DenseMLP{
+			UpProj:   linears.Make(mixerPrefix + ".up_proj"),
+			DownProj: linears.Make(mixerPrefix + ".down_proj"),
+		}
+		if dense.UpProj == nil || dense.DownProj == nil {
+			return nil, fmt.Errorf("missing dense mlp projections")
+		}
+		layer.Dense = dense
+	case 'E':
+		moe := &SparseMoE{
+			Router:         linears.Make(mixerPrefix + ".gate"),
+			RouterWeight:   tensors[mixerPrefix+".gate.weight"],
+			CorrectionBias: tensors[mixerPrefix+".gate.e_score_correction_bias"],
+			SharedUp:       linears.Make(mixerPrefix + ".shared_experts.up_proj"),
+			SharedDown:     linears.Make(mixerPrefix + ".shared_experts.down_proj"),
+		}
+		if moe.Router == nil || moe.RouterWeight == nil || moe.SharedUp == nil || moe.SharedDown == nil {
+			return nil, fmt.Errorf("missing moe router or shared expert projections")
+		}
+		if cfg.NRoutedExperts <= 0 || cfg.NumExpertsPerTok <= 0 {
+			return nil, fmt.Errorf("invalid moe config")
+		}
+		up := loadStackedExpertProjection(tensors, cfg, useQuantizedExperts, layerPrefix, "up_proj")
+		if up == nil {
+			up = collectExpertProjection(tensors, cfg, useQuantizedExperts, layerPrefix, "up_proj", cfg.NRoutedExperts)
+		}
+		down := loadStackedExpertProjection(tensors, cfg, useQuantizedExperts, layerPrefix, "down_proj")
+		if down == nil {
+			down = collectExpertProjection(tensors, cfg, useQuantizedExperts, layerPrefix, "down_proj", cfg.NRoutedExperts)
+		}
+		if up == nil || down == nil {
+			return nil, fmt.Errorf("missing routed expert weights")
+		}
+		if up.Scales != nil {
+			moe.UpWeightQ = up.Weight
+			moe.UpScales = up.Scales
+			moe.UpBiases = up.Biases
+			moe.UpGroupSize = up.GroupSize
+			moe.UpBits = up.Bits
+			moe.UpMode = up.Mode
+		} else {
+			moe.UpWeight = transposeExpertWeightForGatherMM(up.Weight)
+		}
+		if down.Scales != nil {
+			moe.DownWeightQ = down.Weight
+			moe.DownScales = down.Scales
+			moe.DownBiases = down.Biases
+			moe.DownGroupSize = down.GroupSize
+			moe.DownBits = down.Bits
+			moe.DownMode = down.Mode
+		} else {
+			moe.DownWeight = transposeExpertWeightForGatherMM(down.Weight)
+		}
+		moe.UseQuantized = moe.UpWeightQ != nil || moe.DownWeightQ != nil
+		if moe.UseQuantized {
+			foldSharedExperts(moe, cfg)
+		}
+		layer.MoE = moe
+	default:
+		return nil, fmt.Errorf("unsupported layer type %q", layer.Type)
+	}
+
+	return layer, nil
+}
+
+func (m *Model) loadMTPHead(linears model.LinearFactory, tensors map[string]*mlx.Array, useQuantizedExperts bool) error {
+	cfg := m.Config
+	layerPrefixes, err := mtpLayerPrefixes(tensors)
+	if err != nil {
+		return fmt.Errorf("mtp head: %w", err)
+	}
+	firstPrefix := layerPrefixes[0]
+	lastPrefix := layerPrefixes[len(layerPrefixes)-1]
+
+	head := &MTPHead{
+		Enorm: loadRMSNormAny(tensors, cfg.LayerNormEpsilon,
+			"mtp.pre_fc_norm_embedding.weight",
+			firstPrefix+".enorm.weight",
+		),
+		Hnorm: loadRMSNormAny(tensors, cfg.LayerNormEpsilon,
+			"mtp.pre_fc_norm_hidden.weight",
+			firstPrefix+".hnorm.weight",
+		),
+		FC: makeLinearAny(linears,
+			"mtp.fc",
+			firstPrefix+".eh_proj",
+		),
+		Norm: loadRMSNormAny(tensors, cfg.LayerNormEpsilon,
+			"mtp.norm.weight",
+			"mtp.shared_head.norm.weight",
+			lastPrefix+".final_layernorm.weight",
+		),
+	}
+	if head.Enorm == nil || head.Hnorm == nil || head.FC == nil || head.Norm == nil {
+		return fmt.Errorf("mtp head: missing enorm/hnorm/fc/norm tensors")
+	}
+
+	head.Layers = make([]*Layer, len(layerPrefixes))
+	for i, layerPrefix := range layerPrefixes {
+		typ, err := detectMTPLayerType(tensors, layerPrefix)
+		if err != nil {
+			return fmt.Errorf("mtp layer %s: %w", layerPrefix, err)
+		}
+		layer, err := loadLayer(linears, tensors, cfg, layerPrefix, typ, useQuantizedExperts)
+		if err != nil {
+			return fmt.Errorf("mtp layer %s: %w", layerPrefix, err)
+		}
+		head.Layers[i] = layer
+	}
+	m.MTP = head
+	return nil
+}
+
 func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	layout := resolveTensorPathLayout(tensors)
 	m.weightPrefix = layout.containerPrefix
@@ -755,116 +1029,16 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 
 	for i := range cfg.NumHiddenLayers {
 		layerPrefix := fmt.Sprintf("%slayers.%d", backbonePrefix, i)
-		layer := m.Layers[i]
-		if layer == nil {
-			layer = &Layer{Type: cfg.LayerTypes[i]}
+		layer, err := loadLayer(linears, tensors, cfg, layerPrefix, cfg.LayerTypes[i], useQuantizedExperts)
+		if err != nil {
+			return fmt.Errorf("layer %d: %w", i, err)
 		}
-
-		norm := tensors[layerPrefix+".norm.weight"]
-		if norm == nil {
-			return fmt.Errorf("layer %d: missing norm weight", i)
-		}
-		layer.Norm = nn.NewRMSNorm(norm, cfg.LayerNormEpsilon)
-
-		switch layer.Type {
-		case 'M':
-			mixerPrefix := layerPrefix + ".mixer"
-			mamba := &Mamba2{}
-			mamba.InProj = linears.Make(mixerPrefix + ".in_proj")
-			mamba.OutProj = linears.Make(mixerPrefix + ".out_proj")
-			convWeight := sanitizeConvWeight(tensors[mixerPrefix+".conv1d.weight"])
-			mamba.ConvBias = tensors[mixerPrefix+".conv1d.bias"]
-			mamba.DtBias = tensors[mixerPrefix+".dt_bias"]
-			aLog := tensors[mixerPrefix+".A_log"]
-			if aLog != nil {
-				mamba.A = mlx.Neg(mlx.Exp(aLog.AsType(mlx.DTypeFloat32)))
-			}
-			mamba.D = tensors[mixerPrefix+".D"]
-			mamba.NormWeight = tensors[mixerPrefix+".norm.weight"]
-			if mamba.InProj == nil || mamba.OutProj == nil || convWeight == nil || mamba.DtBias == nil || mamba.A == nil || mamba.D == nil || mamba.NormWeight == nil {
-				return fmt.Errorf("layer %d: missing mamba2 tensors", i)
-			}
-			if convWeight.NumDims() != 2 {
-				return fmt.Errorf("layer %d: conv1d weight must be 2D after sanitization, got %dD", i, convWeight.NumDims())
-			}
-			mamba.Conv1D = nn.NewConv1d(mlx.ExpandDims(convWeight, 2), nil, 1, 0, 1, int32(convWeight.Dim(0)))
-			layer.Mamba = mamba
-		case '*', 'A':
-			mixerPrefix := layerPrefix + ".mixer"
-			attn := &Attention{
-				QProj: linears.Make(mixerPrefix + ".q_proj"),
-				KProj: linears.Make(mixerPrefix + ".k_proj"),
-				VProj: linears.Make(mixerPrefix + ".v_proj"),
-				OProj: linears.Make(mixerPrefix + ".o_proj"),
-			}
-			if attn.QProj == nil || attn.KProj == nil || attn.VProj == nil || attn.OProj == nil {
-				return fmt.Errorf("layer %d: missing attention projections", i)
-			}
-			layer.Attention = attn
-		case '-':
-			mixerPrefix := layerPrefix + ".mixer"
-			dense := &DenseMLP{
-				UpProj:   linears.Make(mixerPrefix + ".up_proj"),
-				DownProj: linears.Make(mixerPrefix + ".down_proj"),
-			}
-			if dense.UpProj == nil || dense.DownProj == nil {
-				return fmt.Errorf("layer %d: missing dense mlp projections", i)
-			}
-			layer.Dense = dense
-		case 'E':
-			mixerPrefix := layerPrefix + ".mixer"
-			moe := &SparseMoE{
-				Router:         linears.Make(mixerPrefix + ".gate"),
-				RouterWeight:   tensors[mixerPrefix+".gate.weight"],
-				CorrectionBias: tensors[mixerPrefix+".gate.e_score_correction_bias"],
-				SharedUp:       linears.Make(mixerPrefix + ".shared_experts.up_proj"),
-				SharedDown:     linears.Make(mixerPrefix + ".shared_experts.down_proj"),
-			}
-			if moe.Router == nil || moe.RouterWeight == nil || moe.SharedUp == nil || moe.SharedDown == nil {
-				return fmt.Errorf("layer %d: missing moe router or shared expert projections", i)
-			}
-			if cfg.NRoutedExperts <= 0 || cfg.NumExpertsPerTok <= 0 {
-				return fmt.Errorf("layer %d: invalid moe config", i)
-			}
-			up := loadStackedExpertProjection(tensors, cfg, useQuantizedExperts, layerPrefix, "up_proj")
-			if up == nil {
-				up = collectExpertProjection(tensors, cfg, useQuantizedExperts, layerPrefix, "up_proj", cfg.NRoutedExperts)
-			}
-			down := loadStackedExpertProjection(tensors, cfg, useQuantizedExperts, layerPrefix, "down_proj")
-			if down == nil {
-				down = collectExpertProjection(tensors, cfg, useQuantizedExperts, layerPrefix, "down_proj", cfg.NRoutedExperts)
-			}
-			if up == nil || down == nil {
-				return fmt.Errorf("layer %d: missing routed expert weights", i)
-			}
-			if up.Scales != nil {
-				moe.UpWeightQ = up.Weight
-				moe.UpScales = up.Scales
-				moe.UpBiases = up.Biases
-				moe.UpGroupSize = up.GroupSize
-				moe.UpBits = up.Bits
-				moe.UpMode = up.Mode
-			} else {
-				moe.UpWeight = transposeExpertWeightForGatherMM(up.Weight)
-			}
-			if down.Scales != nil {
-				moe.DownWeightQ = down.Weight
-				moe.DownScales = down.Scales
-				moe.DownBiases = down.Biases
-				moe.DownGroupSize = down.GroupSize
-				moe.DownBits = down.Bits
-				moe.DownMode = down.Mode
-			} else {
-				moe.DownWeight = transposeExpertWeightForGatherMM(down.Weight)
-			}
-			moe.UseQuantized = moe.UpWeightQ != nil || moe.DownWeightQ != nil
-			if moe.UseQuantized {
-				foldSharedExperts(moe, cfg)
-			}
-			layer.MoE = moe
-		}
-
 		m.Layers[i] = layer
+	}
+	if hasMTPHeadTensors(tensors) {
+		if err := m.loadMTPHead(linears, tensors, useQuantizedExperts); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -1389,6 +1563,42 @@ func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 	return m.LMHead.Forward(x)
 }
 
+func (m *Model) SelfDraft() base.DraftModel {
+	if m.MTP == nil {
+		return nil
+	}
+	return m
+}
+
+func (m *Model) DraftCaches(caches []cache.Cache) []cache.Cache {
+	if m.MTP == nil || mtpCacheCount(m.MTP) == 0 || len(caches) <= len(m.Layers) {
+		return nil
+	}
+	return caches[len(m.Layers):]
+}
+
+func (m *Model) Draft(b *batch.Batch, caches []cache.Cache) (hidden, projected *mlx.Array) {
+	dims := b.InputIDs.Dims()
+	B, L := int32(dims[0]), int32(dims[1])
+
+	emb := m.MTP.Enorm.Forward(m.EmbedTokens.Forward(b.InputIDs), m.LayerNormEpsilon)
+	h := m.MTP.Hnorm.Forward(b.Hidden, m.LayerNormEpsilon)
+	fused := m.MTP.FC.Forward(emb.Concatenate(-1, h))
+
+	draftCaches := m.DraftCaches(caches)
+	cacheIndex := 0
+	for _, layer := range m.MTP.Layers {
+		var c cache.Cache
+		if mtpLayerUsesCache(layer) && cacheIndex < len(draftCaches) {
+			c = draftCaches[cacheIndex]
+			cacheIndex++
+		}
+		fused = layer.Forward(fused, b, c, B, L, m.Config)
+	}
+	hidden = m.MTP.Norm.Forward(fused, m.LayerNormEpsilon)
+	return hidden, hidden
+}
+
 func (m *Model) NumLayers() int {
 	return len(m.Layers)
 }
@@ -1402,18 +1612,60 @@ func (m *Model) MaxContextLength() int {
 }
 
 func (m *Model) NewCaches() []cache.Cache {
-	caches := make([]cache.Cache, len(m.Layers))
-	convTail := m.ConvKernel - 1
-	convDim := cfgConvDim(m.Config)
+	capacity := len(m.Layers)
+	if m.MTP != nil {
+		capacity += mtpCacheCount(m.MTP)
+	}
+	caches := make([]cache.Cache, len(m.Layers), capacity)
 	for i, layer := range m.Layers {
-		switch layer.Type {
-		case 'M':
-			caches[i] = cache.NewRecurrentCache(convTail, convDim, m.MambaNumHeads, m.MambaHeadDim, m.SSMStateSize)
-		case '*', 'A':
-			caches[i] = cache.NewKVCache()
+		caches[i] = newLayerCache(layer, m.Config)
+	}
+	if m.MTP != nil {
+		for _, layer := range m.MTP.Layers {
+			if c := newMTPLayerCache(layer); c != nil {
+				caches = append(caches, c)
+			}
 		}
 	}
 	return caches
+}
+
+func newLayerCache(layer *Layer, cfg *Config) cache.Cache {
+	if layer == nil {
+		return nil
+	}
+	switch layer.Type {
+	case 'M':
+		return cache.NewRecurrentCache(cfg.ConvKernel-1, cfgConvDim(cfg), cfg.MambaNumHeads, cfg.MambaHeadDim, cfg.SSMStateSize)
+	case '*', 'A':
+		return cache.NewKVCache()
+	default:
+		return nil
+	}
+}
+
+func mtpLayerUsesCache(layer *Layer) bool {
+	return layer != nil && (layer.Type == '*' || layer.Type == 'A')
+}
+
+func mtpCacheCount(head *MTPHead) int {
+	if head == nil {
+		return 0
+	}
+	count := 0
+	for _, layer := range head.Layers {
+		if mtpLayerUsesCache(layer) {
+			count++
+		}
+	}
+	return count
+}
+
+func newMTPLayerCache(layer *Layer) cache.Cache {
+	if mtpLayerUsesCache(layer) {
+		return cache.NewKVCache()
+	}
+	return nil
 }
 
 func cfgConvDim(cfg *Config) int32 {
