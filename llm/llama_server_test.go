@@ -2069,6 +2069,97 @@ func TestAppendMainGPUArgs(t *testing.T) {
 	}
 }
 
+func TestAppendLoadModeArgs(t *testing.T) {
+	mmapOff := api.DefaultOptions()
+	mmapOff.UseMMap = testBoolPtr(false)
+	mmapOn := api.DefaultOptions()
+	mmapOn.UseMMap = testBoolPtr(true)
+
+	integratedCUDA := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, Integrated: true}}
+	integratedROCm := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "rocm"}, Integrated: true}}
+	discreteCUDA := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}}}
+	integratedMetal := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Metal"}, Integrated: true}}
+
+	// Direct I/O is only selected on Linux, so the expectation depends on the host.
+	dio := []string{"base"}
+	dioWithMMapOff := []string{"base", "--load-mode", "none"}
+	if runtime.GOOS == "linux" {
+		dio = []string{"base", "--load-mode", "dio"}
+		dioWithMMapOff = []string{"base", "--load-mode", "dio"}
+	}
+
+	tests := []struct {
+		name string
+		opts api.Options
+		gpus []ml.DeviceInfo
+		want []string
+	}{
+		{
+			name: "defaults leave llama-server load mode alone",
+			opts: api.DefaultOptions(),
+			gpus: discreteCUDA,
+			want: []string{"base"},
+		},
+		{
+			name: "explicit mmap enabled leaves default",
+			opts: mmapOn,
+			gpus: discreteCUDA,
+			want: []string{"base"},
+		},
+		{
+			name: "mmap disabled selects none",
+			opts: mmapOff,
+			gpus: discreteCUDA,
+			want: []string{"base", "--load-mode", "none"},
+		},
+		{
+			name: "integrated cuda selects dio",
+			opts: api.DefaultOptions(),
+			gpus: integratedCUDA,
+			want: dio,
+		},
+		{
+			name: "integrated rocm selects dio case insensitively",
+			opts: api.DefaultOptions(),
+			gpus: integratedROCm,
+			want: dio,
+		},
+		{
+			name: "integrated metal does not select dio",
+			opts: api.DefaultOptions(),
+			gpus: integratedMetal,
+			want: []string{"base"},
+		},
+		{
+			name: "discrete cuda does not select dio",
+			opts: api.DefaultOptions(),
+			gpus: discreteCUDA,
+			want: []string{"base"},
+		},
+		{
+			name: "dio wins over disabled mmap",
+			opts: mmapOff,
+			gpus: integratedCUDA,
+			want: dioWithMMapOff,
+		},
+		{
+			name: "no gpus leaves default",
+			opts: api.DefaultOptions(),
+			gpus: nil,
+			want: []string{"base"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := appendLoadModeArgs([]string{"base"}, tt.opts, tt.gpus)
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("appendLoadModeArgs = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAppendMMProjArgs(t *testing.T) {
 	defaultOpts := api.DefaultOptions()
 	partialOpts := api.DefaultOptions()
@@ -2463,6 +2554,10 @@ func TestHasLegacyQwenMTPDraft(t *testing.T) {
 }
 
 func testIntPtr(v int) *int {
+	return &v
+}
+
+func testBoolPtr(v bool) *bool {
 	return &v
 }
 
