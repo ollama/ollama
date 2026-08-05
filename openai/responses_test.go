@@ -8,6 +8,35 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
+func responseStringPtr(s string) *string {
+	return &s
+}
+
+func responseBoolPtr(v bool) *bool {
+	return &v
+}
+
+func markerNamespaceTool() ResponsesTool {
+	return ResponsesTool{
+		Type:        "namespace",
+		Name:        "mcp__marker__",
+		Description: responseStringPtr("Tools in the mcp__marker__ namespace."),
+		Tools: []ResponsesTool{
+			{
+				Type:        "function",
+				Name:        "marker",
+				Description: responseStringPtr("Return a fixed marker string"),
+				Strict:      responseBoolPtr(false),
+				Parameters: map[string]any{
+					"type":                 "object",
+					"properties":           map[string]any{},
+					"additionalProperties": false,
+				},
+			},
+		},
+	}
+}
+
 func TestResponsesInputMessage_UnmarshalJSON(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -201,6 +230,25 @@ func TestUnmarshalResponsesInputItem(t *testing.T) {
 		}
 		if fc.Name != "get_weather" {
 			t.Errorf("Name = %q, want %q", fc.Name, "get_weather")
+		}
+	})
+
+	t.Run("function_call item with namespace", func(t *testing.T) {
+		got, err := unmarshalResponsesInputItem([]byte(`{"type": "function_call", "call_id": "call_abc123", "name": "marker", "namespace": "mcp__marker__", "arguments": "{}"}`))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		fc, ok := got.(ResponsesFunctionCall)
+		if !ok {
+			t.Fatalf("got type %T, want ResponsesFunctionCall", got)
+		}
+
+		if fc.Name != "marker" {
+			t.Errorf("Name = %q, want %q", fc.Name, "marker")
+		}
+		if fc.Namespace != "mcp__marker__" {
+			t.Errorf("Namespace = %q, want %q", fc.Namespace, "mcp__marker__")
 		}
 	})
 
@@ -412,6 +460,126 @@ func TestFromResponsesRequest_Tools(t *testing.T) {
 	}
 	if len(tool.Function.Parameters.Required) != 1 || tool.Function.Parameters.Required[0] != "command" {
 		t.Errorf("expected required ['command'], got %v", tool.Function.Parameters.Required)
+	}
+}
+
+func TestFromResponsesRequest_NamespaceTools(t *testing.T) {
+	req := ResponsesRequest{
+		Model: "gpt-oss:20b",
+		Input: ResponsesInput{Text: "hello"},
+		Tools: []ResponsesTool{markerNamespaceTool()},
+	}
+
+	if len(req.Tools) != 1 {
+		t.Fatalf("expected 1 namespace tool, got %d", len(req.Tools))
+	}
+	if len(req.Tools[0].Tools) != 1 {
+		t.Fatalf("expected 1 nested tool, got %d", len(req.Tools[0].Tools))
+	}
+
+	chatReq, err := FromResponsesRequest(req)
+	if err != nil {
+		t.Fatalf("failed to convert request: %v", err)
+	}
+
+	if len(chatReq.Tools) != 1 {
+		t.Fatalf("expected 1 converted tool, got %d", len(chatReq.Tools))
+	}
+
+	tool := chatReq.Tools[0]
+	if tool.Type != "function" {
+		t.Errorf("expected tool type 'function', got %q", tool.Type)
+	}
+	if tool.Function.Name != "mcp__marker__marker" {
+		t.Errorf("expected flattened function name 'mcp__marker__marker', got %q", tool.Function.Name)
+	}
+	if tool.Function.Description != "Return a fixed marker string" {
+		t.Errorf("expected nested function description, got %q", tool.Function.Description)
+	}
+}
+
+func TestFromResponsesRequest_NamespaceToolRejectsNestedNamespace(t *testing.T) {
+	req := ResponsesRequest{
+		Model: "gpt-oss:20b",
+		Input: ResponsesInput{Text: "hello"},
+		Tools: []ResponsesTool{
+			{
+				Type: "namespace",
+				Name: "outer",
+				Tools: []ResponsesTool{
+					{Type: "namespace", Name: "inner"},
+				},
+			},
+		},
+	}
+
+	_, err := FromResponsesRequest(req)
+	if err == nil {
+		t.Fatal("expected unsupported child tool type error")
+	}
+	if err.Error() != `namespace tool "outer" contains unsupported child tool type "namespace"` {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestFromResponsesRequest_NamespacedFunctionCallInput(t *testing.T) {
+	reqJSON := `{
+		"model": "gpt-oss:20b",
+		"input": [
+			{"type": "function_call", "call_id": "call_marker", "name": "marker", "namespace": "mcp__marker__", "arguments": "{}"},
+			{"type": "function_call_output", "call_id": "call_marker", "output": "ok"}
+		]
+	}`
+
+	var req ResponsesRequest
+	if err := json.Unmarshal([]byte(reqJSON), &req); err != nil {
+		t.Fatalf("failed to unmarshal request: %v", err)
+	}
+
+	chatReq, err := FromResponsesRequest(req)
+	if err != nil {
+		t.Fatalf("failed to convert request: %v", err)
+	}
+	if len(chatReq.Messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(chatReq.Messages))
+	}
+
+	toolCalls := chatReq.Messages[0].ToolCalls
+	if len(toolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(toolCalls))
+	}
+	if toolCalls[0].Function.Name != "mcp__marker__marker" {
+		t.Errorf("expected flattened tool call name, got %q", toolCalls[0].Function.Name)
+	}
+	if chatReq.Messages[1].ToolCallID != "call_marker" {
+		t.Errorf("expected tool output call ID, got %q", chatReq.Messages[1].ToolCallID)
+	}
+}
+
+func TestFromResponsesRequest_NamespacedFunctionCallInputWithNamePrefix(t *testing.T) {
+	reqJSON := `{
+		"model": "gpt-oss:20b",
+		"input": [
+			{"type": "function_call", "call_id": "call_tool", "name": "foobar", "namespace": "foo", "arguments": "{}"}
+		]
+	}`
+
+	var req ResponsesRequest
+	if err := json.Unmarshal([]byte(reqJSON), &req); err != nil {
+		t.Fatalf("failed to unmarshal request: %v", err)
+	}
+
+	chatReq, err := FromResponsesRequest(req)
+	if err != nil {
+		t.Fatalf("failed to convert request: %v", err)
+	}
+
+	toolCalls := chatReq.Messages[0].ToolCalls
+	if len(toolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(toolCalls))
+	}
+	if toolCalls[0].Function.Name != "foo__foobar" {
+		t.Errorf("expected namespace boundary flattening, got %q", toolCalls[0].Function.Name)
 	}
 }
 
@@ -1160,6 +1328,102 @@ func TestResponsesStreamConverter_ToolCalls(t *testing.T) {
 	}
 }
 
+func TestResponsesStreamConverter_NamespaceToolCalls(t *testing.T) {
+	converter := NewResponsesStreamConverter("resp_123", "msg_456", "gpt-oss:20b", ResponsesRequest{
+		Tools: []ResponsesTool{markerNamespaceTool()},
+	})
+
+	events := converter.Process(api.ChatResponse{
+		Message: api.Message{
+			ToolCalls: []api.ToolCall{
+				{
+					ID: "call_marker",
+					Function: api.ToolCallFunction{
+						Name:      "mcp__marker__marker",
+						Arguments: testArgs(map[string]any{}),
+					},
+				},
+			},
+		},
+	})
+
+	var doneItem map[string]any
+	for _, event := range events {
+		data := event.Data.(map[string]any)
+		if data["type"] == "response.output_item.done" {
+			item := data["item"].(map[string]any)
+			if item["type"] == "function_call" {
+				doneItem = item
+			}
+		}
+	}
+	if doneItem == nil {
+		t.Fatal("expected function_call output_item.done event")
+	}
+	if doneItem["name"] != "marker" {
+		t.Errorf("name = %q, want %q", doneItem["name"], "marker")
+	}
+	if doneItem["namespace"] != "mcp__marker__" {
+		t.Errorf("namespace = %q, want %q", doneItem["namespace"], "mcp__marker__")
+	}
+}
+
+func TestResponsesStreamConverter_NamespaceToolsInResponseObject(t *testing.T) {
+	converter := NewResponsesStreamConverter("resp_123", "msg_456", "gpt-oss:20b", ResponsesRequest{
+		Tools: []ResponsesTool{markerNamespaceTool()},
+	})
+
+	events := converter.Process(api.ChatResponse{})
+	if len(events) == 0 {
+		t.Fatal("expected response.created event")
+	}
+
+	dataBytes, err := json.Marshal(events[0].Data)
+	if err != nil {
+		t.Fatalf("failed to marshal event data: %v", err)
+	}
+	var data map[string]any
+	if err := json.Unmarshal(dataBytes, &data); err != nil {
+		t.Fatalf("failed to unmarshal event data: %v", err)
+	}
+	response := data["response"].(map[string]any)
+	tools := response["tools"].([]any)
+	if len(tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(tools))
+	}
+	namespace := tools[0].(map[string]any)
+	if namespace["type"] != "namespace" {
+		t.Errorf("namespace tool type = %q, want %q", namespace["type"], "namespace")
+	}
+	if namespace["name"] != "mcp__marker__" {
+		t.Errorf("namespace tool name = %q, want %q", namespace["name"], "mcp__marker__")
+	}
+	if namespace["description"] != "Tools in the mcp__marker__ namespace." {
+		t.Errorf("namespace tool description = %q, want %q", namespace["description"], "Tools in the mcp__marker__ namespace.")
+	}
+	childTools := namespace["tools"].([]any)
+	if len(childTools) != 1 {
+		t.Fatalf("expected 1 child tool, got %d", len(childTools))
+	}
+	child := childTools[0].(map[string]any)
+	if child["type"] != "function" {
+		t.Errorf("child tool type = %q, want %q", child["type"], "function")
+	}
+	if child["name"] != "marker" {
+		t.Errorf("child tool name = %q, want %q", child["name"], "marker")
+	}
+	if child["description"] != "Return a fixed marker string" {
+		t.Errorf("child tool description = %q, want %q", child["description"], "Return a fixed marker string")
+	}
+	if child["strict"] != false {
+		t.Errorf("child tool strict = %v, want false", child["strict"])
+	}
+	parameters := child["parameters"].(map[string]any)
+	if parameters["type"] != "object" {
+		t.Errorf("child parameters type = %q, want %q", parameters["type"], "object")
+	}
+}
+
 func TestResponsesStreamConverter_Reasoning(t *testing.T) {
 	converter := NewResponsesStreamConverter("resp_123", "msg_456", "gpt-oss:20b", ResponsesRequest{})
 
@@ -1503,6 +1767,83 @@ func TestToResponse_WithReasoning(t *testing.T) {
 	}
 	if response.Output[1].Content[0].Text != "The answer is 42" {
 		t.Errorf("Content[0].Text = %q, want %q", response.Output[1].Content[0].Text, "The answer is 42")
+	}
+}
+
+func TestToResponse_NamespaceToolCall(t *testing.T) {
+	response := ToResponse("gpt-oss:20b", "resp_123", "msg_456", api.ChatResponse{
+		CreatedAt: time.Now(),
+		Message: api.Message{
+			ToolCalls: []api.ToolCall{
+				{
+					ID: "call_marker",
+					Function: api.ToolCallFunction{
+						Name:      "mcp__marker__marker",
+						Arguments: testArgs(map[string]any{}),
+					},
+				},
+			},
+		},
+		Done: true,
+	}, ResponsesRequest{
+		Tools: []ResponsesTool{markerNamespaceTool()},
+	})
+
+	if len(response.Output) != 1 {
+		t.Fatalf("expected 1 output item, got %d", len(response.Output))
+	}
+	item := response.Output[0]
+	if item.Type != "function_call" {
+		t.Fatalf("expected function_call output item, got %q", item.Type)
+	}
+	if item.Name != "marker" {
+		t.Errorf("Name = %q, want %q", item.Name, "marker")
+	}
+	if item.Namespace != "mcp__marker__" {
+		t.Errorf("Namespace = %q, want %q", item.Namespace, "mcp__marker__")
+	}
+}
+
+func TestToResponse_NamespaceToolCallNameCollisionPreservesFlatName(t *testing.T) {
+	response := ToResponse("gpt-oss:20b", "resp_123", "msg_456", api.ChatResponse{
+		CreatedAt: time.Now(),
+		Message: api.Message{
+			ToolCalls: []api.ToolCall{
+				{
+					ID: "call_marker",
+					Function: api.ToolCallFunction{
+						Name:      "mcp__marker__marker",
+						Arguments: testArgs(map[string]any{}),
+					},
+				},
+			},
+		},
+		Done: true,
+	}, ResponsesRequest{
+		Tools: []ResponsesTool{
+			{Type: "function", Name: "mcp__marker__marker"},
+			{
+				Type: "namespace",
+				Name: "mcp__marker__",
+				Tools: []ResponsesTool{
+					{Type: "function", Name: "marker"},
+				},
+			},
+		},
+	})
+
+	if len(response.Output) != 1 {
+		t.Fatalf("expected 1 output item, got %d", len(response.Output))
+	}
+	item := response.Output[0]
+	if item.Type != "function_call" {
+		t.Fatalf("expected function_call output item, got %q", item.Type)
+	}
+	if item.Name != "mcp__marker__marker" {
+		t.Errorf("Name = %q, want %q", item.Name, "mcp__marker__marker")
+	}
+	if item.Namespace != "" {
+		t.Errorf("Namespace = %q, want empty", item.Namespace)
 	}
 }
 
