@@ -2519,7 +2519,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 		var msgs []api.Message
 		if len(req.Messages) > 0 {
-			msgs = append(m.Messages, req.Messages...)
+			msgs = mergeModelMessages(m.Messages, req.Messages)
 			if req.Messages[0].Role != "system" && m.System != "" {
 				msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
 			}
@@ -2630,7 +2630,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	msgs := append(m.Messages, req.Messages...)
+	msgs := mergeModelMessages(m.Messages, req.Messages)
 	if req.Messages[0].Role != "system" && m.System != "" {
 		msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
 	}
@@ -3115,4 +3115,8 @@ func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
 		}
 	}
 	return msgs
+}
+
+func mergeModelMessages(modelMessages, requestMessages []api.Message) []api.Message {
+	return append(slices.Clone(modelMessages), requestMessages...)
 }

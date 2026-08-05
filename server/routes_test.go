@@ -988,6 +988,19 @@ func TestNormalize(t *testing.T) {
 	}
 }
 
+func TestMergeModelMessagesDoesNotAliasModel(t *testing.T) {
+	modelMessages := make([]api.Message, 1, 2)
+	modelMessages[0] = api.Message{Role: "assistant", Content: "model content"}
+	requestMessages := []api.Message{{Role: "user", Content: "request content"}}
+
+	merged := mergeModelMessages(modelMessages, requestMessages)
+	merged[0].Content = "mutated"
+
+	if got := modelMessages[0].Content; got != "model content" {
+		t.Fatalf("model message was mutated through merged slice: %q", got)
+	}
+}
+
 func TestFilterThinkTags(t *testing.T) {
 	type testCase struct {
 		msgs  []api.Message
