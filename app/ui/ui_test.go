@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/app/store"
@@ -525,6 +527,25 @@ func TestUserAgentTransport(t *testing.T) {
 	}
 
 	t.Logf("User-Agent transport successfully set: %s", receivedUA)
+}
+
+func TestWaitForServerReturnsWhenContextIsCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- WaitForServer(ctx, time.Second)
+	}()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("WaitForServer() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("WaitForServer did not return after context cancellation")
+	}
 }
 
 func TestInferenceClientUsesUserAgent(t *testing.T) {

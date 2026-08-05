@@ -11,15 +11,21 @@ import (
 )
 
 func waitForServer(ctx context.Context, client *api.Client) error {
-	// wait for the server to start
-	timeout := time.After(5 * time.Second)
-	tick := time.Tick(500 * time.Millisecond)
+	waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
 	for {
 		select {
-		case <-timeout:
+		case <-waitCtx.Done():
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			return errors.New("timed out waiting for server to start")
-		case <-tick:
-			if err := client.Heartbeat(ctx); err == nil {
+		case <-ticker.C:
+			if err := client.Heartbeat(waitCtx); err == nil {
 				return nil // server has started
 			}
 		}
