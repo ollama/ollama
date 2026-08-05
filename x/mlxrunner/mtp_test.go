@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
@@ -19,13 +20,13 @@ import (
 	"github.com/ollama/ollama/x/tokenizer"
 )
 
-// skipIfNoMLX skips a test that exercises native MLX when the dynamic library
-// is unavailable, as on CI runners without an MLX build.
+// skipIfNoMLX skips when MLX is unavailable and pins the test to its OS
+// thread. The pin is load-bearing: MLX caches its default stream per thread,
+// so a goroutine that migrates mid-run panics with "There is no Stream(gpu, 0)
+// in current thread".
 func skipIfNoMLX(t *testing.T) {
 	t.Helper()
-	if err := mlx.CheckInit(); err != nil {
-		t.Skipf("MLX not available: %v", err)
-	}
+	mlxtest.Setup(t)
 }
 
 // The MTP fakes make hidden state and logits the same tensor (Forward returns

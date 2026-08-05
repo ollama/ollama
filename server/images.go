@@ -455,19 +455,7 @@ func (m *Model) filterUnsupportedCapabilities(capabilities []model.Capability, m
 			return c == model.CapabilityAudio
 		})
 	}
-	if suppressVisionCapability(m) {
-		capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool {
-			return c == model.CapabilityVision
-		})
-	}
-
 	return capabilities
-}
-
-func suppressVisionCapability(m *Model) bool {
-	// The current MLX Nemotron path is text-only. Do not advertise vision for
-	// safetensors manifests until the runner can load and serve that modality.
-	return isNemotron3NanoSafetensors(m)
 }
 
 func suppressAudioCapability(m *Model, arch string) bool {

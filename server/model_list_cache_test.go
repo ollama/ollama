@@ -70,7 +70,7 @@ func TestModelListCacheHydratesSummary(t *testing.T) {
 	}
 }
 
-func TestModelListCacheSuppressesNemotronSafetensorsMedia(t *testing.T) {
+func TestModelListCacheSuppressesNemotronSafetensorsAudio(t *testing.T) {
 	caps := []model.Capability{
 		model.CapabilityCompletion,
 		model.CapabilityTools,
@@ -88,15 +88,14 @@ func TestModelListCacheSuppressesNemotronSafetensorsMedia(t *testing.T) {
 		model.CapabilityCompletion,
 		model.CapabilityTools,
 		model.CapabilityThinking,
+		model.CapabilityVision,
 	} {
 		if !slices.Contains(got, capability) {
 			t.Fatalf("capabilities = %v, want %s", got, capability)
 		}
 	}
-	for _, capability := range []model.Capability{model.CapabilityVision, model.CapabilityAudio} {
-		if slices.Contains(got, capability) {
-			t.Fatalf("capabilities = %v, did not expect %s", got, capability)
-		}
+	if slices.Contains(got, model.CapabilityAudio) {
+		t.Fatalf("capabilities = %v, did not expect %s", got, model.CapabilityAudio)
 	}
 }
 

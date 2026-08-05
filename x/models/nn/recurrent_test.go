@@ -33,6 +33,35 @@ func convFromKernel(w *mlx.Array) *Conv1d {
 	return NewConv1d(mlx.ExpandDims(w, 2), nil, 1, 0, 1, int32(w.Dim(0)))
 }
 
+// Guards a biased conv silently losing the fused kernel: depthwiseConvWeight
+// returning nil sends WithConvSiLU down separate graph ops.
+func TestCausalConv1DBiasTakesFusedPath(t *testing.T) {
+	skipIfNoMLX(t)
+	B, L, D, convTail := 2, 3, 4, 2
+	K := convTail + 1
+
+	weight := fromValues(-0.3, D, K)
+	bias := fromValues(0.4, D)
+	conv := NewConv1d(mlx.ExpandDims(weight, 2), bias, 1, 0, 1, int32(D))
+
+	if depthwiseConvWeight(conv) == nil {
+		t.Fatal("depthwiseConvWeight = nil for a biased depthwise conv, so the fused path is skipped")
+	}
+
+	prior := fromValues(0.2, B, convTail, D)
+	input := fromValues(0.1, B, L, D)
+	b := &batch.Batch{
+		InputIDs:     mlx.Zeros(mlx.DTypeInt32, B, L),
+		SeqOffsets:   []int32{0, 0},
+		SeqQueryLens: []int32{int32(L), int32(L)},
+	}
+
+	got, _ := CausalConv1D(b, input, conv, convTail, WithRecurrentState(prior, nil), WithConvSiLU())
+	want := mlx.SiLU(conv.Forward(mlx.Concatenate([]*mlx.Array{prior, input}, 1)))
+	mlx.Eval(got, want)
+	floatsClose(t, "biased fused conv+silu", got.Floats(), want.Floats(), 1e-5)
+}
+
 // TestCausalConv1DPaddedRowParity drives a B=2 batch with one short
 // row (qLen<L). For the short row, (a) `out` positions [0..qLen)
 // must equal a B=1 reference at length qLen, (b) `nextConv` for the

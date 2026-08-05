@@ -27,7 +27,7 @@ func init() {
 var (
 	_ base.Model      = (*Model)(nil)
 	_ base.SelfDraft  = (*Model)(nil)
-	_ base.DraftModel = (*Model)(nil)
+	_ base.DraftModel = (*mtpDraft)(nil)
 )
 
 type Config struct {
@@ -111,7 +111,6 @@ type Mamba2 struct {
 	OutProj nn.LinearLayer
 
 	Conv1D     *nn.Conv1d
-	ConvBias   *mlx.Array
 	DtBias     *mlx.Array
 	A          *mlx.Array
 	D          *mlx.Array
@@ -844,7 +843,7 @@ func loadLayer(linears model.LinearFactory, tensors map[string]*mlx.Array, cfg *
 		mamba.InProj = linears.Make(mixerPrefix + ".in_proj")
 		mamba.OutProj = linears.Make(mixerPrefix + ".out_proj")
 		convWeight := sanitizeConvWeight(tensors[mixerPrefix+".conv1d.weight"])
-		mamba.ConvBias = tensors[mixerPrefix+".conv1d.bias"]
+		convBias := tensors[mixerPrefix+".conv1d.bias"]
 		mamba.DtBias = tensors[mixerPrefix+".dt_bias"]
 		aLog := tensors[mixerPrefix+".A_log"]
 		if aLog != nil {
@@ -858,7 +857,13 @@ func loadLayer(linears model.LinearFactory, tensors map[string]*mlx.Array, cfg *
 		if convWeight.NumDims() != 2 {
 			return nil, fmt.Errorf("conv1d weight must be 2D after sanitization, got %dD", convWeight.NumDims())
 		}
-		mamba.Conv1D = nn.NewConv1d(mlx.ExpandDims(convWeight, 2), nil, 1, 0, 1, int32(convWeight.Dim(0)))
+		// The fused conv kernel needs weight, bias and input to agree on
+		// dtype. Promoting matches what the graph conv would do anyway.
+		convWeight = convWeight.AsType(mlx.DTypeFloat32)
+		if convBias != nil {
+			convBias = convBias.AsType(mlx.DTypeFloat32)
+		}
+		mamba.Conv1D = nn.NewConv1d(mlx.ExpandDims(convWeight, 2), convBias, 1, 0, 1, int32(convWeight.Dim(0)))
 		layer.Mamba = mamba
 	case '*', 'A':
 		attn := &Attention{
@@ -1043,130 +1048,6 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	return nil
 }
 
-func repeatGroups(x *mlx.Array, repeats int32) *mlx.Array {
-	if repeats <= 1 {
-		return x
-	}
-	// Mamba2 maps each B/C group to a contiguous block of heads.
-	dims := x.Dims()
-	x = mlx.ExpandDims(x, 3)
-	x = mlx.Tile(x, []int32{1, 1, 1, repeats, 1})
-	return mlx.Reshape(x, int32(dims[0]), int32(dims[1]), int32(dims[2])*repeats, int32(dims[3]))
-}
-
-func sliceTime(x *mlx.Array, t int32) *mlx.Array {
-	dims := x.Dims()
-	start := make([]int32, len(dims))
-	stop := make([]int32, len(dims))
-	for i, d := range dims {
-		stop[i] = int32(d)
-	}
-	start[1] = t
-	stop[1] = t + 1
-	return mlx.Squeeze(mlx.SliceStartStop(x, start, stop), 1)
-}
-
-func mamba2LoopScan(hidden, bState, cState, dt, state, a, d, dtBias, mask *mlx.Array, B, L int32, cfg *Config, splits []int) (*mlx.Array, *mlx.Array, []*mlx.Array) {
-	outs := make([]*mlx.Array, 0, L)
-	deltaStates := make([]*mlx.Array, 0, len(splits)+1)
-	splitIdx := 0
-	for t := range L {
-		xt := sliceTime(hidden, t).AsType(mlx.DTypeFloat32)
-		bt := sliceTime(bState, t).AsType(mlx.DTypeFloat32)
-		ct := sliceTime(cState, t).AsType(mlx.DTypeFloat32)
-		dtt := sliceTime(dt, t).AsType(mlx.DTypeFloat32)
-		dtt = mlx.Add(dtt, dtBias)
-		dtt = mlx.Exp(dtt)
-		dtt = mlx.AddScalar(dtt, 1)
-		dtt = mlx.Log(dtt)
-
-		reshapedDtt := mlx.Reshape(dtt, B, cfg.MambaNumHeads, 1, 1)
-		product := mlx.Mul(reshapedDtt, a)
-		dA := mlx.Exp(product)
-		dB := mlx.Mul(mlx.Reshape(dtt, B, cfg.MambaNumHeads, 1), bt)
-		dBx := mlx.Mul(mlx.ExpandDims(xt, -1), mlx.ExpandDims(dB, 2))
-		nextState := mlx.Add(mlx.Mul(state, dA), dBx)
-		if mask != nil {
-			valid := sliceTime(mask, t)
-			state = mlx.Where(mlx.Reshape(valid, B, 1, 1, 1), nextState, state)
-		} else {
-			state = nextState
-		}
-
-		y := mlx.Sum(mlx.Mul(state, mlx.ExpandDims(ct, 2)), 3, false)
-		y = mlx.Add(y, mlx.Mul(xt, d))
-		if mask != nil {
-			valid := sliceTime(mask, t)
-			zero := mlx.Zeros(y.DType(), int(B), int(cfg.MambaNumHeads), int(cfg.MambaHeadDim))
-			y = mlx.Where(mlx.Reshape(valid, B, 1, 1), y, zero)
-		}
-		outs = append(outs, y)
-		if splitIdx < len(splits) && int(t+1) == splits[splitIdx] {
-			deltaStates = append(deltaStates, state)
-			splitIdx++
-		}
-	}
-
-	return mlx.Stack(outs, 1), state, deltaStates
-}
-
-// mamba2ScanWithSnapshots uses optional fused scan helpers when they support
-// the current backend and shapes. It returns ok=false when the caller should
-// use the backend-neutral loop fallback.
-func mamba2ScanWithSnapshots(hidden, bState, cState, dt, state, a, d, dtBias, mask *mlx.Array, B, L int32, cfg *Config, splits []int) (*mlx.Array, *mlx.Array, []*mlx.Array, bool) {
-	if mask != nil {
-		return nil, nil, nil, false
-	}
-	if len(splits) == 1 && splits[0] > 0 && splits[0] < int(L) {
-		y, nextState, snapshotState, ok := mlx.FastMamba2ScanWithSnapshot(hidden, bState, cState, dt, state, a, d, dtBias, splits[0])
-		if ok {
-			return y, nextState, []*mlx.Array{snapshotState}, true
-		}
-	}
-
-	outs := make([]*mlx.Array, 0, len(splits)+1)
-	deltaStates := make([]*mlx.Array, 0, len(splits)+1)
-	scanState := state
-	start := int32(0)
-	groups := int32(bState.Dim(2))
-
-	runSegment := func(end int32, capture bool) bool {
-		if end <= start || end > L {
-			return false
-		}
-		segHidden := mlx.SliceStartStop(hidden, []int32{0, start, 0, 0}, []int32{B, end, cfg.MambaNumHeads, cfg.MambaHeadDim}).AsType(mlx.DTypeFloat32)
-		segB := mlx.SliceStartStop(bState, []int32{0, start, 0, 0}, []int32{B, end, groups, cfg.SSMStateSize}).AsType(mlx.DTypeFloat32)
-		segC := mlx.SliceStartStop(cState, []int32{0, start, 0, 0}, []int32{B, end, groups, cfg.SSMStateSize}).AsType(mlx.DTypeFloat32)
-		segDt := mlx.SliceStartStop(dt, []int32{0, start, 0}, []int32{B, end, cfg.MambaNumHeads}).AsType(mlx.DTypeFloat32)
-
-		y, nextState, ok := mlx.FastMamba2Scan(segHidden, segB, segC, segDt, scanState, a, d, dtBias)
-		if !ok {
-			return false
-		}
-		outs = append(outs, y)
-		scanState = nextState
-		if capture {
-			deltaStates = append(deltaStates, scanState)
-		}
-		start = end
-		return true
-	}
-
-	for _, split := range splits {
-		if !runSegment(int32(split), true) {
-			return nil, nil, nil, false
-		}
-	}
-	if !runSegment(L, false) {
-		return nil, nil, nil, false
-	}
-
-	if len(outs) == 1 {
-		return outs[0], scanState, deltaStates, true
-	}
-	return mlx.Concatenate(outs, 1), scanState, deltaStates, true
-}
-
 func (m *Mamba2) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
 	dtype := x.DType()
 	projected := m.InProj.Forward(x)
@@ -1176,54 +1057,26 @@ func (m *Mamba2) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, L int32
 	gate := mlx.SliceStartStop(projected, []int32{0, 0, 0}, []int32{B, L, inner})
 	xBC := mlx.SliceStartStop(projected, []int32{0, 0, inner}, []int32{B, L, inner + convDim}).AsType(mlx.DTypeFloat32)
 	dt := mlx.SliceStartStop(projected, []int32{0, 0, inner + convDim}, []int32{B, L, inner + convDim + cfg.MambaNumHeads})
-	mask := nn.PaddingMask(b, L)
 
 	convTail := cfg.ConvKernel - 1
 	var rc *cache.RecurrentCache
-	var history *nn.RecurrentHistory
-	var state *mlx.Array
-	var splits []int
-	if c != nil {
-		if typed, ok := c.(*cache.RecurrentCache); ok {
-			rc = typed
-			history = rc.Get(b, mlx.DTypeFloat32)
-			state = history.DeltaState()
-			splits = rc.SnapshotSplits(int(L))
+	opts := make([]nn.RecurrentOption, 0, 3)
+	opts = append(opts, nn.WithConvSiLU())
+	if typed, ok := c.(*cache.RecurrentCache); ok {
+		rc = typed
+		opts = append(opts, nn.WithRecurrentHistory(rc.Get(b, mlx.DTypeFloat32)))
+		if splits := rc.SnapshotSplits(int(L)); len(splits) > 0 {
+			opts = append(opts, nn.WithSnapshotSplits(splits))
 		}
-	}
-	if state == nil {
-		state = mlx.Zeros(mlx.DTypeFloat32, int(B), int(cfg.MambaNumHeads), int(cfg.MambaHeadDim), int(cfg.SSMStateSize))
+	} else {
+		opts = append(opts, nn.WithRecurrentState(
+			mlx.Zeros(mlx.DTypeFloat32, int(B), int(convTail), int(convDim)),
+			mlx.Zeros(mlx.DTypeFloat32, int(B), int(cfg.MambaNumHeads), int(cfg.MambaHeadDim), int(cfg.SSMStateSize))))
 	}
 
-	var convOut *mlx.Array
-	var convStates []*mlx.Array
-	convSiLUInHelper := m.ConvBias == nil
-	opts := make([]nn.RecurrentOption, 0, 3)
-	if history != nil {
-		opts = append(opts, nn.WithRecurrentHistory(history))
-	} else {
-		convState := mlx.Zeros(mlx.DTypeFloat32, int(B), int(convTail), int(convDim))
-		opts = append(opts, nn.WithRecurrentState(convState, nil))
-	}
-	if len(splits) > 0 {
-		opts = append(opts, nn.WithSnapshotSplits(splits))
-	}
-	if convSiLUInHelper {
-		opts = append(opts, nn.WithConvSiLU())
-	}
-	convOut, convStates = nn.CausalConv1D(b, xBC, m.Conv1D, int(convTail), opts...)
-	if !convSiLUInHelper {
-		if m.ConvBias != nil {
-			convOut = mlx.Add(convOut, m.ConvBias.AsType(mlx.DTypeFloat32))
-		}
-		convOut = mlx.SiLU(convOut)
-	}
+	convOut, convStates := nn.CausalConv1D(b, xBC, m.Conv1D, int(convTail), opts...)
 	if dtype != mlx.DTypeFloat32 {
 		convOut = convOut.AsType(dtype).AsType(mlx.DTypeFloat32)
-	}
-	if mask != nil {
-		zero := mlx.FromValue(float32(0)).AsType(convOut.DType())
-		convOut = mlx.Where(mlx.ExpandDims(mask, 2), convOut, zero)
 	}
 
 	hidden := mlx.SliceStartStop(convOut, []int32{0, 0, 0}, []int32{B, L, inner})
@@ -1234,64 +1087,34 @@ func (m *Mamba2) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, L int32
 	bState = mlx.Reshape(bState, B, L, cfg.NGroups, cfg.SSMStateSize)
 	cState = mlx.Reshape(cState, B, L, cfg.NGroups, cfg.SSMStateSize)
 
-	var y *mlx.Array
-	var deltaStates []*mlx.Array
-	if customY, customState, customDeltaStates, ok := mamba2ScanWithSnapshots(
-		hidden,
-		bState,
-		cState,
-		dt.AsType(mlx.DTypeFloat32),
-		state,
+	y, deltaStates := nn.Mamba2Scan(b, hidden, bState, cState, dt.AsType(mlx.DTypeFloat32),
 		mlx.Reshape(m.A.AsType(mlx.DTypeFloat32), cfg.MambaNumHeads),
 		mlx.Reshape(m.D.AsType(mlx.DTypeFloat32), cfg.MambaNumHeads),
 		mlx.Reshape(m.DtBias.AsType(mlx.DTypeFloat32), cfg.MambaNumHeads),
-		mask,
-		B,
-		L,
-		cfg,
-		splits,
-	); ok {
-		y, state = customY, customState
-		deltaStates = customDeltaStates
-	}
-	if y == nil {
-		repeats := cfg.MambaNumHeads / cfg.NGroups
-		bState = repeatGroups(bState, repeats)
-		cState = repeatGroups(cState, repeats)
-		a := mlx.Reshape(m.A, 1, cfg.MambaNumHeads, 1, 1)
-		d := mlx.Reshape(m.D.AsType(mlx.DTypeFloat32), 1, cfg.MambaNumHeads, 1)
-		dtBias := mlx.Tile(mlx.Reshape(m.DtBias.AsType(mlx.DTypeFloat32), 1, cfg.MambaNumHeads), []int32{B, 1})
-		y, state, deltaStates = mamba2LoopScan(hidden, bState, cState, dt, state, a, d, dtBias, mask, B, L, cfg, splits)
-	}
+		opts...)
+
 	y = mlx.Reshape(y, B, L, inner)
-	y = gatedGroupRMSNormAsType(y, gate, m.NormWeight, cfg, dtype)
+	y = gatedGroupRMSNorm(y, gate, m.NormWeight, cfg, dtype)
 	out := m.OutProj.Forward(y)
 	if rc != nil {
-		deltaStates = append(deltaStates, state)
 		rc.Put(b, convStates, deltaStates)
 	}
 	return out
 }
 
-func gatedGroupRMSNormAsType(y, gate, weight *mlx.Array, cfg *Config, dtype mlx.DType) *mlx.Array {
-	if out, ok := mlx.FastMambaGatedGroupRMSNorm(y, gate, weight, int(cfg.NGroups), cfg.LayerNormEpsilon, dtype); ok {
-		return out
-	}
-	return gatedGroupRMSNormFallback(y, gate, weight, cfg).AsType(dtype)
-}
-
-func gatedGroupRMSNormFallback(y, gate, weight *mlx.Array, cfg *Config) *mlx.Array {
+// gatedGroupRMSNorm computes RMSNorm(y * SiLU(gate), groups) * weight. The
+// weight varies across groups while the norm reduces within one, so it is a
+// separate multiply rather than the norm's own weight argument.
+func gatedGroupRMSNorm(y, gate, weight *mlx.Array, cfg *Config, dtype mlx.DType) *mlx.Array {
 	inner := cfg.MambaNumHeads * cfg.MambaHeadDim
 	dims := y.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
-	y = mlx.Mul(y, mlx.SiLU(gate.AsType(y.DType())))
 	groupSize := inner / cfg.NGroups
-	y = mlx.Reshape(y, B, L, cfg.NGroups, groupSize)
-	variance := mlx.Mean(mlx.Mul(y, y), 3, true)
-	y = mlx.Mul(y, mlx.RSqrt(mlx.AddScalar(variance, cfg.LayerNormEpsilon)))
-	w := mlx.Reshape(weight.AsType(y.DType()), 1, 1, cfg.NGroups, groupSize)
-	y = mlx.Mul(y, w)
-	return mlx.Reshape(y, B, L, inner)
+
+	y = mlx.Mul(y, mlx.SiLU(gate.AsType(y.DType())))
+	y = mlx.RMSNormFn(mlx.Reshape(y, B, L, cfg.NGroups, groupSize), nil, cfg.LayerNormEpsilon)
+	y = mlx.Mul(y, mlx.Reshape(weight.AsType(y.DType()), 1, 1, cfg.NGroups, groupSize))
+	return mlx.Reshape(y, B, L, inner).AsType(dtype)
 }
 
 func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
@@ -1454,11 +1277,12 @@ func (m *SparseMoE) Forward(x *mlx.Array, cfg *Config) *mlx.Array {
 	return mlx.Reshape(y, B, L, cfg.HiddenSize)
 }
 
+// moeWeightedSum reduces per-expert outputs [B, L, topK, H] by their scores
+// [B, L, topK]. A matmul with a one-row left operand, so it rides MLX's
+// existing matmul kernels instead of materializing the elementwise product.
 func moeWeightedSum(expertOut, scores *mlx.Array, dtype mlx.DType) *mlx.Array {
-	if y, ok := mlx.FastMoEWeightedSum(expertOut, scores, dtype); ok {
-		return y
-	}
-	return mlx.Sum(mlx.Mul(expertOut, mlx.ExpandDims(scores.AsType(expertOut.DType()), -1)), 2, false).AsType(dtype)
+	scores = mlx.ExpandDims(scores.AsType(expertOut.DType()), 2)
+	return mlx.Squeeze(mlx.Matmul(scores, expertOut), 2).AsType(dtype)
 }
 
 func (m *SparseMoE) route(x *mlx.Array, cfg *Config, B, L int32) (*mlx.Array, *mlx.Array) {
@@ -1542,7 +1366,7 @@ func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, L int32,
 	return out
 }
 
-func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
+func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
 	tokens := b.InputIDs
 	dims := tokens.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
@@ -1556,28 +1380,49 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
 		h = layer.Forward(h, b, c, B, L, m.Config)
 	}
 	h = m.Norm.Forward(h, m.LayerNormEpsilon)
-	return h
+	return h, h
 }
 
 func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 	return m.LMHead.Forward(x)
 }
 
+// mtpDraft is the model viewed as its own draft: the same struct, carrying
+// the DraftModel method set for the inline MTP head.
+type mtpDraft Model
+
+// SelfDraft returns the model's drafting view, or nil when no MTP head was
+// loaded. The methods exist either way, so this is what decides availability.
 func (m *Model) SelfDraft() base.DraftModel {
 	if m.MTP == nil {
 		return nil
 	}
-	return m
+	return (*mtpDraft)(m)
 }
 
-func (m *Model) DraftCaches(caches []cache.Cache) []cache.Cache {
-	if m.MTP == nil || mtpCacheCount(m.MTP) == 0 || len(caches) <= len(m.Layers) {
+// LoadWeights does nothing: an inline head's weights load with the target's.
+func (m *mtpDraft) LoadWeights(map[string]*mlx.Array) error { return nil }
+
+func (m *mtpDraft) Unembed(x *mlx.Array) *mlx.Array { return (*Model)(m).Unembed(x) }
+
+// NewCaches builds one slot per MTP layer that keeps state; layers that keep
+// none (MoE, dense) contribute nothing.
+func (m *mtpDraft) NewCaches() []cache.Cache {
+	if m.MTP == nil {
 		return nil
 	}
-	return caches[len(m.Layers):]
+	caches := make([]cache.Cache, 0, mtpCacheCount(m.MTP))
+	for _, layer := range m.MTP.Layers {
+		if c := newMTPLayerCache(layer); c != nil {
+			caches = append(caches, c)
+		}
+	}
+	return caches
 }
 
-func (m *Model) Draft(b *batch.Batch, caches []cache.Cache) (hidden, projected *mlx.Array) {
+// Forward runs one MTP step; the head's hidden also serves as the aux hidden
+// seeding the next step.
+func (m *mtpDraft) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (hidden, auxHidden *mlx.Array) {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 
@@ -1585,7 +1430,6 @@ func (m *Model) Draft(b *batch.Batch, caches []cache.Cache) (hidden, projected *
 	h := m.MTP.Hnorm.Forward(b.Hidden, m.LayerNormEpsilon)
 	fused := m.MTP.FC.Forward(emb.Concatenate(-1, h))
 
-	draftCaches := m.DraftCaches(caches)
 	cacheIndex := 0
 	for _, layer := range m.MTP.Layers {
 		var c cache.Cache
@@ -1599,10 +1443,6 @@ func (m *Model) Draft(b *batch.Batch, caches []cache.Cache) (hidden, projected *
 	return hidden, hidden
 }
 
-func (m *Model) NumLayers() int {
-	return len(m.Layers)
-}
-
 func (m *Model) Tokenizer() *tokenizer.Tokenizer {
 	return m.tok
 }
@@ -1612,20 +1452,9 @@ func (m *Model) MaxContextLength() int {
 }
 
 func (m *Model) NewCaches() []cache.Cache {
-	capacity := len(m.Layers)
-	if m.MTP != nil {
-		capacity += mtpCacheCount(m.MTP)
-	}
-	caches := make([]cache.Cache, len(m.Layers), capacity)
+	caches := make([]cache.Cache, len(m.Layers))
 	for i, layer := range m.Layers {
 		caches[i] = newLayerCache(layer, m.Config)
-	}
-	if m.MTP != nil {
-		for _, layer := range m.MTP.Layers {
-			if c := newMTPLayerCache(layer); c != nil {
-				caches = append(caches, c)
-			}
-		}
 	}
 	return caches
 }

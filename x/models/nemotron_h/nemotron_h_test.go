@@ -7,10 +7,8 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/x/internal/mlxtest"
-	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
-	"github.com/ollama/ollama/x/models/nn"
 )
 
 func TestParseConfigNestedWrapper(t *testing.T) {
@@ -131,19 +129,22 @@ func TestNewCachesLayoutWithAttentionMTP(t *testing.T) {
 		MTP: &MTPHead{Layers: []*Layer{{Type: 'A'}, {Type: 'E'}}},
 	}
 
+	// The model declares only its own layers; the draft declares its own.
 	caches := m.NewCaches()
-	if got, want := len(caches), 5; got != want {
+	if got, want := len(caches), 4; got != want {
 		t.Fatalf("len(NewCaches()) = %d, want %d", got, want)
 	}
-	draftCaches := m.DraftCaches(caches)
+
+	draft := m.SelfDraft()
+	if draft == nil {
+		t.Fatal("SelfDraft() = nil, want the MTP draft")
+	}
+	draftCaches := draft.NewCaches()
 	if got, want := len(draftCaches), 1; got != want {
-		t.Fatalf("len(DraftCaches()) = %d, want %d", got, want)
+		t.Fatalf("len(draft.NewCaches()) = %d, want %d", got, want)
 	}
 	if _, ok := draftCaches[0].(*cache.KVCache); !ok {
-		t.Fatalf("DraftCaches()[0] = %T, want *cache.KVCache", draftCaches[0])
-	}
-	if got := m.SelfDraft(); got != m {
-		t.Fatalf("SelfDraft() = %T, want model", got)
+		t.Fatalf("draft.NewCaches()[0] = %T, want *cache.KVCache", draftCaches[0])
 	}
 }
 
@@ -169,11 +170,13 @@ func TestNewCachesLayoutWithCachelessMTP(t *testing.T) {
 	if got, want := len(caches), 4; got != want {
 		t.Fatalf("len(NewCaches()) = %d, want %d", got, want)
 	}
-	if draftCaches := m.DraftCaches(caches); draftCaches != nil {
-		t.Fatalf("DraftCaches() = %v, want nil for cacheless MTP", draftCaches)
+
+	draft := m.SelfDraft()
+	if draft == nil {
+		t.Fatal("SelfDraft() = nil, want the MTP draft")
 	}
-	if got := m.SelfDraft(); got != m {
-		t.Fatalf("SelfDraft() = %T, want model", got)
+	if draftCaches := draft.NewCaches(); len(draftCaches) != 0 {
+		t.Fatalf("draft.NewCaches() = %v, want none for a cacheless MTP", draftCaches)
 	}
 }
 
@@ -341,176 +344,43 @@ func TestApplyExpertWeightGlobalScale(t *testing.T) {
 	}, 1e-5)
 }
 
-func TestMamba2LoopScanPaddedRowDoesNotAdvanceState(t *testing.T) {
+// The production form leans on MLX's fused fast RMS norm, so check it against
+// a reference that spells out every step.
+func TestGatedGroupRMSNormMatchesElementwiseReference(t *testing.T) {
 	mlxtest.Setup(t)
 
-	const (
-		B = int32(2)
-		L = int32(3)
-		H = int32(2)
-		D = int32(2)
-		S = int32(32)
-	)
-	cfg := &Config{
-		MambaNumHeads: H,
-		MambaHeadDim:  D,
-		NGroups:       H,
-		SSMStateSize:  S,
-	}
+	cfg := &Config{MambaNumHeads: 4, MambaHeadDim: 2, NGroups: 2, LayerNormEpsilon: 1e-5}
+	inner := cfg.MambaNumHeads * cfg.MambaHeadDim
+	groupSize := inner / cfg.NGroups
+	B, L := int32(2), int32(3)
 
-	hidden := testValues(0.1, int(B), int(L), int(H), int(D))
-	bState := testValues(0.2, int(B), int(L), int(H), int(S))
-	cState := testValues(0.3, int(B), int(L), int(H), int(S))
-	dt := testValues(-0.4, int(B), int(L), int(H))
-	state := testValues(0.5, int(B), int(H), int(D), int(S))
-	a := mlx.MulScalar(ones(mlx.DTypeFloat32, 1, int(H), 1, 1), -0.25)
-	d := mlx.MulScalar(ones(mlx.DTypeFloat32, 1, int(H), 1), 0.1)
-	dtBias := mlx.Zeros(mlx.DTypeFloat32, int(B), int(H))
+	y := testGatedValues(0.1, int(B), int(L), int(inner))
+	gate := testGatedValues(-0.2, int(B), int(L), int(inner))
+	weight := testGatedValues(0.9, int(inner))
 
-	fullBatch := &batch.Batch{
-		InputIDs:     mlx.Zeros(mlx.DTypeInt32, int(B), int(L)),
-		SeqOffsets:   []int32{0, 0},
-		SeqQueryLens: []int32{L, 1},
-	}
-	mask := nn.PaddingMask(fullBatch, L)
-	if mask == nil {
-		t.Fatal("expected padding mask")
-	}
+	got := gatedGroupRMSNorm(y, gate, weight, cfg, mlx.DTypeFloat32)
 
-	gotY, gotState, _ := mamba2LoopScan(hidden, bState, cState, dt, state, a, d, dtBias, mask, B, L, cfg, nil)
+	ref := mlx.Mul(y, mlx.SiLU(gate))
+	ref = mlx.Reshape(ref, B, L, cfg.NGroups, groupSize)
+	variance := mlx.Mean(mlx.Mul(ref, ref), 3, true)
+	ref = mlx.Mul(ref, mlx.RSqrt(mlx.AddScalar(variance, cfg.LayerNormEpsilon)))
+	ref = mlx.Mul(ref, mlx.Reshape(weight, 1, 1, cfg.NGroups, groupSize))
+	ref = mlx.Reshape(ref, B, L, inner)
 
-	refY0, refState0, _ := mamba2LoopScan(
-		sliceBatch(hidden, 0, 1, L),
-		sliceBatch(bState, 0, 1, L),
-		sliceBatch(cState, 0, 1, L),
-		sliceBatch(dt, 0, 1, L),
-		sliceStateBatch(state, 0),
-		a,
-		d,
-		mlx.Zeros(mlx.DTypeFloat32, 1, int(H)),
-		nil,
-		1,
-		L,
-		cfg,
-		nil,
-	)
-	refY1, refState1, _ := mamba2LoopScan(
-		sliceBatch(hidden, 1, 2, 1),
-		sliceBatch(bState, 1, 2, 1),
-		sliceBatch(cState, 1, 2, 1),
-		sliceBatch(dt, 1, 2, 1),
-		sliceStateBatch(state, 1),
-		a,
-		d,
-		mlx.Zeros(mlx.DTypeFloat32, 1, int(H)),
-		nil,
-		1,
-		1,
-		cfg,
-		nil,
-	)
-
-	gotY0 := sliceBatch(gotY, 0, 1, L)
-	gotY1Real := sliceBatch(gotY, 1, 2, 1)
-	gotY1Pad := mlx.SliceStartStop(gotY, []int32{1, 1, 0, 0}, []int32{2, L, H, D})
-	gotState0 := sliceStateBatch(gotState, 0)
-	gotState1 := sliceStateBatch(gotState, 1)
-
-	mlx.Eval(gotY0, gotY1Real, gotY1Pad, gotState0, gotState1, refY0, refY1, refState0, refState1)
-	assertAllClose(t, "row0 output", gotY0.Floats(), refY0.Floats(), 1e-5)
-	assertAllClose(t, "row0 state", gotState0.Floats(), refState0.Floats(), 1e-5)
-	assertAllClose(t, "row1 real output", gotY1Real.Floats(), refY1.Floats(), 1e-5)
-	assertAllClose(t, "row1 state", gotState1.Floats(), refState1.Floats(), 1e-5)
-	assertAllClose(t, "row1 padded output", gotY1Pad.Floats(), make([]float32, gotY1Pad.Size()), 1e-5)
+	mlx.Eval(got, ref)
+	assertAllClose(t, "gated group rmsnorm", got.Floats(), ref.Floats(), 1e-5)
 }
 
-func TestMambaConvSharedHelperMatchesExplicitPath(t *testing.T) {
-	mlxtest.Setup(t)
-
-	const (
-		B = int32(2)
-		L = int32(3)
-		C = int32(4)
-		K = int32(3)
-	)
-	convTail := int(K - 1)
-	xBC := testValues(0.1, int(B), int(L), int(C))
-	convState := testValues(0.2, int(B), convTail, int(C))
-	weight := testValues(-0.3, int(C), int(K))
-	bias := testValues(0.4, int(C))
-	b := &batch.Batch{
-		InputIDs:     mlx.Zeros(mlx.DTypeInt32, int(B), int(L)),
-		SeqOffsets:   []int32{0, 0},
-		SeqQueryLens: []int32{L, 1},
-	}
-
-	conv := nn.NewConv1d(mlx.ExpandDims(weight, 2), nil, 1, 0, 1, C)
-	got, gotStates := nn.CausalConv1D(b, xBC, conv, convTail,
-		nn.WithRecurrentState(convState, nil),
-		nn.WithSnapshotSplits([]int{1, 2}),
-	)
-	got = mlx.SiLU(mlx.Add(got, bias))
-
-	mask := nn.PaddingMask(b, L)
-	zero := mlx.FromValue(float32(0))
-	got = mlx.Where(mlx.ExpandDims(mask, 2), got, zero.AsType(got.DType()))
-
-	maskedXBC := mlx.Where(mlx.ExpandDims(mask, 2), xBC, zero.AsType(xBC.DType()))
-	convInput := mlx.Concatenate([]*mlx.Array{convState, maskedXBC}, 1)
-	want := mlx.SiLU(mlx.Add(conv.Forward(convInput), bias))
-	want = mlx.Where(mlx.ExpandDims(mask, 2), want, zero.AsType(want.DType()))
-	wantStates := []*mlx.Array{
-		nn.CausalConvStateAt(convInput, b.SeqQueryLens, convTail, 1),
-		nn.CausalConvStateAt(convInput, b.SeqQueryLens, convTail, 2),
-		nn.CausalConvStateAt(convInput, b.SeqQueryLens, convTail, L),
-	}
-	for i, st := range wantStates {
-		wantStates[i] = mlx.Contiguous(st, false)
-	}
-
-	eval := append([]*mlx.Array{got, want}, gotStates...)
-	eval = append(eval, wantStates...)
-	mlx.Eval(eval...)
-	assertAllClose(t, "conv output", got.Floats(), want.Floats(), 1e-5)
-	if len(gotStates) != len(wantStates) {
-		t.Fatalf("len(conv states) = %d, want %d", len(gotStates), len(wantStates))
-	}
-	for i := range gotStates {
-		assertAllClose(t, "conv state", gotStates[i].Floats(), wantStates[i].Floats(), 1e-5)
-	}
-}
-
-func ones(dtype mlx.DType, shape ...int) *mlx.Array {
-	return mlx.AddScalar(mlx.Zeros(dtype, shape...), 1)
-}
-
-func testValues(seed float32, shape ...int) *mlx.Array {
+func testGatedValues(seed float32, shape ...int) *mlx.Array {
 	n := 1
 	for _, d := range shape {
 		n *= d
 	}
 	vals := make([]float32, n)
 	for i := range vals {
-		vals[i] = seed + 0.001*float32(i)
+		vals[i] = seed + 0.01*float32(i)
 	}
 	return mlx.FromValues(vals, shape...)
-}
-
-func sliceBatch(x *mlx.Array, start, stop int32, length int32) *mlx.Array {
-	dims := x.Dims()
-	starts := make([]int32, len(dims))
-	stops := make([]int32, len(dims))
-	for i, d := range dims {
-		stops[i] = int32(d)
-	}
-	starts[0] = start
-	stops[0] = stop
-	stops[1] = length
-	return mlx.SliceStartStop(x, starts, stops)
-}
-
-func sliceStateBatch(x *mlx.Array, row int32) *mlx.Array {
-	return mlx.SliceStartStop(x, []int32{row, 0, 0, 0}, []int32{row + 1, int32(x.Dim(1)), int32(x.Dim(2)), int32(x.Dim(3))})
 }
 
 func assertAllClose(t *testing.T, name string, got, want []float32, tol float64) {

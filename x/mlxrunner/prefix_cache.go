@@ -212,7 +212,7 @@ func (c *prefixCache) switchToPath(newPath []*trieNode, matched int) {
 	leafNeedsRewind := matched < c.activePath[leaf].endOffset
 	if leafDiverges || leafNeedsRewind {
 		node := c.activePath[leaf]
-		if !node.hasAllSnapshots() {
+		if !hasAllSnapshots(node, c.caches) {
 			fromOffset := node.startOffset()
 			snaps := make([]cache.Snapshot, len(c.caches))
 			for j, kv := range c.caches {
@@ -668,7 +668,7 @@ func (c *prefixCache) dumpTree() {
 		if n.user {
 			flags = append(flags, "user")
 		}
-		if n.hasAllSnapshots() {
+		if hasAllSnapshots(n, c.caches) {
 			snapshotCount++
 			flags = append(flags, "snap")
 		}
