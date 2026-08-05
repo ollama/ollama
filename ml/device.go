@@ -26,7 +26,7 @@ import (
 type GPULayers struct {
 	DeviceID
 
-	// Layers is a set of layer indicies to load
+	// Layers is a set of layer indices to load
 	Layers []int
 }
 
@@ -119,7 +119,7 @@ func (l GPULayersList) Hash() uint64 {
 	return h.Sum64()
 }
 
-// ErrNoMem is returned when panicing due to insufficient memory. It includes
+// ErrNoMem is returned when panicking due to insufficient memory. It includes
 // the attempted memory allocation.
 type ErrNoMem struct {
 	BackendMemory
