@@ -29,6 +29,31 @@ func TestChatAssistantEntryHasNoLabel(t *testing.T) {
 	}
 }
 
+func TestBottomLinesCaretRow(t *testing.T) {
+	m := chatModel{
+		chatID: "chat-a",
+		input:  []rune("hi"),
+	}
+	m.opts.Model = "llama3"
+
+	lines, caret := m.bottomLinesWithCaret(80, 0)
+	if !caret.ok {
+		t.Fatal("expected a valid caret position")
+	}
+	wantRow := len(lines) - 1 - caret.rowsUp
+	if wantRow < 0 || wantRow >= len(lines) {
+		t.Fatalf("caret rowsUp = %d out of range for %d lines", caret.rowsUp, len(lines))
+	}
+	if !strings.Contains(lines[wantRow], "hi") {
+		t.Fatalf("caret does not point at the input box body line: %q", lines[wantRow])
+	}
+
+	m.approvalPrompt = &chatApprovalPrompt{request: testApprovalRequest()}
+	if _, caret := m.bottomLinesWithCaret(80, 0); caret.ok {
+		t.Fatal("caret should be invalid while an approval prompt is active")
+	}
+}
+
 func TestChatViewRendersEmptyPromptHint(t *testing.T) {
 	m := chatModel{
 		chatID: "chat-a",

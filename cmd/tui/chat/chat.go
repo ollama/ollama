@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"os"
 	"runtime"
 	"slices"
 	"strings"
@@ -145,6 +146,7 @@ type chatModel struct {
 
 	width              int
 	height             int
+	termCaret          *termCaretState
 	status             string
 	spinner            int
 	tickActive         bool
@@ -246,7 +248,12 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		m.preloadingModel = strings.TrimSpace(opts.Model)
 	}
 
-	p := tea.NewProgram(m, tea.WithReportFocus())
+	caret := &termCaretState{}
+	m.termCaret = caret
+	out := newCursorSyncWriter(os.Stdout, caret)
+	defer out.restoreIfParked()
+
+	p := tea.NewProgram(m, tea.WithReportFocus(), tea.WithOutput(out))
 	finalModel, err := p.Run()
 	if err != nil {
 		return nil, err
@@ -817,29 +824,45 @@ func (m chatModel) updateDownKey() (tea.Model, tea.Cmd) {
 
 func (m chatModel) View() string {
 	if m.quitting {
+		m.publishCaret(caretPos{})
 		return ""
 	}
 
 	width, height := m.viewSize()
 
 	if m.promptDebug != nil {
+		m.publishCaret(caretPos{})
 		return m.renderPromptDebug(width, height)
 	}
 	if m.modelPicker != nil && m.openModelOnInit {
+		m.publishCaret(caretPos{})
 		return m.renderModelPicker(width)
 	}
 	if m.cloudAuthPrompt != nil {
+		m.publishCaret(caretPos{})
 		return m.renderCloudAuthPrompt(width)
 	}
 	if m.thinkPicker != nil {
+		m.publishCaret(caretPos{})
 		return m.renderThinkPicker(width)
 	}
 	return m.flowView(width)
 }
 
+// publishCaret records the on-screen cell of the input caret for the
+// cursorSyncWriter to park the physical cursor on, so terminal IME preedit
+// composition renders inline instead of at the terminal's fallback origin.
+// termCaret is nil in unit tests that construct a chatModel directly.
+func (m chatModel) publishCaret(p caretPos) {
+	if m.termCaret != nil {
+		m.termCaret.set(p)
+	}
+}
+
 func (m chatModel) flowView(width int) string {
 	allTranscriptLines := m.transcriptLines(width)
-	bottomLines := m.bottomLines(width, 0)
+	bottomLines, caret := m.bottomLinesWithCaret(width, 0)
+	m.publishCaret(caret)
 	bottomGap := transcriptInputGap(0, len(bottomLines), len(allTranscriptLines))
 
 	printed := clamp(m.flowPrintedLines, 0, len(allTranscriptLines))

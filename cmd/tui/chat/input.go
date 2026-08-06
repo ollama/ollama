@@ -1006,6 +1006,22 @@ func (m chatModel) emptyInputPlaceholder() string {
 }
 
 func renderInputBoxLines(input string, cursor int, width, maxBodyLines int, placeholder string) []string {
+	lines, _ := renderInputBoxLinesWithCaret(input, cursor, width, maxBodyLines, placeholder)
+	return lines
+}
+
+// inputBoxCaret is the input caret's location within the lines returned by
+// renderInputBoxLinesWithCaret.
+type inputBoxCaret struct {
+	lineIdx int // index into the returned lines (0 = top border)
+	col     int // 0-based screen column within that line
+	ok      bool
+}
+
+// renderInputBoxLinesWithCaret behaves like renderInputBoxLines but also
+// reports where the input caret landed, so the physical terminal cursor can
+// be parked there for inline IME preedit rendering (see termcursor.go).
+func renderInputBoxLinesWithCaret(input string, cursor int, width, maxBodyLines int, placeholder string) ([]string, inputBoxCaret) {
 	if width < 12 {
 		width = 12
 	}
@@ -1033,6 +1049,18 @@ func renderInputBoxLines(input string, cursor int, width, maxBodyLines int, plac
 	if len(raw) > maxBodyLines {
 		raw = slices.Clone(raw[len(raw)-maxBodyLines:])
 		raw[0] = truncateInputLine(continuationPrefix+trimInputPromptPrefix(raw[0]), contentWidth)
+	}
+
+	var caret inputBoxCaret
+	for i, line := range raw {
+		if idx := strings.Index(line, inputCursorMarker); idx >= 0 {
+			caret = inputBoxCaret{
+				lineIdx: 1 + i, // +1 for the top border line
+				col:     1 + inputBoxHorizontalPadding + lipgloss.Width(line[:idx]),
+				ok:      true,
+			}
+			break
+		}
 	}
 
 	lines := make([]string, 0, len(raw)+2)
@@ -1063,7 +1091,7 @@ func renderInputBoxLines(input string, cursor int, width, maxBodyLines int, plac
 		lines = append(lines, renderInputBoxBodyLine(renderInputTextWithCursor(rendered), contentWidth))
 	}
 	lines = append(lines, chatInputBorderStyle.Render(inputBoxBottomBorderLine(width)))
-	return lines
+	return lines, caret
 }
 
 func renderInputTextWithCursor(line string) string {
