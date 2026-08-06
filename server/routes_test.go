@@ -805,6 +805,29 @@ func TestShow(t *testing.T) {
 	}
 }
 
+// showWithOptions creates a model with the given Modelfile parameters and asks
+// /api/show about it, optionally overriding options the way a caller does when
+// it wants the budget for the request it is about to send.
+func showWithOptions(t *testing.T, s *Server, digest, name string, parameters, options map[string]any) api.ShowResponse {
+	t.Helper()
+	createRequest(t, s.CreateHandler, api.CreateRequest{
+		Name:       name,
+		Files:      map[string]string{"model.gguf": digest},
+		Parameters: parameters,
+	})
+
+	w := createRequest(t, s.ShowHandler, api.ShowRequest{Name: name, Options: options})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d", w.Code)
+	}
+
+	var resp api.ShowResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
 func TestShowThinkBudget(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
@@ -814,23 +837,21 @@ func TestShowThinkBudget(t *testing.T) {
 
 	show := func(t *testing.T, name string, parameters map[string]any) api.ShowResponse {
 		t.Helper()
-		createRequest(t, s.CreateHandler, api.CreateRequest{
-			Name:       name,
-			Files:      map[string]string{"model.gguf": digest},
-			Parameters: parameters,
-		})
-
-		w := createRequest(t, s.ShowHandler, api.ShowRequest{Name: name})
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected status code 200, actual %d", w.Code)
-		}
-
-		var resp api.ShowResponse
-		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-			t.Fatal(err)
-		}
-		return resp
+		return showWithOptions(t, &s, digest, name, parameters, nil)
 	}
+
+	t.Run("resolves against the options the caller intends to send", func(t *testing.T) {
+		// A client that overrides num_predict gets the budget for its own
+		// request, so it never has to re-derive one from a fraction table it
+		// would have to keep in step with the server.
+		resp := showWithOptions(t, &s, digest, "show-think-request-options",
+			map[string]any{"think_budget": "medium", "num_ctx": 32768},
+			map[string]any{"num_predict": 8000})
+
+		if resp.ThinkBudgetTokens != 2000 {
+			t.Errorf("expected think budget tokens 2000, got %d", resp.ThinkBudgetTokens)
+		}
+	})
 
 	t.Run("resolves a level against the model's own window", func(t *testing.T) {
 		// The parameter already appears in Parameters as a line of text; the
