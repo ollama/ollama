@@ -479,7 +479,7 @@ type requestResult struct {
 func simulateRequest(t *testing.T, pc *prefixCache, inputs, generated []int32, userSnapshotAt ...int) requestResult {
 	t.Helper()
 
-	session := pc.begin(inputs)
+	session := pc.begin(inputs, nil)
 	var snapshotOffsets []int
 	for _, at := range userSnapshotAt {
 		if at > 0 {
@@ -692,7 +692,7 @@ func TestBranchCreationAndReuse(t *testing.T) {
 		// Verify trie was populated by close(): everything in the caches
 		// is findable; the last generated token is not.
 		seqA := []int32{1, 2, 3, 4, 5, 6, 7, 8, 20, 21}
-		_, mA := findBestMatch(pc.root, pc.key(seqA))
+		_, mA := findBestMatch(pc.root, pc.key(effectiveKeyTokens(seqA, nil)))
 		if want := len(seqA) - 1; mA != want {
 			t.Fatalf("A findable: expected %d matched, got %d", want, mA)
 		}
@@ -721,11 +721,11 @@ func TestBranchCreationAndReuse(t *testing.T) {
 		env.assertAllTokens(t, "after B", []int32{1, 2, 3, 4, 5, 10, 11, 12, 30})
 
 		// Both A and B should be findable in the trie.
-		_, mA2 := findBestMatch(pc.root, pc.key(seqA))
+		_, mA2 := findBestMatch(pc.root, pc.key(effectiveKeyTokens(seqA, nil)))
 		if mA2 < 5 {
 			t.Fatalf("A still findable: expected >= 5 matched, got %d", mA2)
 		}
-		_, mB := findBestMatch(pc.root, pc.key([]int32{1, 2, 3, 4, 5, 10, 11, 12, 30, 31}))
+		_, mB := findBestMatch(pc.root, pc.key(effectiveKeyTokens([]int32{1, 2, 3, 4, 5, 10, 11, 12, 30, 31}, nil)))
 		if mB < 5 {
 			t.Fatalf("B findable: expected >= 5 matched, got %d", mB)
 		}
@@ -853,8 +853,8 @@ func TestEvictionPreservesActiveConversations(t *testing.T) {
 
 		// System prompt prefix should still be findable (multi-child
 		// branch points are protected from eviction entirely).
-		_, matched := findBestMatch(pc.root, pc.key(systemPrompt))
-		if want := len(pc.key(systemPrompt)); matched < want {
+		_, matched := findBestMatch(pc.root, pc.key(effectiveKeyTokens(systemPrompt, nil)))
+		if want := len(pc.key(effectiveKeyTokens(systemPrompt, nil))); matched < want {
 			t.Fatalf("system prompt match = %d, want %d", matched, want)
 		}
 
@@ -952,7 +952,7 @@ func TestSnapshotBeyondPrefillSkipped(t *testing.T) {
 		pc := env.pc
 		inputs := []int32{1, 2, 3, 4, 5}
 
-		session := pc.begin(inputs)
+		session := pc.begin(inputs, nil)
 		// Request a snapshot at 3 and one at len(inputs); captures land at
 		// the requested prefix minus the look-ahead.
 		session.schedulePrefillSnapshots([]int{3, len(inputs)})
@@ -987,7 +987,7 @@ func TestPrefillSnapshotsDiscardedOnCancel(t *testing.T) {
 		pc := env.pc
 		inputs := []int32{1, 2, 3, 4, 5}
 
-		session := pc.begin(inputs)
+		session := pc.begin(inputs, nil)
 		session.schedulePrefillSnapshots([]int{3})
 		// Cross offset 3 so the caches capture it, then close the session as a
 		// canceled prefill would, before the captures are attached to the trie.

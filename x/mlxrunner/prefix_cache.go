@@ -52,9 +52,10 @@ type pendingSnapshot struct {
 // Callers should append generated tokens to outputs and
 // defer close to save the cache state.
 type cacheSession struct {
-	cache   *prefixCache
-	inputs  []int32
-	outputs []int32
+	cache     *prefixCache
+	inputs    []int32
+	effInputs []uint32 // inputs' key alphabet, media folds applied
+	outputs   []int32
 
 	caches    []cache.Cache
 	remaining []int32
@@ -81,10 +82,11 @@ func (c *prefixCache) ensureRoot() {
 
 // begin prepares caches for a new request. It finds the nearest
 // matching cache or creates new caches if none match.
-func (c *prefixCache) begin(inputs []int32) *cacheSession {
+func (c *prefixCache) begin(inputs []int32, items []mediaItem) *cacheSession {
 	c.ensureRoot()
 
-	keys := c.key(inputs)
+	effInputs := effectiveKeyTokens(inputs, items)
+	keys := c.key(effInputs)
 	matchPath, matched := findBestMatch(c.root, keys)
 	originalMatched := matched
 
@@ -104,6 +106,7 @@ func (c *prefixCache) begin(inputs []int32) *cacheSession {
 	session := &cacheSession{
 		cache:     c,
 		inputs:    inputs,
+		effInputs: effInputs,
 		caches:    c.caches,
 		remaining: remaining,
 	}
@@ -123,12 +126,26 @@ func (c *prefixCache) begin(inputs []int32) *cacheSession {
 	return session
 }
 
-// key converts tokens to trie keys, one per restorable cache offset. A model
-// that drafts through MTP-style draft caches pairs each cache slot with the
-// token after it, so slot i is reusable only if token i+1 also matched. The
-// key for offset i then packs (token i, token i+1): matching k keys verifies
-// k+1 tokens, making every match a valid restore point.
-func (c *prefixCache) key(tokens []int32) []trieKey {
+// effectiveKeyTokens returns the per-position key alphabet: the token ID
+// outside media expansions, the item's fold value across each expansion's
+// whole range.
+func effectiveKeyTokens(tokens []int32, items []mediaItem) []uint32 {
+	eff := make([]uint32, len(tokens))
+	for i, t := range tokens {
+		eff[i] = uint32(t)
+	}
+	for _, item := range items {
+		for i := item.pos; i < item.pos+item.length; i++ {
+			eff[i] = item.fold
+		}
+	}
+	return eff
+}
+
+// key packs (token i, token i+1) per restorable offset: draft caches
+// pair each slot with the next token, so matching k keys verifies k+1
+// tokens and every match is a valid restore point.
+func (c *prefixCache) key(tokens []uint32) []trieKey {
 	keys := make([]trieKey, max(len(tokens)-c.draftLookahead, 0))
 	switch c.draftLookahead {
 	case 0:
@@ -137,12 +154,26 @@ func (c *prefixCache) key(tokens []int32) []trieKey {
 		}
 	case 1:
 		for i := range keys {
-			keys[i] = trieKey(uint32(tokens[i]))<<32 | trieKey(uint32(tokens[i+1]))
+			keys[i] = trieKey(tokens[i])<<32 | trieKey(tokens[i+1])
 		}
 	default:
 		panic(fmt.Sprintf("prefixCache: unsupported draft look-ahead %d", c.draftLookahead))
 	}
 	return keys
+}
+
+// storedKeys keys the session's evaluated stream: the prompt's effective
+// tokens plus generated tokens, which are never media.
+func (s *cacheSession) storedKeys() []trieKey {
+	eff := s.effInputs
+	if len(s.outputs) > 0 {
+		eff = make([]uint32, 0, len(s.effInputs)+len(s.outputs))
+		eff = append(eff, s.effInputs...)
+		for _, t := range s.outputs {
+			eff = append(eff, uint32(t))
+		}
+	}
+	return s.cache.key(eff)
 }
 
 // switchToPath transitions from the current active path to a new path,
@@ -381,7 +412,7 @@ func (s *cacheSession) attachPrefillSnapshots() {
 	// no captured state. Skip it rather than materialize a node whose edge
 	// claims tokens the cache never wrote. Closing its (nil) row is a no-op.
 	reached := c.minCacheOffset()
-	stored := c.key(append(s.inputs, s.outputs...))
+	stored := s.storedKeys()
 	for i, p := range pending {
 		if p.offset > reached {
 			// Never crossed by a write, so the row is nil; close any entry
@@ -511,7 +542,7 @@ func (s *cacheSession) close() {
 	// The caches never advance past the stored keys; anything more
 	// means positions desynced.
 	c := s.cache
-	stored := c.key(append(s.inputs, s.outputs...))
+	stored := s.storedKeys()
 	if offset > len(stored) {
 		panic(fmt.Sprintf("cache: offset %d exceeds %d stored keys", offset, len(stored)))
 	}
