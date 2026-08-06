@@ -14,6 +14,7 @@ import (
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/mlxrunner/model/base"
 	sampler "github.com/ollama/ollama/x/mlxrunner/sample"
 	"github.com/ollama/ollama/x/tokenizer"
 )
@@ -28,6 +29,16 @@ func prefillChunkSize() int {
 func (r *Runner) Prepare(request *Request) error {
 	if r.Model == nil {
 		return errors.New("model not loaded")
+	}
+
+	if len(request.Media) > 0 {
+		if _, ok := r.Model.(base.MediaModel); !ok {
+			kind := string(request.Media[0].Kind)
+			if kind == "" {
+				kind = "media"
+			}
+			return fmt.Errorf("this model does not support %s input", kind)
+		}
 	}
 
 	tokens := r.Tokenizer.Encode(request.Prompt, r.Tokenizer.AddBOS())
