@@ -28,8 +28,8 @@ func newDFlashDrafter(s *speculation, draft base.BlockDraft) *dflashDrafter {
 func (d *dflashDrafter) draftLimit() int { return d.blockSize - 1 }
 
 // open returns a session synced to the draft caches' restored offset.
-func (d *dflashDrafter) open() draftSession {
-	s := &dflashDraftSession{drafter: d}
+func (d *dflashDrafter) open(layout []any) draftSession {
+	s := &dflashDraftSession{drafter: d, layout: layout}
 	if kv := d.spec.draftKV; len(kv) > 0 {
 		s.ctxOffset = kv[0].Offset()
 	}
@@ -41,6 +41,7 @@ func (d *dflashDrafter) open() draftSession {
 // after the last reported token.
 type dflashDraftSession struct {
 	drafter *dflashDrafter
+	layout  []any
 
 	// ctxOffset is the slot after the last feature row written; pendingCount
 	// rows are buffered past it.
@@ -53,7 +54,9 @@ type dflashDraftSession struct {
 	blockOutstanding bool
 }
 
-func (d *dflashDraftSession) committed(tokens, features *mlx.Array, position int) {
+// committed ignores the media manifest: a context row derives from the
+// target hidden at its slot, which already carries any image content.
+func (d *dflashDraftSession) committed(tokens, features *mlx.Array, position int, _ []batch.MediaItem) {
 	n := tokens.Dim(1)
 	// Skip leading rows the session already has (a restored prefix). A run
 	// that starts past the frontier would leave a gap, which is a bug.
@@ -121,6 +124,7 @@ func (d *dflashDraftSession) flush() {
 	spec.draft.Forward(&batch.Batch{
 		SeqOffsets: []int32{int32(offset)},
 		Hidden:     features,
+		Layout:     d.layout,
 	}, spec.targets, spec.draftKV)
 
 	// Force the cache writes: a session that never drafts would otherwise
@@ -165,6 +169,7 @@ func (d *dflashDraftSession) propose(current *mlx.Array, maxTokens int) *draftCa
 		SeqOffsets:   []int32{int32(offset)},
 		SeqQueryLens: []int32{int32(n + 1)},
 		Hidden:       features,
+		Layout:       d.layout,
 	}, spec.targets, spec.draftKV)
 
 	// Row i predicts the token at its own position, so the anchor row is
