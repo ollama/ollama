@@ -21,9 +21,41 @@ type Batch struct {
 	// It is nil for ordinary forward passes.
 	Hidden *mlx.Array
 
+	// Media lists a row's media items in stream order, present on prefill
+	// forwards of a request that carries media; items outside the query
+	// range ride featureless. Nil for text-only requests and for decode
+	// and draft forwards.
+	Media []MediaItem
+
+	// Layout carries each row's opaque layout state from PrepareMedia,
+	// identical on every forward of the request — prefill, decode, and
+	// speculative verification alike, though not draft-model forwards.
+	// The runner never reads it; nil entries are rows whose model derives
+	// nothing from layout.
+	Layout []any
+
 	// Memo is per-forward memoization used to cache results, such as masks,
 	// which are often the same across layers.
 	Memo Memo
+}
+
+// MediaItem is one media occurrence in a row's sequence. The runner knows
+// only where the item's expansion was spliced; which positions bear
+// features and how feature rows map onto them is the model's, derived from
+// Pos plus its own preprocessing data in Opaque.
+type MediaItem struct {
+	// Seq is the batch row the item belongs to.
+	Seq int
+
+	// Pos is the absolute sequence position of the expansion's first token.
+	Pos int
+
+	// Features is the item's whole feature-row array, attached only while
+	// the item's token range overlaps this forward's query range.
+	Features *mlx.Array
+
+	// Opaque is the item's PreparedMedia.Opaque, round-tripped untouched.
+	Opaque any
 }
 
 type Memo struct {

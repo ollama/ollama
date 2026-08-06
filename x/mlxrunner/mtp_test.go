@@ -50,6 +50,9 @@ type fakeMTPModel struct {
 	tok     *tokenizer.Tokenizer
 	// forwards records each Forward call so tests can assert contiguous writes.
 	forwards []forwardCall
+	// layouts records each Forward's Batch.Layout so tests can assert the
+	// request's layout state reaches every target forward.
+	layouts [][]any
 }
 
 type forwardCall struct {
@@ -61,6 +64,7 @@ func (m *fakeMTPModel) Forward(b *batch.Batch, caches []cache.Cache) (hidden, au
 	mlx.Eval(b.InputIDs)
 	ids := b.InputIDs.Ints()
 	m.forwards = append(m.forwards, forwardCall{offset: b.SeqOffsets[0], n: int32(len(ids))})
+	m.layouts = append(m.layouts, b.Layout)
 	for i, c := range caches {
 		if i >= m.NumLayers() {
 			break
@@ -457,7 +461,7 @@ func TestRunMTPDecodeSampled(t *testing.T) {
 		t.Fatalf("open rejected a sampled request")
 	}
 	pinDraftLimit(spec, 4)
-	d := spec.decoder(mlx.FromValues([]int32{1}, 1), position)
+	d := spec.decoder(mlx.FromValues([]int32{1}, 1), position, nil)
 	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -502,7 +506,7 @@ func TestRunMTPDecodeWarmDrafter(t *testing.T) {
 	// hidden row, leaving the drafter ready to propose from slot 1.
 	spec.committed(mlx.FromValues([]int32{0}, 1, 1), oneHotLogits([]int32{1}), 0)
 
-	d := spec.decoder(mlx.FromValues([]int32{1}, 1), position)
+	d := spec.decoder(mlx.FromValues([]int32{1}, 1), position, nil)
 	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -566,7 +570,7 @@ func TestRunMTPDecodeEOSCutLeavesPositionsUnjudged(t *testing.T) {
 	spec.limit = 4
 	spec.committed(mlx.FromValues([]int32{0}, 1, 1), oneHotLogits([]int32{1}), 0)
 
-	d := spec.decoder(mlx.FromValues([]int32{1}, 1), position)
+	d := spec.decoder(mlx.FromValues([]int32{1}, 1), position, nil)
 	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -695,6 +699,43 @@ func TestDecodeCancelledMidStream(t *testing.T) {
 	}
 }
 
+func TestLayoutRidesEveryTargetForward(t *testing.T) {
+	skipIfNoMLX(t)
+	// The request's opaque layout state must reach every target forward:
+	// parked pipelined dispatches and the fused verification forward alike.
+	const eos int32 = 7
+	predict := map[int32]int32{1: 2, 2: 3, 3: 4, 4: eos, eos: 0}
+	r := mtpTestRunner(t, predict, []int32{eos}, sampler.Options{})
+	caches, _ := newMTPTestCaches(1)
+	r.cache.caches = caches
+	r.spec = newSpeculation(r, &fakeMTPDraft{predict: predict}, caches, nil)
+	session, ch := newMTPTestSession(caches)
+
+	req := Request{
+		Responses:         ch,
+		Tokens:            []int32{0},
+		CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
+		SamplerOpts:       sampler.Options{},
+	}
+	spec := r.spec.open(req)
+	pinDraftLimit(spec, 4)
+	d := spec.decoder(mlx.FromValues([]int32{1}, 1), 1, []any{"layout"})
+	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	d.close()
+
+	model := r.Model.(*fakeMTPModel)
+	if len(model.layouts) < 3 {
+		t.Fatalf("forwards recorded = %d, want parked dispatches and a fused round", len(model.layouts))
+	}
+	for i, l := range model.layouts {
+		if len(l) != 1 || l[0] != "layout" {
+			t.Fatalf("forward %d layout = %v", i, l)
+		}
+	}
+}
+
 // pinDraftLimit fixes an engine's draft length for the whole run: decode
 // tests assert engine mechanics at known widths, so they disable adaptive
 // depth rather than steer what it learns.
@@ -711,9 +752,9 @@ func testDecoder(r *Runner, req Request, caches []cache.Cache, seed []int32, pos
 		if spec.enabled {
 			pinDraftLimit(spec, 4)
 		}
-		return spec.decoder(mlx.FromValues(seed, len(seed)), position)
+		return spec.decoder(mlx.FromValues(seed, len(seed)), position, nil)
 	}
-	return r.pipelinedDecoder(nil, caches, mlx.FromValues(seed, 1, len(seed)), position)
+	return r.pipelinedDecoder(nil, caches, mlx.FromValues(seed, 1, len(seed)), position, nil)
 }
 
 func TestDecodeKVDraft(t *testing.T) {
@@ -748,7 +789,7 @@ func TestDecodeKVDraft(t *testing.T) {
 	}
 	pinDraftLimit(spec, 4)
 	defer spec.close()
-	d := spec.decoder(mlx.FromValues([]int32{1}, 1), position)
+	d := spec.decoder(mlx.FromValues([]int32{1}, 1), position, nil)
 	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -830,7 +871,7 @@ func TestDecodeKVDraftRejectionRebuildsFromTarget(t *testing.T) {
 	spec := r.spec.open(req)
 	pinDraftLimit(spec, 4)
 	defer spec.close()
-	d := spec.decoder(mlx.FromValues([]int32{1}, 1), position)
+	d := spec.decoder(mlx.FromValues([]int32{1}, 1), position, nil)
 	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -901,7 +942,7 @@ func TestDecodeMaintainsDraftCacheWithoutDrafting(t *testing.T) {
 	if spec == nil || spec.enabled {
 		t.Fatalf("want a permanent-park speculationSession, got %+v", spec)
 	}
-	d := spec.decoder(mlx.FromValues([]int32{1}, 1), position)
+	d := spec.decoder(mlx.FromValues([]int32{1}, 1), position, nil)
 	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -1041,7 +1082,7 @@ func TestRestoredPrefixRewritesBoundaryPair(t *testing.T) {
 	}
 	spec := r.spec.open(req)
 	pinDraftLimit(spec, 4)
-	d := spec.decoder(mlx.FromValues([]int32{1}, 1), 0)
+	d := spec.decoder(mlx.FromValues([]int32{1}, 1), 0, nil)
 	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -1098,7 +1139,7 @@ func TestDecodeParkedDraftResume(t *testing.T) {
 		t.Fatalf("want a drafting speculationSession, got %+v", spec)
 	}
 	pinDraftLimit(spec, 0)
-	d := spec.decoder(mlx.FromValues([]int32{1}, 1), 0).(*speculativeDecoder)
+	d := spec.decoder(mlx.FromValues([]int32{1}, 1), 0, nil).(*speculativeDecoder)
 
 	// Two parked calls arrive pipelined, one token each.
 	for _, want := range []int{2, 3} {

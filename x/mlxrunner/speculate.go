@@ -91,8 +91,9 @@ func newSpeculation(r *Runner, draft base.DraftModel, targets, draftKV []cache.C
 type speculationSession struct {
 	spec    *speculation
 	drafter draftSession
-	enabled bool // whether this request drafts; false parks (maintain-only)
-	limit   int  // current draft length
+	enabled bool  // whether this request drafts; false parks (maintain-only)
+	limit   int   // current draft length
+	layout  []any // the request's per-row layout state, stamped on every target forward
 	stats   specStats
 
 	// Cost sampling: each round's wall time (start to next start, spanning the
@@ -195,7 +196,8 @@ type speculativeDecoder struct {
 // decoder returns the decoder for this engine's session. A speculationSession that
 // cannot draft (logprobs) has no depth controller and permanently parks,
 // running the inner pipelined decoder whose reports keep the draft KV level.
-func (s *speculationSession) decoder(seed *mlx.Array, position int) decoder {
+func (s *speculationSession) decoder(seed *mlx.Array, position int, layout []any) decoder {
+	s.layout = layout
 	current := sampler.Result{Token: seed}
 	mlx.Pin(current.Arrays()...)
 	return &speculativeDecoder{s: s, position: position, current: current}
@@ -272,7 +274,7 @@ func (st *speculativeDecoder) resume() []sampler.Result {
 func (st *speculativeDecoder) park(remaining int) ([]sampler.Result, error) {
 	s := st.s
 	if st.inner == nil {
-		st.inner = s.spec.r.pipelinedDecoder(s, s.spec.targets, st.current.Token.ExpandDims(-1), st.position)
+		st.inner = s.spec.r.pipelinedDecoder(s, s.spec.targets, st.current.Token.ExpandDims(-1), st.position, s.layout)
 	}
 	return st.inner.next(remaining)
 }
@@ -398,6 +400,7 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 		InputIDs:     current.Token.ExpandDims(-1).Concatenate(1, candidates.tokens),
 		SeqOffsets:   []int32{int32(before)},
 		SeqQueryLens: []int32{int32(draftCount + 1)},
+		Layout:       s.layout,
 	}, s.spec.targets)
 
 	// Row i of the fused hidden is the state after the token at before+i, so

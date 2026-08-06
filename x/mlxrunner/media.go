@@ -10,6 +10,8 @@ import (
 	"strconv"
 
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/x/mlxrunner/batch"
+	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model/base"
 )
 
@@ -38,6 +40,133 @@ func foldValue(data []byte, dims []int) uint32 {
 	}
 	sum := h.Sum64()
 	return (uint32(sum>>32) ^ uint32(sum)) | 1<<31
+}
+
+// requestMedia manages one request's media features on the MLX thread:
+// encoded on first use, held while chunks still need them, released when
+// the item's expansion is fully evaluated. A nil *requestMedia is a
+// text-only request; every method is nil-safe.
+type requestMedia struct {
+	model    base.MediaModel
+	items    []mediaItem
+	inputLen int
+
+	// manifest is the request-scoped batch view of items; Features is
+	// toggled in place so every batch shares the same slice.
+	manifest []batch.MediaItem
+	features []*mlx.Array // parallel to items; nil until encoded
+
+	// layout is the request's one-row Batch.Layout, shared by every batch
+	// like the manifest; nil when the model returned no layout.
+	layout []any
+}
+
+func (r *Runner) openMedia(request Request) *requestMedia {
+	if len(request.MediaItems) == 0 {
+		return nil
+	}
+	m := &requestMedia{
+		model:    r.Model.(base.MediaModel),
+		items:    request.MediaItems,
+		inputLen: len(request.Tokens),
+		manifest: make([]batch.MediaItem, len(request.MediaItems)),
+		features: make([]*mlx.Array, len(request.MediaItems)),
+	}
+	if request.Layout != nil {
+		m.layout = []any{request.Layout}
+	}
+	for i, item := range m.items {
+		m.manifest[i] = batch.MediaItem{Pos: item.pos, Opaque: item.item.Opaque}
+	}
+	return m
+}
+
+// rowLayout returns the request's per-row Batch.Layout value.
+func (m *requestMedia) rowLayout() []any {
+	if m == nil {
+		return nil
+	}
+	return m.layout
+}
+
+func (item *mediaItem) atomic() bool { return !item.item.Causal }
+
+// extendChunk adjusts a chunk [pos, pos+n) whose end lands strictly inside
+// an atomic item's expansion. A bidirectional run's early rows attend its
+// later keys, which must exist in the same forward the first time the run is
+// evaluated. An expansion that starts inside the chunk begins the next
+// forward instead, keeping forwards at the nominal chunk size; one the chunk
+// starts at or inside grows the chunk to the expansion's end, clipped one
+// short of the prompt so the extension never consumes the decode seed.
+// Causal items need no adjustment: their feature rows slice at any boundary.
+func (m *requestMedia) extendChunk(pos, n int) int {
+	if m == nil {
+		return n
+	}
+	end := pos + n
+	for i := range m.items {
+		item := &m.items[i]
+		if !item.atomic() {
+			continue
+		}
+		if item.pos < end && end < item.pos+item.length {
+			if item.pos > pos {
+				return item.pos - pos
+			}
+			return min(item.pos+item.length, m.inputLen-1) - pos
+		}
+	}
+	return n
+}
+
+// batchMedia returns the request's media manifest for a chunk [pos, pos+n),
+// encoding and pinning each item's features on its first overlap. The pin
+// keeps the lazy features across the prefill loop's sweeps; nothing here
+// evaluates — the consuming forward's evaluation pulls the encoder.
+func (m *requestMedia) batchMedia(pos, n int) []batch.MediaItem {
+	if m == nil {
+		return nil
+	}
+	for i, item := range m.items {
+		if item.pos >= pos+n || item.pos+item.length <= pos {
+			continue
+		}
+		if m.features[i] == nil {
+			data := mlx.FromValues(item.item.MediaData, item.item.Dims...)
+			m.features[i] = m.model.EncodeMedia(item.item, data)
+			mlx.Pin(m.features[i])
+		}
+		m.manifest[i].Features = m.features[i]
+	}
+	return m.manifest
+}
+
+// release unpins the features of items fully evaluated at position pos.
+func (m *requestMedia) release(pos int) {
+	if m == nil {
+		return
+	}
+	for i, item := range m.items {
+		if m.features[i] != nil && item.pos+item.length <= pos {
+			mlx.Unpin(m.features[i])
+			m.features[i] = nil
+			m.manifest[i].Features = nil
+		}
+	}
+}
+
+// close unpins whatever remains when the pipeline exits.
+func (m *requestMedia) close() {
+	if m == nil {
+		return
+	}
+	for i, f := range m.features {
+		if f != nil {
+			mlx.Unpin(f)
+			m.features[i] = nil
+			m.manifest[i].Features = nil
+		}
+	}
 }
 
 // expandMedia tokenizes a prompt whose [img-N] tags reference media items,
