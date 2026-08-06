@@ -103,7 +103,7 @@ func newBlockTestSession(t *testing.T, predict map[int32]int32, blockSize int) (
 	draft := &fakeBlockDraft{predict: predict, blockSize: blockSize, maskToken: 6, draftCaches: caches[1:]}
 	r.cache.caches = caches
 	r.spec = newSpeculation(r, draft, caches[:1], caches[1:])
-	return r, draft, r.spec.drafter.open().(*dflashDraftSession), caches
+	return r, draft, r.spec.drafter.open(nil).(*dflashDraftSession), caches
 }
 
 // draftTokensOf reads the draft cache's fed token stream.
@@ -122,7 +122,7 @@ func TestDFlashCommittedBuffersPastFlushCap(t *testing.T) {
 	for i := range ids {
 		ids[i] = int32(i % mtpTestVocab)
 	}
-	session.committed(mlx.FromValues(ids, 1, n), oneHotLogits(ids), 0)
+	session.committed(mlx.FromValues(ids, 1, n), oneHotLogits(ids), 0, nil)
 	if got := len(draft.calls); got != 1 {
 		t.Fatalf("draft calls after cap-sized run = %d, want 1", got)
 	}
@@ -133,7 +133,7 @@ func TestDFlashCommittedBuffersPastFlushCap(t *testing.T) {
 	// A run below the cap only buffers; settle writes it through, skipping
 	// the leading rows the flush already covered.
 	tail := []int32{1, 2, 3}
-	session.committed(mlx.FromValues(tail, 1, 3), oneHotLogits(tail), n-1)
+	session.committed(mlx.FromValues(tail, 1, 3), oneHotLogits(tail), n-1, nil)
 	if got := len(draft.calls); got != 1 {
 		t.Fatalf("draft calls after buffered run = %d, want 1 (buffered)", got)
 	}
@@ -151,14 +151,14 @@ func TestDFlashCommittedGapPanics(t *testing.T) {
 	skipIfNoMLX(t)
 	_, _, session, _ := newBlockTestSession(t, nil, 4)
 
-	session.committed(mlx.FromValues([]int32{1}, 1, 1), oneHotLogits([]int32{1}), 0)
+	session.committed(mlx.FromValues([]int32{1}, 1, 1), oneHotLogits([]int32{1}), 0, nil)
 	defer func() {
 		if recover() == nil {
 			t.Fatalf("committed run past the frontier did not panic")
 		}
 	}()
 	// The frontier is at slot 1; a run starting at 3 leaves slot 1..2 unfed.
-	session.committed(mlx.FromValues([]int32{4}, 1, 1), oneHotLogits([]int32{4}), 3)
+	session.committed(mlx.FromValues([]int32{4}, 1, 1), oneHotLogits([]int32{4}), 3, nil)
 }
 
 func TestDFlashRestoredPrefixResumes(t *testing.T) {
@@ -172,7 +172,7 @@ func TestDFlashRestoredPrefixResumes(t *testing.T) {
 	// A restored prefix arrives with the draft caches already written.
 	restored := []int32{1, 2, 3, 4, 5}
 	caches[1].(*fakeRewindableCache).feed(restored)
-	session := r.spec.drafter.open().(*dflashDraftSession)
+	session := r.spec.drafter.open(nil).(*dflashDraftSession)
 	if session.ctxOffset != len(restored) {
 		t.Fatalf("ctxOffset = %d, want %d (synced to restored offset)", session.ctxOffset, len(restored))
 	}
@@ -180,7 +180,7 @@ func TestDFlashRestoredPrefixResumes(t *testing.T) {
 	// The resumed prefill's run overlaps the restore point; only the rows
 	// past the frontier are buffered and written.
 	run := []int32{2, 3, 0, 1}
-	session.committed(mlx.FromValues(run, 1, 4), oneHotLogits(run), 3)
+	session.committed(mlx.FromValues(run, 1, 4), oneHotLogits(run), 3, nil)
 	session.settle(nil)
 	want := blockCall{offset: 5, ctx: []int32{0, 1}}
 	if got := draft.calls[0]; got.offset != want.offset || !slices.Equal(got.ctx, want.ctx) || got.block != nil {
@@ -201,7 +201,7 @@ func TestDFlashProposeBounds(t *testing.T) {
 	if session.propose(current, 4) != nil {
 		t.Fatalf("propose with no context did not decline")
 	}
-	session.committed(mlx.FromValues([]int32{1}, 1, 1), oneHotLogits([]int32{1}), 0)
+	session.committed(mlx.FromValues([]int32{1}, 1, 1), oneHotLogits([]int32{1}), 0, nil)
 	if session.propose(current, 0) != nil {
 		t.Fatalf("propose with no budget did not decline")
 	}
@@ -225,7 +225,7 @@ func TestDFlashBlockRewoundBeforeContextWrites(t *testing.T) {
 	predict := map[int32]int32{2: 3, 3: 4, 4: 5}
 	_, draft, session, caches := newBlockTestSession(t, predict, 4)
 
-	session.committed(mlx.FromValues([]int32{1}, 1, 1), oneHotLogits([]int32{1}), 0)
+	session.committed(mlx.FromValues([]int32{1}, 1, 1), oneHotLogits([]int32{1}), 0, nil)
 	if session.propose(mlx.FromValues([]int32{2}, 1), 3) == nil {
 		t.Fatalf("propose declined")
 	}
@@ -237,7 +237,7 @@ func TestDFlashBlockRewoundBeforeContextWrites(t *testing.T) {
 	// The next round's report rewinds the block before appending context, so
 	// the accepted tokens' rows land at their true slots.
 	run := []int32{2, 3, 4}
-	session.committed(mlx.FromValues(run, 1, 3), oneHotLogits(run), 1)
+	session.committed(mlx.FromValues(run, 1, 3), oneHotLogits(run), 1, nil)
 	session.settle(nil)
 	if got, want := draftTokensOf(caches), []int32{1, 2, 3, 4}; !slices.Equal(got, want) {
 		t.Fatalf("draft cache after settle = %v, want %v (block rewound)", got, want)
@@ -256,7 +256,7 @@ func TestDFlashCloseDrainsOutstandingBlock(t *testing.T) {
 	predict := map[int32]int32{2: 3, 3: 4, 4: 5}
 	_, _, session, caches := newBlockTestSession(t, predict, 4)
 
-	session.committed(mlx.FromValues([]int32{1}, 1, 1), oneHotLogits([]int32{1}), 0)
+	session.committed(mlx.FromValues([]int32{1}, 1, 1), oneHotLogits([]int32{1}), 0, nil)
 	if session.propose(mlx.FromValues([]int32{2}, 1), 3) == nil {
 		t.Fatalf("propose declined")
 	}
@@ -287,7 +287,7 @@ func TestDecodeBlockDraft(t *testing.T) {
 		CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
 		SamplerOpts:       sampler.Options{},
 	}
-	spec := r.spec.open(req)
+	spec := r.spec.open(req, nil)
 	if spec == nil || !spec.enabled {
 		t.Fatalf("open rejected a block-draft request")
 	}

@@ -97,12 +97,15 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	defer session.close()
 	caches := session.caches
 
+	media := r.openMedia(request)
+	defer media.close()
+
 	// Built before prefill so a drafter with draft caches follows the prompt
 	// through prefill alongside the target.
-	spec := r.spec.open(request)
+	spec := r.spec.open(request, media.rowLayout())
 	defer spec.close()
 
-	seed, position, promptEval, err := r.prefill(ctx, session, spec)
+	seed, position, promptEval, err := r.prefill(ctx, session, spec, media)
 	if err != nil {
 		return err
 	}
@@ -114,7 +117,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	if spec != nil {
 		d = spec.decoder(seed, position)
 	} else {
-		d = r.pipelinedDecoder(nil, caches, seed.ExpandDims(-1), position)
+		d = r.pipelinedDecoder(nil, caches, seed.ExpandDims(-1), position, media.rowLayout())
 	}
 	defer d.close()
 	return r.decode(ctx, request, session, d, promptEval)
@@ -123,7 +126,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 // prefill evaluates the prompt in chunks, leaving one token for decode to
 // seed from, and schedules the prompt's periodic snapshots. It returns the
 // seed token, the resume position, and the prompt-evaluation duration.
-func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *speculationSession) (*mlx.Array, int, time.Duration, error) {
+func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *speculationSession, media *requestMedia) (*mlx.Array, int, time.Duration, error) {
 	start := time.Now()
 	inputs := session.inputs
 	tokens := session.remaining
@@ -159,20 +162,30 @@ func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *specu
 
 	total, processed := len(tokens), 0
 	position := len(inputs) - len(tokens)
+	// Free restored items' buffers now: on a full cache hit the loop never runs.
+	media.release(position)
 	for total-processed > 1 {
 		if err := ctx.Err(); err != nil {
 			return nil, 0, 0, err
 		}
 
 		n := min(prefillChunk, total-processed-1)
+		n = media.extendChunk(position, n)
 
 		chunkIDs := mlx.FromValues(tokens[processed:processed+n], 1, n)
+		manifest := media.batchMedia(position, n)
 		_, auxHidden := r.Model.Forward(&batch.Batch{
 			InputIDs:     chunkIDs,
 			SeqOffsets:   []int32{int32(position)},
 			SeqQueryLens: []int32{int32(n)},
+			Media:        manifest,
+			Layout:       media.rowLayout(),
 		}, caches)
-		spec.committed(chunkIDs, auxHidden, position)
+		spec.committed(chunkIDs, auxHidden, position, manifest)
+		// Unpin finished items before the sweep: the consuming forward's
+		// graph retains their data until evaluation, so the buffers die with
+		// this chunk's eval instead of surviving into the next chunk.
+		media.release(position + n)
 		mlx.Sweep()
 		materializeCaches()
 		processed += n
@@ -311,12 +324,13 @@ type pipelinedDecoder struct {
 	// drafter at close, keeping a non-drafting session's draft KV level.
 	spec     *speculationSession
 	caches   []cache.Cache
+	layout   []any // the request's per-row layout state, stamped on every forward
 	position int
 	sample   sampler.Result // in flight: sampled, not yet forwarded
 }
 
-func (r *Runner) pipelinedDecoder(spec *speculationSession, caches []cache.Cache, seed *mlx.Array, position int) *pipelinedDecoder {
-	t := &pipelinedDecoder{r: r, spec: spec, caches: caches, position: position}
+func (r *Runner) pipelinedDecoder(spec *speculationSession, caches []cache.Cache, seed *mlx.Array, position int, layout []any) *pipelinedDecoder {
+	t := &pipelinedDecoder{r: r, spec: spec, caches: caches, layout: layout, position: position}
 	t.sample = t.dispatch(seed)
 	return t
 }
@@ -329,8 +343,9 @@ func (t *pipelinedDecoder) dispatch(token *mlx.Array) sampler.Result {
 		InputIDs:     token,
 		SeqOffsets:   []int32{int32(t.position)},
 		SeqQueryLens: []int32{int32(token.Dim(1))},
+		Layout:       t.layout,
 	}, t.caches)
-	t.spec.committed(token, auxHidden, t.position)
+	t.spec.committed(token, auxHidden, t.position, nil)
 	t.position += token.Dim(1)
 	logits := r.Model.Unembed(hidden)
 	next := r.Sampler.Sample([]int{pipelineSlot}, logits.Slice(mlx.Slice(), mlx.Slice(logits.Dim(1)-1), mlx.Slice()).Squeeze(1))
