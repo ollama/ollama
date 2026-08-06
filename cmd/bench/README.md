@@ -52,8 +52,21 @@ benchstat -col /name gemma.bench
 ### Controlled Prompt Length
 
 ```
-./ollama-bench -model gemma3 -epochs 6 -prompt-tokens 512
+./ollama-bench -model gemma3 -epochs 6 -prompt-tokens 2048
 ```
+
+With `-prompt-tokens`, the prompt is packed from the MIT-licensed HumanEval
+problem set (embedded from `prompts/HumanEval.jsonl`, see `prompts/LICENSE`):
+whole function signature + docstring problems, never truncated or repeated,
+sent through the model's chat template. The rendered token count (template
+included) is calibrated against the model's tokenizer, hitting the target
+within ~1-2%. Every request carries an opaque nonce so prefix caches cannot
+serve timed epochs; all epochs measure the same workload, and short responses
+retry with a rotated window of problems.
+
+Requires a server with input token counting support. Targets below the
+model-measured minimum (~50-70 tokens) are rejected — use `-p` instead; targets
+beyond the full problem set (~17k tokens) warn and run with the full set.
 
 ### Advanced Example
 
