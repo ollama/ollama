@@ -82,7 +82,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 
 	inputs := request.Tokens
 
-	session := r.cache.begin(inputs)
+	session := r.cache.begin(inputs, nil)
 	defer session.close()
 	caches := session.caches
 
