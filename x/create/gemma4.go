@@ -64,10 +64,10 @@ func (t gemma4ImportTransform) quantizationType(name string, shape []int32, quan
 
 // isSensitiveProjection reports the value/key/down projections whose precision
 // most affects quality — attention output (v/k) and the residual stream
-// (down). Audio and vision tower tensors are excluded and follow the generic
+// (down). Audio and vision tensors are excluded and follow the generic
 // policy.
 func (t gemma4ImportTransform) isSensitiveProjection(name string) bool {
-	if isVisionTower(name) || isAudioTower(name) {
+	if isVision(name) || isAudioTower(name) {
 		return false
 	}
 	return strings.Contains(name, ".v_proj") ||
