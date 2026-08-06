@@ -761,6 +761,14 @@ type ShowRequest struct {
 
 	Options map[string]any `json:"options"`
 
+	// Think is the think value the caller intends to send, used only to report
+	// the budget it would produce. A level carries a budget of its own and
+	// takes precedence over the model's `think_budget` parameter, exactly as it
+	// does on a completion — so without it this endpoint can only answer for a
+	// model that happens to carry a parameter, and answers nothing for the
+	// common case of a caller that sets the level itself.
+	Think *ThinkValue `json:"think,omitempty"`
+
 	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 }
