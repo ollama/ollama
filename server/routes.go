@@ -646,7 +646,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 	}
 
-	thinkBudget, thinkStartTag, thinkEndTag := thinkBudgetForCompletion(builtinParser, openingTag, closingTag, req.Think, opts)
+	thinkBudget, thinkBudgetApplied, thinkStartTag, thinkEndTag := thinkBudgetForCompletion(builtinParser, openingTag, closingTag, req.Think, opts)
 
 	ch := make(chan any)
 	go func() {
@@ -706,6 +706,8 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 			if cr.Done {
 				res.DoneReason = cr.DoneReason.String()
+				res.ThinkBudget = thinkBudgetApplied
+				res.ThinkBudgetTokens = thinkBudget
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 
@@ -1490,6 +1492,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		}
 	}
 	resp.Parameters = strings.Join(params, "\n")
+	resp.ThinkBudget, resp.ThinkBudgetTokens = thinkBudgetForShow(m.Options)
 
 	if len(req.Options) > 0 {
 		if m.Options == nil {
@@ -2303,9 +2306,13 @@ func preservedTokensForCompletion(builtinParser parsers.Parser) []string {
 // parser splits on. A think value carrying its own budget wins over the model's
 // think_budget parameter. The budget is zero when thinking is unrestricted or
 // when there is no thinking block to close.
-func thinkBudgetForCompletion(builtinParser parsers.Parser, templateStart, templateEnd string, think *api.ThinkValue, opts *api.Options) (budget int, start, end string) {
+//
+// The value that produced the budget is returned alongside it, because that is
+// what the response reports: a caller shown only a token count cannot tell a
+// level it sent from one the model carried.
+func thinkBudgetForCompletion(builtinParser parsers.Parser, templateStart, templateEnd string, think *api.ThinkValue, opts *api.Options) (budget int, applied *api.ThinkValue, start, end string) {
 	if opts == nil {
-		return 0, "", ""
+		return 0, nil, "", ""
 	}
 
 	start, end = parsers.ThinkingTagsForParser(builtinParser)
@@ -2313,18 +2320,76 @@ func thinkBudgetForCompletion(builtinParser parsers.Parser, templateStart, templ
 		start, end = templateStart, templateEnd
 	}
 	if start == "" || end == "" {
-		return 0, "", ""
+		return 0, nil, "", ""
 	}
 
 	window := api.ThinkBudgetWindow(opts.NumCtx, opts.NumPredict)
-	budget = think.BudgetTokens(window)
+	budget, applied = think.BudgetTokens(window), think
 	if budget <= 0 {
-		budget = opts.ThinkBudget.BudgetTokens(window)
+		budget, applied = opts.ThinkBudget.BudgetTokens(window), opts.ThinkBudget
 	}
 	if budget <= 0 {
-		return 0, "", ""
+		return 0, nil, "", ""
 	}
-	return budget, start, end
+	return budget, applied, start, end
+}
+
+// thinkBudgetForShow reports the model's own think_budget parameter and what it
+// resolves to against the model's own num_predict and num_ctx.
+//
+// The parameter already reaches a caller inside Parameters, but only as a line
+// of text to parse, and a level there says nothing about the tokens it stands
+// for. A model whose Modelfile sets neither num_predict nor num_ctx has no
+// window to resolve against here — the runtime default supplies one only once a
+// request arrives — so the count is left at zero and omitted, and the responses
+// report the figure that actually applied.
+func thinkBudgetForShow(options map[string]any) (*api.ThinkValue, int) {
+	raw, ok := options["think_budget"]
+	if !ok {
+		return nil, 0
+	}
+
+	think := &api.ThinkValue{}
+	switch v := raw.(type) {
+	case string:
+		think.Value = v
+	case bool:
+		think.Value = v
+	default:
+		count, ok := optionAsInt(raw)
+		if !ok {
+			return nil, 0
+		}
+		think.Value = count
+	}
+
+	numCtx, _ := optionAsInt(options["num_ctx"])
+	numPredict, _ := optionAsInt(options["num_predict"])
+	return think, think.BudgetTokens(api.ThinkBudgetWindow(numCtx, numPredict))
+}
+
+// optionAsInt reads a numeric Modelfile parameter. Values arrive as whichever
+// numeric type the parameter was decoded into, so all of them are accepted
+// rather than the one a given path happens to produce.
+func optionAsInt(value any) (int, bool) {
+	switch v := value.(type) {
+	case int:
+		return v, true
+	case int32:
+		return int(v), true
+	case int64:
+		return int(v), true
+	case uint32:
+		return int(v), true
+	case uint64:
+		return int(v), true
+	case float32:
+		return int(v), true
+	case float64:
+		return int(v), true
+	default:
+		return 0, false
+	}
 }
 
 func toolCallTagForCompletion(toolParser *tools.Parser) string {
@@ -2745,7 +2810,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		structuredOutputsState_Applying
 	)
 
-	thinkBudget, thinkStartTag, thinkEndTag := thinkBudgetForCompletion(builtinParser, openingTag, closingTag, req.Think, opts)
+	thinkBudget, thinkBudgetApplied, thinkStartTag, thinkEndTag := thinkBudgetForCompletion(builtinParser, openingTag, closingTag, req.Think, opts)
 
 	ch := make(chan any)
 	go func() {
@@ -2807,6 +2872,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 				if r.Done {
 					res.DoneReason = r.DoneReason.String()
+					res.ThinkBudget = thinkBudgetApplied
+					res.ThinkBudgetTokens = thinkBudget
 					res.TotalDuration = time.Since(checkpointStart)
 					res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 				}
