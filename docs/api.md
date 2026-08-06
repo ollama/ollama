@@ -1455,7 +1455,7 @@ Show information about a model including details, modelfile, template, parameter
 The response reports a model's thinking budget under the same names the generate and chat responses use:
 
 - `think_budget`: the model's own [`think_budget`](./modelfile.mdx#valid-parameters-and-values) parameter, in the form it was written - a level such as `"medium"`, or a token count. It also appears in `parameters`, but only as a line of text to parse. Omitted when the model carries no budget
-- `think_budget_tokens`: what that budget resolves to against the model's own `num_predict` and `num_ctx`, in tokens. A request that sets either resolves to a different number, which is why the generate and chat responses report their own. Omitted when the model sets no window to resolve against
+- `think_budget_tokens`: what that budget resolves to, in tokens, against the model's own `num_predict` and `num_ctx` - or against `options` when the request supplies them, so a caller can ask what the budget would be under the options it intends to send. Omitted when there is no window to resolve against
 
 ### Examples
 
