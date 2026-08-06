@@ -104,6 +104,8 @@ The final response in the stream also includes additional data about the generat
 - `eval_count`: number of tokens in the response
 - `eval_duration`: time in nanoseconds spent generating the response
 - `context`: an encoding of the conversation used in this response, this can be sent in the next request to keep a conversational memory
+- `think_budget`: the budget that applied, in the form it was written - a level such as `"medium"`, or a token count. This is the request's `think` value when that carried a budget, and the model's own `think_budget` parameter otherwise, which the caller may never have sent. Omitted when thinking was unbounded
+- `think_budget_tokens`: what that budget resolved to, in tokens. A level is a share of the room the response has, so it names a different number on every request; a budget written as a token count reports the same number in both fields. Omitted when thinking was unbounded
 - `response`: empty if the response was streamed, if not streamed, this will contain the full response
 
 To calculate how fast the response is generated in tokens per second (token/s), divide `eval_count` / `eval_duration` \* `10^9`.
@@ -580,6 +582,8 @@ Final response:
   "eval_duration": 4535599000
 }
 ```
+
+The final response carries the same additional data as [generate](#generate-a-completion), including `think_budget` and `think_budget_tokens` when thinking was bounded.
 
 #### Chat request (Streaming with tools)
 
@@ -1446,6 +1450,11 @@ Show information about a model including details, modelfile, template, parameter
 
 - `model`: name of the model to show
 - `verbose`: (optional) if set to `true`, returns full data for verbose response fields
+
+The response reports a model's thinking budget under the same names the generate and chat responses use:
+
+- `think_budget`: the model's own [`think_budget`](./modelfile.mdx#valid-parameters-and-values) parameter, in the form it was written - a level such as `"medium"`, or a token count. It also appears in `parameters`, but only as a line of text to parse. Omitted when the model carries no budget
+- `think_budget_tokens`: what that budget resolves to against the model's own `num_predict` and `num_ctx`, in tokens. A request that sets either resolves to a different number, which is why the generate and chat responses report their own. Omitted when the model sets no window to resolve against
 
 ### Examples
 

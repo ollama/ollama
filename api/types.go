@@ -542,6 +542,23 @@ type ChatResponse struct {
 	// DoneReason is the reason the model stopped generating text.
 	DoneReason string `json:"done_reason,omitempty"`
 
+	// ThinkBudget is the budget that applied, in the form it was written: a
+	// level such as "medium", or a token count. It is the request's think
+	// value when that carried a budget, and the model's own `think_budget`
+	// parameter otherwise — which is a budget the caller never sent and has no
+	// other way to learn from the wire.
+	ThinkBudget *ThinkValue `json:"think_budget,omitempty"`
+
+	// ThinkBudgetTokens is what that budget resolved to for this request.
+	//
+	// A level is a share of the room the response has — `min(num_predict,
+	// num_ctx)` — so it names a different number on every request as the
+	// prompt grows, and no client can work it out from the level alone.
+	// Reporting it is what lets a caller tell the model what it is actually
+	// working within, and tell a truncated answer caused by a thinking bound
+	// apart from one caused by the response cap.
+	ThinkBudgetTokens int `json:"think_budget_tokens,omitempty"`
+
 	DebugInfo *DebugInfo `json:"_debug_info,omitempty"`
 
 	// Logprobs contains log probability information for the generated tokens,
@@ -767,6 +784,18 @@ type ShowResponse struct {
 	Capabilities  []model.Capability `json:"capabilities,omitempty"`
 	ModifiedAt    time.Time          `json:"modified_at,omitempty"`
 	Requires      string             `json:"requires,omitempty"`
+
+	// ThinkBudget is the model's own `think_budget` parameter, in the form it
+	// was written. It also appears in Parameters, but only as a line of text a
+	// caller would have to parse; naming it here matches the field on
+	// [ChatResponse] and [GenerateResponse] so one name means one thing across
+	// the API.
+	ThinkBudget *ThinkValue `json:"think_budget,omitempty"`
+
+	// ThinkBudgetTokens is what that budget resolves to against the model's
+	// own `num_predict` and `num_ctx`. A request that sets either will resolve
+	// to a different number, which is why the responses report their own.
+	ThinkBudgetTokens int `json:"think_budget_tokens,omitempty"`
 }
 
 // CopyRequest is the request passed to [Client.Copy].
@@ -932,6 +961,14 @@ type GenerateResponse struct {
 	// Context is an encoding of the conversation used in this response; this
 	// can be sent in the next request to keep a conversational memory.
 	Context []int `json:"context,omitempty"`
+
+	// ThinkBudget is the budget that applied, in the form it was written. See
+	// the field of the same name on [ChatResponse].
+	ThinkBudget *ThinkValue `json:"think_budget,omitempty"`
+
+	// ThinkBudgetTokens is what that budget resolved to for this request. See
+	// the field of the same name on [ChatResponse].
+	ThinkBudgetTokens int `json:"think_budget_tokens,omitempty"`
 
 	Metrics
 
