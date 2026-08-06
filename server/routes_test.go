@@ -805,6 +805,91 @@ func TestShow(t *testing.T) {
 	}
 }
 
+func TestShowThinkBudget(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	var s Server
+
+	_, digest := createBinFile(t, ggml.KV{"general.architecture": "test"}, nil)
+
+	show := func(t *testing.T, name string, parameters map[string]any) api.ShowResponse {
+		t.Helper()
+		createRequest(t, s.CreateHandler, api.CreateRequest{
+			Name:       name,
+			Files:      map[string]string{"model.gguf": digest},
+			Parameters: parameters,
+		})
+
+		w := createRequest(t, s.ShowHandler, api.ShowRequest{Name: name})
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status code 200, actual %d", w.Code)
+		}
+
+		var resp api.ShowResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+
+	t.Run("resolves a level against the model's own window", func(t *testing.T) {
+		// The parameter already appears in Parameters as a line of text; the
+		// point of the field is that the level alone says nothing about the
+		// tokens it stands for.
+		resp := show(t, "show-think-level", map[string]any{
+			"think_budget": "medium",
+			"num_ctx":      32768,
+		})
+
+		if resp.ThinkBudget == nil || resp.ThinkBudget.Value != "medium" {
+			t.Fatalf("expected think budget %q, got %#v", "medium", resp.ThinkBudget)
+		}
+		if resp.ThinkBudgetTokens != 8192 {
+			t.Errorf("expected think budget tokens 8192, got %d", resp.ThinkBudgetTokens)
+		}
+	})
+
+	t.Run("divides num_predict when the model caps the response", func(t *testing.T) {
+		resp := show(t, "show-think-predict", map[string]any{
+			"think_budget": "medium",
+			"num_ctx":      32768,
+			"num_predict":  8000,
+		})
+
+		if resp.ThinkBudgetTokens != 2000 {
+			t.Errorf("expected think budget tokens 2000, got %d", resp.ThinkBudgetTokens)
+		}
+	})
+
+	t.Run("reports a fixed count as both the value and the count", func(t *testing.T) {
+		resp := show(t, "show-think-fixed", map[string]any{
+			"think_budget": 4096,
+			"num_ctx":      32768,
+		})
+
+		if resp.ThinkBudgetTokens != 4096 {
+			t.Errorf("expected think budget tokens 4096, got %d", resp.ThinkBudgetTokens)
+		}
+		if resp.ThinkBudget == nil {
+			t.Fatalf("expected a think budget value, got nil")
+		}
+		if got := fmt.Sprintf("%v", resp.ThinkBudget.Value); got != "4096" {
+			t.Errorf("expected think budget %q, got %q", "4096", got)
+		}
+	})
+
+	t.Run("says nothing when the model carries no budget", func(t *testing.T) {
+		resp := show(t, "show-think-none", map[string]any{"num_ctx": 32768})
+
+		if resp.ThinkBudget != nil {
+			t.Errorf("expected no think budget, got %#v", resp.ThinkBudget)
+		}
+		if resp.ThinkBudgetTokens != 0 {
+			t.Errorf("expected no think budget tokens, got %d", resp.ThinkBudgetTokens)
+		}
+	})
+}
+
 func TestShowTemplateUsesSelectedRuntimeTemplate(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 	t.Setenv("OLLAMA_GO_TEMPLATE", "")
@@ -1359,7 +1444,7 @@ func TestThinkBudgetForCompletion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			budget, start, end := thinkBudgetForCompletion(tt.parser, tt.templateStart, tt.templateEnd, tt.think, tt.opts)
+			budget, _, start, end := thinkBudgetForCompletion(tt.parser, tt.templateStart, tt.templateEnd, tt.think, tt.opts)
 			if budget != tt.wantBudget {
 				t.Errorf("budget = %d, want %d", budget, tt.wantBudget)
 			}
@@ -1379,7 +1464,7 @@ func TestThinkBudgetForCompletionHarmony(t *testing.T) {
 
 	opts := &api.Options{Runner: api.Runner{NumCtx: 32768}}
 
-	budget, start, end := thinkBudgetForCompletion(harmonyParser, "", "", &api.ThinkValue{Value: "high"}, opts)
+	budget, _, start, end := thinkBudgetForCompletion(harmonyParser, "", "", &api.ThinkValue{Value: "high"}, opts)
 	if budget != 16384 {
 		t.Errorf("budget = %d, want 16384", budget)
 	}
@@ -1392,7 +1477,7 @@ func TestThinkBudgetForCompletionHarmony(t *testing.T) {
 		t.Errorf("end tag = %q, want %q", end, "<|end|>")
 	}
 
-	if budget, _, _ := thinkBudgetForCompletion(harmonyParser, "", "", &api.ThinkValue{Value: true}, opts); budget != 0 {
+	if budget, _, _, _ := thinkBudgetForCompletion(harmonyParser, "", "", &api.ThinkValue{Value: true}, opts); budget != 0 {
 		t.Errorf("think true budget = %d, want 0 (unrestricted)", budget)
 	}
 }
