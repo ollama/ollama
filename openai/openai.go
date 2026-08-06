@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 
@@ -521,6 +520,31 @@ func ToModel(r api.ShowResponse, m string) Model {
 	}
 }
 
+// thinkFromReasoningEffort converts an OpenAI reasoning effort to the equivalent
+// Ollama think value. An empty effort leaves thinking at the model's default.
+//
+// OpenAI's scale extends past both ends of Ollama's ("minimal" below "low",
+// "xhigh" above "high"), and clients built on it add tiers of their own
+// ("ultra"). Clamp those to the nearest Ollama tier rather than rejecting the
+// request, since the alternative is a 400 for an effort the client considers
+// perfectly valid.
+func thinkFromReasoningEffort(effort string) (*api.ThinkValue, error) {
+	switch effort {
+	case "":
+		return nil, nil
+	case "none":
+		return &api.ThinkValue{Value: false}, nil
+	case "minimal":
+		return &api.ThinkValue{Value: "low"}, nil
+	case "low", "medium", "high", "max":
+		return &api.ThinkValue{Value: effort}, nil
+	case "xhigh", "ultra":
+		return &api.ThinkValue{Value: "max"}, nil
+	default:
+		return nil, fmt.Errorf("invalid reasoning value: %q (must be \"minimal\", \"low\", \"medium\", \"high\", \"xhigh\", \"ultra\", \"max\", or \"none\")", effort)
+	}
+}
+
 // FromChatRequest converts a ChatCompletionRequest to api.ChatRequest
 func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	var messages []api.Message
@@ -670,7 +694,6 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		}
 	}
 
-	var think *api.ThinkValue
 	var effort string
 
 	if r.Reasoning != nil {
@@ -679,16 +702,9 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		effort = *r.ReasoningEffort
 	}
 
-	if effort != "" {
-		if !slices.Contains([]string{"high", "medium", "low", "max", "none"}, effort) {
-			return nil, fmt.Errorf("invalid reasoning value: '%s' (must be \"high\", \"medium\", \"low\", \"max\", or \"none\")", effort)
-		}
-
-		if effort == "none" {
-			think = &api.ThinkValue{Value: false}
-		} else {
-			think = &api.ThinkValue{Value: effort}
-		}
+	think, err := thinkFromReasoningEffort(effort)
+	if err != nil {
+		return nil, err
 	}
 
 	return &api.ChatRequest{
