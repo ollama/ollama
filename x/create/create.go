@@ -297,6 +297,11 @@ func GetTensorQuantization(name string, shape []int32, quantize string) string {
 		return ""
 	}
 
+	// Vision towers are too quantization-sensitive; keep source precision.
+	if isVisionTower(name) {
+		return ""
+	}
+
 	// MLX quantization requires last dimension to be divisible by group size.
 	if !isAligned(shape, quantNorm) {
 		return ""
