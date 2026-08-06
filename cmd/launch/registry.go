@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"claude", "chatgpt", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "pi", "pool", "qwen"}
+var launcherIntegrationOrder = []string{"claude", "chatgpt", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "pi", "pool", "qwen", "talos"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -121,6 +121,18 @@ var integrationSpecs = []*IntegrationSpec{
 				return err
 			},
 			URL: "https://moonshotai.github.io/kimi-cli/en/guides/getting-started.html",
+		},
+	},
+	{
+		Name:        "talos",
+		Runner:      &Talos{},
+		Description: "Agent with a deterministic permission kernel",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				_, _, err := (&Talos{}).findPath()
+				return err == nil
+			},
+			URL: "https://talos-agent.ch",
 		},
 	},
 	{
