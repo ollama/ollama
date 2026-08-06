@@ -96,9 +96,10 @@ func isEmbedTokensWeight(name string) bool {
 		!strings.Contains(name, "per_layer")
 }
 
-// isVisionTower reports tensors under a model's vision tower.
-func isVisionTower(name string) bool {
-	return strings.Contains(name, "vision_tower") || strings.Contains(name, ".visual.")
+// isVision reports tensors under a model's vision components: towers,
+// encoder-free embedders, and vision-to-text projections alike.
+func isVision(name string) bool {
+	return strings.Contains(name, "vision") || strings.Contains(name, "visual")
 }
 
 // isAudioTower reports tensors under a model's audio tower or audio embedding.
