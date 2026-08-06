@@ -1452,9 +1452,11 @@ Show information about a model including details, modelfile, template, parameter
 - `model`: name of the model to show
 - `verbose`: (optional) if set to `true`, returns full data for verbose response fields
 
-The response reports a model's thinking budget under the same names the generate and chat responses use:
+It also accepts `think`, the think value the caller intends to send, so the budget below can be answered for a level the caller sets rather than only for one the model carries.
 
-- `think_budget`: the model's own [`think_budget`](./modelfile.mdx#valid-parameters-and-values) parameter, in the form it was written - a level such as `"medium"`, or a token count. It also appears in `parameters`, but only as a line of text to parse. Omitted when the model carries no budget
+The response reports the thinking budget under the same names the generate and chat responses use:
+
+- `think_budget`: the budget that would apply, in the form it was written - a level such as `"medium"`, or a token count. This is the request's `think` value when that carries a budget, and the model's own [`think_budget`](./modelfile.mdx#valid-parameters-and-values) parameter otherwise - the same precedence a completion uses. The parameter also appears in `parameters`, but only as a line of text to parse. Omitted when neither carries a budget
 - `think_budget_tokens`: what that budget resolves to, in tokens, against the model's own `num_predict` and `num_ctx` - or against `options` when the request supplies them, so a caller can ask what the budget would be under the options it intends to send. Omitted when there is no window to resolve against
 
 ### Examples

@@ -813,13 +813,20 @@ func TestShow(t *testing.T) {
 // it wants the budget for the request it is about to send.
 func showWithOptions(t *testing.T, s *Server, digest, name string, parameters, options map[string]any) api.ShowResponse {
 	t.Helper()
+	return showWithThink(t, s, digest, name, parameters, options, nil)
+}
+
+// showWithThink additionally asks about the think value the caller intends to
+// send, which is what a client setting the level itself has to ask about.
+func showWithThink(t *testing.T, s *Server, digest, name string, parameters, options map[string]any, think *api.ThinkValue) api.ShowResponse {
+	t.Helper()
 	createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:       name,
 		Files:      map[string]string{"model.gguf": digest},
 		Parameters: parameters,
 	})
 
-	w := createRequest(t, s.ShowHandler, api.ShowRequest{Name: name, Options: options})
+	w := createRequest(t, s.ShowHandler, api.ShowRequest{Name: name, Options: options, Think: think})
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
@@ -842,6 +849,53 @@ func TestShowThinkBudget(t *testing.T) {
 		t.Helper()
 		return showWithOptions(t, &s, digest, name, parameters, nil)
 	}
+
+	t.Run("answers for a think level the caller intends to send", func(t *testing.T) {
+		// The common case: the client sets the level, and the model carries no
+		// think_budget parameter at all. Without the think value there is
+		// nothing here to resolve and the caller is back to guessing.
+		resp := showWithThink(t, &s, digest, "show-think-request-level",
+			map[string]any{"num_ctx": 32768}, map[string]any{"num_predict": 8000},
+			&api.ThinkValue{Value: "medium"})
+
+		if resp.ThinkBudget == nil || resp.ThinkBudget.Value != "medium" {
+			t.Fatalf("expected think budget %q, got %#v", "medium", resp.ThinkBudget)
+		}
+		if resp.ThinkBudgetTokens != 2000 {
+			t.Errorf("expected think budget tokens 2000, got %d", resp.ThinkBudgetTokens)
+		}
+	})
+
+	t.Run("lets the request's think value win over the model parameter", func(t *testing.T) {
+		// Same precedence as a completion: a think value carrying its own
+		// budget beats the model's. An answer that disagreed with the
+		// completion path would be worse than no answer.
+		resp := showWithThink(t, &s, digest, "show-think-precedence",
+			map[string]any{"think_budget": "minimal", "num_ctx": 32768}, nil,
+			&api.ThinkValue{Value: "high"})
+
+		if resp.ThinkBudget == nil || resp.ThinkBudget.Value != "high" {
+			t.Fatalf("expected think budget %q, got %#v", "high", resp.ThinkBudget)
+		}
+		if resp.ThinkBudgetTokens != 16384 {
+			t.Errorf("expected think budget tokens 16384, got %d", resp.ThinkBudgetTokens)
+		}
+	})
+
+	t.Run("falls back to the model parameter when think carries no budget", func(t *testing.T) {
+		// `think: true` means unbounded, not "no budget", so the model's own
+		// parameter is still what applies.
+		resp := showWithThink(t, &s, digest, "show-think-unbounded",
+			map[string]any{"think_budget": "medium", "num_ctx": 32768}, nil,
+			&api.ThinkValue{Value: true})
+
+		if resp.ThinkBudget == nil || resp.ThinkBudget.Value != "medium" {
+			t.Fatalf("expected think budget %q, got %#v", "medium", resp.ThinkBudget)
+		}
+		if resp.ThinkBudgetTokens != 8192 {
+			t.Errorf("expected think budget tokens 8192, got %d", resp.ThinkBudgetTokens)
+		}
+	})
 
 	t.Run("resolves against the options the caller intends to send", func(t *testing.T) {
 		// A client that overrides num_predict gets the budget for its own
