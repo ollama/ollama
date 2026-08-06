@@ -2,10 +2,12 @@ package server
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -781,5 +783,60 @@ func TestPullModelManifest(t *testing.T) {
 				t.Fatal("expected at least one layer")
 			}
 		})
+	}
+}
+
+type errReader struct{ err error }
+
+func (r errReader) Read([]byte) (int, error) { return 0, r.err }
+
+// GetSHA256Digest used to call log.Fatal on a read error, which terminates the
+// whole server process rather than letting the caller handle it.
+func TestGetSHA256DigestReturnsReadError(t *testing.T) {
+	wantErr := errors.New("simulated disk failure")
+
+	digest, n, err := GetSHA256Digest(errReader{err: wantErr})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected the read error back, got %v", err)
+	}
+	if digest != "" {
+		t.Errorf("expected no digest on failure, got %q", digest)
+	}
+	if n != 0 {
+		t.Errorf("expected 0 bytes hashed, got %d", n)
+	}
+}
+
+func TestVerifyBlobReportsReadErrorNotDigestMismatch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// the directory trick below needs os.Open on a directory to succeed,
+		// which it does not do on Windows
+		t.Skip("relies on POSIX directory open semantics")
+	}
+
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	digest := "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	fp, err := manifest.BlobsPath(digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// a directory opens fine but fails on read, standing in for an unreadable blob
+	if err := os.MkdirAll(fp, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	err = verifyBlob(digest)
+	if err == nil {
+		t.Fatal("expected an error, got none")
+	}
+	if errors.Is(err, errDigestMismatch) {
+		t.Fatalf("read failure was reported as a digest mismatch: %v", err)
+	}
+	// assert it came from the hashing step, not from os.Open, so this cannot
+	// pass for the wrong reason
+	if !strings.Contains(err.Error(), "to verify its digest") {
+		t.Errorf("expected the digest-read error, got %v", err)
 	}
 }
