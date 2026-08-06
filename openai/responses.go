@@ -525,16 +525,9 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 		options["num_predict"] = *r.MaxOutputTokens
 	}
 
-	var think *api.ThinkValue
-	if effort := r.Reasoning.Effort; effort != "" {
-		switch effort {
-		case "none":
-			think = &api.ThinkValue{Value: false}
-		case "low", "medium", "high", "max":
-			think = &api.ThinkValue{Value: effort}
-		default:
-			return nil, fmt.Errorf("invalid reasoning value: %q (must be \"high\", \"medium\", \"low\", \"max\", or \"none\")", effort)
-		}
+	think, err := thinkFromReasoningEffort(r.Reasoning.Effort)
+	if err != nil {
+		return nil, err
 	}
 
 	// Convert tools from Responses API format to api.Tool format
