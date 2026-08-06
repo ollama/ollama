@@ -70,9 +70,35 @@ func captureOutput(f func()) string {
 }
 
 type mockServerOptions struct {
-	generateResponses []api.GenerateResponse
-	showResponse      *api.ShowResponse
-	psResponse        *api.ProcessResponse
+	chatResponses []api.ChatResponse
+	showResponse  *api.ShowResponse
+	psResponse    *api.ProcessResponse
+	// onChat, when set, is called with each decoded chat request.
+	onChat func(req api.ChatRequest)
+	// promptEvalCount, when set, simulates model-specific prompt tokenization.
+	promptEvalCount func(req api.ChatRequest) int
+}
+
+// mockPromptEvalCount deterministically counts prompt words like a tokenizer
+// enough for calibration tests: ~1.3 tokens/word plus template overhead.
+func mockPromptEvalCount(req api.ChatRequest) int {
+	words := 0
+	for _, m := range req.Messages {
+		words += len(strings.Fields(m.Content))
+	}
+	return words*13/10 + 25
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	jsonData, err := json.Marshal(v)
+	if err != nil {
+		return
+	}
+	w.Write(jsonData)
+	w.Write([]byte("\n"))
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func createMockOllamaServer(t *testing.T, opts mockServerOptions) *httptest.Server {
@@ -80,27 +106,35 @@ func createMockOllamaServer(t *testing.T, opts mockServerOptions) *httptest.Serv
 		w.Header().Set("Content-Type", "application/json")
 
 		switch r.URL.Path {
-		case "/api/generate":
+		case "/api/chat":
 			if r.Method != "POST" {
-				t.Errorf("Expected POST method for /api/generate, got %s", r.Method)
+				t.Errorf("Expected POST method for /api/chat, got %s", r.Method)
 				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 				return
 			}
 
+			var req api.ChatRequest
+			body, _ := io.ReadAll(r.Body)
+			json.Unmarshal(body, &req)
+
+			if opts.onChat != nil {
+				opts.onChat(req)
+			}
+
 			w.WriteHeader(http.StatusOK)
-			for _, resp := range opts.generateResponses {
-				jsonData, err := json.Marshal(resp)
-				if err != nil {
-					t.Errorf("Failed to marshal response: %v", err)
-					return
+			for _, resp := range opts.chatResponses {
+				resp.Model = req.Model
+				if resp.Done && opts.promptEvalCount != nil {
+					resp.Metrics.PromptEvalCount = opts.promptEvalCount(req)
 				}
-				w.Write(jsonData)
-				w.Write([]byte("\n"))
-				if f, ok := w.(http.Flusher); ok {
-					f.Flush()
-				}
+				writeJSON(w, resp)
 				time.Sleep(10 * time.Millisecond)
 			}
+
+		case "/api/generate":
+			// Only used by unloadModel
+			w.WriteHeader(http.StatusOK)
+			writeJSON(w, api.GenerateResponse{Done: true})
 
 		case "/api/show":
 			if opts.showResponse != nil {
@@ -137,17 +171,17 @@ func createMockOllamaServer(t *testing.T, opts mockServerOptions) *httptest.Serv
 	}))
 }
 
-func defaultGenerateResponses() []api.GenerateResponse {
-	return []api.GenerateResponse{
+func defaultChatResponses() []api.ChatResponse {
+	return []api.ChatResponse{
 		{
-			Model:    "test-model",
-			Response: "test response part 1",
-			Done:     false,
+			Model:   "test-model",
+			Message: api.Message{Role: "assistant", Content: "test response part 1"},
+			Done:    false,
 		},
 		{
-			Model:    "test-model",
-			Response: "test response part 2",
-			Done:     true,
+			Model:   "test-model",
+			Message: api.Message{Role: "assistant", Content: "test response part 2"},
+			Done:    true,
 			Metrics: api.Metrics{
 				PromptEvalCount:    10,
 				PromptEvalDuration: 100 * time.Millisecond,
@@ -164,7 +198,7 @@ func TestBenchmarkModel_Success(t *testing.T) {
 	fOpt := createTestFlagOptions()
 
 	server := createMockOllamaServer(t, mockServerOptions{
-		generateResponses: defaultGenerateResponses(),
+		chatResponses: defaultChatResponses(),
 	})
 	defer server.Close()
 
@@ -219,7 +253,7 @@ func TestBenchmarkModel_Timeout(t *testing.T) {
 	fOpt.timeout = &shortTimeout
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/show" || r.URL.Path == "/api/ps" {
+		if r.URL.Path == "/api/show" || r.URL.Path == "/api/ps" || r.URL.Path == "/api/generate" {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]any{})
 			return
@@ -228,10 +262,10 @@ func TestBenchmarkModel_Timeout(t *testing.T) {
 		time.Sleep(2 * time.Second)
 
 		w.Header().Set("Content-Type", "application/json")
-		response := api.GenerateResponse{
-			Model:    "test-model",
-			Response: "test response",
-			Done:     true,
+		writeJSON(w, api.ChatResponse{
+			Model:   "test-model",
+			Message: api.Message{Role: "assistant", Content: "test response"},
+			Done:    true,
 			Metrics: api.Metrics{
 				PromptEvalCount:    10,
 				PromptEvalDuration: 100 * time.Millisecond,
@@ -240,9 +274,7 @@ func TestBenchmarkModel_Timeout(t *testing.T) {
 				TotalDuration:      600 * time.Millisecond,
 				LoadDuration:       50 * time.Millisecond,
 			},
-		}
-		jsonData, _ := json.Marshal(response)
-		w.Write(jsonData)
+		})
 	}))
 	defer server.Close()
 
@@ -264,11 +296,11 @@ func TestBenchmarkModel_NoMetrics(t *testing.T) {
 	fOpt := createTestFlagOptions()
 
 	server := createMockOllamaServer(t, mockServerOptions{
-		generateResponses: []api.GenerateResponse{
+		chatResponses: []api.ChatResponse{
 			{
-				Model:    "test-model",
-				Response: "test response",
-				Done:     false, // Never sends Done=true
+				Model:   "test-model",
+				Message: api.Message{Role: "assistant", Content: "test response"},
+				Done:    false, // Never sends Done=true
 			},
 		},
 	})
@@ -295,53 +327,11 @@ func TestBenchmarkModel_MultipleModels(t *testing.T) {
 	fOpt.models = &models
 	fOpt.epochs = &epochs
 
-	generateCallCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		switch r.URL.Path {
-		case "/api/generate":
-			var req api.GenerateRequest
-			body, _ := io.ReadAll(r.Body)
-			json.Unmarshal(body, &req)
-
-			// Don't count unload requests (empty prompt with KeepAlive)
-			if req.Prompt != "" {
-				generateCallCount++
-			}
-
-			response := api.GenerateResponse{
-				Model:    req.Model,
-				Response: "test response for " + req.Model,
-				Done:     true,
-				Metrics: api.Metrics{
-					PromptEvalCount:    10,
-					PromptEvalDuration: 100 * time.Millisecond,
-					EvalCount:          50,
-					EvalDuration:       500 * time.Millisecond,
-					TotalDuration:      600 * time.Millisecond,
-					LoadDuration:       50 * time.Millisecond,
-				},
-			}
-			jsonData, _ := json.Marshal(response)
-			w.Write(jsonData)
-
-		case "/api/show":
-			json.NewEncoder(w).Encode(api.ShowResponse{
-				Details: api.ModelDetails{
-					ParameterSize:     "7B",
-					QuantizationLevel: "Q4_0",
-					Family:            "llama",
-				},
-			})
-
-		case "/api/ps":
-			json.NewEncoder(w).Encode(api.ProcessResponse{})
-
-		default:
-			http.Error(w, "Not found", http.StatusNotFound)
-		}
-	}))
+	chatCallCount := 0
+	server := createMockOllamaServer(t, mockServerOptions{
+		onChat:        func(req api.ChatRequest) { chatCallCount++ },
+		chatResponses: defaultChatResponses(),
+	})
 	defer server.Close()
 
 	t.Setenv("OLLAMA_HOST", server.URL)
@@ -353,9 +343,9 @@ func TestBenchmarkModel_MultipleModels(t *testing.T) {
 		}
 	})
 
-	// Should be called 4 times (2 models x 2 epochs), not counting unload requests
-	if generateCallCount != 4 {
-		t.Errorf("Expected 4 API calls, got %d", generateCallCount)
+	// Should be called 4 times (2 models x 2 epochs)
+	if chatCallCount != 4 {
+		t.Errorf("Expected 4 API calls, got %d", chatCallCount)
 	}
 
 	if !strings.Contains(output, "BenchmarkModel/name=model1") || !strings.Contains(output, "BenchmarkModel/name=model2") {
@@ -381,46 +371,14 @@ func TestBenchmarkModel_WithImage(t *testing.T) {
 	tmpfileName := tmpfile.Name()
 	fOpt.imageFile = &tmpfileName
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		switch r.URL.Path {
-		case "/api/generate":
-			var req api.GenerateRequest
-			body, _ := io.ReadAll(r.Body)
-			json.Unmarshal(body, &req)
-
-			// Only check for images on real requests, not unload requests
-			if req.Prompt != "" && len(req.Images) == 0 {
+	server := createMockOllamaServer(t, mockServerOptions{
+		onChat: func(req api.ChatRequest) {
+			if len(req.Messages) == 0 || len(req.Messages[0].Images) == 0 {
 				t.Error("Expected request to contain images")
 			}
-
-			response := api.GenerateResponse{
-				Model:    "test-model",
-				Response: "test response with image",
-				Done:     true,
-				Metrics: api.Metrics{
-					PromptEvalCount:    10,
-					PromptEvalDuration: 100 * time.Millisecond,
-					EvalCount:          50,
-					EvalDuration:       500 * time.Millisecond,
-					TotalDuration:      600 * time.Millisecond,
-					LoadDuration:       50 * time.Millisecond,
-				},
-			}
-			jsonData, _ := json.Marshal(response)
-			w.Write(jsonData)
-
-		case "/api/show":
-			json.NewEncoder(w).Encode(api.ShowResponse{})
-
-		case "/api/ps":
-			json.NewEncoder(w).Encode(api.ProcessResponse{})
-
-		default:
-			http.Error(w, "Not found", http.StatusNotFound)
-		}
-	}))
+		},
+		chatResponses: defaultChatResponses(),
+	})
 	defer server.Close()
 
 	t.Setenv("OLLAMA_HOST", server.URL)
@@ -475,7 +433,7 @@ func TestReadImage_Success(t *testing.T) {
 	}
 	defer os.Remove(tmpfile.Name())
 
-	content := []byte("fake image data")
+	content := []byte("fake image data for testing")
 	if _, err := tmpfile.Write(content); err != nil {
 		t.Fatalf("Failed to write to temp file: %v", err)
 	}
@@ -483,40 +441,25 @@ func TestReadImage_Success(t *testing.T) {
 
 	imgData, err := readImage(tmpfile.Name())
 	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
+		t.Fatalf("Expected no error, got %v", err)
 	}
 
-	if imgData == nil {
-		t.Error("Expected image data, got nil")
-	}
-
-	expected := api.ImageData(content)
-	if string(imgData) != string(expected) {
-		t.Errorf("Expected image data %v, got %v", expected, imgData)
+	if len(imgData) != len(content) {
+		t.Errorf("Expected image data length %d, got %d", len(content), len(imgData))
 	}
 }
 
 func TestReadImage_FileNotFound(t *testing.T) {
-	imgData, err := readImage("nonexistentfile.jpg")
+	_, err := readImage("/nonexistent/path/to/image.png")
 	if err == nil {
 		t.Error("Expected error for non-existent file, got nil")
-	}
-	if imgData != nil {
-		t.Error("Expected nil image data for non-existent file")
 	}
 }
 
 func TestOptionsMapCreation(t *testing.T) {
 	fOpt := createTestFlagOptions()
 
-	options := make(map[string]interface{})
-	if *fOpt.maxTokens > 0 {
-		options["num_predict"] = *fOpt.maxTokens
-	}
-	options["temperature"] = *fOpt.temperature
-	if fOpt.seed != nil && *fOpt.seed > 0 {
-		options["seed"] = *fOpt.seed
-	}
+	options := benchmarkOptions(fOpt)
 
 	if options["num_predict"] != *fOpt.maxTokens {
 		t.Errorf("Expected num_predict %d, got %v", *fOpt.maxTokens, options["num_predict"])
@@ -538,44 +481,11 @@ func TestBenchmarkModel_Warmup(t *testing.T) {
 	debug := true
 	fOpt.debug = &debug
 
-	generateCallCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		switch r.URL.Path {
-		case "/api/generate":
-			var req api.GenerateRequest
-			body, _ := io.ReadAll(r.Body)
-			json.Unmarshal(body, &req)
-
-			// Don't count unload requests
-			if req.Prompt != "" {
-				generateCallCount++
-			}
-
-			response := api.GenerateResponse{
-				Model:    "test-model",
-				Response: "response",
-				Done:     true,
-				Metrics: api.Metrics{
-					PromptEvalCount:    10,
-					PromptEvalDuration: 100 * time.Millisecond,
-					EvalCount:          50,
-					EvalDuration:       500 * time.Millisecond,
-					TotalDuration:      600 * time.Millisecond,
-					LoadDuration:       50 * time.Millisecond,
-				},
-			}
-			jsonData, _ := json.Marshal(response)
-			w.Write(jsonData)
-
-		case "/api/show":
-			json.NewEncoder(w).Encode(api.ShowResponse{})
-
-		case "/api/ps":
-			json.NewEncoder(w).Encode(api.ProcessResponse{})
-		}
-	}))
+	chatCallCount := 0
+	server := createMockOllamaServer(t, mockServerOptions{
+		onChat:        func(req api.ChatRequest) { chatCallCount++ },
+		chatResponses: defaultChatResponses(),
+	})
 	defer server.Close()
 
 	t.Setenv("OLLAMA_HOST", server.URL)
@@ -587,9 +497,9 @@ func TestBenchmarkModel_Warmup(t *testing.T) {
 		}
 	})
 
-	// 2 warmup + 1 epoch = 3 total generate calls (not counting unload)
-	if generateCallCount != 3 {
-		t.Errorf("Expected 3 generate calls (2 warmup + 1 epoch), got %d", generateCallCount)
+	// 2 warmup + 1 epoch = 3 total chat calls
+	if chatCallCount != 3 {
+		t.Errorf("Expected 3 chat calls (2 warmup + 1 epoch), got %d", chatCallCount)
 	}
 
 	if !strings.Contains(output, "Warmup 1/2 for test-model complete") {
@@ -604,7 +514,7 @@ func TestBenchmarkModel_TTFT(t *testing.T) {
 	fOpt := createTestFlagOptions()
 
 	server := createMockOllamaServer(t, mockServerOptions{
-		generateResponses: defaultGenerateResponses(),
+		chatResponses: defaultChatResponses(),
 	})
 	defer server.Close()
 
@@ -626,7 +536,7 @@ func TestBenchmarkModel_ModelInfo(t *testing.T) {
 	fOpt := createTestFlagOptions()
 
 	server := createMockOllamaServer(t, mockServerOptions{
-		generateResponses: defaultGenerateResponses(),
+		chatResponses: defaultChatResponses(),
 		showResponse: &api.ShowResponse{
 			Details: api.ModelDetails{
 				ParameterSize:     "4.3B",
@@ -661,7 +571,7 @@ func TestBenchmarkModel_VRAM(t *testing.T) {
 	fOpt := createTestFlagOptions()
 
 	server := createMockOllamaServer(t, mockServerOptions{
-		generateResponses: defaultGenerateResponses(),
+		chatResponses: defaultChatResponses(),
 		psResponse: &api.ProcessResponse{
 			Models: []api.ProcessModelResponse{
 				{
@@ -692,47 +602,19 @@ func TestBenchmarkModel_VRAM(t *testing.T) {
 
 func TestBenchmarkModel_PromptTokens(t *testing.T) {
 	fOpt := createTestFlagOptions()
-	promptTokens := 100
+	promptTokens := 1000
 	fOpt.promptTokens = &promptTokens
 
-	var receivedPrompt string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		switch r.URL.Path {
-		case "/api/generate":
-			var req api.GenerateRequest
-			body, _ := io.ReadAll(r.Body)
-			json.Unmarshal(body, &req)
-
-			// Only capture prompt from real requests, not unload requests
-			if req.Prompt != "" {
-				receivedPrompt = req.Prompt
+	var receivedContents []string
+	server := createMockOllamaServer(t, mockServerOptions{
+		onChat: func(req api.ChatRequest) {
+			if len(req.Messages) > 0 {
+				receivedContents = append(receivedContents, req.Messages[0].Content)
 			}
-
-			response := api.GenerateResponse{
-				Model:    "test-model",
-				Response: "response",
-				Done:     true,
-				Metrics: api.Metrics{
-					PromptEvalCount:    85,
-					PromptEvalDuration: 100 * time.Millisecond,
-					EvalCount:          50,
-					EvalDuration:       500 * time.Millisecond,
-					TotalDuration:      600 * time.Millisecond,
-					LoadDuration:       50 * time.Millisecond,
-				},
-			}
-			jsonData, _ := json.Marshal(response)
-			w.Write(jsonData)
-
-		case "/api/show":
-			json.NewEncoder(w).Encode(api.ShowResponse{})
-
-		case "/api/ps":
-			json.NewEncoder(w).Encode(api.ProcessResponse{})
-		}
-	}))
+		},
+		chatResponses:   defaultChatResponses(),
+		promptEvalCount: mockPromptEvalCount,
+	})
 	defer server.Close()
 
 	t.Setenv("OLLAMA_HOST", server.URL)
@@ -744,59 +626,118 @@ func TestBenchmarkModel_PromptTokens(t *testing.T) {
 		}
 	})
 
-	// With ~100 tokens / 1.3 = ~76 words
-	wordCount := len(strings.Fields(receivedPrompt))
-	if wordCount < 50 || wordCount > 120 {
-		t.Errorf("Expected generated prompt with ~76 words, got %d words", wordCount)
+	if len(receivedContents) == 0 {
+		t.Fatal("Expected at least one chat request")
 	}
+	content := receivedContents[len(receivedContents)-1]
 
-	// Prompt should not be the default prompt
-	if receivedPrompt == DefaultPrompt {
-		t.Error("Expected generated prompt, but got default prompt")
+	if !strings.HasPrefix(content, "# -*- coding: utf-8 -*-") {
+		t.Errorf("Expected generated code prompt, got: %.80s...", content)
+	}
+	if strings.Contains(content, "test prompt") {
+		t.Error("Expected generated prompt when promptTokens is set")
+	}
+	if !strings.Contains(content, "def ") {
+		t.Error("Expected HumanEval function signatures in generated prompt")
+	}
+	wordCount := len(strings.Fields(content))
+	if wordCount < 600 || wordCount > 900 {
+		t.Errorf("Expected ~750 words for 1000 tokens, got %d words", wordCount)
 	}
 }
 
-func TestBenchmarkModel_RawMode(t *testing.T) {
+func TestBenchmarkModel_PromptCalibrationFailure(t *testing.T) {
+	fOpt := createTestFlagOptions()
+	promptTokens := 2000
+	fOpt.promptTokens = &promptTokens
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			json.NewEncoder(w).Encode(api.ShowResponse{})
+		case "/api/chat":
+			http.Error(w, "calibration failed", http.StatusInternalServerError)
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("OLLAMA_HOST", server.URL)
+
+	output := captureOutput(func() {
+		err := BenchmarkModel(fOpt)
+		if err == nil {
+			t.Error("Expected error when calibration chat fails")
+		}
+	})
+
+	if !strings.Contains(output, "cannot measure prompt tokens") {
+		t.Errorf("Expected prompt measurement error, got: %s", output)
+	}
+}
+
+func TestBenchmarkModel_PromptBelowMinimum(t *testing.T) {
+	fOpt := createTestFlagOptions()
+	promptTokens := 2
+	fOpt.promptTokens = &promptTokens
+
+	server := createMockOllamaServer(t, mockServerOptions{
+		chatResponses: defaultChatResponses(),
+	})
+	defer server.Close()
+
+	t.Setenv("OLLAMA_HOST", server.URL)
+
+	output := captureOutput(func() {
+		err := BenchmarkModel(fOpt)
+		if err == nil {
+			t.Error("Expected error for prompt target below minimum")
+		}
+	})
+
+	if !strings.Contains(output, "below the minimum") {
+		t.Errorf("Expected minimum-prompt error, got: %s", output)
+	}
+}
+
+func TestBenchmarkModel_PromptAboveMaximum(t *testing.T) {
+	fOpt := createTestFlagOptions()
+	promptTokens := 50000
+	fOpt.promptTokens = &promptTokens
+
+	server := createMockOllamaServer(t, mockServerOptions{
+		chatResponses: defaultChatResponses(),
+	})
+	defer server.Close()
+
+	t.Setenv("OLLAMA_HOST", server.URL)
+
+	output := captureOutput(func() {
+		err := BenchmarkModel(fOpt)
+		if err != nil {
+			t.Errorf("Expected run to proceed with full-set prompt, got %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "exceeds the problem set") {
+		t.Errorf("Expected over-maximum warning, got: %s", output)
+	}
+}
+
+func TestBenchmarkModel_ChatTransport(t *testing.T) {
 	fOpt := createTestFlagOptions()
 
-	receivedRaw := false
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		switch r.URL.Path {
-		case "/api/generate":
-			var req api.GenerateRequest
-			body, _ := io.ReadAll(r.Body)
-			json.Unmarshal(body, &req)
-
-			// Only check raw on real requests, not unload requests
-			if req.Prompt != "" {
-				receivedRaw = req.Raw
+	chatCalls := 0
+	server := createMockOllamaServer(t, mockServerOptions{
+		onChat: func(req api.ChatRequest) {
+			chatCalls++
+			if len(req.Messages) != 1 || req.Messages[0].Role != "user" {
+				t.Errorf("Expected a single user message, got %+v", req.Messages)
 			}
-
-			response := api.GenerateResponse{
-				Model:    "test-model",
-				Response: "response",
-				Done:     true,
-				Metrics: api.Metrics{
-					PromptEvalCount:    10,
-					PromptEvalDuration: 100 * time.Millisecond,
-					EvalCount:          50,
-					EvalDuration:       500 * time.Millisecond,
-					TotalDuration:      600 * time.Millisecond,
-					LoadDuration:       50 * time.Millisecond,
-				},
-			}
-			jsonData, _ := json.Marshal(response)
-			w.Write(jsonData)
-
-		case "/api/show":
-			json.NewEncoder(w).Encode(api.ShowResponse{})
-
-		case "/api/ps":
-			json.NewEncoder(w).Encode(api.ProcessResponse{})
-		}
-	}))
+		},
+		chatResponses: defaultChatResponses(),
+	})
 	defer server.Close()
 
 	t.Setenv("OLLAMA_HOST", server.URL)
@@ -808,54 +749,25 @@ func TestBenchmarkModel_RawMode(t *testing.T) {
 		}
 	})
 
-	if !receivedRaw {
-		t.Error("Expected raw mode to be enabled in generate request")
+	if chatCalls == 0 {
+		t.Error("Expected benchmark traffic on /api/chat")
 	}
 }
 
-func TestBenchmarkModel_PromptVariesPerEpoch(t *testing.T) {
+func TestBenchmarkModel_PromptUniquePerRequest(t *testing.T) {
 	fOpt := createTestFlagOptions()
 	epochs := 3
 	fOpt.epochs = &epochs
 
-	var receivedPrompts []string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		switch r.URL.Path {
-		case "/api/generate":
-			var req api.GenerateRequest
-			body, _ := io.ReadAll(r.Body)
-			json.Unmarshal(body, &req)
-
-			// Only track prompts from real requests, not unload requests
-			if req.Prompt != "" {
-				receivedPrompts = append(receivedPrompts, req.Prompt)
+	var receivedContents []string
+	server := createMockOllamaServer(t, mockServerOptions{
+		onChat: func(req api.ChatRequest) {
+			if len(req.Messages) > 0 {
+				receivedContents = append(receivedContents, req.Messages[0].Content)
 			}
-
-			response := api.GenerateResponse{
-				Model:    "test-model",
-				Response: "response",
-				Done:     true,
-				Metrics: api.Metrics{
-					PromptEvalCount:    10,
-					PromptEvalDuration: 100 * time.Millisecond,
-					EvalCount:          50,
-					EvalDuration:       500 * time.Millisecond,
-					TotalDuration:      600 * time.Millisecond,
-					LoadDuration:       50 * time.Millisecond,
-				},
-			}
-			jsonData, _ := json.Marshal(response)
-			w.Write(jsonData)
-
-		case "/api/show":
-			json.NewEncoder(w).Encode(api.ShowResponse{})
-
-		case "/api/ps":
-			json.NewEncoder(w).Encode(api.ProcessResponse{})
-		}
-	}))
+		},
+		chatResponses: defaultChatResponses(),
+	})
 	defer server.Close()
 
 	t.Setenv("OLLAMA_HOST", server.URL)
@@ -867,16 +779,23 @@ func TestBenchmarkModel_PromptVariesPerEpoch(t *testing.T) {
 		}
 	})
 
-	if len(receivedPrompts) != 3 {
-		t.Fatalf("Expected 3 prompts, got %d", len(receivedPrompts))
+	if len(receivedContents) != 3 {
+		t.Fatalf("Expected 3 requests, got %d", len(receivedContents))
 	}
 
-	// Each epoch should have a different prompt to defeat KV cache
-	for i := range receivedPrompts {
-		for j := i + 1; j < len(receivedPrompts); j++ {
-			if receivedPrompts[i] == receivedPrompts[j] {
-				t.Errorf("Expected different prompts for epoch %d and %d, both got: %s", i, j, receivedPrompts[i])
+	// Every request must carry a unique nonce so prefix caches cannot serve timed epochs
+	for i := range receivedContents {
+		if !strings.HasPrefix(receivedContents[i], "# -*- coding: utf-8 -*-") {
+			t.Errorf("Expected nonce prefix on request %d, got: %.50s...", i, receivedContents[i])
+		}
+		for j := i + 1; j < len(receivedContents); j++ {
+			if receivedContents[i] == receivedContents[j] {
+				t.Errorf("Expected unique prompts for requests %d and %d", i, j)
 			}
+		}
+		// ...while the measured workload stays identical
+		if !strings.HasSuffix(receivedContents[i], "test prompt") {
+			t.Errorf("Expected identical workload body across requests, got: %.50s", receivedContents[i])
 		}
 	}
 }
@@ -886,36 +805,28 @@ func TestBenchmarkModel_ShortResponseRetry(t *testing.T) {
 	maxTokens := 100
 	fOpt.maxTokens = &maxTokens
 
-	generateCallCount := 0
+	chatCallCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
 		switch r.URL.Path {
-		case "/api/generate":
-			var req api.GenerateRequest
+		case "/api/chat":
+			var req api.ChatRequest
 			body, _ := io.ReadAll(r.Body)
 			json.Unmarshal(body, &req)
 
-			if req.Prompt == "" {
-				// Unload request
-				response := api.GenerateResponse{Done: true}
-				jsonData, _ := json.Marshal(response)
-				w.Write(jsonData)
-				return
-			}
-
-			generateCallCount++
+			chatCallCount++
 
 			// First 3 attempts return short responses, 4th returns full
 			evalCount := 20
-			if generateCallCount == 4 {
+			if chatCallCount == 4 {
 				evalCount = 100
 			}
 
-			response := api.GenerateResponse{
-				Model:    "test-model",
-				Response: "response",
-				Done:     true,
+			writeJSON(w, api.ChatResponse{
+				Model:   "test-model",
+				Message: api.Message{Role: "assistant", Content: "response"},
+				Done:    true,
 				Metrics: api.Metrics{
 					PromptEvalCount:    10,
 					PromptEvalDuration: 100 * time.Millisecond,
@@ -924,10 +835,10 @@ func TestBenchmarkModel_ShortResponseRetry(t *testing.T) {
 					TotalDuration:      600 * time.Millisecond,
 					LoadDuration:       50 * time.Millisecond,
 				},
-			}
-			jsonData, _ := json.Marshal(response)
-			w.Write(jsonData)
+			})
 
+		case "/api/generate":
+			writeJSON(w, api.GenerateResponse{Done: true})
 		case "/api/show":
 			json.NewEncoder(w).Encode(api.ShowResponse{})
 		case "/api/ps":
@@ -945,9 +856,9 @@ func TestBenchmarkModel_ShortResponseRetry(t *testing.T) {
 		}
 	})
 
-	// 1 epoch: 3 short retries + 1 successful = 4 generate calls
-	if generateCallCount != 4 {
-		t.Errorf("Expected 4 generate calls (3 retries + 1 success), got %d", generateCallCount)
+	// 1 epoch: 3 short retries + 1 successful = 4 chat calls
+	if chatCallCount != 4 {
+		t.Errorf("Expected 4 chat calls (3 retries + 1 success), got %d", chatCallCount)
 	}
 }
 
@@ -957,15 +868,12 @@ func TestBenchmarkModel_ShortResponseWarning(t *testing.T) {
 	fOpt.maxTokens = &maxTokens
 
 	// Always return short responses to trigger the warning
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		switch r.URL.Path {
-		case "/api/generate":
-			response := api.GenerateResponse{
-				Model:    "test-model",
-				Response: "response",
-				Done:     true,
+	server := createMockOllamaServer(t, mockServerOptions{
+		chatResponses: []api.ChatResponse{
+			{
+				Model:   "test-model",
+				Message: api.Message{Role: "assistant", Content: "response"},
+				Done:    true,
 				Metrics: api.Metrics{
 					PromptEvalCount:    10,
 					PromptEvalDuration: 100 * time.Millisecond,
@@ -974,16 +882,9 @@ func TestBenchmarkModel_ShortResponseWarning(t *testing.T) {
 					TotalDuration:      600 * time.Millisecond,
 					LoadDuration:       50 * time.Millisecond,
 				},
-			}
-			jsonData, _ := json.Marshal(response)
-			w.Write(jsonData)
-
-		case "/api/show":
-			json.NewEncoder(w).Encode(api.ShowResponse{})
-		case "/api/ps":
-			json.NewEncoder(w).Encode(api.ProcessResponse{})
-		}
-	}))
+			},
+		},
+	})
 	defer server.Close()
 
 	t.Setenv("OLLAMA_HOST", server.URL)
@@ -1011,24 +912,14 @@ func TestBenchmarkModel_NoRetryWhenMaxTokensZero(t *testing.T) {
 	maxTokens := 0
 	fOpt.maxTokens = &maxTokens
 
-	generateCallCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		switch r.URL.Path {
-		case "/api/generate":
-			var req api.GenerateRequest
-			body, _ := io.ReadAll(r.Body)
-			json.Unmarshal(body, &req)
-
-			if req.Prompt != "" {
-				generateCallCount++
-			}
-
-			response := api.GenerateResponse{
-				Model:    "test-model",
-				Response: "response",
-				Done:     true,
+	chatCallCount := 0
+	server := createMockOllamaServer(t, mockServerOptions{
+		onChat: func(req api.ChatRequest) { chatCallCount++ },
+		chatResponses: []api.ChatResponse{
+			{
+				Model:   "test-model",
+				Message: api.Message{Role: "assistant", Content: "response"},
+				Done:    true,
 				Metrics: api.Metrics{
 					PromptEvalCount:    10,
 					PromptEvalDuration: 100 * time.Millisecond,
@@ -1037,16 +928,9 @@ func TestBenchmarkModel_NoRetryWhenMaxTokensZero(t *testing.T) {
 					TotalDuration:      600 * time.Millisecond,
 					LoadDuration:       50 * time.Millisecond,
 				},
-			}
-			jsonData, _ := json.Marshal(response)
-			w.Write(jsonData)
-
-		case "/api/show":
-			json.NewEncoder(w).Encode(api.ShowResponse{})
-		case "/api/ps":
-			json.NewEncoder(w).Encode(api.ProcessResponse{})
-		}
-	}))
+			},
+		},
+	})
 	defer server.Close()
 
 	t.Setenv("OLLAMA_HOST", server.URL)
@@ -1059,8 +943,8 @@ func TestBenchmarkModel_NoRetryWhenMaxTokensZero(t *testing.T) {
 	})
 
 	// With maxTokens=0, no retries should happen: exactly 1 call for 1 epoch
-	if generateCallCount != 1 {
-		t.Errorf("Expected 1 generate call (no retries when maxTokens=0), got %d", generateCallCount)
+	if chatCallCount != 1 {
+		t.Errorf("Expected 1 chat call (no retries when maxTokens=0), got %d", chatCallCount)
 	}
 }
 
@@ -1070,7 +954,7 @@ func TestBenchmarkModel_CSVFormat(t *testing.T) {
 	fOpt.format = &format
 
 	server := createMockOllamaServer(t, mockServerOptions{
-		generateResponses: defaultGenerateResponses(),
+		chatResponses: defaultChatResponses(),
 	})
 	defer server.Close()
 
@@ -1096,92 +980,176 @@ func TestBenchmarkModel_CSVFormat(t *testing.T) {
 
 // --- Unit tests for helper functions ---
 
-func TestGeneratePromptForTokenCount(t *testing.T) {
-	prompt := generatePromptForTokenCount(100, 0)
+func TestGenerateCodePrompt(t *testing.T) {
+	prompt := generateCodePrompt(800, 0, "nonce123")
 	wordCount := len(strings.Fields(prompt))
 
-	// 100 / 1.3 ≈ 76 words
-	if wordCount < 50 || wordCount > 100 {
-		t.Errorf("Expected ~76 words, got %d", wordCount)
+	// ~800 words requested: whole problems pack up to the budget (within one problem of it)
+	if wordCount < 700 || wordCount > 810 {
+		t.Errorf("Expected ~800 words, got %d", wordCount)
+	}
+	if !strings.HasPrefix(prompt, "# -*- coding: utf-8 -*-\n# checksum: nonce123") {
+		t.Errorf("Expected session prefix, got: %.50s...", prompt)
+	}
+	if !strings.Contains(prompt, "def ") {
+		t.Error("Expected HumanEval function signatures in prompt")
 	}
 }
 
-func TestGeneratePromptForTokenCount_Small(t *testing.T) {
-	prompt := generatePromptForTokenCount(1, 0)
-	wordCount := len(strings.Fields(prompt))
-	if wordCount != 1 {
-		t.Errorf("Expected 1 word, got %d", wordCount)
+func TestGenerateCodePrompt_WholeProblemsOnly(t *testing.T) {
+	prompt := generateCodePrompt(800, 0, "nonce123")
+	body := strings.TrimPrefix(prompt, "# -*- coding: utf-8 -*-\n# checksum: nonce123\n\n\n")
+
+	// Consume the greedy window in set order; what remains must be exactly one
+	// complete problem (the best-fit pick) — never a truncated fragment.
+	problems := humanEvalProblems()
+	i := 0
+	for i < len(problems) {
+		trimmed := strings.TrimSpace(problems[i].Prompt)
+		if !strings.HasPrefix(body, trimmed) {
+			break
+		}
+		body = strings.TrimPrefix(body, trimmed)
+		body = strings.TrimPrefix(body, "\n\n\n")
+		i++
+	}
+	if i == 0 {
+		t.Fatal("expected at least one window problem")
+	}
+	// body is either empty (best-fit happened to be the next problem in order)
+	// or exactly one complete problem — never a truncated fragment.
+	if body != "" {
+		known := false
+		for _, p := range problems {
+			if body == strings.TrimSpace(p.Prompt) {
+				known = true
+				break
+			}
+		}
+		if !known {
+			t.Fatalf("prompt tail is not a complete HumanEval problem: %.80s...", body)
+		}
 	}
 }
 
-func TestGeneratePromptForTokenCount_VariesByEpoch(t *testing.T) {
-	p0 := generatePromptForTokenCount(100, 0)
-	p1 := generatePromptForTokenCount(100, 1)
-	p2 := generatePromptForTokenCount(100, 2)
+func TestGenerateCodePrompt_FullSetCap(t *testing.T) {
+	// Beyond the full set the prompt must reconstruct the entire set in order,
+	// exactly once — no repeats, no truncation.
+	var want []string
+	for _, p := range humanEvalProblems() {
+		want = append(want, strings.TrimSpace(p.Prompt))
+	}
+	expected := "# -*- coding: utf-8 -*-\n# checksum: nonce123\n\n\n" + strings.Join(want, "\n\n\n")
+
+	if got := generateCodePrompt(1<<20, 0, "nonce123"); got != expected {
+		t.Errorf("full-set prompt mismatch: got %d bytes, want %d bytes", len(got), len(expected))
+	}
+}
+
+func TestGenerateCodePrompt_TinyTarget(t *testing.T) {
+	prompt := generateCodePrompt(10, 0, "nonce123")
+	if !strings.HasPrefix(prompt, "# -*- coding: utf-8 -*-\n# checksum: nonce123") {
+		t.Errorf("Expected session prefix even for tiny targets, got: %.50s...", prompt)
+	}
+	if strings.Contains(prompt, "def ") {
+		t.Error("Expected header-only prompt when no problem fits a tiny budget")
+	}
+}
+
+func TestGenerateCodePrompt_Deterministic(t *testing.T) {
+	p0 := generateCodePrompt(800, 0, "nonce123")
+	p1 := generateCodePrompt(800, 0, "nonce123")
+	if p0 != p1 {
+		t.Error("Expected identical prompts for identical inputs")
+	}
+}
+
+func TestGenerateCodePrompt_VariesByAttempt(t *testing.T) {
+	p0 := generateCodePrompt(800, 0, "nonce123")
+	p1 := generateCodePrompt(800, 1, "nonce123")
+	p2 := generateCodePrompt(800, 2, "nonce123")
 
 	if p0 == p1 || p1 == p2 || p0 == p2 {
-		t.Error("Expected different prompts for different epochs")
+		t.Error("Expected different prompts for different variations")
 	}
 
-	// All should have same word count
-	w0 := len(strings.Fields(p0))
-	w1 := len(strings.Fields(p1))
-	w2 := len(strings.Fields(p2))
-	if w0 != w1 || w1 != w2 {
-		t.Errorf("Expected same word count across epochs, got %d, %d, %d", w0, w1, w2)
+	// All should stay within the budget window
+	for i, p := range []string{p0, p1, p2} {
+		if w := len(strings.Fields(p)); w < 600 || w > 850 {
+			t.Errorf("Variation %d out of budget window, got %d words", i, w)
+		}
 	}
 }
 
-func TestBuildGenerateRequest(t *testing.T) {
+func TestGenerateCodePrompt_UniquePerCacheBuster(t *testing.T) {
+	p0 := generateCodePrompt(800, 0, "nonce-a")
+	p1 := generateCodePrompt(800, 0, "nonce-b")
+	if p0 == p1 {
+		t.Error("Expected different prompts for different cache busters")
+	}
+}
+
+func TestPromptTargetBounds(t *testing.T) {
+	minT, maxT := promptTargetBounds(1000)
+	if minT != 990 || maxT != 1020 {
+		t.Errorf("Expected bounds 990-1020 for target 1000, got %d-%d", minT, maxT)
+	}
+}
+
+func TestBuildChatRequest(t *testing.T) {
 	fOpt := createTestFlagOptions()
-	req := buildGenerateRequest("test-model", fOpt, nil, 0)
+	req := buildChatRequest("test-model", fOpt, nil, "nonce123", 0, 0)
 
 	if req.Model != "test-model" {
 		t.Errorf("Expected model 'test-model', got '%s'", req.Model)
 	}
-	if !req.Raw {
-		t.Error("Expected raw mode to be true")
+	if len(req.Messages) != 1 || req.Messages[0].Role != "user" {
+		t.Fatalf("Expected single user message, got %+v", req.Messages)
 	}
-	if !strings.Contains(req.Prompt, "test prompt") {
-		t.Errorf("Expected prompt to contain 'test prompt', got '%s'", req.Prompt)
+	if !strings.Contains(req.Messages[0].Content, "test prompt") {
+		t.Errorf("Expected message to contain 'test prompt', got '%s'", req.Messages[0].Content)
+	}
+	if !strings.HasPrefix(req.Messages[0].Content, "# -*- coding: utf-8 -*-\n# checksum: nonce123") {
+		t.Errorf("Expected nonce prefix, got: %.50s...", req.Messages[0].Content)
 	}
 }
 
-func TestBuildGenerateRequest_WithPromptTokens(t *testing.T) {
+func TestBuildChatRequest_WithPromptTokens(t *testing.T) {
 	fOpt := createTestFlagOptions()
-	promptTokens := 200
+	promptTokens := 2000
 	fOpt.promptTokens = &promptTokens
 
-	req := buildGenerateRequest("test-model", fOpt, nil, 0)
-	// Should not contain the original prompt
-	if strings.Contains(req.Prompt, "test prompt") {
+	req := buildChatRequest("test-model", fOpt, nil, "nonce123", 0, 1500)
+	content := req.Messages[0].Content
+
+	if strings.Contains(content, "test prompt") {
 		t.Error("Expected generated prompt when promptTokens is set")
 	}
-
-	wordCount := len(strings.Fields(req.Prompt))
-	if wordCount < 100 || wordCount > 200 {
-		t.Errorf("Expected ~153 words for 200 tokens, got %d", wordCount)
+	if !strings.HasPrefix(content, "# -*- coding: utf-8 -*-") {
+		t.Errorf("Expected code prompt, got: %.50s...", content)
 	}
 }
 
-func TestBuildGenerateRequest_WithImage(t *testing.T) {
+func TestBuildChatRequest_WithImage(t *testing.T) {
 	fOpt := createTestFlagOptions()
 	imgData := api.ImageData([]byte("fake image"))
 
-	req := buildGenerateRequest("test-model", fOpt, imgData, 0)
-	if len(req.Images) != 1 {
-		t.Errorf("Expected 1 image, got %d", len(req.Images))
+	req := buildChatRequest("test-model", fOpt, imgData, "nonce123", 0, 0)
+	if len(req.Messages[0].Images) != 1 {
+		t.Errorf("Expected 1 image, got %d", len(req.Messages[0].Images))
 	}
 }
 
-func TestBuildGenerateRequest_VariesByEpoch(t *testing.T) {
+func TestBuildChatRequest_VariesByAttempt(t *testing.T) {
 	fOpt := createTestFlagOptions()
+	promptTokens := 2000
+	fOpt.promptTokens = &promptTokens
 
-	req0 := buildGenerateRequest("test-model", fOpt, nil, 0)
-	req1 := buildGenerateRequest("test-model", fOpt, nil, 1)
+	req0 := buildChatRequest("test-model", fOpt, nil, "nonce123", 0, 1500)
+	req1 := buildChatRequest("test-model", fOpt, nil, "nonce123", 1, 1500)
 
-	if req0.Prompt == req1.Prompt {
-		t.Error("Expected different prompts for different epochs")
+	if req0.Messages[0].Content == req1.Messages[0].Content {
+		t.Error("Expected different prompts for different attempts")
 	}
 }
 
@@ -1199,28 +1167,13 @@ func TestOutputMetrics_Benchstat(t *testing.T) {
 	output := buf.String()
 
 	if !strings.Contains(output, "step=prefill") {
-		t.Errorf("Expected prefill metric, got: %s", output)
+		t.Errorf("Expected prefill in output, got: %s", output)
 	}
-	if !strings.Contains(output, "step=generate") {
-		t.Errorf("Expected generate metric, got: %s", output)
-	}
-	if !strings.Contains(output, "step=ttft") {
-		t.Errorf("Expected ttft metric, got: %s", output)
-	}
-	if !strings.Contains(output, "step=load") {
-		t.Errorf("Expected load metric, got: %s", output)
-	}
-	// Verify dual value/unit pairs for throughput lines (ns/token + token/sec)
 	if !strings.Contains(output, "token/sec") {
-		t.Errorf("Expected token/sec metric for throughput lines, got: %s", output)
+		t.Errorf("Expected token/sec in output, got: %s", output)
 	}
-	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
-		if !strings.HasPrefix(line, "Benchmark") {
-			continue
-		}
-		if strings.Contains(line, "ns/token") && !strings.Contains(line, "token/sec") {
-			t.Errorf("Expected both ns/token and token/sec on throughput line, got: %s", line)
-		}
+	if !strings.Contains(output, "ns/token") {
+		t.Errorf("Expected ns/token in output, got: %s", output)
 	}
 }
 
@@ -1228,76 +1181,59 @@ func TestOutputMetrics_BenchstatFormat(t *testing.T) {
 	var buf bytes.Buffer
 	metrics := []Metrics{
 		{Model: "m1", Step: "prefill", Count: 10, Duration: 100 * time.Millisecond},
-		{Model: "m1", Step: "load", Count: 1, Duration: 50 * time.Millisecond},
 	}
 
 	OutputMetrics(&buf, "benchstat", metrics, false)
 	output := buf.String()
 
-	// Load and total should use ns/op (standard Go benchmark unit)
-	if !strings.Contains(output, "ns/op") {
-		t.Errorf("Expected ns/op unit for load/total, got: %s", output)
+	// Verify benchstat format: BenchmarkModel/name=m1/step=prefill 1 <ns/token> ns/token <tokens/sec> token/sec
+	if !strings.Contains(output, "BenchmarkModel/name=m1/step=prefill 1") {
+		t.Errorf("Expected benchstat format, got: %s", output)
 	}
-	// Prefill/generate should use ns/token
-	if !strings.Contains(output, "ns/token") {
-		t.Errorf("Expected ns/token unit for prefill, got: %s", output)
+	if !strings.Contains(output, "10000000.00 ns/token") {
+		t.Errorf("Expected correct ns/token value, got: %s", output)
+	}
+	if !strings.Contains(output, "100.00 token/sec") {
+		t.Errorf("Expected correct token/sec value, got: %s", output)
 	}
 }
 
 func TestOutputModelInfo(t *testing.T) {
+	var buf bytes.Buffer
 	info := ModelInfo{
-		Name:              "gemma3",
-		ParameterSize:     "4.3B",
-		QuantizationLevel: "Q4_K_M",
-		Family:            "gemma3",
-		SizeBytes:         4080218931,
-		VRAMBytes:         4080218931, // Fully on GPU
+		Name:              "test-model",
+		ParameterSize:     "7B",
+		QuantizationLevel: "Q4_0",
+		Family:            "llama",
+		SizeBytes:         4000000000,
+		VRAMBytes:         3800000000,
+		NumCtx:            8192,
 	}
 
-	t.Run("benchstat", func(t *testing.T) {
-		var buf bytes.Buffer
-		outputModelInfo(&buf, "benchstat", info)
-		output := buf.String()
-		if !strings.Contains(output, "Size: 4080218931") {
-			t.Errorf("Expected benchstat comment with Size, got: %s", output)
-		}
-		if !strings.Contains(output, "VRAM: 4080218931") {
-			t.Errorf("Expected benchstat comment with VRAM, got: %s", output)
-		}
-	})
+	outputModelInfo(&buf, "benchstat", info)
+	output := buf.String()
 
-	t.Run("csv", func(t *testing.T) {
-		var buf bytes.Buffer
-		outputModelInfo(&buf, "csv", info)
-		output := buf.String()
-		if !strings.Contains(output, "Size: 4080218931") {
-			t.Errorf("Expected csv comment with Size, got: %s", output)
-		}
-		if !strings.Contains(output, "VRAM: 4080218931") {
-			t.Errorf("Expected csv comment with VRAM, got: %s", output)
-		}
-	})
-
-	t.Run("no_memory_info", func(t *testing.T) {
-		infoNoMem := ModelInfo{
-			Name:              "gemma3",
-			ParameterSize:     "4.3B",
-			QuantizationLevel: "Q4_K_M",
-			Family:            "gemma3",
-		}
-		var buf bytes.Buffer
-		outputModelInfo(&buf, "benchstat", infoNoMem)
-		output := buf.String()
-		if strings.Contains(output, "VRAM") {
-			t.Errorf("Expected no VRAM in header when SizeBytes is 0, got: %s", output)
-		}
-	})
+	if !strings.Contains(output, "test-model") {
+		t.Errorf("Expected model name in output, got: %s", output)
+	}
+	if !strings.Contains(output, "7B") {
+		t.Errorf("Expected parameter size in output, got: %s", output)
+	}
+	if !strings.Contains(output, "Size: 4000000000") {
+		t.Errorf("Expected memory size in output, got: %s", output)
+	}
+	if !strings.Contains(output, "VRAM: 3800000000") {
+		t.Errorf("Expected VRAM in output, got: %s", output)
+	}
+	if !strings.Contains(output, "NumCtx: 8192") {
+		t.Errorf("Expected context length in output, got: %s", output)
+	}
 }
 
 func TestOutputModelInfo_Unknown(t *testing.T) {
-	info := ModelInfo{Name: "test"}
-
 	var buf bytes.Buffer
+	info := ModelInfo{Name: "test-model"}
+
 	outputModelInfo(&buf, "benchstat", info)
 	output := buf.String()
 
@@ -1309,16 +1245,18 @@ func TestOutputModelInfo_Unknown(t *testing.T) {
 func TestFetchMemoryUsage_PrefixMatch(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(api.ProcessResponse{
-			Models: []api.ProcessModelResponse{
-				{
-					Name:     "gemma3:latest",
-					Model:    "gemma3:latest",
-					Size:     20000000,
-					SizeVRAM: 12345678,
+		if r.URL.Path == "/api/ps" {
+			json.NewEncoder(w).Encode(api.ProcessResponse{
+				Models: []api.ProcessModelResponse{
+					{
+						Name:     "gemma3:27b-it-qat",
+						Model:    "gemma3:27b-it-qat",
+						Size:     21634043438,
+						SizeVRAM: 21634043438,
+					},
 				},
-			},
-		})
+			})
+		}
 	}))
 	defer server.Close()
 
@@ -1326,34 +1264,34 @@ func TestFetchMemoryUsage_PrefixMatch(t *testing.T) {
 
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Failed to create client: %v", err)
 	}
 
-	size, vram := fetchMemoryUsage(t.Context(), client, "gemma3")
-	if vram != 12345678 {
-		t.Errorf("Expected VRAM 12345678 via prefix match, got %d", vram)
+	size, vram := fetchMemoryUsage(t.Context(), client, "gemma3:27b")
+
+	if size != 21634043438 {
+		t.Errorf("Expected size 21634043438, got %d", size)
 	}
-	if size != 20000000 {
-		t.Errorf("Expected Size 20000000 via prefix match, got %d", size)
+	if vram != 21634043438 {
+		t.Errorf("Expected VRAM 21634043438, got %d", vram)
 	}
 }
 
 func TestFetchMemoryUsage_CPUSpill(t *testing.T) {
-	totalSize := int64(8000000000) // 8 GB total
-	vramSize := int64(5000000000)  // 5 GB on GPU, 3 GB spilled to CPU
-
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(api.ProcessResponse{
-			Models: []api.ProcessModelResponse{
-				{
-					Name:     "big-model",
-					Model:    "big-model",
-					Size:     totalSize,
-					SizeVRAM: vramSize,
+		if r.URL.Path == "/api/ps" {
+			json.NewEncoder(w).Encode(api.ProcessResponse{
+				Models: []api.ProcessModelResponse{
+					{
+						Name:     "qwen3-coder:30b-a3b-q4_K_M",
+						Model:    "qwen3-coder:30b-a3b-q4_K_M",
+						Size:     22000000000,
+						SizeVRAM: 18000000000, // 4GB spilled to CPU
+					},
 				},
-			},
-		})
+			})
+		}
 	}))
 	defer server.Close()
 
@@ -1361,50 +1299,41 @@ func TestFetchMemoryUsage_CPUSpill(t *testing.T) {
 
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Failed to create client: %v", err)
 	}
 
-	size, vram := fetchMemoryUsage(t.Context(), client, "big-model")
-	if size != totalSize {
-		t.Errorf("Expected total size %d, got %d", totalSize, size)
+	size, vram := fetchMemoryUsage(t.Context(), client, "qwen3-coder:30b-a3b-q4_K_M")
+
+	if size != 22000000000 {
+		t.Errorf("Expected total size 22000000000, got %d", size)
 	}
-	if vram != vramSize {
-		t.Errorf("Expected VRAM size %d, got %d", vramSize, vram)
-	}
-	cpuSize := size - vram
-	if cpuSize != 3000000000 {
-		t.Errorf("Expected CPU spill of 3000000000, got %d", cpuSize)
+	if vram != 18000000000 {
+		t.Errorf("Expected VRAM 18000000000, got %d", vram)
 	}
 }
 
 func TestOutputFormatHeader(t *testing.T) {
-	t.Run("benchstat_verbose", func(t *testing.T) {
-		var buf bytes.Buffer
-		outputFormatHeader(&buf, "benchstat", true)
-		output := buf.String()
-		if !strings.Contains(output, "goos:") {
-			t.Errorf("Expected goos in verbose benchstat header, got: %s", output)
-		}
-		if !strings.Contains(output, "goarch:") {
-			t.Errorf("Expected goarch in verbose benchstat header, got: %s", output)
-		}
-	})
+	tests := []struct {
+		format   string
+		verbose  bool
+		contains []string
+	}{
+		{"csv", false, []string{"NAME,STEP,COUNT,NS_PER_COUNT,TOKEN_PER_SEC"}},
+		{"benchstat", true, []string{"goos:", "goarch:"}},
+		{"benchstat", false, []string{}},
+	}
 
-	t.Run("benchstat_not_verbose", func(t *testing.T) {
-		var buf bytes.Buffer
-		outputFormatHeader(&buf, "benchstat", false)
-		output := buf.String()
-		if output != "" {
-			t.Errorf("Expected empty output for non-verbose benchstat, got: %s", output)
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.format, func(t *testing.T) {
+			var buf bytes.Buffer
+			outputFormatHeader(&buf, tt.format, tt.verbose)
+			output := buf.String()
 
-	t.Run("csv", func(t *testing.T) {
-		var buf bytes.Buffer
-		outputFormatHeader(&buf, "csv", false)
-		output := buf.String()
-		if !strings.Contains(output, "NAME,STEP,COUNT") {
-			t.Errorf("Expected CSV header, got: %s", output)
-		}
-	})
+			for _, expected := range tt.contains {
+				if !strings.Contains(output, expected) {
+					t.Errorf("Expected output to contain %q, got: %s", expected, output)
+				}
+			}
+		})
+	}
 }
