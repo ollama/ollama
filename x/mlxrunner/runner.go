@@ -32,6 +32,8 @@ type Request struct {
 
 	Ctx         context.Context //nolint:containedctx // Queued requests carry caller cancellation to the runner.
 	Tokens      []int32
+	MediaItems  []mediaItem
+	Layout      any // opaque PrepareMedia layout state, stamped on every batch
 	SamplerOpts sample.Options
 }
 
