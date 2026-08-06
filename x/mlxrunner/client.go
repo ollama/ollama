@@ -112,6 +112,7 @@ func (c *Client) WaitUntilRunning(ctx context.Context) error {
 
 type CompletionRequest struct {
 	Prompt      string
+	Media       []llm.MediaData
 	Options     api.Options
 	Logprobs    bool
 	TopLogprobs int
@@ -155,6 +156,7 @@ func (c *Client) Close() error {
 func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
 	creq := CompletionRequest{
 		Prompt:      req.Prompt,
+		Media:       req.Media,
 		Logprobs:    req.Logprobs,
 		TopLogprobs: req.TopLogprobs,
 	}
