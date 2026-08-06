@@ -30,6 +30,8 @@ type drafter interface {
 	// leveling the draft caches with the target caches.
 	settle(next *mlx.Array)
 
+	// close writes any buffered committed reports through to the draft
+	// caches without completing the frontier pair.
 	close()
 }
 
@@ -109,6 +111,7 @@ type speculationSession struct {
 	spec    *speculation
 	drafter drafter
 	enabled bool // whether this request drafts; false parks (maintain-only)
+	done    bool // a round ended generation; settle flushes without pairing
 	limit   int  // current draft length
 	stats   specStats
 
@@ -182,9 +185,14 @@ func (s *speculationSession) committed(tokens, hiddens *mlx.Array, position int)
 }
 
 // settle completes the drafter's open frontier pair with next and writes
-// buffered reports through to the draft caches.
+// buffered reports through to the draft caches. After a round ending, next is
+// the terminator: no pair may name it, so nothing settles and the buffered
+// reports write through at close.
 func (s *speculationSession) settle(next *mlx.Array) {
 	if s == nil {
+		return
+	}
+	if s.done {
 		return
 	}
 	s.drafter.settle(next)
@@ -334,10 +342,10 @@ func (c *draftCandidates) Arrays() []*mlx.Array {
 }
 
 // scheduleSpeculation schedules per-token snapshots at offsets
-// [before, before+draftCount) on every cache, so the speculative forward
-// captures a rollback point before each draft token's write.
-func scheduleSpeculation(caches []cache.Cache, before, draftCount int) {
-	offsets := make([]int, draftCount)
+// [before, before+count) on every cache, so the round holds a rollback point
+// at every offset a commit can target.
+func scheduleSpeculation(caches []cache.Cache, before, count int) {
+	offsets := make([]int, count)
 	for i := range offsets {
 		offsets[i] = before + i
 	}
@@ -348,29 +356,30 @@ func scheduleSpeculation(caches []cache.Cache, before, draftCount int) {
 	}
 }
 
-// commitSpeculation rolls every cache back to before+accepted, keeping only
-// the accepted prefix; full acceptance needs no restore. Rollback tries a
-// live rewind first (Restore(nil)) and falls back to the captured snapshot.
-func commitSpeculation(caches []cache.Cache, accepted, draftCount, before int) {
-	target := before + accepted
+// commitSpeculation rolls every cache back to target and drains the round's
+// snapshot schedule; a target keeping the whole round needs no restore.
+// Rollback tries a live rewind first (Restore(nil)) and falls back to the
+// captured snapshot.
+func commitSpeculation(caches []cache.Cache, target, count, before int) {
+	slot := target - before
 	for _, c := range caches {
 		if c == nil {
 			continue
 		}
 		snaps := c.TakeSnapshots()
-		if accepted < draftCount {
+		if slot < count {
 			// Close the snapshots we won't restore from before restoring: a
 			// snapshot restore on a wrapped RotatingKVCache copies out every
 			// outstanding lazy snapshot before it rebuilds the buffer, so
 			// dropping the unused ones first stops that copy-out from
 			// materializing snapshots we are about to discard anyway.
 			for i, s := range snaps {
-				if s != nil && i != accepted {
+				if s != nil && i != slot {
 					s.Close()
 					snaps[i] = nil
 				}
 			}
-			if !c.Restore(nil, target) && !c.Restore(snaps[accepted], target) {
+			if !c.Restore(nil, target) && !c.Restore(snaps[slot], target) {
 				panic(fmt.Sprintf("speculation: cache restore to %d failed", target))
 			}
 		}
@@ -397,21 +406,24 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 	r := s.spec.r
 	before := *position
 	draftCount := candidates.tokens.Dim(1)
-	scheduleSpeculation(s.spec.targets, before+1, draftCount)
+	// One slot per offset a commit can target: the pre-round boundary (a
+	// round whose first token ends generation commits there) through full
+	// acceptance.
+	scheduleSpeculation(s.spec.targets, before, draftCount+1)
 
 	// Every exit between schedule and commit must drain the snapshot
 	// schedule and roll the speculative writes back out of the live caches:
 	// an undrained schedule panics the next PrepareSnapshots, and
 	// uncommitted speculative tokens reach the trie through session.close.
 	committed := false
-	commit := func(keep int) {
+	commit := func(target int) {
 		if committed {
 			return
 		}
 		committed = true
-		commitSpeculation(s.spec.targets, keep, draftCount, before+1)
+		commitSpeculation(s.spec.targets, target, draftCount+1, before)
 	}
-	defer commit(0)
+	defer commit(before)
 
 	hiddenSeq := r.Model.Forward(&batch.Batch{
 		InputIDs:     current.Token.ExpandDims(-1).Concatenate(1, candidates.tokens),
@@ -470,21 +482,42 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 			done = true
 			accepted = i + 1
 			observed = accepted
-			// Leave the EOS's own state uncommitted: the next sequence won't
-			// contain this EOS, and recurrent state can't drop a folded-in
-			// token, so committing it would carry the caches past the
-			// reusable prefix and force the next sequence to recompute.
 			keep = i
 			break
 		}
 	}
 
-	commit(keep)
-	*position = before + 1 + keep
+	// The next token (the residual at a rejection, the bonus past a full run)
+	// is read before committing: an EOS there ends generation the same way an
+	// accepted EOS draft does.
+	emitNext := !done
+	var nextID int32
+	if emitNext {
+		if accepted < draftCount {
+			nextID = int32(residualTokens.Ints()[accepted])
+		} else {
+			nextID = int32(bonusToken.Int())
+		}
+		done = r.Tokenizer.IsEOS(nextID)
+	}
+
+	// A round that ends generation commits one below its last content token:
+	// the terminator's state is never committed (the next sequence won't
+	// contain it), and the last content token's key packs the terminator
+	// (see prefixCache.key), so leaving it uncommitted keeps the deepest key
+	// pure content and a continuation restores exactly. settle then no-ops
+	// so no pair ever names the terminator.
+	target := before + keep + 1
+	if done {
+		target = before + keep
+		s.done = true
+	}
+	commit(target)
+	*position = target
 
 	// Report the validated run (current plus kept drafts) to the drafter before
 	// returning, so a cancelled emission still leaves it matching the caches. A
-	// done generation's final token is uncommitted; it reaches finish instead.
+	// done generation's terminator is uncommitted and never settled.
 	runIDs := append([]int32{int32(current.Token.Int())}, commitIDs[:keep]...)
 	s.drafter.committed(
 		mlx.FromValues(runIDs, 1, len(runIDs)),
@@ -492,21 +525,11 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 		before)
 
 	results = draftResults(draftIDs[:accepted])
-	if done {
-		r.Sampler.Commit(pipelineSlot, commitIDs)
-		return results, accepted, observed, nil
+	if emitNext {
+		commitIDs = append(commitIDs, nextID)
+		results = append(results, sampler.Result{Token: mlx.FromValues([]int32{nextID}, 1)})
 	}
-
-	var nextID int32
-	if accepted < draftCount {
-		nextID = int32(residualTokens.Ints()[accepted])
-	} else {
-		nextID = int32(bonusToken.Int())
-	}
-	commitIDs = append(commitIDs, nextID)
 	r.Sampler.Commit(pipelineSlot, commitIDs)
-
-	results = append(results, sampler.Result{Token: mlx.FromValues([]int32{nextID}, 1)})
 	return results, accepted, observed, nil
 }
 
