@@ -31,17 +31,27 @@ func (r *Runner) Prepare(request *Request) error {
 		return errors.New("model not loaded")
 	}
 
-	if len(request.Media) > 0 {
-		if _, ok := r.Model.(base.MediaModel); !ok {
+	var tokens []int32
+	var items []mediaItem
+	if len(request.Media) == 0 {
+		tokens = r.Tokenizer.Encode(request.Prompt, r.Tokenizer.AddBOS())
+	} else {
+		mm, ok := r.Model.(base.MediaModel)
+		if !ok {
 			kind := string(request.Media[0].Kind)
 			if kind == "" {
 				kind = "media"
 			}
 			return fmt.Errorf("this model does not support %s input", kind)
 		}
+		prepared, bound, err := r.expandMedia(mm, request.Prompt, request.Media)
+		if err != nil {
+			return err
+		}
+		tokens, items = prepared.Tokens, bound
+		request.Layout = prepared.Layout
 	}
 
-	tokens := r.Tokenizer.Encode(request.Prompt, r.Tokenizer.AddBOS())
 	if len(tokens) == 0 {
 		return errors.New("empty prompt")
 	}
@@ -59,6 +69,7 @@ func (r *Runner) Prepare(request *Request) error {
 	}
 
 	request.Tokens = tokens
+	request.MediaItems = items
 	return nil
 }
 
@@ -82,7 +93,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 
 	inputs := request.Tokens
 
-	session := r.cache.begin(inputs, nil)
+	session := r.cache.begin(inputs, request.MediaItems)
 	defer session.close()
 	caches := session.caches
 
