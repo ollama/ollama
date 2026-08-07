@@ -172,6 +172,7 @@ console.log(response.message.content);
 - [Hollama](https://github.com/fmaclen/hollama) - Minimal web interface
 - [Chatbox](https://github.com/Bin-Huang/Chatbox) - Desktop and web AI client
 - [chat](https://github.com/swuecho/chat) - Chat web app for teams
+- [Libre WebUI](https://github.com/libre-webui/libre-webui) - Local-first workspace with private knowledge, artifacts, and sandboxed agent work
 - [Ollama RAG Chatbot](https://github.com/datvodinh/rag-chatbot.git) - Chat with multiple PDFs using RAG
 - [Tkinter-based client](https://github.com/chyok/ollama-gui) - Python desktop client
 
