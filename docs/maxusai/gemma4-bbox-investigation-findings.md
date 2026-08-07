@@ -3,9 +3,13 @@
 Resolution of [gemma4-bbox-aspect-investigation.md](gemma4-bbox-aspect-investigation.md)
 (brief opened 7820acf5, 26B cell added 27e05deb). Investigated 2026-08-07.
 
-**Status: the brief's hypothesis is refuted. A different, real coordinate bug is
-confirmed in source and quantified. The primary cause of the collapse is isolated
-to a vertical-only effect that is not aspect, not padding, and not the encoder.**
+**Status: RESOLVED. The brief's hypothesis is refuted; the actual cause is
+identified and verified by prediction: the model only grounds accurately on patch
+grids its five supported budgets can produce (`c·r ≤ B < (c+1)·(r+1)` for
+B ∈ {70, 140, 280, 560, 1120}), and llama.cpp's sizing routinely delivers grids
+outside that set. A faithful 1120 — grid 44×24 — scores IoU 0.952 on 31B, the best
+bbox result of the campaign. A separate, smaller letterbox-padding bug is confirmed
+in source and quantified on the horizontal axis.**
 
 Method note: most of this needed no new model runs. The gitignored `resp_*.json`
 and `scores_*.json` under `vision-suite/` already contained every emitted box and
@@ -223,45 +227,67 @@ The encoder-free 12B is worst and the encoder-bearing MoE is best, but 31B sits
 between them — so the encoder does not partition the results, consistent with
 27e05deb's conclusion. The magnitude tracks robustness, not architecture.
 
-## What remains open
+## 9. The cause: off-ladder patch grids are out of distribution
 
-The cause of the vertical scale error itself. Ruled out: aspect distortion, letterbox
-padding, resampling, the vision encoder, and `resize_position_embeddings`
-(`clip.cpp:285`, the siglip2-naflex bilinear PE interpolation — it is defined but
-**never called**, so gemma4 does not use it).
+Two earlier framings of the driver — "patch rows", then "total patch count with a
+threshold in 530–880" — were each falsified by later cells. In particular a
+44×24 = 1056-patch arm scored 0.856 where the threshold story demanded degradation.
+That cell was the signal, not noise (credit: Glenn's read of the sweep).
 
-It tracks **total patch count**, with a threshold, on 12B:
+The model card says the **supported** token budgets are exactly 70/140/280/560/1120,
+and HF transformers' Gemma 4 processor (verified in source this session) always
+resizes to **fill** the chosen budget: `factor = sqrt(budget_px / total_px)`, floor
+each axis to a multiple of 48. So the only grids the model ever saw in training are
+those this procedure can emit at a supported budget:
 
-| config | grid | patches | vertical accuracy |
-|---|---|---|---|
-| document 280 | 16×16 | 256 | 10.5px — clean |
-| scene 280 | 22×12 | 264 | y-scale 0.999 |
-| scene 560 | 31×17 | 527 | y-scale 0.996 |
-| document 560 | 23×23 | 529 | 4.9px (0.3%) — clean |
-| *(threshold lies in here — unmeasured)* | | 530–880 | |
-| scene 1056 pad-free | 40×22 | 880 | y-scale 0.920 |
-| portrait pad-free | 22×40 | 880 | y-scale 0.811 |
-| square 1440 pad-free | 30×30 | 900 | y-scale 0.906 |
-| scene shipped range | 40×23 | 920 | y-scale 0.825 |
-| document shipped range | 33×33 | 1089 | 20.4px (1.3%) |
-| document 1120 | 34×34 | 1156 | 27.4px (1.7%) |
-| scene 1120 | 45×26 | 1170 | y-scale 1.071 |
+    grid (c, r) is in-distribution  ⇔  c·r ≤ B < (c+1)·(r+1)  for some B in the ladder
 
-It is **not** patch rows: 23 rows appears twice with opposite verdicts — the document
-at 23×23 is clean (0.3%) while the scene at 40×23 is the worst result measured. Sorted
-by total patches the split is exact: everything ≤529 is accurate, everything ≥880 is
-degraded. Grid shape modulates the magnitude within the degraded regime (the 40-row
-portrait is worse than the 22-row landscape at identical patch count), but the
-threshold is set by total count.
+Retrodicting **every** vertical-accuracy cell measured in this campaign against that
+rule: 17/19 fit, and the two exceptions (34×34 = 1156, 44×24 at −4.3%) are the two
+*mildest* errors in their groups, both sitting just past a ladder grid — consistent
+with error growing with distance off-ladder rather than with a binary rule.
 
-**The 560 rung is the largest documented rung that stays under the threshold** — 527
-patches for a 16:9 scene, 529 for a square page. That, not anything about aspect, is
-why 560 is the peak on all three model sizes.
+Then the rule was tested by prediction, including a cell chosen to falsify it:
+45×24 = 1080 is reachable at 1120, while 43×24 = 1032 is not (no budget lies in
+[1032, 1100)) — even though 1032 is *fewer* patches. All arms native-rendered,
+pad-free, one budget pinned so nothing reloads:
 
-Above the threshold the vertical error becomes **noisy as well as biased** — y residual
-rms rises from 2–3px to 35–153px — so it is genuine degradation, not purely a rescale.
-The scene-1120 cell is additionally the only one that upscales beyond native resolution
-(2160×1248 from 1920×1080) and the only one whose error inverts sign.
+| model | grid | patches | on ladder? | IoU | y-scale |
+|---|---|---|---|---|---|
+| 12B | 45×24 | 1080 | **yes** (1120) | **0.943** | 0.9938 |
+| 12B | 43×24 | 1032 | no | 0.799 | 0.9497 |
+| 12B | 22×12 | 264 | **yes** (280) | **0.887** | 0.9952 |
+| 12B | 21×11 | 231 | no | 0.669 | 0.9384 |
+| 12B | 24×13 | 312 | no | 0.726 | 0.9031 |
+| 31B | 44×24 | 1056 | **yes** (1120) | **0.952** | 0.9972 |
+
+Every prediction holds, the bands exist below 560 as well, and the error's sign
+follows the direction off-ladder (below the nearest band → y-scale < 1; the two
+overshooting cells, 1156 and 1170, are the only ones with y-scale > 1).
+
+**The 31B row is the finding.** 44×24 = 2112×1152 is exactly the grid the reference
+preprocessor produces for a 16:9 image at budget 1120. On it, 31B scores **0.952 —
+better than its own 560 rung (0.906)** and the best bbox result of the campaign.
+There is nothing wrong with 1120. What is wrong is that llama.cpp never delivers it:
+
+- **Range mode** (`40…1120`, the shipped config) keeps an under-budget image at its
+  natural rounded grid — 1920×1080 → 40×23 = 920, unreachable at any budget, mid-gap
+  between the 560 band and the 1120 band → the worst cell measured (0.504).
+- **Pinned mode** (`min == max`, the sweep config) overshoots through the
+  `< min_pixels` branch's `ceil_by_factor` — 45×26 = 1170 > 1120, past the top of
+  the ladder → 0.719.
+
+llama.cpp's sizing (`calc_size_preserved_ratio`, a Qwen2-VL `smart_resize` clone)
+differs from the Gemma 4 reference precisely here: the reference **always scales to
+the budget** (up or down) and floors; llama.cpp leaves under-budget images at their
+natural size. That divergence, not the padding, is the primary bug. Why the error
+expresses on the vertical axis only remains unexplained — x-scale is 1.002 ± 0.002
+in every pad-free cell regardless of grid — but it no longer needs explaining to fix
+the problem.
+
+Caveats: one seed, temperature 0, one content family per cell; 26B not run on the
+discriminator cells; error magnitude off-ladder varies non-monotonically (the 38×21
+arm at 0.589 with x also broken is an outlier in degree).
 
 ## Fine text pulls the opposite way — 1120 is not merely a worse 560
 
@@ -285,60 +311,46 @@ renders at ~11px and 12px text at ~8px. **Dropping the ceiling to 560 costs the 
 16px tier and the 12px partial.** That is the workload ADR 0003 and
 [ollama#15626](https://github.com/ollama/ollama/issues/15626) raised the ceiling for.
 
-So the two workloads are in direct opposition, and it is the same variable driving both:
+This looked like a fundamental opposition — geometry seemed to need ≤ ~530 patches
+while fine text needs as many as possible. **§9 dissolves it.** Geometry does not
+need few patches; it needs an on-ladder grid. A faithful 1120 (44×24) delivers
+1584px-class resolution for text *and* the best geometry measured. The conflict was
+an artifact of llama.cpp never producing an on-ladder grid above 560.
 
-- **bbox geometry** needs ≤ ~530 patches (accuracy collapses above it)
-- **fine-text recall** needs as many patches as possible (resolution is the binding constraint)
+## Recommended next steps (superseding both earlier lists)
 
-There is no single budget that serves both, which is the real reason this is hard.
-
-## Recommended next steps (replacing the brief's list)
-
-1. **Find the threshold.** It lies between 529 and 880 patches and is completely
-   unmeasured — the documented ladder jumps 560 → 1120 straight over it. If the true
-   limit is ~700 patches, a budget between the rungs recovers meaningful fine-text
-   resolution while staying geometrically accurate. This is the single highest-value
-   measurement remaining and it is a few model calls. (Drop `gen_aspect.py`, old
-   next-step #2 — aspect is not the variable.)
-2. **Compare against HF transformers (old next-step #5) — now the highest-value
-   check.** llama.cpp names the function `calc_size_preserved_ratio` and comments it
-   as "smart_resize in transformers code", but transformers' smart_resize resizes
-   *directly* to `(h_bar, w_bar)` with **no padding**; llama.cpp then applies
-   `PAD_CEIL` on top. If upstream does not pad, `PAD_CEIL` is the divergence and is an
-   upstream bug worth reporting. *Not yet verified against the Gemma 4 processor
-   source — flagged as a lead, not a finding.*
-3. **Consider `PAD_NONE` for gemma4.** Since normalized coordinates are invariant to
-   anisotropic resize (§1), stretching to the target makes the coordinate mapping exact
-   by construction and costs only a few percent of geometric distortion — which the
-   model demonstrably tolerates (280 runs at +3.13% distortion with an exact mapping).
-   This fixes §3 outright. Caveat: if the model was trained on padded inputs, this
-   changes what it sees, so it needs measuring rather than assuming.
-4. **Fix `score_doc`.** `name_bbox_hits` is a band test that hid §6 for the whole
+1. **Patch the fork's llama.cpp payload to reference sizing for gemma4.** Replace the
+   `calc_size_preserved_ratio` call in the gemma4 path with the reference formula:
+   `factor = sqrt(B·48² / (W·H))`, target = per-axis `floor(dim·factor / 48)·48`,
+   where B is the requested `image_max_tokens` snapped down to the ladder
+   {70, 140, 280, 560, 1120}. This scales **up as well as down** — the grid is then
+   always reachable at B by construction, and the `ceil_by_factor` overshoot (1170 >
+   1120) disappears with the branch. Set `image_resize_pad = PAD_NONE` in the same
+   patch (§3; the reference stretches, it never letterboxes — its per-axis floor is
+   *deliberately* anisotropic). Precedent for carrying exactly this kind of
+   preprocessing patch: [nemotron-dynres-patch.md](nemotron-dynres-patch.md).
+2. **Report both divergences upstream** (ggml-org/llama.cpp): under-budget images are
+   left on unreachable grids (primary, breaks grounding), and `PAD_CEIL` letterboxing
+   is applied where the reference resizes directly (secondary, 2–5% on the padded
+   axis). The 45×24-vs-43×24 pair is the minimal reproduction.
+3. **Re-run the ladder sweep after the patch** — with faithful sizing, pinned and
+   range configurations coincide on the same grids, and the 26B/12B cells at a
+   faithful 1120 fill in the two missing sizes.
+4. **Then revisit ADR 0007.** Its 560 ceiling is the correct mitigation for today's
+   llama.cpp — every grid it can deliver above 560 is off-ladder. After the sizing
+   patch, `min 70 / max 1120` matches the model card's guidance and the measured
+   optimum (31B: 0.952 at faithful 1120 vs 0.906 at 560), and the fine-text cost of
+   560 (§ fine text) no longer needs to be paid. The ADR's own "revisit when the
+   error is fixed" clause anticipates exactly this.
+5. **Fix `score_doc`.** `name_bbox_hits` is a band test that hid §6 for the whole
    investigation. It should score IoU against measured row geometry.
-5. **Default budget (old next-step #6) — "560 dominates 1120" does not hold.** That
-   claim rested on a single 14px serial in the scene test. On the fine-text probe, 560
-   loses the whole 16px tier. The real trade is:
-
-   - shipped `40…1120` — reads 16px text; worst bbox geometry measured (0.504, because
-     a 1920×1080 image lands on 920 patches)
-   - `70…560` — clean bbox geometry; blind below ~22px
-
-   Note also that a *ceiling* of 1120 and a *pinned* 1120 are different configurations:
-   a 1920×1080 image in a `40…1120` range never reaches 1120, it lands at 920 patches.
-   Only `min == max` pushes it into the `< min_pixels` branch and up to 1170. Quoting a
-   pinned-rung measurement to justify a shipped ceiling compares two different things.
-
-   Since the budget is already a per-request knob
-   (`Runner.ImageMinTokens`/`ImageMaxTokens`), routing by workload — grounding requests
-   low, transcription requests high — dominates any single global default. Whatever the
-   ADR decides, it should record the fine-text cost, which is currently unmeasured
-   anywhere in the repo.
 
 ## Reproduction
 
-Experiment scripts (`padtest.py`, `axistest.py`) are not committed — they run against
-the fork server on `:11435` with `gemma4:12b-it-q4_K_M`, think off, temperature 0, and
-reuse `vision_suite.SCENE_PROMPT`. Both render their own inputs so the only variable
+Experiment scripts (`padtest.py`, `axistest.py`, `ftsweep.py`, `threshold.py`,
+`laddertest.py`) are not committed — they run against the fork server on `:11435`
+with `gemma4:12b-it-q4_K_M` (laddertest also `31b`), think off, temperature 0, and
+reuse `vision_suite.SCENE_PROMPT`. Each renders its own inputs so the only variable
 between arms is geometry. The archival analysis reads `resp_*.json` /
 `scores_*.json` in `vision-suite/`, which are gitignored
 (`vision-suite/.gitignore:5`) and therefore local to whoever ran the sweep.
