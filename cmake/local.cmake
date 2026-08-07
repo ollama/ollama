@@ -400,6 +400,19 @@ function(ollama_add_llama_server_build name)
     endif()
     ollama_collect_cache_args_with_prefix("GGML_" _ggml_cache_args)
     ollama_collect_cache_args_with_prefix("LLAMA_" _llama_cache_args)
+    # Forward the superbuild's MSVC compiler by short name so nested Ninja
+    # builds do not fall back to another toolchain found earlier in PATH
+    # (e.g. MinGW gcc). The short name resolves through vcvars at configure
+    # time; passing the resolved full path would trigger MSBuild-based
+    # compiler checks. Backend-specific CMAKE_ARGS (e.g. SYCL's icx) are
+    # appended later and take precedence.
+    set(_cmake_compiler_args)
+    if(WIN32 AND CMAKE_C_COMPILER MATCHES "cl\\.exe$")
+        list(APPEND _cmake_compiler_args -DCMAKE_C_COMPILER=cl)
+    endif()
+    if(WIN32 AND CMAKE_CXX_COMPILER MATCHES "cl\\.exe$")
+        list(APPEND _cmake_compiler_args -DCMAKE_CXX_COMPILER=cl)
+    endif()
     set(_cmake_args
         -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
         -DCMAKE_INSTALL_PREFIX=${OLLAMA_PAYLOAD_INSTALL_PREFIX}
@@ -409,6 +422,7 @@ function(ollama_add_llama_server_build name)
         -DOLLAMA_LLAMA_CPP_SKIP_COMPAT_PATCH=ON
         -DGGML_NATIVE=OFF
         -DGGML_OPENMP=OFF
+        ${_cmake_compiler_args}
         ${ARG_CMAKE_ARGS}
         ${_ggml_cache_args}
         ${_llama_cache_args}
