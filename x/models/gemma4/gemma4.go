@@ -394,6 +394,15 @@ type Model struct {
 
 	SuppressLogitBias *mlx.Array
 	weightPrefix      string
+
+	// Vision (nil for text-only checkpoints). Named fields on purpose:
+	// *TextConfig is already embedded and a second embedded config would
+	// collide with its promoted fields.
+	VisionCfg       *VisionConfig
+	MMTokens        multimodalTokens
+	VisionEmbedder  *VisionEmbedder
+	VisionTower     *VisionTower
+	EmbedVisionProj nn.LinearLayer
 }
 
 func parseTextConfig(configData []byte) (TextConfig, error) {
@@ -646,11 +655,18 @@ func newModel(root *model.Root) (base.Model, error) {
 		return nil, fmt.Errorf("parse tokenizer: %w", err)
 	}
 
+	visionCfg, mmTokens, err := parseVisionConfig(configData)
+	if err != nil {
+		return nil, err
+	}
+
 	m := &Model{
 		Layers:            make([]*DecoderLayer, cfg.NumHiddenLayers),
 		TextConfig:        &cfg,
 		tok:               tok,
 		SuppressLogitBias: makeSuppressLogitBias(suppressTokens, cfg.VocabSize),
+		VisionCfg:         visionCfg,
+		MMTokens:          mmTokens,
 	}
 
 	for i := range m.Layers {
@@ -979,6 +995,12 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	precomputeGemmaScaledWeights(m)
 	if m.NormScaled == nil {
 		return fmt.Errorf("missing precomputed final norm weight")
+	}
+
+	if m.VisionCfg != nil {
+		if err := m.loadVisionWeights(tensors, linears); err != nil {
+			return err
+		}
 	}
 
 	return nil
