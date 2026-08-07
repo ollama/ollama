@@ -10,6 +10,7 @@ package main
 import "C"
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -141,6 +142,20 @@ func installSymlink() {
 
 	// Check the users path first
 	cmd, _ := exec.LookPath("ollama")
+	if cmd == "" {
+		// GUI apps don't inherit shell PATH from .zshrc/.bashrc,
+		// so also check via the user's login shell
+		shell := os.Getenv("SHELL")
+		if shell == "" {
+			shell = "/bin/zsh"
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, shell, "-l", "-c", "command -v ollama").Output()
+		if err == nil {
+			cmd = strings.TrimSpace(string(out))
+		}
+	}
 	if cmd != "" {
 		resolved, err := os.Readlink(cmd)
 		if err == nil {
