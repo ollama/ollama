@@ -10,21 +10,28 @@ Raising gemma4's visual token budget improves fine-text recall and *degrades*
 bounding-box geometry. Measured on an M5 Max, native Metal build, llama.cpp b10091,
 `vision-suite` scene test, think off, temperature 0, `min == max` pinned per rung:
 
-| budget | 12B IoU | 31B IoU | 12B serial | 31B serial |
-|---|---|---|---|---|
-| 70 | 0.000 | 0.000 | ✗ | ✗ |
-| 140 | 0.780 | 0.830 | ✗ | ✗ |
-| 280 | 0.883 | 0.902 | ✗ | ✓ |
-| **560** | **0.894** | **0.906** | ✓ | ✓ |
-| 1120 | 0.719 | 0.729 | ✓ | ✓ |
+| budget | 12B (encoder-free) | 26B A4B (~550M, MoE) | 31B (~550M, dense) |
+|---|---|---|---|
+| 70 | 0.000 | 0.000 | 0.000 |
+| 140 | 0.780 | 0.814 | 0.830 |
+| 280 | 0.883 | 0.885 | 0.902 |
+| **560** | **0.894** | **0.914** | **0.906** |
+| 1120 | 0.719 | 0.810 | 0.729 |
+| **280→1120 cost** | **+0.164** | **+0.075** | **+0.173** |
+
+The 14px serial is found from 280 on 26B and 31B, and only from 560 on 12B.
 
 Four properties any explanation must account for:
 
 1. **Not monotonic in token count.** The shipped *range* `40…1120` selects ~936 image
    tokens and scores IoU 0.504; *pinned* 1120 uses ~1170 and scores 0.719. More
    tokens, better geometry.
-2. **Not in the vision encoder.** 12B is encoder-free; 31B carries ~550M. Both trace
-   the same curve (280→1120 costs +0.164 vs +0.173).
+2. **Not in the vision encoder — ruled out by 26B.** 12B is encoder-free; 26B A4B and
+   31B share a ~550M encoder. All three peak at 560 and collapse at 1120. Critically,
+   the two *encoder-bearing* sizes differ **most** in collapse magnitude (+0.075 vs
+   +0.173) while the encoder-free 12B sits between them on peak IoU. If the encoder
+   drove this, 26B and 31B would pair off against 12B. They do not. The **shape** is
+   universal; the **magnitude** varies non-systematically.
 3. **Aspect-correlated.** The 16:9 scene degrades. The 1:1 document does not
    (`name_bbox_hits` 4→4 across the same rungs).
 4. **Reproduces exactly.** A budget-matched control at 280 reproduces stock's 0.883
@@ -148,9 +155,8 @@ also partly explains the range-vs-pinned discrepancy noted above.
 
 ## Not covered
 
-- **26B A4B was never swept** — absent from the local store. It is the most
-  informative missing cell: it shares 31B's ~550M encoder at MoE scale, so it
-  separates "encoder vs encoder-free" from parameter count.
+- **26B A4B has since been swept (2026-08-07)** and is included above. It was the
+  discriminating cell and it is what rules the encoder out. No longer a gap.
 - Only `q4_K_M`. Quality numbers are not assumed to transfer to `nvfp4`.
 - One image per aspect, one seed. Single-sample scores on 5–6 item tasks are coarse;
   the document `name_bbox` column moves ±1 between adjacent rungs and should not be

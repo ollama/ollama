@@ -214,23 +214,33 @@ llama.cpp b10091.
 
 ### scene_single — 1920×1080 labelled shapes
 
-| budget | image tok | 12B IoU | 31B IoU | 12B labels | 31B labels | 12B serial | 31B serial |
-|---|---|---|---|---|---|---|---|
-| 70 | ~82 | 0.000 | 0.000 | 0/6 | 0/6 | ✗ | ✗ |
-| 140 | ~136 | 0.780 | 0.830 | 4/6 | 6/6 | ✗ | ✗ |
-| 280 | 280 | 0.883 | 0.902 | 6/6 | 6/6 | ✗ | ✓ |
-| **560** | ~543 | **0.894** | **0.906** | 6/6 | 6/6 | ✓ | ✓ |
-| 1120 | ~1186 | 0.719 | 0.729 | 6/6 | 6/6 | ✓ | ✓ |
+`bbox_mean_iou` by budget and size:
+
+| budget | image tok | 12B (encoder-free) | 26B A4B (~550M, MoE) | 31B (~550M, dense) |
+|---|---|---|---|---|
+| 70 | ~82 | 0.000 | 0.000 | 0.000 |
+| 140 | ~136 | 0.780 | 0.814 | 0.830 |
+| 280 | 280 | 0.883 | 0.885 | 0.902 |
+| **560** | ~543 | **0.894** | **0.914** | **0.906** |
+| 1120 | ~1186 | 0.719 | 0.810 | 0.729 |
+| | **280→1120 cost** | **+0.164** | **+0.075** | **+0.173** |
+
+Label/colour recall is 0/6 at 70 and 6/6 from 280 up on all three sizes; 12B is the
+only size that drops labels at 140 (4/6). The 14px serial is found from 280 on 26B and
+31B, and only from 560 on 12B.
 
 ### document_single — 1568² invoice
 
-| budget | image tok | 12B name_bbox | 31B name_bbox | 12B items | 31B items |
+| budget | image tok | 12B name_bbox | 26B name_bbox | 31B name_bbox | items (12B/26B/31B) |
 |---|---|---|---|---|---|
-| 70 | ~88 | 0/5 | 0/5 | 0/5 | 0/5 |
-| 140 | ~145 | 0/5 | 1/5 | 0/5 | 2/5 |
-| 280 | 280 | 4/5 | 3/5 | 5/5 | 5/5 |
-| 560 | ~553 | 3/5 | 4/5 | 5/5 | 5/5 |
-| 1120 | ~1180 | 4/5 | 4/5 | 5/5 | 5/5 |
+| 70 | ~88 | 0/5 | 0/5 | 0/5 | 0 / 0 / 0 |
+| 140 | ~145 | 0/5 | 1/5 | 1/5 | 0 / 2 / 2 |
+| 280 | 280 | 4/5 | 4/5 | 3/5 | 5 / 5 / 5 |
+| 560 | ~553 | 3/5 | 4/5 | 4/5 | 5 / 5 / 5 |
+| 1120 | ~1180 | 4/5 | 4/5 | 4/5 | 5 / 5 / 5 |
+
+The 1:1 document shows **no collapse at 1120 on any size** — the contrast with the 16:9
+scene that motivated [the aspect investigation](gemma4-bbox-aspect-investigation.md).
 
 `prompt_eval_count` is identical across sizes at every rung (650/704/848/1111/1754 for
 scene; 422/479/614/887/1514 for document), confirming image cost is a function of the
@@ -244,24 +254,32 @@ baseline to recover image tokens; using the wrong one yields nonsense at the low
 1. **560 dominates 1120 on both sizes.** Higher IoU (+0.175 on 12B, +0.177 on 31B) with
    identical fine-text recall. The shipped `DefaultImageMaxTokens = 1120` is not the best
    rung on this workload.
-2. **IoU peaks at 560 and collapses at 1120**, identically on both sizes. Since 12B is
-   encoder-free and 31B has a ~550M encoder, **the collapse is not in the vision
-   encoder** — it is in the shared preprocessing/decode path. That is the place to look.
+2. **IoU peaks at 560 and collapses at 1120 on all three sizes**, and **the vision
+   encoder is ruled out**. 12B is encoder-free while 26B A4B and 31B share a ~550M
+   encoder — yet 26B and 31B differ *most* in collapse magnitude (+0.075 vs +0.173)
+   while 12B sits between them on peak IoU. If the encoder drove this, the two
+   encoder-bearing sizes would pair off against 12B. They do not. The **shape** is
+   universal and the **magnitude** varies non-systematically, which is what a shared
+   preprocessing/decode defect modulated by per-model robustness looks like.
 3. **The effect is not monotonic in token count.** The shipped *range* `40…1120` selects
    ~936 image tokens and scores IoU 0.504; the *pinned* 1120 uses ~1186 tokens and scores
    0.719. More tokens, better geometry. "Higher resolution costs localisation" is the
    wrong model — specific grids decode badly.
 4. **The bottom two rungs are unusable here.** 70 scores zero on every metric at both
    sizes; 140 loses labels (12B) and line items (both).
-5. **Size buys low-budget capability, not a different curve.** 31B reads 6/6 labels at
-   140 where 12B manages 4/6, and finds the 14px serial at 280 where 12B needs 560 —
-   consistent with the encoder — but both trace the same peak-then-collapse shape.
+5. **Size buys low-budget capability, not a different curve.** 26B and 31B read 6/6
+   labels at 140 where 12B manages 4/6, and find the 14px serial at 280 where 12B needs
+   560 — consistent with them having an encoder — but all three trace the same
+   peak-then-collapse shape.
+6. **560 is the optimum on every size tested.** Encoder-free, MoE-with-encoder and
+   dense-with-encoder all peak there, and 26B posts the best bbox result in the whole
+   sweep (0.914).
 
 ### Not covered
 
-- **26B A4B was not swept** — it was absent from the local store when this ran. It is the
-  most informative missing cell: it shares 31B's ~550M encoder at MoE scale, so it would
-  separate "encoder vs encoder-free" from "parameter count".
+- **26B A4B was added 2026-08-07** and is included above. It was the discriminating
+  cell — sharing 31B's ~550M encoder at MoE scale — and its result is what rules the
+  encoder out as the cause.
 - Only `q4_K_M` was probed. Per the note above, budget behaviour has not varied by quant
   within an arch, but the *quality* numbers here are not quant-independent and should not
   be assumed to transfer to `nvfp4`.
