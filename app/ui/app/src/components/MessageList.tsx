@@ -23,7 +23,7 @@ export default function MessageList({
   onEditMessage?: (content: string, index: number) => void | Promise<void>;
   editingMessageIndex?: number;
   error?: ErrorEvent | null;
-  browserToolResult?: any;
+  browserToolResult?: { page_stack: string[] };
 }) {
   const [showDots, setShowDots] = React.useState(false);
   const isDownloadingModel = downloadProgress && !downloadProgress.done;
@@ -49,14 +49,14 @@ export default function MessageList({
 
   const lastIdx = messages.length - 1;
 
-  // Memoize the last tool query (web_search query or web_fetch url) at each message index
+  // Memoize the last tool query per message index, recalculate only when message count changes
   const lastToolQueries = React.useMemo(() => {
     const queries: (string | undefined)[] = [];
     let lastQuery: string | undefined = undefined;
     for (let i = 0; i < messages.length; i++) {
-      const m: any = messages[i] as any;
-      const toolCalls: any[] | undefined = Array.isArray(m?.tool_calls)
-        ? (m.tool_calls as any[])
+      const m = messages[i];
+      const toolCalls = Array.isArray(m?.tool_calls)
+        ? m.tool_calls
         : m?.tool_call
           ? [m.tool_call]
           : undefined;
@@ -80,11 +80,12 @@ export default function MessageList({
       queries.push(lastQuery);
     }
     return queries;
-  }, [messages]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages.length]);
 
   return (
     <div
-      className="mx-auto flex max-w-[768px] flex-1 flex-col px-6 pb-12 select-text"
+      className="mx-auto flex max-w-3xl flex-1 flex-col px-6 pb-12 select-text"
       data-role="message-list"
     >
       {messages.map((message, idx) => {
