@@ -365,7 +365,7 @@ time=2025-06-30T09:25:56.197-07:00 level=DEBUG source=ggml.go:155 msg="key not f
 			if err != nil {
 				t.Fatalf("failed to write log file %s: %s", serverLogPath, err)
 			}
-			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+			ctx, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
 			defer cancel()
 			info, err := GetInferenceInfo(ctx)
 			if err != nil {

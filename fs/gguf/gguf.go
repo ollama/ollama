@@ -51,12 +51,19 @@ type File struct {
 	bts    []byte
 }
 
-func Open(path string) (f *File, err error) {
-	f = &File{bts: make([]byte, 4096)}
+func Open(path string) (_ *File, err error) {
+	f := &File{bts: make([]byte, 4096)}
 	f.file, err = os.Open(path)
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if err != nil {
+			if closeErr := f.close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}
+	}()
 
 	f.reader = newBufferedReader(f.file, 32<<10)
 
@@ -324,8 +331,19 @@ func maxInt64() uint64 {
 }
 
 func (f *File) Close() error {
-	f.keyValues.stop()
-	f.tensors.stop()
+	return f.close()
+}
+
+func (f *File) close() error {
+	if f.keyValues != nil {
+		f.keyValues.stop()
+	}
+	if f.tensors != nil {
+		f.tensors.stop()
+	}
+	if f.file == nil {
+		return nil
+	}
 	return f.file.Close()
 }
 

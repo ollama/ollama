@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -1587,7 +1588,7 @@ func TestCreateHandlerDraftQuantizeRequiresDraft(t *testing.T) {
 	}
 }
 
-func TestResolveExperimentalLocalModelDir(t *testing.T) {
+func TestResolveCreateLocalModelDir(t *testing.T) {
 	dir := t.TempDir()
 	modelfile := filepath.Join(dir, "Modelfile")
 	modelDir := filepath.Join(dir, "model")
@@ -1601,15 +1602,15 @@ func TestResolveExperimentalLocalModelDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := resolveExperimentalLocalModelDir("gemma4", modelfile); got != "gemma4" {
-		t.Fatalf("resolveExperimentalLocalModelDir(model name) = %q, want gemma4", got)
+	if got := resolveCreateLocalModelDir("gemma4", modelfile); got != "gemma4" {
+		t.Fatalf("resolveCreateLocalModelDir(model name) = %q, want gemma4", got)
 	}
-	if got := resolveExperimentalLocalModelDir("./model", modelfile); got != modelDir {
-		t.Fatalf("resolveExperimentalLocalModelDir(local dir) = %q, want %q", got, modelDir)
+	if got := resolveCreateLocalModelDir("./model", modelfile); got != modelDir {
+		t.Fatalf("resolveCreateLocalModelDir(local dir) = %q, want %q", got, modelDir)
 	}
 }
 
-func TestResolveExperimentalDraftDir(t *testing.T) {
+func TestResolveCreateDraftDir(t *testing.T) {
 	dir := t.TempDir()
 	modelfile := filepath.Join(dir, "Modelfile")
 	draftDir := filepath.Join(dir, "assistant")
@@ -1623,17 +1624,54 @@ func TestResolveExperimentalDraftDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := resolveExperimentalDraftDir("./assistant", modelfile)
+	got, err := resolveCreateDraftDir("./assistant", modelfile)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != draftDir {
-		t.Fatalf("resolveExperimentalDraftDir(local dir) = %q, want %q", got, draftDir)
+		t.Fatalf("resolveCreateDraftDir(local dir) = %q, want %q", got, draftDir)
 	}
 
-	_, err = resolveExperimentalDraftDir("assistant-model", modelfile)
-	if err == nil || !strings.Contains(err.Error(), "DRAFT model references are not supported with --experimental yet") {
+	_, err = resolveCreateDraftDir("assistant-model", modelfile)
+	if err == nil || !strings.Contains(err.Error(), "DRAFT model references must be local safetensors directories") {
 		t.Fatalf("error = %v, want unsupported draft model reference", err)
+	}
+}
+
+func TestSafetensorsCreateOptionsDetectsLocalDir(t *testing.T) {
+	dir := t.TempDir()
+	modelDir := filepath.Join(dir, "model")
+	draftDir := filepath.Join(dir, "assistant")
+	for _, d := range []string{modelDir, draftDir} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "config.json"), []byte(`{"architectures":["Qwen3ForCausalLM"]}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "model.safetensors"), []byte("dummy"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	modelfilePath := filepath.Join(dir, "Modelfile")
+	modelfile, err := parser.ParseFile(strings.NewReader("FROM ./model\nDRAFT ./assistant\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	opts, ok, err := safetensorsCreateOptions(modelfile, modelfilePath, "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("safetensorsCreateOptions did not detect safetensors model")
+	}
+	if opts.ModelName != "test-model" || opts.ModelDir != modelDir {
+		t.Fatalf("opts model/name = %q/%q, want test-model/%s", opts.ModelName, opts.ModelDir, modelDir)
+	}
+	if opts.Modelfile == nil || opts.Modelfile.Draft != draftDir {
+		t.Fatalf("draft dir = %v, want %s", opts.Modelfile, draftDir)
 	}
 }
 
