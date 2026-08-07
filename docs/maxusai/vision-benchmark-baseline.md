@@ -171,10 +171,11 @@ Findings, in contrast to gemma4:
   ≈ 0). Nemotron's accuracy ceiling is localization *scatter* (y-rms ≥ 13px,
   vs 2–3px for on-ladder gemma4), not a coordinate-space defect — nothing to
   patch; it is a model precision limit.
-- **⚠ Pinned budgets overshoot the ceiling**: `min == max == 3328` delivers
-  3388 tokens — the same generic `ceil_by_factor` overshoot 004 removed for
-  gemma4. Harmless to quality here, but it breaks the budget contract and the
-  Go `MaxImageTokens` bound (3330 < 3390 actual) for pinned requests.
+- **Pinned-budget overshoot — FIXED by compat/005** (same day): pre-005,
+  `min == max == 3328` delivered 3388 tokens (generic `ceil_by_factor`
+  overshoot, the bug 004 removed for gemma4). 005 floors just under min when
+  the pin is infeasible: re-measured 3268 tokens (pe 3902), IoU 0.848 vs 0.856
+  (within noise), Go estimator matches to the token.
 - **⚠ Aspect sensitivity is the real weakness**: at matched ~2000-token budgets,
   portrait loses 0.16 IoU (0.702, scatter tripling to 48px) and square loses
   0.14 (0.721) versus landscape (0.857). Patched gemma4 12B scores 0.905 on the

@@ -1882,6 +1882,12 @@ func TestImageTokensForSize(t *testing.T) {
 		// nemotron_h_omni with the 002 dynres patch (worked examples in
 		// nemotron-dynres-patch.md's validation checklist).
 		{name: "nemotron 640x480", arch: "nemotron_h_omni", w: 640, h: 480, want: 302, wantOK: true},
+		// Pinned min==max: pre-005 the min_pixels ceil overshot the ceiling
+		// (delivered 3388+2 for a 3328 budget); 005 floors just under min
+		// instead: 76×43 = 3268 (+2 markers).
+		{name: "nemotron pinned 3328 1920x1080", arch: "nemotron_h_omni",
+			opts: api.Options{Runner: api.Runner{ImageMinTokens: 3328, ImageMaxTokens: 3328}},
+			w: 1920, h: 1080, want: 3270, wantOK: true},
 		{name: "nemotron 1920x1080", arch: "nemotron_h_omni", w: 1920, h: 1080, want: 2042, wantOK: true},
 		{name: "nemotron 1568x1568", arch: "nemotron_h_omni", w: 1568, h: 1568, want: 2403, wantOK: true},
 		{name: "nemotron 3000x2000", arch: "nemotron_h_omni", w: 3000, h: 2000, want: 3292, wantOK: true},
