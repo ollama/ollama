@@ -45,7 +45,13 @@ constrain. Never silently ignore a constraint.
    - A matcher advances the grammar byte by byte using sets of pushdown stacks
      (the same formalization as `llama-grammar.cpp`, over bytes instead of
      codepoints). Alternation forks stacks; rule references push frames, so
-     recursive `$ref`s work.
+     recursive `$ref`s work. References in tail position reuse the parent
+     continuation instead of pushing — star recursions (string content,
+     whitespace) are tail calls, so those states are genuine self-loops.
+     Without the collapse the stack grows one frame per consumed byte, mask
+     caching never hits inside strings, and long generations decay
+     quadratically (observed live: ~160 ms/token at 900 characters, ~20
+     ms/token — model-bound — after).
    - A vocabulary trie (token id → decoded bytes) computes the per-step
      allowed-token mask by walking the trie under the matcher; masks are
      memoized by canonical matcher-state key (in-string and in-whitespace states

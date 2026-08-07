@@ -165,6 +165,44 @@ func TestStateKeyDistinguishesStates(t *testing.T) {
 	}
 }
 
+func TestInStringStateIsStable(t *testing.T) {
+	// Consuming string content must be a self-loop: the star recursion
+	// may not grow the stack per character, or long generations get a
+	// fresh (uncacheable, ever-slower) state every token.
+	g := mustCompileJSON(t)
+	m := g.NewMatcher()
+	if !m.Advance([]byte(`{"k":"`)) {
+		t.Fatal("prefix rejected")
+	}
+	m.AdvanceByte('a')
+	key := m.StateKey()
+	for i := 0; i < 500; i++ {
+		if !m.AdvanceByte('a') {
+			t.Fatalf("content byte %d rejected", i)
+		}
+		if k := m.StateKey(); k != key {
+			t.Fatalf("in-string state changed after %d content bytes", i+1)
+		}
+	}
+}
+
+func TestWhitespaceStateIsStable(t *testing.T) {
+	g := mustCompileJSON(t)
+	m := g.NewMatcher()
+	if !m.Advance([]byte("{ ")) {
+		t.Fatal("prefix rejected")
+	}
+	key := m.StateKey()
+	for i := 0; i < 100; i++ {
+		if !m.AdvanceByte(' ') {
+			t.Fatalf("ws byte %d rejected", i)
+		}
+		if k := m.StateKey(); k != key {
+			t.Fatalf("whitespace state changed after %d bytes", i+1)
+		}
+	}
+}
+
 func TestCompileRejectsInvalidFormat(t *testing.T) {
 	for _, c := range []string{`"yaml"`, `42`, `[1]`, `"JSON"`, `hello`} {
 		if _, err := Compile([]byte(c)); err == nil {

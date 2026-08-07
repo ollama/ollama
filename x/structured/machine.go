@@ -204,11 +204,28 @@ func (n *normalizer) add(f *frame) {
 	n.out = append(n.out, f)
 }
 
+// normalizeDepthLimit bounds the ε-expansion recursion so degenerate
+// grammars (mutually recursive unit rules a ::= b; b ::= a) cannot hang a
+// request; expansion paths past the limit are dropped, which can only
+// shrink the accepted language of an already-degenerate grammar.
+const normalizeDepthLimit = 4096
+
 // normalize expands the position (parent, rule, alt, idx) until every
 // resulting stack is stable: past-the-end positions pop to the parent,
 // rule references descend into each alternative. Frames are only
-// materialized for stable stacks.
+// materialized for stable stacks. A reference in tail position reuses the
+// parent continuation instead of pushing a frame — without this, star
+// recursions like string content grow the stack by one frame per consumed
+// byte, so states never repeat, mask caching never hits, and long
+// generations slow down quadratically.
 func (n *normalizer) normalize(parent *frame, ruleIdx, alt, idx int32) {
+	n.normalizeAt(parent, ruleIdx, alt, idx, 0)
+}
+
+func (n *normalizer) normalizeAt(parent *frame, ruleIdx, alt, idx int32, depth int) {
+	if depth > normalizeDepthLimit {
+		return
+	}
 	s := n.g.rules[ruleIdx].alts[alt]
 	if int(idx) >= len(s) {
 		// Sequence exhausted: return to the parent, past the ref that
@@ -217,7 +234,7 @@ func (n *normalizer) normalize(parent *frame, ruleIdx, alt, idx int32) {
 			n.add(nil)
 			return
 		}
-		n.normalize(parent.parent, parent.rule, parent.alt, parent.idx+1)
+		n.normalizeAt(parent.parent, parent.rule, parent.alt, parent.idx+1, depth+1)
 		return
 	}
 	e := &s[idx]
@@ -225,9 +242,14 @@ func (n *normalizer) normalize(parent *frame, ruleIdx, alt, idx int32) {
 		n.add(n.alloc(parent, ruleIdx, alt, idx))
 		return
 	}
-	self := n.alloc(parent, ruleIdx, alt, idx)
+	next := parent
+	if int(idx)+1 < len(s) {
+		// Only a non-tail reference needs a return frame; a tail call
+		// continues straight into the parent's continuation.
+		next = n.alloc(parent, ruleIdx, alt, idx)
+	}
 	for childAlt := range n.g.rules[e.ref].alts {
-		n.normalize(self, e.ref, int32(childAlt), 0)
+		n.normalizeAt(next, e.ref, int32(childAlt), 0, depth+1)
 	}
 }
 
