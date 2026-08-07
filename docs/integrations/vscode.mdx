@@ -38,6 +38,12 @@ ollama signin
 
 Local models do not require sign-in.
 
+## Context length
+
+VS Code may show a model's maximum supported context length even when Ollama allocates a smaller context at runtime.
+
+For local models, open Ollama **Settings**, set the context length to at least 64k, reload the VS Code window, and resend your prompt. See [Context length](/context-length) for more information.
+
 ## Troubleshooting
 
 If Ollama models do not appear in the model picker:
