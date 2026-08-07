@@ -362,6 +362,73 @@ func TestPullHandler_CloudSuggestionUnrelatedError(t *testing.T) {
 	}
 }
 
+func TestLaunchCloudSuggestHookWired(t *testing.T) {
+	server := newCloudSuggestServer(t)
+	stubCloudSuggest(t, true, func(string) (bool, error) { return true, nil })
+
+	if launch.DefaultCloudSuggest == nil {
+		t.Fatal("launch.DefaultCloudSuggest is not wired")
+	}
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pullErr := errors.New("failed to pull some-model: pull model manifest: file does not exist")
+	resolved, err := launch.DefaultCloudSuggest(t.Context(), client, "some-model", pullErr)
+	if err != nil {
+		t.Fatalf("DefaultCloudSuggest returned error: %v", err)
+	}
+	if resolved != "some-model:cloud" {
+		t.Fatalf("resolved = %q, want %q", resolved, "some-model:cloud")
+	}
+	if len(server.pullModels) != 0 {
+		t.Fatalf("pulled models = %v, want none (the launch flow owns pulling)", server.pullModels)
+	}
+	if want := []string{"some-model:cloud"}; !slices.Equal(server.showModels, want) {
+		t.Fatalf("show models = %v, want the cloud existence probe %v", server.showModels, want)
+	}
+}
+
+func TestLaunchCloudSuggestHookNonInteractiveHint(t *testing.T) {
+	newCloudSuggestServer(t)
+	stubCloudSuggest(t, false, nil)
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pullErr := errors.New("failed to pull some-model: pull model manifest: file does not exist")
+	_, err = launch.DefaultCloudSuggest(t.Context(), client, "some-model", pullErr)
+	if err == nil {
+		t.Fatal("DefaultCloudSuggest returned nil, want an error")
+	}
+	if !errors.Is(err, pullErr) {
+		t.Fatalf("error = %q, want it to wrap the original pull error", err)
+	}
+	if !strings.Contains(err.Error(), "--model some-model:cloud") {
+		t.Fatalf("error = %q, want it to hint at '--model some-model:cloud'", err)
+	}
+}
+
+func TestLaunchCloudSuggestHookDeclinedKeepsOriginalError(t *testing.T) {
+	newCloudSuggestServer(t)
+	stubCloudSuggest(t, true, func(string) (bool, error) { return false, launch.ErrCancelled })
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pullErr := errors.New("failed to pull some-model: pull model manifest: file does not exist")
+	_, err = launch.DefaultCloudSuggest(t.Context(), client, "some-model", pullErr)
+	if err != pullErr {
+		t.Fatalf("error = %v, want the original pull error unchanged", err)
+	}
+}
+
 func TestRunHandler_CloudSuggestionAccepted_RunsCloudModel(t *testing.T) {
 	server := newCloudSuggestServer(t)
 	stubCloudSuggest(t, true, func(string) (bool, error) { return true, nil })
