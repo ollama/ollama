@@ -1427,6 +1427,14 @@ func smartResizeGrid(width, height, align, minTokens, maxTokens int) (cols, rows
 		beta := float32(math.Sqrt(float64(float32(minPixels) / float32(height*width))))
 		hBar = ceilBy(float32(height) * beta)
 		wBar = ceilBy(float32(width) * beta)
+		// Mirrors compat/005: with pinned budgets (min ~= max) the ceil can
+		// overshoot maxPixels; the budget is a hard ceiling, so floor just
+		// under min instead — keeping this estimate equal to what the patched
+		// payload delivers.
+		if hBar*wBar > maxPixels {
+			hBar = max(align, floorBy(float32(height)*beta))
+			wBar = max(align, floorBy(float32(width)*beta))
+		}
 	}
 
 	return wBar / align, hBar / align

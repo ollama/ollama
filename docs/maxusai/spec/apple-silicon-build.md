@@ -9,7 +9,7 @@ Two artifacts, because one cannot do both jobs:
 | Target | this Mac, run directly | any Apple M-family Mac, under Docker |
 | Preset | `darwin` | `cpu` |
 | Compute | Metal GPU + MLX `metal_v4` | **CPU only** |
-| llama.cpp patches (001–004) | yes | yes |
+| llama.cpp patches (001–005) | yes | yes |
 | Go patches | yes | yes |
 
 ## Why two
@@ -31,7 +31,7 @@ numeric filename order during llama.cpp's `FetchContent`, wired in by
 [`compat.cmake`](../../../llama/compat/compat.cmake) at
 [`llama/server/CMakeLists.txt:134`](../../../llama/server/CMakeLists.txt).
 
-The glob is **recursive**, so subdirectory patches are included. The set is four,
+The glob is **recursive**, so subdirectory patches are included. The set is five,
 applied in numeric filename order:
 
 | Patch | Purpose |
@@ -40,8 +40,9 @@ applied in numeric filename order:
 | `002-llama-cpp-nemotron-dynres.patch` | nemotron dynamic resolution |
 | `models/003-llama-cpp-laguna-metal.patch` | Laguna, Metal path |
 | `004-llama-cpp-gemma4-budget-fill.patch` | gemma4 reference sizing: ladder snap + budget fill + `PAD_NONE` |
+| `005-llama-cpp-dynres-pinned-overshoot.patch` | dyn_size pinned budgets: never exceed max_pixels |
 
-Both the `darwin` and `cpu` presets route through `llama/server`, so all four are
+Both the `darwin` and `cpu` presets route through `llama/server`, so all five are
 applied to the fetched source in each build. No bespoke plumbing, and no
 divergence between the two artifacts.
 
@@ -120,7 +121,7 @@ CUDA v12, CUDA v13, Jetpack 5 and Jetpack 6 — all NVIDIA, none reachable from 
 1. **Build base** — `almalinux:8` (arm64) + `gcc-toolset-13-{gcc,gcc-c++,binutils}`,
    cmake, ninja, git. Verified available for aarch64 at `13.3.1-2.2.el8_10`.
    Omit the NVIDIA CUDA sbsa repo that the stock `base-arm64` adds; nothing needs it.
-2. **llama-server** — `cmake -S llama/server --preset cpu`. Applies 001–004.
+2. **llama-server** — `cmake -S llama/server --preset cpu`. Applies 001–005.
 3. **Go** — build the fork binary with the version stamp.
 4. **Runtime** — `ubuntu:24.04` + `ca-certificates` + `libopenblas0`.
    No `libvulkan1`; there is no Vulkan backend in this image.
@@ -146,8 +147,8 @@ patch is live.
 | What | Check | Pass |
 |---|---|---|
 | Go patches | `go test ./api/... ./llm/... ./server/...` | green |
-| Patches applied — native | build output (superbuild: appears during `cmake --build`, not root configure) | all four `llama/compat: applied …` lines |
-| Patches applied — container | **source inspection, not log grep** — see below | 001–004 hunks present in the fetched source |
+| Patches applied — native | build output (superbuild: appears during `cmake --build`, not root configure) | all five `llama/compat: applied …` lines |
+| Patches applied — container | **source inspection, not log grep** — see below | 001–005 hunks present in the fetched source |
 | 002 live | nemotron vision request, per-image token cost | up to 3,328 (stock shows 256) |
 | Metal live (native) | `build/lib/ollama` contents; serve logs | `mlx_metal_v4` present, Metal backend selected |
 | Container identity | `docker run --rm <img> --version` | fork version string |
