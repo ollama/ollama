@@ -326,7 +326,7 @@ func filesForModel(path string) ([]string, error) {
 			if ct, err := detectContentType(match); err != nil {
 				return nil, err
 			} else if len(contentType) > 0 && ct != contentType {
-				return nil, fmt.Errorf("invalid content type: expected %s for %s", ct, match)
+				return nil, fmt.Errorf("invalid content type: expected %s but got %s for %s", contentType, ct, match)
 			}
 		}
 
