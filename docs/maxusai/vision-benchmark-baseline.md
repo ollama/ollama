@@ -1,114 +1,197 @@
-# Vision benchmark baseline — performance overview and regression reference
-
-Compiled 2026-08-07, gaps filled same day. **Purpose:** one table of clean,
-attributed measurements to (a) compare models/configs and (b) detect regressions.
-Supersedes the throughput columns of
-[vision-token-budget-measurements.md](vision-token-budget-measurements.md)
-(its tps cells are load-contaminated; its accuracy cells stand).
-
-## Platform
+# MaxusAI Vision Benchmark — Baseline Report v1.0
 
 | | |
 |---|---|
-| Host | Apple M5 Max, 128 GB, macOS 26.6 — **High Power Mode** (`pmset -g` powermode 2). Re-measure if power mode differs; all tps cells assume it. |
-| Servers | `:11434` stock ollama 0.32.6 (llama.cpp b10242) · `:11435` fork unpatched (b10091 + compat 001–003) · `:11436` fork patched (b10091 + 001–**004**, `0.32.5-gemma4fill-dev`) |
-| Method | vision-suite prompts, temperature 0, think off, `format:json`; scene 1920×1080 (6 labelled shapes + 14px serial), document 1568² invoice, multi = 3 images. Clean single request per cell, warm load, no concurrent traffic. |
-| Key commits | 004 patch `14dc92a1` · ADR 0008 `b282ca97` · doc-IoU metric `62f01182` (merged, PR #40) |
+| Report date | 2026-08-07 (all measurements same day) |
+| Scope | Local-inference vision quality and throughput: gemma4 family (stock / fork-unpatched / fork-patched), qwen3.6, nemotron3 |
+| Provenance | Fork commits `14dc92a1` (004 sizing patch) · `b282ca97` (ADR 0008) · `62f01182` (doc-IoU metric); merged via PR #40. Investigation: [gemma4-bbox-investigation-findings.md](gemma4-bbox-investigation-findings.md) |
+| Status | Living baseline — append re-measurements with date + config; never overwrite historical cells |
 
-## GGUF inventory (both servers share the store)
+---
 
-| family | q4_K_M | nvfp4 |
-|---|---|---|
-| gemma4 | 12b-it 7.6 GB · 26b-a4b-it 18.0 GB · 31b-it 19.9 GB | 12b 7.7 GB · 26b 17.6 GB · 31b 18.6 GB |
-| qwen3.6 | 35b-a3b 23.9 GB | 35b-a3b 21.9 GB |
-| nemotron3 | 33b 27.6 GB | — |
+## 1. System under test
 
-All **nvfp4** variants route to the MLX runner, which silently drops images
-(vision-blind, model confabulates) — no valid vision cell exists for any nvfp4.
+### 1.1 Hardware / OS
 
-## Main matrix (scene test unless noted; all cells clean-measured)
+| component | value |
+|---|---|
+| Machine | Apple M5 Max, 128 GB unified memory |
+| OS | macOS 26.6 (Darwin 25.6.0) |
+| Power profile | **High Power Mode** (`pmset -g` → `powermode 2`) — precondition for every throughput cell |
+| Backend | Metal (llama.cpp); MLX `metal_v4` present but vision-blind (§6.3) |
+| Storage | Model store on internal NVMe (`~/.ollama/models-mlx`) |
 
-| model | quant | server / patch | budget → img tok | scene IoU | doc name_bbox IoU | 14px serial | gen tok/s | prefill tok/s |
-|---|---|---|---|---|---|---|---|---|
-| qwen3.6 35B-A3B | q4_K_M | patched | (qwen path) ~2031 | **0.975** | 0.686 | ✓ | **109.7** | 1269 |
-| nemotron3 33B | q4_K_M | fork (002) | dynres ~2090 | 0.857 | — | ✓ | 90.4 | 885 |
-| gemma4 26B A4B | q4_K_M | patched | 1120 → 1100 | 0.970 | — | ✓ | 102.9 | 657 |
-| gemma4 26B A4B | q4_K_M | patched | 560 → 527 | 0.961 | — | ✓ | 106.4 | 1104 |
-| gemma4 26B A4B | q4_K_M | **stock** (max 280) | 280 → 264 | 0.885 | — | ✗ | 106.3 | 1102 |
-| gemma4 31B | q4_K_M | patched | 1120 → 1100 | 0.963 | **0.712** | ✓ | 20.8 | 266 |
-| gemma4 31B | q4_K_M | patched | 560 → 527 | 0.934 | — | ✓ | 21.6 | (cache hit)* |
-| gemma4 31B | q4_K_M | patched | 280 → 264 | 0.934 | — | ✗ | 22.6 | ~1200* |
-| gemma4 31B | q4_K_M | unpatched | 280 pinned → 264 | 0.902 | — | ✗ | 23.0 | 432 |
-| gemma4 31B | q4_K_M | **stock** (max 280) | 280 → 264 | 0.902 | — | ✗ | 18.9 | 381 |
-| gemma4 12B | q4_K_M | patched | 1120 → 1100 | 0.885 | 0.101 | ✓ | 52.6 | 1314 |
-| gemma4 12B | q4_K_M | patched | 560 → 527 | 0.940 | ~0.64 | ✓ | 53.5 | 1306 |
-| gemma4 12B | q4_K_M | **stock** (max 280) | 280 → 264 | 0.883 | 0.414 | ✗ | 53.0 | 908 |
-| gemma4 12B | q4_K_M | unpatched shipped 40…1120 | → 920 (off-ladder) | 0.504 | 0.101 | ✓ | — | — |
-| any | **nvfp4** | MLX runner | — | vision-blind | — | — | — | — |
+### 1.2 Server configurations
 
-\* prefill on ≤264-token images is overhead-dominated; the 31b@560 cell hit a warm
-KV cache (0.2s load) — both invalid as prefill measurements.
-
-**Stock 31B confirms the control-arm equivalence exactly**: 0.902 on stock b10242
-matches unpatched-fork b10091 pinned @280 to three decimals.
-
-Extras (patched): portrait 12B @1120 → 24×45 grid, IoU 0.905. Fine text (1568²):
-@560 reads 22px only; @1120 adds 16px + half of 12px. Multi-image: all questions
-correct on 12B/31B/qwen3.6.
-
-## Wall time and request scaling (scene test, ~530–545 output tokens)
-
-Measured 2026-08-07: cold = first request incl. model load; warm-repeat = same
-request again (image prefix may hit the prompt cache — an upper bound); unique =
-derived `eval/gen_tps + prompt_eval/prefill_tps`, the realistic steady state
-when every request carries a *different* image.
-
-| config | cold s | warm-repeat s | unique-image s/req | **req/hour (unique)** |
+| id | binary | llama.cpp payload | compat patches | gemma4 defaults |
 |---|---|---|---|---|
+| `stock` | ollama 0.32.6 (upstream, :11434) | b10242 | none | min 40 / max 280 (upstream) |
+| `unpatched` | fork 0.32.5 (:11435) | b10091 | 001–003 | 40 / 1120 (pre-ADR-0007) |
+| `patched` | fork `0.32.5-gemma4fill-dev` (:11436) | b10091 | 001–**004** | 70 / 1120 (ADR 0008); budget-fill sizing |
+
+All servers `OLLAMA_NUM_PARALLEL=1`, no concurrent traffic during measurement.
+
+### 1.3 Model inventory (shared store)
+
+| model | arch | params (active) | quant | size | vision path |
+|---|---|---|---|---|---|
+| gemma4:12b-it | dense, encoder-free | 12B | Q4_K_M | 7.6 GB | llama-server (mtmd) |
+| gemma4:26b-a4b-it | MoE, ~550M encoder | 25.2B (3.8B) | Q4_K_M | 18.0 GB | llama-server (mtmd) |
+| gemma4:31b-it | dense, ~550M encoder | 30.7B | Q4_K_M | 19.9 GB | llama-server (mtmd) |
+| qwen3.6:35b-a3b | MoE | 35B (3B) | Q4_K_M | 23.9 GB | llama-server (mtmd) |
+| nemotron3:33b | hybrid | 33B | Q4_K_M | 27.6 GB | llama-server (mtmd + compat/002) |
+| gemma4:{12b,26b,31b}-nvfp4, qwen3.6:35b-a3b-nvfp4 | — | — | nvfp4 | 7.7–21.9 GB | **MLX runner — images silently dropped; no valid vision cell (§6.3)** |
+
+---
+
+## 2. Workloads
+
+All inputs are deterministic synthetic images with exact pixel ground truth,
+generated by `vision-suite/gen_scenes.py` (seeded). Sampling:
+`temperature 0`, `think false`, `format json`, `num_predict 4000`, `num_ctx 16384`.
+At temperature 0 every (payload, backend, budget, image) cell is bit-reproducible.
+
+### W1 — Scene grounding (`scene_single`)
+
+| | |
+|---|---|
+| Input | `scene_hd.png`, 1920×1080 RGB PNG: 6 labelled shapes (3 rectangles, 3 ellipses; red/blue/green/orange/purple/teal) on light background, 20px label above each shape, plus a 14px serial `SN-4921-XK` bottom-right |
+| Prompt | Industrial-inspection instruction, 568 text tokens; requests exhaustive detection, exact label transcription, absolute-pixel bboxes, all other text |
+| Expected output | Single JSON object: `image_width/height`, `object_count`, `objects[] {label, kind, color, bbox, confidence}`, `other_text[]`, `notes` — typically 530–545 tokens |
+| Metrics | `scene IoU` = mean IoU over the 6 label-matched boxes, best-of-4 decode ({pixel, norm-1000} × {xyxy, yxyx}; every model measured here emits norm-1000/xyxy). `labels` (6), `colors` (6), `serial` (14px recall — the fine-text canary) |
+
+### W2 — Document extraction (`document_single`)
+
+| | |
+|---|---|
+| Input | `document.png`, 1568×1568 RGB PNG: synthetic invoice — 44px title, 24px headers, 5 line items at 22px body text (rows at y = 354–559), totals, 17px fine print with reference code |
+| Prompt | Accounts-payable parser instruction, 342 text tokens; verbatim extraction + per-item name bbox |
+| Expected output | Single JSON: supplier, invoice_number, date, customer, `line_items[] {name, qty, unit_price, name_bbox}`, total, fine_print, reference codes — ~500 tokens |
+| Metrics | Extraction: items/5, qty+price/5, total, invoice_no. Geometry: `doc name_bbox IoU` = mean IoU vs measured row boxes (metric added `62f01182`; supersedes the legacy band-test `name_bbox_hits`, which cannot detect coordinate-scale errors) |
+
+### W3 — Multi-image (`multi_3img`)
+
+Three images in one request (scene + document + 1280×960 bar chart); cross-image
+questions (which image holds a code, largest bar, shared word, bbox of a named
+shape). Pass/fail per question + chart value recall (5 bars).
+
+### W4 — Fine-text ladder (ad hoc, `ftsweep.py`)
+
+1568² compliance page, 4 reference codes at each of 22/16/12/9/7 px (monospace).
+Metric: exact-transcription recall per size tier. Used to price budget ceilings:
+at gemma4 budget 560 a 1568px page renders at 1104px, at 1120 at 1584px.
+
+### Token accounting invariant
+
+`prompt_eval_count = text + Σ(per image: patch_grid + 16)`. Scene text = 568,
+document = 342. On a 004 payload every gemma4 grid must satisfy
+`cols·rows ≤ B < (cols+1)·(rows+1)` for a supported budget B ∈ {70, 140, 280,
+560, 1120} (SPEC B7). A grid change at fixed config is a sizing regression.
+
+---
+
+## 3. Metric definitions
+
+| metric | definition |
+|---|---|
+| gen tok/s | `eval_count / eval_duration` — decode rate; independent of image budget and of the 004 patch |
+| prefill tok/s | `prompt_eval_count / prompt_eval_duration`; scales with image tokens. Invalid on <300-token prompts (overhead-dominated) or on prompt-cache hits (§6.2) |
+| cold s/req | `total_duration` of the first request, including model load (3–7 s observed) |
+| warm-repeat s/req | `total_duration` of an identical immediate repeat — **upper bound only**; the image prefix hits the prompt cache |
+| unique-image s/req | `eval_count/gen_tps + prompt_eval/prefill_tps` — realistic steady state for a stream of distinct images |
+| req/hour | `3600 / unique-image s/req`, serial, `NUM_PARALLEL=1` |
+
+---
+
+## 4. Results
+
+### 4.1 Quality × throughput matrix (W1 unless noted)
+
+| model | server / config | img tok | scene IoU | doc IoU (W2) | serial | gen tok/s | prefill tok/s |
+|---|---|---|---|---|---|---|---|
+| qwen3.6 35B-A3B | patched, model defaults | ~2031 | **0.975** | 0.686 | ✓ | **109.7** | 1269 |
+| nemotron3 33B | fork (002), defaults | ~2090 | 0.857 | — | ✓ | 90.4 | 885 |
+| gemma4 26B A4B | patched @1120 | 1100 | 0.970 | — | ✓ | 102.9 | 657 |
+| gemma4 26B A4B | patched @560 | 527 | 0.961 | — | ✓ | 106.4 | 1104 |
+| gemma4 26B A4B | stock (max 280) | 264 | 0.885 | — | ✗ | 106.3 | 1102 |
+| gemma4 31B | patched @1120 | 1100 | 0.963 | **0.712** | ✓ | 20.8 | 266 |
+| gemma4 31B | patched @560 | 527 | 0.934 | — | ✓ | 21.6 | n/v† |
+| gemma4 31B | patched @280 | 264 | 0.934 | — | ✗ | 22.6 | n/v† |
+| gemma4 31B | unpatched @280 pinned | 264 | 0.902 | — | ✗ | 23.0 | 432 |
+| gemma4 31B | stock (max 280) | 264 | 0.902 | — | ✗ | 18.9 | 381 |
+| gemma4 12B | patched @1120 | 1100 | 0.885 | 0.101 | ✓ | 52.6 | 1314 |
+| gemma4 12B | patched @560 | 527 | 0.940 | ~0.64 | ✓ | 53.5 | 1306 |
+| gemma4 12B | stock (max 280) | 264 | 0.883 | 0.414 | ✗ | 53.0 | 908 |
+| gemma4 12B | unpatched shipped 40…1120 | 920 ‡ | 0.504 | 0.101 | ✓ | — | — |
+
+† not valid: overhead-dominated or KV-cache hit. ‡ off-ladder grid (the defect 004 fixes).
+
+Secondary results (patched): portrait 12B @1120 (24×45 grid) IoU 0.905 · W3 all
+questions correct on 12B/31B/qwen3.6 · W4: budget 560 reads the 22px tier only;
+1120 adds 16px and half of 12px. Stock 31B (0.902) equals unpatched-fork @280 to
+three decimals, confirming the control-arm equivalence across payloads b10242/b10091.
+
+### 4.2 Latency and request scaling (W1, output 530–545 tokens)
+
+| config | cold s | warm-repeat s | unique s/req | req/hour |
+|---|---|---|---|---|
+| stock 26B (max 280) | 8.1 | 5.8 | 5.8 | ~620 |
 | qwen3.6 35B-A3B | 11.8 | 5.1 | 7.1 | **~505** |
 | patched 26B @1120 | 12.1 | 6.0 | 7.8 | **~460** |
-| stock 26B (max 280) | 8.1 | 5.8 | 5.8 | ~620 |
 | patched 12B @560 | 15.6 | 12.1 | 11.1 | ~325 |
 | patched 31B @1120 | 37.5 | 28.9 | 31.8 | ~113 |
 | stock 31B (max 280) | 32.8 | 28.7 | 30.3 | ~119 |
 
-Reading it: throughput ranking is decode-dominated (output ≈ 540 tokens swamps
-prefill for everything except 31B at high budgets). qwen3.6 and 26B A4B sustain
-~460–505 unique requests/hour at the highest accuracy tier; dense 31B manages
-~113–119 regardless of patch/budget; 12B sits between. Cold-start penalty is
-3–7 s (model load) — only relevant when models churn. Single-request serial
-figures (OLLAMA_NUM_PARALLEL=1); batching/parallel would change absolute rates
-but not the ranking.
+Decode dominates at this output length; accuracy is nearly free until dense 31B
+(~4× cost for ≤0.01 IoU over 26B @1120). Stock 26B's rate advantage is lower
+image resolution (264 tokens), which is also why it misses the serial.
 
-## Reading rules (regression testing)
+### 4.3 Recommendations (as of this report)
 
-1. **Accuracy cells are deterministic** per (payload, backend, budget, image) at
-   temperature 0 — reproduced to three decimals across reruns this campaign. An
-   IoU shift ≥0.01 on the same config is a real regression. `prompt_eval_count`
-   must decompose as `text + patch_grid + 16` per image (scene text = 584 incl.
-   framing, document = 358); a grid change means the sizing changed. On a 004
-   payload every gemma4 grid must satisfy `c·r ≤ B < (c+1)·(r+1)` for a ladder B
-   (SPEC B7).
-2. **Cross-image variance ≈ ±0.01**: 31B @1120 scored 0.952 on a re-rendered
-   scene variant vs 0.963 on the suite scene. Same-config drift beyond that is
-   signal.
-3. **Throughput cells are only valid from a clean single request after warm
-   load, in High Power Mode.** Sweep-archive tps is load-contaminated (31B @280:
-   8.1 tok/s under reload pressure vs 23.0 clean, ~3× off). Watch for KV-cache
-   hits: `load_duration` ≪ 1s with an implausible prefill tok/s means the image
-   prefix was cached — discard the prefill cell.
-4. Decode tok/s is independent of image budget and of 004; prefill scales with
-   image tokens. Cross-payload tps (stock vs fork) is indicative only — e.g.
-   stock 31B decodes 18.9 vs fork 21–23 on different llama.cpp builds.
-5. nvfp4 = MLX runner = images silently dropped (model confabulates). Any nvfp4
-   "vision result" is invalid until MLX vision lands.
-6. Model caveats: 12B (encoder-free) degrades at 1120 — pin 560 for bbox. 26B
-   A4B is the gemma4 speed/accuracy sweet spot (~105 tok/s, 0.970 @1120).
-   Single scene/seed per cell.
+| workload | pick |
+|---|---|
+| General vision, best quality + throughput | qwen3.6 35B-A3B, or gemma4 26B A4B @1120 (patched) |
+| Document-row geometry | gemma4 31B @1120 (patched) — only config above 0.7 doc IoU |
+| bbox on 12B specifically | pin `image_max_tokens: 560` (ADR 0008 exception) |
+| Latency-sensitive, coarse tasks | any gemma4 @280 per request (model-card guidance) |
 
-## Repro
+---
 
-Patched server: worktree build per [apple-silicon-build spec](spec/apple-silicon-build.md),
-`OLLAMA_MODELS=~/.ollama/models-mlx`, then
-`THINK=false python3 vision-suite/vision_suite.py <host> <tag> <model>`; scores land
-in gitignored `scores_<tag>.json`. Verify High Power Mode first: `pmset -g | grep powermode` → 2.
+## 5. Regression procedure
+
+1. Verify High Power Mode, then re-run the target cell as a **clean single
+   request after warm load** on the matching server config.
+2. Check the token-accounting invariant (§2) first — a changed
+   `prompt_eval_count` means the preprocessing changed, not the model.
+3. Compare IoU at three decimals. Thresholds: same config = exact reproduction
+   expected (temp 0); across image variants ±0.01 (measured: 31B @1120 scored
+   0.952 vs 0.963 on re-rendered vs suite scene); beyond that is signal.
+4. Throughput: compare gen tok/s only (±10%); treat prefill and wall time as
+   diagnostic. Discard any cell with `load_duration` < 1 s and implausible
+   prefill rate (prompt-cache hit).
+
+## 6. Known limitations
+
+1. **Single seed / single image per cell** — variance bounded (±0.01) but not
+   characterized; W2/W3 have no variant images at all.
+2. **Sweep-archive throughput is invalid.** `scores_bsweep-*.json` tps was
+   measured under back-to-back reload pressure (31B @280: 8.1 vs 23.0 tok/s
+   clean, ~3× understated). Its accuracy columns remain trustworthy.
+3. **nvfp4 = vision-blind.** The MLX runner silently drops images on both API
+   endpoints and the model confabulates (verified: 0 image tokens,
+   "3 colored shapes" for a 6-shape scene). Fix tracked separately.
+4. Cross-payload throughput (stock b10242 vs fork b10091) is indicative only.
+5. Synthetic imagery; natural-image performance is not claimed.
+
+## 7. Reproduction
+
+```
+pmset -g | grep powermode        # must be 2
+THINK=false python3 docs/maxusai/vision-suite/vision_suite.py <host> <tag> <model>
+```
+
+Patched server build: [apple-silicon-build spec](spec/apple-silicon-build.md);
+serve with `OLLAMA_MODELS=~/.ollama/models-mlx`. Scores land in gitignored
+`vision-suite/scores_<tag>.json`; images regenerate via `gen_scenes.py`.
+Budget overrides per request: `options.image_max_tokens` (gemma4, ladder-snapped
+on 004 payloads).
