@@ -25,6 +25,17 @@ def gen(prompt, images, num_predict=None, num_ctx=None):
     }
     if os.environ.get("KV_CACHE_TYPE"):
         payload["options"]["kv_cache_type"] = os.environ["KV_CACHE_TYPE"]
+    # Fork-only per-request vision budget (visionServerArgs in llm/llama_server.go,
+    # arch-gated to gemma4 and nemotron_h_omni). Pinning these to upstream's
+    # effective defaults turns a fork build into a BUDGET-MATCHED CONTROL, which is
+    # the only way to separate "our larger token budget changed the result" from
+    # "the llama.cpp payload differs" when comparing against a stock server on a
+    # different LLAMA_CPP_VERSION. See the control-arm section in README.md.
+    # These are Runner options — changing them reloads the model.
+    for env, opt in (("IMAGE_MIN_TOKENS", "image_min_tokens"),
+                     ("IMAGE_MAX_TOKENS", "image_max_tokens")):
+        if os.environ.get(env):
+            payload["options"][opt] = int(os.environ[env])
     if os.environ.get("THINK", "false") != "on":
         payload["think"] = False
     endpoint = os.environ.get("ENDPOINT", "generate")
@@ -296,6 +307,25 @@ def main():
         sc = scorer(text)
         sc["prompt_eval_count"] = r.get("prompt_eval_count")
         sc["eval_count"] = r.get("eval_count")
+        # Throughput. Ollama reports durations in nanoseconds. Recorded so a run
+        # can be compared across backends (Metal vs CPU) as well as scored —
+        # additive only, no effect on any existing score field.
+        for k in ("total_duration", "load_duration",
+                  "prompt_eval_duration", "eval_duration"):
+            sc[k] = r.get(k)
+        if r.get("eval_duration") and r.get("eval_count"):
+            sc["gen_tps"] = round(r["eval_count"] / (r["eval_duration"] / 1e9), 2)
+        if r.get("prompt_eval_duration") and r.get("prompt_eval_count"):
+            sc["prefill_tps"] = round(
+                r["prompt_eval_count"] / (r["prompt_eval_duration"] / 1e9), 2)
+        # Record the requested vision budget so a scores file is self-describing:
+        # absent means "build default", present means this was a budget-matched
+        # control arm. Without this a control run is indistinguishable from a
+        # normal one after the fact.
+        for env, key in (("IMAGE_MIN_TOKENS", "req_image_min_tokens"),
+                         ("IMAGE_MAX_TOKENS", "req_image_max_tokens")):
+            if os.environ.get(env):
+                sc[key] = int(os.environ[env])
         results[name] = sc
         print(json.dumps(sc, indent=1), flush=True)
     
