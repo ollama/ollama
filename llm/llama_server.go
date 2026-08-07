@@ -101,7 +101,11 @@ func WithDefaultEmbeddingNumBatch(opts api.Options) api.Options {
 	return opts
 }
 
-func boundedNumPredict(numPredict, numCtx int) int {
+// BoundedNumPredict resolves a request's generation budget against the
+// context window it was scheduled with. Every runner needs this: without it an
+// open-ended request is bounded only by whatever the runner happens to treat as
+// its context, which on a large checkpoint is long enough to look like a hang.
+func BoundedNumPredict(numPredict, numCtx int) int {
 	if numCtx <= 0 {
 		return numPredict
 	}
@@ -1508,7 +1512,7 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 	}
 	defer s.sem.Release(1)
 
-	req.Options.NumPredict = boundedNumPredict(req.Options.NumPredict, s.options.NumCtx)
+	req.Options.NumPredict = BoundedNumPredict(req.Options.NumPredict, s.options.NumCtx)
 
 	status, err := s.getServerStatusRetry(ctx)
 	if err != nil {
@@ -1861,7 +1865,7 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 	}
 	defer s.sem.Release(1)
 
-	req.Options.NumPredict = boundedNumPredict(req.Options.NumPredict, s.options.NumCtx)
+	req.Options.NumPredict = BoundedNumPredict(req.Options.NumPredict, s.options.NumCtx)
 
 	status, err := s.getServerStatusRetry(ctx)
 	if err != nil {
