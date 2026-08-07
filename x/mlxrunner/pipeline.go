@@ -121,6 +121,9 @@ func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *specu
 	if end := len(inputs) - preThinking; end > 0 {
 		snapshotOffsets = append(snapshotOffsets, end)
 	}
+	if r.disablePrefillSnapshots {
+		snapshotOffsets = nil
+	}
 
 	materializeCaches := func() {
 		state := make([]*mlx.Array, 0, 2*len(caches))

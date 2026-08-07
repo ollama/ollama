@@ -228,4 +228,5 @@ func init() {
 	registerLibraryEmbeddingCases(testModels(libraryModels))
 	registerToolCases(testModels(libraryModels))
 	registerVisionTextCases(testModels(libraryModels))
+	registerVisionOCRDocumentCases(testModels([]string{"gemma4"}))
 }

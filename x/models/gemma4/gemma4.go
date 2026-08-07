@@ -29,7 +29,34 @@ func init() {
 }
 
 // Compile-time interface checks.
-var _ base.Model = (*Model)(nil)
+var (
+	_ base.Model           = (*Model)(nil)
+	_ base.MultimodalModel = (*Model)(nil)
+)
+
+// bidirectionalAttention is the config's use_bidirectional_attention value.
+// The Gemma family spells this key both as a mode string ("vision") and as a
+// plain bool, so decoding accepts either form; only the string form names a
+// mode, and a bool decodes to "" (false) or "true".
+type bidirectionalAttention string
+
+func (a *bidirectionalAttention) UnmarshalJSON(data []byte) error {
+	var mode string
+	if err := json.Unmarshal(data, &mode); err == nil {
+		*a = bidirectionalAttention(mode)
+		return nil
+	}
+
+	var enabled bool
+	if err := json.Unmarshal(data, &enabled); err != nil {
+		return fmt.Errorf("use_bidirectional_attention: want a string or bool, got %s", data)
+	}
+	*a = ""
+	if enabled {
+		*a = "true"
+	}
+	return nil
+}
 
 // RopeParams holds per-layer-type RoPE settings.
 type RopeParams struct {
@@ -67,6 +94,11 @@ type TextConfig struct {
 	ExpertIntermediateSize int32                  `json:"moe_intermediate_size"`
 	RopeParameters         map[string]*RopeParams `json:"rope_parameters"`
 	ImageTokenIDValue      int32                  `json:"image_token_id"`
+	// UseBidirectionalAttn is "vision" when image tokens attend to each other
+	// bidirectionally on sliding layers. Gemma configs spell this key as either
+	// a string or a bool, so it decodes leniently rather than failing the whole
+	// config parse on an unexpected JSON type.
+	UseBidirectionalAttn bidirectionalAttention `json:"use_bidirectional_attention"`
 
 	// Quantization parameters.
 	QuantGroupSize int                               `json:"-"`
@@ -380,6 +412,10 @@ type Model struct {
 	Norm        *nn.RMSNorm
 	LMHead      nn.LinearLayer
 
+	VisionEncoder   *VisionEncoder
+	MultimodalEmbed *MultimodalEmbedder
+	VisionConfig    *VisionConfig
+
 	// PLE model-level components (nil if no PLE).
 	EmbedTokensPerLayer nn.EmbeddingLayer
 	PerLayerModelProj   nn.LinearLayer
@@ -394,6 +430,11 @@ type Model struct {
 
 	SuppressLogitBias *mlx.Array
 	weightPrefix      string
+
+	imageStartTokenID int32
+	imageTokenID      int32
+	imageEndTokenID   int32
+	mediaFeatures     *base.MediaFeatureCache
 }
 
 func parseTextConfig(configData []byte) (TextConfig, error) {
@@ -646,11 +687,31 @@ func newModel(root *model.Root) (base.Model, error) {
 		return nil, fmt.Errorf("parse tokenizer: %w", err)
 	}
 
+	visionConfig, err := parseVisionConfig(configData)
+	if err != nil {
+		return nil, err
+	}
+
 	m := &Model{
 		Layers:            make([]*DecoderLayer, cfg.NumHiddenLayers),
 		TextConfig:        &cfg,
 		tok:               tok,
 		SuppressLogitBias: makeSuppressLogitBias(suppressTokens, cfg.VocabSize),
+		VisionConfig:      visionConfig,
+	}
+	if visionConfig != nil {
+		m.VisionEncoder = &VisionEncoder{Cfg: visionConfig}
+		m.mediaFeatures = base.NewMediaFeatureCache()
+		var ok bool
+		if m.imageStartTokenID, ok = tok.GetSpecialToken("<|image>"); !ok {
+			return nil, fmt.Errorf("tokenizer is missing <|image>")
+		}
+		if m.imageTokenID, ok = tok.GetSpecialToken("<|image|>"); !ok {
+			return nil, fmt.Errorf("tokenizer is missing <|image|>")
+		}
+		if m.imageEndTokenID, ok = tok.GetSpecialToken("<image|>"); !ok {
+			return nil, fmt.Errorf("tokenizer is missing <image|>")
+		}
 	}
 
 	for i := range m.Layers {
@@ -981,20 +1042,40 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		return fmt.Errorf("missing precomputed final norm weight")
 	}
 
+	if m.VisionEncoder != nil {
+		if err := m.loadVisionWeights(tensors, linears); err != nil {
+			return err
+		}
+		precomputeVisionScaledWeights(m.VisionEncoder)
+	}
+
 	return nil
 }
 
 func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
+	h := m.embed(b.InputIDs)
+	return m.forwardEmbeddings(h, b, caches, b.InputIDs, nn.CausalMask())
+}
+
+func (m *Model) embed(inputIDs *mlx.Array) *mlx.Array {
+	return mlx.MulScalar(m.EmbedTokens.Forward(inputIDs), m.EmbedScale)
+}
+
+func (m *Model) forwardEmbeddings(
+	h *mlx.Array,
+	b *batch.Batch,
+	caches []cache.Cache,
+	pleTokens *mlx.Array,
+	attentionMask nn.AttentionMask,
+) *mlx.Array {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
-	h := m.EmbedTokens.Forward(b.InputIDs)
-	h = mlx.MulScalar(h, m.EmbedScale)
 
 	// Compute PLE inputs if configured.
 	var perLayerInputs *mlx.Array
-	if m.HiddenSizePerLayer > 0 && m.EmbedTokensPerLayer != nil {
-		perLayerInputs = m.computePLEInputs(b.InputIDs, h)
+	if m.HiddenSizePerLayer > 0 && m.EmbedTokensPerLayer != nil && pleTokens != nil {
+		perLayerInputs = m.computePLEInputs(pleTokens, h)
 	}
 
 	// KV sharing: each donor layer stores its KVHistory here so later
@@ -1025,7 +1106,14 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
 		}
 
 		var donorKV *sharedHistory
-		h, donorKV = layer.Forward(h, b, c, positions, B, L, m.TextConfig, pleInput, donor)
+		// Gemma 4 relaxes causality for image tokens on sliding layers only;
+		// full-attention layers stay strictly causal. Deliberate, and matched
+		// against the reference implementation - see UseBidirectionalAttn.
+		layerMask := nn.CausalMask()
+		if layer.IsSliding {
+			layerMask = attentionMask
+		}
+		h, donorKV = layer.Forward(h, b, c, positions, B, L, m.TextConfig, pleInput, donor, layerMask)
 
 		// If this layer is a donor, store its cached KV for later shared layers.
 		if layer.IsDonor && donorKV != nil {
@@ -1094,7 +1182,7 @@ func (m *Model) Tokenizer() *tokenizer.Tokenizer {
 
 // TokenEmbeddings returns the target model's scaled token embeddings for MTP.
 func (m *Model) TokenEmbeddings(inputIDs *mlx.Array) *mlx.Array {
-	return mlx.MulScalar(m.EmbedTokens.Forward(inputIDs), m.EmbedScale)
+	return m.embed(inputIDs)
 }
 
 // NewCaches creates cache objects for layers that own KV state.
@@ -1158,9 +1246,19 @@ func sliceLayerDim(combined *mlx.Array, layerIdx, B, L, pleDim int32) *mlx.Array
 	return mlx.Squeeze(sliced, 2)
 }
 
-func (l *DecoderLayer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *TextConfig, pleInput *mlx.Array, donor *sharedHistory) (*mlx.Array, *sharedHistory) {
+func (l *DecoderLayer) Forward(
+	x *mlx.Array,
+	b *batch.Batch,
+	c cache.Cache,
+	positions *mlx.Array,
+	B, L int32,
+	cfg *TextConfig,
+	pleInput *mlx.Array,
+	donor *sharedHistory,
+	attentionMask nn.AttentionMask,
+) (*mlx.Array, *sharedHistory) {
 	normed := mlx.RMSNormFn(x, l.InputNormScaled, cfg.RMSNormEps)
-	attnOut, kv := l.Attention.Forward(normed, b, c, positions, B, L, l.IsSliding, cfg, donor)
+	attnOut, kv := l.Attention.Forward(normed, b, c, positions, B, L, l.IsSliding, cfg, donor, attentionMask)
 	attnOut = mlx.RMSNormFn(attnOut, l.PostAttnNormScaled, cfg.RMSNormEps)
 	h := mlx.Add(x, attnOut)
 
@@ -1208,7 +1306,17 @@ func (l *DecoderLayer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, posi
 	return h, kv
 }
 
-func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, isSliding bool, cfg *TextConfig, donor *sharedHistory) (*mlx.Array, *sharedHistory) {
+func (a *Attention) Forward(
+	x *mlx.Array,
+	b *batch.Batch,
+	c cache.Cache,
+	positions *mlx.Array,
+	B, L int32,
+	isSliding bool,
+	cfg *TextConfig,
+	donor *sharedHistory,
+	attentionMask nn.AttentionMask,
+) (*mlx.Array, *sharedHistory) {
 	// Determine head dim and scale based on layer type.
 	headDim := cfg.HeadDim
 	scale := cfg.SlidingScale
@@ -1284,7 +1392,7 @@ func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positio
 		// kernel only handles L < 4 (generation). For prefill, we fall back
 		// to explicit matmul+softmax+matmul on CUDA.
 		var k, v *mlx.Array
-		mask := nn.CausalMask().Intersect(nn.QPaddingMask(b, q.DType()))
+		mask := attentionMask.Intersect(nn.QPaddingMask(b, q.DType()))
 		if kv.history != nil {
 			k, v = kv.history.K(), kv.history.V()
 			mask = kv.history.Mask(mask)
@@ -1314,7 +1422,7 @@ func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positio
 		out = mlx.Reshape(out, B, cfg.NumAttentionHeads, L, headDim)
 	} else {
 		var opt nn.SDPAOption
-		mask := nn.CausalMask()
+		mask := attentionMask
 		if kv.history != nil {
 			opt = nn.WithKVHistory(kv.history)
 		} else {

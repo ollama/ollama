@@ -17,6 +17,7 @@ import (
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/x/internal/mlxthread"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/mlxrunner/model/base"
 	"github.com/ollama/ollama/x/mlxrunner/sample"
 )
 
@@ -127,6 +128,13 @@ func Execute(args []string) error {
 		}
 
 		request.Pipeline = runner.TextGenerationPipeline
+		if len(request.Media) > 0 {
+			if _, ok := runner.Model.(base.MultimodalModel); !ok {
+				http.Error(w, "model does not support multimodal input", http.StatusBadRequest)
+				return
+			}
+			request.Pipeline = runner.MultimodalPipeline
+		}
 		request.SamplerOpts = sample.Options{
 			Temperature:      request.Options.Temperature,
 			TopP:             request.Options.TopP,
@@ -142,9 +150,11 @@ func Execute(args []string) error {
 			TopLogprobs:      request.TopLogprobs,
 		}
 
-		if err := runner.Prepare(&request); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+		if len(request.Media) == 0 {
+			if err := runner.Prepare(&request); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 		}
 
 		var cancel context.CancelFunc

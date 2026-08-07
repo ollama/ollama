@@ -391,9 +391,11 @@ func buildModelListSummary(name model.Name, mf *manifest.Manifest) (modelListSum
 		summary.Capabilities = appendModelListCapability(summary.Capabilities, model.CapabilityVision)
 	}
 
+	// Mirrors suppressAudioCapability in images.go so /api/tags and /api/show
+	// agree for safetensors models whose MLX runner supports vision but not audio.
 	if cfg.ModelFormat == "safetensors" && isGemma4Renderer(cfg.Renderer) {
 		summary.Capabilities = slices.DeleteFunc(summary.Capabilities, func(c model.Capability) bool {
-			return c == model.CapabilityVision || c == model.CapabilityAudio
+			return c == model.CapabilityAudio
 		})
 	}
 

@@ -24,6 +24,38 @@ func TestParseSuppressTokens(t *testing.T) {
 	}
 }
 
+// TestParseTextConfigBidirectionalAttention covers both spellings the Gemma
+// family uses for use_bidirectional_attention. A plain json.Unmarshal into a
+// string field fails the whole config parse on the bool spelling, which would
+// stop the model loading at all rather than just disabling the vision mask.
+func TestParseTextConfigBidirectionalAttention(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		raw  string
+		want bidirectionalAttention
+	}{
+		{name: "absent", raw: `{}`, want: ""},
+		{name: "vision mode string", raw: `{"use_bidirectional_attention": "vision"}`, want: "vision"},
+		{name: "bool true", raw: `{"use_bidirectional_attention": true}`, want: "true"},
+		{name: "bool false", raw: `{"use_bidirectional_attention": false}`, want: ""},
+		{name: "nested text config", raw: `{"text_config": {"use_bidirectional_attention": "vision"}}`, want: "vision"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := parseTextConfig([]byte(tt.raw))
+			if err != nil {
+				t.Fatalf("parseTextConfig() error = %v", err)
+			}
+			if cfg.UseBidirectionalAttn != tt.want {
+				t.Fatalf("UseBidirectionalAttn = %q, want %q", cfg.UseBidirectionalAttn, tt.want)
+			}
+		})
+	}
+
+	if _, err := parseTextConfig([]byte(`{"use_bidirectional_attention": 3}`)); err == nil {
+		t.Fatal("parseTextConfig() with a numeric value = nil error, want an error naming the field")
+	}
+}
+
 func TestParseTextConfigE2B(t *testing.T) {
 	skipIfNoMLX(t)
 	data := []byte(`{

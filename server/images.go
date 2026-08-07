@@ -455,11 +455,6 @@ func (m *Model) filterUnsupportedCapabilities(capabilities []model.Capability, m
 			return c == model.CapabilityAudio
 		})
 	}
-	if isGemma4Renderer(m.Config.Renderer) && m.Config.ModelFormat == "safetensors" {
-		capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool {
-			return c == model.CapabilityVision
-		})
-	}
 
 	return capabilities
 }
