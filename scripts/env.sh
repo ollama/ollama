@@ -1,6 +1,8 @@
 # Common environment setup across build*.sh scripts
 
-export VERSION=${VERSION:-$(git describe --tags --first-parent --abbrev=7 --long --dirty --always | sed -e "s/^v//g")}
+_OLLAMA_SCRIPT_DIR=$(dirname "$0")
+[ -f "$_OLLAMA_SCRIPT_DIR/version.sh" ] || _OLLAMA_SCRIPT_DIR=scripts
+export VERSION=${VERSION:-$(git describe --tags --first-parent --abbrev=7 --long --dirty --always | sh "$_OLLAMA_SCRIPT_DIR/version.sh")}
 export GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=$VERSION\" \"-X=github.com/ollama/ollama/server.mode=release\"'"
 # TODO - consider `docker buildx ls --format=json` to autodiscover platform capability
 PLATFORM=${PLATFORM:-"linux/arm64,linux/amd64"}

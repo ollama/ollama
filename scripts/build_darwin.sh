@@ -12,7 +12,8 @@
 #    VOL_NAME="$(date)" ./scripts/build_darwin.sh
 #
 VOL_NAME=${VOL_NAME:-"Ollama"}
-export VERSION=${VERSION:-$(git describe --tags --first-parent --abbrev=7 --long --dirty --always | sed -e "s/^v//g")}
+_OLLAMA_SCRIPT_DIR=$(dirname "$0")
+export VERSION=${VERSION:-$(git describe --tags --first-parent --abbrev=7 --long --dirty --always | sh "$_OLLAMA_SCRIPT_DIR/version.sh")}
 export CGO_CFLAGS="-O3 -mmacosx-version-min=14.0"
 export CGO_CXXFLAGS="-O3 -mmacosx-version-min=14.0"
 export CGO_LDFLAGS="-mmacosx-version-min=14.0"
