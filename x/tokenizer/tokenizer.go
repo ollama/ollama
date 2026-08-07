@@ -29,6 +29,14 @@ type Vocabulary struct {
 	AddBOS bool
 	AddEOS bool
 
+	// ppLeadingSpecial is the token id the tokenizer.json post-processor prepends
+	// to every single sequence, or -1 if it doesn't begin with a special token.
+	// finalizeBOS turns this into AddBOS only when it matches the configured BOS.
+	ppLeadingSpecial int32
+	// addBOSExplicit records that add_bos_token was set in tokenizer_config.json,
+	// which then takes precedence over the post-processor default.
+	addBOSExplicit bool
+
 	// Precomputed byte token IDs for <0xNN> fallback (256 entries, -1 if not found)
 	byteTokens [256]int32
 }

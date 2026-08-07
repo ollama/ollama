@@ -188,7 +188,7 @@ func (t *Tokenizer) Encode(s string, addBOS bool) []int32 {
 			})
 		}
 
-		if addBOS && t.vocab.BOS >= 0 {
+		if addBOS && t.vocab.BOS >= 0 && (len(ids) == 0 || ids[0] != t.vocab.BOS) {
 			ids = append([]int32{t.vocab.BOS}, ids...)
 		}
 		return ids
@@ -250,7 +250,7 @@ func (t *Tokenizer) Encode(s string, addBOS bool) []int32 {
 		}
 	}
 
-	if addBOS && t.vocab.BOS >= 0 {
+	if addBOS && t.vocab.BOS >= 0 && (len(ids) == 0 || ids[0] != t.vocab.BOS) {
 		ids = append([]int32{t.vocab.BOS}, ids...)
 	}
 	return ids
