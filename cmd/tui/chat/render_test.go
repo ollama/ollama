@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -545,6 +546,24 @@ func TestChatViewKeepsInputBoxWhileRunning(t *testing.T) {
 	}
 	if strings.Contains(lines[borderLine-1], "...") {
 		t.Fatalf("thinking line should not show spinner dots:\n%s", view)
+	}
+}
+
+func TestChatViewShowsActiveThinkingStatusOnce(t *testing.T) {
+	m := chatModel{
+		running:        true,
+		thinking:       true,
+		thinkingTokens: 42,
+		width:          60,
+		height:         16,
+		entries: []chatEntry{
+			{role: "thinking", label: "Thinking ↓ 42 tokens", status: "running", content: "streamed trace", expanded: true},
+		},
+	}
+
+	view := stripANSI(m.View())
+	if count := strings.Count(view, "Thinking ↓ 42 tokens"); count != 1 {
+		t.Fatalf("active thinking status appears %d times, want once:\n%s", count, view)
 	}
 }
 
@@ -1461,7 +1480,7 @@ func TestChatCompletedToolsGroupAcrossEmptyAssistantEntries(t *testing.T) {
 	}
 }
 
-func TestChatCompletedToolsGroupAcrossCollapsedThinking(t *testing.T) {
+func TestChatCompletedToolsPreserveCollapsedThoughts(t *testing.T) {
 	entries := groupCompletedToolEntries([]chatEntry{
 		newChatEntry(chatEntry{role: "tool", detail: "bash", label: `Bash("pwd")`, status: "done", content: "one"}),
 		newChatEntry(chatEntry{role: "thinking", label: "Thinking", content: "choose next tool", status: "done"}),
@@ -1470,13 +1489,13 @@ func TestChatCompletedToolsGroupAcrossCollapsedThinking(t *testing.T) {
 		newChatEntry(chatEntry{role: "tool", detail: "read", label: `Read("AGENTS.md")`, status: "done", content: "instructions"}),
 	})
 
-	if len(entries) != 1 {
-		t.Fatalf("entries = %d, want one grouped tool entry: %#v", len(entries), entries)
+	if len(entries) != 3 {
+		t.Fatalf("entries = %d, want tool, thought, and grouped tools: %#v", len(entries), entries)
 	}
-	if entries[0].role != "tool_group" || len(entries[0].tools) != 3 {
-		t.Fatalf("tools should group across collapsed thinking: %#v", entries[0])
+	if entries[0].role != "tool" || entries[1].role != "thinking" || entries[2].role != "tool_group" || len(entries[2].tools) != 2 {
+		t.Fatalf("collapsed thought should separate tool groups: %#v", entries)
 	}
-	if line := stripANSI(toolGroupStatusLine(entries[0])); line != "Ran 2 commands and read a file" {
+	if line := stripANSI(toolGroupStatusLine(entries[2])); line != "Ran 1 command and read a file" {
 		t.Fatalf("grouped tool line = %q", line)
 	}
 }
@@ -1543,29 +1562,161 @@ func TestChatCtrlOTogglesInlineOutput(t *testing.T) {
 	}
 }
 
-func TestChatCtrlODoesNotExpandThinking(t *testing.T) {
+func TestChatCtrlOTogglesCompletedThinkingDetails(t *testing.T) {
 	m := chatModel{
 		entries: []chatEntry{
-			newChatEntry(chatEntry{role: "thinking", label: "Thinking", status: "done", content: "private reasoning"}),
+			newChatEntry(chatEntry{role: "thinking", label: "Thinking", status: "done", content: "private reasoning", tokenCount: 12}),
 		},
+	}
+
+	if view := stripANSI(m.renderTranscript(100)); !strings.Contains(view, "Thought") || strings.Contains(view, "12 tokens") {
+		t.Fatalf("collapsed thinking should hide its token count:\n%s", view)
 	}
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(chatModel)
-	if m.entries[0].expanded {
-		t.Fatalf("ctrl+o should not expand thinking entries: %#v", m.entries[0])
+	if !m.thinkingDetailsOpen || !m.entries[0].expanded {
+		t.Fatalf("ctrl+o should expand completed thinking entries: %#v", m.entries[0])
 	}
-	if view := stripANSI(m.renderTranscript(100)); strings.Contains(view, "private reasoning") {
-		t.Fatalf("ctrl+o should not render thinking content:\n%s", view)
+	if view := stripANSI(m.renderTranscript(100)); !strings.Contains(view, "Thought (12 tokens)") || !strings.Contains(view, "private reasoning") {
+		t.Fatalf("ctrl+o should render completed thinking content:\n%s", view)
 	}
 
 	m.liveMessages = []api.Message{{Role: "assistant", Thinking: "live private reasoning"}}
-	m.syncThinkingEntry()
-	if m.entries[1].expanded {
-		t.Fatalf("live thinking should not inherit ctrl+o expansion: %#v", m.entries[1])
+	m.syncThinkingEntry("live private reasoning")
+	if !m.entries[1].expanded {
+		t.Fatalf("live thinking should always be expanded: %#v", m.entries[1])
 	}
-	if view := stripANSI(m.renderTranscript(100)); strings.Contains(view, "live private reasoning") {
-		t.Fatalf("ctrl+o should not render live thinking content:\n%s", view)
+	if view := stripANSI(m.renderTranscript(100)); !strings.Contains(view, "live private reasoning") {
+		t.Fatalf("live thinking should render while streaming:\n%s", view)
+	}
+	m.thinkingTokens = 9
+	m.finishThinkingEntry()
+	if m.entries[1].status != "done" || !m.entries[1].expanded {
+		t.Fatalf("completed thinking should honor the open details mode: %#v", m.entries[1])
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	m = updated.(chatModel)
+	if m.thinkingDetailsOpen || m.entries[0].expanded || m.entries[1].expanded {
+		t.Fatalf("ctrl+o should collapse all completed thinking details: %#v", m.entries)
+	}
+}
+
+func TestChatThinkingBodyUsesSecondaryGrey(t *testing.T) {
+	for _, tt := range []struct {
+		entry  chatEntry
+		header string
+	}{
+		{entry: chatEntry{role: "thinking", status: "running", content: "Let me inspect the files.", expanded: true}, header: "Thinking"},
+		{entry: chatEntry{role: "thinking", status: "done", content: "Let me inspect the files.", tokenCount: 15, expanded: true}, header: "Thought (15 tokens)"},
+	} {
+		lines := renderThinkingLines(tt.entry, 80)
+		if len(lines) < 3 {
+			t.Fatalf("thinking entry did not render its body: %#v", lines)
+		}
+		if lines[0] != tt.header {
+			t.Fatalf("thinking header = %q, want unmuted %q", lines[0], tt.header)
+		}
+		if got, want := lines[2], chatToolOutputStyle.Render("Let me inspect the files."); got != want {
+			t.Fatalf("thinking body = %q, want secondary grey %q", got, want)
+		}
+	}
+}
+
+func TestChatThinkingBodyAlignsWithStatusText(t *testing.T) {
+	m := chatModel{entries: []chatEntry{
+		{role: "thinking", status: "done", content: "Let me inspect the files.", tokenCount: 15, expanded: true},
+	}}
+
+	lines := strings.Split(stripANSI(m.renderTranscript(80)), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("thinking entry did not render its body: %#v", lines)
+	}
+	if got, want := lines[0], "• Thought (15 tokens)"; got != want {
+		t.Fatalf("thinking header = %q, want %q", got, want)
+	}
+	if got, want := lines[2], "  Let me inspect the files."; got != want {
+		t.Fatalf("thinking body = %q, want aligned with status text %q", got, want)
+	}
+}
+
+func TestChatLiveThinkingUsesBoundedSanitizedTail(t *testing.T) {
+	longThinking := "first-visible-marker\n" + strings.Repeat("x", maxLiveThinkingRunes+100) + "\nlast-visible-marker\x1b[2J"
+	m := chatModel{entries: []chatEntry{{role: "thinking", label: "Thinking ↓ 10 tokens", status: "running", content: longThinking, expanded: true}}}
+
+	view := stripANSI(m.renderTranscript(80))
+	if strings.Contains(view, "first-visible-marker") || !strings.Contains(view, "earlier thinking omitted while streaming") || !strings.Contains(view, "last-visible-marker") {
+		t.Fatalf("live thinking should render a bounded tail:\n%s", view)
+	}
+	if strings.Contains(view, "\x1b") || strings.Contains(view, "[2J") {
+		t.Fatalf("live thinking should remove terminal control sequences: %q", view)
+	}
+}
+
+func TestChatThinkingSanitizesTerminalControlsLiveAndReopened(t *testing.T) {
+	content := "safe\x1b]52;c;clipboard-payload\a visible\x1bPqdevice-control\x1b\\ done\b!\u009b31m red\a"
+	tests := []struct {
+		name  string
+		entry chatEntry
+	}{
+		{name: "live", entry: chatEntry{role: "thinking", status: "running", content: content, expanded: true}},
+		{name: "reopened", entry: chatEntry{role: "thinking", status: "done", content: content, expanded: true}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			view := chatModel{entries: []chatEntry{tt.entry}}.renderTranscript(80)
+			plain := stripANSI(view)
+			if !strings.Contains(plain, "safe") || !strings.Contains(plain, "visible") || !strings.Contains(plain, "done!") || !strings.Contains(plain, "red") {
+				t.Fatalf("sanitized thinking lost visible text: %q", plain)
+			}
+			for _, unsafe := range []string{"clipboard-payload", "device-control", "\x1b]", "\x1bP", "\a", "\b", "\u009b"} {
+				if strings.Contains(view, unsafe) {
+					t.Fatalf("sanitized thinking contains unsafe value %q: %q", unsafe, view)
+				}
+			}
+		})
+	}
+}
+
+func TestLiveThinkingTailPreservesUTF8Boundary(t *testing.T) {
+	content := strings.Repeat("🙂", maxLiveThinkingRunes+100)
+	tail, omitted := liveThinkingTail(content, maxLiveThinkingRunes)
+	if !omitted {
+		t.Fatal("long thinking trace should report an omitted prefix")
+	}
+	if !utf8.ValidString(tail) || utf8.RuneCountInString(tail) != maxLiveThinkingRunes {
+		t.Fatalf("tail should contain %d complete runes, got %d", maxLiveThinkingRunes, utf8.RuneCountInString(tail))
+	}
+}
+
+func BenchmarkRenderLiveThinkingLines(b *testing.B) {
+	content := strings.Repeat("old thinking that is outside the visible tail\n", 100_000) + "visible tail"
+	entry := chatEntry{role: "thinking", status: "running", content: content, expanded: true}
+	b.ReportAllocs()
+	for b.Loop() {
+		renderThinkingLines(entry, 80)
+	}
+}
+
+func TestChatThinkingDetailsRespectNarrowAndResizedViews(t *testing.T) {
+	m := chatModel{
+		width:  80,
+		height: 10,
+		entries: []chatEntry{
+			{role: "thinking", label: "Thinking ↓ 42 tokens", status: "running", content: "first delta\nsecond delta", expanded: true},
+		},
+	}
+
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 24, Height: 8})
+	m = updated.(chatModel)
+	transcript := stripANSI(m.renderTranscript(24))
+	if !strings.Contains(transcript, "Thinking") || !strings.Contains(transcript, "second delta") {
+		t.Fatalf("narrow transcript should retain the live thinking tail:\n%s", transcript)
+	}
+	if len(m.transcriptLines(24)) == 0 {
+		t.Fatal("resized transcript should remain selectable and scrollable")
 	}
 }
 
