@@ -8,6 +8,7 @@ type MockStreamdownProps = {
     img: React.ComponentType<React.ImgHTMLAttributes<HTMLImageElement>>;
   };
   rehypePlugins?: unknown[];
+  remarkPlugins?: unknown[];
 };
 
 const streamdownMock = vi.hoisted(() =>
@@ -27,6 +28,7 @@ vi.mock("streamdown", () => ({
 }));
 
 import StreamingMarkdownContent from "./StreamingMarkdownContent";
+import remarkSingleDollarMathGuard from "@/utils/remarkSingleDollarMathGuard";
 
 describe("StreamingMarkdownContent", () => {
   beforeEach(() => {
@@ -57,5 +59,24 @@ describe("StreamingMarkdownContent", () => {
     expect(html).not.toContain("<img");
     expect(html).not.toContain("attacker.example");
     expect(html).toContain("secret");
+  });
+
+  it("enables single-dollar math and includes the currency guard, in order", () => {
+    renderToStaticMarkup(<StreamingMarkdownContent content="$x$" />);
+
+    const props = streamdownMock.mock.calls[0][0] as MockStreamdownProps & {
+      remarkPlugins: unknown[];
+    };
+    const plugins = props.remarkPlugins;
+    // gfm (mocked as "gfm"), then [remarkMath, {singleDollarTextMath:true}],
+    // then the guard, then the citation parser.
+    expect(plugins[0]).toBe("gfm");
+    expect(Array.isArray(plugins[1])).toBe(true);
+    expect(
+      (plugins[1] as [unknown, { singleDollarTextMath?: boolean }])[1],
+    ).toEqual({
+      singleDollarTextMath: true,
+    });
+    expect(plugins[2]).toBe(remarkSingleDollarMathGuard);
   });
 });
