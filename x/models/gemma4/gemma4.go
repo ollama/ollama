@@ -988,8 +988,11 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
-	h := m.EmbedTokens.Forward(b.InputIDs)
-	h = mlx.MulScalar(h, m.EmbedScale)
+	h := b.InputsEmbeds
+	if h == nil {
+		h = m.EmbedTokens.Forward(b.InputIDs)
+		h = mlx.MulScalar(h, m.EmbedScale)
+	}
 
 	// Compute PLE inputs if configured.
 	var perLayerInputs *mlx.Array
