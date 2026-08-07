@@ -109,3 +109,13 @@ func (t *Tokenizer) GetSpecialToken(name string) (int32, bool) {
 	id, ok := t.specialTokens[name]
 	return id, ok
 }
+
+// SpecialTokenIDs returns the ids of all registered special tokens, in no
+// particular order.
+func (t *Tokenizer) SpecialTokenIDs() []int32 {
+	ids := make([]int32, 0, len(t.specialTokens))
+	for _, id := range t.specialTokens {
+		ids = append(ids, id)
+	}
+	return ids
+}

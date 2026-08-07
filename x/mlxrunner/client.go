@@ -99,6 +99,7 @@ func (c *Client) WaitUntilRunning(ctx context.Context) error {
 
 type CompletionRequest struct {
 	Prompt      string
+	Format      json.RawMessage
 	Options     api.Options
 	Logprobs    bool
 	TopLogprobs int
@@ -140,8 +141,18 @@ func (c *Client) Close() error {
 
 // Completion implements llm.LlamaServer.
 func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
+	if req.Grammar != "" {
+		// Raw GBNF grammars are a llama-server feature; dropping one
+		// silently would change what the caller was promised.
+		return api.StatusError{
+			StatusCode:   http.StatusBadRequest,
+			ErrorMessage: "raw grammar constraints are not supported by the MLX runner",
+		}
+	}
+
 	creq := CompletionRequest{
 		Prompt:      req.Prompt,
+		Format:      req.Format,
 		Logprobs:    req.Logprobs,
 		TopLogprobs: req.TopLogprobs,
 	}
@@ -177,6 +188,13 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
+		// The caller may cancel from inside fn (the structured-outputs
+		// transition does); chunks already buffered must not keep
+		// flowing after that.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		var raw CompletionResponse
 		if err := json.Unmarshal(scanner.Bytes(), &raw); err != nil {
 			slog.Debug("mlx response parse error", "error", err, "line", string(scanner.Bytes()))

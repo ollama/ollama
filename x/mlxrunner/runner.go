@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 
 	"golang.org/x/sync/errgroup"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/ollama/ollama/x/mlxrunner/model"
 	"github.com/ollama/ollama/x/mlxrunner/model/base"
 	"github.com/ollama/ollama/x/mlxrunner/sample"
+	"github.com/ollama/ollama/x/structured"
 	"github.com/ollama/ollama/x/tokenizer"
 )
 
@@ -31,6 +33,10 @@ type Request struct {
 	Ctx         context.Context //nolint:containedctx // Queued requests carry caller cancellation to the runner.
 	Tokens      []int32
 	SamplerOpts sample.Options
+
+	// Constraint is the compiled format grammar, nil when the request
+	// carries no format. Populated by Prepare.
+	Constraint *structured.Grammar
 }
 
 type Runner struct {
@@ -44,6 +50,12 @@ type Runner struct {
 	// spec is the speculative-decoding subsystem. Nil when the model ships no
 	// draft head.
 	spec *speculation
+
+	// Constrained-sampling vocabulary index, built lazily on the first
+	// request that carries a format.
+	constraintOnce   sync.Once
+	constraintVocab  *structured.Vocab
+	constraintPieces [][]byte
 }
 
 func (r *Runner) Load(modelName string) error {
