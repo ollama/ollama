@@ -1,10 +1,16 @@
 package gemma4
 
 import (
+	"bytes"
+	"image"
+	"image/color"
+	"image/png"
 	"math"
 	"strings"
 	"testing"
 
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
 	"github.com/ollama/ollama/x/models/nn"
@@ -452,10 +458,10 @@ func TestVisionTowerForwardShapes(t *testing.T) {
 		}
 	}
 	tw := &VisionTower{
-		InputProj: smallLinear(hidden, 16*16*3),
-		PosTableX: onesArr(64, hidden),
-		PosTableY: onesArr(64, hidden),
-		Layers:    []*VisionLayer{layer(), layer()},
+		InputProj:  smallLinear(hidden, 16*16*3),
+		PosTableX:  onesArr(64, hidden),
+		PosTableY:  onesArr(64, hidden),
+		Layers:     []*VisionLayer{layer(), layer()},
 		NegStdBias: mlx.Zeros(mlx.DTypeFloat32, hidden),
 		StdScale:   onesArr(hidden),
 	}
@@ -469,4 +475,135 @@ func TestVisionTowerForwardShapes(t *testing.T) {
 	if d := out.Dims(); len(d) != 3 || d[0] != 1 || d[1] != 4 || d[2] != hidden {
 		t.Fatalf("tower out dims = %v, want [1 4 %d]", d, hidden)
 	}
+}
+
+// testImagePNG builds a deterministic 480×336 image: at budget 70 the
+// budget-fill factor is exactly 1.0 (480·336 = 70·48²), so resize is the
+// identity and patch values are exactly predictable.
+func testImagePNG(t *testing.T, w, h int) []byte {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: uint8(x % 256), G: uint8(y % 256), B: uint8((x + y) % 256), A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func unifiedTestModel() *Model {
+	cfg := &VisionConfig{
+		ModelType: "gemma4_unified_vision", MMEmbedDim: 16, MMPosembSize: 1120,
+		ModelPatchSize: 48, PatchSize: 16, PoolingKernelSize: 3, RMSNormEps: 1e-6,
+	}
+	return &Model{TextConfig: &TextConfig{}, VisionCfg: cfg,
+		MMTokens: multimodalTokens{BOI: 255999, EOI: 258882, Image: 258880}}
+}
+
+func towerTestModel() *Model {
+	return &Model{TextConfig: &TextConfig{}, VisionCfg: towerTestConfig(2),
+		MMTokens: multimodalTokens{BOI: 255999, EOI: 258882, Image: 258880}}
+}
+
+func TestNewVisionInputUnifiedLayout(t *testing.T) {
+	png := testImagePNG(t, 480, 336)
+	opts := api.Options{}
+	opts.ImageMaxTokens = 70
+
+	in, err := unifiedTestModel().NewVisionInput(png, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vi := in.(*visionInput)
+	if in.SoftTokens() != 70 {
+		t.Fatalf("SoftTokens = %d, want 70", in.SoftTokens())
+	}
+	if vi.n != 70 || vi.patchDim != 6912 || vi.gridW != 10 || vi.gridH != 7 {
+		t.Fatalf("unified geometry wrong: n=%d patchDim=%d grid=%dx%d", vi.n, vi.patchDim, vi.gridW, vi.gridH)
+	}
+	// Patch (px=2, py=1), inner pixel (dx=5, dy=7) → source pixel (101, 55):
+	// channel-fastest layout, values pixel/255 with no further scaling.
+	i := 1*10 + 2
+	if vi.xs[i] != 2 || vi.ys[i] != 1 {
+		t.Fatalf("positions[%d] = (%d,%d), want (2,1)", i, vi.xs[i], vi.ys[i])
+	}
+	base := i*6912 + (7*48+5)*3
+	for c, want := range []float32{101.0 / 255, 55.0 / 255, 156.0 / 255} {
+		if got := vi.patches[base+c]; !close32(got, want, 1e-3) {
+			t.Fatalf("unified patch value[ch=%d] = %v, want %v", c, got, want)
+		}
+	}
+}
+
+func TestNewVisionInputTowerLayout(t *testing.T) {
+	png := testImagePNG(t, 480, 336)
+	opts := api.Options{}
+	opts.ImageMaxTokens = 70
+
+	in, err := towerTestModel().NewVisionInput(png, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vi := in.(*visionInput)
+	if in.SoftTokens() != 70 {
+		t.Fatalf("SoftTokens = %d, want 70 (48px soft-token grid)", in.SoftTokens())
+	}
+	if vi.n != 630 || vi.patchDim != 768 || vi.gridW != 30 || vi.gridH != 21 {
+		t.Fatalf("tower geometry wrong: n=%d patchDim=%d grid=%dx%d", vi.n, vi.patchDim, vi.gridW, vi.gridH)
+	}
+	// Patch (px=3, py=2), inner pixel (dx=4, dy=9) → source pixel (52, 41):
+	// tower patches carry 2x−1 values.
+	i := 2*30 + 3
+	if vi.xs[i] != 3 || vi.ys[i] != 2 {
+		t.Fatalf("positions[%d] = (%d,%d), want (3,2)", i, vi.xs[i], vi.ys[i])
+	}
+	base := i*768 + (9*16+4)*3
+	for c, want := range []float32{2*52.0/255 - 1, 2*41.0/255 - 1, 2*93.0/255 - 1} {
+		if got := vi.patches[base+c]; !close32(got, want, 1e-3) {
+			t.Fatalf("tower patch value[ch=%d] = %v, want %v", c, got, want)
+		}
+	}
+}
+
+func TestNewVisionInputSizing(t *testing.T) {
+	png := testImagePNG(t, 640, 480)
+	in, err := unifiedTestModel().NewVisionInput(png, api.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Default ceiling 1120: 640×480 budget-fills to 1824×1344 = 38×28 = 1064.
+	if in.SoftTokens() != 1064 {
+		t.Fatalf("SoftTokens = %d, want 1064", in.SoftTokens())
+	}
+	tw, th := llm.BudgetFillSize(640, 480, llm.Gemma4ImageAlign, api.DefaultImageMaxTokens)
+	if in.SoftTokens() != (tw/48)*(th/48) {
+		t.Fatalf("SoftTokens = %d disagrees with llm.BudgetFillSize %dx%d", in.SoftTokens(), tw, th)
+	}
+}
+
+func TestNewVisionInputRejectsJunk(t *testing.T) {
+	if _, err := unifiedTestModel().NewVisionInput([]byte("not an image"), api.Options{}); err == nil {
+		t.Fatal("expected decode error for junk bytes")
+	}
+}
+
+func TestVisionTokens(t *testing.T) {
+	m := unifiedTestModel()
+	if !m.SupportsVision() {
+		// SupportsVision requires a bound path; unbound test model reports false.
+		t.Log("unbound model reports SupportsVision=false as designed")
+	}
+	boi, img, eoi := m.VisionTokens()
+	if boi != 255999 || img != 258880 || eoi != 258882 {
+		t.Fatalf("VisionTokens = (%d,%d,%d)", boi, img, eoi)
+	}
+}
+
+func close32(a, b, tol float32) bool {
+	d := a - b
+	return d < tol && d > -tol
 }

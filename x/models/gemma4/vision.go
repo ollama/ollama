@@ -16,12 +16,23 @@ package gemma4
 // padding/masking paths of the reference are deliberately not ported.
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"math"
 
+	xdraw "golang.org/x/image/draw"
+
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
+	"github.com/ollama/ollama/x/mlxrunner/model/base"
 	"github.com/ollama/ollama/x/models/nn"
 )
 
@@ -427,3 +438,112 @@ func (m *Model) projectVision(h *mlx.Array) *mlx.Array {
 	}
 	return m.EmbedVisionProj.Forward(mlx.RMSNormFn(h, nil, eps))
 }
+
+// visionInput is one preprocessed image: budget-fill-resized, rescaled, and
+// patchified at the lineage's patch granularity (48px unified, 16px tower).
+type visionInput struct {
+	patches  []float32 // [n, patchDim] flattened, channel fastest
+	n        int32     // patches at the lineage's granularity
+	patchDim int32
+	xs, ys   []int32 // per-patch grid coordinates (x=col, y=row)
+	gridW    int32   // patch-level grid dims
+	gridH    int32
+	soft     int // soft tokens = (targetW/48)·(targetH/48)
+}
+
+func (v *visionInput) SoftTokens() int { return v.soft }
+
+// SupportsVision reports whether this checkpoint shipped a vision path; the
+// gemma4 package also registers text-only architectures.
+func (m *Model) SupportsVision() bool {
+	return m.VisionCfg != nil && (m.VisionEmbedder != nil || m.VisionTower != nil)
+}
+
+// VisionTokens returns the ids bracketing one image's soft tokens.
+func (m *Model) VisionTokens() (int32, int32, int32) {
+	return m.MMTokens.BOI, m.MMTokens.Image, m.MMTokens.EOI
+}
+
+// NewVisionInput decodes and preprocesses one image per the reference
+// pipeline pinned to ADR 0008 sizing: convert to RGB, bicubic-resize to the
+// budget-fill target (always a 48-multiple on both axes), rescale by 1/255
+// with no mean/std normalization, and patchify channel-fastest. The tower
+// lineage additionally maps values to 2x−1, which its reference applies
+// inside _patchify. Pure Go — safe off the MLX thread.
+func (m *Model) NewVisionInput(data []byte, opts api.Options) (base.VisionInput, error) {
+	if m.VisionCfg == nil {
+		return nil, errors.New("model has no vision configuration")
+	}
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("decode image: %w", err)
+	}
+	bounds := img.Bounds()
+	_, maxTok := llm.Gemma4ImageBudget(opts)
+	tw, th := llm.BudgetFillSize(bounds.Dx(), bounds.Dy(), llm.Gemma4ImageAlign, maxTok)
+
+	// CatmullRom is the Keys a=-0.5 cubic — the same family as PIL's BICUBIC
+	// resample (processor_config resample=3).
+	dst := image.NewRGBA(image.Rect(0, 0, tw, th))
+	xdraw.CatmullRom.Scale(dst, dst.Bounds(), img, bounds, xdraw.Src, nil)
+
+	p := int(m.VisionCfg.PatchSize) * int(m.VisionCfg.PoolingKernelSize)
+	scale, shift := float32(1)/255, float32(0)
+	if !m.VisionCfg.IsUnified() {
+		p = int(m.VisionCfg.PatchSize)
+		scale, shift = 2.0/255, -1
+	}
+	pW, pH := tw/p, th/p
+	patchDim := p * p * 3
+	patches := make([]float32, pW*pH*patchDim)
+	xs, ys := make([]int32, pW*pH), make([]int32, pW*pH)
+	for py := 0; py < pH; py++ {
+		for px := 0; px < pW; px++ {
+			i := py*pW + px
+			xs[i], ys[i] = int32(px), int32(py)
+			for dy := 0; dy < p; dy++ {
+				o := dst.PixOffset(px*p, (py*p)+dy)
+				row := dst.Pix[o : o+p*4]
+				for dx := 0; dx < p; dx++ {
+					d := i*patchDim + (dy*p+dx)*3
+					patches[d+0] = float32(row[dx*4+0])*scale + shift
+					patches[d+1] = float32(row[dx*4+1])*scale + shift
+					patches[d+2] = float32(row[dx*4+2])*scale + shift
+				}
+			}
+		}
+	}
+	return &visionInput{
+		patches: patches, n: int32(pW * pH), patchDim: int32(patchDim),
+		xs: xs, ys: ys, gridW: int32(pW), gridH: int32(pH),
+		soft: (tw / llm.Gemma4ImageAlign) * (th / llm.Gemma4ImageAlign),
+	}, nil
+}
+
+// EncodeVision embeds one preprocessed image into text hidden space,
+// returning [1, SoftTokens, hidden]. MLX thread only.
+func (m *Model) EncodeVision(in base.VisionInput) *mlx.Array {
+	vi := in.(*visionInput)
+	x := mlx.FromValues(vi.patches, 1, int(vi.n), int(vi.patchDim)).AsType(mlx.DTypeBFloat16)
+	var h *mlx.Array
+	if m.VisionEmbedder != nil {
+		h = m.VisionEmbedder.Forward(x, vi.xs, vi.ys)
+	} else {
+		h = m.VisionTower.Forward(x, vi.xs, vi.ys, vi.gridW, vi.gridH, m.VisionCfg)
+	}
+	return m.projectVision(h)
+}
+
+// MergedEmbeddings returns the embed-scaled token embeddings for inputIDs
+// with vision features spliced over spans — the reference's masked_scatter,
+// specialized to the runner's known half-open span layout. Features replace
+// the placeholder embeddings unscaled, matching get_input_embeddings.
+func (m *Model) MergedEmbeddings(inputIDs *mlx.Array, features []*mlx.Array, spans [][2]int32) *mlx.Array {
+	h := mlx.MulScalar(m.EmbedTokens.Forward(inputIDs), m.EmbedScale)
+	for i, f := range features {
+		h = h.SliceUpdate(f.AsType(h.DType()), mlx.Slice(), mlx.Slice(int(spans[i][0]), int(spans[i][1])), mlx.Slice())
+	}
+	return h
+}
+
+var _ base.VisionModel = (*Model)(nil)
