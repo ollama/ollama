@@ -110,7 +110,7 @@ document = 342. On a 004 payload every gemma4 grid must satisfy
 | model | server / config | img tok | scene IoU | doc IoU (W2) | serial | gen tok/s | prefill tok/s |
 |---|---|---|---|---|---|---|---|
 | qwen3.6 35B-A3B | patched, model defaults | ~2031 | **0.975** | 0.686 | ✓ | **109.7** | 1269 |
-| nemotron3 33B | fork (002), defaults | ~2090 | 0.857 | — | ✓ | 90.4 | 885 |
+| nemotron3 33B | fork (002), defaults | 2042 | 0.857 | — | **✗** | 90.4–113.4 § | 885 |
 | gemma4 26B A4B | patched @1120 | 1100 | 0.970 | — | ✓ | 102.9 | 657 |
 | gemma4 26B A4B | patched @560 | 527 | 0.961 | — | ✓ | 106.4 | 1104 |
 | gemma4 26B A4B | stock (max 280) | 264 | 0.885 | — | ✗ | 106.3 | 1102 |
@@ -125,6 +125,8 @@ document = 342. On a 004 payload every gemma4 grid must satisfy
 | gemma4 12B | unpatched shipped 40…1120 | 920 ‡ | 0.504 | 0.101 | ✓ | — | — |
 
 † not valid: overhead-dominated or KV-cache hit. ‡ off-ladder grid (the defect 004 fixes).
+§ 90.4 first-request-after-load (archive), 113.4 warm repeat (2026-08-07 re-verify); decode
+cells elsewhere in this table are first-request figures and may understate warm rates similarly.
 
 Secondary results (patched): portrait 12B @1120 (24×45 grid) IoU 0.905 · W3 all
 questions correct on 12B/31B/qwen3.6 · W4: budget 560 reads the 22px tier only;
