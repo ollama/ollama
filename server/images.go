@@ -298,6 +298,22 @@ func shouldPreferChatTemplate(chatTemplate string, chatTemplateCaps []model.Capa
 	return chatTemplateHasToolRoundTrip(chatTemplate) && !goTemplateHasToolRoundTrip(goTemplate)
 }
 
+// preferGGUFChatTemplate reports whether the GGUF chat_template should take
+// precedence over the model's Go TEMPLATE when rendering chat requests and
+// deriving capabilities.
+func preferGGUFChatTemplate(m *Model, ggufChatTemplate string) bool {
+	if goTemplateEnvSet() || !m.HasGoTemplate || ggufChatTemplate == "" || m.Config.Renderer != "" || m.Config.Parser != "" {
+		return false
+	}
+	if m.Template != nil && shouldUseHarmony(m) {
+		return false
+	}
+
+	ggufCaps := chatTemplateCapabilities(nil, ggufChatTemplate)
+	goCaps := goTemplateCapabilities(m.Template)
+	return shouldPreferChatTemplate(ggufChatTemplate, ggufCaps, m.Template, goCaps)
+}
+
 func goTemplateEnvSet() bool {
 	return envconfig.GoTemplate(true) == envconfig.GoTemplate(false)
 }
@@ -751,13 +767,9 @@ func GetModel(name string) (*Model, error) {
 		}
 	}
 
-	ggufCaps := chatTemplateCapabilities(nil, ggufChatTemplate)
-	goCaps := goTemplateCapabilities(m.Template)
-	usesHarmony := m.Template != nil && shouldUseHarmony(m)
-	if !goTemplateEnvSet() && m.HasGoTemplate && ggufChatTemplate != "" && m.Config.Renderer == "" && m.Config.Parser == "" && !usesHarmony && shouldPreferChatTemplate(ggufChatTemplate, ggufCaps, m.Template, goCaps) {
-		m.PreferChatTemplate = true
-	}
+	m.PreferChatTemplate = preferGGUFChatTemplate(m, ggufChatTemplate)
 
+	usesHarmony := m.Template != nil && shouldUseHarmony(m)
 	if m.ModelPath != "" && m.isGGUF() && !modelHasPooling && !m.HasChatTemplate && (!m.HasGoTemplate || !envconfig.GoTemplate(true)) && m.Config.Renderer == "" && m.Config.Parser == "" && !usesHarmony {
 		slog.Warn("model is missing tokenizer.chat_template and Go TEMPLATE support is unavailable; chat responses may be poorly formatted", "model", m.Name, "env", "OLLAMA_GO_TEMPLATE=1")
 	}

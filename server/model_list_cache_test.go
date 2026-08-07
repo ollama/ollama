@@ -70,6 +70,48 @@ func TestModelListCacheHydratesSummary(t *testing.T) {
 	}
 }
 
+func TestModelListCacheUsesGGUFChatTemplateCapabilities(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setTestHome(t, t.TempDir())
+
+	// Mirrors models such as deepseek-r1 where the Go TEMPLATE has no tool
+	// support but the GGUF chat template does; /api/show prefers the chat
+	// template, so /api/tags must report the same capabilities.
+	createListCacheModel(t, "list-chat-template", map[string]any{
+		"tokenizer.chat_template": "{% if tools %}{{ tools }}{% endif %}<think></think>{{ messages[0]['content'] }}",
+	}, "{{ .Prompt }}")
+
+	cache := newModelListCache()
+	if err := cache.hydrate(context.Background()); err != nil {
+		t.Fatalf("hydrate failed: %v", err)
+	}
+
+	summary, ok := cache.Get(model.ParseName("list-chat-template"))
+	if !ok {
+		t.Fatal("list summary missing")
+	}
+
+	for _, capability := range []model.Capability{model.CapabilityCompletion, model.CapabilityTools, model.CapabilityThinking} {
+		if !slices.Contains(summary.Capabilities, capability) {
+			t.Fatalf("capabilities = %v, want %s", summary.Capabilities, capability)
+		}
+	}
+
+	mdl, err := GetModel("list-chat-template")
+	if err != nil {
+		t.Fatalf("get model failed: %v", err)
+	}
+	show := mdl.Capabilities()
+	if len(show) != len(summary.Capabilities) {
+		t.Fatalf("list capabilities = %v, show capabilities = %v", summary.Capabilities, show)
+	}
+	for _, capability := range show {
+		if !slices.Contains(summary.Capabilities, capability) {
+			t.Fatalf("list capabilities = %v, missing %s reported by show", summary.Capabilities, capability)
+		}
+	}
+}
+
 func TestModelListCacheRefreshUpdatesEntry(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())
