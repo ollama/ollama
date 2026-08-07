@@ -148,7 +148,45 @@ Decode dominates at this output length; accuracy is nearly free until dense 31B
 (~4× cost for ≤0.01 IoU over 26B @1120). Stock 26B's rate advantage is lower
 image resolution (264 tokens), which is also why it misses the serial.
 
-### 4.3 Recommendations (as of this report)
+### 4.3 Nemotron3 33B resolution/aspect profile (added 2026-08-07)
+
+Gemma4-style sweep on the patched server (002 dyn-res path; 004 does not touch
+nemotron). Scene content, think off; budgets via `image_max_tokens`:
+
+| arm | img tok | IoU | x-scale | y-scale | y-rms |
+|---|---|---|---|---|---|
+| max 512 | 480 | 0.687 | 0.946 | 0.954 | 24px |
+| max 1024 | 1008 | 0.741 | 1.004 | 0.958 | 26px |
+| defaults (→ natural) | 2040 | 0.857 | 1.000 | 0.990 | 13px |
+| pinned 3328 | **3388** ⚠ | 0.856 | 1.015 | 0.990 | 15px |
+| portrait 1056×1920 (defaults) | 1980 | 0.702 | 1.041 | 1.014 | **48px** |
+| square 1440² (defaults) | 2025 | 0.721 | 0.991 | 0.942 | 21px |
+
+Findings, in contrast to gemma4:
+
+- **No ladder, no cliff.** IoU rises smoothly with budget and saturates at the
+  natural grid (~2040) — consistent with continuous dynamic-resolution training.
+  Extra budget beyond natural buys nothing (0.857 → 0.856).
+- **Coordinate mapping is healthy at every budget** (scales 0.95–1.01, offsets
+  ≈ 0). Nemotron's accuracy ceiling is localization *scatter* (y-rms ≥ 13px,
+  vs 2–3px for on-ladder gemma4), not a coordinate-space defect — nothing to
+  patch; it is a model precision limit.
+- **⚠ Pinned budgets overshoot the ceiling**: `min == max == 3328` delivers
+  3388 tokens — the same generic `ceil_by_factor` overshoot 004 removed for
+  gemma4. Harmless to quality here, but it breaks the budget contract and the
+  Go `MaxImageTokens` bound (3330 < 3390 actual) for pinned requests.
+- **⚠ Aspect sensitivity is the real weakness**: at matched ~2000-token budgets,
+  portrait loses 0.16 IoU (0.702, scatter tripling to 48px) and square loses
+  0.14 (0.721) versus landscape (0.857). Patched gemma4 12B scores 0.905 on the
+  same portrait content. Suspected mechanism: 002 interpolates position
+  embeddings from the baked 32×32 grid; quality off the landscape shape is
+  unverified upstream.
+- **⚠ Reasoning degrades grounding**: archived think=on arm scores 0.598 vs
+  0.857 think-off, with scale drift on both axes. Keep think off for bbox work.
+- Fine text: the 14px serial is missed even at 2040 tokens (native 1:1 pixel
+  scale) — nemotron under-performs both gemma4 @1120 and qwen3.6 on small text.
+
+### 4.4 Recommendations (as of this report)
 
 | workload | pick |
 |---|---|
