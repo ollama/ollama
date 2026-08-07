@@ -54,6 +54,14 @@ docker scratch. The overlay needs ~7 GB. It is valid because the fork's C++/CUDA
 payload is untouched — this diff is **empty**, where the tag matches the `FROM` in
 `Dockerfile.gemma4budget`:
 
+> **The 45–70 GB figure is the all-flavours build. `FLAVOR=rocm` costs far less** — it
+> skips the CUDA, Vulkan and MLX stages entirely. Measured 2026-08-08 on gfx1151, cold
+> cache, base image already pulled: **~24 min wall, ~12 GB net disk** (82 G → 70 G free),
+> yielding a **3.08 GB** image. Don't let the headline number rule out a full ROCm build —
+> it is the only way to ship a `llama/compat/*.patch`, since the overlay cannot carry C++
+> (see [ADR 0001](adr/0001-nemotron-vision-dynamic-resolution.md),
+> [ADR 0006](adr/0006-release-lineage-is-never-merged-into-main.md)).
+
 ```bash
 git diff HEAD v0.32.5 -- LLAMA_CPP_VERSION llama/ ml/ CMakeLists.txt \
     CMakePresets.json MLX_VERSION MLX_C_VERSION cmake/ x/imagegen/mlx

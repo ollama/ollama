@@ -21,6 +21,11 @@
 | Backend | Metal (llama.cpp); MLX `metal_v4` present but vision-blind (§6.3) |
 | Storage | Model store on internal NVMe (`~/.ollama/models-mlx`) |
 
+**Second platform (added 2026-08-08).** §4.5 records a cell measured on a different
+machine: Ryzen AI Max+ 395 / Radeon 8060S (**gfx1151**), 96 GiB VRAM, Linux, ROCm
+(llama.cpp HIP). Quality metrics are comparable across platforms; **throughput is not** —
+do not compare tok/s between §4.1 and §4.5.
+
 ### 1.2 Server configurations
 
 | id | binary | llama.cpp payload | compat patches | gemma4 defaults |
@@ -28,6 +33,7 @@
 | `stock` | ollama 0.32.6 (upstream, :11434) | b10242 | none | min 40 / max 280 (upstream) |
 | `unpatched` | fork 0.32.5 (:11435) | b10091 | 001–003 | 40 / 1120 (pre-ADR-0007) |
 | `patched` | fork `0.32.5-gemma4fill-dev` (:11436) | b10091 | 001–**004** | 70 / 1120 (ADR 0008); budget-fill sizing |
+| `dynres-rocm` | fork `0.32.1-dynres-35d9e58e` (gfx1151, :11434) | **b9888** | 001–**005** | 70 / 1120 (ADR 0008); budget-fill sizing |
 
 All servers `OLLAMA_NUM_PARALLEL=1`, no concurrent traffic during measurement.
 
@@ -84,7 +90,11 @@ at gemma4 budget 560 a 1568px page renders at 1104px, at 1120 at 1584px.
 ### Token accounting invariant
 
 `prompt_eval_count = text + Σ(per image: patch_grid + 16)`. Scene text = 568,
-document = 342. On a 004 payload every gemma4 grid must satisfy
+document = 342 — **these are gemma4's tokenisations and are model-specific.** Nemotron3
+tokenises the same scene prompt to **632**. Subtracting the gemma4 figure from a
+non-gemma4 run inflates the apparent image tokens (it produced a phantom "2090 vs 2042
+sizing regression" on 2026-08-08 that did not exist). Measure the text-only baseline for
+the model under test — same prompt, no image — before applying the invariant. On a 004 payload every gemma4 grid must satisfy
 `cols·rows ≤ B < (cols+1)·(rows+1)` for a supported budget B ∈ {70, 140, 280,
 560, 1120} (SPEC B7). A grid change at fixed config is a sizing regression.
 
@@ -197,6 +207,57 @@ Findings, in contrast to gemma4:
 | Latency-sensitive, coarse tasks | any gemma4 @280 per request (model-card guidance) |
 
 ---
+
+### 4.5 gfx1151 / ROCm cell — `dynres-rocm` (added 2026-08-08)
+
+Measured on the second platform (§1.1) after deploying `0.32.1-dynres-35d9e58e` — a **full**
+Dockerfile build (`FLAVOR=rocm`) from `release/0.32.1-dynres`, carrying compat 002 + 004 +
+005 on a b9888 payload. Think off, temp 0, `OLLAMA_NUM_PARALLEL=1`, no concurrent traffic.
+
+| model | workload | img tok | IoU | extraction |
+|---|---|---|---|---|
+| gemma4:31b @1120 | W1 scene | **1100** (20×55) | **0.961** | 6/6 labels · 6/6 colours · serial ✓ |
+| gemma4:31b @1120 | W2 document | **1089** (33×33) | **0.728** | 5/5 items · 5/5 qty+price · total ✓ |
+| gemma4:31b @1120 | W3 multi | — | — | q1 ✓ q2 ✓ q4_bbox ✓ · chart 5/5 |
+| qwen3.6 35B-A3B | W1 scene | 2031 | 0.953 | 6/6 · 6/6 · serial ✓ |
+| qwen3.6 35B-A3B | W2 document | — | 0.320 | 5/5 items · 5/5 qty+price · total ✓ |
+| qwen3.6 35B-A3B | W3 multi | — | — | all correct · chart 5/5 |
+| nemotron3 33B | W1 scene | 2026 | 0.840 | 6/6 · 6/6 · serial ✓ |
+| nemotron3 33B | W2 document | — | 0.058 | 5/5 items · 5/5 qty+price · total ✓ |
+| nemotron3 33B | W3 multi | — | — | all correct · chart 5/5 |
+
+Both gemma4 grids satisfy SPEC B7 (`1100 ≤ 1120 < 21×56`; `1089 ≤ 1120 < 34×34`), which is
+the working confirmation that 004's budget-fill sizing behaves on a b9888 payload, not only
+on b10091.
+
+**005 closes the §4.3 overshoot.** That table flags `pinned 3328 → 3388 ⚠`. On this build:
+
+| nemotron3 arm | img tok | vs ceiling |
+|---|---|---|
+| defaults | 2026 | (§4.3 b10091: 2040) |
+| pinned 3328 | **3254** | **≤ 3328 ✓** — was 3388 pre-005 |
+
+**Cross-platform quality gap — not a build regression.** qwen3.6 document bbox IoU is
+**0.320 here against 0.686 on Metal (§4.1)**, and gemma4:31b scene 0.961 vs 0.963. The
+document gap looked like a regression from the new build, so it was A/B'd on the *same
+hardware* against the previously deployed image (overlay `0.32.1-gemma4budget-85ebcb79`,
+no 002/004/005):
+
+| metric | previous image | `dynres-rocm` |
+|---|---|---|
+| qwen3.6 scene IoU | 0.948 | 0.953 |
+| qwen3.6 doc bbox IoU | 0.317 | 0.320 |
+| qwen3.6 scene / doc `prompt_eval` | 2615 / 2743 | 2615 / 2743 (identical) |
+
+The build is unchanged-to-marginally-better on every cell; the gap is **platform**
+(gfx1151/ROCm vs M5 Max/Metal). qwen3.6 token counts are byte-identical across the two
+builds, as expected — 004 is gemma4-only and 002/005 are nemotron/dyn_size, so `qwen35moe`
+touches none of them. Anyone reading a low qwen3.6 document score on ROCm should not treat
+it as a patch regression without the same-hardware control.
+
+⚠ Throughput from this cell is **not** comparable to §4.1/§4.2 (different silicon and
+backend). Recorded for reference only: gemma4:31b 9.6 gen tok/s, qwen3.6 56.6, nemotron3
+60.3.
 
 ## 5. Regression procedure
 
