@@ -384,12 +384,19 @@ function(ollama_add_llama_server_build name)
         set(_build_dir ${CMAKE_BINARY_DIR}/llama-server-${name})
     endif()
 
-    # Some backends (e.g. SYCL/oneAPI) need a specific generator so their
-    # toolchain can drive the build directly. ExternalProject reconfigures the
-    # sub-build with this generator instead of inheriting the superbuild's.
+    # Nested builds explicitly inherit the superbuild's generator (and
+    # platform) instead of falling back to CMake's default, which on Windows
+    # silently switches to Visual Studio. Some backends (e.g. SYCL/oneAPI)
+    # override with their own generator so their toolchain can drive the
+    # build directly.
     set(_generator_override_args)
     if(ARG_GENERATOR)
         list(APPEND _generator_override_args -G "${ARG_GENERATOR}")
+    elseif(CMAKE_GENERATOR)
+        list(APPEND _generator_override_args -G "${CMAKE_GENERATOR}")
+        if(CMAKE_GENERATOR_PLATFORM)
+            list(APPEND _generator_override_args -A "${CMAKE_GENERATOR_PLATFORM}")
+        endif()
     endif()
     ollama_collect_cache_args_with_prefix("GGML_" _ggml_cache_args)
     ollama_collect_cache_args_with_prefix("LLAMA_" _llama_cache_args)
