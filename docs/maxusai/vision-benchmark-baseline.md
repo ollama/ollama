@@ -56,6 +56,30 @@ Extras (patched): portrait 12B @1120 → 24×45 grid, IoU 0.905. Fine text (1568
 @560 reads 22px only; @1120 adds 16px + half of 12px. Multi-image: all questions
 correct on 12B/31B/qwen3.6.
 
+## Wall time and request scaling (scene test, ~530–545 output tokens)
+
+Measured 2026-08-07: cold = first request incl. model load; warm-repeat = same
+request again (image prefix may hit the prompt cache — an upper bound); unique =
+derived `eval/gen_tps + prompt_eval/prefill_tps`, the realistic steady state
+when every request carries a *different* image.
+
+| config | cold s | warm-repeat s | unique-image s/req | **req/hour (unique)** |
+|---|---|---|---|---|
+| qwen3.6 35B-A3B | 11.8 | 5.1 | 7.1 | **~505** |
+| patched 26B @1120 | 12.1 | 6.0 | 7.8 | **~460** |
+| stock 26B (max 280) | 8.1 | 5.8 | 5.8 | ~620 |
+| patched 12B @560 | 15.6 | 12.1 | 11.1 | ~325 |
+| patched 31B @1120 | 37.5 | 28.9 | 31.8 | ~113 |
+| stock 31B (max 280) | 32.8 | 28.7 | 30.3 | ~119 |
+
+Reading it: throughput ranking is decode-dominated (output ≈ 540 tokens swamps
+prefill for everything except 31B at high budgets). qwen3.6 and 26B A4B sustain
+~460–505 unique requests/hour at the highest accuracy tier; dense 31B manages
+~113–119 regardless of patch/budget; 12B sits between. Cold-start penalty is
+3–7 s (model load) — only relevant when models churn. Single-request serial
+figures (OLLAMA_NUM_PARALLEL=1); batching/parallel would change absolute rates
+but not the ranking.
+
 ## Reading rules (regression testing)
 
 1. **Accuracy cells are deterministic** per (payload, backend, budget, image) at
