@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +19,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/ollama/ollama/anthropic"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
@@ -63,6 +66,8 @@ type mockRunner struct {
 	TemplateFn    func(context.Context, llm.ChatRequest) (string, error)
 	DetokenizeFn  func(context.Context, []int) (string, error)
 	contextLength int
+
+	TokenizeForCompletionFn func(ctx context.Context, prompt, leadingBOS string) ([]int, error)
 }
 
 func (m *mockRunner) Completion(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
@@ -104,6 +109,20 @@ func (mockRunner) Tokenize(_ context.Context, s string) (tokens []int, err error
 	}
 
 	return
+}
+
+// TokenizeForCompletion mirrors llamaServerRunner: the renderer's leading BOS is
+// dropped because the tokenizer adds one of its own, which this mock represents
+// as a single extra token.
+func (m *mockRunner) TokenizeForCompletion(ctx context.Context, prompt, leadingBOS string) ([]int, error) {
+	if m.TokenizeForCompletionFn != nil {
+		return m.TokenizeForCompletionFn(ctx, prompt, leadingBOS)
+	}
+	tokens, err := m.Tokenize(ctx, strings.TrimPrefix(prompt, leadingBOS))
+	if err != nil {
+		return nil, err
+	}
+	return append(tokens, len(tokens)), nil
 }
 
 func (mockRunner) Ping(_ context.Context) error { return nil }
@@ -268,6 +287,220 @@ func TestChatModeForModel(t *testing.T) {
 	}
 	if got := llamaServerConfigForModel(goTemplateModel); !got.DisableJinja {
 		t.Fatalf("llamaServerConfigForModel with Go TEMPLATE should disable jinja")
+	}
+}
+
+// countTokensTemplate renders one line per message, so the token count of a
+// request is derivable from mockRunner.Tokenize's whitespace split.
+const countTokensTemplate = "{{ range .Messages }}{{ .Role }}: {{ .Content }}\n{{ end }}"
+
+func TestInputTokensRoutes(t *testing.T) {
+	t.Setenv("OLLAMA_GO_TEMPLATE", "1")
+	gin.SetMode(gin.TestMode)
+
+	mock := mockRunner{}
+	s := newServerWithMockRunner(t, &mock)
+	createMinimalGGUFModel(t, s, "input-token-model", nil, countTokensTemplate, nil)
+
+	router, err := s.GenerateRoutes()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// "user: count these tokens\n" splits into four whitespace-separated
+	// tokens, plus the BOS mockRunner.TokenizeForCompletion adds.
+	const want = 4 + 1
+
+	for _, tt := range []struct {
+		name       string
+		path       string
+		body       string
+		wantObject string
+	}{
+		{
+			name:       "chat completions",
+			path:       "/v1/chat/completions/input_tokens",
+			body:       `{"model":"input-token-model","messages":[{"role":"user","content":"count these tokens"}]}`,
+			wantObject: "response.input_tokens",
+		},
+		{
+			name:       "responses",
+			path:       "/v1/responses/input_tokens",
+			body:       `{"model":"input-token-model","input":"count these tokens"}`,
+			wantObject: "response.input_tokens",
+		},
+		{
+			name: "anthropic count tokens",
+			path: "/v1/messages/count_tokens",
+			body: `{"model":"input-token-model","messages":[{"role":"user","content":"count these tokens"}]}`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, tt.path, strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+			}
+
+			var got struct {
+				Object      string `json:"object"`
+				InputTokens int    `json:"input_tokens"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Object != tt.wantObject {
+				t.Errorf("object = %q, want %q", got.Object, tt.wantObject)
+			}
+			if got.InputTokens != want {
+				t.Errorf("input_tokens = %d, want %d", got.InputTokens, want)
+			}
+		})
+	}
+}
+
+// TestInputTokensRoutesCountUntruncatedInput pins that the count routes report
+// the size of the caller's input rather than of the truncated prompt the model
+// would have been given.
+func TestInputTokensRoutesCountUntruncatedInput(t *testing.T) {
+	t.Setenv("OLLAMA_GO_TEMPLATE", "1")
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "8")
+	gin.SetMode(gin.TestMode)
+
+	mock := mockRunner{}
+	s := newServerWithMockRunner(t, &mock)
+	createMinimalGGUFModel(t, s, "input-token-model", nil, countTokensTemplate, nil)
+
+	router, err := s.GenerateRoutes()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Four messages of ten words each, far past the eight token context above.
+	// Each renders as "<role>: <ten words>\n" for eleven tokens, plus BOS.
+	const (
+		words = 10
+		msgs  = 4
+		want  = msgs*(1+words) + 1
+	)
+	content := strings.TrimSpace(strings.Repeat("word ", words))
+	chatBody := fmt.Sprintf(`{"model":"input-token-model","messages":[
+		{"role":"user","content":%[1]q},
+		{"role":"assistant","content":%[1]q},
+		{"role":"user","content":%[1]q},
+		{"role":"assistant","content":%[1]q}]}`, content)
+	responsesBody := fmt.Sprintf(`{"model":"input-token-model","input":[
+		{"role":"user","content":%[1]q},
+		{"role":"assistant","content":%[1]q},
+		{"role":"user","content":%[1]q},
+		{"role":"assistant","content":%[1]q}]}`, content)
+
+	for path, body := range map[string]string{
+		"/v1/chat/completions/input_tokens": chatBody,
+		"/v1/responses/input_tokens":        responsesBody,
+		"/v1/messages/count_tokens":         chatBody,
+	} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+			}
+
+			var got struct {
+				InputTokens int `json:"input_tokens"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.InputTokens != want {
+				t.Errorf("input_tokens = %d, want %d", got.InputTokens, want)
+			}
+		})
+	}
+}
+
+// TestInputTokensRouteTokenizeError pins that a runner that cannot tokenize
+// fails the request rather than reporting a count of zero.
+func TestInputTokensRouteTokenizeError(t *testing.T) {
+	t.Setenv("OLLAMA_GO_TEMPLATE", "1")
+	gin.SetMode(gin.TestMode)
+
+	mock := mockRunner{
+		TokenizeForCompletionFn: func(context.Context, string, string) ([]int, error) {
+			return nil, errors.New("tokenizer unavailable")
+		},
+	}
+	s := newServerWithMockRunner(t, &mock)
+	createMinimalGGUFModel(t, s, "input-token-model", nil, countTokensTemplate, nil)
+
+	router, err := s.GenerateRoutes()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", strings.NewReader(
+		`{"model":"input-token-model","messages":[{"role":"user","content":"hi"}]}`,
+	))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, body: %s", w.Code, w.Body.String())
+	}
+
+	var errResp anthropic.ErrorResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &errResp); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errResp.Error.Message, "tokenizer unavailable") {
+		t.Errorf("error message = %q, want it to name the tokenizer failure", errResp.Error.Message)
+	}
+}
+
+// TestInputTokensRouteNativeChat covers the llama-server-templated execution
+// path, which renders through ApplyChatTemplate rather than a Go template.
+func TestInputTokensRouteNativeChat(t *testing.T) {
+	t.Setenv("OLLAMA_GO_TEMPLATE", "")
+	gin.SetMode(gin.TestMode)
+
+	mock := mockRunner{Template: "<s>user: count these tokens"}
+	s := newServerWithMockRunner(t, &mock)
+	createMinimalGGUFModel(t, s, "native-input-token-model", nil, "", nil)
+
+	router, err := s.GenerateRoutes()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages/count_tokens", strings.NewReader(
+		`{"model":"native-input-token-model","messages":[{"role":"user","content":"count these tokens"}]}`,
+	))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+	}
+
+	var got anthropic.CountTokensResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	// "<s>user: count these tokens" is four whitespace-separated tokens, plus BOS.
+	if want := 4 + 1; got.InputTokens != want {
+		t.Errorf("input_tokens = %d, want %d", got.InputTokens, want)
+	}
+	if mock.ChatRequest.Messages == nil {
+		t.Error("ApplyChatTemplate was not reached; the request did not take the native path")
 	}
 }
 
