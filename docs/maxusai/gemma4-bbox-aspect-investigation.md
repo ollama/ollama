@@ -1,8 +1,25 @@
 # Investigation brief: gemma4 bbox geometry degrades with visual token budget
 
 MaxusAI-fork investigation brief (fork-only). Opened 2026-08-07 from the Apple
-Silicon benchmark campaign. **Status: open — hypothesis grounded in source, not yet
-proven.**
+Silicon benchmark campaign.
+
+> **Status: CLOSED 2026-08-07 — the hypothesis below is refuted. See
+> [gemma4-bbox-investigation-findings.md](gemma4-bbox-investigation-findings.md).**
+>
+> Kept as the record of how the question was framed. Three of its claims did not
+> survive measurement, and the corrections matter to anyone reading it:
+>
+> - **The aspect hypothesis is geometrically void.** Normalized coordinates are
+>   invariant to anisotropic resize, so per-dimension rounding cannot move a
+>   norm-1000 box. That is why AR-error magnitude never rank-ordered IoU.
+> - **Constraint 3 is wrong.** The 1:1 document is *not* immune; `name_bbox_hits`
+>   is a band test that cannot see a 5% scale error. A square, unpadded, unresampled
+>   image still loses 9.4% vertically.
+> - **Padding is real but is not the cause.** `PAD_CEIL` letterboxing is confirmed in
+>   source and quantified (it explains the horizontal axis exactly), but a pad-free
+>   control reproduces the collapse.
+>
+> The actual defect is a vertical-only coordinate error that grows with patch rows.
 
 ## The observation
 
