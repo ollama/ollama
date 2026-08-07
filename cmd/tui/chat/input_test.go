@@ -39,6 +39,7 @@ func TestChatHelpCommandShowsV1Commands(t *testing.T) {
 		"**Shortcuts**",
 		"- `shift+enter`: insert a newline",
 		"- `shift+tab`: toggle permission mode",
+		"- `ctrl+o`: toggle transcript details",
 	} {
 		if !strings.Contains(fm.entries[0].content, want) {
 			t.Fatalf("help output missing %q:\n%s", want, fm.entries[0].content)

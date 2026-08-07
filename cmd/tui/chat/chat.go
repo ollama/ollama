@@ -100,46 +100,48 @@ type chatModel struct {
 	entries      []chatEntry
 	workingDir   string
 
-	input              []rune
-	inputCursor        int
-	inputCursorSet     bool
-	inputAttachments   []chatInputAttachment
-	inputPastedTexts   []chatInputPastedText
-	nextImageID        int
-	nextAudioID        int
-	nextPastedTextID   int
-	promptHistory      []string
-	promptCursor       int
-	promptDraft        []rune
-	promptActive       bool
-	running            bool
-	awaitingModel      bool
-	compacting         bool
-	cancel             context.CancelFunc
-	events             <-chan tea.Msg
-	compactEvents      <-chan tea.Msg
-	detectedToolCalls  []chatEntry
-	scroll             int
-	toolOutputMode     bool
-	toolOutputOpen     bool
-	flowPrintedLines   int
-	thinking           bool
-	thinkingTokens     int
-	compactingTokens   int
-	contextTokens      int
-	contextEstimate    bool
-	modelPicker        *chatModelPicker
-	modelPickerModels  []ModelOption
-	thinkPicker        *chatThinkPicker
-	promptDebug        *chatPromptDebug
-	approvalPrompt     *chatApprovalPrompt
-	approvalController *chatApprovalController
-	approvalState      *coreagent.ApprovalState
-	cloudAuthPrompt    *cloudAuthPrompt
-	pendingModel       string
-	defaultAllowAll    bool
-	permissionNotice   string
-	selection          chatSelection
+	input               []rune
+	inputCursor         int
+	inputCursorSet      bool
+	inputAttachments    []chatInputAttachment
+	inputPastedTexts    []chatInputPastedText
+	nextImageID         int
+	nextAudioID         int
+	nextPastedTextID    int
+	promptHistory       []string
+	promptCursor        int
+	promptDraft         []rune
+	promptActive        bool
+	running             bool
+	awaitingModel       bool
+	compacting          bool
+	cancel              context.CancelFunc
+	events              <-chan tea.Msg
+	compactEvents       <-chan tea.Msg
+	detectedToolCalls   []chatEntry
+	scroll              int
+	toolOutputMode      bool
+	toolOutputOpen      bool
+	thinkingDetailsOpen bool
+	flowPrintedLines    int
+	thinking            bool
+	thinkingPhaseStart  int
+	thinkingTokens      int
+	compactingTokens    int
+	contextTokens       int
+	contextEstimate     bool
+	modelPicker         *chatModelPicker
+	modelPickerModels   []ModelOption
+	thinkPicker         *chatThinkPicker
+	promptDebug         *chatPromptDebug
+	approvalPrompt      *chatApprovalPrompt
+	approvalController  *chatApprovalController
+	approvalState       *coreagent.ApprovalState
+	cloudAuthPrompt     *cloudAuthPrompt
+	pendingModel        string
+	defaultAllowAll     bool
+	permissionNotice    string
+	selection           chatSelection
 
 	systemPromptDisabled bool
 
@@ -557,7 +559,7 @@ func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updatePromptDebug(msg)
 	}
 	if msg.Type == tea.KeyCtrlO {
-		m.toggleInlineToolOutput()
+		m.toggleInlineTranscriptDetails()
 		m.disarmQuit()
 		m.disarmEsc()
 		return m.withFlowTranscriptRepaint(nil)
@@ -683,10 +685,12 @@ func (m chatModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *chatModel) toggleInlineToolOutput() {
+func (m *chatModel) toggleInlineTranscriptDetails() {
 	m.toolOutputMode = true
 	m.toolOutputOpen = !m.toolOutputOpen
 	m.applyToolOutputMode()
+	m.thinkingDetailsOpen = !m.thinkingDetailsOpen
+	m.applyThinkingDetails()
 	m.selection = chatSelection{}
 	m.scroll = 0
 }
@@ -966,6 +970,10 @@ func (m chatModel) flowTranscriptHoldEntryIndex() int {
 		}
 	case "tool":
 		if isToolActiveStatus(entry.status) {
+			return index
+		}
+	case "thinking":
+		if entry.status == "running" {
 			return index
 		}
 	}

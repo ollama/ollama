@@ -4,15 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
 
 	coreagent "github.com/ollama/ollama/agent"
@@ -33,6 +34,7 @@ type chatEntry struct {
 	finishedAt time.Time
 	tools      []chatEntry
 	metrics    *api.Metrics
+	tokenCount int
 
 	version     int
 	renderKey   chatEntryRenderKey
@@ -43,6 +45,7 @@ const (
 	chatMessageIndent       = "  "
 	chatUserMessagePrefix   = ""
 	maxCtrlOToolOutputRunes = 400
+	maxLiveThinkingRunes    = 4096
 
 	defaultViewWidth  = 80
 	defaultViewHeight = 24
@@ -384,10 +387,17 @@ func (m *chatModel) scrollBy(lines int) {
 	m.scroll = clamp(m.scroll+lines, 0, m.maxScroll())
 }
 
-var chatANSISequencePattern = regexp.MustCompile(`\x1b\[[0-9;:]*[A-Za-z]`)
-
 func stripChatANSI(s string) string {
-	return chatANSISequencePattern.ReplaceAllString(s, "")
+	s = ansi.Strip(s)
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' {
+			return r
+		}
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 func (m chatModel) normalizedSelectionRange() (chatSelectionPoint, chatSelectionPoint, bool) {
@@ -669,20 +679,71 @@ func compactionSummaryStatusLine(entry chatEntry) string {
 }
 
 func renderThinkingLines(entry chatEntry, width int) []string {
-	if !entry.expanded || strings.TrimSpace(entry.content) == "" {
-		return nil
-	}
 	lines := wrapChatText(thinkingStatusLine(entry), width)
+	if !entry.expanded || entry.content == "" {
+		return lines
+	}
 	lines = append(lines, "")
-	lines = append(lines, indentLines(splitRenderedBody(renderMarkdownForView(entry.content, width-2)), "  ")...)
+	if entry.status == "running" {
+		body := styleLines(renderLiveThinkingLines(entry.content, width), chatToolOutputStyle)
+		lines = append(lines, body...)
+		return lines
+	}
+	body := styleLines(splitRenderedBody(renderMarkdownForView(stripChatANSI(entry.content), width)), chatToolOutputStyle)
+	lines = append(lines, body...)
 	return lines
 }
 
-func thinkingStatusLine(entry chatEntry) string {
-	if strings.TrimSpace(entry.label) != "" {
-		return entry.label
+// renderLiveThinkingLines keeps each streaming redraw bounded. Completed
+// traces use the normal Markdown renderer when explicitly reopened, but a
+// running trace is rendered as plain text so an ever-growing document is not
+// reparsed for every delta.
+func renderLiveThinkingLines(content string, width int) []string {
+	content, omitted := liveThinkingTail(content, maxLiveThinkingRunes)
+	content = stripChatANSI(content)
+	lines := wrapChatText(content, width)
+	if omitted {
+		lines = append([]string{"… earlier thinking omitted while streaming"}, lines...)
 	}
-	return "Thinking"
+	return lines
+}
+
+func liveThinkingTail(content string, limit int) (string, bool) {
+	if limit <= 0 {
+		return content, false
+	}
+	start := len(content)
+	for range limit {
+		if start == 0 {
+			return content, false
+		}
+		_, size := utf8.DecodeLastRuneInString(content[:start])
+		start -= size
+	}
+	tail := content[start:]
+	if newline := strings.IndexByte(tail, '\n'); newline >= 0 {
+		tail = tail[newline+1:]
+	}
+	return tail, true
+}
+
+func thinkingStatusLine(entry chatEntry) string {
+	if entry.status != "running" {
+		return thoughtLabel(entry.tokenCount, entry.expanded)
+	}
+
+	label := "Thinking"
+	if strings.TrimSpace(entry.label) != "" {
+		label = entry.label
+	}
+	return label
+}
+
+func thoughtLabel(tokens int, expanded bool) string {
+	if !expanded || tokens <= 0 {
+		return "Thought"
+	}
+	return "Thought (" + formatTokenCount(tokens) + ")"
 }
 
 func (m chatModel) thinkingLabel() string {
@@ -696,32 +757,35 @@ func thinkingActivityLabel(tokens int) string {
 	return "Thinking"
 }
 
-func (m *chatModel) syncThinkingEntry() {
-	if strings.TrimSpace(m.latestLiveThinking()) == "" {
-		return
-	}
+func (m *chatModel) syncThinkingEntry(content string) {
 	idx := -1
 	if len(m.entries) > 0 && m.entries[len(m.entries)-1].role == "thinking" && m.entries[len(m.entries)-1].status == "running" {
 		idx = len(m.entries) - 1
 	}
 	if idx < 0 {
+		if strings.TrimSpace(content) == "" {
+			return
+		}
 		m.entries = append(m.entries, newChatEntry(chatEntry{role: "thinking", status: "running"}))
 		idx = len(m.entries) - 1
 	}
-	m.entries[idx].content = m.latestLiveThinking()
+	m.entries[idx].content = content
 	m.entries[idx].label = m.thinkingLabel()
 	m.entries[idx].status = "running"
-	m.entries[idx].expanded = false
+	m.entries[idx].tokenCount = m.thinkingTokens
+	m.entries[idx].expanded = true
 	m.markEntryDirty(idx)
 }
 
-func (m chatModel) latestLiveThinking() string {
-	for i := len(m.liveMessages) - 1; i >= 0; i-- {
-		if m.liveMessages[i].Role == "assistant" && strings.TrimSpace(m.liveMessages[i].Thinking) != "" {
-			return m.liveMessages[i].Thinking
+func (m *chatModel) applyThinkingDetails() {
+	for i := range m.entries {
+		entry := &m.entries[i]
+		if entry.role != "thinking" || entry.status == "running" || strings.TrimSpace(entry.content) == "" || entry.expanded == m.thinkingDetailsOpen {
+			continue
 		}
+		entry.expanded = m.thinkingDetailsOpen
+		m.markEntryDirty(i)
 	}
-	return ""
 }
 
 func (m *chatModel) finishThinkingEntry() {
@@ -734,6 +798,8 @@ func (m *chatModel) finishThinkingEntry() {
 	}
 	m.entries[idx].status = "done"
 	m.entries[idx].label = m.thinkingLabel()
+	m.entries[idx].tokenCount = m.thinkingTokens
+	m.entries[idx].expanded = m.thinkingDetailsOpen
 	m.markEntryDirty(idx)
 }
 
@@ -1452,6 +1518,12 @@ func (m chatModel) activityLine() string {
 	if !m.running && !m.compacting && m.preloadingModel == "" && m.approvalPrompt == nil {
 		return ""
 	}
+	if m.thinking && len(m.entries) > 0 {
+		entry := m.entries[len(m.entries)-1]
+		if entry.role == "thinking" && entry.status == "running" {
+			return ""
+		}
+	}
 	label := m.activityLabel()
 	if label == "" {
 		if m.awaitingToolStart() {
@@ -1962,8 +2034,6 @@ func isInvisibleToolGroupingBoundary(entry chatEntry) bool {
 			strings.TrimSpace(entry.label) == "" &&
 			strings.TrimSpace(entry.detail) == "" &&
 			entry.metrics == nil
-	case "thinking":
-		return !entry.expanded
 	default:
 		return false
 	}
