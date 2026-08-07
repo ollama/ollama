@@ -230,23 +230,76 @@ padding, resampling, the vision encoder, and `resize_position_embeddings`
 (`clip.cpp:285`, the siglip2-naflex bilinear PE interpolation — it is defined but
 **never called**, so gemma4 does not use it).
 
-It tracks patch **rows**, on 12B:
+It tracks **total patch count**, with a threshold, on 12B:
 
-| patch rows | 12 | 17 | 22 | 23 | 26* | 30 | 40 |
+| config | grid | patches | vertical accuracy |
+|---|---|---|---|
+| document 280 | 16×16 | 256 | 10.5px — clean |
+| scene 280 | 22×12 | 264 | y-scale 0.999 |
+| scene 560 | 31×17 | 527 | y-scale 0.996 |
+| document 560 | 23×23 | 529 | 4.9px (0.3%) — clean |
+| *(threshold lies in here — unmeasured)* | | 530–880 | |
+| scene 1056 pad-free | 40×22 | 880 | y-scale 0.920 |
+| portrait pad-free | 22×40 | 880 | y-scale 0.811 |
+| square 1440 pad-free | 30×30 | 900 | y-scale 0.906 |
+| scene shipped range | 40×23 | 920 | y-scale 0.825 |
+| document shipped range | 33×33 | 1089 | 20.4px (1.3%) |
+| document 1120 | 34×34 | 1156 | 27.4px (1.7%) |
+| scene 1120 | 45×26 | 1170 | y-scale 1.071 |
+
+It is **not** patch rows: 23 rows appears twice with opposite verdicts — the document
+at 23×23 is clean (0.3%) while the scene at 40×23 is the worst result measured. Sorted
+by total patches the split is exact: everything ≤529 is accurate, everything ≥880 is
+degraded. Grid shape modulates the magnitude within the degraded regime (the 40-row
+portrait is worse than the 22-row landscape at identical patch count), but the
+threshold is set by total count.
+
+**The 560 rung is the largest documented rung that stays under the threshold** — 527
+patches for a 16:9 scene, 529 for a square page. That, not anything about aspect, is
+why 560 is the peak on all three model sizes.
+
+Above the threshold the vertical error becomes **noisy as well as biased** — y residual
+rms rises from 2–3px to 35–153px — so it is genuine degradation, not purely a rescale.
+The scene-1120 cell is additionally the only one that upscales beyond native resolution
+(2160×1248 from 1920×1080) and the only one whose error inverts sign.
+
+## Fine text pulls the opposite way — 1120 is not merely a worse 560
+
+`runs/finetext-2026-08-02.log` compares only upstream's 280 against the fork's shipped
+range. **560 was never probed**, and 560 is exactly what a lowered ceiling would pick.
+Swept here on 12B against a regenerated compliance page (same layout and seed as
+`finetext_probe.py`; Courier New rather than DejaVuSansMono, which is not on this host,
+so absolute recall is *not* comparable to the 2026-08-02 log — the across-budget
+ordering within this run is the result):
+
+| arm | patches | canvas | 22px | 16px | 12px | 9px | 7px |
 |---|---|---|---|---|---|---|---|
-| y-scale | 0.999 | 0.996 | 0.920 | 0.83 | 1.071 | 0.906 | 0.811 |
+| 280 pinned | 256 | 768² | 0/4 | 0/4 | 0/4 | 0/4 | 0/4 |
+| 560 pinned | 529 | 1104² | 4/4 | 0/4 | 0/4 | 0/4 | 0/4 |
+| 70…560 range | 529 | 1104² | 4/4 | 0/4 | 0/4 | 0/4 | 0/4 |
+| 40…1120 shipped | 1089 | 1584² | 4/4 | **4/4** | **2/4** | 0/4 | 0/4 |
+| 1120 pinned | 1156 | 1632² | 4/4 | 3/4 | 1/4 | 0/4 | 0/4 |
 
-\* the 26-row rung is the only one that upscales beyond native resolution
-(2160×1248 from 1920×1080), and the only one whose error inverts sign.
+A 1568px page is downscaled to 1104px at 560 — a 30% linear reduction, so 16px text
+renders at ~11px and 12px text at ~8px. **Dropping the ceiling to 560 costs the entire
+16px tier and the 12px partial.** That is the workload ADR 0003 and
+[ollama#15626](https://github.com/ollama/ollama/issues/15626) raised the ceiling for.
 
-At high row counts the vertical error becomes **noisy as well as biased** — the y
-residual rms rises from 2–3px at 280/560 to 35–153px in the tall-grid arms — so this
-is genuine degradation of vertical grounding, not purely a rescale.
+So the two workloads are in direct opposition, and it is the same variable driving both:
+
+- **bbox geometry** needs ≤ ~530 patches (accuracy collapses above it)
+- **fine-text recall** needs as many patches as possible (resolution is the binding constraint)
+
+There is no single budget that serves both, which is the real reason this is hard.
 
 ## Recommended next steps (replacing the brief's list)
 
-1. **Drop `gen_aspect.py` (old next-step #2).** Aspect is not the variable. The right
-   experiment is a **patch-row sweep at fixed content and fixed aspect**.
+1. **Find the threshold.** It lies between 529 and 880 patches and is completely
+   unmeasured — the documented ladder jumps 560 → 1120 straight over it. If the true
+   limit is ~700 patches, a budget between the rungs recovers meaningful fine-text
+   resolution while staying geometrically accurate. This is the single highest-value
+   measurement remaining and it is a few model calls. (Drop `gen_aspect.py`, old
+   next-step #2 — aspect is not the variable.)
 2. **Compare against HF transformers (old next-step #5) — now the highest-value
    check.** llama.cpp names the function `calc_size_preserved_ratio` and comments it
    as "smart_resize in transformers code", but transformers' smart_resize resizes
@@ -262,10 +315,24 @@ is genuine degradation of vertical grounding, not purely a rescale.
    changes what it sees, so it needs measuring rather than assuming.
 4. **Fix `score_doc`.** `name_bbox_hits` is a band test that hid §6 for the whole
    investigation. It should score IoU against measured row geometry.
-5. **Default budget (old next-step #6).** The data now says something sharper than
-   "560 dominates 1120": the shipped *range* `40…1120` is the **worst** configuration
-   measured (0.504), well below pinned 1120 (0.719), because it lands on a 40×23 grid.
-   Still its own ADR decision, but the case is stronger.
+5. **Default budget (old next-step #6) — "560 dominates 1120" does not hold.** That
+   claim rested on a single 14px serial in the scene test. On the fine-text probe, 560
+   loses the whole 16px tier. The real trade is:
+
+   - shipped `40…1120` — reads 16px text; worst bbox geometry measured (0.504, because
+     a 1920×1080 image lands on 920 patches)
+   - `70…560` — clean bbox geometry; blind below ~22px
+
+   Note also that a *ceiling* of 1120 and a *pinned* 1120 are different configurations:
+   a 1920×1080 image in a `40…1120` range never reaches 1120, it lands at 920 patches.
+   Only `min == max` pushes it into the `< min_pixels` branch and up to 1170. Quoting a
+   pinned-rung measurement to justify a shipped ceiling compares two different things.
+
+   Since the budget is already a per-request knob
+   (`Runner.ImageMinTokens`/`ImageMaxTokens`), routing by workload — grounding requests
+   low, transcription requests high — dominates any single global default. Whatever the
+   ADR decides, it should record the fine-text cost, which is currently unmeasured
+   anywhere in the repo.
 
 ## Reproduction
 
