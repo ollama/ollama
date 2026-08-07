@@ -124,6 +124,20 @@ var integrationSpecs = []*IntegrationSpec{
 		},
 	},
 	{
+		Name:        "muse",
+		Runner:      &Muse{},
+		Aliases:     []string{"muse-code"},
+		Description: "Meta's agentic coding CLI",
+		Hidden:      true,
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				_, err := findMuse()
+				return err == nil
+			},
+			Command: museInstallCommand,
+		},
+	},
+	{
 		Name:        "copilot",
 		Runner:      &Copilot{},
 		Aliases:     []string{"copilot-cli"},

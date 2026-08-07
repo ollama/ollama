@@ -297,6 +297,7 @@ Supported integrations:
   omp             OMP
   droid           Droid
   kimi            Kimi Code CLI
+  muse            Muse Code (aliases: muse-code)
   pi              Pi
   pool            Pool
   cline           Cline
