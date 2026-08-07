@@ -347,11 +347,16 @@ type ResponsesText struct {
 // ResponsesTool represents a tool in the Responses API format.
 // Note: This differs from api.Tool which nests fields under "function".
 type ResponsesTool struct {
-	Type        string         `json:"type"` // "function"
+	Type        string         `json:"type"` // "function" or "namespace"
 	Name        string         `json:"name"`
 	Description *string        `json:"description"` // nullable but required
 	Strict      *bool          `json:"strict"`      // nullable but required
 	Parameters  map[string]any `json:"parameters"`  // nullable but required
+
+	// Tools carries a "namespace" declaration's member functions. The
+	// Responses API groups related tools by domain under a namespace tool
+	// whose nested tools array holds the real function definitions.
+	Tools []ResponsesTool `json:"tools,omitempty"`
 }
 
 type ResponsesRequest struct {
@@ -540,11 +545,11 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 	// Convert tools from Responses API format to api.Tool format
 	var tools []api.Tool
 	for _, t := range r.Tools {
-		tool, err := convertTool(t)
+		expanded, err := convertTools(t)
 		if err != nil {
 			return nil, err
 		}
-		tools = append(tools, tool)
+		tools = append(tools, expanded...)
 	}
 
 	// Handle text format (e.g. json_schema)
@@ -566,6 +571,37 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 		Format:   format,
 		Think:    think,
 	}, nil
+}
+
+// convertTools converts one Responses-API tool declaration to api.Tools. A
+// "namespace" declaration groups member functions under a common name; it
+// expands to those members with namespace-qualified names, since api.Tool
+// carries only a flat function name. Dropping the members instead would
+// leave the model with one schema-less pseudo-function and make every
+// namespaced call undeclarable.
+func convertTools(t ResponsesTool) ([]api.Tool, error) {
+	if t.Type != "namespace" {
+		tool, err := convertTool(t)
+		if err != nil {
+			return nil, err
+		}
+		return []api.Tool{tool}, nil
+	}
+
+	var tools []api.Tool
+	for _, member := range t.Tools {
+		expanded, err := convertTools(member)
+		if err != nil {
+			return nil, err
+		}
+		for i := range expanded {
+			if prefix := t.Name + "."; t.Name != "" && !strings.HasPrefix(expanded[i].Function.Name, prefix) {
+				expanded[i].Function.Name = prefix + expanded[i].Function.Name
+			}
+		}
+		tools = append(tools, expanded...)
+	}
+	return tools, nil
 }
 
 func convertTool(t ResponsesTool) (api.Tool, error) {

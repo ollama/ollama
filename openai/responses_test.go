@@ -415,6 +415,97 @@ func TestFromResponsesRequest_Tools(t *testing.T) {
 	}
 }
 
+// TestFromResponsesRequest_NamespaceTools covers the "namespace" tool
+// declaration: one namespace whose members are the real functions must
+// expand to namespace-qualified function tools with their schemas intact,
+// since dropping the members leaves the model with a single schema-less
+// pseudo-function and makes every namespaced call undeclarable.
+func TestFromResponsesRequest_NamespaceTools(t *testing.T) {
+	reqJSON := `{
+		"model": "gpt-oss:20b",
+		"input": "hello",
+		"tools": [
+			{
+				"type": "namespace",
+				"name": "muse",
+				"description": "Muse Code tool set.",
+				"tools": [
+					{
+						"type": "function",
+						"name": "bash",
+						"description": "Runs a shell command",
+						"strict": true,
+						"parameters": {
+							"type": "object",
+							"properties": {
+								"command": {"type": "string"}
+							},
+							"required": ["command"]
+						}
+					},
+					{
+						"type": "function",
+						"name": "muse.read_file",
+						"description": "Reads a file",
+						"strict": true,
+						"parameters": {
+							"type": "object",
+							"properties": {
+								"path": {"type": "string"}
+							},
+							"required": ["path"]
+						}
+					}
+				]
+			},
+			{
+				"type": "function",
+				"name": "plain",
+				"description": "A non-namespaced tool",
+				"strict": false,
+				"parameters": {"type": "object"}
+			}
+		]
+	}`
+
+	var req ResponsesRequest
+	if err := json.Unmarshal([]byte(reqJSON), &req); err != nil {
+		t.Fatalf("failed to unmarshal request: %v", err)
+	}
+
+	chatReq, err := FromResponsesRequest(req)
+	if err != nil {
+		t.Fatalf("failed to convert request: %v", err)
+	}
+
+	if len(chatReq.Tools) != 3 {
+		t.Fatalf("expected 3 converted tools, got %d: %v", len(chatReq.Tools), chatReq.Tools)
+	}
+
+	// Member functions carry the namespace-qualified name; an already
+	// qualified member is not double-prefixed.
+	if got := chatReq.Tools[0].Function.Name; got != "muse.bash" {
+		t.Errorf("expected function name 'muse.bash', got %q", got)
+	}
+	if got := chatReq.Tools[1].Function.Name; got != "muse.read_file" {
+		t.Errorf("expected function name 'muse.read_file', got %q", got)
+	}
+	if got := chatReq.Tools[2].Function.Name; got != "plain" {
+		t.Errorf("expected function name 'plain', got %q", got)
+	}
+
+	// Member schemas and descriptions survive the expansion.
+	if got := chatReq.Tools[0].Function.Description; got != "Runs a shell command" {
+		t.Errorf("expected bash description, got %q", got)
+	}
+	if req := chatReq.Tools[0].Function.Parameters.Required; len(req) != 1 || req[0] != "command" {
+		t.Errorf("expected required ['command'], got %v", req)
+	}
+	if chatReq.Tools[0].Type != "function" {
+		t.Errorf("expected member type 'function', got %q", chatReq.Tools[0].Type)
+	}
+}
+
 func TestFromResponsesRequest_ReasoningEffort(t *testing.T) {
 	tests := []struct {
 		name      string
