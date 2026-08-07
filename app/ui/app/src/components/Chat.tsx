@@ -171,13 +171,16 @@ export default function Chat({ chatId }: { chatId: string }) {
     handleNewUserMessage();
   };
 
-  const handleEditMessage = (content: string, index: number) => {
-    setEditingMessage({
-      content,
-      index,
-      originalMessage: messages[index],
-    });
-  };
+  const handleEditMessage = useCallback(
+    (content: string, index: number) => {
+      setEditingMessage({
+        content,
+        index,
+        originalMessage: messages[index],
+      });
+    },
+    [messages],
+  );
 
   const handleCancelEdit = () => {
     setEditingMessage(null);
@@ -230,9 +233,7 @@ export default function Chat({ chatId }: { chatId: string }) {
               isWaitingForLoad={isWaitingForLoad}
               isStreaming={isStreaming}
               downloadProgress={downloadProgress}
-              onEditMessage={(content: string, index: number) => {
-                handleEditMessage(content, index);
-              }}
+              onEditMessage={handleEditMessage}
               editingMessageIndex={editingMessage?.index}
               error={chatError}
               browserToolResult={browserToolResult}
