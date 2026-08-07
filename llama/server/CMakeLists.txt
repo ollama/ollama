@@ -518,6 +518,49 @@ if(OLLAMA_RUNNER_DIR)
             )
         endif()
     endif()
+    if(GGML_SYCL)
+        # ggml-sycl depends on the Intel oneAPI SYCL runtime (sycl*.dll,
+        # oneDNN, oneMKL, Level Zero adapters, ...). Bundle them next to the
+        # backend so the packaged runner is self-contained and does not require
+        # a host-wide oneAPI installation, mirroring llama.cpp's official
+        # Windows SYCL release zips. ONEAPI_ROOT must point at the oneAPI
+        # installation when configuring/building this backend.
+        file(TO_CMAKE_PATH "$ENV{ONEAPI_ROOT}" _ollama_oneapi_root)
+        install(CODE "
+            set(_sycl_dest \"\${CMAKE_INSTALL_PREFIX}/${_base_dest}/${OLLAMA_RUNNER_DIR}\")
+            set(_oneapi_root \"${_ollama_oneapi_root}\")
+            if(NOT _oneapi_root)
+                message(WARNING \"ONEAPI_ROOT not set; skipping oneAPI SYCL runtime bundling\")
+            else()
+                foreach(_rel
+                        mkl/latest/bin/mkl_sycl_blas.5.dll
+                        mkl/latest/bin/mkl_core.2.dll
+                        mkl/latest/bin/mkl_tbb_thread.2.dll
+                        dnnl/latest/bin/dnnl.dll
+                        tbb/latest/bin/tbb12.dll
+                        tcm/latest/bin/tcm.dll
+                        tcm/latest/bin/libhwloc-15.dll
+                        umf/latest/bin/umf.dll
+                        compiler/latest/bin/svml_dispmd.dll
+                        compiler/latest/bin/libmmd.dll
+                        compiler/latest/bin/libiomp5md.dll
+                        compiler/latest/bin/libsycl-fallback-bfloat16.spv
+                        compiler/latest/bin/libsycl-native-bfloat16.spv)
+                    if(EXISTS \"\${_oneapi_root}/\${_rel}\")
+                        file(INSTALL \"\${_oneapi_root}/\${_rel}\" DESTINATION \"\${_sycl_dest}\")
+                    endif()
+                endforeach()
+                file(GLOB _sycl_runtime_dlls
+                    \"\${_oneapi_root}/compiler/latest/bin/sycl*.dll\"
+                    \"\${_oneapi_root}/compiler/latest/bin/ur_*.dll\"
+                    \"\${_oneapi_root}/compiler/latest/bin/ze_loader.dll\"
+                    \"\${_oneapi_root}/level_zero/latest/bin/ze_loader.dll\")
+                foreach(_dll \${_sycl_runtime_dlls})
+                    file(INSTALL \"\${_dll}\" DESTINATION \"\${_sycl_dest}\")
+                endforeach()
+            endif()
+        " COMPONENT llama-server)
+    endif()
 else()
     # CPU/base build — install llama-server, llama-quantize + all shared libs + CPU backend modules
     # RUNTIME covers executables and Windows DLLs; LIBRARY covers .so on Linux
