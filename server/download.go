@@ -489,14 +489,20 @@ func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ erro
 	case err != nil:
 		return false, err
 	default:
-		opts.fn(api.ProgressResponse{
-			Status:    fmt.Sprintf("pulling %s", opts.digest[7:19]),
-			Digest:    opts.digest,
-			Total:     fi.Size(),
-			Completed: fi.Size(),
-		})
+		// A size-only check can't tell a valid blob from one a stalled
+		// write or disk error left corrupted at the right length, so
+		// confirm its digest before trusting it as a cache hit.
+		if err := verifyBlob(opts.digest); err == nil {
+			opts.fn(api.ProgressResponse{
+				Status:    fmt.Sprintf("pulling %s", opts.digest[7:19]),
+				Digest:    opts.digest,
+				Total:     fi.Size(),
+				Completed: fi.Size(),
+			})
 
-		return true, nil
+			return true, nil
+		}
+		slog.Warn("existing blob failed digest verification, re-downloading", "digest", opts.digest)
 	}
 
 	data, ok := blobDownloadManager.LoadOrStore(opts.digest, &blobDownload{Name: fp, Digest: opts.digest})
