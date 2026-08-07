@@ -13,7 +13,7 @@ export function SidebarLayout({
   const isWindows = navigator.platform.toLowerCase().includes("win");
 
   return (
-    <div className={`flex transition-[width] duration-300 dark:bg-neutral-900`}>
+    <div className={`flex overflow-hidden transition-[width] duration-300 dark:bg-neutral-900`}>
       <div
         className={`absolute flex mx-2 py-2 z-20 items-center transition-[left] duration-375 text-neutral-500 dark:text-neutral-400 ${settings.sidebarOpen ? (isWindows ? "left-2" : "left-[204px]") : isWindows ? "left-2" : "left-20"}`}
       >
@@ -57,7 +57,7 @@ export function SidebarLayout({
         </Link>
       </div>
       <div
-        className={`flex flex-col transition-[width] duration-300 max-h-screen ${settings.sidebarOpen ? "w-64" : "w-0"}`}
+        className={`flex flex-col max-h-screen`}
       >
         <div
           onDoubleClick={() => window.doubleClick && window.doubleClick()}
@@ -67,7 +67,7 @@ export function SidebarLayout({
         {settings.sidebarOpen && sidebar}
       </div>
       <main
-        className={`flex flex-1 flex-col min-w-0 transition-all duration-300`}
+        className={`flex flex-1 flex-col min-w-0 `}
       >
         <div
           className={`h-13 flex-none w-full z-10 flex items-center bg-white dark:bg-neutral-900 ${isWindows ? "xl:hidden" : "xl:fixed xl:bg-transparent xl:dark:bg-transparent"}`}
@@ -79,3 +79,8 @@ export function SidebarLayout({
     </div>
   );
 }
+
+
+
+
+
