@@ -56,10 +56,31 @@ Reproducible ground-truth benchmarks behind the measured tables in
 - **Cold server per model run** when payloads under test have cross-request leakage
   (upstream #17475 reproduced on b10091): restart the serving container/process
   between runs — `run_grid.sh` does this via `RESTART_CMD`.
-- **Always run both think modes.** Known result: `think:true` + `format:"json"` yields
-  an *empty* `response` for nemotron3 and qwen3.6 on every payload tested (thinking
-  ends without a JSON body, well under the token budget); gemma4 handles both. Report
-  empty cells as data.
+- **Always run both think modes.** `think:true` + `format:"json"` yields an *empty*
+  `response` for nemotron3 and qwen3.6 **on stock builds** (thinking ends without a
+  JSON body, well under the token budget); gemma4 handles both. Report empty cells as
+  data.
+
+  > **Updated 2026-08-07 — this is FIXED on the fork; do not expect empty cells from a
+  > fork build.** Measured on `nemotron3:33b-q4_K_M`, all three tests, both a native
+  > Metal build and the CPU container:
+  >
+  > | build | `json_valid` | `eval_count` |
+  > |---|---|---|
+  > | stock 0.32.6 | **False** ×3 | 562 / 485 / 833 |
+  > | fork (Metal) | **True** ×3 | 5233 / 10110 / 7668 |
+  > | fork (CPU container) | **True** ×3 | 5134 / 7370 / 4889 |
+  >
+  > Stock still generates tokens — it thinks and then emits no JSON. The fork thinks
+  > and then emits valid JSON. See
+  > [generate-think-format-empty-response.md](../generate-think-format-empty-response.md),
+  > [ADR 0002](../adr/0002-deferred-format-constraining.md) and
+  > [ADR 0004](../adr/0004-routes-layer-think-format-double-request.md).
+  >
+  > **Budget accordingly.** A fork think-on cell does real work where stock returns
+  > almost immediately, so it is far slower — not a hang. Same run: stock 21 s for all
+  > three tests, fork on Metal ~7 min, fork on the CPU container ~39 min. Raise
+  > `HTTP_TIMEOUT` for CPU think-on runs.
 - Subtract each model's text-only baseline when reading `prompt_eval_count`
   (nemotron3: 18); counts are grid-quantised — ignore ±2.
 - Bbox scoring is dual-space: models emit their trained coordinate conventions
