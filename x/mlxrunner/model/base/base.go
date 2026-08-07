@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
@@ -49,6 +50,39 @@ type DraftModel interface {
 // target weights; it returns the head, or nil when the checkpoint shipped none.
 type SelfDraft interface {
 	SelfDraft() DraftModel
+}
+
+// VisionInput is one preprocessed image ready for encoding.
+type VisionInput interface {
+	// SoftTokens is the number of image placeholder tokens this input
+	// expands to in the prompt.
+	SoftTokens() int
+}
+
+// VisionModel is implemented by models that accept image input. The runner
+// discovers it by type assertion, mirroring SelfDraft.
+type VisionModel interface {
+	// SupportsVision reports whether this checkpoint actually shipped a
+	// vision path; the interface may be implemented by a package whose
+	// text-only checkpoints share the model type.
+	SupportsVision() bool
+
+	// VisionTokens returns the ids bracketing one image's soft tokens in
+	// the prompt: begin-of-image, the repeated placeholder, end-of-image.
+	VisionTokens() (boi, image, eoi int32)
+
+	// NewVisionInput decodes and preprocesses one image per the model's
+	// pipeline. Pure Go — safe to call off the MLX thread.
+	NewVisionInput(data []byte, opts api.Options) (VisionInput, error)
+
+	// EncodeVision embeds a preprocessed image into text hidden space,
+	// returning [1, SoftTokens, hidden]. MLX thread only.
+	EncodeVision(in VisionInput) *mlx.Array
+
+	// MergedEmbeddings returns the scaled token embeddings for inputIDs with
+	// features spliced over spans (half-open [start, end) positions).
+	// MLX thread only.
+	MergedEmbeddings(inputIDs *mlx.Array, features []*mlx.Array, spans [][2]int32) *mlx.Array
 }
 
 var (

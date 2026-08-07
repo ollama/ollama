@@ -14,6 +14,7 @@ import (
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/mlxrunner/model/base"
 	sampler "github.com/ollama/ollama/x/mlxrunner/sample"
 	"github.com/ollama/ollama/x/tokenizer"
 )
@@ -28,6 +29,14 @@ func prefillChunkSize() int {
 func (r *Runner) Prepare(request *Request) error {
 	if r.Model == nil {
 		return errors.New("model not loaded")
+	}
+
+	if len(request.Media) > 0 {
+		if vm, ok := r.Model.(base.VisionModel); !ok || !vm.SupportsVision() {
+			// A missing media path must be an explicit error, never a silent
+			// drop that lets the model answer from the text alone.
+			return errors.New("this model does not support image input on the MLX runner")
+		}
 	}
 
 	tokens := r.Tokenizer.Encode(request.Prompt, r.Tokenizer.AddBOS())

@@ -100,6 +100,7 @@ func (c *Client) WaitUntilRunning(ctx context.Context) error {
 type CompletionRequest struct {
 	Prompt      string
 	Options     api.Options
+	Media       []llm.MediaData
 	Logprobs    bool
 	TopLogprobs int
 }
@@ -140,19 +141,9 @@ func (c *Client) Close() error {
 
 // Completion implements llm.LlamaServer.
 func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
-	// The MLX wire protocol has no media field: anything in req.Media would be
-	// dropped and the model would answer from the text alone, so refuse the
-	// request instead. This backstops models whose config declares vision or
-	// audio that the MLX runner cannot serve.
-	if len(req.Media) > 0 {
-		return api.StatusError{
-			StatusCode:   http.StatusBadRequest,
-			ErrorMessage: "this model does not support image or audio input on the MLX runner",
-		}
-	}
-
 	creq := CompletionRequest{
 		Prompt:      req.Prompt,
+		Media:       req.Media,
 		Logprobs:    req.Logprobs,
 		TopLogprobs: req.TopLogprobs,
 	}
