@@ -30,6 +30,13 @@ intentionally skipped so a developer can iterate on a local llama.cpp tree.
   resolution (256..3328 tokens, `<img>`/`</img>` markers, interpolated position
   embeddings). Fork-carried port of llama.cpp PR #23638; see
   `docs/maxusai/nemotron-dynres-patch.md`.
+- `004-llama-cpp-gemma4-budget-fill.patch` - gemma4/gemma4u reference sizing:
+  scale every image (up or down) so the 48-aligned patch grid fills the token
+  budget, snapped down to Gemma 4's supported ladder (70/140/280/560/1120), and
+  resize directly (`PAD_NONE`) instead of letterboxing. Off-ladder grids
+  measurably break `box_2d` vertical grounding; see
+  `docs/maxusai/gemma4-bbox-investigation-findings.md`. Makes
+  `--image-min-tokens` a no-op for gemma4.
 - `compat.cmake`, `apply-patch.cmake` - CMake glue and an idempotent applier
   (used by `llama/server/CMakeLists.txt`) that applies every `*.patch` under
   this directory by numeric filename order — the hooks patch plus each

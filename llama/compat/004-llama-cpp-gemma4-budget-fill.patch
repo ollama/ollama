@@ -1,0 +1,110 @@
+diff --git a/tools/mtmd/clip-model.h b/tools/mtmd/clip-model.h
+index 6d4336c..dfb8f39 100644
+--- a/tools/mtmd/clip-model.h
++++ b/tools/mtmd/clip-model.h
+@@ -64,6 +64,12 @@ struct clip_hparams {
+     resize_algo image_resize_algo = RESIZE_ALGO_BICUBIC;
+     pad_style image_resize_pad = PAD_CEIL; // padding style when resizing
+     std::array<uint8_t, 3> image_pad_color = {0, 0, 0};
++    // dyn_size preprocessor only: scale the image (up or down) so the aligned
++    // patch grid FILLS the token budget -- snapped down to the arch's supported
++    // ladder -- instead of keeping under-budget images at their natural rounded
++    // grid. Matches Gemma 4 reference preprocessing; see
++    // img_tool::calc_size_budget_fill.
++    bool image_budget_fill = false;
+ 
+     // (preprocessor) for llava-uhd style models
+     std::vector<clip_image_size> image_res_candidates;
+diff --git a/tools/mtmd/clip.cpp b/tools/mtmd/clip.cpp
+index b886650..aa11a84 100644
+--- a/tools/mtmd/clip.cpp
++++ b/tools/mtmd/clip.cpp
+@@ -1442,6 +1442,18 @@ struct clip_model_loader {
+                         // @ngxson : the model performs quite poor with small images, we need to bump minimum image tokens to 40 to avoid that
+                         hparams.set_limit_image_tokens(40, 280);
+                         hparams.set_warmup_n_tokens(256); // avoid OOM on warmup
++                        // Gemma 4's reference preprocessor (HF transformers
++                        // image_processing_gemma4.py) always scales the image -- up or
++                        // down -- so the 48-aligned patch grid fills the requested
++                        // budget, and it never letterbox-pads: its per-axis floor is
++                        // deliberately anisotropic. box_2d grounding is only accurate
++                        // on grids that procedure can produce at a supported budget
++                        // (70/140/280/560/1120); off-ladder grids -- the natural
++                        // rounded size of an under-budget image, or the ceil overshoot
++                        // of the min_pixels branch -- measurably break the vertical
++                        // coordinate mapping.
++                        hparams.image_budget_fill = true;
++                        hparams.image_resize_pad  = PAD_NONE;
+                     } break;
+ 
+                 case PROJECTOR_TYPE_GEMMA3NV:
+diff --git a/tools/mtmd/mtmd-image.cpp b/tools/mtmd/mtmd-image.cpp
+index 36cd463..c36ba98 100644
+--- a/tools/mtmd/mtmd-image.cpp
++++ b/tools/mtmd/mtmd-image.cpp
+@@ -184,6 +184,45 @@ struct img_tool {
+         return {w_bar, h_bar};
+     }
+ 
++    // Gemma 4 reference sizing (get_aspect_ratio_preserving_size in transformers'
++    // image_processing_gemma4.py): scale the image -- up or down -- by
++    // sqrt(budget_px / source_px) so the grid fills the budget, then floor each
++    // axis to align_size. The requested budget (max_pixels / align_size^2) is
++    // snapped DOWN to the supported ladder; requests below the lowest rung clamp
++    // up to it. The resulting grid always satisfies
++    //     cols*rows <= budget < (cols+1)*(rows+1)
++    // i.e. it is a grid the model saw in training. Note this makes
++    // --image-min-tokens a no-op for archs that opt in via image_budget_fill.
++    static clip_image_size calc_size_budget_fill(const clip_image_size & inp_size, const int align_size, const int max_pixels) {
++        GGML_ASSERT(align_size > 0);
++        if (inp_size.width <= 0 || inp_size.height <= 0) {
++            return {align_size, align_size};
++        }
++        static const int ladder[] = {70, 140, 280, 560, 1120};
++        const int px_per_token = align_size * align_size;
++        int budget = ladder[0];
++        for (int rung : ladder) {
++            if (rung * px_per_token <= max_pixels) {
++                budget = rung;
++            }
++        }
++        const double factor = std::sqrt(static_cast<double>(budget) * px_per_token
++                                        / (static_cast<double>(inp_size.width) * inp_size.height));
++        auto floor_by_factor = [f = align_size](double x) { return static_cast<int>(std::floor(x / f)) * f; };
++        int w_bar = std::max(align_size, floor_by_factor(inp_size.width  * factor));
++        int h_bar = std::max(align_size, floor_by_factor(inp_size.height * factor));
++        // extreme aspect ratios: the align_size clamp on the short axis can push
++        // the grid over budget; shave the long axis until it fits again
++        while ((w_bar / align_size) * (h_bar / align_size) > budget) {
++            if (w_bar >= h_bar) {
++                w_bar -= align_size;
++            } else {
++                h_bar -= align_size;
++            }
++        }
++        return {w_bar, h_bar};
++    }
++
+     // draw src image into dst image at offset (offset_x, offset_y)
+     static void composite(clip_image_u8 & dst, const clip_image_u8 & src, int offset_x, int offset_y) {
+         if (src.is_placeholder()) {
+@@ -895,11 +934,14 @@ mtmd_image_preproc_out mtmd_image_preprocessor_dyn_size::preprocess(const clip_i
+     const clip_image_size original_size = img.get_size();
+     // the original pixtral model doesn't have n_merge
+     const int cur_merge = hparams.n_merge;
+-    const clip_image_size target_size = img_tool::calc_size_preserved_ratio(
+-        original_size,
+-        hparams.patch_size * cur_merge,
+-        hparams.image_min_pixels,
+-        hparams.image_max_pixels);
++    const int align_size = hparams.patch_size * cur_merge;
++    const clip_image_size target_size = hparams.image_budget_fill
++        ? img_tool::calc_size_budget_fill(original_size, align_size, hparams.image_max_pixels)
++        : img_tool::calc_size_preserved_ratio(
++            original_size,
++            align_size,
++            hparams.image_min_pixels,
++            hparams.image_max_pixels);
+     img_tool::resize(img, resized_image, target_size,
+                         hparams.image_resize_algo,
+                         hparams.image_resize_pad,

@@ -317,33 +317,57 @@ need few patches; it needs an on-ladder grid. A faithful 1120 (44×24) delivers
 1584px-class resolution for text *and* the best geometry measured. The conflict was
 an artifact of llama.cpp never producing an on-ladder grid above 560.
 
-## Recommended next steps (superseding both earlier lists)
+## 10. Fix implemented and validated (2026-08-07)
 
-1. **Patch the fork's llama.cpp payload to reference sizing for gemma4.** Replace the
-   `calc_size_preserved_ratio` call in the gemma4 path with the reference formula:
-   `factor = sqrt(B·48² / (W·H))`, target = per-axis `floor(dim·factor / 48)·48`,
-   where B is the requested `image_max_tokens` snapped down to the ladder
-   {70, 140, 280, 560, 1120}. This scales **up as well as down** — the grid is then
-   always reachable at B by construction, and the `ceil_by_factor` overshoot (1170 >
-   1120) disappears with the branch. Set `image_resize_pad = PAD_NONE` in the same
-   patch (§3; the reference stretches, it never letterboxes — its per-axis floor is
-   *deliberately* anisotropic). Precedent for carrying exactly this kind of
-   preprocessing patch: [nemotron-dynres-patch.md](nemotron-dynres-patch.md).
-2. **Report both divergences upstream** (ggml-org/llama.cpp): under-budget images are
+`llama/compat/004-llama-cpp-gemma4-budget-fill.patch` implements exactly the fix §9
+prescribes, following the [nemotron-dynres-patch.md](nemotron-dynres-patch.md)
+precedent: `img_tool::calc_size_budget_fill` mirrors the reference formula
+(`factor = sqrt(B·48²/(W·H))`, per-axis `floor(·/48)·48`, B snapped down to the
+ladder, sub-70 requests clamped up to 70), gated by a new `image_budget_fill`
+hparam that only `PROJECTOR_TYPE_GEMMA4V/GEMMA4UV` set, plus
+`image_resize_pad = PAD_NONE`. `--image-min-tokens` becomes a no-op for gemma4.
+
+Validated end-to-end on a native Metal build (all four `llama/compat: applied`
+lines in the build log), original `scene_hd.png` and archived ground truth, so
+numbers compare directly with the unpatched sweep. Delivered grids confirmed from
+`prompt_eval_count`: 527 = 31×17 at 560, **1100 = 44×25** at 1120 (the reference
+grid for 16:9 — note it is 44×25, not the 44×24 §9's arms happened to use; both
+are reachable). An off-ladder request (`max 900`) snaps to 560 and reproduces the
+560 run byte-for-byte; `min == max == 1120` no longer overshoots to 1170.
+
+| scene IoU | 560 unpatched | 560 patched | 1120 unpatched (pin / shipped) | 1120 patched |
+|---|---|---|---|---|
+| 12B | 0.894 | **0.940** | 0.719 / 0.504 | 0.885 |
+| 26B A4B | 0.914 | **0.961** | 0.810 / — | **0.970** |
+| 31B | 0.906 | 0.934 | 0.729 / — | **0.961** |
+
+- Every cell improves; 26B at faithful 1120 (0.970) is the best bbox result of the
+  campaign, and x-scale is 0.997–1.002 everywhere (the §3 letterbox error is gone —
+  that alone is the +0.03–0.05 at 560).
+- On 26B and 31B, patched 1120 now **beats** patched 560 while fine text holds:
+  patched `max 1120` reads the 22px + full 16px + half the 12px tiers (33×33 grid,
+  same as the old shipped range), where 560 reads only 22px. 1120 strictly
+  dominates — the model card's "higher budgets for OCR" guidance is restored.
+- Honest exception: 12B at 1120 scores 0.885 with y-scale +5.4% — below its own 560
+  (0.940). The encoder-free 12B is the least robust at the top rung in every
+  measurement; on 12B, 560 remains the better bbox setting even patched.
+
+## Remaining next steps
+
+1. **Report both divergences upstream** (ggml-org/llama.cpp): under-budget images are
    left on unreachable grids (primary, breaks grounding), and `PAD_CEIL` letterboxing
    is applied where the reference resizes directly (secondary, 2–5% on the padded
-   axis). The 45×24-vs-43×24 pair is the minimal reproduction.
-3. **Re-run the ladder sweep after the patch** — with faithful sizing, pinned and
-   range configurations coincide on the same grids, and the 26B/12B cells at a
-   faithful 1120 fill in the two missing sizes.
-4. **Then revisit ADR 0007.** Its 560 ceiling is the correct mitigation for today's
-   llama.cpp — every grid it can deliver above 560 is off-ladder. After the sizing
-   patch, `min 70 / max 1120` matches the model card's guidance and the measured
-   optimum (31B: 0.952 at faithful 1120 vs 0.906 at 560), and the fine-text cost of
-   560 (§ fine text) no longer needs to be paid. The ADR's own "revisit when the
-   error is fixed" clause anticipates exactly this.
-5. **Fix `score_doc`.** `name_bbox_hits` is a band test that hid §6 for the whole
+   axis). The 45×24-vs-43×24 pair is the minimal reproduction; 004 is the fix.
+2. **Revisit ADR 0007 with §10's numbers.** Its 560 ceiling was the correct
+   mitigation for unpatched llama.cpp. On a build carrying 004, `min 70 / max 1120`
+   matches the model card's guidance and strictly dominates on 26B/31B (geometry
+   *and* fine text); on 12B, 560 still wins bbox (0.940 vs 0.885). The ADR's own
+   "revisit when the error is fixed" clause anticipates exactly this — one open
+   question is whether the default should be size-aware given the 12B exception.
+3. **Fix `score_doc`.** `name_bbox_hits` is a band test that hid §6 for the whole
    investigation. It should score IoU against measured row geometry.
+4. **Why vertical?** The mechanism behind the OOD error expressing only on the
+   y-axis — and 12B's residual +5.4% at 1120 even on-ladder — remains unexplained.
 
 ## Reproduction
 
