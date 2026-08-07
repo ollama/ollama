@@ -2,6 +2,11 @@
 
 - **Status:** accepted 2026-08-02, with the qwen gap closed on the release lineage
   (`a4788474` on `release/0.32.1-dynres`, backporting the qwen half of `87cf1100`).
+  **The gemma4 default values are superseded by
+  [ADR 0007](0007-gemma4-default-budget-560.md) (2026-08-07): 40/1120 → 70/560.**
+  The *policy* below — per-arch, opt-in, empirically verified — is unchanged and
+  still governs; only the numbers moved. The 1120 figure appears throughout this
+  ADR and its addenda as the then-current default, and is left as written.
 - **Date:** 2026-08-02
 - **Deciders:** MaxusAI fork maintainers
 - **Related:** [ADR 0001](0001-nemotron-vision-dynamic-resolution.md) (nemotron

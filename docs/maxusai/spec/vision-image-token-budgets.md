@@ -47,7 +47,7 @@ payload, not of the arch — recorded in the table rather than silently tolerate
 
 | `modelArch` | flags | effective budget | consumed by |
 |---|---|---|---|
-| `gemma4` | min/max from `api.Options`, defaults 40 / 1120 | 40 … 1,120 | gemma4v projector, `set_limit_image_tokens(40, 280)` with the ceiling raised |
+| `gemma4` | min/max from `api.Options`, defaults **70 / 560** ([ADR 0007](../adr/0007-gemma4-default-budget-560.md)) | 70 … 560 | gemma4v projector, `set_limit_image_tokens(40, 280)` with the ceiling raised |
 | `qwen2vl`, `qwen25vl`, `qwen3vl`, `qwen3vlmoe`, `qwen35`, `qwen35moe` | `--image-min-tokens 1024` | 1,024 … 4,096 | `PROJECTOR_TYPE_QWEN3VL`, `set_limit_image_tokens(8, 4096)` with the floor raised |
 | `nemotron_h_omni` | min/max from `api.Options`, defaults 256 / 3328 | 256 … 3,328 with compat/002; exactly 256, flags inert, without it | `PROJECTOR_TYPE_NEMOTRON_V2_VL` as patched (ADR 0001) |
 | `mistral3`, `glmocr`, `llama4`, `deepseekocr`, all others | none | projector default / structural | — |
@@ -67,17 +67,20 @@ continuous range:
 
 Consequences for this spec:
 
-- **B6 — The gemma4 budget SHOULD be a ladder value.** 280 is llama.cpp's default
-  ceiling; **1120 is the documented maximum**, so the fork's raised default is the
-  top of the vendor's own ladder rather than an invented number. Higher budgets
-  preserve detail for OCR; lower budgets suit classification and video.
+- **B6 — The shipped gemma4 defaults MUST be ladder values.** 280 is llama.cpp's
+  default ceiling and 1120 is the documented maximum. The fork ships **70 / 560**
+  ([ADR 0007](../adr/0007-gemma4-default-budget-560.md)) — both rungs. Moving a
+  default to a non-rung requires superseding that ADR. Higher rungs preserve detail
+  for OCR; lower rungs suit classification and video.
+- **The ceiling is 560 rather than the vendor maximum as a mitigation.** llama.cpp
+  carries a vertical coordinate error that grows with patch rows; 560 keeps large
+  inputs on a 17-row grid where it is ~0.4%. This is not a claim that the model
+  reads 560 better — corrected for that error, 1120 localises best. Re-measure both
+  defaults when the error is fixed
+  ([findings](../gemma4-bbox-investigation-findings.md)).
 - **`gemma4ImageTokenBudget()` does not enforce the ladder.** It clamps `min` down
-  to `max` and otherwise passes any integer through. Off-ladder values are accepted
-  silently and their behaviour is not vendor-documented.
-- **`api.DefaultImageMinTokens = 40` is below the documented floor of 70.** It comes
-  from llama.cpp's `set_limit_image_tokens(40, 280)`, not from the model card. It is
-  a floor rather than a request, so it binds only on very small images — but it is
-  off-ladder and should be read as such.
+  to `max` and otherwise passes any integer through. Off-ladder values remain
+  accepted for per-request tuning, and their behaviour is not vendor-documented.
 
 **Model sizes are not interchangeable for vision results.** Per the same card:
 

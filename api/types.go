@@ -600,9 +600,16 @@ type Options struct {
 
 // Default Gemma 4 vision image-token budget (gemma4v projector). Exposed via
 // Runner.ImageMinTokens/ImageMaxTokens so callers can tune it per request.
+//
+// Both values are rungs on Google's documented ladder (70/140/280/560/1120 —
+// ai.google.dev/gemma/docs/core/model_card_4). The ceiling is 560 rather than the
+// vendor maximum 1120 as a MITIGATION, not because the model reads 560 better:
+// llama.cpp carries a vertical coordinate error that grows with patch rows, and a
+// 560 ceiling keeps large images on a 17-row grid where that error is ~0.4%. See
+// ADR 0007; revisit both values when the vertical error is fixed.
 const (
-	DefaultImageMinTokens = 40   // llama.cpp's documented gemma4v floor
-	DefaultImageMaxTokens = 1120 // raised from llama.cpp's 280 default ceiling
+	DefaultImageMinTokens = 70  // lowest rung on Gemma 4's documented ladder
+	DefaultImageMaxTokens = 560 // ladder rung below the 1120 max; see ADR 0007
 )
 
 // Runner options which must be set when the model is loaded into memory

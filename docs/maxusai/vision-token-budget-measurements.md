@@ -121,16 +121,16 @@ For `modelArch` in `visionServerArgs()` ([`llm/llama_server.go`](../../llm/llama
 
 | arch | flags passed | resulting budget |
 |---|---|---|
-| `gemma4` | `--image-min-tokens` / `--image-max-tokens`, from `api.Options`, defaulting **40 / 1120** | 40 … 1,120 |
+| `gemma4` | `--image-min-tokens` / `--image-max-tokens`, from `api.Options`, defaulting **70 / 560** (ADR 0007) | 70 … 560 |
 | `qwen2vl`, `qwen25vl`, `qwen3vl`, `qwen3vlmoe`, `qwen35`, `qwen35moe` | `--image-min-tokens 1024` (fixed, not tunable) | 1,024 … 4,096 |
 | `nemotron_h_omni` | `--image-min-tokens` / `--image-max-tokens`, defaults **256 / 3328** | 256 … 3,328 on a payload with the 002 patch; exactly 256 (flags inert) unpatched — see [nemotron-dynres-patch.md](nemotron-dynres-patch.md) |
 | everything else | none | projector default |
 
 Option resolution: `ImageMinTokens` / `ImageMaxTokens` are plain `int` with `omitempty`.
 `gemma4ImageTokenBudget()` treats `<= 0` as unset and substitutes the defaults, so a JSON
-`null` — or an omitted field — yields **40 / 1120**, not "no limit". Both are **Runner**
+`null` — or an omitted field — yields **70 / 560** (ADR 0007), not "no limit". Both are **Runner**
 options: changing either reloads the runner. `nemotronImageTokenBudget()` additionally
-treats the exact gemma4-shaped defaults (40/1120) as unset — explicit 40 or 1120 is not
+treats the exact gemma4-shaped defaults (now 70/560, ADR 0007) as unset — an explicit value equal to either default is not
 expressible for that arch — and clamps the ceiling to the trained 3,328; see the
 [normative spec in nemotron-dynres-patch.md](nemotron-dynres-patch.md#spec--normative-behaviour).
 

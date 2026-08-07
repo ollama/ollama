@@ -299,10 +299,12 @@ func TestChatPrompt(t *testing.T) {
 		},
 		{
 			// gemma4 stores vision inline too; its default ceiling resolves to
-			// 1122/image, so two images exceed 2048.
+			// 562/image (ADR 0007 lowered it from 1120 to 560), so two images
+			// exceed 1024. The limit tracks the ceiling: at the previous 1122/image
+			// this case used 2048, and leaving it there would no longer truncate.
 			name:     "truncate images on inline-vision gemma4",
 			model:    gemma4Model,
-			limit:    2048,
+			limit:    1024,
 			truncate: true,
 			msgs: []api.Message{
 				{Role: "user", Content: "You're a test, Harry!", Images: []api.ImageData{[]byte("something")}},
