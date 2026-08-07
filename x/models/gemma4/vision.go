@@ -18,6 +18,7 @@ package gemma4
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
@@ -278,4 +279,151 @@ func (m *Model) loadVisionWeights(tensors map[string]*mlx.Array, linears model.L
 	}
 	m.VisionTower = t
 	return nil
+}
+
+// visionRopeTables builds duplicated-half cos/sin tables for one spatial axis
+// of the reference's multidimensional RoPE: coords is each patch's coordinate
+// on that axis, halfDim the per-axis channel count (head_dim/2), theta the
+// base frequency. Frequencies land on the first half and repeat on the
+// second, matching mx.concatenate([cos, cos]). Layout [1, L, 1, halfDim].
+func visionRopeTables(coords []int32, halfDim int, theta float64, dtype mlx.DType) (cos, sin *mlx.Array) {
+	quarter := halfDim / 2
+	c := make([]float32, len(coords)*halfDim)
+	s := make([]float32, len(coords)*halfDim)
+	for i, p := range coords {
+		for j := 0; j < quarter; j++ {
+			ts := math.Pow(theta, 2*float64(j)/float64(halfDim))
+			angle := float64(p) / ts
+			cv, sv := float32(math.Cos(angle)), float32(math.Sin(angle))
+			c[i*halfDim+j], c[i*halfDim+quarter+j] = cv, cv
+			s[i*halfDim+j], s[i*halfDim+quarter+j] = sv, sv
+		}
+	}
+	cos = mlx.FromValues(c, 1, len(coords), 1, halfDim).AsType(dtype)
+	sin = mlx.FromValues(s, 1, len(coords), 1, halfDim).AsType(dtype)
+	return cos, sin
+}
+
+// visionRope2D rotates x [B, L, H, D]: the head dim splits into an x-axis
+// and a y-axis half, each rotated independently — rotate_half must not mix
+// features across spatial axes.
+func visionRope2D(x, cosX, sinX, cosY, sinY *mlx.Array) *mlx.Array {
+	d := x.Dim(3)
+	half := d / 2
+	rot := func(p *mlx.Array) *mlx.Array {
+		lo := p.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(), mlx.Slice(0, half/2))
+		hi := p.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(), mlx.Slice(half/2, half))
+		return mlx.Concatenate([]*mlx.Array{mlx.MulScalar(hi, -1), lo}, 3)
+	}
+	xX := x.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(), mlx.Slice(0, half))
+	xY := x.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(), mlx.Slice(half, d))
+	outX := mlx.Add(mlx.Mul(xX, cosX), mlx.Mul(rot(xX), sinX))
+	outY := mlx.Add(mlx.Mul(xY, cosY), mlx.Mul(rot(xY), sinY))
+	return mlx.Concatenate([]*mlx.Array{outX, outY}, 3)
+}
+
+// visionAvgPool averages k×k patch blocks over an exact row-major grid:
+// [1, gridH*gridW, D] → [1, (gridH/k)*(gridW/k), D]. Runs in float32 like
+// the reference's einsum pooler, returning the input dtype.
+func visionAvgPool(h *mlx.Array, gridW, gridH, k int32) *mlx.Array {
+	dt := h.DType()
+	D := int32(h.Dim(2))
+	rB, cB := gridH/k, gridW/k
+	p := mlx.Reshape(h.AsType(mlx.DTypeFloat32), 1, rB, k, cB, k, D)
+	p = mlx.Mean(p, 4, false) // [1, rB, k, cB, D]
+	p = mlx.Mean(p, 2, false) // [1, rB, cB, D]
+	return mlx.Reshape(p, 1, rB*cB, D).AsType(dt)
+}
+
+// Forward runs one tower block's attention: per-head q/k RMSNorm (learned),
+// weightless v RMSNorm, 2D RoPE, and SDPA at the reference's scale of 1.0.
+// Grids are exact, so there is never a padding mask.
+func (a *VisionAttention) Forward(x, cosX, sinX, cosY, sinY *mlx.Array, cfg *VisionConfig) *mlx.Array {
+	dims := x.Dims()
+	B, L := int32(dims[0]), int32(dims[1])
+	H, D := cfg.NumAttentionHeads, cfg.HeadDim
+
+	q := mlx.Reshape(a.QProj.Forward(x), B, L, H, D)
+	k := mlx.Reshape(a.KProj.Forward(x), B, L, H, D)
+	v := mlx.Reshape(a.VProj.Forward(x), B, L, H, D)
+
+	q = mlx.RMSNormFn(q, a.QNormWeight, cfg.RMSNormEps)
+	k = mlx.RMSNormFn(k, a.KNormWeight, cfg.RMSNormEps)
+	v = mlx.RMSNormFn(v, nil, cfg.RMSNormEps)
+
+	q = visionRope2D(q, cosX, sinX, cosY, sinY)
+	k = visionRope2D(k, cosX, sinX, cosY, sinY)
+
+	q = mlx.Transpose(q, 0, 2, 1, 3)
+	k = mlx.Transpose(k, 0, 2, 1, 3)
+	v = mlx.Transpose(v, 0, 2, 1, 3)
+	out := mlx.FastScaledDotProductAttention(q, k, v, 1.0, "", nil)
+	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), B, L, H*D)
+	if !mlx.MetalIsAvailable() {
+		out = mlx.Contiguous(out, false)
+	}
+	return a.OProj.Forward(out)
+}
+
+// Forward encodes 16px patches [1, L, 768] (values already 2x−1) through the
+// 27-layer tower: input projection, per-axis position embeddings, sandwich-
+// norm blocks, 3×3 pooling ×√hidden, and standardization.
+func (t *VisionTower) Forward(patches *mlx.Array, xs, ys []int32, gridW, gridH int32, cfg *VisionConfig) *mlx.Array {
+	h := t.InputProj.Forward(patches)
+
+	xi := mlx.FromValues(xs, len(xs))
+	yi := mlx.FromValues(ys, len(ys))
+	pos := mlx.Add(mlx.Take(t.PosTableX, xi, 0), mlx.Take(t.PosTableY, yi, 0))
+	h = mlx.Add(h, mlx.ExpandDims(pos, 0))
+
+	half := int(cfg.HeadDim) / 2
+	theta := float64(cfg.RopeParameters.RopeTheta)
+	cosX, sinX := visionRopeTables(xs, half, theta, h.DType())
+	cosY, sinY := visionRopeTables(ys, half, theta, h.DType())
+
+	for _, l := range t.Layers {
+		n := mlx.RMSNormFn(h, l.InputNorm, cfg.RMSNormEps)
+		a := l.Attn.Forward(n, cosX, sinX, cosY, sinY, cfg)
+		a = mlx.RMSNormFn(a, l.PostAttnNorm, cfg.RMSNormEps)
+		h = mlx.Add(h, a)
+
+		n = mlx.RMSNormFn(h, l.PreFFNorm, cfg.RMSNormEps)
+		f := l.DownProj.Forward(mlx.GeGLU(l.GateProj.Forward(n), l.UpProj.Forward(n)))
+		f = mlx.RMSNormFn(f, l.PostFFNorm, cfg.RMSNormEps)
+		h = mlx.Add(h, f)
+	}
+
+	h = visionAvgPool(h, gridW, gridH, cfg.PoolingKernelSize)
+	h = mlx.MulScalar(h, float32(math.Sqrt(float64(cfg.HiddenSize))))
+
+	if t.NegStdBias != nil {
+		h = mlx.Mul(mlx.Add(h, t.NegStdBias), t.StdScale)
+	}
+	return h
+}
+
+// Forward embeds 48px patches [1, L, 6912] (values in [0,1]) through the
+// encoder-free unified path. One patch is one soft token; positions index
+// the learned per-axis tables at soft-token granularity.
+func (e *VisionEmbedder) Forward(patches *mlx.Array, xs, ys []int32) *mlx.Array {
+	h := e.PatchLN1.Forward(patches)
+	h = e.PatchDense.Forward(h)
+	h = e.PatchLN2.Forward(h)
+
+	xi := mlx.FromValues(xs, len(xs))
+	yi := mlx.FromValues(ys, len(ys))
+	pos := mlx.Add(mlx.Take(e.PosEmbX, xi, 0), mlx.Take(e.PosEmbY, yi, 0))
+	h = mlx.Add(h, mlx.ExpandDims(pos, 0))
+
+	return e.PosNorm.Forward(h)
+}
+
+// projectVision maps soft tokens into the text hidden size through
+// embed_vision: a weightless RMSNorm then the linear projection.
+func (m *Model) projectVision(h *mlx.Array) *mlx.Array {
+	eps := float32(1e-6)
+	if m.VisionCfg != nil && m.VisionCfg.RMSNormEps != 0 {
+		eps = m.VisionCfg.RMSNormEps
+	}
+	return m.EmbedVisionProj.Forward(mlx.RMSNormFn(h, nil, eps))
 }

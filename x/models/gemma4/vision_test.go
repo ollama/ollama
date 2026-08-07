@@ -1,6 +1,7 @@
 package gemma4
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -289,5 +290,183 @@ func TestLoadVisionWeightsMissingTensor(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "k_norm") {
 		t.Errorf("error %q does not name the missing tensor", err)
+	}
+}
+
+// naiveRope2D mirrors mlx_vlm's apply_multidimensional_rope in float64:
+// the head dim splits per spatial axis, each part rotated with its own
+// coordinate; rotate_half stays within the part.
+func naiveRope2D(x []float64, L, H, D int, xs, ys []int32, theta float64) []float64 {
+	out := make([]float64, len(x))
+	half := D / 2
+	quarter := half / 2
+	for l := 0; l < L; l++ {
+		for h := 0; h < H; h++ {
+			base := (l*H + h) * D
+			for d := 0; d < 2; d++ {
+				pos := float64(xs[l])
+				if d == 1 {
+					pos = float64(ys[l])
+				}
+				o := base + d*half
+				for j := 0; j < quarter; j++ {
+					ts := math.Pow(theta, 2*float64(j)/float64(half))
+					angle := pos / ts
+					c, s := math.Cos(angle), math.Sin(angle)
+					x1, x2 := x[o+j], x[o+quarter+j]
+					out[o+j] = x1*c - x2*s
+					out[o+quarter+j] = x2*c + x1*s
+				}
+			}
+		}
+	}
+	return out
+}
+
+func TestRope2DMatchesReference(t *testing.T) {
+	useMLXTestThread(t)
+
+	const L, H, D = 6, 4, 8
+	xs, ys := make([]int32, L), make([]int32, L)
+	for i := range xs { // 3×2 grid, row-major
+		xs[i], ys[i] = int32(i%3), int32(i/3)
+	}
+	data := make([]float32, L*H*D)
+	f64 := make([]float64, len(data))
+	for i := range data {
+		v := math.Sin(float64(i)*0.7) * 0.5
+		data[i], f64[i] = float32(v), v
+	}
+
+	x := mlx.FromValues(data, 1, L, H, D)
+	cosX, sinX := visionRopeTables(xs, D/2, 100, mlx.DTypeFloat32)
+	cosY, sinY := visionRopeTables(ys, D/2, 100, mlx.DTypeFloat32)
+	got := visionRope2D(x, cosX, sinX, cosY, sinY)
+	mlx.Eval(got)
+
+	want := naiveRope2D(f64, L, H, D, xs, ys, 100)
+	gotF := got.AsType(mlx.DTypeFloat32).Floats()
+	for i := range want {
+		if diff := float64(gotF[i]) - want[i]; diff > 1e-4 || diff < -1e-4 {
+			t.Fatalf("rope2d[%d] = %v, want %v", i, gotF[i], want[i])
+		}
+	}
+}
+
+func TestVisionAvgPoolMatchesNaive(t *testing.T) {
+	useMLXTestThread(t)
+
+	const gridW, gridH, D, k = 6, 6, 8, 3
+	data := make([]float32, gridW*gridH*D)
+	for i := range data {
+		data[i] = float32(i%37) * 0.25
+	}
+	h := mlx.FromValues(data, 1, gridW*gridH, D)
+	got := visionAvgPool(h, gridW, gridH, k)
+	mlx.Eval(got)
+	gotF := got.Floats()
+
+	rB, cB := gridH/k, gridW/k
+	if dims := got.Dims(); dims[1] != rB*cB {
+		t.Fatalf("pooled length = %d, want %d", dims[1], rB*cB)
+	}
+	for rb := 0; rb < rB; rb++ {
+		for cb := 0; cb < cB; cb++ {
+			for d := 0; d < D; d++ {
+				var sum float64
+				for dy := 0; dy < k; dy++ {
+					for dx := 0; dx < k; dx++ {
+						patch := (rb*k+dy)*gridW + (cb*k + dx)
+						sum += float64(data[patch*D+d])
+					}
+				}
+				want := sum / (k * k)
+				gi := (rb*cB+cb)*D + d
+				if diff := float64(gotF[gi]) - want; diff > 1e-4 || diff < -1e-4 {
+					t.Fatalf("pool[%d,%d,%d] = %v, want %v", rb, cb, d, gotF[gi], want)
+				}
+			}
+		}
+	}
+}
+
+// smallLinear fills a deterministic non-zero dense linear.
+func smallLinear(out, in int) nn.LinearLayer {
+	data := make([]float32, out*in)
+	for i := range data {
+		data[i] = float32((i%13)-6) * 0.05
+	}
+	return nn.NewLinear(mlx.FromValues(data, out, in), nil)
+}
+
+func onesArr(shape ...int) *mlx.Array {
+	n := 1
+	for _, s := range shape {
+		n *= s
+	}
+	data := make([]float32, n)
+	for i := range data {
+		data[i] = 1
+	}
+	return mlx.FromValues(data, shape...)
+}
+
+func TestVisionEmbedderForwardShapes(t *testing.T) {
+	useMLXTestThread(t)
+
+	const patchDim, embed, L = 48, 16, 4
+	e := &VisionEmbedder{
+		PatchLN1:   &nn.LayerNorm{Weight: onesArr(patchDim), Bias: mlx.Zeros(mlx.DTypeFloat32, patchDim)},
+		PatchDense: smallLinear(embed, patchDim),
+		PatchLN2:   &nn.LayerNorm{Weight: onesArr(embed), Bias: mlx.Zeros(mlx.DTypeFloat32, embed)},
+		PosEmbX:    onesArr(8, embed),
+		PosEmbY:    onesArr(8, embed),
+		PosNorm:    &nn.LayerNorm{Weight: onesArr(embed), Bias: mlx.Zeros(mlx.DTypeFloat32, embed)},
+	}
+	patches := onesArr(1, L, patchDim)
+	xs, ys := []int32{0, 1, 0, 1}, []int32{0, 0, 1, 1}
+	out := e.Forward(patches, xs, ys)
+	mlx.Eval(out)
+	if d := out.Dims(); len(d) != 3 || d[0] != 1 || d[1] != L || d[2] != embed {
+		t.Fatalf("embedder out dims = %v, want [1 %d %d]", d, L, embed)
+	}
+}
+
+func TestVisionTowerForwardShapes(t *testing.T) {
+	useMLXTestThread(t)
+
+	cfg := towerTestConfig(2)
+	const hidden, L = 8, 36 // 6×6 patch grid → 4 soft tokens
+	layer := func() *VisionLayer {
+		return &VisionLayer{
+			InputNorm:    onesArr(hidden),
+			PostAttnNorm: onesArr(hidden),
+			PreFFNorm:    onesArr(hidden),
+			PostFFNorm:   onesArr(hidden),
+			Attn: &VisionAttention{
+				QProj: smallLinear(hidden, hidden), KProj: smallLinear(hidden, hidden),
+				VProj: smallLinear(hidden, hidden), OProj: smallLinear(hidden, hidden),
+				QNormWeight: onesArr(4), KNormWeight: onesArr(4),
+			},
+			GateProj: smallLinear(16, hidden), UpProj: smallLinear(16, hidden), DownProj: smallLinear(hidden, 16),
+		}
+	}
+	tw := &VisionTower{
+		InputProj: smallLinear(hidden, 16*16*3),
+		PosTableX: onesArr(64, hidden),
+		PosTableY: onesArr(64, hidden),
+		Layers:    []*VisionLayer{layer(), layer()},
+		NegStdBias: mlx.Zeros(mlx.DTypeFloat32, hidden),
+		StdScale:   onesArr(hidden),
+	}
+	patches := onesArr(1, L, 16*16*3)
+	xs, ys := make([]int32, L), make([]int32, L)
+	for i := range xs {
+		xs[i], ys[i] = int32(i%6), int32(i/6)
+	}
+	out := tw.Forward(patches, xs, ys, 6, 6, cfg)
+	mlx.Eval(out)
+	if d := out.Dims(); len(d) != 3 || d[0] != 1 || d[1] != 4 || d[2] != hidden {
+		t.Fatalf("tower out dims = %v, want [1 4 %d]", d, hidden)
 	}
 }
