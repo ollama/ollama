@@ -472,6 +472,14 @@ func (c *Client) Tokenize(ctx context.Context, content string) ([]int, error) {
 	return tokens, nil
 }
 
+// TokenizeForCompletion implements llm.LlamaServer. The MLX runner's /v1/tokenize
+// applies the same tokenizer and add-BOS policy its completion path does (see
+// pipeline.go), so the prompt is passed through verbatim - normalizing away a
+// leading BOS here would undercount by exactly the token completion will add.
+func (c *Client) TokenizeForCompletion(ctx context.Context, prompt, _ string) ([]int, error) {
+	return c.Tokenize(ctx, prompt)
+}
+
 func (c *Client) currentMemory() uint64 {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()

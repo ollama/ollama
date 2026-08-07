@@ -79,6 +79,11 @@ type Usage struct {
 	TotalTokens      int `json:"total_tokens"`
 }
 
+type InputTokensResponse struct {
+	Object      string `json:"object,omitempty"`
+	InputTokens int    `json:"input_tokens"`
+}
+
 type ResponseFormat struct {
 	Type       string      `json:"type"`
 	JsonSchema *JsonSchema `json:"json_schema,omitempty"`
