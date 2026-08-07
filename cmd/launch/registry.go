@@ -134,6 +134,10 @@ var integrationSpecs = []*IntegrationSpec{
 				_, err := findMuse()
 				return err == nil
 			},
+			EnsureInstalled: func() error {
+				_, err := ensureMuseInstalled()
+				return err
+			},
 			Command: museInstallCommand,
 		},
 	},

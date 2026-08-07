@@ -180,6 +180,7 @@ func TestMuseApplyLoadedContext_SkipsRemoteAndEmpty(t *testing.T) {
 func TestMuseWriteSettings_KeepsUserPreferences(t *testing.T) {
 	home := t.TempDir()
 	setTestHome(t, home)
+	t.Setenv("XDG_CONFIG_HOME", "")
 
 	userSettings := map[string]any{
 		"schema_version": 2,
@@ -421,6 +422,61 @@ exit 0
 	}
 }
 
+func TestMuseRun_PreservesPreEditBackup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell fake binary")
+	}
+
+	home := t.TempDir()
+	setTestHome(t, home)
+	stubMuseLoadedContext(t, 8192)
+
+	writeFakeBinary(t, home, "muse")
+	t.Setenv("PATH", home)
+
+	settingsPath, err := museSettingsPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte(`{"schema_version":1,"mcp_servers":{"original":{"transport":"stdio"}}}`)
+	if err := os.WriteFile(settingsPath, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := &Muse{}
+	models := []LaunchModel{{Name: "gpt-oss:20b", ContextLength: 131072}}
+	if err := m.Edit(models); err != nil {
+		t.Fatalf("Edit() error = %v", err)
+	}
+	if err := m.Run("gpt-oss:20b", models, nil); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	settings := readMuseSettings(t)
+	if settings.ModelCatalog[0].ContextLimit != 8192 {
+		t.Fatalf("context limit = %d, want loaded context 8192", settings.ModelCatalog[0].ContextLimit)
+	}
+
+	backups, err := filepath.Glob(filepath.Join(fileutil.BackupDir(), "muse", "settings.json.*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != 1 {
+		t.Fatalf("backup count = %d, want 1", len(backups))
+	}
+
+	data, err := os.ReadFile(backups[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != string(original) {
+		t.Fatalf("pre-Edit settings backup = %s, want %s", data, original)
+	}
+}
+
 func TestMuseRun_RequiresModel(t *testing.T) {
 	setTestHome(t, t.TempDir())
 	if err := (&Muse{}).Run("", nil, nil); err == nil {
@@ -444,4 +500,130 @@ func TestMuseSupported(t *testing.T) {
 	if err := m.Supported(); err == nil {
 		t.Error("Supported() on windows = nil, want an error")
 	}
+}
+
+func TestMuseBaseSettings_MalformedLaunchFileFails(t *testing.T) {
+	setTestHome(t, t.TempDir())
+
+	settingsPath, err := museSettingsPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	malformed := []byte("{ this is not json")
+	if err := os.WriteFile(settingsPath, malformed, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := writeMuseSettings([]LaunchModel{{Name: "gpt-oss:20b"}}); err == nil {
+		t.Fatal("writeMuseSettings() = nil, want parse error for malformed launch-owned settings")
+	}
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != string(malformed) {
+		t.Fatalf("malformed settings were rewritten to %q", data)
+	}
+}
+
+func TestEnsureMuseInstalled(t *testing.T) {
+	withConfirm := func(t *testing.T, fn func(prompt string) (bool, error)) {
+		t.Helper()
+		oldConfirm := DefaultConfirmPrompt
+		DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+			return fn(prompt)
+		}
+		t.Cleanup(func() { DefaultConfirmPrompt = oldConfirm })
+	}
+
+	stubInstaller := func(t *testing.T, script string) {
+		t.Helper()
+		oldCommand := museInstallCommand
+		// Absolute shell path and explicit PATH: these tests clear PATH to
+		// hide any real muse, which also hides the script's own utilities.
+		museInstallCommand = []string{"/bin/sh", "-c", "PATH=/usr/bin:/bin; " + script}
+		t.Cleanup(func() { museInstallCommand = oldCommand })
+	}
+
+	t.Run("already installed skips prompt", func(t *testing.T) {
+		home := t.TempDir()
+		setTestHome(t, home)
+		t.Setenv("PATH", t.TempDir())
+		binDir := filepath.Join(home, ".local", "bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFakeBinary(t, binDir, "muse")
+
+		withConfirm(t, func(prompt string) (bool, error) {
+			t.Fatalf("did not expect prompt, got %q", prompt)
+			return false, nil
+		})
+
+		bin, err := ensureMuseInstalled()
+		if err != nil {
+			t.Fatalf("ensureMuseInstalled() error = %v", err)
+		}
+		if bin != filepath.Join(binDir, "muse") {
+			t.Fatalf("bin = %q, want %q", bin, filepath.Join(binDir, "muse"))
+		}
+	})
+
+	t.Run("installs after confirmation and verifies binary", func(t *testing.T) {
+		home := t.TempDir()
+		setTestHome(t, home)
+		t.Setenv("PATH", t.TempDir())
+		binDir := filepath.Join(home, ".local", "bin")
+		stubInstaller(t, fmt.Sprintf("mkdir -p %q && printf '#!/bin/sh\n' > %q && chmod +x %q",
+			binDir, filepath.Join(binDir, "muse"), filepath.Join(binDir, "muse")))
+
+		prompted := false
+		withConfirm(t, func(prompt string) (bool, error) {
+			prompted = true
+			return true, nil
+		})
+
+		bin, err := ensureMuseInstalled()
+		if err != nil {
+			t.Fatalf("ensureMuseInstalled() error = %v", err)
+		}
+		if !prompted {
+			t.Fatal("expected an install confirmation prompt")
+		}
+		if bin != filepath.Join(binDir, "muse") {
+			t.Fatalf("bin = %q, want %q", bin, filepath.Join(binDir, "muse"))
+		}
+	})
+
+	t.Run("declined prompt cancels", func(t *testing.T) {
+		setTestHome(t, t.TempDir())
+		t.Setenv("PATH", t.TempDir())
+		stubInstaller(t, "exit 0")
+
+		withConfirm(t, func(prompt string) (bool, error) {
+			return false, nil
+		})
+
+		if _, err := ensureMuseInstalled(); err == nil {
+			t.Fatal("ensureMuseInstalled() = nil, want cancellation error")
+		}
+	})
+
+	t.Run("installer without binary fails verification", func(t *testing.T) {
+		setTestHome(t, t.TempDir())
+		t.Setenv("PATH", t.TempDir())
+		stubInstaller(t, "exit 0")
+
+		withConfirm(t, func(prompt string) (bool, error) {
+			return true, nil
+		})
+
+		if _, err := ensureMuseInstalled(); err == nil {
+			t.Fatal("ensureMuseInstalled() = nil, want verification error")
+		}
+	})
 }

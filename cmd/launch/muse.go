@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -54,9 +55,40 @@ const (
 
 var museGOOS = runtime.GOOS
 
-// museInstallCommand installs the muse launcher, which then downloads the
-// matching binary next to itself.
-var museInstallCommand = []string{"bash", "-c", `"curl -fsSL https://api.meta.ai/muse-launcher.sh -o ~/.local/bin/muse && chmod +x ~/.local/bin/muse && MUSE_LAUNCHER_INSTALL=1 ~/.local/bin/muse"`}
+// museInstallCommand runs Meta's official installer, which places the muse
+// launcher in ~/.local/bin and downloads the matching binary next to it.
+var museInstallCommand = []string{"bash", "-c", "curl -fsSL https://dev.meta.ai/install.sh | bash"}
+
+// ensureMuseInstalled returns the muse binary path, offering to run the
+// official installer when it is missing and verifying the binary afterward.
+func ensureMuseInstalled() (string, error) {
+	if path, err := findMuse(); err == nil {
+		return path, nil
+	}
+
+	ok, err := ConfirmPrompt("Muse is not installed. Install now?")
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("muse installation cancelled")
+	}
+
+	fmt.Fprintf(os.Stderr, "\nInstalling Muse...\n")
+	cmd := exec.Command(museInstallCommand[0], museInstallCommand[1:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("muse installation failed: %w", err)
+	}
+
+	path, err := findMuse()
+	if err != nil {
+		return "", fmt.Errorf("muse installer finished but the binary was not found")
+	}
+	return path, nil
+}
 
 // museCatalogRow is one row of muse's settings-side model catalog. Muse requires
 // model_id, provider_id, profile_id and both limits; the rest only affect how
@@ -91,12 +123,16 @@ func (m *Muse) Run(model string, models []LaunchModel, args []string) error {
 		return fmt.Errorf("model is required")
 	}
 
-	bin, err := findMuse()
+	bin, err := ensureMuseInstalled()
 	if err != nil {
-		return fmt.Errorf("muse is not installed, install with: %s", strings.Join(museInstallCommand, " "))
+		return err
 	}
 
-	if err := writeMuseSettings(museApplyLoadedContext(museRunModels(model, models))); err != nil {
+	runModels := museApplyLoadedContext(museRunModels(model, models))
+	// When Edit already wrote this catalog, Run only refreshes loaded limits.
+	// Preserve Edit's backup by avoiding a second backup for that refresh.
+	backup := !slices.Equal(m.Models(), launchModelNames(runModels))
+	if err := writeMuseSettingsFile(runModels, backup); err != nil {
 		return fmt.Errorf("failed to configure muse: %w", err)
 	}
 
@@ -208,23 +244,33 @@ func museUserSettingsPath() (string, error) {
 // so once launch's file exists it becomes the base and everything muse recorded
 // there survives the next launch. Before that, the user's own settings seed it so
 // a first launch keeps their skills, hooks, MCP servers and TUI preferences.
-func museBaseSettings() map[string]any {
-	paths := []func() (string, error){museSettingsPath, museUserSettingsPath}
-	for _, resolve := range paths {
-		path, err := resolve()
-		if err != nil {
-			continue
-		}
-		if settings, err := fileutil.ReadJSON(path); err == nil && settings != nil {
-			return settings
+// A launch-owned file that exists but cannot be parsed is an error: falling
+// through would rewrite it and discard whatever muse persisted there.
+func museBaseSettings() (map[string]any, error) {
+	if path, err := museSettingsPath(); err == nil {
+		settings, err := fileutil.ReadJSON(path)
+		switch {
+		case err == nil && settings != nil:
+			return settings, nil
+		case err != nil && !os.IsNotExist(err):
+			return nil, fmt.Errorf("read muse settings %s: %w", path, err)
 		}
 	}
-	return map[string]any{}
+	if path, err := museUserSettingsPath(); err == nil {
+		if settings, err := fileutil.ReadJSON(path); err == nil && settings != nil {
+			return settings, nil
+		}
+	}
+	return map[string]any{}, nil
 }
 
 // writeMuseSettings regenerates the settings file launch owns, replacing only
 // the keys that decide which provider and models muse talks to.
 func writeMuseSettings(models []LaunchModel) error {
+	return writeMuseSettingsFile(models, true)
+}
+
+func writeMuseSettingsFile(models []LaunchModel, backup bool) error {
 	if len(models) == 0 {
 		return nil
 	}
@@ -237,7 +283,10 @@ func writeMuseSettings(models []LaunchModel) error {
 		return err
 	}
 
-	settings := museBaseSettings()
+	settings, err := museBaseSettings()
+	if err != nil {
+		return err
+	}
 	if _, ok := settings["schema_version"]; !ok {
 		settings["schema_version"] = 1
 	}
@@ -255,7 +304,10 @@ func writeMuseSettings(models []LaunchModel) error {
 	if err != nil {
 		return err
 	}
-	return fileutil.WriteWithBackup(settingsPath, data, "muse")
+	if backup {
+		return fileutil.WriteWithBackup(settingsPath, data, "muse")
+	}
+	return os.WriteFile(settingsPath, data, 0o600)
 }
 
 func museCatalogRows(models []LaunchModel) []museCatalogRow {
