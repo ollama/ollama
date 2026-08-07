@@ -63,8 +63,13 @@ d.text((950, y), "Qty", font=head_f, fill=(0, 0, 0))
 d.text((1150, y), "Unit price", font=head_f, fill=(0, 0, 0))
 y += 50
 total = 0.0
+name_bboxes = []
 for name, qty, price in rows:
     d.text((90, y), name, font=body_f, fill=(30, 30, 30))
+    # tight bbox of the item-name text run, for IoU scoring (score_doc's
+    # name_bbox_mean_iou); analytic textbbox tracks measured pixel extents to
+    # within a couple of px, which is negligible at IoU scale
+    name_bboxes.append([int(v) for v in d.textbbox((90, y), name, font=body_f)])
     d.text((950, y), str(qty), font=body_f, fill=(30, 30, 30))
     d.text((1150, y), f"${price:,.2f}", font=body_f, fill=(30, 30, 30))
     total += qty * price
@@ -78,6 +83,7 @@ img.save(f"{OUT}/document.png")
 gt["document"] = {
     "invoice_no": "INV-2026-0801",
     "items": [{"name": n, "qty": q, "unit_price": p} for n, q, p in rows],
+    "name_bboxes": name_bboxes,
     "total": round(total, 2), "size": [W, H],
 }
 

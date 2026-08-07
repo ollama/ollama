@@ -205,16 +205,18 @@ def score_scene(resp_text):
 
 def score_doc(resp_text):
     g = GT["document"]
+    W, H = g["size"]
     s = {"json_valid": False, "invoice_no": False, "items_found": 0,
          "items_total": len(g["items"]), "qty_price_right": 0, "total_right": False,
-         "name_bbox_hits": 0}
+         "name_bbox_hits": 0, "name_bbox_mean_iou": 0.0, "name_bbox_space": None}
     try:
         r = json.loads(resp_text); s["json_valid"] = True
     except Exception:
         return s
     s["invoice_no"] = g["invoice_no"] in json.dumps(r)
     items = r.get("line_items") or []
-    for gti in g["items"]:
+    matched = []
+    for gti, gtb in zip(g["items"], g.get("name_bboxes") or [None] * len(g["items"])):
         m = next((i for i in items if isinstance(i.get("name"), str)
                   and gti["name"].lower() in i["name"].lower()), None)
         if m:
@@ -227,6 +229,23 @@ def score_doc(resp_text):
             bb = m.get("name_bbox") or m.get("name_bbox_2d") or []
             if len(bb) == 4 and bb[1] > 250 and bb[3] < 700 and bb[0] < 500:
                 s["name_bbox_hits"] += 1
+            if len(bb) == 4 and gtb:
+                matched.append((bb, gtb))
+    # name_bbox_hits is a coarse band test that cannot see a 5% scale error —
+    # it hid the document's vertical degradation for the whole 2026-08 bbox
+    # investigation (findings doc §6). Score a real IoU against the measured
+    # row geometry too, best-of-4 decode like score_scene.
+    best = (0.0, None)
+    for space, fx, fy in (("pixel", 1.0, 1.0), ("norm1000", W / 1000.0, H / 1000.0)):
+        for order in ("xyxy", "yxyx"):
+            ious = []
+            for bb, gtb in matched:
+                x1, y1, x2, y2 = (bb[0], bb[1], bb[2], bb[3]) if order == "xyxy" else (bb[1], bb[0], bb[3], bb[2])
+                ious.append(iou([x1 * fx, y1 * fy, x2 * fx, y2 * fy], gtb))
+            mean_iou = round(sum(ious) / len(ious), 3) if ious else 0.0
+            if mean_iou > best[0]:
+                best = (mean_iou, f"{space}/{order}")
+    s["name_bbox_mean_iou"], s["name_bbox_space"] = best
     try:
         s["total_right"] = abs(float(r.get("total")) - g["total"]) < 0.01
     except Exception:

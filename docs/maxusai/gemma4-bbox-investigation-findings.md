@@ -362,6 +362,13 @@ byte-identical `prompt_eval_count` (2674), confirming the `image_budget_fill`
 gate leaks nowhere. The Go-side token estimator was updated to mirror the fill
 arithmetic and the scheduling tests re-pinned (ADR 0008).
 
+`score_doc` now also reports `name_bbox_mean_iou` against measured row geometry
+(the band test stays for continuity). It confirms §6 offline — unpatched pin1120
+scores 0.001 where the band test reported 4/5 — and sharpens the 12B exception:
+at the 1120 default the document rows score 0.101 on 12B (thin 21px strips
+punish its residual vertical error) versus **0.712 on 31B**, the best document
+geometry measured. 12B bbox workloads should pin `image_max_tokens: 560`.
+
 ## Remaining next steps
 
 1. **Report both divergences upstream** (ggml-org/llama.cpp): under-budget images are
