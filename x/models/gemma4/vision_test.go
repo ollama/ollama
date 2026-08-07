@@ -11,6 +11,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
 	"github.com/ollama/ollama/x/models/nn"
@@ -606,4 +607,62 @@ func TestVisionTokens(t *testing.T) {
 func close32(a, b, tol float32) bool {
 	d := a - b
 	return d < tol && d > -tol
+}
+
+func TestVisionChunkMask(t *testing.T) {
+	useMLXTestThread(t)
+
+	b := &batch.Batch{
+		InputIDs:     mlx.Zeros(mlx.DTypeInt32, 1, 6),
+		SeqOffsets:   []int32{0},
+		SeqQueryLens: []int32{6},
+		BidiSpans:    [][2]int32{{1, 4}},
+	}
+	mask := visionChunkMask(b, 6, 2, mlx.DTypeFloat32)
+	arr := mask.AsArray(b, 6, mlx.DTypeFloat32)
+	mlx.Eval(arr)
+	vals := arr.Floats() // [1,1,6,6]
+
+	at := func(q, k int) float32 { return vals[q*6+k] }
+	allowed := func(q, k int) bool { return at(q, k) == 0 }
+
+	cases := []struct {
+		q, k int
+		want bool
+		why  string
+	}{
+		{1, 3, true, "bidi future within block"},
+		{3, 1, true, "bidi past beyond window 2"},
+		{2, 2, true, "diagonal"},
+		{5, 5, true, "diagonal outside block"},
+		{5, 0, false, "window excludes old text for text query"},
+		{5, 4, true, "window includes recent key"},
+		{0, 5, false, "causal for text query"},
+		{0, 2, false, "text query may not see future image"},
+		{4, 1, false, "text query beyond window may not see image"},
+		{3, 2, true, "bidi within block adjacent"},
+	}
+	for _, tc := range cases {
+		if allowed(tc.q, tc.k) != tc.want {
+			t.Errorf("(q=%d,k=%d) allowed=%v, want %v — %s", tc.q, tc.k, !tc.want, tc.want, tc.why)
+		}
+	}
+
+	// Full-attention variant: window 0 disables the sliding restriction.
+	full := visionChunkMask(b, 6, 0, mlx.DTypeFloat32)
+	fvals := full.AsArray(b, 6, mlx.DTypeFloat32)
+	mlx.Eval(fvals)
+	fv := fvals.Floats()
+	if fv[5*6+0] != 0 {
+		t.Error("full attention must allow (q=5,k=0)")
+	}
+	if fv[0*6+5] == 0 {
+		t.Error("full attention must stay causal outside blocks")
+	}
+
+	// Memoized: same window → same array instance.
+	again := visionChunkMask(b, 6, 2, mlx.DTypeFloat32)
+	if again != mask {
+		t.Error("visionChunkMask not memoized per window")
+	}
 }

@@ -30,6 +30,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
 	"github.com/ollama/ollama/x/mlxrunner/model/base"
@@ -547,3 +548,53 @@ func (m *Model) MergedEmbeddings(inputIDs *mlx.Array, features []*mlx.Array, spa
 }
 
 var _ base.VisionModel = (*Model)(nil)
+
+// visionMaskKey memoizes the vision chunk mask per window size on the
+// batch, so sibling layers of the same type share one tensor.
+type visionMaskKey struct{ window int32 }
+
+// visionChunkMask materializes the additive attention mask for a media
+// prefill chunk: causal, optionally sliding-windowed, with every image
+// soft-token block fully bidirectional — including across the window,
+// matching the reference's blockwise overlay (create_causal_mask |
+// same_block). The runner guarantees such chunks start at position zero
+// with empty caches, so chunk coordinates are absolute on both axes.
+func visionChunkMask(b *batch.Batch, K, window int, dtype mlx.DType) nn.AttentionMask {
+	key := visionMaskKey{window: int32(window)}
+	if cached, ok := b.Memo.Get(key); ok {
+		return cached.(nn.AttentionMask)
+	}
+
+	off := 0
+	if len(b.SeqOffsets) > 0 {
+		off = int(b.SeqOffsets[0])
+	}
+	L := b.InputIDs.Dim(1)
+	inSpan := func(p int32) int {
+		for si, s := range b.BidiSpans {
+			if p >= s[0] && p < s[1] {
+				return si
+			}
+		}
+		return -1
+	}
+
+	neg := float32(math.Inf(-1))
+	data := make([]float32, L*K)
+	for qi := 0; qi < L; qi++ {
+		q := off + qi
+		qs := inSpan(int32(q))
+		for k := 0; k < K; k++ {
+			allowed := k <= q && (window <= 0 || q-k < window)
+			if !allowed && qs >= 0 && inSpan(int32(k)) == qs {
+				allowed = true
+			}
+			if !allowed {
+				data[qi*K+k] = neg
+			}
+		}
+	}
+	mask := nn.ArrayMask(mlx.FromValues(data, 1, 1, L, K).AsType(dtype))
+	b.Memo.Put(key, mask)
+	return mask
+}

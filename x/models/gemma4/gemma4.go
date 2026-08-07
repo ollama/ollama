@@ -1259,6 +1259,15 @@ func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positio
 	}
 	q = mlx.RoPEWithFreqs(q, ropeDims, false, ropeBase, 1.0, positions, ropeFreqs)
 
+	// Media prefill chunks carry bidirectional image blocks. The runner
+	// guarantees they run from position zero with empty caches, so the
+	// chunk's own k/v are the complete key set: store the chunk for later
+	// decode steps, but attend over it directly under the self-contained
+	// vision mask. Routing through the cache history would let the sliding
+	// applier re-add the window over relaxed image blocks, which the
+	// reference overlay explicitly overrides.
+	bidi := len(b.BidiSpans) > 0 && L > 1 && len(b.SeqOffsets) > 0 && b.SeqOffsets[0] == 0
+
 	kv := donor
 	if kv == nil {
 		// Determine KV head count: K=V full-attention layers use NumGlobalKeyValueHeads.
@@ -1292,11 +1301,27 @@ func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positio
 
 		// Update cache.
 		kv = &sharedHistory{}
-		if c != nil {
-			kv.history = c.(cache.Attention).Update(b, k, v)
-		} else {
+		switch {
+		case c != nil && bidi:
+			c.(cache.Attention).Update(b, k, v)
 			kv.k, kv.v = k, v
+			window := 0
 			if isSliding {
+				window = int(cfg.SlidingWindow)
+			}
+			kv.mask = visionChunkMask(b, k.Dim(2), window, q.DType())
+		case c != nil:
+			kv.history = c.(cache.Attention).Update(b, k, v)
+		default:
+			kv.k, kv.v = k, v
+			switch {
+			case bidi:
+				window := 0
+				if isSliding {
+					window = int(cfg.SlidingWindow)
+				}
+				kv.mask = visionChunkMask(b, k.Dim(2), window, q.DType())
+			case isSliding:
 				kv.mask = nn.SlidingWindowMask(b, k.Dim(2), int(cfg.SlidingWindow), q.DType())
 			}
 		}
@@ -1309,7 +1334,13 @@ func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positio
 		// kernel only handles L < 4 (generation). For prefill, we fall back
 		// to explicit matmul+softmax+matmul on CUDA.
 		var k, v *mlx.Array
-		mask := nn.CausalMask().Intersect(nn.QPaddingMask(b, q.DType()))
+		mask := nn.CausalMask()
+		if bidi {
+			// The vision chunk mask (added below via kv.mask) already
+			// encodes causal + window + bidirectional blocks.
+			mask = nn.AttentionMask{}
+		}
+		mask = mask.Intersect(nn.QPaddingMask(b, q.DType()))
 		if kv.history != nil {
 			k, v = kv.history.K(), kv.history.V()
 			mask = kv.history.Mask(mask)
@@ -1340,6 +1371,12 @@ func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positio
 	} else {
 		var opt nn.SDPAOption
 		mask := nn.CausalMask()
+		if bidi {
+			// The vision chunk mask already encodes causal + window +
+			// bidirectional blocks; a causal base would write -inf over the
+			// relaxed future cells before the array is added.
+			mask = nn.AttentionMask{}
+		}
 		if kv.history != nil {
 			opt = nn.WithKVHistory(kv.history)
 		} else {
