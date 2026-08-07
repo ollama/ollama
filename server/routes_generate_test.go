@@ -640,6 +640,9 @@ func TestGenerateHandlerChatTemplateRoute(t *testing.T) {
 		s := newServerWithMockRunner(t, &mock)
 		createMinimalGGUFModel(t, s, "generate-chat-template-images", ggml.KV{
 			"tokenizer.chat_template": "{{ messages[0]['content'] }}",
+			// Image requests require the vision capability; this test is about
+			// marker preservation, not capability policy.
+			"llama.vision.block_count": uint32(1),
 		}, "", nil)
 
 		stream := false
@@ -3068,7 +3071,57 @@ func TestGenerateWithImages(t *testing.T) {
 
 	go s.sched.Run(t.Context())
 
+	// Tensor readers are consumed on write, so each createBinFile call needs a
+	// fresh slice.
+	newTensors := func() []*ggml.Tensor {
+		return []*ggml.Tensor{
+			{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+			{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		}
+	}
+
+	// "test" reports the vision capability (vision.block_count set); media
+	// must be forwarded to the completion request for it.
 	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture":          "llama",
+		"llama.block_count":             uint32(1),
+		"llama.context_length":          uint32(8192),
+		"llama.embedding_length":        uint32(4096),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(8),
+		"llama.vision.block_count":      uint32(1),
+		"tokenizer.ggml.tokens":         []string{""},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, newTensors())
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model: "test",
+		Files: map[string]string{"file.gguf": digest},
+		Template: `
+{{- range .Messages }}
+{{- .Role }}: {{ .Content }}
+{{ end }}`,
+		Stream: &stream,
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	// "test-novision" has no image input path; media requests against it must
+	// fail with an explicit capability error instead of silently dropping the
+	// payload.
+	_, novisionDigest := createBinFile(t, ggml.KV{
 		"general.architecture":          "llama",
 		"llama.block_count":             uint32(1),
 		"llama.context_length":          uint32(8192),
@@ -3078,23 +3131,11 @@ func TestGenerateWithImages(t *testing.T) {
 		"tokenizer.ggml.tokens":         []string{""},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []*ggml.Tensor{
-		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-		{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-		{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-		{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-		{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-		{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-		{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-		{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-		{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-	})
+	}, newTensors())
 
-	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Model:  "test",
-		Files:  map[string]string{"file.gguf": digest},
+	w = createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:  "test-novision",
+		Files:  map[string]string{"file.gguf": novisionDigest},
 		Stream: &stream,
 	})
 
@@ -3181,6 +3222,87 @@ func TestGenerateWithImages(t *testing.T) {
 		// Verify no images in completion request
 		if len(mock.CompletionRequest.Media) != 0 {
 			t.Fatalf("expected 0 images in completion request, got %d", len(mock.CompletionRequest.Media))
+		}
+	})
+
+	t.Run("chat images passed to completion request", func(t *testing.T) {
+		testImage := []byte("test-image-data")
+
+		mock.CompletionResponse.Content = "Image processed"
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test",
+			Messages: []api.Message{
+				{Role: "user", Content: "Describe this image", Images: []api.ImageData{testImage}},
+			},
+			Stream: &stream,
+		})
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		if len(mock.CompletionRequest.Media) != 1 {
+			t.Fatalf("expected 1 image in completion request, got %d", len(mock.CompletionRequest.Media))
+		}
+
+		if !bytes.Equal(mock.CompletionRequest.Media[0].Data, testImage) {
+			t.Errorf("image data mismatch in completion request")
+		}
+	})
+
+	t.Run("generate images rejected without vision capability", func(t *testing.T) {
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:  "test-novision",
+			Prompt: "Describe this image",
+			Images: []api.ImageData{[]byte("test-image-data")},
+			Stream: &stream,
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected status 400, got %d: %s", w.Code, w.Body.String())
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"registry.ollama.ai/library/test-novision:latest does not support vision"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("chat images rejected without vision capability", func(t *testing.T) {
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test-novision",
+			Messages: []api.Message{
+				{Role: "user", Content: "Describe this image", Images: []api.ImageData{[]byte("test-image-data")}},
+			},
+			Stream: &stream,
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected status 400, got %d: %s", w.Code, w.Body.String())
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"registry.ollama.ai/library/test-novision:latest does not support vision"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("audio payload rejected without audio capability", func(t *testing.T) {
+		// WAV header: audio media must be charged against the audio
+		// capability, not vision — "test" has vision but no audio.
+		wav := append([]byte("RIFF\x00\x00\x00\x00"), []byte("WAVE")...)
+
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:  "test",
+			Prompt: "Transcribe this",
+			Images: []api.ImageData{wav},
+			Stream: &stream,
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected status 400, got %d: %s", w.Code, w.Body.String())
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"registry.ollama.ai/library/test:latest does not support audio"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 	})
 }
