@@ -352,6 +352,16 @@ are reachable). An off-ladder request (`max 900`) snaps to 560 and reproduces th
   (0.940). The encoder-free 12B is the least robust at the top rung in every
   measurement; on 12B, 560 remains the better bbox setting even patched.
 
+Extended battery, same patched build: full `vision_suite` at defaults passes on
+12B and 31B (31B scene 0.963 vs 0.504 unpatched-shipped; document and multi-image
+metrics held or improved, multi delivering three fill grids in one request);
+**portrait** 1056×1920 at 1120 lands on 24×45 = 1080 and recovers to 0.905 (was
+0.406 off-ladder); a sub-70 request clamps up to the 70 rung (66-patch grid); and
+**nemotron** — which shares the dyn_size preprocessor 004 touches — produces a
+byte-identical `prompt_eval_count` (2674), confirming the `image_budget_fill`
+gate leaks nowhere. The Go-side token estimator was updated to mirror the fill
+arithmetic and the scheduling tests re-pinned (ADR 0008).
+
 ## Remaining next steps
 
 1. **Report both divergences upstream** (ggml-org/llama.cpp): under-budget images are

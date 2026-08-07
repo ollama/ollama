@@ -602,14 +602,19 @@ type Options struct {
 // Runner.ImageMinTokens/ImageMaxTokens so callers can tune it per request.
 //
 // Both values are rungs on Google's documented ladder (70/140/280/560/1120 —
-// ai.google.dev/gemma/docs/core/model_card_4). The ceiling is 560 rather than the
-// vendor maximum 1120 as a MITIGATION, not because the model reads 560 better:
-// llama.cpp carries a vertical coordinate error that grows with patch rows, and a
-// 560 ceiling keeps large images on a 17-row grid where that error is ~0.4%. See
-// ADR 0007; revisit both values when the vertical error is fixed.
+// ai.google.dev/gemma/docs/core/model_card_4), and the ceiling is the vendor
+// maximum again: ADR 0007's 560 mitigation is superseded by ADR 0008, which
+// fixes the underlying defect instead. llama.cpp left under-budget images on
+// patch grids the model never trained on ("off-ladder"), which broke box_2d
+// vertical grounding as budgets grew;
+// llama/compat/004-llama-cpp-gemma4-budget-fill.patch restores the reference
+// sizing (snap the ceiling to the ladder, scale to fill it, no letterbox).
+// Measured on the patched payload, 1120 beats 560 on both geometry and
+// fine-text recall for 26B/31B; the encoder-free 12B still prefers 560 for
+// pure bbox work and can pin it per request. See ADR 0008.
 const (
-	DefaultImageMinTokens = 70  // lowest rung on Gemma 4's documented ladder
-	DefaultImageMaxTokens = 560 // ladder rung below the 1120 max; see ADR 0007
+	DefaultImageMinTokens = 70   // lowest rung on Gemma 4's documented ladder
+	DefaultImageMaxTokens = 1120 // vendor maximum; requires the 004 patch — see ADR 0008
 )
 
 // Runner options which must be set when the model is loaded into memory
