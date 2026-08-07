@@ -9,7 +9,7 @@ Two artifacts, because one cannot do both jobs:
 | Target | this Mac, run directly | any Apple M-family Mac, under Docker |
 | Preset | `darwin` | `cpu` |
 | Compute | Metal GPU + MLX `metal_v4` | **CPU only** |
-| llama.cpp patches (001, 002) | yes | yes |
+| llama.cpp patches (001, 002, 003) | yes | yes |
 | Go patches | yes | yes |
 
 ## Why two
@@ -25,15 +25,28 @@ So: native for speed, container for distribution to other M-family Macs.
 ## The patch mechanism is shared
 
 Both artifacts get the full patch set from one place.
-[`llama/compat/apply-patch.cmake`](../../../llama/compat/apply-patch.cmake) globs
-`llama/compat/*.patch` and applies them in numeric filename order during
-llama.cpp's `FetchContent`, wired in by
+[`llama/compat/apply-patch.cmake`](../../../llama/compat/apply-patch.cmake) uses
+`file(GLOB_RECURSE)` over `llama/compat/*.patch` and applies the results in
+numeric filename order during llama.cpp's `FetchContent`, wired in by
 [`compat.cmake`](../../../llama/compat/compat.cmake) at
 [`llama/server/CMakeLists.txt:134`](../../../llama/server/CMakeLists.txt).
 
-Both the `darwin` and `cpu` presets route through `llama/server`, so `001` (compat
-hooks) and `002` (nemotron dynamic resolution) land in each. No bespoke plumbing,
-and no divergence between the two artifacts.
+The glob is **recursive**, so the set is three patches, not two — the third lives
+in a subdirectory:
+
+| Patch | Purpose |
+|---|---|
+| `001-llama-cpp-hooks.patch` | compat call-sites |
+| `002-llama-cpp-nemotron-dynres.patch` | nemotron dynamic resolution |
+| `models/003-llama-cpp-laguna-metal.patch` | Laguna, Metal path |
+
+Both the `darwin` and `cpu` presets route through `llama/server`, so all three are
+applied to the fetched source in each build. No bespoke plumbing, and no
+divergence between the two artifacts.
+
+Note that 003 patches the Metal path specifically. It applies in the container
+build too — patching is a source-level step — but the code it touches is not
+compiled there, since the container has no Metal backend.
 
 ## The overlay shortcut is invalid here — do not use it
 
@@ -132,14 +145,49 @@ patch is live.
 | What | Check | Pass |
 |---|---|---|
 | Go patches | `go test ./api/... ./llm/... ./server/...` | green |
-| 002 applied | CMake configure output | `llama/compat: applied 002-llama-cpp-nemotron-dynres.patch` |
+| Patches applied — native | build output (superbuild: appears during `cmake --build`, not root configure) | all three `llama/compat: applied …` lines |
+| Patches applied — container | **source inspection, not log grep** — see below | 001/002/003 hunks present in the fetched source |
 | 002 live | nemotron vision request, per-image token cost | up to 3,328 (stock shows 256) |
 | Metal live (native) | `build/lib/ollama` contents; serve logs | `mlx_metal_v4` present, Metal backend selected |
 | Container identity | `docker run --rm <img> --version` | fork version string |
 
 A `FATAL_ERROR` from `apply-patch.cmake` means a patch no longer fits the pinned
 `LLAMA_CPP_VERSION` (currently `b10091`) and must be regenerated — the message says
-so explicitly.
+so explicitly. Because it is fatal, a build that *completes* has necessarily applied
+every patch. That is the strongest guarantee available, and it is worth more than
+the log lines.
+
+### Do not verify the container by grepping the build log
+
+The `llama/compat: applied …` lines **do not appear** in the container build output.
+Confirmed 2026-08-07 with a forced `--no-cache-filter --progress=plain` rebuild: the
+stage genuinely re-ran (37.6 s configure) and the lines were still absent. The
+container uses CMake 3.31, whose `FetchContent` routes the populate sub-build's
+output to a log file instead of the console; the native build uses CMake 4.4.2,
+which forwards it. BuildKit also truncates long step output with `#NN ...` markers,
+which masks the same thing.
+
+Verify against the **source the build actually compiled** instead. Build the
+`llama-server-cpu` stage as a target, then inspect `_deps/llama_cpp-src`:
+
+```sh
+docker build -f Dockerfile.applearm --platform linux/arm64 \
+    --target llama-server-cpu -t applearm-patchproof .
+
+docker run --rm --entrypoint sh --platform linux/arm64 applearm-patchproof -c '
+S=build/llama-server-cpu/_deps/llama_cpp-src
+grep -n "set_limit_image_tokens(256, 3328)" $S/tools/mtmd/clip.cpp                 # 002
+grep -n "resize_position_embeddings(GGML_SCALE_MODE_BICUBIC)" \
+    $S/tools/mtmd/models/nemotron-v2-vl.cpp                                        # 002
+grep -c "llama_ollama_compat" $S/src/llama-model-loader.cpp                        # 001
+grep -n "GGML_USE_METAL" $S/src/models/laguna.cpp                                  # 003
+'
+```
+
+Note the path is 10 directories deep — a `find -maxdepth 8` will miss it.
+
+Do **not** use the string `"<img>"` as a 002 marker. It occurs twice in `mtmd.cpp`
+(another projector uses it), so its presence proves nothing.
 
 ### Two things that do not transfer
 
