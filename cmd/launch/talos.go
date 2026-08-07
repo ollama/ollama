@@ -88,7 +88,7 @@ func (t *Talos) Run(model string, _ []LaunchModel, args []string) error {
 func (t *Talos) envVars(model string) []string {
 	env := []string{
 		"TALOS_MODEL_PROVIDER=openai-api",
-		"TALOS_BASE_URL_OPENAI_API=" + envconfig.Host().String() + "/v1",
+		"TALOS_BASE_URL_OPENAI_API=" + envconfig.ConnectableHost().String() + "/v1",
 	}
 
 	if model != "" {

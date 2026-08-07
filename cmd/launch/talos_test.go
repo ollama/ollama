@@ -153,4 +153,15 @@ func TestTalosEnvVars(t *testing.T) {
 			t.Errorf("TALOS_BASE_URL_OPENAI_API = %q, want custom host", got["TALOS_BASE_URL_OPENAI_API"])
 		}
 	})
+
+	t.Run("translates a wildcard bind address to a connectable one", func(t *testing.T) {
+		t.Setenv("OLLAMA_HOST", "http://0.0.0.0:11434")
+		got := envMap(tl.envVars("test"))
+		if strings.Contains(got["TALOS_BASE_URL_OPENAI_API"], "0.0.0.0") {
+			t.Errorf("TALOS_BASE_URL_OPENAI_API = %q, must not pass a wildcard bind address through", got["TALOS_BASE_URL_OPENAI_API"])
+		}
+		if !strings.Contains(got["TALOS_BASE_URL_OPENAI_API"], "127.0.0.1:11434") {
+			t.Errorf("TALOS_BASE_URL_OPENAI_API = %q, want loopback with the same port", got["TALOS_BASE_URL_OPENAI_API"])
+		}
+	})
 }
