@@ -21,6 +21,13 @@
 # A4B and 31B carry a ~550M vision encoder. These are different vision paths, so
 # a bbox result measured on one size does not transfer to another.
 #
+# POST-004 NOTE (ADR 0008): on a payload carrying llama/compat/004, min is a
+# no-op for gemma4 and the ceiling snaps to the ladder — pinning min==max no
+# longer changes anything, and a budget-matched CONTROL arm can no longer
+# reproduce stock behaviour (stock leaves under-budget images on natural grids;
+# 004 fills). Sweep cells remain valid as ladder cells; off-ladder cells are
+# unreachable by design.
+#
 # Each cell pins min == max == budget, which forces exactly that budget rather
 # than letting the projector pick within a range — that is what isolates budget
 # as the single variable. Budget flags are Runner options (SPEC B3), so every

@@ -1,5 +1,11 @@
 # Vision token budgets: measured cost, and the routing policy that follows
 
+> **2026-08-07, post-004:** every gemma4 number below was measured on the
+> pre-004 payload (natural grids, PAD_CEIL, min==max pinning with ceil
+> overshoot). On a payload carrying `llama/compat/004` the sizing is
+> budget-fill (ADR 0008) and these cells do not reproduce; see
+> [findings §10](gemma4-bbox-investigation-findings.md) for the patched matrix.
+
 MaxusAI-fork reference (fork-only; does not exist upstream). Written 2026-07-31 from
 end-to-end measurements on the gfx1151 host (Ryzen AI Max+ 395 / Radeon 8060S, ROCm),
 serving `0.32.1-gemma4budget-85ebcb79` and `0.32.5-gemma4budget-0d23f7a6`.

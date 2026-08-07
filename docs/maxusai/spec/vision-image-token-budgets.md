@@ -47,7 +47,7 @@ payload, not of the arch — recorded in the table rather than silently tolerate
 
 | `modelArch` | flags | effective budget | consumed by |
 |---|---|---|---|
-| `gemma4` | min/max from `api.Options`, defaults **70 / 560** ([ADR 0007](../adr/0007-gemma4-default-budget-560.md)) | 70 … 560 | gemma4v projector, `set_limit_image_tokens(40, 280)` with the ceiling raised |
+| `gemma4` | max from `api.Options`, defaults **70 / 1120** ([ADR 0008](../adr/0008-gemma4-budget-fill-restores-1120.md)); min is a no-op on the 004 payload | ladder rung ≤ max, grid fills it | gemma4v projector + `llama/compat/004` budget-fill (snap to ladder, scale up/down, `PAD_NONE`) |
 | `qwen2vl`, `qwen25vl`, `qwen3vl`, `qwen3vlmoe`, `qwen35`, `qwen35moe` | `--image-min-tokens 1024` | 1,024 … 4,096 | `PROJECTOR_TYPE_QWEN3VL`, `set_limit_image_tokens(8, 4096)` with the floor raised |
 | `nemotron_h_omni` | min/max from `api.Options`, defaults 256 / 3328 | 256 … 3,328 with compat/002; exactly 256, flags inert, without it | `PROJECTOR_TYPE_NEMOTRON_V2_VL` as patched (ADR 0001) |
 | `mistral3`, `glmocr`, `llama4`, `deepseekocr`, all others | none | projector default / structural | — |
@@ -67,20 +67,23 @@ continuous range:
 
 Consequences for this spec:
 
-- **B6 — The shipped gemma4 defaults MUST be ladder values.** 280 is llama.cpp's
-  default ceiling and 1120 is the documented maximum. The fork ships **70 / 560**
-  ([ADR 0007](../adr/0007-gemma4-default-budget-560.md)) — both rungs. Moving a
-  default to a non-rung requires superseding that ADR. Higher rungs preserve detail
-  for OCR; lower rungs suit classification and video.
-- **The ceiling is 560 rather than the vendor maximum as a mitigation.** llama.cpp
-  carries a vertical coordinate error that grows with patch rows; 560 keeps large
-  inputs on a 17-row grid where it is ~0.4%. This is not a claim that the model
-  reads 560 better — corrected for that error, 1120 localises best. Re-measure both
-  defaults when the error is fixed
-  ([findings](../gemma4-bbox-investigation-findings.md)).
-- **`gemma4ImageTokenBudget()` does not enforce the ladder.** It clamps `min` down
-  to `max` and otherwise passes any integer through. Off-ladder values remain
-  accepted for per-request tuning, and their behaviour is not vendor-documented.
+- **B6 — The shipped gemma4 defaults MUST be ladder values.** The fork ships
+  **70 / 1120** ([ADR 0008](../adr/0008-gemma4-budget-fill-restores-1120.md)) —
+  the documented floor and maximum. Moving a default to a non-rung requires
+  superseding that ADR. Higher rungs preserve detail for OCR; lower rungs suit
+  classification and video, and are selectable per request.
+- **B7 — Delivered grids MUST be ladder-reachable.** The model only grounds
+  `box_2d` accurately on grids satisfying `c·r ≤ B < (c+1)·(r+1)` for a supported
+  budget B ([findings §9](../gemma4-bbox-investigation-findings.md)). The
+  `llama/compat/004` budget-fill patch enforces this: the requested ceiling snaps
+  down to the ladder (sub-70 clamps up), the image scales — up or down — to fill
+  it, no letterbox. ADR 0007's interim 560 ceiling (a mitigation for the
+  off-ladder defect, superseded by ADR 0008) applied only to unpatched payloads.
+- **Off-ladder request values are accepted but snapped.** `gemma4ImageTokenBudget()`
+  passes integers through; the payload snaps the ceiling (900 → 560) and ignores
+  `min`. `MaxImageTokens`/`ImageTokensForSize` mirror the snap-and-fill so
+  scheduling charges what llama-server delivers — including the upscale of small
+  images to the budget (a 640×480 costs ~1064 tokens at ceiling 1120, not 132).
 
 **Model sizes are not interchangeable for vision results.** Per the same card:
 

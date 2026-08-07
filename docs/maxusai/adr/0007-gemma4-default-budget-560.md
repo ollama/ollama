@@ -1,6 +1,8 @@
 # ADR 0007: gemma4's default vision budget drops to 70…560, as a mitigation for a coordinate bug
 
-- **Status:** accepted 2026-08-07
+- **Status:** superseded by [ADR 0008](0008-gemma4-budget-fill-restores-1120.md)
+  (2026-08-07, same day: the 004 budget-fill patch fixed the defect this ADR
+  mitigated; defaults returned to 70/1120). Accepted 2026-08-07.
 - **Date:** 2026-08-07
 - **Deciders:** MaxusAI fork maintainers
 - **Supersedes:** the *default values* set under
