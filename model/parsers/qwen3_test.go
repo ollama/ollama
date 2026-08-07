@@ -231,6 +231,58 @@ func TestQwen35ParserRespectsNoThink(t *testing.T) {
 	}
 }
 
+func TestQwen35InstructParserDefaultsToContent(t *testing.T) {
+	parser := ParserForName("qwen3.5-instruct")
+	if parser == nil {
+		t.Fatal("expected qwen3.5-instruct parser")
+	}
+	if parser.HasThinkingSupport() {
+		t.Fatal("expected instruct parser not to advertise thinking support")
+	}
+	if !parser.HasToolSupport() {
+		t.Fatal("expected instruct parser to keep tool support")
+	}
+
+	parser.Init(nil, nil, nil)
+	content, thinking, calls, err := parser.Add("Direct answer", true)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	if thinking != "" {
+		t.Fatalf("expected no thinking, got %q", thinking)
+	}
+	if content != "Direct answer" {
+		t.Fatalf("expected content %q, got %q", "Direct answer", content)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no tool calls, got %d", len(calls))
+	}
+}
+
+func TestQwen35DefaultParserDefaultsToThinking(t *testing.T) {
+	parser := ParserForName("qwen3.5")
+	if parser == nil {
+		t.Fatal("expected qwen3.5 parser")
+	}
+	if !parser.HasThinkingSupport() {
+		t.Fatal("expected default parser to advertise thinking support")
+	}
+
+	parser.Init(nil, nil, nil)
+	content, thinking, _, err := parser.Add("Plan first.</think>Answer.", true)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	if thinking != "Plan first." {
+		t.Fatalf("expected thinking %q, got %q", "Plan first.", thinking)
+	}
+	if content != "Answer." {
+		t.Fatalf("expected content %q, got %q", "Answer.", content)
+	}
+}
+
 func TestQwen3ParserToolCallIndexing(t *testing.T) {
 	parser := &Qwen3Parser{hasThinkingSupport: false, defaultThinking: false}
 	parser.Init(nil, nil, &api.ThinkValue{Value: false})
