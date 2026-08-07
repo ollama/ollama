@@ -169,8 +169,20 @@ llama.cpp default floor and small images stay cheap (313 rather than 1049 tokens
 CUDA) is unaffected by clause 3 and may track a different version; note that #17475 was
 reported on CUDA, so clauses 1–2 still apply there.
 
+## The deployable line while this gate holds
+
+`main` tracks llama.cpp **b10091** — the payload this gate blocks. The AMD/gfx1151 host is
+served from **`release/0.32.1-dynres`**, pinned to **b9888** and predating `--direct-io`.
+
+That lineage is permanent for as long as the gate holds, and it is **never merged into
+`main`** — see [ADR 0006](adr/0006-release-lineage-is-never-merged-into-main.md). Fixes reach
+AMD by cherry-pick, adapted to b9888; they will not arrive by merging. When this gate lifts,
+the lineage is **retired and archived**, not merged.
+
 ## See also
 
+- [ADR 0006](adr/0006-release-lineage-is-never-merged-into-main.md) — why the release lineage
+  is never merged into `main`, and how changes reach it
 - [gemma4-budget-image.md](gemma4-budget-image.md) — build/verify/deploy runbook
 - [vision-token-budget-measurements.md](vision-token-budget-measurements.md) — measured token
   cost, including the 313 → 1049 delta this gate defers
