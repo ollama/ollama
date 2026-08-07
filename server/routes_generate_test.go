@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -55,14 +56,15 @@ type mockRunner struct {
 	// CompletionRequest is only valid until the next call to Completion
 	llm.CompletionRequest
 	llm.CompletionResponse
-	CompletionFn  func(context.Context, llm.CompletionRequest, func(llm.CompletionResponse)) error
-	ChatRequest   llm.ChatRequest
-	ChatResponse  llm.ChatResponse
-	ChatFn        func(context.Context, llm.ChatRequest, func(llm.ChatResponse)) error
-	Template      string
-	TemplateFn    func(context.Context, llm.ChatRequest) (string, error)
-	DetokenizeFn  func(context.Context, []int) (string, error)
-	contextLength int
+	CompletionFn   func(context.Context, llm.CompletionRequest, func(llm.CompletionResponse)) error
+	ChatRequest    llm.ChatRequest
+	ChatResponse   llm.ChatResponse
+	ChatFn         func(context.Context, llm.ChatRequest, func(llm.ChatResponse)) error
+	Template       string
+	TemplateFn     func(context.Context, llm.ChatRequest) (string, error)
+	DetokenizeFn   func(context.Context, []int) (string, error)
+	EmbeddingInput string
+	contextLength  int
 }
 
 func (m *mockRunner) Completion(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
@@ -104,6 +106,11 @@ func (mockRunner) Tokenize(_ context.Context, s string) (tokens []int, err error
 	}
 
 	return
+}
+
+func (m *mockRunner) Embedding(_ context.Context, s string) ([]float32, int, error) {
+	m.EmbeddingInput = s
+	return []float32{0.1, 0.2}, len(strings.Fields(s)), nil
 }
 
 func (mockRunner) Ping(_ context.Context) error { return nil }
@@ -3215,5 +3222,47 @@ func TestImageGenerateUnsupported(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "image generation models are not currently supported") {
 		t.Fatalf("expected unsupported error in body, got %q", w.Body.String())
+	}
+}
+
+func TestEmbedHandlerWarnsOnTruncation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name     string
+		input    string
+		truncate *bool
+		wantWarn bool
+		wantCode int
+	}{
+		{"input over context is truncated", strings.Repeat("word ", 64), nil, true, http.StatusOK},
+		{"input within context", "word word", nil, false, http.StatusOK},
+		{"truncate disabled rejects instead", strings.Repeat("word ", 64), new(bool), false, http.StatusBadRequest},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := mockRunner{contextLength: 8}
+			s := newServerWithMockRunner(t, &mock)
+			createMinimalGGUFModel(t, s, "embed-truncate", ggml.KV{}, "", nil)
+
+			var buf bytes.Buffer
+			restore := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+			w := createRequest(t, s.EmbedHandler, api.EmbedRequest{
+				Model:    "embed-truncate",
+				Input:    tt.input,
+				Truncate: tt.truncate,
+				Options:  map[string]any{"num_ctx": 8},
+			})
+			slog.SetDefault(restore)
+
+			if w.Code != tt.wantCode {
+				t.Fatalf("status = %d, want %d: %s", w.Code, tt.wantCode, w.Body.String())
+			}
+			if warned := strings.Contains(buf.String(), "truncating embedding input"); warned != tt.wantWarn {
+				t.Errorf("warned = %v, want %v (log: %q)", warned, tt.wantWarn, buf.String())
+			}
+		})
 	}
 }
