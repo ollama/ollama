@@ -94,6 +94,10 @@ func init() {
 
 	launch.DefaultConfirmPrompt = tui.RunConfirmWithOptions
 
+	launch.DefaultCloudSuggestPull = func(ctx context.Context, client *api.Client, model string, retryCommand func(string) string) (string, error) {
+		return pullWithCloudSuggestion(ctx, client, model, false, retryCommand)
+	}
+
 	launch.DefaultSpinner = tui.RunSpinner
 }
 
@@ -724,7 +728,7 @@ func showOrPullModel(cmd *cobra.Command, client *api.Client, name string, insecu
 		return nil, name, err
 	}
 
-	resolved, err := pullWithCloudSuggestion(cmd.Context(), client, name, insecure, verb)
+	resolved, err := pullWithCloudSuggestion(cmd.Context(), client, name, insecure, cloudSuggestionRetryCommand(verb))
 	if err != nil {
 		return nil, name, err
 	}
@@ -1523,7 +1527,7 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	_, err = pullWithCloudSuggestion(cmd.Context(), client, args[0], insecure, "pull")
+	_, err = pullWithCloudSuggestion(cmd.Context(), client, args[0], insecure, cloudSuggestionRetryCommand("pull"))
 	return err
 }
 
