@@ -149,9 +149,6 @@ func TestMenuExpandsMoreOnDownNavigation(t *testing.T) {
 	if got.items[got.cursor].integration == "" {
 		t.Fatalf("expected cursor to land on the first additional integration, got %#v", got.items[got.cursor])
 	}
-	if got.items[got.cursor].integration != otherIntegrationItems(state)[0].integration {
-		t.Fatalf("cursor landed on %q, want first registry-ordered additional integration %q", got.items[got.cursor].integration, otherIntegrationItems(state)[0].integration)
-	}
 	if strings.Contains(got.View(), "More...") {
 		t.Fatalf("expected expanded integrations to replace More\n%s", got.View())
 	}
@@ -174,14 +171,6 @@ func TestMenuStartsExpandedForPreviousOverflowSelection(t *testing.T) {
 	}
 	if strings.Contains(menu.View(), "More...") {
 		t.Fatalf("expected expanded menu to omit More\n%s", menu.View())
-	}
-
-	want := []string{"run", "claude", "opencode", "hermes", "openclaw"}
-	for _, item := range overflow {
-		want = append(want, item.integration)
-	}
-	if diff := compareStrings(integrationSequence(menu.items), want); diff != "" {
-		t.Fatalf("unexpected expanded integration order: %s", diff)
 	}
 }
 

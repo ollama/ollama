@@ -245,7 +245,7 @@ func (m model) selectableItem(item menuItem) bool {
 	if item.isRunModel {
 		return true
 	}
-	if item.integration == "" || item.isOthers {
+	if item.integration == "" {
 		return false
 	}
 	state, ok := m.state.Integrations[item.integration]
@@ -253,7 +253,7 @@ func (m model) selectableItem(item menuItem) bool {
 }
 
 func (m model) changeableItem(item menuItem) bool {
-	if item.integration == "" || item.isOthers {
+	if item.integration == "" {
 		return false
 	}
 	state, ok := m.state.Integrations[item.integration]
@@ -298,9 +298,7 @@ func (m model) renderMenuItem(index int, item menuItem) string {
 			style = menuSelectedItemStyle
 		}
 	} else if item.isOthers {
-		if m.cursor == index {
-			style = menuSelectedItemStyle
-		}
+		// More immediately expands when reached, so it always uses the default style.
 	} else {
 		integrationState := m.state.Integrations[item.integration]
 		if !integrationState.Selectable {
