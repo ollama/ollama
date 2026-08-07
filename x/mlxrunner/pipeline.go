@@ -31,15 +31,27 @@ func (r *Runner) Prepare(request *Request) error {
 		return errors.New("model not loaded")
 	}
 
+	var tokens []int32
 	if len(request.Media) > 0 {
-		if vm, ok := r.Model.(base.VisionModel); !ok || !vm.SupportsVision() {
+		vm, ok := r.Model.(base.VisionModel)
+		if !ok || !vm.SupportsVision() {
 			// A missing media path must be an explicit error, never a silent
 			// drop that lets the model answer from the text alone.
 			return errors.New("this model does not support image input on the MLX runner")
 		}
+		exp, err := expandMedia(request.Prompt, request.Media, vm, request.Options,
+			func(s string, bos bool) []int32 { return r.Tokenizer.Encode(s, bos) },
+			r.Tokenizer.AddBOS())
+		if err != nil {
+			return err
+		}
+		tokens = exp.Tokens
+		request.VisionInputs = exp.Inputs
+		request.VisionSpans = exp.Spans
+		request.CacheSalts = exp.Salts
+	} else {
+		tokens = r.Tokenizer.Encode(request.Prompt, r.Tokenizer.AddBOS())
 	}
-
-	tokens := r.Tokenizer.Encode(request.Prompt, r.Tokenizer.AddBOS())
 	if len(tokens) == 0 {
 		return errors.New("empty prompt")
 	}
@@ -80,7 +92,14 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 
 	inputs := request.Tokens
 
-	session := r.cache.begin(inputs)
+	// Media prompts restore all-or-nothing: a partial match inside an image
+	// block would resume prefill mid-block, and the bidirectional masks only
+	// compose from position zero.
+	restoreFloor := 0
+	if n := len(request.VisionSpans); n > 0 {
+		restoreFloor = int(request.VisionSpans[n-1][1])
+	}
+	session := r.cache.begin(inputs, request.CacheSalts, restoreFloor)
 	defer session.close()
 	caches := session.caches
 
@@ -89,7 +108,26 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	spec := r.spec.open(request, caches)
 	defer spec.close()
 
-	seed, position, promptEval, err := r.prefill(ctx, session, spec)
+	// Encode media and build the merged prompt embeddings before prefill
+	// (all on the MLX thread). The tower's intermediates are swept before the
+	// prompt forward starts.
+	var vision *visionPrefill
+	if len(request.VisionInputs) > 0 {
+		vm := r.Model.(base.VisionModel)
+		feats := make([]*mlx.Array, len(request.VisionInputs))
+		for i, vi := range request.VisionInputs {
+			feats[i] = vm.EncodeVision(vi)
+		}
+		ids := mlx.FromValues(inputs, 1, len(inputs))
+		embeds := vm.MergedEmbeddings(ids, feats, request.VisionSpans)
+		mlx.Pin(embeds)
+		defer mlx.Unpin(embeds)
+		mlx.Sweep()
+		mlx.Eval(embeds)
+		vision = &visionPrefill{embeds: embeds, spans: request.VisionSpans}
+	}
+
+	seed, position, promptEval, err := r.prefill(ctx, session, spec, vision)
 	if err != nil {
 		return err
 	}
@@ -107,15 +145,28 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	return r.decode(ctx, request, session, d, promptEval)
 }
 
+// visionPrefill carries a media prompt's merged embeddings and its
+// bidirectional soft-token spans into prefill.
+type visionPrefill struct {
+	embeds *mlx.Array // [1, len(inputs), hidden]
+	spans  [][2]int32
+}
+
 // prefill evaluates the prompt in chunks, leaving one token for decode to
 // seed from, and schedules the prompt's periodic snapshots. It returns the
 // seed token, the resume position, and the prompt-evaluation duration.
-func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *speculationSession) (*mlx.Array, int, time.Duration, error) {
+func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *speculationSession, vision *visionPrefill) (*mlx.Array, int, time.Duration, error) {
 	start := time.Now()
 	inputs := session.inputs
 	tokens := session.remaining
 	caches := session.caches
 	prefillChunk := prefillChunkSize()
+	if vision != nil {
+		// Bidirectional image blocks must never straddle a chunk boundary;
+		// media prompts prefill in one pass, mirroring the reference's
+		// no_chunked_prefill.
+		prefillChunk = len(inputs)
+	}
 
 	// Request periodic snapshots during prefill and near the end of the
 	// prompt so that long prompts can be partially restored and
@@ -154,11 +205,21 @@ func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *specu
 		n := min(prefillChunk, total-processed-1)
 
 		chunkIDs := mlx.FromValues(tokens[processed:processed+n], 1, n)
-		hidden := r.Model.Forward(&batch.Batch{
+		b := &batch.Batch{
 			InputIDs:     chunkIDs,
 			SeqOffsets:   []int32{int32(position)},
 			SeqQueryLens: []int32{int32(n)},
-		}, caches)
+		}
+		if vision != nil {
+			b.InputsEmbeds = vision.embeds.Slice(mlx.Slice(), mlx.Slice(position, position+n), mlx.Slice())
+			// Only chunks whose queries overlap an image block need the
+			// bidirectional overlay; the restore floor guarantees those
+			// start at position zero with empty caches.
+			if last := vision.spans[len(vision.spans)-1][1]; int32(position) < last {
+				b.BidiSpans = vision.spans
+			}
+		}
+		hidden := r.Model.Forward(b, caches)
 		spec.committed(chunkIDs, hidden, position)
 		mlx.Sweep()
 		materializeCaches()
