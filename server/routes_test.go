@@ -27,6 +27,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/model/parsers"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
@@ -807,6 +808,166 @@ func TestShow(t *testing.T) {
 	}
 }
 
+// showWithOptions creates a model with the given Modelfile parameters and asks
+// /api/show about it, optionally overriding options the way a caller does when
+// it wants the budget for the request it is about to send.
+func showWithOptions(t *testing.T, s *Server, digest, name string, parameters, options map[string]any) api.ShowResponse {
+	t.Helper()
+	return showWithThink(t, s, digest, name, parameters, options, nil)
+}
+
+// showWithThink additionally asks about the think value the caller intends to
+// send, which is what a client setting the level itself has to ask about.
+func showWithThink(t *testing.T, s *Server, digest, name string, parameters, options map[string]any, think *api.ThinkValue) api.ShowResponse {
+	t.Helper()
+	createRequest(t, s.CreateHandler, api.CreateRequest{
+		Name:       name,
+		Files:      map[string]string{"model.gguf": digest},
+		Parameters: parameters,
+	})
+
+	w := createRequest(t, s.ShowHandler, api.ShowRequest{Name: name, Options: options, Think: think})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d", w.Code)
+	}
+
+	var resp api.ShowResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+func TestShowThinkBudget(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	var s Server
+
+	_, digest := createBinFile(t, ggml.KV{"general.architecture": "test"}, nil)
+
+	show := func(t *testing.T, name string, parameters map[string]any) api.ShowResponse {
+		t.Helper()
+		return showWithOptions(t, &s, digest, name, parameters, nil)
+	}
+
+	t.Run("answers for a think level the caller intends to send", func(t *testing.T) {
+		// The common case: the client sets the level, and the model carries no
+		// think_budget parameter at all. Without the think value there is
+		// nothing here to resolve and the caller is back to guessing.
+		resp := showWithThink(t, &s, digest, "show-think-request-level",
+			map[string]any{"num_ctx": 32768}, map[string]any{"num_predict": 8000},
+			&api.ThinkValue{Value: "medium"})
+
+		if resp.ThinkBudget == nil || resp.ThinkBudget.Value != "medium" {
+			t.Fatalf("expected think budget %q, got %#v", "medium", resp.ThinkBudget)
+		}
+		if resp.ThinkBudgetTokens != 2000 {
+			t.Errorf("expected think budget tokens 2000, got %d", resp.ThinkBudgetTokens)
+		}
+	})
+
+	t.Run("lets the request's think value win over the model parameter", func(t *testing.T) {
+		// Same precedence as a completion: a think value carrying its own
+		// budget beats the model's. An answer that disagreed with the
+		// completion path would be worse than no answer.
+		resp := showWithThink(t, &s, digest, "show-think-precedence",
+			map[string]any{"think_budget": "minimal", "num_ctx": 32768}, nil,
+			&api.ThinkValue{Value: "high"})
+
+		if resp.ThinkBudget == nil || resp.ThinkBudget.Value != "high" {
+			t.Fatalf("expected think budget %q, got %#v", "high", resp.ThinkBudget)
+		}
+		if resp.ThinkBudgetTokens != 16384 {
+			t.Errorf("expected think budget tokens 16384, got %d", resp.ThinkBudgetTokens)
+		}
+	})
+
+	t.Run("falls back to the model parameter when think carries no budget", func(t *testing.T) {
+		// `think: true` means unbounded, not "no budget", so the model's own
+		// parameter is still what applies.
+		resp := showWithThink(t, &s, digest, "show-think-unbounded",
+			map[string]any{"think_budget": "medium", "num_ctx": 32768}, nil,
+			&api.ThinkValue{Value: true})
+
+		if resp.ThinkBudget == nil || resp.ThinkBudget.Value != "medium" {
+			t.Fatalf("expected think budget %q, got %#v", "medium", resp.ThinkBudget)
+		}
+		if resp.ThinkBudgetTokens != 8192 {
+			t.Errorf("expected think budget tokens 8192, got %d", resp.ThinkBudgetTokens)
+		}
+	})
+
+	t.Run("resolves against the options the caller intends to send", func(t *testing.T) {
+		// A client that overrides num_predict gets the budget for its own
+		// request, so it never has to re-derive one from a fraction table it
+		// would have to keep in step with the server.
+		resp := showWithOptions(t, &s, digest, "show-think-request-options",
+			map[string]any{"think_budget": "medium", "num_ctx": 32768},
+			map[string]any{"num_predict": 8000})
+
+		if resp.ThinkBudgetTokens != 2000 {
+			t.Errorf("expected think budget tokens 2000, got %d", resp.ThinkBudgetTokens)
+		}
+	})
+
+	t.Run("resolves a level against the model's own window", func(t *testing.T) {
+		// The parameter already appears in Parameters as a line of text; the
+		// point of the field is that the level alone says nothing about the
+		// tokens it stands for.
+		resp := show(t, "show-think-level", map[string]any{
+			"think_budget": "medium",
+			"num_ctx":      32768,
+		})
+
+		if resp.ThinkBudget == nil || resp.ThinkBudget.Value != "medium" {
+			t.Fatalf("expected think budget %q, got %#v", "medium", resp.ThinkBudget)
+		}
+		if resp.ThinkBudgetTokens != 8192 {
+			t.Errorf("expected think budget tokens 8192, got %d", resp.ThinkBudgetTokens)
+		}
+	})
+
+	t.Run("divides num_predict when the model caps the response", func(t *testing.T) {
+		resp := show(t, "show-think-predict", map[string]any{
+			"think_budget": "medium",
+			"num_ctx":      32768,
+			"num_predict":  8000,
+		})
+
+		if resp.ThinkBudgetTokens != 2000 {
+			t.Errorf("expected think budget tokens 2000, got %d", resp.ThinkBudgetTokens)
+		}
+	})
+
+	t.Run("reports a fixed count as both the value and the count", func(t *testing.T) {
+		resp := show(t, "show-think-fixed", map[string]any{
+			"think_budget": 4096,
+			"num_ctx":      32768,
+		})
+
+		if resp.ThinkBudgetTokens != 4096 {
+			t.Errorf("expected think budget tokens 4096, got %d", resp.ThinkBudgetTokens)
+		}
+		if resp.ThinkBudget == nil {
+			t.Fatalf("expected a think budget value, got nil")
+		}
+		if got := fmt.Sprintf("%v", resp.ThinkBudget.Value); got != "4096" {
+			t.Errorf("expected think budget %q, got %q", "4096", got)
+		}
+	})
+
+	t.Run("says nothing when the model carries no budget", func(t *testing.T) {
+		resp := show(t, "show-think-none", map[string]any{"num_ctx": 32768})
+
+		if resp.ThinkBudget != nil {
+			t.Errorf("expected no think budget, got %#v", resp.ThinkBudget)
+		}
+		if resp.ThinkBudgetTokens != 0 {
+			t.Errorf("expected no think budget tokens, got %d", resp.ThinkBudgetTokens)
+		}
+	})
+}
+
 func TestShowTemplateUsesSelectedRuntimeTemplate(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 	t.Setenv("OLLAMA_GO_TEMPLATE", "")
@@ -1194,5 +1355,207 @@ func TestWaitForStream(t *testing.T) {
 				t.Errorf("body mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestThinkBudgetForCompletion(t *testing.T) {
+	thinkingParser := parsers.ParserForName("gemma4")
+	if thinkingParser == nil || !thinkingParser.HasThinkingSupport() {
+		t.Fatalf("expected a gemma4 parser with thinking support, got %#v", thinkingParser)
+	}
+
+	tests := []struct {
+		name          string
+		parser        parsers.Parser
+		templateStart string
+		templateEnd   string
+		think         *api.ThinkValue
+		opts          *api.Options
+		wantBudget    int
+		wantTags      bool
+	}{
+		{
+			// models without a built-in parser split thinking with tags
+			// inferred from the Go template, and must still be bounded
+			name:          "tags inferred from the template",
+			templateStart: "<think>",
+			templateEnd:   "</think>",
+			think:         &api.ThinkValue{Value: 8192},
+			opts:          &api.Options{Runner: api.Runner{NumCtx: 32768}},
+			wantBudget:    8192,
+			wantTags:      true,
+		},
+		{
+			name:  "no tags anywhere",
+			think: &api.ThinkValue{Value: 8192},
+			opts:  &api.Options{Runner: api.Runner{NumCtx: 32768}},
+		},
+		{
+			// a parser that reports its own delimiters wins
+			name:          "parser tags take precedence over the template",
+			parser:        thinkingParser,
+			templateStart: "<think>",
+			templateEnd:   "</think>",
+			think:         &api.ThinkValue{Value: 8192},
+			opts:          &api.Options{Runner: api.Runner{NumCtx: 32768}},
+			wantBudget:    8192,
+			wantTags:      true,
+		},
+		{
+			name:       "effort resolves against the context length",
+			parser:     thinkingParser,
+			think:      &api.ThinkValue{Value: "medium"},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}},
+			wantBudget: 8192,
+			wantTags:   true,
+		},
+		{
+			// num_predict caps the response, so a level takes its share of
+			// that. Against the context length medium would be 32000 here,
+			// exactly the response cap, and the budget would never fire
+			name:       "effort resolves against num_predict when the request sets one",
+			parser:     thinkingParser,
+			think:      &api.ThinkValue{Value: "medium"},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 128000}, NumPredict: 32000},
+			wantBudget: 8000,
+			wantTags:   true,
+		},
+		{
+			name:       "effort resolves against the context when num_predict is past it",
+			parser:     thinkingParser,
+			think:      &api.ThinkValue{Value: "medium"},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, NumPredict: 128000},
+			wantBudget: 8192,
+			wantTags:   true,
+		},
+		{
+			// -1 and 0 both mean "no cap on the response"
+			name:       "effort resolves against the context when num_predict is unlimited",
+			parser:     thinkingParser,
+			think:      &api.ThinkValue{Value: "medium"},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, NumPredict: -1},
+			wantBudget: 8192,
+			wantTags:   true,
+		},
+		{
+			name:       "the model think_budget level resolves against num_predict too",
+			parser:     thinkingParser,
+			think:      &api.ThinkValue{Value: true},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 128000}, NumPredict: 32000, ThinkBudget: &api.ThinkValue{Value: "medium"}},
+			wantBudget: 8000,
+			wantTags:   true,
+		},
+		{
+			// an explicit token count is what the caller asked for, not a share
+			name:       "an explicit budget ignores num_predict",
+			parser:     thinkingParser,
+			think:      &api.ThinkValue{Value: 16000},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 128000}, NumPredict: 32000},
+			wantBudget: 16000,
+			wantTags:   true,
+		},
+		{
+			name:       "explicit budget is used verbatim",
+			parser:     thinkingParser,
+			think:      &api.ThinkValue{Value: 8192},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}},
+			wantBudget: 8192,
+			wantTags:   true,
+		},
+		{
+			name:   "think true stays unrestricted",
+			parser: thinkingParser,
+			think:  &api.ThinkValue{Value: true},
+			opts:   &api.Options{Runner: api.Runner{NumCtx: 32768}},
+		},
+		{
+			name:   "no parser means no tags to bound",
+			parser: nil,
+			think:  &api.ThinkValue{Value: "medium"},
+			opts:   &api.Options{Runner: api.Runner{NumCtx: 32768}},
+		},
+		{
+			name:   "no options",
+			parser: thinkingParser,
+			think:  &api.ThinkValue{Value: "medium"},
+		},
+		{
+			name:       "model think_budget parameter applies when the request has no budget",
+			parser:     thinkingParser,
+			think:      &api.ThinkValue{Value: true},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkValue{Value: 4096}},
+			wantBudget: 4096,
+			wantTags:   true,
+		},
+		{
+			name:       "explicit request budget overrides the model parameter",
+			parser:     thinkingParser,
+			think:      &api.ThinkValue{Value: 512},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkValue{Value: 4096}},
+			wantBudget: 512,
+			wantTags:   true,
+		},
+		{
+			name:       "request effort overrides the model parameter",
+			parser:     thinkingParser,
+			think:      &api.ThinkValue{Value: "low"},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkValue{Value: 999}},
+			wantBudget: 4096,
+			wantTags:   true,
+		},
+		{
+			name:       "model think_budget parameter applies without a think value",
+			parser:     thinkingParser,
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkValue{Value: 4096}},
+			wantBudget: 4096,
+			wantTags:   true,
+		},
+		{
+			name:       "model think_budget parameter accepts an effort level",
+			parser:     thinkingParser,
+			think:      &api.ThinkValue{Value: true},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkValue{Value: "low"}},
+			wantBudget: 4096,
+			wantTags:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			budget, _, start, end := thinkBudgetForCompletion(tt.parser, tt.templateStart, tt.templateEnd, tt.think, tt.opts)
+			if budget != tt.wantBudget {
+				t.Errorf("budget = %d, want %d", budget, tt.wantBudget)
+			}
+			if hasTags := start != "" && end != ""; hasTags != tt.wantTags {
+				t.Errorf("tags = (%q, %q), wantTags %v", start, end, tt.wantTags)
+			}
+		})
+	}
+}
+
+func TestThinkBudgetForCompletionHarmony(t *testing.T) {
+	// gpt-oss reasons in the analysis channel, so a budget has to reach it too
+	harmonyParser := parsers.ParserForName("harmony")
+	if harmonyParser == nil || !harmonyParser.HasThinkingSupport() {
+		t.Fatalf("expected a harmony parser with thinking support, got %#v", harmonyParser)
+	}
+
+	opts := &api.Options{Runner: api.Runner{NumCtx: 32768}}
+
+	budget, _, start, end := thinkBudgetForCompletion(harmonyParser, "", "", &api.ThinkValue{Value: "high"}, opts)
+	if budget != 16384 {
+		t.Errorf("budget = %d, want 16384", budget)
+	}
+	// <|channel|> alone would also match the final channel, and forcing the
+	// end tag there would truncate the answer instead of the reasoning
+	if start != "<|channel|>analysis<|message|>" {
+		t.Errorf("start tag = %q, want the analysis channel header", start)
+	}
+	if end != "<|end|>" {
+		t.Errorf("end tag = %q, want %q", end, "<|end|>")
+	}
+
+	if budget, _, _, _ := thinkBudgetForCompletion(harmonyParser, "", "", &api.ThinkValue{Value: true}, opts); budget != 0 {
+		t.Errorf("think true budget = %d, want 0 (unrestricted)", budget)
 	}
 }

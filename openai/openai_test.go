@@ -70,6 +70,7 @@ func TestFromChatRequest_ReasoningEffort(t *testing.T) {
 		{name: "medium", effort: effort("medium"), want: "medium"},
 		{name: "low", effort: effort("low"), want: "low"},
 		{name: "max", effort: effort("max"), want: "max"},
+		{name: "minimal", effort: effort("minimal"), want: "minimal"},
 		{name: "none disables", effort: effort("none"), want: false},
 		{name: "invalid", effort: effort("extreme"), wantErr: true},
 	}

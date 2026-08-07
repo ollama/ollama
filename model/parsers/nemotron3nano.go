@@ -32,6 +32,12 @@ type Nemotron3NanoParser struct {
 func (p *Nemotron3NanoParser) HasToolSupport() bool     { return true }
 func (p *Nemotron3NanoParser) HasThinkingSupport() bool { return true }
 
+// ThinkingTags reports the delimiters of this parser's thinking block so a
+// thinking-token budget can force the block closed.
+func (p *Nemotron3NanoParser) ThinkingTags() (string, string) {
+	return nemotronThinkOpen, nemotronThinkClose
+}
+
 func (p *Nemotron3NanoParser) PreservedTokens() []string {
 	return []string{
 		nemotronThinkOpen,
