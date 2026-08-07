@@ -29,9 +29,13 @@ func newMTPDrafter(s *speculation) *mtpDrafter {
 	return &mtpDrafter{spec: s}
 }
 
+// draftLimit reports no bound; the head makes one call per draft token, so
+// any depth is reachable.
+func (d *mtpDrafter) draftLimit() int { return 0 }
+
 // open returns the drafting session for one request, its pairing frontier
 // synced to the draft caches' restored offset.
-func (d *mtpDrafter) open() *mtpDraftSession {
+func (d *mtpDrafter) open() draftSession {
 	s := &mtpDraftSession{drafter: d}
 	if kv := d.spec.draftKV; len(kv) > 0 {
 		// A restored prefix arrives with the draft caches already written;
@@ -63,11 +67,11 @@ type mtpDraftSession struct {
 	pendingHiddens       []*mlx.Array
 	pendingCount         int
 
-	// heldHidden is the frontier row's pre-unembed hidden and heldProjected
+	// heldHidden is the frontier row's pre-unembed hidden and heldAuxHidden
 	// its fusion hidden, carried from the last flush so the first proposal
 	// reuses them without a head call.
 	heldHidden    *mlx.Array
-	heldProjected *mlx.Array
+	heldAuxHidden *mlx.Array
 }
 
 func (d *mtpDraftSession) committed(tokens, hiddens *mlx.Array, position int) {
@@ -135,7 +139,7 @@ func (d *mtpDraftSession) queueCacheWrites(tokens, hiddens *mlx.Array) {
 
 // flush writes the pending pairs to the draft caches in one head forward,
 // dropping speculative entries past the committed range first and holding
-// the last row's logits and projected hidden for the next proposal chain.
+// the last row's logits and aux hidden for the next proposal chain.
 func (d *mtpDraftSession) flush() {
 	if len(d.pendingTokens) == 0 {
 		return
@@ -151,13 +155,13 @@ func (d *mtpDraftSession) flush() {
 
 	ids := mlx.Concatenate(d.pendingTokens, 1)
 	hiddens := mlx.Concatenate(d.pendingHiddens, 1)
-	hidden, projected := spec.draft.Draft(&batch.Batch{
+	hidden, auxHidden := spec.draft.Forward(&batch.Batch{
 		InputIDs:     ids,
 		SeqOffsets:   []int32{int32(d.committedDraftOffset)},
 		SeqQueryLens: []int32{int32(ids.Dim(1))},
 		Hidden:       hiddens,
-	}, spec.caches)
-	d.setHeld(lastHiddenRow(hidden), lastHiddenRow(projected))
+	}, spec.targets, spec.draftKV)
+	d.setHeld(lastHiddenRow(hidden), lastHiddenRow(auxHidden))
 	d.committedDraftOffset += ids.Dim(1)
 
 	// Force the draft writes: a session that never drafts would otherwise
@@ -181,10 +185,10 @@ func (d *mtpDraftSession) setFrontierHidden(h *mlx.Array) {
 }
 
 // setHeld replaces the held flush outputs, pinned until the next flush or close.
-func (d *mtpDraftSession) setHeld(hidden, projected *mlx.Array) {
-	mlx.Pin(hidden, projected)
-	mlx.Unpin(d.heldHidden, d.heldProjected)
-	d.heldHidden, d.heldProjected = hidden, projected
+func (d *mtpDraftSession) setHeld(hidden, auxHidden *mlx.Array) {
+	mlx.Pin(hidden, auxHidden)
+	mlx.Unpin(d.heldHidden, d.heldAuxHidden)
+	d.heldHidden, d.heldAuxHidden = hidden, auxHidden
 }
 
 // propose drafts a token chain after the not-yet-validated current token.
@@ -211,11 +215,11 @@ func (d *mtpDraftSession) propose(current *mlx.Array, maxTokens int) *draftCandi
 	var prefix *mlx.Array
 
 	for i := range maxTokens {
-		var hidden, projected *mlx.Array
+		var hidden, auxHidden *mlx.Array
 		if i == 0 && len(spec.draftKV) > 0 {
 			// The settle flush already produced the frontier row; reuse it
 			// instead of re-running the head.
-			hidden, projected = d.heldHidden, d.heldProjected
+			hidden, auxHidden = d.heldHidden, d.heldAuxHidden
 		} else {
 			// A head with draft caches writes each draft token to the next
 			// draft-cache slot, advancing one per step from the last committed
@@ -226,16 +230,16 @@ func (d *mtpDraftSession) propose(current *mlx.Array, maxTokens int) *draftCandi
 			if len(spec.draftKV) > 0 {
 				pos = d.frontier - 1 + i
 			}
-			hidden, projected = spec.draft.Draft(&batch.Batch{
+			hidden, auxHidden = spec.draft.Forward(&batch.Batch{
 				InputIDs:     lastToken,
 				SeqOffsets:   []int32{int32(pos)},
 				SeqQueryLens: []int32{1},
 				Hidden:       lastHidden,
-			}, spec.caches)
+			}, spec.targets, spec.draftKV)
 		}
 		// Unembed only the row being sampled, never the batch.
 		stepLogits := spec.draft.Unembed(hidden).Squeeze(1)
-		lastHidden = projected
+		lastHidden = auxHidden
 		// The chain's earlier drafts ride along as the row's history, so
 		// penalties shape proposals the same way they shape validation.
 		dist := r.Sampler.Distribution(pipelineSlot, stepLogits, prefix)

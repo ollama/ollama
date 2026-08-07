@@ -743,7 +743,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 }
 
 // Forward computes the forward pass of the model
-func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
+func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
@@ -759,7 +759,7 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
 	}
 
 	h = m.Norm.Forward(h, m.RMSNormEps)
-	return h
+	return h, h
 }
 
 // Unembed applies the LM head to get logits.
@@ -767,8 +767,14 @@ func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 	return m.LMHead.Forward(x)
 }
 
-// NumLayers returns the number of transformer layers
-func (m *Model) NumLayers() int { return len(m.Layers) }
+// NewCaches builds a KV cache per layer.
+func (m *Model) NewCaches() []cache.Cache {
+	caches := make([]cache.Cache, len(m.Layers))
+	for i := range caches {
+		caches[i] = cache.NewKVCache()
+	}
+	return caches
+}
 
 // MaxContextLength returns the maximum context length
 func (m *Model) MaxContextLength() int { return int(m.MaxPositionEmbeddings) }

@@ -243,7 +243,8 @@ func isStackedExpertWeight(name string) bool {
 	// as gemma's bare "...layers.N.experts.gate_up_proj" (no .mlp/.moe prefix).
 	return strings.Contains(name, ".experts.") ||
 		strings.Contains(name, ".mlp.switch_mlp.") ||
-		strings.Contains(name, ".mlp.shared_experts.")
+		strings.Contains(name, ".mlp.shared_experts.") ||
+		strings.Contains(name, ".mixer.shared_experts.")
 }
 
 // isRoutingGate reports the small MoE routing/gate weights that select the
@@ -251,6 +252,7 @@ func isStackedExpertWeight(name string) bool {
 // are kept at source precision regardless of architecture.
 func isRoutingGate(name string) bool {
 	return strings.HasSuffix(name, ".mlp.gate.weight") ||
+		strings.HasSuffix(name, ".mixer.gate.weight") ||
 		strings.HasSuffix(name, ".shared_expert_gate.weight") ||
 		strings.HasSuffix(name, ".router.proj.weight")
 }
@@ -297,6 +299,11 @@ func GetTensorQuantization(name string, shape []int32, quantize string) string {
 		return ""
 	}
 
+	// Vision towers are too quantization-sensitive; keep source precision.
+	if isVisionTower(name) {
+		return ""
+	}
+
 	// MLX quantization requires last dimension to be divisible by group size.
 	if !isAligned(shape, quantNorm) {
 		return ""
@@ -314,7 +321,7 @@ func GetTensorQuantization(name string, shape []int32, quantize string) string {
 	return quantNorm
 }
 
-var expertLayerPrefixRegexp = regexp.MustCompile(`^(?:model\.language_model\.|language_model(?:\.model)?\.|model\.)?layers\.\d+$`)
+var expertLayerPrefixRegexp = regexp.MustCompile(`^(?:model\.language_model\.|language_model(?:\.model)?\.|language_model\.backbone\.|model\.|backbone\.|mtp\.)?layers\.\d+$`)
 
 // ExpertGroupPrefix returns the group prefix for expert tensors that should be packed together.
 // For example:
@@ -333,6 +340,8 @@ func ExpertGroupPrefix(tensorName string) string {
 		".mlp.shared_experts.",
 		".mlp.switch_mlp.",
 		".moe.experts.",
+		".mixer.experts.",
+		".mixer.shared_experts.",
 	} {
 		idx := strings.Index(tensorName, marker)
 		if idx == -1 {
@@ -484,6 +493,9 @@ var tensorImportTransformRegistry = map[string]tensorImportTransformFactory{
 	"Gemma4AssistantForCausalLM":            newGemma4ImportTransform,
 	"Gemma4UnifiedAssistantForCausalLM":     newGemma4ImportTransform,
 	"gemma4_unified_assistant":              newGemma4ImportTransform,
+	"NemotronH_Nano_VL_V2":                  newNemotronHImportTransform,
+	"NemotronH_Nano_Omni_Reasoning_V3":      newNemotronHImportTransform,
+	"NemotronHForCausalLM":                  newNemotronHImportTransform,
 }
 
 func newTensorImportTransform(inv Inventory) (quantizePolicy, error) {

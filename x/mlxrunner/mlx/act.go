@@ -34,6 +34,17 @@ var SiLU = Compile1(
 	Shapeless(),
 )
 
+// ReLUSquared returns relu(x)^2 as a fused kernel.
+var ReLUSquared = Compile1(
+	"ReLUSquared",
+	func(x *Array) *Array {
+		zero := FromValue[float32](0).AsType(x.DType())
+		x = Maximum(x, zero)
+		return x.Multiply(x)
+	},
+	Shapeless(),
+)
+
 // SoftplusF32 returns softplus(x) computed in float32 precision and cast back
 // to x's original dtype, as a fused kernel. Matches the laguna attention
 // output-gate formula: softplus(cast_f32(x)).cast(orig_dtype).

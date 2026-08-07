@@ -437,6 +437,21 @@ func newSlidingWindowEnv() *testEnv {
 	}
 }
 
+// newStatelessLayerEnv gives the cache slice nil holes, the layout a hybrid
+// model produces when some layers own no state.
+func newStatelessLayerEnv() *testEnv {
+	tr := &snapshotTracker{}
+	rc := &fakeRewindableCache{tracker: tr}
+	nrc := &fakeRecurrentCache{tracker: tr}
+	caches := []cache.Cache{nrc, nil, rc, nil}
+	return &testEnv{
+		pc:         &prefixCache{caches: caches},
+		caches:     caches,
+		tracker:    tr,
+		rewindable: false,
+	}
+}
+
 // newRecurrentEnv creates a test environment with one rewindable cache and one
 // non-rewindable cache (Jamba-style architecture).
 func newRecurrentEnv() *testEnv {
@@ -456,12 +471,20 @@ func newRecurrentEnv() *testEnv {
 // the expected token sequence.
 func (e *testEnv) assertAllTokens(t *testing.T, label string, expected []int32) {
 	t.Helper()
+	var first cache.Cache
 	for i, c := range e.caches {
+		if c == nil {
+			continue
+		}
 		assertTokens(t, label, c, expected)
 		// Verify all caches report the same offset.
-		if i > 0 && c.Offset() != e.caches[0].Offset() {
-			t.Errorf("%s: cache %d offset=%d != cache 0 offset=%d",
-				label, i, c.Offset(), e.caches[0].Offset())
+		if first == nil {
+			first = c
+			continue
+		}
+		if c.Offset() != first.Offset() {
+			t.Errorf("%s: cache %d offset=%d != first cache offset=%d",
+				label, i, c.Offset(), first.Offset())
 		}
 	}
 }
@@ -479,7 +502,7 @@ type requestResult struct {
 func simulateRequest(t *testing.T, pc *prefixCache, inputs, generated []int32, userSnapshotAt ...int) requestResult {
 	t.Helper()
 
-	session := pc.begin(inputs)
+	session := pc.begin(inputs, nil)
 	var snapshotOffsets []int
 	for _, at := range userSnapshotAt {
 		if at > 0 {
@@ -531,13 +554,17 @@ func feedAll(caches []cache.Cache, tokens []int32) {
 // assertCacheOffsetAlignment verifies all caches report the same offset.
 func assertCacheOffsetAlignment(t *testing.T, pc *prefixCache, label string) {
 	t.Helper()
-	if len(pc.caches) < 2 {
-		return
-	}
-	expected := pc.caches[0].Offset()
-	for i := 1; i < len(pc.caches); i++ {
-		if got := pc.caches[i].Offset(); got != expected {
-			t.Errorf("%s: cache %d offset=%d != cache 0 offset=%d", label, i, got, expected)
+	expected := -1
+	for i, c := range pc.caches {
+		if c == nil {
+			continue
+		}
+		if expected < 0 {
+			expected = c.Offset()
+			continue
+		}
+		if got := c.Offset(); got != expected {
+			t.Errorf("%s: cache %d offset=%d != first cache offset=%d", label, i, got, expected)
 		}
 	}
 }
@@ -655,6 +682,7 @@ func forEachEnv(t *testing.T, fn func(t *testing.T, env *testEnv)) {
 		{"Transformer", newTransformerEnv},
 		{"SlidingWindow", newSlidingWindowEnv},
 		{"Recurrent", newRecurrentEnv},
+		{"StatelessLayers", newStatelessLayerEnv},
 	}
 	for _, e := range envs {
 		for _, lookahead := range []int{0, 1} {
@@ -692,7 +720,7 @@ func TestBranchCreationAndReuse(t *testing.T) {
 		// Verify trie was populated by close(): everything in the caches
 		// is findable; the last generated token is not.
 		seqA := []int32{1, 2, 3, 4, 5, 6, 7, 8, 20, 21}
-		_, mA := findBestMatch(pc.root, pc.key(seqA))
+		_, mA := findBestMatch(pc.root, pc.key(effectiveKeyTokens(seqA, nil)))
 		if want := len(seqA) - 1; mA != want {
 			t.Fatalf("A findable: expected %d matched, got %d", want, mA)
 		}
@@ -721,11 +749,11 @@ func TestBranchCreationAndReuse(t *testing.T) {
 		env.assertAllTokens(t, "after B", []int32{1, 2, 3, 4, 5, 10, 11, 12, 30})
 
 		// Both A and B should be findable in the trie.
-		_, mA2 := findBestMatch(pc.root, pc.key(seqA))
+		_, mA2 := findBestMatch(pc.root, pc.key(effectiveKeyTokens(seqA, nil)))
 		if mA2 < 5 {
 			t.Fatalf("A still findable: expected >= 5 matched, got %d", mA2)
 		}
-		_, mB := findBestMatch(pc.root, pc.key([]int32{1, 2, 3, 4, 5, 10, 11, 12, 30, 31}))
+		_, mB := findBestMatch(pc.root, pc.key(effectiveKeyTokens([]int32{1, 2, 3, 4, 5, 10, 11, 12, 30, 31}, nil)))
 		if mB < 5 {
 			t.Fatalf("B findable: expected >= 5 matched, got %d", mB)
 		}
@@ -853,8 +881,8 @@ func TestEvictionPreservesActiveConversations(t *testing.T) {
 
 		// System prompt prefix should still be findable (multi-child
 		// branch points are protected from eviction entirely).
-		_, matched := findBestMatch(pc.root, pc.key(systemPrompt))
-		if want := len(pc.key(systemPrompt)); matched < want {
+		_, matched := findBestMatch(pc.root, pc.key(effectiveKeyTokens(systemPrompt, nil)))
+		if want := len(pc.key(effectiveKeyTokens(systemPrompt, nil))); matched < want {
 			t.Fatalf("system prompt match = %d, want %d", matched, want)
 		}
 
@@ -952,7 +980,7 @@ func TestSnapshotBeyondPrefillSkipped(t *testing.T) {
 		pc := env.pc
 		inputs := []int32{1, 2, 3, 4, 5}
 
-		session := pc.begin(inputs)
+		session := pc.begin(inputs, nil)
 		// Request a snapshot at 3 and one at len(inputs); captures land at
 		// the requested prefix minus the look-ahead.
 		session.schedulePrefillSnapshots([]int{3, len(inputs)})
@@ -987,7 +1015,7 @@ func TestPrefillSnapshotsDiscardedOnCancel(t *testing.T) {
 		pc := env.pc
 		inputs := []int32{1, 2, 3, 4, 5}
 
-		session := pc.begin(inputs)
+		session := pc.begin(inputs, nil)
 		session.schedulePrefillSnapshots([]int{3})
 		// Cross offset 3 so the caches capture it, then close the session as a
 		// canceled prefill would, before the captures are attached to the trie.
@@ -1186,5 +1214,74 @@ func TestSwapSnapshotsDetachesHook(t *testing.T) {
 	replacement.materialize(2 << 20)
 	if pc.pagedOutBytes != 2<<20 {
 		t.Fatalf("pagedOutBytes after replacement materialize = %d, want %d", pc.pagedOutBytes, 2<<20)
+	}
+}
+
+// Without this, every node reads as incomplete on a hybrid model and
+// switchToPath re-pages the leaf every time.
+func TestHasAllSnapshotsIgnoresStatelessLayers(t *testing.T) {
+	tr := &snapshotTracker{}
+	caches := []cache.Cache{
+		&fakeRewindableCache{tracker: tr},
+		nil,
+		&fakeRecurrentCache{tracker: tr},
+	}
+
+	node := &trieNode{tokens: []trieKey{1, 2, 3}, endOffset: 3}
+	if hasAllSnapshots(node, caches) {
+		t.Fatal("hasAllSnapshots = true with no snapshots at all")
+	}
+
+	node.snapshots = []cache.Snapshot{&fakeSnapshot{from: 0, to: 3}, nil, &fakeSnapshot{from: 0, to: 3}}
+	if !hasAllSnapshots(node, caches) {
+		t.Fatal("hasAllSnapshots = false when every stateful layer has a snapshot")
+	}
+
+	node.snapshots = []cache.Snapshot{&fakeSnapshot{from: 0, to: 3}, nil, nil}
+	if hasAllSnapshots(node, caches) {
+		t.Fatal("hasAllSnapshots = true with a stateful layer's snapshot missing")
+	}
+}
+
+// Merge is only reached when an interior node with one child is evicted, which
+// the scenario tests never hit, so drive it directly.
+func TestMergeWithChildSkipsStatelessLayers(t *testing.T) {
+	tr := &snapshotTracker{}
+	caches := []cache.Cache{
+		&fakeRewindableCache{tracker: tr},
+		nil,
+		&fakeRecurrentCache{tracker: tr},
+	}
+
+	pc := &prefixCache{caches: caches}
+	pc.ensureRoot()
+
+	parent := &trieNode{parent: pc.root, tokens: []trieKey{1, 2}, endOffset: 2}
+	child := &trieNode{parent: parent, tokens: []trieKey{3, 4}, endOffset: 4}
+	parent.children = []*trieNode{child}
+	pc.root.children = []*trieNode{parent}
+
+	parent.setSnapshots([]cache.Snapshot{
+		&fakeSnapshot{from: 0, to: 2}, nil, &fakeSnapshot{from: 0, to: 2},
+	}, &pc.pagedOutBytes)
+	child.setSnapshots([]cache.Snapshot{
+		&fakeSnapshot{from: 2, to: 4}, nil, &fakeSnapshot{from: 2, to: 4},
+	}, &pc.pagedOutBytes)
+
+	mergeWithChild(parent, caches, &pc.pagedOutBytes)
+
+	if got := len(parent.tokens); got != 4 {
+		t.Fatalf("merged tokens = %d, want 4", got)
+	}
+	if got := parent.endOffset; got != 4 {
+		t.Fatalf("merged endOffset = %d, want 4", got)
+	}
+	if parent.snapshots[1] != nil {
+		t.Fatalf("stateless layer snapshot = %v, want nil", parent.snapshots[1])
+	}
+	for _, i := range []int{0, 2} {
+		if parent.snapshots[i] == nil {
+			t.Fatalf("stateful layer %d lost its merged snapshot", i)
+		}
 	}
 }

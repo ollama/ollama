@@ -728,7 +728,7 @@ func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *
 	return mlx.Add(x, mlx.Add(attnOut, mlpOut))
 }
 
-func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
+func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
@@ -742,7 +742,8 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
 		h = layer.Forward(h, b, c, positions, B, L, m.Config)
 	}
 
-	return m.Norm.Forward(h)
+	out := m.Norm.Forward(h)
+	return out, out
 }
 
 func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
@@ -751,10 +752,6 @@ func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 		logits = mlx.MulScalar(logits, m.LogitScale)
 	}
 	return logits
-}
-
-func (m *Model) NumLayers() int {
-	return len(m.Layers)
 }
 
 func (m *Model) MaxContextLength() int {

@@ -27,7 +27,7 @@ func init() {
 var (
 	_ base.Model      = (*Model)(nil)
 	_ base.SelfDraft  = (*Model)(nil)
-	_ base.DraftModel = (*Model)(nil)
+	_ base.DraftModel = (*mtpDraft)(nil)
 )
 
 // RopeParameters carries optional rope metadata embedded under rope_parameters.
@@ -102,8 +102,8 @@ type Model struct {
 	weightPrefix string
 }
 
-// MTPHead is the multi-token-prediction draft head; it owns a KV cache appended
-// after the per-layer caches and reuses the model's lm_head.
+// MTPHead is the multi-token-prediction draft head; it writes one KV cache
+// and reuses the model's lm_head.
 type MTPHead struct {
 	Enorm *nn.RMSNorm
 	Hnorm *nn.RMSNorm
@@ -1194,7 +1194,7 @@ func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *
 	return mlx.Add(h, r)
 }
 
-func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
+func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
@@ -1208,34 +1208,42 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
 		h = layer.Forward(h, b, c, positions, B, L, m.Config)
 	}
 	out := m.Norm.Forward(h, m.RMSNormEps)
-	return out
+	return out, out
 }
 
 func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 	return m.LMHead.Forward(x)
 }
 
-// DraftCaches returns the MTP head's KV caches: the trailing slots NewCaches
-// appended after the per-layer caches.
-func (m *Model) DraftCaches(caches []cache.Cache) []cache.Cache {
+// mtpDraft is the model viewed as its own draft: the same struct, carrying
+// the DraftModel method set for the inline MTP head.
+type mtpDraft Model
+
+// NewCaches builds the MTP head's KV cache.
+func (m *mtpDraft) NewCaches() []cache.Cache {
 	if m.MTP == nil {
 		return nil
 	}
-	return caches[len(m.Layers):]
+	return []cache.Cache{cache.NewKVCache()}
 }
 
-// SelfDraft returns the model as its own draft when an MTP head loaded, else
-// nil; Draft exists either way, so availability is reported here.
+// LoadWeights does nothing: an inline head's weights load with the target's.
+func (m *mtpDraft) LoadWeights(map[string]*mlx.Array) error { return nil }
+
+func (m *mtpDraft) Unembed(x *mlx.Array) *mlx.Array { return (*Model)(m).Unembed(x) }
+
+// SelfDraft returns the model's drafting view, or nil when no MTP head was
+// loaded. The methods exist either way, so this is what decides availability.
 func (m *Model) SelfDraft() base.DraftModel {
 	if m.MTP == nil {
 		return nil
 	}
-	return m
+	return (*mtpDraft)(m)
 }
 
-// Draft runs one MTP step; the head's hidden also serves as the projected
+// Forward runs one MTP step; the head's hidden also serves as the aux
 // hidden seeding the next step.
-func (m *Model) Draft(b *batch.Batch, caches []cache.Cache) (hidden, projected *mlx.Array) {
+func (m *mtpDraft) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (hidden, auxHidden *mlx.Array) {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
@@ -1244,8 +1252,7 @@ func (m *Model) Draft(b *batch.Batch, caches []cache.Cache) (hidden, projected *
 	h := m.MTP.Hnorm.Forward(b.Hidden, m.RMSNormEps)
 	fused := m.MTP.FC.Forward(emb.Concatenate(-1, h))
 
-	c := m.DraftCaches(caches)[0]
-	out := m.MTP.Layer.Forward(fused, b, c, positions, B, L, m.Config)
+	out := m.MTP.Layer.Forward(fused, b, draftCaches[0], positions, B, L, m.Config)
 	hidden = m.MTP.Norm.Forward(out, m.RMSNormEps)
 	return hidden, hidden
 }
@@ -1263,8 +1270,7 @@ func (m *Model) Tokenizer() *tokenizer.Tokenizer {
 }
 
 func (m *Model) NewCaches() []cache.Cache {
-	// Reserve a trailing slot for the MTP head's KV cache when present.
-	caches := make([]cache.Cache, len(m.Layers), len(m.Layers)+1)
+	caches := make([]cache.Cache, len(m.Layers))
 	convTail := m.LinearConvKernelDim - 1
 	convDim := 2*m.LinearNumKeyHeads*m.LinearKeyHeadDim + m.LinearNumValueHeads*m.LinearValueHeadDim
 	for i, layer := range m.Layers {
@@ -1273,10 +1279,6 @@ func (m *Model) NewCaches() []cache.Cache {
 		} else {
 			caches[i] = cache.NewKVCache()
 		}
-	}
-	// Trailing slot is the MTP head's (DraftCaches); Model.Forward never touches it.
-	if m.MTP != nil {
-		caches = append(caches, cache.NewKVCache())
 	}
 	return caches
 }

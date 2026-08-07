@@ -516,7 +516,20 @@ func TestModelCapabilities(t *testing.T) {
 			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision},
 		},
 		{
-			name: "gemma4 small safetensors suppresses vision and audio",
+			name: "nemotron3 safetensors suppresses audio but keeps vision and thinking",
+			model: Model{
+				Config: model.ConfigV2{
+					ModelFormat:  "safetensors",
+					Parser:       "nemotron-3-nano",
+					Renderer:     "nemotron-3-nano",
+					Capabilities: []string{"completion", "vision", "audio"},
+				},
+				Template: chatTemplate,
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision, model.CapabilityTools, model.CapabilityThinking},
+		},
+		{
+			name: "gemma4 small safetensors suppresses audio but keeps vision",
 			model: Model{
 				Config: model.ConfigV2{
 					ModelFormat:  "safetensors",
@@ -525,9 +538,10 @@ func TestModelCapabilities(t *testing.T) {
 				},
 				Template: chatTemplate,
 			},
+			expectedCaps: []model.Capability{model.CapabilityVision},
 		},
 		{
-			name: "gemma4 large safetensors suppresses vision and audio",
+			name: "gemma4 large safetensors suppresses audio but keeps vision",
 			model: Model{
 				Config: model.ConfigV2{
 					ModelFormat:  "safetensors",
@@ -536,9 +550,10 @@ func TestModelCapabilities(t *testing.T) {
 				},
 				Template: chatTemplate,
 			},
+			expectedCaps: []model.Capability{model.CapabilityVision},
 		},
 		{
-			name: "default gemma4 safetensors suppresses vision and audio",
+			name: "default gemma4 safetensors suppresses audio but keeps vision",
 			model: Model{
 				Config: model.ConfigV2{
 					ModelFormat:  "safetensors",
@@ -547,6 +562,7 @@ func TestModelCapabilities(t *testing.T) {
 				},
 				Template: chatTemplate,
 			},
+			expectedCaps: []model.Capability{model.CapabilityVision},
 		},
 	}
 
