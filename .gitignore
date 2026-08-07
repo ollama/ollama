@@ -16,3 +16,9 @@ llama/build
 llama/vendor
 /ollama
 integration/testdata/models/
+
+# MaxusAI fork only (not upstream). Deliberately NOT a blanket `.claude/` ignore:
+# shared agent config such as .claude/settings.json is meant to be committed, and a
+# directory-wide rule would hide it silently. Only the per-user and transient bits:
+.claude/settings.local.json
+.claude/worktrees/
