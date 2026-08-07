@@ -1572,13 +1572,18 @@ func TestVisionServerArgs(t *testing.T) {
 		{
 			name: "gemma4 defaults (unset opts fall back)",
 			arch: "gemma4",
-			want: []string{"--image-min-tokens", "40", "--image-max-tokens", "1120"},
+			want: []string{"--image-min-tokens", "70", "--image-max-tokens", "1120"},
 		},
 		{
+			// Deliberately not the defaults: this case must keep testing that an
+			// explicit budget is passed through verbatim (the flags carry the
+			// requested values; the 004 payload does its own ladder snap), so it
+			// must not collide with DefaultImageMin/MaxTokens (ADR 0008 moved
+			// those to 70/1120).
 			name: "gemma4 custom budget",
 			arch: "gemma4",
-			opts: api.Options{Runner: api.Runner{ImageMinTokens: 70, ImageMaxTokens: 560}},
-			want: []string{"--image-min-tokens", "70", "--image-max-tokens", "560"},
+			opts: api.Options{Runner: api.Runner{ImageMinTokens: 140, ImageMaxTokens: 560}},
+			want: []string{"--image-min-tokens", "140", "--image-max-tokens", "560"},
 		},
 		{
 			name: "gemma4 min clamped to max",
@@ -1728,15 +1733,26 @@ func TestMaxImageTokens(t *testing.T) {
 			want: 4098,
 		},
 		{
+			// 1120 (ADR 0008 default ceiling, the vendor maximum) + imageMarkerTokens.
 			name: "gemma4 defaults",
 			arch: "gemma4",
 			want: 1122,
 		},
 		{
 			// Tracks the same resolver that produces the --image-max-tokens flag.
+			// Must differ from the defaults to be a meaningful case — see the
+			// matching note in TestVisionServerArgs.
 			name: "gemma4 custom ceiling",
 			arch: "gemma4",
-			opts: api.Options{Runner: api.Runner{ImageMinTokens: 70, ImageMaxTokens: 560}},
+			opts: api.Options{Runner: api.Runner{ImageMinTokens: 140, ImageMaxTokens: 560}},
+			want: 562,
+		},
+		{
+			// Off-ladder ceilings snap DOWN to the nearest supported rung, matching
+			// the 004 payload: a 900 request delivers at most 560 tokens.
+			name: "gemma4 off-ladder ceiling snaps down",
+			arch: "gemma4",
+			opts: api.Options{Runner: api.Runner{ImageMaxTokens: 900}},
 			want: 562,
 		},
 		{
@@ -1814,6 +1830,13 @@ func TestMaxImageTokens(t *testing.T) {
 // and the worked examples in docs/maxusai/nemotron-dynres-patch.md.
 func TestImageTokensForSize(t *testing.T) {
 	pinned := api.Options{Runner: api.Runner{ImageMinTokens: 1088, ImageMaxTokens: 1120}}
+	// The pre-ADR-0007 default values. With the 004 budget-fill payload these
+	// resolve identically to the ADR 0008 defaults: min is a no-op and 1120
+	// snaps to itself.
+	legacy := api.Options{Runner: api.Runner{ImageMinTokens: 40, ImageMaxTokens: 1120}}
+	// An off-ladder ceiling; the 004 payload snaps it down to 560.
+	offLadder := api.Options{Runner: api.Runner{ImageMinTokens: 70, ImageMaxTokens: 900}}
+	rung560 := api.Options{Runner: api.Runner{ImageMaxTokens: 560}}
 
 	tests := []struct {
 		name   string
@@ -1823,18 +1846,30 @@ func TestImageTokensForSize(t *testing.T) {
 		want   int
 		wantOK bool
 	}{
-		// gemma4, fork defaults 40/1120 (measured row "fork, default").
-		{name: "gemma4 640x480", arch: "gemma4", w: 640, h: 480, want: 132, wantOK: true},
-		{name: "gemma4 896x896", arch: "gemma4", w: 896, h: 896, want: 363, wantOK: true},
-		{name: "gemma4 1920x1080", arch: "gemma4", w: 1920, h: 1080, want: 922, wantOK: true},
+		// gemma4 with the 004 budget-fill payload, fork defaults 70/1120
+		// (ADR 0008): every image — small ones included — is scaled to fill the
+		// ladder-snapped ceiling, so all rows land just under 1120. 1920×1080 →
+		// 44×25+2 and 1568² → 33×33+2 are the live-validated grids from
+		// gemma4-bbox-investigation-findings.md §10.
+		{name: "gemma4 640x480", arch: "gemma4", w: 640, h: 480, want: 1066, wantOK: true},
+		{name: "gemma4 896x896", arch: "gemma4", w: 896, h: 896, want: 1091, wantOK: true},
+		{name: "gemma4 1920x1080", arch: "gemma4", w: 1920, h: 1080, want: 1102, wantOK: true},
 		{name: "gemma4 1568x1568", arch: "gemma4", w: 1568, h: 1568, want: 1091, wantOK: true},
 		{name: "gemma4 3000x2000", arch: "gemma4", w: 3000, h: 2000, want: 1082, wantOK: true},
-		// gemma4, pinned 1088/1120 (measured row "fork, pinned").
-		{name: "gemma4 pinned 640x480", arch: "gemma4", opts: pinned, w: 640, h: 480, want: 1133, wantOK: true},
-		{name: "gemma4 pinned 896x896", arch: "gemma4", opts: pinned, w: 896, h: 896, want: 1091, wantOK: true},
+		// The 560 rung: 31×17+2 and 23×23+2, also live-validated.
+		{name: "gemma4 560 1920x1080", arch: "gemma4", opts: rung560, w: 1920, h: 1080, want: 529, wantOK: true},
+		{name: "gemma4 560 1568x1568", arch: "gemma4", opts: rung560, w: 1568, h: 1568, want: 531, wantOK: true},
+		// Off-ladder ceilings snap down (900 → 560); live-validated byte-identical
+		// to the 560 run.
+		{name: "gemma4 snap 900->560 1920x1080", arch: "gemma4", opts: offLadder, w: 1920, h: 1080, want: 529, wantOK: true},
+		// The pre-ADR-0007 default values resolve identically to the new
+		// defaults under 004 (min no-op, 1120 snaps to itself) — the 40×23 = 922
+		// off-ladder grid this configuration used to produce (worst measured
+		// bbox IoU, 0.504) is no longer reachable at all.
+		{name: "gemma4 legacy 40/1120 1920x1080", arch: "gemma4", opts: legacy, w: 1920, h: 1080, want: 1102, wantOK: true},
+		// Pinning min==max no longer overshoots: the old min_pixels ceil branch
+		// produced 45×26+2 = 1172 here; 004 fills to 44×25+2 = 1102.
 		{name: "gemma4 pinned 1920x1080", arch: "gemma4", opts: pinned, w: 1920, h: 1080, want: 1102, wantOK: true},
-		{name: "gemma4 pinned 1568x1568", arch: "gemma4", opts: pinned, w: 1568, h: 1568, want: 1091, wantOK: true},
-		{name: "gemma4 pinned 3000x2000", arch: "gemma4", opts: pinned, w: 3000, h: 2000, want: 1082, wantOK: true},
 		// qwen35 with the 1024 floor (measured row "after 87cf1100").
 		{name: "qwen35 640x480", arch: "qwen35", w: 640, h: 480, want: 1038, wantOK: true},
 		{name: "qwen35 896x896", arch: "qwen35", w: 896, h: 896, want: 1026, wantOK: true},

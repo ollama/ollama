@@ -1030,9 +1030,13 @@ func visionServerArgs(modelArch string, opts api.Options) []string {
 	case "gemma4":
 		// Gemma 4 vision (gemma4v projector) image-token budget. llama.cpp
 		// defaults to set_limit_image_tokens(40, 280); we expose both bounds as
-		// api.Options (defaults 40 / 1120 from DefaultOptions) so they can be
-		// tuned per request. These are Runner options, so changing them reloads
-		// the runner.
+		// api.Options so they can be tuned per request (defaults in
+		// api.DefaultImageMin/MaxTokens, ADR 0008). With the fork's
+		// 004-llama-cpp-gemma4-budget-fill.patch the payload snaps max down to
+		// the supported ladder and fills to it, and min is a no-op; the flags
+		// are still passed verbatim so an unpatched payload degrades to the old
+		// behavior rather than failing. These are Runner options, so changing
+		// them reloads the runner.
 		minTok, maxTok := gemma4ImageTokenBudget(opts)
 		return []string{
 			"--image-min-tokens", strconv.Itoa(minTok),
@@ -1152,8 +1156,10 @@ func MaxImageTokens(modelArch string, opts api.Options) int {
 	case "gemma3":
 		return gemma3ImageTokens + imageMarkerTokens
 	case "gemma4":
+		// The 004 budget-fill payload snaps the requested ceiling down to the
+		// supported ladder, so the delivered maximum is the snapped value.
 		_, maxTok := gemma4ImageTokenBudget(opts)
-		return maxTok + imageMarkerTokens
+		return gemma4SnapBudget(maxTok) + imageMarkerTokens
 	case "nemotron_h_omni":
 		_, maxTok := nemotronImageTokenBudget(opts)
 		return maxTok + imageMarkerTokens
@@ -1256,8 +1262,10 @@ func ImageTokensForSize(modelArch string, opts api.Options, width, height int) (
 	case "qwen3vl", "qwen3vlmoe", "qwen35", "qwen35moe":
 		return smartResizeTokens(width, height, qwen3VLImageAlign, qwenVLImageMinTokens, qwenVLImageMaxTokens) + imageMarkerTokens, true
 	case "gemma4":
-		minTok, maxTok := gemma4ImageTokenBudget(opts)
-		return smartResizeTokens(width, height, gemma4ImageAlign, minTok, maxTok) + imageMarkerTokens, true
+		// 004 budget-fill sizing: every image is scaled (up or down) to fill
+		// the ladder-snapped ceiling; the min bound is a no-op.
+		_, maxTok := gemma4ImageTokenBudget(opts)
+		return budgetFillTokens(width, height, gemma4ImageAlign, maxTok) + imageMarkerTokens, true
 	case "nemotron_h_omni":
 		minTok, maxTok := nemotronImageTokenBudget(opts)
 		return smartResizeTokens(width, height, nemotronImageAlign, minTok, maxTok) + imageMarkerTokens, true
@@ -1422,6 +1430,47 @@ func smartResizeGrid(width, height, align, minTokens, maxTokens int) (cols, rows
 	}
 
 	return wBar / align, hBar / align
+}
+
+// gemma4Ladder is Gemma 4's supported visual-token budget ladder
+// (ai.google.dev/gemma/docs/core/model_card_4). The model's box_2d grounding
+// is only accurate on patch grids reachable at one of these budgets; see
+// docs/maxusai/gemma4-bbox-investigation-findings.md.
+var gemma4Ladder = [...]int{70, 140, 280, 560, 1120}
+
+// gemma4SnapBudget snaps a requested token ceiling DOWN to the nearest ladder
+// rung; requests below the lowest rung clamp up to it. Mirrors the snap in
+// llama/compat/004-llama-cpp-gemma4-budget-fill.patch exactly.
+func gemma4SnapBudget(maxTokens int) int {
+	budget := gemma4Ladder[0]
+	for _, rung := range gemma4Ladder {
+		if rung <= maxTokens {
+			budget = rung
+		}
+	}
+	return budget
+}
+
+// budgetFillTokens replicates img_tool::calc_size_budget_fill from the 004
+// patch: snap the ceiling to the ladder, scale the image (up or down) by
+// sqrt(budget_px/source_px), floor each axis to a multiple of align, and shave
+// the long axis while the align clamp holds the grid over budget. float64
+// mirrors the C++ double arithmetic so grid boundaries match llama-server
+// exactly.
+func budgetFillTokens(width, height, align, maxTokens int) int {
+	budget := gemma4SnapBudget(maxTokens)
+	pxPerToken := align * align
+	factor := math.Sqrt(float64(budget*pxPerToken) / (float64(width) * float64(height)))
+	wBar := max(align, int(math.Floor(float64(width)*factor/float64(align)))*align)
+	hBar := max(align, int(math.Floor(float64(height)*factor/float64(align)))*align)
+	for (wBar/align)*(hBar/align) > budget {
+		if wBar >= hBar {
+			wBar -= align
+		} else {
+			hBar -= align
+		}
+	}
+	return (wBar / align) * (hBar / align)
 }
 
 // Load waits for llama-server to finish loading the model. llama-server loads

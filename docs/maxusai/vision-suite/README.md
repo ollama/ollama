@@ -17,6 +17,9 @@ Reproducible ground-truth benchmarks behind the measured tables in
   and scores objectively (label recall, color accuracy, qty/price exactness, bbox
   center-hits, cross-image answers). Env: `THINK=on|false` (default `false`),
   `NUM_PREDICT` (default 2200; ≥4000 with `THINK=on`, 16000 for think-on multi-image),
+  `IMAGE_MIN_TOKENS` / `IMAGE_MAX_TOKENS` (fork-only per-request vision budget,
+  arch-gated to gemma4 and nemotron_h_omni; unset = build default. Recorded in the
+  scores as `req_image_*_tokens` so a control run is identifiable after the fact),
   `ENDPOINT=generate|chat` (default `generate` — `/api/chat` is what OpenWebUI and
   ChatOllama use, and it has carried the upstream think+format two-pass fix since
   v0.12.4, so think-on cells differ by endpoint on builds without the generate-side
@@ -41,6 +44,9 @@ Reproducible ground-truth benchmarks behind the measured tables in
   why the external harnesses' own grounding scorers cannot be trusted with our models.
 - `run_grid.sh` — model × think-mode grid against one host, with an optional restart
   hook between runs (see below).
+- `run_compare.sh <tag-prefix>` — **stock vs fork, with a budget-matched control arm.**
+  Use this rather than eyeballing two separate runs: a bare stock-vs-fork comparison
+  moves two variables at once. See "Comparing against stock" below.
 - `variants.py <host> <nogrammar|thinkon> [model]` — scene-test probes that isolate
   the `format:"json"` grammar constraint and reasoning mode as variables.
 
@@ -50,10 +56,31 @@ Reproducible ground-truth benchmarks behind the measured tables in
 - **Cold server per model run** when payloads under test have cross-request leakage
   (upstream #17475 reproduced on b10091): restart the serving container/process
   between runs — `run_grid.sh` does this via `RESTART_CMD`.
-- **Always run both think modes.** Known result: `think:true` + `format:"json"` yields
-  an *empty* `response` for nemotron3 and qwen3.6 on every payload tested (thinking
-  ends without a JSON body, well under the token budget); gemma4 handles both. Report
-  empty cells as data.
+- **Always run both think modes.** `think:true` + `format:"json"` yields an *empty*
+  `response` for nemotron3 and qwen3.6 **on stock builds** (thinking ends without a
+  JSON body, well under the token budget); gemma4 handles both. Report empty cells as
+  data.
+
+  > **Updated 2026-08-07 — this is FIXED on the fork; do not expect empty cells from a
+  > fork build.** Measured on `nemotron3:33b-q4_K_M`, all three tests, both a native
+  > Metal build and the CPU container:
+  >
+  > | build | `json_valid` | `eval_count` |
+  > |---|---|---|
+  > | stock 0.32.6 | **False** ×3 | 562 / 485 / 833 |
+  > | fork (Metal) | **True** ×3 | 5233 / 10110 / 7668 |
+  > | fork (CPU container) | **True** ×3 | 5134 / 7370 / 4889 |
+  >
+  > Stock still generates tokens — it thinks and then emits no JSON. The fork thinks
+  > and then emits valid JSON. See
+  > [generate-think-format-empty-response.md](../generate-think-format-empty-response.md),
+  > [ADR 0002](../adr/0002-deferred-format-constraining.md) and
+  > [ADR 0004](../adr/0004-routes-layer-think-format-double-request.md).
+  >
+  > **Budget accordingly.** A fork think-on cell does real work where stock returns
+  > almost immediately, so it is far slower — not a hang. Same run: stock 21 s for all
+  > three tests, fork on Metal ~7 min, fork on the CPU container ~39 min. Raise
+  > `HTTP_TIMEOUT` for CPU think-on runs.
 - Subtract each model's text-only baseline when reading `prompt_eval_count`
   (nemotron3: 18); counts are grid-quantised — ignore ±2.
 - Bbox scoring is dual-space: models emit their trained coordinate conventions
@@ -82,6 +109,47 @@ RESTART_CMD="docker restart my-test-container" \
 
 The isolated-container recipe (own port, model store mounted read-only, GPU
 passthrough) is in [nemotron-test-image.md](../nemotron-test-image.md).
+
+## Comparing against stock (use the control arm)
+
+A bare stock-vs-fork comparison moves **two** variables at once:
+
+1. **our vision token budget** — `visionServerArgs` adds `gemma4` and
+   `nemotron_h_omni` branches that upstream does not have *at all* (checked
+   2026-08-07: both `v0.32.5:llm/llama_server.go:994` and `v0.32.6:…:999` contain
+   only `qwenVLServerArgs`, handling qwen arches); and
+2. **the llama.cpp payload** — `LLAMA_CPP_VERSION` differs whenever the fork is not
+   synced to the release the stock server runs. Measured 2026-08-07: fork `b10091`
+   (v0.32.5) vs stock `b10242` (v0.32.6), 151 builds apart.
+
+So "the fork detects the fine text that stock misses" and "the fork's bbox IoU is
+worse than stock's" are individually uninterpretable — either could be ours or
+upstream's drift.
+
+`run_compare.sh` adds a third arm that pins the fork's budget to upstream's
+effective defaults. A delta that **disappears** under the control was ours; a delta
+that **survives** is the payload.
+
+```bash
+STOCK=http://127.0.0.1:11434 FORK=http://127.0.0.1:11435 \
+  MODEL=gemma4:12b-it-q4_K_M CONTROL_MIN=40 CONTROL_MAX=280 \
+  ./run_compare.sh mytag
+```
+
+Control values are **per-arch**, and wrong ones silently invalidate the arm:
+
+| arch | control min | control max | why |
+|---|---|---|---|
+| `gemma4` | 40 | 280 | llama.cpp `set_limit_image_tokens(40, 280)` |
+| `nemotron_h_omni` | 256 | 256 | unpatched payload is a structural flat 256; 002 makes it (256, 3328), so pinning both bounds reproduces stock |
+
+The knobs are arch-gated, so on any other arch the control arm is a no-op that
+duplicates the fork arm. That is a valid result — but do not read it as "no budget
+effect" on an arch that was never wired into `visionServerArgs`.
+
+**Backend caveat.** A CPU arm can differ from a Metal arm on identical inputs with
+identical `prompt_eval_count` — greedy sampling diverges on backend floating point.
+Always check `prompt_eval_count` before attributing such a delta to a patch.
 
 ## Runs archive and harness knobs (2026-08-02)
 

@@ -25,6 +25,17 @@ def gen(prompt, images, num_predict=None, num_ctx=None):
     }
     if os.environ.get("KV_CACHE_TYPE"):
         payload["options"]["kv_cache_type"] = os.environ["KV_CACHE_TYPE"]
+    # Fork-only per-request vision budget (visionServerArgs in llm/llama_server.go,
+    # arch-gated to gemma4 and nemotron_h_omni). Pinning these to upstream's
+    # effective defaults turns a fork build into a BUDGET-MATCHED CONTROL, which is
+    # the only way to separate "our larger token budget changed the result" from
+    # "the llama.cpp payload differs" when comparing against a stock server on a
+    # different LLAMA_CPP_VERSION. See the control-arm section in README.md.
+    # These are Runner options — changing them reloads the model.
+    for env, opt in (("IMAGE_MIN_TOKENS", "image_min_tokens"),
+                     ("IMAGE_MAX_TOKENS", "image_max_tokens")):
+        if os.environ.get(env):
+            payload["options"][opt] = int(os.environ[env])
     if os.environ.get("THINK", "false") != "on":
         payload["think"] = False
     endpoint = os.environ.get("ENDPOINT", "generate")
@@ -194,16 +205,18 @@ def score_scene(resp_text):
 
 def score_doc(resp_text):
     g = GT["document"]
+    W, H = g["size"]
     s = {"json_valid": False, "invoice_no": False, "items_found": 0,
          "items_total": len(g["items"]), "qty_price_right": 0, "total_right": False,
-         "name_bbox_hits": 0}
+         "name_bbox_hits": 0, "name_bbox_mean_iou": 0.0, "name_bbox_space": None}
     try:
         r = json.loads(resp_text); s["json_valid"] = True
     except Exception:
         return s
     s["invoice_no"] = g["invoice_no"] in json.dumps(r)
     items = r.get("line_items") or []
-    for gti in g["items"]:
+    matched = []
+    for gti, gtb in zip(g["items"], g.get("name_bboxes") or [None] * len(g["items"])):
         m = next((i for i in items if isinstance(i.get("name"), str)
                   and gti["name"].lower() in i["name"].lower()), None)
         if m:
@@ -216,6 +229,23 @@ def score_doc(resp_text):
             bb = m.get("name_bbox") or m.get("name_bbox_2d") or []
             if len(bb) == 4 and bb[1] > 250 and bb[3] < 700 and bb[0] < 500:
                 s["name_bbox_hits"] += 1
+            if len(bb) == 4 and gtb:
+                matched.append((bb, gtb))
+    # name_bbox_hits is a coarse band test that cannot see a 5% scale error —
+    # it hid the document's vertical degradation for the whole 2026-08 bbox
+    # investigation (findings doc §6). Score a real IoU against the measured
+    # row geometry too, best-of-4 decode like score_scene.
+    best = (0.0, None)
+    for space, fx, fy in (("pixel", 1.0, 1.0), ("norm1000", W / 1000.0, H / 1000.0)):
+        for order in ("xyxy", "yxyx"):
+            ious = []
+            for bb, gtb in matched:
+                x1, y1, x2, y2 = (bb[0], bb[1], bb[2], bb[3]) if order == "xyxy" else (bb[1], bb[0], bb[3], bb[2])
+                ious.append(iou([x1 * fx, y1 * fy, x2 * fx, y2 * fy], gtb))
+            mean_iou = round(sum(ious) / len(ious), 3) if ious else 0.0
+            if mean_iou > best[0]:
+                best = (mean_iou, f"{space}/{order}")
+    s["name_bbox_mean_iou"], s["name_bbox_space"] = best
     try:
         s["total_right"] = abs(float(r.get("total")) - g["total"]) < 0.01
     except Exception:
@@ -274,16 +304,27 @@ def main():
     HOST = sys.argv[1]
     TAG = sys.argv[2]
     MODEL = sys.argv[3] if len(sys.argv) > 3 else "nemotron3:33b-q4_K_M"
-    only = sys.argv[4] if len(sys.argv) > 4 else None
     results = {}
     run_tests = tests
-    only = os.environ.get("ONLY_TESTS")
+    # ONLY_TESTS takes precedence over the positional [test] arg, but no longer
+    # clobbers it — previously the env lookup overwrote argv[4] unconditionally,
+    # so the documented positional form was dead.
+    only = os.environ.get("ONLY_TESTS") or (sys.argv[4] if len(sys.argv) > 4 else None)
     if only:
         keep = set(only.split(","))
         run_tests = [t for t in run_tests if t[0] in keep]
+        missing = keep - {t[0] for t in tests}
+        if missing:
+            print(f"WARNING: unknown test name(s) ignored: {', '.join(sorted(missing))}")
+        if not run_tests:
+            print(f"ERROR: no tests matched {only!r}; nothing to run")
+            sys.exit(2)
+    # NOTE: run_tests is already filtered above. A second per-iteration check
+    # comparing `name != only` used to live here, which silently skipped EVERY
+    # test whenever ONLY_TESTS held more than one comma-separated name (no single
+    # name equals the whole string) — producing an empty scores file that looked
+    # like a model failure.
     for name, prompt, images, scorer in run_tests:
-        if only and name != only:
-            continue
         print(f"--- {name} [{TAG}] ---", flush=True)
         try:
             r = gen(prompt, [b64(i) for i in images])
@@ -296,6 +337,25 @@ def main():
         sc = scorer(text)
         sc["prompt_eval_count"] = r.get("prompt_eval_count")
         sc["eval_count"] = r.get("eval_count")
+        # Throughput. Ollama reports durations in nanoseconds. Recorded so a run
+        # can be compared across backends (Metal vs CPU) as well as scored —
+        # additive only, no effect on any existing score field.
+        for k in ("total_duration", "load_duration",
+                  "prompt_eval_duration", "eval_duration"):
+            sc[k] = r.get(k)
+        if r.get("eval_duration") and r.get("eval_count"):
+            sc["gen_tps"] = round(r["eval_count"] / (r["eval_duration"] / 1e9), 2)
+        if r.get("prompt_eval_duration") and r.get("prompt_eval_count"):
+            sc["prefill_tps"] = round(
+                r["prompt_eval_count"] / (r["prompt_eval_duration"] / 1e9), 2)
+        # Record the requested vision budget so a scores file is self-describing:
+        # absent means "build default", present means this was a budget-matched
+        # control arm. Without this a control run is indistinguishable from a
+        # normal one after the fact.
+        for env, key in (("IMAGE_MIN_TOKENS", "req_image_min_tokens"),
+                         ("IMAGE_MAX_TOKENS", "req_image_max_tokens")):
+            if os.environ.get(env):
+                sc[key] = int(os.environ[env])
         results[name] = sc
         print(json.dumps(sc, indent=1), flush=True)
     

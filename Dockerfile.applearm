@@ -1,0 +1,130 @@
+# vim: filetype=dockerfile
+#
+# CPU-only linux/arm64 image for the MaxusAI/ollama fork, for Apple M-family Macs.
+#
+# 🛑 THIS IS NOT AN OVERLAY, AND MUST NOT BECOME ONE.
+#
+# Dockerfile.gemma4budget copies the compiled C++ payload from the ollama/ollama
+# base and replaces only /usr/bin/ollama. That shortcut is INVALID on any tree
+# containing llama/compat/002-llama-cpp-nemotron-dynres.patch: 002 changes the
+# compiled payload, so an overlay produces an image that LOOKS patched and is not.
+# See docs/maxusai/nemotron-dynres-patch.md ("Deployment constraints").
+#
+# This file therefore does a full CMake build. That is affordable only because it
+# builds ONE backend — cpu. The 45-70 GB figure that motivated the overlay is the
+# full fleet matrix (ROCm base + CUDA 12 + CUDA 13 + Vulkan + MLX), none of which
+# a Mac can reach.
+#
+# Why not the repo's own Dockerfile: its `arm64` assembly stage hardcodes CUDA
+# v12, CUDA v13, Jetpack 5 and Jetpack 6 — all NVIDIA, all unreachable from a Mac.
+#
+# WHY CPU-ONLY: containers on Apple Silicon run inside a Linux VM and there is no
+# Metal passthrough to a Linux guest. This image cannot use the GPU on any Mac,
+# under any runtime. For GPU inference on a Mac, build natively — Metal + MLX.
+# See docs/maxusai/spec/apple-silicon-build.md.
+#
+# Build:
+#   SHA=$(git rev-parse --short=8 HEAD)
+#   docker build -f Dockerfile.applearm --platform linux/arm64 \
+#     --build-arg OLLAMA_VERSION=0.32.5-applearm-$SHA \
+#     -t maxusai/ollama:$SHA-applearm .
+#
+# Verify:
+#   docker run --rm maxusai/ollama:$SHA-applearm --version
+#     # -> client version is 0.32.5-applearm-<sha>
+#
+# Docker Desktop's default VM (8 GB) is too small for this build. Allocate 32 GB,
+# or lower --parallel. See the spec for the measured numbers.
+
+ARG CMAKEVERSION=3.31.2
+ARG NINJAVERSION=1.12.1
+
+# Pinned, not derived from TARGETARCH: this image is Apple-M-family-only, so an
+# accidental amd64 build is a mistake, not a variant. Declared as an ARG rather
+# than a literal so the FROM lines do not trip FromPlatformFlagConstDisallowed.
+ARG APPLEARM_PLATFORM=linux/arm64
+
+#
+# Build base — mirrors the stock Dockerfile's base-arm64 -> base -> cpu-deps
+# chain, minus the NVIDIA CUDA sbsa repo (nothing here needs it).
+#
+FROM --platform=${APPLEARM_PLATFORM} almalinux:8 AS base
+ARG CMAKEVERSION
+ARG NINJAVERSION
+# epel-release for ccache
+RUN yum install -y yum-utils epel-release \
+    && dnf install -y clang ccache git unzip
+ENV CC=clang CXX=clang++
+RUN curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
+RUN curl -fsSL -o /tmp/ninja.zip https://github.com/ninja-build/ninja/releases/download/v${NINJAVERSION}/ninja-linux-aarch64.zip \
+    && unzip /tmp/ninja.zip -d /usr/local/bin \
+    && rm /tmp/ninja.zip
+ENV CMAKE_GENERATOR=Ninja
+ENV LDFLAGS=-s
+
+#
+# llama-server, cpu backend only.
+#
+# COPY llama/compat is what carries 001 + 002 into the build: compat.cmake wires
+# apply-patch.cmake in as FetchContent's PATCH_COMMAND, and it applies every
+# llama/compat/*.patch in numeric order to the fetched llama.cpp source.
+#
+# Configure output MUST contain:
+#   llama/compat: applied 001-llama-cpp-hooks.patch
+#   llama/compat: applied 002-llama-cpp-nemotron-dynres.patch
+# A FATAL_ERROR here means a patch no longer fits the pinned LLAMA_CPP_VERSION.
+#
+FROM base AS llama-server-cpu
+RUN dnf install -y gcc-toolset-13-gcc gcc-toolset-13-gcc-c++ gcc-toolset-13-binutils
+ENV PATH=/opt/rh/gcc-toolset-13/root/usr/bin:$PATH
+WORKDIR /go/src/github.com/ollama/ollama
+COPY LLAMA_CPP_VERSION .
+COPY llama/server llama/server
+COPY llama/compat llama/compat
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake -S llama/server --preset cpu \
+        && cmake --build build/llama-server-cpu -- -l $(nproc) \
+        && cmake --install build/llama-server-cpu --component llama-server --strip \
+        && for lib in \
+            /usr/lib64/libgomp.so* \
+            /usr/lib64/libomp.so* \
+            /opt/rh/gcc-toolset-13/root/usr/lib64/libgomp.so* \
+            /opt/rh/gcc-toolset-13/root/usr/lib64/libomp.so*; do \
+                [ -e "$lib" ] && cp -a "$lib" dist/lib/ollama/ || true; \
+            done
+
+#
+# Go binary — carries the fork's Go-side patches (gemma4 image token budgets,
+# per-model KV cache type, generate think/format handling).
+#
+FROM base AS build
+WORKDIR /go/src/github.com/ollama/ollama
+COPY go.mod go.sum .
+RUN curl -fsSL https://golang.org/dl/go$(awk '/^go/ { print $2 }' go.mod).linux-arm64.tar.gz | tar xz -C /usr/local
+ENV PATH=/usr/local/go/bin:$PATH
+RUN go mod download
+COPY . .
+ENV CGO_ENABLED=1
+ARG OLLAMA_VERSION=0.0.0
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    go build -trimpath -buildmode=pie \
+        -ldflags="-w -s -X=github.com/ollama/ollama/version.Version=${OLLAMA_VERSION}" \
+        -o /bin/ollama .
+
+#
+# Runtime. No libvulkan1 — there is no Vulkan backend in this image.
+# Building on AlmaLinux 8 (glibc 2.28) and running on Ubuntu 24.04 (glibc 2.39)
+# is forward-compatible, and is what the stock Dockerfile already does.
+#
+ARG APPLEARM_PLATFORM
+FROM --platform=${APPLEARM_PLATFORM} ubuntu:24.04
+RUN apt-get update \
+    && apt-get install -y ca-certificates libopenblas0 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /bin/ollama /usr/bin/ollama
+COPY --from=llama-server-cpu /go/src/github.com/ollama/ollama/dist/lib/ollama /usr/lib/ollama
+ENV OLLAMA_HOST=0.0.0.0:11434
+EXPOSE 11434
+ENTRYPOINT ["/usr/bin/ollama"]
+CMD ["serve"]

@@ -1,5 +1,11 @@
 # Vision token budgets: measured cost, and the routing policy that follows
 
+> **2026-08-07, post-004:** every gemma4 number below was measured on the
+> pre-004 payload (natural grids, PAD_CEIL, min==max pinning with ceil
+> overshoot). On a payload carrying `llama/compat/004` the sizing is
+> budget-fill (ADR 0008) and these cells do not reproduce; see
+> [findings §10](gemma4-bbox-investigation-findings.md) for the patched matrix.
+
 MaxusAI-fork reference (fork-only; does not exist upstream). Written 2026-07-31 from
 end-to-end measurements on the gfx1151 host (Ryzen AI Max+ 395 / Radeon 8060S, ROCm),
 serving `0.32.1-gemma4budget-85ebcb79` and `0.32.5-gemma4budget-0d23f7a6`.
@@ -121,16 +127,16 @@ For `modelArch` in `visionServerArgs()` ([`llm/llama_server.go`](../../llm/llama
 
 | arch | flags passed | resulting budget |
 |---|---|---|
-| `gemma4` | `--image-min-tokens` / `--image-max-tokens`, from `api.Options`, defaulting **40 / 1120** | 40 … 1,120 |
+| `gemma4` | `--image-min-tokens` / `--image-max-tokens`, from `api.Options`, defaulting **70 / 560** (ADR 0007) | 70 … 560 |
 | `qwen2vl`, `qwen25vl`, `qwen3vl`, `qwen3vlmoe`, `qwen35`, `qwen35moe` | `--image-min-tokens 1024` (fixed, not tunable) | 1,024 … 4,096 |
 | `nemotron_h_omni` | `--image-min-tokens` / `--image-max-tokens`, defaults **256 / 3328** | 256 … 3,328 on a payload with the 002 patch; exactly 256 (flags inert) unpatched — see [nemotron-dynres-patch.md](nemotron-dynres-patch.md) |
 | everything else | none | projector default |
 
 Option resolution: `ImageMinTokens` / `ImageMaxTokens` are plain `int` with `omitempty`.
 `gemma4ImageTokenBudget()` treats `<= 0` as unset and substitutes the defaults, so a JSON
-`null` — or an omitted field — yields **40 / 1120**, not "no limit". Both are **Runner**
+`null` — or an omitted field — yields **70 / 560** (ADR 0007), not "no limit". Both are **Runner**
 options: changing either reloads the runner. `nemotronImageTokenBudget()` additionally
-treats the exact gemma4-shaped defaults (40/1120) as unset — explicit 40 or 1120 is not
+treats the exact gemma4-shaped defaults (now 70/560, ADR 0007) as unset — an explicit value equal to either default is not
 expressible for that arch — and clamps the ceiling to the trained 3,328; see the
 [normative spec in nemotron-dynres-patch.md](nemotron-dynres-patch.md#spec--normative-behaviour).
 
@@ -195,3 +201,94 @@ it.
   behaviour is not quant-specific.
 - Aspect ratios covered: 1:1, 4:3, 3:4, 16:9, 9:16, 3:1, 1:3, 3:2. Audio input on
   `nemotron_h_omni` was **not** tested.
+
+## Ladder sweep — bbox quality vs budget, per size (2026-08-07)
+
+Everything above measures *cost*. This section measures what the cost **buys**, across
+the vendor's documented rungs.
+
+Google's Gemma 4 model card — <https://ai.google.dev/gemma/docs/core/model_card_4> —
+defines the supported visual token budgets as a discrete ladder: **70, 140, 280, 560,
+1120**. 280 is llama.cpp's default ceiling; 1120 is the vendor maximum and the fork's
+default. The card also splits the family by vision path: **12B is encoder-free**, while
+**26B A4B and 31B carry a ~550M vision encoder** — which is why this sweep runs per size.
+
+Harness: `vision-suite/run_budget_sweep.sh`, `min == max` pinned per rung (forcing the
+budget rather than letting the projector pick within a range), `scene_single` +
+`document_single`, think off, temperature 0. Host: native Metal build on an M5 Max,
+llama.cpp b10091.
+
+### scene_single — 1920×1080 labelled shapes
+
+`bbox_mean_iou` by budget and size:
+
+| budget | image tok | 12B (encoder-free) | 26B A4B (~550M, MoE) | 31B (~550M, dense) |
+|---|---|---|---|---|
+| 70 | ~82 | 0.000 | 0.000 | 0.000 |
+| 140 | ~136 | 0.780 | 0.814 | 0.830 |
+| 280 | 280 | 0.883 | 0.885 | 0.902 |
+| **560** | ~543 | **0.894** | **0.914** | **0.906** |
+| 1120 | ~1186 | 0.719 | 0.810 | 0.729 |
+| | **280→1120 cost** | **+0.164** | **+0.075** | **+0.173** |
+
+Label/colour recall is 0/6 at 70 and 6/6 from 280 up on all three sizes; 12B is the
+only size that drops labels at 140 (4/6). The 14px serial is found from 280 on 26B and
+31B, and only from 560 on 12B.
+
+### document_single — 1568² invoice
+
+| budget | image tok | 12B name_bbox | 26B name_bbox | 31B name_bbox | items (12B/26B/31B) |
+|---|---|---|---|---|---|
+| 70 | ~88 | 0/5 | 0/5 | 0/5 | 0 / 0 / 0 |
+| 140 | ~145 | 0/5 | 1/5 | 1/5 | 0 / 2 / 2 |
+| 280 | 280 | 4/5 | 4/5 | 3/5 | 5 / 5 / 5 |
+| 560 | ~553 | 3/5 | 4/5 | 4/5 | 5 / 5 / 5 |
+| 1120 | ~1180 | 4/5 | 4/5 | 4/5 | 5 / 5 / 5 |
+
+The 1:1 document shows **no collapse at 1120 on any size** — the contrast with the 16:9
+scene that motivated [the aspect investigation](gemma4-bbox-aspect-investigation.md).
+
+`prompt_eval_count` is identical across sizes at every rung (650/704/848/1111/1754 for
+scene; 422/479/614/887/1514 for document), confirming image cost is a function of the
+budget and not of parameter count — and that the flag bound (SPEC B4). Text baselines
+differ per test because the prompts differ: **≈568 tokens for scene, ≈334 for document**
+(both derived from the 280 rung, where image cost is exactly 280). Subtract the matching
+baseline to recover image tokens; using the wrong one yields nonsense at the low rungs.
+
+### What the sweep says
+
+1. **560 dominates 1120 on both sizes.** Higher IoU (+0.175 on 12B, +0.177 on 31B) with
+   identical fine-text recall. The shipped `DefaultImageMaxTokens = 1120` is not the best
+   rung on this workload.
+2. **IoU peaks at 560 and collapses at 1120 on all three sizes**, and **the vision
+   encoder is ruled out**. 12B is encoder-free while 26B A4B and 31B share a ~550M
+   encoder — yet 26B and 31B differ *most* in collapse magnitude (+0.075 vs +0.173)
+   while 12B sits between them on peak IoU. If the encoder drove this, the two
+   encoder-bearing sizes would pair off against 12B. They do not. The **shape** is
+   universal and the **magnitude** varies non-systematically, which is what a shared
+   preprocessing/decode defect modulated by per-model robustness looks like.
+3. **The effect is not monotonic in token count.** The shipped *range* `40…1120` selects
+   ~936 image tokens and scores IoU 0.504; the *pinned* 1120 uses ~1186 tokens and scores
+   0.719. More tokens, better geometry. "Higher resolution costs localisation" is the
+   wrong model — specific grids decode badly.
+4. **The bottom two rungs are unusable here.** 70 scores zero on every metric at both
+   sizes; 140 loses labels (12B) and line items (both).
+5. **Size buys low-budget capability, not a different curve.** 26B and 31B read 6/6
+   labels at 140 where 12B manages 4/6, and find the 14px serial at 280 where 12B needs
+   560 — consistent with them having an encoder — but all three trace the same
+   peak-then-collapse shape.
+6. **560 is the optimum on every size tested.** Encoder-free, MoE-with-encoder and
+   dense-with-encoder all peak there, and 26B posts the best bbox result in the whole
+   sweep (0.914).
+
+### Not covered
+
+- **26B A4B was added 2026-08-07** and is included above. It was the discriminating
+  cell — sharing 31B's ~550M encoder at MoE scale — and its result is what rules the
+  encoder out as the cause.
+- Only `q4_K_M` was probed. Per the note above, budget behaviour has not varied by quant
+  within an arch, but the *quality* numbers here are not quant-independent and should not
+  be assumed to transfer to `nvfp4`.
+- One image per test, one seed, temperature 0. Single-sample scores on 5–6 item tasks are
+  coarse; the document `name_bbox` column in particular moves by ±1 between adjacent rungs
+  and should not be read as a trend.

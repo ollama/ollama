@@ -600,9 +600,21 @@ type Options struct {
 
 // Default Gemma 4 vision image-token budget (gemma4v projector). Exposed via
 // Runner.ImageMinTokens/ImageMaxTokens so callers can tune it per request.
+//
+// Both values are rungs on Google's documented ladder (70/140/280/560/1120 —
+// ai.google.dev/gemma/docs/core/model_card_4), and the ceiling is the vendor
+// maximum again: ADR 0007's 560 mitigation is superseded by ADR 0008, which
+// fixes the underlying defect instead. llama.cpp left under-budget images on
+// patch grids the model never trained on ("off-ladder"), which broke box_2d
+// vertical grounding as budgets grew;
+// llama/compat/004-llama-cpp-gemma4-budget-fill.patch restores the reference
+// sizing (snap the ceiling to the ladder, scale to fill it, no letterbox).
+// Measured on the patched payload, 1120 beats 560 on both geometry and
+// fine-text recall for 26B/31B; the encoder-free 12B still prefers 560 for
+// pure bbox work and can pin it per request. See ADR 0008.
 const (
-	DefaultImageMinTokens = 40   // llama.cpp's documented gemma4v floor
-	DefaultImageMaxTokens = 1120 // raised from llama.cpp's 280 default ceiling
+	DefaultImageMinTokens = 70   // lowest rung on Gemma 4's documented ladder
+	DefaultImageMaxTokens = 1120 // vendor maximum; requires the 004 patch — see ADR 0008
 )
 
 // Runner options which must be set when the model is loaded into memory

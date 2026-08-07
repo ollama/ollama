@@ -21,11 +21,29 @@ For what each arch actually **costs** at real image sizes — stock vs fork vs p
 visual tokens and pixels-per-token — plus the routing policy that follows, see
 [vision-token-budget-measurements.md](vision-token-budget-measurements.md).
 
+> **Vendor reference, added 2026-08-07 — the gemma4 budget has a documented ladder.**
+> Google's Gemma 4 model card
+> (<https://ai.google.dev/gemma/docs/core/model_card_4>) states: *"The supported
+> token budgets are: 70, 140, 280, 560, and 1120."* So gemma4's knob is not a free
+> integer — 280 is llama.cpp's default rung and 1120 is the vendor maximum. The fork
+> ships **70 / 560** ([ADR 0007](adr/0007-gemma4-default-budget-560.md), 2026-08-07;
+> previously 40 / 1120). Higher rungs preserve detail for OCR, lower rungs suit
+> classification and video.
+>
+> The ceiling sits at 560 rather than the vendor maximum as a **mitigation** for a
+> llama.cpp vertical coordinate error that grows with patch rows — not because the
+> model reads 560 better. Corrected for that error, 1120 localises best. See the
+> [findings](gemma4-bbox-investigation-findings.md).
+>
+> The card also splits the family by vision path: **12B is encoder-free**, while
+> **26B A4B and 31B carry a ~550M vision encoder** — but note the bbox collapse is
+> *not* encoder-related: all three sizes trace the same curve, peaking at 560.
+
 ## What each arch actually gets
 
 | `modelArch` | flags ollama passes | effective budget | set by |
 |---|---|---|---|
-| `gemma4` | `--image-min-tokens` / `--image-max-tokens`, defaults **40 / 1120** | 40 … 1,120 tokens | `set_limit_image_tokens(40, 280)`, ceiling raised by our flags |
+| `gemma4` | `--image-min-tokens` / `--image-max-tokens`, defaults **70 / 560** (ADR 0007; was 40/1120 before 2026-08-07) | 70 … 560 tokens | `set_limit_image_tokens(40, 280)`, ceiling raised by our flags |
 | `qwen2vl`, `qwen25vl`, `qwen3vl`, `qwen3vlmoe`, `qwen35`, `qwen35moe` | `--image-min-tokens 1024` (fixed) | 1,024 … 4,096 tokens | `set_limit_image_tokens(8, 4096)`, floor raised by our flag |
 | **`nemotron_h_omni`** | `--image-min-tokens` / `--image-max-tokens`, defaults **256 / 3328** | 256 … 3,328 with the 002 patch; **exactly 256 (flags inert) on an unpatched payload** | `set_limit_image_tokens(256, 3328)` added by `llama/compat/002-llama-cpp-nemotron-dynres.patch` |
 | `mistral3` | none | 8 … 1,024 **grid** tokens; per-image cost is grid + rows (see below), worst case **2,048** | `set_limit_image_tokens(8, 1024)` (pixtral projector) |

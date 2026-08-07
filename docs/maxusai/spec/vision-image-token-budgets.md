@@ -47,7 +47,7 @@ payload, not of the arch — recorded in the table rather than silently tolerate
 
 | `modelArch` | flags | effective budget | consumed by |
 |---|---|---|---|
-| `gemma4` | min/max from `api.Options`, defaults 40 / 1120 | 40 … 1,120 | gemma4v projector, `set_limit_image_tokens(40, 280)` with the ceiling raised |
+| `gemma4` | max from `api.Options`, defaults **70 / 1120** ([ADR 0008](../adr/0008-gemma4-budget-fill-restores-1120.md)); min is a no-op on the 004 payload | ladder rung ≤ max, grid fills it | gemma4v projector + `llama/compat/004` budget-fill (snap to ladder, scale up/down, `PAD_NONE`) |
 | `qwen2vl`, `qwen25vl`, `qwen3vl`, `qwen3vlmoe`, `qwen35`, `qwen35moe` | `--image-min-tokens 1024` | 1,024 … 4,096 | `PROJECTOR_TYPE_QWEN3VL`, `set_limit_image_tokens(8, 4096)` with the floor raised |
 | `nemotron_h_omni` | min/max from `api.Options`, defaults 256 / 3328 | 256 … 3,328 with compat/002; exactly 256, flags inert, without it | `PROJECTOR_TYPE_NEMOTRON_V2_VL` as patched (ADR 0001) |
 | `mistral3`, `glmocr`, `llama4`, `deepseekocr`, all others | none | projector default / structural | — |
@@ -56,6 +56,50 @@ payload, not of the arch — recorded in the table rather than silently tolerate
 `handle_qwen35_like_clip()` sets `clip.projector_type = "qwen3vl_merger"`, so they
 load as `PROJECTOR_TYPE_QWEN3VL` — the branch that emits the "requires at minimum
 1024 image tokens" warning.
+
+### 2.1 Gemma 4's vendor-documented budget ladder
+
+Google's model card — **<https://ai.google.dev/gemma/docs/core/model_card_4>** —
+specifies the supported visual token budgets as a **discrete ladder**, not a
+continuous range:
+
+> The supported token budgets are: **70, 140, 280, 560, and 1120.**
+
+Consequences for this spec:
+
+- **B6 — The shipped gemma4 defaults MUST be ladder values.** The fork ships
+  **70 / 1120** ([ADR 0008](../adr/0008-gemma4-budget-fill-restores-1120.md)) —
+  the documented floor and maximum. Moving a default to a non-rung requires
+  superseding that ADR. Higher rungs preserve detail for OCR; lower rungs suit
+  classification and video, and are selectable per request.
+- **B7 — Delivered grids MUST be ladder-reachable.** The model only grounds
+  `box_2d` accurately on grids satisfying `c·r ≤ B < (c+1)·(r+1)` for a supported
+  budget B ([findings §9](../gemma4-bbox-investigation-findings.md)). The
+  `llama/compat/004` budget-fill patch enforces this: the requested ceiling snaps
+  down to the ladder (sub-70 clamps up), the image scales — up or down — to fill
+  it, no letterbox. ADR 0007's interim 560 ceiling (a mitigation for the
+  off-ladder defect, superseded by ADR 0008) applied only to unpatched payloads.
+- **Off-ladder request values are accepted but snapped.** `gemma4ImageTokenBudget()`
+  passes integers through; the payload snaps the ceiling (900 → 560) and ignores
+  `min`. `MaxImageTokens`/`ImageTokensForSize` mirror the snap-and-fill so
+  scheduling charges what llama-server delivers — including the upscale of small
+  images to the budget (a 640×480 costs ~1064 tokens at ceiling 1120, not 132).
+
+**Model sizes are not interchangeable for vision results.** Per the same card:
+
+| variant | params | vision encoder | context |
+|---|---|---|---|
+| E2B | 2.3B effective (5.1B w/ embeddings) | ~150M | 128K |
+| E4B | 4.5B effective (8B w/ embeddings) | ~150M | 128K |
+| 12B Unified | 11.95B | **encoder-free** | 256K |
+| 26B A4B (MoE) | 25.2B total / 3.8B active | ~550M | 256K |
+| 31B Dense | 30.7B | ~550M | 256K |
+
+The 12B is **encoder-free** while 26B/31B carry a ~550M vision encoder. These are
+different vision paths, so a budget/bbox measurement taken on one size MUST NOT be
+generalised to another without re-measuring — see
+[vision-token-budget-measurements.md](../vision-token-budget-measurements.md) for the
+per-size sweep and `run_budget_sweep.sh` for the harness.
 
 ## 3. Verifying that a flag binds
 
