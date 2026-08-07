@@ -57,6 +57,44 @@ payload, not of the arch — recorded in the table rather than silently tolerate
 load as `PROJECTOR_TYPE_QWEN3VL` — the branch that emits the "requires at minimum
 1024 image tokens" warning.
 
+### 2.1 Gemma 4's vendor-documented budget ladder
+
+Google's model card — **<https://ai.google.dev/gemma/docs/core/model_card_4>** —
+specifies the supported visual token budgets as a **discrete ladder**, not a
+continuous range:
+
+> The supported token budgets are: **70, 140, 280, 560, and 1120.**
+
+Consequences for this spec:
+
+- **B6 — The gemma4 budget SHOULD be a ladder value.** 280 is llama.cpp's default
+  ceiling; **1120 is the documented maximum**, so the fork's raised default is the
+  top of the vendor's own ladder rather than an invented number. Higher budgets
+  preserve detail for OCR; lower budgets suit classification and video.
+- **`gemma4ImageTokenBudget()` does not enforce the ladder.** It clamps `min` down
+  to `max` and otherwise passes any integer through. Off-ladder values are accepted
+  silently and their behaviour is not vendor-documented.
+- **`api.DefaultImageMinTokens = 40` is below the documented floor of 70.** It comes
+  from llama.cpp's `set_limit_image_tokens(40, 280)`, not from the model card. It is
+  a floor rather than a request, so it binds only on very small images — but it is
+  off-ladder and should be read as such.
+
+**Model sizes are not interchangeable for vision results.** Per the same card:
+
+| variant | params | vision encoder | context |
+|---|---|---|---|
+| E2B | 2.3B effective (5.1B w/ embeddings) | ~150M | 128K |
+| E4B | 4.5B effective (8B w/ embeddings) | ~150M | 128K |
+| 12B Unified | 11.95B | **encoder-free** | 256K |
+| 26B A4B (MoE) | 25.2B total / 3.8B active | ~550M | 256K |
+| 31B Dense | 30.7B | ~550M | 256K |
+
+The 12B is **encoder-free** while 26B/31B carry a ~550M vision encoder. These are
+different vision paths, so a budget/bbox measurement taken on one size MUST NOT be
+generalised to another without re-measuring — see
+[vision-token-budget-measurements.md](../vision-token-budget-measurements.md) for the
+per-size sweep and `run_budget_sweep.sh` for the harness.
+
 ## 3. Verifying that a flag binds
 
 Adding an arch to the switch MUST be accompanied by an empirical check, because B4

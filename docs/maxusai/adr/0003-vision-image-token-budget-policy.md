@@ -6,6 +6,10 @@
 - **Deciders:** MaxusAI fork maintainers
 - **Related:** [ADR 0001](0001-nemotron-vision-dynamic-resolution.md) (nemotron
   dynamic resolution), [SPEC: vision image-token budgets](../spec/vision-image-token-budgets.md)
+- **Vendor reference:** Gemma 4 model card —
+  <https://ai.google.dev/gemma/docs/core/model_card_4> (supported visual token
+  budgets **70 / 140 / 280 / 560 / 1120**; 12B is encoder-free, 26B A4B and 31B
+  carry a ~550M vision encoder)
 
 ## Context
 
@@ -99,3 +103,75 @@ dense fine-text A/B: upstream reads nothing below 16px on a 1568² page and
 confabulates code-like strings; the budgeted build transcribes correctly to
 7–9px. Cost: ~0.12 mean IoU on synthetic shape boxes. Policy stands. Details:
 [vision-campaign-2026-08-02.md](../vision-campaign-2026-08-02.md) §4.
+
+## Addendum — vendor ladder and size dependence (2026-08-07)
+
+Two things learned after the decision, neither of which reverses it, but both of
+which change how the IoU cost above should be read.
+
+**1. The budget is a vendor-documented ladder.** Google's model card
+(<https://ai.google.dev/gemma/docs/core/model_card_4>) states: *"The supported
+token budgets are: 70, 140, 280, 560, and 1120."* So the 280→1120 raise moves
+from llama.cpp's default rung to the **documented maximum** — it is a ladder
+step, not an invented ceiling. This strengthens decision 1: the knob has a
+vendor-defined domain.
+
+Two off-ladder facts follow, recorded rather than acted on here:
+
+- `gemma4ImageTokenBudget()` accepts any integer; it does not clamp to the ladder.
+  Off-ladder values are undocumented territory.
+- `api.DefaultImageMinTokens = 40` sits **below the documented floor of 70**. It
+  derives from llama.cpp's `set_limit_image_tokens(40, 280)`, not the model card.
+  As a floor it binds only on very small images, so the practical impact is
+  narrow — but it is off-ladder.
+
+**2. The IoU cost depends on the REGIME, not on model size — and 560 beats 1120.**
+
+First, the payload is exonerated. Measured 2026-08-07 on `gemma4:12b-it-q4_K_M`
+(Metal, M5 Max), scene test, with a budget-matched control:
+
+| arm | budget | `prompt_eval_count` | `bbox_mean_iou` | 14px serial |
+|---|---|---|---|---|
+| stock (b10242) | llama.cpp default | 848 | 0.883 | ✗ |
+| fork (b10091) | 40 / 1120 (range) | 1504 | **0.504** | ✓ |
+| control (b10091) | 40 / 280 (range) | 848 | 0.883 | ✗ |
+
+The control reproduces stock **exactly**, so the 151-build llama.cpp gap between
+the lineages contributes nothing measurable and the whole delta is the budget.
+
+Then the ladder sweep (`run_budget_sweep.sh`, `min == max` pinned per rung):
+
+| budget | image tok | 12B IoU | 31B IoU | 12B serial | 31B serial |
+|---|---|---|---|---|---|
+| 70 | ~82 | 0.000 | 0.000 | ✗ | ✗ |
+| 140 | ~136 | 0.780 | 0.830 | ✗ | ✗ |
+| 280 | 280 | 0.883 | 0.902 | ✗ | ✓ |
+| **560** | ~543 | **0.894** | **0.906** | ✓ | ✓ |
+| 1120 | ~1186 | 0.719 | 0.729 | ✓ | ✓ |
+
+Three corrections to the reading above follow:
+
+- **Not size-dependent.** Both sizes trace the same curve — peak at 560, collapse
+  at 1120 — and the 280→1120 cost is +0.164 (12B) vs +0.173 (31B). An earlier
+  draft of this addendum attributed the ~0.12-vs-0.379 gap to 12B being
+  encoder-free. That was wrong.
+- **Regime-dependent instead.** ~0.379 came from the *range* `40…1120`, where the
+  projector selected ~936 image tokens; the *pinned* 1120 (~1186 tokens) costs only
+  ~0.164. **More tokens produced better geometry**, so the effect is not monotonic
+  in token count and "higher resolution costs localisation" is the wrong model of
+  it. The shipped default's range happens to select a bad intermediate grid.
+- **Not in the vision encoder.** 12B is encoder-free and 31B carries ~550M, yet both
+  collapse identically at 1120. The defect therefore sits in the shared path — grid
+  selection during preprocessing, or the norm-1000 `box_2d`/yxyx decode — which
+  rules out a large part of the search space.
+
+**560 dominates 1120 on both sizes**: higher IoU *and* the same fine-text recall.
+The bottom two rungs are unusable for this workload (70 scores zero on every
+metric; 140 loses labels and line items).
+
+**Decisions 1–5 stand unchanged**, but decision 2's "empirical check" standard now
+argues against the value in decision-adjacent defaults: on this evidence
+`api.DefaultImageMaxTokens = 1120` is the wrong rung, and 560 is the candidate.
+Changing a shipped default is out of scope for an addendum — raise it as its own
+decision. Until then, do not quote "the budget raise costs ~0.12 IoU" without
+stating the regime and the rung.

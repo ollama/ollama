@@ -285,16 +285,27 @@ def main():
     HOST = sys.argv[1]
     TAG = sys.argv[2]
     MODEL = sys.argv[3] if len(sys.argv) > 3 else "nemotron3:33b-q4_K_M"
-    only = sys.argv[4] if len(sys.argv) > 4 else None
     results = {}
     run_tests = tests
-    only = os.environ.get("ONLY_TESTS")
+    # ONLY_TESTS takes precedence over the positional [test] arg, but no longer
+    # clobbers it — previously the env lookup overwrote argv[4] unconditionally,
+    # so the documented positional form was dead.
+    only = os.environ.get("ONLY_TESTS") or (sys.argv[4] if len(sys.argv) > 4 else None)
     if only:
         keep = set(only.split(","))
         run_tests = [t for t in run_tests if t[0] in keep]
+        missing = keep - {t[0] for t in tests}
+        if missing:
+            print(f"WARNING: unknown test name(s) ignored: {', '.join(sorted(missing))}")
+        if not run_tests:
+            print(f"ERROR: no tests matched {only!r}; nothing to run")
+            sys.exit(2)
+    # NOTE: run_tests is already filtered above. A second per-iteration check
+    # comparing `name != only` used to live here, which silently skipped EVERY
+    # test whenever ONLY_TESTS held more than one comma-separated name (no single
+    # name equals the whole string) — producing an empty scores file that looked
+    # like a model failure.
     for name, prompt, images, scorer in run_tests:
-        if only and name != only:
-            continue
         print(f"--- {name} [{TAG}] ---", flush=True)
         try:
             r = gen(prompt, [b64(i) for i in images])

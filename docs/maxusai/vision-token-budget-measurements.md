@@ -195,3 +195,76 @@ it.
   behaviour is not quant-specific.
 - Aspect ratios covered: 1:1, 4:3, 3:4, 16:9, 9:16, 3:1, 1:3, 3:2. Audio input on
   `nemotron_h_omni` was **not** tested.
+
+## Ladder sweep — bbox quality vs budget, per size (2026-08-07)
+
+Everything above measures *cost*. This section measures what the cost **buys**, across
+the vendor's documented rungs.
+
+Google's Gemma 4 model card — <https://ai.google.dev/gemma/docs/core/model_card_4> —
+defines the supported visual token budgets as a discrete ladder: **70, 140, 280, 560,
+1120**. 280 is llama.cpp's default ceiling; 1120 is the vendor maximum and the fork's
+default. The card also splits the family by vision path: **12B is encoder-free**, while
+**26B A4B and 31B carry a ~550M vision encoder** — which is why this sweep runs per size.
+
+Harness: `vision-suite/run_budget_sweep.sh`, `min == max` pinned per rung (forcing the
+budget rather than letting the projector pick within a range), `scene_single` +
+`document_single`, think off, temperature 0. Host: native Metal build on an M5 Max,
+llama.cpp b10091.
+
+### scene_single — 1920×1080 labelled shapes
+
+| budget | image tok | 12B IoU | 31B IoU | 12B labels | 31B labels | 12B serial | 31B serial |
+|---|---|---|---|---|---|---|---|
+| 70 | ~82 | 0.000 | 0.000 | 0/6 | 0/6 | ✗ | ✗ |
+| 140 | ~136 | 0.780 | 0.830 | 4/6 | 6/6 | ✗ | ✗ |
+| 280 | 280 | 0.883 | 0.902 | 6/6 | 6/6 | ✗ | ✓ |
+| **560** | ~543 | **0.894** | **0.906** | 6/6 | 6/6 | ✓ | ✓ |
+| 1120 | ~1186 | 0.719 | 0.729 | 6/6 | 6/6 | ✓ | ✓ |
+
+### document_single — 1568² invoice
+
+| budget | image tok | 12B name_bbox | 31B name_bbox | 12B items | 31B items |
+|---|---|---|---|---|---|
+| 70 | ~88 | 0/5 | 0/5 | 0/5 | 0/5 |
+| 140 | ~145 | 0/5 | 1/5 | 0/5 | 2/5 |
+| 280 | 280 | 4/5 | 3/5 | 5/5 | 5/5 |
+| 560 | ~553 | 3/5 | 4/5 | 5/5 | 5/5 |
+| 1120 | ~1180 | 4/5 | 4/5 | 5/5 | 5/5 |
+
+`prompt_eval_count` is identical across sizes at every rung (650/704/848/1111/1754 for
+scene; 422/479/614/887/1514 for document), confirming image cost is a function of the
+budget and not of parameter count — and that the flag bound (SPEC B4). Text baselines
+differ per test because the prompts differ: **≈568 tokens for scene, ≈334 for document**
+(both derived from the 280 rung, where image cost is exactly 280). Subtract the matching
+baseline to recover image tokens; using the wrong one yields nonsense at the low rungs.
+
+### What the sweep says
+
+1. **560 dominates 1120 on both sizes.** Higher IoU (+0.175 on 12B, +0.177 on 31B) with
+   identical fine-text recall. The shipped `DefaultImageMaxTokens = 1120` is not the best
+   rung on this workload.
+2. **IoU peaks at 560 and collapses at 1120**, identically on both sizes. Since 12B is
+   encoder-free and 31B has a ~550M encoder, **the collapse is not in the vision
+   encoder** — it is in the shared preprocessing/decode path. That is the place to look.
+3. **The effect is not monotonic in token count.** The shipped *range* `40…1120` selects
+   ~936 image tokens and scores IoU 0.504; the *pinned* 1120 uses ~1186 tokens and scores
+   0.719. More tokens, better geometry. "Higher resolution costs localisation" is the
+   wrong model — specific grids decode badly.
+4. **The bottom two rungs are unusable here.** 70 scores zero on every metric at both
+   sizes; 140 loses labels (12B) and line items (both).
+5. **Size buys low-budget capability, not a different curve.** 31B reads 6/6 labels at
+   140 where 12B manages 4/6, and finds the 14px serial at 280 where 12B needs 560 —
+   consistent with the encoder — but both trace the same peak-then-collapse shape.
+
+### Not covered
+
+- **26B A4B was not swept** — it was absent from the local store when this ran. It is the
+  most informative missing cell: it shares 31B's ~550M encoder at MoE scale, so it would
+  separate "encoder vs encoder-free" from "parameter count".
+- Only `q4_K_M` was probed. Per the note above, budget behaviour has not varied by quant
+  within an arch, but the *quality* numbers here are not quant-independent and should not
+  be assumed to transfer to `nvfp4`.
+- One image per test, one seed, temperature 0. Single-sample scores on 5–6 item tasks are
+  coarse; the document `name_bbox` column in particular moves by ±1 between adjacent rungs
+  and should not be read as a trend.

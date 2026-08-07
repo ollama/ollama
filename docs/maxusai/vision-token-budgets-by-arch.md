@@ -21,6 +21,25 @@ For what each arch actually **costs** at real image sizes — stock vs fork vs p
 visual tokens and pixels-per-token — plus the routing policy that follows, see
 [vision-token-budget-measurements.md](vision-token-budget-measurements.md).
 
+> **Vendor reference, added 2026-08-07 — the gemma4 budget has a documented ladder.**
+> Google's Gemma 4 model card
+> (<https://ai.google.dev/gemma/docs/core/model_card_4>) states: *"The supported
+> token budgets are: 70, 140, 280, 560, and 1120."* So gemma4's knob is not a free
+> integer — 280 is llama.cpp's default rung and **1120 is the vendor maximum**, which
+> is where the fork's default sits. Higher rungs preserve detail for OCR, lower rungs
+> suit classification and video.
+>
+> `gemma4ImageTokenBudget()` does not enforce the ladder, and
+> `api.DefaultImageMinTokens = 40` is **below the documented floor of 70** (it comes
+> from llama.cpp, not the card). Both are recorded in
+> [SPEC §2.1](spec/vision-image-token-budgets.md) rather than fixed here.
+>
+> The card also splits the family by vision path: **12B is encoder-free**, while
+> **26B A4B and 31B carry a ~550M vision encoder**. Budget/quality results measured on
+> one size therefore do **not** transfer to another — confirmed 2026-08-07, where the
+> bbox IoU cost of the 280→1120 raise measured ≈0.379 on 12B against the ~0.12
+> recorded for the 31B-class campaign.
+
 ## What each arch actually gets
 
 | `modelArch` | flags ollama passes | effective budget | set by |
