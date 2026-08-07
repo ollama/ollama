@@ -353,6 +353,46 @@ func (d DeviceInfo) Driver() string {
 	return strconv.Itoa(d.DriverMajor) + "." + strconv.Itoa(d.DriverMinor)
 }
 
+// IsUnifiedMemoryAPU reports whether the device is an integrated GPU whose VRAM
+// is carved out of system RAM (a unified-memory APU). On these devices the GPU
+// reports its own free memory against a large carveout that is sized
+// independently of host free memory, so host free memory must not be used to
+// bound the GPU memory budget.
+//
+// This currently covers AMD Strix Halo (gfx1151, e.g. Ryzen AI Max+ 395 /
+// Radeon 8060S/8050S), which may run on either the ROCm or Vulkan backend. ROCm
+// exposes a structured GFXTarget; the Vulkan backend does not, so the Vulkan
+// device is matched on the name it reports (the only place the gfx target / SKU
+// is surfaced). Extend as additional unified-memory APUs are validated.
+func (d DeviceInfo) IsUnifiedMemoryAPU() bool {
+	if !d.Integrated {
+		return false
+	}
+	switch {
+	case strings.EqualFold(d.Library, "ROCm"):
+		return d.GFXTarget == "gfx1151"
+	case strings.EqualFold(d.Library, "Vulkan"):
+		return isStrixHaloName(d.Name) || isStrixHaloName(d.Description)
+	default:
+		return false
+	}
+}
+
+// isStrixHaloName reports whether a backend-provided device name identifies an
+// AMD Strix Halo iGPU (gfx1151). The Vulkan backend exposes no structured gfx
+// target, so the chip is identified by the markers that appear in its reported
+// name: the gfx target, the "Strix Halo" codename, or the Radeon 8060S/8050S
+// marketing SKUs.
+func isStrixHaloName(name string) bool {
+	name = strings.ToLower(name)
+	for _, marker := range []string{"gfx1151", "strix halo", "strix_halo", "radeon 8060s", "radeon 8050s"} {
+		if strings.Contains(name, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 // MinimumMemory reports the amount of memory that should be set aside
 // on the device for overhead (e.g. VRAM consumed by context structures independent
 // of model allocations)
