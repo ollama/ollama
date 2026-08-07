@@ -45,6 +45,19 @@ function uint8ArrayToBase64(uint8Array: Uint8Array): string {
   return btoa(binary);
 }
 
+// UIClientError marks failures talking to the local UI server so callers can
+// distinguish retryable network/server failures from definitive HTTP status
+// responses (e.g. 401/403 auth responses) that must not be retried in a loop.
+export class UIClientError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "UIClientError";
+    this.status = status;
+  }
+}
+
 export async function fetchUser(): Promise<User | null> {
   const response = await fetch(`${API_BASE}/api/me`, {
     method: "POST",
@@ -67,7 +80,10 @@ export async function fetchUser(): Promise<User | null> {
     return null;
   }
 
-  throw new Error(`Failed to fetch user: ${response.status}`);
+  throw new UIClientError(
+    `Failed to fetch user: ${response.status}`,
+    response.status,
+  );
 }
 
 export async function fetchConnectUrl(): Promise<string> {
@@ -85,7 +101,17 @@ export async function fetchConnectUrl(): Promise<string> {
     }
   }
 
-  throw new Error("Failed to fetch connect URL");
+  if (response.status === 403) {
+    // A 403 here means the session is rejected, not that the user can fix it
+    // by retrying. Surface the status so the caller stops polling instead of
+    // re-entering the sign-in flow.
+    throw new UIClientError(
+      `Failed to fetch connect URL: ${response.status}`,
+      response.status,
+    );
+  }
+
+  throw new UIClientError("Failed to fetch connect URL", response.status);
 }
 
 export async function disconnectUser(): Promise<void> {
@@ -97,7 +123,10 @@ export async function disconnectUser(): Promise<void> {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to disconnect user");
+    throw new UIClientError(
+      `Failed to disconnect user: ${response.status}`,
+      response.status,
+    );
   }
 }
 
