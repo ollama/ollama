@@ -24,7 +24,6 @@ type ConfigV2 struct {
 	// required by spec
 	Architecture string `json:"architecture"`
 	OS           string `json:"os"`
-	RootFS       RootFS `json:"rootfs"`
 }
 
 // Draft describes an auxiliary draft model stored in the same manifest.
@@ -33,10 +32,4 @@ type Draft struct {
 	Architecture string `json:"architecture,omitempty"`
 	TensorPrefix string `json:"tensor_prefix,omitempty"`
 	Config       string `json:"config,omitempty"`
-}
-
-// RootFS represents the root filesystem configuration for a model.
-type RootFS struct {
-	Type    string   `json:"type"`
-	DiffIDs []string `json:"diff_ids"`
 }
