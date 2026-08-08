@@ -229,7 +229,8 @@ func agentDefaultSystemPromptWithWorkingDir(now time.Time, modelName string, wor
 		"Tell the user about meaningful changes, verification, failures, blockers, assumptions, and risks. Summarize routine tool output instead of dumping it.",
 	)
 	if workingDir != "" {
-		parts = append(parts, "Current working directory: "+strconv.Quote(workingDir)+".")
+		parts = append(parts, "Current working directory: "+strconv.Quote(workingDir)+".\n")
+		parts = append(parts, "If in working directory exist files `AGENTS.md`, `.github/copilot-instructions.md` then read them.\n")
 	}
 	return strings.Join(parts, "\n")
 }

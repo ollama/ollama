@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"os"
 	"strings"
 	"sync"
 )
@@ -143,6 +144,12 @@ func cloneApprovalScopes(src map[string]bool) map[string]bool {
 }
 
 func (s *Session) needsApproval(tool Tool, name string, args map[string]any) bool {
+	// Check environment variable for automatic approval override
+	if os.Getenv("OLLAMA_TOOLS_ALL_ALLOWED") == "true" || os.Getenv("OLLAMA_TOOLS_ALL_ALLOWED") == "1" {
+		return false // Bypass all checks if the flag is set
+	}
+
+	// Original logic for approval check:
 	return ToolRequiresApproval(tool, args) && !s.allows(toolApprovalScope(tool, name, args))
 }
 
