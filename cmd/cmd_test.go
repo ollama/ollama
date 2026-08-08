@@ -12,11 +12,13 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/spf13/cobra"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/types/model"
@@ -2388,5 +2390,60 @@ func TestIsLocalhost(t *testing.T) {
 				t.Errorf("isLocalhost() with OLLAMA_HOST=%q = %v, want %v", tt.host, got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestInitializeKeypairConcurrent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	const n = 16
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := range n {
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = initializeKeypair()
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("initializeKeypair goroutine %d: %v", i, err)
+		}
+	}
+
+	privPath := filepath.Join(home, ".ollama", "id_ed25519")
+	pubPath := filepath.Join(home, ".ollama", "id_ed25519.pub")
+	privBytes, err := os.ReadFile(privPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pubBytes, err := os.ReadFile(pubPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	signer, err := ssh.ParsePrivateKey(privBytes)
+	if err != nil {
+		t.Fatalf("parse private key: %v", err)
+	}
+	wantPub := string(ssh.MarshalAuthorizedKey(signer.PublicKey()))
+	if string(pubBytes) != wantPub {
+		t.Fatalf("public key does not match private key")
+	}
+
+	if err := initializeKeypair(); err != nil {
+		t.Fatal(err)
+	}
+	privAfter, err := os.ReadFile(privPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(privBytes, privAfter) {
+		t.Fatal("initializeKeypair overwrote an existing private key")
 	}
 }
