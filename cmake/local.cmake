@@ -709,8 +709,8 @@ if(OLLAMA_HAVE_LLAMA_SERVER)
             list(APPEND _backend_targets ollama-llama-server-${_backend})
         elseif(_backend STREQUAL "sycl")
             # Intel oneAPI SYCL backend. The DPC++/C++ compiler (icx) drives a
-            # Ninja sub-build, mirroring llama.cpp's official Windows SYCL
-            # instructions. Requires the Intel oneAPI environment (setvars.bat)
+            # Ninja sub-build, mirroring llama.cpp's official SYCL build
+            # instructions. Requires the Intel oneAPI environment (setvars)
             # to be active during configuration. GGML_SYCL_F16 defaults to ON
             # for better long-prompt performance and can be overridden from the
             # superbuild cache (e.g. -DGGML_SYCL_F16=OFF).
@@ -727,6 +727,12 @@ if(OLLAMA_HAVE_LLAMA_SERVER)
                 # only the SYCL device code needs the DPC++ compiler.
                 list(APPEND _sycl_args
                     -DCMAKE_C_COMPILER=cl
+                    -DCMAKE_CXX_COMPILER=icx)
+            else()
+                # On Linux, llama.cpp's official SYCL build uses the Intel
+                # DPC++ compiler (icx) for both C and C++.
+                list(APPEND _sycl_args
+                    -DCMAKE_C_COMPILER=icx
                     -DCMAKE_CXX_COMPILER=icx)
             endif()
             ollama_add_llama_server_build(sycl
