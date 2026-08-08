@@ -1,7 +1,10 @@
 # SPEC: structured output combined with thinking
 
 MaxusAI-fork specification. Status: **implemented** (fork `main` lineage and
-`release/0.32.1-dynres`). Written 2026-08-02.
+`release/0.32.1-dynres`). Written 2026-08-02. Both runner backends satisfy
+the runner-side obligations: llama-server natively, the MLX runner since
+2026-08-08 ([ADR 0009](../adr/0009-mlx-pure-go-constrained-sampling.md) —
+constrain-from-first-token, stop strings, and post-cancel chunk discipline).
 
 Normative contract for requests that set `format` **and** run a model that emits
 reasoning. Rationale and history live in
@@ -102,6 +105,14 @@ Requirements on that implementation:
 - On `/api/chat`, requests carrying tools MUST NOT use the marker stop (it would
   preempt a tool call following the marker); they keep the transition flow.
 
+The split places two obligations on every runner backend: `format` on the
+request the runner receives MUST constrain from the first token (R9), and
+`Options.Stop` MUST truncate the stream at the first textual match without
+emitting the stop text (the marker stop of pass one). The transition flow
+additionally requires that a runner client deliver no further chunks once the
+handler cancels the request context — buffered pass-one content past the
+cancellation would leak into the constrained response.
+
 ## 4. Defensive reclassification
 
 For flows the double request does not cover, a non-streaming generate response
@@ -130,6 +141,14 @@ Manual probe (any implicit-open model, temperature 0): `/api/generate` with
 `think:true` and `format:"json"` must return reasoning in `thinking` and parseable
 JSON in `response`, with `done_reason:"stop"`; repeat with a JSON Schema, with
 `stream:true`, and against `/api/chat` and `/v1/chat/completions`.
+
+MLX runner probe (2026-08-08, `gemma4:12b-nvfp4`, explicit-open → transition
+flow): `format:"json"` and JSON Schema requests return constrained JSON on
+`/api/generate`, `/api/chat` (streaming included), and `/v1/chat/completions`;
+`think:true` separates reasoning from a valid constrained response; budget
+exhaustion reports `done_reason:"length"` (R5); the GGUF twin
+(`gemma4:12b-it-q4_K_M`) produces the same shapes for the same schema. Full
+matrix and runner-side mechanism in ADR 0009.
 
 ## 6. Non-goals
 

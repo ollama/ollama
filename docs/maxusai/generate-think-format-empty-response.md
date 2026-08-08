@@ -214,6 +214,9 @@ Safety net: `reclassifyConstrainedThinking` in `server/routes.go` — non-stream
 generate responses that come back with `format` active, `done_reason:"stop"`, empty
 response and *valid-JSON* thinking are reclassified as response. This covers runners
 without the deferral (e.g. MLX, or a llama-server predating stop-string reporting).
+*(Update 2026-08-08: the MLX runner now constrains `format` from the first token and
+honors stop strings — [ADR 0009](adr/0009-mlx-pure-go-constrained-sampling.md) — so
+this net no longer exists for MLX's sake; it remains as defence in depth.)*
 
 ### Why not `grammar_lazy` + `grammar_triggers`?
 
