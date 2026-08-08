@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"runtime"
 
 	"github.com/ollama/ollama/envconfig"
 )
@@ -12,13 +11,7 @@ import (
 // Poolside implements Runner for Poolside's CLI.
 type Poolside struct{}
 
-var poolsideGOOS = runtime.GOOS
-
 func (p *Poolside) String() string { return "Pool" }
-
-func poolsideUnsupportedError() error {
-	return fmt.Errorf("Warning: Poolside is not currently supported on Windows")
-}
 
 func (p *Poolside) args(model string, extra []string) []string {
 	var args []string
@@ -30,10 +23,6 @@ func (p *Poolside) args(model string, extra []string) []string {
 }
 
 func (p *Poolside) Run(model string, _ []LaunchModel, args []string) error {
-	if poolsideGOOS == "windows" {
-		return poolsideUnsupportedError()
-	}
-
 	bin, err := exec.LookPath("pool")
 	if err != nil {
 		return fmt.Errorf("pool is not installed")
