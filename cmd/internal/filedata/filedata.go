@@ -21,6 +21,12 @@ type File struct {
 }
 
 func NormalizePath(fp string) string {
+	if strings.HasPrefix(fp, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			fp = filepath.Join(home, fp[2:])
+		}
+	}
+
 	fp = strings.Trim(fp, "\"")
 	fp = strings.NewReplacer(
 		"\\ ", " ",
@@ -50,10 +56,10 @@ func NormalizePath(fp string) string {
 }
 
 // fileExtractRe matches file:// URLs and filesystem paths ending in image/audio
-// extensions. Hoisted to package scope so the per-keystroke slash-completion
-// path (chat.slashInputIsMultimodalFile -> ExtractNames) doesn't recompile it
-// on every call.
-var fileExtractRe = regexp.MustCompile(`(?:file://\S+?\.(?i:jpg|jpeg|png|webp|wav)\b)|(?:(?:[a-zA-Z]:)?(?:\./|\.\\|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav)\b)`)
+// extensions, including ~/ for home directory paths. Hoisted to package scope so
+// the per-keystroke slash-completion path (chat.slashInputIsMultimodalFile ->
+// ExtractNames) doesn't recompile it on every call.
+var fileExtractRe = regexp.MustCompile(`(?:file://\S+?\.(?i:jpg|jpeg|png|webp|wav)\b)|(?:(?:[a-zA-Z]:)?(?:~/|\./|\.\\|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav)\b)`)
 
 func ExtractNames(input string) []string {
 	return fileExtractRe.FindAllString(input, -1)
