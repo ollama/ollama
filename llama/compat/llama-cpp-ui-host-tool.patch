@@ -1,0 +1,23 @@
+diff --git a/tools/ui/CMakeLists.txt b/tools/ui/CMakeLists.txt
+--- a/tools/ui/CMakeLists.txt
++++ b/tools/ui/CMakeLists.txt
+@@ -36,6 +36,18 @@
+ set(UI_H   "${CMAKE_CURRENT_BINARY_DIR}/ui.h")
+ 
+-if(CMAKE_CROSSCOMPILING)
++set(LLAMA_UI_EMBED_USE_HOST_COMPILER ${CMAKE_CROSSCOMPILING})
++
++# CMake does not set CMAKE_CROSSCOMPILING when macOS builds a non-native
++# architecture slice via CMAKE_OSX_ARCHITECTURES. llama-ui-embed is executed
++# during the build, so it must match the host architecture rather than the
++# target slice.
++if(APPLE AND CMAKE_OSX_ARCHITECTURES AND NOT CMAKE_OSX_ARCHITECTURES MATCHES ";")
++    if(NOT CMAKE_OSX_ARCHITECTURES STREQUAL CMAKE_HOST_SYSTEM_PROCESSOR)
++        set(LLAMA_UI_EMBED_USE_HOST_COMPILER ON)
++    endif()
++endif()
++
++if(LLAMA_UI_EMBED_USE_HOST_COMPILER)
+     find_program(HOST_CXX_COMPILER NAMES g++ clang++ NO_CMAKE_FIND_ROOT_PATH)
+     if(NOT HOST_CXX_COMPILER)
+         message(FATAL_ERROR "UI: no host C++ compiler (g++/clang++) found to build llama-ui-embed; set -DHOST_CXX_COMPILER=<path>")
