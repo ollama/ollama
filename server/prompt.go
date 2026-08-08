@@ -74,7 +74,7 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 	}
 
 	if currMsgIdx > 0 {
-		slog.Debug("truncating input messages which exceed context length", "truncated", len(msgs[currMsgIdx:]))
+		slog.Warn("truncating input messages which exceed context length", "truncated", currMsgIdx, "context_length", opts.NumCtx)
 	}
 
 	renderMsgs, media, err := imageTaggedMessages(m, msgs, currMsgIdx, false)
