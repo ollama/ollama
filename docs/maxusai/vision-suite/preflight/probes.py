@@ -158,23 +158,58 @@ class Ollama:
         return resp
 
     def visual_tokens(self, model, size, baseline, **kw):
-        """prompt_eval_count for one image minus the text-only baseline."""
+        """prompt_eval_count for one image minus the calibrated text prefix."""
         resp = self.generate(model, PROBE_PROMPT,
                              images=[ladder_image_b64(size)], label=f"{size}", **kw)
         return resp["prompt_eval_count"] - baseline, resp
 
     def text_baseline(self, model):
-        """Baseline for the SAME prompt the image probes use.
+        """Text-only prompt_eval_count for PROBE_PROMPT.
 
-        This is load-bearing. measure.py takes its baseline with "Hi" but probes
-        with "Describe briefly.", so its reported visual-token deltas silently
-        carry the difference in prompt length — measured on nemotron3:33b-q8,
-        "Hi" is 18 tokens and "Describe briefly." is 21, a constant +3 on every
-        row. Using one prompt for both makes the subtraction cancel the text
-        exactly and leaves only visual tokens plus markers.
+        Reported as a diagnostic and compared against image_prefix(); it is NOT
+        the right subtrahend for visual_tokens(). See image_prefix().
         """
         resp = self.generate(model, PROBE_PROMPT, num_predict=1, label="baseline")
         return resp["prompt_eval_count"], resp
+
+    def image_prefix(self, model, size_a="256x144", size_b="512x288"):
+        """The text prefix as tokenised INSIDE an image-bearing request.
+
+        This is load-bearing, and one prompt everywhere is only half of it.
+
+        Trap 1 — mismatched prompts. measure.py used to baseline with "Hi" and
+        probe with "Describe briefly.", so the text-length difference landed in
+        every row (18 vs 21 tokens on nemotron3:33b-q8).
+
+        Trap 2 — and this is the one a matched prompt does NOT fix. Attaching an
+        image can change how the template renders the surrounding text, so the
+        text-only count is still the wrong subtrahend. Measured 2026-08-08 on
+        the :11437 canary, same prompt, same model: text-only 21, but the prefix
+        inside an image request 20. Subtracting the text-only count therefore
+        reads every nemotron image exactly 1 token LOW. gemma4:31b measures 19
+        both ways, so the offset is arch-specific and cannot be hardcoded.
+
+        Recovered without trusting a text-only probe and without assuming a grid:
+        for one fixed prompt and two images A and B, each of the three counts
+        carries the prefix P exactly once, so
+
+            count(A) + count(B) - count(A, B)
+              = (P + cA) + (P + cB) - (P + cA + cB)
+              = P
+
+        Returns (prefix, text_only, detail) so callers can report the delta.
+        """
+        a, _ = self.visual_tokens(model, size_a, 0)
+        b, _ = self.visual_tokens(model, size_b, 0)
+        resp = self.generate(model, PROBE_PROMPT,
+                             images=[ladder_image_b64(size_a),
+                                     ladder_image_b64(size_b)],
+                             label=f"{size_a}+{size_b}")
+        both = resp["prompt_eval_count"]
+        prefix = a + b - both
+        text_only, _ = self.text_baseline(model)
+        return prefix, text_only, {"one_a": a, "one_b": b, "both": both,
+                                   "size_a": size_a, "size_b": size_b}
 
 
 # --------------------------------------------------------------------------

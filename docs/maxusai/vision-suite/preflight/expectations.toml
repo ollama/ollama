@@ -50,19 +50,29 @@ cuda_v13 + vulkan + mlx_cuda_v13. Reference canary for a passing run, verified
 2026-08-08 on :11437.
 """
 
-[profiles.rocm-0-32-1-gemma4budget]
+[profiles.rocm-0-32-1-dynres]
 platform = "rocm"
-version_pattern = '^0\.32\.1-gemma4budget-[0-9a-f]{7,40}$'
-patchset = ["001", "gemma4budget"]
-reference_image = "maxusai-ollama:0.32.1-rocm-gemma4budget"
+version_pattern = '^0\.32\.1-dynres-[0-9a-f]{7,40}$'
+patchset = ["001", "002", "004", "005"]
+reference_image = "0.32.1-dynres-35d9e58e"
 expect_patch_marker = 1
 arches = ["nemotron_h_omni", "gemma4"]
 notes = """
-gfx1151 (Ryzen AI Max+ 395 / Radeon 8060S), host 10.8.0.4. GATED AT 0.32.1 per
-docs/maxusai/amd-upgrade-gate.md — 0.32.5/b10091 produced degenerate vision output
-and was rolled back 2026-07-31 (upstream #17459, #17475). This is a DIFFERENT
-payload from the CUDA profile: no 002, no 004, no 005. Its nemotron row is
-therefore a structural flat 256 and that is CORRECT here, not a regression.
+gfx1151 (Ryzen AI Max+ 395 / Radeon 8060S), host 10.8.0.4, served from the
+`release/0.32.1-dynres` lineage. Deployed 2026-08-08 per
+spec/vision-image-token-budgets.md §2.3 on that branch.
+
+WHAT THE AMD GATE ACTUALLY PINS. docs/maxusai/amd-upgrade-gate.md (2026-07-31)
+blocks the **ollama 0.32.5 base / b10091 payload**, not the compat patches. The
+release lineage stayed on 0.32.1 + b9888 and then took 002, 004 and 005 as
+*adapted* backports (`5f6e7fdc`, `593fc3b1`, `35d9e58e`). So this host's patch set
+now matches the CUDA profile's while its llama.cpp payload does not — b9888 vs
+b10091. That is exactly why the profile is keyed on (platform, version) rather
+than on the patch list.
+
+Do not read the gate as "ROCm is a pre-002 payload". It was that at
+`0.32.1-gemma4budget-85ebcb79` (001 only, verified by tree inspection), which is
+no longer what is deployed.
 """
 
 [profiles.apple-silicon-cpu]
@@ -107,16 +117,26 @@ image_max_pixels = 3407872       # 3328 * 32^2
 # payload. Do NOT share this heuristic with gemma4, where flat is correct.
 scaling = "dynamic"
 ladder_tolerance = 2
-ladder = [265, 265, 577, 2305, 3269]
+# Corrected 2026-08-08: was [265, 265, 577, 2305, 3269], one token low on every
+# rung. Those values were recorded against a text-only baseline of 21; the text
+# prefix inside an image-bearing request is 20 on this arch, so every delta was
+# under-reported by exactly 1 (B8, probes.Ollama.image_prefix). Each rung is now
+# grid + 2 markers, and the last agrees with the pinned expect_tokens = 3270
+# below and with TestImageTokensForSize.
+ladder = [266, 266, 578, 2306, 3270]
 
 [expect.cuda-dynres-005.nemotron_h_omni.pinned]
 # The 005 defect class: image_min_tokens == image_max_tokens. Pre-005 a pinned
 # 3328 delivered 3390 — 60 grid tokens OVER its own ceiling. Post-005: 3270.
 #
-# The harness re-measured this on the :11437 canary 2026-08-08 and read 3269
-# pinned / 2305 control — one token under each recorded value, which is the
-# documented +/-2 grid quantisation, not a change. The recorded values are kept
-# and the tolerance absorbs it; do not chase the last token.
+# The harness read 3269 pinned / 2305 control on the :11437 canary 2026-08-08 —
+# one token under each recorded value. That was originally written off as the
+# documented +/-2 grid quantisation. It was not: quantisation does not land
+# deterministically one low on every rung, across both runner configs. It was
+# the harness subtracting the text-only count (21) instead of the in-image text
+# prefix (20) — see B8 and probes.Ollama.image_prefix, fixed 2026-08-08. The
+# recorded values were right; the measurement was 1 low. Do not widen the
+# tolerance to absorb a constant offset — it would mask a real 1-token change.
 size = "2048x1152"
 pin_tokens = 3328
 expect_tokens = 3270
@@ -176,46 +196,54 @@ require_nonempty_thinking = false   # gemma4 handles think+format on stock too
 
 
 # ------------------------------------------------------------- ROCm / 0.32.1 --
-# This host runs a pre-002 payload. Only the checks whose expected values have
-# actually been measured on it are declared. The rest are marked "unmeasured",
-# which the harness reports as NEEDS-BASELINE and treats as a non-zero exit —
-# an unvalidatable check must never read as a pass.
+# This host carries the SAME compat patches as CUDA but a different llama.cpp
+# payload (b9888 vs b10091), so its numbers must be taken on the host rather than
+# copied across. Both arches are unmeasured at the preflight geometries, so the
+# harness reports NEEDS_BASELINE (exit 4) — an unvalidatable check must never
+# read as a pass.
+#
+# CONVENTION MISMATCH — read before transplanting any number from that lineage's
+# docs. `release/0.32.1-dynres` spec/vision-image-token-budgets.md §2.3 reports
+# image tokens as
+#     prompt_eval_count - own text-only baseline - 16 per image
+# whereas this file records the raw delta with marker_allowance = 2. The two
+# differ by 16 on nemotron: §2.3 gives pinned 3328 -> 3254, this harness records
+# 3270 (3254 + 16). The 16 is gemma4's marker count applied to an arch that
+# carries 2, so §2.3's nemotron cells sit 14 below their own grid while its
+# gemma4 cells ARE the grid. Same payload behaviour, different accounting.
+# Re-measure with the harness; do not convert.
 
-[expect.rocm-0-32-1-gemma4budget.nemotron_h_omni]
+[expect.rocm-0-32-1-dynres.nemotron_h_omni]
 status = "unmeasured"
 model = "nemotron3:33b-q4_K_M"
 reason = """
-Not measured on gfx1151 at the five preflight geometries. Two things are known
-and should make the measurement quick — but neither is a substitute for taking it:
+Not measured on gfx1151 at the five preflight geometries, and NOT derivable from
+the CUDA row: same patch set, different payload (b9888 vs b10091).
 
-  * The cost is a STRUCTURAL flat 256 on an unpatched payload:
-    (image_size/patch_size)^2 / n_merge^2 = (512/16)^2 / 2^2. Measured 2026-07-30
-    on nemotron3:33b-q4_K_M, constant across a 576x area range, with
-    image_max_tokens at 64, 2048 and 4096 all leaving it at exactly 256.
-  * The published row in vision-token-budget-measurements.md reads 256, NOT 258 —
-    i.e. no +2 marker allowance. nemotron wraps images in <img>/</img> (token ids
-    19/20) but stock llama.cpp omits those markers entirely, so the usual grid+2
-    convention does not apply to this payload. Do not assume the +2.
+Known from spec/vision-image-token-budgets.md §2.3 on `release/0.32.1-dynres`
+(build 0.32.1-dynres-35d9e58e, deployed 2026-08-08) — but in that doc's own
+convention, and at geometries this ladder does not use:
 
-So the expected ladder is almost certainly [256, 256, 256, 256, 256] with
-scaling = "flat" — but "almost certainly" is what this file exists to refuse.
-Measure on 10.8.0.4 and fill it in per README.md.
+  * defaults: 2026
+  * pinned 3328: 3254, under the ceiling (was 3388 pre-005)
 
-Also expected once measured: expect_no_pixel_log_line = true. Without the 002
-patch the projector never calls set_limit_image_tokens(), so the flags are parsed
-but inert and the load log prints no image_*_pixels line at all (those lines are
-gated on the values being > 0, and an unpatched projector leaves them at the -1
-sentinel). Absence is the proof on this payload.
+Expect scaling = "dynamic" once measured. 002 IS present on this lineage, so the
+structural flat 256 of the old gemma4budget build does NOT apply here.
+Measure on 10.8.0.4 per README.md.
 """
 
-[expect.rocm-0-32-1-gemma4budget.gemma4]
+[expect.rocm-0-32-1-dynres.gemma4]
 status = "unmeasured"
 model = "gemma4:31b-it-q4_K_M"
 reason = """
-The 0.32.1 gemma4budget payload predates 004 (budget-fill) and ADR 0007/0008, so
-neither the CUDA flat-1102 row nor the pre-004 scaling row applies. No ladder has
-been measured on gfx1151 at the five preflight geometries. Measure on 10.8.0.4
-and fill this in per README.md before trusting a ROCm gate.
+Not measured at the five preflight geometries. 004 IS present on this lineage
+(`5f6e7fdc`) with defaults 70/1120, so expect scaling = "flat" as on CUDA — but
+the payload underneath is b9888, so the constant must be measured, not copied
+from the CUDA row's 1102.
+
+Known from spec §2.3 (that doc's convention, other geometries): 1920x1080 gives
+grid 1100 = 20x55 and 1568^2 gives 1089 = 33x33, both conforming to the 1120
+ceiling. Measure on 10.8.0.4 per README.md.
 """
 
 

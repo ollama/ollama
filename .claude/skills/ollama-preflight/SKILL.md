@@ -22,9 +22,13 @@ Establish three things. Guessing any of them wastes a twenty-minute run.
    entirely different server. Never assume; the harness asserts the version
    string first and aborts if it disagrees, which is the safety net, not a
    substitute for checking.
-3. **Which platform profile applies.** `cuda`, `rocm`, or `apple-silicon`. ROCm
-   is gated at 0.32.1 (`docs/maxusai/amd-upgrade-gate.md`) and runs a *different*
-   payload, so its expectations are not the CUDA ones.
+3. **Which platform profile applies.** `cuda`, `rocm`, or `apple-silicon`. ROCm is
+   gated at the 0.32.1 base (`docs/maxusai/amd-upgrade-gate.md`) and served from
+   `release/0.32.1-dynres`. Note what the gate does and does not pin: it blocks the
+   0.32.5 base and its b10091 payload, **not** the compat patches — that lineage
+   carries 002/004/005 as adapted backports. So ROCm has the *same patch list* as
+   CUDA over a *different payload*, and its numbers are still not the CUDA ones.
+   Identical patch lists do not imply identical token counts.
 
 ## Order of work
 
