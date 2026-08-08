@@ -1,0 +1,98 @@
+{
+  "uuid": "tvbox-ollama",
+  "name": "TVBox Ollama 直播配置",
+  "author": "Ollama TVBox",
+  "version": "1.0.0",
+  "sites": [],
+  "lives": [
+    {
+      "name": "直播源倉庫",
+      "type": 0,
+      "url": "https://live.fanmingming.com/tv/m3u/ipv6.m3u",
+      "playerType": 1,
+      "ua": "",
+      "epg": "http://epg.51zmt.top:8000/api/diyp/?ch={name}&date={date}",
+      "logo": "https://epg.112114.xyz/logo/{name}.png"
+    },
+    {
+      "name": "Global 直播 (范明明)",
+      "type": 0,
+      "url": "https://live.fanmingming.com/tv/m3u/global.m3u",
+      "playerType": 1,
+      "epg": "http://epg.51zmt.top:8000/api/diyp/?ch={name}&date={date}",
+      "logo": "https://epg.112114.xyz/logo/{name}.png"
+    },
+    {
+      "name": "Radio 直播 (范明明)",
+      "type": 0,
+      "url": "https://live.fanmingming.com/radio/m3u/index.m3u",
+      "playerType": 1,
+      "epg": "",
+      "logo": ""
+    },
+    {
+      "name": "YueChan IPTV",
+      "type": 0,
+      "url": "https://raw.githubusercontent.com/YueChan/Live/main/IPTV.m3u",
+      "playerType": 1,
+      "epg": "http://epg.51zmt.top:8000/api/diyp/?ch={name}&date={date}",
+      "logo": "https://epg.112114.xyz/logo/{name}.png"
+    },
+    {
+      "name": "1986 直播",
+      "type": 0,
+      "url": "https://since1986.online/epg/live.m3u",
+      "playerType": 1,
+      "epg": "http://epg.51zmt.top:8000/api/diyp/?ch={name}&date={date}",
+      "logo": "https://epg.112114.xyz/logo/{name}.png"
+    },
+    {
+      "name": "PTV研究所 (綜合)",
+      "type": 0,
+      "url": "https://smart.pendy.dpdns.org/m3u/merged_judy.m3u",
+      "playerType": 1,
+      "epg": "http://epg.51zmt.top:8000/api/diyp/?ch={name}&date={date}",
+      "logo": "https://epg.112114.xyz/logo/{name}.png"
+    },
+    {
+      "name": "PTV研究所 (體育)",
+      "type": 0,
+      "url": "https://smart.pendy.dpdns.org/m3u/gongyi_judy.m3u",
+      "playerType": 1,
+      "epg": "http://epg.51zmt.top:8000/api/diyp/?ch={name}&date={date}",
+      "logo": "https://epg.112114.xyz/logo/{name}.png"
+    },
+    {
+      "name": "AKTV 直播",
+      "type": 0,
+      "url": "https://aktv.space/live.m3u",
+      "playerType": 1,
+      "epg": "http://epg.51zmt.top:8000/api/diyp/?ch={name}&date={date}",
+      "logo": "https://epg.112114.xyz/logo/{name}.png"
+    },
+    {
+      "name": "夢澤河 (TiviMate專用)",
+      "type": 0,
+      "url": "https://ghproxy.net/https://raw.githubusercontent.com/mengzehe/tvbox/main/live.m3u",
+      "playerType": 1,
+      "epg": "http://epg.51zmt.top:8000/api/diyp/?ch={name}&date={date}",
+      "logo": "https://epg.112114.xyz/logo/{name}.png"
+    }
+  ],
+  "parses": [],
+  "flags": [
+    "youku",
+    "qq",
+    "iqiyi",
+    "qiyi",
+    "letv",
+    "sohu",
+    "tudou",
+    "pptv",
+    "mgtv",
+    "wasu",
+    "bilibili"
+  ],
+  "ijk": [],
+  "ads": []
+}
