@@ -816,6 +816,10 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 					case "nemotron_h", "nemotron_h_moe", "nemotron_h_omni":
 						config.Renderer = cmp.Or(config.Renderer, "nemotron-3-nano")
 						config.Parser = cmp.Or(config.Parser, "nemotron-3-nano")
+					case "glm4_moe_lite":
+						// GLM-5.2 model detection based on architecture
+						config.Renderer = cmp.Or(config.Renderer, "glm52")
+						config.Parser = cmp.Or(config.Parser, "glm52")
 					}
 				}
 			case manifest.MediaTypeImageDraft:
