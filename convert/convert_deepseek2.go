@@ -10,6 +10,8 @@ import (
 	"github.com/ollama/ollama/fs/ggml"
 )
 
+var deepseek2BlockRe = regexp.MustCompile(`^blk\.(\d+)`)
+
 type deepseek2Model struct {
 	ModelParameters               // architectures, vocab_size
 	MaxPositionEmbeddings uint32  `json:"max_position_embeddings"`
@@ -141,8 +143,7 @@ func (p *deepseek2Model) Tensors(s []Tensor) (out []*ggml.Tensor) {
 	}
 
 	skipLayer := func(n string, minValue uint32) bool {
-		re := regexp.MustCompile(`^blk\.(\d+)`)
-		matches := re.FindStringSubmatch(n)
+		matches := deepseek2BlockRe.FindStringSubmatch(n)
 		if matches == nil {
 			return false
 		}
