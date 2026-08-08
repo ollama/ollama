@@ -466,7 +466,7 @@ SYSTEM """This is a multiline system."""
 		{
 			`
 FROM foo
-SYSTEM """This is a multiline system.""
+SYSTEM """This is a multiline system."""
 			`,
 			nil,
 			io.ErrUnexpectedEOF,
@@ -528,11 +528,11 @@ SYSTEM "'"
 		{
 			`
 FROM foo
-SYSTEM """''"'""'""'"'''''""'""'"""
+SYSTEM """''"'" validation '''"""
 `,
 			[]Command{
 				{Name: "model", Args: "foo"},
-				{Name: "system", Args: `''"'""'""'"'''''""'""'`},
+				{Name: "system", Args: `''"'" validation '''`},
 			},
 			nil,
 		},
@@ -1253,4 +1253,25 @@ func TestFilesForModel(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCreateRequestSymlinkMountPoint(t *testing.T) {
+	dir := t.TempDir()
+	targetDir := filepath.Join(dir, "target")
+	require.NoError(t, os.MkdirAll(targetDir, 0o755))
+
+	modelFile, _ := createBinFile(t, map[string]any{"general.architecture": "test"}, nil)
+
+	linkDir := filepath.Join(dir, "mount_link")
+	if err := os.Symlink(filepath.Dir(modelFile), linkDir); err != nil {
+		t.Skip("skipping symlink test on platform without permissions")
+	}
+
+	linkedModelFile := filepath.Join(linkDir, filepath.Base(modelFile))
+	modelfile, err := ParseFile(strings.NewReader(fmt.Sprintf("FROM %s", linkedModelFile)))
+	require.NoError(t, err)
+
+	req, err := modelfile.CreateRequest(dir)
+	require.NoError(t, err)
+	require.Len(t, req.Files, 1)
 }
