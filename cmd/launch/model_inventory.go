@@ -17,6 +17,7 @@ type LaunchModel struct {
 	Remote          bool
 	ToolCapable     bool
 	Capabilities    []modelpkg.Capability
+	Parameters      string
 	ContextLength   int
 	MaxOutputTokens int
 	EmbeddingLength int
@@ -114,6 +115,29 @@ func (i *modelInventory) Resolve(ctx context.Context, names []string) []LaunchMo
 		}
 	}
 	return resolved
+}
+
+func (i *modelInventory) ResolveWithShowMetadata(ctx context.Context, names []string) []LaunchModel {
+	return i.withShowMetadata(ctx, i.Resolve(ctx, names))
+}
+
+func (i *modelInventory) withShowMetadata(ctx context.Context, models []LaunchModel) []LaunchModel {
+	if i == nil || i.client == nil {
+		return models
+	}
+	for idx := range models {
+		model := models[idx]
+		if model.Name == "" || model.Remote || isCloudModelName(model.Name) {
+			continue
+		}
+		resp, err := i.client.Show(ctx, &api.ShowRequest{Model: model.Name})
+		if err != nil {
+			continue
+		}
+		model.Parameters = resp.Parameters
+		models[idx] = model
+	}
+	return models
 }
 
 func resolveLaunchModels(names []string, models []LaunchModel) ([]LaunchModel, bool) {
