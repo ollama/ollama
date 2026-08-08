@@ -117,16 +117,26 @@ image_max_pixels = 3407872       # 3328 * 32^2
 # payload. Do NOT share this heuristic with gemma4, where flat is correct.
 scaling = "dynamic"
 ladder_tolerance = 2
-ladder = [265, 265, 577, 2305, 3269]
+# Corrected 2026-08-08: was [265, 265, 577, 2305, 3269], one token low on every
+# rung. Those values were recorded against a text-only baseline of 21; the text
+# prefix inside an image-bearing request is 20 on this arch, so every delta was
+# under-reported by exactly 1 (B8, probes.Ollama.image_prefix). Each rung is now
+# grid + 2 markers, and the last agrees with the pinned expect_tokens = 3270
+# below and with TestImageTokensForSize.
+ladder = [266, 266, 578, 2306, 3270]
 
 [expect.cuda-dynres-005.nemotron_h_omni.pinned]
 # The 005 defect class: image_min_tokens == image_max_tokens. Pre-005 a pinned
 # 3328 delivered 3390 — 60 grid tokens OVER its own ceiling. Post-005: 3270.
 #
-# The harness re-measured this on the :11437 canary 2026-08-08 and read 3269
-# pinned / 2305 control — one token under each recorded value, which is the
-# documented +/-2 grid quantisation, not a change. The recorded values are kept
-# and the tolerance absorbs it; do not chase the last token.
+# The harness read 3269 pinned / 2305 control on the :11437 canary 2026-08-08 —
+# one token under each recorded value. That was originally written off as the
+# documented +/-2 grid quantisation. It was not: quantisation does not land
+# deterministically one low on every rung, across both runner configs. It was
+# the harness subtracting the text-only count (21) instead of the in-image text
+# prefix (20) — see B8 and probes.Ollama.image_prefix, fixed 2026-08-08. The
+# recorded values were right; the measurement was 1 low. Do not widen the
+# tolerance to absorb a constant offset — it would mask a real 1-token change.
 size = "2048x1152"
 pin_tokens = 3328
 expect_tokens = 3270
@@ -197,9 +207,11 @@ require_nonempty_thinking = false   # gemma4 handles think+format on stock too
 # image tokens as
 #     prompt_eval_count - own text-only baseline - 16 per image
 # whereas this file records the raw delta with marker_allowance = 2. The two
-# differ by ~14 on nemotron: §2.3 gives pinned 3328 -> 3254, while this harness
-# measured 3269 for the same behaviour on CUDA. Same payload behaviour, different
-# accounting. Re-measure with the harness; do not convert.
+# differ by 16 on nemotron: §2.3 gives pinned 3328 -> 3254, this harness records
+# 3270 (3254 + 16). The 16 is gemma4's marker count applied to an arch that
+# carries 2, so §2.3's nemotron cells sit 14 below their own grid while its
+# gemma4 cells ARE the grid. Same payload behaviour, different accounting.
+# Re-measure with the harness; do not convert.
 
 [expect.rocm-0-32-1-dynres.nemotron_h_omni]
 status = "unmeasured"

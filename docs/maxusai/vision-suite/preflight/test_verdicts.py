@@ -45,7 +45,7 @@ class StubClient:
 
 
 DYNAMIC = {"model": "m", "scaling": "dynamic", "ladder_tolerance": 2,
-           "ladder": [265, 265, 577, 2305, 3269], "budget_max_tokens": 3328}
+           "ladder": [266, 266, 578, 2306, 3270], "budget_max_tokens": 3328}
 FLAT = {"model": "m", "scaling": "flat", "ladder_tolerance": 2,
         "ladder": [1102] * 5, "budget_max_tokens": 1120}
 
