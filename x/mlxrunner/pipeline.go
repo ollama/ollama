@@ -16,6 +16,7 @@ import (
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model/base"
 	sampler "github.com/ollama/ollama/x/mlxrunner/sample"
+	"github.com/ollama/ollama/x/structured"
 	"github.com/ollama/ollama/x/tokenizer"
 )
 
@@ -23,12 +24,32 @@ func prefillChunkSize() int {
 	return 2 << 10
 }
 
-// Prepare tokenizes the prompt and validates it against the model's
-// context length. It is safe to call from any goroutine. On success it
-// populates request.Tokens and adjusts request.Options.NumPredict.
+// compileFormat populates request.Constraint from request.Format. An
+// unsupported format is an error — the fork never silently drops a
+// constraint the caller asked for.
+func (request *Request) compileFormat() error {
+	if len(request.Format) == 0 || string(request.Format) == "null" {
+		return nil
+	}
+	g, err := structured.Compile(request.Format)
+	if err != nil {
+		return err
+	}
+	request.Constraint = g
+	return nil
+}
+
+// Prepare tokenizes the prompt, validates it against the model's context
+// length, and compiles any format constraint. It is safe to call from any
+// goroutine. On success it populates request.Tokens (and
+// request.Constraint) and adjusts request.Options.NumPredict.
 func (r *Runner) Prepare(request *Request) error {
 	if r.Model == nil {
 		return errors.New("model not loaded")
+	}
+
+	if err := request.compileFormat(); err != nil {
+		return err
 	}
 
 	var tokens []int32
@@ -136,9 +157,14 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	r.Sampler.Add(pipelineSlot, request.SamplerOpts, inputs)
 
 	var d decoder
-	if spec != nil {
+	switch {
+	case request.Constraint != nil:
+		// Constrained requests decode serially with the grammar mask;
+		// the spec session rides along so a drafter's KV stays level.
+		d = r.constrainedDecoder(spec, caches, seed.ExpandDims(-1), position, request.Constraint)
+	case spec != nil:
 		d = spec.decoder(seed, position)
-	} else {
+	default:
 		d = r.pipelinedDecoder(nil, caches, seed.ExpandDims(-1), position)
 	}
 	defer d.close()
@@ -274,6 +300,14 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 		wantTopLogprobs: request.SamplerOpts.TopLogprobs,
 	}
 
+	// Stop sequences truncate the stream at the first match; the routes
+	// layer's think+format flow relies on this for its marker stop.
+	var stop *stopper
+	if len(request.Options.Stop) > 0 {
+		stop = newStopper(request.Options.Stop)
+	}
+	stopMatched := false
+
 	final := CompletionResponse{Done: true, PromptEvalCount: len(request.Tokens), DoneReason: 1}
 	final.PromptEvalDuration = promptEval
 	now := time.Now()
@@ -324,10 +358,25 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 			if !ok {
 				continue
 			}
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case request.Responses <- resp:
+			if stop != nil {
+				resp.Content, stopMatched = stop.feed(resp.Content)
+				if stopMatched {
+					final.DoneReason = 0
+					done = true
+				}
+				if resp.Content == "" && len(resp.Logprobs) == 0 && !stopMatched {
+					continue
+				}
+			}
+			if resp.Content != "" || len(resp.Logprobs) > 0 {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case request.Responses <- resp:
+				}
+			}
+			if stopMatched {
+				break
 			}
 		}
 
@@ -337,6 +386,18 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 
 		if generated%clearCacheInterval == 0 {
 			mlx.ClearCache()
+		}
+	}
+
+	// Text held back as a possible stop prefix is real content once the
+	// stream ends without a match.
+	if stop != nil && !stopMatched {
+		if tail := stop.flush(); tail != "" {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case request.Responses <- CompletionResponse{Content: tail}:
+			}
 		}
 	}
 
