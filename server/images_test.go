@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/fs/ggml"
+	fsgguf "github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/model"
@@ -54,6 +55,63 @@ func TestPruneLayersSkipsRecentOrphans(t *testing.T) {
 	}
 	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
 		t.Fatalf("old orphan still exists: %v", err)
+	}
+}
+
+func TestGenerationDefaultsFromGGUF(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "model-*.gguf")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ggml.WriteGGUF(file, ggml.KV{
+		"general.architecture":             "llama",
+		"general.sampling.top_k":           int32(0),
+		"general.sampling.top_p":           float32(0.7),
+		"general.sampling.min_p":           float32(0),
+		"general.sampling.typ_p":           float32(0.95),
+		"general.sampling.temp":            float32(0.6),
+		"general.sampling.penalty_last_n":  int32(-1),
+		"general.sampling.penalty_repeat":  float32(1.05),
+		"general.sampling.penalty_freq":    float32(0.2),
+		"general.sampling.penalty_present": float32(0.1),
+		"general.sampling.xtc_threshold":   float32(0.5),
+		"general.sampling.mirostat_tau":    float32(5),
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := fsgguf.Open(file.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	defaults := generationDefaultsFromGGUF(f)
+	check := func(key string, want any) {
+		t.Helper()
+		if got := defaults[key]; got != want {
+			t.Fatalf("%s = %#v, want %#v", key, got, want)
+		}
+	}
+
+	check("top_k", int64(0))
+	check("top_p", float64(float32(0.7)))
+	check("min_p", float64(0))
+	check("typical_p", float64(float32(0.95)))
+	check("temperature", float64(float32(0.6)))
+	check("repeat_last_n", int64(-1))
+	check("repeat_penalty", float64(float32(1.05)))
+	check("frequency_penalty", float64(float32(0.2)))
+	check("presence_penalty", float64(float32(0.1)))
+	if _, ok := defaults["mirostat_tau"]; ok {
+		t.Fatal("mirostat_tau should not be mapped to an Ollama option")
+	}
+	if _, ok := defaults["xtc_threshold"]; ok {
+		t.Fatal("xtc_threshold should not be mapped to an Ollama option")
 	}
 }
 
