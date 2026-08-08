@@ -212,7 +212,30 @@ configure_systemd() {
     $SUDO usermod -a -G ollama $(whoami)
 
     status "Creating ollama systemd service..."
-    cat <<EOF | $SUDO tee /etc/systemd/system/ollama.service >/dev/null
+
+    # Install the unit into the local-admin vendor directory rather than the
+    # administrator override namespace (/etc/systemd/system). This keeps the
+    # /etc slot free so `systemctl mask`/override works, and is always on the
+    # unit search path (sibling of the bundled libraries under lib).
+    OLLAMA_UNIT_DIR="$OLLAMA_INSTALL_DIR/lib/systemd/system"
+    OLLAMA_UNIT="$OLLAMA_UNIT_DIR/ollama.service"
+    OLLAMA_UNIT_ETC="/etc/systemd/system/ollama.service"
+
+    # Capture the prior enablement state before touching anything so an upgrade
+    # can honor an administrator who has masked or disabled the service.
+    OLLAMA_UNIT_STATE="$(systemctl is-enabled ollama 2>/dev/null || true)"
+
+    # Older installers wrote the unit as a regular file into /etc, where it
+    # shadows the vendor unit and blocks `systemctl mask`. Migrate it out on
+    # upgrade. Leave a symlink untouched: that is an admin mask (-> /dev/null)
+    # or override that must be preserved.
+    if [ -f "$OLLAMA_UNIT_ETC" ] && [ ! -L "$OLLAMA_UNIT_ETC" ]; then
+        status "Removing legacy unit from $OLLAMA_UNIT_ETC..."
+        $SUDO rm -f "$OLLAMA_UNIT_ETC"
+    fi
+
+    $SUDO install -o0 -g0 -m755 -d "$OLLAMA_UNIT_DIR"
+    cat <<EOF | $SUDO tee "$OLLAMA_UNIT" >/dev/null
 [Unit]
 Description=Ollama Service
 After=network-online.target
@@ -231,12 +254,29 @@ EOF
     SYSTEMCTL_RUNNING="$(systemctl is-system-running || true)"
     case $SYSTEMCTL_RUNNING in
         running|degraded)
-            status "Enabling and starting ollama service..."
             $SUDO systemctl daemon-reload
-            $SUDO systemctl enable ollama
+            case $OLLAMA_UNIT_STATE in
+                masked*)
+                    # Admin masked the unit: keep it off entirely. Don't
+                    # enable or start (and don't fail on the masked unit).
+                    status "Leaving ollama service masked (administrator preference)..."
+                    ;;
+                disabled)
+                    # Admin disabled the unit: keep it disabled at boot, but if
+                    # a daemon is currently running, restart it so the upgraded
+                    # binary takes effect. try-restart is a no-op when inactive.
+                    status "Leaving ollama service disabled; restarting only if active..."
+                    start_service() { $SUDO systemctl try-restart ollama; }
+                    trap start_service EXIT
+                    ;;
+                *)
+                    status "Enabling and starting ollama service..."
+                    $SUDO systemctl enable ollama
 
-            start_service() { $SUDO systemctl restart ollama; }
-            trap start_service EXIT
+                    start_service() { $SUDO systemctl restart ollama; }
+                    trap start_service EXIT
+                    ;;
+            esac
             ;;
         *)
             warning "systemd is not running"
