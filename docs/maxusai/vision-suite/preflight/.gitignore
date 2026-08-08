@@ -1,0 +1,5 @@
+# Generated probe images (deterministic — regenerated on demand by probes.py)
+# and run outputs. Expectations are the versioned artifact here, not results.
+ladderimgs/
+runs/
+__pycache__/
