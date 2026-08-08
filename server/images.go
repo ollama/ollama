@@ -883,7 +883,7 @@ func PruneLayers() error {
 	slog.Info(fmt.Sprintf("total blobs: %d", len(deleteMap)))
 
 	if err := deleteUnusedLayers(deleteMap); err != nil {
-		slog.Error(fmt.Sprintf("couldn't remove unused layers: %v", err))
+		slog.Error("couldn't remove unused layers", "error", err)
 		return nil
 	}
 

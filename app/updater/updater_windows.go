@@ -163,7 +163,7 @@ func DoUpgrade(interactive bool) error {
 	if cmd.Process != nil {
 		err := cmd.Process.Release()
 		if err != nil {
-			slog.Error(fmt.Sprintf("failed to release server process: %s", err))
+			slog.Error("failed to release server process", "error", err)
 		}
 	} else {
 		// TODO - some details about why it didn't start, or is this a pedantic error case?
