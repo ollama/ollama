@@ -224,6 +224,18 @@ class TestQualityThresholds(unittest.TestCase):
         r = checks.check_quality("http://stub", None, {"model": "m"}, "gemma4", "t")
         self.assertEqual(r["status"], SKIP)
 
+    def test_absent_vision_suite_skips_rather_than_erroring(self):
+        """release/0.32.1-dynres carries preflight/ without the vision suite. A
+        missing scorer is not a build defect and must not read as one."""
+        real_exists = os.path.exists
+        with mock.patch.object(checks.os.path, "exists",
+                               lambda p: False if p.endswith("vision_suite.py")
+                               else real_exists(p)):
+            r = checks.check_quality("http://stub", self.QUALITY, {"model": "m"},
+                                     "gemma4", "t")
+        self.assertEqual(r["status"], SKIP)
+        self.assertIn("vision_suite.py", r["summary"])
+
 
 class TestContention(unittest.TestCase):
     """Queue starvation is invisible: a saturated single slot times requests out
