@@ -5,6 +5,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
@@ -25,7 +26,7 @@ func TestParseSuppressTokens(t *testing.T) {
 }
 
 func TestParseTextConfigE2B(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	data := []byte(`{
 		"architectures": ["Gemma4ForConditionalGeneration"],
 		"text_config": {
@@ -141,7 +142,7 @@ func TestParseTextConfigE2B(t *testing.T) {
 }
 
 func TestParseTextConfig26B(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	data := []byte(`{
 		"architectures": ["Gemma4ForConditionalGeneration"],
 		"text_config": {
@@ -220,7 +221,7 @@ func TestParseTextConfig26B(t *testing.T) {
 }
 
 func TestParseTextConfig31B(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	data := []byte(`{
 		"architectures": ["Gemma4ForConditionalGeneration"],
 		"text_config": {
@@ -319,7 +320,7 @@ func TestParseTextConfig31B(t *testing.T) {
 }
 
 func TestParseTextConfig12BUnified(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	layerTypes := make([]string, 0, 48)
 	for i := range 48 {
@@ -428,7 +429,7 @@ func TestParseTextConfig12BUnified(t *testing.T) {
 }
 
 func TestParseTextConfigE4B(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	data := []byte(`{
 		"architectures": ["Gemma4ForConditionalGeneration"],
 		"text_config": {
@@ -644,9 +645,7 @@ func TestNewCachesAssistantSharedHistoryOrdering(t *testing.T) {
 }
 
 func TestResolveWeightPrefix(t *testing.T) {
-	if err := mlx.CheckInit(); err != nil {
-		t.Skipf("MLX not available: %v", err)
-	}
+	mlxtest.SkipIfUnavailable(t)
 
 	tests := []struct {
 		name    string
@@ -660,6 +659,8 @@ func TestResolveWeightPrefix(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			mlxtest.Setup(t)
+
 			dummy := mlx.FromValue(float32(1.0))
 			mlx.Eval(dummy)
 			tensors := map[string]*mlx.Array{tt.key: dummy}
@@ -668,12 +669,5 @@ func TestResolveWeightPrefix(t *testing.T) {
 				t.Errorf("resolveWeightPrefix(%q) = %q, want %q", tt.key, got, tt.wantPfx)
 			}
 		})
-	}
-}
-
-func skipIfNoMLX(t *testing.T) {
-	t.Helper()
-	if err := mlx.CheckInit(); err != nil {
-		t.Skipf("MLX not available: %v", err)
 	}
 }

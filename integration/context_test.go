@@ -44,9 +44,7 @@ func runLongInputContext(t *testing.T) {
 		},
 		Stream: &stream,
 		Options: map[string]any{
-			"temperature": 0,
-			"seed":        123,
-			"num_ctx":     128,
+			"num_ctx": 128,
 		},
 	}
 	client, _, cleanup := InitServerConnection(ctx, t)
@@ -109,9 +107,7 @@ func runContextExhaustion(t *testing.T) {
 		Think:  &thinkOff,
 		Stream: &stream,
 		Options: map[string]any{
-			"temperature": 0,
-			"seed":        123,
-			"num_ctx":     128,
+			"num_ctx": 128,
 		},
 	}
 	client, _, cleanup := InitServerConnection(ctx, t)

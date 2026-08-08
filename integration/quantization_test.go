@@ -85,11 +85,7 @@ func runQuantization(t *testing.T) {
 						},
 					},
 					KeepAlive: &api.Duration{Duration: 3 * time.Second},
-					Options: map[string]any{
-						"seed":        42,
-						"temperature": 0.0,
-					},
-					Stream: &stream,
+					Stream:    &stream,
 				}
 				t.Logf("verifying: %s -> %s", base, quant)
 

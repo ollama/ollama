@@ -101,10 +101,14 @@ func doEval(outputs []*Array, async bool) {
 	})
 }
 
+// AsyncEval enqueues evaluation of outputs, which must have been created
+// on the calling thread (see package doc).
 func AsyncEval(outputs ...*Array) {
 	doEval(outputs, true)
 }
 
+// Eval evaluates outputs, which must have been created on the calling
+// thread (see package doc).
 func Eval(outputs ...*Array) {
 	doEval(outputs, false)
 }

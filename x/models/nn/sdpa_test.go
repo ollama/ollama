@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
@@ -30,7 +31,7 @@ func newBatch(seqOffsets []int32, L int, qLens []int32) *batch.Batch {
 }
 
 func TestAttentionMaskZero(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	var m AttentionMask
 	if !m.IsZero() {
 		t.Fatal("zero value should report IsZero")
@@ -53,7 +54,7 @@ func TestAttentionMaskZero(t *testing.T) {
 }
 
 func TestAttentionMaskAsArrayCausal(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	L, K := 4, 6
 	b := newBatch([]int32{2}, L, nil)
 	arr := CausalMask().AsArray(b, K, mlx.DTypeFloat32)
@@ -84,7 +85,7 @@ func TestAttentionMaskAsArrayCausal(t *testing.T) {
 }
 
 func TestAttentionMaskRelaxLazy(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	// Relax must not materialize a tensor — the perf invariant the
 	// causal-flag fast path relies on. Everything else (predicates,
 	// AsArray contents) is exercised by the materialization tests.
@@ -101,11 +102,11 @@ func TestAttentionMaskRelaxLazy(t *testing.T) {
 // inside the causal triangle — must produce the same materialized
 // tensor as plain causal.
 func TestAttentionMaskRelaxNoopRectsMatchCausal(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.SkipIfUnavailable(t)
 	L, K := 4, 6
 	b := newBatch([]int32{0}, L, nil)
 	want := CausalMask().AsArray(b, K, mlx.DTypeFloat32)
-	mlx.Eval(want)
+	mlx.Eval(want, b.InputIDs)
 	wantF := want.Floats()
 
 	cases := []struct {
@@ -118,6 +119,8 @@ func TestAttentionMaskRelaxNoopRectsMatchCausal(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			mlxtest.Setup(t)
+
 			m := CausalMask().Relax(0, tc.qLo, tc.qHi, tc.kLo, tc.kHi)
 			arr := m.AsArray(b, K, mlx.DTypeFloat32)
 			mlx.Eval(arr)
@@ -132,7 +135,7 @@ func TestAttentionMaskRelaxNoopRectsMatchCausal(t *testing.T) {
 }
 
 func TestAttentionMaskAsArrayWithRelax(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	L, K := 4, 6
 	b := newBatch([]int32{0}, L, nil)
 	arr := CausalMask().Relax(0, 1, 3, 2, 5).AsArray(b, K, mlx.DTypeFloat32)
@@ -163,7 +166,7 @@ func TestAttentionMaskAsArrayWithRelax(t *testing.T) {
 }
 
 func TestAttentionMaskAsArrayPerRow(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	L, K := 3, 5
 	b := newBatch([]int32{0, 2}, L, nil)
 	m := CausalMask().
@@ -210,7 +213,7 @@ func TestAttentionMaskAsArrayPerRow(t *testing.T) {
 }
 
 func TestQPaddingMask(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	L := 4
 	// Row 0 fully real; row 1 has 2 real queries.
 	b := newBatch([]int32{0, 0}, L, []int32{int32(L), 2})
@@ -234,7 +237,7 @@ func TestQPaddingMask(t *testing.T) {
 }
 
 func TestKPaddingMask(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	K := 5
 	// Row 0 full keys; row 1 has 3 real keys.
 	b := newBatch([]int32{0, 0}, 4, nil)
@@ -258,7 +261,7 @@ func TestKPaddingMask(t *testing.T) {
 }
 
 func TestQPaddingMaskZeroWhenFull(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	b := newBatch([]int32{0}, 4, nil)
 	m := QPaddingMask(b, mlx.DTypeFloat32)
 	if !m.IsZero() {
@@ -267,7 +270,7 @@ func TestQPaddingMaskZeroWhenFull(t *testing.T) {
 }
 
 func TestKPaddingMaskZeroWhenFull(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	K := 4
 	b := newBatch([]int32{0}, 4, nil)
 	kLens := []int32{int32(K)}
@@ -278,7 +281,7 @@ func TestKPaddingMaskZeroWhenFull(t *testing.T) {
 }
 
 func TestAttentionMaskCombineCausal(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	var z AttentionMask
 	got := z.Intersect(CausalMask())
 	if !got.IsCausal() {
@@ -295,7 +298,7 @@ func TestAttentionMaskCombineCausal(t *testing.T) {
 }
 
 func TestAttentionMaskCombineRelaxDroppedAgainstCausal(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	relaxed := CausalMask().Relax(0, 1, 3, 2, 5)
 	got := relaxed.Intersect(CausalMask())
 	if !got.IsCausal() {
@@ -315,7 +318,7 @@ func TestAttentionMaskCombineRelaxDroppedAgainstCausal(t *testing.T) {
 }
 
 func TestAttentionMaskCombineRelaxIntersect(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	L, K := 6, 6
 	b := newBatch([]int32{0}, L, nil)
 
@@ -355,7 +358,7 @@ func TestAttentionMaskCombineRelaxIntersect(t *testing.T) {
 }
 
 func TestAttentionMaskCombineRelaxKeptAgainstNonCausal(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	L, K := 4, 6
 	b := newBatch([]int32{0}, L, nil)
 
@@ -400,7 +403,7 @@ func TestAttentionMaskCombineRelaxKeptAgainstNonCausal(t *testing.T) {
 }
 
 func TestAttentionMaskCombineArrays(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	a := mlx.FromValues([]float32{0, 0, 0, 0}, 1, 1, 2, 2)
 	bb := mlx.FromValues([]float32{1, 2, 3, 4}, 1, 1, 2, 2)
 	sum := ArrayMask(a).Intersect(ArrayMask(bb))
@@ -418,7 +421,7 @@ func TestAttentionMaskCombineArrays(t *testing.T) {
 }
 
 func TestAttentionMaskRelaxPanicOnArray(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	a := mlx.FromValues([]float32{0}, 1, 1, 1, 1)
 	defer func() {
 		if r := recover(); r == nil {
@@ -429,7 +432,7 @@ func TestAttentionMaskRelaxPanicOnArray(t *testing.T) {
 }
 
 func TestAttentionMaskRelaxPanicOnZero(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	defer func() {
 		if r := recover(); r == nil {
 			t.Fatal("Relax on zero mask should panic")
@@ -470,7 +473,7 @@ func sdpaInputs(L, K int) (q, k, v *mlx.Array) {
 }
 
 func TestSDPACausalParity(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	L, K := 4, 4
 	q, k, v := sdpaInputs(L, K)
 	b := newBatch([]int32{int32(K - L)}, L, nil)
@@ -489,7 +492,7 @@ func TestSDPACausalParity(t *testing.T) {
 }
 
 func TestSDPAZeroMaskParity(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	L, K := 4, 4
 	q, k, v := sdpaInputs(L, K)
 	b := newBatch([]int32{0}, L, nil)
@@ -505,7 +508,7 @@ func TestSDPAZeroMaskParity(t *testing.T) {
 }
 
 func TestSDPAArrayMaskParity(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	L, K := 3, 3
 	q, k, v := sdpaInputs(L, K)
 	b := newBatch([]int32{0}, L, nil)
@@ -529,7 +532,7 @@ func TestSDPAArrayMaskParity(t *testing.T) {
 }
 
 func TestSDPARelaxMaskMaterializes(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	L, K := 3, 5
 	q, k, v := sdpaInputs(L, K)
 	b := newBatch([]int32{int32(K - L)}, L, nil)
@@ -549,7 +552,7 @@ func TestSDPARelaxMaskMaterializes(t *testing.T) {
 }
 
 func TestSDPAPanicsWithBothKVAndHistory(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	L := 3
 	q, k, v := sdpaInputs(L, L)
 	b := newBatch([]int32{0}, L, nil)
@@ -563,7 +566,7 @@ func TestSDPAPanicsWithBothKVAndHistory(t *testing.T) {
 }
 
 func TestSDPAMLAHistorySlicesVFromK(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	L, D, valueDim := 2, 5, 3
 	kBuf := make([]float32, 1*1*L*D)
 	for i := range kBuf {
@@ -590,7 +593,7 @@ func TestSDPAMLAHistorySlicesVFromK(t *testing.T) {
 }
 
 func TestSDPAPanicsWithoutKV(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	q := mlx.FromValues(make([]float32, 4), 1, 1, 1, 4)
 	b := newBatch([]int32{0}, 1, nil)
 	defer func() {
@@ -619,7 +622,7 @@ func fillTensor(seed float32, B, H, T, D int) *mlx.Array {
 // central multi-sequence contract: right-padded rows must produce
 // per-row outputs that don't depend on the padded tails.
 func TestSDPAMultiSequenceParity(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	const H, D = 1, 4
 	const L, K = 4, 6
 	const qShort, kShort = 2, 2

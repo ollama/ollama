@@ -68,8 +68,6 @@ func runAudioTranscriptionModel(t *testing.T, model string) {
 		},
 		Stream: &stream,
 		Options: map[string]any{
-			"temperature": 0,
-			"seed":        123,
 			"num_predict": 50,
 		},
 	}
@@ -103,8 +101,6 @@ func runAudioResponse(t *testing.T, models []string) {
 				},
 				Stream: &stream,
 				Options: map[string]any{
-					"temperature": 0,
-					"seed":        123,
 					"num_predict": 200,
 				},
 			}
@@ -191,8 +187,6 @@ func runOpenAIChatWithAudio(t *testing.T, models []string) {
 						{"type": "input_audio", "input_audio": {"data": %q, "format": "wav"}}
 					]
 				}],
-				"temperature": 0,
-				"seed": 123,
 				"max_tokens": 200,
 				"think": false
 			}`, model, strings.TrimSpace(audioB64))

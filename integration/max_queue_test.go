@@ -32,10 +32,6 @@ func runMaxQueue(t *testing.T) {
 	req := api.GenerateRequest{
 		Model:  smol,
 		Prompt: "write a long historical fiction story about christopher columbus.  use at least 10 facts from his actual journey",
-		Options: map[string]any{
-			"seed":        42,
-			"temperature": 0.0,
-		},
 	}
 	resp := []string{"explore", "discover", "ocean"}
 
