@@ -279,8 +279,19 @@ marker would preempt a tool call that follows `</think>`.
   window, the request ends `done_reason:"length"` with the streamed thinking
   preserved instead of a 500.
 - Final metrics count each token once: pass one's `prompt_eval_count`, summed
-  `eval_count`/durations. On chat this fixes the 16,181-vs-~888 inflation; the
-  cancel-path (no pass-one final) keeps upstream's raw forwarding.
+  `eval_count`/durations. On chat this fixes the 16,181-vs-~888 inflation. The
+  cancel-path (no pass-one final) originally kept upstream's raw forwarding —
+  `eval_count` omitted the whole reasoning span (gemma4:12b-nvfp4 live:
+  eval 5 with ~300 reasoning tokens) — until 2026-08-08, when the transition
+  restart began reconstructing pass-one metrics in the textual form
+  (`transitionPassMetrics`, [ADR 0010](adr/0010-transition-flow-metrics-reconstruction.md)):
+  the request's own prompt and the raw pass-one stream tokenized, durations
+  split at the first streamed chunk, fed through the same pass-one summing as
+  the marker flow. Refined the same day for vision requests:
+  `prompt_eval_count` is derived from pass two's cache-inclusive prefill
+  minus the pure-text continuation delta, restoring the image-embedding
+  tokens the textual count cannot see (~2042/image on nemotron3, 256+ on
+  gemma4); the textual count remains the context-full/degenerate fallback.
 
 The runner-layer split was removed in the follow-up commit (routes stopped
 passing `ThinkCloseTag`, making it unreachable; then the field and machinery

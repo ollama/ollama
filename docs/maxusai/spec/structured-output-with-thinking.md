@@ -121,6 +121,12 @@ Automated (`server/routes_generate_test.go`):
 - `TestChatThinkFormatMarkerStop` — the chat marker flow and metrics (R6).
 - `TestChatThinkFormatLengthNoContinuation` — budget exhaustion inside
   reasoning (R5).
+- `Test{Generate,Chat}ThinkFormatTransitionMetrics` — the transition flow's
+  reconstructed pass-one metrics (R6): eval_count totals both passes and
+  prompt_eval_count reports the request's own prompt — image-embedding
+  tokens included, derived from pass two's cache-inclusive prefill minus the
+  pure-text continuation delta — even though the pass-one cancellation
+  discards the runner's metrics chunk.
 - The pre-existing chat `structured outputs restart` tests — the transition
   fallback.
 - `Test{Nemotron3Nano,Qwen35}Parser*ThinkingCloseMarker` — marker exposure (R4).

@@ -4,6 +4,9 @@
   b9888+002 payload, test server :11441). Supersedes the *mechanism* of
   [ADR 0002](0002-deferred-format-constraining.md) (runner-layer stop-split);
   0002's problem analysis and alternatives record remain the reference.
+  Transition-flow metrics amended 2026-08-08 by
+  [ADR 0010](0010-transition-flow-metrics-reconstruction.md) (the cancel path
+  no longer forwards pass-two metrics raw).
 - **Date:** 2026-08-02
 - **Deciders:** MaxusAI fork maintainers
 
