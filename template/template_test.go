@@ -417,6 +417,32 @@ What is your name?<|im_end|>
 	}
 }
 
+func TestGemma3InstructThinkPrompt(t *testing.T) {
+	bts, err := os.ReadFile("gemma3-instruct.gotmpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl, err := Parse(string(bts))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var b bytes.Buffer
+	err = tmpl.Execute(&b, Values{
+		Think: true,
+		Messages: []api.Message{
+			{Role: "user", Content: "hey"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := strings.TrimSpace(b.String())
+	if !strings.HasSuffix(out, "<unused94>") {
+		t.Errorf("expected generation prompt to end with <unused94>, got:\n%s", out)
+	}
+}
+
 func TestExecuteWithSuffix(t *testing.T) {
 	tmpl, err := Parse(`{{- if .Suffix }}<PRE> {{ .Prompt }} <SUF>{{ .Suffix }} <MID>
 {{- else }}{{ .Prompt }}
