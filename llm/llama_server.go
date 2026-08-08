@@ -1459,13 +1459,14 @@ func gemma4SnapBudget(maxTokens int) int {
 	return budget
 }
 
-// budgetFillTokens replicates img_tool::calc_size_budget_fill from the 004
+// BudgetFillSize replicates img_tool::calc_size_budget_fill from the 004
 // patch: snap the ceiling to the ladder, scale the image (up or down) by
 // sqrt(budget_px/source_px), floor each axis to a multiple of align, and shave
 // the long axis while the align clamp holds the grid over budget. float64
 // mirrors the C++ double arithmetic so grid boundaries match llama-server
-// exactly.
-func budgetFillTokens(width, height, align, maxTokens int) int {
+// exactly. Exported for the MLX runner's preprocessor, which must land on the
+// same ladder grids (ADR 0008).
+func BudgetFillSize(width, height, align, maxTokens int) (int, int) {
 	budget := gemma4SnapBudget(maxTokens)
 	pxPerToken := align * align
 	factor := math.Sqrt(float64(budget*pxPerToken) / (float64(width) * float64(height)))
@@ -1478,8 +1479,23 @@ func budgetFillTokens(width, height, align, maxTokens int) int {
 			hBar -= align
 		}
 	}
+	return wBar, hBar
+}
+
+func budgetFillTokens(width, height, align, maxTokens int) int {
+	wBar, hBar := BudgetFillSize(width, height, align, maxTokens)
 	return (wBar / align) * (hBar / align)
 }
+
+// Gemma4ImageBudget exposes the gemma4 image-token budget resolution
+// (request options with ADR 0008 defaults) for the MLX runner.
+func Gemma4ImageBudget(opts api.Options) (minTok, maxTok int) {
+	return gemma4ImageTokenBudget(opts)
+}
+
+// Gemma4ImageAlign is the pixel edge of one gemma4 soft token
+// (ViT patch 16 × pooling kernel 3).
+const Gemma4ImageAlign = gemma4ImageAlign
 
 // Load waits for llama-server to finish loading the model. llama-server loads
 // the model at startup and auto-detects GPU layers, so this just waits for

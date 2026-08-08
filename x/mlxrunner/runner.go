@@ -31,6 +31,12 @@ type Request struct {
 	Ctx         context.Context //nolint:containedctx // Queued requests carry caller cancellation to the runner.
 	Tokens      []int32
 	SamplerOpts sample.Options
+
+	// Media state populated by Prepare: preprocessed images, their
+	// soft-token spans within Tokens, and per-token prefix-cache salts.
+	VisionInputs []base.VisionInput
+	VisionSpans  [][2]int32
+	CacheSalts   []uint32
 }
 
 type Runner struct {

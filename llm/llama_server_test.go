@@ -4039,3 +4039,36 @@ func TestApplyCompletionFormat(t *testing.T) {
 		})
 	}
 }
+
+func TestBudgetFillSize(t *testing.T) {
+	cases := []struct {
+		name         string
+		w, h, maxTok int
+		wantW, wantH int
+	}{
+		// findings §9: 2160×1152 is already the budget-1120 target for its aspect.
+		{"native ladder grid", 2160, 1152, 1120, 2160, 1152},
+		// findings §9: 1920×1080 fills to 44×25 = 2112×1200 at 1120.
+		{"1080p fills to 44x25", 1920, 1080, 1120, 2112, 1200},
+		// upstream-gemma4-sizing-issue.md: budget-fill upscales 640×480 to ~1064 tokens.
+		{"640x480 upscales", 640, 480, 1120, 1824, 1344},
+		// Off-ladder request snaps down (600 → 560).
+		{"snap down", 1920, 1080, 600, 1488, 816},
+		// Below the lowest rung clamps up to 70.
+		{"clamp up", 1920, 1080, 10, 528, 288},
+		// Extreme aspect: short axis floors at 48, long axis shaved back under budget.
+		{"extreme aspect", 4800, 10, 70, 3360, 48},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w, h := BudgetFillSize(tc.w, tc.h, 48, tc.maxTok)
+			if w != tc.wantW || h != tc.wantH {
+				t.Fatalf("BudgetFillSize(%d,%d,48,%d) = %dx%d, want %dx%d",
+					tc.w, tc.h, tc.maxTok, w, h, tc.wantW, tc.wantH)
+			}
+			if got := budgetFillTokens(tc.w, tc.h, 48, tc.maxTok); got != (w/48)*(h/48) {
+				t.Fatalf("budgetFillTokens = %d, want %d", got, (w/48)*(h/48))
+			}
+		})
+	}
+}

@@ -21,6 +21,18 @@ type Batch struct {
 	// embedding for this step. It is nil for ordinary forward passes.
 	Hidden *mlx.Array
 
+	// InputsEmbeds, when non-nil, is the precomputed input embedding tensor
+	// for this forward pass, shape (B, L, hidden) — already embed-scaled,
+	// with any multimodal features spliced in. Models that support it skip
+	// their token-embedding lookup; InputIDs still carries the real token
+	// ids for masks and bookkeeping.
+	InputsEmbeds *mlx.Array
+
+	// BidiSpans lists [start, end) absolute prompt positions that attend
+	// bidirectionally (image soft-token blocks). Empty for text-only
+	// forwards; consulted only by models whose config asks for it.
+	BidiSpans [][2]int32
+
 	// Memo is per-forward memoization used to cache results, such as masks,
 	// which are often the same across layers.
 	Memo Memo

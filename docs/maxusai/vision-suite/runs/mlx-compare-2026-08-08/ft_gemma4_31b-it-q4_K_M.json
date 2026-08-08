@@ -1,0 +1,12 @@
+{
+ "tag": "gemma4_31b-it-q4_K_M",
+ "json_valid": true,
+ "prompt_eval_count": 1173,
+ "eval_count": 264,
+ "recall_22px": 4,
+ "recall_16px": 4,
+ "recall_12px": 4,
+ "recall_9px": 3,
+ "recall_7px": 2,
+ "total_found": 20
+}

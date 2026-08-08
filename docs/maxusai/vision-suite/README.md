@@ -10,7 +10,9 @@ Reproducible ground-truth benchmarks behind the measured tables in
   plus `ground_truth.json`: a 1920×1080 labeled-shapes scene (20px labels, 14px corner
   serial), a 1568×1568 fake invoice (22px line items, 17px fine print), a 1280×960 bar
   chart (19px values). Needs Pillow + DejaVu fonts
-  (`/usr/share/fonts/truetype/dejavu/`). Regenerate any time; edit sizes/content to
+  (`/usr/share/fonts/truetype/dejavu/`; on hosts without that path — macOS — set
+  `FONT_PATH`, e.g. to matplotlib's bundled `DejaVuSansMono.ttf`; applies to
+  `finetext_probe.py gen` too). Regenerate any time; edit sizes/content to
   extend coverage — scoring reads `ground_truth.json`, not hardcoded values.
 - `vision_suite.py <host> <tag> [model] [test]` — runs three long-prompt JSON
   extractions (single scene w/ pixel bboxes, single invoice, 3-image cross-analysis)
@@ -44,11 +46,26 @@ Reproducible ground-truth benchmarks behind the measured tables in
   why the external harnesses' own grounding scorers cannot be trusted with our models.
 - `run_grid.sh` — model × think-mode grid against one host, with an optional restart
   hook between runs (see below).
+- `run_engine_compare.sh <host>` — **engine-parity campaign** (MLX safetensors vs
+  llama-server GGUF): cold server per model via `RESTART_CMD`, then the three-suite
+  run and the fine-text probe per model. `summarize_engine_compare.py <model…>`
+  renders the two comparison tables from the per-tag `scores_*/ft_*` files —
+  the format of [vision-campaign-2026-08-08-mlx.md](../vision-campaign-2026-08-08-mlx.md);
+  keep it stable so runs diff cleanly.
 - `run_compare.sh <tag-prefix>` — **stock vs fork, with a budget-matched control arm.**
   Use this rather than eyeballing two separate runs: a bare stock-vs-fork comparison
   moves two variables at once. See "Comparing against stock" below.
 - `variants.py <host> <nogrammar|thinkon> [model]` — scene-test probes that isolate
   the `format:"json"` grammar constraint and reasoning mode as variables.
+
+## Scoring note: markdown-fence tolerance (2026-08-08)
+
+All scorers (`vision_suite.py`, `finetext_probe.py`) strip one markdown code
+fence before `json.loads` and record `fenced: true` when they did. Engines that
+enforce `format:"json"` (llama-server grammars) never produce fences, so this
+is a no-op there; the MLX runner did not enforce format until x/structured
+(ADR 0009) and answered with well-formed but fenced JSON. `json_valid` means
+"parsed after fence tolerance" — check `fenced` when comparing engines.
 
 ## Method (match this or numbers aren't comparable)
 

@@ -391,9 +391,11 @@ func buildModelListSummary(name model.Name, mf *manifest.Manifest) (modelListSum
 		summary.Capabilities = appendModelListCapability(summary.Capabilities, model.CapabilityVision)
 	}
 
+	// The MLX runner serves gemma4 vision but not audio; keep audio hidden
+	// so the CLI and clients don't offer an input path that would 400.
 	if cfg.ModelFormat == "safetensors" && isGemma4Renderer(cfg.Renderer) {
 		summary.Capabilities = slices.DeleteFunc(summary.Capabilities, func(c model.Capability) bool {
-			return c == model.CapabilityVision || c == model.CapabilityAudio
+			return c == model.CapabilityAudio
 		})
 	}
 

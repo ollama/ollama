@@ -459,6 +459,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	if req.Suffix != "" {
 		caps = append(caps, model.CapabilityInsert)
 	}
+	caps = mediaCapabilities(caps, req.Images...)
 
 	modelCaps := m.Capabilities()
 	if slices.Contains(modelCaps, model.CapabilityThinking) {
@@ -2843,6 +2844,13 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	if len(req.Tools) > 0 {
 		caps = append(caps, model.CapabilityTools)
 	}
+	// Baked-in model messages ride the same prompt as request messages, so
+	// their media counts too.
+	for _, msgs := range [][]api.Message{m.Messages, req.Messages} {
+		for _, msg := range msgs {
+			caps = mediaCapabilities(caps, msg.Images...)
+		}
+	}
 
 	modelCaps := m.Capabilities()
 	if slices.Contains(modelCaps, model.CapabilityThinking) {
@@ -3448,6 +3456,24 @@ func countChatImages(msgs []api.Message) int {
 		count += len(msg.Images)
 	}
 	return count
+}
+
+// mediaCapabilities appends the capabilities the attached media payloads
+// require: audio payloads need CapabilityAudio; anything else — images, plus
+// formats Go cannot identify but a runner may still decode — needs
+// CapabilityVision. Requiring these up front turns a request whose media the
+// model cannot process into an explicit capability error instead of a silent
+// drop (the MLX runner has no media path at all, and llama-server ignores
+// media without a projector).
+func mediaCapabilities(caps []model.Capability, images ...api.ImageData) []model.Capability {
+	for _, img := range images {
+		if llm.DetectMediaKind(img) == llm.MediaKindAudio {
+			caps = appendCapability(caps, model.CapabilityAudio)
+		} else {
+			caps = appendCapability(caps, model.CapabilityVision)
+		}
+	}
+	return caps
 }
 
 func handleScheduleError(c *gin.Context, name string, err error) {

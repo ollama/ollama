@@ -62,9 +62,12 @@ func TestGenerateDebugRenderOnly(t *testing.T) {
 		"llama.embedding_length":        uint32(4096),
 		"llama.attention.head_count":    uint32(32),
 		"llama.attention.head_count_kv": uint32(8),
-		"tokenizer.ggml.tokens":         []string{""},
-		"tokenizer.ggml.scores":         []float32{0},
-		"tokenizer.ggml.token_type":     []int32{0},
+		// The debug render tests attach images; the media capability check
+		// requires the model to report vision for those to render.
+		"llama.vision.block_count":  uint32(1),
+		"tokenizer.ggml.tokens":     []string{""},
+		"tokenizer.ggml.scores":     []float32{0},
+		"tokenizer.ggml.token_type": []int32{0},
 	}, []*ggml.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -257,9 +260,12 @@ func TestChatDebugRenderOnly(t *testing.T) {
 		"llama.embedding_length":        uint32(4096),
 		"llama.attention.head_count":    uint32(32),
 		"llama.attention.head_count_kv": uint32(8),
-		"tokenizer.ggml.tokens":         []string{""},
-		"tokenizer.ggml.scores":         []float32{0},
-		"tokenizer.ggml.token_type":     []int32{0},
+		// The debug render tests attach images; the media capability check
+		// requires the model to report vision for those to render.
+		"llama.vision.block_count":  uint32(1),
+		"tokenizer.ggml.tokens":     []string{""},
+		"tokenizer.ggml.scores":     []float32{0},
+		"tokenizer.ggml.token_type": []int32{0},
 	}, []*ggml.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
