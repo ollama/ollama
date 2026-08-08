@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/ollama/ollama/fs/ggml"
 
 	"github.com/ollama/ollama/api"
 	fsgguf "github.com/ollama/ollama/fs/gguf"
@@ -337,5 +338,112 @@ func writeModelListGGUFUint64(t *testing.T, b *bytes.Buffer, v uint64) {
 	t.Helper()
 	if err := binary.Write(b, binary.LittleEndian, v); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestModelListCacheExtractsProjectorCapabilities(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	modelsDir := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", modelsDir)
+
+	visionOnlyKV := ggml.KV{
+		"general.architecture":    "clip",
+		"clip.projector_type":     "pixtral",
+		"clip.vision.block_count": uint32(1),
+	}
+	_, visionOnlyDigest := createBinFile(t, visionOnlyKV, nil)
+
+	audioOnlyKV := ggml.KV{
+		"general.architecture":    "clip",
+		"clip.has_audio_encoder":  true,
+		"clip.projector_type":     "granite_speech",
+		"clip.audio.block_count":  uint32(1),
+		"clip.has_vision_encoder": false,
+	}
+	_, audioOnlyDigest := createBinFile(t, audioOnlyKV, nil)
+
+	visionAndAudioKV := ggml.KV{
+		"general.architecture":    "clip",
+		"clip.has_audio_encoder":  true,
+		"vision.projector_type":   "gemma3",
+		"clip.vision.block_count": uint32(1),
+		"clip.audio.block_count":  uint32(1),
+	}
+	_, visionAndAudioDigest := createBinFile(t, visionAndAudioKV, nil)
+
+	baseKV := map[string]any{"general.architecture": "llama"}
+	_, baseModelDigest := createBinFile(t, baseKV, nil)
+
+	testCases := []struct {
+		name         string
+		modelName    string
+		modelFiles   map[string]string
+		expectedCaps []model.Capability
+	}{
+		{
+			name:      "vision-only projector",
+			modelName: "proj-vision",
+			modelFiles: map[string]string{
+				"model.gguf":     baseModelDigest,
+				"projector.gguf": visionOnlyDigest,
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision},
+		},
+		{
+			name:      "audio-only projector",
+			modelName: "proj-audio",
+			modelFiles: map[string]string{
+				"model.gguf":     baseModelDigest,
+				"projector.gguf": audioOnlyDigest,
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityAudio},
+		},
+		{
+			name:      "vision and audio projector",
+			modelName: "proj-vision-audio",
+			modelFiles: map[string]string{
+				"model.gguf":     baseModelDigest,
+				"projector.gguf": visionAndAudioDigest,
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision, model.CapabilityAudio},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := api.CreateRequest{
+				Model:  tc.modelName,
+				Files:  tc.modelFiles,
+				Stream: &stream,
+			}
+
+			var s Server
+			w := createRequest(t, s.CreateHandler, req)
+			if w.Code != http.StatusOK {
+				t.Fatalf("create model status = %d, want 200: %s", w.Code, w.Body.String())
+			}
+
+			cache := newModelListCache()
+			if err := cache.hydrate(context.Background()); err != nil {
+				t.Fatalf("hydrate failed: %v", err)
+			}
+
+			summary, ok := cache.Get(model.ParseName(tc.modelName))
+			if !ok {
+				t.Fatal("model summary missing from cache")
+			}
+
+			for _, cap := range tc.expectedCaps {
+				if !slices.Contains(summary.Capabilities, cap) {
+					t.Fatalf("capabilities = %v, want %s", summary.Capabilities, cap)
+				}
+			}
+
+			for _, cap := range summary.Capabilities {
+				if !slices.Contains(tc.expectedCaps, cap) {
+					t.Fatalf("capabilities = %v, unexpected %s", summary.Capabilities, cap)
+				}
+			}
+		})
 	}
 }
