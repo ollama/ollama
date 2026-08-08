@@ -88,6 +88,12 @@ func cloudPassthroughMiddleware(disabledOperation string) gin.HandlerFunc {
 			defer reader.Close()
 			c.Request.Body = http.MaxBytesReader(c.Writer, io.NopCloser(reader), maxDecompressedBodySize)
 			c.Request.Header.Del("Content-Encoding")
+			// If Authorization header is not set, try to use x-api-key for Anthropic compatibility
+				if c.GetHeader("Authorization") == "" {
+					if apiKey := c.GetHeader("x-api-key"); apiKey != "" {
+						c.Request.Header.Set("Authorization", "Bearer "+apiKey)
+					}
+				}
 		}
 
 		// TODO(drifkin): Avoid full-body buffering here for model detection.
