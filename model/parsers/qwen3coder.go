@@ -232,9 +232,17 @@ func parseToolCall(raw qwenEventRawToolCall, tools []api.Tool) (api.ToolCall, er
 	xmlString := transformToXML(raw.raw)
 
 	var functionCall XMLFunctionCall
-	err := xml.Unmarshal([]byte(xmlString), &functionCall)
-	if err != nil {
-		return api.ToolCall{}, err
+	if err := xml.Unmarshal([]byte(xmlString), &functionCall); err != nil {
+		// Models occasionally emit malformed tool-call xml — for example a stray
+		// or unbalanced </parameter> tag. Strict parsing rejects the entire call,
+		// which previously surfaced as an error and aborted the whole response.
+		// Fall back to a lenient recovery that salvages the function name and any
+		// well-formed parameters; only surface the error if even that fails.
+		recovered, ok := recoverFunctionCall(raw.raw)
+		if !ok {
+			return api.ToolCall{}, err
+		}
+		functionCall = recovered
 	}
 
 	toolCall.Function = api.ToolCallFunction{
@@ -271,6 +279,28 @@ func parseToolCall(raw qwenEventRawToolCall, tools []api.Tool) (api.ToolCall, er
 	}
 
 	return toolCall, nil
+}
+
+// recoverFunctionCall makes a best-effort attempt to reconstruct a function call
+// from raw qwen tool-call output whose xml is malformed (for example a stray or
+// unbalanced </parameter> tag) and therefore rejected by strict parsing. It
+// scans the raw string for the function name and any well-formed
+// <parameter=...>...</parameter> pairs, so a single malformed tag no longer
+// discards the entire call. Because it reads the same raw form the strict path
+// transforms, recovered values flow through parseValue identically to parsed
+// ones. It reports false only when no function name is present, in which case
+// the caller keeps the original parse error.
+func recoverFunctionCall(raw string) (XMLFunctionCall, bool) {
+	nameMatch := qwenRecoverFunctionRegex.FindStringSubmatch(raw)
+	if nameMatch == nil {
+		return XMLFunctionCall{}, false
+	}
+
+	functionCall := XMLFunctionCall{Name: nameMatch[1]}
+	for _, m := range qwenRecoverParameterRegex.FindAllStringSubmatch(raw, -1) {
+		functionCall.Parameters = append(functionCall.Parameters, XMLParameter{Name: m[1], Value: m[2]})
+	}
+	return functionCall, true
 }
 
 // parseValue converts a raw string value to the appropriate type based on the parameter type specification.
@@ -401,6 +431,11 @@ func parseValue(raw string, paramType api.PropertyType) any {
 var (
 	qwenTagRegex    = regexp.MustCompile(`<(\w+)=([^>]+)>`)
 	qwenXMLTagRegex = regexp.MustCompile(`</?(?:function|parameter)(?:\s+name="[^"]*")?>`)
+
+	// Used by recoverFunctionCall to salvage a tool call from raw qwen output
+	// whose xml is malformed and rejected by strict parsing.
+	qwenRecoverFunctionRegex  = regexp.MustCompile(`<function=([^>]+)>`)
+	qwenRecoverParameterRegex = regexp.MustCompile(`(?s)<parameter=([^>]+)>(.*?)</parameter>`)
 )
 
 // transformToXML transforms a raw qwen tool call with xml-like tags into valid
