@@ -1,0 +1,106 @@
+---
+title: CorvinOS
+---
+
+CorvinOS is a self-hosted agentic OS that connects Ollama to Discord, WhatsApp, Telegram, Slack, and Email. EU AI Act 2026 governance and GDPR compliance are built into the architecture — not configured on top of it. Bot-disclosure (Art. 50), hash-chained audit log (Art. 30/32), deny-by-default consent (Art. 6/7), and the right-to-erasure orchestrator (Art. 17) are structural and cannot be disabled.
+
+## Quick start
+
+```bash
+ollama launch corvinos
+```
+
+Ollama handles everything automatically:
+
+1. **Install** — If CorvinOS isn't installed, Ollama prompts to install it via `pip install corvinos`
+2. **Model** — Pick a model from the selector (local or cloud)
+3. **Onboarding** — Ollama points CorvinOS at `http://127.0.0.1:11434/v1` and sets your model as the primary
+4. **Bridges** — Connect one or more messaging platforms (Discord, Telegram, WhatsApp, Slack, Email)
+5. **Console** — Opens the CorvinOS web console in your browser
+
+## Recommended models
+
+**Cloud models:**
+
+- `kimi-k2.5:cloud` — Multimodal reasoning with subagents
+- `qwen3.5:cloud` — Reasoning, coding, and agentic tool use with vision
+- `glm-5.1:cloud` — Reasoning and code generation
+
+**Local models:**
+
+- `gemma4` — Reasoning and code generation locally (~16 GB VRAM)
+- `qwen3.5` — Efficient reasoning and tool use locally (~11 GB VRAM)
+- `hermes3` — Instruction following and multi-turn conversation locally (~5 GB VRAM)
+
+More models at [ollama.com/search](https://ollama.com/search?c=cloud).
+
+## Connect messaging apps
+
+Link Discord, Telegram, WhatsApp, Slack, or Email to chat with your local models from anywhere:
+
+```bash
+corvin-install
+```
+
+Follow the interactive setup to configure each bridge.
+
+## Manual setup
+
+Install CorvinOS directly from PyPI if you prefer to drive setup yourself:
+
+```bash
+pip install corvinos
+corvin-serve          # starts the web console
+corvin-install        # interactive bridge setup
+corvin-install --yes  # non-interactive
+```
+
+### Connect to Ollama
+
+1. Open the web console (default: `http://localhost:8000`)
+2. Go to **Settings → Engine**
+3. Select **Ollama** and set the base URL:
+
+   ```
+   http://127.0.0.1:11434/v1
+   ```
+
+4. CorvinOS auto-detects downloaded models — select the one you want
+5. Click **Save** — the selected model becomes the active engine for all bridges
+
+### Connect a messaging platform
+
+In the console, go to **Settings → Bridges** and follow the setup for each platform:
+
+- **Discord** — paste your bot token and invite link
+- **Telegram** — enter your `@BotFather` token
+- **WhatsApp** — scan the QR code shown in the console
+- **Slack** — enter your app credentials from api.slack.com
+- **Email** — configure IMAP/SMTP credentials
+
+## Compliance
+
+CorvinOS is designed for operators with data sovereignty requirements:
+
+- **GDPR Art. 5** — metadata-only audit events, no prompt text logged
+- **GDPR Art. 17** — built-in erasure orchestrator per user on request
+- **EU AI Act 2026 Art. 50** — mandatory bot-disclosure card on first contact
+- **Audit log** — tamper-evident hash-chained event log at `~/.corvin/`
+
+All processing stays on your infrastructure. CorvinOS never sends data to external servers unless you configure a cloud model provider.
+
+## Auto-update
+
+CorvinOS updates itself on every start:
+
+```bash
+# Disable auto-update
+echo '{"auto_update": false}' > ~/.config/corvin-launcher/config.json
+```
+
+## Resources
+
+- [GitHub](https://github.com/CorvinLabs/CorvinOS)
+- [Documentation](https://corvin-labs.com)
+- [PyPI](https://pypi.org/project/corvinos/)
+- [Pricing](https://corvin-labs.com/pricing)

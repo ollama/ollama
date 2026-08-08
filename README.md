@@ -283,6 +283,7 @@ console.log(response.message.content);
 
 ### Bots & Messaging
 
+- [CorvinOS](https://github.com/CorvinLabs/CorvinOS) - GDPR-compliant AI assistant across Discord, WhatsApp, Telegram, Slack, and Email with EU AI Act compliance, hash-chained audit log, and multi-tenant support
 - [LangBot](https://github.com/RockChinQ/LangBot) - Multi-platform messaging bots with agents and RAG
 - [AstrBot](https://github.com/Soulter/AstrBot/) - Multi-platform chatbot with RAG and plugins
 - [Discord-Ollama Chat Bot](https://github.com/kevinthedang/discord-ollama) - TypeScript Discord bot
