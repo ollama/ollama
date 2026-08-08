@@ -52,9 +52,6 @@ func (s *Server) CreateHandler(c *gin.Context) {
 	config := &model.ConfigV2{
 		OS:           "linux",
 		Architecture: "amd64",
-		RootFS: model.RootFS{
-			Type: "layers",
-		},
 	}
 
 	var r api.CreateRequest
@@ -878,7 +875,7 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 		return err
 	}
 
-	configLayer, err := createConfigLayer(layers, *config)
+	configLayer, err := createConfigLayer(*config)
 	if err != nil {
 		return err
 	}
@@ -1424,13 +1421,7 @@ func setMessages(layers []manifest.Layer, m []api.Message) ([]manifest.Layer, er
 	return layers, nil
 }
 
-func createConfigLayer(layers []manifest.Layer, config model.ConfigV2) (*manifest.Layer, error) {
-	digests := make([]string, len(layers))
-	for i, layer := range layers {
-		digests[i] = layer.Digest
-	}
-	config.RootFS.DiffIDs = digests
-
+func createConfigLayer(config model.ConfigV2) (*manifest.Layer, error) {
 	var b bytes.Buffer
 	if err := json.NewEncoder(&b).Encode(config); err != nil {
 		return nil, err

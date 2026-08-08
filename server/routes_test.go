@@ -130,9 +130,6 @@ func TestRoutes(t *testing.T) {
 		config := &model.ConfigV2{
 			OS:           "linux",
 			Architecture: "amd64",
-			RootFS: model.RootFS{
-				Type: "layers",
-			},
 		}
 
 		if err := createModel(r, modelName, baseLayers, config, fn); err != nil {
@@ -573,7 +570,7 @@ func TestGetModelInfoRepairsUnknownGGUFFileType(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	configLayer, err := createConfigLayer([]manifest.Layer{modelLayer}, model.ConfigV2{
+	configLayer, err := createConfigLayer(model.ConfigV2{
 		ModelFormat:   "gguf",
 		ModelFamily:   "llama",
 		ModelFamilies: []string{"llama"},
