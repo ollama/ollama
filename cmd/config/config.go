@@ -238,7 +238,7 @@ func LoadIntegration(appName string) (*integration, error) {
 	}
 
 	integrationConfig, ok := cfg.Integrations[strings.ToLower(appName)]
-	if !ok {
+	if !ok || integrationConfig == nil {
 		return nil, os.ErrNotExist
 	}
 
