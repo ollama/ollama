@@ -156,6 +156,7 @@ func GenerateAgentTUI(cmd *cobra.Command, client *api.Client, opts agentTUIOptio
 			}
 			return user.Name, true, nil
 		},
+		StatusLineScript: os.Getenv("OLLAMA_STATUSLINE"),
 	})
 	return err
 }

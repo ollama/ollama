@@ -9,6 +9,7 @@ const (
 	chatAnsiBlue        = "4"
 	chatAnsiCyan        = "6"
 	chatAnsiBrightBlack = "8"
+	chatAnsiOrange      = "208"
 )
 
 var (
