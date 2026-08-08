@@ -30,6 +30,30 @@ If editing the context length for Ollama is not possible, the context length can
 OLLAMA_CONTEXT_LENGTH=64000 ollama serve
 ```
 
+### Linux (systemd)
+
+If Ollama is running as a systemd service (the default after installing via the Linux install script), `OLLAMA_CONTEXT_LENGTH` must be set in the unit file — exporting it in your shell will not affect the service.
+
+1. Edit the systemd service by calling `systemctl edit ollama.service`. This will open an editor.
+
+2. Under section `[Service]`, add an `Environment` line:
+
+   ```ini
+   [Service]
+   Environment="OLLAMA_CONTEXT_LENGTH=64000"
+   ```
+
+3. Save and exit.
+
+4. Reload `systemd` and restart Ollama:
+
+   ```shell
+   systemctl daemon-reload
+   systemctl restart ollama
+   ```
+
+For other environment variables, see [Setting environment variables on Linux](./faq#setting-environment-variables-on-linux).
+
 ### Check allocated context length and model offloading
 For best performance, use the maximum context length for a model, and avoid offloading the model to CPU. Verify the split under `PROCESSOR` using `ollama ps`.
 ```
