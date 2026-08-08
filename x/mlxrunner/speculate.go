@@ -21,8 +21,11 @@ type draftSession interface {
 	// committed reports a run of tokens committed to the target caches:
 	// tokens[i] sits at slot position+i and hiddens row i is the target
 	// hidden state at that slot. Runs arrive in slot order — prefill
-	// chunks, the decode seed, then each round's validated tokens.
-	committed(tokens, hiddens *mlx.Array, position int)
+	// chunks, the decode seed, then each round's validated tokens. media is
+	// the run's manifest (feature-bearing for items the run overlaps), valid
+	// only for the call; a session that defers its forward pins what it
+	// keeps. Nil outside prefill.
+	committed(tokens, hiddens *mlx.Array, position int, media []batch.MediaItem)
 
 	// settle completes any open frontier pair with next — the token after
 	// the last committed slot — and writes buffered reports through,
@@ -59,9 +62,9 @@ type speculation struct {
 }
 
 // drafter is the per-model half of a drafting implementation, opening each
-// request's drafting session.
+// request's drafting session with the request's per-row layout state.
 type drafter interface {
-	open() draftSession
+	open(layout []any) draftSession
 
 	// draftLimit is the deepest draft this drafter can produce, 0 when nothing
 	// bounds it. A depth past it is never measured, so the depth search must
@@ -91,8 +94,9 @@ func newSpeculation(r *Runner, draft base.DraftModel, targets, draftKV []cache.C
 type speculationSession struct {
 	spec    *speculation
 	drafter draftSession
-	enabled bool // whether this request drafts; false parks (maintain-only)
-	limit   int  // current draft length
+	enabled bool  // whether this request drafts; false parks (maintain-only)
+	limit   int   // current draft length
+	layout  []any // the request's per-row layout state, stamped on every target forward
 	stats   specStats
 
 	// Cost sampling: each round's wall time (start to next start, spanning the
@@ -105,18 +109,18 @@ type speculationSession struct {
 
 // open returns the speculation cursor for this request or nil when the model ships
 // no draft head (a nil receiver), which decodes plainly.
-func (s *speculation) open(request Request) *speculationSession {
+func (s *speculation) open(request Request, layout []any) *speculationSession {
 	if s == nil {
 		return nil
 	}
-	d := s.drafter.open()
+	d := s.drafter.open(layout)
 
 	// Logprobs are not yet supported, so a logprobs request keeps a speculationSession
 	// only to maintain a draft cache in lockstep (permanently parked).
 	opts := request.SamplerOpts
 	enabled := !opts.Logprobs && opts.TopLogprobs == 0
 
-	spec := &speculationSession{spec: s, drafter: d, enabled: enabled, prevDrafts: -1, roundDrafts: -1}
+	spec := &speculationSession{spec: s, drafter: d, layout: layout, enabled: enabled, prevDrafts: -1, roundDrafts: -1}
 	if enabled {
 		spec.limit = s.depth.scheduled
 	}
@@ -155,11 +159,11 @@ func (s *speculationSession) endRound(drafted, accepted, observed int) {
 	}
 }
 
-func (s *speculationSession) committed(tokens, hiddens *mlx.Array, position int) {
+func (s *speculationSession) committed(tokens, hiddens *mlx.Array, position int, media []batch.MediaItem) {
 	if s == nil {
 		return
 	}
-	s.drafter.committed(tokens, hiddens, position)
+	s.drafter.committed(tokens, hiddens, position, media)
 }
 
 // settle completes the drafter's open frontier pair with next and writes
@@ -272,7 +276,7 @@ func (st *speculativeDecoder) resume() []sampler.Result {
 func (st *speculativeDecoder) park(remaining int) ([]sampler.Result, error) {
 	s := st.s
 	if st.inner == nil {
-		st.inner = s.spec.r.pipelinedDecoder(s, s.spec.targets, st.current.Token.ExpandDims(-1), st.position)
+		st.inner = s.spec.r.pipelinedDecoder(s, s.spec.targets, st.current.Token.ExpandDims(-1), st.position, s.layout)
 	}
 	return st.inner.next(remaining)
 }
@@ -398,6 +402,7 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 		InputIDs:     current.Token.ExpandDims(-1).Concatenate(1, candidates.tokens),
 		SeqOffsets:   []int32{int32(before)},
 		SeqQueryLens: []int32{int32(draftCount + 1)},
+		Layout:       s.layout,
 	}, s.spec.targets)
 
 	// Row i of the fused hidden is the state after the token at before+i, so
@@ -470,7 +475,7 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 	s.drafter.committed(
 		mlx.FromValues(runIDs, 1, len(runIDs)),
 		auxHiddenSeq.Slice(mlx.Slice(), mlx.Slice(0, len(runIDs)), mlx.Slice()),
-		before)
+		before, nil)
 
 	results = draftResults(draftIDs[:accepted])
 	if done {

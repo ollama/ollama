@@ -28,6 +28,7 @@ var (
 	_ base.Model      = (*Model)(nil)
 	_ base.SelfDraft  = (*Model)(nil)
 	_ base.DraftModel = (*mtpDraft)(nil)
+	_ base.MediaModel = (*Model)(nil)
 )
 
 // RopeParameters carries optional rope metadata embedded under rope_parameters.
@@ -36,6 +37,7 @@ type RopeParameters struct {
 	RopeType            string  `json:"rope_type"`
 	RopeTheta           float32 `json:"rope_theta"`
 	PartialRotaryFactor float32 `json:"partial_rotary_factor"`
+	MropeSection        []int32 `json:"mrope_section"`
 }
 
 // Config holds Qwen 3.5 text config (top-level or nested text_config).
@@ -76,6 +78,8 @@ type Config struct {
 	RopeScaling         map[string]any  `json:"rope_scaling"`
 	RopeParameters      *RopeParameters `json:"rope_parameters"`
 
+	MropeSection []int32 `json:"-"`
+
 	// Quantization metadata.
 	QuantGroupSize int                               `json:"-"`
 	QuantBits      int                               `json:"-"`
@@ -95,6 +99,11 @@ type Model struct {
 	LMHead      nn.LinearLayer
 
 	MTP *MTPHead
+
+	// Vision components; nil for text-only checkpoints.
+	Vision      *VisionConfig
+	VisionTower *VisionTower
+	MM          multimodalConfig
 
 	tok *tokenizer.Tokenizer
 	*Config
@@ -276,6 +285,10 @@ func parseConfig(configData []byte) (Config, error) {
 		ropeDim = cfg.HeadDim
 	}
 	cfg.RopeDim = ropeDim
+	cfg.MropeSection = []int32{11, 11, 10}
+	if cfg.RopeParameters != nil && len(cfg.RopeParameters.MropeSection) == 3 {
+		cfg.MropeSection = cfg.RopeParameters.MropeSection
+	}
 
 	if cfg.FullAttentionInterval <= 0 {
 		for i, lt := range cfg.LayerTypes {
@@ -405,9 +418,16 @@ func NewModel(root *model.Root) (base.Model, error) {
 		return nil, fmt.Errorf("parse tokenizer: %w", err)
 	}
 
+	mm, err := parseMultimodalConfig(configData)
+	if err != nil {
+		return nil, err
+	}
+
 	m := &Model{
 		Layers: make([]*Layer, cfg.NumHiddenLayers),
 		Config: &cfg,
+		MM:     mm,
+		Vision: mm.VisionConfig,
 		tok:    tok,
 	}
 
@@ -870,7 +890,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		}
 	}
 
-	return nil
+	return m.loadVisionWeights(tensors, linears)
 }
 
 // loadLayer builds a decoder layer from tensors at layerPrefix. It serves both
@@ -1021,7 +1041,7 @@ func (m *Model) loadMTPHead(linears model.LinearFactory, tensors map[string]*mlx
 	return nil
 }
 
-func (a *FullAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
+func (a *FullAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config, mropeCos, mropeSin *mlx.Array) *mlx.Array {
 	qg := a.QProj.Forward(x)
 	qg = mlx.Reshape(qg, B, L, cfg.NumAttentionHeads, cfg.HeadDim*2)
 	q := mlx.SliceStartStop(qg, []int32{0, 0, 0, 0}, []int32{B, L, cfg.NumAttentionHeads, cfg.HeadDim})
@@ -1040,8 +1060,13 @@ func (a *FullAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, pos
 	k = mlx.Transpose(k, 0, 2, 1, 3)
 	v = mlx.Transpose(v, 0, 2, 1, 3)
 
-	q = mlx.RoPEWithBase(q, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, positions)
-	k = mlx.RoPEWithBase(k, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, positions)
+	if mropeCos != nil {
+		q = applyMRoPE(q, mropeCos, mropeSin, cfg.RopeDim)
+		k = applyMRoPE(k, mropeCos, mropeSin, cfg.RopeDim)
+	} else {
+		q = mlx.RoPEWithBase(q, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, positions)
+		k = mlx.RoPEWithBase(k, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, positions)
+	}
 
 	var kv nn.SDPAOption
 	if c != nil {
@@ -1181,13 +1206,13 @@ func (m *SparseMoE) Forward(x *mlx.Array, cfg *Config) *mlx.Array {
 	return mlx.Reshape(y, B, L, cfg.HiddenSize)
 }
 
-func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
+func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config, mropeCos, mropeSin *mlx.Array) *mlx.Array {
 	var r *mlx.Array
 	normed := l.InputNorm.Forward(x, cfg.RMSNormEps)
 	if l.IsLinear {
 		r = l.Linear.Forward(normed, b, c, B, L, cfg)
 	} else {
-		r = l.FullAttn.Forward(normed, b, c, positions, B, L, cfg)
+		r = l.FullAttn.Forward(normed, b, c, positions, B, L, cfg, mropeCos, mropeSin)
 	}
 	h := mlx.Add(x, r)
 	r = l.MLP.Forward(l.PostAttentionNorm.Forward(h, cfg.RMSNormEps), cfg)
@@ -1200,12 +1225,23 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
 
 	h := m.EmbedTokens.Forward(b.InputIDs)
+	if len(b.Media) > 0 {
+		h = m.scatterMedia(h, b, 0)
+	}
+
+	// One shared table pair per forward: every full-attention layer applies
+	// the same chunk positions.
+	var mropeCos, mropeSin *mlx.Array
+	if mp := ropePositions(b, L); mp != nil {
+		mropeCos, mropeSin = mropeCosSin(m.Config, mp, L)
+	}
+
 	for i, layer := range m.Layers {
 		var c cache.Cache
 		if caches != nil && i < len(caches) {
 			c = caches[i]
 		}
-		h = layer.Forward(h, b, c, positions, B, L, m.Config)
+		h = layer.Forward(h, b, c, positions, B, L, m.Config, mropeCos, mropeSin)
 	}
 	out := m.Norm.Forward(h, m.RMSNormEps)
 	return out, out
@@ -1248,11 +1284,22 @@ func (m *mtpDraft) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (hidden
 	B, L := int32(dims[0]), int32(dims[1])
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
 
-	emb := m.MTP.Enorm.Forward(m.EmbedTokens.Forward(b.InputIDs), m.RMSNormEps)
+	raw := m.EmbedTokens.Forward(b.InputIDs)
+	if len(b.Media) > 0 {
+		// The pair at slot S embeds the look-ahead token S+1, so each row's
+		// column 0 holds the prompt token one past its offset.
+		raw = (*Model)(m).scatterMedia(raw, b, 1)
+	}
+	emb := m.MTP.Enorm.Forward(raw, m.RMSNormEps)
 	h := m.MTP.Hnorm.Forward(b.Hidden, m.RMSNormEps)
 	fused := m.MTP.FC.Forward(emb.Concatenate(-1, h))
 
-	out := m.MTP.Layer.Forward(fused, b, draftCaches[0], positions, B, L, m.Config)
+	var mropeCos, mropeSin *mlx.Array
+	if mp := ropePositions(b, L); mp != nil {
+		mropeCos, mropeSin = mropeCosSin(m.Config, mp, L)
+	}
+
+	out := m.MTP.Layer.Forward(fused, b, draftCaches[0], positions, B, L, m.Config, mropeCos, mropeSin)
 	hidden = m.MTP.Norm.Forward(out, m.RMSNormEps)
 	return hidden, hidden
 }

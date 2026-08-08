@@ -2,6 +2,7 @@ package mlxrunner
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
@@ -35,8 +36,8 @@ func (d *mtpDrafter) draftLimit() int { return 0 }
 
 // open returns the drafting session for one request, its pairing frontier
 // synced to the draft caches' restored offset.
-func (d *mtpDrafter) open() draftSession {
-	s := &mtpDraftSession{drafter: d}
+func (d *mtpDrafter) open(layout []any) draftSession {
+	s := &mtpDraftSession{drafter: d, layout: layout}
 	if kv := d.spec.draftKV; len(kv) > 0 {
 		// A restored prefix arrives with the draft caches already written;
 		// pairing resumes from their absolute offset.
@@ -52,6 +53,7 @@ func (d *mtpDrafter) open() draftSession {
 // completes only when the next token arrives.
 type mtpDraftSession struct {
 	drafter *mtpDrafter
+	layout  []any
 
 	// frontier is the slot after the last reported token; frontierHidden is
 	// the pinned target hidden at frontier-1, fused into the next pair.
@@ -72,10 +74,17 @@ type mtpDraftSession struct {
 	// reuses them without a head call.
 	heldHidden    *mlx.Array
 	heldAuxHidden *mlx.Array
+
+	// pendingMedia holds manifest rows the deferred flush may still embed,
+	// pinned since prefill releases them after the target's chunk;
+	// lastDelivered marks each row's newest delivered end.
+	pendingMedia  map[int]batch.MediaItem
+	lastDelivered map[int]int
 }
 
-func (d *mtpDraftSession) committed(tokens, hiddens *mlx.Array, position int) {
+func (d *mtpDraftSession) committed(tokens, hiddens *mlx.Array, position int, media []batch.MediaItem) {
 	n := tokens.Dim(1)
+	d.captureMedia(media, position+n)
 	if len(d.drafter.spec.draftKV) > 0 {
 		// The pair at slot S fuses token[S+1] with hidden[S], so a run pairs its
 		// tokens with its own hiddens shifted one slot back: the first writable
@@ -104,6 +113,59 @@ func (d *mtpDraftSession) committed(tokens, hiddens *mlx.Array, position int) {
 	d.setFrontierHidden(lastHiddenRow(hiddens))
 }
 
+// captureMedia pins the run's feature-bearing rows for the deferred
+// flush, which embeds them after prefill has released the features. A row
+// spanning chunks arrives once per chunk.
+func (d *mtpDraftSession) captureMedia(media []batch.MediaItem, end int) {
+	if len(d.drafter.spec.draftKV) == 0 {
+		return
+	}
+	for _, item := range media {
+		if item.Features == nil {
+			continue
+		}
+		if _, ok := d.pendingMedia[item.Pos]; !ok {
+			if d.pendingMedia == nil {
+				d.pendingMedia = make(map[int]batch.MediaItem)
+				d.lastDelivered = make(map[int]int)
+			}
+			mlx.Pin(item.Features)
+			d.pendingMedia[item.Pos] = item
+		}
+		d.lastDelivered[item.Pos] = end
+	}
+}
+
+// flushMedia returns the held rows for a flush batch and drops rows the
+// flush finishes: fully delivered below embedEnd means never embedded
+// again.
+func (d *mtpDraftSession) flushMedia(embedEnd int) []batch.MediaItem {
+	if len(d.pendingMedia) == 0 {
+		return nil
+	}
+	manifest := make([]batch.MediaItem, 0, len(d.pendingMedia))
+	for _, item := range d.pendingMedia {
+		manifest = append(manifest, item)
+	}
+	slices.SortFunc(manifest, func(a, b batch.MediaItem) int { return a.Pos - b.Pos })
+	for pos, last := range d.lastDelivered {
+		if last <= embedEnd {
+			mlx.Unpin(d.pendingMedia[pos].Features)
+			delete(d.pendingMedia, pos)
+			delete(d.lastDelivered, pos)
+		}
+	}
+	return manifest
+}
+
+func (d *mtpDraftSession) closeMedia() {
+	for pos, item := range d.pendingMedia {
+		mlx.Unpin(item.Features)
+		delete(d.pendingMedia, pos)
+		delete(d.lastDelivered, pos)
+	}
+}
+
 // settle completes any open frontier pair with next — the token after the
 // last committed slot — and flushes, leveling the draft caches with the
 // target.
@@ -119,6 +181,7 @@ func (d *mtpDraftSession) settle(next *mlx.Array) {
 
 func (d *mtpDraftSession) close() {
 	d.flush()
+	d.closeMedia()
 	d.setFrontierHidden(nil)
 	d.setHeld(nil, nil)
 }
@@ -155,11 +218,15 @@ func (d *mtpDraftSession) flush() {
 
 	ids := mlx.Concatenate(d.pendingTokens, 1)
 	hiddens := mlx.Concatenate(d.pendingHiddens, 1)
+	// The pair at slot S embeds the look-ahead token S+1, so this flush
+	// embeds prompt tokens up to committedDraftOffset+len+1.
 	hidden, auxHidden := spec.draft.Forward(&batch.Batch{
 		InputIDs:     ids,
 		SeqOffsets:   []int32{int32(d.committedDraftOffset)},
 		SeqQueryLens: []int32{int32(ids.Dim(1))},
 		Hidden:       hiddens,
+		Media:        d.flushMedia(d.committedDraftOffset + ids.Dim(1) + 1),
+		Layout:       d.layout,
 	}, spec.targets, spec.draftKV)
 	d.setHeld(lastHiddenRow(hidden), lastHiddenRow(auxHidden))
 	d.committedDraftOffset += ids.Dim(1)
@@ -235,6 +302,7 @@ func (d *mtpDraftSession) propose(current *mlx.Array, maxTokens int) *draftCandi
 				SeqOffsets:   []int32{int32(pos)},
 				SeqQueryLens: []int32{1},
 				Hidden:       lastHidden,
+				Layout:       d.layout,
 			}, spec.targets, spec.draftKV)
 		}
 		// Unembed only the row being sampled, never the batch.
