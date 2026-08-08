@@ -51,7 +51,7 @@ func prepareAgentModel(cmd *cobra.Command, client *api.Client, opts *agentTUIOpt
 	// Unlike `ollama run`, the bare `ollama` root command doesn't define
 	// --insecure, so GetBool would error; treat it as false.
 	insecure, _ := cmd.Flags().GetBool("insecure")
-	info, resolved, err := showOrPullModel(cmd, client, opts.Model, insecure, "run")
+	info, resolved, err := showOrPullModel(cmd, client, opts.Model, "", insecure, "run")
 	if err != nil {
 		return nil, err
 	}
@@ -175,12 +175,16 @@ func agentSelectionItems(models []agentchat.ModelOption) []launch.SelectionItem 
 	for _, model := range models {
 		items = append(items, launch.SelectionItem{
 			Name:              model.Name,
-			Description:       strings.TrimSpace(model.Description),
+			Description:       agentSelectionDescription(model),
 			Recommended:       model.Recommended,
 			AvailabilityBadge: model.AvailabilityBadge,
 		})
 	}
 	return items
+}
+
+func agentSelectionDescription(model agentchat.ModelOption) string {
+	return strings.TrimSpace(model.Description)
 }
 
 var agentGetwd = os.Getwd

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -116,7 +118,7 @@ func TestOpenAIListMatchesTagsModels(t *testing.T) {
 		t.Helper()
 
 		parsed := model.ParseName(name)
-		path, err := manifest.PathForName(parsed)
+		path, err := manifest.ResolvePathForName(parsed)
 		if err != nil {
 			t.Fatalf("manifest path for %s: %v", name, err)
 		}
@@ -182,5 +184,262 @@ func TestOpenAIListMatchesTagsModels(t *testing.T) {
 
 	if got, want := models.Data[0].Id, "newer-model:latest"; got != want {
 		t.Fatalf("first /v1/models id = %q, want %q", got, want)
+	}
+}
+
+// makeManifestListConfig writes a minimal model config blob for format and
+// returns its layer.
+func makeManifestListConfig(t *testing.T, format string) manifest.Layer {
+	t.Helper()
+
+	data, err := json.Marshal(model.ConfigV2{ModelFormat: format})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	layer, err := manifest.NewLayer(bytes.NewReader(data), "application/vnd.docker.container.image.v1+json")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return layer
+}
+
+type manifestListFixtureChild struct {
+	name   string
+	runner string
+	format string
+}
+
+// writeManifestListFixture assembles a manifest list named name from
+// already-written child manifests and writes it. It returns the parsed child
+// manifests in the same order as children so callers can inspect their
+// digests and layers.
+func writeManifestListFixture(t *testing.T, name string, children ...manifestListFixtureChild) []*manifest.Manifest {
+	t.Helper()
+
+	refs := make([]manifest.Manifest, 0, len(children))
+	manifests := make([]*manifest.Manifest, 0, len(children))
+	for _, child := range children {
+		m, err := manifest.ParseNamedManifestForRunner(model.ParseName(child.name), child.runner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ref, err := manifest.NewManifestReference(m.BlobDigest(), child.runner, child.format)
+		if err != nil {
+			t.Fatal(err)
+		}
+		manifests = append(manifests, m)
+		refs = append(refs, ref)
+	}
+
+	parentData, err := json.Marshal(manifest.Manifest{
+		SchemaVersion: 2,
+		MediaType:     manifest.MediaTypeManifestList,
+		Manifests:     refs,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manifest.WriteManifestData(model.ParseName(name), parentData); err != nil {
+		t.Fatal(err)
+	}
+
+	return manifests
+}
+
+func TestListIncludesManifestListChildrenAsSeparateRows(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	ggufConfig := makeManifestListConfig(t, manifest.FormatGGUF)
+	mlxConfig := makeManifestListConfig(t, manifest.FormatSafetensors)
+
+	sharedBlob, err := manifest.NewLayer(bytes.NewReader([]byte("shared-weights")), "application/vnd.ollama.image.model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ggufBlob, err := manifest.NewLayer(bytes.NewReader([]byte("gguf-weights")), "application/vnd.ollama.image.model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mlxBlob, err := manifest.NewLayer(bytes.NewReader([]byte("mlx-weights")), manifest.MediaTypeImageTensor)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ggufLayers := []manifest.Layer{
+		sharedBlob,
+		ggufBlob,
+	}
+	if err := manifest.WriteManifestWithMetadata(model.ParseName("test-gguf"), ggufConfig, ggufLayers, manifest.RunnerGGML, manifest.FormatGGUF); err != nil {
+		t.Fatal(err)
+	}
+
+	mlxLayers := []manifest.Layer{
+		{
+			MediaType: manifest.MediaTypeImageTensor,
+			Digest:    sharedBlob.Digest,
+			Size:      sharedBlob.Size,
+		},
+		mlxBlob,
+	}
+	if err := manifest.WriteManifestWithMetadata(model.ParseName("test-mlx"), mlxConfig, mlxLayers, manifest.RunnerMLX, manifest.FormatSafetensors); err != nil {
+		t.Fatal(err)
+	}
+
+	children := writeManifestListFixture(t, "test-list",
+		manifestListFixtureChild{name: "test-gguf", runner: manifest.RunnerGGML, format: manifest.FormatGGUF},
+		manifestListFixtureChild{name: "test-mlx", runner: manifest.RunnerMLX, format: manifest.FormatSafetensors},
+	)
+	ggufManifest, mlxManifest := children[0], children[1]
+	parentModified := time.Unix(3000, 0).UTC()
+	parentPath, err := manifest.ResolvePathForName(model.ParseName("test-list"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(parentPath, parentModified, parentModified); err != nil {
+		t.Fatal(err)
+	}
+
+	s := Server{modelCaches: &modelCaches{modelList: newModelListCache()}}
+	s.modelCaches.modelList.Start(context.Background())
+	if err := s.modelCaches.modelList.Wait(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	w := createRequest(t, s.ListHandler, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d", w.Code)
+	}
+
+	var resp api.ListResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	var listed []api.ListModelResponse
+	for i := range resp.Models {
+		if resp.Models[i].Name == "test-list:latest" {
+			listed = append(listed, resp.Models[i])
+		}
+	}
+	if len(listed) != 2 {
+		t.Fatalf("test-list:latest rows = %d, want 2: %+v", len(listed), listed)
+	}
+
+	wantSizes := map[string]int64{
+		strings.TrimPrefix(ggufManifest.BlobDigest(), "sha256:"): ggufConfig.Size + sharedBlob.Size + ggufBlob.Size,
+		strings.TrimPrefix(mlxManifest.BlobDigest(), "sha256:"):  mlxConfig.Size + sharedBlob.Size + mlxBlob.Size,
+	}
+	wantRunners := map[string]string{
+		strings.TrimPrefix(ggufManifest.BlobDigest(), "sha256:"): manifest.RunnerGGML,
+		strings.TrimPrefix(mlxManifest.BlobDigest(), "sha256:"):  manifest.RunnerMLX,
+	}
+	for _, row := range listed {
+		want, ok := wantSizes[row.Digest]
+		if !ok {
+			t.Fatalf("unexpected digest for test-list row: %+v", row)
+		}
+		if row.Size != want {
+			t.Fatalf("size for %s = %d, want %d", row.Digest, row.Size, want)
+		}
+		if !row.ModifiedAt.Equal(parentModified) {
+			t.Fatalf("modified_at for %s = %s, want parent %s", row.Digest, row.ModifiedAt, parentModified)
+		}
+		if row.Details.Runner != wantRunners[row.Digest] {
+			t.Fatalf("runner for %s = %q, want %q", row.Digest, row.Details.Runner, wantRunners[row.Digest])
+		}
+		delete(wantSizes, row.Digest)
+	}
+	if len(wantSizes) != 0 {
+		t.Fatalf("missing list rows for digests: %+v", wantSizes)
+	}
+}
+
+func TestCopyManifestListByNameAndChildDigest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	ggufConfig := makeManifestListConfig(t, manifest.FormatGGUF)
+	mlxConfig := makeManifestListConfig(t, manifest.FormatSafetensors)
+
+	ggufBlob, err := manifest.NewLayer(bytes.NewReader([]byte("gguf-weights")), "application/vnd.ollama.image.model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mlxBlob, err := manifest.NewLayer(bytes.NewReader([]byte("mlx-weights")), manifest.MediaTypeImageTensor)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := manifest.WriteManifestWithMetadata(model.ParseName("copy-gguf"), ggufConfig, []manifest.Layer{ggufBlob}, manifest.RunnerGGML, manifest.FormatGGUF); err != nil {
+		t.Fatal(err)
+	}
+	if err := manifest.WriteManifestWithMetadata(model.ParseName("copy-mlx"), mlxConfig, []manifest.Layer{mlxBlob}, manifest.RunnerMLX, manifest.FormatSafetensors); err != nil {
+		t.Fatal(err)
+	}
+
+	children := writeManifestListFixture(t, "copy-list",
+		manifestListFixtureChild{name: "copy-gguf", runner: manifest.RunnerGGML, format: manifest.FormatGGUF},
+		manifestListFixtureChild{name: "copy-mlx", runner: manifest.RunnerMLX, format: manifest.FormatSafetensors},
+	)
+	ggufManifest := children[0]
+
+	var s Server
+	w := createRequest(t, s.CopyHandler, api.CopyRequest{
+		Source:      "copy-list",
+		Destination: "copy-list-copy",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("copy manifest list status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	copiedList, err := manifest.ReadManifestData(model.ParseName("copy-list-copy"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var copiedParent manifest.Manifest
+	if err := json.Unmarshal(copiedList, &copiedParent); err != nil {
+		t.Fatal(err)
+	}
+	if copiedParent.MediaType != manifest.MediaTypeManifestList || len(copiedParent.Manifests) != 2 {
+		t.Fatalf("copied parent = %+v, want manifest list with 2 children", copiedParent)
+	}
+
+	childDigestRef := strings.Replace(ggufManifest.BlobDigest(), ":", "-", 1)
+	w = createRequest(t, s.CopyHandler, api.CopyRequest{
+		Source:      childDigestRef,
+		Destination: "copy-child",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("copy child digest status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	copiedChild, err := manifest.ParseNamedManifest(model.ParseName("copy-child"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if copiedChild.MediaType == manifest.MediaTypeManifestList {
+		t.Fatal("copying a child digest produced a manifest list")
+	}
+	if copiedChild.BlobDigest() != ggufManifest.BlobDigest() {
+		t.Fatalf("copied child digest = %s, want %s", copiedChild.BlobDigest(), ggufManifest.BlobDigest())
+	}
+}
+
+func TestCopyRejectsExplicitCloudSource(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	createShowCacheModel(t, "copy-cloud", map[string]any{"test.context_length": uint32(1024)})
+
+	var s Server
+	w := createRequest(t, s.CopyHandler, api.CopyRequest{
+		Source:      "copy-cloud:cloud",
+		Destination: "copy-cloud-local",
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("copy cloud source status = %d, want 400: %s", w.Code, w.Body.String())
 	}
 }

@@ -4,13 +4,14 @@ package mlx
 import "C"
 
 import (
+	"fmt"
 	"reflect"
 	"unsafe"
 )
 
 // Quantization operations
 
-func Quantize(w *Array, groupSize, bits int, mode string) (weights, scales, biases *Array) {
+func Quantize(w *Array, groupSize, bits int, mode string) (weights, scales, biases *Array, err error) {
 	cMode := C.CString(mode)
 	defer C.free(unsafe.Pointer(cMode))
 	optGroupSize := C.mlx_optional_int{value: C.int(groupSize), has_value: true}
@@ -18,19 +19,32 @@ func Quantize(w *Array, groupSize, bits int, mode string) (weights, scales, bias
 	res := C.mlx_vector_array_new()
 	defer C.mlx_vector_array_free(res)
 	var globalScale C.mlx_array
-	C.mlx_quantize(&res, w.ctx, optGroupSize, optBits, cMode, globalScale, DefaultStream().ctx)
+	if err := mlxErr("quantize failed", func() C.int {
+		return C.mlx_quantize(&res, w.ctx, optGroupSize, optBits, cMode, globalScale, DefaultStream().ctx)
+	}); err != nil {
+		return nil, nil, nil, err
+	}
 
 	vecSize := int(C.mlx_vector_array_size(res))
+	if vecSize < 2 {
+		return nil, nil, nil, fmt.Errorf("quantize returned %d arrays, want at least 2", vecSize)
+	}
 	w0 := New("QUANTIZE_W")
-	C.mlx_vector_array_get(&w0.ctx, res, 0)
+	if C.mlx_vector_array_get(&w0.ctx, res, 0) != 0 {
+		return nil, nil, nil, fmt.Errorf("quantize result missing weight")
+	}
 	w1 := New("QUANTIZE_S")
-	C.mlx_vector_array_get(&w1.ctx, res, 1)
+	if C.mlx_vector_array_get(&w1.ctx, res, 1) != 0 {
+		return nil, nil, nil, fmt.Errorf("quantize result missing scales")
+	}
 	if vecSize >= 3 {
 		w2 := New("QUANTIZE_B")
-		C.mlx_vector_array_get(&w2.ctx, res, 2)
-		return w0, w1, w2
+		if C.mlx_vector_array_get(&w2.ctx, res, 2) != 0 {
+			return nil, nil, nil, fmt.Errorf("quantize result missing biases")
+		}
+		return w0, w1, w2, nil
 	}
-	return w0, w1, nil
+	return w0, w1, nil, nil
 }
 
 func FromFP8(x *Array, dtype DType) *Array {

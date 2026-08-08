@@ -18,6 +18,12 @@ type Value struct {
 	value any
 }
 
+// Any returns the raw decoded value: a Go scalar, string, or slice matching
+// the GGUF value type, or nil when the value is invalid.
+func (v Value) Any() any {
+	return v.value
+}
+
 func value[T any](v Value, kinds ...reflect.Kind) (t T) {
 	vv := reflect.ValueOf(v.value)
 	if slices.Contains(kinds, vv.Kind()) {

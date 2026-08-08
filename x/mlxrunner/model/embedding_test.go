@@ -12,6 +12,9 @@ func skipIfNoMLX(t *testing.T) {
 	if err := mlx.CheckInit(); err != nil {
 		t.Skipf("MLX not available: %v", err)
 	}
+	if !mlx.GPUIsAvailable() {
+		t.Skip("MLX GPU not available")
+	}
 }
 
 func TestMakeEmbeddingLayerDense(t *testing.T) {
@@ -49,7 +52,10 @@ func TestMakeEmbeddingLayerQuantized(t *testing.T) {
 		return out
 	}(), 2, 64).AsType(mlx.DTypeBFloat16)
 
-	qw, scales, qbiases := mlx.Quantize(denseWeight, 64, 4, "affine")
+	qw, scales, qbiases, err := mlx.Quantize(denseWeight, 64, 4, "affine")
+	if err != nil {
+		t.Fatalf("Quantize() error = %v", err)
+	}
 	mlx.Eval(qw, scales, qbiases)
 
 	emb := MakeEmbeddingLayer(map[string]*mlx.Array{

@@ -1,6 +1,8 @@
 package create
 
 import (
+	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -24,7 +26,7 @@ func TestCreatePipeline(t *testing.T) {
 		return nil
 	}
 
-	if err := Create("mymodel", dir, "", store, writeManifest, func(string) {}); err != nil {
+	if err := Create(context.Background(), "mymodel", dir, "", store, writeManifest, func(string) {}); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
 
@@ -41,5 +43,17 @@ func TestCreatePipeline(t *testing.T) {
 		if _, ok := store.blobs[n]; !ok {
 			t.Errorf("missing written blob %q (have %v)", n, store.names())
 		}
+	}
+}
+
+func TestCreatePipelineReturnsCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := Create(ctx, "mymodel", t.TempDir(), "", newCaptureStore(), func(string, LayerInfo, []LayerInfo) error {
+		return nil
+	}, func(string) {})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Create() error = %v, want context.Canceled", err)
 	}
 }

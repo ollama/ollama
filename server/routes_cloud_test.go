@@ -178,7 +178,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		local := httptest.NewServer(router)
 		defer local.Close()
 
-		reqBody := `{"model":"kimi-k2.5:cloud","prompt":"hello","stream":false}`
+		reqBody := `{"model":"kimi-k2.5:cloud","prompt":"hello","stream":false,"runner":"bad"}`
 		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, local.URL+"/api/generate", bytes.NewBufferString(reqBody))
 		if err != nil {
 			t.Fatal(err)
@@ -203,6 +203,9 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 
 		if !strings.Contains(capture.body, `"model":"kimi-k2.5"`) {
 			t.Fatalf("expected normalized model in upstream body, got %q", capture.body)
+		}
+		if strings.Contains(capture.body, `"runner"`) {
+			t.Fatalf("expected local-only runner to be omitted from upstream body, got %q", capture.body)
 		}
 
 		if got := capture.header.Get("X-Test-Header"); got != "api-header" {
@@ -229,7 +232,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		local := httptest.NewServer(router)
 		defer local.Close()
 
-		reqBody := `{"model":"kimi-k2.5:cloud","messages":[{"role":"user","content":"hello"}],"stream":false}`
+		reqBody := `{"model":"kimi-k2.5:cloud","messages":[{"role":"user","content":"hello"}],"stream":false,"runner":"bad"}`
 		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, local.URL+"/api/chat", bytes.NewBufferString(reqBody))
 		if err != nil {
 			t.Fatal(err)
@@ -253,6 +256,9 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 
 		if !strings.Contains(capture.body, `"model":"kimi-k2.5"`) {
 			t.Fatalf("expected normalized model in upstream body, got %q", capture.body)
+		}
+		if strings.Contains(capture.body, `"runner"`) {
+			t.Fatalf("expected local-only runner to be omitted from upstream body, got %q", capture.body)
 		}
 	})
 
@@ -358,7 +364,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		local := httptest.NewServer(router)
 		defer local.Close()
 
-		reqBody := `{"model":"kimi-k2.5:cloud"}`
+		reqBody := `{"model":"kimi-k2.5:cloud","runner":"bad","all_manifests":true}`
 		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, local.URL+"/api/show", bytes.NewBufferString(reqBody))
 		if err != nil {
 			t.Fatal(err)
@@ -382,6 +388,9 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 
 		if !strings.Contains(capture.body, `"model":"kimi-k2.5"`) {
 			t.Fatalf("expected normalized model in upstream body, got %q", capture.body)
+		}
+		if strings.Contains(capture.body, `"runner"`) || strings.Contains(capture.body, `"all_manifests"`) {
+			t.Fatalf("expected local-only manifest selectors to be omitted from upstream body, got %q", capture.body)
 		}
 	})
 

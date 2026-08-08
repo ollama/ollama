@@ -51,17 +51,28 @@ type scalarTypes interface {
 
 func FromValue[T scalarTypes](t T) *Array {
 	tt := New("")
+	tt.ctx = C.mlx_array_new()
 	switch v := any(t).(type) {
 	case bool:
-		tt.ctx = C.mlx_array_new_bool(C.bool(v))
+		mlxCheck("array bool scalar creation failed", func() C.int {
+			return C.mlx_array_set_bool(&tt.ctx, C.bool(v))
+		})
 	case int:
-		tt.ctx = C.mlx_array_new_int(C.int(v))
+		mlxCheck("array int scalar creation failed", func() C.int {
+			return C.mlx_array_set_int(&tt.ctx, C.int(v))
+		})
 	case float32:
-		tt.ctx = C.mlx_array_new_float32(C.float(v))
+		mlxCheck("array float32 scalar creation failed", func() C.int {
+			return C.mlx_array_set_float32(&tt.ctx, C.float(v))
+		})
 	case float64:
-		tt.ctx = C.mlx_array_new_float64(C.double(v))
+		mlxCheck("array float64 scalar creation failed", func() C.int {
+			return C.mlx_array_set_float64(&tt.ctx, C.double(v))
+		})
 	case complex64:
-		tt.ctx = C.mlx_array_new_complex(C.float(real(v)), C.float(imag(v)))
+		mlxCheck("array complex64 scalar creation failed", func() C.int {
+			return C.mlx_array_set_complex(&tt.ctx, C.float(real(v)), C.float(imag(v)))
+		})
 	default:
 		panic("unsupported type")
 	}

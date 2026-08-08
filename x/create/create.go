@@ -164,15 +164,7 @@ type LayerCreator func(r io.Reader, mediaType, name string) (LayerInfo, error)
 // ManifestWriter writes the manifest file.
 type ManifestWriter func(modelName string, config LayerInfo, layers []LayerInfo) error
 
-// ShouldQuantize returns true if a tensor should be quantized.
-// For image gen models (component non-empty): quantizes linear weights, skipping VAE, embeddings, norms.
-// For LLM models (component empty): quantizes linear weights, skipping embeddings, norms, and small tensors.
-func ShouldQuantize(name, component string) bool {
-	// Image gen specific: skip VAE entirely
-	if component == "vae" {
-		return false
-	}
-
+func shouldQuantize(name string) bool {
 	// Skip audio encoder tensors (highly sensitive to quantization)
 	if strings.Contains(name, "audio_tower") || strings.Contains(name, "embed_audio") {
 		return false
@@ -261,7 +253,7 @@ func GetTensorQuantization(name string, shape []int32, quantize string) string {
 	stackedExpert := isStackedExpertWeight(name)
 
 	// Use basic name-based check first
-	if !stackedExpert && !ShouldQuantize(name, "") {
+	if !stackedExpert && !shouldQuantize(name) {
 		return ""
 	}
 
