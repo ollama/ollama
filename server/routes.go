@@ -60,6 +60,7 @@ const (
 	cloudErrRemoteModelDetailsUnavailable = "remote model details are unavailable"
 	cloudErrWebSearchUnavailable          = "web search is unavailable"
 	cloudErrWebFetchUnavailable           = "web fetch is unavailable"
+	cloudErrUsageUnavailable              = "usage is unavailable"
 	copilotChatUserAgentPrefix            = "GitHubCopilotChat/"
 )
 
@@ -1871,7 +1872,7 @@ func (s *Server) GenerateRoutes() (http.Handler, error) {
 	r.DELETE("/api/delete", s.DeleteHandler)
 
 	r.POST("/api/me", s.WhoamiHandler)
-
+	r.GET("/api/usage", s.UsageHandler)
 	r.POST("/api/signout", s.SignoutHandler)
 	// deprecated
 	r.DELETE("/api/user/keys/:encodedKey", s.SignoutHandler)
@@ -2210,6 +2211,10 @@ func (s *Server) WhoamiHandler(c *gin.Context) {
 		user.Plan = "free"
 	}
 	c.JSON(http.StatusOK, user)
+}
+
+func (s *Server) UsageHandler(c *gin.Context) {
+	proxyCloudRequest(c, nil, cloudErrUsageUnavailable)
 }
 
 func (s *Server) SignoutHandler(c *gin.Context) {
