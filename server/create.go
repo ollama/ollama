@@ -19,6 +19,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -118,6 +119,17 @@ func (s *Server) CreateHandler(c *gin.Context) {
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
+		defer func() {
+			// A panic anywhere in the conversion pipeline (e.g. a malformed
+			// GGUF/safetensors file triggering an index-out-of-range or
+			// divide-by-zero in one of the model converters) must not take
+			// down the whole ollama serve process. Recover it here and
+			// report it to the client as a regular error instead.
+			if rec := recover(); rec != nil {
+				slog.Error("panic while creating model", "name", name, "error", rec, "stack", string(debug.Stack()))
+				ch <- gin.H{"error": fmt.Sprintf("failed to create model: %v", rec)}
+			}
+		}()
 		fn := func(resp api.ProgressResponse) {
 			ch <- resp
 		}
