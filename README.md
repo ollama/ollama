@@ -174,6 +174,7 @@ console.log(response.message.content);
 - [chat](https://github.com/swuecho/chat) - Chat web app for teams
 - [Ollama RAG Chatbot](https://github.com/datvodinh/rag-chatbot.git) - Chat with multiple PDFs using RAG
 - [Tkinter-based client](https://github.com/chyok/ollama-gui) - Python desktop client
+- [H2O GPT](https://github.com/h2oai/h2ogpt) - Private chat with local GPT with document, images, video, etc. 100% private ([guide](https://github.com/h2oai/h2ogpt/blob/5af700f5bdd155816de33cf95a41ced8393c48dc/docs/README_InferenceServers.md#ollama))
 
 #### Desktop
 
