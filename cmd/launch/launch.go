@@ -744,7 +744,7 @@ func (c *launcherClient) launchSingleIntegration(ctx context.Context, name strin
 		}
 	}
 
-	return launchAfterConfiguration(name, runner, target, c.resolveRunModels(ctx, []string{target}), req)
+	return c.launchAfterConfiguration(ctx, name, runner, target, c.resolveRunModels(ctx, []string{target}), req)
 }
 
 func (c *launcherClient) launchEditorIntegration(ctx context.Context, name string, runner Runner, editor Editor, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
@@ -778,6 +778,7 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 	liveConfigMatches := slices.Equal(editor.Models(), models)
 	if needsConfigure || req.ModelOverride != "" || !savedMatchesModels(saved, models) || !liveConfigMatches {
 		launchModels = c.modelInventory().Resolve(ctx, models)
+		launchModels = c.prepareLaunchModelsForConfig(ctx, editor, models[0], launchModels)
 		if err := prepareEditorIntegration(name, editor, launchModels); err != nil {
 			return err
 		}
@@ -785,7 +786,7 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 		launchModels = c.resolveRunModels(ctx, models)
 	}
 
-	return launchAfterConfiguration(name, runner, models[0], launchModels, req)
+	return c.launchAfterConfiguration(ctx, name, runner, models[0], launchModels, req)
 }
 
 func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, name string, runner Runner, managed ManagedSingleModel, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
@@ -1462,7 +1463,29 @@ func runIntegration(runner Runner, modelName string, models []LaunchModel, args 
 	return runner.Run(modelName, models, args)
 }
 
-func launchAfterConfiguration(name string, runner Runner, model string, models []LaunchModel, req IntegrationLaunchRequest) error {
+type launchModelRunPreparer interface {
+	prepareRunLaunchModels(context.Context, *launcherClient, string, []LaunchModel) ([]LaunchModel, error)
+}
+
+type launchModelConfigPreparer interface {
+	prepareConfigLaunchModels(context.Context, *launcherClient, string, []LaunchModel) []LaunchModel
+}
+
+func (c *launcherClient) prepareLaunchModelsForRun(ctx context.Context, runner Runner, model string, models []LaunchModel) ([]LaunchModel, error) {
+	if preparer, ok := runner.(launchModelRunPreparer); ok {
+		return preparer.prepareRunLaunchModels(ctx, c, model, models)
+	}
+	return models, nil
+}
+
+func (c *launcherClient) prepareLaunchModelsForConfig(ctx context.Context, editor Editor, primary string, models []LaunchModel) []LaunchModel {
+	if preparer, ok := editor.(launchModelConfigPreparer); ok {
+		return preparer.prepareConfigLaunchModels(ctx, c, primary, models)
+	}
+	return models
+}
+
+func (c *launcherClient) launchAfterConfiguration(ctx context.Context, name string, runner Runner, model string, models []LaunchModel, req IntegrationLaunchRequest) error {
 	if req.ConfigureOnly {
 		launch, err := ConfirmPrompt(fmt.Sprintf("Launch %s now?", runner))
 		if err != nil {
@@ -1475,7 +1498,11 @@ func launchAfterConfiguration(name string, runner Runner, model string, models [
 	if err := EnsureIntegrationInstalled(name, runner); err != nil {
 		return err
 	}
-	return runIntegration(runner, model, models, req.ExtraArgs)
+	preparedModels, err := c.prepareLaunchModelsForRun(ctx, runner, model, models)
+	if err != nil {
+		return err
+	}
+	return runIntegration(runner, model, preparedModels, req.ExtraArgs)
 }
 
 func loadStoredIntegrationConfig(name string) (*config.IntegrationConfig, error) {

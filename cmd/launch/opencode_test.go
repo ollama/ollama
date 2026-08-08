@@ -1,7 +1,9 @@
 package launch
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -224,6 +226,188 @@ func TestOpenCodeEdit(t *testing.T) {
 			t.Fatalf("variants.max.reasoningEffort = %v, want max", max["reasoningEffort"])
 		}
 	})
+}
+
+func TestOpenCodeRunPassesConfigContent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell fake binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	binDir := filepath.Join(tmpDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	capturePath := filepath.Join(tmpDir, "opencode-config.json")
+	t.Setenv("CAPTURE_PATH", capturePath)
+	t.Setenv("PATH", binDir)
+
+	fakeOpenCode := filepath.Join(binDir, "opencode")
+	script := "#!/bin/sh\nprintf '%s' \"$OPENCODE_CONFIG_CONTENT\" > \"$CAPTURE_PATH\"\n"
+	if err := os.WriteFile(fakeOpenCode, []byte(script), 0o755); err != nil {
+		t.Fatalf("failed to write fake opencode: %v", err)
+	}
+
+	models := []LaunchModel{{
+		Name:            "gemma4",
+		ContextLength:   32_768,
+		MaxOutputTokens: 8_192,
+	}}
+	o := &OpenCode{}
+	if err := o.Run("gemma4", models, nil); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	data, err := os.ReadFile(capturePath)
+	if err != nil {
+		t.Fatalf("failed to read captured config: %v", err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("captured config is not valid JSON: %v\n%s", err, string(data))
+	}
+	if cfg["model"] != "ollama/gemma4" {
+		t.Fatalf("model = %v, want ollama/gemma4", cfg["model"])
+	}
+
+	provider, _ := cfg["provider"].(map[string]any)
+	ollama, _ := provider["ollama"].(map[string]any)
+	cfgModels, _ := ollama["models"].(map[string]any)
+	entry, _ := cfgModels["gemma4"].(map[string]any)
+	limit, _ := entry["limit"].(map[string]any)
+	if limit["context"] != float64(32_768) {
+		t.Fatalf("limit.context = %v, want 32768", limit["context"])
+	}
+	if limit["output"] != float64(8_192) {
+		t.Fatalf("limit.output = %v, want 8192", limit["output"])
+	}
+}
+
+func TestOpenCodePrepareLaunchModelsSetsLocalLimits(t *testing.T) {
+	client, _ := testLauncherClientWithStatus(t, 32*1024)
+
+	models := client.prepareLaunchModelsForConfig(context.Background(), &OpenCode{}, "llama3.2", []LaunchModel{
+		{Name: "llama3.2", ContextLength: 131072},
+		{Name: "glm-5:cloud", ContextLength: 202752, MaxOutputTokens: 131072},
+	})
+
+	if len(models) != 2 {
+		t.Fatalf("models = %+v, want 2", models)
+	}
+	if models[0].ContextLength != 32*1024 || models[0].MaxOutputTokens != 8192 {
+		t.Fatalf("local model = %+v, want server context and derived output", models[0])
+	}
+	if models[1].ContextLength != 202752 || models[1].MaxOutputTokens != 131072 {
+		t.Fatalf("cloud model = %+v, want unchanged cloud limits", models[1])
+	}
+
+	entries := buildModelEntries(models)
+	local, _ := entries["llama3.2"].(map[string]any)
+	limit, _ := local["limit"].(map[string]any)
+	if limit["context"] != 32*1024 || limit["output"] != 8192 {
+		t.Fatalf("local limit = %v, want context/output from server context", limit)
+	}
+}
+
+func TestOpenCodeLocalMaxOutputTokens(t *testing.T) {
+	tests := map[int]int{
+		4096:       2048,
+		16 * 1024:  4096,
+		32 * 1024:  8192,
+		128 * 1024: 8192,
+	}
+	for contextLength, want := range tests {
+		if got := openCodeLocalMaxOutputTokens(contextLength); got != want {
+			t.Fatalf("openCodeLocalMaxOutputTokens(%d) = %d, want %d", contextLength, got, want)
+		}
+	}
+}
+
+func TestOpenCodePrepareLaunchModelsWarnsForLowLocalContext(t *testing.T) {
+	client, _ := testLauncherClientWithStatus(t, 32*1024)
+
+	oldConfirm := DefaultConfirmPrompt
+	defer func() { DefaultConfirmPrompt = oldConfirm }()
+
+	var gotPrompt string
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		gotPrompt = prompt
+		if options.Default != ConfirmDefaultNo {
+			t.Fatal("expected warning prompt to default to no")
+		}
+		if options.YesLabel != "Launch anyway" || options.NoLabel != "Cancel" {
+			t.Fatalf("labels = %q/%q, want Launch anyway/Cancel", options.YesLabel, options.NoLabel)
+		}
+		return false, nil
+	}
+
+	_, err := client.prepareLaunchModelsForRun(context.Background(), &OpenCode{}, "llama3.2", []LaunchModel{{Name: "llama3.2"}})
+	if !errors.Is(err, ErrCancelled) {
+		t.Fatalf("error = %v, want ErrCancelled", err)
+	}
+	for _, want := range []string{
+		"OpenCode works best with at least 64k context. Current local context: 32k.",
+		"Launch OpenCode anyway?",
+	} {
+		if !strings.Contains(gotPrompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, gotPrompt)
+		}
+	}
+}
+
+func TestOpenCodePrepareLaunchModelsAppliesLocalLimitsWithCloudPrimary(t *testing.T) {
+	client, _ := testLauncherClientWithStatus(t, 32*1024)
+
+	oldConfirm := DefaultConfirmPrompt
+	defer func() { DefaultConfirmPrompt = oldConfirm }()
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		t.Fatalf("did not expect prompt for cloud primary, got %q", prompt)
+		return false, nil
+	}
+
+	models, err := client.prepareLaunchModelsForRun(context.Background(), &OpenCode{}, "glm-5:cloud", []LaunchModel{
+		{Name: "glm-5:cloud", Remote: true, ContextLength: 202752, MaxOutputTokens: 131072},
+		{Name: "llama3.2", ContextLength: 131072},
+	})
+	if err != nil {
+		t.Fatalf("prepareLaunchModelsForRun error = %v", err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("models = %+v, want 2", models)
+	}
+	if models[0].ContextLength != 202752 || models[0].MaxOutputTokens != 131072 {
+		t.Fatalf("cloud model = %+v, want unchanged cloud limits", models[0])
+	}
+	if models[1].ContextLength != 32*1024 || models[1].MaxOutputTokens != 8192 {
+		t.Fatalf("local model = %+v, want server context and derived output", models[1])
+	}
+}
+
+func TestOpenCodePrepareLaunchModelsSkipsAllCloudModels(t *testing.T) {
+	client, statusCalls := testLauncherClientWithStatus(t, 32*1024)
+
+	models, err := client.prepareLaunchModelsForRun(context.Background(), &OpenCode{}, "glm-5:cloud", []LaunchModel{{Name: "glm-5:cloud", Remote: true}})
+	if err != nil {
+		t.Fatalf("prepareLaunchModelsForRun error = %v", err)
+	}
+	if *statusCalls != 0 {
+		t.Fatalf("status calls = %d, want 0", *statusCalls)
+	}
+	if len(models) != 1 || models[0].ContextLength != 0 {
+		t.Fatalf("models = %+v, want unchanged cloud model", models)
+	}
+}
+
+func TestLaunchModelsWithOpenCodeLocalLimitsDoesNotAppendMissingCloudPrimary(t *testing.T) {
+	models := launchModelsWithOpenCodeLocalLimits("glm-5:cloud", []LaunchModel{{Name: "llama3.2"}}, 32*1024)
+	if len(models) != 1 {
+		t.Fatalf("models = %+v, want no fallback cloud primary appended", models)
+	}
+	if models[0].Name != "llama3.2" || models[0].ContextLength != 32*1024 || models[0].MaxOutputTokens != 8192 {
+		t.Fatalf("local model = %+v, want local limits applied", models[0])
+	}
 }
 
 func TestBuildModelEntries(t *testing.T) {
