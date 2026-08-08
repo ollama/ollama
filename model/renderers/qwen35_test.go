@@ -7,6 +7,21 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
+func TestQwen35RendererSeparatesImageTags(t *testing.T) {
+	renderer := &Qwen35Renderer{useImgTags: true}
+	content, offset := renderer.renderContent(api.Message{
+		Content: "compare these images",
+		Images:  []api.ImageData{api.ImageData("one"), api.ImageData("two")},
+	}, 0)
+
+	if content != "[img-0] [img-1] compare these images" {
+		t.Fatalf("content = %q", content)
+	}
+	if offset != 2 {
+		t.Fatalf("offset = %d, want 2", offset)
+	}
+}
+
 func TestQwen35RendererUsesXMLToolCallingFormat(t *testing.T) {
 	renderer := &Qwen35Renderer{isThinking: true}
 	msgs := []api.Message{
