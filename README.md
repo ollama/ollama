@@ -301,6 +301,7 @@ console.log(response.message.content);
 - [ShellOracle](https://github.com/djcopley/ShellOracle) - Shell command suggestions
 - [LLM-X](https://github.com/mrdjohnson/llm-x) - Progressive web app for LLMs
 - [cmdh](https://github.com/pgibler/cmdh) - Natural language to shell commands
+- [killport](https://github.com/skosari/killport) - Kill whatever is running on a port — macOS, Windows, and Linux, with AI-powered port scanning and vulnerability reporting via Ollama
 - [VT](https://github.com/vinhnx/vt.ai) - Minimal multimodal AI chat app
 
 ### Productivity & Apps
