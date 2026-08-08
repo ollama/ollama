@@ -1699,7 +1699,8 @@ func ptr[T any](v T) *T { return &v }
 
 // Browser tools simulate a full browser environment, allowing for actions like searching, opening, and interacting with web pages (e.g., "browser_search", "browser_open", "browser_find"). Currently only gpt-oss models support browser tools.
 func supportsBrowserTools(model string) bool {
-	return strings.HasPrefix(strings.ToLower(model), "gpt-oss")
+	m := strings.ToLower(model)
+	return strings.HasPrefix(m, "gpt-oss") || strings.HasPrefix(m, "mimo")
 }
 
 // buildChatRequest converts store.Chat to api.ChatRequest
