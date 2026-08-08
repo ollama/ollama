@@ -11,10 +11,11 @@ import (
 )
 
 // ensureCloudEnabledForTool checks cloud policy from the connected Ollama server.
+// It only blocks when cloud is disabled via the OLLAMA_NO_CLOUD environment variable
+// (source "env" or "both"), allowing web search/fetch to work when cloud is disabled
+// via the user-facing toggle alone (source "config").
 // If policy cannot be determined, this fails closed and blocks the operation.
 func ensureCloudEnabledForTool(ctx context.Context, operation string) error {
-	// Reuse shared message formatting; policy evaluation is still done via
-	// the connected server's /api/status endpoint below.
 	disabledMessage := internalcloud.DisabledError(operation)
 
 	client, err := api.ClientFromEnvironment()
@@ -27,7 +28,7 @@ func ensureCloudEnabledForTool(ctx context.Context, operation string) error {
 		return errors.New(disabledMessage + " (unable to verify server cloud policy)")
 	}
 
-	if status.Cloud.Disabled {
+	if status.Cloud.Disabled && (status.Cloud.Source == "env" || status.Cloud.Source == "both") {
 		return errors.New(disabledMessage)
 	}
 
