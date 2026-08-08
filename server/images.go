@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"log/slog"
 	"net"
@@ -826,8 +827,25 @@ func deleteUnusedLayers(deleteMap map[string]struct{}) error {
 			slog.Info(fmt.Sprintf("couldn't get file path for '%s': %v", k, err))
 			continue
 		}
-		if err := os.Remove(fp); err != nil {
-			slog.Info(fmt.Sprintf("couldn't remove file '%s': %v", fp, err))
+		// Windows mmap teardown race condition fix
+		var removeErr error
+		for attempt := 0; attempt < 6; attempt++ {
+			removeErr = os.Remove(fp)
+			if removeErr == nil {
+				break
+			}
+			
+			// ERROR_ACCESS_DENIED is mapped to fs.ErrPermission in Go
+			if !errors.Is(removeErr, fs.ErrPermission) {
+				break // Break early if it's not a locking/permission issue
+			}
+			
+			// Exponential backoff: 50ms, 100ms, 200ms, 400ms, 800ms
+			time.Sleep(time.Duration(50 * (1 << attempt)) * time.Millisecond)
+		}
+
+		if removeErr != nil {
+			slog.Info(fmt.Sprintf("couldn't remove file '%s' after retries: %v", fp, removeErr))
 			continue
 		}
 	}
