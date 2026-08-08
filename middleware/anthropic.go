@@ -257,7 +257,13 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 		}
 
 		const defaultMaxResults = 5
-		searchResp, err := anthropic.WebSearch(ctx, query, defaultMaxResults)
+		maxResults := defaultMaxResults
+		allowed, blocked, _ := anthropic.WebSearchDomainFilters(w.req.Tools)
+		if len(allowed) > 0 || len(blocked) > 0 {
+			// Ask for more results so filtering still leaves something useful.
+			maxResults = 10
+		}
+		searchResp, err := anthropic.WebSearch(ctx, query, maxResults)
 		if err != nil {
 			logutil.TraceContext(ctx, "anthropic middleware: web_search request failed",
 				"loop", loop,
@@ -271,9 +277,12 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 				err:   err,
 			}
 		}
+		searchResp.Results = anthropic.FilterOllamaWebSearchResults(searchResp.Results, allowed, blocked)
 		logutil.TraceContext(ctx, "anthropic middleware: web_search results",
 			"loop", loop,
 			"results", len(searchResp.Results),
+			"allowed_domains", len(allowed),
+			"blocked_domains", len(blocked),
 		)
 
 		toolUseID := loopServerToolUseID(w.inner.id, loop)
@@ -872,6 +881,10 @@ func AnthropicMessagesMiddleware() gin.HandlerFunc {
 		}
 
 		if hasWebSearchTool(req.Tools) {
+			if _, _, err := anthropic.WebSearchDomainFilters(req.Tools); err != nil {
+				c.AbortWithStatusJSON(http.StatusBadRequest, anthropic.NewError(http.StatusBadRequest, err.Error()))
+				return
+			}
 			// Guard against runtime cloud-disable policy (OLLAMA_NO_CLOUD/server.json)
 			// for cloud models. Local models may still receive web_search tool definitions;
 			// execution is validated when the model actually emits a web_search tool call.
