@@ -473,7 +473,7 @@ if(OLLAMA_RUNNER_DIR)
             )
             install(RUNTIME_DEPENDENCY_SET rocm_deps
                 DIRECTORIES ${HIP_BIN_INSTALL_DIR} ${HIP_LIB_INSTALL_DIR}
-                PRE_INCLUDE_REGEXES hipblas rocblas amdhip64 rocsolver amd_comgr hsa-runtime64 rocsparse tinfo rocprofiler-register roctx64 rocroller drm drm_amdgpu numa elf
+                PRE_INCLUDE_REGEXES hipblas rocblas amdhip64 rocm_kpack rocm_sysdeps rocsolver amd_comgr hsa-runtime64 rocsparse tinfo rocprofiler-register roctx64 rocroller drm drm_amdgpu numa elf clang-cpp LLVM
                 PRE_EXCLUDE_REGEXES ".*"
                 POST_EXCLUDE_REGEXES "system32"
                 RUNTIME DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
@@ -501,13 +501,32 @@ if(OLLAMA_RUNNER_DIR)
                 endif()
             endif()
             foreach(_hip_dir IN ITEMS ${HIP_BIN_INSTALL_DIR} ${HIP_LIB_INSTALL_DIR})
-                if(EXISTS ${_hip_dir}/rocblas)
+                if(EXISTS ${_hip_dir}/rocblas/library)
                     install(DIRECTORY ${_hip_dir}/rocblas
                         DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}"
                         COMPONENT llama-server)
                     break()
                 endif()
             endforeach()
+            set(_hipblaslt_runtime_libs)
+            # Keep the hipBLASLt shared library for dynamic linking, but do not
+            # bundle the gigabyte-scale hipblaslt/library Tensile payload.
+            foreach(_hip_dir IN ITEMS ${HIP_BIN_INSTALL_DIR} ${HIP_LIB_INSTALL_DIR})
+                if(EXISTS "${_hip_dir}")
+                    file(GLOB _dir_hipblaslt_runtime_libs
+                        LIST_DIRECTORIES false
+                        "${_hip_dir}/libhipblaslt.so*"
+                        "${_hip_dir}/libhipblaslt*.dll"
+                        "${_hip_dir}/hipblaslt*.dll")
+                    list(APPEND _hipblaslt_runtime_libs ${_dir_hipblaslt_runtime_libs})
+                endif()
+            endforeach()
+            if(_hipblaslt_runtime_libs)
+                list(REMOVE_DUPLICATES _hipblaslt_runtime_libs)
+                install(FILES ${_hipblaslt_runtime_libs}
+                    DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}"
+                    COMPONENT llama-server)
+            endif()
         endif()
     endif()
     if(GGML_VULKAN)
