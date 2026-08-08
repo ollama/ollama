@@ -135,7 +135,7 @@ different payload by design, and a merged pass/fail hides that.
 ## Reference
 
 - Why expectations are code and not knowledge in this file, plus the normative
-  rules: `docs/maxusai/adr/0009-preflight-expectations-are-versioned-code.md`
+  rules: `docs/maxusai/adr/0011-preflight-expectations-are-versioned-code.md`
 - Harness and the maintenance path: `docs/maxusai/vision-suite/preflight/README.md`
 - Expected values: `docs/maxusai/vision-suite/preflight/expectations.toml`
 - Reference passing run: canary `maxusai/ollama:4987dd49-dynres` on `:11437`

@@ -1,4 +1,4 @@
-# ADR 0009: pre-deploy expectations are versioned code in the repo, not skill knowledge
+# ADR 0011: pre-deploy expectations are versioned code in the repo, not skill knowledge
 
 - **Status:** accepted, 2026-08-08
 - **Date:** 2026-08-08

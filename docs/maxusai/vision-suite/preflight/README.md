@@ -16,7 +16,7 @@ machine-readable result file to `runs/`, and exits non-zero on failure.
 
 **The expectations live in [`expectations.toml`](expectations.toml), in this
 repo, on purpose** — the decision and its normative rules are
-[ADR 0009](../../adr/0009-preflight-expectations-are-versioned-code.md). They
+[ADR 0011](../../adr/0011-preflight-expectations-are-versioned-code.md). They
 legitimately change when a compat patch lands — 004 made gemma4 flat at 1,102
 tokens, 005 moved nemotron's pinned cost from 3,390 to 3,270 — so they are
 versioned alongside the payload they describe. A harness living outside the repo
