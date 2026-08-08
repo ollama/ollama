@@ -17,6 +17,13 @@ type Claude struct{}
 
 func (c *Claude) String() string { return "Claude Code" }
 
+func (c *Claude) ModelForReadiness(model string) string {
+	if base, ok := strings.CutSuffix(model, "[1m]"); ok && base != "" {
+		return base
+	}
+	return model
+}
+
 func (c *Claude) args(model string, extra []string) []string {
 	var args []string
 	if model != "" {
