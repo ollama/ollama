@@ -387,3 +387,39 @@ func qwen35WeatherUVTools() []api.Tool {
 		},
 	}
 }
+
+func TestQwen35RendererPreserveThinkingAcrossUserTurns(t *testing.T) {
+	msgs := []api.Message{
+		{Role: "user", Content: "What is 2+2?"},
+		{Role: "assistant", Content: "4.", Thinking: "Simple arithmetic."},
+		{Role: "user", Content: "And 3+3?"},
+	}
+
+	// Default behaviour: assistant thinking from before the most recent
+	// user message is dropped.
+	def := &Qwen35Renderer{isThinking: true}
+	got, err := def.Render(msgs, nil, nil)
+	if err != nil {
+		t.Fatalf("render failed: %v", err)
+	}
+	if strings.Contains(got, "Simple arithmetic.") {
+		t.Errorf("default renderer should drop pre-last-user-turn thinking, got:\n%s", got)
+	}
+
+	// preserve-thinking variant: historical assistant thinking is retained
+	// on every turn — the Qwen3.6 chat template's preserve_thinking
+	// behaviour, which the model is trained to leverage in agent scenarios.
+	preserve := &Qwen35Renderer{isThinking: true, alwaysRenderAssistantThinkBlock: true}
+	got, err = preserve.Render(msgs, nil, nil)
+	if err != nil {
+		t.Fatalf("render failed: %v", err)
+	}
+	if !strings.Contains(got, "<think>\nSimple arithmetic.\n</think>") {
+		t.Errorf("preserve variant should retain pre-last-user-turn thinking, got:\n%s", got)
+	}
+
+	// The variant is reachable by name (Modelfile: RENDERER qwen3.5-preserve-thinking).
+	if rendererForName("qwen3.5-preserve-thinking") == nil {
+		t.Error("qwen3.5-preserve-thinking renderer not registered")
+	}
+}
