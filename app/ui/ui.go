@@ -414,19 +414,31 @@ func (s *Server) UserData(ctx context.Context) (*api.UserResponse, error) {
 
 // WaitForServer waits for the Ollama server to be ready
 func WaitForServer(ctx context.Context, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
 		c, err := api.ClientFromEnvironment()
 		if err != nil {
 			return err
 		}
-		if _, err := c.Version(ctx); err == nil {
+		if _, err := c.Version(waitCtx); err == nil {
 			slog.Debug("ollama server is ready")
 			return nil
 		}
-		time.Sleep(10 * time.Millisecond)
+
+		select {
+		case <-waitCtx.Done():
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			return errors.New("timeout waiting for Ollama server to be ready")
+		case <-ticker.C:
+		}
 	}
-	return errors.New("timeout waiting for Ollama server to be ready")
 }
 
 func (s *Server) createChat(w http.ResponseWriter, r *http.Request) error {
