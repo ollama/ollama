@@ -257,10 +257,12 @@ func (p *FunctionGemmaParser) splitArguments(argsStr string) []string {
 
 // parseValue parses a single value from the FunctionGemma format
 func (p *FunctionGemmaParser) parseValue(value string) any {
-	// Check for escaped string
-	if strings.HasPrefix(value, "<escape>") && strings.HasSuffix(value, "<escape>") {
-		// Remove the escape tags
-		return value[8 : len(value)-8]
+	// Check for escaped string. Both markers have to be present: a value that is
+	// a single <escape> matches as prefix and suffix at once.
+	if trimmed, ok := strings.CutPrefix(value, "<escape>"); ok {
+		if trimmed, ok := strings.CutSuffix(trimmed, "<escape>"); ok {
+			return trimmed
+		}
 	}
 
 	// Check for boolean
