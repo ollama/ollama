@@ -439,10 +439,12 @@ export class Settings {
 }
 export class SettingsResponse {
     settings: Settings;
+    modelsFromEnv: boolean;
 
     constructor(source: any = {}) {
         if ('string' === typeof source) source = JSON.parse(source);
         this.settings = this.convertValues(source["settings"], Settings);
+        this.modelsFromEnv = source["modelsFromEnv"];
     }
 
 	convertValues(a: any, classs: any, asMap: boolean = false): any {

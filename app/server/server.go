@@ -20,6 +20,7 @@ import (
 
 	"github.com/ollama/ollama/app/logrotate"
 	"github.com/ollama/ollama/app/store"
+	"github.com/ollama/ollama/envconfig"
 )
 
 const restartDelay = time.Second
@@ -253,7 +254,10 @@ func (s *Server) cmd(ctx context.Context) (*exec.Cmd, error) {
 	if settings.Browser {
 		env["OLLAMA_ORIGINS"] = "*"
 	}
-	if settings.Models != "" {
+	if modelsEnv := envconfig.Var("OLLAMA_MODELS"); modelsEnv != "" {
+		env["OLLAMA_MODELS"] = modelsEnv
+		slog.Info("using OLLAMA_MODELS from environment", "path", modelsEnv)
+	} else if settings.Models != "" {
 		if _, err := os.Stat(settings.Models); err == nil {
 			env["OLLAMA_MODELS"] = settings.Models
 		} else {
