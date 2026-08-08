@@ -15,9 +15,17 @@ func (r *GLM46Renderer) LeadingBOS() string {
 }
 
 func (r *GLM46Renderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
-	var sb strings.Builder
+	segments, err := r.RenderSegments(messages, tools, thinkValue)
+	if err != nil {
+		return "", err
+	}
+	return JoinSegments(segments), nil
+}
 
-	sb.WriteString("[gMASK]<sop>")
+func (r *GLM46Renderer) RenderSegments(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) ([]Segment, error) {
+	var sb segmentBuilder
+
+	sb.control("[gMASK]<sop>")
 
 	var lastUserIndex int
 	for i, message := range messages {
@@ -27,51 +35,59 @@ func (r *GLM46Renderer) Render(messages []api.Message, tools []api.Tool, thinkVa
 	}
 
 	if len(tools) > 0 {
-		sb.WriteString("<|system|>\n")
-		sb.WriteString("# Tools\n\n")
-		sb.WriteString("You may call one or more functions to assist with the user query.\n\n")
-		sb.WriteString("You are provided with function signatures within <tools></tools> XML tags:\n")
-		sb.WriteString("<tools>\n")
+		sb.control("<|system|>\n")
+		sb.control("# Tools\n\n")
+		sb.control("You may call one or more functions to assist with the user query.\n\n")
+		sb.control("You are provided with function signatures within <tools></tools> XML tags:\n")
+		sb.control("<tools>\n")
 		for _, tool := range tools {
 			d, _ := json.Marshal(tool)
-			sb.WriteString(string(d) + "\n")
+			sb.content(string(d))
+			sb.control("\n")
 		}
-		sb.WriteString("</tools>\n\n")
-		sb.WriteString("For each function call, output the function name and arguments within the following XML format:\n")
-		sb.WriteString("<tool_call>{function-name}\n")
-		sb.WriteString("<arg_key>{arg-key-1}</arg_key>\n")
-		sb.WriteString("<arg_value>{arg-value-1}</arg_value>\n")
-		sb.WriteString("<arg_key>{arg-key-2}</arg_key>\n")
-		sb.WriteString("<arg_value>{arg-value-2}</arg_value>\n")
-		sb.WriteString("...\n")
-		sb.WriteString("</tool_call>")
+		sb.control("</tools>\n\n")
+		sb.control("For each function call, output the function name and arguments within the following XML format:\n")
+		sb.control("<tool_call>{function-name}\n")
+		sb.control("<arg_key>{arg-key-1}</arg_key>\n")
+		sb.control("<arg_value>{arg-value-1}</arg_value>\n")
+		sb.control("<arg_key>{arg-key-2}</arg_key>\n")
+		sb.control("<arg_value>{arg-value-2}</arg_value>\n")
+		sb.control("...\n")
+		sb.control("</tool_call>")
 	}
 
 	for i, message := range messages {
 		switch message.Role {
 		case "user":
-			sb.WriteString("<|user|>\n")
-			sb.WriteString(message.Content)
+			sb.control("<|user|>\n")
+			sb.content(message.Content)
 			if thinkValue != nil && !thinkValue.Bool() && !strings.HasSuffix(message.Content, "/nothink") {
-				sb.WriteString("/nothink")
+				sb.control("/nothink")
 			}
 		case "assistant":
-			sb.WriteString("<|assistant|>")
+			sb.control("<|assistant|>")
 			if i > lastUserIndex {
 				if message.Thinking != "" {
-					sb.WriteString("\n<think>" + message.Thinking + "</think>")
+					sb.control("\n<think>")
+					sb.content(message.Thinking)
+					sb.control("</think>")
 				} else {
-					sb.WriteString("\n<think></think>")
+					sb.control("\n<think></think>")
 				}
 			}
 			if message.Content != "" {
-				sb.WriteString("\n" + message.Content)
+				sb.control("\n")
+				sb.content(message.Content)
 			}
 			if len(message.ToolCalls) > 0 {
 				for _, toolCall := range message.ToolCalls {
-					sb.WriteString("\n<tool_call>" + toolCall.Function.Name + "\n")
+					sb.control("\n<tool_call>")
+					sb.content(toolCall.Function.Name)
+					sb.control("\n")
 					for key, value := range toolCall.Function.Arguments.All() {
-						sb.WriteString("<arg_key>" + key + "</arg_key>\n")
+						sb.control("<arg_key>")
+						sb.content(key)
+						sb.control("</arg_key>\n")
 
 						var valueStr string
 						if str, ok := value.(string); ok {
@@ -85,30 +101,32 @@ func (r *GLM46Renderer) Render(messages []api.Message, tools []api.Tool, thinkVa
 							}
 						}
 
-						sb.WriteString("<arg_value>" + valueStr + "</arg_value>\n")
+						sb.control("<arg_value>")
+						sb.content(valueStr)
+						sb.control("</arg_value>\n")
 					}
 
-					sb.WriteString("</tool_call>")
+					sb.control("</tool_call>")
 				}
 			}
 		case "tool":
 			if i == 0 || messages[i-1].Role != "tool" {
-				sb.WriteString("<|observation|>")
+				sb.control("<|observation|>")
 			}
-			sb.WriteString("\n<tool_response>\n")
-			sb.WriteString(message.Content)
-			sb.WriteString("\n</tool_response>")
+			sb.control("\n<tool_response>\n")
+			sb.content(message.Content)
+			sb.control("\n</tool_response>")
 		case "system":
-			sb.WriteString("<|system|>\n")
-			sb.WriteString(message.Content)
+			sb.control("<|system|>\n")
+			sb.content(message.Content)
 		}
 	}
 
 	// Add generation prompt
-	sb.WriteString("<|assistant|>")
+	sb.control("<|assistant|>")
 	if thinkValue != nil && !thinkValue.Bool() {
-		sb.WriteString("\n<think></think>\n")
+		sb.control("\n<think></think>\n")
 	}
 
-	return sb.String(), nil
+	return sb.Segments(), nil
 }

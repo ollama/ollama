@@ -246,7 +246,7 @@ func TestChatPrompt(t *testing.T) {
 			model := tt.model
 			opts := api.Options{Runner: api.Runner{NumCtx: tt.limit}}
 			think := false
-			prompt, images, err := chatPrompt(t.Context(), &model, mockRunner{}.Tokenize, &opts, tt.msgs, nil, &api.ThinkValue{Value: think}, tt.truncate)
+			prompt, images, _, err := chatPrompt(t.Context(), &model, mockRunner{}.Tokenize, &opts, tt.msgs, nil, &api.ThinkValue{Value: think}, tt.truncate)
 			if tt.error == nil && err != nil {
 				t.Fatal(err)
 			} else if tt.error != nil && err != tt.error {
@@ -329,7 +329,7 @@ func TestChatPromptTokenizeCalls(t *testing.T) {
 
 			opts := api.Options{Runner: api.Runner{NumCtx: tt.limit}}
 			think := false
-			_, _, err := chatPrompt(t.Context(), &model, countingTokenize, &opts, tt.msgs, nil, &api.ThinkValue{Value: think}, true)
+			_, _, _, err := chatPrompt(t.Context(), &model, countingTokenize, &opts, tt.msgs, nil, &api.ThinkValue{Value: think}, true)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -358,7 +358,7 @@ func TestChatPromptRendererDoesNotRewriteMessageContent(t *testing.T) {
 	opts := api.Options{Runner: api.Runner{NumCtx: 8192}}
 	think := false
 
-	prompt, images, err := chatPrompt(t.Context(), &m, mockRunner{}.Tokenize, &opts, msgs, nil, &api.ThinkValue{Value: think}, true)
+	prompt, images, _, err := chatPrompt(t.Context(), &m, mockRunner{}.Tokenize, &opts, msgs, nil, &api.ThinkValue{Value: think}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +392,7 @@ func TestChatPromptGLMOcrRendererAddsImageTags(t *testing.T) {
 	opts := api.Options{Runner: api.Runner{NumCtx: 8192}}
 	think := false
 
-	prompt, images, err := chatPrompt(t.Context(), &m, mockRunner{}.Tokenize, &opts, msgs, nil, &api.ThinkValue{Value: think}, true)
+	prompt, images, _, err := chatPrompt(t.Context(), &m, mockRunner{}.Tokenize, &opts, msgs, nil, &api.ThinkValue{Value: think}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -479,7 +479,7 @@ func TestChatPromptRendererAddsToolImageTags(t *testing.T) {
 			opts := api.Options{Runner: api.Runner{NumCtx: 8192}}
 			think := false
 
-			prompt, images, err := chatPrompt(t.Context(), &m, mockRunner{}.Tokenize, &opts, msgs, nil, &api.ThinkValue{Value: think}, true)
+			prompt, images, _, err := chatPrompt(t.Context(), &m, mockRunner{}.Tokenize, &opts, msgs, nil, &api.ThinkValue{Value: think}, true)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -549,7 +549,7 @@ func TestChatPromptRendererPreservesExplicitImagePlaceholders(t *testing.T) {
 			opts := api.Options{Runner: api.Runner{NumCtx: 8192}}
 			think := false
 
-			prompt, images, err := chatPrompt(t.Context(), &m, mockRunner{}.Tokenize, &opts, msgs, nil, &api.ThinkValue{Value: think}, true)
+			prompt, images, _, err := chatPrompt(t.Context(), &m, mockRunner{}.Tokenize, &opts, msgs, nil, &api.ThinkValue{Value: think}, true)
 			if err != nil {
 				t.Fatal(err)
 			}
