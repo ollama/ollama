@@ -1020,7 +1020,13 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	}
 
 	fn(api.ProgressResponse{Status: "verifying sha256 digest"})
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	for _, layer := range layers {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if skipVerify[layer.Digest] {
 			continue
 		}
@@ -1044,6 +1050,9 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	delete(deleteMap, mf.Config.Digest)
 
 	fn(api.ProgressResponse{Status: "writing manifest"})
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	fp, err := manifest.PathForName(n)
 	if err != nil {
@@ -1063,6 +1072,9 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 
 	if !envconfig.NoPrune() && len(deleteMap) > 0 {
 		fn(api.ProgressResponse{Status: "removing unused layers"})
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := deleteUnusedLayers(deleteMap); err != nil {
 			fn(api.ProgressResponse{Status: fmt.Sprintf("couldn't remove unused layers: %v", err)})
 		}
@@ -1142,6 +1154,9 @@ func pullWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer
 
 	// Write manifest
 	fn(api.ProgressResponse{Status: "writing manifest"})
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	fp, err := manifest.PathForName(n)
 	if err != nil {

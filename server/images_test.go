@@ -1,7 +1,9 @@
 package server
 
 import (
+	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/template"
@@ -721,6 +724,65 @@ func TestModelCheckCapabilities(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPullModelStopsBeforeVerifyWhenProgressCannotStream(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	_, layerDigest := createBinFile(t, nil, nil)
+	_, configDigest := createBinFile(t, nil, nil)
+
+	blobSize := func(digest string) int64 {
+		t.Helper()
+		p, err := manifest.BlobsPath(digest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return info.Size()
+	}
+
+	manifestJSON := fmt.Sprintf(`{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json","config":{"digest":%q,"mediaType":"application/vnd.docker.container.image.v1+json","size":%d},"layers":[{"digest":%q,"mediaType":"application/vnd.ollama.image.model","size":%d}]}`,
+		configDigest, blobSize(configDigest), layerDigest, blobSize(layerDigest))
+
+	testMakeRequestDialContext = pipeDial(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v2/library/test/manifests/latest" {
+			w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
+			_, _ = w.Write([]byte(manifestJSON))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(func() { testMakeRequestDialContext = nil })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var sawVerify bool
+	name := "registry.example.com/library/test:latest"
+	err := PullModel(ctx, name, &registryOptions{Insecure: true}, func(r api.ProgressResponse) {
+		if r.Status == "verifying sha256 digest" {
+			sawVerify = true
+			cancel()
+		}
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("PullModel() error = %v, want context.Canceled", err)
+	}
+	if !sawVerify {
+		t.Fatal("PullModel() did not reach the verify progress point")
+	}
+
+	manifestPath, err := manifest.PathForName(model.ParseName(name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(manifestPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("PullModel() wrote manifest after cancellation: %v", err)
 	}
 }
 
