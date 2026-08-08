@@ -2,10 +2,17 @@ package progress
 
 import (
 	"bytes"
+	"os"
 	"runtime"
 	"testing"
 	"time"
 )
+
+type staticProgressState string
+
+func (s staticProgressState) String() string {
+	return string(s)
+}
 
 // TestStopIsIdempotent pins the contract cmd relies on: a second Stop (e.g. a
 // deferred StopAndClear after an explicit one) reports false so callers don't
@@ -27,6 +34,30 @@ func TestStopIsIdempotent(t *testing.T) {
 				t.Fatal("second stop should report false")
 			}
 		})
+	}
+}
+
+func TestProgressTracksOnlyRenderedLines(t *testing.T) {
+	oldStderr := os.Stderr
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = write
+	t.Cleanup(func() {
+		os.Stderr = oldStderr
+		read.Close()
+		write.Close()
+	})
+
+	p := NewProgress(&bytes.Buffer{})
+	for range defaultTermHeight + 5 {
+		p.Add("", staticProgressState("state"))
+	}
+
+	_, pos := p.stop()
+	if pos != defaultTermHeight {
+		t.Fatalf("rendered line count = %d, want %d", pos, defaultTermHeight)
 	}
 }
 
