@@ -364,10 +364,13 @@ func GetInferenceInfo(ctx context.Context) (*InferenceInfo, error) {
 		file, err := os.Open(serverLogPath)
 		if err != nil {
 			slog.Debug("failed to open server log", "log", serverLogPath, "error", err)
-			time.Sleep(time.Second)
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("timeout scanning server log for inference compute details")
+			case <-time.After(time.Second):
+			}
 			continue
 		}
-		defer file.Close()
 		scanner := bufio.NewScanner(file)
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -396,14 +399,29 @@ func GetInferenceInfo(ctx context.Context) (*InferenceInfo, error) {
 						slog.Info("Matched default context length", "default_num_ctx", numCtx)
 					}
 				}
+				file.Close()
 				return info, nil
 			}
 			// If we've found compute info but hit a non-matching line, return what we have
 			// This handles older server versions that don't log the default context line
 			if len(info.Computes) > 0 {
+				file.Close()
 				return info, nil
 			}
 		}
-		time.Sleep(100 * time.Millisecond)
+		scanErr := scanner.Err()
+		file.Close()
+		if scanErr != nil {
+			return nil, scanErr
+		}
+
+		// The log may still be mid-write. Rescan it as a fresh snapshot so
+		// entries from an incomplete pass are not duplicated.
+		info = &InferenceInfo{}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("timeout scanning server log for inference compute details")
+		case <-time.After(100 * time.Millisecond):
+		}
 	}
 }

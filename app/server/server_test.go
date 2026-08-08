@@ -398,3 +398,32 @@ func TestGetInferenceInfoTimeout(t *testing.T) {
 		t.Fatalf("unexpected error: %s", err)
 	}
 }
+
+func TestGetInferenceInfoDoesNotDuplicateDevicesWhilePolling(t *testing.T) {
+	tmpDir := t.TempDir()
+	serverLogPath = filepath.Join(tmpDir, "server.log")
+	logLine := `time=2026-08-05T00:00:00Z level=INFO msg="inference compute" library=cpu total="16.0 GiB"` + "\n"
+	if err := os.WriteFile(serverLogPath, []byte(logLine), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	go func() {
+		time.Sleep(250 * time.Millisecond)
+		f, err := os.OpenFile(serverLogPath, os.O_APPEND|os.O_WRONLY, 0o644)
+		if err != nil {
+			return
+		}
+		defer f.Close()
+		_, _ = f.WriteString("server startup complete\n")
+	}()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	info, err := GetInferenceInfo(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(info.Computes); got != 1 {
+		t.Fatalf("compute count = %d, want 1: %#v", got, info.Computes)
+	}
+}
