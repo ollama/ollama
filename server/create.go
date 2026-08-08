@@ -152,6 +152,37 @@ func (s *Server) CreateHandler(c *gin.Context) {
 				config.RemoteModel = fromRef.Base
 				config.RemoteHost = ru
 				remote = true
+
+				// Inherit model_info fields (architecture, context/embedding
+				// length, basename) from the parent's stored config so /api/show
+				// and /api/tags report them for the derived model. Without this,
+				// model_info comes back empty and integrations fall back to a
+				// short default context window.
+				if mf, mErr := manifest.ParseNamedManifest(fromName); mErr == nil && mf.Config.Digest != "" {
+					if configPath, pErr := manifest.BlobsPath(mf.Config.Digest); pErr == nil {
+						if cfgFile, fErr := os.Open(configPath); fErr == nil {
+							var baseConfig model.ConfigV2
+							if decErr := json.NewDecoder(cfgFile).Decode(&baseConfig); decErr == nil {
+								if config.ModelFamily == "" {
+									config.ModelFamily = baseConfig.ModelFamily
+								}
+								if len(config.ModelFamilies) == 0 {
+									config.ModelFamilies = baseConfig.ModelFamilies
+								}
+								if config.BaseName == "" {
+									config.BaseName = baseConfig.BaseName
+								}
+								if config.ContextLen == 0 {
+									config.ContextLen = baseConfig.ContextLen
+								}
+								if config.EmbedLen == 0 {
+									config.EmbedLen = baseConfig.EmbedLen
+								}
+							}
+							cfgFile.Close()
+						}
+					}
+				}
 			} else {
 				ctx, cancel := context.WithCancel(c.Request.Context())
 				defer cancel()
