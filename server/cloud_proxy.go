@@ -226,6 +226,14 @@ func proxyCloudRequestWithPath(c *gin.Context, body []byte, path string, disable
 	copyProxyResponseHeaders(c.Writer.Header(), resp.Header)
 	c.Status(resp.StatusCode)
 
+	slog.Debug(
+		"cloud proxy response headers copied",
+		"path", c.Request.URL.Path,
+		"upstream_path", path,
+		"status", resp.StatusCode,
+		"content_type", resp.Header.Get("Content-Type"),
+	)
+
 	var bodyWriter http.ResponseWriter = c.Writer
 	var framedWriter *jsonlFramingResponseWriter
 	// TEMP(drifkin): only needed on the cloud-proxied first leg of Anthropic
@@ -480,6 +488,12 @@ func copyProxyResponseBody(dst http.ResponseWriter, src io.Reader) error {
 				// responses don't flush every write and can optimize throughput.
 				flusher.Flush()
 			}
+		} else if err == nil {
+			// Reader returned 0 bytes with no error.
+			// According to io.Reader contract, this shouldn't happen,
+			// but guard against infinite loops by returning early.
+			slog.Warn("cloud proxy response reader returned zero bytes with no error")
+			return nil
 		}
 
 		if err != nil {
