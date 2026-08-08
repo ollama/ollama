@@ -71,7 +71,10 @@ func createTestFile(t *testing.T, name string) (string, string) {
 		t.Fatal(err)
 	}
 
-	digest, _ := GetSHA256Digest(f)
+	digest, _, err := GetSHA256Digest(f)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}
