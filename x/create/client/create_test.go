@@ -660,6 +660,11 @@ func TestInferSafetensorsCapabilitiesFromParser(t *testing.T) {
 			parserName: "functiongemma",
 			want:       []string{"completion", "tools"},
 		},
+		{
+			name:       "apertus 1.5 tools and thinking",
+			parserName: "apertus1.5",
+			want:       []string{"completion", "tools", "thinking"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -710,6 +715,11 @@ func TestGetParserName(t *testing.T) {
 			want:       "qwen3.5",
 		},
 		{
+			name:       "apertus 1.5 model",
+			configJSON: `{"architectures": ["Apertus1p5ForConditionalGeneration"]}`,
+			want:       "apertus1.5",
+		},
+		{
 			name:       "deepseek model",
 			configJSON: `{"architectures": ["DeepseekV3ForCausalLM"]}`,
 			want:       "deepseek3",
@@ -728,6 +738,11 @@ func TestGetParserName(t *testing.T) {
 			name:       "qwen3 via model_type",
 			configJSON: `{"model_type": "qwen3"}`,
 			want:       "qwen3",
+		},
+		{
+			name:       "apertus 1.5 via model_type",
+			configJSON: `{"model_type": "apertus1p5"}`,
+			want:       "apertus1.5",
 		},
 		{
 			name:       "laguna model",
@@ -770,6 +785,11 @@ func TestGetRendererName(t *testing.T) {
 			want:       "qwen3.5",
 		},
 		{
+			name:       "apertus 1.5 model",
+			configJSON: `{"architectures": ["Apertus1p5ForConditionalGeneration"]}`,
+			want:       "apertus1.5",
+		},
+		{
 			name:       "deepseek model",
 			configJSON: `{"architectures": ["DeepseekV3ForCausalLM"]}`,
 			want:       "deepseek3",
@@ -788,6 +808,11 @@ func TestGetRendererName(t *testing.T) {
 			name:       "laguna model",
 			configJSON: `{"architectures": ["LagunaForCausalLM"], "model_type": "laguna"}`,
 			want:       "laguna",
+		},
+		{
+			name:       "apertus 1.5 via model_type",
+			configJSON: `{"model_type": "apertus1p5"}`,
+			want:       "apertus1.5",
 		},
 	}
 

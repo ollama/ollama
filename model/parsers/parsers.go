@@ -98,6 +98,8 @@ func ParserForName(name string) Parser {
 		return &LagunaV8Parser{}
 	case "cohere":
 		return &CohereParser{}
+	case "apertus1.5":
+		return &Apertus15Parser{}
 	default:
 		return nil
 	}
