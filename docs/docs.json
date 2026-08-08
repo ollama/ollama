@@ -139,7 +139,8 @@
             "pages": [
               "/integrations/openclaw",
               "/integrations/hermes",
-              "/integrations/hermes-desktop"
+              "/integrations/hermes-desktop",
+              "/integrations/talos"
             ]
           },
           {

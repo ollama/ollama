@@ -1,0 +1,63 @@
+---
+title: Talos
+---
+
+Talos is an agent you can hand a shell to, because every effect passes a deterministic permission kernel before it happens. The model proposes; it never decides. It runs on your own machine, takes instructions over a chat channel or the terminal, and keeps an event log you can read afterwards.
+
+Open models can be used with Talos through Ollama, enabling you to use models such as `qwen3.5`, `glm-5.1:cloud`, `kimi-k2.5:cloud`.
+
+## Install
+
+Install [Talos](https://talos-agent.ch):
+
+```shell
+curl -fsSL https://talos-agent.ch/install.sh | sh
+```
+
+The installer verifies the release checksum and its Ed25519 signature, runs the full test suite and the adversarial suite in front of you, and then stops. Nothing starts listening until you say so.
+
+## Usage with Ollama
+
+### Quick setup
+
+```shell
+ollama launch talos
+```
+
+### Run directly with a model
+
+```shell
+ollama launch talos --model qwen3.5
+```
+
+## Recommended Models
+
+- `qwen3.5`
+- `glm-4.7-flash`
+- `kimi-k2.5:cloud`
+- `glm-5:cloud`
+- `qwen3.5:cloud`
+
+Cloud models are also available at [ollama.com/search?c=cloud](https://ollama.com/search?c=cloud).
+
+## Manual setup
+
+Talos connects to Ollama through its OpenAI-compatible provider.
+
+1. Set the environment variables:
+
+```shell
+export TALOS_MODEL_PROVIDER=openai-api
+export TALOS_BASE_URL_OPENAI_API=http://localhost:11434/v1
+export TALOS_MODEL=qwen3.5
+```
+
+1. Start a session:
+
+```shell
+talos chat
+```
+
+Naming the base URL is what tells Talos to trust the model name you configured: its own catalogue cannot know which models a local server offers.
+
+**Note:** Talos asks the operator before any effect that changes something, so a model with a reasonable context window helps it keep the conversation while it works. See the [context length documentation](/context-length) for how to adjust context length in Ollama.
