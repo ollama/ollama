@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -16,16 +17,34 @@ import (
 	"github.com/ollama/ollama/logutil"
 )
 
+// errEmptyToolCall is returned by parseToolCall when the model emitted a
+// <tool_call>…</tool_call> envelope that contains no parseable function
+// block. qwen3.6 occasionally does this when it changes its mind mid-stream
+// or drifts to an older training format whose tags don't match. Callers
+// should treat the envelope as a no-op and let the agent loop decide
+// whether to retry or finalize, rather than returning 500 from /api/chat.
+var errEmptyToolCall = errors.New("qwen tool call envelope contained no function block")
+
 type qwenParserState int
 
 const (
 	toolOpenTag  = "<tool_call>"
 	toolCloseTag = "</tool_call>"
+	// funcOpenTag / funcCloseTag are the inner function-block tags. qwen3-coder
+	// (and qwen3.6) sometimes emit a bare <function=…></function> block with no
+	// enclosing <tool_call> opening tag — often leaving a stray </tool_call>
+	// behind. We treat <function= as an alternate tool-call trigger so the call
+	// isn't dropped into content. See https://github.com/ollama/ollama/issues/16686.
+	funcOpenTag  = "<function="
+	funcCloseTag = "</function>"
 )
 
 const (
 	qwenParserState_LookingForToolStart qwenParserState = iota
 	qwenParserState_CollectingToolContent
+	// CollectingBareFunction handles a <function=…> block that appeared without
+	// an opening <tool_call>; it collects up to and including </function>.
+	qwenParserState_CollectingBareFunction
 )
 
 type Qwen3CoderParser struct {
@@ -33,6 +52,14 @@ type Qwen3CoderParser struct {
 	acc       strings.Builder
 	tools     []api.Tool
 	callIndex int
+	// lineHasContent tracks whether the current output line has emitted
+	// any non-whitespace content yet. It persists across Add() calls so
+	// the bare-<function=> and stray-</tool_call> prose guards work
+	// under streaming input, where preceding prose is emitted in earlier
+	// calls and by the time the trigger arrives the local buffer only
+	// holds the withheld partial tag. Reset by a newline in emitted
+	// content, set by any non-whitespace rune.
+	lineHasContent bool
 }
 
 func (p *Qwen3CoderParser) HasToolSupport() bool {
@@ -53,7 +80,40 @@ func (p *Qwen3CoderParser) PreservedTokens() []string {
 func (p *Qwen3CoderParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
 	p.callIndex = 0
+	p.lineHasContent = false
 	return tools // Qwen doesn't modify tools
+}
+
+// recordEmitted updates lineHasContent to reflect the position we'd be at
+// after streaming s to the caller. A newline resets to false (fresh line);
+// any other non-whitespace rune sets to true.
+func (p *Qwen3CoderParser) recordEmitted(s string) {
+	for _, r := range s {
+		if r == '\n' {
+			p.lineHasContent = false
+		} else if !unicode.IsSpace(r) {
+			p.lineHasContent = true
+		}
+	}
+}
+
+// atCallBoundary reports whether appending leading to the already-emitted
+// stream would leave us at a call boundary — the start of a line (either
+// the stream start or after a newline) with no non-whitespace content
+// since. Used by the bare-<function=> and stray-</tool_call> guards to
+// distinguish real drift-mode calls (own-line) from prose mentions
+// (mid-line). Chained tool calls work via p.lineHasContent being reset
+// to false whenever Add() processes a tool-call event.
+func (p *Qwen3CoderParser) atCallBoundary(leading string) bool {
+	hasContent := p.lineHasContent
+	for _, r := range leading {
+		if r == '\n' {
+			hasContent = false
+		} else if !unicode.IsSpace(r) {
+			hasContent = true
+		}
+	}
+	return !hasContent
 }
 
 func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
@@ -61,12 +121,42 @@ func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking st
 
 	events := p.parseEvents()
 
+	// If the stream ended while we were still inside a bare <function=…>
+	// block that never closed, flush what we accumulated as content
+	// rather than dropping it silently. The block is not a valid tool
+	// call — we don't have </function> — so surfacing it as content is
+	// the closest thing to what the model actually tried to say. The
+	// tool-envelope case (CollectingToolContent) intentionally still
+	// drops on unterminated close, since <tool_call> is an unambiguous
+	// invocation attempt and emitting the raw envelope as content would
+	// be more confusing than helpful.
+	if done && p.state == qwenParserState_CollectingBareFunction {
+		if remaining := p.acc.String(); remaining != "" {
+			events = append(events, qwenEventContent{content: remaining})
+		}
+		p.acc.Reset()
+		p.state = qwenParserState_LookingForToolStart
+	}
+
 	var toolCalls []api.ToolCall
 	var sb strings.Builder
 	for _, event := range events {
 		switch event := event.(type) {
 		case qwenEventRawToolCall:
+			// A tool call — real or empty — is a semantic line break: the
+			// model is done with prose and won't be building on the same
+			// line. Reset so a follow-on bare <function=…> in a later
+			// Add() is recognized as at a call boundary even if there was
+			// non-whitespace content earlier in the turn.
+			p.lineHasContent = false
 			toolCall, err := parseToolCall(event, p.tools)
+			if errors.Is(err, errEmptyToolCall) {
+				// Model emitted an empty or non-tool <tool_call> envelope.
+				// Skip silently — returning an error here would 500 the chat
+				// request even though the rest of the turn is fine.
+				slog.Warn("qwen tool call envelope was empty; skipping", "raw", event.raw)
+				continue
+			}
 			if err != nil {
 				slog.Warn("qwen tool call parsing failed", "error", err)
 				return "", "", nil, err
@@ -79,6 +169,7 @@ func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking st
 			// events, we naively append them together here. See the note below about
 			// `qwenEvent`s for more details
 			sb.WriteString(event.content)
+			p.recordEmitted(event.content)
 		}
 	}
 
@@ -135,49 +226,110 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 
 	switch p.state {
 	case qwenParserState_LookingForToolStart:
-		if strings.Contains(p.acc.String(), toolOpenTag) {
-			// we found a full tool open tag, so we can emit the content before the
-			// tag, being sure to trim any trailing whitespace
-			split := strings.SplitN(p.acc.String(), toolOpenTag, 2)
-			before := split[0]
-			before = strings.TrimRightFunc(before, unicode.IsSpace)
+		acc := p.acc.String()
+		// Dispatch on the earliest of three triggers:
+		//   <tool_call>   — normal envelope open
+		//   <function=    — a bare function block with no opening <tool_call> (#16686)
+		//   </tool_call>  — a stray close tag with no opener (the same malformation
+		//                   leaves one behind); drop it so it doesn't leak as content
+		best, kind := -1, 0
+		for _, t := range []struct {
+			idx, kind int
+		}{
+			{strings.Index(acc, toolOpenTag), 1},
+			{strings.Index(acc, funcOpenTag), 2},
+			{strings.Index(acc, toolCloseTag), 3},
+		} {
+			if t.idx >= 0 && (best < 0 || t.idx < best) {
+				best, kind = t.idx, t.kind
+			}
+		}
+
+		switch kind {
+		case 1: // <tool_call>: emit content before it, drop the tag, collect the envelope
+			before := strings.TrimRightFunc(acc[:best], unicode.IsSpace)
 			if len(before) > 0 {
 				events = append(events, qwenEventContent{content: before})
 			}
-			after := split[1]
 			p.acc.Reset()
-			p.acc.WriteString(after)
+			p.acc.WriteString(acc[best+len(toolOpenTag):])
 			p.state = qwenParserState_CollectingToolContent
 			return events, true
-		} else if overlap := overlap(p.acc.String(), toolOpenTag); overlap > 0 {
-			// we found a partial tool open tag, so we can emit the unambiguous part,
-			// which is the (trailing-whitespace trimmed) content before the partial
-			// tool open tag
-			beforePartialTag := p.acc.String()[:len(p.acc.String())-overlap]
-			trailingWhitespaceLen := trailingWhitespaceLen(beforePartialTag)
-			ambiguousStart := len(beforePartialTag) - trailingWhitespaceLen
-			unambiguous := p.acc.String()[:ambiguousStart]
-			ambiguous := p.acc.String()[ambiguousStart:]
-			p.acc.Reset()
-			p.acc.WriteString(ambiguous)
-			if len(unambiguous) > 0 {
-				events = append(events, qwenEventContent{content: unambiguous})
+		case 2: // bare <function=>: only trigger when the tag stands alone
+			// Reject the trigger if the block appears mid-prose. Models asked
+			// to explain their own tool-call syntax happily emit inline
+			// examples like "you use <function=get_weather> to call it",
+			// and we don't want to consume those as real tool calls. A real
+			// drift-mode call is separated by a newline (or is at the start
+			// of the stream) — we treat anything mid-line as prose and let
+			// it pass through as content.
+			//
+			// The check must combine per-call `leading` with cross-call
+			// `p.lineHasContent`, since under streaming input the preceding
+			// prose was already emitted in earlier Add() calls and `leading`
+			// alone would be empty.
+			leading := acc[:best]
+			if !p.atCallBoundary(leading) {
+				// Emit everything up to and including the tag as content,
+				// then keep scanning the remainder for a legitimate trigger.
+				events = append(events, qwenEventContent{content: acc[:best+len(funcOpenTag)]})
+				p.acc.Reset()
+				p.acc.WriteString(acc[best+len(funcOpenTag):])
+				return events, true
 			}
-			return events, false
-		} else {
-			// we found content that is entirely not a tool call. We should withhold
-			// any trailing whitespace in case this is the end of the content
-			whitespaceLen := trailingWhitespaceLen(p.acc.String())
-			ambiguousStart := len(p.acc.String()) - whitespaceLen
-			unambiguous := p.acc.String()[:ambiguousStart]
-			ambiguous := p.acc.String()[ambiguousStart:]
-			p.acc.Reset()
-			p.acc.WriteString(ambiguous)
-			if len(unambiguous) > 0 {
-				events = append(events, qwenEventContent{content: unambiguous})
+			before := strings.TrimRightFunc(leading, unicode.IsSpace)
+			if len(before) > 0 {
+				events = append(events, qwenEventContent{content: before})
 			}
-			return events, false
+			p.acc.Reset()
+			p.acc.WriteString(acc[best:])
+			p.state = qwenParserState_CollectingBareFunction
+			return events, true
+		case 3: // stray </tool_call>
+			// If we're at a call boundary (the tag is trailing a completed
+			// drift-mode tool call — the #16686 malformation always leaves
+			// one behind), drop it silently along with framing whitespace.
+			// Otherwise it's a prose mention of the tag: preserve it as
+			// content so words don't collide ("the </tool_call> tag" must
+			// not become "thetag"). This matches main's behavior of
+			// leaking unrecognized tags through as content.
+			leading := acc[:best]
+			if p.atCallBoundary(leading) {
+				before := strings.TrimRightFunc(leading, unicode.IsSpace)
+				if len(before) > 0 {
+					events = append(events, qwenEventContent{content: before})
+				}
+				rest := strings.TrimLeftFunc(acc[best+len(toolCloseTag):], unicode.IsSpace)
+				p.acc.Reset()
+				p.acc.WriteString(rest)
+				return events, true
+			}
+			events = append(events, qwenEventContent{content: acc[:best+len(toolCloseTag)]})
+			p.acc.Reset()
+			p.acc.WriteString(acc[best+len(toolCloseTag):])
+			return events, true
 		}
+
+		// No complete trigger. Withhold a trailing partial of any of the three
+		// tags (and the whitespace before it, which a real tag would trim), so we
+		// never stream out part of a tag or whitespace that may precede one.
+		o := overlap(acc, toolOpenTag)
+		if of := overlap(acc, funcOpenTag); of > o {
+			o = of
+		}
+		if oc := overlap(acc, toolCloseTag); oc > o {
+			o = oc
+		}
+		beforePartial := acc[:len(acc)-o]
+		ambiguousStart := len(beforePartial) - trailingWhitespaceLen(beforePartial)
+		unambiguous := acc[:ambiguousStart]
+		ambiguous := acc[ambiguousStart:]
+		p.acc.Reset()
+		p.acc.WriteString(ambiguous)
+		if len(unambiguous) > 0 {
+			events = append(events, qwenEventContent{content: unambiguous})
+		}
+		return events, false
 	case qwenParserState_CollectingToolContent:
 		if strings.Contains(p.acc.String(), toolCloseTag) {
 			split := strings.SplitN(p.acc.String(), toolCloseTag, 2)
@@ -199,6 +351,24 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 			// here
 			return events, false
 		}
+	case qwenParserState_CollectingBareFunction:
+		// We're inside a bare <function=…> block (no enclosing <tool_call>).
+		// Collect up to and including </function>, then emit it as a raw tool
+		// call. We don't stream partial tool content, so we just wait for the
+		// closing tag.
+		acc := p.acc.String()
+		if idx := strings.Index(acc, funcCloseTag); idx >= 0 {
+			raw := acc[:idx+len(funcCloseTag)]
+			// Hand the remainder back to LookingForToolStart. A stray </tool_call>
+			// the model often leaves after the bare block (the #16686 malformation)
+			// is dropped there along with any other trailing tags.
+			p.acc.Reset()
+			p.acc.WriteString(acc[idx+len(funcCloseTag):])
+			events = append(events, qwenEventRawToolCall{raw: raw})
+			p.state = qwenParserState_LookingForToolStart
+			return events, true
+		}
+		return events, false
 	default:
 		panic("unreachable")
 	}
@@ -215,6 +385,34 @@ type XMLParameter struct {
 	Value string `xml:",chardata"`
 }
 
+// extractFunctionBlock narrows the tool-call payload to the first
+// <function=...>...</function> block in the input. Some models occasionally
+// drift from the documented chat_template format (e.g. qwen3.6, which is
+// trained on a wrapper from an earlier generation) and emit stray closing
+// tags or unrelated elements alongside an otherwise valid function block.
+// Anchoring on the function block lets the XML unmarshaler handle the
+// well-formed portion and discard the noise.
+//
+// Returns the extracted slice and ok=true on success. Returns ("", false)
+// when the envelope is empty, whitespace-only, or contains no usable
+// <function=...>...</function> pair — callers should treat that as a
+// silent no-op rather than an unmarshaler error.
+func extractFunctionBlock(raw string) (string, bool) {
+	open := strings.Index(raw, "<function=")
+	if open < 0 {
+		return "", false
+	}
+	// The first </function> after the opener is the matching close tag.
+	// Using LastIndex would accidentally absorb stray duplicates (e.g.
+	// `</function></function>`) into the slice and re-introduce the same
+	// xml.Unmarshal error this helper is meant to prevent.
+	end := strings.Index(raw[open:], "</function>")
+	if end < 0 {
+		return "", false
+	}
+	return raw[open : open+end+len("</function>")], true
+}
+
 // parseToolCall parses a raw tool call string into an api.ToolCall.
 // The raw string follows an xml-like format, here's an example:
 //
@@ -229,12 +427,24 @@ type XMLParameter struct {
 func parseToolCall(raw qwenEventRawToolCall, tools []api.Tool) (api.ToolCall, error) {
 	toolCall := api.ToolCall{}
 
-	xmlString := transformToXML(raw.raw)
+	extracted, ok := extractFunctionBlock(raw.raw)
+	if !ok {
+		// Empty / non-tool envelope. Surface as a sentinel so the streaming
+		// caller can skip silently instead of failing the whole request.
+		return api.ToolCall{}, errEmptyToolCall
+	}
+	xmlString := transformToXML(extracted)
 
 	var functionCall XMLFunctionCall
-	err := xml.Unmarshal([]byte(xmlString), &functionCall)
-	if err != nil {
-		return api.ToolCall{}, err
+	if err := xml.Unmarshal([]byte(xmlString), &functionCall); err != nil {
+		// A malformed bare block (e.g. unterminated <parameter=…>) reaches
+		// us as a well-delimited slice but invalid XML. The old behavior
+		// propagated the error, which 500'd the whole chat request. Prefer
+		// the sentinel so the streaming caller skips this call silently,
+		// matching the empty-envelope behavior. The raw slice is logged so
+		// the drift is still traceable.
+		slog.Warn("qwen bare function block failed to parse; skipping", "error", err, "raw", raw.raw)
+		return api.ToolCall{}, errEmptyToolCall
 	}
 
 	toolCall.Function = api.ToolCallFunction{
