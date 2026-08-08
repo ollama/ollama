@@ -1,0 +1,12 @@
+{
+ "tag": "gemma4_12b-nvfp4",
+ "json_valid": true,
+ "prompt_eval_count": 1173,
+ "eval_count": 267,
+ "recall_22px": 4,
+ "recall_16px": 4,
+ "recall_12px": 2,
+ "recall_9px": 0,
+ "recall_7px": 0,
+ "total_found": 20
+}

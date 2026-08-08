@@ -1,0 +1,12 @@
+{
+ "tag": "nemotron3_33b-q4_K_M",
+ "json_valid": true,
+ "prompt_eval_count": 2496,
+ "eval_count": 287,
+ "recall_22px": 4,
+ "recall_16px": 4,
+ "recall_12px": 3,
+ "recall_9px": 1,
+ "recall_7px": 0,
+ "total_found": 20
+}

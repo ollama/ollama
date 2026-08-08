@@ -3,7 +3,8 @@
 Usage: vision_suite.py <host> <tag> [model]
 e.g.   vision_suite.py http://127.0.0.1:11435 patched nemotron3:33b-q4_K_M
 """
-import json, sys, base64, os, urllib.request
+import json
+import re, sys, base64, os, urllib.request
 
 HOST = TAG = MODEL = None  # set in main()
 DIR = os.path.dirname(os.path.abspath(__file__))
@@ -152,6 +153,26 @@ def get_bbox(o):
             return o[k]
     return []
 
+
+FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.S)
+
+def parse_json_response(text):
+    """json.loads with markdown-fence tolerance: engines that do not enforce
+    format:"json" (the MLX runner before x/structured, ADR 0009) emit fenced
+    JSON; stripping is a no-op on grammar-constrained output. Scorers record
+    fenced=True so a non-enforcing engine is identifiable in the scores.
+    Returns (obj_or_None, fenced)."""
+    m = FENCE.search(text)
+    if m:
+        try:
+            return json.loads(m.group(1)), True
+        except Exception:
+            return None, True
+    try:
+        return json.loads(text), False
+    except Exception:
+        return None, False
+
 def iou(a, b):
     ix = max(0, min(a[2], b[2]) - max(a[0], b[0]))
     iy = max(0, min(a[3], b[3]) - max(a[1], b[1]))
@@ -166,10 +187,12 @@ def score_scene(resp_text):
          "bbox_hits": 0, "bbox_mean_iou": 0.0, "bbox_space": None,
          "colors_right": 0, "serial_found": g["serial"] in resp_text,
          "object_count": None}
-    try:
-        r = json.loads(resp_text); s["json_valid"] = True
-    except Exception:
+    r, fenced = parse_json_response(resp_text)
+    if fenced:
+        s["fenced"] = True
+    if r is None:
         return s
+    s["json_valid"] = True
     objs = r.get("objects") or []
     s["object_count"] = len(objs)
     by_label = {o.get("label"): o for o in objs if o.get("label")}
@@ -209,10 +232,12 @@ def score_doc(resp_text):
     s = {"json_valid": False, "invoice_no": False, "items_found": 0,
          "items_total": len(g["items"]), "qty_price_right": 0, "total_right": False,
          "name_bbox_hits": 0, "name_bbox_mean_iou": 0.0, "name_bbox_space": None}
-    try:
-        r = json.loads(resp_text); s["json_valid"] = True
-    except Exception:
+    r, fenced = parse_json_response(resp_text)
+    if fenced:
+        s["fenced"] = True
+    if r is None:
         return s
+    s["json_valid"] = True
     s["invoice_no"] = g["invoice_no"] in json.dumps(r)
     items = r.get("line_items") or []
     matched = []
@@ -257,10 +282,12 @@ def score_multi(resp_text):
     s = {"json_valid": False, "q1_right": False, "q2_right": False,
          "q4_bbox_hit": False, "chart_values_found": 0,
          "chart_total": len(g["chart"]["bars"])}
-    try:
-        r = json.loads(resp_text); s["json_valid"] = True
-    except Exception:
+    r, fenced = parse_json_response(resp_text)
+    if fenced:
+        s["fenced"] = True
+    if r is None:
         return s
+    s["json_valid"] = True
     a = r.get("answers") or {}
     s["q1_right"] = a.get("q1") == 2
     q2 = a.get("q2") or {}

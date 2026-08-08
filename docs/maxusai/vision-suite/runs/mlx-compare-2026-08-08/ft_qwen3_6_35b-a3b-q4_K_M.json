@@ -1,0 +1,12 @@
+{
+ "tag": "qwen3_6_35b-a3b-q4_K_M",
+ "json_valid": true,
+ "prompt_eval_count": 2484,
+ "eval_count": 311,
+ "recall_22px": 4,
+ "recall_16px": 4,
+ "recall_12px": 4,
+ "recall_9px": 3,
+ "recall_7px": 0,
+ "total_found": 20
+}

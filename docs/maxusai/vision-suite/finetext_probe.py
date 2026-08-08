@@ -7,12 +7,15 @@ scores per-size recall.
 Usage: finetext_probe.py <host> <tag> <model>
 Env: THINK=on|false, ENDPOINT=generate|chat, NUM_CTX, NUM_PREDICT, HTTP_TIMEOUT
 """
-import json, os, sys, base64, random, urllib.request
+import json
+import re, os, sys, base64, random, urllib.request
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 IMG = os.path.join(DIR, "visimgs", "finetext.png")
 GT = os.path.join(DIR, "visimgs", "finetext_gt.json")
-FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
+# FONT_PATH overrides for hosts without the Debian DejaVu path (macOS:
+# point it at e.g. matplotlib's bundled DejaVuSansMono.ttf).
+FONT = os.environ.get("FONT_PATH", "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf")
 
 SIZES = [22, 16, 12, 9, 7]  # px per bucket, 4 codes each
 CHARS = "ACDEFHJKMNPRTUVWXY"  # unambiguous set
@@ -85,6 +88,13 @@ def run(host, tag, model):
     s = {"tag": tag, "json_valid": False,
          "prompt_eval_count": r.get("prompt_eval_count"), "eval_count": r.get("eval_count")}
     found = []
+    # Fence tolerance: engines that do not enforce format:"json" (the MLX
+    # runner before x/structured, ADR 0009) fence the JSON. No-op on
+    # grammar-constrained output; recorded so the engine is identifiable.
+    fenced = re.search(r"```(?:json)?\s*(.*?)```", body, re.S)
+    if fenced:
+        body = fenced.group(1)
+        s["fenced"] = True
     try:
         found = [str(x).strip().upper() for x in json.loads(body).get("codes", [])]
         s["json_valid"] = True
@@ -95,6 +105,7 @@ def run(host, tag, model):
     s["total_found"] = len(found)
     print(f"--- finetext [{tag}] ---")
     print(json.dumps(s, indent=1))
+    json.dump(s, open(os.path.join(DIR, f"ft_{tag}.json"), "w"), indent=1)
 
 
 if __name__ == "__main__":
