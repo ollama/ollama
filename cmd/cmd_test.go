@@ -20,7 +20,33 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/types/model"
+	"github.com/ollama/ollama/version"
 )
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stdout = w
+
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+
+	fn()
+
+	_ = w.Close()
+	os.Stdout = oldStdout
+
+	return <-done
+}
 
 func TestShowInfo(t *testing.T) {
 	t.Run("bare details", func(t *testing.T) {
@@ -2150,6 +2176,49 @@ func TestPushProgressMessage(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestVersionHandler(t *testing.T) {
+	t.Run("prints server version when available", func(t *testing.T) {
+		mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/version" {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"version":"1.2.3"}`)
+		}))
+		t.Cleanup(mockServer.Close)
+		t.Setenv("OLLAMA_HOST", mockServer.URL)
+
+		cmd := &cobra.Command{}
+		cmd.SetContext(t.Context())
+
+		got := captureStdout(t, func() {
+			versionHandler(cmd, nil)
+		})
+
+		want := "ollama version is 1.2.3\nWarning: client version is " + version.Version + "\n"
+		if got != want {
+			t.Fatalf("output = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("prints local version when server is unavailable", func(t *testing.T) {
+		t.Setenv("OLLAMA_HOST", "http://127.0.0.1:65535")
+
+		cmd := &cobra.Command{}
+		cmd.SetContext(t.Context())
+
+		got := captureStdout(t, func() {
+			versionHandler(cmd, nil)
+		})
+
+		want := "Warning: could not connect to a running Ollama instance\nollama version is " + version.Version + "\n"
+		if got != want {
+			t.Fatalf("output = %q, want %q", got, want)
+		}
+	})
 }
 
 func TestRunOptions_Copy_Independence(t *testing.T) {
