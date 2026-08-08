@@ -1344,6 +1344,11 @@ func TestSetupLlamaServerCommandEnv(t *testing.T) {
 	if got := env["GGML_BACKEND_PATH"]; got != backendPath {
 		t.Fatalf("GGML_BACKEND_PATH = %q, want %q", got, backendPath)
 	}
+	// One backend loads from the env var alone, so the working directory is left
+	// wherever the caller had it.
+	if cmd.Dir != "" {
+		t.Fatalf("cmd.Dir = %q, want empty for a single GPU backend", cmd.Dir)
+	}
 	if got := env["OLLAMA_DEBUG"]; got != "1" {
 		t.Fatalf("OLLAMA_DEBUG = %q, want %q", got, "1")
 	}
@@ -1360,6 +1365,56 @@ func TestSetupLlamaServerCommandEnv(t *testing.T) {
 	}
 	if paths[2] != userLibDir {
 		t.Fatalf("%s[2] = %q, want %q", pathEnv, paths[2], userLibDir)
+	}
+}
+
+// A device list that spans libraries needs both backends registered in the one
+// llama-server process. GGML_BACKEND_PATH carries a single library, so the second
+// has to arrive through ggml's other search path: the working directory.
+func TestSetupLlamaServerCommandEnvMixedBackends(t *testing.T) {
+	backendName := func(lib string) string {
+		switch runtime.GOOS {
+		case "darwin":
+			return "libggml-" + lib + ".dylib"
+		case "windows":
+			return "ggml-" + lib + ".dll"
+		default:
+			return "libggml-" + lib + ".so"
+		}
+	}
+
+	exeDir := t.TempDir()
+	exe := filepath.Join(exeDir, "llama-server")
+	if err := os.WriteFile(exe, nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cudaDir := t.TempDir()
+	cudaBackend := filepath.Join(cudaDir, backendName("cuda"))
+	if err := os.WriteFile(cudaBackend, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	vulkanDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(vulkanDir, backendName("vulkan")), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("echo")
+	SetupLlamaServerCommandEnv(cmd, exe, []string{ml.LibOllamaPath, cudaDir, vulkanDir}, nil)
+
+	var backendEnv string
+	for _, kv := range cmd.Env {
+		if key, value, ok := strings.Cut(kv, "="); ok && strings.EqualFold(key, "GGML_BACKEND_PATH") {
+			backendEnv = value
+		}
+	}
+
+	if backendEnv != cudaBackend {
+		t.Fatalf("GGML_BACKEND_PATH = %q, want %q", backendEnv, cudaBackend)
+	}
+	if cmd.Dir != vulkanDir {
+		t.Fatalf("cmd.Dir = %q, want %q", cmd.Dir, vulkanDir)
 	}
 }
 
