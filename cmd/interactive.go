@@ -583,7 +583,8 @@ func NewCreateRequest(name string, opts runOptions) *api.CreateRequest {
 }
 
 func normalizeFilePath(fp string) string {
-	return strings.NewReplacer(
+	fp = strings.Trim(fp, "\"'")
+	fp = strings.NewReplacer(
 		"\\ ", " ", // Escaped space
 		"\\(", "(", // Escaped left parenthesis
 		"\\)", ")", // Escaped right parenthesis
@@ -595,18 +596,29 @@ func normalizeFilePath(fp string) string {
 		"\\&", "&", // Escaped ampersand
 		"\\;", ";", // Escaped semicolon
 		"\\'", "'", // Escaped single quote
+		"\\\"", "\"", // Escaped double quote
 		"\\\\", "\\", // Escaped backslash
 		"\\*", "*", // Escaped asterisk
 		"\\?", "?", // Escaped question mark
 		"\\~", "~", // Escaped tilde
 	).Replace(fp)
+
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if fp == "~" {
+			fp = home
+		} else if strings.HasPrefix(fp, "~/") || strings.HasPrefix(fp, "~\\") {
+			fp = filepath.Join(home, fp[2:])
+		}
+	}
+
+	return fp
 }
 
 func extractFileNames(input string) []string {
-	// Regex to match file paths starting with optional drive letter, / ./ \ or .\ and include escaped or unescaped spaces (\ or %20)
+	// Regex to match file paths starting with optional drive letter, / ./ \ .\ or ~ \~ and include escaped or unescaped spaces (\ or %20)
 	// and followed by more characters and a file extension
 	// This will capture non filename strings, but we'll check for file existence to remove mismatches
-	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav)\b`
+	regexPattern := `(?:[a-zA-Z]:)?(?:\./|\.\\|/|\\|\\?~[/\\])[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav)\b`
 	re := regexp.MustCompile(regexPattern)
 
 	return re.FindAllString(input, -1)
@@ -634,6 +646,8 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 		}
 		input = strings.ReplaceAll(input, "'"+nfp+"'", "")
 		input = strings.ReplaceAll(input, "'"+fp+"'", "")
+		input = strings.ReplaceAll(input, `"`+nfp+`"`, "")
+		input = strings.ReplaceAll(input, `"`+fp+`"`, "")
 		input = strings.ReplaceAll(input, fp, "")
 		imgs = append(imgs, data)
 	}
