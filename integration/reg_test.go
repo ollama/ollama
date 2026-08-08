@@ -128,10 +128,87 @@ var knownIntegrationFlakes = []knownIntegrationFlake{
 		Model:    "gemma4",
 		Reason:   "counts five animals in the docs image instead of four",
 	},
+
+	{
+		Scenario: "tools-stress",
+		Model:    "lfm2.5-thinking",
+		Reason:   "returns text instead of tool calls with complex system prompts",
+	},
+	{
+		Scenario: "tools-stress",
+		Model:    "qwen3.5:2b",
+		Reason:   "2B model too small for reliable multi-tool agent prompts",
+	},
+	{
+		Scenario: "tools-stress",
+		Model:    "qwen3-vl",
+		Reason:   "vision model, extremely slow with complex tool prompts",
+	},
+	{
+		Scenario: "tools-stress",
+		Model:    "llama3.2",
+		Reason:   "3B model too small for reliable multi-tool agent prompts",
+	},
+	{
+		Scenario: "tools-stress",
+		Model:    "mistral",
+		Reason:   "7B v0.3 returns text instead of tool calls with complex prompts",
+	},
+	{
+		Scenario: "tools-stress",
+		Model:    "mixtral:8x22b",
+		Reason:   "returns text instead of tool calls with complex prompts",
+	},
+	{
+		Scenario: "tools-stress",
+		Model:    "qwen2",
+		Reason:   "returns text instead of tool calls with complex prompts",
+	},
+	{
+		Scenario: "tools-stress",
+		Model:    "granite3.3",
+		Reason:   "returns text instead of tool calls with complex prompts",
+	},
+
+	{
+		Scenario: "vision-multiturn",
+		Model:    "gemma3",
+		Reason:   "misidentifies briefcase as smartphone on turn 3",
+	},
+	{
+		Scenario: "vision-multiturn",
+		Model:    "llama3.2-vision",
+		Reason:   "miscounts animals (says 3 instead of 4) on turn 2",
+	},
+	{
+		Scenario: "vision-count",
+		Model:    "llama3.2-vision",
+		Reason:   "consistently miscounts (says 3 instead of 4)",
+	},
+	{
+		Scenario: "vision-scene",
+		Model:    "llama3.2-vision",
+		Reason:   "3B model lacks cultural reference knowledge",
+	},
+	{
+		Scenario: "vision-scene",
+		Model:    "minicpm-v",
+		Reason:   "too small for cultural reference detection",
+	},
+	{
+		Scenario: "vision-multi-image",
+		Model:    "llama3.2-vision",
+		Reason:   "does not support multi-image input",
+	},
 }
 
+// skipKnownIntegrationFlake skips known-bad model/scenario combinations
+// unless OLLAMA_TEST_MODEL explicitly requests the model.
 func skipKnownIntegrationFlake(t *testing.T, scenario, model string) {
 	t.Helper()
+	if testModel != "" {
+		return
+	}
 	for _, flake := range knownIntegrationFlakes {
 		if flake.Scenario == scenario && flake.Model == model {
 			t.Skipf("known model/scenario flake: %s", flake.Reason)
