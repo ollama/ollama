@@ -707,6 +707,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 		state := structuredOutputsState_None
 		var pass1 *llm.CompletionResponse // pass-one final metrics in the marker flow
+		// transitionPromptDelta, when ≥ 0, refines a reconstructed pass one's
+		// prompt count at done time: it is the pure-text token delta between
+		// the continuation prompt and the request's own prompt, and pass
+		// two's cache-inclusive prefill minus it recovers the prompt cost
+		// including image-embedding tokens no text tokenization can count.
+		transitionPromptDelta := -1
 		var continueViaMarker bool
 		var contentStarted bool
 		// contextPrompt is what the final Context field is tokenized against;
@@ -731,6 +737,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 			ctx, cancel := context.WithCancel(c.Request.Context())
 
+			// passStart and firstChunkAt reconstruct pass-one durations if the
+			// transition flow cancels the pass before its final metrics arrive:
+			// prefill runs before the first streamed chunk, decode after.
+			passStart := time.Now()
+			var firstChunkAt time.Time
+
 			err := r.Completion(ctx, llm.CompletionRequest{
 				Prompt:          prompt,
 				Media:           media,
@@ -743,6 +755,9 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				PreservedTokens: preservedTokensForCompletion(builtinParser),
 				LeadingBOS:      leadingBOS,
 			}, func(cr llm.CompletionResponse) {
+				if firstChunkAt.IsZero() {
+					firstChunkAt = time.Now()
+				}
 				res := api.GenerateResponse{
 					Model:     req.Model,
 					CreatedAt: time.Now().UTC(),
@@ -841,6 +856,16 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 						// prefill re-reads pass one's output from cache),
 						// generated tokens and durations summed.
 						res.Metrics.PromptEvalCount = pass1.PromptEvalCount
+						if transitionPromptDelta >= 0 {
+							// Reconstructed pass one: prefer deriving the
+							// prompt cost from pass two's cache-inclusive
+							// prefill minus the pure-text continuation delta —
+							// unlike pass1's textual count it carries the
+							// request's image-embedding tokens.
+							if derived := cr.PromptEvalCount - transitionPromptDelta; derived > 0 {
+								res.Metrics.PromptEvalCount = derived
+							}
+						}
 						res.Metrics.PromptEvalDuration += pass1.PromptEvalDuration
 						res.Metrics.EvalCount += pass1.EvalCount
 						res.Metrics.EvalDuration += pass1.EvalDuration
@@ -889,11 +914,24 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			if state == structuredOutputsState_ReadyToApply {
 				state = structuredOutputsState_Applying
 
+				// reconstructed marks pass-one metrics synthesized by this
+				// restart; their prompt count is refined once pass two
+				// reports its prefill.
+				reconstructed := false
+
 				if continueViaMarker {
 					// Continue the exact token stream: the prompt plus
 					// everything generated plus the marker (already in sb).
 					prompt = contextPrompt + sb.String()
 				} else {
+					// The transition cancelled pass one mid-stream before its
+					// final metrics arrived; reconstruct them so the final
+					// response still counts every pass-one token (R6).
+					if pass1 == nil {
+						pass1 = transitionPassMetrics(c.Request.Context(), r, contextPrompt, sb.String(), passStart, firstChunkAt)
+						reconstructed = pass1 != nil
+					}
+
 					msg := api.Message{
 						Role:     "assistant",
 						Thinking: tb.String(),
@@ -927,8 +965,18 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				if ctxLen := r.ContextLength(); ctxLen > 0 {
 					numCtx = ctxLen
 				}
-				if tokens, terr := r.Tokenize(c.Request.Context(), prompt); terr == nil && numCtx > 0 && len(tokens) >= numCtx-thinkingContinuationHeadroom {
-					slog.Warn("thinking filled the context window, skipping format-constrained continuation", "tokens", len(tokens), "num_ctx", numCtx)
+				continuationTokens, terr := r.Tokenize(c.Request.Context(), prompt)
+				if reconstructed && terr == nil {
+					// Both prompts tokenize as pure text here, so the delta is
+					// exactly the appended thinking (any image placeholders
+					// cancel); pass two's prefill count then supplies the
+					// image tokens the textual counts lack.
+					if d := len(continuationTokens) - pass1.PromptEvalCount; d >= 0 {
+						transitionPromptDelta = d
+					}
+				}
+				if terr == nil && numCtx > 0 && len(continuationTokens) >= numCtx-thinkingContinuationHeadroom {
+					slog.Warn("thinking filled the context window, skipping format-constrained continuation", "tokens", len(continuationTokens), "num_ctx", numCtx)
 					res := api.GenerateResponse{
 						Model:      req.Model,
 						CreatedAt:  time.Now().UTC(),
@@ -1017,6 +1065,38 @@ func formatConstrains(format json.RawMessage) bool {
 // must remain after the continuation prompt of a structured-outputs double
 // request for constrained generation to be worth attempting.
 const thinkingContinuationHeadroom = 8
+
+// transitionPassMetrics reconstructs the metrics of a structured-outputs pass
+// one that was cancelled at the thinking→content transition, where the
+// runner's final chunk — the only carrier of pass metrics — never arrives
+// (the marker flow instead keeps them from its stop-terminated done chunk).
+// The counts are recovered in the textual form (R6): the pass's own prompt
+// and its raw output, tokenized. Wall-clock durations split at the first
+// streamed chunk: prefill before it, decode after. Returns nil on a tokenize
+// error, leaving the caller to fall back to pass-two metrics only.
+//
+// The textual PromptEvalCount cannot see image-embedding tokens, so it is a
+// stand-in: once pass two reports its cache-inclusive prefill, the done-time
+// summing re-derives the prompt cost as that prefill minus the pure-text
+// continuation delta (transitionPromptDelta), which restores the image
+// tokens. The textual count still serves the no-pass-two exits (context
+// full) and as the fallback for degenerate reports.
+func transitionPassMetrics(ctx context.Context, r llm.LlamaServer, prompt, output string, passStart, firstChunkAt time.Time) *llm.CompletionResponse {
+	promptTokens, perr := r.Tokenize(ctx, prompt)
+	evalTokens, eerr := r.Tokenize(ctx, output)
+	if perr != nil || eerr != nil {
+		return nil
+	}
+	pass1 := llm.CompletionResponse{
+		PromptEvalCount: len(promptTokens),
+		EvalCount:       len(evalTokens),
+	}
+	if !firstChunkAt.IsZero() {
+		pass1.PromptEvalDuration = firstChunkAt.Sub(passStart)
+		pass1.EvalDuration = time.Since(firstChunkAt)
+	}
+	return &pass1
+}
 
 // reclassifyConstrainedThinking is a safety net for format-constrained
 // generation that ran with an eager grammar anyway (e.g. flows the double
@@ -3003,10 +3083,22 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 		structuredOutputsState := structuredOutputsState_None
 		var pass1 *llm.CompletionResponse // pass-one final metrics in the marker flow
+		// transitionPromptDelta, when ≥ 0, refines a reconstructed pass one's
+		// prompt count at done time: it is the pure-text token delta between
+		// the continuation prompt and the request's own prompt, and pass
+		// two's cache-inclusive prefill minus it recovers the prompt cost
+		// including image-embedding tokens no text tokenization can count.
+		transitionPromptDelta := -1
 		var contentStarted bool
 
 		for {
 			var tb strings.Builder
+			// raw accumulates the unparsed pass output; with passStart and
+			// firstChunkAt it reconstructs pass-one metrics if the transition
+			// flow cancels the pass before its final metrics arrive.
+			var raw strings.Builder
+			passStart := time.Now()
+			var firstChunkAt time.Time
 
 			currentFormat := req.Format
 			passOpts := opts
@@ -3049,6 +3141,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				ToolCallTag:     toolCallTagForCompletion(toolParser),
 				LeadingBOS:      leadingBOSForModel(m),
 			}, func(r llm.CompletionResponse) {
+				if firstChunkAt.IsZero() {
+					firstChunkAt = time.Now()
+				}
+				raw.WriteString(r.Content)
 				res := api.ChatResponse{
 					Model:     req.Model,
 					CreatedAt: time.Now().UTC(),
@@ -3071,6 +3167,16 @@ func (s *Server) ChatHandler(c *gin.Context) {
 						// re-submits pass one's output as prompt), generated
 						// tokens and durations summed.
 						res.Metrics.PromptEvalCount = pass1.PromptEvalCount
+						if transitionPromptDelta >= 0 {
+							// Reconstructed pass one: prefer deriving the
+							// prompt cost from pass two's cache-inclusive
+							// prefill minus the pure-text continuation delta —
+							// unlike pass1's textual count it carries the
+							// request's image-embedding tokens.
+							if derived := r.PromptEvalCount - transitionPromptDelta; derived > 0 {
+								res.Metrics.PromptEvalCount = derived
+							}
+						}
 						res.Metrics.PromptEvalDuration += pass1.PromptEvalDuration
 						res.Metrics.EvalCount += pass1.EvalCount
 						res.Metrics.EvalDuration += pass1.EvalDuration
@@ -3224,6 +3330,17 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			// ignored structured outputs cancellation falls through to here, start a new request with the structured outputs and updated prompt. use the
 			if structuredOutputsState == structuredOutputsState_ReadyToApply {
 				structuredOutputsState = structuredOutputsState_Applying
+
+				// The transition cancelled pass one mid-stream before its
+				// final metrics arrived; reconstruct them so the final
+				// response still counts every pass-one token (R6). The
+				// prompt count is refined once pass two reports its prefill.
+				reconstructed := false
+				if pass1 == nil {
+					pass1 = transitionPassMetrics(c.Request.Context(), r, prompt, raw.String(), passStart, firstChunkAt)
+					reconstructed = pass1 != nil
+				}
+
 				msg := api.Message{
 					Role:     "assistant",
 					Thinking: tb.String(),
@@ -3255,8 +3372,18 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				if ctxLen := r.ContextLength(); ctxLen > 0 {
 					numCtx = ctxLen
 				}
-				if tokens, terr := r.Tokenize(c.Request.Context(), prompt); terr == nil && numCtx > 0 && len(tokens) >= numCtx-thinkingContinuationHeadroom {
-					slog.Warn("thinking filled the context window, skipping format-constrained continuation", "tokens", len(tokens), "num_ctx", numCtx)
+				continuationTokens, terr := r.Tokenize(c.Request.Context(), prompt)
+				if reconstructed && terr == nil {
+					// Both prompts tokenize as pure text here, so the delta is
+					// exactly the appended thinking (any image placeholders
+					// cancel); pass two's prefill count then supplies the
+					// image tokens the textual counts lack.
+					if d := len(continuationTokens) - pass1.PromptEvalCount; d >= 0 {
+						transitionPromptDelta = d
+					}
+				}
+				if terr == nil && numCtx > 0 && len(continuationTokens) >= numCtx-thinkingContinuationHeadroom {
+					slog.Warn("thinking filled the context window, skipping format-constrained continuation", "tokens", len(continuationTokens), "num_ctx", numCtx)
 					res := api.ChatResponse{
 						Model:      req.Model,
 						CreatedAt:  time.Now().UTC(),

@@ -3721,9 +3721,9 @@ func TestTruncateNativeChatMessages(t *testing.T) {
 	}
 }
 
-// setupImplicitThinkingModel creates a scheduler-wired server around mock and
-// registers a model that uses the given implicit-thinking builtin parser.
-func setupImplicitThinkingModel(t *testing.T, mock *mockRunner, modelName, parser string) *Server {
+// setupThinkingTestServer creates a scheduler-wired server around mock and
+// returns it with the digest of a minimal gguf blob to register models from.
+func setupThinkingTestServer(t *testing.T, mock *mockRunner) (*Server, string) {
 	t.Helper()
 
 	s := &Server{
@@ -3770,12 +3770,48 @@ func setupImplicitThinkingModel(t *testing.T, mock *mockRunner, modelName, parse
 		{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 	})
 
+	return s, digest
+}
+
+// setupImplicitThinkingModel creates a scheduler-wired server around mock and
+// registers a model that uses the given implicit-thinking builtin parser.
+func setupImplicitThinkingModel(t *testing.T, mock *mockRunner, modelName, parser string) *Server {
+	t.Helper()
+
+	s, digest := setupThinkingTestServer(t, mock)
+
 	if w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model:    modelName,
 		Files:    map[string]string{"file.gguf": digest},
 		Parser:   parser,
 		Template: `{{ if .Prompt }}{{ .Prompt }} {{ end }}{{ .Response }}`,
 		Stream:   &stream,
+	}); w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	return s
+}
+
+// setupTransitionThinkingModel registers a template-driven thinking model
+// with no known think-close marker: thinking.InferTags recognises the
+// <think> tags in the assistant branch (so the model gains the thinking
+// capability), but the rendered prompt does not prefill the opening tag, so
+// a structured-outputs request must use the thinking→content transition flow
+// rather than the marker stop.
+func setupTransitionThinkingModel(t *testing.T, mock *mockRunner, modelName string) *Server {
+	t.Helper()
+
+	s, digest := setupThinkingTestServer(t, mock)
+
+	if w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model: modelName,
+		Files: map[string]string{"file.gguf": digest},
+		Template: `{{- range .Messages }}
+{{- if eq .Role "user" }}user: {{ .Content }}
+{{ else if eq .Role "assistant" }}assistant: {{ if .Thinking }}<think>{{ .Thinking }}</think>{{ end }}{{ .Content }}
+{{ end }}{{ end }}`,
+		Stream: &stream,
 	}); w.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
 	}
@@ -4188,5 +4224,258 @@ func TestChatThinkFormatLengthNoContinuation(t *testing.T) {
 	}
 	if resp.Message.Content != "" {
 		t.Errorf("expected empty content, got %q", resp.Message.Content)
+	}
+}
+
+// TestGenerateThinkFormatTransitionMetrics exercises R6 on the transition
+// flow of /api/generate: a thinking model with no known think-close marker is
+// cancelled at the thinking→content transition, so pass one's final metrics
+// never arrive from the runner. The final response must still report
+// eval_count as the total generated across both passes and prompt_eval_count
+// as the request's own prompt, not the continuation prefill. The request is
+// vision-shaped: the runner's prefill counts carry image-embedding tokens
+// that text tokenization cannot see, and prompt_eval_count must include them.
+func TestGenerateThinkFormatTransitionMetrics(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mock := &mockRunner{}
+	s := setupTransitionThinkingModel(t, mock, "test-transition-thinking")
+
+	format := json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}}}`)
+	passOneRaw := `<think> Reasoning deeply about the answer. </think> {"answer`
+
+	// imageTokens is the image-embedding surplus in the runner's prefill
+	// counts (~one nemotron3 image): present in the runner-reported
+	// PromptEvalCount of both passes, invisible to Tokenize, which the mock
+	// implements as whitespace fields.
+	const imageTokens = 2042
+
+	var (
+		requestsMu sync.Mutex
+		requests   []llm.CompletionRequest
+	)
+
+	mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+		requestsMu.Lock()
+		requests = append(requests, r)
+		callNum := len(requests)
+		requestsMu.Unlock()
+
+		switch callNum {
+		case 1:
+			fn(llm.CompletionResponse{Content: passOneRaw, Done: false})
+			// the transition cancels this pass: the final chunk that would
+			// carry the pass-one metrics never arrives
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Second):
+				t.Errorf("timeout waiting for structured outputs cancellation")
+				return nil
+			}
+		case 2:
+			fn(llm.CompletionResponse{
+				Content:    `{"answer":"42"}`,
+				Done:       true,
+				DoneReason: llm.DoneReasonStop,
+				// The runner reports pass two's cache-inclusive prefill
+				// (llama-server CacheN+PromptN, MLX len(request.Tokens)):
+				// the continuation prompt's text tokens plus the request's
+				// image-embedding tokens. It re-counts the reasoning as
+				// prompt and must not be reported raw.
+				PromptEvalCount:    len(strings.Fields(r.Prompt)) + imageTokens,
+				PromptEvalDuration: 30,
+				EvalCount:          9,
+				EvalDuration:       90,
+			})
+			return nil
+		default:
+			t.Errorf("unexpected number of completion calls: %d", callNum)
+			return nil
+		}
+	}
+
+	think := true
+	streamRequest := false
+	w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+		Model:  "test-transition-thinking",
+		Prompt: "Why is the sky blue?",
+		Think:  &api.ThinkValue{Value: think},
+		Stream: &streamRequest,
+		Format: format,
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	if len(requests) != 2 {
+		t.Fatalf("expected two completion calls, got %d", len(requests))
+	}
+	if requests[0].Format != nil {
+		t.Errorf("expected first completion format to be nil, got %q", requests[0].Format)
+	}
+	if !bytes.Equal([]byte(format), []byte(requests[1].Format)) {
+		t.Errorf("expected second completion format to match original format")
+	}
+	if !strings.Contains(requests[1].Prompt, "assistant: <think>Reasoning deeply about the answer. </think>") {
+		t.Errorf("expected continuation prompt to carry the thinking, got %q", requests[1].Prompt)
+	}
+
+	var resp api.GenerateResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.Thinking != "Reasoning deeply about the answer. " {
+		t.Errorf("expected thinking %q, got %q", "Reasoning deeply about the answer. ", resp.Thinking)
+	}
+	if resp.Response != `{"answer":"42"}` {
+		t.Errorf("expected response %q, got %q", `{"answer":"42"}`, resp.Response)
+	}
+	if resp.DoneReason != "stop" {
+		t.Errorf("expected done reason stop, got %s", resp.DoneReason)
+	}
+
+	// R6: prompt_eval_count reports the request's own prompt — its text
+	// tokens plus its image-embedding tokens, derived as pass two's
+	// cache-inclusive prefill minus the pure-text continuation delta — not
+	// the raw continuation prefill that re-counts the reasoning.
+	wantPrompt := len(strings.Fields(requests[0].Prompt)) + imageTokens
+	if resp.PromptEvalCount != wantPrompt {
+		t.Errorf("expected prompt eval count %d (the request's own prompt), got %d", wantPrompt, resp.PromptEvalCount)
+	}
+	// R6: eval_count totals both passes: the cancelled pass-one stream in
+	// its textual form plus the constrained continuation.
+	wantEval := len(strings.Fields(passOneRaw)) + 9
+	if resp.EvalCount != wantEval {
+		t.Errorf("expected eval count %d (both passes), got %d", wantEval, resp.EvalCount)
+	}
+	if resp.PromptEvalDuration < 30 {
+		t.Errorf("expected prompt eval duration to include pass two's, got %d", resp.PromptEvalDuration)
+	}
+	if resp.EvalDuration < 90 {
+		t.Errorf("expected eval duration to include pass two's, got %d", resp.EvalDuration)
+	}
+}
+
+// TestChatThinkFormatTransitionMetrics is the /api/chat side of R6 on the
+// transition flow: pass one is cancelled at the thinking→content transition
+// with no runner-reported metrics, and the final response must still total
+// eval_count across both passes and report the request's own prompt cost —
+// including the image-embedding tokens of a vision-shaped request, which
+// only the runner's prefill counts carry.
+func TestChatThinkFormatTransitionMetrics(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mock := &mockRunner{}
+	s := setupTransitionThinkingModel(t, mock, "test-transition-thinking-chat")
+
+	format := json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}}}`)
+	passOneRaw := `<think> Weighing the options carefully. </think> {"answer`
+
+	// imageTokens is the image-embedding surplus in the runner's prefill
+	// counts (~one gemma4 image): invisible to the whitespace-field mock
+	// Tokenize, present in the runner-reported PromptEvalCount.
+	const imageTokens = 256
+
+	var (
+		requestsMu sync.Mutex
+		requests   []llm.CompletionRequest
+	)
+
+	mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+		requestsMu.Lock()
+		requests = append(requests, r)
+		callNum := len(requests)
+		requestsMu.Unlock()
+
+		switch callNum {
+		case 1:
+			fn(llm.CompletionResponse{Content: passOneRaw, Done: false})
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Second):
+				t.Errorf("timeout waiting for structured outputs cancellation")
+				return nil
+			}
+		case 2:
+			fn(llm.CompletionResponse{
+				Content:    `{"answer":"42"}`,
+				Done:       true,
+				DoneReason: llm.DoneReasonStop,
+				// Pass two's cache-inclusive prefill: continuation text
+				// tokens plus image-embedding tokens. Not to be reported
+				// raw — it re-counts the reasoning as prompt.
+				PromptEvalCount:    len(strings.Fields(r.Prompt)) + imageTokens,
+				PromptEvalDuration: 30,
+				EvalCount:          5,
+				EvalDuration:       50,
+			})
+			return nil
+		default:
+			t.Errorf("unexpected number of completion calls: %d", callNum)
+			return nil
+		}
+	}
+
+	think := true
+	streamRequest := false
+	w := createRequest(t, s.ChatHandler, api.ChatRequest{
+		Model:    "test-transition-thinking-chat",
+		Messages: []api.Message{{Role: "user", Content: "Please respond in JSON."}},
+		Think:    &api.ThinkValue{Value: think},
+		Stream:   &streamRequest,
+		Format:   format,
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	if len(requests) != 2 {
+		t.Fatalf("expected two completion calls, got %d", len(requests))
+	}
+	if requests[0].Format != nil {
+		t.Errorf("expected first completion format to be nil, got %q", requests[0].Format)
+	}
+	if !bytes.Equal([]byte(format), []byte(requests[1].Format)) {
+		t.Errorf("expected second completion format to match original format")
+	}
+	if !strings.Contains(requests[1].Prompt, "assistant: <think>Weighing the options carefully. </think>") {
+		t.Errorf("expected continuation prompt to carry the thinking, got %q", requests[1].Prompt)
+	}
+
+	var resp api.ChatResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.Message.Thinking != "Weighing the options carefully. " {
+		t.Errorf("expected thinking %q, got %q", "Weighing the options carefully. ", resp.Message.Thinking)
+	}
+	if resp.Message.Content != `{"answer":"42"}` {
+		t.Errorf("expected content %q, got %q", `{"answer":"42"}`, resp.Message.Content)
+	}
+	if resp.DoneReason != "stop" {
+		t.Errorf("expected done reason stop, got %s", resp.DoneReason)
+	}
+
+	// R6: the request's own prompt cost, image tokens included — pass two's
+	// cache-inclusive prefill minus the pure-text continuation delta.
+	wantPrompt := len(strings.Fields(requests[0].Prompt)) + imageTokens
+	if resp.PromptEvalCount != wantPrompt {
+		t.Errorf("expected prompt eval count %d (the request's own prompt), got %d", wantPrompt, resp.PromptEvalCount)
+	}
+	wantEval := len(strings.Fields(passOneRaw)) + 5
+	if resp.EvalCount != wantEval {
+		t.Errorf("expected eval count %d (both passes), got %d", wantEval, resp.EvalCount)
+	}
+	if resp.PromptEvalDuration < 30 {
+		t.Errorf("expected prompt eval duration to include pass two's, got %d", resp.PromptEvalDuration)
+	}
+	if resp.EvalDuration < 50 {
+		t.Errorf("expected eval duration to include pass two's, got %d", resp.EvalDuration)
 	}
 }
