@@ -76,3 +76,13 @@ Then run:
 ```
 codex --profile ollama-launch
 ```
+
+### Reasoning effort
+
+Codex controls how much a thinking model reasons through the `model_reasoning_effort` setting in `~/.codex/config.toml`. With Ollama, the value must be one of `low`, `medium`, `high`, `max`, or `none`.
+
+The OpenAI-only values `minimal` and `xhigh` are not supported and are rejected with an `invalid reasoning value` error. If your existing Codex profile sets one of them, update it to a supported value:
+
+```toml
+model_reasoning_effort = "max"
+```
