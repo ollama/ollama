@@ -1,0 +1,69 @@
+diff --git a/ggml/src/CMakeLists.txt b/ggml/src/CMakeLists.txt
+index 1158347..bee9959 100644
+--- a/ggml/src/CMakeLists.txt
++++ b/ggml/src/CMakeLists.txt
+@@ -405,14 +405,56 @@ if (GGML_CPU_ALL_VARIANTS)
+             # Many of these features are optional so we build versions with popular
+             # combinations and name the backends based on the version they were
+             # first released with
+-            ggml_add_cpu_backend_variant(armv8.0_1)
+-            ggml_add_cpu_backend_variant(armv8.2_1    DOTPROD)
+-            ggml_add_cpu_backend_variant(armv8.2_2    DOTPROD FP16_VECTOR_ARITHMETIC)
+-            ggml_add_cpu_backend_variant(armv8.2_3    DOTPROD FP16_VECTOR_ARITHMETIC SVE)
+-            ggml_add_cpu_backend_variant(armv8.6_1    DOTPROD FP16_VECTOR_ARITHMETIC SVE MATMUL_INT8)
+-            ggml_add_cpu_backend_variant(armv8.6_2    DOTPROD FP16_VECTOR_ARITHMETIC SVE MATMUL_INT8 SVE2)
+-            ggml_add_cpu_backend_variant(armv9.2_1    DOTPROD FP16_VECTOR_ARITHMETIC SVE MATMUL_INT8 SME)
+-            ggml_add_cpu_backend_variant(armv9.2_2    DOTPROD FP16_VECTOR_ARITHMETIC SVE MATMUL_INT8 SVE2 SME)
++            # Some of these variants target -march values (e.g. armv9.2-a) that
++            # are only understood by newer toolchains. Older compilers (such as
++            # GCC 11 shipped on Ubuntu 22.04 / Jetson) abort with
++            # "unknown value '...' for '-march'" and take the whole build down.
++            # Probe the -march each variant needs and skip the unsupported ones
++            # instead of failing, mirroring the POWER11 handling below.
++            function(ggml_add_cpu_backend_variant_guarded tag_name)
++                set(GGML_CPU_GUARD_MARCH "armv8-a")
++                set(GGML_CPU_GUARD_TAGS  "")
++                foreach (feat IN LISTS ARGN)
++                    if (feat STREQUAL "DOTPROD")
++                        set(GGML_CPU_GUARD_MARCH "armv8.2-a")
++                        string(APPEND GGML_CPU_GUARD_TAGS "+dotprod")
++                    elseif (feat STREQUAL "FP16_VECTOR_ARITHMETIC")
++                        set(GGML_CPU_GUARD_MARCH "armv8.2-a")
++                        string(APPEND GGML_CPU_GUARD_TAGS "+fp16")
++                    elseif (feat STREQUAL "SVE")
++                        set(GGML_CPU_GUARD_MARCH "armv8.2-a")
++                        string(APPEND GGML_CPU_GUARD_TAGS "+sve")
++                    elseif (feat STREQUAL "MATMUL_INT8")
++                        set(GGML_CPU_GUARD_MARCH "armv8.6-a")
++                        string(APPEND GGML_CPU_GUARD_TAGS "+i8mm")
++                    elseif (feat STREQUAL "SVE2")
++                        set(GGML_CPU_GUARD_MARCH "armv8.6-a")
++                        string(APPEND GGML_CPU_GUARD_TAGS "+sve2")
++                    elseif (feat STREQUAL "NOSVE")
++                        string(APPEND GGML_CPU_GUARD_TAGS "+nosve")
++                    elseif (feat STREQUAL "SME")
++                        set(GGML_CPU_GUARD_MARCH "armv9.2-a")
++                        string(APPEND GGML_CPU_GUARD_TAGS "+sme")
++                    endif()
++                endforeach()
++                set(GGML_CPU_GUARD_FLAG "-march=${GGML_CPU_GUARD_MARCH}${GGML_CPU_GUARD_TAGS}")
++                string(MAKE_C_IDENTIFIER "GGML_MARCH_SUPPORTED_${GGML_CPU_GUARD_MARCH}${GGML_CPU_GUARD_TAGS}" GGML_CPU_GUARD_VAR)
++                check_cxx_compiler_flag("${GGML_CPU_GUARD_FLAG}" ${GGML_CPU_GUARD_VAR})
++                if (${GGML_CPU_GUARD_VAR})
++                    ggml_add_cpu_backend_variant(${tag_name} ${ARGN})
++                else()
++                    message(STATUS "ggml-cpu: skipping variant ${tag_name}; compiler does not support ${GGML_CPU_GUARD_FLAG}")
++                endif()
++            endfunction()
++
++            ggml_add_cpu_backend_variant_guarded(armv8.0_1)
++            ggml_add_cpu_backend_variant_guarded(armv8.2_1    DOTPROD)
++            ggml_add_cpu_backend_variant_guarded(armv8.2_2    DOTPROD FP16_VECTOR_ARITHMETIC)
++            ggml_add_cpu_backend_variant_guarded(armv8.2_3    DOTPROD FP16_VECTOR_ARITHMETIC SVE)
++            ggml_add_cpu_backend_variant_guarded(armv8.6_1    DOTPROD FP16_VECTOR_ARITHMETIC SVE MATMUL_INT8)
++            ggml_add_cpu_backend_variant_guarded(armv8.6_2    DOTPROD FP16_VECTOR_ARITHMETIC SVE MATMUL_INT8 SVE2)
++            ggml_add_cpu_backend_variant_guarded(armv9.2_1    DOTPROD FP16_VECTOR_ARITHMETIC SVE MATMUL_INT8 SME)
++            ggml_add_cpu_backend_variant_guarded(armv9.2_2    DOTPROD FP16_VECTOR_ARITHMETIC SVE MATMUL_INT8 SVE2 SME)
+         elseif (CMAKE_SYSTEM_NAME MATCHES "Android")
+             # Android-specific backends with SoC-compatible feature sets
+             ggml_add_cpu_backend_variant(android_armv8.0_1)
