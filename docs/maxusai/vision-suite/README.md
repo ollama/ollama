@@ -6,6 +6,15 @@ Reproducible ground-truth benchmarks behind the measured tables in
 
 ## Files
 
+- `preflight/` — **the pre-deploy regression gate.** Everything else here reports;
+  this asserts. One entry point takes an image tag and a platform, resolves a
+  profile from `(platform, version string)`, runs the applicable checks, and exits
+  non-zero with an expected-vs-actual diff. Expected values live in
+  `preflight/expectations.toml` and are versioned with the payload they describe,
+  because a compat patch legitimately changes them (004 made gemma4 flat, 005 moved
+  nemotron's pinned cost 3390 → 3270). Start at
+  [preflight/README.md](preflight/README.md); the operator procedure is the
+  `ollama-preflight` skill.
 - `gen_scenes.py` — deterministically renders the three test images into `visimgs/`
   plus `ground_truth.json`: a 1920×1080 labeled-shapes scene (20px labels, 14px corner
   serial), a 1568×1568 fake invoice (22px line items, 17px fine print), a 1280×960 bar
