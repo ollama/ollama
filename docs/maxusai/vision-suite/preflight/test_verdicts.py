@@ -182,12 +182,20 @@ class TestQualityThresholds(unittest.TestCase):
         with open(path, "w") as fh:
             json.dump(scores, fh)
         real_exists = os.path.exists
+
+        # Both the suite script and its ground truth must read as present. These
+        # tests exercise the SCORING logic; the absence path has its own test.
+        # Without the vision_suite.py leg they pass only where the rest of the
+        # suite happens to exist, and fail on any tree carrying preflight/ alone
+        # — release/0.32.1-dynres is exactly that.
+        def present(p):
+            return (True if p.endswith(("ground_truth.json", "vision_suite.py"))
+                    else real_exists(p))
+
         try:
             with mock.patch.object(checks.subprocess, "run",
                                    return_value=mock.Mock(stdout="", stderr="")), \
-                 mock.patch.object(checks.os.path, "exists",
-                                   lambda p: True if p.endswith("ground_truth.json")
-                                   else real_exists(p)):
+                 mock.patch.object(checks.os.path, "exists", present):
                 return checks.check_quality("http://stub", self.QUALITY,
                                             {"model": "m"}, "gemma4", tag)
         finally:
