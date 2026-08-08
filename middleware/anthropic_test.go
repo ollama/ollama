@@ -1065,6 +1065,144 @@ func TestWebSearchToolPresent_ModelCallsIt_NonStreaming(t *testing.T) {
 	}
 }
 
+func TestWebSearchDomainFiltersMutuallyExclusive(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.Use(AnthropicMessagesMiddleware())
+	router.POST("/v1/messages", func(c *gin.Context) {
+		t.Fatal("handler should not run when domain filters are invalid")
+	})
+
+	body := `{
+		"model":"test-model",
+		"max_tokens":100,
+		"messages":[{"role":"user","content":"hi"}],
+		"tools":[{
+			"type":"web_search_20250305",
+			"name":"web_search",
+			"allowed_domains":["nih.gov"],
+			"blocked_domains":["spam.com"]
+		}]
+	}`
+	req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", resp.Code, resp.Body.String())
+	}
+	if !strings.Contains(resp.Body.String(), "mutually exclusive") {
+		t.Fatalf("expected mutual exclusivity error, got %s", resp.Body.String())
+	}
+}
+
+func TestWebSearchAllowedDomainsFiltersResults(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	enableCloudForTest(t)
+
+	followupServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := api.ChatResponse{
+			Model:      "test-model",
+			Message:    api.Message{Role: "assistant", Content: "Filtered answer."},
+			Done:       true,
+			DoneReason: "stop",
+			Metrics:    api.Metrics{PromptEvalCount: 50, EvalCount: 20},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer followupServer.Close()
+	t.Setenv("OLLAMA_HOST", followupServer.URL)
+
+	var gotMaxResults int
+	searchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req anthropic.OllamaWebSearchRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		gotMaxResults = req.MaxResults
+		resp := anthropic.OllamaWebSearchResponse{
+			Results: []anthropic.OllamaWebSearchResult{
+				{Title: "NIH", URL: "https://www.nih.gov/a", Content: "ok"},
+				{Title: "Other", URL: "https://example.com/x", Content: "nope"},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer searchServer.Close()
+
+	originalEndpoint := anthropic.WebSearchEndpoint
+	anthropic.WebSearchEndpoint = searchServer.URL
+	defer func() { anthropic.WebSearchEndpoint = originalEndpoint }()
+
+	router := gin.New()
+	router.Use(AnthropicMessagesMiddleware())
+	router.POST("/v1/messages", func(c *gin.Context) {
+		resp := api.ChatResponse{
+			Model: "test-model",
+			Message: api.Message{
+				Role: "assistant",
+				ToolCalls: []api.ToolCall{{
+					ID: "call_ws_001",
+					Function: api.ToolCallFunction{
+						Name:      "web_search",
+						Arguments: makeArgs("query", "nih guidelines"),
+					},
+				}},
+			},
+			Done:       true,
+			DoneReason: "stop",
+			Metrics:    api.Metrics{PromptEvalCount: 15, EvalCount: 3},
+		}
+		data, _ := json.Marshal(resp)
+		c.Writer.WriteHeader(http.StatusOK)
+		_, _ = c.Writer.Write(data)
+	})
+
+	body := `{
+		"model":"test-model:cloud",
+		"max_tokens":100,
+		"messages":[{"role":"user","content":"nih?"}],
+		"tools":[{
+			"type":"web_search_20250305",
+			"name":"web_search",
+			"allowed_domains":["nih.gov"]
+		}]
+	}`
+	req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+	if gotMaxResults != 10 {
+		t.Fatalf("max_results = %d, want 10 when domain filters are set", gotMaxResults)
+	}
+
+	var result anthropic.MessagesResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal error: %v\nbody: %s", err, resp.Body.String())
+	}
+	if len(result.Content) < 2 {
+		t.Fatalf("expected search result block, got %+v", result.Content)
+	}
+
+	raw, err := json.Marshal(result.Content[1].Content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var searchResults []anthropic.WebSearchResult
+	if err := json.Unmarshal(raw, &searchResults); err != nil {
+		t.Fatalf("unmarshal search results: %v (%s)", err, string(raw))
+	}
+	if len(searchResults) != 1 || searchResults[0].URL != "https://www.nih.gov/a" {
+		t.Fatalf("expected only nih.gov result, got %+v", searchResults)
+	}
+}
+
 // TestWebSearchToolPresent_ModelCallsIt_Streaming tests the streaming SSE output
 // when the model calls web_search with mocked search and followup endpoints.
 func TestWebSearchToolPresent_ModelCallsIt_Streaming(t *testing.T) {

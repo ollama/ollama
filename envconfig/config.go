@@ -463,3 +463,8 @@ func NoCloudSource() string {
 		return "none"
 	}
 }
+
+// PrefillCacheDir returns the process-local directory for persisted prefill caches.
+func PrefillCacheDir() string {
+	return filepath.Join(os.TempDir(), "ollama-prefill-cache", fmt.Sprintf("%d", os.Getpid()))
+}

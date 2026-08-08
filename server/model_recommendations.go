@@ -372,9 +372,9 @@ var defaultModelRecommendations = []api.ModelRecommendation{
 		MaxOutputTokens: 262_144,
 	},
 	{
-		Model:           "glm-5.1:cloud",
+		Model:           "glm-5.2:cloud",
 		Description:     "Reasoning and code generation",
-		ContextLength:   202_752,
+		ContextLength:   1_048_576,
 		MaxOutputTokens: 131_072,
 	},
 	{
