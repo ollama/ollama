@@ -217,7 +217,7 @@ def main():
         description="Pre-deploy regression harness for ollama images.")
     ap.add_argument("--host", required=True, help="e.g. http://127.0.0.1:11437")
     ap.add_argument("--platform", required=True,
-                    choices=["cuda", "rocm", "apple-silicon"])
+                    choices=["cuda", "rocm", "apple-silicon", "apple-silicon-mlx"])
     ap.add_argument("--image-tag", help="image tag under test; verified against "
                                         "the running container when resolvable")
     ap.add_argument("--arch", action="append",

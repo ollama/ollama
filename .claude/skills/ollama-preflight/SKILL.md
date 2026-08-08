@@ -22,9 +22,13 @@ Establish three things. Guessing any of them wastes a twenty-minute run.
    entirely different server. Never assume; the harness asserts the version
    string first and aborts if it disagrees, which is the safety net, not a
    substitute for checking.
-3. **Which platform profile applies.** `cuda`, `rocm`, or `apple-silicon`. ROCm
-   is gated at 0.32.1 (`docs/maxusai/amd-upgrade-gate.md`) and runs a *different*
-   payload, so its expectations are not the CUDA ones.
+3. **Which platform profile applies.** `cuda`, `rocm`, `apple-silicon`, or
+   `apple-silicon-mlx`. ROCm is gated at 0.32.1
+   (`docs/maxusai/amd-upgrade-gate.md`) and runs a *different* payload, so its
+   expectations are not the CUDA ones. On a Mac the platform names the serving
+   stack, which version alone cannot: `apple-silicon` is the llama.cpp path,
+   `apple-silicon-mlx` is the MLX-store server (conventionally `:11436`,
+   `OLLAMA_MODELS=~/.ollama/models-mlx`).
 
 ## Order of work
 

@@ -80,6 +80,30 @@ point, so text-comparing generative output across backends is invalid even at
 identical prompt_eval_count. Only the token/quality checks carry over.
 """
 
+[profiles.apple-silicon-mlx]
+platform = "apple-silicon-mlx"
+# Native macOS serve against the MLX store (OLLAMA_MODELS=~/.ollama/models-mlx,
+# conventionally :11436). Same fork Go binary as the CPU profile, but the payload
+# under test is the Go MLX runner, not a llama.cpp patchset — (platform, version)
+# alone cannot tell the two serving stacks apart, so the operator states the
+# stack via --platform. Tighten this pattern to the exact stamp when the first
+# baseline is taken; a wider pattern is safe only while every expectation below
+# is unmeasured (NEEDS_BASELINE cannot false-pass).
+version_pattern = '^0\.3[2-9]\.[0-9]+-[a-z0-9]+-[0-9a-f]{7,40}$'
+patchset = []                     # llama.cpp compat patches do not apply to MLX
+reference_image = "native macOS build — no container"
+# The fork Go binary carries the --image-max-tokens flag either way; without a
+# container the binary and log checks are skipped by the harness anyway.
+expect_patch_marker = 1
+arches = ["gemma4", "gemma4_unified"]
+notes = """
+MLX vision merged to main 2026-08-08 (7380a61f); sizing goes through
+llm.BudgetFillSize. Audio input still returns an explicit 400 on MLX, so no
+audio probes. Native serve means no container: image_tag, patch-marker and
+load-log payload proof are skipped by design — the token ladder and generative
+probes are the evidence here.
+"""
+
 
 # =============================================================================
 # EXPECTATIONS — [expect.<profile>.<arch>]
@@ -234,6 +258,53 @@ measuring is exactly the silent-default failure this file exists to prevent.
 status = "unmeasured"
 model = "gemma4:31b-it-q4_K_M"
 reason = "Not yet measured on the arm64 image. See README.md, Adding an expectation."
+
+
+# ------------------------------------------------------ Apple Silicon / MLX --
+# The MLX store carries five standard-lineage gemma4 quants plus the unified
+# 12b (inventory verified 2026-08-08 from the store manifests/config blobs).
+# One `model` per arch block is the schema; the bf16 export anchors the
+# baseline and the quant sweep gets blocks as each variant is measured.
+
+[expect.apple-silicon-mlx.gemma4]
+status = "unmeasured"
+model = "gemma4:31b-mlx-bf16"
+reason = """
+Never measured — MLX vision only merged 2026-08-08 (7380a61f). What is known,
+and what this file refuses to assert without a measurement:
+
+  * Store inventory, all Gemma4ForConditionalGeneration with the 27-layer
+    vision tower (verified from config blobs): 31b-mlx-bf16 (63.5 GB),
+    26b-mlx-bf16 (52.5 GB), 26b-mxfp8 (27.7 GB), 31b-nvfp4 (18.6 GB),
+    26b-nvfp4 (17.6 GB). The bf16 anchors the baseline: quantisation error and
+    runner regressions must not be conflated in the first measured row.
+  * MLX sizing goes through llm.BudgetFillSize — the same budget-fill
+    semantics 004 gives llama.cpp — so the ladder is EXPECTED flat at ~1102
+    with scaling = "flat". Expected is not measured; 004 itself moved numbers
+    the derivation said could not move.
+  * The +2 marker_allowance is a llama-server media-marker convention and has
+    NOT been verified on the MLX runner's token accounting. Do not assume it.
+  * think_format applies: constrained sampling (x/structured) and the
+    transition-metrics fix are both live on MLX as of the 2026-08-08 merges.
+
+Measure per README.md "Adding an expectation" against the MLX-store server
+(conventionally :11436), bf16 first, then fill a block per quant variant —
+26b-mlx-bf16, 26b-mxfp8, 31b-nvfp4, 26b-nvfp4 — before trusting any of them
+in a deploy gate.
+"""
+
+[expect.apple-silicon-mlx.gemma4_unified]
+status = "unmeasured"
+model = "gemma4:12b-nvfp4"
+reason = """
+Different vision wiring from the standard lineage, so it is its own arch row:
+Gemma4UnifiedForConditionalGeneration has no vision tower — an early-fusion
+patch embedder (10 tensors, ~40 MB) with a 1120-slot learned position table
+and num_soft_tokens = 280 in vision_config. The ladder shape is genuinely
+unknown: budget-fill to ~1102 like the standard lineage, flat at ~280 soft
+tokens, or something else. Measure before setting `scaling`; the verdict
+logic must not inherit the standard-lineage row.
+"""
 
 
 # =============================================================================
