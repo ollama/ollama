@@ -299,6 +299,7 @@ console.log(response.message.content);
 - [ParLlama](https://github.com/paulrobello/parllama) - TUI for Ollama
 - [llm-ollama](https://github.com/taketwo/llm-ollama) - Plugin for [Datasette's LLM CLI](https://llm.datasette.io/en/stable/)
 - [ShellOracle](https://github.com/djcopley/ShellOracle) - Shell command suggestions
+- [ShellSage](https://github.com/AhsanAhmadkiani/ShellSage) - Local-first shell agent that turns plain English into OS-aware commands, with safety gating and command memory
 - [LLM-X](https://github.com/mrdjohnson/llm-x) - Progressive web app for LLMs
 - [cmdh](https://github.com/pgibler/cmdh) - Natural language to shell commands
 - [VT](https://github.com/vinhnx/vt.ai) - Minimal multimodal AI chat app
