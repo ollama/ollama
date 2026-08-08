@@ -86,10 +86,15 @@ Normative rules:
    profile's numbers across to make a run green is the failure this file exists to
    prevent.
 5. **An unknown `(platform, version)` combination is a hard error (exit 2), never a
-   default.** One baseline does not fit all hosts: the ROCm/gfx1151 host is pinned
-   to a pre-002 payload by the [AMD gate](../amd-upgrade-gate.md), so a 0.32.5-dynres
-   build declared as `--platform rocm` is refused rather than validated against CUDA
-   numbers.
+   default.** One baseline does not fit all hosts. The ROCm/gfx1151 host runs
+   `0.32.1-dynres` from the release lineage — **the same compat patch set as CUDA
+   (001+002+004+005) over a different llama.cpp payload, b9888 rather than b10091**.
+   The [AMD gate](../amd-upgrade-gate.md) blocks the 0.32.5 base and its b10091
+   payload, not the compat patches, which reached that lineage as adapted backports
+   (`5f6e7fdc`, `593fc3b1`, `35d9e58e`). Identical patch lists therefore do **not**
+   imply identical numbers, which is why profiles key on `(platform, version)` and
+   not on the patch set. A 0.32.5-dynres build declared as `--platform rocm` is
+   refused rather than validated against the wrong baseline.
 6. **The payload patch proof is the model-load log, never binary inspection.**
    `load_hparams: image_max_pixels: N (custom value)` with `N == max_tokens × S²`,
    `S = patch_size × n_merge`. Static inspection of `libmtmd.so` is unreliable and

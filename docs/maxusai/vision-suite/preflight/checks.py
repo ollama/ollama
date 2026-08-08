@@ -426,6 +426,18 @@ def check_quality(host, quality, expect, arch, tag, timeout=5400):
     tests = quality.get("tests", ["scene_single", "document_single"])
     model = expect["model"]
 
+    # The harness is cherry-picked to lineages that do not carry the whole vision
+    # suite (release/0.32.1-dynres has preflight/ but no vision_suite.py). Skip
+    # with a reason rather than erroring — a missing scorer is not a build defect,
+    # and reporting it as one is the false-failure class this harness exists to
+    # remove. Token and payload checks are unaffected.
+    if not os.path.exists(os.path.join(SUITE_DIR, "vision_suite.py")):
+        return result(name, SKIP, "vision_suite.py is not present in this tree",
+                      arch=arch,
+                      diagnosis="Extraction scoring is delegated to the vision "
+                                "suite, which is not on every lineage. Run the "
+                                "quality arm from a tree that carries it.")
+
     # visimgs/ is gitignored, so on a fresh clone vision_suite.py fails at import
     # (it loads ground_truth.json at module level). Generate the scenes first.
     ground_truth = os.path.join(SUITE_DIR, "visimgs", "ground_truth.json")

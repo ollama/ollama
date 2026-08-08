@@ -28,14 +28,25 @@ results); this code owns the *assertions*.
 This extends the vision suite rather than replacing it. `measure.py` reports;
 this asserts. `vision_suite.py` scores; this applies thresholds to its scores.
 
-> **One method difference from `measure.py`, and it matters.** `measure.py` takes
-> its text-only baseline with the prompt `"Hi"` but probes images with
-> `"Describe briefly."`, so its reported visual-token deltas carry the difference
-> in *prompt* length — measured on `nemotron3:33b-q8`, 18 vs 21 tokens, a constant
-> +3 on every row it prints. This harness uses one prompt for both, so the
-> subtraction cancels the text exactly. That correction is what makes the ladder
-> reproduce the recorded expectations to the token; before it, all five rows were
-> uniformly +3 and looked like a regression.
+> **Getting the subtrahend right takes two corrections, not one.** Both are now in
+> `probes.Ollama.image_prefix()`, and SPEC B8 makes them normative.
+>
+> 1. **One prompt everywhere.** `measure.py` used to baseline with `"Hi"` and probe
+>    with `"Describe briefly."`, so the *prompt*-length difference landed in every
+>    row (18 vs 21 tokens on `nemotron3:33b-q8`). Fixed upstream of this branch.
+> 2. **The text prefix is not the text-only count.** Attaching an image can change
+>    how the template renders the surrounding text. Same prompt, same model:
+>    text-only 21, but the prefix inside an image request **20**. A matched-prompt
+>    text-only baseline therefore reads every nemotron image exactly 1 token *low*.
+>    `gemma4:31b` measures 19 both ways, so this is arch-specific and cannot be
+>    hardcoded.
+>
+> This harness calibrates the prefix from a two-image difference —
+> `count(A) + count(B) − count(A,B)`, which cancels it without trusting a text-only
+> probe or assuming a grid. Until 2026-08-08 it did (2) wrong, which is why the
+> recorded ladder read `[265, 265, 577, 2305, 3269]`: uniformly 1 low, and briefly
+> written off as grid quantisation. Corrected to `[266, 266, 578, 2306, 3270]`,
+> which agrees with the pinned `expect_tokens` and `TestImageTokensForSize`.
 
 ## Relationship to the no-GPU gates
 
@@ -180,8 +191,8 @@ from probes import Ollama
 c = Ollama("http://127.0.0.1:11437")
 print("version:", c.version())
 model = "nemotron3:33b-q8"
-base, _ = c.text_baseline(model)
-print("text-only baseline:", base)
+base, text_only, _ = c.image_prefix(model)   # NOT text_baseline() -- see B8
+print(f"in-image prefix: {base}  (text-only: {text_only})")
 for size in ["256x144", "512x288", "1024x576", "2048x1152", "3072x1728"]:
     delta, _ = c.visual_tokens(model, size, base)
     print(f"  {size:>10}: {delta}")

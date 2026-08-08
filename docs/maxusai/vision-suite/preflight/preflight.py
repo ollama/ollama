@@ -167,14 +167,21 @@ def run_arch(client, exp, profile_id, arch, args, container, results, flush):
 
     # ---- budget group 1: default budget, no reloads ----
     try:
-        baseline, _ = client.text_baseline(model)
+        baseline, text_only, detail = client.image_prefix(model)
     except ProbeError as exc:
         results.append(checks.result("text_baseline", ERROR, str(exc), arch=arch))
         flush()
         return
+    skew = text_only - baseline
+    note = (f"in-image text prefix = {baseline} "
+            f"(calibrated on {detail['size_a']}+{detail['size_b']}); "
+            f"text-only = {text_only}")
+    if skew:
+        # Not noise. A constant, reproducible offset -- subtracting the
+        # text-only count here would move every image token count by `skew`.
+        note += f"; text-only is {skew:+d} and MUST NOT be used (B8)"
     results.append(checks.result(
-        "text_baseline", PASS, f"text-only prompt_eval_count = {baseline}",
-        arch=arch, actual=baseline))
+        "text_baseline", PASS, note, arch=arch, actual=baseline))
     flush()
 
     print(f"    token ladder ({len(exp['ladder_sizes'])} geometries, default budget)...")
