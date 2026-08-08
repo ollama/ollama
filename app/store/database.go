@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -51,7 +52,19 @@ func newDatabase(dbPath string) (*database, error) {
 }
 
 func (db *database) Close() error {
+	// Checkpoint WAL to ensure all writes are flushed
 	_, _ = db.conn.Exec("PRAGMA wal_checkpoint(TRUNCATE);")
+
+	// Vacuum database to reclaim disk space from deleted records
+	// This can fail if disk space is tight, but we still want to close cleanly
+	if _, err := db.conn.Exec("VACUUM;"); err != nil {
+		slog.Warn("failed to vacuum database during close", "error", err)
+	}
+
+	// Reindex to optimize query performance after vacuum
+	if _, err := db.conn.Exec("REINDEX;"); err != nil {
+		slog.Warn("failed to reindex database during close", "error", err)
+	}
 
 	return db.conn.Close()
 }
