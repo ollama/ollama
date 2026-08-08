@@ -73,8 +73,11 @@ docker run -d --device /dev/kfd --device /dev/dri -v ollama:/root/.ollama -p 114
 Vulkan is bundled into the `ollama/ollama` image and is enabled by default when
 the container can access the GPU devices.
 
+Vulkan needs the GPU render nodes at `/dev/dri`. Unlike the AMD ROCm command
+above, it does not need `/dev/kfd`, which is not present for Intel GPUs.
+
 ```shell
-docker run -d --device /dev/kfd --device /dev/dri -v ollama:/root/.ollama -p 11434:11434 --name ollama ollama/ollama
+docker run -d --device /dev/dri -v ollama:/root/.ollama -p 11434:11434 --name ollama ollama/ollama
 ```
 
 Use `OLLAMA_VULKAN=0` to disable Vulkan, or `GGML_VK_VISIBLE_DEVICES=<ids>` to
