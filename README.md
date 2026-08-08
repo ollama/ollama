@@ -328,6 +328,8 @@ console.log(response.message.content);
 - [Langfuse](https://langfuse.com/docs/integrations/ollama) - Open source LLM observability
 - [HoneyHive](https://docs.honeyhive.ai/integrations/ollama) - AI observability and evaluation for agents
 - [MLflow Tracing](https://mlflow.org/docs/latest/llms/tracing/index.html#automatic-tracing) - Open source LLM observability
+- [Ollama Monitor](https://github.com/Jamalianpour/ollama-monitor) - Real-time dashboard for running models, requests, GPU, system metrics, and logs
+
 
 ### Database & Embeddings
 
