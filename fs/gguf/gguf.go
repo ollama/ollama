@@ -58,6 +58,12 @@ func Open(path string) (f *File, err error) {
 		return nil, err
 	}
 
+	defer func() {
+		if err != nil {
+			f.file.Close()
+		}
+	}()
+
 	f.reader = newBufferedReader(f.file, 32<<10)
 
 	if err := binary.Read(f.reader, binary.LittleEndian, &f.Magic); err != nil {
@@ -65,7 +71,8 @@ func Open(path string) (f *File, err error) {
 	}
 
 	if bytes.Equal(f.Magic[:], []byte("gguf")) {
-		return nil, fmt.Errorf("%w file type %v", ErrUnsupported, f.Magic)
+		err = fmt.Errorf("%w file type %v", ErrUnsupported, f.Magic)
+		return nil, err
 	}
 
 	if err := binary.Read(f.reader, binary.LittleEndian, &f.Version); err != nil {
@@ -73,13 +80,20 @@ func Open(path string) (f *File, err error) {
 	}
 
 	if f.Version < 2 {
-		return nil, fmt.Errorf("%w version %v", ErrUnsupported, f.Version)
+		err = fmt.Errorf("%w version %v", ErrUnsupported, f.Version)
+		return nil, err
 	}
 
 	f.tensors, err = newLazy(f, f.readTensor)
 	if err != nil {
 		return nil, err
 	}
+
+	defer func() {
+		if err != nil {
+			f.tensors.stop()
+		}
+	}()
 
 	f.tensors.successFunc = func() error {
 		offset := f.reader.offset
