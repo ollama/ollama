@@ -282,7 +282,7 @@ func BenchmarkModel(fOpt flagOptions) error {
 
 	var out io.Writer = os.Stdout
 	if fOpt.outputFile != nil && *fOpt.outputFile != "" {
-		f, err := os.OpenFile(*fOpt.outputFile, os.O_CREATE|os.O_WRONLY, 0o644)
+		f, err := os.OpenFile(*fOpt.outputFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: cannot open output file %s: %v\n", *fOpt.outputFile, err)
 			return err
