@@ -309,7 +309,7 @@ bool firstTimeRun,startHidden; // Set in run before initialization
 }
 
 - (BOOL)windowShouldClose:(id)sender {
-    [NSApp hide:nil];
+    [self hide];
     return NO;
 }
 
