@@ -4,13 +4,20 @@ title: FAQ
 
 ## How can I upgrade Ollama?
 
+You can upgrade Ollama directly using the CLI:
+
+```shell
+ollama update
+```
+
 Ollama on macOS and Windows will automatically download updates. Click on the taskbar or menubar item and then click "Restart to update" to apply the update. Updates can also be installed by downloading the latest version [manually](https://ollama.com/download/).
 
-On Linux, re-run the install script:
+On Linux, `ollama update` will automatically re-run the install script (or you can run it manually):
 
 ```shell
 curl -fsSL https://ollama.com/install.sh | sh
 ```
+
 
 ## How can I view the logs?
 
