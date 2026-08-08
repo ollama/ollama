@@ -2164,7 +2164,7 @@ func TestWebSearchStreamingUsageUsesObservedChunkMetrics(t *testing.T) {
 			Message:    api.Message{Role: "assistant", Content: "After search."},
 			Done:       true,
 			DoneReason: "stop",
-			Metrics:    api.Metrics{PromptEvalCount: 20, EvalCount: 7},
+			Metrics:    api.Metrics{PromptEvalCount: 20, PromptEvalCachedCount: 5, EvalCount: 7},
 		}
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
@@ -2192,7 +2192,7 @@ func TestWebSearchStreamingUsageUsesObservedChunkMetrics(t *testing.T) {
 				Model:   "test-model",
 				Message: api.Message{Role: "assistant", Content: "Preface "},
 				Done:    false,
-				Metrics: api.Metrics{PromptEvalCount: 12, EvalCount: 4},
+				Metrics: api.Metrics{PromptEvalCount: 12, PromptEvalCachedCount: 4, EvalCount: 4},
 			},
 			{
 				Model: "test-model",
@@ -2216,7 +2216,7 @@ func TestWebSearchStreamingUsageUsesObservedChunkMetrics(t *testing.T) {
 				Message:    api.Message{Role: "assistant"},
 				Done:       true,
 				DoneReason: "stop",
-				Metrics:    api.Metrics{PromptEvalCount: 12, EvalCount: 4},
+				Metrics:    api.Metrics{PromptEvalCount: 12, PromptEvalCachedCount: 4, EvalCount: 4},
 			},
 		}
 		c.Writer.WriteHeader(http.StatusOK)
@@ -2259,8 +2259,11 @@ func TestWebSearchStreamingUsageUsesObservedChunkMetrics(t *testing.T) {
 	if !found {
 		t.Fatal("expected message_delta event")
 	}
-	if messageDelta.Usage.InputTokens != 32 {
-		t.Fatalf("expected aggregated input tokens 32 (12 passthrough + 20 followup), got %d", messageDelta.Usage.InputTokens)
+	if messageDelta.Usage.InputTokens != 23 {
+		t.Fatalf("expected aggregated fresh input tokens 23 ((12-4) passthrough + (20-5) followup), got %d", messageDelta.Usage.InputTokens)
+	}
+	if messageDelta.Usage.CacheReadInputTokens != 9 {
+		t.Fatalf("expected aggregated cache read tokens 9 (4 passthrough + 5 followup), got %d", messageDelta.Usage.CacheReadInputTokens)
 	}
 	if messageDelta.Usage.OutputTokens != 11 {
 		t.Fatalf("expected aggregated output tokens 11 (4 passthrough + 7 followup), got %d", messageDelta.Usage.OutputTokens)

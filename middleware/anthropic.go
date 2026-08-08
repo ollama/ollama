@@ -101,13 +101,13 @@ type WebSearchAnthropicWriter struct {
 
 	terminalSent bool
 
-	observedPromptEvalCount int
-	observedEvalCount       int
+	observedPromptEvalCount       int
+	observedPromptEvalCachedCount int
+	observedEvalCount             int
 
-	loopInFlight      bool
-	loopBaseInputTok  int
-	loopBaseOutputTok int
-	loopResultCh      chan webSearchLoopResult
+	loopInFlight  bool
+	loopBaseUsage anthropic.Usage
+	loopResultCh  chan webSearchLoopResult
 
 	streamMessageStarted bool
 	streamHasOpenBlock   bool
@@ -201,10 +201,7 @@ func (w *WebSearchAnthropicWriter) Write(data []byte) (int, error) {
 	loopCtx, cancel := w.startLoopContext()
 	defer cancel()
 
-	initialUsage := anthropic.Usage{
-		InputTokens:  max(w.observedPromptEvalCount, chatResponse.Metrics.PromptEvalCount),
-		OutputTokens: max(w.observedEvalCount, chatResponse.Metrics.EvalCount),
-	}
+	initialUsage := w.usageWithObservedMetrics(chatResponse.Metrics)
 	logutil.Trace("anthropic middleware: starting sync web_search loop",
 		"tool_call", anthropic.TraceToolCall(webSearchCall),
 		"resp", anthropic.TraceChatResponse(chatResponse),
@@ -319,8 +316,7 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 			"resp", anthropic.TraceChatResponse(followUpResponse),
 		)
 
-		usage.InputTokens += followUpResponse.Metrics.PromptEvalCount
-		usage.OutputTokens += followUpResponse.Metrics.EvalCount
+		usage.Add(anthropic.UsageFromMetrics(followUpResponse.Metrics))
 
 		nextToolCall, hasWebSearch, hasOtherTools := findWebSearchToolCall(followUpResponse.Message.ToolCalls)
 		if hasWebSearch && hasOtherTools {
@@ -380,12 +376,8 @@ func (w *WebSearchAnthropicWriter) startLoopWorker(initialResponse api.ChatRespo
 		return
 	}
 
-	initialUsage := anthropic.Usage{
-		InputTokens:  max(w.observedPromptEvalCount, initialResponse.Metrics.PromptEvalCount),
-		OutputTokens: max(w.observedEvalCount, initialResponse.Metrics.EvalCount),
-	}
-	w.loopBaseInputTok = initialUsage.InputTokens
-	w.loopBaseOutputTok = initialUsage.OutputTokens
+	initialUsage := w.usageWithObservedMetrics(initialResponse.Metrics)
+	w.loopBaseUsage = initialUsage
 	w.loopResultCh = make(chan webSearchLoopResult, 1)
 	w.loopInFlight = true
 	logutil.Trace("anthropic middleware: loop worker started",
@@ -438,25 +430,42 @@ func (w *WebSearchAnthropicWriter) recordObservedUsage(metrics api.Metrics) {
 	if metrics.PromptEvalCount > w.observedPromptEvalCount {
 		w.observedPromptEvalCount = metrics.PromptEvalCount
 	}
+	if metrics.PromptEvalCachedCount > w.observedPromptEvalCachedCount {
+		w.observedPromptEvalCachedCount = metrics.PromptEvalCachedCount
+	}
 	if metrics.EvalCount > w.observedEvalCount {
 		w.observedEvalCount = metrics.EvalCount
 	}
 }
 
 func (w *WebSearchAnthropicWriter) applyObservedUsageDeltaToUsage(usage *anthropic.Usage) {
-	if deltaIn := w.observedPromptEvalCount - w.loopBaseInputTok; deltaIn > 0 {
-		usage.InputTokens += deltaIn
-	}
-	if deltaOut := w.observedEvalCount - w.loopBaseOutputTok; deltaOut > 0 {
-		usage.OutputTokens += deltaOut
-	}
+	observed := w.currentObservedUsage()
+	usage.InputTokens += observed.InputTokens - w.loopBaseUsage.InputTokens
+	usage.CacheCreationInputTokens += observed.CacheCreationInputTokens - w.loopBaseUsage.CacheCreationInputTokens
+	usage.CacheReadInputTokens += observed.CacheReadInputTokens - w.loopBaseUsage.CacheReadInputTokens
+	usage.OutputTokens += observed.OutputTokens - w.loopBaseUsage.OutputTokens
 }
 
 func (w *WebSearchAnthropicWriter) currentObservedUsage() anthropic.Usage {
-	return anthropic.Usage{
-		InputTokens:  w.observedPromptEvalCount,
-		OutputTokens: w.observedEvalCount,
+	return anthropic.UsageFromMetrics(api.Metrics{
+		PromptEvalCount:       w.observedPromptEvalCount,
+		PromptEvalCachedCount: w.observedPromptEvalCachedCount,
+		EvalCount:             w.observedEvalCount,
+	})
+}
+
+func (w *WebSearchAnthropicWriter) usageWithObservedMetrics(metrics api.Metrics) anthropic.Usage {
+	if w.observedPromptEvalCount > metrics.PromptEvalCount {
+		metrics.PromptEvalCount = w.observedPromptEvalCount
 	}
+	if w.observedPromptEvalCachedCount > metrics.PromptEvalCachedCount {
+		metrics.PromptEvalCachedCount = w.observedPromptEvalCachedCount
+	}
+	if w.observedEvalCount > metrics.EvalCount {
+		metrics.EvalCount = w.observedEvalCount
+	}
+
+	return anthropic.UsageFromMetrics(metrics)
 }
 
 func (w *WebSearchAnthropicWriter) startLoopContext() (context.Context, context.CancelFunc) {
@@ -625,7 +634,7 @@ func (w *WebSearchAnthropicWriter) ensureStreamMessageStart(usage anthropic.Usag
 	}
 
 	inputTokens := usage.InputTokens
-	if inputTokens == 0 {
+	if inputTokens == 0 && usage.CacheCreationInputTokens == 0 && usage.CacheReadInputTokens == 0 {
 		inputTokens = w.estimatedInputTokens
 	}
 
@@ -638,7 +647,9 @@ func (w *WebSearchAnthropicWriter) ensureStreamMessageStart(usage anthropic.Usag
 			Model:   w.req.Model,
 			Content: []anthropic.ContentBlock{},
 			Usage: anthropic.Usage{
-				InputTokens: inputTokens,
+				InputTokens:              inputTokens,
+				CacheCreationInputTokens: usage.CacheCreationInputTokens,
+				CacheReadInputTokens:     usage.CacheReadInputTokens,
 			},
 		},
 	}); err != nil {
@@ -751,8 +762,10 @@ func (w *WebSearchAnthropicWriter) writeTerminalResponse(response anthropic.Mess
 			StopReason: response.StopReason,
 		},
 		Usage: anthropic.DeltaUsage{
-			InputTokens:  response.Usage.InputTokens,
-			OutputTokens: response.Usage.OutputTokens,
+			InputTokens:              response.Usage.InputTokens,
+			CacheCreationInputTokens: response.Usage.CacheCreationInputTokens,
+			CacheReadInputTokens:     response.Usage.CacheReadInputTokens,
+			OutputTokens:             response.Usage.OutputTokens,
 		},
 	}); err != nil {
 		return err
