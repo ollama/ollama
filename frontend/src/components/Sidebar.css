@@ -1,0 +1,129 @@
+.sidebar {
+  width: 260px;
+  background: #0f0f0f;
+  border-right: 1px solid #333;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.sidebar-header {
+  padding: 1.5rem 1rem;
+  border-bottom: 1px solid #333;
+}
+
+.sidebar-header h2 {
+  margin: 0 0 1rem 0;
+  font-size: 1.25rem;
+  color: #e0e0e0;
+}
+
+.new-chat-button {
+  width: 100%;
+  padding: 0.75rem;
+  background: #1a73e8;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.new-chat-button:hover {
+  background: #1557b0;
+}
+
+.sessions-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.5rem;
+}
+
+.session-item {
+  padding: 0.75rem;
+  margin-bottom: 0.25rem;
+  background: #1a1a1a;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: background 0.2s;
+}
+
+.session-item:hover {
+  background: #2a2a2a;
+}
+
+.session-item.active {
+  background: #2a2a2a;
+  border-left: 3px solid #1a73e8;
+}
+
+.session-title {
+  flex: 1;
+  color: #e0e0e0;
+  font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.delete-button {
+  background: none;
+  border: none;
+  color: #666;
+  cursor: pointer;
+  font-size: 1.5rem;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.delete-button:hover {
+  color: #ff4444;
+}
+
+.sidebar-footer {
+  padding: 1rem;
+  border-top: 1px solid #333;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.sidebar-footer .github-button {
+  width: 100%;
+  padding: 0.75rem;
+  background: #24292e;
+  color: #e0e0e0;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.sidebar-footer .github-button:hover {
+  background: #2f363d;
+}
+
+.sidebar-footer .logout-button {
+  width: 100%;
+  padding: 0.75rem;
+  background: #444;
+  color: #e0e0e0;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.sidebar-footer .logout-button:hover {
+  background: #555;
+}

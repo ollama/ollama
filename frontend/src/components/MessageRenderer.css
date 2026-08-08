@@ -1,0 +1,151 @@
+.markdown-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.message-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+
+.inline-code {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 0.9em;
+  color: #ffa07a;
+}
+
+.code-block-wrapper {
+  background: #2d2d2d;
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 0.5rem 0;
+  border: 1px solid #444;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.code-block-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 1rem;
+  background: #1e1e1e;
+  border-bottom: 1px solid #444;
+}
+
+.code-language {
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 0.85rem;
+  color: #9cdcfe;
+  text-transform: lowercase;
+  font-weight: 500;
+}
+
+.copy-button {
+  background: transparent;
+  border: none;
+  color: #858585;
+  cursor: pointer;
+  padding: 0.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.copy-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #e0e0e0;
+}
+
+.code-block-content {
+  display: flex;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.line-numbers {
+  background: #1e1e1e;
+  padding: 1rem 0.75rem;
+  text-align: right;
+  user-select: none;
+  border-right: 1px solid #444;
+  min-width: 3rem;
+}
+
+.line-number {
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 0.85rem;
+  color: #858585;
+  line-height: 1.5;
+  height: 1.5em;
+}
+
+.code-pre {
+  flex: 1;
+  margin: 0;
+  padding: 1rem;
+  overflow-x: auto;
+  background: #2d2d2d;
+}
+
+.code-pre code {
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: #d4d4d4;
+  display: block;
+}
+
+.code-line {
+  height: 1.5em;
+  line-height: 1.5;
+}
+
+/* Syntax highlighting colors */
+.language-javascript .code-line,
+.language-typescript .code-line,
+.language-js .code-line,
+.language-ts .code-line {
+  color: #d4d4d4;
+}
+
+/* Keywords */
+.code-line:has-text("function"),
+.code-line:has-text("const"),
+.code-line:has-text("let"),
+.code-line:has-text("var"),
+.code-line:has-text("return"),
+.code-line:has-text("if"),
+.code-line:has-text("else"),
+.code-line:has-text("for"),
+.code-line:has-text("while") {
+  color: #c586c0;
+}
+
+/* Scrollbar styling */
+.code-block-content::-webkit-scrollbar,
+.code-pre::-webkit-scrollbar {
+  height: 8px;
+}
+
+.code-block-content::-webkit-scrollbar-track,
+.code-pre::-webkit-scrollbar-track {
+  background: #1e1e1e;
+}
+
+.code-block-content::-webkit-scrollbar-thumb,
+.code-pre::-webkit-scrollbar-thumb {
+  background: #555;
+  border-radius: 4px;
+}
+
+.code-block-content::-webkit-scrollbar-thumb:hover,
+.code-pre::-webkit-scrollbar-thumb:hover {
+  background: #666;
+}
