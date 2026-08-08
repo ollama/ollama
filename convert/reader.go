@@ -76,11 +76,23 @@ func (t *tensorBase) SetRepacker(fn Repacker) {
 type Repacker func(string, []float32, []uint64) ([]float32, error)
 
 func parseTensors(fsys fs.FS, replacer *strings.Replacer) ([]Tensor, error) {
+	matches, err := fs.Glob(fsys, "*.safetensors")
+	if err != nil {
+		return nil, err
+	}
+	nestedMatches, err := fs.Glob(fsys, "*/*.safetensors")
+	if err != nil {
+		return nil, err
+	}
+	matches = append(matches, nestedMatches...)
+	if len(matches) > 0 {
+		return parseSafetensors(fsys, replacer, matches...)
+	}
+
 	patterns := []struct {
 		Pattern string
 		Func    func(fs.FS, *strings.Replacer, ...string) ([]Tensor, error)
 	}{
-		{"*.safetensors", parseSafetensors},
 		{"pytorch_model-*-of-*.bin", parseTorch},
 		{"pytorch_model.bin", parseTorch},
 		{"consolidated.*.pth", parseTorch},
