@@ -7,19 +7,33 @@ back to `0.32.1-gemma4budget-85ebcb79`.
 > **The one thing to take away:** do **not** upgrade the AMD/gfx1151 deployment past
 > **0.32.1** until [#17459](https://github.com/ollama/ollama/issues/17459) and
 > [#17475](https://github.com/ollama/ollama/issues/17475) are closed **and**
-> `--direct-io` is confirmed safe on ROCm iGPUs. The pinned image is
-> `maxusai-ollama:0.32.1-rocm-gemma4budget`. This gate is about the **upstream payload**,
-> not about anything the fork changed.
+> `--direct-io` is confirmed safe on ROCm iGPUs. The deployed image is
+> `maxusai-ollama:0.32.1-rocm-dynres-35d9e58e` (see Status). This gate is about the
+> **upstream payload**, not about anything the fork changed — moving *within* the b9888
+> lineage, as the 2026-08-08 deploy did, is not an upgrade and is not gated.
 
 ## Status
 
 | | |
 |---|---|
-| Pinned image | `maxusai-ollama:0.32.1-rocm-gemma4budget` |
-| Pinned version | `0.32.1-gemma4budget-85ebcb79` |
+| Deployed image | `maxusai-ollama:0.32.1-rocm-dynres-35d9e58e` (since 2026-08-08) |
+| Deployed version | `0.32.1-dynres-35d9e58e` |
+| Build type | **full** `FLAVOR=rocm` from `release/0.32.1-dynres`; compat **002 + 004 + 005** |
+| Payload | **b9888** — gate-safe; no `--direct-io` |
+| Previous image | `maxusai-ollama:0.32.1-rocm-gemma4budget` (`0.32.1-gemma4budget-85ebcb79`) — retained for rollback |
 | Blocked target | `0.32.5-gemma4budget-4259c191` (built, verified, **rolled back**) |
 | Host | Ryzen AI Max+ 395 / Radeon 8060S, **gfx1151**, ROCm, Linux |
 | Gate lifts when | #17459 **and** #17475 closed, **and** `--direct-io` re-validated on ROCm iGPU |
+
+The 2026-08-08 change swapped one b9888 image for another and **did not touch the gate**.
+The overlay image it replaced could not carry `llama/compat/*.patch` at all, so shipping
+002/004/005 required a full build — see [ADR 0006](adr/0006-release-lineage-is-never-merged-into-main.md)
+and the deploy record in [nemotron-test-image.md](nemotron-test-image.md).
+
+**Where these docs live.** `main` is the canonical home for fork documentation, including
+this gate. `release/0.32.1-dynres` deliberately does **not** carry them — duplicating docs
+across both lineages is the cost ADR 0006 exists to avoid, not something to chase. Read the
+docs on `main`; build the artefact from the release branch.
 
 ## What was observed
 

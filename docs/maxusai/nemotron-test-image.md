@@ -327,3 +327,48 @@ the operator with `OLLAMA_KV_CACHE_TYPE=f16` (same gemma4budget image;
 rollback container `ollama-rocm-q8backup` retained). The q8_0 reasoning-
 inflation exposure (campaign §6) is closed fleet-wide; q8_0 remains available
 per-request via the pair syntax where memory matters.
+
+---
+
+## Deploy record — `35d9e58e` promoted to prod `:11434` (2026-08-08)
+
+**First full build to reach production.** `maxusai-ollama:0.32.1-rocm-dynres-35d9e58e`
+(version `0.32.1-dynres-35d9e58e`), a `FLAVOR=rocm` Dockerfile build from
+`release/0.32.1-dynres`, replacing the overlay `…-gemma4budget-85ebcb79`. Carries compat
+**002** (nemotron dynamic resolution — was a hard 256 tokens/image, now up to 3328), **004**
+(gemma4 budget-fill sizing), **005** (pinned-budget overshoot). The overlay cannot carry any
+of them: they are C++ under `llama/compat`, and the overlay rebuilds only the Go binary.
+
+Gate-safe: payload **b9888**, `--direct-io` absent. This is a move *within* the b9888
+lineage, not an upgrade past it, so [amd-upgrade-gate.md](amd-upgrade-gate.md) is unaffected.
+
+**Build cost, measured** (corrects the ~45–70 GB figure, which is the all-flavours build):
+~24 min wall, ~12 GB net disk (82 G → 70 G free), 3.08 GB image, cold cache, base already
+pulled.
+
+**Verified before cutover** (bench container on `:11435`, store `:ro`, `NUM_PARALLEL=1`):
+
+| model | scene IoU | doc IoU | img tok | notes |
+|---|---|---|---|---|
+| gemma4:31b @1120 | 0.961 | 0.728 | 1100 / 1089 | both grids on-ladder (SPEC B7) |
+| qwen3.6 35B-A3B | 0.953 | 0.320 | 2031 | W3 all correct |
+| nemotron3 33B | 0.840 | 0.058 | 2026 | W3 all correct |
+
+005 confirmed: `pinned 3328` delivers **3254** (≤ ceiling), against `3388 ⚠` pre-005 in the
+baseline §4.3.
+
+**The decisive check was `qwen3.6`** — the model `10.8.0.6` actually drives, and the one
+that degenerated in the July incident. Its document IoU of 0.320 looked like a regression
+against the 0.686 recorded on Metal, so it was A/B'd on the *same hardware* against the
+outgoing image: **0.317 vs 0.320**, `prompt_eval` byte-identical (2615 / 2743). Platform,
+not patches. qwen3.6 touches none of 002/004/005 (004 is gemma4-only; 002/005 are
+nemotron/dyn_size). Full cell: [vision-benchmark-baseline.md](vision-benchmark-baseline.md) §4.5.
+
+**Not verified:** the exit-255 crash seen on `dynres-258534eb` (inside `process_mtmd`,
+`n_tokens = 8601`) did **not** recur, but the suite's heaviest leg reached only 6203 tokens,
+so the triggering conditions were never reproduced. No-crash here is not evidence of a fix.
+
+Deploy notes: the outgoing container had lost its compose labels (recreated outside compose
+on 2026-08-02), so `docker compose up -d` could not adopt it and left an orphan; it needed an
+explicit `docker rm -f` and a brief stop rather than a seamless recreate. It is
+compose-managed again. Rollback images retained; `~/deployments` `.env` carries the chain.
