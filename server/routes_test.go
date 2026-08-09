@@ -1196,3 +1196,65 @@ func TestWaitForStream(t *testing.T) {
 		})
 	}
 }
+
+func TestFilterNamespaceTools(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []api.Tool
+		expected []api.Tool
+	}{
+		{
+			name:     "nil input",
+			input:    nil,
+			expected: nil,
+		},
+		{
+			name:     "empty input",
+			input:    []api.Tool{},
+			expected: []api.Tool{},
+		},
+		{
+			name: "namespace only",
+			input: []api.Tool{
+				{Type: "namespace", Function: api.ToolFunction{Name: "ns1"}},
+				{Type: "namespace", Function: api.ToolFunction{Name: "ns2"}},
+			},
+			expected: []api.Tool{},
+		},
+		{
+			name: "function only",
+			input: []api.Tool{
+				{Type: "function", Function: api.ToolFunction{Name: "fn1"}},
+				{Type: "function", Function: api.ToolFunction{Name: "fn2"}},
+			},
+			expected: []api.Tool{
+				{Type: "function", Function: api.ToolFunction{Name: "fn1"}},
+				{Type: "function", Function: api.ToolFunction{Name: "fn2"}},
+			},
+		},
+		{
+			name: "mixed namespace and function",
+			input: []api.Tool{
+				{Type: "function", Function: api.ToolFunction{Name: "fn1"}},
+				{Type: "namespace", Function: api.ToolFunction{Name: "ns1"}},
+				{Type: "function", Function: api.ToolFunction{Name: "fn2"}},
+				{Type: "namespace", Function: api.ToolFunction{Name: "ns2"}},
+				{Type: "function", Function: api.ToolFunction{Name: "fn3"}},
+			},
+			expected: []api.Tool{
+				{Type: "function", Function: api.ToolFunction{Name: "fn1"}},
+				{Type: "function", Function: api.ToolFunction{Name: "fn2"}},
+				{Type: "function", Function: api.ToolFunction{Name: "fn3"}},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := filterNamespaceTools(tt.input)
+			if diff := cmp.Diff(tt.expected, result); diff != "" {
+				t.Errorf("filterNamespaceTools() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

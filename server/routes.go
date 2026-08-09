@@ -2910,7 +2910,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	writeChatResponse(c, req, ch)
 }
 
-// filterNamespaceTools removes namespace-type tools that are not supported by llama-server
+// filterNamespaceTools removes namespace-type tools that are not supported by llama-server.
+// Namespace tools are group declarations sent by clients like Codex; the actual callable
+// tools are sent separately as function-type entries, so filtering namespaces is safe.
 func filterNamespaceTools(tools []api.Tool) []api.Tool {
 	if len(tools) == 0 {
 		return tools
