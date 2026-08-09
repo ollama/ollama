@@ -280,7 +280,7 @@ func writeTestModelManifest(t *testing.T, name, digest, tmpl string) {
 	}
 
 	layers := []manifest.Layer{modelLayer, templateLayer}
-	configLayer, err := createConfigLayer(layers, model.ConfigV2{
+	configLayer, err := createConfigLayer(model.ConfigV2{
 		ModelFormat:   "gguf",
 		ModelFamily:   "llama",
 		ModelFamilies: []string{"llama"},
