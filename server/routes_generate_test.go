@@ -3249,7 +3249,9 @@ func TestChatHandlerNamespaceToolsFiltered(t *testing.T) {
 	s := newServerWithMockRunner(t, &mock)
 	createMinimalGGUFModel(t, s, "chat-template", ggml.KV{
 		"tokenizer.chat_template": "{{ messages[0]['content'] }}",
-	}, "", nil)
+	}, "", map[string]any{
+		"capabilities": []any{"completion", "tools"},
+	})
 
 	stream := false
 	w := createRequest(t, s.ChatHandler, api.ChatRequest{
