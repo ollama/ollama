@@ -468,6 +468,9 @@ func suppressAudioCapability(m *Model, arch string) bool {
 	if isGemma4Renderer(m.Config.Renderer) && m.Config.ModelFormat == "safetensors" {
 		return true
 	}
+	if m.Config.ModelFormat == "safetensors" && m.Config.Renderer == "glimmer" {
+		return true
+	}
 
 	if arch == "nemotron_h_omni" ||
 		m.Config.ModelFamily == "nemotron_h_omni" ||

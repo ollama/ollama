@@ -23,6 +23,9 @@ func init() {
 	base.RegisterDraft("DFlashLagunaForCausalLM", func(root *model.Root, target base.Model) (base.DraftModel, error) {
 		return newModel(root, target, true)
 	})
+	base.RegisterDraft("MuseGlimmerAssistantModel", func(root *model.Root, target base.Model) (base.DraftModel, error) {
+		return newModel(root, target, false)
+	})
 }
 
 var _ base.BlockDraft = (*Model)(nil)
@@ -43,6 +46,13 @@ type Config struct {
 	MaskTokenID    int32
 	VocabSize      int32
 	TargetLayerIDs []int
+
+	// RopeInterleaved selects the draft's rotary pairing convention:
+	// true pairs adjacent dims (torch view_as_complex over pairs, the glimmer
+	// publisher convention); false pairs split halves (HF rotate_half, the
+	// laguna convention). Defaults to false for backwards compatibility with
+	// laguna drafts.
+	RopeInterleaved bool
 
 	// Causal, when set, overrides every layer's attention direction;
 	// otherwise only sliding layers run causal.
@@ -148,6 +158,7 @@ func parseConfig(data []byte) (*Config, error) {
 		VocabSize       int32    `json:"vocab_size"`
 		LayerTypes      []string `json:"layer_types"`
 		SlidingWindow   int32    `json:"sliding_window"`
+		RopeInterleaved *bool    `json:"rope_interleaved"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parse dflash config: %w", err)
@@ -167,6 +178,9 @@ func parseConfig(data []byte) (*Config, error) {
 		VocabSize:         raw.VocabSize,
 		TargetLayerIDs:    raw.DFlashConfig.TargetLayerIDs,
 		Causal:            raw.DFlashConfig.Causal,
+	}
+	if raw.RopeInterleaved != nil {
+		cfg.RopeInterleaved = *raw.RopeInterleaved
 	}
 	if cfg.RopeTheta == 0 {
 		cfg.RopeTheta = raw.RopeParameters.RopeTheta
@@ -609,7 +623,7 @@ func (a *Attention) contextKV(hctx *mlx.Array, positions *mlx.Array, cfg *Config
 	k = a.KNorm.Forward(k, cfg.RMSNormEps)
 	k = mlx.Transpose(k, 0, 2, 1, 3)
 	v = mlx.Transpose(v, 0, 2, 1, 3)
-	k = mlx.RoPEWithBase(k, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, positions)
+	k = mlx.RoPEWithBase(k, int(cfg.HeadDim), cfg.RopeInterleaved, cfg.RopeTheta, 1.0, positions)
 	return k, v
 }
 
@@ -631,8 +645,8 @@ func (a *Attention) Forward(x, ctxK, ctxV *mlx.Array, c cache.Cache, bb *batch.B
 	k = mlx.Transpose(k, 0, 2, 1, 3)
 	v = mlx.Transpose(v, 0, 2, 1, 3)
 
-	q = mlx.RoPEWithBase(q, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, positions)
-	k = mlx.RoPEWithBase(k, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, positions)
+	q = mlx.RoPEWithBase(q, int(cfg.HeadDim), cfg.RopeInterleaved, cfg.RopeTheta, 1.0, positions)
+	k = mlx.RoPEWithBase(k, int(cfg.HeadDim), cfg.RopeInterleaved, cfg.RopeTheta, 1.0, positions)
 
 	if ctxK != nil {
 		k = ctxK.Concatenate(2, k)

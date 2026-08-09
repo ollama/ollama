@@ -516,13 +516,14 @@ func detectCapabilities(modelDir string) modelCapabilities {
 		ModelType     string          `json:"model_type"`
 		VisionConfig  *map[string]any `json:"vision_config"`
 		AudioConfig   *map[string]any `json:"audio_config"`
+		HasVision     bool            `json:"has_vision"`
 	}
 	if data, err := os.ReadFile(filepath.Join(modelDir, "config.json")); err == nil {
 		_ = json.Unmarshal(data, &cfg)
 	}
 
 	return modelCapabilities{
-		vision: cfg.VisionConfig != nil,
+		vision: cfg.VisionConfig != nil || cfg.HasVision,
 		audio:  cfg.AudioConfig != nil,
 		thinking: chatTemplateHasThinkingSupport(readChatTemplate(modelDir)) ||
 			alwaysSupportsThinking(cfg.Architectures, cfg.ModelType),
@@ -617,6 +618,9 @@ func getParserName(modelDir string) string {
 	// Check architectures for known parsers
 	for _, arch := range cfg.Architectures {
 		archLower := strings.ToLower(arch)
+		if strings.HasPrefix(arch, "MuseGlimmer") {
+			return "glimmer"
+		}
 		if strings.Contains(archLower, "laguna") {
 			return lagunaRendererParserName(modelDir)
 		}
@@ -643,6 +647,9 @@ func getParserName(modelDir string) string {
 	// Also check model_type
 	if cfg.ModelType != "" {
 		typeLower := strings.ToLower(cfg.ModelType)
+		if typeLower == "muse_glimmer" {
+			return "glimmer"
+		}
 		if strings.Contains(typeLower, "laguna") {
 			return lagunaRendererParserName(modelDir)
 		}
@@ -689,6 +696,9 @@ func getRendererName(modelDir string) string {
 	// Check architectures for known renderers
 	for _, arch := range cfg.Architectures {
 		archLower := strings.ToLower(arch)
+		if strings.HasPrefix(arch, "MuseGlimmer") {
+			return "glimmer"
+		}
 		if strings.Contains(archLower, "laguna") {
 			return lagunaRendererParserName(modelDir)
 		}
@@ -715,6 +725,9 @@ func getRendererName(modelDir string) string {
 	// Also check model_type
 	if cfg.ModelType != "" {
 		typeLower := strings.ToLower(cfg.ModelType)
+		if typeLower == "muse_glimmer" {
+			return "glimmer"
+		}
 		if strings.Contains(typeLower, "laguna") {
 			return lagunaRendererParserName(modelDir)
 		}

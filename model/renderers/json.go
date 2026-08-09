@@ -10,7 +10,10 @@ func marshalWithSpaces(v any) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	return addJSONSpaces(b), nil
+}
 
+func addJSONSpaces(b []byte) []byte {
 	out := make([]byte, 0, len(b)+len(b)/8)
 	inStr, esc := false, false
 	for _, c := range b {
@@ -41,5 +44,5 @@ func marshalWithSpaces(v any) ([]byte, error) {
 			out = append(out, c)
 		}
 	}
-	return out, nil
+	return out
 }

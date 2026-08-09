@@ -598,6 +598,11 @@ func TestDetectCapabilities(t *testing.T) {
 			want:       modelCapabilities{vision: true},
 		},
 		{
+			name:       "flat vision flag",
+			configJSON: `{"architectures": ["MuseGlimmerForConditionalGeneration"], "model_type": "muse_glimmer", "has_vision": true}`,
+			want:       modelCapabilities{vision: true},
+		},
+		{
 			name:       "audio config",
 			configJSON: `{"architectures": ["Qwen3OmniForConditionalGeneration"], "audio_config": {}}`,
 			want:       modelCapabilities{audio: true},
@@ -660,6 +665,11 @@ func TestInferSafetensorsCapabilitiesFromParser(t *testing.T) {
 			parserName: "functiongemma",
 			want:       []string{"completion", "tools"},
 		},
+		{
+			name:       "glimmer tools and thinking",
+			parserName: "glimmer",
+			want:       []string{"completion", "tools", "thinking"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -673,6 +683,23 @@ func TestInferSafetensorsCapabilitiesFromParser(t *testing.T) {
 				t.Fatalf("inferSafetensorsCapabilities() = %#v, want %#v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestInferSafetensorsCapabilitiesGlimmerPreservesVisionMetadata(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{
+		"architectures": ["MuseGlimmerForConditionalGeneration"],
+		"model_type": "muse_glimmer",
+		"has_vision": true
+	}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := inferSafetensorsCapabilities(dir, "glimmer")
+	want := []string{"completion", "vision", "tools", "thinking"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("inferSafetensorsCapabilities() = %#v, want %#v", got, want)
 	}
 }
 
@@ -735,6 +762,11 @@ func TestGetParserName(t *testing.T) {
 			want:       "laguna",
 		},
 		{
+			name:       "glimmer model",
+			configJSON: `{"architectures": ["MuseGlimmerForConditionalGeneration"], "model_type": "muse_glimmer"}`,
+			want:       "glimmer",
+		},
+		{
 			name:       "no config",
 			configJSON: `{}`,
 			want:       "",
@@ -788,6 +820,11 @@ func TestGetRendererName(t *testing.T) {
 			name:       "laguna model",
 			configJSON: `{"architectures": ["LagunaForCausalLM"], "model_type": "laguna"}`,
 			want:       "laguna",
+		},
+		{
+			name:       "glimmer model",
+			configJSON: `{"architectures": ["MuseGlimmerForConditionalGeneration"], "model_type": "muse_glimmer"}`,
+			want:       "glimmer",
 		},
 	}
 

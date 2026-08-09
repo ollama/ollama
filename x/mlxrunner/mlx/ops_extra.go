@@ -491,6 +491,12 @@ func Cos(a *Array) *Array {
 	return out
 }
 
+func erf(a *Array) *Array {
+	out := New("ERF")
+	C.mlx_erf(&out.ctx, a.ctx, DefaultStream().ctx)
+	return out
+}
+
 func Clip(a, aMin, aMax *Array) *Array {
 	out := New("CLIP")
 	C.mlx_clip(&out.ctx, a.ctx, aMin.ctx, aMax.ctx, DefaultStream().ctx)
