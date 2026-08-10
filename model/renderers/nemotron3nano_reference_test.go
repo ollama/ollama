@@ -450,11 +450,15 @@ func renderNemotronWithJinja2(t *testing.T, templateRel string, messages []api.M
 	}
 
 	thinking := "unset"
+	mediumEffort := "false"
 	if think != nil {
 		if think.Bool() {
 			thinking = "true"
 		} else {
 			thinking = "false"
+		}
+		if think.IsString() && think.String() == "medium" {
+			mediumEffort = "true"
 		}
 	}
 
@@ -467,7 +471,7 @@ import sys
 from pathlib import Path
 from transformers.utils.chat_template_utils import _compile_jinja_template
 
-template_path, messages_json, tools_json, thinking = sys.argv[1:5]
+template_path, messages_json, tools_json, thinking, medium_effort = sys.argv[1:6]
 tmpl = _compile_jinja_template(Path(template_path).read_text())
 kwargs = {
     "messages": json.loads(messages_json),
@@ -479,10 +483,12 @@ if thinking == "true":
     kwargs["enable_thinking"] = True
 elif thinking == "false":
     kwargs["enable_thinking"] = False
+if medium_effort == "true":
+    kwargs["medium_effort"] = True
 print(tmpl.render(**kwargs), end="")
 `
 
-	cmd := exec.CommandContext(t.Context(), pythonPath, "-c", script, templatePath, string(msgsJSON), toolsJSON, thinking)
+	cmd := exec.CommandContext(t.Context(), pythonPath, "-c", script, templatePath, string(msgsJSON), toolsJSON, thinking, mediumEffort)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

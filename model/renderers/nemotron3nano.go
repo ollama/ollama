@@ -11,7 +11,10 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-type Nemotron3NanoRenderer struct{}
+type Nemotron3NanoRenderer struct {
+	// v35 renders the Nemotron 3.5 prompt layout.
+	v35 bool
+}
 
 func (r *Nemotron3NanoRenderer) LeadingBOS() string {
 	return ""
@@ -22,6 +25,7 @@ func (r *Nemotron3NanoRenderer) Render(messages []api.Message, tools []api.Tool,
 	imageOffset := 0
 
 	enableThinking := r.resolveThinking(messages, thinkValue)
+	mediumEffort := r.v35 && thinkValue != nil && thinkValue.IsString() && thinkValue.String() == "medium"
 
 	// Extract system message if present
 	var systemMessage string
@@ -74,9 +78,13 @@ func (r *Nemotron3NanoRenderer) Render(messages []api.Message, tools []api.Tool,
 
 		case "user", "system":
 			sb.WriteString("<|im_start|>" + message.Role + "\n")
-			// The template strips toggle text from user and system turns
-			// alike, keeping any real closing tag intact.
-			sb.WriteString(strings.TrimSpace(stripThinkToggles(r.renderMessageContent(message, imageOffset))))
+			content := r.renderMessageContent(message, imageOffset)
+			if !r.v35 {
+				content = strings.TrimSpace(stripThinkToggles(content))
+			} else if message.Role == "user" && i == lastUserIdx && mediumEffort {
+				content += "\n\n{reasoning effort: efficient}"
+			}
+			sb.WriteString(content)
 			imageOffset += len(message.Images)
 			sb.WriteString("<|im_end|>\n")
 
@@ -175,6 +183,9 @@ func (r *Nemotron3NanoRenderer) renderTools(tools []api.Tool) string {
 func (r *Nemotron3NanoRenderer) buildContent(message api.Message) string {
 	content := nemotron3NanoRenderContent(message.Content)
 	if message.Thinking != "" {
+		if r.v35 {
+			return "<think>\n" + message.Thinking + "</think>" + content
+		}
 		return "<think>\n" + message.Thinking + "\n</think>\n" + content
 	}
 	if !strings.Contains(content, "<think>") && !strings.Contains(content, "</think>") {
@@ -305,6 +316,11 @@ func nemotron3NanoRenderContent(content any) string {
 
 func (r *Nemotron3NanoRenderer) resolveThinking(messages []api.Message, thinkValue *api.ThinkValue) bool {
 	enableThinking := thinkValue == nil || thinkValue.Bool()
+	// Under v35 only the request controls thinking; "/think" and "/no_think"
+	// in a prompt are ordinary text.
+	if r.v35 {
+		return enableThinking
+	}
 	for _, message := range messages {
 		if message.Role != "user" && message.Role != "system" {
 			continue
@@ -320,7 +336,12 @@ func (r *Nemotron3NanoRenderer) resolveThinking(messages []api.Message, thinkVal
 }
 
 func (r *Nemotron3NanoRenderer) sanitizeSystemMessage(content string) string {
-	return stripThinkToggles(nemotron3NanoRenderContent(content))
+	system := nemotron3NanoRenderContent(content)
+	// Under v35 the system message is passed through unaltered.
+	if r.v35 {
+		return system
+	}
+	return stripThinkToggles(system)
 }
 
 // stripThinkToggles removes the inline /think and /no_think markers the

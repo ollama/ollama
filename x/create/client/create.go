@@ -600,6 +600,22 @@ func lagunaRendererParserName(modelDir string) string {
 	return "laguna"
 }
 
+func nemotronRendererParserName(modelDir string) string {
+	const v35Marker = "{reasoning effort: efficient}"
+
+	// Nemotron 3.5 publishes its updated template as a standalone file while
+	// tokenizer_config.json can retain the older template, so inspect both.
+	if data, err := os.ReadFile(filepath.Join(modelDir, "chat_template.jinja")); err == nil &&
+		strings.Contains(string(data), v35Marker) {
+		return "nemotron-3.5-nano"
+	}
+	if strings.Contains(readChatTemplate(modelDir), v35Marker) {
+		return "nemotron-3.5-nano"
+	}
+
+	return "nemotron-3-nano"
+}
+
 // getParserName returns the parser name for a model based on its architecture.
 // This reads the config.json from the model directory and determines the appropriate parser.
 func getParserName(modelDir string) string {
@@ -657,7 +673,7 @@ func parserNameForIdentifier(modelDir, s string) string {
 	// NemotronH_Nano_Omni_Reasoning_V3 for omni; model_type is nemotron_h,
 	// nemotron_h_moe, or the omni name. The two stems cover all of them.
 	case strings.Contains(s, "nemotronh") || strings.Contains(s, "nemotron_h"):
-		return "nemotron-3-nano"
+		return nemotronRendererParserName(modelDir)
 	default:
 		return ""
 	}
@@ -720,7 +736,7 @@ func rendererNameForIdentifier(modelDir, s string) string {
 	// NemotronH_Nano_Omni_Reasoning_V3 for omni; model_type is nemotron_h,
 	// nemotron_h_moe, or the omni name. The two stems cover all of them.
 	case strings.Contains(s, "nemotronh") || strings.Contains(s, "nemotron_h"):
-		return "nemotron-3-nano"
+		return nemotronRendererParserName(modelDir)
 	default:
 		return ""
 	}
