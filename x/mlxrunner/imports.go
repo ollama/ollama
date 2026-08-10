@@ -1,6 +1,7 @@
 package mlxrunner
 
 import (
+	_ "github.com/ollama/ollama/x/models/bailing_moe_v3"
 	_ "github.com/ollama/ollama/x/models/cohere2_moe"
 	_ "github.com/ollama/ollama/x/models/dflash"
 	_ "github.com/ollama/ollama/x/models/gemma3"

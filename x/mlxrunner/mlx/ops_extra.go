@@ -443,17 +443,19 @@ func RoPEWithFreqs(x *Array, dims int, traditional bool, base, scale float32, of
 		}
 	}
 	out := New("FAST_ROPE")
-	C.mlx_fast_rope_dynamic(
-		&out.ctx,
-		x.ctx,
-		C.int(dims),
-		C.bool(traditional),
-		optBase,
-		C.float(scale),
-		offsets.ctx,
-		freqsCtx,
-		DefaultStream().ctx,
-	)
+	mlxCheck("fast rope failed", func() C.int {
+		return C.mlx_fast_rope_dynamic(
+			&out.ctx,
+			x.ctx,
+			C.int(dims),
+			C.bool(traditional),
+			optBase,
+			C.float(scale),
+			offsets.ctx,
+			freqsCtx,
+			DefaultStream().ctx,
+		)
+	})
 	return out
 }
 
