@@ -57,6 +57,24 @@ func TestParseConfigAndLayerSchedule(t *testing.T) {
 	}
 }
 
+func TestSupportsGatherQMM(t *testing.T) {
+	tests := []struct {
+		mode string
+		bits int
+		want bool
+	}{
+		{mode: "mxfp8", bits: 8, want: true},
+		{mode: "mxfp8", bits: 4, want: false},
+		{mode: "affine", bits: 8, want: false},
+		{mode: "", bits: 8, want: false},
+	}
+	for _, tt := range tests {
+		if got := supportsGatherQMM(tt.mode, tt.bits); got != tt.want {
+			t.Fatalf("supportsGatherQMM(%q, %d) = %v, want %v", tt.mode, tt.bits, got, tt.want)
+		}
+	}
+}
+
 func TestKDASegmentedCacheMatchesSingleScan(t *testing.T) {
 	requireMLX(t)
 	const B, T, H, D = 1, 5, 2, 3

@@ -1,6 +1,7 @@
 package create
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"io"
@@ -10,6 +11,8 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxthread"
+	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	st "github.com/ollama/ollama/x/safetensors"
 )
 
@@ -212,5 +215,57 @@ func TestWriteBlobsBlockFP8Decode(t *testing.T) {
 	}
 	if _, leaked := store.blobs["model.layers.0.mlp.down_proj.weight_scale_inv"]; leaked {
 		t.Error("fp8 scale companion leaked as its own blob")
+	}
+}
+
+func TestDecodeSourceFP8E8M0Scale(t *testing.T) {
+	if !QuantizeSupported() {
+		t.Skip("MLX unavailable")
+	}
+
+	thread, err := mlxthread.Start("decode-e8m0-test", func() error {
+		if err := mlx.CheckInit(); err != nil {
+			return err
+		}
+		if mlx.GPUIsAvailable() {
+			mlx.SetDefaultDeviceGPU()
+		}
+		return nil
+	})
+	if err != nil {
+		t.Skipf("MLX unavailable: %v", err)
+	}
+	defer func() {
+		if err := thread.Stop(context.Background(), func() {
+			mlx.Sweep()
+			mlx.ClearCache()
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}()
+
+	values, err := mlxthread.Call(context.Background(), thread, func() ([]float32, error) {
+		// E4M3 byte 0x38 is 1.0 and E8M0 byte 128 is 2^(128-127) = 2.
+		rawWeight := make([]uint8, 128*128)
+		for i := range rawWeight {
+			rawWeight[i] = 0x38
+		}
+		weight := mlx.FromValues(rawWeight, 128, 128)
+		scale := mlx.FromValues([]uint8{128}, 1, 1)
+		decoded, err := decodeSourceFP8Tensor(weight, scale)
+		if err != nil {
+			return nil, err
+		}
+		decoded = decoded.AsType(mlx.DTypeFloat32)
+		mlx.Eval(decoded)
+		return append([]float32(nil), decoded.Floats()...), nil
+	})
+	if err != nil {
+		t.Fatalf("decodeSourceFP8Tensor() error = %v", err)
+	}
+	for _, index := range []int{0, len(values) / 2, len(values) - 1} {
+		if values[index] != 2 {
+			t.Fatalf("decoded[%d] = %v, want 2", index, values[index])
+		}
 	}
 }

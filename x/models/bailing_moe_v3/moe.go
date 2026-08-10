@@ -14,10 +14,30 @@ type Router struct {
 }
 
 type SwitchMLP struct {
-	// GatherMM consumes [experts, input, output].
+	// GatherMM consumes [experts, input, output]. Quantized GatherQMM keeps
+	// imported weights in their native packed [experts, output, input] layout.
 	GateWeight *mlx.Array
 	UpWeight   *mlx.Array
 	DownWeight *mlx.Array
+
+	GateWeightQ, GateScales, GateBiases *mlx.Array
+	UpWeightQ, UpScales, UpBiases       *mlx.Array
+	DownWeightQ, DownScales, DownBiases *mlx.Array
+
+	GateBits, UpBits, DownBits                int
+	GateGroupSize, UpGroupSize, DownGroupSize int
+	GateMode, UpMode, DownMode                string
+
+	UseQuantized bool
+}
+
+type stackedExpertWeights struct {
+	Weight    *mlx.Array
+	Scales    *mlx.Array
+	Biases    *mlx.Array
+	Bits      int
+	GroupSize int
+	Mode      string
 }
 
 type SparseMoE struct {
@@ -114,16 +134,62 @@ func (s *SwitchMLP) Forward(x, indices *mlx.Array, cfg *Config) *mlx.Array {
 		idxFlat = mlx.Reshape(mlx.Take(all, order, 0), n, 1)
 	}
 
-	gate := mlx.GatherMM(xFlat, s.GateWeight, nil, idxFlat, doSort)
-	up := mlx.GatherMM(xFlat, s.UpWeight, nil, idxFlat, doSort)
-	hidden := mlx.SwiGLU(gate, up)
-	down := mlx.GatherMM(hidden, s.DownWeight, nil, idxFlat, doSort)
+	var gate, up, hidden, down *mlx.Array
+	if s.UseQuantized {
+		gate = mlx.GatherQMM(xFlat, s.GateWeightQ, s.GateScales, s.GateBiases,
+			nil, idxFlat, true, s.GateGroupSize, s.GateBits, s.GateMode, doSort)
+		up = mlx.GatherQMM(xFlat, s.UpWeightQ, s.UpScales, s.UpBiases,
+			nil, idxFlat, true, s.UpGroupSize, s.UpBits, s.UpMode, doSort)
+		hidden = mlx.SwiGLU(gate, up)
+		down = mlx.GatherQMM(hidden, s.DownWeightQ, s.DownScales, s.DownBiases,
+			nil, idxFlat, true, s.DownGroupSize, s.DownBits, s.DownMode, doSort)
+	} else {
+		gate = mlx.GatherMM(xFlat, s.GateWeight, nil, idxFlat, doSort)
+		up = mlx.GatherMM(xFlat, s.UpWeight, nil, idxFlat, doSort)
+		hidden = mlx.SwiGLU(gate, up)
+		down = mlx.GatherMM(hidden, s.DownWeight, nil, idxFlat, doSort)
+	}
 	if doSort {
 		down = mlx.Reshape(mlx.Take(mlx.Squeeze(mlx.Squeeze(down, 2), 1), inverse, 0), B*L, topK, cfg.HiddenSize)
 	} else {
 		down = mlx.Squeeze(down, 2)
 	}
 	return mlx.Reshape(down, B, L, topK, cfg.HiddenSize)
+}
+
+func supportsGatherQMM(mode string, bits int) bool {
+	return mode == "mxfp8" && bits == 8
+}
+
+func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, base string) (*stackedExpertWeights, error) {
+	key := base + ".weight"
+	weight := tensors[key]
+	if weight == nil {
+		return nil, nil
+	}
+
+	scales := tensors[key+"_scale"]
+	if scales == nil {
+		return &stackedExpertWeights{Weight: weight}, nil
+	}
+
+	biases := tensors[key+"_qbias"]
+	groupSize, bits, mode := model.ResolveLinearQuantParams(
+		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant,
+		key, weight, scales,
+	)
+	if !supportsGatherQMM(mode, bits) {
+		return nil, fmt.Errorf("stacked expert projection %s uses unsupported quantization mode=%q bits=%d", base, mode, bits)
+	}
+
+	return &stackedExpertWeights{
+		Weight:    weight,
+		Scales:    scales,
+		Biases:    biases,
+		Bits:      bits,
+		GroupSize: groupSize,
+		Mode:      mode,
+	}, nil
 }
 
 func (m *SparseMoE) Forward(x *mlx.Array, cfg *Config) *mlx.Array {
@@ -156,10 +222,28 @@ func loadSparseMoE(linears model.LinearFactory, tensors map[string]*mlx.Array, p
 	// three stacked tensors. Use transpose views of those tensors directly: a
 	// second stacked copy costs several GB for this model and can make macOS kill
 	// the runner during load.
-	stackedGate := tensors[p+".experts.gate_proj.weight"]
-	stackedUp := tensors[p+".experts.up_proj.weight"]
-	stackedDown := tensors[p+".experts.down_proj.weight"]
-	if stackedGate != nil && stackedUp != nil && stackedDown != nil {
+	stackedGate, err := loadStackedProjection(tensors, cfg, p+".experts.gate_proj")
+	if err != nil {
+		return nil, err
+	}
+	stackedUp, err := loadStackedProjection(tensors, cfg, p+".experts.up_proj")
+	if err != nil {
+		return nil, err
+	}
+	stackedDown, err := loadStackedProjection(tensors, cfg, p+".experts.down_proj")
+	if err != nil {
+		return nil, err
+	}
+	stackedCount := 0
+	for _, projection := range []*stackedExpertWeights{stackedGate, stackedUp, stackedDown} {
+		if projection != nil {
+			stackedCount++
+		}
+	}
+	if stackedCount != 0 && stackedCount != 3 {
+		return nil, fmt.Errorf("incomplete stacked expert projections: found %d of 3", stackedCount)
+	}
+	if stackedCount == 3 {
 		shared := &DenseMLP{
 			GateProj: linears.Make(p + ".shared_experts.gate_proj"),
 			UpProj:   linears.Make(p + ".shared_experts.up_proj"),
@@ -168,13 +252,33 @@ func loadSparseMoE(linears model.LinearFactory, tensors map[string]*mlx.Array, p
 		if shared.GateProj == nil || shared.UpProj == nil || shared.DownProj == nil {
 			return nil, fmt.Errorf("missing shared expert projection")
 		}
+
+		switchMLP := &SwitchMLP{}
+		quantizedCount := 0
+		for _, projection := range []*stackedExpertWeights{stackedGate, stackedUp, stackedDown} {
+			if projection.Scales != nil {
+				quantizedCount++
+			}
+		}
+		if quantizedCount != 0 && quantizedCount != 3 {
+			return nil, fmt.Errorf("incomplete quantized stacked expert projections: found scales for %d of 3", quantizedCount)
+		}
+		if quantizedCount == 3 {
+			switchMLP.UseQuantized = true
+			switchMLP.GateWeightQ, switchMLP.GateScales, switchMLP.GateBiases = stackedGate.Weight, stackedGate.Scales, stackedGate.Biases
+			switchMLP.GateBits, switchMLP.GateGroupSize, switchMLP.GateMode = stackedGate.Bits, stackedGate.GroupSize, stackedGate.Mode
+			switchMLP.UpWeightQ, switchMLP.UpScales, switchMLP.UpBiases = stackedUp.Weight, stackedUp.Scales, stackedUp.Biases
+			switchMLP.UpBits, switchMLP.UpGroupSize, switchMLP.UpMode = stackedUp.Bits, stackedUp.GroupSize, stackedUp.Mode
+			switchMLP.DownWeightQ, switchMLP.DownScales, switchMLP.DownBiases = stackedDown.Weight, stackedDown.Scales, stackedDown.Biases
+			switchMLP.DownBits, switchMLP.DownGroupSize, switchMLP.DownMode = stackedDown.Bits, stackedDown.GroupSize, stackedDown.Mode
+		} else {
+			switchMLP.GateWeight = mlx.Transpose(stackedGate.Weight, 0, 2, 1)
+			switchMLP.UpWeight = mlx.Transpose(stackedUp.Weight, 0, 2, 1)
+			switchMLP.DownWeight = mlx.Transpose(stackedDown.Weight, 0, 2, 1)
+		}
 		return &SparseMoE{
-			Router: router,
-			Switch: &SwitchMLP{
-				GateWeight: mlx.Transpose(stackedGate, 0, 2, 1),
-				UpWeight:   mlx.Transpose(stackedUp, 0, 2, 1),
-				DownWeight: mlx.Transpose(stackedDown, 0, 2, 1),
-			},
+			Router:       router,
+			Switch:       switchMLP,
 			SharedExpert: shared,
 		}, nil
 	}

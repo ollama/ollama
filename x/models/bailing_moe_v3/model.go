@@ -109,6 +109,7 @@ func (m *DenseMLP) Forward(x *mlx.Array, _ *Config) *mlx.Array {
 // MLAAttention implements the checkpoint's eager multi-latent attention path.
 // The KV cache stores the expanded per-head keys and values.
 type MLAAttention struct {
+	QProj          nn.LinearLayer
 	QAProj         nn.LinearLayer
 	QALayerNorm    *nn.RMSNorm
 	QBProj         nn.LinearLayer
@@ -292,21 +293,26 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 func loadMLAAttention(linears model.LinearFactory, tensors map[string]*mlx.Array, prefix string, cfg *Config) (*MLAAttention, error) {
 	p := prefix + ".attention"
 	a := &MLAAttention{
-		QAProj:         linears.Make(p + ".q_a_proj"),
-		QBProj:         linears.Make(p + ".q_b_proj"),
 		KVAProjWithMQA: linears.Make(p + ".kv_a_proj_with_mqa"),
 		KVBProj:        linears.Make(p + ".kv_b_proj"),
 		GateProj:       linears.Make(p + ".g_proj"),
 		OutProj:        linears.Make(p + ".dense"),
 	}
-	if w := tensors[p+".q_a_layernorm.weight"]; w != nil {
-		a.QALayerNorm = nn.NewRMSNorm(w, cfg.RMSNormEps)
+	if cfg.QLoraRank > 0 {
+		a.QAProj = linears.Make(p + ".q_a_proj")
+		a.QBProj = linears.Make(p + ".q_b_proj")
+		if w := tensors[p+".q_a_layernorm.weight"]; w != nil {
+			a.QALayerNorm = nn.NewRMSNorm(w, cfg.RMSNormEps)
+		}
+	} else {
+		a.QProj = linears.Make(p + ".q_proj")
 	}
 	if w := tensors[p+".kv_a_layernorm.weight"]; w != nil {
 		a.KVALayerNorm = nn.NewRMSNorm(w, cfg.RMSNormEps)
 	}
-	if a.QAProj == nil || a.QALayerNorm == nil || a.QBProj == nil ||
-		a.KVAProjWithMQA == nil || a.KVALayerNorm == nil || a.KVBProj == nil ||
+	qProjectionOK := a.QProj != nil ||
+		(a.QAProj != nil && a.QALayerNorm != nil && a.QBProj != nil)
+	if !qProjectionOK || a.KVAProjWithMQA == nil || a.KVALayerNorm == nil || a.KVBProj == nil ||
 		a.GateProj == nil || a.OutProj == nil {
 		return nil, fmt.Errorf("missing MLA projection")
 	}
@@ -335,7 +341,12 @@ func interleavedToHalf(x *mlx.Array) *mlx.Array {
 }
 
 func (a *MLAAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
-	q := a.QBProj.Forward(a.QALayerNorm.Forward(a.QAProj.Forward(x), cfg.RMSNormEps))
+	var q *mlx.Array
+	if a.QProj != nil {
+		q = a.QProj.Forward(x)
+	} else {
+		q = a.QBProj.Forward(a.QALayerNorm.Forward(a.QAProj.Forward(x), cfg.RMSNormEps))
+	}
 	q = mlx.Reshape(q, B, L, cfg.NumAttentionHeads, cfg.QKHeadDim)
 	q = mlx.Transpose(q, 0, 2, 1, 3)
 	qNope := mlx.SliceStartStop(q,
