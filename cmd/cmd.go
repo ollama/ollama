@@ -315,7 +315,10 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	spinner := progress.NewSpinner(status)
 	p.Add(status, spinner)
 
-	req, err := modelfile.CreateRequest(filepath.Dir(filename))
+	hashProgress := func(path string, size int64) io.WriteCloser {
+		return newHashProgressWriter(path, size, p)
+	}
+	req, err := modelfile.CreateRequestWithProgress(filepath.Dir(filename), hashProgress)
 	if err != nil {
 		return err
 	}
@@ -538,6 +541,55 @@ type progressWriter struct {
 func (w *progressWriter) Write(p []byte) (n int, err error) {
 	w.n.Add(int64(len(p)))
 	return len(p), nil
+}
+
+// hashProgressWriter reports per-file SHA-256 hashing progress via a spinner
+// on the supplied progress.Progress. Each write increments a byte counter; a
+// goroutine samples the counter every 60ms and updates the spinner message
+// with the completion percentage. Close stops the goroutine and the spinner.
+type hashProgressWriter struct {
+	progressWriter
+	spinner *progress.Spinner
+	done    chan struct{}
+	stopped atomic.Bool
+	base    string
+}
+
+func newHashProgressWriter(path string, size int64, p *progress.Progress) *hashProgressWriter {
+	base := filepath.Base(path)
+	h := &hashProgressWriter{
+		spinner: progress.NewSpinner(fmt.Sprintf("hashing %s 0%%", base)),
+		done:    make(chan struct{}),
+		base:    base,
+	}
+	p.Add("hashing:"+path, h.spinner)
+
+	go func() {
+		ticker := time.NewTicker(60 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				pct := 0
+				if size > 0 {
+					pct = int(100 * h.n.Load() / size)
+				}
+				h.spinner.SetMessage(fmt.Sprintf("hashing %s %d%%", base, pct))
+			case <-h.done:
+				return
+			}
+		}
+	}()
+	return h
+}
+
+func (h *hashProgressWriter) Close() error {
+	if h.stopped.CompareAndSwap(false, true) {
+		close(h.done)
+		h.spinner.SetMessage(fmt.Sprintf("hashing %s 100%%", h.base))
+		h.spinner.Stop()
+	}
+	return nil
 }
 
 func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions) error {
