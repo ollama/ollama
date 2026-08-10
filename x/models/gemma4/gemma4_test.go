@@ -24,6 +24,33 @@ func TestParseSuppressTokens(t *testing.T) {
 	}
 }
 
+func TestParseTextConfigBidirectionalAttention(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		raw  string
+		want bidirectionalAttention
+	}{
+		{name: "absent", raw: `{}`, want: ""},
+		{name: "vision mode", raw: `{"use_bidirectional_attention":"vision"}`, want: "vision"},
+		{name: "bool true", raw: `{"use_bidirectional_attention":true}`, want: "true"},
+		{name: "bool false", raw: `{"use_bidirectional_attention":false}`, want: ""},
+		{name: "nested", raw: `{"text_config":{"use_bidirectional_attention":"vision"}}`, want: "vision"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := parseTextConfig([]byte(tt.raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.UseBidirectionalAttn != tt.want {
+				t.Fatalf("mode = %q, want %q", cfg.UseBidirectionalAttn, tt.want)
+			}
+		})
+	}
+	if _, err := parseTextConfig([]byte(`{"use_bidirectional_attention":3}`)); err == nil {
+		t.Fatal("numeric use_bidirectional_attention did not fail")
+	}
+}
+
 func TestParseTextConfigE2B(t *testing.T) {
 	skipIfNoMLX(t)
 	data := []byte(`{

@@ -516,7 +516,7 @@ func TestModelCapabilities(t *testing.T) {
 			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision},
 		},
 		{
-			name: "gemma4 small safetensors suppresses vision and audio",
+			name: "gemma4 small safetensors exposes vision and suppresses audio",
 			model: Model{
 				Config: model.ConfigV2{
 					ModelFormat:  "safetensors",
@@ -525,9 +525,10 @@ func TestModelCapabilities(t *testing.T) {
 				},
 				Template: chatTemplate,
 			},
+			expectedCaps: []model.Capability{model.CapabilityVision},
 		},
 		{
-			name: "gemma4 large safetensors suppresses vision and audio",
+			name: "gemma4 large safetensors exposes vision and suppresses audio",
 			model: Model{
 				Config: model.ConfigV2{
 					ModelFormat:  "safetensors",
@@ -536,9 +537,10 @@ func TestModelCapabilities(t *testing.T) {
 				},
 				Template: chatTemplate,
 			},
+			expectedCaps: []model.Capability{model.CapabilityVision},
 		},
 		{
-			name: "default gemma4 safetensors suppresses vision and audio",
+			name: "default gemma4 safetensors exposes vision and suppresses audio",
 			model: Model{
 				Config: model.ConfigV2{
 					ModelFormat:  "safetensors",
@@ -547,6 +549,7 @@ func TestModelCapabilities(t *testing.T) {
 				},
 				Template: chatTemplate,
 			},
+			expectedCaps: []model.Capability{model.CapabilityVision},
 		},
 	}
 
