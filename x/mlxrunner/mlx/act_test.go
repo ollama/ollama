@@ -97,3 +97,26 @@ func benchmarkGELU(b *testing.B, fn func(*Array) *Array) {
 		b.Fatal(err)
 	}
 }
+
+func TestReLUSquared(t *testing.T) {
+	var got []float32
+	withMLXThread(t, func() {
+		x := FromValues([]float32{-2, -0, 0.5, 2}, 4)
+		Pin(x)
+		defer Unpin(x)
+
+		y := ReLUSquared(x)
+		Eval(y)
+		got = append(got, y.Floats()...)
+	})
+
+	want := []float32{0, 0, 0.25, 4}
+	if len(got) != len(want) {
+		t.Fatalf("got %d values, want %d", len(got), len(want))
+	}
+	for i, v := range got {
+		if v != want[i] {
+			t.Errorf("got[%d]=%v want %v", i, v, want[i])
+		}
+	}
+}

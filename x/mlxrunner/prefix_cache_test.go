@@ -437,6 +437,21 @@ func newSlidingWindowEnv() *testEnv {
 	}
 }
 
+// newStatelessLayerEnv gives the cache slice nil holes, the layout a hybrid
+// model produces when some layers own no state.
+func newStatelessLayerEnv() *testEnv {
+	tr := &snapshotTracker{}
+	rc := &fakeRewindableCache{tracker: tr}
+	nrc := &fakeRecurrentCache{tracker: tr}
+	caches := []cache.Cache{nrc, nil, rc, nil}
+	return &testEnv{
+		pc:         &prefixCache{caches: caches},
+		caches:     caches,
+		tracker:    tr,
+		rewindable: false,
+	}
+}
+
 // newRecurrentEnv creates a test environment with one rewindable cache and one
 // non-rewindable cache (Jamba-style architecture).
 func newRecurrentEnv() *testEnv {
@@ -456,12 +471,20 @@ func newRecurrentEnv() *testEnv {
 // the expected token sequence.
 func (e *testEnv) assertAllTokens(t *testing.T, label string, expected []int32) {
 	t.Helper()
+	var first cache.Cache
 	for i, c := range e.caches {
+		if c == nil {
+			continue
+		}
 		assertTokens(t, label, c, expected)
 		// Verify all caches report the same offset.
-		if i > 0 && c.Offset() != e.caches[0].Offset() {
-			t.Errorf("%s: cache %d offset=%d != cache 0 offset=%d",
-				label, i, c.Offset(), e.caches[0].Offset())
+		if first == nil {
+			first = c
+			continue
+		}
+		if c.Offset() != first.Offset() {
+			t.Errorf("%s: cache %d offset=%d != first cache offset=%d",
+				label, i, c.Offset(), first.Offset())
 		}
 	}
 }
@@ -531,13 +554,17 @@ func feedAll(caches []cache.Cache, tokens []int32) {
 // assertCacheOffsetAlignment verifies all caches report the same offset.
 func assertCacheOffsetAlignment(t *testing.T, pc *prefixCache, label string) {
 	t.Helper()
-	if len(pc.caches) < 2 {
-		return
-	}
-	expected := pc.caches[0].Offset()
-	for i := 1; i < len(pc.caches); i++ {
-		if got := pc.caches[i].Offset(); got != expected {
-			t.Errorf("%s: cache %d offset=%d != cache 0 offset=%d", label, i, got, expected)
+	expected := -1
+	for i, c := range pc.caches {
+		if c == nil {
+			continue
+		}
+		if expected < 0 {
+			expected = c.Offset()
+			continue
+		}
+		if got := c.Offset(); got != expected {
+			t.Errorf("%s: cache %d offset=%d != first cache offset=%d", label, i, got, expected)
 		}
 	}
 }
@@ -655,6 +682,7 @@ func forEachEnv(t *testing.T, fn func(t *testing.T, env *testEnv)) {
 		{"Transformer", newTransformerEnv},
 		{"SlidingWindow", newSlidingWindowEnv},
 		{"Recurrent", newRecurrentEnv},
+		{"StatelessLayers", newStatelessLayerEnv},
 	}
 	for _, e := range envs {
 		for _, lookahead := range []int{0, 1} {
@@ -1186,5 +1214,74 @@ func TestSwapSnapshotsDetachesHook(t *testing.T) {
 	replacement.materialize(2 << 20)
 	if pc.pagedOutBytes != 2<<20 {
 		t.Fatalf("pagedOutBytes after replacement materialize = %d, want %d", pc.pagedOutBytes, 2<<20)
+	}
+}
+
+// Without this, every node reads as incomplete on a hybrid model and
+// switchToPath re-pages the leaf every time.
+func TestHasAllSnapshotsIgnoresStatelessLayers(t *testing.T) {
+	tr := &snapshotTracker{}
+	caches := []cache.Cache{
+		&fakeRewindableCache{tracker: tr},
+		nil,
+		&fakeRecurrentCache{tracker: tr},
+	}
+
+	node := &trieNode{tokens: []trieKey{1, 2, 3}, endOffset: 3}
+	if hasAllSnapshots(node, caches) {
+		t.Fatal("hasAllSnapshots = true with no snapshots at all")
+	}
+
+	node.snapshots = []cache.Snapshot{&fakeSnapshot{from: 0, to: 3}, nil, &fakeSnapshot{from: 0, to: 3}}
+	if !hasAllSnapshots(node, caches) {
+		t.Fatal("hasAllSnapshots = false when every stateful layer has a snapshot")
+	}
+
+	node.snapshots = []cache.Snapshot{&fakeSnapshot{from: 0, to: 3}, nil, nil}
+	if hasAllSnapshots(node, caches) {
+		t.Fatal("hasAllSnapshots = true with a stateful layer's snapshot missing")
+	}
+}
+
+// Merge is only reached when an interior node with one child is evicted, which
+// the scenario tests never hit, so drive it directly.
+func TestMergeWithChildSkipsStatelessLayers(t *testing.T) {
+	tr := &snapshotTracker{}
+	caches := []cache.Cache{
+		&fakeRewindableCache{tracker: tr},
+		nil,
+		&fakeRecurrentCache{tracker: tr},
+	}
+
+	pc := &prefixCache{caches: caches}
+	pc.ensureRoot()
+
+	parent := &trieNode{parent: pc.root, tokens: []trieKey{1, 2}, endOffset: 2}
+	child := &trieNode{parent: parent, tokens: []trieKey{3, 4}, endOffset: 4}
+	parent.children = []*trieNode{child}
+	pc.root.children = []*trieNode{parent}
+
+	parent.setSnapshots([]cache.Snapshot{
+		&fakeSnapshot{from: 0, to: 2}, nil, &fakeSnapshot{from: 0, to: 2},
+	}, &pc.pagedOutBytes)
+	child.setSnapshots([]cache.Snapshot{
+		&fakeSnapshot{from: 2, to: 4}, nil, &fakeSnapshot{from: 2, to: 4},
+	}, &pc.pagedOutBytes)
+
+	mergeWithChild(parent, caches, &pc.pagedOutBytes)
+
+	if got := len(parent.tokens); got != 4 {
+		t.Fatalf("merged tokens = %d, want 4", got)
+	}
+	if got := parent.endOffset; got != 4 {
+		t.Fatalf("merged endOffset = %d, want 4", got)
+	}
+	if parent.snapshots[1] != nil {
+		t.Fatalf("stateless layer snapshot = %v, want nil", parent.snapshots[1])
+	}
+	for _, i := range []int{0, 2} {
+		if parent.snapshots[i] == nil {
+			t.Fatalf("stateful layer %d lost its merged snapshot", i)
+		}
 	}
 }
