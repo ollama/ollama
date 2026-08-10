@@ -85,6 +85,17 @@ func TestDiscoverSkillsSkipsMalformedEntries(t *testing.T) {
 	if got, want := len(catalog.Diagnostics()), 7; got != want {
 		t.Fatalf("diagnostics = %d, want %d: %#v", got, want, catalog.Diagnostics())
 	}
+	// The diagnostic has to name the rule; "invalid" alone leaves the user
+	// guessing which of the name, contents, or permissions was rejected.
+	var underscore string
+	for _, d := range catalog.Diagnostics() {
+		if strings.Contains(d.Error(), `"under_score"`) {
+			underscore = d.Error()
+		}
+	}
+	if !strings.Contains(underscore, "lowercase letters, numbers, and single hyphens") || !strings.Contains(underscore, dir) {
+		t.Fatalf("under_score diagnostic = %q, want the naming rule and the directory scanned", underscore)
+	}
 	if _, err := catalog.Load("broken"); err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("load broken error = %v", err)
 	}
@@ -269,6 +280,32 @@ func TestLoadDefaultSkillsPrecedenceAndCollisions(t *testing.T) {
 		if strings.Contains(d.Error(), "shadows") {
 			t.Fatalf("unexpected shadow diagnostic: %v", d)
 		}
+	}
+}
+
+func TestLoadDefaultSkillsScansEachRootOnce(t *testing.T) {
+	// Running the agent from the home directory makes the user and project
+	// roots resolve to the same paths, which scanned each of them twice and
+	// reported every diagnostic from them twice.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // Windows: os.UserHomeDir uses %USERPROFILE%
+	t.Setenv(SkillsDirEnv, filepath.Join(home, ".ollama", "skills"))
+
+	writeCatalogSkill(t, filepath.Join(home, ".agents", "skills"), "under_score", "invalid directory")
+
+	catalog, err := LoadDefaultSkills(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var invalid []error
+	for _, d := range catalog.Diagnostics() {
+		if strings.Contains(d.Error(), "under_score") {
+			invalid = append(invalid, d)
+		}
+	}
+	if got, want := len(invalid), 1; got != want {
+		t.Fatalf("diagnostics for under_score = %d, want %d: %v", got, want, invalid)
 	}
 }
 
