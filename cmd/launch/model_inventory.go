@@ -133,12 +133,17 @@ func resolveLaunchModels(names []string, models []LaunchModel) ([]LaunchModel, b
 }
 
 func launchModelFromListResponse(model api.ListModelResponse) LaunchModel {
+	contextLength := model.Details.ProjectedContextLength
+	if contextLength <= 0 {
+		contextLength = model.Details.ContextLength
+	}
+
 	return LaunchModel{
 		Name:            model.Name,
 		Remote:          model.RemoteModel != "",
 		ToolCapable:     slices.Contains(model.Capabilities, modelpkg.CapabilityTools),
 		Capabilities:    append([]modelpkg.Capability(nil), model.Capabilities...),
-		ContextLength:   model.Details.ContextLength,
+		ContextLength:   contextLength,
 		EmbeddingLength: model.Details.EmbeddingLength,
 		Size:            model.Size,
 		Details:         model.Details,
