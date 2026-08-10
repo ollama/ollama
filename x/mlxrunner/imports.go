@@ -5,6 +5,7 @@ import (
 	_ "github.com/ollama/ollama/x/models/dflash"
 	_ "github.com/ollama/ollama/x/models/gemma3"
 	_ "github.com/ollama/ollama/x/models/gemma4"
+	_ "github.com/ollama/ollama/x/models/glimmer"
 	_ "github.com/ollama/ollama/x/models/glm4_moe_lite"
 	_ "github.com/ollama/ollama/x/models/laguna"
 	_ "github.com/ollama/ollama/x/models/llama"

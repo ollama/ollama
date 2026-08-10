@@ -397,6 +397,14 @@ func buildModelListSummary(name model.Name, mf *manifest.Manifest) (modelListSum
 		})
 	}
 
+	// Mirrors suppressAudioCapability in images.go so /api/tags and /api/show
+	// agree for safetensors models whose MLX runner serves vision but not audio.
+	if cfg.ModelFormat == "safetensors" && cfg.Renderer == "glimmer" {
+		summary.Capabilities = slices.DeleteFunc(summary.Capabilities, func(c model.Capability) bool {
+			return c == model.CapabilityAudio
+		})
+	}
+
 	return summary, nil
 }
 

@@ -113,6 +113,8 @@ func rendererForName(name string) Renderer {
 		return &LagunaV8Renderer{}
 	case "cohere":
 		return &CohereRenderer{}
+	case "glimmer":
+		return &GlimmerRenderer{useImgTags: RenderImgTags}
 	default:
 		return nil
 	}

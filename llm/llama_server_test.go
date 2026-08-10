@@ -2469,12 +2469,13 @@ func TestAppendContextShiftArgs(t *testing.T) {
 	}
 }
 
-func TestAppendMTPDraftArgs(t *testing.T) {
+func TestAppendDraftArgs(t *testing.T) {
 	tests := []struct {
-		name   string
-		config LlamaServerConfig
-		opts   api.Options
-		want   []string
+		name      string
+		draftType string
+		draftPath string
+		opts      api.Options
+		want      []string
 	}{
 		{
 			name: "no draft model leaves speculative decoding disabled",
@@ -2482,30 +2483,63 @@ func TestAppendMTPDraftArgs(t *testing.T) {
 			want: []string{"base"},
 		},
 		{
-			name:   "embedded draft uses configured draft depth",
-			config: LlamaServerConfig{EnableMTP: true},
-			opts:   api.Options{Runner: api.Runner{DraftNumPredict: 4}},
-			want:   []string{"base", "--spec-type", "draft-mtp", "--spec-draft-n-max", "4", "--spec-draft-backend-sampling"},
+			name:      "embedded MTP draft uses configured draft depth",
+			draftType: draftTypeMTP,
+			opts:      api.Options{Runner: api.Runner{DraftNumPredict: 4}},
+			want:      []string{"base", "--spec-type", "draft-mtp", "--spec-draft-n-max", "4", "--spec-draft-backend-sampling"},
 		},
 		{
-			name:   "separate draft model uses configured draft depth",
-			config: LlamaServerConfig{DraftModelPath: "draft.gguf"},
-			opts:   api.Options{Runner: api.Runner{DraftNumPredict: 8}},
-			want:   []string{"base", "--spec-type", "draft-mtp", "--spec-draft-n-max", "8", "--spec-draft-backend-sampling", "--spec-draft-model", "draft.gguf"},
+			name:      "separate MTP draft uses configured draft depth",
+			draftType: draftTypeMTP,
+			draftPath: "draft.gguf",
+			opts:      api.Options{Runner: api.Runner{DraftNumPredict: 8}},
+			want:      []string{"base", "--spec-type", "draft-mtp", "--spec-draft-n-max", "8", "--spec-draft-backend-sampling", "--spec-draft-model", "draft.gguf"},
 		},
 		{
-			name:   "zero draft depth disables speculative decoding",
-			config: LlamaServerConfig{EnableMTP: true, DraftModelPath: "draft.gguf"},
-			opts:   api.Options{Runner: api.Runner{DraftNumPredict: 0}},
-			want:   []string{"base"},
+			name:      "DFlash draft omits MTP backend sampling",
+			draftType: draftTypeDFlash,
+			draftPath: "draft.gguf",
+			opts:      api.Options{Runner: api.Runner{DraftNumPredict: 4}},
+			want:      []string{"base", "--spec-type", "draft-dflash", "--spec-draft-n-max", "4", "--spec-draft-model", "draft.gguf"},
+		},
+		{
+			name:      "zero draft depth disables speculative decoding",
+			draftType: draftTypeDFlash,
+			draftPath: "draft.gguf",
+			opts:      api.Options{Runner: api.Runner{DraftNumPredict: 0}},
+			want:      []string{"base"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := appendMTPDraftArgs([]string{"base"}, tt.config, tt.opts)
+			got := appendDraftArgs([]string{"base"}, tt.draftType, tt.draftPath, tt.opts)
 			if !slices.Equal(got, tt.want) {
-				t.Fatalf("appendMTPDraftArgs = %v, want %v", got, tt.want)
+				t.Fatalf("appendDraftArgs = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExternalDraftType(t *testing.T) {
+	tests := []struct {
+		architecture string
+		want         string
+	}{
+		{architecture: "dflash", want: draftTypeDFlash},
+		{architecture: "qwen35", want: draftTypeMTP},
+		{architecture: "unknown", want: draftTypeMTP},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.architecture, func(t *testing.T) {
+			path, _ := writeTestGGML(t, ggml.KV{"general.architecture": tt.architecture}, nil)
+			got, err := externalDraftType(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Fatalf("externalDraftType = %q, want %q", got, tt.want)
 			}
 		})
 	}
