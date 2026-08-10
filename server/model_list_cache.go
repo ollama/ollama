@@ -393,7 +393,7 @@ func buildModelListSummary(name model.Name, mf *manifest.Manifest) (modelListSum
 
 	if cfg.ModelFormat == "safetensors" && isGemma4Renderer(cfg.Renderer) {
 		summary.Capabilities = slices.DeleteFunc(summary.Capabilities, func(c model.Capability) bool {
-			return c == model.CapabilityVision || c == model.CapabilityAudio
+			return c == model.CapabilityAudio
 		})
 	}
 

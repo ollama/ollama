@@ -339,3 +339,37 @@ func writeModelListGGUFUint64(t *testing.T, b *bytes.Buffer, v uint64) {
 		t.Fatal(err)
 	}
 }
+
+func TestModelListCacheGemma4SafetensorsCapabilities(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setTestHome(t, t.TempDir())
+
+	name := model.ParseName("gemma4-list")
+	configLayer, err := createConfigLayer(model.ConfigV2{
+		ModelFormat:  "safetensors",
+		ModelFamily:  "gemma4",
+		Renderer:     gemma4RendererSmall,
+		Capabilities: []string{"completion", "vision", "audio"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manifest.WriteManifest(name, *configLayer, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	cache := newModelListCache()
+	if err := cache.hydrate(context.Background()); err != nil {
+		t.Fatalf("hydrate failed: %v", err)
+	}
+	summary, ok := cache.Get(name)
+	if !ok {
+		t.Fatal("list summary missing")
+	}
+	if !slices.Contains(summary.Capabilities, model.CapabilityVision) {
+		t.Errorf("capabilities = %v, want vision", summary.Capabilities)
+	}
+	if slices.Contains(summary.Capabilities, model.CapabilityAudio) {
+		t.Errorf("capabilities = %v, want no audio", summary.Capabilities)
+	}
+}
