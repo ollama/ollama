@@ -29,8 +29,10 @@ const (
 type Qwen35Parser struct {
 	toolParser Qwen3CoderParser
 
-	state  qwen35ParserState
-	buffer strings.Builder
+	state              qwen35ParserState
+	buffer             strings.Builder
+	hasThinkingSupport bool
+	defaultThinking    bool
 	// Some checkpoints may emit an explicit leading <think> even when the
 	// prompt already opened thinking. Strip at most one such tag.
 	allowLeadingThinkOpenTag bool
@@ -41,7 +43,7 @@ func (p *Qwen35Parser) HasToolSupport() bool {
 }
 
 func (p *Qwen35Parser) HasThinkingSupport() bool {
-	return true
+	return p.hasThinkingSupport
 }
 
 func (p *Qwen35Parser) PreservedTokens() []string {
@@ -60,11 +62,11 @@ func (p *Qwen35Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkVal
 
 	thinkingEnabled := thinkValue != nil && thinkValue.Bool()
 	if thinkValue == nil {
-		thinkingEnabled = true
+		thinkingEnabled = p.defaultThinking
 	}
 
 	assistantPrefill := lastMessage != nil && lastMessage.Role == "assistant" && lastMessage.Content != ""
-	if thinkingEnabled && !assistantPrefill {
+	if p.hasThinkingSupport && thinkingEnabled && !assistantPrefill {
 		p.state = qwen35ParserStateCollectingThinking
 		p.allowLeadingThinkOpenTag = true
 	} else {
