@@ -143,7 +143,7 @@ func (s *SwitchMLP) Forward(x, indices *mlx.Array, cfg *Config) *mlx.Array {
 }
 
 func supportsGatherQMM(mode string, bits int) bool {
-	return mode == "mxfp8" && bits == 8
+	return (mode == "mxfp8" && bits == 8) || (mode == "affine" && bits == 4)
 }
 
 func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, base string) (*stackedExpertWeights, error) {
@@ -168,6 +168,9 @@ func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, base stri
 	)
 	if !supportsGatherQMM(mode, bits) {
 		return nil, fmt.Errorf("stacked expert projection %s uses unsupported quantization mode=%q bits=%d", base, mode, bits)
+	}
+	if mode == "affine" && biases == nil {
+		return nil, fmt.Errorf("stacked expert projection %s uses affine quantization but is missing its qbias tensor", base)
 	}
 
 	return &stackedExpertWeights{

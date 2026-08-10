@@ -65,6 +65,11 @@ func TestClassify(t *testing.T) {
 			wantKind: SourcePrequantized,
 		},
 		{
+			name:     "compressed-tensors int4 (.weight_packed I32)",
+			tensors:  map[string]string{"model.layers.0.weight_packed": "I32", "model.layers.0.weight_scale": "BF16"},
+			wantKind: SourcePrequantized,
+		},
+		{
 			name:      "block-fp8 auto-converts to mxfp8",
 			cfg:       fp8BlockConfig(128, 128),
 			tensors:   map[string]string{"model.layers.0.weight": "F8_E4M3", "model.layers.0.weight_scale_inv": "F32"},

@@ -73,6 +73,22 @@ func f32le(v float32) []byte {
 	return b
 }
 
+func u32le(values ...uint32) []byte {
+	out := make([]byte, len(values)*4)
+	for i, value := range values {
+		binary.LittleEndian.PutUint32(out[i*4:], value)
+	}
+	return out
+}
+
+func i64le(values ...int64) []byte {
+	out := make([]byte, len(values)*8)
+	for i, value := range values {
+		binary.LittleEndian.PutUint64(out[i*8:], uint64(value))
+	}
+	return out
+}
+
 func TestWriteBlobsCompressedNVFP4(t *testing.T) {
 	dir := t.TempDir()
 	writeConfigJSON(t, dir, `{"architectures":["TestModel"],"compression_config":{"format":"nvfp4-pack-quantized"}}`)
@@ -130,6 +146,99 @@ func TestWriteBlobsCompressedNVFP4(t *testing.T) {
 	}
 	if nh := blobHeader(t, norm)["norm.weight"]; nh.Dtype != "BF16" || !slices.Equal(nh.Shape, []int32{16}) {
 		t.Errorf("norm = %+v, want BF16 [16]", nh)
+	}
+}
+
+func TestWriteBlobsCompressedInt4Experts(t *testing.T) {
+	dir := t.TempDir()
+	writeConfigJSON(t, dir, `{
+		"architectures":["BailingMoeV3ForCausalLM"],
+		"quantization_config":{
+			"quant_method":"compressed-tensors",
+			"format":"pack-quantized",
+			"config_groups":{"group_0":{"weights":{
+				"num_bits":4,"type":"int","symmetric":true,
+				"strategy":"group","group_size":32
+			}}}
+		}
+	}`)
+
+	const group = "model.layers.1.mlp.experts"
+	packed0 := u32le(0x01234567, 0x89abcdef, 0x11111111, 0x22222222, 0x33333333, 0x44444444, 0x55555555, 0x66666666)
+	packed1 := u32le(0x76543210, 0xfedcba98, 0x77777777, 0x88888888, 0x99999999, 0xaaaaaaaa, 0xbbbbbbbb, 0xcccccccc)
+	scale0, err := EncodeFloatTensor("BF16", []float32{0.25, 0.5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scale1, err := EncodeFloatTensor("BF16", []float32{1, 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
+		st.NewTensorDataFromBytes(group+".0.gate_proj.weight_packed", "I32", []int32{2, 4}, packed0),
+		st.NewTensorDataFromBytes(group+".0.gate_proj.weight_scale", "BF16", []int32{2, 1}, scale0),
+		st.NewTensorDataFromBytes(group+".0.gate_proj.weight_shape", "I64", []int32{2}, i64le(2, 32)),
+		st.NewTensorDataFromBytes(group+".1.gate_proj.weight_packed", "I32", []int32{2, 4}, packed1),
+		st.NewTensorDataFromBytes(group+".1.gate_proj.weight_scale", "BF16", []int32{2, 1}, scale1),
+		st.NewTensorDataFromBytes(group+".1.gate_proj.weight_shape", "I64", []int32{2}, i64le(2, 32)),
+	})
+
+	inv, err := ReadInventory(dir)
+	if err != nil {
+		t.Fatalf("ReadInventory() error = %v", err)
+	}
+	class, err := Classify(inv, "")
+	if err != nil {
+		t.Fatalf("Classify() error = %v", err)
+	}
+	specs, err := Plan(inv, class, defaultQuantPolicy{})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	store := newCaptureStore()
+	if _, err := WriteBlobs(specs, dir, store); err != nil {
+		t.Fatalf("WriteBlobs() error = %v", err)
+	}
+
+	blob, ok := store.blobs[group]
+	if !ok {
+		t.Fatalf("missing stacked expert blob; got %v", store.names())
+	}
+	name := group + ".gate_proj.weight"
+	hdr := blobHeader(t, blob)
+	if w := hdr[name]; w.Dtype != "U32" || !slices.Equal(w.Shape, []int32{2, 2, 4}) {
+		t.Errorf("stacked weight = %+v, want U32 [2 2 4]", w)
+	}
+	if scale := hdr[name+".scale"]; scale.Dtype != "BF16" || !slices.Equal(scale.Shape, []int32{2, 2, 1}) {
+		t.Errorf("stacked scale = %+v, want BF16 [2 2 1]", scale)
+	}
+	if bias := hdr[name+".bias"]; bias.Dtype != "BF16" || !slices.Equal(bias.Shape, []int32{2, 2, 1}) {
+		t.Errorf("stacked bias = %+v, want BF16 [2 2 1]", bias)
+	}
+
+	wantPacked := append(append([]byte(nil), packed0...), packed1...)
+	if got := readPackedTensorRaw(t, blob, name); !slices.Equal(got, wantPacked) {
+		t.Error("packed INT4 words changed during stacking")
+	}
+	biasValues, err := DecodeFloatTensor("BF16", readPackedTensorRaw(t, blob, name+".bias"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []float32{-2, -4, -8, -16}; !slices.Equal(biasValues, want) {
+		t.Errorf("qbias = %v, want %v", biasValues, want)
+	}
+
+	headerSize := binary.LittleEndian.Uint64(blob[:8])
+	var rawHeader map[string]json.RawMessage
+	if err := json.Unmarshal(blob[8:8+headerSize], &rawHeader); err != nil {
+		t.Fatal(err)
+	}
+	var metadata map[string]string
+	if err := json.Unmarshal(rawHeader["__metadata__"], &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata["quant_type"] != "int4" || metadata["group_size"] != "32" {
+		t.Errorf("metadata = %v, want int4 group_size=32", metadata)
 	}
 }
 

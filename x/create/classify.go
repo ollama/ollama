@@ -140,7 +140,7 @@ func firstUnsupportedFP8(inv Inventory) (string, bool) {
 
 func isPackedDtype(dtype string) bool {
 	switch strings.ToUpper(dtype) {
-	case "U8", "U32": // current .weight_scale producers ship U8; U32 covers a future word-packed source
+	case "U8", "I32", "U32": // NVFP4 uses U8; compressed-tensors integer packing uses I32 words
 		return true
 	default:
 		return false

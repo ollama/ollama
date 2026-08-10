@@ -24,6 +24,17 @@ const (
 	// its raw bytes; the bytes themselves are unchanged.
 	TransformRelabelU8 Transform = "relabel_u8"
 
+	// TransformRelabelU32 relabels a packed I32 weight as U32. The packed
+	// bit-pattern is unchanged; compressed-tensors uses signed I32 only as the
+	// storage container while MLX consumes the same words as unsigned values.
+	TransformRelabelU32 Transform = "relabel_u32"
+
+	// TransformInt4SymmetricQBias derives MLX affine biases from one or more
+	// compressed-tensors symmetric INT4 scales. compressed-tensors packs q+8,
+	// while MLX decodes scale*q+bias, so bias is exactly -8*scale per group.
+	// Multiple sources are concatenated in expert order into OutShape.
+	TransformInt4SymmetricQBias Transform = "int4_symmetric_qbias"
+
 	// TransformScalarF32 validates that the source is a scalar F32 and copies
 	// it through (a global scale stored as-is).
 	TransformScalarF32 Transform = "scalar_f32"

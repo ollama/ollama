@@ -372,6 +372,9 @@ type sourceQuantization struct {
 			BlockStructure []int32 `json:"block_structure"`
 			NumBits        int     `json:"num_bits"`
 			Type           string  `json:"type"`
+			GroupSize      int     `json:"group_size"`
+			Strategy       string  `json:"strategy"`
+			Symmetric      *bool   `json:"symmetric"`
 		} `json:"weights"`
 	} `json:"config_groups"`
 }
@@ -420,25 +423,64 @@ func (cfg sourceModelConfig) Architecture() string {
 }
 
 func (cfg sourceModelConfig) QuantMetadata() map[string]string {
-	// Use the first non-empty quantization config found
-	var q sourceQuantization
+	// Use the first non-empty quantization config found. Native MLX configs put
+	// bits/group_size at the top level; compressed-tensors puts them under a
+	// config group instead.
 	for _, candidate := range cfg.quantizationConfigs() {
 		if candidate.Bits != 0 {
-			q = candidate
-			break
+			quantType := sourceQuantType(candidate.Mode, candidate.Bits)
+			if quantType == "" {
+				continue
+			}
+			metadata := map[string]string{"quant_type": quantType}
+			if candidate.GroupSize > 0 {
+				metadata["group_size"] = strconv.Itoa(candidate.GroupSize)
+			}
+			return metadata
+		}
+		if bits, groupSize, ok := candidate.compressedIntQuantization(); ok {
+			quantType := sourceQuantType("affine", bits)
+			if quantType == "" {
+				continue
+			}
+			return map[string]string{
+				"quant_type": quantType,
+				"group_size": strconv.Itoa(groupSize),
+			}
 		}
 	}
+	return nil
+}
 
-	quantType := sourceQuantType(q.Mode, q.Bits)
-	if quantType == "" {
-		return nil
+// compressedIntQuantization returns the single integer group quantization
+// shared by a compressed-tensors pack-quantized config. Multiple matching
+// config groups are accepted only when their bit width and group size agree;
+// otherwise one blob-level metadata record could misdescribe some tensors.
+func (q sourceQuantization) compressedIntQuantization() (bits, groupSize int, ok bool) {
+	if !strings.EqualFold(q.QuantMethod, "compressed-tensors") || !strings.EqualFold(q.Format, "pack-quantized") {
+		return 0, 0, false
 	}
 
-	metadata := map[string]string{"quant_type": quantType}
-	if q.GroupSize > 0 {
-		metadata["group_size"] = strconv.Itoa(q.GroupSize)
+	for _, group := range q.ConfigGroups {
+		weights := group.Weights
+		if !strings.EqualFold(weights.Type, "int") || weights.NumBits == 0 {
+			continue
+		}
+		if weights.NumBits != 4 && weights.NumBits != 8 {
+			return 0, 0, false
+		}
+		if !strings.EqualFold(weights.Strategy, "group") || weights.GroupSize <= 0 {
+			return 0, 0, false
+		}
+		if weights.Symmetric == nil || !*weights.Symmetric {
+			return 0, 0, false
+		}
+		if ok && (bits != weights.NumBits || groupSize != weights.GroupSize) {
+			return 0, 0, false
+		}
+		bits, groupSize, ok = weights.NumBits, weights.GroupSize, true
 	}
-	return metadata
+	return bits, groupSize, ok
 }
 
 func (cfg sourceModelConfig) quantizationConfigs() []sourceQuantization {

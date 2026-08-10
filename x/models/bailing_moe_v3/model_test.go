@@ -124,6 +124,7 @@ func TestSupportsGatherQMM(t *testing.T) {
 	}{
 		{mode: "mxfp8", bits: 8, want: true},
 		{mode: "mxfp8", bits: 4, want: false},
+		{mode: "affine", bits: 4, want: true},
 		{mode: "affine", bits: 8, want: false},
 		{mode: "", bits: 8, want: false},
 	}
@@ -140,31 +141,40 @@ func TestLoadStackedProjectionQuantizationBoundary(t *testing.T) {
 	key := base + ".weight"
 	weight := mlx.FromValues([]uint32{0}, 1, 1, 1)
 	scale := mlx.FromValues([]uint8{127}, 1, 1, 1)
+	affineScale := mlx.FromValues([]float32{0.25}, 1, 1, 1)
+	affineBias := mlx.FromValues([]float32{-2}, 1, 1, 1)
 
 	tests := []struct {
 		quantType string
+		scale     *mlx.Array
+		bias      *mlx.Array
+		wantMode  string
+		wantBits  int
 		wantErr   bool
 	}{
-		{quantType: "mxfp8"},
-		{quantType: "mxfp4", wantErr: true},
-		{quantType: "int8", wantErr: true},
+		{quantType: "mxfp8", scale: scale, wantMode: "mxfp8", wantBits: 8},
+		{quantType: "int4", scale: affineScale, bias: affineBias, wantMode: "affine", wantBits: 4},
+		{quantType: "mxfp4", scale: scale, wantErr: true},
+		{quantType: "int8", scale: affineScale, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.quantType, func(t *testing.T) {
 			cfg := &Config{TensorQuant: map[string]*model.TensorQuantInfo{
 				key: {QuantType: tt.quantType, GroupSize: 32},
 			}}
-			got, err := loadStackedProjection(map[string]*mlx.Array{
-				key: weight, key + "_scale": scale,
-			}, cfg, base)
+			tensors := map[string]*mlx.Array{key: weight, key + "_scale": tt.scale}
+			if tt.bias != nil {
+				tensors[key+"_qbias"] = tt.bias
+			}
+			got, err := loadStackedProjection(tensors, cfg, base)
 			if tt.wantErr {
 				if err == nil || !strings.Contains(err.Error(), "unsupported quantization") {
 					t.Fatalf("loadStackedProjection() error = %v, want unsupported quantization", err)
 				}
 				return
 			}
-			if err != nil || got == nil || got.Scales != scale || got.Mode != "mxfp8" || got.Bits != 8 {
-				t.Fatalf("loadStackedProjection() = %+v, %v; want MXFP8 GatherQMM weights", got, err)
+			if err != nil || got == nil || got.Scales != tt.scale || got.Biases != tt.bias || got.Mode != tt.wantMode || got.Bits != tt.wantBits {
+				t.Fatalf("loadStackedProjection() = %+v, %v; want mode=%s bits=%d GatherQMM weights", got, err, tt.wantMode, tt.wantBits)
 			}
 		})
 	}
@@ -174,6 +184,64 @@ func TestLoadStackedProjectionQuantizationBoundary(t *testing.T) {
 	}}
 	if _, err := loadStackedProjection(map[string]*mlx.Array{key: weight}, cfg, base); err == nil || !strings.Contains(err.Error(), "missing its scale tensor") {
 		t.Fatalf("loadStackedProjection() error = %v, want missing scale rejection", err)
+	}
+
+	cfg = &Config{TensorQuant: map[string]*model.TensorQuantInfo{
+		key: {QuantType: "int4", GroupSize: 32},
+	}}
+	if _, err := loadStackedProjection(map[string]*mlx.Array{
+		key: weight, key + "_scale": affineScale,
+	}, cfg, base); err == nil || !strings.Contains(err.Error(), "missing its qbias tensor") {
+		t.Fatalf("loadStackedProjection() error = %v, want missing qbias rejection", err)
+	}
+}
+
+func TestGatherQMMCompressedInt4Values(t *testing.T) {
+	requireMLX(t)
+
+	pack := func(values []int8) []uint32 {
+		if len(values)%8 != 0 {
+			t.Fatalf("pack input length %d is not divisible by 8", len(values))
+		}
+		words := make([]uint32, len(values)/8)
+		for i, value := range values {
+			if value < -8 || value > 7 {
+				t.Fatalf("INT4 value %d out of range", value)
+			}
+			words[i/8] |= uint32(uint8(value+8)) << (4 * (i % 8))
+		}
+		return words
+	}
+
+	expert0 := make([]int8, 32)
+	expert1 := make([]int8, 32)
+	for i := range expert0 {
+		expert0[i] = int8(i%16 - 8)
+		expert1[i] = 1
+	}
+	packed := append(pack(expert0), pack(expert1)...)
+	weight := mlx.FromValues(packed, 2, 1, 4)
+	scales := mlx.FromValues([]float32{0.5, 2}, 2, 1, 1)
+	biases := mlx.FromValues([]float32{-4, -16}, 2, 1, 1)
+	xValues := make([]float32, 2*32)
+	for i := range xValues {
+		xValues[i] = 1
+	}
+	x := mlx.FromValues(xValues, 2, 1, 1, 32)
+	rhsIndices := mlx.FromValues([]int32{0, 1}, 2, 1)
+
+	got := mlx.GatherQMM(x, weight, scales, biases, nil, rhsIndices, true, 32, 4, "affine", false)
+	got = got.AsType(mlx.DTypeFloat32)
+	mlx.Eval(got)
+	values := got.Floats()
+	want := []float32{-8, 64}
+	if len(values) != len(want) {
+		t.Fatalf("GatherQMM output shape %v values=%v, want two values", got.Dims(), values)
+	}
+	for i := range want {
+		if math.Abs(float64(values[i]-want[i])) > 1e-5 {
+			t.Errorf("GatherQMM output[%d] = %g, want %g", i, values[i], want[i])
+		}
 	}
 }
 
