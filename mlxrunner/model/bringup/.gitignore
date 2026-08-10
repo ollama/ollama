@@ -1,0 +1,5 @@
+# Guide documents (top-level *.md) are tracked; every per-model bring-up
+# tree is ignored — it ships as a PR-attached archive instead (artifacts.md).
+/*
+!/.gitignore
+!/*.md
