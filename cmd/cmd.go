@@ -803,7 +803,6 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 			prompts = append([]string{stdinContent}, prompts...)
 		}
 		opts.ShowConnect = false
-		opts.WordWrap = false
 		interactive = false
 	}
 	opts.Prompt = strings.Join(prompts, " ")
@@ -819,7 +818,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	opts.WordWrap = !nowrap
+	opts.WordWrap = !nowrap && term.IsTerminal(int(os.Stdout.Fd()))
 
 	// Fill out the rest of the options based on information about the
 	// model.

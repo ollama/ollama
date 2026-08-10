@@ -1054,6 +1054,73 @@ func TestRunHandler_ExplicitCloudStubPullFailure_IsBestEffortTEMP(t *testing.T) 
 	}
 }
 
+func TestRunHandler_NonTTYStdout_NoANSIEscapes(t *testing.T) {
+	// Long enough that word-wrap would fire (default termWidth is 80 when
+	// stdout is not a TTY) and emit \x1b[Nd / \x1b[K sequences if it ran.
+	longResponse := strings.Repeat("the quick brown fox jumps over the lazy dog ", 5)
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/show" && r.Method == http.MethodPost:
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityCompletion},
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		case r.URL.Path == "/api/generate" && r.Method == http.MethodPost:
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(api.GenerateResponse{
+				Response: longResponse,
+				Done:     true,
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("keepalive", "", "")
+	cmd.Flags().Bool("truncate", false, "")
+	cmd.Flags().Int("dimensions", 0, "")
+	cmd.Flags().Bool("verbose", false, "")
+	cmd.Flags().Bool("insecure", false, "")
+	cmd.Flags().Bool("nowordwrap", false, "")
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("think", "", "")
+	cmd.Flags().Bool("hidethinking", false, "")
+
+	// Redirecting os.Stdout to a pipe makes term.IsTerminal return false,
+	// exercising the non-TTY code path (issue #16785).
+	oldStdout := os.Stdout
+	readOut, writeOut, _ := os.Pipe()
+	os.Stdout = writeOut
+	t.Cleanup(func() { os.Stdout = oldStdout })
+
+	err := RunHandler(cmd, []string{"llama3", "tell me a story"})
+
+	_ = writeOut.Close()
+	var out bytes.Buffer
+	_, _ = io.Copy(&out, readOut)
+
+	if err != nil {
+		t.Fatalf("RunHandler returned error: %v", err)
+	}
+
+	if strings.Contains(out.String(), "\x1b[") {
+		t.Fatalf("expected no ANSI escape sequences in redirected output, got %q", out.String())
+	}
+}
+
 func TestGetModelfileName(t *testing.T) {
 	tests := []struct {
 		name          string
