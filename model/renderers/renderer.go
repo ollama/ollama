@@ -113,6 +113,8 @@ func rendererForName(name string) Renderer {
 		return &LagunaV8Renderer{}
 	case "cohere":
 		return &CohereRenderer{}
+	case "apertus1.5":
+		return &Apertus15Renderer{useImgTags: RenderImgTags}
 	default:
 		return nil
 	}
