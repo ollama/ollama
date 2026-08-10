@@ -1,11 +1,14 @@
 package bailing_moe_v3
 
 import (
+	"encoding/json"
 	"math"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/mlxrunner/model"
 	"github.com/ollama/ollama/x/models/nn"
 )
 
@@ -16,23 +19,42 @@ func requireMLX(t *testing.T) {
 	}
 }
 
+func validConfigData(t *testing.T, overrides map[string]any) []byte {
+	t.Helper()
+	cfg := map[string]any{
+		"model_type":                            "bailing_hybrid",
+		"hidden_size":                           1536,
+		"num_hidden_layers":                     24,
+		"num_attention_heads":                   16,
+		"head_dim":                              128,
+		"layer_group_size":                      4,
+		"no_kda_lora":                           true,
+		"qk_head_dim":                           192,
+		"qk_nope_head_dim":                      128,
+		"qk_rope_head_dim":                      64,
+		"rope_interleave":                       true,
+		"gated_attention_proj_granularity_type": "head_wise",
+		"num_experts":                           128,
+		"num_experts_per_tok":                   8,
+		"n_group":                               8,
+		"topk_group":                            4,
+	}
+	for key, value := range overrides {
+		if value == nil {
+			delete(cfg, key)
+		} else {
+			cfg[key] = value
+		}
+	}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
 func TestParseConfigAndLayerSchedule(t *testing.T) {
-	cfg, err := parseConfig([]byte(`{
-		"model_type":"bailing_hybrid",
-		"hidden_size":1536,
-		"num_hidden_layers":24,
-		"num_attention_heads":16,
-		"head_dim":128,
-		"layer_group_size":4,
-		"no_kda_lora":true,
-		"qk_head_dim":192,
-		"qk_nope_head_dim":128,
-		"qk_rope_head_dim":64,
-		"rope_interleave":true,
-		"gated_attention_proj_granularity_type":"head_wise",
-		"num_experts":128,
-		"n_group":8
-	}`))
+	cfg, err := parseConfig(validConfigData(t, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,6 +79,43 @@ func TestParseConfigAndLayerSchedule(t *testing.T) {
 	}
 }
 
+func TestParseConfigRejectsInvalidRouting(t *testing.T) {
+	tests := []struct {
+		name      string
+		overrides map[string]any
+		want      string
+	}{
+		{name: "missing n_group", overrides: map[string]any{"n_group": nil}, want: "invalid n_group: 0"},
+		{name: "uneven groups", overrides: map[string]any{"n_group": 7}, want: "must be divisible"},
+		{name: "one expert per group", overrides: map[string]any{"n_group": 128}, want: "at least 2"},
+		{name: "missing topk_group", overrides: map[string]any{"topk_group": nil}, want: "invalid topk_group: 0"},
+		{name: "too many groups", overrides: map[string]any{"topk_group": 9}, want: "must not exceed n_group"},
+		{name: "missing experts per token", overrides: map[string]any{"num_experts_per_tok": nil}, want: "invalid num_experts_per_tok: 0"},
+		{name: "too many experts per token", overrides: map[string]any{"num_experts_per_tok": 65}, want: "exceeds the 64 candidates"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := parseConfig(validConfigData(t, tt.overrides))
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("parseConfig() error = %v, want substring %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseConfigRejectsRopeScaling(t *testing.T) {
+	if _, err := parseConfig(validConfigData(t, map[string]any{"rope_scaling": json.RawMessage("null")})); err != nil {
+		t.Fatalf("parseConfig() rejected null rope_scaling: %v", err)
+	}
+
+	_, err := parseConfig(validConfigData(t, map[string]any{
+		"rope_scaling": map[string]any{"rope_type": "yarn", "factor": 4},
+	}))
+	if err == nil || !strings.Contains(err.Error(), "rope_scaling is not supported") {
+		t.Fatalf("parseConfig() error = %v, want unsupported rope_scaling", err)
+	}
+}
+
 func TestSupportsGatherQMM(t *testing.T) {
 	tests := []struct {
 		mode string
@@ -72,6 +131,49 @@ func TestSupportsGatherQMM(t *testing.T) {
 		if got := supportsGatherQMM(tt.mode, tt.bits); got != tt.want {
 			t.Fatalf("supportsGatherQMM(%q, %d) = %v, want %v", tt.mode, tt.bits, got, tt.want)
 		}
+	}
+}
+
+func TestLoadStackedProjectionQuantizationBoundary(t *testing.T) {
+	requireMLX(t)
+	const base = "model.layers.0.mlp.experts.gate_proj"
+	key := base + ".weight"
+	weight := mlx.FromValues([]uint32{0}, 1, 1, 1)
+	scale := mlx.FromValues([]uint8{127}, 1, 1, 1)
+
+	tests := []struct {
+		quantType string
+		wantErr   bool
+	}{
+		{quantType: "mxfp8"},
+		{quantType: "mxfp4", wantErr: true},
+		{quantType: "int8", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.quantType, func(t *testing.T) {
+			cfg := &Config{TensorQuant: map[string]*model.TensorQuantInfo{
+				key: {QuantType: tt.quantType, GroupSize: 32},
+			}}
+			got, err := loadStackedProjection(map[string]*mlx.Array{
+				key: weight, key + "_scale": scale,
+			}, cfg, base)
+			if tt.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "unsupported quantization") {
+					t.Fatalf("loadStackedProjection() error = %v, want unsupported quantization", err)
+				}
+				return
+			}
+			if err != nil || got == nil || got.Scales != scale || got.Mode != "mxfp8" || got.Bits != 8 {
+				t.Fatalf("loadStackedProjection() = %+v, %v; want MXFP8 GatherQMM weights", got, err)
+			}
+		})
+	}
+
+	cfg := &Config{TensorQuant: map[string]*model.TensorQuantInfo{
+		key: {QuantType: "mxfp8", GroupSize: 32},
+	}}
+	if _, err := loadStackedProjection(map[string]*mlx.Array{key: weight}, cfg, base); err == nil || !strings.Contains(err.Error(), "missing its scale tensor") {
+		t.Fatalf("loadStackedProjection() error = %v, want missing scale rejection", err)
 	}
 }
 

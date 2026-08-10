@@ -2,6 +2,7 @@
 package bailing_moe_v3
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -23,18 +24,19 @@ var _ base.Model = (*Model)(nil)
 
 // Config is the subset of BailingMoeV3Config needed for inference.
 type Config struct {
-	ModelType             string  `json:"model_type"`
-	HiddenSize            int32   `json:"hidden_size"`
-	IntermediateSize      int32   `json:"intermediate_size"`
-	NumHiddenLayers       int32   `json:"num_hidden_layers"`
-	NumAttentionHeads     int32   `json:"num_attention_heads"`
-	NumKeyValueHeads      int32   `json:"num_key_value_heads"`
-	HeadDim               int32   `json:"head_dim"`
-	VocabSize             int32   `json:"vocab_size"`
-	MaxPositionEmbeddings int32   `json:"max_position_embeddings"`
-	RMSNormEps            float32 `json:"rms_norm_eps"`
-	RopeTheta             float32 `json:"rope_theta"`
-	TieWordEmbeddings     bool    `json:"tie_word_embeddings"`
+	ModelType             string          `json:"model_type"`
+	HiddenSize            int32           `json:"hidden_size"`
+	IntermediateSize      int32           `json:"intermediate_size"`
+	NumHiddenLayers       int32           `json:"num_hidden_layers"`
+	NumAttentionHeads     int32           `json:"num_attention_heads"`
+	NumKeyValueHeads      int32           `json:"num_key_value_heads"`
+	HeadDim               int32           `json:"head_dim"`
+	VocabSize             int32           `json:"vocab_size"`
+	MaxPositionEmbeddings int32           `json:"max_position_embeddings"`
+	RMSNormEps            float32         `json:"rms_norm_eps"`
+	RopeTheta             float32         `json:"rope_theta"`
+	RopeScaling           json.RawMessage `json:"rope_scaling"`
+	TieWordEmbeddings     bool            `json:"tie_word_embeddings"`
 
 	LayerGroupSize       int32   `json:"layer_group_size"`
 	ShortConvKernelSize  int32   `json:"short_conv_kernel_size"`
@@ -125,6 +127,9 @@ func parseConfig(data []byte) (Config, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return Config{}, fmt.Errorf("parse config: %w", err)
 	}
+	if raw := bytes.TrimSpace(cfg.RopeScaling); len(raw) > 0 && !bytes.Equal(raw, []byte("null")) {
+		return Config{}, fmt.Errorf("rope_scaling is not supported")
+	}
 
 	switch {
 	case cfg.HiddenSize <= 0:
@@ -141,8 +146,25 @@ func parseConfig(data []byte) (Config, error) {
 		return Config{}, fmt.Errorf("KDA LoRA projections are not supported yet")
 	case cfg.QKNopeHeadDim+cfg.QKRopeHeadDim != cfg.QKHeadDim:
 		return Config{}, fmt.Errorf("qk dimensions do not close: %d + %d != %d", cfg.QKNopeHeadDim, cfg.QKRopeHeadDim, cfg.QKHeadDim)
-	case cfg.NumExperts > 0 && cfg.NumExperts%cfg.NGroup != 0:
-		return Config{}, fmt.Errorf("num_experts (%d) must be divisible by n_group (%d)", cfg.NumExperts, cfg.NGroup)
+	}
+
+	if cfg.NumExperts > 0 {
+		switch {
+		case cfg.NGroup <= 0:
+			return Config{}, fmt.Errorf("invalid n_group: %d", cfg.NGroup)
+		case cfg.NumExperts%cfg.NGroup != 0:
+			return Config{}, fmt.Errorf("num_experts (%d) must be divisible by n_group (%d)", cfg.NumExperts, cfg.NGroup)
+		case cfg.NumExperts/cfg.NGroup < 2:
+			return Config{}, fmt.Errorf("experts per group must be at least 2: num_experts=%d n_group=%d", cfg.NumExperts, cfg.NGroup)
+		case cfg.TopKGroup <= 0:
+			return Config{}, fmt.Errorf("invalid topk_group: %d", cfg.TopKGroup)
+		case cfg.TopKGroup > cfg.NGroup:
+			return Config{}, fmt.Errorf("topk_group (%d) must not exceed n_group (%d)", cfg.TopKGroup, cfg.NGroup)
+		case cfg.NumExpertsPerTok <= 0:
+			return Config{}, fmt.Errorf("invalid num_experts_per_tok: %d", cfg.NumExpertsPerTok)
+		case cfg.NumExpertsPerTok > cfg.TopKGroup*(cfg.NumExperts/cfg.NGroup):
+			return Config{}, fmt.Errorf("num_experts_per_tok (%d) exceeds the %d candidates selected by topk_group", cfg.NumExpertsPerTok, cfg.TopKGroup*(cfg.NumExperts/cfg.NGroup))
+		}
 	}
 
 	if cfg.RMSNormEps == 0 {

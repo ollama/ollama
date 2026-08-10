@@ -170,6 +170,9 @@ func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, base stri
 
 	scales := tensors[key+"_scale"]
 	if scales == nil {
+		if cfg.TensorQuant != nil && cfg.TensorQuant[key] != nil {
+			return nil, fmt.Errorf("quantized stacked expert projection %s is missing its scale tensor", base)
+		}
 		return &stackedExpertWeights{Weight: weight}, nil
 	}
 
@@ -292,6 +295,12 @@ func loadSparseMoE(linears model.LinearFactory, tensors map[string]*mlx.Array, p
 		gateKey := base + ".gate_proj.weight"
 		upKey := base + ".up_proj.weight"
 		downKey := base + ".down_proj.weight"
+		for _, key := range []string{gateKey, upKey, downKey} {
+			_, hasQuantMetadata := cfg.TensorQuant[key]
+			if tensors[key+"_scale"] != nil || hasQuantMetadata {
+				return nil, fmt.Errorf("expert %d: unstacked quantized projection %s is not supported", expert, key)
+			}
+		}
 		gate, up, down := tensors[gateKey], tensors[upKey], tensors[downKey]
 		if gate == nil || up == nil || down == nil {
 			return nil, fmt.Errorf("expert %d: missing projection", expert)
