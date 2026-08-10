@@ -75,6 +75,10 @@ func (p *Qwen35Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkVal
 	return tools
 }
 
+func (p *Qwen35Parser) SetStreamToolCalls(enabled bool) {
+	p.toolParser.SetStreamToolCalls(enabled)
+}
+
 type qwen35Event interface {
 	isQwen35Event()
 }

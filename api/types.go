@@ -158,6 +158,14 @@ type ChatRequest struct {
 	// for supported models.
 	Think *ThinkValue `json:"think,omitempty"`
 
+	// StreamToolCalls, when true, asks supported parsers (currently Qwen3 /
+	// Qwen3.5 XML tool calls) to emit partial tool_calls while arguments are
+	// still being generated. Partial chunks populate
+	// ToolCallFunction.ArgumentsDelta and leave Arguments empty; the final
+	// assembled call is still emitted once the tool block closes. Opt-in so
+	// existing clients keep receiving only complete tool_calls.
+	StreamToolCalls *bool `json:"stream_tool_calls,omitempty"`
+
 	// Truncate is a boolean that, when set to true, truncates the chat history messages
 	// if the rendered prompt exceeds the context length limit.
 	Truncate *bool `json:"truncate,omitempty"`
@@ -227,6 +235,11 @@ type ToolCallFunction struct {
 	Index     int                       `json:"index"`
 	Name      string                    `json:"name"`
 	Arguments ToolCallFunctionArguments `json:"arguments"`
+	// ArgumentsDelta is opt-in progressive tool-argument text while the model
+	// is still generating a tool call (see ChatRequest.StreamToolCalls). It is
+	// the cumulative raw tool-call body so far (e.g. Qwen XML). Empty on the
+	// final assembled tool call.
+	ArgumentsDelta string `json:"arguments_delta,omitempty"`
 }
 
 // ToolCallFunctionArguments holds tool call arguments in insertion order.
