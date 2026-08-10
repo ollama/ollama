@@ -130,3 +130,81 @@ func TestPlanBlockFP8PerExpertStacked(t *testing.T) {
 		}
 	}
 }
+
+func TestPlanBlockFP8MixedMXFP4PerExpert(t *testing.T) {
+	inv := Inventory{Dir: "test", Tensors: map[string]SourceTensor{
+		// A regular block-FP8 tensor keeps the overall source on the block-FP8
+		// import path.
+		"model.layers.0.self_attn.q_proj.weight":           {Name: "model.layers.0.self_attn.q_proj.weight", Dtype: "F8_E4M3", Shape: []int32{256, 256}},
+		"model.layers.0.self_attn.q_proj.weight_scale_inv": {Name: "model.layers.0.self_attn.q_proj.weight_scale_inv", Dtype: "F8_E8M0", Shape: []int32{2, 2}},
+
+		// Ling's routed experts pack two E2M1 values in each I8 byte and store
+		// one E8M0 scale per 32 logical input values.
+		"model.layers.0.mlp.experts.0.gate_proj.weight":           {Name: "model.layers.0.mlp.experts.0.gate_proj.weight", Dtype: "I8", Shape: []int32{768, 1280}},
+		"model.layers.0.mlp.experts.0.gate_proj.weight_scale_inv": {Name: "model.layers.0.mlp.experts.0.gate_proj.weight_scale_inv", Dtype: "F8_E8M0", Shape: []int32{768, 80}},
+		"model.layers.0.mlp.experts.1.gate_proj.weight":           {Name: "model.layers.0.mlp.experts.1.gate_proj.weight", Dtype: "I8", Shape: []int32{768, 1280}},
+		"model.layers.0.mlp.experts.1.gate_proj.weight_scale_inv": {Name: "model.layers.0.mlp.experts.1.gate_proj.weight_scale_inv", Dtype: "F8_E8M0", Shape: []int32{768, 80}},
+	}}
+
+	specs, err := Plan(inv, Classification{Kind: SourceBlockFP8, Quantize: "mxfp8"}, defaultQuantPolicy{})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+
+	group, ok := specByName(specs, "model.layers.0.mlp.experts")
+	if !ok {
+		t.Fatalf("missing MXFP4 expert group; got %v", specNames(specs))
+	}
+	if group.Metadata["quant_type"] != "mxfp4" || group.Metadata["group_size"] != "32" {
+		t.Fatalf("metadata = %v, want mxfp4 group_size=32", group.Metadata)
+	}
+
+	weight, ok := inputByOutput(group, "model.layers.0.mlp.experts.gate_proj.weight")
+	if !ok {
+		t.Fatal("missing stacked MXFP4 weight")
+	}
+	if weight.Transform != TransformStackExperts || weight.OutDtype != "U32" ||
+		!slices.Equal(weight.OutShape, []int32{2, 768, 320}) {
+		t.Errorf("weight = %+v, want stacked U32 [2 768 320]", weight)
+	}
+
+	scale, ok := inputByOutput(group, "model.layers.0.mlp.experts.gate_proj.weight.scale")
+	if !ok {
+		t.Fatal("missing stacked MXFP4 scale")
+	}
+	if scale.Transform != TransformStackExperts || scale.OutDtype != "U8" ||
+		!slices.Equal(scale.OutShape, []int32{2, 768, 80}) {
+		t.Errorf("scale = %+v, want stacked U8 [2 768 80]", scale)
+	}
+
+	if _, leaked := specByName(specs, "model.layers.0.mlp.experts.0.gate_proj.weight_scale_inv"); leaked {
+		t.Error("MXFP4 scale companion must not be emitted as its own blob")
+	}
+}
+
+func TestPlanBlockFP8ErrorsOnMissingScale(t *testing.T) {
+	// An F8 weight without a scale companion must fail loudly instead of
+	// passing through to the float path as raw FP8 bytes.
+	inv := blockFP8(map[string]string{
+		"model.layers.0.self_attn.q_proj.weight": "F8_E4M3",
+	})
+	if _, err := Plan(inv, Classification{Kind: SourceBlockFP8, Quantize: "mxfp8"}, defaultQuantPolicy{}); err == nil {
+		t.Fatal("Plan() = nil error, want missing-scale error")
+	}
+}
+
+func TestPlanBlockFP8ErrorsOnInvalidMXFP4Pair(t *testing.T) {
+	// A byte-packed weight with an E8M0 companion of the wrong shape must
+	// fail validation instead of silently falling through to the float path.
+	inv := Inventory{Dir: "test", Tensors: map[string]SourceTensor{
+		"model.layers.3.mlp.experts.0.gate_proj.weight": {
+			Name: "model.layers.3.mlp.experts.0.gate_proj.weight", Dtype: "I8", Shape: []int32{64, 64},
+		},
+		"model.layers.3.mlp.experts.0.gate_proj.weight_scale_inv": {
+			Name: "model.layers.3.mlp.experts.0.gate_proj.weight_scale_inv", Dtype: "F8_E8M0", Shape: []int32{64, 3},
+		},
+	}}
+	if _, err := Plan(inv, Classification{Kind: SourceBlockFP8, Quantize: "mxfp8"}, defaultQuantPolicy{}); err == nil {
+		t.Fatal("Plan() = nil error, want mxfp4 shape validation error")
+	}
+}

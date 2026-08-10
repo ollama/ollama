@@ -122,10 +122,14 @@ func TestSupportsGatherQMM(t *testing.T) {
 		bits int
 		want bool
 	}{
-		{mode: "mxfp8", bits: 8, want: true},
-		{mode: "mxfp8", bits: 4, want: false},
 		{mode: "affine", bits: 4, want: true},
-		{mode: "affine", bits: 8, want: false},
+		{mode: "affine", bits: 8, want: true},
+		{mode: "mxfp8", bits: 8, want: true},
+		{mode: "nvfp4", bits: 4, want: true},
+		{mode: "mxfp4", bits: 4, want: true},
+		{mode: "mxfp4", bits: 8, want: false},
+		{mode: "mxfp8", bits: 4, want: false},
+		{mode: "", bits: 4, want: false},
 		{mode: "", bits: 8, want: false},
 	}
 	for _, tt := range tests {
@@ -153,9 +157,9 @@ func TestLoadStackedProjectionQuantizationBoundary(t *testing.T) {
 		wantErr   bool
 	}{
 		{quantType: "mxfp8", scale: scale, wantMode: "mxfp8", wantBits: 8},
+		{quantType: "mxfp4", scale: scale, wantMode: "mxfp4", wantBits: 4},
 		{quantType: "int4", scale: affineScale, bias: affineBias, wantMode: "affine", wantBits: 4},
-		{quantType: "mxfp4", scale: scale, wantErr: true},
-		{quantType: "int8", scale: affineScale, wantErr: true},
+		{quantType: "int8", scale: affineScale, bias: affineBias, wantMode: "affine", wantBits: 8},
 	}
 	for _, tt := range tests {
 		t.Run(tt.quantType, func(t *testing.T) {
@@ -174,7 +178,7 @@ func TestLoadStackedProjectionQuantizationBoundary(t *testing.T) {
 				return
 			}
 			if err != nil || got == nil || got.Scales != tt.scale || got.Biases != tt.bias || got.Mode != tt.wantMode || got.Bits != tt.wantBits {
-				t.Fatalf("loadStackedProjection() = %+v, %v; want mode=%s bits=%d GatherQMM weights", got, err, tt.wantMode, tt.wantBits)
+				t.Fatalf("loadStackedProjection() = %+v, %v; want mode=%q bits=%d GatherQMM weights", got, err, tt.wantMode, tt.wantBits)
 			}
 		})
 	}

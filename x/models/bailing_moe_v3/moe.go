@@ -209,7 +209,16 @@ func (s *SwitchMLP) Forward(x, indices *mlx.Array, cfg *Config) *mlx.Array {
 }
 
 func supportsGatherQMM(mode string, bits int) bool {
-	return (mode == "mxfp8" && bits == 8) || (mode == "affine" && bits == 4)
+	switch mode {
+	case "affine":
+		return bits == 4 || bits == 8
+	case "mxfp8":
+		return bits == 8
+	case "nvfp4", "mxfp4":
+		return bits == 4
+	default:
+		return false
+	}
 }
 
 func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, base string) (*stackedExpertWeights, error) {

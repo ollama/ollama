@@ -76,6 +76,18 @@ func TestClassify(t *testing.T) {
 			wantKind:  SourceBlockFP8,
 			wantQuant: "mxfp8",
 		},
+		{
+			// Pure MXFP4 experts on a float base: no FP8 tensors and no
+			// weight_block_size metadata, but still not a float source.
+			name: "mxfp4 experts on a bf16 base",
+			tensors: map[string]string{
+				"model.layers.0.mlp.experts.0.gate_proj.weight":           "I8",
+				"model.layers.0.mlp.experts.0.gate_proj.weight_scale_inv": "F8_E8M0",
+				"model.embed_tokens.weight":                               "BF16",
+			},
+			wantKind:  SourceBlockFP8,
+			wantQuant: "mxfp8",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

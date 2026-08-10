@@ -61,12 +61,17 @@ func Classify(inv Inventory, requested string) (Classification, error) {
 		return Classification{Kind: SourcePrequantized}, nil
 
 	case SourceBlockFP8:
-		rows, cols, ok := inv.Config.HFFP8WeightBlockSize()
-		if !ok {
-			return Classification{}, fmt.Errorf("fp8 source model is missing weight_block_size metadata")
-		}
-		if rows != 128 || cols != 128 {
-			return Classification{}, fmt.Errorf("unsupported fp8 source block size %dx%d (only 128x128 is supported)", rows, cols)
+		// The 128x128 block-size requirement only applies to FP8 decode; a
+		// pure MXFP4 source (byte-packed experts on a float base) carries no
+		// FP8 tensors and no weight_block_size metadata.
+		if hasE4M3Weight(inv) {
+			rows, cols, ok := inv.Config.HFFP8WeightBlockSize()
+			if !ok {
+				return Classification{}, fmt.Errorf("fp8 source model is missing weight_block_size metadata")
+			}
+			if rows != 128 || cols != 128 {
+				return Classification{}, fmt.Errorf("unsupported fp8 source block size %dx%d (only 128x128 is supported)", rows, cols)
+			}
 		}
 		if requested != "" {
 			return Classification{}, fmt.Errorf("cannot quantize an fp8 source model (requested %q): fp8 sources are converted to mxfp8 automatically; only bf16/fp16/fp32 sources can be quantized", requested)
@@ -96,7 +101,7 @@ func normalizeRequested(requested string) (string, error) {
 // missing (e.g. a ModelOpt checkpoint without hf_quant_config.json) is still
 // recognized as already-quantized and not mistaken for a float model.
 func detectKind(inv Inventory) SourceKind {
-	var hasMLXScales, hasPacked, hasNVFP4Scale, hasFP8Weight bool
+	var hasMLXScales, hasPacked, hasNVFP4Scale, hasFP8Weight, hasMXFP4Weight bool
 	for name, t := range inv.Tensors {
 		switch {
 		case strings.HasSuffix(name, ".scales"):
@@ -110,6 +115,14 @@ func detectKind(inv Inventory) SourceKind {
 			if bt, ok := inv.Tensors[strings.TrimSuffix(name, "_scale")]; ok && isPackedDtype(bt.Dtype) {
 				hasNVFP4Scale = true
 			}
+		case strings.HasSuffix(name, ".weight_scale_inv") && isE8M0Dtype(t.Dtype):
+			// Byte-packed MXFP4 weights carry E8M0 block-scale companions.
+			// Without this signal a pure BF16+MXFP4 checkpoint (no FP8
+			// tensors) would be misclassified as float.
+			if bt, ok := inv.Tensors[strings.TrimSuffix(name, "_scale_inv")]; ok &&
+				(strings.EqualFold(bt.Dtype, "I8") || strings.EqualFold(bt.Dtype, "U8")) {
+				hasMXFP4Weight = true
+			}
 		}
 		if strings.HasSuffix(name, ".weight") && isE4M3Dtype(t.Dtype) {
 			hasFP8Weight = true
@@ -119,7 +132,7 @@ func detectKind(inv Inventory) SourceKind {
 	switch {
 	case hasMLXScales || hasPacked || hasNVFP4Scale:
 		return SourcePrequantized
-	case hasFP8Weight:
+	case hasFP8Weight || hasMXFP4Weight:
 		return SourceBlockFP8
 	default:
 		return SourceFloat
@@ -136,6 +149,16 @@ func firstUnsupportedFP8(inv Inventory) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// hasE4M3Weight reports whether any tensor is an F8_E4M3 weight.
+func hasE4M3Weight(inv Inventory) bool {
+	for name, t := range inv.Tensors {
+		if strings.HasSuffix(name, ".weight") && isE4M3Dtype(t.Dtype) {
+			return true
+		}
+	}
+	return false
 }
 
 func isPackedDtype(dtype string) bool {
@@ -169,7 +192,7 @@ func isE5M2Dtype(dtype string) bool {
 // (the value is 2^(byte-127)).
 func isE8M0Dtype(dtype string) bool {
 	switch strings.ToUpper(dtype) {
-	case "F8_E8M0", "UE8M0", "E8M0":
+	case "F8_E8M0", "F8_E8M0FNU", "UE8M0", "E8M0":
 		return true
 	default:
 		return false
