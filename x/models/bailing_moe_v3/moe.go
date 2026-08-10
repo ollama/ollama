@@ -101,21 +101,6 @@ func (r *Router) Forward(x *mlx.Array, cfg *Config) (*mlx.Array, *mlx.Array) {
 	return indices, weights
 }
 
-func splitLastAxis(a *mlx.Array) (*mlx.Array, *mlx.Array) {
-	dims := a.Dims()
-	start := make([]int32, len(dims))
-	stop := make([]int32, len(dims))
-	for i, d := range dims {
-		stop[i] = int32(d)
-	}
-	mid := int32(dims[len(dims)-1]) / 2
-	leftStop := append([]int32(nil), stop...)
-	leftStop[len(leftStop)-1] = mid
-	rightStart := append([]int32(nil), start...)
-	rightStart[len(rightStart)-1] = mid
-	return mlx.SliceStartStop(a, start, leftStop), mlx.SliceStartStop(a, rightStart, stop)
-}
-
 func (s *SwitchMLP) Forward(x, indices *mlx.Array, cfg *Config) *mlx.Array {
 	dims := x.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
