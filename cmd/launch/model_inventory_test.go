@@ -24,7 +24,7 @@ func TestModelInventoryResolveRefreshesLocalMiss(t *testing.T) {
 			fmt.Fprint(w, `{"models":[]}`)
 			return
 		}
-		fmt.Fprint(w, `{"models":[{"name":"new-model","size":123,"details":{"context_length":65536,"embedding_length":1024},"capabilities":["vision","tools"]}]}`)
+		fmt.Fprint(w, `{"models":[{"name":"new-model","size":123,"details":{"context_length":65536,"projected_context_length":32768,"embedding_length":1024},"capabilities":["vision","tools"]}]}`)
 	}))
 	defer srv.Close()
 
@@ -41,11 +41,39 @@ func TestModelInventoryResolveRefreshesLocalMiss(t *testing.T) {
 	if got[0].Name != "new-model" {
 		t.Fatalf("Name = %q, want new-model", got[0].Name)
 	}
-	if got[0].ContextLength != 65_536 || got[0].EmbeddingLength != 1_024 {
+	if got[0].ContextLength != 32_768 || got[0].EmbeddingLength != 1_024 {
 		t.Fatalf("metadata = context %d embedding %d, want refreshed metadata", got[0].ContextLength, got[0].EmbeddingLength)
 	}
 	if !got[0].HasCapability(modelpkg.CapabilityVision) || !got[0].ToolCapable {
 		t.Fatalf("capabilities = %v toolCapable=%v, want refreshed capabilities", got[0].Capabilities, got[0].ToolCapable)
+	}
+}
+
+func TestLaunchModelFromListResponseContextLength(t *testing.T) {
+	tests := []struct {
+		name    string
+		details api.ModelDetails
+		want    int
+	}{
+		{
+			name:    "projected",
+			details: api.ModelDetails{ContextLength: 131_072, ProjectedContextLength: 32_768},
+			want:    32_768,
+		},
+		{
+			name:    "architectural fallback",
+			details: api.ModelDetails{ContextLength: 131_072},
+			want:    131_072,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := launchModelFromListResponse(api.ListModelResponse{Name: "test", Details: tt.details})
+			if got.ContextLength != tt.want {
+				t.Fatalf("ContextLength = %d, want %d", got.ContextLength, tt.want)
+			}
+		})
 	}
 }
 

@@ -36,7 +36,7 @@ func TestList(t *testing.T) {
 		"myhost/mynamespace/lips:code",
 	}
 
-	s := Server{modelCaches: &modelCaches{modelList: newModelListCache()}}
+	s := Server{defaultNumCtx: 32_768, modelCaches: &modelCaches{modelList: newModelListCache()}}
 	s.modelCaches.modelList.Start(context.Background())
 	if err := s.modelCaches.modelList.Wait(context.Background()); err != nil {
 		t.Fatal(err)
@@ -81,6 +81,35 @@ func TestList(t *testing.T) {
 		if !slices.Contains(m.Capabilities, "completion") {
 			t.Fatalf("capabilities for %q = %v, want completion", m.Name, m.Capabilities)
 		}
+		if m.Details.ProjectedContextLength != 32_768 {
+			t.Fatalf("projected context length for %q = %d, want 32768", m.Name, m.Details.ProjectedContextLength)
+		}
+	}
+}
+
+func TestProjectedContextLength(t *testing.T) {
+	tests := []struct {
+		name       string
+		env        string
+		bucket     int
+		modelLimit int
+		want       int
+	}{
+		{name: "bucket", bucket: 32_768, modelLimit: 131_072, want: 32_768},
+		{name: "model limit", bucket: 262_144, modelLimit: 131_072, want: 131_072},
+		{name: "unknown model limit", bucket: 4_096, want: 4_096},
+		{name: "environment override", env: "65536", bucket: 4_096, modelLimit: 131_072, want: 65_536},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OLLAMA_CONTEXT_LENGTH", tt.env)
+			s := Server{defaultNumCtx: tt.bucket}
+			model := api.ListModelResponse{Details: api.ModelDetails{ContextLength: tt.modelLimit}}
+			if got := s.projectedContextLength(model); got != tt.want {
+				t.Fatalf("projectedContextLength(%d) = %d, want %d", tt.modelLimit, got, tt.want)
+			}
+		})
 	}
 }
 
