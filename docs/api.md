@@ -1381,7 +1381,9 @@ A single JSON object will be returned.
         "family": "qwen2",
         "families": ["qwen2"],
         "parameter_size": "7.6B",
-        "quantization_level": "Q4_K_M"
+        "quantization_level": "Q4_K_M",
+        "context_length": 131072,
+        "recommended_context_length": 32768
       }
     },
     {
@@ -1396,7 +1398,9 @@ A single JSON object will be returned.
         "family": "llama",
         "families": ["llama"],
         "parameter_size": "3.2B",
-        "quantization_level": "Q4_K_M"
+        "quantization_level": "Q4_K_M",
+        "context_length": 131072,
+        "recommended_context_length": 32768
       }
     }
   ]
