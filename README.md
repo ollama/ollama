@@ -38,6 +38,12 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `ollama/ollama` is available on Docker Hub.
 
+### Deploy on Sealos
+
+[![Deploy on Sealos](https://sealos.io/Deploy-on-Sealos.svg)](https://sealos.io/products/app-store/ollama)
+
+The template uses the official Ollama image and persists model files across restarts.
+
 ### Libraries
 
 - [ollama-python](https://github.com/ollama/ollama-python)
