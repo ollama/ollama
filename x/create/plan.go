@@ -47,6 +47,15 @@ const (
 	// expert-index order) into one [experts, ...] tensor.
 	TransformStackExperts Transform = "stack_experts"
 
+	// TransformBlockFP8GroupScales expands UE8M0 128x128 block-scale exponent
+	// bytes into MLX mxfp8 per-group scales (one byte per 32 values along the
+	// last axis). Sources are the block-scale tensors in expert order; the
+	// output is U8 with OutShape [(experts,) rows, cols/32]. Together with a
+	// byte-identical relabel of the E4M3 weight this converts block-FP8 to
+	// mxfp8 losslessly: both formats store E4M3 codes with power-of-two
+	// scales, and every 32-value group lies inside one 128x128 block.
+	TransformBlockFP8GroupScales Transform = "blockfp8_group_scales"
+
 	// TransformDecodeFP8 dequantizes a block-FP8 weight using its block scale.
 	// Its two sources are the F8_E4M3 weight and its scale companion; the
 	// result is a BF16 tensor, which Quantize (if set) then re-quantizes.

@@ -164,3 +164,14 @@ func isE5M2Dtype(dtype string) bool {
 		return false
 	}
 }
+
+// isE8M0Dtype reports whether dtype stores UE8M0 scale exponents as raw bytes
+// (the value is 2^(byte-127)).
+func isE8M0Dtype(dtype string) bool {
+	switch strings.ToUpper(dtype) {
+	case "F8_E8M0", "UE8M0", "E8M0":
+		return true
+	default:
+		return false
+	}
+}

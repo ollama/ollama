@@ -8,10 +8,14 @@ import (
 )
 
 // planBlockFP8 plans an HF block-FP8 source. MLX has no FP8 tensor type, so
-// every FP8 weight is decoded to BF16 using its block scale and then quantized
-// to the target (mxfp8); a weight the policy declines is still decoded and kept
-// at BF16 (it is never stored as FP8). Everything else passes through at source
-// precision.
+// every FP8 weight becomes mxfp8 or BF16. When the block scales are UE8M0
+// exponents the mxfp8 conversion is exact and purely byte-level: E4M3 codes
+// are kept bit-for-bit and each 128x128 block exponent is replicated into the
+// per-32-value group scales (both formats are E4M3 x 2^k, and every group
+// lies inside one block). Weights the policy declines, and weights whose
+// scales are not UE8M0, are decoded to BF16 with their block scales (and then
+// re-quantized to mxfp8 when the policy asks for it). Everything else passes
+// through at source precision.
 func planBlockFP8(inv Inventory, target string, policy quantizePolicy) ([]BlobSpec, error) {
 	// The scale companion of each FP8 weight is folded into that weight's
 	// blob, so it is not emitted on its own.
@@ -45,13 +49,22 @@ func planBlockFP8(inv Inventory, target string, policy quantizePolicy) ([]BlobSp
 			if !ok {
 				return nil, fmt.Errorf("fp8 weight %q has no scale companion", name)
 			}
+			quantize := policy.quantizationType(name, t.Shape, target)
+			if quantize == "mxfp8" && canRepackBlockFP8(t, inv.Tensors[scaleName]) {
+				specs = append(specs, BlobSpec{
+					Name:     name,
+					Tensors:  repackBlockFP8Tensors(name, []SourceTensor{t}, []SourceTensor{inv.Tensors[scaleName]}, t.Shape),
+					Metadata: mxfp8BlobMetadata(),
+				})
+				continue
+			}
 			specs = append(specs, BlobSpec{
 				Name: name,
 				Tensors: []TensorSpec{{
 					Name:      name,
 					Sources:   []SourceTensor{t, inv.Tensors[scaleName]},
 					Transform: TransformDecodeFP8,
-					Quantize:  policy.quantizationType(name, t.Shape, target),
+					Quantize:  quantize,
 					OutDtype:  "BF16",
 					OutShape:  t.Shape,
 				}},
@@ -112,6 +125,14 @@ func planFP8ExpertGroup(groupPrefix string, tensors []SourceTensor, inv Inventor
 	}
 
 	var tensorSpecs []TensorSpec
+	repackable := true
+	type plannedProj struct {
+		name    string
+		shape   []int32
+		weights []SourceTensor
+		scales  []SourceTensor
+	}
+	var planned []plannedProj
 	for _, proj := range sortedKeys(byProj) {
 		experts := byProj[proj]
 		sort.Slice(experts, func(i, j int) bool { return experts[i].idx < experts[j].idx })
@@ -138,16 +159,92 @@ func planFP8ExpertGroup(groupPrefix string, tensors []SourceTensor, inv Inventor
 
 		stackedName := groupPrefix + "." + proj + ".weight"
 		stackedShape := append([]int32{int32(len(experts))}, base.Shape...)
+		quantize := policy.quantizationType(stackedName, stackedShape, target)
+		if quantize != "mxfp8" || !canRepackBlockFP8(base, baseScale) {
+			repackable = false
+		}
+		planned = append(planned, plannedProj{name: stackedName, shape: stackedShape, weights: sources[:len(experts)], scales: scales})
 		tensorSpecs = append(tensorSpecs, TensorSpec{
 			Name:      stackedName,
 			Sources:   sources,
 			Transform: TransformDecodeStackFP8,
-			Quantize:  policy.quantizationType(stackedName, stackedShape, target),
+			Quantize:  quantize,
 			OutDtype:  base.Dtype,
 			OutShape:  stackedShape,
 		})
 	}
+
+	// The lossless byte repack applies only when every projection of the group
+	// qualifies, so the blob's quant metadata describes all of its tensors.
+	if repackable {
+		var repacked []TensorSpec
+		for _, proj := range planned {
+			repacked = append(repacked, repackBlockFP8Tensors(proj.name, proj.weights, proj.scales, proj.shape)...)
+		}
+		return []BlobSpec{{Name: groupPrefix, Tensors: repacked, Metadata: mxfp8BlobMetadata()}}, nil
+	}
 	return homogeneousExpertBlobs(groupPrefix, tensorSpecs), nil
+}
+
+// canRepackBlockFP8 reports whether an FP8 weight and its block scale can be
+// converted to mxfp8 losslessly at the byte level: UE8M0 exponent scales over
+// full 128x128 blocks of an E4M3 weight whose rows split evenly into 32-value
+// groups.
+func canRepackBlockFP8(weight, scale SourceTensor) bool {
+	if !isE4M3Dtype(weight.Dtype) || !isE8M0Dtype(scale.Dtype) {
+		return false
+	}
+	rank := len(weight.Shape)
+	if rank < 2 || len(scale.Shape) != rank {
+		return false
+	}
+	rows, cols := weight.Shape[rank-2], weight.Shape[rank-1]
+	if cols%32 != 0 {
+		return false
+	}
+	sr := (rows + 127) / 128
+	sc := (cols + 127) / 128
+	want := append(append([]int32(nil), weight.Shape[:rank-2]...), sr, sc)
+	return slices.Equal(scale.Shape, want)
+}
+
+// repackBlockFP8Tensors builds the two byte-level TensorSpecs that convert a
+// block-FP8 weight (or a stack of per-expert weights) to mxfp8 exactly: the
+// E4M3 bytes relabeled as packed U32 words, and the block scales expanded to
+// per-group UE8M0 bytes.
+func repackBlockFP8Tensors(name string, weights, scales []SourceTensor, outShape []int32) []TensorSpec {
+	rank := len(outShape)
+	packedShape := append([]int32(nil), outShape...)
+	packedShape[rank-1] /= 4
+	scaleShape := append([]int32(nil), outShape...)
+	scaleShape[rank-1] /= 32
+
+	weightTransform := TransformRelabelU32
+	if len(weights) > 1 {
+		weightTransform = TransformStackExperts
+	}
+	return []TensorSpec{
+		{
+			Name:      name,
+			Sources:   weights,
+			Transform: weightTransform,
+			OutDtype:  "U32",
+			OutShape:  packedShape,
+		},
+		{
+			Name:      name + ".scale",
+			Sources:   scales,
+			Transform: TransformBlockFP8GroupScales,
+			OutDtype:  "U8",
+			OutShape:  scaleShape,
+		},
+	}
+}
+
+// mxfp8BlobMetadata is the safetensors metadata recorded on a losslessly
+// repacked block-FP8 blob, matching what the MLX mxfp8 quantizer writes.
+func mxfp8BlobMetadata() map[string]string {
+	return map[string]string{"quant_type": "mxfp8", "group_size": "32"}
 }
 
 // isFP8Weight reports whether name is an F8_E4M3 weight with a block-scale
