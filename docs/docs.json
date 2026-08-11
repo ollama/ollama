@@ -61,6 +61,10 @@
   },
   "redirects": [
     {
+      "source": "/development.md",
+      "destination": "/development"
+    },
+    {
       "source": "/api/openai-compatibility.mdx",
       "destination": "/api/openai-compatibility"
     },
