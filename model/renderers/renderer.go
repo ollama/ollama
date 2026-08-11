@@ -103,6 +103,8 @@ func rendererForName(name string) Renderer {
 		return &FunctionGemmaRenderer{}
 	case "glm-4.7":
 		return &GLM47Renderer{}
+	case "bailing":
+		return &BailingRenderer{}
 	case "glm-ocr":
 		return &GlmOcrRenderer{useImgTags: RenderImgTags}
 	case "lfm2":

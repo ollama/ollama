@@ -655,6 +655,11 @@ func parserNameForIdentifier(modelDir, s string) string {
 	switch {
 	case strings.HasPrefix(s, "museglimmer") || s == "muse_glimmer":
 		return "glimmer"
+	// Match the V3 architecture specifically: Ling 2.x checkpoints
+	// (e.g. BailingMoeV2_5ForCausalLM) share the "bailing" prefix and the
+	// bailing_hybrid model type but use different chat protocols.
+	case strings.Contains(s, "bailingmoev3"):
+		return "bailing"
 	case strings.Contains(s, "laguna"):
 		return lagunaRendererParserName(modelDir)
 	case strings.Contains(s, "cohere2moe") || strings.Contains(s, "cohere2_moe"):
@@ -718,6 +723,11 @@ func rendererNameForIdentifier(modelDir, s string) string {
 	switch {
 	case strings.HasPrefix(s, "museglimmer") || s == "muse_glimmer":
 		return "glimmer"
+	// Match the V3 architecture specifically: Ling 2.x checkpoints
+	// (e.g. BailingMoeV2_5ForCausalLM) share the "bailing" prefix and the
+	// bailing_hybrid model type but use different chat protocols.
+	case strings.Contains(s, "bailingmoev3"):
+		return "bailing"
 	case strings.Contains(s, "laguna"):
 		return lagunaRendererParserName(modelDir)
 	case strings.Contains(s, "cohere2moe") || strings.Contains(s, "cohere2_moe"):
