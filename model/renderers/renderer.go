@@ -93,6 +93,8 @@ func rendererForName(name string) Renderer {
 		return renderer
 	case "nemotron-3-nano":
 		return &Nemotron3NanoRenderer{}
+	case "nemotron-3.5-nano":
+		return &Nemotron3NanoRenderer{v35: true}
 	case "gemma4", "gemma4-small":
 		return &Gemma4Renderer{useImgTags: RenderImgTags}
 	case "gemma4-large":

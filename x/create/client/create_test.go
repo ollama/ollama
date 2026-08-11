@@ -65,6 +65,23 @@ func TestNemotronNanoOmniMetadataInference(t *testing.T) {
 	}
 }
 
+func TestNemotron35MetadataInference(t *testing.T) {
+	dir := t.TempDir()
+	config := `{"architectures":["NemotronHForCausalLM"],"model_type":"nemotron_h"}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "chat_template.jinja"), []byte("{reasoning effort: efficient}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := getParserName(dir), "nemotron-3.5-nano"; got != want {
+		t.Fatalf("parser = %q, want %q", got, want)
+	}
+	if got, want := getRendererName(dir), "nemotron-3.5-nano"; got != want {
+		t.Fatalf("renderer = %q, want %q", got, want)
+	}
+}
+
 func TestConfigFromModelfile(t *testing.T) {
 	modelfile, err := parser.ParseFile(strings.NewReader(`
 FROM ./model

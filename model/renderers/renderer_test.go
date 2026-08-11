@@ -38,6 +38,8 @@ func TestBuiltInRendererStillWorks(t *testing.T) {
 	}{
 		{name: "qwen3-coder"},
 		{name: "qwen3.5"},
+		{name: "nemotron-3-nano"},
+		{name: "nemotron-3.5-nano"},
 	}
 
 	messages := []api.Message{
