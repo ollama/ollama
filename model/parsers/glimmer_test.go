@@ -246,6 +246,76 @@ func TestGlimmerParserStrayMessageTagInInvokeName(t *testing.T) {
 	}
 }
 
+// TestGlimmerParserMessageTagReplacesInvokeTerminator covers the fleet-observed
+// stress failure where the model emits a <|message|> boundary token in place
+// of the `">` terminator of the invoke name (`name="read<|message|><atem:parameter ...`).
+// The name must recover as the text before the tag and parameter parsing must
+// resume at the parameter element.
+func TestGlimmerParserMessageTagReplacesInvokeTerminator(t *testing.T) {
+	tool := glimmerTestTool("read", map[string]api.ToolProperty{
+		"path": {Type: api.PropertyType{"string"}},
+	})
+
+	for name, invoke := range map[string]string{
+		"terminator replaced": `read<|message|><atem:parameter name="path">go.mod</atem:parameter>
+`,
+		"tag mid-name": `re<|message|>ad"><atem:parameter name="path">go.mod</atem:parameter>
+`,
+		"repeated tags": `read<|message|><|message|>"><atem:parameter name="path">go.mod</atem:parameter>
+`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			input := ` to=read<|message|><atem:function_calls>
+<atem:invoke name="` + invoke + `</atem:invoke>
+</atem:function_calls><|eot|>`
+
+			p := &GlimmerParser{}
+			p.Init([]api.Tool{tool}, nil, nil)
+			content, thinking, calls, err := p.Add(input, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if content != "" || thinking != "" || len(calls) != 1 {
+				t.Fatalf("got content=%q thinking=%q calls=%v", content, thinking, calls)
+			}
+			if calls[0].Function.Name != "read" {
+				t.Fatalf("call name = %q, want %q", calls[0].Function.Name, "read")
+			}
+			if got, ok := calls[0].Function.Arguments.Get("path"); !ok || got != "go.mod" {
+				t.Fatalf("path = %#v, %v; want %q", got, ok, "go.mod")
+			}
+		})
+	}
+}
+
+// TestGlimmerParserMessageTagInParamValueUntouched pins the non-recovery side:
+// a literal <|message|> inside a parameter value sits after the name
+// terminator and must be preserved verbatim, not treated as a fumble.
+func TestGlimmerParserMessageTagInParamValueUntouched(t *testing.T) {
+	tool := glimmerTestTool("echo", map[string]api.ToolProperty{
+		"text": {Type: api.PropertyType{"string"}},
+	})
+	value := `keep <|message|> literal`
+	input := ` to=echo<|message|>` + glimmerTestATEM(
+		"echo",
+		`<atem:parameter name="text">`+value+`</atem:parameter>
+`,
+	) + `<|eot|>`
+
+	p := &GlimmerParser{}
+	p.Init([]api.Tool{tool}, nil, nil)
+	_, _, calls, err := p.Add(input, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("calls = %v, want 1", calls)
+	}
+	if got, ok := calls[0].Function.Arguments.Get("text"); !ok || got != value {
+		t.Fatalf("text = %#v, %v; want %q", got, ok, value)
+	}
+}
+
 // TestGlimmerParserNamespacedSelfReference covers the observed stress failure
 // where the model addresses an undotted tool through its own derived
 // namespace (`read.read` for a tool declared as `read`) — the chat template
