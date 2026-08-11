@@ -24,6 +24,13 @@ type KDAAttention struct {
 	GProj nn.LinearLayer
 	OProj nn.LinearLayer
 
+	// QKVProj and FBGProj, when non-nil, are the row-fused equivalents of
+	// (QProj,KProj,VProj) and (FProj,BProj,GProj): one wide matmul replaces
+	// three thin ones per forward, and the qkv fusion also replaces the
+	// explicit concatenation feeding the shared short convolution.
+	QKVProj nn.LinearLayer
+	FBGProj nn.LinearLayer
+
 	Conv1D      *nn.Conv1d
 	ONormWeight *mlx.Array
 	DtBias      *mlx.Array
@@ -80,6 +87,20 @@ func loadKDAAttention(linears model.LinearFactory, tensors map[string]*mlx.Array
 	delete(tensors, p+".q_conv1d.weight")
 	delete(tensors, p+".k_conv1d.weight")
 	delete(tensors, p+".v_conv1d.weight")
+
+	// Row-fuse the six input projections into two wide matmuls. The fusion
+	// is bit-exact (quant groups run along the input axis), so a nil result
+	// just means mixed representations; the per-projection path still works.
+	a.QKVProj = fuseLinearRows(a.QProj, a.KProj, a.VProj)
+	if a.QKVProj != nil {
+		// Forward uses only the fused projection; drop the originals so the
+		// loader's pin pass does not keep both copies resident.
+		a.QProj, a.KProj, a.VProj = nil, nil, nil
+	}
+	a.FBGProj = fuseLinearRows(a.FProj, a.BProj, a.GProj)
+	if a.FBGProj != nil {
+		a.FProj, a.BProj, a.GProj = nil, nil, nil
+	}
 	return a, nil
 }
 
@@ -112,13 +133,76 @@ func l2Normalize(x *mlx.Array) *mlx.Array {
 	return mlx.Mul(x, norm)
 }
 
+// kdaStepGraph builds the single-timestep KDA recurrence as one compilable
+// graph: L2 normalization, the decay gate, and the delta rule fused into a
+// handful of Metal kernels instead of ~20 tiny ones. Inputs: q, k, v, a
+// [B,H,D]; beta [B,H]; state [B,H,D,D] (f32); A [1,H,1]; dt [1,H,D]; qScale
+// and lowerBound scalars. Outputs: y [B,H,D] in q's dtype and the new f32
+// state. The math matches kdaScan's loop body op for op.
+func kdaStepGraph(safeGate bool) mlx.CompileFunc {
+	return func(in ...*mlx.Array) []*mlx.Array {
+		q, k, v, a, beta, state, A, dt, qScale, lowerBound := in[0], in[1], in[2], in[3], in[4], in[5], in[6], in[7], in[8], in[9]
+		outDType := q.DType()
+		qn := mlx.Mul(l2Normalize(q), qScale)
+		kn := l2Normalize(k)
+		vf := v.AsType(mlx.DTypeFloat32)
+		b := mlx.ExpandDims(mlx.Sigmoid(beta.AsType(mlx.DTypeFloat32)), -1)
+
+		gateInput := mlx.Add(a.AsType(mlx.DTypeFloat32), dt)
+		var logDecay *mlx.Array
+		if safeGate {
+			logDecay = mlx.Mul(mlx.Sigmoid(mlx.Mul(A, gateInput)), lowerBound)
+		} else {
+			logDecay = mlx.MulScalar(mlx.Mul(A, mlx.Softplus(gateInput)), -1)
+		}
+		decay := mlx.Exp(logDecay)
+
+		kx := mlx.ExpandDims(kn, 2)
+		s := mlx.Mul(state, mlx.ExpandDims(decay, 2))
+		memory := mlx.Sum(mlx.Mul(s, kx), -1, false)
+		delta := mlx.Mul(mlx.Sub(vf, memory), b)
+		s = mlx.Add(s, mlx.Mul(kx, mlx.ExpandDims(delta, -1)))
+		y := mlx.Sum(mlx.Mul(s, mlx.ExpandDims(qn, 2)), -1, false)
+		return []*mlx.Array{y.AsType(outDType), s}
+	}
+}
+
+var (
+	kdaStepSafeGate = mlx.Compile("KDAStepSafeGate", kdaStepGraph(true), mlx.Shapeless())
+	kdaStepSoftplus = mlx.Compile("KDAStepSoftplus", kdaStepGraph(false), mlx.Shapeless())
+)
+
+// kdaOutGate fuses the KDA output gate out * sigmoid(gate) computed in f32.
+var kdaOutGate = mlx.Compile2("KDAOutGate", func(out, gate *mlx.Array) *mlx.Array {
+	dt := out.DType()
+	return mlx.Mul(out.AsType(mlx.DTypeFloat32), mlx.Sigmoid(gate.AsType(mlx.DTypeFloat32))).AsType(dt)
+}, mlx.Shapeless())
+
 // kdaScan is the graph reference for the exact FLA KDA recurrence used by the
 // checkpoint. It intentionally favors correctness for initial bring-up; a
 // fused Metal implementation can replace it without changing model code.
+// Single-token calls (every decode step) take the compiled fused-step path,
+// which computes the same graph with far fewer kernel launches.
 func kdaScan(q, k, v, a, betaLogits, aExp, dtBias, state *mlx.Array, safeGate bool, lowerBound float32) (*mlx.Array, *mlx.Array) {
 	dims := q.Dims()
 	B, T, H, D := int32(dims[0]), int32(dims[1]), int32(dims[2]), int32(dims[3])
 	outDType := q.DType()
+
+	if T == 1 {
+		step := kdaStepSoftplus
+		if safeGate {
+			step = kdaStepSafeGate
+		}
+		outs := step(
+			mlx.Squeeze(q, 1), mlx.Squeeze(k, 1), mlx.Squeeze(v, 1),
+			mlx.Squeeze(a, 1), mlx.Squeeze(betaLogits, 1), state,
+			mlx.Reshape(aExp.AsType(mlx.DTypeFloat32), 1, H, 1),
+			mlx.Reshape(dtBias.AsType(mlx.DTypeFloat32), 1, H, D),
+			mlx.FromValue(float32(1/math.Sqrt(float64(D)))),
+			mlx.FromValue(lowerBound),
+		)
+		return mlx.ExpandDims(outs[0], 1), outs[1]
+	}
 
 	q = mlx.MulScalar(l2Normalize(q), float32(1/math.Sqrt(float64(D))))
 	k = l2Normalize(k)
@@ -180,11 +264,16 @@ func runKDASegments(q, k, v, a, beta, aExp, dtBias, initial *mlx.Array, splits [
 
 func (a *KDAAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, _ *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
 	projectionDim := cfg.NumAttentionHeads * cfg.HeadDim
-	qkv := mlx.Concatenate([]*mlx.Array{
-		a.QProj.Forward(x),
-		a.KProj.Forward(x),
-		a.VProj.Forward(x),
-	}, 2)
+	var qkv *mlx.Array
+	if a.QKVProj != nil {
+		qkv = a.QKVProj.Forward(x)
+	} else {
+		qkv = mlx.Concatenate([]*mlx.Array{
+			a.QProj.Forward(x),
+			a.KProj.Forward(x),
+			a.VProj.Forward(x),
+		}, 2)
+	}
 
 	convTail := cfg.ShortConvKernelSize - 1
 	var rc *cache.RecurrentCache
@@ -214,8 +303,19 @@ func (a *KDAAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, _ *m
 	q = mlx.Reshape(q, B, L, cfg.NumAttentionHeads, cfg.HeadDim)
 	k = mlx.Reshape(k, B, L, cfg.NumAttentionHeads, cfg.HeadDim)
 	v = mlx.Reshape(v, B, L, cfg.NumAttentionHeads, cfg.HeadDim)
-	decayInput := mlx.Reshape(a.FProj.Forward(x), B, L, cfg.NumAttentionHeads, cfg.HeadDim)
-	beta := mlx.Reshape(a.BProj.Forward(x), B, L, cfg.NumAttentionHeads)
+	var decayInput, beta, gateFlat *mlx.Array
+	if a.FBGProj != nil {
+		fbg := a.FBGProj.Forward(x)
+		fDim := projectionDim
+		bDim := cfg.NumAttentionHeads
+		decayInput = mlx.Reshape(sliceCols(fbg, B, L, 0, fDim), B, L, cfg.NumAttentionHeads, cfg.HeadDim)
+		beta = mlx.Reshape(sliceCols(fbg, B, L, fDim, fDim+bDim), B, L, cfg.NumAttentionHeads)
+		gateFlat = sliceCols(fbg, B, L, fDim+bDim, fDim+bDim+fDim)
+	} else {
+		decayInput = mlx.Reshape(a.FProj.Forward(x), B, L, cfg.NumAttentionHeads, cfg.HeadDim)
+		beta = mlx.Reshape(a.BProj.Forward(x), B, L, cfg.NumAttentionHeads)
+		gateFlat = a.GProj.Forward(x)
+	}
 
 	out, deltaStates := runKDASegments(
 		q, k, v, decayInput, beta, a.AExp, a.DtBias, history.DeltaState(), splits,
@@ -225,10 +325,9 @@ func (a *KDAAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, _ *m
 		rc.Put(b, convStates, deltaStates)
 	}
 
-	gate := mlx.Reshape(a.GProj.Forward(x), B, L, cfg.NumAttentionHeads, cfg.HeadDim)
-	outDType := out.DType()
+	gate := mlx.Reshape(gateFlat, B, L, cfg.NumAttentionHeads, cfg.HeadDim)
 	out = mlx.RMSNormFn(out, a.ONormWeight, cfg.RMSNormEps)
-	out = mlx.Mul(out.AsType(mlx.DTypeFloat32), mlx.Sigmoid(gate.AsType(mlx.DTypeFloat32))).AsType(outDType)
+	out = kdaOutGate(out, gate)
 	out = mlx.Reshape(out, B, L, projectionDim)
 	return a.OProj.Forward(out)
 }

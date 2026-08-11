@@ -330,3 +330,40 @@ func TestInterleavedToHalf(t *testing.T) {
 		}
 	}
 }
+
+func TestFuseGateUpDropsOriginals(t *testing.T) {
+	requireMLX(t)
+	newLinear := func(dtype mlx.DType) *nn.Linear {
+		w := mlx.Zeros(dtype, 4, 8)
+		mlx.Eval(w)
+		return &nn.Linear{Weight: w}
+	}
+
+	m := &DenseMLP{
+		GateProj: newLinear(mlx.DTypeBFloat16),
+		UpProj:   newLinear(mlx.DTypeBFloat16),
+		DownProj: newLinear(mlx.DTypeBFloat16),
+	}
+	m.fuseGateUp()
+	if m.GateUpProj == nil {
+		t.Fatal("expected uniform projections to fuse")
+	}
+	if m.GateProj != nil || m.UpProj != nil {
+		t.Fatal("expected fused originals to be dropped so they are not pinned twice")
+	}
+
+	// Mixed representations do not fuse; the originals must survive for the
+	// per-projection fallback path.
+	mixed := &DenseMLP{
+		GateProj: newLinear(mlx.DTypeBFloat16),
+		UpProj:   newLinear(mlx.DTypeFloat32),
+		DownProj: newLinear(mlx.DTypeBFloat16),
+	}
+	mixed.fuseGateUp()
+	if mixed.GateUpProj != nil {
+		t.Fatal("expected mixed-dtype projections not to fuse")
+	}
+	if mixed.GateProj == nil || mixed.UpProj == nil {
+		t.Fatal("unfused originals must be retained")
+	}
+}

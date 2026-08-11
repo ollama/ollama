@@ -102,9 +102,23 @@ type DenseMLP struct {
 	GateProj nn.LinearLayer
 	UpProj   nn.LinearLayer
 	DownProj nn.LinearLayer
+
+	// GateUpProj, when non-nil, is the row-fused (GateProj, UpProj) pair:
+	// one wide matmul whose left half is the gate and right half the up.
+	GateUpProj nn.LinearLayer
 }
 
 func (m *DenseMLP) Forward(x *mlx.Array, _ *Config) *mlx.Array {
+	if m.GateUpProj != nil {
+		gateUp := m.GateUpProj.Forward(x)
+		dims := gateUp.Dims()
+		B, L := int32(dims[0]), int32(dims[1])
+		half := int32(dims[2]) / 2
+		return m.DownProj.Forward(mlx.SwiGLU(
+			sliceCols(gateUp, B, L, 0, half),
+			sliceCols(gateUp, B, L, half, 2*half),
+		))
+	}
 	return m.DownProj.Forward(mlx.SwiGLU(m.GateProj.Forward(x), m.UpProj.Forward(x)))
 }
 
@@ -300,6 +314,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 			if dense.GateProj == nil || dense.UpProj == nil || dense.DownProj == nil {
 				return fmt.Errorf("layer %d: missing dense MLP projection", i)
 			}
+			dense.fuseGateUp()
 			layer.MLP = dense
 		} else {
 			layer.MLP, err = loadSparseMoE(linears, tensors, prefix, cfg)
