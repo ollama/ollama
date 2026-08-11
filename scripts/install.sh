@@ -194,10 +194,27 @@ trap install_success EXIT
 
 # Everything from this point onwards is optional.
 
-configure_systemd() {
+configure_ollama_user() {
     if ! id ollama >/dev/null 2>&1; then
         status "Creating ollama user..."
-        $SUDO useradd -r -s /bin/false -U -m -d /usr/share/ollama ollama
+        if available useradd && $SUDO useradd -r -s /bin/false -U -m -d /usr/share/ollama ollama; then
+            :
+        elif available adduser; then
+            # BusyBox-based distributions (for example Alpine) use adduser
+            # instead of the shadow useradd implementation.
+            if available addgroup && (! available getent || ! getent group ollama >/dev/null 2>&1); then
+                $SUDO addgroup -S ollama 2>/dev/null || $SUDO addgroup ollama
+            fi
+            $SUDO adduser -S -D -H -s /sbin/nologin -G ollama ollama
+        else
+            error "Unable to create the ollama service user: useradd and adduser are unavailable."
+        fi
+    fi
+}
+
+configure_ollama_groups() {
+    if ! available getent || ! available usermod; then
+        return
     fi
     if getent group render >/dev/null 2>&1; then
         status "Adding ollama user to render group..."
@@ -210,6 +227,11 @@ configure_systemd() {
 
     status "Adding current user to ollama group..."
     $SUDO usermod -a -G ollama $(whoami)
+}
+
+configure_systemd() {
+    configure_ollama_user
+    configure_ollama_groups
 
     status "Creating ollama systemd service..."
     cat <<EOF | $SUDO tee /etc/systemd/system/ollama.service >/dev/null
@@ -247,8 +269,40 @@ EOF
     esac
 }
 
+configure_openrc() {
+    configure_ollama_user
+    configure_ollama_groups
+
+    status "Creating ollama OpenRC service..."
+    cat <<EOF | $SUDO tee /etc/init.d/ollama >/dev/null
+#!/sbin/openrc-run
+
+name="ollama"
+description="Ollama model service"
+command="$BINDIR/ollama"
+command_args="serve"
+command_user="ollama:ollama"
+command_background=true
+pidfile="/run/\${RC_SVCNAME}.pid"
+retry="TERM/30/KILL/5"
+
+depend() {
+    need net
+    after firewall
+}
+EOF
+    $SUDO chmod 755 /etc/init.d/ollama
+    status "Enabling and starting ollama OpenRC service..."
+    $SUDO rc-update add ollama default
+    if ! $SUDO rc-service ollama restart; then
+        warning "OpenRC is not running; start the service later with 'rc-service ollama start'."
+    fi
+}
+
 if available systemctl; then
     configure_systemd
+elif available rc-update && available rc-service && available openrc-run; then
+    configure_openrc
 fi
 
 # WSL2 only supports GPUs via nvidia passthrough
