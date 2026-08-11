@@ -104,6 +104,9 @@ func humanEvalWordBounds() (small, total int) {
 const (
 	tokensPerWordHeuristic = 1.3
 	nonceHeaderWords       = 8 // "# -*- coding: utf-8 -*-" + "# checksum: <nonce>"
+	// problemStartStride rotates retries through the prompt set; any stride
+	// coprime with len(problems) avoids short cycles.
+	problemStartStride = 23
 )
 
 func estimatePromptWords(targetTokens int) int {
@@ -129,7 +132,7 @@ func generateCodePrompt(wordCount, variation int, cacheBuster string) string {
 
 	var parts []string
 	included := make([]bool, len(problems))
-	for i := ((variation*23)%len(problems) + len(problems)) % len(problems); !included[i]; i = (i + 1) % len(problems) {
+	for i := ((variation*problemStartStride)%len(problems) + len(problems)) % len(problems); !included[i]; i = (i + 1) % len(problems) {
 		body := strings.TrimSpace(problems[i].Prompt)
 		if used+len(strings.Fields(body)) > wordCount {
 			break
@@ -255,15 +258,9 @@ func resolvePromptWords(ctx context.Context, client *api.Client, model string, f
 		return 0, fmt.Errorf("prompt target %d tokens is below the minimum coding prompt size ~%d tokens for model %q; use -p for smaller prompts", targetTokens, floorTokens, model)
 	}
 
-	_, total := humanEvalWordBounds()
-	ceiling := total * 2
-	if targetTokens > ceiling {
-		fmt.Fprintf(os.Stderr, "WARNING: prompt target %d tokens exceeds the problem set (~%d tokens); the prompt will use the full set\n", targetTokens, ceiling)
-		return fullCodePromptWords(), nil
-	}
-
 	minTokens, maxTokens := promptTargetBounds(targetTokens)
-	words := estimatePromptWords(targetTokens)
+	maxWords := fullCodePromptWords()
+	words := min(estimatePromptWords(targetTokens), maxWords)
 	lastCount := 0
 	for range 4 {
 		lastCount, err = measurePromptTokens(ctx, client, model, fOpt, imgData, 0, words)
@@ -273,7 +270,11 @@ func resolvePromptWords(ctx context.Context, client *api.Client, model string, f
 		if lastCount >= minTokens && lastCount <= maxTokens {
 			return words, nil
 		}
-		words = words * targetTokens / max(lastCount, 1)
+		if words == maxWords && lastCount < minTokens {
+			fmt.Fprintf(os.Stderr, "WARNING: prompt target %d tokens exceeds the problem set (~%d tokens); the prompt will use the full set\n", targetTokens, lastCount)
+			return words, nil
+		}
+		words = min(words*targetTokens/max(lastCount, 1), maxWords)
 	}
 	fmt.Fprintf(os.Stderr, "WARNING: prompt resolved to %d prompt tokens against target %d (tolerance -1%%/+2%%); results use the actual count\n", lastCount, targetTokens)
 	return words, nil

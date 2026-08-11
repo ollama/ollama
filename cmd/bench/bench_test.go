@@ -707,7 +707,8 @@ func TestBenchmarkModel_PromptAboveMaximum(t *testing.T) {
 	fOpt.promptTokens = &promptTokens
 
 	server := createMockOllamaServer(t, mockServerOptions{
-		chatResponses: defaultChatResponses(),
+		chatResponses:   defaultChatResponses(),
+		promptEvalCount: mockPromptEvalCount,
 	})
 	defer server.Close()
 
