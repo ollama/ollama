@@ -112,6 +112,14 @@ func NewQuantizedLinear(weight *mlx.Array, bias *mlx.Array, groupSize, bits int,
 	}
 }
 
+var quantizedLinearOutputScale = mlx.Compile2(
+	"QuantizedLinearOutputScale",
+	func(out, scale *mlx.Array) *mlx.Array {
+		return mlx.Mul(out, scale).AsType(out.DType())
+	},
+	mlx.Shapeless(),
+)
+
 func (ql *QuantizedLinear) Forward(x *mlx.Array) *mlx.Array {
 	out := mlx.QuantizedMatmul(x, ql.Weight, ql.Scales, ql.QBiases, true, ql.GroupSize, ql.Bits, ql.Mode)
 	if ql.GlobalScale != nil {
@@ -120,8 +128,7 @@ func (ql *QuantizedLinear) Forward(x *mlx.Array) *mlx.Array {
 		// (weight_scale_2 in NVIDIA's format) or per-row.
 		// TODO: switch to a fused double-scale matmul once MLX has kernel
 		// coverage for this path.
-		outDType := out.DType()
-		out = mlx.Mul(out, ql.GlobalScale).AsType(outDType)
+		out = quantizedLinearOutputScale(out, ql.GlobalScale)
 	}
 	if ql.Bias != nil && ql.Bias.Valid() {
 		bias := ql.Bias
