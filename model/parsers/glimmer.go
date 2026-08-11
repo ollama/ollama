@@ -369,24 +369,52 @@ func glimmerATEMInvokeName(body string) string {
 	if !strings.HasPrefix(inner, glimmerATEMInvokeOpen) {
 		return ""
 	}
-	name, _, ok := strings.Cut(inner[len(glimmerATEMInvokeOpen):], `">`)
+	name, _, ok := glimmerCutInvokeName(inner[len(glimmerATEMInvokeOpen):])
 	if !ok {
 		return ""
 	}
-	return glimmerTrimStrayMessageTag(name)
+	return name
 }
 
-// glimmerTrimStrayMessageTag drops <|message|> boundary tokens the model
-// occasionally fumbles into the invoke name (e.g. `name="read<|message|>">`),
-// echoing the header form `to=read<|message|>`. Function names are
-// identifiers, so the tag is never legitimate there; parameter values are
-// left untouched (control-token text is preserved in values).
-func glimmerTrimStrayMessageTag(name string) string {
-	if !strings.Contains(name, glimmerMessageTag) {
-		return name
+// glimmerCutInvokeName splits an ATEM invoke element's name attribute from
+// the text after its `">` terminator, recovering the <|message|> boundary
+// tokens the model occasionally fumbles into the name region — echoing the
+// header form `to=read<|message|>`. Observed shapes: the tag inside a
+// terminated name (`name="read<|message|>">`) and the tag in place of the
+// terminator itself (`name="read<|message|><atem:parameter ...`). Function
+// names are identifiers, so a boundary token before the terminator is never
+// legitimate; parameter values are unaffected because they only appear
+// after the terminator.
+func glimmerCutInvokeName(s string) (name, rest string, ok bool) {
+	var b strings.Builder
+	rest = s
+	fumbled := false
+	for {
+		termIdx := strings.Index(rest, `">`)
+		tagIdx := strings.Index(rest, glimmerMessageTag)
+		if tagIdx >= 0 && (termIdx < 0 || tagIdx < termIdx) {
+			// Boundary token before the terminator: drop it and keep
+			// scanning. If the parameter list begins immediately after,
+			// the token replaced the terminator and the name is complete.
+			fumbled = true
+			b.WriteString(rest[:tagIdx])
+			rest = rest[tagIdx+len(glimmerMessageTag):]
+			if strings.HasPrefix(rest, glimmerATEMParamOpen) {
+				break
+			}
+			continue
+		}
+		if termIdx < 0 {
+			return "", "", false
+		}
+		b.WriteString(rest[:termIdx])
+		rest = rest[termIdx+2:]
+		break
 	}
-	slog.Warn("glimmer parser recovered stray message boundary token in ATEM invoke name", "name", name)
-	return strings.ReplaceAll(name, glimmerMessageTag, "")
+	if fumbled {
+		slog.Warn("glimmer parser recovered stray message boundary token in ATEM invoke name", "name", b.String())
+	}
+	return b.String(), rest, true
 }
 
 func (p *GlimmerParser) parseToolCall(body string) (api.ToolCall, error) {
@@ -458,12 +486,11 @@ func parseGlimmerATEM(body string, tool api.Tool) (string, api.ToolCallFunctionA
 		return "", api.ToolCallFunctionArguments{}, fmt.Errorf("missing ATEM invoke wrapper")
 	}
 	invoke = invoke[len(glimmerATEMInvokeOpen):]
-	nameEnd := strings.Index(invoke, `">`)
-	if nameEnd < 0 {
+	name, rest, ok := glimmerCutInvokeName(invoke)
+	if !ok || len(rest) < len(glimmerATEMInvokeClose) {
 		return "", api.ToolCallFunctionArguments{}, fmt.Errorf("malformed ATEM invoke name")
 	}
-	name := glimmerTrimStrayMessageTag(invoke[:nameEnd])
-	params := invoke[nameEnd+2 : len(invoke)-len(glimmerATEMInvokeClose)]
+	params := rest[:len(rest)-len(glimmerATEMInvokeClose)]
 	params = strings.TrimPrefix(params, "\n")
 	params = strings.TrimSuffix(params, "\n")
 
