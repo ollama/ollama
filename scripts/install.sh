@@ -205,32 +205,63 @@ configure_ollama_user() {
             if available addgroup && (! available getent || ! getent group ollama >/dev/null 2>&1); then
                 $SUDO addgroup -S ollama 2>/dev/null || $SUDO addgroup ollama
             fi
-            $SUDO adduser -S -D -H -s /sbin/nologin -G ollama ollama
+            $SUDO adduser -S -D -h /usr/share/ollama -s /sbin/nologin -G ollama ollama
         else
             error "Unable to create the ollama service user: useradd and adduser are unavailable."
         fi
     fi
 }
 
-configure_ollama_groups() {
-    if ! available getent || ! available usermod; then
+configure_ollama_home() {
+    status "Preparing ollama home directory..."
+    $SUDO install -o ollama -g ollama -m750 -d /usr/share/ollama
+}
+
+group_exists() {
+    if available getent; then
+        getent group "$1" >/dev/null 2>&1
+    else
+        grep -q "^$1:" /etc/group
+    fi
+}
+
+add_ollama_group_member() {
+    local USER="$1"
+    local GROUP="$2"
+
+    if ! group_exists "$GROUP"; then
         return
     fi
-    if getent group render >/dev/null 2>&1; then
-        status "Adding ollama user to render group..."
-        $SUDO usermod -a -G render ollama
+
+    if available usermod; then
+        if ! $SUDO usermod -a -G "$GROUP" "$USER"; then
+            warning "Unable to add $USER to the $GROUP group."
+        fi
+    elif available addgroup; then
+        # BusyBox provides addgroup USER GROUP instead of usermod -a -G.
+        if ! $SUDO addgroup "$USER" "$GROUP"; then
+            warning "Unable to add $USER to the $GROUP group."
+        fi
     fi
-    if getent group video >/dev/null 2>&1; then
+}
+
+configure_ollama_groups() {
+    if group_exists render; then
+        status "Adding ollama user to render group..."
+        add_ollama_group_member ollama render
+    fi
+    if group_exists video; then
         status "Adding ollama user to video group..."
-        $SUDO usermod -a -G video ollama
+        add_ollama_group_member ollama video
     fi
 
     status "Adding current user to ollama group..."
-    $SUDO usermod -a -G ollama $(whoami)
+    add_ollama_group_member "$(whoami)" ollama
 }
 
 configure_systemd() {
     configure_ollama_user
+    configure_ollama_home
     configure_ollama_groups
 
     status "Creating ollama systemd service..."
@@ -245,6 +276,7 @@ User=ollama
 Group=ollama
 Restart=always
 RestartSec=3
+Environment="HOME=/usr/share/ollama"
 Environment="PATH=$PATH"
 
 [Install]
@@ -271,6 +303,7 @@ EOF
 
 configure_openrc() {
     configure_ollama_user
+    configure_ollama_home
     configure_ollama_groups
 
     status "Creating ollama OpenRC service..."
@@ -279,12 +312,15 @@ configure_openrc() {
 
 name="ollama"
 description="Ollama model service"
+export HOME="/usr/share/ollama"
 command="$BINDIR/ollama"
 command_args="serve"
 command_user="ollama:ollama"
-command_background=true
 pidfile="/run/\${RC_SVCNAME}.pid"
 retry="TERM/30/KILL/5"
+supervisor=supervise-daemon
+respawn_delay=3
+respawn_max=0
 
 depend() {
     need net
