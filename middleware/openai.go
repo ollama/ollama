@@ -559,12 +559,14 @@ type WebSearchResponsesWriter struct {
 	followUpChat func(context.Context, []api.Message, api.Tools) (api.ChatResponse, error)
 	newContext   func() (context.Context, context.CancelFunc)
 
-	// Buffer the initial response through its terminal chunk. Any model may emit
-	// ordinary content before deciding to call a tool, and the private function
-	// must never leak into an already-started Responses stream.
-	buffered []api.ChatResponse
-	status   int
-	done     bool
+	// Keep the initial model response for the follow-up context while streaming
+	// ordinary output immediately. Once web_search appears, its private function
+	// call and terminal chunk are intercepted and replaced by native events.
+	buffered              []api.ChatResponse
+	webSearchPending      bool
+	streamedInitialOutput bool
+	status                int
+	done                  bool
 
 	// Accumulated across loop iterations by runLoop, consumed by
 	// writeWebSearchResponse / writeWebSearchStream.
@@ -605,6 +607,38 @@ func (w *WebSearchResponsesWriter) Write(data []byte) (int, error) {
 	}
 	if w.inner.stream {
 		w.buffered = append(w.buffered, response)
+		if _, found, _ := findWebSearchToolCall(response.Message.ToolCalls); found {
+			w.webSearchPending = true
+		}
+		if !w.webSearchPending {
+			if _, err := w.inner.writeResponse(data); err != nil {
+				return 0, err
+			}
+			if response.Message.Content != "" || response.Message.Thinking != "" {
+				w.streamedInitialOutput = true
+			}
+			if response.Done {
+				w.buffered = nil
+				w.done = true
+			}
+			return len(data), nil
+		}
+
+		// A tool-bearing chunk may also contain ordinary model output. Stream a
+		// sanitized copy while keeping the private function call server-side.
+		if response.Message.Content != "" || response.Message.Thinking != "" {
+			streamed := response
+			streamed.Message.ToolCalls = nil
+			streamed.Done = false
+			streamedData, err := json.Marshal(streamed)
+			if err != nil {
+				return 0, err
+			}
+			if _, err := w.inner.writeResponse(streamedData); err != nil {
+				return 0, err
+			}
+			w.streamedInitialOutput = true
+		}
 		if response.Done {
 			return len(data), w.finishStream()
 		}
@@ -645,17 +679,7 @@ func (w *WebSearchResponsesWriter) finishStream() error {
 		}
 	}
 	if !found {
-		for _, response := range w.buffered {
-			data, err := json.Marshal(response)
-			if err != nil {
-				return err
-			}
-			if _, err := w.inner.writeResponse(data); err != nil {
-				return err
-			}
-		}
-		w.done = true
-		return nil
+		return fmt.Errorf("web_search call disappeared before the terminal chunk")
 	}
 	// Combine model output from all streamed chunks into the initial response so
 	// runLoop can preserve it before the web search events and in the follow-up.
@@ -710,9 +734,18 @@ func (w *WebSearchResponsesWriter) runLoop(ctx context.Context, initial api.Chat
 			}
 		}
 
+		initialOutputAlreadyStreamed := loop == 1 && w.streamedInitialOutput
+		if initialOutputAlreadyStreamed {
+			for _, event := range w.inner.converter.FinishMessageItem() {
+				if err := w.inner.writeEvent(event.Event, event.Data); err != nil {
+					return api.ChatResponse{}, calls, usage, err
+				}
+			}
+		}
+
 		// Emit pre-search content (text the model produced before calling
 		// web_search) as a completed message item before the search events.
-		if current.Message.Thinking != "" && w.inner.stream {
+		if current.Message.Thinking != "" && w.inner.stream && !initialOutputAlreadyStreamed {
 			thinkingResponse := api.ChatResponse{Message: api.Message{Role: "assistant", Thinking: current.Message.Thinking}}
 			for _, event := range w.inner.converter.Process(thinkingResponse) {
 				if err := w.inner.writeEvent(event.Event, event.Data); err != nil {
@@ -727,7 +760,7 @@ func (w *WebSearchResponsesWriter) runLoop(ctx context.Context, initial api.Chat
 			preSearchThinking.WriteString(current.Message.Thinking)
 		}
 		if current.Message.Content != "" {
-			if w.inner.stream {
+			if w.inner.stream && !initialOutputAlreadyStreamed {
 				contentResponse := api.ChatResponse{Message: api.Message{Role: "assistant", Content: current.Message.Content}}
 				for _, event := range w.inner.converter.Process(contentResponse) {
 					if err := w.inner.writeEvent(event.Event, event.Data); err != nil {
@@ -739,7 +772,7 @@ func (w *WebSearchResponsesWriter) runLoop(ctx context.Context, initial api.Chat
 						return api.ChatResponse{}, calls, usage, err
 					}
 				}
-			} else {
+			} else if !w.inner.stream {
 				if preSearchContent.Len() > 0 {
 					preSearchContent.WriteString("\n")
 				}

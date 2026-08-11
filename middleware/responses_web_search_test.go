@@ -83,7 +83,7 @@ func TestWebSearchResponsesWriterNonStreaming(t *testing.T) {
 	}
 }
 
-func TestWebSearchResponsesWriterStreamingNoSearchFlushesAtDone(t *testing.T) {
+func TestWebSearchResponsesWriterStreamingNoSearchStreamsImmediately(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
@@ -96,8 +96,10 @@ func TestWebSearchResponsesWriterStreamingNoSearchFlushesAtDone(t *testing.T) {
 	if _, err := writer.Write(chunk); err != nil {
 		t.Fatal(err)
 	}
-	if recorder.Body.Len() != 0 {
-		t.Fatalf("content leaked before terminal chunk: %s", recorder.Body.String())
+	if body := recorder.Body.String(); !strings.Contains(body, "response.output_text.delta") || !strings.Contains(body, "hello") {
+		t.Fatalf("content was not streamed immediately: %s", body)
+	} else if strings.Contains(body, "response.completed") {
+		t.Fatalf("response completed before terminal chunk: %s", body)
 	}
 
 	done, _ := json.Marshal(api.ChatResponse{Done: true})
@@ -336,8 +338,10 @@ func TestWebSearchResponsesWriterStreamingPreservesContentBeforeToolCall(t *test
 	if _, err := writer.Write(content); err != nil {
 		t.Fatal(err)
 	}
-	if recorder.Body.Len() != 0 {
-		t.Fatalf("content leaked before terminal chunk: %s", recorder.Body.String())
+	if body := recorder.Body.String(); !strings.Contains(body, "response.output_text.delta") || !strings.Contains(body, "I will search.") {
+		t.Fatalf("pre-search content was not streamed immediately: %s", body)
+	} else if strings.Contains(body, "response.web_search_call.in_progress") {
+		t.Fatalf("search started before its tool call: %s", body)
 	}
 
 	toolChunk, _ := json.Marshal(api.ChatResponse{Message: api.Message{ToolCalls: []api.ToolCall{{ID: "call_1", Function: api.ToolCallFunction{Name: "web_search", Arguments: testArgs(map[string]any{"query": "test"})}}}}})
@@ -360,6 +364,9 @@ func TestWebSearchResponsesWriterStreamingPreservesContentBeforeToolCall(t *test
 	}
 	if strings.Contains(body, "response.function_call_arguments") {
 		t.Fatalf("private web_search function leaked: %s", body)
+	}
+	if strings.Count(body, "event: response.output_text.delta") != 2 {
+		t.Fatalf("unexpected output delta count; pre-search content may have been replayed: %s", body)
 	}
 }
 
@@ -387,6 +394,11 @@ func TestWebSearchResponsesWriterStreamingPreservesThinkingBeforeToolCall(t *tes
 	if _, err := writer.Write(thinking); err != nil {
 		t.Fatal(err)
 	}
+	if body := recorder.Body.String(); !strings.Contains(body, "response.reasoning_summary_text.delta") || !strings.Contains(body, "I should search first.") {
+		t.Fatalf("pre-search reasoning was not streamed immediately: %s", body)
+	} else if strings.Contains(body, "response.web_search_call.in_progress") {
+		t.Fatalf("search started before its tool call: %s", body)
+	}
 	toolChunk, _ := json.Marshal(api.ChatResponse{Message: api.Message{ToolCalls: []api.ToolCall{{ID: "call_1", Function: api.ToolCallFunction{Name: "web_search", Arguments: testArgs(map[string]any{"query": "test"})}}}}})
 	if _, err := writer.Write(toolChunk); err != nil {
 		t.Fatal(err)
@@ -402,6 +414,46 @@ func TestWebSearchResponsesWriterStreamingPreservesThinkingBeforeToolCall(t *tes
 	searchStarted := strings.Index(body, "response.web_search_call.in_progress")
 	if reasoningDelta < 0 || reasoningDone < reasoningDelta || searchStarted < reasoningDone {
 		t.Fatalf("reasoning/search lifecycle is out of order: %s", body)
+	}
+}
+
+func TestWebSearchResponsesWriterStreamingContentAndToolCallInSameChunk(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	stream := true
+	request := openai.ResponsesRequest{Model: "test-model", Stream: &stream, Tools: []openai.ResponsesTool{{Type: "web_search"}}}
+	inner := &ResponsesWriter{BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, converter: openai.NewResponsesStreamConverter("resp_test", "msg_test", request.Model, request), model: request.Model, stream: true, responseID: "resp_test", itemID: "msg_test", request: request}
+	writer := &WebSearchResponsesWriter{
+		BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, inner: inner, req: request,
+		chat:   &api.ChatRequest{Model: request.Model, Tools: api.Tools{openai.WebSearchFunctionTool()}},
+		search: func(context.Context, string) (*api.WebSearchResponse, error) { return &api.WebSearchResponse{}, nil },
+		followUpChat: func(context.Context, []api.Message, api.Tools) (api.ChatResponse, error) {
+			return api.ChatResponse{Done: true, Message: api.Message{Role: "assistant", Content: "done"}}, nil
+		},
+	}
+
+	chunk, _ := json.Marshal(api.ChatResponse{Message: api.Message{
+		Role:    "assistant",
+		Content: "Let me check.",
+		ToolCalls: []api.ToolCall{{ID: "call_1", Function: api.ToolCallFunction{
+			Name: "web_search", Arguments: testArgs(map[string]any{"query": "test"}),
+		}}},
+	}})
+	if _, err := writer.Write(chunk); err != nil {
+		t.Fatal(err)
+	}
+	if body := recorder.Body.String(); !strings.Contains(body, "Let me check.") || strings.Contains(body, "response.function_call_arguments") {
+		t.Fatalf("same-chunk content was not streamed safely: %s", body)
+	}
+
+	done, _ := json.Marshal(api.ChatResponse{Done: true})
+	if _, err := writer.Write(done); err != nil {
+		t.Fatal(err)
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, "response.web_search_call.completed") || strings.Count(body, "event: response.output_text.delta") != 2 {
+		t.Fatalf("unexpected response stream: %s", body)
 	}
 }
 
