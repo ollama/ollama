@@ -63,4 +63,20 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/llama/server/CMakeLists.txt")
 else()
     set(OLLAMA_HAVE_LLAMA_SERVER FALSE)
 endif()
+
+# s390x big-endian GGUF byte-swap option.
+# Declared here so the root superbuild can forward it to llama/server via
+# ollama_collect_cache_args_with_prefix("OLLAMA_" ...).
+# The default is auto-detected in llama/server/CMakeLists.txt; set it
+# explicitly here only when cross-compiling or overriding.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^s390x?$")
+    option(OLLAMA_S390X_BIGENDIAN
+        "Byte-swap little-endian GGUF tensor data at load time (required on s390x / IBM Z)"
+        ON)
+else()
+    option(OLLAMA_S390X_BIGENDIAN
+        "Byte-swap little-endian GGUF tensor data at load time (required on s390x / IBM Z)"
+        OFF)
+endif()
+
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/local.cmake)

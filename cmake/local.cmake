@@ -600,6 +600,15 @@ if(OLLAMA_HAVE_LLAMA_SERVER)
             -DGGML_BACKEND_DL=OFF
             -DGGML_METAL=ON
             -DGGML_METAL_EMBED_LIBRARY=ON)
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^s390x?$")
+        # IBM Z / LinuxONE: big-endian host, no GPU backends, OpenBLAS available.
+        # OLLAMA_S390X_BIGENDIAN activates bswap_tensor_data() at load time so
+        # GGUF files (always little-endian) are read correctly on this platform.
+        list(APPEND _cpu_args
+            -DBUILD_SHARED_LIBS=ON
+            -DGGML_BACKEND_DL=ON
+            -DGGML_CPU_ALL_VARIANTS=ON
+            -DOLLAMA_S390X_BIGENDIAN=ON)
     else()
         list(APPEND _cpu_args
             -DBUILD_SHARED_LIBS=ON
