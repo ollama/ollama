@@ -52,6 +52,35 @@ option(OLLAMA_MLX_GENERATE_WRAPPERS "Regenerate MLX Go wrappers" OFF)
 message(STATUS "Setting up MLX (this takes a while...)")
 add_subdirectory(${OLLAMA_SOURCE_DIR}/x/mlxrunner/mlx ${CMAKE_BINARY_DIR}/x/mlxrunner/mlx)
 
+include(FetchContent)
+FetchContent_Declare(xgrammar
+    GIT_REPOSITORY "https://github.com/mlc-ai/xgrammar.git"
+    GIT_TAG v0.2.5
+    GIT_SHALLOW TRUE
+    GIT_SUBMODULES 3rdparty/dlpack
+    # Do not add XGrammar's Python-oriented CMake project.
+    SOURCE_SUBDIR cmake/ollama)
+FetchContent_MakeAvailable(xgrammar)
+
+file(GLOB_RECURSE XGRAMMAR_SOURCES CONFIGURE_DEPENDS "${xgrammar_SOURCE_DIR}/cpp/*.cc")
+list(FILTER XGRAMMAR_SOURCES EXCLUDE REGEX "/cpp/tvm_ffi/.*\\.cc$")
+add_library(xgrammar STATIC ${XGRAMMAR_SOURCES})
+set_target_properties(xgrammar PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(xgrammar PUBLIC "${xgrammar_SOURCE_DIR}/include")
+target_include_directories(xgrammar SYSTEM PUBLIC
+    "${xgrammar_SOURCE_DIR}/3rdparty/picojson"
+    "${xgrammar_SOURCE_DIR}/3rdparty/dlpack/include")
+target_compile_definitions(xgrammar PUBLIC
+    XGRAMMAR_ENABLE_CPPTRACE=0
+    XGRAMMAR_ENABLE_INTERNAL_CHECK=0)
+
+add_library(ollama_constraints SHARED
+    "${OLLAMA_SOURCE_DIR}/x/mlxrunner/constraint/native/constraint.cpp")
+target_include_directories(ollama_constraints PRIVATE
+    "${OLLAMA_SOURCE_DIR}/x/mlxrunner/constraint/native")
+target_compile_definitions(ollama_constraints PRIVATE OLLAMA_CONSTRAINT_BUILD=1)
+target_link_libraries(ollama_constraints PRIVATE xgrammar Threads::Threads)
+
 # Find CUDA toolkit if MLX is built with CUDA support.
 find_package(CUDAToolkit)
 
@@ -88,12 +117,22 @@ endif()
 
 # Keep mlx/mlxc targets separate from runtime dependencies so --strip only
 # applies to the binaries we build, not vendor DLLs/libs.
-install(TARGETS mlx mlxc
+install(TARGETS mlx mlxc ollama_constraints
     RUNTIME_DEPENDENCY_SET mlx_runtime_deps
     RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
     LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
     FRAMEWORK DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
 )
+install(FILES
+    "${xgrammar_SOURCE_DIR}/LICENSE"
+    DESTINATION ${OLLAMA_INSTALL_DIR}
+    RENAME XGRAMMAR_LICENSE
+    COMPONENT MLX)
+install(FILES
+    "${xgrammar_SOURCE_DIR}/NOTICE"
+    DESTINATION ${OLLAMA_INSTALL_DIR}
+    RENAME XGRAMMAR_NOTICE
+    COMPONENT MLX)
 install(RUNTIME_DEPENDENCY_SET mlx_runtime_deps
     DIRECTORIES ${MLX_RUNTIME_DIRS}
     PRE_INCLUDE_REGEXES ${MLX_INCLUDE_REGEXES}

@@ -70,7 +70,7 @@ func (r *Runner) Prepare(request *Request) error {
 
 	request.Tokens = tokens
 	request.MediaItems = items
-	return nil
+	return r.prepareConstraint(request)
 }
 
 // The runner serializes requests today so we just use a fixed slot ID.
@@ -114,7 +114,12 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	r.Sampler.Add(pipelineSlot, request.SamplerOpts, inputs)
 
 	var d decoder
-	if spec != nil {
+	if request.Constraint != nil {
+		d, err = r.constrainedDecoder(spec, caches, seed, position, media.rowLayout(), request.Constraint)
+		if err != nil {
+			return err
+		}
+	} else if spec != nil {
 		d = spec.decoder(seed, position)
 	} else {
 		d = r.pipelinedDecoder(nil, caches, seed.ExpandDims(-1), position, media.rowLayout())
@@ -244,6 +249,7 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 		tokenizer:       r.Tokenizer,
 		wantLogprobs:    request.SamplerOpts.Logprobs,
 		wantTopLogprobs: request.SamplerOpts.TopLogprobs,
+		constrained:     request.Constraint != nil,
 	}
 
 	final := CompletionResponse{Done: true, PromptEvalCount: len(request.Tokens), DoneReason: 1}
@@ -393,12 +399,17 @@ type detokenizer struct {
 	logprobs        []llm.Logprob
 	wantLogprobs    bool
 	wantTopLogprobs int
+	constrained     bool
 }
 
 func (d *detokenizer) detokenize(res sampler.Result) (CompletionResponse, bool) {
 	output := int32(res.Token.Int())
 	d.buf.WriteString(d.tokenizer.Decode([]int32{output}))
-	d.logprobs = append(d.logprobs, buildLogprob(res, d.wantLogprobs, d.wantTopLogprobs, d.tokenizer.Decode)...)
+	logprobs := buildLogprob(res, d.wantLogprobs, d.wantTopLogprobs, d.tokenizer.Decode)
+	if d.constrained {
+		removeMaskedTopLogprobs(logprobs)
+	}
+	d.logprobs = append(d.logprobs, logprobs...)
 
 	content := flushValidUTF8Prefix(&d.buf)
 	if content == "" {

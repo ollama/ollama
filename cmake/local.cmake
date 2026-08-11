@@ -521,6 +521,7 @@ function(ollama_add_mlx_build name)
             ${OLLAMA_NATIVE_CONFIG_ARG}
             ${OLLAMA_NATIVE_BUILD_TARGET_ARG} mlx
             ${OLLAMA_NATIVE_BUILD_TARGET_ARG} mlxc
+            ${OLLAMA_NATIVE_BUILD_TARGET_ARG} ollama_constraints
         INSTALL_COMMAND ${CMAKE_COMMAND} --install <BINARY_DIR>
             ${OLLAMA_NATIVE_CONFIG_ARG}
             --component MLX

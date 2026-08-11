@@ -113,6 +113,7 @@ func (c *Client) WaitUntilRunning(ctx context.Context) error {
 type CompletionRequest struct {
 	Prompt      string
 	Media       []llm.MediaData
+	Format      json.RawMessage
 	Options     api.Options
 	Logprobs    bool
 	TopLogprobs int
@@ -154,9 +155,14 @@ func (c *Client) Close() error {
 
 // Completion implements llm.LlamaServer.
 func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
+	if req.Grammar != "" {
+		return errors.New("raw grammar is not supported by the MLX runner")
+	}
+
 	creq := CompletionRequest{
 		Prompt:      req.Prompt,
 		Media:       req.Media,
+		Format:      req.Format,
 		Logprobs:    req.Logprobs,
 		TopLogprobs: req.TopLogprobs,
 	}

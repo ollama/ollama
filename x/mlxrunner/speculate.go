@@ -118,7 +118,7 @@ func (s *speculation) open(request Request, layout []any) *speculationSession {
 	// Logprobs are not yet supported, so a logprobs request keeps a speculationSession
 	// only to maintain a draft cache in lockstep (permanently parked).
 	opts := request.SamplerOpts
-	enabled := !opts.Logprobs && opts.TopLogprobs == 0
+	enabled := request.Constraint == nil && !opts.Logprobs && opts.TopLogprobs == 0
 
 	spec := &speculationSession{spec: s, drafter: d, layout: layout, enabled: enabled, prevDrafts: -1, roundDrafts: -1}
 	if enabled {

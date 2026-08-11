@@ -14,6 +14,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/x/internal/mlxthread"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
+	"github.com/ollama/ollama/x/mlxrunner/constraint"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
 	"github.com/ollama/ollama/x/mlxrunner/model/base"
@@ -35,6 +36,7 @@ type Request struct {
 	MediaItems  []mediaItem
 	Layout      any // opaque PrepareMedia layout state, stamped on every batch
 	SamplerOpts sample.Options
+	Constraint  requestConstraint
 }
 
 type Runner struct {
@@ -45,6 +47,8 @@ type Runner struct {
 	cache         *prefixCache
 	contextLength int
 	mlxThread     *mlxthread.Thread
+	constraints   *constraint.Model
+	constraintErr error
 	// spec is the speculative-decoding subsystem. Nil when the model ships no
 	// draft head.
 	spec *speculation
@@ -115,6 +119,7 @@ func (r *Runner) Load(modelName string) error {
 	r.cache = newPrefixCache(slices.Concat(caches, draftCaches))
 	r.Sampler = sample.New(r.contextLength)
 	r.spec = newSpeculation(r, draftModel, caches, draftCaches)
+	r.loadConstraints(root)
 
 	mlx.EnableCompile()
 
@@ -257,6 +262,9 @@ func (r *Runner) Run(host, port string, mux http.Handler) error {
 }
 
 func (r *Runner) runRequest(request Request) error {
+	if request.Constraint != nil {
+		defer request.Constraint.Close()
+	}
 	if r.mlxThread == nil {
 		return request.Pipeline(request.Ctx, request)
 	}
