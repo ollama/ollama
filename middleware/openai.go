@@ -555,9 +555,10 @@ type WebSearchResponsesWriter struct {
 
 	// The functions are injectable so the protocol lifecycle can be tested
 	// without a running server or cloud credentials.
-	search       func(context.Context, string) (*api.WebSearchResponse, error)
-	followUpChat func(context.Context, []api.Message, api.Tools) (api.ChatResponse, error)
-	newContext   func() (context.Context, context.CancelFunc)
+	search         func(context.Context, string) (*api.WebSearchResponse, error)
+	followUpChat   func(context.Context, []api.Message, api.Tools) (api.ChatResponse, error)
+	followUpStream func(context.Context, []api.Message, api.Tools, func(api.ChatResponse) error) error
+	newContext     func() (context.Context, context.CancelFunc)
 
 	// Keep the initial model response for the follow-up context while streaming
 	// ordinary output immediately. Once web_search appears, its private function
@@ -570,9 +571,10 @@ type WebSearchResponsesWriter struct {
 
 	// Accumulated across loop iterations by runLoop, consumed by
 	// writeWebSearchResponse / writeWebSearchStream.
-	preSearchThinking string         // reasoning the model emitted before calling web_search
-	preSearchContent  string         // text the model emitted before calling web_search
-	otherToolCalls    []api.ToolCall // non-web_search tool calls from mixed responses
+	preSearchThinking   string         // reasoning the model emitted before calling web_search
+	preSearchContent    string         // text the model emitted before calling web_search
+	otherToolCalls      []api.ToolCall // non-web_search tool calls from mixed responses
+	finalOutputStreamed bool
 }
 
 func (w *WebSearchResponsesWriter) WriteHeader(code int) {
@@ -715,6 +717,7 @@ func (w *WebSearchResponsesWriter) runLoop(ctx context.Context, initial api.Chat
 	var preSearchThinking strings.Builder
 	var preSearchContent strings.Builder
 	var otherToolCalls []api.ToolCall
+	currentOutputStreamed := w.streamedInitialOutput
 
 	// Emit response.created / response.in_progress once, before the loop.
 	if w.inner.stream {
@@ -728,14 +731,17 @@ func (w *WebSearchResponsesWriter) runLoop(ctx context.Context, initial api.Chat
 	for loop := 1; loop <= maxWebSearchLoops; loop++ {
 		// Collect non-web_search tool calls from mixed responses so they can
 		// be surfaced to the client instead of silently dropped.
+		var currentOtherToolCalls []api.ToolCall
 		for _, tc := range current.Message.ToolCalls {
 			if tc.Function.Name != "web_search" {
-				otherToolCalls = append(otherToolCalls, tc)
+				currentOtherToolCalls = append(currentOtherToolCalls, tc)
 			}
 		}
+		if !w.inner.stream {
+			otherToolCalls = append(otherToolCalls, currentOtherToolCalls...)
+		}
 
-		initialOutputAlreadyStreamed := loop == 1 && w.streamedInitialOutput
-		if initialOutputAlreadyStreamed {
+		if w.inner.stream && currentOutputStreamed {
 			for _, event := range w.inner.converter.FinishMessageItem() {
 				if err := w.inner.writeEvent(event.Event, event.Data); err != nil {
 					return api.ChatResponse{}, calls, usage, err
@@ -745,7 +751,7 @@ func (w *WebSearchResponsesWriter) runLoop(ctx context.Context, initial api.Chat
 
 		// Emit pre-search content (text the model produced before calling
 		// web_search) as a completed message item before the search events.
-		if current.Message.Thinking != "" && w.inner.stream && !initialOutputAlreadyStreamed {
+		if current.Message.Thinking != "" && w.inner.stream && !currentOutputStreamed {
 			thinkingResponse := api.ChatResponse{Message: api.Message{Role: "assistant", Thinking: current.Message.Thinking}}
 			for _, event := range w.inner.converter.Process(thinkingResponse) {
 				if err := w.inner.writeEvent(event.Event, event.Data); err != nil {
@@ -760,7 +766,7 @@ func (w *WebSearchResponsesWriter) runLoop(ctx context.Context, initial api.Chat
 			preSearchThinking.WriteString(current.Message.Thinking)
 		}
 		if current.Message.Content != "" {
-			if w.inner.stream && !initialOutputAlreadyStreamed {
+			if w.inner.stream && !currentOutputStreamed {
 				contentResponse := api.ChatResponse{Message: api.Message{Role: "assistant", Content: current.Message.Content}}
 				for _, event := range w.inner.converter.Process(contentResponse) {
 					if err := w.inner.writeEvent(event.Event, event.Data); err != nil {
@@ -812,6 +818,11 @@ func (w *WebSearchResponsesWriter) runLoop(ctx context.Context, initial api.Chat
 					return api.ChatResponse{}, calls, usage, err
 				}
 			}
+			for _, event := range w.inner.converter.EmitFunctionCallItems(currentOtherToolCalls) {
+				if err := w.inner.writeEvent(event.Event, event.Data); err != nil {
+					return api.ChatResponse{}, calls, usage, err
+				}
+			}
 		}
 		calls = append(calls, responseCall)
 
@@ -819,7 +830,13 @@ func (w *WebSearchResponsesWriter) runLoop(ctx context.Context, initial api.Chat
 			buildWebSearchAssistantMessage(current, currentCall),
 			api.Message{Role: "tool", ToolCallID: currentCall.ID, Content: formatResponsesWebSearchResults(searchResponse.Results)},
 		)
-		followUp, err := w.callFollowUp(ctx, messages, tools)
+		var followUp api.ChatResponse
+		var followUpOutputStreamed bool
+		if w.inner.stream {
+			followUp, followUpOutputStreamed, err = w.callFollowUpStream(ctx, messages, tools)
+		} else {
+			followUp, err = w.callFollowUp(ctx, messages, tools)
+		}
 		if err != nil {
 			return api.ChatResponse{}, calls, usage, err
 		}
@@ -834,10 +851,12 @@ func (w *WebSearchResponsesWriter) runLoop(ctx context.Context, initial api.Chat
 			w.preSearchThinking = preSearchThinking.String()
 			w.preSearchContent = preSearchContent.String()
 			w.otherToolCalls = otherToolCalls
+			w.finalOutputStreamed = followUpOutputStreamed
 			followUp.Metrics = usage
 			return followUp, calls, usage, nil
 		}
 		current, currentCall = followUp, next
+		currentOutputStreamed = followUpOutputStreamed
 	}
 
 	w.preSearchThinking = preSearchThinking.String()
@@ -869,6 +888,64 @@ func (w *WebSearchResponsesWriter) callFollowUp(ctx context.Context, messages []
 		return w.followUpChat(ctx, messages, tools)
 	}
 	return doFollowUpChat(ctx, w.chat.Model, messages, tools, w.chat.Options)
+}
+
+func (w *WebSearchResponsesWriter) callFollowUpStream(ctx context.Context, messages []api.Message, tools api.Tools) (api.ChatResponse, bool, error) {
+	var final api.ChatResponse
+	var content strings.Builder
+	var thinking strings.Builder
+	var role string
+	var toolCalls []api.ToolCall
+	outputStreamed := false
+
+	yield := func(response api.ChatResponse) error {
+		final = response
+		if response.Message.Role != "" {
+			role = response.Message.Role
+		}
+		content.WriteString(response.Message.Content)
+		thinking.WriteString(response.Message.Thinking)
+		toolCalls = append(toolCalls, response.Message.ToolCalls...)
+
+		streamed := response
+		if _, hasWebSearch, _ := findWebSearchToolCall(streamed.Message.ToolCalls); hasWebSearch {
+			streamed.Message.ToolCalls = nil
+		}
+		streamed.Done = false
+		if streamed.Message.Content == "" && streamed.Message.Thinking == "" && len(streamed.Message.ToolCalls) == 0 {
+			return nil
+		}
+		for _, event := range w.inner.converter.Process(streamed) {
+			if err := w.inner.writeEvent(event.Event, event.Data); err != nil {
+				return err
+			}
+		}
+		outputStreamed = true
+		return nil
+	}
+
+	var err error
+	switch {
+	case w.followUpStream != nil:
+		err = w.followUpStream(ctx, messages, tools, yield)
+	case w.followUpChat != nil:
+		var response api.ChatResponse
+		response, err = w.followUpChat(ctx, messages, tools)
+		if err == nil {
+			err = yield(response)
+		}
+	default:
+		err = streamFollowUpChat(ctx, w.chat.Model, messages, tools, w.chat.Options, yield)
+	}
+	if err != nil {
+		return api.ChatResponse{}, outputStreamed, err
+	}
+
+	final.Message.Role = role
+	final.Message.Content = content.String()
+	final.Message.Thinking = thinking.String()
+	final.Message.ToolCalls = toolCalls
+	return final, outputStreamed, nil
 }
 
 func formatResponsesWebSearchResults(results []api.WebSearchResult) string {
@@ -954,6 +1031,9 @@ func (w *WebSearchResponsesWriter) writeWebSearchStream(final api.ChatResponse, 
 				return err
 			}
 		}
+	}
+	if w.finalOutputStreamed {
+		final.Message = api.Message{}
 	}
 	final.Metrics = usage
 	final.Done = true

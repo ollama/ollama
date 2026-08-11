@@ -457,6 +457,136 @@ func TestWebSearchResponsesWriterStreamingContentAndToolCallInSameChunk(t *testi
 	}
 }
 
+func TestWebSearchResponsesWriterStreamsFollowUpAsProduced(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	stream := true
+	request := openai.ResponsesRequest{Model: "test-model", Stream: &stream, Tools: []openai.ResponsesTool{{Type: "web_search"}}}
+	inner := &ResponsesWriter{BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, converter: openai.NewResponsesStreamConverter("resp_test", "msg_test", request.Model, request), model: request.Model, stream: true, responseID: "resp_test", itemID: "msg_test", request: request}
+	writer := &WebSearchResponsesWriter{
+		BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, inner: inner, req: request,
+		chat:   &api.ChatRequest{Model: request.Model, Tools: api.Tools{openai.WebSearchFunctionTool()}},
+		search: func(context.Context, string) (*api.WebSearchResponse, error) { return &api.WebSearchResponse{}, nil },
+		followUpStream: func(_ context.Context, _ []api.Message, _ api.Tools, yield func(api.ChatResponse) error) error {
+			if err := yield(api.ChatResponse{Message: api.Message{Role: "assistant", Content: "streamed "}}); err != nil {
+				return err
+			}
+			if body := recorder.Body.String(); !strings.Contains(body, `"delta":"streamed "`) || strings.Contains(body, "response.completed") {
+				t.Fatalf("first follow-up chunk was not flushed immediately: %s", body)
+			}
+			if err := yield(api.ChatResponse{Message: api.Message{Role: "assistant", Content: "answer"}}); err != nil {
+				return err
+			}
+			return yield(api.ChatResponse{Done: true, Metrics: api.Metrics{PromptEvalCount: 7, EvalCount: 3}})
+		},
+	}
+
+	initial := api.ChatResponse{Done: true, Message: api.Message{ToolCalls: []api.ToolCall{{ID: "call_1", Function: api.ToolCallFunction{Name: "web_search", Arguments: testArgs(map[string]any{"query": "test"})}}}}, Metrics: api.Metrics{PromptEvalCount: 5, EvalCount: 2}}
+	data, _ := json.Marshal(initial)
+	if _, err := writer.Write(data); err != nil {
+		t.Fatal(err)
+	}
+
+	body := recorder.Body.String()
+	searchDone := strings.Index(body, "response.web_search_call.completed")
+	firstDelta := strings.Index(body, `"delta":"streamed "`)
+	secondDelta := strings.Index(body, `"delta":"answer"`)
+	completed := strings.Index(body, "response.completed")
+	if searchDone < 0 || firstDelta < searchDone || secondDelta < firstDelta || completed < secondDelta {
+		t.Fatalf("follow-up stream lifecycle is out of order: %s", body)
+	}
+	output := completedResponseOutput(t, body)
+	if len(output) != 2 || output[0]["type"] != "web_search_call" || output[1]["type"] != "message" {
+		t.Fatalf("terminal output = %#v", output)
+	}
+	content := output[1]["content"].([]any)[0].(map[string]any)
+	if content["text"] != "streamed answer" {
+		t.Fatalf("final text = %#v", content["text"])
+	}
+}
+
+func TestWebSearchResponsesWriterStreamsFollowUpBeforeSecondSearch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	stream := true
+	request := openai.ResponsesRequest{Model: "test-model", Stream: &stream, Tools: []openai.ResponsesTool{{Type: "web_search"}}}
+	inner := &ResponsesWriter{BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, converter: openai.NewResponsesStreamConverter("resp_test", "msg_test", request.Model, request), model: request.Model, stream: true, responseID: "resp_test", itemID: "msg_test", request: request}
+	searches := 0
+	followUps := 0
+	writer := &WebSearchResponsesWriter{
+		BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, inner: inner, req: request,
+		chat: &api.ChatRequest{Model: request.Model, Tools: api.Tools{openai.WebSearchFunctionTool()}},
+		search: func(_ context.Context, query string) (*api.WebSearchResponse, error) {
+			searches++
+			if query != []string{"first", "second"}[searches-1] {
+				t.Fatalf("search %d query = %q", searches, query)
+			}
+			return &api.WebSearchResponse{}, nil
+		},
+		followUpStream: func(_ context.Context, messages []api.Message, _ api.Tools, yield func(api.ChatResponse) error) error {
+			followUps++
+			if followUps == 1 {
+				if err := yield(api.ChatResponse{Message: api.Message{Role: "assistant", Content: "Need another search."}}); err != nil {
+					return err
+				}
+				if !strings.Contains(recorder.Body.String(), `"delta":"Need another search."`) {
+					t.Fatalf("intermediate content was not streamed: %s", recorder.Body.String())
+				}
+				if err := yield(api.ChatResponse{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{ID: "call_2", Function: api.ToolCallFunction{Name: "web_search", Arguments: testArgs(map[string]any{"query": "second"})}}}}}); err != nil {
+					return err
+				}
+				return yield(api.ChatResponse{Done: true, Metrics: api.Metrics{PromptEvalCount: 3, EvalCount: 4}})
+			}
+
+			assistant := messages[len(messages)-2]
+			if assistant.Content != "Need another search." || len(assistant.ToolCalls) != 1 || assistant.ToolCalls[0].Function.Name != "web_search" {
+				t.Fatalf("second-search assistant context = %#v", assistant)
+			}
+			if err := yield(api.ChatResponse{Message: api.Message{Role: "assistant", Content: "Final "}}); err != nil {
+				return err
+			}
+			if err := yield(api.ChatResponse{Message: api.Message{Role: "assistant", Content: "answer."}}); err != nil {
+				return err
+			}
+			return yield(api.ChatResponse{Done: true, Metrics: api.Metrics{PromptEvalCount: 5, EvalCount: 6}})
+		},
+	}
+
+	initial := api.ChatResponse{Done: true, Message: api.Message{ToolCalls: []api.ToolCall{{ID: "call_1", Function: api.ToolCallFunction{Name: "web_search", Arguments: testArgs(map[string]any{"query": "first"})}}}}, Metrics: api.Metrics{PromptEvalCount: 1, EvalCount: 2}}
+	data, _ := json.Marshal(initial)
+	if _, err := writer.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if searches != 2 || followUps != 2 {
+		t.Fatalf("searches=%d follow-ups=%d, want 2 each", searches, followUps)
+	}
+
+	body := recorder.Body.String()
+	firstSearchDone := strings.Index(body, "response.web_search_call.completed")
+	intermediate := strings.Index(body, `"delta":"Need another search."`)
+	secondSearch := strings.Index(body, `"query":"second"`)
+	finalDelta := strings.Index(body, `"delta":"Final "`)
+	completed := strings.Index(body, "response.completed")
+	if firstSearchDone < 0 || intermediate < firstSearchDone || secondSearch < intermediate || finalDelta < secondSearch || completed < finalDelta {
+		t.Fatalf("repeated search lifecycle is out of order: %s", body)
+	}
+	if strings.Count(body, "event: response.web_search_call.completed") != 2 || strings.Contains(body, "response.function_call_arguments") {
+		t.Fatalf("unexpected search events: %s", body)
+	}
+	output := completedResponseOutput(t, body)
+	wantTypes := []string{"web_search_call", "message", "web_search_call", "message"}
+	if len(output) != len(wantTypes) {
+		t.Fatalf("terminal output = %#v", output)
+	}
+	for i, want := range wantTypes {
+		if output[i]["type"] != want {
+			t.Fatalf("output[%d] type = %v, want %s: %#v", i, output[i]["type"], want, output)
+		}
+	}
+}
+
 func TestWebSearchResponsesWriterNonStreamingPreservesContentBeforeToolCall(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()

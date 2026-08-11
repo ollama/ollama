@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,41 @@ import (
 
 	"github.com/ollama/ollama/api"
 )
+
+func TestStreamFollowUpChat(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/chat" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		var request api.ChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if request.Stream == nil || !*request.Stream {
+			t.Fatalf("stream = %#v, want true", request.Stream)
+		}
+		encoder := json.NewEncoder(w)
+		if err := encoder.Encode(api.ChatResponse{Message: api.Message{Role: "assistant", Content: "one"}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := encoder.Encode(api.ChatResponse{Done: true, Message: api.Message{Role: "assistant", Content: "two"}}); err != nil {
+			t.Fatal(err)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("OLLAMA_HOST", server.URL)
+
+	var chunks []string
+	if err := streamFollowUpChat(context.Background(), "test-model", nil, nil, nil, func(response api.ChatResponse) error {
+		chunks = append(chunks, response.Message.Content)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(chunks) != 2 || chunks[0] != "one" || chunks[1] != "two" {
+		t.Fatalf("chunks = %#v", chunks)
+	}
+}
 
 func TestFindWebSearchToolCall(t *testing.T) {
 	first := api.ToolCall{ID: "search_1", Function: api.ToolCallFunction{Name: "web_search"}}

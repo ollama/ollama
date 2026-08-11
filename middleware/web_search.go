@@ -27,6 +27,17 @@ func doFollowUpChat(ctx context.Context, model string, messages []api.Message, t
 	return chatResponse, nil
 }
 
+// streamFollowUpChat streams the model response after a web search result.
+func streamFollowUpChat(ctx context.Context, model string, messages []api.Message, tools api.Tools, options map[string]any, yield func(api.ChatResponse) error) error {
+	stream := true
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+	request := api.ChatRequest{Model: model, Messages: messages, Stream: &stream, Tools: tools, Options: options}
+	return client.Chat(ctx, &request, yield)
+}
+
 func buildWebSearchAssistantMessage(response api.ChatResponse, webSearchCall api.ToolCall) api.Message {
 	assistant := api.Message{
 		Role:      "assistant",
