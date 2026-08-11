@@ -61,6 +61,22 @@
   },
   "redirects": [
     {
+      "source": "/api/openai-compatibility.mdx",
+      "destination": "/api/openai-compatibility"
+    },
+    {
+      "source": "/gpu.mdx",
+      "destination": "/gpu"
+    },
+    {
+      "source": "/integrations/vscode.mdx",
+      "destination": "/integrations/vscode"
+    },
+    {
+      "source": "/troubleshooting.mdx",
+      "destination": "/troubleshooting"
+    },
+    {
       "source": "/openai",
       "destination": "/api/openai-compatibility"
     },
