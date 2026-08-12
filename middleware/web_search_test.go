@@ -23,6 +23,9 @@ func TestStreamFollowUpChat(t *testing.T) {
 		if request.Stream == nil || !*request.Stream {
 			t.Fatalf("stream = %#v, want true", request.Stream)
 		}
+		if string(request.Format) != `{"type":"object"}` || request.Think == nil || request.Think.Value != "high" {
+			t.Fatalf("follow-up controls were not preserved: format=%s think=%#v", request.Format, request.Think)
+		}
 		encoder := json.NewEncoder(w)
 		if err := encoder.Encode(api.ChatResponse{Message: api.Message{Role: "assistant", Content: "one"}}); err != nil {
 			t.Fatal(err)
@@ -35,7 +38,8 @@ func TestStreamFollowUpChat(t *testing.T) {
 	t.Setenv("OLLAMA_HOST", server.URL)
 
 	var chunks []string
-	if err := streamFollowUpChat(context.Background(), "test-model", nil, nil, nil, func(response api.ChatResponse) error {
+	base := api.ChatRequest{Model: "test-model", Format: json.RawMessage(`{"type":"object"}`), Think: &api.ThinkValue{Value: "high"}}
+	if err := streamFollowUpChat(context.Background(), base, nil, nil, func(response api.ChatResponse) error {
 		chunks = append(chunks, response.Message.Content)
 		return nil
 	}); err != nil {
@@ -138,7 +142,7 @@ func TestDoFollowUpChatPreservesHTTPErrorTypes(t *testing.T) {
 			defer server.Close()
 			t.Setenv("OLLAMA_HOST", server.URL)
 
-			_, err := doFollowUpChat(context.Background(), "test-model", nil, nil, nil)
+			_, err := doFollowUpChat(context.Background(), api.ChatRequest{Model: "test-model"}, nil, nil)
 			if err == nil {
 				t.Fatal("expected error")
 			}

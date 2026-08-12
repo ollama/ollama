@@ -609,10 +609,11 @@ func (w *WebSearchResponsesWriter) Write(data []byte) (int, error) {
 	}
 	if w.inner.stream {
 		w.buffered = append(w.buffered, response)
-		if _, found, _ := findWebSearchToolCall(response.Message.ToolCalls); found {
+		_, hasWebSearch, _ := findWebSearchToolCall(response.Message.ToolCalls)
+		if hasWebSearch {
 			w.webSearchPending = true
 		}
-		if !w.webSearchPending {
+		if !w.webSearchPending && len(response.Message.ToolCalls) == 0 {
 			if _, err := w.inner.writeResponse(data); err != nil {
 				return 0, err
 			}
@@ -626,8 +627,9 @@ func (w *WebSearchResponsesWriter) Write(data []byte) (int, error) {
 			return len(data), nil
 		}
 
-		// A tool-bearing chunk may also contain ordinary model output. Stream a
-		// sanitized copy while keeping the private function call server-side.
+		// Tool-bearing chunks never pass through Process: its normal tool path
+		// latches text off for the rest of the stream. Stream ordinary output,
+		// then emit client tools through the latch-free path.
 		if response.Message.Content != "" || response.Message.Thinking != "" {
 			streamed := response
 			streamed.Message.ToolCalls = nil
@@ -641,8 +643,44 @@ func (w *WebSearchResponsesWriter) Write(data []byte) (int, error) {
 			}
 			w.streamedInitialOutput = true
 		}
+		var otherToolCalls []api.ToolCall
+		for _, tc := range response.Message.ToolCalls {
+			if tc.Function.Name != "web_search" {
+				otherToolCalls = append(otherToolCalls, tc)
+			}
+		}
+		if len(otherToolCalls) > 0 {
+			for _, event := range w.inner.converter.Process(api.ChatResponse{}) {
+				if err := w.inner.writeEvent(event.Event, event.Data); err != nil {
+					return 0, err
+				}
+			}
+			for _, event := range w.inner.converter.FinishMessageItem() {
+				if err := w.inner.writeEvent(event.Event, event.Data); err != nil {
+					return 0, err
+				}
+			}
+			for _, event := range w.inner.converter.EmitFunctionCallItems(otherToolCalls) {
+				if err := w.inner.writeEvent(event.Event, event.Data); err != nil {
+					return 0, err
+				}
+			}
+			w.streamedInitialOutput = true
+		}
 		if response.Done {
-			return len(data), w.finishStream()
+			if w.webSearchPending {
+				return len(data), w.finishStream()
+			}
+			response.Message = api.Message{}
+			terminal, err := json.Marshal(response)
+			if err != nil {
+				return 0, err
+			}
+			if _, err := w.inner.writeResponse(terminal); err != nil {
+				return 0, err
+			}
+			w.buffered = nil
+			w.done = true
 		}
 		return len(data), nil
 	}
@@ -664,6 +702,7 @@ func (w *WebSearchResponsesWriter) finishStream() error {
 	var observed api.Metrics
 	var contentBuilder strings.Builder
 	var thinkingBuilder strings.Builder
+	var toolCalls []api.ToolCall
 	for _, response := range w.buffered {
 		observed.PromptEvalCount = max(observed.PromptEvalCount, response.Metrics.PromptEvalCount)
 		observed.EvalCount = max(observed.EvalCount, response.Metrics.EvalCount)
@@ -673,6 +712,7 @@ func (w *WebSearchResponsesWriter) finishStream() error {
 		if response.Message.Thinking != "" {
 			thinkingBuilder.WriteString(response.Message.Thinking)
 		}
+		toolCalls = append(toolCalls, response.Message.ToolCalls...)
 		if candidate, ok, mixed := findWebSearchToolCall(response.Message.ToolCalls); ok && !found {
 			if mixed {
 				slog.Debug("preferring web_search tool call over client tool calls in mixed Responses response")
@@ -687,6 +727,7 @@ func (w *WebSearchResponsesWriter) finishStream() error {
 	// runLoop can preserve it before the web search events and in the follow-up.
 	initial.Message.Content = contentBuilder.String()
 	initial.Message.Thinking = thinkingBuilder.String()
+	initial.Message.ToolCalls = toolCalls
 	initial.Metrics = observed
 	return w.runAndWrite(initial, call)
 }
@@ -818,11 +859,6 @@ func (w *WebSearchResponsesWriter) runLoop(ctx context.Context, initial api.Chat
 					return api.ChatResponse{}, calls, usage, err
 				}
 			}
-			for _, event := range w.inner.converter.EmitFunctionCallItems(currentOtherToolCalls) {
-				if err := w.inner.writeEvent(event.Event, event.Data); err != nil {
-					return api.ChatResponse{}, calls, usage, err
-				}
-			}
 		}
 		calls = append(calls, responseCall)
 
@@ -887,7 +923,7 @@ func (w *WebSearchResponsesWriter) callFollowUp(ctx context.Context, messages []
 	if w.followUpChat != nil {
 		return w.followUpChat(ctx, messages, tools)
 	}
-	return doFollowUpChat(ctx, w.chat.Model, messages, tools, w.chat.Options)
+	return doFollowUpChat(ctx, *w.chat, messages, tools)
 }
 
 func (w *WebSearchResponsesWriter) callFollowUpStream(ctx context.Context, messages []api.Message, tools api.Tools) (api.ChatResponse, bool, error) {
@@ -908,19 +944,37 @@ func (w *WebSearchResponsesWriter) callFollowUpStream(ctx context.Context, messa
 		toolCalls = append(toolCalls, response.Message.ToolCalls...)
 
 		streamed := response
-		if _, hasWebSearch, _ := findWebSearchToolCall(streamed.Message.ToolCalls); hasWebSearch {
-			streamed.Message.ToolCalls = nil
-		}
+		streamed.Message.ToolCalls = nil
 		streamed.Done = false
-		if streamed.Message.Content == "" && streamed.Message.Thinking == "" && len(streamed.Message.ToolCalls) == 0 {
-			return nil
+		if streamed.Message.Content != "" || streamed.Message.Thinking != "" {
+			events := w.inner.converter.Process(streamed)
+			for _, event := range events {
+				if err := w.inner.writeEvent(event.Event, event.Data); err != nil {
+					return err
+				}
+			}
+			outputStreamed = outputStreamed || len(events) > 0
 		}
-		for _, event := range w.inner.converter.Process(streamed) {
-			if err := w.inner.writeEvent(event.Event, event.Data); err != nil {
-				return err
+
+		var otherToolCalls []api.ToolCall
+		for _, tc := range response.Message.ToolCalls {
+			if tc.Function.Name != "web_search" {
+				otherToolCalls = append(otherToolCalls, tc)
 			}
 		}
-		outputStreamed = true
+		if len(otherToolCalls) > 0 {
+			for _, event := range w.inner.converter.FinishMessageItem() {
+				if err := w.inner.writeEvent(event.Event, event.Data); err != nil {
+					return err
+				}
+			}
+			for _, event := range w.inner.converter.EmitFunctionCallItems(otherToolCalls) {
+				if err := w.inner.writeEvent(event.Event, event.Data); err != nil {
+					return err
+				}
+			}
+			outputStreamed = true
+		}
 		return nil
 	}
 
@@ -935,7 +989,7 @@ func (w *WebSearchResponsesWriter) callFollowUpStream(ctx context.Context, messa
 			err = yield(response)
 		}
 	default:
-		err = streamFollowUpChat(ctx, w.chat.Model, messages, tools, w.chat.Options, yield)
+		err = streamFollowUpChat(ctx, *w.chat, messages, tools, yield)
 	}
 	if err != nil {
 		return api.ChatResponse{}, outputStreamed, err
@@ -1024,14 +1078,6 @@ func buildResponsesWebSearchOutput(output []openai.ResponsesOutputItem, preSearc
 }
 
 func (w *WebSearchResponsesWriter) writeWebSearchStream(final api.ChatResponse, usage api.Metrics) error {
-	// Emit function_call events for mixed tool calls before the final content.
-	if len(w.otherToolCalls) > 0 {
-		for _, event := range w.inner.converter.EmitFunctionCallItems(w.otherToolCalls) {
-			if err := w.inner.writeEvent(event.Event, event.Data); err != nil {
-				return err
-			}
-		}
-	}
 	if w.finalOutputStreamed {
 		final.Message = api.Message{}
 	}

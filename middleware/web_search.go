@@ -10,14 +10,17 @@ const maxWebSearchLoops = 3
 
 // doFollowUpChat sends a non-streaming /api/chat request with the accumulated
 // messages and tools so the model can continue after a web search result.
-func doFollowUpChat(ctx context.Context, model string, messages []api.Message, tools api.Tools, options map[string]any) (api.ChatResponse, error) {
+func doFollowUpChat(ctx context.Context, base api.ChatRequest, messages []api.Message, tools api.Tools) (api.ChatResponse, error) {
 	stream := false
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return api.ChatResponse{}, err
 	}
 	var chatResponse api.ChatResponse
-	request := api.ChatRequest{Model: model, Messages: messages, Stream: &stream, Tools: tools, Options: options}
+	request := base
+	request.Messages = messages
+	request.Stream = &stream
+	request.Tools = tools
 	if err := client.Chat(ctx, &request, func(response api.ChatResponse) error {
 		chatResponse = response
 		return nil
@@ -28,13 +31,16 @@ func doFollowUpChat(ctx context.Context, model string, messages []api.Message, t
 }
 
 // streamFollowUpChat streams the model response after a web search result.
-func streamFollowUpChat(ctx context.Context, model string, messages []api.Message, tools api.Tools, options map[string]any, yield func(api.ChatResponse) error) error {
+func streamFollowUpChat(ctx context.Context, base api.ChatRequest, messages []api.Message, tools api.Tools, yield func(api.ChatResponse) error) error {
 	stream := true
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
-	request := api.ChatRequest{Model: model, Messages: messages, Stream: &stream, Tools: tools, Options: options}
+	request := base
+	request.Messages = messages
+	request.Stream = &stream
+	request.Tools = tools
 	return client.Chat(ctx, &request, yield)
 }
 

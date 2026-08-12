@@ -503,7 +503,7 @@ func loopServerToolUseID(messageID string, loop int) string {
 }
 
 func (w *WebSearchAnthropicWriter) callFollowUpChat(ctx context.Context, messages []api.Message, tools api.Tools) (api.ChatResponse, error) {
-	return doFollowUpChat(ctx, w.chatReq.Model, messages, tools, w.chatReq.Options)
+	return doFollowUpChat(ctx, *w.chatReq, messages, tools)
 }
 
 func (w *WebSearchAnthropicWriter) writePassthroughStreamChunk(chatResponse api.ChatResponse) error {
