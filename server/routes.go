@@ -2144,6 +2144,11 @@ func (s *Server) WebFetchExperimentalHandler(c *gin.Context) {
 }
 
 func (s *Server) webExperimentalProxyHandler(c *gin.Context, proxyPath, disabledOperation string) {
+	// This endpoint is authenticated by the server's cloud signature. A client
+	// may have supplied an unrelated provider credential (for example, Codex's
+	// Responses API key); it must not be sent to the web-search service.
+	c.Request.Header.Del("Authorization")
+
 	body, err := readRequestBody(c.Request)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -2439,7 +2444,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	if modelRef.Source == modelSourceCloud {
 		req.Model = modelRef.Base
-		if c.GetBool(legacyCloudAnthropicKey) {
+		if c.GetBool(cloudWebSearchOrchestrationKey) {
 			proxyCloudJSONRequestWithPath(c, req, "/api/chat", cloudErrRemoteInferenceUnavailable)
 			return
 		}
