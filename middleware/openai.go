@@ -895,10 +895,59 @@ func (w *WebSearchResponsesWriter) runLoop(ctx context.Context, initial api.Chat
 		currentOutputStreamed = followUpOutputStreamed
 	}
 
+	// The model asked for another search after consuming the search budget.
+	// Close that tool call with a limit result, then let the model continue with
+	// the original tools. The search budget controls execution, not which tools
+	// the model can select.
+	if w.inner.stream && currentOutputStreamed {
+		for _, event := range w.inner.converter.FinishMessageItem() {
+			if err := w.inner.writeEvent(event.Event, event.Data); err != nil {
+				return api.ChatResponse{}, calls, usage, err
+			}
+		}
+	}
+	if !w.inner.stream {
+		if current.Message.Thinking != "" {
+			if preSearchThinking.Len() > 0 {
+				preSearchThinking.WriteString("\n")
+			}
+			preSearchThinking.WriteString(current.Message.Thinking)
+		}
+		if current.Message.Content != "" {
+			if preSearchContent.Len() > 0 {
+				preSearchContent.WriteString("\n")
+			}
+			preSearchContent.WriteString(current.Message.Content)
+		}
+		for _, tc := range current.Message.ToolCalls {
+			if tc.Function.Name != "web_search" {
+				otherToolCalls = append(otherToolCalls, tc)
+			}
+		}
+	}
+	messages = append(messages,
+		buildWebSearchAssistantMessage(current, currentCall),
+		api.Message{Role: "tool", ToolCallID: currentCall.ID, Content: "Web search limit reached."},
+	)
+	var final api.ChatResponse
+	var finalOutputStreamed bool
+	var err error
+	if w.inner.stream {
+		final, finalOutputStreamed, err = w.callFollowUpStream(ctx, messages, tools)
+	} else {
+		final, err = w.callFollowUp(ctx, messages, tools)
+	}
+	if err != nil {
+		return api.ChatResponse{}, calls, usage, err
+	}
+	usage.PromptEvalCount += final.Metrics.PromptEvalCount
+	usage.EvalCount += final.Metrics.EvalCount
 	w.preSearchThinking = preSearchThinking.String()
 	w.preSearchContent = preSearchContent.String()
 	w.otherToolCalls = otherToolCalls
-	return current, calls, usage, fmt.Errorf("web_search exceeded the maximum of %d calls", maxWebSearchLoops)
+	w.finalOutputStreamed = finalOutputStreamed
+	final.Metrics = usage
+	return final, calls, usage, nil
 }
 
 func (w *WebSearchResponsesWriter) loopContext() (context.Context, context.CancelFunc) {

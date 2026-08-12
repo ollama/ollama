@@ -681,7 +681,7 @@ func TestWebSearchResponsesWriterStreamingSplitInitialToolsDoNotLatchFinalText(t
 	}
 }
 
-func TestWebSearchResponsesWriterStreamingLoopExhaustionFails(t *testing.T) {
+func TestWebSearchResponsesWriterStreamingLoopExhaustionReturnsToolResult(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
@@ -689,14 +689,29 @@ func TestWebSearchResponsesWriterStreamingLoopExhaustionFails(t *testing.T) {
 	request := openai.ResponsesRequest{Model: "test-model", Stream: &stream, Tools: []openai.ResponsesTool{{Type: "web_search"}}}
 	inner := &ResponsesWriter{BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, converter: openai.NewResponsesStreamConverter("resp_test", "msg_test", request.Model, request), model: request.Model, stream: true, responseID: "resp_test", itemID: "msg_test", request: request}
 	searches := 0
+	followUps := 0
+	tools := api.Tools{openai.WebSearchFunctionTool(), {Type: "function", Function: api.ToolFunction{Name: "get_weather"}}}
 	writer := &WebSearchResponsesWriter{
 		BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, inner: inner, req: request,
-		chat: &api.ChatRequest{Model: request.Model, Tools: api.Tools{openai.WebSearchFunctionTool()}},
+		chat: &api.ChatRequest{Model: request.Model, Tools: tools},
 		search: func(context.Context, string) (*api.WebSearchResponse, error) {
 			searches++
 			return &api.WebSearchResponse{}, nil
 		},
-		followUpStream: func(_ context.Context, _ []api.Message, _ api.Tools, yield func(api.ChatResponse) error) error {
+		followUpStream: func(_ context.Context, messages []api.Message, gotTools api.Tools, yield func(api.ChatResponse) error) error {
+			followUps++
+			if len(messages) > 0 && strings.Contains(messages[len(messages)-1].Content, "limit reached") {
+				if len(gotTools) != len(tools) {
+					t.Fatalf("final follow-up tools = %#v, want %#v", gotTools, tools)
+				}
+				if len(messages) == 0 || messages[len(messages)-1].Role != "tool" || !strings.Contains(messages[len(messages)-1].Content, "limit reached") {
+					t.Fatalf("final follow-up messages = %#v", messages)
+				}
+				if err := yield(api.ChatResponse{Message: api.Message{Role: "assistant", Content: "answer from existing results"}, Metrics: api.Metrics{PromptEvalCount: 2, EvalCount: 1}}); err != nil {
+					return err
+				}
+				return yield(api.ChatResponse{Done: true})
+			}
 			call := api.ToolCall{ID: "call_next", Function: api.ToolCallFunction{Name: "web_search", Arguments: testArgs(map[string]any{"query": "again"})}}
 			if err := yield(api.ChatResponse{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{call}}}); err != nil {
 				return err
@@ -711,8 +726,53 @@ func TestWebSearchResponsesWriterStreamingLoopExhaustionFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := recorder.Body.String()
-	if searches != maxWebSearchLoops || !strings.Contains(body, "response.failed") || !strings.Contains(body, "exceeded the maximum") || strings.Contains(body, "response.completed") {
-		t.Fatalf("loop exhaustion was not a terminal failure: searches=%d body=%s", searches, body)
+	if searches != maxWebSearchLoops || followUps != maxWebSearchLoops+1 || !strings.Contains(body, `"delta":"answer from existing results"`) || !strings.Contains(body, "response.completed") || strings.Contains(body, "response.failed") {
+		t.Fatalf("loop exhaustion did not finish gracefully: searches=%d followUps=%d body=%s", searches, followUps, body)
+	}
+}
+
+func TestWebSearchResponsesWriterNonStreamingLoopExhaustionReturnsToolResult(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	request := openai.ResponsesRequest{Model: "test-model", Tools: []openai.ResponsesTool{{Type: "web_search"}}}
+	inner := &ResponsesWriter{BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, model: request.Model, responseID: "resp_test", itemID: "msg_test", request: request}
+	searches := 0
+	followUps := 0
+	tools := api.Tools{openai.WebSearchFunctionTool(), {Type: "function", Function: api.ToolFunction{Name: "get_weather"}}}
+	writer := &WebSearchResponsesWriter{
+		BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, inner: inner, req: request,
+		chat: &api.ChatRequest{Model: request.Model, Tools: tools},
+		search: func(context.Context, string) (*api.WebSearchResponse, error) {
+			searches++
+			return &api.WebSearchResponse{}, nil
+		},
+		followUpChat: func(_ context.Context, messages []api.Message, gotTools api.Tools) (api.ChatResponse, error) {
+			followUps++
+			if len(messages) > 0 && strings.Contains(messages[len(messages)-1].Content, "limit reached") {
+				if len(gotTools) != len(tools) {
+					t.Fatalf("final follow-up tools = %#v, want %#v", gotTools, tools)
+				}
+				if len(messages) == 0 || messages[len(messages)-1].Role != "tool" || !strings.Contains(messages[len(messages)-1].Content, "limit reached") {
+					t.Fatalf("final follow-up messages = %#v", messages)
+				}
+				return api.ChatResponse{Done: true, Message: api.Message{Role: "assistant", Content: "answer from existing results"}}, nil
+			}
+			return api.ChatResponse{Done: true, Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{ID: "call_next", Function: api.ToolCallFunction{Name: "web_search", Arguments: testArgs(map[string]any{"query": "again"})}}}}}, nil
+		},
+	}
+
+	initial := api.ChatResponse{Done: true, Message: api.Message{ToolCalls: []api.ToolCall{{ID: "call_1", Function: api.ToolCallFunction{Name: "web_search", Arguments: testArgs(map[string]any{"query": "first"})}}}}}
+	data, _ := json.Marshal(initial)
+	if _, err := writer.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	var response openai.ResponsesResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v: %s", err, recorder.Body.String())
+	}
+	if searches != maxWebSearchLoops || followUps != maxWebSearchLoops+1 || response.Status != "completed" || len(response.Output) != maxWebSearchLoops+1 || response.Output[len(response.Output)-1].Content[0].Text != "answer from existing results" {
+		t.Fatalf("loop exhaustion did not finish gracefully: searches=%d followUps=%d response=%#v", searches, followUps, response)
 	}
 }
 
