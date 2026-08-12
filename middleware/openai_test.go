@@ -1796,3 +1796,134 @@ func TestResponsesMiddlewareZstd(t *testing.T) {
 		})
 	}
 }
+
+func TestResponsesMiddlewareStreamError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(ResponsesMiddleware())
+	router.Handle(http.MethodPost, "/v1/responses", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+
+		chunk, err := json.Marshal(api.ChatResponse{
+			Model:   "test-model",
+			Message: api.Message{Role: "assistant", Thinking: "Let me think..."},
+		})
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if _, err := c.Writer.Write(chunk); err != nil {
+			t.Error(err)
+			return
+		}
+
+		// Generation fails once the stream is already underway.
+		if err := json.NewEncoder(c.Writer).Encode(gin.H{"error": "error parsing tool call"}); err != nil {
+			t.Error(err)
+		}
+	})
+
+	body := `{"model": "test-model", "input": "Hello", "stream": true}`
+	req, _ := http.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.Code, http.StatusOK)
+	}
+
+	got := resp.Body.String()
+	if n := strings.Count(got, "event: response.failed"); n != 1 {
+		t.Errorf("response.failed count = %d, want 1:\n%s", n, got)
+	}
+	if strings.Contains(got, "event: response.completed") {
+		t.Errorf("stream reported completion for a failed generation:\n%s", got)
+	}
+	if !strings.Contains(got, "event: response.reasoning_summary_text.done") {
+		t.Errorf("reasoning was left open when the stream ended:\n%s", got)
+	}
+	if !strings.Contains(got, "error parsing tool call") {
+		t.Errorf("terminal event is missing the error message:\n%s", got)
+	}
+
+	// Everything on the wire has to be a blank line delimited event and data
+	// pair. A bare JSON error blob, or events run together without a
+	// separator, would reach the client as unparseable.
+	for _, block := range strings.Split(strings.TrimSuffix(got, "\n\n"), "\n\n") {
+		lines := strings.Split(block, "\n")
+		if len(lines) != 2 || !strings.HasPrefix(lines[0], "event: ") || !strings.HasPrefix(lines[1], "data: ") {
+			t.Errorf("malformed event %q in stream:\n%s", block, got)
+		}
+	}
+}
+
+func TestResponsesMiddlewareStreamErrorBeforeAnyContent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(ResponsesMiddleware())
+	router.Handle(http.MethodPost, "/v1/responses", func(c *gin.Context) {
+		// Nothing is written first and no status is set. Status() still reports
+		// 200, which is what routes an error envelope into the streaming path
+		// even when generation failed before producing a token.
+		if err := json.NewEncoder(c.Writer).Encode(gin.H{"error": "model runner exited"}); err != nil {
+			t.Error(err)
+		}
+	})
+
+	body := `{"model": "test-model", "input": "Hello", "stream": true}`
+	req, _ := http.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	got := resp.Body.String()
+	for _, event := range []string{"response.created", "response.in_progress", "response.failed"} {
+		if !strings.Contains(got, "event: "+event) {
+			t.Errorf("stream is missing %s:\n%s", event, got)
+		}
+	}
+	if !strings.Contains(got, "model runner exited") {
+		t.Errorf("terminal event is missing the error message:\n%s", got)
+	}
+}
+
+func TestStreamErrorMessage(t *testing.T) {
+	chatResponse, err := json.Marshal(api.ChatResponse{
+		Model:   "test-model",
+		Message: api.Message{Role: "assistant", Content: "hi"},
+		Done:    true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name        string
+		data        string
+		wantMessage string
+		wantOK      bool
+	}{
+		{name: "error envelope", data: `{"error":"error parsing tool call"}`, wantMessage: "error parsing tool call", wantOK: true},
+		{name: "error envelope with status", data: `{"error":"boom","status":500}`, wantMessage: "boom", wantOK: true},
+		// api.StatusError can carry an empty message, and an empty message
+		// still has to end the stream rather than fall through as content.
+		{name: "empty message", data: `{"error":""}`, wantMessage: "", wantOK: true},
+		{name: "chat response", data: string(chatResponse), wantOK: false},
+		{name: "not json", data: "who knows", wantOK: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			message, ok := streamErrorMessage([]byte(tt.data))
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if message != tt.wantMessage {
+				t.Errorf("message = %q, want %q", message, tt.wantMessage)
+			}
+		})
+	}
+}
