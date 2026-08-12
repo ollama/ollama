@@ -2,14 +2,17 @@ package server
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/template"
@@ -794,5 +797,58 @@ func TestPullModelManifest(t *testing.T) {
 				t.Fatal("expected at least one layer")
 			}
 		})
+	}
+}
+
+// TestPullModelDuplicateDigestVerifiesBlob pulls a manifest whose config and
+// layer share a digest. The registry redirects blob downloads via Location to
+// an "internal" path serving bytes that don't match the digest, so PullModel
+// must reject the pull with errDigestMismatch.
+func TestPullModelDuplicateDigestVerifiesBlob(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	const bogusDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+	backendURL := ""
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/manifests/"):
+			w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
+			fmt.Fprintf(w, `{
+				"schemaVersion": 2,
+				"mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+				"config": {
+					"mediaType": "application/vnd.ollama.image.config",
+					"digest": %q,
+					"size": 5
+				},
+				"layers": [{
+					"mediaType": "application/vnd.ollama.image.model",
+					"digest": %q,
+					"size": 5
+				}]
+			}`, bogusDigest, bogusDigest)
+		case strings.Contains(r.URL.Path, "/internal/blobs/"):
+			w.Write([]byte("attacker-controlled-bytes"))
+		case strings.Contains(r.URL.Path, "/blobs/"):
+			w.Header().Set("Location", backendURL+"/internal"+r.URL.Path)
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	backendURL = ts.URL
+
+	u, err := url.Parse(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := model.ParseName(u.Host + "/test/attack")
+	n.ProtocolScheme = "http"
+
+	err = PullModel(t.Context(), n.String(), &registryOptions{Insecure: true}, func(api.ProgressResponse) {})
+	if !errors.Is(err, errDigestMismatch) {
+		t.Fatalf("PullModel = %v, want errDigestMismatch (unverified blob would persist)", err)
 	}
 }
