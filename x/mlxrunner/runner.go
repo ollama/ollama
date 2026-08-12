@@ -112,7 +112,11 @@ func (r *Runner) Load(modelName string) error {
 	r.contextLength = m.MaxContextLength()
 	caches := m.NewCaches()
 	draftCaches := newDraftCaches(draftModel)
-	r.cache = newPrefixCache(slices.Concat(caches, draftCaches))
+	connector, err := newKVConnector(modelName)
+	if err != nil {
+		return err
+	}
+	r.cache = newPrefixCache(slices.Concat(caches, draftCaches), connector)
 	r.Sampler = sample.New(r.contextLength)
 	r.spec = newSpeculation(r, draftModel, caches, draftCaches)
 
