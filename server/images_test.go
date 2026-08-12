@@ -799,6 +799,7 @@ func TestPullModelManifest(t *testing.T) {
 		})
 	}
 }
+
 // TestPullModelDuplicateDigestVerifiesBlob pulls a manifest whose config and
 // layer share a digest. The registry redirects blob downloads via Location to
 // an "internal" path serving bytes that don't match the digest, so PullModel
@@ -851,4 +852,3 @@ func TestPullModelDuplicateDigestVerifiesBlob(t *testing.T) {
 		t.Fatalf("PullModel = %v, want errDigestMismatch (unverified blob would persist)", err)
 	}
 }
-
