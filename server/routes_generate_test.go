@@ -2351,86 +2351,87 @@ func TestChatLogprobs(t *testing.T) {
 	})
 }
 
-func TestChatWithPromptEndingInThinkTag(t *testing.T) {
-	t.Setenv("OLLAMA_GO_TEMPLATE", "1")
-	gin.SetMode(gin.TestMode)
+// setupThinkingTest creates a standard thinking test setup: a server serving a
+// model whose template adds <think> at the end of the prompt.
+func setupThinkingTest(t *testing.T) (*mockRunner, *Server) {
+	mock := &mockRunner{
+		CompletionResponse: llm.CompletionResponse{
+			Done:               true,
+			DoneReason:         llm.DoneReasonStop,
+			PromptEvalCount:    1,
+			PromptEvalDuration: 1,
+			EvalCount:          1,
+			EvalDuration:       1,
+		},
+	}
 
-	// Helper to create a standard thinking test setup
-	setupThinkingTest := func(t *testing.T) (*mockRunner, *Server) {
-		mock := &mockRunner{
-			CompletionResponse: llm.CompletionResponse{
-				Done:               true,
-				DoneReason:         llm.DoneReasonStop,
-				PromptEvalCount:    1,
-				PromptEvalDuration: 1,
-				EvalCount:          1,
-				EvalDuration:       1,
+	s := &Server{
+		sched: &Scheduler{
+			pendingReqCh:    make(chan *LlmRequest, 1),
+			finishedReqCh:   make(chan *LlmRequest, 1),
+			expiredCh:       make(chan *runnerRef, 1),
+			unloadedCh:      make(chan any, 1),
+			loaded:          make(map[string]*runnerRef),
+			newServerFn:     newMockServer(mock),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+			waitForRecovery: 250 * time.Millisecond,
+			loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				time.Sleep(time.Millisecond)
+				req.successCh <- &runnerRef{llama: mock}
+				return false
 			},
-		}
+		},
+	}
 
-		s := &Server{
-			sched: &Scheduler{
-				pendingReqCh:    make(chan *LlmRequest, 1),
-				finishedReqCh:   make(chan *LlmRequest, 1),
-				expiredCh:       make(chan *runnerRef, 1),
-				unloadedCh:      make(chan any, 1),
-				loaded:          make(map[string]*runnerRef),
-				newServerFn:     newMockServer(mock),
-				getGpuFn:        getGpuFn,
-				getSystemInfoFn: getSystemInfoFn,
-				waitForRecovery: 250 * time.Millisecond,
-				loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
-					time.Sleep(time.Millisecond)
-					req.successCh <- &runnerRef{llama: mock}
-					return false
-				},
-			},
-		}
+	go s.sched.Run(t.Context())
 
-		go s.sched.Run(t.Context())
+	// Create a model with thinking support
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture":          "llama",
+		"llama.block_count":             uint32(1),
+		"llama.context_length":          uint32(8192),
+		"llama.embedding_length":        uint32(4096),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(8),
+		"tokenizer.ggml.tokens":         []string{""},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*ggml.Tensor{
+		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+	})
 
-		// Create a model with thinking support
-		_, digest := createBinFile(t, ggml.KV{
-			"general.architecture":          "llama",
-			"llama.block_count":             uint32(1),
-			"llama.context_length":          uint32(8192),
-			"llama.embedding_length":        uint32(4096),
-			"llama.attention.head_count":    uint32(32),
-			"llama.attention.head_count_kv": uint32(8),
-			"tokenizer.ggml.tokens":         []string{""},
-			"tokenizer.ggml.scores":         []float32{0},
-			"tokenizer.ggml.token_type":     []int32{0},
-		}, []*ggml.Tensor{
-			{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-		})
-
-		// Create model with thinking template that adds <think> at the end
-		w := createRequest(t, s.CreateHandler, api.CreateRequest{
-			Model: "test-thinking",
-			Files: map[string]string{"file.gguf": digest},
-			Template: `{{- range .Messages }}
+	// Create model with thinking template that adds <think> at the end
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model: "test-thinking",
+		Files: map[string]string{"file.gguf": digest},
+		Template: `{{- range .Messages }}
 {{- if eq .Role "user" }}user: {{ .Content }}
 {{ else if eq .Role "assistant" }}assistant: {{ if .Thinking }}<think>{{ .Thinking }}</think>{{ end }}{{ .Content }}
 {{ end }}{{ end }}<think>`,
-			Stream: &stream,
-		})
+		Stream: &stream,
+	})
 
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected status 200, got %d", w.Code)
-		}
-
-		return mock, s
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
 	}
+
+	return mock, s
+}
+
+func TestChatWithPromptEndingInThinkTag(t *testing.T) {
+	t.Setenv("OLLAMA_GO_TEMPLATE", "1")
+	gin.SetMode(gin.TestMode)
 
 	mock, s := setupThinkingTest(t)
 
@@ -2933,6 +2934,78 @@ func TestChatFormatWithThinkFalse(t *testing.T) {
 
 			if !bytes.Equal([]byte(format), []byte(requests[0].Format)) {
 				t.Errorf("expected first completion format to match the request format, got %q", string(requests[0].Format))
+			}
+		})
+	}
+}
+
+// TestGenerateRawThinkingDefault verifies that `raw` requests don't turn
+// thinking on by themselves. Raw mode bypasses the template, so the thinking
+// tags inferred from it don't describe what the model was asked to emit, and
+// splitting the output on them leaves text completion clients with an empty
+// `response`. See https://github.com/ollama/ollama/issues/17700.
+func TestGenerateRawThinkingDefault(t *testing.T) {
+	t.Setenv("OLLAMA_GO_TEMPLATE", "1")
+	gin.SetMode(gin.TestMode)
+
+	mock, s := setupThinkingTest(t)
+
+	const modelOutput = "<think>reasoning</think>answer"
+
+	for _, tc := range []struct {
+		name             string
+		think            *api.ThinkValue
+		expectedThinking string
+		expectedResponse string
+	}{
+		{
+			// what SillyTavern's text completion sends: no `think` at all
+			name:             "unset",
+			expectedResponse: modelOutput,
+		},
+		{
+			name:             "explicitly enabled",
+			think:            &api.ThinkValue{Value: true},
+			expectedThinking: "reasoning",
+			expectedResponse: "answer",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mock.CompletionResponse = llm.CompletionResponse{
+				Content:            modelOutput,
+				Done:               true,
+				DoneReason:         llm.DoneReasonStop,
+				PromptEvalCount:    1,
+				PromptEvalDuration: 1,
+				EvalCount:          1,
+				EvalDuration:       1,
+			}
+
+			streamRequest := false
+			w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+				Model:   "test-thinking",
+				Prompt:  "user: Please respond.\n",
+				Raw:     true,
+				Think:   tc.think,
+				Stream:  &streamRequest,
+				Options: map[string]any{"num_ctx": 4096},
+			})
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+			}
+
+			var resp api.GenerateResponse
+			if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+				t.Fatal(err)
+			}
+
+			if resp.Thinking != tc.expectedThinking {
+				t.Errorf("expected thinking %q, got %q", tc.expectedThinking, resp.Thinking)
+			}
+
+			if resp.Response != tc.expectedResponse {
+				t.Errorf("expected response %q, got %q", tc.expectedResponse, resp.Response)
 			}
 		})
 	}
