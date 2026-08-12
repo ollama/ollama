@@ -140,6 +140,8 @@ func Execute(args []string) error {
 			UseSeed:          request.Options.Seed >= 0,
 			Logprobs:         request.Logprobs,
 			TopLogprobs:      request.TopLogprobs,
+			Grammar:          request.Grammar,
+			Format:           request.Format,
 		}
 
 		if err := runner.Prepare(&request); err != nil {

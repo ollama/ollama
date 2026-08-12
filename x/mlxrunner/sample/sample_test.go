@@ -46,9 +46,9 @@ func sampleOne(t *testing.T, opts Options, priorTokens []int32, values []float32
 		s.Free()
 		mlx.Sweep()
 	})
-	s.Add(0, opts, priorTokens)
+	s.Add(0, opts, priorTokens, nil, nil, nil)
 
-	got := s.Sample([]int{0}, slotLogits(values)).Token
+	got := s.Sample([]int{0}, slotLogits(values), nil).Token
 	mlx.Eval(got)
 	return got.Int()
 }
@@ -150,7 +150,7 @@ func TestDistributionAppliesTopKBeforeTopP(t *testing.T) {
 		s.Free()
 		mlx.Sweep()
 	})
-	s.Add(0, Options{Temperature: 1, TopK: 2, TopP: 0.7}, nil)
+	s.Add(0, Options{Temperature: 1, TopK: 2, TopP: 0.7}, nil, nil, nil, nil)
 
 	dist := s.Distribution(0, slotLogits([]float32{logOf(0.6), logOf(0.2), logOf(0.2)}), nil)
 	mlx.Eval(dist.Arrays()...)
@@ -221,12 +221,12 @@ func TestSeededSamplingIsReproducible(t *testing.T) {
 			s.Free()
 			mlx.Sweep()
 		})
-		s.Add(0, Options{Temperature: 1, TopK: 4, Seed: seed, UseSeed: true}, nil)
+		s.Add(0, Options{Temperature: 1, TopK: 4, Seed: seed, UseSeed: true}, nil, nil, nil, nil)
 
 		logits := slotLogits([]float32{0, 0, 0, 0})
 		out := make([]int, 32)
 		for i := range out {
-			token := s.Sample([]int{0}, logits).Token
+			token := s.Sample([]int{0}, logits, nil).Token
 			mlx.Eval(token)
 			out[i] = token.Int()
 		}
@@ -254,7 +254,7 @@ func TestSeededBernoulliIsReproducible(t *testing.T) {
 			s.Free()
 			mlx.Sweep()
 		})
-		s.Add(0, Options{Seed: 99, UseSeed: true}, nil)
+		s.Add(0, Options{Seed: 99, UseSeed: true}, nil, nil, nil, nil)
 
 		mask := s.Bernoulli(0, mlx.FromValues([]float32{0.5, 0.5, 0.5, 0.5, 0.5, 0.5}, 6)).AsType(mlx.DTypeInt32)
 		mlx.Eval(mask)
@@ -283,11 +283,11 @@ func TestSampleHistoryWindow(t *testing.T) {
 
 	// RepeatLastN=2 with priors {1, 2, 3}: makeHistoryRow keeps only
 	// {2, 3}. Token 1 was trimmed — its penalty is NOT active.
-	s.Add(0, Options{RepeatLastN: 2, PresencePenalty: 10}, []int32{1, 2, 3})
+	s.Add(0, Options{RepeatLastN: 2, PresencePenalty: 10}, []int32{1, 2, 3}, nil, nil, nil)
 
 	// Step 1: logits favor token 1 (trimmed). If the trim were broken it
 	// would be penalized and the argmax would move.
-	step1 := s.Sample([]int{0}, slotLogits([]float32{0, 5, 0, 0, 0})).Token
+	step1 := s.Sample([]int{0}, slotLogits([]float32{0, 5, 0, 0, 0}), nil).Token
 	mlx.Eval(step1)
 	if got := step1.Int(); got != 1 {
 		t.Fatalf("step 1 = %d, want 1 (token 1 trimmed from priors)", got)
@@ -296,7 +296,7 @@ func TestSampleHistoryWindow(t *testing.T) {
 
 	// Step 2: logits favor token 2 (rotated out). If the ring wrap were
 	// wrong, token 2 would still be penalized.
-	step2 := s.Sample([]int{0}, slotLogits([]float32{0, 0, 5, 0, 0})).Token
+	step2 := s.Sample([]int{0}, slotLogits([]float32{0, 0, 5, 0, 0}), nil).Token
 	mlx.Eval(step2)
 	if got := step2.Int(); got != 2 {
 		t.Fatalf("step 2 = %d, want 2 (token 2 rotated out of ring)", got)
@@ -312,7 +312,7 @@ func TestSpeculativeScoresUsesDraftHistoryWithoutCommit(t *testing.T) {
 		mlx.Sweep()
 	})
 
-	s.Add(0, Options{RepeatLastN: 2, RepeatPenalty: 10}, []int32{1, 2})
+	s.Add(0, Options{RepeatLastN: 2, RepeatPenalty: 10}, []int32{1, 2}, nil, nil, nil)
 	draftTokens := mlx.NewArrayInt32([]int32{3, 4}, []int32{1, 2})
 	scores := s.SpeculativeScores(0, batchLogits(
 		[]float32{0, 9, 9, 8, 0}, // history {1,2}; token 3 wins
@@ -349,8 +349,8 @@ func TestDistributionSingleRowAppliesDraftPrefix(t *testing.T) {
 	// the single row is the chain's final step, so every draft belongs to
 	// its history. Slot 0 exercises the batched history path (full ring),
 	// slot 1 the serial path (ring not yet full).
-	s.Add(0, Options{RepeatLastN: 2, RepeatPenalty: 10}, []int32{0, 1})
-	s.Add(1, Options{RepeatLastN: 8, RepeatPenalty: 10}, []int32{0, 1})
+	s.Add(0, Options{RepeatLastN: 2, RepeatPenalty: 10}, []int32{0, 1}, nil, nil, nil)
+	s.Add(1, Options{RepeatLastN: 8, RepeatPenalty: 10}, []int32{0, 1}, nil, nil, nil)
 	prefix := mlx.NewArrayInt32([]int32{3, 4}, []int32{1, 2})
 
 	for _, seqID := range []int{0, 1} {
@@ -377,8 +377,8 @@ func TestDistributionMultiRowWithoutChain(t *testing.T) {
 	// no draft chain: each row sees the slot history unchanged. Slot 0
 	// exercises the batched history path (full ring), slot 1 the serial path
 	// (ring not yet full).
-	s.Add(0, Options{RepeatLastN: 2, RepeatPenalty: 10}, []int32{3, 4})
-	s.Add(1, Options{RepeatLastN: 8, RepeatPenalty: 10}, []int32{3, 4})
+	s.Add(0, Options{RepeatLastN: 2, RepeatPenalty: 10}, []int32{3, 4}, nil, nil, nil)
+	s.Add(1, Options{RepeatLastN: 8, RepeatPenalty: 10}, []int32{3, 4}, nil, nil, nil)
 
 	for _, seqID := range []int{0, 1} {
 		// Tokens 3 and 4 are penalized in every row alike; rows 1 and 3
@@ -406,7 +406,7 @@ func TestCommitBatchesRingWrites(t *testing.T) {
 		mlx.Sweep()
 	})
 
-	s.Add(0, Options{RepeatLastN: 4, RepeatPenalty: 1.1}, []int32{10, 11, 12})
+	s.Add(0, Options{RepeatLastN: 4, RepeatPenalty: 1.1}, []int32{10, 11, 12}, nil, nil, nil)
 	s.Commit(0, []int32{20, 21, 22})
 	s.Commit(0, []int32{30, 31, 32, 33, 34})
 	mlx.Eval(s.history)
@@ -503,9 +503,9 @@ func TestBatchSamplingPreservesPerSlotBehavior(t *testing.T) {
 				mlx.Sweep()
 			})
 			for _, spec := range tc.slots {
-				s.Add(spec.id, spec.opts, spec.priors)
+				s.Add(spec.id, spec.opts, spec.priors, nil, nil, nil)
 			}
-			res := s.Sample(tc.sample, batchLogits(tc.rows...))
+			res := s.Sample(tc.sample, batchLogits(tc.rows...), nil)
 			mlx.Eval(res.Token)
 			got := res.Token.Ints()
 
@@ -530,10 +530,10 @@ func TestRemoveDoesNotLeakHistory(t *testing.T) {
 		s.Free()
 		mlx.Sweep()
 	})
-	s.Add(1, opts, []int32{1})
-	s.Add(2, opts, []int32{2})
+	s.Add(1, opts, []int32{1}, nil, nil, nil)
+	s.Add(2, opts, []int32{2}, nil, nil, nil)
 	s.Remove(1)
-	s.Add(3, opts, []int32{0})
+	s.Add(3, opts, []int32{0}, nil, nil, nil)
 
 	// Slot 2 retains history {2}; slot 3 retains history {0}. With
 	// equal logits and PresencePenalty=10 the argmax drops to the first
@@ -541,7 +541,7 @@ func TestRemoveDoesNotLeakHistory(t *testing.T) {
 	res := s.Sample([]int{2, 3}, batchLogits(
 		[]float32{3, 3, 0},
 		[]float32{3, 3, 0},
-	))
+	), nil)
 	mlx.Eval(res.Token)
 	tokens := res.Token.Ints()
 	if tokens[0] != 0 {

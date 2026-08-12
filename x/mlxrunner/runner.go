@@ -47,7 +47,9 @@ type Runner struct {
 	mlxThread     *mlxthread.Thread
 	// spec is the speculative-decoding subsystem. Nil when the model ships no
 	// draft head.
-	spec *speculation
+	spec              *speculation
+	decodedVocab      []string
+	decodedVocabBytes [][]byte
 }
 
 func (r *Runner) Load(modelName string) error {
@@ -109,6 +111,12 @@ func (r *Runner) Load(modelName string) error {
 
 	r.Model = m
 	r.Tokenizer = m.Tokenizer()
+	r.decodedVocab = make([]string, r.Tokenizer.VocabSize())
+	r.decodedVocabBytes = make([][]byte, r.Tokenizer.VocabSize())
+	for i := range r.decodedVocab {
+		r.decodedVocab[i] = r.Tokenizer.Decode([]int32{int32(i)})
+		r.decodedVocabBytes[i] = r.Tokenizer.DecodeToBytes(int32(i))
+	}
 	r.contextLength = m.MaxContextLength()
 	caches := m.NewCaches()
 	draftCaches := newDraftCaches(draftModel)

@@ -5,6 +5,42 @@ import (
 	"strings"
 )
 
+// DecodeToBytes converts a single token ID to its raw byte representation
+func (t *Tokenizer) DecodeToBytes(id int32) []byte {
+	if int(id) >= len(t.vocab.Values) {
+		return nil
+	}
+
+	token := t.vocab.Values[id]
+	var bytes []byte
+
+	switch t.typ {
+	case TokenizerSentencePiece:
+		token = strings.ReplaceAll(token, "▁", " ")
+		if len(token) == 6 && token[0] == '<' && token[1] == '0' && token[2] == 'x' && token[5] == '>' {
+			if v, err := strconv.ParseUint(token[3:5], 16, 8); err == nil {
+				return []byte{byte(v)}
+			}
+		}
+		return []byte(token)
+	default:
+		for _, r := range token {
+			switch {
+			case r == 0x0100:
+				continue
+			case r == 0x0143:
+				r = 0x00ad
+			case r > 0x0100 && r <= 0x0120:
+				r = r - 0x0100
+			case r > 0x0120 && r <= 0x0142:
+				r = r - 0x00a2
+			}
+			bytes = append(bytes, byte(r))
+		}
+	}
+	return bytes
+}
+
 // Decode converts token IDs back to text
 func (t *Tokenizer) Decode(ids []int32) string {
 	var sb strings.Builder

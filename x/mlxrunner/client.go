@@ -116,6 +116,8 @@ type CompletionRequest struct {
 	Options     api.Options
 	Logprobs    bool
 	TopLogprobs int
+	Grammar     string          `json:"grammar,omitempty"`
+	Format      json.RawMessage `json:"format,omitempty"`
 }
 
 type CompletionResponse struct {
@@ -159,6 +161,8 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 		Media:       req.Media,
 		Logprobs:    req.Logprobs,
 		TopLogprobs: req.TopLogprobs,
+		Grammar:     req.Grammar,
+		Format:      req.Format,
 	}
 	if req.Options != nil {
 		creq.Options = *req.Options

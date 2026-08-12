@@ -239,7 +239,7 @@ func mtpTestRunner(t *testing.T, predict map[int32]int32, eos []int32, opts samp
 		Sampler:   sampler.New(4096),
 		cache:     &prefixCache{},
 	}
-	r.Sampler.Add(pipelineSlot, opts, nil)
+	r.Sampler.Add(pipelineSlot, opts, nil, nil, nil, nil)
 	t.Cleanup(func() { r.Sampler.Remove(pipelineSlot) })
 	return r
 }

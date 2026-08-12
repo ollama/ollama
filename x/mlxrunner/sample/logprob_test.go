@@ -29,10 +29,10 @@ func runSampleLogprobs(t *testing.T, logits []float32, topK int) (int, float64, 
 		s.Free()
 		mlx.Sweep()
 	}()
-	s.Add(0, Options{Logprobs: true, TopLogprobs: topK}, nil)
+	s.Add(0, Options{Logprobs: true, TopLogprobs: topK}, nil, nil, nil, nil)
 
 	tensor := mlx.FromValues(logits, 1, len(logits))
-	res := s.Sample([]int{0}, tensor)
+	res := s.Sample([]int{0}, tensor, nil)
 
 	mlx.Pin(res.Arrays()...)
 	defer mlx.Unpin(res.Arrays()...)
@@ -253,11 +253,11 @@ func TestBatchedLogprobsPerRow(t *testing.T) {
 		s.Free()
 		mlx.Sweep()
 	})
-	s.Add(1, Options{Logprobs: true}, nil)
-	s.Add(2, Options{Logprobs: true}, nil)
+	s.Add(1, Options{Logprobs: true}, nil, nil, nil, nil)
+	s.Add(2, Options{Logprobs: true}, nil, nil, nil, nil)
 
 	logits := mlx.FromValues(append(append([]float32{}, rowA...), rowB...), 2, 3)
-	res := s.Sample([]int{1, 2}, logits)
+	res := s.Sample([]int{1, 2}, logits, nil)
 	mlx.Pin(res.Arrays()...)
 	t.Cleanup(func() { mlx.Unpin(res.Arrays()...) })
 	mlx.Eval(res.Arrays()...)

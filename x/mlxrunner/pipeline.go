@@ -111,7 +111,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	}
 
 	// Register the sampler after prefill completes.
-	r.Sampler.Add(pipelineSlot, request.SamplerOpts, inputs)
+	r.Sampler.Add(pipelineSlot, request.SamplerOpts, inputs, r.decodedVocab, r.decodedVocabBytes, r.Tokenizer.EOSTokens())
 
 	var d decoder
 	if spec != nil {
@@ -355,7 +355,7 @@ func (t *pipelinedDecoder) dispatch(token *mlx.Array) sampler.Result {
 	t.spec.committed(token, auxHidden, t.position, nil)
 	t.position += token.Dim(1)
 	logits := r.Model.Unembed(hidden)
-	next := r.Sampler.Sample([]int{pipelineSlot}, logits.Slice(mlx.Slice(), mlx.Slice(logits.Dim(1)-1), mlx.Slice()).Squeeze(1))
+	next := r.Sampler.Sample([]int{pipelineSlot}, logits.Slice(mlx.Slice(), mlx.Slice(logits.Dim(1)-1), mlx.Slice()).Squeeze(1), r.Tokenizer.Decode)
 	mlx.Pin(next.Arrays()...)
 	mlx.Sweep()
 	mlx.AsyncEval(next.Arrays()...)

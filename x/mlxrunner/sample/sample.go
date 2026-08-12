@@ -1,6 +1,8 @@
 package sample
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"math"
 	"slices"
@@ -24,6 +26,25 @@ type Options struct {
 	// token's log-probability. TopLogprobs (when > 0) adds top-K pairs.
 	Logprobs    bool
 	TopLogprobs int
+	Grammar     string
+	Format      json.RawMessage
+}
+
+func (o Options) Equals(other Options) bool {
+	return o.Temperature == other.Temperature &&
+		o.TopP == other.TopP &&
+		o.MinP == other.MinP &&
+		o.TopK == other.TopK &&
+		o.RepeatLastN == other.RepeatLastN &&
+		o.RepeatPenalty == other.RepeatPenalty &&
+		o.PresencePenalty == other.PresencePenalty &&
+		o.FrequencyPenalty == other.FrequencyPenalty &&
+		o.Seed == other.Seed &&
+		o.UseSeed == other.UseSeed &&
+		o.Logprobs == other.Logprobs &&
+		o.TopLogprobs == other.TopLogprobs &&
+		o.Grammar == other.Grammar &&
+		bytes.Equal(o.Format, other.Format)
 }
 
 // Result bundles the outputs of one decode step. Logprob/TopTokens/
@@ -192,9 +213,15 @@ type Sampler struct {
 }
 
 type slotState struct {
-	opts          Options
-	historyLen    int
-	randomCounter uint64
+	opts              Options
+	historyLen        int
+	randomCounter     uint64
+	generatedTokens   []int32
+	generatedBytes    []byte
+	constraint        *GrammarConstraint
+	decodedVocab      []string
+	decodedVocabBytes [][]byte
+	eosTokens         []int32
 }
 
 type slotCtx struct {
@@ -257,14 +284,19 @@ func (o Options) normalize(numCtx int) Options {
 
 // Add registers a sequence under seqID. The last RepeatLastN entries of
 // priorTokens seed the ring buffer.
-func (s *Sampler) Add(seqID int, opts Options, priorTokens []int32) {
+func (s *Sampler) Add(seqID int, opts Options, priorTokens []int32, decodedVocab []string, decodedVocabBytes [][]byte, eosTokens []int32) {
 	if _, dup := s.byID[seqID]; dup {
 		panic(fmt.Sprintf("sample.Sampler.Add: seqID %d already registered", seqID))
 	}
 
 	opts = opts.normalize(s.numCtx)
+	constraint, _ := NewGrammarConstraint(opts.Format, opts.Grammar)
 	slot := &slotState{
-		opts: opts,
+		opts:              opts,
+		constraint:        constraint,
+		decodedVocab:      decodedVocab,
+		decodedVocabBytes: decodedVocabBytes,
+		eosTokens:         eosTokens,
 	}
 
 	// Grow the pool to hold this slot's row. The pool is lazy — the first
@@ -335,7 +367,7 @@ func (s *Sampler) recomputeInvariants() {
 	s.anyLogprobs = false
 	s.maxTopLogprobs = 0
 	for _, slot := range s.slots {
-		if slot.opts != first {
+		if !slot.opts.Equals(first) {
 			s.allSameOpts = false
 		}
 		if slot.opts.Logprobs {
@@ -397,7 +429,7 @@ func (s *Sampler) Free() {
 // Sample draws one token per row of logits ([B,V]); seqIDs[i] names the
 // slot whose logits live at row i. Each sampled token is appended to its
 // slot's ring. Slots not named in seqIDs are untouched.
-func (s *Sampler) Sample(seqIDs []int, logits *mlx.Array) Result {
+func (s *Sampler) Sample(seqIDs []int, logits *mlx.Array, decode func([]int32) string) Result {
 	if len(seqIDs) == 0 {
 		return Result{}
 	}
@@ -413,9 +445,9 @@ func (s *Sampler) Sample(seqIDs []int, logits *mlx.Array) Result {
 
 	var token *mlx.Array
 	if opts0, ok := s.canBatch(slots); ok {
-		token = s.sampleTokensUniform(slots, opts0, logits)
+		token = s.sampleTokensUniform(slots, opts0, logits, decode)
 	} else {
-		token = s.sampleTokensSerial(slots, logits)
+		token = s.sampleTokensSerial(slots, logits, decode)
 	}
 
 	res := Result{Token: token}
@@ -464,7 +496,7 @@ func (s *Sampler) Distribution(seqID int, logits *mlx.Array, draftTokens *mlx.Ar
 		hist = s.speculativeHistory(slot, draftTokens, rows)
 	}
 
-	return slot.distribution(&slotCtx{opts: slot.opts, history: hist}, logits)
+	return slot.distribution(&slotCtx{opts: slot.opts, history: hist}, logits, nil)
 }
 
 // SpeculativeScores applies this slot's sampling transforms to logits without
@@ -548,6 +580,12 @@ func (s *Sampler) Commit(seqID int, tokens []int32) {
 	if !ok {
 		panic(fmt.Sprintf("sample.Sampler.Commit: seqID %d not registered", seqID))
 	}
+	slot.generatedTokens = append(slot.generatedTokens, tokens...)
+	for _, tok := range tokens {
+		if int(tok) < len(slot.decodedVocabBytes) {
+			slot.generatedBytes = append(slot.generatedBytes, slot.decodedVocabBytes[tok]...)
+		}
+	}
 	if !slot.opts.usesHistory() {
 		return
 	}
@@ -602,7 +640,7 @@ func (s *Sampler) speculativeDistributionSerial(slot *slotState, logits *mlx.Arr
 				hist = hist.Slice(mlx.Slice(), mlx.Slice(hist.Dim(1)-slot.opts.RepeatLastN, mlx.End))
 			}
 		}
-		dists = append(dists, slot.distribution(&slotCtx{opts: slot.opts, history: hist}, rowLogits))
+		dists = append(dists, slot.distribution(&slotCtx{opts: slot.opts, history: hist}, rowLogits, nil))
 	}
 	return ConcatenateDistributions(dists)
 }
@@ -647,9 +685,9 @@ func (s *Sampler) speculativeHistory(slot *slotState, draftTokens *mlx.Array, ro
 
 func (slot *slotState) speculativeScores(ctx *slotCtx, logits *mlx.Array) *mlx.Array {
 	if slot.opts.Temperature == 0 {
-		return slot.baseScores(ctx, logits)
+		return slot.baseScores(ctx, logits, nil)
 	}
-	return slot.distribution(ctx, logits).LogProbs(logits.Dim(logits.NumDims() - 1))
+	return slot.distribution(ctx, logits, nil).LogProbs(logits.Dim(logits.NumDims() - 1))
 }
 
 // canBatch reports whether the call can take the uniform batched path.
@@ -683,7 +721,7 @@ func (s *Sampler) canBatch(slots []*slotState) (Options, bool) {
 // sampleTokensUniform runs one fused sampling pass over the whole batch.
 // Reached only when canBatch is true, which lets the pool be used in place
 // with a single PutAlongAxis write-back and no gather.
-func (s *Sampler) sampleTokensUniform(slots []*slotState, opts Options, logits *mlx.Array) *mlx.Array {
+func (s *Sampler) sampleTokensUniform(slots []*slotState, opts Options, logits *mlx.Array, decode func([]int32) string) *mlx.Array {
 	B := len(slots)
 
 	var hist *mlx.Array
@@ -695,7 +733,14 @@ func (s *Sampler) sampleTokensUniform(slots []*slotState, opts Options, logits *
 	}
 
 	ctx := &slotCtx{opts: opts, history: hist}
-	token := slots[0].sample(ctx, logits)
+	token := slots[0].sample(ctx, logits, decode)
+	tokenInts := token.Ints()
+	for i, slot := range slots {
+		slot.generatedTokens = append(slot.generatedTokens, int32(tokenInts[i]))
+		if int(tokenInts[i]) < len(slot.decodedVocabBytes) {
+			slot.generatedBytes = append(slot.generatedBytes, slot.decodedVocabBytes[tokenInts[i]]...)
+		}
+	}
 	if opts.UseSeed && opts.Temperature != 0 {
 		// TODO: This only keeps counters aligned; it does not give each slot
 		// an independent key for the batched draw.
@@ -720,7 +765,7 @@ func (s *Sampler) sampleTokensUniform(slots []*slotState, opts Options, logits *
 }
 
 // sampleTokensSerial samples each slot against its own row of logits.
-func (s *Sampler) sampleTokensSerial(slots []*slotState, logits *mlx.Array) *mlx.Array {
+func (s *Sampler) sampleTokensSerial(slots []*slotState, logits *mlx.Array, decode func([]int32) string) *mlx.Array {
 	perSlotTokens := make([]*mlx.Array, len(slots))
 
 	rowOf := make(map[*slotState]int, len(s.slots))
@@ -742,10 +787,17 @@ func (s *Sampler) sampleTokensSerial(slots []*slotState, logits *mlx.Array) *mlx
 		}
 
 		ctx := &slotCtx{opts: slot.opts, history: hist}
-		perSlotTokens[i] = slot.sample(ctx, row)
+		perSlotTokens[i] = slot.sample(ctx, row, decode)
 	}
 
 	token := mlx.Concatenate(perSlotTokens, 0)
+	tokenInts := token.Ints()
+	for i, slot := range slots {
+		slot.generatedTokens = append(slot.generatedTokens, int32(tokenInts[i]))
+		if int(tokenInts[i]) < len(slot.decodedVocabBytes) {
+			slot.generatedBytes = append(slot.generatedBytes, slot.decodedVocabBytes[tokenInts[i]]...)
+		}
+	}
 
 	if s.history != nil {
 		// For each writing slot collect its flat (row-major) pool offset
@@ -778,11 +830,11 @@ func (s *Sampler) sampleTokensSerial(slots []*slotState, logits *mlx.Array) *mlx
 	return token
 }
 
-func (slot *slotState) sample(ctx *slotCtx, logits *mlx.Array) *mlx.Array {
+func (slot *slotState) sample(ctx *slotCtx, logits *mlx.Array, decode func([]int32) string) *mlx.Array {
 	if slot.opts.Temperature == 0 {
-		return slot.baseScores(ctx, logits).Argmax(-1, false).AsType(mlx.DTypeInt32)
+		return slot.baseScores(ctx, logits, decode).Argmax(-1, false).AsType(mlx.DTypeInt32)
 	}
-	return slot.distribution(ctx, logits).SampleWithKey(slot.nextRandomKey())
+	return slot.distribution(ctx, logits, decode).SampleWithKey(slot.nextRandomKey())
 }
 
 func (slot *slotState) nextRandomKey() *mlx.Array {
@@ -811,16 +863,92 @@ func mixSeed(seed, counter uint64) uint64 {
 	return z ^ (z >> splitMix64FinalShift)
 }
 
-func (slot *slotState) baseScores(ctx *slotCtx, logits *mlx.Array) *mlx.Array {
+func (slot *slotState) baseScores(ctx *slotCtx, logits *mlx.Array, decode func([]int32) string) *mlx.Array {
 	scores := logits
 	if slot.opts.usesHistory() {
 		scores = penalty(ctx, scores)
 	}
+	if slot.constraint != nil && decode != nil && len(slot.decodedVocab) > 0 {
+		scores = slot.applyGrammarConstraint(scores, decode)
+	}
 	return scores
 }
 
-func (slot *slotState) distribution(ctx *slotCtx, logits *mlx.Array) Distribution {
-	scores := slot.baseScores(ctx, logits)
+func (slot *slotState) applyGrammarConstraint(scores *mlx.Array, decode func([]int32) string) *mlx.Array {
+	floats := scores.Floats()
+	cleanBytes := stripIncompleteUTF8(slot.generatedBytes)
+	prefix := string(cleanBytes)
+
+	baseTracker := slot.constraint.GetState(prefix)
+	isComplete := slot.constraint.IsComplete(prefix)
+
+	for i := range floats {
+		isEOS := false
+		for _, eos := range slot.eosTokens {
+			if int32(i) == eos {
+				isEOS = true
+				break
+			}
+		}
+
+		if isEOS {
+			if !isComplete {
+				floats[i] = float32(math.Inf(-1))
+			}
+			continue
+		}
+
+		tokenStr := slot.decodedVocab[i]
+		tracker := baseTracker
+		for _, r := range tokenStr {
+			tracker = tracker.Transition(r)
+			if !tracker.Valid {
+				break
+			}
+		}
+
+		if !tracker.Valid {
+			floats[i] = float32(math.Inf(-1))
+		}
+	}
+
+	return mlx.FromValues(floats, scores.Dims()...)
+}
+
+func stripIncompleteUTF8(b []byte) []byte {
+	if len(b) == 0 {
+		return b
+	}
+	for i := 1; i <= 4; i++ {
+		if len(b)-i < 0 {
+			break
+		}
+		byteVal := b[len(b)-i]
+		if byteVal >= 0xc0 && byteVal <= 0xf7 {
+			var expectedLen int
+			switch {
+			case byteVal >= 0xf0:
+				expectedLen = 4
+			case byteVal >= 0xe0:
+				expectedLen = 3
+			default:
+				expectedLen = 2
+			}
+			if i < expectedLen {
+				return b[:len(b)-i]
+			}
+			break
+		}
+		if byteVal >= 0x80 && byteVal <= 0xbf {
+			continue
+		}
+		break
+	}
+	return b
+}
+
+func (slot *slotState) distribution(ctx *slotCtx, logits *mlx.Array, decode func([]int32) string) Distribution {
+	scores := slot.baseScores(ctx, logits, decode)
 	if slot.opts.Temperature <= 0 {
 		ids := scores.Argmax(-1, false).AsType(mlx.DTypeInt32).ExpandDims(-1)
 		probs := mlx.AddScalar(ids.AsType(mlx.DTypeFloat32).Multiply(mlx.FromValue(float32(0))), 1)
