@@ -737,7 +737,7 @@ func (s *Sampler) sampleTokensUniform(slots []*slotState, opts Options, logits *
 	tokenInts := token.Ints()
 	for i, slot := range slots {
 		slot.generatedTokens = append(slot.generatedTokens, int32(tokenInts[i]))
-		if int(tokenInts[i]) < len(slot.decodedVocabBytes) {
+		if tokenInts[i] < len(slot.decodedVocabBytes) {
 			slot.generatedBytes = append(slot.generatedBytes, slot.decodedVocabBytes[tokenInts[i]]...)
 		}
 	}
@@ -794,7 +794,7 @@ func (s *Sampler) sampleTokensSerial(slots []*slotState, logits *mlx.Array, deco
 	tokenInts := token.Ints()
 	for i, slot := range slots {
 		slot.generatedTokens = append(slot.generatedTokens, int32(tokenInts[i]))
-		if int(tokenInts[i]) < len(slot.decodedVocabBytes) {
+		if tokenInts[i] < len(slot.decodedVocabBytes) {
 			slot.generatedBytes = append(slot.generatedBytes, slot.decodedVocabBytes[tokenInts[i]]...)
 		}
 	}
