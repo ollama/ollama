@@ -2,11 +2,14 @@ package tools
 
 import (
 	"bufio"
+	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -105,26 +108,37 @@ func (e *Edit) Name() string {
 }
 
 func (e *Edit) Description() string {
-	return "Edit a text file in the current working directory by replacing exact text."
+	return "Edit a text file in the current working directory by replacing exact text. Pass multiple edits to change separate parts of the file in one call."
 }
 
 func (e *Edit) Schema() api.ToolFunction {
+	editProps := api.NewToolPropertiesMap()
+	editProps.Set("old_text", api.ToolProperty{
+		Type:        api.PropertyType{"string"},
+		Description: "Exact text for one targeted replacement. Must match the original file exactly once and must not overlap with any other edit's old_text.",
+	})
+	editProps.Set("new_text", api.ToolProperty{
+		Type:        api.PropertyType{"string"},
+		Description: "Replacement text for this targeted edit.",
+	})
+
 	props := api.NewToolPropertiesMap()
 	props.Set("path", api.ToolProperty{
 		Type:        api.PropertyType{"string"},
 		Description: "Path to the file to edit, relative to the working directory.",
 	})
-	props.Set("old_text", api.ToolProperty{
-		Type:        api.PropertyType{"string"},
-		Description: "Exact text to replace.",
-	})
-	props.Set("new_text", api.ToolProperty{
-		Type:        api.PropertyType{"string"},
-		Description: "Replacement text.",
+	props.Set("edits", api.ToolProperty{
+		Type: api.PropertyType{"array"},
+		Items: api.ToolProperty{
+			Type:       api.PropertyType{"object"},
+			Properties: editProps,
+			Required:   []string{"old_text", "new_text"},
+		},
+		Description: "One or more exact-text replacements. Each is matched against the original file, not against the output of earlier edits. Keep old_text as small as possible while still unique in the file; merge changes to the same or adjacent lines into a single edit.",
 	})
 	props.Set("replace_all", api.ToolProperty{
 		Type:        api.PropertyType{"boolean"},
-		Description: "Replace every occurrence. Defaults to false and requires old_text to match exactly once.",
+		Description: "Replace every occurrence. Defaults to false; only applies when a single edit is provided.",
 	})
 	return api.ToolFunction{
 		Name:        e.Name(),
@@ -132,7 +146,7 @@ func (e *Edit) Schema() api.ToolFunction {
 		Parameters: api.ToolFunctionParameters{
 			Type:       "object",
 			Properties: props,
-			Required:   []string{"path", "old_text", "new_text"},
+			Required:   []string{"path", "edits"},
 		},
 	}
 }
@@ -148,17 +162,10 @@ func (e *Edit) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[
 		return agent.ToolResult{}, fmt.Errorf("path parameter is required")
 	}
 
-	oldText, ok := args["old_text"].(string)
-	if !ok || oldText == "" {
-		return agent.ToolResult{}, fmt.Errorf("old_text parameter is required")
+	edits, replaceAll, err := parseEditArgs(args)
+	if err != nil {
+		return agent.ToolResult{}, err
 	}
-
-	newText, ok := args["new_text"].(string)
-	if !ok {
-		return agent.ToolResult{}, fmt.Errorf("new_text parameter is required")
-	}
-
-	replaceAll, _ := args["replace_all"].(bool)
 
 	if err := rejectFinalSymlink(toolCtx.WorkingDir, path); err != nil {
 		return agent.ToolResult{}, err
@@ -188,19 +195,56 @@ func (e *Edit) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[
 		return agent.ToolResult{}, err
 	}
 	content := string(contentBytes)
-	matches := strings.Count(content, oldText)
-	if matches == 0 {
-		return agent.ToolResult{}, fmt.Errorf("old_text was not found in %s", path)
-	}
-	if matches > 1 && !replaceAll {
-		return agent.ToolResult{}, fmt.Errorf("old_text matched %d times in %s; set replace_all to true to replace every match", matches, path)
-	}
 
 	var updated string
+	replacements := 0
 	if replaceAll {
-		updated = strings.ReplaceAll(content, oldText, newText)
+		matches := strings.Count(content, edits[0].OldText)
+		if matches == 0 {
+			return agent.ToolResult{}, fmt.Errorf("old_text was not found in %s", path)
+		}
+		updated = strings.ReplaceAll(content, edits[0].OldText, edits[0].NewText)
+		replacements = matches
 	} else {
-		updated = strings.Replace(content, oldText, newText, 1)
+		// Every edit is matched against the original file content rather
+		// than the output of earlier edits, so each edit must match exactly
+		// once and edits must target disjoint regions.
+		matched := make([]editMatch, 0, len(edits))
+		for i, edit := range edits {
+			count := strings.Count(content, edit.OldText)
+			if count == 0 {
+				return agent.ToolResult{}, editNotFoundError(path, i, len(edits))
+			}
+			if count > 1 {
+				return agent.ToolResult{}, editAmbiguousError(path, i, len(edits), count)
+			}
+			matched = append(matched, editMatch{
+				editIndex: i,
+				offset:    strings.Index(content, edit.OldText),
+				length:    len(edit.OldText),
+				newText:   edit.NewText,
+			})
+			replacements++
+		}
+
+		slices.SortFunc(matched, func(a, b editMatch) int { return cmp.Compare(a.offset, b.offset) })
+		for i := 1; i < len(matched); i++ {
+			prev, cur := matched[i-1], matched[i]
+			if prev.offset+prev.length > cur.offset {
+				return agent.ToolResult{}, fmt.Errorf("edits[%d] and edits[%d] overlap in %s; merge them into one edit or target disjoint text", prev.editIndex, cur.editIndex, path)
+			}
+		}
+
+		// Apply from the end of the file backwards so earlier offsets stay valid.
+		updated = content
+		for i := len(matched) - 1; i >= 0; i-- {
+			m := matched[i]
+			updated = updated[:m.offset] + m.newText + updated[m.offset+m.length:]
+		}
+	}
+
+	if updated == content {
+		return agent.ToolResult{}, fmt.Errorf("edit produced no changes in %s; replacement text is identical to the original", path)
 	}
 	if len(updated) > maxReadBytes {
 		return agent.ToolResult{}, fmt.Errorf("edited content is too large (%d bytes)", len(updated))
@@ -210,7 +254,116 @@ func (e *Edit) Execute(ctx context.Context, toolCtx agent.ToolContext, args map[
 		return agent.ToolResult{}, err
 	}
 
-	return agent.ToolResult{Content: fmt.Sprintf("Updated %s (%d replacement%s).", path, matches, plural(matches))}, nil
+	return agent.ToolResult{Content: fmt.Sprintf("Updated %s (%d edit%s, %d replacement%s).", path, len(edits), plural(len(edits)), replacements, plural(replacements))}, nil
+}
+
+// editReplacement is one targeted replacement within an edit call.
+type editReplacement struct {
+	OldText string
+	NewText string
+}
+
+// editMatch locates one editReplacement within the original file content.
+type editMatch struct {
+	editIndex int
+	offset    int
+	length    int
+	newText   string
+}
+
+// parseEditArgs normalizes edit arguments from a tool call into a list of
+// replacements. It accepts the `edits` array form and tolerates legacy
+// top-level old_text/new_text args as well as stringified JSON, mirroring
+// the pi coding agent's argument handling.
+func parseEditArgs(args map[string]any) ([]editReplacement, bool, error) {
+	replaceAll, _ := args["replace_all"].(bool)
+
+	var edits []editReplacement
+	if raw, ok := args["edits"]; ok {
+		parsed, err := parseEditArray(raw)
+		if err != nil {
+			return nil, false, err
+		}
+		edits = parsed
+	}
+
+	// Fold a legacy top-level old_text/new_text pair into edits.
+	if oldText, ok := args["old_text"].(string); ok {
+		newText, ok := args["new_text"].(string)
+		if !ok {
+			return nil, false, fmt.Errorf("new_text parameter is required")
+		}
+		edits = append(edits, editReplacement{OldText: oldText, NewText: newText})
+	}
+
+	if len(edits) == 0 {
+		return nil, false, fmt.Errorf("edits parameter is required")
+	}
+	for i, edit := range edits {
+		if edit.OldText == "" {
+			if len(edits) == 1 {
+				return nil, false, fmt.Errorf("old_text parameter is required")
+			}
+			return nil, false, fmt.Errorf("edits[%d].old_text must not be empty", i)
+		}
+	}
+	if replaceAll && len(edits) != 1 {
+		return nil, false, fmt.Errorf("replace_all only applies to a single edit")
+	}
+	return edits, replaceAll, nil
+}
+
+func parseEditArray(raw any) ([]editReplacement, error) {
+	if s, ok := raw.(string); ok {
+		// Some models serialize array arguments as a JSON string.
+		if err := json.Unmarshal([]byte(s), &raw); err != nil {
+			return nil, fmt.Errorf("edits must be an array of {old_text, new_text} objects")
+		}
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("edits must be an array of {old_text, new_text} objects")
+	}
+
+	edits := make([]editReplacement, 0, len(items))
+	for i, item := range items {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("edits[%d] must be an object with old_text and new_text", i)
+		}
+		oldText, oldOK := editTextArg(entry, "old_text", "oldText")
+		newText, newOK := editTextArg(entry, "new_text", "newText")
+		if !oldOK || !newOK {
+			return nil, fmt.Errorf("edits[%d] must be an object with old_text and new_text", i)
+		}
+		edits = append(edits, editReplacement{OldText: oldText, NewText: newText})
+	}
+	return edits, nil
+}
+
+// editTextArg reads the first present string key, tolerating both snake_case
+// and camelCase spellings that models emit.
+func editTextArg(entry map[string]any, keys ...string) (string, bool) {
+	for _, key := range keys {
+		if value, ok := entry[key].(string); ok {
+			return value, true
+		}
+	}
+	return "", false
+}
+
+func editNotFoundError(path string, editIndex, totalEdits int) error {
+	if totalEdits == 1 {
+		return fmt.Errorf("old_text was not found in %s", path)
+	}
+	return fmt.Errorf("edits[%d].old_text was not found in %s", editIndex, path)
+}
+
+func editAmbiguousError(path string, editIndex, totalEdits, occurrences int) error {
+	if totalEdits == 1 {
+		return fmt.Errorf("old_text matched %d times in %s; set replace_all to true to replace every match", occurrences, path)
+	}
+	return fmt.Errorf("edits[%d].old_text matched %d times in %s; each edit must match exactly once, so provide more surrounding context", editIndex, occurrences, path)
 }
 
 func cleanRelativePath(path string) (string, error) {
