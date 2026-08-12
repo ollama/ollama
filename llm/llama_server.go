@@ -2500,6 +2500,16 @@ func (s *llamaServerRunner) Tokenize(ctx context.Context, content string) ([]int
 	return s.tokenize(ctx, content, false, nil)
 }
 
+// TokenizeForCompletion implements llm.LlamaServer. It applies the same BOS
+// normalization Completion does before handing the prompt to /tokenize with
+// add_special set, so the count matches what /completion will see. A prompt
+// llama-server templated itself and will send through /v1/chat/completions is
+// only approximated: it passes through the same normalization even though that
+// path tokenizes internally.
+func (s *llamaServerRunner) TokenizeForCompletion(ctx context.Context, prompt, leadingBOS string) ([]int, error) {
+	return s.tokenize(ctx, s.completionPrompt(prompt, leadingBOS), true, nil)
+}
+
 // Detokenize calls llama-server's /detokenize endpoint.
 func (s *llamaServerRunner) Detokenize(ctx context.Context, tokens []int) (string, error) {
 	data, err := json.Marshal(map[string][]int{"tokens": tokens})

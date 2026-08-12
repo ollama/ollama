@@ -1896,15 +1896,18 @@ func (s *Server) GenerateRoutes() (http.Handler, error) {
 	// TODO(cloud-stage-a): apply Modelfile overlay deltas for local models with cloud
 	// parents on v1 request families while preserving this explicit :cloud passthrough.
 	r.POST("/v1/chat/completions", s.withInferenceRequestLogging("/v1/chat/completions", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.ChatMiddleware(), s.ChatHandler)...)
+	r.POST("/v1/chat/completions/input_tokens", s.withInferenceRequestLogging("/v1/chat/completions/input_tokens", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.ChatInputTokensMiddleware(), s.ChatHandler)...)
 	r.POST("/v1/completions", s.withInferenceRequestLogging("/v1/completions", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.CompletionsMiddleware(), s.GenerateHandler)...)
 	r.POST("/v1/embeddings", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.EmbeddingsMiddleware(), s.EmbedHandler)
 	r.GET("/v1/models", middleware.ListMiddleware(), s.ListHandler)
 	r.GET("/v1/models/:model", cloudModelPathPassthroughMiddleware(cloudErrRemoteModelDetailsUnavailable), middleware.RetrieveMiddleware(), s.ShowHandler)
 	r.POST("/v1/responses", s.withInferenceRequestLogging("/v1/responses", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.ResponsesMiddleware(), s.ChatHandler)...)
+	r.POST("/v1/responses/input_tokens", s.withInferenceRequestLogging("/v1/responses/input_tokens", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.ResponsesInputTokensMiddleware(), s.ChatHandler)...)
 	// OpenAI-compatible audio endpoint
 	r.POST("/v1/audio/transcriptions", middleware.TranscriptionMiddleware(), s.ChatHandler)
 
 	// Inference (Anthropic compatibility)
+	r.POST("/v1/messages/count_tokens", s.withInferenceRequestLogging("/v1/messages/count_tokens", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.AnthropicCountTokensMiddleware(), s.ChatHandler)...)
 	r.POST("/v1/messages", s.withInferenceRequestLogging("/v1/messages", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.AnthropicMessagesMiddleware(), s.ChatHandler)...)
 
 	return r, nil
@@ -2683,13 +2686,17 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	// If debug mode is enabled, return the rendered template instead of calling the model
 	if req.DebugRenderOnly {
+		debugInfo, err := chatDebugInfo(c.Request.Context(), r, prompt, len(media), leadingBOSForModel(m))
+		if err != nil {
+			slog.Error("chat prompt token count error", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
 		c.JSON(http.StatusOK, api.ChatResponse{
 			Model:     req.Model,
 			CreatedAt: time.Now().UTC(),
-			DebugInfo: &api.DebugInfo{
-				RenderedTemplate: prompt,
-				ImageCount:       len(media),
-			},
+			DebugInfo: debugInfo,
 		})
 		return
 	}
@@ -2951,13 +2958,17 @@ func (s *Server) handleNativeChat(c *gin.Context, req api.ChatRequest, m *Model,
 			return
 		}
 
+		debugInfo, err := chatDebugInfo(c.Request.Context(), r, prompt, countChatImages(msgs), leadingBOSForModel(m))
+		if err != nil {
+			slog.Error("chat prompt token count error", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
 		c.JSON(http.StatusOK, api.ChatResponse{
 			Model:     req.Model,
 			CreatedAt: time.Now().UTC(),
-			DebugInfo: &api.DebugInfo{
-				RenderedTemplate: prompt,
-				ImageCount:       countChatImages(msgs),
-			},
+			DebugInfo: debugInfo,
 		})
 		return
 	}
@@ -3072,6 +3083,20 @@ func countChatImages(msgs []api.Message) int {
 		count += len(msg.Images)
 	}
 	return count
+}
+
+func chatDebugInfo(ctx context.Context, r llm.LlamaServer, prompt string, imageCount int, leadingBOS string) (*api.DebugInfo, error) {
+	tokens, err := r.TokenizeForCompletion(ctx, prompt, leadingBOS)
+	if err != nil {
+		return nil, err
+	}
+	inputTokens := len(tokens)
+
+	return &api.DebugInfo{
+		RenderedTemplate: prompt,
+		ImageCount:       imageCount,
+		InputTokens:      &inputTokens,
+	}, nil
 }
 
 func handleScheduleError(c *gin.Context, name string, err error) {

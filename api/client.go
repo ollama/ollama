@@ -305,6 +305,35 @@ func (c *Client) Chat(ctx context.Context, req *ChatRequest, fn ChatResponseFunc
 	})
 }
 
+// ChatInputTokens returns the rendered input token count for a chat request
+// without running model inference.
+func (c *Client) ChatInputTokens(ctx context.Context, req *ChatRequest) (*InputTokensResponse, error) {
+	if req == nil {
+		return nil, errors.New("nil chat request")
+	}
+
+	renderReq := *req
+	stream := false
+	renderReq.Stream = &stream
+	renderReq.DebugRenderOnly = true
+
+	var result InputTokensResponse
+	if err := c.Chat(ctx, &renderReq, func(resp ChatResponse) error {
+		if resp.DebugInfo == nil {
+			return errors.New("chat input token count response missing debug info")
+		}
+		if resp.DebugInfo.InputTokens == nil {
+			return errors.New("chat input token count response missing input tokens")
+		}
+		result.InputTokens = *resp.DebugInfo.InputTokens
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
 // PullProgressFunc is a function that [Client.Pull] invokes every time there
 // is progress with a "pull" request sent to the service. If this function
 // returns an error, [Client.Pull] will stop the process and return this error.

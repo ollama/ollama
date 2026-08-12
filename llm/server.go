@@ -66,6 +66,12 @@ type LlamaServer interface {
 	ApplyChatTemplate(ctx context.Context, req ChatRequest) (string, error)
 	Embedding(ctx context.Context, input string) ([]float32, int, error)
 	Tokenize(ctx context.Context, content string) ([]int, error)
+	// TokenizeForCompletion counts the prompt the way the runner will see it,
+	// applying whatever prompt normalization the runner's own completion path
+	// applies. leadingBOS is the BOS string the renderer emitted, if any, so
+	// implementations that let the tokenizer add BOS can avoid double-counting
+	// it; implementations that tokenize the prompt verbatim ignore it.
+	TokenizeForCompletion(ctx context.Context, prompt, leadingBOS string) ([]int, error)
 	Detokenize(ctx context.Context, tokens []int) (string, error)
 	Close() error
 	MemorySize() (total, vram uint64)

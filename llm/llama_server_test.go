@@ -1628,6 +1628,50 @@ func TestLlamaServerTokenize(t *testing.T) {
 	}
 }
 
+func TestLlamaServerTokenizeForCompletion(t *testing.T) {
+	var got struct {
+		Content    string `json:"content"`
+		AddSpecial bool   `json:"add_special"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/tokenize" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprint(w, `{"tokens":[1,2,3]}`)
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port: portInt,
+		cmd:  fakeRunningCmd(),
+		ggml: loadTestGGML(t, ggml.KV{
+			"general.architecture":         "gemma3",
+			"tokenizer.ggml.add_bos_token": true,
+		}),
+	}
+	tokens, err := runner.TokenizeForCompletion(t.Context(), "<bos>hello world", "<bos>")
+	if err != nil {
+		t.Fatalf("TokenizeForCompletion error: %v", err)
+	}
+	if got.Content != "hello world" {
+		t.Fatalf("content = %q, want hello world", got.Content)
+	}
+	if !got.AddSpecial {
+		t.Fatal("add_special = false, want true")
+	}
+	if len(tokens) != 3 || tokens[0] != 1 || tokens[1] != 2 || tokens[2] != 3 {
+		t.Errorf("tokens = %v, want [1,2,3]", tokens)
+	}
+}
+
 func TestLlamaServerTokenizeDoesNotReuseIdleConnections(t *testing.T) {
 	var newConns atomic.Int64
 

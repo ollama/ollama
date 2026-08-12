@@ -342,6 +342,42 @@ claude --model qwen3-coder
 - [x] `ping`
 - [x] `error`
 
+### `/v1/messages/count_tokens`
+
+Returns the number of input tokens a request would consume, without generating
+anything:
+
+```shell
+curl -X POST http://localhost:11434/v1/messages/count_tokens \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen3-coder",
+    "messages": [{"role": "user", "content": "Hello"}]
+  }'
+```
+
+```json
+{
+  "input_tokens": 11
+}
+```
+
+#### Supported request fields
+
+- [x] `model`
+- [x] `messages`
+- [x] `system`
+- [x] `tools`
+- [x] `thinking`
+
+The count is of the prompt rendered from the whole request, so it reflects the
+chat template, the tool definitions and the thinking delimiters - not just the
+message text. Unlike `/v1/messages`, the request is never truncated to fit the
+context window, so the count can legitimately exceed it.
+
+Requests containing images are counted as text only: the image markers in the
+rendered prompt are counted, the image embeddings they stand for are not.
+
 ## Models
 
 Ollama supports both local and cloud models.
@@ -396,7 +432,11 @@ curl http://localhost:11434/v1/messages \
 
 - API key is accepted but not validated
 - `anthropic-version` header is accepted but not used
-- Token counts are approximations based on the underlying model's tokenizer
+- `/v1/messages/count_tokens` counts the rendered prompt with the underlying
+  model's tokenizer, and a non-streaming `/v1/messages` response reports the
+  count the model itself evaluated. A streaming response has neither available
+  when it must emit `message_start`, so its `usage.input_tokens` can be an
+  approximation
 
 ### Not supported
 
@@ -404,7 +444,6 @@ The following Anthropic API features are not currently supported:
 
 | Feature | Description |
 |---------|-------------|
-| `/v1/messages/count_tokens` | Token counting endpoint |
 | `tool_choice` | Forcing specific tool use or disabling tools |
 | `metadata` | Request metadata (user_id) |
 | Prompt caching | `cache_control` blocks for caching prefixes |

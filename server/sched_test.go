@@ -2140,6 +2140,10 @@ func (s *mockLlm) Tokenize(ctx context.Context, content string) ([]int, error) {
 	return s.tokenizeResp, s.tokenizeRespErr
 }
 
+func (s *mockLlm) TokenizeForCompletion(ctx context.Context, prompt, leadingBOS string) ([]int, error) {
+	return s.tokenizeResp, s.tokenizeRespErr
+}
+
 func (s *mockLlm) Detokenize(ctx context.Context, tokens []int) (string, error) {
 	return s.detokenizeResp, s.detonekizeRespErr
 }
