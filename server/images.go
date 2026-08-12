@@ -31,6 +31,7 @@ import (
 	"github.com/ollama/ollama/thinking"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
+	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/transfer"
 )
 
@@ -1015,6 +1016,12 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	mf, manifestData, err := pullModelManifest(ctx, n, regOpts)
 	if err != nil {
 		return fmt.Errorf("pull model manifest: %s", err)
+	}
+	if hasTensorLayers(mf.Layers) {
+		if err := mlx.CheckInit(); err != nil {
+			slog.Debug("MLX is unavailable for safetensors model pull", "error", err)
+			return errors.New("this model requires MLX support, but the MLX runtime is not available")
+		}
 	}
 
 	var layers []manifest.Layer
