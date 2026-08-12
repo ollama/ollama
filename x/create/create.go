@@ -161,8 +161,9 @@ type LayerInfo struct {
 // name is the path-style name (e.g., "tokenizer/tokenizer.json")
 type LayerCreator func(r io.Reader, mediaType, name string) (LayerInfo, error)
 
-// ManifestWriter writes the manifest file.
-type ManifestWriter func(modelName string, config LayerInfo, layers []LayerInfo) error
+// ManifestWriter writes the manifest file with the source classification used
+// to produce its tensor layers.
+type ManifestWriter func(modelName string, config LayerInfo, layers []LayerInfo, class Classification) error
 
 // ShouldQuantize returns true if a tensor should be quantized.
 // For image gen models (component non-empty): quantizes linear weights, skipping VAE, embeddings, norms.

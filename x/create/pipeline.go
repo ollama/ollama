@@ -50,7 +50,7 @@ func Create(modelName, modelDir, quantize string, store BlobStore, writeManifest
 	}
 
 	fn(fmt.Sprintf("writing manifest for %s", modelName))
-	if err := writeManifest(modelName, configLayer, layers); err != nil {
+	if err := writeManifest(modelName, configLayer, layers, class); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
 	fn(fmt.Sprintf("successfully imported %s with %d layers", modelName, len(layers)))

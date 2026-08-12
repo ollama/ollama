@@ -796,10 +796,10 @@ func sanitizeConvWeight(w *mlx.Array) *mlx.Array {
 	}
 	if w.NumDims() == 3 {
 		if w.Dim(1) == 1 {
-			return mlx.Squeeze(w, 1)
+			return mlx.Reshape(w, int32(w.Dim(0)), int32(w.Dim(2)))
 		}
 		if w.Dim(2) == 1 {
-			return mlx.Squeeze(w, 2)
+			return mlx.Reshape(w, int32(w.Dim(0)), int32(w.Dim(1)))
 		}
 	}
 	return w

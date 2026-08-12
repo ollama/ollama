@@ -30,8 +30,8 @@ func (k SourceKind) String() string {
 }
 
 // Classification is the decision about a source model: its kind and the
-// quantization that will actually be applied. An empty Quantize means the
-// tensors are stored at source precision (no quantization).
+// effective quantization of the imported weights. Quantize may describe a
+// requested conversion or a quantization already present in the source.
 type Classification struct {
 	Kind     SourceKind
 	Quantize string
@@ -58,7 +58,10 @@ func Classify(inv Inventory, requested string) (Classification, error) {
 		if requested != "" {
 			return Classification{}, fmt.Errorf("cannot requantize an already-quantized source model (requested %q): only bf16/fp16/fp32 sources can be quantized", requested)
 		}
-		return Classification{Kind: SourcePrequantized}, nil
+		return Classification{
+			Kind:     SourcePrequantized,
+			Quantize: detectPrequantizedQuantization(inv),
+		}, nil
 
 	case SourceBlockFP8:
 		rows, cols, ok := inv.Config.HFFP8WeightBlockSize()
@@ -75,6 +78,28 @@ func Classify(inv Inventory, requested string) (Classification, error) {
 	}
 
 	return Classification{}, fmt.Errorf("could not classify source model in %s", inv.Dir)
+}
+
+// detectPrequantizedQuantization reports a single quantization shared by the
+// source's recognized prequantized weights. A mixed or unrecognized source has
+// no single file type to record in the model manifest.
+func detectPrequantizedQuantization(inv Inventory) string {
+	var detected string
+	for _, name := range sortedTensorNames(inv) {
+		spec, _, ok := matchPrequant(name, inv)
+		if !ok {
+			continue
+		}
+		q := quant.Canonical(spec.Metadata["quant_type"])
+		if q == "" {
+			continue
+		}
+		if detected != "" && detected != q {
+			return ""
+		}
+		detected = q
+	}
+	return detected
 }
 
 // normalizeRequested validates the user's quantize value and returns its
