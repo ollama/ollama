@@ -394,3 +394,118 @@ func assertAllClose(t *testing.T, name string, got, want []float32, tol float64)
 		}
 	}
 }
+
+func TestParseVisionConfigOmniDefaults(t *testing.T) {
+	cfg, err := parseVisionConfig([]byte(`{
+		"vision_config": {
+			"version": "c-radio_v4-h",
+			"patch_size": 16,
+			"min_num_patches": 1024,
+			"max_num_patches": 13312
+		},
+		"patch_size": 16,
+		"downsample_ratio": 0.5,
+		"img_context_token_id": 18,
+		"img_context_token": "<image>",
+		"img_start_token": "<img>",
+		"img_end_token": "</img>",
+		"vit_hidden_size": 1280,
+		"projector_hidden_size": 20480
+	}`), []byte(`{
+		"patch_size": 16,
+		"downsample_ratio": 0.5,
+		"norm_mean": [0.48145466, 0.4578275, 0.40821073],
+		"norm_std": [0.26862954, 0.26130258, 0.27577711],
+		"min_num_patches": 1024,
+		"max_num_patches": 13312,
+		"max_model_len": 16384
+	}`))
+	if err != nil {
+		t.Fatalf("parseVisionConfig returned error: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("parseVisionConfig returned nil config")
+	}
+	if got, want := cfg.HiddenSize, int32(1280); got != want {
+		t.Fatalf("HiddenSize = %d, want %d", got, want)
+	}
+	if got, want := cfg.NumHiddenLayers, int32(32); got != want {
+		t.Fatalf("NumHiddenLayers = %d, want %d", got, want)
+	}
+	if got, want := cfg.HeadDim, int32(80); got != want {
+		t.Fatalf("HeadDim = %d, want %d", got, want)
+	}
+	if got, want := cfg.DownsampleFactor, int32(2); got != want {
+		t.Fatalf("DownsampleFactor = %d, want %d", got, want)
+	}
+	if got, want := cfg.ImageTokenID, int32(18); got != want {
+		t.Fatalf("ImageTokenID = %d, want %d", got, want)
+	}
+}
+
+func TestParseVisionConfigRejectsMalformedNormalization(t *testing.T) {
+	config := []byte(`{
+		"vision_config": {"version": "c-radio_v4-h"},
+		"norm_mean": [0.1, 0.2]
+	}`)
+	if _, err := parseVisionConfig(config, nil); err == nil {
+		t.Fatal("expected malformed config norm_mean error")
+	}
+
+	config = []byte(`{"vision_config": {"version": "c-radio_v4-h"}}`)
+	preprocessor := []byte(`{"norm_std": [0.1, 0.2, 0.3, 0.4]}`)
+	if _, err := parseVisionConfig(config, preprocessor); err == nil {
+		t.Fatal("expected malformed preprocessor norm_std error")
+	}
+}
+
+func TestNemotronImagePatchBudget(t *testing.T) {
+	cfg := &VisionConfig{
+		DownsampleFactor: 2,
+		MinNumPatches:    1024,
+		MaxNumPatches:    13312,
+		MaxModelLen:      16384,
+	}
+
+	// Context-bound, not memory-bound: base.MediaModel requires PrepareMedia
+	// to be deterministic for given segments.
+	if got, want := nemotronImagePatchBudget(cfg), 13312; got != want {
+		t.Fatalf("budget = %d, want %d", got, want)
+	}
+	if got, want := nemotronImagePatchBudget(&VisionConfig{DownsampleFactor: 2, MinNumPatches: 1024, MaxNumPatches: 13312, MaxModelLen: 512}), 2032; got != want {
+		t.Fatalf("context-limited budget = %d, want %d", got, want)
+	}
+}
+
+func TestNemotronImagePatchGrid(t *testing.T) {
+	cfg := &VisionConfig{
+		PatchSize:        16,
+		DownsampleFactor: 2,
+		MinNumPatches:    1024,
+		MaxNumPatches:    13312,
+	}
+
+	for _, tt := range []struct {
+		name       string
+		height     int
+		width      int
+		budget     int
+		wantMax    int
+		wantMin    int
+		wantFactor int
+	}{
+		{name: "square minimum", height: 512, width: 512, budget: 1024, wantMax: 1024, wantMin: 1024, wantFactor: 2},
+		{name: "large square capped", height: 2048, width: 2048, budget: 13312, wantMax: 13312, wantMin: 1024, wantFactor: 2},
+		{name: "wide image capped", height: 512, width: 2048, budget: 4096, wantMax: 4096, wantMin: 1024, wantFactor: 2},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			patchH, patchW := nemotronImagePatchGrid(tt.height, tt.width, tt.budget, cfg)
+			if got := patchH * patchW; got > tt.wantMax || got < tt.wantMin {
+				t.Fatalf("patches = %d (%dx%d), want within [%d,%d]", got, patchH, patchW, tt.wantMin, tt.wantMax)
+			}
+			if patchH%tt.wantFactor != 0 || patchW%tt.wantFactor != 0 {
+				t.Fatalf("patch grid = %dx%d, want both divisible by %d", patchH, patchW, tt.wantFactor)
+			}
+		})
+	}
+}
