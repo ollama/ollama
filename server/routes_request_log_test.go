@@ -88,6 +88,40 @@ func TestInferenceRequestLoggerMiddlewareWritesReplayArtifacts(t *testing.T) {
 	}
 }
 
+func TestInferenceRequestLoggerMiddlewareWritesLogBeforeHandlerRuns(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	logDir := t.TempDir()
+	requestLogger := &inferenceRequestLogger{dir: logDir}
+
+	const route = "/api/generate"
+	const requestBody = `{"model":"m","prompt":"hi"}`
+
+	// The handler asserts the log artifacts already exist at the moment it
+	// runs. With the pre-fix behaviour (log written after c.Next()), the
+	// files would not exist yet and this test would fail (#17437).
+	handlerSawBodyLog := false
+	r := gin.New()
+	r.POST(route, requestLogger.middleware(route), func(c *gin.Context) {
+		bodyFiles, _ := filepath.Glob(filepath.Join(logDir, "*_api_generate_body.json"))
+		handlerSawBodyLog = len(bodyFiles) == 1
+		c.Status(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, route, strings.NewReader(requestBody))
+	req.Host = "127.0.0.1:11434"
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+	if !handlerSawBodyLog {
+		t.Fatal("request log was not written before the handler ran; expected the log to be written on request arrival (#17437)")
+	}
+}
+
 func TestNewInferenceRequestLoggerCreatesDirectory(t *testing.T) {
 	requestLogger, err := newInferenceRequestLogger()
 	if err != nil {
