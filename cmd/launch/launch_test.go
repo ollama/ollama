@@ -3614,6 +3614,66 @@ func TestLaunchIntegration_ClaudeContextSuffixUsesBaseModelForReadiness(t *testi
 	}
 }
 
+func TestLaunchIntegration_ClaudeSavedContextSuffixUsesBaseModelForReadiness(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, false)
+
+	const model = "gemma4[1m]"
+	if err := config.SaveIntegration("claude", []string{model}); err != nil {
+		t.Fatalf("failed to seed saved config: %v", err)
+	}
+
+	DefaultConfirmPrompt = func(string, ConfirmOptions) (bool, error) {
+		return false, nil
+	}
+
+	var shownModel string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"gemma4"}]}`)
+		case "/api/show":
+			var req struct {
+				Model string `json:"model"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("failed to decode show request: %v", err)
+			}
+			shownModel = req.Model
+			if req.Model != "gemma4" {
+				w.WriteHeader(http.StatusBadRequest)
+				fmt.Fprint(w, `{"error":"invalid model name"}`)
+				return
+			}
+			fmt.Fprint(w, `{"model":"gemma4"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+		Name:          "claude",
+		ConfigureOnly: true,
+	}); err != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", err)
+	}
+	if shownModel != "gemma4" {
+		t.Fatalf("readiness model = %q, want gemma4", shownModel)
+	}
+
+	saved, err := config.LoadIntegration("claude")
+	if err != nil {
+		t.Fatalf("failed to reload saved config: %v", err)
+	}
+	if saved.Models[0] != model {
+		t.Fatalf("saved model = %q, want %q", saved.Models[0], model)
+	}
+}
+
 func TestLaunchIntegration_ClaudeModelOverrideDeprecatedDeclineOpensPicker(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
