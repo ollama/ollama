@@ -39,6 +39,7 @@ func NormalizePath(fp string) string {
 		"\\?", "?",
 		"\\~", "~",
 	).Replace(fp)
+	fp = strings.Trim(fp, "'") // Strip wrapping single-quotes added by shell drag-drop
 
 	if u, err := url.Parse(fp); err == nil && strings.EqualFold(u.Scheme, "file") {
 		return normalizeFileURL(u)
