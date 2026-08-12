@@ -54,7 +54,10 @@ func createBinFile(t *testing.T, kv map[string]any, ti []*ggml.Tensor) (string, 
 		t.Fatal(err)
 	}
 
-	digest, _ := GetSHA256Digest(f)
+	digest, _, err := GetSHA256Digest(f)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}

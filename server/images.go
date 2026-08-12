@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"log/slog"
 	"net"
 	"net/http"
@@ -1271,14 +1270,14 @@ func pullModelManifest(ctx context.Context, n model.Name, regOpts *registryOptio
 }
 
 // GetSHA256Digest returns the SHA256 hash of a given buffer and returns it, and the size of buffer
-func GetSHA256Digest(r io.Reader) (string, int64) {
+func GetSHA256Digest(r io.Reader) (string, int64, error) {
 	h := sha256.New()
 	n, err := io.Copy(h, r)
 	if err != nil {
-		log.Fatal(err)
+		return "", n, err
 	}
 
-	return fmt.Sprintf("sha256:%x", h.Sum(nil)), n
+	return fmt.Sprintf("sha256:%x", h.Sum(nil)), n, nil
 }
 
 var errUnauthorized = errors.New("unauthorized: access denied")
@@ -1435,7 +1434,11 @@ func verifyBlob(digest string) error {
 	}
 	defer f.Close()
 
-	fileDigest, _ := GetSHA256Digest(f)
+	fileDigest, _, err := GetSHA256Digest(f)
+	if err != nil {
+		return fmt.Errorf("reading %s to verify its digest: %w", fp, err)
+	}
+
 	if digest != fileDigest {
 		return fmt.Errorf("%w: want %s, got %s", errDigestMismatch, digest, fileDigest)
 	}
