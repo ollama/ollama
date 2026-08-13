@@ -321,7 +321,7 @@ func agentContextWindowForModel(ctx context.Context, client *api.Client, modelNa
 	if client == nil || strings.TrimSpace(modelName) == "" {
 		return fallback
 	}
-	if tokens := loadedContextWindowForModel(ctx, client, modelName); tokens > 0 {
+	if tokens := launch.LoadedContextWindow(ctx, client, modelName); tokens > 0 {
 		return tokens
 	}
 	if modelref.HasExplicitCloudSource(modelName) {
@@ -355,38 +355,11 @@ func contextWindowFromRecommendations(modelName string, recommendations []api.Mo
 		if rec.ContextLength <= 0 {
 			continue
 		}
-		if sameModelRef(modelName, rec.Model) {
+		if launch.SameModelRef(modelName, rec.Model) {
 			return rec.ContextLength
 		}
 	}
 	return 0
-}
-
-func sameModelRef(a, b string) bool {
-	a = comparableModelRef(a)
-	b = comparableModelRef(b)
-	if strings.EqualFold(a, b) {
-		return true
-	}
-	pa, errA := modelref.ParseRef(a)
-	pb, errB := modelref.ParseRef(b)
-	if errA != nil || errB != nil {
-		return false
-	}
-	if !strings.EqualFold(pa.Base, pb.Base) {
-		return false
-	}
-	return pa.Source == pb.Source ||
-		pa.Source == modelref.ModelSourceUnspecified ||
-		pb.Source == modelref.ModelSourceUnspecified
-}
-
-func comparableModelRef(value string) string {
-	value = strings.TrimSpace(value)
-	if strings.HasSuffix(strings.ToLower(value), ":latest") {
-		return strings.TrimSpace(value[:len(value)-len(":latest")])
-	}
-	return value
 }
 
 func showResponseContextWindow(resp *api.ShowResponse) int {
@@ -460,33 +433,7 @@ func preloadAgentModelIfLocal(ctx context.Context, client *api.Client, opts agen
 	}); err != nil {
 		return 0, err
 	}
-	return loadedContextWindowForModel(ctx, client, modelName), nil
-}
-
-func loadedContextWindowForModel(ctx context.Context, client *api.Client, modelName string) int {
-	if client == nil || strings.TrimSpace(modelName) == "" {
-		return 0
-	}
-	resp, err := client.ListRunning(ctx)
-	if err != nil {
-		return 0
-	}
-	return processContextWindowForModel(modelName, resp)
-}
-
-func processContextWindowForModel(modelName string, resp *api.ProcessResponse) int {
-	if resp == nil {
-		return 0
-	}
-	for _, running := range resp.Models {
-		if running.ContextLength <= 0 {
-			continue
-		}
-		if sameModelRef(modelName, running.Name) || sameModelRef(modelName, running.Model) {
-			return running.ContextLength
-		}
-	}
-	return 0
+	return launch.LoadedContextWindow(ctx, client, modelName), nil
 }
 
 func agentModelOptions(ctx context.Context, client *api.Client) ([]agentchat.ModelOption, error) {

@@ -170,18 +170,6 @@ func TestShowResponseContextWindowReadsArchitectureContextLength(t *testing.T) {
 	}
 }
 
-func TestProcessContextWindowForModelMatchesLatestAlias(t *testing.T) {
-	got := processContextWindowForModel("ornith", &api.ProcessResponse{
-		Models: []api.ProcessModelResponse{
-			{Name: "other:latest", Model: "other:latest", ContextLength: 32768},
-			{Name: "ornith:latest", Model: "ornith:latest", ContextLength: 262144},
-		},
-	})
-	if got != 262144 {
-		t.Fatalf("context window = %d, want 262144", got)
-	}
-}
-
 func TestSaveLastAgentModel(t *testing.T) {
 	setCmdTestHome(t, t.TempDir())
 

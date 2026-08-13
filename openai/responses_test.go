@@ -668,6 +668,21 @@ func TestFromResponsesRequest_ReasoningEffort(t *testing.T) {
 			wantThink: "max",
 		},
 		{
+			name:      "minimal clamps to low",
+			effort:    "minimal",
+			wantThink: "low",
+		},
+		{
+			name:      "xhigh clamps to max",
+			effort:    "xhigh",
+			wantThink: "max",
+		},
+		{
+			name:      "ultra clamps to max",
+			effort:    "ultra",
+			wantThink: "max",
+		},
+		{
 			name:      "none",
 			effort:    "none",
 			wantThink: false,
