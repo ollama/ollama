@@ -264,5 +264,41 @@
         pendingMenuItems = [];
       };
     </script>
-  </body>
+  
+
+<!-- KIROV-UI-WIDGET-INJECTED -->
+<style id="kirov-ui-widget-style">
+  button, a, input, select, textarea { min-height: 44px; }
+  :focus-visible { outline: 3px solid #0EA5E9 !important; outline-offset: 2px !important; }
+  html.kirov-dark-mode { filter: invert(1) hue-rotate(180deg) !important; background: #ffffff !important; }
+  html.kirov-dark-mode img, html.kirov-dark-mode video, html.kirov-dark-mode iframe, html.kirov-dark-mode #kirov-splash-overlay, html.kirov-dark-mode #kirov-fab-container { filter: invert(1) hue-rotate(180deg) !important; }
+  #kirov-fab-container { position: fixed; bottom: 24px; right: 24px; z-index: 999998; display: flex; flex-direction: column-reverse; align-items: flex-end; gap: 12px; font-family: 'Inter', system-ui, sans-serif; }
+  .kirov-fab-btn { width: 56px; height: 56px; border-radius: 50%; background: linear-gradient(135deg, #0EA5E9, #8B5CF6); color: white; border: none; cursor: pointer; box-shadow: 0 8px 24px rgba(14,165,233,0.3); display: flex; align-items: center; justify-content: center; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+  .kirov-fab-btn:hover { transform: scale(1.08); box-shadow: 0 12px 28px rgba(14,165,233,0.4); }
+  .kirov-fab-menu { display: flex; flex-direction: column; gap: 10px; opacity: 0; transform: translateY(20px) scale(0.9); pointer-events: none; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); transform-origin: bottom right; }
+  #kirov-fab-container:hover .kirov-fab-menu, #kirov-fab-container.active .kirov-fab-menu { opacity: 1; transform: translateY(0) scale(1); pointer-events: all; }
+  .kirov-fab-item { background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(12px); color: #e2e8f0; text-decoration: none; padding: 12px 20px; border-radius: 999px; font-weight: 500; font-size: 14px; white-space: nowrap; display: flex; align-items: center; gap: 8px; border: 1px solid rgba(255,255,255,0.1); transition: all 0.2s; cursor: pointer; }
+  .kirov-fab-item:hover { background: rgba(30, 41, 59, 0.95); color: #fff; transform: translateX(-4px); }
+  .kirov-fab-icon { width: 18px; height: 18px; fill: currentColor; }
+</style>
+<div id="kirov-fab-container">
+  <button class="kirov-fab-btn" aria-label="Menu" onclick="this.parentElement.classList.toggle('active')">
+    <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="19" r="1"></circle></svg>
+  </button>
+  <div class="kirov-fab-menu">
+    <button class="kirov-fab-item" onclick="document.documentElement.classList.toggle('kirov-dark-mode'); localStorage.setItem('kirov-theme', document.documentElement.classList.contains('kirov-dark-mode') ? 'dark' : 'light');">
+      <svg class="kirov-fab-icon" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+      Toggle Dark Mode
+    </button>
+    <a href="https://raphasha27.github.io/" class="kirov-fab-item">
+      <svg class="kirov-fab-icon" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+      Back to Portfolio Hub
+    </a>
+  </div>
+</div>
+<script>
+  if (localStorage.getItem('kirov-theme') === 'dark') { document.documentElement.classList.add('kirov-dark-mode'); }
+</script>
+
+</body>
 </html>
