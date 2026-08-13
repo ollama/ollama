@@ -1,6 +1,9 @@
 package launch
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,7 +50,7 @@ func TestDeepSeekHarnessConfigurePreservesSettingsAndIsIdempotent(t *testing.T) 
 	}
 
 	models := []LaunchModel{
-		{Name: "qwen3.5", ContextLength: 262144, MaxOutputTokens: 32768, Capabilities: []model.Capability{model.CapabilityVision}},
+		{Name: "qwen3.5:latest", ContextLength: 262144, MaxOutputTokens: 32768, Capabilities: []model.Capability{model.CapabilityVision}},
 		{Name: "kimi-k2.6:cloud", ContextLength: 262144, MaxOutputTokens: 262144},
 	}
 	dsh := &DeepSeekHarness{}
@@ -84,7 +87,7 @@ func TestDeepSeekHarnessConfigurePreservesSettingsAndIsIdempotent(t *testing.T) 
 		t.Fatalf("unrelated settings were not preserved: %#v", settings["theme"])
 	}
 	selected, _ := settings["agent-default-model"].(map[string]any)
-	if selected["provider"] != deepSeekHarnessProvider || selected["model"] != "qwen3.5" {
+	if selected["provider"] != deepSeekHarnessProvider || selected["model"] != "qwen3.5:latest" {
 		t.Fatalf("default model = %#v", selected)
 	}
 	llm, _ := settings["llm-pi-ai"].(map[string]any)
@@ -101,7 +104,7 @@ func TestDeepSeekHarnessConfigurePreservesSettingsAndIsIdempotent(t *testing.T) 
 		t.Fatalf("configured models = %#v", configuredModels)
 	}
 	local, _ := configuredModels[0].(map[string]any)
-	if local["id"] != "qwen3.5" || local["contextWindow"] != 262144 || local["maxTokens"] != 32768 {
+	if local["id"] != "qwen3.5:latest" || local["contextWindow"] != 262144 || local["maxTokens"] != 32768 {
 		t.Fatalf("local model = %#v", local)
 	}
 	if got, _ := local["input"].([]any); !slices.Equal(got, []any{"text", "image"}) {
@@ -112,7 +115,7 @@ func TestDeepSeekHarnessConfigurePreservesSettingsAndIsIdempotent(t *testing.T) 
 		t.Fatalf("cloud model = %#v", cloud)
 	}
 	web, _ := settings[deepSeekHarnessWebSettings].(map[string]any)
-	if web["baseURL"] != "http://127.0.0.1:12345/v1" || web["apiKeyEnv"] != deepSeekHarnessAPIKeyEnv || web["model"] != "qwen3.5" {
+	if web["baseURL"] != "http://127.0.0.1:12345/v1" || web["apiKeyEnv"] != deepSeekHarnessAPIKeyEnv || web["model"] != "qwen3.5:latest" {
 		t.Fatalf("Ollama web search provider = %#v", web)
 	}
 	if web["maxUses"] != 3 {
@@ -130,7 +133,50 @@ func TestDeepSeekHarnessConfigurePreservesSettingsAndIsIdempotent(t *testing.T) 
 	if patchConfig["path"] != settingsPath {
 		t.Fatalf("settings patch path = %#v", patchConfig["path"])
 	}
-	if got := dsh.CurrentModel(); got != "qwen3.5" {
+	if got := dsh.CurrentModel(); got != "qwen3.5:latest" {
+		t.Fatalf("CurrentModel() = %q", got)
+	}
+}
+
+func TestDeepSeekHarnessConfigureSkipsWebSearchWhenCloudDisabled(t *testing.T) {
+	home := t.TempDir()
+	setTestHome(t, home)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/status" {
+			fmt.Fprint(w, `{"cloud":{"disabled":true,"source":"config"}}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	settingsPath, err := deepSeekHarnessSettingsPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	existing := []byte("web-search-deepseek:\n    maxUses: 3\n")
+	if err := os.WriteFile(settingsPath, existing, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	dsh := &DeepSeekHarness{}
+	if err := dsh.ConfigureWithModels("qwen3.5", []LaunchModel{{Name: "qwen3.5:latest"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	settings, err := readDeepSeekHarnessYAML(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	web, _ := settings[deepSeekHarnessWebSettings].(map[string]any)
+	if len(web) != 1 || web["maxUses"] != 3 {
+		t.Fatalf("web search settings = %#v", web)
+	}
+	if got := dsh.CurrentModel(); got != "qwen3.5:latest" {
 		t.Fatalf("CurrentModel() = %q", got)
 	}
 }

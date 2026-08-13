@@ -182,6 +182,9 @@ func (d *DeepSeekHarness) ConfigureWithModels(primary string, models []LaunchMod
 	if len(models) == 0 {
 		models = []LaunchModel{fallbackLaunchModel(primary)}
 	}
+	if selected, ok := findLaunchModel(models, primary); ok {
+		primary = selected.Name
+	}
 
 	settingsPath, err := deepSeekHarnessSettingsPath()
 	if err != nil {
@@ -191,7 +194,7 @@ func (d *DeepSeekHarness) ConfigureWithModels(primary string, models []LaunchMod
 	if err != nil {
 		return fmt.Errorf("parse deepseek harness launch settings: %w", err)
 	}
-	applyDeepSeekHarnessSettings(settings, primary, models)
+	applyDeepSeekHarnessSettings(settings, primary, models, shouldManageOllamaWebSearch())
 
 	settingsData, err := yaml.Marshal(settings)
 	if err != nil {
@@ -237,7 +240,7 @@ func readDeepSeekHarnessYAML(path string) (map[string]any, error) {
 	return settings, nil
 }
 
-func applyDeepSeekHarnessSettings(settings map[string]any, primary string, models []LaunchModel) {
+func applyDeepSeekHarnessSettings(settings map[string]any, primary string, models []LaunchModel, manageWebSearch bool) {
 	settings["agent-default-model"] = map[string]any{
 		"provider": deepSeekHarnessProvider,
 		"model":    primary,
@@ -261,11 +264,15 @@ func applyDeepSeekHarnessSettings(settings map[string]any, primary string, model
 	llm["providers"] = providers
 	settings["llm-pi-ai"] = llm
 
+	web, _ := settings[deepSeekHarnessWebSettings].(map[string]any)
+	if !manageWebSearch {
+		return
+	}
+
 	// Harness's bundled search provider appends /messages to this /v1 base and
 	// sends the Anthropic web_search server tool. This is separate from the main
 	// model provider above; Harness does not expose a configured way to send the
 	// native OpenAI Responses web_search tool.
-	web, _ := settings[deepSeekHarnessWebSettings].(map[string]any)
 	if web == nil {
 		web = make(map[string]any)
 	}
@@ -333,6 +340,9 @@ func (d *DeepSeekHarness) CurrentModel() string {
 	provider, _ := providers[deepSeekHarnessProvider].(map[string]any)
 	if !deepSeekHarnessProviderHealthy(provider, modelName) {
 		return ""
+	}
+	if !shouldManageOllamaWebSearch() {
+		return modelName
 	}
 	web, _ := settings[deepSeekHarnessWebSettings].(map[string]any)
 	if !deepSeekHarnessWebProviderHealthy(web, modelName) {
