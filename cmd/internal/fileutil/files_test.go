@@ -515,41 +515,80 @@ func TestWriteWithBackup_FileUnreadableButDirWritable(t *testing.T) {
 	}
 }
 
-// TestWriteWithBackup_RapidSuccessiveWrites verifies backup works with multiple writes
-// within the same second (timestamp collision scenario).
+// TestWriteWithBackup_RapidSuccessiveWrites verifies backup collision-safety for
+// multiple writes within the same wall-clock second.
+//
+// Before the fix, writeBackupCopy used time.Now().Unix() (1s resolution), so
+// rapid writes selected the same backup path. A later backup overwrote the
+// earlier one, silently discarding the original pre-change state.
+//
+// After the fix (time.Now().UnixNano()), every content-changing write produces
+// a distinct backup file even when all writes complete within a single second.
 func TestWriteWithBackup_RapidSuccessiveWrites(t *testing.T) {
 	tmpDir := isolatedTempDir(t)
 	path := filepath.Join(tmpDir, "rapid.json")
 
-	// Create initial file
-	os.WriteFile(path, []byte(`{"v": 0}`), 0o644)
+	originalContent := []byte(`{"v": 0}`)
+	if err := os.WriteFile(path, originalContent, 0o644); err != nil {
+		t.Fatal(err)
+	}
 
-	// Rapid successive writes
-	for i := 1; i <= 3; i++ {
+	const numWrites = 3
+	for i := 1; i <= numWrites; i++ {
 		data := []byte(fmt.Sprintf(`{"v": %d}`, i))
 		if err := WriteWithBackup(path, data); err != nil {
 			t.Fatalf("write %d failed: %v", i, err)
 		}
 	}
 
-	// Verify final content
-	content, _ := os.ReadFile(path)
+	// 1. Final target must contain the latest content.
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading final file: %v", err)
+	}
 	if string(content) != `{"v": 3}` {
-		t.Errorf("expected final content {\"v\": 3}, got %s", string(content))
+		t.Errorf("final content = %q, want {\"v\": 3}", string(content))
 	}
 
-	// Verify at least one backup exists
-	entries, _ := os.ReadDir(BackupDir())
-	var backupCount int
+	// 2. Collect all backups for this file.
+	prefix := "rapid.json."
+	entries, err := os.ReadDir(BackupDir())
+	if err != nil {
+		t.Fatalf("reading backup dir: %v", err)
+	}
+	var backups []string
 	for _, e := range entries {
-		if len(e.Name()) > len("rapid.json.") && e.Name()[:len("rapid.json.")] == "rapid.json." {
-			backupCount++
+		if len(e.Name()) > len(prefix) && e.Name()[:len(prefix)] == prefix {
+			backups = append(backups, filepath.Join(BackupDir(), e.Name()))
 		}
 	}
-	if backupCount == 0 {
-		t.Error("expected at least one backup file from rapid writes")
+
+	// 3. Every write must have produced a distinct backup (no collision).
+	if len(backups) != numWrites {
+		t.Errorf("expected %d distinct backups (one per write), got %d — collision likely with second-resolution suffix",
+			numWrites, len(backups))
+	}
+
+	// 4. The original content {"v": 0} must be present in exactly one backup
+	// (the very first backup created before write 1). If backups collide, this
+	// original state is silently lost.
+	var foundOriginal bool
+	for _, bp := range backups {
+		data, err := os.ReadFile(bp)
+		if err != nil {
+			t.Errorf("reading backup %s: %v", bp, err)
+			continue
+		}
+		if string(data) == string(originalContent) {
+			foundOriginal = true
+			break
+		}
+	}
+	if !foundOriginal {
+		t.Error("original pre-change content not found in any backup — earliest backup was overwritten by a later one")
 	}
 }
+
 
 // TestWriteWithBackup_BackupDirIsFile verifies error when backup directory path is a file.
 func TestWriteWithBackup_BackupDirIsFile(t *testing.T) {
