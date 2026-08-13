@@ -75,6 +75,21 @@ func glimmerReasoningStrength(think *api.ThinkValue) string {
 	return "high"
 }
 
+var glimmerSystemReasoningReplacer = strings.NewReplacer(
+	"Reasoning effort", "Reasoning strength",
+	"Reasoning Effort", "Reasoning Strength",
+	"reasoning effort", "reasoning strength",
+	"REASONING EFFORT", "REASONING STRENGTH",
+)
+
+func glimmerNormalizeSystemReasoning(content string) string {
+	return glimmerSystemReasoningReplacer.Replace(content)
+}
+
+func glimmerHasSystemReasoning(content string) bool {
+	return strings.Contains(strings.ToLower(content), "reasoning strength")
+}
+
 func glimmerNamespace(name string) string {
 	if namespace, _, ok := strings.Cut(name, "."); ok {
 		return namespace
@@ -161,6 +176,10 @@ func writeGlimmerSystemMeta(sb *strings.Builder, tools []api.Tool) {
 }
 
 func writeGlimmerSystem(sb *strings.Builder, content string, tools []api.Tool, strength, currentDate string, defaultSystem bool) error {
+	if !defaultSystem {
+		content = glimmerNormalizeSystemReasoning(content)
+	}
+
 	writeGlimmerMessageStart(sb, "system")
 	sb.WriteString(content)
 	if defaultSystem {
@@ -171,9 +190,11 @@ func writeGlimmerSystem(sb *strings.Builder, content string, tools []api.Tool, s
 		sb.WriteString(currentDate)
 		sb.WriteByte('.')
 	}
-	sb.WriteString("\n\nReasoning strength: ")
-	sb.WriteString(strength)
-	sb.WriteByte('.')
+	if defaultSystem || !glimmerHasSystemReasoning(content) {
+		sb.WriteString("\n\nReasoning strength: ")
+		sb.WriteString(strength)
+		sb.WriteByte('.')
+	}
 	if len(tools) > 0 {
 		sb.WriteString("\n\n")
 		if err := writeGlimmerToolDefinitions(sb, tools); err != nil {
