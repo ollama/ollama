@@ -531,6 +531,10 @@ func TestMuseBaseSettings_MalformedLaunchFileFails(t *testing.T) {
 }
 
 func TestEnsureMuseInstalled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Muse is not supported on Windows")
+	}
+
 	withConfirm := func(t *testing.T, fn func(prompt string) (bool, error)) {
 		t.Helper()
 		oldConfirm := DefaultConfirmPrompt
