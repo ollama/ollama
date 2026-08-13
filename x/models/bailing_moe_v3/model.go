@@ -122,8 +122,13 @@ func (m *DenseMLP) Forward(x *mlx.Array, _ *Config) *mlx.Array {
 	return m.DownProj.Forward(mlx.SwiGLU(m.GateProj.Forward(x), m.UpProj.Forward(x)))
 }
 
-// MLAAttention implements the checkpoint's eager multi-latent attention path.
-// The KV cache stores the expanded per-head keys and values.
+// MLAAttention implements the checkpoint's multi-latent attention with
+// DeepSeek-style absorption: the KV cache stores only the 576-dim compressed
+// latent (kv_lora_rank + rope) per token instead of the expanded per-head
+// keys/values (num_heads * (qk_head_dim + v_head_dim) = 5120 dims), an 8.9x
+// KV memory saving. kv_b_proj's two halves are folded into the query path
+// (EmbedQ) and the output path (UnembedOut); the attention core runs as MQA
+// over the shared latent. Mathematically equivalent to the expanded form.
 type MLAAttention struct {
 	QProj          nn.LinearLayer
 	QAProj         nn.LinearLayer
@@ -131,7 +136,10 @@ type MLAAttention struct {
 	QBProj         nn.LinearLayer
 	KVAProjWithMQA nn.LinearLayer
 	KVALayerNorm   *nn.RMSNorm
-	KVBProj        nn.LinearLayer
+	EmbedQ         *nn.MultiLinear // [H, kv_lora_rank, qk_nope_head_dim]: absorbs kv_b_proj's K half into Q
+	UnembedOut     *nn.MultiLinear // [H, v_head_dim, kv_lora_rank]: absorbs kv_b_proj's V half into the output
+	ExpandKW       *mlx.Array      // [kv_lora_rank, H*qk_nope_head_dim]: re-expands latent history to keys as one 2D GEMM
+	ExpandVW       *mlx.Array      // [kv_lora_rank, H*v_head_dim]: re-expands latent history to values as one 2D GEMM
 	GateProj       nn.LinearLayer
 	OutProj        nn.LinearLayer
 }
@@ -331,7 +339,6 @@ func loadMLAAttention(linears model.LinearFactory, tensors map[string]*mlx.Array
 	p := prefix + ".attention"
 	a := &MLAAttention{
 		KVAProjWithMQA: linears.Make(p + ".kv_a_proj_with_mqa"),
-		KVBProj:        linears.Make(p + ".kv_b_proj"),
 		GateProj:       linears.Make(p + ".g_proj"),
 		OutProj:        linears.Make(p + ".dense"),
 	}
@@ -347,13 +354,71 @@ func loadMLAAttention(linears model.LinearFactory, tensors map[string]*mlx.Array
 	if w := tensors[p+".kv_a_layernorm.weight"]; w != nil {
 		a.KVALayerNorm = nn.NewRMSNorm(w, cfg.RMSNormEps)
 	}
+	embedQ, unembedOut, expandK, expandV, err := absorbKVBProj(tensors, p+".kv_b_proj", cfg)
+	if err != nil {
+		return nil, err
+	}
+	if embedQ != nil {
+		a.EmbedQ = nn.NewMultiLinear(embedQ)
+		a.UnembedOut = nn.NewMultiLinear(unembedOut)
+		a.ExpandKW = expandK
+		a.ExpandVW = expandV
+	}
 	qProjectionOK := a.QProj != nil ||
 		(a.QAProj != nil && a.QALayerNorm != nil && a.QBProj != nil)
-	if !qProjectionOK || a.KVAProjWithMQA == nil || a.KVALayerNorm == nil || a.KVBProj == nil ||
+	if !qProjectionOK || a.KVAProjWithMQA == nil || a.KVALayerNorm == nil || a.EmbedQ == nil ||
 		a.GateProj == nil || a.OutProj == nil {
 		return nil, fmt.Errorf("missing MLA projection")
 	}
 	return a, nil
+}
+
+// absorbKVBProj splits kv_b_proj [H*(qk_nope+v_head), kv_lora_rank] into the
+// absorbed per-head factors: EmbedQ [H, kv_lora_rank, qk_nope] mapping
+// queries into latent space, and UnembedOut [H, v_head, kv_lora_rank]
+// mapping latent attention output back to per-head values. Quantized weights
+// are dequantized first — kv_b_proj is small (~2.4 MB/layer at bf16), so
+// holding the absorbed factors unquantized costs almost nothing while the KV
+// cache shrinks 8.9x.
+func absorbKVBProj(tensors map[string]*mlx.Array, path string, cfg *Config) (embedQ, unembedOut, expandK, expandV *mlx.Array, err error) {
+	w := tensors[path+".weight"]
+	if w == nil {
+		return nil, nil, nil, nil, nil
+	}
+	if scales := tensors[path+".weight_scale"]; scales != nil {
+		qbiases := tensors[path+".weight_qbias"]
+		groupSize, bits, mode := model.ResolveLinearQuantParams(
+			cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant,
+			path+".weight", w, scales,
+		)
+		w = mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode, nil)
+	}
+
+	headDim := cfg.QKNopeHeadDim + cfg.VHeadDim
+	if int64(w.Dim(0)) != int64(cfg.NumAttentionHeads)*int64(headDim) || int32(w.Dim(1)) != cfg.KVLoraRank {
+		return nil, nil, nil, nil, fmt.Errorf("kv_b_proj shape %v does not match heads=%d qk_nope+v=%d kv_lora_rank=%d",
+			w.Dims(), cfg.NumAttentionHeads, headDim, cfg.KVLoraRank)
+	}
+	w = mlx.Reshape(w, cfg.NumAttentionHeads, headDim, cfg.KVLoraRank)
+	wk := mlx.SliceStartStop(w, []int32{0, 0, 0}, []int32{cfg.NumAttentionHeads, cfg.QKNopeHeadDim, cfg.KVLoraRank})
+	wv := mlx.SliceStartStop(w, []int32{0, cfg.QKNopeHeadDim, 0}, []int32{cfg.NumAttentionHeads, headDim, cfg.KVLoraRank})
+
+	embedQ = mlx.Contiguous(mlx.Transpose(wk, 0, 2, 1), false)
+	unembedOut = mlx.Contiguous(wv, false)
+	// [H, dim, lora] -> [lora, H*dim]: one 2D GEMM re-expands the latent
+	// history for every head with no broadcasted batch dims (CUDA's batched
+	// matmul materializes broadcasts).
+	expandK = mlx.Contiguous(mlx.Reshape(
+		mlx.Transpose(wk, 2, 0, 1),
+		cfg.KVLoraRank, cfg.NumAttentionHeads*cfg.QKNopeHeadDim), false)
+	expandV = mlx.Contiguous(mlx.Reshape(
+		mlx.Transpose(wv, 2, 0, 1),
+		cfg.KVLoraRank, cfg.NumAttentionHeads*cfg.VHeadDim), false)
+	mlx.Eval(embedQ, unembedOut, expandK, expandV)
+	delete(tensors, path+".weight")
+	delete(tensors, path+".weight_scale")
+	delete(tensors, path+".weight_qbias")
+	return embedQ, unembedOut, expandK, expandV, nil
 }
 
 // interleavedToHalf converts adjacent rotary pairs [x0,x1,x2,x3,...]
@@ -401,33 +466,79 @@ func (a *MLAAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, posi
 		[]int32{0, 0, cfg.KVLoraRank},
 		[]int32{B, L, cfg.KVLoraRank + cfg.QKRopeHeadDim})
 	kPE = mlx.Transpose(mlx.Reshape(kPE, B, L, 1, cfg.QKRopeHeadDim), 0, 2, 1, 3)
-	kvLatent := a.KVALayerNorm.Forward(kvCompressed, cfg.RMSNormEps)
-	kvExpanded := a.KVBProj.Forward(kvLatent)
-	kvExpanded = mlx.Transpose(mlx.Reshape(
-		kvExpanded, B, L, cfg.NumAttentionHeads, cfg.QKNopeHeadDim+cfg.VHeadDim,
-	), 0, 2, 1, 3)
-	kNope := mlx.SliceStartStop(kvExpanded,
-		[]int32{0, 0, 0, 0},
-		[]int32{B, cfg.NumAttentionHeads, L, cfg.QKNopeHeadDim})
-	values := mlx.SliceStartStop(kvExpanded,
-		[]int32{0, 0, 0, cfg.QKNopeHeadDim},
-		[]int32{B, cfg.NumAttentionHeads, L, cfg.QKNopeHeadDim + cfg.VHeadDim})
+	kvLatent := mlx.ExpandDims(a.KVALayerNorm.Forward(kvCompressed, cfg.RMSNormEps), 1)
 
 	qPE = mlx.RoPEWithBase(interleavedToHalf(qPE), int(cfg.QKRopeHeadDim), false, cfg.RopeTheta, 1, positions)
 	kPE = mlx.RoPEWithBase(interleavedToHalf(kPE), int(cfg.QKRopeHeadDim), false, cfg.RopeTheta, 1, positions)
-	kPE = mlx.Tile(kPE, []int32{1, cfg.NumAttentionHeads, 1, 1})
-	keys := mlx.Concatenate([]*mlx.Array{kNope, kPE}, 3)
 
-	var kv nn.SDPAOption
+	// Absorbed attention: queries move into the shared latent space
+	// (q_nope @ EmbedQ), and the cache stores one 576-dim latent row per
+	// token — [kvLatent, kPE] as keys, with V the kvLatent prefix of the
+	// same tensor. The attention core is MQA over that single KV head;
+	// scores match the expanded form exactly because
+	// (q W_k^T) . latent == q . (W_k latent).
+	keys := mlx.Concatenate([]*mlx.Array{kvLatent, kPE}, 3)
+
+	var out *mlx.Array
 	if typed, ok := c.(cache.Attention); ok {
-		history := typed.Update(b, keys, values)
-		kv = nn.WithKVHistory(history)
+		placeholderValues := mlx.ZerosF32([]int32{B, 1, L, 0})
+		history := typed.Update(b, keys, placeholderValues)
+		if L == 1 {
+			// Decode: absorbed MQA over the 576-dim latent, written as
+			// explicit broadcast matmuls. MLX has no fused SDPA for 576-dim
+			// heads on CUDA, and its generic fallback materializes the
+			// broadcast K per query head (~300 MB per token per layer at 4K
+			// context), which OOMs under the async pipeline; the stride-0
+			// broadcast matmul reads the latent once instead. B==1 decode:
+			// the history view is the valid region, causal is trivial.
+			qLatent := a.EmbedQ.Forward(qNope)
+			queries := mlx.Concatenate([]*mlx.Array{qLatent, qPE}, 3)
+			hk := history.K()
+			T := int32(hk.Dim(2))
+			latentDim := cfg.KVLoraRank + cfg.QKRopeHeadDim
+			// [B*H, latent] x [latent, T]: plain GEMMs, no broadcast batch.
+			q2 := mlx.Reshape(queries, B*cfg.NumAttentionHeads, latentDim)
+			hk2 := mlx.Reshape(hk, T, latentDim)
+			scores := q2.Matmul(mlx.Transpose(hk2, 1, 0))
+			scores = mlx.MulScalar(scores.AsType(mlx.DTypeFloat32), cfg.Scale)
+			probs := mlx.SoftmaxAxis(scores, -1, true).AsType(hk.DType())
+			hv := mlx.SliceStartStop(hk2, []int32{0, 0}, []int32{T, cfg.KVLoraRank})
+			ov := probs.Matmul(hv)
+			out = mlx.Reshape(ov, B, cfg.NumAttentionHeads, 1, cfg.KVLoraRank)
+			out = a.UnembedOut.Forward(out)
+		} else {
+			// Prefill: CUDA's fused SDPA only supports head dims <= 128,
+			// so re-expand the latent history to per-head 192/128 keys and
+			// values (one broadcasted GEMM each) and run the fast kernel.
+			hk := history.K()
+			T := int32(hk.Dim(2))
+			hk2 := mlx.Reshape(hk, T, cfg.KVLoraRank+cfg.QKRopeHeadDim)
+			hl2 := mlx.SliceStartStop(hk2, []int32{0, 0}, []int32{T, cfg.KVLoraRank})
+			hpe := mlx.SliceStartStop(hk,
+				[]int32{0, 0, 0, cfg.KVLoraRank},
+				[]int32{B, 1, T, cfg.KVLoraRank + cfg.QKRopeHeadDim})
+			// One [T, lora] x [lora, H*dim] GEMM per tensor, then reshape to
+			// per-head layout — no broadcasted batch dims anywhere.
+			kNope := mlx.ExpandDims(mlx.Transpose(mlx.Reshape(
+				hl2.Matmul(a.ExpandKW),
+				T, cfg.NumAttentionHeads, cfg.QKNopeHeadDim), 1, 0, 2), 0)
+			histValues := mlx.ExpandDims(mlx.Transpose(mlx.Reshape(
+				hl2.Matmul(a.ExpandVW),
+				T, cfg.NumAttentionHeads, cfg.VHeadDim), 1, 0, 2), 0)
+			histKeys := mlx.Concatenate(
+				[]*mlx.Array{kNope, mlx.Tile(hpe, []int32{1, cfg.NumAttentionHeads, 1, 1})}, 3)
+			queries := mlx.Concatenate([]*mlx.Array{qNope, qPE}, 3)
+			kv := nn.WithExpandedHistory(history, histKeys, histValues)
+			out = nn.ScaledDotProductAttention(b, queries, cfg.Scale, kv, nn.WithMask(nn.CausalMask()))
+		}
 	} else {
-		kv = nn.WithKV(keys, values, b.SeqQueryLens)
+		qLatent := a.EmbedQ.Forward(qNope)
+		queries := mlx.Concatenate([]*mlx.Array{qLatent, qPE}, 3)
+		values := mlx.SliceStartStop(keys, []int32{0, 0, 0, 0}, []int32{B, 1, L, cfg.KVLoraRank})
+		kv := nn.WithKV(keys, values, b.SeqQueryLens)
+		out = nn.ScaledDotProductAttention(b, queries, cfg.Scale, kv, nn.WithMask(nn.CausalMask()))
+		out = a.UnembedOut.Forward(out)
 	}
-
-	queries := mlx.Concatenate([]*mlx.Array{qNope, qPE}, 3)
-	out := nn.ScaledDotProductAttention(b, queries, cfg.Scale, kv, nn.WithMask(nn.CausalMask()))
 
 	gate := mlx.Sigmoid(a.GateProj.Forward(x).AsType(mlx.DTypeFloat32))
 	gate = mlx.ExpandDims(mlx.Transpose(gate, 0, 2, 1), -1)

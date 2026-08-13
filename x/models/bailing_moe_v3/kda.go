@@ -178,6 +178,161 @@ var kdaOutGate = mlx.Compile2("KDAOutGate", func(out, gate *mlx.Array) *mlx.Arra
 	return mlx.Mul(out.AsType(mlx.DTypeFloat32), mlx.Sigmoid(gate.AsType(mlx.DTypeFloat32))).AsType(dt)
 }, mlx.Shapeless())
 
+// kdaChunkSize is the block length of the chunked prefill scan. kdaSubTile is
+// the sub-block used to build the intra-chunk Gram matrices so every decay
+// exponent is gc_t-gc_s with t >= s (always <= 0, hence exp() is safe).
+const (
+	kdaChunkSize = 64
+	kdaSubTile   = 16
+)
+
+type kdaChunkConsts struct {
+	identity  *mlx.Array // [C, C] f32
+	strict    *mlx.Array // [S, S] f32, 1 where t > s
+	inclusive *mlx.Array // [S, S] f32, 1 where t >= s
+}
+
+func newKDAChunkConsts() kdaChunkConsts {
+	c, sub := kdaChunkSize, kdaSubTile
+	eye := make([]float32, c*c)
+	for i := 0; i < c; i++ {
+		eye[i*c+i] = 1
+	}
+	st := make([]float32, sub*sub)
+	inc := make([]float32, sub*sub)
+	for t := 0; t < sub; t++ {
+		for s := 0; s < sub; s++ {
+			if t > s {
+				st[t*sub+s] = 1
+			}
+			if t >= s {
+				inc[t*sub+s] = 1
+			}
+		}
+	}
+	return kdaChunkConsts{
+		identity:  mlx.FromValues(eye, c, c),
+		strict:    mlx.FromValues(st, sub, sub),
+		inclusive: mlx.FromValues(inc, sub, sub),
+	}
+}
+
+// kdaChunk advances the recurrence by kdaChunkSize steps with dense matrix
+// ops. q, k, v, a are raw [B,C,H,D] slices, betaLogits [B,C,H]; state is the
+// f32 [B,H,D,D] carry. Returns y [B,C,H,D] in outDType and the new state.
+// The math matches kdaScan's step loop exactly (see the derivation in the
+// comment above runKDASegments).
+func kdaChunk(
+	q, k, v, a, betaLogits, state *mlx.Array,
+	A4, dt4, qScale *mlx.Array,
+	safeGate bool, lowerBound float32,
+	cc kdaChunkConsts,
+) (*mlx.Array, *mlx.Array) {
+	dims := q.Dims()
+	B, C, H := int32(dims[0]), int32(dims[1]), int32(dims[2])
+	nTiles := int(C) / kdaSubTile
+	outDType := q.DType()
+
+	qn := mlx.Mul(l2Normalize(q), qScale)
+	kn := l2Normalize(k)
+	vf := v.AsType(mlx.DTypeFloat32)
+	beta := mlx.Sigmoid(betaLogits.AsType(mlx.DTypeFloat32)) // [B,C,H]
+
+	gateInput := mlx.Add(a.AsType(mlx.DTypeFloat32), dt4)
+	var logDecay *mlx.Array
+	if safeGate {
+		logDecay = mlx.MulScalar(mlx.Sigmoid(mlx.Mul(A4, gateInput)), lowerBound)
+	} else {
+		logDecay = mlx.MulScalar(mlx.Mul(A4, mlx.Softplus(gateInput)), -1)
+	}
+
+	// Head-major views.
+	qh := mlx.Transpose(qn, 0, 2, 1, 3) // [B,H,C,D]
+	kh := mlx.Transpose(kn, 0, 2, 1, 3)
+	vh := mlx.Transpose(vf, 0, 2, 1, 3)
+	ldh := mlx.Transpose(logDecay, 0, 2, 1, 3)
+	bh := mlx.ExpandDims(mlx.Transpose(beta, 0, 2, 1), -1) // [B,H,C,1]
+
+	gc := mlx.CumSum(ldh, 2, false, true) // log Γ_{1:t}, <= 0
+	eg := mlx.Exp(gc)
+	kg := mlx.Mul(kh, eg) // k_t ⊙ Γ_{1:t}
+	qg := mlx.Mul(qh, eg)
+
+	s0T := mlx.Transpose(state, 0, 1, 3, 2) // [B,H,Dk,Dv]
+	bMat := mlx.Sub(vh, kg.Matmul(s0T))     // v_t − S0·(Γ_{1:t}k_t)
+
+	sliceC := func(x *mlx.Array, i int) *mlx.Array { // [B,H,S,D]
+		return x.Slice(mlx.Slice(), mlx.Slice(),
+			mlx.Slice(i*kdaSubTile, (i+1)*kdaSubTile), mlx.Slice())
+	}
+	sliceB := func(i int) *mlx.Array { // β columns [B,H,1,S]
+		bs := bh.Slice(mlx.Slice(), mlx.Slice(),
+			mlx.Slice(i*kdaSubTile, (i+1)*kdaSubTile), mlx.Slice())
+		return mlx.Transpose(bs, 0, 1, 3, 2)
+	}
+
+	// buildGram assembles [B,H,C,C] of β_s · Σ_j x_tj k_sj exp(gc_tj − gc_sj)
+	// over the lower triangle (strict for the delta system, inclusive for the
+	// output map). Off-diagonal tiles have t > s everywhere so the exponent is
+	// safe; the diagonal tile clamps before exp and masks after.
+	buildGram := func(x *mlx.Array, diagMask *mlx.Array) *mlx.Array {
+		rows := make([]*mlx.Array, 0, nTiles)
+		for ti := 0; ti < nTiles; ti++ {
+			cols := make([]*mlx.Array, 0, nTiles)
+			for si := 0; si < nTiles; si++ {
+				if si > ti {
+					cols = append(cols, mlx.Zeros(mlx.DTypeFloat32,
+						int(B), int(H), kdaSubTile, kdaSubTile))
+					continue
+				}
+				gt := mlx.ExpandDims(sliceC(gc, ti), 3) // [B,H,S,1,D]
+				gs := mlx.ExpandDims(sliceC(gc, si), 2) // [B,H,1,S,D]
+				diff := mlx.Sub(gt, gs)
+				if si == ti {
+					diff = mlx.Minimum(diff, mlx.FromValue(float32(0)))
+				}
+				e := mlx.Exp(diff)
+				xt := mlx.ExpandDims(sliceC(x, ti), 3)
+				ks := mlx.ExpandDims(sliceC(kh, si), 2)
+				t := mlx.Sum(mlx.Mul(mlx.Mul(xt, ks), e), -1, false) // [B,H,S,S]
+				if si == ti {
+					t = mlx.Mul(t, diagMask)
+				}
+				cols = append(cols, mlx.Mul(t, sliceB(si)))
+			}
+			rows = append(rows, mlx.Concatenate(cols, 3))
+		}
+		return mlx.Concatenate(rows, 2)
+	}
+
+	aMat := buildGram(kh, cc.strict) // strictly-lower system matrix
+	mMat := buildGram(qh, cc.inclusive)
+
+	// Solve (I + A) u = b exactly: A is strictly lower triangular, hence
+	// nilpotent (A^C = 0), and Σ (−A)^k = Π_i (I + (−A)^(2^i)).
+	n := mlx.MulScalar(aMat, -1)
+	r := mlx.Add(cc.identity, n)
+	p := n
+	for i := 0; i < 5; i++ {
+		p = p.Matmul(p)
+		r = r.Matmul(mlx.Add(cc.identity, p))
+	}
+	u := r.Matmul(bMat) // [B,H,C,Dv]
+
+	y := mlx.Add(qg.Matmul(s0T), mMat.Matmul(u))
+
+	// Chunk-final state: S_C = S0 ⊙ Γ_{1:C} (key cols) + Σ_s β_s u_s (k_s ⊙ Γ_{s+1:C})ᵀ
+	gcLast := gc.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(int(C-1), int(C)), mlx.Slice()) // [B,H,1,D]
+	kf := mlx.Mul(kh, mlx.Exp(mlx.Sub(gcLast, gc)))
+	bu := mlx.Mul(u, bh)
+	newState := mlx.Add(
+		mlx.Mul(state, mlx.Exp(gcLast)),
+		mlx.Transpose(bu, 0, 1, 3, 2).Matmul(kf),
+	)
+
+	return mlx.Transpose(y, 0, 2, 1, 3).AsType(outDType), newState
+}
+
 // kdaScan is the graph reference for the exact FLA KDA recurrence used by the
 // checkpoint. It intentionally favors correctness for initial bring-up; a
 // fused Metal implementation can replace it without changing model code.
@@ -204,39 +359,40 @@ func kdaScan(q, k, v, a, betaLogits, aExp, dtBias, state *mlx.Array, safeGate bo
 		return mlx.ExpandDims(outs[0], 1), outs[1]
 	}
 
-	q = mlx.MulScalar(l2Normalize(q), float32(1/math.Sqrt(float64(D))))
-	k = l2Normalize(k)
-	v = v.AsType(mlx.DTypeFloat32)
-	a = a.AsType(mlx.DTypeFloat32)
-	beta := mlx.Sigmoid(betaLogits.AsType(mlx.DTypeFloat32))
-
-	dt := mlx.Reshape(dtBias.AsType(mlx.DTypeFloat32), 1, 1, H, D)
-	A := mlx.Reshape(aExp.AsType(mlx.DTypeFloat32), 1, 1, H, 1)
-	gateInput := mlx.Add(a, dt)
-	var logDecay *mlx.Array
+	step := kdaStepSoftplus
 	if safeGate {
-		logDecay = mlx.MulScalar(mlx.Sigmoid(mlx.Mul(A, gateInput)), lowerBound)
-	} else {
-		logDecay = mlx.MulScalar(mlx.Mul(A, mlx.Softplus(gateInput)), -1)
+		step = kdaStepSafeGate
 	}
-	decay := mlx.Exp(logDecay)
+	qScale := mlx.FromValue(float32(1 / math.Sqrt(float64(D))))
+	lb := mlx.FromValue(lowerBound)
+	dt4 := mlx.Reshape(dtBias.AsType(mlx.DTypeFloat32), 1, 1, H, D)
+	A4 := mlx.Reshape(aExp.AsType(mlx.DTypeFloat32), 1, 1, H, 1)
+	dt3 := mlx.Reshape(dtBias.AsType(mlx.DTypeFloat32), 1, H, D)
+	A3 := mlx.Reshape(aExp.AsType(mlx.DTypeFloat32), 1, H, 1)
+	cc := newKDAChunkConsts()
 
-	outputs := make([]*mlx.Array, 0, T)
-	for t := int32(0); t < T; t++ {
+	outputs := make([]*mlx.Array, 0, int(T)/kdaChunkSize+kdaChunkSize)
+	t := int32(0)
+	for ; t+kdaChunkSize <= T; t += kdaChunkSize {
+		r := timeRange{start: t, end: t + kdaChunkSize}
+		var y *mlx.Array
+		y, state = kdaChunk(
+			sliceTime(q, r), sliceTime(k, r), sliceTime(v, r),
+			sliceTime(a, r), sliceTime(betaLogits, r), state,
+			A4, dt4, qScale, safeGate, lowerBound, cc,
+		)
+		outputs = append(outputs, y)
+	}
+	for ; t < T; t++ {
 		r := timeRange{start: t, end: t + 1}
-		qt := mlx.Squeeze(sliceTime(q, r), 1)
-		kt := mlx.Squeeze(sliceTime(k, r), 1)
-		vt := mlx.Squeeze(sliceTime(v, r), 1)
-		gt := mlx.Squeeze(sliceTime(decay, r), 1)
-		bt := mlx.Squeeze(sliceTime(beta, r), 1)
-
-		kExpanded := mlx.ExpandDims(kt, 2)
-		state = mlx.Mul(state, mlx.ExpandDims(gt, 2))
-		memory := mlx.Sum(mlx.Mul(state, kExpanded), -1, false)
-		delta := mlx.Mul(mlx.Sub(vt, memory), mlx.ExpandDims(bt, -1))
-		state = mlx.Add(state, mlx.Mul(kExpanded, mlx.ExpandDims(delta, -1)))
-		y := mlx.Sum(mlx.Mul(state, mlx.ExpandDims(qt, 2)), -1, false)
-		outputs = append(outputs, mlx.ExpandDims(y.AsType(outDType), 1))
+		outs := step(
+			mlx.Squeeze(sliceTime(q, r), 1), mlx.Squeeze(sliceTime(k, r), 1),
+			mlx.Squeeze(sliceTime(v, r), 1), mlx.Squeeze(sliceTime(a, r), 1),
+			mlx.Squeeze(sliceTime(betaLogits, r), 1), state,
+			A3, dt3, qScale, lb,
+		)
+		outputs = append(outputs, mlx.ExpandDims(outs[0], 1))
+		state = outs[1]
 	}
 	if len(outputs) == 0 {
 		return mlx.Zeros(outDType, int(B), 0, int(H), int(D)), state

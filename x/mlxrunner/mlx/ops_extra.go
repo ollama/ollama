@@ -511,6 +511,13 @@ func Logaddexp(a, b *Array) *Array {
 	return out
 }
 
+// CumSum computes the cumulative sum along axis.
+func CumSum(a *Array, axis int, reverse, inclusive bool) *Array {
+	out := New("CUMSUM")
+	C.mlx_cumsum(&out.ctx, a.ctx, C.int(axis), C.bool(reverse), C.bool(inclusive), DefaultStream().ctx)
+	return out
+}
+
 func SoftmaxAxis(a *Array, axis int, precise bool) *Array {
 	out := New("SOFTMAX_AXIS")
 	C.mlx_softmax_axis(&out.ctx, a.ctx, C.int(axis), C.bool(precise), DefaultStream().ctx)

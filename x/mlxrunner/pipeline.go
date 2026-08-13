@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/ollama/ollama/llm"
@@ -20,6 +22,11 @@ import (
 )
 
 func prefillChunkSize() int {
+	if v := os.Getenv("OLLAMA_PREFILL_CHUNK"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 64 {
+			return n
+		}
+	}
 	return 2 << 10
 }
 
