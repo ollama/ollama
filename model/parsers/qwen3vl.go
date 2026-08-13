@@ -3,6 +3,7 @@ package parsers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strings"
 	"unicode"
@@ -259,7 +260,7 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 func parseJSONToolCall(raw qwenEventRawToolCall, tools []api.Tool) (api.ToolCall, error) {
 	var toolCallFunction api.ToolCallFunction
 	if err := json.Unmarshal([]byte(raw.raw), &toolCallFunction); err != nil {
-		return api.ToolCall{}, err
+		return api.ToolCall{}, fmt.Errorf("failed to parse model-generated tool call: %w", err)
 	}
 
 	toolCall := api.ToolCall{}
