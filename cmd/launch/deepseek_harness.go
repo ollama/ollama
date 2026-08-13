@@ -261,9 +261,10 @@ func applyDeepSeekHarnessSettings(settings map[string]any, primary string, model
 	llm["providers"] = providers
 	settings["llm-pi-ai"] = llm
 
-	// DeepSeek Harness's native web_search tool calls an Anthropic-compatible
-	// Messages endpoint with the web_search server tool. Point that provider at
-	// Ollama so the local server performs search with the selected model.
+	// Harness's bundled search provider appends /messages to this /v1 base and
+	// sends the Anthropic web_search server tool. This is separate from the main
+	// model provider above; Harness does not expose a configured way to send the
+	// native OpenAI Responses web_search tool.
 	web, _ := settings[deepSeekHarnessWebSettings].(map[string]any)
 	if web == nil {
 		web = make(map[string]any)

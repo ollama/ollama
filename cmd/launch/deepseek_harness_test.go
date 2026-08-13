@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -192,6 +193,10 @@ func TestDeepSeekHarnessConfigureAcceptsNullSettings(t *testing.T) {
 }
 
 func TestDeepSeekHarnessRunUsesManagedPatchAndCredential(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
 	home := t.TempDir()
 	setTestHome(t, home)
 	binDir := t.TempDir()
@@ -232,6 +237,10 @@ func TestDeepSeekHarnessRejectsManagedPatchArgument(t *testing.T) {
 }
 
 func TestEnsureDeepSeekHarnessInstalledUsesPublicNpmPackage(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
 	home := t.TempDir()
 	binDir := t.TempDir()
 	logPath := filepath.Join(home, "npm-invocation")
