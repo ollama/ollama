@@ -1,0 +1,62 @@
+---
+title: DeepSeek Harness
+---
+
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) is DeepSeek's open-source agent harness. It includes a web interface, coding tools, subagents, and web search.
+
+<Note>DeepSeek Harness is currently a developer preview. Its upstream configuration may change between releases.</Note>
+
+## Quick setup
+
+Launch the Harness web interface with Ollama:
+
+```shell
+ollama launch dsh
+```
+
+Ollama installs the public `@deepseek-ai/dsh` npm package if needed, then configures the selected local or cloud model.
+
+Choose a model directly:
+
+```shell
+ollama launch dsh --model qwen3.5
+ollama launch dsh --model qwen3.5:cloud
+```
+
+To configure DeepSeek Harness without starting it:
+
+```shell
+ollama launch dsh --config
+```
+
+## Web search
+
+The Harness `web_search` tool is connected to Ollama automatically. Search uses the selected model through the local Ollama server and does not require a DeepSeek API key.
+
+Web search requires Ollama cloud access. If needed, run `ollama signin` first.
+
+Use a model that supports tools so it can request a search.
+
+## Configuration
+
+Ollama writes its settings to `~/.ollama/launch/dsh/settings.yaml` and supplies that file to Harness with a final `--patch`. Your normal Harness home, profiles, sessions, credentials, and `~/.dsh/settings.yaml` remain unchanged.
+
+Harness loads its bundled configuration first, then its profile, home, and command-line patch layers. The Ollama-managed patch is last. Inside the Ollama settings file, Launch owns the selected default model, the `ollama` model provider, and the Ollama connection used by web search. Other settings and provider entries in that file are preserved.
+
+Additional `--patch` arguments are not accepted because they could replace the managed settings layer. Other Harness arguments can follow `--`:
+
+```shell
+ollama launch dsh -- --port 3081
+```
+
+## Manual install
+
+DeepSeek Harness requires Node.js. Install its CLI from npm:
+
+```shell
+npm install -g @deepseek-ai/dsh@latest
+```
+
+Then run `ollama launch dsh` to configure and start it.
+
+On Windows, use a native Node.js installation. Harness uses PowerShell for command execution and can fall back to the Windows PowerShell included with the operating system.
