@@ -84,6 +84,7 @@ func TestVision(t *testing.T) {
 		"vision-detail",
 		"vision-multi-image",
 		"vision-description",
+		"vision-ocr-document",
 		"vision-split-batch",
 		"vision-text",
 	)

@@ -50,6 +50,11 @@ endif()
 option(OLLAMA_MLX_GENERATE_WRAPPERS "Regenerate MLX Go wrappers" OFF)
 
 message(STATUS "Setting up MLX (this takes a while...)")
+foreach(_cudnn_var CUDNN_INCLUDE_PATH CUDNN_LIBRARY_PATH)
+    if((NOT DEFINED ${_cudnn_var} OR "${${_cudnn_var}}" STREQUAL "") AND DEFINED ENV{${_cudnn_var}})
+        set(${_cudnn_var} "$ENV{${_cudnn_var}}" CACHE PATH "")
+    endif()
+endforeach()
 add_subdirectory(${OLLAMA_SOURCE_DIR}/x/mlxrunner/mlx ${CMAKE_BINARY_DIR}/x/mlxrunner/mlx)
 
 # Find CUDA toolkit if MLX is built with CUDA support.
@@ -65,6 +70,7 @@ elseif(DEFINED ENV{CUDNN_ROOT_DIR})
     set(_cudnn_root "$ENV{CUDNN_ROOT_DIR}")
 endif()
 if(_cudnn_root)
+    file(TO_CMAKE_PATH "${_cudnn_root}" _cudnn_root)
     # cuDNN 9.x has versioned subdirectories under bin/ (e.g., bin/13.0/).
     file(GLOB CUDNN_BIN_SUBDIRS "${_cudnn_root}/bin/*")
     list(APPEND MLX_RUNTIME_DIRS ${CUDNN_BIN_SUBDIRS})
@@ -310,7 +316,25 @@ if(CUDAToolkit_FOUND)
         "${CUDAToolkit_LIBRARY_DIR}/libnvrtc.so*"
         "${CUDAToolkit_LIBRARY_DIR}/libnvrtc-builtins.so*"
         "${CUDAToolkit_LIBRARY_DIR}/libcufft.so*"
-        "${CUDAToolkit_LIBRARY_DIR}/libcudnn.so*")
+        "${CUDAToolkit_LIBRARY_DIR}/libcudnn*.so*")
+    if(WIN32)
+        file(GLOB MLX_CUDA_DLLS
+            "${CUDAToolkit_BIN_DIR}/nvrtc-builtins64_*.dll"
+            "${CUDAToolkit_BIN_DIR}/x64/nvrtc-builtins64_*.dll")
+        list(APPEND MLX_CUDA_LIBS ${MLX_CUDA_DLLS})
+    endif()
+    find_library(MLX_CUDNN_LIBRARY NAMES cudnn HINTS "$ENV{CUDNN_LIBRARY_PATH}")
+    if(MLX_CUDNN_LIBRARY)
+        get_filename_component(MLX_CUDNN_LIBRARY_DIR "${MLX_CUDNN_LIBRARY}" DIRECTORY)
+        file(GLOB MLX_CUDNN_LIBS "${MLX_CUDNN_LIBRARY_DIR}/libcudnn*.so*")
+        list(APPEND MLX_CUDA_LIBS ${MLX_CUDNN_LIBS})
+    endif()
+    if(WIN32 AND _cudnn_root)
+        file(GLOB MLX_CUDNN_DLLS
+            "${_cudnn_root}/bin/${CUDAToolkit_VERSION_MAJOR}.0/cudnn*.dll"
+            "${_cudnn_root}/bin/x64/cudnn*.dll")
+        list(APPEND MLX_CUDA_LIBS ${MLX_CUDNN_DLLS})
+    endif()
     if(MLX_CUDA_LIBS)
         install(FILES ${MLX_CUDA_LIBS}
             DESTINATION ${OLLAMA_INSTALL_DIR}

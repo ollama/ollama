@@ -403,7 +403,7 @@ func loadExpertWeight(tensors map[string]*mlx.Array, path string, useQuantized b
 			return &ExpertWeight{Weight: w, Scales: scales, Biases: qbiases, Bits: bits, GroupSize: groupSize}
 		}
 
-		return &ExpertWeight{Weight: mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode)}
+		return &ExpertWeight{Weight: mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode, nil)}
 	}
 
 	return &ExpertWeight{Weight: w}
@@ -441,7 +441,7 @@ func loadStackedProjection(tensors map[string]*mlx.Array, base string, useQuanti
 		return &StackedExpertWeights{Weight: w, Scales: scales, Biases: qbiases, Bits: bits, GroupSize: groupSize}
 	}
 
-	return &StackedExpertWeights{Weight: mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode)}
+	return &StackedExpertWeights{Weight: mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode, nil)}
 }
 
 // loadStackedExperts loads a stacked expert projection by its .experts name,
@@ -532,7 +532,7 @@ func sanitizeMLAWeights(tensors map[string]*mlx.Array, prefix string, cfg *Confi
 			w,
 			scales,
 		)
-		w = mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode)
+		w = mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode, nil)
 	}
 
 	headDim := cfg.QKNopeHeadDim + cfg.VHeadDim
@@ -743,7 +743,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 }
 
 // Forward computes the forward pass of the model
-func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
+func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
@@ -759,7 +759,7 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
 	}
 
 	h = m.Norm.Forward(h, m.RMSNormEps)
-	return h
+	return h, h
 }
 
 // Unembed applies the LM head to get logits.
@@ -767,8 +767,14 @@ func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 	return m.LMHead.Forward(x)
 }
 
-// NumLayers returns the number of transformer layers
-func (m *Model) NumLayers() int { return len(m.Layers) }
+// NewCaches builds a KV cache per layer.
+func (m *Model) NewCaches() []cache.Cache {
+	caches := make([]cache.Cache, len(m.Layers))
+	for i := range caches {
+		caches[i] = cache.NewKVCache()
+	}
+	return caches
+}
 
 // MaxContextLength returns the maximum context length
 func (m *Model) MaxContextLength() int { return int(m.MaxPositionEmbeddings) }

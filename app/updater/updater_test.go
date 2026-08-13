@@ -577,7 +577,9 @@ func TestCancelOngoingDownload(t *testing.T) {
 	_, resp := updater.checkForUpdate(ctx)
 
 	// Start download in goroutine
+	downloadDone := make(chan struct{})
 	go func() {
+		defer close(downloadDone)
 		_ = updater.DownloadNewRelease(ctx, resp)
 	}()
 
@@ -598,6 +600,10 @@ func TestCancelOngoingDownload(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("download cancellation was not received by server")
 	}
+
+	// Wait for the download goroutine to unwind: it drags along a background
+	// update-check loop that reads package-level knobs the next test rewrites.
+	<-downloadDone
 }
 
 func TestTriggerImmediateCheck(t *testing.T) {
