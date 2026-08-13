@@ -190,11 +190,13 @@ func (d *DeepSeekHarness) ConfigureWithModels(primary string, models []LaunchMod
 	if err != nil {
 		return err
 	}
-	settings, err := readDeepSeekHarnessYAML(settingsPath)
+	settings, err := readDeepSeekHarnessYAMLDocument(settingsPath)
 	if err != nil {
 		return fmt.Errorf("parse deepseek harness launch settings: %w", err)
 	}
-	applyDeepSeekHarnessSettings(settings, primary, models, shouldManageOllamaWebSearch())
+	if err := applyDeepSeekHarnessSettings(settings, primary, models, shouldManageOllamaWebSearch()); err != nil {
+		return err
+	}
 
 	settingsData, err := yaml.Marshal(settings)
 	if err != nil {
@@ -240,46 +242,114 @@ func readDeepSeekHarnessYAML(path string) (map[string]any, error) {
 	return settings, nil
 }
 
-func applyDeepSeekHarnessSettings(settings map[string]any, primary string, models []LaunchModel, manageWebSearch bool) {
-	settings["agent-default-model"] = map[string]any{
+func readDeepSeekHarnessYAMLDocument(path string) (*yaml.Node, error) {
+	document := &yaml.Node{Kind: yaml.DocumentNode}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+		document.Content = []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}
+		return document, nil
+	}
+	if err := yaml.Unmarshal(data, document); err != nil {
+		return nil, err
+	}
+	if len(document.Content) == 0 || document.Content[0].Kind == yaml.ScalarNode && document.Content[0].Tag == "!!null" {
+		document.Content = []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}
+	}
+	if document.Content[0].Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("settings root must be a mapping")
+	}
+	return document, nil
+}
+
+func applyDeepSeekHarnessSettings(document *yaml.Node, primary string, models []LaunchModel, manageWebSearch bool) error {
+	settings := document.Content[0]
+	selected := deepSeekHarnessEnsureYAMLMapping(settings, "agent-default-model")
+	for key, value := range map[string]string{
 		"provider": deepSeekHarnessProvider,
 		"model":    primary,
+	} {
+		if err := deepSeekHarnessSetYAMLValue(selected, key, value); err != nil {
+			return err
+		}
 	}
 
-	llm, _ := settings["llm-pi-ai"].(map[string]any)
-	if llm == nil {
-		llm = make(map[string]any)
-	}
-	providers, _ := llm["providers"].(map[string]any)
-	if providers == nil {
-		providers = make(map[string]any)
-	}
-	providers[deepSeekHarnessProvider] = map[string]any{
+	llm := deepSeekHarnessEnsureYAMLMapping(settings, "llm-pi-ai")
+	providers := deepSeekHarnessEnsureYAMLMapping(llm, "providers")
+	provider := deepSeekHarnessEnsureYAMLMapping(providers, deepSeekHarnessProvider)
+	for key, value := range map[string]any{
 		"displayName": "Ollama",
 		"apiKeyEnv":   deepSeekHarnessAPIKeyEnv,
 		"api":         "openai-completions",
 		"baseURL":     deepSeekHarnessBaseURL(),
 		"models":      deepSeekHarnessModelConfigs(primary, models),
+	} {
+		if err := deepSeekHarnessSetYAMLValue(provider, key, value); err != nil {
+			return err
+		}
 	}
-	llm["providers"] = providers
-	settings["llm-pi-ai"] = llm
 
-	web, _ := settings[deepSeekHarnessWebSettings].(map[string]any)
 	if !manageWebSearch {
-		return
+		return nil
 	}
 
 	// Harness's bundled search provider appends /messages to this /v1 base and
 	// sends the Anthropic web_search server tool. This is separate from the main
 	// model provider above; Harness does not expose a configured way to send the
 	// native OpenAI Responses web_search tool.
-	if web == nil {
-		web = make(map[string]any)
+	web := deepSeekHarnessEnsureYAMLMapping(settings, deepSeekHarnessWebSettings)
+	for key, value := range map[string]string{
+		"apiKeyEnv": deepSeekHarnessAPIKeyEnv,
+		"baseURL":   deepSeekHarnessBaseURL(),
+		"model":     primary,
+	} {
+		if err := deepSeekHarnessSetYAMLValue(web, key, value); err != nil {
+			return err
+		}
 	}
-	web["apiKeyEnv"] = deepSeekHarnessAPIKeyEnv
-	web["baseURL"] = deepSeekHarnessBaseURL()
-	web["model"] = primary
-	settings[deepSeekHarnessWebSettings] = web
+	return nil
+}
+
+func deepSeekHarnessEnsureYAMLMapping(mapping *yaml.Node, key string) *yaml.Node {
+	if value := deepSeekHarnessYAMLValue(mapping, key); value != nil && value.Kind == yaml.MappingNode {
+		return value
+	}
+	value := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	deepSeekHarnessSetYAMLNode(mapping, key, value)
+	return value
+}
+
+func deepSeekHarnessSetYAMLValue(mapping *yaml.Node, key string, value any) error {
+	node := &yaml.Node{}
+	if err := node.Encode(value); err != nil {
+		return err
+	}
+	deepSeekHarnessSetYAMLNode(mapping, key, node)
+	return nil
+}
+
+func deepSeekHarnessSetYAMLNode(mapping *yaml.Node, key string, value *yaml.Node) {
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == key {
+			mapping.Content[i+1] = value
+			return
+		}
+	}
+	mapping.Content = append(mapping.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key},
+		value,
+	)
+}
+
+func deepSeekHarnessYAMLValue(mapping *yaml.Node, key string) *yaml.Node {
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == key {
+			return mapping.Content[i+1]
+		}
+	}
+	return nil
 }
 
 func deepSeekHarnessModelConfigs(primary string, models []LaunchModel) []any {
@@ -321,6 +391,9 @@ func (d *DeepSeekHarness) CurrentModel() string {
 	if err != nil {
 		return ""
 	}
+	if !deepSeekHarnessPatchHealthy(settingsPath) {
+		return ""
+	}
 	settings, err := readDeepSeekHarnessYAML(settingsPath)
 	if err != nil {
 		return ""
@@ -349,6 +422,27 @@ func (d *DeepSeekHarness) CurrentModel() string {
 		return ""
 	}
 	return modelName
+}
+
+func deepSeekHarnessPatchHealthy(settingsPath string) bool {
+	patchPath, err := deepSeekHarnessPatchPath()
+	if err != nil {
+		return false
+	}
+	data, err := os.ReadFile(patchPath)
+	if err != nil {
+		return false
+	}
+	var patches []struct {
+		ID     string `yaml:"id"`
+		Config struct {
+			Path string `yaml:"path"`
+		} `yaml:"config"`
+	}
+	if err := yaml.Unmarshal(data, &patches); err != nil || len(patches) != 1 {
+		return false
+	}
+	return patches[0].ID == "settings" && patches[0].Config.Path == settingsPath
 }
 
 func deepSeekHarnessProviderHealthy(provider map[string]any, modelName string) bool {

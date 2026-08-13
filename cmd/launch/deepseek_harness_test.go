@@ -44,7 +44,7 @@ func TestDeepSeekHarnessConfigurePreservesSettingsAndIsIdempotent(t *testing.T) 
 	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	existing := []byte("theme:\n    mode: dark\nllm-pi-ai:\n    providers:\n        custom:\n            api: openai-completions\n            baseURL: https://example.invalid/v1\n            models:\n                - id: custom-model\nweb-search-deepseek:\n    maxUses: 3\n")
+	existing := []byte("# keep-comment\ndefaults: &defaults\n    mode: dark\ntheme: *defaults\nagent-default-model:\n    # keep-reasoning-comment\n    reasoningEffort: high\nllm-pi-ai:\n    providers:\n        custom:\n            api: openai-completions\n            baseURL: https://example.invalid/v1\n            models:\n                - id: custom-model\n        ollama:\n            # keep-retry-comment\n            retryPolicy:\n                maxAttempts: 2\nweb-search-deepseek:\n    maxUses: 3\n")
 	if err := os.WriteFile(settingsPath, existing, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -78,6 +78,11 @@ func TestDeepSeekHarnessConfigurePreservesSettingsAndIsIdempotent(t *testing.T) 
 	if string(firstSettings) != string(secondSettings) || string(firstPatch) != string(secondPatch) {
 		t.Fatal("repeated configuration changed Ollama-managed files")
 	}
+	for _, preserved := range []string{"# keep-comment", "&defaults", "*defaults", "# keep-reasoning-comment", "# keep-retry-comment"} {
+		if !strings.Contains(string(firstSettings), preserved) {
+			t.Fatalf("settings did not preserve %q:\n%s", preserved, firstSettings)
+		}
+	}
 
 	var settings map[string]any
 	if err := yaml.Unmarshal(firstSettings, &settings); err != nil {
@@ -90,6 +95,9 @@ func TestDeepSeekHarnessConfigurePreservesSettingsAndIsIdempotent(t *testing.T) 
 	if selected["provider"] != deepSeekHarnessProvider || selected["model"] != "qwen3.5:latest" {
 		t.Fatalf("default model = %#v", selected)
 	}
+	if selected["reasoningEffort"] != "high" {
+		t.Fatalf("default model settings were not preserved: %#v", selected)
+	}
 	llm, _ := settings["llm-pi-ai"].(map[string]any)
 	providers, _ := llm["providers"].(map[string]any)
 	if providers["custom"] == nil {
@@ -98,6 +106,10 @@ func TestDeepSeekHarnessConfigurePreservesSettingsAndIsIdempotent(t *testing.T) 
 	provider, _ := providers[deepSeekHarnessProvider].(map[string]any)
 	if provider["baseURL"] != "http://127.0.0.1:12345/v1" || provider["apiKeyEnv"] != deepSeekHarnessAPIKeyEnv {
 		t.Fatalf("Ollama provider = %#v", provider)
+	}
+	retryPolicy, _ := provider["retryPolicy"].(map[string]any)
+	if retryPolicy["maxAttempts"] != 2 {
+		t.Fatalf("Ollama provider settings were not preserved: %#v", provider)
 	}
 	configuredModels, _ := provider["models"].([]any)
 	if len(configuredModels) != 2 {
@@ -191,6 +203,44 @@ func TestDeepSeekHarnessCurrentModelRejectsDrift(t *testing.T) {
 	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:9999")
 	if got := dsh.CurrentModel(); got != "" {
 		t.Fatalf("CurrentModel() = %q for stale endpoint", got)
+	}
+}
+
+func TestDeepSeekHarnessCurrentModelRejectsPatchDrift(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+	dsh := &DeepSeekHarness{}
+	if err := dsh.Configure("qwen3.5"); err != nil {
+		t.Fatal(err)
+	}
+	patchPath, err := deepSeekHarnessPatchPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, data := range map[string][]byte{
+		"missing":   nil,
+		"malformed": []byte("["),
+		"wrong path": []byte(`- id: settings
+  config:
+    path: /tmp/not-managed.yaml
+`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := dsh.Configure("qwen3.5"); err != nil {
+				t.Fatal(err)
+			}
+			if data == nil {
+				if err := os.Remove(patchPath); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(patchPath, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if got := dsh.CurrentModel(); got != "" {
+				t.Fatalf("CurrentModel() = %q", got)
+			}
+		})
 	}
 }
 
