@@ -31,6 +31,7 @@ type prequantPattern struct {
 
 	forceQuantType   string // override the blob's quant_type metadata
 	defaultGroupSize string // set group_size metadata only when the config did not
+	defaultQuantMode string // assume this quantization mode when the config states none
 }
 
 // prequantPatterns is consulted in order; the first whose weight suffix matches
@@ -43,6 +44,9 @@ var prequantPatterns = []prequantPattern{
 		weightSuffix: ".weight",
 		scaleSuffix:  ".scales",
 		biasSuffix:   ".biases",
+		// mlx-lm omits "mode" for its default affine quantization, so a
+		// config that states only {"group_size": 64, "bits": 4} is affine.
+		defaultQuantMode: "affine",
 	},
 	{
 		name:             "compressed-tensors-nvfp4",
@@ -73,10 +77,11 @@ var prequantPatterns = []prequantPattern{
 // and any remaining tensors (norms, embeddings) pass through at source
 // precision.
 func planPrequantized(inv Inventory) ([]BlobSpec, error) {
+	quant := inv.Config.quantization()
 	fused := make(map[string]BlobSpec)
 	consumed := make(map[string]bool)
 	for _, name := range sortedTensorNames(inv) {
-		spec, sources, ok := matchPrequant(name, inv)
+		spec, sources, ok := matchPrequant(name, inv, quant)
 		if !ok {
 			continue
 		}
@@ -105,7 +110,7 @@ func planPrequantized(inv Inventory) ([]BlobSpec, error) {
 // prequantized producer, along with the source names it consumes. It returns
 // ok=false when name is not a prequantized weight (a companion or a plain
 // tensor).
-func matchPrequant(name string, inv Inventory) (BlobSpec, []string, bool) {
+func matchPrequant(name string, inv Inventory, quant sourceQuantization) (BlobSpec, []string, bool) {
 	for _, p := range prequantPatterns {
 		base, ok := strings.CutSuffix(name, p.weightSuffix)
 		if !ok {
@@ -162,21 +167,38 @@ func matchPrequant(name string, inv Inventory) (BlobSpec, []string, bool) {
 			}
 		}
 
-		return BlobSpec{Name: outWeight, Tensors: tensors, Metadata: prequantMetadata(inv, p)}, consumed, true
+		return BlobSpec{Name: outWeight, Tensors: tensors, Metadata: prequantMetadata(quant, p, outWeight)}, consumed, true
 	}
 	return BlobSpec{}, nil, false
 }
 
 // prequantMetadata builds the fused blob's metadata: the source config's quant
 // metadata, with the pattern's quant_type override and group_size default
-// applied. Returns nil when there is nothing to record.
-func prequantMetadata(inv Inventory, p prequantPattern) map[string]string {
+// applied, plus the weight's own metadata when the source quantized that
+// module differently from the model default. Returns nil when there is nothing
+// to record.
+func prequantMetadata(q sourceQuantization, p prequantPattern, weightName string) map[string]string {
 	md := make(map[string]string)
-	for k, v := range inv.Config.QuantMetadata() {
+	for k, v := range q.metadata(p.defaultQuantMode) {
 		md[k] = v
 	}
 	if p.forceQuantType != "" {
+		// A producer with a fixed format has no per-module overrides to read.
 		md["quant_type"] = p.forceQuantType
+	} else if module, ok := q.Modules[strings.TrimSuffix(weightName, ".weight")]; ok {
+		// MLX mixed precision: this module was quantized on its own terms, so
+		// record what it differs in per tensor. The runtime prefers the
+		// per-tensor entries, and it cannot fall back to the stored shapes,
+		// which do not tell the formats apart: a 4-bit group-64 weight and an
+		// 8-bit group-32 weight pack to identical weight and scale shapes.
+		if quantType, groupSize := module.resolve(); quantType != "" {
+			if quantType != md["quant_type"] {
+				md[weightName+".quant_type"] = quantType
+			}
+			if groupSize != md["group_size"] {
+				md[weightName+".group_size"] = groupSize
+			}
+		}
 	}
 	if p.defaultGroupSize != "" {
 		if _, ok := md["group_size"]; !ok {

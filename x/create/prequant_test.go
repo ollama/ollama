@@ -1,6 +1,8 @@
 package create
 
 import (
+	"encoding/json"
+	"maps"
 	"slices"
 	"testing"
 )
@@ -179,5 +181,172 @@ func TestPlanPrequantizedCompressedNVFP4(t *testing.T) {
 	}
 	if w.Metadata["quant_type"] != "nvfp4" || w.Metadata["group_size"] != "16" {
 		t.Errorf("metadata = %v, want quant_type=nvfp4 group_size=16", w.Metadata)
+	}
+}
+
+// mlxQuantConfig parses a config.json "quantization" object the way the
+// importer does, so these tests exercise the real JSON shape MLX writes rather
+// than a hand-built struct.
+func mlxQuantConfig(t *testing.T, quantization string) sourceModelConfig {
+	t.Helper()
+	var cfg sourceModelConfig
+	if err := json.Unmarshal([]byte(`{"quantization": `+quantization+`}`), &cfg); err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+	return cfg
+}
+
+func TestPlanPrequantizedMLXImplicitAffineMode(t *testing.T) {
+	// mlx-lm omits "mode" for its default affine quantization. Without it the
+	// blob used to carry no quant_type at all, and the runtime cannot infer
+	// one: a 4-bit group-64 weight and an 8-bit group-32 weight pack to the
+	// same shapes.
+	inv := newInventory(mlxQuantConfig(t, `{"group_size": 64, "bits": 4}`), map[string]string{
+		"l.weight": "U32",
+		"l.scales": "BF16",
+		"l.biases": "BF16",
+	})
+
+	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	w, ok := specByName(specs, "l.weight")
+	if !ok {
+		t.Fatal("missing l.weight blob")
+	}
+	if w.Metadata["quant_type"] != "int4" || w.Metadata["group_size"] != "64" {
+		t.Errorf("metadata = %v, want quant_type=int4 group_size=64", w.Metadata)
+	}
+}
+
+func TestPlanPrequantizedMLXMixedPrecision(t *testing.T) {
+	// MLX records per-module overrides beside the defaults, keyed by module
+	// path, and fills in what an override omits from the mode's defaults
+	// (affine: 4 bits, group size 64) rather than from the model-wide values.
+	cfg := mlxQuantConfig(t, `{
+		"group_size": 64,
+		"bits": 4,
+		"model.layers.0.self_attn.q_proj": {"bits": 8, "group_size": 32},
+		"model.layers.0.self_attn.k_proj": {"group_size": 32},
+		"model.layers.0.mlp.experts": {"bits": 4, "group_size": 64},
+		"model.layers.0.mlp.up_proj": {"bits": 8}
+	}`)
+	inv := newInventory(cfg, map[string]string{
+		"model.layers.0.self_attn.q_proj.weight": "U32",
+		"model.layers.0.self_attn.q_proj.scales": "BF16",
+		"model.layers.0.self_attn.q_proj.biases": "BF16",
+		"model.layers.0.self_attn.k_proj.weight": "U32",
+		"model.layers.0.self_attn.k_proj.scales": "BF16",
+		"model.layers.0.self_attn.k_proj.biases": "BF16",
+		"model.layers.0.mlp.experts.weight":      "U32",
+		"model.layers.0.mlp.experts.scales":      "BF16",
+		"model.layers.0.mlp.experts.biases":      "BF16",
+		"model.layers.0.mlp.up_proj.weight":      "U32",
+		"model.layers.0.mlp.up_proj.scales":      "BF16",
+		"model.layers.0.mlp.up_proj.biases":      "BF16",
+		"model.layers.0.mlp.gate_proj.weight":    "U32",
+		"model.layers.0.mlp.gate_proj.scales":    "BF16",
+		"model.layers.0.mlp.gate_proj.biases":    "BF16",
+	})
+
+	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+
+	tests := []struct {
+		blob          string
+		wantQuantType string
+		wantGroupSize string
+	}{
+		// Promoted to 8 bits at a different group size.
+		{"model.layers.0.self_attn.q_proj.weight", "int8", "32"},
+		// Regrouped at the model's bit width: only the group size differs.
+		{"model.layers.0.self_attn.k_proj.weight", "", "32"},
+		// Promoted to 8 bits at MLX's default group size, which happens to be
+		// the model's: only the bit width differs.
+		{"model.layers.0.mlp.up_proj.weight", "int8", ""},
+		// Overridden, but to what the blob already says.
+		{"model.layers.0.mlp.experts.weight", "", ""},
+		// No override at all.
+		{"model.layers.0.mlp.gate_proj.weight", "", ""},
+	}
+	for _, tt := range tests {
+		w, ok := specByName(specs, tt.blob)
+		if !ok {
+			t.Errorf("missing %s blob", tt.blob)
+			continue
+		}
+		if w.Metadata["quant_type"] != "int4" || w.Metadata["group_size"] != "64" {
+			t.Errorf("%s: blob defaults = %v, want quant_type=int4 group_size=64", tt.blob, w.Metadata)
+		}
+		if got := w.Metadata[tt.blob+".quant_type"]; got != tt.wantQuantType {
+			t.Errorf("%s: per-tensor quant_type = %q, want %q", tt.blob, got, tt.wantQuantType)
+		}
+		if got := w.Metadata[tt.blob+".group_size"]; got != tt.wantGroupSize {
+			t.Errorf("%s: per-tensor group_size = %q, want %q", tt.blob, got, tt.wantGroupSize)
+		}
+	}
+}
+
+func TestPlanPrequantizedUnmappableQuantization(t *testing.T) {
+	// A bit width we cannot map records no quant_type, as before: the runtime
+	// falls back to inferring one from the shapes.
+	inv := newInventory(mlxQuantConfig(t, `{"group_size": 64, "bits": 3}`), map[string]string{
+		"l.weight": "U32",
+		"l.scales": "BF16",
+		"l.biases": "BF16",
+	})
+
+	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	w, ok := specByName(specs, "l.weight")
+	if !ok {
+		t.Fatal("missing l.weight blob")
+	}
+	if len(w.Metadata) != 0 {
+		t.Errorf("metadata = %v, want none", w.Metadata)
+	}
+}
+
+func TestSourceQuantizationModules(t *testing.T) {
+	tests := []struct {
+		name         string
+		quantization string
+		want         map[string]moduleQuantization
+	}{
+		{
+			name:         "mlx overrides",
+			quantization: `{"group_size": 64, "bits": 4, "model.layers.0.self_attn.q_proj": {"bits": 8, "group_size": 32}}`,
+			want: map[string]moduleQuantization{
+				"model.layers.0.self_attn.q_proj": {Bits: 8, GroupSize: 32},
+			},
+		},
+		{
+			name:         "model-wide fields only",
+			quantization: `{"group_size": 64, "bits": 4, "mode": "mxfp4"}`,
+		},
+		{
+			// compressed-tensors nests objects of its own; they are not
+			// module overrides and must not be read as any.
+			name: "compressed-tensors config groups",
+			quantization: `{
+				"quant_method": "compressed-tensors",
+				"format": "nvfp4-pack-quantized",
+				"config_groups": {"group_0": {"format": "nvfp4-pack-quantized", "weights": {"num_bits": 4, "type": "float", "group_size": 16}}},
+				"kv_cache_scheme": {"num_bits": 8, "type": "float"}
+			}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := mlxQuantConfig(t, tt.quantization).Quantization.Modules
+			if !maps.Equal(got, tt.want) {
+				t.Errorf("modules = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
