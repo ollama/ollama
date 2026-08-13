@@ -1611,6 +1611,7 @@ func (m chatModel) helpSummary() string {
 		"",
 		"- `shift+enter`: insert a newline",
 		"- `shift+tab`: toggle permission mode",
+		"- `ctrl+o`: toggle transcript details",
 		"- `↑/↓`: previous or next prompt",
 		"- `ctrl+a/e`: move to line start or end",
 	)

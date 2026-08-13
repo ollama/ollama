@@ -66,7 +66,7 @@ func (s *speculationSession) logStats() {
 	}
 
 	// Log learned acceptance over the trusted positions [1, frontier] and
-	// expected throughput over the searched window [0, frontier+1]; deeper
+	// expected throughput over the searched window [0, limit]; deeper
 	// depths have no data of their own.
 	d := s.spec.depth
 	frontier := d.frontier()
@@ -74,7 +74,7 @@ func (s *speculationSession) logStats() {
 	for n := 1; n <= frontier; n++ {
 		rates = append(rates, fmt.Sprintf("%d:%.2f", n, d.acc.acceptance(n)))
 	}
-	limit := frontier + 1
+	limit := d.limit()
 	tps := make([]string, 0, limit+1)
 	if d.cost.ready() {
 		for n := 0; n <= limit; n++ {

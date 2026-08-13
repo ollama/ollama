@@ -70,6 +70,36 @@ func TestModelListCacheHydratesSummary(t *testing.T) {
 	}
 }
 
+func TestModelListCacheSuppressesNemotronSafetensorsMedia(t *testing.T) {
+	caps := []model.Capability{
+		model.CapabilityCompletion,
+		model.CapabilityTools,
+		model.CapabilityThinking,
+		model.CapabilityVision,
+		model.CapabilityAudio,
+	}
+	got := filterUnsupportedModelListCapabilities(caps, model.ConfigV2{
+		ModelFormat: "safetensors",
+		Renderer:    "nemotron-3-nano",
+		Parser:      "nemotron-3-nano",
+	})
+
+	for _, capability := range []model.Capability{
+		model.CapabilityCompletion,
+		model.CapabilityTools,
+		model.CapabilityThinking,
+	} {
+		if !slices.Contains(got, capability) {
+			t.Fatalf("capabilities = %v, want %s", got, capability)
+		}
+	}
+	for _, capability := range []model.Capability{model.CapabilityVision, model.CapabilityAudio} {
+		if slices.Contains(got, capability) {
+			t.Fatalf("capabilities = %v, did not expect %s", got, capability)
+		}
+	}
+}
+
 func TestModelListCacheRefreshUpdatesEntry(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())

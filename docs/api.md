@@ -16,7 +16,6 @@
 - [Generate Embeddings](#generate-embeddings)
 - [List Running Models](#list-running-models)
 - [Version](#version)
-- [Experimental: Image Generation](#image-generation-experimental)
 
 ## Conventions
 
@@ -1180,7 +1179,7 @@ Create a model from:
 - a safetensors directory; or
 - a GGUF file.
 
-If you are creating a model from a safetensors directory or from a GGUF file, you must [create a blob](#create-a-blob) for each of the files and then use the file name and SHA256 digest associated with each blob in the `files` field.
+If you are creating a model from a safetensors directory or from a GGUF file, you must [push a blob](#push-a-blob) for each of the files and then use the file name and SHA256 digest associated with each blob in the `files` field.
 
 ### Parameters
 

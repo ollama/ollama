@@ -117,7 +117,6 @@ func init() {
 		integrationTestCase("create-safetensors", "", runCreateSafetensorsLLM),
 		integrationTestCase("create-gguf", "", runCreateGGUF),
 		integrationTestCase("quantization", "qwen2.5:0.5b-instruct-fp16", runQuantization),
-		integrationTestCase("image-generation", "", runImageGeneration),
 	)
 
 	// Model-parametric cases
@@ -128,5 +127,6 @@ func init() {
 	registerVisionTextCases(testModels(releaseVisionTextModels))
 	registerToolCases(testModels(releaseToolsModels))
 	registerToolStressCases(testModels(releaseToolsModels))
+	registerVisionOCRDocumentCases(testModels(releaseVisionModels))
 	registerAudioTranscriptionCases(testModels(releaseAudioModels))
 }

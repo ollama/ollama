@@ -41,6 +41,47 @@ func TestModelfileConfig(t *testing.T) {
 	}
 }
 
+func TestNemotronNanoOmniMetadataInference(t *testing.T) {
+	dir := t.TempDir()
+	config := `{
+		"architectures": ["NemotronH_Nano_Omni_Reasoning_V3"],
+		"model_type": "NemotronH_Nano_Omni_Reasoning_V3",
+		"vision_config": {"patch_size": 16},
+		"sound_config": {"model_type": "parakeet"},
+		"llm_config": {"model_type": "nemotron_h"}
+	}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := getParserName(dir), "nemotron-3-nano"; got != want {
+		t.Fatalf("parser = %q, want %q", got, want)
+	}
+	if got, want := getRendererName(dir), "nemotron-3-nano"; got != want {
+		t.Fatalf("renderer = %q, want %q", got, want)
+	}
+	caps := inferSafetensorsCapabilities(dir, getParserName(dir))
+	if !slices.Equal(caps, []string{"completion", "vision", "audio", "tools", "thinking"}) {
+		t.Fatalf("capabilities = %v, want completion/vision/audio/tools/thinking", caps)
+	}
+}
+
+func TestNemotron35MetadataInference(t *testing.T) {
+	dir := t.TempDir()
+	config := `{"architectures":["NemotronHForCausalLM"],"model_type":"nemotron_h"}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "chat_template.jinja"), []byte("{reasoning effort: efficient}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := getParserName(dir), "nemotron-3.5-nano"; got != want {
+		t.Fatalf("parser = %q, want %q", got, want)
+	}
+	if got, want := getRendererName(dir), "nemotron-3.5-nano"; got != want {
+		t.Fatalf("renderer = %q, want %q", got, want)
+	}
+}
+
 func TestConfigFromModelfile(t *testing.T) {
 	modelfile, err := parser.ParseFile(strings.NewReader(`
 FROM ./model
@@ -400,6 +441,15 @@ func TestInferSafetensorsCapabilities(t *testing.T) {
 			want: []string{"completion", "audio"},
 		},
 		{
+			name: "model with sound config",
+			configJSON: `{
+				"architectures": ["SomeSoundModel"],
+				"model_type": "other",
+				"sound_config": {"model_type": "parakeet"}
+			}`,
+			want: []string{"completion", "audio"},
+		},
+		{
 			name: "non-qwen conditional generation model",
 			configJSON: `{
 				"architectures": ["SomeOtherForConditionalGeneration"],
@@ -598,6 +648,11 @@ func TestDetectCapabilities(t *testing.T) {
 			want:       modelCapabilities{vision: true},
 		},
 		{
+			name:       "flat vision flag",
+			configJSON: `{"architectures": ["MuseGlimmerForConditionalGeneration"], "model_type": "muse_glimmer", "has_vision": true}`,
+			want:       modelCapabilities{vision: true},
+		},
+		{
 			name:       "audio config",
 			configJSON: `{"architectures": ["Qwen3OmniForConditionalGeneration"], "audio_config": {}}`,
 			want:       modelCapabilities{audio: true},
@@ -660,6 +715,11 @@ func TestInferSafetensorsCapabilitiesFromParser(t *testing.T) {
 			parserName: "functiongemma",
 			want:       []string{"completion", "tools"},
 		},
+		{
+			name:       "glimmer tools and thinking",
+			parserName: "glimmer",
+			want:       []string{"completion", "tools", "thinking"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -673,6 +733,23 @@ func TestInferSafetensorsCapabilitiesFromParser(t *testing.T) {
 				t.Fatalf("inferSafetensorsCapabilities() = %#v, want %#v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestInferSafetensorsCapabilitiesGlimmerPreservesVisionMetadata(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{
+		"architectures": ["MuseGlimmerForConditionalGeneration"],
+		"model_type": "muse_glimmer",
+		"has_vision": true
+	}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := inferSafetensorsCapabilities(dir, "glimmer")
+	want := []string{"completion", "vision", "tools", "thinking"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("inferSafetensorsCapabilities() = %#v, want %#v", got, want)
 	}
 }
 
@@ -735,6 +812,26 @@ func TestGetParserName(t *testing.T) {
 			want:       "laguna",
 		},
 		{
+			name:       "glimmer model",
+			configJSON: `{"architectures": ["MuseGlimmerForConditionalGeneration"], "model_type": "muse_glimmer"}`,
+			want:       "glimmer",
+		},
+		{
+			name:       "nemotron text architecture",
+			configJSON: `{"architectures": ["NemotronHForCausalLM"], "model_type": "nemotron_h"}`,
+			want:       "nemotron-3-nano",
+		},
+		{
+			name:       "nemotron omni architecture",
+			configJSON: `{"architectures": ["NemotronH_Nano_Omni_Reasoning_V3"], "model_type": "NemotronH_Nano_Omni_Reasoning_V3"}`,
+			want:       "nemotron-3-nano",
+		},
+		{
+			name:       "nemotron nested llm config",
+			configJSON: `{"model_type": "nemotron_h_omni", "llm_config": {"model_type": "nemotron_h"}}`,
+			want:       "nemotron-3-nano",
+		},
+		{
 			name:       "no config",
 			configJSON: `{}`,
 			want:       "",
@@ -788,6 +885,26 @@ func TestGetRendererName(t *testing.T) {
 			name:       "laguna model",
 			configJSON: `{"architectures": ["LagunaForCausalLM"], "model_type": "laguna"}`,
 			want:       "laguna",
+		},
+		{
+			name:       "glimmer model",
+			configJSON: `{"architectures": ["MuseGlimmerForConditionalGeneration"], "model_type": "muse_glimmer"}`,
+			want:       "glimmer",
+		},
+		{
+			name:       "nemotron text architecture",
+			configJSON: `{"architectures": ["NemotronHForCausalLM"], "model_type": "nemotron_h"}`,
+			want:       "nemotron-3-nano",
+		},
+		{
+			name:       "nemotron omni architecture",
+			configJSON: `{"architectures": ["NemotronH_Nano_Omni_Reasoning_V3"], "model_type": "NemotronH_Nano_Omni_Reasoning_V3"}`,
+			want:       "nemotron-3-nano",
+		},
+		{
+			name:       "nemotron nested llm config",
+			configJSON: `{"model_type": "nemotron_h_omni", "llm_config": {"model_type": "nemotron_h"}}`,
+			want:       "nemotron-3-nano",
 		},
 	}
 

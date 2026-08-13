@@ -254,7 +254,7 @@ func TestTinyLagunaLoadAndForward(t *testing.T) {
 			}
 		}
 	}()
-	hidden := m.Forward(&batch.Batch{
+	hidden, _ := m.Forward(&batch.Batch{
 		InputIDs:     tokens,
 		SeqOffsets:   []int32{0},
 		SeqQueryLens: []int32{int32(tokens.Dim(1))},

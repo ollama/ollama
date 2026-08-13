@@ -27,6 +27,24 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(mlx-c)
 
-# Sync vendored headers with fetched version
-file(GLOB _mlx_c_hdrs "${mlx-c_SOURCE_DIR}/mlx/c/*.h")
-file(COPY ${_mlx_c_hdrs} DESTINATION "${CMAKE_CURRENT_SOURCE_DIR}/include/mlx/c/")
+# Stamp libmlx with the pinned commit's git describe so the built library
+# identifies its exact MLX commit, not just mlx/version.h's MAJOR.MINOR.PATCH.
+if(TARGET mlx_version AND DEFINED FETCHCONTENT_SOURCE_DIR_MLX)
+    execute_process(
+        COMMAND git describe --tags --first-parent --abbrev=7 --long --dirty --always
+        WORKING_DIRECTORY ${mlx_SOURCE_DIR}
+        OUTPUT_VARIABLE _mlx_git_version
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+        RESULT_VARIABLE _mlx_git_result
+    )
+    if(_mlx_git_result EQUAL 0 AND _mlx_git_version)
+        # Strip leading "v" prefix for consistency
+        string(REGEX REPLACE "^v" "" _mlx_git_version "${_mlx_git_version}")
+        get_target_property(_mlx_defs mlx_version COMPILE_DEFINITIONS)
+        list(FILTER _mlx_defs EXCLUDE REGEX "^MLX_VERSION=")
+        set_target_properties(mlx_version PROPERTIES COMPILE_DEFINITIONS "${_mlx_defs}")
+        target_compile_definitions(mlx_version PRIVATE "MLX_VERSION=\"${_mlx_git_version}\"")
+        message(STATUS "MLX version: ${_mlx_git_version}")
+    endif()
+endif()

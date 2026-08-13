@@ -2115,6 +2115,97 @@ func TestAppendMainGPUArgs(t *testing.T) {
 	}
 }
 
+func TestAppendLoadModeArgs(t *testing.T) {
+	mmapOff := api.DefaultOptions()
+	mmapOff.UseMMap = testBoolPtr(false)
+	mmapOn := api.DefaultOptions()
+	mmapOn.UseMMap = testBoolPtr(true)
+
+	integratedCUDA := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, Integrated: true}}
+	integratedROCm := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "rocm"}, Integrated: true}}
+	discreteCUDA := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}}}
+	integratedMetal := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Metal"}, Integrated: true}}
+
+	// Direct I/O is only selected on Linux, so the expectation depends on the host.
+	dio := []string{"base"}
+	dioWithMMapOff := []string{"base", "--load-mode", "none"}
+	if runtime.GOOS == "linux" {
+		dio = []string{"base", "--load-mode", "dio"}
+		dioWithMMapOff = []string{"base", "--load-mode", "dio"}
+	}
+
+	tests := []struct {
+		name string
+		opts api.Options
+		gpus []ml.DeviceInfo
+		want []string
+	}{
+		{
+			name: "defaults leave llama-server load mode alone",
+			opts: api.DefaultOptions(),
+			gpus: discreteCUDA,
+			want: []string{"base"},
+		},
+		{
+			name: "explicit mmap enabled leaves default",
+			opts: mmapOn,
+			gpus: discreteCUDA,
+			want: []string{"base"},
+		},
+		{
+			name: "mmap disabled selects none",
+			opts: mmapOff,
+			gpus: discreteCUDA,
+			want: []string{"base", "--load-mode", "none"},
+		},
+		{
+			name: "integrated cuda selects dio",
+			opts: api.DefaultOptions(),
+			gpus: integratedCUDA,
+			want: dio,
+		},
+		{
+			name: "integrated rocm selects dio case insensitively",
+			opts: api.DefaultOptions(),
+			gpus: integratedROCm,
+			want: dio,
+		},
+		{
+			name: "integrated metal does not select dio",
+			opts: api.DefaultOptions(),
+			gpus: integratedMetal,
+			want: []string{"base"},
+		},
+		{
+			name: "discrete cuda does not select dio",
+			opts: api.DefaultOptions(),
+			gpus: discreteCUDA,
+			want: []string{"base"},
+		},
+		{
+			name: "dio wins over disabled mmap",
+			opts: mmapOff,
+			gpus: integratedCUDA,
+			want: dioWithMMapOff,
+		},
+		{
+			name: "no gpus leaves default",
+			opts: api.DefaultOptions(),
+			gpus: nil,
+			want: []string{"base"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := appendLoadModeArgs([]string{"base"}, tt.opts, tt.gpus)
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("appendLoadModeArgs = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAppendMMProjArgs(t *testing.T) {
 	defaultOpts := api.DefaultOptions()
 	partialOpts := api.DefaultOptions()
@@ -2424,12 +2515,13 @@ func TestAppendContextShiftArgs(t *testing.T) {
 	}
 }
 
-func TestAppendMTPDraftArgs(t *testing.T) {
+func TestAppendDraftArgs(t *testing.T) {
 	tests := []struct {
-		name   string
-		config LlamaServerConfig
-		opts   api.Options
-		want   []string
+		name      string
+		draftType string
+		draftPath string
+		opts      api.Options
+		want      []string
 	}{
 		{
 			name: "no draft model leaves speculative decoding disabled",
@@ -2437,30 +2529,63 @@ func TestAppendMTPDraftArgs(t *testing.T) {
 			want: []string{"base"},
 		},
 		{
-			name:   "embedded draft uses configured draft depth",
-			config: LlamaServerConfig{EnableMTP: true},
-			opts:   api.Options{Runner: api.Runner{DraftNumPredict: 4}},
-			want:   []string{"base", "--spec-type", "draft-mtp", "--spec-draft-n-max", "4", "--spec-draft-backend-sampling"},
+			name:      "embedded MTP draft uses configured draft depth",
+			draftType: draftTypeMTP,
+			opts:      api.Options{Runner: api.Runner{DraftNumPredict: 4}},
+			want:      []string{"base", "--spec-type", "draft-mtp", "--spec-draft-n-max", "4", "--spec-draft-backend-sampling"},
 		},
 		{
-			name:   "separate draft model uses configured draft depth",
-			config: LlamaServerConfig{DraftModelPath: "draft.gguf"},
-			opts:   api.Options{Runner: api.Runner{DraftNumPredict: 8}},
-			want:   []string{"base", "--spec-type", "draft-mtp", "--spec-draft-n-max", "8", "--spec-draft-backend-sampling", "--spec-draft-model", "draft.gguf"},
+			name:      "separate MTP draft uses configured draft depth",
+			draftType: draftTypeMTP,
+			draftPath: "draft.gguf",
+			opts:      api.Options{Runner: api.Runner{DraftNumPredict: 8}},
+			want:      []string{"base", "--spec-type", "draft-mtp", "--spec-draft-n-max", "8", "--spec-draft-backend-sampling", "--spec-draft-model", "draft.gguf"},
 		},
 		{
-			name:   "zero draft depth disables speculative decoding",
-			config: LlamaServerConfig{EnableMTP: true, DraftModelPath: "draft.gguf"},
-			opts:   api.Options{Runner: api.Runner{DraftNumPredict: 0}},
-			want:   []string{"base"},
+			name:      "DFlash draft omits MTP backend sampling",
+			draftType: draftTypeDFlash,
+			draftPath: "draft.gguf",
+			opts:      api.Options{Runner: api.Runner{DraftNumPredict: 4}},
+			want:      []string{"base", "--spec-type", "draft-dflash", "--spec-draft-n-max", "4", "--spec-draft-model", "draft.gguf"},
+		},
+		{
+			name:      "zero draft depth disables speculative decoding",
+			draftType: draftTypeDFlash,
+			draftPath: "draft.gguf",
+			opts:      api.Options{Runner: api.Runner{DraftNumPredict: 0}},
+			want:      []string{"base"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := appendMTPDraftArgs([]string{"base"}, tt.config, tt.opts)
+			got := appendDraftArgs([]string{"base"}, tt.draftType, tt.draftPath, tt.opts)
 			if !slices.Equal(got, tt.want) {
-				t.Fatalf("appendMTPDraftArgs = %v, want %v", got, tt.want)
+				t.Fatalf("appendDraftArgs = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExternalDraftType(t *testing.T) {
+	tests := []struct {
+		architecture string
+		want         string
+	}{
+		{architecture: "dflash", want: draftTypeDFlash},
+		{architecture: "qwen35", want: draftTypeMTP},
+		{architecture: "unknown", want: draftTypeMTP},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.architecture, func(t *testing.T) {
+			path, _ := writeTestGGML(t, ggml.KV{"general.architecture": tt.architecture}, nil)
+			got, err := externalDraftType(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Fatalf("externalDraftType = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -2509,6 +2634,10 @@ func TestHasLegacyQwenMTPDraft(t *testing.T) {
 }
 
 func testIntPtr(v int) *int {
+	return &v
+}
+
+func testBoolPtr(v bool) *bool {
 	return &v
 }
 
