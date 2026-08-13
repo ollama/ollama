@@ -69,6 +69,16 @@ func rendererForName(name string) Renderer {
 	case "qwen3.5":
 		renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true, useImgTags: RenderImgTags}
 		return renderer
+	case "qwen3.5-preserve-thinking":
+		// Opt-in equivalent of the Qwen3.6 chat template's preserve_thinking
+		// flag: render passed-back assistant thinking on ALL turns, not just
+		// those after the last user message. Qwen3.6 (which shares the
+		// qwen3.5 architecture and renderer) is trained to leverage retained
+		// reasoning traces in agent scenarios. Select via a derived Modelfile:
+		//   FROM qwen3.6
+		//   RENDERER qwen3.5-preserve-thinking
+		renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true, useImgTags: RenderImgTags, alwaysRenderAssistantThinkBlock: true}
+		return renderer
 	case "ornith":
 		return newOrnithRenderer()
 	case "cogito":
