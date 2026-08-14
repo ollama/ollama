@@ -380,14 +380,6 @@ func TestQwen38RendererRejectsInvalidTranscripts(t *testing.T) {
 			},
 			wantErr: "system message cannot contain images",
 		},
-		{
-			name: "late developer role",
-			messages: []api.Message{
-				{Role: "user", Content: "Hello"},
-				{Role: "developer", Content: "No"},
-			},
-			wantErr: `unexpected message role "developer"`,
-		},
 	}
 
 	for _, tt := range tests {

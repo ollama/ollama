@@ -2,6 +2,7 @@ package renderers
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/ollama/ollama/api"
@@ -199,8 +200,6 @@ func (r *Qwen35Renderer) validateMessages(messages []api.Message) error {
 				return fmt.Errorf("system message must be at the beginning")
 			}
 		case "user", "assistant", "tool":
-		default:
-			return fmt.Errorf("unexpected message role %q", message.Role)
 		}
 	}
 
@@ -345,6 +344,9 @@ func (r *Qwen35Renderer) Render(messages []api.Message, tools []api.Tool, think 
 			if i == len(messages)-1 || messages[i+1].Role != "tool" {
 				sb.WriteString(imEndTag + "\n")
 			}
+		} else if r.variant == qwen35Renderer38 && message.Role != "system" {
+			slog.Warn("unexpected message role", "renderer", "qwen3.8", "role", message.Role)
+			sb.WriteString(imStartTag + message.Role + "\n" + content + imEndTag + "\n")
 		}
 
 		// prefill at the end

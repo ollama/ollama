@@ -308,7 +308,7 @@ func InitServerConnection(ctx context.Context, t *testing.T) (*api.Client, strin
 
 			if t.Failed() || os.Getenv("OLLAMA_TEST_LOG_SERVER") != "" {
 				slog.Warn("SERVER LOG FOLLOWS")
-				io.Copy(os.Stderr, &serverLog)
+				io.Copy(os.Stderr, bytes.NewReader(serverLog.Bytes()))
 				slog.Warn("END OF SERVER")
 			}
 			slog.Info("cleanup complete", "failed", t.Failed())

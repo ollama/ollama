@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -35,7 +37,10 @@ func runToolRoutesModel(t *testing.T, model string) {
 	defer cancel()
 
 	client, endpoint, cleanup := InitServerConnection(ctx, t)
-	defer cleanup()
+	t.Cleanup(func() {
+		cleanup()
+		assertNoUnexpectedRoleWarnings(t)
+	})
 
 	if v, ok := toolsMinVRAM[model]; ok {
 		skipUnderMinVRAM(t, v)
@@ -54,6 +59,19 @@ func runToolRoutesModel(t *testing.T, model string) {
 	t.Run("anthropic_messages", func(t *testing.T) {
 		runAnthropicToolRoute(t, ctx, endpoint, model)
 	})
+}
+
+func assertNoUnexpectedRoleWarnings(t *testing.T) {
+	t.Helper()
+	if os.Getenv("OLLAMA_TEST_EXISTING") != "" || runtime.GOOS == "windows" {
+		return
+	}
+
+	serverMutex.Lock()
+	defer serverMutex.Unlock()
+	if strings.Contains(serverLog.String(), "unexpected message role") {
+		t.Error("tool route request emitted an unexpected message role warning")
+	}
 }
 
 func toolRouteTool() api.Tool {
