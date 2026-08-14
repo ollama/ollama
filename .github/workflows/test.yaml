@@ -50,8 +50,6 @@ jobs:
             'MLX_C_VERSION' \
             'llama/llama.cpp/**/*' \
             'ml/backend/ggml/ggml/**/*' \
-            'x/imagegen/mlx/**' \
-            'x/imagegen/mlx/**/*' \
             '.github/**/*') | tee -a $GITHUB_OUTPUT
           echo app_changed=$(changed 'app/**' 'app/**/*') | tee -a $GITHUB_OUTPUT
           echo enginehash=$(cat LLAMA_CPP_VERSION)-$(cat MLX_VERSION)-$(cat MLX_C_VERSION) | tee -a $GITHUB_OUTPUT
@@ -383,6 +381,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+      - name: Cache MLX Darwin release payload
+        if: ${{ startsWith(matrix.os, 'macos') }}
+        uses: actions/cache@v4
+        with:
+          path: .cache/mlx-darwin-release
+          key: mlx-darwin-${{ hashFiles('MLX_VERSION', 'MLX_C_VERSION') }}
+      - name: Prepare MLX Darwin release payload
+        if: ${{ startsWith(matrix.os, 'macos') }}
+        run: .github/scripts/prepare_mlx_darwin.sh
       - name: Install UI dependencies
         working-directory: ./app/ui/app
         run: npm ci
@@ -399,20 +406,63 @@ jobs:
           cmake -S . -B build/mlx-generate -DOLLAMA_MLX_BACKENDS=cuda_v13
           cmake --build build/mlx-generate --target ollama-mlx-generate-wrappers
           git diff --exit-code -- \
-            x/imagegen/mlx/mlx.h \
-            x/imagegen/mlx/mlx.c \
             x/mlxrunner/mlx/generated.h \
             x/mlxrunner/mlx/generated.c \
             x/mlxrunner/mlx/include/mlx/c
       - name: Run go generate
         run: go generate ./...
 
+      - name: Verify UI generated types are current
+        if: ${{ startsWith(matrix.os, 'ubuntu') }}
+        run: git diff --exit-code -- app/ui/app/codegen/gotypes.gen.ts
+
       - name: go test
         if: always()
-        run: go test -count=1 -benchtime=1x ./...
+        # Smoke-run each benchmark once to catch panics and bit rot; this does
+        # not assert timings. -benchtime without -bench is inert.
+        run: go test -count=1 -bench=. -benchtime=1x ./...
 
       - name: go test app with live updater tag
         if: ${{ needs.changes.outputs.app_changed == 'True' && contains(fromJSON('["macos-latest","windows-latest"]'), matrix.os) }}
         run: go test -count=1 -tags updater_live ./app/...
 
       - uses: golangci/golangci-lint-action@v9
+
+  race:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      CGO_ENABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache-dependency-path: |
+            go.sum
+            LLAMA_CPP_VERSION
+            MLX_VERSION
+            MLX_C_VERSION
+      - name: Cache MLX Darwin release payload
+        if: ${{ startsWith(matrix.os, 'macos') }}
+        uses: actions/cache@v4
+        with:
+          path: .cache/mlx-darwin-release
+          key: mlx-darwin-${{ hashFiles('MLX_VERSION', 'MLX_C_VERSION') }}
+      - name: Prepare MLX Darwin release payload
+        if: ${{ startsWith(matrix.os, 'macos') }}
+        run: .github/scripts/prepare_mlx_darwin.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # app/ui embeds app/dist, so the UI has to be built before app/... will
+      # even compile.
+      - name: Build UI
+        working-directory: ./app/ui/app
+        run: |
+          npm ci
+          npm run build
+      - name: go test -race
+        run: go test -race -count=1 ./...

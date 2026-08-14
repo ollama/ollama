@@ -4,6 +4,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
@@ -100,7 +101,7 @@ func wantWindowTags(offset, window int) []int {
 // speculation commit path — a live rewind, since KV is append-only — restores
 // the cache to each accepted offset with the prefix intact.
 func TestKVCachePerTokenSnapshotRestore(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	const before = 6
 	const draft = 4
@@ -169,7 +170,7 @@ func TestKVCachePerTokenSnapshotRestore(t *testing.T) {
 // trie performs on stored snapshots (mergeWithChild / splitNode) — proving they
 // work on captured snapshots, not just freshly-taken ones.
 func TestKVCaptureMergeSplit(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	const before = 6
 	c := NewKVCache()
@@ -219,7 +220,7 @@ func TestKVCaptureMergeSplit(t *testing.T) {
 // observable as wrong positions, not just wrong shapes; the wrapped regime
 // forces concat's linearize branch to run on entry.
 func TestRotatingPerTokenSnapshotRestore(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.SkipIfUnavailable(t)
 
 	cases := []struct {
 		name   string
@@ -234,6 +235,8 @@ func TestRotatingPerTokenSnapshotRestore(t *testing.T) {
 	const draft = 4
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			mlxtest.Setup(t)
+
 			for accepted := 0; accepted <= draft; accepted++ {
 				c := NewRotatingKVCache(tc.window)
 				fillTagged(c, tc.before)
@@ -294,7 +297,7 @@ func TestRotatingPerTokenSnapshotRestore(t *testing.T) {
 // same window data. Covers the restored content, a following decode write, and
 // the snapshot copying out correctly afterward, across wrap regimes.
 func TestRotatingRestoreLazyOwnSnapshotSlices(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.SkipIfUnavailable(t)
 
 	cases := []struct {
 		name   string
@@ -309,6 +312,8 @@ func TestRotatingRestoreLazyOwnSnapshotSlices(t *testing.T) {
 	const draft, accepted = 4, 2
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			mlxtest.Setup(t)
+
 			c := NewRotatingKVCache(tc.window)
 			fillTagged(c, tc.before)
 
@@ -386,7 +391,7 @@ func TestRotatingRestoreLazyOwnSnapshotSlices(t *testing.T) {
 // when a following write would destroy the window and copies the snapshot out —
 // the lazy mechanism paying for itself only when the data is about to be lost.
 func TestRotatingRestoreHookedSnapshotStaysLazy(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	const window, before, draft, accepted = 4, 10, 4, 2
 
@@ -451,7 +456,7 @@ func TestRotatingRestoreHookedSnapshotStaysLazy(t *testing.T) {
 // not-yet-wrapped and wrapped regimes; the wrapped one exercises the ring-clone
 // fallback.
 func TestRotatingSnapshotSingleTokenWrite(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.SkipIfUnavailable(t)
 
 	cases := []struct {
 		name   string
@@ -464,6 +469,8 @@ func TestRotatingSnapshotSingleTokenWrite(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			mlxtest.Setup(t)
+
 			c := NewRotatingKVCache(tc.window)
 			fillTagged(c, tc.before)
 
@@ -495,7 +502,7 @@ func TestRotatingSnapshotSingleTokenWrite(t *testing.T) {
 // batched write trims/rewrites the buffer the snapshot's slots lived in. This is
 // the case that forces a lazy snapshot to copy out before the later write destroys it.
 func TestRotatingSnapshotSurvivesLaterChunk(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	const window = 6
 	c := NewRotatingKVCache(window)
@@ -544,7 +551,7 @@ func TestRotatingSnapshotSurvivesLaterChunk(t *testing.T) {
 // lazy snapshot reports Size() == 0 until a destructive write copies it out, at
 // which point the materialize hook fires with the newly-allocated bytes.
 func TestRotatingLazySnapshotSizeZeroUntilMaterialized(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	const window = 4
 	const before = 10 // wrapped
@@ -609,7 +616,7 @@ func TestRotatingLazySnapshotSizeZeroUntilMaterialized(t *testing.T) {
 // survive multiple writes until TakeSnapshots — the property prefill would rely
 // on to snapshot interior offsets without splitting its forward.
 func TestPerTokenSnapshotPersistsAcrossWrites(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	c := NewKVCache()
 	fillKV(c, 2)
@@ -660,7 +667,7 @@ func TestPerTokenSnapshotPersistsAcrossWrites(t *testing.T) {
 // reports the interior scheduled offsets and PutSegmented captures them from the
 // per-boundary states, so each accepted count restores to a distinct state.
 func TestRecurrentSnapshotSplitsAndSegmentedCapture(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	const convTail, convDim, nv, vd, kd = 3, 8, 2, 4, 4
 	c := NewRecurrentCache(convTail, convDim, nv, vd, kd)
@@ -740,7 +747,7 @@ func TestRecurrentSnapshotSplitsAndSegmentedCapture(t *testing.T) {
 // TestPrepareSnapshotsPastOffsetPanics verifies scheduling an already-passed offset
 // is rejected.
 func TestPrepareSnapshotsPastOffsetPanics(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	c := NewKVCache()
 	fillKV(c, 5)

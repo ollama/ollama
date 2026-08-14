@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/models/nn"
 )
@@ -57,7 +58,7 @@ func scatterRows(packed *mlx.Array, perm []int32) *mlx.Array {
 }
 
 func TestPackGatedDeltaProjectionsNativeMatchesSplit(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	cfg := gdnTestConfig()
 	keyDim := int(cfg.LinearNumKeyHeads * cfg.LinearKeyHeadDim)
 	valueDim := int(cfg.LinearNumValueHeads * cfg.LinearValueHeadDim)
@@ -96,7 +97,7 @@ func TestPackGatedDeltaProjectionsNativeMatchesSplit(t *testing.T) {
 }
 
 func TestConcatProjectionPairQuantized(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	in := 64
 	hi := nn.NewQuantizedLinear(patternArray(16, in).AsType(mlx.DTypeFloat32), nil, 32, 4, "affine")
 	lo := nn.NewQuantizedLinear(patternArray(8, in).AsType(mlx.DTypeFloat32), nil, 32, 4, "affine")
@@ -114,7 +115,7 @@ func TestConcatProjectionPairQuantized(t *testing.T) {
 }
 
 func TestConcatProjectionPairMixedFallsBackToDense(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	in := 64
 	hi := nn.NewQuantizedLinear(patternArray(16, in).AsType(mlx.DTypeFloat32), nil, 32, 4, "affine")
 	loW := patternArray(8, in)

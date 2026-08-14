@@ -1,5 +1,3 @@
-//go:build mlx
-
 package sample
 
 import (
@@ -7,15 +5,9 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
-
-func skipIfNoMLX(t *testing.T) {
-	t.Helper()
-	if err := mlx.CheckInit(); err != nil {
-		t.Skipf("MLX not available: %v", err)
-	}
-}
 
 // slotLogits builds a [1, V] logits tensor for a single-slot Sample call.
 func slotLogits(values []float32) *mlx.Array {
@@ -62,7 +54,7 @@ func logOf(p float64) float32 { return float32(math.Log(p)) }
 // hand from the math of each transform, not from a second call into the
 // sampler — so a regression in any single transform shows up here.
 func TestSampleSingleSlotOptions(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.SkipIfUnavailable(t)
 
 	cases := []struct {
 		name   string
@@ -135,6 +127,8 @@ func TestSampleSingleSlotOptions(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			mlxtest.Setup(t)
+
 			if got := sampleOne(t, tc.opts, tc.priors, tc.logits); got != tc.want {
 				t.Errorf("got %d, want %d", got, tc.want)
 			}
@@ -143,7 +137,7 @@ func TestSampleSingleSlotOptions(t *testing.T) {
 }
 
 func TestDistributionAppliesTopKBeforeTopP(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	s := New(128)
 	t.Cleanup(func() {
@@ -181,7 +175,7 @@ func TestDistributionAppliesTopKBeforeTopP(t *testing.T) {
 }
 
 func TestDistributionResidualUsesTargetSupport(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	target := Distribution{
 		IDs:   mlx.NewArrayInt32([]int32{2, 5}, []int32{1, 2}),
@@ -213,7 +207,7 @@ func TestDistributionResidualUsesTargetSupport(t *testing.T) {
 }
 
 func TestSeededSamplingIsReproducible(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	seededSequence := func(seed int) []int {
 		s := New(128)
@@ -246,7 +240,7 @@ func TestSeededSamplingIsReproducible(t *testing.T) {
 }
 
 func TestSeededBernoulliIsReproducible(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	seededMask := func() []int {
 		s := New(128)
@@ -273,7 +267,7 @@ func TestSeededBernoulliIsReproducible(t *testing.T) {
 // and once the ring wraps, tokens that rotate out no longer contribute
 // to penalties.
 func TestSampleHistoryWindow(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	s := New(128)
 	t.Cleanup(func() {
@@ -304,7 +298,7 @@ func TestSampleHistoryWindow(t *testing.T) {
 }
 
 func TestSpeculativeScoresUsesDraftHistoryWithoutCommit(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	s := New(128)
 	t.Cleanup(func() {
@@ -337,7 +331,7 @@ func TestSpeculativeScoresUsesDraftHistoryWithoutCommit(t *testing.T) {
 }
 
 func TestDistributionSingleRowAppliesDraftPrefix(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	s := New(128)
 	t.Cleanup(func() {
@@ -365,7 +359,7 @@ func TestDistributionSingleRowAppliesDraftPrefix(t *testing.T) {
 }
 
 func TestDistributionMultiRowWithoutChain(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	s := New(128)
 	t.Cleanup(func() {
@@ -398,7 +392,7 @@ func TestDistributionMultiRowWithoutChain(t *testing.T) {
 }
 
 func TestCommitBatchesRingWrites(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	s := New(128)
 	t.Cleanup(func() {
@@ -428,7 +422,7 @@ func TestCommitBatchesRingWrites(t *testing.T) {
 // serial on partial ring, subset/out-of-order), a batched Sample call must
 // produce the same token per row as running the same slot alone.
 func TestBatchSamplingPreservesPerSlotBehavior(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.SkipIfUnavailable(t)
 
 	type slot struct {
 		id     int
@@ -483,6 +477,8 @@ func TestBatchSamplingPreservesPerSlotBehavior(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			mlxtest.Setup(t)
+
 			// Per-slot reference for each sampled seq.
 			want := make([]int, len(tc.sample))
 			for i, id := range tc.sample {
@@ -522,7 +518,7 @@ func TestBatchSamplingPreservesPerSlotBehavior(t *testing.T) {
 // recycled row must start from its own priors only — no carryover from
 // the removed slot's history.
 func TestRemoveDoesNotLeakHistory(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	opts := Options{RepeatLastN: 1, PresencePenalty: 10}
 	s := New(128)

@@ -1,3 +1,4 @@
+// Package mlxthread serializes MLX work on a locked OS thread.
 package mlxthread
 
 import (
