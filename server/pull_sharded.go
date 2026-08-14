@@ -50,12 +50,55 @@ func hfBase() string {
 	return hfEndpoint
 }
 
-var shardedRefusalRe = regexp.MustCompile(`(?i)sharded GGUF`)
+// shardedRefusalRe matches the registry's refusal to serve a sharded GGUF. The
+// wording has changed at least once (it was reworded on 2026-08-14 to point at
+// the `ollama create` workaround, and differs between a sharded tag and a
+// repository containing only sharded files), so match the stable part rather
+// than a whole sentence. shardedFallbackCandidate does not rely on this alone.
+var shardedRefusalRe = regexp.MustCompile(`(?is)shard(ed)?[^.]{0,60}gguf|gguf[^.]{0,60}shard(ed)?`)
 
-// isShardedGGUFRefusal reports whether err is the registry's refusal to serve a
+// isShardedGGUFRefusal reports whether err looks like the registry refusing a
 // sharded GGUF tag.
 func isShardedGGUFRefusal(err error) bool {
 	return err != nil && shardedRefusalRe.MatchString(err.Error())
+}
+
+// isManifestClientError reports whether err came back as a 4xx from the
+// registry, as opposed to a transport failure or a server error, so the
+// fallback is only considered for requests the registry actively rejected.
+func isManifestClientError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return true
+	}
+	return regexp.MustCompile(`^4\d\d:`).MatchString(strings.TrimSpace(err.Error()))
+}
+
+// shardedFallbackCandidate decides whether a failed manifest pull should be
+// retried by fetching shards directly, and returns the shard set if so.
+//
+// The registry's error wording is not a stable contract, so a prose match is
+// only used as a fast path: on any 4xx for a Hugging Face model the repository
+// is probed for a shard set matching the tag, and the fallback runs only if one
+// actually exists. That way a reworded refusal still works, and unrelated
+// rejections (an invalid quantization scheme, a genuinely missing tag) fall
+// through to the original error.
+func shardedFallbackCandidate(ctx context.Context, n model.Name, err error) ([]hfTreeEntry, int64, bool) {
+	if !isHuggingFaceHost(n.Host) {
+		return nil, 0, false
+	}
+	if !isShardedGGUFRefusal(err) && !isManifestClientError(err) {
+		return nil, 0, false
+	}
+
+	shards, total, listErr := hfShardSet(ctx, n.Namespace+"/"+n.Model, n.Tag)
+	if listErr != nil {
+		slog.Debug("no sharded GGUF fallback available", "model", n.DisplayShortest(), "error", listErr)
+		return nil, 0, false
+	}
+	return shards, total, true
 }
 
 // isHuggingFaceHost reports whether host is a Hugging Face registry host.
@@ -250,25 +293,21 @@ func downloadShard(ctx context.Context, repo string, e hfTreeEntry, fn func(api.
 	return layer.Digest, nil
 }
 
-// pullShardedGGUF downloads the shard set for n directly from Hugging Face and
+// pullShardedGGUF downloads the given shard set directly from Hugging Face and
 // creates the model from it, reusing the create path's merge. It is the
 // in-process equivalent of downloading the shards by hand and running
 // `ollama create` in that directory.
-func pullShardedGGUF(ctx context.Context, n model.Name, fn func(api.ProgressResponse)) error {
+func pullShardedGGUF(ctx context.Context, n model.Name, shards []hfTreeEntry, total int64, fn func(api.ProgressResponse)) error {
 	if !isHuggingFaceHost(n.Host) {
 		return errors.New("sharded GGUF pull is only supported for Hugging Face models")
 	}
+	if len(shards) == 0 {
+		return errors.New("no sharded GGUF files to pull")
+	}
 
 	repo := n.Namespace + "/" + n.Model
-	slog.Info("registry refused sharded GGUF tag, fetching shards directly", "repo", repo, "tag", n.Tag)
-
-	fn(api.ProgressResponse{Status: "pulling manifest"})
-
-	shards, total, err := hfShardSet(ctx, repo, n.Tag)
-	if err != nil {
-		return err
-	}
-	slog.Info("found sharded GGUF", "repo", repo, "tag", n.Tag, "shards", len(shards), "bytes", total)
+	slog.Info("registry refused sharded GGUF tag, fetching shards directly",
+		"repo", repo, "tag", n.Tag, "shards", len(shards), "bytes", total)
 
 	files := make(map[string]string, len(shards))
 	for _, e := range shards {
