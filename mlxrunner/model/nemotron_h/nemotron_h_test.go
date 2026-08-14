@@ -9,6 +9,7 @@ import (
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlx/mlxtest"
 	"github.com/ollama/ollama/mlxrunner/cache"
+	"github.com/ollama/ollama/mlxrunner/model"
 	"github.com/ollama/ollama/mlxrunner/nn"
 )
 
@@ -541,7 +542,7 @@ func TestFoldSharedExpertsExtendsGlobalScales(t *testing.T) {
 func TestParseVisionConfigOmniDefaults(t *testing.T) {
 	cfg, err := parseVisionConfig([]byte(`{
 		"vision_config": {
-			"version": "c-radio_v4-h",
+			"version": "radio_v2.5-h",
 			"patch_size": 16,
 			"min_num_patches": 1024,
 			"max_num_patches": 13312
@@ -558,10 +559,7 @@ func TestParseVisionConfigOmniDefaults(t *testing.T) {
 		"patch_size": 16,
 		"downsample_ratio": 0.5,
 		"norm_mean": [0.48145466, 0.4578275, 0.40821073],
-		"norm_std": [0.26862954, 0.26130258, 0.27577711],
-		"min_num_patches": 1024,
-		"max_num_patches": 13312,
-		"max_model_len": 16384
+		"norm_std": [0.26862954, 0.26130258, 0.27577711]
 	}`))
 	if err != nil {
 		t.Fatalf("parseVisionConfig returned error: %v", err)
@@ -584,6 +582,15 @@ func TestParseVisionConfigOmniDefaults(t *testing.T) {
 	if got, want := cfg.ImageTokenID, int32(18); got != want {
 		t.Fatalf("ImageTokenID = %d, want %d", got, want)
 	}
+	if got, want := cfg.MinNumPatches, 1024; got != want {
+		t.Fatalf("MinNumPatches = %d, want %d", got, want)
+	}
+	if got, want := cfg.MaxNumPatches, 13312; got != want {
+		t.Fatalf("MaxNumPatches = %d, want %d", got, want)
+	}
+	if got, want := cfg.MaxModelLen, 16384; got != want {
+		t.Fatalf("MaxModelLen = %d, want %d", got, want)
+	}
 }
 
 func TestParseVisionConfigRejectsMalformedNormalization(t *testing.T) {
@@ -600,6 +607,60 @@ func TestParseVisionConfigRejectsMalformedNormalization(t *testing.T) {
 	if _, err := parseVisionConfig(config, preprocessor); err == nil {
 		t.Fatal("expected malformed preprocessor norm_std error")
 	}
+}
+
+func TestParseVisionConfigRequiresDynamicResolutionBounds(t *testing.T) {
+	for _, config := range []string{
+		`{"vision_config":{"version":"c-radio_v4-h","min_num_patches":1024}}`,
+		`{"vision_config":{"version":"c-radio_v4-h","max_num_patches":13312}}`,
+		`{"vision_config":{"version":"c-radio_v4-h"}}`,
+	} {
+		if _, err := parseVisionConfig([]byte(config), nil); err == nil || !strings.Contains(err.Error(), "requires min_num_patches and max_num_patches") {
+			t.Fatalf("parseVisionConfig error = %v, want missing dynamic-resolution bounds", err)
+		}
+	}
+
+	_, err := parseVisionConfig([]byte(`{
+		"vision_config": {
+			"version": "c-radio_v4-h",
+			"min_num_patches": 2048,
+			"max_num_patches": 1024
+		}
+	}`), nil)
+	if err == nil || !strings.Contains(err.Error(), "min_num_patches (2048) exceeds max_num_patches (1024)") {
+		t.Fatalf("parseVisionConfig error = %v, want reversed bounds error", err)
+	}
+}
+
+func TestLoadVisionWeightsRejectsNonSquarePositionGrid(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		const prefix = "vision_model.radio_model.model."
+		tensors := map[string]*mlx.Array{
+			prefix + "patch_generator.embedder.weight": mlx.Zeros(mlx.DTypeBFloat16, 4, 3),
+			prefix + "patch_generator.cls_token.token": mlx.Zeros(mlx.DTypeBFloat16, 1, 4),
+			prefix + "patch_generator.pos_embed":       mlx.Zeros(mlx.DTypeBFloat16, 1, 6, 4),
+		}
+		m := &Model{
+			VisionConfig:  &VisionConfig{},
+			VisionEncoder: &RadioVisionEncoder{},
+			Projector:     &VisionProjector{},
+		}
+		linears := model.NewLinearFactory(tensors, 0, 0, "", nil)
+		if err := m.loadVisionWeights(tensors, linears); err == nil || !strings.Contains(err.Error(), "6 positions, want a square grid") {
+			t.Fatalf("loadVisionWeights error = %v, want non-square position-grid error", err)
+		}
+	})
+}
+
+func TestResizeGrid2DPreservesSourceDType(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		x := mlx.FromValues([]float32{0, 1, 2, 3}, 1, 2, 2, 1).AsType(mlx.DTypeBFloat16)
+		got := resizeGrid2D(x, 3, 3)
+		mlx.Eval(got)
+		if got.DType() != mlx.DTypeBFloat16 {
+			t.Fatalf("resizeGrid2D dtype = %s, want bfloat16", got.DType())
+		}
+	})
 }
 
 func TestNemotronImagePatchBudget(t *testing.T) {

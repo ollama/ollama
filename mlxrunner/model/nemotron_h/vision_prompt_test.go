@@ -2,13 +2,14 @@ package nemotron_h
 
 import (
 	"bytes"
+	"errors"
 	"image"
 	"image/png"
 	"testing"
 
 	"github.com/ollama/ollama/mlx"
+	"github.com/ollama/ollama/mlx/mlxtest"
 	"github.com/ollama/ollama/mlxrunner/batch"
-	"github.com/ollama/ollama/mlxrunner/internal/mlxtest"
 	"github.com/ollama/ollama/mlxrunner/model"
 )
 
@@ -53,6 +54,26 @@ func TestPrepareMediaMarksImageExpansionCausal(t *testing.T) {
 	}
 }
 
+func TestPrepareMediaReportsDisabledVision(t *testing.T) {
+	m := &Model{visionErr: errors.New("unsupported RADIO version \"radio-v5\"")}
+
+	prepared, err := m.PrepareMedia([]model.Segment{{Tokens: []int32{1, 2}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := prepared.Tokens, []int32{1, 2}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("text tokens = %v, want %v", got, want)
+	}
+
+	_, err = m.PrepareMedia([]model.Segment{{Kind: "image", Data: []byte{1}}})
+	if err == nil {
+		t.Fatal("PrepareMedia unexpectedly accepted image input")
+	}
+	if got, want := err.Error(), "nemotron_h vision is unavailable: unsupported RADIO version \"radio-v5\""; got != want {
+		t.Fatalf("PrepareMedia error = %q, want %q", got, want)
+	}
+}
+
 // scatterMediaFixture builds a model and batch whose expansion covers
 // positions 1..4: one item spliced at position 0, so imageStart sits at 0 and
 // four feature rows follow. PatchSize and DownsampleFactor of 1 make
@@ -87,20 +108,20 @@ func scatterMediaFixture() (*Model, *batch.Batch, *mlx.Array) {
 // The target forward's column 0 is the sequence position in SeqOffsets, so
 // the feature rows land on the expansion's own positions 1..4.
 func TestScatterMediaTargetForward(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		m, b, h := scatterMediaFixture()
+		got := m.scatterMedia(h, b, 0)
+		mlx.Eval(got)
 
-	m, b, h := scatterMediaFixture()
-	got := m.scatterMedia(h, b, 0)
-	mlx.Eval(got)
-
-	assertAllClose(t, "target-forward scatter", got.Floats(), []float32{
-		0, 0, // position 0: imageStart, untouched
-		1, 2, // positions 1..4: feature rows
-		3, 4,
-		5, 6,
-		7, 8,
-		0, 0, // position 5: past the expansion
-	}, 1e-5)
+		assertAllClose(t, "target-forward scatter", got.Floats(), []float32{
+			0, 0, // position 0: imageStart, untouched
+			1, 2, // positions 1..4: feature rows
+			3, 4,
+			5, 6,
+			7, 8,
+			0, 0, // position 5: past the expansion
+		}, 1e-5)
+	})
 }
 
 // The MTP draft's slot S embeds the look-ahead token S+1, so its column 0
@@ -108,36 +129,36 @@ func TestScatterMediaTargetForward(t *testing.T) {
 // one column. Getting this wrong embeds raw placeholder tokens into the
 // draft, which degrades acceptance silently rather than failing outright.
 func TestScatterMediaDraftForwardShiftsByOne(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		m, b, h := scatterMediaFixture()
+		got := m.scatterMedia(h, b, 1)
+		mlx.Eval(got)
 
-	m, b, h := scatterMediaFixture()
-	got := m.scatterMedia(h, b, 1)
-	mlx.Eval(got)
-
-	assertAllClose(t, "draft-forward scatter", got.Floats(), []float32{
-		1, 2, // shifted one column earlier than the target forward
-		3, 4,
-		5, 6,
-		7, 8,
-		0, 0,
-		0, 0,
-	}, 1e-5)
+		assertAllClose(t, "draft-forward scatter", got.Floats(), []float32{
+			1, 2, // shifted one column earlier than the target forward
+			3, 4,
+			5, 6,
+			7, 8,
+			0, 0,
+			0, 0,
+		}, 1e-5)
+	})
 }
 
 // A forward whose query range misses the expansion writes nothing, so a
 // decode step past the image leaves the hidden rows alone.
 func TestScatterMediaSkipsNonOverlappingQuery(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		m, b, h := scatterMediaFixture()
+		b.SeqOffsets = []int32{8}
+		b.SeqQueryLens = []int32{1}
 
-	m, b, h := scatterMediaFixture()
-	b.SeqOffsets = []int32{8}
-	b.SeqQueryLens = []int32{1}
+		got := m.scatterMedia(h, b, 0)
+		mlx.Eval(got)
 
-	got := m.scatterMedia(h, b, 0)
-	mlx.Eval(got)
-
-	assertAllClose(t, "non-overlapping scatter", got.Floats(), []float32{
-		0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0,
-	}, 1e-5)
+		assertAllClose(t, "non-overlapping scatter", got.Floats(), []float32{
+			0, 0, 0, 0, 0, 0,
+			0, 0, 0, 0, 0, 0,
+		}, 1e-5)
+	})
 }
