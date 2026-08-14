@@ -168,6 +168,7 @@
             "pages": [
               "/integrations/claude-code",
               "/integrations/opencode",
+              "/integrations/deepseek-harness",
               "/integrations/cline-cli",
               "/integrations/codex-app",
               "/integrations/codex",
