@@ -118,7 +118,7 @@ func (s *speculation) open(request Request, layout []any) *speculationSession {
 	// Logprobs are not yet supported, so a logprobs request keeps a speculationSession
 	// only to maintain a draft cache in lockstep (permanently parked).
 	opts := request.SamplerOpts
-	enabled := !opts.Logprobs && opts.TopLogprobs == 0
+	enabled := request.Grammar == nil && !opts.Logprobs && opts.TopLogprobs == 0
 
 	spec := &speculationSession{spec: s, drafter: d, layout: layout, enabled: enabled, prevDrafts: -1, roundDrafts: -1}
 	if enabled {
@@ -128,8 +128,13 @@ func (s *speculation) open(request Request, layout []any) *speculationSession {
 }
 
 // beginRound records the previous round's cost sample (its wall time runs to
-// this round's start) and starts timing the new one.
+// this round's start) and starts timing the new one. A session that cannot
+// draft records nothing: its parked rounds carry grammar or logprobs work
+// that would skew the shared depth-0 cost.
 func (s *speculationSession) beginRound() {
+	if !s.enabled {
+		return
+	}
 	now := time.Now()
 	if !s.lastRoundStart.IsZero() && s.roundDrafts >= 0 {
 		if s.roundDrafts == s.prevDrafts {
@@ -194,15 +199,18 @@ type speculativeDecoder struct {
 	position int
 	current  sampler.Result    // emitted (or the seed), not yet forwarded
 	inner    *pipelinedDecoder // pipelines plain tokens while parked; nil while drafting
+	// grammar reaches sampling through the parked inner decoder; a
+	// constrained session never drafts.
+	grammar *grammar
 }
 
 // decoder returns the decoder for this engine's session. A speculationSession that
-// cannot draft (logprobs) has no depth controller and permanently parks,
-// running the inner pipelined decoder whose reports keep the draft KV level.
-func (s *speculationSession) decoder(seed *mlx.Array, position int) decoder {
+// cannot draft (a grammar, logprobs) has no depth controller and permanently
+// parks, running the inner pipelined decoder whose reports keep the draft KV level.
+func (s *speculationSession) decoder(seed *mlx.Array, position int, grammar *grammar) decoder {
 	current := sampler.Result{Token: seed}
 	mlx.Pin(current.Arrays()...)
-	return &speculativeDecoder{s: s, position: position, current: current}
+	return &speculativeDecoder{s: s, position: position, current: current, grammar: grammar}
 }
 
 func (st *speculativeDecoder) next(remaining int) ([]sampler.Result, error) {
@@ -276,7 +284,7 @@ func (st *speculativeDecoder) resume() []sampler.Result {
 func (st *speculativeDecoder) park(remaining int) ([]sampler.Result, error) {
 	s := st.s
 	if st.inner == nil {
-		st.inner = s.spec.r.pipelinedDecoder(s, s.spec.targets, st.current.Token.ExpandDims(-1), st.position, s.layout)
+		st.inner = s.spec.r.pipelinedDecoder(s, s.spec.targets, st.current.Token.ExpandDims(-1), st.position, s.layout, st.grammar)
 	}
 	return st.inner.next(remaining)
 }

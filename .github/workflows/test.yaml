@@ -52,6 +52,8 @@ jobs:
             'ml/backend/ggml/ggml/**/*' \
             'x/imagegen/mlx/**' \
             'x/imagegen/mlx/**/*' \
+            'x/mlxrunner/xgrammar/native/**' \
+            'x/mlxrunner/xgrammar/native/**/*' \
             '.github/**/*') | tee -a $GITHUB_OUTPUT
           echo app_changed=$(changed 'app/**' 'app/**/*') | tee -a $GITHUB_OUTPUT
           echo enginehash=$(cat LLAMA_CPP_VERSION)-$(cat MLX_VERSION)-$(cat MLX_C_VERSION) | tee -a $GITHUB_OUTPUT
@@ -116,7 +118,7 @@ jobs:
             superbuild_target: ollama-mlx-cuda_v13
             superbuild_dir: build/local-superbuild-mlx-cuda_v13
             superbuild_args: '-DOLLAMA_MLX_BACKENDS=cuda_v13 -DCMAKE_CUDA_ARCHITECTURES=87 -DMLX_CUDA_ARCHITECTURES=80-virtual -DBLAS_INCLUDE_DIRS=/usr/include/x86_64-linux-gnu -DLAPACK_INCLUDE_DIRS=/usr/include/x86_64-linux-gnu'
-            expected_payload: lib/ollama/mlx_cuda_v13/libmlx.so
+            expected_payload: lib/ollama/mlx_cuda_v13/libmlx.so lib/ollama/mlx_cuda_v13/libollama_xgrammar.so
             install-go: true
     runs-on: linux
     container: ${{ matrix.container }}
@@ -158,7 +160,9 @@ jobs:
         run: |
           cmake -S . -B "${{ matrix.superbuild_dir }}" ${{ matrix.superbuild_args }}
           CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) cmake --build "${{ matrix.superbuild_dir }}" --target "${{ matrix.superbuild_target }}" -- -l $(nproc)
-          test -e "${{ matrix.superbuild_dir }}/${{ matrix.expected_payload }}"
+          for f in ${{ matrix.expected_payload }}; do
+            test -e "${{ matrix.superbuild_dir }}/$f"
+          done
       - name: Verify local superbuild install
         if: matrix.superbuild_target == 'ollama-local'
         run: |
@@ -214,7 +218,7 @@ jobs:
             superbuild_target: ollama-mlx-cuda_v13
             superbuild_dir: build\local-superbuild-mlx-cuda_v13
             superbuild_args: '-DOLLAMA_MLX_BACKENDS=cuda_v13 -DCMAKE_CUDA_ARCHITECTURES=80 -DMLX_CUDA_ARCHITECTURES=80-virtual'
-            expected_payload: lib\ollama\mlx_cuda_v13\mlx.dll
+            expected_payload: lib\ollama\mlx_cuda_v13\mlx.dll lib\ollama\mlx_cuda_v13\ollama_xgrammar.dll
             install-go: true
             cuda-components:
               - '"cudart"'
@@ -334,8 +338,10 @@ jobs:
           cmake -S . -B "${{ matrix.superbuild_dir }}" ${{ matrix.superbuild_args }}
           $env:CMAKE_BUILD_PARALLEL_LEVEL = [Environment]::ProcessorCount
           cmake --build "${{ matrix.superbuild_dir }}" --target "${{ matrix.superbuild_target }}" -- -l $([Environment]::ProcessorCount)
-          if (!(Test-Path "${{ matrix.superbuild_dir }}\${{ matrix.expected_payload }}")) {
-            throw "missing ${{ matrix.expected_payload }}"
+          foreach ($f in "${{ matrix.expected_payload }}".Split(' ')) {
+            if (!(Test-Path "${{ matrix.superbuild_dir }}\$f")) {
+              throw "missing $f"
+            }
           }
         env:
           CMAKE_GENERATOR: Ninja
