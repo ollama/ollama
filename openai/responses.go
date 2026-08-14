@@ -159,7 +159,8 @@ type ResponsesFunctionCall struct {
 	Type      string `json:"type"`         // always "function_call"
 	CallID    string `json:"call_id"`      // the tool call ID
 	Name      string `json:"name"`         // function name
-	Arguments string `json:"arguments"`    // JSON arguments string
+	Namespace string `json:"namespace,omitempty"`
+	Arguments string `json:"arguments"` // JSON arguments string
 }
 
 func (ResponsesFunctionCall) responsesInputItem() {}
@@ -496,7 +497,7 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 			toolCall := api.ToolCall{
 				ID: v.CallID,
 				Function: api.ToolCallFunction{
-					Name:      v.Name,
+					Name:      flattenNamespaceToolCallName(v.Namespace, v.Name),
 					Arguments: args,
 				},
 			}
@@ -675,13 +676,86 @@ func convertTools(t ResponsesTool) ([]api.Tool, error) {
 			return nil, err
 		}
 		for i := range expanded {
-			if prefix := t.Name + "."; t.Name != "" && !strings.HasPrefix(expanded[i].Function.Name, prefix) {
-				expanded[i].Function.Name = prefix + expanded[i].Function.Name
+			if prefix := joinNamespaceToolName(t.Name, ""); t.Name != "" && !strings.HasPrefix(expanded[i].Function.Name, prefix) {
+				expanded[i].Function.Name = joinNamespaceToolName(t.Name, expanded[i].Function.Name)
 			}
 		}
 		tools = append(tools, expanded...)
 	}
 	return tools, nil
+}
+
+func joinNamespaceToolName(namespace, name string) string {
+	if strings.HasSuffix(namespace, "__") {
+		return namespace + name
+	}
+	return namespace + "__" + name
+}
+
+type namespaceToolCallName struct {
+	name      string
+	namespace string
+}
+
+func namespaceToolCallNamesByFlatName(tools []ResponsesTool) map[string]namespaceToolCallName {
+	flatFunctionNames := make(map[string]struct{})
+	for _, tool := range tools {
+		if tool.Type == "function" && tool.Name != "" {
+			flatFunctionNames[tool.Name] = struct{}{}
+		}
+	}
+
+	names := make(map[string]namespaceToolCallName)
+	for _, tool := range tools {
+		if tool.Type == "namespace" {
+			addNamespaceToolCallNames(names, flatFunctionNames, "", tool)
+		}
+	}
+	return names
+}
+
+func addNamespaceToolCallNames(names map[string]namespaceToolCallName, flatFunctionNames map[string]struct{}, parent string, namespace ResponsesTool) {
+	if namespace.Name == "" {
+		return
+	}
+
+	qualifiedNamespace := namespace.Name
+	if parent != "" {
+		qualifiedNamespace = joinNamespaceToolName(parent, namespace.Name)
+	}
+	for _, child := range namespace.Tools {
+		switch child.Type {
+		case "namespace":
+			addNamespaceToolCallNames(names, flatFunctionNames, qualifiedNamespace, child)
+		case "function":
+			if child.Name == "" {
+				continue
+			}
+			flatName := joinNamespaceToolName(qualifiedNamespace, child.Name)
+			if _, ok := flatFunctionNames[flatName]; ok {
+				continue
+			}
+			names[flatName] = namespaceToolCallName{name: child.Name, namespace: qualifiedNamespace}
+		}
+	}
+}
+
+func unflattenNamespaceToolCallName(names map[string]namespaceToolCallName, name string) (string, string) {
+	if resolved, ok := names[name]; ok {
+		return resolved.name, resolved.namespace
+	}
+	return name, ""
+}
+
+func flattenNamespaceToolCallName(namespace, name string) string {
+	if namespace == "" {
+		return name
+	}
+	prefix := joinNamespaceToolName(namespace, "")
+	if strings.HasPrefix(name, prefix) {
+		return name
+	}
+	return joinNamespaceToolName(namespace, name)
 }
 
 func convertTool(t ResponsesTool) (api.Tool, error) {
@@ -821,6 +895,7 @@ type ResponsesOutputItem struct {
 	Content   []ResponsesOutputContent  `json:"content,omitempty"`   // for message
 	CallID    string                    `json:"call_id,omitempty"`   // for function_call
 	Name      string                    `json:"name,omitempty"`      // for function_call
+	Namespace string                    `json:"namespace,omitempty"` // for function_call
 	Arguments string                    `json:"arguments,omitempty"` // for function_call
 	Action    *ResponsesWebSearchAction `json:"action,omitempty"`    // for web_search_call
 
@@ -915,13 +990,16 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse,
 
 	if len(chatResponse.Message.ToolCalls) > 0 {
 		toolCalls := ToToolCalls(chatResponse.Message.ToolCalls)
+		toolCallNames := namespaceToolCallNamesByFlatName(request.Tools)
 		for i, tc := range toolCalls {
+			name, namespace := unflattenNamespaceToolCallName(toolCallNames, tc.Function.Name)
 			output = append(output, ResponsesOutputItem{
 				ID:        fmt.Sprintf("fc_%s_%d", responseID, i),
 				Type:      "function_call",
 				Status:    "completed",
 				CallID:    tc.ID,
-				Name:      tc.Function.Name,
+				Name:      name,
+				Namespace: namespace,
 				Arguments: tc.Function.Arguments,
 			})
 		}
@@ -1130,21 +1208,7 @@ func (c *ResponsesStreamConverter) buildResponseObject(status string, output []a
 		truncation = *c.request.Truncation
 	}
 
-	var tools []any
-	if c.request.Tools != nil {
-		for _, t := range c.request.Tools {
-			tools = append(tools, map[string]any{
-				"type":        t.Type,
-				"name":        t.Name,
-				"description": t.Description,
-				"strict":      t.Strict,
-				"parameters":  t.Parameters,
-			})
-		}
-	}
-	if tools == nil {
-		tools = []any{}
-	}
+	tools := responsesToolsForStream(c.request.Tools)
 
 	textFormat := map[string]any{"type": "text"}
 	if c.request.Text != nil && c.request.Text.Format != nil {
@@ -1221,6 +1285,28 @@ func (c *ResponsesStreamConverter) buildResponseObject(status string, output []a
 		"safety_identifier":    nil,
 		"prompt_cache_key":     nil,
 	}
+}
+
+func responsesToolsForStream(tools []ResponsesTool) []any {
+	if tools == nil {
+		return []any{}
+	}
+
+	converted := make([]any, 0, len(tools))
+	for _, tool := range tools {
+		value := map[string]any{
+			"type":        tool.Type,
+			"name":        tool.Name,
+			"description": tool.Description,
+			"strict":      tool.Strict,
+			"parameters":  tool.Parameters,
+		}
+		if len(tool.Tools) > 0 {
+			value["tools"] = responsesToolsForStream(tool.Tools)
+		}
+		converted = append(converted, value)
+	}
+	return converted
 }
 
 func (c *ResponsesStreamConverter) createResponseCreatedEvent() ResponsesStreamEvent {
@@ -1316,32 +1402,42 @@ func (c *ResponsesStreamConverter) processToolCalls(toolCalls []api.ToolCall) []
 func (c *ResponsesStreamConverter) emitFunctionCallEvents(toolCalls []api.ToolCall) []ResponsesStreamEvent {
 	var events []ResponsesStreamEvent
 	converted := ToToolCalls(toolCalls)
+	toolCallNames := namespaceToolCallNamesByFlatName(c.request.Tools)
 
 	for i, tc := range converted {
 		outputIndex := c.outputIndex + i
 		fcItemID := fmt.Sprintf("fc_%d_%d", rand.Intn(999999), i)
+		name, namespace := unflattenNamespaceToolCallName(toolCallNames, tc.Function.Name)
 
 		toolCallItem := map[string]any{
 			"id":        fcItemID,
 			"type":      "function_call",
 			"status":    "completed",
 			"call_id":   tc.ID,
-			"name":      tc.Function.Name,
+			"name":      name,
 			"arguments": tc.Function.Arguments,
 		}
+		if namespace != "" {
+			toolCallItem["namespace"] = namespace
+		}
 		c.completedItems = append(c.completedItems, toolCallItem)
+
+		addedItem := map[string]any{
+			"id":        fcItemID,
+			"type":      "function_call",
+			"status":    "in_progress",
+			"call_id":   tc.ID,
+			"name":      name,
+			"arguments": "",
+		}
+		if namespace != "" {
+			addedItem["namespace"] = namespace
+		}
 
 		events = append(events,
 			c.newEvent("response.output_item.added", map[string]any{
 				"output_index": outputIndex,
-				"item": map[string]any{
-					"id":        fcItemID,
-					"type":      "function_call",
-					"status":    "in_progress",
-					"call_id":   tc.ID,
-					"name":      tc.Function.Name,
-					"arguments": "",
-				},
+				"item":         addedItem,
 			}),
 			c.newEvent("response.function_call_arguments.delta", map[string]any{
 				"item_id":      fcItemID,
