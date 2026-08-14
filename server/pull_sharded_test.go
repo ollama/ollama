@@ -121,6 +121,37 @@ func TestHFShardSet(t *testing.T) {
 		}
 	})
 
+	t.Run("matches root-level quant exactly", func(t *testing.T) {
+		rootSrv := treeServer(t, `[
+			{"path":"model-Q4_0-00001-of-00002.gguf","size":100},
+			{"path":"model-Q4_0-00002-of-00002.gguf","size":200},
+			{"path":"model-IQ4_0-00001-of-00002.gguf","size":300},
+			{"path":"model-IQ4_0-00002-of-00002.gguf","size":400}
+		]`)
+		defer rootSrv.Close()
+
+		oldEndpoint := hfEndpointOverride
+		hfEndpointOverride = rootSrv.URL
+		defer func() { hfEndpointOverride = oldEndpoint }()
+
+		shards, _, err := hfShardSet(context.Background(), "r", "Q4_0")
+		if err != nil {
+			t.Fatalf("hfShardSet() error = %v", err)
+		}
+		if len(shards) != 2 {
+			t.Fatalf("got %d shards, want 2", len(shards))
+		}
+		want := []string{
+			"model-Q4_0-00001-of-00002.gguf",
+			"model-Q4_0-00002-of-00002.gguf",
+		}
+		for i, shard := range shards {
+			if shard.Path != want[i] {
+				t.Errorf("shard[%d] = %q, want %q", i, shard.Path, want[i])
+			}
+		}
+	})
+
 	t.Run("unsharded tag is rejected", func(t *testing.T) {
 		if _, _, err := hfShardSet(context.Background(), "r", "UD-TQ1_0"); err == nil {
 			t.Error("expected error for a single-file tag, got nil")
@@ -132,4 +163,36 @@ func TestHFShardSet(t *testing.T) {
 			t.Error("expected error for unknown tag, got nil")
 		}
 	})
+}
+
+func TestHFShardSetFollowsPagination(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("cursor") == "next" {
+			fmt.Fprint(w, `[
+				{"path":"Q4_0/model-Q4_0-00001-of-00002.gguf","size":100},
+				{"path":"Q4_0/model-Q4_0-00002-of-00002.gguf","size":200}
+			]`)
+			return
+		}
+
+		w.Header().Set("Link", `</api/models/r/tree/main?recursive=true&cursor=next>; rel="next"`)
+		fmt.Fprint(w, `[{"path":"README.md","size":1000}]`)
+	}))
+	defer srv.Close()
+
+	old := hfEndpointOverride
+	hfEndpointOverride = srv.URL
+	defer func() { hfEndpointOverride = old }()
+
+	shards, total, err := hfShardSet(context.Background(), "r", "Q4_0")
+	if err != nil {
+		t.Fatalf("hfShardSet() error = %v", err)
+	}
+	if len(shards) != 2 {
+		t.Fatalf("got %d shards, want 2", len(shards))
+	}
+	if total != 300 {
+		t.Errorf("total = %d, want 300", total)
+	}
 }
