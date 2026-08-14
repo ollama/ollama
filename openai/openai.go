@@ -648,6 +648,8 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		for _, s := range stop {
 			if str, ok := s.(string); ok {
 				stops = append(stops, str)
+			} else {
+				return nil, fmt.Errorf("invalid type for 'stop' field: %T", s)
 			}
 		}
 		options["stop"] = stops
