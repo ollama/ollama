@@ -288,7 +288,7 @@ func TestDecodeBlockDraft(t *testing.T) {
 		t.Fatalf("open rejected a block-draft request")
 	}
 	pinDraftLimit(spec, 4)
-	d := spec.decoder(mlx.FromValues([]int32{1}, 1), 0)
+	d := spec.decoder(mlx.FromValues([]int32{1}, 1), 0, nil)
 	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
