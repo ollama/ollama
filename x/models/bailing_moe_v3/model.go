@@ -506,6 +506,33 @@ func (a *MLAAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, posi
 			ov := probs.Matmul(hv)
 			out = mlx.Reshape(ov, B, cfg.NumAttentionHeads, 1, cfg.KVLoraRank)
 			out = a.UnembedOut.Forward(out)
+		} else if B == 1 && L <= 4 {
+			// Short decode windows (speculative verify): the same absorbed
+			// MQA with a right-aligned causal mask. The prefill branch below
+			// re-expands the whole latent history to per-head keys/values
+			// (two [S, lora] x [lora, H*dim] GEMMs plus tile/copies per layer
+			// per round, ~1ms/layer at 4K context), which dominated deep-KV
+			// verify rounds; the masked latent path reads the history once.
+			qLatent := a.EmbedQ.Forward(qNope)
+			queries := mlx.Concatenate([]*mlx.Array{qLatent, qPE}, 3)
+			hk := history.K()
+			S := int32(hk.Dim(2))
+			latentDim := cfg.KVLoraRank + cfg.QKRopeHeadDim
+			// [B*H, L, latent] x [latent, S]: strided GEMM, no broadcast batch.
+			q2 := mlx.Reshape(queries, B*cfg.NumAttentionHeads, L, latentDim)
+			hk2 := mlx.Reshape(hk, S, latentDim)
+			scores := q2.Matmul(mlx.Transpose(hk2, 1, 0))
+			scores = mlx.MulScalar(scores.AsType(mlx.DTypeFloat32), cfg.Scale)
+			// Row t attends to absolute positions [0, S-L+t]: keep = lower
+			// triangle offset by the history the window sits on top of.
+			keep := mlx.Tri(L, S, int(S-L))
+			mask := mlx.Where(keep, mlx.FromValue(float32(0)), mlx.FromValue(float32(-1e9)))
+			scores = mlx.Add(scores, mask)
+			probs := mlx.SoftmaxAxis(scores, -1, true).AsType(hk.DType())
+			hv := mlx.SliceStartStop(hk2, []int32{0, 0}, []int32{S, cfg.KVLoraRank})
+			ov := probs.Matmul(hv)
+			out = mlx.Reshape(ov, B, cfg.NumAttentionHeads, L, cfg.KVLoraRank)
+			out = a.UnembedOut.Forward(out)
 		} else {
 			// Prefill: CUDA's fused SDPA only supports head dims <= 128,
 			// so re-expand the latent history to per-head 192/128 keys and
