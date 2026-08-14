@@ -78,6 +78,14 @@ const LAUNCH_COMMANDS: LaunchCommand[] = [
     icon: "/launch-icons/droid.svg",
   },
   {
+    id: "dsh",
+    name: "DeepSeek Harness",
+    command: "ollama launch dsh",
+    description: "DeepSeek's open-source agent harness",
+    icon: "/launch-icons/deepseek-harness.svg",
+    iconClassName: "h-7 w-7",
+  },
+  {
     id: "pi",
     name: "Pi",
     command: "ollama launch pi",

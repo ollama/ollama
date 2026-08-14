@@ -83,14 +83,6 @@ func createTestFile(t *testing.T, name string) (string, string) {
 	return f.Name(), digest
 }
 
-type panicTransport struct{}
-
-func (t *panicTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	panic("unexpected RoundTrip call")
-}
-
-var panicOnRoundTrip = &http.Client{Transport: &panicTransport{}}
-
 func TestRoutes(t *testing.T) {
 	modelsDir := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", modelsDir)
@@ -138,9 +130,6 @@ func TestRoutes(t *testing.T) {
 		config := &model.ConfigV2{
 			OS:           "linux",
 			Architecture: "amd64",
-			RootFS: model.RootFS{
-				Type: "layers",
-			},
 		}
 
 		if err := createModel(r, modelName, baseLayers, config, fn); err != nil {
@@ -581,7 +570,7 @@ func TestGetModelInfoRepairsUnknownGGUFFileType(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	configLayer, err := createConfigLayer([]manifest.Layer{modelLayer}, model.ConfigV2{
+	configLayer, err := createConfigLayer(model.ConfigV2{
 		ModelFormat:   "gguf",
 		ModelFamily:   "llama",
 		ModelFamilies: []string{"llama"},

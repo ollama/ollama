@@ -11,8 +11,29 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-// runThinkingEnabled verifies that when thinking is requested, the model
-// produces both thinking and content output without leaking raw channel tags.
+var rawThinkingProtocolTags = []string{
+	"<|channel>",
+	"<channel|>",
+	"<think>",
+	"</think>",
+	"<assistant>",
+	"</assistant>",
+	"<tool_call>",
+	"</tool_call>",
+}
+
+func rejectRawThinkingProtocolTags(t *testing.T, field, value string) {
+	t.Helper()
+	for _, tag := range rawThinkingProtocolTags {
+		if strings.Contains(value, tag) {
+			t.Errorf("%s contains raw protocol tag %q: %s", field, tag, value)
+		}
+	}
+}
+
+// runThinkingEnabled verifies that thinking-capable models honor an explicit
+// thinking request, complete a reasoning trace, and return the final answer
+// without leaking raw channel tags.
 func runThinkingEnabled(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -33,12 +54,15 @@ func runThinkingEnabled(t *testing.T) {
 				Stream: &stream,
 				Think:  &think,
 				Messages: []api.Message{
-					{Role: "user", Content: "What is 12 * 15? Think step by step."},
+					{Role: "user", Content: "What is 12 multiplied by 15? Give the final answer."},
 				},
 				Options: map[string]any{
 					"temperature": 0,
 					"seed":        42,
-					"num_predict": 512,
+					// Deep-thinking models can use several thousand tokens on
+					// simple problems before producing their final answer. Keep
+					// this high enough to verify a natural stop, not truncation.
+					"num_predict": 8192,
 				},
 			}
 
@@ -61,22 +85,17 @@ func runThinkingEnabled(t *testing.T) {
 			if thinking == "" {
 				t.Error("expected non-empty thinking output when thinking is enabled")
 			}
-
-			// The answer (180) should appear in thinking, content, or both.
-			// Some models put everything in thinking and leave content empty
-			// if they hit the token limit while still thinking.
-			combined := thinking + " " + content
-			if !strings.Contains(combined, "180") {
-				t.Errorf("expected '180' in thinking or content, got thinking=%q content=%q", thinking, content)
+			if content == "" {
+				t.Error("expected non-empty final content after thinking")
+			} else if !strings.Contains(content, "180") {
+				t.Errorf("expected final answer 180, got content=%q", content)
+			}
+			if response.DoneReason != "stop" {
+				t.Errorf("expected completed response, got done reason %q", response.DoneReason)
 			}
 
-			// Neither thinking nor content should contain raw channel tags
-			if strings.Contains(content, "<|channel>") || strings.Contains(content, "<channel|>") {
-				t.Errorf("content contains raw channel tags: %s", content)
-			}
-			if strings.Contains(thinking, "<|channel>") || strings.Contains(thinking, "<channel|>") {
-				t.Errorf("thinking contains raw channel tags: %s", thinking)
-			}
+			rejectRawThinkingProtocolTags(t, "content", content)
+			rejectRawThinkingProtocolTags(t, "thinking", thinking)
 
 			t.Logf("thinking (%d chars): %.100s...", len(thinking), thinking)
 			t.Logf("content (%d chars): %s", len(content), content)
@@ -84,7 +103,7 @@ func runThinkingEnabled(t *testing.T) {
 	}
 }
 
-// runThinkingSuppressed verifies that when thinking is NOT requested,
+// runThinkingSuppressed verifies that when thinking is explicitly disabled,
 // the model does not leak thinking/channel content into the response.
 func runThinkingSuppressed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -100,10 +119,11 @@ func runThinkingSuppressed(t *testing.T) {
 			pullOrSkip(ctx, t, client, modelName)
 
 			stream := false
+			think := api.ThinkValue{Value: false}
 			req := api.ChatRequest{
 				Model:  modelName,
 				Stream: &stream,
-				// Think is nil — thinking not requested
+				Think:  &think,
 				Messages: []api.Message{
 					{Role: "user", Content: "What is the capital of Japan? Answer in one word."},
 				},
@@ -129,24 +149,16 @@ func runThinkingSuppressed(t *testing.T) {
 			content := response.Message.Content
 			thinking := response.Message.Thinking
 
-			// The answer should appear in content or thinking
-			combined := content + " " + thinking
-			if !strings.Contains(combined, "Tokyo") {
-				t.Errorf("expected 'Tokyo' in content or thinking, got content=%q thinking=%q", content, thinking)
+			// With thinking disabled, the answer must be returned as content.
+			if !strings.Contains(content, "Tokyo") {
+				t.Errorf("expected 'Tokyo' in content, got content=%q thinking=%q", content, thinking)
 			}
 
-			// Content must NOT contain channel/thinking tags
-			if strings.Contains(content, "<|channel>") || strings.Contains(content, "<channel|>") {
-				t.Errorf("content contains leaked channel tags when thinking not requested: %s", content)
-			}
-			if strings.Contains(content, "thought") && strings.Contains(content, "<channel|>") {
-				t.Errorf("content contains leaked thinking block: %s", content)
-			}
+			rejectRawThinkingProtocolTags(t, "content", content)
+			rejectRawThinkingProtocolTags(t, "thinking", thinking)
 
-			// Thinking field should ideally be empty when not requested.
-			// Some small models may still produce thinking output; log but don't fail.
 			if thinking != "" {
-				t.Logf("WARNING: model produced thinking output when not requested (%d chars): %.100s...", len(thinking), thinking)
+				t.Errorf("expected empty thinking when thinking is disabled, got %q", thinking)
 			}
 
 			t.Logf("content: %s", content)

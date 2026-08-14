@@ -71,18 +71,18 @@ func planBlockFP8(inv Inventory, target string, policy quantizePolicy) ([]BlobSp
 	}
 
 	for _, gp := range sortedKeys(groups) {
-		spec, err := planExpertGroup(gp, groups[gp], "", policy)
+		groupSpecs, err := planExpertGroup(gp, groups[gp], "", policy)
 		if err != nil {
 			return nil, err
 		}
-		specs = append(specs, spec)
+		specs = append(specs, groupSpecs...)
 	}
 	for _, gp := range sortedKeys(fp8Groups) {
-		spec, err := planFP8ExpertGroup(gp, fp8Groups[gp], inv, target, policy)
+		groupSpecs, err := planFP8ExpertGroup(gp, fp8Groups[gp], inv, target, policy)
 		if err != nil {
 			return nil, err
 		}
-		specs = append(specs, spec)
+		specs = append(specs, groupSpecs...)
 	}
 	return specs, nil
 }
@@ -92,7 +92,7 @@ func planBlockFP8(inv Inventory, target string, policy quantizePolicy) ([]BlobSp
 // dequantized from FP8 with their block scales, and quantized per the policy.
 // The stacking, decode, and quantize all run on the MLX writer thread; the
 // planner only groups and orders the source weights and their scale companions.
-func planFP8ExpertGroup(groupPrefix string, tensors []SourceTensor, inv Inventory, target string, policy quantizePolicy) (BlobSpec, error) {
+func planFP8ExpertGroup(groupPrefix string, tensors []SourceTensor, inv Inventory, target string, policy quantizePolicy) ([]BlobSpec, error) {
 	type expert struct {
 		idx    int
 		weight SourceTensor
@@ -102,16 +102,16 @@ func planFP8ExpertGroup(groupPrefix string, tensors []SourceTensor, inv Inventor
 	for _, t := range tensors {
 		idx, proj, err := parseExpertTensor(groupPrefix, t.Name)
 		if err != nil {
-			return BlobSpec{}, err
+			return nil, err
 		}
 		scaleName, ok := fp8ScaleFor(inv, t.Name)
 		if !ok {
-			return BlobSpec{}, fmt.Errorf("fp8 expert weight %q has no scale companion", t.Name)
+			return nil, fmt.Errorf("fp8 expert weight %q has no scale companion", t.Name)
 		}
 		byProj[proj] = append(byProj[proj], expert{idx: idx, weight: t, scale: inv.Tensors[scaleName]})
 	}
 
-	spec := BlobSpec{Name: groupPrefix}
+	var tensorSpecs []TensorSpec
 	for _, proj := range sortedKeys(byProj) {
 		experts := byProj[proj]
 		sort.Slice(experts, func(i, j int) bool { return experts[i].idx < experts[j].idx })
@@ -124,11 +124,11 @@ func planFP8ExpertGroup(groupPrefix string, tensors []SourceTensor, inv Inventor
 		scales := make([]SourceTensor, 0, len(experts))
 		for _, e := range experts {
 			if e.weight.Dtype != base.Dtype || !slices.Equal(e.weight.Shape, base.Shape) {
-				return BlobSpec{}, fmt.Errorf("fp8 expert group %s projection %s has mismatched weight layout (%s %v vs %s %v)",
+				return nil, fmt.Errorf("fp8 expert group %s projection %s has mismatched weight layout (%s %v vs %s %v)",
 					groupPrefix, proj, base.Dtype, base.Shape, e.weight.Dtype, e.weight.Shape)
 			}
 			if e.scale.Dtype != baseScale.Dtype || !slices.Equal(e.scale.Shape, baseScale.Shape) {
-				return BlobSpec{}, fmt.Errorf("fp8 expert group %s projection %s has mismatched scale layout (%s %v vs %s %v)",
+				return nil, fmt.Errorf("fp8 expert group %s projection %s has mismatched scale layout (%s %v vs %s %v)",
 					groupPrefix, proj, baseScale.Dtype, baseScale.Shape, e.scale.Dtype, e.scale.Shape)
 			}
 			sources = append(sources, e.weight)
@@ -138,7 +138,7 @@ func planFP8ExpertGroup(groupPrefix string, tensors []SourceTensor, inv Inventor
 
 		stackedName := groupPrefix + "." + proj + ".weight"
 		stackedShape := append([]int32{int32(len(experts))}, base.Shape...)
-		spec.Tensors = append(spec.Tensors, TensorSpec{
+		tensorSpecs = append(tensorSpecs, TensorSpec{
 			Name:      stackedName,
 			Sources:   sources,
 			Transform: TransformDecodeStackFP8,
@@ -147,7 +147,7 @@ func planFP8ExpertGroup(groupPrefix string, tensors []SourceTensor, inv Inventor
 			OutShape:  stackedShape,
 		})
 	}
-	return spec, nil
+	return homogeneousExpertBlobs(groupPrefix, tensorSpecs), nil
 }
 
 // isFP8Weight reports whether name is an F8_E4M3 weight with a block-scale

@@ -191,7 +191,18 @@ if(OLLAMA_MLX_BACKENDS)
             USES_TERMINAL_DOWNLOAD TRUE)
         list(APPEND _mlx_source_targets ollama-mlx-c-source)
     endif()
-    add_custom_target(ollama-mlx-sources DEPENDS ${_mlx_source_targets})
+    # Refresh the vendored MLX-C headers once the sources are present. Every MLX
+    # backend variant shares this destination in the source tree, so the copy has
+    # to happen here rather than in each variant's build.
+    add_custom_target(ollama-mlx-vendor-headers
+        COMMAND ${CMAKE_COMMAND}
+            -DMLX_C_HEADERS_DIR=${OLLAMA_MLX_C_SOURCE_DIR}/mlx/c
+            -DMLX_C_HEADERS_DEST=${CMAKE_SOURCE_DIR}/x/mlxrunner/mlx/include/mlx/c
+            -P "${CMAKE_SOURCE_DIR}/cmake/vendor-mlx-c-headers.cmake"
+        DEPENDS ${_mlx_source_targets}
+        COMMENT "Vendoring MLX-C headers"
+        VERBATIM)
+    add_custom_target(ollama-mlx-sources DEPENDS ollama-mlx-vendor-headers)
 endif()
 
 set(OLLAMA_BUILD_PARALLEL "" CACHE STRING
@@ -528,15 +539,8 @@ endfunction()
 find_program(GO_EXECUTABLE go)
 
 if(OLLAMA_MLX_BACKENDS)
-    set(_mlx_c_headers_dir "${OLLAMA_MLX_C_SOURCE_DIR}/mlx/c")
-    set(_mlx_c_headers_dest "${CMAKE_SOURCE_DIR}/x/mlxrunner/mlx/include/mlx/c")
-
     if(GO_EXECUTABLE AND (NOT APPLE OR CMAKE_SYSTEM_PROCESSOR STREQUAL CMAKE_HOST_SYSTEM_PROCESSOR))
         add_custom_target(ollama-mlx-generate-wrappers
-            COMMAND ${CMAKE_COMMAND}
-                -DMLX_C_HEADERS_DIR=${_mlx_c_headers_dir}
-                -DMLX_C_HEADERS_DEST=${_mlx_c_headers_dest}
-                -P "${CMAKE_SOURCE_DIR}/cmake/vendor-mlx-c-headers.cmake"
             COMMAND ${CMAKE_COMMAND} -E env
                 CC= CGO_CFLAGS= CGO_CXXFLAGS=
                 ${GO_EXECUTABLE} generate ./x/...

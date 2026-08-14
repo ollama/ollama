@@ -18,9 +18,6 @@ type specStats struct {
 }
 
 func (s *specStats) recordRound(depth int) {
-	if !slog.Default().Enabled(context.TODO(), slog.LevelDebug) {
-		return
-	}
 	s.chosen = append(s.chosen, depth)
 }
 
@@ -49,7 +46,7 @@ func (s *specStats) depthOverTime() string {
 }
 
 func (s *speculationSession) logStats() {
-	if !s.enabled || !slog.Default().Enabled(context.TODO(), slog.LevelDebug) {
+	if !s.enabled {
 		return
 	}
 	acceptance := 0.0
@@ -62,10 +59,14 @@ func (s *speculationSession) logStats() {
 		avgDraft = float64(s.stats.drafted) / float64(s.stats.iterations)
 		avgAccepted = float64(s.stats.accepted) / float64(s.stats.iterations)
 	}
-	slog.Debug("speculative decode stats", "iterations", s.stats.iterations, "drafted", s.stats.drafted, "accepted", s.stats.accepted, "acceptance", fmt.Sprintf("%.2f", acceptance), "avg_draft", fmt.Sprintf("%.2f", avgDraft), "max_draft", s.stats.maxDraft, "avg_accepted", fmt.Sprintf("%.2f", avgAccepted), "depth_over_time", s.stats.depthOverTime())
+	slog.Info("speculative decode stats", "iterations", s.stats.iterations, "drafted", s.stats.drafted, "accepted", s.stats.accepted, "acceptance", fmt.Sprintf("%.2f", acceptance), "avg_draft", fmt.Sprintf("%.2f", avgDraft), "max_draft", s.stats.maxDraft, "avg_accepted", fmt.Sprintf("%.2f", avgAccepted), "depth_over_time", s.stats.depthOverTime())
+
+	if !slog.Default().Enabled(context.TODO(), slog.LevelDebug) {
+		return
+	}
 
 	// Log learned acceptance over the trusted positions [1, frontier] and
-	// expected throughput over the searched window [0, frontier+1]; deeper
+	// expected throughput over the searched window [0, limit]; deeper
 	// depths have no data of their own.
 	d := s.spec.depth
 	frontier := d.frontier()
@@ -73,7 +74,7 @@ func (s *speculationSession) logStats() {
 	for n := 1; n <= frontier; n++ {
 		rates = append(rates, fmt.Sprintf("%d:%.2f", n, d.acc.acceptance(n)))
 	}
-	limit := frontier + 1
+	limit := d.limit()
 	tps := make([]string, 0, limit+1)
 	if d.cost.ready() {
 		for n := 0; n <= limit; n++ {

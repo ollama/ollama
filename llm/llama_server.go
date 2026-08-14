@@ -169,6 +169,7 @@ type llamaServerRunner struct {
 type llamaServerLaunchConfig struct {
 	modelPath            string
 	modelArch            string
+	draftType            string
 	projectors           []string
 	mmprojMemory         uint64
 	modelLayers          uint64
@@ -376,7 +377,7 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 	params = appendJinjaArgs(params, launch.config)
 
 	params = appendMMProjArgs(params, launch)
-	params = appendMTPDraftArgs(params, launch.config, launch.opts)
+	params = appendDraftArgs(params, launch.draftType, launch.config.DraftModelPath, launch.opts)
 
 	params = append(params, qwenVLServerArgs(launch.modelArch)...)
 
@@ -385,19 +386,7 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 		params = append(params, "--lora", adapter)
 	}
 
-	// UseMmap
-	if launch.opts.UseMMap != nil && !*launch.opts.UseMMap {
-		params = append(params, "--no-mmap")
-	}
-
-	// Direct I/O skips the page cache on load for integrated CUDA/ROCm GPUs, which
-	// share system memory with the CPU and would otherwise double-buffer weights.
-	for _, g := range launch.gpus {
-		if runtime.GOOS == "linux" && g.Integrated && (strings.EqualFold(g.Library, "CUDA") || strings.EqualFold(g.Library, "ROCm")) {
-			params = append(params, "--direct-io")
-			break
-		}
-	}
+	params = appendLoadModeArgs(params, launch.opts, launch.gpus)
 
 	// KV cache type
 	if launch.kvCacheType != "" {
@@ -630,6 +619,23 @@ func appendFlashAttentionArgs(params []string, gpus []ml.DeviceInfo) []string {
 	}
 }
 
+// appendLoadModeArgs selects llama-server's single model loading mode. Direct I/O
+// skips the page cache on load for integrated CUDA/ROCm GPUs, which share system
+// memory with the CPU and would otherwise double-buffer weights.
+func appendLoadModeArgs(params []string, opts api.Options, gpus []ml.DeviceInfo) []string {
+	for _, g := range gpus {
+		if runtime.GOOS == "linux" && g.Integrated && (strings.EqualFold(g.Library, "CUDA") || strings.EqualFold(g.Library, "ROCm")) {
+			return append(params, "--load-mode", "dio")
+		}
+	}
+
+	if opts.UseMMap != nil && !*opts.UseMMap {
+		return append(params, "--load-mode", "none")
+	}
+
+	return params
+}
+
 func appendMainGPUArgs(params []string, opts api.Options) []string {
 	if opts.MainGPU == nil {
 		return params
@@ -791,21 +797,39 @@ func appendContextShiftArgs(params []string, opts api.Options, enabled bool) []s
 	return params
 }
 
-func appendMTPDraftArgs(params []string, config LlamaServerConfig, opts api.Options) []string {
-	if !config.EnableMTP && config.DraftModelPath == "" {
+const (
+	draftTypeMTP    = "draft-mtp"
+	draftTypeDFlash = "draft-dflash"
+)
+
+func appendDraftArgs(params []string, draftType, draftModelPath string, opts api.Options) []string {
+	if draftType == "" {
 		return params
 	}
 	if opts.DraftNumPredict <= 0 {
 		return params
 	}
 
-	params = append(params, "--spec-type", "draft-mtp")
+	params = append(params, "--spec-type", draftType)
 	params = append(params, "--spec-draft-n-max", strconv.Itoa(opts.DraftNumPredict))
-	params = append(params, "--spec-draft-backend-sampling")
-	if config.DraftModelPath != "" {
-		params = append(params, "--spec-draft-model", config.DraftModelPath)
+	if draftType == draftTypeMTP {
+		params = append(params, "--spec-draft-backend-sampling")
+	}
+	if draftModelPath != "" {
+		params = append(params, "--spec-draft-model", draftModelPath)
 	}
 	return params
+}
+
+func externalDraftType(path string) (string, error) {
+	f, err := LoadModel(path, 1)
+	if err != nil {
+		return "", fmt.Errorf("load draft model metadata: %w", err)
+	}
+	if f.KV().Architecture() == "dflash" {
+		return draftTypeDFlash, nil
+	}
+	return draftTypeMTP, nil
 }
 
 func hasMTPDraft(f *ggml.GGML) bool {
@@ -876,6 +900,17 @@ func NewLlamaServerRunner(
 		config.EnableMTP = true
 	}
 
+	draftType := ""
+	if config.EnableMTP {
+		draftType = draftTypeMTP
+	}
+	if config.DraftModelPath != "" {
+		draftType, err = externalDraftType(config.DraftModelPath)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	gpuLibs := ml.LibraryPaths(gpus)
 	status := NewStatusWriter(os.Stderr)
 
@@ -893,6 +928,7 @@ func NewLlamaServerRunner(
 	launch := llamaServerLaunchConfig{
 		modelPath:    modelPath,
 		modelArch:    arch,
+		draftType:    draftType,
 		projectors:   slices.Clone(projectors),
 		mmprojMemory: mmprojMemory,
 		modelLayers:  f.KV().BlockCount() + 1,

@@ -364,6 +364,39 @@ func TestDistributionSingleRowAppliesDraftPrefix(t *testing.T) {
 	}
 }
 
+func TestDistributionMultiRowWithoutChain(t *testing.T) {
+	skipIfNoMLX(t)
+
+	s := New(128)
+	t.Cleanup(func() {
+		s.Free()
+		mlx.Sweep()
+	})
+
+	// A block drafter's proposal batch samples every row from one call with
+	// no draft chain: each row sees the slot history unchanged. Slot 0
+	// exercises the batched history path (full ring), slot 1 the serial path
+	// (ring not yet full).
+	s.Add(0, Options{RepeatLastN: 2, RepeatPenalty: 10}, []int32{3, 4})
+	s.Add(1, Options{RepeatLastN: 8, RepeatPenalty: 10}, []int32{3, 4})
+
+	for _, seqID := range []int{0, 1} {
+		// Tokens 3 and 4 are penalized in every row alike; rows 1 and 3
+		// share logits, so a chain alignment leaking between rows would
+		// split their winners.
+		dist := s.Distribution(seqID, batchLogits(
+			[]float32{0, 0, 8, 9, 9},
+			[]float32{0, 8, 0, 9, 9},
+			[]float32{0, 0, 8, 9, 9},
+		), nil)
+		top := dist.IDs.Slice(mlx.Slice(), mlx.Slice(0, 1))
+		mlx.Eval(top)
+		if got, want := top.Ints(), []int{2, 1, 2}; !slices.Equal(got, want) {
+			t.Fatalf("seq %d top tokens = %v, want %v", seqID, got, want)
+		}
+	}
+}
+
 func TestCommitBatchesRingWrites(t *testing.T) {
 	skipIfNoMLX(t)
 

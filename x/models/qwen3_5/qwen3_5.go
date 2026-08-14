@@ -24,12 +24,20 @@ func init() {
 	base.Register("Qwen3NextForConditionalGeneration", NewModel)
 }
 
+var (
+	_ base.Model      = (*Model)(nil)
+	_ base.SelfDraft  = (*Model)(nil)
+	_ base.DraftModel = (*mtpDraft)(nil)
+	_ base.MediaModel = (*Model)(nil)
+)
+
 // RopeParameters carries optional rope metadata embedded under rope_parameters.
 type RopeParameters struct {
 	Type                string  `json:"type"`
 	RopeType            string  `json:"rope_type"`
 	RopeTheta           float32 `json:"rope_theta"`
 	PartialRotaryFactor float32 `json:"partial_rotary_factor"`
+	MropeSection        []int32 `json:"mrope_section"`
 }
 
 // Config holds Qwen 3.5 text config (top-level or nested text_config).
@@ -70,6 +78,8 @@ type Config struct {
 	RopeScaling         map[string]any  `json:"rope_scaling"`
 	RopeParameters      *RopeParameters `json:"rope_parameters"`
 
+	MropeSection []int32 `json:"-"`
+
 	// Quantization metadata.
 	QuantGroupSize int                               `json:"-"`
 	QuantBits      int                               `json:"-"`
@@ -88,10 +98,27 @@ type Model struct {
 	Norm        *nn.RMSNorm
 	LMHead      nn.LinearLayer
 
+	MTP *MTPHead
+
+	// Vision components; nil for text-only checkpoints.
+	Vision      *VisionConfig
+	VisionTower *VisionTower
+	MM          multimodalConfig
+
 	tok *tokenizer.Tokenizer
 	*Config
 
 	weightPrefix string
+}
+
+// MTPHead is the multi-token-prediction draft head; it writes one KV cache
+// and reuses the model's lm_head.
+type MTPHead struct {
+	Enorm *nn.RMSNorm
+	Hnorm *nn.RMSNorm
+	FC    nn.LinearLayer
+	Layer *Layer
+	Norm  *nn.RMSNorm
 }
 
 // Layer is a transformer decoder layer.
@@ -118,10 +145,6 @@ type FullAttention struct {
 
 // GatedDeltaNet is the recurrent linear-attention branch.
 type GatedDeltaNet struct {
-	InProjQKV  nn.LinearLayer
-	InProjZ    nn.LinearLayer
-	InProjB    nn.LinearLayer
-	InProjA    nn.LinearLayer
 	InProjQKVZ nn.LinearLayer
 	InProjBA   nn.LinearLayer
 	OutProj    nn.LinearLayer
@@ -153,25 +176,22 @@ type SparseMoE struct {
 	SharedExpertGate nn.LinearLayer
 }
 
-// SwitchMLP executes selected expert MLPs.
+// SwitchMLP executes selected expert MLPs. Gate and up are always held
+// packed as one gate_up tensor; checkpoints that ship them separately are
+// fused at load.
 type SwitchMLP struct {
-	GateWeight *mlx.Array
-	UpWeight   *mlx.Array
-	DownWeight *mlx.Array
+	GateUpWeight *mlx.Array
+	DownWeight   *mlx.Array
 
-	GateWeightQ, GateScales, GateBiases *mlx.Array
-	UpWeightQ, UpScales, UpBiases       *mlx.Array
-	DownWeightQ, DownScales, DownBiases *mlx.Array
+	GateUpWeightQ, GateUpScales, GateUpBias *mlx.Array
+	DownWeightQ, DownScales, DownBiases     *mlx.Array
 
-	GateBits int
-	UpBits   int
-	DownBits int
-
-	GateGroupSize int
-	UpGroupSize   int
-	DownGroupSize int
-
-	UseQuantized bool
+	GateUpBits      int
+	DownBits        int
+	GateUpGroupSize int
+	DownGroupSize   int
+	GateUpMode      string
+	DownMode        string
 }
 
 type stackedExpertWeights struct {
@@ -265,6 +285,10 @@ func parseConfig(configData []byte) (Config, error) {
 		ropeDim = cfg.HeadDim
 	}
 	cfg.RopeDim = ropeDim
+	cfg.MropeSection = []int32{11, 11, 10}
+	if cfg.RopeParameters != nil && len(cfg.RopeParameters.MropeSection) == 3 {
+		cfg.MropeSection = cfg.RopeParameters.MropeSection
+	}
 
 	if cfg.FullAttentionInterval <= 0 {
 		for i, lt := range cfg.LayerTypes {
@@ -394,9 +418,16 @@ func NewModel(root *model.Root) (base.Model, error) {
 		return nil, fmt.Errorf("parse tokenizer: %w", err)
 	}
 
+	mm, err := parseMultimodalConfig(configData)
+	if err != nil {
+		return nil, err
+	}
+
 	m := &Model{
 		Layers: make([]*Layer, cfg.NumHiddenLayers),
 		Config: &cfg,
+		MM:     mm,
+		Vision: mm.VisionConfig,
 		tok:    tok,
 	}
 
@@ -464,57 +495,58 @@ func transposeExpertWeightForGatherMM(w *mlx.Array) *mlx.Array {
 	return cloned
 }
 
-func describeMoEProjection(prefix string, w *stackedExpertWeights) string {
-	if w == nil {
-		return prefix + "=missing"
-	}
-	if w.Scales != nil {
-		return fmt.Sprintf("%s=qmm(mode=%s,bits=%d,gs=%d)", prefix, w.Mode, w.Bits, w.GroupSize)
-	}
-	if w.Bits > 0 || w.Mode != "" {
-		reason := "dequantized"
-		if !supportsGatherQMM(w.Mode, w.Bits) {
-			reason = "unsupported_gather_qmm"
-		}
-		return fmt.Sprintf("%s=%s(mode=%s,bits=%d,gs=%d)", prefix, reason, w.Mode, w.Bits, w.GroupSize)
-	}
-	return prefix + "=fp"
-}
-
-func summarizeMoEFallbackReason(gateW, upW, downW *stackedExpertWeights) string {
-	for _, w := range []*stackedExpertWeights{gateW, upW, downW} {
-		if w == nil {
-			return "missing_projection"
-		}
-		if w.Scales != nil {
-			continue
-		}
-		if w.Bits > 0 || w.Mode != "" {
-			if !supportsGatherQMM(w.Mode, w.Bits) {
-				return fmt.Sprintf("unsupported_gather_qmm(mode=%s,bits=%d)", w.Mode, w.Bits)
-			}
-			return "dequantized_quant_weights"
-		}
-	}
-	return "unquantized_weights"
-}
-
-func sliceStackedExpertAxis1(a *mlx.Array, start, stop int32) *mlx.Array {
-	if a == nil || !a.Valid() {
+func fuseExpertStacks(a, b *mlx.Array, axis int) *mlx.Array {
+	if a == nil || !a.Valid() || b == nil || !b.Valid() {
 		return nil
 	}
-	dims := a.Dims()
-	if len(dims) < 2 {
+	out := mlx.Concatenate([]*mlx.Array{a, b}, axis).Clone()
+	mlx.Eval(out)
+	return out
+}
+
+// fuseGateUpProjections joins gate and up stacks along the output dimension,
+// which is exact for quantized stacks: groups run along the input dimension.
+func fuseGateUpProjections(gate, up *stackedExpertWeights) *stackedExpertWeights {
+	if gate == nil || up == nil {
 		return nil
 	}
-	beg := make([]int32, len(dims))
-	end := make([]int32, len(dims))
-	for i, d := range dims {
-		end[i] = int32(d)
+	if gate.Weight == nil || gate.Weight.NumDims() != 3 || up.Weight == nil || up.Weight.NumDims() != 3 {
+		return nil
 	}
-	beg[1] = start
-	end[1] = stop
-	return mlx.SliceStartStop(a, beg, end)
+	if gate.Scales != nil && up.Scales != nil &&
+		gate.Bits == up.Bits && gate.GroupSize == up.GroupSize && gate.Mode == up.Mode &&
+		(gate.Biases == nil) == (up.Biases == nil) {
+		fused := &stackedExpertWeights{
+			Weight:    fuseExpertStacks(gate.Weight, up.Weight, 1),
+			Scales:    fuseExpertStacks(gate.Scales, up.Scales, 1),
+			Bits:      gate.Bits,
+			GroupSize: gate.GroupSize,
+			Mode:      gate.Mode,
+		}
+		if gate.Biases != nil {
+			fused.Biases = fuseExpertStacks(gate.Biases, up.Biases, 1)
+		}
+		return fused
+	}
+	if gate.Scales != nil || up.Scales != nil {
+		slog.Warn("dequantizing gate/up experts: quantization parameters differ",
+			"gate_mode", gate.Mode, "gate_bits", gate.Bits, "gate_group_size", gate.GroupSize,
+			"up_mode", up.Mode, "up_bits", up.Bits, "up_group_size", up.GroupSize)
+	}
+	gateWeight := gate.Weight
+	if gate.Scales != nil {
+		gateWeight = mlx.Dequantize(gate.Weight, gate.Scales, gate.Biases, gate.GroupSize, gate.Bits, gate.Mode, nil)
+	}
+	upWeight := up.Weight
+	if up.Scales != nil {
+		upWeight = mlx.Dequantize(up.Weight, up.Scales, up.Biases, up.GroupSize, up.Bits, up.Mode, nil)
+	}
+	return &stackedExpertWeights{
+		Weight:    mlx.Concatenate([]*mlx.Array{gateWeight, upWeight}, 1),
+		Bits:      gate.Bits,
+		GroupSize: gate.GroupSize,
+		Mode:      gate.Mode,
+	}
 }
 
 func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, useQuantized bool, bases ...string) *stackedExpertWeights {
@@ -550,8 +582,11 @@ func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, useQuanti
 			}
 		}
 
+		if useQuantized {
+			slog.Warn("dequantizing expert weights: no gather kernel for format", "tensor", key, "mode", mode, "bits", bits)
+		}
 		return &stackedExpertWeights{
-			Weight:    mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode),
+			Weight:    mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode, nil),
 			Bits:      bits,
 			GroupSize: groupSize,
 			Mode:      mode,
@@ -566,6 +601,7 @@ func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQ
 	scales := make([]*mlx.Array, 0, numExperts)
 	biases := make([]*mlx.Array, 0, numExperts)
 	consumedKeys := make([]string, 0, numExperts*3)
+	numDequantized := 0
 	bits := 0
 	groupSize := 0
 	mode := cfg.QuantMode
@@ -609,8 +645,13 @@ func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQ
 				biases = append(biases, qb)
 			}
 		} else {
-			weights = append(weights, mlx.Dequantize(w, s, qb, gs, b, m))
+			weights = append(weights, mlx.Dequantize(w, s, qb, gs, b, m, nil))
+			numDequantized++
 		}
+	}
+	if useQuantized && numDequantized > 0 {
+		slog.Warn("dequantizing expert weights: no gather kernel for format",
+			"tensor", fmt.Sprintf("%s.mlp.experts.*.%s", layerPrefix, proj), "mode", mode, "bits", bits)
 	}
 
 	if len(weights) == 0 {
@@ -628,122 +669,125 @@ func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQ
 	return out
 }
 
-func splitGateUpProjection(tensors map[string]*mlx.Array, cfg *Config, useQuantized bool, layerPrefix string) (gate, up, down *stackedExpertWeights) {
+// combinedGateUpProjection loads the packed mlp.experts.gate_up_proj stack;
+// nil when the checkpoint ships gate/up separately.
+func combinedGateUpProjection(tensors map[string]*mlx.Array, cfg *Config, useQuantized bool, layerPrefix string) *stackedExpertWeights {
 	gateUp, key := tensorAny(
 		tensors,
 		layerPrefix+".mlp.experts.gate_up_proj.weight",
 		layerPrefix+".mlp.experts.gate_up_proj",
 	)
-	if gateUp == nil {
-		return nil, nil, nil
+	if gateUp == nil || gateUp.NumDims() != 3 {
+		return nil
 	}
 
-	if scales := tensors[key+"_scale"]; scales != nil {
-		qbiases := tensors[key+"_qbias"]
-		groupSize, bits, mode := model.ResolveLinearQuantParams(
-			cfg.QuantGroupSize,
-			cfg.QuantBits,
-			cfg.QuantMode,
-			cfg.TensorQuant,
-			key,
-			gateUp,
-			scales,
-		)
-		if useQuantized && supportsGatherQMM(mode, bits) {
-			gate = &stackedExpertWeights{
-				Bits:      bits,
-				GroupSize: groupSize,
-				Mode:      mode,
-			}
-			up = &stackedExpertWeights{
-				Bits:      bits,
-				GroupSize: groupSize,
-				Mode:      mode,
-			}
-			// Keep quantized packed tensor and split along the out-dim (axis=1).
-			// This assumes MLX quantization preserves the leading [experts, out, ...] layout.
-			if gateUp.NumDims() != 3 {
-				return nil, nil, nil
-			}
-			shape := gateUp.Dims()
-			nExperts, twoHidden, inHidden := int32(shape[0]), int32(shape[1]), int32(shape[2])
-			_ = nExperts
-			_ = inHidden
-			mid := twoHidden / 2
+	scales := tensors[key+"_scale"]
+	if scales == nil {
+		return &stackedExpertWeights{Weight: gateUp}
+	}
 
-			gate.Weight = sliceStackedExpertAxis1(gateUp, 0, mid)
-			up.Weight = sliceStackedExpertAxis1(gateUp, mid, twoHidden)
-			gate.Scales = sliceStackedExpertAxis1(scales, 0, mid)
-			up.Scales = sliceStackedExpertAxis1(scales, mid, twoHidden)
-			if qbiases != nil {
-				gate.Biases = sliceStackedExpertAxis1(qbiases, 0, mid)
-				up.Biases = sliceStackedExpertAxis1(qbiases, mid, twoHidden)
-			}
-		} else {
-			gateUp = mlx.Dequantize(gateUp, scales, qbiases, groupSize, bits, mode)
-			gate = &stackedExpertWeights{Bits: bits, GroupSize: groupSize, Mode: mode}
-			up = &stackedExpertWeights{Bits: bits, GroupSize: groupSize, Mode: mode}
+	qbiases := tensors[key+"_qbias"]
+	groupSize, bits, mode := model.ResolveLinearQuantParams(
+		cfg.QuantGroupSize,
+		cfg.QuantBits,
+		cfg.QuantMode,
+		cfg.TensorQuant,
+		key,
+		gateUp,
+		scales,
+	)
+	if useQuantized && supportsGatherQMM(mode, bits) {
+		return &stackedExpertWeights{
+			Weight:    gateUp,
+			Scales:    scales,
+			Biases:    qbiases,
+			Bits:      bits,
+			GroupSize: groupSize,
+			Mode:      mode,
 		}
 	}
+	if useQuantized {
+		slog.Warn("dequantizing expert weights: no gather kernel for format", "tensor", key, "mode", mode, "bits", bits)
+	}
+	return &stackedExpertWeights{
+		Weight:    mlx.Dequantize(gateUp, scales, qbiases, groupSize, bits, mode, nil),
+		Bits:      bits,
+		GroupSize: groupSize,
+		Mode:      mode,
+	}
+}
 
-	if gateUp.NumDims() != 3 {
-		return nil, nil, nil
+// splitLastAxisHalves views the two halves of a's last axis.
+func splitLastAxisHalves(a *mlx.Array) (lo, hi *mlx.Array) {
+	dims := a.Dims()
+	nd := len(dims)
+	beg := make([]int32, nd)
+	end := make([]int32, nd)
+	for i, d := range dims {
+		end[i] = int32(d)
 	}
-	shape := gateUp.Dims()
-	nExperts, twoHidden, inHidden := int32(shape[0]), int32(shape[1]), int32(shape[2])
-	mid := twoHidden / 2
+	mid := int32(dims[nd-1]) / 2
+	endLo := append([]int32(nil), end...)
+	endLo[nd-1] = mid
+	begHi := append([]int32(nil), beg...)
+	begHi[nd-1] = mid
+	return mlx.SliceStartStop(a, beg, endLo), mlx.SliceStartStop(a, begHi, end)
+}
 
-	if gate == nil {
-		gate = &stackedExpertWeights{}
-	}
-	if up == nil {
-		up = &stackedExpertWeights{}
-	}
-	if gate.Weight == nil {
-		gate.Weight = mlx.SliceStartStop(gateUp, []int32{0, 0, 0}, []int32{nExperts, mid, inHidden})
-	}
-	if up.Weight == nil {
-		up.Weight = mlx.SliceStartStop(gateUp, []int32{0, mid, 0}, []int32{nExperts, twoHidden, inHidden})
-	}
-
-	downW, downKey := tensorAny(
-		tensors,
-		layerPrefix+".mlp.experts.down_proj.weight",
+// loadSwitchMLP assembles a layer's routed experts from any supported
+// checkpoint layout.
+func loadSwitchMLP(tensors map[string]*mlx.Array, cfg *Config, useQuantized bool, layerPrefix string) (*SwitchMLP, error) {
+	gateUpW := combinedGateUpProjection(tensors, cfg, useQuantized, layerPrefix)
+	downW := loadStackedProjection(tensors, cfg, useQuantized,
+		layerPrefix+".mlp.switch_mlp.down_proj",
 		layerPrefix+".mlp.experts.down_proj",
 	)
-	if downW == nil {
-		return gate, up, nil
-	}
-	if scales := tensors[downKey+"_scale"]; scales != nil {
-		qbiases := tensors[downKey+"_qbias"]
-		groupSize, bits, mode := model.ResolveLinearQuantParams(
-			cfg.QuantGroupSize,
-			cfg.QuantBits,
-			cfg.QuantMode,
-			cfg.TensorQuant,
-			downKey,
-			downW,
-			scales,
+	if gateUpW == nil {
+		gateW := loadStackedProjection(tensors, cfg, useQuantized,
+			layerPrefix+".mlp.switch_mlp.gate_proj",
+			layerPrefix+".mlp.experts.gate_proj",
 		)
-		if useQuantized && supportsGatherQMM(mode, bits) {
-			down = &stackedExpertWeights{
-				Weight:    downW,
-				Scales:    scales,
-				Biases:    qbiases,
-				Bits:      bits,
-				GroupSize: groupSize,
-				Mode:      mode,
-			}
-			return gate, up, down
+		upW := loadStackedProjection(tensors, cfg, useQuantized,
+			layerPrefix+".mlp.switch_mlp.up_proj",
+			layerPrefix+".mlp.experts.up_proj",
+		)
+		if gateW == nil {
+			gateW = collectPerExpertProjection(tensors, cfg, useQuantized, layerPrefix, "gate_proj", cfg.NumExperts)
 		}
-		downW = mlx.Dequantize(downW, scales, qbiases, groupSize, bits, mode)
-		down = &stackedExpertWeights{Bits: bits, GroupSize: groupSize, Mode: mode}
+		if upW == nil {
+			upW = collectPerExpertProjection(tensors, cfg, useQuantized, layerPrefix, "up_proj", cfg.NumExperts)
+		}
+		gateUpW = fuseGateUpProjections(gateW, upW)
 	}
-	if down == nil {
-		down = &stackedExpertWeights{}
+	if downW == nil {
+		downW = collectPerExpertProjection(tensors, cfg, useQuantized, layerPrefix, "down_proj", cfg.NumExperts)
 	}
-	down.Weight = downW
-	return gate, up, down
+	if gateUpW == nil || downW == nil {
+		return nil, fmt.Errorf("missing switch expert weights")
+	}
+
+	switchMLP := &SwitchMLP{}
+	if gateUpW.Scales != nil {
+		switchMLP.GateUpWeightQ = gateUpW.Weight
+		switchMLP.GateUpScales = gateUpW.Scales
+		switchMLP.GateUpBias = gateUpW.Biases
+		switchMLP.GateUpBits = gateUpW.Bits
+		switchMLP.GateUpGroupSize = gateUpW.GroupSize
+		switchMLP.GateUpMode = gateUpW.Mode
+	} else {
+		switchMLP.GateUpWeight = transposeExpertWeightForGatherMM(gateUpW.Weight)
+	}
+	if downW.Scales != nil {
+		switchMLP.DownWeightQ = downW.Weight
+		switchMLP.DownScales = downW.Scales
+		switchMLP.DownBiases = downW.Biases
+		switchMLP.DownBits = downW.Bits
+		switchMLP.DownGroupSize = downW.GroupSize
+		switchMLP.DownMode = downW.Mode
+	} else {
+		switchMLP.DownWeight = transposeExpertWeightForGatherMM(downW.Weight)
+	}
+	return switchMLP, nil
 }
 
 func sanitizeConvWeight(w *mlx.Array) *mlx.Array {
@@ -761,26 +805,17 @@ func sanitizeConvWeight(w *mlx.Array) *mlx.Array {
 	return w
 }
 
-func shouldShiftNormKey(key string) bool {
-	for _, suffix := range []string{
-		".input_layernorm.weight",
-		".post_attention_layernorm.weight",
-		"model.norm.weight",
-		".self_attn.q_norm.weight",
-		".self_attn.k_norm.weight",
-	} {
-		if strings.HasSuffix(key, suffix) {
-			return true
-		}
+// loadNorm builds an RMSNorm from tensors[key], adding 1 to weights from
+// checkpoints that store them zero-centered.
+func loadNorm(tensors map[string]*mlx.Array, key string, shift bool, eps float32) *nn.RMSNorm {
+	w := tensors[key]
+	if w == nil {
+		return nil
 	}
-	return false
-}
-
-func maybeShiftNormWeight(key string, w *mlx.Array, shouldShift bool) *mlx.Array {
-	if !shouldShift || w == nil || w.NumDims() != 1 || !shouldShiftNormKey(key) {
-		return w
+	if shift && w.NumDims() == 1 {
+		w = mlx.AddScalar(w, 1.0)
 	}
-	return mlx.AddScalar(w, 1.0)
+	return nn.NewRMSNorm(w, eps)
 }
 
 // LoadWeights assigns tensors to model fields.
@@ -794,19 +829,12 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	linears := model.NewLinearFactory(tensors, cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant)
 
 	shouldShiftNormWeights := false
-	mtpKeys := make([]string, 0)
 	for name, t := range tensors {
-		if strings.Contains(name, "mtp.") {
+		if strings.Contains(name, "mtp.") ||
+			(strings.Contains(name, ".linear_attn.conv1d.weight") && t != nil && t.NumDims() == 3 && t.Dim(2) != 1) {
 			shouldShiftNormWeights = true
-			mtpKeys = append(mtpKeys, name)
-			continue
+			break
 		}
-		if !shouldShiftNormWeights && strings.Contains(name, ".linear_attn.conv1d.weight") && t != nil && t.NumDims() == 3 && t.Dim(2) != 1 {
-			shouldShiftNormWeights = true
-		}
-	}
-	if len(mtpKeys) > 0 {
-		freeTensorKeys(tensors, mtpKeys...)
 	}
 
 	embedTokens := model.MakeEmbeddingLayer(tensors, modelPrefix+"embed_tokens", cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant)
@@ -815,12 +843,10 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	}
 	m.EmbedTokens = embedTokens
 
-	normKey := modelPrefix + "norm.weight"
-	normWeight := maybeShiftNormWeight(normKey, tensors[normKey], shouldShiftNormWeights)
-	if normWeight == nil {
+	m.Norm = loadNorm(tensors, modelPrefix+"norm.weight", shouldShiftNormWeights, cfg.RMSNormEps)
+	if m.Norm == nil {
 		return fmt.Errorf("missing final norm weight: %snorm.weight", modelPrefix)
 	}
-	m.Norm = nn.NewRMSNorm(normWeight, cfg.RMSNormEps)
 
 	if cfg.TieWordEmbeddings {
 		m.LMHead = m.EmbedTokens.AsLinear()
@@ -845,242 +871,177 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 			}
 		}
 	}
-	moeLoadSummaries := make([]string, 0)
 
 	for i := range cfg.NumHiddenLayers {
 		layerPrefix := fmt.Sprintf("%slayers.%d", modelPrefix, i)
-		layer := &Layer{IsLinear: layerIsLinear(cfg, i)}
-
-		if w := maybeShiftNormWeight(layerPrefix+".input_layernorm.weight", tensors[layerPrefix+".input_layernorm.weight"], shouldShiftNormWeights); w != nil {
-			layer.InputNorm = nn.NewRMSNorm(w, cfg.RMSNormEps)
+		layer, err := loadLayer(linears, tensors, cfg, layerPrefix, layerIsLinear(cfg, i), layerUsesMoE(cfg, i), useQuantizedExperts, shouldShiftNormWeights)
+		if err != nil {
+			return err
 		}
-		if w := maybeShiftNormWeight(layerPrefix+".post_attention_layernorm.weight", tensors[layerPrefix+".post_attention_layernorm.weight"], shouldShiftNormWeights); w != nil {
-			layer.PostAttentionNorm = nn.NewRMSNorm(w, cfg.RMSNormEps)
-		}
-		if layer.InputNorm == nil || layer.PostAttentionNorm == nil {
-			return fmt.Errorf("layer %d: missing layer norms", i)
-		}
-
-		if layer.IsLinear {
-			lin := &GatedDeltaNet{}
-			lin.InProjQKV = linears.Make(layerPrefix + ".linear_attn.in_proj_qkv")
-			lin.InProjZ = linears.Make(layerPrefix + ".linear_attn.in_proj_z")
-			lin.InProjB = linears.Make(layerPrefix + ".linear_attn.in_proj_b")
-			lin.InProjA = linears.Make(layerPrefix + ".linear_attn.in_proj_a")
-			lin.InProjQKVZ = linears.Make(layerPrefix + ".linear_attn.in_proj_qkvz")
-			lin.InProjBA = linears.Make(layerPrefix + ".linear_attn.in_proj_ba")
-			lin.OutProj = linears.Make(layerPrefix + ".linear_attn.out_proj")
-
-			convWeight := sanitizeConvWeight(tensors[layerPrefix+".linear_attn.conv1d.weight"])
-			if convWeight == nil {
-				convWeight = sanitizeConvWeight(tensors[layerPrefix+".linear_attn.conv1d"])
-			}
-			lin.NormWeight, _ = tensorAny(tensors,
-				layerPrefix+".linear_attn.norm.weight",
-				layerPrefix+".linear_attn.norm",
-			)
-			lin.DtBias, _ = tensorAny(tensors,
-				layerPrefix+".linear_attn.dt_bias",
-				layerPrefix+".linear_attn.dt_proj",
-			)
-			lin.ALog, _ = tensorAny(tensors,
-				layerPrefix+".linear_attn.A_log",
-				layerPrefix+".linear_attn.a_log",
-			)
-			if lin.ALog != nil {
-				lin.AExp = mlx.Exp(lin.ALog.AsType(mlx.DTypeFloat32))
-			}
-
-			hasSplit := lin.InProjQKV != nil && lin.InProjZ != nil && lin.InProjB != nil && lin.InProjA != nil
-			hasCombined := lin.InProjQKVZ != nil && lin.InProjBA != nil
-			if (!hasSplit && !hasCombined) || lin.OutProj == nil {
-				return fmt.Errorf("layer %d: missing linear attention projections", i)
-			}
-			if convWeight == nil || lin.NormWeight == nil || lin.DtBias == nil || lin.ALog == nil || lin.AExp == nil {
-				return fmt.Errorf("layer %d: missing linear attention state tensors", i)
-			}
-			if convWeight.NumDims() != 2 {
-				return fmt.Errorf("layer %d: conv1d weight must be 2D after sanitization, got %dD", i, convWeight.NumDims())
-			}
-			// MLX grouped conv expects [Cout, K, Cin/groups]; for depthwise
-			// conv (groups=C) the [C, K] kernel becomes [C, K, 1].
-			lin.Conv1D = nn.NewConv1d(mlx.ExpandDims(convWeight, 2), nil, 1, 0, 1, int32(convWeight.Dim(0)))
-
-			layer.Linear = lin
-		} else {
-			attn := &FullAttention{}
-			attn.QProj = linears.Make(layerPrefix + ".self_attn.q_proj")
-			attn.KProj = linears.Make(layerPrefix + ".self_attn.k_proj")
-			attn.VProj = linears.Make(layerPrefix + ".self_attn.v_proj")
-			attn.OProj = linears.Make(layerPrefix + ".self_attn.o_proj")
-
-			if w := maybeShiftNormWeight(layerPrefix+".self_attn.q_norm.weight", tensors[layerPrefix+".self_attn.q_norm.weight"], shouldShiftNormWeights); w != nil {
-				attn.QNorm = nn.NewRMSNorm(w, cfg.RMSNormEps)
-			}
-			if w := maybeShiftNormWeight(layerPrefix+".self_attn.k_norm.weight", tensors[layerPrefix+".self_attn.k_norm.weight"], shouldShiftNormWeights); w != nil {
-				attn.KNorm = nn.NewRMSNorm(w, cfg.RMSNormEps)
-			}
-
-			if attn.QProj == nil || attn.KProj == nil || attn.VProj == nil || attn.OProj == nil {
-				return fmt.Errorf("layer %d: missing full attention projections", i)
-			}
-			if attn.QNorm == nil || attn.KNorm == nil {
-				return fmt.Errorf("layer %d: missing full attention q/k norms", i)
-			}
-			layer.FullAttn = attn
-		}
-
-		if layerUsesMoE(cfg, i) {
-			moe := &SparseMoE{}
-			moe.Gate = linears.Make(layerPrefix + ".mlp.gate")
-			if moe.Gate == nil {
-				return fmt.Errorf("layer %d: missing moe gate", i)
-			}
-
-			gateW := loadStackedProjection(tensors, cfg, useQuantizedExperts,
-				layerPrefix+".mlp.switch_mlp.gate_proj",
-				layerPrefix+".mlp.experts.gate_proj",
-			)
-			upW := loadStackedProjection(tensors, cfg, useQuantizedExperts,
-				layerPrefix+".mlp.switch_mlp.up_proj",
-				layerPrefix+".mlp.experts.up_proj",
-			)
-			downW := loadStackedProjection(tensors, cfg, useQuantizedExperts,
-				layerPrefix+".mlp.switch_mlp.down_proj",
-				layerPrefix+".mlp.experts.down_proj",
-			)
-			if gateW == nil || upW == nil || downW == nil {
-				g2, u2, d2 := splitGateUpProjection(tensors, cfg, useQuantizedExperts, layerPrefix)
-				if gateW == nil {
-					gateW = g2
-				}
-				if upW == nil {
-					upW = u2
-				}
-				if downW == nil {
-					downW = d2
-				}
-			}
-			if gateW == nil || upW == nil || downW == nil {
-				gateW = collectPerExpertProjection(tensors, cfg, useQuantizedExperts, layerPrefix, "gate_proj", cfg.NumExperts)
-				upW = collectPerExpertProjection(tensors, cfg, useQuantizedExperts, layerPrefix, "up_proj", cfg.NumExperts)
-				downW = collectPerExpertProjection(tensors, cfg, useQuantizedExperts, layerPrefix, "down_proj", cfg.NumExperts)
-			}
-
-			if gateW == nil || upW == nil || downW == nil {
-				return fmt.Errorf("layer %d: missing switch expert weights", i)
-			}
-
-			switchMLP := &SwitchMLP{}
-			if gateW.Scales != nil && upW.Scales != nil && downW.Scales != nil {
-				switchMLP.UseQuantized = true
-				switchMLP.GateWeightQ = gateW.Weight
-				switchMLP.GateScales = gateW.Scales
-				switchMLP.GateBiases = gateW.Biases
-				switchMLP.GateBits = gateW.Bits
-				switchMLP.GateGroupSize = gateW.GroupSize
-				switchMLP.UpWeightQ = upW.Weight
-				switchMLP.UpScales = upW.Scales
-				switchMLP.UpBiases = upW.Biases
-				switchMLP.UpBits = upW.Bits
-				switchMLP.UpGroupSize = upW.GroupSize
-				switchMLP.DownWeightQ = downW.Weight
-				switchMLP.DownScales = downW.Scales
-				switchMLP.DownBiases = downW.Biases
-				switchMLP.DownBits = downW.Bits
-				switchMLP.DownGroupSize = downW.GroupSize
-			} else {
-				switchMLP.GateWeight = transposeExpertWeightForGatherMM(gateW.Weight)
-				switchMLP.UpWeight = transposeExpertWeightForGatherMM(upW.Weight)
-				switchMLP.DownWeight = transposeExpertWeightForGatherMM(downW.Weight)
-				moeLoadSummaries = append(moeLoadSummaries,
-					fmt.Sprintf(
-						"layer=%d moe_fallback reason=%s %s %s %s",
-						i,
-						summarizeMoEFallbackReason(gateW, upW, downW),
-						describeMoEProjection("gate", gateW),
-						describeMoEProjection("up", upW),
-						describeMoEProjection("down", downW),
-					),
-				)
-			}
-			if switchMLP.UseQuantized {
-				moeLoadSummaries = append(moeLoadSummaries,
-					fmt.Sprintf(
-						"layer=%d moe_quantized %s %s %s",
-						i,
-						describeMoEProjection("gate", gateW),
-						describeMoEProjection("up", upW),
-						describeMoEProjection("down", downW),
-					),
-				)
-			}
-			moe.SwitchMLP = switchMLP
-
-			sharedGateProj := linears.Make(layerPrefix + ".mlp.shared_expert.gate_proj")
-			sharedUpProj := linears.Make(layerPrefix + ".mlp.shared_expert.up_proj")
-			sharedDownProj := linears.Make(layerPrefix + ".mlp.shared_expert.down_proj")
-			if sharedGateProj != nil && sharedUpProj != nil && sharedDownProj != nil {
-				moe.SharedExpert = &DenseMLP{
-					GateProj: sharedGateProj,
-					UpProj:   sharedUpProj,
-					DownProj: sharedDownProj,
-				}
-				moe.SharedExpertGate = linears.Make(layerPrefix + ".mlp.shared_expert_gate")
-			}
-
-			layer.MLP = moe
-		} else {
-			mlp := &DenseMLP{
-				GateProj: linears.Make(layerPrefix + ".mlp.gate_proj"),
-				UpProj:   linears.Make(layerPrefix + ".mlp.up_proj"),
-				DownProj: linears.Make(layerPrefix + ".mlp.down_proj"),
-			}
-			if mlp.GateProj == nil || mlp.UpProj == nil || mlp.DownProj == nil {
-				return fmt.Errorf("layer %d: missing dense mlp projections", i)
-			}
-			layer.MLP = mlp
-		}
-
 		m.Layers[i] = layer
 	}
-	for _, summary := range moeLoadSummaries {
-		slog.Debug("qwen3.5 moe load", "summary", summary)
+
+	// Load the MTP head only when its tensors are present: a config may declare
+	// num_nextn_predict_layers while a package ships without them. mtp.* names
+	// carry no container prefix.
+	if fc, _ := tensorByBase(tensors, "mtp.fc"); fc != nil {
+		if err := m.loadMTPHead(linears, tensors, useQuantizedExperts, shouldShiftNormWeights); err != nil {
+			return err
+		}
 	}
 
+	return m.loadVisionWeights(tensors, linears)
+}
+
+// loadLayer builds a decoder layer from tensors at layerPrefix. It serves both
+// the main stack and the MTP head's single full-attention layer.
+func loadLayer(linears model.LinearFactory, tensors map[string]*mlx.Array, cfg *Config, layerPrefix string, isLinear, useMoE, useQuantizedExperts, shiftNorms bool) (*Layer, error) {
+	layer := &Layer{IsLinear: isLinear}
+
+	layer.InputNorm = loadNorm(tensors, layerPrefix+".input_layernorm.weight", shiftNorms, cfg.RMSNormEps)
+	layer.PostAttentionNorm = loadNorm(tensors, layerPrefix+".post_attention_layernorm.weight", shiftNorms, cfg.RMSNormEps)
+	if layer.InputNorm == nil || layer.PostAttentionNorm == nil {
+		return nil, fmt.Errorf("layer %s: missing layer norms", layerPrefix)
+	}
+
+	if isLinear {
+		lin := &GatedDeltaNet{}
+		var err error
+		lin.InProjQKVZ, lin.InProjBA, err = packGatedDeltaProjections(
+			linears.Make(layerPrefix+".linear_attn.in_proj_qkv"),
+			linears.Make(layerPrefix+".linear_attn.in_proj_z"),
+			linears.Make(layerPrefix+".linear_attn.in_proj_b"),
+			linears.Make(layerPrefix+".linear_attn.in_proj_a"),
+			linears.Make(layerPrefix+".linear_attn.in_proj_qkvz"),
+			linears.Make(layerPrefix+".linear_attn.in_proj_ba"),
+			cfg,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("layer %s: %w", layerPrefix, err)
+		}
+		lin.OutProj = linears.Make(layerPrefix + ".linear_attn.out_proj")
+
+		convWeight := sanitizeConvWeight(tensors[layerPrefix+".linear_attn.conv1d.weight"])
+		if convWeight == nil {
+			convWeight = sanitizeConvWeight(tensors[layerPrefix+".linear_attn.conv1d"])
+		}
+		lin.NormWeight, _ = tensorAny(tensors,
+			layerPrefix+".linear_attn.norm.weight",
+			layerPrefix+".linear_attn.norm",
+		)
+		lin.DtBias, _ = tensorAny(tensors,
+			layerPrefix+".linear_attn.dt_bias",
+			layerPrefix+".linear_attn.dt_proj",
+		)
+		lin.ALog, _ = tensorAny(tensors,
+			layerPrefix+".linear_attn.A_log",
+			layerPrefix+".linear_attn.a_log",
+		)
+		if lin.ALog != nil {
+			lin.AExp = mlx.Exp(lin.ALog.AsType(mlx.DTypeFloat32))
+		}
+
+		if lin.OutProj == nil {
+			return nil, fmt.Errorf("layer %s: missing linear attention projections", layerPrefix)
+		}
+		if convWeight == nil || lin.NormWeight == nil || lin.DtBias == nil || lin.ALog == nil || lin.AExp == nil {
+			return nil, fmt.Errorf("layer %s: missing linear attention state tensors", layerPrefix)
+		}
+		if convWeight.NumDims() != 2 {
+			return nil, fmt.Errorf("layer %s: conv1d weight must be 2D after sanitization, got %dD", layerPrefix, convWeight.NumDims())
+		}
+		// MLX grouped conv expects [Cout, K, Cin/groups]; for depthwise
+		// conv (groups=C) the [C, K] kernel becomes [C, K, 1].
+		lin.Conv1D = nn.NewConv1d(mlx.ExpandDims(convWeight, 2), nil, 1, 0, 1, int32(convWeight.Dim(0)))
+
+		layer.Linear = lin
+	} else {
+		attn := &FullAttention{}
+		attn.QProj = linears.Make(layerPrefix + ".self_attn.q_proj")
+		attn.KProj = linears.Make(layerPrefix + ".self_attn.k_proj")
+		attn.VProj = linears.Make(layerPrefix + ".self_attn.v_proj")
+		attn.OProj = linears.Make(layerPrefix + ".self_attn.o_proj")
+
+		attn.QNorm = loadNorm(tensors, layerPrefix+".self_attn.q_norm.weight", shiftNorms, cfg.RMSNormEps)
+		attn.KNorm = loadNorm(tensors, layerPrefix+".self_attn.k_norm.weight", shiftNorms, cfg.RMSNormEps)
+
+		if attn.QProj == nil || attn.KProj == nil || attn.VProj == nil || attn.OProj == nil {
+			return nil, fmt.Errorf("layer %s: missing full attention projections", layerPrefix)
+		}
+		if attn.QNorm == nil || attn.KNorm == nil {
+			return nil, fmt.Errorf("layer %s: missing full attention q/k norms", layerPrefix)
+		}
+		layer.FullAttn = attn
+	}
+
+	if useMoE {
+		moe := &SparseMoE{}
+		moe.Gate = linears.Make(layerPrefix + ".mlp.gate")
+		if moe.Gate == nil {
+			return nil, fmt.Errorf("layer %s: missing moe gate", layerPrefix)
+		}
+
+		switchMLP, err := loadSwitchMLP(tensors, cfg, useQuantizedExperts, layerPrefix)
+		if err != nil {
+			return nil, fmt.Errorf("layer %s: %w", layerPrefix, err)
+		}
+		moe.SwitchMLP = switchMLP
+
+		sharedGateProj := linears.Make(layerPrefix + ".mlp.shared_expert.gate_proj")
+		sharedUpProj := linears.Make(layerPrefix + ".mlp.shared_expert.up_proj")
+		sharedDownProj := linears.Make(layerPrefix + ".mlp.shared_expert.down_proj")
+		if sharedGateProj != nil && sharedUpProj != nil && sharedDownProj != nil {
+			moe.SharedExpert = &DenseMLP{
+				GateProj: sharedGateProj,
+				UpProj:   sharedUpProj,
+				DownProj: sharedDownProj,
+			}
+			moe.SharedExpertGate = linears.Make(layerPrefix + ".mlp.shared_expert_gate")
+		}
+
+		layer.MLP = moe
+	} else {
+		mlp := &DenseMLP{
+			GateProj: linears.Make(layerPrefix + ".mlp.gate_proj"),
+			UpProj:   linears.Make(layerPrefix + ".mlp.up_proj"),
+			DownProj: linears.Make(layerPrefix + ".mlp.down_proj"),
+		}
+		if mlp.GateProj == nil || mlp.UpProj == nil || mlp.DownProj == nil {
+			return nil, fmt.Errorf("layer %s: missing dense mlp projections", layerPrefix)
+		}
+		layer.MLP = mlp
+	}
+
+	return layer, nil
+}
+
+// loadMTPHead builds the MTP head from the mtp.* tensors. Its single decoder
+// layer is full attention even when the main stack is hybrid; lm_head and
+// embeddings are shared with the target.
+func (m *Model) loadMTPHead(linears model.LinearFactory, tensors map[string]*mlx.Array, useQuantizedExperts, shiftNorms bool) error {
+	cfg := m.Config
+	mtpPrefix := "mtp."
+
+	head := &MTPHead{}
+	head.Enorm = loadNorm(tensors, mtpPrefix+"pre_fc_norm_embedding.weight", shiftNorms, cfg.RMSNormEps)
+	head.Hnorm = loadNorm(tensors, mtpPrefix+"pre_fc_norm_hidden.weight", shiftNorms, cfg.RMSNormEps)
+	head.FC = linears.Make(mtpPrefix + "fc")
+	head.Norm = loadNorm(tensors, mtpPrefix+"norm.weight", shiftNorms, cfg.RMSNormEps)
+	if head.Enorm == nil || head.Hnorm == nil || head.FC == nil || head.Norm == nil {
+		return fmt.Errorf("mtp head: missing enorm/hnorm/fc/norm tensors")
+	}
+
+	layer, err := loadLayer(linears, tensors, cfg, mtpPrefix+"layers.0", false, cfg.NumExperts > 0, useQuantizedExperts, shiftNorms)
+	if err != nil {
+		return err
+	}
+	head.Layer = layer
+
+	m.MTP = head
 	return nil
 }
 
-func softplus(x *mlx.Array) *mlx.Array {
-	return mlx.Logaddexp(x, mlx.Zeros(x.DType(), x.Dims()...))
-}
-
-func splitQKVZBA(mixedQKVZ, mixedBA *mlx.Array, cfg *Config, B, L int32) (q, k, v, z, beta, alpha *mlx.Array) {
-	nk := cfg.LinearNumKeyHeads
-	nv := cfg.LinearNumValueHeads
-	dk := cfg.LinearKeyHeadDim
-	dv := cfg.LinearValueHeadDim
-	vPerK := nv / nk
-
-	mixedQKVZ = mlx.Reshape(mixedQKVZ, B, L, nk, 2*dk+2*vPerK*dv)
-	q = mlx.SliceStartStop(mixedQKVZ, []int32{0, 0, 0, 0}, []int32{B, L, nk, dk})
-	k = mlx.SliceStartStop(mixedQKVZ, []int32{0, 0, 0, dk}, []int32{B, L, nk, 2 * dk})
-	v = mlx.SliceStartStop(mixedQKVZ, []int32{0, 0, 0, 2 * dk}, []int32{B, L, nk, 2*dk + vPerK*dv})
-	z = mlx.SliceStartStop(mixedQKVZ, []int32{0, 0, 0, 2*dk + vPerK*dv}, []int32{B, L, nk, 2*dk + 2*vPerK*dv})
-
-	v = mlx.Reshape(v, B, L, nv, dv)
-	z = mlx.Reshape(z, B, L, nv, dv)
-
-	mixedBA = mlx.Reshape(mixedBA, B, L, nk, 2*vPerK)
-	beta = mlx.SliceStartStop(mixedBA, []int32{0, 0, 0, 0}, []int32{B, L, nk, vPerK})
-	alpha = mlx.SliceStartStop(mixedBA, []int32{0, 0, 0, vPerK}, []int32{B, L, nk, 2 * vPerK})
-	beta = mlx.Reshape(beta, B, L, nv)
-	alpha = mlx.Reshape(alpha, B, L, nv)
-
-	return q, k, v, z, beta, alpha
-}
-
-func (a *FullAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
+func (a *FullAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config, mropeCos, mropeSin *mlx.Array) *mlx.Array {
 	qg := a.QProj.Forward(x)
 	qg = mlx.Reshape(qg, B, L, cfg.NumAttentionHeads, cfg.HeadDim*2)
 	q := mlx.SliceStartStop(qg, []int32{0, 0, 0, 0}, []int32{B, L, cfg.NumAttentionHeads, cfg.HeadDim})
@@ -1099,8 +1060,13 @@ func (a *FullAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, pos
 	k = mlx.Transpose(k, 0, 2, 1, 3)
 	v = mlx.Transpose(v, 0, 2, 1, 3)
 
-	q = mlx.RoPEWithBase(q, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, positions)
-	k = mlx.RoPEWithBase(k, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, positions)
+	if mropeCos != nil {
+		q = applyMRoPE(q, mropeCos, mropeSin, cfg.RopeDim)
+		k = applyMRoPE(k, mropeCos, mropeSin, cfg.RopeDim)
+	} else {
+		q = mlx.RoPEWithBase(q, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, positions)
+		k = mlx.RoPEWithBase(k, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, positions)
+	}
 
 	var kv nn.SDPAOption
 	if c != nil {
@@ -1118,28 +1084,19 @@ func (a *FullAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, pos
 }
 
 func (g *GatedDeltaNet) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
-	var qkv, z, beta, alpha *mlx.Array
-	useSplitProj := g.InProjQKV != nil && g.InProjZ != nil && g.InProjB != nil && g.InProjA != nil
-	if useSplitProj {
-		qkv = g.InProjQKV.Forward(x)
-		z = g.InProjZ.Forward(x)
-		z = mlx.Reshape(z, B, L, cfg.LinearNumValueHeads, cfg.LinearValueHeadDim)
-		beta = g.InProjB.Forward(x)
-		alpha = g.InProjA.Forward(x)
-	} else {
-		mixedQKVZ := g.InProjQKVZ.Forward(x)
-		mixedBA := g.InProjBA.Forward(x)
-		var q, k, v *mlx.Array
-		q, k, v, z, beta, alpha = splitQKVZBA(mixedQKVZ, mixedBA, cfg, B, L)
-		qkv = mlx.Concatenate([]*mlx.Array{
-			mlx.Reshape(q, B, L, cfg.LinearNumKeyHeads*cfg.LinearKeyHeadDim),
-			mlx.Reshape(k, B, L, cfg.LinearNumKeyHeads*cfg.LinearKeyHeadDim),
-			mlx.Reshape(v, B, L, cfg.LinearNumValueHeads*cfg.LinearValueHeadDim),
-		}, -1)
-	}
+	keyDim := cfg.LinearNumKeyHeads * cfg.LinearKeyHeadDim
+	valueDim := cfg.LinearNumValueHeads * cfg.LinearValueHeadDim
+	qkvDim := 2*keyDim + valueDim
+
+	mixedQKVZ := g.InProjQKVZ.Forward(x)
+	mixedBA := g.InProjBA.Forward(x)
+	qkv := mlx.SliceStartStop(mixedQKVZ, []int32{0, 0, 0}, []int32{B, L, qkvDim})
+	z := mlx.SliceStartStop(mixedQKVZ, []int32{0, 0, qkvDim}, []int32{B, L, qkvDim + valueDim})
+	z = mlx.Reshape(z, B, L, cfg.LinearNumValueHeads, cfg.LinearValueHeadDim)
 	convTail := cfg.LinearConvKernelDim - 1
 	var rc *cache.RecurrentCache
-	opts := make([]nn.RecurrentOption, 0, 2)
+	opts := make([]nn.RecurrentOption, 0, 3)
+	opts = append(opts, nn.WithConvSiLU())
 	if typed, ok := c.(*cache.RecurrentCache); ok {
 		rc = typed
 		opts = append(opts, nn.WithRecurrentHistory(rc.Get(b, x.DType())))
@@ -1157,28 +1114,7 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, 
 	}
 
 	convOut, convStates := nn.CausalConv1D(b, qkv, g.Conv1D, int(convTail), opts...)
-	convOut = mlx.SiLU(convOut)
-
-	keyDim := cfg.LinearNumKeyHeads * cfg.LinearKeyHeadDim
-	valueDim := cfg.LinearNumValueHeads * cfg.LinearValueHeadDim
-	q := mlx.SliceStartStop(convOut, []int32{0, 0, 0}, []int32{B, L, keyDim})
-	k := mlx.SliceStartStop(convOut, []int32{0, 0, keyDim}, []int32{B, L, 2 * keyDim})
-	v := mlx.SliceStartStop(convOut, []int32{0, 0, 2 * keyDim}, []int32{B, L, 2*keyDim + valueDim})
-	q = mlx.Reshape(q, B, L, cfg.LinearNumKeyHeads, cfg.LinearKeyHeadDim)
-	k = mlx.Reshape(k, B, L, cfg.LinearNumKeyHeads, cfg.LinearKeyHeadDim)
-	v = mlx.Reshape(v, B, L, cfg.LinearNumValueHeads, cfg.LinearValueHeadDim)
-	invScale := float32(1.0 / math.Sqrt(float64(cfg.LinearKeyHeadDim)))
-	q = mlx.MulScalar(mlx.RMSNormFn(q, nil, 1e-6), invScale*invScale)
-	k = mlx.MulScalar(mlx.RMSNormFn(k, nil, 1e-6), invScale)
-
-	gDecay := softplus(mlx.Add(alpha, g.DtBias))
-	gDecay = mlx.Mul(gDecay, g.AExp)
-	gDecay = mlx.Exp(mlx.MulScalar(gDecay, -1))
-	gDecay = gDecay.AsType(alpha.DType())
-
-	betaGate := mlx.Sigmoid(beta)
-
-	out, deltaStates := nn.GatedDelta(b, q, k, v, gDecay, betaGate, opts...)
+	out, deltaStates := nn.GatedDelta(b, convOut, mixedBA, g.DtBias, g.AExp, opts...)
 	outDType := out.DType()
 	out = mlx.RMSNormFn(out, g.NormWeight, cfg.RMSNormEps)
 	out = mlx.Mul(out.AsType(mlx.DTypeFloat32), mlx.SiLU(z.AsType(mlx.DTypeFloat32))).AsType(outDType)
@@ -1215,19 +1151,19 @@ func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.
 		idxFlat = mlx.Reshape(mlx.Take(idxAll, order, 0), n, 1)
 	}
 
-	var gate, up, hidden, down *mlx.Array
-	if s.UseQuantized {
-		gate = mlx.GatherQMM(xFlat, s.GateWeightQ, s.GateScales, s.GateBiases,
-			nil, idxFlat, true, s.GateGroupSize, s.GateBits, cfg.QuantMode, doSort)
-		up = mlx.GatherQMM(xFlat, s.UpWeightQ, s.UpScales, s.UpBiases,
-			nil, idxFlat, true, s.UpGroupSize, s.UpBits, cfg.QuantMode, doSort)
-		hidden = mlx.SwiGLU(gate, up)
-		down = mlx.GatherQMM(hidden, s.DownWeightQ, s.DownScales, s.DownBiases,
-			nil, idxFlat, true, s.DownGroupSize, s.DownBits, cfg.QuantMode, doSort)
+	var gateUp, down *mlx.Array
+	if s.GateUpWeightQ != nil {
+		gateUp = mlx.GatherQMM(xFlat, s.GateUpWeightQ, s.GateUpScales, s.GateUpBias,
+			nil, idxFlat, true, s.GateUpGroupSize, s.GateUpBits, s.GateUpMode, doSort)
 	} else {
-		gate = mlx.GatherMM(xFlat, s.GateWeight, nil, idxFlat, doSort)
-		up = mlx.GatherMM(xFlat, s.UpWeight, nil, idxFlat, doSort)
-		hidden = mlx.SwiGLU(gate, up)
+		gateUp = mlx.GatherMM(xFlat, s.GateUpWeight, nil, idxFlat, doSort)
+	}
+	gate, up := splitLastAxisHalves(gateUp)
+	hidden := mlx.SwiGLU(gate, up)
+	if s.DownWeightQ != nil {
+		down = mlx.GatherQMM(hidden, s.DownWeightQ, s.DownScales, s.DownBiases,
+			nil, idxFlat, true, s.DownGroupSize, s.DownBits, s.DownMode, doSort)
+	} else {
 		down = mlx.GatherMM(hidden, s.DownWeight, nil, idxFlat, doSort)
 	}
 
@@ -1270,38 +1206,102 @@ func (m *SparseMoE) Forward(x *mlx.Array, cfg *Config) *mlx.Array {
 	return mlx.Reshape(y, B, L, cfg.HiddenSize)
 }
 
-func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
+func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config, mropeCos, mropeSin *mlx.Array) *mlx.Array {
 	var r *mlx.Array
 	normed := l.InputNorm.Forward(x, cfg.RMSNormEps)
 	if l.IsLinear {
 		r = l.Linear.Forward(normed, b, c, B, L, cfg)
 	} else {
-		r = l.FullAttn.Forward(normed, b, c, positions, B, L, cfg)
+		r = l.FullAttn.Forward(normed, b, c, positions, B, L, cfg, mropeCos, mropeSin)
 	}
 	h := mlx.Add(x, r)
 	r = l.MLP.Forward(l.PostAttentionNorm.Forward(h, cfg.RMSNormEps), cfg)
 	return mlx.Add(h, r)
 }
 
-func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
+func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
 
 	h := m.EmbedTokens.Forward(b.InputIDs)
+	if len(b.Media) > 0 {
+		h = m.scatterMedia(h, b, 0)
+	}
+
+	// One shared table pair per forward: every full-attention layer applies
+	// the same chunk positions.
+	var mropeCos, mropeSin *mlx.Array
+	if mp := ropePositions(b, L); mp != nil {
+		mropeCos, mropeSin = mropeCosSin(m.Config, mp, L)
+	}
+
 	for i, layer := range m.Layers {
 		var c cache.Cache
 		if caches != nil && i < len(caches) {
 			c = caches[i]
 		}
-		h = layer.Forward(h, b, c, positions, B, L, m.Config)
+		h = layer.Forward(h, b, c, positions, B, L, m.Config, mropeCos, mropeSin)
 	}
 	out := m.Norm.Forward(h, m.RMSNormEps)
-	return out
+	return out, out
 }
 
 func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 	return m.LMHead.Forward(x)
+}
+
+// mtpDraft is the model viewed as its own draft: the same struct, carrying
+// the DraftModel method set for the inline MTP head.
+type mtpDraft Model
+
+// NewCaches builds the MTP head's KV cache.
+func (m *mtpDraft) NewCaches() []cache.Cache {
+	if m.MTP == nil {
+		return nil
+	}
+	return []cache.Cache{cache.NewKVCache()}
+}
+
+// LoadWeights does nothing: an inline head's weights load with the target's.
+func (m *mtpDraft) LoadWeights(map[string]*mlx.Array) error { return nil }
+
+func (m *mtpDraft) Unembed(x *mlx.Array) *mlx.Array { return (*Model)(m).Unembed(x) }
+
+// SelfDraft returns the model's drafting view, or nil when no MTP head was
+// loaded. The methods exist either way, so this is what decides availability.
+func (m *Model) SelfDraft() base.DraftModel {
+	if m.MTP == nil {
+		return nil
+	}
+	return (*mtpDraft)(m)
+}
+
+// Forward runs one MTP step; the head's hidden also serves as the aux
+// hidden seeding the next step.
+func (m *mtpDraft) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (hidden, auxHidden *mlx.Array) {
+	dims := b.InputIDs.Dims()
+	B, L := int32(dims[0]), int32(dims[1])
+	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
+
+	raw := m.EmbedTokens.Forward(b.InputIDs)
+	if len(b.Media) > 0 {
+		// The pair at slot S embeds the look-ahead token S+1, so each row's
+		// column 0 holds the prompt token one past its offset.
+		raw = (*Model)(m).scatterMedia(raw, b, 1)
+	}
+	emb := m.MTP.Enorm.Forward(raw, m.RMSNormEps)
+	h := m.MTP.Hnorm.Forward(b.Hidden, m.RMSNormEps)
+	fused := m.MTP.FC.Forward(emb.Concatenate(-1, h))
+
+	var mropeCos, mropeSin *mlx.Array
+	if mp := ropePositions(b, L); mp != nil {
+		mropeCos, mropeSin = mropeCosSin(m.Config, mp, L)
+	}
+
+	out := m.MTP.Layer.Forward(fused, b, draftCaches[0], positions, B, L, m.Config, mropeCos, mropeSin)
+	hidden = m.MTP.Norm.Forward(out, m.RMSNormEps)
+	return hidden, hidden
 }
 
 func (m *Model) NumLayers() int {

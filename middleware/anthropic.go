@@ -15,7 +15,6 @@ import (
 
 	"github.com/ollama/ollama/anthropic"
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/envconfig"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
 	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/logutil"
@@ -114,8 +113,6 @@ type WebSearchAnthropicWriter struct {
 	streamOpenBlockIndex int
 	streamNextIndex      int
 }
-
-const maxWebSearchLoops = 3
 
 type webSearchLoopResult struct {
 	response anthropic.MessagesResponse
@@ -485,20 +482,6 @@ func (w *WebSearchAnthropicWriter) combineServerAndFinalContent(serverContent []
 	}
 }
 
-func buildWebSearchAssistantMessage(response api.ChatResponse, webSearchCall api.ToolCall) api.Message {
-	assistantMsg := api.Message{
-		Role:      "assistant",
-		ToolCalls: []api.ToolCall{webSearchCall},
-	}
-	if response.Message.Content != "" {
-		assistantMsg.Content = response.Message.Content
-	}
-	if response.Message.Thinking != "" {
-		assistantMsg.Thinking = response.Message.Thinking
-	}
-	return assistantMsg
-}
-
 func formatWebSearchResultsForToolMessage(results []anthropic.OllamaWebSearchResult) string {
 	var resultText strings.Builder
 	for _, r := range results {
@@ -511,25 +494,6 @@ func formatWebSearchResultsForToolMessage(results []anthropic.OllamaWebSearchRes
 	return resultText.String()
 }
 
-func findWebSearchToolCall(toolCalls []api.ToolCall) (api.ToolCall, bool, bool) {
-	var webSearchCall api.ToolCall
-	hasWebSearch := false
-	hasOtherTools := false
-
-	for _, toolCall := range toolCalls {
-		if toolCall.Function.Name == "web_search" {
-			if !hasWebSearch {
-				webSearchCall = toolCall
-				hasWebSearch = true
-			}
-			continue
-		}
-		hasOtherTools = true
-	}
-
-	return webSearchCall, hasWebSearch, hasOtherTools
-}
-
 func loopServerToolUseID(messageID string, loop int) string {
 	base := serverToolUseID(messageID)
 	if loop <= 1 {
@@ -539,53 +503,7 @@ func loopServerToolUseID(messageID string, loop int) string {
 }
 
 func (w *WebSearchAnthropicWriter) callFollowUpChat(ctx context.Context, messages []api.Message, tools api.Tools) (api.ChatResponse, error) {
-	streaming := false
-	followUp := api.ChatRequest{
-		Model:    w.chatReq.Model,
-		Messages: messages,
-		Stream:   &streaming,
-		Tools:    tools,
-		Options:  w.chatReq.Options,
-	}
-
-	body, err := json.Marshal(followUp)
-	if err != nil {
-		return api.ChatResponse{}, err
-	}
-
-	chatURL := envconfig.Host().String() + "/api/chat"
-	logutil.TraceContext(ctx, "anthropic middleware: followup request",
-		"url", chatURL,
-		"req", anthropic.TraceChatRequest(&followUp),
-	)
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", chatURL, bytes.NewReader(body))
-	if err != nil {
-		return api.ChatResponse{}, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(httpReq)
-	if err != nil {
-		return api.ChatResponse{}, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		logutil.TraceContext(ctx, "anthropic middleware: followup non-200 response",
-			"status", resp.StatusCode,
-			"response", strings.TrimSpace(string(respBody)),
-		)
-		return api.ChatResponse{}, fmt.Errorf("followup /api/chat returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
-	}
-
-	var chatResp api.ChatResponse
-	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
-		return api.ChatResponse{}, err
-	}
-	logutil.TraceContext(ctx, "anthropic middleware: followup decoded", "resp", anthropic.TraceChatResponse(chatResp))
-
-	return chatResp, nil
+	return doFollowUpChat(ctx, *w.chatReq, messages, tools)
 }
 
 func (w *WebSearchAnthropicWriter) writePassthroughStreamChunk(chatResponse api.ChatResponse) error {
@@ -913,18 +831,6 @@ func hasWebSearchTool(tools []anthropic.Tool) bool {
 
 func isCloudModelName(name string) bool {
 	return modelref.HasExplicitCloudSource(name)
-}
-
-// extractQueryFromToolCall extracts the search query from a web_search tool call
-func extractQueryFromToolCall(tc *api.ToolCall) string {
-	q, ok := tc.Function.Arguments.Get("query")
-	if !ok {
-		return ""
-	}
-	if s, ok := q.(string); ok {
-		return s
-	}
-	return ""
 }
 
 // writeSSE writes a Server-Sent Event

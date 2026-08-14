@@ -117,17 +117,15 @@ func TestAttentionMaskRelaxNoopRectsMatchCausal(t *testing.T) {
 		{"fully under causal", 5, 7, 0, 3},
 	}
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			m := CausalMask().Relax(0, tc.qLo, tc.qHi, tc.kLo, tc.kHi)
-			arr := m.AsArray(b, K, mlx.DTypeFloat32)
-			mlx.Eval(arr)
-			got := arr.Floats()
-			for i := range wantF {
-				if !sameF(got[i], wantF[i]) {
-					t.Fatalf("index %d: want %v, got %v", i, wantF[i], got[i])
-				}
+		m := CausalMask().Relax(0, tc.qLo, tc.qHi, tc.kLo, tc.kHi)
+		arr := m.AsArray(b, K, mlx.DTypeFloat32)
+		mlx.Eval(arr)
+		got := arr.Floats()
+		for i := range wantF {
+			if !sameF(got[i], wantF[i]) {
+				t.Fatalf("%s index %d: want %v, got %v", tc.name, i, wantF[i], got[i])
 			}
-		})
+		}
 	}
 }
 

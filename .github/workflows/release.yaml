@@ -93,6 +93,7 @@ jobs:
   windows-depends:
     needs: setup-environment
     strategy:
+      fail-fast: false
       matrix:
         os: [windows]
         arch: [amd64]
@@ -214,8 +215,18 @@ jobs:
         name: Install CUDA ${{ matrix.cuda-version }}
         run: |
           $ErrorActionPreference = "Stop"
+          $ProgressPreference = 'SilentlyContinue'
           if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
-            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              try {
+                Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+                break
+              } catch {
+                if ($attempt -eq 3) { throw }
+                Write-Host "CUDA installer download attempt $attempt failed: $($_.Exception.Message); retrying in 15s"
+                Start-Sleep -Seconds 15
+              }
+            }
             $subpackages = @(${{ join(matrix.cuda-components, ', ') }}) | Foreach-Object {"${_}_${{ matrix.cuda-version }}"}
             Start-Process -FilePath .\install.exe -ArgumentList (@("-s") + $subpackages) -NoNewWindow -Wait
           }
@@ -450,6 +461,7 @@ jobs:
 
   linux-depends:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - arch: amd64
@@ -531,6 +543,7 @@ jobs:
   # and just assembles, runs the Go build, pushes the final image, and extracts release bundles.
   docker-build-push:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: linux
@@ -681,6 +694,7 @@ jobs:
   # Merge Docker images for the same flavor into a single multi-arch manifest
   docker-merge-push:
     strategy:
+      fail-fast: false
       matrix:
         suffix: ['', '-rocm']
     runs-on: linux
