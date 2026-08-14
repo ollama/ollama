@@ -748,6 +748,9 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				// Emit chunks that carry logprobs even if the parser is still buffering
 				// visible content, otherwise generate logprobs disappear for models with
 				// builtin thinking/tool parsers.
+				if os.Getenv("OLLAMA_NO_THINK") == "true" {
+					res.Thinking = ""
+				}
 				if res.Response != "" || res.Thinking != "" || res.Done || len(res.ToolCalls) > 0 || len(res.Logprobs) > 0 {
 					ch <- res
 				}
@@ -755,7 +758,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				return
 			}
 
-			ch <- res
+			if os.Getenv("OLLAMA_NO_THINK") == "true" {
+				res.Thinking = ""
+			}
+			if res.Response != "" || res.Thinking != "" || res.Done || len(res.ToolCalls) > 0 || len(res.Logprobs) > 0 {
+				ch <- res
+			}
 		}); err != nil {
 			s.sched.expireRunnersForRuntimeOOM(m, err)
 			var serr api.StatusError
@@ -2861,6 +2869,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					}
 
 					if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || r.Done || len(res.Logprobs) > 0 {
+						if os.Getenv("OLLAMA_NO_THINK") == "true" {
+							res.Message.Thinking = ""
+						}
 						slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser output", "parser", m.Config.Parser, "content", content, "thinking", thinking, "toolCalls", toolCalls, "done", r.Done)
 						ch <- res
 					} else {
@@ -2917,8 +2928,13 @@ func (s *Server) ChatHandler(c *gin.Context) {
 						return
 					}
 				}
+				if os.Getenv("OLLAMA_NO_THINK") == "true" {
+					res.Message.Thinking = ""
+				}
 
-				ch <- res
+				if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || r.Done || len(res.Logprobs) > 0 {
+					ch <- res
+				}
 			})
 			if err != nil {
 				if structuredOutputsState == structuredOutputsState_ReadyToApply && strings.Contains(err.Error(), "context canceled") && c.Request.Context().Err() == nil {
