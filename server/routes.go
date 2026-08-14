@@ -263,6 +263,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	if os.Getenv("OLLAMA_NO_THINK") == "true" {
+		req.Think = &api.ThinkValue{Value: false}
+	}
+
 	modelRef, err := parseAndValidateModelRef(req.Model)
 	if err != nil {
 		writeModelRefParseError(c, err, http.StatusNotFound, fmt.Sprintf("model '%s' not found", req.Model))
@@ -2434,6 +2438,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
 		return
+	}
+
+	if os.Getenv("OLLAMA_NO_THINK") == "true" {
+		req.Think = &api.ThinkValue{Value: false}
 	}
 
 	modelRef, err := parseAndValidateModelRef(req.Model)
