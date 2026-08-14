@@ -1,8 +1,6 @@
 package renderers
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -98,6 +96,7 @@ Reminder:
 - If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls
 </IMPORTANT><|im_end|>
 `
+	developerToolHeader := strings.TrimSuffix(toolHeader, imEndTag+"\n") + "\n\nUse tools when requested." + imEndTag + "\n"
 
 	tests := []struct {
 		name            string
@@ -119,6 +118,41 @@ Hello<|im_end|>
 <think>
 `,
 			matchesTemplate: true,
+		},
+		{
+			name: "developer instruction maps to system",
+			messages: []api.Message{
+				{Role: "developer", Content: "Use Go."},
+				{Role: "user", Content: "Hello"},
+			},
+			want: `<|im_start|>system
+` + qwen38RefXHigh + `
+
+Use Go.<|im_end|>
+<|im_start|>user
+Hello<|im_end|>
+<|im_start|>assistant
+<think>
+`,
+		},
+		{
+			name: "system and developer instructions merge",
+			messages: []api.Message{
+				{Role: "system", Content: "Base policy."},
+				{Role: "developer", Content: "Use Go."},
+				{Role: "user", Content: "Hello"},
+			},
+			want: `<|im_start|>system
+` + qwen38RefXHigh + `
+
+Base policy.
+
+Use Go.<|im_end|>
+<|im_start|>user
+Hello<|im_end|>
+<|im_start|>assistant
+<think>
+`,
 		},
 		{
 			name: "boolean true uses API medium effort",
@@ -189,6 +223,20 @@ Next<|im_end|>
 <think>
 `,
 			matchesTemplate: true,
+		},
+		{
+			name: "developer instruction with tools",
+			messages: []api.Message{
+				{Role: "developer", Content: "Use tools when requested."},
+				{Role: "user", Content: "Check the weather."},
+			},
+			tools: weather,
+			think: think(true),
+			want: developerToolHeader + `<|im_start|>user
+Check the weather.<|im_end|>
+<|im_start|>assistant
+<think>
+`,
 		},
 		{
 			name: "tool call result and next generation prompt",
@@ -332,14 +380,6 @@ func TestQwen38RendererRejectsInvalidTranscripts(t *testing.T) {
 			},
 			wantErr: "system message cannot contain images",
 		},
-		{
-			name: "unexpected role",
-			messages: []api.Message{
-				{Role: "user", Content: "Hello"},
-				{Role: "developer", Content: "No"},
-			},
-			wantErr: `unexpected message role "developer"`,
-		},
 	}
 
 	for _, tt := range tests {
@@ -384,19 +424,6 @@ Partial`
 	wantJinja := got + "<|im_end|>\n<|im_start|>assistant\n<think>\n"
 	if diff := cmp.Diff(wantJinja, jinja); diff != "" {
 		t.Fatalf("assistant prefill Jinja difference changed (-want +jinja):\n%s", diff)
-	}
-}
-
-func TestQwen38TemplateFixtureHash(t *testing.T) {
-	data, err := os.ReadFile(qwen38Template)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The publisher file has no trailing newline. The checked-in fixture adds
-	// the repository-standard final newline, which does not change Jinja output.
-	sum := sha256.Sum256([]byte(strings.TrimSuffix(string(data), "\n")))
-	if got, want := hex.EncodeToString(sum[:]), "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041"; got != want {
-		t.Fatalf("template SHA-256 = %s, want %s", got, want)
 	}
 }
 

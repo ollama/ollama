@@ -2,6 +2,7 @@ package renderers
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/ollama/ollama/api"
@@ -132,6 +133,39 @@ func qwen38ReasoningInstructions(think *api.ThinkValue) (string, error) {
 	}
 }
 
+// Qwen3.8 has no developer role. Fold leading developer instructions into its
+// system turn so they retain precedence over user messages.
+func normalizeQwen38Messages(messages []api.Message) ([]api.Message, error) {
+	var instructionCount int
+	var hasDeveloper bool
+	var instructions []string
+	for _, message := range messages {
+		if message.Role != "system" && message.Role != "developer" {
+			break
+		}
+		if len(message.Images) > 0 {
+			return nil, fmt.Errorf("%s message cannot contain images", message.Role)
+		}
+		instructionCount++
+		hasDeveloper = hasDeveloper || message.Role == "developer"
+		if content := strings.TrimSpace(message.Content); content != "" {
+			instructions = append(instructions, content)
+		}
+	}
+
+	if !hasDeveloper {
+		return messages, nil
+	}
+
+	normalized := make([]api.Message, 0, len(messages)-instructionCount+1)
+	normalized = append(normalized, api.Message{
+		Role:    "system",
+		Content: strings.Join(instructions, "\n\n"),
+	})
+	normalized = append(normalized, messages[instructionCount:]...)
+	return normalized, nil
+}
+
 func (r *Qwen35Renderer) validateMessages(messages []api.Message) error {
 	if r.variant != qwen35Renderer38 {
 		return nil
@@ -166,8 +200,6 @@ func (r *Qwen35Renderer) validateMessages(messages []api.Message) error {
 				return fmt.Errorf("system message must be at the beginning")
 			}
 		case "user", "assistant", "tool":
-		default:
-			return fmt.Errorf("unexpected message role %q", message.Role)
 		}
 	}
 
@@ -175,6 +207,13 @@ func (r *Qwen35Renderer) validateMessages(messages []api.Message) error {
 }
 
 func (r *Qwen35Renderer) Render(messages []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error) {
+	if r.variant == qwen35Renderer38 {
+		var err error
+		messages, err = normalizeQwen38Messages(messages)
+		if err != nil {
+			return "", err
+		}
+	}
 	if err := r.validateMessages(messages); err != nil {
 		return "", err
 	}
@@ -305,6 +344,9 @@ func (r *Qwen35Renderer) Render(messages []api.Message, tools []api.Tool, think 
 			if i == len(messages)-1 || messages[i+1].Role != "tool" {
 				sb.WriteString(imEndTag + "\n")
 			}
+		} else if r.variant == qwen35Renderer38 && message.Role != "system" {
+			slog.Warn("unexpected message role", "renderer", "qwen3.8", "role", message.Role)
+			sb.WriteString(imStartTag + message.Role + "\n" + content + imEndTag + "\n")
 		}
 
 		// prefill at the end
