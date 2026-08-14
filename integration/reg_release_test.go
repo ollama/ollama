@@ -53,6 +53,7 @@ var (
 		"gemma4",
 		"gpt-oss:20b",
 		"qwen3.6:27b",
+		"qwen3.8:27b",
 	}
 	releaseAudioModels = []string{
 		"nemotron3:33b",
@@ -126,6 +127,7 @@ func init() {
 	registerEmbeddingCases(testModels(releaseEmbedModels))
 	registerVisionTextCases(testModels(releaseVisionTextModels))
 	registerToolCases(testModels(releaseToolsModels))
+	registerToolRouteCases(testModels(releaseToolsModels))
 	registerToolStressCases(testModels(releaseToolsModels))
 	registerVisionOCRDocumentCases(testModels(releaseVisionModels))
 	registerAudioTranscriptionCases(testModels(releaseAudioModels))

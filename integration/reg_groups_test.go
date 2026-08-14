@@ -120,6 +120,7 @@ func TestConcurrency(t *testing.T) {
 func TestTools(t *testing.T) {
 	runIntegrationGroup(t,
 		"tools",
+		"tools-routes",
 		"tools-stress",
 	)
 }
