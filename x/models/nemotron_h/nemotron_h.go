@@ -90,6 +90,7 @@ type Model struct {
 	imageStartTokenID int32
 	imageTokenID      int32
 	imageEndTokenID   int32
+	visionErr         error
 
 	tok *tokenizer.Tokenizer
 	*Config
@@ -310,40 +311,29 @@ func newModel(root *model.Root) (base.Model, error) {
 	}
 
 	var preprocessorData []byte
+	var visionErr error
 	if root.Manifest.GetConfigLayer("preprocessor_config.json") != nil {
 		data, err := root.Manifest.ReadConfig("preprocessor_config.json")
 		if err != nil {
-			return nil, fmt.Errorf("load preprocessor_config.json: %w", err)
+			visionErr = fmt.Errorf("load preprocessor_config.json: %w", err)
+		} else {
+			preprocessorData = data
 		}
-		preprocessorData = data
 	}
-	visionConfig, err := parseVisionConfig(configData, preprocessorData)
-	if err != nil {
-		return nil, err
+	var visionConfig *VisionConfig
+	if visionErr == nil {
+		visionConfig, visionErr = parseVisionConfig(configData, preprocessorData)
 	}
 
 	m := &Model{
-		Layers:       make([]*Layer, cfg.NumHiddenLayers),
-		Config:       &cfg,
-		tok:          tok,
-		VisionConfig: visionConfig,
+		Layers:    make([]*Layer, cfg.NumHiddenLayers),
+		Config:    &cfg,
+		tok:       tok,
+		visionErr: visionErr,
 	}
 	if visionConfig != nil {
-		m.VisionEncoder = &RadioVisionEncoder{}
-		m.Projector = &VisionProjector{}
-
-		var ok bool
-		if m.imageStartTokenID, ok = tok.GetSpecialToken(visionConfig.ImageStartToken); !ok {
-			return nil, fmt.Errorf("tokenizer is missing %s", visionConfig.ImageStartToken)
-		}
-		if m.imageTokenID, ok = tok.GetSpecialToken(visionConfig.ImageToken); !ok {
-			return nil, fmt.Errorf("tokenizer is missing %s", visionConfig.ImageToken)
-		}
-		if visionConfig.ImageTokenID > 0 && m.imageTokenID != visionConfig.ImageTokenID {
-			return nil, fmt.Errorf("tokenizer %s id = %d, config has %d", visionConfig.ImageToken, m.imageTokenID, visionConfig.ImageTokenID)
-		}
-		if m.imageEndTokenID, ok = tok.GetSpecialToken(visionConfig.ImageEndToken); !ok {
-			return nil, fmt.Errorf("tokenizer is missing %s", visionConfig.ImageEndToken)
+		if err := m.configureVision(visionConfig); err != nil {
+			m.visionErr = err
 		}
 	}
 	for i, typ := range cfg.LayerTypes {

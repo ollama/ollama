@@ -18,8 +18,6 @@ const (
 	nemotronVisionDefaultNumHeads         = int32(16)
 	nemotronVisionDefaultLayerNormEpsilon = float32(1e-6)
 	nemotronVisionDefaultProjectorNormEps = float32(1e-5)
-	nemotronVisionDefaultMinPatches       = 1024
-	nemotronVisionDefaultMaxPatches       = 13312
 	nemotronVisionDefaultMaxModelLen      = 16384
 	nemotronVisionReservedTokens          = 4
 )
@@ -46,10 +44,11 @@ type VisionConfig struct {
 }
 
 type RadioVisionEncoder struct {
-	PatchEmbed nn.LinearLayer
-	ClassToken *mlx.Array
-	Position   *mlx.Array
-	Layers     []*RadioVisionLayer
+	PatchEmbed       nn.LinearLayer
+	ClassToken       *mlx.Array
+	Position         *mlx.Array
+	PositionGridSize int32
+	Layers           []*RadioVisionLayer
 }
 
 type RadioVisionLayer struct {
@@ -107,8 +106,8 @@ func parseVisionConfig(configData, preprocessorData []byte) (*VisionConfig, erro
 		NumAttentionHeads: firstPositiveInt32(env.VisionConfig.NumHeads, nemotronVisionDefaultNumHeads),
 		LayerNormEps:      nemotronVisionDefaultLayerNormEpsilon,
 		ProjectorNormEps:  nemotronVisionDefaultProjectorNormEps,
-		MinNumPatches:     firstPositiveInt(env.VisionConfig.MinNumPatches, env.VisionConfig.Args.MinNumPatches, nemotronVisionDefaultMinPatches),
-		MaxNumPatches:     firstPositiveInt(env.VisionConfig.MaxNumPatches, env.VisionConfig.Args.MaxNumPatches, nemotronVisionDefaultMaxPatches),
+		MinNumPatches:     firstPositiveInt(env.VisionConfig.MinNumPatches, env.VisionConfig.Args.MinNumPatches),
+		MaxNumPatches:     firstPositiveInt(env.VisionConfig.MaxNumPatches, env.VisionConfig.Args.MaxNumPatches),
 		MaxModelLen:       nemotronVisionDefaultMaxModelLen,
 		Mean:              [3]float32{0.48145466, 0.4578275, 0.40821073},
 		Std:               [3]float32{0.26862954, 0.26130258, 0.27577711},
@@ -149,6 +148,12 @@ func parseVisionConfig(configData, preprocessorData []byte) (*VisionConfig, erro
 	}
 	if cfg.DownsampleFactor != 2 {
 		return nil, fmt.Errorf("unsupported RADIO downsample factor=%d", cfg.DownsampleFactor)
+	}
+	if cfg.MinNumPatches <= 0 || cfg.MaxNumPatches <= 0 {
+		return nil, fmt.Errorf("RADIO dynamic resolution requires min_num_patches and max_num_patches")
+	}
+	if cfg.MinNumPatches > cfg.MaxNumPatches {
+		return nil, fmt.Errorf("RADIO min_num_patches (%d) exceeds max_num_patches (%d)", cfg.MinNumPatches, cfg.MaxNumPatches)
 	}
 	return cfg, nil
 }
@@ -220,6 +225,32 @@ func setTriplet(dst []float32, src []float32, name string) error {
 	return nil
 }
 
+func (m *Model) configureVision(cfg *VisionConfig) error {
+	imageStartTokenID, ok := m.tok.GetSpecialToken(cfg.ImageStartToken)
+	if !ok {
+		return fmt.Errorf("tokenizer is missing %s", cfg.ImageStartToken)
+	}
+	imageTokenID, ok := m.tok.GetSpecialToken(cfg.ImageToken)
+	if !ok {
+		return fmt.Errorf("tokenizer is missing %s", cfg.ImageToken)
+	}
+	if cfg.ImageTokenID > 0 && imageTokenID != cfg.ImageTokenID {
+		return fmt.Errorf("tokenizer %s id = %d, config has %d", cfg.ImageToken, imageTokenID, cfg.ImageTokenID)
+	}
+	imageEndTokenID, ok := m.tok.GetSpecialToken(cfg.ImageEndToken)
+	if !ok {
+		return fmt.Errorf("tokenizer is missing %s", cfg.ImageEndToken)
+	}
+
+	m.VisionConfig = cfg
+	m.VisionEncoder = &RadioVisionEncoder{}
+	m.Projector = &VisionProjector{}
+	m.imageStartTokenID = imageStartTokenID
+	m.imageTokenID = imageTokenID
+	m.imageEndTokenID = imageEndTokenID
+	return nil
+}
+
 func (m *Model) loadVisionWeights(tensors map[string]*mlx.Array, linears model.LinearFactory) error {
 	visionPrefix := resolveVisionPrefix(tensors)
 	if visionPrefix == "" {
@@ -233,6 +264,11 @@ func (m *Model) loadVisionWeights(tensors map[string]*mlx.Array, linears model.L
 	if ve.PatchEmbed == nil || ve.ClassToken == nil || ve.Position == nil {
 		return fmt.Errorf("missing RADIO patch generator weights")
 	}
+	positionGridSize, err := radioPositionGridSize(ve.Position)
+	if err != nil {
+		return err
+	}
+	ve.PositionGridSize = positionGridSize
 
 	cfg := m.VisionConfig
 	ve.Layers = make([]*RadioVisionLayer, cfg.NumHiddenLayers)
@@ -305,7 +341,7 @@ func (m *Model) forwardVision(pixelValues *mlx.Array) *mlx.Array {
 	patchW := W / cfg.PatchSize
 
 	h := ve.PatchEmbed.Forward(radioPatchify(pixelValues, cfg.PatchSize))
-	h = mlx.Add(h, radioPositionEmbedding(ve.Position, patchH, patchW))
+	h = mlx.Add(h, radioPositionEmbedding(ve.Position, ve.PositionGridSize, patchH, patchW))
 	cls := mlx.ExpandDims(ve.ClassToken, 0)
 	if B > 1 {
 		cls = mlx.Tile(cls, []int32{B, 1, 1})
@@ -341,7 +377,8 @@ func radioVisionLayerForward(layer *RadioVisionLayer, x *mlx.Array, B int32, cfg
 	attn := radioAttentionForward(layer, normed, B, S, cfg)
 	h := mlx.Add(x, attn)
 	mlp := layer.FC1.Forward(layer.Norm2.Forward(h))
-	mlp = mlx.GELUApprox(mlp)
+	mlpDType := mlp.DType()
+	mlp = mlx.GELU(mlp.AsType(mlx.DTypeFloat32)).AsType(mlpDType)
 	mlp = layer.FC2.Forward(mlp)
 	return mlx.Add(h, mlp)
 }
@@ -388,15 +425,25 @@ func radioPixelShuffle(x *mlx.Array, factor int32) *mlx.Array {
 	return mlx.Transpose(x, 0, 2, 1, 3)
 }
 
-func radioPositionEmbedding(pos *mlx.Array, patchH, patchW int32) *mlx.Array {
+func radioPositionGridSize(pos *mlx.Array) (int32, error) {
 	dims := pos.Dims()
+	if len(dims) < 2 {
+		return 0, fmt.Errorf("RADIO position embedding has %d dimensions, want at least 2", len(dims))
+	}
 	numPositions := dims[len(dims)-2]
-	hidden := int32(dims[len(dims)-1])
+	if numPositions <= 0 {
+		return 0, fmt.Errorf("RADIO position embedding has no positions")
+	}
 	src := int32(math.Round(math.Sqrt(float64(numPositions))))
 	if int(src*src) != numPositions {
-		panic("RADIO position embedding is not square")
+		return 0, fmt.Errorf("RADIO position embedding has %d positions, want a square grid", numPositions)
 	}
+	return src, nil
+}
 
+func radioPositionEmbedding(pos *mlx.Array, src, patchH, patchW int32) *mlx.Array {
+	dims := pos.Dims()
+	hidden := int32(dims[len(dims)-1])
 	grid := mlx.Reshape(pos, 1, src, src, hidden)
 	target := max(patchH, patchW)
 	if target != src {
@@ -413,23 +460,28 @@ func radioPositionEmbedding(pos *mlx.Array, patchH, patchW int32) *mlx.Array {
 }
 
 func resizeGrid2D(x *mlx.Array, outH, outW int32) *mlx.Array {
+	if int32(x.Dim(1)) == outH && int32(x.Dim(2)) == outW {
+		return x
+	}
+	dtype := x.DType()
+	x = x.AsType(mlx.DTypeFloat32)
 	if inH := int32(x.Dim(1)); inH != outH {
 		lo, hi, loWeight, hiWeight := linearResizeWeights(inH, outH)
 		loX := mlx.Take(x, mlx.NewArrayInt32(lo, []int32{outH}), 1)
 		hiX := mlx.Take(x, mlx.NewArrayInt32(hi, []int32{outH}), 1)
-		loW := mlx.FromValues(loWeight, 1, int(outH), 1, 1).AsType(x.DType())
-		hiW := mlx.FromValues(hiWeight, 1, int(outH), 1, 1).AsType(x.DType())
+		loW := mlx.FromValues(loWeight, 1, int(outH), 1, 1)
+		hiW := mlx.FromValues(hiWeight, 1, int(outH), 1, 1)
 		x = mlx.Add(mlx.Mul(loX, loW), mlx.Mul(hiX, hiW))
 	}
 	if inW := int32(x.Dim(2)); inW != outW {
 		lo, hi, loWeight, hiWeight := linearResizeWeights(inW, outW)
 		loX := mlx.Take(x, mlx.NewArrayInt32(lo, []int32{outW}), 2)
 		hiX := mlx.Take(x, mlx.NewArrayInt32(hi, []int32{outW}), 2)
-		loW := mlx.FromValues(loWeight, 1, 1, int(outW), 1).AsType(x.DType())
-		hiW := mlx.FromValues(hiWeight, 1, 1, int(outW), 1).AsType(x.DType())
+		loW := mlx.FromValues(loWeight, 1, 1, int(outW), 1)
+		hiW := mlx.FromValues(hiWeight, 1, 1, int(outW), 1)
 		x = mlx.Add(mlx.Mul(loX, loW), mlx.Mul(hiX, hiW))
 	}
-	return x
+	return x.AsType(dtype)
 }
 
 func linearResizeWeights(in, out int32) ([]int32, []int32, []float32, []float32) {

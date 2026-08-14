@@ -29,11 +29,14 @@ func (m *Model) PrepareMedia(segments []base.Segment) (*base.PreparedRequest, er
 			prepared.Tokens = append(prepared.Tokens, seg.Tokens...)
 			continue
 		}
-		if m.VisionEncoder == nil || m.Projector == nil || m.VisionConfig == nil {
-			return nil, fmt.Errorf("this model does not support %s input", seg.Kind)
-		}
 		if seg.Kind != "image" {
 			return nil, fmt.Errorf("nemotron_h does not support %s input", seg.Kind)
+		}
+		if m.VisionEncoder == nil || m.Projector == nil || m.VisionConfig == nil {
+			if m.visionErr != nil {
+				return nil, fmt.Errorf("nemotron_h vision is unavailable: %w", m.visionErr)
+			}
+			return nil, fmt.Errorf("this model does not support %s input", seg.Kind)
 		}
 
 		pixels, height, width, err := m.preprocessImage(seg.Data, nemotronImagePatchBudget(m.VisionConfig))
@@ -65,7 +68,7 @@ func (m *Model) PrepareMedia(segments []base.Segment) (*base.PreparedRequest, er
 // EncodeMedia implements base.MediaModel: run the RADIO tower and projector
 // over one image, returning the lazy [1, tokens, hidden] features.
 func (m *Model) EncodeMedia(_ *base.PreparedItem, data *mlx.Array) *mlx.Array {
-	return mlx.Squeeze(m.forwardVision(data), 0)
+	return mlx.Squeeze(m.forwardVision(data.AsType(m.VisionEncoder.Position.DType())), 0)
 }
 
 // scatterMedia overwrites each expansion's feature rows with the encoded
@@ -117,7 +120,7 @@ func (m *Model) preprocessImage(data []byte, maxPatches int) (pixels []float32, 
 	targetH := patchH * int(cfg.PatchSize)
 	targetW := patchW * int(cfg.PatchSize)
 	dst := image.NewRGBA(image.Rect(0, 0, targetW, targetH))
-	draw.CatmullRom.Scale(dst, dst.Bounds(), src, bounds, draw.Over, nil)
+	draw.CatmullRom.Scale(dst, dst.Bounds(), src, bounds, draw.Src, nil)
 
 	pixels = make([]float32, 3*targetH*targetW)
 	plane := targetH * targetW

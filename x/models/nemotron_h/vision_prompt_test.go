@@ -2,6 +2,7 @@ package nemotron_h
 
 import (
 	"bytes"
+	"errors"
 	"image"
 	"image/png"
 	"testing"
@@ -50,6 +51,26 @@ func TestPrepareMediaMarksImageExpansionCausal(t *testing.T) {
 	}
 	if !prepared.Items[0].Causal {
 		t.Fatal("image expansion must be causal in the text stack")
+	}
+}
+
+func TestPrepareMediaReportsDisabledVision(t *testing.T) {
+	m := &Model{visionErr: errors.New("unsupported RADIO version \"radio-v5\"")}
+
+	prepared, err := m.PrepareMedia([]base.Segment{{Tokens: []int32{1, 2}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := prepared.Tokens, []int32{1, 2}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("text tokens = %v, want %v", got, want)
+	}
+
+	_, err = m.PrepareMedia([]base.Segment{{Kind: "image", Data: []byte{1}}})
+	if err == nil {
+		t.Fatal("PrepareMedia unexpectedly accepted image input")
+	}
+	if got, want := err.Error(), "nemotron_h vision is unavailable: unsupported RADIO version \"radio-v5\""; got != want {
+		t.Fatalf("PrepareMedia error = %q, want %q", got, want)
 	}
 }
 
