@@ -34,6 +34,7 @@ type Qwen35Parser struct {
 	// Some checkpoints may emit an explicit leading <think> even when the
 	// prompt already opened thinking. Strip at most one such tag.
 	allowLeadingThinkOpenTag bool
+	trimLeadingThinkingSpace bool
 }
 
 func (p *Qwen35Parser) HasToolSupport() bool {
@@ -67,9 +68,11 @@ func (p *Qwen35Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkVal
 	if thinkingEnabled && !assistantPrefill {
 		p.state = qwen35ParserStateCollectingThinking
 		p.allowLeadingThinkOpenTag = true
+		p.trimLeadingThinkingSpace = false
 	} else {
 		p.state = qwen35ParserStateCollectingContent
 		p.allowLeadingThinkOpenTag = false
+		p.trimLeadingThinkingSpace = false
 	}
 
 	return tools
@@ -162,10 +165,11 @@ func (p *Qwen35Parser) maybeConsumeLeadingThinkOpenTag(acc string) (bool, bool) 
 		after = strings.TrimLeftFunc(after, unicode.IsSpace)
 		p.buffer.Reset()
 		p.buffer.WriteString(after)
+		p.allowLeadingThinkOpenTag = false
+		p.trimLeadingThinkingSpace = after == ""
 		if after == "" {
 			return true, false
 		}
-		p.allowLeadingThinkOpenTag = false
 		return true, true
 	}
 
@@ -186,6 +190,15 @@ func (p *Qwen35Parser) eat() ([]qwen35Event, bool) {
 
 		if handled, continueNow := p.maybeConsumeLeadingThinkOpenTag(acc); handled {
 			return events, continueNow
+		}
+		if p.trimLeadingThinkingSpace {
+			acc = strings.TrimLeftFunc(acc, unicode.IsSpace)
+			p.buffer.Reset()
+			p.buffer.WriteString(acc)
+			if acc == "" {
+				return events, false
+			}
+			p.trimLeadingThinkingSpace = false
 		}
 
 		if strings.Contains(acc, qwen35ThinkingCloseTag) {

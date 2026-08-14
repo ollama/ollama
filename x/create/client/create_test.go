@@ -514,17 +514,17 @@ func TestCreateModelfileLayersIncludesParameters(t *testing.T) {
 	}
 }
 
-func TestNewManifestWriter_PopulatesFileTypeFromQuantize(t *testing.T) {
+func TestNewManifestWriter_PopulatesFileTypeFromEffectiveQuantize(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
 	opts := CreateOptions{
 		ModelName: "test-quantized",
 		ModelDir:  t.TempDir(),
-		Quantize:  "MXFP8",
 	}
 
 	writer := newManifestWriter(opts, []string{"completion"}, "qwen3", "qwen3")
-	if err := writer(opts.ModelName, create.LayerInfo{}, nil); err != nil {
+	class := create.Classification{Kind: create.SourceBlockFP8, Quantize: "mxfp8"}
+	if err := writer(opts.ModelName, create.LayerInfo{}, nil, class); err != nil {
 		t.Fatalf("newManifestWriter() error = %v", err)
 	}
 
@@ -569,7 +569,7 @@ func TestNewManifestWriter_PopulatesDraftMetadata(t *testing.T) {
 	}
 
 	writer := newManifestWriter(opts, []string{"completion"}, "gemma4", "gemma4")
-	if err := writer(opts.ModelName, create.LayerInfo{}, nil); err != nil {
+	if err := writer(opts.ModelName, create.LayerInfo{}, nil, create.Classification{}); err != nil {
 		t.Fatalf("newManifestWriter() error = %v", err)
 	}
 
@@ -852,9 +852,11 @@ func TestGetParserName(t *testing.T) {
 
 func TestGetRendererName(t *testing.T) {
 	tests := []struct {
-		name       string
-		configJSON string
-		want       string
+		name           string
+		configJSON     string
+		chatTemplate   string
+		standaloneOnly bool
+		want           string
 	}{
 		{
 			name:       "qwen3 model",
@@ -865,6 +867,19 @@ func TestGetRendererName(t *testing.T) {
 			name:       "qwen3.5 model",
 			configJSON: `{"architectures": ["Qwen3_5ForConditionalGeneration"]}`,
 			want:       "qwen3.5",
+		},
+		{
+			name:         "qwen3.8 embedded template",
+			configJSON:   `{"architectures": ["Qwen3_5ForConditionalGeneration"]}`,
+			chatTemplate: `{% set resolved_reasoning_effort = reasoning_effort|default('xhigh') %}{% if preserve_thinking %}{% endif %}`,
+			want:         "qwen3.8",
+		},
+		{
+			name:           "qwen3.8 standalone template",
+			configJSON:     `{"architectures": ["Qwen3_5ForConditionalGeneration"]}`,
+			chatTemplate:   `{% set resolved_reasoning_effort = reasoning_effort|default('xhigh') %}{% if preserve_thinking %}{% endif %}`,
+			standaloneOnly: true,
+			want:           "qwen3.8",
 		},
 		{
 			name:       "deepseek model",
@@ -911,7 +926,24 @@ func TestGetRendererName(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
-			os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.configJSON), 0o644)
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.configJSON), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if tt.chatTemplate != "" {
+				if tt.standaloneOnly {
+					if err := os.WriteFile(filepath.Join(dir, "chat_template.jinja"), []byte(tt.chatTemplate), 0o644); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					data, err := json.Marshal(map[string]string{"chat_template": tt.chatTemplate})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(dir, "tokenizer_config.json"), data, 0o644); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
 
 			if got := getRendererName(dir); got != tt.want {
 				t.Errorf("getRendererName() = %q, want %q", got, tt.want)

@@ -235,9 +235,9 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 }
 
 func appendLayersManifestWriter(next create.ManifestWriter, extra []create.LayerInfo) create.ManifestWriter {
-	return func(modelName string, config create.LayerInfo, layers []create.LayerInfo) error {
+	return func(modelName string, config create.LayerInfo, layers []create.LayerInfo, class create.Classification) error {
 		layers = append(layers, extra...)
-		return next(modelName, config, layers)
+		return next(modelName, config, layers, class)
 	}
 }
 
@@ -314,6 +314,7 @@ func createModelFromBaseWithDraft(opts CreateOptions, draftLayers []create.Layer
 			Name:      configLayer.Name,
 		},
 		layers,
+		create.Classification{Quantize: quant.Canonical(opts.Quantize)},
 	)
 }
 
@@ -377,7 +378,7 @@ func newLayerCreator() create.LayerCreator {
 
 // newManifestWriter returns a ManifestWriter callback for writing the model manifest.
 func newManifestWriter(opts CreateOptions, capabilities []string, parserName, rendererName string) create.ManifestWriter {
-	return func(modelName string, config create.LayerInfo, layers []create.LayerInfo) error {
+	return func(modelName string, config create.LayerInfo, layers []create.LayerInfo, class create.Classification) error {
 		name := model.ParseName(modelName)
 		if !name.IsValid() {
 			return fmt.Errorf("invalid model name: %s", modelName)
@@ -389,8 +390,8 @@ func newManifestWriter(opts CreateOptions, capabilities []string, parserName, re
 			configData = *opts.BaseConfig
 		}
 		configData.ModelFormat = "safetensors"
-		if opts.Quantize != "" || configData.FileType == "" {
-			configData.FileType = strings.ToLower(strings.TrimSpace(opts.Quantize))
+		if class.Quantize != "" || configData.FileType == "" {
+			configData.FileType = class.Quantize
 		}
 		configData.Capabilities = capabilities
 		configData.Requires = MinOllamaVersion
@@ -583,6 +584,16 @@ func isQwen35Family(s string) bool {
 	return strings.Contains(s, "qwen3_5") || strings.Contains(s, "qwen3next")
 }
 
+func qwen35RendererName(modelDir string) string {
+	template := readChatTemplate(modelDir)
+	if strings.Contains(template, "resolved_reasoning_effort") &&
+		strings.Contains(template, "preserve_thinking") {
+		return "qwen3.8"
+	}
+
+	return "qwen3.5"
+}
+
 func lagunaRendererParserName(modelDir string) string {
 	const poolsideV1Marker = "laguna_glm_thinking_v8"
 
@@ -729,7 +740,7 @@ func rendererNameForIdentifier(modelDir, s string) string {
 	case strings.Contains(s, "deepseek"):
 		return "deepseek3"
 	case isQwen35Family(s):
-		return "qwen3.5"
+		return qwen35RendererName(modelDir)
 	case strings.Contains(s, "qwen3"):
 		return "qwen3-coder"
 	// Nemotron-H publishes NemotronHForCausalLM for text and
