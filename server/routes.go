@@ -641,6 +641,21 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	var customStripper *thinkStripper
+	if os.Getenv("OLLAMA_NO_THINK") == "true" {
+		openingTag, closingTag := thinking.InferTags(m.Template.Template)
+		if openingTag == "" {
+			openingTag = "<think>"
+		}
+		if closingTag == "" {
+			closingTag = "</think>"
+		}
+		customStripper = &thinkStripper{
+			openingTag: openingTag,
+			closingTag: closingTag,
+		}
+	}
+
 	var thinkingState *thinking.Parser
 	if builtinParser == nil {
 		openingTag, closingTag := thinking.InferTags(m.Template.Template)
@@ -672,6 +687,13 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			PreservedTokens: preservedTokensForCompletion(builtinParser),
 			LeadingBOS:      leadingBOS,
 		}, func(cr llm.CompletionResponse) {
+			if customStripper != nil {
+				cr.Content = customStripper.process(cr.Content, cr.Done)
+				if cr.Content == "" && !cr.Done {
+					return
+				}
+			}
+
 			res := api.GenerateResponse{
 				Model:     req.Model,
 				CreatedAt: time.Now().UTC(),
@@ -2707,6 +2729,21 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
+	var customStripper *thinkStripper
+	if os.Getenv("OLLAMA_NO_THINK") == "true" {
+		openingTag, closingTag := thinking.InferTags(m.Template.Template)
+		if openingTag == "" {
+			openingTag = "<think>"
+		}
+		if closingTag == "" {
+			closingTag = "</think>"
+		}
+		customStripper = &thinkStripper{
+			openingTag: openingTag,
+			closingTag: closingTag,
+		}
+	}
+
 	var thinkingState *thinking.Parser
 	openingTag, closingTag := thinking.InferTags(m.Template.Template)
 	if req.Think != nil && req.Think.Bool() && openingTag != "" && closingTag != "" {
@@ -2772,6 +2809,13 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				ToolCallTag:     toolCallTagForCompletion(toolParser),
 				LeadingBOS:      leadingBOSForModel(m),
 			}, func(r llm.CompletionResponse) {
+				if customStripper != nil {
+					r.Content = customStripper.process(r.Content, r.Done)
+					if r.Content == "" && !r.Done {
+						return
+					}
+				}
+
 				res := api.ChatResponse{
 					Model:     req.Model,
 					CreatedAt: time.Now().UTC(),
@@ -3128,4 +3172,68 @@ func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
 		}
 	}
 	return msgs
+}
+
+type thinkStripper struct {
+	streamBuf  string
+	inThink    bool
+	openingTag string
+	closingTag string
+}
+
+func (s *thinkStripper) process(content string, done bool) string {
+	if s.openingTag == "" || s.closingTag == "" {
+		return content
+	}
+	s.streamBuf += content
+	var out string
+	for {
+		if !s.inThink {
+			idx := strings.Index(s.streamBuf, s.openingTag)
+			if idx >= 0 {
+				out += s.streamBuf[:idx]
+				s.streamBuf = s.streamBuf[idx+len(s.openingTag):]
+				s.inThink = true
+				continue
+			}
+			overlapLen := overlapString(s.streamBuf, s.openingTag)
+			if overlapLen > 0 {
+				out += s.streamBuf[:len(s.streamBuf)-overlapLen]
+				s.streamBuf = s.streamBuf[len(s.streamBuf)-overlapLen:]
+			} else {
+				out += s.streamBuf
+				s.streamBuf = ""
+			}
+			break
+		} else {
+			idx := strings.Index(s.streamBuf, s.closingTag)
+			if idx >= 0 {
+				s.streamBuf = s.streamBuf[idx+len(s.closingTag):]
+				s.inThink = false
+				continue
+			}
+			if len(s.streamBuf) > len(s.closingTag) {
+				s.streamBuf = s.streamBuf[len(s.streamBuf)-len(s.closingTag):]
+			}
+			break
+		}
+	}
+	if done {
+		out += s.streamBuf
+		s.streamBuf = ""
+	}
+	return out
+}
+
+func overlapString(s, delim string) int {
+	max := len(delim)
+	if len(s) < max {
+		max = len(s)
+	}
+	for i := max; i > 0; i-- {
+		if strings.HasSuffix(s, delim[:i]) {
+			return i
+		}
+	}
+	return 0
 }
