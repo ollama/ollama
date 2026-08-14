@@ -13,7 +13,6 @@ var (
 	u32 = windows.NewLazySystemDLL("User32.dll")
 	s32 = windows.NewLazySystemDLL("Shell32.dll")
 
-	pCreatePopupMenu       = u32.NewProc("CreatePopupMenu")
 	pCreateWindowEx        = u32.NewProc("CreateWindowExW")
 	pDefWindowProc         = u32.NewProc("DefWindowProcW")
 	pDestroyWindow         = u32.NewProc("DestroyWindow")
@@ -22,7 +21,6 @@ var (
 	pGetCursorPos          = u32.NewProc("GetCursorPos")
 	pGetMessage            = u32.NewProc("GetMessageW")
 	pGetModuleHandle       = k32.NewProc("GetModuleHandleW")
-	pInsertMenuItem        = u32.NewProc("InsertMenuItemW")
 	pLoadCursor            = u32.NewProc("LoadCursorW")
 	pLoadIcon              = u32.NewProc("LoadIconW")
 	pLoadImage             = u32.NewProc("LoadImageW")
@@ -32,11 +30,8 @@ var (
 	pRegisterWindowMessage = u32.NewProc("RegisterWindowMessageW")
 	pSendMessage           = u32.NewProc("SendMessageW")
 	pSetForegroundWindow   = u32.NewProc("SetForegroundWindow")
-	pSetMenuInfo           = u32.NewProc("SetMenuInfo")
-	pSetMenuItemInfo       = u32.NewProc("SetMenuItemInfoW")
 	pShellNotifyIcon       = s32.NewProc("Shell_NotifyIconW")
 	pShowWindow            = u32.NewProc("ShowWindow")
-	pTrackPopupMenu        = u32.NewProc("TrackPopupMenu")
 	pTranslateMessage      = u32.NewProc("TranslateMessage")
 	pUnregisterClass       = u32.NewProc("UnregisterClassW")
 	pUpdateWindow          = u32.NewProc("UpdateWindow")
@@ -51,28 +46,15 @@ const (
 	IMAGE_ICON          = 1          // Loads an icon
 	LR_DEFAULTSIZE      = 0x00000040 // Loads default-size icon for windows(SM_CXICON x SM_CYICON) if cx, cy are set to zero
 	LR_LOADFROMFILE     = 0x00000010 // Loads the stand-alone image from the file
-	MFS_DISABLED        = 0x00000003
-	MFT_SEPARATOR       = 0x00000800
-	MFT_STRING          = 0x00000000
-	MIIM_BITMAP         = 0x00000080
-	MIIM_FTYPE          = 0x00000100
-	MIIM_ID             = 0x00000002
-	MIIM_STATE          = 0x00000001
-	MIIM_STRING         = 0x00000040
-	MIIM_SUBMENU        = 0x00000004
-	MIM_APPLYTOSUBMENUS = 0x80000000
 	NIF_ICON            = 0x00000002
 	NIF_TIP             = 0x00000004
 	NIF_INFO            = 0x00000010
 	NIF_MESSAGE         = 0x00000001
 	SW_HIDE             = 0
-	TPM_BOTTOMALIGN     = 0x0020
-	TPM_LEFTALIGN       = 0x0000
-	TPM_RIGHTBUTTON     = 0x0002
 	WM_CLOSE            = 0x0010
 	WM_RBUTTONUP        = 0x0205
+	WM_RBUTTONDOWN      = 0x0204
 	WM_LBUTTONUP        = 0x0202
-	WM_COMMAND          = 0x0111
 	WM_ENDSESSION       = 0x0016
 	WM_QUIT             = 0x0012
 	WM_DESTROY          = 0x0002
@@ -87,8 +69,6 @@ const (
 	WS_OVERLAPPEDWINDOW = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX
 	WS_SYSMENU          = 0x00080000
 	WS_THICKFRAME       = 0x00040000
-	MB_OK               = 0x00000000
-	MB_ICONINFORMATION  = 0x00000040
 )
 
 // Not sure if this is actually needed on windows

@@ -5,11 +5,11 @@ package wintray
 import (
 	"crypto/md5"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sort"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -44,6 +44,15 @@ type TrayCallbacks interface {
 	GetIconHandle() windows.Handle
 }
 
+// TrayWebView is the WebView2 surface that the Windows tray flyout needs. The
+// app creates it because the shared webview package links app-owned callbacks.
+type TrayWebView interface {
+	Bind(name string, f interface{}) error
+	Destroy()
+	Eval(js string)
+	SetHtml(html string)
+}
+
 type AppCallbacks interface {
 	UIRun(path string)
 	UIShow()
@@ -51,6 +60,28 @@ type AppCallbacks interface {
 	UIRunning() bool
 	Quit()
 	DoUpdate()
+}
+
+// TrayWebViewFactory provides the WebView2 surface used by the tray flyout.
+type TrayWebViewFactory interface {
+	// NewTrayWebView embeds a WebView in the nonzero Windows HWND supplied by
+	// the tray UI thread. The tray owns and destroys the returned view on that
+	// same thread before it destroys the host window.
+	NewTrayWebView(window unsafe.Pointer) (TrayWebView, error)
+}
+
+// TrayFlyoutStyle selects the token set used by the tray flyout.
+type TrayFlyoutStyle string
+
+const (
+	TrayFlyoutStyleFluent TrayFlyoutStyle = "fluent"
+	TrayFlyoutStyleOllama TrayFlyoutStyle = "ollama"
+)
+
+// TrayFlyoutStyleProvider optionally selects the flyout appearance in the app
+// backend. The flyout does not expose this choice as an end-user control.
+type TrayFlyoutStyleProvider interface {
+	TrayFlyoutStyle() TrayFlyoutStyle
 }
 
 type URLSchemeHandler interface {
@@ -70,20 +101,6 @@ type winTray struct {
 	loadedImages   map[string]windows.Handle
 	muLoadedImages sync.RWMutex
 
-	// menus keeps track of the submenus keyed by the menu item ID, plus 0
-	// which corresponds to the main popup menu.
-	menus    map[uint32]windows.Handle
-	muMenus  sync.RWMutex
-	menuOf   map[uint32]windows.Handle
-	muMenuOf sync.RWMutex
-	// menuItemIcons maintains the bitmap of each menu item (if applies). It's
-	// needed to show the icon correctly when showing a previously hidden menu
-	// item again.
-	// menuItemIcons   map[uint32]windows.Handle
-	// muMenuItemIcons sync.RWMutex
-	visibleItems   map[uint32][]uint32
-	muVisibleItems sync.RWMutex
-
 	nid   *notifyIconData
 	muNID sync.RWMutex
 	wcex  *wndClassEx
@@ -91,13 +108,16 @@ type winTray struct {
 	wmSystrayMessage,
 	wmTaskbarCreated uint32
 
+	muState sync.RWMutex // guards pendingUpdate and updateNotified
+
 	pendingUpdate  bool
 	updateNotified bool // Only pop up the notification once - TODO consider daily nag?
 	normalIcon     []byte
 	updateIcon     []byte
 
-	// TODO clean up exit handling
-	quitting bool
+	flyout             *trayFlyout
+	flyoutInitializing bool // WebView2 initialization pumps messages and may reenter the tray callback.
+	shuttingDown       bool
 
 	app AppCallbacks
 }
@@ -105,15 +125,19 @@ type winTray struct {
 var wt winTray
 
 func InitTray(icon, updateIcon []byte, app AppCallbacks) (*winTray, error) {
+	if _, ok := app.(TrayWebViewFactory); !ok {
+		return nil, errors.New("app does not provide a tray WebView2 factory")
+	}
+	// WebView enables DPI awareness when it creates its first top-level window.
+	// The tray must do it earlier so a start-hidden flyout and main UI agree.
+	if err := enableFlyoutDPIAwareness(); err != nil {
+		return nil, err
+	}
 	wt.normalIcon = icon
 	wt.updateIcon = updateIcon
 	wt.app = app
 	if err := wt.initInstance(); err != nil {
 		return nil, fmt.Errorf("Unable to init instance: %w\n", err)
-	}
-
-	if err := wt.createMenu(); err != nil {
-		return nil, fmt.Errorf("Unable to create menu: %w\n", err)
 	}
 
 	iconFilePath, err := iconBytesToFilePath(wt.normalIcon)
@@ -130,7 +154,7 @@ func InitTray(icon, updateIcon []byte, app AppCallbacks) (*winTray, error) {
 	}
 	wt.defaultIcon = h
 
-	return &wt, wt.initMenus()
+	return &wt, nil
 }
 
 func (t *winTray) initInstance() error {
@@ -139,10 +163,6 @@ func (t *winTray) initInstance() error {
 	)
 
 	t.wmSystrayMessage = WM_USER + 1
-	t.visibleItems = make(map[uint32][]uint32)
-	t.menus = make(map[uint32]windows.Handle)
-	t.menuOf = make(map[uint32]windows.Handle)
-
 	t.loadedImages = make(map[string]windows.Handle)
 
 	taskbarEventNamePtr, _ := windows.UTF16PtrFromString("TaskbarCreated")
@@ -238,197 +258,31 @@ func (t *winTray) initInstance() error {
 	return t.nid.add()
 }
 
-func (t *winTray) createMenu() error {
-	menuHandle, _, err := pCreatePopupMenu.Call()
-	if menuHandle == 0 {
-		return err
+func (t *winTray) showFlyout() error {
+	if t.shuttingDown {
+		return nil
 	}
-	t.menus[0] = windows.Handle(menuHandle)
-
-	// https://msdn.microsoft.com/en-us/library/windows/desktop/ms647575(v=vs.85).aspx
-	mi := struct {
-		Size, Mask, Style, Max uint32
-		Background             windows.Handle
-		ContextHelpID          uint32
-		MenuData               uintptr
-	}{
-		Mask: MIM_APPLYTOSUBMENUS,
+	if t.flyout != nil {
+		return t.flyout.show()
 	}
-	mi.Size = uint32(unsafe.Sizeof(mi))
-
-	res, _, err := pSetMenuInfo.Call(
-		uintptr(t.menus[0]),
-		uintptr(unsafe.Pointer(&mi)),
-	)
-	if res == 0 {
-		return err
+	if t.flyoutInitializing {
+		slog.Debug("ignoring reentrant tray flyout show request")
+		return nil
 	}
-	return nil
-}
 
-// Contains information about a menu item.
-// https://msdn.microsoft.com/en-us/library/windows/desktop/ms647578(v=vs.85).aspx
-type menuItemInfo struct {
-	Size, Mask, Type, State     uint32
-	ID                          uint32
-	SubMenu, Checked, Unchecked windows.Handle
-	ItemData                    uintptr
-	TypeData                    *uint16
-	Cch                         uint32
-	BMPItem                     windows.Handle
-}
+	t.flyoutInitializing = true
+	defer func() { t.flyoutInitializing = false }()
 
-func (t *winTray) addOrUpdateMenuItem(menuItemId uint32, parentId uint32, title string, disabled bool) error {
-	titlePtr, err := windows.UTF16PtrFromString(title)
+	flyout, err := newTrayFlyout(t)
 	if err != nil {
 		return err
 	}
-
-	mi := menuItemInfo{
-		Mask:     MIIM_FTYPE | MIIM_STRING | MIIM_ID | MIIM_STATE,
-		Type:     MFT_STRING,
-		ID:       menuItemId,
-		TypeData: titlePtr,
-		Cch:      uint32(len(title)),
+	if t.shuttingDown {
+		flyout.destroy()
+		return nil
 	}
-	mi.Size = uint32(unsafe.Sizeof(mi))
-	if disabled {
-		mi.State |= MFS_DISABLED
-	}
-
-	var res uintptr
-	t.muMenus.RLock()
-	menu := t.menus[parentId]
-	t.muMenus.RUnlock()
-	if t.getVisibleItemIndex(parentId, menuItemId) != -1 {
-		// We set the menu item info based on the menuID
-		boolRet, _, err := pSetMenuItemInfo.Call(
-			uintptr(menu),
-			uintptr(menuItemId),
-			0,
-			uintptr(unsafe.Pointer(&mi)),
-		)
-		if boolRet == 0 {
-			return fmt.Errorf("failed to set menu item: %w", err)
-		}
-	}
-
-	if res == 0 {
-		// Menu item does not already exist, create it
-		t.muMenus.RLock()
-		submenu, exists := t.menus[menuItemId]
-		t.muMenus.RUnlock()
-		if exists {
-			mi.Mask |= MIIM_SUBMENU
-			mi.SubMenu = submenu
-		}
-		t.addToVisibleItems(parentId, menuItemId)
-		position := t.getVisibleItemIndex(parentId, menuItemId)
-		res, _, err = pInsertMenuItem.Call(
-			uintptr(menu),
-			uintptr(position),
-			1,
-			uintptr(unsafe.Pointer(&mi)),
-		)
-		if res == 0 {
-			t.delFromVisibleItems(parentId, menuItemId)
-			return err
-		}
-		t.muMenuOf.Lock()
-		t.menuOf[menuItemId] = menu
-		t.muMenuOf.Unlock()
-	}
-
-	return nil
-}
-
-func (t *winTray) addSeparatorMenuItem(menuItemId, parentId uint32) error {
-	mi := menuItemInfo{
-		Mask: MIIM_FTYPE | MIIM_ID | MIIM_STATE,
-		Type: MFT_SEPARATOR,
-		ID:   menuItemId,
-	}
-
-	mi.Size = uint32(unsafe.Sizeof(mi))
-
-	t.addToVisibleItems(parentId, menuItemId)
-	position := t.getVisibleItemIndex(parentId, menuItemId)
-	t.muMenus.RLock()
-	menu := uintptr(t.menus[parentId])
-	t.muMenus.RUnlock()
-	res, _, err := pInsertMenuItem.Call(
-		menu,
-		uintptr(position),
-		1,
-		uintptr(unsafe.Pointer(&mi)),
-	)
-	if res == 0 {
-		return err
-	}
-
-	return nil
-}
-
-func (t *winTray) showMenu() error {
-	p := point{}
-	boolRet, _, err := pGetCursorPos.Call(uintptr(unsafe.Pointer(&p)))
-	if boolRet == 0 {
-		return err
-	}
-	boolRet, _, err = pSetForegroundWindow.Call(uintptr(t.window))
-	if boolRet == 0 {
-		slog.Warn(fmt.Sprintf("failed to bring menu to foreground: %s", err))
-	}
-
-	boolRet, _, err = pTrackPopupMenu.Call(
-		uintptr(t.menus[0]),
-		TPM_BOTTOMALIGN|TPM_LEFTALIGN|TPM_RIGHTBUTTON,
-		uintptr(p.X),
-		uintptr(p.Y),
-		0,
-		uintptr(t.window),
-		0,
-	)
-	if boolRet == 0 {
-		return err
-	}
-
-	return nil
-}
-
-func (t *winTray) delFromVisibleItems(parent, val uint32) {
-	t.muVisibleItems.Lock()
-	defer t.muVisibleItems.Unlock()
-	visibleItems := t.visibleItems[parent]
-	for i, itemval := range visibleItems {
-		if val == itemval {
-			t.visibleItems[parent] = append(visibleItems[:i], visibleItems[i+1:]...)
-			break
-		}
-	}
-}
-
-func (t *winTray) addToVisibleItems(parent, val uint32) {
-	t.muVisibleItems.Lock()
-	defer t.muVisibleItems.Unlock()
-	if visibleItems, exists := t.visibleItems[parent]; !exists {
-		t.visibleItems[parent] = []uint32{val}
-	} else {
-		newvisible := append(visibleItems, val)
-		sort.Slice(newvisible, func(i, j int) bool { return newvisible[i] < newvisible[j] })
-		t.visibleItems[parent] = newvisible
-	}
-}
-
-func (t *winTray) getVisibleItemIndex(parent, val uint32) int {
-	t.muVisibleItems.RLock()
-	defer t.muVisibleItems.RUnlock()
-	for i, itemval := range t.visibleItems[parent] {
-		if val == itemval {
-			return i
-		}
-	}
-	return -1
+	t.flyout = flyout
+	return flyout.show()
 }
 
 func iconBytesToFilePath(iconBytes []byte) (string, error) {
@@ -499,15 +353,4 @@ func (t *winTray) loadIconFrom(src string) (windows.Handle, error) {
 
 func (t *winTray) GetIconHandle() windows.Handle {
 	return t.defaultIcon
-}
-
-func (t *winTray) DisplayFirstUseNotification() error {
-	t.muNID.Lock()
-	defer t.muNID.Unlock()
-	copy(t.nid.InfoTitle[:], windows.StringToUTF16(firstTimeTitle))
-	copy(t.nid.Info[:], windows.StringToUTF16(firstTimeMessage))
-	t.nid.Flags |= NIF_INFO
-	t.nid.Size = uint32(unsafe.Sizeof(*wt.nid))
-
-	return t.nid.modify()
 }

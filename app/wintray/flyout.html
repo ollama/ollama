@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="en" data-style="fluent">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ollama</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --font: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+        --canvas: #f3f3f3;
+        --surface: rgba(255, 255, 255, 0.72);
+        --surface-strong: #ffffff;
+        --surface-hover: rgba(0, 0, 0, 0.055);
+        --surface-pressed: rgba(0, 0, 0, 0.09);
+        --text: #1b1b1b;
+        --muted: #616161;
+        --border: rgba(0, 0, 0, 0.1);
+        --accent: #0f6cbd;
+        --accent-hover: #115ea3;
+        --danger: #c42b1c;
+        --radius-window: 8px;
+        --radius-card: 6px;
+        --radius-control: 5px;
+        --window-padding: 8px;
+        --row-height: 36px;
+        --shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+        --tracking: 0;
+      }
+
+      html[data-style="ollama"] {
+        --font:
+          -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text",
+          sans-serif;
+        --canvas: #ececef;
+        --surface: rgba(255, 255, 255, 0.66);
+        --surface-strong: rgba(255, 255, 255, 0.88);
+        --surface-hover: rgba(0, 0, 0, 0.06);
+        --surface-pressed: rgba(0, 0, 0, 0.1);
+        --text: #19191b;
+        --muted: #6d6d72;
+        --border: rgba(0, 0, 0, 0.08);
+        --accent: #000000;
+        --accent-hover: #242426;
+        --radius-window: 12px;
+        --radius-card: 10px;
+        --radius-control: 8px;
+        --window-padding: 9px;
+        --row-height: 38px;
+        --shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+        --tracking: -0.01em;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --canvas: #202020;
+          --surface: rgba(255, 255, 255, 0.055);
+          --surface-strong: #292929;
+          --surface-hover: rgba(255, 255, 255, 0.075);
+          --surface-pressed: rgba(255, 255, 255, 0.11);
+          --text: #f5f5f5;
+          --muted: #b4b4b4;
+          --border: rgba(255, 255, 255, 0.095);
+          --accent: #60a5df;
+          --accent-hover: #75b4e6;
+          --danger: #ff99a4;
+          --shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.035);
+        }
+
+        html[data-style="ollama"] {
+          --canvas: #252528;
+          --surface: rgba(255, 255, 255, 0.07);
+          --surface-strong: rgba(255, 255, 255, 0.09);
+          --surface-hover: rgba(255, 255, 255, 0.1);
+          --surface-pressed: rgba(255, 255, 255, 0.14);
+          --text: #f5f5f7;
+          --muted: #aaaab0;
+          --border: rgba(255, 255, 255, 0.085);
+          --accent: #ffffff;
+          --accent-hover: #e7e7e9;
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      [hidden] {
+        display: none !important;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: var(--canvas);
+        color: var(--text);
+        font-family: var(--font);
+        font-size: 12px;
+        letter-spacing: var(--tracking);
+        user-select: none;
+      }
+
+      body {
+        padding: var(--window-padding);
+        box-shadow: var(--shadow);
+      }
+
+      button {
+        color: inherit;
+        font: inherit;
+      }
+
+      .header {
+        display: flex;
+        min-height: 30px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .identity {
+        display: flex;
+        min-width: 0;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .mark {
+        display: grid;
+        width: 26px;
+        height: 26px;
+        flex: 0 0 auto;
+        place-items: center;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-control);
+        background: var(--surface-strong);
+        font-size: 15px;
+        font-weight: 700;
+      }
+
+      .product {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        font-size: 13px;
+        font-weight: 650;
+        white-space: nowrap;
+      }
+
+      .update-card {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        align-items: center;
+        margin-top: 2px;
+        padding: 7px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-card);
+        background: var(--surface);
+        gap: 8px;
+      }
+
+      .actions {
+        display: grid;
+        margin-top: 6px;
+        gap: 2px;
+      }
+
+      .action {
+        display: grid;
+        min-height: var(--row-height);
+        grid-template-columns: 22px 1fr;
+        align-items: center;
+        padding: 3px 7px;
+        border: 0;
+        border-radius: var(--radius-control);
+        background: transparent;
+        cursor: pointer;
+        text-align: left;
+        gap: 7px;
+      }
+
+      html[data-style="ollama"] .action {
+        border: 1px solid transparent;
+      }
+
+      html[data-style="ollama"] .action:hover {
+        border-color: var(--border);
+        background: var(--surface);
+      }
+
+      .action:hover {
+        background: var(--surface-hover);
+      }
+      .action:active {
+        background: var(--surface-pressed);
+      }
+
+      .action svg {
+        width: 15px;
+        height: 15px;
+        stroke: currentColor;
+      }
+
+      .action-copy {
+        min-width: 0;
+      }
+
+      .action-title {
+        display: block;
+        font-weight: 590;
+      }
+
+      .update-title {
+        font-size: 11px;
+        font-weight: 700;
+      }
+
+      .update-button {
+        min-height: 26px;
+        padding: 3px 10px;
+        border: 1px solid color-mix(in srgb, var(--accent) 76%, transparent);
+        border-radius: var(--radius-control);
+        background: var(--accent);
+        color: var(--canvas);
+        cursor: pointer;
+        font-size: 11px;
+        font-weight: 650;
+      }
+
+      .update-button:hover {
+        background: var(--accent-hover);
+      }
+
+      .footer {
+        margin-top: 5px;
+        padding-top: 5px;
+        border-top: 1px solid var(--border);
+      }
+
+      .quit {
+        width: 100%;
+        min-height: 30px;
+        padding: 3px 7px;
+        border: 0;
+        border-radius: var(--radius-control);
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+        text-align: left;
+      }
+
+      .quit:hover {
+        background: color-mix(in srgb, var(--danger) 10%, transparent);
+        color: var(--danger);
+      }
+
+      button:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 1px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="flyout-content">
+      <header class="header">
+        <div class="identity">
+          <div class="mark" aria-hidden="true">O</div>
+          <div class="product">Ollama</div>
+        </div>
+      </header>
+
+      <main class="actions">
+        <button class="action" type="button" data-action="open">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke-width="1.8"
+            aria-hidden="true"
+          >
+            <path d="M4 5.5h16v13H4z" />
+            <path d="M4 9h16" />
+          </svg>
+          <span class="action-copy"
+            ><span id="open-label" class="action-title"></span
+          ></span>
+        </button>
+        <button class="action" type="button" data-action="settings">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke-width="1.8"
+            aria-hidden="true"
+          >
+            <circle cx="12" cy="12" r="3" />
+            <path
+              d="M19 12a7 7 0 0 0-.1-1.2l2-1.5-2-3.4-2.5 1a8 8 0 0 0-2-1.2L14 3h-4l-.4 2.7a8 8 0 0 0-2 1.2l-2.5-1-2 3.4 2 1.5A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.5-1a8 8 0 0 0 2 1.2L10 21h4l.4-2.7a8 8 0 0 0 2-1.2l2.5 1 2-3.4-2-1.5c.1-.4.1-.8.1-1.2Z"
+            />
+          </svg>
+          <span class="action-copy"
+            ><span id="settings-label" class="action-title"></span
+          ></span>
+        </button>
+
+        <section
+          id="update-card"
+          class="update-card"
+          aria-labelledby="update-available-label"
+          hidden
+        >
+          <div id="update-available-label" class="update-title"></div>
+          <button
+            id="update-label"
+            class="update-button"
+            type="button"
+            data-action="update"
+          ></button>
+        </section>
+
+        <button class="action" type="button" data-action="logs">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke-width="1.8"
+            aria-hidden="true"
+          >
+            <path d="M5 3h10l4 4v14H5z" />
+            <path d="M15 3v5h4M8 12h8M8 16h8" />
+          </svg>
+          <span class="action-copy"
+            ><span id="logs-label" class="action-title"></span
+          ></span>
+        </button>
+      </main>
+
+      <footer class="footer">
+        <button
+          id="quit-label"
+          class="quit"
+          type="button"
+          data-action="quit"
+        ></button>
+      </footer>
+    </div>
+
+    <script>
+      function applyStyle(value) {
+        const style = value === "ollama" ? "ollama" : "fluent";
+        document.documentElement.dataset.style = style;
+      }
+
+      function applyState(state) {
+        if (!state) return;
+        applyStyle(state.style);
+        document.getElementById("update-card").hidden = !state.pendingUpdate;
+        const labelElements = {
+          open: "open-label",
+          settings: "settings-label",
+          updateAvailable: "update-available-label",
+          update: "update-label",
+          logs: "logs-label",
+          quit: "quit-label",
+        };
+        Object.entries(labelElements).forEach(([name, id]) => {
+          document.getElementById(id).textContent = state.labels?.[name] || "";
+        });
+      }
+
+      let trayStateReady = false;
+      window.refreshTrayState = async function () {
+        try {
+          applyState(await window.trayGetState());
+          trayStateReady = true;
+        } catch (error) {
+          console.error("Unable to refresh tray state", error);
+        }
+      };
+
+      let lastMetrics = "";
+      async function reportMetrics() {
+        const bodyStyle = getComputedStyle(document.body);
+        const content = document.getElementById("flyout-content");
+        const contentHeight = Math.ceil(
+          content.getBoundingClientRect().height +
+            parseFloat(bodyStyle.paddingTop) +
+            parseFloat(bodyStyle.paddingBottom),
+        );
+        const physicalHeight = Math.ceil(
+          contentHeight * window.devicePixelRatio,
+        );
+        const metrics = {
+          devicePixelRatio: window.devicePixelRatio,
+          innerWidth: window.innerWidth,
+          innerHeight: window.innerHeight,
+          bodyFontSize: bodyStyle.fontSize,
+          contentHeight,
+          physicalHeight,
+        };
+        const signature = JSON.stringify(metrics);
+        if (signature === lastMetrics) return;
+        lastMetrics = signature;
+        try {
+          await window.trayRequestHeight(physicalHeight);
+          await window.trayReportMetrics(metrics);
+        } catch (error) {
+          console.error("Unable to report tray metrics", error);
+        }
+      }
+
+      document.querySelectorAll("[data-action]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          try {
+            await window.trayAction(button.dataset.action);
+          } catch (error) {
+            console.error("Unable to run tray action", error);
+          }
+        });
+      });
+
+      document.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          window.trayAction("dismiss");
+          return;
+        }
+
+        const navigationKeys = ["ArrowDown", "ArrowUp", "Home", "End"];
+        if (!navigationKeys.includes(event.key)) return;
+        const actions = Array.from(
+          document.querySelectorAll("button[data-action]:not([disabled])"),
+        ).filter((button) => !button.closest("[hidden]"));
+        if (actions.length === 0) return;
+
+        const current = actions.indexOf(document.activeElement);
+        let next;
+        switch (event.key) {
+          case "ArrowUp":
+            next = current <= 0 ? actions.length - 1 : current - 1;
+            break;
+          case "Home":
+            next = 0;
+            break;
+          case "End":
+            next = actions.length - 1;
+            break;
+          default:
+            next =
+              current < 0 || current === actions.length - 1 ? 0 : current + 1;
+        }
+        event.preventDefault();
+        actions[next].focus();
+      });
+
+      window.addEventListener("DOMContentLoaded", async () => {
+        await window.refreshTrayState();
+        await reportMetrics();
+      });
+      window.addEventListener("resize", () => {
+        window.requestAnimationFrame(reportMetrics);
+      });
+      new ResizeObserver(() => {
+        if (!trayStateReady) return;
+        window.requestAnimationFrame(reportMetrics);
+      }).observe(document.getElementById("flyout-content"));
+    </script>
+  </body>
+</html>

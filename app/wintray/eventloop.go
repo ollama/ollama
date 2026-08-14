@@ -11,10 +11,14 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-var (
-	quitOnce            sync.Once
-	UI_REQUEST_MSG_ID   = WM_USER + 2
-	FOCUS_WINDOW_MSG_ID = WM_USER + 3
+var quitOnce sync.Once
+
+const (
+	UI_REQUEST_MSG_ID       = WM_USER + 2
+	FOCUS_WINDOW_MSG_ID     = WM_USER + 3
+	trayFlyoutActionMessage = WM_USER + 4
+	trayFlyoutResizeMessage = WM_USER + 5
+	trayShutdownMessage     = WM_USER + 6
 )
 
 func (t *winTray) TrayRun() {
@@ -70,41 +74,29 @@ func (t *winTray) TrayRun() {
 func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam uintptr) (lResult uintptr) {
 	// slog.Debug("XXX in winTray.wndProc", "message", fmt.Sprintf("0x%x", message), "wParam", fmt.Sprintf("0x%x", wParam), "lParam", fmt.Sprintf("0x%x", lParam))
 	switch message {
-	case WM_COMMAND:
-		menuItemId := int32(wParam)
-		// https://docs.microsoft.com/en-us/windows/win32/menurc/wm-command#menus
-		switch menuItemId {
-		case quitMenuID:
-			t.app.Quit()
-		case updateMenuID:
-			t.app.DoUpdate()
-		case openUIMenuID:
-			// UI must be initialized on this thread so don't use the callbacks
-			t.app.UIShow()
-		case settingsUIMenuID:
-			// UI must be initialized on this thread so don't use the callbacks
-			t.app.UIRun("/settings")
-		case diagLogsMenuID:
-			t.showLogs()
-		default:
-			slog.Debug(fmt.Sprintf("Unexpected menu item id: %d", menuItemId))
-			lResult, _, _ = pDefWindowProc.Call(
-				uintptr(hWnd),
-				uintptr(message),
-				wParam,
-				lParam,
-			)
+	case WM_CLOSE, trayShutdownMessage:
+		if t.shuttingDown {
+			break
 		}
-	case WM_CLOSE:
-		// TODO - does this need adjusting?
-		// slog.Debug("XXX WM_CLOSE triggered")
+		t.shuttingDown = true
+		slog.Debug("shutting down tray", "message", fmt.Sprintf("0x%x", message))
+		// Explicit shutdown owns the ordering: close the main WebView first,
+		// then the flyout and tray window. Destroying the tray posts the final
+		// WM_QUIT that ends the process message loop.
+		if t.app.UIRunning() {
+			t.app.UITerminate()
+		}
+		if t.flyout != nil {
+			t.flyout.destroy()
+			t.flyout = nil
+		}
 		boolRet, _, err := pDestroyWindow.Call(uintptr(t.window))
 		if boolRet == 0 {
 			slog.Error(fmt.Sprintf("failed to destroy window: %s", err))
 		}
 		err = t.wcex.unregister()
 		if err != nil {
-			slog.Error(fmt.Sprintf("failed to uregister windo %s", err))
+			slog.Error(fmt.Sprintf("failed to unregister window: %s", err))
 		}
 	case WM_DESTROY:
 		// slog.Debug("XXX WM_DESTROY triggered")
@@ -124,20 +116,26 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 		t.muNID.Unlock()
 	case t.wmSystrayMessage:
 		switch lParam {
-		case WM_MOUSEMOVE, WM_LBUTTONDOWN:
+		case WM_MOUSEMOVE:
 			// Ignore these...
+		case WM_LBUTTONDOWN, WM_RBUTTONDOWN:
+			if t.flyout != nil {
+				t.flyout.trayMouseDown()
+			}
 		case WM_RBUTTONUP, WM_LBUTTONUP:
-			err := t.showMenu()
+			if t.flyout != nil && t.flyout.trayMouseUp() {
+				break
+			}
+			err := t.showFlyout()
 			if err != nil {
-				slog.Error(fmt.Sprintf("failed to show menu: %s", err))
+				slog.Error("failed to show tray flyout", "error", err)
 			}
 		case 0x405: // TODO - how is this magic value derived for the notification left click
-			if t.pendingUpdate {
+			if t.hasPendingUpdate() {
 				// TODO - revamp how detecting an update is notified to the user
 				t.app.DoUpdate()
 			}
-		case 0x404: // Middle click or close notification
-			// slog.Debug("doing nothing on close of first time notification")
+		case 0x404: // Middle click or dismiss notification
 		default:
 			// 0x402 also seems common - what is it?
 			slog.Debug(fmt.Sprintf("unmanaged app message, lParm: 0x%x", lParam))
@@ -155,6 +153,16 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 			slog.Error(fmt.Sprintf("failed to refresh the taskbar on explorer restart: %s", err))
 		}
 		t.muNID.Unlock()
+	case trayFlyoutActionMessage:
+		if err := t.handleFlyoutAction(trayFlyoutAction(wParam)); err != nil {
+			slog.Error("failed to handle tray flyout action", "error", err)
+		}
+	case trayFlyoutResizeMessage:
+		if t.flyout != nil && t.flyout.window == windows.Handle(lParam) {
+			if err := t.flyout.resizeToContent(int32(wParam)); err != nil {
+				slog.Error("failed to resize tray flyout", "error", err)
+			}
+		}
 	case uint32(UI_REQUEST_MSG_ID):
 		// Requests for the UI must always come from the main event thread
 		l := int(wParam)
@@ -198,8 +206,6 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 }
 
 func (t *winTray) Quit() {
-	// slog.Debug("XXX in winTray.Quit")
-	t.quitting = true
 	quitOnce.Do(quit)
 }
 
@@ -218,7 +224,7 @@ func SendUIRequestMessage(path string) {
 func quit() {
 	boolRet, _, err := pPostMessage.Call(
 		uintptr(wt.window),
-		WM_CLOSE,
+		trayShutdownMessage,
 		0,
 		0,
 	)
