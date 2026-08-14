@@ -365,14 +365,6 @@ func TestQwen38RendererRejectsInvalidTranscripts(t *testing.T) {
 			wantErr:  "no user query found in messages",
 		},
 		{
-			name: "late system",
-			messages: []api.Message{
-				{Role: "user", Content: "Hello"},
-				{Role: "system", Content: "Late"},
-			},
-			wantErr: "system message must be at the beginning",
-		},
-		{
 			name: "system image",
 			messages: []api.Message{
 				{Role: "system", Images: []api.ImageData{{1}}},

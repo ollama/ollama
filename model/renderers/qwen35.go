@@ -193,16 +193,6 @@ func (r *Qwen35Renderer) validateMessages(messages []api.Message) error {
 		return fmt.Errorf("no user query found in messages")
 	}
 
-	for i, message := range messages {
-		switch message.Role {
-		case "system":
-			if i != 0 {
-				return fmt.Errorf("system message must be at the beginning")
-			}
-		case "user", "assistant", "tool":
-		}
-	}
-
 	return nil
 }
 
@@ -297,6 +287,9 @@ func (r *Qwen35Renderer) Render(messages []api.Message, tools []api.Tool, think 
 		prefill := lastMessage && message.Role == "assistant"
 
 		if message.Role == "user" || (message.Role == "system" && i != 0) {
+			if r.variant == qwen35Renderer38 && message.Role == "system" {
+				slog.Warn("non-leading system message", "renderer", "qwen3.8")
+			}
 			sb.WriteString(imStartTag + message.Role + "\n" + content + imEndTag + "\n")
 		} else if message.Role == "assistant" {
 			renderAssistantThinkBlock := r.alwaysRenderAssistantThinkBlock || (isThinking && i > lastQueryIndex)
