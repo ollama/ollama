@@ -80,6 +80,9 @@ type Model struct {
 	Messages           []api.Message
 
 	Template *template.Template
+
+	capabilities       []model.Capability
+	capabilitiesCached bool
 }
 
 func (m *Model) IsMLX() bool {
@@ -107,6 +110,10 @@ const (
 
 // Capabilities returns the capabilities that the model supports
 func (m *Model) Capabilities() []model.Capability {
+	if m.capabilitiesCached {
+		return slices.Clone(m.capabilities)
+	}
+
 	capabilities := m.capabilitiesForTemplate(templateCapabilitySelected, nil)
 	if len(capabilities) == 0 {
 		slog.Warn("unknown capabilities for model", "model", m.Name)
