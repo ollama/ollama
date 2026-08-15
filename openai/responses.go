@@ -159,7 +159,8 @@ type ResponsesFunctionCall struct {
 	Type      string `json:"type"`         // always "function_call"
 	CallID    string `json:"call_id"`      // the tool call ID
 	Name      string `json:"name"`         // function name
-	Arguments string `json:"arguments"`    // JSON arguments string
+	Namespace string `json:"namespace,omitempty"`
+	Arguments string `json:"arguments"` // JSON arguments string
 }
 
 func (ResponsesFunctionCall) responsesInputItem() {}
@@ -414,6 +415,11 @@ type ResponsesRequest struct {
 
 // FromResponsesRequest converts a ResponsesRequest to api.ChatRequest
 func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
+	resolver, err := newResponsesToolResolver(r)
+	if err != nil {
+		return nil, err
+	}
+
 	var messages []api.Message
 
 	// Add instructions as system message if present
@@ -496,7 +502,7 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 			toolCall := api.ToolCall{
 				ID: v.CallID,
 				Function: api.ToolCallFunction{
-					Name:      v.Name,
+					Name:      resolver.internalName(v.Namespace, v.Name),
 					Arguments: args,
 				},
 			}
@@ -577,28 +583,6 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 		return nil, err
 	}
 
-	// Convert tools from Responses API format to api.Tool format
-	var tools []api.Tool
-	hasWebSearch := HasWebSearchTool(r.Tools)
-	for _, t := range r.Tools {
-		if isWebSearchTool(t) {
-			tools = append(tools, WebSearchFunctionTool())
-			continue
-		}
-		expanded, err := convertTools(t)
-		if err != nil {
-			return nil, err
-		}
-		for _, tool := range expanded {
-			// The built-in tool owns this name. Keeping a user-declared function
-			// with the same name makes a model call ambiguous.
-			if hasWebSearch && tool.Function.Name == "web_search" {
-				continue
-			}
-			tools = append(tools, tool)
-		}
-	}
-
 	// Handle text format (e.g. json_schema)
 	var format json.RawMessage
 	if r.Text != nil && r.Text.Format != nil {
@@ -614,7 +598,7 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 		Model:    r.Model,
 		Messages: messages,
 		Options:  options,
-		Tools:    tools,
+		Tools:    resolver.tools,
 		Format:   format,
 		Think:    think,
 	}, nil
@@ -653,31 +637,247 @@ func WebSearchFunctionTool() api.Tool {
 	}
 }
 
-// convertTools converts one Responses-API tool declaration to api.Tools. A
-// "namespace" declaration groups member functions under a common name; it
-// expands to those members with namespace-qualified names, since api.Tool
-// carries only a flat function name. Dropping the members instead would
-// leave the model with one schema-less pseudo-function and make every
-// namespaced call undeclarable.
-func convertTools(t ResponsesTool) ([]api.Tool, error) {
+type responsesToolExternalName struct {
+	namespace string
+	name      string
+}
+
+type responsesToolName struct {
+	external        responsesToolExternalName
+	internal        string
+	declarationNode *responsesNamespaceNode
+	declared        bool
+}
+
+type responsesNamespaceNode struct {
+	id     uint64
+	name   string
+	parent *responsesNamespaceNode
+}
+
+type responsesNamespaceChild struct {
+	parentID uint64
+	name     string
+}
+
+type responsesToolDeclaration struct {
+	namespaceID uint64
+	name        string
+}
+
+type responsesToolResolver struct {
+	byExternal        map[responsesToolExternalName]responsesToolName
+	byInternal        map[string]responsesToolName
+	declarations      map[responsesToolDeclaration]struct{}
+	namespaceChildren map[responsesNamespaceChild]struct{}
+	nextNamespaceID   uint64
+	tools             []api.Tool
+	hasWebSearchTool  bool
+}
+
+func newResponsesToolResolver(r ResponsesRequest) (*responsesToolResolver, error) {
+	resolver := &responsesToolResolver{
+		byExternal:        make(map[responsesToolExternalName]responsesToolName),
+		byInternal:        make(map[string]responsesToolName),
+		declarations:      make(map[responsesToolDeclaration]struct{}),
+		namespaceChildren: make(map[responsesNamespaceChild]struct{}),
+		hasWebSearchTool:  HasWebSearchTool(r.Tools),
+	}
+
+	for _, tool := range r.Tools {
+		expanded, err := convertTools(tool, nil, resolver)
+		if err != nil {
+			return nil, err
+		}
+		resolver.tools = append(resolver.tools, expanded...)
+	}
+
+	for _, item := range r.Input.Items {
+		if call, ok := item.(ResponsesFunctionCall); ok {
+			if _, err := resolver.register(call.Namespace, call.Name, nil, false); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	return resolver, nil
+}
+
+func joinNamespaceToolName(namespace, name string) string {
+	if strings.HasSuffix(namespace, "__") {
+		return namespace + name
+	}
+	return namespace + "__" + name
+}
+
+func namespaceParts(node *responsesNamespaceNode, leaf string) []string {
+	depth := 0
+	for current := node; current != nil; current = current.parent {
+		depth++
+	}
+	leafCount := 0
+	if leaf != "" {
+		leafCount = 1
+	}
+	parts := make([]string, depth+leafCount)
+	if leafCount != 0 {
+		parts[depth] = leaf
+	}
+	for current, i := node, depth-1; current != nil; current, i = current.parent, i-1 {
+		parts[i] = current.name
+	}
+	return parts
+}
+
+func joinNamespaceParts(parts []string) string {
+	if len(parts) == 0 {
+		return ""
+	}
+	size := 0
+	for i, part := range parts {
+		size += len(part)
+		if i > 0 && !strings.HasSuffix(parts[i-1], "__") {
+			size += 2
+		}
+	}
+	var qualified strings.Builder
+	qualified.Grow(size)
+	qualified.WriteString(parts[0])
+	for i, part := range parts[1:] {
+		if !strings.HasSuffix(parts[i], "__") {
+			qualified.WriteString("__")
+		}
+		qualified.WriteString(part)
+	}
+	return qualified.String()
+}
+
+func qualifiedNamespace(node *responsesNamespaceNode) string {
+	return joinNamespaceParts(namespaceParts(node, ""))
+}
+
+func describeResponsesToolName(name responsesToolName) string {
+	source := ""
+	if name.declared {
+		source = fmt.Sprintf(" declared at path %q", namespaceParts(name.declarationNode, name.external.name))
+	}
+	if name.external.namespace == "" {
+		return fmt.Sprintf("flat function %q%s", name.external.name, source)
+	}
+	return fmt.Sprintf("namespace %q function %q%s", name.external.namespace, name.external.name, source)
+}
+
+func (r *responsesToolResolver) register(namespace, name string, declarationNode *responsesNamespaceNode, declaration bool) (responsesToolName, error) {
+	if name == "" {
+		return responsesToolName{}, fmt.Errorf("responses function name must not be empty")
+	}
+	if namespace != "" && strings.HasPrefix(name, joinNamespaceToolName(namespace, "")) {
+		return responsesToolName{}, fmt.Errorf("responses namespace %q function %q is already namespace-qualified", namespace, name)
+	}
+
+	external := responsesToolExternalName{namespace: namespace, name: name}
+	internal := name
+	if namespace != "" {
+		internal = joinNamespaceToolName(namespace, name)
+	}
+	candidate := responsesToolName{external: external, internal: internal, declarationNode: declarationNode, declared: declaration}
+
+	if declaration {
+		namespaceID := uint64(0)
+		if declarationNode != nil {
+			namespaceID = declarationNode.id
+		}
+		declarationID := responsesToolDeclaration{namespaceID: namespaceID, name: name}
+		if _, ok := r.declarations[declarationID]; ok {
+			return responsesToolName{}, fmt.Errorf("duplicate responses tool declaration for %s", describeResponsesToolName(candidate))
+		}
+		r.declarations[declarationID] = struct{}{}
+	}
+
+	if existing, ok := r.byInternal[internal]; ok {
+		sameExternal := existing.external == external
+		sameDeclaration := !declaration || existing.declarationNode == declarationNode
+		if sameExternal && sameDeclaration {
+			return existing, nil
+		}
+		left, right := describeResponsesToolName(existing), describeResponsesToolName(candidate)
+		if right < left {
+			left, right = right, left
+		}
+		return responsesToolName{}, fmt.Errorf("responses tool identity collision for internal name %q between %s and %s", internal, left, right)
+	}
+
+	r.byExternal[external] = candidate
+	r.byInternal[internal] = candidate
+	return candidate, nil
+}
+
+func (r *responsesToolResolver) internalName(namespace, name string) string {
+	if resolved, ok := r.byExternal[responsesToolExternalName{namespace: namespace, name: name}]; ok {
+		return resolved.internal
+	}
+	return name
+}
+
+func (r *responsesToolResolver) externalName(name string) (string, string) {
+	if resolved, ok := r.byInternal[name]; ok {
+		return resolved.external.name, resolved.external.namespace
+	}
+	return name, ""
+}
+
+// convertTools expands one Responses declaration while registering every
+// model-visible function identity. Declaration expansion and identity
+// validation intentionally share this single recursive traversal.
+func convertTools(t ResponsesTool, namespaceNode *responsesNamespaceNode, resolver *responsesToolResolver) ([]api.Tool, error) {
+	if t.Type == "web_search" && namespaceNode == nil {
+		return []api.Tool{WebSearchFunctionTool()}, nil
+	}
+
 	if t.Type != "namespace" {
 		tool, err := convertTool(t)
 		if err != nil {
 			return nil, err
 		}
-		return []api.Tool{tool}, nil
-	}
+		if t.Type != "function" {
+			return []api.Tool{tool}, nil
+		}
 
-	var tools []api.Tool
-	for _, member := range t.Tools {
-		expanded, err := convertTools(member)
+		// The built-in tool retains upstream ownership of its private model name.
+		if resolver.hasWebSearchTool && namespaceNode == nil && t.Name == "web_search" {
+			return nil, nil
+		}
+
+		namespace := qualifiedNamespace(namespaceNode)
+		resolved, err := resolver.register(namespace, t.Name, namespaceNode, true)
 		if err != nil {
 			return nil, err
 		}
-		for i := range expanded {
-			if prefix := t.Name + "."; t.Name != "" && !strings.HasPrefix(expanded[i].Function.Name, prefix) {
-				expanded[i].Function.Name = prefix + expanded[i].Function.Name
-			}
+		tool.Function.Name = resolved.internal
+		return []api.Tool{tool}, nil
+	}
+
+	if t.Name == "" {
+		return nil, fmt.Errorf("responses namespace name must not be empty")
+	}
+	parentID := uint64(0)
+	if namespaceNode != nil {
+		parentID = namespaceNode.id
+	}
+	child := responsesNamespaceChild{parentID: parentID, name: t.Name}
+	if _, ok := resolver.namespaceChildren[child]; ok {
+		duplicate := &responsesNamespaceNode{name: t.Name, parent: namespaceNode}
+		return nil, fmt.Errorf("duplicate responses namespace declaration %q", qualifiedNamespace(duplicate))
+	}
+	resolver.namespaceChildren[child] = struct{}{}
+	resolver.nextNamespaceID++
+	childNode := &responsesNamespaceNode{id: resolver.nextNamespaceID, name: t.Name, parent: namespaceNode}
+
+	var tools []api.Tool
+	for _, member := range t.Tools {
+		expanded, err := convertTools(member, childNode, resolver)
+		if err != nil {
+			return nil, err
 		}
 		tools = append(tools, expanded...)
 	}
@@ -821,6 +1021,7 @@ type ResponsesOutputItem struct {
 	Content   []ResponsesOutputContent  `json:"content,omitempty"`   // for message
 	CallID    string                    `json:"call_id,omitempty"`   // for function_call
 	Name      string                    `json:"name,omitempty"`      // for function_call
+	Namespace string                    `json:"namespace,omitempty"` // for function_call
 	Arguments string                    `json:"arguments,omitempty"` // for function_call
 	Action    *ResponsesWebSearchAction `json:"action,omitempty"`    // for web_search_call
 
@@ -921,17 +1122,7 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse,
 	}
 
 	if len(chatResponse.Message.ToolCalls) > 0 {
-		toolCalls := ToToolCalls(chatResponse.Message.ToolCalls)
-		for i, tc := range toolCalls {
-			output = append(output, ResponsesOutputItem{
-				ID:        fmt.Sprintf("fc_%s_%d", responseID, i),
-				Type:      "function_call",
-				Status:    "completed",
-				CallID:    tc.ID,
-				Name:      tc.Function.Name,
-				Arguments: tc.Function.Arguments,
-			})
-		}
+		output = append(output, ResponsesFunctionCallOutputItems(request, fmt.Sprintf("fc_%s_", responseID), chatResponse.Message.ToolCalls)...)
 	} else {
 		output = append(output, ResponsesOutputItem{
 			ID:     itemID,
@@ -1026,6 +1217,31 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse,
 	}
 }
 
+// ResponsesFunctionCallOutputItems converts model-facing function calls back
+// to Responses wire items using the request's validated namespace identities.
+// idPrefix lets each Responses output owner preserve its established item IDs.
+func ResponsesFunctionCallOutputItems(request ResponsesRequest, idPrefix string, toolCalls []api.ToolCall) []ResponsesOutputItem {
+	resolver, _ := newResponsesToolResolver(request)
+	converted := ToToolCalls(toolCalls)
+	items := make([]ResponsesOutputItem, 0, len(converted))
+	for i, tc := range converted {
+		name, namespace := tc.Function.Name, ""
+		if resolver != nil {
+			name, namespace = resolver.externalName(tc.Function.Name)
+		}
+		items = append(items, ResponsesOutputItem{
+			ID:        fmt.Sprintf("%s%d", idPrefix, i),
+			Type:      "function_call",
+			Status:    "completed",
+			CallID:    tc.ID,
+			Name:      name,
+			Namespace: namespace,
+			Arguments: tc.Function.Arguments,
+		})
+	}
+	return items
+}
+
 // Streaming events: <https://platform.openai.com/docs/api-reference/responses-streaming>
 
 // ResponsesStreamEvent represents a single Server-Sent Event for the Responses API.
@@ -1043,6 +1259,7 @@ type ResponsesStreamConverter struct {
 	itemID     string
 	model      string
 	request    ResponsesRequest
+	resolver   *responsesToolResolver
 
 	// State tracking (mutated across Process calls)
 	firstWrite      bool
@@ -1075,11 +1292,13 @@ func (c *ResponsesStreamConverter) newEvent(eventType string, data map[string]an
 
 // NewResponsesStreamConverter creates a new converter with the given configuration.
 func NewResponsesStreamConverter(responseID, itemID, model string, request ResponsesRequest) *ResponsesStreamConverter {
+	resolver, _ := newResponsesToolResolver(request)
 	return &ResponsesStreamConverter{
 		responseID: responseID,
 		itemID:     itemID,
 		model:      model,
 		request:    request,
+		resolver:   resolver,
 		firstWrite: true,
 	}
 }
@@ -1136,21 +1355,7 @@ func (c *ResponsesStreamConverter) buildResponseObject(status string, output []a
 		truncation = *c.request.Truncation
 	}
 
-	var tools []any
-	if c.request.Tools != nil {
-		for _, t := range c.request.Tools {
-			tools = append(tools, map[string]any{
-				"type":        t.Type,
-				"name":        t.Name,
-				"description": t.Description,
-				"strict":      t.Strict,
-				"parameters":  t.Parameters,
-			})
-		}
-	}
-	if tools == nil {
-		tools = []any{}
-	}
+	tools := responsesToolsForStream(c.request.Tools)
 
 	textFormat := map[string]any{"type": "text"}
 	if c.request.Text != nil && c.request.Text.Format != nil {
@@ -1227,6 +1432,28 @@ func (c *ResponsesStreamConverter) buildResponseObject(status string, output []a
 		"safety_identifier":    nil,
 		"prompt_cache_key":     nil,
 	}
+}
+
+func responsesToolsForStream(tools []ResponsesTool) []any {
+	if tools == nil {
+		return []any{}
+	}
+
+	converted := make([]any, 0, len(tools))
+	for _, tool := range tools {
+		value := map[string]any{
+			"type":        tool.Type,
+			"name":        tool.Name,
+			"description": tool.Description,
+			"strict":      tool.Strict,
+			"parameters":  tool.Parameters,
+		}
+		if len(tool.Tools) > 0 {
+			value["tools"] = responsesToolsForStream(tool.Tools)
+		}
+		converted = append(converted, value)
+	}
+	return converted
 }
 
 func (c *ResponsesStreamConverter) createResponseCreatedEvent() ResponsesStreamEvent {
@@ -1326,28 +1553,40 @@ func (c *ResponsesStreamConverter) emitFunctionCallEvents(toolCalls []api.ToolCa
 	for i, tc := range converted {
 		outputIndex := c.outputIndex + i
 		fcItemID := fmt.Sprintf("fc_%d_%d", rand.Intn(999999), i)
+		name, namespace := tc.Function.Name, ""
+		if c.resolver != nil {
+			name, namespace = c.resolver.externalName(tc.Function.Name)
+		}
 
 		toolCallItem := map[string]any{
 			"id":        fcItemID,
 			"type":      "function_call",
 			"status":    "completed",
 			"call_id":   tc.ID,
-			"name":      tc.Function.Name,
+			"name":      name,
 			"arguments": tc.Function.Arguments,
 		}
+		if namespace != "" {
+			toolCallItem["namespace"] = namespace
+		}
 		c.completedItems = append(c.completedItems, toolCallItem)
+
+		addedItem := map[string]any{
+			"id":        fcItemID,
+			"type":      "function_call",
+			"status":    "in_progress",
+			"call_id":   tc.ID,
+			"name":      name,
+			"arguments": "",
+		}
+		if namespace != "" {
+			addedItem["namespace"] = namespace
+		}
 
 		events = append(events,
 			c.newEvent("response.output_item.added", map[string]any{
 				"output_index": outputIndex,
-				"item": map[string]any{
-					"id":        fcItemID,
-					"type":      "function_call",
-					"status":    "in_progress",
-					"call_id":   tc.ID,
-					"name":      tc.Function.Name,
-					"arguments": "",
-				},
+				"item":         addedItem,
 			}),
 			c.newEvent("response.function_call_arguments.delta", map[string]any{
 				"item_id":      fcItemID,
