@@ -385,7 +385,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			if errors.As(err, &authError) {
 				sURL, sErr := signinURL()
 				if sErr != nil {
-					slog.Error(sErr.Error())
+					slog.Error("failed to get signin URL", "error", sErr)
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "error getting authorization details"})
 					return
 				}
@@ -2167,7 +2167,7 @@ func (s *Server) WhoamiHandler(c *gin.Context) {
 	// todo allow other hosts
 	u, err := url.Parse("https://ollama.com")
 	if err != nil {
-		slog.Error(err.Error())
+		slog.Error("failed to parse ollama.com URL", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "URL parse error"})
 		return
 	}
@@ -2184,7 +2184,7 @@ func (s *Server) WhoamiHandler(c *gin.Context) {
 				var sErr error
 				sURL, sErr = signinURL()
 				if sErr != nil {
-					slog.Error(sErr.Error())
+					slog.Error("failed to get signin URL", "error", sErr)
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "error getting authorization details"})
 					return
 				}
@@ -2193,7 +2193,7 @@ func (s *Server) WhoamiHandler(c *gin.Context) {
 			return
 		}
 
-		slog.Error(err.Error())
+		slog.Error("account unavailable", "error", err)
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "account unavailable"})
 		return
 	}
@@ -2201,7 +2201,7 @@ func (s *Server) WhoamiHandler(c *gin.Context) {
 	if user == nil || user.Name == "" {
 		sURL, sErr := signinURL()
 		if sErr != nil {
-			slog.Error(sErr.Error())
+			slog.Error("failed to get signin URL", "error", sErr)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "error getting authorization details"})
 			return
 		}
@@ -2230,7 +2230,7 @@ func (s *Server) SignoutHandler(c *gin.Context) {
 	// todo allow other hosts
 	u, err := url.Parse("https://ollama.com")
 	if err != nil {
-		slog.Error(err.Error())
+		slog.Error("failed to parse ollama.com URL", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "URL parse error"})
 		return
 	}
@@ -2569,7 +2569,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			if errors.As(err, &authError) {
 				sURL, sErr := signinURL()
 				if sErr != nil {
-					slog.Error(sErr.Error())
+					slog.Error("failed to get signin URL", "error", sErr)
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "error getting authorization details"})
 					return
 				}

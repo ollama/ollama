@@ -53,7 +53,7 @@ func (t *winTray) TrayRun() {
 		// https://msdn.microsoft.com/en-us/library/windows/desktop/ms644936(v=vs.85).aspx
 		switch int32(ret) {
 		case -1:
-			slog.Error(fmt.Sprintf("get message failure: %v", err))
+			slog.Error("get message failure", "error", err)
 			return
 		case 0:
 			// slog.Debug("XXX tray run loop exiting from handling", "message", fmt.Sprintf("0x%x", m.Message), "wParam", fmt.Sprintf("0x%x", m.Wparam), "lParam", fmt.Sprintf("0x%x", m.Lparam))
@@ -100,11 +100,11 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 		// slog.Debug("XXX WM_CLOSE triggered")
 		boolRet, _, err := pDestroyWindow.Call(uintptr(t.window))
 		if boolRet == 0 {
-			slog.Error(fmt.Sprintf("failed to destroy window: %s", err))
+			slog.Error("failed to destroy window", "error", err)
 		}
 		err = t.wcex.unregister()
 		if err != nil {
-			slog.Error(fmt.Sprintf("failed to uregister windo %s", err))
+			slog.Error("failed to unregister window", "error", err)
 		}
 	case WM_DESTROY:
 		// slog.Debug("XXX WM_DESTROY triggered")
@@ -118,7 +118,7 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 		if t.nid != nil {
 			err := t.nid.delete()
 			if err != nil {
-				slog.Error(fmt.Sprintf("failed to delete nid: %s", err))
+				slog.Error("failed to delete nid", "error", err)
 			}
 		}
 		t.muNID.Unlock()
@@ -129,7 +129,7 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 		case WM_RBUTTONUP, WM_LBUTTONUP:
 			err := t.showMenu()
 			if err != nil {
-				slog.Error(fmt.Sprintf("failed to show menu: %s", err))
+				slog.Error("failed to show menu", "error", err)
 			}
 		case 0x405: // TODO - how is this magic value derived for the notification left click
 			if t.pendingUpdate {
@@ -152,7 +152,7 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 		t.muNID.Lock()
 		err := t.nid.add()
 		if err != nil {
-			slog.Error(fmt.Sprintf("failed to refresh the taskbar on explorer restart: %s", err))
+			slog.Error("failed to refresh the taskbar on explorer restart", "error", err)
 		}
 		t.muNID.Unlock()
 	case uint32(UI_REQUEST_MSG_ID):
@@ -211,7 +211,7 @@ func SendUIRequestMessage(path string) {
 		uintptr(unsafe.Pointer(unsafe.StringData(path))),
 	)
 	if boolRet == 0 {
-		slog.Error(fmt.Sprintf("failed to post UI request message %s", err))
+		slog.Error("failed to post UI request message", "error", err)
 	}
 }
 
@@ -223,7 +223,7 @@ func quit() {
 		0,
 	)
 	if boolRet == 0 {
-		slog.Error(fmt.Sprintf("failed to post close message on shutdown %s", err))
+		slog.Error("failed to post close message on shutdown", "error", err)
 	}
 }
 

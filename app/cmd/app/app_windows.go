@@ -127,7 +127,7 @@ func (app *appCallbacks) DoUpdate() {
 	app.shutdown()
 
 	if err := updater.DoUpgrade(true); err != nil {
-		slog.Warn(fmt.Sprintf("upgrade attempt failed: %s", err))
+		slog.Warn("upgrade attempt failed", "error", err)
 	}
 }
 

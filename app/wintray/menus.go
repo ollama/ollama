@@ -97,7 +97,7 @@ func (t *winTray) showLogs() error {
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: false, CreationFlags: 0x08000000}
 	err := cmd.Start()
 	if err != nil {
-		slog.Error(fmt.Sprintf("Failed to open log dir: %s", err))
+		slog.Error("failed to open log dir", "error", err)
 	}
 	return nil
 }
