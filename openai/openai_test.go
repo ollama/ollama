@@ -56,6 +56,35 @@ func TestFromChatRequest_Basic(t *testing.T) {
 	}
 }
 
+func TestFromChatRequest_TemperatureFallback(t *testing.T) {
+	req := ChatCompletionRequest{
+		Model: "test-model",
+		Messages: []Message{
+			{Role: "user", Content: "Hello"},
+		},
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, ok := result.Options["temperature"]; ok {
+		t.Errorf("expected temperature to be unset when omitted from the request, got %v", result.Options["temperature"])
+	}
+
+	temp := 0.2
+	req.Temperature = &temp
+	result, err = FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if tempVal, ok := result.Options["temperature"].(float64); !ok || tempVal != 0.2 {
+		t.Errorf("expected temperature 0.2, got %v", result.Options["temperature"])
+	}
+}
+
 func TestFromChatRequest_ReasoningEffort(t *testing.T) {
 	effort := func(s string) *string { return &s }
 
