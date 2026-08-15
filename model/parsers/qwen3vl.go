@@ -3,6 +3,7 @@ package parsers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strings"
 	"unicode"
@@ -88,7 +89,7 @@ func (p *Qwen3VLParser) Add(s string, done bool) (content string, thinking strin
 			toolCall, err := parseJSONToolCall(event, p.tools)
 			if err != nil {
 				slog.Warn("qwen tool call parsing failed", "error", err)
-				return "", "", nil, err
+				return "", "", nil, fmt.Errorf("failed to parse model-generated tool call: %w", err)
 			}
 			calls = append(calls, toolCall)
 		case qwenEventThinkingContent:
