@@ -191,6 +191,35 @@ func TestBenchmarkModel_Success(t *testing.T) {
 	}
 }
 
+func TestBenchmarkModel_TruncatesOutputFile(t *testing.T) {
+	fOpt := createTestFlagOptions()
+	outputFile := t.TempDir() + "/results.bench"
+	fOpt.outputFile = &outputFile
+
+	const stale = "stale output from a previous benchmark"
+	if err := os.WriteFile(outputFile, []byte(strings.Repeat(stale, 1024)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	server := createMockOllamaServer(t, mockServerOptions{
+		generateResponses: defaultGenerateResponses(),
+	})
+	defer server.Close()
+	t.Setenv("OLLAMA_HOST", server.URL)
+
+	if err := BenchmarkModel(fOpt); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(outputFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), stale) {
+		t.Fatal("output file retained data from the previous benchmark")
+	}
+}
+
 func TestBenchmarkModel_ServerError(t *testing.T) {
 	fOpt := createTestFlagOptions()
 
