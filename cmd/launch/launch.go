@@ -296,7 +296,9 @@ Supported integrations:
   copilot         Copilot CLI (aliases: copilot-cli)
   omp             OMP
   droid           Droid
+  dsh             DeepSeek Harness (alias: deepseek-harness)
   kimi            Kimi Code CLI
+  muse            Muse Code (aliases: muse-code)
   pi              Pi
   pool            Pool
   cline           Cline
@@ -311,6 +313,7 @@ Examples:
   ollama launch chatgpt --restore
   ollama launch hermes
   ollama launch hermes-desktop
+  ollama launch dsh
   ollama launch droid --config (does not auto-launch)
   ollama launch codex --restore
   ollama launch codex -- --sandbox workspace-write`,

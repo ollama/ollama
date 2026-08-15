@@ -53,6 +53,7 @@ var (
 		"gemma4",
 		"gpt-oss:20b",
 		"qwen3.6:27b",
+		"qwen3.8:27b",
 	}
 	releaseAudioModels = []string{
 		"nemotron3:33b",
@@ -117,7 +118,6 @@ func init() {
 		integrationTestCase("create-safetensors", "", runCreateSafetensorsLLM),
 		integrationTestCase("create-gguf", "", runCreateGGUF),
 		integrationTestCase("quantization", "qwen2.5:0.5b-instruct-fp16", runQuantization),
-		integrationTestCase("image-generation", "", runImageGeneration),
 	)
 
 	// Model-parametric cases
@@ -127,6 +127,8 @@ func init() {
 	registerEmbeddingCases(testModels(releaseEmbedModels))
 	registerVisionTextCases(testModels(releaseVisionTextModels))
 	registerToolCases(testModels(releaseToolsModels))
+	registerToolRouteCases(testModels(releaseToolsModels))
 	registerToolStressCases(testModels(releaseToolsModels))
+	registerVisionOCRDocumentCases(testModels(releaseVisionModels))
 	registerAudioTranscriptionCases(testModels(releaseAudioModels))
 }

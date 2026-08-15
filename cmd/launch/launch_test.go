@@ -151,6 +151,21 @@ func (r *launcherManagedListRunner) ConfigureWithModels(primary string, models [
 	return r.Configure(primary)
 }
 
+type launcherCanonicalManagedListRunner struct {
+	launcherManagedListRunner
+}
+
+func (r *launcherCanonicalManagedListRunner) ConfigureWithModels(primary string, models []LaunchModel) error {
+	r.configuredModelLists = append(r.configuredModelLists, launchModelNames(models))
+	r.configured = append(r.configured, primary)
+	if selected, ok := findLaunchModel(models, primary); ok {
+		r.currentModel = selected.Name
+	} else {
+		r.currentModel = primary
+	}
+	return nil
+}
+
 type launcherManagedAutodiscoveryRunner struct {
 	launcherManagedRunner
 	autodiscoveryConfigures int
@@ -1086,6 +1101,51 @@ func TestLaunchIntegration_ManagedSingleIntegrationCanConfigureWithModelList(t *
 	}
 	if diff := compareStrings(runner.configured, []string{"gemma4"}); diff != "" {
 		t.Fatalf("configured primary mismatch: %s", diff)
+	}
+}
+
+func TestLaunchIntegration_ManagedSingleIntegrationSavesCanonicalModel(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, true)
+	withLauncherHooks(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"qwen3.5:latest"}]}`)
+		case "/api/show":
+			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	runner := &launcherCanonicalManagedListRunner{}
+	withIntegrationOverride(t, "stubmanaged", runner)
+
+	request := IntegrationLaunchRequest{Name: "stubmanaged", ModelOverride: "qwen3.5"}
+	if err := LaunchIntegration(context.Background(), request); err != nil {
+		t.Fatalf("first LaunchIntegration returned error: %v", err)
+	}
+
+	saved, err := config.LoadIntegration("stubmanaged")
+	if err != nil {
+		t.Fatalf("failed to reload managed integration config: %v", err)
+	}
+	if diff := compareStrings(saved.Models, []string{"qwen3.5:latest"}); diff != "" {
+		t.Fatalf("saved models mismatch: %s", diff)
+	}
+
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "stubmanaged"}); err != nil {
+		t.Fatalf("second LaunchIntegration returned error: %v", err)
+	}
+	if diff := compareStrings(runner.configured, []string{"qwen3.5"}); diff != "" {
+		t.Fatalf("expected second launch to skip configuration: %s", diff)
 	}
 }
 

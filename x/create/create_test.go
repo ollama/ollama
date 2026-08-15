@@ -15,50 +15,6 @@ import (
 	st "github.com/ollama/ollama/x/safetensors"
 )
 
-func TestIsTensorModelDir(t *testing.T) {
-	tests := []struct {
-		name     string
-		setup    func(dir string) error
-		expected bool
-	}{
-		{
-			name: "valid diffusers model with model_index.json",
-			setup: func(dir string) error {
-				return os.WriteFile(filepath.Join(dir, "model_index.json"), []byte(`{"_class_name": "FluxPipeline"}`), 0o644)
-			},
-			expected: true,
-		},
-		{
-			name: "empty directory",
-			setup: func(dir string) error {
-				return nil
-			},
-			expected: false,
-		},
-		{
-			name: "directory with other files but no model_index.json",
-			setup: func(dir string) error {
-				return os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{}`), 0o644)
-			},
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
-			if err := tt.setup(dir); err != nil {
-				t.Fatalf("setup failed: %v", err)
-			}
-
-			got := IsTensorModelDir(dir)
-			if got != tt.expected {
-				t.Errorf("IsTensorModelDir() = %v, want %v", got, tt.expected)
-			}
-		})
-	}
-}
-
 func TestValidateScalarFloat32TensorData(t *testing.T) {
 	td := st.NewTensorDataFromBytes("linear.weight_scale_2", "F32", []int32{}, encodeFloat32s(2))
 
@@ -434,6 +390,30 @@ func TestExpertGroupPrefix(t *testing.T) {
 		{"language_model.layers.2.mlp.switch_mlp.gate_proj.weight", "language_model.layers.2.mlp.switch_mlp"},
 		{"language_model.model.layers.3.mlp.switch_mlp.up_proj.weight", "language_model.model.layers.3.mlp.switch_mlp"},
 		{"model.language_model.layers.4.mlp.switch_mlp.gate_proj.weight", "model.language_model.layers.4.mlp.switch_mlp"},
+
+		// Nemotron-style expert tensors (backbone.layers.N.mixer.experts.M)
+		{"backbone.layers.1.mixer.experts.0.down_proj.weight", "backbone.layers.1.mixer.experts"},
+		{"backbone.layers.2.mixer.experts.127.up_proj.weight", "backbone.layers.2.mixer.experts"},
+		{"language_model.backbone.layers.3.mixer.experts.42.down_proj.weight", "language_model.backbone.layers.3.mixer.experts"},
+		{"model.language_model.backbone.layers.4.mixer.experts.7.up_proj.weight", "model.language_model.backbone.layers.4.mixer.experts"},
+
+		// Nemotron-style shared expert tensors
+		{"backbone.layers.1.mixer.shared_experts.down_proj.weight", "backbone.layers.1.mixer.shared_experts"},
+		{"backbone.layers.2.mixer.shared_experts.up_proj.weight", "backbone.layers.2.mixer.shared_experts"},
+
+		// Nemotron routing gate is not an expert
+		{"backbone.layers.1.mixer.gate.weight", ""},
+
+		// MTP expert tensors (mtp.layers.N.mixer.experts.M)
+		{"mtp.layers.1.mixer.experts.0.up_proj.weight", "mtp.layers.1.mixer.experts"},
+		{"mtp.layers.1.mixer.experts.127.down_proj.weight", "mtp.layers.1.mixer.experts"},
+
+		// MTP shared expert tensors
+		{"mtp.layers.1.mixer.shared_experts.up_proj.weight", "mtp.layers.1.mixer.shared_experts"},
+		{"mtp.layers.1.mixer.shared_experts.down_proj.weight", "mtp.layers.1.mixer.shared_experts"},
+
+		// MTP routing gate is not an expert
+		{"mtp.layers.1.mixer.gate.weight", ""},
 
 		// Non-expert tensors should return empty string
 		{"model.layers.0.mlp.down_proj.weight", ""},    // dense layer, no experts

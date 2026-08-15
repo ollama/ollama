@@ -27,7 +27,6 @@ import (
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
-	"github.com/ollama/ollama/x/mlxrunner/model/base"
 )
 
 const maxPagedOutBytes int64 = 8 << 30 // 8 GiB eviction threshold for paged-out snapshot memory
@@ -53,9 +52,10 @@ type pendingSnapshot struct {
 // Callers should append generated tokens to outputs and
 // defer close to save the cache state.
 type cacheSession struct {
-	cache   *prefixCache
-	inputs  []int32
-	outputs []int32
+	cache     *prefixCache
+	inputs    []int32
+	effInputs []uint32 // inputs' key alphabet, media folds applied
+	outputs   []int32
 
 	caches    []cache.Cache
 	remaining []int32
@@ -66,17 +66,9 @@ type cacheSession struct {
 	pendingSnapshots []pendingSnapshot
 }
 
-func newPrefixCache(m base.Model) *prefixCache {
-	c := &prefixCache{}
-	if cacheFactory, ok := m.(interface{ NewCaches() []cache.Cache }); ok {
-		c.caches = cacheFactory.NewCaches()
-		return c
-	}
-	c.caches = make([]cache.Cache, m.NumLayers())
-	for i := range c.caches {
-		c.caches[i] = cache.NewKVCache()
-	}
-	return c
+// newPrefixCache manages the given cache slots for the model's life.
+func newPrefixCache(caches []cache.Cache) *prefixCache {
+	return &prefixCache{caches: caches}
 }
 
 func (c *prefixCache) ensureRoot() {
@@ -90,10 +82,11 @@ func (c *prefixCache) ensureRoot() {
 
 // begin prepares caches for a new request. It finds the nearest
 // matching cache or creates new caches if none match.
-func (c *prefixCache) begin(inputs []int32) *cacheSession {
+func (c *prefixCache) begin(inputs []int32, items []mediaItem) *cacheSession {
 	c.ensureRoot()
 
-	keys := c.key(inputs)
+	effInputs := effectiveKeyTokens(inputs, items)
+	keys := c.key(effInputs)
 	matchPath, matched := findBestMatch(c.root, keys)
 	originalMatched := matched
 
@@ -113,6 +106,7 @@ func (c *prefixCache) begin(inputs []int32) *cacheSession {
 	session := &cacheSession{
 		cache:     c,
 		inputs:    inputs,
+		effInputs: effInputs,
 		caches:    c.caches,
 		remaining: remaining,
 	}
@@ -132,12 +126,26 @@ func (c *prefixCache) begin(inputs []int32) *cacheSession {
 	return session
 }
 
-// key converts tokens to trie keys, one per restorable cache offset. A model
-// that drafts through MTP-style draft caches pairs each cache slot with the
-// token after it, so slot i is reusable only if token i+1 also matched. The
-// key for offset i then packs (token i, token i+1): matching k keys verifies
-// k+1 tokens, making every match a valid restore point.
-func (c *prefixCache) key(tokens []int32) []trieKey {
+// effectiveKeyTokens returns the per-position key alphabet: the token ID
+// outside media expansions, the item's fold value across each expansion's
+// whole range.
+func effectiveKeyTokens(tokens []int32, items []mediaItem) []uint32 {
+	eff := make([]uint32, len(tokens))
+	for i, t := range tokens {
+		eff[i] = uint32(t)
+	}
+	for _, item := range items {
+		for i := item.pos; i < item.pos+item.length; i++ {
+			eff[i] = item.fold
+		}
+	}
+	return eff
+}
+
+// key packs (token i, token i+1) per restorable offset: draft caches
+// pair each slot with the next token, so matching k keys verifies k+1
+// tokens and every match is a valid restore point.
+func (c *prefixCache) key(tokens []uint32) []trieKey {
 	keys := make([]trieKey, max(len(tokens)-c.draftLookahead, 0))
 	switch c.draftLookahead {
 	case 0:
@@ -146,12 +154,26 @@ func (c *prefixCache) key(tokens []int32) []trieKey {
 		}
 	case 1:
 		for i := range keys {
-			keys[i] = trieKey(uint32(tokens[i]))<<32 | trieKey(uint32(tokens[i+1]))
+			keys[i] = trieKey(tokens[i])<<32 | trieKey(tokens[i+1])
 		}
 	default:
 		panic(fmt.Sprintf("prefixCache: unsupported draft look-ahead %d", c.draftLookahead))
 	}
 	return keys
+}
+
+// storedKeys keys the session's evaluated stream: the prompt's effective
+// tokens plus generated tokens, which are never media.
+func (s *cacheSession) storedKeys() []trieKey {
+	eff := s.effInputs
+	if len(s.outputs) > 0 {
+		eff = make([]uint32, 0, len(s.effInputs)+len(s.outputs))
+		eff = append(eff, s.effInputs...)
+		for _, t := range s.outputs {
+			eff = append(eff, uint32(t))
+		}
+	}
+	return s.cache.key(eff)
 }
 
 // switchToPath transitions from the current active path to a new path,
@@ -186,7 +208,7 @@ func (c *prefixCache) switchToPath(newPath []*trieNode, matched int) {
 	leafNeedsRewind := matched < c.activePath[leaf].endOffset
 	if leafDiverges || leafNeedsRewind {
 		node := c.activePath[leaf]
-		if !node.hasAllSnapshots() {
+		if !hasAllSnapshots(node, c.caches) {
 			fromOffset := node.startOffset()
 			snaps := make([]cache.Snapshot, len(c.caches))
 			for j, kv := range c.caches {
@@ -390,7 +412,7 @@ func (s *cacheSession) attachPrefillSnapshots() {
 	// no captured state. Skip it rather than materialize a node whose edge
 	// claims tokens the cache never wrote. Closing its (nil) row is a no-op.
 	reached := c.minCacheOffset()
-	stored := c.key(append(s.inputs, s.outputs...))
+	stored := s.storedKeys()
 	for i, p := range pending {
 		if p.offset > reached {
 			// Never crossed by a write, so the row is nil; close any entry
@@ -520,7 +542,7 @@ func (s *cacheSession) close() {
 	// The caches never advance past the stored keys; anything more
 	// means positions desynced.
 	c := s.cache
-	stored := c.key(append(s.inputs, s.outputs...))
+	stored := s.storedKeys()
 	if offset > len(stored) {
 		panic(fmt.Sprintf("cache: offset %d exceeds %d stored keys", offset, len(stored)))
 	}
@@ -642,7 +664,7 @@ func (c *prefixCache) dumpTree() {
 		if n.user {
 			flags = append(flags, "user")
 		}
-		if n.hasAllSnapshots() {
+		if hasAllSnapshots(n, c.caches) {
 			snapshotCount++
 			flags = append(flags, "snap")
 		}

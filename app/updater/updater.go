@@ -153,10 +153,12 @@ func (u *Updater) DownloadNewRelease(ctx context.Context, updateResp UpdateRespo
 		return err
 	}
 
-	// In case of slow downloads, continue the update check in the background
+	// In case of slow downloads, continue the update check in the background.
+	// Drain the goroutine before returning: it reads package-level knobs
+	// (e.g. UpdateCheckInterval), which callers may mutate once we return.
 	bgctx, bgcancel := context.WithCancel(downloadCtx)
-	defer bgcancel()
-	go func() {
+	var bgwg sync.WaitGroup
+	bgwg.Go(func() {
 		for {
 			select {
 			case <-bgctx.Done():
@@ -165,6 +167,10 @@ func (u *Updater) DownloadNewRelease(ctx context.Context, updateResp UpdateRespo
 				u.checkForUpdate(bgctx)
 			}
 		}
+	})
+	defer func() {
+		bgcancel()
+		bgwg.Wait()
 	}()
 
 	resp, err := http.DefaultClient.Do(req)

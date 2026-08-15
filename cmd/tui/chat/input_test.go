@@ -39,6 +39,7 @@ func TestChatHelpCommandShowsV1Commands(t *testing.T) {
 		"**Shortcuts**",
 		"- `shift+enter`: insert a newline",
 		"- `shift+tab`: toggle permission mode",
+		"- `ctrl+o`: toggle transcript details",
 	} {
 		if !strings.Contains(fm.entries[0].content, want) {
 			t.Fatalf("help output missing %q:\n%s", want, fm.entries[0].content)
@@ -368,6 +369,36 @@ func TestChatPromptDebugMouseWheelScrolls(t *testing.T) {
 	m = updated.(chatModel)
 	if m.promptDebug.scroll != 0 {
 		t.Fatalf("mouse wheel up should return prompt debug screen to top, got scroll %d", m.promptDebug.scroll)
+	}
+}
+
+func TestChatPromptDebugCachesLinesByWidth(t *testing.T) {
+	m := chatModel{
+		promptDebug: &chatPromptDebug{
+			request: api.ChatRequest{
+				Model: "llama3.2",
+				Messages: []api.Message{{
+					Role:    "user",
+					Content: strings.Repeat("a long prompt line ", 20),
+				}},
+			},
+		},
+	}
+
+	first := m.promptDebugLines(80)
+	if len(first) == 0 || m.promptDebug.linesWidth != 80 {
+		t.Fatalf("prompt cache = %#v, want lines cached at width 80", m.promptDebug)
+	}
+	if &first[0] != &m.promptDebugLines(80)[0] {
+		t.Fatal("prompt debug should reuse cached lines at the same width")
+	}
+
+	resized := m.promptDebugLines(120)
+	if m.promptDebug.linesWidth != 120 {
+		t.Fatalf("prompt cache width = %d, want 120", m.promptDebug.linesWidth)
+	}
+	if &first[0] == &resized[0] {
+		t.Fatal("prompt debug should rebuild lines after a width change")
 	}
 }
 
@@ -1275,5 +1306,46 @@ func TestChatFileMentionSuggestionsFilterAndComplete(t *testing.T) {
 	m.applyCompletion()
 	if got := string(m.input); got != "open @README.md " {
 		t.Fatalf("completed input = %q", got)
+	}
+}
+
+func TestChatEnterCompletesHighlightedFileMentionWithoutSubmitting(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "alpha.md"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "target.md"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := chatModel{
+		workingDir:     dir,
+		input:          []rune("review @ after this"),
+		inputCursor:    len([]rune("review @")),
+		inputCursorSet: true,
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(chatModel)
+	if got, want := m.complete, 1; got != want {
+		t.Fatalf("selected completion = %d, want %d", got, want)
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatal("selecting a file mention should not submit the prompt")
+	}
+	m = updated.(chatModel)
+	if got, want := string(m.input), "review @target.md after this"; got != want {
+		t.Fatalf("input = %q, want %q", got, want)
+	}
+	if got, want := m.inputCursor, len([]rune("review @target.md ")); got != want || !m.inputCursorSet {
+		t.Fatalf("cursor = %d (set=%v), want %d after the inserted mention", got, m.inputCursorSet, want)
+	}
+	if len(m.entries) != 0 || len(m.messages) != 0 {
+		t.Fatalf("selecting a file mention submitted the prompt: entries=%#v messages=%#v", m.entries, m.messages)
+	}
+	if completions := m.mentionCompletions(); completions != nil {
+		t.Fatalf("mention selector remained visible after selection: %#v", completions)
 	}
 }

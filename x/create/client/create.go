@@ -186,6 +186,7 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 
 	var draftLayers []create.LayerInfo
 	var err error
+
 	if hasDraft {
 		draftLayers, err = create.CreateDraftLayers(
 			opts.Modelfile.Draft,
@@ -234,9 +235,9 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 }
 
 func appendLayersManifestWriter(next create.ManifestWriter, extra []create.LayerInfo) create.ManifestWriter {
-	return func(modelName string, config create.LayerInfo, layers []create.LayerInfo) error {
+	return func(modelName string, config create.LayerInfo, layers []create.LayerInfo, class create.Classification) error {
 		layers = append(layers, extra...)
-		return next(modelName, config, layers)
+		return next(modelName, config, layers, class)
 	}
 }
 
@@ -313,6 +314,7 @@ func createModelFromBaseWithDraft(opts CreateOptions, draftLayers []create.Layer
 			Name:      configLayer.Name,
 		},
 		layers,
+		create.Classification{Quantize: quant.Canonical(opts.Quantize)},
 	)
 }
 
@@ -376,23 +378,10 @@ func newLayerCreator() create.LayerCreator {
 
 // newManifestWriter returns a ManifestWriter callback for writing the model manifest.
 func newManifestWriter(opts CreateOptions, capabilities []string, parserName, rendererName string) create.ManifestWriter {
-	return func(modelName string, config create.LayerInfo, layers []create.LayerInfo) error {
+	return func(modelName string, config create.LayerInfo, layers []create.LayerInfo, class create.Classification) error {
 		name := model.ParseName(modelName)
 		if !name.IsValid() {
 			return fmt.Errorf("invalid model name: %s", modelName)
-		}
-
-		// TODO: find a better way to detect image input support
-		// For now, hardcode Flux2KleinPipeline as supporting vision (image input)
-		caps := capabilities
-		modelIndex := filepath.Join(opts.ModelDir, "model_index.json")
-		if data, err := os.ReadFile(modelIndex); err == nil {
-			var cfg struct {
-				ClassName string `json:"_class_name"`
-			}
-			if json.Unmarshal(data, &cfg) == nil && cfg.ClassName == "Flux2KleinPipeline" {
-				caps = append(caps, "vision")
-			}
 		}
 
 		// Create config blob with version requirement.
@@ -401,10 +390,10 @@ func newManifestWriter(opts CreateOptions, capabilities []string, parserName, re
 			configData = *opts.BaseConfig
 		}
 		configData.ModelFormat = "safetensors"
-		if opts.Quantize != "" || configData.FileType == "" {
-			configData.FileType = strings.ToLower(strings.TrimSpace(opts.Quantize))
+		if class.Quantize != "" || configData.FileType == "" {
+			configData.FileType = class.Quantize
 		}
-		configData.Capabilities = caps
+		configData.Capabilities = capabilities
 		configData.Requires = MinOllamaVersion
 		if opts.Modelfile != nil && opts.Modelfile.Requires != "" {
 			configData.Requires = opts.Modelfile.Requires
@@ -529,14 +518,16 @@ func detectCapabilities(modelDir string) modelCapabilities {
 		ModelType     string          `json:"model_type"`
 		VisionConfig  *map[string]any `json:"vision_config"`
 		AudioConfig   *map[string]any `json:"audio_config"`
+		HasVision     bool            `json:"has_vision"`
+		SoundConfig   *map[string]any `json:"sound_config"`
 	}
 	if data, err := os.ReadFile(filepath.Join(modelDir, "config.json")); err == nil {
 		_ = json.Unmarshal(data, &cfg)
 	}
 
 	return modelCapabilities{
-		vision: cfg.VisionConfig != nil,
-		audio:  cfg.AudioConfig != nil,
+		vision: cfg.VisionConfig != nil || cfg.HasVision,
+		audio:  cfg.AudioConfig != nil || cfg.SoundConfig != nil,
 		thinking: chatTemplateHasThinkingSupport(readChatTemplate(modelDir)) ||
 			alwaysSupportsThinking(cfg.Architectures, cfg.ModelType),
 	}
@@ -593,6 +584,16 @@ func isQwen35Family(s string) bool {
 	return strings.Contains(s, "qwen3_5") || strings.Contains(s, "qwen3next")
 }
 
+func qwen35RendererName(modelDir string) string {
+	template := readChatTemplate(modelDir)
+	if strings.Contains(template, "resolved_reasoning_effort") &&
+		strings.Contains(template, "preserve_thinking") {
+		return "qwen3.8"
+	}
+
+	return "qwen3.5"
+}
+
 func lagunaRendererParserName(modelDir string) string {
 	const poolsideV1Marker = "laguna_glm_thinking_v8"
 
@@ -610,6 +611,22 @@ func lagunaRendererParserName(modelDir string) string {
 	return "laguna"
 }
 
+func nemotronRendererParserName(modelDir string) string {
+	const v35Marker = "{reasoning effort: efficient}"
+
+	// Nemotron 3.5 publishes its updated template as a standalone file while
+	// tokenizer_config.json can retain the older template, so inspect both.
+	if data, err := os.ReadFile(filepath.Join(modelDir, "chat_template.jinja")); err == nil &&
+		strings.Contains(string(data), v35Marker) {
+		return "nemotron-3.5-nano"
+	}
+	if strings.Contains(readChatTemplate(modelDir), v35Marker) {
+		return "nemotron-3.5-nano"
+	}
+
+	return "nemotron-3-nano"
+}
+
 // getParserName returns the parser name for a model based on its architecture.
 // This reads the config.json from the model directory and determines the appropriate parser.
 func getParserName(modelDir string) string {
@@ -622,64 +639,55 @@ func getParserName(modelDir string) string {
 	var cfg struct {
 		Architectures []string `json:"architectures"`
 		ModelType     string   `json:"model_type"`
+		LLMConfig     struct {
+			ModelType string `json:"model_type"`
+		} `json:"llm_config"`
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return ""
 	}
 
-	// Check architectures for known parsers
 	for _, arch := range cfg.Architectures {
-		archLower := strings.ToLower(arch)
-		if strings.Contains(archLower, "laguna") {
-			return lagunaRendererParserName(modelDir)
-		}
-		if strings.Contains(archLower, "cohere2moe") || strings.Contains(archLower, "cohere2_moe") {
-			return "cohere"
-		}
-		if strings.Contains(archLower, "glm4") || strings.Contains(archLower, "glm-4") {
-			return "glm-4.7"
-		}
-		if strings.Contains(archLower, "deepseek") {
-			return "deepseek3"
-		}
-		if strings.Contains(archLower, "gemma4") {
-			return "gemma4"
-		}
-		if isQwen35Family(archLower) {
-			return "qwen3.5"
-		}
-		if strings.Contains(archLower, "qwen3") {
-			return "qwen3"
+		if name := parserNameForIdentifier(modelDir, arch); name != "" {
+			return name
 		}
 	}
-
-	// Also check model_type
-	if cfg.ModelType != "" {
-		typeLower := strings.ToLower(cfg.ModelType)
-		if strings.Contains(typeLower, "laguna") {
-			return lagunaRendererParserName(modelDir)
-		}
-		if strings.Contains(typeLower, "cohere2_moe") {
-			return "cohere"
-		}
-		if strings.Contains(typeLower, "glm4") || strings.Contains(typeLower, "glm-4") {
-			return "glm-4.7"
-		}
-		if strings.Contains(typeLower, "deepseek") {
-			return "deepseek3"
-		}
-		if strings.Contains(typeLower, "gemma4") {
-			return "gemma4"
-		}
-		if isQwen35Family(typeLower) {
-			return "qwen3.5"
-		}
-		if strings.Contains(typeLower, "qwen3") {
-			return "qwen3"
+	for _, modelType := range []string{cfg.ModelType, cfg.LLMConfig.ModelType} {
+		if name := parserNameForIdentifier(modelDir, modelType); name != "" {
+			return name
 		}
 	}
 
 	return ""
+}
+
+func parserNameForIdentifier(modelDir, s string) string {
+	s = strings.ToLower(s)
+	switch {
+	case strings.HasPrefix(s, "museglimmer") || s == "muse_glimmer":
+		return "glimmer"
+	case strings.Contains(s, "laguna"):
+		return lagunaRendererParserName(modelDir)
+	case strings.Contains(s, "cohere2moe") || strings.Contains(s, "cohere2_moe"):
+		return "cohere"
+	case strings.Contains(s, "glm4") || strings.Contains(s, "glm-4"):
+		return "glm-4.7"
+	case strings.Contains(s, "deepseek"):
+		return "deepseek3"
+	case strings.Contains(s, "gemma4"):
+		return "gemma4"
+	case isQwen35Family(s):
+		return "qwen3.5"
+	case strings.Contains(s, "qwen3"):
+		return "qwen3"
+	// Nemotron-H publishes NemotronHForCausalLM for text and
+	// NemotronH_Nano_Omni_Reasoning_V3 for omni; model_type is nemotron_h,
+	// nemotron_h_moe, or the omni name. The two stems cover all of them.
+	case strings.Contains(s, "nemotronh") || strings.Contains(s, "nemotron_h"):
+		return nemotronRendererParserName(modelDir)
+	default:
+		return ""
+	}
 }
 
 // getRendererName returns the renderer name for a model based on its architecture.
@@ -694,62 +702,53 @@ func getRendererName(modelDir string) string {
 	var cfg struct {
 		Architectures []string `json:"architectures"`
 		ModelType     string   `json:"model_type"`
+		LLMConfig     struct {
+			ModelType string `json:"model_type"`
+		} `json:"llm_config"`
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return ""
 	}
 
-	// Check architectures for known renderers
 	for _, arch := range cfg.Architectures {
-		archLower := strings.ToLower(arch)
-		if strings.Contains(archLower, "laguna") {
-			return lagunaRendererParserName(modelDir)
-		}
-		if strings.Contains(archLower, "cohere2moe") || strings.Contains(archLower, "cohere2_moe") {
-			return "cohere"
-		}
-		if strings.Contains(archLower, "gemma4") {
-			return "gemma4"
-		}
-		if strings.Contains(archLower, "glm4") || strings.Contains(archLower, "glm-4") {
-			return "glm-4.7"
-		}
-		if strings.Contains(archLower, "deepseek") {
-			return "deepseek3"
-		}
-		if isQwen35Family(archLower) {
-			return "qwen3.5"
-		}
-		if strings.Contains(archLower, "qwen3") {
-			return "qwen3-coder"
+		if name := rendererNameForIdentifier(modelDir, arch); name != "" {
+			return name
 		}
 	}
-
-	// Also check model_type
-	if cfg.ModelType != "" {
-		typeLower := strings.ToLower(cfg.ModelType)
-		if strings.Contains(typeLower, "laguna") {
-			return lagunaRendererParserName(modelDir)
-		}
-		if strings.Contains(typeLower, "cohere2_moe") {
-			return "cohere"
-		}
-		if strings.Contains(typeLower, "gemma4") {
-			return "gemma4"
-		}
-		if strings.Contains(typeLower, "glm4") || strings.Contains(typeLower, "glm-4") {
-			return "glm-4.7"
-		}
-		if strings.Contains(typeLower, "deepseek") {
-			return "deepseek3"
-		}
-		if isQwen35Family(typeLower) {
-			return "qwen3.5"
-		}
-		if strings.Contains(typeLower, "qwen3") {
-			return "qwen3-coder"
+	for _, modelType := range []string{cfg.ModelType, cfg.LLMConfig.ModelType} {
+		if name := rendererNameForIdentifier(modelDir, modelType); name != "" {
+			return name
 		}
 	}
 
 	return ""
+}
+
+func rendererNameForIdentifier(modelDir, s string) string {
+	s = strings.ToLower(s)
+	switch {
+	case strings.HasPrefix(s, "museglimmer") || s == "muse_glimmer":
+		return "glimmer"
+	case strings.Contains(s, "laguna"):
+		return lagunaRendererParserName(modelDir)
+	case strings.Contains(s, "cohere2moe") || strings.Contains(s, "cohere2_moe"):
+		return "cohere"
+	case strings.Contains(s, "gemma4"):
+		return "gemma4"
+	case strings.Contains(s, "glm4") || strings.Contains(s, "glm-4"):
+		return "glm-4.7"
+	case strings.Contains(s, "deepseek"):
+		return "deepseek3"
+	case isQwen35Family(s):
+		return qwen35RendererName(modelDir)
+	case strings.Contains(s, "qwen3"):
+		return "qwen3-coder"
+	// Nemotron-H publishes NemotronHForCausalLM for text and
+	// NemotronH_Nano_Omni_Reasoning_V3 for omni; model_type is nemotron_h,
+	// nemotron_h_moe, or the omni name. The two stems cover all of them.
+	case strings.Contains(s, "nemotronh") || strings.Contains(s, "nemotron_h"):
+		return nemotronRendererParserName(modelDir)
+	default:
+		return ""
+	}
 }

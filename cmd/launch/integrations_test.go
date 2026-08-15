@@ -64,7 +64,11 @@ func TestIntegrationLookup(t *testing.T) {
 		{"codex app gui alias", "codex-gui", true, "ChatGPT"},
 		{"hermes desktop", "hermes-desktop", true, "Hermes Desktop"},
 		{"kimi", "kimi", true, "Kimi Code CLI"},
+		{"muse", "muse", true, "Muse Code"},
+		{"muse alias", "muse-code", true, "Muse Code"},
 		{"droid", "droid", true, "Droid"},
+		{"dsh", "dsh", true, "DeepSeek Harness"},
+		{"deepseek harness alias", "deepseek-harness", true, "DeepSeek Harness"},
 		{"opencode", "opencode", true, "OpenCode"},
 		{"omp", "omp", true, "OMP"},
 		{"pool", "pool", true, "Pool"},
@@ -86,7 +90,7 @@ func TestIntegrationLookup(t *testing.T) {
 }
 
 func TestIntegrationRegistry(t *testing.T) {
-	expectedIntegrations := []string{"claude", "claude-desktop", "cline", "codex", "chatgpt", "kimi", "droid", "opencode", "omp", "hermes", "hermes-desktop", "pool", "qwen"}
+	expectedIntegrations := []string{"claude", "claude-desktop", "cline", "codex", "chatgpt", "kimi", "muse", "droid", "dsh", "opencode", "omp", "hermes", "hermes-desktop", "pool", "qwen"}
 	for _, name := range expectedIntegrations {
 		t.Run(name, func(t *testing.T) {
 			r, ok := integrations[name]
@@ -127,7 +131,7 @@ func TestChatGPTMigratesLegacyCodexAppLaunchConfig(t *testing.T) {
 func TestHiddenIntegrationsExcludedFromVisibleLists(t *testing.T) {
 	for _, info := range ListIntegrationInfos() {
 		switch info.Name {
-		case "vscode", "kimi":
+		case "vscode", "kimi", "muse":
 			t.Fatalf("hidden integration %q should not appear in ListIntegrationInfos", info.Name)
 		}
 	}

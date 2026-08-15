@@ -152,6 +152,7 @@ func loadFromTokenizerJSON(data []byte) (*Tokenizer, error) {
 			return nil, fmt.Errorf("failed to compile pretokenizer regex %q: %w", pattern, err)
 		}
 		t.pretokenizer = re
+		t.pretokenizerSpaceBeforePunctuation = strings.Contains(pattern, ` ?[^\s\p{L}\p{N}]`)
 	}
 
 	cacheSortedSpecialTokens(t)

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -795,6 +796,157 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 			t.Fatalf("expected upstream path /v1/models/kimi-k2.5:latest, got %q", capture.path)
 		}
 	})
+}
+
+func TestCloudResponsesWebSearchUsesLocalOrchestration(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setTestHome(t, t.TempDir())
+
+	chatCalls := 0
+	searchCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/chat":
+			chatCalls++
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			if chatCalls == 1 {
+				_, _ = io.WriteString(w, `{"message":{"role":"assistant","tool_calls":[{"id":"call_1","function":{"name":"web_search","arguments":{"query":"latest Ollama release"}}}]},"done":false}`+"\n")
+				_, _ = io.WriteString(w, `{"message":{"role":"assistant"},"done":true,"prompt_eval_count":12,"eval_count":4}`+"\n")
+				return
+			}
+			_, _ = io.WriteString(w, `{"message":{"role":"assistant","content":"Ollama [release](https://ollama.com/release)."},"done":true,"prompt_eval_count":20,"eval_count":6}`)
+		case "/api/web_search":
+			searchCalls++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"results":[{"title":"Ollama release","url":"https://ollama.com/release","content":"current release"}]}`)
+		default:
+			t.Fatalf("unexpected upstream path %q", r.URL.Path)
+		}
+	}))
+	defer upstream.Close()
+
+	originalBaseURL := cloudProxyBaseURL
+	originalSignRequest := cloudProxySignRequest
+	cloudProxyBaseURL = upstream.URL
+	cloudProxySignRequest = func(context.Context, *http.Request) error { return nil }
+	t.Cleanup(func() {
+		cloudProxyBaseURL = originalBaseURL
+		cloudProxySignRequest = originalSignRequest
+	})
+
+	s := &Server{}
+	router, err := s.GenerateRoutes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := httptest.NewServer(router)
+	defer local.Close()
+	t.Setenv("OLLAMA_HOST", local.URL)
+
+	reqBody := `{
+		"model":"kimi-k2.5:cloud",
+		"input":"Find the latest Ollama release",
+		"stream":true,
+		"tools":[{"type":"web_search","external_web_access":false}]
+	}`
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, local.URL+"/v1/responses", bytes.NewBufferString(reqBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := local.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", resp.StatusCode, body)
+	}
+	if chatCalls != 2 || searchCalls != 1 {
+		t.Fatalf("chat calls = %d, search calls = %d; want 2 and 1", chatCalls, searchCalls)
+	}
+	if !bytes.Contains(body, []byte("response.web_search_call.completed")) || !bytes.Contains(body, []byte("https://ollama.com/release")) {
+		t.Fatalf("missing native web search result and citation: %s", body)
+	}
+	if bytes.Contains(body, []byte("response.function_call_arguments")) || bytes.Contains(body, []byte(`"type":"function_call"`)) {
+		t.Fatalf("private web_search function leaked: %s", body)
+	}
+}
+
+func TestCloudResponsesUnsupportedWebSearchPassthrough(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setTestHome(t, t.TempDir())
+
+	type upstreamCapture struct {
+		path string
+		body string
+	}
+	capture := &upstreamCapture{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capture.path = r.URL.Path
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		capture.body = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"resp_1","object":"response"}`)
+	}))
+	defer upstream.Close()
+
+	originalBaseURL := cloudProxyBaseURL
+	originalSignRequest := cloudProxySignRequest
+	cloudProxyBaseURL = upstream.URL
+	cloudProxySignRequest = func(context.Context, *http.Request) error { return nil }
+	t.Cleanup(func() {
+		cloudProxyBaseURL = originalBaseURL
+		cloudProxySignRequest = originalSignRequest
+	})
+
+	router := gin.New()
+	router.POST(
+		"/v1/responses",
+		cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable),
+		middleware.ResponsesMiddleware(),
+		func(c *gin.Context) { c.Status(http.StatusTeapot) },
+	)
+	local := httptest.NewServer(router)
+	defer local.Close()
+
+	for _, toolType := range []string{"web_search_preview", "web_search_invalid"} {
+		t.Run(toolType, func(t *testing.T) {
+			capture.path = ""
+			capture.body = ""
+			reqBody := fmt.Sprintf(`{
+				"model":"kimi-k2.5:cloud",
+				"input":"Find the latest Ollama release",
+				"tools":[{"type":%q}]
+			}`, toolType)
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, local.URL+"/v1/responses", bytes.NewBufferString(reqBody))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Content-Type", "application/json")
+
+			resp, err := local.Client().Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				t.Fatalf("status = %d, want %d: %s", resp.StatusCode, http.StatusOK, body)
+			}
+			if capture.path != "/v1/responses" {
+				t.Fatalf("upstream path = %q, want /v1/responses", capture.path)
+			}
+			if !strings.Contains(capture.body, fmt.Sprintf(`"type":%q`, toolType)) {
+				t.Fatalf("unsupported web-search tool was not passed through: %s", capture.body)
+			}
+		})
+	}
 }
 
 func TestCloudDisabledBlocksExplicitCloudPassthrough(t *testing.T) {

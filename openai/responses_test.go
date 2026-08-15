@@ -248,6 +248,21 @@ func TestUnmarshalResponsesInputItem(t *testing.T) {
 		}
 	})
 
+	t.Run("web_search_call item", func(t *testing.T) {
+		got, err := unmarshalResponsesInputItem([]byte(`{"type":"web_search_call","id":"ws_123","status":"completed","action":{"type":"search","query":"Parth Sareen"}}`))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		call, ok := got.(ResponsesWebSearchCall)
+		if !ok {
+			t.Fatalf("got type %T, want ResponsesWebSearchCall", got)
+		}
+		if call.ID != "ws_123" || call.Action == nil || call.Action.Query != "Parth Sareen" {
+			t.Fatalf("call = %#v", call)
+		}
+	})
+
 	t.Run("unknown item type", func(t *testing.T) {
 		_, err := unmarshalResponsesInputItem([]byte(`{"type": "unknown_type"}`))
 		if err == nil {
@@ -277,6 +292,67 @@ func TestUnmarshalResponsesInputItem(t *testing.T) {
 			t.Errorf("unexpected error message: %v", err)
 		}
 	})
+}
+
+func TestFromResponsesRequestIgnoresReplayedWebSearchCall(t *testing.T) {
+	req := ResponsesRequest{
+		Model: "test",
+		Input: ResponsesInput{Items: []ResponsesInputItem{
+			ResponsesInputMessage{Type: "message", Role: "user", Content: []ResponsesContent{ResponsesTextContent{Type: "input_text", Text: "Who is Parth Sareen?"}}},
+			ResponsesWebSearchCall{ID: "ws_123", Type: "web_search_call", Status: "completed", Action: &ResponsesWebSearchAction{Type: "search", Query: "Parth Sareen"}},
+			ResponsesInputMessage{Type: "message", Role: "assistant", Content: []ResponsesContent{ResponsesOutputTextContent{Type: "output_text", Text: "He works at Ollama."}}},
+			ResponsesInputMessage{Type: "message", Role: "user", Content: []ResponsesContent{ResponsesTextContent{Type: "input_text", Text: "What do you think of him?"}}},
+		}},
+	}
+
+	chat, err := FromResponsesRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.Messages) != 3 {
+		t.Fatalf("messages = %#v", chat.Messages)
+	}
+	if chat.Messages[0].Role != "user" || chat.Messages[1].Role != "assistant" || chat.Messages[1].Content != "He works at Ollama." || chat.Messages[2].Role != "user" {
+		t.Fatalf("messages = %#v", chat.Messages)
+	}
+}
+
+func TestFromResponsesRequestMergesMessageAfterFunctionCall(t *testing.T) {
+	var req ResponsesRequest
+	err := json.Unmarshal([]byte(`{
+		"model": "kimi-k3:cloud",
+		"input": [
+			{"role": "user", "content": "Find Ollama and inspect the current directory."},
+			{"type": "web_search_call", "id": "ws_test", "status": "completed", "action": {"type": "search", "query": "Ollama"}},
+			{"type": "function_call", "call_id": "call_test", "name": "exec_command", "arguments": "{\"cmd\":\"pwd\"}"},
+			{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "I found Ollama and will inspect the directory."}]},
+			{"type": "function_call_output", "call_id": "call_test", "output": "/tmp"}
+		]
+	}`), &req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	chat, err := FromResponsesRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.Messages) != 3 {
+		t.Fatalf("messages = %#v", chat.Messages)
+	}
+
+	assistant := chat.Messages[1]
+	if assistant.Role != "assistant" || assistant.Content != "I found Ollama and will inspect the directory." || len(assistant.ToolCalls) != 1 {
+		t.Fatalf("assistant message = %#v", assistant)
+	}
+	if assistant.ToolCalls[0].ID != "call_test" || assistant.ToolCalls[0].Function.Name != "exec_command" {
+		t.Fatalf("tool call = %#v", assistant.ToolCalls[0])
+	}
+
+	tool := chat.Messages[2]
+	if tool.Role != "tool" || tool.ToolCallID != "call_test" || tool.Content != "/tmp" {
+		t.Fatalf("tool message = %#v", tool)
+	}
 }
 
 func TestResponsesRequest_UnmarshalJSON(t *testing.T) {
@@ -415,6 +491,152 @@ func TestFromResponsesRequest_Tools(t *testing.T) {
 	}
 }
 
+func TestFromResponsesRequest_WebSearchTool(t *testing.T) {
+	var req ResponsesRequest
+	if err := json.Unmarshal([]byte(`{
+		"model":"gpt-oss:20b", "input":"latest news",
+		"tools":[
+			{"type":"web_search"},
+			{"type":"function", "name":"web_search", "description":"client collision", "parameters":{"type":"object"}},
+			{"type":"function", "name":"weather", "description":"weather", "parameters":{"type":"object"}}
+		]
+	}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	if !HasWebSearchTool(req.Tools) {
+		t.Fatal("built-in web_search was not detected")
+	}
+	chat, err := FromResponsesRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.Tools) != 2 {
+		t.Fatalf("converted tool count = %d, want 2", len(chat.Tools))
+	}
+	if chat.Tools[0].Function.Name != "web_search" {
+		t.Errorf("first tool = %q, want web_search", chat.Tools[0].Function.Name)
+	}
+	if chat.Tools[0].Function.Parameters.Type != "object" || len(chat.Tools[0].Function.Parameters.Required) != 1 || chat.Tools[0].Function.Parameters.Required[0] != "query" {
+		t.Errorf("web_search parameters = %#v, want required query object", chat.Tools[0].Function.Parameters)
+	}
+	if chat.Tools[1].Function.Name != "weather" {
+		t.Errorf("second tool = %q, want weather", chat.Tools[1].Function.Name)
+	}
+}
+
+func TestFromResponsesRequest_WebSearchIgnoresUnknownControls(t *testing.T) {
+	for _, declaration := range []string{
+		`{"type":"web_search","filters":{"allowed_domains":["example.com"]}}`,
+		`{"type":"web_search","user_location":{"type":"approximate"}}`,
+		`{"type":"web_search","search_context_size":"high"}`,
+	} {
+		t.Run(declaration, func(t *testing.T) {
+			var tool ResponsesTool
+			if err := json.Unmarshal([]byte(declaration), &tool); err != nil {
+				t.Fatal(err)
+			}
+			request, err := FromResponsesRequest(ResponsesRequest{Model: "test", Input: ResponsesInput{Text: "hi"}, Tools: []ResponsesTool{tool}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(request.Tools) != 1 || request.Tools[0].Function.Name != "web_search" {
+				t.Fatalf("tools = %#v, want web_search", request.Tools)
+			}
+		})
+	}
+}
+
+// TestFromResponsesRequest_NamespaceTools covers the "namespace" tool
+// declaration: one namespace whose members are the real functions must
+// expand to namespace-qualified function tools with their schemas intact,
+// since dropping the members leaves the model with a single schema-less
+// pseudo-function and makes every namespaced call undeclarable.
+func TestFromResponsesRequest_NamespaceTools(t *testing.T) {
+	reqJSON := `{
+		"model": "gpt-oss:20b",
+		"input": "hello",
+		"tools": [
+			{
+				"type": "namespace",
+				"name": "muse",
+				"description": "Muse Code tool set.",
+				"tools": [
+					{
+						"type": "function",
+						"name": "bash",
+						"description": "Runs a shell command",
+						"strict": true,
+						"parameters": {
+							"type": "object",
+							"properties": {
+								"command": {"type": "string"}
+							},
+							"required": ["command"]
+						}
+					},
+					{
+						"type": "function",
+						"name": "muse.read_file",
+						"description": "Reads a file",
+						"strict": true,
+						"parameters": {
+							"type": "object",
+							"properties": {
+								"path": {"type": "string"}
+							},
+							"required": ["path"]
+						}
+					}
+				]
+			},
+			{
+				"type": "function",
+				"name": "plain",
+				"description": "A non-namespaced tool",
+				"strict": false,
+				"parameters": {"type": "object"}
+			}
+		]
+	}`
+
+	var req ResponsesRequest
+	if err := json.Unmarshal([]byte(reqJSON), &req); err != nil {
+		t.Fatalf("failed to unmarshal request: %v", err)
+	}
+
+	chatReq, err := FromResponsesRequest(req)
+	if err != nil {
+		t.Fatalf("failed to convert request: %v", err)
+	}
+
+	if len(chatReq.Tools) != 3 {
+		t.Fatalf("expected 3 converted tools, got %d: %v", len(chatReq.Tools), chatReq.Tools)
+	}
+
+	// Member functions carry the namespace-qualified name; an already
+	// qualified member is not double-prefixed.
+	if got := chatReq.Tools[0].Function.Name; got != "muse.bash" {
+		t.Errorf("expected function name 'muse.bash', got %q", got)
+	}
+	if got := chatReq.Tools[1].Function.Name; got != "muse.read_file" {
+		t.Errorf("expected function name 'muse.read_file', got %q", got)
+	}
+	if got := chatReq.Tools[2].Function.Name; got != "plain" {
+		t.Errorf("expected function name 'plain', got %q", got)
+	}
+
+	// Member schemas and descriptions survive the expansion.
+	if got := chatReq.Tools[0].Function.Description; got != "Runs a shell command" {
+		t.Errorf("expected bash description, got %q", got)
+	}
+	if req := chatReq.Tools[0].Function.Parameters.Required; len(req) != 1 || req[0] != "command" {
+		t.Errorf("expected required ['command'], got %v", req)
+	}
+	if chatReq.Tools[0].Type != "function" {
+		t.Errorf("expected member type 'function', got %q", chatReq.Tools[0].Type)
+	}
+}
+
 func TestFromResponsesRequest_ReasoningEffort(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -443,6 +665,21 @@ func TestFromResponsesRequest_ReasoningEffort(t *testing.T) {
 		{
 			name:      "max",
 			effort:    "max",
+			wantThink: "max",
+		},
+		{
+			name:      "minimal clamps to low",
+			effort:    "minimal",
+			wantThink: "low",
+		},
+		{
+			name:      "xhigh clamps to max",
+			effort:    "xhigh",
+			wantThink: "max",
+		},
+		{
+			name:      "ultra clamps to max",
+			effort:    "ultra",
 			wantThink: "max",
 		},
 		{
@@ -2047,5 +2284,161 @@ func TestResponsesStreamConverter_FunctionCallStatus(t *testing.T) {
 	}
 	if doneItem["status"] != "completed" {
 		t.Errorf("output_item.done status = %q, want %q", doneItem["status"], "completed")
+	}
+}
+
+func TestResponsesStreamConverter_WebSearchCall(t *testing.T) {
+	converter := NewResponsesStreamConverter("resp_123", "msg_456", "gpt-oss:20b", ResponsesRequest{})
+	call := ResponsesWebSearchCall{
+		ID:     "ws_123",
+		Type:   "web_search_call",
+		Status: "completed",
+		Action: &ResponsesWebSearchAction{
+			Type:  "search",
+			Query: "Ollama news",
+		},
+	}
+	outputIndex, events := converter.StartWebSearchCall(call)
+	events = append(events, converter.FinishWebSearchCall(call, outputIndex)...)
+	wantTypes := []string{
+		"response.output_item.added",
+		"response.web_search_call.in_progress",
+		"response.web_search_call.searching",
+		"response.web_search_call.completed",
+		"response.output_item.done",
+	}
+	if len(events) != len(wantTypes) {
+		t.Fatalf("event count = %d, want %d", len(events), len(wantTypes))
+	}
+	for i, event := range events {
+		if event.Event != wantTypes[i] {
+			t.Errorf("event[%d] = %q, want %q", i, event.Event, wantTypes[i])
+		}
+		if got := event.Data.(map[string]any)["sequence_number"]; got != i {
+			t.Errorf("event[%d] sequence = %v, want %d", i, got, i)
+		}
+	}
+	done := events[len(events)-1].Data.(map[string]any)["item"].(map[string]any)
+	action := done["action"].(map[string]any)
+	if action["query"] != "Ollama news" {
+		t.Errorf("done query = %q", action["query"])
+	}
+}
+
+func TestResponsesStreamConverter_FinishMessageItem(t *testing.T) {
+	converter := NewResponsesStreamConverter("resp_123", "msg_456", "gpt-oss:20b", ResponsesRequest{})
+
+	// Process some text content first
+	textEvents := converter.Process(api.ChatResponse{Message: api.Message{Role: "assistant", Content: "pre-search text"}})
+	if len(textEvents) == 0 {
+		t.Fatal("expected events from Process")
+	}
+
+	// FinishMessageItem should close the message item
+	finishEvents := converter.FinishMessageItem()
+	wantTypes := []string{
+		"response.output_text.done",
+		"response.content_part.done",
+		"response.output_item.done",
+	}
+	if len(finishEvents) != len(wantTypes) {
+		t.Fatalf("event count = %d, want %d", len(finishEvents), len(wantTypes))
+	}
+	for i, event := range finishEvents {
+		if event.Event != wantTypes[i] {
+			t.Errorf("event[%d] = %q, want %q", i, event.Event, wantTypes[i])
+		}
+	}
+
+	// buildFinalOutput should include the completed message item
+	output := converter.buildFinalOutput()
+	if len(output) != 1 {
+		t.Fatalf("output count = %d, want 1", len(output))
+	}
+	item := output[0].(map[string]any)
+	if item["type"] != "message" {
+		t.Fatalf("output type = %v, want message", item["type"])
+	}
+	content := item["content"].([]map[string]any)
+	if content[0]["text"] != "pre-search text" {
+		t.Fatalf("text = %v, want 'pre-search text'", content[0]["text"])
+	}
+	preSearchID := item["id"]
+
+	// Calling FinishMessageItem again without content should be a no-op
+	if events := converter.FinishMessageItem(); len(events) != 0 {
+		t.Fatalf("expected no events, got %d", len(events))
+	}
+
+	// A later model leg must use a fresh message item ID, and both message
+	// items must be present in the terminal response output.
+	finalEvents := converter.Process(api.ChatResponse{
+		Message: api.Message{Role: "assistant", Content: "final text"},
+		Done:    true,
+	})
+	var finalMessageID any
+	var finalOutput []any
+	for _, event := range finalEvents {
+		data := event.Data.(map[string]any)
+		switch event.Event {
+		case "response.output_item.added":
+			added := data["item"].(map[string]any)
+			if added["type"] == "message" {
+				finalMessageID = added["id"]
+			}
+		case "response.completed":
+			response := data["response"].(map[string]any)
+			finalOutput = response["output"].([]any)
+		}
+	}
+	if finalMessageID == nil || finalMessageID == preSearchID {
+		t.Fatalf("message item IDs were not rotated: pre-search=%v final=%v", preSearchID, finalMessageID)
+	}
+	if len(finalOutput) != 2 {
+		t.Fatalf("terminal output count = %d, want 2: %#v", len(finalOutput), finalOutput)
+	}
+	if got := finalOutput[1].(map[string]any)["id"]; got != finalMessageID {
+		t.Fatalf("terminal final message ID = %v, want %v", got, finalMessageID)
+	}
+}
+
+func TestResponsesStreamConverter_FinalOutputKeepsStreamedItemOrder(t *testing.T) {
+	converter := NewResponsesStreamConverter("resp_order", "msg_order", "test-model", ResponsesRequest{})
+	var events []ResponsesStreamEvent
+
+	events = append(events, converter.Process(api.ChatResponse{Message: api.Message{Thinking: "before search"}})...)
+	call := ResponsesWebSearchCall{
+		ID:     "ws_order_1",
+		Type:   "web_search_call",
+		Status: "completed",
+		Action: &ResponsesWebSearchAction{Type: "search", Query: "test"},
+	}
+	outputIndex, searchEvents := converter.StartWebSearchCall(call)
+	events = append(events, searchEvents...)
+	events = append(events, converter.FinishWebSearchCall(call, outputIndex)...)
+	events = append(events, converter.Process(api.ChatResponse{Message: api.Message{Thinking: "after search"}})...)
+	events = append(events, converter.Process(api.ChatResponse{Message: api.Message{Content: "answer"}, Done: true})...)
+
+	doneIDs := map[int]any{}
+	var finalOutput []any
+	for _, event := range events {
+		data := event.Data.(map[string]any)
+		switch event.Event {
+		case "response.output_item.done":
+			item := data["item"].(map[string]any)
+			doneIDs[data["output_index"].(int)] = item["id"]
+		case "response.completed":
+			response := data["response"].(map[string]any)
+			finalOutput = response["output"].([]any)
+		}
+	}
+	if len(finalOutput) != 4 {
+		t.Fatalf("terminal output count = %d, want 4: %#v", len(finalOutput), finalOutput)
+	}
+	for outputIndex, raw := range finalOutput {
+		item := raw.(map[string]any)
+		if got, want := item["id"], doneIDs[outputIndex]; got != want {
+			t.Fatalf("terminal output[%d] ID = %v, streamed done ID = %v; output=%#v", outputIndex, got, want, finalOutput)
+		}
 	}
 }

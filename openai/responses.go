@@ -280,6 +280,12 @@ func unmarshalResponsesInputItem(data []byte) (ResponsesInputItem, error) {
 			return nil, err
 		}
 		return reasoning, nil
+	case "web_search_call":
+		var call ResponsesWebSearchCall
+		if err := json.Unmarshal(data, &call); err != nil {
+			return nil, err
+		}
+		return call, nil
 	default:
 		if itemType == "" {
 			return nil, fmt.Errorf("input item missing required 'type' field")
@@ -347,11 +353,16 @@ type ResponsesText struct {
 // ResponsesTool represents a tool in the Responses API format.
 // Note: This differs from api.Tool which nests fields under "function".
 type ResponsesTool struct {
-	Type        string         `json:"type"` // "function"
+	Type        string         `json:"type"` // "function", "namespace", or "web_search"
 	Name        string         `json:"name"`
 	Description *string        `json:"description"` // nullable but required
 	Strict      *bool          `json:"strict"`      // nullable but required
 	Parameters  map[string]any `json:"parameters"`  // nullable but required
+
+	// Tools carries a "namespace" declaration's member functions. The
+	// Responses API groups related tools by domain under a namespace tool
+	// whose nested tools array holds the real function definitions.
+	Tools []ResponsesTool `json:"tools,omitempty"`
 }
 
 type ResponsesRequest struct {
@@ -425,7 +436,7 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 	// Track pending reasoning to merge with the next assistant message
 	var pendingThinking string
 
-	for _, item := range r.Input.Items {
+	for i, item := range r.Input.Items {
 		switch v := item.(type) {
 		case ResponsesReasoningInput:
 			// Store thinking to merge with the next assistant message
@@ -439,6 +450,39 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 			if msg.Role == "assistant" && pendingThinking != "" {
 				msg.Thinking = pendingThinking
 				pendingThinking = ""
+			}
+			// Responses may replay an assistant message between a function_call and
+			// its function_call_output. Keep those items in one Chat assistant message
+			// so the tool result immediately follows the call it answers.
+			var outputCallID string
+			if i+1 < len(r.Input.Items) {
+				if output, ok := r.Input.Items[i+1].(ResponsesFunctionCallOutput); ok {
+					outputCallID = output.CallID
+				}
+			}
+			if msg.Role == "assistant" && outputCallID != "" && len(messages) > 0 {
+				lastMsg := &messages[len(messages)-1]
+				if lastMsg.Role == "assistant" && len(lastMsg.ToolCalls) > 0 {
+					merged := false
+					for _, call := range lastMsg.ToolCalls {
+						if call.ID != outputCallID {
+							continue
+						}
+						if lastMsg.Content != "" && msg.Content != "" {
+							lastMsg.Content += "\n"
+						}
+						lastMsg.Content += msg.Content
+						lastMsg.Images = append(lastMsg.Images, msg.Images...)
+						if msg.Thinking != "" {
+							lastMsg.Thinking = msg.Thinking
+						}
+						merged = true
+						break
+					}
+					if merged {
+						continue
+					}
+				}
 			}
 			messages = append(messages, msg)
 		case ResponsesFunctionCall:
@@ -492,6 +536,9 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 				Images:     images,
 				ToolCallID: v.CallID,
 			})
+		case ResponsesWebSearchCall:
+			// Built-in tool calls are history metadata. The assistant message
+			// that follows carries the model-visible result of the prior search.
 		}
 	}
 
@@ -525,26 +572,31 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 		options["num_predict"] = *r.MaxOutputTokens
 	}
 
-	var think *api.ThinkValue
-	if effort := r.Reasoning.Effort; effort != "" {
-		switch effort {
-		case "none":
-			think = &api.ThinkValue{Value: false}
-		case "low", "medium", "high", "max":
-			think = &api.ThinkValue{Value: effort}
-		default:
-			return nil, fmt.Errorf("invalid reasoning value: %q (must be \"high\", \"medium\", \"low\", \"max\", or \"none\")", effort)
-		}
+	think, err := thinkFromReasoningEffort(r.Reasoning.Effort)
+	if err != nil {
+		return nil, err
 	}
 
 	// Convert tools from Responses API format to api.Tool format
 	var tools []api.Tool
+	hasWebSearch := HasWebSearchTool(r.Tools)
 	for _, t := range r.Tools {
-		tool, err := convertTool(t)
+		if isWebSearchTool(t) {
+			tools = append(tools, WebSearchFunctionTool())
+			continue
+		}
+		expanded, err := convertTools(t)
 		if err != nil {
 			return nil, err
 		}
-		tools = append(tools, tool)
+		for _, tool := range expanded {
+			// The built-in tool owns this name. Keeping a user-declared function
+			// with the same name makes a model call ambiguous.
+			if hasWebSearch && tool.Function.Name == "web_search" {
+				continue
+			}
+			tools = append(tools, tool)
+		}
 	}
 
 	// Handle text format (e.g. json_schema)
@@ -566,6 +618,70 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 		Format:   format,
 		Think:    think,
 	}, nil
+}
+
+func isWebSearchTool(t ResponsesTool) bool { return t.Type == "web_search" }
+
+// HasWebSearchTool reports whether a request declares the built-in Responses
+// web-search tool.
+func HasWebSearchTool(tools []ResponsesTool) bool {
+	for _, tool := range tools {
+		if isWebSearchTool(tool) {
+			return true
+		}
+	}
+	return false
+}
+
+// WebSearchFunctionTool is the private function contract passed to local
+// models. Responses clients must only ever see their original web_search
+// declaration echoed back.
+func WebSearchFunctionTool() api.Tool {
+	properties := api.NewToolPropertiesMap()
+	properties.Set("query", api.ToolProperty{Type: api.PropertyType{"string"}, Description: "The search query."})
+	return api.Tool{
+		Type: "function",
+		Function: api.ToolFunction{
+			Name:        "web_search",
+			Description: "Search the web for current information.",
+			Parameters: api.ToolFunctionParameters{
+				Type:       "object",
+				Required:   []string{"query"},
+				Properties: properties,
+			},
+		},
+	}
+}
+
+// convertTools converts one Responses-API tool declaration to api.Tools. A
+// "namespace" declaration groups member functions under a common name; it
+// expands to those members with namespace-qualified names, since api.Tool
+// carries only a flat function name. Dropping the members instead would
+// leave the model with one schema-less pseudo-function and make every
+// namespaced call undeclarable.
+func convertTools(t ResponsesTool) ([]api.Tool, error) {
+	if t.Type != "namespace" {
+		tool, err := convertTool(t)
+		if err != nil {
+			return nil, err
+		}
+		return []api.Tool{tool}, nil
+	}
+
+	var tools []api.Tool
+	for _, member := range t.Tools {
+		expanded, err := convertTools(member)
+		if err != nil {
+			return nil, err
+		}
+		for i := range expanded {
+			if prefix := t.Name + "."; t.Name != "" && !strings.HasPrefix(expanded[i].Function.Name, prefix) {
+				expanded[i].Function.Name = prefix + expanded[i].Function.Name
+			}
+		}
+		tools = append(tools, expanded...)
+	}
+	return tools, nil
 }
 
 func convertTool(t ResponsesTool) (api.Tool, error) {
@@ -698,18 +814,47 @@ type ResponsesResponse struct {
 }
 
 type ResponsesOutputItem struct {
-	ID        string                   `json:"id"`
-	Type      string                   `json:"type"` // "message", "function_call", or "reasoning"
-	Status    string                   `json:"status,omitempty"`
-	Role      string                   `json:"role,omitempty"`      // for message
-	Content   []ResponsesOutputContent `json:"content,omitempty"`   // for message
-	CallID    string                   `json:"call_id,omitempty"`   // for function_call
-	Name      string                   `json:"name,omitempty"`      // for function_call
-	Arguments string                   `json:"arguments,omitempty"` // for function_call
+	ID        string                    `json:"id"`
+	Type      string                    `json:"type"` // "message", "function_call", or "reasoning"
+	Status    string                    `json:"status,omitempty"`
+	Role      string                    `json:"role,omitempty"`      // for message
+	Content   []ResponsesOutputContent  `json:"content,omitempty"`   // for message
+	CallID    string                    `json:"call_id,omitempty"`   // for function_call
+	Name      string                    `json:"name,omitempty"`      // for function_call
+	Arguments string                    `json:"arguments,omitempty"` // for function_call
+	Action    *ResponsesWebSearchAction `json:"action,omitempty"`    // for web_search_call
 
 	// Reasoning fields
 	Summary          []ResponsesReasoningSummary `json:"summary,omitempty"`           // for reasoning
 	EncryptedContent string                      `json:"encrypted_content,omitempty"` // for reasoning
+}
+
+// ResponsesWebSearchCall is the native output item emitted for an executed
+// built-in web search. It is intentionally separate from function calls: the
+// internal web_search function is never exposed through the Responses API.
+type ResponsesWebSearchCall struct {
+	ID     string                    `json:"id"`
+	Type   string                    `json:"type"` // always "web_search_call"
+	Status string                    `json:"status"`
+	Action *ResponsesWebSearchAction `json:"action,omitempty"`
+}
+
+func (ResponsesWebSearchCall) responsesInputItem() {}
+
+type ResponsesWebSearchAction struct {
+	Type  string `json:"type"` // always "search"
+	Query string `json:"query"`
+}
+
+// WebSearchCallOutputItem converts a web search call into the generic output
+// item used by non-streaming Responses responses.
+func WebSearchCallOutputItem(call ResponsesWebSearchCall) ResponsesOutputItem {
+	return ResponsesOutputItem{
+		ID:     call.ID,
+		Type:   call.Type,
+		Status: call.Status,
+		Action: call.Action,
+	}
 }
 
 type ResponsesReasoningSummary struct {
@@ -906,10 +1051,9 @@ type ResponsesStreamConverter struct {
 	accumulatedThinking string
 	reasoningItemID     string
 	reasoningStarted    bool
-	reasoningDone       bool
 
-	// Tool calls state (for final output)
-	toolCallItems []map[string]any
+	// Items completed before the final message, in streamed output-index order.
+	completedItems []any
 }
 
 // newEvent creates a ResponsesStreamEvent with the sequence number included in the data.
@@ -1129,45 +1273,54 @@ func (c *ResponsesStreamConverter) processThinking(thinking string) []ResponsesS
 }
 
 func (c *ResponsesStreamConverter) finishReasoning() []ResponsesStreamEvent {
-	if !c.reasoningStarted || c.reasoningDone {
+	if !c.reasoningStarted {
 		return nil
 	}
-	c.reasoningDone = true
+
+	itemID := c.reasoningItemID
+	thinking := c.accumulatedThinking
+	outputIndex := c.outputIndex
+	item := map[string]any{
+		"id":                itemID,
+		"type":              "reasoning",
+		"summary":           []map[string]any{{"type": "summary_text", "text": thinking}},
+		"encrypted_content": thinking,
+	}
+	c.completedItems = append(c.completedItems, item)
+	c.accumulatedThinking = ""
+	c.reasoningItemID = ""
+	c.reasoningStarted = false
+	c.outputIndex++
 
 	events := []ResponsesStreamEvent{
 		c.newEvent("response.reasoning_summary_text.done", map[string]any{
-			"item_id":       c.reasoningItemID,
-			"output_index":  c.outputIndex,
+			"item_id":       itemID,
+			"output_index":  outputIndex,
 			"summary_index": 0,
-			"text":          c.accumulatedThinking,
+			"text":          thinking,
 		}),
 		c.newEvent("response.output_item.done", map[string]any{
-			"output_index": c.outputIndex,
-			"item": map[string]any{
-				"id":                c.reasoningItemID,
-				"type":              "reasoning",
-				"summary":           []map[string]any{{"type": "summary_text", "text": c.accumulatedThinking}},
-				"encrypted_content": c.accumulatedThinking, // Plain text for now
-			},
+			"output_index": outputIndex,
+			"item":         item,
 		}),
 	}
-
-	c.outputIndex++
 	return events
 }
 
 func (c *ResponsesStreamConverter) processToolCalls(toolCalls []api.ToolCall) []ResponsesStreamEvent {
+	return append(c.finishReasoning(), c.emitFunctionCallEvents(toolCalls)...)
+}
+
+// emitFunctionCallEvents emits function_call stream events for the given tool
+// calls, stores them for the final output, and advances the output index.
+func (c *ResponsesStreamConverter) emitFunctionCallEvents(toolCalls []api.ToolCall) []ResponsesStreamEvent {
 	var events []ResponsesStreamEvent
-
-	// Finish reasoning first if it was started
-	events = append(events, c.finishReasoning()...)
-
 	converted := ToToolCalls(toolCalls)
 
 	for i, tc := range converted {
+		outputIndex := c.outputIndex + i
 		fcItemID := fmt.Sprintf("fc_%d_%d", rand.Intn(999999), i)
 
-		// Store for final output (with status: completed)
 		toolCallItem := map[string]any{
 			"id":        fcItemID,
 			"type":      "function_call",
@@ -1176,52 +1329,157 @@ func (c *ResponsesStreamConverter) processToolCalls(toolCalls []api.ToolCall) []
 			"name":      tc.Function.Name,
 			"arguments": tc.Function.Arguments,
 		}
-		c.toolCallItems = append(c.toolCallItems, toolCallItem)
+		c.completedItems = append(c.completedItems, toolCallItem)
 
-		// response.output_item.added for function call
-		events = append(events, c.newEvent("response.output_item.added", map[string]any{
-			"output_index": c.outputIndex + i,
-			"item": map[string]any{
-				"id":        fcItemID,
-				"type":      "function_call",
-				"status":    "in_progress",
-				"call_id":   tc.ID,
-				"name":      tc.Function.Name,
-				"arguments": "",
-			},
-		}))
-
-		// response.function_call_arguments.delta
-		if tc.Function.Arguments != "" {
-			events = append(events, c.newEvent("response.function_call_arguments.delta", map[string]any{
+		events = append(events,
+			c.newEvent("response.output_item.added", map[string]any{
+				"output_index": outputIndex,
+				"item": map[string]any{
+					"id":        fcItemID,
+					"type":      "function_call",
+					"status":    "in_progress",
+					"call_id":   tc.ID,
+					"name":      tc.Function.Name,
+					"arguments": "",
+				},
+			}),
+			c.newEvent("response.function_call_arguments.delta", map[string]any{
 				"item_id":      fcItemID,
-				"output_index": c.outputIndex + i,
+				"output_index": outputIndex,
 				"delta":        tc.Function.Arguments,
-			}))
-		}
+			}),
+			c.newEvent("response.function_call_arguments.done", map[string]any{
+				"item_id":      fcItemID,
+				"output_index": outputIndex,
+				"arguments":    tc.Function.Arguments,
+			}),
+			c.newEvent("response.output_item.done", map[string]any{
+				"output_index": outputIndex,
+				"item":         toolCallItem,
+			}),
+		)
+	}
+	c.outputIndex += len(converted)
+	return events
+}
 
-		// response.function_call_arguments.done
-		events = append(events, c.newEvent("response.function_call_arguments.done", map[string]any{
-			"item_id":      fcItemID,
-			"output_index": c.outputIndex + i,
-			"arguments":    tc.Function.Arguments,
-		}))
-
-		// response.output_item.done for function call
-		events = append(events, c.newEvent("response.output_item.done", map[string]any{
-			"output_index": c.outputIndex + i,
+// StartWebSearchCall emits the events that precede a server-side search and
+// reserves its position in the response output.
+func (c *ResponsesStreamConverter) StartWebSearchCall(call ResponsesWebSearchCall) (int, []ResponsesStreamEvent) {
+	events := c.finishReasoning()
+	outputIndex := c.outputIndex
+	c.outputIndex++
+	events = append(events,
+		c.newEvent("response.output_item.added", map[string]any{
+			"output_index": outputIndex,
 			"item": map[string]any{
-				"id":        fcItemID,
-				"type":      "function_call",
-				"status":    "completed",
-				"call_id":   tc.ID,
-				"name":      tc.Function.Name,
-				"arguments": tc.Function.Arguments,
+				"id": call.ID, "type": "web_search_call", "status": "in_progress",
+				"action": map[string]any{"type": call.Action.Type, "query": call.Action.Query},
 			},
-		}))
+		}),
+		c.newEvent("response.web_search_call.in_progress", map[string]any{
+			"item_id": call.ID, "output_index": outputIndex,
+		}),
+		c.newEvent("response.web_search_call.searching", map[string]any{
+			"item_id": call.ID, "output_index": outputIndex,
+		}),
+	)
+	return outputIndex, events
+}
+
+// FinishWebSearchCall emits the events that follow a successful server-side search.
+func (c *ResponsesStreamConverter) FinishWebSearchCall(call ResponsesWebSearchCall, outputIndex int) []ResponsesStreamEvent {
+	item := webSearchCallMap(call)
+	c.completedItems = append(c.completedItems, item)
+	return []ResponsesStreamEvent{
+		c.newEvent("response.web_search_call.completed", map[string]any{
+			"item_id": call.ID, "output_index": outputIndex,
+		}),
+		c.newEvent("response.output_item.done", map[string]any{
+			"output_index": outputIndex,
+			"item":         item,
+		}),
+	}
+}
+
+// ResponseFailed emits a terminal failure using this stream's sequence counter.
+func (c *ResponsesStreamConverter) ResponseFailed(response map[string]any) ResponsesStreamEvent {
+	return c.newEvent("response.failed", map[string]any{"response": response})
+}
+
+func webSearchCallMap(call ResponsesWebSearchCall) map[string]any {
+	item := map[string]any{
+		"id": call.ID, "type": "web_search_call", "status": call.Status,
+	}
+	if call.Action != nil {
+		item["action"] = map[string]any{"type": call.Action.Type, "query": call.Action.Query}
+	}
+	return item
+}
+
+// FinishMessageItem closes the current text message item (if one was started)
+// and reserves its place in the final output. This allows pre-search content
+// to be emitted as a distinct message item before web_search_call events.
+func (c *ResponsesStreamConverter) FinishMessageItem() []ResponsesStreamEvent {
+	if !c.contentStarted {
+		return nil
 	}
 
-	return events
+	c.contentStarted = false
+	text := c.accumulatedText
+	c.accumulatedText = ""
+	c.contentIndex = 0
+
+	itemID := c.itemID
+	item := map[string]any{
+		"id":     itemID,
+		"type":   "message",
+		"status": "completed",
+		"role":   "assistant",
+		"content": []map[string]any{{
+			"type":        "output_text",
+			"text":        text,
+			"annotations": []any{},
+			"logprobs":    []any{},
+		}},
+	}
+	c.completedItems = append(c.completedItems, item)
+	outputIndex := c.outputIndex
+	c.outputIndex++
+	c.itemID = fmt.Sprintf("msg_%s_%d", strings.TrimPrefix(c.responseID, "resp_"), c.outputIndex)
+
+	return []ResponsesStreamEvent{
+		c.newEvent("response.output_text.done", map[string]any{
+			"item_id":       itemID,
+			"output_index":  outputIndex,
+			"content_index": 0,
+			"text":          text,
+			"logprobs":      []any{},
+		}),
+		c.newEvent("response.content_part.done", map[string]any{
+			"item_id":       itemID,
+			"output_index":  outputIndex,
+			"content_index": 0,
+			"part": map[string]any{
+				"type":        "output_text",
+				"text":        text,
+				"annotations": []any{},
+				"logprobs":    []any{},
+			},
+		}),
+		c.newEvent("response.output_item.done", map[string]any{
+			"output_index": outputIndex,
+			"item":         item,
+		}),
+	}
+}
+
+// EmitFunctionCallItems emits function_call events for client-provided tool
+// calls that accompanied a web_search call (mixed responses). Unlike
+// processToolCalls, this does not set toolCallsSent, so subsequent text
+// content can still be processed.
+func (c *ResponsesStreamConverter) EmitFunctionCallItems(toolCalls []api.ToolCall) []ResponsesStreamEvent {
+	return c.emitFunctionCallEvents(toolCalls)
 }
 
 func (c *ResponsesStreamConverter) processTextContent(content string) []ResponsesStreamEvent {
@@ -1276,24 +1534,8 @@ func (c *ResponsesStreamConverter) processTextContent(content string) []Response
 }
 
 func (c *ResponsesStreamConverter) buildFinalOutput() []any {
-	var output []any
-
-	// Add reasoning item if present
-	if c.reasoningStarted {
-		output = append(output, map[string]any{
-			"id":                c.reasoningItemID,
-			"type":              "reasoning",
-			"summary":           []map[string]any{{"type": "summary_text", "text": c.accumulatedThinking}},
-			"encrypted_content": c.accumulatedThinking,
-		})
-	}
-
-	// Add tool calls if present
-	if len(c.toolCallItems) > 0 {
-		for _, item := range c.toolCallItems {
-			output = append(output, item)
-		}
-	} else if c.contentStarted {
+	output := append([]any(nil), c.completedItems...)
+	if c.contentStarted {
 		// Add message item if we had text content
 		output = append(output, map[string]any{
 			"id":     c.itemID,

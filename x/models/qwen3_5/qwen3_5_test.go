@@ -3,6 +3,7 @@ package qwen3_5
 import (
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
@@ -11,6 +12,28 @@ func skipIfNoMLX(t *testing.T) {
 	t.Helper()
 	if err := mlx.CheckInit(); err != nil {
 		t.Skipf("MLX not available: %v", err)
+	}
+}
+
+func TestSanitizeConvWeight(t *testing.T) {
+	mlxtest.Setup(t)
+
+	tests := []struct {
+		name  string
+		shape []int
+		want  []int
+	}{
+		{name: "publisher layout", shape: []int{8, 1, 4}, want: []int{8, 4}},
+		{name: "imported layout", shape: []int{8, 4, 1}, want: []int{8, 4}},
+		{name: "already sanitized", shape: []int{8, 4}, want: []int{8, 4}},
+	}
+
+	for _, tt := range tests {
+		got := sanitizeConvWeight(mlx.Zeros(mlx.DTypeBFloat16, tt.shape...))
+		mlx.Eval(got)
+		if dims := got.Dims(); len(dims) != len(tt.want) || dims[0] != tt.want[0] || dims[1] != tt.want[1] {
+			t.Fatalf("%s: sanitizeConvWeight() shape = %v, want %v", tt.name, dims, tt.want)
+		}
 	}
 }
 

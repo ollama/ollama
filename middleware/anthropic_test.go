@@ -653,53 +653,6 @@ func TestHasWebSearchTool(t *testing.T) {
 	}
 }
 
-func TestExtractQueryFromToolCall(t *testing.T) {
-	tests := []struct {
-		name     string
-		tc       *api.ToolCall
-		expected string
-	}{
-		{
-			name: "valid query",
-			tc: &api.ToolCall{
-				Function: api.ToolCallFunction{
-					Name:      "web_search",
-					Arguments: makeArgs("query", "test search"),
-				},
-			},
-			expected: "test search",
-		},
-		{
-			name: "empty arguments",
-			tc: &api.ToolCall{
-				Function: api.ToolCallFunction{
-					Name: "web_search",
-				},
-			},
-			expected: "",
-		},
-		{
-			name: "no query key",
-			tc: &api.ToolCall{
-				Function: api.ToolCallFunction{
-					Name:      "web_search",
-					Arguments: makeArgs("other", "value"),
-				},
-			},
-			expected: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := extractQueryFromToolCall(tt.tc)
-			if result != tt.expected {
-				t.Errorf("expected %q, got %q", tt.expected, result)
-			}
-		})
-	}
-}
-
 // makeArgs is a test helper that creates ToolCallFunctionArguments
 func makeArgs(key string, value any) api.ToolCallFunctionArguments {
 	args := api.NewToolCallFunctionArguments()
