@@ -1018,7 +1018,7 @@ func (w *WebSearchResponsesWriter) writeWebSearchResponse(final api.ChatResponse
 	response := openai.ToResponse(w.inner.model, w.inner.responseID, w.inner.itemID, final, w.req)
 	completedAt := time.Now().Unix()
 	response.CompletedAt = &completedAt
-	response.Output = buildResponsesWebSearchOutput(response.Output, w.preSearchThinking, w.preSearchContent, calls, w.otherToolCalls)
+	response.Output = buildResponsesWebSearchOutput(w.req, response.Output, w.preSearchThinking, w.preSearchContent, calls, w.otherToolCalls)
 	if response.Usage != nil {
 		response.Usage.InputTokens = usage.PromptEvalCount
 		response.Usage.OutputTokens = usage.EvalCount
@@ -1032,7 +1032,7 @@ func (w *WebSearchResponsesWriter) writeWebSearchResponse(final api.ChatResponse
 // buildResponsesWebSearchOutput assembles the final non-streaming output in
 // model-leg order: pre-search reasoning/text, server and mixed tool calls, then
 // the final model output.
-func buildResponsesWebSearchOutput(output []openai.ResponsesOutputItem, preSearchThinking, preSearchContent string, searchCalls []openai.ResponsesWebSearchCall, otherToolCalls []api.ToolCall) []openai.ResponsesOutputItem {
+func buildResponsesWebSearchOutput(request openai.ResponsesRequest, output []openai.ResponsesOutputItem, preSearchThinking, preSearchContent string, searchCalls []openai.ResponsesWebSearchCall, otherToolCalls []api.ToolCall) []openai.ResponsesOutputItem {
 	items := make([]openai.ResponsesOutputItem, 0, len(output)+len(searchCalls)+len(otherToolCalls)+2)
 	if preSearchThinking != "" {
 		items = append(items, openai.ResponsesOutputItem{
@@ -1061,17 +1061,7 @@ func buildResponsesWebSearchOutput(output []openai.ResponsesOutputItem, preSearc
 		items = append(items, openai.WebSearchCallOutputItem(call))
 	}
 	// function_call items from mixed responses
-	convertedCalls := openai.ToToolCalls(otherToolCalls)
-	for i, tc := range convertedCalls {
-		items = append(items, openai.ResponsesOutputItem{
-			ID:        fmt.Sprintf("fc_mixed_%d", i),
-			Type:      "function_call",
-			Status:    "completed",
-			CallID:    tc.ID,
-			Name:      tc.Function.Name,
-			Arguments: tc.Function.Arguments,
-		})
-	}
+	items = append(items, openai.ResponsesFunctionCallOutputItems(request, "fc_mixed_", otherToolCalls)...)
 	// remaining items (final reasoning, message, or function calls)
 	items = append(items, output...)
 	return items

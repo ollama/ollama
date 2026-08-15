@@ -764,55 +764,118 @@ func TestWebSearchResponsesWriterNonStreamingPreservesContentBeforeToolCall(t *t
 }
 
 func TestWebSearchResponsesWriterNonStreamingSurfacesMixedToolCalls(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	recorder := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(recorder)
-	request := openai.ResponsesRequest{Model: "test-model", Tools: []openai.ResponsesTool{{Type: "web_search"}, {Type: "function", Name: "get_weather", Description: ptr("weather"), Parameters: map[string]any{"type": "object"}}}}
-	inner := &ResponsesWriter{BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, model: request.Model, responseID: "resp_test", itemID: "msg_test", request: request}
-	writer := &WebSearchResponsesWriter{
-		BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, inner: inner, req: request,
-		chat: &api.ChatRequest{Model: request.Model, Tools: api.Tools{openai.WebSearchFunctionTool()}},
-		search: func(context.Context, string) (*api.WebSearchResponse, error) {
-			return &api.WebSearchResponse{}, nil
+	tests := []struct {
+		name          string
+		clientTool    openai.ResponsesTool
+		internalName  string
+		wantName      string
+		wantNamespace string
+	}{
+		{
+			name: "namespaced",
+			clientTool: openai.ResponsesTool{Type: "namespace", Name: "weather", Tools: []openai.ResponsesTool{{
+				Type: "function", Name: "lookup", Description: ptr("weather"), Parameters: map[string]any{"type": "object"},
+			}}},
+			internalName:  "weather__lookup",
+			wantName:      "lookup",
+			wantNamespace: "weather",
 		},
-		followUpChat: func(_ context.Context, messages []api.Message, _ api.Tools) (api.ChatResponse, error) {
-			// Verify the assistant message only contains the web_search tool call,
-			// not the get_weather tool call.
-			if len(messages) < 2 {
-				t.Fatalf("expected at least 2 messages, got %d", len(messages))
-			}
-			assistant := messages[len(messages)-2]
-			if len(assistant.ToolCalls) != 1 || assistant.ToolCalls[0].Function.Name != "web_search" {
-				t.Fatalf("assistant message should only have web_search tool call, got %#v", assistant.ToolCalls)
-			}
-			return api.ChatResponse{Done: true, Message: api.Message{Role: "assistant", Content: "done"}}, nil
+		{
+			name:         "flat",
+			clientTool:   openai.ResponsesTool{Type: "function", Name: "get_weather", Description: ptr("weather"), Parameters: map[string]any{"type": "object"}},
+			internalName: "get_weather",
+			wantName:     "get_weather",
 		},
 	}
 
-	// Non-streaming response with both web_search and get_weather tool calls.
-	initial := api.ChatResponse{Done: true, Message: api.Message{ToolCalls: []api.ToolCall{
-		{ID: "call_1", Function: api.ToolCallFunction{Name: "web_search", Arguments: testArgs(map[string]any{"query": "weather"})}},
-		{ID: "call_2", Function: api.ToolCallFunction{Name: "get_weather", Arguments: testArgs(map[string]any{"city": "SF"})}},
-	}}}
-	data, _ := json.Marshal(initial)
-	if _, err := writer.Write(data); err != nil {
-		t.Fatal(err)
-	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			request := openai.ResponsesRequest{Model: "test-model", Tools: []openai.ResponsesTool{{Type: "web_search"}, test.clientTool}}
+			chat, err := openai.FromResponsesRequest(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			inner := &ResponsesWriter{BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, model: request.Model, responseID: "resp_test", itemID: "msg_test", request: request}
+			writer := &WebSearchResponsesWriter{
+				BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, inner: inner, req: request,
+				chat: chat,
+				search: func(context.Context, string) (*api.WebSearchResponse, error) {
+					return &api.WebSearchResponse{}, nil
+				},
+				followUpChat: func(_ context.Context, messages []api.Message, _ api.Tools) (api.ChatResponse, error) {
+					if len(messages) < 2 {
+						t.Fatalf("expected at least 2 messages, got %d", len(messages))
+					}
+					assistant := messages[len(messages)-2]
+					if len(assistant.ToolCalls) != 1 || assistant.ToolCalls[0].Function.Name != "web_search" {
+						t.Fatalf("assistant message should only have web_search tool call, got %#v", assistant.ToolCalls)
+					}
+					return api.ChatResponse{Done: true, Message: api.Message{Role: "assistant", Content: "done"}}, nil
+				},
+			}
 
-	var response openai.ResponsesResponse
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode response: %v: %s", err, recorder.Body.String())
-	}
+			initial := api.ChatResponse{Done: true, Message: api.Message{
+				Thinking: "I should search.",
+				Content:  "Searching first.",
+				ToolCalls: []api.ToolCall{
+					{ID: "call_search", Function: api.ToolCallFunction{Name: "web_search", Arguments: testArgs(map[string]any{"query": "weather"})}},
+					{ID: "call_client", Function: api.ToolCallFunction{Name: test.internalName, Arguments: testArgs(map[string]any{"city": "SF"})}},
+				},
+			}}
+			data, _ := json.Marshal(initial)
+			if _, err := writer.Write(data); err != nil {
+				t.Fatal(err)
+			}
 
-	// Output should include a function_call item for get_weather.
-	var hasFunctionCall bool
-	for _, item := range response.Output {
-		if item.Type == "function_call" && item.Name == "get_weather" {
-			hasFunctionCall = true
-		}
-	}
-	if !hasFunctionCall {
-		t.Fatalf("mixed tool call (get_weather) was not surfaced: %#v", response.Output)
+			var response openai.ResponsesResponse
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode response: %v: %s", err, recorder.Body.String())
+			}
+			wantTypes := []string{"reasoning", "message", "web_search_call", "function_call", "message"}
+			if len(response.Output) != len(wantTypes) {
+				t.Fatalf("output = %#v", response.Output)
+			}
+			for i, wantType := range wantTypes {
+				if response.Output[i].Type != wantType {
+					t.Fatalf("output[%d].type = %q, want %q: %#v", i, response.Output[i].Type, wantType, response.Output)
+				}
+			}
+			if response.Output[0].EncryptedContent != "I should search." || response.Output[1].Content[0].Text != "Searching first." || response.Output[4].Content[0].Text != "done" {
+				t.Fatalf("reasoning/messages were reordered: %#v", response.Output)
+			}
+			if response.Output[2].Action == nil || response.Output[2].Action.Query != "weather" {
+				t.Fatalf("search item = %#v", response.Output[2])
+			}
+			function := response.Output[3]
+			if function.ID != "fc_mixed_0" || function.CallID != "call_client" || function.Name != test.wantName || function.Namespace != test.wantNamespace {
+				t.Fatalf("function item = %#v", function)
+			}
+			var rawResponse struct {
+				Output []map[string]json.RawMessage `json:"output"`
+			}
+			if err := json.Unmarshal(recorder.Body.Bytes(), &rawResponse); err != nil {
+				t.Fatal(err)
+			}
+			_, hasNamespace := rawResponse.Output[3]["namespace"]
+			if hasNamespace != (test.wantNamespace != "") {
+				t.Fatalf("function namespace presence = %v, want %v: %s", hasNamespace, test.wantNamespace != "", recorder.Body.String())
+			}
+			if function.Arguments != `{"city":"SF"}` {
+				t.Fatalf("function arguments changed: %q", function.Arguments)
+			}
+			var arguments map[string]any
+			if err := json.Unmarshal([]byte(function.Arguments), &arguments); err != nil || arguments["city"] != "SF" {
+				t.Fatalf("function arguments = %q (%v)", function.Arguments, err)
+			}
+			for _, item := range response.Output {
+				if item.Type == "function_call" && item.Name == "web_search" {
+					t.Fatalf("private web_search function leaked: %#v", response.Output)
+				}
+			}
+		})
 	}
 }
 

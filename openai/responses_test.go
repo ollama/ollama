@@ -2,11 +2,20 @@ package openai
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/ollama/ollama/api"
 )
+
+func responsesNamespace(name string, tools ...ResponsesTool) ResponsesTool {
+	return ResponsesTool{Type: "namespace", Name: name, Tools: tools}
+}
+
+func responsesFunction(name string) ResponsesTool {
+	return ResponsesTool{Type: "function", Name: name, Parameters: map[string]any{"type": "object"}}
+}
 
 func TestResponsesInputMessage_UnmarshalJSON(t *testing.T) {
 	tests := []struct {
@@ -201,6 +210,21 @@ func TestUnmarshalResponsesInputItem(t *testing.T) {
 		}
 		if fc.Name != "get_weather" {
 			t.Errorf("Name = %q, want %q", fc.Name, "get_weather")
+		}
+	})
+
+	t.Run("namespaced function_call item", func(t *testing.T) {
+		got, err := unmarshalResponsesInputItem([]byte(`{"type":"function_call","call_id":"call_abc123","namespace":"mcp__marker__","name":"marker","arguments":"{}"}`))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		fc, ok := got.(ResponsesFunctionCall)
+		if !ok {
+			t.Fatalf("got type %T, want ResponsesFunctionCall", got)
+		}
+		if fc.Namespace != "mcp__marker__" || fc.Name != "marker" {
+			t.Fatalf("function identity = (%q, %q), want (%q, %q)", fc.Namespace, fc.Name, "mcp__marker__", "marker")
 		}
 	})
 
@@ -576,7 +600,7 @@ func TestFromResponsesRequest_NamespaceTools(t *testing.T) {
 					},
 					{
 						"type": "function",
-						"name": "muse.read_file",
+						"name": "read_file",
 						"description": "Reads a file",
 						"strict": true,
 						"parameters": {
@@ -613,13 +637,13 @@ func TestFromResponsesRequest_NamespaceTools(t *testing.T) {
 		t.Fatalf("expected 3 converted tools, got %d: %v", len(chatReq.Tools), chatReq.Tools)
 	}
 
-	// Member functions carry the namespace-qualified name; an already
-	// qualified member is not double-prefixed.
-	if got := chatReq.Tools[0].Function.Name; got != "muse.bash" {
-		t.Errorf("expected function name 'muse.bash', got %q", got)
+	// Member functions carry Codex-compatible double-underscore namespace
+	// qualification.
+	if got := chatReq.Tools[0].Function.Name; got != "muse__bash" {
+		t.Errorf("expected function name 'muse__bash', got %q", got)
 	}
-	if got := chatReq.Tools[1].Function.Name; got != "muse.read_file" {
-		t.Errorf("expected function name 'muse.read_file', got %q", got)
+	if got := chatReq.Tools[1].Function.Name; got != "muse__read_file" {
+		t.Errorf("expected function name 'muse__read_file', got %q", got)
 	}
 	if got := chatReq.Tools[2].Function.Name; got != "plain" {
 		t.Errorf("expected function name 'plain', got %q", got)
@@ -634,6 +658,398 @@ func TestFromResponsesRequest_NamespaceTools(t *testing.T) {
 	}
 	if chatReq.Tools[0].Type != "function" {
 		t.Errorf("expected member type 'function', got %q", chatReq.Tools[0].Type)
+	}
+}
+
+func TestResponsesToolIdentityRejectsAmbiguity(t *testing.T) {
+	nestedABC := responsesNamespace("a", responsesNamespace("b", responsesFunction("c")))
+	flatNamespaceABC := responsesNamespace("a__b", responsesFunction("c"))
+
+	tests := []struct {
+		name  string
+		tools []ResponsesTool
+	}{
+		{"separator collision forward", []ResponsesTool{responsesNamespace("a", responsesFunction("b__c")), responsesNamespace("a__b", responsesFunction("c"))}},
+		{"separator collision reverse", []ResponsesTool{responsesNamespace("a__b", responsesFunction("c")), responsesNamespace("a", responsesFunction("b__c"))}},
+		{"trailing separator collision forward", []ResponsesTool{responsesNamespace("a", responsesFunction("b")), responsesNamespace("a__", responsesFunction("b"))}},
+		{"trailing separator collision reverse", []ResponsesTool{responsesNamespace("a__", responsesFunction("b")), responsesNamespace("a", responsesFunction("b"))}},
+		{"nested path collision forward", []ResponsesTool{nestedABC, flatNamespaceABC}},
+		{"nested path collision reverse", []ResponsesTool{flatNamespaceABC, nestedABC}},
+		{"prequalified leaf", []ResponsesTool{responsesNamespace("muse", responsesFunction("muse__read_file"))}},
+		{"duplicate flat declarations", []ResponsesTool{responsesFunction("same"), responsesFunction("same")}},
+		{"duplicate namespace leaves", []ResponsesTool{responsesNamespace("a", responsesFunction("b"), responsesFunction("b"))}},
+		{"repeated namespace path", []ResponsesTool{responsesNamespace("a", responsesFunction("b")), responsesNamespace("a", responsesFunction("c"))}},
+		{"flat namespace collision forward", []ResponsesTool{responsesFunction("a__b__c"), nestedABC}},
+		{"flat namespace collision reverse", []ResponsesTool{nestedABC, responsesFunction("a__b__c")}},
+		{"empty namespace", []ResponsesTool{responsesNamespace("", responsesFunction("b"))}},
+		{"empty flat function", []ResponsesTool{responsesFunction("")}},
+		{"empty namespace function", []ResponsesTool{responsesNamespace("a", responsesFunction(""))}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := FromResponsesRequest(ResponsesRequest{Model: "test", Input: ResponsesInput{Text: "hi"}, Tools: tt.tools})
+			if err == nil {
+				t.Fatal("expected identity validation error")
+			}
+			if !strings.Contains(err.Error(), "responses") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestResponsesToolIdentityErrorsAreOrderIndependent(t *testing.T) {
+	pairs := []struct {
+		name  string
+		left  ResponsesTool
+		right ResponsesTool
+	}{
+		{"separator", responsesNamespace("a", responsesFunction("b__c")), responsesNamespace("a__b", responsesFunction("c"))},
+		{"trailing separator", responsesNamespace("a", responsesFunction("b")), responsesNamespace("a__", responsesFunction("b"))},
+		{"nested path", responsesNamespace("a", responsesNamespace("b", responsesFunction("c"))), responsesNamespace("a__b", responsesFunction("c"))},
+		{"flat namespace", responsesFunction("a__b__c"), responsesNamespace("a", responsesNamespace("b", responsesFunction("c")))},
+	}
+	for _, tt := range pairs {
+		t.Run(tt.name, func(t *testing.T) {
+			getError := func(tools []ResponsesTool) string {
+				_, err := FromResponsesRequest(ResponsesRequest{Model: "test", Input: ResponsesInput{Text: "hi"}, Tools: tools})
+				if err == nil {
+					t.Fatal("expected identity validation error")
+				}
+				return err.Error()
+			}
+			forward := getError([]ResponsesTool{tt.left, tt.right})
+			reverse := getError([]ResponsesTool{tt.right, tt.left})
+			if forward != reverse {
+				t.Fatalf("order-dependent errors:\nforward: %s\nreverse: %s", forward, reverse)
+			}
+		})
+	}
+}
+
+func TestResponsesNamespaceBookkeepingIsLinear(t *testing.T) {
+	deepNamespace := func(depth int, leaf *ResponsesTool) ResponsesTool {
+		var tool ResponsesTool
+		if leaf != nil {
+			tool = *leaf
+		} else {
+			tool = responsesNamespace("n")
+			depth--
+		}
+		for range depth {
+			tool = responsesNamespace("n", tool)
+		}
+		return tool
+	}
+
+	t.Run("deep namespace-only chain retains one segment per node", func(t *testing.T) {
+		const depth = 2048
+		resolver, err := newResponsesToolResolver(ResponsesRequest{Tools: []ResponsesTool{deepNamespace(depth, nil)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := len(resolver.namespaceChildren); got != depth {
+			t.Fatalf("namespace node count = %d, want %d", got, depth)
+		}
+		retainedSegmentBytes := 0
+		for child := range resolver.namespaceChildren {
+			retainedSegmentBytes += len(child.name)
+		}
+		if retainedSegmentBytes != depth {
+			t.Fatalf("retained namespace key bytes = %d, want %d", retainedSegmentBytes, depth)
+		}
+		if len(resolver.tools) != 0 {
+			t.Fatalf("namespace-only chain dispatched tools: %#v", resolver.tools)
+		}
+	})
+
+	t.Run("near-limit leaf builds only its qualified model name", func(t *testing.T) {
+		const depth = 1024
+		leaf := responsesFunction("leaf")
+		resolver, err := newResponsesToolResolver(ResponsesRequest{Tools: []ResponsesTool{deepNamespace(depth, &leaf)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := len(resolver.namespaceChildren); got != depth {
+			t.Fatalf("namespace node count = %d, want %d", got, depth)
+		}
+		if len(resolver.tools) != 1 {
+			t.Fatalf("dispatched tool count = %d, want 1", len(resolver.tools))
+		}
+		wantLength := depth*3 + len("leaf")
+		if got := len(resolver.tools[0].Function.Name); got != wantLength {
+			t.Fatalf("qualified leaf length = %d, want %d", got, wantLength)
+		}
+	})
+}
+
+func TestResponsesHistoryToolIdentity(t *testing.T) {
+	call := func(id, namespace, name string) ResponsesFunctionCall {
+		return ResponsesFunctionCall{Type: "function_call", CallID: id, Namespace: namespace, Name: name, Arguments: "{}"}
+	}
+
+	rejections := []struct {
+		name  string
+		items []ResponsesInputItem
+	}{
+		{"flat namespace forward", []ResponsesInputItem{call("1", "", "a__b__c"), call("2", "a", "b__c")}},
+		{"flat namespace reverse", []ResponsesInputItem{call("2", "a", "b__c"), call("1", "", "a__b__c")}},
+		{"namespace collision forward", []ResponsesInputItem{call("1", "a", "b__c"), call("2", "a__b", "c")}},
+		{"namespace collision reverse", []ResponsesInputItem{call("2", "a__b", "c"), call("1", "a", "b__c")}},
+		{"prequalified history", []ResponsesInputItem{call("1", "muse", "muse__read_file")}},
+	}
+	for _, tt := range rejections {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := FromResponsesRequest(ResponsesRequest{Model: "test", Input: ResponsesInput{Items: tt.items}})
+			if err == nil {
+				t.Fatal("expected identity validation error")
+			}
+		})
+	}
+
+	t.Run("flat declaration collides with namespaced history", func(t *testing.T) {
+		_, err := FromResponsesRequest(ResponsesRequest{
+			Model: "test",
+			Tools: []ResponsesTool{responsesFunction("a__b__c")},
+			Input: ResponsesInput{Items: []ResponsesInputItem{call("1", "a", "b__c")}},
+		})
+		if err == nil {
+			t.Fatal("expected declaration/history identity collision")
+		}
+	})
+
+	t.Run("namespaced declaration collides with flat history", func(t *testing.T) {
+		_, err := FromResponsesRequest(ResponsesRequest{
+			Model: "test",
+			Tools: []ResponsesTool{responsesNamespace("a", responsesFunction("b__c"))},
+			Input: ResponsesInput{Items: []ResponsesInputItem{call("1", "", "a__b__c")}},
+		})
+		if err == nil {
+			t.Fatal("expected declaration/history identity collision")
+		}
+	})
+
+	t.Run("repeated exact history is accepted", func(t *testing.T) {
+		chat, err := FromResponsesRequest(ResponsesRequest{Model: "test", Input: ResponsesInput{Items: []ResponsesInputItem{
+			call("1", "a", "b"), call("2", "a", "b"),
+		}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := chat.Messages[0].ToolCalls[0].Function.Name; got != "a__b" {
+			t.Fatalf("first history name = %q", got)
+		}
+		if got := chat.Messages[0].ToolCalls[1].Function.Name; got != "a__b" {
+			t.Fatalf("second history name = %q", got)
+		}
+	})
+
+	t.Run("declaration-free validator history is accepted", func(t *testing.T) {
+		chat, err := FromResponsesRequest(ResponsesRequest{Model: "test", Input: ResponsesInput{Items: []ResponsesInputItem{
+			call("marker", "mcp__marker__", "marker"),
+		}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := chat.Messages[0].ToolCalls[0].Function.Name; got != "mcp__marker__marker" {
+			t.Fatalf("history name = %q", got)
+		}
+	})
+}
+
+func TestResponsesNamespaceRoundTrip(t *testing.T) {
+	declaration := responsesNamespace("a", responsesNamespace("b", responsesFunction("c")))
+	request := ResponsesRequest{
+		Model: "test",
+		Tools: []ResponsesTool{declaration},
+		Input: ResponsesInput{Items: []ResponsesInputItem{ResponsesFunctionCall{
+			Type: "function_call", CallID: "call_1", Namespace: "a__b", Name: "c", Arguments: "{}",
+		}}},
+	}
+	chat, err := FromResponsesRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := chat.Tools[0].Function.Name; got != "a__b__c" {
+		t.Fatalf("declaration name = %q", got)
+	}
+	if got := chat.Messages[0].ToolCalls[0].Function.Name; got != "a__b__c" {
+		t.Fatalf("history name = %q", got)
+	}
+
+	response := ToResponse("test", "resp", "item", api.ChatResponse{
+		CreatedAt: time.Now(),
+		Message: api.Message{ToolCalls: []api.ToolCall{{
+			ID: "call_2", Function: api.ToolCallFunction{Name: "a__b__c", Arguments: testArgs(map[string]any{})},
+		}}},
+	}, request)
+	if got := response.Output[0]; got.Name != "c" || got.Namespace != "a__b" {
+		t.Fatalf("non-stream identity = (%q, %q)", got.Namespace, got.Name)
+	}
+
+	converter := NewResponsesStreamConverter("resp", "item", "test", request)
+	events := converter.Process(api.ChatResponse{
+		Message: api.Message{ToolCalls: []api.ToolCall{{
+			ID: "call_3", Function: api.ToolCallFunction{Name: "a__b__c", Arguments: testArgs(map[string]any{})},
+		}}},
+		Done: true,
+	})
+	var added, done, terminal map[string]any
+	for _, event := range events {
+		data := event.Data.(map[string]any)
+		switch event.Event {
+		case "response.output_item.added":
+			item := data["item"].(map[string]any)
+			if item["type"] == "function_call" {
+				added = item
+			}
+		case "response.output_item.done":
+			item := data["item"].(map[string]any)
+			if item["type"] == "function_call" {
+				done = item
+			}
+		case "response.completed":
+			output := data["response"].(map[string]any)["output"].([]any)
+			terminal = output[0].(map[string]any)
+		}
+	}
+	for label, item := range map[string]map[string]any{"added": added, "done": done, "terminal": terminal} {
+		if item == nil || item["name"] != "c" || item["namespace"] != "a__b" {
+			t.Fatalf("%s identity = %#v", label, item)
+		}
+	}
+
+	created := events[0].Data.(map[string]any)["response"].(map[string]any)
+	encoded, err := json.Marshal(created["tools"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tools []ResponsesTool
+	if err := json.Unmarshal(encoded, &tools); err != nil {
+		t.Fatal(err)
+	}
+	if len(tools) != 1 || len(tools[0].Tools) != 1 || len(tools[0].Tools[0].Tools) != 1 || tools[0].Tools[0].Tools[0].Name != "c" {
+		t.Fatalf("recursive stream metadata = %#v", tools)
+	}
+}
+
+func TestResponsesToolIdentityPreservesFlatWebSearchAndNamespaceOrder(t *testing.T) {
+	request := ResponsesRequest{
+		Model: "test",
+		Input: ResponsesInput{Text: "hi"},
+		Tools: []ResponsesTool{
+			responsesFunction("flat"),
+			{Type: "web_search"},
+			responsesNamespace("a", responsesFunction("b")),
+		},
+	}
+	chat, err := FromResponsesRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"flat", "web_search", "a__b"}
+	if len(chat.Tools) != len(want) {
+		t.Fatalf("tools = %#v", chat.Tools)
+	}
+	for i, tool := range chat.Tools {
+		if tool.Function.Name != want[i] {
+			t.Fatalf("tool[%d] = %q, want %q", i, tool.Function.Name, want[i])
+		}
+	}
+}
+
+func TestResponsesOutputInvalidResolverKeepsFlatName(t *testing.T) {
+	invalid := ResponsesRequest{Tools: []ResponsesTool{
+		responsesFunction("a__b"), responsesNamespace("a", responsesFunction("b")),
+	}}
+	response := ToResponse("test", "resp", "item", api.ChatResponse{
+		CreatedAt: time.Now(),
+		Message: api.Message{ToolCalls: []api.ToolCall{{
+			ID: "call", Function: api.ToolCallFunction{Name: "a__b", Arguments: testArgs(map[string]any{})},
+		}}},
+	}, invalid)
+	if got := response.Output[0]; got.Name != "a__b" || got.Namespace != "" {
+		t.Fatalf("invalid resolver attributed output as (%q, %q)", got.Namespace, got.Name)
+	}
+
+	converter := NewResponsesStreamConverter("resp", "item", "test", invalid)
+	events := converter.Process(api.ChatResponse{Message: api.Message{ToolCalls: []api.ToolCall{{
+		ID: "call", Function: api.ToolCallFunction{Name: "a__b", Arguments: testArgs(map[string]any{})},
+	}}}})
+	for _, event := range events {
+		if event.Event != "response.output_item.done" {
+			continue
+		}
+		item := event.Data.(map[string]any)["item"].(map[string]any)
+		if item["name"] != "a__b" {
+			t.Fatalf("invalid stream resolver changed flat name: %#v", item)
+		}
+		if _, ok := item["namespace"]; ok {
+			t.Fatalf("invalid stream resolver attributed namespace: %#v", item)
+		}
+		return
+	}
+	t.Fatal("missing streamed function_call item")
+}
+
+func TestResponsesStreamConverter_MixedNamespaceWebSearchReasoningOrder(t *testing.T) {
+	request := ResponsesRequest{Tools: []ResponsesTool{
+		responsesNamespace("a", responsesFunction("b")),
+		{Type: "web_search"},
+	}}
+	converter := NewResponsesStreamConverter("resp_mixed", "msg_mixed", "test", request)
+	var events []ResponsesStreamEvent
+
+	events = append(events, converter.Process(api.ChatResponse{Message: api.Message{Thinking: "search first"}})...)
+	search := ResponsesWebSearchCall{
+		ID:     "ws_mixed",
+		Type:   "web_search_call",
+		Status: "completed",
+		Action: &ResponsesWebSearchAction{Type: "search", Query: "Ollama"},
+	}
+	searchIndex, searchEvents := converter.StartWebSearchCall(search)
+	events = append(events, searchEvents...)
+	events = append(events, converter.FinishWebSearchCall(search, searchIndex)...)
+	events = append(events, converter.EmitFunctionCallItems([]api.ToolCall{{
+		ID: "call_mixed", Function: api.ToolCallFunction{Name: "a__b", Arguments: testArgs(map[string]any{})},
+	}})...)
+	events = append(events, converter.Process(api.ChatResponse{Done: true})...)
+
+	doneByIndex := map[int]map[string]any{}
+	var addedFunction map[string]any
+	var terminal []any
+	for _, event := range events {
+		data := event.Data.(map[string]any)
+		switch event.Event {
+		case "response.output_item.added":
+			item := data["item"].(map[string]any)
+			if item["type"] == "function_call" {
+				addedFunction = item
+			}
+		case "response.output_item.done":
+			doneByIndex[data["output_index"].(int)] = data["item"].(map[string]any)
+		case "response.completed":
+			terminal = data["response"].(map[string]any)["output"].([]any)
+		}
+	}
+	if addedFunction == nil || addedFunction["name"] != "b" || addedFunction["namespace"] != "a" {
+		t.Fatalf("namespaced added item = %#v", addedFunction)
+	}
+	wantTypes := []string{"reasoning", "web_search_call", "function_call"}
+	if len(doneByIndex) != len(wantTypes) || len(terminal) != len(wantTypes) {
+		t.Fatalf("done=%#v terminal=%#v", doneByIndex, terminal)
+	}
+	for i, wantType := range wantTypes {
+		done := doneByIndex[i]
+		final := terminal[i].(map[string]any)
+		if done["type"] != wantType || final["type"] != wantType || done["id"] != final["id"] {
+			t.Fatalf("output[%d] done=%#v terminal=%#v", i, done, final)
+		}
+	}
+	function := doneByIndex[2]
+	if function["name"] != "b" || function["namespace"] != "a" {
+		t.Fatalf("namespaced done item = %#v", function)
 	}
 }
 
