@@ -1,4 +1,4 @@
-import { Link } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";`nimport { useEffect, useState } from "react";
 import { useSettings } from "@/hooks/useSettings";
 
 export function SidebarLayout({
@@ -9,11 +9,11 @@ export function SidebarLayout({
   collapsible?: boolean;
   chatId?: string;
 }>) {
-  const { settings, setSettings } = useSettings();
+  const { settings, setSettings } = useSettings();`n  const [mounted, setMounted] = useState(false);`n`n  useEffect(() => {`n    setMounted(true);`n  }, []);
   const isWindows = navigator.platform.toLowerCase().includes("win");
 
   return (
-    <div className={`flex transition-[width] duration-300 dark:bg-neutral-900`}>
+    <div className={`flex ${mounted ? "transition-[width] duration-300" : ""} dark:bg-neutral-900`}>
       <div
         className={`absolute flex mx-2 py-2 z-20 items-center transition-[left] duration-375 text-neutral-500 dark:text-neutral-400 ${settings.sidebarOpen ? (isWindows ? "left-2" : "left-[204px]") : isWindows ? "left-2" : "left-20"}`}
       >
