@@ -144,6 +144,7 @@ func newServerWithMockRunner(t *testing.T, mock *mockRunner) *Server {
 	t.Helper()
 
 	s := &Server{
+		metrics: newTestMetrics(),
 		sched: &Scheduler{
 			pendingReqCh:    make(chan *LlmRequest, 1),
 			finishedReqCh:   make(chan *LlmRequest, 1),
@@ -696,7 +697,7 @@ func TestGenerateChatRemote(t *testing.T) {
 	}
 
 	t.Setenv("OLLAMA_REMOTES", p.Hostname())
-	s := Server{}
+	s := Server{metrics: newTestMetrics()}
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model:      "test-cloud",
 		RemoteHost: rs.URL,
@@ -763,6 +764,7 @@ func TestGenerateChat(t *testing.T) {
 	}
 
 	s := Server{
+		metrics: newTestMetrics(),
 		sched: &Scheduler{
 			pendingReqCh:    make(chan *LlmRequest, 1),
 			finishedReqCh:   make(chan *LlmRequest, 1),
@@ -1480,6 +1482,7 @@ func TestGenerate(t *testing.T) {
 	}
 
 	s := Server{
+		metrics: newTestMetrics(),
 		sched: &Scheduler{
 			pendingReqCh:    make(chan *LlmRequest, 1),
 			finishedReqCh:   make(chan *LlmRequest, 1),
@@ -1891,7 +1894,7 @@ func TestGenerate(t *testing.T) {
 func TestGenerateLogprobs(t *testing.T) {
 	t.Run("invalid top_logprobs negative", func(t *testing.T) {
 		gin.SetMode(gin.TestMode)
-		s := Server{}
+		s := Server{metrics: newTestMetrics()}
 		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
 			Model:       "test",
 			Prompt:      "Hello",
@@ -1909,7 +1912,7 @@ func TestGenerateLogprobs(t *testing.T) {
 
 	t.Run("invalid top_logprobs too high", func(t *testing.T) {
 		gin.SetMode(gin.TestMode)
-		s := Server{}
+		s := Server{metrics: newTestMetrics()}
 		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
 			Model:       "test",
 			Prompt:      "Hello",
@@ -1964,6 +1967,7 @@ func TestGenerateLogprobs(t *testing.T) {
 		}
 
 		s := &Server{
+			metrics: newTestMetrics(),
 			sched: &Scheduler{
 				pendingReqCh:    make(chan *LlmRequest, 1),
 				finishedReqCh:   make(chan *LlmRequest, 1),
@@ -2094,6 +2098,7 @@ func TestGenerateLogprobsWithBuiltinParser(t *testing.T) {
 	}
 
 	s := Server{
+		metrics: newTestMetrics(),
 		sched: &Scheduler{
 			pendingReqCh:    make(chan *LlmRequest, 1),
 			finishedReqCh:   make(chan *LlmRequest, 1),
@@ -2175,7 +2180,7 @@ func TestGenerateLogprobsWithBuiltinParser(t *testing.T) {
 func TestChatLogprobs(t *testing.T) {
 	t.Run("invalid top_logprobs negative", func(t *testing.T) {
 		gin.SetMode(gin.TestMode)
-		s := Server{}
+		s := Server{metrics: newTestMetrics()}
 		w := createRequest(t, s.ChatHandler, api.ChatRequest{
 			Model: "test",
 			Messages: []api.Message{
@@ -2195,7 +2200,7 @@ func TestChatLogprobs(t *testing.T) {
 
 	t.Run("invalid top_logprobs too high", func(t *testing.T) {
 		gin.SetMode(gin.TestMode)
-		s := Server{}
+		s := Server{metrics: newTestMetrics()}
 		w := createRequest(t, s.ChatHandler, api.ChatRequest{
 			Model: "test",
 			Messages: []api.Message{
@@ -2258,6 +2263,7 @@ func TestChatLogprobs(t *testing.T) {
 		}
 
 		s := &Server{
+			metrics: newTestMetrics(),
 			sched: &Scheduler{
 				pendingReqCh:    make(chan *LlmRequest, 1),
 				finishedReqCh:   make(chan *LlmRequest, 1),
@@ -2369,6 +2375,7 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 		}
 
 		s := &Server{
+			metrics: newTestMetrics(),
 			sched: &Scheduler{
 				pendingReqCh:    make(chan *LlmRequest, 1),
 				finishedReqCh:   make(chan *LlmRequest, 1),
@@ -2834,6 +2841,7 @@ func TestChatFormatWithThinkFalse(t *testing.T) {
 			}
 
 			s := &Server{
+				metrics: newTestMetrics(),
 				sched: &Scheduler{
 					pendingReqCh:    make(chan *LlmRequest, 1),
 					finishedReqCh:   make(chan *LlmRequest, 1),
@@ -2944,6 +2952,7 @@ func TestGenerateUnload(t *testing.T) {
 	var loadFnCalled bool
 
 	s := Server{
+		metrics: newTestMetrics(),
 		sched: &Scheduler{
 			pendingReqCh:    make(chan *LlmRequest, 1),
 			finishedReqCh:   make(chan *LlmRequest, 1),
@@ -3045,6 +3054,7 @@ func TestGenerateWithImages(t *testing.T) {
 	}
 
 	s := Server{
+		metrics: newTestMetrics(),
 		sched: &Scheduler{
 			pendingReqCh:    make(chan *LlmRequest, 1),
 			finishedReqCh:   make(chan *LlmRequest, 1),
@@ -3205,7 +3215,7 @@ func TestImageGenerateUnsupported(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	w := createRequest(t, (&Server{}).GenerateHandler, api.GenerateRequest{
+	w := createRequest(t, (&Server{metrics: newTestMetrics()}).GenerateHandler, api.GenerateRequest{
 		Model:  "test-image",
 		Prompt: "test prompt",
 	})

@@ -28,10 +28,18 @@ import (
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/openai"
+	"github.com/ollama/ollama/telemetry"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 	"github.com/stretchr/testify/assert"
+	"go.opentelemetry.io/otel/metric/noop"
 )
+
+// newTestMetrics returns a Metrics backed by a no-op meter so handlers can
+// record metrics in tests without initialization.
+func newTestMetrics() *telemetry.Metrics {
+	return telemetry.NewMetrics(noop.NewMeterProvider().Meter("test"))
+}
 
 func createTestFile(t *testing.T, name string) (string, string) {
 	t.Helper()
@@ -96,7 +104,7 @@ func TestRoutes(t *testing.T) {
 		Expected func(t *testing.T, resp *http.Response)
 	}
 
-	s := &Server{modelCaches: &modelCaches{modelList: newModelListCache()}}
+	s := &Server{modelCaches: &modelCaches{modelList: newModelListCache()}, metrics: newTestMetrics()}
 	s.modelCaches.modelList.Start(context.Background())
 	if err := s.modelCaches.modelList.Wait(context.Background()); err != nil {
 		t.Fatal(err)
