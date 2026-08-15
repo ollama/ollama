@@ -114,3 +114,47 @@ func TestExtractFileDataWAV(t *testing.T) {
 	assert.Len(t, imgs, 1)
 	assert.Equal(t, "before  after", cleaned)
 }
+
+// TestNormalizeFilePath verifies that shell-escaped and quoted paths are
+// resolved to plain filesystem paths. Covers the drag-drop single-quote
+// wrapping case reported in https://github.com/ollama/ollama/issues/10333.
+func TestNormalizeFilePath(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "path wrapped in single quotes (linux drag-drop)",
+			in:   "'/home/user/photo.jpg'",
+			want: "/home/user/photo.jpg",
+		},
+		{
+			name: "path with spaces wrapped in single quotes",
+			in:   "'/home/user/my photos/vacation.png'",
+			want: "/home/user/my photos/vacation.png",
+		},
+		{
+			name: "escaped space without quotes",
+			in:   "/home/user/my\\ photo.jpg",
+			want: "/home/user/my photo.jpg",
+		},
+		{
+			name: "escaped tilde",
+			in:   "\\~/pictures/image.png",
+			want: "~/pictures/image.png",
+		},
+		{
+			name: "no quotes or escapes",
+			in:   "/home/user/plain.jpg",
+			want: "/home/user/plain.jpg",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := normalizeFilePath(tc.in)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}

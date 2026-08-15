@@ -583,7 +583,7 @@ func NewCreateRequest(name string, opts runOptions) *api.CreateRequest {
 }
 
 func normalizeFilePath(fp string) string {
-	return strings.NewReplacer(
+	fp = strings.NewReplacer(
 		"\\ ", " ", // Escaped space
 		"\\(", "(", // Escaped left parenthesis
 		"\\)", ")", // Escaped right parenthesis
@@ -600,6 +600,7 @@ func normalizeFilePath(fp string) string {
 		"\\?", "?", // Escaped question mark
 		"\\~", "~", // Escaped tilde
 	).Replace(fp)
+	return strings.Trim(fp, "'") // Strip wrapping single-quotes added by shell drag-drop
 }
 
 func extractFileNames(input string) []string {

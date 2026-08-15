@@ -221,3 +221,49 @@ func assertNotContainsSlice(t *testing.T, ss []string, want string) {
 		}
 	}
 }
+
+// TestNormalizePathSingleQuotes verifies that paths wrapped in single-quotes
+// by the shell during drag-and-drop are handled correctly.
+// Regression test for https://github.com/ollama/ollama/issues/10333.
+func TestNormalizePathSingleQuotes(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "path wrapped in single quotes (linux drag-drop)",
+			in:   "'/home/user/photo.jpg'",
+			want: "/home/user/photo.jpg",
+		},
+		{
+			name: "path with spaces wrapped in single quotes",
+			in:   "'/home/user/my photos/vacation.png'",
+			want: "/home/user/my photos/vacation.png",
+		},
+		{
+			name: "double-quoted path still stripped",
+			in:   "\"/home/user/photo.jpg\"",
+			want: "/home/user/photo.jpg",
+		},
+		{
+			name: "escaped space without quotes",
+			in:   "/home/user/my\\ photo.jpg",
+			want: "/home/user/my photo.jpg",
+		},
+		{
+			name: "no quotes or escapes",
+			in:   "/home/user/plain.jpg",
+			want: "/home/user/plain.jpg",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := NormalizePath(tc.in)
+			if got != tc.want {
+				t.Fatalf("NormalizePath(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
