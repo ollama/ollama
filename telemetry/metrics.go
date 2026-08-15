@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/runtime"
@@ -126,7 +127,23 @@ func NewPrometheusMeterProvider(res *resource.Resource, exp *prometheus.Exporter
 	return meterProvider, nil
 }
 
+var (
+	initMetricsOnce   sync.Once
+	initMetricsResult *Metrics
+	initMetricsErr    error
+)
+
+// InitMetrics initializes the global metrics exporter and instruments. It is
+// idempotent: repeated calls return the original result, since the exporter
+// can only be registered with the default Prometheus registry once.
 func InitMetrics() (*Metrics, error) {
+	initMetricsOnce.Do(func() {
+		initMetricsResult, initMetricsErr = initMetrics()
+	})
+	return initMetricsResult, initMetricsErr
+}
+
+func initMetrics() (*Metrics, error) {
 	res, err := resource.New(context.Background(),
 		resource.WithAttributes(
 			semconv.ServiceNameKey.String(namespace),
