@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -303,6 +304,29 @@ func TestMessage_UnmarshalJSON(t *testing.T) {
 		if msg.Role != test.expected {
 			t.Errorf("role not lowercased: got %v, expected %v", msg.Role, test.expected)
 		}
+	}
+}
+
+func TestMessage_UnmarshalJSONRejectsAudio(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"audios", `{"role": "user", "content": "hi", "audios": ["data:audio/wav;base64,AAAA"]}`},
+		{"audio", `{"role": "user", "content": "hi", "audio": "data:audio/wav;base64,AAAA"}`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var msg Message
+			err := json.Unmarshal([]byte(test.input), &msg)
+			if err == nil {
+				t.Fatalf("expected error for %s field, got nil", test.name)
+			}
+			if !strings.Contains(err.Error(), "audio input is not supported") {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
 	}
 }
 

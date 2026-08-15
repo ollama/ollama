@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"iter"
 	"log/slog"
@@ -211,6 +212,17 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 	var a Alias
 	if err := json.Unmarshal(b, &a); err != nil {
 		return err
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	if _, ok := raw["audios"]; ok {
+		return errors.New("audio input is not supported on the chat API; use the /v1/chat/completions endpoint with input_audio instead")
+	}
+	if _, ok := raw["audio"]; ok {
+		return errors.New("audio input is not supported on the chat API; use the /v1/chat/completions endpoint with input_audio instead")
 	}
 
 	*m = Message(a)
