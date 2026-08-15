@@ -177,19 +177,19 @@ func (r *Qwen35Renderer) validateMessages(messages []api.Message) error {
 		return fmt.Errorf("system message cannot contain images")
 	}
 
-	foundUserQuery := false
+	// Qwen3.8's template requires a user query, but tool-loop continuations
+	// are still renderable: tool results become user turns with
+	// <tool_response> blocks. Accept any transcript with a user or tool turn
+	// so context truncation that drops the original query does not fail the
+	// request.
+	foundQuery := false
 	for _, message := range messages {
-		if message.Role != "user" {
-			continue
-		}
-		content, _ := r.renderContent(message, 0)
-		content = strings.TrimSpace(content)
-		if !(strings.HasPrefix(content, "<tool_response>") && strings.HasSuffix(content, "</tool_response>")) {
-			foundUserQuery = true
+		if message.Role == "user" || message.Role == "tool" {
+			foundQuery = true
 			break
 		}
 	}
-	if !foundUserQuery {
+	if !foundQuery {
 		return fmt.Errorf("no user query found in messages")
 	}
 

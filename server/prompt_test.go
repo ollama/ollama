@@ -276,6 +276,54 @@ func TestChatPrompt(t *testing.T) {
 	}
 }
 
+// TestChatPromptQwen38ToolLoopTruncation covers a long tool loop whose
+// history exceeds the context window. Truncation drops the original user
+// query from the front, and the qwen3.8 renderer must still render the
+// tool-loop continuation instead of failing the request.
+func TestChatPromptQwen38ToolLoopTruncation(t *testing.T) {
+	model := Model{Config: model.ConfigV2{Renderer: "qwen3.8"}}
+	opts := api.Options{Runner: api.Runner{NumCtx: 250}}
+
+	weatherArgs := api.NewToolCallFunctionArguments()
+	weatherArgs.Set("city", "Paris")
+	weatherProps := api.NewToolPropertiesMap()
+	weatherProps.Set("city", api.ToolProperty{Type: api.PropertyType{"string"}})
+	tools := []api.Tool{{
+		Type: "function",
+		Function: api.ToolFunction{
+			Name:        "get_weather",
+			Description: "Get weather",
+			Parameters: api.ToolFunctionParameters{
+				Type:       "object",
+				Required:   []string{"city"},
+				Properties: weatherProps,
+			},
+		},
+	}}
+
+	toolCall := api.ToolCall{Function: api.ToolCallFunction{Name: "get_weather", Arguments: weatherArgs}}
+	msgs := []api.Message{
+		// A long original query so the full transcript exceeds the context
+		// window, but the tool-loop continuation fits.
+		{Role: "user", Content: "What is the weather in Paris? " + strings.Repeat("context ", 200)},
+		{Role: "assistant", Content: "I'll check.", ToolCalls: []api.ToolCall{toolCall}},
+		{Role: "tool", Content: `{"temp": 18}`},
+		{Role: "assistant", Content: "Checking again.", ToolCalls: []api.ToolCall{toolCall}},
+		{Role: "tool", Content: `{"temp": 19}`},
+	}
+
+	prompt, _, err := chatPrompt(t.Context(), &model, mockRunner{}.Tokenize, &opts, msgs, tools, &api.ThinkValue{Value: true}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(prompt, "What is the weather in Paris?") {
+		t.Fatalf("expected original query to be truncated, got prompt:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "<tool_response>") {
+		t.Fatalf("expected tool responses in prompt:\n%s", prompt)
+	}
+}
+
 func TestChatPromptTokenizeCalls(t *testing.T) {
 	tmpl, err := template.Parse(`
 {{- if .System }}{{ .System }} {{ end }}

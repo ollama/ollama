@@ -282,6 +282,67 @@ Montréal
 			matchesTemplate: true,
 		},
 		{
+			// The Jinja template raises for this transcript, but the Go
+			// renderer tolerates it: context truncation can drop the
+			// original user query from a long tool loop, and the model
+			// can still continue from the tool results.
+			name: "tool loop continuation without user query",
+			messages: []api.Message{
+				{
+					Role:     "assistant",
+					Thinking: "Need current data.",
+					Content:  "I'll check.",
+					ToolCalls: []api.ToolCall{{Function: api.ToolCallFunction{
+						Name:      "get_weather",
+						Arguments: weatherArgs,
+					}}},
+				},
+				{Role: "tool", Content: `{"temp": 18}`},
+			},
+			tools:       weather,
+			think:       think(true),
+			jinjaEffort: "medium",
+			want: toolHeader + `<|im_start|>assistant
+<think>
+Need current data.
+</think>
+
+I'll check.
+
+<tool_call>
+<function=get_weather>
+<parameter=city>
+Montréal
+</parameter>
+</function>
+</tool_call><|im_end|>
+<|im_start|>user
+<tool_response>
+{"temp": 18}
+</tool_response><|im_end|>
+<|im_start|>assistant
+<think>
+`,
+		},
+		{
+			// Some clients hand tool results back as user messages with
+			// <tool_response> blocks instead of role "tool" messages.
+			name: "tool</think> user message without query",
+			messages: []api.Message{
+				{Role: "user", Content: "<tool_response>\n{\"temp\": 18}\n</tool_response>"},
+			},
+			tools:       weather,
+			think:       think(true),
+			jinjaEffort: "medium",
+			want: toolHeader + `<|im_start|>user
+<tool_response>
+{"temp": 18}
+</tool_response><|im_end|>
+<|im_start|>assistant
+<think>
+`,
+		},
+		{
 			name: "image content",
 			messages: []api.Message{{
 				Role:    "user",
@@ -363,6 +424,14 @@ func TestQwen38RendererRejectsInvalidTranscripts(t *testing.T) {
 			name:     "no user query",
 			messages: []api.Message{{Role: "system", Content: "Hello"}},
 			wantErr:  "no user query found in messages",
+		},
+		{
+			name: "assistant prefill without query",
+			messages: []api.Message{
+				{Role: "system", Content: "Hello"},
+				{Role: "assistant", Content: "Partial"},
+			},
+			wantErr: "no user query found in messages",
 		},
 		{
 			name: "system image",
