@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
@@ -15,6 +16,16 @@ import (
 	"github.com/ollama/ollama/x/models/nn"
 	"github.com/ollama/ollama/x/tokenizer"
 )
+
+// mlaLayerEval commits and waits for the op stream after each MLA layer
+// during prefill (OLLAMA_MLA_LAYER_EVAL=1 enables). Superseded by the
+// blocked prefill path, which bounds transients by construction.
+var mlaLayerEval = os.Getenv("OLLAMA_MLA_LAYER_EVAL") == "1"
+
+// mlaChunkedPrefill processes the latent history in fixed-size key blocks
+// with an online softmax during prefill (OLLAMA_MLA_CHUNKED_PREFILL=0
+// falls back to re-expanding the whole history per chunk).
+var mlaChunkedPrefill = os.Getenv("OLLAMA_MLA_CHUNKED_PREFILL") != "0"
 
 func init() {
 	base.Register("BailingMoeV3ForCausalLM", NewModel)
@@ -533,6 +544,95 @@ func (a *MLAAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, posi
 			ov := probs.Matmul(hv)
 			out = mlx.Reshape(ov, B, cfg.NumAttentionHeads, L, cfg.KVLoraRank)
 			out = a.UnembedOut.Forward(out)
+		} else if mlaChunkedPrefill {
+			// Prefill: absorbed MQA over the latent history, processed in
+			// fixed-size key blocks with an online softmax. CUDA's fused
+			// SDPA cannot run 576-dim latent heads, and both alternatives
+			// materialize O(S) tensors per layer — re-expanding the history
+			// to per-head keys/values costs S×24 KiB and the generic SDPA
+			// fallback materializes [H, L, S] f32 scores — which stacked up
+			// to ~0.3 MB/token of transients and OOM'd long-context
+			// prefills. Blocking keeps the transient footprint constant
+			// regardless of context length.
+			qLatent := a.EmbedQ.Forward(qNope)
+			queries := mlx.Concatenate([]*mlx.Array{qLatent, qPE}, 3)
+			hk := history.K()
+			S := int32(hk.Dim(2))
+			latentDim := cfg.KVLoraRank + cfg.QKRopeHeadDim
+			q2 := mlx.Reshape(queries, B*cfg.NumAttentionHeads, L, latentDim)
+			hk2 := mlx.Reshape(hk, S, latentDim)
+			histBase := S - L
+
+			const mlaKeyBlock = 8192
+			var acc, rowMax, rowSum *mlx.Array // [B*H, L, lora] f32, [B*H, L, 1] f32 ×2
+			for j0 := int32(0); j0 < S; j0 += mlaKeyBlock {
+				j1 := min(j0+mlaKeyBlock, S)
+				kj := mlx.SliceStartStop(hk2, []int32{j0, 0}, []int32{j1, latentDim})
+				kjT := mlx.Transpose(kj, 1, 0)
+				raw := q2.Matmul(kjT)
+				rawF32 := raw.AsType(mlx.DTypeFloat32)
+				scores := mlx.MulScalar(rawF32, cfg.Scale)
+				var keep, mask, masked *mlx.Array
+				if j1 > histBase {
+					// Row t attends to absolute positions <= histBase+t;
+					// block column s is absolute j0+s.
+					keep = mlx.Tri(L, j1-j0, int(histBase-j0))
+					mask = mlx.Where(keep, mlx.FromValue(float32(0)), mlx.FromValue(float32(-1e9)))
+					masked = mlx.Add(scores, mask)
+				} else {
+					masked = scores
+				}
+				bm := masked.MaxAxis(-1, true)
+				nm := bm
+				if rowMax != nil {
+					nm = mlx.Maximum(rowMax, bm)
+				}
+				shifted := mlx.Sub(masked, nm)
+				p := mlx.Exp(shifted)
+				pl := p.AsType(hk.DType())
+				vj := mlx.SliceStartStop(hk2, []int32{j0, 0}, []int32{j1, cfg.KVLoraRank})
+				pvRaw := pl.Matmul(vj)
+				pv := pvRaw.AsType(mlx.DTypeFloat32)
+				ps := mlx.Sum(p, -1, true)
+				prevAcc, prevMax, prevSum := acc, rowMax, rowSum
+				if acc == nil {
+					acc, rowMax, rowSum = pv, nm, ps
+				} else {
+					correct := mlx.Exp(mlx.Sub(prevMax, nm))
+					acc = mlx.Add(mlx.Mul(prevAcc, correct), pv)
+					rowSum = mlx.Add(mlx.Mul(prevSum, correct), ps)
+					rowMax = nm
+					mlx.Free(correct)
+				}
+				// Evaluate the block synchronously, then drop every
+				// intermediate (each op's output has an explicit variable so
+				// nothing is left implicitly referenced): the block's
+				// transients recycle before the next block allocates instead
+				// of piling up until the runner's end-of-chunk Sweep.
+				mlx.Eval(acc, rowMax, rowSum)
+				mlx.Free(kj, kjT, raw, rawF32, scores, keep, mask, shifted, p, pl, vj, pvRaw)
+				if bm != rowMax {
+					mlx.Free(bm)
+				}
+				if pv != acc {
+					mlx.Free(pv)
+				}
+				if ps != rowSum {
+					mlx.Free(ps)
+				}
+				if prevAcc != acc {
+					mlx.Free(prevAcc, prevSum)
+				}
+				if prevMax != rowMax && prevMax != nil {
+					mlx.Free(prevMax)
+				}
+				if masked != scores {
+					mlx.Free(masked)
+				}
+			}
+			ov := mlx.Div(acc, rowSum).AsType(hk.DType())
+			out = mlx.Reshape(ov, B, cfg.NumAttentionHeads, L, cfg.KVLoraRank)
+			out = a.UnembedOut.Forward(out)
 		} else {
 			// Prefill: CUDA's fused SDPA only supports head dims <= 128,
 			// so re-expand the latent history to per-head 192/128 keys and
@@ -586,12 +686,18 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden
 	B, L := int32(dims[0]), int32(dims[1])
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
 	h := m.EmbedTokens.Forward(b.InputIDs)
+	// Optional belt-and-braces: wait out the stream after each MLA layer
+	// (off by default; the blocked prefill path above bounds transients).
+	splitMLA := mlaLayerEval && L > 4
 	for i, layer := range m.Layers {
 		var c cache.Cache
 		if i < len(caches) {
 			c = caches[i]
 		}
 		h = layer.Forward(h, b, c, positions, B, L, m.Config)
+		if splitMLA && layer.IsMLA {
+			mlx.Eval(h)
+		}
 	}
 	out := m.Norm.Forward(h, m.RMSNormEps)
 	return out, out
