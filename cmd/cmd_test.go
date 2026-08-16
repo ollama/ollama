@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1793,6 +1794,164 @@ func TestNewCreateRequest(t *testing.T) {
 			actual := NewCreateRequest(tt.from, tt.opts)
 			if !cmp.Equal(actual, tt.expected) {
 				t.Errorf("expected output %#v, got %#v", tt.expected, actual)
+			}
+		})
+	}
+}
+
+func TestNewSaveCreateRequest(t *testing.T) {
+	tests := []struct {
+		name       string
+		opts       runOptions
+		showStatus int
+		showError  string
+		wantReq    *api.CreateRequest
+		wantErr    string
+		wantShow   []string
+	}{
+		{
+			name: "parent model not found falls back to current model",
+			opts: runOptions{
+				Model:       "local-model",
+				ParentModel: "remote-parent",
+				Options: map[string]any{
+					"draft_num_predict": 2,
+				},
+			},
+			showStatus: http.StatusNotFound,
+			showError:  "model 'remote-parent' not found",
+			wantReq: &api.CreateRequest{
+				Model: "saved-model",
+				From:  "local-model",
+				Parameters: map[string]any{
+					"draft_num_predict": 2,
+				},
+			},
+			wantShow: []string{"remote-parent"},
+		},
+		{
+			name: "parent model exists locally",
+			opts: runOptions{
+				Model:       "local-model",
+				ParentModel: "local-parent",
+			},
+			showStatus: http.StatusOK,
+			wantReq: &api.CreateRequest{
+				Model: "saved-model",
+				From:  "local-parent",
+			},
+			wantShow: []string{"local-parent"},
+		},
+		{
+			name: "parent model show non-404 returns error",
+			opts: runOptions{
+				Model:       "local-model",
+				ParentModel: "local-parent",
+			},
+			showStatus: http.StatusInternalServerError,
+			showError:  "server exploded",
+			wantErr:    "server exploded",
+			wantShow:   []string{"local-parent"},
+		},
+		{
+			name: "parent model not found drops loaded messages",
+			opts: runOptions{
+				Model:          "local-model",
+				ParentModel:    "remote-parent",
+				LoadedMessages: []api.Message{{Role: "assistant", Content: "loaded"}},
+				Messages:       []api.Message{{Role: "user", Content: "new"}},
+			},
+			showStatus: http.StatusNotFound,
+			showError:  "model 'remote-parent' not found",
+			wantReq: &api.CreateRequest{
+				Model:    "saved-model",
+				From:     "local-model",
+				Messages: []api.Message{{Role: "user", Content: "new"}},
+			},
+			wantShow: []string{"remote-parent"},
+		},
+		{
+			name: "empty parent model uses current model without show",
+			opts: runOptions{
+				Model: "local-model",
+			},
+			wantReq: &api.CreateRequest{
+				Model: "saved-model",
+				From:  "local-model",
+			},
+		},
+		{
+			name: "explicit cloud model preserves source without parent show",
+			opts: runOptions{
+				Model:       "qwen3.5:cloud",
+				ParentModel: "qwen3.5",
+			},
+			wantReq: &api.CreateRequest{
+				Model: "saved-model",
+				From:  "qwen3.5:cloud",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var showReqs []api.ShowRequest
+			mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/show" || r.Method != http.MethodPost {
+					http.NotFound(w, r)
+					return
+				}
+
+				var req api.ShowRequest
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				showReqs = append(showReqs, req)
+
+				if tt.showStatus == 0 {
+					w.WriteHeader(http.StatusInternalServerError)
+					_ = json.NewEncoder(w).Encode(map[string]string{"error": "unexpected show request"})
+					return
+				}
+
+				w.WriteHeader(tt.showStatus)
+				if tt.showStatus == http.StatusOK {
+					_ = json.NewEncoder(w).Encode(api.ShowResponse{})
+				} else {
+					_ = json.NewEncoder(w).Encode(map[string]string{"error": tt.showError})
+				}
+			}))
+			t.Cleanup(mockServer.Close)
+
+			u, err := url.Parse(mockServer.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			req, err := newSaveCreateRequest(t.Context(), api.NewClient(u, mockServer.Client()), "saved-model", tt.opts)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error = %v, want %q", err, tt.wantErr)
+				}
+				if req != nil {
+					t.Fatalf("request = %#v, want nil", req)
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if diff := cmp.Diff(tt.wantReq, req); diff != "" {
+					t.Fatalf("create request mismatch (-want +got):\n%s", diff)
+				}
+			}
+
+			var gotShow []string
+			for _, req := range showReqs {
+				gotShow = append(gotShow, req.Model)
+			}
+			if diff := cmp.Diff(tt.wantShow, gotShow); diff != "" {
+				t.Fatalf("show requests mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
