@@ -282,6 +282,47 @@ Montréal
 			matchesTemplate: true,
 		},
 		{
+			// Truncation can drop the original user query from a long tool
+			// loop, leaving only tool responses. The reference template raises
+			// on this shape, so it is not template-checked.
+			name: "tool loop without a plain user query",
+			messages: []api.Message{
+				{
+					Role:     "assistant",
+					Thinking: "Need current data.",
+					Content:  "I'll check.",
+					ToolCalls: []api.ToolCall{{Function: api.ToolCallFunction{
+						Name:      "get_weather",
+						Arguments: weatherArgs,
+					}}},
+				},
+				{Role: "tool", Content: `{"temp": 18}`},
+			},
+			tools: weather,
+			think: think(true),
+			want: toolHeader + `<|im_start|>assistant
+<think>
+Need current data.
+</think>
+
+I'll check.
+
+<tool_call>
+<function=get_weather>
+<parameter=city>
+Montréal
+</parameter>
+</function>
+</tool_call><|im_end|>
+<|im_start|>user
+<tool_response>
+{"temp": 18}
+</tool_response><|im_end|>
+<|im_start|>assistant
+<think>
+`,
+		},
+		{
 			name: "image content",
 			messages: []api.Message{{
 				Role:    "user",
@@ -359,11 +400,6 @@ func TestQwen38RendererRejectsInvalidTranscripts(t *testing.T) {
 		wantErr  string
 	}{
 		{name: "empty", wantErr: "no messages provided"},
-		{
-			name:     "no user query",
-			messages: []api.Message{{Role: "system", Content: "Hello"}},
-			wantErr:  "no user query found in messages",
-		},
 		{
 			name: "system image",
 			messages: []api.Message{
