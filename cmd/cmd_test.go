@@ -1798,6 +1798,75 @@ func TestNewCreateRequest(t *testing.T) {
 	}
 }
 
+func TestResolveParentForSave(t *testing.T) {
+	loaded := []api.Message{{Role: "assistant", Content: "loaded"}}
+
+	t.Run("parent not locally available falls back to running model", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "not found", http.StatusNotFound)
+		}))
+		defer srv.Close()
+		t.Setenv("OLLAMA_HOST", srv.URL)
+
+		client, err := api.ClientFromEnvironment()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		opts := runOptions{
+			Model:          "nemotron-3.5-lightning:30b",
+			ParentModel:    "nemotron3.5:30b-a3b-q4_K_M",
+			LoadedMessages: loaded,
+		}
+		got := resolveParentForSave(t.Context(), client, opts)
+		if got.ParentModel != "" {
+			t.Errorf("ParentModel = %q, want empty", got.ParentModel)
+		}
+		if got.LoadedMessages != nil {
+			t.Errorf("LoadedMessages should be nil on fallback, got %v", got.LoadedMessages)
+		}
+		if got.Model != "nemotron-3.5-lightning:30b" {
+			t.Errorf("Model = %q, want unchanged", got.Model)
+		}
+	})
+
+	t.Run("parent locally available is preserved", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{}); err != nil {
+				t.Fatal(err)
+			}
+		}))
+		defer srv.Close()
+		t.Setenv("OLLAMA_HOST", srv.URL)
+
+		client, err := api.ClientFromEnvironment()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		opts := runOptions{
+			Model:          "mymodel",
+			ParentModel:    "parentmodel",
+			LoadedMessages: loaded,
+		}
+		got := resolveParentForSave(t.Context(), client, opts)
+		if got.ParentModel != "parentmodel" {
+			t.Errorf("ParentModel = %q, want %q", got.ParentModel, "parentmodel")
+		}
+		if len(got.LoadedMessages) != 1 {
+			t.Errorf("LoadedMessages should be preserved, got %v", got.LoadedMessages)
+		}
+	})
+
+	t.Run("no parent model is a no-op", func(t *testing.T) {
+		opts := runOptions{Model: "mymodel"}
+		got := resolveParentForSave(t.Context(), nil, opts)
+		if got.Model != "mymodel" || got.ParentModel != "" {
+			t.Errorf("unexpected change: %+v", got)
+		}
+	})
+}
+
 func TestApplyShowResponseToRunOptions(t *testing.T) {
 	opts := runOptions{}
 	info := &api.ShowResponse{
