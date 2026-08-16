@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -79,14 +80,24 @@ type mockServerOptions struct {
 	promptEvalCount func(req api.ChatRequest) int
 }
 
-// mockPromptEvalCount deterministically counts prompt words like a tokenizer
-// enough for calibration tests: ~1.3 tokens/word plus template overhead.
+// mockPromptEvalCount stands in for a real tokenizer well enough for
+// calibration tests. It reproduces the two properties calibration relies on:
+// a single character costs exactly one token (so pad letters move the count by
+// one), and code words cost roughly one token per four characters, which puts
+// HumanEval near the 2.0-2.5 tokens/word real tokenizers charge. The trailing
+// constant stands in for the chat template.
 func mockPromptEvalCount(req api.ChatRequest) int {
-	words := 0
+	tokens := 0
 	for _, m := range req.Messages {
-		words += len(strings.Fields(m.Content))
+		for field := range strings.FieldsSeq(m.Content) {
+			if len(field) == 1 {
+				tokens++
+				continue
+			}
+			tokens += 1 + len(field)/4
+		}
 	}
-	return words*13/10 + 25
+	return tokens + 25
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -640,9 +651,141 @@ func TestBenchmarkModel_PromptTokens(t *testing.T) {
 	if !strings.Contains(content, "def ") {
 		t.Error("Expected HumanEval function signatures in generated prompt")
 	}
-	wordCount := len(strings.Fields(content))
-	if wordCount < 600 || wordCount > 900 {
-		t.Errorf("Expected ~750 words for 1000 tokens, got %d words", wordCount)
+	if got := mockPromptEvalCount(api.ChatRequest{Messages: []api.Message{{Content: content}}}); got != promptTokens {
+		t.Errorf("timed request measured %d prompt tokens, want exactly %d", got, promptTokens)
+	}
+}
+
+// TestBenchmarkModel_PromptTokensExact pins the contract -prompt-tokens now
+// carries: the target is a ceiling that every benchmark request lands on
+// exactly, so a run can be placed on a kernel tile boundary instead of drifting
+// a few percent past one.
+func TestBenchmarkModel_PromptTokensExact(t *testing.T) {
+	for _, target := range []int{256, 512, 1024, 4096, 4097} {
+		t.Run(strconv.Itoa(target), func(t *testing.T) {
+			fOpt := createTestFlagOptions()
+			epochs, warmups := 3, 1
+			fOpt.epochs = &epochs
+			fOpt.warmup = &warmups
+			fOpt.promptTokens = &target
+
+			var counts []int
+			server := createMockOllamaServer(t, mockServerOptions{
+				onChat: func(req api.ChatRequest) {
+					counts = append(counts, mockPromptEvalCount(req))
+				},
+				chatResponses:   defaultChatResponses(),
+				promptEvalCount: mockPromptEvalCount,
+			})
+			defer server.Close()
+
+			t.Setenv("OLLAMA_HOST", server.URL)
+
+			output := captureOutput(func() {
+				if err := BenchmarkModel(fOpt); err != nil {
+					t.Fatalf("BenchmarkModel() error = %v", err)
+				}
+			})
+
+			// Calibration probes are free to overshoot; the warmup and timed
+			// requests that follow are not.
+			benchmarked := warmups + epochs
+			if len(counts) < benchmarked {
+				t.Fatalf("got %d chat requests, want at least %d", len(counts), benchmarked)
+			}
+			for i, count := range counts[len(counts)-benchmarked:] {
+				if count != target {
+					t.Errorf("benchmark request %d measured %d prompt tokens, want exactly %d", i, count, target)
+				}
+			}
+			if strings.Contains(output, "prompt size other than the requested") {
+				t.Errorf("unexpected off-target warning: %s", output)
+			}
+		})
+	}
+}
+
+// TestBenchmarkModel_PromptSizeDriftWarning covers the safety net: the plan is
+// calibrated once, so a size that moves afterwards must be reported rather than
+// silently benchmarked.
+func TestBenchmarkModel_PromptSizeDriftWarning(t *testing.T) {
+	fOpt := createTestFlagOptions()
+	epochs, warmups, promptTokens := 2, 0, 1024
+	fOpt.epochs = &epochs
+	fOpt.warmup = &warmups
+	fOpt.promptTokens = &promptTokens
+
+	server := createMockOllamaServer(t, mockServerOptions{
+		chatResponses: defaultChatResponses(),
+		promptEvalCount: func(req api.ChatRequest) int {
+			count := mockPromptEvalCount(req)
+			// Calibration probes ask for a single token; drift the count only
+			// for the benchmark requests that follow them.
+			if predict, ok := req.Options["num_predict"].(float64); !ok || predict != 1 {
+				count++
+			}
+			return count
+		},
+	})
+	defer server.Close()
+
+	t.Setenv("OLLAMA_HOST", server.URL)
+
+	output := captureOutput(func() {
+		if err := BenchmarkModel(fOpt); err != nil {
+			t.Fatalf("BenchmarkModel() error = %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "prompt size other than the requested 1024 tokens") {
+		t.Errorf("Expected off-target warning, got: %s", output)
+	}
+}
+
+func TestBenchmarkModel_GeneratedPromptVariesByRequest(t *testing.T) {
+	fOpt := createTestFlagOptions()
+	epochs := 3
+	warmups := 1
+	promptTokens := 1000
+	fOpt.epochs = &epochs
+	fOpt.warmup = &warmups
+	fOpt.promptTokens = &promptTokens
+
+	var receivedContents []string
+	server := createMockOllamaServer(t, mockServerOptions{
+		onChat: func(req api.ChatRequest) {
+			if len(req.Messages) > 0 {
+				receivedContents = append(receivedContents, req.Messages[0].Content)
+			}
+		},
+		chatResponses:   defaultChatResponses(),
+		promptEvalCount: mockPromptEvalCount,
+	})
+	defer server.Close()
+
+	t.Setenv("OLLAMA_HOST", server.URL)
+
+	captureOutput(func() {
+		if err := BenchmarkModel(fOpt); err != nil {
+			t.Fatalf("BenchmarkModel() error = %v", err)
+		}
+	})
+
+	requestCount := warmups + epochs
+	if len(receivedContents) < requestCount {
+		t.Fatalf("got %d chat requests, want at least %d", len(receivedContents), requestCount)
+	}
+
+	seen := make(map[string]bool)
+	for i, content := range receivedContents[len(receivedContents)-requestCount:] {
+		_, body, ok := strings.Cut(content, "\n\n\n")
+		if !ok {
+			t.Fatalf("request %d has no generated prompt body", i)
+		}
+		if seen[body] {
+			t.Errorf("request %d reused a HumanEval window", i)
+		}
+		seen[body] = true
 	}
 }
 
@@ -982,74 +1125,86 @@ func TestBenchmarkModel_CSVFormat(t *testing.T) {
 // --- Unit tests for helper functions ---
 
 func TestGenerateCodePrompt(t *testing.T) {
-	prompt := generateCodePrompt(800, 0, "nonce123")
-	wordCount := len(strings.Fields(prompt))
+	prompt := generateCodePrompt(promptPlan{words: 800}, 0)
 
-	// ~800 words requested: whole problems pack up to the budget (within one problem of it)
-	if wordCount < 700 || wordCount > 810 {
-		t.Errorf("Expected ~800 words, got %d", wordCount)
-	}
-	if !strings.HasPrefix(prompt, "# -*- coding: utf-8 -*-\n# checksum: nonce123") {
+	if !strings.HasPrefix(prompt, "# -*- coding: utf-8 -*-\n# checksum: ") {
 		t.Errorf("Expected session prefix, got: %.50s...", prompt)
 	}
 	if !strings.Contains(prompt, "def ") {
 		t.Error("Expected HumanEval function signatures in prompt")
 	}
+
+	// The word budget covers the problems alone, and repeated best-fit packs to
+	// within the smallest problem of it.
+	_, body, _ := strings.Cut(prompt, "\n\n\n")
+	if got, floor := len(strings.Fields(body)), 800-smallestCodePromptWords(); got > 800 || got <= floor {
+		t.Errorf("body packed to %d words, want (%d, 800]", got, floor)
+	}
+}
+
+func TestPromptNonce(t *testing.T) {
+	for _, n := range []int{1, 12, 40} {
+		fields := strings.Fields(promptNonce(n))
+		if len(fields) != n {
+			t.Errorf("promptNonce(%d) produced %d fields, want %d", n, len(fields), n)
+		}
+		// Single lowercase letters are what cost exactly one token each; any
+		// wider unit would make the pad unable to hit the target.
+		for _, field := range fields {
+			if len(field) != 1 || field[0] < 'a' || field[0] > 'z' {
+				t.Errorf("promptNonce(%d) field %q is not a single lowercase letter", n, field)
+			}
+		}
+	}
+	first, second := promptNonce(12), promptNonce(12)
+	if first == second {
+		t.Errorf("Expected a fresh nonce per call to defeat prefix caches, got %q twice", first)
+	}
+}
+
+func TestGenerateCodePrompt_PadOnlyExtendsHeader(t *testing.T) {
+	baseHeader, baseBody, _ := strings.Cut(generateCodePrompt(promptPlan{words: 800}, 0), "\n\n\n")
+	padHeader, padBody, _ := strings.Cut(generateCodePrompt(promptPlan{words: 800, pad: 7}, 0), "\n\n\n")
+
+	if baseBody != padBody {
+		t.Error("pad changed the coding request; it must only extend the header nonce")
+	}
+	if got := len(strings.Fields(padHeader)) - len(strings.Fields(baseHeader)); got != 7 {
+		t.Errorf("pad added %d header words, want 7", got)
+	}
 }
 
 func TestGenerateCodePrompt_WholeProblemsOnly(t *testing.T) {
-	prompt := generateCodePrompt(800, 0, "nonce123")
-	body := strings.TrimPrefix(prompt, "# -*- coding: utf-8 -*-\n# checksum: nonce123\n\n\n")
-
-	// Consume the greedy window in set order; what remains must be exactly one
-	// complete problem (the best-fit pick) — never a truncated fragment.
-	problems := humanEvalProblems()
-	i := 0
-	for i < len(problems) {
-		trimmed := strings.TrimSpace(problems[i].Prompt)
-		if !strings.HasPrefix(body, trimmed) {
-			break
-		}
-		body = strings.TrimPrefix(body, trimmed)
-		body = strings.TrimPrefix(body, "\n\n\n")
-		i++
-	}
-	if i == 0 {
+	problems := codePromptProblems(800, 0)
+	if len(problems) == 0 {
 		t.Fatal("expected at least one window problem")
 	}
-	// body is either empty (best-fit happened to be the next problem in order)
-	// or exactly one complete problem — never a truncated fragment.
-	if body != "" {
-		known := false
-		for _, p := range problems {
-			if body == strings.TrimSpace(p.Prompt) {
-				known = true
-				break
-			}
+	seen := make(map[string]bool)
+	for _, problem := range problems {
+		if seen[problem.TaskID] {
+			t.Fatal("prompt repeats a HumanEval problem")
 		}
-		if !known {
-			t.Fatalf("prompt tail is not a complete HumanEval problem: %.80s...", body)
-		}
+		seen[problem.TaskID] = true
 	}
 }
 
 func TestGenerateCodePrompt_FullSetCap(t *testing.T) {
-	// Beyond the full set the prompt must reconstruct the entire set in order,
-	// exactly once — no repeats, no truncation.
-	var want []string
-	for _, p := range humanEvalProblems() {
-		want = append(want, strings.TrimSpace(p.Prompt))
+	problems := codePromptProblems(1<<20, 0)
+	if len(problems) != len(humanEvalProblems()) {
+		t.Fatalf("full-set prompt contains %d problems, want %d", len(problems), len(humanEvalProblems()))
 	}
-	expected := "# -*- coding: utf-8 -*-\n# checksum: nonce123\n\n\n" + strings.Join(want, "\n\n\n")
-
-	if got := generateCodePrompt(1<<20, 0, "nonce123"); got != expected {
-		t.Errorf("full-set prompt mismatch: got %d bytes, want %d bytes", len(got), len(expected))
+	seen := make(map[string]bool)
+	for _, problem := range problems {
+		if seen[problem.TaskID] {
+			t.Fatal("full-set prompt repeats a HumanEval problem")
+		}
+		seen[problem.TaskID] = true
 	}
 }
 
 func TestGenerateCodePrompt_TinyTarget(t *testing.T) {
-	prompt := generateCodePrompt(10, 0, "nonce123")
-	if !strings.HasPrefix(prompt, "# -*- coding: utf-8 -*-\n# checksum: nonce123") {
+	prompt := generateCodePrompt(promptPlan{words: 10}, 0)
+	if !strings.HasPrefix(prompt, "# -*- coding: utf-8 -*-\n# checksum: ") {
 		t.Errorf("Expected session prefix even for tiny targets, got: %.50s...", prompt)
 	}
 	if strings.Contains(prompt, "def ") {
@@ -1057,49 +1212,79 @@ func TestGenerateCodePrompt_TinyTarget(t *testing.T) {
 	}
 }
 
-func TestGenerateCodePrompt_Deterministic(t *testing.T) {
-	p0 := generateCodePrompt(800, 0, "nonce123")
-	p1 := generateCodePrompt(800, 0, "nonce123")
-	if p0 != p1 {
-		t.Error("Expected identical prompts for identical inputs")
+func TestCodePromptBody_Deterministic(t *testing.T) {
+	first, second := codePromptBody(800, 0), codePromptBody(800, 0)
+	if first != second {
+		t.Error("Expected identical bodies for identical inputs")
 	}
 }
 
-func TestGenerateCodePrompt_VariesByAttempt(t *testing.T) {
-	p0 := generateCodePrompt(800, 0, "nonce123")
-	p1 := generateCodePrompt(800, 1, "nonce123")
-	p2 := generateCodePrompt(800, 2, "nonce123")
-
-	if p0 == p1 || p1 == p2 || p0 == p2 {
-		t.Error("Expected different prompts for different variations")
+func TestCodePromptBody_VariationsPreserveProblemSet(t *testing.T) {
+	reference := codePromptBody(800, 0)
+	want := codePromptProblems(800, 0)
+	wantSet := make(map[string]bool)
+	for _, problem := range want {
+		wantSet[problem.TaskID] = true
 	}
+	seenPrompts := make(map[string]bool)
+	for i := range 6 {
+		prompt := codePromptBody(800, i)
+		if seenPrompts[prompt] {
+			t.Errorf("variation %d reused a prompt", i)
+		}
+		seenPrompts[prompt] = true
 
-	// All should stay within the budget window
-	for i, p := range []string{p0, p1, p2} {
-		if w := len(strings.Fields(p)); w < 600 || w > 850 {
-			t.Errorf("Variation %d out of budget window, got %d words", i, w)
+		problems := codePromptProblems(800, i)
+		if len(problems) != len(wantSet) {
+			t.Errorf("variation %d contains %d problems, want %d", i, len(problems), len(wantSet))
+		}
+		seen := make(map[string]bool)
+		for _, problem := range problems {
+			if !wantSet[problem.TaskID] {
+				t.Errorf("variation %d changed the calibrated problem set", i)
+			}
+			if seen[problem.TaskID] {
+				t.Errorf("variation %d repeats problem %s", i, problem.TaskID)
+			}
+			seen[problem.TaskID] = true
+		}
+		if got, want := len(strings.Fields(prompt)), len(strings.Fields(reference)); got != want {
+			t.Errorf("variation %d contains %d words, want %d", i, got, want)
 		}
 	}
 }
 
-func TestGenerateCodePrompt_UniquePerCacheBuster(t *testing.T) {
-	p0 := generateCodePrompt(800, 0, "nonce-a")
-	p1 := generateCodePrompt(800, 0, "nonce-b")
-	if p0 == p1 {
-		t.Error("Expected different prompts for different cache busters")
+func TestBenchmarkPromptVariation(t *testing.T) {
+	const (
+		warmups = 2
+		epochs  = 3
+	)
+	seen := make(map[int]bool)
+	for epoch := range epochs {
+		for attempt := range maxShortResponseRetries + 1 {
+			variation := benchmarkPromptVariation(warmups, epochs, epoch, attempt)
+			if variation < warmups {
+				t.Errorf("benchmarkPromptVariation(%d, %d, %d, %d) = %d, overlaps warmups", warmups, epochs, epoch, attempt, variation)
+			}
+			if seen[variation] {
+				t.Errorf("benchmarkPromptVariation(%d, %d, %d, %d) = %d, already used", warmups, epochs, epoch, attempt, variation)
+			}
+			seen[variation] = true
+		}
 	}
 }
 
-func TestPromptTargetBounds(t *testing.T) {
-	minT, maxT := promptTargetBounds(1000)
-	if minT != 990 || maxT != 1020 {
-		t.Errorf("Expected bounds 990-1020 for target 1000, got %d-%d", minT, maxT)
+func TestGenerateCodePrompt_UniquePerRequest(t *testing.T) {
+	plan := promptPlan{words: 800}
+	first, second := generateCodePrompt(plan, 0), generateCodePrompt(plan, 0)
+	if first == second {
+		t.Error("Expected a fresh nonce per request to defeat prefix caches")
 	}
 }
 
 func TestBuildChatRequest(t *testing.T) {
 	fOpt := createTestFlagOptions()
-	req := buildChatRequest("test-model", fOpt, nil, "nonce123", 0, 0)
+	req := buildChatRequest("test-model", fOpt, nil, 0, promptPlan{})
 
 	if req.Model != "test-model" {
 		t.Errorf("Expected model 'test-model', got '%s'", req.Model)
@@ -1110,7 +1295,7 @@ func TestBuildChatRequest(t *testing.T) {
 	if !strings.Contains(req.Messages[0].Content, "test prompt") {
 		t.Errorf("Expected message to contain 'test prompt', got '%s'", req.Messages[0].Content)
 	}
-	if !strings.HasPrefix(req.Messages[0].Content, "# -*- coding: utf-8 -*-\n# checksum: nonce123") {
+	if !strings.HasPrefix(req.Messages[0].Content, "# -*- coding: utf-8 -*-\n# checksum: ") {
 		t.Errorf("Expected nonce prefix, got: %.50s...", req.Messages[0].Content)
 	}
 }
@@ -1120,7 +1305,7 @@ func TestBuildChatRequest_WithPromptTokens(t *testing.T) {
 	promptTokens := 2000
 	fOpt.promptTokens = &promptTokens
 
-	req := buildChatRequest("test-model", fOpt, nil, "nonce123", 0, 1500)
+	req := buildChatRequest("test-model", fOpt, nil, 0, promptPlan{words: 1500})
 	content := req.Messages[0].Content
 
 	if strings.Contains(content, "test prompt") {
@@ -1135,7 +1320,7 @@ func TestBuildChatRequest_WithImage(t *testing.T) {
 	fOpt := createTestFlagOptions()
 	imgData := api.ImageData([]byte("fake image"))
 
-	req := buildChatRequest("test-model", fOpt, imgData, "nonce123", 0, 0)
+	req := buildChatRequest("test-model", fOpt, imgData, 0, promptPlan{})
 	if len(req.Messages[0].Images) != 1 {
 		t.Errorf("Expected 1 image, got %d", len(req.Messages[0].Images))
 	}
@@ -1146,10 +1331,11 @@ func TestBuildChatRequest_VariesByAttempt(t *testing.T) {
 	promptTokens := 2000
 	fOpt.promptTokens = &promptTokens
 
-	req0 := buildChatRequest("test-model", fOpt, nil, "nonce123", 0, 1500)
-	req1 := buildChatRequest("test-model", fOpt, nil, "nonce123", 1, 1500)
+	plan := promptPlan{words: 1500}
+	_, body0, _ := strings.Cut(buildChatRequest("test-model", fOpt, nil, 0, plan).Messages[0].Content, "\n\n\n")
+	_, body1, _ := strings.Cut(buildChatRequest("test-model", fOpt, nil, 1, plan).Messages[0].Content, "\n\n\n")
 
-	if req0.Messages[0].Content == req1.Messages[0].Content {
+	if body0 == body1 {
 		t.Error("Expected different prompts for different attempts")
 	}
 }
