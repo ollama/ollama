@@ -682,12 +682,18 @@ func (d DeviceInfo) PreferredLibrary(other DeviceInfo) bool {
 	if d.Library == "CUDA" || d.Library == "ROCm" {
 		return true
 	}
+	// Prefer SYCL over Vulkan on Intel GPUs when both backends are installed.
+	if d.Library == "SYCL" && other.Library == "Vulkan" {
+		return true
+	}
 	return false
 }
 
 func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string, mustFilter bool) {
 	var envVar string
 	var rocmOrdinalEnv string
+	sep := ","
+	valuePrefix := ""
 	switch d.Library {
 	case "ROCm":
 		// ROCm must be filtered as it can crash the runner on unsupported devices
@@ -709,13 +715,25 @@ func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string, mustFilter bo
 			return
 		}
 		envVar = "GGML_VK_VISIBLE_DEVICES"
+	case "SYCL":
+		// SYCL selects devices through ONEAPI_DEVICE_SELECTOR
+		// (e.g. "level_zero:0;level_zero:1").
+		if !mustFilter {
+			return
+		}
+		envVar = "ONEAPI_DEVICE_SELECTOR"
+		sep = ";"
+		valuePrefix = "level_zero:"
 	default:
 		return
 	}
 	v, existing := env[envVar]
 	childOrdinal := visibleDeviceCount(v)
 	if existing {
-		v = v + ","
+		v = v + sep
+	}
+	if valuePrefix != "" {
+		v = v + valuePrefix
 	}
 	if d.FilterID != "" {
 		v = v + d.FilterID
