@@ -238,6 +238,29 @@ func TestLoadIntegration_NonexistentIntegration(t *testing.T) {
 	}
 }
 
+func TestLoadIntegration_NullIntegration(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	dir := filepath.Join(tmpDir, ".ollama")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"integrations":{"claude":null}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := IntegrationModel("claude"); got != "" {
+		t.Fatalf("IntegrationModel() = %q, want empty", got)
+	}
+	if got := IntegrationModels("claude"); got != nil {
+		t.Fatalf("IntegrationModels() = %v, want nil", got)
+	}
+	if _, err := LoadIntegration("claude"); !os.IsNotExist(err) {
+		t.Fatalf("LoadIntegration() error = %v, want os.ErrNotExist", err)
+	}
+}
+
 func TestConfigPath(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
