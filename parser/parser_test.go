@@ -765,6 +765,38 @@ func TestParseMultiByte(t *testing.T) {
 	}
 }
 
+func TestParseFileZeroWidthAndNonBreakingRunes(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{"zero width non-joiner", "\u200cخواهم\u200c", "\u200cخواهم\u200c"},
+		{"zero width joiner", "👨\u200d👩\u200d👧", "👨\u200d👩\u200d👧"},
+		{"non-breaking space", "a\u00a0b", "a\u00a0b"},
+		{"right-to-left mark", "abc\u200f", "abc\u200f"},
+		{"soft hyphen", "co\u00adoperate", "co\u00adoperate"},
+		{"variation selector", "❤\ufe0f", "❤\ufe0f"},
+		// Control characters stay out of the value, which is what the guard is
+		// there for, along with the rune 0 the state machine yields for a
+		// delimiter it has already consumed.
+		{"control characters are dropped", "a\ab\u0007c", "abc"},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			actual, err := ParseFile(strings.NewReader("FROM test\nSYSTEM " + tt.value + "\n"))
+			require.NoError(t, err)
+
+			expect := []Command{
+				{Name: "model", Args: "test"},
+				{Name: "system", Args: tt.want},
+			}
+			assert.Equal(t, expect, actual.Commands)
+		})
+	}
+}
+
 func TestCreateRequest(t *testing.T) {
 	cases := []struct {
 		input    string

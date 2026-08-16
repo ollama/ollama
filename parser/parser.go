@@ -13,9 +13,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
+	stdunicode "unicode"
 
 	"golang.org/x/mod/semver"
 	"golang.org/x/sync/errgroup"
@@ -546,7 +546,12 @@ func ParseFile(r io.Reader) (*Modelfile, error) {
 			curr = next
 		}
 
-		if strconv.IsPrint(r) {
+		// Drop control runes, which also covers the rune 0 that
+		// parseRuneForState returns for a delimiter it has consumed. This used
+		// to test strconv.IsPrint, which is false for format runes (ZWJ, ZWNJ,
+		// RLM) and non-ASCII spaces too, so those were stripped out of the
+		// value even though they are content the user typed.
+		if !stdunicode.IsControl(r) {
 			if _, err := b.WriteRune(r); err != nil {
 				return nil, err
 			}
