@@ -374,9 +374,13 @@ func kdaScan(q, k, v, a, betaLogits, aExp, dtBias, state *mlx.Array, safeGate bo
 
 	outputs := make([]*mlx.Array, 0, int(T)/kdaChunkSize+kdaChunkSize)
 	t := int32(0)
+	// ownedState marks states produced inside this scan (safe to Free once
+	// replaced); the incoming state belongs to the caller/cache.
+	ownedState := false
 	for ; !kdaChunkDisabled && t+kdaChunkSize <= T; t += kdaChunkSize {
 		r := timeRange{start: t, end: t + kdaChunkSize}
 		var y *mlx.Array
+		prev := state
 		y, state = kdaChunk(
 			sliceTime(q, r), sliceTime(k, r), sliceTime(v, r),
 			sliceTime(a, r), sliceTime(betaLogits, r), state,
@@ -386,17 +390,38 @@ func kdaScan(q, k, v, a, betaLogits, aExp, dtBias, state *mlx.Array, safeGate bo
 		if kdaChunkSync {
 			mlx.AsyncEval(y, state)
 		}
+		if ownedState {
+			mlx.Free(prev)
+		}
+		ownedState = true
 	}
+	// The per-token fallback covers whatever the chunked scan (default off)
+	// did not. Left unmanaged it builds T steps of lazy graph whose per-step
+	// transients — dominated by each step's [B,H,Dv,Dk] f32 state — stay
+	// registered until the runner's end-of-chunk Sweep: at the runner's
+	// default 2048-token prefill chunk that is ~2 MB x 2048 steps x every KDA
+	// layer held at once, which took down a 48 GiB Mac. Free each step's
+	// slices and superseded state immediately (the lazy graph keeps its own
+	// refs until executed) and commit periodically so retired buffers
+	// actually recycle.
+	const kdaStepCommitInterval = 64
 	for ; t < T; t++ {
 		r := timeRange{start: t, end: t + 1}
-		outs := step(
-			mlx.Squeeze(sliceTime(q, r), 1), mlx.Squeeze(sliceTime(k, r), 1),
-			mlx.Squeeze(sliceTime(v, r), 1), mlx.Squeeze(sliceTime(a, r), 1),
-			mlx.Squeeze(sliceTime(betaLogits, r), 1), state,
-			A3, dt3, qScale, lb,
-		)
-		outputs = append(outputs, mlx.ExpandDims(outs[0], 1))
+		qs, ks, vs, as, bs := sliceTime(q, r), sliceTime(k, r), sliceTime(v, r), sliceTime(a, r), sliceTime(betaLogits, r)
+		q1, k1, v1, a1, b1 := mlx.Squeeze(qs, 1), mlx.Squeeze(ks, 1), mlx.Squeeze(vs, 1), mlx.Squeeze(as, 1), mlx.Squeeze(bs, 1)
+		outs := step(q1, k1, v1, a1, b1, state, A3, dt3, qScale, lb)
+		y := mlx.ExpandDims(outs[0], 1)
+		outputs = append(outputs, y)
+		prev := state
 		state = outs[1]
+		if (t+1)%kdaStepCommitInterval == 0 {
+			mlx.AsyncEval(y, state)
+		}
+		mlx.Free(qs, ks, vs, as, bs, q1, k1, v1, a1, b1, outs[0])
+		if ownedState {
+			mlx.Free(prev)
+		}
+		ownedState = true
 	}
 	if len(outputs) == 0 {
 		return mlx.Zeros(outDType, int(B), 0, int(H), int(D)), state
