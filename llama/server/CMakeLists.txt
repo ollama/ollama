@@ -13,6 +13,9 @@ if(CMAKE_OSX_ARCHITECTURES AND NOT CMAKE_OSX_ARCHITECTURES MATCHES ";")
         message(STATUS "Cross-compiling for arm64: overriding CMAKE_SYSTEM_PROCESSOR from ${CMAKE_SYSTEM_PROCESSOR} to arm64")
         set(CMAKE_SYSTEM_PROCESSOR "arm64")
     endif()
+    if(NOT CMAKE_OSX_ARCHITECTURES STREQUAL CMAKE_HOST_SYSTEM_PROCESSOR)
+        set(CMAKE_CROSSCOMPILING TRUE)
+    endif()
 endif()
 
 # Ensure all shared libraries and executables can find their dependencies
