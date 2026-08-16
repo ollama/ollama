@@ -577,8 +577,10 @@ jobs:
           do
             [ -f "$payload" ] || { echo "missing $payload"; exit 1; }
           done
+      - name: Prepare Windows App Runtime
+        run: ./.github/scripts/prepare_windows_app_runtime.ps1 -Install
       - name: Build unsigned Windows installer and zips
-        run: ./scripts/build_windows.ps1 deps installer zip
+        run: ./scripts/build_windows.ps1 installer zip
       - name: Log contents after build
         run: |
           gci -path .\dist -Recurse -File | ForEach-Object { get-filehash -path $_.FullName -Algorithm SHA256 } | format-list

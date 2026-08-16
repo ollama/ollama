@@ -56,6 +56,7 @@ jobs:
           echo app_changed=$(changed \
             'app/**' \
             'app/**/*' \
+            '.github/scripts/prepare_windows_app_runtime.ps1' \
             'scripts/build_darwin.sh' \
             'scripts/build_windows.ps1') | tee -a $GITHUB_OUTPUT
           echo enginehash=$(cat LLAMA_CPP_VERSION)-$(cat MLX_VERSION)-$(cat MLX_C_VERSION) | tee -a $GITHUB_OUTPUT
@@ -187,8 +188,16 @@ jobs:
             Expand-Archive -Path $archive -DestinationPath "dist\windows-$arch"
           }
           Remove-Item -Force -ErrorAction SilentlyContinue "dist\windows-*\ollama app.exe", "dist\windows-ollama-app-*.exe"
+      - name: Prepare Windows App Runtime
+        run: ./.github/scripts/prepare_windows_app_runtime.ps1
       - name: Build Windows apps and installer
         run: ./scripts/build_windows.ps1 app appArm64 installer
+      - name: Test WinUI app packages
+        run: |
+          $env:CGO_ENABLED = "1"
+          $env:CC = "x86_64-w64-mingw32-gcc.exe"
+          $env:CXX = "x86_64-w64-mingw32-g++.exe"
+          go test -count=1 -tags winui ./app/cmd/app ./app/wintray
       - name: Verify Windows app outputs
         run: |
           if (-not (Test-Path dist\windows-ollama-app-amd64.exe)) { throw "missing amd64 app" }

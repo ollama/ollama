@@ -10,18 +10,21 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
+	"sync"
+	"sync/atomic"
 	"unsafe"
 
+	"github.com/ollama/ollama/app/dialog"
 	"github.com/ollama/ollama/app/updater"
 	"github.com/ollama/ollama/app/version"
 	"github.com/ollama/ollama/app/wintray"
 	"golang.org/x/sys/windows"
 )
+
+const windowsAppRuntimeDownloadURL = "https://learn.microsoft.com/windows/apps/windows-app-sdk/downloads-archive#windows-app-sdk-18"
 
 var (
 	u32                  = windows.NewLazySystemDLL("User32.dll")
@@ -34,6 +37,17 @@ var (
 	pSetForegroundWindow = u32.NewProc("SetForegroundWindow")
 	pSetActiveWindow     = u32.NewProc("SetActiveWindow")
 	pIsIconic            = u32.NewProc("IsIconic")
+	pSetWindowLongPtr    = u32.NewProc("SetWindowLongPtrW")
+	pCallWindowProc      = u32.NewProc("CallWindowProcW")
+	pDefWindowProc       = u32.NewProc("DefWindowProcW")
+
+	// Publish originalProc before handle and clear handle before originalProc.
+	// A matching nonzero handle therefore guarantees that the callback can
+	// forward messages through the corresponding original procedure.
+	mainWindowHandle       atomic.Uintptr
+	mainWindowOriginalProc atomic.Uintptr
+	mainWindowCloseProc    = windows.NewCallback(mainWindowProc)
+	mainWindowProcMu       sync.Mutex // serializes the compound native subclass operation
 
 	appPath         = filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs", "Ollama")
 	appLogPath      = filepath.Join(os.Getenv("LOCALAPPDATA"), "Ollama", "app.log")
@@ -79,6 +93,27 @@ func handleExistingInstance(startHidden bool) {
 		slog.Info("existing instance found, exiting")
 		os.Exit(0)
 	}
+
+	// Fail before the server supervisor is constructed so a UI initialization
+	// failure cannot disturb managed server state.
+	if err := wintray.Initialize(); err != nil {
+		slog.Error("Windows UI is unavailable", "error", err)
+		if errors.Is(err, wintray.ErrWindowsAppRuntimeUnavailable) {
+			showMissingWindowsAppRuntimeDialog()
+		}
+		os.Exit(1)
+	}
+}
+
+func showMissingWindowsAppRuntimeDialog() {
+	dialog.Message(
+		"Ollama requires Windows App Runtime 1.8, but it is missing or damaged.\n\n"+
+			"Download it from Microsoft:\n%s\n\n"+
+			"After installing it, start Ollama again. "+
+			"If you are running Ollama from a ZIP, make sure you extracted the complete archive. "+
+			"If you installed Ollama with OllamaSetup.exe, reinstalling Ollama will also restore this dependency.",
+		windowsAppRuntimeDownloadURL,
+	).Title("Ollama couldn't start").Error()
 }
 
 func installSymlink() {}
@@ -88,36 +123,70 @@ type appCallbacks struct {
 	shutdown func()
 }
 
-var app = &appCallbacks{}
+var (
+	app         = &appCallbacks{}
+	appQuitOnce sync.Once
+)
 
 func (ac *appCallbacks) UIRun(path string) {
-	wv.Run(path)
+	runUI(path)
 }
 
 func (*appCallbacks) UIShow() {
-	if wv.webview != nil {
-		showWindow(wv.webview.Window())
-	} else {
-		wv.Run("/")
+	if !wv.show() {
+		runUI("/")
 	}
 }
 
 func (*appCallbacks) UITerminate() {
-	wv.Terminate()
+	terminateUI()
 }
 
 func (*appCallbacks) UIRunning() bool {
 	return wv.IsRunning()
 }
 
+func (*appCallbacks) ShowLogs() error {
+	logDir := filepath.Dir(appLogPath)
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		return fmt.Errorf("create log directory: %w", err)
+	}
+	verb, err := windows.UTF16PtrFromString("open")
+	if err != nil {
+		return fmt.Errorf("encode shell action: %w", err)
+	}
+	path, err := windows.UTF16PtrFromString(logDir)
+	if err != nil {
+		return fmt.Errorf("encode log directory: %w", err)
+	}
+
+	slog.Debug("opening Ollama log directory", "path", logDir)
+	if err := windows.ShellExecute(0, verb, path, nil, nil, windows.SW_SHOWNORMAL); err != nil {
+		return fmt.Errorf("open log directory: %w", err)
+	}
+	return nil
+}
+
 func (app *appCallbacks) Quit() {
-	app.t.Quit()
-	wv.Terminate()
+	quit()
 }
 
 // TODO - reconcile with above for consistency between mac/windows
 func quit() {
-	wv.Terminate()
+	appQuitOnce.Do(func() {
+		// Stop background work before releasing tray and WebView2 resources. This
+		// prevents a late updater callback from posting to a destroyed IUP handle.
+		if app.shutdown != nil {
+			app.shutdown()
+		}
+
+		// Queue WebView2 destruction before stopping the shared IUP/WinUI message
+		// loop so its thread-affine COM objects are released on the UI thread.
+		terminateUI()
+		if app.t != nil {
+			app.t.Quit()
+		}
+	})
 }
 
 func (app *appCallbacks) DoUpdate() {
@@ -147,9 +216,7 @@ func handleURLSchemeRequest(urlScheme string) {
 	if isConnect {
 		handleConnectURLScheme()
 	} else {
-		if wv.webview != nil {
-			showWindow(wv.webview.Window())
-		}
+		wv.show()
 	}
 }
 
@@ -177,17 +244,6 @@ func osRun(shutdown func(), hasCompletedFirstRun, startHidden bool) {
 		UpdateAvailable("")
 	}
 
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
-
-	// TODO - can this be generalized?
-	go func() {
-		<-signals
-		slog.Debug("shutting down due to signal")
-		app.t.Quit()
-		wv.Terminate()
-	}()
-
 	// On windows, we run the final tasks in the main thread
 	// before starting the tray event loop.  These final tasks
 	// may trigger the UI, and must do that from the main thread.
@@ -208,7 +264,7 @@ func osRun(shutdown func(), hasCompletedFirstRun, startHidden bool) {
 	if startHidden {
 		startHiddenTasks()
 	} else {
-		ptr := wv.Run("/")
+		ptr := runUI("/")
 
 		// Set the window icon using the tray icon
 		if ptr != nil {
@@ -436,7 +492,6 @@ func checkAndHandleExistingInstance(urlSchemeRequest string) bool {
 	if urlSchemeRequest == "" {
 		return false
 	}
-
 	// Try to send URL to existing instance using wintray messaging
 	if wintray.CheckAndSendToExistingInstance(urlSchemeRequest) {
 		os.Exit(0)
@@ -445,4 +500,96 @@ func checkAndHandleExistingInstance(urlSchemeRequest string) bool {
 
 	// No existing instance, we'll handle it ourselves
 	return false
+}
+
+const (
+	gwlpWndProc = ^uintptr(3) // GWLP_WNDPROC (-4)
+	wmClose     = 0x0010
+)
+
+func runUI(path string) unsafe.Pointer {
+	window := wv.Run(path)
+	if err := makeMainWindowCloseToTray(window); err != nil {
+		slog.Error("failed to make main window close to tray", "error", err)
+	}
+	return window
+}
+
+func makeMainWindowCloseToTray(window unsafe.Pointer) error {
+	mainWindowProcMu.Lock()
+	defer mainWindowProcMu.Unlock()
+
+	hwnd := uintptr(window)
+	if hwnd == 0 || mainWindowHandle.Load() == hwnd {
+		return nil
+	}
+	if err := restoreMainWindowProcLocked(); err != nil {
+		return err
+	}
+
+	original, _, callErr := pSetWindowLongPtr.Call(hwnd, gwlpWndProc, mainWindowCloseProc)
+	if original == 0 {
+		return fmt.Errorf("subclass main window: %w", callErr)
+	}
+	mainWindowOriginalProc.Store(original)
+	mainWindowHandle.Store(hwnd)
+	return nil
+}
+
+func mainWindowProc(hwnd windows.Handle, message uint32, wParam, lParam uintptr) uintptr {
+	if message == wmClose {
+		slog.Debug("hiding main window after native close")
+		pShowWindow.Call(uintptr(hwnd), SW_HIDE) //nolint:errcheck
+		return 0
+	}
+
+	original := mainWindowOriginalProc.Load()
+	if mainWindowHandle.Load() == uintptr(hwnd) && original != 0 {
+		result, _, _ := pCallWindowProc.Call(original, uintptr(hwnd), uintptr(message), wParam, lParam)
+		return result
+	}
+	result, _, _ := pDefWindowProc.Call(uintptr(hwnd), uintptr(message), wParam, lParam)
+	return result
+}
+
+func restoreMainWindowProc() error {
+	mainWindowProcMu.Lock()
+	defer mainWindowProcMu.Unlock()
+	return restoreMainWindowProcLocked()
+}
+
+func restoreMainWindowProcLocked() error {
+	hwnd := mainWindowHandle.Load()
+	original := mainWindowOriginalProc.Load()
+	if hwnd == 0 || original == 0 {
+		return nil
+	}
+
+	// Stop intercepting window messages before WebView2 tears down the native
+	// window. In particular, its destruction messages must reach WebView2's
+	// original procedure rather than DefWindowProc.
+	previous, _, callErr := pSetWindowLongPtr.Call(hwnd, gwlpWndProc, original)
+	if previous == 0 {
+		return fmt.Errorf("restore main window procedure: %w", callErr)
+	}
+	mainWindowHandle.CompareAndSwap(hwnd, 0)
+	mainWindowOriginalProc.CompareAndSwap(original, 0)
+	return nil
+}
+
+func terminateUI() {
+	if err := restoreMainWindowProc(); err != nil {
+		slog.Warn("failed to restore main window procedure", "error", err)
+	}
+	wv.Terminate()
+}
+
+func (w *Webview) show() bool {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+	if w.webview == nil {
+		return false
+	}
+	showWindow(w.webview.Window())
+	return true
 }

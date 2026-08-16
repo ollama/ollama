@@ -439,16 +439,7 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 			}
 		})
 
-		// On Darwin, we can't have 2 threads both running global event loops
-		// but on Windows, the event loops are tied to the window, so we're
-		// able to run in both the tray and webview
-		if runtime.GOOS != "darwin" {
-			slog.Debug("starting webview event loop")
-			go func() {
-				wv.Run()
-				slog.Debug("webview event loop exited")
-			}()
-		}
+		runWebviewEventLoop(wv)
 
 		if w.Store != nil {
 			width, height, err := w.Store.WindowSize()
@@ -466,9 +457,7 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 		w.webview = wv
 		w.webview.Navigate(url)
 	} else {
-		w.webview.Eval(fmt.Sprintf(`
-			history.pushState({}, '', '%s');
-		`, path))
+		navigateExistingWebview(w.webview, url, path)
 		showWindow(w.webview.Window())
 	}
 
@@ -485,8 +474,7 @@ func (w *Webview) Terminate() {
 	wv := w.webview
 	w.webview = nil
 	w.mutex.Unlock()
-	wv.Terminate()
-	wv.Destroy()
+	terminateWebview(wv)
 }
 
 func (w *Webview) IsRunning() bool {
