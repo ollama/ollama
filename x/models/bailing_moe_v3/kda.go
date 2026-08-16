@@ -3,6 +3,7 @@ package bailing_moe_v3
 import (
 	"fmt"
 	"math"
+	"os"
 
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
@@ -373,7 +374,7 @@ func kdaScan(q, k, v, a, betaLogits, aExp, dtBias, state *mlx.Array, safeGate bo
 
 	outputs := make([]*mlx.Array, 0, int(T)/kdaChunkSize+kdaChunkSize)
 	t := int32(0)
-	for ; t+kdaChunkSize <= T; t += kdaChunkSize {
+	for ; !kdaChunkDisabled && t+kdaChunkSize <= T; t += kdaChunkSize {
 		r := timeRange{start: t, end: t + kdaChunkSize}
 		var y *mlx.Array
 		y, state = kdaChunk(
@@ -382,6 +383,9 @@ func kdaScan(q, k, v, a, betaLogits, aExp, dtBias, state *mlx.Array, safeGate bo
 			A4, dt4, qScale, safeGate, lowerBound, cc,
 		)
 		outputs = append(outputs, y)
+		if kdaChunkSync {
+			mlx.AsyncEval(y, state)
+		}
 	}
 	for ; t < T; t++ {
 		r := timeRange{start: t, end: t + 1}
@@ -399,6 +403,16 @@ func kdaScan(q, k, v, a, betaLogits, aExp, dtBias, state *mlx.Array, safeGate bo
 	}
 	return mlx.Concatenate(outputs, 1), state
 }
+
+// kdaChunkDisabled gates the chunked prefill scan OFF unless OLLAMA_KDA_CHUNK=1:
+// the dense chunk path leaks boundary-state transients on long prefills and
+// has an unresolved numerical fault; the per-token step loop is the safe
+// default.
+var kdaChunkDisabled = os.Getenv("OLLAMA_KDA_CHUNK") != "1"
+
+// kdaChunkSync commits the op stream at every chunk boundary so each chunk
+// keys the same cached CUDA graph (OLLAMA_KDA_CHUNK_SYNC=0 to disable).
+var kdaChunkSync = os.Getenv("OLLAMA_KDA_CHUNK_SYNC") != "0"
 
 func runKDASegments(q, k, v, a, beta, aExp, dtBias, initial *mlx.Array, splits []int, safeGate bool, lowerBound float32) (*mlx.Array, []*mlx.Array) {
 	length := int32(q.Dim(1))
