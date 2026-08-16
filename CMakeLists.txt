@@ -18,6 +18,12 @@ if(CMAKE_OSX_ARCHITECTURES AND NOT CMAKE_OSX_ARCHITECTURES MATCHES ";")
     endif()
 endif()
 
+option(OLLAMA_FETCH_MOLTENVK "Download MoltenVK for building ggml-vulkan on macOS" OFF)
+set(OLLAMA_MOLTENVK_VERSION "1.4.1" CACHE STRING "MoltenVK release to fetch when OLLAMA_FETCH_MOLTENVK=ON")
+set(OLLAMA_MOLTENVK_URL "" CACHE STRING "Override MoltenVK archive URL")
+set(OLLAMA_MOLTENVK_SHA256 "" CACHE STRING "SHA256 checksum for the MoltenVK archive (enforced unless OLLAMA_MOLTENVK_INSECURE=ON)")
+option(OLLAMA_MOLTENVK_INSECURE "Skip SHA256 verification for MoltenVK downloads" OFF)
+
 include(CheckLanguage)
 include(GNUInstallDirs)
 

@@ -18,6 +18,41 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 or [download manually](https://ollama.com/download/Ollama.dmg)
 
+#### Experimental Intel Mac AMD GPU support via MoltenVK
+
+> [!WARNING]
+> This configuration is experimental and unsupported.
+
+The MoltenVK build adds a Vulkan backend intended for Intel Macs with AMD GPUs. It also produces the standard universal macOS binaries and app bundle.
+
+1. Install the standard [development prerequisites](docs/development.md), including Xcode, Go, CMake 3.24 or newer, and Node.js/npm. Then install the additional build dependencies:
+
+   ```bash
+   brew install shaderc glslang libomp
+   ```
+
+   The universal build also requires Xcode's Metal toolchain:
+
+   ```bash
+   xcodebuild -downloadComponent MetalToolchain
+   ```
+
+2. From the repository root, build the universal binaries and app bundle:
+
+   ```bash
+   ./scripts/build_darwin_vulkan.sh
+   ```
+
+MoltenVK 1.4.1 is downloaded and SHA256-verified automatically; a separate Vulkan SDK installation is not required. Build artifacts, including `dist/Ollama.app`, are written to `dist/`.
+
+Vulkan discovery is enabled by default. To force the packaged command-line runtime to use it while testing:
+
+```bash
+OLLAMA_LLM_LIBRARY=vulkan ./dist/darwin/ollama serve
+```
+
+The backend can run on Apple Silicon, but it is primarily intended for Intel Macs with AMD GPUs and will generally perform worse than the native Apple Silicon backends.
+
 ### Windows
 
 ```shell

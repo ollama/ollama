@@ -13,6 +13,9 @@ if(CMAKE_OSX_ARCHITECTURES AND NOT CMAKE_OSX_ARCHITECTURES MATCHES ";")
         message(STATUS "Cross-compiling for arm64: overriding CMAKE_SYSTEM_PROCESSOR from ${CMAKE_SYSTEM_PROCESSOR} to arm64")
         set(CMAKE_SYSTEM_PROCESSOR "arm64")
     endif()
+    if(NOT CMAKE_OSX_ARCHITECTURES STREQUAL CMAKE_HOST_SYSTEM_PROCESSOR)
+        set(CMAKE_CROSSCOMPILING TRUE)
+    endif()
 endif()
 
 # Ensure all shared libraries and executables can find their dependencies
@@ -23,6 +26,13 @@ if(APPLE)
 elseif(NOT WIN32)
     set(CMAKE_INSTALL_RPATH "$ORIGIN")
     set(CMAKE_BUILD_RPATH "$ORIGIN")
+endif()
+
+if(OLLAMA_FETCH_MOLTENVK)
+    list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../cmake")
+    include(OllamaMoltenVK)
+    ollama_configure_moltenvk()
+    set(OLLAMA_MOLTENVK_RUNTIME "${Vulkan_LIBRARY}")
 endif()
 
 if(GGML_VULKAN AND DEFINED ENV{VULKAN_SDK})
@@ -516,6 +526,11 @@ if(OLLAMA_RUNNER_DIR)
                 RUNTIME DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
                 LIBRARY DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
             )
+        endif()
+        if(OLLAMA_MOLTENVK_RUNTIME AND EXISTS "${OLLAMA_MOLTENVK_RUNTIME}")
+            install(FILES "${OLLAMA_MOLTENVK_RUNTIME}"
+                DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}"
+                COMPONENT llama-server)
         endif()
     endif()
 else()

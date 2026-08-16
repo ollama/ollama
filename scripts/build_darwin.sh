@@ -16,6 +16,16 @@ export VERSION=${VERSION:-$(git describe --tags --first-parent --abbrev=7 --long
 export CGO_CFLAGS="-O3 -mmacosx-version-min=14.0"
 export CGO_CXXFLAGS="-O3 -mmacosx-version-min=14.0"
 export CGO_LDFLAGS="-mmacosx-version-min=14.0"
+LLAMA_BACKENDS=${OLLAMA_LLAMA_BACKENDS:-}
+
+MOLTENVK_CMAKE_ARGS=
+if [ "${OLLAMA_FETCH_MOLTENVK:-OFF}" = "ON" ]; then
+    MOLTENVK_CMAKE_ARGS="-DOLLAMA_FETCH_MOLTENVK=ON"
+    [ -z "${OLLAMA_MOLTENVK_VERSION:-}" ] || MOLTENVK_CMAKE_ARGS="$MOLTENVK_CMAKE_ARGS -DOLLAMA_MOLTENVK_VERSION=$OLLAMA_MOLTENVK_VERSION"
+    [ -z "${OLLAMA_MOLTENVK_URL:-}" ] || MOLTENVK_CMAKE_ARGS="$MOLTENVK_CMAKE_ARGS -DOLLAMA_MOLTENVK_URL=$OLLAMA_MOLTENVK_URL"
+    [ -z "${OLLAMA_MOLTENVK_SHA256:-}" ] || MOLTENVK_CMAKE_ARGS="$MOLTENVK_CMAKE_ARGS -DOLLAMA_MOLTENVK_SHA256=$OLLAMA_MOLTENVK_SHA256"
+    [ -z "${OLLAMA_MOLTENVK_INSECURE:-}" ] || MOLTENVK_CMAKE_ARGS="$MOLTENVK_CMAKE_ARGS -DOLLAMA_MOLTENVK_INSECURE=$OLLAMA_MOLTENVK_INSECURE"
+fi
 
 set -e
 
@@ -45,7 +55,7 @@ _build_darwin() {
 
     SOURCE_BUILD=build/darwin-sources
     status "Preparing shared native sources"
-    cmake -S . -B "$SOURCE_BUILD" -DOLLAMA_MLX_BACKENDS=metal_v3 -DOLLAMA_LLAMA_BACKENDS=
+    cmake -S . -B "$SOURCE_BUILD" -DOLLAMA_MLX_BACKENDS=metal_v3 -DOLLAMA_LLAMA_BACKENDS="$LLAMA_BACKENDS" $MOLTENVK_CMAKE_ARGS
     cmake --build "$SOURCE_BUILD" --target ollama-llama-cpp-source --target ollama-mlx-sources
     LLAMA_CPP_SHARED_SRC="$(pwd)/$SOURCE_BUILD/_deps/llama_cpp-src"
     MLX_SHARED_SRC="$(pwd)/$SOURCE_BUILD/_deps/mlx-src"
@@ -79,14 +89,19 @@ _build_darwin() {
             -DOLLAMA_GO_OUTPUT=$INSTALL_PREFIX/ollama \
             -DOLLAMA_VERSION="$VERSION" \
             -DOLLAMA_MLX_BACKENDS="$MLX_BACKENDS" \
-            -DOLLAMA_LLAMA_BACKENDS= \
+            -DOLLAMA_LLAMA_BACKENDS="$LLAMA_BACKENDS" \
             -DFETCHCONTENT_SOURCE_DIR_LLAMA_CPP=$LLAMA_CPP_SHARED_SRC \
             -DFETCHCONTENT_SOURCE_DIR_MLX=$MLX_SHARED_SRC \
             -DFETCHCONTENT_SOURCE_DIR_MLX-C=$MLX_C_SHARED_SRC \
+            $MOLTENVK_CMAKE_ARGS \
             $MLX_EXTRA_ARGS
 
+        NATIVE_TARGETS="--target ollama-local --target ollama-mlx-backends"
+        if [ -n "$LLAMA_BACKENDS" ]; then
+            NATIVE_TARGETS="$NATIVE_TARGETS --target ollama-llama-server-backends"
+        fi
         GOOS=darwin GOARCH=$ARCH CGO_ENABLED=1 CGO_CFLAGS="$MLX_CGO_CFLAGS" CGO_LDFLAGS="$MLX_CGO_LDFLAGS" \
-            cmake --build "$BUILD_DIR" --target ollama-local --target ollama-mlx-backends --parallel "$BUILD_JOBS" -- -l "$BUILD_LOAD"
+            cmake --build "$BUILD_DIR" $NATIVE_TARGETS --parallel "$BUILD_JOBS" -- -l "$BUILD_LOAD"
     done
 }
 
@@ -99,6 +114,7 @@ _merge_darwin_payload() {
         [ -d "$ROOT" ] || continue
         for F in "$ROOT"/*; do
             [ -e "$F" ] || continue
+            [ -f "$F" ] || [ -L "$F" ] || continue
             BASE=$(basename "$F")
             case "$BASE" in
                 llama-server|llama-quantize|mlx_*) continue ;;
@@ -133,6 +149,26 @@ _merge_darwin_payload() {
             cp "$F" "$DEST/"
         done
     done
+
+    AMD_VULKAN=dist/darwin-amd64/lib/ollama/vulkan
+    ARM_VULKAN=dist/darwin-arm64/lib/ollama/vulkan
+    if [ -d "$AMD_VULKAN" ] || [ -d "$ARM_VULKAN" ]; then
+        DEST=dist/darwin/lib/ollama/vulkan
+        mkdir -p "$DEST"
+        for LIB in libggml-vulkan.dylib libMoltenVK.dylib; do
+            if [ -f "$AMD_VULKAN/$LIB" ] && [ -f "$ARM_VULKAN/$LIB" ]; then
+                if [ "$LIB" = "libMoltenVK.dylib" ]; then
+                    cp "$AMD_VULKAN/$LIB" "$DEST/"
+                else
+                    lipo -create -output "$DEST/$LIB" "$AMD_VULKAN/$LIB" "$ARM_VULKAN/$LIB"
+                fi
+            elif [ -f "$AMD_VULKAN/$LIB" ]; then
+                cp "$AMD_VULKAN/$LIB" "$DEST/"
+            elif [ -f "$ARM_VULKAN/$LIB" ]; then
+                cp "$ARM_VULKAN/$LIB" "$DEST/"
+            fi
+        done
+    fi
 }
 
 _prepare_darwin_runtime() {
@@ -169,7 +205,7 @@ _package_darwin_runtime() {
 _sign_darwin() {
     _prepare_darwin_runtime
     if [ -n "$APPLE_IDENTITY" ]; then
-        for F in dist/darwin/ollama dist/darwin/llama-server dist/darwin/llama-quantize dist/darwin/lib/ollama/* dist/darwin/lib/ollama/mlx_metal_v*/*; do
+        for F in dist/darwin/ollama dist/darwin/llama-server dist/darwin/llama-quantize dist/darwin/lib/ollama/* dist/darwin/lib/ollama/mlx_metal_v*/* dist/darwin/lib/ollama/vulkan/*; do
             [ -f "$F" ] && [ ! -L "$F" ] || continue
             codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime "$F"
         done
@@ -246,7 +282,7 @@ _build_macapp() {
         codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime dist/Ollama.app/Contents/Resources/ollama
         codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime dist/Ollama.app/Contents/Resources/llama-server
         codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime dist/Ollama.app/Contents/Resources/llama-quantize
-        for lib in dist/Ollama.app/Contents/Resources/*.so dist/Ollama.app/Contents/Resources/*.dylib dist/Ollama.app/Contents/Resources/*.metallib dist/Ollama.app/Contents/Resources/mlx_metal_v*/*.dylib dist/Ollama.app/Contents/Resources/mlx_metal_v*/*.metallib dist/Ollama.app/Contents/Resources/mlx_metal_v*/*.so; do
+        for lib in dist/Ollama.app/Contents/Resources/*.so dist/Ollama.app/Contents/Resources/*.dylib dist/Ollama.app/Contents/Resources/*.metallib dist/Ollama.app/Contents/Resources/mlx_metal_v*/*.dylib dist/Ollama.app/Contents/Resources/mlx_metal_v*/*.metallib dist/Ollama.app/Contents/Resources/mlx_metal_v*/*.so dist/Ollama.app/Contents/Resources/vulkan/*; do
             [ -f "$lib" ] || continue
             codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime "$lib"
         done
@@ -255,7 +291,7 @@ _build_macapp() {
 
     rm -f dist/Ollama-darwin.zip
     ditto -c -k --norsrc --keepParent dist/Ollama.app dist/Ollama-darwin.zip
-    (cd dist/Ollama.app/Contents/Resources/; tar -cf - ollama llama-server llama-quantize *.so *.dylib *.metallib mlx_metal_v*/ 2>/dev/null) | gzip -9vc > dist/ollama-darwin.tgz
+    (cd dist/Ollama.app/Contents/Resources/; tar -cf - ollama llama-server llama-quantize *.so *.dylib *.metallib mlx_metal_v*/ vulkan/ 2>/dev/null) | gzip -9vc > dist/ollama-darwin.tgz
 
     # Notarize and Staple
     if [ -n "$APPLE_IDENTITY" ]; then

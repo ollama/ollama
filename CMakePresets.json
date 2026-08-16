@@ -16,6 +16,15 @@
       "cacheVariables": {
         "OLLAMA_MLX_BACKENDS": "metal_v3;metal_v4"
       }
+    },
+    {
+      "name": "MoltenVK",
+      "inherits": [ "Default" ],
+      "cacheVariables": {
+        "OLLAMA_FETCH_MOLTENVK": "ON",
+        "OLLAMA_LLAMA_BACKENDS": "vulkan",
+        "OLLAMA_MLX_BACKENDS": ""
+      }
     }
   ],
   "buildPresets": [
@@ -28,6 +37,11 @@
       "name": "MLX Metal",
       "targets": [ "ollama-mlx-backends" ],
       "configurePreset": "MLX Metal"
+    },
+    {
+      "name": "MoltenVK",
+      "targets": [ "ollama-llama-server-backends" ],
+      "configurePreset": "MoltenVK"
     }
   ]
 }
