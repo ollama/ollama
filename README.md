@@ -18,24 +18,40 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 or [download manually](https://ollama.com/download/Ollama.dmg)
 
-#### Experimental Intel Mac AMDGPU support via MoltenVK
+#### Experimental Intel Mac AMD GPU support via MoltenVK
+
 > [!WARNING]
-> This configuration is experimental - no support is provided, but feel free to explore it.
+> This configuration is experimental and unsupported.
 
-To build app bundles with this backend:
+The MoltenVK build adds a Vulkan backend intended for Intel Macs with AMD GPUs. It also produces the standard universal macOS binaries and app bundle.
 
-1. Install dependencies (once per machine):
+1. Install the standard [development prerequisites](docs/development.md), including Xcode, Go, CMake 3.24 or newer, and Node.js/npm. Then install the additional build dependencies:
+
    ```bash
-   brew install cmake shaderc glslang libomp typescript
+   brew install shaderc glslang libomp
    ```
-   > Make sure the standard development prerequisites (Go toolchain, Node.js/npm, etc.) from the earlier sections are already installed.
 
-2. Create the universal binaries and app bundles (they land in `dist/`):
+   The universal build also requires Xcode's Metal toolchain:
+
+   ```bash
+   xcodebuild -downloadComponent MetalToolchain
+   ```
+
+2. From the repository root, build the universal binaries and app bundle:
+
    ```bash
    ./scripts/build_darwin_vulkan.sh
    ```
-The resulting `dist/` folder contains the standard `Ollama.app`, but with the MoltenVK backend enabled. 
-It should technically work on both Apple Silicon & Intel Macs, but is optimised for Intel Macs with AMD GPUs and will *probably* have worse performance in most use-cases on Apple Silicon.
+
+MoltenVK 1.4.1 is downloaded and SHA256-verified automatically; a separate Vulkan SDK installation is not required. Build artifacts, including `dist/Ollama.app`, are written to `dist/`.
+
+Vulkan discovery is enabled by default. To force the packaged command-line runtime to use it while testing:
+
+```bash
+OLLAMA_LLM_LIBRARY=vulkan ./dist/darwin/ollama serve
+```
+
+The backend can run on Apple Silicon, but it is primarily intended for Intel Macs with AMD GPUs and will generally perform worse than the native Apple Silicon backends.
 
 ### Windows
 
