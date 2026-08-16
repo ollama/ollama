@@ -10,7 +10,9 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/ollama/ollama/envconfig"
@@ -57,6 +59,19 @@ func Execute(args []string) error {
 	})
 	runnerCtx, cancelRunner := context.WithCancel(context.Background())
 	defer cancelRunner()
+
+	// os.Exit(2) on SIGINT skips defer, leaving Metal GPU resources unreleased; catch it and clean up first.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		cancelRunner()
+		_ = worker.Stop(context.Background(), func() {
+			mlx.Sweep()
+			mlx.ClearCache()
+		})
+		os.Exit(0)
+	}()
 
 	runner := Runner{
 		Requests:  make(chan Request),
