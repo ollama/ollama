@@ -241,6 +241,7 @@ export const useSendMessage = (chatId: string) => {
       fileTools,
       forceUpdate,
       think,
+      fileRefs,
       onChatEvent,
     }: {
       message: string;
@@ -250,6 +251,7 @@ export const useSendMessage = (chatId: string) => {
       fileTools?: boolean;
       forceUpdate?: boolean;
       think?: boolean | string;
+      fileRefs?: string[];
       onChatEvent?: (event: ChatEventUnion) => void;
     }) => {
       // For existing chats, set streaming state and add optimistic user message
@@ -326,6 +328,7 @@ export const useSendMessage = (chatId: string) => {
         fileTools,
         forceUpdate,
         think,
+        fileRefs,
       );
       let currentChatId = chatId;
       let isCancelled = false;

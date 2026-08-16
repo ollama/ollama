@@ -14,7 +14,7 @@ import (
 
 // currentSchemaVersion defines the current database schema version.
 // Increment this when making schema changes that require migrations.
-const currentSchemaVersion = 16
+const currentSchemaVersion = 17
 
 // database wraps the SQLite connection.
 // SQLite handles its own locking for concurrent access:
@@ -88,6 +88,8 @@ func (db *database) init() error {
 		cloud_setting_migrated BOOLEAN NOT NULL DEFAULT 0,
 		remote TEXT NOT NULL DEFAULT '', -- deprecated
 		auto_update_enabled BOOLEAN NOT NULL DEFAULT 1,
+		project_dir TEXT NOT NULL DEFAULT '',
+		recent_projects TEXT NOT NULL DEFAULT '[]',
 		schema_version INTEGER NOT NULL DEFAULT %d
 	);
 
@@ -271,6 +273,12 @@ func (db *database) migrate() error {
 				return fmt.Errorf("migrate v15 to v16: %w", err)
 			}
 			version = 16
+		case 16:
+			// add project_dir and recent_projects columns to settings table
+			if err := db.migrateV16ToV17(); err != nil {
+				return fmt.Errorf("migrate v16 to v17: %w", err)
+			}
+			version = 17
 		default:
 			// If we have a version we don't recognize, just set it to current
 			// This might happen during development
@@ -533,6 +541,26 @@ func (db *database) migrateV15ToV16() error {
 	}
 
 	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 16`)
+	if err != nil {
+		return fmt.Errorf("update schema version: %w", err)
+	}
+
+	return nil
+}
+
+// migrateV16ToV17 adds the project_dir and recent_projects columns to the settings table
+func (db *database) migrateV16ToV17() error {
+	_, err := db.conn.Exec(`ALTER TABLE settings ADD COLUMN project_dir TEXT NOT NULL DEFAULT ''`)
+	if err != nil && !duplicateColumnError(err) {
+		return fmt.Errorf("add project_dir column: %w", err)
+	}
+
+	_, err = db.conn.Exec(`ALTER TABLE settings ADD COLUMN recent_projects TEXT NOT NULL DEFAULT '[]'`)
+	if err != nil && !duplicateColumnError(err) {
+		return fmt.Errorf("add recent_projects column: %w", err)
+	}
+
+	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 17`)
 	if err != nil {
 		return fmt.Errorf("update schema version: %w", err)
 	}
@@ -1252,6 +1280,52 @@ func (db *database) getAirplaneMode() (bool, error) {
 		return false, fmt.Errorf("get airplane_mode: %w", err)
 	}
 	return airplaneMode, nil
+}
+
+func (db *database) getProjectDir() (string, error) {
+	var dir string
+	err := db.conn.QueryRow("SELECT project_dir FROM settings").Scan(&dir)
+	if err != nil {
+		return "", fmt.Errorf("get project_dir: %w", err)
+	}
+	return dir, nil
+}
+
+func (db *database) setProjectDir(dir string) error {
+	_, err := db.conn.Exec("UPDATE settings SET project_dir = ?", dir)
+	if err != nil {
+		return fmt.Errorf("set project_dir: %w", err)
+	}
+	return nil
+}
+
+func (db *database) getRecentProjects() ([]string, error) {
+	var raw string
+	err := db.conn.QueryRow("SELECT recent_projects FROM settings").Scan(&raw)
+	if err != nil {
+		return nil, fmt.Errorf("get recent_projects: %w", err)
+	}
+
+	var recents []string
+	if raw != "" {
+		if err := json.Unmarshal([]byte(raw), &recents); err != nil {
+			return nil, fmt.Errorf("parse recent_projects: %w", err)
+		}
+	}
+	return recents, nil
+}
+
+func (db *database) setRecentProjects(recents []string) error {
+	raw, err := json.Marshal(recents)
+	if err != nil {
+		return fmt.Errorf("marshal recent_projects: %w", err)
+	}
+
+	_, err = db.conn.Exec("UPDATE settings SET recent_projects = ?", string(raw))
+	if err != nil {
+		return fmt.Errorf("set recent_projects: %w", err)
+	}
+	return nil
 }
 
 func (db *database) getWindowSize() (int, int, error) {

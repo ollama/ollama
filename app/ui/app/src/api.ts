@@ -8,6 +8,8 @@ import {
   ModelCapabilitiesResponse,
   Model,
   ChatRequest,
+  ProjectFilesResponse,
+  ProjectResponse,
   Settings,
   User,
 } from "@/gotypes";
@@ -207,6 +209,7 @@ export async function* sendMessage(
   fileTools?: boolean,
   forceUpdate?: boolean,
   think?: boolean | string,
+  fileRefs?: string[],
 ): AsyncGenerator<ChatEventUnion> {
   // Convert Uint8Array to base64 for JSON serialization
   const serializedAttachments = attachments?.map((att) => ({
@@ -237,6 +240,7 @@ export async function* sendMessage(
         file_tools: fileTools ?? false,
         ...(forceUpdate !== undefined ? { forceUpdate } : {}),
         ...(shouldSendThink ? { think } : {}),
+        ...(fileRefs && fileRefs.length > 0 ? { file_refs: fileRefs } : {}),
       }),
     ),
     signal,
@@ -255,6 +259,56 @@ export async function* sendMessage(
         break;
     }
   }
+}
+
+export async function getProject(): Promise<ProjectResponse> {
+  const response = await fetch(`${API_BASE}/api/v1/project`);
+  if (!response.ok) {
+    throw new Error("Failed to fetch project");
+  }
+  const data = await response.json();
+  return new ProjectResponse(data);
+}
+
+export async function openProject(path: string): Promise<ProjectResponse> {
+  const response = await fetch(`${API_BASE}/api/v1/project/open`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ path }),
+  });
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(error || "Failed to open project");
+  }
+  const data = await response.json();
+  return new ProjectResponse(data);
+}
+
+export async function closeProject(): Promise<ProjectResponse> {
+  const response = await fetch(`${API_BASE}/api/v1/project/close`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(error || "Failed to close project");
+  }
+  const data = await response.json();
+  return new ProjectResponse(data);
+}
+
+export async function getProjectFiles(
+  refresh = false,
+): Promise<ProjectFilesResponse> {
+  const response = await fetch(
+    `${API_BASE}/api/v1/project/files${refresh ? "?refresh=1" : ""}`,
+  );
+  if (!response.ok) {
+    throw new Error("Failed to fetch project files");
+  }
+  const data = await response.json();
+  return new ProjectFilesResponse(data);
 }
 
 export async function getSettings(): Promise<{
@@ -418,7 +472,9 @@ export interface ModelRecommendationsResponse {
   recommendations: ModelRecommendation[];
 }
 
-export async function getModelRecommendations(): Promise<ModelRecommendation[]> {
+export async function getModelRecommendations(): Promise<
+  ModelRecommendation[]
+> {
   const response = await fetch(
     `${API_BASE}/api/experimental/model-recommendations`,
   );

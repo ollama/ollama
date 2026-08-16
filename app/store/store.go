@@ -476,6 +476,42 @@ func (s *Store) SetWindowSize(width, height int) error {
 	return s.db.setWindowSize(width, height)
 }
 
+// ProjectDir returns the path of the last opened project folder, or an
+// empty string if no project is open.
+func (s *Store) ProjectDir() (string, error) {
+	if err := s.ensureDB(); err != nil {
+		return "", err
+	}
+
+	return s.db.getProjectDir()
+}
+
+func (s *Store) SetProjectDir(dir string) error {
+	if err := s.ensureDB(); err != nil {
+		return err
+	}
+
+	return s.db.setProjectDir(dir)
+}
+
+// RecentProjects returns the list of recently opened project folders,
+// most recent first.
+func (s *Store) RecentProjects() ([]string, error) {
+	if err := s.ensureDB(); err != nil {
+		return nil, err
+	}
+
+	return s.db.getRecentProjects()
+}
+
+func (s *Store) SetRecentProjects(recents []string) error {
+	if err := s.ensureDB(); err != nil {
+		return err
+	}
+
+	return s.db.setRecentProjects(recents)
+}
+
 func (s *Store) UpdateLastMessage(chatID string, message Message) error {
 	if err := s.ensureDB(); err != nil {
 		return err
