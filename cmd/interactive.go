@@ -264,7 +264,18 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				return err
 			}
 
-			req := NewCreateRequest(args[1], opts)
+			// If the parent model is not locally available, fall back to the
+			// running model so /save doesn't try to pull an internal variant
+			// name that may not exist in the registry.
+			saveOpts := opts
+			if saveOpts.ParentModel != "" {
+				if _, showErr := client.Show(cmd.Context(), &api.ShowRequest{Model: saveOpts.ParentModel}); showErr != nil {
+					saveOpts.ParentModel = ""
+					saveOpts.LoadedMessages = nil
+				}
+			}
+
+			req := NewCreateRequest(args[1], saveOpts)
 			fn := func(resp api.ProgressResponse) error { return nil }
 			err = client.Create(cmd.Context(), req, fn)
 			if err != nil {
