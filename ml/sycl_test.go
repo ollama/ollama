@@ -3,8 +3,8 @@ package ml
 import "testing"
 
 func TestDevicePreferredLibrarySYCLOverVulkan(t *testing.T) {
-	sycl := DeviceInfo{Library: "SYCL", FilterID: "0"}
-	vulkan := DeviceInfo{Library: "Vulkan", FilterID: "0"}
+	sycl := DeviceInfo{DeviceID: DeviceID{Library: "SYCL"}, FilterID: "0"}
+	vulkan := DeviceInfo{DeviceID: DeviceID{Library: "Vulkan"}, FilterID: "0"}
 
 	if !sycl.PreferredLibrary(vulkan) {
 		t.Fatal("expected SYCL to be preferred over Vulkan")
