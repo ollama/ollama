@@ -707,6 +707,14 @@ func (m *Model) Unembed(x *mlx.Array) *mlx.Array { return m.LMHead.Forward(x) }
 func (m *Model) Tokenizer() *tokenizer.Tokenizer { return m.tok }
 func (m *Model) MaxContextLength() int           { return int(m.MaxPositionEmbeddings) }
 
+// DefaultPrefillChunk caps prefill chunks at 256 tokens. The hybrid stack's
+// per-chunk transients — KDA per-step states plus MoE/MLA intermediates
+// across every layer, all held until the end-of-chunk Sweep — scale with
+// chunk length and made larger defaults exhaust the memory budgets these
+// models deploy on (GB10 121G with flash, M4 Pro 48G with tiny).
+// OLLAMA_PREFILL_CHUNK still overrides.
+func (m *Model) DefaultPrefillChunk() int { return 256 }
+
 func (m *Model) NewCaches() []cache.Cache {
 	caches := make([]cache.Cache, len(m.Layers))
 	convTail := m.ShortConvKernelSize - 1
