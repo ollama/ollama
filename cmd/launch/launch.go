@@ -771,7 +771,7 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 	var launchModels []LaunchModel
 	liveConfigMatches := slices.Equal(editor.Models(), models)
 	if needsConfigure || req.ModelOverride != "" || !savedMatchesModels(saved, models) || !liveConfigMatches {
-		launchModels = c.resolveRunModels(ctx, name, models)
+		launchModels = c.resolveConfigModels(ctx, name, models)
 		if err := prepareEditorIntegration(name, editor, launchModels); err != nil {
 			return err
 		}
@@ -809,7 +809,7 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 		if err != nil {
 			return err
 		}
-		resolvedModels := c.resolveRunModels(ctx, name, configureModels)
+		resolvedModels := c.resolveConfigModels(ctx, name, configureModels)
 		if primary, ok := findLaunchModel(resolvedModels, target); ok {
 			runModels = []LaunchModel{primary}
 		}
@@ -1484,6 +1484,17 @@ func (c *launcherClient) resolveRunModels(ctx context.Context, integration strin
 
 func launchModelRecommendationKey(name string) string {
 	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(name), ":latest"))
+}
+
+// resolveConfigModels resolves models for integration config writes: on top of
+// resolveRunModels (which supplies thinking metadata), names the local model
+// list could not describe (typically unpulled ":cloud" models) get one
+// best-effort, 5s-bounded Show probe for context and capability metadata.
+// Run paths use resolveRunModels alone and never probe these unvalidated
+// saved models.
+func (c *launcherClient) resolveConfigModels(ctx context.Context, integration string, models []string) []LaunchModel {
+	resolved := c.resolveRunModels(ctx, integration, models)
+	return c.modelInventory().enrichUnresolvedFromShow(ctx, resolved)
 }
 
 func runIntegration(runner Runner, modelName string, models []LaunchModel, args []string) error {
