@@ -1,12 +1,56 @@
 package mlx
 
+// #include <stdbool.h>
+// #include <stdint.h>
+// #include <stddef.h>
+// #include <stdlib.h>
 // #include "generated.h"
+//
+// extern bool goMLXReaderIsOpen(void*);
+// extern size_t goMLXReaderTell(void*);
+// extern int goMLXReaderSeek(void*, int64_t, int);
+// extern size_t goMLXReaderRead(void*, char*, size_t);
+// extern size_t goMLXReaderReadAtOffset(void*, char*, size_t, size_t);
+// extern void goMLXReaderFree(void*);
+//
+// static size_t go_mlx_reader_write(void* desc, const char* data, size_t n) {
+// 	(void)desc;
+// 	(void)data;
+// 	(void)n;
+// 	return 0;
+// }
+//
+// static const char* go_mlx_reader_label(void* desc) {
+// 	(void)desc;
+// 	return "Go reader";
+// }
+//
+// static mlx_io_vtable go_mlx_reader_vtable(void) {
+// 	mlx_io_vtable vtable = {0};
+// 	vtable.is_open = goMLXReaderIsOpen;
+// 	vtable.good = goMLXReaderIsOpen;
+// 	vtable.tell = goMLXReaderTell;
+// 	vtable.seek = goMLXReaderSeek;
+// 	vtable.read = goMLXReaderRead;
+// 	vtable.read_at_offset = goMLXReaderReadAtOffset;
+// 	vtable.write = go_mlx_reader_write;
+// 	vtable.label = go_mlx_reader_label;
+// 	vtable.free = goMLXReaderFree;
+// 	return vtable;
+// }
+//
+// static mlx_io_reader go_mlx_reader_new(void* desc) {
+// 	return mlx_io_reader_new(desc, go_mlx_reader_vtable());
+// }
 import "C"
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"iter"
 	"runtime"
+	"runtime/cgo"
 	"sort"
 	"unsafe"
 )
@@ -24,25 +68,64 @@ func loadSafetensorsStream() C.mlx_stream {
 	return C.mlx_default_gpu_stream_new()
 }
 
-// LoadSafetensorsNative loads a safetensors file using MLX's native loader.
-func LoadSafetensorsNative(path string) (*SafetensorsFile, error) {
+// SafetensorsReader is the random-access source MLX reads lazily. Ownership is
+// transferred to LoadSafetensors; Close is called after MLX releases its last
+// reference to the reader.
+type SafetensorsReader interface {
+	io.ReaderAt
+	Size() int64
+	Close() error
+}
+
+// LoadSafetensors loads a safetensors file through MLX's reader API.
+func LoadSafetensors(reader SafetensorsReader) (*SafetensorsFile, error) {
 	var arrays C.mlx_map_string_to_array
 	var metadata C.mlx_map_string_to_string
-
-	cPath := C.CString(path)
-	defer C.free(unsafe.Pointer(cPath))
+	if reader == nil {
+		return nil, errors.New("mlx: nil safetensors reader")
+	}
 
 	stream := loadSafetensorsStream()
 	if err := mlxError(stream); err != nil {
+		_ = reader.Close()
 		return nil, err
 	}
 	defer freeStream(stream)
 
-	if err := mlxError(C.mlx_load_safetensors(&arrays, &metadata, cPath, stream)); err != nil {
-		return nil, fmt.Errorf("failed to load safetensors %s: %w", path, err)
+	cReader, err := newIOReader(reader)
+	if err != nil {
+		return nil, err
+	}
+	defer freeIOReader(cReader)
+
+	if err := mlxError(C.mlx_load_safetensors_reader(&arrays, &metadata, cReader, stream)); err != nil {
+		return nil, fmt.Errorf("failed to load safetensors: %w", err)
 	}
 
 	return &SafetensorsFile{arrays: arrays, metadata: metadata}, nil
+}
+
+func newIOReader(reader SafetensorsReader) (C.mlx_io_reader, error) {
+	var zero C.mlx_io_reader
+	payload := (*cgo.Handle)(C.malloc(C.size_t(unsafe.Sizeof(cgo.Handle(0)))))
+	if payload == nil {
+		_ = reader.Close()
+		return zero, errors.New("mlx: failed to allocate I/O reader handle")
+	}
+	handle := cgo.NewHandle(&ioReader{reader: reader})
+	*payload = handle
+	cReader := C.go_mlx_reader_new(unsafe.Pointer(payload))
+	if err := mlxError(cReader); err != nil {
+		handle.Delete()
+		C.free(unsafe.Pointer(payload))
+		_ = reader.Close()
+		return zero, fmt.Errorf("mlx: failed to create I/O reader: %w", err)
+	}
+	return cReader, nil
+}
+
+func freeIOReader(reader C.mlx_io_reader) {
+	mlxCheck(C.mlx_io_reader_free(reader))
 }
 
 // Get retrieves a tensor by name.
@@ -92,15 +175,9 @@ func (s *SafetensorsFile) Free() {
 	freeStringMap(s.metadata)
 }
 
-func Load(path string) iter.Seq2[string, *Array] {
+func (s *SafetensorsFile) Arrays() iter.Seq2[string, *Array] {
 	return func(yield func(string, *Array) bool) {
-		sf, err := LoadSafetensorsNative(path)
-		if err != nil {
-			return
-		}
-		defer sf.Free()
-
-		it := mlxCheck(C.mlx_map_string_to_array_iterator_new(sf.arrays))
+		it := mlxCheck(C.mlx_map_string_to_array_iterator_new(s.arrays))
 		defer freeArrayMapIterator(it)
 
 		for {
