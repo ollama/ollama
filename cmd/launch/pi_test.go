@@ -1080,6 +1080,55 @@ func TestPiEdit(t *testing.T) {
 		}
 	})
 
+	t.Run("rebuilds stale managed entry from resolved model metadata", func(t *testing.T) {
+		cleanup()
+		os.MkdirAll(configDir, 0o755)
+
+		// kimi-k3:cloud is not covered by the cloud limit maps; the resolved
+		// LaunchModel (enriched from Show metadata) is the only source of its
+		// context window.
+		existingConfig := `{
+			"providers": {
+				"ollama": {
+					"baseUrl": "http://localhost:11434/v1",
+					"api": "openai-completions",
+					"apiKey": "ollama",
+					"models": [
+						{"id": "kimi-k3:cloud", "_launch": true}
+					]
+				}
+			}
+		}`
+		if err := os.WriteFile(configPath, []byte(existingConfig), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		models := []LaunchModel{{
+			Name:          "kimi-k3:cloud",
+			Remote:        true,
+			ContextLength: 1_048_576,
+			Capabilities:  []model.Capability{model.CapabilityThinking},
+		}}
+		if err := pi.Edit(models); err != nil {
+			t.Fatalf("Edit() error = %v", err)
+		}
+
+		cfg := readConfig()
+		providers := cfg["providers"].(map[string]any)
+		ollama := providers["ollama"].(map[string]any)
+		modelsArray := ollama["models"].([]any)
+		if len(modelsArray) != 1 {
+			t.Fatalf("Expected 1 model after update, got %d", len(modelsArray))
+		}
+		modelEntry := modelsArray[0].(map[string]any)
+		if modelEntry["contextWindow"] != float64(1_048_576) {
+			t.Errorf("contextWindow = %v, want 1048576", modelEntry["contextWindow"])
+		}
+		if modelEntry["reasoning"] != true {
+			t.Errorf("reasoning = %v, want true", modelEntry["reasoning"])
+		}
+	})
+
 	t.Run("replaces old models with new ones", func(t *testing.T) {
 		cleanup()
 		os.MkdirAll(configDir, 0o755)
