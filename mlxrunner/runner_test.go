@@ -37,7 +37,8 @@ func TestLoadTensorsSkipsNamedTensors(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mlxtest.Run(t, func(t *mlxtest.T) {
-				tensors, err := loadTensorsFromManifest(root, tc.skip)
+				var progress float32
+				tensors, err := loadTensorsFromManifest(root, tc.skip, func(p float32) { progress = p })
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -48,6 +49,11 @@ func TestLoadTensorsSkipsNamedTensors(t *testing.T) {
 					if got := arr.Floats(); !slices.Equal(got, []float32{2}) {
 						t.Errorf("%s = %v, want [2]", name, got)
 					}
+				}
+				// Skipped tensors are read outside MLX, so their bytes still
+				// count toward a load that reports completion.
+				if progress != 1 {
+					t.Errorf("progress = %v, want 1", progress)
 				}
 			})
 		})

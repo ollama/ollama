@@ -640,12 +640,17 @@ func loadPrequantWeights(t *mlxtest.T, root *model.Root) map[string]*mlx.Array {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for name, weight := range mlx.Load(path) {
+		safetensors, err := mlx.OpenSafetensors(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, weight := range safetensors.Arrays() {
 			if strings.HasSuffix(name, ".scale") {
 				name = strings.TrimSuffix(name, ".scale") + "_scale"
 			}
 			weights[name] = weight
 		}
+		safetensors.Free()
 	}
 	mlx.Eval(slices.Collect(maps.Values(weights))...)
 	return weights
