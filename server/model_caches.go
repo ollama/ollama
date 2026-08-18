@@ -6,6 +6,7 @@ type modelCaches struct {
 	recommendations *modelRecommendationsCache
 	show            *modelShowCache
 	modelList       *modelListCache
+	inference       *inferenceModelCache
 }
 
 func newModelCaches() *modelCaches {
@@ -13,6 +14,7 @@ func newModelCaches() *modelCaches {
 		recommendations: newModelRecommendationsCache(),
 		show:            newModelShowCache(),
 		modelList:       newModelListCache(),
+		inference:       newInferenceModelCache(),
 	}
 }
 
