@@ -451,8 +451,8 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 	keep := accepted
 	done := false
 	for i, id := range draftIDs[:accepted] {
-		commitIDs = append(commitIDs, int32(id))
-		if r.Tokenizer.IsEOS(int32(id)) {
+		commitIDs = append(commitIDs, id)
+		if r.Tokenizer.IsEOS(id) {
 			done = true
 			accepted = i + 1
 			observed = accepted
@@ -471,7 +471,7 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 	// Report the validated run (current plus kept drafts) to the drafter before
 	// returning, so a cancelled emission still leaves it matching the caches. A
 	// done generation's final token is uncommitted; it reaches finish instead.
-	runIDs := append([]int32{int32(current.Token.Int())}, commitIDs[:keep]...)
+	runIDs := append([]int32{current.Token.Int()}, commitIDs[:keep]...)
 	s.drafter.committed(
 		mlx.FromValues(runIDs, 1, len(runIDs)),
 		auxHiddenSeq.Slice(mlx.Slice(), mlx.Slice(0, len(runIDs)), mlx.Slice()),
@@ -485,9 +485,9 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 
 	var nextID int32
 	if accepted < draftCount {
-		nextID = int32(residualTokens.Ints()[accepted])
+		nextID = residualTokens.Ints()[accepted]
 	} else {
-		nextID = int32(bonusToken.Int())
+		nextID = bonusToken.Int()
 	}
 	commitIDs = append(commitIDs, nextID)
 	r.Sampler.Commit(pipelineSlot, commitIDs)
@@ -509,10 +509,10 @@ func (r *Runner) sampleTokenAt(dist sampler.Distribution, index int) *mlx.Array 
 
 // draftResults wraps accepted draft ids as sampler results; drafts carry no
 // logprobs, so only the token id is set.
-func draftResults(ids []int) []sampler.Result {
+func draftResults(ids []int32) []sampler.Result {
 	results := make([]sampler.Result, len(ids))
 	for i, id := range ids {
-		results[i] = sampler.Result{Token: mlx.FromValues([]int32{int32(id)}, 1)}
+		results[i] = sampler.Result{Token: mlx.FromValues([]int32{id}, 1)}
 	}
 	return results
 }

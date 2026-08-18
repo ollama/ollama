@@ -307,7 +307,7 @@ func legacyRouterForward(r *Router, x *mlx.Array, cfg *TextConfig) (*mlx.Array, 
 	return scores, inds
 }
 
-func intSlicesEqual(a, b []int) bool {
+func intSlicesEqual(a, b []int32) bool {
 	if len(a) != len(b) {
 		return false
 	}

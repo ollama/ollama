@@ -61,11 +61,7 @@ func (d *fakeBlockDraft) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (
 	}
 	if b.InputIDs != nil {
 		mlx.Eval(b.InputIDs)
-		ids := b.InputIDs.Ints()
-		call.block = make([]int32, len(ids))
-		for i, id := range ids {
-			call.block[i] = int32(id)
-		}
+		call.block = b.InputIDs.Ints()
 	}
 	d.calls = append(d.calls, call)
 
@@ -212,7 +208,7 @@ func TestDFlashProposeBounds(t *testing.T) {
 		t.Fatalf("propose declined with context and budget")
 	}
 	mlx.Eval(cand.tokens)
-	if got := cand.tokens.Ints(); !slices.Equal(got, []int{2, 3, 4}) {
+	if got := cand.tokens.Ints(); !slices.Equal(got, []int32{2, 3, 4}) {
 		t.Fatalf("draft tokens = %v, want [2 3 4]", got)
 	}
 	if got, want := draft.calls[0].block, []int32{1, 6, 6, 6}; !slices.Equal(got, want) {
