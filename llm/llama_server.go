@@ -1768,7 +1768,12 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 		return fmt.Errorf("error reading llama-server response: %v", err)
 	}
 
-	return nil
+	// The stream ended without a final stop event. llama-server cancels the task
+	// internally (e.g. a chat template parse failure) and closes the stream without
+	// a stop event, so a clean EOF here means the generation was aborted, not that
+	// it completed. Surface it as an error so clients don't mistake a partial
+	// `done: false` response for success.
+	return errors.New("model generation was cancelled before completing, see server logs for details")
 }
 
 func llamaServerStreamLimitError(label string, err error) error {
@@ -2077,7 +2082,12 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 		return fmt.Errorf("error reading llama-server chat response: %v", err)
 	}
 
-	return nil
+	// The stream ended without a final response. llama-server cancels the task
+	// internally (e.g. a chat template parse failure) and closes the stream without
+	// a finish_reason, so a clean EOF here means the generation was aborted, not
+	// that it completed. Surface it as an error so clients don't mistake a partial
+	// `done: false` response for success.
+	return errors.New("model generation was cancelled before completing, see server logs for details")
 }
 
 type llamaServerToolCallAccumulator struct {
