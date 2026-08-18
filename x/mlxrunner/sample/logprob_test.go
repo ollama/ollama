@@ -13,7 +13,7 @@ import (
 // logprobEntry is the (token id, logprob) pair returned by the sampler's
 // top-K extraction, used after the test-side descending sort.
 type logprobEntry struct {
-	id      int
+	id      int32
 	logprob float64
 }
 
@@ -21,7 +21,7 @@ type logprobEntry struct {
 // and returns the greedily-sampled token id, its logprob, and the top-K
 // entries sorted descending by logprob. Logits must be a [vocab]-shaped
 // slice; the helper reshapes it to [1, vocab] before calling the sampler.
-func runSampleLogprobs(t *testing.T, logits []float32, topK int) (int, float64, []logprobEntry) {
+func runSampleLogprobs(t *testing.T, logits []float32, topK int) (int32, float64, []logprobEntry) {
 	t.Helper()
 
 	s := New(128)
@@ -62,7 +62,7 @@ func TestSampleLogprobsBasic(t *testing.T) {
 		name           string
 		logits         []float32
 		topK           int
-		wantSelectedID int
+		wantSelectedID int32
 		wantTopLen     int
 	}{
 		{
@@ -215,10 +215,10 @@ func TestSampleLogprobsSelectedTokenCorrectness(t *testing.T) {
 
 	logits := []float32{3.0, 1.0, 2.0, 0.5}
 
-	maxIdx := 0
+	maxIdx := int32(0)
 	for i, v := range logits[1:] {
 		if v > logits[maxIdx] {
-			maxIdx = i + 1
+			maxIdx = int32(i + 1)
 		}
 	}
 
@@ -279,7 +279,7 @@ func TestSampleLogprobsTopKOrdering(t *testing.T) {
 
 	// Logits chosen so argmax order differs from index order.
 	logits := []float32{2.0, 5.0, 1.0, 4.0, 3.0}
-	wantOrder := []int{1, 3, 4, 0, 2}
+	wantOrder := []int32{1, 3, 4, 0, 2}
 
 	_, _, top := runSampleLogprobs(t, logits, len(logits))
 

@@ -240,7 +240,7 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 	defer func() {
 		results, _ := d.drain()
 		for _, res := range results {
-			session.outputs = append(session.outputs, int32(res.Token.Int()))
+			session.outputs = append(session.outputs, res.Token.Int())
 		}
 	}()
 
@@ -275,9 +275,7 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 		done := false
 		stream := len(results)
 		for i, res := range results {
-			// Int evaluates the array before reading it; a raw data read
-			// on a lazy array races its evaluation and returns garbage.
-			id := int32(res.Token.Int())
+			id := res.Token.Int()
 			session.outputs = append(session.outputs, id)
 			if done {
 				continue
@@ -400,7 +398,7 @@ type detokenizer struct {
 }
 
 func (d *detokenizer) detokenize(res sampler.Result) (CompletionResponse, bool) {
-	output := int32(res.Token.Int())
+	output := res.Token.Int()
 	d.buf.WriteString(d.tokenizer.Decode([]int32{output}))
 	d.logprobs = append(d.logprobs, buildLogprob(res, d.wantLogprobs, d.wantTopLogprobs, d.tokenizer.Decode)...)
 
@@ -426,7 +424,7 @@ func buildLogprob(sample sampler.Result, wantLogprobs bool, wantTopLogprobs int,
 
 	out := llm.Logprob{
 		TokenLogprob: llm.TokenLogprob{
-			Token:   tok(int32(sample.Token.Int())),
+			Token:   tok(sample.Token.Int()),
 			Logprob: float64(sample.Logprob.Floats()[0]),
 		},
 	}
@@ -437,7 +435,7 @@ func buildLogprob(sample sampler.Result, wantLogprobs bool, wantTopLogprobs int,
 		pairs := make([]llm.TokenLogprob, len(ids))
 		for i, id := range ids {
 			pairs[i] = llm.TokenLogprob{
-				Token:   tok(int32(id)),
+				Token:   tok(id),
 				Logprob: float64(vals[i]),
 			}
 		}
