@@ -342,8 +342,6 @@ func (s *Server) CreateHandler(c *gin.Context) {
 			}
 		}
 
-		s.refreshModelListCache(name)
-
 		ch <- api.ProgressResponse{Status: "success"}
 	}()
 
