@@ -9,6 +9,7 @@ import {
   useEffect,
   useLayoutEffect,
   useCallback,
+  useMemo,
 } from "react";
 import {
   useSendMessage,
@@ -31,6 +32,13 @@ import { ErrorMessage } from "./ErrorMessage";
 import { processFiles } from "@/utils/fileValidation";
 import type { ImageData } from "@/types/webview";
 import { PlusIcon } from "@heroicons/react/24/outline";
+import {
+  useProject,
+  useProjectFiles,
+  MENTION_TOTAL_BYTES,
+} from "@/hooks/useProject";
+import { fuzzyFilter } from "@/utils/fuzzyMatch";
+import { FileMentionMenu } from "@/components/FileMentionMenu";
 
 export type ThinkingLevel = "low" | "medium" | "high";
 
@@ -50,6 +58,70 @@ interface MessageInput {
   fileErrors: Array<{ filename: string; error: string }>;
 }
 
+interface MentionRange {
+  start: number;
+  end: number;
+  path: string;
+}
+
+// detectMention returns the active "@query" being typed at the caret, if any
+function detectMention(
+  value: string,
+  caret: number,
+): { start: number; query: string } | null {
+  const upto = value.slice(0, caret);
+  const at = upto.lastIndexOf("@");
+  if (at === -1) return null;
+  // "@" must start a token (beginning of text or after whitespace/brackets)
+  if (at > 0 && !/[\s([{'"`]/.test(upto[at - 1])) return null;
+  const query = upto.slice(at + 1);
+  if (/\s/.test(query)) return null;
+  return { start: at, query };
+}
+
+// getMentionRanges finds every "@path" in the content that resolves to a real
+// project file, so the same ranges drive highlighting and prompt injection
+function getMentionRanges(
+  content: string,
+  filePathSet: Set<string>,
+  selectedMentions: Set<string>,
+): MentionRange[] {
+  const ranges: MentionRange[] = [];
+
+  for (const match of content.matchAll(/@([^\s@]+)/g)) {
+    if (match.index !== undefined && filePathSet.has(match[1])) {
+      ranges.push({
+        start: match.index,
+        end: match.index + match[0].length,
+        path: match[1],
+      });
+    }
+  }
+
+  // Paths containing whitespace can only come from explicit selections
+  for (const path of selectedMentions) {
+    if (!/\s/.test(path)) continue;
+    const needle = `@${path}`;
+    let idx = content.indexOf(needle);
+    while (idx !== -1) {
+      ranges.push({ start: idx, end: idx + needle.length, path });
+      idx = content.indexOf(needle, idx + needle.length);
+    }
+  }
+
+  ranges.sort((a, b) => a.start - b.start);
+
+  // Drop overlapping ranges (longer/earlier one wins)
+  const merged: MentionRange[] = [];
+  for (const range of ranges) {
+    const last = merged[merged.length - 1];
+    if (!last || range.start >= last.end) {
+      merged.push(range);
+    }
+  }
+  return merged;
+}
+
 interface ChatFormProps {
   hasMessages: boolean;
   onSubmit?: (
@@ -60,6 +132,7 @@ interface ChatFormProps {
       webSearch?: boolean;
       fileTools?: boolean;
       think?: boolean | string;
+      fileRefs?: string[];
     },
   ) => void;
   autoFocus?: boolean;
@@ -121,6 +194,122 @@ function ChatForm({
   const [fileUploadError, setFileUploadError] = useState<ErrorEvent | null>(
     null,
   );
+
+  // "@" file mention state (only active while a project is open)
+  const { project } = useProject();
+  const { filePathSet, fileSizes } = useProjectFiles();
+  const [mention, setMention] = useState<{
+    start: number;
+    query: string;
+  } | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [selectedMentions, setSelectedMentions] = useState<Set<string>>(
+    new Set(),
+  );
+  const highlightRef = useRef<HTMLDivElement>(null);
+
+  const filePaths = useMemo(() => Array.from(filePathSet), [filePathSet]);
+
+  const mentionResults = useMemo(() => {
+    if (!project || !mention) return [];
+    return fuzzyFilter(mention.query, filePaths, 50);
+  }, [project, mention, filePaths]);
+
+  useEffect(() => {
+    setMentionIndex(0);
+  }, [mention?.query]);
+
+  const mentionRanges = useMemo(() => {
+    if (!project) return [];
+    return getMentionRanges(message.content, filePathSet, selectedMentions);
+  }, [project, message.content, filePathSet, selectedMentions]);
+
+  const mentionedFiles = useMemo(
+    () => Array.from(new Set(mentionRanges.map((r) => r.path))),
+    [mentionRanges],
+  );
+
+  const mentionedBytes = useMemo(
+    () =>
+      mentionedFiles.reduce((sum, path) => sum + (fileSizes.get(path) ?? 0), 0),
+    [mentionedFiles, fileSizes],
+  );
+  const mentionOverBudget = mentionedBytes > MENTION_TOTAL_BYTES;
+
+  const updateMentionFromTextarea = useCallback(
+    (el: HTMLTextAreaElement) => {
+      if (!project || filePathSet.size === 0) {
+        setMention(null);
+        return;
+      }
+      setMention(detectMention(el.value, el.selectionStart ?? el.value.length));
+    },
+    [project, filePathSet],
+  );
+
+  const resizeTextarea = (el: HTMLTextAreaElement) => {
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 24 * 8) + "px";
+  };
+
+  const insertMention = useCallback(
+    (path: string) => {
+      const el = textareaRef.current;
+      if (!el || !mention) return;
+      const caret = el.selectionStart ?? message.content.length;
+      const before = message.content.slice(0, mention.start);
+      const after = message.content.slice(caret);
+      const inserted = `@${path} `;
+
+      setMessage((prev) => ({ ...prev, content: before + inserted + after }));
+      setSelectedMentions((prev) => new Set(prev).add(path));
+      setMention(null);
+
+      requestAnimationFrame(() => {
+        const textarea = textareaRef.current;
+        if (textarea) {
+          const pos = before.length + inserted.length;
+          textarea.focus();
+          textarea.setSelectionRange(pos, pos);
+          resizeTextarea(textarea);
+        }
+      });
+    },
+    [mention, message.content],
+  );
+
+  // Insert a mention when a file is clicked in the project tree
+  useEffect(() => {
+    const handleMentionFile = (e: Event) => {
+      const path = (e as CustomEvent<{ path?: string }>).detail?.path;
+      if (!path) return;
+
+      setMessage((prev) => {
+        const needsSpace = prev.content.length > 0 && !/\s$/.test(prev.content);
+        return {
+          ...prev,
+          content: `${prev.content}${needsSpace ? " " : ""}@${path} `,
+        };
+      });
+      setSelectedMentions((prev) => new Set(prev).add(path));
+
+      requestAnimationFrame(() => {
+        const textarea = textareaRef.current;
+        if (textarea) {
+          textarea.focus();
+          textarea.setSelectionRange(
+            textarea.value.length,
+            textarea.value.length,
+          );
+          resizeTextarea(textarea);
+        }
+      });
+    };
+
+    window.addEventListener("project:mention-file", handleMentionFile);
+    return () =>
+      window.removeEventListener("project:mention-file", handleMentionFile);
+  }, []);
 
   const handleThinkingLevelDropdownToggle = (isOpen: boolean) => {
     if (
@@ -264,6 +453,8 @@ function ChatForm({
       attachments: [],
       fileErrors: [],
     });
+    setMention(null);
+    setSelectedMentions(new Set());
 
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
@@ -482,9 +673,7 @@ function ChatForm({
 
     // Prepare attachments for submission, excluding unsupported images
     const attachmentsToSend: FileAttachment[] = message.attachments
-      .filter(
-        (att) => hasVisionCapability || !isImageFile(att.filename),
-      )
+      .filter((att) => hasVisionCapability || !isImageFile(att.filename))
       .map((att) => ({
         filename: att.filename,
         data: att.data || new Uint8Array(0), // Empty data for existing files
@@ -498,12 +687,15 @@ function ChatForm({
         ? thinkEnabled
         : undefined;
 
+    const fileRefs = mentionedFiles.length > 0 ? mentionedFiles : undefined;
+
     if (onSubmit) {
       onSubmit(message.content, {
         attachments: attachmentsToSend,
         index: undefined,
         webSearch: useWebSearch,
         think: useThink,
+        fileRefs,
       });
     } else {
       sendMessageMutation({
@@ -511,6 +703,7 @@ function ChatForm({
         attachments: attachmentsToSend,
         webSearch: useWebSearch,
         think: useThink,
+        fileRefs,
         onChatEvent: (event) => {
           if (event.eventName === "chat_created" && event.chatId) {
             navigate({
@@ -530,6 +723,8 @@ function ChatForm({
       attachments: [],
       fileErrors: [],
     });
+    setMention(null);
+    setSelectedMentions(new Set());
 
     // Reset textarea height and refocus after submit
     setTimeout(() => {
@@ -541,6 +736,33 @@ function ChatForm({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // While the "@" mention menu is open it captures navigation keys
+    if (mention && mentionResults.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setMentionIndex((i) => (i + 1) % mentionResults.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setMentionIndex(
+          (i) => (i - 1 + mentionResults.length) % mentionResults.length,
+        );
+        return;
+      }
+      if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") {
+        e.preventDefault();
+        insertMention(mentionResults[mentionIndex]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        setMention(null);
+        return;
+      }
+    }
+
     // Handle Enter to submit
     if (e.key === "Enter" && !e.shiftKey && !isEditing) {
       e.preventDefault();
@@ -628,6 +850,7 @@ function ChatForm({
   // Auto-resize textarea function
   const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setMessage((prev) => ({ ...prev, content: e.target.value }));
+    updateMentionFromTextarea(e.target);
 
     // Reset height to auto to get the correct scrollHeight, then cap at 8 lines
     e.target.style.height = "auto";
@@ -742,68 +965,70 @@ function ChatForm({
               const isUnsupportedImage =
                 !hasVisionCapability && isImageFile(attachment.filename);
               return (
-              <div
-                key={attachment.id}
-                className={`group flex items-center gap-2 py-2 px-3 rounded-lg transition-colors flex-shrink-0 ${
-                  isUnsupportedImage
-                    ? "bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800"
-                    : "bg-neutral-50 dark:bg-neutral-700/50 hover:bg-neutral-100 dark:hover:bg-neutral-700"
-                }`}
-              >
-                {isImageFile(attachment.filename) ? (
-                  <ImageThumbnail
-                    image={{
-                      filename: attachment.filename,
-                      data: attachment.data || new Uint8Array(0),
-                    }}
-                    className="w-8 h-8 object-cover rounded-md flex-shrink-0"
-                  />
-                ) : (
-                  <svg
-                    className="w-4 h-4 text-neutral-400 dark:text-neutral-500 flex-shrink-0"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={1.5}
-                      d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                    />
-                  </svg>
-                )}
-                <div className="flex flex-col min-w-0">
-                  <span className={`text-sm max-w-36 truncate ${isUnsupportedImage ? "text-red-700 dark:text-red-300" : "text-neutral-700 dark:text-neutral-300"}`}>
-                    {attachment.filename}
-                  </span>
-                  {isUnsupportedImage && (
-                    <span className="text-xs text-red-600 dark:text-red-400 opacity-75">
-                      This model does not support images
-                    </span>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => removeFile(index)}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity text-neutral-400 hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300 -mr-1 cursor-pointer"
-                  aria-label={`Remove ${attachment.filename}`}
+                <div
+                  key={attachment.id}
+                  className={`group flex items-center gap-2 py-2 px-3 rounded-lg transition-colors flex-shrink-0 ${
+                    isUnsupportedImage
+                      ? "bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800"
+                      : "bg-neutral-50 dark:bg-neutral-700/50 hover:bg-neutral-100 dark:hover:bg-neutral-700"
+                  }`}
                 >
-                  <svg
-                    className="w-4 h-4"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M6 18L18 6M6 6l12 12"
+                  {isImageFile(attachment.filename) ? (
+                    <ImageThumbnail
+                      image={{
+                        filename: attachment.filename,
+                        data: attachment.data || new Uint8Array(0),
+                      }}
+                      className="w-8 h-8 object-cover rounded-md flex-shrink-0"
                     />
-                  </svg>
-                </button>
-              </div>
+                  ) : (
+                    <svg
+                      className="w-4 h-4 text-neutral-400 dark:text-neutral-500 flex-shrink-0"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={1.5}
+                        d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                      />
+                    </svg>
+                  )}
+                  <div className="flex flex-col min-w-0">
+                    <span
+                      className={`text-sm max-w-36 truncate ${isUnsupportedImage ? "text-red-700 dark:text-red-300" : "text-neutral-700 dark:text-neutral-300"}`}
+                    >
+                      {attachment.filename}
+                    </span>
+                    {isUnsupportedImage && (
+                      <span className="text-xs text-red-600 dark:text-red-400 opacity-75">
+                        This model does not support images
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeFile(index)}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity text-neutral-400 hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300 -mr-1 cursor-pointer"
+                    aria-label={`Remove ${attachment.filename}`}
+                  >
+                    <svg
+                      className="w-4 h-4"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M6 18L18 6M6 6l12 12"
+                      />
+                    </svg>
+                  </button>
+                </div>
               );
             })}
             {message.fileErrors.map((fileError, index) => (
@@ -856,21 +1081,76 @@ function ChatForm({
         )}
 
         <div className="relative w-full px-5">
+          {mention && !isDisabled && (
+            <FileMentionMenu
+              results={mentionResults}
+              selectedIndex={mentionIndex}
+              onSelect={insertMention}
+              onHover={setMentionIndex}
+            />
+          )}
+          {mentionRanges.length > 0 && (
+            // Backdrop that paints a highlight behind each valid @mention;
+            // its text is transparent and only span backgrounds are visible
+            <div
+              ref={highlightRef}
+              aria-hidden
+              className="pointer-events-none absolute inset-x-5 inset-y-0 overflow-hidden whitespace-pre-wrap break-words text-transparent min-h-[24px] leading-6"
+            >
+              {(() => {
+                const parts: React.ReactNode[] = [];
+                let last = 0;
+                mentionRanges.forEach((range, i) => {
+                  if (range.start > last) {
+                    parts.push(message.content.slice(last, range.start));
+                  }
+                  parts.push(
+                    <span
+                      key={i}
+                      className="rounded bg-blue-100 dark:bg-blue-500/25"
+                    >
+                      {message.content.slice(range.start, range.end)}
+                    </span>,
+                  );
+                  last = range.end;
+                });
+                if (last < message.content.length) {
+                  parts.push(message.content.slice(last));
+                }
+                return parts;
+              })()}
+            </div>
+          )}
           <textarea
             ref={textareaRef}
             value={message.content}
             onChange={handleTextareaChange}
             placeholder="Send a message"
             disabled={isDisabled}
-            className={`allow-context-menu w-full overflow-y-auto text-neutral-700 outline-none resize-none border-none bg-transparent dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 min-h-[24px] leading-6 transition-opacity duration-300 ${
+            className={`allow-context-menu relative z-[1] w-full overflow-y-auto text-neutral-700 outline-none resize-none border-none bg-transparent dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 min-h-[24px] leading-6 transition-opacity duration-300 ${
               editingMessage ? "animate-fade-in" : ""
             }`}
             rows={1}
             onKeyDown={handleKeyDown}
+            onClick={(e) => updateMentionFromTextarea(e.currentTarget)}
+            onScroll={(e) => {
+              if (highlightRef.current) {
+                highlightRef.current.scrollTop = e.currentTarget.scrollTop;
+              }
+            }}
             onCompositionStart={handleCompositionStart}
             onCompositionEnd={handleCompositionEnd}
           />
         </div>
+        {mentionOverBudget && (
+          <div className="w-full px-5 pt-1">
+            <p className="text-xs text-amber-600 dark:text-amber-400">
+              Mentioned files exceed the context budget (~
+              {Math.round(MENTION_TOTAL_BYTES / 4 / 1000)}k tokens) — their
+              content will be truncated.
+            </p>
+          </div>
+        )}
 
         {/* Controls */}
         <div className="flex w-full items-center justify-end gap-2 px-3 pt-2">

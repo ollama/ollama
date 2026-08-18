@@ -126,6 +126,10 @@ type ChatRequest struct {
 	FileTools   *bool        `json:"file_tools,omitempty"`
 	ForceUpdate bool         `json:"forceUpdate,omitempty"`
 	Think       any          `json:"think,omitempty"`
+
+	// FileRefs contains project-relative paths of files mentioned with "@"
+	// in the prompt. Their contents are injected into the model context.
+	FileRefs []string `json:"file_refs,omitempty"`
 }
 
 type Error struct {
@@ -135,6 +139,35 @@ type Error struct {
 type ModelUpstreamResponse struct {
 	Stale bool   `json:"stale"`
 	Error string `json:"error,omitempty"`
+}
+
+// ProjectFile is a single entry in the active project's file listing
+type ProjectFile struct {
+	Path  string `json:"path"`
+	Size  int64  `json:"size"`
+	IsDir bool   `json:"isDir"`
+}
+
+// ProjectSkill describes a skill found under .agents/skills in the project root
+type ProjectSkill struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+// ProjectResponse describes the currently active project (empty Root means
+// no project is open)
+type ProjectResponse struct {
+	Root        string         `json:"root"`
+	Name        string         `json:"name"`
+	HasAgentsMd bool           `json:"hasAgentsMd"`
+	Skills      []ProjectSkill `json:"skills"`
+	Recent      []string       `json:"recent"`
+}
+
+// ProjectFilesResponse is the cached file listing of the active project
+type ProjectFilesResponse struct {
+	Files     []ProjectFile `json:"files"`
+	Truncated bool          `json:"truncated"`
 }
 
 // Serializable data for the browser state

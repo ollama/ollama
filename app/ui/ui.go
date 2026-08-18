@@ -112,6 +112,14 @@ type Server struct {
 	// Updater for checking and downloading updates
 	Updater             *updater.Updater
 	UpdateAvailableFunc func()
+
+	// projectMu protects the active project state below
+	projectMu sync.Mutex
+	// project is the currently open project folder, if any
+	project *projectState
+	// projectLoaded is true once the last opened project has been restored
+	// from the store
+	projectLoaded bool
 }
 
 func (s *Server) log() *slog.Logger {
@@ -285,6 +293,11 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("DELETE /api/v1/chat/{id}", handle(s.deleteChat))
 	mux.Handle("POST /api/v1/create-chat", handle(s.createChat))
 	mux.Handle("PUT /api/v1/chat/{id}/rename", handle(s.renameChat))
+
+	mux.Handle("GET /api/v1/project", handle(s.getProject))
+	mux.Handle("POST /api/v1/project/open", handle(s.openProject))
+	mux.Handle("POST /api/v1/project/close", handle(s.closeProject))
+	mux.Handle("GET /api/v1/project/files", handle(s.getProjectFiles))
 
 	mux.Handle("GET /api/v1/inference-compute", handle(s.getInferenceCompute))
 	mux.Handle("POST /api/v1/model/upstream", handle(s.modelUpstream))
@@ -687,7 +700,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 	// Only add user message if not forceUpdate
 	if !req.ForceUpdate {
 		var messageOptions *store.MessageOptions
-		if len(req.Attachments) > 0 {
+		if len(req.Attachments) > 0 || len(req.FileRefs) > 0 {
 			storeAttachments := make([]store.File, 0, len(req.Attachments))
 
 			for _, att := range req.Attachments {
@@ -715,6 +728,18 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 						Filename: att.Filename,
 						Data:     data,
 					})
+				}
+			}
+
+			// Resolve @-mentioned project files into attachments so their
+			// contents reach the model and persist with the message
+			if len(req.FileRefs) > 0 {
+				if p := s.activeProject(); p != nil {
+					seen := make(map[string]bool, len(storeAttachments))
+					for _, att := range storeAttachments {
+						seen[att.Filename] = true
+					}
+					storeAttachments = append(storeAttachments, p.resolveFileRefs(req.FileRefs, seen)...)
 				}
 			}
 
@@ -1705,6 +1730,12 @@ func supportsBrowserTools(model string) bool {
 // buildChatRequest converts store.Chat to api.ChatRequest
 func (s *Server) buildChatRequest(chat *store.Chat, model string, think any, availableTools []map[string]any) (*api.ChatRequest, error) {
 	var msgs []api.Message
+
+	// When a project folder is open, provide its context (AGENTS.md and
+	// skills) as a system message
+	if p := s.activeProject(); p != nil {
+		msgs = append(msgs, api.Message{Role: "system", Content: p.systemPrompt()})
+	}
 	for _, m := range chat.Messages {
 		// Skip empty messages if present
 		if m.Content == "" && m.Thinking == "" && len(m.ToolCalls) == 0 && len(m.Attachments) == 0 {

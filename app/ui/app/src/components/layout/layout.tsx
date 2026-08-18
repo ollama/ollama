@@ -1,5 +1,8 @@
 import { Link } from "@tanstack/react-router";
 import { useSettings } from "@/hooks/useSettings";
+import { useProject } from "@/hooks/useProject";
+import { ProjectButton } from "@/components/ProjectButton";
+import { ProjectPanel } from "@/components/ProjectPanel";
 
 export function SidebarLayout({
   sidebar,
@@ -10,12 +13,13 @@ export function SidebarLayout({
   chatId?: string;
 }>) {
   const { settings, setSettings } = useSettings();
+  const { project } = useProject();
   const isWindows = navigator.platform.toLowerCase().includes("win");
 
   return (
     <div className={`flex transition-[width] duration-300 dark:bg-neutral-900`}>
       <div
-        className={`absolute flex mx-2 py-2 z-20 items-center transition-[left] duration-375 text-neutral-500 dark:text-neutral-400 ${settings.sidebarOpen ? (isWindows ? "left-2" : "left-[204px]") : isWindows ? "left-2" : "left-20"}`}
+        className={`absolute flex mx-2 py-2 z-40 items-center transition-[left] duration-375 text-neutral-500 dark:text-neutral-400 ${settings.sidebarOpen ? (isWindows ? "left-2" : "left-[204px]") : isWindows ? "left-2" : "left-20"}`}
       >
         <button
           onClick={() => setSettings({ SidebarOpen: !settings.sidebarOpen })}
@@ -66,14 +70,26 @@ export function SidebarLayout({
         ></div>
         {settings.sidebarOpen && sidebar}
       </div>
+      {project && (
+        <div className="flex w-60 flex-none flex-col max-h-screen border-r border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900">
+          <div
+            onDoubleClick={() => window.doubleClick && window.doubleClick()}
+            onMouseDown={() => window.drag && window.drag()}
+            className="flex-none h-13 w-full"
+          ></div>
+          <ProjectPanel />
+        </div>
+      )}
       <main
         className={`flex flex-1 flex-col min-w-0 transition-all duration-300`}
       >
         <div
-          className={`h-13 flex-none w-full z-10 flex items-center bg-white dark:bg-neutral-900 ${isWindows ? "xl:hidden" : "xl:fixed xl:bg-transparent xl:dark:bg-transparent"}`}
+          className={`h-13 flex-none w-full z-30 flex items-center justify-end px-4 bg-white dark:bg-neutral-900 ${isWindows ? "" : "xl:fixed xl:bg-transparent xl:dark:bg-transparent"}`}
           onDoubleClick={() => window.doubleClick && window.doubleClick()}
           onMouseDown={() => window.drag && window.drag()}
-        ></div>
+        >
+          <ProjectButton />
+        </div>
         {children}
       </main>
     </div>
