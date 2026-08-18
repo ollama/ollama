@@ -2715,9 +2715,15 @@ type memoryParsingWriter struct {
 	inner   io.Writer
 	runner  *llamaServerRunner
 	buffers map[memoryBufferKey]memoryBuffer
+
+	// currentModel attributes buffer lines to the model being loaded: a
+	// subprocess can load a target, a speculative draft, and a projector,
+	// whose buffer lines are otherwise indistinguishable.
+	currentModel string
 }
 
 type memoryBufferKey struct {
+	model     string // owning model: target, draft, projector
 	component string
 	backend   string
 	kind      string
@@ -2726,6 +2732,22 @@ type memoryBufferKey struct {
 type memoryBuffer struct {
 	bytes uint64
 }
+
+// Model attribution for buffers parsed from the subprocess stream.
+const (
+	memoryModelTarget    = "target"
+	memoryModelDraft     = "draft"
+	memoryModelProjector = "projector"
+
+	// memoryBackendProjector marks the projector's estimate, which names
+	// no device; aggregation assigns it to the busiest one.
+	memoryBackendProjector = "(projector)"
+)
+
+// mmprojMemoryRegex matches the projector's worst-case memory estimate:
+//
+//	srv  load_model: [mtmd] estimated worst-case memory usage of mmproj is 1700.98 MiB (took 36.34 ms)
+var mmprojMemoryRegex = regexp.MustCompile(`estimated worst-case memory usage of mmproj is ([\d.]+)\s*MiB`)
 
 // deviceFreeRegex matches per-device free VRAM reported at model load time:
 //
@@ -2779,52 +2801,116 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 			w.runner.memoryMu.Lock()
 			defer w.runner.memoryMu.Unlock()
 
-			if match := deviceFreeRegex.FindSubmatch(b); match != nil {
-				devName := string(match[1])
-				if mib, err := strconv.ParseUint(string(match[2]), 10, 64); err == nil {
-					w.runner.systemFreeAtLoad[devName] = mib * 1024 * 1024
-				}
-			}
-			for _, match := range offloadedLayersRegex.FindAllSubmatch(b, -1) {
-				loaded, loadedErr := strconv.ParseUint(string(match[1]), 10, 64)
-				total, totalErr := strconv.ParseUint(string(match[2]), 10, 64)
-				if loadedErr == nil && totalErr == nil {
-					w.runner.gpuLayers = loaded
-					w.runner.totalLayers = total
-				}
-			}
-			for _, match := range fitOverflowingLayersRegex.FindAllSubmatch(b, -1) {
-				overflowing, err := strconv.ParseUint(string(match[1]), 10, 64)
-				if err == nil && overflowing > 0 {
-					w.runner.gpuLayerOverflow += int(overflowing)
-				}
-			}
-			for _, match := range bufferSizeRegex.FindAllSubmatch(b, -1) {
-				backendName := string(match[2])
-				if mib, err := strconv.ParseFloat(string(match[4]), 64); err == nil {
-					if w.buffers == nil {
-						w.buffers = make(map[memoryBufferKey]memoryBuffer)
-					}
-					w.buffers[memoryBufferKey{
-						component: string(match[1]),
-						backend:   backendName,
-						kind:      string(match[3]),
-					}] = memoryBuffer{bytes: uint64(mib * 1024 * 1024)}
-					w.updateRunnerMemoryLocked()
-				}
+			// Line at a time: attribution markers must apply in stream
+			// order relative to surrounding buffer lines.
+			for line := range bytes.SplitSeq(b, []byte("\n")) {
+				w.parseLineLocked(line)
 			}
 		}()
 	}
 	return w.inner.Write(b)
 }
 
+// parseLineLocked parses a single llama-server log line for memory tracking.
+// Caller holds runner.memoryMu.
+func (w *memoryParsingWriter) parseLineLocked(line []byte) {
+	if bytes.Contains(line, []byte("loading draft model")) {
+		w.currentModel = memoryModelDraft
+		return
+	}
+	if bytes.Contains(line, []byte("loading model tensors")) {
+		// A new tensor-load pass supersedes the current model's previous
+		// buffers (e.g. a fit probe); other models' buffers are kept.
+		for key := range w.buffers {
+			if key.model == w.model() {
+				delete(w.buffers, key)
+			}
+		}
+		w.updateRunnerMemoryLocked()
+		return
+	}
+
+	if match := deviceFreeRegex.FindSubmatch(line); match != nil {
+		devName := string(match[1])
+		if mib, err := strconv.ParseUint(string(match[2]), 10, 64); err == nil {
+			w.runner.systemFreeAtLoad[devName] = mib * 1024 * 1024
+		}
+	}
+	if match := offloadedLayersRegex.FindSubmatch(line); match != nil {
+		// Only the target's counts drive offload status; the draft
+		// prints its own (e.g. "offloaded 6/6").
+		if w.model() == memoryModelTarget {
+			loaded, loadedErr := strconv.ParseUint(string(match[1]), 10, 64)
+			total, totalErr := strconv.ParseUint(string(match[2]), 10, 64)
+			if loadedErr == nil && totalErr == nil {
+				w.runner.gpuLayers = loaded
+				w.runner.totalLayers = total
+			}
+		}
+	}
+	if match := fitOverflowingLayersRegex.FindSubmatch(line); match != nil {
+		overflowing, err := strconv.ParseUint(string(match[1]), 10, 64)
+		if err == nil && overflowing > 0 {
+			w.runner.gpuLayerOverflow += int(overflowing)
+		}
+	}
+	if match := mmprojMemoryRegex.FindSubmatch(line); match != nil {
+		if mib, err := strconv.ParseFloat(string(match[1]), 64); err == nil {
+			w.setBufferLocked(memoryBufferKey{
+				model:     memoryModelProjector,
+				component: "mtmd",
+				backend:   memoryBackendProjector,
+				kind:      "model",
+			}, uint64(mib*1024*1024), false)
+		}
+	}
+	if match := bufferSizeRegex.FindSubmatch(line); match != nil {
+		if mib, err := strconv.ParseFloat(string(match[4]), 64); err == nil {
+			// Accumulate: one pass can allocate several same-key buffers
+			// (hybrid attention prints one KV line per cache pool).
+			w.setBufferLocked(memoryBufferKey{
+				model:     w.model(),
+				component: string(match[1]),
+				backend:   string(match[2]),
+				kind:      string(match[3]),
+			}, uint64(mib*1024*1024), true)
+		}
+	}
+}
+
+// model returns the model currently being loaded in the subprocess stream.
+func (w *memoryParsingWriter) model() string {
+	if w.currentModel == "" {
+		return memoryModelTarget
+	}
+	return w.currentModel
+}
+
+func (w *memoryParsingWriter) setBufferLocked(key memoryBufferKey, bytes uint64, accumulate bool) {
+	if w.buffers == nil {
+		w.buffers = make(map[memoryBufferKey]memoryBuffer)
+	}
+	if accumulate {
+		bytes += w.buffers[key].bytes
+	}
+	w.buffers[key] = memoryBuffer{bytes: bytes}
+	w.updateRunnerMemoryLocked()
+}
+
 func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
-	var total, gpu, modelFileBacked, cpuMappedModel uint64
+	var total, gpu, modelFileBacked, cpuMappedModel, projector uint64
 	byDevice := make(map[string]uint64)
 
 	for key, buffer := range w.buffers {
 		total += buffer.bytes
-		if key.kind == "model" {
+		if key.backend == memoryBackendProjector {
+			projector += buffer.bytes
+			continue
+		}
+		// The mmap-overlap trim in MemorySize compares against the
+		// target's file, so only target buffers participate; the draft's
+		// small mmap double-count is accepted.
+		if key.kind == "model" && key.model == memoryModelTarget {
 			onGPU := isGPUBuffer(key.backend)
 			mmapBacked := strings.HasSuffix(key.backend, "_Mapped")
 			// Device copies and mmap views mirror the on-disk weights, so their
@@ -2841,6 +2927,21 @@ func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
 		if isGPUBuffer(key.backend) {
 			gpu += buffer.bytes
 			byDevice[deviceName(key.backend)] += buffer.bytes
+		}
+	}
+
+	if projector > 0 {
+		// Count the projector estimate as GPU usage on the busiest device
+		// so the scheduler reserves for it.
+		gpu += projector
+		var busiest string
+		for dev, used := range byDevice {
+			if busiest == "" || used > byDevice[busiest] {
+				busiest = dev
+			}
+		}
+		if busiest != "" {
+			byDevice[busiest] += projector
 		}
 	}
 

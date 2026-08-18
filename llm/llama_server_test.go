@@ -2940,10 +2940,12 @@ func TestMemoryParsingWriter(t *testing.T) {
 		{
 			name: "fit probe buffers are replaced by final load",
 			lines: []string{
+				"load_tensors: loading model tensors, this can take a while... (load_mode = mmap)\n",
 				"load_tensors:        CUDA0 model buffer size =  1000.00 MiB\n",
 				"llama_kv_cache:      CUDA0 KV buffer size =  2000.00 MiB\n",
 				"sched_reserve:      CUDA0 compute buffer size =   300.00 MiB\n",
 				"sched_reserve:  CUDA_Host compute buffer size =   400.00 MiB\n",
+				"load_tensors: loading model tensors, this can take a while... (load_mode = mmap)\n",
 				"load_tensors:        CUDA0 model buffer size =  1100.00 MiB\n",
 				"llama_kv_cache:      CUDA0 KV buffer size =  2200.00 MiB\n",
 				"sched_reserve:      CUDA0 compute buffer size =   330.00 MiB\n",
@@ -2957,6 +2959,7 @@ func TestMemoryParsingWriter(t *testing.T) {
 		{
 			name: "rc21 fit probe accounting",
 			lines: []string{
+				"load_tensors: loading model tensors, this can take a while... (load_mode = mmap)\n",
 				"load_tensors:          CPU model buffer size =     0.00 MiB\n",
 				"load_tensors:        CUDA0 model buffer size =     0.00 MiB\n",
 				"load_tensors:        CUDA1 model buffer size =     0.00 MiB\n",
@@ -2968,9 +2971,11 @@ func TestMemoryParsingWriter(t *testing.T) {
 				"sched_reserve:      CUDA0 compute buffer size =  9952.25 MiB\n",
 				"sched_reserve:      CUDA1 compute buffer size =  6436.28 MiB\n",
 				"sched_reserve:  CUDA_Host compute buffer size =  8272.31 MiB\n",
+				"load_tensors: loading model tensors, this can take a while... (load_mode = mmap)\n",
 				"load_tensors:          CPU model buffer size =   682.03 MiB\n",
 				"load_tensors:        CUDA0 model buffer size =  8171.01 MiB\n",
 				"load_tensors:        CUDA1 model buffer size =  6618.25 MiB\n",
+				"llama_context:  CUDA_Host  output buffer size =     0.95 MiB\n",
 				"llama_kv_cache:      CUDA0 KV buffer size =  9216.00 MiB\n",
 				"llama_kv_cache:      CUDA1 KV buffer size =  7168.00 MiB\n",
 				"llama_memory_recurrent:      CUDA0 RS buffer size =    90.40 MiB\n",
@@ -2983,6 +2988,53 @@ func TestMemoryParsingWriter(t *testing.T) {
 			},
 			wantGPU:   47799.52,
 			wantTotal: 56779.74,
+		},
+		{
+			// Hybrid attention prints one same-key KV line per cache
+			// pool; both are live allocations and must sum.
+			name: "hybrid attention KV pools accumulate",
+			lines: []string{
+				"load_tensors: loading model tensors, this can take a while... (load_mode = mmap)\n",
+				"load_tensors:  MTL0_Mapped model buffer size = 15967.91 MiB\n",
+				"llama_kv_cache:       MTL0 KV buffer size =  1664.00 MiB\n",
+				"llama_kv_cache:       MTL0 KV buffer size =   156.00 MiB\n",
+			},
+			wantGPU:   15967.91 + 1664 + 156,
+			wantTotal: 15967.91 + 1664 + 156,
+		},
+		{
+			// Distilled from a muse-glimmer q8_0+DFlash load: draft
+			// buffers add to the target's, not replace them.
+			name: "speculative draft buffers add to the target's",
+			lines: []string{
+				"load_tensors: loading model tensors, this can take a while... (load_mode = mmap)\n",
+				"load_tensors:   CPU_Mapped model buffer size =  1362.69 MiB\n",
+				"load_tensors:  MTL0_Mapped model buffer size = 28228.61 MiB\n",
+				"llama_context:        CPU  output buffer size =     0.77 MiB\n",
+				"llama_kv_cache:       MTL0 KV buffer size =  1664.00 MiB\n",
+				"llama_kv_cache:       MTL0 KV buffer size =   156.00 MiB\n",
+				"sched_reserve:       MTL0 compute buffer size =  1100.07 MiB\n",
+				"sched_reserve:        CPU compute buffer size =   632.08 MiB\n",
+				"common_speculative_init_result: loading draft model '/blobs/sha256-draft'\n",
+				"load_tensors: loading model tensors, this can take a while... (load_mode = mmap)\n",
+				"load_tensors:  MTL0_Mapped model buffer size =  1543.17 MiB\n",
+				"llama_kv_cache:       MTL0 KV buffer size =    52.00 MiB\n",
+				"sched_reserve:       MTL0 compute buffer size =   200.00 MiB\n",
+			},
+			wantGPU:   28228.61 + 1664 + 156 + 1100.07 + 1543.17 + 52 + 200,
+			wantTotal: 28228.61 + 1664 + 156 + 1100.07 + 1543.17 + 52 + 200 + 1362.69 + 0.77 + 632.08,
+		},
+		{
+			// The projector estimate names no device; counted on the
+			// busiest one.
+			name: "projector estimate counted on busiest device",
+			lines: []string{
+				"load_tensors: loading model tensors, this can take a while... (load_mode = mmap)\n",
+				"load_tensors:        CUDA0 model buffer size = 15246.49 MiB\n",
+				"srv    load_model: [mtmd] estimated worst-case memory usage of mmproj is 1700.98 MiB (took 36.34 ms)\n",
+			},
+			wantGPU:   15246.49 + 1700.98,
+			wantTotal: 15246.49 + 1700.98,
 		},
 	}
 
@@ -3218,6 +3270,18 @@ func TestMemoryParsingWriterMemorySizeFullOffload(t *testing.T) {
 				"llm_load_tensors: offloaded 33/33 layers to GPU\n",
 			},
 			wantProcessTotal: 80,
+			wantProcessVRAM:  80,
+		},
+		{
+			// The draft's own layer counts must not overwrite the
+			// target's partial-offload status.
+			name: "draft offload counts do not overwrite the target's",
+			lines: []string{
+				"llm_load_tensors: offloaded 40/53 layers to GPU\n",
+				"common_speculative_init_result: loading draft model '/blobs/x'\n",
+				"load_tensors: offloaded 6/6 layers to GPU\n",
+			},
+			wantProcessTotal: 100,
 			wantProcessVRAM:  80,
 		},
 		{
