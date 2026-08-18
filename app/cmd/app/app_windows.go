@@ -408,6 +408,8 @@ func hideWindow(ptr unsafe.Pointer) {
 	}
 }
 
+func setOnboardingWindowStyle(_ unsafe.Pointer, _ bool) {}
+
 func runInBackground() {
 	exe, err := os.Executable()
 	if err != nil {

@@ -205,6 +205,12 @@ func main() {
 	uiServerPort = port
 
 	st := &store.Store{}
+	if devMode {
+		if dbPath := strings.TrimSpace(os.Getenv("OLLAMA_APP_DB_PATH")); dbPath != "" {
+			st.DBPath = dbPath
+			slog.Debug("using development app database", "path", dbPath)
+		}
+	}
 	appStore = st
 
 	// Enable CORS in development mode

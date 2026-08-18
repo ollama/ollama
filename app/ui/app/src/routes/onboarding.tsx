@@ -1,0 +1,164 @@
+import Onboarding from "@/components/Onboarding";
+import { getSettings } from "@/api";
+import { useSettings } from "@/hooks/useSettings";
+import { useUser } from "@/hooks/useUser";
+import {
+  authenticationTimeoutAction,
+  CURRENT_ONBOARDING_VERSION,
+  homeChatId,
+} from "@/lib/onboarding";
+import { createFileRoute, redirect } from "@tanstack/react-router";
+import { useCallback, useEffect, useState } from "react";
+
+export const Route = createFileRoute("/onboarding")({
+  beforeLoad: async ({ context }) => {
+    // Let developers review onboarding without resetting their local app data.
+    if (
+      import.meta.env.DEV &&
+      new URLSearchParams(window.location.search).get("preview") === "1"
+    ) {
+      return;
+    }
+
+    const settingsData = await context.queryClient.ensureQueryData({
+      queryKey: ["settings"],
+      queryFn: getSettings,
+    });
+
+    if (settingsData.settings.OnboardingVersion >= CURRENT_ONBOARDING_VERSION) {
+      const chatId = homeChatId();
+      throw redirect({
+        to: "/c/$chatId",
+        params: { chatId },
+        mask: { to: "/" },
+      });
+    }
+  },
+  component: OnboardingRoute,
+});
+
+function OnboardingRoute() {
+  const { settingsData, setSettings } = useSettings();
+  const { fetchConnectUrl, refetchUser, isAuthenticated } = useUser();
+  const [isAwaitingAuth, setIsAwaitingAuth] = useState(false);
+  const [showRun, setShowRun] = useState(false);
+  const [signInError, setSignInError] = useState<string | null>(null);
+  const [completionError, setCompletionError] = useState<string | null>(null);
+
+  const completeOnboarding = useCallback(async (): Promise<boolean> => {
+    setCompletionError(null);
+
+    try {
+      if (!settingsData) {
+        throw new Error("Settings are not loaded");
+      }
+
+      await setSettings({
+        OnboardingVersion: CURRENT_ONBOARDING_VERSION,
+      });
+      return true;
+    } catch (error) {
+      console.error("Failed to save onboarding state:", error);
+      setCompletionError("Unable to save setup. Please try again.");
+      return false;
+    }
+  }, [setSettings, settingsData]);
+
+  const finish = useCallback(async () => {
+    if (!(await completeOnboarding())) return;
+    window.setOnboardingWindow?.(false);
+    window.close();
+  }, [completeOnboarding]);
+
+  const signIn = useCallback(async () => {
+    setSignInError(null);
+
+    if (isAuthenticated) {
+      setShowRun(true);
+      return;
+    }
+
+    setIsAwaitingAuth(true);
+
+    try {
+      const result = await fetchConnectUrl();
+      if (!result.data) {
+        throw new Error("No sign-in URL was returned");
+      }
+
+      window.open(result.data, "_blank");
+    } catch (error) {
+      console.error("Failed to start sign in:", error);
+      setIsAwaitingAuth(false);
+      setSignInError("Unable to start sign in. Please try again.");
+    }
+  }, [fetchConnectUrl, isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAwaitingAuth) return;
+
+    let checking = false;
+    let settled = false;
+    let timeoutPending = false;
+
+    const failConnection = () => {
+      if (settled) return;
+      settled = true;
+      setIsAwaitingAuth(false);
+      setSignInError(
+        "Connection is taking longer than expected. Please try again.",
+      );
+    };
+
+    const checkConnection = async () => {
+      if (checking || settled) return;
+      checking = true;
+
+      try {
+        const result = await refetchUser();
+        if (!settled && result.data?.name) {
+          settled = true;
+          setIsAwaitingAuth(false);
+          setShowRun(true);
+        }
+      } catch (error) {
+        console.error("Failed to check sign-in status:", error);
+      } finally {
+        checking = false;
+        if (timeoutPending) failConnection();
+      }
+    };
+
+    void checkConnection();
+    const pollingInterval = window.setInterval(checkConnection, 1000);
+    const timeout = window.setTimeout(() => {
+      const action = authenticationTimeoutAction(settled, checking);
+      if (action === "ignore") return;
+      if (action === "defer") {
+        timeoutPending = true;
+        return;
+      }
+      failConnection();
+    }, 60_000);
+
+    window.addEventListener("focus", checkConnection);
+    return () => {
+      settled = true;
+      window.clearInterval(pollingInterval);
+      window.clearTimeout(timeout);
+      window.removeEventListener("focus", checkConnection);
+    };
+  }, [isAwaitingAuth, refetchUser]);
+
+  return (
+    <Onboarding
+      completionError={completionError}
+      isAuthenticated={isAuthenticated}
+      isSigningIn={isAwaitingAuth}
+      signInError={signInError}
+      onSignIn={signIn}
+      onFinish={finish}
+      showRun={showRun}
+    />
+  );
+}

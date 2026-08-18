@@ -80,7 +80,7 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 			t.app.DoUpdate()
 		case openUIMenuID:
 			// UI must be initialized on this thread so don't use the callbacks
-			t.app.UIShow()
+			t.app.UIRun("/")
 		case settingsUIMenuID:
 			// UI must be initialized on this thread so don't use the callbacks
 			t.app.UIRun("/settings")

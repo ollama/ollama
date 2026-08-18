@@ -18,7 +18,6 @@ import {
   ArrowDownTrayIcon,
 } from "@heroicons/react/20/solid";
 import { Settings as SettingsType } from "@/gotypes";
-import { useNavigate } from "@tanstack/react-router";
 import { useUser } from "@/hooks/useUser";
 import { useCloudStatus } from "@/hooks/useCloudStatus";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -61,7 +60,6 @@ export default function Settings() {
   const [isAwaitingConnection, setIsAwaitingConnection] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [pollingInterval, setPollingInterval] = useState<number | null>(null);
-  const navigate = useNavigate();
   const {
     cloudDisabled,
     cloudStatus,
@@ -274,8 +272,7 @@ export default function Settings() {
 
   const isWindows = navigator.platform.toLowerCase().includes("win");
   const handleCloseSettings = () => {
-    const chatId = settings.LastHomeView === "chat" ? "new" : "launch";
-    navigate({ to: "/c/$chatId", params: { chatId } });
+    window.close();
   };
 
   return (
@@ -463,7 +460,9 @@ export default function Settings() {
                   <div className="flex-shrink-0">
                     <Switch
                       checked={settings.AutoUpdateEnabled}
-                      onChange={(checked) => handleChange("AutoUpdateEnabled", checked)}
+                      onChange={(checked) =>
+                        handleChange("AutoUpdateEnabled", checked)
+                      }
                     />
                   </div>
                 </div>
@@ -544,7 +543,9 @@ export default function Settings() {
                     </Description>
                     <div className="mt-3">
                       <Slider
-                        value={settings.ContextLength || defaultContextLength || 0}
+                        value={
+                          settings.ContextLength || defaultContextLength || 0
+                        }
                         onChange={(value) => {
                           handleChange("ContextLength", value);
                         }}

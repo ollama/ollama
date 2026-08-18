@@ -167,8 +167,11 @@ type Settings struct {
 	// SidebarOpen indicates if the chat sidebar is open
 	SidebarOpen bool
 
-	// LastHomeView stores the preferred home route target ("chat" or integration name)
+	// LastHomeView is retained for settings compatibility and resolves to chat.
 	LastHomeView string
+
+	// OnboardingVersion stores the latest onboarding flow the user has completed.
+	OnboardingVersion int
 
 	// AutoUpdateEnabled indicates if automatic updates should be downloaded
 	AutoUpdateEnabled bool
@@ -393,7 +396,7 @@ func (s *Store) Settings() (Settings, error) {
 	}
 
 	if settings.LastHomeView == "" {
-		settings.LastHomeView = "launch"
+		settings.LastHomeView = "chat"
 	}
 
 	return settings, nil

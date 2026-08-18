@@ -229,6 +229,11 @@ func styleWindow(ptr unsafe.Pointer) {
 	C.styleWindow(C.uintptr_t(uintptr(ptr)))
 }
 
+func setOnboardingWindowStyle(ptr unsafe.Pointer, enabled bool) {
+	styleWindow(ptr)
+	C.setWindowResizable(C.uintptr_t(uintptr(ptr)), C.bool(!enabled))
+}
+
 func runInBackground() {
 	cmd := exec.Command(filepath.Join(updater.BundlePath, "Contents", "MacOS", "Ollama"), "hidden")
 	if cmd != nil {

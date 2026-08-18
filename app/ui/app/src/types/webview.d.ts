@@ -24,6 +24,7 @@ declare global {
     webview?: WebviewAPI;
     drag?: () => void;
     doubleClick?: () => void;
+    setOnboardingWindow?: (enabled: boolean) => void;
     menu: (items: MenuItem[]) => Promise<string | null>;
     OLLAMA_TOOLS?: boolean;
     OLLAMA_WEBSEARCH?: boolean;

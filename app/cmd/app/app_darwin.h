@@ -38,6 +38,7 @@ void setWindowDelegate(void *window);
 void showWindow(uintptr_t wndPtr);
 void hideWindow(uintptr_t wndPtr);
 void styleWindow(uintptr_t wndPtr);
+void setWindowResizable(uintptr_t wndPtr, bool resizable);
 void drag(uintptr_t wndPtr);
 void doubleClick(uintptr_t wndPtr);
 void handleConnectURL();

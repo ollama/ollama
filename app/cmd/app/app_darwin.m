@@ -64,16 +64,16 @@ bool firstTimeRun,startHidden; // Set in run before initialization
 
     // Create status item and menu
     NSMenu *menu = [[NSMenu alloc] init];
+    [menu addItemWithTitle:@"Settings..."
+                    action:@selector(settingsUI)
+             keyEquivalent:@","];
+
     NSMenuItem *openMenuItem =
-        [[NSMenuItem alloc] initWithTitle:@"Open Ollama"
+        [[NSMenuItem alloc] initWithTitle:@"Open Ollama Chat"
                                    action:@selector(openUI)
                             keyEquivalent:@""];
     [openMenuItem setTarget:self];
     [menu addItem:openMenuItem];
-
-    [menu addItemWithTitle:@"Settings..."
-                    action:@selector(settingsUI)
-             keyEquivalent:@","];
     [menu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem *updateAvailable =
@@ -264,7 +264,7 @@ bool firstTimeRun,startHidden; // Set in run before initialization
 }
 
 - (void)openUI {
-    ShowUI();
+    [self uiRequest:@"/"];
 }
 
 - (void)newChat {
@@ -1095,6 +1095,17 @@ void styleWindow(uintptr_t wndPtr) {
     L.masksToBounds = NO;
     L.borderColor = nil;
     L.borderWidth = 0.0;
+}
+
+void setWindowResizable(uintptr_t wndPtr, bool resizable) {
+    NSWindow *w = (__bridge NSWindow *)wndPtr;
+    if (!w) return;
+
+    if (resizable) {
+        w.styleMask |= NSWindowStyleMaskResizable;
+    } else {
+        w.styleMask &= ~NSWindowStyleMaskResizable;
+    }
 }
 
 void drag(uintptr_t wndPtr) {

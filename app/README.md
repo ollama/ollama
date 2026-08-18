@@ -41,6 +41,13 @@ go generate ./... &&
 OLLAMA_DEBUG=1 go run ./cmd/app -dev
 ```
 
+To test a fresh install without changing your existing app data, point the
+development app at a separate database:
+
+```bash
+OLLAMA_APP_DB_PATH=/tmp/ollama-app-dev/db.sqlite OLLAMA_DEBUG=1 go run ./cmd/app -dev
+```
+
 The `-dev` flag enables:
 
 - Loading the UI from the Vite dev server at http://localhost:5173

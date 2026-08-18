@@ -8,6 +8,19 @@
     "SF Pro Rounded", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
 }
 
+@layer base {
+  a[href],
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  [role="button"][aria-disabled="true"] {
+    cursor: not-allowed;
+  }
+}
+
 @media (prefers-color-scheme: dark) {
   /* Dark mode styles go here */
   :root {
