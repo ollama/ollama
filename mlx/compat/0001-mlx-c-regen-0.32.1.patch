@@ -1,0 +1,88 @@
+diff --git a/mlx/c/compile.cpp b/mlx/c/compile.cpp
+index bc7b864..260ee86 100644
+--- a/mlx/c/compile.cpp
++++ b/mlx/c/compile.cpp
+@@ -42,22 +42,25 @@ extern "C" int mlx_detail_compile(
+ }
+ extern "C" int mlx_detail_compile_clear_cache(void) {
+   try {
+-    mlx::core::detail::compile_clear_cache();
++    mlx::core::detail::compile_clear_cache(mlx::core::detail::compile_cache());
+   } catch (std::exception& e) {
+     mlx_error(e.what());
+     return 1;
+   }
+   return 0;
+ }
++
+ extern "C" int mlx_detail_compile_erase(uintptr_t fun_id) {
+   try {
+-    mlx::core::detail::compile_erase(fun_id);
++    mlx::core::detail::compile_erase(
++        mlx::core::detail::compile_cache(), fun_id);
+   } catch (std::exception& e) {
+     mlx_error(e.what());
+     return 1;
+   }
+   return 0;
+ }
++
+ extern "C" int mlx_disable_compile(void) {
+   try {
+     mlx::core::disable_compile();
+diff --git a/mlx/c/compile.h b/mlx/c/compile.h
+index 2892a1f..ff3abc4 100644
+--- a/mlx/c/compile.h
++++ b/mlx/c/compile.h
+@@ -44,7 +44,9 @@ int mlx_detail_compile(
+     const uint64_t* constants,
+     size_t constants_num);
+ int mlx_detail_compile_clear_cache(void);
++
+ int mlx_detail_compile_erase(uintptr_t fun_id);
++
+ int mlx_disable_compile(void);
+ int mlx_enable_compile(void);
+ int mlx_set_compile_mode(mlx_compile_mode mode);
+diff --git a/mlx/c/fast.cpp b/mlx/c/fast.cpp
+index ac17d54..eb35d16 100644
+--- a/mlx/c/fast.cpp
++++ b/mlx/c/fast.cpp
+@@ -3,8 +3,8 @@
+ /* This file is auto-generated. Do not edit manually. */
+ /*                                                    */
+ 
+-#include "mlx/c/fast.h"
+ #include "mlx/c/error.h"
++#include "mlx/c/fast.h"
+ #include "mlx/c/private/mlx.h"
+ #include "mlx/fast.h"
+ 
+@@ -610,6 +610,7 @@ extern "C" int mlx_fast_scaled_dot_product_attention(
+     const char* mask_mode,
+     const mlx_array mask_arr /* may be null */,
+     const mlx_array sinks /* may be null */,
++    bool force_fused,
+     const mlx_stream s) {
+   try {
+     mlx_array_set_(
+@@ -624,6 +625,7 @@ extern "C" int mlx_fast_scaled_dot_product_attention(
+                           : std::nullopt),
+             (sinks.ctx ? std::make_optional(mlx_array_get_(sinks))
+                        : std::nullopt),
++            force_fused,
+             mlx_stream_get_(s)));
+   } catch (std::exception& e) {
+     mlx_error(e.what());
+diff --git a/mlx/c/fast.h b/mlx/c/fast.h
+index c825d00..e6c5bdf 100644
+--- a/mlx/c/fast.h
++++ b/mlx/c/fast.h
+@@ -195,6 +195,7 @@ int mlx_fast_scaled_dot_product_attention(
+     const char* mask_mode,
+     const mlx_array mask_arr /* may be null */,
+     const mlx_array sinks /* may be null */,
++    bool force_fused,
+     const mlx_stream s);
+ 
+ /**@}*/
