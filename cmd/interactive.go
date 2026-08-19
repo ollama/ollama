@@ -620,6 +620,7 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 		nfp := normalizeFilePath(fp)
 		data, err := getImageData(nfp)
 		if errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(os.Stderr, "Warning: image file not found: %q (tried: %q)\n", fp, nfp)
 			continue
 		} else if err != nil {
 			fmt.Fprintf(os.Stderr, "Couldn't process file: %q\n", err)
@@ -733,3 +734,4 @@ func getImageData(filePath string) ([]byte, error) {
 
 	return buf, nil
 }
+
