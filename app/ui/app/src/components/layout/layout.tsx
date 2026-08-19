@@ -1,5 +1,18 @@
 import { Link } from "@tanstack/react-router";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useSettings } from "@/hooks/useSettings";
+
+const SIDEBAR_STORAGE_KEY = "ollama.sidebar.open";
+
+function readSidebarStorage(): boolean {
+  try {
+    const stored = localStorage.getItem(SIDEBAR_STORAGE_KEY);
+    if (stored !== null) return stored === "true";
+  } catch {
+    // localStorage unavailable
+  }
+  return true;
+}
 
 export function SidebarLayout({
   sidebar,
@@ -9,13 +22,43 @@ export function SidebarLayout({
   collapsible?: boolean;
   chatId?: string;
 }>) {
-  const { settings, setSettings } = useSettings();
+  const { settings, settingsData, setSettings } = useSettings();
   const isWindows = navigator.platform.toLowerCase().includes("win");
+  const [transitionsEnabled, setTransitionsEnabled] = useState(false);
+
+  // Read the last known sidebar state synchronously so the very first render
+  // already has the correct width — avoids a w-0 → w-64 layout jump on load.
+  const initialSidebarOpen = useRef(readSidebarStorage());
+
+  // Use the real API value once it arrives, otherwise fall back to the cached one.
+  const sidebarOpen =
+    settingsData !== undefined ? settings.sidebarOpen : initialSidebarOpen.current;
+
+  // Keep localStorage in sync so future loads start at the right width.
+  useEffect(() => {
+    if (settingsData !== undefined) {
+      try {
+        localStorage.setItem(SIDEBAR_STORAGE_KEY, String(settings.sidebarOpen));
+      } catch {
+        // localStorage unavailable
+      }
+    }
+  }, [settings.sidebarOpen, settingsData]);
+
+  // Enable transitions only after the first real settings value has been painted.
+  // useLayoutEffect fires before the browser paints, so scheduling a rAF here
+  // ensures transitions are enabled only after the correct initial width is visible.
+  useLayoutEffect(() => {
+    if (settingsData !== undefined && !transitionsEnabled) {
+      const raf = requestAnimationFrame(() => setTransitionsEnabled(true));
+      return () => cancelAnimationFrame(raf);
+    }
+  }, [settingsData, transitionsEnabled]);
 
   return (
-    <div className={`flex transition-[width] duration-300 dark:bg-neutral-900`}>
+    <div className={`flex ${transitionsEnabled ? "transition-[width] duration-300" : ""} dark:bg-neutral-900`}>
       <div
-        className={`absolute flex mx-2 py-2 z-20 items-center transition-[left] duration-375 text-neutral-500 dark:text-neutral-400 ${settings.sidebarOpen ? (isWindows ? "left-2" : "left-[204px]") : isWindows ? "left-2" : "left-20"}`}
+        className={`absolute flex mx-2 py-2 z-20 items-center ${transitionsEnabled ? "transition-[left] duration-375" : ""} text-neutral-500 dark:text-neutral-400 ${sidebarOpen ? (isWindows ? "left-2" : "left-[204px]") : isWindows ? "left-2" : "left-20"}`}
       >
         <button
           onClick={() => setSettings({ SidebarOpen: !settings.sidebarOpen })}
@@ -23,8 +66,8 @@ export function SidebarLayout({
             e.stopPropagation();
           }}
           className="h-9 w-9 flex items-center justify-center rounded-full hover:bg-neutral-100 dark:hover:bg-neutral-700/75 cursor-pointer"
-          aria-label={settings.sidebarOpen ? "Hide sidebar" : "Show sidebar"}
-          title={settings.sidebarOpen ? "Hide sidebar" : "Show sidebar"}
+          aria-label={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
+          title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
         >
           <svg
             className="h-5 w-5 fill-current"
@@ -40,7 +83,7 @@ export function SidebarLayout({
           params={{ chatId: "new" }}
           title="New chat"
           className={`flex ml-1 items-center justify-center rounded-full transition-opacity duration-375 h-9 w-9 hover:bg-neutral-100 dark:hover:bg-neutral-700 ${
-            settings.sidebarOpen
+            sidebarOpen
               ? "opacity-0 pointer-events-none"
               : "opacity-100"
           }`}
@@ -57,17 +100,17 @@ export function SidebarLayout({
         </Link>
       </div>
       <div
-        className={`flex flex-col transition-[width] duration-300 max-h-screen ${settings.sidebarOpen ? "w-64" : "w-0"}`}
+        className={`flex flex-col ${transitionsEnabled ? "transition-[width] duration-300" : ""} max-h-screen ${sidebarOpen ? "w-64" : "w-0"}`}
       >
         <div
           onDoubleClick={() => window.doubleClick && window.doubleClick()}
           onMouseDown={() => window.drag && window.drag()}
           className="flex-none h-13 w-full"
         ></div>
-        {settings.sidebarOpen && sidebar}
+        {sidebarOpen && sidebar}
       </div>
       <main
-        className={`flex flex-1 flex-col min-w-0 transition-all duration-300`}
+        className={`flex flex-1 flex-col min-w-0 ${transitionsEnabled ? "transition-all duration-300" : ""}`}
       >
         <div
           className={`h-13 flex-none w-full z-10 flex items-center bg-white dark:bg-neutral-900 ${isWindows ? "xl:hidden" : "xl:fixed xl:bg-transparent xl:dark:bg-transparent"}`}
