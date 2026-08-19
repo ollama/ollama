@@ -8,7 +8,7 @@ import {
   homeChatId,
 } from "@/lib/onboarding";
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export const Route = createFileRoute("/onboarding")({
   beforeLoad: async ({ context }) => {
@@ -44,6 +44,7 @@ function OnboardingRoute() {
   const [showRun, setShowRun] = useState(false);
   const [signInError, setSignInError] = useState<string | null>(null);
   const [completionError, setCompletionError] = useState<string | null>(null);
+  const authAttemptRef = useRef(0);
 
   const completeOnboarding = useCallback(async (): Promise<boolean> => {
     setCompletionError(null);
@@ -78,21 +79,31 @@ function OnboardingRoute() {
       return;
     }
 
+    const authAttempt = ++authAttemptRef.current;
     setIsAwaitingAuth(true);
 
     try {
       const result = await fetchConnectUrl();
+      if (authAttempt !== authAttemptRef.current) return;
       if (!result.data) {
         throw new Error("No sign-in URL was returned");
       }
 
       window.open(result.data, "_blank");
     } catch (error) {
+      if (authAttempt !== authAttemptRef.current) return;
       console.error("Failed to start sign in:", error);
       setIsAwaitingAuth(false);
       setSignInError("Unable to start sign in. Please try again.");
     }
   }, [fetchConnectUrl, isAuthenticated]);
+
+  const useLocal = useCallback(() => {
+    authAttemptRef.current += 1;
+    setIsAwaitingAuth(false);
+    setSignInError(null);
+    setShowRun(true);
+  }, []);
 
   useEffect(() => {
     if (!isAwaitingAuth) return;
@@ -100,9 +111,10 @@ function OnboardingRoute() {
     let checking = false;
     let settled = false;
     let timeoutPending = false;
+    const authAttempt = authAttemptRef.current;
 
     const failConnection = () => {
-      if (settled) return;
+      if (settled || authAttempt !== authAttemptRef.current) return;
       settled = true;
       setIsAwaitingAuth(false);
       setSignInError(
@@ -111,12 +123,16 @@ function OnboardingRoute() {
     };
 
     const checkConnection = async () => {
-      if (checking || settled) return;
+      if (checking || settled || authAttempt !== authAttemptRef.current) return;
       checking = true;
 
       try {
         const result = await refetchUser();
-        if (!settled && result.data?.name) {
+        if (
+          !settled &&
+          authAttempt === authAttemptRef.current &&
+          result.data?.name
+        ) {
           settled = true;
           setIsAwaitingAuth(false);
           setShowRun(true);
@@ -157,6 +173,7 @@ function OnboardingRoute() {
       isSigningIn={isAwaitingAuth}
       signInError={signInError}
       onSignIn={signIn}
+      onUseLocal={useLocal}
       onFinish={finish}
       showRun={showRun}
     />

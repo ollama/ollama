@@ -14,16 +14,15 @@ import {
 
 describe("Onboarding", () => {
   it("explains what Ollama is before asking the user to choose a path", () => {
-    const html = renderToStaticMarkup(
-      <IntroScreen onContinue={vi.fn()} onSkip={vi.fn()} />,
-    );
+    const html = renderToStaticMarkup(<IntroScreen onContinue={vi.fn()} />);
 
     expect(html).toContain("What is Ollama?");
-    expect(html).toContain("Run models locally");
-    expect(html).toContain("Connect your tools");
-    expect(html).toContain("Choose the right model");
+    expect(html).toContain("Open models, anywhere");
+    expect(html).toContain("Works with your tools");
+    expect(html).toContain("Your data stays yours");
+    expect(html).toContain("Claude, ChatGPT, Codex, and more");
     expect(html).toContain("Continue");
-    expect(html).toContain("Skip");
+    expect(html).not.toContain("Skip");
   });
 
   it("routes signed-out and signed-in users without an extra connected page", () => {
@@ -48,6 +47,7 @@ describe("Onboarding", () => {
         completionError={null}
         onSignIn={vi.fn()}
         onFinish={vi.fn()}
+        onUseLocal={vi.fn()}
         showRun
       />,
     );

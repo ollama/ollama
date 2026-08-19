@@ -12,7 +12,6 @@ import {
   BoltIcon,
   WrenchIcon,
   CloudIcon,
-  XMarkIcon,
   CogIcon,
   ArrowLeftIcon,
   ArrowDownTrayIcon,
@@ -295,14 +294,6 @@ export default function Settings() {
           )}
           Settings
         </h1>
-        {!isWindows && (
-          <button
-            onClick={handleCloseSettings}
-            className="p-1 hover:bg-neutral-100 mr-3 dark:hover:bg-neutral-800 rounded-full"
-          >
-            <XMarkIcon className="w-6 h-6 dark:text-white" />
-          </button>
-        )}
       </header>
       <div className="w-full p-6 overflow-y-auto flex-1 overscroll-contain">
         <div className="space-y-4 max-w-2xl mx-auto">

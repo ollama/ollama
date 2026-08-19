@@ -718,6 +718,55 @@ func TestSettingsToggleAutoUpdateOff_CancelsDownload(t *testing.T) {
 	}
 }
 
+func TestSettingsPreservesOnboardingVersionWhenOmitted(t *testing.T) {
+	testStore := &store.Store{
+		DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
+	}
+	defer testStore.Close()
+
+	settings, err := testStore.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.OnboardingVersion = 1
+	if err := testStore.SetSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+
+	payload, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		t.Fatal(err)
+	}
+	delete(fields, "OnboardingVersion")
+	payload, err = json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server := &Server{
+		Store:   testStore,
+		Restart: func() {},
+	}
+	req := httptest.NewRequest("POST", "/api/v1/settings", bytes.NewReader(payload))
+	rr := httptest.NewRecorder()
+
+	if err := server.settings(rr, req); err != nil {
+		t.Fatalf("settings() error = %v", err)
+	}
+
+	saved, err := testStore.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.OnboardingVersion != 1 {
+		t.Fatalf("OnboardingVersion = %d, want 1", saved.OnboardingVersion)
+	}
+}
+
 func TestSettingsToggleAutoUpdateOn_WithPendingUpdate_ShowsNotification(t *testing.T) {
 	testStore := &store.Store{
 		DBPath: filepath.Join(t.TempDir(), "db.sqlite"),

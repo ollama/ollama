@@ -1,9 +1,6 @@
 import CopyButton from "@/components/CopyButton";
 import Logo from "@/components/Logo";
-import {
-  nextOnboardingStep,
-  type OnboardingStep,
-} from "@/lib/onboarding";
+import { nextOnboardingStep, type OnboardingStep } from "@/lib/onboarding";
 import {
   CommandLineIcon,
   CubeTransparentIcon,
@@ -74,38 +71,35 @@ function OnboardingCard({ children }: { children: ReactNode }) {
 
 const OLLAMA_FEATURES = [
   {
-    title: "Run models locally",
-    description:
-      "Use AI models on your computer and keep control of your data.",
-    icon: ShieldCheckIcon,
+    title: "Open models, anywhere",
+    description: "Run open models on your computer or in the cloud.",
+    icon: CubeTransparentIcon,
   },
   {
-    title: "Connect your tools",
-    description:
-      "Use Ollama with coding agents, desktop apps, and the terminal.",
+    title: "Works with your tools",
+    description: "Use Ollama with Claude, ChatGPT, Codex, and more.",
     icon: CommandLineIcon,
   },
   {
-    title: "Choose the right model",
-    description: "Switch between local and cloud models from one place.",
-    icon: CubeTransparentIcon,
+    title: "Your data stays yours",
+    description: "Choose where your models run and keep control of your data.",
+    icon: ShieldCheckIcon,
   },
 ];
 
-export function IntroScreen({
-  onContinue,
-  onSkip,
-}: {
-  onContinue: () => void;
-  onSkip: () => void;
-}) {
+export function IntroScreen({ onContinue }: { onContinue: () => void }) {
   return (
     <main className="flex h-screen w-full flex-col overflow-hidden bg-white text-neutral-950">
-      <TitleBar onSkip={onSkip} />
+      <TitleBar />
 
       <section className="min-h-0 flex-1 overflow-y-auto px-6">
         <div className="mx-auto flex min-h-full w-full max-w-[620px] flex-col items-center justify-center py-4 text-center">
-          <OnboardingIcon />
+          <img
+            src="/hello.png"
+            alt="Ollama waving"
+            className="h-[72px] w-[72px] select-none object-contain"
+            draggable={false}
+          />
           <h1 className="mt-6 font-rounded text-2xl font-medium leading-8">
             What is Ollama?
           </h1>
@@ -133,18 +127,16 @@ export function IntroScreen({
               );
             })}
           </div>
+
+          <button
+            type="button"
+            className="mt-8 flex h-11 w-full max-w-[240px] cursor-pointer items-center justify-center rounded-full bg-neutral-900 px-5 font-sans text-sm font-normal text-white transition-colors hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
+            onClick={onContinue}
+          >
+            Continue
+          </button>
         </div>
       </section>
-
-      <footer className="flex h-18 shrink-0 items-start justify-end px-6 pt-2">
-        <button
-          type="button"
-          className="h-8 min-w-[96px] cursor-pointer rounded-lg bg-neutral-900 px-4 text-[13px] text-white hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
-          onClick={onContinue}
-        >
-          Continue
-        </button>
-      </footer>
     </main>
   );
 }
@@ -180,8 +172,8 @@ export function WelcomeScreen({
           Welcome to Ollama
         </h1>
         <p className="mt-3 max-w-[400px] text-sm leading-6 text-neutral-400">
-          Sign in to launch Ollama inside the apps you use, or run it locally
-          from the command line.
+          Sign in to use the latest open models in the cloud, or continue with
+          local models.
         </p>
 
         <div className="mt-7 flex w-full max-w-[240px] flex-col items-center">
@@ -277,6 +269,7 @@ interface OnboardingProps extends ScreenProps {
   completionError: string | null;
   isAuthenticated: boolean;
   onFinish: () => void;
+  onUseLocal: () => void;
   showRun: boolean;
 }
 
@@ -313,11 +306,6 @@ export default function Onboarding(props: OnboardingProps) {
             nextOnboardingStep(current, "continue", props.isAuthenticated),
           )
         }
-        onSkip={() =>
-          setStep((current) =>
-            nextOnboardingStep(current, "skip", props.isAuthenticated),
-          )
-        }
       />
     );
   }
@@ -325,11 +313,12 @@ export default function Onboarding(props: OnboardingProps) {
   return (
     <WelcomeScreen
       {...props}
-      onLocal={() =>
+      onLocal={() => {
+        props.onUseLocal();
         setStep((current) =>
           nextOnboardingStep(current, "local", props.isAuthenticated),
-        )
-      }
+        );
+      }}
     />
   );
 }
