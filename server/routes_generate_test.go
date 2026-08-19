@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -2571,6 +2572,139 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 
 		if got := allContent.String(); got != "Based on my analysis, the solution is straightforward." {
 			t.Errorf("expected content %q, got %q", "Based on my analysis, the solution is straightforward.", got)
+		}
+	})
+
+	// A level names a different number on every request, because it is a share
+	// of the room the response has. A client that only sees "medium" cannot
+	// work out which number applied, and a budget carried by the model's own
+	// think_budget parameter is one the client never sent at all.
+	t.Run("reports the resolved think budget", func(t *testing.T) {
+		mock.CompletionResponse = llm.CompletionResponse{
+			Content:            " thinking </think> done.",
+			Done:               true,
+			DoneReason:         llm.DoneReasonStop,
+			PromptEvalCount:    1,
+			PromptEvalDuration: 1,
+			EvalCount:          1,
+			EvalDuration:       1,
+		}
+		mock.CompletionFn = nil
+
+		streamRequest := false
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model:    "test-thinking",
+			Messages: []api.Message{{Role: "user", Content: "Analyze this"}},
+			Think:    &api.ThinkValue{Value: "medium"},
+			Stream:   &streamRequest,
+			Options: map[string]any{
+				"num_ctx":     32768,
+				"num_predict": 8000,
+			},
+		})
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", w.Code)
+		}
+
+		var resp api.ChatResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+
+		// medium is 1/4 of min(num_predict, num_ctx), so the response cap is
+		// what it divides -- not the context length.
+		if resp.ThinkBudgetTokens != 2000 {
+			t.Errorf("expected think budget tokens 2000, got %d", resp.ThinkBudgetTokens)
+		}
+		// The level is reported in the form it was written, so a caller can
+		// tell a level it sent apart from one the model carried.
+		if resp.ThinkBudget == nil || resp.ThinkBudget.Value != "medium" {
+			t.Errorf("expected think budget %q, got %#v", "medium", resp.ThinkBudget)
+		}
+	})
+
+	// A fixed count is already the resolved figure, so both fields carry the
+	// same number. That is the point: one name means one thing whether the
+	// budget was written as a level or as a count.
+	t.Run("reports a fixed budget as both the value and the count", func(t *testing.T) {
+		mock.CompletionResponse = llm.CompletionResponse{
+			Content:            " thinking </think> done.",
+			Done:               true,
+			DoneReason:         llm.DoneReasonStop,
+			PromptEvalCount:    1,
+			PromptEvalDuration: 1,
+			EvalCount:          1,
+			EvalDuration:       1,
+		}
+		mock.CompletionFn = nil
+
+		streamRequest := false
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model:    "test-thinking",
+			Messages: []api.Message{{Role: "user", Content: "Analyze this"}},
+			Think:    &api.ThinkValue{Value: 4096},
+			Stream:   &streamRequest,
+			Options:  map[string]any{"num_ctx": 32768, "num_predict": 8000},
+		})
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", w.Code)
+		}
+
+		var resp api.ChatResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+
+		if resp.ThinkBudgetTokens != 4096 {
+			t.Errorf("expected think budget tokens 4096, got %d", resp.ThinkBudgetTokens)
+		}
+		if resp.ThinkBudget == nil {
+			t.Fatalf("expected a think budget value, got nil")
+		}
+		// Decoded from JSON, so the count arrives as a number rather than an
+		// int; compare on the wire form both fields are read from.
+		if got := fmt.Sprintf("%v", resp.ThinkBudget.Value); got != "4096" {
+			t.Errorf("expected think budget %q, got %q", "4096", got)
+		}
+	})
+
+	t.Run("omits the think budget when thinking is unbounded", func(t *testing.T) {
+		mock.CompletionResponse = llm.CompletionResponse{
+			Content:            " thinking </think> done.",
+			Done:               true,
+			DoneReason:         llm.DoneReasonStop,
+			PromptEvalCount:    1,
+			PromptEvalDuration: 1,
+			EvalCount:          1,
+			EvalDuration:       1,
+		}
+		mock.CompletionFn = nil
+
+		streamRequest := false
+		think := true
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model:    "test-thinking",
+			Messages: []api.Message{{Role: "user", Content: "Analyze this"}},
+			Think:    &api.ThinkValue{Value: think},
+			Stream:   &streamRequest,
+		})
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", w.Code)
+		}
+
+		var resp api.ChatResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+
+		if resp.ThinkBudgetTokens != 0 {
+			t.Errorf("expected no think budget tokens, got %d", resp.ThinkBudgetTokens)
+		}
+		if resp.ThinkBudget != nil {
+			t.Errorf("expected no think budget value, got %#v", resp.ThinkBudget)
 		}
 	})
 

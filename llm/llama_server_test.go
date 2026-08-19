@@ -3606,6 +3606,92 @@ func TestLlamaServerChatTemplateKwargs(t *testing.T) {
 	}
 }
 
+func TestLlamaServerChatRequestThinkBudget(t *testing.T) {
+	// llama-server owns the template on the chat path, so the budget in the
+	// body is the only thing bounding thinking there
+	tests := []struct {
+		name        string
+		numCtx      int
+		numPredict  int
+		think       *api.ThinkValue
+		thinkBudget *api.ThinkValue
+		want        any
+	}{
+		{
+			name:   "effort resolves against the context length",
+			numCtx: 32768,
+			think:  &api.ThinkValue{Value: "medium"},
+			want:   8192,
+		},
+		{
+			// a level leaves room to answer, so a capped response is the
+			// window it takes its share of
+			name:       "effort resolves against num_predict when the request caps the response",
+			numCtx:     128000,
+			numPredict: 32000,
+			think:      &api.ThinkValue{Value: "medium"},
+			want:       8000,
+		},
+		{
+			name:       "effort resolves against the context when num_predict is past it",
+			numCtx:     32768,
+			numPredict: 128000,
+			think:      &api.ThinkValue{Value: "medium"},
+			want:       8192,
+		},
+		{
+			name:       "effort resolves against the context when num_predict is unlimited",
+			numCtx:     32768,
+			numPredict: -1,
+			think:      &api.ThinkValue{Value: "medium"},
+			want:       8192,
+		},
+		{
+			name:        "the model think_budget level resolves against num_predict too",
+			numCtx:      128000,
+			numPredict:  32000,
+			think:       &api.ThinkValue{Value: true},
+			thinkBudget: &api.ThinkValue{Value: "medium"},
+			want:        8000,
+		},
+		{
+			name:       "an explicit budget ignores num_predict",
+			numCtx:     128000,
+			numPredict: 32000,
+			think:      &api.ThinkValue{Value: 16000},
+			want:       16000,
+		},
+		{
+			name:   "think true stays unrestricted",
+			numCtx: 32768,
+			think:  &api.ThinkValue{Value: true},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &llamaServerRunner{options: api.Options{Runner: api.Runner{NumCtx: tt.numCtx}}}
+
+			opts := api.DefaultOptions()
+			opts.NumCtx = tt.numCtx
+			opts.NumPredict = tt.numPredict
+			opts.ThinkBudget = tt.thinkBudget
+
+			body, err := s.llamaServerChatRequest(ChatRequest{
+				Messages: []api.Message{{Role: "user", Content: "hi"}},
+				Options:  &opts,
+				Think:    tt.think,
+			}, false)
+			if err != nil {
+				t.Fatalf("llamaServerChatRequest error: %v", err)
+			}
+			if got := body["thinking_budget_tokens"]; got != tt.want {
+				t.Fatalf("thinking_budget_tokens = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLlamaServerChatMessageConvertsToolCalls(t *testing.T) {
 	args := api.NewToolCallFunctionArguments()
 	args.Set("command", "ls")
@@ -3743,4 +3829,198 @@ func fakeRunningCmd() *exec.Cmd {
 	// pass *testing.T here without changing all call sites. The OS will
 	// SIGKILL children when the test process exits.
 	return cmd
+}
+
+func TestLlamaServerCompletionReasoningBudget(t *testing.T) {
+	tests := []struct {
+		name                 string
+		req                  CompletionRequest
+		wantBudget           any
+		wantStart            any
+		wantEnd              any
+		wantMessage          any
+		wantGenerationPrompt any
+	}{
+		{
+			name: "budget with model-emitted opening tag",
+			req: CompletionRequest{
+				Prompt:           "<bos><|turn>user\nhi<turn|>\n<|turn>model\n",
+				ThinkBudget:      512,
+				ThinkingStartTag: "<|channel>",
+				ThinkingEndTag:   "<channel|>",
+			},
+			wantBudget:  float64(512),
+			wantStart:   "<|channel>",
+			wantEnd:     "<channel|>",
+			wantMessage: "",
+		},
+		{
+			name: "primed thinking block is replayed as the generation prompt",
+			req: CompletionRequest{
+				Prompt:           "<|im_start|>assistant\n<think>\n",
+				ThinkBudget:      512,
+				ThinkingStartTag: "<think>",
+				ThinkingEndTag:   "</think>",
+			},
+			wantBudget:           float64(512),
+			wantStart:            "<think>",
+			wantEnd:              "</think>",
+			wantMessage:          "",
+			wantGenerationPrompt: "<think>\n",
+		},
+		{
+			// gemma4 primes the block with a channel name after a tool
+			// response, so the prompt ends past the opening tag rather than
+			// with it
+			name: "primed block is replayed past the opening tag",
+			req: CompletionRequest{
+				Prompt:           "<|tool_response>12:00<turn|>\n<|channel>thought\n",
+				ThinkBudget:      512,
+				ThinkingStartTag: "<|channel>",
+				ThinkingEndTag:   "<channel|>",
+			},
+			wantBudget:           float64(512),
+			wantStart:            "<|channel>",
+			wantEnd:              "<channel|>",
+			wantMessage:          "",
+			wantGenerationPrompt: "<|channel>thought\n",
+		},
+		{
+			name: "closed thinking block is not replayed",
+			req: CompletionRequest{
+				Prompt:           "<|turn>model\n<|channel>thought\nhm<channel|>done<turn|>\n<|turn>model\n",
+				ThinkBudget:      512,
+				ThinkingStartTag: "<|channel>",
+				ThinkingEndTag:   "<channel|>",
+			},
+			wantBudget:  float64(512),
+			wantStart:   "<|channel>",
+			wantEnd:     "<channel|>",
+			wantMessage: "",
+		},
+		{
+			// an opening tag this far from the end came from message content,
+			// not from the template priming the turn
+			name: "opening tag inside message content is not replayed",
+			req: CompletionRequest{
+				Prompt:           "<|im_start|>user\nwhy does <think> not close in this quoted example I pasted<|im_end|>\n<|im_start|>assistant\n",
+				ThinkBudget:      512,
+				ThinkingStartTag: "<think>",
+				ThinkingEndTag:   "</think>",
+			},
+			wantBudget:  float64(512),
+			wantStart:   "<think>",
+			wantEnd:     "</think>",
+			wantMessage: "",
+		},
+		{
+			name: "wrap-up message is forced ahead of the closing tag",
+			req: CompletionRequest{
+				Prompt:             "<bos><|turn>user\nhi<turn|>\n<|turn>model\n",
+				ThinkBudget:        512,
+				ThinkBudgetMessage: "\n\nTime to answer now.\n",
+				ThinkingStartTag:   "<|channel>",
+				ThinkingEndTag:     "<channel|>",
+			},
+			wantBudget:  float64(512),
+			wantStart:   "<|channel>",
+			wantEnd:     "<channel|>",
+			wantMessage: "\n\nTime to answer now.\n",
+		},
+		{
+			name: "no budget",
+			req: CompletionRequest{
+				Prompt:             "test prompt",
+				ThinkBudgetMessage: "ignored without a budget",
+				ThinkingStartTag:   "<think>",
+				ThinkingEndTag:     "</think>",
+			},
+		},
+		{
+			name: "budget without tags is not enforceable",
+			req: CompletionRequest{
+				Prompt:      "test prompt",
+				ThinkBudget: 512,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var completionBody map[string]any
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/health":
+					fmt.Fprint(w, `{"status":"ok"}`)
+				case "/completion":
+					body, err := io.ReadAll(r.Body)
+					if err != nil {
+						t.Errorf("reading completion request body: %v", err)
+						return
+					}
+					if err := json.Unmarshal(body, &completionBody); err != nil {
+						t.Errorf("invalid completion request body %q: %v", body, err)
+						return
+					}
+					w.Header().Set("Content-Type", "text/event-stream")
+					fmt.Fprintln(w, `data: {"content":"","stop":true}`)
+				default:
+					t.Errorf("unexpected path: %s", r.URL.Path)
+				}
+			}))
+			defer srv.Close()
+
+			parts := strings.Split(srv.URL, ":")
+			var portInt int
+			fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+			runner := &llamaServerRunner{
+				port:    portInt,
+				cmd:     fakeRunningCmd(),
+				sem:     semaphore.NewWeighted(1),
+				options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+			}
+
+			opts := api.DefaultOptions()
+			req := tt.req
+			req.Options = &opts
+			if err := runner.Completion(t.Context(), req, func(CompletionResponse) {}); err != nil {
+				t.Fatalf("Completion error: %v", err)
+			}
+
+			// a nil want means the field must not reach the wire at all
+			checks := []struct {
+				field string
+				want  any
+			}{
+				{"reasoning_budget_tokens", tt.wantBudget},
+				{"reasoning_budget_start_tag", tt.wantStart},
+				{"reasoning_budget_end_tag", tt.wantEnd},
+				// llama-server builds the sequence it forces from
+				// message+end_tag, and only when this field is present, so an
+				// empty message still has to reach the wire
+				{"reasoning_budget_message", tt.wantMessage},
+				{"generation_prompt", tt.wantGenerationPrompt},
+			}
+
+			for _, check := range checks {
+				field, want := check.field, check.want
+				got, ok := completionBody[field]
+				if want == nil {
+					if ok {
+						t.Errorf("%s = %v, want it omitted", field, got)
+					}
+					continue
+				}
+				if !ok {
+					t.Errorf("%s missing from llama-server completion request", field)
+					continue
+				}
+				if got != want {
+					t.Errorf("%s = %v, want %v", field, got, want)
+				}
+			}
+		})
+	}
 }

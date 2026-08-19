@@ -45,7 +45,7 @@ Generate a response for a given prompt with a provided model. This is a streamin
 - `prompt`: the prompt to generate a response for
 - `suffix`: the text after the model response
 - `images`: (optional) a list of base64-encoded images (for multimodal models such as `llava`)
-- `think`: (for thinking models) should the model think before responding? Can be a boolean or a thinking level (`"low"`, `"medium"`, `"high"`, or `"max"`).
+- `think`: (for thinking models) should the model think before responding? Can be a boolean, a thinking level (`"minimal"`, `"low"`, `"medium"`, `"high"`, or `"max"`), or a positive integer capping how many tokens the model may spend thinking. Levels are a share of the room the response has - `num_predict` when the request caps it, the context length otherwise - from a sixteenth for `"minimal"` to four fifths for `"max"`; `true` leaves thinking unbounded. `"xhigh"` is accepted as another name for `"max"`, for clients whose effort scale ends there. See [`think_budget`](./modelfile.mdx#valid-parameters-and-values) for the model-level form and for the wrap-up message.
 
 Advanced parameters (optional):
 
@@ -104,6 +104,8 @@ The final response in the stream also includes additional data about the generat
 - `eval_count`: number of tokens in the response
 - `eval_duration`: time in nanoseconds spent generating the response
 - `context`: an encoding of the conversation used in this response, this can be sent in the next request to keep a conversational memory
+- `think_budget`: the budget that applied, in the form it was written - a level such as `"medium"`, or a token count. This is the request's `think` value when that carried a budget, and the model's own `think_budget` parameter otherwise, which the caller may never have sent. Omitted when thinking was unbounded
+- `think_budget_tokens`: what that budget resolved to, in tokens. A level is a share of the room the response has, so it names a different number on every request; a budget written as a token count reports the same number in both fields. Omitted when thinking was unbounded
 - `response`: empty if the response was streamed, if not streamed, this will contain the full response
 
 To calculate how fast the response is generated in tokens per second (token/s), divide `eval_count` / `eval_duration` \* `10^9`.
@@ -494,7 +496,7 @@ Generate the next message in a chat with a provided model. This is a streaming e
 - `model`: (required) the [model name](#model-names)
 - `messages`: the messages of the chat, this can be used to keep a chat memory
 - `tools`: list of tools in JSON for the model to use if supported
-- `think`: (for thinking models) should the model think before responding? Can be a boolean or a thinking level (`"low"`, `"medium"`, `"high"`, or `"max"`).
+- `think`: (for thinking models) should the model think before responding? Can be a boolean, a thinking level (`"minimal"`, `"low"`, `"medium"`, `"high"`, or `"max"`), or a positive integer capping how many tokens the model may spend thinking. Levels are a share of the room the response has - `num_predict` when the request caps it, the context length otherwise - from a sixteenth for `"minimal"` to four fifths for `"max"`; `true` leaves thinking unbounded. `"xhigh"` is accepted as another name for `"max"`, for clients whose effort scale ends there. See [`think_budget`](./modelfile.mdx#valid-parameters-and-values) for the model-level form and for the wrap-up message.
 
 The `message` object has the following fields:
 
@@ -580,6 +582,8 @@ Final response:
   "eval_duration": 4535599000
 }
 ```
+
+The final response carries the same additional data as [generate](#generate-a-completion), including `think_budget` and `think_budget_tokens` when thinking was bounded.
 
 #### Chat request (Streaming with tools)
 
@@ -1446,6 +1450,13 @@ Show information about a model including details, modelfile, template, parameter
 
 - `model`: name of the model to show
 - `verbose`: (optional) if set to `true`, returns full data for verbose response fields
+
+It also accepts `think`, the think value the caller intends to send, so the budget below can be answered for a level the caller sets rather than only for one the model carries.
+
+The response reports the thinking budget under the same names the generate and chat responses use:
+
+- `think_budget`: the budget that would apply, in the form it was written - a level such as `"medium"`, or a token count. This is the request's `think` value when that carries a budget, and the model's own [`think_budget`](./modelfile.mdx#valid-parameters-and-values) parameter otherwise - the same precedence a completion uses. The parameter also appears in `parameters`, but only as a line of text to parse. Omitted when neither carries a budget
+- `think_budget_tokens`: what that budget resolves to, in tokens, against the model's own `num_predict` and `num_ctx` - or against `options` when the request supplies them, so a caller can ask what the budget would be under the options it intends to send. Omitted when there is no window to resolve against
 
 ### Examples
 
