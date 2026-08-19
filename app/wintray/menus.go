@@ -28,10 +28,10 @@ const (
 )
 
 func (t *winTray) initMenus() error {
-	if err := t.addOrUpdateMenuItem(openUIMenuID, 0, openUIMenuTitle, false); err != nil {
+	if err := t.addOrUpdateMenuItem(settingsUIMenuID, 0, settingsUIMenuTitle, false); err != nil {
 		return fmt.Errorf("unable to create menu entries %w", err)
 	}
-	if err := t.addOrUpdateMenuItem(settingsUIMenuID, 0, settingsUIMenuTitle, false); err != nil {
+	if err := t.addOrUpdateMenuItem(openUIMenuID, 0, openUIMenuTitle, false); err != nil {
 		return fmt.Errorf("unable to create menu entries %w", err)
 	}
 	if err := t.addOrUpdateMenuItem(diagLogsMenuID, 0, diagLogsMenuTitle, false); err != nil {

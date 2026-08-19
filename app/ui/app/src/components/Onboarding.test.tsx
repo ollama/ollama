@@ -17,11 +17,16 @@ describe("Onboarding", () => {
   it("explains what Ollama is before asking the user to choose a path", () => {
     const html = renderToStaticMarkup(<IntroScreen onContinue={vi.fn()} />);
 
-    expect(html).toContain("What is Ollama?");
-    expect(html).toContain("Open models, anywhere");
-    expect(html).toContain("Works with your tools");
+    expect(html).toContain("Welcome to Ollama!");
+    expect(html).toContain(
+      "Ollama lets you use open models with your coding agents so you can spend less while keeping your data private.",
+    );
+    expect(html).toContain("Keep your setup");
     expect(html).toContain("Your data stays yours");
-    expect(html).toContain("Claude, ChatGPT, Codex, and more");
+    expect(html).toContain("Easily switch models");
+    expect(html).toContain("coding agents you already know");
+    expect(html).toContain("never used for training or tracking");
+    expect(html).toContain("powerful and faster models in one click");
     expect(html).toContain("Continue");
     expect(html).not.toContain("Skip");
   });
@@ -76,7 +81,10 @@ describe("Onboarding", () => {
       />,
     );
 
-    expect(html).toContain("Welcome to Ollama");
+    expect(html).toContain("Sign in to Ollama");
+    expect(html).toContain(
+      "Use and manage your private models, and run powerful models with Ollama Cloud. No frontier hardware needed.",
+    );
     expect(html).toContain("Sign in or create an account");
     expect(html).toContain("Local only");
     expect(html).toContain("Skip");

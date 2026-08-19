@@ -2,8 +2,8 @@ import CopyButton from "@/components/CopyButton";
 import Logo from "@/components/Logo";
 import { nextOnboardingStep, type OnboardingStep } from "@/lib/onboarding";
 import {
+  ArrowsRightLeftIcon,
   CommandLineIcon,
-  CubeTransparentIcon,
   ShieldCheckIcon,
 } from "@heroicons/react/24/outline";
 import { useEffect, useState, type ReactNode } from "react";
@@ -71,19 +71,19 @@ function OnboardingCard({ children }: { children: ReactNode }) {
 
 const OLLAMA_FEATURES = [
   {
-    title: "Open models, anywhere",
-    description: "Run open models on your computer or in the cloud.",
-    icon: CubeTransparentIcon,
-  },
-  {
-    title: "Works with your tools",
-    description: "Use Ollama with Claude, ChatGPT, Codex, and more.",
+    title: "Keep your setup",
+    description: "Use Ollama with the coding agents you already know.",
     icon: CommandLineIcon,
   },
   {
     title: "Your data stays yours",
-    description: "Choose where your models run and keep control of your data.",
+    description: "Your prompts are never used for training or tracking.",
     icon: ShieldCheckIcon,
+  },
+  {
+    title: "Easily switch models",
+    description: "Swap between powerful and faster models in one click.",
+    icon: ArrowsRightLeftIcon,
   },
 ];
 
@@ -94,21 +94,23 @@ export function IntroScreen({ onContinue }: { onContinue: () => void }) {
 
       <section className="min-h-0 flex-1 overflow-y-auto px-6">
         <div className="mx-auto flex min-h-full w-full max-w-[620px] flex-col items-center justify-center py-4 text-center">
-          <img
-            src="/hello.png"
-            alt="Ollama waving"
-            className="h-[72px] w-[72px] select-none object-contain"
-            draggable={false}
-          />
-          <h1 className="mt-6 font-rounded text-2xl font-medium leading-8">
-            What is Ollama?
-          </h1>
-          <p className="mt-3 max-w-[440px] text-sm leading-6 text-neutral-500">
-            Run AI models on your own computer, or connect to Ollama for cloud
-            models.
+          <div className="flex items-center justify-center gap-3">
+            <h1 className="font-rounded text-2xl font-medium leading-8">
+              Welcome to Ollama!
+            </h1>
+            <img
+              src="/hello.png"
+              alt="Ollama waving"
+              className="h-[72px] w-[72px] select-none object-contain"
+              draggable={false}
+            />
+          </div>
+          <p className="mt-4 max-w-[500px] text-sm leading-6 text-neutral-500">
+            Ollama lets you use open models with your coding agents so you can
+            spend less while keeping your data private.
           </p>
 
-          <div className="mt-8 w-full max-w-[480px] space-y-5 text-left">
+          <div className="mt-8 w-full max-w-[500px] space-y-6 text-left">
             {OLLAMA_FEATURES.map((feature) => {
               const Icon = feature.icon;
 
@@ -169,11 +171,11 @@ export function WelcomeScreen({
       <OnboardingCard>
         <OnboardingIcon />
         <h1 className="mt-7 font-rounded text-2xl font-medium leading-8">
-          Welcome to Ollama
+          Sign in to Ollama
         </h1>
         <p className="mt-3 max-w-[400px] text-sm leading-6 text-neutral-400">
-          Sign in to use the latest open models in the cloud, or continue with
-          local models.
+          Use and manage your private models, and run powerful models with
+          Ollama Cloud. No frontier hardware needed.
         </p>
 
         <div className="mt-7 flex w-full max-w-[240px] flex-col items-center">

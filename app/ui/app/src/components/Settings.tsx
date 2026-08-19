@@ -13,7 +13,6 @@ import {
   WrenchIcon,
   CloudIcon,
   CogIcon,
-  ArrowLeftIcon,
   ArrowDownTrayIcon,
 } from "@heroicons/react/20/solid";
 import { Settings as SettingsType } from "@/gotypes";
@@ -270,9 +269,6 @@ export default function Settings() {
   }
 
   const isWindows = navigator.platform.toLowerCase().includes("win");
-  const handleCloseSettings = () => {
-    window.close();
-  };
 
   return (
     <main className="flex h-screen w-full flex-col select-none dark:bg-neutral-900">
@@ -284,14 +280,6 @@ export default function Settings() {
         <h1
           className={`${isWindows ? "pl-4" : "pl-24"} flex items-center font-rounded text-md font-medium dark:text-white`}
         >
-          {isWindows && (
-            <button
-              onClick={handleCloseSettings}
-              className="hover:bg-neutral-100 mr-3 dark:hover:bg-neutral-800 rounded-full p-1.5"
-            >
-              <ArrowLeftIcon className="w-5 h-5 dark:text-white" />
-            </button>
-          )}
           Settings
         </h1>
       </header>
