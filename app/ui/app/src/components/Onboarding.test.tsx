@@ -18,6 +18,9 @@ describe("Onboarding", () => {
     const html = renderToStaticMarkup(<IntroScreen onContinue={vi.fn()} />);
 
     expect(html).toContain("Welcome to Ollama!");
+    expect(html.indexOf('alt="Ollama waving"')).toBeLessThan(
+      html.indexOf("Welcome to Ollama!"),
+    );
     expect(html).toContain("Run open models locally or in the cloud.");
     expect(html).toContain("Keep your setup");
     expect(html).toContain("Your data stays yours");

@@ -95,16 +95,16 @@ export function IntroScreen({ onContinue }: { onContinue: () => void }) {
 
       <section className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-6 pb-10">
         <div className="mx-auto flex min-h-full w-full max-w-[620px] flex-col items-center justify-center py-4 text-center">
-          <div className="flex items-center justify-center gap-3">
-            <h1 className="font-rounded text-2xl font-medium leading-8">
-              Welcome to Ollama!
-            </h1>
+          <div className="flex flex-col items-center justify-center gap-2">
             <img
               src="/hello.png"
               alt="Ollama waving"
               className="h-[72px] w-[72px] select-none object-contain"
               draggable={false}
             />
+            <h1 className="font-rounded text-2xl font-medium leading-8">
+              Welcome to Ollama!
+            </h1>
           </div>
           <p className="mt-4 max-w-[500px] text-sm leading-6 text-neutral-500">
             Run open models locally or in the cloud.
