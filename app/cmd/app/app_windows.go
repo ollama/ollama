@@ -424,17 +424,13 @@ func drag(ptr unsafe.Pointer) {}
 func doubleClick(ptr unsafe.Pointer) {}
 
 // checkAndHandleExistingInstance checks if another instance is running and sends the URL to it
-func checkAndHandleExistingInstance(urlSchemeRequest string) bool {
+func checkAndHandleExistingInstance(urlSchemeRequest string) {
 	if urlSchemeRequest == "" {
-		return false
+		return
 	}
 
 	// Try to send URL to existing instance using wintray messaging
 	if wintray.CheckAndSendToExistingInstance(urlSchemeRequest) {
 		os.Exit(0)
-		return true
 	}
-
-	// No existing instance, we'll handle it ourselves
-	return false
 }

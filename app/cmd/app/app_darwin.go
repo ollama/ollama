@@ -265,6 +265,4 @@ func handleConnectURL() {
 }
 
 // checkAndHandleExistingInstance is not needed on non-Windows platforms
-func checkAndHandleExistingInstance(_ string) bool {
-	return false
-}
+func checkAndHandleExistingInstance(_ string) {}
