@@ -6,7 +6,8 @@ import {
   authenticationTimeoutAction,
   CURRENT_ONBOARDING_VERSION,
   homeChatId,
-  onboardingConnectUrl,
+  onboardingAuthUrl,
+  type OnboardingAuthMode,
 } from "@/lib/onboarding";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -72,7 +73,7 @@ function OnboardingRoute() {
     window.close();
   }, [completeOnboarding]);
 
-  const signIn = useCallback(async () => {
+  const authenticate = useCallback(async (mode: OnboardingAuthMode) => {
     setSignInError(null);
 
     if (isAuthenticated) {
@@ -90,7 +91,7 @@ function OnboardingRoute() {
         throw new Error("No sign-in URL was returned");
       }
 
-      window.open(onboardingConnectUrl(result.data), "_blank");
+      window.open(onboardingAuthUrl(result.data, mode), "_blank");
     } catch (error) {
       if (authAttempt !== authAttemptRef.current) return;
       console.error("Failed to start sign in:", error);
@@ -98,6 +99,9 @@ function OnboardingRoute() {
       setSignInError("Unable to start sign in. Please try again.");
     }
   }, [fetchConnectUrl, isAuthenticated]);
+
+  const signIn = useCallback(() => authenticate("signin"), [authenticate]);
+  const signUp = useCallback(() => authenticate("signup"), [authenticate]);
 
   const useLocal = useCallback(() => {
     authAttemptRef.current += 1;
@@ -175,6 +179,7 @@ function OnboardingRoute() {
       isSigningIn={isAwaitingAuth}
       signInError={signInError}
       onSignIn={signIn}
+      onSignUp={signUp}
       onUseLocal={useLocal}
       onFinish={finish}
       showRun={showRun}

@@ -1,10 +1,18 @@
 // Keep in sync with store.CurrentOnboardingVersion in app/store/store.go.
 export const CURRENT_ONBOARDING_VERSION = 1;
 
-export function onboardingConnectUrl(connectUrl: string): string {
+export type OnboardingAuthMode = "signin" | "signup";
+
+export function onboardingAuthUrl(
+  connectUrl: string,
+  mode: OnboardingAuthMode,
+): string {
   const url = new URL(connectUrl);
   url.searchParams.delete("launch");
-  return url.toString();
+
+  const authUrl = new URL(`/${mode}`, url.origin);
+  authUrl.searchParams.set("next", `${url.pathname}${url.search}`);
+  return authUrl.toString();
 }
 
 export type OnboardingStep = "intro" | "welcome" | "run";
@@ -14,10 +22,10 @@ export type AuthenticationTimeoutAction = "ignore" | "defer" | "fail";
 export function nextOnboardingStep(
   step: OnboardingStep,
   action: OnboardingAction,
-  isAuthenticated: boolean,
+  _isAuthenticated: boolean,
 ): OnboardingStep {
   if (action === "skip" || action === "local") return "run";
-  if (step === "intro") return isAuthenticated ? "run" : "welcome";
+  if (step === "intro") return "welcome";
   return step;
 }
 
