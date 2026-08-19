@@ -169,6 +169,14 @@ if(OLLAMA_MLX_BACKENDS)
         list(APPEND _mlx_source_targets ollama-mlx-source)
     endif()
 
+    # Temporary MLX-C carry patch: regenerated bindings for force_fused and the
+    # thread-local compile cache, carried until they merge upstream into
+    # ml-explore/mlx-c. Then bump MLX_C_VERSION and delete mlx/compat/.
+    find_package(Git REQUIRED)
+    set(OLLAMA_MLX_C_COMPAT_PATCH_COMMAND
+        ${GIT_EXECUTABLE} apply ${CMAKE_SOURCE_DIR}/mlx/compat/0001-mlx-c-regen-0.32.1.patch
+        CACHE INTERNAL "MLX-C carry patch")
+
     if(DEFINED "FETCHCONTENT_SOURCE_DIR_MLX-C" AND NOT "${FETCHCONTENT_SOURCE_DIR_MLX-C}" STREQUAL "")
         get_filename_component(OLLAMA_MLX_C_SOURCE_DIR
             "${FETCHCONTENT_SOURCE_DIR_MLX-C}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
@@ -188,7 +196,9 @@ if(OLLAMA_MLX_BACKENDS)
             CONFIGURE_COMMAND ""
             BUILD_COMMAND ""
             INSTALL_COMMAND ""
-            USES_TERMINAL_DOWNLOAD TRUE)
+            PATCH_COMMAND ${OLLAMA_MLX_C_COMPAT_PATCH_COMMAND}
+            USES_TERMINAL_DOWNLOAD TRUE
+            USES_TERMINAL_PATCH TRUE)
         list(APPEND _mlx_source_targets ollama-mlx-c-source)
     endif()
     # Refresh the vendored MLX-C headers once the sources are present. Every MLX
