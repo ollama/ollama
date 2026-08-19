@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"cmp"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -31,9 +30,19 @@ import (
 
 var stream bool = false
 
+// ensureTestModelsDir isolates tests from a developer OLLAMA_MODELS while
+// reusing one directory for every helper call within the same test. Always
+// calling t.TempDir() here would break createBinFile → createRequest flows.
+func ensureTestModelsDir(t *testing.T) {
+	t.Helper()
+	if envconfig.Var("OLLAMA_MODELS") == "" {
+		t.Setenv("OLLAMA_MODELS", t.TempDir())
+	}
+}
+
 func createBinFile(t *testing.T, kv map[string]any, ti []*ggml.Tensor) (string, string) {
 	t.Helper()
-	t.Setenv("OLLAMA_MODELS", cmp.Or(os.Getenv("OLLAMA_MODELS"), t.TempDir()))
+	ensureTestModelsDir(t)
 
 	modelDir := envconfig.Models()
 
@@ -83,8 +92,7 @@ func (t *responseRecorder) CloseNotify() <-chan bool {
 
 func createRequest(t *testing.T, fn func(*gin.Context), body any) *httptest.ResponseRecorder {
 	t.Helper()
-	// if OLLAMA_MODELS is not set, set it to the temp directory
-	t.Setenv("OLLAMA_MODELS", cmp.Or(os.Getenv("OLLAMA_MODELS"), t.TempDir()))
+	ensureTestModelsDir(t)
 
 	w := NewRecorder()
 	c, _ := gin.CreateTestContext(w)

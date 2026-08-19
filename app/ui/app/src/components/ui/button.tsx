@@ -195,7 +195,10 @@ export const Button = forwardRef(function Button(
   ) : (
     <Headless.Button
       {...(props as Omit<Headless.ButtonProps, "as" | "className">)}
-      className={clsx(classes, "cursor-pointer")}
+      className={clsx(
+        classes,
+        "cursor-pointer data-disabled:cursor-not-allowed",
+      )}
       ref={ref as React.ForwardedRef<HTMLButtonElement>}
     >
       <TouchTarget>{children}</TouchTarget>

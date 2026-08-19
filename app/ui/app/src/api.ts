@@ -259,6 +259,7 @@ export async function* sendMessage(
 
 export async function getSettings(): Promise<{
   settings: Settings;
+  modelsFromEnv: boolean;
 }> {
   const response = await fetch(`${API_BASE}/api/v1/settings`);
   if (!response.ok) {
@@ -267,11 +268,13 @@ export async function getSettings(): Promise<{
   const data = await response.json();
   return {
     settings: new Settings(data.settings),
+    modelsFromEnv: Boolean(data.modelsFromEnv),
   };
 }
 
 export async function updateSettings(settings: Settings): Promise<{
   settings: Settings;
+  modelsFromEnv: boolean;
 }> {
   const response = await fetch(`${API_BASE}/api/v1/settings`, {
     method: "POST",
@@ -287,6 +290,7 @@ export async function updateSettings(settings: Settings): Promise<{
   const data = await response.json();
   return {
     settings: new Settings(data.settings),
+    modelsFromEnv: Boolean(data.modelsFromEnv),
   };
 }
 
