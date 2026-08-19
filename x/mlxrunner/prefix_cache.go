@@ -63,7 +63,7 @@ type cacheSession struct {
 
 	// pendingSnapshots lists offsets where snapshots should be captured
 	// during prefill, sorted by offset. Entries are scheduled on the caches
-	// before prefill and drained or discarded after.
+	// before prefill and drained when the captures are attached.
 	pendingSnapshots []pendingSnapshot
 }
 
@@ -326,29 +326,6 @@ func (s *cacheSession) schedulePrefillSnapshots(offsets []int) {
 	}
 }
 
-// discardPrefillSnapshots drains and closes the snapshots scheduled by
-// schedulePrefillSnapshots without attaching them to the trie, releasing their
-// pinned/lazy state. It is a no-op once attachPrefillSnapshots has drained the
-// schedule, so close can call it unconditionally to clean up an abandoned
-// prefill.
-func (s *cacheSession) discardPrefillSnapshots() {
-	if len(s.pendingSnapshots) == 0 {
-		return
-	}
-	s.pendingSnapshots = nil
-
-	for _, kv := range s.cache.caches {
-		if kv == nil {
-			continue
-		}
-		for _, snap := range kv.TakeSnapshots() {
-			if snap != nil {
-				snap.Close()
-			}
-		}
-	}
-}
-
 // attachPrefillSnapshots collects the snapshots captured during prefill and
 // attaches them to the trie, materializing a node at each requested offset.
 // Pending offsets are ascending and were scheduled in the same order, so the
@@ -538,13 +515,10 @@ func (c *prefixCache) minCacheOffset() int {
 
 // close saves the token state if the forward pass ran.
 func (s *cacheSession) close() {
-	// Release any prefill snapshots the session scheduled but never attached to
-	// the trie. A successful prefill drains them in attachPrefillSnapshots (so
-	// this is a no-op then); an abandoned one (e.g. cancellation between
-	// schedule and attach) leaves them in the caches, where the next request's
-	// PrepareSnapshots would overwrite the schedule without closing them,
-	// leaking the pinned/lazy snapshots and their VRAM.
-	s.discardPrefillSnapshots()
+	// A cancelled prefill never reaches the success-path attach; attaching
+	// here keeps its crossed captures for the retry and drains the schedule
+	// PrepareSnapshots would otherwise overwrite, leaking them.
+	s.attachPrefillSnapshots()
 
 	offset := s.cache.minCacheOffset()
 	if offset <= 0 {
