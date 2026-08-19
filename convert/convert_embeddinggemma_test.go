@@ -120,6 +120,14 @@ func TestConvertEmbeddingGemmaSentenceTransformers(t *testing.T) {
 			t.Errorf("missing tensor %s", name)
 		}
 	}
+	for _, name := range []string{
+		"2_Dense.linear.weight",
+		"3_Dense.linear.weight",
+	} {
+		if slices.Contains(names, name) {
+			t.Errorf("unexpected raw nested tensor %s", name)
+		}
+	}
 
 	assertF32TensorValues(t, f, tensors, "output_norm.weight", 1)
 	assertF32TensorValues(t, f, tensors, "blk.0.attn_norm.weight", 1)
