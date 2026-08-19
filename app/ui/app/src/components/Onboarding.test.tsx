@@ -10,7 +10,7 @@ import {
 import {
   authenticationTimeoutAction,
   nextOnboardingStep,
-  onboardingAuthUrl,
+  onboardingConnectUrl,
 } from "@/lib/onboarding";
 
 describe("Onboarding", () => {
@@ -18,23 +18,20 @@ describe("Onboarding", () => {
     const html = renderToStaticMarkup(<IntroScreen onContinue={vi.fn()} />);
 
     expect(html).toContain("Welcome to Ollama!");
-    expect(html).toContain(
-      "Ollama lets you use open models with your coding agents so you can spend less while keeping your data private.",
-    );
+    expect(html).toContain("Run open models locally or in the cloud.");
     expect(html).toContain("Keep your setup");
     expect(html).toContain("Your data stays yours");
     expect(html).toContain("Easily switch models");
     expect(html).toContain("Run Ollama with the agents you already use.");
-    expect(html).toContain("Your prompts are never trained on or tracked.");
+    expect(html).toContain("Your data is never logged or trained on.");
     expect(html).toContain("Swap between frontier models in one click.");
     expect(html).toContain("Continue");
     expect(html).not.toContain("Skip");
   });
 
-  it("shows the cloud choice to signed-out and signed-in users", () => {
+  it("shows the account choice only to signed-out users", () => {
     expect(nextOnboardingStep("intro", "continue", false)).toBe("welcome");
-    expect(nextOnboardingStep("intro", "continue", true)).toBe("welcome");
-    expect(nextOnboardingStep("intro", "skip", false)).toBe("run");
+    expect(nextOnboardingStep("intro", "continue", true)).toBe("run");
     expect(nextOnboardingStep("welcome", "local", false)).toBe("run");
   });
 
@@ -44,22 +41,22 @@ describe("Onboarding", () => {
     expect(authenticationTimeoutAction(true, true)).toBe("ignore");
   });
 
-  it("keeps the onboarding app in control of sign-up and sign-in returns", () => {
+  it("opens the device connection flow and asks it to return to the app", () => {
     expect(
-      onboardingAuthUrl(
-        "https://ollama.com/connect?name=MacBook&key=public-key&launch=true",
-        "signup",
-      ),
-    ).toBe(
-      "https://ollama.com/signup?next=%2Fconnect%3Fname%3DMacBook%26key%3Dpublic-key",
-    );
-    expect(
-      onboardingAuthUrl(
+      onboardingConnectUrl(
         "https://ollama.com/connect?name=MacBook&key=public-key&launch=true",
         "signin",
       ),
     ).toBe(
-      "https://ollama.com/signin?next=%2Fconnect%3Fname%3DMacBook%26key%3Dpublic-key",
+      "https://ollama.com/connect?name=MacBook&key=public-key&launch=true",
+    );
+    expect(
+      onboardingConnectUrl(
+        "https://ollama.com/connect?name=MacBook&key=public-key",
+        "signup",
+      ),
+    ).toBe(
+      "https://ollama.com/connect?name=MacBook&key=public-key&launch=true&signup=true",
     );
   });
 
@@ -71,7 +68,7 @@ describe("Onboarding", () => {
         signInError={null}
         completionError={null}
         onSignIn={vi.fn()}
-        onFinish={vi.fn()}
+        onRetryCompletion={vi.fn()}
         onUseLocal={vi.fn()}
         showRun
       />,
@@ -79,7 +76,7 @@ describe("Onboarding", () => {
 
     expect(html).toContain("Run Ollama");
     expect(html).not.toContain("Welcome to Ollama");
-    expect(html).not.toContain("Get started with Ollama Cloud");
+    expect(html).not.toContain("Sign up");
   });
 
   it("offers cloud sign-up, local setup, and sign in on the welcome screen", () => {
@@ -94,12 +91,13 @@ describe("Onboarding", () => {
       />,
     );
 
-    expect(html).toContain("Run powerful models with Ollama Cloud");
+    expect(html).toContain("Create an account");
     expect(html).toContain(
-      "Sign up to power your agents with frontier models without having to buy frontier hardware.",
+      "Create your account for access to faster, larger open models.",
     );
-    expect(html).toContain("Get started with Ollama Cloud");
-    expect(html).toContain("Get started locally");
+    expect(html).toContain("Your data is never logged or trained on.");
+    expect(html).toContain("Sign up");
+    expect(html).toContain("No thanks, I&#x27;ll use Ollama locally");
     expect(html).toContain("Sign in");
     expect(html).not.toContain("Skip");
   });
@@ -116,25 +114,22 @@ describe("Onboarding", () => {
       />,
     );
 
-    expect(html).toContain("Run powerful models with Ollama Cloud");
+    expect(html).toContain("Create an account");
     expect(html).toContain(
-      "Power your agents with frontier models without having to buy frontier hardware.",
+      "Create your account for access to faster, larger open models.",
     );
-    expect(html).not.toContain("Sign up to power your agents");
+    expect(html).toContain("Your data is never logged or trained on.");
     expect(html).not.toContain(">Sign in<");
   });
 
-  it("shows only the local command and finish action on the final page", () => {
+  it("shows only the local command on the final page", () => {
     const html = renderToStaticMarkup(
-      <RunOllamaScreen
-        completionError={null}
-        onFinish={vi.fn()}
-      />,
+      <RunOllamaScreen completionError={null} onRetryCompletion={vi.fn()} />,
     );
 
     expect(html).toContain("Run Ollama");
     expect(html).toContain(FIRST_MODEL_COMMAND);
-    expect(html).toContain("Finish");
+    expect(html).not.toContain("Finish");
     expect(html).not.toContain("Sign in");
     expect(html).not.toContain("create an account");
   });
@@ -156,14 +151,16 @@ describe("Onboarding", () => {
   });
 
   it("shows a retryable error when onboarding completion cannot be saved", () => {
+    const onRetryCompletion = vi.fn();
     const html = renderToStaticMarkup(
       <RunOllamaScreen
         completionError="Unable to save setup. Please try again."
-        onFinish={vi.fn()}
+        onRetryCompletion={onRetryCompletion}
       />,
     );
 
     expect(html).toContain("Unable to save setup. Please try again.");
     expect(html).toContain('role="alert"');
+    expect(html).toContain("Try again");
   });
 });

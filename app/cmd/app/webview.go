@@ -25,8 +25,10 @@ import (
 )
 
 const (
-	defaultWindowWidth  = 1360
-	defaultWindowHeight = 960
+	defaultWindowWidth     = 1360
+	defaultWindowHeight    = 960
+	onboardingWindowWidth  = 900
+	onboardingWindowHeight = 660
 )
 
 type Webview struct {
@@ -253,7 +255,7 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 		wv.Bind("setOnboardingWindow", func(enabled bool) {
 			wv.Dispatch(func() {
 				if enabled {
-					wv.SetSize(988, 728, webview.HintFixed)
+					wv.SetSize(onboardingWindowWidth, onboardingWindowHeight, webview.HintFixed)
 					setOnboardingWindowStyle(wv.Window(), true)
 					return
 				}

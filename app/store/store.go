@@ -340,6 +340,16 @@ func (s *Store) migrateFromConfig(database *database) error {
 	if err := database.setHasCompletedFirstRun(hasCompleted); err != nil {
 		return fmt.Errorf("migrate first time run: %w", err)
 	}
+	if hasCompleted {
+		settings, err := database.getSettings()
+		if err != nil {
+			return fmt.Errorf("read settings for onboarding migration: %w", err)
+		}
+		settings.OnboardingVersion = CurrentOnboardingVersion
+		if err := database.setSettings(settings); err != nil {
+			return fmt.Errorf("migrate onboarding completion: %w", err)
+		}
+	}
 	slog.Info("migrated first run status from config.json", "hasCompleted", hasCompleted)
 
 	// Mark as migrated

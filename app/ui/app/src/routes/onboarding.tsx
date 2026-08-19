@@ -3,10 +3,11 @@ import { getSettings } from "@/api";
 import { useSettings } from "@/hooks/useSettings";
 import { useUser } from "@/hooks/useUser";
 import {
+  AUTHENTICATION_TIMEOUT_MS,
   authenticationTimeoutAction,
   CURRENT_ONBOARDING_VERSION,
   homeChatId,
-  onboardingAuthUrl,
+  onboardingConnectUrl,
   type OnboardingAuthMode,
 } from "@/lib/onboarding";
 import { createFileRoute, redirect } from "@tanstack/react-router";
@@ -67,38 +68,44 @@ function OnboardingRoute() {
     }
   }, [setSettings, settingsData]);
 
-  const finish = useCallback(async () => {
-    if (!(await completeOnboarding())) return;
-    window.setOnboardingWindow?.(false);
-    window.close();
+  const showRunScreen = useCallback(() => {
+    setShowRun(true);
+    void completeOnboarding();
   }, [completeOnboarding]);
 
-  const authenticate = useCallback(async (mode: OnboardingAuthMode) => {
-    setSignInError(null);
+  const retryCompletion = useCallback(() => {
+    void completeOnboarding();
+  }, [completeOnboarding]);
 
-    if (isAuthenticated) {
-      setShowRun(true);
-      return;
-    }
+  const authenticate = useCallback(
+    async (mode: OnboardingAuthMode) => {
+      setSignInError(null);
 
-    const authAttempt = ++authAttemptRef.current;
-    setIsAwaitingAuth(true);
-
-    try {
-      const result = await fetchConnectUrl();
-      if (authAttempt !== authAttemptRef.current) return;
-      if (!result.data) {
-        throw new Error("No sign-in URL was returned");
+      if (isAuthenticated) {
+        showRunScreen();
+        return;
       }
 
-      window.open(onboardingAuthUrl(result.data, mode), "_blank");
-    } catch (error) {
-      if (authAttempt !== authAttemptRef.current) return;
-      console.error("Failed to start sign in:", error);
-      setIsAwaitingAuth(false);
-      setSignInError("Unable to start sign in. Please try again.");
-    }
-  }, [fetchConnectUrl, isAuthenticated]);
+      const authAttempt = ++authAttemptRef.current;
+      setIsAwaitingAuth(true);
+
+      try {
+        const result = await fetchConnectUrl();
+        if (authAttempt !== authAttemptRef.current) return;
+        if (!result.data) {
+          throw new Error("No sign-in URL was returned");
+        }
+
+        window.open(onboardingConnectUrl(result.data, mode), "_blank");
+      } catch (error) {
+        if (authAttempt !== authAttemptRef.current) return;
+        console.error("Failed to start sign in:", error);
+        setIsAwaitingAuth(false);
+        setSignInError("Unable to start sign in. Please try again.");
+      }
+    },
+    [fetchConnectUrl, isAuthenticated, showRunScreen],
+  );
 
   const signIn = useCallback(() => authenticate("signin"), [authenticate]);
   const signUp = useCallback(() => authenticate("signup"), [authenticate]);
@@ -107,8 +114,8 @@ function OnboardingRoute() {
     authAttemptRef.current += 1;
     setIsAwaitingAuth(false);
     setSignInError(null);
-    setShowRun(true);
-  }, []);
+    showRunScreen();
+  }, [showRunScreen]);
 
   useEffect(() => {
     if (!isAwaitingAuth) return;
@@ -140,7 +147,7 @@ function OnboardingRoute() {
         ) {
           settled = true;
           setIsAwaitingAuth(false);
-          setShowRun(true);
+          showRunScreen();
           window.activateOllama?.();
         }
       } catch (error) {
@@ -161,7 +168,7 @@ function OnboardingRoute() {
         return;
       }
       failConnection();
-    }, 60_000);
+    }, AUTHENTICATION_TIMEOUT_MS);
 
     window.addEventListener("focus", checkConnection);
     return () => {
@@ -170,7 +177,7 @@ function OnboardingRoute() {
       window.clearTimeout(timeout);
       window.removeEventListener("focus", checkConnection);
     };
-  }, [isAwaitingAuth, refetchUser]);
+  }, [isAwaitingAuth, refetchUser, showRunScreen]);
 
   return (
     <Onboarding
@@ -180,8 +187,8 @@ function OnboardingRoute() {
       signInError={signInError}
       onSignIn={signIn}
       onSignUp={signUp}
+      onRetryCompletion={retryCompletion}
       onUseLocal={useLocal}
-      onFinish={finish}
       showRun={showRun}
     />
   );

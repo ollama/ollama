@@ -21,6 +21,26 @@ extern NSString *SystemWidePath;
 
 bool showOnboarding,startHidden; // Set in run before initialization
 
+static NSBundle *OllamaResourceBundle(void) {
+    NSBundle *bundle = [NSBundle mainBundle];
+    if ([bundle.bundlePath hasSuffix:@".app"]) {
+        return bundle;
+    }
+
+    NSString *cwdPath = [[NSFileManager defaultManager] currentDirectoryPath];
+    NSArray<NSString *> *bundlePaths = @[
+        [cwdPath stringByAppendingPathComponent:@"darwin/Ollama.app"],
+        [cwdPath stringByAppendingPathComponent:@"app/darwin/Ollama.app"],
+    ];
+    for (NSString *bundlePath in bundlePaths) {
+        if ([[NSFileManager defaultManager] fileExistsAtPath:bundlePath]) {
+            return [NSBundle bundleWithPath:bundlePath];
+        }
+    }
+
+    return bundle;
+}
+
 - (void)application:(NSApplication *)application openURLs:(NSArray<NSURL *> *)urls {
     for (NSURL *url in urls) {
         if ([url.scheme isEqualToString:@"ollama"]) {
@@ -51,13 +71,8 @@ bool showOnboarding,startHidden; // Set in run before initialization
     // if we're in development mode, set the app icon
     NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
     if (![bundlePath hasSuffix:@".app"]) {
-        NSString *cwdPath =
-            [[NSFileManager defaultManager] currentDirectoryPath];
-        NSString *iconPath = [cwdPath
-            stringByAppendingPathComponent:
-                [NSString
-                    stringWithFormat:
-                        @"darwin/Ollama.app/Contents/Resources/icon.icns"]];
+        NSString *iconPath =
+            [OllamaResourceBundle() pathForResource:@"icon" ofType:@"icns"];
         NSImage *customIcon = [[NSImage alloc] initWithContentsOfFile:iconPath];
         [NSApp setApplicationIconImage:customIcon];
     }
@@ -322,17 +337,7 @@ bool showOnboarding,startHidden; // Set in run before initialization
     }
 
     NSImage *statusImage;
-    NSBundle *bundle = [NSBundle mainBundle];
-    if (![bundle.bundlePath hasSuffix:@".app"]) {
-        NSString *cwdPath =
-            [[NSFileManager defaultManager] currentDirectoryPath];
-        NSString *bundlePath =
-            [cwdPath stringByAppendingPathComponent:
-                         [NSString stringWithFormat:@"darwin/Ollama.app"]];
-        bundle = [NSBundle bundleWithPath:bundlePath];
-    }
-
-    statusImage = [bundle imageForResource:iconName];
+    statusImage = [OllamaResourceBundle() imageForResource:iconName];
     [statusImage setTemplate:YES];
     self.statusItem.button.image = statusImage;
 }

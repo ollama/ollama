@@ -3,29 +3,33 @@ export const CURRENT_ONBOARDING_VERSION = 1;
 
 export type OnboardingAuthMode = "signin" | "signup";
 
-export function onboardingAuthUrl(
+export function onboardingConnectUrl(
   connectUrl: string,
   mode: OnboardingAuthMode,
 ): string {
   const url = new URL(connectUrl);
-  url.searchParams.delete("launch");
-
-  const authUrl = new URL(`/${mode}`, url.origin);
-  authUrl.searchParams.set("next", `${url.pathname}${url.search}`);
-  return authUrl.toString();
+  url.searchParams.set("launch", "true");
+  if (mode === "signup") {
+    url.searchParams.set("signup", "true");
+  } else {
+    url.searchParams.delete("signup");
+  }
+  return url.toString();
 }
 
+export const AUTHENTICATION_TIMEOUT_MS = 5 * 60 * 1000;
+
 export type OnboardingStep = "intro" | "welcome" | "run";
-export type OnboardingAction = "continue" | "skip" | "local";
+export type OnboardingAction = "continue" | "local";
 export type AuthenticationTimeoutAction = "ignore" | "defer" | "fail";
 
 export function nextOnboardingStep(
   step: OnboardingStep,
   action: OnboardingAction,
-  _isAuthenticated: boolean,
+  isAuthenticated: boolean,
 ): OnboardingStep {
-  if (action === "skip" || action === "local") return "run";
-  if (step === "intro") return "welcome";
+  if (action === "local") return "run";
+  if (step === "intro") return isAuthenticated ? "run" : "welcome";
   return step;
 }
 
