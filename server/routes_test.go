@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 	"unicode"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-cmp/cmp"
@@ -1202,5 +1203,46 @@ func TestWaitForStream(t *testing.T) {
 				t.Errorf("body mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestStreamingHandler_ContextCancellation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/api/generate", nil)
+	if err != nil {
+		t.Fatalf("failed to create test request: %v", err)
+	}
+	c.Request = req
+
+	ch := make(chan any) // unbuffered channel to reproduce the hang
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		// sendCh implementation under test
+		sendCh := func(v any) bool {
+			select {
+			case ch <- v:
+				return true
+			case <-c.Request.Context().Done():
+				return false
+			}
+		}
+
+		_ = sendCh("test payload")
+	}()
+
+	// Simulate client dropping connection while channel is blocked
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("goroutine leaked: blocked indefinitely on unbuffered channel send")
 	}
 }

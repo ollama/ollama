@@ -661,6 +661,18 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		// TODO (jmorganca): avoid building the response twice both here and below
 		var sb strings.Builder
 		defer close(ch)
+
+				// sendCh emits a value to the unbuffered channel, but bails out if the client has disconnected
+				// so the goroutine can unwind instead of blocking forever on a send with no receiver aka leaked
+				// goroutines
+        		sendCh := func(v any) bool {
+        			select {
+        			case ch <- v:
+        				return true
+        			case <-c.Request.Context().Done():
+        				return false
+        			}
+        		}
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:          prompt,
 			Media:           media,
@@ -690,7 +702,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			if builtinParser != nil {
 				content, thinking, toolCalls, err := builtinParser.Add(cr.Content, cr.Done)
 				if err != nil {
-					ch <- gin.H{"error": err.Error()}
+					sendCh(gin.H{"error": err.Error()})
 					return
 				}
 				res.Response = content
@@ -705,7 +717,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			}
 
 			if _, err := sb.WriteString(cr.Content); err != nil {
-				ch <- gin.H{"error": err.Error()}
+				sendCh(gin.H{"error": err.Error()})
 			}
 
 			if cr.Done {
@@ -716,7 +728,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				if !req.Raw {
 					tokens, err := r.Tokenize(c.Request.Context(), prompt+sb.String())
 					if err != nil {
-						ch <- gin.H{"error": err.Error()}
+						sendCh(gin.H{"error": err.Error()})
 						return
 					}
 					res.Context = tokens
@@ -728,7 +740,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				// visible content, otherwise generate logprobs disappear for models with
 				// builtin thinking/tool parsers.
 				if res.Response != "" || res.Thinking != "" || res.Done || len(res.ToolCalls) > 0 || len(res.Logprobs) > 0 {
-					ch <- res
+					sendCh(res)
 				}
 
 				return
@@ -739,9 +751,9 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			s.sched.expireRunnersForRuntimeOOM(m, err)
 			var serr api.StatusError
 			if errors.As(err, &serr) {
-				ch <- gin.H{"error": serr.ErrorMessage, "status": serr.StatusCode}
+				sendCh(gin.H{"error": serr.ErrorMessage, "status": serr.StatusCode})
 			} else {
-				ch <- gin.H{"error": err.Error()}
+				sendCh(gin.H{"error": err.Error()})
 			}
 		}
 	}()
@@ -1120,8 +1132,18 @@ func (s *Server) PullHandler(c *gin.Context) {
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
+
+		sendCh := func(v any) bool {
+        			select {
+        			case ch <- v:
+        				return true
+        			case <-c.Request.Context().Done():
+        				return false
+        			}
+        		}
+
 		fn := func(r api.ProgressResponse) {
-			ch <- r
+			sendCh(r)
 		}
 
 		regOpts := &registryOptions{
@@ -1132,7 +1154,7 @@ func (s *Server) PullHandler(c *gin.Context) {
 		defer cancel()
 
 		if err := PullModel(ctx, name.DisplayShortest(), regOpts, fn); err != nil {
-			ch <- gin.H{"error": err.Error()}
+			sendCh(gin.H{"error": err.Error()})
 			return
 		}
 
@@ -1172,8 +1194,18 @@ func (s *Server) PushHandler(c *gin.Context) {
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
+
+		sendCh := func(v any) bool {
+        			select {
+        			case ch <- v:
+        				return true
+        			case <-c.Request.Context().Done():
+        				return false
+        			}
+        		}
+
 		fn := func(r api.ProgressResponse) {
-			ch <- r
+			sendCh(r)
 		}
 
 		regOpts := &registryOptions{
@@ -1185,12 +1217,12 @@ func (s *Server) PushHandler(c *gin.Context) {
 
 		name, err := getExistingName(model.ParseName(mname))
 		if err != nil {
-			ch <- gin.H{"error": err.Error()}
+			sendCh(gin.H{"error": err.Error()})
 			return
 		}
 
 		if err := PushModel(ctx, name.DisplayShortest(), regOpts, fn); err != nil {
-			ch <- gin.H{"error": err.Error()}
+			sendCh(gin.H{"error": err.Error()})
 		}
 	}()
 
@@ -2751,6 +2783,15 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	go func() {
 		defer close(ch)
 
+		sendCh := func(v any) bool {
+        			select {
+        			case ch <- v:
+        				return true
+        			case <-c.Request.Context().Done():
+        				return false
+        			}
+        		}
+
 		structuredOutputsState := structuredOutputsState_None
 
 		for {
@@ -2812,7 +2853,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 					content, thinking, toolCalls, err := builtinParser.Add(r.Content, r.Done)
 					if err != nil {
-						ch <- gin.H{"error": err.Error()}
+						sendCh(gin.H{"error": err.Error()})
 						return
 					}
 
@@ -2833,7 +2874,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 					if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || r.Done || len(res.Logprobs) > 0 {
 						slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser output", "parser", m.Config.Parser, "content", content, "thinking", thinking, "toolCalls", toolCalls, "done", r.Done)
-						ch <- res
+						sendCh(res)
 					} else {
 						slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser empty output", "parser", m.Config.Parser)
 					}
@@ -2853,7 +2894,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					if structuredOutputsState == structuredOutputsState_None && req.Format != nil && tb.String() != "" && remainingContent != "" {
 						structuredOutputsState = structuredOutputsState_ReadyToApply
 						res.Message.Content = ""
-						ch <- res
+						sendCh(res)
 						cancel()
 						return
 					}
@@ -2878,18 +2919,18 @@ func (s *Server) ChatHandler(c *gin.Context) {
 							logprobRes := res
 							logprobRes.Message.Content = ""
 							logprobRes.Message.ToolCalls = nil
-							ch <- logprobRes
+							sendCh(logprobRes)
 						}
 
 						if r.Done {
 							res.Message.Content = toolParser.Content()
-							ch <- res
+							sendCh(res)
 						}
 						return
 					}
 				}
 
-				ch <- res
+				sendCh(res)
 			})
 			if err != nil {
 				if structuredOutputsState == structuredOutputsState_ReadyToApply && strings.Contains(err.Error(), "context canceled") && c.Request.Context().Err() == nil {
@@ -2898,9 +2939,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					s.sched.expireRunnersForRuntimeOOM(m, err)
 					var serr api.StatusError
 					if errors.As(err, &serr) {
-						ch <- gin.H{"error": serr.ErrorMessage, "status": serr.StatusCode}
+						sendCh(gin.H{"error": serr.ErrorMessage, "status": serr.StatusCode})
 					} else {
-						ch <- gin.H{"error": err.Error()}
+						sendCh(gin.H{"error": err.Error()})
 					}
 					return
 				}
@@ -2918,7 +2959,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				prompt, _, err = chatPrompt(c.Request.Context(), m, r.Tokenize, promptOpts, msgs, processedTools, req.Think, truncate)
 				if err != nil {
 					slog.Error("chat prompt error applying structured outputs", "error", err)
-					ch <- gin.H{"error": err.Error()}
+					sendCh(gin.H{"error": err.Error()})
 					return
 				}
 				// force constraining by terminating thinking header, the parser is already at this state
