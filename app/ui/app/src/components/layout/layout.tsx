@@ -1,5 +1,61 @@
 import { Link } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { useSettings } from "@/hooks/useSettings";
+
+type SidebarLayoutClassNames = {
+  root: string;
+  toggleContainer: string;
+  newChatLink: string;
+  sidebar: string;
+  main: string;
+};
+
+function classNames(...classes: Array<string | false | undefined>) {
+  return classes.filter(Boolean).join(" ");
+}
+
+export function getSidebarLayoutClassNames({
+  animate,
+  isWindows,
+  sidebarOpen,
+}: {
+  animate: boolean;
+  isWindows: boolean;
+  sidebarOpen: boolean;
+}): SidebarLayoutClassNames {
+  return {
+    root: classNames(
+      "flex",
+      animate && "transition-[width] duration-300",
+      "dark:bg-neutral-900",
+    ),
+    toggleContainer: classNames(
+      "absolute flex mx-2 py-2 z-20 items-center text-neutral-500 dark:text-neutral-400",
+      animate && "transition-[left] duration-375",
+      sidebarOpen
+        ? isWindows
+          ? "left-2"
+          : "left-[204px]"
+        : isWindows
+          ? "left-2"
+          : "left-20",
+    ),
+    newChatLink: classNames(
+      "flex ml-1 items-center justify-center rounded-full h-9 w-9 hover:bg-neutral-100 dark:hover:bg-neutral-700",
+      animate && "transition-opacity duration-375",
+      sidebarOpen ? "opacity-0 pointer-events-none" : "opacity-100",
+    ),
+    sidebar: classNames(
+      "flex flex-col max-h-screen",
+      animate && "transition-[width] duration-300",
+      sidebarOpen ? "w-64" : "w-0",
+    ),
+    main: classNames(
+      "flex flex-1 flex-col min-w-0",
+      animate && "transition-all duration-300",
+    ),
+  };
+}
 
 export function SidebarLayout({
   sidebar,
@@ -9,14 +65,31 @@ export function SidebarLayout({
   collapsible?: boolean;
   chatId?: string;
 }>) {
-  const { settings, setSettings } = useSettings();
+  const { settings, settingsData, error, setSettings } = useSettings();
   const isWindows = navigator.platform.toLowerCase().includes("win");
+  const [transitionsEnabled, setTransitionsEnabled] = useState(false);
+
+  useEffect(() => {
+    if (transitionsEnabled || (!settingsData && !error)) {
+      return;
+    }
+
+    const frame = requestAnimationFrame(() => {
+      setTransitionsEnabled(true);
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [error, settingsData, transitionsEnabled]);
+
+  const classes = getSidebarLayoutClassNames({
+    animate: transitionsEnabled,
+    isWindows,
+    sidebarOpen: settings.sidebarOpen,
+  });
 
   return (
-    <div className={`flex transition-[width] duration-300 dark:bg-neutral-900`}>
-      <div
-        className={`absolute flex mx-2 py-2 z-20 items-center transition-[left] duration-375 text-neutral-500 dark:text-neutral-400 ${settings.sidebarOpen ? (isWindows ? "left-2" : "left-[204px]") : isWindows ? "left-2" : "left-20"}`}
-      >
+    <div className={classes.root}>
+      <div className={classes.toggleContainer}>
         <button
           onClick={() => setSettings({ SidebarOpen: !settings.sidebarOpen })}
           onMouseDown={(e) => {
@@ -39,11 +112,7 @@ export function SidebarLayout({
           to="/c/$chatId"
           params={{ chatId: "new" }}
           title="New chat"
-          className={`flex ml-1 items-center justify-center rounded-full transition-opacity duration-375 h-9 w-9 hover:bg-neutral-100 dark:hover:bg-neutral-700 ${
-            settings.sidebarOpen
-              ? "opacity-0 pointer-events-none"
-              : "opacity-100"
-          }`}
+          className={classes.newChatLink}
         >
           <svg
             className="h-5 w-5 fill-current"
@@ -56,9 +125,7 @@ export function SidebarLayout({
           </svg>
         </Link>
       </div>
-      <div
-        className={`flex flex-col transition-[width] duration-300 max-h-screen ${settings.sidebarOpen ? "w-64" : "w-0"}`}
-      >
+      <div className={classes.sidebar}>
         <div
           onDoubleClick={() => window.doubleClick && window.doubleClick()}
           onMouseDown={() => window.drag && window.drag()}
@@ -66,9 +133,7 @@ export function SidebarLayout({
         ></div>
         {settings.sidebarOpen && sidebar}
       </div>
-      <main
-        className={`flex flex-1 flex-col min-w-0 transition-all duration-300`}
-      >
+      <main className={classes.main}>
         <div
           className={`h-13 flex-none w-full z-10 flex items-center bg-white dark:bg-neutral-900 ${isWindows ? "xl:hidden" : "xl:fixed xl:bg-transparent xl:dark:bg-transparent"}`}
           onDoubleClick={() => window.doubleClick && window.doubleClick()}
