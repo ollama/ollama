@@ -366,6 +366,12 @@ func cloneModelRecommendations(in []api.ModelRecommendation) []api.ModelRecommen
 
 var defaultModelRecommendations = []api.ModelRecommendation{
 	{
+		Model:           "mimo-v2.5-pro:cloud",
+		Description:     "Xiaomi's flagship MoE model for complex reasoning and agentic workflows",
+		ContextLength:   1_048_576,
+		MaxOutputTokens: 262_144,
+	},
+	{
 		Model:           "kimi-k2.6:cloud",
 		Description:     "State-of-the-art coding, long-horizon execution, and multimodal agent swarm capability",
 		ContextLength:   262_144,
