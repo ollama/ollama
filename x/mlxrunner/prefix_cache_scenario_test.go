@@ -265,3 +265,126 @@ func TestScenarioConversationTurns(t *testing.T) {
 	}
 	checkSnapshotCoverage(t, e.pc, e.kvLayers())
 }
+
+// runCancelledPrefill mirrors a prefill cancelled by a client timeout at
+// (roughly) cancelAt prompt tokens: begin, schedule, feed whole chunks until
+// cancelAt with the drafter's pairs lagging one token, settle the drafter with
+// the next prompt token, then close, which attaches the crossed captures.
+func (e *hybridEnv) runCancelledPrefill(t *testing.T, inputs []int32, chunk, cancelAt int) {
+	t.Helper()
+	pc := e.pc
+	session := pc.begin(inputs, nil)
+	session.schedulePrefillSnapshots(periodic(len(inputs)))
+
+	pos := pc.minCacheOffset()
+	for pos < cancelAt && pos < len(inputs)-1 {
+		n := min(chunk, len(inputs)-1-pos)
+		for _, c := range pc.caches {
+			if c == cache.Cache(e.draft) {
+				continue
+			}
+			if fc, ok := c.(feedableCache); ok {
+				fc.feed(inputs[pos : pos+n])
+			}
+		}
+		if d := e.draft.Offset(); d < pos+n-1 {
+			e.draft.feed(inputs[d : pos+n-1])
+		}
+		pos += n
+	}
+
+	if d := e.draft.Offset(); d < pos {
+		e.draft.feed(inputs[d:pos])
+	}
+	session.close()
+}
+
+// TestScenarioCancelledPrefills covers the cancellation invariants: a retry
+// of a cancelled prefill resumes exactly where the previous attempt stopped,
+// and the captures the cancelled attempt crossed become restore points.
+func TestScenarioCancelledPrefills(t *testing.T) {
+	logs := captureWarns(t)
+	e := newHybridEnv()
+	ts := &tokenStream{}
+	begins := &beginLog{t: t, logs: logs}
+
+	prompt := ts.fresh(47)
+
+	// Cancelled after two chunks of 9. The prefill crossed the captures
+	// scheduled at interval and 2*interval — key offsets 7 and 15 after the
+	// draft look-ahead shift — and close attached them.
+	e.runCancelledPrefill(t, prompt, 9, 2*9)
+	begins.next()
+
+	// A session diverging inside the cancelled span restores to the deepest
+	// crossed capture: 17 keys match, and the entry at 15 is the closest
+	// restore point below.
+	probe := slices.Concat(slices.Clone(prompt[:18]), ts.fresh(10))
+	pr := e.pc.begin(probe, nil)
+	if _, m, c, _ := begins.next(); m != 17 || c != 15 {
+		t.Errorf("probe into cancelled span: matched=%d cached=%d, want 17/15", m, c)
+	}
+	pr.close()
+
+	// The retry resumes exactly at the 18 tokens the first attempt recorded,
+	// and is cancelled again two chunks deeper.
+	e.runCancelledPrefill(t, prompt, 9, 2*9+2*9)
+	if _, m, c, _ := begins.next(); m != 18 || c != 18 {
+		t.Errorf("first retry: matched=%d cached=%d, want 18/18", m, c)
+	}
+
+	// The final retry resumes at 36 and completes.
+	e.runRequest(t, prompt, ts.fresh(6))
+	if _, m, c, _ := begins.next(); m != 36 || c != 36 {
+		t.Errorf("second retry: matched=%d cached=%d, want 36/36", m, c)
+	}
+
+	if out := logs(); strings.Contains(out, "failed to restore cache") {
+		t.Errorf("freeAll warn fired:\n%s", out)
+	}
+	checkSnapshotCoverage(t, e.pc, e.kvLayers())
+}
+
+// TestScenarioDivergentCancels interleaves cancelled prefills that diverge
+// from a conversation mid-history with completed requests, growing branch
+// points above and below the conversation's capture offsets, then re-requests
+// the full conversation, which must restore to within the capture cadence.
+func TestScenarioDivergentCancels(t *testing.T) {
+	logs := captureWarns(t)
+	e := newHybridEnv()
+	ts := &tokenStream{}
+	begins := &beginLog{t: t, logs: logs}
+
+	prompt := ts.fresh(24)
+	gen := ts.fresh(8)
+	e.runRequest(t, prompt, gen)
+	stream := slices.Concat(prompt, gen)
+	begins.next()
+
+	// A cancelled prefill diverging between the second and third captures.
+	e.runCancelledPrefill(t, slices.Concat(slices.Clone(stream[:2*interval+2]), ts.fresh(20)), 5, 12)
+	begins.next()
+
+	// A completed turn extends the conversation.
+	p2 := slices.Concat(stream, ts.fresh(10))
+	g2 := ts.fresh(4)
+	e.runRequest(t, p2, g2)
+	stream = slices.Concat(p2, g2)
+	begins.next()
+
+	// A cancelled prefill diverging below the first capture.
+	e.runCancelledPrefill(t, slices.Concat(slices.Clone(stream[:interval-2]), ts.fresh(16)), 5, 14)
+	begins.next()
+
+	// Re-requesting the full conversation restores to within the cadence of
+	// the last completed turn.
+	e.runRequest(t, slices.Concat(stream, ts.fresh(12)), ts.fresh(5))
+	if _, m, c, _ := begins.next(); c < m-e.restoreBound(len(g2), 0) {
+		t.Errorf("re-request: cached=%d fell more than %d below matched=%d", c, e.restoreBound(len(g2), 0), m)
+	}
+
+	if out := logs(); strings.Contains(out, "failed to restore cache") {
+		t.Errorf("freeAll warn fired:\n%s", out)
+	}
+	checkSnapshotCoverage(t, e.pc, e.kvLayers())
+}
