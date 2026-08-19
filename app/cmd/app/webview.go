@@ -242,6 +242,10 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 			showWindow(wv.Window())
 		})
 
+		wv.Bind("activateOllama", func() {
+			showWindow(wv.Window())
+		})
+
 		wv.Bind("close", func() {
 			hideWindow(wv.Window())
 		})

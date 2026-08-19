@@ -1,5 +1,11 @@
 export const CURRENT_ONBOARDING_VERSION = 1;
 
+export function onboardingConnectUrl(connectUrl: string): string {
+  const url = new URL(connectUrl);
+  url.searchParams.delete("launch");
+  return url.toString();
+}
+
 export type OnboardingStep = "intro" | "welcome" | "run";
 export type OnboardingAction = "continue" | "skip" | "local";
 export type AuthenticationTimeoutAction = "ignore" | "defer" | "fail";

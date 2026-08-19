@@ -6,6 +6,7 @@ import {
   authenticationTimeoutAction,
   CURRENT_ONBOARDING_VERSION,
   homeChatId,
+  onboardingConnectUrl,
 } from "@/lib/onboarding";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -89,7 +90,7 @@ function OnboardingRoute() {
         throw new Error("No sign-in URL was returned");
       }
 
-      window.open(result.data, "_blank");
+      window.open(onboardingConnectUrl(result.data), "_blank");
     } catch (error) {
       if (authAttempt !== authAttemptRef.current) return;
       console.error("Failed to start sign in:", error);
@@ -136,6 +137,7 @@ function OnboardingRoute() {
           settled = true;
           setIsAwaitingAuth(false);
           setShowRun(true);
+          window.activateOllama?.();
         }
       } catch (error) {
         console.error("Failed to check sign-in status:", error);

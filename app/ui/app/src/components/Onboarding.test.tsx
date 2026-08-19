@@ -10,6 +10,7 @@ import {
 import {
   authenticationTimeoutAction,
   nextOnboardingStep,
+  onboardingConnectUrl,
 } from "@/lib/onboarding";
 
 describe("Onboarding", () => {
@@ -36,6 +37,14 @@ describe("Onboarding", () => {
     expect(authenticationTimeoutAction(false, true)).toBe("defer");
     expect(authenticationTimeoutAction(false, false)).toBe("fail");
     expect(authenticationTimeoutAction(true, true)).toBe("ignore");
+  });
+
+  it("keeps the onboarding app in control of the connect return", () => {
+    expect(
+      onboardingConnectUrl(
+        "https://ollama.com/connect?name=MacBook&key=public-key&launch=true",
+      ),
+    ).toBe("https://ollama.com/connect?name=MacBook&key=public-key");
   });
 
   it("shows Run Ollama after a successful connection and hides sign in", () => {
