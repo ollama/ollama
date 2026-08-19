@@ -54,14 +54,17 @@ func StartUI(path *C.cchar_t) {
 
 //export ShowUI
 func ShowUI() {
-	// If webview is already running, just show the window
+	openUI("/")
+}
+
+func openUI(path string) {
 	if wv.IsRunning() && wv.webview != nil {
 		showWindow(wv.webview.Window())
-	} else {
-		root := C.CString("/")
-		defer C.free(unsafe.Pointer(root))
-		StartUI(root)
+		return
 	}
+	p := C.CString(path)
+	defer C.free(unsafe.Pointer(p))
+	StartUI(p)
 }
 
 //export StopUI

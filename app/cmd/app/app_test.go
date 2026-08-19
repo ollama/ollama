@@ -41,3 +41,38 @@ func TestShouldShowOnboarding(t *testing.T) {
 		})
 	}
 }
+
+func TestDispatchURLSchemeRequest(t *testing.T) {
+	tests := []struct {
+		name        string
+		request     string
+		wantConnect bool
+		wantOpen    bool
+		wantErr     bool
+	}{
+		{name: "bare URL opens app", request: "ollama://", wantOpen: true},
+		{name: "connect URL starts connection", request: "ollama://connect", wantConnect: true},
+		{name: "unsupported URL", request: "ollama://unsupported", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			connected := false
+			opened := false
+			err := dispatchURLSchemeRequest(
+				tt.request,
+				func() { connected = true },
+				func() { opened = true },
+			)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("dispatchURLSchemeRequest() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if connected != tt.wantConnect {
+				t.Errorf("connect called = %v, want %v", connected, tt.wantConnect)
+			}
+			if opened != tt.wantOpen {
+				t.Errorf("open called = %v, want %v", opened, tt.wantOpen)
+			}
+		})
+	}
+}

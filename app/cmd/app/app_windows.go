@@ -95,11 +95,15 @@ func (ac *appCallbacks) UIRun(path string) {
 }
 
 func (*appCallbacks) UIShow() {
-	if wv.webview != nil {
+	openUI("/")
+}
+
+func openUI(path string) {
+	if wv.IsRunning() && wv.webview != nil {
 		showWindow(wv.webview.Window())
-	} else {
-		wv.Run("/")
+		return
 	}
+	wv.Run(path)
 }
 
 func (*appCallbacks) UITerminate() {
@@ -138,19 +142,7 @@ func (app *appCallbacks) HandleURLScheme(urlScheme string) {
 
 // handleURLSchemeRequest processes URL scheme requests from other instances
 func handleURLSchemeRequest(urlScheme string) {
-	isConnect, err := parseURLScheme(urlScheme)
-	if err != nil {
-		slog.Error("failed to parse URL scheme request", "url", urlScheme, "error", err)
-		return
-	}
-
-	if isConnect {
-		handleConnectURLScheme()
-	} else {
-		if wv.webview != nil {
-			showWindow(wv.webview.Window())
-		}
-	}
+	handleURLSchemeInCurrentInstance(urlScheme)
 }
 
 func UpdateAvailable(ver string) error {

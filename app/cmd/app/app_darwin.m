@@ -50,11 +50,9 @@ static NSBundle *OllamaResourceBundle(void) {
                 // Special case: handle connect by opening browser instead of app
                 handleConnectURL();
             } else {
-                // Set app to be active and visible
-                [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
-                [NSApp activateIgnoringOtherApps:YES];
+                [self openUI];
             }
-            
+
             break;
         }
     }
@@ -251,6 +249,7 @@ static NSBundle *OllamaResourceBundle(void) {
 }
 
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)hasVisibleWindows {
+    [self openUI];
     return YES;
 }
 

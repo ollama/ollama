@@ -448,7 +448,7 @@ func checkUserLoggedIn(uiServerPort int) bool {
 func handleConnectURLScheme() {
 	if checkUserLoggedIn(uiServerPort) {
 		slog.Info("user is already logged in, opening app instead")
-		showWindow(wv.webview.Window())
+		openUI("/")
 		return
 	}
 
@@ -507,17 +507,23 @@ func parseURLScheme(urlSchemeRequest string) (isConnect bool, err error) {
 
 // handleURLSchemeInCurrentInstance processes URL scheme requests in the current instance
 func handleURLSchemeInCurrentInstance(urlSchemeRequest string) {
-	isConnect, err := parseURLScheme(urlSchemeRequest)
+	err := dispatchURLSchemeRequest(urlSchemeRequest, handleConnectURLScheme, func() {
+		openUI("/")
+	})
 	if err != nil {
 		slog.Error("failed to parse URL scheme request", "url", urlSchemeRequest, "error", err)
-		return
 	}
+}
 
-	if isConnect {
-		handleConnectURLScheme()
-	} else {
-		if wv.webview != nil {
-			showWindow(wv.webview.Window())
-		}
+func dispatchURLSchemeRequest(urlSchemeRequest string, connect, open func()) error {
+	isConnect, err := parseURLScheme(urlSchemeRequest)
+	if err != nil {
+		return err
 	}
+	if isConnect {
+		connect()
+	} else {
+		open()
+	}
+	return nil
 }

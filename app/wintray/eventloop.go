@@ -174,7 +174,7 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 			}
 		}
 	case uint32(FOCUS_WINDOW_MSG_ID):
-		// Returning users stay tray-only until they explicitly choose a menu item.
+		focusUI(t.app)
 		lResult = 1 // Return non-zero to indicate success
 	default:
 		// Calls the default window procedure to provide default processing for any window messages that an application does not process.
@@ -188,6 +188,14 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 		)
 	}
 	return
+}
+
+func focusUI(app AppCallbacks) {
+	if app.UIRunning() {
+		app.UIShow()
+		return
+	}
+	app.UIRun("/")
 }
 
 func (t *winTray) Quit() {
