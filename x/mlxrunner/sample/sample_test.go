@@ -212,6 +212,25 @@ func TestDistributionResidualUsesTargetSupport(t *testing.T) {
 	}
 }
 
+func TestDenseResidualSubtractsSparseDraft(t *testing.T) {
+	skipIfNoMLX(t)
+
+	target := Distribution{Probs: mlx.FromValues([]float32{0.2, 0.5, 0.3}, 1, 3)}
+	draft := Distribution{
+		IDs:   mlx.NewArrayInt32([]int32{0, 2}, []int32{1, 2}),
+		Probs: mlx.FromValues([]float32{0.1, 0.9}, 1, 2),
+	}
+	residual := target.ResidualAgainst(draft)
+	mlx.Eval(residual.Probs)
+
+	want := []float32{1.0 / 6.0, 5.0 / 6.0, 0}
+	for i, got := range residual.Probs.Floats() {
+		if math.Abs(float64(got-want[i])) > 1e-5 {
+			t.Fatalf("residual[%d] = %g, want %g", i, got, want[i])
+		}
+	}
+}
+
 func TestSeededSamplingIsReproducible(t *testing.T) {
 	skipIfNoMLX(t)
 

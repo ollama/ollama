@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/x/mlxrunner/batch"
@@ -108,7 +109,8 @@ type Model struct {
 	tok *tokenizer.Tokenizer
 	*Config
 
-	weightPrefix string
+	weightPrefix    string
+	auxHiddenLayers []int
 }
 
 // MTPHead is the multi-token-prediction draft head; it writes one KV cache
@@ -1236,19 +1238,36 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden
 		mropeCos, mropeSin = mropeCosSin(m.Config, mp, L)
 	}
 
+	var features []*mlx.Array
 	for i, layer := range m.Layers {
 		var c cache.Cache
 		if caches != nil && i < len(caches) {
 			c = caches[i]
 		}
 		h = layer.Forward(h, b, c, positions, B, L, m.Config, mropeCos, mropeSin)
+		if slices.Contains(m.auxHiddenLayers, i) {
+			features = append(features, h)
+		}
 	}
 	out := m.Norm.Forward(h, m.RMSNormEps)
+	if features != nil {
+		return out, mlx.Concatenate(features, -1)
+	}
 	return out, out
 }
 
 func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 	return m.LMHead.Forward(x)
+}
+
+func (m *Model) SetAuxHiddenLayers(layers []int) { m.auxHiddenLayers = layers }
+
+func (m *Model) TokenEmbeddings(ids *mlx.Array) *mlx.Array {
+	return m.EmbedTokens.Forward(ids)
+}
+
+func (m *Model) RawLogits(hidden *mlx.Array) *mlx.Array {
+	return m.LMHead.Forward(hidden)
 }
 
 // mtpDraft is the model viewed as its own draft: the same struct, carrying
