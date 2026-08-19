@@ -3556,7 +3556,7 @@ public:
     auto cb =
         std::bind(&win32_edge_engine::on_message, this, std::placeholders::_1);
 
-    embed(m_widget, debug, cb);
+    m_initialized = embed(m_widget, debug, cb);
   }
 
   virtual ~win32_edge_engine() {
@@ -3622,7 +3622,9 @@ public:
   }
   void *window_impl() override { return (void *)m_window; }
   void *widget_impl() override { return (void *)m_widget; }
-  void *browser_controller_impl() override { return (void *)m_controller; }
+  void *browser_controller_impl() override {
+    return m_initialized ? (void *)m_controller : nullptr;
+  }
   void terminate_impl() override { PostQuitMessage(0); }
   void dispatch_impl(dispatch_fn_t f) override {
     PostMessageW(m_message_window, WM_APP, 0, (LPARAM) new dispatch_fn_t(f));
@@ -3742,6 +3744,10 @@ private:
       DispatchMessageW(&msg);
     }
     if (got_quit_msg) {
+      // GetMessage removes WM_QUIT from the thread queue. Preserve it for the
+      // application's outer message loop after this nested initialization loop
+      // unwinds.
+      PostQuitMessage(static_cast<int>(msg.wParam));
       return false;
     }
     if (!m_controller || !m_webview) {
@@ -3752,20 +3758,13 @@ private:
     if (res != S_OK) {
       return false;
     }
-    res = settings->put_AreDevToolsEnabled(debug ? TRUE : FALSE);
-    if (res != S_OK) {
-      return false;
-    }
-    res = settings->put_IsStatusBarEnabled(FALSE);
-    if (res != S_OK) {
-      return false;
-    }
-    res = settings->put_AreDefaultScriptDialogsEnabled(FALSE);
-    if (res != S_OK) {
-      return false;
-    }
-    res = settings->put_IsZoomControlEnabled(FALSE);
-    if (res != S_OK) {
+    const auto settings_configured =
+        settings->put_AreDevToolsEnabled(debug ? TRUE : FALSE) == S_OK &&
+        settings->put_IsStatusBarEnabled(FALSE) == S_OK &&
+        settings->put_AreDefaultScriptDialogsEnabled(FALSE) == S_OK &&
+        settings->put_IsZoomControlEnabled(FALSE) == S_OK;
+    settings->Release();
+    if (!settings_configured) {
       return false;
     }
     init("window.external={invoke:s=>window.chrome.webview.postMessage(s)}");
@@ -3875,6 +3874,7 @@ private:
   mswebview2::loader m_webview2_loader;
   int m_dpi{};
   bool m_owns_window{};
+  bool m_initialized{};
 };
 
 } // namespace detail

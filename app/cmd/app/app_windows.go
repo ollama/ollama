@@ -14,11 +14,13 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 
 	"github.com/ollama/ollama/app/updater"
 	"github.com/ollama/ollama/app/version"
+	"github.com/ollama/ollama/app/webview"
 	"github.com/ollama/ollama/app/wintray"
 	"golang.org/x/sys/windows"
 )
@@ -34,6 +36,13 @@ var (
 	pSetForegroundWindow = u32.NewProc("SetForegroundWindow")
 	pSetActiveWindow     = u32.NewProc("SetActiveWindow")
 	pIsIconic            = u32.NewProc("IsIconic")
+	pSetWindowLongPtr    = u32.NewProc("SetWindowLongPtrW")
+	pCallWindowProc      = u32.NewProc("CallWindowProcW")
+	pDefWindowProc       = u32.NewProc("DefWindowProcW")
+
+	mainWindowHandle       atomic.Uintptr
+	mainWindowOriginalProc atomic.Uintptr
+	mainWindowCloseProc    = windows.NewCallback(mainWindowProc)
 
 	appPath         = filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs", "Ollama")
 	appLogPath      = filepath.Join(os.Getenv("LOCALAPPDATA"), "Ollama", "app.log")
@@ -91,14 +100,14 @@ type appCallbacks struct {
 var app = &appCallbacks{}
 
 func (ac *appCallbacks) UIRun(path string) {
-	wv.Run(path)
+	runUI(path)
 }
 
 func (*appCallbacks) UIShow() {
 	if wv.webview != nil {
 		showWindow(wv.webview.Window())
 	} else {
-		wv.Run("/")
+		runUI("/")
 	}
 }
 
@@ -110,13 +119,28 @@ func (*appCallbacks) UIRunning() bool {
 	return wv.IsRunning()
 }
 
+func (*appCallbacks) NewTrayWebView(window unsafe.Pointer) (wintray.TrayWebView, error) {
+	view, err := webview.NewWindowWithError(false, window)
+	if err != nil {
+		return nil, fmt.Errorf("WebView2 is unavailable: %w", err)
+	}
+	return view, nil
+}
+
+func (*appCallbacks) TrayFlyoutStyle() wintray.TrayFlyoutStyle {
+	return wintray.TrayFlyoutStyleFluent
+}
+
 func (app *appCallbacks) Quit() {
 	app.t.Quit()
-	wv.Terminate()
 }
 
 // TODO - reconcile with above for consistency between mac/windows
 func quit() {
+	if app.t != nil {
+		app.t.Quit()
+		return
+	}
 	wv.Terminate()
 }
 
@@ -185,7 +209,6 @@ func osRun(shutdown func(), hasCompletedFirstRun, startHidden bool) {
 		<-signals
 		slog.Debug("shutting down due to signal")
 		app.t.Quit()
-		wv.Terminate()
 	}()
 
 	// On windows, we run the final tasks in the main thread
@@ -208,7 +231,7 @@ func osRun(shutdown func(), hasCompletedFirstRun, startHidden bool) {
 	if startHidden {
 		startHiddenTasks()
 	} else {
-		ptr := wv.Run("/")
+		ptr := runUI("/")
 
 		// Set the window icon using the tray icon
 		if ptr != nil {
@@ -302,7 +325,49 @@ const (
 	MF_SEPARATOR  = 0x00000800
 	MF_GRAYED     = 0x00000001
 	TPM_RETURNCMD = 0x0100
+	WM_CLOSE      = 0x0010
 )
+
+var gwlpWndProc = ^uintptr(3) // GWLP_WNDPROC (-4)
+
+func runUI(path string) unsafe.Pointer {
+	window := wv.Run(path)
+	if err := makeMainWindowCloseToTray(window); err != nil {
+		slog.Error("failed to make main window close to tray", "error", err)
+	}
+	return window
+}
+
+func makeMainWindowCloseToTray(window unsafe.Pointer) error {
+	hwnd := uintptr(window)
+	if hwnd == 0 || mainWindowHandle.Load() == hwnd {
+		return nil
+	}
+
+	original, _, callErr := pSetWindowLongPtr.Call(hwnd, gwlpWndProc, mainWindowCloseProc)
+	if original == 0 {
+		return fmt.Errorf("subclass main window: %w", callErr)
+	}
+	mainWindowOriginalProc.Store(original)
+	mainWindowHandle.Store(hwnd)
+	return nil
+}
+
+func mainWindowProc(hwnd windows.Handle, message uint32, wParam, lParam uintptr) uintptr {
+	if message == WM_CLOSE {
+		slog.Debug("hiding main window after native close")
+		pShowWindow.Call(uintptr(hwnd), SW_HIDE) //nolint:errcheck
+		return 0
+	}
+
+	original := mainWindowOriginalProc.Load()
+	if mainWindowHandle.Load() == uintptr(hwnd) && original != 0 {
+		result, _, _ := pCallWindowProc.Call(original, uintptr(hwnd), uintptr(message), wParam, lParam)
+		return result
+	}
+	result, _, _ := pDefWindowProc.Call(uintptr(hwnd), uintptr(message), wParam, lParam)
+	return result
+}
 
 // POINT structure for cursor position
 type POINT struct {

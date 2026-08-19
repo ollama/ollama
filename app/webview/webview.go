@@ -174,6 +174,10 @@ func boolToInt(b bool) C.int {
 // is non-zero - developer tools will be enabled (if the platform supports them).
 func New(debug bool) WebView { return NewWindow(debug, nil) }
 
+func newWindow(debug bool, window unsafe.Pointer) *webview {
+	return &webview{w: C.webview_create(boolToInt(debug), window)}
+}
+
 // NewWindow creates a new webview instance. If debug is non-zero - developer
 // tools will be enabled (if the platform supports them). Window parameter can be
 // a pointer to the native window handle. If it's non-null - then child WebView is
@@ -181,9 +185,22 @@ func New(debug bool) WebView { return NewWindow(debug, nil) }
 // Depending on the platform, a GtkWindow, NSWindow or HWND pointer can be passed
 // here.
 func NewWindow(debug bool, window unsafe.Pointer) WebView {
-	w := &webview{}
-	w.w = C.webview_create(boolToInt(debug), window)
-	return w
+	return newWindow(debug, window)
+}
+
+// NewWindowWithError creates a webview and verifies that its browser controller
+// was initialized. This is useful for embedded windows, whose host HWND may be
+// created successfully even when the browser runtime is unavailable.
+func NewWindowWithError(debug bool, window unsafe.Pointer) (WebView, error) {
+	w := newWindow(debug, window)
+	if w.w == nil {
+		return nil, errors.New("webview creation failed")
+	}
+	if C.webview_get_native_handle(w.w, C.WEBVIEW_NATIVE_HANDLE_KIND_BROWSER_CONTROLLER) == nil {
+		w.Destroy()
+		return nil, errors.New("webview browser controller is unavailable")
+	}
+	return w, nil
 }
 
 func (w *webview) Destroy() {
