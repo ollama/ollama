@@ -44,22 +44,20 @@ describe("Onboarding", () => {
     expect(authenticationTimeoutAction(true, true)).toBe("ignore");
   });
 
-  it("opens the device connection flow and asks it to return to the app", () => {
+  it("opens the device connection flow without relaunching the app", () => {
     expect(
       onboardingConnectUrl(
         "https://ollama.com/connect?name=MacBook&key=public-key&launch=true",
         "signin",
       ),
-    ).toBe(
-      "https://ollama.com/connect?name=MacBook&key=public-key&launch=true",
-    );
+    ).toBe("https://ollama.com/connect?name=MacBook&key=public-key");
     expect(
       onboardingConnectUrl(
         "https://ollama.com/connect?name=MacBook&key=public-key",
         "signup",
       ),
     ).toBe(
-      "https://ollama.com/connect?name=MacBook&key=public-key&launch=true&signup=true",
+      "https://ollama.com/connect?name=MacBook&key=public-key&signup=true",
     );
   });
 

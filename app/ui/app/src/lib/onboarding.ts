@@ -8,7 +8,7 @@ export function onboardingConnectUrl(
   mode: OnboardingAuthMode,
 ): string {
   const url = new URL(connectUrl);
-  url.searchParams.set("launch", "true");
+  url.searchParams.delete("launch");
   if (mode === "signup") {
     url.searchParams.set("signup", "true");
   } else {
