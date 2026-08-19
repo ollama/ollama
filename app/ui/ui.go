@@ -1464,9 +1464,19 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 		return fmt.Errorf("failed to load settings: %w", err)
 	}
 
-	var settings store.Settings
-	if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
+	var request struct {
+		store.Settings
+		OnboardingVersion *int
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		return fmt.Errorf("invalid request body: %w", err)
+	}
+
+	settings := request.Settings
+	if request.OnboardingVersion == nil {
+		settings.OnboardingVersion = old.OnboardingVersion
+	} else {
+		settings.OnboardingVersion = *request.OnboardingVersion
 	}
 
 	if err := s.Store.SetSettings(settings); err != nil {

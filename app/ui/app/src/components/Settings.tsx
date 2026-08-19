@@ -12,13 +12,10 @@ import {
   BoltIcon,
   WrenchIcon,
   CloudIcon,
-  XMarkIcon,
   CogIcon,
-  ArrowLeftIcon,
   ArrowDownTrayIcon,
 } from "@heroicons/react/20/solid";
 import { Settings as SettingsType } from "@/gotypes";
-import { useNavigate } from "@tanstack/react-router";
 import { useUser } from "@/hooks/useUser";
 import { useCloudStatus } from "@/hooks/useCloudStatus";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -61,7 +58,6 @@ export default function Settings() {
   const [isAwaitingConnection, setIsAwaitingConnection] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [pollingInterval, setPollingInterval] = useState<number | null>(null);
-  const navigate = useNavigate();
   const {
     cloudDisabled,
     cloudStatus,
@@ -273,10 +269,6 @@ export default function Settings() {
   }
 
   const isWindows = navigator.platform.toLowerCase().includes("win");
-  const handleCloseSettings = () => {
-    const chatId = settings.LastHomeView === "chat" ? "new" : "launch";
-    navigate({ to: "/c/$chatId", params: { chatId } });
-  };
 
   return (
     <main className="flex h-screen w-full flex-col select-none dark:bg-neutral-900">
@@ -288,24 +280,8 @@ export default function Settings() {
         <h1
           className={`${isWindows ? "pl-4" : "pl-24"} flex items-center font-rounded text-md font-medium dark:text-white`}
         >
-          {isWindows && (
-            <button
-              onClick={handleCloseSettings}
-              className="hover:bg-neutral-100 mr-3 dark:hover:bg-neutral-800 rounded-full p-1.5"
-            >
-              <ArrowLeftIcon className="w-5 h-5 dark:text-white" />
-            </button>
-          )}
           Settings
         </h1>
-        {!isWindows && (
-          <button
-            onClick={handleCloseSettings}
-            className="p-1 hover:bg-neutral-100 mr-3 dark:hover:bg-neutral-800 rounded-full"
-          >
-            <XMarkIcon className="w-6 h-6 dark:text-white" />
-          </button>
-        )}
       </header>
       <div className="w-full p-6 overflow-y-auto flex-1 overscroll-contain">
         <div className="space-y-4 max-w-2xl mx-auto">
@@ -463,7 +439,9 @@ export default function Settings() {
                   <div className="flex-shrink-0">
                     <Switch
                       checked={settings.AutoUpdateEnabled}
-                      onChange={(checked) => handleChange("AutoUpdateEnabled", checked)}
+                      onChange={(checked) =>
+                        handleChange("AutoUpdateEnabled", checked)
+                      }
                     />
                   </div>
                 </div>
@@ -544,7 +522,9 @@ export default function Settings() {
                     </Description>
                     <div className="mt-3">
                       <Slider
-                        value={settings.ContextLength || defaultContextLength || 0}
+                        value={
+                          settings.ContextLength || defaultContextLength || 0
+                        }
                         onChange={(value) => {
                           handleChange("ContextLength", value);
                         }}

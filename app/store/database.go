@@ -14,7 +14,7 @@ import (
 
 // currentSchemaVersion defines the current database schema version.
 // Increment this when making schema changes that require migrations.
-const currentSchemaVersion = 16
+const currentSchemaVersion = 17
 
 // database wraps the SQLite connection.
 // SQLite handles its own locking for concurrent access:
@@ -82,7 +82,8 @@ func (db *database) init() error {
 		websearch_enabled BOOLEAN NOT NULL DEFAULT 0,
 		selected_model TEXT NOT NULL DEFAULT '',
 		sidebar_open BOOLEAN NOT NULL DEFAULT 0,
-		last_home_view TEXT NOT NULL DEFAULT 'launch',
+		last_home_view TEXT NOT NULL DEFAULT 'chat',
+		onboarding_version INTEGER NOT NULL DEFAULT 0,
 		think_enabled BOOLEAN NOT NULL DEFAULT 0,
 		think_level TEXT NOT NULL DEFAULT '',
 		cloud_setting_migrated BOOLEAN NOT NULL DEFAULT 0,
@@ -271,6 +272,12 @@ func (db *database) migrate() error {
 				return fmt.Errorf("migrate v15 to v16: %w", err)
 			}
 			version = 16
+		case 16:
+			// Existing users should not be shown onboarding after an upgrade.
+			if err := db.migrateV16ToV17(); err != nil {
+				return fmt.Errorf("migrate v16 to v17: %w", err)
+			}
+			version = 17
 		default:
 			// If we have a version we don't recognize, just set it to current
 			// This might happen during development
@@ -527,7 +534,7 @@ func (db *database) migrateV14ToV15() error {
 
 // migrateV15ToV16 adds the last_home_view column to the settings table
 func (db *database) migrateV15ToV16() error {
-	_, err := db.conn.Exec(`ALTER TABLE settings ADD COLUMN last_home_view TEXT NOT NULL DEFAULT 'launch'`)
+	_, err := db.conn.Exec(`ALTER TABLE settings ADD COLUMN last_home_view TEXT NOT NULL DEFAULT 'chat'`)
 	if err != nil && !duplicateColumnError(err) {
 		return fmt.Errorf("add last_home_view column: %w", err)
 	}
@@ -535,6 +542,23 @@ func (db *database) migrateV15ToV16() error {
 	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 16`)
 	if err != nil {
 		return fmt.Errorf("update schema version: %w", err)
+	}
+
+	return nil
+}
+
+// migrateV16ToV17 adds versioned onboarding state. The schema default stays at
+// zero for genuinely new installs, while all existing rows are marked complete
+// and moved off the retired launch home view.
+func (db *database) migrateV16ToV17() error {
+	_, err := db.conn.Exec(`ALTER TABLE settings ADD COLUMN onboarding_version INTEGER NOT NULL DEFAULT 0`)
+	if err != nil && !duplicateColumnError(err) {
+		return fmt.Errorf("add onboarding_version column: %w", err)
+	}
+
+	_, err = db.conn.Exec(`UPDATE settings SET onboarding_version = 1, last_home_view = 'chat', schema_version = 17`)
+	if err != nil {
+		return fmt.Errorf("complete onboarding for existing users: %w", err)
 	}
 
 	return nil
@@ -1188,9 +1212,9 @@ func (db *database) getSettings() (Settings, error) {
 	var s Settings
 
 	err := db.conn.QueryRow(`
-		SELECT expose, survey, browser, models, agent, tools, working_dir, context_length, turbo_enabled, websearch_enabled, selected_model, sidebar_open, last_home_view, think_enabled, think_level, auto_update_enabled
+		SELECT expose, survey, browser, models, agent, tools, working_dir, context_length, turbo_enabled, websearch_enabled, selected_model, sidebar_open, last_home_view, onboarding_version, think_enabled, think_level, auto_update_enabled
 		FROM settings
-	`).Scan(&s.Expose, &s.Survey, &s.Browser, &s.Models, &s.Agent, &s.Tools, &s.WorkingDir, &s.ContextLength, &s.TurboEnabled, &s.WebSearchEnabled, &s.SelectedModel, &s.SidebarOpen, &s.LastHomeView, &s.ThinkEnabled, &s.ThinkLevel, &s.AutoUpdateEnabled)
+	`).Scan(&s.Expose, &s.Survey, &s.Browser, &s.Models, &s.Agent, &s.Tools, &s.WorkingDir, &s.ContextLength, &s.TurboEnabled, &s.WebSearchEnabled, &s.SelectedModel, &s.SidebarOpen, &s.LastHomeView, &s.OnboardingVersion, &s.ThinkEnabled, &s.ThinkLevel, &s.AutoUpdateEnabled)
 	if err != nil {
 		return Settings{}, fmt.Errorf("get settings: %w", err)
 	}
@@ -1200,28 +1224,14 @@ func (db *database) getSettings() (Settings, error) {
 
 func (db *database) setSettings(s Settings) error {
 	lastHomeView := strings.ToLower(strings.TrimSpace(s.LastHomeView))
-	validLaunchView := map[string]struct{}{
-		"launch":    {},
-		"openclaw":  {},
-		"claude":    {},
-		"hermes":    {},
-		"codex":     {},
-		"codex-app": {},
-		"copilot":   {},
-		"opencode":  {},
-		"droid":     {},
-		"pi":        {},
-	}
 	if lastHomeView != "chat" {
-		if _, ok := validLaunchView[lastHomeView]; !ok {
-			lastHomeView = "launch"
-		}
+		lastHomeView = "chat"
 	}
 
 	_, err := db.conn.Exec(`
 		UPDATE settings
-		SET expose = ?, survey = ?, browser = ?, models = ?, agent = ?, tools = ?, working_dir = ?, context_length = ?, turbo_enabled = ?, websearch_enabled = ?, selected_model = ?, sidebar_open = ?, last_home_view = ?, think_enabled = ?, think_level = ?, auto_update_enabled = ?
-	`, s.Expose, s.Survey, s.Browser, s.Models, s.Agent, s.Tools, s.WorkingDir, s.ContextLength, s.TurboEnabled, s.WebSearchEnabled, s.SelectedModel, s.SidebarOpen, lastHomeView, s.ThinkEnabled, s.ThinkLevel, s.AutoUpdateEnabled)
+		SET expose = ?, survey = ?, browser = ?, models = ?, agent = ?, tools = ?, working_dir = ?, context_length = ?, turbo_enabled = ?, websearch_enabled = ?, selected_model = ?, sidebar_open = ?, last_home_view = ?, onboarding_version = ?, think_enabled = ?, think_level = ?, auto_update_enabled = ?
+	`, s.Expose, s.Survey, s.Browser, s.Models, s.Agent, s.Tools, s.WorkingDir, s.ContextLength, s.TurboEnabled, s.WebSearchEnabled, s.SelectedModel, s.SidebarOpen, lastHomeView, s.OnboardingVersion, s.ThinkEnabled, s.ThinkLevel, s.AutoUpdateEnabled)
 	if err != nil {
 		return fmt.Errorf("set settings: %w", err)
 	}

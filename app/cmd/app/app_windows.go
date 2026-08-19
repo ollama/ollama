@@ -95,11 +95,15 @@ func (ac *appCallbacks) UIRun(path string) {
 }
 
 func (*appCallbacks) UIShow() {
-	if wv.webview != nil {
+	openUI("/")
+}
+
+func openUI(path string) {
+	if wv.IsRunning() && wv.webview != nil {
 		showWindow(wv.webview.Window())
-	} else {
-		wv.Run("/")
+		return
 	}
+	wv.Run(path)
 }
 
 func (*appCallbacks) UITerminate() {
@@ -138,19 +142,7 @@ func (app *appCallbacks) HandleURLScheme(urlScheme string) {
 
 // handleURLSchemeRequest processes URL scheme requests from other instances
 func handleURLSchemeRequest(urlScheme string) {
-	isConnect, err := parseURLScheme(urlScheme)
-	if err != nil {
-		slog.Error("failed to parse URL scheme request", "url", urlScheme, "error", err)
-		return
-	}
-
-	if isConnect {
-		handleConnectURLScheme()
-	} else {
-		if wv.webview != nil {
-			showWindow(wv.webview.Window())
-		}
-	}
+	handleURLSchemeInCurrentInstance(urlScheme)
 }
 
 func UpdateAvailable(ver string) error {
@@ -161,7 +153,7 @@ func UpdateAvailable(ver string) error {
 	return app.t.UpdateAvailable(ver)
 }
 
-func osRun(shutdown func(), hasCompletedFirstRun, startHidden bool) {
+func osRun(shutdown func(), hasCompletedFirstRun, startHidden, showOnboarding bool, urlSchemeRequest string) {
 	var err error
 	app.shutdown = shutdown
 	app.t, err = wintray.NewTray(app)
@@ -205,9 +197,7 @@ func osRun(shutdown func(), hasCompletedFirstRun, startHidden bool) {
 			}
 		}
 	}
-	if startHidden {
-		startHiddenTasks()
-	} else {
+	runInitialWindowsUI(startHidden, showOnboarding, urlSchemeRequest, startHiddenTasks, handleURLSchemeInCurrentInstance, func() {
 		ptr := wv.Run("/")
 
 		// Set the window icon using the tray icon
@@ -225,7 +215,7 @@ func osRun(shutdown func(), hasCompletedFirstRun, startHidden bool) {
 		}
 
 		centerWindow(ptr)
-	}
+	})
 
 	if !hasCompletedFirstRun {
 		// Only create the login shortcut on first start
@@ -408,6 +398,8 @@ func hideWindow(ptr unsafe.Pointer) {
 	}
 }
 
+func setOnboardingWindowStyle(_ unsafe.Pointer, _ bool) {}
+
 func runInBackground() {
 	exe, err := os.Executable()
 	if err != nil {
@@ -432,17 +424,13 @@ func drag(ptr unsafe.Pointer) {}
 func doubleClick(ptr unsafe.Pointer) {}
 
 // checkAndHandleExistingInstance checks if another instance is running and sends the URL to it
-func checkAndHandleExistingInstance(urlSchemeRequest string) bool {
+func checkAndHandleExistingInstance(urlSchemeRequest string) {
 	if urlSchemeRequest == "" {
-		return false
+		return
 	}
 
 	// Try to send URL to existing instance using wintray messaging
 	if wintray.CheckAndSendToExistingInstance(urlSchemeRequest) {
 		os.Exit(0)
-		return true
 	}
-
-	// No existing instance, we'll handle it ourselves
-	return false
 }

@@ -24,6 +24,13 @@ import (
 	"github.com/ollama/ollama/app/webview"
 )
 
+const (
+	defaultWindowWidth     = 1360
+	defaultWindowHeight    = 960
+	onboardingWindowWidth  = 900
+	onboardingWindowHeight = 660
+)
+
 type Webview struct {
 	port    int
 	token   string
@@ -237,8 +244,36 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 			showWindow(wv.Window())
 		})
 
+		wv.Bind("activateOllama", func() {
+			showWindow(wv.Window())
+		})
+
 		wv.Bind("close", func() {
 			hideWindow(wv.Window())
+		})
+
+		wv.Bind("setOnboardingWindow", func(enabled bool) {
+			wv.Dispatch(func() {
+				if enabled {
+					wv.SetSize(onboardingWindowWidth, onboardingWindowHeight, webview.HintFixed)
+					setOnboardingWindowStyle(wv.Window(), true)
+					return
+				}
+
+				width, height := defaultWindowWidth, defaultWindowHeight
+				if w.Store != nil {
+					storedWidth, storedHeight, err := w.Store.WindowSize()
+					if err != nil {
+						slog.Error("failed to restore window size", "error", err)
+					} else if storedWidth > 0 && storedHeight > 0 {
+						width, height = storedWidth, storedHeight
+					}
+				}
+
+				wv.SetSize(width, height, webview.HintNone)
+				wv.SetSize(800, 600, webview.HintMin)
+				setOnboardingWindowStyle(wv.Window(), false)
+			})
 		})
 
 		// Webviews do not allow access to the file system by default, so we need to
@@ -450,17 +485,17 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 			}()
 		}
 
+		width, height := defaultWindowWidth, defaultWindowHeight
 		if w.Store != nil {
-			width, height, err := w.Store.WindowSize()
+			storedWidth, storedHeight, err := w.Store.WindowSize()
 			if err != nil {
 				slog.Error("failed to get window size", "error", err)
 			}
-			if width > 0 && height > 0 {
-				wv.SetSize(width, height, webview.HintNone)
-			} else {
-				wv.SetSize(800, 600, webview.HintNone)
+			if storedWidth > 0 && storedHeight > 0 {
+				width, height = storedWidth, storedHeight
 			}
 		}
+		wv.SetSize(width, height, webview.HintNone)
 		wv.SetSize(800, 600, webview.HintMin)
 
 		w.webview = wv

@@ -16,7 +16,7 @@ enum AppMove
     MoveError,
 };
 
-void run(bool firstTimeRun, bool startHidden);
+void run(bool showOnboarding, bool startHidden);
 void killOtherInstances();
 enum AppMove askToMoveToApplications();
 int createSymlinkWithAuthorization();
@@ -38,6 +38,7 @@ void setWindowDelegate(void *window);
 void showWindow(uintptr_t wndPtr);
 void hideWindow(uintptr_t wndPtr);
 void styleWindow(uintptr_t wndPtr);
+void setWindowResizable(uintptr_t wndPtr, bool resizable);
 void drag(uintptr_t wndPtr);
 void doubleClick(uintptr_t wndPtr);
 void handleConnectURL();

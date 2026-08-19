@@ -54,14 +54,17 @@ func StartUI(path *C.cchar_t) {
 
 //export ShowUI
 func ShowUI() {
-	// If webview is already running, just show the window
+	openUI("/")
+}
+
+func openUI(path string) {
 	if wv.IsRunning() && wv.webview != nil {
 		showWindow(wv.webview.Window())
-	} else {
-		root := C.CString("/")
-		defer C.free(unsafe.Pointer(root))
-		StartUI(root)
+		return
 	}
+	p := C.CString(path)
+	defer C.free(unsafe.Pointer(p))
+	StartUI(p)
 }
 
 //export StopUI
@@ -172,13 +175,13 @@ func UpdateAvailable(ver string) error {
 	return nil
 }
 
-func osRun(_ func(), hasCompletedFirstRun, startHidden bool) {
+func osRun(_ func(), hasCompletedFirstRun, startHidden, showOnboarding bool, _ string) {
 	registerLaunchAgent(hasCompletedFirstRun)
 
 	// Run the native macOS app
 	// Note: this will block until the app is closed
 	slog.Debug("starting native darwin event loop")
-	C.run(C._Bool(hasCompletedFirstRun), C._Bool(startHidden))
+	C.run(C._Bool(showOnboarding), C._Bool(startHidden))
 }
 
 func quit() {
@@ -229,6 +232,11 @@ func styleWindow(ptr unsafe.Pointer) {
 	C.styleWindow(C.uintptr_t(uintptr(ptr)))
 }
 
+func setOnboardingWindowStyle(ptr unsafe.Pointer, enabled bool) {
+	styleWindow(ptr)
+	C.setWindowResizable(C.uintptr_t(uintptr(ptr)), C.bool(!enabled))
+}
+
 func runInBackground() {
 	cmd := exec.Command(filepath.Join(updater.BundlePath, "Contents", "MacOS", "Ollama"), "hidden")
 	if cmd != nil {
@@ -257,6 +265,4 @@ func handleConnectURL() {
 }
 
 // checkAndHandleExistingInstance is not needed on non-Windows platforms
-func checkAndHandleExistingInstance(_ string) bool {
-	return false
-}
+func checkAndHandleExistingInstance(_ string) {}
