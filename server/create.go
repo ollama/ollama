@@ -204,7 +204,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 				}
 			}
 		} else if r.Files != nil {
-			baseLayers, err = convertModelFromFiles(r.Files, baseLayers, false, fn)
+			baseLayers, err = convertModelFromFilesFn(r.Files, baseLayers, false, fn)
 			if err != nil {
 				for _, badReq := range []error{errNoFilesProvided, errOnlyGGUFSupported, errUnknownType} {
 					if errors.Is(err, badReq) {
@@ -418,6 +418,12 @@ func remoteURL(raw string) (string, error) {
 func convertModelFromFiles(files map[string]string, baseLayers []*layerGGML, isAdapter bool, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
 	return convertModelFromFilesWithMediaType(files, baseLayers, isAdapter, "", true, fn)
 }
+
+// convertModelFromFilesFn is a seam over convertModelFromFiles so tests can
+// simulate a panic from the model conversion pipeline (e.g. a malformed
+// GGUF/safetensors file) without needing a real file that crashes a specific
+// converter.
+var convertModelFromFilesFn = convertModelFromFiles
 
 func convertDraftModelFromFiles(files map[string]string, baseLayers []*layerGGML, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
 	return convertModelFromFilesWithMediaType(files, baseLayers, false, manifest.MediaTypeImageDraft, false, fn)

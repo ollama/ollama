@@ -154,6 +154,43 @@ func TestCreateHandlerRejectsInvalidInfoTypes(t *testing.T) {
 	}
 }
 
+// TestCreateHandlerRecoversConversionPanic ensures that a panic inside the
+// background model conversion goroutine (e.g. triggered by a malformed
+// model file) is recovered and reported to the client as a normal error
+// response instead of crashing the process.
+func TestCreateHandlerRecoversConversionPanic(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	oldConvert := convertModelFromFilesFn
+	t.Cleanup(func() { convertModelFromFilesFn = oldConvert })
+	convertModelFromFilesFn = func(files map[string]string, baseLayers []*layerGGML, isAdapter bool, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
+		panic("simulated conversion panic: index out of range")
+	}
+
+	var s Server
+	_, digest := createBinFile(t, nil, nil)
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model: "test-create-conversion-panic",
+		Files: map[string]string{
+			"test.gguf": digest,
+		},
+		Stream: &stream,
+	})
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status code 500, got %d", w.Code)
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := resp["error"]; !strings.Contains(got, "simulated conversion panic") {
+		t.Fatalf("expected error to mention the recovered panic, got %q", got)
+	}
+}
+
 func readCreatedModelConfig(t *testing.T, name string) model.ConfigV2 {
 	t.Helper()
 
