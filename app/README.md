@@ -53,7 +53,17 @@ The `-dev` flag enables:
 
 ### Windows
 
-- https://jrsoftware.org/isinfo.php
+Install these prerequisites before building the Windows desktop app:
+
+- [Go](https://go.dev/dl/)
+- [Node.js 20](https://nodejs.org/en/download)
+- [CMake 3.24 or newer](https://cmake.org/download/)
+- [Visual Studio C++ Build Tools](https://visualstudio.microsoft.com/downloads/),
+  including the Desktop development with C++ workload and a Windows SDK
+- [MSYS2](https://www.msys2.org/docs/installer/) with its Clang64 toolchain,
+  including a C++20 compiler, libc++, and `windres`
+- [Windows App Runtime 1.8](https://learn.microsoft.com/windows/apps/windows-app-sdk/downloads)
+- [Inno Setup](https://jrsoftware.org/isinfo.php) when building the installer
 
 
 **Dependencies** - either build a local copy of ollama, or use a github release

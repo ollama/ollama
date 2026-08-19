@@ -892,6 +892,64 @@ function withWindowsArm64GoEnv {
     }
 }
 
+function assertWindowsWinUICompiler {
+    if (-not $env:CXX) {
+        Write-Error "Building the WinUI app requires a C++20 Clang compiler"
+        exit(1)
+    }
+
+    $version = (& $env:CXX --version 2>&1 | Out-String)
+    if ($LASTEXITCODE -ne 0 -or $version -notmatch "clang") {
+        Write-Error "Building the WinUI app requires Clang with libc++; CXX=$env:CXX"
+        exit(1)
+    }
+}
+
+function withWindowsWinUIGoEnv {
+    param (
+        [string]$arch,
+        [scriptblock]$action
+    )
+
+    if ($arch -eq "arm64") {
+        withWindowsArm64GoEnv {
+            assertWindowsWinUICompiler
+            & $action
+        }
+        return
+    }
+
+    $compiler = findWindowsCPUCompiler
+    if (-not $compiler) {
+        Write-Error "Building the WinUI app requires llvm-mingw or MSYS2 clang64"
+        exit(1)
+    }
+
+    $oldGOOS = $env:GOOS
+    $oldGOARCH = $env:GOARCH
+    $oldCGO_ENABLED = $env:CGO_ENABLED
+    $oldCC = $env:CC
+    $oldCXX = $env:CXX
+    $oldPath = $env:PATH
+    try {
+        $env:GOOS = "windows"
+        $env:GOARCH = "amd64"
+        $env:CGO_ENABLED = "1"
+        $env:PATH = "$(Split-Path -Parent $compiler.CC);$oldPath"
+        $env:CC = Split-Path -Leaf $compiler.CC
+        $env:CXX = Split-Path -Leaf $compiler.CXX
+        assertWindowsWinUICompiler
+        & $action
+    } finally {
+        $env:GOOS = $oldGOOS
+        $env:GOARCH = $oldGOARCH
+        $env:CGO_ENABLED = $oldCGO_ENABLED
+        $env:CC = $oldCC
+        $env:CXX = $oldCXX
+        $env:PATH = $oldPath
+    }
+}
+
 function buildOllamaCLI {
     param (
         [string]$distDir
@@ -977,17 +1035,63 @@ function prepareApp {
     $script:APP_PREPARED = $true
 }
 
+function findWindowsResourceCompiler {
+    $cc = (Get-Command $env:CC -ErrorAction SilentlyContinue | Select-Object -First 1).Path
+    if (-not $cc -and (Test-Path -LiteralPath $env:CC)) {
+        $cc = (Resolve-Path -LiteralPath $env:CC).Path
+    }
+    if (-not $cc) {
+        return $null
+    }
+
+    $compilerDir = Split-Path -Parent $cc
+    $compilerName = Split-Path -Leaf $cc
+    $prefixedWindres = $compilerName -replace '(gcc|clang)(\.exe)?$', 'windres$2'
+    foreach ($name in @($prefixedWindres, "llvm-windres.exe", "windres.exe")) {
+        $candidate = Join-Path $compilerDir $name
+        if (Test-Path -LiteralPath $candidate) {
+            return $candidate
+        }
+    }
+    return $null
+}
+
 function buildApp {
     param (
         [string]$arch
     )
-	& go build -trimpath -ldflags "-s -w -H windowsgui -X=github.com/ollama/ollama/app/version.Version=$script:VERSION" -o .\dist\windows-ollama-app-${arch}.exe ./app/cmd/app/
-    if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+
+    $windres = findWindowsResourceCompiler
+    if (-not $windres) {
+        Write-Error "Unable to find windres beside CC=$env:CC"
+        exit(1)
+    }
+
+    $versionParts = $script:PKG_VERSION.Split('.')
+    $resourcePath = "${script:SRC_DIR}\app\cmd\app\ollama_windows_${arch}.syso"
+    $buildExit = 0
+    try {
+        & $windres `
+            "-DOLLAMA_VERSION_MAJOR=$($versionParts[0])" `
+            "-DOLLAMA_VERSION_MINOR=$($versionParts[1])" `
+            "-DOLLAMA_VERSION_PATCH=$($versionParts[2])" `
+            -i .\app\ollama.rc -o $resourcePath -O coff
+        $buildExit = $LASTEXITCODE
+        if ($buildExit -eq 0) {
+            & go build -tags winui -trimpath -ldflags "-s -w -H windowsgui -X=github.com/ollama/ollama/app/version.Version=$script:VERSION" -o .\dist\windows-ollama-app-${arch}.exe ./app/cmd/app/
+            $buildExit = $LASTEXITCODE
+        }
+    } finally {
+        Remove-Item -LiteralPath $resourcePath -Force -ErrorAction SilentlyContinue
+    }
+    if ($buildExit -ne 0) { exit($buildExit) }
 }
 
 function app {
     prepareApp
-    buildApp $script:ARCH
+    withWindowsWinUIGoEnv $script:ARCH {
+        buildApp $script:ARCH
+    }
 }
 
 function appArm64 {
@@ -998,16 +1102,9 @@ function appArm64 {
 
     prepareApp
     Write-Output "Building Ollama App for arm64"
-    withWindowsArm64GoEnv {
+    withWindowsWinUIGoEnv "arm64" {
         buildApp "arm64"
     }
-}
-
-function deps {
-    # MSVC CRT DLLs (vcruntime140.dll, msvcp140.dll, etc.) are now bundled
-    # directly alongside the executables by CMake's RUNTIME_DEPENDENCIES
-    # mechanism during install. No need to download vc_redist.exe.
-    Write-Output "deps: no external dependencies to download (CRT DLLs bundled by CMake install)"
 }
 
 function sign {
@@ -1076,7 +1173,8 @@ function newDependencyAuditJob($payloadDir, $label, $reportPath, $dependencyDirs
         $systemDlls = @(
             "advapi32.dll", "bcrypt.dll", "cfgmgr32.dll", "combase.dll",
             "comctl32.dll", "comdlg32.dll", "crypt32.dll", "d3d12.dll",
-            "dbghelp.dll", "dxcore.dll", "dxgi.dll", "gdi32.dll",
+            "d2d1.dll", "d3d11.dll", "dbghelp.dll", "dwrite.dll",
+            "dxcore.dll", "dxgi.dll", "gdi32.dll",
             "gdi32full.dll", "imm32.dll", "iphlpapi.dll", "kernel32.dll",
             "mpr.dll", "msasn1.dll", "msvcrt.dll", "ncrypt.dll",
             "normaliz.dll", "ntdll.dll", "ole32.dll", "oleaut32.dll",
@@ -1130,6 +1228,11 @@ function newDependencyAuditJob($payloadDir, $label, $reportPath, $dependencyDirs
                         continue
                     }
                     if ($driverDlls -contains $depLower) {
+                        continue
+                    }
+                    # The ZIP app reports a clear download error when the
+                    # separately installed Windows App Runtime is unavailable.
+                    if ($depLower -eq 'microsoft.windowsappruntime.dll') {
                         continue
                     }
                     if ($depLower -like 'api-ms-win-*.dll' -or $depLower -like 'ext-ms-*.dll') {
@@ -1228,6 +1331,22 @@ function restoreComponents($mainDir, $stagingDir) {
     Remove-Item -ea 0 -r $stagingDir
 }
 
+function stageWindowsApp($arch, $payloadDir) {
+    $app = "${script:SRC_DIR}\dist\windows-ollama-app-${arch}.exe"
+    if (-not (Test-Path -LiteralPath $app)) {
+        return
+    }
+
+    $runtimeArch = if ($arch -eq "amd64") { "x64" } else { $arch }
+    $bootstrap = "${script:SRC_DIR}\dist\app-runtime\${runtimeArch}\Microsoft.WindowsAppRuntime.Bootstrap.dll"
+    if (-not (Test-Path -LiteralPath $bootstrap)) {
+        throw "Missing Windows App Runtime bootstrap DLL required to package the $arch app"
+    }
+
+    Copy-Item -LiteralPath $app -Destination "${payloadDir}\ollama app.exe" -Force
+    Copy-Item -LiteralPath $bootstrap -Destination $payloadDir -Force
+}
+
 function zip {
     $jobs = @()
     $distDir = "${script:SRC_DIR}\dist"
@@ -1238,6 +1357,8 @@ function zip {
 
     try {
         if (Test-Path -Path $amd64Dir) {
+            stageWindowsApp "amd64" $amd64Dir
+
             # Stage ROCm into its own directory for independent compression.
             if (stageComponents $amd64Dir "${distDir}\windows-amd64-rocm" "rocm_v*" "ROCm") {
                 Write-Output "Generating ${distDir}\ollama-windows-amd64-rocm.zip"
@@ -1261,6 +1382,7 @@ function zip {
         $arm64Dir = "${distDir}\windows-arm64"
         if (Test-Path -Path $arm64Dir) {
             if ((Test-Path -Path "${arm64Dir}\ollama.exe") -and (Test-Path -Path "${arm64Dir}\lib\ollama\llama-server.exe")) {
+                stageWindowsApp "arm64" $arm64Dir
                 verifyWindowsArm64Binaries $arm64Dir
                 Write-Output "Generating ${distDir}\ollama-windows-arm64.zip"
                 $jobs += newZipJob $arm64Dir "${distDir}\ollama-windows-arm64.zip"
@@ -1313,7 +1435,6 @@ try {
         ollamaArm64
         app
         appArm64
-        deps
         sign
         installer
         zip

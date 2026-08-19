@@ -111,6 +111,19 @@ Source: "..\dist\windows-arm64\lib\ollama\*"; DestDir: "{app}\lib\ollama\"; Chec
 
 Source: ".\assets\app.ico"; DestDir: "{app}"; Flags: ignoreversion
 
+Source: "..\dist\app-runtime\x64\Microsoft.WindowsAppRuntime.Bootstrap.dll"; DestDir: "{app}"; Check: not IsArm64(); Flags: ignoreversion 64bit
+Source: "..\dist\app-runtime\x64\WindowsAppRuntimeInstall.exe"; DestDir: "{tmp}"; DestName: "WindowsAppRuntimeInstall.exe"; Check: not IsArm64(); Flags: deleteafterinstall; AfterInstall: InstallWindowsAppRuntime
+#if FileExists("..\dist\windows-ollama-app-arm64.exe")
+Source: "..\dist\app-runtime\arm64\Microsoft.WindowsAppRuntime.Bootstrap.dll"; DestDir: "{app}"; Check: IsArm64(); Flags: ignoreversion 64bit
+Source: "..\dist\app-runtime\arm64\WindowsAppRuntimeInstall.exe"; DestDir: "{tmp}"; DestName: "WindowsAppRuntimeInstall.exe"; Check: IsArm64(); Flags: deleteafterinstall; AfterInstall: InstallWindowsAppRuntime
+#else
+; Local ARM64 installer tests fall back to the x64 app under emulation, so its
+; bootstrap and runtime installer must use the same architecture as the app.
+Source: "..\dist\app-runtime\x64\Microsoft.WindowsAppRuntime.Bootstrap.dll"; DestDir: "{app}"; Check: IsArm64(); Flags: ignoreversion 64bit
+Source: "..\dist\app-runtime\x64\WindowsAppRuntimeInstall.exe"; DestDir: "{tmp}"; DestName: "WindowsAppRuntimeInstall.exe"; Check: IsArm64(); Flags: deleteafterinstall; AfterInstall: InstallWindowsAppRuntime
+#endif
+Source: "..\dist\app-runtime\licenses\*"; DestDir: "{app}\licenses\WindowsAppSDK"; Flags: ignoreversion
+
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\app.ico"
 Name: "{app}\lib\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\app.ico"
@@ -164,6 +177,20 @@ Root: HKCU; Subkey: "Software\Classes\ollama"; ValueType: string; ValueName: "UR
 Root: HKCU; Subkey: "Software\Classes\ollama\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Flags: uninsdeletekey
 
 [Code]
+
+procedure InstallWindowsAppRuntime;
+var
+  ResultCode: Integer;
+begin
+  Log('Installing the Windows App Runtime');
+  if not Exec(ExpandConstant('{tmp}\WindowsAppRuntimeInstall.exe'), '--quiet', '', SW_HIDE,
+    ewWaitUntilTerminated, ResultCode) then begin
+    RaiseException(Format('Unable to start the Windows App Runtime installer (%d: %s)', [ResultCode, SysErrorMessage(ResultCode)]));
+  end;
+  if ResultCode <> 0 then begin
+    RaiseException(Format('The Windows App Runtime installer failed with exit code %d', [ResultCode]));
+  end;
+end;
 
 function NeedsAddPath(Param: string): boolean;
 var

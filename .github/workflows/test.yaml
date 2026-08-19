@@ -7,7 +7,7 @@ concurrency:
   # For non-PR pushes, concurrency.group needs to be unique for every distinct
   # CI run we want to have happen. Use run_id, which in practice means all
   # non-PR CI runs will be allowed to run without preempting each other.
-  group: ${{ github.workflow }}-$${{ github.pull_request.number || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 on:
@@ -53,8 +53,156 @@ jobs:
             'x/imagegen/mlx/**' \
             'x/imagegen/mlx/**/*' \
             '.github/**/*') | tee -a $GITHUB_OUTPUT
-          echo app_changed=$(changed 'app/**' 'app/**/*') | tee -a $GITHUB_OUTPUT
+          echo app_changed=$(changed \
+            'app/**' \
+            'app/**/*' \
+            '.github/scripts/prepare_windows_app_runtime.ps1' \
+            'scripts/build_darwin.sh' \
+            'scripts/build_windows.ps1') | tee -a $GITHUB_OUTPUT
           echo enginehash=$(cat LLAMA_CPP_VERSION)-$(cat MLX_VERSION)-$(cat MLX_C_VERSION) | tee -a $GITHUB_OUTPUT
+
+  app-darwin:
+    needs: [changes]
+    if: needs.changes.outputs.app_changed == 'True'
+    runs-on: macos-latest
+    env:
+      VERSION: 0.0.0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Resolve latest stable release
+        id: stable
+        shell: bash
+        run: |
+          set -euo pipefail
+          release="$(mktemp)"
+          curl -fsSL --retry 3 \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -o "$release" https://api.github.com/repos/ollama/ollama/releases/latest
+          tag="$(jq -r .tag_name "$release")"
+          url="$(jq -r '.assets[] | select(.name == "ollama-darwin.tgz") | .browser_download_url' "$release")"
+          digest="$(jq -r '.assets[] | select(.name == "ollama-darwin.tgz") | .digest' "$release")"
+          test -n "$tag" && test -n "$url" && test "$digest" != null
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "sha256=${digest#sha256:}" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: .cache/app-ci/ollama-darwin.tgz
+          key: app-ci-darwin-${{ steps.stable.outputs.tag }}
+      - name: Prepare stable Darwin runtime payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive=.cache/app-ci/ollama-darwin.tgz
+          mkdir -p "$(dirname "$archive")"
+          if [ ! -f "$archive" ]; then
+            curl -fL --retry 3 --retry-delay 2 -o "$archive" "${{ steps.stable.outputs.url }}"
+          fi
+          echo "${{ steps.stable.outputs.sha256 }}  $archive" | shasum -a 256 -c -
+
+          payload="$RUNNER_TEMP/ollama-darwin-stable"
+          rm -rf "$payload" dist/darwin
+          mkdir -p "$payload" dist/darwin/lib/ollama
+          tar -xzf "$archive" -C "$payload"
+          mv "$payload/ollama" "$payload/llama-server" "$payload/llama-quantize" dist/darwin/
+          for item in "$payload"/*; do
+            mv "$item" dist/darwin/lib/ollama/
+          done
+      - name: Build macOS app
+        run: ./scripts/build_darwin.sh app
+      - name: Verify macOS app outputs
+        shell: bash
+        run: |
+          test -x dist/Ollama.app/Contents/MacOS/Ollama
+          test -f dist/Ollama-darwin.zip
+
+  app-windows:
+    needs: [changes]
+    if: needs.changes.outputs.app_changed == 'True'
+    runs-on: windows
+    env:
+      VERSION: 0.0.0
+    steps:
+      - name: Install clang and gcc-compat
+        run: |
+          $ErrorActionPreference = "Stop"
+          Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-x86_64.zip" -OutFile "${{ runner.temp }}\llvm-mingw-ucrt.zip"
+          Expand-Archive -Path "${{ runner.temp }}\llvm-mingw-ucrt.zip" -DestinationPath "C:\Program Files\"
+          $installPath = (Resolve-Path -Path "C:\Program Files\llvm-mingw-*-ucrt-x86_64").Path
+          "$installPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Resolve latest stable release
+        id: stable
+        run: |
+          $headers = @{
+            "Authorization" = "Bearer ${{ github.token }}"
+            "User-Agent" = "ollama-app-ci"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          $release = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/ollama/ollama/releases/latest"
+          "tag=$($release.tag_name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          foreach ($arch in @("amd64", "arm64")) {
+            $name = "ollama-windows-$arch.zip"
+            $asset = $release.assets | Where-Object Name -eq $name | Select-Object -First 1
+            if (-not $asset -or -not $asset.digest) { throw "Latest stable release is missing $name or its digest" }
+            "${arch}_url=$($asset.browser_download_url)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            "${arch}_sha256=$($asset.digest -replace '^sha256:', '')" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
+      - uses: actions/cache@v4
+        with:
+          path: .cache/app-ci/ollama-windows-*.zip
+          key: app-ci-windows-${{ steps.stable.outputs.tag }}
+      - name: Prepare stable Windows runtime payload
+        run: |
+          $ProgressPreference = "SilentlyContinue"
+          New-Item -ItemType Directory -Force -Path .cache\app-ci | Out-Null
+          $assets = @(
+            @("amd64", "${{ steps.stable.outputs.amd64_url }}", "${{ steps.stable.outputs.amd64_sha256 }}"),
+            @("arm64", "${{ steps.stable.outputs.arm64_url }}", "${{ steps.stable.outputs.arm64_sha256 }}")
+          )
+          foreach ($asset in $assets) {
+            $arch, $url, $sha256 = $asset
+            $archive = ".cache\app-ci\ollama-windows-$arch.zip"
+            if (-not (Test-Path $archive)) {
+              Invoke-WebRequest -Uri $url -OutFile $archive -MaximumRetryCount 3 -RetryIntervalSec 2
+            }
+            if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne $sha256) {
+              throw "SHA256 mismatch for $archive"
+            }
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "dist\windows-$arch"
+            Expand-Archive -Path $archive -DestinationPath "dist\windows-$arch"
+          }
+          Remove-Item -Force -ErrorAction SilentlyContinue "dist\windows-*\ollama app.exe", "dist\windows-ollama-app-*.exe"
+      - name: Prepare Windows App Runtime
+        run: ./.github/scripts/prepare_windows_app_runtime.ps1
+      - name: Build Windows apps and installer
+        run: ./scripts/build_windows.ps1 app appArm64 installer
+      - name: Test WinUI app packages
+        run: |
+          $env:CGO_ENABLED = "1"
+          $env:CC = "x86_64-w64-mingw32-gcc.exe"
+          $env:CXX = "x86_64-w64-mingw32-g++.exe"
+          go test -count=1 -tags winui ./app/cmd/app ./app/wintray
+      - name: Verify Windows app outputs
+        run: |
+          if (-not (Test-Path dist\windows-ollama-app-amd64.exe)) { throw "missing amd64 app" }
+          if (-not (Test-Path dist\windows-ollama-app-arm64.exe)) { throw "missing arm64 app" }
+          if (-not (Test-Path dist\OllamaSetup.exe)) { throw "missing installer" }
 
   patches:
     strategy:
