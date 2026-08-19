@@ -174,14 +174,7 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 			}
 		}
 	case uint32(FOCUS_WINDOW_MSG_ID):
-		// Handle focus window request from another instance
-		if t.app.UIRunning() {
-			// If UI is already running, just show it
-			t.app.UIShow()
-		} else {
-			// If UI is not running, start it
-			t.app.UIRun("/")
-		}
+		// Returning users stay tray-only until they explicitly choose a menu item.
 		lResult = 1 // Return non-zero to indicate success
 	default:
 		// Calls the default window procedure to provide default processing for any window messages that an application does not process.

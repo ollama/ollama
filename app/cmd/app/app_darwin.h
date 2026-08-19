@@ -16,7 +16,7 @@ enum AppMove
     MoveError,
 };
 
-void run(bool firstTimeRun, bool startHidden);
+void run(bool showOnboarding, bool startHidden);
 void killOtherInstances();
 enum AppMove askToMoveToApplications();
 int createSymlinkWithAuthorization();

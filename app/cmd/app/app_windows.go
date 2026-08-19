@@ -161,7 +161,7 @@ func UpdateAvailable(ver string) error {
 	return app.t.UpdateAvailable(ver)
 }
 
-func osRun(shutdown func(), hasCompletedFirstRun, startHidden bool) {
+func osRun(shutdown func(), hasCompletedFirstRun, startHidden, showOnboarding bool) {
 	var err error
 	app.shutdown = shutdown
 	app.t, err = wintray.NewTray(app)
@@ -207,7 +207,7 @@ func osRun(shutdown func(), hasCompletedFirstRun, startHidden bool) {
 	}
 	if startHidden {
 		startHiddenTasks()
-	} else {
+	} else if showOnboarding {
 		ptr := wv.Run("/")
 
 		// Set the window icon using the tray icon

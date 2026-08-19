@@ -349,7 +349,13 @@ func main() {
 		}
 	}()
 
-	osRun(cancel, hasCompletedFirstRun, startHidden)
+	settings, settingsErr := st.Settings()
+	showOnboarding := shouldShowOnboarding(settings, settingsErr)
+	if settingsErr != nil {
+		slog.Error("failed to load onboarding state", "error", settingsErr)
+	}
+
+	osRun(cancel, hasCompletedFirstRun, startHidden, showOnboarding)
 
 	slog.Info("shutting down desktop server")
 	if err := srv.Close(); err != nil {
@@ -359,6 +365,10 @@ func main() {
 	slog.Info("shutting down ollama server")
 	cancel()
 	<-done
+}
+
+func shouldShowOnboarding(settings store.Settings, err error) bool {
+	return err != nil || settings.OnboardingVersion < store.CurrentOnboardingVersion
 }
 
 func startHiddenTasks() {

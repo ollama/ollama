@@ -19,7 +19,7 @@ extern NSString *SystemWidePath;
 
 @implementation AppDelegate
 
-bool firstTimeRun,startHidden; // Set in run before initialization
+bool showOnboarding,startHidden; // Set in run before initialization
 
 - (void)application:(NSApplication *)application openURLs:(NSArray<NSURL *> *)urls {
     for (NSURL *url in urls) {
@@ -214,10 +214,8 @@ bool firstTimeRun,startHidden; // Set in run before initialization
     dispatch_async(dispatch_get_main_queue(), ^{
         if (hidden || startHidden) {
             darwinStartHiddenTasks();
-        } else {
-            if (!startHidden) {
-                StartUI("/");
-            }
+        } else if (showOnboarding) {
+            StartUI("/");
         }
     });
 }
@@ -238,7 +236,6 @@ bool firstTimeRun,startHidden; // Set in run before initialization
 }
 
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)hasVisibleWindows {
-    [self openUI];
     return YES;
 }
 
@@ -621,12 +618,12 @@ decidePolicyForNavigationAction:(WKNavigationAction *)action
 @end
 
 AppDelegate *appDelegate;
-void run(bool ftr, bool sh) {
+void run(bool so, bool sh) {
     [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
     appDelegate = [[AppDelegate alloc] init];
     [NSApp setDelegate:appDelegate];
-    firstTimeRun = ftr;
+    showOnboarding = so;
     startHidden = sh;
     [NSApp run];
     StopUI();

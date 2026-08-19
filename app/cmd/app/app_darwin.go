@@ -172,13 +172,13 @@ func UpdateAvailable(ver string) error {
 	return nil
 }
 
-func osRun(_ func(), hasCompletedFirstRun, startHidden bool) {
+func osRun(_ func(), hasCompletedFirstRun, startHidden, showOnboarding bool) {
 	registerLaunchAgent(hasCompletedFirstRun)
 
 	// Run the native macOS app
 	// Note: this will block until the app is closed
 	slog.Debug("starting native darwin event loop")
-	C.run(C._Bool(hasCompletedFirstRun), C._Bool(startHidden))
+	C.run(C._Bool(showOnboarding), C._Bool(startHidden))
 }
 
 func quit() {

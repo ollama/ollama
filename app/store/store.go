@@ -177,6 +177,9 @@ type Settings struct {
 	AutoUpdateEnabled bool
 }
 
+// Keep in sync with CURRENT_ONBOARDING_VERSION in app/ui/app/src/lib/onboarding.ts.
+const CurrentOnboardingVersion = 1
+
 type Store struct {
 	// DBPath allows overriding the default database path (mainly for testing)
 	DBPath string

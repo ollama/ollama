@@ -1,3 +1,4 @@
+// Keep in sync with store.CurrentOnboardingVersion in app/store/store.go.
 export const CURRENT_ONBOARDING_VERSION = 1;
 
 export function onboardingConnectUrl(connectUrl: string): string {
