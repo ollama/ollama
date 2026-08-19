@@ -31,7 +31,49 @@ func TestEnsureCloudEnabledForTool(t *testing.T) {
 		}
 	})
 
-	t.Run("disabled blocks tool execution", func(t *testing.T) {
+	t.Run("disabled via env blocks tool execution", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/status" {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"cloud":{"disabled":true,"source":"env"}}`))
+		}))
+		t.Cleanup(ts.Close)
+		t.Setenv("OLLAMA_HOST", ts.URL)
+
+		err := ensureCloudEnabledForTool(context.Background(), op)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if got := err.Error(); got != disabledPrefix {
+			t.Fatalf("unexpected error: %q", got)
+		}
+	})
+
+	t.Run("disabled via both blocks tool execution", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/status" {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"cloud":{"disabled":true,"source":"both"}}`))
+		}))
+		t.Cleanup(ts.Close)
+		t.Setenv("OLLAMA_HOST", ts.URL)
+
+		err := ensureCloudEnabledForTool(context.Background(), op)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if got := err.Error(); got != disabledPrefix {
+			t.Fatalf("unexpected error: %q", got)
+		}
+	})
+
+	t.Run("disabled via config allows tool execution", func(t *testing.T) {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/api/status" {
 				http.NotFound(w, r)
@@ -43,12 +85,8 @@ func TestEnsureCloudEnabledForTool(t *testing.T) {
 		t.Cleanup(ts.Close)
 		t.Setenv("OLLAMA_HOST", ts.URL)
 
-		err := ensureCloudEnabledForTool(context.Background(), op)
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-		if got := err.Error(); got != disabledPrefix {
-			t.Fatalf("unexpected error: %q", got)
+		if err := ensureCloudEnabledForTool(context.Background(), op); err != nil {
+			t.Fatalf("expected nil error, got %v", err)
 		}
 	})
 
