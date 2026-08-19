@@ -832,8 +832,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 
 	shouldShiftNormWeights := false
 	for name, t := range tensors {
-		if strings.Contains(name, "mtp.") ||
-			(strings.Contains(name, ".linear_attn.conv1d.weight") && t != nil && t.NumDims() == 3 && t.Dim(2) != 1) {
+		if strings.Contains(name, ".linear_attn.conv1d.weight") && t != nil && t.NumDims() == 3 && t.Dim(2) != 1 {
 			shouldShiftNormWeights = true
 			break
 		}
@@ -887,7 +886,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	// num_nextn_predict_layers while a package ships without them. mtp.* names
 	// carry no container prefix.
 	if fc, _ := tensorByBase(tensors, "mtp.fc"); fc != nil {
-		if err := m.loadMTPHead(linears, tensors, useQuantizedExperts, shouldShiftNormWeights); err != nil {
+		if err := m.loadMTPHead(linears, tensors, useQuantizedExperts, true); err != nil {
 			return err
 		}
 	}

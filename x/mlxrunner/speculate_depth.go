@@ -56,11 +56,15 @@ func newDepthController() *depthController {
 func (c *depthController) frontier() int { return c.acc.frontier() }
 
 // limit is the deepest depth the search considers: one past the frontier, held
-// to what the drafter can produce.
-func (c *depthController) limit() int {
+// to what the drafter and this request can produce. maxDepth 0 means no
+// request-specific bound.
+func (c *depthController) limit(maxDepth int) int {
 	limit := c.frontier() + 1
 	if c.drafterLimit > 0 {
 		limit = min(limit, c.drafterLimit)
+	}
+	if maxDepth > 0 {
+		limit = min(limit, maxDepth)
 	}
 	return limit
 }
@@ -71,9 +75,9 @@ func (c *depthController) limit() int {
 // doubles toward its cap while probes change nothing and resets on any selection
 // change, giving the new selection a full interval to settle. The chosen depth is
 // recorded in c.scheduled for the next request's open to consume.
-func (c *depthController) next() (depth int) {
+func (c *depthController) next(maxDepth int) (depth int) {
 	defer func() { c.scheduled = depth }()
-	sel := c.selected()
+	sel := c.selected(maxDepth)
 	if sel != c.lastSelected {
 		c.probeInterval = depthProbeInterval
 		c.probeSince = 0
@@ -86,7 +90,7 @@ func (c *depthController) next() (depth int) {
 	c.probeSince++
 	if c.probeSince >= c.probeInterval {
 		c.probeSince = 0
-		if probe := min(sel+1, c.limit()); probe != sel {
+		if probe := min(sel+1, c.limit(maxDepth)); probe != sel {
 			c.probed = true
 			return probe
 		}
@@ -97,7 +101,7 @@ func (c *depthController) next() (depth int) {
 	// at has no clean sample; draft the shallowest such depth to dwell there. Without
 	// this the controller stays at the one depth it can sit at without a transition
 	// (depth 0) and never learns that drafting pays on a deep-optimum model.
-	if seed := c.costSeedDepth(); seed >= 0 {
+	if seed := c.costSeedDepth(maxDepth); seed >= 0 {
 		return seed
 	}
 	return sel
@@ -106,8 +110,8 @@ func (c *depthController) next() (depth int) {
 // costSeedDepth is the shallowest depth within the search limit with no clean
 // cost sample, or -1 if all are sampled; the bound keeps cost-seeding from
 // outrunning the acceptance frontier or the drafter.
-func (c *depthController) costSeedDepth() int {
-	limit := c.limit()
+func (c *depthController) costSeedDepth(maxDepth int) int {
+	limit := c.limit(maxDepth)
 	for n := 0; n <= limit; n++ {
 		if !c.cost.sampled(n) {
 			return n
@@ -120,11 +124,11 @@ func (c *depthController) costSeedDepth() int {
 // argmax within the search limit. The frontier bound keeps the inherited optimistic
 // rate from making ever-deeper depths look best; the depth-0 floor lets it stop
 // speculating. Returns 0 until the cost model can compare depths.
-func (c *depthController) selected() int {
+func (c *depthController) selected(maxDepth int) int {
 	if !c.cost.ready() {
 		return 0
 	}
-	limit := c.limit()
+	limit := c.limit(maxDepth)
 	best, bestEV := 0, c.acc.expectedCommitted(0)/c.cost.cost(0)
 	for n := 1; n <= limit; n++ {
 		if ev := c.acc.expectedCommitted(n) / c.cost.cost(n); ev > bestEV {

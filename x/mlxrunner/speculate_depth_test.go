@@ -14,7 +14,7 @@ import (
 // leading run of positions whose draws succeed.
 func driveDepthController(c *depthController, n int, fwdMS func(width int) float64, draw func(pos, step int) bool) int {
 	for step := range n {
-		d := c.next()
+		d := c.next(0)
 		c.cost.observe(d, time.Duration(fwdMS(d+1)*float64(time.Millisecond)))
 		accepted := 0
 		for i := 1; i <= d; i++ {
@@ -26,7 +26,7 @@ func driveDepthController(c *depthController, n int, fwdMS func(width int) float
 		}
 		c.acc.observe(d, accepted)
 	}
-	return c.selected()
+	return c.selected(0)
 }
 
 // deterministicDraw turns a per-position acceptance rate into a reproducible,
@@ -115,7 +115,7 @@ func TestDepthControllerExploresBeforeCostReady(t *testing.T) {
 	// from the shallowest end — never jumping deep. The first draft is 0 (depth-0,
 	// plain-decode cost); once that depth is recorded the next is 1. Those are the two
 	// depths the controller first compares at.
-	first := c.next()
+	first := c.next(0)
 	if cost.ready() {
 		t.Fatal("cost model should not be ready before any observation")
 	}
@@ -123,7 +123,7 @@ func TestDepthControllerExploresBeforeCostReady(t *testing.T) {
 		t.Errorf("first warmup draft = %d, want 0 (depth-0 cost first, never deep)", first)
 	}
 	cost.observe(first, 24*time.Millisecond)
-	second := c.next()
+	second := c.next(0)
 	if second != 1 {
 		t.Errorf("second warmup draft = %d, want 1 (depth-1 cost next)", second)
 	}
@@ -147,7 +147,7 @@ func TestDepthControllerClimbsOutwardWithinFrontier(t *testing.T) {
 	always := func(int) float64 { return 1.0 }
 	draw := deterministicDraw(always)
 	for step := range 400 {
-		d := c.next()
+		d := c.next(0)
 		if d > c.frontier()+1 {
 			t.Fatalf("step %d drafted depth %d, want <= frontier+1 = %d", step, d, c.frontier()+1)
 		}
@@ -161,6 +161,22 @@ func TestDepthControllerClimbsOutwardWithinFrontier(t *testing.T) {
 			}
 		}
 		c.acc.observe(d, accepted)
+	}
+}
+
+func TestDepthControllerStaysWithinRequestLimit(t *testing.T) {
+	c := newDepthController()
+	c.drafterLimit = 7
+	for step := range 600 {
+		d := c.next(2)
+		if d > 2 {
+			t.Fatalf("step %d drafted depth %d, want <= request limit 2", step, d)
+		}
+		c.cost.observe(d, time.Duration(bandwidthBoundCost(d+1)*float64(time.Millisecond)))
+		c.acc.observe(d, d)
+	}
+	if got := c.selected(2); got > 2 {
+		t.Fatalf("selected depth %d, want <= request limit 2", got)
 	}
 }
 
@@ -201,7 +217,7 @@ func TestDepthControllerStaysParkedThroughHostStall(t *testing.T) {
 	// parked baseline remains credible and the controller does not start
 	// drafting against a phantom plain-decode cost.
 	cost.observe(0, 49*time.Millisecond)
-	if selected := c.selected(); selected != 0 {
+	if selected := c.selected(0); selected != 0 {
 		t.Errorf("a single stall-inflated depth-0 sample un-parked the controller: selected %d with cost(0)=%.1fms", selected, cost.cost(0))
 	}
 }
@@ -211,7 +227,7 @@ func TestDepthControllerStaysParkedThroughHostStall(t *testing.T) {
 func driveCountingProbes(c *depthController, n int, fwdMS func(width int) float64, draw func(pos, step int) bool) int {
 	probes := 0
 	for step := range n {
-		d := c.next()
+		d := c.next(0)
 		if d > 0 {
 			probes++
 		}
@@ -238,8 +254,8 @@ func TestDepthControllerProbeBackoff(t *testing.T) {
 	steep := func(width int) float64 { return 16.0 + 15.0*float64(width-1) }
 	mediocre := deterministicDraw(func(int) float64 { return 0.6 })
 	driveDepthController(c, 600, steep, mediocre)
-	if c.selected() != 0 {
-		t.Fatalf("expected the controller to park at depth 0, got %d", c.selected())
+	if c.selected(0) != 0 {
+		t.Fatalf("expected the controller to park at depth 0, got %d", c.selected(0))
 	}
 	probes := driveCountingProbes(c, 4096, steep, mediocre)
 	if c.probeInterval != depthProbeIntervalMax {
@@ -283,7 +299,7 @@ func TestDepthControllerTracksAcceptanceDrift(t *testing.T) {
 	}
 	deepFavoring := func(int) float64 { return 0.95 } // deep readily accepted
 	driveDepthController(c, 400, bandwidthBoundCost, deterministicDraw(shallowFavoring))
-	shallow := c.selected()
+	shallow := c.selected(0)
 	if shallow > 4 {
 		t.Fatalf("expected shallow selection while deep acceptance is poor, got %d", shallow)
 	}
@@ -291,7 +307,7 @@ func TestDepthControllerTracksAcceptanceDrift(t *testing.T) {
 	// recovery runs at backed-off probe spacing until the first selection
 	// change snaps it back — the drive must span several backed-off intervals.
 	driveDepthController(c, 4096, bandwidthBoundCost, deterministicDraw(deepFavoring))
-	deep := c.selected()
+	deep := c.selected(0)
 	if deep <= shallow {
 		t.Errorf("expected selection to deepen after acceptance rose (was %d, now %d)", shallow, deep)
 	}

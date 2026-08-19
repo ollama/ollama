@@ -92,12 +92,13 @@ func newSpeculation(r *Runner, draft base.DraftModel, targets, draftKV []cache.C
 // it owns the drafter and runs the validate rounds. A nil session is a plain
 // decode.
 type speculationSession struct {
-	spec    *speculation
-	drafter draftSession
-	enabled bool  // whether this request drafts; false parks (maintain-only)
-	limit   int   // current draft length
-	layout  []any // the request's per-row layout state, stamped on every target forward
-	stats   specStats
+	spec     *speculation
+	drafter  draftSession
+	enabled  bool  // whether this request drafts; false parks (maintain-only)
+	maxDraft int   // request's maximum draft length, held to the drafter's limit
+	limit    int   // current draft length
+	layout   []any // the request's per-row layout state, stamped on every target forward
+	stats    specStats
 
 	// Cost sampling: each round's wall time (start to next start, spanning the
 	// next emit's sync) is attributed to its draft depth only when the depth
@@ -115,14 +116,19 @@ func (s *speculation) open(request Request, layout []any) *speculationSession {
 	}
 	d := s.drafter.open(layout)
 
-	// Logprobs are not yet supported, so a logprobs request keeps a speculationSession
-	// only to maintain a draft cache in lockstep (permanently parked).
-	opts := request.SamplerOpts
-	enabled := !opts.Logprobs && opts.TopLogprobs == 0
+	maxDraft := request.Options.DraftNumPredict
+	if limit := s.drafter.draftLimit(); limit > 0 {
+		maxDraft = min(maxDraft, limit)
+	}
 
-	spec := &speculationSession{spec: s, drafter: d, layout: layout, enabled: enabled, prevDrafts: -1, roundDrafts: -1}
+	// A disabled or logprobs request keeps a speculationSession only to maintain
+	// the draft cache in lockstep (permanently parked).
+	opts := request.SamplerOpts
+	enabled := maxDraft > 0 && !opts.Logprobs && opts.TopLogprobs == 0
+
+	spec := &speculationSession{spec: s, drafter: d, layout: layout, enabled: enabled, maxDraft: maxDraft, prevDrafts: -1, roundDrafts: -1}
 	if enabled {
-		spec.limit = s.depth.scheduled
+		spec.limit = min(s.depth.scheduled, maxDraft)
 	}
 	return spec
 }
@@ -155,7 +161,7 @@ func (s *speculationSession) endRound(drafted, accepted, observed int) {
 		if observed > 0 {
 			s.spec.depth.acc.observe(observed, accepted)
 		}
-		s.limit = s.spec.depth.next()
+		s.limit = s.spec.depth.next(s.maxDraft)
 	}
 }
 
