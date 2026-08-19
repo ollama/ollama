@@ -76,3 +76,37 @@ func TestDispatchURLSchemeRequest(t *testing.T) {
 		})
 	}
 }
+
+func TestRunInitialWindowsUIWithBareURL(t *testing.T) {
+	hiddenCalls := 0
+	urlCalls := 0
+	onboardingCalls := 0
+	openCalls := 0
+
+	runInitialWindowsUI(
+		false,
+		true,
+		"ollama://",
+		func() { hiddenCalls++ },
+		func(request string) {
+			urlCalls++
+			if err := dispatchURLSchemeRequest(request, func() {}, func() { openCalls++ }); err != nil {
+				t.Fatalf("dispatchURLSchemeRequest() error = %v", err)
+			}
+		},
+		func() { onboardingCalls++ },
+	)
+
+	if urlCalls != 1 {
+		t.Fatalf("URL handled %d times, want 1", urlCalls)
+	}
+	if openCalls != 1 {
+		t.Errorf("app opened %d times, want 1", openCalls)
+	}
+	if hiddenCalls != 0 {
+		t.Errorf("hidden startup called %d times, want 0", hiddenCalls)
+	}
+	if onboardingCalls != 0 {
+		t.Errorf("onboarding opened %d times, want 0", onboardingCalls)
+	}
+}

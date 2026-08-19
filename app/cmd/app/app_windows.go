@@ -153,7 +153,7 @@ func UpdateAvailable(ver string) error {
 	return app.t.UpdateAvailable(ver)
 }
 
-func osRun(shutdown func(), hasCompletedFirstRun, startHidden, showOnboarding bool) {
+func osRun(shutdown func(), hasCompletedFirstRun, startHidden, showOnboarding bool, urlSchemeRequest string) {
 	var err error
 	app.shutdown = shutdown
 	app.t, err = wintray.NewTray(app)
@@ -197,9 +197,7 @@ func osRun(shutdown func(), hasCompletedFirstRun, startHidden, showOnboarding bo
 			}
 		}
 	}
-	if startHidden {
-		startHiddenTasks()
-	} else if showOnboarding {
+	runInitialWindowsUI(startHidden, showOnboarding, urlSchemeRequest, startHiddenTasks, handleURLSchemeInCurrentInstance, func() {
 		ptr := wv.Run("/")
 
 		// Set the window icon using the tray icon
@@ -217,7 +215,7 @@ func osRun(shutdown func(), hasCompletedFirstRun, startHidden, showOnboarding bo
 		}
 
 		centerWindow(ptr)
-	}
+	})
 
 	if !hasCompletedFirstRun {
 		// Only create the login shortcut on first start

@@ -146,15 +146,10 @@ func main() {
 	// Do this after logging is set up so we can debug issues
 	if runtime.GOOS == "windows" && urlSchemeRequest != "" {
 		slog.Debug("checking for existing instance", "url", urlSchemeRequest)
-		if checkAndHandleExistingInstance(urlSchemeRequest) {
-			// The function will exit if it successfully sends to another instance
-			// If we reach here, we're the first/only instance
-		} else {
-			// No existing instance found, handle the URL scheme in this instance
-			go func() {
-				handleURLSchemeInCurrentInstance(urlSchemeRequest)
-			}()
-		}
+		// This exits after forwarding the request when another instance is
+		// running. First-instance requests are handled later by osRun, after the
+		// Windows UI dependencies are initialized and from the primary thread.
+		checkAndHandleExistingInstance(urlSchemeRequest)
 	}
 
 	// Detect if this is a first start after an upgrade, in
@@ -330,11 +325,11 @@ func main() {
 		quit()
 	}()
 
-	if urlSchemeRequest != "" {
+	if urlSchemeRequest != "" && runtime.GOOS != "windows" {
 		go func() {
 			handleURLSchemeInCurrentInstance(urlSchemeRequest)
 		}()
-	} else {
+	} else if urlSchemeRequest == "" {
 		slog.Debug("no URL scheme request to handle")
 	}
 
@@ -355,7 +350,7 @@ func main() {
 		slog.Error("failed to load onboarding state", "error", settingsErr)
 	}
 
-	osRun(cancel, hasCompletedFirstRun, startHidden, showOnboarding)
+	osRun(cancel, hasCompletedFirstRun, startHidden, showOnboarding, urlSchemeRequest)
 
 	slog.Info("shutting down desktop server")
 	if err := srv.Close(); err != nil {
@@ -369,6 +364,27 @@ func main() {
 
 func shouldShowOnboarding(settings store.Settings, err error) bool {
 	return err != nil || settings.OnboardingVersion < store.CurrentOnboardingVersion
+}
+
+func runInitialWindowsUI(
+	startHidden bool,
+	showOnboarding bool,
+	urlSchemeRequest string,
+	startHiddenFn func(),
+	handleURLFn func(string),
+	showOnboardingFn func(),
+) {
+	if urlSchemeRequest != "" {
+		handleURLFn(urlSchemeRequest)
+		return
+	}
+	if startHidden {
+		startHiddenFn()
+		return
+	}
+	if showOnboarding {
+		showOnboardingFn()
+	}
 }
 
 func startHiddenTasks() {

@@ -175,7 +175,7 @@ func UpdateAvailable(ver string) error {
 	return nil
 }
 
-func osRun(_ func(), hasCompletedFirstRun, startHidden, showOnboarding bool) {
+func osRun(_ func(), hasCompletedFirstRun, startHidden, showOnboarding bool, _ string) {
 	registerLaunchAgent(hasCompletedFirstRun)
 
 	// Run the native macOS app

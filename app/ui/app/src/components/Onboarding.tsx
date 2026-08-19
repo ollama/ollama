@@ -37,7 +37,7 @@ function TitleBar({ onSignIn }: { onSignIn?: () => void }) {
       {onSignIn && (
         <button
           type="button"
-          className="absolute right-5 cursor-pointer rounded-md px-2 py-1 text-sm font-normal text-neutral-500 hover:text-neutral-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
+          className="absolute right-5 top-3 cursor-pointer rounded-md px-2 py-0 text-sm font-normal text-neutral-500 hover:text-neutral-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
           onClick={onSignIn}
           onMouseDown={(event) => event.stopPropagation()}
         >
@@ -72,19 +72,19 @@ function OnboardingCard({ children }: { children: ReactNode }) {
 
 const OLLAMA_FEATURES = [
   {
-    title: "Keep your setup",
-    description: "Run Ollama with the agents you already use.",
+    title: "Connect your apps",
+    description: "Power your existing coding apps with open models",
     icon: CommandLineIcon,
-  },
-  {
-    title: "Your data stays yours",
-    description: "Your data is never logged or trained on.",
-    icon: ShieldCheckIcon,
   },
   {
     title: "Easily switch models",
     description: "Swap between frontier models in one click.",
     icon: ArrowsRightLeftIcon,
+  },
+  {
+    title: "Your data stays yours",
+    description: "Your prompt data is never logged or trained on.",
+    icon: ShieldCheckIcon,
   },
 ];
 
@@ -106,10 +106,6 @@ export function IntroScreen({ onContinue }: { onContinue: () => void }) {
               Welcome to Ollama!
             </h1>
           </div>
-          <p className="mt-4 max-w-[500px] text-sm leading-6 text-neutral-500">
-            Run open models locally or in the cloud.
-          </p>
-
           <div className="mx-auto mt-8 flex w-fit max-w-full flex-col gap-6 text-left">
             {OLLAMA_FEATURES.map((feature) => {
               const Icon = feature.icon;
