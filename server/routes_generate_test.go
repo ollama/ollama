@@ -2351,86 +2351,87 @@ func TestChatLogprobs(t *testing.T) {
 	})
 }
 
-func TestChatWithPromptEndingInThinkTag(t *testing.T) {
-	t.Setenv("OLLAMA_GO_TEMPLATE", "1")
-	gin.SetMode(gin.TestMode)
+// setupThinkingTest creates a standard thinking test setup: a server serving a
+// model whose template adds <think> at the end of the prompt.
+func setupThinkingTest(t *testing.T) (*mockRunner, *Server) {
+	mock := &mockRunner{
+		CompletionResponse: llm.CompletionResponse{
+			Done:               true,
+			DoneReason:         llm.DoneReasonStop,
+			PromptEvalCount:    1,
+			PromptEvalDuration: 1,
+			EvalCount:          1,
+			EvalDuration:       1,
+		},
+	}
 
-	// Helper to create a standard thinking test setup
-	setupThinkingTest := func(t *testing.T) (*mockRunner, *Server) {
-		mock := &mockRunner{
-			CompletionResponse: llm.CompletionResponse{
-				Done:               true,
-				DoneReason:         llm.DoneReasonStop,
-				PromptEvalCount:    1,
-				PromptEvalDuration: 1,
-				EvalCount:          1,
-				EvalDuration:       1,
+	s := &Server{
+		sched: &Scheduler{
+			pendingReqCh:    make(chan *LlmRequest, 1),
+			finishedReqCh:   make(chan *LlmRequest, 1),
+			expiredCh:       make(chan *runnerRef, 1),
+			unloadedCh:      make(chan any, 1),
+			loaded:          make(map[string]*runnerRef),
+			newServerFn:     newMockServer(mock),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+			waitForRecovery: 250 * time.Millisecond,
+			loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				time.Sleep(time.Millisecond)
+				req.successCh <- &runnerRef{llama: mock}
+				return false
 			},
-		}
+		},
+	}
 
-		s := &Server{
-			sched: &Scheduler{
-				pendingReqCh:    make(chan *LlmRequest, 1),
-				finishedReqCh:   make(chan *LlmRequest, 1),
-				expiredCh:       make(chan *runnerRef, 1),
-				unloadedCh:      make(chan any, 1),
-				loaded:          make(map[string]*runnerRef),
-				newServerFn:     newMockServer(mock),
-				getGpuFn:        getGpuFn,
-				getSystemInfoFn: getSystemInfoFn,
-				waitForRecovery: 250 * time.Millisecond,
-				loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
-					time.Sleep(time.Millisecond)
-					req.successCh <- &runnerRef{llama: mock}
-					return false
-				},
-			},
-		}
+	go s.sched.Run(t.Context())
 
-		go s.sched.Run(t.Context())
+	// Create a model with thinking support
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture":          "llama",
+		"llama.block_count":             uint32(1),
+		"llama.context_length":          uint32(8192),
+		"llama.embedding_length":        uint32(4096),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(8),
+		"tokenizer.ggml.tokens":         []string{""},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*ggml.Tensor{
+		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+	})
 
-		// Create a model with thinking support
-		_, digest := createBinFile(t, ggml.KV{
-			"general.architecture":          "llama",
-			"llama.block_count":             uint32(1),
-			"llama.context_length":          uint32(8192),
-			"llama.embedding_length":        uint32(4096),
-			"llama.attention.head_count":    uint32(32),
-			"llama.attention.head_count_kv": uint32(8),
-			"tokenizer.ggml.tokens":         []string{""},
-			"tokenizer.ggml.scores":         []float32{0},
-			"tokenizer.ggml.token_type":     []int32{0},
-		}, []*ggml.Tensor{
-			{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-		})
-
-		// Create model with thinking template that adds <think> at the end
-		w := createRequest(t, s.CreateHandler, api.CreateRequest{
-			Model: "test-thinking",
-			Files: map[string]string{"file.gguf": digest},
-			Template: `{{- range .Messages }}
+	// Create model with thinking template that adds <think> at the end
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model: "test-thinking",
+		Files: map[string]string{"file.gguf": digest},
+		Template: `{{- range .Messages }}
 {{- if eq .Role "user" }}user: {{ .Content }}
 {{ else if eq .Role "assistant" }}assistant: {{ if .Thinking }}<think>{{ .Thinking }}</think>{{ end }}{{ .Content }}
 {{ end }}{{ end }}<think>`,
-			Stream: &stream,
-		})
+		Stream: &stream,
+	})
 
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected status 200, got %d", w.Code)
-		}
-
-		return mock, s
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
 	}
+
+	return mock, s
+}
+
+func TestChatWithPromptEndingInThinkTag(t *testing.T) {
+	t.Setenv("OLLAMA_GO_TEMPLATE", "1")
+	gin.SetMode(gin.TestMode)
 
 	mock, s := setupThinkingTest(t)
 
@@ -2935,6 +2936,893 @@ func TestChatFormatWithThinkFalse(t *testing.T) {
 				t.Errorf("expected first completion format to match the request format, got %q", string(requests[0].Format))
 			}
 		})
+	}
+}
+
+// TestGenerateFormatWithThinking verifies that /api/generate defers the format
+// grammar until thinking is done, the same way /api/chat does. Applying it from
+// the first token leaves the model no room to reason, so `think` was silently
+// ignored. See https://github.com/ollama/ollama/issues/17544.
+func TestGenerateFormatWithThinking(t *testing.T) {
+	t.Setenv("OLLAMA_GO_TEMPLATE", "1")
+	gin.SetMode(gin.TestMode)
+
+	mock, s := setupThinkingTest(t)
+
+	format := json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}`)
+	const thinkingChunk = " I am thinking through this problem. </think> {\"answer\":\"42\"}"
+
+	// restartOnFormat replays firstChunk, then blocks until the handler cancels
+	// the first request to apply structured outputs
+	restartOnFormat := func(t *testing.T, requests *[]llm.CompletionRequest, requestsMu *sync.Mutex, firstChunk string) func(context.Context, llm.CompletionRequest, func(llm.CompletionResponse)) error {
+		return func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+			requestsMu.Lock()
+			*requests = append(*requests, r)
+			callNum := len(*requests)
+			requestsMu.Unlock()
+
+			switch callNum {
+			case 1:
+				fn(llm.CompletionResponse{
+					Content:            firstChunk,
+					Done:               false,
+					PromptEvalCount:    1,
+					PromptEvalDuration: 1,
+				})
+
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(time.Second):
+					t.Errorf("timeout waiting for structured outputs cancellation")
+					return nil
+				}
+			case 2:
+				fn(llm.CompletionResponse{
+					Content:            `{"answer":"42"}`,
+					Done:               true,
+					DoneReason:         llm.DoneReasonStop,
+					PromptEvalCount:    1,
+					PromptEvalDuration: 1,
+					EvalCount:          1,
+					EvalDuration:       1,
+				})
+				return nil
+			default:
+				t.Errorf("unexpected number of completion calls: %d", callNum)
+				return nil
+			}
+		}
+	}
+
+	// the second request must carry the format and be primed with the thinking
+	// the model already produced
+	checkRestartedRequests := func(t *testing.T, requests []llm.CompletionRequest) {
+		t.Helper()
+
+		if len(requests) != 2 {
+			t.Fatalf("expected two completion calls, got %d", len(requests))
+		}
+
+		if requests[0].Format != nil {
+			t.Errorf("expected first completion format to be nil, got %q", requests[0].Format)
+		}
+
+		if !bytes.Equal([]byte(format), []byte(requests[1].Format)) {
+			t.Errorf("expected second completion format to match original format, got %q", requests[1].Format)
+		}
+
+		if !strings.Contains(requests[1].Prompt, "user: Please respond in JSON.") {
+			t.Errorf("expected second completion prompt to keep the original prompt, got %q", requests[1].Prompt)
+		}
+
+		if !strings.Contains(requests[1].Prompt, "<think>I am thinking through this problem. </think>") {
+			t.Errorf("expected second completion prompt to carry the thinking, got %q", requests[1].Prompt)
+		}
+	}
+
+	t.Run("structured outputs restart non-stream", func(t *testing.T) {
+		var (
+			requestsMu sync.Mutex
+			requests   []llm.CompletionRequest
+		)
+
+		mock.CompletionFn = restartOnFormat(t, &requests, &requestsMu, thinkingChunk)
+		t.Cleanup(func() { mock.CompletionFn = nil })
+
+		streamRequest := false
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:   "test-thinking",
+			Prompt:  "Please respond in JSON.",
+			Think:   &api.ThinkValue{Value: true},
+			Stream:  &streamRequest,
+			Format:  format,
+			Options: map[string]any{"num_ctx": 4096},
+		})
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", w.Code)
+		}
+
+		checkRestartedRequests(t, requests)
+
+		var resp api.GenerateResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+
+		if resp.Thinking != "I am thinking through this problem. " {
+			t.Errorf("expected thinking %q, got %q", "I am thinking through this problem. ", resp.Thinking)
+		}
+
+		if resp.Response != `{"answer":"42"}` {
+			t.Errorf("expected response %q, got %q", `{"answer":"42"}`, resp.Response)
+		}
+
+		if !resp.Done {
+			t.Error("expected response to be done")
+		}
+
+		if resp.DoneReason != "stop" {
+			t.Errorf("expected done reason stop, got %s", resp.DoneReason)
+		}
+	})
+
+	t.Run("structured outputs restart streaming", func(t *testing.T) {
+		var (
+			requestsMu sync.Mutex
+			requests   []llm.CompletionRequest
+		)
+
+		mock.CompletionFn = restartOnFormat(t, &requests, &requestsMu, thinkingChunk)
+		t.Cleanup(func() { mock.CompletionFn = nil })
+
+		streamRequest := true
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:   "test-thinking",
+			Prompt:  "Please respond in JSON.",
+			Think:   &api.ThinkValue{Value: true},
+			Stream:  &streamRequest,
+			Format:  format,
+			Options: map[string]any{"num_ctx": 4096},
+		})
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", w.Code)
+		}
+
+		checkRestartedRequests(t, requests)
+
+		decoder := json.NewDecoder(w.Body)
+		var events []api.GenerateResponse
+		for {
+			var event api.GenerateResponse
+			if err := decoder.Decode(&event); err == io.EOF {
+				break
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			events = append(events, event)
+			if event.Done {
+				break
+			}
+		}
+
+		if len(events) < 2 {
+			t.Fatalf("expected at least two streaming events, got %d", len(events))
+		}
+
+		first := events[0]
+		if first.Thinking != "I am thinking through this problem. " {
+			t.Errorf("expected first event thinking %q, got %q", "I am thinking through this problem. ", first.Thinking)
+		}
+
+		if first.Response != "" {
+			t.Errorf("expected first event response to be empty, got %q", first.Response)
+		}
+
+		if first.Done {
+			t.Error("expected first event to be non-terminal")
+		}
+
+		last := events[len(events)-1]
+		if last.Response != `{"answer":"42"}` {
+			t.Errorf("expected final event response %q, got %q", `{"answer":"42"}`, last.Response)
+		}
+
+		if !last.Done {
+			t.Error("expected final event to be done")
+		}
+
+		if last.DoneReason != "stop" {
+			t.Errorf("expected final done reason stop, got %s", last.DoneReason)
+		}
+	})
+
+	// a model that emits no thinking at all still has to end up constrained: the
+	// format was deferred for the first request, so it must be applied by a restart
+	t.Run("empty thinking still applies format", func(t *testing.T) {
+		var (
+			requestsMu sync.Mutex
+			requests   []llm.CompletionRequest
+		)
+
+		mock.CompletionFn = restartOnFormat(t, &requests, &requestsMu, `</think>{"answer":"42"}`)
+		t.Cleanup(func() { mock.CompletionFn = nil })
+
+		streamRequest := false
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:   "test-thinking",
+			Prompt:  "Please respond in JSON.",
+			Think:   &api.ThinkValue{Value: true},
+			Stream:  &streamRequest,
+			Format:  format,
+			Options: map[string]any{"num_ctx": 4096},
+		})
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", w.Code)
+		}
+
+		if len(requests) != 2 {
+			t.Fatalf("expected two completion calls, got %d", len(requests))
+		}
+
+		if !bytes.Equal([]byte(format), []byte(requests[1].Format)) {
+			t.Errorf("expected second completion format to match original format, got %q", requests[1].Format)
+		}
+
+		// nothing was thought, so there is no prefill to add to the prompt
+		if requests[1].Prompt != requests[0].Prompt {
+			t.Errorf("expected second completion prompt %q, got %q", requests[0].Prompt, requests[1].Prompt)
+		}
+
+		var resp api.GenerateResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+
+		if resp.Response != `{"answer":"42"}` {
+			t.Errorf("expected response %q, got %q", `{"answer":"42"}`, resp.Response)
+		}
+	})
+
+	// the restart makes the chunk that triggered it non-terminal, otherwise a client
+	// that stops at the first done would never see the constrained answer
+	t.Run("transitional chunk is not terminal", func(t *testing.T) {
+		var (
+			requestsMu sync.Mutex
+			requests   []llm.CompletionRequest
+		)
+
+		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+			requestsMu.Lock()
+			requests = append(requests, r)
+			callNum := len(requests)
+			requestsMu.Unlock()
+
+			switch callNum {
+			case 1:
+				// thinking, content and done all arrive in a single chunk
+				fn(llm.CompletionResponse{
+					Content:            thinkingChunk,
+					Done:               true,
+					DoneReason:         llm.DoneReasonStop,
+					PromptEvalCount:    1,
+					PromptEvalDuration: 1,
+					EvalCount:          1,
+					EvalDuration:       1,
+					Logprobs: []llm.Logprob{
+						{TokenLogprob: llm.TokenLogprob{Token: "42", Logprob: -0.5}},
+					},
+				})
+
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(time.Second):
+					t.Errorf("timeout waiting for structured outputs cancellation")
+					return nil
+				}
+			case 2:
+				fn(llm.CompletionResponse{
+					Content:            `{"answer":"42"}`,
+					Done:               true,
+					DoneReason:         llm.DoneReasonStop,
+					PromptEvalCount:    1,
+					PromptEvalDuration: 1,
+					EvalCount:          1,
+					EvalDuration:       1,
+				})
+				return nil
+			default:
+				t.Errorf("unexpected number of completion calls: %d", callNum)
+				return nil
+			}
+		}
+		t.Cleanup(func() { mock.CompletionFn = nil })
+
+		streamRequest := true
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:    "test-thinking",
+			Prompt:   "Please respond in JSON.",
+			Think:    &api.ThinkValue{Value: true},
+			Stream:   &streamRequest,
+			Format:   format,
+			Logprobs: true,
+			Options:  map[string]any{"num_ctx": 4096},
+		})
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", w.Code)
+		}
+
+		checkRestartedRequests(t, requests)
+
+		decoder := json.NewDecoder(w.Body)
+		var events []api.GenerateResponse
+		for {
+			var event api.GenerateResponse
+			if err := decoder.Decode(&event); err == io.EOF {
+				break
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			events = append(events, event)
+		}
+
+		var done int
+		var thinking, content strings.Builder
+		for _, event := range events {
+			thinking.WriteString(event.Thinking)
+			content.WriteString(event.Response)
+			if event.Done {
+				done++
+			}
+		}
+
+		if done != 1 {
+			t.Errorf("expected exactly one terminal event, got %d of %d", done, len(events))
+		}
+
+		if !events[len(events)-1].Done {
+			t.Error("expected the last event to be the terminal one")
+		}
+
+		// the transitional event describes nothing but the thinking: the metrics and
+		// logprobs of the discarded answer must not reach the client
+		transitional := events[0]
+		if transitional.Response != "" || len(transitional.ToolCalls) > 0 {
+			t.Errorf("expected transitional event to carry only thinking, got %#v", transitional)
+		}
+
+		if transitional.Metrics != (api.Metrics{}) {
+			t.Errorf("expected transitional event to carry no metrics, got %#v", transitional.Metrics)
+		}
+
+		if len(transitional.Logprobs) > 0 {
+			t.Errorf("expected transitional event to carry no logprobs, got %#v", transitional.Logprobs)
+		}
+
+		if transitional.DoneReason != "" {
+			t.Errorf("expected transitional event to carry no done reason, got %q", transitional.DoneReason)
+		}
+
+		if thinking.String() != "I am thinking through this problem. " {
+			t.Errorf("expected thinking %q, got %q", "I am thinking through this problem. ", thinking.String())
+		}
+
+		if content.String() != `{"answer":"42"}` {
+			t.Errorf("expected content %q, got %q", `{"answer":"42"}`, content.String())
+		}
+	})
+
+	// requests with no thinking to wait for, and flows that cannot be re-rendered
+	// with a thinking prefill, keep applying the format to the first and only request
+	for _, tc := range []struct {
+		name string
+		req  api.GenerateRequest
+	}{
+		{
+			name: "thinking disabled",
+			req: api.GenerateRequest{
+				Model:  "test-thinking",
+				Prompt: "Please respond in JSON.",
+				Think:  &api.ThinkValue{Value: false},
+				Format: format,
+			},
+		},
+		{
+			name: "raw mode",
+			req: api.GenerateRequest{
+				Model:  "test-thinking",
+				Prompt: "Please respond in JSON.",
+				Raw:    true,
+				Think:  &api.ThinkValue{Value: true},
+				Format: format,
+			},
+		},
+		{
+			// json.RawMessage is non-nil here, but the runner ignores both values
+			name: "null format",
+			req: api.GenerateRequest{
+				Model:  "test-thinking",
+				Prompt: "Please respond in JSON.",
+				Think:  &api.ThinkValue{Value: true},
+				Format: json.RawMessage("null"),
+			},
+		},
+		{
+			name: "empty format",
+			req: api.GenerateRequest{
+				Model:  "test-thinking",
+				Prompt: "Please respond in JSON.",
+				Think:  &api.ThinkValue{Value: true},
+				Format: json.RawMessage(`""`),
+			},
+		},
+	} {
+		t.Run("no restart with "+tc.name, func(t *testing.T) {
+			var (
+				requestsMu sync.Mutex
+				requests   []llm.CompletionRequest
+			)
+
+			mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+				requestsMu.Lock()
+				requests = append(requests, r)
+				requestsMu.Unlock()
+
+				// a thinking turn: a restart would show up as a second call
+				fn(llm.CompletionResponse{
+					Content:            thinkingChunk,
+					Done:               true,
+					DoneReason:         llm.DoneReasonStop,
+					PromptEvalCount:    1,
+					PromptEvalDuration: 1,
+					EvalCount:          1,
+					EvalDuration:       1,
+				})
+				return nil
+			}
+			t.Cleanup(func() { mock.CompletionFn = nil })
+
+			streamRequest := false
+			req := tc.req
+			req.Stream = &streamRequest
+			req.Options = map[string]any{"num_ctx": 4096}
+			w := createRequest(t, s.GenerateHandler, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+			}
+
+			if len(requests) != 1 {
+				t.Fatalf("expected a single completion call, got %d", len(requests))
+			}
+
+			if !bytes.Equal([]byte(tc.req.Format), []byte(requests[0].Format)) {
+				t.Errorf("expected first completion format to match the request format, got %q", requests[0].Format)
+			}
+		})
+	}
+}
+
+// TestGenerateFormatWithThinkingNativeChatTemplate covers the deferral when the
+// prompt is rendered by the runner's own chat template. ApplyChatTemplate drops
+// Message.Thinking, so the restart continues the assistant turn textually.
+func TestGenerateFormatWithThinkingNativeChatTemplate(t *testing.T) {
+	t.Setenv("OLLAMA_GO_TEMPLATE", "0")
+	gin.SetMode(gin.TestMode)
+
+	const basePrompt = "native-template: Please respond in JSON.<think>"
+
+	mock := &mockRunner{
+		TemplateFn: func(_ context.Context, req llm.ChatRequest) (string, error) {
+			return basePrompt, nil
+		},
+	}
+
+	s := newServerWithMockRunner(t, mock)
+	// the chat template is the selected one, so the thinking capability comes from
+	// it, while the unselected Go template still supplies the thinking tags
+	createMinimalGGUFModel(t, s, "generate-native-thinking", ggml.KV{
+		"tokenizer.chat_template": "{{ messages[0]['content'] }}<think></think>",
+	}, `{{- range .Messages }}{{ .Role }}: {{ if .Thinking }}<think>{{ .Thinking }}</think>{{ end }}{{ .Content }}
+{{ end }}<think>`, nil)
+
+	if m, err := GetModel("generate-native-thinking"); err != nil {
+		t.Fatal(err)
+	} else if chatModeForModel(m) != chatExecutionModeNative {
+		t.Fatalf("expected the native chat template route, got %v", chatModeForModel(m))
+	}
+
+	format := json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}`)
+
+	var (
+		requestsMu sync.Mutex
+		requests   []llm.CompletionRequest
+	)
+
+	mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+		requestsMu.Lock()
+		requests = append(requests, r)
+		callNum := len(requests)
+		requestsMu.Unlock()
+
+		switch callNum {
+		case 1:
+			fn(llm.CompletionResponse{
+				Content:            ` I am thinking through this problem. </think> {"answer":"42"}`,
+				Done:               false,
+				PromptEvalCount:    1,
+				PromptEvalDuration: 1,
+			})
+
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Second):
+				t.Errorf("timeout waiting for structured outputs cancellation")
+				return nil
+			}
+		case 2:
+			fn(llm.CompletionResponse{
+				Content:            `{"answer":"42"}`,
+				Done:               true,
+				DoneReason:         llm.DoneReasonStop,
+				PromptEvalCount:    1,
+				PromptEvalDuration: 1,
+				EvalCount:          1,
+				EvalDuration:       1,
+			})
+			return nil
+		default:
+			t.Errorf("unexpected number of completion calls: %d", callNum)
+			return nil
+		}
+	}
+
+	streamRequest := false
+	w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+		Model:   "generate-native-thinking",
+		Prompt:  "Please respond in JSON.",
+		Think:   &api.ThinkValue{Value: true},
+		Stream:  &streamRequest,
+		Format:  format,
+		Options: map[string]any{"num_ctx": 4096},
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	if len(requests) != 2 {
+		t.Fatalf("expected two completion calls, got %d", len(requests))
+	}
+
+	if requests[0].Format != nil {
+		t.Errorf("expected first completion format to be nil, got %q", requests[0].Format)
+	}
+
+	if !bytes.Equal([]byte(format), []byte(requests[1].Format)) {
+		t.Errorf("expected second completion format to match original format, got %q", requests[1].Format)
+	}
+
+	// the rendered prompt already opened the thinking block, so the restart only
+	// appends what the model produced plus the closing tag
+	if want := basePrompt + "I am thinking through this problem. </think>"; requests[1].Prompt != want {
+		t.Errorf("expected second completion prompt %q, got %q", want, requests[1].Prompt)
+	}
+
+	var resp api.GenerateResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.Thinking != "I am thinking through this problem. " {
+		t.Errorf("expected thinking %q, got %q", "I am thinking through this problem. ", resp.Thinking)
+	}
+
+	if resp.Response != `{"answer":"42"}` {
+		t.Errorf("expected response %q, got %q", `{"answer":"42"}`, resp.Response)
+	}
+}
+
+// TestGenerateThinkingNativeChatTemplateOnly pins the boundary of the deferral.
+// A model whose thinking capability comes from its GGUF chat template alone gives
+// ollama no tags to parse the output with, so /api/generate cannot tell reasoning
+// from content: the thinking is left inline in the response and the format keeps
+// being applied to the first and only request. Deferring without a parser would
+// only restart on the very first token.
+func TestGenerateThinkingNativeChatTemplateOnly(t *testing.T) {
+	t.Setenv("OLLAMA_GO_TEMPLATE", "0")
+	gin.SetMode(gin.TestMode)
+
+	mock := &mockRunner{
+		TemplateFn: func(_ context.Context, req llm.ChatRequest) (string, error) {
+			return "native-template: Please respond in JSON.", nil
+		},
+	}
+
+	s := newServerWithMockRunner(t, mock)
+	createMinimalGGUFModel(t, s, "generate-native-thinking-only", ggml.KV{
+		"tokenizer.chat_template": "{{ messages[0]['content'] }}<think></think>",
+	}, "", nil)
+
+	m, err := GetModel("generate-native-thinking-only")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chatModeForModel(m) != chatExecutionModeNative {
+		t.Fatalf("expected the native chat template route, got %v", chatModeForModel(m))
+	}
+	if !slices.Contains(m.Capabilities(), model.CapabilityThinking) {
+		t.Fatal("expected the chat template to grant the thinking capability")
+	}
+
+	format := json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}`)
+
+	// answer replays a single completion and records the requests it was given
+	answer := func(t *testing.T, content string) *[]llm.CompletionRequest {
+		var (
+			requestsMu sync.Mutex
+			requests   []llm.CompletionRequest
+		)
+
+		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+			requestsMu.Lock()
+			requests = append(requests, r)
+			requestsMu.Unlock()
+
+			fn(llm.CompletionResponse{
+				Content:            content,
+				Done:               true,
+				DoneReason:         llm.DoneReasonStop,
+				PromptEvalCount:    1,
+				PromptEvalDuration: 1,
+				EvalCount:          1,
+				EvalDuration:       1,
+			})
+			return nil
+		}
+		t.Cleanup(func() { mock.CompletionFn = nil })
+
+		return &requests
+	}
+
+	// without a format the model is free to emit its tags, and nothing parses them
+	// out of the response - this is the gap that makes the deferral impossible
+	t.Run("thinking is left inline in the response", func(t *testing.T) {
+		requests := answer(t, `<think>I am thinking through this problem.</think>The answer is 42.`)
+
+		streamRequest := false
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:   "generate-native-thinking-only",
+			Prompt:  "What is 17 * 23?",
+			Think:   &api.ThinkValue{Value: true},
+			Stream:  &streamRequest,
+			Options: map[string]any{"num_ctx": 4096},
+		})
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		if len(*requests) != 1 {
+			t.Fatalf("expected a single completion call, got %d", len(*requests))
+		}
+
+		var resp api.GenerateResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+
+		if resp.Thinking != "" {
+			t.Errorf("expected no parsed thinking, got %q", resp.Thinking)
+		}
+
+		if !strings.Contains(resp.Response, "<think>") {
+			t.Errorf("expected the raw thinking tags to stay in the response, got %q", resp.Response)
+		}
+	})
+
+	// so the format is applied to the first and only request, and the answer it
+	// constrains is all the model gets to produce
+	t.Run("format is applied to the first request", func(t *testing.T) {
+		requests := answer(t, `{"answer":"42"}`)
+
+		streamRequest := false
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:   "generate-native-thinking-only",
+			Prompt:  "Please respond in JSON.",
+			Think:   &api.ThinkValue{Value: true},
+			Stream:  &streamRequest,
+			Format:  format,
+			Options: map[string]any{"num_ctx": 4096},
+		})
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		if len(*requests) != 1 {
+			t.Fatalf("expected a single completion call, got %d", len(*requests))
+		}
+
+		if !bytes.Equal([]byte(format), []byte((*requests)[0].Format)) {
+			t.Errorf("expected the format to be applied to the first request, got %q", (*requests)[0].Format)
+		}
+
+		var resp api.GenerateResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+
+		if resp.Thinking != "" {
+			t.Errorf("expected no parsed thinking, got %q", resp.Thinking)
+		}
+
+		if resp.Response != `{"answer":"42"}` {
+			t.Errorf("expected response %q, got %q", `{"answer":"42"}`, resp.Response)
+		}
+	})
+}
+
+// TestGenerateFormatWithBuiltinParserThinking covers the same deferral for models
+// with a builtin thinking parser, which can return thinking and content from a
+// single Add call - that thinking still has to reach the client.
+func TestGenerateFormatWithBuiltinParserThinking(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mock := &mockRunner{}
+
+	s := &Server{
+		sched: &Scheduler{
+			pendingReqCh:    make(chan *LlmRequest, 1),
+			finishedReqCh:   make(chan *LlmRequest, 1),
+			expiredCh:       make(chan *runnerRef, 1),
+			unloadedCh:      make(chan any, 1),
+			loaded:          make(map[string]*runnerRef),
+			newServerFn:     newMockServer(mock),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+			waitForRecovery: 250 * time.Millisecond,
+			loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				time.Sleep(time.Millisecond)
+				req.successCh <- &runnerRef{llama: mock}
+				return false
+			},
+		},
+	}
+
+	go s.sched.Run(t.Context())
+
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture":          "llama",
+		"llama.block_count":             uint32(1),
+		"llama.context_length":          uint32(8192),
+		"llama.embedding_length":        uint32(4096),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(8),
+		"tokenizer.ggml.tokens":         []string{""},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*ggml.Tensor{
+		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+	})
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:  "test-qwen3-thinking",
+		Files:  map[string]string{"file.gguf": digest},
+		Parser: "qwen3-thinking",
+		Template: `{{- range .Messages }}{{ .Role }}: {{ if .Thinking }}<think>{{ .Thinking }}</think>{{ end }}{{ .Content }}
+{{ end }}`,
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("create: expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	format := json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}`)
+
+	var (
+		requestsMu sync.Mutex
+		requests   []llm.CompletionRequest
+	)
+
+	// the parser returns the whole turn - thinking and content - from one Add call
+	mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+		requestsMu.Lock()
+		requests = append(requests, r)
+		callNum := len(requests)
+		requestsMu.Unlock()
+
+		switch callNum {
+		case 1:
+			fn(llm.CompletionResponse{
+				Content:            `I am thinking through this problem. </think>{"answer":"42"}`,
+				Done:               false,
+				PromptEvalCount:    1,
+				PromptEvalDuration: 1,
+			})
+
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Second):
+				t.Errorf("timeout waiting for structured outputs cancellation")
+				return nil
+			}
+		case 2:
+			fn(llm.CompletionResponse{
+				Content:            `{"answer":"42"}`,
+				Done:               true,
+				DoneReason:         llm.DoneReasonStop,
+				PromptEvalCount:    1,
+				PromptEvalDuration: 1,
+				EvalCount:          1,
+				EvalDuration:       1,
+			})
+			return nil
+		default:
+			t.Errorf("unexpected number of completion calls: %d", callNum)
+			return nil
+		}
+	}
+
+	streamRequest := false
+	w = createRequest(t, s.GenerateHandler, api.GenerateRequest{
+		Model:   "test-qwen3-thinking",
+		Prompt:  "Please respond in JSON.",
+		Think:   &api.ThinkValue{Value: true},
+		Stream:  &streamRequest,
+		Format:  format,
+		Options: map[string]any{"num_ctx": 4096},
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	if len(requests) != 2 {
+		t.Fatalf("expected two completion calls, got %d", len(requests))
+	}
+
+	if requests[0].Format != nil {
+		t.Errorf("expected first completion format to be nil, got %q", requests[0].Format)
+	}
+
+	if !bytes.Equal([]byte(format), []byte(requests[1].Format)) {
+		t.Errorf("expected second completion format to match original format, got %q", requests[1].Format)
+	}
+
+	// the qwen3 parser trims the whitespace around thinking
+	if !strings.Contains(requests[1].Prompt, "<think>I am thinking through this problem.</think>") {
+		t.Errorf("expected second completion prompt to carry the thinking, got %q", requests[1].Prompt)
+	}
+
+	var resp api.GenerateResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.Thinking != "I am thinking through this problem." {
+		t.Errorf("expected thinking %q, got %q", "I am thinking through this problem.", resp.Thinking)
+	}
+
+	if resp.Response != `{"answer":"42"}` {
+		t.Errorf("expected response %q, got %q", `{"answer":"42"}`, resp.Response)
 	}
 }
 

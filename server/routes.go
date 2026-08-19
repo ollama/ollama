@@ -497,6 +497,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	prompt := req.Prompt
 	var leadingBOS string
+	// rebuildPrompt re-renders the prompt with the thinking produced so far appended as
+	// an assistant message, so a second constrained request can continue from there. it
+	// stays nil for flows that cannot be re-rendered (raw mode, suffix completion), which
+	// keeps structured outputs applied to the first request as before
+	var rebuildPrompt func(thinking string) (string, error)
 	if !req.Raw {
 		tmpl := m.Template
 		if req.Template != "" {
@@ -548,6 +553,14 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			b.WriteString(s)
 		}
 
+		// the detokenized req.Context, if any, prefixes whichever prompt we render
+		// TEMP(drifkin): req.Context will be removed very soon, but we're temporarily supporting it in this flow here
+		promptPrefix := b.String()
+
+		thinkingMessages := func(thinking string) []api.Message {
+			return append(slices.Clone(values.Messages), api.Message{Role: "assistant", Thinking: thinking})
+		}
+
 		// check that we're in the `api/chat`-like flow, and if so, generate the
 		// prompt the same way
 		// TEMP(drifkin): we should really just detect the chat-like flow and call
@@ -590,10 +603,24 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 					}
 					return
 				}
-				// TEMP(drifkin): req.Context will be removed very soon, but we're temporarily supporting it in this flow here
-				if req.Context != nil {
-					b.WriteString(prompt)
-					prompt = b.String()
+				prompt = promptPrefix + prompt
+
+				// ApplyChatTemplate drops api.Message.Thinking on its way to the runner, so
+				// the second request cannot be re-rendered with the reasoning. continue the
+				// assistant turn textually instead, which is exactly what the model emitted.
+				// the tags come from the Go template, the same source thinkingState parses
+				// the output with. a model that describes its thinking only in the GGUF chat
+				// template has neither, so there is no way to tell reasoning from content and
+				// the format keeps being applied to the first request
+				openingTag, closingTag := thinking.InferTags(m.Template.Template)
+				if openingTag != "" && closingTag != "" {
+					basePrompt := prompt
+					rebuildPrompt = func(thinking string) (string, error) {
+						if strings.HasSuffix(strings.TrimSpace(basePrompt), openingTag) {
+							return basePrompt + thinking + closingTag, nil
+						}
+						return basePrompt + openingTag + thinking + closingTag, nil
+					}
 				}
 			} else {
 				prompt, media, err = chatPrompt(c.Request.Context(), m, r.Tokenize, optionsForPrompt(opts, r), values.Messages, []api.Tool{}, req.Think, genTruncate)
@@ -601,12 +628,16 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 					return
 				}
-				// TEMP(drifkin): req.Context will be removed very soon, but we're temporarily supporting it in this flow here
-				if req.Context != nil {
-					b.WriteString(prompt)
-					prompt = b.String()
-				}
+				prompt = promptPrefix + prompt
 				leadingBOS = leadingBOSForModel(m)
+
+				rebuildPrompt = func(thinking string) (string, error) {
+					p, _, err := chatPrompt(c.Request.Context(), m, r.Tokenize, optionsForPrompt(opts, r), thinkingMessages(thinking), []api.Tool{}, req.Think, genTruncate)
+					if err != nil {
+						return "", err
+					}
+					return promptPrefix + p, nil
+				}
 			}
 		} else {
 			// Direct template execution flow.
@@ -616,6 +647,20 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			}
 
 			prompt = b.String()
+
+			if values.Messages != nil {
+				rebuildPrompt = func(thinking string) (string, error) {
+					v := values
+					v.Messages = thinkingMessages(thinking)
+
+					var b bytes.Buffer
+					b.WriteString(promptPrefix)
+					if err := tmpl.Execute(&b, v); err != nil {
+						return "", err
+					}
+					return b.String(), nil
+				}
+			}
 		}
 	}
 
@@ -646,93 +691,191 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 	}
 
+	type structuredOutputsState int
+	const (
+		structuredOutputsState_None structuredOutputsState = iota
+		structuredOutputsState_ReadyToApply
+		structuredOutputsState_Applying
+	)
+
+	// json.RawMessage is non-nil for `null` and `""` too, which the runner treats as
+	// no format at all - deferring for those would cost a second request for nothing
+	constrainsOutput := req.Format != nil && string(req.Format) != "null" && string(req.Format) != `""`
+
 	ch := make(chan any)
 	go func() {
-		// TODO (jmorganca): avoid building the response twice both here and below
-		var sb strings.Builder
 		defer close(ch)
-		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
-			Prompt:          prompt,
-			Media:           media,
-			Format:          req.Format,
-			Options:         opts,
-			Shift:           req.Shift == nil || *req.Shift,
-			Truncate:        req.Truncate == nil || *req.Truncate,
-			Logprobs:        req.Logprobs,
-			TopLogprobs:     req.TopLogprobs,
-			PreservedTokens: preservedTokensForCompletion(builtinParser),
-			LeadingBOS:      leadingBOS,
-		}, func(cr llm.CompletionResponse) {
-			res := api.GenerateResponse{
-				Model:     req.Model,
-				CreatedAt: time.Now().UTC(),
-				Response:  cr.Content,
-				Done:      cr.Done,
-				Metrics: api.Metrics{
-					PromptEvalCount:    cr.PromptEvalCount,
-					PromptEvalDuration: cr.PromptEvalDuration,
-					EvalCount:          cr.EvalCount,
-					EvalDuration:       cr.EvalDuration,
-				},
-				Logprobs: toAPILogprobs(cr.Logprobs),
+
+		structuredOutputsState := structuredOutputsState_None
+
+		for {
+			// TODO (jmorganca): avoid building the response twice both here and below
+			var sb strings.Builder
+			var tb strings.Builder
+
+			currentFormat := req.Format
+			// structured outputs via double request is enabled when:
+			// 1. the model supports the thinking capability,
+			// 2. it uses a built-in parser or our generic thinking parser and
+			// 3. the prompt can be re-rendered with the thinking as a prefill
+			// constraining from the first token otherwise leaves the model nowhere to
+			// reason, so `think` ends up silently ignored
+
+			// Note that the current approach does not work for (potential future)
+			// non-thinking models that emit anything before actual content. This
+			// current approach uses the first parsed content as the signal to turn
+			// constraining on
+
+			// deferredFormat records that the grammar was dropped for this request, so a
+			// restart has to apply it before any content reaches the client, even if
+			// nothing was thought
+			var deferredFormat bool
+
+			forceImmediate := builtinParser != nil && builtinParser.HasThinkingSupport() && req.Think != nil && !req.Think.Bool()
+			if constrainsOutput && structuredOutputsState == structuredOutputsState_None && !forceImmediate && rebuildPrompt != nil && ((builtinParser != nil || thinkingState != nil) && slices.Contains(m.Capabilities(), model.CapabilityThinking)) {
+				currentFormat = nil
+				deferredFormat = true
 			}
 
-			if builtinParser != nil {
-				content, thinking, toolCalls, err := builtinParser.Add(cr.Content, cr.Done)
-				if err != nil {
-					ch <- gin.H{"error": err.Error()}
-					return
+			// sets up new context given parent context per request
+			ctx, cancel := context.WithCancel(c.Request.Context())
+
+			err := r.Completion(ctx, llm.CompletionRequest{
+				Prompt:          prompt,
+				Media:           media,
+				Format:          currentFormat,
+				Options:         opts,
+				Shift:           req.Shift == nil || *req.Shift,
+				Truncate:        req.Truncate == nil || *req.Truncate,
+				Logprobs:        req.Logprobs,
+				TopLogprobs:     req.TopLogprobs,
+				PreservedTokens: preservedTokensForCompletion(builtinParser),
+				LeadingBOS:      leadingBOS,
+			}, func(cr llm.CompletionResponse) {
+				res := api.GenerateResponse{
+					Model:     req.Model,
+					CreatedAt: time.Now().UTC(),
+					Response:  cr.Content,
+					Done:      cr.Done,
+					Metrics: api.Metrics{
+						PromptEvalCount:    cr.PromptEvalCount,
+						PromptEvalDuration: cr.PromptEvalDuration,
+						EvalCount:          cr.EvalCount,
+						EvalDuration:       cr.EvalDuration,
+					},
+					Logprobs: toAPILogprobs(cr.Logprobs),
 				}
-				res.Response = content
-				res.Thinking = thinking
-				if cr.Done && len(toolCalls) > 0 {
-					res.ToolCalls = toolCalls
-				}
-			} else if thinkingState != nil {
-				thinking, content := thinkingState.AddContent(cr.Content)
-				res.Thinking = thinking
-				res.Response = content
-			}
 
-			if _, err := sb.WriteString(cr.Content); err != nil {
-				ch <- gin.H{"error": err.Error()}
-			}
-
-			if cr.Done {
-				res.DoneReason = cr.DoneReason.String()
-				res.TotalDuration = time.Since(checkpointStart)
-				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
-
-				if !req.Raw {
-					tokens, err := r.Tokenize(c.Request.Context(), prompt+sb.String())
+				if builtinParser != nil {
+					content, thinking, toolCalls, err := builtinParser.Add(cr.Content, cr.Done)
 					if err != nil {
 						ch <- gin.H{"error": err.Error()}
 						return
 					}
-					res.Context = tokens
+					res.Response = content
+					res.Thinking = thinking
+					if cr.Done && len(toolCalls) > 0 {
+						res.ToolCalls = toolCalls
+					}
+
+					tb.WriteString(thinking)
+				} else if thinkingState != nil {
+					thinking, content := thinkingState.AddContent(cr.Content)
+					res.Thinking = thinking
+					res.Response = content
+
+					tb.WriteString(thinking)
+				}
+
+				// we are now receiving content from the model - we should start applying
+				// structured outputs. both parsers can return thinking and content from a
+				// single call, so emit the thinking before restarting. nothing else from
+				// that chunk survives: the content, tool calls, logprobs and metrics all
+				// describe the answer the constrained request regenerates, and that
+				// request reports the completion
+				if deferredFormat && structuredOutputsState == structuredOutputsState_None && res.Response != "" {
+					structuredOutputsState = structuredOutputsState_ReadyToApply
+					if res.Thinking != "" {
+						ch <- api.GenerateResponse{
+							Model:     res.Model,
+							CreatedAt: res.CreatedAt,
+							Thinking:  res.Thinking,
+						}
+					}
+					cancel()
+					return
+				}
+
+				if _, err := sb.WriteString(cr.Content); err != nil {
+					ch <- gin.H{"error": err.Error()}
+				}
+
+				if cr.Done {
+					res.DoneReason = cr.DoneReason.String()
+					res.TotalDuration = time.Since(checkpointStart)
+					res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+
+					if !req.Raw {
+						tokens, err := r.Tokenize(c.Request.Context(), prompt+sb.String())
+						if err != nil {
+							ch <- gin.H{"error": err.Error()}
+							return
+						}
+						res.Context = tokens
+					}
+				}
+
+				if builtinParser != nil {
+					// Emit chunks that carry logprobs even if the parser is still buffering
+					// visible content, otherwise generate logprobs disappear for models with
+					// builtin thinking/tool parsers.
+					if res.Response != "" || res.Thinking != "" || res.Done || len(res.ToolCalls) > 0 || len(res.Logprobs) > 0 {
+						ch <- res
+					}
+
+					return
+				}
+
+				ch <- res
+			})
+			if err != nil {
+				if structuredOutputsState == structuredOutputsState_ReadyToApply && strings.Contains(err.Error(), "context canceled") && c.Request.Context().Err() == nil {
+					// only ignores error if it's a context cancellation due to setting structured outputs
+				} else {
+					s.sched.expireRunnersForRuntimeOOM(m, err)
+					var serr api.StatusError
+					if errors.As(err, &serr) {
+						ch <- gin.H{"error": serr.ErrorMessage, "status": serr.StatusCode}
+					} else {
+						ch <- gin.H{"error": err.Error()}
+					}
+					return
 				}
 			}
 
-			if builtinParser != nil {
-				// Emit chunks that carry logprobs even if the parser is still buffering
-				// visible content, otherwise generate logprobs disappear for models with
-				// builtin thinking/tool parsers.
-				if res.Response != "" || res.Thinking != "" || res.Done || len(res.ToolCalls) > 0 || len(res.Logprobs) > 0 {
-					ch <- res
+			// ignored structured outputs cancellation falls through to here, start a new request with the structured outputs and updated prompt
+			if structuredOutputsState == structuredOutputsState_ReadyToApply {
+				structuredOutputsState = structuredOutputsState_Applying
+				// with no thinking to prime it with, the second request re-runs the
+				// original prompt rather than appending an empty assistant turn
+				if thinking := tb.String(); thinking != "" {
+					prompt, err = rebuildPrompt(thinking)
+					if err != nil {
+						slog.Error("generate prompt error applying structured outputs", "error", err)
+						ch <- gin.H{"error": err.Error()}
+						return
+					}
+					// force constraining by terminating thinking header, the parser is already at this state
+					// when the last message is thinking, the renderer for gpt-oss cannot disambiguate between having the
+					// model continue thinking or ending thinking and outputting the final message.
+					if shouldUseHarmony(m) || (builtinParser != nil && m.Config.Parser == "harmony") {
+						prompt += "<|end|><|start|>assistant<|channel|>final<|message|>"
+					}
 				}
-
-				return
+				continue
 			}
 
-			ch <- res
-		}); err != nil {
-			s.sched.expireRunnersForRuntimeOOM(m, err)
-			var serr api.StatusError
-			if errors.As(err, &serr) {
-				ch <- gin.H{"error": serr.ErrorMessage, "status": serr.StatusCode}
-			} else {
-				ch <- gin.H{"error": err.Error()}
-			}
+			break
 		}
 	}()
 
