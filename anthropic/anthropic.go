@@ -1075,7 +1075,7 @@ type CountTokensRequest struct {
 
 // EstimateInputTokens estimates input tokens from a MessagesRequest (reuses CountTokensRequest logic)
 func EstimateInputTokens(req MessagesRequest) int {
-	return estimateTokens(CountTokensRequest{
+	return EstimateCountTokens(CountTokensRequest{
 		Model:    req.Model,
 		Messages: req.Messages,
 		System:   req.System,
@@ -1089,10 +1089,10 @@ type CountTokensResponse struct {
 	InputTokens int `json:"input_tokens"`
 }
 
-// estimateTokens returns a rough estimate of tokens (len/4).
+// EstimateCountTokens returns a rough estimate of tokens (len/4).
 // TODO: Replace with actual tokenization via Tokenize API for accuracy.
 // Current len/4 heuristic is a rough approximation (~4 chars/token average).
-func estimateTokens(req CountTokensRequest) int {
+func EstimateCountTokens(req CountTokensRequest) int {
 	var totalLen int
 
 	// Count system prompt

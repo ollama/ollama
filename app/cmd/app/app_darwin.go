@@ -10,16 +10,26 @@ package main
 import "C"
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 	"unsafe"
 
 	"github.com/ollama/ollama/app/updater"
 	"github.com/ollama/ollama/app/version"
+	"github.com/ollama/ollama/cmd/launch"
+	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/internal/proxy"
 )
 
 var ollamaPath = func() string {
@@ -35,10 +45,25 @@ var ollamaPath = func() string {
 	return filepath.Join(pwd, "ollama")
 }()
 
+type claudeProxyFailure uint8
+
+const (
+	claudeProxyFailureNone claudeProxyFailure = iota
+	claudeProxyFailurePortConflict
+)
+
 var (
 	isApp           = updater.BundlePath != ""
 	appLogPath      = filepath.Join(os.Getenv("HOME"), ".ollama", "logs", "app.log")
 	launchAgentPath = filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents", "com.ollama.ollama.plist")
+	claudeAppProxy  *proxy.ClaudeDesktop
+	claudeProxyMu   sync.Mutex
+	claudeProxyErr  error
+	claudeProxyFail claudeProxyFailure
+	claudeDesktop   = &launch.ClaudeDesktop{}
+
+	claudeDesktopInstalled = launch.ClaudeDesktopInstalled
+	claudeProxyListenAddr  = proxy.DefaultClaudeDesktopListenAddr
 )
 
 // TODO(jmorganca): pre-create the window and pass
@@ -177,11 +202,205 @@ func UpdateAvailable(ver string) error {
 
 func osRun(_ func(), hasCompletedFirstRun, startHidden, showOnboarding bool, _ string) {
 	registerLaunchAgent(hasCompletedFirstRun)
+	if err := reconcileClaudeAppProxy(); err != nil {
+		slog.Warn("failed to start Claude gateway", "error", err)
+	}
+	defer stopClaudeAppProxy()
 
 	// Run the native macOS app
 	// Note: this will block until the app is closed
 	slog.Debug("starting native darwin event loop")
 	C.run(C._Bool(showOnboarding), C._Bool(startHidden))
+}
+
+func reconcileClaudeAppProxy() error {
+	if !claudeDesktopInstalled() || !claudeDesktop.UsesOllamaGateway() {
+		stopClaudeAppProxy()
+		return nil
+	}
+	return startClaudeAppProxy()
+}
+
+func startClaudeAppProxy() error {
+	claudeProxyMu.Lock()
+	defer claudeProxyMu.Unlock()
+	if claudeAppProxy != nil {
+		clearClaudeProxyFailure()
+		return nil
+	}
+	if !claudeDesktopInstalled() {
+		slog.Debug("Claude Desktop is not installed; skipping gateway")
+		clearClaudeProxyFailure()
+		return nil
+	}
+	ollamaURL := envconfig.ConnectableHost()
+	gatewayPort, err := claudeGatewayPort()
+	if err != nil {
+		return setClaudeProxyFailure(fmt.Errorf("parse Claude gateway address: %w", err), claudeProxyFailureNone)
+	}
+	if ollamaURL.Port() == gatewayPort {
+		return setClaudeProxyFailure(
+			fmt.Errorf("OLLAMA_HOST cannot use port %s because it is reserved for Claude", gatewayPort),
+			claudeProxyFailurePortConflict,
+		)
+	}
+	gateway, err := proxy.NewClaudeDesktop(proxy.ClaudeDesktopConfig{
+		ListenAddr:      claudeProxyListenAddr,
+		OllamaURL:       ollamaURL.String(),
+		Model:           "kimi-k3:cloud",
+		Logger:          slog.Default(),
+		OnCountsChanged: updateClaudeProxyMenu,
+	})
+	if err != nil {
+		return setClaudeProxyFailure(err, claudeProxyFailureNone)
+	}
+	if err := gateway.Start(); err != nil {
+		_ = gateway.Close(context.Background())
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		defer cancel()
+		probeErr := proxy.ProbeClaudeDesktop(ctx, "http://"+claudeProxyListenAddr)
+		if probeErr == nil {
+			slog.Info("Claude gateway is already running", "address", claudeProxyListenAddr)
+			clearClaudeProxyFailure()
+			return nil
+		}
+		failure := claudeProxyFailureNone
+		if errors.Is(err, syscall.EADDRINUSE) {
+			failure = claudeProxyFailurePortConflict
+		}
+		return setClaudeProxyFailure(fmt.Errorf("%w: %v", err, probeErr), failure)
+	}
+	claudeAppProxy = gateway
+	clearClaudeProxyFailure()
+	return nil
+}
+
+func claudeGatewayPort() (string, error) {
+	_, port, err := net.SplitHostPort(claudeProxyListenAddr)
+	if err != nil {
+		return "", err
+	}
+	return port, nil
+}
+
+//export ClaudeGatewayPort
+func ClaudeGatewayPort() C.int {
+	portText, err := claudeGatewayPort()
+	if err != nil {
+		return 0
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		return 0
+	}
+	return C.int(port)
+}
+
+// These helpers require claudeProxyMu to be held.
+func setClaudeProxyFailure(err error, failure claudeProxyFailure) error {
+	claudeProxyErr = err
+	claudeProxyFail = failure
+	return err
+}
+
+func clearClaudeProxyFailure() {
+	claudeProxyErr = nil
+	claudeProxyFail = claudeProxyFailureNone
+}
+
+//export SetClaudeGatewayInstalled
+func SetClaudeGatewayInstalled(installed C.bool, restartClaude C.bool) C.bool {
+	shouldInstall := installed != C._Bool(false)
+	shouldRestart := restartClaude != C._Bool(false)
+	if err := setClaudeGatewayInstalled(shouldInstall, shouldRestart); err != nil {
+		slog.Warn("failed to change Claude Desktop gateway installation", "installed", shouldInstall, "error", err)
+		return C._Bool(false)
+	}
+	return C._Bool(true)
+}
+
+func setClaudeGatewayInstalled(installed, restart bool) error {
+	if installed && !claudeDesktopInstalled() {
+		return errors.New("Claude Desktop is not installed")
+	}
+	if installed {
+		if err := startClaudeAppProxy(); err != nil {
+			return err
+		}
+	}
+	err := claudeDesktop.SetInstalledFromDesktop(installed, restart)
+	if !claudeDesktop.UsesOllamaGateway() {
+		stopClaudeAppProxy()
+	}
+	return err
+}
+
+//export IsClaudeDesktopInstalled
+func IsClaudeDesktopInstalled() C.bool {
+	return C._Bool(claudeDesktopInstalled())
+}
+
+//export IsClaudeDesktopRunning
+func IsClaudeDesktopRunning() C.bool {
+	return C._Bool(launch.ClaudeDesktopRunning())
+}
+
+//export IsClaudeGatewayConfigured
+func IsClaudeGatewayConfigured() C.bool {
+	return C._Bool(claudeDesktop.UsesOllamaGateway())
+}
+
+//export ClaudeGatewayStartFailed
+func ClaudeGatewayStartFailed() C.bool {
+	return C._Bool(claudeGatewayStartFailed())
+}
+
+func claudeGatewayStartFailed() bool {
+	claudeProxyMu.Lock()
+	defer claudeProxyMu.Unlock()
+	return claudeProxyErr != nil
+}
+
+//export ClaudeGatewayPortConflict
+func ClaudeGatewayPortConflict() C.bool {
+	return C._Bool(claudeGatewayPortConflict())
+}
+
+func claudeGatewayPortConflict() bool {
+	claudeProxyMu.Lock()
+	defer claudeProxyMu.Unlock()
+	return claudeProxyFail == claudeProxyFailurePortConflict
+}
+
+//export RefreshClaudeProxyMenu
+func RefreshClaudeProxyMenu() {
+	claudeProxyMu.Lock()
+	proxy := claudeAppProxy
+	claudeProxyMu.Unlock()
+	if proxy == nil {
+		return
+	}
+	updateClaudeProxyMenu(proxy.Counts())
+}
+
+func updateClaudeProxyMenu(counts proxy.ClaudeDesktopCounts) {
+	C.updateClaudeProxyMenu(C.ulonglong(counts.Routed))
+}
+
+func stopClaudeAppProxy() {
+	claudeProxyMu.Lock()
+	proxy := claudeAppProxy
+	claudeAppProxy = nil
+	clearClaudeProxyFailure()
+	claudeProxyMu.Unlock()
+	if proxy == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := proxy.Close(ctx); err != nil {
+		slog.Debug("failed to stop Claude gateway cleanly", "error", err)
+	}
 }
 
 func quit() {

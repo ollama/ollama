@@ -56,11 +56,11 @@ var integrationSpecs = []*IntegrationSpec{
 		Name:        "claude-desktop",
 		Runner:      &ClaudeDesktop{},
 		Aliases:     []string{"claude-app"},
-		Description: "Claude Desktop with Ollama Cloud",
 		Hidden:      true,
+		Description: "Use Ollama models in Claude Desktop",
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
-				return claudeDesktopInstalled()
+				return ClaudeDesktopInstalled()
 			},
 			URL: "https://claude.com/download",
 		},

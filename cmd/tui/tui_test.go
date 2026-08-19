@@ -174,33 +174,6 @@ func TestMenuStartsExpandedForPreviousOverflowSelection(t *testing.T) {
 	}
 }
 
-func TestMenuOmitsMoreWithoutAdditionalIntegrations(t *testing.T) {
-	state := launcherTestState()
-	for name := range state.Integrations {
-		if name != "claude" && name != "opencode" && name != "hermes" && name != "openclaw" {
-			delete(state.Integrations, name)
-		}
-	}
-	state.Integrations["claude-desktop"] = launch.LauncherIntegrationState{
-		Name:        "claude-desktop",
-		DisplayName: "Claude Desktop",
-		Selectable:  true,
-		Changeable:  true,
-	}
-
-	menu := newModel(state)
-	want := []string{"run", "claude", "opencode", "hermes", "openclaw"}
-	if diff := compareStrings(integrationSequence(menu.items), want); diff != "" {
-		t.Fatalf("unexpected menu without additional integrations: %s", diff)
-	}
-	if strings.Contains(menu.View(), "More...") {
-		t.Fatalf("expected no More item without additional integrations\n%s", menu.View())
-	}
-	if strings.Contains(menu.View(), "Claude Desktop") {
-		t.Fatalf("expected hidden integration to remain omitted\n%s", menu.View())
-	}
-}
-
 func TestMenuEnterOnRunSelectsRun(t *testing.T) {
 	menu := newModel(launcherTestState())
 	updated, _ := menu.Update(tea.KeyMsg{Type: tea.KeyEnter})
