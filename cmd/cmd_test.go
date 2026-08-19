@@ -1200,6 +1200,50 @@ func TestPushHandler(t *testing.T) {
 			expectedOutput: "\nYou can find your model at:\n\n\thttps://ollama.com/test-model\n",
 		},
 		{
+			name:      "successful push with only blob-digest responses (no status updates)",
+			modelName: "test-model",
+			serverResponse: map[string]func(w http.ResponseWriter, r *http.Request){
+				"/api/push": func(w http.ResponseWriter, r *http.Request) {
+					if r.Method != http.MethodPost {
+						t.Errorf("expected POST request, got %s", r.Method)
+					}
+
+					var req api.PushRequest
+					if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+						http.Error(w, err.Error(), http.StatusBadRequest)
+						return
+					}
+
+					if req.Name != "test-model" {
+						t.Errorf("expected model name 'test-model', got %s", req.Name)
+					}
+
+					// ALL responses have Digest — no status-only response.
+					// This leaves spinner nil throughout the push, which
+					// would panic at spinner.Stop() without a nil guard.
+					responses := []api.ProgressResponse{
+						{Digest: "sha256:abc123def456", Total: 100, Completed: 50},
+						{Digest: "sha256:abc123def456", Total: 100, Completed: 100},
+						{Digest: "sha256:xyz789ghi012", Total: 100, Completed: 100},
+					}
+
+					for _, resp := range responses {
+						if err := json.NewEncoder(w).Encode(resp); err != nil {
+							http.Error(w, err.Error(), http.StatusInternalServerError)
+							return
+						}
+						w.(http.Flusher).Flush()
+					}
+				},
+				"/api/me": func(w http.ResponseWriter, r *http.Request) {
+					if r.Method != http.MethodPost {
+						t.Errorf("expected POST request, got %s", r.Method)
+					}
+				},
+			},
+			expectedOutput: "\nYou can find your model at:\n\n\thttps://ollama.com/test-model\n",
+		},
+		{
 			name:      "not signed in push",
 			modelName: "notsignedin-model",
 			serverResponse: map[string]func(w http.ResponseWriter, r *http.Request){
