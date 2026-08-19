@@ -35,7 +35,7 @@ export const Route = createFileRoute("/c/$chatId")({
   loader: async ({ context, params }) => {
     // Skip loading for special non-chat views
     if (params.chatId !== "new" && params.chatId !== "launch") {
-      context.queryClient.ensureQueryData({
+      await context.queryClient.ensureQueryData({
         queryKey: ["chat", params.chatId],
         queryFn: () => getChat(params.chatId),
         staleTime: 1500,
