@@ -270,7 +270,9 @@ export async function getSettings(): Promise<{
   };
 }
 
-export async function updateSettings(settings: Settings): Promise<{
+// Accepts a subset of the settings; fields that are left out keep their
+// current value on the server.
+export async function updateSettings(settings: Partial<Settings>): Promise<{
   settings: Settings;
 }> {
   const response = await fetch(`${API_BASE}/api/v1/settings`, {
