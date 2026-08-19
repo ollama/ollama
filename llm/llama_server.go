@@ -224,6 +224,36 @@ func (s *llamaServerRunner) HasExited() bool {
 	return s.cmd != nil && s.cmd.ProcessState != nil && s.cmd.ProcessState.ExitCode() >= 0
 }
 
+// exited returns an error if the llama-server subprocess has terminated.
+// Unlike HasExited, this detects the exit immediately even before
+// ProcessState is populated by cmd.Wait.
+func (s *llamaServerRunner) exited() error {
+	if s.done == nil {
+		return nil
+	}
+	select {
+	case <-s.done:
+		if err := s.exitErr(); err != nil {
+			return fmt.Errorf("llama-server has stopped: %w", err)
+		}
+		return errors.New("llama-server has stopped")
+	default:
+		return nil
+	}
+}
+
+// exitErr returns the captured error from the subprocess exit, if any.
+// Falls back to the last stderr error line captured by the status writer.
+func (s *llamaServerRunner) exitErr() error {
+	if s.doneErr != nil {
+		return s.doneErr
+	}
+	if msg := s.lastErrMsg(); msg != "" {
+		return errors.New(msg)
+	}
+	return nil
+}
+
 func (s *llamaServerRunner) llamaServerMediaMarker() string {
 	if s.mediaMarker != "" {
 		return s.mediaMarker
@@ -1197,6 +1227,11 @@ func (s *llamaServerRunner) getServerStatus(ctx context.Context) (ServerStatus, 
 		}
 		return ServerStatusError, fmt.Errorf("llama-server process no longer running: %s %s", ExitStatus(s.cmd.ProcessState.ExitCode()), msg)
 	}
+	// ProcessState may still be nil when the subprocess has just exited and
+	// cmd.Wait hasn't populated it yet. Check s.done to catch that window.
+	if err := s.exited(); err != nil {
+		return ServerStatusError, err
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/health", s.port), nil)
 	if err != nil {
@@ -1541,6 +1576,10 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 	}
 	defer s.sem.Release(1)
 
+	if err := s.exited(); err != nil {
+		return err
+	}
+
 	req.Options.NumPredict = boundedNumPredict(req.Options.NumPredict, s.options.NumCtx)
 
 	status, err := s.getServerStatusRetry(ctx)
@@ -1638,6 +1677,9 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 			return err
 		}
 		slog.Error("llama-server completion error", "error", err)
+		if err := s.exited(); err != nil {
+			return err
+		}
 		if msg := s.lastErrMsg(); msg != "" {
 			return fmt.Errorf("model runner has unexpectedly stopped, this may be due to resource limitations or an internal error, check ollama server logs for details: %s", msg)
 		}
@@ -1759,6 +1801,9 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 		}
 		if strings.Contains(err.Error(), "unexpected EOF") || strings.Contains(err.Error(), "forcibly closed") {
 			s.Close()
+			if exitErr := s.exitErr(); exitErr != nil {
+				return fmt.Errorf("llama-server has stopped: %w", exitErr)
+			}
 			msg := s.lastErrMsg()
 			if msg == "" {
 				msg = err.Error()
@@ -1837,6 +1882,10 @@ func convertLogprobs(probs []llamaServerTokenProb, includeTop bool) []Logprob {
 }
 
 func (s *llamaServerRunner) ApplyChatTemplate(ctx context.Context, req ChatRequest) (string, error) {
+	if err := s.exited(); err != nil {
+		return "", err
+	}
+
 	data, err := s.llamaServerChatRequest(req, false)
 	if err != nil {
 		return "", err
@@ -1857,6 +1906,9 @@ func (s *llamaServerRunner) ApplyChatTemplate(ctx context.Context, req ChatReque
 	res, err := s.httpClient().Do(serverReq)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
+			return "", err
+		}
+		if err := s.exited(); err != nil {
 			return "", err
 		}
 		return "", fmt.Errorf("llama-server apply-template error: %w", err)
@@ -1898,6 +1950,10 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 	}
 	defer s.sem.Release(1)
 
+	if err := s.exited(); err != nil {
+		return err
+	}
+
 	req.Options.NumPredict = boundedNumPredict(req.Options.NumPredict, s.options.NumCtx)
 
 	status, err := s.getServerStatusRetry(ctx)
@@ -1932,6 +1988,9 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 			return err
 		}
 		slog.Error("llama-server chat error", "error", err)
+		if err := s.exited(); err != nil {
+			return err
+		}
 		if msg := s.lastErrMsg(); msg != "" {
 			return fmt.Errorf("model runner has unexpectedly stopped, this may be due to resource limitations or an internal error, check ollama server logs for details: %s", msg)
 		}
@@ -2068,6 +2127,9 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 		}
 		if strings.Contains(err.Error(), "unexpected EOF") || strings.Contains(err.Error(), "forcibly closed") {
 			s.Close()
+			if exitErr := s.exitErr(); exitErr != nil {
+				return fmt.Errorf("llama-server has stopped: %w", exitErr)
+			}
 			msg := s.lastErrMsg()
 			if msg == "" {
 				msg = err.Error()
@@ -2341,6 +2403,10 @@ func (s *llamaServerRunner) Embedding(ctx context.Context, input string) ([]floa
 	}
 	defer s.sem.Release(1)
 
+	if err := s.exited(); err != nil {
+		return nil, 0, err
+	}
+
 	status, err := s.getServerStatusRetry(ctx)
 	if err != nil {
 		return nil, 0, err
@@ -2368,6 +2434,9 @@ func (s *llamaServerRunner) Embedding(ctx context.Context, input string) ([]floa
 
 	resp, err := s.httpClient().Do(r)
 	if err != nil {
+		if err := s.exited(); err != nil {
+			return nil, 0, err
+		}
 		return nil, 0, fmt.Errorf("do embedding request: %w", err)
 	}
 	defer resp.Body.Close()
@@ -2479,6 +2548,10 @@ func isEmbeddingInputLimitError(errMsg string) bool {
 }
 
 func (s *llamaServerRunner) tokenize(ctx context.Context, content any, addSpecial bool, parseSpecial *bool) ([]int, error) {
+	if err := s.exited(); err != nil {
+		return nil, err
+	}
+
 	req := struct {
 		Content      any   `json:"content"`
 		AddSpecial   bool  `json:"add_special,omitempty"`
@@ -2502,6 +2575,9 @@ func (s *llamaServerRunner) tokenize(ctx context.Context, content any, addSpecia
 
 	resp, err := s.httpClient().Do(r)
 	if err != nil {
+		if err := s.exited(); err != nil {
+			return nil, err
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()
@@ -2532,6 +2608,10 @@ func (s *llamaServerRunner) Tokenize(ctx context.Context, content string) ([]int
 
 // Detokenize calls llama-server's /detokenize endpoint.
 func (s *llamaServerRunner) Detokenize(ctx context.Context, tokens []int) (string, error) {
+	if err := s.exited(); err != nil {
+		return "", err
+	}
+
 	data, err := json.Marshal(map[string][]int{"tokens": tokens})
 	if err != nil {
 		return "", err
@@ -2545,6 +2625,9 @@ func (s *llamaServerRunner) Detokenize(ctx context.Context, tokens []int) (strin
 
 	resp, err := s.httpClient().Do(r)
 	if err != nil {
+		if err := s.exited(); err != nil {
+			return "", err
+		}
 		return "", err
 	}
 	defer resp.Body.Close()
