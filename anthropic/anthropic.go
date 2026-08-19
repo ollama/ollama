@@ -388,6 +388,13 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 
 	if r.Thinking != nil && r.Thinking.Type == "enabled" {
 		think = &api.ThinkValue{Value: true}
+	} else {
+		// Explicitly disable thinking when the Anthropic request omits the
+		// thinking field or sets it to disabled. Without this, the downstream
+		// route handler auto-enables thinking for capable models when Think
+		// is nil, which violates the Anthropic API spec where omitting the
+		// field means thinking is disabled.
+		think = &api.ThinkValue{Value: false}
 	}
 	if r.Thinking != nil && r.Thinking.Type == "disabled" {
 		think = &api.ThinkValue{Value: false}
