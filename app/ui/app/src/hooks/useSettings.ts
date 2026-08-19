@@ -51,7 +51,7 @@ export function useSettings() {
       thinkEnabled: settingsData?.settings?.ThinkEnabled ?? false,
       thinkLevel: settingsData?.settings?.ThinkLevel ?? "none",
       selectedModel: settingsData?.settings?.SelectedModel ?? "",
-      sidebarOpen: settingsData?.settings?.SidebarOpen ?? false,
+      sidebarOpen: settingsData?.settings?.SidebarOpen ?? true,
       lastHomeView: settingsData?.settings?.LastHomeView ?? "launch",
     }),
     [settingsData?.settings],
