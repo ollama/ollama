@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -62,6 +63,12 @@ d:\path with\spaces\thirteen.WEBP some ending
 	assert.Contains(t, res[11], "c:")
 	assert.Contains(t, res[12], "thirteen.WEBP")
 	assert.Contains(t, res[12], "d:")
+
+	// Tilde style paths
+	input = ` some preamble ~/Library/Mobile\ Documents/com\~apple\~CloudDocs/screenshots/CleanShot\ 2025-04-17\ at\ 21.26.40@2x.png `
+	res = extractFileNames(input)
+	assert.Len(t, res, 1)
+	assert.Contains(t, res[0], "CleanShot")
 }
 
 // Ensure that file paths wrapped in single quotes are removed with the quotes.
@@ -114,3 +121,35 @@ func TestExtractFileDataWAV(t *testing.T) {
 	assert.Len(t, imgs, 1)
 	assert.Equal(t, "before  after", cleaned)
 }
+
+func TestNormalizeFilePath(t *testing.T) {
+	// Standard home dir mock for test validation
+	t.Setenv("HOME", "/Users/ollama")
+
+	// Escaped path
+	fp := `~/Library/Mobile\ Documents/com\~apple\~CloudDocs/screenshots/CleanShot\ 2025-04-17\ at\ 21.26.40@2x.png`
+	normalized := normalizeFilePath(fp)
+	assert.Equal(t, "/Users/ollama/Library/Mobile Documents/com~apple~CloudDocs/screenshots/CleanShot 2025-04-17 at 21.26.40@2x.png", filepath.ToSlash(normalized))
+
+	// Quoted path
+	fp = `"/Users/ollama/Library/Mobile Documents/CleanShot.png"`
+	normalized = normalizeFilePath(fp)
+	assert.Equal(t, "/Users/ollama/Library/Mobile Documents/CleanShot.png", filepath.ToSlash(normalized))
+
+	// Escaped exclamation mark and double quotes
+	fp = `/tmp/test_\!_\"image\".jpg`
+	normalized = normalizeFilePath(fp)
+	assert.Equal(t, `/tmp/test_!_"image".jpg`, filepath.ToSlash(normalized))
+
+	// Windows path normalization
+	if runtime.GOOS == "windows" {
+		fp = `c:\users\jdoe\eight.png`
+		normalized = normalizeFilePath(fp)
+		assert.Equal(t, `c:\users\jdoe\eight.png`, normalized)
+
+		fp = `c:\users\jdoe\my\ image.png`
+		normalized = normalizeFilePath(fp)
+		assert.Equal(t, `c:\users\jdoe\my image.png`, normalized)
+	}
+}
+
