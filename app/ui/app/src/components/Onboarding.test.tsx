@@ -21,13 +21,16 @@ describe("Onboarding", () => {
     expect(html.indexOf('alt="Ollama waving"')).toBeLessThan(
       html.indexOf("Welcome to Ollama!"),
     );
-    expect(html).toContain("Run open models locally or in the cloud.");
-    expect(html).toContain("Keep your setup");
-    expect(html).toContain("Your data stays yours");
-    expect(html).toContain("Easily switch models");
-    expect(html).toContain("Run Ollama with the agents you already use.");
-    expect(html).toContain("Your data is never logged or trained on.");
+    expect(html).not.toContain("Run open models locally or in the cloud.");
+    expect(html.indexOf("Connect your apps")).toBeLessThan(
+      html.indexOf("Easily switch models"),
+    );
+    expect(html.indexOf("Easily switch models")).toBeLessThan(
+      html.indexOf("Your data stays yours"),
+    );
+    expect(html).toContain("Power your existing coding apps with open models");
     expect(html).toContain("Swap between frontier models in one click.");
+    expect(html).toContain("Your prompt data is never logged or trained on.");
     expect(html).toContain("Continue");
     expect(html).not.toContain("Skip");
   });
