@@ -57,19 +57,35 @@ export function useSettings() {
     [settingsData?.settings],
   );
 
-  // Single function to update most settings
+  const { mutateAsync } = updateSettingsMutation;
+
+  // Single function to update most settings.
+  //
+  // Only the fields that actually change are sent, and the comparison is made
+  // against the cache rather than a render-time copy of the settings. Sending
+  // the whole object from a copy that has gone stale reverts fields another
+  // view just saved; that view then re-applies them, reverting these in turn,
+  // and the two keep writing to /api/v1/settings for the life of the process.
+  // Dropping writes that change nothing keeps effects that re-assert a setting
+  // from issuing a request every time the settings are refetched.
   const setSettings = useCallback(
     async (updates: SettingsUpdate) => {
-      if (!settingsData?.settings) return;
+      const current = queryClient.getQueryData<{ settings: Settings }>([
+        "settings",
+      ])?.settings;
+      if (!current) return;
 
-      const updatedSettings = new Settings({
-        ...settingsData.settings,
-        ...updates,
-      });
+      const changed = Object.fromEntries(
+        Object.entries(updates).filter(
+          ([key, value]) => value !== current[key as keyof Settings],
+        ),
+      ) as SettingsUpdate;
 
-      await updateSettingsMutation.mutateAsync(updatedSettings);
+      if (Object.keys(changed).length === 0) return;
+
+      await mutateAsync(changed);
     },
-    [settingsData?.settings, updateSettingsMutation],
+    [queryClient, mutateAsync],
   );
 
   return useMemo(

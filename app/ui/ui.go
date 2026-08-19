@@ -1464,7 +1464,12 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 		return fmt.Errorf("failed to load settings: %w", err)
 	}
 
-	var settings store.Settings
+	// Decode over a copy of the stored settings so that fields the client
+	// leaves out keep their current values. Clients send only the fields they
+	// are changing; decoding into a zero value resets everything else, so two
+	// views saving different settings would each undo the other's change and
+	// then re-apply their own, looping until the app is killed.
+	settings := old
 	if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
 		return fmt.Errorf("invalid request body: %w", err)
 	}

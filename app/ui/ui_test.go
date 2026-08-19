@@ -840,3 +840,116 @@ func TestSettingsToggleAutoUpdateOn_NoPendingUpdate_TriggersCheck(t *testing.T) 
 		t.Fatal("UpdateAvailableFunc should not be called when there is no pending update")
 	}
 }
+
+// postSettings sends a raw JSON body to the settings handler and returns the
+// settings as they were stored afterwards.
+func postSettings(t *testing.T, server *Server, body string) store.Settings {
+	t.Helper()
+
+	req := httptest.NewRequest("POST", "/api/v1/settings", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	if err := server.settings(rr, req); err != nil {
+		t.Fatalf("settings(%s) error = %v", body, err)
+	}
+	if rr.Code != http.StatusOK {
+		t.Fatalf("settings(%s) status = %d, want %d", body, rr.Code, http.StatusOK)
+	}
+
+	saved, err := server.Store.Settings()
+	if err != nil {
+		t.Fatalf("Settings() error = %v", err)
+	}
+	return saved
+}
+
+func seededSettings() store.Settings {
+	return store.Settings{
+		Expose:            true,
+		Browser:           true,
+		Survey:            true,
+		Models:            "/custom/models",
+		Agent:             true,
+		Tools:             true,
+		WorkingDir:        "/workspace",
+		ContextLength:     8192,
+		TurboEnabled:      true,
+		WebSearchEnabled:  true,
+		ThinkEnabled:      true,
+		ThinkLevel:        "high",
+		SelectedModel:     "gemma3:4b",
+		SidebarOpen:       true,
+		LastHomeView:      "launch",
+		AutoUpdateEnabled: true,
+	}
+}
+
+func newSeededServer(t *testing.T, restart func()) *Server {
+	t.Helper()
+
+	testStore := &store.Store{
+		DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
+	}
+	t.Cleanup(func() { testStore.Close() })
+
+	if err := testStore.SetSettings(seededSettings()); err != nil {
+		t.Fatalf("SetSettings() error = %v", err)
+	}
+
+	return &Server{
+		Store:   testStore,
+		Restart: restart,
+	}
+}
+
+func TestHandlePostApiSettingsPreservesOmittedFields(t *testing.T) {
+	server := newSeededServer(t, func() {})
+
+	got := postSettings(t, server, `{"LastHomeView":"chat"}`)
+
+	want := seededSettings()
+	want.LastHomeView = "chat"
+	if got != want {
+		t.Errorf("settings after partial update:\n got %+v\nwant %+v", got, want)
+	}
+}
+
+func TestHandlePostApiSettingsPartialUpdatesDoNotClobberEachOther(t *testing.T) {
+	// Several views save different settings independently. Each request only
+	// carries the field it changed, so no request may undo another's change --
+	// otherwise each view re-applies its own value on the next read and the app
+	// writes to /api/v1/settings for the rest of the session.
+	server := newSeededServer(t, func() {})
+
+	postSettings(t, server, `{"LastHomeView":"chat"}`)
+	postSettings(t, server, `{"SelectedModel":"llama3.2"}`)
+	got := postSettings(t, server, `{"SidebarOpen":false}`)
+
+	want := seededSettings()
+	want.LastHomeView = "chat"
+	want.SelectedModel = "llama3.2"
+	want.SidebarOpen = false
+	if got != want {
+		t.Errorf("settings after independent updates:\n got %+v\nwant %+v", got, want)
+	}
+}
+
+func TestHandlePostApiSettingsRestartsOnlyForServerSettings(t *testing.T) {
+	// Restarting tears down the running ollama server, so an update that leaves
+	// Expose, Models and ContextLength alone must not trigger one.
+	restarts := 0
+	server := newSeededServer(t, func() { restarts++ })
+
+	postSettings(t, server, `{"SelectedModel":"llama3.2"}`)
+	postSettings(t, server, `{"SidebarOpen":false}`)
+	postSettings(t, server, `{"LastHomeView":"chat"}`)
+	if restarts != 0 {
+		t.Errorf("Restart called %d times for updates unrelated to the server, want 0", restarts)
+	}
+
+	postSettings(t, server, `{"ContextLength":16384}`)
+	if restarts != 1 {
+		t.Errorf("Restart called %d times after changing the context length, want 1", restarts)
+	}
+}
