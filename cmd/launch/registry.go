@@ -414,9 +414,6 @@ func ListVisibleIntegrationSpecs() []IntegrationSpec {
 		if supported, ok := spec.Runner.(SupportedIntegration); ok && supported.Supported() != nil {
 			continue
 		}
-		if spec.Name == "pool" && poolsideGOOS == "windows" {
-			continue
-		}
 		visible = append(visible, *spec)
 	}
 
@@ -535,10 +532,6 @@ func EnsureIntegrationInstalled(name string, runner Runner) error {
 		if err := supported.Supported(); err != nil {
 			return err
 		}
-	}
-
-	if integration.spec.Name == "pool" && poolsideGOOS == "windows" {
-		return poolsideUnsupportedError()
 	}
 
 	if integration.installed {
