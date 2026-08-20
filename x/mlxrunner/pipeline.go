@@ -169,6 +169,10 @@ func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *specu
 	media.release(position)
 	for total-processed > 1 {
 		if err := ctx.Err(); err != nil {
+			// Settle the drafter with the next prompt token so the caches
+			// rest level with the recorded keys and a retry resumes exactly
+			// where this prefill stopped.
+			spec.settle(mlx.FromValues(tokens[processed:processed+1], 1))
 			return nil, 0, 0, err
 		}
 
