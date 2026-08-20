@@ -236,6 +236,10 @@ var (
 	EnableIntegratedGPU = BoolWithDefault("OLLAMA_IGPU_ENABLE")
 	// NoCloudEnv checks the OLLAMA_NO_CLOUD environment variable.
 	NoCloudEnv = Bool("OLLAMA_NO_CLOUD")
+	// MLXKVConnector selects the optional MLX KV connector implementation.
+	MLXKVConnector = String("OLLAMA_MLX_KV_CONNECTOR")
+	// MLXKVConnectorDir overrides where the MLX KV connector stores its data.
+	MLXKVConnectorDir = String("OLLAMA_MLX_KV_CONNECTOR_DIR")
 )
 
 func String(s string) func() string {

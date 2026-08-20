@@ -35,6 +35,7 @@ type prefixCache struct {
 	root          *trieNode   // root of the prefix trie
 	activePath    []*trieNode // current root→leaf path with live MLX arrays
 	caches        []cache.Cache
+	connector     KVConnector
 	pagedOutBytes int64 // total bytes in paged-out snapshots across the trie
 
 	// draftLookahead is how far the draft caches' entries reference past
@@ -44,8 +45,9 @@ type prefixCache struct {
 
 // pendingSnapshot is a snapshot scheduled to be taken during prefill.
 type pendingSnapshot struct {
-	offset int
-	user   bool
+	offset    int
+	user      bool
+	connector bool
 }
 
 // cacheSession manages caches for a single pipeline run.
@@ -67,8 +69,8 @@ type cacheSession struct {
 }
 
 // newPrefixCache manages the given cache slots for the model's life.
-func newPrefixCache(caches []cache.Cache) *prefixCache {
-	return &prefixCache{caches: caches}
+func newPrefixCache(caches []cache.Cache, connector KVConnector) *prefixCache {
+	return &prefixCache{caches: caches, connector: connector}
 }
 
 func (c *prefixCache) ensureRoot() {
@@ -88,16 +90,23 @@ func (c *prefixCache) begin(inputs []int32, items []mediaItem) *cacheSession {
 	effInputs := effectiveKeyTokens(inputs, items)
 	keys := c.key(effInputs)
 	matchPath, matched := findBestMatch(c.root, keys)
+	restored := false
+
+	if c.connector != nil && matched < len(inputs) {
+		matchPath, matched, restored = c.maybeRestoreConnectorMatch(keys, matched)
+	}
 	originalMatched := matched
 
 	// Always keep at least one token to re-evaluate so the
 	// pipeline can seed token generation from it.
-	if matched == len(inputs) && matched > 0 {
+	if !restored && matched == len(inputs) && matched > 0 {
 		matchPath, matched = findBestMatch(c.root, keys[:matched-1])
 	}
 
 	// Switch to the matched path, paging in/out as needed.
-	c.switchToPath(matchPath, matched)
+	if !restored {
+		c.switchToPath(matchPath, matched)
+	}
 
 	// switchToPath aligns caches to a common offset
 	prefix := c.minCacheOffset()
@@ -124,6 +133,75 @@ func (c *prefixCache) begin(inputs []int32, items []mediaItem) *cacheSession {
 	slog.Info(msg, "total", len(inputs), "matched", originalMatched, "cached", prefix, "left", len(remaining))
 
 	return session
+}
+
+func (c *prefixCache) maybeRestoreConnectorMatch(keys []trieKey, matched int) ([]*trieNode, int, bool) {
+	match, err := c.connector.Lookup(keys)
+	if err != nil {
+		slog.Warn("mlx kv connector lookup failed", "error", err)
+		path, matched := findBestMatch(c.root, keys)
+		return path, matched, false
+	}
+	if match == nil {
+		path, matched := findBestMatch(c.root, keys)
+		return path, matched, false
+	}
+	defer closeSnapshots(match.Snapshots)
+
+	if match.Offset <= matched || match.Offset >= len(keys)+1 {
+		path, matched := findBestMatch(c.root, keys)
+		return path, matched, false
+	}
+	if len(match.Snapshots) != len(c.caches) {
+		slog.Warn("mlx kv connector returned wrong snapshot count", "got", len(match.Snapshots), "want", len(c.caches))
+		path, matched := findBestMatch(c.root, keys)
+		return path, matched, false
+	}
+
+	if !c.restoreConnectorMatch(match) {
+		slog.Warn("mlx kv connector restore failed", "offset", match.Offset)
+		path, matched := findBestMatch(c.root, keys)
+		return path, matched, false
+	}
+
+	slog.Debug("restored prefix from kv connector", "offset", match.Offset)
+	return []*trieNode{c.root}, c.minCacheOffset(), true
+}
+
+func (c *prefixCache) restoreConnectorMatch(match *KVConnectorMatch) bool {
+	if match == nil || match.Offset <= 0 {
+		return false
+	}
+
+	c.switchToPath([]*trieNode{c.root}, 0)
+
+	ok := true
+	for i, kv := range c.caches {
+		if kv == nil {
+			continue
+		}
+		if i >= len(match.Snapshots) || match.Snapshots[i] == nil || !kv.Restore(match.Snapshots[i], match.Offset) {
+			ok = false
+			break
+		}
+	}
+	if !ok {
+		c.freeAll()
+		c.activePath = []*trieNode{c.root}
+		return false
+	}
+
+	minOff := c.minCacheOffset()
+	for _, kv := range c.caches {
+		if kv != nil && kv.Offset() != minOff && !kv.Restore(nil, minOff) {
+			c.freeAll()
+			c.activePath = []*trieNode{c.root}
+			return false
+		}
+	}
+
+	c.activePath = []*trieNode{c.root}
+	return true
 }
 
 // effectiveKeyTokens returns the per-position key alphabet: the token ID
@@ -332,6 +410,27 @@ func (s *cacheSession) schedulePrefillSnapshots(offsets []int) {
 			s.pendingSnapshots = append(s.pendingSnapshots, pendingSnapshot{offset: offset, user: true})
 		}
 	}
+
+	if c.connector != nil {
+		for _, offset := range c.connector.SnapshotOffsets(s.inputs, c.draftLookahead) {
+			offset -= c.draftLookahead
+			if offset <= base || offset > len(s.inputs) {
+				continue
+			}
+			found := false
+			for i := range s.pendingSnapshots {
+				if s.pendingSnapshots[i].offset == offset {
+					s.pendingSnapshots[i].connector = true
+					found = true
+					break
+				}
+			}
+			if !found {
+				s.pendingSnapshots = append(s.pendingSnapshots, pendingSnapshot{offset: offset, connector: true})
+			}
+		}
+	}
+
 	slices.SortFunc(s.pendingSnapshots, func(a, b pendingSnapshot) int {
 		return a.offset - b.offset
 	})
@@ -433,6 +532,9 @@ func (s *cacheSession) attachPrefillSnapshots() {
 			frontier.user = true
 		}
 		s.attachCapturedSnapshots(frontier, rows[i])
+		if p.connector {
+			s.persistConnectorSnapshot(frontier, stored)
+		}
 	}
 }
 
@@ -447,6 +549,25 @@ func (s *cacheSession) attachCapturedSnapshots(node *trieNode, snaps []cache.Sna
 	node.lastUsed = time.Now()
 	slog.Debug("created snapshot", "offset", node.endOffset)
 	c.enforceEvictionPolicy()
+}
+
+func (s *cacheSession) persistConnectorSnapshot(node *trieNode, stored []trieKey) {
+	c := s.cache
+	if c.connector == nil || node == nil || node.endOffset <= 0 || node.endOffset > len(stored) {
+		return
+	}
+	if !hasAllSnapshots(node, c.caches) {
+		return
+	}
+
+	entry := &KVConnectorEntry{
+		Offset:    node.endOffset,
+		Keys:      slices.Clone(stored[:node.endOffset]),
+		Snapshots: node.snapshots,
+	}
+	if err := c.connector.Store(entry); err != nil {
+		slog.Warn("mlx kv connector store failed", "offset", node.endOffset, "error", err)
+	}
 }
 
 // advancePath advances the active path from the current frontier by matching
