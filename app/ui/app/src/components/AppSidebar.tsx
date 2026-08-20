@@ -1,9 +1,6 @@
 import { Link } from "@/components/ui/link";
-import {
-  ChatBubbleLeftRightIcon,
-  Cog6ToothIcon,
-  RectangleGroupIcon,
-} from "@heroicons/react/24/outline";
+import { ChatIcon } from "@/components/ChatIcon";
+import { Cog6ToothIcon, RectangleGroupIcon } from "@heroicons/react/24/outline";
 
 type AppSection = "apps" | "chat" | "settings";
 
@@ -27,7 +24,7 @@ export function AppSidebar({ current }: { current: AppSection }) {
           className={itemClass("chat")}
           draggable={false}
         >
-          <ChatBubbleLeftRightIcon className="h-5 w-5 stroke-current" />
+          <ChatIcon />
           <span className="truncate">Chat</span>
         </Link>
         <Link

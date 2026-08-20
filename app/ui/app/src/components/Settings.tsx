@@ -14,6 +14,7 @@ import {
   CloudIcon,
   CogIcon,
   ArrowDownTrayIcon,
+  Squares2X2Icon,
 } from "@heroicons/react/20/solid";
 import { Settings as SettingsType } from "@/gotypes";
 import { useUser } from "@/hooks/useUser";
@@ -45,6 +46,8 @@ export default function Settings({ embedded = false }: { embedded?: boolean }) {
   const queryClient = useQueryClient();
   const [showSaved, setShowSaved] = useState(false);
   const [restartMessage, setRestartMessage] = useState(false);
+  const [showAppsInMenu, setShowAppsInMenuState] = useState(true);
+  const [showAppsInMenuPending, setShowAppsInMenuPending] = useState(false);
   const {
     user,
     isAuthenticated,
@@ -140,6 +143,15 @@ export default function Settings({ embedded = false }: { embedded?: boolean }) {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    window
+      .getShowAppsInMenu?.()
+      .then(setShowAppsInMenuState)
+      .catch((error) =>
+        console.error("Failed to load menu app visibility:", error),
+      );
+  }, []);
+
+  useEffect(() => {
     const handleFocus = () => {
       if (isAwaitingConnection && pollingInterval) {
         // Stop polling when window gets focus
@@ -216,6 +228,22 @@ export default function Settings({ embedded = false }: { embedded?: boolean }) {
     }
   };
 
+  const handleShowAppsInMenu = async (checked: boolean) => {
+    const previous = showAppsInMenu;
+    setShowAppsInMenuState(checked);
+    setShowAppsInMenuPending(true);
+    try {
+      await window.setShowAppsInMenu?.(checked);
+      setShowSaved(true);
+      setTimeout(() => setShowSaved(false), 1500);
+    } catch (error) {
+      setShowAppsInMenuState(previous);
+      console.error("Failed to update menu app visibility:", error);
+    } finally {
+      setShowAppsInMenuPending(false);
+    }
+  };
+
   const cloudOverriddenByEnv =
     cloudStatus?.source === "env" || cloudStatus?.source === "both";
   const cloudToggleDisabled =
@@ -288,7 +316,7 @@ export default function Settings({ embedded = false }: { embedded?: boolean }) {
         </header>
       )}
       <div className="w-full p-6 overflow-y-auto flex-1 overscroll-contain">
-        <div className="mx-auto max-w-5xl space-y-4">
+        <div className="mx-auto max-w-4xl space-y-4">
           {/* Connect Ollama Account */}
           <div className="overflow-hidden rounded-xl bg-white dark:bg-neutral-800">
             <div className="p-4">
@@ -425,6 +453,29 @@ export default function Settings({ embedded = false }: { embedded?: boolean }) {
                   </div>
                 </div>
               </Field>
+
+              {!isWindows && (
+                <Field>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex flex-1 items-start space-x-3">
+                      <Squares2X2Icon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
+                      <div>
+                        <Label>Show apps in menu</Label>
+                        <Description>
+                          Show connected apps at the top of the Ollama menu.
+                        </Description>
+                      </div>
+                    </div>
+                    <div className="flex-shrink-0">
+                      <Switch
+                        checked={showAppsInMenu}
+                        disabled={showAppsInMenuPending}
+                        onChange={handleShowAppsInMenu}
+                      />
+                    </div>
+                  </div>
+                </Field>
+              )}
 
               {/* Auto Update */}
               <Field>

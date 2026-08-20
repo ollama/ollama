@@ -14,7 +14,16 @@ extern NSString *SystemWidePath;
 static NSString *const ClaudeDownloadURL =
     @"https://claude.ai/api/desktop/darwin/universal/dmg/latest/redirect";
 static NSString *const ClaudeDownloadPageURL = @"https://claude.com/download";
+static NSString *const ShowAppsInMenuDefaultsKey = @"ShowAppsInMenu";
 static NSBundle *OllamaResourceBundle(void);
+
+static BOOL shouldShowAppsInMenu(void) {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if ([defaults objectForKey:ShowAppsInMenuDefaultsKey] == nil) {
+        return YES;
+    }
+    return [defaults boolForKey:ShowAppsInMenuDefaultsKey];
+}
 
 static NSImage *integrationAppIcon(NSString *appName,
                                    NSString *fallbackSymbolName) {
@@ -317,6 +326,8 @@ static NSImage *integrationAppIcon(NSString *appName,
 @property(assign, nonatomic) BOOL claudeAppEnabled;
 @property(assign, nonatomic) BOOL claudeAppReady;
 @property(strong, nonatomic) IntegrationMenuRow *claudeAppRow;
+@property(strong, nonatomic) NSMenuItem *claudeMenuItem;
+@property(strong, nonatomic) NSMenuItem *claudeMenuSeparatorItem;
 @property(strong, nonatomic) NSURLSession *claudeDownloadSession;
 @property(strong, nonatomic) NSURLSessionDownloadTask *claudeDownloadTask;
 @property(strong, nonatomic) NSAlert *claudeDownloadAlert;
@@ -335,6 +346,7 @@ static NSImage *integrationAppIcon(NSString *appName,
 - (void)showClaudeDownloadFailure:(NSError *)error;
 - (void)toggleClaudeAppProxy:(NSButton *)sender;
 - (void)refreshClaudeAppState;
+- (void)applyShowAppsInMenu:(BOOL)visible;
 - (void)requestQuit;
 - (void)completeSystemTermination;
 @end
@@ -411,20 +423,22 @@ static NSImage *ollamaApplicationIcon(void) {
     [menu setDelegate:self];
     [menu setAutoenablesItems:NO];
 
-    NSMenuItem *claudeMenuItem = [[NSMenuItem alloc] initWithTitle:@"Claude"
-                                                            action:nil
-                                                     keyEquivalent:@""];
-    [claudeMenuItem setEnabled:YES];
+    self.claudeMenuItem = [[NSMenuItem alloc] initWithTitle:@"Claude"
+                                                     action:nil
+                                              keyEquivalent:@""];
+    [self.claudeMenuItem setEnabled:YES];
     self.claudeAppRow = [[IntegrationMenuRow alloc]
         initWithTitle:@"Claude"
            symbolName:@"sparkles"
                target:self
            openAction:@selector(openClaudeApp:)
          toggleAction:@selector(toggleClaudeAppProxy:)];
-    [claudeMenuItem setView:self.claudeAppRow];
-    [menu addItem:claudeMenuItem];
+    [self.claudeMenuItem setView:self.claudeAppRow];
+    [menu addItem:self.claudeMenuItem];
     [self refreshClaudeAppState];
-    [menu addItem:[NSMenuItem separatorItem]];
+    self.claudeMenuSeparatorItem = [NSMenuItem separatorItem];
+    [menu addItem:self.claudeMenuSeparatorItem];
+    [self applyShowAppsInMenu:shouldShowAppsInMenu()];
 
     NSMenuItem *appsMenuItem =
         [[NSMenuItem alloc] initWithTitle:@"Open Ollama"
@@ -629,6 +643,11 @@ static NSImage *ollamaApplicationIcon(void) {
     [self.claudeAppRow setIntegrationActive:self.claudeAppEnabled];
     [self.claudeAppRow setIntegrationReady:self.claudeAppReady];
     RefreshClaudeProxyMenu();
+}
+
+- (void)applyShowAppsInMenu:(BOOL)visible {
+    [self.claudeMenuItem setHidden:!visible];
+    [self.claudeMenuSeparatorItem setHidden:!visible];
 }
 
 - (void)menuDidClose:(NSMenu *)menu {
@@ -1837,6 +1856,19 @@ void updateClaudeProxyMenu(unsigned long long routed) {
     } else {
         dispatch_async(dispatch_get_main_queue(), updateMenu);
     }
+}
+
+bool ShowAppsInMenu(void) {
+    return shouldShowAppsInMenu();
+}
+
+void SetShowAppsInMenu(bool visible) {
+    [[NSUserDefaults standardUserDefaults]
+        setBool:visible
+         forKey:ShowAppsInMenuDefaultsKey];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [appDelegate applyShowAppsInMenu:visible];
+    });
 }
 
 enum ClaudeInstallResult installClaudeDesktop(void) {

@@ -29,6 +29,8 @@ const (
 	defaultWindowHeight    = 960
 	onboardingWindowWidth  = 900
 	onboardingWindowHeight = 660
+	minimumWindowWidth     = onboardingWindowWidth
+	minimumWindowHeight    = onboardingWindowHeight
 )
 
 type Webview struct {
@@ -276,8 +278,23 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 			return result
 		})
 
+		wv.Bind("openClaudeDesktop", func() string {
+			if err := openClaudeDesktopApplication(); err != nil {
+				return err.Error()
+			}
+			return ""
+		})
+
 		wv.Bind("installClaudeDesktop", func() claudeDesktopInstallResult {
 			return requestClaudeDesktopInstall()
+		})
+
+		wv.Bind("getShowAppsInMenu", func() bool {
+			return getShowAppsInMenu()
+		})
+
+		wv.Bind("setShowAppsInMenu", func(visible bool) {
+			setShowAppsInMenu(visible)
 		})
 
 		wv.Bind("close", func() {
@@ -303,7 +320,7 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 				}
 
 				wv.SetSize(width, height, webview.HintNone)
-				wv.SetSize(800, 600, webview.HintMin)
+				wv.SetSize(minimumWindowWidth, minimumWindowHeight, webview.HintMin)
 				setOnboardingWindowStyle(wv.Window(), false)
 			})
 		})
@@ -528,7 +545,7 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 			}
 		}
 		wv.SetSize(width, height, webview.HintNone)
-		wv.SetSize(800, 600, webview.HintMin)
+		wv.SetSize(minimumWindowWidth, minimumWindowHeight, webview.HintMin)
 
 		w.webview = wv
 		w.webview.Navigate(url)

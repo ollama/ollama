@@ -871,6 +871,14 @@ func ClaudeDesktopRunning() bool {
 	return running
 }
 
+// OpenClaudeDesktop brings the installed Claude Desktop app to the foreground.
+func OpenClaudeDesktop() error {
+	if err := claudeDesktopSupported(); err != nil {
+		return err
+	}
+	return claudeDesktopOpenApp()
+}
+
 func defaultClaudeDesktopRunning(ctx context.Context) (bool, error) {
 	var (
 		out []byte

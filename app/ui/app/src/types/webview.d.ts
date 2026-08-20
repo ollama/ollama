@@ -47,7 +47,10 @@ declare global {
     setClaudeDesktopConnected?: (
       enabled: boolean,
     ) => Promise<ClaudeDesktopActionResult>;
+    openClaudeDesktop?: () => Promise<string>;
     installClaudeDesktop?: () => Promise<ClaudeDesktopInstallResult>;
+    getShowAppsInMenu?: () => Promise<boolean>;
+    setShowAppsInMenu?: (visible: boolean) => Promise<void>;
     setOnboardingWindow?: (enabled: boolean) => void;
     menu: (items: MenuItem[]) => Promise<string | null>;
     OLLAMA_TOOLS?: boolean;

@@ -489,8 +489,20 @@ func setClaudeDesktopConnection(enabled bool) error {
 	return setClaudeGatewayInstalled(enabled, launch.ClaudeDesktopRunning())
 }
 
+func openClaudeDesktopApplication() error {
+	return launch.OpenClaudeDesktop()
+}
+
 func requestClaudeDesktopInstall() claudeDesktopInstallResult {
 	return claudeDesktopInstallResultFromCode(int(C.installClaudeDesktop()))
+}
+
+func getShowAppsInMenu() bool {
+	return bool(C.ShowAppsInMenu())
+}
+
+func setShowAppsInMenu(visible bool) {
+	C.SetShowAppsInMenu(C._Bool(visible))
 }
 
 func claudeDesktopInstallResultFromCode(code int) claudeDesktopInstallResult {

@@ -6,8 +6,10 @@ import {
   IntroScreen,
   default as Onboarding,
   RunOllamaScreen,
+  terminalRowsForWindowHeight,
   WelcomeScreen,
 } from "./Onboarding";
+import { isClaudeConnectionComplete } from "@/lib/claudeDesktop";
 import {
   authenticationTimeoutAction,
   isOnboardingZoomShortcut,
@@ -75,6 +77,12 @@ describe("Onboarding", () => {
     ).toBe(false);
   });
 
+  it("shows more terminal integrations as the window gets taller", () => {
+    expect(terminalRowsForWindowHeight(400)).toBe(1);
+    expect(terminalRowsForWindowHeight(660)).toBe(4);
+    expect(terminalRowsForWindowHeight(960)).toBe(8);
+  });
+
   it("shows the account choice only to signed-out users", () => {
     expect(nextOnboardingStep("intro", "continue", false)).toBe("welcome");
     expect(nextOnboardingStep("intro", "continue", true)).toBe("apps");
@@ -87,6 +95,28 @@ describe("Onboarding", () => {
     expect(authenticationTimeoutAction(false, true)).toBe("defer");
     expect(authenticationTimeoutAction(false, false)).toBe("fail");
     expect(authenticationTimeoutAction(true, true)).toBe("ignore");
+  });
+
+  it("finishes Claude connection states from the native status hook", () => {
+    const status = {
+      supported: true,
+      installed: true,
+      connected: true,
+      running: false,
+      startFailed: false,
+      portConflict: false,
+    };
+
+    expect(isClaudeConnectionComplete(true, status)).toBe(true);
+    expect(
+      isClaudeConnectionComplete(true, { ...status, connected: false }),
+    ).toBe(false);
+    expect(
+      isClaudeConnectionComplete(true, { ...status, startFailed: true }),
+    ).toBe(false);
+    expect(
+      isClaudeConnectionComplete(false, { ...status, connected: false }),
+    ).toBe(true);
   });
 
   it("opens the device connection flow without relaunching the app", () => {
@@ -126,7 +156,7 @@ describe("Onboarding", () => {
     expect(html).not.toContain("Sign up");
   });
 
-  it("places disconnected Claude with the ready-to-launch integrations", () => {
+  it("groups disconnected Claude with applications and terminal separately", () => {
     const integrations: IntegrationStatuses = [
       {
         id: "claude-desktop",
@@ -168,6 +198,14 @@ describe("Onboarding", () => {
         command: "ollama launch opencode",
       },
       {
+        id: "droid",
+        name: "Droid",
+        description: "AI software engineering agent",
+        installed: false,
+        action: "copy",
+        command: "ollama launch droid",
+      },
+      {
         id: "terminal",
         name: "Terminal",
         description: "Run local models from your terminal",
@@ -192,9 +230,12 @@ describe("Onboarding", () => {
     expect(html).toContain("Claude Code");
     expect(html).not.toContain("Search apps");
     expect(html).not.toContain('type="search"');
-    expect(html).toContain("Ready to launch");
+    expect(html).toContain("Application");
+    expect(html).toContain('id="applications-heading"');
+    expect(html).toContain('id="terminal-heading"');
+    expect(html).not.toContain("Ready to launch");
     expect(html).not.toContain('id="claude-apps-heading"');
-    expect(html.indexOf("Ready to launch")).toBeLessThan(
+    expect(html.indexOf("Application")).toBeLessThan(
       html.indexOf("Use Ollama models in Claude Desktop"),
     );
     expect(html).not.toContain(">Command</th>");
@@ -204,7 +245,7 @@ describe("Onboarding", () => {
     expect(html).toContain('aria-label="Connect Claude"');
     expect(html).toContain('role="switch"');
     expect(html).toContain('aria-checked="false"');
-    expect(html).toContain("Inactive");
+    expect(html).not.toContain("Inactive");
     expect(html).not.toContain("Download &amp; connect");
     expect(html).not.toContain("Active");
     expect(html).toContain("bg-transparent");
@@ -231,7 +272,7 @@ describe("Onboarding", () => {
     expect(html).not.toContain('viewBox="0 0 3400 3400"');
   });
 
-  it("moves connected Claude into the Connected group", () => {
+  it("keeps connected Claude in Application without an idle status", () => {
     const html = renderToStaticMarkup(
       <ConnectAppsScreen
         completionError={null}
@@ -264,14 +305,13 @@ describe("Onboarding", () => {
       />,
     );
 
-    expect(html).toContain('id="claude-apps-heading"');
-    expect(html).toContain("Connected");
-    expect(html).toContain("Active");
+    expect(html).toContain('id="applications-heading"');
+    expect(html).not.toContain('id="claude-apps-heading"');
+    expect(html).not.toContain("Ready to launch");
+    expect(html).not.toContain("Active");
+    expect(html).not.toContain("Inactive");
     expect(html).toContain('aria-checked="true"');
     expect(html).toContain('aria-label="Disconnect Claude"');
-    expect(html.indexOf("Connected")).toBeLessThan(
-      html.indexOf("Ready to launch"),
-    );
   });
 
   it("keeps Claude available without a separate not-installed group", () => {

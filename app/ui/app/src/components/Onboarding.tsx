@@ -11,6 +11,7 @@ import {
   type IntegrationStatuses,
 } from "@/api";
 import { INTEGRATION_ICONS } from "@/lib/launchCommands";
+import { isClaudeConnectionComplete } from "@/lib/claudeDesktop";
 import type { ClaudeDesktopStatus } from "@/types/webview";
 import { copyTextToClipboard } from "@/utils/clipboard";
 import {
@@ -41,6 +42,21 @@ type ClaudeConnectPhase =
   | "waiting-for-install"
   | "connecting"
   | "disconnecting";
+
+const CLAUDE_CONNECTION_POLL_INTERVAL_MS = 500;
+const CLAUDE_CONNECTION_TIMEOUT_MS = 45_000;
+const MINIMUM_APP_WINDOW_HEIGHT = 660;
+const TERMINAL_ROW_HEIGHT_WITH_GAP = 80;
+const TERMINAL_LIST_RESERVED_HEIGHT = 296;
+
+export function terminalRowsForWindowHeight(height: number): number {
+  return Math.max(
+    1,
+    Math.floor(
+      (height - TERMINAL_LIST_RESERVED_HEIGHT) / TERMINAL_ROW_HEIGHT_WITH_GAP,
+    ),
+  );
+}
 
 interface ScreenProps {
   isSigningIn: boolean;
@@ -360,7 +376,28 @@ export function ConnectAppsScreen({
   const [integrationStatuses, setIntegrationStatuses] =
     useState<IntegrationStatuses | null>(initialIntegrations ?? null);
   const [showAllIntegrations, setShowAllIntegrations] = useState(false);
+  const [collapsedIntegrationCount, setCollapsedIntegrationCount] = useState(
+    () =>
+      terminalRowsForWindowHeight(
+        typeof window === "undefined"
+          ? MINIMUM_APP_WINDOW_HEIGHT
+          : window.innerHeight,
+      ),
+  );
   const [statusError, setStatusError] = useState(false);
+
+  useEffect(() => {
+    const updateCollapsedIntegrationCount = () => {
+      setCollapsedIntegrationCount(
+        terminalRowsForWindowHeight(window.innerHeight),
+      );
+    };
+
+    window.addEventListener("resize", updateCollapsedIntegrationCount);
+    return () => {
+      window.removeEventListener("resize", updateCollapsedIntegrationCount);
+    };
+  }, []);
 
   useEffect(() => {
     if (initialIntegrations) return;
@@ -402,12 +439,78 @@ export function ConnectAppsScreen({
     }
   }, []);
 
+  const openConnectedClaude = useCallback(
+    async (status: ClaudeDesktopStatus) => {
+      if (!status.connected || status.running || !window.openClaudeDesktop) {
+        return null;
+      }
+      try {
+        return (await window.openClaudeDesktop()) || null;
+      } catch {
+        return "Ollama connected Claude, but could not open the app.";
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
     void refreshClaudeStatus();
     const handleFocus = () => void refreshClaudeStatus();
     window.addEventListener("focus", handleFocus);
     return () => window.removeEventListener("focus", handleFocus);
   }, [refreshClaudeStatus]);
+
+  useEffect(() => {
+    if (claudePhase !== "connecting" && claudePhase !== "disconnecting") {
+      return;
+    }
+    if (!window.getClaudeDesktopStatus) return;
+
+    const enabling = claudePhase === "connecting";
+    let active = true;
+    let checking = false;
+
+    const checkConnection = async () => {
+      if (!active || checking || !window.getClaudeDesktopStatus) return;
+      checking = true;
+      try {
+        const status = await window.getClaudeDesktopStatus();
+        if (!active) return;
+        setClaudeStatus(status);
+        if (!isClaudeConnectionComplete(enabling, status)) return;
+
+        const openError = enabling ? await openConnectedClaude(status) : null;
+        if (!active) return;
+        setClaudeError(openError);
+        setClaudePhase("idle");
+      } catch {
+        // Keep polling until the native action completes or the timeout fires.
+      } finally {
+        checking = false;
+      }
+    };
+
+    void checkConnection();
+    const interval = window.setInterval(
+      checkConnection,
+      CLAUDE_CONNECTION_POLL_INTERVAL_MS,
+    );
+    const timeout = window.setTimeout(() => {
+      if (!active) return;
+      setClaudeError(
+        enabling
+          ? "Claude is taking too long to connect. Check Claude and try again."
+          : "Claude is taking too long to disconnect. Try again.",
+      );
+      setClaudePhase("idle");
+    }, CLAUDE_CONNECTION_TIMEOUT_MS);
+
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      window.clearTimeout(timeout);
+    };
+  }, [claudePhase, openConnectedClaude]);
 
   useEffect(() => {
     if (claudePhase !== "waiting-for-install") return;
@@ -521,15 +624,16 @@ export function ConnectAppsScreen({
     try {
       const result = await window.setClaudeDesktopConnected(enabling);
       setClaudeStatus(result.status);
-      if (result.error) {
-        setClaudeError(result.error);
-      } else if (result.status.connected !== enabling) {
-        setClaudeError(
-          enabling
-            ? "Ollama could not connect to Claude."
-            : "Ollama could not disconnect from Claude.",
-        );
+      let actionError = result.error || null;
+      if (enabling && result.status.connected) {
+        const openError = await openConnectedClaude(result.status);
+        actionError = openError;
+      } else if (!actionError && result.status.connected !== enabling) {
+        actionError = enabling
+          ? "Ollama could not connect to Claude."
+          : "Ollama could not disconnect from Claude.";
       }
+      setClaudeError(actionError);
     } catch {
       setClaudeError(
         enabling
@@ -553,22 +657,35 @@ export function ConnectAppsScreen({
     claudeStatus?.installed ?? claudeIntegration?.installed ?? false;
   const claudeSupported = claudeStatus?.supported ?? true;
   const isConnectingClaude = claudePhase !== "idle";
-  const disconnectedClaudeCount = claudeIntegration && !claudeConnected ? 1 : 0;
-  const collapsedLaunchCount = Math.max(0, 5 - disconnectedClaudeCount);
   const initialLaunchIntegrations = launchIntegrations.slice(
     0,
-    collapsedLaunchCount,
+    collapsedIntegrationCount,
   );
-  const additionalLaunchIntegrations =
-    launchIntegrations.slice(collapsedLaunchCount);
+  const additionalLaunchIntegrations = launchIntegrations.slice(
+    collapsedIntegrationCount,
+  );
   const canToggleIntegrations =
-    launchIntegrations.length + disconnectedClaudeCount > 5;
+    launchIntegrations.length > collapsedIntegrationCount;
+  const claudeStatusLabel =
+    claudePhase === "installing"
+      ? "Downloading…"
+      : claudePhase === "waiting-for-install"
+        ? "Finish installing…"
+        : claudePhase === "connecting"
+          ? "Connecting…"
+          : claudePhase === "disconnecting"
+            ? "Disconnecting…"
+            : !claudeSupported
+              ? "Unavailable"
+              : !claudeConnected && !claudeInstalled
+                ? "Download & connect"
+                : null;
   const launchIntegrationRow = (item: IntegrationStatus) => {
     const copied = copiedCommand === item.command;
     return (
       <div
         key={item.id}
-        className="flex min-h-18 items-center justify-between gap-4 px-4 py-3 max-[1050px]:flex-col max-[1050px]:items-stretch max-[1050px]:gap-2"
+        className="flex min-h-18 items-center justify-between gap-4 px-4 py-3"
       >
         <div className="flex min-w-0 items-center gap-3">
           <LaunchCommandIcon item={item} />
@@ -579,8 +696,8 @@ export function ConnectAppsScreen({
             </p>
           </div>
         </div>
-        <div className="ml-auto flex min-w-0 shrink-0 items-center overflow-hidden rounded-lg bg-neutral-100 pl-3 max-[1050px]:ml-0 max-[1050px]:w-full">
-          <code className="block flex-1 whitespace-nowrap py-2 pr-2 font-mono text-[13px] text-neutral-500 max-[1050px]:min-w-0">
+        <div className="ml-auto flex min-w-0 shrink-0 items-center overflow-hidden rounded-lg bg-neutral-100 pl-3">
+          <code className="block flex-1 whitespace-nowrap py-2 pr-2 font-mono text-[13px] text-neutral-500">
             {item.command}
           </code>
           <button
@@ -605,9 +722,7 @@ export function ConnectAppsScreen({
     );
   };
   const claudeRow = claudeIntegration ? (
-    <div
-      className={`flex min-h-18 items-center justify-between gap-4 bg-white px-4 py-3 ${claudeConnected ? "mt-2 rounded-xl border border-neutral-200" : ""}`}
-    >
+    <div className="flex min-h-18 items-center justify-between gap-4 bg-white px-4 py-3">
       <div className="flex min-w-0 items-center gap-3">
         <LaunchCommandIcon item={claudeIntegration} />
         <div className="min-w-0">
@@ -636,36 +751,18 @@ export function ConnectAppsScreen({
         </div>
       </div>
       <div className="ml-auto flex shrink-0 items-center gap-2.5">
-        <span
-          role="status"
-          aria-live="polite"
-          className={`inline-flex items-center gap-1.5 whitespace-nowrap text-xs ${claudeConnected && !isConnectingClaude ? "text-green-700" : "text-neutral-500"}`}
-        >
-          {isConnectingClaude && (
-            <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
-          )}
-          {claudeConnected && !isConnectingClaude && (
-            <span
-              aria-hidden="true"
-              className="h-1.5 w-1.5 rounded-full bg-green-500"
-            />
-          )}
-          {claudePhase === "installing"
-            ? "Downloading…"
-            : claudePhase === "waiting-for-install"
-              ? "Finish installing…"
-              : claudePhase === "connecting"
-                ? "Connecting…"
-                : claudePhase === "disconnecting"
-                  ? "Disconnecting…"
-                  : claudeConnected
-                    ? "Active"
-                    : !claudeSupported
-                      ? "Unavailable"
-                      : claudeInstalled
-                        ? "Inactive"
-                        : "Download & connect"}
-        </span>
+        {claudeStatusLabel && (
+          <span
+            role="status"
+            aria-live="polite"
+            className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-neutral-500"
+          >
+            {isConnectingClaude && (
+              <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
+            )}
+            {claudeStatusLabel}
+          </span>
+        )}
         <button
           type="button"
           role="switch"
@@ -711,41 +808,37 @@ export function ConnectAppsScreen({
       )}
       <div className="flex min-h-0 flex-1 flex-col p-6">
         <section className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-5xl text-left">
+          <div className="mx-auto w-full max-w-4xl text-left">
             {integrationStatuses ? (
               <div className="space-y-7 pb-4 pt-2">
-                {claudeIntegration && claudeConnected && (
-                  <section aria-labelledby="claude-apps-heading">
+                {claudeIntegration && (
+                  <section aria-labelledby="applications-heading">
                     <h2
-                      id="claude-apps-heading"
-                      className="px-1 text-xs font-medium uppercase tracking-wider text-neutral-400"
+                      id="applications-heading"
+                      className="px-4 text-xs font-medium uppercase tracking-wider text-neutral-400"
                     >
-                      Connected
+                      Application
                     </h2>
-                    {claudeRow}
+                    <div className="mt-2 bg-white">{claudeRow}</div>
                   </section>
                 )}
 
-                {(launchIntegrations.length > 0 ||
-                  (claudeIntegration && !claudeConnected)) && (
-                  <section aria-labelledby="launch-apps-heading">
+                {launchIntegrations.length > 0 && (
+                  <section aria-labelledby="terminal-heading">
                     <h2
-                      id="launch-apps-heading"
-                      className="px-1 text-xs font-medium uppercase tracking-wider text-neutral-400"
+                      id="terminal-heading"
+                      className="px-4 text-xs font-medium uppercase tracking-wider text-neutral-400"
                     >
-                      Ready to launch
+                      Terminal
                     </h2>
                     <div className="mt-2 overflow-hidden bg-white">
-                      {!claudeConnected && claudeRow && (
-                        <div className="mb-2">{claudeRow}</div>
-                      )}
                       <div className="space-y-2">
                         {initialLaunchIntegrations.map(launchIntegrationRow)}
                       </div>
                       {canToggleIntegrations && (
                         <div
                           aria-hidden={!showAllIntegrations}
-                          className={`grid transition-[grid-template-rows,opacity,visibility] duration-300 ease-out ${
+                          className={`grid transition-[grid-template-rows,opacity,visibility] duration-[750ms] ease-in-out motion-reduce:duration-0 ${
                             showAllIntegrations
                               ? "visible grid-rows-[1fr] opacity-100"
                               : "invisible grid-rows-[0fr] opacity-0"

@@ -53,6 +53,8 @@ bool ClaudeGatewayPortConflict(void);
 int ClaudeGatewayPort(void);
 void RefreshClaudeProxyMenu(void);
 void updateClaudeProxyMenu(unsigned long long routed);
+bool ShowAppsInMenu(void);
+void SetShowAppsInMenu(bool visible);
 enum ClaudeInstallResult
 {
     ClaudeInstallCancelled,
