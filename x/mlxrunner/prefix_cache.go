@@ -441,9 +441,31 @@ func (s *cacheSession) attachPrefillSnapshots() {
 // whose offset the live cache has already advanced past: the snapshots come
 // from the capture scheduled earlier, not from the cache's current state. The
 // node takes ownership of the snapshots (TakeSnapshots already transferred it).
+// Each capture is clipped to the node's edge, and a layer that already has a
+// snapshot keeps it.
 func (s *cacheSession) attachCapturedSnapshots(node *trieNode, snaps []cache.Snapshot) {
 	c := s.cache
-	node.setSnapshots(snaps, &c.pagedOutBytes)
+	next := make([]cache.Snapshot, len(c.caches))
+	copy(next, node.snapshots)
+	for i, kv := range c.caches {
+		if kv == nil || i >= len(snaps) || snaps[i] == nil {
+			continue
+		}
+		if next[i] != nil {
+			snaps[i].Close()
+			continue
+		}
+		head, tail := kv.Split(snaps[i], node.startOffset())
+		if head != nil {
+			head.Close()
+		}
+		next[i] = tail
+	}
+	for i, old := range node.swapSnapshots(next, &c.pagedOutBytes) {
+		if old != nil && old != next[i] {
+			old.Close()
+		}
+	}
 	node.lastUsed = time.Now()
 	slog.Debug("created snapshot", "offset", node.endOffset)
 	c.enforceEvictionPolicy()
