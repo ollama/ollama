@@ -211,8 +211,11 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 					e.code === 'NumpadAdd' || e.code === 'NumpadSubtract'
 				);
 
-				// Keep the fixed onboarding experience at its intended scale.
-				if (window.location.pathname === '/onboarding' && isZoomShortcut) {
+				// Keep fixed-scale onboarding and apps pages at their intended size.
+				const isFixedScalePage =
+					window.location.pathname === '/onboarding' ||
+					window.location.pathname === '/connect';
+				if (isFixedScalePage && isZoomShortcut) {
 					e.preventDefault();
 					e.stopImmediatePropagation();
 					return false;

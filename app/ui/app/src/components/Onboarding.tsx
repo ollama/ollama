@@ -808,8 +808,8 @@ export function ConnectAppsScreen({
           </h1>
         </header>
       )}
-      <div className="flex min-h-0 flex-1 flex-col p-6">
-        <section className="min-h-0 flex-1 overflow-y-auto">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain p-6">
+        <section className="min-h-0 flex-1">
           <div className="mx-auto w-full max-w-4xl text-left">
             {integrationStatuses ? (
               <div className="space-y-7 pb-4 pt-2">
