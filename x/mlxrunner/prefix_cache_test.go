@@ -1022,15 +1022,6 @@ func TestPrefillSnapshotsDiscardedOnCancel(t *testing.T) {
 		feedAll(pc.caches, inputs[pc.minCacheOffset():3])
 		session.close()
 
-		// close advances the trie over the committed tokens, but the abandoned
-		// captures must not be attached as snapshots to any node.
-		walkNodes(pc.root, func(n *trieNode) bool {
-			if n != pc.root && n.hasSnapshots() {
-				t.Errorf("abandoned capture attached as snapshot at offset %d", n.endOffset)
-			}
-			return true
-		})
-
 		// A second request re-prepares snapshots on the same caches: if the
 		// discarded ones were not closed, prepare() orphans them here.
 		simulateRequest(t, pc, inputs, nil, 5)

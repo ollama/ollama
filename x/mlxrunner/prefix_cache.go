@@ -5,10 +5,9 @@
 //
 // Key properties:
 //   - Only one path through the trie is "active" (backed by live MLX arrays)
-//     at a time. Switching paths pages out the frontier node and pages in the
-//     new path.
-//   - Snapshots are only captured at the frontier (end) of the active path.
-//     Intermediate node snapshots come from split prefill.
+//     at a time. Switching paths pages in the new path from its snapshots.
+//   - Every node carries its snapshots from creation: prefill captures for
+//     prompt segments, a page-out at close for generated ones.
 //   - All cache layers must stay at the same token offset.
 //   - Sibling edges must not share a common token prefix (compressed trie
 //     invariant).
@@ -177,7 +176,7 @@ func (s *cacheSession) storedKeys() []trieKey {
 }
 
 // switchToPath transitions from the current active path to a new path,
-// paging out diverging segments and paging in the new path.
+// rewinding the caches and paging in the new path's snapshots.
 func (c *prefixCache) switchToPath(newPath []*trieNode, matched int) {
 	defer c.enforceEvictionPolicy()
 
@@ -195,33 +194,7 @@ func (c *prefixCache) switchToPath(newPath []*trieNode, matched int) {
 		ancestorOffset = c.activePath[commonLen-1].endOffset
 	}
 
-	var pageOutCount, pageInCount int
-
-	// Page out the leaf of the old path. Only the leaf's live cache
-	// state is correct — intermediate nodes already have snapshots
-	// captured during their creation (splitNode + prefill). Snapshotting
-	// non-leaf nodes here would produce wrong results for non-rewindable
-	// caches (e.g. RecurrentCache) whose state reflects the leaf, not
-	// the intermediate boundary.
-	leaf := len(c.activePath) - 1
-	leafDiverges := leaf >= commonLen
-	leafNeedsRewind := matched < c.activePath[leaf].endOffset
-	if leafDiverges || leafNeedsRewind {
-		node := c.activePath[leaf]
-		if !hasAllSnapshots(node, c.caches) {
-			fromOffset := node.startOffset()
-			snaps := make([]cache.Snapshot, len(c.caches))
-			for j, kv := range c.caches {
-				if kv == nil {
-					continue
-				}
-				snaps[j] = kv.Snapshot(fromOffset)
-			}
-			node.setSnapshots(snaps, &c.pagedOutBytes)
-			pageOutCount++
-			logutil.Trace(fmt.Sprintf("page out: [%d, %d)", fromOffset, node.endOffset))
-		}
-	}
+	var pageInCount int
 
 	// Rewind each cache to the target offset or free it. When matched
 	// falls within the ancestor's range (same-path case), we rewind
@@ -294,8 +267,8 @@ pageIn:
 		c.activePath[len(c.activePath)-1].lastUsed = time.Now()
 	}
 
-	if pageOutCount > 0 || pageInCount > 0 {
-		slog.Debug("switching cache path", "page_out", pageOutCount, "page_in", pageInCount)
+	if pageInCount > 0 {
+		slog.Debug("switching cache path", "page_in", pageInCount)
 	}
 }
 
@@ -510,6 +483,24 @@ func (c *prefixCache) advancePath(frontier *trieNode, tokens []trieKey, endOffse
 	return dest
 }
 
+// pageOut captures a fresh node's state from the live caches, which rest
+// exactly at its end. Nodes reached by traversal already carry snapshots.
+func (c *prefixCache) pageOut(node *trieNode) {
+	if node.hasSnapshots() {
+		return
+	}
+	snaps := make([]cache.Snapshot, len(c.caches))
+	for i, kv := range c.caches {
+		if kv == nil {
+			continue
+		}
+		snaps[i] = kv.Snapshot(node.startOffset())
+	}
+	node.setSnapshots(snaps, &c.pagedOutBytes)
+	logutil.Trace(fmt.Sprintf("page out: [%d, %d)", node.startOffset(), node.endOffset))
+	c.enforceEvictionPolicy()
+}
+
 // freeAll releases all cache layers.
 func (c *prefixCache) freeAll() {
 	for _, kv := range c.caches {
@@ -569,12 +560,13 @@ func (s *cacheSession) close() {
 		panic(fmt.Sprintf("cache: offset %d exceeds %d stored keys", offset, len(stored)))
 	}
 
-	// Advance the trie frontier with any newly generated tokens.
+	// Advance the trie frontier with any newly generated tokens and page
+	// the new segment out.
 	if len(c.activePath) > 0 {
 		frontier := c.activePath[len(c.activePath)-1]
 		if offset > frontier.endOffset {
 			newTokens := stored[frontier.endOffset:offset]
-			c.advancePath(frontier, newTokens, offset)
+			c.pageOut(c.advancePath(frontier, newTokens, offset))
 		}
 		c.activePath[len(c.activePath)-1].lastUsed = time.Now()
 	}
