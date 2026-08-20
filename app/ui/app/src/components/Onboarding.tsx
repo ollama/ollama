@@ -1,6 +1,10 @@
 import CopyButton from "@/components/CopyButton";
 import Logo from "@/components/Logo";
-import { nextOnboardingStep, type OnboardingStep } from "@/lib/onboarding";
+import {
+  isOnboardingZoomShortcut,
+  nextOnboardingStep,
+  type OnboardingStep,
+} from "@/lib/onboarding";
 import {
   ArrowsRightLeftIcon,
   CommandLineIcon,
@@ -28,16 +32,20 @@ interface RunOllamaScreenProps {
 }
 
 function TitleBar({ onSignIn }: { onSignIn?: () => void }) {
+  const isMacOS =
+    typeof navigator !== "undefined" &&
+    navigator.platform.toLowerCase().includes("mac");
+
   return (
     <header
-      className="relative flex h-10 shrink-0 items-center justify-center bg-white"
+      className={`relative flex shrink-0 items-center justify-center bg-white ${isMacOS ? "h-[52px]" : "h-10"}`}
       onDoubleClick={() => window.doubleClick?.()}
       onMouseDown={() => window.drag?.()}
     >
       {onSignIn && (
         <button
           type="button"
-          className="absolute right-5 top-3 cursor-pointer rounded-md px-2 py-0 text-sm font-normal text-neutral-500 hover:text-neutral-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
+          className="absolute inset-y-0 right-5 flex cursor-pointer items-center rounded-md px-2 text-sm font-normal leading-none text-neutral-500 hover:text-neutral-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
           onClick={onSignIn}
           onMouseDown={(event) => event.stopPropagation()}
         >
@@ -106,6 +114,10 @@ export function IntroScreen({ onContinue }: { onContinue: () => void }) {
               Welcome to Ollama!
             </h1>
           </div>
+          <p className="mt-4 max-w-[380px] text-sm leading-6 text-neutral-500">
+            Run open models with your coding agents so you can spend less while
+            keeping your data private.
+          </p>
           <div className="mx-auto mt-8 flex w-fit max-w-full flex-col gap-6 text-left">
             {OLLAMA_FEATURES.map((feature) => {
               const Icon = feature.icon;
@@ -261,6 +273,15 @@ export default function Onboarding(props: OnboardingProps) {
   useEffect(() => {
     window.setOnboardingWindow?.(true);
     return () => window.setOnboardingWindow?.(false);
+  }, []);
+
+  useEffect(() => {
+    const preventZoom = (event: KeyboardEvent) => {
+      if (isOnboardingZoomShortcut(event)) event.preventDefault();
+    };
+
+    window.addEventListener("keydown", preventZoom, true);
+    return () => window.removeEventListener("keydown", preventZoom, true);
   }, []);
 
   if (props.showRun || step === "run") {

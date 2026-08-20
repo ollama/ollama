@@ -9,6 +9,7 @@ import {
 } from "./Onboarding";
 import {
   authenticationTimeoutAction,
+  isOnboardingZoomShortcut,
   nextOnboardingStep,
   onboardingConnectUrl,
 } from "@/lib/onboarding";
@@ -21,7 +22,9 @@ describe("Onboarding", () => {
     expect(html.indexOf('alt="Ollama waving"')).toBeLessThan(
       html.indexOf("Welcome to Ollama!"),
     );
-    expect(html).not.toContain("Run open models locally or in the cloud.");
+    expect(html).toContain(
+      "Run open models with your coding agents so you can spend less while keeping your data private.",
+    );
     expect(html.indexOf("Connect your apps")).toBeLessThan(
       html.indexOf("Easily switch models"),
     );
@@ -33,6 +36,41 @@ describe("Onboarding", () => {
     expect(html).toContain("Your prompt data is never logged or trained on.");
     expect(html).toContain("Continue");
     expect(html).not.toContain("Skip");
+  });
+
+  it("blocks browser zoom shortcuts during onboarding", () => {
+    expect(
+      isOnboardingZoomShortcut({
+        metaKey: true,
+        ctrlKey: false,
+        key: "=",
+        code: "Equal",
+      }),
+    ).toBe(true);
+    expect(
+      isOnboardingZoomShortcut({
+        metaKey: false,
+        ctrlKey: true,
+        key: "-",
+        code: "Minus",
+      }),
+    ).toBe(true);
+    expect(
+      isOnboardingZoomShortcut({
+        metaKey: false,
+        ctrlKey: false,
+        key: "+",
+        code: "Equal",
+      }),
+    ).toBe(false);
+    expect(
+      isOnboardingZoomShortcut({
+        metaKey: true,
+        ctrlKey: false,
+        key: "0",
+        code: "Digit0",
+      }),
+    ).toBe(false);
   });
 
   it("shows the account choice only to signed-out users", () => {
