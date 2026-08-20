@@ -112,11 +112,11 @@ func TestGatewayRoutesClaudeProtocolToOllama(t *testing.T) {
 					t.Fatalf("%s family defaults = %d, want 1", family, familyDefaults[family])
 				}
 			}
-			wantIDs := "claude-opus-5,claude-fable-5,claude-sonnet-5,claude-haiku-4-5-20251001,claude-sonnet-5-20251001"
+			wantIDs := "claude-fable-5,claude-opus-5,claude-sonnet-5,claude-haiku-4-5-20251001,claude-sonnet-5-20251001"
 			if strings.Join(gotIDs, ",") != wantIDs || catalog.FirstID != gotIDs[0] || catalog.LastID != gotIDs[len(gotIDs)-1] || catalog.HasMore {
 				t.Fatalf("gateway catalog = %+v", catalog.Data)
 			}
-			wantNames := "Kimi K3,GLM 5.2,DeepSeek V4 Pro,DeepSeek V4 Flash,Qwen3.8 MLX"
+			wantNames := "GLM 5.2,Kimi K3,DeepSeek V4 Pro,DeepSeek V4 Flash,Qwen3.8 MLX"
 			if strings.Join(gotNames, ",") != wantNames {
 				t.Fatalf("gateway display names = %v, want %s", gotNames, wantNames)
 			}

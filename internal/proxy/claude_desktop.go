@@ -38,6 +38,16 @@ const (
 // claudeModels are Claude-compatible IDs for Ollama models
 var claudeModels = []gatewayModel{
 	{
+		ID:                  "claude-fable-5",
+		Type:                "model",
+		DisplayName:         "GLM 5.2",
+		CreatedAt:           "2026-06-09T00:00:00Z",
+		MaxTokens:           128_000,
+		AnthropicFamilyTier: "fable",
+		IsFamilyDefault:     true,
+		OllamaModel:         "glm-5.2:cloud",
+	},
+	{
 		ID:                  "claude-opus-5",
 		Type:                "model",
 		DisplayName:         "Kimi K3",
@@ -47,16 +57,6 @@ var claudeModels = []gatewayModel{
 		IsFamilyDefault:     true,
 		OllamaModel:         "kimi-k3:cloud",
 		SupportsVision:      true,
-	},
-	{
-		ID:                  "claude-fable-5",
-		Type:                "model",
-		DisplayName:         "GLM 5.2",
-		CreatedAt:           "2026-06-09T00:00:00Z",
-		MaxTokens:           128_000,
-		AnthropicFamilyTier: "fable",
-		IsFamilyDefault:     true,
-		OllamaModel:         "glm-5.2:cloud",
 	},
 	{
 		ID:                  "claude-sonnet-5",

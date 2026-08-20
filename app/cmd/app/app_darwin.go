@@ -250,7 +250,7 @@ func startClaudeAppProxy() error {
 	gateway, err := proxy.NewClaudeDesktop(proxy.ClaudeDesktopConfig{
 		ListenAddr:           claudeProxyListenAddr,
 		OllamaURL:            ollamaURL.String(),
-		Model:                "kimi-k3:cloud",
+		Model:                "glm-5.2:cloud",
 		Logger:               slog.Default(),
 		OnCountsChanged:      updateClaudeProxyMenu,
 		CloudModelsAvailable: func(ctx context.Context) bool { return claudeCloudModelsAvailable(ctx, ollamaClient.Whoami) },
