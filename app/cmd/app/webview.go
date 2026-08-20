@@ -203,6 +203,19 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 		// Add keyboard handler for zoom
 		wv.Init(`
 			window.addEventListener('keydown', function(e) {
+				const isZoomShortcut = (e.metaKey || e.ctrlKey) && (
+					e.key === '+' || e.key === '=' || e.key === '-' ||
+					e.key === '_' || e.key === '0' ||
+					e.code === 'NumpadAdd' || e.code === 'NumpadSubtract'
+				);
+
+				// Keep the fixed onboarding experience at its intended scale.
+				if (window.location.pathname === '/onboarding' && isZoomShortcut) {
+					e.preventDefault();
+					e.stopImmediatePropagation();
+					return false;
+				}
+
 				// CMD/Ctrl + Plus/Equals (zoom in)
 				if ((e.metaKey || e.ctrlKey) && (e.key === '+' || e.key === '=')) {
 					e.preventDefault();
