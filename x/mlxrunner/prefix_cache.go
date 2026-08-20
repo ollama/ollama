@@ -7,7 +7,9 @@
 //   - Only one path through the trie is "active" (backed by live MLX arrays)
 //     at a time. Switching paths pages in the new path from its snapshots.
 //   - Every node carries its snapshots from creation: prefill captures for
-//     prompt segments, a page-out at close for generated ones.
+//     prompt segments, a page-out at close for generated ones. Sliceable
+//     (KV) layers always span exactly the node's edge; whole-state layers
+//     (recurrent, rotating) keep entries only at node ends.
 //   - All cache layers must stay at the same token offset.
 //   - Sibling edges must not share a common token prefix (compressed trie
 //     invariant).
@@ -406,7 +408,9 @@ func (s *cacheSession) attachPrefillSnapshots() {
 			frontier.user = true
 		}
 		s.attachCapturedSnapshots(frontier, rows[i])
+		c.compactPath()
 	}
+	c.enforceEvictionPolicy()
 }
 
 // attachCapturedSnapshots stores pre-captured snapshots on a trie node. Unlike
@@ -441,12 +445,11 @@ func (s *cacheSession) attachCapturedSnapshots(node *trieNode, snaps []cache.Sna
 	}
 	node.lastUsed = time.Now()
 	slog.Debug("created snapshot", "offset", node.endOffset)
-	c.enforceEvictionPolicy()
 }
 
 // advancePath advances the active path from the current frontier by matching
 // tokens against existing trie children, splitting partial matches, and
-// appending any remaining tokens as new nodes. Returns the new frontier.
+// appending any remaining tokens as a new child node. Returns the new frontier.
 func (c *prefixCache) advancePath(frontier *trieNode, tokens []trieKey, endOffset int) *trieNode {
 	// Check if existing children already cover some or all of tokens.
 	// tokens may span multiple trie nodes when extending a previous run's
@@ -469,18 +472,26 @@ func (c *prefixCache) advancePath(frontier *trieNode, tokens []trieKey, endOffse
 	dest := matchPath[len(matchPath)-1]
 
 	if len(remaining) > 0 {
-		// Drop non-user snapshots so appendTokens can extend in-place
-		// rather than creating a new child node.
-		if len(dest.children) == 0 && !dest.user {
-			dest.setSnapshots(nil, &c.pagedOutBytes)
-		}
-		newDest := dest.appendTokens(c.root, remaining, endOffset)
-		if newDest != dest {
-			c.activePath = append(c.activePath, newDest)
-		}
-		dest = newDest
+		dest = dest.appendChild(remaining, endOffset)
+		c.activePath = append(c.activePath, dest)
 	}
 	return dest
+}
+
+// compactPath absorbs the active path's last node into its parent when the
+// parent is a non-user node with no other children, keeping consecutive
+// non-user segments compressed into one node.
+func (c *prefixCache) compactPath() {
+	n := len(c.activePath)
+	if n < 2 {
+		return
+	}
+	parent := c.activePath[n-2]
+	if parent == c.root || parent.user || len(parent.children) != 1 {
+		return
+	}
+	mergeWithChild(parent, c.caches, &c.pagedOutBytes)
+	c.activePath = c.activePath[:n-1]
 }
 
 // pageOut captures a fresh node's state from the live caches, which rest
@@ -561,12 +572,14 @@ func (s *cacheSession) close() {
 	}
 
 	// Advance the trie frontier with any newly generated tokens and page
-	// the new segment out.
+	// the new segment out. Merging after the page-out combines covered
+	// snapshots.
 	if len(c.activePath) > 0 {
 		frontier := c.activePath[len(c.activePath)-1]
 		if offset > frontier.endOffset {
 			newTokens := stored[frontier.endOffset:offset]
 			c.pageOut(c.advancePath(frontier, newTokens, offset))
+			c.compactPath()
 		}
 		c.activePath[len(c.activePath)-1].lastUsed = time.Now()
 	}
