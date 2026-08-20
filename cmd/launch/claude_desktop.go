@@ -27,6 +27,7 @@ const (
 	claudeDesktopAPIKeyURL       = "https://ollama.com/settings/keys"
 	claudeDesktopModelLabel      = "Ollama Cloud"
 	claudeDesktopUnsupported     = "Claude Desktop is no longer supported. Existing installations can be restored with 'ollama launch claude-desktop --restore'."
+	claudeDesktopUnsupportedOS   = "Ollama only configured Claude Desktop on macOS and Windows, so there is nothing to restore on this system."
 	claudeDesktopSuccessMessage  = "Claude Desktop profile changed to Ollama Cloud."
 	claudeDesktopRestoreMessage  = "To restore the usual Claude profile, run: ollama launch claude-desktop --restore"
 	claudeDesktopRestoredMessage = "Claude Desktop restored to the usual Claude profile."
@@ -171,7 +172,7 @@ func claudeDesktopSupported() error {
 	case "darwin", "windows":
 		return nil
 	default:
-		return fmt.Errorf("Claude Desktop launch is only supported on macOS and Windows")
+		return errors.New(claudeDesktopUnsupportedOS)
 	}
 }
 

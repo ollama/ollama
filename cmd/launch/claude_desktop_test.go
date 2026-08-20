@@ -144,6 +144,33 @@ func TestLaunchIntegration_ClaudeDesktopLaunchReturnsUnsupported(t *testing.T) {
 	}
 }
 
+// Claude Desktop launch is disabled on every platform, so an unsupported OS
+// must not be blamed for it.
+func TestLaunchIntegration_ClaudeDesktopLaunchOnUnsupportedOSReportsDeprecation(t *testing.T) {
+	withClaudeDesktopPlatform(t, "linux")
+
+	err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "claude-desktop"})
+	if err == nil {
+		t.Fatal("expected Claude Desktop launch to fail")
+	}
+	if err.Error() != claudeDesktopUnsupported {
+		t.Fatalf("expected deprecation guidance, got %v", err)
+	}
+}
+
+func TestLaunchIntegration_ClaudeDesktopRestoreOnUnsupportedOS(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	withClaudeDesktopPlatform(t, "linux")
+
+	err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "claude-desktop", Restore: true})
+	if err == nil {
+		t.Fatal("expected Claude Desktop restore to fail")
+	}
+	if err.Error() != claudeDesktopUnsupportedOS {
+		t.Fatalf("expected nothing to restore guidance, got %v", err)
+	}
+}
+
 func TestLaunchIntegration_ClaudeDesktopRestoreStillWorks(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
