@@ -131,7 +131,7 @@ func TestChatGPTMigratesLegacyCodexAppLaunchConfig(t *testing.T) {
 func TestHiddenIntegrationsExcludedFromVisibleLists(t *testing.T) {
 	for _, info := range ListIntegrationInfos() {
 		switch info.Name {
-		case "vscode", "kimi", "muse":
+		case "claude-desktop", "vscode", "kimi", "muse":
 			t.Fatalf("hidden integration %q should not appear in ListIntegrationInfos", info.Name)
 		}
 	}
@@ -1924,7 +1924,7 @@ func TestListIntegrationInfos(t *testing.T) {
 		}
 		wantPrefix := []string{"claude", "chatgpt", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp"}
 		if codexAppSupported() != nil {
-			wantPrefix = []string{"claude", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp"}
+			wantPrefix = slices.DeleteFunc(wantPrefix, func(name string) bool { return name == "chatgpt" })
 		}
 		if len(got) < len(wantPrefix) {
 			t.Fatalf("expected at least %d integrations, got %v", len(wantPrefix), got)
@@ -2009,11 +2009,19 @@ func TestListIntegrationInfos_HidesPoolsideOnWindows(t *testing.T) {
 	}
 }
 
-func TestListIntegrationInfos_HidesClaudeDesktop(t *testing.T) {
-	for _, info := range ListIntegrationInfos() {
-		if info.Name == "claude-desktop" {
-			t.Fatal("expected hidden claude-desktop to be absent")
-		}
+func TestListIntegrationInfos_HidesClaudeDesktopOnUnsupportedPlatform(t *testing.T) {
+	for _, goos := range []string{"linux", "windows"} {
+		t.Run(goos, func(t *testing.T) {
+			previous := claudeDesktopGOOS
+			claudeDesktopGOOS = goos
+			t.Cleanup(func() { claudeDesktopGOOS = previous })
+
+			for _, info := range ListIntegrationInfos() {
+				if info.Name == "claude-desktop" {
+					t.Fatal("expected claude-desktop to be absent on unsupported platforms")
+				}
+			}
+		})
 	}
 }
 

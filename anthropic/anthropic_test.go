@@ -1546,7 +1546,7 @@ func TestEstimateTokens_SimpleMessage(t *testing.T) {
 		},
 	}
 
-	tokens := estimateTokens(req)
+	tokens := EstimateCountTokens(req)
 
 	// "user" (4) + "Hello, world!" (13) = 17 chars / 4 = 4 tokens
 	if tokens < 1 {
@@ -1567,7 +1567,7 @@ func TestEstimateTokens_WithSystemPrompt(t *testing.T) {
 		},
 	}
 
-	tokens := estimateTokens(req)
+	tokens := EstimateCountTokens(req)
 
 	// System prompt adds to count
 	if tokens < 5 {
@@ -1590,7 +1590,7 @@ func TestEstimateTokens_WithTools(t *testing.T) {
 		},
 	}
 
-	tokens := estimateTokens(req)
+	tokens := EstimateCountTokens(req)
 
 	// Tools add significant content
 	if tokens < 10 {
@@ -1619,7 +1619,7 @@ func TestEstimateTokens_WithThinking(t *testing.T) {
 		},
 	}
 
-	tokens := estimateTokens(req)
+	tokens := EstimateCountTokens(req)
 
 	// Thinking content should be counted
 	if tokens < 10 {
@@ -1633,7 +1633,7 @@ func TestEstimateTokens_EmptyContent(t *testing.T) {
 		Messages: []MessageParam{},
 	}
 
-	tokens := estimateTokens(req)
+	tokens := EstimateCountTokens(req)
 
 	if tokens != 0 {
 		t.Errorf("expected 0 tokens for empty content, got %d", tokens)

@@ -18,6 +18,7 @@ enum AppMove
 
 void run(bool showOnboarding, bool startHidden);
 void killOtherInstances();
+bool otherOllamaInstanceRunning(void);
 enum AppMove askToMoveToApplications();
 int createSymlinkWithAuthorization();
 int installSymlink(const char *cliPath);
@@ -42,3 +43,13 @@ void setWindowResizable(uintptr_t wndPtr, bool resizable);
 void drag(uintptr_t wndPtr);
 void doubleClick(uintptr_t wndPtr);
 void handleConnectURL();
+bool SetClaudeGatewayInstalled(bool installed, bool restartClaude);
+bool RestoreClaudeGatewayForShutdown(void);
+bool IsClaudeGatewayConfigured(void);
+bool IsClaudeDesktopInstalled(void);
+bool IsClaudeDesktopRunning(void);
+bool ClaudeGatewayStartFailed(void);
+bool ClaudeGatewayPortConflict(void);
+int ClaudeGatewayPort(void);
+void RefreshClaudeProxyMenu(void);
+void updateClaudeProxyMenu(unsigned long long routed);
