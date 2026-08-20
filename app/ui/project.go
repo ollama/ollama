@@ -3,8 +3,11 @@
 package ui
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -13,6 +16,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/ollama/ollama/app/store"
 	"github.com/ollama/ollama/app/ui/responses"
@@ -31,6 +35,13 @@ const (
 	// maxMentionTotalBytes caps the combined content injected for all
 	// @-mentioned files in a single message (~32k tokens at ~4 bytes/token)
 	maxMentionTotalBytes = 128 * 1024
+
+	// maxViewFileBytes caps how much of a file the viewer returns; longer
+	// files are truncated and flagged as such
+	maxViewFileBytes = 512 * 1024
+
+	// maxViewImageBytes caps images returned inline (base64) to the viewer
+	maxViewImageBytes = 8 * 1024 * 1024
 
 	// maxRecentProjects caps the persisted recent projects list
 	maxRecentProjects = 8
@@ -372,6 +383,17 @@ func (p *projectState) systemPrompt() string {
 	return b.String()
 }
 
+// resolvePath maps a project-relative reference to its slash-separated
+// relative form and absolute path on disk. It reports false for absolute
+// paths and for anything that would escape the project root.
+func (p *projectState) resolvePath(ref string) (rel, full string, ok bool) {
+	cleaned := filepath.Clean(filepath.FromSlash(ref))
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) || filepath.IsAbs(cleaned) {
+		return "", "", false
+	}
+	return filepath.ToSlash(cleaned), filepath.Join(p.Root, cleaned), true
+}
+
 // resolveFileRefs reads the contents of @-mentioned project files, skipping
 // paths outside the project root and filenames already present in skip.
 // Contents are truncated to per-file and total budgets.
@@ -385,12 +407,11 @@ func (p *projectState) resolveFileRefs(refs []string, skip map[string]bool) []st
 		}
 		skip[ref] = true
 
-		rel := filepath.Clean(filepath.FromSlash(ref))
-		if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		rel, full, ok := p.resolvePath(ref)
+		if !ok {
 			continue
 		}
 
-		full := filepath.Join(p.Root, rel)
 		info, err := os.Stat(full)
 		if err != nil || info.IsDir() {
 			continue
@@ -412,7 +433,7 @@ func (p *projectState) resolveFileRefs(refs []string, skip map[string]bool) []st
 		total += len(data)
 
 		files = append(files, store.File{
-			Filename: filepath.ToSlash(rel),
+			Filename: rel,
 			Data:     data,
 		})
 	}
@@ -548,4 +569,111 @@ func (s *Server) getProjectFiles(w http.ResponseWriter, r *http.Request) error {
 		Files:     files,
 		Truncated: p.Truncated,
 	})
+}
+
+// viewImageTypes maps image extensions the viewer renders inline to their
+// MIME type
+var viewImageTypes = map[string]string{
+	".png":  "image/png",
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+	".gif":  "image/gif",
+	".webp": "image/webp",
+	".bmp":  "image/bmp",
+	".svg":  "image/svg+xml",
+	".ico":  "image/x-icon",
+}
+
+// trimPartialRune drops the incomplete UTF-8 sequence a byte-size cut may
+// have left at the end of data
+func trimPartialRune(data []byte) []byte {
+	for range 3 {
+		if len(data) == 0 {
+			break
+		}
+		if r, size := utf8.DecodeLastRune(data); r != utf8.RuneError || size > 1 {
+			break
+		}
+		data = data[:len(data)-1]
+	}
+	return data
+}
+
+// isBinary reports whether data looks like something other than UTF-8 text
+func isBinary(data []byte) bool {
+	return bytes.IndexByte(data, 0) >= 0 || !utf8.Valid(trimPartialRune(data))
+}
+
+// getProjectFile returns the contents of a single file of the active project
+// so the UI can preview it. Text is returned as-is (truncated past
+// maxViewFileBytes), images as base64, and other binaries without content.
+func (s *Server) getProjectFile(w http.ResponseWriter, r *http.Request) error {
+	p := s.activeProject()
+	if p == nil {
+		return fmt.Errorf("no project is open")
+	}
+
+	ref := r.URL.Query().Get("path")
+	if ref == "" {
+		return fmt.Errorf("path is required")
+	}
+
+	rel, full, ok := p.resolvePath(ref)
+	if !ok {
+		return fmt.Errorf("invalid path %q", ref)
+	}
+
+	info, err := os.Stat(full)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", rel, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("%s is a directory", rel)
+	}
+
+	resp := responses.ProjectFileResponse{Path: rel, Size: info.Size()}
+
+	if mime, isImage := viewImageTypes[strings.ToLower(filepath.Ext(full))]; isImage {
+		resp.Binary = true
+		if info.Size() > maxViewImageBytes {
+			w.Header().Set("Content-Type", "application/json")
+			return json.NewEncoder(w).Encode(resp)
+		}
+		data, err := os.ReadFile(full)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", rel, err)
+		}
+		resp.MimeType = mime
+		resp.Content = base64.StdEncoding.EncodeToString(data)
+		w.Header().Set("Content-Type", "application/json")
+		return json.NewEncoder(w).Encode(resp)
+	}
+
+	f, err := os.Open(full)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", rel, err)
+	}
+	defer f.Close()
+
+	// read one byte past the cap to tell a full file from a truncated one
+	data, err := io.ReadAll(io.LimitReader(f, maxViewFileBytes+1))
+	if err != nil {
+		return fmt.Errorf("read %s: %w", rel, err)
+	}
+	if len(data) > maxViewFileBytes {
+		data = data[:maxViewFileBytes]
+		resp.Truncated = true
+	}
+
+	if isBinary(data) {
+		resp.Binary = true
+	} else {
+		if resp.Truncated {
+			data = trimPartialRune(data)
+		}
+		resp.Content = string(data)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	return json.NewEncoder(w).Encode(resp)
 }

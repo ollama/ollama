@@ -619,6 +619,24 @@ export class ProjectResponse {
 	    return a;
 	}
 }
+export class ProjectFileResponse {
+    path: string;
+    size: number;
+    content: string;
+    truncated: boolean;
+    binary: boolean;
+    mimeType: string;
+
+    constructor(source: any = {}) {
+        if ('string' === typeof source) source = JSON.parse(source);
+        this.path = source["path"];
+        this.size = source["size"];
+        this.content = source["content"];
+        this.truncated = source["truncated"];
+        this.binary = source["binary"];
+        this.mimeType = source["mimeType"];
+    }
+}
 export class ProjectFilesResponse {
     files: ProjectFile[];
     truncated: boolean;

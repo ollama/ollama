@@ -8,6 +8,7 @@ import {
   ModelCapabilitiesResponse,
   Model,
   ChatRequest,
+  ProjectFileResponse,
   ProjectFilesResponse,
   ProjectResponse,
   Settings,
@@ -309,6 +310,20 @@ export async function getProjectFiles(
   }
   const data = await response.json();
   return new ProjectFilesResponse(data);
+}
+
+export async function getProjectFile(
+  path: string,
+): Promise<ProjectFileResponse> {
+  const response = await fetch(
+    `${API_BASE}/api/v1/project/file?path=${encodeURIComponent(path)}`,
+  );
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(error || "Failed to read file");
+  }
+  const data = await response.json();
+  return new ProjectFileResponse(data);
 }
 
 export async function getSettings(): Promise<{

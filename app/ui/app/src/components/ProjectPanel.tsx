@@ -5,9 +5,11 @@ import {
   FolderIcon,
   DocumentIcon,
   ArrowPathIcon,
+  AtSymbolIcon,
   XMarkIcon,
 } from "@heroicons/react/24/outline";
 import { useProject, useProjectFiles } from "@/hooks/useProject";
+import { FileViewer } from "@/components/FileViewer";
 import { ProjectFile } from "@/gotypes";
 
 interface TreeNode {
@@ -62,40 +64,59 @@ function TreeEntry({
   expanded,
   onToggle,
   onFileClick,
+  onMention,
 }: {
   node: TreeNode;
   depth: number;
   expanded: Set<string>;
   onToggle: (path: string) => void;
   onFileClick: (path: string) => void;
+  onMention: (path: string) => void;
 }) {
   const isExpanded = expanded.has(node.path);
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() =>
-          node.isDir ? onToggle(node.path) : onFileClick(node.path)
-        }
-        title={node.path}
-        className="flex w-full items-center gap-1 rounded-md px-2 py-1 text-left text-sm text-neutral-700 hover:bg-neutral-200/60 dark:text-neutral-300 dark:hover:bg-neutral-700/60 cursor-pointer"
-        style={{ paddingLeft: `${depth * 12 + 8}px` }}
-      >
-        {node.isDir ? (
-          <>
-            {isExpanded ? (
-              <ChevronDownIcon className="h-3 w-3 flex-shrink-0 text-neutral-400" />
-            ) : (
-              <ChevronRightIcon className="h-3 w-3 flex-shrink-0 text-neutral-400" />
-            )}
-            <FolderIcon className="h-4 w-4 flex-shrink-0 text-neutral-400" />
-          </>
-        ) : (
-          <DocumentIcon className="ml-4 h-4 w-4 flex-shrink-0 text-neutral-400" />
+      <div className="group relative flex items-center rounded-md hover:bg-neutral-200/60 dark:hover:bg-neutral-700/60">
+        <button
+          type="button"
+          onClick={(e) =>
+            node.isDir
+              ? onToggle(node.path)
+              : // modifier-click mentions the file instead of opening it
+                e.metaKey || e.ctrlKey
+                ? onMention(node.path)
+                : onFileClick(node.path)
+          }
+          title={node.path}
+          className="flex min-w-0 flex-1 items-center gap-1 px-2 py-1 text-left text-sm text-neutral-700 dark:text-neutral-300 cursor-pointer"
+          style={{ paddingLeft: `${depth * 12 + 8}px` }}
+        >
+          {node.isDir ? (
+            <>
+              {isExpanded ? (
+                <ChevronDownIcon className="h-3 w-3 flex-shrink-0 text-neutral-400" />
+              ) : (
+                <ChevronRightIcon className="h-3 w-3 flex-shrink-0 text-neutral-400" />
+              )}
+              <FolderIcon className="h-4 w-4 flex-shrink-0 text-neutral-400" />
+            </>
+          ) : (
+            <DocumentIcon className="ml-4 h-4 w-4 flex-shrink-0 text-neutral-400" />
+          )}
+          <span className="truncate">{node.name}</span>
+        </button>
+        {!node.isDir && (
+          <button
+            type="button"
+            onClick={() => onMention(node.path)}
+            title="Mention this file in the chat"
+            className="mr-1 flex-none rounded p-1 text-neutral-400 opacity-0 hover:bg-neutral-300/60 hover:text-neutral-600 focus:opacity-100 group-hover:opacity-100 dark:hover:bg-neutral-600/60 dark:hover:text-neutral-200 cursor-pointer"
+          >
+            <AtSymbolIcon className="h-3.5 w-3.5" />
+          </button>
         )}
-        <span className="truncate">{node.name}</span>
-      </button>
+      </div>
       {node.isDir &&
         isExpanded &&
         node.children.map((child) => (
@@ -106,6 +127,7 @@ function TreeEntry({
             expanded={expanded}
             onToggle={onToggle}
             onFileClick={onFileClick}
+            onMention={onMention}
           />
         ))}
     </>
@@ -117,6 +139,7 @@ export function ProjectPanel() {
   const { files, truncated, isLoading, refresh } = useProjectFiles();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [previewPath, setPreviewPath] = useState<string | null>(null);
 
   const tree = useMemo(() => buildTree(files), [files]);
 
@@ -134,7 +157,10 @@ export function ProjectPanel() {
     });
   };
 
-  const handleFileClick = (path: string) => {
+  // Clicking a file opens the preview; mentioning it in the chat is an
+  // explicit action (the "@" button, or a modifier-click on the row)
+  const handleMention = (path: string) => {
+    setPreviewPath(null);
     window.dispatchEvent(
       new CustomEvent("project:mention-file", { detail: { path } }),
     );
@@ -191,7 +217,8 @@ export function ProjectPanel() {
                 depth={0}
                 expanded={expanded}
                 onToggle={handleToggle}
-                onFileClick={handleFileClick}
+                onFileClick={setPreviewPath}
+                onMention={handleMention}
               />
             ))}
             {truncated && (
@@ -202,6 +229,13 @@ export function ProjectPanel() {
           </>
         )}
       </div>
+      {previewPath && (
+        <FileViewer
+          path={previewPath}
+          onClose={() => setPreviewPath(null)}
+          onMention={handleMention}
+        />
+      )}
     </div>
   );
 }

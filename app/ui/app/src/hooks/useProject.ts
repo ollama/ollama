@@ -1,6 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
-import { getProject, openProject, closeProject, getProjectFiles } from "@/api";
+import {
+  getProject,
+  openProject,
+  closeProject,
+  getProjectFiles,
+  getProjectFile,
+} from "@/api";
 import { ProjectFile } from "@/gotypes";
 
 // Approximate context budget for @-mentioned files. Must stay in sync with
@@ -115,5 +121,30 @@ export function useProjectFiles() {
       refresh,
     }),
     [files, filePathSet, fileSizes, data?.truncated, isLoading, refresh],
+  );
+}
+
+// useProjectFileContent loads a single file of the active project for
+// previewing. Pass null to skip the request.
+export function useProjectFileContent(path: string | null) {
+  const { project } = useProject();
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["projectFile", project?.root, path],
+    queryFn: () => getProjectFile(path!),
+    enabled: !!project?.root && !!path,
+    // files change on disk, so don't serve a stale preview on reopen
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
+  });
+
+  return useMemo(
+    () => ({
+      file: data ?? null,
+      isLoading,
+      error: error instanceof Error ? error.message : null,
+    }),
+    [data, isLoading, error],
   );
 }

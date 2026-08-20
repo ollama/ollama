@@ -164,6 +164,18 @@ type ProjectResponse struct {
 	Recent      []string       `json:"recent"`
 }
 
+// ProjectFileResponse is the content of a single project file, as rendered
+// by the file viewer. Content holds text as-is, or base64 data when MimeType
+// is set (inline images); it is empty for binaries the UI cannot render.
+type ProjectFileResponse struct {
+	Path      string `json:"path"`
+	Size      int64  `json:"size"`
+	Content   string `json:"content"`
+	Truncated bool   `json:"truncated"`
+	Binary    bool   `json:"binary"`
+	MimeType  string `json:"mimeType"`
+}
+
 // ProjectFilesResponse is the cached file listing of the active project
 type ProjectFilesResponse struct {
 	Files     []ProjectFile `json:"files"`

@@ -4,8 +4,10 @@ package ui
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -233,6 +235,62 @@ func TestProjectSystemPrompt(t *testing.T) {
 	for _, want := range []string{"Always use tabs.", "deploy", "Deploys the app"} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("system prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestGetProjectFile(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "main.go", "package main\n")
+	writeFile(t, root, "big.txt", strings.Repeat("a", maxViewFileBytes+100))
+	writeFile(t, root, "bin.dat", "head\x00\x01binary")
+	writeFile(t, root, "img.png", "\x89PNG\r\n\x1a\n fake")
+
+	server := &Server{Restart: func() {}}
+	server.project = &projectState{Root: root}
+	server.projectLoaded = true
+
+	get := func(t *testing.T, path string) responses.ProjectFileResponse {
+		t.Helper()
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/api/v1/project/file?path="+url.QueryEscape(path), nil)
+		if err := server.getProjectFile(rr, req); err != nil {
+			t.Fatalf("getProjectFile(%q): %v", path, err)
+		}
+		var resp responses.ProjectFileResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+
+	if resp := get(t, "main.go"); resp.Content != "package main\n" || resp.Binary || resp.Truncated {
+		t.Errorf("unexpected response for main.go: %+v", resp)
+	}
+
+	resp := get(t, "big.txt")
+	if !resp.Truncated || len(resp.Content) != maxViewFileBytes {
+		t.Errorf("big.txt: truncated=%v len=%d, want truncated with %d bytes", resp.Truncated, len(resp.Content), maxViewFileBytes)
+	}
+
+	if resp := get(t, "bin.dat"); !resp.Binary || resp.Content != "" {
+		t.Errorf("unexpected response for bin.dat: %+v", resp)
+	}
+
+	resp = get(t, "img.png")
+	if resp.MimeType != "image/png" || !resp.Binary {
+		t.Errorf("unexpected response for img.png: %+v", resp)
+	}
+	if data, err := base64.StdEncoding.DecodeString(resp.Content); err != nil || !strings.HasPrefix(string(data), "\x89PNG") {
+		t.Errorf("img.png content not base64 png: %v", err)
+	}
+
+	// paths outside the project and directories are rejected
+	for _, bad := range []string{"../escape.txt", "/etc/passwd", "", "."} {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/api/v1/project/file?path="+url.QueryEscape(bad), nil)
+		if err := server.getProjectFile(rr, req); err == nil {
+			t.Errorf("expected error for path %q", bad)
 		}
 	}
 }

@@ -2,7 +2,7 @@
 
 Este documento descreve duas funcionalidades adicionadas ao app desktop:
 
-1. **Projeto ativo** — abrir uma pasta local como projeto (estilo "Open Folder" do VSCode), com árvore de arquivos lateral, persistência do último projeto, recentes e carregamento automático de `AGENTS.md` e `.agents/skills/`.
+1. **Projeto ativo** — abrir uma pasta local como projeto (estilo "Open Folder" do VSCode), com árvore de arquivos lateral, visualizador de arquivos, persistência do último projeto, recentes e carregamento automático de `AGENTS.md` e `.agents/skills/`.
 2. **Menção de arquivos com `@`** — autocomplete fuzzy de arquivos do projeto no campo de chat, com injeção do conteúdo dos arquivos mencionados no contexto da LLM.
 
 O modo "chat livre" (sem projeto aberto) continua funcionando normalmente: sem árvore, sem menções, sem contexto de pasta.
@@ -15,8 +15,8 @@ O modo "chat livre" (sem projeto aberto) continua funcionando normalmente: sem �
 ┌────────────────────────── Frontend (React/Vite) ──────────────────────────┐
 │                                                                           │
 │  ProjectButton (pill no header)      ProjectPanel (árvore lateral)        │
-│        │  abrir/recentes/fechar            │  clique insere @path        │
-│        ▼                                   ▼                              │
+│        │  abrir/recentes/fechar            │  clique abre FileViewer     │
+│        ▼                                   ▼  botão @ menciona          │
 │  useProject / useProjectFiles  ◄── cache react-query (staleTime: ∞)      │
 │        │                                                                  │
 │  ChatForm ── detecta "@" ── FileMentionMenu (fuzzy + teclado)            │
@@ -31,6 +31,7 @@ O modo "chat livre" (sem projeto aberto) continua funcionando normalmente: sem �
 │    • scanner com .gitignore + pastas pesadas ignoradas                    │
 │    • AGENTS.md + .agents/skills → system prompt                           │
 │    • resolveFileRefs: file_refs → attachments (com truncamento)           │
+│    • getProjectFile: conteúdo de um arquivo para o visualizador           │
 │                                                                           │
 │  store (SQLite): project_dir + recent_projects (schema v17)               │
 └───────────────────────────────────────────────────────────────────────────┘
@@ -56,6 +57,7 @@ O modo "chat livre" (sem projeto aberto) continua funcionando normalmente: sem �
 | `POST` | `/api/v1/project/open` | Body `{"path": "/abs/path"}`. Ativa o projeto, escaneia, persiste e retorna `ProjectResponse`. |
 | `POST` | `/api/v1/project/close` | Fecha o projeto ativo (limpa `project_dir`; os recentes são mantidos). |
 | `GET` | `/api/v1/project/files` | Listagem cacheada de arquivos. Com `?refresh=1`, re-escaneia o disco. |
+| `GET` | `/api/v1/project/file` | Conteúdo de um arquivo (`?path=rel/ativo.ts`) para o visualizador. |
 
 Formas de resposta (em `app/ui/responses/types.go`, espelhadas em `gotypes.gen.ts`):
 
@@ -68,6 +70,10 @@ Formas de resposta (em `app/ui/responses/types.go`, espelhadas em `gotypes.gen.t
 // ProjectFilesResponse
 { "files": [{ "path": "src/main.ts", "size": 1234, "isDir": false }, ...],
   "truncated": false }
+
+// ProjectFileResponse
+{ "path": "src/main.ts", "size": 1234, "content": "export {}\n",
+  "truncated": false, "binary": false, "mimeType": "" }
 ```
 
 ### Scanner de arquivos (`app/ui/project.go`)
@@ -99,8 +105,19 @@ O system message resultante contém: nome/path do projeto, conteúdo do AGENTS.m
 ### UI
 
 - **`ProjectButton.tsx`** — pill no header (área de drag da janela; usa `stopPropagation` no `mousedown` para não iniciar drag). Mostra o nome da pasta ativa; menu com "Open folder…", recentes e "Close project". Tooltip mostra o path completo.
-- **`ProjectPanel.tsx`** — coluna lateral (renderizada pelo `SidebarLayout` quando há projeto): árvore colapsável (pastas primeiro, ordem alfabética), botão de refresh (re-scan) e fechar. Clicar num arquivo dispara o evento `project:mention-file`, que o `ChatForm` escuta para inserir `@path` no input.
+- **`ProjectPanel.tsx`** — coluna lateral (renderizada pelo `SidebarLayout` quando há projeto): árvore colapsável (pastas primeiro, ordem alfabética), botão de refresh (re-scan) e fechar. Clicar num arquivo **abre o visualizador** (`FileViewer`); mencionar no chat é uma ação explícita (botão `@` que aparece no hover da linha, ou clique com ⌘/Ctrl), que dispara o evento `project:mention-file` ouvido pelo `ChatForm`.
 - **`layout.tsx`** — nota para Windows: o header superior era `xl:hidden`; agora fica sempre visível para abrigar o pill do projeto.
+
+### Visualizador de arquivos (`FileViewer.tsx`)
+
+Clicar num arquivo da árvore abre um **modal de preview** sobre a UI (fecha no `Esc`, no clique fora ou no `X`).
+
+- **Backend** (`getProjectFile` em `project.go`): valida o path com o mesmo `resolvePath` usado pelas menções (rejeita path absoluto, `..` e qualquer coisa fora da raiz) e responde conforme o tipo do arquivo:
+  - **texto**: conteúdo cru, limitado a `maxViewFileBytes` (512 KB); acima disso vem `truncated: true` (o corte é aparado para não deixar rune UTF-8 pela metade);
+  - **imagem** (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, `.svg`, `.ico`): base64 em `content` + `mimeType`, até `maxViewImageBytes` (8 MB);
+  - **binário** (byte `NUL` ou UTF-8 inválido): `binary: true` e `content` vazio — nada é enviado pela rede à toa.
+- **Frontend**: `useProjectFileContent(path)` (react-query, `staleTime: 0` para não mostrar preview velho de um arquivo que mudou no disco). O modal mostra nome, diretório, tamanho e aviso de truncamento; imagens são renderizadas inline; texto ganha numeração de linhas e destaque de sintaxe reaproveitando o `highlighter` (shiki) já carregado pelo chat — acima de 100 KB o destaque é desligado para não travar a UI, e extensões fora da lista de linguagens carregadas caem em texto puro.
+- No topo do modal: botão **Mention** (insere `@path` no chat e fecha o preview) e botão de copiar o conteúdo.
 
 ---
 
@@ -157,10 +174,11 @@ No frontend, a soma dos tamanhos dos arquivos mencionados (os `size` já vêm na
 |---|---|
 | `app/ui/project.go` | Estado do projeto, scanner + gitignore, skills/AGENTS.md, resolução de `file_refs`, handlers HTTP |
 | `app/ui/project_test.go` | Testes: scanner/gitignore, resolveFileRefs, frontmatter, system prompt, endpoints + persistência |
-| `app/ui/app/src/hooks/useProject.ts` | Hooks `useProject`/`useProjectFiles` (react-query) + `MENTION_TOTAL_BYTES` |
+| `app/ui/app/src/hooks/useProject.ts` | Hooks `useProject`/`useProjectFiles`/`useProjectFileContent` (react-query) + `MENTION_TOTAL_BYTES` |
 | `app/ui/app/src/components/ProjectButton.tsx` | Pill do header com menu abrir/recentes/fechar |
-| `app/ui/app/src/components/ProjectPanel.tsx` | Árvore de arquivos lateral |
+| `app/ui/app/src/components/ProjectPanel.tsx` | Árvore de arquivos lateral (clique abre o preview, botão `@` menciona) |
 | `app/ui/app/src/components/FileMentionMenu.tsx` | Dropdown de autocomplete do `@` |
+| `app/ui/app/src/components/FileViewer.tsx` | Modal de preview do arquivo (texto com destaque, imagem, binário) |
 | `app/ui/app/src/utils/fuzzyMatch.ts` | Ranking fuzzy (`fuzzyScore`/`fuzzyFilter`) |
 
 ### Modificados
@@ -172,7 +190,7 @@ No frontend, a soma dos tamanhos dos arquivos mencionados (os `size` já vêm na
 | `app/ui/ui.go` | Campos de projeto no `Server`, rotas `/api/v1/project*`, `file_refs` → attachments no `chat`, system prompt no `buildChatRequest` |
 | `app/ui/responses/types.go` | `ChatRequest.FileRefs` + `ProjectFile`/`ProjectSkill`/`ProjectResponse`/`ProjectFilesResponse` |
 | `app/ui/app/codegen/gotypes.gen.ts` | Regenerado (idêntico à saída do `tscriptify`) |
-| `app/ui/app/src/api.ts` | `getProject`/`openProject`/`closeProject`/`getProjectFiles`; `sendMessage` aceita `fileRefs` |
+| `app/ui/app/src/api.ts` | `getProject`/`openProject`/`closeProject`/`getProjectFiles`/`getProjectFile`; `sendMessage` aceita `fileRefs` |
 | `app/ui/app/src/hooks/useChats.ts` | Propaga `fileRefs` na mutation de envio |
 | `app/ui/app/src/components/Chat.tsx` | Propaga `fileRefs` do form para a mutation |
 | `app/ui/app/src/components/ChatForm.tsx` | Detecção do `@`, menu, teclado, destaque, aviso de orçamento, evento da árvore |
@@ -199,13 +217,16 @@ OLLAMA_DEBUG=1 go run ./app/cmd/app -dev  # terminal 2, a partir de app/
 Roteiro manual rápido:
 
 1. Abrir o pill "Open project" → escolher uma pasta com `.gitignore`, `AGENTS.md` e `.agents/skills/` → conferir árvore (sem `node_modules`/ignorados) e nome no header.
-2. Digitar `@` no chat → filtrar, navegar com setas, selecionar com Enter → menção destacada em azul.
-3. Enviar mensagem mencionando um arquivo → a resposta do modelo deve refletir o conteúdo do arquivo; a mensagem mostra o chip do anexo.
-4. Fechar e reabrir o app → o projeto reabre sozinho; "Close project" volta ao chat livre e mantém os recentes.
+2. Clicar num arquivo da árvore → o preview abre com destaque de sintaxe; clicar numa imagem → ela aparece inline; `Esc` fecha.
+3. Passar o mouse numa linha da árvore → botão `@` insere a menção no chat (⌘/Ctrl+clique faz o mesmo).
+4. Digitar `@` no chat → filtrar, navegar com setas, selecionar com Enter → menção destacada em azul.
+5. Enviar mensagem mencionando um arquivo → a resposta do modelo deve refletir o conteúdo do arquivo; a mensagem mostra o chip do anexo.
+6. Fechar e reabrir o app → o projeto reabre sozinho; "Close project" volta ao chat livre e mantém os recentes.
 
 ## Limitações conhecidas
 
 - O matcher de `.gitignore` é um subconjunto prático do formato do git (sem escapes exóticos; negação não recupera conteúdo de diretórios já pulados).
 - Arquivos com espaço no nome só são reconhecidos como menção quando inseridos pelo dropdown/árvore (a digitação manual usa token sem espaços).
-- A listagem só atualiza no refresh manual ou na reabertura do projeto (sem file watcher).
+- A listagem só atualiza no refresh manual ou na reabertura do projeto (sem file watcher). O preview, esse sim, relê o arquivo do disco a cada abertura.
+- O preview é somente leitura: não há edição nem busca dentro do arquivo.
 - O título nativo da janela não muda; o indicador do projeto é o pill no header da UI.

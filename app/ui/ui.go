@@ -298,6 +298,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/project/open", handle(s.openProject))
 	mux.Handle("POST /api/v1/project/close", handle(s.closeProject))
 	mux.Handle("GET /api/v1/project/files", handle(s.getProjectFiles))
+	mux.Handle("GET /api/v1/project/file", handle(s.getProjectFile))
 
 	mux.Handle("GET /api/v1/inference-compute", handle(s.getInferenceCompute))
 	mux.Handle("POST /api/v1/model/upstream", handle(s.modelUpstream))
