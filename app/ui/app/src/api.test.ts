@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchConnectUrl } from "./api";
+import { fetchConnectUrl, getIntegrationStatuses } from "./api";
 
 describe("fetchConnectUrl", () => {
   afterEach(() => {
@@ -22,6 +22,59 @@ describe("fetchConnectUrl", () => {
 
     await expect(fetchConnectUrl()).resolves.toBe(
       "https://ollama.com/connect?name=MacBook&key=public-key&launch=true",
+    );
+  });
+});
+
+describe("getIntegrationStatuses", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("returns installation state from the desktop app", async () => {
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          {
+            id: "claude-desktop",
+            name: "Claude",
+            description: "Use Ollama models in Claude Desktop",
+            installed: true,
+            action: "connect",
+          },
+          {
+            id: "opencode",
+            name: "OpenCode",
+            description: "Open-source coding agent",
+            installed: false,
+            action: "copy",
+            command: "ollama launch opencode",
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(getIntegrationStatuses()).resolves.toEqual([
+      {
+        id: "claude-desktop",
+        name: "Claude",
+        description: "Use Ollama models in Claude Desktop",
+        installed: true,
+        action: "connect",
+      },
+      {
+        id: "opencode",
+        name: "OpenCode",
+        description: "Open-source coding agent",
+        installed: false,
+        action: "copy",
+        command: "ollama launch opencode",
+      },
+    ]);
+    expect(fetch).toHaveBeenCalledWith(
+      "http://127.0.0.1:3001/api/v1/integrations",
     );
   });
 });

@@ -53,3 +53,10 @@ bool ClaudeGatewayPortConflict(void);
 int ClaudeGatewayPort(void);
 void RefreshClaudeProxyMenu(void);
 void updateClaudeProxyMenu(unsigned long long routed);
+enum ClaudeInstallResult
+{
+    ClaudeInstallCancelled,
+    ClaudeInstallerOpened,
+    ClaudeInstallFailed,
+};
+enum ClaudeInstallResult installClaudeDesktop(void);

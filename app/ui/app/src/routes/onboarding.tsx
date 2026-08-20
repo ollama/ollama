@@ -10,7 +10,7 @@ import {
   onboardingConnectUrl,
   type OnboardingAuthMode,
 } from "@/lib/onboarding";
-import { createFileRoute, redirect } from "@tanstack/react-router";
+import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export const Route = createFileRoute("/onboarding")({
@@ -41,10 +41,10 @@ export const Route = createFileRoute("/onboarding")({
 });
 
 function OnboardingRoute() {
+  const navigate = useNavigate();
   const { settingsData, setSettings } = useSettings();
   const { fetchConnectUrl, refetchUser, isAuthenticated } = useUser();
   const [isAwaitingAuth, setIsAwaitingAuth] = useState(false);
-  const [showRun, setShowRun] = useState(false);
   const [signInError, setSignInError] = useState<string | null>(null);
   const [completionError, setCompletionError] = useState<string | null>(null);
   const authAttemptRef = useRef(0);
@@ -68,10 +68,15 @@ function OnboardingRoute() {
     }
   }, [setSettings, settingsData]);
 
-  const showRunScreen = useCallback(() => {
-    setShowRun(true);
+  const finishSetup = useCallback(() => {
     void completeOnboarding();
   }, [completeOnboarding]);
+
+  const openApps = useCallback(async (): Promise<boolean> => {
+    if (!(await completeOnboarding())) return false;
+    await navigate({ to: "/connect" });
+    return true;
+  }, [completeOnboarding, navigate]);
 
   const retryCompletion = useCallback(() => {
     void completeOnboarding();
@@ -82,7 +87,6 @@ function OnboardingRoute() {
       setSignInError(null);
 
       if (isAuthenticated) {
-        showRunScreen();
         return;
       }
 
@@ -104,7 +108,7 @@ function OnboardingRoute() {
         setSignInError("Unable to start sign in. Please try again.");
       }
     },
-    [fetchConnectUrl, isAuthenticated, showRunScreen],
+    [fetchConnectUrl, isAuthenticated],
   );
 
   const signIn = useCallback(() => authenticate("signin"), [authenticate]);
@@ -114,8 +118,8 @@ function OnboardingRoute() {
     authAttemptRef.current += 1;
     setIsAwaitingAuth(false);
     setSignInError(null);
-    showRunScreen();
-  }, [showRunScreen]);
+    finishSetup();
+  }, [finishSetup]);
 
   useEffect(() => {
     if (!isAwaitingAuth) return;
@@ -147,7 +151,6 @@ function OnboardingRoute() {
         ) {
           settled = true;
           setIsAwaitingAuth(false);
-          showRunScreen();
           window.activateOllama?.();
         }
       } catch (error) {
@@ -177,7 +180,7 @@ function OnboardingRoute() {
       window.clearTimeout(timeout);
       window.removeEventListener("focus", checkConnection);
     };
-  }, [isAwaitingAuth, refetchUser, showRunScreen]);
+  }, [isAwaitingAuth, refetchUser]);
 
   return (
     <Onboarding
@@ -185,11 +188,11 @@ function OnboardingRoute() {
       isAuthenticated={isAuthenticated}
       isSigningIn={isAwaitingAuth}
       signInError={signInError}
+      onOpenApps={openApps}
       onSignIn={signIn}
       onSignUp={signUp}
       onRetryCompletion={retryCompletion}
       onUseLocal={useLocal}
-      showRun={showRun}
     />
   );
 }

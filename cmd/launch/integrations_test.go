@@ -70,8 +70,8 @@ func TestIntegrationLookup(t *testing.T) {
 		{"dsh", "dsh", true, "DeepSeek Harness"},
 		{"deepseek harness alias", "deepseek-harness", true, "DeepSeek Harness"},
 		{"opencode", "opencode", true, "OpenCode"},
-		{"omp", "omp", true, "OMP"},
-		{"pool", "pool", true, "Pool"},
+		{"omp", "omp", true, "Oh My Pi"},
+		{"pool", "pool", true, "Poolside"},
 		{"unknown integration", "unknown", false, ""},
 		{"empty string", "", false, ""},
 	}

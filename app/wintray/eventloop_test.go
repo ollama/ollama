@@ -24,8 +24,8 @@ func TestFocusUICreatesOrShowsWindow(t *testing.T) {
 		wantRun  string
 		wantShow bool
 	}{
-		{name: "creates window when tray only", wantRun: "/"},
-		{name: "shows existing window", running: true, wantShow: true},
+		{name: "creates Apps window when tray only", wantRun: "/connect"},
+		{name: "routes existing window to Apps", running: true, wantRun: "/connect"},
 	}
 
 	for _, tt := range tests {

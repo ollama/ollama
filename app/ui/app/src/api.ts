@@ -32,6 +32,25 @@ export interface CloudStatusResponse {
   disabled: boolean;
   source: CloudStatusSource;
 }
+
+export interface IntegrationStatus {
+  id: string;
+  name: string;
+  description: string;
+  installed?: boolean;
+  action: "connect" | "copy";
+  command?: string;
+}
+
+export type IntegrationStatuses = IntegrationStatus[];
+
+export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
+  const response = await fetch(`${API_BASE}/api/v1/integrations`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch integration statuses: ${response.status}`);
+  }
+  return response.json();
+}
 // Helper function to convert Uint8Array to base64
 function uint8ArrayToBase64(uint8Array: Uint8Array): string {
   const chunkSize = 0x8000; // 32KB chunks to avoid stack overflow

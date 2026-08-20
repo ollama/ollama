@@ -261,6 +261,25 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 			showWindow(wv.Window())
 		})
 
+		wv.Bind("getClaudeDesktopStatus", func() claudeDesktopStatus {
+			return getClaudeDesktopConnectionStatus()
+		})
+
+		wv.Bind("setClaudeDesktopConnected", func(enabled bool) claudeDesktopActionResult {
+			err := setClaudeDesktopConnection(enabled)
+			result := claudeDesktopActionResult{
+				Status: getClaudeDesktopConnectionStatus(),
+			}
+			if err != nil {
+				result.Error = err.Error()
+			}
+			return result
+		})
+
+		wv.Bind("installClaudeDesktop", func() claudeDesktopInstallResult {
+			return requestClaudeDesktopInstall()
+		})
+
 		wv.Bind("close", func() {
 			hideWindow(wv.Window())
 		})

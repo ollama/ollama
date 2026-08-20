@@ -41,7 +41,7 @@ function AnimatedDots() {
   );
 }
 
-export default function Settings() {
+export default function Settings({ embedded = false }: { embedded?: boolean }) {
   const queryClient = useQueryClient();
   const [showSaved, setShowSaved] = useState(false);
   const [restartMessage, setRestartMessage] = useState(false);
@@ -271,20 +271,24 @@ export default function Settings() {
   const isWindows = navigator.platform.toLowerCase().includes("win");
 
   return (
-    <main className="flex h-screen w-full flex-col select-none dark:bg-neutral-900">
-      <header
-        className="w-full flex flex-none justify-between h-[52px] py-2.5 items-center border-b border-neutral-200 dark:border-neutral-800 select-none"
-        onMouseDown={() => window.drag && window.drag()}
-        onDoubleClick={() => window.doubleClick && window.doubleClick()}
-      >
-        <h1
-          className={`${isWindows ? "pl-4" : "pl-24"} flex items-center font-rounded text-md font-medium dark:text-white`}
+    <main
+      className={`flex w-full flex-col select-none dark:bg-neutral-900 ${embedded ? "min-h-0 flex-1" : "h-screen"}`}
+    >
+      {!embedded && (
+        <header
+          className="w-full flex flex-none justify-between h-[52px] py-2.5 items-center border-b border-neutral-200 dark:border-neutral-800 select-none"
+          onMouseDown={() => window.drag && window.drag()}
+          onDoubleClick={() => window.doubleClick && window.doubleClick()}
         >
-          Settings
-        </h1>
-      </header>
+          <h1
+            className={`${isWindows ? "pl-4" : "pl-24"} flex items-center font-rounded text-md font-medium dark:text-white`}
+          >
+            Settings
+          </h1>
+        </header>
+      )}
       <div className="w-full p-6 overflow-y-auto flex-1 overscroll-contain">
-        <div className="space-y-4 max-w-2xl mx-auto">
+        <div className="mx-auto max-w-5xl space-y-4">
           {/* Connect Ollama Account */}
           <div className="overflow-hidden rounded-xl bg-white dark:bg-neutral-800">
             <div className="p-4">

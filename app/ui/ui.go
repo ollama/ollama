@@ -31,6 +31,7 @@ import (
 	"github.com/ollama/ollama/app/updater"
 	"github.com/ollama/ollama/app/version"
 	ollamaAuth "github.com/ollama/ollama/auth"
+	"github.com/ollama/ollama/cmd/launch"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
@@ -110,8 +111,9 @@ type Server struct {
 	Dev bool
 
 	// Updater for checking and downloading updates
-	Updater             *updater.Updater
-	UpdateAvailableFunc func()
+	Updater              *updater.Updater
+	UpdateAvailableFunc  func()
+	IntegrationInstalled func(string) bool
 }
 
 func (s *Server) log() *slog.Logger {
@@ -292,6 +294,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/settings", handle(s.settings))
 	mux.Handle("GET /api/v1/cloud", handle(s.getCloudSetting))
 	mux.Handle("POST /api/v1/cloud", handle(s.cloudSetting))
+	mux.Handle("GET /api/v1/integrations", handle(s.getIntegrationStatuses))
 
 	// Ollama proxy endpoints
 	ollamaProxy := s.ollamaProxy()
@@ -312,6 +315,74 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("DELETE /", s.appHandler())
 
 	return mux
+}
+
+func (s *Server) getIntegrationStatuses(w http.ResponseWriter, _ *http.Request) error {
+	isInstalled := s.IntegrationInstalled
+	if isInstalled == nil {
+		isInstalled = launch.IsIntegrationInstalled
+	}
+
+	type integrationStatus struct {
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Installed   *bool  `json:"installed,omitempty"`
+		Action      string `json:"action"`
+		Command     string `json:"command,omitempty"`
+	}
+
+	infos := launch.ListIntegrationInfos()
+	statuses := make([]integrationStatus, 0, len(infos)+2)
+	claudeDesktopInstalled := isInstalled("claude-desktop")
+	statuses = append(statuses, integrationStatus{
+		ID:          "claude-desktop",
+		Name:        "Claude",
+		Description: "Use Ollama models in Claude Desktop",
+		Installed:   &claudeDesktopInstalled,
+		Action:      "connect",
+	})
+
+	byName := make(map[string]launch.IntegrationInfo, len(infos))
+	for _, info := range infos {
+		byName[info.Name] = info
+	}
+	seen := map[string]bool{"chatgpt": true}
+	launcherMenuOrder := []string{"claude", "codex", "openclaw", "opencode", "droid", "pi", "cline"}
+	orderedInfos := make([]launch.IntegrationInfo, 0, len(infos))
+	for _, name := range launcherMenuOrder {
+		if info, ok := byName[name]; ok {
+			orderedInfos = append(orderedInfos, info)
+			seen[name] = true
+		}
+	}
+	for _, info := range infos {
+		if !seen[info.Name] {
+			orderedInfos = append(orderedInfos, info)
+		}
+	}
+
+	for _, info := range orderedInfos {
+		installed := isInstalled(info.Name)
+		statuses = append(statuses, integrationStatus{
+			ID:          info.Name,
+			Name:        info.DisplayName,
+			Description: info.Description,
+			Installed:   &installed,
+			Action:      "copy",
+			Command:     "ollama launch " + info.Name,
+		})
+	}
+
+	statuses = append(statuses, integrationStatus{
+		ID:          "terminal",
+		Name:        "Terminal",
+		Description: "Run local models from your terminal",
+		Action:      "copy",
+		Command:     "ollama",
+	})
+
+	return json.NewEncoder(w).Encode(statuses)
 }
 
 // handleError renders appropriate error responses based on request type

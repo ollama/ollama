@@ -12,6 +12,24 @@ interface MenuItem {
   separator?: boolean;
 }
 
+interface ClaudeDesktopStatus {
+  supported: boolean;
+  installed: boolean;
+  connected: boolean;
+  running: boolean;
+  startFailed: boolean;
+  portConflict: boolean;
+  gatewayPort?: number;
+  error?: string;
+}
+
+interface ClaudeDesktopActionResult {
+  status: ClaudeDesktopStatus;
+  error?: string;
+}
+
+type ClaudeDesktopInstallResult = "opened" | "cancelled" | "failed";
+
 interface WebviewAPI {
   selectFile: () => Promise<ImageData | null>;
   selectMultipleFiles: () => Promise<ImageData[] | null>;
@@ -25,6 +43,11 @@ declare global {
     drag?: () => void;
     doubleClick?: () => void;
     activateOllama?: () => void;
+    getClaudeDesktopStatus?: () => Promise<ClaudeDesktopStatus>;
+    setClaudeDesktopConnected?: (
+      enabled: boolean,
+    ) => Promise<ClaudeDesktopActionResult>;
+    installClaudeDesktop?: () => Promise<ClaudeDesktopInstallResult>;
     setOnboardingWindow?: (enabled: boolean) => void;
     menu: (items: MenuItem[]) => Promise<string | null>;
     OLLAMA_TOOLS?: boolean;
@@ -48,4 +71,12 @@ declare global {
   }
 }
 
-export type { ImageData, WebviewAPI, ContextMenuItem, ContextMenuResult };
+export type {
+  ClaudeDesktopActionResult,
+  ClaudeDesktopInstallResult,
+  ClaudeDesktopStatus,
+  ContextMenuItem,
+  ContextMenuResult,
+  ImageData,
+  WebviewAPI,
+};

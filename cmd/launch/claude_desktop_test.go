@@ -490,6 +490,19 @@ func TestClaudeDesktopWindowsOpenDoesNotFallBackToClaudeCommand(t *testing.T) {
 	}
 }
 
+func TestClaudeDesktopDarwinOpenTargetsDesktopApp(t *testing.T) {
+	path := "/Applications/Claude.app"
+	if got := claudeDesktopDarwinOpenArgs(path); len(got) != 1 || got[0] != path {
+		t.Fatalf("claudeDesktopDarwinOpenArgs(%q) = %q, want explicit app path", path, got)
+	}
+
+	got := claudeDesktopDarwinOpenArgs("")
+	want := []string{"-b", "com.anthropic.claudefordesktop"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("claudeDesktopDarwinOpenArgs(\"\") = %q, want %q", got, want)
+	}
+}
+
 func TestClaudeDesktopConfigureIgnoresCloudAPIKey(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)

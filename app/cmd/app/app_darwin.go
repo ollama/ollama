@@ -455,6 +455,55 @@ func claudeGatewayPortConflict() bool {
 	return claudeProxyFail == claudeProxyFailurePortConflict
 }
 
+func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
+	claudeProxyMu.Lock()
+	proxyErr := claudeProxyErr
+	proxyFailure := claudeProxyFail
+	claudeProxyMu.Unlock()
+
+	port := 0
+	if portText, err := claudeGatewayPort(); err == nil {
+		port, _ = strconv.Atoi(portText)
+	}
+	installed := claudeDesktopInstalled()
+	configured := installed && claudeDesktop.UsesOllamaGateway()
+	status := claudeDesktopStatus{
+		Supported:    true,
+		Installed:    installed,
+		Connected:    configured && proxyErr == nil,
+		Running:      launch.ClaudeDesktopRunning(),
+		StartFailed:  proxyErr != nil,
+		PortConflict: proxyFailure == claudeProxyFailurePortConflict,
+		GatewayPort:  port,
+	}
+	if proxyErr != nil {
+		status.Error = proxyErr.Error()
+	}
+	return status
+}
+
+func setClaudeDesktopConnection(enabled bool) error {
+	if !claudeDesktopInstalled() {
+		return errors.New("Claude Desktop is not installed")
+	}
+	return setClaudeGatewayInstalled(enabled, launch.ClaudeDesktopRunning())
+}
+
+func requestClaudeDesktopInstall() claudeDesktopInstallResult {
+	return claudeDesktopInstallResultFromCode(int(C.installClaudeDesktop()))
+}
+
+func claudeDesktopInstallResultFromCode(code int) claudeDesktopInstallResult {
+	switch code {
+	case int(C.ClaudeInstallerOpened):
+		return claudeDesktopInstallerOpened
+	case int(C.ClaudeInstallCancelled):
+		return claudeDesktopInstallCancelled
+	default:
+		return claudeDesktopInstallFailed
+	}
+}
+
 //export RefreshClaudeProxyMenu
 func RefreshClaudeProxyMenu() {
 	claudeProxyMu.Lock()

@@ -197,8 +197,8 @@ func osRun(shutdown func(), hasCompletedFirstRun, startHidden, showOnboarding bo
 			}
 		}
 	}
-	runInitialWindowsUI(startHidden, showOnboarding, urlSchemeRequest, startHiddenTasks, handleURLSchemeInCurrentInstance, func() {
-		ptr := wv.Run("/")
+	runInitialWindowsUI(startHidden, showOnboarding, urlSchemeRequest, startHiddenTasks, handleURLSchemeInCurrentInstance, func(path string) {
+		ptr := wv.Run(path)
 
 		// Set the window icon using the tray icon
 		if ptr != nil {
@@ -422,6 +422,18 @@ func runInBackground() {
 func drag(ptr unsafe.Pointer) {}
 
 func doubleClick(ptr unsafe.Pointer) {}
+
+func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
+	return claudeDesktopStatus{Supported: false}
+}
+
+func setClaudeDesktopConnection(_ bool) error {
+	return errors.New("Claude Desktop connection is only supported on macOS")
+}
+
+func requestClaudeDesktopInstall() claudeDesktopInstallResult {
+	return claudeDesktopInstallFailed
+}
 
 // checkAndHandleExistingInstance checks if another instance is running and sends the URL to it
 func checkAndHandleExistingInstance(urlSchemeRequest string) {
