@@ -177,7 +177,8 @@
               "/integrations/goose",
               "/integrations/oh-my-pi",
               "/integrations/pi",
-              "/integrations/pool"
+              "/integrations/pool",
+              "/integrations/operator"
             ]
           },
           {
