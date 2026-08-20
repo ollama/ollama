@@ -319,12 +319,14 @@ static NSImage *integrationAppIcon(NSString *appName,
 @property(assign, nonatomic) BOOL claudeDownloadCancelled;
 @property(assign, nonatomic) BOOL claudeDownloadCompleted;
 @property(assign, nonatomic) BOOL claudeDownloadModalRunning;
+@property(assign, nonatomic) BOOL quitInProgress;
 - (void)openClaudeApp:(id)sender;
 - (void)downloadClaude;
 - (void)finishClaudeDownload;
 - (void)showClaudeDownloadFailure:(NSError *)error;
 - (void)toggleClaudeAppProxy:(NSButton *)sender;
 - (void)refreshClaudeAppState;
+- (void)requestQuit;
 @end
 
 @implementation AppDelegate
@@ -445,7 +447,7 @@ static NSImage *ollamaApplicationIcon(void) {
     [menu addItem:[NSMenuItem separatorItem]];
 
     [menu addItemWithTitle:@"Quit Ollama"
-                    action:@selector(quit)
+                    action:@selector(requestQuit)
              keyEquivalent:@"q"];
 
     self.statusItem = [[NSStatusBar systemStatusBar]
@@ -1045,6 +1047,52 @@ didCompleteWithError:(NSError *)error {
 - (void)hide {
     [NSApp hide:nil];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+}
+
+- (void)requestQuit {
+    if (self.quitInProgress) {
+        return;
+    }
+    if (!IsClaudeGatewayConfigured()) {
+        [self quit];
+        return;
+    }
+
+    BOOL restartClaude = IsClaudeDesktopRunning();
+    if (restartClaude) {
+        NSAlert *alert = [[NSAlert alloc] init];
+        [alert setAlertStyle:NSAlertStyleWarning];
+        [alert setIcon:ollamaApplicationIcon()];
+        [alert setMessageText:@"Restart Claude before quitting Ollama?"];
+        [alert setInformativeText:
+            @"Claude must restart before Ollama quits. Any running task will stop."];
+        [alert addButtonWithTitle:@"Restart Claude and Quit"];
+        [alert addButtonWithTitle:@"Cancel"];
+        if ([alert runModal] != NSAlertFirstButtonReturn) {
+            return;
+        }
+    }
+
+    self.quitInProgress = YES;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        BOOL succeeded = SetClaudeGatewayInstalled(false, restartClaude);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (succeeded) {
+                [self quit];
+                return;
+            }
+
+            self.quitInProgress = NO;
+            [self refreshClaudeAppState];
+            NSAlert *alert = [[NSAlert alloc] init];
+            [alert setAlertStyle:NSAlertStyleWarning];
+            [alert setIcon:ollamaApplicationIcon()];
+            [alert setMessageText:@"Unable to quit Ollama"];
+            [alert setInformativeText:
+                @"Ollama couldn’t update Claude, so it is still running. Check the Ollama log and try again."];
+            [alert runModal];
+        });
+    });
 }
 
 - (void)quit {
