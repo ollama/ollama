@@ -196,9 +196,10 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 			`
 		}
 
-		init += `
+		init += fmt.Sprintf(`
+			window.OLLAMA_PLATFORM = %q;
 			window.OLLAMA_WEBSEARCH = true;
-		`
+		`, runtime.GOOS)
 
 		wv.Init(init)
 
@@ -266,31 +267,7 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 			showWindow(wv.Window())
 		})
 
-		wv.Bind("getClaudeDesktopStatus", func() claudeDesktopStatus {
-			return getClaudeDesktopConnectionStatus()
-		})
-
-		wv.Bind("setClaudeDesktopConnected", func(enabled bool) claudeDesktopActionResult {
-			err := setClaudeDesktopConnection(enabled)
-			result := claudeDesktopActionResult{
-				Status: getClaudeDesktopConnectionStatus(),
-			}
-			if err != nil {
-				result.Error = err.Error()
-			}
-			return result
-		})
-
-		wv.Bind("openClaudeDesktop", func() string {
-			if err := openClaudeDesktopApplication(); err != nil {
-				return err.Error()
-			}
-			return ""
-		})
-
-		wv.Bind("installClaudeDesktop", func() claudeDesktopInstallResult {
-			return requestClaudeDesktopInstall()
-		})
+		bindClaudeDesktop(wv)
 
 		wv.Bind("getShowAppsInMenu", func() bool {
 			return getShowAppsInMenu()

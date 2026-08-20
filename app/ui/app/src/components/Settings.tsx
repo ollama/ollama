@@ -17,6 +17,7 @@ import {
   Squares2X2Icon,
 } from "@heroicons/react/20/solid";
 import { Settings as SettingsType } from "@/gotypes";
+import { isWindowsPlatform } from "@/lib/platform";
 import { useUser } from "@/hooks/useUser";
 import { useCloudStatus } from "@/hooks/useCloudStatus";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -296,9 +297,7 @@ export default function Settings({ embedded = false }: { embedded?: boolean }) {
     );
   }
 
-  const isWindows =
-    typeof navigator !== "undefined" &&
-    navigator.platform.toLowerCase().includes("win");
+  const isWindows = isWindowsPlatform();
 
   return (
     <main

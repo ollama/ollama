@@ -317,6 +317,10 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
+func supportsClaudeDesktopIntegration(goos string) bool {
+	return goos == "darwin"
+}
+
 func (s *Server) getIntegrationStatuses(w http.ResponseWriter, _ *http.Request) error {
 	isInstalled := s.IntegrationInstalled
 	if isInstalled == nil {
@@ -334,14 +338,16 @@ func (s *Server) getIntegrationStatuses(w http.ResponseWriter, _ *http.Request) 
 
 	infos := launch.ListIntegrationInfos()
 	statuses := make([]integrationStatus, 0, len(infos)+2)
-	claudeDesktopInstalled := isInstalled("claude-desktop")
-	statuses = append(statuses, integrationStatus{
-		ID:          "claude-desktop",
-		Name:        "Claude",
-		Description: "Use Ollama models in Claude Desktop",
-		Installed:   &claudeDesktopInstalled,
-		Action:      "connect",
-	})
+	if supportsClaudeDesktopIntegration(runtime.GOOS) {
+		claudeDesktopInstalled := isInstalled("claude-desktop")
+		statuses = append(statuses, integrationStatus{
+			ID:          "claude-desktop",
+			Name:        "Claude",
+			Description: "Use Ollama models in Claude Desktop",
+			Installed:   &claudeDesktopInstalled,
+			Action:      "connect",
+		})
+	}
 
 	byName := make(map[string]launch.IntegrationInfo, len(infos))
 	for _, info := range infos {

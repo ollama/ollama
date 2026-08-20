@@ -146,10 +146,13 @@ func TestGetIntegrationStatuses(t *testing.T) {
 	if len(got) < 5 {
 		t.Fatalf("got %d integrations, want the full registry", len(got))
 	}
-	if got[0].ID != "claude-desktop" || got[0].Action != "connect" || got[0].Command != "" {
-		t.Fatalf("first integration = %+v, want command-free Claude Desktop connect", got[0])
+	wantPrefix := []string{"claude", "codex", "openclaw", "opencode", "droid", "pi", "cline"}
+	if runtime.GOOS == "darwin" {
+		if got[0].ID != "claude-desktop" || got[0].Action != "connect" || got[0].Command != "" {
+			t.Fatalf("first integration = %+v, want command-free Claude Desktop connect", got[0])
+		}
+		wantPrefix = append([]string{"claude-desktop"}, wantPrefix...)
 	}
-	wantPrefix := []string{"claude-desktop", "claude", "codex", "openclaw", "opencode", "droid", "pi", "cline"}
 	for i, want := range wantPrefix {
 		if got[i].ID != want {
 			t.Fatalf("integration %d = %q, want launcher menu order entry %q", i, got[i].ID, want)
@@ -168,29 +171,46 @@ func TestGetIntegrationStatuses(t *testing.T) {
 		}{item.Installed, item.Action, item.Command}
 	}
 
-	for name, want := range map[string]bool{
-		"claude-desktop": true,
-		"opencode":       false,
-		"codex":          true,
-	} {
+	wantInstalled := map[string]bool{
+		"opencode": false,
+		"codex":    true,
+	}
+	if runtime.GOOS == "darwin" {
+		wantInstalled["claude-desktop"] = true
+	} else if _, ok := byID["claude-desktop"]; ok {
+		t.Fatal("Claude Desktop should not be exposed on Windows")
+	}
+	for name, want := range wantInstalled {
 		item, ok := byID[name]
 		if !ok || item.Installed == nil || *item.Installed != want {
 			t.Errorf("%s installed = %v, want %v", name, item.Installed, want)
 		}
 	}
 	if item, ok := byID["claude"]; !ok || item.Command != "ollama launch claude" {
-		t.Fatal("Claude Code should follow Claude Desktop with its launch command")
+		t.Fatal("Claude Code should include its launch command")
 	}
 	if _, ok := byID["chatgpt"]; ok {
 		t.Fatal("ChatGPT should be excluded from onboarding integrations")
 	}
-	wantCount := len(launch.ListIntegrationInfos()) + 1 // Claude Desktop and Terminal replace omitted ChatGPT.
+	wantCount := len(launch.ListIntegrationInfos()) // Terminal replaces omitted ChatGPT.
+	if runtime.GOOS == "darwin" {
+		wantCount++ // Claude Desktop is also available on macOS.
+	}
 	if len(got) != wantCount {
 		t.Fatalf("got %d integrations, want %d launcher entries", len(got), wantCount)
 	}
 	terminal := got[len(got)-1]
 	if terminal.ID != "terminal" || terminal.Installed != nil || terminal.Command != "ollama" {
 		t.Fatalf("last integration = %+v, want Terminal without install status", terminal)
+	}
+}
+
+func TestSupportsClaudeDesktopIntegration(t *testing.T) {
+	if !supportsClaudeDesktopIntegration("darwin") {
+		t.Fatal("Claude Desktop should be available on macOS")
+	}
+	if supportsClaudeDesktopIntegration("windows") {
+		t.Fatal("Claude Desktop should be hidden on Windows")
 	}
 }
 

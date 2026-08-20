@@ -10,6 +10,7 @@ import {
   WelcomeScreen,
 } from "./Onboarding";
 import { isClaudeConnectionComplete } from "@/lib/claudeDesktop";
+import { isWindowsPlatform } from "@/lib/platform";
 import {
   authenticationTimeoutAction,
   isOnboardingZoomShortcut,
@@ -95,6 +96,47 @@ describe("Onboarding", () => {
           />,
         ),
       ).not.toThrow();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("hides the Claude application on Windows", () => {
+    vi.stubGlobal("window", {
+      OLLAMA_PLATFORM: "windows",
+      innerHeight: 660,
+    });
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    try {
+      expect(isWindowsPlatform()).toBe(true);
+      const html = renderToStaticMarkup(
+        <ConnectAppsScreen
+          completionError={null}
+          onRetryCompletion={vi.fn()}
+          initialIntegrations={[
+            {
+              id: "claude-desktop",
+              name: "Claude",
+              description: "Use Ollama models in Claude Desktop",
+              installed: true,
+              action: "connect",
+            },
+            {
+              id: "claude",
+              name: "Claude Code",
+              description: "Anthropic's coding tool with subagents",
+              installed: true,
+              action: "copy",
+              command: "ollama launch claude",
+            },
+          ]}
+        />,
+      );
+
+      expect(html).not.toContain('id="applications-heading"');
+      expect(html).not.toContain("Use Ollama models in Claude Desktop");
+      expect(html).toContain('id="terminal-heading"');
+      expect(html).toContain("ollama launch claude");
     } finally {
       vi.unstubAllGlobals();
     }

@@ -12,6 +12,7 @@ import {
 } from "@/api";
 import { INTEGRATION_ICONS } from "@/lib/launchCommands";
 import { isClaudeConnectionComplete } from "@/lib/claudeDesktop";
+import { isWindowsPlatform } from "@/lib/platform";
 import type { ClaudeDesktopStatus } from "@/types/webview";
 import { copyTextToClipboard } from "@/utils/clipboard";
 import {
@@ -366,9 +367,7 @@ export function ConnectAppsScreen({
   initialClaudeStatus,
   embedded = false,
 }: ConnectAppsScreenProps) {
-  const isWindows =
-    typeof navigator !== "undefined" &&
-    navigator.platform.toLowerCase().includes("win");
+  const isWindows = isWindowsPlatform();
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
   const [claudeError, setClaudeError] = useState<string | null>(null);
   const [claudeStatus, setClaudeStatus] = useState<ClaudeDesktopStatus | null>(
@@ -430,6 +429,7 @@ export function ConnectAppsScreen({
   }, [claudeError, copiedCommand]);
 
   const refreshClaudeStatus = useCallback(async () => {
+    if (isWindows) return null;
     if (!window.getClaudeDesktopStatus) return null;
     try {
       const status = await window.getClaudeDesktopStatus();
@@ -439,7 +439,7 @@ export function ConnectAppsScreen({
       setClaudeError("Ollama could not read the Claude connection status.");
       return null;
     }
-  }, []);
+  }, [isWindows]);
 
   const openConnectedClaude = useCallback(
     async (status: ClaudeDesktopStatus) => {
@@ -647,9 +647,9 @@ export function ConnectAppsScreen({
     }
   };
 
-  const claudeIntegration = integrationStatuses?.find(
-    (item) => item.id === "claude-desktop",
-  );
+  const claudeIntegration = isWindows
+    ? undefined
+    : integrationStatuses?.find((item) => item.id === "claude-desktop");
   const launchIntegrations =
     integrationStatuses?.filter(
       (item) => item.id !== "claude-desktop" && item.command,
