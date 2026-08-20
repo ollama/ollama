@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "privategpt"
+version = "0.1.0"
+description = ""
+authors = ["Ivan Martinez <ivanmartit@gmail.com>"]
+license = "Apache Version 2.0"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+langchain = "0.0.261"
+gpt4all = "^1.0.3"
+chromadb = "^0.3.26"
+PyMuPDF = "^1.22.5"
+python-dotenv = "^1.0.0"
+unstructured = "^0.8.0"
+extract-msg = "^0.41.5"
+tabulate = "^0.9.0"
+pandoc = "^2.3"
+pypandoc = "^1.11"
+tqdm = "^4.65.0"
+sentence-transformers = "^2.2.2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
