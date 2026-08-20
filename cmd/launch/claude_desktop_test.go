@@ -33,20 +33,17 @@ func withClaudeDesktopProcessHooks(t *testing.T, running func() bool, quit func(
 	oldOpen := claudeDesktopOpenApp
 	oldOpenPath := claudeDesktopOpenAppPath
 	oldRunningPath := claudeDesktopRunningAppPath
-	oldSleep := claudeDesktopSleep
-	claudeDesktopIsRunning = running
-	claudeDesktopQuitApp = quit
+	claudeDesktopIsRunning = func(context.Context) (bool, error) { return running(), nil }
+	claudeDesktopQuitApp = func(context.Context) error { return quit() }
 	claudeDesktopOpenApp = open
 	claudeDesktopOpenAppPath = oldOpenPath
 	claudeDesktopRunningAppPath = oldRunningPath
-	claudeDesktopSleep = func(time.Duration) {}
 	t.Cleanup(func() {
 		claudeDesktopIsRunning = oldRunning
 		claudeDesktopQuitApp = oldQuit
 		claudeDesktopOpenApp = oldOpen
 		claudeDesktopOpenAppPath = oldOpenPath
 		claudeDesktopRunningAppPath = oldRunningPath
-		claudeDesktopSleep = oldSleep
 	})
 }
 
@@ -287,6 +284,41 @@ func TestClaudeDesktopConfigureWritesOllamaCloudProfile(t *testing.T) {
 	}
 }
 
+func TestClaudeDesktopConfigureActivatesNormalProfileLast(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withClaudeDesktopPlatform(t, "darwin")
+
+	paths, err := claudeDesktopConfigPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.normalConfig), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.desktopConfig), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.normalConfig, []byte(`{"deploymentMode":"1p","existing":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.desktopConfig, []byte(`{"deploymentMode":`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = (&ClaudeDesktop{}).ConfigureAutodiscovery()
+	if err == nil {
+		t.Fatal("ConfigureAutodiscovery succeeded with malformed third-party config")
+	}
+	normal := claudeDesktopReadJSON(t, paths.normalConfig)
+	if normal["deploymentMode"] != "1p" || normal["existing"] != true {
+		t.Fatalf("normal profile changed before third-party assets were ready: %v", normal)
+	}
+	if (&ClaudeDesktop{}).UsesOllamaGateway() {
+		t.Fatal("failed configuration left Claude routed through Ollama")
+	}
+}
+
 func TestClaudeDesktopConfigureAutodiscoveryRemovesExistingModelCatalog(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
@@ -432,7 +464,9 @@ func TestWaitForClaudeDesktopExitUsesRunningHook(t *testing.T) {
 		func() error { return nil },
 	)
 
-	if err := waitForClaudeDesktopExit(time.Second); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := waitForClaudeDesktopExit(ctx); err != nil {
 		t.Fatalf("waitForClaudeDesktopExit returned error: %v", err)
 	}
 	if runningChecks < 2 {
@@ -939,6 +973,156 @@ func TestClaudeDesktopSetInstalledFromDesktopDoesNotOpenStoppedAppWhenDisabled(t
 	}
 	if c.AutodiscoveryConfigured() {
 		t.Fatal("Claude gateway remains configured after disabling")
+	}
+}
+
+func TestClaudeDesktopRestoreForShutdownDoesNotReopenApp(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withClaudeDesktopPlatform(t, "darwin")
+	c := &ClaudeDesktop{}
+	if err := c.ConfigureAutodiscovery(); err != nil {
+		t.Fatal(err)
+	}
+	paths, err := claudeDesktopConfigPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	running := true
+	quitCalls := 0
+	withClaudeDesktopProcessHooks(t,
+		func() bool { return running },
+		func() error {
+			quitCalls++
+			running = false
+			return os.WriteFile(paths.profile, []byte(`{"provider":"ollama"}`), 0o644)
+		},
+		func() error {
+			t.Fatal("Claude reopened during shutdown")
+			return nil
+		},
+	)
+
+	if err := c.RestoreForShutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if quitCalls != 1 {
+		t.Fatalf("quit calls = %d, want 1", quitCalls)
+	}
+	if c.UsesOllamaGateway() {
+		t.Fatal("Claude gateway remains configured after shutdown restore")
+	}
+}
+
+func TestClaudeDesktopRestoreForShutdownBoundsHungQuit(t *testing.T) {
+	withClaudeDesktopPlatform(t, "darwin")
+	oldRunning := claudeDesktopIsRunning
+	oldQuit := claudeDesktopQuitApp
+	claudeDesktopIsRunning = func(context.Context) (bool, error) { return true, nil }
+	claudeDesktopQuitApp = func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	t.Cleanup(func() {
+		claudeDesktopIsRunning = oldRunning
+		claudeDesktopQuitApp = oldQuit
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	err := (&ClaudeDesktop{}).RestoreForShutdown(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("RestoreForShutdown error = %v, want deadline exceeded", err)
+	}
+}
+
+func TestClaudeDesktopRestoreForShutdownBoundsExitWait(t *testing.T) {
+	withClaudeDesktopPlatform(t, "darwin")
+	oldRunning := claudeDesktopIsRunning
+	oldQuit := claudeDesktopQuitApp
+	claudeDesktopIsRunning = func(context.Context) (bool, error) { return true, nil }
+	claudeDesktopQuitApp = func(context.Context) error { return nil }
+	t.Cleanup(func() {
+		claudeDesktopIsRunning = oldRunning
+		claudeDesktopQuitApp = oldQuit
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	err := (&ClaudeDesktop{}).RestoreForShutdown(ctx)
+	if err == nil || !strings.Contains(err.Error(), "did not quit") {
+		t.Fatalf("RestoreForShutdown error = %v, want bounded exit error", err)
+	}
+}
+
+func TestClaudeDesktopRestoreForShutdownPreservesProfileWhenInitialCheckExpires(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	withClaudeDesktopPlatform(t, "darwin")
+	c := &ClaudeDesktop{}
+	if err := c.ConfigureAutodiscovery(); err != nil {
+		t.Fatal(err)
+	}
+
+	oldRunning := claudeDesktopIsRunning
+	oldQuit := claudeDesktopQuitApp
+	claudeDesktopIsRunning = func(ctx context.Context) (bool, error) {
+		<-ctx.Done()
+		return false, ctx.Err()
+	}
+	claudeDesktopQuitApp = func(context.Context) error {
+		t.Fatal("quit called after an indeterminate process check")
+		return nil
+	}
+	t.Cleanup(func() {
+		claudeDesktopIsRunning = oldRunning
+		claudeDesktopQuitApp = oldQuit
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	err := c.RestoreForShutdown(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("RestoreForShutdown error = %v, want deadline exceeded", err)
+	}
+	if !c.UsesOllamaGateway() {
+		t.Fatal("indeterminate initial process check restored the profile")
+	}
+}
+
+func TestClaudeDesktopRestoreForShutdownPreservesProfileWhenExitCheckExpires(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	withClaudeDesktopPlatform(t, "darwin")
+	c := &ClaudeDesktop{}
+	if err := c.ConfigureAutodiscovery(); err != nil {
+		t.Fatal(err)
+	}
+
+	oldRunning := claudeDesktopIsRunning
+	oldQuit := claudeDesktopQuitApp
+	checks := 0
+	claudeDesktopIsRunning = func(ctx context.Context) (bool, error) {
+		checks++
+		if checks == 1 {
+			return true, nil
+		}
+		<-ctx.Done()
+		return false, ctx.Err()
+	}
+	claudeDesktopQuitApp = func(context.Context) error { return nil }
+	t.Cleanup(func() {
+		claudeDesktopIsRunning = oldRunning
+		claudeDesktopQuitApp = oldQuit
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	err := c.RestoreForShutdown(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("RestoreForShutdown error = %v, want deadline exceeded", err)
+	}
+	if !c.UsesOllamaGateway() {
+		t.Fatal("indeterminate exit process check restored the profile")
 	}
 }
 

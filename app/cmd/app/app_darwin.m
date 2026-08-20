@@ -121,6 +121,7 @@ static NSImage *integrationAppIcon(NSString *appName,
                    openAction:(SEL)openAction
                  toggleAction:(SEL)toggleAction;
 - (void)setIntegrationActive:(BOOL)active;
+- (void)setIntegrationReady:(BOOL)ready;
 - (void)setActiveStatusText:(NSString *)status;
 - (void)setInactiveStatusText:(NSString *)status;
 - (void)resetHover;
@@ -284,10 +285,14 @@ static NSImage *integrationAppIcon(NSString *appName,
 - (void)setIntegrationActive:(BOOL)active {
     self.integrationSwitch.state = active ? NSControlStateValueOn
                                           : NSControlStateValueOff;
-    self.action = active ? self.integrationOpenAction : nil;
-    self.openButton.enabled = active;
-    self.openButton.alphaValue = active ? 1.0 : 0.45;
+    [self setIntegrationReady:active];
     [self updateAppearance];
+}
+
+- (void)setIntegrationReady:(BOOL)ready {
+    self.action = ready ? self.integrationOpenAction : nil;
+    self.openButton.enabled = ready;
+    self.openButton.alphaValue = ready ? 1.0 : 0.45;
 }
 
 - (void)setActiveStatusText:(NSString *)status {
@@ -309,6 +314,7 @@ static NSImage *integrationAppIcon(NSString *appName,
 @property(strong, nonatomic) NSMenuItem *updateAvailableMenuItem;
 @property(strong, nonatomic) NSMenuItem *restartMenuItem;
 @property(assign, nonatomic) BOOL claudeAppEnabled;
+@property(assign, nonatomic) BOOL claudeAppReady;
 @property(strong, nonatomic) IntegrationMenuRow *claudeAppRow;
 @property(strong, nonatomic) NSURLSession *claudeDownloadSession;
 @property(strong, nonatomic) NSURLSessionDownloadTask *claudeDownloadTask;
@@ -320,6 +326,8 @@ static NSImage *integrationAppIcon(NSString *appName,
 @property(assign, nonatomic) BOOL claudeDownloadCompleted;
 @property(assign, nonatomic) BOOL claudeDownloadModalRunning;
 @property(assign, nonatomic) BOOL quitInProgress;
+@property(assign, nonatomic) BOOL systemTerminationReplyPending;
+@property(strong, nonatomic) NSApplication *systemTerminationApplication;
 - (void)openClaudeApp:(id)sender;
 - (void)downloadClaude;
 - (void)finishClaudeDownload;
@@ -327,6 +335,7 @@ static NSImage *integrationAppIcon(NSString *appName,
 - (void)toggleClaudeAppProxy:(NSButton *)sender;
 - (void)refreshClaudeAppState;
 - (void)requestQuit;
+- (void)completeSystemTermination;
 @end
 
 @implementation AppDelegate
@@ -603,14 +612,18 @@ static NSImage *ollamaApplicationIcon(void) {
     BOOL installed = IsClaudeDesktopInstalled();
     BOOL startFailed = ClaudeGatewayStartFailed();
     BOOL portConflict = startFailed && ClaudeGatewayPortConflict();
-    self.claudeAppEnabled = installed && IsClaudeGatewayConfigured() &&
-                            !startFailed;
-    [self.claudeAppRow setInactiveStatusText:!installed
-        ? @"Not installed"
-        : (portConflict
-            ? [NSString stringWithFormat:@"Port %d is in use", ClaudeGatewayPort()]
-            : (startFailed ? @"Unable to use Ollama" : nil))];
+    BOOL configured = installed && IsClaudeGatewayConfigured();
+    NSString *failureStatus = portConflict
+        ? [NSString stringWithFormat:@"Port %d is in use", ClaudeGatewayPort()]
+        : (startFailed ? @"Unable to use Ollama" : nil);
+    self.claudeAppEnabled = configured;
+    self.claudeAppReady = configured && !startFailed;
+    [self.claudeAppRow setActiveStatusText:configured ? failureStatus : nil];
+    [self.claudeAppRow setInactiveStatusText:configured
+        ? nil
+        : (!installed ? @"Not installed" : failureStatus)];
     [self.claudeAppRow setIntegrationActive:self.claudeAppEnabled];
+    [self.claudeAppRow setIntegrationReady:self.claudeAppReady];
     RefreshClaudeProxyMenu();
 }
 
@@ -647,7 +660,7 @@ static NSImage *ollamaApplicationIcon(void) {
 
 - (void)openClaudeApp:(id)sender {
     (void)sender;
-    if (!self.claudeAppEnabled) {
+    if (!self.claudeAppReady) {
         return;
     }
     [self.statusItem.menu cancelTracking];
@@ -930,7 +943,7 @@ didCompleteWithError:(NSError *)error {
         [restartAlert addButtonWithTitle:@"Restart Claude Desktop"];
         [restartAlert addButtonWithTitle:@"Cancel"];
         if ([restartAlert runModal] != NSAlertFirstButtonReturn) {
-            [self.claudeAppRow setIntegrationActive:!enabled];
+            [self refreshClaudeAppState];
             return;
         }
     }
@@ -959,9 +972,13 @@ didCompleteWithError:(NSError *)error {
             }
 
             self.claudeAppEnabled = enabled;
+            self.claudeAppReady = enabled;
+            [self.claudeAppRow setActiveStatusText:nil];
             [self.claudeAppRow setInactiveStatusText:nil];
             [self.claudeAppRow setIntegrationActive:enabled];
+            [self.claudeAppRow setIntegrationReady:enabled];
             if (enabled) {
+                RefreshClaudeProxyMenu();
                 [self openClaudeApp:nil];
             }
         });
@@ -994,14 +1011,42 @@ didCompleteWithError:(NSError *)error {
 }
 
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
-    // Allow termination if the system is shutting down or restarting
     if (self.systemShutdownInProgress) {
-        return NSTerminateNow;
+        if (!IsClaudeGatewayConfigured()) {
+            return NSTerminateNow;
+        }
+        self.systemTerminationApplication = sender;
+        self.systemTerminationReplyPending = YES;
+        if (self.quitInProgress) {
+            return NSTerminateLater;
+        }
+        self.quitInProgress = YES;
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            BOOL succeeded = RestoreClaudeGatewayForShutdown();
+            if (!succeeded) {
+                appLogInfo(@"Unable to restore Claude during system shutdown");
+            }
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [self completeSystemTermination];
+            });
+        });
+        return NSTerminateLater;
     }
     // Otherwise just hide the app (for Cmd+Q, close button, etc.)
     [NSApp hide:nil];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
     return NSTerminateCancel;
+}
+
+- (void)completeSystemTermination {
+    if (!self.systemTerminationReplyPending) {
+        return;
+    }
+    NSApplication *application = self.systemTerminationApplication;
+    self.systemTerminationReplyPending = NO;
+    self.systemTerminationApplication = nil;
+    self.quitInProgress = NO;
+    [application replyToApplicationShouldTerminate:YES];
 }
 
 - (IBAction)terminate:(id)sender {
@@ -1077,6 +1122,13 @@ didCompleteWithError:(NSError *)error {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         BOOL succeeded = SetClaudeGatewayInstalled(false, restartClaude);
         dispatch_async(dispatch_get_main_queue(), ^{
+            if (self.systemTerminationReplyPending) {
+                if (!succeeded) {
+                    appLogInfo(@"Unable to restore Claude during system shutdown");
+                }
+                [self completeSystemTermination];
+                return;
+            }
             if (succeeded) {
                 [self quit];
                 return;
@@ -1375,6 +1427,28 @@ void run(bool so, bool sh) {
     StopUI();
 }
 
+static BOOL isOllamaApplication(NSRunningApplication *app) {
+    NSString *bundleId = app.bundleIdentifier;
+    if (bundleId == nil || bundleId.length == 0) {
+        return NO;
+    }
+    return [bundleId isEqualToString:[[NSBundle mainBundle] bundleIdentifier]] ||
+        [bundleId isEqualToString:@"ai.ollama.ollama"] ||
+        [bundleId isEqualToString:@"com.electron.ollama"];
+}
+
+bool otherOllamaInstanceRunning(void) {
+    pid_t myPid = getpid();
+    for (NSRunningApplication *app in
+         [[NSWorkspace sharedWorkspace] runningApplications]) {
+        if (isOllamaApplication(app) && app.processIdentifier > 0 &&
+            app.processIdentifier != myPid) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // killOtherInstances kills all other instances of the app currently
 // running. This way we can ensure that only the most recently started
 // instance of Ollama is running
@@ -1383,23 +1457,15 @@ void killOtherInstances() {
     NSArray *apps = [[NSWorkspace sharedWorkspace] runningApplications];
 
     for (NSRunningApplication *app in apps) {
-        NSString *bundleId = app.bundleIdentifier;
-        
-        // Skip apps without bundle identifiers
-        if (!bundleId || [bundleId length] == 0) {
-            continue;
-        }
-        
-        if ([bundleId isEqualToString:[[NSBundle mainBundle] bundleIdentifier]] ||
-            [bundleId isEqualToString:@"ai.ollama.ollama"] ||
-            [bundleId isEqualToString:@"com.electron.ollama"]) {
-            
+        if (isOllamaApplication(app)) {
             pid_t pid = app.processIdentifier;
             if (pid != myPid && pid > 0) {
                 appLogInfo([NSString stringWithFormat:@"terminating other ollama instance %d", pid]);
-                kill(pid, SIGTERM);
+                // Preserve the Claude profile while the replacement instance
+                // takes ownership of the local gateway.
+                kill(pid, SIGUSR1);
             } else if (pid == -1) {
-                appLogInfo([NSString stringWithFormat:@"skipping app with invalid pid: %@", bundleId]);
+                appLogInfo([NSString stringWithFormat:@"skipping app with invalid pid: %@", app.bundleIdentifier]);
             }
         }
     }

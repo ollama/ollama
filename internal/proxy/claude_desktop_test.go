@@ -148,11 +148,18 @@ func TestGatewayPrunesCloudModelsWhenSignedOut(t *testing.T) {
 	defer upstream.Close()
 
 	var cloudModelsAvailable atomic.Bool
+	var localModelAvailable atomic.Bool
 	p, err := NewClaudeDesktop(ClaudeDesktopConfig{
 		ListenAddr:           "127.0.0.1:0",
 		OllamaURL:            upstream.URL,
 		Model:                "kimi-k3:cloud",
 		CloudModelsAvailable: func(context.Context) bool { return cloudModelsAvailable.Load() },
+		ListLocalModels: func(context.Context) ([]string, error) {
+			if localModelAvailable.Load() {
+				return []string{"qwen3.8:27b-mlx"}, nil
+			}
+			return nil, nil
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -193,6 +200,12 @@ func TestGatewayPrunesCloudModelsWhenSignedOut(t *testing.T) {
 	}
 
 	catalog := fetchCatalog()
+	if len(catalog.Data) != 0 || catalog.FirstID != "" || catalog.LastID != "" {
+		t.Fatalf("signed-out empty catalog = %+v", catalog)
+	}
+
+	localModelAvailable.Store(true)
+	catalog = fetchCatalog()
 	if len(catalog.Data) != 1 || catalog.Data[0].DisplayName != "Qwen3.8 MLX" {
 		t.Fatalf("signed-out catalog = %+v, want local model only", catalog.Data)
 	}

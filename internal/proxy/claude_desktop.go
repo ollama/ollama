@@ -110,6 +110,7 @@ type ClaudeDesktopConfig struct {
 	Logger               *slog.Logger
 	OnCountsChanged      func(ClaudeDesktopCounts)
 	CloudModelsAvailable func(context.Context) bool
+	ListLocalModels      func(context.Context) ([]string, error)
 }
 
 // ClaudeDesktopCounts reports requests routed through the proxy.
@@ -134,6 +135,7 @@ type ClaudeDesktop struct {
 	model                string
 	onCountsChanged      func(ClaudeDesktopCounts)
 	cloudModelsAvailable func(context.Context) bool
+	listLocalModels      func(context.Context) ([]string, error)
 	routed               atomic.Uint64
 	shutdown             chan struct{}
 	shutdownOnce         sync.Once
@@ -183,6 +185,7 @@ func NewClaudeDesktop(config ClaudeDesktopConfig) (*ClaudeDesktop, error) {
 		model:                config.Model,
 		onCountsChanged:      config.OnCountsChanged,
 		cloudModelsAvailable: config.CloudModelsAvailable,
+		listLocalModels:      config.ListLocalModels,
 		shutdown:             make(chan struct{}),
 		readyWait:            upstreamReadyTimeout,
 		readyPoll:            upstreamReadyPoll,
@@ -454,13 +457,34 @@ func (p *ClaudeDesktop) markUpstreamNotReady() {
 }
 
 func (p *ClaudeDesktop) serveModels(w http.ResponseWriter, ctx context.Context) {
-	models := claudeModels
-	if p.cloudModelsAvailable != nil && !p.cloudModelsAvailable(ctx) {
-		models = make([]gatewayModel, 0, len(claudeModels))
-		for _, model := range claudeModels {
-			if !modelref.HasExplicitCloudSource(model.OllamaModel) {
+	cloudModelsAvailable := p.cloudModelsAvailable == nil || p.cloudModelsAvailable(ctx)
+	var localModels map[string]struct{}
+	if p.listLocalModels != nil {
+		localModels = make(map[string]struct{})
+		names, err := p.listLocalModels(ctx)
+		if err != nil {
+			p.logger.Debug("could not list local models for Claude", "error", err)
+		} else {
+			for _, name := range names {
+				localModels[name] = struct{}{}
+			}
+		}
+	}
+
+	models := make([]gatewayModel, 0, len(claudeModels))
+	for _, model := range claudeModels {
+		if modelref.HasExplicitCloudSource(model.OllamaModel) {
+			if cloudModelsAvailable {
 				models = append(models, model)
 			}
+			continue
+		}
+		if localModels == nil {
+			models = append(models, model)
+			continue
+		}
+		if _, ok := localModels[model.OllamaModel]; ok {
+			models = append(models, model)
 		}
 	}
 

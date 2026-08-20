@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -66,6 +67,9 @@ var (
 
 	claudeDesktopInstalled = launch.ClaudeDesktopInstalled
 	claudeProxyListenAddr  = proxy.DefaultClaudeDesktopListenAddr
+	claudeProxyRetryWait   = 750 * time.Millisecond
+	claudeProxyRetryPoll   = 50 * time.Millisecond
+	claudeShutdownTimeout  = 30 * time.Second
 )
 
 // TODO(jmorganca): pre-create the window and pass
@@ -203,6 +207,21 @@ func UpdateAvailable(ver string) error {
 }
 
 func osRun(_ func(), hasCompletedFirstRun, startHidden, showOnboarding bool, _ string) {
+	handoffSignal := make(chan os.Signal, 1)
+	handoffDone := make(chan struct{})
+	signal.Notify(handoffSignal, syscall.SIGUSR1)
+	defer signal.Stop(handoffSignal)
+	defer close(handoffDone)
+	go func() {
+		select {
+		case <-handoffSignal:
+			slog.Info("received app handoff signal, shutting down")
+			stopClaudeAppProxy()
+			C.quit()
+		case <-handoffDone:
+		}
+	}()
+
 	registerLaunchAgent(hasCompletedFirstRun)
 	if err := reconcileClaudeAppProxy(); err != nil {
 		slog.Warn("failed to start Claude gateway", "error", err)
@@ -248,40 +267,59 @@ func startClaudeAppProxy() error {
 	}
 	ollamaClient := api.NewClient(ollamaURL, http.DefaultClient)
 	gateway, err := proxy.NewClaudeDesktop(proxy.ClaudeDesktopConfig{
-		ListenAddr:           claudeProxyListenAddr,
-		OllamaURL:            ollamaURL.String(),
-		Model:                "glm-5.2:cloud",
-		Logger:               slog.Default(),
-		OnCountsChanged:      updateClaudeProxyMenu,
-		CloudModelsAvailable: func(ctx context.Context) bool { return claudeCloudModelsAvailable(ctx, ollamaClient.Whoami) },
+		ListenAddr:      claudeProxyListenAddr,
+		OllamaURL:       ollamaURL.String(),
+		Model:           "glm-5.2:cloud",
+		Logger:          slog.Default(),
+		OnCountsChanged: updateClaudeProxyMenu,
+		CloudModelsAvailable: func(ctx context.Context) bool {
+			return claudeCloudModelsAvailable(ctx, ollamaClient.CloudStatusExperimental, ollamaClient.Whoami)
+		},
+		ListLocalModels: func(ctx context.Context) ([]string, error) {
+			return claudeLocalModels(ctx, ollamaClient.List)
+		},
 	})
 	if err != nil {
 		return setClaudeProxyFailure(err, claudeProxyFailureNone)
 	}
-	if err := gateway.Start(); err != nil {
+	if err := startClaudeGateway(gateway); err != nil {
 		_ = gateway.Close(context.Background())
-		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-		defer cancel()
-		probeErr := proxy.ProbeClaudeDesktop(ctx, "http://"+claudeProxyListenAddr)
-		if probeErr == nil {
-			slog.Info("Claude gateway is already running", "address", claudeProxyListenAddr)
-			clearClaudeProxyFailure()
-			return nil
-		}
 		failure := claudeProxyFailureNone
 		if errors.Is(err, syscall.EADDRINUSE) {
 			failure = claudeProxyFailurePortConflict
 		}
-		return setClaudeProxyFailure(fmt.Errorf("%w: %v", err, probeErr), failure)
+		return setClaudeProxyFailure(err, failure)
 	}
 	claudeAppProxy = gateway
 	clearClaudeProxyFailure()
 	return nil
 }
 
-func claudeCloudModelsAvailable(ctx context.Context, whoami func(context.Context) (*api.UserResponse, error)) bool {
+func startClaudeGateway(gateway *proxy.ClaudeDesktop) error {
+	deadline := time.Now().Add(claudeProxyRetryWait)
+	for {
+		err := gateway.Start()
+		if err == nil || !errors.Is(err, syscall.EADDRINUSE) || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(claudeProxyRetryPoll)
+	}
+}
+
+func claudeCloudModelsAvailable(
+	ctx context.Context,
+	cloudStatus func(context.Context) (*api.StatusResponse, error),
+	whoami func(context.Context) (*api.UserResponse, error),
+) bool {
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
+	status, err := cloudStatus(ctx)
+	if err != nil {
+		slog.Debug("could not check whether Ollama cloud is enabled", "error", err)
+	} else if status != nil && status.Cloud.Disabled {
+		return false
+	}
+
 	user, err := whoami(ctx)
 	if err != nil {
 		var authErr api.AuthorizationError
@@ -292,6 +330,32 @@ func claudeCloudModelsAvailable(ctx context.Context, whoami func(context.Context
 		return true
 	}
 	return user != nil && strings.TrimSpace(user.Name) != ""
+}
+
+func claudeLocalModels(
+	ctx context.Context,
+	list func(context.Context) (*api.ListResponse, error),
+) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	response, err := list(ctx)
+	if err != nil || response == nil {
+		return nil, err
+	}
+
+	names := make([]string, 0, len(response.Models)*2)
+	for _, model := range response.Models {
+		if model.RemoteModel != "" || model.RemoteHost != "" {
+			continue
+		}
+		if model.Name != "" {
+			names = append(names, model.Name)
+		}
+		if model.Model != "" && model.Model != model.Name {
+			names = append(names, model.Model)
+		}
+	}
+	return names, nil
 }
 
 func claudeGatewayPort() (string, error) {
@@ -423,7 +487,44 @@ func stopClaudeAppProxy() {
 }
 
 func quit() {
+	ctx, cancel := context.WithTimeout(context.Background(), claudeShutdownTimeout)
+	defer cancel()
+	handoff := bool(C.otherOllamaInstanceRunning())
+	if err := restoreClaudeAppForTermination(ctx, handoff); err != nil {
+		slog.Warn("failed to restore Claude before quitting", "error", err)
+	}
 	C.quit()
+}
+
+func restoreClaudeBeforeQuit(ctx context.Context, handoff, configured bool, restore func(context.Context) error) error {
+	if handoff || !configured {
+		return nil
+	}
+	return restore(ctx)
+}
+
+func restoreClaudeAppForTermination(ctx context.Context, handoff bool) error {
+	if handoff {
+		stopClaudeAppProxy()
+		return nil
+	}
+	configured := claudeDesktop.UsesOllamaGateway()
+	err := restoreClaudeBeforeQuit(ctx, handoff, configured, claudeDesktop.RestoreForShutdown)
+	if !claudeDesktop.UsesOllamaGateway() {
+		stopClaudeAppProxy()
+	}
+	return err
+}
+
+//export RestoreClaudeGatewayForShutdown
+func RestoreClaudeGatewayForShutdown() C.bool {
+	ctx, cancel := context.WithTimeout(context.Background(), claudeShutdownTimeout)
+	defer cancel()
+	if err := restoreClaudeAppForTermination(ctx, false); err != nil {
+		slog.Warn("failed to restore Claude during system shutdown", "error", err)
+		return C._Bool(false)
+	}
+	return C._Bool(true)
 }
 
 func LaunchNewApp() {

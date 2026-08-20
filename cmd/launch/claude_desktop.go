@@ -41,10 +41,9 @@ var (
 	claudeDesktopOpenApp        = defaultClaudeDesktopOpenApp
 	claudeDesktopOpenAppPath    = defaultClaudeDesktopOpenAppPath
 	claudeDesktopQuitApp        = defaultClaudeDesktopQuitApp
-	claudeDesktopIsRunning      = ClaudeDesktopRunning
+	claudeDesktopIsRunning      = defaultClaudeDesktopRunning
 	claudeDesktopRunningAppPath = defaultClaudeDesktopRunningAppPath
 	claudeDesktopGlob           = filepath.Glob
-	claudeDesktopSleep          = time.Sleep
 	claudeDesktopProbeGateway   = proxy.ProbeClaudeDesktop
 )
 
@@ -115,18 +114,16 @@ func (c *ClaudeDesktop) SetInstalledFromDesktop(installed, restart bool) error {
 		return err
 	}
 
-	applyProfile := func() error {
-		targets, err := claudeDesktopTargetPaths()
-		if err != nil {
-			return err
-		}
-		return restoreClaudeDesktopTargets(targets)
-	}
+	applyProfile := restoreClaudeDesktopProfile
 	if installed {
 		applyProfile = c.ConfigureAutodiscovery
 	}
 
-	if !claudeDesktopIsRunning() {
+	running, err := claudeDesktopIsRunning(context.Background())
+	if err != nil {
+		return fmt.Errorf("check whether Claude Desktop is running: %w", err)
+	}
+	if !running {
 		if err := applyProfile(); err != nil {
 			return err
 		}
@@ -139,6 +136,35 @@ func (c *ClaudeDesktop) SetInstalledFromDesktop(installed, restart bool) error {
 		return errors.New("Claude Desktop restart confirmation is required before changing its profile")
 	}
 	return restartClaudeDesktop(applyProfile)
+}
+
+// RestoreForShutdown restores Claude's usual profile without reopening the app.
+func (c *ClaudeDesktop) RestoreForShutdown(ctx context.Context) error {
+	if err := claudeDesktopSupported(); err != nil {
+		return err
+	}
+	running, err := claudeDesktopIsRunning(ctx)
+	if err != nil {
+		return fmt.Errorf("check whether Claude Desktop is running: %w", err)
+	}
+	if !running {
+		return restoreClaudeDesktopProfile()
+	}
+	if err := claudeDesktopQuitApp(ctx); err != nil {
+		return fmt.Errorf("quit Claude Desktop: %w", err)
+	}
+	if err := waitForClaudeDesktopExit(ctx); err != nil {
+		return err
+	}
+	return restoreClaudeDesktopProfile()
+}
+
+func restoreClaudeDesktopProfile() error {
+	targets, err := claudeDesktopTargetPaths()
+	if err != nil {
+		return err
+	}
+	return restoreClaudeDesktopTargets(targets)
 }
 
 func (c *ClaudeDesktop) Onboard() error {
@@ -184,19 +210,19 @@ func (c *ClaudeDesktop) Restore() error {
 }
 
 func configureClaudeDesktopTargets(targets claudeDesktopTargets, baseURL, apiKey string) error {
-	for _, path := range targets.normalConfigs {
-		if err := writeClaudeDesktopDeploymentMode(path, "3p"); err != nil {
-			return err
-		}
-	}
 	for _, target := range targets.thirdPartyProfiles {
-		if err := writeClaudeDesktopDeploymentMode(target.desktopConfig, "3p"); err != nil {
+		if err := writeClaudeDesktopGatewayProfile(target.profile, baseURL, apiKey, true); err != nil {
 			return err
 		}
 		if err := writeClaudeDesktopMeta(target.meta, claudeDesktopProfileID, claudeDesktopProfileName); err != nil {
 			return err
 		}
-		if err := writeClaudeDesktopGatewayProfile(target.profile, baseURL, apiKey, true); err != nil {
+		if err := writeClaudeDesktopDeploymentMode(target.desktopConfig, "3p"); err != nil {
+			return err
+		}
+	}
+	for _, path := range targets.normalConfigs {
+		if err := writeClaudeDesktopDeploymentMode(path, "3p"); err != nil {
 			return err
 		}
 	}
@@ -254,7 +280,8 @@ func ClaudeDesktopInstalled() bool {
 	if claudeDesktopGOOS != "windows" {
 		return false
 	}
-	if claudeDesktopAppPath() != "" || claudeDesktopIsRunning() {
+	running, _ := claudeDesktopIsRunning(context.Background())
+	if claudeDesktopAppPath() != "" || running {
 		return true
 	}
 	for _, dir := range claudeDesktopProfileDirCandidates(false) {
@@ -771,7 +798,11 @@ func claudeDesktopAnySlice(value any) []any {
 }
 
 func claudeDesktopLaunchOrRestart(prompt string, reapplyProfile func() error) error {
-	if !claudeDesktopIsRunning() {
+	running, err := claudeDesktopIsRunning(context.Background())
+	if err != nil {
+		return fmt.Errorf("check whether Claude Desktop is running: %w", err)
+	}
+	if !running {
 		return claudeDesktopOpenApp()
 	}
 	restart, err := ConfirmPrompt(prompt)
@@ -790,10 +821,12 @@ func restartClaudeDesktop(reapplyProfile func() error) error {
 	if claudeDesktopGOOS == "windows" {
 		restartAppPath = claudeDesktopRunningAppPath()
 	}
-	if err := claudeDesktopQuitApp(); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := claudeDesktopQuitApp(ctx); err != nil {
 		return fmt.Errorf("quit Claude Desktop: %w", err)
 	}
-	if err := waitForClaudeDesktopExit(30 * time.Second); err != nil {
+	if err := waitForClaudeDesktopExit(ctx); err != nil {
 		return err
 	}
 	// Claude persists settings while shutting down. Reapply the profile after
@@ -815,29 +848,52 @@ func openClaudeDesktopAfterRestart(restartAppPath string) error {
 	return claudeDesktopOpenApp()
 }
 
-func waitForClaudeDesktopExit(timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if !claudeDesktopIsRunning() {
+func waitForClaudeDesktopExit(ctx context.Context) error {
+	for {
+		running, err := claudeDesktopIsRunning(ctx)
+		if err != nil {
+			return fmt.Errorf("check whether Claude Desktop is running: %w", err)
+		}
+		if !running {
 			return nil
 		}
-		claudeDesktopSleep(200 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return errors.New("Claude Desktop did not quit; quit it manually and re-run the command")
+		case <-time.After(200 * time.Millisecond):
+		}
 	}
-	return errors.New("Claude Desktop did not quit; quit it manually and re-run the command")
 }
 
 // ClaudeDesktopRunning reports whether Claude Desktop is open.
 func ClaudeDesktopRunning() bool {
+	running, _ := claudeDesktopIsRunning(context.Background())
+	return running
+}
+
+func defaultClaudeDesktopRunning(ctx context.Context) (bool, error) {
+	var (
+		out []byte
+		err error
+	)
 	switch claudeDesktopGOOS {
 	case "darwin":
-		out, err := exec.Command("pgrep", "-f", "Claude.app/Contents/MacOS/Claude").Output()
-		return err == nil && strings.TrimSpace(string(out)) != ""
+		out, err = exec.CommandContext(ctx, "pgrep", "-f", "Claude.app/Contents/MacOS/Claude").Output()
+		if exitErr := (*exec.ExitError)(nil); errors.As(err, &exitErr) && exitErr.ExitCode() == 1 && ctx.Err() == nil {
+			return false, nil
+		}
 	case "windows":
-		out, err := exec.Command("powershell.exe", "-NoProfile", "-Command", `(Get-Process claude -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1).Id`).Output()
-		return err == nil && strings.TrimSpace(string(out)) != ""
+		out, err = exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-Command", `(Get-Process claude -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1).Id`).Output()
 	default:
-		return false
+		return false, nil
 	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return false, ctxErr
+	}
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(string(out)) != "", nil
 }
 
 func defaultClaudeDesktopOpenApp() error {
@@ -887,12 +943,12 @@ func defaultClaudeDesktopRunningAppPath() string {
 	return strings.TrimSpace(string(out))
 }
 
-func defaultClaudeDesktopQuitApp() error {
+func defaultClaudeDesktopQuitApp(ctx context.Context) error {
 	if claudeDesktopGOOS == "windows" {
 		script := `Get-Process claude -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object { [void]$_.CloseMainWindow() }`
-		return exec.Command("powershell.exe", "-NoProfile", "-Command", script).Run()
+		return exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-Command", script).Run()
 	}
-	return exec.Command("osascript", "-e", `tell application "Claude" to quit`).Run()
+	return exec.CommandContext(ctx, "osascript", "-e", `tell application "Claude" to quit`).Run()
 }
 
 func quotePowerShellString(s string) string {
