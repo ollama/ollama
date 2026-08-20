@@ -417,7 +417,7 @@ static NSImage *ollamaApplicationIcon(void) {
     [menu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem *openMenuItem =
-        [[NSMenuItem alloc] initWithTitle:@"Open Ollama Chat"
+        [[NSMenuItem alloc] initWithTitle:@"Open Chat"
                                    action:@selector(openUI)
                             keyEquivalent:@""];
     [openMenuItem setTarget:self];
