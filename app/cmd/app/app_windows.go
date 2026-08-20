@@ -130,7 +130,7 @@ func (app *appCallbacks) DoUpdate() {
 
 	app.shutdown()
 
-	if err := updater.DoUpgrade(true); err != nil {
+	if err := updater.DoUpgrade(true); err != nil { //nolint:staticcheck,nolintlint // DoUpgrade may always return non-nil on Windows
 		slog.Warn(fmt.Sprintf("upgrade attempt failed: %s", err))
 	}
 }

@@ -110,15 +110,15 @@ func RunNativeProbeCommand(ctx context.Context, libDirs []string, out io.Writer)
 		libDirs = []string{ml.LibOllamaPath}
 	}
 
-	devices, err := runNativeProbe(ctx, libDirs)
-	if err != nil {
+	devices, err := runNativeProbe(ctx, libDirs) //nolint:staticcheck,nolintlint // runNativeProbe always returns non-nil on macOS (stub) but can return nil on Linux with cgo
+	if err != nil {                              //nolint:staticcheck,nolintlint
 		return err
 	}
 
 	return json.NewEncoder(out).Encode(nativeProbeResult{Devices: devices})
 }
 
-func runNativeProbe(ctx context.Context, libDirs []string) ([]nativeProbeDevice, error) {
+func runNativeProbe(ctx context.Context, libDirs []string) ([]nativeProbeDevice, error) { //nolint:staticcheck,nolintlint
 	return runPlatformNativeProbe(ctx, libDirs)
 }
 

@@ -2085,7 +2085,7 @@ func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
 		if !(strings.Contains(err.Error(), " refused") || strings.Contains(err.Error(), "could not connect")) {
 			return err
 		}
-		if err := startApp(cmd.Context(), client); err != nil {
+		if err := startApp(cmd.Context(), client); err != nil { //nolint:staticcheck,nolintlint // startApp always returns non-nil on Linux (start_default.go) but can return nil on macOS/Windows
 			return err
 		}
 	}
