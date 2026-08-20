@@ -14,22 +14,8 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
-type modelListSummary struct {
-	Model        string
-	Name         string
-	RemoteModel  string
-	RemoteHost   string
-	Size         int64
-	Digest       string
-	ModifiedAt   time.Time
-	Details      api.ModelDetails
-	Capabilities []model.Capability
-}
-
 // listModels builds /api/tags from the manifests and the per-blob metadata
-// metadata files. A model whose file is missing has it extracted here, so the first
-// list after an upgrade pays for the models it has not seen before and later
-// ones read only small files.
+// files, extracting for any blob that has none yet.
 func listModels(ctx context.Context) ([]api.ListModelResponse, error) {
 	manifests, err := manifest.Manifests(true)
 	if err != nil {
@@ -44,25 +30,24 @@ func listModels(ctx context.Context) ([]api.ListModelResponse, error) {
 			}
 		}
 
-		summary, err := buildModelListSummary(name, mf)
+		summary, err := describeModel(name, mf)
 		if err != nil {
 			slog.Warn("failed to describe model", "model", name.String(), "error", err)
 			continue
 		}
-		models = append(models, summary.ListModelResponse())
+		models = append(models, summary)
 	}
 
 	sortListModelResponses(models)
 	return models, nil
 }
 
-// buildModelListSummary describes one model for /api/tags. Capabilities come
-// from the same Model.Capabilities() the inference path uses, so the two cannot
-// drift; the rest is manifest and config bookkeeping.
-func buildModelListSummary(name model.Name, mf *manifest.Manifest) (modelListSummary, error) {
+// describeModel describes one model for /api/tags. Capabilities come from the
+// same Model.Capabilities() the inference path uses, so the two cannot drift.
+func describeModel(name model.Name, mf *manifest.Manifest) (api.ListModelResponse, error) {
 	cfg, err := readModelListConfig(mf)
 	if err != nil {
-		return modelListSummary{}, err
+		return api.ListModelResponse{}, err
 	}
 
 	var modified time.Time
@@ -70,7 +55,7 @@ func buildModelListSummary(name model.Name, mf *manifest.Manifest) (modelListSum
 		modified = fi.ModTime()
 	}
 
-	summary := modelListSummary{
+	summary := api.ListModelResponse{
 		Model:       name.DisplayShortest(),
 		Name:        name.DisplayShortest(),
 		RemoteModel: cfg.RemoteModel,
@@ -91,7 +76,10 @@ func buildModelListSummary(name model.Name, mf *manifest.Manifest) (modelListSum
 
 	m, err := GetModel(name.String())
 	if err != nil {
-		return modelListSummary{}, err
+		// A model that will not load is the one a user most needs to see, in
+		// order to remove it. Report what the manifest says.
+		slog.Warn("could not load model to describe it", "model", name.String(), "error", err)
+		return summary, nil
 	}
 	summary.Details.ParentModel = m.ParentModel
 	summary.Capabilities = m.Capabilities()
@@ -135,32 +123,6 @@ func readModelListConfig(mf *manifest.Manifest) (model.ConfigV2, error) {
 
 func isUnknownQuantization(quantization string) bool {
 	return quantization == "" || quantization == "unknown"
-}
-
-func (s modelListSummary) ListModelResponse() api.ListModelResponse {
-	resp := api.ListModelResponse{
-		Model:       s.Model,
-		Name:        s.Name,
-		RemoteModel: s.RemoteModel,
-		RemoteHost:  s.RemoteHost,
-		Size:        s.Size,
-		Digest:      s.Digest,
-		ModifiedAt:  s.ModifiedAt,
-		Details: api.ModelDetails{
-			ParentModel:       s.Details.ParentModel,
-			Format:            s.Details.Format,
-			Family:            s.Details.Family,
-			Families:          append([]string(nil), s.Details.Families...),
-			ParameterSize:     s.Details.ParameterSize,
-			QuantizationLevel: s.Details.QuantizationLevel,
-			ContextLength:     s.Details.ContextLength,
-			EmbeddingLength:   s.Details.EmbeddingLength,
-		},
-	}
-
-	resp.Capabilities = append([]model.Capability(nil), s.Capabilities...)
-
-	return resp
 }
 
 func sortListModelResponses(models []api.ListModelResponse) {

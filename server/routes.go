@@ -1287,7 +1287,9 @@ func (s *Server) DeleteHandler(c *gin.Context) {
 		return
 	}
 
-	if err := m.RemoveLayers(); err != nil {
+	removed, err := m.RemoveLayers()
+	removeGGUFMetadata(removed...)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

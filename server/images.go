@@ -485,6 +485,7 @@ func isNemotron3NanoSafetensorsConfig(cfg model.ConfigV2) bool {
 }
 
 func projectorHasAudio(md ggufMetadata) bool {
+	// read directly: Keys reports qualified keys, the accessors qualify theirs
 	for _, key := range md.Keys() {
 		if key == "has_audio_encoder" || strings.HasSuffix(key, ".has_audio_encoder") {
 			if b, ok := md.KV[key].(bool); ok && b {
@@ -675,20 +676,10 @@ func GetModel(name string) (*Model, error) {
 	modelHasPooling := false
 	ggufChatTemplate := ""
 	for _, layer := range mf.Layers {
-		switch layer.MediaType {
-		case "application/vnd.ollama.image.model",
-			manifest.MediaTypeImageDraft,
-			"application/vnd.ollama.image.adapter",
-			"application/vnd.ollama.image.projector",
-			"application/vnd.ollama.image.prompt",
-			"application/vnd.ollama.image.template",
-			"application/vnd.ollama.image.system",
-			"application/vnd.ollama.image.params",
-			"application/vnd.ollama.image.messages",
-			"application/vnd.ollama.image.license":
-		default:
-			// Nothing below reads this layer, and resolving a path for it is a
-			// syscall per layer on models sharded into thousands of tensors.
+		// Nothing below reads a tensor layer, and resolving a path costs a
+		// syscall each. Named rather than allowlisting the types below, so a new
+		// layer type is slower here instead of silently unread.
+		if layer.MediaType == manifest.MediaTypeImageTensor {
 			continue
 		}
 
@@ -851,7 +842,7 @@ func deleteUnusedLayers(deleteMap map[string]struct{}) error {
 			slog.Info(fmt.Sprintf("couldn't get file path for '%s': %v", k, err))
 			continue
 		}
-		if err := os.Remove(fp); err != nil {
+		if err := os.Remove(fp); err != nil && !errors.Is(err, os.ErrNotExist) {
 			slog.Info(fmt.Sprintf("couldn't remove file '%s': %v", fp, err))
 			continue
 		}
@@ -898,7 +889,6 @@ func PruneLayers() error {
 				if err := os.Remove(filepath.Join(p, blob.Name())); err != nil {
 					slog.Error("couldn't remove blob", "blob", blob.Name(), "error", err)
 				}
-				removeGGUFMetadata(blob.Name())
 			}
 
 			continue

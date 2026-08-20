@@ -280,14 +280,15 @@ func readArrayData[T any](f *File, n uint64) (s []T, err error) {
 		return nil, err
 	}
 
-	s = make([]T, size)
-	for i := range size {
+	// n comes from the file, so grow instead of preallocating it.
+	s = make([]T, 0, min(size, 4096))
+	for range size {
 		e, err := read[T](f)
 		if err != nil {
 			return nil, err
 		}
 
-		s[i] = e
+		s = append(s, e)
 	}
 
 	return s, nil
@@ -299,14 +300,15 @@ func readArrayString(f *File, n uint64) (s []string, err error) {
 		return nil, err
 	}
 
-	s = make([]string, size)
-	for i := range size {
+	// as in readArrayData, n comes from the file
+	s = make([]string, 0, min(size, 4096))
+	for range size {
 		e, err := readString(f)
 		if err != nil {
 			return nil, err
 		}
 
-		s[i] = e
+		s = append(s, e)
 	}
 
 	return s, nil

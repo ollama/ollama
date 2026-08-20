@@ -2,13 +2,14 @@ package server
 
 import (
 	"context"
-	"net/http"
+	"os"
 	"slices"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -30,7 +31,7 @@ func listedModel(t *testing.T, name string) api.ListModelResponse {
 func TestListModelsDescribesModel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())
-	createListCacheModel(t, "list-describe", map[string]any{
+	createListedModelFromKV(t, "list-describe", map[string]any{
 		"test.context_length":   uint32(4096),
 		"test.embedding_length": uint32(384),
 	}, "{{ .prompt }}{{ if .tools }}{{ .tools }}{{ end }}{{ if .suffix }}{{ .suffix }}{{ end }}")
@@ -69,19 +70,15 @@ func TestListModelsDescribesModel(t *testing.T) {
 func TestListModelsFollowsManifestChanges(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())
-	createListCacheModel(t, "list-follow-a", map[string]any{"test.context_length": uint32(1024)}, "")
+	createListedModelFromKV(t, "list-follow-a", map[string]any{"test.context_length": uint32(1024)}, "")
 
 	listedModel(t, "list-follow-a:latest")
 
-	createListCacheModel(t, "list-follow-b", map[string]any{"test.context_length": uint32(2048)}, "")
+	createListedModelFromKV(t, "list-follow-b", map[string]any{"test.context_length": uint32(2048)}, "")
 	listedModel(t, "list-follow-a:latest")
 	listedModel(t, "list-follow-b:latest")
 
-	var s Server
-	w := createRequest(t, s.DeleteHandler, api.DeleteRequest{Model: "list-follow-a"})
-	if w.Code != http.StatusOK {
-		t.Fatalf("delete status = %d: %s", w.Code, w.Body.String())
-	}
+	deleteModelNamed(t, "list-follow-a")
 
 	models, err := listModels(context.Background())
 	if err != nil {
@@ -124,4 +121,48 @@ func TestCapabilitiesSuppressNemotronSafetensorsMedia(t *testing.T) {
 			t.Errorf("capabilities = %v, did not expect %s", got, capability)
 		}
 	}
+}
+
+// A model whose layers no longer parse must still be listed: it is the one the
+// user most needs to see, in order to remove it.
+func TestListModelsKeepsUnloadableModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setTestHome(t, t.TempDir())
+	createListedModelFromKV(t, "broken", map[string]any{"test.context_length": uint32(1024)}, "{{ .Prompt }}")
+
+	mf, err := manifest.ParseNamedManifest(model.ParseName("broken"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var corrupted bool
+	for _, layer := range mf.Layers {
+		if layer.MediaType != "application/vnd.ollama.image.template" {
+			continue
+		}
+		path, err := manifest.BlobsPath(layer.Digest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("{{ if }"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		corrupted = true
+	}
+	if !corrupted {
+		t.Fatal("no template layer to corrupt")
+	}
+	if _, err := GetModel("broken"); err == nil {
+		t.Fatal("model still loads, so the listing is not being asked the question")
+	}
+
+	got := listedModel(t, "broken:latest")
+	if got.Details.Family != "test" {
+		t.Errorf("details = %+v, want the manifest config's family", got.Details)
+	}
+}
+
+func createListedModelFromKV(t *testing.T, name string, kv map[string]any, tmpl string) {
+	t.Helper()
+	_, digest := createBinFile(t, kv, nil)
+	createModelFromBlob(t, name, digest, tmpl)
 }

@@ -9,7 +9,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/ollama/ollama/envconfig"
@@ -23,8 +22,6 @@ import (
 // reading them differently later needs no invalidation, and values left out are
 // recorded by key so an absent key stays distinct from an uncopied one.
 
-var ggufDigestPattern = regexp.MustCompile(`^sha256[:-][0-9a-fA-F]{64}$`)
-
 // Comfortably above per-layer arrays, which scale with block count, and far
 // below any tokenizer vocabulary.
 const ggufMetadataMaxArray = 4096
@@ -32,8 +29,10 @@ const ggufMetadataMaxArray = 4096
 type ggufMetadata struct {
 	OllamaVersion string `json:"ollama_version,omitempty"`
 
-	// Values keyed exactly as they appear in the file.
-	KV map[string]any `json:"kv,omitempty"`
+	// Values keyed exactly as they appear in the file. Never omitempty: absent
+	// on load means the file is not ours, and an all-omitted file is still
+	// usable.
+	KV map[string]any `json:"kv"`
 	// Keys present in the file whose values were too large to copy.
 	Omitted []string `json:"omitted,omitempty"`
 }
@@ -83,8 +82,8 @@ func (m ggufMetadata) lookup(key string) (any, bool) {
 }
 
 func ggufMetadataPath(digest string) (string, error) {
-	if !ggufDigestPattern.MatchString(digest) {
-		return "", fmt.Errorf("invalid digest %q", digest)
+	if err := manifest.ValidateDigest(digest); err != nil {
+		return "", fmt.Errorf("%w: %q", err, digest)
 	}
 	return filepath.Join(envconfig.Models(), "metadata", strings.ReplaceAll(digest, ":", "-")+".json"), nil
 }
@@ -92,11 +91,12 @@ func ggufMetadataPath(digest string) (string, error) {
 // readGGUFMetadata extracts the blob when there is no usable metadata file. Best
 // effort throughout: a bad file is re-extracted, a failed write is dropped.
 func readGGUFMetadata(digest string) (ggufMetadata, error) {
-	path, pathErr := ggufMetadataPath(digest)
-	if pathErr == nil {
-		if md, ok := loadGGUFMetadata(path); ok {
-			return md, nil
-		}
+	path, err := ggufMetadataPath(digest)
+	if err != nil {
+		return ggufMetadata{}, err
+	}
+	if md, ok := loadGGUFMetadata(path); ok {
+		return md, nil
 	}
 
 	blob, err := manifest.BlobsPath(digest)
@@ -108,11 +108,7 @@ func readGGUFMetadata(digest string) (ggufMetadata, error) {
 		return ggufMetadata{}, err
 	}
 
-	if pathErr == nil {
-		writeGGUFMetadata(path, md)
-	} else {
-		slog.Debug("not caching gguf metadata", "digest", digest, "error", pathErr)
-	}
+	writeGGUFMetadata(path, md)
 	return md, nil
 }
 
@@ -166,14 +162,17 @@ func writeGGUFMetadata(path string, md ggufMetadata) {
 	}
 }
 
-// removeGGUFMetadata drops the metadata file for a blob that is being deleted.
-func removeGGUFMetadata(digest string) {
-	path, err := ggufMetadataPath(digest)
-	if err != nil {
-		return
-	}
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		slog.Debug("could not remove gguf metadata file", "path", path, "error", err)
+// removeGGUFMetadata drops metadata for deleted blobs. Pass only digests whose
+// last reference is gone.
+func removeGGUFMetadata(digests ...string) {
+	for _, digest := range digests {
+		path, err := ggufMetadataPath(digest)
+		if err != nil {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			slog.Debug("could not remove gguf metadata file", "path", path, "error", err)
+		}
 	}
 }
 
@@ -215,7 +214,8 @@ func scanGGUFMetadata(path string) (ggufMetadata, error) {
 	}
 	defer f.Close()
 
-	md := ggufMetadata{KV: make(map[string]any, f.NumKeyValues())}
+	// not sized from f.NumKeyValues(): that count comes from the file
+	md := ggufMetadata{KV: make(map[string]any)}
 	for _, kv := range f.KeyValues() {
 		if omitValue(kv.Any()) {
 			md.Omitted = append(md.Omitted, kv.Key)
