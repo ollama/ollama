@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/anthropic"
+	"github.com/ollama/ollama/internal/modelref"
 )
 
 const (
@@ -103,11 +104,12 @@ type gatewayModel struct {
 
 // ClaudeDesktopConfig configures a Claude Desktop proxy instance.
 type ClaudeDesktopConfig struct {
-	ListenAddr      string
-	OllamaURL       string
-	Model           string
-	Logger          *slog.Logger
-	OnCountsChanged func(ClaudeDesktopCounts)
+	ListenAddr           string
+	OllamaURL            string
+	Model                string
+	Logger               *slog.Logger
+	OnCountsChanged      func(ClaudeDesktopCounts)
+	CloudModelsAvailable func(context.Context) bool
 }
 
 // ClaudeDesktopCounts reports requests routed through the proxy.
@@ -125,15 +127,16 @@ type upstreamReadinessCheck struct {
 // proxy: Claude terminates its own gateway protocol here, so no TLS
 // interception or system trust changes are necessary.
 type ClaudeDesktop struct {
-	listenAddr      string
-	ollamaURL       *url.URL
-	ollamaProxy     *httputil.ReverseProxy
-	logger          *slog.Logger
-	model           string
-	onCountsChanged func(ClaudeDesktopCounts)
-	routed          atomic.Uint64
-	shutdown        chan struct{}
-	shutdownOnce    sync.Once
+	listenAddr           string
+	ollamaURL            *url.URL
+	ollamaProxy          *httputil.ReverseProxy
+	logger               *slog.Logger
+	model                string
+	onCountsChanged      func(ClaudeDesktopCounts)
+	cloudModelsAvailable func(context.Context) bool
+	routed               atomic.Uint64
+	shutdown             chan struct{}
+	shutdownOnce         sync.Once
 
 	readyMu    sync.Mutex
 	readyUntil time.Time
@@ -174,14 +177,15 @@ func NewClaudeDesktop(config ClaudeDesktopConfig) (*ClaudeDesktop, error) {
 	proxy.Transport = transport
 	proxy.FlushInterval = -1
 	p := &ClaudeDesktop{
-		listenAddr:      config.ListenAddr,
-		ollamaURL:       ollamaURL,
-		logger:          logger,
-		model:           config.Model,
-		onCountsChanged: config.OnCountsChanged,
-		shutdown:        make(chan struct{}),
-		readyWait:       upstreamReadyTimeout,
-		readyPoll:       upstreamReadyPoll,
+		listenAddr:           config.ListenAddr,
+		ollamaURL:            ollamaURL,
+		logger:               logger,
+		model:                config.Model,
+		onCountsChanged:      config.OnCountsChanged,
+		cloudModelsAvailable: config.CloudModelsAvailable,
+		shutdown:             make(chan struct{}),
+		readyWait:            upstreamReadyTimeout,
+		readyPoll:            upstreamReadyPoll,
 	}
 	dialer := &net.Dialer{Timeout: upstreamReadyPoll}
 	p.dial = dialer.DialContext
@@ -306,7 +310,7 @@ func (p *ClaudeDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			methodNotAllowed(w, http.MethodGet)
 			return
 		}
-		p.serveModels(w)
+		p.serveModels(w, r.Context())
 		return
 	case "/v1/messages/count_tokens":
 		if r.Method != http.MethodPost {
@@ -449,7 +453,22 @@ func (p *ClaudeDesktop) markUpstreamNotReady() {
 	p.readyMu.Unlock()
 }
 
-func (p *ClaudeDesktop) serveModels(w http.ResponseWriter) {
+func (p *ClaudeDesktop) serveModels(w http.ResponseWriter, ctx context.Context) {
+	models := claudeModels
+	if p.cloudModelsAvailable != nil && !p.cloudModelsAvailable(ctx) {
+		models = make([]gatewayModel, 0, len(claudeModels))
+		for _, model := range claudeModels {
+			if !modelref.HasExplicitCloudSource(model.OllamaModel) {
+				models = append(models, model)
+			}
+		}
+	}
+
+	var firstID, lastID string
+	if len(models) > 0 {
+		firstID = models[0].ID
+		lastID = models[len(models)-1].ID
+	}
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(struct {
 		Data    []gatewayModel `json:"data"`
@@ -457,9 +476,9 @@ func (p *ClaudeDesktop) serveModels(w http.ResponseWriter) {
 		LastID  string         `json:"last_id"`
 		HasMore bool           `json:"has_more"`
 	}{
-		Data:    claudeModels,
-		FirstID: claudeModels[0].ID,
-		LastID:  claudeModels[len(claudeModels)-1].ID,
+		Data:    models,
+		FirstID: firstID,
+		LastID:  lastID,
 	}); err != nil {
 		p.logger.Debug("write Claude model catalog", "error", err)
 	}

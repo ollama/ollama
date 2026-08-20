@@ -143,6 +143,70 @@ func TestGatewayRoutesClaudeProtocolToOllama(t *testing.T) {
 	}
 }
 
+func TestGatewayPrunesCloudModelsWhenSignedOut(t *testing.T) {
+	upstream := httptest.NewServer(http.NotFoundHandler())
+	defer upstream.Close()
+
+	var cloudModelsAvailable atomic.Bool
+	p, err := NewClaudeDesktop(ClaudeDesktopConfig{
+		ListenAddr:           "127.0.0.1:0",
+		OllamaURL:            upstream.URL,
+		Model:                "kimi-k3:cloud",
+		CloudModelsAvailable: func(context.Context) bool { return cloudModelsAvailable.Load() },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := p.Close(ctx); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	fetchCatalog := func() struct {
+		Data    []gatewayModel `json:"data"`
+		FirstID string         `json:"first_id"`
+		LastID  string         `json:"last_id"`
+	} {
+		resp, err := http.Get("http://" + p.Addr() + "/v1/models")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+		var catalog struct {
+			Data    []gatewayModel `json:"data"`
+			FirstID string         `json:"first_id"`
+			LastID  string         `json:"last_id"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&catalog); err != nil {
+			t.Fatal(err)
+		}
+		return catalog
+	}
+
+	catalog := fetchCatalog()
+	if len(catalog.Data) != 1 || catalog.Data[0].DisplayName != "Qwen3.8 MLX" {
+		t.Fatalf("signed-out catalog = %+v, want local model only", catalog.Data)
+	}
+	if catalog.FirstID != catalog.Data[0].ID || catalog.LastID != catalog.Data[0].ID {
+		t.Fatalf("signed-out catalog bounds = %q, %q", catalog.FirstID, catalog.LastID)
+	}
+
+	cloudModelsAvailable.Store(true)
+	catalog = fetchCatalog()
+	if len(catalog.Data) != len(claudeModels) {
+		t.Fatalf("signed-in catalog has %d models, want %d", len(catalog.Data), len(claudeModels))
+	}
+}
+
 func TestGatewayCountsTokensLocally(t *testing.T) {
 	upstreamCalls := 0
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

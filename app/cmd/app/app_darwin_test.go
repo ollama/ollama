@@ -4,14 +4,61 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/internal/proxy"
 )
+
+func TestClaudeCloudModelsAvailable(t *testing.T) {
+	tests := []struct {
+		name   string
+		whoami func(context.Context) (*api.UserResponse, error)
+		want   bool
+	}{
+		{
+			name: "signed in",
+			whoami: func(context.Context) (*api.UserResponse, error) {
+				return &api.UserResponse{Name: "parth"}, nil
+			},
+			want: true,
+		},
+		{
+			name: "signed out",
+			whoami: func(context.Context) (*api.UserResponse, error) {
+				return nil, api.AuthorizationError{StatusCode: http.StatusUnauthorized}
+			},
+			want: false,
+		},
+		{
+			name: "empty account",
+			whoami: func(context.Context) (*api.UserResponse, error) {
+				return &api.UserResponse{}, nil
+			},
+			want: false,
+		},
+		{
+			name: "account check unavailable",
+			whoami: func(context.Context) (*api.UserResponse, error) {
+				return nil, errors.New("account service unavailable")
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := claudeCloudModelsAvailable(context.Background(), tt.whoami); got != tt.want {
+				t.Fatalf("claudeCloudModelsAvailable() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
 
 func TestSetClaudeGatewayInstalledRejectsMissingClaude(t *testing.T) {
 	previousInstalled := claudeDesktopInstalled

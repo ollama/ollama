@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,6 +26,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/app/updater"
 	"github.com/ollama/ollama/app/version"
 	"github.com/ollama/ollama/cmd/launch"
@@ -244,12 +246,14 @@ func startClaudeAppProxy() error {
 			claudeProxyFailurePortConflict,
 		)
 	}
+	ollamaClient := api.NewClient(ollamaURL, http.DefaultClient)
 	gateway, err := proxy.NewClaudeDesktop(proxy.ClaudeDesktopConfig{
-		ListenAddr:      claudeProxyListenAddr,
-		OllamaURL:       ollamaURL.String(),
-		Model:           "kimi-k3:cloud",
-		Logger:          slog.Default(),
-		OnCountsChanged: updateClaudeProxyMenu,
+		ListenAddr:           claudeProxyListenAddr,
+		OllamaURL:            ollamaURL.String(),
+		Model:                "kimi-k3:cloud",
+		Logger:               slog.Default(),
+		OnCountsChanged:      updateClaudeProxyMenu,
+		CloudModelsAvailable: func(ctx context.Context) bool { return claudeCloudModelsAvailable(ctx, ollamaClient.Whoami) },
 	})
 	if err != nil {
 		return setClaudeProxyFailure(err, claudeProxyFailureNone)
@@ -273,6 +277,21 @@ func startClaudeAppProxy() error {
 	claudeAppProxy = gateway
 	clearClaudeProxyFailure()
 	return nil
+}
+
+func claudeCloudModelsAvailable(ctx context.Context, whoami func(context.Context) (*api.UserResponse, error)) bool {
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	user, err := whoami(ctx)
+	if err != nil {
+		var authErr api.AuthorizationError
+		if errors.As(err, &authErr) && authErr.StatusCode == http.StatusUnauthorized {
+			return false
+		}
+		slog.Debug("could not check whether cloud models are available", "error", err)
+		return true
+	}
+	return user != nil && strings.TrimSpace(user.Name) != ""
 }
 
 func claudeGatewayPort() (string, error) {
