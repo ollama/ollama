@@ -83,6 +83,23 @@ describe("Onboarding", () => {
     expect(terminalRowsForWindowHeight(960)).toBe(8);
   });
 
+  it("renders the apps screen without browser platform globals", () => {
+    vi.stubGlobal("navigator", undefined);
+    try {
+      expect(() =>
+        renderToStaticMarkup(
+          <ConnectAppsScreen
+            completionError={null}
+            onRetryCompletion={vi.fn()}
+            initialIntegrations={[]}
+          />,
+        ),
+      ).not.toThrow();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("shows the account choice only to signed-out users", () => {
     expect(nextOnboardingStep("intro", "continue", false)).toBe("welcome");
     expect(nextOnboardingStep("intro", "continue", true)).toBe("apps");

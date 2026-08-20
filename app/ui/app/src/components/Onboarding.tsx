@@ -366,7 +366,9 @@ export function ConnectAppsScreen({
   initialClaudeStatus,
   embedded = false,
 }: ConnectAppsScreenProps) {
-  const isWindows = navigator.platform.toLowerCase().includes("win");
+  const isWindows =
+    typeof navigator !== "undefined" &&
+    navigator.platform.toLowerCase().includes("win");
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
   const [claudeError, setClaudeError] = useState<string | null>(null);
   const [claudeStatus, setClaudeStatus] = useState<ClaudeDesktopStatus | null>(

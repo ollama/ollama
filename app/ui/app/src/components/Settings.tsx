@@ -296,7 +296,9 @@ export default function Settings({ embedded = false }: { embedded?: boolean }) {
     );
   }
 
-  const isWindows = navigator.platform.toLowerCase().includes("win");
+  const isWindows =
+    typeof navigator !== "undefined" &&
+    navigator.platform.toLowerCase().includes("win");
 
   return (
     <main
