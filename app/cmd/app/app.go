@@ -407,7 +407,7 @@ func startHiddenTasks() {
 				return
 			}
 
-			if err := updater.DoUpgradeAtStartup(); err != nil {
+			if err := updater.DoUpgradeAtStartup(); err != nil { //nolint:staticcheck,nolintlint // DoUpgradeAtStartup may always return non-nil on Windows
 				slog.Info("unable to perform upgrade at startup", "error", err)
 				// Make sure the restart to upgrade menu shows so we can attempt an interactive upgrade to get authorization
 				UpdateAvailable("")
