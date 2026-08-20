@@ -11,7 +11,11 @@ set(MLX_BUILD_SAFETENSORS ON CACHE BOOL "" FORCE)
 set(MLX_C_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
 
-set(CMAKE_INSTALL_RPATH "@loader_path")
+if(APPLE)
+    set(CMAKE_INSTALL_RPATH "@loader_path")
+else()
+    set(CMAKE_INSTALL_RPATH "$ORIGIN")
+endif()
 
 include(FetchContent)
 
