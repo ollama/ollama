@@ -3,15 +3,16 @@ package cache
 import (
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
+// skipIfNoMLX preserves the cache package's existing test helper name while
+// using the shared MLX setup shape from mac-mlx-ci.
 func skipIfNoMLX(t *testing.T) {
 	t.Helper()
-	if err := mlx.CheckInit(); err != nil {
-		t.Skipf("MLX not available: %v", err)
-	}
+	mlxtest.Setup(t)
 }
 
 // newKVBatch builds a B=1 batch at SeqOffsets=off with all-real

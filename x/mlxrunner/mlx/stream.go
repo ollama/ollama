@@ -3,7 +3,10 @@ package mlx
 // #include "generated.h"
 import "C"
 
-import "log/slog"
+import (
+	"log/slog"
+	"sync"
+)
 
 type Device struct {
 	ctx C.mlx_device
@@ -17,18 +20,26 @@ func (d Device) LogValue() slog.Value {
 }
 
 var (
+	defaultDeviceMu  sync.Mutex
 	defaultDevice    Device
 	defaultDeviceSet bool
-	defaultStream    Stream
-	defaultStreamSet bool
+	defaultStreams   sync.Map // map[uint64]Stream, keyed by thread ID
 )
 
 func resetDefaultStreamCache() {
+	defaultDeviceMu.Lock()
 	defaultDeviceSet = false
-	defaultStreamSet = false
+	defaultDeviceMu.Unlock()
+	defaultStreams.Range(func(k, _ any) bool {
+		defaultStreams.Delete(k)
+		return true
+	})
 }
 
 func DefaultDevice() Device {
+	defaultDeviceMu.Lock()
+	defer defaultDeviceMu.Unlock()
+
 	if !defaultDeviceSet {
 		d := C.mlx_device_new()
 		C.mlx_get_default_device(&d)
@@ -68,12 +79,15 @@ func (s Stream) LogValue() slog.Value {
 }
 
 func DefaultStream() Stream {
-	if !defaultStreamSet {
-		s := C.mlx_stream_new()
-		C.mlx_get_default_stream(&s, DefaultDevice().ctx)
-		defaultStream = Stream{s}
-		defaultStreamSet = true
+	tid := currentThreadID()
+	if s, ok := defaultStreams.Load(tid); ok {
+		return s.(Stream)
 	}
 
-	return defaultStream
+	dev := DefaultDevice()
+	s := C.mlx_stream_new()
+	C.mlx_get_default_stream(&s, dev.ctx)
+	stream := Stream{s}
+	defaultStreams.Store(tid, stream)
+	return stream
 }

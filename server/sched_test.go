@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -27,6 +29,47 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+// syncBuffer is a goroutine-safe sink for capturing slog output: scheduler
+// goroutines from a previous test can still be draining — and logging through
+// slog.Default — while the current test writes and reads its capture buffer.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func withSynctestScheduler(t *testing.T, fn func(t *testing.T, ctx context.Context)) {
+	t.Helper()
+
+	// Tests inside this helper can use time.Sleep to advance synctest's fake
+	// clock for scheduler timers without adding wall-clock delay or CI flake.
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		fn(t, ctx)
+		cancel()
+		synctest.Wait()
+	})
+}
+
+func requireLoadedCount(t *testing.T, s *Scheduler, want int) {
+	t.Helper()
+
+	s.loadedMu.Lock()
+	defer s.loadedMu.Unlock()
+	require.Len(t, s.loaded, want)
+}
+
 func TestSchedInit(t *testing.T) {
 	ctx, done := context.WithCancel(t.Context())
 	defer done()
@@ -37,97 +80,94 @@ func TestSchedInit(t *testing.T) {
 }
 
 func TestSchedLoad(t *testing.T) {
-	ctx, done := context.WithTimeout(t.Context(), 20*time.Millisecond)
-	defer done()
-	s := InitScheduler(ctx)
-	s.waitForRecovery = 10 * time.Millisecond
+	withSynctestScheduler(t, func(t *testing.T, ctx context.Context) {
+		s := InitScheduler(ctx)
+		s.waitForRecovery = 10 * time.Millisecond
 
-	modelPath, _ := createBinFile(t, ggml.KV{
-		"general.architecture":          "llama",
-		"llama.context_length":          uint32(32),
-		"llama.embedding_length":        uint32(4096),
-		"llama.block_count":             uint32(1),
-		"llama.attention.head_count":    uint32(32),
-		"llama.attention.head_count_kv": uint32(32),
-		"tokenizer.ggml.tokens":         []string{" "},
-		"tokenizer.ggml.scores":         []float32{0},
-		"tokenizer.ggml.token_type":     []int32{0},
-	}, []*ggml.Tensor{
-		{Name: "blk.0.attn.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
-		{Name: "output.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
-	})
+		modelPath, _ := createBinFile(t, ggml.KV{
+			"general.architecture":          "llama",
+			"llama.context_length":          uint32(32),
+			"llama.embedding_length":        uint32(4096),
+			"llama.block_count":             uint32(1),
+			"llama.attention.head_count":    uint32(32),
+			"llama.attention.head_count_kv": uint32(32),
+			"tokenizer.ggml.tokens":         []string{" "},
+			"tokenizer.ggml.scores":         []float32{0},
+			"tokenizer.ggml.token_type":     []int32{0},
+		}, []*ggml.Tensor{
+			{Name: "blk.0.attn.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
+			{Name: "output.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
+		})
 
-	req := &LlmRequest{
-		ctx:             ctx,
-		model:           &Model{ModelPath: modelPath},
-		opts:            api.DefaultOptions(),
-		successCh:       make(chan *runnerRef, 1),
-		errCh:           make(chan error, 1),
-		sessionDuration: &api.Duration{Duration: 2 * time.Second},
-	}
-	// Fail to load model first
-	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
-		return nil, errors.New("something failed to load model blah")
-	}
-	gpus := []ml.DeviceInfo{}
-	systemInfo := ml.SystemInfo{}
-	s.load(req, systemInfo, gpus, false)
-	require.Empty(t, req.successCh)
-	require.Len(t, req.errCh, 1)
-	s.loadedMu.Lock()
-	require.Empty(t, s.loaded)
-	s.loadedMu.Unlock()
-	err := <-req.errCh
-	require.Contains(t, err.Error(), "this model may be incompatible")
+		req := &LlmRequest{
+			ctx:             ctx,
+			model:           &Model{ModelPath: modelPath},
+			opts:            api.DefaultOptions(),
+			successCh:       make(chan *runnerRef, 1),
+			errCh:           make(chan error, 1),
+			sessionDuration: &api.Duration{Duration: 2 * time.Second},
+		}
+		// Fail to load model first
+		s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
+			return nil, errors.New("something failed to load model blah")
+		}
+		gpus := []ml.DeviceInfo{}
+		systemInfo := ml.SystemInfo{}
+		s.load(req, systemInfo, gpus, false)
+		require.Empty(t, req.successCh)
+		require.Len(t, req.errCh, 1)
+		requireLoadedCount(t, s, 0)
+		err := <-req.errCh
+		require.Contains(t, err.Error(), "this model may be incompatible")
 
-	server := &mockLlm{vramSize: 10, vramByGPU: map[ml.DeviceID]uint64{}}
-	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
-		server.modelPath = model
-		return server, nil
-	}
-	s.load(req, systemInfo, gpus, false)
-	select {
-	case err := <-req.errCh:
-		require.NoError(t, err)
-	case resp := <-req.successCh:
-		require.Equal(t, uint64(10), resp.vramSize)
-		require.Equal(t, uint(1), resp.refCount)
+		server := &mockLlm{vramSize: 10, vramByGPU: map[ml.DeviceID]uint64{}}
+		s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
+			server.modelPath = model
+			return server, nil
+		}
+		s.load(req, systemInfo, gpus, false)
+		synctest.Wait()
+		select {
+		case err := <-req.errCh:
+			require.NoError(t, err)
+		case resp := <-req.successCh:
+			require.Equal(t, uint64(10), resp.vramSize)
+			require.Equal(t, uint(1), resp.refCount)
+		}
+		requireLoadedCount(t, s, 1)
+
+		modelPath2, _ := createBinFile(t, ggml.KV{
+			"general.architecture":          "llama",
+			"llama.context_length":          uint32(32),
+			"llama.embedding_length":        uint32(4096),
+			"llama.block_count":             uint32(1),
+			"llama.attention.head_count":    uint32(32),
+			"llama.attention.head_count_kv": uint32(32),
+			"tokenizer.ggml.tokens":         []string{" "},
+			"tokenizer.ggml.scores":         []float32{0},
+			"tokenizer.ggml.token_type":     []int32{0},
+		}, []*ggml.Tensor{
+			{Name: "blk.0.attn.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
+			{Name: "output.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
+		})
+
+		req.model.ModelPath = modelPath2
+		server.waitResp = errors.New("wait failure")
+		s.load(req, systemInfo, gpus, false)
+		synctest.Wait()
+		select {
+		case err := <-req.errCh:
+			require.Contains(t, err.Error(), "wait failure")
+		case resp := <-req.successCh:
+			t.Fatalf("unexpected success %v", resp)
+		}
 		s.loadedMu.Lock()
-		require.Len(t, s.loaded, 1)
+		runner := s.loaded[modelPath2]
 		s.loadedMu.Unlock()
-	}
-
-	modelPath2, _ := createBinFile(t, ggml.KV{
-		"general.architecture":          "llama",
-		"llama.context_length":          uint32(32),
-		"llama.embedding_length":        uint32(4096),
-		"llama.block_count":             uint32(1),
-		"llama.attention.head_count":    uint32(32),
-		"llama.attention.head_count_kv": uint32(32),
-		"tokenizer.ggml.tokens":         []string{" "},
-		"tokenizer.ggml.scores":         []float32{0},
-		"tokenizer.ggml.token_type":     []int32{0},
-	}, []*ggml.Tensor{
-		{Name: "blk.0.attn.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
-		{Name: "output.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
+		require.NotNil(t, runner)
+		require.Equal(t, uint(0), runner.refCount)
+		require.Len(t, s.expiredCh, 1)
 	})
-
-	req.model.ModelPath = modelPath2
-	server.waitResp = errors.New("wait failure")
-	s.load(req, systemInfo, gpus, false)
-	select {
-	case err := <-req.errCh:
-		require.Contains(t, err.Error(), "wait failure")
-	case resp := <-req.successCh:
-		t.Fatalf("unexpected success %v", resp)
-	}
-	s.loadedMu.Lock()
-	runner := s.loaded[modelPath2]
-	s.loadedMu.Unlock()
-	require.NotNil(t, runner)
-	require.Equal(t, uint(0), runner.refCount)
-	time.Sleep(1 * time.Millisecond)
-	require.Len(t, s.expiredCh, 1)
 }
 
 func TestSchedLoadStoresEffectiveContextLength(t *testing.T) {
@@ -319,249 +359,213 @@ func TestSchedRequestsSameModelSameRequest(t *testing.T) {
 }
 
 func TestSchedRequestsSimpleReloadSameModel(t *testing.T) {
-	ctx, done := context.WithTimeout(t.Context(), 5000*time.Millisecond)
-	defer done()
-	s := InitScheduler(ctx)
-	s.waitForRecovery = 10 * time.Millisecond
-	g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
-	g.TotalMemory = 24 * format.GigaByte
-	g.FreeMemory = 12 * format.GigaByte
-	gMu := sync.Mutex{}
-	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
-		slog.Info("test getGpuFn called", "runners", runners)
+	withSynctestScheduler(t, func(t *testing.T, ctx context.Context) {
+		s := InitScheduler(ctx)
+		s.waitForRecovery = 10 * time.Millisecond
+		g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
+		g.TotalMemory = 24 * format.GigaByte
+		g.FreeMemory = 12 * format.GigaByte
+		gMu := sync.Mutex{}
+		s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+			slog.Info("test getGpuFn called", "runners", runners)
+			gMu.Lock()
+			defer gMu.Unlock()
+			return []ml.DeviceInfo{g}
+		}
+		s.getSystemInfoFn = getSystemInfoFn
+		a := newScenarioRequest(t, ctx, "ollama-model-1", 10, &api.Duration{Duration: 5 * time.Millisecond}, nil)
+		b := newScenarioRequest(t, ctx, "ollama-model-1", 20, &api.Duration{Duration: 5 * time.Millisecond}, nil)
+		tmpModel := *a.req.model
+		b.req.model = &tmpModel
+
+		s.newServerFn = a.newServer
+		slog.Info("a")
+		s.pendingReqCh <- a.req
+		require.Len(t, s.pendingReqCh, 1)
+		s.Run(ctx)
+		synctest.Wait()
+		select {
+		case resp := <-a.req.successCh:
+			require.Equal(t, resp.llama, a.srv)
+			require.Empty(t, s.pendingReqCh)
+			require.Empty(t, a.req.errCh)
+		case err := <-a.req.errCh:
+			t.Fatal(err.Error())
+		}
+
+		// Trigger a reload
+		s.newServerFn = b.newServer
+		b.req.model.AdapterPaths = []string{"new"}
+		slog.Info("b")
+		s.pendingReqCh <- b.req
+		synctest.Wait()
+		s.loadedMu.Lock()
+		runner := s.loaded[schedulerModelKey(a.req.model)]
+		s.loadedMu.Unlock()
+		require.NotNil(t, runner)
+		runner.refMu.Lock()
+		require.True(t, runner.expireOnIdle)
+		require.Equal(t, time.Duration(0), runner.sessionDuration)
+		runner.refMu.Unlock()
+		a.ctxDone()
 		gMu.Lock()
-		defer gMu.Unlock()
-		return []ml.DeviceInfo{g}
-	}
-	s.getSystemInfoFn = getSystemInfoFn
-	a := newScenarioRequest(t, ctx, "ollama-model-1", 10, &api.Duration{Duration: 5 * time.Millisecond}, nil)
-	b := newScenarioRequest(t, ctx, "ollama-model-1", 20, &api.Duration{Duration: 5 * time.Millisecond}, nil)
-	tmpModel := *a.req.model
-	b.req.model = &tmpModel
-
-	s.newServerFn = a.newServer
-	slog.Info("a")
-	s.pendingReqCh <- a.req
-	require.Len(t, s.pendingReqCh, 1)
-	s.Run(ctx)
-	select {
-	case resp := <-a.req.successCh:
-		require.Equal(t, resp.llama, a.srv)
-		require.Empty(t, s.pendingReqCh)
-		require.Empty(t, a.req.errCh)
-	case err := <-a.req.errCh:
-		t.Fatal(err.Error())
-	case <-ctx.Done():
-		t.Fatal("timeout")
-	}
-
-	// Trigger a reload
-	s.newServerFn = b.newServer
-	b.req.model.AdapterPaths = []string{"new"}
-	slog.Info("b")
-	s.pendingReqCh <- b.req
-	// finish first two requests, so model can reload
-	time.Sleep(1 * time.Millisecond)
-	a.ctxDone()
-	// Report recovered VRAM usage
-	time.Sleep(1 * time.Millisecond)
-	gMu.Lock()
-	g.FreeMemory = 24 * format.GigaByte
-	gMu.Unlock()
-	select {
-	case resp := <-b.req.successCh:
-		require.Equal(t, resp.llama, b.srv)
-		require.Empty(t, s.pendingReqCh)
-		require.Empty(t, b.req.errCh)
-	case err := <-b.req.errCh:
-		t.Fatal(err.Error())
-	case <-ctx.Done():
-		t.Fatal("timeout")
-	}
+		g.FreeMemory = 24 * format.GigaByte
+		gMu.Unlock()
+		synctest.Wait()
+		select {
+		case resp := <-b.req.successCh:
+			require.Equal(t, resp.llama, b.srv)
+			require.Empty(t, s.pendingReqCh)
+			require.Empty(t, b.req.errCh)
+		case err := <-b.req.errCh:
+			t.Fatal(err.Error())
+		}
+	})
 }
 
 func TestSchedRequestsMultipleLoadedModels(t *testing.T) {
-	slog.Info("TestRequestsMultipleLoadedModels")
-	ctx, done := context.WithTimeout(t.Context(), 1000*time.Millisecond)
-	defer done()
-	s := InitScheduler(ctx)
-	s.waitForRecovery = 10 * time.Millisecond
-	g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
-	g.TotalMemory = 24 * format.GigaByte
-	g.FreeMemory = 12 * format.GigaByte
-	gMu := sync.Mutex{}
-	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
-		slog.Info("test getGpuFn called", "runners", runners)
+	withSynctestScheduler(t, func(t *testing.T, ctx context.Context) {
+		slog.Info("TestRequestsMultipleLoadedModels")
+		s := InitScheduler(ctx)
+		s.waitForRecovery = 10 * time.Millisecond
+		g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
+		g.TotalMemory = 24 * format.GigaByte
+		g.FreeMemory = 12 * format.GigaByte
+		gMu := sync.Mutex{}
+		s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+			slog.Info("test getGpuFn called", "runners", runners)
+			gMu.Lock()
+			defer gMu.Unlock()
+			return []ml.DeviceInfo{g}
+		}
+		s.getSystemInfoFn = getSystemInfoFn
+
+		// Multiple loaded models
+		a := newScenarioRequest(t, ctx, "model-a-1g-gpu", 1*format.GigaByte, nil, map[ml.DeviceID]uint64{{Library: "Metal"}: 1 * format.GigaByte})
+		a.req.sessionDuration = &api.Duration{Duration: 5 * time.Millisecond}
+		b := newScenarioRequest(t, ctx, "model-b-10g-gpu", 10*format.GigaByte, nil, map[ml.DeviceID]uint64{{Library: "Metal"}: 10 * format.GigaByte})
+		b.req.sessionDuration = &api.Duration{Duration: 5 * time.Millisecond}
+		c := newScenarioRequest(t, ctx, "model-c-10g-cpu", 10*format.GigaByte, nil, nil /* No GPU load */)
+		c.req.opts.NumGPU = 0                                                                                                                         // CPU load, will be allowed
+		b.req.sessionDuration = &api.Duration{Duration: 10 * time.Millisecond}                                                                        // longer than b to cause the scheduler to favor unloading b over c
+		d := newScenarioRequest(t, ctx, "model-d-10g-gpu", 13*format.GigaByte, nil, map[ml.DeviceID]uint64{{Library: "Metal"}: 13 * format.GigaByte}) // Needs prior unloaded
+
+		s.newServerFn = a.newServer
+		slog.Info("Loading A")
+		s.pendingReqCh <- a.req
+		s.Run(ctx)
+		synctest.Wait()
+		select {
+		case resp := <-a.req.successCh:
+			require.Equal(t, resp.llama, a.srv)
+			require.Empty(t, s.pendingReqCh)
+			require.Empty(t, a.req.errCh)
+		case err := <-a.req.errCh:
+			t.Fatal(err.Error())
+		}
+		requireLoadedCount(t, s, 1)
+
+		t.Setenv("OLLAMA_MAX_LOADED_MODELS", "0")
+		s.newServerFn = b.newServer
+		slog.Info("Loading B")
+		s.pendingReqCh <- b.req
+		synctest.Wait()
+		select {
+		case resp := <-b.req.successCh:
+			require.Equal(t, resp.llama, b.srv)
+			require.Empty(t, s.pendingReqCh)
+			require.Empty(t, b.req.errCh)
+		case err := <-b.req.errCh:
+			t.Fatal(err.Error())
+		}
+		requireLoadedCount(t, s, 2)
+
+		// This is a CPU load with NumGPU = 0 so it should load
+		s.newServerFn = c.newServer
+		slog.Info("Loading C")
+		s.pendingReqCh <- c.req
+		synctest.Wait()
+		select {
+		case resp := <-c.req.successCh:
+			require.Equal(t, resp.llama, c.srv)
+			require.Empty(t, s.pendingReqCh)
+			require.Empty(t, c.req.errCh)
+		case err := <-c.req.errCh:
+			t.Fatal(err.Error())
+		}
+		requireLoadedCount(t, s, 3)
+
+		// Try to load a model that won't fit
+		s.newServerFn = d.newServer
+		slog.Info("d")
+		requireLoadedCount(t, s, 3)
+		a.ctxDone() // Won't help since this one isn't big enough to make room
+		s.pendingReqCh <- d.req
+		synctest.Wait()
+		requireLoadedCount(t, s, 2)
+
+		// Mark b done so it can unload
+		b.ctxDone()
+		// Report recovered VRAM usage so scheduler will finish waiting and unload
 		gMu.Lock()
-		defer gMu.Unlock()
-		return []ml.DeviceInfo{g}
-	}
-	s.getSystemInfoFn = getSystemInfoFn
-
-	// Multiple loaded models
-	a := newScenarioRequest(t, ctx, "model-a-1g-gpu", 1*format.GigaByte, nil, map[ml.DeviceID]uint64{{Library: "Metal"}: 1 * format.GigaByte})
-	a.req.sessionDuration = &api.Duration{Duration: 5 * time.Millisecond}
-	b := newScenarioRequest(t, ctx, "model-b-10g-gpu", 10*format.GigaByte, nil, map[ml.DeviceID]uint64{{Library: "Metal"}: 10 * format.GigaByte})
-	b.req.sessionDuration = &api.Duration{Duration: 5 * time.Millisecond}
-	c := newScenarioRequest(t, ctx, "model-c-10g-cpu", 10*format.GigaByte, nil, nil /* No GPU load */)
-	c.req.opts.NumGPU = 0                                                                                                                         // CPU load, will be allowed
-	b.req.sessionDuration = &api.Duration{Duration: 10 * time.Millisecond}                                                                        // longer than b to cause the scheduler to favor unloading b over c
-	d := newScenarioRequest(t, ctx, "model-d-10g-gpu", 13*format.GigaByte, nil, map[ml.DeviceID]uint64{{Library: "Metal"}: 13 * format.GigaByte}) // Needs prior unloaded
-
-	s.newServerFn = a.newServer
-	slog.Info("Loading A")
-	s.pendingReqCh <- a.req
-	s.Run(ctx)
-	select {
-	case resp := <-a.req.successCh:
-		require.Equal(t, resp.llama, a.srv)
-		require.Empty(t, s.pendingReqCh)
-		require.Empty(t, a.req.errCh)
-	case err := <-a.req.errCh:
-		t.Fatal(err.Error())
-	case <-ctx.Done():
-		t.Fatal("timeout")
-	}
-	s.loadedMu.Lock()
-	require.Len(t, s.loaded, 1)
-	s.loadedMu.Unlock()
-
-	t.Setenv("OLLAMA_MAX_LOADED_MODELS", "0")
-	s.newServerFn = b.newServer
-	slog.Info("Loading B")
-	s.pendingReqCh <- b.req
-	select {
-	case resp := <-b.req.successCh:
-		require.Equal(t, resp.llama, b.srv)
-		require.Empty(t, s.pendingReqCh)
-		require.Empty(t, b.req.errCh)
-	case err := <-b.req.errCh:
-		t.Fatal(err.Error())
-	case <-ctx.Done():
-		t.Fatal("timeout")
-	}
-	s.loadedMu.Lock()
-	require.Len(t, s.loaded, 2)
-	s.loadedMu.Unlock()
-
-	// This is a CPU load with NumGPU = 0 so it should load
-	s.newServerFn = c.newServer
-	slog.Info("Loading C")
-	s.pendingReqCh <- c.req
-	select {
-	case resp := <-c.req.successCh:
-		require.Equal(t, resp.llama, c.srv)
-		require.Empty(t, s.pendingReqCh)
-		require.Empty(t, c.req.errCh)
-	case err := <-c.req.errCh:
-		t.Fatal(err.Error())
-	case <-ctx.Done():
-		slog.Info("FAIL: scheduler state", "s.loaded", s.loaded)
-		t.Fatal("timeout")
-	}
-	s.loadedMu.Lock()
-	require.Len(t, s.loaded, 3)
-	s.loadedMu.Unlock()
-
-	// Try to load a model that won't fit
-	s.newServerFn = d.newServer
-	slog.Info("d")
-	s.loadedMu.Lock()
-	require.Len(t, s.loaded, 3)
-	s.loadedMu.Unlock()
-	a.ctxDone() // Won't help since this one isn't big enough to make room
-	time.Sleep(2 * time.Millisecond)
-	s.pendingReqCh <- d.req
-	// finish prior request, so new model can load
-	time.Sleep(6 * time.Millisecond)
-	s.loadedMu.Lock()
-	require.Len(t, s.loaded, 2)
-	s.loadedMu.Unlock()
-	// Mark b done so it can unload
-	b.ctxDone()
-	// Report recovered VRAM usage so scheduler will finish waiting and unload
-	time.Sleep(1 * time.Millisecond)
-	gMu.Lock()
-	g.FreeMemory = 24 * format.GigaByte
-	gMu.Unlock()
-	select {
-	case resp := <-d.req.successCh:
+		g.FreeMemory = 24 * format.GigaByte
+		gMu.Unlock()
+		synctest.Wait()
+		resp := <-d.req.successCh
 		require.Equal(t, resp.llama, d.srv)
 		require.Empty(t, s.pendingReqCh)
 		require.Empty(t, d.req.errCh)
-	case <-ctx.Done():
-		t.Fatal("timeout")
-	}
-	// Wait for b to close
-closeWait:
-	for {
-		select {
-		case <-ctx.Done():
-			t.Fatal("timeout")
-		default:
-			if b.srv.closeCalled {
-				break closeWait
-			}
-			time.Sleep(1 * time.Millisecond)
-		}
-	}
-	s.loadedMu.Lock()
-	require.Len(t, s.loaded, 2)
-	s.loadedMu.Unlock()
+		require.True(t, b.srv.closeCalled)
+		requireLoadedCount(t, s, 2)
+	})
 }
 
 func TestSchedGetRunner(t *testing.T) {
-	ctx, done := context.WithTimeout(t.Context(), 3*time.Second)
-	defer done()
+	withSynctestScheduler(t, func(t *testing.T, ctx context.Context) {
+		a := newScenarioRequest(t, ctx, "ollama-model-1a", 10, &api.Duration{Duration: 2 * time.Millisecond}, nil)
+		b := newScenarioRequest(t, ctx, "ollama-model-1b", 10, &api.Duration{Duration: 2 * time.Millisecond}, nil)
+		c := newScenarioRequest(t, ctx, "ollama-model-1c", 10, &api.Duration{Duration: 2 * time.Millisecond}, nil)
+		t.Setenv("OLLAMA_MAX_QUEUE", "1")
+		s := InitScheduler(ctx)
+		s.waitForRecovery = 10 * time.Millisecond
+		s.getGpuFn = getGpuFn
+		s.getSystemInfoFn = getSystemInfoFn
+		s.newServerFn = a.newServer
+		slog.Info("a")
+		successCh1a, errCh1a := s.getRunner(a.ctx, a.req.model, a.req.opts, a.req.sessionDuration, false, false, nil)
+		require.Len(t, s.pendingReqCh, 1)
+		slog.Info("b")
+		successCh1b, errCh1b := s.getRunner(b.ctx, b.req.model, b.req.opts, b.req.sessionDuration, false, false, nil)
+		require.Len(t, s.pendingReqCh, 1)
+		require.Empty(t, successCh1b)
+		require.Len(t, errCh1b, 1)
+		err := <-errCh1b
+		require.Contains(t, err.Error(), "server busy")
+		s.Run(ctx)
+		synctest.Wait()
+		select {
+		case resp := <-successCh1a:
+			require.Equal(t, resp.llama, a.srv)
+			require.Empty(t, s.pendingReqCh)
+			require.Empty(t, errCh1a)
+		case err := <-errCh1a:
+			t.Fatal(err.Error())
+		}
+		a.ctxDone() // Set "a" model to idle so it can unload
+		requireLoadedCount(t, s, 1)
 
-	a := newScenarioRequest(t, ctx, "ollama-model-1a", 10, &api.Duration{Duration: 2 * time.Millisecond}, nil)
-	b := newScenarioRequest(t, ctx, "ollama-model-1b", 10, &api.Duration{Duration: 2 * time.Millisecond}, nil)
-	c := newScenarioRequest(t, ctx, "ollama-model-1c", 10, &api.Duration{Duration: 2 * time.Millisecond}, nil)
-	t.Setenv("OLLAMA_MAX_QUEUE", "1")
-	s := InitScheduler(ctx)
-	s.waitForRecovery = 10 * time.Millisecond
-	s.getGpuFn = getGpuFn
-	s.getSystemInfoFn = getSystemInfoFn
-	s.newServerFn = a.newServer
-	slog.Info("a")
-	successCh1a, errCh1a := s.getRunner(a.ctx, a.req.model, a.req.opts, a.req.sessionDuration, false, false, nil)
-	require.Len(t, s.pendingReqCh, 1)
-	slog.Info("b")
-	successCh1b, errCh1b := s.getRunner(b.ctx, b.req.model, b.req.opts, b.req.sessionDuration, false, false, nil)
-	require.Len(t, s.pendingReqCh, 1)
-	require.Empty(t, successCh1b)
-	require.Len(t, errCh1b, 1)
-	err := <-errCh1b
-	require.Contains(t, err.Error(), "server busy")
-	s.Run(ctx)
-	select {
-	case resp := <-successCh1a:
-		require.Equal(t, resp.llama, a.srv)
-		require.Empty(t, s.pendingReqCh)
-		require.Empty(t, errCh1a)
-	case err := <-errCh1a:
-		t.Fatal(err.Error())
-	case <-ctx.Done():
-		t.Fatal("timeout")
-	}
-	a.ctxDone() // Set "a" model to idle so it can unload
-	s.loadedMu.Lock()
-	require.Len(t, s.loaded, 1)
-	s.loadedMu.Unlock()
-
-	c.req.model.ModelPath = "bad path"
-	slog.Info("c")
-	successCh1c, errCh1c := s.getRunner(c.ctx, c.req.model, c.req.opts, c.req.sessionDuration, false, false, nil)
-	// Starts in pending channel, then should be quickly processed to return an error
-	time.Sleep(50 * time.Millisecond) // Long enough for the "a" model to expire and unload
-	require.Empty(t, successCh1c)
-	s.loadedMu.Lock()
-	require.Empty(t, s.loaded)
-	s.loadedMu.Unlock()
-	require.Len(t, errCh1c, 1)
-	err = <-errCh1c
-	require.Contains(t, err.Error(), "bad path")
-	b.ctxDone()
+		c.req.model.ModelPath = "bad path"
+		slog.Info("c")
+		successCh1c, errCh1c := s.getRunner(c.ctx, c.req.model, c.req.opts, c.req.sessionDuration, false, false, nil)
+		synctest.Wait()
+		require.Empty(t, successCh1c)
+		time.Sleep(a.req.sessionDuration.Duration)
+		synctest.Wait()
+		requireLoadedCount(t, s, 0)
+		err = <-errCh1c
+		require.Contains(t, err.Error(), "bad path")
+		b.ctxDone()
+	})
 }
 
 func TestSchedGetRunnerUsesDigestKeyWhenModelPathEmpty(t *testing.T) {
@@ -630,132 +634,121 @@ func TestSchedGetRunnerReusesSameDigestWhenModelPathEmpty(t *testing.T) {
 }
 
 func TestSchedExpireRunner(t *testing.T) {
-	ctx, done := context.WithCancel(t.Context())
-	defer done()
-	s := InitScheduler(ctx)
-	s.waitForRecovery = 10 * time.Millisecond
+	withSynctestScheduler(t, func(t *testing.T, ctx context.Context) {
+		schedCtx, done := context.WithCancel(ctx)
+		s := InitScheduler(schedCtx)
+		s.waitForRecovery = 10 * time.Millisecond
 
-	modelPath, _ := createBinFile(t, ggml.KV{
-		"general.architecture":          "llama",
-		"llama.context_length":          uint32(32),
-		"llama.embedding_length":        uint32(4096),
-		"llama.block_count":             uint32(1),
-		"llama.attention.head_count":    uint32(32),
-		"llama.attention.head_count_kv": uint32(32),
-		"tokenizer.ggml.tokens":         []string{" "},
-		"tokenizer.ggml.scores":         []float32{0},
-		"tokenizer.ggml.token_type":     []int32{0},
-	}, []*ggml.Tensor{
-		{Name: "blk.0.attn.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
-		{Name: "output.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
+		modelPath, _ := createBinFile(t, ggml.KV{
+			"general.architecture":          "llama",
+			"llama.context_length":          uint32(32),
+			"llama.embedding_length":        uint32(4096),
+			"llama.block_count":             uint32(1),
+			"llama.attention.head_count":    uint32(32),
+			"llama.attention.head_count_kv": uint32(32),
+			"tokenizer.ggml.tokens":         []string{" "},
+			"tokenizer.ggml.scores":         []float32{0},
+			"tokenizer.ggml.token_type":     []int32{0},
+		}, []*ggml.Tensor{
+			{Name: "blk.0.attn.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
+			{Name: "output.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
+		})
+
+		reqCtx, cancelReq := context.WithCancel(schedCtx)
+		defer cancelReq()
+
+		req := &LlmRequest{
+			ctx:             reqCtx,
+			model:           &Model{ModelPath: modelPath},
+			opts:            api.DefaultOptions(),
+			successCh:       make(chan *runnerRef, 1),
+			errCh:           make(chan error, 1),
+			sessionDuration: &api.Duration{Duration: 2 * time.Minute},
+		}
+
+		gpus := []ml.DeviceInfo{}
+		systemInfo := ml.SystemInfo{}
+		server := &mockLlm{vramSize: 10, vramByGPU: map[ml.DeviceID]uint64{}}
+		s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
+			server.modelPath = model
+			return server, nil
+		}
+		s.load(req, systemInfo, gpus, false)
+		synctest.Wait()
+
+		select {
+		case err := <-req.errCh:
+			if err != nil {
+				t.Fatalf("expected no errors when loading, got '%s'", err.Error())
+			}
+		case resp := <-req.successCh:
+			require.Equal(t, uint(1), resp.refCount)
+			requireLoadedCount(t, s, 1)
+		}
+
+		completedDone := make(chan struct{})
+		go func() {
+			defer close(completedDone)
+			s.processCompleted(schedCtx)
+		}()
+
+		s.expireRunner(&Model{ModelPath: modelPath})
+		cancelReq()
+		synctest.Wait()
+		require.Len(t, s.unloadedCh, 1)
+		<-s.unloadedCh
+		requireLoadedCount(t, s, 0)
+
+		done()
+		synctest.Wait()
+		select {
+		case <-completedDone:
+		default:
+			t.Fatal("expected completed loop to stop")
+		}
 	})
-
-	reqCtx, cancelReq := context.WithCancel(ctx)
-	defer cancelReq()
-
-	req := &LlmRequest{
-		ctx:             reqCtx,
-		model:           &Model{ModelPath: modelPath},
-		opts:            api.DefaultOptions(),
-		successCh:       make(chan *runnerRef, 1),
-		errCh:           make(chan error, 1),
-		sessionDuration: &api.Duration{Duration: 2 * time.Minute},
-	}
-
-	gpus := []ml.DeviceInfo{}
-	systemInfo := ml.SystemInfo{}
-	server := &mockLlm{vramSize: 10, vramByGPU: map[ml.DeviceID]uint64{}}
-	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
-		server.modelPath = model
-		return server, nil
-	}
-	s.load(req, systemInfo, gpus, false)
-
-	select {
-	case err := <-req.errCh:
-		if err != nil {
-			t.Fatalf("expected no errors when loading, got '%s'", err.Error())
-		}
-	case resp := <-req.successCh:
-		s.loadedMu.Lock()
-		if resp.refCount != uint(1) || len(s.loaded) != 1 {
-			t.Fatalf("expected a model to be loaded")
-		}
-		s.loadedMu.Unlock()
-	}
-
-	completedDone := make(chan struct{})
-	go func() {
-		defer close(completedDone)
-		s.processCompleted(ctx)
-	}()
-
-	s.expireRunner(&Model{ModelPath: modelPath})
-	cancelReq()
-
-	select {
-	case <-s.unloadedCh:
-	case <-time.After(5 * time.Second):
-		t.Fatal("expected model to be unloaded")
-	}
-
-	s.loadedMu.Lock()
-	if len(s.loaded) != 0 {
-		t.Fatalf("expected model to be unloaded")
-	}
-	s.loadedMu.Unlock()
-
-	done()
-	select {
-	case <-completedDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("expected completed loop to stop")
-	}
 }
 
 // TODO - add one scenario that triggers the bogus finished event with positive ref count
 func TestSchedPrematureExpired(t *testing.T) {
-	ctx, done := context.WithTimeout(t.Context(), 1000*time.Millisecond)
-	defer done()
+	withSynctestScheduler(t, func(t *testing.T, ctx context.Context) {
+		// Same model, same request
+		scenario1a := newScenarioRequest(t, ctx, "ollama-model-1a", 10, &api.Duration{Duration: 100 * time.Millisecond}, nil)
+		s := InitScheduler(ctx)
+		s.waitForRecovery = 10 * time.Millisecond
+		s.getGpuFn = getGpuFn
+		s.getSystemInfoFn = getSystemInfoFn
+		s.newServerFn = scenario1a.newServer
+		successCh1a, errCh1a := s.getRunner(scenario1a.ctx, scenario1a.req.model, scenario1a.req.opts, scenario1a.req.sessionDuration, false, false, nil)
+		require.Len(t, s.pendingReqCh, 1)
+		s.Run(ctx)
+		synctest.Wait()
+		var resp *runnerRef
+		select {
+		case resp = <-successCh1a:
+			require.Equal(t, resp.llama, scenario1a.srv)
+			require.Empty(t, s.pendingReqCh)
+			require.Empty(t, errCh1a)
+			requireLoadedCount(t, s, 1)
+			slog.Info("sending premature expired event now")
+			s.expiredCh <- resp // Shouldn't happen in real life, but make sure its safe
+		case err := <-errCh1a:
+			t.Fatal(err.Error())
+		}
+		synctest.Wait()
+		resp.refMu.Lock()
+		require.True(t, resp.expireOnIdle)
+		resp.refMu.Unlock()
+		scenario1a.ctxDone()
+		synctest.Wait()
+		requireLoadedCount(t, s, 0)
 
-	// Same model, same request
-	scenario1a := newScenarioRequest(t, ctx, "ollama-model-1a", 10, &api.Duration{Duration: 100 * time.Millisecond}, nil)
-	s := InitScheduler(ctx)
-	s.waitForRecovery = 10 * time.Millisecond
-	s.getGpuFn = getGpuFn
-	s.getSystemInfoFn = getSystemInfoFn
-	s.newServerFn = scenario1a.newServer
-	successCh1a, errCh1a := s.getRunner(scenario1a.ctx, scenario1a.req.model, scenario1a.req.opts, scenario1a.req.sessionDuration, false, false, nil)
-	require.Len(t, s.pendingReqCh, 1)
-	s.Run(ctx)
-	select {
-	case resp := <-successCh1a:
-		require.Equal(t, resp.llama, scenario1a.srv)
-		require.Empty(t, s.pendingReqCh)
-		require.Empty(t, errCh1a)
-		s.loadedMu.Lock()
-		require.Len(t, s.loaded, 1)
-		s.loadedMu.Unlock()
-		slog.Info("sending premature expired event now")
-		s.expiredCh <- resp // Shouldn't happen in real life, but make sure its safe
-	case err := <-errCh1a:
-		t.Fatal(err.Error())
-	case <-ctx.Done():
-		t.Fatal("timeout")
-	}
-	time.Sleep(scenario1a.req.sessionDuration.Duration)
-	scenario1a.ctxDone()
-	time.Sleep(20 * time.Millisecond)
-	require.LessOrEqual(t, len(s.finishedReqCh), 1)
-	time.Sleep(10 * time.Millisecond)
-	require.Empty(t, s.finishedReqCh)
-	s.loadedMu.Lock()
-	require.Empty(t, s.loaded)
-	s.loadedMu.Unlock()
-
-	// also shouldn't happen in real life
-	s.finishedReqCh <- scenario1a.req
-	time.Sleep(5 * time.Millisecond)
+		// also shouldn't happen in real life; wait until the scheduler has safely
+		// consumed the bogus event
+		s.finishedReqCh <- scenario1a.req
+		synctest.Wait()
+		require.Empty(t, s.finishedReqCh)
+	})
 }
 
 func TestSchedUseLoadedRunner(t *testing.T) {
@@ -769,7 +762,7 @@ func TestSchedUseLoadedRunner(t *testing.T) {
 	finished := make(chan *LlmRequest)
 	llm1 := &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}}
 	r1 := &runnerRef{llama: llm1, sessionDuration: 1, numParallel: 1}
-	req.useLoadedRunner(r1, finished)
+	req.tryUseLoadedRunner(r1, finished)
 	require.Equal(t, uint(1), r1.refCount)
 	require.Equal(t, time.Duration(2), r1.sessionDuration)
 	select {
@@ -783,6 +776,32 @@ func TestSchedUseLoadedRunner(t *testing.T) {
 	done()
 	fin := <-finished
 	require.Equal(t, req, fin)
+}
+
+func TestSchedUseLoadedRunnerCanceledDoesNotIncrementRefCount(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	req := &LlmRequest{
+		ctx:             ctx,
+		opts:            api.DefaultOptions(),
+		successCh:       make(chan *runnerRef, 1),
+		errCh:           make(chan error, 1),
+		sessionDuration: &api.Duration{Duration: 2},
+	}
+	finished := make(chan *LlmRequest)
+	runner := &runnerRef{llama: &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}}, sessionDuration: 1, numParallel: 1}
+
+	require.True(t, req.tryUseLoadedRunner(runner, finished))
+	require.Equal(t, uint(0), runner.refCount)
+	require.Equal(t, time.Duration(1), runner.sessionDuration)
+	require.Empty(t, req.successCh)
+	select {
+	case err := <-req.errCh:
+		require.ErrorIs(t, err, context.Canceled)
+	default:
+		t.Fatal("expected canceled request error")
+	}
 }
 
 func TestSchedUpdateFreeSpace(t *testing.T) {
@@ -827,6 +846,37 @@ func TestSchedUpdateFreeSpace(t *testing.T) {
 	s.updateFreeSpace(gpus)
 	require.Equal(t, uint64(1000-50-125), gpus[0].FreeMemory)
 	require.Equal(t, uint64(2000-50-75), gpus[1].FreeMemory)
+}
+
+func TestSchedUpdateFreeSpaceDoesNotHoldRunnerLockDuringVRAMRefresh(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer done()
+
+	gpuID := ml.DeviceID{ID: "1", Library: "CUDA"}
+	gpus := []ml.DeviceInfo{{
+		DeviceID:    gpuID,
+		TotalMemory: 1000,
+		FreeMemory:  900,
+	}}
+
+	var runner *runnerRef
+	llm := &mockLlm{
+		vramByGPUFn: func(id ml.DeviceID) uint64 {
+			require.True(t, runner.refMu.TryLock(), "VRAMByGPU called while runner.refMu was held")
+			runner.refMu.Unlock()
+			require.Equal(t, gpuID, id)
+			return 125
+		},
+	}
+	runner = &runnerRef{llama: llm, gpus: []ml.DeviceID{gpuID}, numParallel: 1}
+
+	s := InitScheduler(ctx)
+	s.loadedMu.Lock()
+	s.loaded["a"] = runner
+	s.loadedMu.Unlock()
+
+	s.updateFreeSpace(gpus)
+	require.Equal(t, uint64(1000-125), gpus[0].FreeMemory)
 }
 
 func TestSchedFindRunnerToUnload(t *testing.T) {
@@ -1088,45 +1138,45 @@ func TestAutomaticGenerationBatch(t *testing.T) {
 			name:         "small context keeps default",
 			effectiveCtx: 4096,
 			flash:        ml.FlashAttentionAuto,
-			want:         512,
+			want:         llamaServerGenerationBatchDefault,
 		},
 		{
-			name:         "medium context uses 1024 with unknown memory",
+			name:         "medium context uses medium batch with unknown memory",
 			effectiveCtx: 32768,
 			flash:        ml.FlashAttentionAuto,
-			want:         1024,
+			want:         llamaServerGenerationBatchMedium,
 		},
 		{
-			name:         "large context uses 2048 with headroom",
+			name:         "large context uses large batch with headroom",
 			effectiveCtx: 131072,
 			predicted:    8 * format.GibiByte,
 			available:    14 * format.GibiByte,
 			flash:        ml.FlashAttentionAuto,
-			want:         2048,
+			want:         llamaServerGenerationBatchLarge,
 		},
 		{
-			name:         "large context steps down to 1024 without 2048 headroom",
+			name:         "large context steps down to medium batch without large batch headroom",
 			effectiveCtx: 131072,
 			predicted:    9 * format.GibiByte,
 			available:    14 * format.GibiByte,
 			flash:        ml.FlashAttentionAuto,
-			want:         1024,
+			want:         llamaServerGenerationBatchMedium,
 		},
 		{
-			name:         "large context steps down to 1024 for headroom",
+			name:         "large context steps down to medium batch for headroom",
 			effectiveCtx: 131072,
 			predicted:    8 * format.GibiByte,
 			available:    11 * format.GibiByte,
 			flash:        ml.FlashAttentionAuto,
-			want:         1024,
+			want:         llamaServerGenerationBatchMedium,
 		},
 		{
-			name:         "medium context steps down to 512 for headroom",
+			name:         "medium context steps down to default batch for headroom",
 			effectiveCtx: 32768,
 			predicted:    8500 * format.MebiByte,
 			available:    11 * format.GibiByte,
 			flash:        ml.FlashAttentionAuto,
-			want:         512,
+			want:         llamaServerGenerationBatchDefault,
 		},
 		{
 			name:         "flash attention disabled suppresses promotion",
@@ -1135,7 +1185,7 @@ func TestAutomaticGenerationBatch(t *testing.T) {
 			available:    14 * format.GibiByte,
 			flash:        ml.FlashAttentionDisabled,
 			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 14 * format.GibiByte}},
-			want:         512,
+			want:         llamaServerGenerationBatchDefault,
 		},
 		{
 			name:         "constrained CUDA without flash attention uses smaller batch",
@@ -1144,7 +1194,7 @@ func TestAutomaticGenerationBatch(t *testing.T) {
 			available:    6 * format.GibiByte,
 			flash:        ml.FlashAttentionDisabled,
 			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 6 * format.GibiByte}},
-			want:         256,
+			want:         llamaServerGenerationBatchConstrained,
 		},
 	}
 
@@ -1188,22 +1238,228 @@ func TestSchedUnload(t *testing.T) {
 	require.Nil(t, r2.model)
 }
 
-func TestSchedAlreadyCanceled(t *testing.T) {
-	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+func TestRunnerRefDiscoveryAccessorsUseSnapshots(t *testing.T) {
+	gpuID := ml.DeviceID{ID: "0", Library: "CUDA"}
+	opts := api.DefaultOptions()
+	opts.NumCtx = 2048
+	runner := &runnerRef{
+		llama:     &mockLlm{port: 12345, deviceInfos: []ml.DeviceInfo{{DeviceID: gpuID}}},
+		model:     &Model{Name: "test"},
+		modelPath: "test",
+		modelKey:  "test",
+		gpus:      []ml.DeviceID{gpuID},
+		totalSize: 1,
+		vramSize:  1,
+		Options:   &opts,
+	}
+
+	require.Equal(t, 12345, runner.GetPort())
+	require.False(t, runner.HasExited())
+	require.Equal(t, []ml.DeviceInfo{{DeviceID: gpuID}}, runner.GetDeviceInfos(t.Context()))
+
+	gpus := runner.GetActiveDeviceIDs()
+	require.Equal(t, []ml.DeviceID{gpuID}, gpus)
+	gpus[0].ID = "changed"
+	runner.refMu.Lock()
+	require.Equal(t, gpuID, runner.gpus[0])
+	_ = runner.LogValue()
+	runner.refMu.Unlock()
+
+	runner.unload()
+	require.Equal(t, -1, runner.GetPort())
+	require.True(t, runner.HasExited())
+	require.Nil(t, runner.GetDeviceInfos(t.Context()))
+	require.Empty(t, runner.GetActiveDeviceIDs())
+}
+
+func TestSchedLoadedModelsDoesNotBlockDuringVRAMRecovery(t *testing.T) {
+	withSynctestScheduler(t, func(t *testing.T, ctx context.Context) {
+		s := InitScheduler(ctx)
+		s.waitForRecovery = 10 * time.Millisecond
+
+		gpuQueryEntered := make(chan struct{})
+		releaseGPUQuery := make(chan struct{})
+		var enterOnce sync.Once
+		s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+			enterOnce.Do(func() {
+				close(gpuQueryEntered)
+				select {
+				case <-releaseGPUQuery:
+				case <-ctx.Done():
+				}
+			})
+			gpu := ml.DeviceInfo{DeviceID: ml.DeviceID{ID: "0", Library: "CUDA"}}
+			gpu.TotalMemory = 24 * format.GigaByte
+			gpu.FreeMemory = 12 * format.GigaByte
+			return []ml.DeviceInfo{gpu}
+		}
+
+		model := &Model{ModelPath: "resident"}
+		runner := &runnerRef{
+			llama:           &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}},
+			model:           model,
+			modelPath:       model.ModelPath,
+			modelKey:        schedulerModelKey(model),
+			pid:             1,
+			gpus:            []ml.DeviceID{{ID: "0", Library: "CUDA"}},
+			usesDiscreteGPU: true,
+			vramSize:        1 * format.GigaByte,
+		}
+		s.loadedMu.Lock()
+		s.loaded[runner.modelKey] = runner
+		s.loadedMu.Unlock()
+
+		go s.processCompleted(ctx)
+		s.expiredCh <- runner
+		synctest.Wait()
+		select {
+		case <-gpuQueryEntered:
+		default:
+			t.Fatal("expected VRAM recovery to start GPU discovery")
+		}
+
+		loadedModelsDone := make(chan []loadedModel, 1)
+		go func() {
+			loadedModelsDone <- s.loadedModels()
+		}()
+		synctest.Wait()
+		select {
+		case models := <-loadedModelsDone:
+			require.Empty(t, models)
+		default:
+			t.Fatal("loadedModels blocked behind VRAM recovery")
+		}
+
+		close(releaseGPUQuery)
+		synctest.Wait()
+		time.Sleep(s.waitForRecovery)
+		synctest.Wait()
+		require.Len(t, s.unloadedCh, 1)
+		<-s.unloadedCh
+	})
+}
+
+func TestSchedLoadedModelsDoesNotHoldRunnerLockDuringMemoryRefresh(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer done()
-	dctx, done2 := context.WithCancel(ctx)
-	done2()
-	scenario1a := newScenarioRequest(t, dctx, "ollama-model-1", 10, &api.Duration{Duration: 0}, nil)
+
+	model := &Model{Name: "test", ModelPath: "/fake/model"}
+	var runner *runnerRef
+	llm := &mockLlm{
+		contextLength: 2048,
+		memorySizeFn: func() (uint64, uint64) {
+			require.True(t, runner.refMu.TryLock(), "MemorySize called while runner.refMu was held")
+			runner.refMu.Unlock()
+			return 10 * format.GigaByte, 8 * format.GigaByte
+		},
+	}
+	runner = &runnerRef{
+		model:           model,
+		modelPath:       model.ModelPath,
+		modelKey:        schedulerModelKey(model),
+		llama:           llm,
+		sessionDuration: time.Minute,
+		totalSize:       1,
+		vramSize:        1,
+	}
+
 	s := InitScheduler(ctx)
-	s.waitForRecovery = 10 * time.Millisecond
-	slog.Info("scenario1a")
-	s.pendingReqCh <- scenario1a.req
-	require.Len(t, s.pendingReqCh, 1)
-	s.Run(ctx)
-	time.Sleep(5 * time.Millisecond)
+	s.loadedMu.Lock()
+	s.loaded[runner.modelKey] = runner
+	s.loadedMu.Unlock()
+
+	models := s.loadedModels()
+	require.Len(t, models, 1)
+	require.Equal(t, int64(10*format.GigaByte), models[0].size)
+	require.Equal(t, int64(8*format.GigaByte), models[0].sizeVRAM)
+	require.Equal(t, 2048, models[0].contextLength)
+}
+
+func TestSchedAlreadyCanceled(t *testing.T) {
+	withSynctestScheduler(t, func(t *testing.T, ctx context.Context) {
+		dctx, done2 := context.WithCancel(ctx)
+		done2()
+		scenario1a := newScenarioRequest(t, dctx, "ollama-model-1", 10, &api.Duration{Duration: 0}, nil)
+		s := InitScheduler(ctx)
+		s.waitForRecovery = 10 * time.Millisecond
+		slog.Info("scenario1a")
+		s.pendingReqCh <- scenario1a.req
+		require.Len(t, s.pendingReqCh, 1)
+		s.Run(ctx)
+		synctest.Wait()
+		require.Empty(t, s.pendingReqCh)
+		select {
+		case err := <-scenario1a.req.errCh:
+			require.ErrorIs(t, err, context.Canceled)
+		default:
+			t.Fatal("expected canceled request error")
+		}
+		require.Empty(t, scenario1a.req.successCh)
+	})
+}
+
+func TestSchedCanceledRequestDoesNotEnterPendingQueue(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	s := InitScheduler(t.Context())
+	_, errCh := s.getRunner(ctx, &Model{Name: "canceled"}, api.DefaultOptions(), nil, false, false, nil)
+
+	select {
+	case err := <-errCh:
+		require.ErrorIs(t, err, context.Canceled)
+	default:
+		t.Fatal("expected canceled request error")
+	}
 	require.Empty(t, s.pendingReqCh)
-	require.Empty(t, scenario1a.req.errCh)
-	require.Empty(t, scenario1a.req.successCh)
+}
+
+func TestSchedPendingCanceledDuringUnloadWaitDoesNotRetry(t *testing.T) {
+	withSynctestScheduler(t, func(t *testing.T, ctx context.Context) {
+		s := InitScheduler(ctx)
+		s.waitForRecovery = 10 * time.Millisecond
+		s.getGpuFn = getGpuFn
+		s.getSystemInfoFn = getSystemInfoFn
+
+		resident := &runnerRef{
+			llama:     &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}},
+			modelPath: "resident",
+			modelKey:  "resident",
+		}
+		s.loadedMu.Lock()
+		s.loaded[resident.modelKey] = resident
+		s.loadedMu.Unlock()
+
+		var loadCalls atomic.Int32
+		s.loadFn = func(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) bool {
+			loadCalls.Add(1)
+			return true
+		}
+
+		pending := newScenarioRequest(t, ctx, "pending", 1, nil, nil)
+		go s.processPending(ctx)
+		s.pendingReqCh <- pending.req
+		synctest.Wait()
+
+		select {
+		case runner := <-s.expiredCh:
+			require.Equal(t, resident, runner)
+		default:
+			t.Fatal("expected resident runner to be marked for expiration")
+		}
+
+		pending.ctxDone()
+		s.unloadedCh <- struct{}{}
+		synctest.Wait()
+
+		select {
+		case err := <-pending.req.errCh:
+			require.ErrorIs(t, err, context.Canceled)
+		default:
+			t.Fatal("expected canceled request error")
+		}
+		require.Equal(t, int32(1), loadCalls.Load())
+	})
 }
 
 // hasLoadedRunner is a test helper that checks if any runner is loaded.
@@ -1211,7 +1467,10 @@ func hasLoadedRunner(s *Scheduler) bool {
 	s.loadedMu.Lock()
 	defer s.loadedMu.Unlock()
 	for _, r := range s.loaded {
-		if r.llama != nil {
+		r.refMu.Lock()
+		llama := r.llama
+		r.refMu.Unlock()
+		if llama != nil {
 			return true
 		}
 	}
@@ -1332,6 +1591,124 @@ func TestSchedLlamaServerFitsAlongside(t *testing.T) {
 	require.False(t, needEvict, "expected no eviction when model fits in available VRAM")
 }
 
+func TestSchedRetriesWhenLlamaServerSpillsToCPUWithLoadedRunner(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+
+	var buf syncBuffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(previous)
+
+	s := InitScheduler(ctx)
+	s.waitForRecovery = 10 * time.Millisecond
+	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+		g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
+		g.TotalMemory = 24 * format.GigaByte
+		g.FreeMemory = 20 * format.GigaByte
+		return []ml.DeviceInfo{g}
+	}
+	s.getSystemInfoFn = getSystemInfoFn
+
+	s.loadedMu.Lock()
+	s.loaded["existing-model"] = &runnerRef{
+		llama:    &mockLlm{modelPath: "/fake/existing"},
+		modelKey: "existing-model",
+	}
+	s.loadedMu.Unlock()
+
+	scenario := newScenarioRequest(t, ctx, "cpu-spill-model", 1*format.GigaByte, nil, nil)
+	scenario.srv.totalSize = 2 * format.GigaByte
+	scenario.srv.vramSize = 1 * format.GigaByte
+	scenario.srv.gpuLayers = 20
+	scenario.srv.totalLayers = 33
+	s.newServerFn = scenario.newServer
+
+	systemInfo := getSystemInfoFn()
+	gpus := s.getGpuFn(ctx, nil)
+
+	require.True(t, s.load(scenario.req, systemInfo, gpus, true))
+	require.True(t, scenario.req.loadRetryAttempted)
+	require.True(t, scenario.srv.closeCalled)
+	require.Nil(t, s.activeLoading)
+	require.Contains(t, buf.String(), "llama-server spilled layers to CPU with other models resident; evicting residents and retrying")
+	require.Contains(t, buf.String(), "gpu_layers=20")
+	require.Contains(t, buf.String(), "total_layers=33")
+}
+
+func TestSchedAllowsCPUOnlyLlamaServerLoadWithLoadedRunner(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+
+	var buf syncBuffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(previous)
+
+	s := InitScheduler(ctx)
+	s.waitForRecovery = 10 * time.Millisecond
+	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+		return nil
+	}
+	s.getSystemInfoFn = getSystemInfoFn
+
+	s.loadedMu.Lock()
+	s.loaded["existing-model"] = &runnerRef{
+		llama:    &mockLlm{modelPath: "/fake/existing"},
+		modelKey: "existing-model",
+	}
+	s.loadedMu.Unlock()
+
+	scenario := newScenarioRequest(t, ctx, "cpu-only-model", 1*format.GigaByte, nil, nil)
+	scenario.srv.totalSize = 2 * format.GigaByte
+	scenario.srv.gpuLayers = 0
+	scenario.srv.totalLayers = 33
+	s.newServerFn = scenario.newServer
+
+	systemInfo := getSystemInfoFn()
+	gpus := s.getGpuFn(ctx, nil)
+
+	require.False(t, s.load(scenario.req, systemInfo, gpus, true))
+	require.False(t, scenario.req.loadRetryAttempted)
+	require.False(t, scenario.srv.closeCalled)
+	require.NotContains(t, buf.String(), "llama-server spilled layers to CPU with other models resident")
+}
+
+func TestSchedAllowsLlamaServerCPUOverflowWithoutLoadedRunner(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+
+	var buf syncBuffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(previous)
+
+	s := InitScheduler(ctx)
+	s.waitForRecovery = 10 * time.Millisecond
+	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+		g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
+		g.TotalMemory = 24 * format.GigaByte
+		g.FreeMemory = 20 * format.GigaByte
+		return []ml.DeviceInfo{g}
+	}
+	s.getSystemInfoFn = getSystemInfoFn
+
+	scenario := newScenarioRequest(t, ctx, "cpu-spill-model", 1*format.GigaByte, nil, nil)
+	scenario.srv.totalSize = 2 * format.GigaByte
+	scenario.srv.vramSize = 1 * format.GigaByte
+	scenario.srv.gpuLayers = 20
+	scenario.srv.totalLayers = 33
+	s.newServerFn = scenario.newServer
+
+	systemInfo := getSystemInfoFn()
+	gpus := s.getGpuFn(ctx, nil)
+
+	require.False(t, s.load(scenario.req, systemInfo, gpus, false))
+	require.False(t, scenario.req.loadRetryAttempted)
+	require.False(t, scenario.srv.closeCalled)
+	require.NotContains(t, buf.String(), "llama-server spilled layers to CPU with other models resident")
+}
+
 func TestSchedLlamaServerPredictionUsesTotalParallelContext(t *testing.T) {
 	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
 	defer done()
@@ -1371,374 +1748,6 @@ func TestSchedLlamaServerPredictionUsesTotalParallelContext(t *testing.T) {
 	require.False(t, called, "preflight prediction should reject before spawning llama-server")
 }
 
-func TestAvailableMemoryForLoadUsesWorstSharedMemoryMeasurement(t *testing.T) {
-	tests := []struct {
-		name              string
-		systemFree        uint64
-		gpus              []ml.DeviceInfo
-		wantAvailable     uint64
-		wantGPUFree       uint64
-		wantSystemLimited bool
-	}{
-		{
-			name:       "integrated metal uses lower system free",
-			systemFree: 80 * format.GigaByte,
-			gpus: []ml.DeviceInfo{{
-				DeviceID:   ml.DeviceID{Library: "Metal"},
-				Integrated: true,
-				FreeMemory: 300 * format.GigaByte,
-			}},
-			wantAvailable:     80 * format.GigaByte,
-			wantGPUFree:       300 * format.GigaByte,
-			wantSystemLimited: true,
-		},
-		{
-			name:       "integrated gpu uses lower system free",
-			systemFree: 6 * format.GigaByte,
-			gpus: []ml.DeviceInfo{{
-				DeviceID:   ml.DeviceID{Library: "Vulkan"},
-				Integrated: true,
-				FreeMemory: 12 * format.GigaByte,
-			}},
-			wantAvailable:     6 * format.GigaByte,
-			wantGPUFree:       12 * format.GigaByte,
-			wantSystemLimited: true,
-		},
-		{
-			name:       "discrete metal ignores lower system free",
-			systemFree: 6 * format.GigaByte,
-			gpus: []ml.DeviceInfo{{
-				DeviceID:   ml.DeviceID{Library: "Metal"},
-				FreeMemory: 12 * format.GigaByte,
-			}},
-			wantAvailable: 12 * format.GigaByte,
-			wantGPUFree:   12 * format.GigaByte,
-		},
-		{
-			name:       "discrete gpu ignores lower system free",
-			systemFree: 6 * format.GigaByte,
-			gpus: []ml.DeviceInfo{{
-				DeviceID:   ml.DeviceID{Library: "CUDA"},
-				FreeMemory: 12 * format.GigaByte,
-			}},
-			wantAvailable: 12 * format.GigaByte,
-			wantGPUFree:   12 * format.GigaByte,
-		},
-		{
-			name:       "mixed gpus only clamp integrated contribution",
-			systemFree: 6 * format.GigaByte,
-			gpus: []ml.DeviceInfo{
-				{
-					DeviceID:   ml.DeviceID{Library: "CUDA"},
-					FreeMemory: 12 * format.GigaByte,
-				},
-				{
-					DeviceID:   ml.DeviceID{Library: "Vulkan"},
-					Integrated: true,
-					FreeMemory: 10 * format.GigaByte,
-				},
-			},
-			wantAvailable:     18 * format.GigaByte,
-			wantGPUFree:       22 * format.GigaByte,
-			wantSystemLimited: true,
-		},
-		{
-			name:       "shared gpu keeps lower adjusted gpu baseline",
-			systemFree: 20 * format.GigaByte,
-			gpus: []ml.DeviceInfo{{
-				DeviceID:   ml.DeviceID{Library: "Metal"},
-				Integrated: true,
-				FreeMemory: 12 * format.GigaByte,
-			}},
-			wantAvailable: 12 * format.GigaByte,
-			wantGPUFree:   12 * format.GigaByte,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			available, gpuFree, systemLimited := availableMemoryForLoad(ml.SystemInfo{FreeMemory: tt.systemFree}, tt.gpus)
-			require.Equal(t, tt.wantAvailable, available)
-			require.Equal(t, tt.wantGPUFree, gpuFree)
-			require.Equal(t, tt.wantSystemLimited, systemLimited)
-		})
-	}
-}
-
-func TestSelectLlamaServerPlacement(t *testing.T) {
-	systemInfo := ml.SystemInfo{FreeMemory: 14 * format.GigaByte}
-
-	tests := []struct {
-		name             string
-		gpus             []ml.DeviceInfo
-		predictedVRAM    uint64
-		opts             api.Options
-		schedSpread      string
-		wantLibrary      string
-		wantMainGPU      *int
-		wantSelectedGPUs int
-		wantGPUID        string
-	}{
-		{
-			name:          "compacts onto largest same-backend GPU",
-			predictedVRAM: 8 * format.GigaByte,
-			gpus: []ml.DeviceInfo{
-				{DeviceID: ml.DeviceID{ID: "0", Library: "CUDA"}, Name: "small", FreeMemory: 10 * format.GigaByte},
-				{DeviceID: ml.DeviceID{ID: "1", Library: "CUDA"}, Name: "large", FreeMemory: 20 * format.GigaByte},
-			},
-			opts:             api.DefaultOptions(),
-			wantLibrary:      "CUDA",
-			wantMainGPU:      testIntPtr(0),
-			wantSelectedGPUs: 1,
-			wantGPUID:        "1",
-		},
-		{
-			name:          "explicit main gpu selects matching backend group",
-			predictedVRAM: 8 * format.GigaByte,
-			gpus: []ml.DeviceInfo{
-				{DeviceID: ml.DeviceID{ID: "0", Library: "CUDA"}, FreeMemory: 10 * format.GigaByte},
-				{DeviceID: ml.DeviceID{ID: "0", Library: "ROCm"}, FreeMemory: 20 * format.GigaByte},
-				{DeviceID: ml.DeviceID{ID: "1", Library: "ROCm"}, FreeMemory: 24 * format.GigaByte},
-			},
-			opts: api.Options{
-				Runner: api.Runner{MainGPU: testIntPtr(1), NumGPU: -1},
-			},
-			wantLibrary:      "ROCm",
-			wantMainGPU:      testIntPtr(0),
-			wantSelectedGPUs: 1,
-			wantGPUID:        "1",
-		},
-		{
-			name:          "integrated GPU is capped by system free memory",
-			predictedVRAM: 12 * format.GigaByte,
-			gpus: []ml.DeviceInfo{
-				{DeviceID: ml.DeviceID{ID: "0", Library: "Metal"}, Integrated: true, FreeMemory: 32 * format.GigaByte},
-				{DeviceID: ml.DeviceID{ID: "1", Library: "Metal"}, FreeMemory: 16 * format.GigaByte},
-			},
-			opts:             api.DefaultOptions(),
-			wantLibrary:      "Metal",
-			wantMainGPU:      testIntPtr(0),
-			wantSelectedGPUs: 1,
-			wantGPUID:        "1",
-		},
-		{
-			name:          "prefers discrete GPU over integrated GPU with more available memory",
-			predictedVRAM: 8 * format.GigaByte,
-			gpus: []ml.DeviceInfo{
-				{DeviceID: ml.DeviceID{ID: "0", Library: "Vulkan"}, Name: "integrated", Integrated: true, FreeMemory: 32 * format.GigaByte},
-				{DeviceID: ml.DeviceID{ID: "1", Library: "Vulkan"}, Name: "discrete", FreeMemory: 10 * format.GigaByte},
-			},
-			opts:             api.DefaultOptions(),
-			wantLibrary:      "Vulkan",
-			wantMainGPU:      testIntPtr(0),
-			wantSelectedGPUs: 1,
-			wantGPUID:        "1",
-		},
-		{
-			name:          "spread disables automatic compaction",
-			predictedVRAM: 8 * format.GigaByte,
-			schedSpread:   "1",
-			gpus: []ml.DeviceInfo{
-				{DeviceID: ml.DeviceID{ID: "0", Library: "CUDA"}, FreeMemory: 10 * format.GigaByte},
-				{DeviceID: ml.DeviceID{ID: "1", Library: "CUDA"}, FreeMemory: 20 * format.GigaByte},
-			},
-			opts:             api.DefaultOptions(),
-			wantLibrary:      "CUDA",
-			wantSelectedGPUs: 2,
-		},
-		{
-			name:          "no single fit chooses best backend group for llama-server split",
-			predictedVRAM: 30 * format.GigaByte,
-			gpus: []ml.DeviceInfo{
-				{DeviceID: ml.DeviceID{ID: "0", Library: "CUDA"}, FreeMemory: 10 * format.GigaByte},
-				{DeviceID: ml.DeviceID{ID: "1", Library: "CUDA"}, FreeMemory: 18 * format.GigaByte},
-				{DeviceID: ml.DeviceID{ID: "0", Library: "ROCm"}, FreeMemory: 12 * format.GigaByte},
-			},
-			opts:             api.DefaultOptions(),
-			wantLibrary:      "CUDA",
-			wantSelectedGPUs: 2,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("OLLAMA_SCHED_SPREAD", tt.schedSpread)
-
-			selected, launchOpts := selectLlamaServerPlacement(systemInfo, tt.gpus, tt.predictedVRAM, tt.opts)
-			require.Len(t, selected, tt.wantSelectedGPUs)
-			require.Equal(t, tt.wantLibrary, selected[0].Library)
-			if tt.wantGPUID != "" {
-				require.Equal(t, tt.wantGPUID, selected[0].ID)
-			}
-			if tt.wantMainGPU == nil {
-				require.Nil(t, launchOpts.MainGPU)
-			} else {
-				require.NotNil(t, launchOpts.MainGPU)
-				require.Equal(t, *tt.wantMainGPU, *launchOpts.MainGPU)
-			}
-		})
-	}
-}
-
-func testIntPtr(v int) *int {
-	return &v
-}
-
-func TestDisableMmapDefaultReason(t *testing.T) {
-	useMmap := true
-	tests := []struct {
-		name          string
-		goos          string
-		opts          api.Options
-		gpus          []ml.DeviceInfo
-		blockCount    uint64
-		predictedVRAM uint64
-		availableVRAM uint64
-		want          string
-	}{
-		{
-			name: "explicit use_mmap true wins",
-			goos: "windows",
-			opts: api.Options{Runner: api.Runner{NumGPU: -1, UseMMap: &useMmap}},
-			gpus: []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}}},
-		},
-		{
-			name: "cpu-only request disables mmap",
-			goos: "linux",
-			opts: api.Options{Runner: api.Runner{NumGPU: 0}},
-			gpus: []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}}},
-			want: "cpu",
-		},
-		{
-			name: "no GPU devices disables mmap",
-			goos: "linux",
-			opts: api.Options{Runner: api.Runner{NumGPU: -1}},
-			want: "cpu",
-		},
-		{
-			name: "windows cuda disables mmap",
-			goos: "windows",
-			opts: api.Options{Runner: api.Runner{NumGPU: -1}},
-			gpus: []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}}},
-			want: "windows_cuda",
-		},
-		{
-			name:       "metal partial offload disables mmap",
-			goos:       "darwin",
-			opts:       api.Options{Runner: api.Runner{NumGPU: 10}},
-			gpus:       []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Metal"}}},
-			blockCount: 20,
-			want:       "metal_partial_offload",
-		},
-		{
-			name:       "metal full offload keeps default",
-			goos:       "darwin",
-			opts:       api.Options{Runner: api.Runner{NumGPU: 21}},
-			gpus:       []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Metal"}}},
-			blockCount: 20,
-		},
-		{
-			name:          "metal auto partial offload disables mmap",
-			goos:          "darwin",
-			opts:          api.Options{Runner: api.Runner{NumGPU: -1}},
-			gpus:          []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Metal"}}},
-			predictedVRAM: 30 * format.GigaByte,
-			availableVRAM: 20 * format.GigaByte,
-			want:          "metal_partial_offload",
-		},
-		{
-			name:          "metal auto full offload keeps default",
-			goos:          "darwin",
-			opts:          api.Options{Runner: api.Runner{NumGPU: -1}},
-			gpus:          []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Metal"}}},
-			predictedVRAM: 10 * format.GigaByte,
-			availableVRAM: 20 * format.GigaByte,
-		},
-		{
-			name: "linux cuda keeps default",
-			goos: "linux",
-			opts: api.Options{Runner: api.Runner{NumGPU: -1}},
-			gpus: []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}}},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, disableMmapDefaultReason(tt.goos, tt.opts, tt.gpus, tt.blockCount, tt.predictedVRAM, tt.availableVRAM))
-		})
-	}
-}
-
-func TestDisableMmapForHostPressure(t *testing.T) {
-	gpus := []ml.DeviceInfo{{
-		DeviceID:    ml.DeviceID{Library: "CUDA"},
-		TotalMemory: 100 * format.GigaByte,
-		FreeMemory:  80 * format.GigaByte,
-	}}
-	systemInfo := ml.SystemInfo{
-		TotalMemory: 100 * format.GigaByte,
-		FreeMemory:  50 * format.GigaByte,
-	}
-
-	require.True(t, disableMmapForHostPressure(
-		"linux",
-		api.Options{},
-		systemInfo,
-		gpus,
-		20*format.GigaByte,
-		25*format.GigaByte,
-		30*format.GigaByte,
-		80*format.GigaByte,
-	))
-
-	useMmap := true
-	require.False(t, disableMmapForHostPressure(
-		"linux",
-		api.Options{Runner: api.Runner{UseMMap: &useMmap}},
-		systemInfo,
-		gpus,
-		20*format.GigaByte,
-		25*format.GigaByte,
-		30*format.GigaByte,
-		80*format.GigaByte,
-	), "explicit use_mmap=true should win")
-
-	require.False(t, disableMmapForHostPressure(
-		"darwin",
-		api.Options{},
-		systemInfo,
-		gpus,
-		20*format.GigaByte,
-		25*format.GigaByte,
-		30*format.GigaByte,
-		80*format.GigaByte,
-	), "only the Linux pressure heuristic is restored")
-
-	igpu := append([]ml.DeviceInfo(nil), gpus...)
-	igpu[0].Integrated = true
-	require.False(t, disableMmapForHostPressure(
-		"linux",
-		api.Options{},
-		systemInfo,
-		igpu,
-		20*format.GigaByte,
-		25*format.GigaByte,
-		30*format.GigaByte,
-		80*format.GigaByte,
-	), "shared-memory GPU loads should keep the normal mmap path")
-
-	require.False(t, disableMmapForHostPressure(
-		"linux",
-		api.Options{},
-		systemInfo,
-		gpus,
-		20*format.GigaByte,
-		25*format.GigaByte,
-		70*format.GigaByte,
-		80*format.GigaByte,
-	), "when VRAM is tight, no-mmap could make partial CPU offload worse")
-}
-
 // TestSchedLoadCrashTriggersEvictAllAndRetry verifies that a post-spawn
 // Load() OOM while other models are resident signals evict-all-and-retry
 // on the first attempt, but fails fast on the second attempt.
@@ -1776,8 +1785,8 @@ func TestSchedLoadCrashTriggersEvictAllAndRetry(t *testing.T) {
 	// First attempt: should signal evict-all by returning true and NOT send
 	// the error to errCh (so the caller will retry).
 	needEvict := s.load(scenario.req, systemInfo, gpus, true)
-	require.True(t, needEvict, "first load OOM should signal eviction")
-	require.True(t, scenario.req.oomRetryAttempted, "oomRetryAttempted should be set")
+	require.True(t, needEvict, "first load retry should signal eviction")
+	require.True(t, scenario.req.loadRetryAttempted, "loadRetryAttempted should be set")
 	select {
 	case err := <-scenario.req.errCh:
 		t.Fatalf("errCh should be empty on first crash, got %v", err)
@@ -1785,14 +1794,14 @@ func TestSchedLoadCrashTriggersEvictAllAndRetry(t *testing.T) {
 	}
 
 	// Second attempt (simulating the retry after processPending evicted all
-	// other runners): same crash, but this time oomRetryAttempted is set so
+	// other runners): same crash, but this time loadRetryAttempted is set so
 	// load() should fail fast and report the error.
 	needEvict = s.load(scenario.req, systemInfo, gpus, true)
-	require.False(t, needEvict, "second load OOM should not ask for another eviction")
+	require.False(t, needEvict, "second load retry should not ask for another eviction")
 	select {
 	case err := <-scenario.req.errCh:
 		require.ErrorIs(t, err, loadCrash)
-	case <-time.After(100 * time.Millisecond):
+	default:
 		t.Fatal("expected error on errCh after second crash")
 	}
 }
@@ -1834,10 +1843,10 @@ func TestSchedLoadOOMReducesAutomaticContextBeforeRetry(t *testing.T) {
 	gpus := s.getGpuFn(ctx, nil)
 
 	needEvict := s.load(scenario.req, systemInfo, gpus, true)
-	require.True(t, needEvict, "first automatic-context load OOM should signal eviction and retry")
-	require.True(t, scenario.req.oomRetryAttempted)
+	require.True(t, needEvict, "first automatic-context load retry should signal eviction and retry")
+	require.True(t, scenario.req.loadRetryAttempted)
 	require.Equal(t, 32768, scenario.req.opts.NumCtx)
-	require.Equal(t, 1024, scenario.req.opts.NumBatch)
+	require.Equal(t, llamaServerGenerationBatchMedium, scenario.req.opts.NumBatch)
 	select {
 	case err := <-scenario.req.errCh:
 		t.Fatalf("errCh should be empty on first crash, got %v", err)
@@ -1845,13 +1854,13 @@ func TestSchedLoadOOMReducesAutomaticContextBeforeRetry(t *testing.T) {
 	}
 
 	needEvict = s.load(scenario.req, systemInfo, gpus, true)
-	require.False(t, needEvict, "second load OOM should not ask for another eviction")
+	require.False(t, needEvict, "second load retry should not ask for another eviction")
 	require.Equal(t, []int{262144, 32768}, seenNumCtx)
-	require.Equal(t, []int{2048, 1024}, seenNumBatch)
+	require.Equal(t, []int{llamaServerGenerationBatchLarge, llamaServerGenerationBatchMedium}, seenNumBatch)
 	select {
 	case err := <-scenario.req.errCh:
 		require.ErrorIs(t, err, loadCrash)
-	case <-time.After(100 * time.Millisecond):
+	default:
 		t.Fatal("expected error on errCh after second crash")
 	}
 }
@@ -1888,8 +1897,8 @@ func TestSchedLoadOOMKeepsExplicitContextBeforeRetry(t *testing.T) {
 	gpus := s.getGpuFn(ctx, nil)
 
 	needEvict := s.load(scenario.req, systemInfo, gpus, true)
-	require.True(t, needEvict, "explicit-context load OOM should still evict and retry once")
-	require.True(t, scenario.req.oomRetryAttempted)
+	require.True(t, needEvict, "explicit-context load retry should still evict and retry once")
+	require.True(t, scenario.req.loadRetryAttempted)
 	require.Equal(t, 262144, scenario.req.opts.NumCtx)
 	select {
 	case err := <-scenario.req.errCh:
@@ -1965,11 +1974,11 @@ func TestSchedLoadCrashNoOtherModelsFailsFast(t *testing.T) {
 
 	needEvict := s.load(scenario.req, systemInfo, gpus, true)
 	require.False(t, needEvict, "crash with no other runners should not ask for eviction")
-	require.False(t, scenario.req.oomRetryAttempted, "oomRetryAttempted must stay false")
+	require.False(t, scenario.req.loadRetryAttempted, "loadRetryAttempted must stay false")
 	select {
 	case err := <-scenario.req.errCh:
 		require.ErrorIs(t, err, loadCrash)
-	case <-time.After(100 * time.Millisecond):
+	default:
 		t.Fatal("expected error on errCh immediately")
 	}
 }
@@ -2005,11 +2014,11 @@ func TestSchedLoadNonOOMWithOtherModelsFailsFast(t *testing.T) {
 
 	needEvict := s.load(scenario.req, systemInfo, gpus, true)
 	require.False(t, needEvict, "non-OOM load crash should not ask for eviction")
-	require.False(t, scenario.req.oomRetryAttempted, "oomRetryAttempted must stay false")
+	require.False(t, scenario.req.loadRetryAttempted, "loadRetryAttempted must stay false")
 	select {
 	case err := <-scenario.req.errCh:
 		require.ErrorIs(t, err, loadCrash)
-	case <-time.After(100 * time.Millisecond):
+	default:
 		t.Fatal("expected error on errCh immediately")
 	}
 }
@@ -2085,6 +2094,14 @@ type mockLlm struct {
 	totalSize         uint64
 	contextLength     int
 	vramByGPU         map[ml.DeviceID]uint64
+	memorySizeFn      func() (uint64, uint64)
+	vramByGPUFn       func(ml.DeviceID) uint64
+	gpuLayers         uint64
+	totalLayers       uint64
+	gpuLayerOverflow  int
+	port              int
+	deviceInfos       []ml.DeviceInfo
+	exited            bool
 
 	// loadErr, if non-nil, is returned from Load() to simulate a post-spawn
 	// load failure (e.g. llama-server crashing due to under-predicted VRAM).
@@ -2095,7 +2112,7 @@ func (s *mockLlm) ModelPath() string {
 	return s.modelPath
 }
 
-func (s *mockLlm) Load(ctx context.Context, sytemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error) {
+func (s *mockLlm) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error) {
 	if s.loadErr != nil {
 		return nil, s.loadErr
 	}
@@ -2148,14 +2165,36 @@ func (s *mockLlm) Close() error {
 	s.closeCalled = true
 	return s.closeResp
 }
-func (s *mockLlm) MemorySize() (uint64, uint64)                       { return s.totalSize, s.vramSize }
-func (s *mockLlm) VRAMByGPU(id ml.DeviceID) uint64                    { return s.vramByGPU[id] }
-func (s *mockLlm) Pid() int                                           { return -1 }
-func (s *mockLlm) GetPort() int                                       { return -1 }
-func (s *mockLlm) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo { return nil }
-func (s *mockLlm) HasExited() bool                                    { return false }
-func (s *mockLlm) GetActiveDeviceIDs() []ml.DeviceID                  { return nil }
-func (s *mockLlm) ContextLength() int                                 { return s.contextLength }
+
+func (s *mockLlm) MemorySize() (uint64, uint64) {
+	if s.memorySizeFn != nil {
+		return s.memorySizeFn()
+	}
+	return s.totalSize, s.vramSize
+}
+
+func (s *mockLlm) VRAMByGPU(id ml.DeviceID) uint64 {
+	if s.vramByGPUFn != nil {
+		return s.vramByGPUFn(id)
+	}
+	return s.vramByGPU[id]
+}
+func (s *mockLlm) Pid() int { return -1 }
+func (s *mockLlm) GetPort() int {
+	if s.port == 0 {
+		return -1
+	}
+	return s.port
+}
+func (s *mockLlm) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo {
+	return s.deviceInfos
+}
+func (s *mockLlm) HasExited() bool                   { return s.exited }
+func (s *mockLlm) GetActiveDeviceIDs() []ml.DeviceID { return nil }
+func (s *mockLlm) ContextLength() int                { return s.contextLength }
+func (s *mockLlm) LayerOffloadStatus() (gpuLayers, totalLayers uint64, overflow int, ok bool) {
+	return s.gpuLayers, s.totalLayers, s.gpuLayerOverflow, s.totalLayers > 0
+}
 
 func TestRunnerCanBeEvicted(t *testing.T) {
 	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)

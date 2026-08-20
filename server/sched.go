@@ -5,12 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"reflect"
-	"runtime"
 	"slices"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -23,7 +20,6 @@ import (
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/types/model"
-	"github.com/ollama/ollama/x/mlxrunner"
 )
 
 type LlmRequest struct {
@@ -35,9 +31,10 @@ type LlmRequest struct {
 	errCh           chan error
 	schedAttempts   uint
 
-	// oomRetryAttempted is set after a llama-server load crash triggers an
-	// evict-all-and-retry. Prevents infinite retry on persistent load failures.
-	oomRetryAttempted bool
+	// loadRetryAttempted is set after a backend load outcome triggers a retry
+	// through the eviction path. It prevents infinite retry on persistent load
+	// failures or CPU spills.
+	loadRetryAttempted bool
 
 	// numCtxAuto is true when NumCtx came from Ollama's automatic VRAM-tier
 	// default rather than explicit request, model, or environment config.
@@ -55,6 +52,25 @@ type LlmRequest struct {
 	// request-level shift option before scheduling.
 	contextShift bool
 	shift        *bool
+}
+
+func (pending *LlmRequest) fail(err error) {
+	if err == nil {
+		return
+	}
+
+	select {
+	case pending.errCh <- err:
+	default:
+	}
+}
+
+func (pending *LlmRequest) failIfCanceled() bool {
+	if err := pending.ctx.Err(); err != nil {
+		pending.fail(err)
+		return true
+	}
+	return false
 }
 
 type Scheduler struct {
@@ -195,19 +211,47 @@ func (s *Scheduler) getRunner(c context.Context, m *Model, opts api.Options, ses
 	}
 
 	key := schedulerModelKey(req.model)
+	if req.failIfCanceled() {
+		return req.successCh, req.errCh
+	}
+
 	s.loadedMu.Lock()
 	runner := s.loaded[key]
 	s.loadedMu.Unlock()
 	if runner != nil && !runner.needsReload(c, req) {
-		req.useLoadedRunner(runner, s.finishedReqCh)
+		if req.tryUseLoadedRunner(runner, s.finishedReqCh) {
+			return req.successCh, req.errCh
+		}
+	}
+
+	if req.failIfCanceled() {
+		return req.successCh, req.errCh
 	} else {
 		select {
 		case s.pendingReqCh <- req:
 		default:
-			req.errCh <- ErrMaxQueue
+			req.fail(ErrMaxQueue)
 		}
 	}
 	return req.successCh, req.errCh
+}
+
+// acquireRunner schedules the model and blocks until it is loaded or fails,
+// returning its server. The context must be canceled to decrement the ref
+// count and release the runner.
+func (s *Scheduler) acquireRunner(c context.Context, m *Model, opts api.Options, sessionDuration *api.Duration, numCtxAuto bool, numBatchAuto bool, shift *bool) (llm.LlamaServer, error) {
+	runnerCh, errCh := s.getRunner(c, m, opts, sessionDuration, numCtxAuto, numBatchAuto, shift)
+	select {
+	case runner := <-runnerCh:
+		runner.refMu.Lock()
+		llama := runner.llama
+		runner.refMu.Unlock()
+		return llama, nil
+	case err := <-errCh:
+		return nil, err
+	case <-c.Done():
+		return nil, c.Err()
+	}
 }
 
 // Returns immediately, spawns go routines for the scheduler which will shutdown when ctx is done
@@ -225,6 +269,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 func (s *Scheduler) processPending(ctx context.Context) {
 	maxRunners := envconfig.MaxRunners()
 
+nextPending:
 	for {
 		select {
 		case <-ctx.Done():
@@ -234,13 +279,18 @@ func (s *Scheduler) processPending(ctx context.Context) {
 			// Block other requests until we get this pending request running
 			pending.schedAttempts++
 
-			if pending.ctx.Err() != nil {
+			if pending.failIfCanceled() {
 				slog.Debug("pending request cancelled or timed out, skipping scheduling")
 				continue
 			}
 			logutil.Trace("processing incoming request", "model", pending.model.ModelPath)
 
 			for {
+				if pending.failIfCanceled() {
+					slog.Debug("pending request cancelled or timed out, stopping scheduling")
+					continue nextPending
+				}
+
 				var runnerToExpire *runnerRef
 				pendingKey := schedulerModelKey(pending.model)
 				s.loadedMu.Lock()
@@ -259,8 +309,10 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					} else {
 						// Runner is usable, return it
 						logutil.Trace("using existing loaded runner", "model", pendingKey)
-						pending.useLoadedRunner(runner, s.finishedReqCh)
-						break
+						if pending.tryUseLoadedRunner(runner, s.finishedReqCh) {
+							break
+						}
+						continue
 					}
 				} else if maxRunners > 0 && loadedCount >= int(maxRunners) {
 					slog.Debug("max runners achieved, unloading one to make room", "runner_count", loadedCount)
@@ -293,6 +345,10 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					// Update free memory from currently loaded models
 					logutil.Trace("updating free space", "gpu_count", len(gpus), "model", pending.model.ModelPath)
 					s.updateFreeSpace(gpus)
+					if pending.failIfCanceled() {
+						slog.Debug("pending request cancelled or timed out before load")
+						continue nextPending
+					}
 
 					if loadedCount == 0 {
 						// No models loaded. Load the model but prefer the best fit.
@@ -313,12 +369,12 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						break
 					}
 
-					// OOM retry path: load() crashed post-spawn and we still
-					// have other models resident. Evict all of them, wait for
-					// every unload, then loop back to retry the load once.
-					// load() has already set oomRetryAttempted so a second
-					// crash falls through to the fail-fast path.
-					if pending.oomRetryAttempted {
+					// Load retry path: Load failed or llama-server spilled to
+					// CPU with resident models still loaded. Evict all of them,
+					// wait for every unload, then loop back to retry once.
+					// load() has already set loadRetryAttempted so a second
+					// failure falls through to the fail-fast path.
+					if pending.loadRetryAttempted {
 						if !s.evictAllAndWait(ctx, pendingKey) {
 							return
 						}
@@ -335,17 +391,14 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					continue
 				}
 				// Trigger an expiration to unload once it's done
+				var expireNow bool
 				runnerToExpire.refMu.Lock()
 				slog.Debug("resetting model to expire immediately to make room", "runner", runnerToExpire, "refCount", runnerToExpire.refCount)
-				if runnerToExpire.expireTimer != nil {
-					runnerToExpire.expireTimer.Stop()
-					runnerToExpire.expireTimer = nil
-				}
-				runnerToExpire.sessionDuration = 0
-				if runnerToExpire.refCount <= 0 {
+				expireNow = runnerToExpire.requestImmediateExpirationLocked()
+				runnerToExpire.refMu.Unlock()
+				if expireNow {
 					s.expiredCh <- runnerToExpire
 				}
-				runnerToExpire.refMu.Unlock()
 				// Wait for the unload to happen
 				slog.Debug("waiting for pending requests to complete and unload to occur", "runner", runnerToExpire)
 				select {
@@ -354,6 +407,10 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					return
 				case <-s.unloadedCh:
 					slog.Debug("unload completed", "runner", runnerToExpire)
+					if pending.failIfCanceled() {
+						slog.Debug("pending request cancelled or timed out after unload")
+						continue nextPending
+					}
 					continue
 				}
 			}
@@ -382,23 +439,33 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 			}
 			runner.refMu.Lock()
 			runner.refCount--
+			expireNow := false
 			if runner.refCount <= 0 {
-				if runner.sessionDuration <= 0 {
+				if runner.expireOnIdle || runner.sessionDuration <= 0 {
 					slog.Debug("runner with zero duration has gone idle, expiring to unload", "runner", runner)
 					if runner.expireTimer != nil {
 						runner.expireTimer.Stop()
 						runner.expireTimer = nil
 					}
-					s.expiredCh <- runner
+					runner.expireOnIdle = false
+					expireNow = true
 				} else if runner.expireTimer == nil {
 					slog.Debug("runner with non-zero duration has gone idle, adding timer", "runner", runner, "duration", runner.sessionDuration)
 					runner.expireTimer = time.AfterFunc(runner.sessionDuration, func() {
 						slog.Debug("timer expired, expiring to unload", "runner", runner)
 						runner.refMu.Lock()
-						defer runner.refMu.Unlock()
-						if runner.expireTimer != nil {
-							runner.expireTimer.Stop()
-							runner.expireTimer = nil
+						if runner.expireTimer == nil {
+							runner.refMu.Unlock()
+							return
+						}
+						runner.expireTimer = nil
+						expireNow := runner.refCount <= 0
+						if !expireNow {
+							runner.expireOnIdle = true
+						}
+						runner.refMu.Unlock()
+						if !expireNow {
+							return
 						}
 						s.expiredCh <- runner
 					})
@@ -411,20 +478,26 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 			}
 			slog.Debug("after processing request finished event", "runner", runner, "refCount", runner.refCount)
 			runner.refMu.Unlock()
+			if expireNow {
+				s.expiredCh <- runner
+			}
 		case runner := <-s.expiredCh:
 			slog.Debug("runner expired event received", "runner", runner)
 			runner.refMu.Lock()
 			if runner.refCount > 0 {
-				slog.Debug("expired event with positive ref count, retrying", "runner", runner, "refCount", runner.refCount)
-				go func(runner *runnerRef) {
-					// We can't unload yet, but want to as soon as the current request completes
-					// So queue up another expired event
-					time.Sleep(10 * time.Millisecond)
-					s.expiredCh <- runner
-				}(runner)
+				runner.expireOnIdle = true
 				runner.refMu.Unlock()
+				slog.Debug("expired event with positive ref count, expiring when idle", "runner", runner, "refCount", runner.refCount)
 				continue
 			}
+			if runner.unloading {
+				runner.refMu.Unlock()
+				slog.Debug("duplicate expired event, ignoring runner already unloading", "runner", runner)
+				continue
+			}
+			runner.unloading = true
+			runner.expireOnIdle = false
+			runner.refMu.Unlock()
 
 			s.loadedMu.Lock()
 			slog.Debug("got lock to unload expired event", "runner", runner)
@@ -436,7 +509,6 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 				// that requires this one to be evicted, or the settings change
 				// and require a reload
 				s.loadedMu.Unlock()
-				runner.refMu.Unlock()
 				slog.Debug("duplicate expired event, ignoring", "runner", runner)
 			} else if runner.pid != runnerToUnload.pid {
 				// If the pids do not match, we likely had multiple load
@@ -446,22 +518,20 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 				// do not delete the mismatched loaded runner, or wait for VRAM
 				// convergence.
 				slog.Debug("orphaned runner shutting down", "orphan", runner, "loaded", runnerToUnload)
-				runner.unload()
 				s.loadedMu.Unlock()
-				runner.refMu.Unlock()
+				runner.unload()
 			} else {
 				slog.Debug("starting background wait for VRAM recovery", "runner", runner)
 				runnersSnapshot := make([]ml.FilteredRunnerDiscovery, 0, len(s.loaded))
 				for _, r := range s.loaded {
 					runnersSnapshot = append(runnersSnapshot, r)
 				}
-				finished := s.waitForVRAMRecovery(runner, runnersSnapshot)
-				runner.unload()
 				delete(s.loaded, runner.modelKey)
 				s.loadedMu.Unlock()
+				finished := s.waitForVRAMRecovery(runner, runnersSnapshot)
+				runner.unload()
 				slog.Debug("runner terminated and removed from list, blocking for VRAM recovery", "runner", runner)
 				<-finished
-				runner.refMu.Unlock()
 				slog.Debug("sending an unloaded event", "runner", runner)
 				s.unloadedCh <- struct{}{}
 			}
@@ -472,9 +542,20 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 // Complete the pending request and send the runner back to the requester
 // Wires up a finished event after the request context is completed
 // Updates session duration, and resets expiration timer
-func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *LlmRequest) {
+func (pending *LlmRequest) tryUseLoadedRunner(runner *runnerRef, finished chan *LlmRequest) bool {
+	if pending.failIfCanceled() {
+		return true
+	}
+
 	runner.refMu.Lock()
-	defer runner.refMu.Unlock()
+	if pending.failIfCanceled() {
+		runner.refMu.Unlock()
+		return true
+	}
+	if runner.unloading {
+		runner.refMu.Unlock()
+		return false
+	}
 	runner.refCount++
 	if runner.expireTimer != nil {
 		runner.expireTimer.Stop()
@@ -483,12 +564,15 @@ func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *Llm
 	if pending.sessionDuration != nil {
 		runner.sessionDuration = pending.sessionDuration.Duration
 	}
+	runner.refMu.Unlock()
+
 	pending.successCh <- runner
 	go func() {
 		<-pending.ctx.Done()
 		slog.Debug("context for request finished", "runner", runner)
 		finished <- pending
 	}()
+	return true
 }
 
 // load creates a new model based on req and loads it. If requireFull is true then the model must be loaded fully onto GPUs
@@ -516,77 +600,55 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 
 	s.loadedMu.Lock()
 	llama := s.activeLoading
-	var f *ggml.GGML
 	loadGpus := gpus
-	var launchOpts api.Options
+	var retryPlanner loadRetryPlanner
+	var trainContext int
+	loadedCountAtLoadStart := len(s.loaded)
+	proposal := loadProposal{
+		systemInfo:  systemInfo,
+		gpus:        gpus,
+		numParallel: numParallel,
+		completion:  completion,
+	}
 
 	if llama == nil {
+		var plan runnerLoadPlan
 		var err error
-		if !req.model.IsMLX() {
-			var loadErr error
-			f, loadErr = llm.LoadModel(req.model.ModelPath, 1024)
-			if loadErr != nil {
-				slog.Info("failed to load model metadata", "model", req.model.ModelPath, "error", loadErr)
-				req.errCh <- loadErr
-				s.loadedMu.Unlock()
-				return false
-			}
-
-			predictedCtx := effectiveLlamaServerContext(req.opts.NumCtx, f, numParallel)
-			predicted := llm.PredictServerVRAM(req.model.ModelPath, f, predictedCtx)
-			loadGpus, launchOpts = selectLlamaServerPlacement(systemInfo, gpus, predicted, req.opts)
-			availableForBatch, _, _ := availableMemoryForPlacement(systemInfo, loadGpus, launchOpts)
-			flashAttention := llm.LlamaServerFlashAttention(loadGpus)
-			req.applyAutomaticGenerationBatch(completion, predictedCtx, predicted, availableForBatch, flashAttention, loadGpus)
-			launchOpts.NumBatch = req.opts.NumBatch
-			predictedForLoad := predicted + generationBatchSurchargeForCompletion(completion, launchOpts.NumBatch)
-
-			// Pre-flight check: estimate whether the model fits in remaining memory.
-			// llama-server auto-detects layers based on available VRAM, so if
-			// we predict it won't fit, evict before spawning.
-			if requireFull && !explicitPartialGPUOffload(launchOpts, f) && len(s.loaded) > 0 && len(loadGpus) > 0 {
-				freeMemory, gpuFreeMemory, systemLimited := availableMemoryForPlacement(systemInfo, loadGpus, launchOpts)
-				// Use 80% of free memory as threshold to leave headroom.
-				if predictedForLoad > freeMemory*80/100 {
-					slog.Info("llama-server model predicted to exceed available memory, evicting",
-						"predicted", format.HumanBytes2(predictedForLoad),
-						"predicted_num_ctx", predictedCtx,
-						"num_batch", launchOpts.NumBatch,
-						"available", format.HumanBytes2(freeMemory),
-						"gpu_free", format.HumanBytes2(gpuFreeMemory),
-						"system_free", format.HumanBytes2(systemInfo.FreeMemory),
-						"system_limited", systemLimited)
-					s.loadedMu.Unlock()
-					return true
-				}
-				slog.Info("llama-server model fits alongside existing models",
-					"predicted", format.HumanBytes2(predictedForLoad),
-					"predicted_num_ctx", predictedCtx,
-					"num_batch", launchOpts.NumBatch,
-					"available", format.HumanBytes2(freeMemory),
-					"gpu_free", format.HumanBytes2(gpuFreeMemory),
-					"system_free", format.HumanBytes2(systemInfo.FreeMemory),
-					"system_limited", systemLimited)
-			}
-
-			launchOpts = s.applyLlamaServerMmapDefaults(req, launchOpts, systemInfo, loadGpus, f, numParallel)
-			req.contextShift = resolveContextShift(req.shift, req.model)
-
-			config := llamaServerConfigForModel(req.model)
-			config.ContextShift = req.contextShift
-			llama, err = s.newServerFn(systemInfo, loadGpus, req.model.ModelPath, f, req.model.AdapterPaths, req.model.ProjectorPaths, launchOpts, numParallel, config)
-			if err != nil {
-				// some older models are not compatible with newer versions of llama.cpp
-				// show a generalized compatibility error until there is a better way to
-				// check for model compatibility
-				if errors.Is(err, ggml.ErrUnsupportedFormat) || strings.Contains(err.Error(), "failed to load model") {
-					err = fmt.Errorf("%v: this model may be incompatible with your version of Ollama. If you previously pulled this model, try updating it by running `ollama pull %s`", err, req.model.ShortName)
-				}
-			}
+		if req.model.IsMLX() {
+			plan, err = newMLXLoadPlan(req, proposal)
 		} else {
-			modelName := req.model.ShortName
-			llama, err = mlxrunner.NewClient(modelName, req.opts.NumCtx)
+			var llamaPlan llamaServerLoadPlan
+			llamaPlan, err = newLlamaServerLoadPlan(req, proposal)
+			if err == nil {
+				plan = s.applyLlamaServerMmapDefaults(req, llamaPlan, systemInfo)
+			}
 		}
+		if err != nil {
+			slog.Info("failed to plan model load", "model", req.model.ShortName, "error", err)
+			req.errCh <- err
+			s.loadedMu.Unlock()
+			return false
+		}
+
+		switch plan.assessLoadedRunnerFit(requireFull, loadedCountAtLoadStart) {
+		case loadedRunnerNeedsEviction:
+			slog.Info("model predicted to exceed available memory, evicting",
+				"load_plan", plan,
+				"system_free", format.HumanBytes2(systemInfo.FreeMemory))
+			s.loadedMu.Unlock()
+			return true
+		case loadedRunnerFits:
+			slog.Info("model fits alongside existing models",
+				"load_plan", plan,
+				"system_free", format.HumanBytes2(systemInfo.FreeMemory))
+		}
+
+		plan.applyToRequest(req)
+		loadGpus = plan.gpusForLoad()
+		retryPlanner = plan.retryPlanner()
+		trainContext = plan.trainContext()
+		// newServer starts llama-server now; MLX constructs a client and starts during Load below.
+		llama, err = plan.newServer(s, req)
 		if err != nil {
 			slog.Info("failed to create server", "model", req.model.ShortName, "error", err)
 			req.errCh <- err
@@ -624,14 +686,17 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 			"overhead", format.HumanBytes2(envconfig.GpuOverhead()))
 	}
 
+	// Load completes backend startup: llama-server waits for readiness, while MLX starts here.
 	gpuIDs, err := llama.Load(req.ctx, systemInfo, loadGpus, requireFull)
 	if err != nil {
 		if errors.Is(err, llm.ErrLoadRequiredFull) {
 			if !requireFull {
 				// No other models loaded, yet we still don't fit, so report an error
 				slog.Info("model is too large for system memory", "requireFull", requireFull)
-				s.activeLoading.Close()
+				llama.Close()
+				s.loadedMu.Lock()
 				s.activeLoading = nil
+				s.loadedMu.Unlock()
 				req.errCh <- err
 				return false
 			}
@@ -639,56 +704,49 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 		}
 
 		slog.Info("Load failed", "model", req.model.ModelPath, "error", err)
-		s.activeLoading.Close()
+		llama.Close()
+		s.loadedMu.Lock()
 		s.activeLoading = nil
+		s.loadedMu.Unlock()
 
 		s.loadedMu.Lock()
 		loadedCount := len(s.loaded)
 		s.loadedMu.Unlock()
-		otherLoaded := loadedCount > 0
-		if !req.oomRetryAttempted && llm.IsOutOfMemory(err) {
-			if oldNumCtx, effectiveNumCtx, newNumCtx, oldNumBatch, newNumBatch, ok := req.reduceAutoNumCtxForLoadOOM(f, numParallel, completion, systemInfo, loadGpus, launchOpts); ok {
-				req.oomRetryAttempted = true
-				slog.Warn("llama-server load failed; reducing automatic context and retrying once",
-					"model", req.model.ModelPath,
-					"old_num_ctx", oldNumCtx,
-					"effective_num_ctx", effectiveNumCtx,
-					"new_num_ctx", newNumCtx,
-					"old_num_batch", oldNumBatch,
-					"new_num_batch", newNumBatch,
-					"loaded_count", loadedCount,
-					"evict_all", otherLoaded,
-					"error", err)
-				return true
-			}
-		}
-		if otherLoaded && !req.oomRetryAttempted && llm.IsOutOfMemory(err) {
-			req.oomRetryAttempted = true
-			slog.Warn("llama-server load failed; evicting all other models and retrying once", "model", req.model.ModelPath, "error", err)
+
+		// MLX is a no-op here; llama-server may crash during Load, so retry with a smaller auto context or by evicting other models.
+		if retryPlanner != nil && retryPlanner.maybeRetryLoadFailure(req, systemInfo, loadedCount, err) {
 			return true
 		}
 
 		req.errCh <- err
 		return false
 	}
+
+	totalSize, vramSize := llama.MemorySize()
+	// After a successful llama-server Load, retry if it spilled to CPU while other models were resident.
+	if retryPlanner != nil && retryPlanner.maybeRetryCPUSpill(req, llama, requireFull, loadedCountAtLoadStart, totalSize, vramSize) {
+		llama.Close()
+		s.loadedMu.Lock()
+		s.activeLoading = nil
+		s.loadedMu.Unlock()
+		return true
+	}
 	logTemplateSelection(req.model)
 
 	// Determine if we have discrete GPUs which we should monitor VRAM usage on during shutdown
-	discreteGPUs := false
+	usesDiscreteGPU := false
 iGPUScan:
 	for _, devid := range gpuIDs {
 		for _, dev := range loadGpus {
 			if dev.DeviceID == devid {
 				if !dev.Integrated {
-					discreteGPUs = true
+					usesDiscreteGPU = true
 					break iGPUScan
 				}
 			}
 		}
 	}
 
-	totalSize, vramSize := llama.MemorySize()
-	trainContext := modelTrainContext(f)
 	if effectiveNumCtx := llama.ContextLength(); req.model.ModelPath != "" && effectiveNumCtx > 0 {
 		req.opts.NumCtx = effectiveNumCtx
 		req.contextShift = resolveContextShift(req.shift, req.model)
@@ -701,7 +759,7 @@ iGPUScan:
 		Options:         &req.opts,
 		sessionDuration: sessionDuration,
 		gpus:            gpuIDs,
-		discreteGPUs:    discreteGPUs,
+		usesDiscreteGPU: usesDiscreteGPU,
 		totalSize:       totalSize,
 		vramSize:        vramSize,
 		loading:         true,
@@ -716,24 +774,29 @@ iGPUScan:
 	runner.refMu.Lock() // hold lock until running or aborted
 
 	s.loadedMu.Lock()
-	if oldRunner, ok := s.loaded[runner.modelKey]; ok {
+	var oldRunner *runnerRef
+	if existing, ok := s.loaded[runner.modelKey]; ok {
 		// Shouldn't happen, but safeguard against leaking a runner
+		oldRunner = existing
 		slog.Warn("model was still loaded", "old_runner", oldRunner, "new_runner", runner)
-		oldRunner.refMu.Lock()
-		oldRunner.unload()
-		oldRunner.refMu.Unlock()
 	}
 	s.activeLoading = nil
 	s.loaded[runner.modelKey] = runner
 	slog.Info("loaded runners", "count", len(s.loaded))
 	s.loadedMu.Unlock()
+	if oldRunner != nil {
+		oldRunner.unload()
+	}
 
 	go func() {
-		defer runner.refMu.Unlock()
+		// llama-server usually returns immediately here because Load already
+		// waited for startup. Keep the scheduler-level readiness gate for
+		// backends whose Load only starts a subprocess, such as MLX.
 		if err = llama.WaitUntilRunning(req.ctx); err != nil {
 			slog.Error("error loading llama server", "error", err)
 			req.errCh <- err
 			slog.Debug("triggering expiration for failed load", "runner", runner)
+			runner.refMu.Unlock()
 			s.expiredCh <- runner
 			return
 		}
@@ -749,547 +812,10 @@ iGPUScan:
 			s.finishedReqCh <- req
 		}()
 		req.successCh <- runner
+		runner.refMu.Unlock()
 	}()
 
 	return false
-}
-
-func (req *LlmRequest) reduceAutoNumCtxForLoadOOM(f *ggml.GGML, numParallel int, completion bool, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, launchOpts api.Options) (oldNumCtx, effectiveNumCtx, newNumCtx, oldNumBatch, newNumBatch int, ok bool) {
-	if !req.numCtxAuto {
-		return 0, 0, 0, 0, 0, false
-	}
-
-	oldNumCtx = req.opts.NumCtx
-	oldNumBatch = req.opts.NumBatch
-	effectiveNumCtx = oldNumCtx
-	if f != nil {
-		if trainCtx := int(f.KV().ContextLength()); trainCtx > 0 && effectiveNumCtx > trainCtx {
-			effectiveNumCtx = trainCtx
-		}
-	}
-
-	newNumCtx, ok = nextLowerAutoNumCtx(effectiveNumCtx)
-	if !ok || newNumCtx >= oldNumCtx {
-		return 0, 0, 0, 0, 0, false
-	}
-
-	req.opts.NumCtx = newNumCtx
-	predictedCtx := effectiveLlamaServerContext(req.opts.NumCtx, f, numParallel)
-	predictedVRAM := llm.PredictServerVRAM(req.model.ModelPath, f, predictedCtx)
-	available, _, _ := availableMemoryForPlacement(systemInfo, gpus, launchOpts)
-	req.applyAutomaticGenerationBatch(completion, predictedCtx, predictedVRAM, available, llm.LlamaServerFlashAttention(gpus), gpus)
-	newNumBatch = req.opts.NumBatch
-	return oldNumCtx, effectiveNumCtx, newNumCtx, oldNumBatch, newNumBatch, true
-}
-
-func explicitPartialGPUOffload(opts api.Options, f *ggml.GGML) bool {
-	if opts.NumGPU <= 0 || f == nil {
-		return false
-	}
-
-	return uint64(opts.NumGPU) < f.KV().BlockCount()+1
-}
-
-func effectiveLlamaServerContext(numCtx int, f *ggml.GGML, numParallel int) int {
-	return effectiveModelContext(numCtx, f) * max(numParallel, 1)
-}
-
-const (
-	llamaServerGenerationBatchDefault     = 512
-	llamaServerGenerationBatchConstrained = 256
-	llamaServerGenerationBatchMedium      = 1024
-	llamaServerGenerationBatchLarge       = 2048
-
-	llamaServerGenerationBatchMediumHeadroomPercent = 75
-	llamaServerGenerationBatchLargeHeadroomPercent  = 60
-)
-
-func (req *LlmRequest) applyAutomaticGenerationBatch(completion bool, effectiveCtx int, predictedVRAM, availableMemory uint64, flashAttention ml.FlashAttentionType, gpus []ml.DeviceInfo) {
-	if !completion || !req.numBatchAuto {
-		return
-	}
-
-	req.opts.NumBatch = automaticGenerationBatch(effectiveCtx, predictedVRAM, availableMemory, flashAttention, gpus)
-}
-
-func generationBatchSurchargeForCompletion(completion bool, batch int) uint64 {
-	if !completion {
-		return 0
-	}
-	return generationBatchSurcharge(batch)
-}
-
-func automaticGenerationBatch(effectiveCtx int, predictedVRAM, availableMemory uint64, flashAttention ml.FlashAttentionType, gpus []ml.DeviceInfo) int {
-	if flashAttention == ml.FlashAttentionDisabled && hasCUDADevice(gpus) {
-		if constrainedCUDAWithoutFlashAttention(effectiveCtx, gpus) {
-			return llamaServerGenerationBatchConstrained
-		}
-		return llamaServerGenerationBatchDefault
-	}
-
-	batch := generationBatchForContext(effectiveCtx)
-	for batch > llamaServerGenerationBatchDefault && !generationBatchFits(batch, predictedVRAM, availableMemory) {
-		batch = nextLowerGenerationBatch(batch)
-	}
-	return batch
-}
-
-func hasCUDADevice(gpus []ml.DeviceInfo) bool {
-	return slices.ContainsFunc(gpus, func(gpu ml.DeviceInfo) bool {
-		return gpu.Library == "CUDA"
-	})
-}
-
-func constrainedCUDAWithoutFlashAttention(effectiveCtx int, gpus []ml.DeviceInfo) bool {
-	if effectiveCtx <= 4096 {
-		return false
-	}
-	return slices.ContainsFunc(gpus, func(gpu ml.DeviceInfo) bool {
-		if gpu.Library != "CUDA" {
-			return false
-		}
-		memory := gpu.FreeMemory
-		if memory == 0 || (gpu.TotalMemory > 0 && gpu.TotalMemory < memory) {
-			memory = gpu.TotalMemory
-		}
-		return memory > 0 && memory <= 8*format.GibiByte
-	})
-}
-
-func generationBatchForContext(effectiveCtx int) int {
-	switch {
-	case effectiveCtx > 32768:
-		return llamaServerGenerationBatchLarge
-	case effectiveCtx > 4096:
-		return llamaServerGenerationBatchMedium
-	default:
-		return llamaServerGenerationBatchDefault
-	}
-}
-
-func generationBatchFits(batch int, predictedVRAM, availableMemory uint64) bool {
-	if predictedVRAM == 0 || availableMemory == 0 {
-		return true
-	}
-
-	threshold := availableMemory * 80 / 100
-	if predictedVRAM > threshold {
-		return false
-	}
-	if !generationBatchHasHeadroom(batch, predictedVRAM, availableMemory) {
-		return false
-	}
-
-	return generationBatchSurcharge(batch) <= threshold-predictedVRAM
-}
-
-func generationBatchHasHeadroom(batch int, predictedVRAM, availableMemory uint64) bool {
-	switch {
-	case batch >= llamaServerGenerationBatchLarge:
-		return predictedVRAM <= availableMemory*llamaServerGenerationBatchLargeHeadroomPercent/100
-	case batch >= llamaServerGenerationBatchMedium:
-		return predictedVRAM <= availableMemory*llamaServerGenerationBatchMediumHeadroomPercent/100
-	default:
-		return true
-	}
-}
-
-func nextLowerGenerationBatch(batch int) int {
-	switch {
-	case batch > llamaServerGenerationBatchMedium:
-		return llamaServerGenerationBatchMedium
-	default:
-		return llamaServerGenerationBatchDefault
-	}
-}
-
-func generationBatchSurcharge(batch int) uint64 {
-	switch {
-	case batch >= llamaServerGenerationBatchLarge:
-		return 2 * format.GibiByte
-	case batch >= llamaServerGenerationBatchMedium:
-		return 768 * format.MebiByte
-	default:
-		return 0
-	}
-}
-
-func nextLowerAutoNumCtx(numCtx int) (int, bool) {
-	switch {
-	case numCtx > 32768:
-		return 32768, true
-	case numCtx > 4096:
-		return 4096, true
-	default:
-		return 0, false
-	}
-}
-
-func availableMemoryForLoad(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo) (available, gpuFree uint64, systemLimited bool) {
-	var sharedGPUFree uint64
-	var discreteGPUFree uint64
-	for _, gpu := range gpus {
-		gpuFree += gpu.FreeMemory
-		if gpu.Integrated {
-			sharedGPUFree += gpu.FreeMemory
-		} else {
-			discreteGPUFree += gpu.FreeMemory
-		}
-	}
-
-	// On iGPUs, GPU free memory can be a static or slowly refreshed device
-	// baseline. updateFreeSpace has already subtracted known Ollama runner
-	// allocations from that baseline. Current system free memory is a separate
-	// live measurement that already includes those loaded runners, so use the
-	// smaller value for shared-memory GPUs without discounting discrete VRAM.
-	if systemInfo.FreeMemory > 0 && sharedGPUFree > 0 && systemInfo.FreeMemory < sharedGPUFree {
-		return discreteGPUFree + systemInfo.FreeMemory, gpuFree, true
-	}
-
-	return gpuFree, gpuFree, false
-}
-
-func availableMemoryForPlacement(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, opts api.Options) (available, gpuFree uint64, systemLimited bool) {
-	placementGpus := gpusForPlacement(gpus, opts)
-	if len(placementGpus) == 1 && opts.MainGPU != nil {
-		gpuFree = placementGpus[0].FreeMemory
-		available = availableMemoryForGPU(systemInfo, placementGpus[0])
-		systemLimited = available < gpuFree
-		return available, gpuFree, systemLimited
-	}
-
-	return availableMemoryForLoad(systemInfo, placementGpus)
-}
-
-func gpusForPlacement(gpus []ml.DeviceInfo, opts api.Options) []ml.DeviceInfo {
-	if opts.MainGPU != nil && *opts.MainGPU >= 0 && *opts.MainGPU < len(gpus) {
-		return []ml.DeviceInfo{gpus[*opts.MainGPU]}
-	}
-
-	return gpus
-}
-
-func selectLlamaServerPlacement(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, predictedVRAM uint64, opts api.Options) ([]ml.DeviceInfo, api.Options) {
-	launchOpts := opts
-	if len(gpus) <= 1 || opts.NumGPU == 0 {
-		return gpus, launchOpts
-	}
-
-	groups := ml.ByLibrary(gpus)
-	if len(groups) == 0 {
-		return gpus, launchOpts
-	}
-
-	if opts.MainGPU != nil {
-		gpu, available, ok := bestExplicitMainGPU(systemInfo, groups, *opts.MainGPU)
-		if !ok {
-			selected := bestGPUGroupByAvailableMemory(systemInfo, groups)
-			slog.Warn("requested main_gpu is outside the selected GPU group; passing value through to llama-server",
-				"main_gpu", *opts.MainGPU,
-				"gpu_count", len(selected))
-			logSelectedGPUGroup(gpus, selected)
-			return selected, launchOpts
-		}
-
-		selected, launchOpts := singleLlamaServerGPUPlacement(gpu, launchOpts)
-		slog.Info("selecting requested single GPU for llama-server model",
-			"requested_main_gpu", *opts.MainGPU,
-			"main_gpu", *launchOpts.MainGPU,
-			"id", gpu.ID,
-			"filter_id", gpu.FilterID,
-			"library", gpu.Library,
-			"name", gpu.Name,
-			"description", gpu.Description,
-			"integrated", gpu.Integrated,
-			"available", format.HumanBytes2(available))
-		logSelectedGPUGroup(gpus, selected)
-		return selected, launchOpts
-	}
-
-	if !envconfig.SchedSpread() && predictedVRAM > 0 {
-		gpu, available, ok := bestSingleGPUFit(systemInfo, groups, predictedVRAM)
-		if ok {
-			selected, launchOpts := singleLlamaServerGPUPlacement(gpu, launchOpts)
-			slog.Info("selecting single GPU for llama-server model",
-				"main_gpu", *launchOpts.MainGPU,
-				"id", gpu.ID,
-				"filter_id", gpu.FilterID,
-				"library", gpu.Library,
-				"name", gpu.Name,
-				"description", gpu.Description,
-				"integrated", gpu.Integrated,
-				"predicted", format.HumanBytes2(predictedVRAM),
-				"available", format.HumanBytes2(available))
-			logSelectedGPUGroup(gpus, selected)
-			return selected, launchOpts
-		}
-	}
-
-	selected := bestGPUGroupByAvailableMemory(systemInfo, groups)
-	logSelectedGPUGroup(gpus, selected)
-	return selected, launchOpts
-}
-
-func singleLlamaServerGPUPlacement(gpu ml.DeviceInfo, opts api.Options) ([]ml.DeviceInfo, api.Options) {
-	mainGPU := 0
-	opts.MainGPU = &mainGPU
-	return []ml.DeviceInfo{gpu}, opts
-}
-
-func bestExplicitMainGPU(systemInfo ml.SystemInfo, groups [][]ml.DeviceInfo, mainGPU int) (gpu ml.DeviceInfo, available uint64, ok bool) {
-	if mainGPU < 0 {
-		return ml.DeviceInfo{}, 0, false
-	}
-
-	for _, group := range groups {
-		if mainGPU >= len(group) {
-			continue
-		}
-		candidate := group[mainGPU]
-		candidateAvailable := availableMemoryForGPU(systemInfo, candidate)
-		if !ok || betterPlacementGPU(candidate, candidateAvailable, gpu, available) {
-			gpu = candidate
-			available = candidateAvailable
-			ok = true
-		}
-	}
-
-	return gpu, available, ok
-}
-
-func bestSingleGPUFit(systemInfo ml.SystemInfo, groups [][]ml.DeviceInfo, predictedVRAM uint64) (gpu ml.DeviceInfo, available uint64, ok bool) {
-	for _, group := range groups {
-		for _, candidate := range group {
-			candidateAvailable := availableMemoryForGPU(systemInfo, candidate)
-			if predictedVRAM > candidateAvailable*80/100 {
-				continue
-			}
-			if !ok || betterPlacementGPU(candidate, candidateAvailable, gpu, available) {
-				gpu = candidate
-				available = candidateAvailable
-				ok = true
-			}
-		}
-	}
-
-	return gpu, available, ok
-}
-
-func betterPlacementGPU(candidate ml.DeviceInfo, candidateAvailable uint64, current ml.DeviceInfo, currentAvailable uint64) bool {
-	if candidate.Integrated != current.Integrated {
-		return !candidate.Integrated
-	}
-
-	return candidateAvailable > currentAvailable
-}
-
-func bestGPUGroupByAvailableMemory(systemInfo ml.SystemInfo, groups [][]ml.DeviceInfo) []ml.DeviceInfo {
-	var best []ml.DeviceInfo
-	var bestAvailable uint64
-	for _, group := range groups {
-		available, _, _ := availableMemoryForLoad(systemInfo, group)
-		if best == nil || betterPlacementGroup(group, available, best, bestAvailable) {
-			best = group
-			bestAvailable = available
-		}
-	}
-
-	return best
-}
-
-func betterPlacementGroup(candidate []ml.DeviceInfo, candidateAvailable uint64, current []ml.DeviceInfo, currentAvailable uint64) bool {
-	candidateDiscrete := hasDiscreteGPU(candidate)
-	currentDiscrete := hasDiscreteGPU(current)
-	if candidateDiscrete != currentDiscrete {
-		return candidateDiscrete
-	}
-
-	return candidateAvailable > currentAvailable
-}
-
-func hasDiscreteGPU(gpus []ml.DeviceInfo) bool {
-	for _, gpu := range gpus {
-		if !gpu.Integrated {
-			return true
-		}
-	}
-	return false
-}
-
-func availableMemoryForGPU(systemInfo ml.SystemInfo, gpu ml.DeviceInfo) uint64 {
-	if gpu.Integrated && systemInfo.FreeMemory > 0 && systemInfo.FreeMemory < gpu.FreeMemory {
-		return systemInfo.FreeMemory
-	}
-
-	return gpu.FreeMemory
-}
-
-func logSelectedGPUGroup(all, selected []ml.DeviceInfo) {
-	if len(selected) == 0 || len(selected) == len(all) {
-		return
-	}
-
-	slog.Info("selecting GPU backend for llama-server model",
-		"library", selected[0].Library,
-		"gpu_count", len(selected),
-		"available_gpu_count", len(all))
-}
-
-func (s *Scheduler) applyLlamaServerMmapDefaults(req *LlmRequest, launchOpts api.Options, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, f *ggml.GGML, numParallel int) api.Options {
-	predictedCtx := effectiveLlamaServerContext(req.opts.NumCtx, f, numParallel)
-	predictedVRAM := llm.PredictServerVRAM(req.model.ModelPath, f, predictedCtx)
-	availableVRAM, _, _ := availableMemoryForPlacement(systemInfo, gpus, launchOpts)
-
-	if reason := disableMmapDefaultReason(runtime.GOOS, req.opts, gpus, f.KV().BlockCount(), predictedVRAM, availableVRAM); reason != "" {
-		useMmap := false
-		req.opts.UseMMap = &useMmap
-		req.useMMapAuto = true
-		slog.Info("disabling mmap for llama-server load by default",
-			"model", req.model.ModelPath,
-			"reason", reason)
-	} else {
-		s.maybeDisableMmapForHostPressure(req, launchOpts, systemInfo, gpus, f, numParallel)
-	}
-
-	launchOpts.UseMMap = req.opts.UseMMap
-	return launchOpts
-}
-
-func disableMmapDefaultReason(goos string, opts api.Options, gpus []ml.DeviceInfo, blockCount, predictedVRAM, availableVRAM uint64) string {
-	if opts.UseMMap != nil {
-		return ""
-	}
-	if opts.NumGPU == 0 || len(gpus) == 0 || allDevicesLibrary(gpus, "cpu") {
-		return "cpu"
-	}
-	if goos == "windows" && hasDeviceLibrary(gpus, "cuda") {
-		return "windows_cuda"
-	}
-	if hasDeviceLibrary(gpus, "metal") {
-		if opts.NumGPU > 0 && blockCount > 0 && uint64(opts.NumGPU) < blockCount+1 {
-			return "metal_partial_offload"
-		}
-		if opts.NumGPU < 0 && predictedVRAM > 0 && availableVRAM > 0 && predictedVRAM > availableVRAM {
-			return "metal_partial_offload"
-		}
-	}
-	return ""
-}
-
-func hasDeviceLibrary(gpus []ml.DeviceInfo, library string) bool {
-	for _, gpu := range gpus {
-		if strings.EqualFold(gpu.Library, library) {
-			return true
-		}
-	}
-	return false
-}
-
-func allDevicesLibrary(gpus []ml.DeviceInfo, library string) bool {
-	if len(gpus) == 0 {
-		return false
-	}
-	for _, gpu := range gpus {
-		if !strings.EqualFold(gpu.Library, library) {
-			return false
-		}
-	}
-	return true
-}
-
-func (s *Scheduler) maybeDisableMmapForHostPressure(req *LlmRequest, launchOpts api.Options, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, f *ggml.GGML, numParallel int) {
-	modelSize := modelFileSize(req.model.ModelPath)
-	loadedMmapSize := s.loadedMmapModelSizeLocked()
-	predictedCtx := effectiveLlamaServerContext(req.opts.NumCtx, f, numParallel)
-	predictedVRAM := llm.PredictServerVRAM(req.model.ModelPath, f, predictedCtx)
-	availableVRAM, _, _ := availableMemoryForPlacement(systemInfo, gpus, launchOpts)
-	placementGpus := gpusForPlacement(gpus, launchOpts)
-
-	if !disableMmapForHostPressure(runtime.GOOS, req.opts, systemInfo, placementGpus, modelSize, loadedMmapSize, predictedVRAM, availableVRAM) {
-		return
-	}
-
-	useMmap := false
-	req.opts.UseMMap = &useMmap
-	req.useMMapAuto = true
-	slog.Info("disabling mmap for llama-server load due to host memory pressure",
-		"model", req.model.ModelPath,
-		"model_size", format.HumanBytes2(modelSize),
-		"loaded_mmap_size", format.HumanBytes2(loadedMmapSize),
-		"headroom", format.HumanBytes2(mmapHostPressureHeadroom(systemInfo.TotalMemory)),
-		"system_free", format.HumanBytes2(systemInfo.FreeMemory),
-		"system_total", format.HumanBytes2(systemInfo.TotalMemory),
-		"predicted_vram", format.HumanBytes2(predictedVRAM),
-		"available_vram", format.HumanBytes2(availableVRAM),
-	)
-}
-
-func disableMmapForHostPressure(goos string, opts api.Options, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelSize, loadedMmapSize, predictedVRAM, availableVRAM uint64) bool {
-	if opts.UseMMap != nil || goos != "linux" || modelSize == 0 || systemInfo.FreeMemory == 0 || !allDiscreteGPUs(gpus) {
-		return false
-	}
-
-	// Only back off mmap when we still expect the model to fit on discrete GPU.
-	// If VRAM is already tight, disabling mmap can make partial CPU offload
-	// worse by turning file-backed mappings into anonymous memory.
-	if predictedVRAM == 0 || availableVRAM == 0 || predictedVRAM > availableVRAM*80/100 {
-		return false
-	}
-
-	pressure := modelSize + loadedMmapSize + mmapHostPressureHeadroom(systemInfo.TotalMemory)
-	return systemInfo.FreeMemory < pressure
-}
-
-func allDiscreteGPUs(gpus []ml.DeviceInfo) bool {
-	if len(gpus) == 0 {
-		return false
-	}
-	for _, gpu := range gpus {
-		if gpu.Integrated {
-			return false
-		}
-	}
-	return true
-}
-
-func mmapHostPressureHeadroom(totalMemory uint64) uint64 {
-	if totalMemory == 0 {
-		return 8 * format.GigaByte
-	}
-	return max(8*format.GigaByte, totalMemory/10)
-}
-
-func modelFileSize(path string) uint64 {
-	if path == "" {
-		return 0
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return 0
-	}
-	return uint64(info.Size())
-}
-
-func (s *Scheduler) loadedMmapModelSizeLocked() uint64 {
-	var total uint64
-	for _, r := range s.loaded {
-		if !runnerUsesMmap(r) {
-			continue
-		}
-		if size := modelFileSize(r.modelPath); size > 0 {
-			total += size
-		} else {
-			total += r.totalSize
-		}
-	}
-	return total
-}
-
-func runnerUsesMmap(r *runnerRef) bool {
-	if r == nil || r.Options == nil || r.Options.UseMMap == nil {
-		return true
-	}
-	return *r.Options.UseMMap
 }
 
 func (s *Scheduler) updateFreeSpace(allGpus []ml.DeviceInfo) {
@@ -1305,14 +831,15 @@ func (s *Scheduler) updateFreeSpace(allGpus []ml.DeviceInfo) {
 	s.loadedMu.Unlock()
 	for _, r := range runners {
 		r.refMu.Lock()
-		if r.llama != nil {
-			for _, gpu := range allGpus {
-				predMap[gpu.DeviceID] += r.llama.VRAMByGPU(gpu.DeviceID)
-			}
-		} else {
-			slog.Warn("unexpected nil runner reference, memory prediction may be incorrect")
-		}
+		llama := r.llama
 		r.refMu.Unlock()
+		if llama == nil {
+			slog.Warn("unexpected nil runner reference, memory prediction may be incorrect")
+			continue
+		}
+		for _, gpu := range allGpus {
+			predMap[gpu.DeviceID] += llama.VRAMByGPU(gpu.DeviceID)
+		}
 	}
 
 	// Now that we've summed up all the GPU usage predictions across all the loaded runners, update the gpu list
@@ -1334,22 +861,29 @@ func (s *Scheduler) updateFreeSpace(allGpus []ml.DeviceInfo) {
 	}
 }
 
-// TODO consolidate sched_types.go
 type runnerRef struct {
-	refMu    sync.Mutex
-	refCount uint // prevent unloading if > 0
+	// refMu guards refCount, loading, unloading, expireOnIdle,
+	// sessionDuration, expireTimer, expiresAt, llama, model, Options, gpus, and
+	// contextShift. Fields set once at construction, such as modelKey and
+	// totalSize, may be read lock-free. LogValue uses a best-effort TryLock so
+	// it can still render while refMu is already held.
+	refMu sync.Mutex
 
-	llama        llm.LlamaServer
-	pid          int
-	loading      bool          // True only during initial load, then false forever
-	gpus         []ml.DeviceID // Recorded at time of provisioning
-	discreteGPUs bool          // True if all devices are discrete GPUs - used to skip VRAM recovery check for iGPUs
-	vramSize     uint64
-	totalSize    uint64
+	refCount     uint // prevent unloading if > 0
+	loading      bool // True only during initial load, then false forever
+	unloading    bool
+	expireOnIdle bool
 
 	sessionDuration time.Duration
 	expireTimer     *time.Timer
 	expiresAt       time.Time
+
+	llama           llm.LlamaServer
+	pid             int
+	gpus            []ml.DeviceID // Recorded at time of provisioning
+	usesDiscreteGPU bool          // Used to skip VRAM recovery for CPU and iGPU-only runners.
+	vramSize        uint64
+	totalSize       uint64
 
 	model        *Model
 	modelPath    string
@@ -1363,25 +897,50 @@ type runnerRef struct {
 	*api.Options
 }
 
-// The refMu must already be held when calling unload
-func (runner *runnerRef) unload() {
+// requestImmediateExpirationLocked records that the runner should unload as
+// soon as its refcount reaches zero. It returns true when the caller should
+// send the runner to expiredCh immediately after releasing refMu.
+func (runner *runnerRef) requestImmediateExpirationLocked() bool {
 	if runner.expireTimer != nil {
 		runner.expireTimer.Stop()
 		runner.expireTimer = nil
 	}
-	if runner.llama != nil {
-		runner.llama.Close()
+	runner.sessionDuration = 0
+	if runner.refCount > 0 {
+		runner.expireOnIdle = true
+		return false
 	}
+	return true
+}
+
+func (runner *runnerRef) unload() {
+	runner.refMu.Lock()
+	if runner.expireTimer != nil {
+		runner.expireTimer.Stop()
+		runner.expireTimer = nil
+	}
+	llama := runner.llama
+	runner.llama = nil
 	runner.model = nil
 	runner.Options = nil
 	runner.gpus = nil
 	runner.contextShift = false
+	runner.loading = false
+	runner.unloading = true
+	runner.refMu.Unlock()
+
+	if llama != nil {
+		llama.Close()
+	}
 }
 
 func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool {
 	slog.Debug("evaluating already loaded", "model", schedulerModelKey(req.model))
 	runner.refMu.Lock()
 	defer runner.refMu.Unlock()
+	if runner.unloading {
+		return true
+	}
 
 	timeout := 10 * time.Second
 	if runner.loading {
@@ -1441,9 +1000,15 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 func (s *Scheduler) waitForVRAMRecovery(runner *runnerRef, runners []ml.FilteredRunnerDiscovery) chan any {
 	finished := make(chan any, 1)
 
+	runner.refMu.Lock()
+	gpus := slices.Clone(runner.gpus)
+	usesDiscreteGPU := runner.usesDiscreteGPU
+	vramSize := runner.vramSize
+	runner.refMu.Unlock()
+
 	// CPU, Metal and iGPUs don't need checking, so no waiting required
-	if len(runner.gpus) == 0 || !runner.discreteGPUs ||
-		(len(runner.gpus) == 1 && runner.gpus[0].Library == "Metal") {
+	if len(gpus) == 0 || !usesDiscreteGPU ||
+		(len(gpus) == 1 && gpus[0].Library == "Metal") {
 		finished <- struct{}{}
 		slog.Debug("no need to wait for VRAM recovery", "runner", runner)
 		return finished
@@ -1478,12 +1043,12 @@ func (s *Scheduler) waitForVRAMRecovery(runner *runnerRef, runners []ml.Filtered
 					freeMemoryNow += gpu.FreeMemory
 				}
 				if freeMemoryNow > freeMemoryBefore {
-					logutil.Trace("gpu VRAM convergence", "percent", int(float32(freeMemoryNow-freeMemoryBefore)/float32(runner.vramSize)*100))
+					logutil.Trace("gpu VRAM convergence", "percent", int(float32(freeMemoryNow-freeMemoryBefore)/float32(vramSize)*100))
 				} else {
 					logutil.Trace("gpu VRAM convergence", "percent", 0)
 				}
 				// If we're within ~75% of the estimated memory usage recovered, bail out
-				if float32(freeMemoryNow-freeMemoryBefore) > float32(runner.vramSize)*0.75 {
+				if float32(freeMemoryNow-freeMemoryBefore) > float32(vramSize)*0.75 {
 					slog.Debug(fmt.Sprintf("gpu VRAM free memory converged after %0.2f seconds", time.Since(start).Seconds()), "free_before", format.HumanBytes2(freeMemoryBefore), "free_now", format.HumanBytes2(freeMemoryNow), "runner", runner)
 					finished <- struct{}{}
 					return
@@ -1507,74 +1072,90 @@ func (runner *runnerRef) LogValue() slog.Value {
 		modelID = runner.modelKey
 	}
 	attrs := []slog.Attr{}
-	if runner.model != nil {
-		attrs = append(attrs, slog.String("name", runner.model.Name))
-	}
-	if len(runner.gpus) > 0 {
-		attrs = append(attrs,
-			slog.Any("inference", runner.gpus),
-		)
+	if runner.refMu.TryLock() {
+		if runner.model != nil {
+			attrs = append(attrs, slog.String("name", runner.model.Name))
+		}
+		if len(runner.gpus) > 0 {
+			attrs = append(attrs,
+				slog.Any("inference", slices.Clone(runner.gpus)),
+			)
+		}
+		attrs = append(attrs, slog.Int("pid", runner.pid))
+		if runner.Options != nil {
+			attrs = append(attrs, slog.Int("num_ctx", runner.Options.NumCtx))
+		}
+		runner.refMu.Unlock()
 	}
 	attrs = append(attrs,
 		slog.String("size", format.HumanBytes2(runner.totalSize)),
 		slog.String("vram", format.HumanBytes2(runner.vramSize)),
 		slog.Int("parallel", runner.numParallel),
-		slog.Int("pid", runner.pid),
 		slog.String("model", modelID),
 	)
-	if runner.Options != nil {
-		attrs = append(attrs, slog.Int("num_ctx", runner.Options.NumCtx))
-	}
 	return slog.GroupValue(attrs...)
 }
 
 // Implements discover.RunnerDiscovery
 func (runner *runnerRef) GetPort() int {
-	if runner.llama != nil {
-		return runner.llama.GetPort()
+	runner.refMu.Lock()
+	llama := runner.llama
+	runner.refMu.Unlock()
+	if llama != nil {
+		return llama.GetPort()
 	}
 	return -1
 }
 
 func (runner *runnerRef) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo {
-	if runner.llama != nil {
-		return runner.llama.GetDeviceInfos(ctx)
+	runner.refMu.Lock()
+	llama := runner.llama
+	runner.refMu.Unlock()
+	if llama != nil {
+		return llama.GetDeviceInfos(ctx)
 	}
 	return nil
 }
 
 func (runner *runnerRef) GetActiveDeviceIDs() []ml.DeviceID {
-	return runner.gpus
+	runner.refMu.Lock()
+	gpus := slices.Clone(runner.gpus)
+	runner.refMu.Unlock()
+	return gpus
 }
 
 func (runner *runnerRef) HasExited() bool {
-	if runner.llama != nil {
-		return runner.llama.HasExited()
+	runner.refMu.Lock()
+	llama := runner.llama
+	runner.refMu.Unlock()
+	if llama != nil {
+		return llama.HasExited()
 	}
 	return true
 }
 
-type ByDurationAndName []*runnerRef
+type runnerUnloadCandidate struct {
+	runner          *runnerRef
+	refCount        uint
+	sessionDuration time.Duration
+	name            string
+}
 
-func (a ByDurationAndName) Len() int      { return len(a) }
-func (a ByDurationAndName) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
-func (a ByDurationAndName) Less(i, j int) bool {
-	// Primary sort by session duration (uint64 to handle negatives)
-	d1 := uint64(a[i].sessionDuration)
-	d2 := uint64(a[j].sessionDuration)
-	if d1 != d2 {
-		return d1 < d2
+func newRunnerUnloadCandidate(runner *runnerRef) runnerUnloadCandidate {
+	runner.refMu.Lock()
+	defer runner.refMu.Unlock()
+
+	name := runner.modelPath
+	if name == "" {
+		name = runner.modelKey
 	}
-	// Secondary sort by model key/path lex order
-	n1 := a[i].modelPath
-	if n1 == "" {
-		n1 = a[i].modelKey
+
+	return runnerUnloadCandidate{
+		runner:          runner,
+		refCount:        runner.refCount,
+		sessionDuration: runner.sessionDuration,
+		name:            name,
 	}
-	n2 := a[j].modelPath
-	if n2 == "" {
-		n2 = a[j].modelKey
-	}
-	return n1 < n2
 }
 
 // TODO - future consideration to pick runners based on size
@@ -1586,7 +1167,7 @@ func (a ByDurationAndName) Less(i, j int) bool {
 // evictAllAndWait synchronously expires every currently loaded runner except
 // the one being loaded (matched by modelKey) and waits for all unload events
 // to drain. Returns false if the context was cancelled mid-wait so the caller
-// can exit the scheduling loop. Used by the OOM retry path in processPending.
+// can exit the scheduling loop. Used by the load retry path in processPending.
 func (s *Scheduler) evictAllAndWait(ctx context.Context, keepKey string) bool {
 	s.loadedMu.Lock()
 	runnersToExpire := make([]*runnerRef, 0, len(s.loaded))
@@ -1602,18 +1183,15 @@ func (s *Scheduler) evictAllAndWait(ctx context.Context, keepKey string) bool {
 		return true
 	}
 
-	slog.Info("evicting all other loaded models for OOM retry", "count", len(runnersToExpire))
+	slog.Info("evicting all other loaded models for load retry", "count", len(runnersToExpire))
 	for _, runner := range runnersToExpire {
+		var expireNow bool
 		runner.refMu.Lock()
-		if runner.expireTimer != nil {
-			runner.expireTimer.Stop()
-			runner.expireTimer = nil
-		}
-		runner.sessionDuration = 0
-		if runner.refCount <= 0 {
+		expireNow = runner.requestImmediateExpirationLocked()
+		runner.refMu.Unlock()
+		if expireNow {
 			s.expiredCh <- runner
 		}
-		runner.refMu.Unlock()
 	}
 
 	// Wait for every unload event. Each runner produces exactly one
@@ -1647,16 +1225,13 @@ func (s *Scheduler) expireRunnersForRuntimeOOM(model *Model, err error) {
 
 	slog.Warn("runtime OOM detected; expiring loaded models to clear memory before next request", "model", schedulerModelKey(model), "error", err)
 	for _, runner := range runners {
+		var expireNow bool
 		runner.refMu.Lock()
-		if runner.expireTimer != nil {
-			runner.expireTimer.Stop()
-			runner.expireTimer = nil
-		}
-		runner.sessionDuration = 0
-		if runner.refCount <= 0 {
+		expireNow = runner.requestImmediateExpirationLocked()
+		runner.refMu.Unlock()
+		if expireNow {
 			s.expiredCh <- runner
 		}
-		runner.refMu.Unlock()
 	}
 }
 
@@ -1675,38 +1250,51 @@ func (s *Scheduler) findRunnerToUnload() *runnerRef {
 
 	// In the future we can enhance the algorithm to be smarter about picking the optimal runner to unload
 	// e.g., if we have multiple options, will one make room for the request?
-	sort.Sort(ByDurationAndName(runnerList))
+	candidates := make([]runnerUnloadCandidate, 0, len(runnerList))
+	for _, runner := range runnerList {
+		candidates = append(candidates, newRunnerUnloadCandidate(runner))
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		// Primary sort by session duration (uint64 to handle negatives)
+		d1 := uint64(candidates[i].sessionDuration)
+		d2 := uint64(candidates[j].sessionDuration)
+		if d1 != d2 {
+			return d1 < d2
+		}
+		// Secondary sort by model key/path lex order
+		return candidates[i].name < candidates[j].name
+	})
 
 	// First try to find a runner that's already idle
-	for _, runner := range runnerList {
-		runner.refMu.Lock()
-		rc := runner.refCount
-		runner.refMu.Unlock()
-		if rc == 0 {
-			slog.Debug("found an idle runner to unload", "runner", runner)
-			return runner
+	for _, candidate := range candidates {
+		if candidate.refCount == 0 {
+			slog.Debug("found an idle runner to unload", "runner", candidate.runner)
+			return candidate.runner
 		}
 	}
 	// None appear idle, just wait for the one with the shortest duration
-	slog.Debug("no idle runners, picking the shortest duration", "runner_count", len(runnerList), "runner", runnerList[0])
-	return runnerList[0]
+	slog.Debug("no idle runners, picking the shortest duration", "runner_count", len(candidates), "runner", candidates[0].runner)
+	return candidates[0].runner
 }
 
 func (s *Scheduler) unloadAllRunners() {
 	s.loadedMu.Lock()
-	defer s.loadedMu.Unlock()
-
-	if s.activeLoading != nil {
-		slog.Debug("shutting down currently loading runner")
-		s.activeLoading.Close()
-		s.activeLoading = nil
-	}
-
+	activeLoading := s.activeLoading
+	s.activeLoading = nil
+	runners := make([]*runnerRef, 0, len(s.loaded))
 	for model, runner := range s.loaded {
-		if runner.llama != nil {
-			slog.Debug("shutting down runner", "model", model)
-			runner.llama.Close()
-		}
+		slog.Debug("shutting down runner", "model", model)
+		runners = append(runners, runner)
+		delete(s.loaded, model)
+	}
+	s.loadedMu.Unlock()
+
+	if activeLoading != nil {
+		slog.Debug("shutting down currently loading runner")
+		activeLoading.Close()
+	}
+	for _, runner := range runners {
+		runner.unload()
 	}
 }
 
@@ -1716,17 +1304,14 @@ func (s *Scheduler) expireRunner(model *Model) {
 	runner, ok := s.loaded[modelKey]
 	s.loadedMu.Unlock()
 	if ok {
+		var expireNow bool
 		runner.refMu.Lock()
 		runner.expiresAt = time.Now()
-		if runner.expireTimer != nil {
-			runner.expireTimer.Stop()
-			runner.expireTimer = nil
-		}
-		runner.sessionDuration = 0
-		if runner.refCount <= 0 {
+		expireNow = runner.requestImmediateExpirationLocked()
+		runner.refMu.Unlock()
+		if expireNow {
 			s.expiredCh <- runner
 		}
-		runner.refMu.Unlock()
 	}
 }
 
@@ -1750,8 +1335,8 @@ func (s *Scheduler) loadedModels() []loadedModel {
 	}
 	s.loadedMu.Unlock()
 
-	// refMu must not be acquired while holding loadedMu: the expiration path
-	// locks them in the opposite order.
+	// Keep loadedMu scoped to the map snapshot so status reporting does not
+	// block scheduler map updates while it inspects per-runner state.
 	models := make([]loadedModel, 0, len(runners))
 	for _, r := range runners {
 		r.refMu.Lock()
@@ -1760,15 +1345,18 @@ func (s *Scheduler) loadedModels() []loadedModel {
 			r.refMu.Unlock()
 			continue
 		}
+		llama := r.llama
+		sessionDuration := r.sessionDuration
 		lm := loadedModel{
 			model:     r.model,
 			size:      int64(r.totalSize),
 			sizeVRAM:  int64(r.vramSize),
 			expiresAt: r.expiresAt,
 		}
-		if r.llama != nil {
-			lm.contextLength = r.llama.ContextLength()
-			total, vram := r.llama.MemorySize()
+		r.refMu.Unlock()
+		if llama != nil {
+			lm.contextLength = llama.ContextLength()
+			total, vram := llama.MemorySize()
 			lm.size = int64(total)
 			lm.sizeVRAM = int64(vram)
 		}
@@ -1776,9 +1364,8 @@ func (s *Scheduler) loadedModels() []loadedModel {
 		// loading may have the zero value. Estimate expiration from the
 		// session duration instead.
 		if lm.expiresAt.IsZero() {
-			lm.expiresAt = time.Now().Add(r.sessionDuration)
+			lm.expiresAt = time.Now().Add(sessionDuration)
 		}
-		r.refMu.Unlock()
 		models = append(models, lm)
 	}
 	return models
