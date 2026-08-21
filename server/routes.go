@@ -3046,16 +3046,32 @@ func truncateNativeChatMessages(ctx context.Context, m *Model, r llm.LlamaServer
 	currMsgIdx := 0
 	var system []api.Message
 
+	// Never truncate past the most recent user message. Renderers (e.g. qwen3.8)
+	// reject transcripts without a user query, and multi-step tool loops that
+	// overflow the context window must not lose the original question.
+	lastUserMsgIdx := -1
+	for i := lastMsgIdx; i >= 0; i-- {
+		if req.Messages[i].Role == "user" {
+			lastUserMsgIdx = i
+			break
+		}
+	}
+
 	for i := 0; i <= lastMsgIdx; i++ {
+		startIdx := i
+		if lastUserMsgIdx >= 0 && startIdx > lastUserMsgIdx {
+			startIdx = lastUserMsgIdx
+		}
+
 		system = system[:0]
-		for j := range i {
+		for j := range startIdx {
 			if req.Messages[j].Role == "system" {
 				system = append(system, req.Messages[j])
 			}
 		}
 
 		renderReq := req
-		renderReq.Messages = append(slices.Clone(system), req.Messages[i:]...)
+		renderReq.Messages = append(slices.Clone(system), req.Messages[startIdx:]...)
 		prompt, err := r.ApplyChatTemplate(ctx, renderReq)
 		if err != nil {
 			return nil, err
@@ -3074,11 +3090,13 @@ func truncateNativeChatMessages(ctx context.Context, m *Model, r llm.LlamaServer
 		}
 
 		if ctxLen <= opts.NumCtx {
-			currMsgIdx = i
+			currMsgIdx = startIdx
 			break
 		}
-		if i == lastMsgIdx {
-			currMsgIdx = lastMsgIdx
+		// Must always include at least the last message; never drop the
+		// most recent user message even if the prompt still overflows.
+		if i == lastMsgIdx || startIdx == lastUserMsgIdx {
+			currMsgIdx = startIdx
 			break
 		}
 	}
