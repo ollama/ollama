@@ -23,6 +23,12 @@ type Parser interface {
 	HasThinkingSupport() bool
 }
 
+// StreamToolCallsSetter is implemented by parsers that can emit progressive
+// tool-call argument deltas (ChatRequest.StreamToolCalls).
+type StreamToolCallsSetter interface {
+	SetStreamToolCalls(enabled bool)
+}
+
 type ParserConstructor func() Parser
 
 type ParserRegistry struct {

@@ -21,6 +21,10 @@ type qwenParserState int
 const (
 	toolOpenTag  = "<tool_call>"
 	toolCloseTag = "</tool_call>"
+
+	// Minimum growth in buffered tool-call body before emitting another
+	// arguments_delta chunk when StreamToolCalls is enabled.
+	streamToolCallDeltaMinBytes = 128
 )
 
 const (
@@ -33,6 +37,13 @@ type Qwen3CoderParser struct {
 	acc       strings.Builder
 	tools     []api.Tool
 	callIndex int
+
+	// Progressive tool-call streaming (opt-in via SetStreamToolCalls).
+	streamToolCalls bool
+	streamName      string
+	streamIndex     int
+	streamStarted   bool
+	lastStreamedLen int
 }
 
 func (p *Qwen3CoderParser) HasToolSupport() bool {
@@ -41,6 +52,10 @@ func (p *Qwen3CoderParser) HasToolSupport() bool {
 
 func (p *Qwen3CoderParser) HasThinkingSupport() bool {
 	return false
+}
+
+func (p *Qwen3CoderParser) SetStreamToolCalls(enabled bool) {
+	p.streamToolCalls = enabled
 }
 
 func (p *Qwen3CoderParser) PreservedTokens() []string {
@@ -53,7 +68,15 @@ func (p *Qwen3CoderParser) PreservedTokens() []string {
 func (p *Qwen3CoderParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
 	p.callIndex = 0
+	p.resetStreamState()
 	return tools // Qwen doesn't modify tools
+}
+
+func (p *Qwen3CoderParser) resetStreamState() {
+	p.streamName = ""
+	p.streamIndex = 0
+	p.streamStarted = false
+	p.lastStreamedLen = 0
 }
 
 func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
@@ -73,7 +96,17 @@ func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking st
 			}
 			toolCall.Function.Index = p.callIndex
 			p.callIndex++
+			p.resetStreamState()
 			toolCalls = append(toolCalls, toolCall)
+		case qwenEventToolCallDelta:
+			toolCalls = append(toolCalls, api.ToolCall{
+				Function: api.ToolCallFunction{
+					Index:          event.index,
+					Name:           event.name,
+					Arguments:      api.NewToolCallFunctionArguments(),
+					ArgumentsDelta: event.delta,
+				},
+			})
 		case qwenEventContent:
 			// TODO(drifkin): if the same turn contains multiple interleaved content
 			// events, we naively append them together here. See the note below about
@@ -123,8 +156,58 @@ type qwenEventContent struct {
 	content string
 }
 
-func (qwenEventContent) isQwenEvent()     {}
-func (qwenEventRawToolCall) isQwenEvent() {}
+// qwenEventToolCallDelta is emitted while collecting tool content when
+// StreamToolCalls is enabled. delta is the cumulative raw body so far.
+type qwenEventToolCallDelta struct {
+	name  string
+	index int
+	delta string
+}
+
+func (qwenEventContent) isQwenEvent()       {}
+func (qwenEventRawToolCall) isQwenEvent()   {}
+func (qwenEventToolCallDelta) isQwenEvent() {}
+
+var (
+	qwenFunctionNameRe       = regexp.MustCompile(`(?s)<function=([^>"\s]+)`)
+	qwenFunctionNameQuotedRe = regexp.MustCompile(`(?s)<function="([^"]+)"`)
+)
+
+func peekQwenFunctionName(raw string) string {
+	if m := qwenFunctionNameQuotedRe.FindStringSubmatch(raw); len(m) == 2 {
+		return m[1]
+	}
+	if m := qwenFunctionNameRe.FindStringSubmatch(raw); len(m) == 2 {
+		return m[1]
+	}
+	return ""
+}
+
+func (p *Qwen3CoderParser) maybeStreamToolDelta() []qwenEvent {
+	if !p.streamToolCalls {
+		return nil
+	}
+	acc := p.acc.String()
+	name := peekQwenFunctionName(acc)
+	if name == "" {
+		return nil
+	}
+	if !p.streamStarted {
+		p.streamName = name
+		p.streamIndex = p.callIndex
+		p.streamStarted = true
+	}
+	grew := len(acc) - p.lastStreamedLen
+	if p.lastStreamedLen > 0 && grew < streamToolCallDeltaMinBytes {
+		return nil
+	}
+	p.lastStreamedLen = len(acc)
+	return []qwenEvent{qwenEventToolCallDelta{
+		name:  p.streamName,
+		index: p.streamIndex,
+		delta: acc,
+	}}
+}
 
 // eat consumes the parser's buffer, and returns a list of any unambiguous
 // events from the current parser state. If the parser transitions to another
@@ -193,10 +276,11 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 			p.state = qwenParserState_LookingForToolStart
 			return events, true
 		} else {
-			// note that we don't need to check the overlap here because we only plan
-			// on parsing the tool call once we see the full closing tag. We don't
-			// stream back the unparsed tool content, so there's no need to be eager
-			// here
+			// Default: hold until </tool_call>. With StreamToolCalls, emit
+			// progressive argument deltas once the function name is known.
+			if deltas := p.maybeStreamToolDelta(); len(deltas) > 0 {
+				return deltas, false
+			}
 			return events, false
 		}
 	default:
