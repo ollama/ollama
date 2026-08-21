@@ -43,7 +43,7 @@ function AnimatedDots() {
   );
 }
 
-export default function Settings({ embedded = false }: { embedded?: boolean }) {
+export default function Settings() {
   const queryClient = useQueryClient();
   const [showSaved, setShowSaved] = useState(false);
   const [restartMessage, setRestartMessage] = useState(false);
@@ -291,7 +291,7 @@ export default function Settings({ embedded = false }: { embedded?: boolean }) {
 
   if (error || !settings) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
+      <div className="flex flex-1 items-center justify-center">
         <div className="text-red-500">Failed to load settings</div>
       </div>
     );
@@ -300,22 +300,7 @@ export default function Settings({ embedded = false }: { embedded?: boolean }) {
   const isWindows = isWindowsPlatform();
 
   return (
-    <main
-      className={`flex w-full flex-col select-none dark:bg-neutral-900 ${embedded ? "min-h-0 flex-1" : "h-screen"}`}
-    >
-      {!embedded && (
-        <header
-          className="w-full flex flex-none justify-between h-[52px] py-2.5 items-center border-b border-neutral-200 dark:border-neutral-800 select-none"
-          onMouseDown={() => window.drag && window.drag()}
-          onDoubleClick={() => window.doubleClick && window.doubleClick()}
-        >
-          <h1
-            className={`${isWindows ? "pl-4" : "pl-24"} flex items-center font-rounded text-md font-medium dark:text-white`}
-          >
-            Settings
-          </h1>
-        </header>
-      )}
+    <main className="flex min-h-0 w-full flex-1 flex-col select-none dark:bg-neutral-900">
       <div className="w-full p-6 overflow-y-auto flex-1 overscroll-contain">
         <div className="mx-auto max-w-4xl space-y-4">
           {/* Connect Ollama Account */}

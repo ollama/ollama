@@ -318,7 +318,6 @@ static NSImage *integrationAppIcon(NSString *appName,
 
 @interface AppDelegate () <NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, NSMenuDelegate, NSURLSessionDownloadDelegate>
 @property(strong, nonatomic) NSStatusItem *statusItem;
-@property(strong, nonatomic) NSMenu *statusMenu;
 @property(assign, nonatomic) BOOL updateAvailable;
 @property(assign, nonatomic) BOOL systemShutdownInProgress;
 @property(strong, nonatomic) NSMenuItem *updateAvailableMenuItem;
@@ -354,6 +353,7 @@ static NSImage *integrationAppIcon(NSString *appName,
 @implementation AppDelegate
 
 bool showOnboarding,startHidden; // Set in run before initialization
+static NSWindow *onboardingWindow = nil;
 
 static NSBundle *OllamaResourceBundle(void) {
     NSBundle *bundle = [NSBundle mainBundle];
@@ -482,7 +482,6 @@ static NSImage *ollamaApplicationIcon(void) {
                                  NSKeyValueObservingOptionInitial
                          context:nil];
 
-    self.statusMenu = menu;
     self.statusItem.menu = menu;
     [self showIcon];
 
@@ -615,6 +614,13 @@ static NSImage *ollamaApplicationIcon(void) {
 }
 
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)hasVisibleWindows {
+    if (onboardingWindow != nil) {
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+        [onboardingWindow makeKeyAndOrderFront:nil];
+        [NSApp activateIgnoringOtherApps:YES];
+        return YES;
+    }
+
     [self appsUI];
     return YES;
 }
@@ -1940,6 +1946,10 @@ void hideWindow(uintptr_t wndPtr) {
     NSWindow *w = (__bridge NSWindow *)wndPtr;
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
     [w orderOut:nil];
+}
+
+void setOnboardingWindowActive(uintptr_t wndPtr, bool active) {
+    onboardingWindow = active ? (__bridge NSWindow *)wndPtr : nil;
 }
 
 void showWindow(uintptr_t wndPtr) {

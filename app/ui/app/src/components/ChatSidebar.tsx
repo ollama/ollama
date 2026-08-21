@@ -6,8 +6,7 @@ import { getChat } from "@/api";
 import { Link } from "@/components/ui/link";
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { ChatsResponse } from "@/gotypes";
-import { ChatIcon } from "@/components/ChatIcon";
-import { Cog6ToothIcon, RectangleGroupIcon } from "@heroicons/react/24/outline";
+import { AppNavigation } from "@/components/AppSidebar";
 
 // there's a hidden debug feature to copy a chat's data to the clipboard by
 // holding shift and clicking this many times within this many seconds
@@ -262,34 +261,7 @@ export function ChatSidebar({ currentChatId }: ChatSidebarProps) {
   return (
     <nav className="flex flex-1 flex-col min-h-0 select-none">
       <header className="flex flex-col gap-0.5 px-4 pb-2">
-        <Link
-          to="/connect"
-          className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
-          draggable={false}
-        >
-          <RectangleGroupIcon className="h-5 w-5 stroke-current" />
-          <span className="truncate">Apps</span>
-        </Link>
-        <Link
-          to="/c/$chatId"
-          params={{ chatId: "new" }}
-          mask={{ to: "/" }}
-          className={`flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 dark:text-neutral-100 ${
-            currentChatId === "new" ? "bg-neutral-100 dark:bg-neutral-800" : ""
-          }`}
-          draggable={false}
-        >
-          <ChatIcon />
-          <span className="truncate">Chat</span>
-        </Link>
-        <Link
-          to="/settings"
-          className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
-          draggable={false}
-        >
-          <Cog6ToothIcon className="h-5 w-5 stroke-current" />
-          <span className="truncate">Settings</span>
-        </Link>
+        <AppNavigation current="chat" />
       </header>
       <div className="flex flex-1 flex-col px-4 py-1 overflow-y-auto overscroll-auto scrollbar-gutter">
         <div className="flex flex-col gap-3 pt-4">

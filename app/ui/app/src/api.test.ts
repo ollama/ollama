@@ -31,7 +31,7 @@ describe("getIntegrationStatuses", () => {
     vi.unstubAllGlobals();
   });
 
-  it("returns installation state from the desktop app", async () => {
+  it("returns desktop and launcher integration metadata", async () => {
     const fetch = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify([
@@ -40,14 +40,11 @@ describe("getIntegrationStatuses", () => {
             name: "Claude",
             description: "Use Ollama models in Claude Desktop",
             installed: true,
-            action: "connect",
           },
           {
             id: "opencode",
             name: "OpenCode",
             description: "Open-source coding agent",
-            installed: false,
-            action: "copy",
             command: "ollama launch opencode",
           },
         ]),
@@ -62,14 +59,11 @@ describe("getIntegrationStatuses", () => {
         name: "Claude",
         description: "Use Ollama models in Claude Desktop",
         installed: true,
-        action: "connect",
       },
       {
         id: "opencode",
         name: "OpenCode",
         description: "Open-source coding agent",
-        installed: false,
-        action: "copy",
         command: "ollama launch opencode",
       },
     ]);

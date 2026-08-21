@@ -13,7 +13,6 @@ import { isClaudeConnectionComplete } from "@/lib/claudeDesktop";
 import { isWindowsPlatform } from "@/lib/platform";
 import {
   authenticationTimeoutAction,
-  isOnboardingZoomShortcut,
   nextOnboardingStep,
   onboardingConnectUrl,
 } from "@/lib/onboarding";
@@ -43,41 +42,6 @@ describe("Onboarding", () => {
     expect(html).not.toContain("Skip");
   });
 
-  it("blocks browser zoom shortcuts during onboarding", () => {
-    expect(
-      isOnboardingZoomShortcut({
-        metaKey: true,
-        ctrlKey: false,
-        key: "=",
-        code: "Equal",
-      }),
-    ).toBe(true);
-    expect(
-      isOnboardingZoomShortcut({
-        metaKey: false,
-        ctrlKey: true,
-        key: "-",
-        code: "Minus",
-      }),
-    ).toBe(true);
-    expect(
-      isOnboardingZoomShortcut({
-        metaKey: false,
-        ctrlKey: false,
-        key: "+",
-        code: "Equal",
-      }),
-    ).toBe(false);
-    expect(
-      isOnboardingZoomShortcut({
-        metaKey: true,
-        ctrlKey: false,
-        key: "0",
-        code: "Digit0",
-      }),
-    ).toBe(false);
-  });
-
   it("shows more terminal integrations as the window gets taller", () => {
     expect(terminalRowsForWindowHeight(400)).toBe(1);
     expect(terminalRowsForWindowHeight(660)).toBe(4);
@@ -88,13 +52,7 @@ describe("Onboarding", () => {
     vi.stubGlobal("navigator", undefined);
     try {
       expect(() =>
-        renderToStaticMarkup(
-          <ConnectAppsScreen
-            completionError={null}
-            onRetryCompletion={vi.fn()}
-            initialIntegrations={[]}
-          />,
-        ),
+        renderToStaticMarkup(<ConnectAppsScreen initialIntegrations={[]} />),
       ).not.toThrow();
     } finally {
       vi.unstubAllGlobals();
@@ -111,22 +69,17 @@ describe("Onboarding", () => {
       expect(isWindowsPlatform()).toBe(true);
       const html = renderToStaticMarkup(
         <ConnectAppsScreen
-          completionError={null}
-          onRetryCompletion={vi.fn()}
           initialIntegrations={[
             {
               id: "claude-desktop",
               name: "Claude",
               description: "Use Ollama models in Claude Desktop",
               installed: true,
-              action: "connect",
             },
             {
               id: "claude",
               name: "Claude Code",
               description: "Anthropic's coding tool with subagents",
-              installed: true,
-              action: "copy",
               command: "ollama launch claude",
             },
           ]}
@@ -222,120 +175,72 @@ describe("Onboarding", () => {
         name: "Claude",
         description: "Use Ollama models in Claude Desktop",
         installed: true,
-        action: "connect",
       },
       {
         id: "claude",
         name: "Claude Code",
         description: "Anthropic's coding tool with subagents",
-        installed: true,
-        action: "copy",
         command: "ollama launch claude",
       },
       {
         id: "codex",
         name: "Codex",
         description: "OpenAI's open-source coding agent",
-        installed: true,
-        action: "copy",
         command: "ollama launch codex",
       },
       {
         id: "openclaw",
         name: "OpenClaw",
         description: "Personal AI with 100+ skills",
-        installed: true,
-        action: "copy",
         command: "ollama launch openclaw",
       },
       {
         id: "opencode",
         name: "OpenCode",
         description: "Anomaly's open-source coding agent",
-        installed: false,
-        action: "copy",
         command: "ollama launch opencode",
       },
       {
         id: "droid",
         name: "Droid",
         description: "AI software engineering agent",
-        installed: false,
-        action: "copy",
         command: "ollama launch droid",
       },
       {
         id: "terminal",
         name: "Terminal",
         description: "Run local models from your terminal",
-        action: "copy",
         command: "ollama",
       },
     ];
     const html = renderToStaticMarkup(
-      <ConnectAppsScreen
-        completionError={null}
-        onRetryCompletion={vi.fn()}
-        initialIntegrations={integrations}
-      />,
+      <ConnectAppsScreen initialIntegrations={integrations} />,
     );
 
-    expect(html).toContain("Connect your apps");
-    expect(html).not.toContain(
-      "Connect Claude, or copy a command to run in your terminal.",
-    );
-    expect(html).toContain("Claude");
-    expect(html).toContain("Use Ollama models in Claude Desktop");
-    expect(html).toContain("Claude Code");
-    expect(html).not.toContain("Search apps");
-    expect(html).not.toContain('type="search"');
-    expect(html).toContain("Application");
     expect(html).toContain('id="applications-heading"');
     expect(html).toContain('id="terminal-heading"');
-    expect(html).not.toContain("Ready to launch");
-    expect(html).not.toContain('id="claude-apps-heading"');
     expect(html.indexOf("Application")).toBeLessThan(
       html.indexOf("Use Ollama models in Claude Desktop"),
     );
-    expect(html).not.toContain(">Command</th>");
-    expect(html).toContain("ollama launch claude");
-    expect(html).not.toContain("Installed");
-    expect(html).not.toContain("Not installed");
     expect(html).toContain('aria-label="Connect Claude"');
     expect(html).toContain('role="switch"');
     expect(html).toContain('aria-checked="false"');
     expect(html).not.toContain("Inactive");
-    expect(html).not.toContain("Download &amp; connect");
     expect(html).not.toContain("Active");
-    expect(html).toContain("bg-transparent");
     expect(html).toContain('aria-label="Copy OpenCode command"');
     expect(html).toContain('aria-label="Copy Terminal command"');
-    expect(html).not.toContain(">Copy command</button>");
     expect(html).not.toContain("ChatGPT");
-    expect(html).toContain("OpenCode");
-    expect(html).toContain("Terminal");
-    expect(html).toContain(">More<");
+    expect(html).toContain('aria-label="Show more apps"');
     expect(html).toContain('aria-expanded="false"');
     expect(html).toContain("grid-rows-[0fr]");
-    expect(html).not.toContain("Collapse");
     expect(html).toContain("/launch-icons/claude.svg");
     expect(html).toContain("/launch-icons/claude-code.svg");
-    expect(html).not.toContain("<table");
-    expect(html).not.toContain("<footer");
-    expect(html).not.toContain("Command copied. Run it in your terminal.");
     expect(html).toContain("Run local models from your terminal");
-    expect(html).not.toContain("Launch command");
-    expect(html).not.toContain('aria-pressed="true"');
-    expect(html).not.toContain("Continue");
-    expect(html).not.toContain("Run Ollama");
-    expect(html).not.toContain('viewBox="0 0 3400 3400"');
   });
 
   it("keeps connected Claude in Application without an idle status", () => {
     const html = renderToStaticMarkup(
       <ConnectAppsScreen
-        completionError={null}
-        onRetryCompletion={vi.fn()}
         initialClaudeStatus={{
           supported: true,
           installed: true,
@@ -350,14 +255,11 @@ describe("Onboarding", () => {
             name: "Claude",
             description: "Use Ollama models in Claude Desktop",
             installed: true,
-            action: "connect",
           },
           {
             id: "codex",
             name: "Codex",
             description: "OpenAI's open-source coding agent",
-            installed: true,
-            action: "copy",
             command: "ollama launch codex",
           },
         ]}
@@ -376,15 +278,12 @@ describe("Onboarding", () => {
   it("keeps Claude available without a separate not-installed group", () => {
     const html = renderToStaticMarkup(
       <ConnectAppsScreen
-        completionError={null}
-        onRetryCompletion={vi.fn()}
         initialIntegrations={[
           {
             id: "claude-desktop",
             name: "Claude",
             description: "Use Ollama models in Claude Desktop",
             installed: false,
-            action: "connect",
           },
         ]}
       />,
@@ -401,35 +300,29 @@ describe("Onboarding", () => {
   it("uses branded icons for the remaining launcher integrations", () => {
     const html = renderToStaticMarkup(
       <ConnectAppsScreen
-        completionError={null}
-        onRetryCompletion={vi.fn()}
         initialIntegrations={[
           {
             id: "cline",
             name: "Cline",
             description: "Autonomous coding agent",
-            action: "copy",
             command: "ollama launch cline",
           },
           {
             id: "omp",
             name: "Oh My Pi",
             description: "AI coding agent",
-            action: "copy",
             command: "ollama launch omp",
           },
           {
             id: "pool",
             name: "Poolside",
             description: "Poolside's coding agent",
-            action: "copy",
             command: "ollama launch pool",
           },
           {
             id: "qwen",
             name: "Qwen Code",
             description: "Qwen's coding agent",
-            action: "copy",
             command: "ollama launch qwen",
           },
         ]}

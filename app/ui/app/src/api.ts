@@ -38,7 +38,6 @@ export interface IntegrationStatus {
   name: string;
   description: string;
   installed?: boolean;
-  action: "connect" | "copy";
   command?: string;
 }
 

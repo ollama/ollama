@@ -216,14 +216,6 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 
 		bindClaudeDesktop(wv)
 
-		wv.Bind("getShowAppsInMenu", func() bool {
-			return getShowAppsInMenu()
-		})
-
-		wv.Bind("setShowAppsInMenu", func(visible bool) {
-			setShowAppsInMenu(visible)
-		})
-
 		wv.Bind("close", func() {
 			hideWindow(wv.Window())
 		})

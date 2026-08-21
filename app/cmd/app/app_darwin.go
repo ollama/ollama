@@ -633,6 +633,7 @@ func styleWindow(ptr unsafe.Pointer) {
 }
 
 func setOnboardingWindowStyle(ptr unsafe.Pointer, enabled bool) {
+	C.setOnboardingWindowActive(C.uintptr_t(uintptr(ptr)), C.bool(enabled))
 	styleWindow(ptr)
 	C.setWindowResizable(C.uintptr_t(uintptr(ptr)), C.bool(!enabled))
 }

@@ -111,9 +111,9 @@ type Server struct {
 	Dev bool
 
 	// Updater for checking and downloading updates
-	Updater              *updater.Updater
-	UpdateAvailableFunc  func()
-	IntegrationInstalled func(string) bool
+	Updater                *updater.Updater
+	UpdateAvailableFunc    func()
+	ClaudeDesktopInstalled func() bool
 }
 
 func (s *Server) log() *slog.Logger {
@@ -322,30 +322,28 @@ func supportsClaudeDesktopIntegration(goos string) bool {
 }
 
 func (s *Server) getIntegrationStatuses(w http.ResponseWriter, _ *http.Request) error {
-	isInstalled := s.IntegrationInstalled
-	if isInstalled == nil {
-		isInstalled = launch.IsIntegrationInstalled
-	}
-
 	type integrationStatus struct {
 		ID          string `json:"id"`
 		Name        string `json:"name"`
 		Description string `json:"description"`
 		Installed   *bool  `json:"installed,omitempty"`
-		Action      string `json:"action"`
 		Command     string `json:"command,omitempty"`
 	}
 
 	infos := launch.ListIntegrationInfos()
 	statuses := make([]integrationStatus, 0, len(infos)+2)
 	if supportsClaudeDesktopIntegration(runtime.GOOS) {
-		claudeDesktopInstalled := isInstalled("claude-desktop")
+		var claudeDesktopInstalled bool
+		if s.ClaudeDesktopInstalled != nil {
+			claudeDesktopInstalled = s.ClaudeDesktopInstalled()
+		} else {
+			claudeDesktopInstalled = launch.IsIntegrationInstalled("claude-desktop")
+		}
 		statuses = append(statuses, integrationStatus{
 			ID:          "claude-desktop",
 			Name:        "Claude",
 			Description: "Use Ollama models in Claude Desktop",
 			Installed:   &claudeDesktopInstalled,
-			Action:      "connect",
 		})
 	}
 
@@ -369,13 +367,10 @@ func (s *Server) getIntegrationStatuses(w http.ResponseWriter, _ *http.Request) 
 	}
 
 	for _, info := range orderedInfos {
-		installed := isInstalled(info.Name)
 		statuses = append(statuses, integrationStatus{
 			ID:          info.Name,
 			Name:        info.DisplayName,
 			Description: info.Description,
-			Installed:   &installed,
-			Action:      "copy",
 			Command:     "ollama launch " + info.Name,
 		})
 	}
@@ -384,7 +379,6 @@ func (s *Server) getIntegrationStatuses(w http.ResponseWriter, _ *http.Request) 
 		ID:          "terminal",
 		Name:        "Terminal",
 		Description: "Run local models from your terminal",
-		Action:      "copy",
 		Command:     "ollama",
 	})
 

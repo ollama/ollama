@@ -122,8 +122,8 @@ func TestHandlePostApiSettings(t *testing.T) {
 
 func TestGetIntegrationStatuses(t *testing.T) {
 	server := &Server{
-		IntegrationInstalled: func(name string) bool {
-			return name == "claude-desktop" || name == "codex"
+		ClaudeDesktopInstalled: func() bool {
+			return true
 		},
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/integrations", nil)
@@ -136,7 +136,6 @@ func TestGetIntegrationStatuses(t *testing.T) {
 	var got []struct {
 		ID        string `json:"id"`
 		Installed *bool  `json:"installed"`
-		Action    string `json:"action"`
 		Command   string `json:"command"`
 	}
 	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
@@ -148,7 +147,7 @@ func TestGetIntegrationStatuses(t *testing.T) {
 	}
 	wantPrefix := []string{"claude", "codex", "openclaw", "opencode", "droid", "pi", "cline"}
 	if runtime.GOOS == "darwin" {
-		if got[0].ID != "claude-desktop" || got[0].Action != "connect" || got[0].Command != "" {
+		if got[0].ID != "claude-desktop" || got[0].Installed == nil || !*got[0].Installed || got[0].Command != "" {
 			t.Fatalf("first integration = %+v, want command-free Claude Desktop connect", got[0])
 		}
 		wantPrefix = append([]string{"claude-desktop"}, wantPrefix...)
@@ -160,30 +159,23 @@ func TestGetIntegrationStatuses(t *testing.T) {
 	}
 	byID := make(map[string]struct {
 		Installed *bool
-		Action    string
 		Command   string
 	}, len(got))
 	for _, item := range got {
 		byID[item.ID] = struct {
 			Installed *bool
-			Action    string
 			Command   string
-		}{item.Installed, item.Action, item.Command}
+		}{item.Installed, item.Command}
 	}
 
-	wantInstalled := map[string]bool{
-		"opencode": false,
-		"codex":    true,
+	if runtime.GOOS != "darwin" {
+		if _, ok := byID["claude-desktop"]; ok {
+			t.Fatal("Claude Desktop should not be exposed on Windows")
+		}
 	}
-	if runtime.GOOS == "darwin" {
-		wantInstalled["claude-desktop"] = true
-	} else if _, ok := byID["claude-desktop"]; ok {
-		t.Fatal("Claude Desktop should not be exposed on Windows")
-	}
-	for name, want := range wantInstalled {
-		item, ok := byID[name]
-		if !ok || item.Installed == nil || *item.Installed != want {
-			t.Errorf("%s installed = %v, want %v", name, item.Installed, want)
+	for name, item := range byID {
+		if name != "claude-desktop" && item.Installed != nil {
+			t.Errorf("%s should not include unused install status", name)
 		}
 	}
 	if item, ok := byID["claude"]; !ok || item.Command != "ollama launch claude" {

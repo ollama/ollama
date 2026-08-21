@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { ChatIcon } from "@/components/ChatIcon";
 import { useState } from "react";
 
 let sessionSidebarOpen = false;
@@ -10,8 +11,6 @@ export function SidebarLayout({
 }: React.PropsWithChildren<{
   sidebar: React.ReactNode;
   title?: string;
-  collapsible?: boolean;
-  chatId?: string;
 }>) {
   const [sidebarOpen, setSidebarOpen] = useState(sessionSidebarOpen);
   const isWindows = navigator.platform.toLowerCase().includes("win");
@@ -22,9 +21,7 @@ export function SidebarLayout({
   };
 
   return (
-    <div
-      className={`flex h-screen w-full overflow-hidden transition-[width] duration-300 dark:bg-neutral-900`}
-    >
+    <div className="flex h-screen w-full overflow-hidden dark:bg-neutral-900">
       <div
         className={`absolute flex mx-2 py-2 z-20 items-center transition-[left] duration-375 text-neutral-500 dark:text-neutral-400 ${sidebarOpen ? (isWindows ? "left-2" : "left-[140px]") : isWindows ? "left-2" : "left-20"}`}
       >
@@ -55,15 +52,7 @@ export function SidebarLayout({
               sidebarOpen ? "opacity-0 pointer-events-none" : "opacity-100"
             }`}
           >
-            <svg
-              className="h-5 w-5 fill-current"
-              viewBox="0 0 24 24"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path d="M17.0859 3.39949L15.2135 5.27196H7.27028C5.78649 5.27196 4.94684 6.11336 4.94684 7.59716V16.664C4.94684 18.1558 5.78649 18.9892 7.27028 18.9892H16.3406C17.8324 18.9892 18.6623 18.1558 18.6623 16.664V8.79514L20.5428 6.9115C20.567 7.11532 20.5773 7.33066 20.5773 7.55419V16.7149C20.5773 19.4069 19.0818 20.9024 16.3898 20.9024H7.22107C4.53708 20.9024 3.03357 19.4069 3.03357 16.7149V7.55419C3.03357 4.8622 4.53708 3.35869 7.22107 3.35869H16.3898C16.6329 3.35869 16.8662 3.37094 17.0859 3.39949Z" />
-              <path d="M9.92714 14.381L11.914 13.5403L20.8312 4.63114L19.3404 3.1581L10.433 12.0655L9.55234 13.9964C9.45664 14.2169 9.70293 14.4714 9.92714 14.381ZM21.5767 3.89364L22.2588 3.19384C22.6347 2.80184 22.6435 2.2663 22.2711 1.90536L22.0148 1.64287C21.6822 1.31377 21.1334 1.36513 20.7689 1.72158L20.0859 2.39833L21.5767 3.89364Z" />
-            </svg>
+            <ChatIcon />
           </Link>
         )}
       </div>
@@ -81,9 +70,7 @@ export function SidebarLayout({
         ></div>
         {sidebarOpen && sidebar}
       </div>
-      <main
-        className={`flex flex-1 flex-col min-w-0 transition-all duration-300`}
-      >
+      <main className="flex min-w-0 flex-1 flex-col transition-all duration-300">
         <div
           className={`h-13 z-10 flex w-full flex-none items-center bg-white dark:bg-neutral-900 ${title ? "" : isWindows ? "xl:hidden" : "xl:fixed xl:bg-transparent xl:dark:bg-transparent"}`}
           onDoubleClick={() => window.doubleClick && window.doubleClick()}

@@ -30,4 +30,12 @@ func bindClaudeDesktop(wv webview.WebView) {
 	wv.Bind("installClaudeDesktop", func() claudeDesktopInstallResult {
 		return requestClaudeDesktopInstall()
 	})
+
+	wv.Bind("getShowAppsInMenu", func() bool {
+		return getShowAppsInMenu()
+	})
+
+	wv.Bind("setShowAppsInMenu", func(visible bool) {
+		setShowAppsInMenu(visible)
+	})
 }

@@ -423,12 +423,6 @@ func drag(ptr unsafe.Pointer) {}
 
 func doubleClick(ptr unsafe.Pointer) {}
 
-func getShowAppsInMenu() bool {
-	return false
-}
-
-func setShowAppsInMenu(_ bool) {}
-
 // checkAndHandleExistingInstance checks if another instance is running and sends the URL to it
 func checkAndHandleExistingInstance(urlSchemeRequest string) {
 	if urlSchemeRequest == "" {

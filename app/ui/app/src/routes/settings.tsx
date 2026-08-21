@@ -10,7 +10,7 @@ export const Route = createFileRoute("/settings")({
 function SettingsRoute() {
   return (
     <SidebarLayout title="Settings" sidebar={<AppSidebar current="settings" />}>
-      <Settings embedded />
+      <Settings />
     </SidebarLayout>
   );
 }

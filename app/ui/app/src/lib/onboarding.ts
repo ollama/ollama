@@ -21,16 +21,6 @@ export const AUTHENTICATION_TIMEOUT_MS = 5 * 60 * 1000;
 
 export type OnboardingStep = "intro" | "welcome" | "apps" | "run";
 
-export function isOnboardingZoomShortcut(
-  event: Pick<KeyboardEvent, "metaKey" | "ctrlKey" | "key" | "code">,
-) {
-  if (!event.metaKey && !event.ctrlKey) return false;
-
-  return (
-    ["+", "-", "=", "_"].includes(event.key) ||
-    ["Equal", "Minus", "NumpadAdd", "NumpadSubtract"].includes(event.code)
-  );
-}
 export type OnboardingAction = "continue" | "authenticated" | "local";
 export type AuthenticationTimeoutAction = "ignore" | "defer" | "fail";
 

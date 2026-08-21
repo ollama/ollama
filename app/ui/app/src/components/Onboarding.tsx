@@ -1,10 +1,6 @@
 import CopyButton from "@/components/CopyButton";
 import Logo from "@/components/Logo";
-import {
-  isOnboardingZoomShortcut,
-  nextOnboardingStep,
-  type OnboardingStep,
-} from "@/lib/onboarding";
+import { nextOnboardingStep, type OnboardingStep } from "@/lib/onboarding";
 import {
   getIntegrationStatuses,
   type IntegrationStatus,
@@ -79,11 +75,8 @@ interface RunOllamaScreenProps {
 }
 
 interface ConnectAppsScreenProps {
-  completionError: string | null;
-  onRetryCompletion: () => void;
   initialIntegrations?: IntegrationStatuses;
   initialClaudeStatus?: ClaudeDesktopStatus;
-  embedded?: boolean;
 }
 
 function TitleBar({ onSignIn }: { onSignIn?: () => void }) {
@@ -361,11 +354,8 @@ function LaunchCommandIcon({ item }: { item: IntegrationStatus }) {
 }
 
 export function ConnectAppsScreen({
-  completionError,
-  onRetryCompletion,
   initialIntegrations,
   initialClaudeStatus,
-  embedded = false,
 }: ConnectAppsScreenProps) {
   const isWindows = isWindowsPlatform();
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
@@ -792,22 +782,7 @@ export function ConnectAppsScreen({
   ) : null;
 
   return (
-    <main
-      className={`flex w-full flex-col overflow-hidden bg-white text-neutral-950 ${embedded ? "min-h-0 flex-1" : "h-screen"}`}
-    >
-      {!embedded && (
-        <header
-          className="flex h-[52px] w-full flex-none select-none items-center justify-between border-b border-neutral-200 py-2.5"
-          onMouseDown={() => window.drag?.()}
-          onDoubleClick={() => window.doubleClick?.()}
-        >
-          <h1
-            className={`${isWindows ? "pl-4" : "pl-24"} font-rounded text-md flex items-center font-medium`}
-          >
-            Connect your apps
-          </h1>
-        </header>
-      )}
+    <main className="flex min-h-0 w-full flex-1 flex-col overflow-hidden bg-white text-neutral-950">
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain p-6">
         <section className="min-h-0 flex-1">
           <div className="mx-auto w-full max-w-4xl text-left">
@@ -840,10 +815,15 @@ export function ConnectAppsScreen({
                       {canToggleIntegrations && (
                         <div
                           aria-hidden={!showAllIntegrations}
-                          className={`grid transition-[grid-template-rows,opacity,visibility] duration-[750ms] ease-in-out motion-reduce:duration-0 ${
+                          inert={!showAllIntegrations}
+                          className={`grid transition-[grid-template-rows] ease-in-out motion-reduce:duration-0 ${
                             showAllIntegrations
-                              ? "visible grid-rows-[1fr] opacity-100"
-                              : "invisible grid-rows-[0fr] opacity-0"
+                              ? "duration-[750ms]"
+                              : "duration-[825ms]"
+                          } ${
+                            showAllIntegrations
+                              ? "grid-rows-[1fr]"
+                              : "grid-rows-[0fr]"
                           }`}
                         >
                           <div className="min-h-0 overflow-hidden">
@@ -858,19 +838,27 @@ export function ConnectAppsScreen({
                       {canToggleIntegrations && (
                         <button
                           type="button"
+                          aria-label={
+                            showAllIntegrations
+                              ? "Collapse apps"
+                              : "Show more apps"
+                          }
                           aria-expanded={showAllIntegrations}
-                          className="mt-2 flex h-9 w-full items-center justify-center gap-1.5 rounded-lg text-xs text-neutral-500 transition-colors hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
-                          onMouseEnter={() => setShowAllIntegrations(true)}
-                          onFocus={() => setShowAllIntegrations(true)}
+                          className="mx-auto mt-3 flex h-10 w-10 items-center justify-center rounded-full text-neutral-600 transition-colors hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
                           onClick={() =>
                             setShowAllIntegrations((current) => !current)
                           }
                         >
-                          {showAllIntegrations ? "Collapse" : "More"}
                           {showAllIntegrations ? (
-                            <ChevronUpIcon className="h-3.5 w-3.5" />
+                            <ChevronUpIcon
+                              aria-hidden="true"
+                              className="h-5 w-5"
+                            />
                           ) : (
-                            <ChevronDownIcon className="h-3.5 w-3.5" />
+                            <ChevronDownIcon
+                              aria-hidden="true"
+                              className="h-5 w-5"
+                            />
                           )}
                         </button>
                       )}
@@ -892,17 +880,6 @@ export function ConnectAppsScreen({
               <p className="mt-8 text-sm text-neutral-400">
                 Checking integrations…
               </p>
-            )}
-
-            <InlineError message={completionError} />
-            {completionError && (
-              <button
-                type="button"
-                className="mt-2 cursor-pointer rounded-md px-1 py-1 text-sm font-normal text-neutral-600 underline decoration-neutral-300 underline-offset-4 hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
-                onClick={onRetryCompletion}
-              >
-                Try again
-              </button>
             )}
           </div>
         </section>
@@ -935,15 +912,6 @@ export default function Onboarding(props: OnboardingProps) {
   useEffect(() => {
     window.setOnboardingWindow?.(true);
     return () => window.setOnboardingWindow?.(false);
-  }, []);
-
-  useEffect(() => {
-    const preventZoom = (event: KeyboardEvent) => {
-      if (isOnboardingZoomShortcut(event)) event.preventDefault();
-    };
-
-    window.addEventListener("keydown", preventZoom, true);
-    return () => window.removeEventListener("keydown", preventZoom, true);
   }, []);
 
   useEffect(() => {

@@ -38,6 +38,7 @@ void unregisterSelfFromLoginItem();
 void setWindowDelegate(void *window);
 void showWindow(uintptr_t wndPtr);
 void hideWindow(uintptr_t wndPtr);
+void setOnboardingWindowActive(uintptr_t wndPtr, bool active);
 void styleWindow(uintptr_t wndPtr);
 void setWindowResizable(uintptr_t wndPtr, bool resizable);
 void drag(uintptr_t wndPtr);
