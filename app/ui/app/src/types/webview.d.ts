@@ -43,6 +43,7 @@ declare global {
     setClaudeDesktopConnected?: (
       enabled: boolean,
     ) => Promise<ClaudeDesktopActionResult>;
+    prepareClaudeDesktopConnection?: () => Promise<ClaudeDesktopActionResult>;
     openClaudeDesktop?: () => Promise<string>;
     installClaudeDesktop?: () => Promise<ClaudeDesktopInstallResult>;
     getShowAppsInMenu?: () => Promise<boolean>;

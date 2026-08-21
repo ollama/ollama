@@ -482,6 +482,20 @@ func setClaudeDesktopConnection(enabled bool) error {
 	return setClaudeGatewayInstalled(enabled, launch.ClaudeDesktopRunning())
 }
 
+func prepareClaudeDesktopConnection() error {
+	if !claudeDesktopInstalled() {
+		return errors.New("Claude Desktop is not installed")
+	}
+	if err := startClaudeAppProxy(); err != nil {
+		return err
+	}
+	err := claudeDesktop.ConfigureAutodiscovery()
+	if !claudeDesktop.UsesOllamaGateway() {
+		stopClaudeAppProxy()
+	}
+	return err
+}
+
 func openClaudeDesktopApplication() error {
 	return launch.OpenClaudeDesktop()
 }

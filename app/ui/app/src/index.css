@@ -45,3 +45,32 @@
     opacity: 1;
   }
 }
+
+@keyframes claude-connected-backdrop-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes claude-connected-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+}
+
+.claude-connected-backdrop {
+  animation: claude-connected-backdrop-in 280ms ease-in-out both;
+}
+
+.claude-connected-dialog {
+  animation: claude-connected-dialog-in 345ms cubic-bezier(0.4, 0, 0.2, 1) both;
+  will-change: opacity, transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .claude-connected-backdrop,
+  .claude-connected-dialog {
+    animation: none;
+  }
+}

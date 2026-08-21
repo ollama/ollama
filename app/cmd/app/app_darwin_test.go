@@ -195,6 +195,9 @@ func TestClaudeDesktopConnectionStatusReportsMissingApp(t *testing.T) {
 	if err := setClaudeDesktopConnection(true); err == nil || !strings.Contains(err.Error(), "not installed") {
 		t.Fatalf("setClaudeDesktopConnection error = %v, want missing Claude error", err)
 	}
+	if err := prepareClaudeDesktopConnection(); err == nil || !strings.Contains(err.Error(), "not installed") {
+		t.Fatalf("prepareClaudeDesktopConnection error = %v, want missing Claude error", err)
+	}
 }
 
 func TestClaudeDesktopInstallResultFromCode(t *testing.T) {

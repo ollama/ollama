@@ -20,6 +20,17 @@ func bindClaudeDesktop(wv webview.WebView) {
 		return result
 	})
 
+	wv.Bind("prepareClaudeDesktopConnection", func() claudeDesktopActionResult {
+		err := prepareClaudeDesktopConnection()
+		result := claudeDesktopActionResult{
+			Status: getClaudeDesktopConnectionStatus(),
+		}
+		if err != nil {
+			result.Error = err.Error()
+		}
+		return result
+	})
+
 	wv.Bind("openClaudeDesktop", func() string {
 		if err := openClaudeDesktopApplication(); err != nil {
 			return err.Error()
