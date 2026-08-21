@@ -7,7 +7,10 @@ import {
   type IntegrationStatuses,
 } from "@/api";
 import { INTEGRATION_ICONS } from "@/lib/launchCommands";
-import { isClaudeConnectionComplete } from "@/lib/claudeDesktop";
+import {
+  isClaudeConnectionComplete,
+  scheduleClaudeInstallTimeout,
+} from "@/lib/claudeDesktop";
 import { isWindowsPlatform } from "@/lib/platform";
 import type { ClaudeDesktopStatus } from "@/types/webview";
 import { copyTextToClipboard } from "@/utils/clipboard";
@@ -610,9 +613,15 @@ export function ConnectAppsScreen({
 
     void checkForInstall();
     const interval = window.setInterval(checkForInstall, 1000);
+    const timeout = scheduleClaudeInstallTimeout(() => {
+      if (!active) return;
+      setClaudePhase("idle");
+      setClaudeError("Claude installation wasn’t detected. Try again.");
+    });
     return () => {
       active = false;
       window.clearInterval(interval);
+      window.clearTimeout(timeout);
     };
   }, [claudePhase, finishClaudeConnection]);
 
@@ -634,7 +643,7 @@ export function ConnectAppsScreen({
     setClaudeError(null);
     const status = await refreshClaudeStatus();
     if (!status) return;
-    const enabling = !status.connected;
+    const enabling = !status.configured;
     if (enabling && !status.installed) {
       if (!window.installClaudeDesktop) {
         setClaudeError("Ollama could not open the Claude installer.");
@@ -680,7 +689,10 @@ export function ConnectAppsScreen({
       if (!actionError && enabling && result.status.connected) {
         const openError = await finishClaudeConnection(result.status);
         actionError = openError;
-      } else if (!actionError && result.status.connected !== enabling) {
+      } else if (
+        !actionError &&
+        (enabling ? !result.status.connected : result.status.configured)
+      ) {
         actionError = enabling
           ? "Ollama could not connect to Claude."
           : "Ollama could not disconnect from Claude.";
@@ -704,6 +716,7 @@ export function ConnectAppsScreen({
     integrationStatuses?.filter(
       (item) => item.id !== "claude-desktop" && item.command,
     ) ?? [];
+  const claudeConfigured = claudeStatus?.configured ?? false;
   const claudeConnected = claudeStatus?.connected ?? false;
   const claudeInstalled =
     claudeStatus?.installed ?? claudeIntegration?.installed ?? false;
@@ -728,7 +741,7 @@ export function ConnectAppsScreen({
             ? "Opening…"
             : claudePhase === "disconnecting"
               ? "Disconnecting…"
-              : !claudeConnected && !claudeInstalled
+              : !claudeConfigured && !claudeInstalled
                 ? "Download & connect"
                 : null;
   const launchIntegrationRow = (item: IntegrationStatus) => {
@@ -785,19 +798,21 @@ export function ConnectAppsScreen({
             className={`truncate text-xs leading-5 ${claudeError ? "text-red-600" : "text-neutral-500"}`}
           >
             {claudeError ??
-              (claudeConnected
-                ? "Connected to Ollama"
-                : claudePhase === "installing"
-                  ? "Ollama is downloading the Claude installer…"
-                  : claudePhase === "waiting-for-install"
-                    ? "Finish installing Claude. Ollama will connect it automatically."
-                    : claudePhase === "connecting"
-                      ? "Connecting Claude to Ollama…"
-                      : claudePhase === "launching"
-                        ? "Opening Claude…"
-                        : claudePhase === "disconnecting"
-                          ? "Restoring Claude’s usual connection…"
-                          : claudeIntegration.description)}
+              (claudeConfigured && claudeStatus?.startFailed
+                ? "Ollama couldn’t start the Claude connection."
+                : claudeConnected
+                  ? "Connected to Ollama"
+                  : claudePhase === "installing"
+                    ? "Ollama is downloading the Claude installer…"
+                    : claudePhase === "waiting-for-install"
+                      ? "Finish installing Claude. Ollama will connect it automatically."
+                      : claudePhase === "connecting"
+                        ? "Connecting Claude to Ollama…"
+                        : claudePhase === "launching"
+                          ? "Opening Claude…"
+                          : claudePhase === "disconnecting"
+                            ? "Restoring Claude’s usual connection…"
+                            : claudeIntegration.description)}
           </p>
         </div>
       </div>
@@ -817,23 +832,23 @@ export function ConnectAppsScreen({
         <button
           type="button"
           role="switch"
-          aria-checked={claudeConnected}
+          aria-checked={claudeConfigured}
           aria-busy={isConnectingClaude || undefined}
           aria-label={
-            claudeConnected
+            claudeConfigured
               ? "Disconnect Claude"
               : isConnectingClaude
                 ? "Connecting Claude"
                 : "Connect Claude"
           }
-          title={claudeConnected ? "Connected" : "Connect"}
+          title={claudeConfigured ? "Disconnect" : "Connect"}
           disabled={isConnectingClaude}
           onClick={connectClaude}
-          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait ${claudeConnected ? "bg-neutral-950" : "bg-neutral-300"}`}
+          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait ${claudeConfigured ? "bg-neutral-950" : "bg-neutral-300"}`}
         >
           <span
             aria-hidden="true"
-            className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${isConnectingClaude ? "animate-pulse" : ""} ${claudeConnected ? "translate-x-4.5" : "translate-x-0.5"}`}
+            className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${isConnectingClaude ? "animate-pulse" : ""} ${claudeConfigured ? "translate-x-4.5" : "translate-x-0.5"}`}
           />
         </button>
       </div>

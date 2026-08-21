@@ -189,7 +189,7 @@ func TestClaudeDesktopConnectionStatusReportsMissingApp(t *testing.T) {
 	})
 
 	status := getClaudeDesktopConnectionStatus()
-	if status.Installed || status.Connected {
+	if status.Installed || status.Configured || status.Connected {
 		t.Fatalf("Claude status = %+v, want missing and disconnected", status)
 	}
 	if err := setClaudeDesktopConnection(true); err == nil || !strings.Contains(err.Error(), "not installed") {
@@ -197,6 +197,13 @@ func TestClaudeDesktopConnectionStatusReportsMissingApp(t *testing.T) {
 	}
 	if err := prepareClaudeDesktopConnection(); err == nil || !strings.Contains(err.Error(), "not installed") {
 		t.Fatalf("prepareClaudeDesktopConnection error = %v, want missing Claude error", err)
+	}
+}
+
+func TestClaudeDesktopConnectionStatusSeparatesConfigurationFromGatewayHealth(t *testing.T) {
+	status := claudeDesktopConnectionStatus(true, true, false, errors.New("gateway failed"))
+	if !status.Configured || status.Connected || !status.StartFailed {
+		t.Fatalf("Claude status = %+v, want configured with failed gateway", status)
 	}
 }
 

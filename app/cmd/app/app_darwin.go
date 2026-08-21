@@ -467,10 +467,15 @@ func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
 
 	installed := claudeDesktopInstalled()
 	configured := installed && claudeDesktop.UsesOllamaGateway()
+	return claudeDesktopConnectionStatus(installed, configured, launch.ClaudeDesktopRunning(), proxyErr)
+}
+
+func claudeDesktopConnectionStatus(installed, configured, running bool, proxyErr error) claudeDesktopStatus {
 	return claudeDesktopStatus{
 		Installed:   installed,
+		Configured:  configured,
 		Connected:   configured && proxyErr == nil,
-		Running:     launch.ClaudeDesktopRunning(),
+		Running:     running,
 		StartFailed: proxyErr != nil,
 	}
 }

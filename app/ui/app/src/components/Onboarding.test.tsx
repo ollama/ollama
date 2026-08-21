@@ -9,7 +9,11 @@ import {
   terminalRowsForWindowHeight,
   WelcomeScreen,
 } from "./Onboarding";
-import { isClaudeConnectionComplete } from "@/lib/claudeDesktop";
+import {
+  CLAUDE_INSTALL_TIMEOUT_MS,
+  isClaudeConnectionComplete,
+  scheduleClaudeInstallTimeout,
+} from "@/lib/claudeDesktop";
 import { isWindowsPlatform } from "@/lib/platform";
 import {
   authenticationTimeoutAction,
@@ -112,6 +116,7 @@ describe("Onboarding", () => {
   it("finishes Claude connection states from the native status hook", () => {
     const status = {
       installed: true,
+      configured: true,
       connected: true,
       running: false,
       startFailed: false,
@@ -125,8 +130,29 @@ describe("Onboarding", () => {
       isClaudeConnectionComplete(true, { ...status, startFailed: true }),
     ).toBe(false);
     expect(
-      isClaudeConnectionComplete(false, { ...status, connected: false }),
+      isClaudeConnectionComplete(false, {
+        ...status,
+        configured: false,
+        connected: false,
+      }),
     ).toBe(true);
+  });
+
+  it("bounds the Claude installer wait", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", { setTimeout: globalThis.setTimeout });
+    const onTimeout = vi.fn();
+
+    try {
+      scheduleClaudeInstallTimeout(onTimeout);
+      vi.advanceTimersByTime(CLAUDE_INSTALL_TIMEOUT_MS - 1);
+      expect(onTimeout).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(onTimeout).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("opens the device connection flow without relaunching the app", () => {
@@ -241,6 +267,7 @@ describe("Onboarding", () => {
       <ConnectAppsScreen
         initialClaudeStatus={{
           installed: true,
+          configured: true,
           connected: true,
           running: false,
           startFailed: false,
@@ -269,6 +296,32 @@ describe("Onboarding", () => {
     expect(html).not.toContain("Inactive");
     expect(html).toContain('aria-checked="true"');
     expect(html).toContain('aria-label="Disconnect Claude"');
+  });
+
+  it("keeps failed configured Claude disconnectable", () => {
+    const html = renderToStaticMarkup(
+      <ConnectAppsScreen
+        initialClaudeStatus={{
+          installed: true,
+          configured: true,
+          connected: false,
+          running: false,
+          startFailed: true,
+        }}
+        initialIntegrations={[
+          {
+            id: "claude-desktop",
+            name: "Claude",
+            description: "Use Ollama models in Claude Desktop",
+            installed: true,
+          },
+        ]}
+      />,
+    );
+
+    expect(html).toContain('aria-checked="true"');
+    expect(html).toContain('aria-label="Disconnect Claude"');
+    expect(html).toContain("Ollama couldn’t start the Claude connection.");
   });
 
   it("keeps Claude available without a separate not-installed group", () => {

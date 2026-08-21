@@ -12,6 +12,7 @@ const (
 
 type claudeDesktopStatus struct {
 	Installed   bool `json:"installed"`
+	Configured  bool `json:"configured"`
 	Connected   bool `json:"connected"`
 	Running     bool `json:"running"`
 	StartFailed bool `json:"startFailed"`

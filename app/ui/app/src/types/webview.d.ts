@@ -14,6 +14,7 @@ interface MenuItem {
 
 interface ClaudeDesktopStatus {
   installed: boolean;
+  configured: boolean;
   connected: boolean;
   running: boolean;
   startFailed: boolean;
