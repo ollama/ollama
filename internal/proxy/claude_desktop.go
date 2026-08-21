@@ -323,7 +323,7 @@ func (p *ClaudeDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if err := p.refreshModelCatalog(r.Context()); err != nil {
 				p.logger.Debug("could not refresh Claude model catalog", "error", err)
 			}
-			generation, models = p.modelSnapshotWithGeneration()
+			_, models = p.modelSnapshotWithGeneration()
 		}
 		p.serveModels(w, r.Context(), models)
 		return

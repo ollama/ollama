@@ -410,7 +410,7 @@ func TestGatewayReevaluatesModelAccessBeforeRouting(t *testing.T) {
 		}
 	})
 
-	postMessage := func(model string) *http.Response {
+	postMessage := func(model string) (int, string) {
 		t.Helper()
 		resp, err := http.Post(
 			"http://"+p.Addr()+"/v1/messages",
@@ -420,17 +420,27 @@ func TestGatewayReevaluatesModelAccessBeforeRouting(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return resp
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp.StatusCode, string(body)
+	}
+	assertMessage := func(model string, status int, want string) {
+		t.Helper()
+		gotStatus, body := postMessage(model)
+		if gotStatus != status || !strings.Contains(body, want) {
+			t.Fatalf("status/body = %d/%q, want %d containing %q", gotStatus, body, status, want)
+		}
 	}
 
-	resp := postMessage("claude-fable-5")
-	assertResponseContains(t, resp, http.StatusForbidden, "requires an Ollama pro plan")
+	assertMessage("claude-fable-5", http.StatusForbidden, "requires an Ollama pro plan")
 	if routed.Load() != 0 {
 		t.Fatalf("ineligible Pro request reached upstream")
 	}
 
-	resp = postMessage("claude-opus-5")
-	assertResponseContains(t, resp, http.StatusOK, `"ok":true`)
+	assertMessage("claude-opus-5", http.StatusOK, `"ok":true`)
 	if routed.Load() != 1 {
 		t.Fatalf("free model routed %d times, want 1", routed.Load())
 	}
@@ -438,8 +448,7 @@ func TestGatewayReevaluatesModelAccessBeforeRouting(t *testing.T) {
 	// Account and Cloud settings can change while Claude is open. Each request
 	// resolves them again so an old conversation cannot retain stale access.
 	state.Cloud = ClaudeDesktopCloudOff
-	resp = postMessage("claude-opus-5")
-	assertResponseContains(t, resp, http.StatusForbidden, "Turn on Cloud in Ollama Settings")
+	assertMessage("claude-opus-5", http.StatusForbidden, "Turn on Cloud in Ollama Settings")
 	if routed.Load() != 1 {
 		t.Fatalf("Cloud-disabled request reached upstream")
 	}
@@ -627,7 +636,11 @@ func TestGatewayRejectsRequestWhenSlotChangesDuringRefresh(t *testing.T) {
 		_ = p.Close(ctx)
 	})
 
-	response := make(chan *http.Response, 1)
+	type messageResponse struct {
+		status int
+		body   string
+	}
+	response := make(chan messageResponse, 1)
 	requestErr := make(chan error, 1)
 	go func() {
 		resp, err := http.Post(
@@ -639,7 +652,13 @@ func TestGatewayRejectsRequestWhenSlotChangesDuringRefresh(t *testing.T) {
 			requestErr <- err
 			return
 		}
-		response <- resp
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			requestErr <- err
+			return
+		}
+		response <- messageResponse{status: resp.StatusCode, body: string(body)}
 	}()
 	<-started
 	if err := p.SetModels(updated); err != nil {
@@ -650,7 +669,9 @@ func TestGatewayRejectsRequestWhenSlotChangesDuringRefresh(t *testing.T) {
 	case err := <-requestErr:
 		t.Fatal(err)
 	case resp := <-response:
-		assertResponseContains(t, resp, http.StatusBadRequest, "model catalog changed")
+		if resp.status != http.StatusBadRequest || !strings.Contains(resp.body, "model catalog changed") {
+			t.Fatalf("response = (%d, %q), want status %d containing %q", resp.status, resp.body, http.StatusBadRequest, "model catalog changed")
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for request")
 	}
