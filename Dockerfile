@@ -56,7 +56,8 @@ RUN dnf install -y cuda-toolkit-${CUDA13VERSION//./-}
 ENV PATH=/usr/local/cuda-13/bin:$PATH
 
 FROM base AS rocm-7-deps
-ENV PATH=/opt/rocm/llvm/bin:/opt/rocm/hcc/bin:/opt/rocm/hip/bin:/opt/rocm/bin:$PATH
+COPY scripts/fetch_rocm_linux.sh scripts/fetch_rocm_linux.sh
+RUN bash scripts/fetch_rocm_linux.sh --prefix /opt/rocm
 
 FROM base AS vulkan-deps
 ARG VULKANVERSION
@@ -123,19 +124,18 @@ RUN --mount=type=cache,target=/root/.ccache \
 FROM scratch AS publish-llama-server-cuda_v13
 COPY --from=llama-server-cuda_v13 dist/lib/ollama /lib/ollama/
 
-FROM rocm-7-deps AS llama-server-rocm_v7_2
-ENV CC=clang CXX=clang++ CXXFLAGS=--gcc-toolchain=/opt/rh/gcc-toolset-13/root/usr
+FROM rocm-7-deps AS llama-server-rocm_v7_14
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake -S llama/server --preset rocm_v7_2_linux \
-        && cmake --build build/llama-server-rocm_v7_2 -- -l $(nproc) \
-        && cmake --install build/llama-server-rocm_v7_2 --component llama-server --strip
-RUN rm -f dist/lib/ollama/rocm_v7_2/rocblas/library/*gfx90[06]*
+    . /opt/rocm/linux-current/ollama-rocm-env.sh \
+        && cmake -S llama/server --preset rocm_v7_14_linux \
+        && cmake --build build/llama-server-rocm_v7_14 -- -l $(nproc) \
+        && cmake --install build/llama-server-rocm_v7_14 --component llama-server --strip
 
-FROM scratch AS publish-llama-server-rocm_v7_2
-COPY --from=llama-server-rocm_v7_2 dist/lib/ollama /lib/ollama/
+FROM scratch AS publish-llama-server-rocm_v7_14
+COPY --from=llama-server-rocm_v7_14 dist/lib/ollama /lib/ollama/
 
 FROM vulkan-deps AS llama-server-vulkan
 COPY LLAMA_CPP_VERSION .
@@ -278,11 +278,11 @@ COPY --from=jetpack-6 dist/lib/ollama/ /lib/ollama/
 
 FROM scratch AS rocm
 COPY --from=llama-server-cpu  dist/lib/ollama /lib/ollama
-COPY --from=llama-server-rocm_v7_2 dist/lib/ollama /lib/ollama
+COPY --from=llama-server-rocm_v7_14 dist/lib/ollama /lib/ollama
 
 FROM --platform=linux/amd64 scratch AS amd64-archive
 COPY --from=amd64 /lib/ollama /lib/ollama/
-COPY --from=llama-server-rocm_v7_2 dist/lib/ollama /lib/ollama/
+COPY --from=llama-server-rocm_v7_14 dist/lib/ollama /lib/ollama/
 
 FROM --platform=linux/arm64 scratch AS arm64-archive
 COPY --from=arm64 /lib/ollama /lib/ollama/
