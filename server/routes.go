@@ -2742,11 +2742,31 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		structuredOutputsState_Applying
 	)
 
+	// json.RawMessage is non-nil for `null` and `""` too, which the runner treats as
+	// no format at all - deferring for those would cost a second request for nothing
+	constrainsOutput := req.Format != nil && string(req.Format) != "null" && string(req.Format) != `""`
+
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
 
 		structuredOutputsState := structuredOutputsState_None
+
+		// sendThinkingBeforeRestart emits the thinking collected by the chunk that
+		// triggered the restart. nothing else from that chunk survives: the content,
+		// tool calls, logprobs and metrics all describe the answer the constrained
+		// request regenerates, and that request reports the completion
+		sendThinkingBeforeRestart := func(res api.ChatResponse) {
+			if res.Message.Thinking == "" {
+				return
+			}
+
+			ch <- api.ChatResponse{
+				Model:     res.Model,
+				CreatedAt: res.CreatedAt,
+				Message:   api.Message{Role: "assistant", Thinking: res.Message.Thinking},
+			}
+		}
 
 		for {
 			var tb strings.Builder
@@ -2758,12 +2778,18 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 			// Note that the current approach does not work for (potential future)
 			// non-thinking models that emit anything before actual content. This
-			// current approach uses the transition from parsed thinking content to
-			// parsed non-thinking content as the signal to turn constraining on
+			// current approach uses the first parsed content as the signal to turn
+			// constraining on
+
+			// deferredFormat records that the grammar was dropped for this request, so a
+			// restart has to apply it before any content reaches the client, even if
+			// nothing was thought
+			var deferredFormat bool
 
 			forceImmediate := builtinParser != nil && builtinParser.HasThinkingSupport() && req.Think != nil && !req.Think.Bool()
-			if req.Format != nil && structuredOutputsState == structuredOutputsState_None && !forceImmediate && ((builtinParser != nil || thinkingState != nil) && slices.Contains(m.Capabilities(), model.CapabilityThinking)) {
+			if constrainsOutput && structuredOutputsState == structuredOutputsState_None && !forceImmediate && ((builtinParser != nil || thinkingState != nil) && slices.Contains(m.Capabilities(), model.CapabilityThinking)) {
 				currentFormat = nil
+				deferredFormat = true
 			}
 
 			// sets up new context given parent context per request
@@ -2822,9 +2848,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					res.Message.ToolCalls = toolCalls
 
 					tb.WriteString(thinking)
-					// we are now receiving content from the model - we should start applying structured outputs
-					if structuredOutputsState == structuredOutputsState_None && req.Format != nil && tb.String() != "" && res.Message.Content != "" {
+					// we are now receiving content from the model - we should start applying structured
+					// outputs. the parser can return thinking and content from a single call, so emit
+					// the thinking before restarting
+					if deferredFormat && structuredOutputsState == structuredOutputsState_None && res.Message.Content != "" {
 						structuredOutputsState = structuredOutputsState_ReadyToApply
+						sendThinkingBeforeRestart(res)
 						cancel()
 						return
 					}
@@ -2848,10 +2877,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					tb.WriteString(thinkingContent)
 					// emit the collected thinking text before restarting with structured outputs and clear unstructured content
 					// to avoid leaking mixed tokens like "</think>Hello"
-					if structuredOutputsState == structuredOutputsState_None && req.Format != nil && tb.String() != "" && remainingContent != "" {
+					if deferredFormat && structuredOutputsState == structuredOutputsState_None && remainingContent != "" {
 						structuredOutputsState = structuredOutputsState_ReadyToApply
-						res.Message.Content = ""
-						ch <- res
+						sendThinkingBeforeRestart(res)
 						cancel()
 						return
 					}
@@ -2911,24 +2939,28 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			// ignored structured outputs cancellation falls through to here, start a new request with the structured outputs and updated prompt. use the
 			if structuredOutputsState == structuredOutputsState_ReadyToApply {
 				structuredOutputsState = structuredOutputsState_Applying
-				msg := api.Message{
-					Role:     "assistant",
-					Thinking: tb.String(),
-				}
+				// with no thinking to prime it with, the second request re-runs the
+				// original prompt rather than appending an empty assistant turn
+				if thinking := tb.String(); thinking != "" {
+					msg := api.Message{
+						Role:     "assistant",
+						Thinking: thinking,
+					}
 
-				msgs = append(msgs, msg)
-				prompt, _, err = chatPrompt(c.Request.Context(), m, r.Tokenize, promptOpts, msgs, processedTools, req.Think, truncate)
-				if err != nil {
-					slog.Error("chat prompt error applying structured outputs", "error", err)
-					ch <- gin.H{"error": err.Error()}
-					return
-				}
-				// force constraining by terminating thinking header, the parser is already at this state
-				// when the last message is thinking, the rendered for gpt-oss cannot disambiguate between having the
-				// model continue thinking or ending thinking and outputting the final message.
-				// TODO(parthsareen): consider adding prefill disambiguation logic to the renderer for structured outputs.
-				if shouldUseHarmony(m) || (builtinParser != nil && m.Config.Parser == "harmony") {
-					prompt += "<|end|><|start|>assistant<|channel|>final<|message|>"
+					msgs = append(msgs, msg)
+					prompt, _, err = chatPrompt(c.Request.Context(), m, r.Tokenize, promptOpts, msgs, processedTools, req.Think, truncate)
+					if err != nil {
+						slog.Error("chat prompt error applying structured outputs", "error", err)
+						ch <- gin.H{"error": err.Error()}
+						return
+					}
+					// force constraining by terminating thinking header, the parser is already at this state
+					// when the last message is thinking, the rendered for gpt-oss cannot disambiguate between having the
+					// model continue thinking or ending thinking and outputting the final message.
+					// TODO(parthsareen): consider adding prefill disambiguation logic to the renderer for structured outputs.
+					if shouldUseHarmony(m) || (builtinParser != nil && m.Config.Parser == "harmony") {
+						prompt += "<|end|><|start|>assistant<|channel|>final<|message|>"
+					}
 				}
 				continue
 			}
