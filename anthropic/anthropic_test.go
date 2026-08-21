@@ -1884,6 +1884,70 @@ func TestConvertOllamaToAnthropicResults(t *testing.T) {
 	}
 }
 
+func TestValidateDomainFilters(t *testing.T) {
+	if err := ValidateDomainFilters(nil, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := ValidateDomainFilters([]string{"a.com"}, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := ValidateDomainFilters(nil, []string{"b.com"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := ValidateDomainFilters([]string{"a.com"}, []string{"b.com"}); err == nil {
+		t.Fatal("expected mutual exclusivity error")
+	}
+}
+
+func TestFilterOllamaWebSearchResults(t *testing.T) {
+	results := []OllamaWebSearchResult{
+		{Title: "NIH", URL: "https://www.nih.gov/news", Content: "a"},
+		{Title: "Blog", URL: "https://example.com/blog/post", Content: "b"},
+		{Title: "Spam", URL: "https://spam.com/x", Content: "c"},
+		{Title: "Other", URL: "https://other.org/", Content: "d"},
+	}
+
+	t.Run("no filters", func(t *testing.T) {
+		got := FilterOllamaWebSearchResults(results, nil, nil)
+		if len(got) != len(results) {
+			t.Fatalf("got %d, want %d", len(got), len(results))
+		}
+	})
+
+	t.Run("allowed domains", func(t *testing.T) {
+		got := FilterOllamaWebSearchResults(results, []string{"nih.gov", "example.com/blog"}, nil)
+		if len(got) != 2 {
+			t.Fatalf("got %d results, want 2: %+v", len(got), got)
+		}
+		if got[0].URL != results[0].URL || got[1].URL != results[1].URL {
+			t.Fatalf("unexpected results: %+v", got)
+		}
+	})
+
+	t.Run("blocked domains", func(t *testing.T) {
+		got := FilterOllamaWebSearchResults(results, nil, []string{"spam.com"})
+		if len(got) != 3 {
+			t.Fatalf("got %d results, want 3: %+v", len(got), got)
+		}
+		for _, r := range got {
+			if strings.Contains(r.URL, "spam.com") {
+				t.Fatalf("blocked domain still present: %s", r.URL)
+			}
+		}
+	})
+
+	t.Run("path prefix does not match sibling path", func(t *testing.T) {
+		got := FilterOllamaWebSearchResults(
+			[]OllamaWebSearchResult{{URL: "https://example.com/docs"}},
+			[]string{"example.com/blog"},
+			nil,
+		)
+		if len(got) != 0 {
+			t.Fatalf("expected empty, got %+v", got)
+		}
+	})
+}
+
 func TestWebSearchTypes(t *testing.T) {
 	// Test that WebSearchResult serializes correctly
 	result := WebSearchResult{
