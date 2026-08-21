@@ -31,6 +31,7 @@ import (
 	appui "github.com/ollama/ollama/app/ui"
 	"github.com/ollama/ollama/app/updater"
 	"github.com/ollama/ollama/app/version"
+	ollamaAuth "github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/cmd/launch"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/internal/modelref"
@@ -92,9 +93,7 @@ var (
 	claudeRecommendationsEndpoint = func() string {
 		return strings.TrimRight(appui.OllamaDotCom, "/") + "/api/experimental/model-recommendations?app=claude-desktop"
 	}
-	claudeDownloadEndpoint = func() string {
-		return claudeDesktopDownloadEndpoint(appui.OllamaDotCom)
-	}
+	signOllamaData        = ollamaAuth.Sign
 	claudeModelsLoader    = loadClaudeDesktopModels
 	claudeAvailableModels []proxy.ClaudeDesktopModel
 	claudeModelSource     string
@@ -462,7 +461,12 @@ func preserveClaudeDesktopEntitlements(fallback, previous []proxy.ClaudeDesktopM
 }
 
 func loadClaudeDesktopModels(ctx context.Context) ([]proxy.ClaudeDesktopModel, string) {
-	models, err := proxy.FetchClaudeDesktopModels(ctx, claudeRecommendationsClient, claudeRecommendationsEndpoint())
+	req, err := newSignedOllamaRequest(ctx, http.MethodGet, claudeRecommendationsEndpoint())
+	if err != nil {
+		slog.Debug("could not prepare Claude Desktop model recommendations request", "error", err)
+		return proxy.UnverifyClaudeDesktopCloudEntitlements(proxy.DefaultClaudeDesktopModels()), "fallback"
+	}
+	models, err := proxy.FetchClaudeDesktopModels(claudeRecommendationsClient, req)
 	if err == nil {
 		return models, "endpoint"
 	}
@@ -1066,9 +1070,36 @@ func claudeDesktopDownloadEndpoint(baseURL string) string {
 	return strings.TrimRight(baseURL, "/") + "/download-app?app=claude-desktop&type=mac-zip"
 }
 
-//export ClaudeDesktopDownloadURL
-func ClaudeDesktopDownloadURL() *C.char {
-	return C.CString(claudeDownloadEndpoint())
+func newSignedOllamaRequest(ctx context.Context, method, endpoint string) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	query := req.URL.Query()
+	query.Set("ts", strconv.FormatInt(time.Now().Unix(), 10))
+	req.URL.RawQuery = query.Encode()
+	signature, err := signOllamaData(ctx, []byte(fmt.Sprintf("%s,%s", req.Method, req.URL.RequestURI())))
+	if err != nil {
+		return nil, fmt.Errorf("sign request: %w", err)
+	}
+	req.Header.Set("Authorization", signature)
+	return req, nil
+}
+
+//export ClaudeDesktopDownloadRequest
+func ClaudeDesktopDownloadRequest(authorization **C.char) *C.char {
+	if authorization == nil {
+		return nil
+	}
+	*authorization = nil
+
+	req, err := newSignedOllamaRequest(context.Background(), http.MethodGet, claudeDesktopDownloadEndpoint(appui.OllamaDotCom))
+	if err != nil {
+		slog.Warn("failed to prepare Claude Desktop download request", "error", err)
+		return nil
+	}
+	*authorization = C.CString(req.Header.Get("Authorization"))
+	return C.CString(req.URL.String())
 }
 
 //export InstallClaudeDesktopArchive

@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -28,7 +27,11 @@ func TestFetchClaudeDesktopModelsUsesAppAwareContract(t *testing.T) {
 	}))
 	defer server.Close()
 
-	models, err := FetchClaudeDesktopModels(context.Background(), server.Client(), server.URL+"/api/experimental/model-recommendations?app=claude-desktop")
+	req, err := http.NewRequest(http.MethodGet, server.URL+"/api/experimental/model-recommendations?app=claude-desktop", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	models, err := FetchClaudeDesktopModels(server.Client(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +63,11 @@ func TestFetchClaudeDesktopModelsRejectsInvalidResponses(t *testing.T) {
 				_, _ = w.Write([]byte(test.body))
 			}))
 			defer server.Close()
-			if _, err := FetchClaudeDesktopModels(context.Background(), server.Client(), server.URL); err == nil {
+			req, err := http.NewRequest(http.MethodGet, server.URL, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := FetchClaudeDesktopModels(server.Client(), req); err == nil {
 				t.Fatal("FetchClaudeDesktopModels succeeded")
 			}
 		})
