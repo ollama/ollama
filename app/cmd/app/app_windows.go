@@ -114,6 +114,10 @@ func (*appCallbacks) UIRunning() bool {
 	return wv.IsRunning()
 }
 
+func (*appCallbacks) UIOnboarding() bool {
+	return wv.OnboardingActive()
+}
+
 func (app *appCallbacks) Quit() {
 	app.t.Quit()
 	wv.Terminate()

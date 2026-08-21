@@ -37,13 +37,14 @@ var claudeDesktopModelSlots = [MaxClaudeDesktopModels]claudeDesktopModelSlot{
 // catalog. Name is the canonical recommendation identifier shown to users;
 // OllamaModel is the explicit route sent to the local Ollama server.
 type ClaudeDesktopModel struct {
-	Name         string
-	Description  string
-	DisplayName  string
-	RequiredPlan string
-	OllamaModel  string
-	Cloud        bool
-	gateway      gatewayModel
+	Name             string
+	Description      string
+	DisplayName      string
+	RequiredPlan     string
+	OllamaModel      string
+	Cloud            bool
+	entitlementKnown bool
+	gateway          gatewayModel
 }
 
 // GatewayID returns the validated Claude-facing ID assigned to this model.
@@ -110,6 +111,7 @@ func ClaudeDesktopModelsFromRecommendations(recommendations []api.ModelRecommend
 			strings.TrimSpace(recommendation.RequiredPlan),
 			recommendation.MaxOutputTokens,
 		)
+		model.entitlementKnown = true
 		models = append(models, model)
 	}
 	return models
@@ -131,6 +133,18 @@ func DefaultClaudeDesktopModels() []ClaudeDesktopModel {
 	models[3].DisplayName = models[3].OllamaModel
 	models[3].gateway.DisplayName = models[3].OllamaModel
 	models[3].gateway.OllamaModel = models[3].OllamaModel
+	return models
+}
+
+// UnverifyClaudeDesktopCloudEntitlements prevents fallback metadata from
+// overriding a catalog that was already refreshed from the server.
+func UnverifyClaudeDesktopCloudEntitlements(models []ClaudeDesktopModel) []ClaudeDesktopModel {
+	models = cloneClaudeDesktopModels(models)
+	for i := range models {
+		if models[i].Cloud {
+			models[i].entitlementKnown = false
+		}
+	}
 	return models
 }
 
@@ -213,6 +227,10 @@ func newClaudeDesktopModel(name, description, requiredPlan string, maxTokens int
 		RequiredPlan: requiredPlan,
 		OllamaModel:  ollamaModel,
 		Cloud:        cloud,
+		// Local models are checked against installed inventory. A cloud model
+		// constructed without plan metadata must be verified by an authoritative
+		// recommendation before account policy can allow it.
+		entitlementKnown: !cloud || strings.TrimSpace(requiredPlan) != "",
 		gateway: gatewayModel{
 			Type:           "model",
 			DisplayName:    displayName,

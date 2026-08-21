@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   addClaudeModelSelection,
+  claudeDesktopRecoveryMessage,
   claudeDesktopMaxModels,
   claudeDesktopMaxModelsMessage,
 } from "@/lib/claudeDesktop";
@@ -85,13 +86,13 @@ export function ClaudeDesktopModelsSettings({
     setStatus(next);
     setModels(visibleModels(next));
     setSelection(selectedModelNames(next));
+    setError(null);
   }, []);
 
   const refreshStatus = useCallback(async () => {
     if (!window.getClaudeDesktopStatus) return;
     try {
       applyStatus(await window.getClaudeDesktopStatus());
-      setError(null);
     } catch {
       setError("Ollama could not read the Claude connection status.");
     }
@@ -254,6 +255,15 @@ export function ClaudeDesktopModelsSettings({
 
   const maxModels = claudeDesktopMaxModels(status);
   const selectionFull = selection.length >= maxModels;
+  const guidance =
+    claudeDesktopRecoveryMessage(status.error, error) ??
+    (!hasAvailableSelection && selection.length > 0
+      ? "Select a model available to your account."
+      : selectionFull
+        ? claudeDesktopMaxModelsMessage(maxModels)
+        : status.connected
+          ? "Restart Claude to refresh its model list."
+          : "These models will be available when Claude starts.");
 
   return (
     <section aria-labelledby="apps-settings-heading" className="space-y-2">
@@ -373,17 +383,10 @@ export function ClaudeDesktopModelsSettings({
 
             <div className="mt-3 flex items-center justify-between gap-4 max-sm:flex-col max-sm:items-stretch">
               <p
-                role={error ? "alert" : undefined}
-                className={`text-xs leading-5 ${error ? "text-red-600 dark:text-red-400" : "text-neutral-400"}`}
+                role={error || status.error ? "alert" : undefined}
+                className="text-xs leading-5 text-neutral-500 dark:text-neutral-400"
               >
-                {error ??
-                  (!hasAvailableSelection && selection.length > 0
-                    ? "Select a model available to your account."
-                    : selectionFull
-                      ? claudeDesktopMaxModelsMessage(maxModels)
-                      : status.connected
-                        ? "Restart Claude to refresh its model list."
-                        : "These models will be available when Claude starts.")}
+                {guidance}
               </p>
               <Button
                 type="button"

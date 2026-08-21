@@ -16,6 +16,7 @@ type claudeDesktopStatus struct {
 	Supported    bool                       `json:"supported"`
 	Used         bool                       `json:"used"`
 	Installed    bool                       `json:"installed"`
+	Configured   bool                       `json:"configured"`
 	Connected    bool                       `json:"connected"`
 	Running      bool                       `json:"running"`
 	StartFailed  bool                       `json:"startFailed"`

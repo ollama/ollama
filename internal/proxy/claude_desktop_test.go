@@ -504,6 +504,264 @@ func TestGatewaySetModelsReplacesCatalogAndRoutesExactModel(t *testing.T) {
 	}
 }
 
+func TestGatewayRefreshesEntitlementsWithoutRestart(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer upstream.Close()
+	initial := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "changing-model:cloud", RequiredPlan: "free"}})
+	updated := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "changing-model:cloud", RequiredPlan: "pro"}})
+	p, err := NewClaudeDesktop(ClaudeDesktopConfig{
+		ListenAddr: "127.0.0.1:0",
+		OllamaURL:  upstream.URL,
+		Model:      initial[0].OllamaModel,
+		Models:     initial,
+		RefreshModels: func(context.Context, []ClaudeDesktopModel) ([]ClaudeDesktopModel, error) {
+			return updated, nil
+		},
+		ResolveAccessState: func(context.Context) (ClaudeDesktopAccessState, error) {
+			return ClaudeDesktopAccessState{Cloud: ClaudeDesktopCloudOn, Account: ClaudeDesktopAccountSignedIn, Plan: "free"}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = p.Close(ctx)
+	})
+
+	resp, err := http.Post(
+		"http://"+p.Addr()+"/v1/messages",
+		"application/json",
+		strings.NewReader(`{"model":"claude-fable-5","messages":[]}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertResponseContains(t, resp, http.StatusBadRequest, "model catalog changed")
+
+	resp, err = http.Post(
+		"http://"+p.Addr()+"/v1/messages",
+		"application/json",
+		strings.NewReader(`{"model":"claude-fable-5","messages":[]}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertResponseContains(t, resp, http.StatusForbidden, "requires an Ollama pro plan")
+}
+
+func TestGatewayDiscardsRefreshThatRacesWithModelUpdate(t *testing.T) {
+	initial := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "model-a:cloud", RequiredPlan: "free"}})
+	updated := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "model-b:cloud", RequiredPlan: "free"}})
+	started := make(chan struct{})
+	release := make(chan struct{})
+	p, err := NewClaudeDesktop(ClaudeDesktopConfig{
+		ListenAddr: "127.0.0.1:0",
+		OllamaURL:  "http://127.0.0.1:11434",
+		Model:      initial[0].OllamaModel,
+		Models:     initial,
+		RefreshModels: func(_ context.Context, current []ClaudeDesktopModel) ([]ClaudeDesktopModel, error) {
+			close(started)
+			<-release
+			return current, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- p.refreshModelCatalog(context.Background()) }()
+	<-started
+	if err := p.SetModels(updated); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	models := p.Models()
+	if len(models) != 1 || models[0].OllamaModel != "model-b:cloud" {
+		t.Fatalf("models after racing refresh = %+v, want model B", models)
+	}
+}
+
+func TestGatewayRejectsRequestWhenSlotChangesDuringRefresh(t *testing.T) {
+	var upstreamCalls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		upstreamCalls.Add(1)
+	}))
+	defer upstream.Close()
+	initial := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "model-a:cloud", RequiredPlan: "free"}})
+	updated := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "model-b:cloud", RequiredPlan: "free"}})
+	started := make(chan struct{})
+	release := make(chan struct{})
+	p, err := NewClaudeDesktop(ClaudeDesktopConfig{
+		ListenAddr: "127.0.0.1:0",
+		OllamaURL:  upstream.URL,
+		Model:      initial[0].OllamaModel,
+		Models:     initial,
+		RefreshModels: func(_ context.Context, current []ClaudeDesktopModel) ([]ClaudeDesktopModel, error) {
+			close(started)
+			<-release
+			return current, nil
+		},
+		ResolveAccessState: func(context.Context) (ClaudeDesktopAccessState, error) {
+			return ClaudeDesktopAccessState{Cloud: ClaudeDesktopCloudOn, Account: ClaudeDesktopAccountSignedIn, Plan: "free"}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = p.Close(ctx)
+	})
+
+	response := make(chan *http.Response, 1)
+	requestErr := make(chan error, 1)
+	go func() {
+		resp, err := http.Post(
+			"http://"+p.Addr()+"/v1/messages",
+			"application/json",
+			strings.NewReader(`{"model":"claude-fable-5","messages":[]}`),
+		)
+		if err != nil {
+			requestErr <- err
+			return
+		}
+		response <- resp
+	}()
+	<-started
+	if err := p.SetModels(updated); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	select {
+	case err := <-requestErr:
+		t.Fatal(err)
+	case resp := <-response:
+		assertResponseContains(t, resp, http.StatusBadRequest, "model catalog changed")
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for request")
+	}
+	if got := upstreamCalls.Load(); got != 0 {
+		t.Fatalf("upstream calls = %d, want 0 after a slot change", got)
+	}
+}
+
+func TestGatewayRejectsAdmittedRequestAfterSlotReassignment(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		initial []ClaudeDesktopModel
+		updated []ClaudeDesktopModel
+	}{
+		{
+			name:    "cloud",
+			initial: ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "cloud-a:cloud", RequiredPlan: "free"}}),
+			updated: ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "cloud-b:cloud", RequiredPlan: "free"}}),
+		},
+		{
+			name:    "local",
+			initial: SelectClaudeDesktopModels(nil, []string{"local-a"}),
+			updated: SelectClaudeDesktopModels(nil, []string{"local-b"}),
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := NewClaudeDesktop(ClaudeDesktopConfig{
+				ListenAddr: "127.0.0.1:0",
+				OllamaURL:  "http://127.0.0.1:11434",
+				Model:      tt.initial[0].OllamaModel,
+				Models:     tt.initial,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			generation, admitted := p.modelSnapshotWithGeneration()
+			if err := p.SetModels(tt.updated); err != nil {
+				t.Fatal(err)
+			}
+			request := httptest.NewRequest(
+				http.MethodPost,
+				"http://127.0.0.1/v1/messages",
+				strings.NewReader(`{"model":"claude-fable-5","messages":[]}`),
+			)
+			err = p.routeModel(request, generation, admitted)
+			if err == nil || !strings.Contains(err.Error(), "model catalog changed") {
+				t.Fatalf("route error = %v, want catalog-changed rejection", err)
+			}
+		})
+	}
+}
+
+func TestGatewayLocalRequestSkipsAccountResolution(t *testing.T) {
+	var accessCalls atomic.Int32
+	var refreshCalls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer upstream.Close()
+	models := SelectClaudeDesktopModels(nil, []string{"qwen3:8b"})
+	p, err := NewClaudeDesktop(ClaudeDesktopConfig{
+		ListenAddr: "127.0.0.1:0",
+		OllamaURL:  upstream.URL,
+		Model:      models[0].OllamaModel,
+		Models:     models,
+		RefreshModels: func(context.Context, []ClaudeDesktopModel) ([]ClaudeDesktopModel, error) {
+			refreshCalls.Add(1)
+			return models, nil
+		},
+		ResolveAccessState: func(context.Context) (ClaudeDesktopAccessState, error) {
+			accessCalls.Add(1)
+			return ClaudeDesktopAccessState{}, errors.New("offline")
+		},
+		ListLocalModels: func(context.Context) ([]string, error) {
+			return []string{"qwen3:8b"}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = p.Close(ctx)
+	})
+	discovery, err := http.Get("http://" + p.Addr() + "/v1/models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertResponseContains(t, discovery, http.StatusOK, "qwen3:8b")
+
+	resp, err := http.Post(
+		"http://"+p.Addr()+"/v1/messages",
+		"application/json",
+		strings.NewReader(`{"model":"claude-fable-5","messages":[]}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertResponseContains(t, resp, http.StatusOK, `"ok":true`)
+	if got := accessCalls.Load(); got != 0 {
+		t.Fatalf("account resolution calls = %d, want 0 for a local model", got)
+	}
+	if got := refreshCalls.Load(); got != 0 {
+		t.Fatalf("recommendation refresh calls = %d, want 0 for an all-local catalog", got)
+	}
+}
+
 func TestGatewayCountsTokensLocally(t *testing.T) {
 	upstreamCalls := 0
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

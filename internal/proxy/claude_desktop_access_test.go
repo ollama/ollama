@@ -45,3 +45,22 @@ func TestEvaluateClaudeDesktopModelAccessUnknownLocalInventory(t *testing.T) {
 		t.Fatalf("EvaluateClaudeDesktopModelAccess() = %+v, want %+v", got, want)
 	}
 }
+
+func TestEvaluateClaudeDesktopModelAccessUnknownCloudEntitlement(t *testing.T) {
+	selected := SelectClaudeDesktopModels(DefaultClaudeDesktopModels(), []string{"retired-pro-model:cloud"})
+	if len(selected) != 1 {
+		t.Fatalf("selected models = %d, want 1", len(selected))
+	}
+	want := ClaudeDesktopModelAccess{
+		Availability: ClaudeDesktopAvailabilityUnknown,
+		Reason:       ClaudeDesktopAccessVerificationUnavailable,
+	}
+	state := ClaudeDesktopAccessState{
+		Cloud:   ClaudeDesktopCloudOn,
+		Account: ClaudeDesktopAccountSignedIn,
+		Plan:    "free",
+	}
+	if got := EvaluateClaudeDesktopModelAccess(selected[0], state, false, true); got != want {
+		t.Fatalf("EvaluateClaudeDesktopModelAccess() = %+v, want %+v", got, want)
+	}
+}

@@ -6,7 +6,21 @@ export function isClaudeConnectionComplete(
   enabled: boolean,
   status: ClaudeDesktopStatus,
 ) {
-  return enabled ? status.connected && !status.startFailed : !status.configured;
+  const configured = isClaudeConfigured(status);
+  return enabled
+    ? configured && status.connected && !status.startFailed
+    : !configured;
+}
+
+export function isClaudeConfigured(status: ClaudeDesktopStatus): boolean {
+  return status.configured ?? status.connected;
+}
+
+export function claudeDesktopRecoveryMessage(
+  statusError?: string,
+  actionError?: string | null,
+): string | null {
+  return statusError || actionError || null;
 }
 
 export function scheduleClaudeInstallTimeout(onTimeout: () => void) {

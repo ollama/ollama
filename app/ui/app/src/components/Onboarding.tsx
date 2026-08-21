@@ -8,6 +8,8 @@ import {
 } from "@/api";
 import { INTEGRATION_ICONS } from "@/lib/launchCommands";
 import {
+  claudeDesktopRecoveryMessage,
+  isClaudeConfigured,
   isClaudeConnectionComplete,
   scheduleClaudeInstallTimeout,
 } from "@/lib/claudeDesktop";
@@ -429,6 +431,7 @@ export function ConnectAppsScreen({
     try {
       const status = await window.getClaudeDesktopStatus();
       setClaudeStatus(status);
+      setClaudeError(null);
       return status;
     } catch {
       setClaudeError("Ollama could not read the Claude connection status.");
@@ -656,7 +659,7 @@ export function ConnectAppsScreen({
     setClaudeError(null);
     const status = await refreshClaudeStatus();
     if (!status) return;
-    const enabling = !status.configured;
+    const enabling = !isClaudeConfigured(status);
     if (enabling && !status.installed) {
       if (!window.installClaudeDesktop) {
         setClaudeError("Ollama could not open the Claude installer.");
@@ -729,8 +732,10 @@ export function ConnectAppsScreen({
     integrationStatuses?.filter(
       (item) => item.id !== "claude-desktop" && item.command,
     ) ?? [];
-  const claudeConfigured = claudeStatus?.configured ?? false;
   const claudeConnected = claudeStatus?.connected ?? false;
+  const claudeConfigured = claudeStatus
+    ? isClaudeConfigured(claudeStatus)
+    : false;
   const claudeInstalled =
     claudeStatus?.installed ?? claudeIntegration?.installed ?? false;
   const isConnectingClaude = claudePhase !== "idle";
@@ -757,6 +762,10 @@ export function ConnectAppsScreen({
               : !claudeConfigured && !claudeInstalled
                 ? "Download & connect"
                 : null;
+  const claudeGuidance = claudeDesktopRecoveryMessage(
+    claudeStatus?.error,
+    claudeError,
+  );
   const launchIntegrationRow = (item: IntegrationStatus) => {
     const copied = copiedCommand === item.command;
     return (
@@ -807,25 +816,23 @@ export function ConnectAppsScreen({
             {claudeIntegration.name}
           </p>
           <p
-            role={claudeError ? "alert" : undefined}
+            role={claudeGuidance ? "alert" : undefined}
             className="truncate text-xs leading-5 text-neutral-500"
           >
-            {claudeError ??
-              (claudeConfigured && claudeStatus?.startFailed
-                ? "Ollama couldn’t start the Claude connection."
-                : claudeConnected
-                  ? "Connected to Ollama"
-                  : claudePhase === "installing"
-                    ? "Ollama is downloading the Claude installer…"
-                    : claudePhase === "waiting-for-install"
-                      ? "Finish installing Claude. Ollama will connect it automatically."
-                      : claudePhase === "connecting"
-                        ? "Connecting Claude to Ollama…"
-                        : claudePhase === "launching"
-                          ? "Opening Claude…"
-                          : claudePhase === "disconnecting"
-                            ? "Restoring Claude’s usual connection…"
-                            : claudeIntegration.description)}
+            {claudeGuidance ??
+              (claudeConnected
+                ? "Connected to Ollama"
+                : claudePhase === "installing"
+                  ? "Ollama is downloading the Claude installer…"
+                  : claudePhase === "waiting-for-install"
+                    ? "Finish installing Claude. Ollama will connect it automatically."
+                  : claudePhase === "connecting"
+                    ? "Connecting Claude to Ollama…"
+                    : claudePhase === "launching"
+                      ? "Opening Claude…"
+                      : claudePhase === "disconnecting"
+                        ? "Restoring Claude’s usual connection…"
+                        : claudeIntegration.description)}
           </p>
         </div>
       </div>

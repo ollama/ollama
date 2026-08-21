@@ -1,10 +1,29 @@
 import { describe, expect, it } from "vitest";
 import {
   addClaudeModelSelection,
+  claudeDesktopRecoveryMessage,
   claudeDesktopMaxModels,
   claudeDesktopMaxModelsMessage,
   defaultClaudeDesktopMaxModels,
+  isClaudeConfigured,
 } from "./claudeDesktop";
+
+describe("isClaudeConfigured", () => {
+  it("keeps a failed configured profile switchable off", () => {
+    expect(
+      isClaudeConfigured({
+        supported: true,
+        used: true,
+        installed: true,
+        configured: true,
+        connected: false,
+        running: false,
+        startFailed: true,
+        portConflict: true,
+      }),
+    ).toBe(true);
+  });
+});
 
 describe("claudeDesktopMaxModels", () => {
   it("falls back to the five literal Claude slots without a status", () => {
@@ -35,6 +54,21 @@ describe("claudeDesktopMaxModels", () => {
         maxModels: 3,
       }),
     ).toBe(3);
+  });
+});
+
+describe("claudeDesktopRecoveryMessage", () => {
+  it("prefers current native guidance over stale action errors", () => {
+    expect(
+      claudeDesktopRecoveryMessage(
+        "Cloud models are off. Select an installed model in Settings.",
+        "Ollama could not open Claude.",
+      ),
+    ).toBe("Cloud models are off. Select an installed model in Settings.");
+  });
+
+  it("clears after native recovery when no action error remains", () => {
+    expect(claudeDesktopRecoveryMessage(undefined, null)).toBeNull();
   });
 });
 

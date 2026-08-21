@@ -141,6 +141,25 @@ func (c *ClaudeDesktop) SetInstalledFromDesktop(installed, restart bool) error {
 	return restartClaudeDesktop(applyProfile)
 }
 
+// RestartWithProfileChange stops Claude before applying a profile-dependent
+// change, then reopens it after the change is complete.
+func (c *ClaudeDesktop) RestartWithProfileChange(change func() error) error {
+	if err := claudeDesktopSupported(); err != nil {
+		return err
+	}
+	running, err := claudeDesktopIsRunning(context.Background())
+	if err != nil {
+		return fmt.Errorf("check whether Claude Desktop is running: %w", err)
+	}
+	if !running {
+		if err := change(); err != nil {
+			return err
+		}
+		return claudeDesktopOpenApp()
+	}
+	return restartClaudeDesktop(change)
+}
+
 // RestoreForShutdown restores Claude's usual profile without reopening the app.
 func (c *ClaudeDesktop) RestoreForShutdown(ctx context.Context) error {
 	if err := claudeDesktopSupported(); err != nil {
@@ -186,6 +205,12 @@ func SaveClaudeDesktopModels(models []string) error {
 	if len(models) == 0 {
 		return errors.New("select at least one Claude Desktop model")
 	}
+	return config.SaveIntegration(claudeDesktopIntegrationName, models)
+}
+
+// RestoreClaudeDesktopModels restores a previously captured selection. A nil
+// selection restores the implicit recommendation defaults.
+func RestoreClaudeDesktopModels(models []string) error {
 	return config.SaveIntegration(claudeDesktopIntegrationName, models)
 }
 

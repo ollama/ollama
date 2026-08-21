@@ -54,6 +54,7 @@ type ClaudeDesktopConfig struct {
 	Models             []ClaudeDesktopModel
 	Logger             *slog.Logger
 	OnCountsChanged    func(ClaudeDesktopCounts)
+	RefreshModels      func(context.Context, []ClaudeDesktopModel) ([]ClaudeDesktopModel, error)
 	ResolveAccessState func(context.Context) (ClaudeDesktopAccessState, error)
 	ListLocalModels    func(context.Context) ([]string, error)
 }
@@ -80,7 +81,9 @@ type ClaudeDesktop struct {
 	model              string
 	modelsMu           sync.RWMutex
 	models             []ClaudeDesktopModel
+	modelsGeneration   uint64
 	onCountsChanged    func(ClaudeDesktopCounts)
+	refreshModels      func(context.Context, []ClaudeDesktopModel) ([]ClaudeDesktopModel, error)
 	resolveAccessState func(context.Context) (ClaudeDesktopAccessState, error)
 	listLocalModels    func(context.Context) ([]string, error)
 	routed             atomic.Uint64
@@ -131,7 +134,9 @@ func NewClaudeDesktop(config ClaudeDesktopConfig) (*ClaudeDesktop, error) {
 		logger:             logger,
 		model:              config.Model,
 		models:             SelectClaudeDesktopModels(config.Models, nil),
+		modelsGeneration:   1,
 		onCountsChanged:    config.OnCountsChanged,
+		refreshModels:      config.RefreshModels,
 		resolveAccessState: config.ResolveAccessState,
 		listLocalModels:    config.ListLocalModels,
 		shutdown:           make(chan struct{}),
@@ -257,8 +262,13 @@ func (p *ClaudeDesktop) SetModels(models []ClaudeDesktopModel) error {
 	}
 	models = SelectClaudeDesktopModels(models, nil)
 	p.modelsMu.Lock()
+	if claudeDesktopModelsEqual(p.models, models) {
+		p.modelsMu.Unlock()
+		return nil
+	}
 	p.models = cloneClaudeDesktopModels(models)
 	p.model = models[0].OllamaModel
+	p.modelsGeneration++
 	p.modelsMu.Unlock()
 	return nil
 }
@@ -269,15 +279,31 @@ func (p *ClaudeDesktop) modelSnapshot() (string, []ClaudeDesktopModel) {
 	return p.model, cloneClaudeDesktopModels(p.models)
 }
 
+func (p *ClaudeDesktop) modelSnapshotWithGeneration() (uint64, []ClaudeDesktopModel) {
+	p.modelsMu.RLock()
+	defer p.modelsMu.RUnlock()
+	return p.modelsGeneration, cloneClaudeDesktopModels(p.models)
+}
+
+func claudeDesktopModelsEqual(left, right []ClaudeDesktopModel) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func (p *ClaudeDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !p.allowsHost(r.Host) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 
-	_, models := p.modelSnapshot()
-	switch r.URL.Path {
-	case healthPath:
+	if r.URL.Path == healthPath {
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w, http.MethodGet)
 			return
@@ -285,10 +311,19 @@ func (p *ClaudeDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(healthHeader, "1")
 		w.WriteHeader(http.StatusNoContent)
 		return
+	}
+	generation, models := p.modelSnapshotWithGeneration()
+	switch r.URL.Path {
 	case "/v1/models":
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w, http.MethodGet)
 			return
+		}
+		if hasCloudClaudeDesktopModel(models) {
+			if err := p.refreshModelCatalog(r.Context()); err != nil {
+				p.logger.Debug("could not refresh Claude model catalog", "error", err)
+			}
+			generation, models = p.modelSnapshotWithGeneration()
 		}
 		p.serveModels(w, r.Context(), models)
 		return
@@ -297,14 +332,14 @@ func (p *ClaudeDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			methodNotAllowed(w, http.MethodPost)
 			return
 		}
-		p.serveTokenCount(w, r)
+		p.serveTokenCount(w, r, generation, models)
 		return
 	case "/v1/messages":
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
 			return
 		}
-		if err := p.routeModel(r); err != nil {
+		if err := p.routeModel(r, generation, models); err != nil {
 			var accessErr *claudeDesktopAccessError
 			if errors.As(err, &accessErr) {
 				writeAnthropicError(w, accessErr.status, accessErr)
@@ -336,6 +371,42 @@ func (p *ClaudeDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.onCountsChanged(counts)
 	}
 	p.ollamaProxy.ServeHTTP(w, r)
+}
+
+func (p *ClaudeDesktop) refreshModelCatalog(ctx context.Context) error {
+	if p.refreshModels == nil {
+		return nil
+	}
+	generation, current := p.modelSnapshotWithGeneration()
+	models, err := p.refreshModels(ctx, current)
+	if err != nil {
+		return err
+	}
+	if len(models) == 0 {
+		return errors.New("Claude Desktop model refresh returned no models")
+	}
+	models = SelectClaudeDesktopModels(models, nil)
+	p.modelsMu.Lock()
+	defer p.modelsMu.Unlock()
+	if p.modelsGeneration != generation {
+		return nil
+	}
+	if claudeDesktopModelsEqual(p.models, models) {
+		return nil
+	}
+	p.models = cloneClaudeDesktopModels(models)
+	p.model = models[0].OllamaModel
+	p.modelsGeneration++
+	return nil
+}
+
+func hasCloudClaudeDesktopModel(models []ClaudeDesktopModel) bool {
+	for _, model := range models {
+		if model.Cloud {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *ClaudeDesktop) allowsHost(host string) bool {
@@ -439,7 +510,14 @@ func (p *ClaudeDesktop) markUpstreamNotReady() {
 }
 
 func (p *ClaudeDesktop) serveModels(w http.ResponseWriter, ctx context.Context, configured []ClaudeDesktopModel) {
-	state, localModels, inventoryKnown := p.accessFacts(ctx)
+	var state ClaudeDesktopAccessState
+	var localModels map[string]struct{}
+	var inventoryKnown bool
+	if hasCloudClaudeDesktopModel(configured) {
+		state, localModels, inventoryKnown = p.accessFacts(ctx)
+	} else {
+		localModels, inventoryKnown = p.localModelFacts(ctx)
+	}
 
 	models := make([]gatewayModel, 0, len(configured))
 	for _, configuredModel := range configured {
@@ -469,7 +547,7 @@ func (p *ClaudeDesktop) serveModels(w http.ResponseWriter, ctx context.Context, 
 	}
 }
 
-func (p *ClaudeDesktop) serveTokenCount(w http.ResponseWriter, r *http.Request) {
+func (p *ClaudeDesktop) serveTokenCount(w http.ResponseWriter, r *http.Request, generation uint64, models []ClaudeDesktopModel) {
 	body, err := readRequestBody(r)
 	if err != nil {
 		writeAnthropicError(w, http.StatusBadRequest, err)
@@ -480,9 +558,18 @@ func (p *ClaudeDesktop) serveTokenCount(w http.ResponseWriter, r *http.Request) 
 		writeAnthropicError(w, http.StatusBadRequest, fmt.Errorf("decode Claude token-count request: %w", err))
 		return
 	}
-	selected, err := p.modelForClaudeID(request.Model)
+	selected, err := claudeDesktopModelForID(models, request.Model)
 	if err != nil {
 		writeAnthropicError(w, http.StatusBadRequest, err)
+		return
+	}
+	if selected.Cloud {
+		if err := p.refreshModelCatalog(r.Context()); err != nil {
+			p.logger.Debug("could not refresh Claude model catalog", "error", err)
+		}
+	}
+	if !p.modelGenerationMatches(generation) {
+		writeAnthropicError(w, http.StatusConflict, errors.New("Claude model catalog changed; try again"))
 		return
 	}
 	if access := p.modelAccess(r.Context(), selected); access.Availability != ClaudeDesktopAvailabilityAvailable {
@@ -499,7 +586,7 @@ func (p *ClaudeDesktop) serveTokenCount(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-func (p *ClaudeDesktop) routeModel(r *http.Request) error {
+func (p *ClaudeDesktop) routeModel(r *http.Request, generation uint64, models []ClaudeDesktopModel) error {
 	body, err := readRequestBody(r)
 	if err != nil {
 		return err
@@ -512,9 +599,17 @@ func (p *ClaudeDesktop) routeModel(r *http.Request) error {
 	if err := json.Unmarshal(payload["model"], &requestedModel); err != nil || strings.TrimSpace(requestedModel) == "" {
 		return errors.New("decode Claude gateway request: model is required")
 	}
-	selected, err := p.modelForClaudeID(requestedModel)
+	selected, err := claudeDesktopModelForID(models, requestedModel)
 	if err != nil {
 		return err
+	}
+	if selected.Cloud {
+		if err := p.refreshModelCatalog(r.Context()); err != nil {
+			p.logger.Debug("could not refresh Claude model catalog", "error", err)
+		}
+	}
+	if !p.modelGenerationMatches(generation) {
+		return errors.New("Claude model catalog changed; try again")
 	}
 	if access := p.modelAccess(r.Context(), selected); access.Availability != ClaudeDesktopAvailabilityAvailable {
 		return newClaudeDesktopAccessError(selected, access)
@@ -636,12 +731,22 @@ func setRequestBody(r *http.Request, body []byte) {
 
 func (p *ClaudeDesktop) modelForClaudeID(id string) (ClaudeDesktopModel, error) {
 	_, models := p.modelSnapshot()
+	return claudeDesktopModelForID(models, id)
+}
+
+func claudeDesktopModelForID(models []ClaudeDesktopModel, id string) (ClaudeDesktopModel, error) {
 	for _, model := range models {
 		if model.gateway.ID == id || model.OllamaModel == id {
 			return model, nil
 		}
 	}
 	return ClaudeDesktopModel{}, fmt.Errorf("unknown Claude model %q", id)
+}
+
+func (p *ClaudeDesktop) modelGenerationMatches(generation uint64) bool {
+	p.modelsMu.RLock()
+	defer p.modelsMu.RUnlock()
+	return p.modelsGeneration == generation
 }
 
 func (p *ClaudeDesktop) accessFacts(ctx context.Context) (ClaudeDesktopAccessState, map[string]struct{}, bool) {
@@ -658,22 +763,31 @@ func (p *ClaudeDesktop) accessFacts(ctx context.Context) (ClaudeDesktopAccessSta
 		}
 	}
 
+	localModels, inventoryKnown := p.localModelFacts(ctx)
+	return state, localModels, inventoryKnown
+}
+
+func (p *ClaudeDesktop) localModelFacts(ctx context.Context) (map[string]struct{}, bool) {
 	if p.listLocalModels == nil {
-		return state, nil, true
+		return nil, true
 	}
 	names, err := p.listLocalModels(ctx)
 	if err != nil {
 		p.logger.Debug("could not list local models for Claude", "error", err)
-		return state, nil, false
+		return nil, false
 	}
 	localModels := make(map[string]struct{}, len(names))
 	for _, name := range names {
 		localModels[name] = struct{}{}
 	}
-	return state, localModels, true
+	return localModels, true
 }
 
 func (p *ClaudeDesktop) modelAccess(ctx context.Context, model ClaudeDesktopModel) ClaudeDesktopModelAccess {
+	if !model.Cloud {
+		localModels, inventoryKnown := p.localModelFacts(ctx)
+		return evaluateClaudeDesktopAccess(model, ClaudeDesktopAccessState{}, localModels, inventoryKnown)
+	}
 	state, localModels, inventoryKnown := p.accessFacts(ctx)
 	return evaluateClaudeDesktopAccess(model, state, localModels, inventoryKnown)
 }

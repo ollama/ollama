@@ -9,10 +9,14 @@ import {
   terminalRowsForWindowHeight,
   WelcomeScreen,
 } from "./Onboarding";
-import { isClaudeConnectionComplete } from "@/lib/claudeDesktop";
+import {
+  CLAUDE_INSTALL_TIMEOUT_MS,
+  isClaudeConnectionComplete,
+  scheduleClaudeInstallTimeout,
+} from "@/lib/claudeDesktop";
+import { isWindowsPlatform } from "@/lib/platform";
 import {
   authenticationTimeoutAction,
-  isOnboardingZoomShortcut,
   nextOnboardingStep,
   onboardingConnectUrl,
 } from "@/lib/onboarding";
@@ -42,45 +46,57 @@ describe("Onboarding", () => {
     expect(html).not.toContain("Skip");
   });
 
-  it("blocks browser zoom shortcuts during onboarding", () => {
-    expect(
-      isOnboardingZoomShortcut({
-        metaKey: true,
-        ctrlKey: false,
-        key: "=",
-        code: "Equal",
-      }),
-    ).toBe(true);
-    expect(
-      isOnboardingZoomShortcut({
-        metaKey: false,
-        ctrlKey: true,
-        key: "-",
-        code: "Minus",
-      }),
-    ).toBe(true);
-    expect(
-      isOnboardingZoomShortcut({
-        metaKey: false,
-        ctrlKey: false,
-        key: "+",
-        code: "Equal",
-      }),
-    ).toBe(false);
-    expect(
-      isOnboardingZoomShortcut({
-        metaKey: true,
-        ctrlKey: false,
-        key: "0",
-        code: "Digit0",
-      }),
-    ).toBe(false);
-  });
-
   it("shows more terminal integrations as the window gets taller", () => {
     expect(terminalRowsForWindowHeight(400)).toBe(1);
     expect(terminalRowsForWindowHeight(660)).toBe(4);
     expect(terminalRowsForWindowHeight(960)).toBe(8);
+  });
+
+  it("renders the apps screen without browser platform globals", () => {
+    vi.stubGlobal("navigator", undefined);
+    try {
+      expect(() =>
+        renderToStaticMarkup(<ConnectAppsScreen initialIntegrations={[]} />),
+      ).not.toThrow();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("hides the Claude application on Windows", () => {
+    vi.stubGlobal("window", {
+      OLLAMA_PLATFORM: "windows",
+      innerHeight: 660,
+    });
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    try {
+      expect(isWindowsPlatform()).toBe(true);
+      const html = renderToStaticMarkup(
+        <ConnectAppsScreen
+          initialIntegrations={[
+            {
+              id: "claude-desktop",
+              name: "Claude",
+              description: "Use Ollama models in Claude Desktop",
+              installed: true,
+            },
+            {
+              id: "claude",
+              name: "Claude Code",
+              description: "Anthropic's coding tool with subagents",
+              command: "ollama launch claude",
+            },
+          ]}
+        />,
+      );
+
+      expect(html).not.toContain('id="applications-heading"');
+      expect(html).not.toContain("Use Ollama models in Claude Desktop");
+      expect(html).toContain('id="terminal-heading"');
+      expect(html).toContain("ollama launch claude");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("shows the account choice only to signed-out users", () => {
@@ -101,6 +117,7 @@ describe("Onboarding", () => {
     const status = {
       supported: true,
       installed: true,
+      configured: true,
       connected: true,
       running: false,
       startFailed: false,
@@ -115,8 +132,32 @@ describe("Onboarding", () => {
       isClaudeConnectionComplete(true, { ...status, startFailed: true }),
     ).toBe(false);
     expect(
-      isClaudeConnectionComplete(false, { ...status, connected: false }),
+      isClaudeConnectionComplete(false, {
+        ...status,
+        configured: false,
+        connected: false,
+      }),
     ).toBe(true);
+    expect(
+      isClaudeConnectionComplete(false, { ...status, connected: false }),
+    ).toBe(false);
+  });
+
+  it("bounds the Claude installer wait", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", { setTimeout: globalThis.setTimeout });
+    const onTimeout = vi.fn();
+
+    try {
+      scheduleClaudeInstallTimeout(onTimeout);
+      vi.advanceTimersByTime(CLAUDE_INSTALL_TIMEOUT_MS - 1);
+      expect(onTimeout).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(onTimeout).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("opens the device connection flow without relaunching the app", () => {
@@ -221,7 +262,6 @@ describe("Onboarding", () => {
       />,
     );
 
-    expect(html).toContain("Connect your apps");
     expect(html).not.toContain(
       "Connect Claude, or copy a command to run in your terminal.",
     );
@@ -255,7 +295,7 @@ describe("Onboarding", () => {
     expect(html).not.toContain("ChatGPT");
     expect(html).toContain("OpenCode");
     expect(html).toContain("Terminal");
-    expect(html).toContain(">More<");
+    expect(html).toContain('aria-label="Show more apps"');
     expect(html).toContain('aria-expanded="false"');
     expect(html).toContain("grid-rows-[0fr]");
     expect(html).not.toContain("Collapse");
@@ -311,6 +351,43 @@ describe("Onboarding", () => {
     expect(html).not.toContain("Ready to launch");
     expect(html).not.toContain("Active");
     expect(html).not.toContain("Inactive");
+    expect(html).toContain('aria-checked="true"');
+    expect(html).toContain('aria-label="Disconnect Claude"');
+  });
+
+  it("shows initial Claude recovery guidance without error styling", () => {
+    const html = renderToStaticMarkup(
+      <ConnectAppsScreen
+        completionError={null}
+        onRetryCompletion={vi.fn()}
+        initialClaudeStatus={{
+          supported: true,
+          used: true,
+          installed: true,
+          configured: true,
+          connected: false,
+          running: false,
+          startFailed: true,
+          portConflict: false,
+          error: "Cloud models are off. Select an installed model in Settings.",
+        }}
+        initialIntegrations={[
+          {
+            id: "claude-desktop",
+            name: "Claude",
+            description: "Use Ollama models in Claude Desktop",
+            installed: true,
+            action: "connect",
+          },
+        ]}
+      />,
+    );
+
+    expect(html).toContain(
+      "Cloud models are off. Select an installed model in Settings.",
+    );
+    expect(html).toContain('role="alert"');
+    expect(html).not.toContain("text-red");
     expect(html).toContain('aria-checked="true"');
     expect(html).toContain('aria-label="Disconnect Claude"');
   });

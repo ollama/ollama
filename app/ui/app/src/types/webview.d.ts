@@ -16,6 +16,7 @@ interface ClaudeDesktopStatus {
   supported: boolean;
   used: boolean;
   installed: boolean;
+  configured?: boolean;
   connected: boolean;
   running: boolean;
   startFailed: boolean;
@@ -67,6 +68,7 @@ declare global {
     setClaudeDesktopConnected?: (
       enabled: boolean,
     ) => Promise<ClaudeDesktopActionResult>;
+    prepareClaudeDesktopConnection?: () => Promise<ClaudeDesktopActionResult>;
     openClaudeDesktop?: () => Promise<string>;
     installClaudeDesktop?: () => Promise<ClaudeDesktopInstallResult>;
     getShowAppsInMenu?: () => Promise<boolean>;
@@ -78,6 +80,7 @@ declare global {
     menu: (items: MenuItem[]) => Promise<string | null>;
     OLLAMA_TOOLS?: boolean;
     OLLAMA_WEBSEARCH?: boolean;
+    OLLAMA_PLATFORM?: "darwin" | "windows";
   }
 
   namespace JSX {

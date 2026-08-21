@@ -217,8 +217,9 @@ describe("ClaudeDesktopModelsSettings", () => {
           installed: true,
           connected: false,
           running: false,
-          startFailed: false,
+          startFailed: true,
           portConflict: false,
+          error: "Cloud models are off. Select an installed model in Settings.",
           modelSource: "endpoint",
           models: [
             {
@@ -236,6 +237,11 @@ describe("ClaudeDesktopModelsSettings", () => {
 
     expect(html).not.toContain("glm-5.2:cloud");
     expect(html).toContain("Search Ollama models");
+    expect(html).toContain(
+      "Cloud models are off. Select an installed model in Settings.",
+    );
+    expect(html).not.toContain("These models will be available when Claude starts.");
+    expect(html).not.toContain("text-red");
   });
 
   it("shows account requirements and prevents selecting unavailable models", () => {

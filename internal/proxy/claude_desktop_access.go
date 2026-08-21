@@ -96,6 +96,11 @@ func EvaluateClaudeDesktopModelAccess(model ClaudeDesktopModel, state ClaudeDesk
 		decision.Reason = ClaudeDesktopAccessVerificationUnavailable
 		return decision
 	}
+	if !model.entitlementKnown {
+		decision.Availability = ClaudeDesktopAvailabilityUnknown
+		decision.Reason = ClaudeDesktopAccessVerificationUnavailable
+		return decision
+	}
 	if !claudeDesktopPlanSatisfies(state.Plan, decision.RequiredPlan) {
 		decision.Availability = ClaudeDesktopAvailabilityUnavailable
 		decision.Reason = ClaudeDesktopAccessUpgradeRequired

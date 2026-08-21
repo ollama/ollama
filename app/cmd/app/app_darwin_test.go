@@ -99,6 +99,160 @@ func TestResolveClaudeDesktopCatalogUsesPersistedSelection(t *testing.T) {
 	}
 }
 
+func TestRefreshClaudeDesktopCatalogUpdatesPolicyAndPreservesSlots(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	previousLoader := claudeModelsLoader
+	previousInterval := claudeCatalogRefreshInterval
+	previousNow := claudeCatalogNow
+	claudeProxyMu.Lock()
+	previousAvailable := claudeAvailableModels
+	previousSource := claudeModelSource
+	previousUpdated := claudeCatalogUpdated
+	claudeAvailableModels = nil
+	claudeModelSource = ""
+	claudeCatalogUpdated = time.Time{}
+	claudeProxyMu.Unlock()
+	t.Cleanup(func() {
+		claudeModelsLoader = previousLoader
+		claudeCatalogRefreshInterval = previousInterval
+		claudeCatalogNow = previousNow
+		claudeProxyMu.Lock()
+		claudeAvailableModels = previousAvailable
+		claudeModelSource = previousSource
+		claudeCatalogUpdated = previousUpdated
+		claudeProxyMu.Unlock()
+	})
+
+	now := time.Unix(1_000, 0)
+	claudeCatalogNow = func() time.Time { return now }
+	claudeCatalogRefreshInterval = time.Minute
+	load := 0
+	claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
+		load++
+		requiredPlan := "free"
+		if load > 1 {
+			requiredPlan = "pro"
+		}
+		return proxy.ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "changing-model:cloud", RequiredPlan: requiredPlan}}), "endpoint"
+	}
+
+	_, initial, _ := refreshClaudeDesktopCatalog(context.Background(), nil, false)
+	if len(initial) != 1 {
+		t.Fatalf("initial selection = %+v", initial)
+	}
+	initialID := initial[0].GatewayID()
+	now = now.Add(2 * time.Minute)
+	_, updated, _ := refreshClaudeDesktopCatalog(context.Background(), initial, false)
+	if load != 2 {
+		t.Fatalf("catalog loads = %d, want 2", load)
+	}
+	if len(updated) != 1 || updated[0].RequiredPlan != "pro" {
+		t.Fatalf("updated selection = %+v, want Pro metadata", updated)
+	}
+	if updated[0].GatewayID() != initialID {
+		t.Fatalf("gateway ID changed from %q to %q", initialID, updated[0].GatewayID())
+	}
+}
+
+func TestRefreshClaudeDesktopCatalogFailsClosedForRemovedSelection(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	previousLoader := claudeModelsLoader
+	previousInterval := claudeCatalogRefreshInterval
+	previousNow := claudeCatalogNow
+	claudeProxyMu.Lock()
+	previousAvailable := claudeAvailableModels
+	previousSource := claudeModelSource
+	previousUpdated := claudeCatalogUpdated
+	claudeAvailableModels = nil
+	claudeModelSource = ""
+	claudeCatalogUpdated = time.Time{}
+	claudeProxyMu.Unlock()
+	t.Cleanup(func() {
+		claudeModelsLoader = previousLoader
+		claudeCatalogRefreshInterval = previousInterval
+		claudeCatalogNow = previousNow
+		claudeProxyMu.Lock()
+		claudeAvailableModels = previousAvailable
+		claudeModelSource = previousSource
+		claudeCatalogUpdated = previousUpdated
+		claudeProxyMu.Unlock()
+	})
+
+	now := time.Unix(2_000, 0)
+	claudeCatalogNow = func() time.Time { return now }
+	claudeCatalogRefreshInterval = time.Minute
+	load := 0
+	claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
+		load++
+		name := "retired-model:cloud"
+		if load > 1 {
+			name = "replacement-model:cloud"
+		}
+		return proxy.ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: name, RequiredPlan: "free"}}), "endpoint"
+	}
+
+	_, initial, _ := refreshClaudeDesktopCatalog(context.Background(), nil, false)
+	now = now.Add(2 * time.Minute)
+	_, updated, _ := refreshClaudeDesktopCatalog(context.Background(), initial, false)
+	if len(updated) != 1 || updated[0].Name != "retired-model:cloud" {
+		t.Fatalf("updated selection = %+v, want preserved retired selection", updated)
+	}
+	state := proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "free"}
+	access := proxy.EvaluateClaudeDesktopModelAccess(updated[0], state, false, true)
+	if access.Reason != proxy.ClaudeDesktopAccessVerificationUnavailable {
+		t.Fatalf("removed-model access = %+v, want verification unavailable", access)
+	}
+}
+
+func TestRefreshClaudeDesktopCatalogDoesNotDowngradeEntitlementOnFallback(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	previousLoader := claudeModelsLoader
+	previousInterval := claudeCatalogRefreshInterval
+	previousNow := claudeCatalogNow
+	claudeProxyMu.Lock()
+	previousAvailable := claudeAvailableModels
+	previousSource := claudeModelSource
+	previousUpdated := claudeCatalogUpdated
+	claudeAvailableModels = nil
+	claudeModelSource = ""
+	claudeCatalogUpdated = time.Time{}
+	claudeProxyMu.Unlock()
+	t.Cleanup(func() {
+		claudeModelsLoader = previousLoader
+		claudeCatalogRefreshInterval = previousInterval
+		claudeCatalogNow = previousNow
+		claudeProxyMu.Lock()
+		claudeAvailableModels = previousAvailable
+		claudeModelSource = previousSource
+		claudeCatalogUpdated = previousUpdated
+		claudeProxyMu.Unlock()
+	})
+
+	now := time.Unix(3_000, 0)
+	claudeCatalogNow = func() time.Time { return now }
+	claudeCatalogRefreshInterval = time.Minute
+	load := 0
+	claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
+		load++
+		if load == 1 {
+			return proxy.ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "gemma4:31b-cloud", RequiredPlan: "pro"}}), "endpoint"
+		}
+		return proxy.DefaultClaudeDesktopModels(), "fallback"
+	}
+
+	_, initial, _ := refreshClaudeDesktopCatalog(context.Background(), nil, false)
+	now = now.Add(2 * time.Minute)
+	_, updated, _ := refreshClaudeDesktopCatalog(context.Background(), initial, false)
+	if len(updated) != 1 || updated[0].RequiredPlan != "pro" {
+		t.Fatalf("fallback selection = %+v, want last-known Pro requirement", updated)
+	}
+	state := proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "free"}
+	access := proxy.EvaluateClaudeDesktopModelAccess(updated[0], state, false, true)
+	if access.Reason != proxy.ClaudeDesktopAccessUpgradeRequired {
+		t.Fatalf("fallback access = %+v, want upgrade required", access)
+	}
+}
+
 func TestIncludeSelectedClaudeDesktopModelsKeepsCustomModels(t *testing.T) {
 	available := proxy.DefaultClaudeDesktopModels()
 	selected := proxy.SelectClaudeDesktopModels(available, []string{"qwen3:8b"})
@@ -143,17 +297,39 @@ func TestSelectKnownClaudeDesktopModelsAllowsInstalledModelsOnly(t *testing.T) {
 }
 
 type fakeClaudeDesktopController struct {
-	configured bool
-	installed  bool
-	restart    bool
+	configured     bool
+	installed      bool
+	restart        bool
+	setErr         error
+	modelsAtSet    []string
+	configureOnSet bool
 }
 
 func (f *fakeClaudeDesktopController) UsesOllamaGateway() bool { return f.configured }
 
+func (f *fakeClaudeDesktopController) ConfigureAutodiscovery() error {
+	f.configured = true
+	return nil
+}
+
 func (f *fakeClaudeDesktopController) SetInstalledFromDesktop(installed, restart bool) error {
 	f.installed = installed
 	f.restart = restart
-	return nil
+	f.modelsAtSet = launch.ClaudeDesktopModels()
+	if f.configureOnSet {
+		f.configured = installed
+	}
+	return f.setErr
+}
+
+func (f *fakeClaudeDesktopController) RestartWithProfileChange(change func() error) error {
+	if err := change(); err != nil {
+		return err
+	}
+	f.installed = true
+	f.restart = true
+	f.modelsAtSet = launch.ClaudeDesktopModels()
+	return f.setErr
 }
 
 func (f *fakeClaudeDesktopController) RestoreForShutdown(context.Context) error { return nil }
@@ -183,6 +359,121 @@ func TestRestartClaudeDesktopWithModelsPersistsSelection(t *testing.T) {
 	}
 	if got, want := launch.ClaudeDesktopModels(), []string{"kimi-k3:cloud"}; !slices.Equal(got, want) {
 		t.Fatalf("persisted models = %v, want Ollama routes %v", got, want)
+	}
+}
+
+func TestRestartClaudeDesktopWithModelsRollsBackWhenRestartFails(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := launch.SaveClaudeDesktopModels([]string{"glm-5.2:cloud"}); err != nil {
+		t.Fatal(err)
+	}
+	models := proxy.SelectClaudeDesktopModels(proxy.DefaultClaudeDesktopModels(), []string{"glm-5.2:cloud"})
+	gateway, err := proxy.NewClaudeDesktop(proxy.ClaudeDesktopConfig{
+		ListenAddr: "127.0.0.1:0",
+		OllamaURL:  "http://127.0.0.1:11434",
+		Model:      models[0].OllamaModel,
+		Models:     models,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	previousInstalled := claudeDesktopInstalled
+	previousDesktop := claudeDesktop
+	claudeProxyMu.Lock()
+	previousGateway := claudeAppProxy
+	previousAvailable := claudeAvailableModels
+	previousSource := claudeModelSource
+	previousUpdated := claudeCatalogUpdated
+	claudeAppProxy = gateway
+	claudeAvailableModels = proxy.DefaultClaudeDesktopModels()
+	claudeModelSource = "endpoint"
+	claudeCatalogUpdated = claudeCatalogNow()
+	claudeProxyMu.Unlock()
+	claudeDesktopInstalled = func() bool { return true }
+	fake := &fakeClaudeDesktopController{configured: true, setErr: errors.New("restart failed")}
+	claudeDesktop = fake
+	t.Cleanup(func() {
+		claudeDesktopInstalled = previousInstalled
+		claudeDesktop = previousDesktop
+		claudeProxyMu.Lock()
+		claudeAppProxy = previousGateway
+		claudeAvailableModels = previousAvailable
+		claudeModelSource = previousSource
+		claudeCatalogUpdated = previousUpdated
+		claudeProxyMu.Unlock()
+	})
+
+	err = restartClaudeDesktopWithModels([]string{"kimi-k3:cloud"})
+	if err == nil || !strings.Contains(err.Error(), "restart failed") {
+		t.Fatalf("restart error = %v", err)
+	}
+	if got := launch.ClaudeDesktopModels(); !slices.Equal(got, []string{"glm-5.2:cloud"}) {
+		t.Fatalf("persisted models after failure = %v", got)
+	}
+	if !slices.Equal(fake.modelsAtSet, []string{"kimi-k3:cloud"}) {
+		t.Fatalf("models visible before restart = %v, want new selection", fake.modelsAtSet)
+	}
+	gotModels := gateway.Models()
+	if len(gotModels) != 1 || gotModels[0].OllamaModel != "glm-5.2:cloud" {
+		t.Fatalf("live gateway models after failure = %+v", gotModels)
+	}
+}
+
+func TestFirstConnectKeepsModelsWhenProfileCommitsButOpenFails(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := launch.SaveClaudeDesktopModels([]string{"glm-5.2:cloud"}); err != nil {
+		t.Fatal(err)
+	}
+	previousInstalled := claudeDesktopInstalled
+	previousDesktop := claudeDesktop
+	previousAddr := claudeProxyListenAddr
+	claudeProxyMu.Lock()
+	previousGateway := claudeAppProxy
+	previousAvailable := claudeAvailableModels
+	previousSource := claudeModelSource
+	previousUpdated := claudeCatalogUpdated
+	claudeAppProxy = nil
+	claudeAvailableModels = nil
+	claudeModelSource = ""
+	claudeCatalogUpdated = time.Time{}
+	claudeProxyMu.Unlock()
+	claudeDesktopInstalled = func() bool { return true }
+	claudeProxyListenAddr = "127.0.0.1:0"
+	fake := &fakeClaudeDesktopController{setErr: errors.New("open failed"), configureOnSet: true}
+	claudeDesktop = fake
+	t.Cleanup(func() {
+		stopClaudeAppProxy()
+		claudeDesktopInstalled = previousInstalled
+		claudeDesktop = previousDesktop
+		claudeProxyListenAddr = previousAddr
+		claudeProxyMu.Lock()
+		claudeAppProxy = previousGateway
+		claudeAvailableModels = previousAvailable
+		claudeModelSource = previousSource
+		claudeCatalogUpdated = previousUpdated
+		claudeProxyMu.Unlock()
+	})
+
+	err := restartClaudeDesktopWithModels([]string{"kimi-k3:cloud"})
+	if err == nil || !strings.Contains(err.Error(), "open failed") {
+		t.Fatalf("connect error = %v", err)
+	}
+	if !fake.configured {
+		t.Fatal("profile did not remain configured after the open failure")
+	}
+	if got := launch.ClaudeDesktopModels(); !slices.Equal(got, []string{"kimi-k3:cloud"}) {
+		t.Fatalf("persisted models after open failure = %v", got)
+	}
+	claudeProxyMu.Lock()
+	gateway := claudeAppProxy
+	claudeProxyMu.Unlock()
+	if gateway == nil {
+		t.Fatal("gateway stopped after the profile committed")
+	}
+	models := gateway.Models()
+	if len(models) != 1 || models[0].OllamaModel != "kimi-k3:cloud" {
+		t.Fatalf("live models after open failure = %+v", models)
 	}
 }
 
@@ -256,6 +547,15 @@ func TestLoadClaudeDesktopModelsFallsBackWithoutMLX(t *testing.T) {
 	for _, model := range models {
 		if strings.Contains(strings.ToLower(model.Name), "mlx") {
 			t.Fatalf("fallback contains MLX model %q", model.Name)
+		}
+		access := proxy.EvaluateClaudeDesktopModelAccess(
+			model,
+			proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "pro"},
+			false,
+			true,
+		)
+		if access.Reason != proxy.ClaudeDesktopAccessVerificationUnavailable {
+			t.Fatalf("cold fallback access for %q = %+v, want verification unavailable", model.Name, access)
 		}
 	}
 }
@@ -578,6 +878,82 @@ func TestClaudeLocalModels(t *testing.T) {
 	}
 }
 
+func TestClaudeGatewayStartupWithLocalSelectionSkipsCloudLookups(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("OLLAMA_HOST", "127.0.0.1:11434")
+	if err := launch.SaveClaudeDesktopModels([]string{"qwen3:8b"}); err != nil {
+		t.Fatal(err)
+	}
+	previousInstalled := claudeDesktopInstalled
+	previousStore := appStore
+	appStore = &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
+	if err := markClaudeDesktopIntegrationUsed(); err != nil {
+		t.Fatal(err)
+	}
+	previousAddr := claudeProxyListenAddr
+	previousLoader := claudeModelsLoader
+	previousAccess := claudeAccessStateResolver
+	previousLocal := claudeLocalModelsResolver
+	claudeProxyMu.Lock()
+	previousGateway := claudeAppProxy
+	previousAvailable := claudeAvailableModels
+	previousSource := claudeModelSource
+	previousUpdated := claudeCatalogUpdated
+	claudeAppProxy = nil
+	claudeProxyMu.Unlock()
+	claudeDesktopInstalled = func() bool { return true }
+	claudeProxyListenAddr = "127.0.0.1:0"
+	loaderCalls := 0
+	accessCalls := 0
+	claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
+		loaderCalls++
+		return nil, "fallback"
+	}
+	claudeAccessStateResolver = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
+		accessCalls++
+		return proxy.ClaudeDesktopAccessState{}, errors.New("offline")
+	}
+	claudeLocalModelsResolver = func(context.Context) ([]string, error) {
+		return []string{"qwen3:8b"}, nil
+	}
+	t.Cleanup(func() {
+		stopClaudeAppProxy()
+		_ = appStore.Close()
+		appStore = previousStore
+		claudeDesktopInstalled = previousInstalled
+		claudeProxyListenAddr = previousAddr
+		claudeModelsLoader = previousLoader
+		claudeAccessStateResolver = previousAccess
+		claudeLocalModelsResolver = previousLocal
+		claudeProxyMu.Lock()
+		claudeAppProxy = previousGateway
+		claudeAvailableModels = previousAvailable
+		claudeModelSource = previousSource
+		claudeCatalogUpdated = previousUpdated
+		claudeProxyMu.Unlock()
+	})
+
+	if err := startClaudeAppProxy(); err != nil {
+		t.Fatal(err)
+	}
+	if loaderCalls != 0 || accessCalls != 0 {
+		t.Fatalf("cloud startup calls = recommendations:%d access:%d, want zero", loaderCalls, accessCalls)
+	}
+	status := getClaudeDesktopConnectionStatus()
+	if len(status.Models) != 1 || status.Models[0].Name != "qwen3:8b" {
+		t.Fatalf("local status models = %+v", status.Models)
+	}
+	if loaderCalls != 0 || accessCalls != 0 {
+		t.Fatalf("cloud status calls = recommendations:%d access:%d, want zero", loaderCalls, accessCalls)
+	}
+	claudeProxyMu.Lock()
+	models := claudeAppProxy.Models()
+	claudeProxyMu.Unlock()
+	if len(models) != 1 || models[0].OllamaModel != "qwen3:8b" {
+		t.Fatalf("startup models = %+v", models)
+	}
+}
+
 func TestRestoreClaudeBeforeQuit(t *testing.T) {
 	called := false
 	if err := restoreClaudeBeforeQuit(context.Background(), false, false, func(context.Context) error {
@@ -654,10 +1030,29 @@ func TestClaudeDesktopConnectionStatusReportsMissingApp(t *testing.T) {
 	}
 }
 
-func TestClaudeDesktopConnectionStatusSeparatesConfigurationFromGatewayHealth(t *testing.T) {
-	status := claudeDesktopConnectionStatus(true, true, false, errors.New("gateway failed"))
+func TestClaudeDesktopConnectionStatusKeepsConfiguredStateOnGatewayFailure(t *testing.T) {
+	previousInstalled := claudeDesktopInstalled
+	previousDesktop := claudeDesktop
+	claudeProxyMu.Lock()
+	previousErr := claudeProxyErr
+	previousFailure := claudeProxyFail
+	claudeProxyErr = errors.New("gateway failed")
+	claudeProxyFail = claudeProxyFailurePortConflict
+	claudeProxyMu.Unlock()
+	claudeDesktopInstalled = func() bool { return true }
+	claudeDesktop = &fakeClaudeDesktopController{configured: true}
+	t.Cleanup(func() {
+		claudeDesktopInstalled = previousInstalled
+		claudeDesktop = previousDesktop
+		claudeProxyMu.Lock()
+		claudeProxyErr = previousErr
+		claudeProxyFail = previousFailure
+		claudeProxyMu.Unlock()
+	})
+
+	status := getClaudeDesktopConnectionStatus()
 	if !status.Configured || status.Connected || !status.StartFailed {
-		t.Fatalf("Claude status = %+v, want configured with failed gateway", status)
+		t.Fatalf("Claude status = %+v, want configured but unavailable", status)
 	}
 }
 
