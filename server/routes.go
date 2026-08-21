@@ -453,7 +453,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	modelCaps := m.Capabilities()
 	if slices.Contains(modelCaps, model.CapabilityThinking) {
 		caps = append(caps, model.CapabilityThinking)
-		if req.Think == nil {
+		// raw mode passes the prompt through untouched, so the thinking tags
+		// inferred from the template describe a prompt the model was never given.
+		// splitting the output on them anyway hides it from clients that only read
+		// `response`. thinking stays available to callers that ask for it explicitly
+		if req.Think == nil && !req.Raw {
 			req.Think = &api.ThinkValue{Value: true}
 		}
 	} else {
