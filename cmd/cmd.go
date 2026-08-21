@@ -26,6 +26,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"github.com/containerd/console"
@@ -985,6 +986,100 @@ func SignoutHandler(cmd *cobra.Command, args []string) error {
 	fmt.Println("You have signed out of ollama.com")
 	fmt.Println()
 	return nil
+}
+
+func UsageHandler(cmd *cobra.Command, args []string) error {
+	out := cmd.OutOrStdout()
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	usage, err := client.Usage(cmd.Context())
+	if err != nil {
+		var aErr api.AuthorizationError
+		if errors.As(err, &aErr) && aErr.StatusCode == http.StatusUnauthorized {
+			fmt.Fprintln(out, "You need to be signed in to Ollama to view usage.")
+			fmt.Fprintln(out)
+			if aErr.SigninURL != "" {
+				_ = browser.OpenURL(aErr.SigninURL)
+				fmt.Fprintf(out, ConnectInstructions, aErr.SigninURL)
+			}
+			return nil
+		}
+
+		return err
+	}
+
+	fmt.Fprintln(out, "Usage")
+	details := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	fmt.Fprintf(details, "  Period\t%s to %s\n", usage.Activity.Period.StartingAt.Format("2006-01-02"), usage.Activity.Period.EndingAt.Format("2006-01-02"))
+	fmt.Fprintf(details, "  Spend\t$%s\n", usage.Activity.Cost)
+	if err := details.Flush(); err != nil {
+		return err
+	}
+
+	if len(usage.Activity.Models) == 0 && usageLimitEmpty(usage.Limits.Session) && usageLimitEmpty(usage.Limits.Weekly) {
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "No usage recorded for this period.")
+		return nil
+	}
+
+	if len(usage.Activity.Models) > 0 {
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "Activity")
+		table := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(table, "  Model\tRequests\tSpend")
+		for _, m := range usage.Activity.Models {
+			fmt.Fprintf(table, "  %s\t%d\t$%s\n", usageModelName(m.Name), m.RequestCount, m.Cost)
+		}
+		if err := table.Flush(); err != nil {
+			return err
+		}
+	}
+
+	if err := writeUsageLimit(out, "Session", usage.Limits.Session); err != nil {
+		return err
+	}
+	if err := writeUsageLimit(out, "Weekly", usage.Limits.Weekly); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func usageLimitEmpty(limit api.UsageLimit) bool {
+	return limit.Usage == 0 && len(limit.Models) == 0
+}
+
+func usageModelName(name string) string {
+	switch name {
+	case "web search":
+		return "Web Search"
+	case "web fetch":
+		return "Web Fetch"
+	default:
+		return name
+	}
+}
+
+func writeUsageLimit(out io.Writer, name string, limit api.UsageLimit) error {
+	if usageLimitEmpty(limit) {
+		return nil
+	}
+
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, name)
+	table := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	fmt.Fprintf(table, "  Used\t%.1f%%\n", limit.Usage*100)
+	if len(limit.Models) > 0 {
+		fmt.Fprintln(table, "  Model\tRequests")
+	}
+	for _, m := range limit.Models {
+		fmt.Fprintf(table, "  %s\t%d\n", usageModelName(m.Name), m.RequestCount)
+	}
+	return table.Flush()
 }
 
 func PushHandler(cmd *cobra.Command, args []string) error {
@@ -2429,6 +2524,14 @@ func NewCLI() *cobra.Command {
 		RunE:    SignoutHandler,
 	}
 
+	usageCmd := &cobra.Command{
+		Use:     "usage",
+		Short:   "Show your ollama.com usage",
+		Args:    cobra.ExactArgs(0),
+		PreRunE: checkServerHeartbeat,
+		RunE:    UsageHandler,
+	}
+
 	listCmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
@@ -2492,6 +2595,7 @@ func NewCLI() *cobra.Command {
 		stopCmd,
 		pullCmd,
 		pushCmd,
+		usageCmd,
 		listCmd,
 		psCmd,
 		copyCmd,
@@ -2542,6 +2646,7 @@ func NewCLI() *cobra.Command {
 		loginCmd,
 		signoutCmd,
 		logoutCmd,
+		usageCmd,
 		listCmd,
 		psCmd,
 		copyCmd,

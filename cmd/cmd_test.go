@@ -1398,6 +1398,102 @@ func TestListHandler(t *testing.T) {
 	}
 }
 
+func TestUsageHandler(t *testing.T) {
+	startsAt := time.Date(2026, time.June, 29, 0, 0, 0, 0, time.UTC)
+	endsAt := time.Date(2026, time.July, 27, 0, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name       string
+		statusCode int
+		response   any
+		want       string
+	}{
+		{
+			name:       "activity and limits",
+			statusCode: http.StatusOK,
+			response: api.UsageResponse{
+				Activity: api.UsageActivity{
+					Cost: "12.34000",
+					Period: api.UsagePeriod{
+						Type:       "last_4_weeks",
+						StartingAt: startsAt,
+						EndingAt:   endsAt,
+					},
+					Models: []api.UsageModel{{Name: "gpt-oss:120b", RequestCount: 42, Cost: "12.34000"}},
+				},
+				Limits: api.UsageLimits{
+					Session: api.UsageLimit{Usage: 0.006, Models: []api.UsageModel{{Name: "web search", RequestCount: 1}}},
+				},
+			},
+			want: "Usage\n" +
+				"  Period  2026-06-29 to 2026-07-27\n" +
+				"  Spend   $12.34000\n\n" +
+				"Activity\n" +
+				"  Model         Requests  Spend\n" +
+				"  gpt-oss:120b  42        $12.34000\n\n" +
+				"Session\n" +
+				"  Used        0.6%\n" +
+				"  Model       Requests\n" +
+				"  Web Search  1\n",
+		},
+		{
+			name:       "no usage",
+			statusCode: http.StatusOK,
+			response: api.UsageResponse{
+				Activity: api.UsageActivity{
+					Cost:   "0.00000",
+					Period: api.UsagePeriod{Type: "last_4_weeks", StartingAt: startsAt, EndingAt: endsAt},
+					Models: []api.UsageModel{},
+				},
+				Limits: api.UsageLimits{
+					Session: api.UsageLimit{Models: []api.UsageModel{}},
+					Weekly:  api.UsageLimit{Models: []api.UsageModel{}},
+				},
+			},
+			want: "Usage\n" +
+				"  Period  2026-06-29 to 2026-07-27\n" +
+				"  Spend   $0.00000\n\n" +
+				"No usage recorded for this period.\n",
+		},
+		{
+			name:       "not signed in",
+			statusCode: http.StatusUnauthorized,
+			response:   map[string]string{"error": "unauthorized"},
+			want:       "You need to be signed in to Ollama to view usage.\n\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/api/usage" {
+					t.Fatalf("request = %s %s, want GET /api/usage", r.Method, r.URL.Path)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tt.statusCode)
+				if err := json.NewEncoder(w).Encode(tt.response); err != nil {
+					t.Fatal(err)
+				}
+			}))
+			defer server.Close()
+
+			t.Setenv("OLLAMA_HOST", server.URL)
+
+			cmd := &cobra.Command{}
+			cmd.SetContext(t.Context())
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+
+			if err := UsageHandler(cmd, nil); err != nil {
+				t.Fatal(err)
+			}
+			if got := out.String(); got != tt.want {
+				t.Errorf("unexpected output (-want +got):\n%s", cmp.Diff(tt.want, got))
+			}
+		})
+	}
+}
+
 func TestCreateHandler(t *testing.T) {
 	tests := []struct {
 		name           string
