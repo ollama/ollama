@@ -181,9 +181,59 @@ func statusErrorLine(line string) string {
 		return errPrefix + strings.TrimRight(line[errStart+len(errPrefix):], " \t\r")
 	}
 
+	if errMsg := llamaServerSrvErrorLine(line); errMsg != "" {
+		return errMsg
+	}
+
 	if IsOutOfMemoryMessage(line) {
 		return line
 	}
 
 	return ""
+}
+
+func llamaServerSrvErrorLine(line string) string {
+	trimmed := strings.TrimLeft(line, " \t")
+	if !strings.HasPrefix(trimmed, "srv ") {
+		return ""
+	}
+
+	if strings.Contains(trimmed, "got exception:") {
+		return strings.TrimRight(trimmed, " \t\r")
+	}
+
+	if !strings.Contains(trimmed, "log_server_r:") {
+		return ""
+	}
+	fields := strings.Fields(trimmed)
+	if hasHealthRequestPath(fields) {
+		return ""
+	}
+	for _, field := range fields {
+		if isFailedHTTPStatusField(field) {
+			return strings.TrimRight(trimmed, " \t\r")
+		}
+	}
+	return ""
+}
+
+func hasHealthRequestPath(fields []string) bool {
+	for _, field := range fields {
+		if field == "/health" || strings.HasPrefix(field, "/health?") {
+			return true
+		}
+	}
+	return false
+}
+
+func isFailedHTTPStatusField(field string) bool {
+	if len(field) != 3 || (field[0] != '4' && field[0] != '5') {
+		return false
+	}
+	for _, c := range field[1:] {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
