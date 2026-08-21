@@ -18,6 +18,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/app/store"
 	"github.com/ollama/ollama/app/updater"
+	"github.com/ollama/ollama/manifest"
 )
 
 func TestHandlePostApiSettings(t *testing.T) {
@@ -887,5 +888,72 @@ func TestSettingsToggleAutoUpdateOn_NoPendingUpdate_TriggersCheck(t *testing.T) 
 	// UpdateAvailableFunc should NOT be called since there's no pending update
 	if notificationCalled.Load() {
 		t.Fatal("UpdateAvailableFunc should not be called when there is no pending update")
+	}
+}
+
+func TestManifestsContentEqual(t *testing.T) {
+	configDigest := "sha256:abc"
+	layer1Digest := "sha256:layer1"
+	layer2Digest := "sha256:layer2"
+
+	localManifest := &manifest.Manifest{
+		Config: manifest.Layer{Digest: configDigest},
+		Layers: []manifest.Layer{
+			{Digest: layer1Digest},
+			{Digest: layer2Digest},
+		},
+	}
+
+	tests := []struct {
+		name     string
+		local    *manifest.Manifest
+		upstream string
+		want     bool
+	}{
+		{
+			name:     "identical content",
+			local:    localManifest,
+			upstream: `{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json","config":{"mediaType":"application/vnd.docker.container.image.v1+json","digest":"` + configDigest + `","size":100},"layers":[{"mediaType":"application/vnd.ollama.image.model","digest":"` + layer1Digest + `","size":1000},{"mediaType":"application/vnd.ollama.image.model","digest":"` + layer2Digest + `","size":2000}]}`,
+			want:     true,
+		},
+		{
+			name:     "different config digest",
+			local:    localManifest,
+			upstream: `{"schemaVersion":2,"config":{"digest":"sha256:different"},"layers":[{"digest":"` + layer1Digest + `"},{"digest":"` + layer2Digest + `"}]}`,
+			want:     false,
+		},
+		{
+			name:     "different layer digest",
+			local:    localManifest,
+			upstream: `{"schemaVersion":2,"config":{"digest":"` + configDigest + `"},"layers":[{"digest":"` + layer1Digest + `"},{"digest":"sha256:different"}]}`,
+			want:     false,
+		},
+		{
+			name:     "different number of layers",
+			local:    localManifest,
+			upstream: `{"schemaVersion":2,"config":{"digest":"` + configDigest + `"},"layers":[{"digest":"` + layer1Digest + `"}]}`,
+			want:     false,
+		},
+		{
+			name:     "layers in different order still match",
+			local:    localManifest,
+			upstream: `{"schemaVersion":2,"config":{"digest":"` + configDigest + `"},"layers":[{"digest":"` + layer2Digest + `"},{"digest":"` + layer1Digest + `"}]}`,
+			want:     true,
+		},
+		{
+			name:     "invalid JSON",
+			local:    localManifest,
+			upstream: `not json`,
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := manifestsContentEqual(tt.local, []byte(tt.upstream))
+			if got != tt.want {
+				t.Errorf("manifestsContentEqual() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

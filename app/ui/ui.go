@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httputil"
@@ -456,30 +457,25 @@ func (s *Server) listChats(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// checkModelUpstream makes a HEAD request to the Ollama registry to get the upstream digest and push time
-func (s *Server) checkModelUpstream(ctx context.Context, modelName string, timeout time.Duration) (string, int64, error) {
+// checkModelUpstream makes a GET request to the Ollama registry to get the upstream
+// digest, push time, and manifest body. The manifest body is used to compare layer
+// digests when the manifest digest doesn't match, to avoid false staleness reports
+// caused by manifest re-serialization differences.
+func (s *Server) checkModelUpstream(ctx context.Context, modelName string, timeout time.Duration) (string, []byte, int64, error) {
 	// Create a context with timeout for the registry check
 	checkCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// Parse model name to get namespace, model, and tag
-	parts := strings.Split(modelName, ":")
-	name := parts[0]
-	tag := "latest"
-	if len(parts) > 1 {
-		tag = parts[1]
+	n := model.ParseName(modelName)
+	if !n.IsFullyQualified() {
+		return "", nil, 0, fmt.Errorf("invalid model name: %s", modelName)
 	}
 
-	if !strings.Contains(name, "/") {
-		// If the model name does not contain a slash, assume it's a library model
-		name = "library/" + name
-	}
-
-	// Check the model in the Ollama registry using HEAD request
-	url := OllamaDotCom + "/v2/" + name + "/manifests/" + tag
-	req, err := http.NewRequestWithContext(checkCtx, "HEAD", url, nil)
+	// Check the model in the Ollama registry using GET request to retrieve manifest body
+	url := OllamaDotCom + "/v2/" + n.DisplayNamespaceModel() + "/manifests/" + n.Tag
+	req, err := http.NewRequestWithContext(checkCtx, "GET", url, nil)
 	if err != nil {
-		return "", 0, err
+		return "", nil, 0, err
 	}
 
 	httpClient := s.httpClient()
@@ -487,17 +483,22 @@ func (s *Server) checkModelUpstream(ctx context.Context, modelName string, timeo
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return "", 0, err
+		return "", nil, 0, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", 0, fmt.Errorf("registry returned status %d", resp.StatusCode)
+		return "", nil, 0, fmt.Errorf("registry returned status %d", resp.StatusCode)
 	}
 
 	digest := resp.Header.Get("ollama-content-digest")
 	if digest == "" {
-		return "", 0, fmt.Errorf("no digest header found")
+		return "", nil, 0, fmt.Errorf("no digest header found")
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", nil, 0, err
 	}
 
 	var pushTime int64
@@ -507,7 +508,38 @@ func (s *Server) checkModelUpstream(ctx context.Context, modelName string, timeo
 		}
 	}
 
-	return digest, pushTime, nil
+	return digest, body, pushTime, nil
+}
+
+// manifestsContentEqual compares the config and layer digests of two manifests.
+// Returns true if all config and layer digests match, meaning the actual model
+// content is the same even if the manifest serialization differs.
+func manifestsContentEqual(local *manifest.Manifest, upstreamBody []byte) bool {
+	var upstream manifest.Manifest
+	if err := json.Unmarshal(upstreamBody, &upstream); err != nil {
+		return false
+	}
+
+	if local.Config.Digest != upstream.Config.Digest {
+		return false
+	}
+
+	if len(local.Layers) != len(upstream.Layers) {
+		return false
+	}
+
+	localDigests := make(map[string]bool)
+	for _, layer := range local.Layers {
+		localDigests[layer.Digest] = true
+	}
+
+	for _, layer := range upstream.Layers {
+		if !localDigests[layer.Digest] {
+			return false
+		}
+	}
+
+	return true
 }
 
 // isNetworkError checks if an error string contains common network/connection error patterns
@@ -1593,7 +1625,7 @@ func (s *Server) modelUpstream(w http.ResponseWriter, r *http.Request) error {
 		return fmt.Errorf("model is required")
 	}
 
-	digest, pushTime, err := s.checkModelUpstream(r.Context(), req.Model, 5*time.Second)
+	digest, upstreamBody, pushTime, err := s.checkModelUpstream(r.Context(), req.Model, 5*time.Second)
 	if err != nil {
 		s.log().Warn("failed to check upstream digest", "error", err, "model", req.Model)
 		response := responses.ModelUpstreamResponse{
@@ -1607,6 +1639,11 @@ func (s *Server) modelUpstream(w http.ResponseWriter, r *http.Request) error {
 	stale := true
 	if m, err := manifest.ParseNamedManifest(n); err == nil {
 		if m.Digest() == digest {
+			stale = false
+		} else if manifestsContentEqual(m, upstreamBody) {
+			// Manifest digest mismatch can be caused by serialization differences
+			// (e.g. models pulled before the raw-bytes manifest write fix).
+			// Compare actual content digests to avoid false staleness.
 			stale = false
 		} else if pushTime > 0 && m.FileInfo().ModTime().Unix() >= pushTime {
 			stale = false
