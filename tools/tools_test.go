@@ -756,6 +756,13 @@ func TestParser(t *testing.T) {
 				},
 			},
 		},
+		{
+			name:   "tool name substring inside longer identifier",
+			inputs: []string{`<tool_call>{"name": "add_numbers", "arguments": {"a": "5", "b": "10"}}</tool_call>`},
+			content: "",
+			tmpl:    qwen,
+			calls:   nil,
+		},
 	}
 
 	for _, tt := range tests {
