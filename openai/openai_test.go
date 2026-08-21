@@ -177,6 +177,21 @@ func TestFromCompleteRequest_Basic(t *testing.T) {
 	}
 }
 
+func TestFromChatRequest_InvalidStopArrayElement(t *testing.T) {
+	req := ChatCompletionRequest{
+		Model: "test-model",
+		Messages: []Message{
+			{Role: "user", Content: "Hello"},
+		},
+		Stop: []any{"valid", 42},
+	}
+
+	_, err := FromChatRequest(req)
+	if err == nil {
+		t.Fatal("expected error for non-string stop sequence, got nil")
+	}
+}
+
 func TestToUsage(t *testing.T) {
 	resp := api.ChatResponse{
 		Metrics: api.Metrics{
