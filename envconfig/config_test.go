@@ -437,3 +437,24 @@ func TestNoCloud(t *testing.T) {
 		})
 	}
 }
+
+func TestNumThread(t *testing.T) {
+	cases := map[string]struct {
+		envValue string
+		expect   uint
+	}{
+		"default": {"", 0},
+		"valid":   {"4", 4},
+		"large":   {"64", 64},
+		"invalid": {"abc", 0},
+	}
+
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("OLLAMA_NUM_THREAD", tt.envValue)
+			if got := NumThread(); got != tt.expect {
+				t.Errorf("%s: expected %d, got %d", name, tt.expect, got)
+			}
+		})
+	}
+}
