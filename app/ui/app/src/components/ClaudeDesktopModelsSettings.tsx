@@ -16,7 +16,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 interface ClaudeDesktopModelsSettingsProps {
   initialStatus?: ClaudeDesktopStatus;
   initialLocalModels?: string[];
-  includeCloudModels?: boolean;
 }
 
 function isInvalidModelName(name: string): boolean {
@@ -26,21 +25,33 @@ function isInvalidModelName(name: string): boolean {
 
 function visibleModels(
   status: ClaudeDesktopStatus,
-  includeCloudModels: boolean,
 ): ClaudeDesktopModelStatus[] {
   return (status.models ?? []).filter(
-    (model) =>
-      !isInvalidModelName(model.name) && (includeCloudModels || !model.cloud),
+    (model) => !isInvalidModelName(model.name) && model.reason !== "cloud_off",
   );
 }
 
-function selectedModelNames(
-  status: ClaudeDesktopStatus,
-  includeCloudModels: boolean,
-): string[] {
-  return visibleModels(status, includeCloudModels)
+function selectedModelNames(status: ClaudeDesktopStatus): string[] {
+  return visibleModels(status)
     .filter((model) => model.selected)
     .map((model) => model.name);
+}
+
+function modelAccessLabel(model: ClaudeDesktopModelStatus): string | null {
+  switch (model.reason) {
+    case "sign_in_required":
+      return "Sign in required";
+    case "upgrade_required":
+      return model.requiredPlan
+        ? `${model.requiredPlan} plan required`
+        : "Upgrade required";
+    case "verification_unavailable":
+      return "Access unavailable";
+    case "model_not_installed":
+      return "Not installed";
+    default:
+      return null;
+  }
 }
 
 function explicitCloudName(name: string): string {
@@ -50,16 +61,15 @@ function explicitCloudName(name: string): string {
 export function ClaudeDesktopModelsSettings({
   initialStatus,
   initialLocalModels,
-  includeCloudModels = false,
 }: ClaudeDesktopModelsSettingsProps) {
   const [status, setStatus] = useState<ClaudeDesktopStatus | null>(
     initialStatus ?? null,
   );
   const [models, setModels] = useState<ClaudeDesktopModelStatus[]>(() =>
-    initialStatus ? visibleModels(initialStatus, includeCloudModels) : [],
+    initialStatus ? visibleModels(initialStatus) : [],
   );
   const [selection, setSelection] = useState<string[]>(() =>
-    initialStatus ? selectedModelNames(initialStatus, includeCloudModels) : [],
+    initialStatus ? selectedModelNames(initialStatus) : [],
   );
   const [localModels, setLocalModels] = useState<string[]>(
     initialLocalModels ?? [],
@@ -71,14 +81,11 @@ export function ClaudeDesktopModelsSettings({
   const [restarting, setRestarting] = useState(false);
   const pickerRef = useRef<HTMLDivElement>(null);
 
-  const applyStatus = useCallback(
-    (next: ClaudeDesktopStatus) => {
-      setStatus(next);
-      setModels(visibleModels(next, includeCloudModels));
-      setSelection(selectedModelNames(next, includeCloudModels));
-    },
-    [includeCloudModels],
-  );
+  const applyStatus = useCallback((next: ClaudeDesktopStatus) => {
+    setStatus(next);
+    setModels(visibleModels(next));
+    setSelection(selectedModelNames(next));
+  }, []);
 
   const refreshStatus = useCallback(async () => {
     if (!window.getClaudeDesktopStatus) return;
@@ -99,15 +106,15 @@ export function ClaudeDesktopModelsSettings({
 
   useEffect(() => {
     if (!status) return;
-    setModels(visibleModels(status, includeCloudModels));
-    setSelection(selectedModelNames(status, includeCloudModels));
-  }, [includeCloudModels, status]);
+    setModels(visibleModels(status));
+    setSelection(selectedModelNames(status));
+  }, [status]);
 
   useEffect(() => {
     if (initialLocalModels || !status?.used) return;
     let cancelled = false;
     setModelsLoading(true);
-    void getClaudeDesktopAvailableModels(includeCloudModels)
+    void getClaudeDesktopAvailableModels()
       .then((installed) => {
         if (!cancelled) {
           setLocalModels(installed.map((model) => model.model));
@@ -122,7 +129,7 @@ export function ClaudeDesktopModelsSettings({
     return () => {
       cancelled = true;
     };
-  }, [includeCloudModels, initialLocalModels, status?.used]);
+  }, [initialLocalModels, status?.used]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -187,13 +194,24 @@ export function ClaudeDesktopModelsSettings({
     const cloud = name.endsWith(":cloud");
     setModels((current) => [
       ...current,
-      { name, displayName: name, cloud, selected: true },
+      {
+        name,
+        displayName: name,
+        cloud,
+        selected: true,
+        availability: "available",
+      },
     ]);
     setSelection(result.selection);
     setSearchQuery("");
     setPickerOpen(false);
     setError(null);
   };
+
+  const hasAvailableSelection = selection.some((name) => {
+    const model = models.find((candidate) => candidate.name === name);
+    return !model?.availability || model.availability === "available";
+  });
 
   const restartClaude = async () => {
     if (!window.restartClaudeDesktop) {
@@ -202,6 +220,10 @@ export function ClaudeDesktopModelsSettings({
     }
     if (selection.length === 0) {
       setError("Select at least one model for Claude.");
+      return;
+    }
+    if (!hasAvailableSelection) {
+      setError("Select a model available to your account.");
       return;
     }
     if (
@@ -267,25 +289,37 @@ export function ClaudeDesktopModelsSettings({
             </div>
 
             <div className="mt-3 grid grid-cols-2 gap-x-5 gap-y-2 max-[850px]:grid-cols-1">
-              {models.map((model) => (
-                <label
-                  key={model.name}
-                  className="flex min-w-0 cursor-pointer items-center gap-2 rounded-md py-1 text-sm text-neutral-600 dark:text-neutral-300"
-                  title={model.description}
-                >
-                  <input
-                    type="checkbox"
-                    checked={selection.includes(model.name)}
-                    disabled={
-                      restarting ||
-                      (!selection.includes(model.name) && selectionFull)
-                    }
-                    onChange={() => toggleModel(model.name)}
-                    className="h-4 w-4 rounded border-neutral-300 accent-neutral-900 dark:border-neutral-600 dark:accent-white"
-                  />
-                  <span className="truncate">{model.displayName}</span>
-                </label>
-              ))}
+              {models.map((model) => {
+                const selected = selection.includes(model.name);
+                const accessLabel = modelAccessLabel(model);
+                const unavailable =
+                  model.availability !== undefined &&
+                  model.availability !== "available";
+                return (
+                  <label
+                    key={model.name}
+                    className="flex min-w-0 cursor-pointer items-center gap-2 rounded-md py-1 text-sm text-neutral-600 dark:text-neutral-300"
+                    title={accessLabel ?? model.description}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      disabled={
+                        restarting ||
+                        (!selected && (selectionFull || unavailable))
+                      }
+                      onChange={() => toggleModel(model.name)}
+                      className="h-4 w-4 rounded border-neutral-300 accent-neutral-900 dark:border-neutral-600 dark:accent-white"
+                    />
+                    <span className="truncate">{model.displayName}</span>
+                    {accessLabel && (
+                      <span className="flex-shrink-0 text-xs text-neutral-400">
+                        {accessLabel}
+                      </span>
+                    )}
+                  </label>
+                );
+              })}
             </div>
 
             <div ref={pickerRef} className="relative mt-3">
@@ -343,17 +377,21 @@ export function ClaudeDesktopModelsSettings({
                 className={`text-xs leading-5 ${error ? "text-red-600 dark:text-red-400" : "text-neutral-400"}`}
               >
                 {error ??
-                  (selectionFull
-                    ? claudeDesktopMaxModelsMessage(maxModels)
-                    : status.connected
-                      ? "Restart Claude to refresh its model list."
-                      : "These models will be available when Claude starts.")}
+                  (!hasAvailableSelection && selection.length > 0
+                    ? "Select a model available to your account."
+                    : selectionFull
+                      ? claudeDesktopMaxModelsMessage(maxModels)
+                      : status.connected
+                        ? "Restart Claude to refresh its model list."
+                        : "These models will be available when Claude starts.")}
               </p>
               <Button
                 type="button"
                 color="white"
                 onClick={restartClaude}
-                disabled={restarting || selection.length === 0}
+                disabled={
+                  restarting || selection.length === 0 || !hasAvailableSelection
+                }
                 className="flex-shrink-0 max-sm:w-full"
               >
                 {restarting && (

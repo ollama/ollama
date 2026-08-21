@@ -414,32 +414,14 @@ export function ConnectAppsScreen({
   }, []);
 
   useEffect(() => {
-    if (initialIntegrations) return;
-
-    let active = true;
-    getIntegrationStatuses()
-      .then((statuses) => {
-        if (active) setIntegrationStatuses(statuses);
-      })
-      .catch(() => {
-        if (active) setStatusError(true);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [initialIntegrations]);
-
-  useEffect(() => {
-    if (!copiedCommand && !claudeError) return;
+    if (!copiedCommand) return;
 
     const timeout = window.setTimeout(() => {
       setCopiedCommand(null);
-      setClaudeError(null);
     }, 5000);
 
     return () => window.clearTimeout(timeout);
-  }, [claudeError, copiedCommand]);
+  }, [copiedCommand]);
 
   const refreshClaudeStatus = useCallback(async () => {
     if (isWindows) return null;
@@ -453,6 +435,38 @@ export function ConnectAppsScreen({
       return null;
     }
   }, [isWindows]);
+
+  useEffect(() => {
+    let active = true;
+    const integrations = initialIntegrations
+      ? Promise.resolve(initialIntegrations)
+      : getIntegrationStatuses();
+    const claude = initialClaudeStatus
+      ? Promise.resolve(initialClaudeStatus)
+      : window.getClaudeDesktopStatus
+        ? window.getClaudeDesktopStatus()
+        : Promise.resolve(null);
+
+    void Promise.allSettled([integrations, claude]).then(
+      ([integrationResult, claudeResult]) => {
+        if (!active) return;
+        if (integrationResult.status === "fulfilled") {
+          setIntegrationStatuses(integrationResult.value);
+        } else {
+          setStatusError(true);
+        }
+        if (claudeResult.status === "fulfilled") {
+          setClaudeStatus(claudeResult.value);
+        } else {
+          setClaudeError("Ollama could not read the Claude connection status.");
+        }
+      },
+    );
+
+    return () => {
+      active = false;
+    };
+  }, [initialClaudeStatus, initialIntegrations]);
 
   const openConnectedClaude = useCallback(
     async (status: ClaudeDesktopStatus) => {
@@ -505,7 +519,6 @@ export function ConnectAppsScreen({
   };
 
   useEffect(() => {
-    void refreshClaudeStatus();
     const handleFocus = () => void refreshClaudeStatus();
     window.addEventListener("focus", handleFocus);
     return () => window.removeEventListener("focus", handleFocus);
@@ -795,7 +808,7 @@ export function ConnectAppsScreen({
           </p>
           <p
             role={claudeError ? "alert" : undefined}
-            className={`truncate text-xs leading-5 ${claudeError ? "text-red-600" : "text-neutral-500"}`}
+            className="truncate text-xs leading-5 text-neutral-500"
           >
             {claudeError ??
               (claudeConfigured && claudeStatus?.startFailed

@@ -33,6 +33,14 @@ interface ClaudeDesktopModelStatus {
   description?: string;
   cloud?: boolean;
   selected: boolean;
+  availability?: "unknown" | "available" | "unavailable";
+  reason?:
+    | "cloud_off"
+    | "sign_in_required"
+    | "upgrade_required"
+    | "verification_unavailable"
+    | "model_not_installed";
+  requiredPlan?: string;
 }
 
 interface ClaudeDesktopActionResult {

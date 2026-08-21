@@ -196,44 +196,26 @@ export async function getModels(query?: string): Promise<Model[]> {
   }
 }
 
-export async function getClaudeDesktopAvailableModels(
-  includeCloudModels: boolean,
-): Promise<Model[]> {
+export async function getClaudeDesktopAvailableModels(): Promise<Model[]> {
   try {
     const { models: modelsResponse } = await ollama.list();
-    let cloudModels: ModelResponse[] = [];
-    if (includeCloudModels) {
-      try {
-        const response = await fetch(`${API_BASE}/api/v1/models/cloud`);
-        if (!response.ok) {
-          throw new Error(`cloud model list returned ${response.status}`);
-        }
-        const data = (await response.json()) as { models?: ModelResponse[] };
-        cloudModels = (data.models ?? []).map((model) => {
-          const name = model.name.replace(/:latest$/, "");
-          return {
-            ...model,
-            name: name.endsWith(":cloud") ? name : `${name}:cloud`,
-          };
-        });
-      } catch (error) {
-        console.warn("Failed to fetch cloud models:", error);
-      }
-    }
 
     const seen = new Set<string>();
-    return [
-      ...modelsResponse.filter((model: ModelResponse) => {
+    return modelsResponse
+      .filter((model: ModelResponse) => {
         const response = model as ModelResponse & {
           remote_model?: string;
           remote_host?: string;
         };
-        return !response.remote_model && !response.remote_host;
-      }),
-      ...cloudModels,
-    ]
+        const name = model.name.replace(/:latest$/, "");
+        return (
+          !response.remote_model &&
+          !response.remote_host &&
+          !name.endsWith("cloud")
+        );
+      })
       .filter((model: ModelResponse) => {
-        const base = model.name.replace(/:latest$/, "").replace(/:cloud$/, "");
+        const base = model.name.replace(/:latest$/, "");
         if (!base || seen.has(base)) return false;
 
         const families = model.details?.families;

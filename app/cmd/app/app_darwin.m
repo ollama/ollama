@@ -1024,6 +1024,11 @@ didCompleteWithError:(NSError *)error {
             [sender setEnabled:YES];
             if (!succeeded) {
                 BOOL portConflict = enabled && ClaudeGatewayPortConflict();
+                char *rawGatewayError = ClaudeGatewayErrorMessage();
+                NSString *gatewayError = rawGatewayError != NULL && rawGatewayError[0] != '\0'
+                    ? [NSString stringWithUTF8String:rawGatewayError]
+                    : nil;
+                free(rawGatewayError);
                 [self refreshClaudeAppState];
                 NSAlert *alert = [[NSAlert alloc] init];
                 [alert setAlertStyle:NSAlertStyleWarning];
@@ -1035,7 +1040,9 @@ didCompleteWithError:(NSError *)error {
                         : @"Unable to remove Ollama from Claude")];
                 [alert setInformativeText:portConflict
                     ? [NSString stringWithFormat:@"Change OLLAMA_HOST or quit the app using port %d, then try again.", ClaudeGatewayPort()]
-                    : @"Ollama could not update Claude. Check the Ollama log for details."];
+                    : (gatewayError.length > 0
+                        ? gatewayError
+                        : @"Ollama could not update Claude. Check the Ollama log for details.")];
                 [alert runModal];
                 return;
             }

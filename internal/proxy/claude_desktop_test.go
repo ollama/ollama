@@ -97,11 +97,11 @@ func TestGatewayRoutesClaudeProtocolToOllama(t *testing.T) {
 					t.Fatalf("incomplete gateway model metadata: %+v", model)
 				}
 			}
-			wantIDs := "claude-fable-5,claude-opus-5,claude-sonnet-5,claude-haiku-4-5-20251001"
+			wantIDs := "claude-fable-5,claude-opus-5,claude-sonnet-5,claude-haiku-4-5-20251001,claude-sonnet-4-6"
 			if strings.Join(gotIDs, ",") != wantIDs || catalog.FirstID != gotIDs[0] || catalog.LastID != gotIDs[len(gotIDs)-1] || catalog.HasMore {
 				t.Fatalf("gateway catalog = %+v", catalog.Data)
 			}
-			wantNames := "glm-5.2:cloud,kimi-k3:cloud,deepseek-v4-pro:cloud,deepseek-v4-flash:0731:cloud"
+			wantNames := "glm-5.2:cloud,kimi-k3:cloud,deepseek-v4-pro:cloud,deepseek-v4-flash:0731:cloud,gemma4:31b-cloud"
 			if strings.Join(gotNames, ",") != wantNames {
 				t.Fatalf("gateway display names = %v, want %s", gotNames, wantNames)
 			}
@@ -291,11 +291,18 @@ func TestGatewayPrunesCloudModelsWhenSignedOut(t *testing.T) {
 		{Model: "qwen3.8:27b"},
 	})
 	p, err := NewClaudeDesktop(ClaudeDesktopConfig{
-		ListenAddr:           "127.0.0.1:0",
-		OllamaURL:            upstream.URL,
-		Model:                "kimi-k3:cloud",
-		Models:               models,
-		CloudModelsAvailable: func(context.Context) bool { return cloudModelsAvailable.Load() },
+		ListenAddr: "127.0.0.1:0",
+		OllamaURL:  upstream.URL,
+		Model:      "kimi-k3:cloud",
+		Models:     models,
+		ResolveAccessState: func(context.Context) (ClaudeDesktopAccessState, error) {
+			state := ClaudeDesktopAccessState{Cloud: ClaudeDesktopCloudOn, Account: ClaudeDesktopAccountSignedOut}
+			if cloudModelsAvailable.Load() {
+				state.Account = ClaudeDesktopAccountSignedIn
+				state.Plan = "pro"
+			}
+			return state, nil
+		},
 		ListLocalModels: func(context.Context) ([]string, error) {
 			if localModelAvailable.Load() {
 				return []string{"qwen3.8:27b"}, nil
@@ -359,6 +366,94 @@ func TestGatewayPrunesCloudModelsWhenSignedOut(t *testing.T) {
 	catalog = fetchCatalog()
 	if len(catalog.Data) != len(models) {
 		t.Fatalf("signed-in catalog has %d models, want %d", len(catalog.Data), len(models))
+	}
+}
+
+func TestGatewayReevaluatesModelAccessBeforeRouting(t *testing.T) {
+	var routed atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		routed.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer upstream.Close()
+
+	state := ClaudeDesktopAccessState{
+		Cloud:   ClaudeDesktopCloudOn,
+		Account: ClaudeDesktopAccountSignedIn,
+		Plan:    "free",
+	}
+	models := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{
+		{Model: "glm-5.2:cloud", RequiredPlan: "pro"},
+		{Model: "gemma4:31b-cloud", RequiredPlan: "free"},
+	})
+	p, err := NewClaudeDesktop(ClaudeDesktopConfig{
+		ListenAddr: "127.0.0.1:0",
+		OllamaURL:  upstream.URL,
+		Model:      models[0].OllamaModel,
+		Models:     models,
+		ResolveAccessState: func(context.Context) (ClaudeDesktopAccessState, error) {
+			return state, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := p.Close(ctx); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	postMessage := func(model string) *http.Response {
+		t.Helper()
+		resp, err := http.Post(
+			"http://"+p.Addr()+"/v1/messages",
+			"application/json",
+			strings.NewReader(`{"model":"`+model+`","messages":[{"role":"user","content":"hi"}]}`),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+
+	resp := postMessage("claude-fable-5")
+	assertResponseContains(t, resp, http.StatusForbidden, "requires an Ollama pro plan")
+	if routed.Load() != 0 {
+		t.Fatalf("ineligible Pro request reached upstream")
+	}
+
+	resp = postMessage("claude-opus-5")
+	assertResponseContains(t, resp, http.StatusOK, `"ok":true`)
+	if routed.Load() != 1 {
+		t.Fatalf("free model routed %d times, want 1", routed.Load())
+	}
+
+	// Account and Cloud settings can change while Claude is open. Each request
+	// resolves them again so an old conversation cannot retain stale access.
+	state.Cloud = ClaudeDesktopCloudOff
+	resp = postMessage("claude-opus-5")
+	assertResponseContains(t, resp, http.StatusForbidden, "Turn on Cloud in Ollama Settings")
+	if routed.Load() != 1 {
+		t.Fatalf("Cloud-disabled request reached upstream")
+	}
+}
+
+func assertResponseContains(t *testing.T, response *http.Response, status int, want string) {
+	t.Helper()
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != status || !strings.Contains(string(body), want) {
+		t.Fatalf("response = %d %s, want %d containing %q", response.StatusCode, body, status, want)
 	}
 }
 

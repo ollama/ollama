@@ -7,7 +7,6 @@ describe("ClaudeDesktopModelsSettings", () => {
     const html = renderToStaticMarkup(
       <ClaudeDesktopModelsSettings
         initialLocalModels={["llama3.2", "qwen3:8b"]}
-        includeCloudModels
         initialStatus={{
           supported: true,
           used: true,
@@ -50,7 +49,6 @@ describe("ClaudeDesktopModelsSettings", () => {
   it("does not show the invalid Ollama Cloud sentinel", () => {
     const html = renderToStaticMarkup(
       <ClaudeDesktopModelsSettings
-        includeCloudModels
         initialStatus={{
           supported: true,
           used: true,
@@ -83,7 +81,6 @@ describe("ClaudeDesktopModelsSettings", () => {
   it("labels the built-in fallback without exposing MLX", () => {
     const html = renderToStaticMarkup(
       <ClaudeDesktopModelsSettings
-        includeCloudModels
         initialStatus={{
           supported: true,
           used: true,
@@ -113,7 +110,6 @@ describe("ClaudeDesktopModelsSettings", () => {
   it("prevents a sixth selection when the literal Claude slots are full", () => {
     const html = renderToStaticMarkup(
       <ClaudeDesktopModelsSettings
-        includeCloudModels
         initialStatus={{
           supported: true,
           used: true,
@@ -178,7 +174,6 @@ describe("ClaudeDesktopModelsSettings", () => {
   it("honors a smaller maxModels limit from the status", () => {
     const html = renderToStaticMarkup(
       <ClaudeDesktopModelsSettings
-        includeCloudModels
         initialStatus={{
           supported: true,
           used: true,
@@ -231,6 +226,8 @@ describe("ClaudeDesktopModelsSettings", () => {
               displayName: "glm-5.2:cloud",
               cloud: true,
               selected: true,
+              availability: "unavailable",
+              reason: "cloud_off",
             },
           ],
         }}
@@ -239,6 +236,80 @@ describe("ClaudeDesktopModelsSettings", () => {
 
     expect(html).not.toContain("glm-5.2:cloud");
     expect(html).toContain("Search Ollama models");
+  });
+
+  it("shows account requirements and prevents selecting unavailable models", () => {
+    const html = renderToStaticMarkup(
+      <ClaudeDesktopModelsSettings
+        initialStatus={{
+          supported: true,
+          used: true,
+          installed: true,
+          connected: true,
+          running: false,
+          startFailed: false,
+          portConflict: false,
+          modelSource: "endpoint",
+          models: [
+            {
+              name: "glm-5.2:cloud",
+              displayName: "glm-5.2:cloud",
+              cloud: true,
+              selected: false,
+              availability: "unavailable",
+              reason: "upgrade_required",
+              requiredPlan: "pro",
+            },
+            {
+              name: "gemma4:31b-cloud",
+              displayName: "gemma4:31b-cloud",
+              cloud: true,
+              selected: true,
+              availability: "available",
+              requiredPlan: "free",
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(html).toContain("pro plan required");
+    const index = html.indexOf(">glm-5.2:cloud</span>");
+    const label = html.slice(html.lastIndexOf("<label", index), index);
+    expect(label).toContain("disabled");
+    expect(html).toContain("gemma4:31b-cloud");
+  });
+
+  it("does not restart Claude when every selected model is unavailable", () => {
+    const html = renderToStaticMarkup(
+      <ClaudeDesktopModelsSettings
+        initialStatus={{
+          supported: true,
+          used: true,
+          installed: true,
+          connected: true,
+          running: false,
+          startFailed: false,
+          portConflict: false,
+          modelSource: "endpoint",
+          models: [
+            {
+              name: "glm-5.2:cloud",
+              displayName: "glm-5.2:cloud",
+              cloud: true,
+              selected: true,
+              availability: "unavailable",
+              reason: "upgrade_required",
+              requiredPlan: "pro",
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(html).toContain("Select a model available to your account.");
+    const button = html.slice(html.lastIndexOf("<button"));
+    expect(button).toContain("disabled");
   });
 
   it("remains visible after Claude has been disconnected", () => {

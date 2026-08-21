@@ -52,6 +52,7 @@ bool IsClaudeDesktopInstalled(void);
 bool IsClaudeDesktopRunning(void);
 bool ClaudeGatewayStartFailed(void);
 bool ClaudeGatewayPortConflict(void);
+char *ClaudeGatewayErrorMessage(void);
 int ClaudeGatewayPort(void);
 void RefreshClaudeProxyMenu(void);
 void updateClaudeProxyMenu(unsigned long long routed);

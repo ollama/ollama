@@ -89,7 +89,7 @@ describe("getClaudeDesktopAvailableModels", () => {
     vi.restoreAllMocks();
   });
 
-  it("merges local and cloud lists while pruning local remote entries", async () => {
+  it("returns installed local models while pruning remote entries", async () => {
     listModels.mockResolvedValue({
       models: [
         { name: "llama3.2:latest", digest: "local" },
@@ -100,52 +100,42 @@ describe("getClaudeDesktopAvailableModels", () => {
         },
       ],
     });
-    const fetch = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          models: [
-            { name: "glm-5.2", digest: "cloud" },
-            { name: "llama3.2:latest", digest: "duplicate" },
-          ],
-        }),
-        { status: 200 },
-      ),
-    );
+    const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);
 
-    const models = await getClaudeDesktopAvailableModels(true);
+    const models = await getClaudeDesktopAvailableModels();
 
-    expect(models.map((model) => model.model)).toEqual([
-      "llama3.2",
-      "glm-5.2:cloud",
-    ]);
-    expect(fetch).toHaveBeenCalledWith(
-      "http://127.0.0.1:3001/api/v1/models/cloud",
-    );
+    expect(models.map((model) => model.model)).toEqual(["llama3.2"]);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("does not request cloud models when they are unavailable to the user", async () => {
     listModels.mockResolvedValue({
-      models: [{ name: "qwen3:8b", digest: "local" }],
+      models: [
+        { name: "qwen3:8b", digest: "local" },
+        { name: "deepseek-v4-flash:cloud", digest: "cached-cloud" },
+        { name: "gemma4:31b-cloud", digest: "legacy-cached-cloud" },
+      ],
     });
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);
 
-    const models = await getClaudeDesktopAvailableModels(false);
+    const models = await getClaudeDesktopAvailableModels();
 
     expect(models.map((model) => model.model)).toEqual(["qwen3:8b"]);
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("keeps local models when the cloud list fails", async () => {
+  it("does not use the global cloud model list", async () => {
     listModels.mockResolvedValue({
       models: [{ name: "qwen3:8b", digest: "local" }],
     });
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetch = vi.fn().mockRejectedValue(new Error("offline"));
+    vi.stubGlobal("fetch", fetch);
 
-    const models = await getClaudeDesktopAvailableModels(true);
+    const models = await getClaudeDesktopAvailableModels();
 
     expect(models.map((model) => model.model)).toEqual(["qwen3:8b"]);
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

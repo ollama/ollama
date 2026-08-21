@@ -123,6 +123,7 @@ func DefaultClaudeDesktopModels() []ClaudeDesktopModel {
 		{Model: "kimi-k3:cloud", Description: "Long-horizon agentic reasoning with multimodal tool use", MaxOutputTokens: 262_144, RequiredPlan: "pro"},
 		{Model: "deepseek-v4-pro", Description: "High-performance coding and tool use", MaxOutputTokens: 128_000, RequiredPlan: "pro"},
 		{Model: "deepseek-v4-flash", Description: "Fast coding and agentic tool use", MaxOutputTokens: 64_000, RequiredPlan: "pro"},
+		{Model: "gemma4:31b-cloud", Description: "Agentic workflows and multimodal reasoning", MaxOutputTokens: 262_144, RequiredPlan: "free"},
 	})
 	// Preserve the proven fallback route while the endpoint remains free to
 	// move the canonical DeepSeek alias independently.
@@ -193,6 +194,9 @@ func cloneClaudeDesktopModels(models []ClaudeDesktopModel) []ClaudeDesktopModel 
 
 func newClaudeDesktopModel(name, description, requiredPlan string, maxTokens int) ClaudeDesktopModel {
 	ollamaModel := name
+	// The app-aware recommendation contract uses required_plan for cloud aliases
+	// that intentionally omit a source suffix, such as DeepSeek. Installed local
+	// models are added separately and never carry plan requirements.
 	cloud := requiredPlan != "" || modelref.HasExplicitCloudSource(ollamaModel)
 	if cloud && !modelref.HasExplicitCloudSource(ollamaModel) {
 		ollamaModel += ":cloud"

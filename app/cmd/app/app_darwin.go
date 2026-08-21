@@ -33,6 +33,7 @@ import (
 	"github.com/ollama/ollama/app/version"
 	"github.com/ollama/ollama/cmd/launch"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/internal/proxy"
 )
 
@@ -78,6 +79,8 @@ var (
 	claudeProxyListenAddr         = proxy.DefaultClaudeDesktopListenAddr
 	claudeProxyRetryWait          = 750 * time.Millisecond
 	claudeProxyRetryPoll          = 50 * time.Millisecond
+	claudeAccessRetryWait         = 3 * time.Second
+	claudeAccessRetryPoll         = 100 * time.Millisecond
 	claudeShutdownTimeout         = 30 * time.Second
 	claudeRecommendationsClient   = &http.Client{Timeout: 3 * time.Second}
 	claudeRecommendationsEndpoint = func() string {
@@ -89,7 +92,12 @@ var (
 	claudeModelsLoader    = loadClaudeDesktopModels
 	claudeAvailableModels []proxy.ClaudeDesktopModel
 	claudeModelSource     string
+
+	claudeAccessStateResolver = currentClaudeDesktopAccessState
+	claudeLocalModelsResolver = currentClaudeDesktopLocalModels
 )
+
+var errClaudeDesktopAccessUnavailable = errors.New("Ollama couldn't verify the selected models. Try again")
 
 // TODO(jmorganca): pre-create the window and pass
 // it to the webview instead of using the internal one
@@ -290,21 +298,19 @@ func startClaudeAppProxy() error {
 			claudeProxyFailurePortConflict,
 		)
 	}
-	ollamaClient := api.NewClient(ollamaURL, http.DefaultClient)
 	availableModels, activeModels, modelSource := resolveClaudeDesktopCatalog(context.Background())
+	if err := ensureClaudeDesktopModelsAvailable(context.Background(), activeModels); err != nil {
+		return setClaudeProxyFailure(err, claudeProxyFailureNone)
+	}
 	gateway, err := proxy.NewClaudeDesktop(proxy.ClaudeDesktopConfig{
-		ListenAddr:      claudeProxyListenAddr,
-		OllamaURL:       ollamaURL.String(),
-		Model:           activeModels[0].OllamaModel,
-		Models:          activeModels,
-		Logger:          slog.Default(),
-		OnCountsChanged: updateClaudeProxyMenu,
-		CloudModelsAvailable: func(ctx context.Context) bool {
-			return claudeCloudModelsAvailable(ctx, ollamaClient.CloudStatusExperimental, ollamaClient.Whoami)
-		},
-		ListLocalModels: func(ctx context.Context) ([]string, error) {
-			return claudeLocalModels(ctx, ollamaClient.List)
-		},
+		ListenAddr:         claudeProxyListenAddr,
+		OllamaURL:          ollamaURL.String(),
+		Model:              activeModels[0].OllamaModel,
+		Models:             activeModels,
+		Logger:             slog.Default(),
+		OnCountsChanged:    updateClaudeProxyMenu,
+		ResolveAccessState: claudeAccessStateResolver,
+		ListLocalModels:    claudeLocalModelsResolver,
 	})
 	if err != nil {
 		return setClaudeProxyFailure(err, claudeProxyFailureNone)
@@ -374,30 +380,52 @@ func startClaudeGateway(gateway *proxy.ClaudeDesktop) error {
 	}
 }
 
-func claudeCloudModelsAvailable(
+func resolveClaudeDesktopAccessState(
 	ctx context.Context,
 	cloudStatus func(context.Context) (*api.StatusResponse, error),
 	whoami func(context.Context) (*api.UserResponse, error),
-) bool {
-	ctx, cancel := context.WithTimeout(ctx, time.Second)
-	defer cancel()
-	status, err := cloudStatus(ctx)
-	if err != nil {
-		slog.Debug("could not check whether Ollama cloud is enabled", "error", err)
-	} else if status != nil && status.Cloud.Disabled {
-		return false
+) (proxy.ClaudeDesktopAccessState, error) {
+	state := proxy.ClaudeDesktopAccessState{
+		Cloud:   proxy.ClaudeDesktopCloudUnknown,
+		Account: proxy.ClaudeDesktopAccountUnknown,
 	}
+	statusCtx, cancel := context.WithTimeout(ctx, time.Second)
+	status, err := cloudStatus(statusCtx)
+	cancel()
+	if err != nil {
+		return state, fmt.Errorf("check whether Ollama cloud is enabled: %w", err)
+	}
+	if status != nil && status.Cloud.Disabled {
+		state.Cloud = proxy.ClaudeDesktopCloudOff
+		// Account eligibility cannot change the result while Cloud is off, so do
+		// not make a remote account request from discovery or Settings.
+		return state, nil
+	}
+	state.Cloud = proxy.ClaudeDesktopCloudOn
 
-	user, err := whoami(ctx)
+	accountCtx, cancel := context.WithTimeout(ctx, time.Second)
+	user, err := whoami(accountCtx)
+	defer cancel()
 	if err != nil {
 		var authErr api.AuthorizationError
 		if errors.As(err, &authErr) && authErr.StatusCode == http.StatusUnauthorized {
-			return false
+			state.Account = proxy.ClaudeDesktopAccountSignedOut
+			return state, nil
 		}
-		slog.Debug("could not check whether cloud models are available", "error", err)
-		return true
+		return state, fmt.Errorf("check Ollama account: %w", err)
 	}
-	return user != nil && strings.TrimSpace(user.Name) != ""
+	if user == nil || strings.TrimSpace(user.Name) == "" {
+		state.Account = proxy.ClaudeDesktopAccountSignedOut
+		return state, nil
+	}
+	state.Account = proxy.ClaudeDesktopAccountSignedIn
+	state.Plan = strings.TrimSpace(user.Plan)
+	return state, nil
+}
+
+func currentClaudeDesktopAccessState(ctx context.Context) (proxy.ClaudeDesktopAccessState, error) {
+	client := api.NewClient(envconfig.ConnectableHost(), http.DefaultClient)
+	return resolveClaudeDesktopAccessState(ctx, client.CloudStatusExperimental, client.Whoami)
 }
 
 func claudeLocalModels(
@@ -413,7 +441,10 @@ func claudeLocalModels(
 
 	names := make([]string, 0, len(response.Models)*2)
 	for _, model := range response.Models {
-		if model.RemoteModel != "" || model.RemoteHost != "" {
+		// /api/tags can include cloud placeholders. Only models with local
+		// weights qualify as installed local choices for Claude Desktop.
+		if model.RemoteModel != "" || model.RemoteHost != "" ||
+			modelref.HasExplicitCloudSource(model.Name) || modelref.HasExplicitCloudSource(model.Model) {
 			continue
 		}
 		if model.Name != "" {
@@ -430,6 +461,72 @@ func claudeLocalModels(
 		}
 	}
 	return names, nil
+}
+
+func currentClaudeDesktopLocalModels(ctx context.Context) ([]string, error) {
+	client := api.NewClient(envconfig.ConnectableHost(), http.DefaultClient)
+	return claudeLocalModels(ctx, client.List)
+}
+
+func ensureClaudeDesktopModelsAvailable(ctx context.Context, models []proxy.ClaudeDesktopModel) error {
+	deadline := time.Now().Add(claudeAccessRetryWait)
+	for {
+		state, stateErr := claudeAccessStateResolver(ctx)
+		if stateErr != nil {
+			slog.Debug("could not resolve Claude model access", "error", stateErr)
+		}
+		localNames, localErr := claudeLocalModelsResolver(ctx)
+		if localErr != nil {
+			slog.Debug("could not load local models for Claude", "error", localErr)
+		}
+		err := validateClaudeDesktopModels(models, state, localNames, localErr == nil)
+		if !errors.Is(err, errClaudeDesktopAccessUnavailable) || time.Now().After(deadline) {
+			return err
+		}
+
+		timer := time.NewTimer(claudeAccessRetryPoll)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func validateClaudeDesktopModels(models []proxy.ClaudeDesktopModel, state proxy.ClaudeDesktopAccessState, localNames []string, inventoryKnown bool) error {
+	installed := make(map[string]struct{}, len(localNames))
+	for _, name := range localNames {
+		installed[name] = struct{}{}
+	}
+
+	reasons := make(map[proxy.ClaudeDesktopAccessReason]struct{})
+	for _, model := range models {
+		_, isInstalled := installed[model.OllamaModel]
+		access := proxy.EvaluateClaudeDesktopModelAccess(model, state, isInstalled, inventoryKnown)
+		if access.Availability == proxy.ClaudeDesktopAvailabilityAvailable {
+			return nil
+		}
+		reasons[access.Reason] = struct{}{}
+	}
+
+	// Prefer the action that resolves the broadest part of the selected set.
+	if _, ok := reasons[proxy.ClaudeDesktopAccessCloudOff]; ok {
+		return errors.New("Cloud models are off. Choose an installed model in Ollama Settings")
+	}
+	if _, ok := reasons[proxy.ClaudeDesktopAccessSignInRequired]; ok {
+		return errors.New("Sign in to Ollama or choose an installed model in Ollama Settings")
+	}
+	if _, ok := reasons[proxy.ClaudeDesktopAccessUpgradeRequired]; ok {
+		return errors.New("Select another model in Settings to connect Claude")
+	}
+	if _, ok := reasons[proxy.ClaudeDesktopAccessModelNotInstalled]; ok {
+		return errors.New("Install the selected model or choose another model in Ollama Settings")
+	}
+	if _, ok := reasons[proxy.ClaudeDesktopAccessVerificationUnavailable]; ok {
+		return errClaudeDesktopAccessUnavailable
+	}
+	return errors.New("Choose at least one model in Ollama Settings")
 }
 
 func claudeGatewayPort() (string, error) {
@@ -516,6 +613,10 @@ func setClaudeGatewayInstalled(installed, restart bool) error {
 		return errors.New("Claude Desktop is not installed")
 	}
 	if installed {
+		// A failed first attempt must still expose Claude's Settings recovery UI.
+		if err := markClaudeDesktopIntegrationUsed(); err != nil {
+			return fmt.Errorf("remember Claude Desktop connection: %w", err)
+		}
 		if err := startClaudeAppProxy(); err != nil {
 			return err
 		}
@@ -526,11 +627,6 @@ func setClaudeGatewayInstalled(installed, restart bool) error {
 	}
 	if err != nil {
 		return err
-	}
-	if installed {
-		if err := markClaudeDesktopIntegrationUsed(); err != nil {
-			return fmt.Errorf("remember Claude Desktop connection: %w", err)
-		}
 	}
 	return nil
 }
@@ -564,6 +660,16 @@ func claudeGatewayStartFailed() bool {
 //export ClaudeGatewayPortConflict
 func ClaudeGatewayPortConflict() C.bool {
 	return C._Bool(claudeGatewayPortConflict())
+}
+
+//export ClaudeGatewayErrorMessage
+func ClaudeGatewayErrorMessage() *C.char {
+	claudeProxyMu.Lock()
+	defer claudeProxyMu.Unlock()
+	if claudeProxyErr == nil {
+		return C.CString("")
+	}
+	return C.CString(claudeProxyErr.Error())
 }
 
 func claudeGatewayPortConflict() bool {
@@ -604,6 +710,27 @@ func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
 	for _, model := range selectedModels {
 		selected[model.Name] = struct{}{}
 	}
+	accessState := proxy.ClaudeDesktopAccessState{
+		Cloud:   proxy.ClaudeDesktopCloudUnknown,
+		Account: proxy.ClaudeDesktopAccountUnknown,
+	}
+	var localNames []string
+	var localErr error
+	if len(availableModels) > 0 {
+		var accessErr error
+		accessState, accessErr = claudeAccessStateResolver(context.Background())
+		if accessErr != nil {
+			slog.Debug("could not resolve Claude model access for Settings", "error", accessErr)
+		}
+		localNames, localErr = claudeLocalModelsResolver(context.Background())
+		if localErr != nil {
+			slog.Debug("could not load local models for Claude Settings", "error", localErr)
+		}
+	}
+	localModels := make(map[string]struct{}, len(localNames))
+	for _, name := range localNames {
+		localModels[name] = struct{}{}
+	}
 	modelStatuses := make([]claudeDesktopModelStatus, 0, len(availableModels))
 	for _, model := range availableModels {
 		_, isSelected := selected[model.Name]
@@ -611,8 +738,17 @@ func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
 		if model.Cloud {
 			name = model.OllamaModel
 		}
+		_, installed := localModels[model.OllamaModel]
+		access := proxy.EvaluateClaudeDesktopModelAccess(model, accessState, installed, localErr == nil)
 		modelStatuses = append(modelStatuses, claudeDesktopModelStatus{
-			Name: name, DisplayName: name, Description: model.Description, Cloud: model.Cloud, Selected: isSelected,
+			Name:         name,
+			DisplayName:  name,
+			Description:  model.Description,
+			Cloud:        model.Cloud,
+			Selected:     isSelected,
+			Availability: access.Availability,
+			Reason:       access.Reason,
+			RequiredPlan: access.RequiredPlan,
 		})
 	}
 
@@ -683,13 +819,19 @@ func restartClaudeDesktopWithModels(names []string) error {
 		}
 	}
 
-	ollamaClient := api.NewClient(envconfig.ConnectableHost(), http.DefaultClient)
-	localNames, err := claudeLocalModels(context.Background(), ollamaClient.List)
-	if err != nil {
-		slog.Debug("could not load local models for Claude Desktop selection", "error", err)
+	localNames, localErr := claudeLocalModelsResolver(context.Background())
+	if localErr != nil {
+		slog.Debug("could not load local models for Claude Desktop selection", "error", localErr)
 	}
 	selected, err := selectKnownClaudeDesktopModels(available, current, localNames, names)
 	if err != nil {
+		return err
+	}
+	accessState, accessErr := claudeAccessStateResolver(context.Background())
+	if accessErr != nil {
+		slog.Debug("could not resolve Claude model access for selection", "error", accessErr)
+	}
+	if err := validateClaudeDesktopModels(selected, accessState, localNames, localErr == nil); err != nil {
 		return err
 	}
 

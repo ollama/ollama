@@ -69,7 +69,7 @@ func TestFetchClaudeDesktopModelsRejectsInvalidResponses(t *testing.T) {
 
 func TestDefaultClaudeDesktopModelsExcludeMLX(t *testing.T) {
 	models := DefaultClaudeDesktopModels()
-	if got, want := claudeDesktopModelNames(models), []string{"glm-5.2:cloud", "kimi-k3:cloud", "deepseek-v4-pro", "deepseek-v4-flash"}; !slices.Equal(got, want) {
+	if got, want := claudeDesktopModelNames(models), []string{"glm-5.2:cloud", "kimi-k3:cloud", "deepseek-v4-pro", "deepseek-v4-flash", "gemma4:31b-cloud"}; !slices.Equal(got, want) {
 		t.Fatalf("fallback models = %v, want %v", got, want)
 	}
 	for _, model := range models {

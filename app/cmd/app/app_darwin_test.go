@@ -23,11 +23,23 @@ import (
 
 func TestMain(m *testing.M) {
 	previousLoader := claudeModelsLoader
+	previousAccessResolver := claudeAccessStateResolver
+	previousLocalResolver := claudeLocalModelsResolver
 	claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
 		return proxy.DefaultClaudeDesktopModels(), "fallback"
 	}
+	claudeAccessStateResolver = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
+		return proxy.ClaudeDesktopAccessState{
+			Cloud:   proxy.ClaudeDesktopCloudOn,
+			Account: proxy.ClaudeDesktopAccountSignedIn,
+			Plan:    "pro",
+		}, nil
+	}
+	claudeLocalModelsResolver = func(context.Context) ([]string, error) { return nil, nil }
 	code := m.Run()
 	claudeModelsLoader = previousLoader
+	claudeAccessStateResolver = previousAccessResolver
+	claudeLocalModelsResolver = previousLocalResolver
 	os.Exit(code)
 }
 
@@ -238,7 +250,7 @@ func TestLoadClaudeDesktopModelsFallsBackWithoutMLX(t *testing.T) {
 	})
 
 	models, source := loadClaudeDesktopModels(context.Background())
-	if source != "fallback" || len(models) != 4 {
+	if source != "fallback" || len(models) != 5 {
 		t.Fatalf("models/source = %+v/%q", models, source)
 	}
 	for _, model := range models {
@@ -248,33 +260,33 @@ func TestLoadClaudeDesktopModelsFallsBackWithoutMLX(t *testing.T) {
 	}
 }
 
-func TestClaudeCloudModelsAvailable(t *testing.T) {
+func TestResolveClaudeDesktopAccessState(t *testing.T) {
 	tests := []struct {
 		name        string
 		cloudStatus func(context.Context) (*api.StatusResponse, error)
 		whoami      func(context.Context) (*api.UserResponse, error)
-		want        bool
+		want        proxy.ClaudeDesktopAccessState
 	}{
 		{
 			name: "signed in",
 			whoami: func(context.Context) (*api.UserResponse, error) {
-				return &api.UserResponse{Name: "parth"}, nil
+				return &api.UserResponse{Name: "parth", Plan: "pro"}, nil
 			},
-			want: true,
+			want: proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "pro"},
 		},
 		{
 			name: "signed out",
 			whoami: func(context.Context) (*api.UserResponse, error) {
 				return nil, api.AuthorizationError{StatusCode: http.StatusUnauthorized}
 			},
-			want: false,
+			want: proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedOut},
 		},
 		{
 			name: "empty account",
 			whoami: func(context.Context) (*api.UserResponse, error) {
 				return &api.UserResponse{}, nil
 			},
-			want: false,
+			want: proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedOut},
 		},
 		{
 			name: "cloud disabled",
@@ -285,7 +297,7 @@ func TestClaudeCloudModelsAvailable(t *testing.T) {
 				t.Fatal("whoami called while cloud was disabled")
 				return nil, nil
 			},
-			want: false,
+			want: proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOff, Account: proxy.ClaudeDesktopAccountUnknown},
 		},
 		{
 			name: "cloud status unavailable",
@@ -295,14 +307,14 @@ func TestClaudeCloudModelsAvailable(t *testing.T) {
 			whoami: func(context.Context) (*api.UserResponse, error) {
 				return &api.UserResponse{Name: "parth"}, nil
 			},
-			want: true,
+			want: proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudUnknown, Account: proxy.ClaudeDesktopAccountUnknown},
 		},
 		{
 			name: "account check unavailable",
 			whoami: func(context.Context) (*api.UserResponse, error) {
 				return nil, errors.New("account service unavailable")
 			},
-			want: true,
+			want: proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountUnknown},
 		},
 	}
 
@@ -314,8 +326,216 @@ func TestClaudeCloudModelsAvailable(t *testing.T) {
 					return &api.StatusResponse{}, nil
 				}
 			}
-			if got := claudeCloudModelsAvailable(context.Background(), cloudStatus, tt.whoami); got != tt.want {
-				t.Fatalf("claudeCloudModelsAvailable() = %v, want %v", got, tt.want)
+			got, _ := resolveClaudeDesktopAccessState(context.Background(), cloudStatus, tt.whoami)
+			if got != tt.want {
+				t.Fatalf("resolveClaudeDesktopAccessState() = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateClaudeDesktopModels(t *testing.T) {
+	local := proxy.ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "qwen3:8b"}})
+	free := proxy.ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "gemma4:31b-cloud", RequiredPlan: "free"}})
+	pro := proxy.ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "glm-5.2:cloud", RequiredPlan: "pro"}})
+
+	tests := []struct {
+		name           string
+		models         []proxy.ClaudeDesktopModel
+		state          proxy.ClaudeDesktopAccessState
+		localNames     []string
+		inventoryKnown bool
+		wantError      string
+	}{
+		{
+			name:           "installed local works with cloud off",
+			models:         local,
+			state:          proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOff},
+			localNames:     []string{"qwen3:8b"},
+			inventoryKnown: true,
+		},
+		{
+			name:           "free cloud model works for free account",
+			models:         free,
+			state:          proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "free"},
+			inventoryKnown: true,
+		},
+		{
+			name:           "cloud disabled by configuration or environment",
+			models:         free,
+			state:          proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOff},
+			inventoryKnown: true,
+			wantError:      "Cloud models are off",
+		},
+		{
+			name:           "signed out",
+			models:         free,
+			state:          proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedOut},
+			inventoryKnown: true,
+			wantError:      "Sign in to Ollama",
+		},
+		{
+			name:           "plan upgrade required",
+			models:         pro,
+			state:          proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "free"},
+			inventoryKnown: true,
+			wantError:      "Select another model in Settings",
+		},
+		{
+			name:           "local model missing",
+			models:         local,
+			inventoryKnown: true,
+			wantError:      "Install the selected model",
+		},
+		{
+			name:      "access unavailable",
+			models:    free,
+			wantError: "couldn't verify",
+		},
+		{
+			name:           "empty selection",
+			inventoryKnown: true,
+			wantError:      "Choose at least one model",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateClaudeDesktopModels(tt.models, tt.state, tt.localNames, tt.inventoryKnown)
+			if tt.wantError == "" {
+				if err != nil {
+					t.Fatalf("validateClaudeDesktopModels() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("validateClaudeDesktopModels() error = %v, want %q", err, tt.wantError)
+			}
+		})
+	}
+}
+
+func TestEnsureClaudeDesktopModelsAvailableRetriesStartupRace(t *testing.T) {
+	previousAccessResolver := claudeAccessStateResolver
+	previousLocalResolver := claudeLocalModelsResolver
+	previousRetryWait := claudeAccessRetryWait
+	previousRetryPoll := claudeAccessRetryPoll
+	claudeAccessRetryWait = time.Second
+	claudeAccessRetryPoll = time.Millisecond
+	calls := 0
+	claudeAccessStateResolver = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
+		calls++
+		if calls == 1 {
+			return proxy.ClaudeDesktopAccessState{}, errors.New("server starting")
+		}
+		return proxy.ClaudeDesktopAccessState{
+			Cloud:   proxy.ClaudeDesktopCloudOn,
+			Account: proxy.ClaudeDesktopAccountSignedIn,
+			Plan:    "free",
+		}, nil
+	}
+	claudeLocalModelsResolver = func(context.Context) ([]string, error) { return nil, nil }
+	t.Cleanup(func() {
+		claudeAccessStateResolver = previousAccessResolver
+		claudeLocalModelsResolver = previousLocalResolver
+		claudeAccessRetryWait = previousRetryWait
+		claudeAccessRetryPoll = previousRetryPoll
+	})
+
+	models := proxy.ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{
+		Model:        "gemma4:31b-cloud",
+		RequiredPlan: "free",
+	}})
+	if err := ensureClaudeDesktopModelsAvailable(context.Background(), models); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("access checks = %d, want 2", calls)
+	}
+}
+
+func TestSetClaudeGatewayInstalledRejectsEmptyUsableCatalog(t *testing.T) {
+	tests := []struct {
+		name      string
+		state     proxy.ClaudeDesktopAccessState
+		selection []string
+		wantError string
+	}{
+		{
+			name: "signed out",
+			state: proxy.ClaudeDesktopAccessState{
+				Cloud:   proxy.ClaudeDesktopCloudOn,
+				Account: proxy.ClaudeDesktopAccountSignedOut,
+			},
+			wantError: "Sign in to Ollama",
+		},
+		{
+			name:      "OLLAMA_NO_CLOUD or Cloud setting disabled",
+			state:     proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOff},
+			wantError: "Cloud models are off",
+		},
+		{
+			name: "free account with only Pro selected",
+			state: proxy.ClaudeDesktopAccessState{
+				Cloud:   proxy.ClaudeDesktopCloudOn,
+				Account: proxy.ClaudeDesktopAccountSignedIn,
+				Plan:    "free",
+			},
+			selection: []string{"glm-5.2:cloud"},
+			wantError: "Select another model in Settings",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			previousStore := appStore
+			appStore = &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
+			if len(tt.selection) > 0 {
+				if err := launch.SaveClaudeDesktopModels(tt.selection); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			previousInstalled := claudeDesktopInstalled
+			previousAddr := claudeProxyListenAddr
+			previousDesktop := claudeDesktop
+			previousAccessResolver := claudeAccessStateResolver
+			previousLocalResolver := claudeLocalModelsResolver
+			claudeDesktopInstalled = func() bool { return true }
+			claudeProxyListenAddr = "127.0.0.1:0"
+			fake := &fakeClaudeDesktopController{}
+			claudeDesktop = fake
+			claudeAccessStateResolver = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
+				return tt.state, nil
+			}
+			claudeLocalModelsResolver = func(context.Context) ([]string, error) { return nil, nil }
+			t.Cleanup(func() {
+				stopClaudeAppProxy()
+				_ = appStore.Close()
+				appStore = previousStore
+				claudeDesktopInstalled = previousInstalled
+				claudeProxyListenAddr = previousAddr
+				claudeDesktop = previousDesktop
+				claudeAccessStateResolver = previousAccessResolver
+				claudeLocalModelsResolver = previousLocalResolver
+				claudeProxyMu.Lock()
+				clearClaudeProxyFailure()
+				claudeProxyMu.Unlock()
+			})
+
+			err := setClaudeGatewayInstalled(true, false)
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("setClaudeGatewayInstalled() error = %v, want %q", err, tt.wantError)
+			}
+			if fake.installed {
+				t.Fatal("Claude profile changed without a usable model")
+			}
+			if claudeAppProxy != nil {
+				t.Fatal("Claude gateway started without a usable model")
+			}
+			if !hasUsedClaudeDesktopIntegration() {
+				t.Fatal("failed enable did not expose Claude recovery settings")
 			}
 		})
 	}
@@ -328,6 +548,8 @@ func TestClaudeLocalModels(t *testing.T) {
 			{Name: "alias:latest", Model: "original:latest"},
 			{Name: "remote-model:latest", Model: "remote-model:latest", RemoteModel: "upstream/model"},
 			{Name: "remote-host:latest", Model: "remote-host:latest", RemoteHost: "https://ollama.com"},
+			{Name: "cloud-source:cloud", Model: "cloud-source:cloud"},
+			{Name: "legacy-cloud:31b-cloud", Model: "legacy-cloud:31b-cloud"},
 		}}, nil
 	})
 	if err != nil {
@@ -524,6 +746,7 @@ func TestClaudeGatewayDoesNotReportPortConflictWithoutClaude(t *testing.T) {
 }
 
 func TestClaudeGatewayRecoversAfterPortConflict(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	setClaudeProxyRetry(t, 20*time.Millisecond, 5*time.Millisecond)
 	conflict := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(conflict.Close)
@@ -568,6 +791,7 @@ func TestClaudeGatewayRecoversAfterPortConflict(t *testing.T) {
 }
 
 func TestClaudeGatewayRejectsSpoofedExistingGateway(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	setClaudeProxyRetry(t, 20*time.Millisecond, 5*time.Millisecond)
 	spoof := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("X-Ollama-Claude-Gateway", "1")
@@ -594,6 +818,7 @@ func TestClaudeGatewayRejectsSpoofedExistingGateway(t *testing.T) {
 }
 
 func TestClaudeGatewayWaitsForPreviousListenerToExit(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	setClaudeProxyRetry(t, 500*time.Millisecond, 5*time.Millisecond)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

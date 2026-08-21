@@ -66,7 +66,6 @@ export default function Settings() {
   const {
     cloudDisabled,
     cloudStatus,
-    isKnown: cloudStatusKnown,
     isLoading: cloudStatusLoading,
   } = useCloudStatus();
 
@@ -589,11 +588,7 @@ export default function Settings() {
             </div>
           </div>
 
-          <ClaudeDesktopModelsSettings
-            includeCloudModels={
-              isAuthenticated && cloudStatusKnown && !cloudDisabled
-            }
-          />
+          <ClaudeDesktopModelsSettings />
 
           {/* Agent Mode */}
           {window.OLLAMA_TOOLS && (
