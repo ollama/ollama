@@ -7,10 +7,7 @@ import {
   type IntegrationStatuses,
 } from "@/api";
 import { INTEGRATION_ICONS } from "@/lib/launchCommands";
-import {
-  isClaudeConnectionComplete,
-  shouldShowClaudeConnectedIntro,
-} from "@/lib/claudeDesktop";
+import { isClaudeConnectionComplete } from "@/lib/claudeDesktop";
 import { isWindowsPlatform } from "@/lib/platform";
 import type { ClaudeDesktopStatus } from "@/types/webview";
 import { copyTextToClipboard } from "@/utils/clipboard";
@@ -51,6 +48,20 @@ const CLAUDE_CONNECTED_INTRO_KEY = "ollama.claude-connected-intro-seen";
 const MINIMUM_APP_WINDOW_HEIGHT = 660;
 const TERMINAL_ROW_HEIGHT_WITH_GAP = 80;
 const TERMINAL_LIST_RESERVED_HEIGHT = 296;
+
+function hasSeenClaudeConnectedIntro() {
+  return window.localStorage.getItem(CLAUDE_CONNECTED_INTRO_KEY) === "true";
+}
+
+function setClaudeConnection(enabled: boolean, deferLaunch = false) {
+  if (enabled && deferLaunch && window.prepareClaudeDesktopConnection) {
+    return window.prepareClaudeDesktopConnection();
+  }
+  if (!window.setClaudeDesktopConnected) {
+    throw new Error("Claude Desktop connection is unavailable");
+  }
+  return window.setClaudeDesktopConnected(enabled);
+}
 
 export function terminalRowsForWindowHeight(height: number): number {
   return Math.max(
@@ -454,44 +465,28 @@ export function ConnectAppsScreen({
     [],
   );
 
-  const hasSeenClaudeConnectedIntro = useCallback(() => {
-    try {
-      return window.localStorage.getItem(CLAUDE_CONNECTED_INTRO_KEY) === "true";
-    } catch {
-      return false;
-    }
-  }, []);
-
-  const showFirstClaudeConnectedIntro = useCallback(
-    (status: ClaudeDesktopStatus) => {
-      if (claudeConnectedIntroPending.current) return true;
-      const introSeen = hasSeenClaudeConnectedIntro();
-
-      if (!shouldShowClaudeConnectedIntro(status, introSeen)) return false;
-
-      claudeConnectedIntroPending.current = true;
-      setShowClaudeConnectedIntro(true);
-      window.activateOllama?.();
-      return true;
-    },
-    [hasSeenClaudeConnectedIntro],
-  );
-
   const finishClaudeConnection = useCallback(
     async (status: ClaudeDesktopStatus) => {
-      if (showFirstClaudeConnectedIntro(status)) return null;
+      if (claudeConnectedIntroPending.current) return null;
+      if (
+        status.connected &&
+        !status.startFailed &&
+        !hasSeenClaudeConnectedIntro()
+      ) {
+        claudeConnectedIntroPending.current = true;
+        setShowClaudeConnectedIntro(true);
+        window.activateOllama?.();
+        return null;
+      }
+
       return openConnectedClaude(status);
     },
-    [openConnectedClaude, showFirstClaudeConnectedIntro],
+    [openConnectedClaude],
   );
 
-  const dismissClaudeConnectedIntro = useCallback(async () => {
+  const dismissClaudeConnectedIntro = async () => {
     claudeConnectedIntroPending.current = false;
-    try {
-      window.localStorage.setItem(CLAUDE_CONNECTED_INTRO_KEY, "true");
-    } catch {
-      // The confirmation remains one-time for this mounted screen.
-    }
+    window.localStorage.setItem(CLAUDE_CONNECTED_INTRO_KEY, "true");
     setShowClaudeConnectedIntro(false);
     if (!window.setClaudeDesktopConnected) return;
     setClaudePhase("launching");
@@ -504,20 +499,7 @@ export function ConnectAppsScreen({
     } finally {
       setClaudePhase("idle");
     }
-  }, []);
-
-  const setClaudeConnection = useCallback(
-    (enabled: boolean, deferLaunch = false) => {
-      if (enabled && deferLaunch && window.prepareClaudeDesktopConnection) {
-        return window.prepareClaudeDesktopConnection();
-      }
-      if (!window.setClaudeDesktopConnected) {
-        throw new Error("Claude Desktop connection is unavailable");
-      }
-      return window.setClaudeDesktopConnected(enabled);
-    },
-    [],
-  );
+  };
 
   useEffect(() => {
     void refreshClaudeStatus();
@@ -632,12 +614,7 @@ export function ConnectAppsScreen({
       active = false;
       window.clearInterval(interval);
     };
-  }, [
-    claudePhase,
-    finishClaudeConnection,
-    hasSeenClaudeConnectedIntro,
-    setClaudeConnection,
-  ]);
+  }, [claudePhase, finishClaudeConnection]);
 
   const copyLaunchCommand = async (item: IntegrationStatus) => {
     if (item.command && (await copyTextToClipboard(item.command))) {

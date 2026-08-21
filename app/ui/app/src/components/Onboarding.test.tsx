@@ -9,10 +9,7 @@ import {
   terminalRowsForWindowHeight,
   WelcomeScreen,
 } from "./Onboarding";
-import {
-  isClaudeConnectionComplete,
-  shouldShowClaudeConnectedIntro,
-} from "@/lib/claudeDesktop";
+import { isClaudeConnectionComplete } from "@/lib/claudeDesktop";
 import { isWindowsPlatform } from "@/lib/platform";
 import {
   authenticationTimeoutAction,
@@ -130,14 +127,6 @@ describe("Onboarding", () => {
     expect(
       isClaudeConnectionComplete(false, { ...status, connected: false }),
     ).toBe(true);
-    expect(shouldShowClaudeConnectedIntro(status, false)).toBe(true);
-    expect(shouldShowClaudeConnectedIntro(status, true)).toBe(false);
-    expect(
-      shouldShowClaudeConnectedIntro({ ...status, connected: false }, false),
-    ).toBe(false);
-    expect(
-      shouldShowClaudeConnectedIntro({ ...status, startFailed: true }, false),
-    ).toBe(false);
   });
 
   it("opens the device connection flow without relaunching the app", () => {
