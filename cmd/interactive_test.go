@@ -114,3 +114,21 @@ func TestExtractFileDataWAV(t *testing.T) {
 	assert.Len(t, imgs, 1)
 	assert.Equal(t, "before  after", cleaned)
 }
+
+func TestNormalizeFilePath(t *testing.T) {
+	// Test escaped characters from drag and drop in terminal
+	escapedPath := `/Users/ollama/Library/Mobile\ Documents/com\~apple\~CloudDocs/screenshots/CleanShot\ 2025-04-17\ at\ 21.26.40\@2x.png`
+	expected := `/Users/ollama/Library/Mobile Documents/com~apple~CloudDocs/screenshots/CleanShot 2025-04-17 at 21.26.40@2x.png`
+	assert.Equal(t, expected, normalizeFilePath(escapedPath))
+
+	// Test special escaped symbols
+	escapedSymbols := `path/to/file\ \#1\!\ \&\ \$test.png`
+	expectedSymbols := `path/to/file #1! & $test.png`
+	assert.Equal(t, expectedSymbols, normalizeFilePath(escapedSymbols))
+
+	// Test home directory expansion
+	if home, err := os.UserHomeDir(); err == nil {
+		homePath := `~/Pictures/photo.png`
+		assert.Equal(t, filepath.Join(home, "Pictures/photo.png"), normalizeFilePath(homePath))
+	}
+}
