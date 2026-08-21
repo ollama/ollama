@@ -6,7 +6,7 @@ import { getChat } from "@/api";
 import { Link } from "@/components/ui/link";
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { ChatsResponse } from "@/gotypes";
-import { CogIcon } from "@heroicons/react/24/outline";
+import { AppNavigation } from "@/components/AppSidebar";
 
 // there's a hidden debug feature to copy a chat's data to the clipboard by
 // holding shift and clicking this many times within this many seconds
@@ -258,40 +258,10 @@ export function ChatSidebar({ currentChatId }: ChatSidebarProps) {
     );
   }
 
-  const isWindows = navigator.platform.toLowerCase().includes("win");
-
   return (
     <nav className="flex flex-1 flex-col min-h-0 select-none">
       <header className="flex flex-col gap-0.5 px-4 pb-2">
-        <Link
-          href="/c/new"
-          mask={{ to: "/" }}
-          className={`flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 dark:text-neutral-100 ${
-            currentChatId === "new" ? "bg-neutral-100 dark:bg-neutral-800" : ""
-          }`}
-          draggable={false}
-        >
-          <svg
-            className="h-5 w-5 fill-current"
-            viewBox="0 0 24 24"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            <path d="M17.0859 3.39949L15.2135 5.27196H7.27028C5.78649 5.27196 4.94684 6.11336 4.94684 7.59716V16.664C4.94684 18.1558 5.78649 18.9892 7.27028 18.9892H16.3406C17.8324 18.9892 18.6623 18.1558 18.6623 16.664V8.79514L20.5428 6.9115C20.567 7.11532 20.5773 7.33066 20.5773 7.55419V16.7149C20.5773 19.4069 19.0818 20.9024 16.3898 20.9024H7.22107C4.53708 20.9024 3.03357 19.4069 3.03357 16.7149V7.55419C3.03357 4.8622 4.53708 3.35869 7.22107 3.35869H16.3898C16.6329 3.35869 16.8662 3.37094 17.0859 3.39949Z" />
-            <path d="M9.92714 14.381L11.914 13.5403L20.8312 4.63114L19.3404 3.1581L10.433 12.0655L9.55234 13.9964C9.45664 14.2169 9.70293 14.4714 9.92714 14.381ZM21.5767 3.89364L22.2588 3.19384C22.6347 2.80184 22.6435 2.2663 22.2711 1.90536L22.0148 1.64287C21.6822 1.31377 21.1334 1.36513 20.7689 1.72158L20.0859 2.39833L21.5767 3.89364Z" />
-          </svg>
-          <span className="truncate">New Chat</span>
-        </Link>
-        {isWindows && (
-          <Link
-            href="/settings"
-            className={`flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 dark:text-neutral-300`}
-            draggable={false}
-          >
-            <CogIcon className="h-5 w-5 stroke-current" />
-            <span className="truncate">Settings</span>
-          </Link>
-        )}
+        <AppNavigation current="chat" />
       </header>
       <div className="flex flex-1 flex-col px-4 py-1 overflow-y-auto overscroll-auto scrollbar-gutter">
         <div className="flex flex-col gap-3 pt-4">

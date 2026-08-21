@@ -490,6 +490,13 @@ func TestClaudeDesktopWindowsOpenDoesNotFallBackToClaudeCommand(t *testing.T) {
 	}
 }
 
+func TestClaudeDesktopDarwinOpenTargetsDesktopApp(t *testing.T) {
+	path := "/Applications/Claude.app"
+	if got := claudeDesktopDarwinOpenArgs(path); len(got) != 1 || got[0] != path {
+		t.Fatalf("claudeDesktopDarwinOpenArgs(%q) = %q, want explicit app path", path, got)
+	}
+}
+
 func TestClaudeDesktopConfigureIgnoresCloudAPIKey(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
@@ -973,6 +980,24 @@ func TestClaudeDesktopSetInstalledFromDesktopDoesNotOpenStoppedAppWhenDisabled(t
 	}
 	if c.AutodiscoveryConfigured() {
 		t.Fatal("Claude gateway remains configured after disabling")
+	}
+}
+
+func TestOpenClaudeDesktop(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	withClaudeDesktopPlatform(t, "darwin")
+	openCalls := 0
+	withClaudeDesktopProcessHooks(t,
+		func() bool { return false },
+		func() error { t.Fatal("opening Claude should not quit it"); return nil },
+		func() error { openCalls++; return nil },
+	)
+
+	if err := OpenClaudeDesktop(); err != nil {
+		t.Fatalf("OpenClaudeDesktop returned error: %v", err)
+	}
+	if openCalls != 1 {
+		t.Fatalf("open calls = %d, want 1", openCalls)
 	}
 }
 

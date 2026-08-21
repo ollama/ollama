@@ -18,6 +18,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/app/store"
 	"github.com/ollama/ollama/app/updater"
+	"github.com/ollama/ollama/cmd/launch"
 )
 
 func TestHandlePostApiSettings(t *testing.T) {
@@ -116,6 +117,92 @@ func TestHandlePostApiSettings(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestGetIntegrationStatuses(t *testing.T) {
+	server := &Server{
+		ClaudeDesktopInstalled: func() bool {
+			return true
+		},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/integrations", nil)
+	rr := httptest.NewRecorder()
+
+	if err := server.getIntegrationStatuses(rr, req); err != nil {
+		t.Fatalf("getIntegrationStatuses() error = %v", err)
+	}
+
+	var got []struct {
+		ID        string `json:"id"`
+		Installed *bool  `json:"installed"`
+		Command   string `json:"command"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if len(got) < 5 {
+		t.Fatalf("got %d integrations, want the full registry", len(got))
+	}
+	wantPrefix := []string{"claude", "codex", "openclaw", "opencode", "droid", "pi", "cline"}
+	if runtime.GOOS == "darwin" {
+		if got[0].ID != "claude-desktop" || got[0].Installed == nil || !*got[0].Installed || got[0].Command != "" {
+			t.Fatalf("first integration = %+v, want command-free Claude Desktop connect", got[0])
+		}
+		wantPrefix = append([]string{"claude-desktop"}, wantPrefix...)
+	}
+	for i, want := range wantPrefix {
+		if got[i].ID != want {
+			t.Fatalf("integration %d = %q, want launcher menu order entry %q", i, got[i].ID, want)
+		}
+	}
+	byID := make(map[string]struct {
+		Installed *bool
+		Command   string
+	}, len(got))
+	for _, item := range got {
+		byID[item.ID] = struct {
+			Installed *bool
+			Command   string
+		}{item.Installed, item.Command}
+	}
+
+	if runtime.GOOS != "darwin" {
+		if _, ok := byID["claude-desktop"]; ok {
+			t.Fatal("Claude Desktop should not be exposed on Windows")
+		}
+	}
+	for name, item := range byID {
+		if name != "claude-desktop" && item.Installed != nil {
+			t.Errorf("%s should not include unused install status", name)
+		}
+	}
+	if item, ok := byID["claude"]; !ok || item.Command != "ollama launch claude" {
+		t.Fatal("Claude Code should include its launch command")
+	}
+	if _, ok := byID["chatgpt"]; ok {
+		t.Fatal("ChatGPT should be excluded from onboarding integrations")
+	}
+	wantCount := len(launch.ListIntegrationInfos()) // Terminal replaces omitted ChatGPT.
+	if runtime.GOOS == "darwin" {
+		wantCount++ // Claude Desktop is also available on macOS.
+	}
+	if len(got) != wantCount {
+		t.Fatalf("got %d integrations, want %d launcher entries", len(got), wantCount)
+	}
+	terminal := got[len(got)-1]
+	if terminal.ID != "terminal" || terminal.Installed != nil || terminal.Command != "ollama" {
+		t.Fatalf("last integration = %+v, want Terminal without install status", terminal)
+	}
+}
+
+func TestSupportsClaudeDesktopIntegration(t *testing.T) {
+	if !supportsClaudeDesktopIntegration("darwin") {
+		t.Fatal("Claude Desktop should be available on macOS")
+	}
+	if supportsClaudeDesktopIntegration("windows") {
+		t.Fatal("Claude Desktop should be hidden on Windows")
 	}
 }
 

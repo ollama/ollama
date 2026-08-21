@@ -181,6 +181,48 @@ func TestSetClaudeGatewayInstalledRejectsMissingClaude(t *testing.T) {
 	}
 }
 
+func TestClaudeDesktopConnectionStatusReportsMissingApp(t *testing.T) {
+	previousInstalled := claudeDesktopInstalled
+	claudeDesktopInstalled = func() bool { return false }
+	t.Cleanup(func() {
+		claudeDesktopInstalled = previousInstalled
+	})
+
+	status := getClaudeDesktopConnectionStatus()
+	if status.Installed || status.Configured || status.Connected {
+		t.Fatalf("Claude status = %+v, want missing and disconnected", status)
+	}
+	if err := setClaudeDesktopConnection(true); err == nil || !strings.Contains(err.Error(), "not installed") {
+		t.Fatalf("setClaudeDesktopConnection error = %v, want missing Claude error", err)
+	}
+	if err := prepareClaudeDesktopConnection(); err == nil || !strings.Contains(err.Error(), "not installed") {
+		t.Fatalf("prepareClaudeDesktopConnection error = %v, want missing Claude error", err)
+	}
+}
+
+func TestClaudeDesktopConnectionStatusSeparatesConfigurationFromGatewayHealth(t *testing.T) {
+	status := claudeDesktopConnectionStatus(true, true, false, errors.New("gateway failed"))
+	if !status.Configured || status.Connected || !status.StartFailed {
+		t.Fatalf("Claude status = %+v, want configured with failed gateway", status)
+	}
+}
+
+func TestClaudeDesktopInstallResultFromCode(t *testing.T) {
+	for _, tt := range []struct {
+		code int
+		want claudeDesktopInstallResult
+	}{
+		{code: 0, want: claudeDesktopInstallCancelled},
+		{code: 1, want: claudeDesktopInstallerOpened},
+		{code: 2, want: claudeDesktopInstallFailed},
+		{code: 99, want: claudeDesktopInstallFailed},
+	} {
+		if got := claudeDesktopInstallResultFromCode(tt.code); got != tt.want {
+			t.Errorf("claudeDesktopInstallResultFromCode(%d) = %q, want %q", tt.code, got, tt.want)
+		}
+	}
+}
+
 func TestClaudeGatewayRejectsOllamaHostPortConflict(t *testing.T) {
 	t.Setenv("OLLAMA_HOST", "0.0.0.0:11435")
 

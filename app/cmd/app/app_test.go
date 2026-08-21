@@ -94,7 +94,9 @@ func TestRunInitialWindowsUIWithBareURL(t *testing.T) {
 				t.Fatalf("dispatchURLSchemeRequest() error = %v", err)
 			}
 		},
-		func() { onboardingCalls++ },
+		func(path string) {
+			onboardingCalls++
+		},
 	)
 
 	if urlCalls != 1 {
@@ -108,5 +110,31 @@ func TestRunInitialWindowsUIWithBareURL(t *testing.T) {
 	}
 	if onboardingCalls != 0 {
 		t.Errorf("onboarding opened %d times, want 0", onboardingCalls)
+	}
+}
+
+func TestRunInitialWindowsUIRoutesInteractiveLaunch(t *testing.T) {
+	for _, tt := range []struct {
+		name           string
+		showOnboarding bool
+		wantPath       string
+	}{
+		{name: "fresh install preserves onboarding", showOnboarding: true, wantPath: "/"},
+		{name: "returning launch opens apps", wantPath: "/connect"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotPath string
+			runInitialWindowsUI(
+				false,
+				tt.showOnboarding,
+				"",
+				func() { t.Fatal("unexpected hidden startup") },
+				func(string) { t.Fatal("unexpected URL handling") },
+				func(path string) { gotPath = path },
+			)
+			if gotPath != tt.wantPath {
+				t.Fatalf("initial UI path = %q, want %q", gotPath, tt.wantPath)
+			}
+		})
 	}
 }

@@ -114,6 +114,10 @@ func (*appCallbacks) UIRunning() bool {
 	return wv.IsRunning()
 }
 
+func (*appCallbacks) UIOnboarding() bool {
+	return wv.OnboardingActive()
+}
+
 func (app *appCallbacks) Quit() {
 	app.t.Quit()
 	wv.Terminate()
@@ -197,8 +201,8 @@ func osRun(shutdown func(), hasCompletedFirstRun, startHidden, showOnboarding bo
 			}
 		}
 	}
-	runInitialWindowsUI(startHidden, showOnboarding, urlSchemeRequest, startHiddenTasks, handleURLSchemeInCurrentInstance, func() {
-		ptr := wv.Run("/")
+	runInitialWindowsUI(startHidden, showOnboarding, urlSchemeRequest, startHiddenTasks, handleURLSchemeInCurrentInstance, func(path string) {
+		ptr := wv.Run(path)
 
 		// Set the window icon using the tray icon
 		if ptr != nil {

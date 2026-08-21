@@ -88,6 +88,11 @@ func ShowUI() {
 	openUI("/")
 }
 
+//export IsOnboardingActive
+func IsOnboardingActive() C.bool {
+	return C._Bool(wv.OnboardingActive())
+}
+
 func openUI(path string) {
 	if wv.IsRunning() && wv.webview != nil {
 		showWindow(wv.webview.Window())
@@ -453,6 +458,74 @@ func claudeGatewayPortConflict() bool {
 	claudeProxyMu.Lock()
 	defer claudeProxyMu.Unlock()
 	return claudeProxyFail == claudeProxyFailurePortConflict
+}
+
+func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
+	claudeProxyMu.Lock()
+	proxyErr := claudeProxyErr
+	claudeProxyMu.Unlock()
+
+	installed := claudeDesktopInstalled()
+	configured := installed && claudeDesktop.UsesOllamaGateway()
+	return claudeDesktopConnectionStatus(installed, configured, launch.ClaudeDesktopRunning(), proxyErr)
+}
+
+func claudeDesktopConnectionStatus(installed, configured, running bool, proxyErr error) claudeDesktopStatus {
+	return claudeDesktopStatus{
+		Installed:   installed,
+		Configured:  configured,
+		Connected:   configured && proxyErr == nil,
+		Running:     running,
+		StartFailed: proxyErr != nil,
+	}
+}
+
+func setClaudeDesktopConnection(enabled bool) error {
+	if !claudeDesktopInstalled() {
+		return errors.New("Claude Desktop is not installed")
+	}
+	return setClaudeGatewayInstalled(enabled, launch.ClaudeDesktopRunning())
+}
+
+func prepareClaudeDesktopConnection() error {
+	if !claudeDesktopInstalled() {
+		return errors.New("Claude Desktop is not installed")
+	}
+	if err := startClaudeAppProxy(); err != nil {
+		return err
+	}
+	err := claudeDesktop.ConfigureAutodiscovery()
+	if !claudeDesktop.UsesOllamaGateway() {
+		stopClaudeAppProxy()
+	}
+	return err
+}
+
+func openClaudeDesktopApplication() error {
+	return launch.OpenClaudeDesktop()
+}
+
+func requestClaudeDesktopInstall() claudeDesktopInstallResult {
+	return claudeDesktopInstallResultFromCode(int(C.installClaudeDesktop()))
+}
+
+func getShowAppsInMenu() bool {
+	return bool(C.ShowAppsInMenu())
+}
+
+func setShowAppsInMenu(visible bool) {
+	C.SetShowAppsInMenu(C._Bool(visible))
+}
+
+func claudeDesktopInstallResultFromCode(code int) claudeDesktopInstallResult {
+	switch code {
+	case int(C.ClaudeInstallerOpened):
+		return claudeDesktopInstallerOpened
+	case int(C.ClaudeInstallCancelled):
+		return claudeDesktopInstallCancelled
+	default:
+		return claudeDesktopInstallFailed
+	}
 }
 
 //export RefreshClaudeProxyMenu

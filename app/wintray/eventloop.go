@@ -78,9 +78,9 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 			t.app.Quit()
 		case updateMenuID:
 			t.app.DoUpdate()
-		case openUIMenuID:
+		case openAppsMenuID:
 			// UI must be initialized on this thread so don't use the callbacks
-			t.app.UIRun("/")
+			t.app.UIRun("/connect")
 		case settingsUIMenuID:
 			// UI must be initialized on this thread so don't use the callbacks
 			t.app.UIRun("/settings")
@@ -191,11 +191,11 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 }
 
 func focusUI(app AppCallbacks) {
-	if app.UIRunning() {
+	if app.UIRunning() && app.UIOnboarding() {
 		app.UIShow()
 		return
 	}
-	app.UIRun("/")
+	app.UIRun("/connect")
 }
 
 func (t *winTray) Quit() {

@@ -31,6 +31,7 @@ import (
 	"github.com/ollama/ollama/app/updater"
 	"github.com/ollama/ollama/app/version"
 	ollamaAuth "github.com/ollama/ollama/auth"
+	"github.com/ollama/ollama/cmd/launch"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
@@ -110,8 +111,9 @@ type Server struct {
 	Dev bool
 
 	// Updater for checking and downloading updates
-	Updater             *updater.Updater
-	UpdateAvailableFunc func()
+	Updater                *updater.Updater
+	UpdateAvailableFunc    func()
+	ClaudeDesktopInstalled func() bool
 }
 
 func (s *Server) log() *slog.Logger {
@@ -292,6 +294,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/settings", handle(s.settings))
 	mux.Handle("GET /api/v1/cloud", handle(s.getCloudSetting))
 	mux.Handle("POST /api/v1/cloud", handle(s.cloudSetting))
+	mux.Handle("GET /api/v1/integrations", handle(s.getIntegrationStatuses))
 
 	// Ollama proxy endpoints
 	ollamaProxy := s.ollamaProxy()
@@ -312,6 +315,76 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("DELETE /", s.appHandler())
 
 	return mux
+}
+
+func supportsClaudeDesktopIntegration(goos string) bool {
+	return goos == "darwin"
+}
+
+func (s *Server) getIntegrationStatuses(w http.ResponseWriter, _ *http.Request) error {
+	type integrationStatus struct {
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Installed   *bool  `json:"installed,omitempty"`
+		Command     string `json:"command,omitempty"`
+	}
+
+	infos := launch.ListIntegrationInfos()
+	statuses := make([]integrationStatus, 0, len(infos)+2)
+	if supportsClaudeDesktopIntegration(runtime.GOOS) {
+		var claudeDesktopInstalled bool
+		if s.ClaudeDesktopInstalled != nil {
+			claudeDesktopInstalled = s.ClaudeDesktopInstalled()
+		} else {
+			claudeDesktopInstalled = launch.IsIntegrationInstalled("claude-desktop")
+		}
+		statuses = append(statuses, integrationStatus{
+			ID:          "claude-desktop",
+			Name:        "Claude",
+			Description: "Use Ollama models in Claude Desktop",
+			Installed:   &claudeDesktopInstalled,
+		})
+	}
+
+	byName := make(map[string]launch.IntegrationInfo, len(infos))
+	for _, info := range infos {
+		byName[info.Name] = info
+	}
+	// Apps prioritizes the primary terminal agents; unlisted entries retain launcher order.
+	preferredOrder := []string{"claude", "codex", "openclaw", "opencode", "droid", "pi", "cline"}
+	seen := make(map[string]bool, len(preferredOrder))
+	orderedInfos := make([]launch.IntegrationInfo, 0, len(infos))
+	for _, name := range preferredOrder {
+		if info, ok := byName[name]; ok {
+			orderedInfos = append(orderedInfos, info)
+			seen[name] = true
+		}
+	}
+	for _, info := range infos {
+		if info.Name == "chatgpt" || seen[info.Name] {
+			continue
+		}
+		orderedInfos = append(orderedInfos, info)
+	}
+
+	for _, info := range orderedInfos {
+		statuses = append(statuses, integrationStatus{
+			ID:          info.Name,
+			Name:        info.DisplayName,
+			Description: info.Description,
+			Command:     "ollama launch " + info.Name,
+		})
+	}
+
+	statuses = append(statuses, integrationStatus{
+		ID:          "terminal",
+		Name:        "Terminal",
+		Description: "Run local models from your terminal",
+		Command:     "ollama",
+	})
+
+	return json.NewEncoder(w).Encode(statuses)
 }
 
 // handleError renders appropriate error responses based on request type

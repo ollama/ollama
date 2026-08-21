@@ -26,6 +26,7 @@ extern void Restart();
 // extern void Quit();
 void StartUI(const char *path);
 void ShowUI();
+bool IsOnboardingActive(void);
 void StopUI();
 void StartUpdate();
 void darwinStartHiddenTasks();
@@ -53,3 +54,12 @@ bool ClaudeGatewayPortConflict(void);
 int ClaudeGatewayPort(void);
 void RefreshClaudeProxyMenu(void);
 void updateClaudeProxyMenu(unsigned long long routed);
+bool ShowAppsInMenu(void);
+void SetShowAppsInMenu(bool visible);
+enum ClaudeInstallResult
+{
+    ClaudeInstallCancelled,
+    ClaudeInstallerOpened,
+    ClaudeInstallFailed,
+};
+enum ClaudeInstallResult installClaudeDesktop(void);

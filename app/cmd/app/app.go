@@ -372,7 +372,7 @@ func runInitialWindowsUI(
 	urlSchemeRequest string,
 	startHiddenFn func(),
 	handleURLFn func(string),
-	showOnboardingFn func(),
+	showUIFn func(string),
 ) {
 	if urlSchemeRequest != "" {
 		handleURLFn(urlSchemeRequest)
@@ -383,8 +383,10 @@ func runInitialWindowsUI(
 		return
 	}
 	if showOnboarding {
-		showOnboardingFn()
+		showUIFn("/")
+		return
 	}
+	showUIFn("/connect")
 }
 
 func startHiddenTasks() {

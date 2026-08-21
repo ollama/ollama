@@ -871,6 +871,14 @@ func ClaudeDesktopRunning() bool {
 	return running
 }
 
+// OpenClaudeDesktop brings the installed Claude Desktop app to the foreground.
+func OpenClaudeDesktop() error {
+	if err := claudeDesktopSupported(); err != nil {
+		return err
+	}
+	return claudeDesktopOpenApp()
+}
+
 func defaultClaudeDesktopRunning(ctx context.Context) (bool, error) {
 	var (
 		out []byte
@@ -907,7 +915,11 @@ func defaultClaudeDesktopOpenApp() error {
 		}
 		return errors.New("Claude Desktop executable was not found; open Claude Desktop manually once and re-run 'ollama launch claude-desktop --restore'")
 	case "darwin":
-		return openClaudeDesktopDarwin()
+		path := claudeDesktopAppPath()
+		if path == "" {
+			return errors.New("Claude Desktop app was not found")
+		}
+		return openClaudeDesktopDarwin(path)
 	default:
 		return claudeDesktopSupported()
 	}
@@ -918,14 +930,18 @@ func defaultClaudeDesktopOpenAppPath(path string) error {
 	case "windows":
 		return exec.Command("powershell.exe", "-NoProfile", "-Command", "Start-Process -FilePath "+quotePowerShellString(path)).Run()
 	case "darwin":
-		return openClaudeDesktopDarwin()
+		return openClaudeDesktopDarwin(path)
 	default:
 		return claudeDesktopSupported()
 	}
 }
 
-func openClaudeDesktopDarwin() error {
-	cmd := exec.Command("open", "-a", "Claude")
+func claudeDesktopDarwinOpenArgs(path string) []string {
+	return []string{path}
+}
+
+func openClaudeDesktopDarwin(path string) error {
+	cmd := exec.Command("/usr/bin/open", claudeDesktopDarwinOpenArgs(path)...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()

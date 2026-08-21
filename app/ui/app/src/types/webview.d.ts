@@ -12,6 +12,21 @@ interface MenuItem {
   separator?: boolean;
 }
 
+interface ClaudeDesktopStatus {
+  installed: boolean;
+  configured: boolean;
+  connected: boolean;
+  running: boolean;
+  startFailed: boolean;
+}
+
+interface ClaudeDesktopActionResult {
+  status: ClaudeDesktopStatus;
+  error?: string;
+}
+
+type ClaudeDesktopInstallResult = "opened" | "cancelled" | "failed";
+
 interface WebviewAPI {
   selectFile: () => Promise<ImageData | null>;
   selectMultipleFiles: () => Promise<ImageData[] | null>;
@@ -25,10 +40,20 @@ declare global {
     drag?: () => void;
     doubleClick?: () => void;
     activateOllama?: () => void;
+    getClaudeDesktopStatus?: () => Promise<ClaudeDesktopStatus>;
+    setClaudeDesktopConnected?: (
+      enabled: boolean,
+    ) => Promise<ClaudeDesktopActionResult>;
+    prepareClaudeDesktopConnection?: () => Promise<ClaudeDesktopActionResult>;
+    openClaudeDesktop?: () => Promise<string>;
+    installClaudeDesktop?: () => Promise<ClaudeDesktopInstallResult>;
+    getShowAppsInMenu?: () => Promise<boolean>;
+    setShowAppsInMenu?: (visible: boolean) => Promise<void>;
     setOnboardingWindow?: (enabled: boolean) => void;
     menu: (items: MenuItem[]) => Promise<string | null>;
     OLLAMA_TOOLS?: boolean;
     OLLAMA_WEBSEARCH?: boolean;
+    OLLAMA_PLATFORM?: "darwin" | "windows";
   }
 
   namespace JSX {
@@ -48,4 +73,12 @@ declare global {
   }
 }
 
-export type { ImageData, WebviewAPI, ContextMenuItem, ContextMenuResult };
+export type {
+  ClaudeDesktopActionResult,
+  ClaudeDesktopInstallResult,
+  ClaudeDesktopStatus,
+  ContextMenuItem,
+  ContextMenuResult,
+  ImageData,
+  WebviewAPI,
+};
