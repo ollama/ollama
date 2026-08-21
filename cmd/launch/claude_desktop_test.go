@@ -264,6 +264,9 @@ func TestClaudeDesktopConfigureWritesOllamaCloudProfile(t *testing.T) {
 	if profile["inferenceGatewayAuthScheme"] != "bearer" {
 		t.Fatalf("auth scheme = %v, want bearer", profile["inferenceGatewayAuthScheme"])
 	}
+	if profile["deploymentDisplayName"] != "Ollama" {
+		t.Fatalf("deployment display name = %v, want Ollama", profile["deploymentDisplayName"])
+	}
 	if profile["disableDeploymentModeChooser"] != true {
 		t.Fatalf("disableDeploymentModeChooser = %v, want true", profile["disableDeploymentModeChooser"])
 	}
@@ -643,6 +646,34 @@ func TestClaudeDesktopAutodiscoveryConfiguredRequiresAPIKey(t *testing.T) {
 	}
 }
 
+func TestClaudeDesktopAutodiscoveryConfiguredRequiresDisplayName(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withClaudeDesktopPlatform(t, "darwin")
+
+	c := &ClaudeDesktop{}
+	if err := c.ConfigureAutodiscovery(); err != nil {
+		t.Fatalf("Configure returned error: %v", err)
+	}
+
+	paths, err := claudeDesktopConfigPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := claudeDesktopReadJSON(t, paths.profile)
+	delete(profile, "deploymentDisplayName")
+	if err := writeClaudeDesktopJSON(paths.profile, profile); err != nil {
+		t.Fatal(err)
+	}
+
+	if c.AutodiscoveryConfigured() {
+		t.Fatal("expected missing deployment display name to force Claude Desktop reconfiguration")
+	}
+	if !c.UsesOllamaGateway() {
+		t.Fatal("expected missing deployment display name to leave Ollama routing active")
+	}
+}
+
 func TestClaudeDesktopAutodiscoveryConfiguredRequiresTelemetryDisabled(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
@@ -800,7 +831,7 @@ func TestClaudeDesktopRestoreSwitchesBackToFirstPartyMode(t *testing.T) {
 	if err := os.WriteFile(paths.meta, []byte(`{"appliedId":"`+claudeDesktopProfileID+`","entries":[{"id":"`+claudeDesktopProfileID+`","name":"Ollama"}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(paths.profile, []byte(`{"autoModeEnabled":true,"coworkEgressAllowedHosts":["github.com"],"disableDeploymentModeChooser":true,"disableEssentialTelemetry":true,"disableNonessentialTelemetry":true,"inferenceGatewayApiKey":"keep","inferenceProvider":"gateway","inferenceGatewayBaseUrl":"https://ollama.com","inferenceGatewayAuthScheme":"bearer","inferenceModels":["legacy"]}`), 0o644); err != nil {
+	if err := os.WriteFile(paths.profile, []byte(`{"autoModeEnabled":true,"coworkEgressAllowedHosts":["github.com"],"deploymentDisplayName":"Ollama","disableDeploymentModeChooser":true,"disableEssentialTelemetry":true,"disableNonessentialTelemetry":true,"inferenceGatewayApiKey":"keep","inferenceProvider":"gateway","inferenceGatewayBaseUrl":"https://ollama.com","inferenceGatewayAuthScheme":"bearer","inferenceModels":["legacy"]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -823,7 +854,7 @@ func TestClaudeDesktopRestoreSwitchesBackToFirstPartyMode(t *testing.T) {
 	if profile["inferenceGatewayApiKey"] != "keep" {
 		t.Fatal("restore should leave existing Ollama profile credentials in place")
 	}
-	for _, key := range []string{"inferenceProvider", "inferenceGatewayBaseUrl", "inferenceGatewayAuthScheme", "inferenceModels", "coworkEgressAllowedHosts", "autoModeEnabled", "disableEssentialTelemetry", "disableNonessentialTelemetry"} {
+	for _, key := range []string{"inferenceProvider", "inferenceGatewayBaseUrl", "inferenceGatewayAuthScheme", "deploymentDisplayName", "inferenceModels", "coworkEgressAllowedHosts", "autoModeEnabled", "disableEssentialTelemetry", "disableNonessentialTelemetry"} {
 		if _, ok := profile[key]; ok {
 			t.Fatalf("restore should clear stale %s from the Ollama profile: %v", key, profile)
 		}

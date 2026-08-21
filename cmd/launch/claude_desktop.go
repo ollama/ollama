@@ -617,6 +617,7 @@ func writeClaudeDesktopGatewayProfile(path, baseURL, apiKey string, forceChooser
 	cfg["inferenceGatewayBaseUrl"] = baseURL
 	cfg["inferenceGatewayApiKey"] = apiKey
 	cfg["inferenceGatewayAuthScheme"] = "bearer"
+	cfg["deploymentDisplayName"] = claudeDesktopProfileName
 	cfg["chatTabEnabled"] = true
 	delete(cfg, "inferenceModels")
 	cfg["disableDeploymentModeChooser"] = forceChooser
@@ -677,6 +678,7 @@ func restoreClaudeDesktopOllamaProfile(path string) error {
 	delete(cfg, "inferenceProvider")
 	delete(cfg, "inferenceGatewayBaseUrl")
 	delete(cfg, "inferenceGatewayAuthScheme")
+	delete(cfg, "deploymentDisplayName")
 	delete(cfg, "inferenceModels")
 	delete(cfg, "coworkEgressAllowedHosts")
 	delete(cfg, "autoModeEnabled")
@@ -745,6 +747,9 @@ func claudeDesktopThirdPartyProfileConfigured(target claudeDesktopThirdPartyPath
 		return false
 	}
 	if s, _ := cfg["inferenceGatewayApiKey"].(string); strings.TrimSpace(s) == "" {
+		return false
+	}
+	if s, _ := cfg["deploymentDisplayName"].(string); s != claudeDesktopProfileName {
 		return false
 	}
 	egressHosts := claudeDesktopAnySlice(cfg["coworkEgressAllowedHosts"])
