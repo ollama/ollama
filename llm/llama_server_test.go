@@ -440,6 +440,72 @@ func TestLlamaServerStreamsHandleLargeSSELines(t *testing.T) {
 	}
 }
 
+func TestLlamaServerAbortedStreamReturnsError(t *testing.T) {
+	tests := []struct {
+		name string
+		chat bool
+	}{
+		{name: "completion", chat: false},
+		{name: "chat", chat: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := "/completion"
+			event := `data: {"content":"partial"}`
+			if tt.chat {
+				path = "/v1/chat/completions"
+				event = `data: {"choices":[{"delta":{"content":"partial"}}]}`
+			}
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/health":
+					fmt.Fprint(w, `{"status":"ok"}`)
+				case path:
+					w.Header().Set("Content-Type", "text/event-stream")
+					fmt.Fprintln(w, event)
+				default:
+					t.Errorf("unexpected path: %s", r.URL.Path)
+				}
+			}))
+			defer srv.Close()
+
+			parts := strings.Split(srv.URL, ":")
+			var portInt int
+			fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+			runner := &llamaServerRunner{
+				port:    portInt,
+				cmd:     fakeRunningCmd(),
+				sem:     semaphore.NewWeighted(1),
+				options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+			}
+
+			opts := api.DefaultOptions()
+			var err error
+			if tt.chat {
+				err = runner.Chat(t.Context(), ChatRequest{
+					Messages: []api.Message{{Role: "user", Content: "test prompt"}},
+					Options:  &opts,
+				}, func(cr ChatResponse) {})
+			} else {
+				err = runner.Completion(t.Context(), CompletionRequest{
+					Prompt:  "test prompt",
+					Options: &opts,
+				}, func(cr CompletionResponse) {})
+			}
+
+			if err == nil {
+				t.Fatal("expected error for stream ending without a final response")
+			}
+			if !strings.Contains(err.Error(), "cancelled before completing") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func writeLargeLlamaServerEvent(t *testing.T, w io.Writer, chat bool, payload string) {
 	t.Helper()
 
