@@ -181,6 +181,9 @@ if [ -f /etc/nv_tegra_release ] ; then
         download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-jetpack6"
     elif grep R35 /etc/nv_tegra_release > /dev/null ; then
         download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-jetpack5"
+    elif grep -E ' R(3[89]|[4-9][0-9]) ' /etc/nv_tegra_release > /dev/null ; then
+        # JetPack 7+ uses the SBSA cuda_v13 build already in the base package
+        status "NVIDIA JetPack detected."
     else
         warning "Unsupported JetPack version detected.  GPU may not be supported"
     fi
