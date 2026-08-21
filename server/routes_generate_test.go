@@ -3217,3 +3217,65 @@ func TestImageGenerateUnsupported(t *testing.T) {
 		t.Fatalf("expected unsupported error in body, got %q", w.Body.String())
 	}
 }
+
+func TestChatHandlerNamespaceToolsFiltered(t *testing.T) {
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
+	t.Setenv("OLLAMA_GO_TEMPLATE", "")
+	gin.SetMode(gin.TestMode)
+
+	mock := mockRunner{
+		ChatFn: func(_ context.Context, req llm.ChatRequest, fn func(llm.ChatResponse)) error {
+			// Verify that namespace tools were filtered out
+			if len(req.Tools) != 2 {
+				t.Errorf("expected 2 tools after filtering, got %d", len(req.Tools))
+			}
+			for _, tool := range req.Tools {
+				if tool.Type == "namespace" {
+					t.Errorf("namespace tool was not filtered out: %v", tool)
+				}
+			}
+			fn(llm.ChatResponse{
+				Message:            api.Message{Role: "assistant", Content: "response"},
+				Done:               true,
+				DoneReason:         llm.DoneReasonStop,
+				PromptEvalCount:    1,
+				PromptEvalDuration: time.Millisecond,
+				EvalCount:          2,
+				EvalDuration:       2 * time.Millisecond,
+			})
+			return nil
+		},
+	}
+	s := newServerWithMockRunner(t, &mock)
+	createMinimalGGUFModel(t, s, "chat-template", ggml.KV{
+		"tokenizer.chat_template": "{{ messages[0]['content'] }}",
+	}, "", map[string]any{
+		"capabilities": []any{"completion", "tools"},
+	})
+
+	stream := false
+	w := createRequest(t, s.ChatHandler, api.ChatRequest{
+		Model: "chat-template",
+		Messages: []api.Message{
+			{Role: "user", Content: "hello"},
+		},
+		Tools: []api.Tool{
+			{Type: "function", Function: api.ToolFunction{Name: "fn1"}},
+			{Type: "namespace", Function: api.ToolFunction{Name: "ns1"}},
+			{Type: "function", Function: api.ToolFunction{Name: "fn2"}},
+			{Type: "namespace", Function: api.ToolFunction{Name: "ns2"}},
+		},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var actual api.ChatResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &actual); err != nil {
+		t.Fatal(err)
+	}
+	if actual.Message.Content != "response" {
+		t.Fatalf("expected response, got %q", actual.Message.Content)
+	}
+}
