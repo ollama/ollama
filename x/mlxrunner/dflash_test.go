@@ -111,6 +111,36 @@ func draftTokensOf(caches []cache.Cache) []int32 {
 	return caches[1].(*fakeRewindableCache).tokens
 }
 
+func TestDFlashRequestDraftLimit(t *testing.T) {
+	r := &Runner{}
+	draft := &fakeBlockDraft{blockSize: 8, maskToken: 6}
+	s := newSpeculation(r, draft, nil, nil)
+	s.depth.scheduled = 7
+
+	for _, tt := range []struct {
+		name    string
+		request int
+		enabled bool
+		want    int
+	}{
+		{name: "disabled", request: 0, enabled: false, want: 0},
+		{name: "request cap", request: 2, enabled: true, want: 2},
+		{name: "model cap", request: 99, enabled: true, want: 7},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			req := Request{CompletionRequest: CompletionRequest{Options: api.Options{Runner: api.Runner{DraftNumPredict: tt.request}}}}
+			session := s.open(req, nil)
+			defer session.close()
+			if session.enabled != tt.enabled {
+				t.Fatalf("enabled = %v, want %v", session.enabled, tt.enabled)
+			}
+			if session.maxDraft != tt.want || session.limit != tt.want {
+				t.Fatalf("maxDraft/limit = %d/%d, want %d/%d", session.maxDraft, session.limit, tt.want, tt.want)
+			}
+		})
+	}
+}
+
 func TestDFlashCommittedBuffersPastFlushCap(t *testing.T) {
 	skipIfNoMLX(t)
 	_, draft, session, caches := newBlockTestSession(t, nil, 4)
@@ -284,7 +314,7 @@ func TestDecodeBlockDraft(t *testing.T) {
 	req := Request{
 		Responses:         ch,
 		Tokens:            []int32{1},
-		CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
+		CompletionRequest: CompletionRequest{Options: api.Options{Runner: api.Runner{DraftNumPredict: 4}, NumPredict: 20}},
 		SamplerOpts:       sampler.Options{},
 	}
 	spec := r.spec.open(req, nil)

@@ -119,10 +119,17 @@ func (d Distribution) ResidualAgainst(draft Distribution) Distribution {
 		return Distribution{IDs: d.IDs, Probs: normalizeProbs(mlx.Maximum(diff, mlx.FromValue(float32(0))))}
 	}
 	if draft.IDs != nil {
-		panic("sample.Distribution.ResidualAgainst: dense target with sparse draft is unsupported")
+		diff := d.Probs.ScatterAddAxis(draft.IDs, draft.Probs.Negative(), -1)
+		return Distribution{Probs: normalizeProbs(mlx.Maximum(diff, mlx.FromValue(float32(0))))}
 	}
 	diff := d.Probs.Subtract(draft.Probs)
 	return Distribution{Probs: normalizeProbs(mlx.Maximum(diff, mlx.FromValue(float32(0))))}
+}
+
+// Temperature returns the registered slot's sampling temperature without
+// mutating its history or RNG state.
+func (s *Sampler) Temperature(seqID int) float32 {
+	return s.mustSlot("Temperature", seqID).opts.Temperature
 }
 
 // LogProbs returns dense log-probabilities, scattering sparse distributions

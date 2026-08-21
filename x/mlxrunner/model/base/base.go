@@ -63,6 +63,14 @@ type BlockDraft interface {
 	BlockParams() (blockSize int, maskToken int32)
 }
 
+// PathBlockDraft augments a block draft with a path selector. CandidateLattice
+// returns token ids [B,L,K] and transition scores [B,L,K,K]; at position zero
+// every predecessor row represents the supplied anchor.
+type PathBlockDraft interface {
+	BlockDraft
+	CandidateLattice(hidden, anchor *mlx.Array) (ids, scores *mlx.Array)
+}
+
 // SelfDraft is implemented by models whose draft head ships inline with the
 // target weights; it returns the head, or nil when the checkpoint shipped none.
 type SelfDraft interface {
