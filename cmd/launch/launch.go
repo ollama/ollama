@@ -145,6 +145,17 @@ type Runner interface {
 	String() string
 }
 
+type readinessModelResolver interface {
+	readinessModel(model string) string
+}
+
+func modelForReadiness(runner Runner, model string) string {
+	if resolver, ok := runner.(readinessModelResolver); ok {
+		return resolver.readinessModel(model)
+	}
+	return model
+}
+
 // Editor can edit config files for integrations that support model configuration.
 type Editor interface {
 	Paths() []string
@@ -969,7 +980,7 @@ func (c *launcherClient) resolveSingleIntegrationTarget(ctx context.Context, nam
 		usable := skipReadiness && target != ""
 		if !skipReadiness {
 			var err error
-			usable, err = c.savedModelUsable(ctx, target)
+			usable, err = c.savedModelUsable(ctx, modelForReadiness(runner, target))
 			if err != nil {
 				return "", false, err
 			}
@@ -986,7 +997,8 @@ func (c *launcherClient) resolveSingleIntegrationTarget(ctx context.Context, nam
 		}
 		target = selected
 	} else if !skipReadiness {
-		if err := c.ensureModelsReadyFor(ctx, []string{target}, runner.String(), name); err != nil {
+		readinessModel := modelForReadiness(runner, target)
+		if err := c.ensureModelsReadyFor(ctx, []string{readinessModel}, runner.String(), name); err != nil {
 			if !errors.Is(err, errDeprecatedLaunchModelDeclined) {
 				return "", false, err
 			}
