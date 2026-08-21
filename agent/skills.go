@@ -180,7 +180,7 @@ func DiscoverSkills(dir string) (*SkillCatalog, error) {
 			continue
 		}
 		if !skillName.MatchString(name) {
-			catalog.diagnostics = append(catalog.diagnostics, fmt.Errorf("invalid skill directory %q", name))
+			catalog.diagnostics = append(catalog.diagnostics, fmt.Errorf("invalid skill directory %q in %s: skill names may use only lowercase letters, numbers, and single hyphens", name, dir))
 			continue
 		}
 		skill, err := parseSkill(filepath.Join(dir, name, skillFilename), name)
@@ -646,7 +646,20 @@ func defaultSkillRoots(projectDir string) ([]skillRoot, error) {
 			)
 		}
 	}
-	return roots, nil
+
+	// Running the agent from the home directory makes the user and project
+	// roots resolve to the same paths. Keep the first occurrence so the
+	// documented precedence still holds, and scan each path only once.
+	seen := make(map[string]bool, len(roots))
+	deduped := roots[:0]
+	for _, root := range roots {
+		if seen[root.path] {
+			continue
+		}
+		seen[root.path] = true
+		deduped = append(deduped, root)
+	}
+	return deduped, nil
 }
 
 func (c *SkillCatalog) Dir() string {
