@@ -199,7 +199,16 @@ func (s *Scheduler) getRunner(c context.Context, m *Model, opts api.Options, ses
 	runner := s.loaded[key]
 	s.loadedMu.Unlock()
 	if runner != nil && !runner.needsReload(c, req) {
-		req.useLoadedRunner(runner, s.finishedReqCh)
+		if !req.useLoadedRunner(runner, s.finishedReqCh) {
+			// The runner exited between the health ping and the acquire
+			// (keep-alive expiry/eviction or a crash). Enqueue so the
+			// scheduler can unload the stale entry and load a fresh runner.
+			select {
+			case s.pendingReqCh <- req:
+			default:
+				req.errCh <- ErrMaxQueue
+			}
+		}
 	} else {
 		select {
 		case s.pendingReqCh <- req:
@@ -259,8 +268,15 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					} else {
 						// Runner is usable, return it
 						logutil.Trace("using existing loaded runner", "model", pendingKey)
-						pending.useLoadedRunner(runner, s.finishedReqCh)
-						break
+						if !pending.useLoadedRunner(runner, s.finishedReqCh) {
+							// Runner died before we could acquire it; unload the
+							// stale entry so a fresh runner is loaded on the
+							// next pass.
+							slog.Debug("loaded runner exited before acquire, unloading", "runner", runner)
+							runnerToExpire = runner
+						} else {
+							break
+						}
 					}
 				} else if maxRunners > 0 && loadedCount >= int(maxRunners) {
 					slog.Debug("max runners achieved, unloading one to make room", "runner_count", loadedCount)
@@ -472,9 +488,16 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 // Complete the pending request and send the runner back to the requester
 // Wires up a finished event after the request context is completed
 // Updates session duration, and resets expiration timer
-func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *LlmRequest) {
+func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *LlmRequest) bool {
 	runner.refMu.Lock()
 	defer runner.refMu.Unlock()
+	if runner.HasExited() {
+		// The runner's llama-server process is no longer running. Handing it
+		// out would make every tokenize/embedding HTTP call fail with
+		// "connection refused" against its (closed) port.
+		slog.Debug("refusing to use exited runner", "runner", runner, "pid", runner.pid)
+		return false
+	}
 	runner.refCount++
 	if runner.expireTimer != nil {
 		runner.expireTimer.Stop()
@@ -489,6 +512,7 @@ func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *Llm
 		slog.Debug("context for request finished", "runner", runner)
 		finished <- pending
 	}()
+	return true
 }
 
 // load creates a new model based on req and loads it. If requireFull is true then the model must be loaded fully onto GPUs
