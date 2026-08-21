@@ -438,8 +438,12 @@ func parseTypedToolValue(raw string, paramType api.PropertyType) any {
 }
 
 var (
-	qwenTagRegex    = regexp.MustCompile(`<(\w+)=([^>]+)>`)
-	qwenXMLTagRegex = regexp.MustCompile(`</?(?:function|parameter)(?:\s+name="[^"]*")?>`)
+	// Only `function` and `parameter` are tags in this format, opening with a
+	// value and closing bare. Matching any `<word=value>` rewrote text that
+	// merely looked like a tag, and parameter values are full of it:
+	// `if (a<b=c>d)` came out as `if (a<b name="c">d)`, silently, in the command
+	// a tool was about to run.
+	qwenTagRegex = regexp.MustCompile(`</?(function|parameter)(=[^>]*)?>`)
 
 	qwenFunctionOpenRegex  = regexp.MustCompile(`<function\b[^>]*>`)
 	qwenParameterOpenRegex = regexp.MustCompile(`<parameter\b[^>]*>`)
@@ -517,47 +521,80 @@ func repairToolCallXML(xmlString string) (string, bool) {
 
 // transformToXML transforms a raw qwen tool call with xml-like tags into valid
 // xml so that it can be parsed by any xml parser
+//
+// Only `<function…>` and `<parameter…>` are markup here. Rewriting every
+// `<word=value>` in the block reached into parameter values, which are character
+// data and are allowed to look like markup: `if (a<b=c>d)` arrived at the tool
+// as `if (a<b name="c">d)`, a changed command with nothing said about it.
+//
+// A `<parameter=…>` inside an open parameter is left structural on purpose. It
+// is ambiguous -- either the model forgot `</parameter>` or the value mentions a
+// tag -- and the first is what models actually do under long context, so reading
+// it as a new parameter recovers the call instead of swallowing it into the
+// previous value.
 func transformToXML(raw string) string {
-	// take the form `<tag=abc>` and transform it to `<tag name="abc">`, taking
-	// care to properly escape the string that becomes the attribute value
-	transformed := qwenTagRegex.ReplaceAllStringFunc(raw, func(match string) string {
-		groups := qwenTagRegex.FindStringSubmatch(match)
-		tag := groups[1]
-		var escapedValue strings.Builder
-		_ = xml.EscapeText(&escapedValue, []byte(groups[2])) // error is always nil for strings.Builder
-		return fmt.Sprintf(`<%s name="%s">`, tag, escapedValue.String())
-	})
-
-	// Walk the resulting string, escaping any character data that sits between the
-	// xml tags we just emitted
 	var out strings.Builder
+
 	lastIdx := 0
-	parameterDepth := 0
-	for _, loc := range qwenXMLTagRegex.FindAllStringIndex(transformed, -1) {
+	// Whether a parameter is open, for the one tag whose meaning depends on it.
+	inParameter := false
+	for _, loc := range qwenTagRegex.FindAllStringSubmatchIndex(raw, -1) {
+		match := raw[loc[0]:loc[1]]
+		closing := strings.HasPrefix(match, "</")
+		name := raw[loc[2]:loc[3]]
+
+		// An opening tag without a value (`<function>`) is not this format and
+		// never was, so it stays character data.
+		if !closing && loc[4] < 0 {
+			continue
+		}
+
+		// A `</function>` inside an open parameter is the value's text when the
+		// parameter is still closed after it (upstream #19228: `text =
+		// "</function>"`). With no `</parameter>` before the next parameter or
+		// the end, the model dropped the closing tag instead, and this is the
+		// call's end, which repairToolCallXML needs to see to recover it.
+		if closing && name == "function" && inParameter && parameterClosedLater(raw[loc[1]:]) {
+			continue
+		}
+
 		if loc[0] > lastIdx {
-			escapeTextNode(&out, transformed[lastIdx:loc[0]])
+			escapeTextNode(&out, raw[lastIdx:loc[0]])
 		}
-		tag := transformed[loc[0]:loc[1]]
-		switch {
-		case strings.HasPrefix(tag, "<parameter"):
-			parameterDepth++
-		case tag == "</parameter>" && parameterDepth > 0:
-			parameterDepth--
-		}
-		// Only a function-level close ends the call. A parameter can contain
-		// this literal text, but still needs its own closing tag.
-		if tag == "</function>" && parameterDepth > 0 {
-			escapeTextNode(&out, tag)
+		if closing {
+			out.WriteString(match)
 		} else {
-			out.WriteString(tag)
+			// `<tag=abc>` becomes `<tag name="abc">`, escaping the string that
+			// becomes the attribute value.
+			var escapedValue strings.Builder
+			_ = xml.EscapeText(&escapedValue, []byte(raw[loc[4]+1:loc[5]])) // error is always nil for strings.Builder
+			fmt.Fprintf(&out, `<%s name="%s">`, name, escapedValue.String())
+		}
+		// A new parameter while one is open implicitly closes it (see above), so
+		// this is a flag, not a depth.
+		if name == "parameter" {
+			inParameter = !closing
+		} else if closing {
+			inParameter = false
 		}
 		lastIdx = loc[1]
 	}
-	if lastIdx < len(transformed) {
-		escapeTextNode(&out, transformed[lastIdx:])
+	if lastIdx < len(raw) {
+		escapeTextNode(&out, raw[lastIdx:])
 	}
 
 	return out.String()
+}
+
+// parameterClosedLater reports whether the open parameter's `</parameter>`
+// comes in rest before the next `<parameter=` does.
+func parameterClosedLater(rest string) bool {
+	closeIdx := strings.Index(rest, "</parameter>")
+	if closeIdx < 0 {
+		return false
+	}
+	next := qwenParameterOpenRegex.FindStringIndex(rest)
+	return next == nil || closeIdx < next[0]
 }
 
 // escapeTextNode escapes XML character data without altering other characters
