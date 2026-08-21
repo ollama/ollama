@@ -558,6 +558,39 @@ Hello! 你好! 🌟 مرحبا
 	}
 }
 
+// A parameter's value is character data, not markup. Rewriting `<tag=value>`
+// everywhere in the block reached into values that only looked like tags, and
+// changed them without saying so -- the first case here is a shell command that
+// would have run altered.
+func TestQwenToolCallValuesAreNotRewritten(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{
+			name:  "comparison followed by an assignment",
+			value: `node -e "if (a<b=c>d) console.log(1)"`,
+		},
+		{
+			name:  "text that looks like a tag",
+			value: "const el = <div=foo>;",
+		},
+	}
+
+	for _, tc := range cases {
+		raw := "<function=editor>\n<parameter=new_text>\n" + tc.value + "\n</parameter>\n</function>"
+		gotToolCall, err := parseToolCall(qwenEventRawToolCall{raw: raw}, []api.Tool{})
+		if err != nil {
+			t.Errorf("%s: %v", tc.name, err)
+			continue
+		}
+		got, _ := gotToolCall.Function.Arguments.Get("new_text")
+		if got != tc.value {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.value)
+		}
+	}
+}
+
 // A model under long context stops emitting closing tags. All three shapes here
 // were taken from one agent session (2026-08-21), which produced both
 // `element <parameter> closed by </function>` and `unexpected EOF` from the same
