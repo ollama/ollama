@@ -111,12 +111,10 @@ describe("Onboarding", () => {
 
   it("finishes Claude connection states from the native status hook", () => {
     const status = {
-      supported: true,
       installed: true,
       connected: true,
       running: false,
       startFailed: false,
-      portConflict: false,
     };
 
     expect(isClaudeConnectionComplete(true, status)).toBe(true);
@@ -242,12 +240,10 @@ describe("Onboarding", () => {
     const html = renderToStaticMarkup(
       <ConnectAppsScreen
         initialClaudeStatus={{
-          supported: true,
           installed: true,
           connected: true,
           running: false,
           startFailed: false,
-          portConflict: false,
         }}
         initialIntegrations={[
           {

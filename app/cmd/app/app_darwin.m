@@ -353,7 +353,6 @@ static NSImage *integrationAppIcon(NSString *appName,
 @implementation AppDelegate
 
 bool showOnboarding,startHidden; // Set in run before initialization
-static NSWindow *onboardingWindow = nil;
 
 static NSBundle *OllamaResourceBundle(void) {
     NSBundle *bundle = [NSBundle mainBundle];
@@ -614,10 +613,8 @@ static NSImage *ollamaApplicationIcon(void) {
 }
 
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)hasVisibleWindows {
-    if (onboardingWindow != nil) {
-        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
-        [onboardingWindow makeKeyAndOrderFront:nil];
-        [NSApp activateIgnoringOtherApps:YES];
+    if (IsOnboardingActive()) {
+        ShowUI();
         return YES;
     }
 
@@ -1946,10 +1943,6 @@ void hideWindow(uintptr_t wndPtr) {
     NSWindow *w = (__bridge NSWindow *)wndPtr;
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
     [w orderOut:nil];
-}
-
-void setOnboardingWindowActive(uintptr_t wndPtr, bool active) {
-    onboardingWindow = active ? (__bridge NSWindow *)wndPtr : nil;
 }
 
 void showWindow(uintptr_t wndPtr) {

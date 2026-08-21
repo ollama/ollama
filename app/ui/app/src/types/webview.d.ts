@@ -13,14 +13,10 @@ interface MenuItem {
 }
 
 interface ClaudeDesktopStatus {
-  supported: boolean;
   installed: boolean;
   connected: boolean;
   running: boolean;
   startFailed: boolean;
-  portConflict: boolean;
-  gatewayPort?: number;
-  error?: string;
 }
 
 interface ClaudeDesktopActionResult {

@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -34,10 +35,11 @@ const (
 )
 
 type Webview struct {
-	port    int
-	token   string
-	webview webview.WebView
-	mutex   sync.Mutex
+	port       int
+	token      string
+	webview    webview.WebView
+	mutex      sync.Mutex
+	onboarding atomic.Bool
 
 	Store *store.Store
 }
@@ -221,6 +223,7 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 		})
 
 		wv.Bind("setOnboardingWindow", func(enabled bool) {
+			w.onboarding.Store(enabled)
 			wv.Dispatch(func() {
 				if enabled {
 					wv.SetSize(onboardingWindowWidth, onboardingWindowHeight, webview.HintFixed)
@@ -479,6 +482,7 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 }
 
 func (w *Webview) Terminate() {
+	w.onboarding.Store(false)
 	w.mutex.Lock()
 	if w.webview == nil {
 		w.mutex.Unlock()
@@ -490,6 +494,10 @@ func (w *Webview) Terminate() {
 	w.mutex.Unlock()
 	wv.Terminate()
 	wv.Destroy()
+}
+
+func (w *Webview) OnboardingActive() bool {
+	return w.onboarding.Load()
 }
 
 func (w *Webview) IsRunning() bool {

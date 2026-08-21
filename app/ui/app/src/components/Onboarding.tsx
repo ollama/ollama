@@ -572,11 +572,6 @@ export function ConnectAppsScreen({
     setClaudeError(null);
     const status = await refreshClaudeStatus();
     if (!status) return;
-    if (!status.supported) {
-      setClaudeError("Claude connection is currently available on macOS.");
-      return;
-    }
-
     const enabling = !status.connected;
     if (enabling && !status.installed) {
       if (!window.installClaudeDesktop) {
@@ -647,7 +642,6 @@ export function ConnectAppsScreen({
   const claudeConnected = claudeStatus?.connected ?? false;
   const claudeInstalled =
     claudeStatus?.installed ?? claudeIntegration?.installed ?? false;
-  const claudeSupported = claudeStatus?.supported ?? true;
   const isConnectingClaude = claudePhase !== "idle";
   const initialLaunchIntegrations = launchIntegrations.slice(
     0,
@@ -667,11 +661,9 @@ export function ConnectAppsScreen({
           ? "Connecting…"
           : claudePhase === "disconnecting"
             ? "Disconnecting…"
-            : !claudeSupported
-              ? "Unavailable"
-              : !claudeConnected && !claudeInstalled
-                ? "Download & connect"
-                : null;
+            : !claudeConnected && !claudeInstalled
+              ? "Download & connect"
+              : null;
   const launchIntegrationRow = (item: IntegrationStatus) => {
     const copied = copiedCommand === item.command;
     return (
@@ -736,9 +728,7 @@ export function ConnectAppsScreen({
                       ? "Connecting Claude to Ollama…"
                       : claudePhase === "disconnecting"
                         ? "Restoring Claude’s usual connection…"
-                        : !claudeSupported
-                          ? "Claude connection is currently available on macOS."
-                          : claudeIntegration.description)}
+                        : claudeIntegration.description)}
           </p>
         </div>
       </div>
@@ -768,7 +758,7 @@ export function ConnectAppsScreen({
                 : "Connect Claude"
           }
           title={claudeConnected ? "Connected" : "Connect"}
-          disabled={isConnectingClaude || !claudeSupported}
+          disabled={isConnectingClaude}
           onClick={connectClaude}
           className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait ${claudeConnected ? "bg-neutral-950" : "bg-neutral-300"}`}
         >

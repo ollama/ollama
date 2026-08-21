@@ -88,6 +88,11 @@ func ShowUI() {
 	openUI("/")
 }
 
+//export IsOnboardingActive
+func IsOnboardingActive() C.bool {
+	return C._Bool(wv.OnboardingActive())
+}
+
 func openUI(path string) {
 	if wv.IsRunning() && wv.webview != nil {
 		showWindow(wv.webview.Window())
@@ -458,28 +463,16 @@ func claudeGatewayPortConflict() bool {
 func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
 	claudeProxyMu.Lock()
 	proxyErr := claudeProxyErr
-	proxyFailure := claudeProxyFail
 	claudeProxyMu.Unlock()
 
-	port := 0
-	if portText, err := claudeGatewayPort(); err == nil {
-		port, _ = strconv.Atoi(portText)
-	}
 	installed := claudeDesktopInstalled()
 	configured := installed && claudeDesktop.UsesOllamaGateway()
-	status := claudeDesktopStatus{
-		Supported:    true,
-		Installed:    installed,
-		Connected:    configured && proxyErr == nil,
-		Running:      launch.ClaudeDesktopRunning(),
-		StartFailed:  proxyErr != nil,
-		PortConflict: proxyFailure == claudeProxyFailurePortConflict,
-		GatewayPort:  port,
+	return claudeDesktopStatus{
+		Installed:   installed,
+		Connected:   configured && proxyErr == nil,
+		Running:     launch.ClaudeDesktopRunning(),
+		StartFailed: proxyErr != nil,
 	}
-	if proxyErr != nil {
-		status.Error = proxyErr.Error()
-	}
-	return status
 }
 
 func setClaudeDesktopConnection(enabled bool) error {
@@ -633,7 +626,6 @@ func styleWindow(ptr unsafe.Pointer) {
 }
 
 func setOnboardingWindowStyle(ptr unsafe.Pointer, enabled bool) {
-	C.setOnboardingWindowActive(C.uintptr_t(uintptr(ptr)), C.bool(enabled))
 	styleWindow(ptr)
 	C.setWindowResizable(C.uintptr_t(uintptr(ptr)), C.bool(!enabled))
 }

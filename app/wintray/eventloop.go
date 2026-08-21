@@ -126,7 +126,7 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 		switch lParam {
 		case WM_MOUSEMOVE, WM_LBUTTONDOWN:
 			// Ignore these...
-		case WM_LBUTTONUP, WM_RBUTTONUP:
+		case WM_RBUTTONUP, WM_LBUTTONUP:
 			err := t.showMenu()
 			if err != nil {
 				slog.Error(fmt.Sprintf("failed to show menu: %s", err))
@@ -191,6 +191,10 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 }
 
 func focusUI(app AppCallbacks) {
+	if app.UIRunning() && app.UIOnboarding() {
+		app.UIShow()
+		return
+	}
 	app.UIRun("/connect")
 }
 

@@ -351,19 +351,21 @@ func (s *Server) getIntegrationStatuses(w http.ResponseWriter, _ *http.Request) 
 	for _, info := range infos {
 		byName[info.Name] = info
 	}
-	seen := map[string]bool{"chatgpt": true}
-	launcherMenuOrder := []string{"claude", "codex", "openclaw", "opencode", "droid", "pi", "cline"}
+	// Apps prioritizes the primary terminal agents; unlisted entries retain launcher order.
+	preferredOrder := []string{"claude", "codex", "openclaw", "opencode", "droid", "pi", "cline"}
+	seen := make(map[string]bool, len(preferredOrder))
 	orderedInfos := make([]launch.IntegrationInfo, 0, len(infos))
-	for _, name := range launcherMenuOrder {
+	for _, name := range preferredOrder {
 		if info, ok := byName[name]; ok {
 			orderedInfos = append(orderedInfos, info)
 			seen[name] = true
 		}
 	}
 	for _, info := range infos {
-		if !seen[info.Name] {
-			orderedInfos = append(orderedInfos, info)
+		if info.Name == "chatgpt" || seen[info.Name] {
+			continue
 		}
+		orderedInfos = append(orderedInfos, info)
 	}
 
 	for _, info := range orderedInfos {

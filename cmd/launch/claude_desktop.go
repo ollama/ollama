@@ -937,10 +937,7 @@ func defaultClaudeDesktopOpenAppPath(path string) error {
 }
 
 func claudeDesktopDarwinOpenArgs(path string) []string {
-	if path != "" {
-		return []string{path}
-	}
-	return []string{"-b", "com.anthropic.claudefordesktop"}
+	return []string{path}
 }
 
 func openClaudeDesktopDarwin(path string) error {

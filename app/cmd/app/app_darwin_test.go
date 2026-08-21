@@ -189,14 +189,8 @@ func TestClaudeDesktopConnectionStatusReportsMissingApp(t *testing.T) {
 	})
 
 	status := getClaudeDesktopConnectionStatus()
-	if !status.Supported {
-		t.Fatal("Claude Desktop connection should be supported on macOS")
-	}
 	if status.Installed || status.Connected {
 		t.Fatalf("Claude status = %+v, want missing and disconnected", status)
-	}
-	if status.GatewayPort != 11435 {
-		t.Fatalf("Claude gateway port = %d, want 11435", status.GatewayPort)
 	}
 	if err := setClaudeDesktopConnection(true); err == nil || !strings.Contains(err.Error(), "not installed") {
 		t.Fatalf("setClaudeDesktopConnection error = %v, want missing Claude error", err)
