@@ -1,0 +1,116 @@
+diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
+index 3d50f8a1c..895b53ab1 100644
+--- a/src/llama-model-loader.cpp
++++ b/src/llama-model-loader.cpp
+@@ -6,6 +6,87 @@
+ #include "llama-hparams.h"
+ #include "llama.h"
+ 
++#if defined(OLLAMA_BIGENDIAN_BSWAP)
++// Byte-swap the endian-sensitive scale fields of a tensor block array loaded
++// from a little-endian GGUF file on a big-endian (s390x) host.
++//
++// GGUF files are always stored little-endian.  The packed integer quant bits
++// and sub-byte values need no swap; only the FP16/FP32 scale fields at
++// well-known byte offsets within each block type require byte reversal.
++//
++// Block layout reference (QK_K = 256):
++//   F16/BF16:   every 2 bytes are one FP16 value
++//   F32:        every 4 bytes are one float
++//   Q4_0:       [d:FP16(2), qs:u8[16]]                               d at offset 0
++//   Q4_1:       [d:FP16(2), m:FP16(2), qs:u8[16]]                   d,m at offsets 0,2
++//   Q5_0:       [d:FP16(2), qh:u32(4), qs:u8[16]]                   d at offset 0
++//   Q5_1:       [d:FP16(2), m:FP16(2), qh:u32(4), qs:u8[16]]        d,m at offsets 0,2
++//   Q8_0:       [d:FP16(2), qs:i8[32]]                               d at offset 0
++//   Q2_K (84B): [scales:u8[16], qs:u8[64], d:FP16(2), dmin:FP16(2)] d at 80
++//   Q3_K (110B):[hmask:u8[32], qs:u8[64], scales:u8[12], d:FP16(2)] d at 108
++//   Q4_K (144B):[d:FP16(2), dmin:FP16(2), scales:u8[12], qs:u8[128]] d at 0
++//   Q5_K (176B):[d:FP16(2), dmin:FP16(2), scales:u8[12], qh:u8[32], qs:u8[128]] d at 0
++//   Q6_K (210B):[ql:u8[128], qh:u8[64], scales:i8[16], d:FP16(2)]  d at 208
++static void bswap_buf(ggml_type type, uint8_t * data, size_t nbytes) {
++    auto bswap2 = [](uint8_t * b) {
++        uint8_t t = b[0]; b[0] = b[1]; b[1] = t;
++    };
++    auto bswap4 = [](uint8_t * b) {
++        uint8_t t;
++        t = b[0]; b[0] = b[3]; b[3] = t;
++        t = b[1]; b[1] = b[2]; b[2] = t;
++    };
++    if (type == GGML_TYPE_F16 || type == GGML_TYPE_BF16) {
++        for (size_t off = 0; off + 1 < nbytes; off += 2) bswap2(data + off);
++        return;
++    }
++    if (type == GGML_TYPE_F32) {
++        for (size_t off = 0; off + 3 < nbytes; off += 4) bswap4(data + off);
++        return;
++    }
++    if (type == GGML_TYPE_I8 || type == GGML_TYPE_I32 || type == GGML_TYPE_I64) return;
++    const size_t blk = ggml_type_size(type);
++    if (blk == 0 || nbytes % blk != 0) return;
++    if (type == GGML_TYPE_Q4_0 || type == GGML_TYPE_Q5_0 || type == GGML_TYPE_Q8_0) {
++        for (size_t off = 0; off + blk <= nbytes; off += blk) bswap2(data + off);
++        return;
++    }
++    if (type == GGML_TYPE_Q4_1 || type == GGML_TYPE_Q5_1) {
++        for (size_t off = 0; off + blk <= nbytes; off += blk) {
++            bswap2(data + off); bswap2(data + off + 2);
++        }
++        return;
++    }
++    if (type == GGML_TYPE_Q4_K || type == GGML_TYPE_Q5_K) {
++        for (size_t off = 0; off + blk <= nbytes; off += blk) {
++            bswap2(data + off); bswap2(data + off + 2);
++        }
++        return;
++    }
++    if (type == GGML_TYPE_Q2_K) {
++        for (size_t off = 0; off + blk <= nbytes; off += blk) {
++            bswap2(data + off + 80); bswap2(data + off + 82);
++        }
++        return;
++    }
++    if (type == GGML_TYPE_Q3_K) {
++        for (size_t off = 0; off + blk <= nbytes; off += blk) bswap2(data + off + 108);
++        return;
++    }
++    if (type == GGML_TYPE_Q6_K) {
++        for (size_t off = 0; off + blk <= nbytes; off += blk) bswap2(data + off + 208);
++        return;
++    }
++}
++static void bswap_tensor_data(struct ggml_tensor * t) {
++    bswap_buf(t->type, (uint8_t *)t->data, ggml_nbytes(t));
++}
++#else
++static void bswap_buf(ggml_type, uint8_t *, size_t) {}
++static void bswap_tensor_data(struct ggml_tensor *) {}
++#endif
++
++
+ #include <algorithm>
+ #include <array>
+ #include <cinttypes>
+@@ -1403,6 +1484,7 @@ void llama_model_loader::load_data_for(struct ggml_tensor * cur) const {
+         const auto & file = files.at(w.idx);
+         file->seek(w.offs, SEEK_SET);
+         file->read_raw(cur->data, ggml_nbytes(cur));
++        bswap_tensor_data(cur);
+     }
+ 
+     if (check_tensors && !ggml_validate_row_data(cur->type, cur->data, ggml_nbytes(cur))) {
+@@ -1574,6 +1656,7 @@ bool llama_model_loader::load_all_data(
+             if (ggml_backend_buffer_is_host(cur->buffer)) {
+                 file->seek(weight->offs, SEEK_SET);
+                 file->read_raw(cur->data, n_size);
++                bswap_tensor_data(cur);
+                 if (check_tensors) {
+                     validation_result.emplace_back(std::async(std::launch::async, [cur, n_size] {
+                         return std::make_pair(cur, ggml_validate_row_data(cur->type, cur->data, n_size));
+@@ -1637,6 +1720,7 @@ bool llama_model_loader::load_all_data(
+                     read_buf.resize(n_size);
+                     file->seek(weight->offs, SEEK_SET);
+                     file->read_raw(read_buf.data(), n_size);
++                    bswap_buf(cur->type, read_buf.data(), n_size);
+                     ggml_backend_tensor_set(cur, read_buf.data(), 0, n_size);
+                     if (check_tensors && !ggml_validate_row_data(cur->type, read_buf.data(), n_size)) {
+                         throw std::runtime_error(format("tensor '%s' has invalid data", ggml_get_name(cur)));
