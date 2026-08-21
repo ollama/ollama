@@ -385,6 +385,130 @@ func TestFromMessagesRequest_WithToolResultFollowedByUserText(t *testing.T) {
 	}
 }
 
+func TestFromMessagesRequest_WithTools(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "test-model",
+		MaxTokens: 1024,
+		Messages:  []MessageParam{{Role: "user", Content: textContent("Hello")}},
+		Tools: []Tool{
+			{
+				Name:        "get_weather",
+				Description: "Get current weather",
+				InputSchema: json.RawMessage(`{"type":"object","properties":{"location":{"type":"string"}},"required":["location"]}`),
+			},
+		},
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(result.Tools))
+	}
+
+	tool := result.Tools[0]
+	if tool.Type != "function" {
+		t.Errorf("expected type 'function', got %q", tool.Type)
+	}
+	if tool.Function.Name != "get_weather" {
+		t.Errorf("expected name 'get_weather', got %q", tool.Function.Name)
+	}
+	if tool.Function.Description != "Get current weather" {
+		t.Errorf("expected description 'Get current weather', got %q", tool.Function.Description)
+	}
+}
+
+func TestFromMessagesRequest_DropsCustomWebSearchWhenBuiltinPresent(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "test-model",
+		MaxTokens: 1024,
+		Messages:  []MessageParam{{Role: "user", Content: textContent("Hello")}},
+		Tools: []Tool{
+			{
+				Type: "web_search_20250305",
+				Name: "web_search",
+			},
+			{
+				Type:        "custom",
+				Name:        "web_search",
+				Description: "User-defined web search that should be dropped",
+				InputSchema: json.RawMessage(`{"type":"invalid"}`),
+			},
+			{
+				Type:        "custom",
+				Name:        "get_weather",
+				Description: "Get current weather",
+				InputSchema: json.RawMessage(`{"type":"object","properties":{"location":{"type":"string"}},"required":["location"]}`),
+			},
+		},
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Tools) != 2 {
+		t.Fatalf("expected 2 tools after dropping custom web_search, got %d", len(result.Tools))
+	}
+	if result.Tools[0].Function.Name != "web_search" {
+		t.Fatalf("expected first tool to be built-in web_search, got %q", result.Tools[0].Function.Name)
+	}
+	if result.Tools[1].Function.Name != "get_weather" {
+		t.Fatalf("expected second tool to be get_weather, got %q", result.Tools[1].Function.Name)
+	}
+}
+
+func TestFromMessagesRequest_KeepsCustomWebSearchWhenBuiltinAbsent(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "test-model",
+		MaxTokens: 1024,
+		Messages:  []MessageParam{{Role: "user", Content: textContent("Hello")}},
+		Tools: []Tool{
+			{
+				Type:        "custom",
+				Name:        "web_search",
+				Description: "User-defined web search",
+				InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`),
+			},
+		},
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Tools) != 1 {
+		t.Fatalf("expected 1 custom tool, got %d", len(result.Tools))
+	}
+	if result.Tools[0].Function.Name != "web_search" {
+		t.Fatalf("expected custom tool name web_search, got %q", result.Tools[0].Function.Name)
+	}
+	if result.Tools[0].Function.Description != "User-defined web search" {
+		t.Fatalf("expected custom description preserved, got %q", result.Tools[0].Function.Description)
+	}
+}
+
+func TestFromMessagesRequest_InvalidThinkingType(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "test-model",
+		MaxTokens: 1024,
+		Messages:  []MessageParam{{Role: "user", Content: textContent("Hello")}},
+		Thinking:  &ThinkingConfig{Type: "bogus"},
+	}
+
+	_, err := FromMessagesRequest(req)
+	if err == nil {
+		t.Fatal("expected error for invalid thinking type")
+	}
+	if !strings.Contains(err.Error(), "invalid thinking type") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 func TestFromMessagesRequest_WithOutputConfigEffort(t *testing.T) {
 	req := MessagesRequest{
 		Model:     "gemma4",
@@ -507,131 +631,205 @@ func TestFromMessagesRequest_ThinkingAdaptiveUsesOutputConfigEffort(t *testing.T
 	}
 }
 
-func TestFromMessagesRequest_WithTools(t *testing.T) {
-	req := MessagesRequest{
-		Model:     "test-model",
-		MaxTokens: 1024,
-		Messages:  []MessageParam{{Role: "user", Content: textContent("Hello")}},
-		Tools: []Tool{
-			{
-				Name:        "get_weather",
-				Description: "Get current weather",
-				InputSchema: json.RawMessage(`{"type":"object","properties":{"location":{"type":"string"}},"required":["location"]}`),
-			},
+func TestFromMessagesRequest_EffortAcrossThinkingModes(t *testing.T) {
+	tests := []struct {
+		name         string
+		thinking     *ThinkingConfig
+		outputConfig *OutputConfig
+		wantThinkNil bool
+		wantValue    any
+		wantErr      string
+	}{
+		// enabled + effort: Think.Value is set to the effort string.
+		{
+			name:         "enabled + effort high",
+			thinking:     &ThinkingConfig{Type: "enabled"},
+			outputConfig: &OutputConfig{Effort: "high"},
+			wantValue:    "high",
+		},
+		{
+			name:         "enabled + effort medium",
+			thinking:     &ThinkingConfig{Type: "enabled"},
+			outputConfig: &OutputConfig{Effort: "medium"},
+			wantValue:    "medium",
+		},
+		{
+			name:         "enabled + effort low",
+			thinking:     &ThinkingConfig{Type: "enabled"},
+			outputConfig: &OutputConfig{Effort: "low"},
+			wantValue:    "low",
+		},
+		{
+			name:         "enabled + effort max",
+			thinking:     &ThinkingConfig{Type: "enabled"},
+			outputConfig: &OutputConfig{Effort: "max"},
+			wantValue:    "max",
+		},
+		{
+			name:         "enabled + effort xhigh maps to high",
+			thinking:     &ThinkingConfig{Type: "enabled"},
+			outputConfig: &OutputConfig{Effort: "xhigh"},
+			wantValue:    "high",
+		},
+		{
+			name:         "enabled + no effort defaults to high",
+			thinking:     &ThinkingConfig{Type: "enabled"},
+			outputConfig: nil,
+			wantValue:    "high",
+		},
+		{
+			name:         "enabled + invalid effort",
+			thinking:     &ThinkingConfig{Type: "enabled"},
+			outputConfig: &OutputConfig{Effort: "turbo"},
+			wantErr:      `invalid effort value: 'turbo'`,
+		},
+
+		// adaptive + effort: Think.Value is set to the effort string.
+		{
+			name:         "adaptive + effort high",
+			thinking:     &ThinkingConfig{Type: "adaptive"},
+			outputConfig: &OutputConfig{Effort: "high"},
+			wantValue:    "high",
+		},
+		{
+			name:         "adaptive + effort medium",
+			thinking:     &ThinkingConfig{Type: "adaptive"},
+			outputConfig: &OutputConfig{Effort: "medium"},
+			wantValue:    "medium",
+		},
+		{
+			name:         "adaptive + effort low",
+			thinking:     &ThinkingConfig{Type: "adaptive"},
+			outputConfig: &OutputConfig{Effort: "low"},
+			wantValue:    "low",
+		},
+		{
+			name:         "adaptive + effort max",
+			thinking:     &ThinkingConfig{Type: "adaptive"},
+			outputConfig: &OutputConfig{Effort: "max"},
+			wantValue:    "max",
+		},
+		{
+			name:         "adaptive + effort xhigh maps to high",
+			thinking:     &ThinkingConfig{Type: "adaptive"},
+			outputConfig: &OutputConfig{Effort: "xhigh"},
+			wantValue:    "high",
+		},
+		{
+			name:         "adaptive + no effort defaults to high",
+			thinking:     &ThinkingConfig{Type: "adaptive"},
+			outputConfig: nil,
+			wantValue:    "high",
+		},
+		{
+			name:         "adaptive + invalid effort",
+			thinking:     &ThinkingConfig{Type: "adaptive"},
+			outputConfig: &OutputConfig{Effort: "turbo"},
+			wantErr:      `invalid effort value: 'turbo'`,
+		},
+
+		// disabled: effort is ignored for the Think value (always false),
+		// but invalid effort still errors because effort validation runs first.
+		{
+			name:         "disabled + effort low ignored, value stays false",
+			thinking:     &ThinkingConfig{Type: "disabled"},
+			outputConfig: &OutputConfig{Effort: "low"},
+			wantValue:    false,
+		},
+		{
+			name:         "disabled + no effort stays false",
+			thinking:     &ThinkingConfig{Type: "disabled"},
+			outputConfig: nil,
+			wantValue:    false,
+		},
+		{
+			name:         "disabled + invalid effort still errors",
+			thinking:     &ThinkingConfig{Type: "disabled"},
+			outputConfig: &OutputConfig{Effort: "turbo"},
+			wantErr:      `invalid effort value: 'turbo'`,
+		},
+
+		// no thinking field: Think is set only when (defaulted/normalized) effort is "max" or "high".
+		{
+			name:         "nil thinking + no effort defaults to high",
+			thinking:     nil,
+			outputConfig: nil,
+			wantValue:    "high",
+		},
+		{
+			name:         "nil thinking + effort high",
+			thinking:     nil,
+			outputConfig: &OutputConfig{Effort: "high"},
+			wantValue:    "high",
+		},
+		{
+			name:         "nil thinking + effort max",
+			thinking:     nil,
+			outputConfig: &OutputConfig{Effort: "max"},
+			wantValue:    "max",
+		},
+		{
+			name:         "nil thinking + effort xhigh maps to high",
+			thinking:     nil,
+			outputConfig: &OutputConfig{Effort: "xhigh"},
+			wantValue:    "high",
+		},
+		{
+			name:         "nil thinking + effort medium leaves Think nil",
+			thinking:     nil,
+			outputConfig: &OutputConfig{Effort: "medium"},
+			wantThinkNil: true,
+		},
+		{
+			name:         "nil thinking + effort low leaves Think nil",
+			thinking:     nil,
+			outputConfig: &OutputConfig{Effort: "low"},
+			wantThinkNil: true,
+		},
+		{
+			name:         "nil thinking + invalid effort errors",
+			thinking:     nil,
+			outputConfig: &OutputConfig{Effort: "turbo"},
+			wantErr:      `invalid effort value: 'turbo'`,
 		},
 	}
 
-	result, err := FromMessagesRequest(req)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := MessagesRequest{
+				Model:        "test-model",
+				MaxTokens:    1024,
+				Messages:     []MessageParam{{Role: "user", Content: textContent("Hello")}},
+				Thinking:     tt.thinking,
+				OutputConfig: tt.outputConfig,
+			}
 
-	if len(result.Tools) != 1 {
-		t.Fatalf("expected 1 tool, got %d", len(result.Tools))
-	}
-
-	tool := result.Tools[0]
-	if tool.Type != "function" {
-		t.Errorf("expected type 'function', got %q", tool.Type)
-	}
-	if tool.Function.Name != "get_weather" {
-		t.Errorf("expected name 'get_weather', got %q", tool.Function.Name)
-	}
-	if tool.Function.Description != "Get current weather" {
-		t.Errorf("expected description 'Get current weather', got %q", tool.Function.Description)
-	}
-}
-
-func TestFromMessagesRequest_DropsCustomWebSearchWhenBuiltinPresent(t *testing.T) {
-	req := MessagesRequest{
-		Model:     "test-model",
-		MaxTokens: 1024,
-		Messages:  []MessageParam{{Role: "user", Content: textContent("Hello")}},
-		Tools: []Tool{
-			{
-				Type: "web_search_20250305",
-				Name: "web_search",
-			},
-			{
-				Type:        "custom",
-				Name:        "web_search",
-				Description: "User-defined web search that should be dropped",
-				InputSchema: json.RawMessage(`{"type":"invalid"}`),
-			},
-			{
-				Type:        "custom",
-				Name:        "get_weather",
-				Description: "Get current weather",
-				InputSchema: json.RawMessage(`{"type":"object","properties":{"location":{"type":"string"}},"required":["location"]}`),
-			},
-		},
-	}
-
-	result, err := FromMessagesRequest(req)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(result.Tools) != 2 {
-		t.Fatalf("expected 2 tools after dropping custom web_search, got %d", len(result.Tools))
-	}
-	if result.Tools[0].Function.Name != "web_search" {
-		t.Fatalf("expected first tool to be built-in web_search, got %q", result.Tools[0].Function.Name)
-	}
-	if result.Tools[1].Function.Name != "get_weather" {
-		t.Fatalf("expected second tool to be get_weather, got %q", result.Tools[1].Function.Name)
-	}
-}
-
-func TestFromMessagesRequest_KeepsCustomWebSearchWhenBuiltinAbsent(t *testing.T) {
-	req := MessagesRequest{
-		Model:     "test-model",
-		MaxTokens: 1024,
-		Messages:  []MessageParam{{Role: "user", Content: textContent("Hello")}},
-		Tools: []Tool{
-			{
-				Type:        "custom",
-				Name:        "web_search",
-				Description: "User-defined web search",
-				InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`),
-			},
-		},
-	}
-
-	result, err := FromMessagesRequest(req)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(result.Tools) != 1 {
-		t.Fatalf("expected 1 custom tool, got %d", len(result.Tools))
-	}
-	if result.Tools[0].Function.Name != "web_search" {
-		t.Fatalf("expected custom tool name web_search, got %q", result.Tools[0].Function.Name)
-	}
-	if result.Tools[0].Function.Description != "User-defined web search" {
-		t.Fatalf("expected custom description preserved, got %q", result.Tools[0].Function.Description)
-	}
-}
-
-func TestFromMessagesRequest_WithThinking(t *testing.T) {
-	req := MessagesRequest{
-		Model:     "test-model",
-		MaxTokens: 1024,
-		Messages:  []MessageParam{{Role: "user", Content: textContent("Hello")}},
-		Thinking:  &ThinkingConfig{Type: "enabled", BudgetTokens: 1000},
-	}
-
-	result, err := FromMessagesRequest(req)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if result.Think == nil {
-		t.Fatal("expected Think to be set")
-	}
-	if v, ok := result.Think.Value.(bool); !ok || !v {
-		t.Errorf("expected Think.Value to be true, got %v", result.Think.Value)
+			result, err := FromMessagesRequest(req)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("expected error containing %q, got %q", tt.wantErr, err.Error())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tt.wantThinkNil {
+				if result.Think != nil {
+					t.Fatalf("expected Think to be nil, got %+v", result.Think)
+				}
+				return
+			}
+			if result.Think == nil {
+				t.Fatal("expected Think to be set")
+			}
+			if result.Think.Value != tt.wantValue {
+				t.Errorf("expected Think.Value = %v (%T), got %v (%T)", tt.wantValue, tt.wantValue, result.Think.Value, result.Think.Value)
+			}
+		})
 	}
 }
 
