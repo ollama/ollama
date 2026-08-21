@@ -443,17 +443,19 @@ func RoPEWithFreqs(x *Array, dims int, traditional bool, base, scale float32, of
 		}
 	}
 	out := New("FAST_ROPE")
-	C.mlx_fast_rope_dynamic(
-		&out.ctx,
-		x.ctx,
-		C.int(dims),
-		C.bool(traditional),
-		optBase,
-		C.float(scale),
-		offsets.ctx,
-		freqsCtx,
-		DefaultStream().ctx,
-	)
+	mlxCheck("fast rope failed", func() C.int {
+		return C.mlx_fast_rope_dynamic(
+			&out.ctx,
+			x.ctx,
+			C.int(dims),
+			C.bool(traditional),
+			optBase,
+			C.float(scale),
+			offsets.ctx,
+			freqsCtx,
+			DefaultStream().ctx,
+		)
+	})
 	return out
 }
 
@@ -506,6 +508,13 @@ func Clip(a, aMin, aMax *Array) *Array {
 func Logaddexp(a, b *Array) *Array {
 	out := New("LOGADDEXP")
 	C.mlx_logaddexp(&out.ctx, a.ctx, b.ctx, DefaultStream().ctx)
+	return out
+}
+
+// CumSum computes the cumulative sum along axis.
+func CumSum(a *Array, axis int, reverse, inclusive bool) *Array {
+	out := New("CUMSUM")
+	C.mlx_cumsum(&out.ctx, a.ctx, C.int(axis), C.bool(reverse), C.bool(inclusive), DefaultStream().ctx)
 	return out
 }
 

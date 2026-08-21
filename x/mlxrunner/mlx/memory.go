@@ -64,6 +64,16 @@ func PeakMemory() int {
 	return int(peak)
 }
 
+// MemoryLimit returns the allocator's memory budget in bytes, or 0 if the
+// backend does not report one.
+func MemoryLimit() int {
+	var limit C.size_t
+	if C.mlx_get_memory_limit(&limit) != 0 {
+		return 0
+	}
+	return int(limit)
+}
+
 func ResetPeakMemory() {
 	C.mlx_reset_peak_memory()
 }

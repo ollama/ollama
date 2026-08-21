@@ -85,9 +85,26 @@ func TestClassify(t *testing.T) {
 			wantKind: SourcePrequantized,
 		},
 		{
+			name:     "compressed-tensors int4 (.weight_packed I32)",
+			tensors:  map[string]string{"model.layers.0.weight_packed": "I32", "model.layers.0.weight_scale": "BF16"},
+			wantKind: SourcePrequantized,
+		},
+		{
 			name:      "block-fp8 auto-converts to mxfp8",
 			cfg:       fp8BlockConfig(128, 128),
 			tensors:   map[string]string{"model.layers.0.weight": "F8_E4M3", "model.layers.0.weight_scale_inv": "F32"},
+			wantKind:  SourceBlockFP8,
+			wantQuant: "mxfp8",
+		},
+		{
+			// Pure MXFP4 experts on a float base: no FP8 tensors and no
+			// weight_block_size metadata, but still not a float source.
+			name: "mxfp4 experts on a bf16 base",
+			tensors: map[string]string{
+				"model.layers.0.mlp.experts.0.gate_proj.weight":           "I8",
+				"model.layers.0.mlp.experts.0.gate_proj.weight_scale_inv": "F8_E8M0",
+				"model.embed_tokens.weight":                               "BF16",
+			},
 			wantKind:  SourceBlockFP8,
 			wantQuant: "mxfp8",
 		},

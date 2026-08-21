@@ -24,6 +24,17 @@ const (
 	// its raw bytes; the bytes themselves are unchanged.
 	TransformRelabelU8 Transform = "relabel_u8"
 
+	// TransformRelabelU32 relabels a packed I32 weight as U32. The packed
+	// bit-pattern is unchanged; compressed-tensors uses signed I32 only as the
+	// storage container while MLX consumes the same words as unsigned values.
+	TransformRelabelU32 Transform = "relabel_u32"
+
+	// TransformInt4SymmetricQBias derives MLX affine biases from one or more
+	// compressed-tensors symmetric INT4 scales. compressed-tensors packs q+8,
+	// while MLX decodes scale*q+bias, so bias is exactly -8*scale per group.
+	// Multiple sources are concatenated in expert order into OutShape.
+	TransformInt4SymmetricQBias Transform = "int4_symmetric_qbias"
+
 	// TransformScalarF32 validates that the source is a scalar F32 and copies
 	// it through (a global scale stored as-is).
 	TransformScalarF32 Transform = "scalar_f32"
@@ -35,6 +46,15 @@ const (
 	// TransformStackExperts concatenates N per-expert source tensors (in
 	// expert-index order) into one [experts, ...] tensor.
 	TransformStackExperts Transform = "stack_experts"
+
+	// TransformBlockFP8GroupScales expands UE8M0 128x128 block-scale exponent
+	// bytes into MLX mxfp8 per-group scales (one byte per 32 values along the
+	// last axis). Sources are the block-scale tensors in expert order; the
+	// output is U8 with OutShape [(experts,) rows, cols/32]. Together with a
+	// byte-identical relabel of the E4M3 weight this converts block-FP8 to
+	// mxfp8 losslessly: both formats store E4M3 codes with power-of-two
+	// scales, and every 32-value group lies inside one 128x128 block.
+	TransformBlockFP8GroupScales Transform = "blockfp8_group_scales"
 
 	// TransformDecodeFP8 dequantizes a block-FP8 weight using its block scale.
 	// Its two sources are the F8_E4M3 weight and its scale companion; the

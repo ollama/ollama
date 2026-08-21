@@ -1,6 +1,7 @@
 package create
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"io"
@@ -10,6 +11,8 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxthread"
+	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	st "github.com/ollama/ollama/x/safetensors"
 )
 
@@ -70,6 +73,22 @@ func f32le(v float32) []byte {
 	return b
 }
 
+func u32le(values ...uint32) []byte {
+	out := make([]byte, len(values)*4)
+	for i, value := range values {
+		binary.LittleEndian.PutUint32(out[i*4:], value)
+	}
+	return out
+}
+
+func i64le(values ...int64) []byte {
+	out := make([]byte, len(values)*8)
+	for i, value := range values {
+		binary.LittleEndian.PutUint64(out[i*8:], uint64(value))
+	}
+	return out
+}
+
 func TestWriteBlobsCompressedNVFP4(t *testing.T) {
 	dir := t.TempDir()
 	writeConfigJSON(t, dir, `{"architectures":["TestModel"],"compression_config":{"format":"nvfp4-pack-quantized"}}`)
@@ -127,6 +146,99 @@ func TestWriteBlobsCompressedNVFP4(t *testing.T) {
 	}
 	if nh := blobHeader(t, norm)["norm.weight"]; nh.Dtype != "BF16" || !slices.Equal(nh.Shape, []int32{16}) {
 		t.Errorf("norm = %+v, want BF16 [16]", nh)
+	}
+}
+
+func TestWriteBlobsCompressedInt4Experts(t *testing.T) {
+	dir := t.TempDir()
+	writeConfigJSON(t, dir, `{
+		"architectures":["BailingMoeV3ForCausalLM"],
+		"quantization_config":{
+			"quant_method":"compressed-tensors",
+			"format":"pack-quantized",
+			"config_groups":{"group_0":{"weights":{
+				"num_bits":4,"type":"int","symmetric":true,
+				"strategy":"group","group_size":32
+			}}}
+		}
+	}`)
+
+	const group = "model.layers.1.mlp.experts"
+	packed0 := u32le(0x01234567, 0x89abcdef, 0x11111111, 0x22222222, 0x33333333, 0x44444444, 0x55555555, 0x66666666)
+	packed1 := u32le(0x76543210, 0xfedcba98, 0x77777777, 0x88888888, 0x99999999, 0xaaaaaaaa, 0xbbbbbbbb, 0xcccccccc)
+	scale0, err := EncodeFloatTensor("BF16", []float32{0.25, 0.5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scale1, err := EncodeFloatTensor("BF16", []float32{1, 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
+		st.NewTensorDataFromBytes(group+".0.gate_proj.weight_packed", "I32", []int32{2, 4}, packed0),
+		st.NewTensorDataFromBytes(group+".0.gate_proj.weight_scale", "BF16", []int32{2, 1}, scale0),
+		st.NewTensorDataFromBytes(group+".0.gate_proj.weight_shape", "I64", []int32{2}, i64le(2, 32)),
+		st.NewTensorDataFromBytes(group+".1.gate_proj.weight_packed", "I32", []int32{2, 4}, packed1),
+		st.NewTensorDataFromBytes(group+".1.gate_proj.weight_scale", "BF16", []int32{2, 1}, scale1),
+		st.NewTensorDataFromBytes(group+".1.gate_proj.weight_shape", "I64", []int32{2}, i64le(2, 32)),
+	})
+
+	inv, err := ReadInventory(dir)
+	if err != nil {
+		t.Fatalf("ReadInventory() error = %v", err)
+	}
+	class, err := Classify(inv, "")
+	if err != nil {
+		t.Fatalf("Classify() error = %v", err)
+	}
+	specs, err := Plan(inv, class, defaultQuantPolicy{})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	store := newCaptureStore()
+	if _, err := WriteBlobs(specs, dir, store); err != nil {
+		t.Fatalf("WriteBlobs() error = %v", err)
+	}
+
+	blob, ok := store.blobs[group]
+	if !ok {
+		t.Fatalf("missing stacked expert blob; got %v", store.names())
+	}
+	name := group + ".gate_proj.weight"
+	hdr := blobHeader(t, blob)
+	if w := hdr[name]; w.Dtype != "U32" || !slices.Equal(w.Shape, []int32{2, 2, 4}) {
+		t.Errorf("stacked weight = %+v, want U32 [2 2 4]", w)
+	}
+	if scale := hdr[name+".scale"]; scale.Dtype != "BF16" || !slices.Equal(scale.Shape, []int32{2, 2, 1}) {
+		t.Errorf("stacked scale = %+v, want BF16 [2 2 1]", scale)
+	}
+	if bias := hdr[name+".bias"]; bias.Dtype != "BF16" || !slices.Equal(bias.Shape, []int32{2, 2, 1}) {
+		t.Errorf("stacked bias = %+v, want BF16 [2 2 1]", bias)
+	}
+
+	wantPacked := append(append([]byte(nil), packed0...), packed1...)
+	if got := readPackedTensorRaw(t, blob, name); !slices.Equal(got, wantPacked) {
+		t.Error("packed INT4 words changed during stacking")
+	}
+	biasValues, err := DecodeFloatTensor("BF16", readPackedTensorRaw(t, blob, name+".bias"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []float32{-2, -4, -8, -16}; !slices.Equal(biasValues, want) {
+		t.Errorf("qbias = %v, want %v", biasValues, want)
+	}
+
+	headerSize := binary.LittleEndian.Uint64(blob[:8])
+	var rawHeader map[string]json.RawMessage
+	if err := json.Unmarshal(blob[8:8+headerSize], &rawHeader); err != nil {
+		t.Fatal(err)
+	}
+	var metadata map[string]string
+	if err := json.Unmarshal(rawHeader["__metadata__"], &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata["quant_type"] != "int4" || metadata["group_size"] != "32" {
+		t.Errorf("metadata = %v, want int4 group_size=32", metadata)
 	}
 }
 
@@ -213,4 +325,197 @@ func TestWriteBlobsBlockFP8Decode(t *testing.T) {
 	if _, leaked := store.blobs["model.layers.0.mlp.down_proj.weight_scale_inv"]; leaked {
 		t.Error("fp8 scale companion leaked as its own blob")
 	}
+}
+
+func TestDecodeSourceFP8E8M0Scale(t *testing.T) {
+	if !QuantizeSupported() {
+		t.Skip("MLX unavailable")
+	}
+
+	thread, err := mlxthread.Start("decode-e8m0-test", func() error {
+		if err := mlx.CheckInit(); err != nil {
+			return err
+		}
+		if mlx.GPUIsAvailable() {
+			mlx.SetDefaultDeviceGPU()
+		}
+		return nil
+	})
+	if err != nil {
+		t.Skipf("MLX unavailable: %v", err)
+	}
+	defer func() {
+		if err := thread.Stop(context.Background(), func() {
+			mlx.Sweep()
+			mlx.ClearCache()
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}()
+
+	values, err := mlxthread.Call(context.Background(), thread, func() ([]float32, error) {
+		// E4M3 byte 0x38 is 1.0 and E8M0 byte 128 is 2^(128-127) = 2.
+		rawWeight := make([]uint8, 128*128)
+		for i := range rawWeight {
+			rawWeight[i] = 0x38
+		}
+		weight := mlx.FromValues(rawWeight, 128, 128)
+		scale := mlx.FromValues([]uint8{128}, 1, 1)
+		decoded, err := decodeSourceFP8Tensor(weight, scale)
+		if err != nil {
+			return nil, err
+		}
+		decoded = decoded.AsType(mlx.DTypeFloat32)
+		mlx.Eval(decoded)
+		return append([]float32(nil), decoded.Floats()...), nil
+	})
+	if err != nil {
+		t.Fatalf("decodeSourceFP8Tensor() error = %v", err)
+	}
+	for _, index := range []int{0, len(values) / 2, len(values) - 1} {
+		if values[index] != 2 {
+			t.Fatalf("decoded[%d] = %v, want 2", index, values[index])
+		}
+	}
+}
+
+// TestWriteBlobsBlockFP8LosslessRepack verifies that a block-FP8 source with
+// UE8M0 scales is converted to mxfp8 without touching the E4M3 bytes: the
+// weight is relabeled U32, and each 128x128 block exponent is replicated into
+// the per-32-value group scales. The whole path is byte-level, so it must work
+// without MLX.
+func TestWriteBlobsBlockFP8LosslessRepack(t *testing.T) {
+	dir := t.TempDir()
+	writeConfigJSON(t, dir, `{"architectures":["TestModel"]}`)
+
+	const rows, cols = 256, 256
+	weightBytes := make([]byte, rows*cols)
+	for i := range weightBytes {
+		weightBytes[i] = byte(i % 251)
+	}
+	// Distinct exponent per 128x128 block: [2 x 2] blocks.
+	scaleBytes := []byte{100, 110, 120, 130}
+
+	expertWeight := make([]byte, 128*128)
+	for i := range expertWeight {
+		expertWeight[i] = byte((i * 7) % 253)
+	}
+
+	createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
+		st.NewTensorDataFromBytes("model.layers.0.mlp.down_proj.weight", "F8_E4M3", []int32{rows, cols}, weightBytes),
+		st.NewTensorDataFromBytes("model.layers.0.mlp.down_proj.weight_scale_inv", "F8_E8M0", []int32{2, 2}, scaleBytes),
+		st.NewTensorDataFromBytes("model.layers.1.mlp.experts.0.gate_proj.weight", "F8_E4M3", []int32{128, 128}, expertWeight),
+		st.NewTensorDataFromBytes("model.layers.1.mlp.experts.0.gate_proj.weight_scale_inv", "F8_E8M0", []int32{1, 1}, []byte{140}),
+		st.NewTensorDataFromBytes("model.layers.1.mlp.experts.1.gate_proj.weight", "F8_E4M3", []int32{128, 128}, expertWeight),
+		st.NewTensorDataFromBytes("model.layers.1.mlp.experts.1.gate_proj.weight_scale_inv", "F8_E8M0", []int32{1, 1}, []byte{141}),
+	})
+
+	inv, err := ReadInventory(dir)
+	if err != nil {
+		t.Fatalf("ReadInventory() error = %v", err)
+	}
+	specs, err := Plan(inv, Classification{Kind: SourceBlockFP8, Quantize: "mxfp8"}, defaultQuantPolicy{})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	for _, spec := range specs {
+		if blobNeedsMLX(spec) {
+			t.Fatalf("blob %s requires MLX; the lossless repack must be byte-level", spec.Name)
+		}
+	}
+	store := newCaptureStore()
+	if _, err := WriteBlobs(specs, dir, store); err != nil {
+		t.Fatalf("WriteBlobs() error = %v", err)
+	}
+
+	dense, ok := store.blobs["model.layers.0.mlp.down_proj.weight"]
+	if !ok {
+		t.Fatalf("missing dense blob; got %v", store.names())
+	}
+	hdr := blobHeader(t, dense)
+	w := hdr["model.layers.0.mlp.down_proj.weight"]
+	if w.Dtype != "U32" || !slices.Equal(w.Shape, []int32{rows, cols / 4}) {
+		t.Errorf("repacked weight = %s %v, want U32 [%d %d]", w.Dtype, w.Shape, rows, cols/4)
+	}
+	s := hdr["model.layers.0.mlp.down_proj.weight.scale"]
+	if s.Dtype != "U8" || !slices.Equal(s.Shape, []int32{rows, cols / 32}) {
+		t.Errorf("group scale = %s %v, want U8 [%d %d]", s.Dtype, s.Shape, rows, cols/32)
+	}
+	if got := readTensorBytes(t, dense, "model.layers.0.mlp.down_proj.weight"); !slices.Equal(got, weightBytes) {
+		t.Error("E4M3 weight bytes were altered by the repack")
+	}
+	gotScale := readTensorBytes(t, dense, "model.layers.0.mlp.down_proj.weight.scale")
+	for r := 0; r < rows; r++ {
+		for g := 0; g < cols/32; g++ {
+			want := scaleBytes[(r/128)*2+g*32/128]
+			if gotScale[r*(cols/32)+g] != want {
+				t.Fatalf("scale[%d][%d] = %d, want %d", r, g, gotScale[r*(cols/32)+g], want)
+			}
+		}
+	}
+	meta := blobMetadata(t, dense)
+	if meta["quant_type"] != "mxfp8" || meta["group_size"] != "32" {
+		t.Errorf("blob metadata = %v, want quant_type=mxfp8 group_size=32", meta)
+	}
+
+	experts, ok := store.blobs["model.layers.1.mlp.experts"]
+	if !ok {
+		t.Fatalf("missing expert group blob; got %v", store.names())
+	}
+	ehdr := blobHeader(t, experts)
+	ew := ehdr["model.layers.1.mlp.experts.gate_proj.weight"]
+	if ew.Dtype != "U32" || !slices.Equal(ew.Shape, []int32{2, 128, 32}) {
+		t.Errorf("stacked expert weight = %s %v, want U32 [2 128 32]", ew.Dtype, ew.Shape)
+	}
+	es := ehdr["model.layers.1.mlp.experts.gate_proj.weight.scale"]
+	if es.Dtype != "U8" || !slices.Equal(es.Shape, []int32{2, 128, 4}) {
+		t.Errorf("stacked expert scale = %s %v, want U8 [2 128 4]", es.Dtype, es.Shape)
+	}
+	gotExpertW := readTensorBytes(t, experts, "model.layers.1.mlp.experts.gate_proj.weight")
+	if !slices.Equal(gotExpertW[:len(expertWeight)], expertWeight) || !slices.Equal(gotExpertW[len(expertWeight):], expertWeight) {
+		t.Error("stacked expert E4M3 bytes were altered by the repack")
+	}
+	gotExpertS := readTensorBytes(t, experts, "model.layers.1.mlp.experts.gate_proj.weight.scale")
+	for e := 0; e < 2; e++ {
+		for i := 0; i < 128*4; i++ {
+			if gotExpertS[e*128*4+i] != byte(140+e) {
+				t.Fatalf("expert %d scale byte %d = %d, want %d", e, i, gotExpertS[e*128*4+i], 140+e)
+			}
+		}
+	}
+}
+
+// readTensorBytes extracts one tensor's raw bytes from a packed blob.
+func readTensorBytes(t *testing.T, blob []byte, name string) []byte {
+	t.Helper()
+	n := binary.LittleEndian.Uint64(blob[:8])
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(blob[8:8+n], &raw); err != nil {
+		t.Fatalf("parse header: %v", err)
+	}
+	var entry struct {
+		Offsets []int64 `json:"data_offsets"`
+	}
+	if err := json.Unmarshal(raw[name], &entry); err != nil {
+		t.Fatalf("parse entry %q: %v", name, err)
+	}
+	base := int64(8 + n)
+	return blob[base+entry.Offsets[0] : base+entry.Offsets[1]]
+}
+
+// blobMetadata extracts the __metadata__ map from a packed blob.
+func blobMetadata(t *testing.T, blob []byte) map[string]string {
+	t.Helper()
+	n := binary.LittleEndian.Uint64(blob[:8])
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(blob[8:8+n], &raw); err != nil {
+		t.Fatalf("parse header: %v", err)
+	}
+	meta := map[string]string{}
+	if m, ok := raw["__metadata__"]; ok {
+		if err := json.Unmarshal(m, &meta); err != nil {
+			t.Fatalf("parse metadata: %v", err)
+		}
+	}
+	return meta
 }

@@ -832,6 +832,16 @@ func TestGetParserName(t *testing.T) {
 			want:       "nemotron-3-nano",
 		},
 		{
+			name:       "bailing moe v3 model",
+			configJSON: `{"architectures": ["BailingMoeV3ForCausalLM"], "model_type": "bailing_hybrid"}`,
+			want:       "bailing",
+		},
+		{
+			name:       "bailing moe v2.5 model (no parser)",
+			configJSON: `{"architectures": ["BailingMoeV2_5ForCausalLM"], "model_type": "bailing_hybrid"}`,
+			want:       "",
+		},
+		{
 			name:       "no config",
 			configJSON: `{}`,
 			want:       "",
@@ -920,6 +930,16 @@ func TestGetRendererName(t *testing.T) {
 			name:       "nemotron nested llm config",
 			configJSON: `{"model_type": "nemotron_h_omni", "llm_config": {"model_type": "nemotron_h"}}`,
 			want:       "nemotron-3-nano",
+		},
+		{
+			name:       "bailing moe v3 model",
+			configJSON: `{"architectures": ["BailingMoeV3ForCausalLM"], "model_type": "bailing_hybrid"}`,
+			want:       "bailing",
+		},
+		{
+			name:       "bailing moe v2.5 model (no renderer)",
+			configJSON: `{"architectures": ["BailingMoeV2_5ForCausalLM"], "model_type": "bailing_hybrid"}`,
+			want:       "",
 		},
 	}
 

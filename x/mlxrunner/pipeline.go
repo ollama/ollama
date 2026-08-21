@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/ollama/ollama/llm"
@@ -19,8 +21,15 @@ import (
 	"github.com/ollama/ollama/x/tokenizer"
 )
 
-func prefillChunkSize() int {
-	return 2 << 10
+// prefillChunkSize returns the configured prefill chunk length and whether
+// it was set explicitly via OLLAMA_PREFILL_CHUNK.
+func prefillChunkSize() (int, bool) {
+	if v := os.Getenv("OLLAMA_PREFILL_CHUNK"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 64 {
+			return n, true
+		}
+	}
+	return 2 << 10, false
 }
 
 // Prepare tokenizes the prompt and validates it against the model's
@@ -131,7 +140,35 @@ func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *specu
 	inputs := session.inputs
 	tokens := session.remaining
 	caches := session.caches
-	prefillChunk := prefillChunkSize()
+	prefillChunk, explicitChunk := prefillChunkSize()
+
+	// Without an explicit OLLAMA_PREFILL_CHUNK, ramp the chunk length up
+	// adaptively instead of committing to the full default: forward
+	// transients scale with chunk length AND model size (a 2048-token chunk
+	// holds every layer's intermediates until the end-of-chunk Sweep — ~15 GiB
+	// for Ling Tiny, far more for larger models), so one fixed default either
+	// OOMs big models and small machines or wastes throughput on small ones.
+	// Each chunk's measured per-token transient cost decides whether doubling
+	// the next chunk still fits under the allocator's memory budget with 2x
+	// headroom.
+	const adaptiveStartChunk = 256
+	targetChunk := prefillChunk
+	memLimit := 0
+	adaptive := !explicitChunk
+	if adaptive {
+		// A model that knows its own safe chunk size fixes it outright —
+		// no ramping past a bound the model has already declared unsafe.
+		if m, ok := r.Model.(interface{ DefaultPrefillChunk() int }); ok {
+			if n := m.DefaultPrefillChunk(); n >= 64 {
+				prefillChunk, targetChunk = n, n
+				adaptive = false
+			}
+		}
+	}
+	if adaptive {
+		memLimit = mlx.MemoryLimit()
+		prefillChunk = min(adaptiveStartChunk, targetChunk)
+	}
 
 	// Request periodic snapshots during prefill and near the end of the
 	// prompt so that long prompts can be partially restored and
@@ -205,6 +242,25 @@ func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *specu
 		logutil.TraceContext(ctx, "mlx prompt forward", "processed", processed, "total", total, "tokens", n, "memory", mlx.Memory{})
 
 		mlx.ClearCache()
+
+		// Raise the chunk only while the doubled chunk's projected peak —
+		// current active plus twice the measured per-token transient cost at
+		// twice the length — stays under the allocator budget. The cost
+		// estimate rides the monotonic peak, which each larger chunk
+		// refreshes; no budget signal means no raising.
+		if adaptive && prefillChunk < targetChunk && memLimit > 0 {
+			active := mlx.ActiveMemory()
+			perToken := (mlx.PeakMemory() - active) / n
+			projected := active + 4*max(perToken, 0)*prefillChunk
+			if projected < memLimit {
+				prefillChunk = min(2*prefillChunk, targetChunk)
+				slog.Debug("adaptive prefill chunk raised",
+					"chunk", prefillChunk,
+					"perTokenTransient", mlx.PrettyBytes(perToken),
+					"projectedPeak", mlx.PrettyBytes(projected),
+					"limit", mlx.PrettyBytes(memLimit))
+			}
+		}
 	}
 
 	// Settle before attaching: snapshots attach only at offsets every cache

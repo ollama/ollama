@@ -257,6 +257,15 @@ func decodeSourceFP8Tensor(weight, scale *mlx.Array) (*mlx.Array, error) {
 		return nil, fmt.Errorf("unexpected fp8 scale shape %v for weight shape %v; want %v", scaleShape, weightShape, wantScale)
 	}
 
+	// Safetensors stores UE8M0 block scales as exponent bytes, and MLX loads
+	// that storage dtype as uint8. Decode each byte e to the multiplicative
+	// scale 2^(e-127) before applying it to the E4M3 weight. Float block scales
+	// are already numeric and pass through unchanged.
+	if scale.DType() == mlx.DTypeUint8 {
+		exponent := mlx.AddScalar(scale.AsType(mlx.DTypeFloat32), -127)
+		scale = mlx.NewScalarArray(2).Power(exponent)
+	}
+
 	leadI32 := make([]int32, len(lead))
 	for i, d := range lead {
 		leadI32[i] = int32(d)

@@ -157,6 +157,20 @@ func Unpin(s ...*Array) {
 	}
 }
 
+// Free releases the array's MLX handle immediately, without waiting for a
+// Sweep. The buffer is truly freed once no graph dependency references it.
+// The Go wrapper stays registered until the next Sweep drops the dead entry;
+// Valid() reports false in the meantime. Only free arrays that no later ops
+// will use.
+func Free(s ...*Array) {
+	for _, t := range s {
+		if t != nil && t.pinned.Load() == 0 && t.Valid() {
+			C.mlx_array_free(t.ctx)
+			t.ctx.ctx = nil
+		}
+	}
+}
+
 // Sweep releases all unpinned arrays, primarily intermediate tensors. MLX will truly
 // free them when there are no other references, including dependencies in the graph.
 func Sweep() {

@@ -1,7 +1,9 @@
 package create
 
 import (
+	"encoding/json"
 	"slices"
+	"strconv"
 	"testing"
 )
 
@@ -37,6 +39,26 @@ func specNames(specs []BlobSpec) []string {
 		names[i] = s.Name
 	}
 	return names
+}
+
+func compressedInt4TestConfig(t *testing.T) sourceModelConfig {
+	t.Helper()
+	var cfg sourceModelConfig
+	err := json.Unmarshal([]byte(`{
+		"architectures":["BailingMoeV3ForCausalLM"],
+		"quantization_config":{
+			"quant_method":"compressed-tensors",
+			"format":"pack-quantized",
+			"config_groups":{"group_0":{"weights":{
+				"num_bits":4,"type":"int","symmetric":true,
+				"strategy":"group","group_size":32
+			}}}
+		}
+	}`), &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg
 }
 
 func TestPlanPrequantizedMLX(t *testing.T) {
@@ -179,5 +201,78 @@ func TestPlanPrequantizedCompressedNVFP4(t *testing.T) {
 	}
 	if w.Metadata["quant_type"] != "nvfp4" || w.Metadata["group_size"] != "16" {
 		t.Errorf("metadata = %v, want quant_type=nvfp4 group_size=16", w.Metadata)
+	}
+}
+
+func TestPlanPrequantizedCompressedInt4(t *testing.T) {
+	inv := Inventory{Dir: "test", Config: compressedInt4TestConfig(t), Tensors: map[string]SourceTensor{
+		"linear.weight_packed": {Name: "linear.weight_packed", Dtype: "I32", Shape: []int32{2, 4}, File: "model.safetensors"},
+		"linear.weight_scale":  {Name: "linear.weight_scale", Dtype: "BF16", Shape: []int32{2, 1}, File: "model.safetensors"},
+		"linear.weight_shape":  {Name: "linear.weight_shape", Dtype: "I64", Shape: []int32{2}, File: "model.safetensors"},
+	}}
+
+	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if len(specs) != 1 || specs[0].Name != "linear.weight" {
+		t.Fatalf("specs = %v, want one linear.weight blob", specNames(specs))
+	}
+	w := specs[0]
+	weight, ok := inputByOutput(w, "linear.weight")
+	if !ok || weight.Transform != TransformRelabelU32 || weight.OutDtype != "U32" || !slices.Equal(weight.OutShape, []int32(nil)) {
+		t.Errorf("weight = %+v ok=%v, want I32 words relabeled U32", weight, ok)
+	}
+	scale, ok := inputByOutput(w, "linear.weight.scale")
+	if !ok || scale.Transform != TransformNone || scale.OutDtype != "" {
+		t.Errorf("scale = %+v ok=%v, want BF16 pass-through", scale, ok)
+	}
+	bias, ok := inputByOutput(w, "linear.weight.bias")
+	if !ok || bias.Transform != TransformInt4SymmetricQBias || bias.OutDtype != "BF16" {
+		t.Errorf("bias = %+v ok=%v, want derived BF16 qbias", bias, ok)
+	}
+	if w.Metadata["quant_type"] != "int4" || w.Metadata["group_size"] != "32" {
+		t.Errorf("metadata = %v, want int4 group_size=32", w.Metadata)
+	}
+	if _, leaked := specByName(specs, "linear.weight_shape"); leaked {
+		t.Error("weight_shape companion leaked as its own blob")
+	}
+}
+
+func TestPlanPrequantizedCompressedInt4StacksExperts(t *testing.T) {
+	const group = "model.layers.1.mlp.experts"
+	tensors := map[string]SourceTensor{
+		"norm.weight": {Name: "norm.weight", Dtype: "BF16", Shape: []int32{2}, File: "model.safetensors"},
+	}
+	for expert := 0; expert < 2; expert++ {
+		base := group + "." + strconv.Itoa(expert) + ".gate_proj"
+		tensors[base+".weight_packed"] = SourceTensor{Name: base + ".weight_packed", Dtype: "I32", Shape: []int32{2, 4}, File: "model.safetensors"}
+		tensors[base+".weight_scale"] = SourceTensor{Name: base + ".weight_scale", Dtype: "BF16", Shape: []int32{2, 1}, File: "model.safetensors"}
+		tensors[base+".weight_shape"] = SourceTensor{Name: base + ".weight_shape", Dtype: "I64", Shape: []int32{2}, File: "model.safetensors"}
+	}
+	inv := Inventory{Dir: "test", Config: compressedInt4TestConfig(t), Tensors: tensors}
+
+	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	experts, ok := specByName(specs, group)
+	if !ok {
+		t.Fatalf("missing stacked expert blob; got %v", specNames(specs))
+	}
+	weight, _ := inputByOutput(experts, group+".gate_proj.weight")
+	if weight.Transform != TransformStackExperts || weight.OutDtype != "U32" || !slices.Equal(weight.OutShape, []int32{2, 2, 4}) || len(weight.Sources) != 2 {
+		t.Errorf("stacked weight = %+v, want U32 [2 2 4] from two experts", weight)
+	}
+	scale, _ := inputByOutput(experts, group+".gate_proj.weight.scale")
+	if scale.Transform != TransformStackExperts || !slices.Equal(scale.OutShape, []int32{2, 2, 1}) || len(scale.Sources) != 2 {
+		t.Errorf("stacked scale = %+v, want BF16 [2 2 1]", scale)
+	}
+	bias, _ := inputByOutput(experts, group+".gate_proj.weight.bias")
+	if bias.Transform != TransformInt4SymmetricQBias || !slices.Equal(bias.OutShape, []int32{2, 2, 1}) || len(bias.Sources) != 2 {
+		t.Errorf("stacked bias = %+v, want derived BF16 [2 2 1]", bias)
+	}
+	if _, ok := specByName(specs, "norm.weight"); !ok {
+		t.Error("plain norm tensor should pass through")
 	}
 }

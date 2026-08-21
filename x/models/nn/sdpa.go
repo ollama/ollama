@@ -35,6 +35,13 @@ func WithMLAHistory(h *KVHistory, valueDim int) SDPAOption {
 	return WithKVHistory(&KVHistory{k: h.K(), v: v, applier: h.applier})
 }
 
+// WithExpandedHistory reuses a history's mask applier with caller-
+// transformed K/V tensors — e.g. an MLA latent history re-expanded to
+// per-head keys/values for the fused-SDPA prefill path.
+func WithExpandedHistory(h *KVHistory, k, v *mlx.Array) SDPAOption {
+	return WithKVHistory(&KVHistory{k: k, v: v, applier: h.applier})
+}
+
 // WithKV supplies explicit K/V tensors for the no-cache path. kLens
 // gives per-row real key extents — pass b.SeqQueryLens for self-
 // attention, or the caller's own extents for cross-attention.
