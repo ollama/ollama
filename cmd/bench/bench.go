@@ -3,9 +3,14 @@ package main
 import (
 	"cmp"
 	"context"
+	_ "embed"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"math"
+	"math/rand/v2"
 	"os"
 	"runtime"
 	"slices"
@@ -54,50 +59,181 @@ type ModelInfo struct {
 
 const DefaultPrompt = `Please write a descriptive story about a llama named Alonso who grows up to be President of the Land of Llamas. Include details about Alonso's childhood, adolescent years, and how he grew up to be a political mover and shaker. Write the story with a sense of whimsy.`
 
-// Word list for generating prompts targeting a specific token count.
-var promptWordList = []string{
-	"the", "quick", "brown", "fox", "jumps", "over", "lazy", "dog",
-	"a", "bright", "sunny", "day", "in", "the", "meadow", "where",
-	"flowers", "bloom", "and", "birds", "sing", "their", "morning",
-	"songs", "while", "gentle", "breeze", "carries", "sweet", "scent",
-	"of", "pine", "trees", "across", "rolling", "hills", "toward",
-	"distant", "mountains", "covered", "with", "fresh", "snow",
-	"beneath", "clear", "blue", "sky", "children", "play", "near",
-	"old", "stone", "bridge", "that", "crosses", "winding", "river",
+// Generated prompts come from the MIT-licensed HumanEval problem set
+// (openai/human-eval, see prompts/LICENSE). Real code avoids the repetition
+// loops that synthetic filler triggers in speculative decoding drafts
+// (MTP/dFlash), which inflate throughput and acceptance measurements.
+//
+//go:embed prompts/HumanEval.jsonl
+var humanEvalJSONL []byte
+
+type evalProblem struct {
+	TaskID string `json:"task_id"`
+	Prompt string `json:"prompt"`
 }
 
-// tokensPerWord is the calibrated ratio of tokens to words for the current model.
-// Initialized with a heuristic, then updated during warmup based on actual tokenization.
-var tokensPerWord = 1.3
-
-func generatePromptForTokenCount(targetTokens int, epoch int) string {
-	targetWords := int(float64(targetTokens) / tokensPerWord)
-	if targetWords < 1 {
-		targetWords = 1
+var humanEvalProblems = sync.OnceValue(func() []evalProblem {
+	var problems []evalProblem
+	for line := range strings.Lines(string(humanEvalJSONL)) {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var p evalProblem
+		if err := json.Unmarshal([]byte(line), &p); err == nil && p.Prompt != "" {
+			problems = append(problems, p)
+		}
 	}
+	return problems
+})
 
-	// Vary the starting offset by epoch to defeat KV cache prefix matching
-	offset := epoch * 7 // stride by a prime to get good distribution
-	n := len(promptWordList)
-	words := make([]string, targetWords)
-	for i := range words {
-		words[i] = promptWordList[((i+offset)%n+n)%n]
+// humanEvalWordBounds returns the smallest single problem's word count and the
+// word count of the full problem set.
+func humanEvalWordBounds() (small, total int) {
+	small = math.MaxInt
+	for _, p := range humanEvalProblems() {
+		w := len(strings.Fields(strings.TrimSpace(p.Prompt)))
+		small = min(small, w)
+		total += w
 	}
-	return strings.Join(words, " ")
+	return small, total
 }
 
-// calibratePromptTokens adjusts tokensPerWord based on actual tokenization from a warmup run.
-func calibratePromptTokens(targetTokens, actualTokens, wordCount int) {
-	if actualTokens <= 0 || wordCount <= 0 {
-		return
-	}
-	tokensPerWord = float64(actualTokens) / float64(wordCount)
-	newWords := int(float64(targetTokens) / tokensPerWord)
-	fmt.Fprintf(os.Stderr, "bench: calibrated %.2f tokens/word (target=%d, got=%d, words=%d → %d)\n",
-		tokensPerWord, targetTokens, actualTokens, wordCount, newWords)
+const (
+	// tokensPerWordSeed seeds the calibration search only. HumanEval code runs
+	// 2.0-2.5 tokens per word across tokenizers; the exact ratio varies per
+	// model and is resolved against the live model's tokenizer.
+	tokensPerWordSeed = 2.1
+	// calibrationHeadroom places the first search probe under the target so a
+	// prompt that satisfies the ceiling is always in hand.
+	calibrationHeadroom = 0.9
+	// maxCalibrationProbes bounds the sizing requests spent per model. Whole
+	// problems cost 35-500 tokens each and word count predicts token count only
+	// to within ~35% per problem, so the search samples rather than solves.
+	maxCalibrationProbes = 8
+	// padGoalDivisor sets how close to the target whole problems must land
+	// before the search stops and lets pad letters cover the rest. Tightening it
+	// buys less filler at the cost of more probes.
+	padGoalDivisor = 256
+	minPadGoal     = 4
+	// nonceLetters is the base cache-busting nonce length, in pad letters.
+	// 26^12 is far more than a run needs to keep every prefix distinct.
+	nonceLetters            = 12
+	maxShortResponseRetries = 3
+	// problemStartStride spreads the calibrated problem set across HumanEval;
+	// it is coprime with the number of embedded problems.
+	problemStartStride = 23
+)
+
+// promptPlan is the resolved prompt shape for one model: a set of whole
+// problems that measures at or under the target, plus the pad letters that
+// close the remaining gap so every request lands on the target exactly.
+type promptPlan struct {
+	words int // word budget the problem set is packed to
+	pad   int // pad letters beyond nonceLetters, one token each
 }
 
-func buildGenerateRequest(model string, fOpt flagOptions, imgData api.ImageData, epoch int) *api.GenerateRequest {
+// promptNonce returns n space-separated lowercase letters.
+//
+// Each " x" costs exactly one token on every tokenizer this was checked
+// against, so the nonce contributes a fixed number of tokens no matter what it
+// draws, and lengthening it moves the prompt size by exactly one token. A
+// packed random string cannot do either job: its token count swings by ~5
+// tokens per draw, which alone puts an exact prompt size out of reach.
+func promptNonce(n int) string {
+	letters := make([]byte, 0, 2*n)
+	for i := range n {
+		if i > 0 {
+			letters = append(letters, ' ')
+		}
+		letters = append(letters, byte('a'+rand.IntN(26)))
+	}
+	return string(letters)
+}
+
+// nonceHeader is the per-request cache-busting prefix. It reads like a
+// vendored-file header rather than benchmark scaffolding, which reasoning
+// models take as a cue to analyze the harness instead of writing code.
+func nonceHeader(cacheBuster string) string {
+	return "# -*- coding: utf-8 -*-\n# checksum: " + cacheBuster + "\n\n\n"
+}
+
+func codePromptProblems(wordCount, variation int) []evalProblem {
+	problems := humanEvalProblems()
+	used := 0
+
+	var selected []evalProblem
+	included := make([]bool, len(problems))
+	for i := 0; !included[i]; i = (i + problemStartStride) % len(problems) {
+		problem := problems[i]
+		words := len(strings.Fields(strings.TrimSpace(problem.Prompt)))
+		if used+words > wordCount {
+			break
+		}
+		selected = append(selected, problem)
+		included[i] = true
+		used += words
+	}
+
+	// Best-fit the remaining slack with complete problems until none fits, so
+	// the packed set sits within the smallest problem of the word budget.
+	for {
+		best, bestWords := -1, 0
+		for i, problem := range problems {
+			if included[i] {
+				continue
+			}
+			if words := len(strings.Fields(strings.TrimSpace(problem.Prompt))); words > bestWords && used+words <= wordCount {
+				best, bestWords = i, words
+			}
+		}
+		if best < 0 {
+			break
+		}
+		selected = append(selected, problems[best])
+		included[best] = true
+		used += bestWords
+	}
+	if len(selected) == 0 {
+		return nil
+	}
+
+	start := ((variation % len(selected)) + len(selected)) % len(selected)
+	ordered := make([]evalProblem, 0, len(selected))
+	ordered = append(ordered, selected[start:]...)
+	ordered = append(ordered, selected[:start]...)
+	return ordered
+}
+
+// codePromptBody packs whole problems (signature + docstring — the model
+// completes the body), never truncated or repeated, up to wordCount words.
+// variation rotates one fixed problem set so requests vary without changing the
+// prompt material or its token count: problems are separated by blank lines, so
+// the tokenizer treats each as its own run and the total is order-independent.
+// Deterministic for a given (wordCount, variation).
+func codePromptBody(wordCount, variation int) string {
+	problems := codePromptProblems(wordCount, variation)
+	parts := make([]string, len(problems))
+	for i, problem := range problems {
+		parts[i] = strings.TrimSpace(problem.Prompt)
+	}
+	return strings.Join(parts, "\n\n\n")
+}
+
+// generateCodePrompt renders a plan into a request-unique prompt. The pad
+// letters ride in the header nonce, where they read as digest material and
+// leave the coding request itself made only of whole problems.
+func generateCodePrompt(plan promptPlan, variation int) string {
+	return nonceHeader(promptNonce(nonceLetters+plan.pad)) + codePromptBody(plan.words, variation)
+}
+
+// benchmarkPromptVariation keeps primary epoch windows consecutive while
+// assigning retries to disjoint windows after them.
+func benchmarkPromptVariation(warmups, epochs, epoch, attempt int) int {
+	return warmups + attempt*epochs + epoch
+}
+
+func benchmarkOptions(fOpt flagOptions) map[string]any {
 	options := make(map[string]interface{})
 	if *fOpt.maxTokens > 0 {
 		options["num_predict"] = *fOpt.maxTokens
@@ -109,34 +245,191 @@ func buildGenerateRequest(model string, fOpt flagOptions, imgData api.ImageData,
 	if fOpt.numCtx != nil && *fOpt.numCtx > 0 {
 		options["num_ctx"] = *fOpt.numCtx
 	}
+	return options
+}
 
-	var keepAliveDuration *api.Duration
+func benchmarkKeepAlive(fOpt flagOptions) *api.Duration {
 	if *fOpt.keepAlive > 0 {
-		duration := api.Duration{Duration: time.Duration(*fOpt.keepAlive * float64(time.Second))}
-		keepAliveDuration = &duration
+		return &api.Duration{Duration: time.Duration(*fOpt.keepAlive * float64(time.Second))}
 	}
+	return nil
+}
 
-	prompt := *fOpt.prompt
+// buildChatRequest builds a single-message benchmark request through the
+// model's chat template. plan is the calibrated prompt shape for generated
+// prompts; ignored for -p prompts.
+func buildChatRequest(model string, fOpt flagOptions, imgData api.ImageData, variation int, plan promptPlan) *api.ChatRequest {
+	var content string
 	if *fOpt.promptTokens > 0 {
-		prompt = generatePromptForTokenCount(*fOpt.promptTokens, epoch)
+		content = generateCodePrompt(plan, variation)
 	} else {
-		// Vary the prompt per epoch to defeat KV cache prefix matching
-		prompt = fmt.Sprintf("[%d] %s", epoch, prompt)
+		// A leading unique nonce defeats prefix cache reuse across runs.
+		content = nonceHeader(promptNonce(nonceLetters)) + *fOpt.prompt
 	}
 
-	req := &api.GenerateRequest{
-		Model:     model,
-		Prompt:    prompt,
-		Raw:       true,
-		Options:   options,
-		KeepAlive: keepAliveDuration,
-	}
-
+	msg := api.Message{Role: "user", Content: content}
 	if imgData != nil {
-		req.Images = []api.ImageData{imgData}
+		msg.Images = []api.ImageData{imgData}
 	}
 
-	return req
+	return &api.ChatRequest{
+		Model:     model,
+		Messages:  []api.Message{msg},
+		Options:   benchmarkOptions(fOpt),
+		KeepAlive: benchmarkKeepAlive(fOpt),
+	}
+}
+
+// maxPadTokens caps the filler a plan may carry. Past this the prompt says more
+// about the padding than about the coding request, so the run reports the size
+// it could reach instead of padding out to the target.
+func maxPadTokens(targetTokens int) int {
+	return max(256, targetTokens/4)
+}
+
+// smallestCodePromptWords is the word budget for the smallest well-formed
+// prompt: a single, complete problem.
+func smallestCodePromptWords() int {
+	small, _ := humanEvalWordBounds()
+	return small
+}
+
+func fullCodePromptWords() int {
+	_, total := humanEvalWordBounds()
+	return total
+}
+
+func measurePromptTokens(ctx context.Context, client *api.Client, model string, fOpt flagOptions, imgData api.ImageData, plan promptPlan) (int, error) {
+	maxTokens := 1
+	fOpt.maxTokens = &maxTokens
+	req := buildChatRequest(model, fOpt, imgData, 0, plan)
+
+	var metrics *api.Metrics
+	err := client.Chat(ctx, req, func(resp api.ChatResponse) error {
+		if resp.Done {
+			metrics = &resp.Metrics
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	if metrics == nil {
+		return 0, errors.New("no metrics received")
+	}
+	return metrics.PromptEvalCount, nil
+}
+
+// calibratePrompt owns prompt sizing. The timed benchmark path only consumes
+// the returned plan and never recalibrates between epochs.
+//
+// The target is a ceiling: the search only keeps a problem set that measures at
+// or under it, then pads to the target exactly, so a run lands on the size the
+// caller asked for. Whole problems get within a handful of tokens of the target;
+// pad letters, which cost exactly one token each, cover the remainder.
+//
+// TODO: Replace this chat-based calibration with the token-count API when
+// cmd/bench can depend on it. Keep the replacement behind this function so
+// sizing remains outside warmups and timed requests.
+func calibratePrompt(ctx context.Context, client *api.Client, model string, fOpt flagOptions, imgData api.ImageData) (promptPlan, error) {
+	targetTokens := *fOpt.promptTokens
+	maxWords := fullCodePromptWords()
+
+	measured := make(map[int]int)
+	measure := func(words int) (int, error) {
+		if tokens, ok := measured[words]; ok {
+			return tokens, nil
+		}
+		tokens, err := measurePromptTokens(ctx, client, model, fOpt, imgData, promptPlan{words: words})
+		if err != nil {
+			return 0, fmt.Errorf("cannot measure prompt tokens with model '%s': %w", model, err)
+		}
+		measured[words] = tokens
+		return tokens, nil
+	}
+
+	// The smallest well-formed prompt doubles as the floor check and as a
+	// feasible anchor, so the search always has something under the ceiling.
+	plan := promptPlan{words: smallestCodePromptWords()}
+	bestTokens, err := measure(plan.words)
+	if err != nil {
+		return promptPlan{}, err
+	}
+	if targetTokens < bestTokens {
+		return promptPlan{}, fmt.Errorf("prompt target %d tokens is below the minimum coding prompt size ~%d tokens for model %q; use -p for smaller prompts", targetTokens, bestTokens, model)
+	}
+
+	padGoal := max(minPadGoal, targetTokens/padGoalDivisor)
+	aim := targetTokens - max(1, padGoal/3)
+	words := min(int(calibrationHeadroom*float64(targetTokens)/tokensPerWordSeed), maxWords)
+	prevWords, prevTokens := 0, 0
+	for len(measured) < maxCalibrationProbes && targetTokens-bestTokens > padGoal {
+		if _, seen := measured[words]; seen {
+			break // the search has stopped moving; take the best set so far
+		}
+		tokens, err := measure(words)
+		if err != nil {
+			return promptPlan{}, err
+		}
+		if tokens <= targetTokens && tokens > bestTokens {
+			plan.words, bestTokens = words, tokens
+		}
+
+		// Word count predicts token count only loosely per problem, so step
+		// with the secant slope between the last two probes where possible and
+		// fall back to the running average.
+		slope := float64(tokens) / float64(words)
+		if prevWords != 0 && words != prevWords && tokens != prevTokens {
+			slope = float64(tokens-prevTokens) / float64(words-prevWords)
+		}
+		prevWords, prevTokens = words, tokens
+		next := words + int(math.Round(float64(aim-tokens)/max(slope, 0.5)))
+		step := 1
+		if tokens > aim {
+			step = -1
+		}
+		for next >= 1 && next <= maxWords {
+			if _, seen := measured[next]; !seen {
+				break
+			}
+			next += step
+		}
+		words = min(max(next, 1), maxWords)
+	}
+
+	plan.pad = targetTokens - bestTokens
+	if plan.pad > maxPadTokens(targetTokens) {
+		if plan.words >= maxWords {
+			fmt.Fprintf(os.Stderr, "WARNING: prompt target %d tokens exceeds the problem set (~%d tokens); the prompt will use the full set\n", targetTokens, bestTokens)
+		} else {
+			fmt.Fprintf(os.Stderr, "WARNING: could not size a %d-token prompt for model %q within %d probes; falling back to %d tokens\n", targetTokens, model, maxCalibrationProbes, bestTokens)
+		}
+		plan.pad = 0
+		return plan, nil
+	}
+
+	// Confirm the padded prompt, and correct once if the model's tokenizer
+	// prices pad letters at anything other than one token each.
+	for range 2 {
+		actual, err := measurePromptTokens(ctx, client, model, fOpt, imgData, plan)
+		if err != nil {
+			return promptPlan{}, fmt.Errorf("cannot measure prompt tokens with model '%s': %w", model, err)
+		}
+		if actual == targetTokens {
+			return plan, nil
+		}
+		if corrected := plan.pad + targetTokens - actual; corrected >= 0 {
+			plan.pad = corrected
+			continue
+		}
+		break
+	}
+
+	// Padding cannot reach the target on this tokenizer. Drop it and keep the
+	// ceiling: the unpadded set is known to measure at or under the target.
+	fmt.Fprintf(os.Stderr, "WARNING: could not pin the prompt to %d tokens for model %q; falling back to %d tokens\n", targetTokens, model, bestTokens)
+	plan.pad = 0
+	return plan, nil
 }
 
 func fetchModelInfo(ctx context.Context, client *api.Client, model string) ModelInfo {
@@ -295,9 +588,7 @@ func BenchmarkModel(fOpt flagOptions) error {
 
 	// Log prompt-tokens info in debug mode
 	if *fOpt.debug && *fOpt.promptTokens > 0 {
-		prompt := generatePromptForTokenCount(*fOpt.promptTokens, 0)
-		wordCount := len(strings.Fields(prompt))
-		fmt.Fprintf(os.Stderr, "Generated prompt targeting ~%d tokens (%d words, varied per epoch)\n", *fOpt.promptTokens, wordCount)
+		fmt.Fprintf(os.Stderr, "Generated code prompt of exactly %d tokens (unique per request)\n", *fOpt.promptTokens)
 	}
 
 	for _, model := range models {
@@ -306,32 +597,37 @@ func BenchmarkModel(fOpt flagOptions) error {
 		info := fetchModelInfo(infoCtx, client, model)
 		infoCancel()
 
-		// Warmup phase (uses negative epoch numbers to avoid colliding with timed epochs)
+		// Resolve the generated prompt to the target token count against the
+		// live model (count includes the chat template).
+		var plan promptPlan
+		if *fOpt.promptTokens > 0 {
+			calCtx, calCancel := context.WithTimeout(context.Background(), time.Duration(*fOpt.timeout)*time.Second)
+			plan, err = calibratePrompt(calCtx, client, model, fOpt, imgData)
+			calCancel()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				return err
+			}
+			if *fOpt.debug {
+				fmt.Fprintf(os.Stderr, "Prompt resolved to %d tokens for %s: %d problems plus %d pad tokens\n",
+					*fOpt.promptTokens, model, len(codePromptProblems(plan.words, 0)), plan.pad)
+			}
+		}
+
+		// Warmup phase
 		for i := range *fOpt.warmup {
-			req := buildGenerateRequest(model, fOpt, imgData, -(i + 1))
+			req := buildChatRequest(model, fOpt, imgData, i, plan)
 			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*fOpt.timeout)*time.Second)
 
-			var warmupMetrics *api.Metrics
-			err = client.Generate(ctx, req, func(resp api.GenerateResponse) error {
-				if resp.Done {
-					warmupMetrics = &resp.Metrics
-				}
+			err = client.Chat(ctx, req, func(resp api.ChatResponse) error {
 				return nil
 			})
 			cancel()
 
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "WARNING: Warmup %d/%d for %s failed: %v\n", i+1, *fOpt.warmup, model, err)
-			} else {
-				if *fOpt.debug {
-					fmt.Fprintf(os.Stderr, "Warmup %d/%d for %s complete\n", i+1, *fOpt.warmup, model)
-				}
-				// Calibrate prompt token count on last warmup run
-				if i == *fOpt.warmup-1 && *fOpt.promptTokens > 0 && warmupMetrics != nil {
-					prompt := generatePromptForTokenCount(*fOpt.promptTokens, -(i + 1))
-					wordCount := len(strings.Fields(prompt))
-					calibratePromptTokens(*fOpt.promptTokens, warmupMetrics.PromptEvalCount, wordCount)
-				}
+			} else if *fOpt.debug {
+				fmt.Fprintf(os.Stderr, "Warmup %d/%d for %s complete\n", i+1, *fOpt.warmup, model)
 			}
 		}
 
@@ -349,32 +645,33 @@ func BenchmarkModel(fOpt flagOptions) error {
 
 		// Timed epoch loop
 		shortCount := 0
+		offTargetCount, offTargetExample := 0, 0
 		for epoch := range *fOpt.epochs {
 			var responseMetrics *api.Metrics
 			var ttft time.Duration
 			short := false
 
 			// Retry loop: if the model hits a stop token before max-tokens,
-			// retry with a different prompt (up to maxRetries times).
-			const maxRetries = 3
-			for attempt := range maxRetries + 1 {
+			// retry with a different HumanEval window.
+			for attempt := range maxShortResponseRetries + 1 {
 				responseMetrics = nil
 				ttft = 0
 				var ttftOnce sync.Once
 
-				req := buildGenerateRequest(model, fOpt, imgData, epoch+attempt*1000)
+				variation := benchmarkPromptVariation(*fOpt.warmup, *fOpt.epochs, epoch, attempt)
+				req := buildChatRequest(model, fOpt, imgData, variation, plan)
 				requestStart := time.Now()
 
 				ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*fOpt.timeout)*time.Second)
 
-				err = client.Generate(ctx, req, func(resp api.GenerateResponse) error {
+				err = client.Chat(ctx, req, func(resp api.ChatResponse) error {
 					if *fOpt.debug {
-						fmt.Fprintf(os.Stderr, "%s", cmp.Or(resp.Thinking, resp.Response))
+						fmt.Fprintf(os.Stderr, "%s", cmp.Or(resp.Message.Thinking, resp.Message.Content))
 					}
 
 					// Capture TTFT on first content
 					ttftOnce.Do(func() {
-						if resp.Response != "" || resp.Thinking != "" {
+						if resp.Message.Content != "" || resp.Message.Thinking != "" {
 							ttft = time.Since(requestStart)
 						}
 					})
@@ -406,13 +703,13 @@ func BenchmarkModel(fOpt flagOptions) error {
 
 				// Check if the response was shorter than requested
 				short = *fOpt.maxTokens > 0 && responseMetrics.EvalCount < *fOpt.maxTokens
-				if !short || attempt == maxRetries {
+				if !short || attempt == maxShortResponseRetries {
 					break
 				}
 
 				if *fOpt.debug {
 					fmt.Fprintf(os.Stderr, "Short response (%d/%d tokens), retrying with different prompt (attempt %d/%d)\n",
-						responseMetrics.EvalCount, *fOpt.maxTokens, attempt+1, maxRetries)
+						responseMetrics.EvalCount, *fOpt.maxTokens, attempt+1, maxShortResponseRetries)
 				}
 			}
 
@@ -424,7 +721,7 @@ func BenchmarkModel(fOpt flagOptions) error {
 				shortCount++
 				if *fOpt.debug {
 					fmt.Fprintf(os.Stderr, "WARNING: Short response (%d/%d tokens) after %d retries for epoch %d\n",
-						responseMetrics.EvalCount, *fOpt.maxTokens, maxRetries, epoch+1)
+						responseMetrics.EvalCount, *fOpt.maxTokens, maxShortResponseRetries, epoch+1)
 				}
 			}
 
@@ -463,9 +760,11 @@ func BenchmarkModel(fOpt flagOptions) error {
 
 			OutputMetrics(out, *fOpt.format, metrics, *fOpt.verbose)
 
-			if *fOpt.debug && *fOpt.promptTokens > 0 {
-				fmt.Fprintf(os.Stderr, "Generated prompt targeting ~%d tokens (actual: %d)\n",
-					*fOpt.promptTokens, responseMetrics.PromptEvalCount)
+			// The plan is calibrated once, so hold every timed request to it
+			// rather than trusting that it held.
+			if *fOpt.promptTokens > 0 && responseMetrics.PromptEvalCount != *fOpt.promptTokens {
+				offTargetCount++
+				offTargetExample = responseMetrics.PromptEvalCount
 			}
 
 			if *fOpt.keepAlive > 0 {
@@ -476,6 +775,11 @@ func BenchmarkModel(fOpt flagOptions) error {
 		if shortCount > 0 {
 			fmt.Fprintf(os.Stderr, "WARNING: %d/%d epochs for '%s' had short responses (<%d tokens). Generation metrics may be unreliable.\n",
 				shortCount, *fOpt.epochs, model, *fOpt.maxTokens)
+		}
+
+		if offTargetCount > 0 {
+			fmt.Fprintf(os.Stderr, "WARNING: %d/%d epochs for '%s' ran at a prompt size other than the requested %d tokens (e.g. %d). Prefill comparisons across prompt sizes are not valid.\n",
+				offTargetCount, *fOpt.epochs, model, *fOpt.promptTokens, offTargetExample)
 		}
 
 		// Unload model before moving to the next one
@@ -530,7 +834,7 @@ func main() {
 		verbose:      flag.Bool("v", false, "Show system information"),
 		debug:        flag.Bool("debug", false, "Show debug information"),
 		warmup:       flag.Int("warmup", 1, "Number of warmup requests before timing"),
-		promptTokens: flag.Int("prompt-tokens", 0, "Generate prompt targeting ~N tokens (0 = use -p prompt)"),
+		promptTokens: flag.Int("prompt-tokens", 0, "Generate a prompt of exactly N tokens (0 = use -p prompt)"),
 		numCtx:       flag.Int("num-ctx", 0, "Context size (0 = server default)"),
 	}
 
