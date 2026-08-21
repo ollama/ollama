@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { useEffect, useRef, useState } from "react";
 import { useSettings } from "@/hooks/useSettings";
 
 export function SidebarLayout({
@@ -9,13 +10,45 @@ export function SidebarLayout({
   collapsible?: boolean;
   chatId?: string;
 }>) {
-  const { settings, setSettings } = useSettings();
+  const { settings, settingsData, setSettings } = useSettings();
   const isWindows = navigator.platform.toLowerCase().includes("win");
 
+  // `settings.sidebarOpen` defaults to `false` until the settings query
+  // resolves, so a persisted "open" sidebar flips from closed -> open right
+  // after mount. That flip used to play the same CSS transition as a manual
+  // toggle, which looked like the sidebar animating open on every launch
+  // instead of simply appearing in its saved state. We keep the width/left/
+  // opacity transitions disabled until settings have loaded once, then
+  // re-enable them a frame later so this first, "real" render commits
+  // instantly and only later user-triggered toggles animate.
+  const hasSettledRef = useRef(false);
+  const [transitionsEnabled, setTransitionsEnabled] = useState(false);
+
+  useEffect(() => {
+    if (settingsData && !hasSettledRef.current) {
+      hasSettledRef.current = true;
+      const frame = requestAnimationFrame(() => setTransitionsEnabled(true));
+      return () => cancelAnimationFrame(frame);
+    }
+  }, [settingsData]);
+
+  const widthTransitionClass = transitionsEnabled
+    ? "transition-[width] duration-300"
+    : "";
+  const leftTransitionClass = transitionsEnabled
+    ? "transition-[left] duration-375"
+    : "";
+  const opacityTransitionClass = transitionsEnabled
+    ? "transition-opacity duration-375"
+    : "";
+  const mainTransitionClass = transitionsEnabled
+    ? "transition-all duration-300"
+    : "";
+
   return (
-    <div className={`flex transition-[width] duration-300 dark:bg-neutral-900`}>
+    <div className={`flex ${widthTransitionClass} dark:bg-neutral-900`}>
       <div
-        className={`absolute flex mx-2 py-2 z-20 items-center transition-[left] duration-375 text-neutral-500 dark:text-neutral-400 ${settings.sidebarOpen ? (isWindows ? "left-2" : "left-[204px]") : isWindows ? "left-2" : "left-20"}`}
+        className={`absolute flex mx-2 py-2 z-20 items-center ${leftTransitionClass} text-neutral-500 dark:text-neutral-400 ${settings.sidebarOpen ? (isWindows ? "left-2" : "left-[204px]") : isWindows ? "left-2" : "left-20"}`}
       >
         <button
           onClick={() => setSettings({ SidebarOpen: !settings.sidebarOpen })}
@@ -39,7 +72,7 @@ export function SidebarLayout({
           to="/c/$chatId"
           params={{ chatId: "new" }}
           title="New chat"
-          className={`flex ml-1 items-center justify-center rounded-full transition-opacity duration-375 h-9 w-9 hover:bg-neutral-100 dark:hover:bg-neutral-700 ${
+          className={`flex ml-1 items-center justify-center rounded-full ${opacityTransitionClass} h-9 w-9 hover:bg-neutral-100 dark:hover:bg-neutral-700 ${
             settings.sidebarOpen
               ? "opacity-0 pointer-events-none"
               : "opacity-100"
@@ -57,7 +90,7 @@ export function SidebarLayout({
         </Link>
       </div>
       <div
-        className={`flex flex-col transition-[width] duration-300 max-h-screen ${settings.sidebarOpen ? "w-64" : "w-0"}`}
+        className={`flex flex-col ${widthTransitionClass} max-h-screen ${settings.sidebarOpen ? "w-64" : "w-0"}`}
       >
         <div
           onDoubleClick={() => window.doubleClick && window.doubleClick()}
@@ -66,9 +99,7 @@ export function SidebarLayout({
         ></div>
         {settings.sidebarOpen && sidebar}
       </div>
-      <main
-        className={`flex flex-1 flex-col min-w-0 transition-all duration-300`}
-      >
+      <main className={`flex flex-1 flex-col min-w-0 ${mainTransitionClass}`}>
         <div
           className={`h-13 flex-none w-full z-10 flex items-center bg-white dark:bg-neutral-900 ${isWindows ? "xl:hidden" : "xl:fixed xl:bg-transparent xl:dark:bg-transparent"}`}
           onDoubleClick={() => window.doubleClick && window.doubleClick()}
