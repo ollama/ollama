@@ -826,13 +826,13 @@ export function ConnectAppsScreen({
                   ? "Ollama is downloading the Claude installer…"
                   : claudePhase === "waiting-for-install"
                     ? "Finish installing Claude. Ollama will connect it automatically."
-                  : claudePhase === "connecting"
-                    ? "Connecting Claude to Ollama…"
-                    : claudePhase === "launching"
-                      ? "Opening Claude…"
-                      : claudePhase === "disconnecting"
-                        ? "Restoring Claude’s usual connection…"
-                        : claudeIntegration.description)}
+                    : claudePhase === "connecting"
+                      ? "Connecting Claude to Ollama…"
+                      : claudePhase === "launching"
+                        ? "Opening Claude…"
+                        : claudePhase === "disconnecting"
+                          ? "Restoring Claude’s usual connection…"
+                          : claudeIntegration.description)}
           </p>
         </div>
       </div>
@@ -1008,13 +1008,14 @@ export function ConnectAppsScreen({
                 id="claude-connected-title"
                 className="font-rounded text-lg font-medium leading-6 text-neutral-950"
               >
-                Ollama models are now available in Claude
+                Easily access Ollama models in your Claude
               </h2>
               <p
                 id="claude-connected-description"
                 className="mt-2 text-[13px] leading-5 text-neutral-500"
               >
-                Choose an Ollama model from Claude&apos;s model selector.
+                Ollama models now show up in Claude so you can pick the right
+                model for the task.
               </p>
               <div className="mt-5 flex justify-end">
                 <button
