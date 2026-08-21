@@ -180,22 +180,6 @@ func (r *Qwen35Renderer) validateMessages(messages []api.Message) error {
 		return fmt.Errorf("system message cannot contain images")
 	}
 
-	foundUserQuery := false
-	for _, message := range messages {
-		if message.Role != "user" {
-			continue
-		}
-		content, _ := r.renderContent(message, 0)
-		content = strings.TrimSpace(content)
-		if !(strings.HasPrefix(content, "<tool_response>") && strings.HasSuffix(content, "</tool_response>")) {
-			foundUserQuery = true
-			break
-		}
-	}
-	if !foundUserQuery {
-		return fmt.Errorf("no user query found in messages")
-	}
-
 	return nil
 }
 
@@ -278,6 +262,10 @@ func (r *Qwen35Renderer) Render(messages []api.Message, tools []api.Tool, think 
 				lastQueryIndex = i
 			}
 		}
+	}
+
+	if r.variant == qwen35Renderer38 && multiStepTool {
+		slog.Warn("no user query found in messages", "renderer", "qwen3.8")
 	}
 
 	imageOffset := 0
