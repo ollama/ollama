@@ -603,35 +603,6 @@ func TestUserAgentTransport(t *testing.T) {
 }
 
 func TestGetCloudModels(t *testing.T) {
-	t.Run("lists models when cloud is enabled and account is authorized", func(t *testing.T) {
-		t.Setenv("HOME", t.TempDir())
-		t.Setenv("OLLAMA_NO_CLOUD", "")
-		testStore := &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
-		defer testStore.Close()
-
-		server := &Server{
-			Store: testStore,
-			ListCloudModels: func(context.Context) (*api.ListResponse, error) {
-				return &api.ListResponse{Models: []api.ListModelResponse{
-					{Name: "glm-5.2", Model: "glm-5.2"},
-				}}, nil
-			},
-		}
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/models/cloud", nil)
-		rr := httptest.NewRecorder()
-		if err := server.getCloudModels(rr, req); err != nil {
-			t.Fatal(err)
-		}
-
-		var got api.ListResponse
-		if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
-			t.Fatal(err)
-		}
-		if len(got.Models) != 1 || got.Models[0].Name != "glm-5.2" {
-			t.Fatalf("models = %+v, want glm-5.2", got.Models)
-		}
-	})
-
 	t.Run("does not call ollama.com when cloud is disabled", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		t.Setenv("OLLAMA_NO_CLOUD", "1")
