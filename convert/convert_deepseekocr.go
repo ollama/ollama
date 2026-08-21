@@ -2,6 +2,7 @@ package convert
 
 import (
 	"fmt"
+	"io/fs"
 
 	"github.com/ollama/ollama/fs/ggml"
 )
@@ -67,21 +68,45 @@ func (m *deepseekocr) KV(t *Tokenizer) KV {
 	return kv
 }
 
+// maxDeepSeekOCRHiddenLayers mirrors maxDeepSeek2HiddenLayers's rationale:
+// far above any known config, but keeps HiddenLayers*3 clear of uint32
+// overflow and bounds how many times Tensors() below can iterate.
+const maxDeepSeekOCRHiddenLayers = 1024
+
+func (m *deepseekocr) parseMore(_ fs.FS) error {
+	return m.validate()
+}
+
+func (m *deepseekocr) validate() error {
+	if m.LanguageConfig.HiddenLayers == 0 {
+		return fmt.Errorf("deepseekocr: language_config.num_hidden_layers must be set")
+	}
+	if m.LanguageConfig.HiddenLayers > maxDeepSeekOCRHiddenLayers {
+		return fmt.Errorf("deepseekocr: language_config.num_hidden_layers (%d) exceeds max supported value (%d)", m.LanguageConfig.HiddenLayers, maxDeepSeekOCRHiddenLayers)
+	}
+	return nil
+}
+
 func (m *deepseekocr) Tensors(s []Tensor) (out []*ggml.Tensor) {
-	merges := make([]merge, m.LanguageConfig.HiddenLayers*3)
+	// Built with append (not a pre-sized index-assigned slice) so a bad
+	// HiddenLayers value can never cause an out-of-bounds write here even
+	// if validate() above did not run on some future call path.
+	merges := make([]merge, 0, m.LanguageConfig.HiddenLayers*3)
 	for i := range m.LanguageConfig.HiddenLayers {
-		merges[i*3+0] = merge{
-			fmt.Sprintf("blk.%d.mlp.experts.*.gate_proj.weight", i),
-			fmt.Sprintf("blk.%d.ffn_gate_exps.weight", i),
-		}
-		merges[i*3+1] = merge{
-			fmt.Sprintf("blk.%d.mlp.experts.*.up_proj.weight", i),
-			fmt.Sprintf("blk.%d.ffn_up_exps.weight", i),
-		}
-		merges[i*3+2] = merge{
-			fmt.Sprintf("blk.%d.mlp.experts.*.down_proj.weight", i),
-			fmt.Sprintf("blk.%d.ffn_down_exps.weight", i),
-		}
+		merges = append(merges,
+			merge{
+				fmt.Sprintf("blk.%d.mlp.experts.*.gate_proj.weight", i),
+				fmt.Sprintf("blk.%d.ffn_gate_exps.weight", i),
+			},
+			merge{
+				fmt.Sprintf("blk.%d.mlp.experts.*.up_proj.weight", i),
+				fmt.Sprintf("blk.%d.ffn_up_exps.weight", i),
+			},
+			merge{
+				fmt.Sprintf("blk.%d.mlp.experts.*.down_proj.weight", i),
+				fmt.Sprintf("blk.%d.ffn_down_exps.weight", i),
+			},
+		)
 	}
 
 	out, s = mergeTensors(s, merges...)
