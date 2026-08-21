@@ -44,6 +44,7 @@ describe("ClaudeDesktopModelsSettings", () => {
     expect(html).toContain("Search Ollama models");
     expect(html).not.toContain("Add any Ollama model");
     expect(html).toContain("Restart Claude");
+    expect((html.match(/checked=""/g) ?? []).length).toBe(2);
   });
 
   it("does not show the invalid Ollama Cloud sentinel", () => {
@@ -240,7 +241,9 @@ describe("ClaudeDesktopModelsSettings", () => {
     expect(html).toContain(
       "Cloud models are off. Select an installed model in Settings.",
     );
-    expect(html).not.toContain("These models will be available when Claude starts.");
+    expect(html).not.toContain(
+      "These models will be available when Claude starts.",
+    );
     expect(html).not.toContain("text-red");
   });
 
@@ -284,6 +287,58 @@ describe("ClaudeDesktopModelsSettings", () => {
     const label = html.slice(html.lastIndexOf("<label", index), index);
     expect(label).toContain("disabled");
     expect(html).toContain("gemma4:31b-cloud");
+  });
+
+  it("replaces paid defaults with the available free recommendation", () => {
+    const html = renderToStaticMarkup(
+      <ClaudeDesktopModelsSettings
+        initialStatus={{
+          supported: true,
+          used: true,
+          installed: true,
+          connected: false,
+          running: false,
+          startFailed: false,
+          portConflict: false,
+          modelSource: "endpoint",
+          models: [
+            "glm-5.2:cloud",
+            "kimi-k3:cloud",
+            "deepseek-v4-pro:cloud",
+            "deepseek-v4-flash:cloud",
+          ]
+            .map((name) => ({
+              name,
+              displayName: name,
+              cloud: true,
+              selected: true,
+              availability: "unavailable" as const,
+              reason: "upgrade_required" as const,
+              requiredPlan: "pro",
+            }))
+            .concat([
+              {
+                name: "gemma4:31b-cloud",
+                displayName: "gemma4:31b-cloud",
+                cloud: true,
+                selected: false,
+                availability: "available" as const,
+                requiredPlan: "free",
+              },
+            ]),
+        }}
+      />,
+    );
+
+    expect((html.match(/>pro plan required<\/span>/g) ?? []).length).toBe(4);
+    expect((html.match(/checked=""/g) ?? []).length).toBe(1);
+    const gemmaIndex = html.indexOf(">gemma4:31b-cloud</span>");
+    const gemmaInput = html.slice(
+      html.lastIndexOf("<input", gemmaIndex),
+      gemmaIndex,
+    );
+    expect(gemmaInput).toContain('checked=""');
+    expect(html).toContain("Start Claude");
   });
 
   it("does not restart Claude when every selected model is unavailable", () => {

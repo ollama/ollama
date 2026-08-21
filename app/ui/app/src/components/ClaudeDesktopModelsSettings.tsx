@@ -6,6 +6,7 @@ import {
   claudeDesktopRecoveryMessage,
   claudeDesktopMaxModels,
   claudeDesktopMaxModelsMessage,
+  claudeDesktopUsableSelection,
 } from "@/lib/claudeDesktop";
 import type {
   ClaudeDesktopModelStatus,
@@ -33,9 +34,11 @@ function visibleModels(
 }
 
 function selectedModelNames(status: ClaudeDesktopStatus): string[] {
-  return visibleModels(status)
-    .filter((model) => model.selected)
-    .map((model) => model.name);
+  return claudeDesktopUsableSelection(
+    visibleModels(status),
+    status.modelSource !== "user",
+    claudeDesktopMaxModels(status),
+  );
 }
 
 function modelAccessLabel(model: ClaudeDesktopModelStatus): string | null {
@@ -257,7 +260,7 @@ export function ClaudeDesktopModelsSettings({
   const selectionFull = selection.length >= maxModels;
   const guidance =
     claudeDesktopRecoveryMessage(status.error, error) ??
-    (!hasAvailableSelection && selection.length > 0
+    (!hasAvailableSelection && models.length > 0
       ? "Select a model available to your account."
       : selectionFull
         ? claudeDesktopMaxModelsMessage(maxModels)

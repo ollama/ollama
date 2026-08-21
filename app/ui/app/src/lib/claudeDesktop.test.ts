@@ -4,6 +4,7 @@ import {
   claudeDesktopRecoveryMessage,
   claudeDesktopMaxModels,
   claudeDesktopMaxModelsMessage,
+  claudeDesktopUsableSelection,
   defaultClaudeDesktopMaxModels,
   isClaudeConfigured,
 } from "./claudeDesktop";
@@ -104,5 +105,84 @@ describe("addClaudeModelSelection", () => {
     expect(addClaudeModelSelection(["qwen3:8b"], "qwen3:8b", 5)).toEqual({
       selection: ["qwen3:8b"],
     });
+  });
+});
+
+describe("claudeDesktopUsableSelection", () => {
+  it("replaces unavailable paid selections with an available free model", () => {
+    expect(
+      claudeDesktopUsableSelection([
+        {
+          name: "glm-5.2:cloud",
+          displayName: "glm-5.2:cloud",
+          selected: true,
+          availability: "unavailable",
+          reason: "upgrade_required",
+          requiredPlan: "pro",
+        },
+        {
+          name: "gemma4:31b-cloud",
+          displayName: "gemma4:31b-cloud",
+          selected: false,
+          availability: "available",
+          requiredPlan: "free",
+        },
+      ]),
+    ).toEqual(["gemma4:31b-cloud"]);
+  });
+
+  it("preserves selected models that remain available", () => {
+    expect(
+      claudeDesktopUsableSelection([
+        {
+          name: "gemma4:31b-cloud",
+          displayName: "gemma4:31b-cloud",
+          selected: true,
+          availability: "available",
+        },
+        {
+          name: "qwen3:8b",
+          displayName: "qwen3:8b",
+          selected: false,
+          availability: "available",
+        },
+      ]),
+    ).toEqual(["gemma4:31b-cloud"]);
+  });
+
+  it("selects all available recommendations for a default catalog", () => {
+    expect(
+      claudeDesktopUsableSelection(
+        [
+          {
+            name: "glm-5.2:cloud",
+            displayName: "glm-5.2:cloud",
+            selected: false,
+            availability: "available",
+          },
+          {
+            name: "kimi-k3:cloud",
+            displayName: "kimi-k3:cloud",
+            selected: false,
+            availability: "available",
+          },
+        ],
+        true,
+        5,
+      ),
+    ).toEqual(["glm-5.2:cloud", "kimi-k3:cloud"]);
+  });
+
+  it("returns no selection when no model is available", () => {
+    expect(
+      claudeDesktopUsableSelection([
+        {
+          name: "glm-5.2:cloud",
+          displayName: "glm-5.2:cloud",
+          selected: true,
+          availability: "unavailable",
+        },
+      ]),
+    ).toEqual([]);
   });
 });
