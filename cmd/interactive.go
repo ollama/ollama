@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -264,7 +265,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				return err
 			}
 
-			req := NewCreateRequest(args[1], opts)
+			req := NewCreateRequest(args[1], resolveParentForSave(cmd.Context(), client, opts))
 			fn := func(resp api.ProgressResponse) error { return nil }
 			err = client.Create(cmd.Context(), req, fn)
 			if err != nil {
@@ -543,6 +544,19 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			sb.Reset()
 		}
 	}
+}
+
+// resolveParentForSave clears ParentModel and LoadedMessages when the parent is not locally reachable,
+// so /save falls back to the running model alias instead of 404ing on an internal registry variant.
+func resolveParentForSave(ctx context.Context, client *api.Client, opts runOptions) runOptions {
+	if opts.ParentModel == "" {
+		return opts
+	}
+	if _, err := client.Show(ctx, &api.ShowRequest{Model: opts.ParentModel}); err != nil {
+		opts.ParentModel = ""
+		opts.LoadedMessages = nil
+	}
+	return opts
 }
 
 func NewCreateRequest(name string, opts runOptions) *api.CreateRequest {
