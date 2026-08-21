@@ -115,11 +115,13 @@ describe("Onboarding", () => {
 
   it("finishes Claude connection states from the native status hook", () => {
     const status = {
+      supported: true,
       installed: true,
       configured: true,
       connected: true,
       running: false,
       startFailed: false,
+      portConflict: false,
     };
 
     expect(isClaudeConnectionComplete(true, status)).toBe(true);
@@ -136,6 +138,9 @@ describe("Onboarding", () => {
         connected: false,
       }),
     ).toBe(true);
+    expect(
+      isClaudeConnectionComplete(false, { ...status, connected: false }),
+    ).toBe(false);
   });
 
   it("bounds the Claude installer wait", () => {
@@ -199,78 +204,127 @@ describe("Onboarding", () => {
         name: "Claude",
         description: "Use Ollama models in Claude Desktop",
         installed: true,
+        action: "connect",
       },
       {
         id: "claude",
         name: "Claude Code",
         description: "Anthropic's coding tool with subagents",
+        installed: true,
+        action: "copy",
         command: "ollama launch claude",
       },
       {
         id: "codex",
         name: "Codex",
         description: "OpenAI's open-source coding agent",
+        installed: true,
+        action: "copy",
         command: "ollama launch codex",
       },
       {
         id: "openclaw",
         name: "OpenClaw",
         description: "Personal AI with 100+ skills",
+        installed: true,
+        action: "copy",
         command: "ollama launch openclaw",
       },
       {
         id: "opencode",
         name: "OpenCode",
         description: "Anomaly's open-source coding agent",
+        installed: false,
+        action: "copy",
         command: "ollama launch opencode",
       },
       {
         id: "droid",
         name: "Droid",
         description: "AI software engineering agent",
+        installed: false,
+        action: "copy",
         command: "ollama launch droid",
       },
       {
         id: "terminal",
         name: "Terminal",
         description: "Run local models from your terminal",
+        action: "copy",
         command: "ollama",
       },
     ];
     const html = renderToStaticMarkup(
-      <ConnectAppsScreen initialIntegrations={integrations} />,
+      <ConnectAppsScreen
+        completionError={null}
+        onRetryCompletion={vi.fn()}
+        initialIntegrations={integrations}
+      />,
     );
 
+    expect(html).not.toContain(
+      "Connect Claude, or copy a command to run in your terminal.",
+    );
+    expect(html).toContain("Claude");
+    expect(html).toContain("Use Ollama models in Claude Desktop");
+    expect(html).toContain("Claude Code");
+    expect(html).not.toContain("Search apps");
+    expect(html).not.toContain('type="search"');
+    expect(html).toContain("Application");
     expect(html).toContain('id="applications-heading"');
     expect(html).toContain('id="terminal-heading"');
+    expect(html).not.toContain("Ready to launch");
+    expect(html).not.toContain('id="claude-apps-heading"');
     expect(html.indexOf("Application")).toBeLessThan(
       html.indexOf("Use Ollama models in Claude Desktop"),
     );
+    expect(html).not.toContain(">Command</th>");
+    expect(html).toContain("ollama launch claude");
+    expect(html).not.toContain("Installed");
+    expect(html).not.toContain("Not installed");
     expect(html).toContain('aria-label="Connect Claude"');
     expect(html).toContain('role="switch"');
     expect(html).toContain('aria-checked="false"');
     expect(html).not.toContain("Inactive");
+    expect(html).not.toContain("Download &amp; connect");
     expect(html).not.toContain("Active");
+    expect(html).toContain("bg-transparent");
     expect(html).toContain('aria-label="Copy OpenCode command"');
     expect(html).toContain('aria-label="Copy Terminal command"');
+    expect(html).not.toContain(">Copy command</button>");
     expect(html).not.toContain("ChatGPT");
+    expect(html).toContain("OpenCode");
+    expect(html).toContain("Terminal");
     expect(html).toContain('aria-label="Show more apps"');
     expect(html).toContain('aria-expanded="false"');
     expect(html).toContain("grid-rows-[0fr]");
+    expect(html).not.toContain("Collapse");
     expect(html).toContain("/launch-icons/claude.svg");
     expect(html).toContain("/launch-icons/claude-code.svg");
+    expect(html).not.toContain("<table");
+    expect(html).not.toContain("<footer");
+    expect(html).not.toContain("Command copied. Run it in your terminal.");
     expect(html).toContain("Run local models from your terminal");
+    expect(html).not.toContain("Launch command");
+    expect(html).not.toContain('aria-pressed="true"');
+    expect(html).not.toContain("Continue");
+    expect(html).not.toContain("Run Ollama");
+    expect(html).not.toContain('viewBox="0 0 3400 3400"');
   });
 
   it("keeps connected Claude in Application without an idle status", () => {
     const html = renderToStaticMarkup(
       <ConnectAppsScreen
+        completionError={null}
+        onRetryCompletion={vi.fn()}
         initialClaudeStatus={{
+          supported: true,
+          used: true,
           installed: true,
-          configured: true,
           connected: true,
           running: false,
           startFailed: false,
+          portConflict: false,
         }}
         initialIntegrations={[
           {
@@ -278,11 +332,14 @@ describe("Onboarding", () => {
             name: "Claude",
             description: "Use Ollama models in Claude Desktop",
             installed: true,
+            action: "connect",
           },
           {
             id: "codex",
             name: "Codex",
             description: "OpenAI's open-source coding agent",
+            installed: true,
+            action: "copy",
             command: "ollama launch codex",
           },
         ]}
@@ -298,15 +355,21 @@ describe("Onboarding", () => {
     expect(html).toContain('aria-label="Disconnect Claude"');
   });
 
-  it("keeps failed configured Claude disconnectable", () => {
+  it("shows initial Claude recovery guidance without error styling", () => {
     const html = renderToStaticMarkup(
       <ConnectAppsScreen
+        completionError={null}
+        onRetryCompletion={vi.fn()}
         initialClaudeStatus={{
+          supported: true,
+          used: true,
           installed: true,
           configured: true,
           connected: false,
           running: false,
           startFailed: true,
+          portConflict: false,
+          error: "Cloud models are off. Select an installed model in Settings.",
         }}
         initialIntegrations={[
           {
@@ -314,25 +377,82 @@ describe("Onboarding", () => {
             name: "Claude",
             description: "Use Ollama models in Claude Desktop",
             installed: true,
+            action: "connect",
           },
         ]}
       />,
     );
 
+    expect(html).toContain(
+      "Cloud models are off. Select an installed model in Settings.",
+    );
+    expect(html).toContain('role="alert"');
+    expect(html).not.toContain("text-red");
     expect(html).toContain('aria-checked="true"');
     expect(html).toContain('aria-label="Disconnect Claude"');
-    expect(html).toContain("Ollama couldn’t start the Claude connection.");
+  });
+
+  it("keeps Claude model management off the Connect Apps page", () => {
+    const html = renderToStaticMarkup(
+      <ConnectAppsScreen
+        completionError={null}
+        onRetryCompletion={vi.fn()}
+        initialClaudeStatus={{
+          supported: true,
+          used: true,
+          installed: true,
+          connected: true,
+          running: true,
+          startFailed: false,
+          portConflict: false,
+          modelSource: "endpoint",
+          models: [
+            {
+              name: "glm-5.2:cloud",
+              displayName: "GLM 5.2",
+              description: "Long-horizon coding",
+              selected: true,
+            },
+            {
+              name: "qwen3.8:27b",
+              displayName: "Qwen 3.8 27B",
+              description: "Local coding",
+              selected: false,
+            },
+          ],
+        }}
+        initialIntegrations={[
+          {
+            id: "claude-desktop",
+            name: "Claude",
+            description: "Use Ollama models in Claude Desktop",
+            installed: true,
+            action: "connect",
+          },
+        ]}
+      />,
+    );
+
+    expect(html).not.toContain("Models in Claude");
+    expect(html).not.toContain("GLM 5.2");
+    expect(html).not.toContain("Qwen 3.8 27B");
+    expect(html).not.toContain('type="checkbox"');
+    expect(html).not.toContain("Restart Claude");
+    expect(html).not.toContain("Built-in defaults");
   });
 
   it("keeps Claude available without a separate not-installed group", () => {
     const html = renderToStaticMarkup(
       <ConnectAppsScreen
+        completionError={null}
+        onRetryCompletion={vi.fn()}
         initialIntegrations={[
           {
             id: "claude-desktop",
             name: "Claude",
             description: "Use Ollama models in Claude Desktop",
             installed: false,
+            action: "connect",
           },
         ]}
       />,
@@ -349,29 +469,35 @@ describe("Onboarding", () => {
   it("uses branded icons for the remaining launcher integrations", () => {
     const html = renderToStaticMarkup(
       <ConnectAppsScreen
+        completionError={null}
+        onRetryCompletion={vi.fn()}
         initialIntegrations={[
           {
             id: "cline",
             name: "Cline",
             description: "Autonomous coding agent",
+            action: "copy",
             command: "ollama launch cline",
           },
           {
             id: "omp",
             name: "Oh My Pi",
             description: "AI coding agent",
+            action: "copy",
             command: "ollama launch omp",
           },
           {
             id: "pool",
             name: "Poolside",
             description: "Poolside's coding agent",
+            action: "copy",
             command: "ollama launch pool",
           },
           {
             id: "qwen",
             name: "Qwen Code",
             description: "Qwen's coding agent",
+            action: "copy",
             command: "ollama launch qwen",
           },
         ]}

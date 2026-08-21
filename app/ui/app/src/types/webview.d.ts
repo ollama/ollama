@@ -13,11 +13,35 @@ interface MenuItem {
 }
 
 interface ClaudeDesktopStatus {
+  supported: boolean;
+  used: boolean;
   installed: boolean;
-  configured: boolean;
+  configured?: boolean;
   connected: boolean;
   running: boolean;
   startFailed: boolean;
+  portConflict: boolean;
+  gatewayPort?: number;
+  error?: string;
+  modelSource?: "user" | "endpoint" | "fallback";
+  maxModels?: number;
+  models?: ClaudeDesktopModelStatus[];
+}
+
+interface ClaudeDesktopModelStatus {
+  name: string;
+  displayName: string;
+  description?: string;
+  cloud?: boolean;
+  selected: boolean;
+  availability?: "unknown" | "available" | "unavailable";
+  reason?:
+    | "cloud_off"
+    | "sign_in_required"
+    | "upgrade_required"
+    | "verification_unavailable"
+    | "model_not_installed";
+  requiredPlan?: string;
 }
 
 interface ClaudeDesktopActionResult {
@@ -49,6 +73,9 @@ declare global {
     installClaudeDesktop?: () => Promise<ClaudeDesktopInstallResult>;
     getShowAppsInMenu?: () => Promise<boolean>;
     setShowAppsInMenu?: (visible: boolean) => Promise<void>;
+    restartClaudeDesktop?: (
+      models: string[],
+    ) => Promise<ClaudeDesktopActionResult>;
     setOnboardingWindow?: (enabled: boolean) => void;
     menu: (items: MenuItem[]) => Promise<string | null>;
     OLLAMA_TOOLS?: boolean;
@@ -76,6 +103,7 @@ declare global {
 export type {
   ClaudeDesktopActionResult,
   ClaudeDesktopInstallResult,
+  ClaudeDesktopModelStatus,
   ClaudeDesktopStatus,
   ContextMenuItem,
   ContextMenuResult,

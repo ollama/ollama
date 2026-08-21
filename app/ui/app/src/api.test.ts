@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchConnectUrl, getIntegrationStatuses } from "./api";
+const { listModels } = vi.hoisted(() => ({ listModels: vi.fn() }));
+vi.mock("./lib/ollama-client", () => ({
+  ollamaClient: { list: listModels },
+}));
+
+import {
+  fetchConnectUrl,
+  getClaudeDesktopAvailableModels,
+  getIntegrationStatuses,
+} from "./api";
 
 describe("fetchConnectUrl", () => {
   afterEach(() => {
@@ -70,5 +79,63 @@ describe("getIntegrationStatuses", () => {
     expect(fetch).toHaveBeenCalledWith(
       "http://127.0.0.1:3001/api/v1/integrations",
     );
+  });
+});
+
+describe("getClaudeDesktopAvailableModels", () => {
+  afterEach(() => {
+    listModels.mockReset();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("returns installed local models while pruning remote entries", async () => {
+    listModels.mockResolvedValue({
+      models: [
+        { name: "llama3.2:latest", digest: "local" },
+        {
+          name: "remote-placeholder",
+          digest: "remote",
+          remote_host: "https://ollama.com",
+        },
+      ],
+    });
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+
+    const models = await getClaudeDesktopAvailableModels();
+
+    expect(models.map((model) => model.model)).toEqual(["llama3.2"]);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("does not request cloud models when they are unavailable to the user", async () => {
+    listModels.mockResolvedValue({
+      models: [
+        { name: "qwen3:8b", digest: "local" },
+        { name: "deepseek-v4-flash:cloud", digest: "cached-cloud" },
+        { name: "gemma4:31b-cloud", digest: "legacy-cached-cloud" },
+      ],
+    });
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+
+    const models = await getClaudeDesktopAvailableModels();
+
+    expect(models.map((model) => model.model)).toEqual(["qwen3:8b"]);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("does not use the global cloud model list", async () => {
+    listModels.mockResolvedValue({
+      models: [{ name: "qwen3:8b", digest: "local" }],
+    });
+    const fetch = vi.fn().mockRejectedValue(new Error("offline"));
+    vi.stubGlobal("fetch", fetch);
+
+    const models = await getClaudeDesktopAvailableModels();
+
+    expect(models.map((model) => model.model)).toEqual(["qwen3:8b"]);
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

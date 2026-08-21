@@ -6,6 +6,7 @@ import { Field, Label, Description } from "@/components/ui/fieldset";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
+import { ClaudeDesktopModelsSettings } from "@/components/ClaudeDesktopModelsSettings";
 import {
   WifiIcon,
   FolderIcon,
@@ -586,6 +587,8 @@ export default function Settings() {
               </Field>
             </div>
           </div>
+
+          <ClaudeDesktopModelsSettings />
 
           {/* Agent Mode */}
           {window.OLLAMA_TOOLS && (

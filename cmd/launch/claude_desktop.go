@@ -63,6 +63,9 @@ func (c *ClaudeDesktop) AutodiscoveredModel() string {
 	return claudeDesktopModelLabel
 }
 
+// ConfigureAutodiscovery points Claude Desktop at Ollama's local gateway
+// without pinning a model list, so Claude discovers the selected catalog and
+// exact Ollama route names the gateway advertises.
 func (c *ClaudeDesktop) ConfigureAutodiscovery() error {
 	if err := claudeDesktopSupported(); err != nil {
 		return err
@@ -138,6 +141,25 @@ func (c *ClaudeDesktop) SetInstalledFromDesktop(installed, restart bool) error {
 	return restartClaudeDesktop(applyProfile)
 }
 
+// RestartWithProfileChange stops Claude before applying a profile-dependent
+// change, then reopens it after the change is complete.
+func (c *ClaudeDesktop) RestartWithProfileChange(change func() error) error {
+	if err := claudeDesktopSupported(); err != nil {
+		return err
+	}
+	running, err := claudeDesktopIsRunning(context.Background())
+	if err != nil {
+		return fmt.Errorf("check whether Claude Desktop is running: %w", err)
+	}
+	if !running {
+		if err := change(); err != nil {
+			return err
+		}
+		return claudeDesktopOpenApp()
+	}
+	return restartClaudeDesktop(change)
+}
+
 // RestoreForShutdown restores Claude's usual profile without reopening the app.
 func (c *ClaudeDesktop) RestoreForShutdown(ctx context.Context) error {
 	if err := claudeDesktopSupported(); err != nil {
@@ -169,6 +191,27 @@ func restoreClaudeDesktopProfile() error {
 
 func (c *ClaudeDesktop) Onboard() error {
 	return config.MarkIntegrationOnboarded(claudeDesktopIntegrationName)
+}
+
+// ClaudeDesktopModels returns the user's explicitly saved Claude Desktop
+// model subset. A nil result means the recommendation source should decide.
+func ClaudeDesktopModels() []string {
+	return config.IntegrationModels(claudeDesktopIntegrationName)
+}
+
+// SaveClaudeDesktopModels persists the user's explicit Claude Desktop model
+// subset in the shared launcher configuration.
+func SaveClaudeDesktopModels(models []string) error {
+	if len(models) == 0 {
+		return errors.New("select at least one Claude Desktop model")
+	}
+	return config.SaveIntegration(claudeDesktopIntegrationName, models)
+}
+
+// RestoreClaudeDesktopModels restores a previously captured selection. A nil
+// selection restores the implicit recommendation defaults.
+func RestoreClaudeDesktopModels(models []string) error {
+	return config.SaveIntegration(claudeDesktopIntegrationName, models)
 }
 
 func (c *ClaudeDesktop) RequiresInteractiveOnboarding() bool {
@@ -574,6 +617,7 @@ func writeClaudeDesktopGatewayProfile(path, baseURL, apiKey string, forceChooser
 	cfg["inferenceGatewayBaseUrl"] = baseURL
 	cfg["inferenceGatewayApiKey"] = apiKey
 	cfg["inferenceGatewayAuthScheme"] = "bearer"
+	cfg["deploymentDisplayName"] = claudeDesktopProfileName
 	cfg["chatTabEnabled"] = true
 	delete(cfg, "inferenceModels")
 	cfg["disableDeploymentModeChooser"] = forceChooser
@@ -634,6 +678,7 @@ func restoreClaudeDesktopOllamaProfile(path string) error {
 	delete(cfg, "inferenceProvider")
 	delete(cfg, "inferenceGatewayBaseUrl")
 	delete(cfg, "inferenceGatewayAuthScheme")
+	delete(cfg, "deploymentDisplayName")
 	delete(cfg, "inferenceModels")
 	delete(cfg, "coworkEgressAllowedHosts")
 	delete(cfg, "autoModeEnabled")
@@ -702,6 +747,9 @@ func claudeDesktopThirdPartyProfileConfigured(target claudeDesktopThirdPartyPath
 		return false
 	}
 	if s, _ := cfg["inferenceGatewayApiKey"].(string); strings.TrimSpace(s) == "" {
+		return false
+	}
+	if s, _ := cfg["deploymentDisplayName"].(string); s != claudeDesktopProfileName {
 		return false
 	}
 	egressHosts := claudeDesktopAnySlice(cfg["coworkEgressAllowedHosts"])

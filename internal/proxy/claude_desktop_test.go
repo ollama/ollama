@@ -1,12 +1,10 @@
 package proxy
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
-	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/anthropic"
+	"github.com/ollama/ollama/api"
 )
 
 func TestGatewayRoutesClaudeProtocolToOllama(t *testing.T) {
@@ -45,12 +44,10 @@ func TestGatewayRoutesClaudeProtocolToOllama(t *testing.T) {
 		body   string
 	}{
 		{http.MethodGet, "/v1/models?limit=1000", ""},
-		{http.MethodPost, "/v1/messages", `{"model":"claude-fable-5","messages":[]}`},
-		{http.MethodPost, "/v1/messages", `{"model":"claude-opus-5","messages":[]}`},
-		{http.MethodPost, "/v1/messages", `{"model":"claude-sonnet-5","messages":[]}`},
-		{http.MethodPost, "/v1/messages", `{"model":"claude-haiku-4-5-20251001","messages":[]}`},
-		{http.MethodPost, "/v1/messages", `{"model":"claude-sonnet-5-20251001","messages":[]}`},
-		{http.MethodPost, "/v1/messages", `{"model":"claude-opus-4-6","messages":[]}`},
+		{http.MethodPost, "/v1/messages", `{"model":"glm-5.2:cloud","messages":[]}`},
+		{http.MethodPost, "/v1/messages", `{"model":"kimi-k3:cloud","messages":[]}`},
+		{http.MethodPost, "/v1/messages", `{"model":"deepseek-v4-pro:cloud","messages":[]}`},
+		{http.MethodPost, "/v1/messages", `{"model":"deepseek-v4-flash:0731:cloud","messages":[]}`},
 	} {
 		req, err := http.NewRequest(request.method, "http://"+p.Addr()+request.path, strings.NewReader(request.body))
 		if err != nil {
@@ -93,30 +90,18 @@ func TestGatewayRoutesClaudeProtocolToOllama(t *testing.T) {
 			}
 			gotIDs := make([]string, len(catalog.Data))
 			gotNames := make([]string, len(catalog.Data))
-			familyDefaults := make(map[string]int)
 			for i, model := range catalog.Data {
 				gotIDs[i] = model.ID
 				gotNames[i] = model.DisplayName
-				if model.Type != "model" || model.AnthropicFamilyTier == "" {
+				if model.Type != "model" {
 					t.Fatalf("incomplete gateway model metadata: %+v", model)
 				}
-				if model.IsFamilyDefault {
-					familyDefaults[model.AnthropicFamilyTier]++
-				}
-				if model.ID == "claude-sonnet-5-20251001" && model.AnthropicFamilyTier != "sonnet" {
-					t.Fatalf("Qwen family tier = %q, want sonnet", model.AnthropicFamilyTier)
-				}
 			}
-			for _, family := range []string{"opus", "fable", "sonnet", "haiku"} {
-				if familyDefaults[family] != 1 {
-					t.Fatalf("%s family defaults = %d, want 1", family, familyDefaults[family])
-				}
-			}
-			wantIDs := "claude-fable-5,claude-opus-5,claude-sonnet-5,claude-haiku-4-5-20251001,claude-sonnet-5-20251001"
+			wantIDs := "claude-fable-5,claude-opus-5,claude-sonnet-5,claude-haiku-4-5-20251001,claude-sonnet-4-6"
 			if strings.Join(gotIDs, ",") != wantIDs || catalog.FirstID != gotIDs[0] || catalog.LastID != gotIDs[len(gotIDs)-1] || catalog.HasMore {
 				t.Fatalf("gateway catalog = %+v", catalog.Data)
 			}
-			wantNames := "GLM 5.2,Kimi K3,DeepSeek V4 Pro,DeepSeek V4 Flash,Qwen3.8 MLX"
+			wantNames := "glm-5.2:cloud,kimi-k3:cloud,deepseek-v4-pro:cloud,deepseek-v4-flash:0731:cloud,gemma4:31b-cloud"
 			if strings.Join(gotNames, ",") != wantNames {
 				t.Fatalf("gateway display names = %v, want %s", gotNames, wantNames)
 			}
@@ -129,17 +114,169 @@ func TestGatewayRoutesClaudeProtocolToOllama(t *testing.T) {
 		"kimi-k3:cloud",
 		"deepseek-v4-pro:cloud",
 		"deepseek-v4-flash:0731:cloud",
-		"qwen3.8:27b-mlx",
-		"glm-5.2:cloud",
 	}
 	if strings.Join(messageModels, ",") != strings.Join(wantModels, ",") {
 		t.Fatalf("rewritten message models = %v", messageModels)
 	}
-	if len(paths) != 6 {
+	if len(paths) != 4 {
 		t.Fatalf("upstream paths = %v", paths)
 	}
-	if got := p.Counts().Routed; got != 6 {
-		t.Fatalf("routed requests = %d, want 6", got)
+	if got := p.Counts().Routed; got != 4 {
+		t.Fatalf("routed requests = %d, want 4", got)
+	}
+}
+
+func TestGatewayRoutesSelectedKimiByExactRoute(t *testing.T) {
+	var routedModel string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		routedModel = requestModel(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer upstream.Close()
+
+	selected := SelectClaudeDesktopModels(DefaultClaudeDesktopModels(), []string{"kimi-k3:cloud"})
+	if len(selected) != 1 || selected[0].GatewayID() != "claude-fable-5" || selected[0].OllamaModel != "kimi-k3:cloud" {
+		t.Fatalf("selected kimi = %+v, want validated ID routing to exact model", selected)
+	}
+	p, err := NewClaudeDesktop(ClaudeDesktopConfig{
+		ListenAddr: "127.0.0.1:0",
+		OllamaURL:  upstream.URL,
+		Model:      selected[0].OllamaModel,
+		Models:     selected,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := p.Close(ctx); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	resp, err := http.Get("http://" + p.Addr() + "/v1/models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var catalog struct {
+		Data []gatewayModel `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&catalog); err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.Data) != 1 || catalog.Data[0].ID != "claude-fable-5" || catalog.Data[0].DisplayName != "kimi-k3:cloud" {
+		t.Fatalf("catalog = %+v, want claude-fable-5 displaying Kimi", catalog.Data)
+	}
+
+	message, err := http.Post(
+		"http://"+p.Addr()+"/v1/messages",
+		"application/json",
+		strings.NewReader(`{"model":"claude-fable-5","messages":[{"role":"user","content":"hi"}]}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer message.Body.Close()
+	if message.StatusCode != http.StatusOK || routedModel != "kimi-k3:cloud" {
+		t.Fatalf("status/model = %d/%q, want 200 routing kimi-k3:cloud", message.StatusCode, routedModel)
+	}
+}
+
+func TestGatewayRoutesEveryMappedModelIDToExactOllamaRoute(t *testing.T) {
+	var routed []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		routed = append(routed, requestModel(t, r))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer upstream.Close()
+
+	models := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{
+		{Model: "glm-5.2:cloud", RequiredPlan: "pro"},
+		{Model: "kimi-k3:cloud", RequiredPlan: "pro"},
+		{Model: "deepseek-v4-pro", RequiredPlan: "pro"},
+		{Model: "deepseek-v4-flash", RequiredPlan: "pro"},
+		{Model: "gemma4:26b:cloud", RequiredPlan: "pro"},
+	})
+	p, err := NewClaudeDesktop(ClaudeDesktopConfig{
+		ListenAddr: "127.0.0.1:0",
+		OllamaURL:  upstream.URL,
+		Model:      models[0].OllamaModel,
+		Models:     models,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := p.Close(ctx); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	routes := []struct {
+		id     string
+		ollama string
+	}{
+		{"claude-fable-5", "glm-5.2:cloud"},
+		{"claude-opus-5", "kimi-k3:cloud"},
+		{"claude-sonnet-5", "deepseek-v4-pro:cloud"},
+		{"claude-haiku-4-5-20251001", "deepseek-v4-flash:cloud"},
+		{"claude-sonnet-4-6", "gemma4:26b:cloud"},
+	}
+	for _, route := range routes {
+		resp, err := http.Post(
+			"http://"+p.Addr()+"/v1/messages",
+			"application/json",
+			strings.NewReader(`{"model":"`+route.id+`","messages":[{"role":"user","content":"hi"}]}`),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			_ = resp.Body.Close()
+			t.Fatalf("%s status = %d, want 200", route.id, resp.StatusCode)
+		}
+		_ = resp.Body.Close()
+		if got := routed[len(routed)-1]; got != route.ollama {
+			t.Fatalf("%s routed to %q, want exact Ollama route %q", route.id, got, route.ollama)
+		}
+	}
+
+	resp, err := http.Get("http://" + p.Addr() + "/v1/models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var catalog struct {
+		Data []gatewayModel `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&catalog); err != nil {
+		t.Fatal(err)
+	}
+	gotIDs := make([]string, len(catalog.Data))
+	for i, model := range catalog.Data {
+		gotIDs[i] = model.ID
+	}
+	wantIDs := []string{
+		"claude-fable-5",
+		"claude-opus-5",
+		"claude-sonnet-5",
+		"claude-haiku-4-5-20251001",
+		"claude-sonnet-4-6",
+	}
+	if strings.Join(gotIDs, ",") != strings.Join(wantIDs, ",") {
+		t.Fatalf("catalog IDs = %v, want validated Claude IDs %v", gotIDs, wantIDs)
 	}
 }
 
@@ -149,14 +286,26 @@ func TestGatewayPrunesCloudModelsWhenSignedOut(t *testing.T) {
 
 	var cloudModelsAvailable atomic.Bool
 	var localModelAvailable atomic.Bool
+	models := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{
+		{Model: "kimi-k3:cloud", RequiredPlan: "pro"},
+		{Model: "qwen3.8:27b"},
+	})
 	p, err := NewClaudeDesktop(ClaudeDesktopConfig{
-		ListenAddr:           "127.0.0.1:0",
-		OllamaURL:            upstream.URL,
-		Model:                "kimi-k3:cloud",
-		CloudModelsAvailable: func(context.Context) bool { return cloudModelsAvailable.Load() },
+		ListenAddr: "127.0.0.1:0",
+		OllamaURL:  upstream.URL,
+		Model:      "kimi-k3:cloud",
+		Models:     models,
+		ResolveAccessState: func(context.Context) (ClaudeDesktopAccessState, error) {
+			state := ClaudeDesktopAccessState{Cloud: ClaudeDesktopCloudOn, Account: ClaudeDesktopAccountSignedOut}
+			if cloudModelsAvailable.Load() {
+				state.Account = ClaudeDesktopAccountSignedIn
+				state.Plan = "pro"
+			}
+			return state, nil
+		},
 		ListLocalModels: func(context.Context) ([]string, error) {
 			if localModelAvailable.Load() {
-				return []string{"qwen3.8:27b-mlx"}, nil
+				return []string{"qwen3.8:27b"}, nil
 			}
 			return nil, nil
 		},
@@ -206,7 +355,7 @@ func TestGatewayPrunesCloudModelsWhenSignedOut(t *testing.T) {
 
 	localModelAvailable.Store(true)
 	catalog = fetchCatalog()
-	if len(catalog.Data) != 1 || catalog.Data[0].DisplayName != "Qwen3.8 MLX" {
+	if len(catalog.Data) != 1 || catalog.Data[0].DisplayName != "qwen3.8:27b" {
 		t.Fatalf("signed-out catalog = %+v, want local model only", catalog.Data)
 	}
 	if catalog.FirstID != catalog.Data[0].ID || catalog.LastID != catalog.Data[0].ID {
@@ -215,8 +364,422 @@ func TestGatewayPrunesCloudModelsWhenSignedOut(t *testing.T) {
 
 	cloudModelsAvailable.Store(true)
 	catalog = fetchCatalog()
-	if len(catalog.Data) != len(claudeModels) {
-		t.Fatalf("signed-in catalog has %d models, want %d", len(catalog.Data), len(claudeModels))
+	if len(catalog.Data) != len(models) {
+		t.Fatalf("signed-in catalog has %d models, want %d", len(catalog.Data), len(models))
+	}
+}
+
+func TestGatewayReevaluatesModelAccessBeforeRouting(t *testing.T) {
+	var routed atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		routed.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer upstream.Close()
+
+	state := ClaudeDesktopAccessState{
+		Cloud:   ClaudeDesktopCloudOn,
+		Account: ClaudeDesktopAccountSignedIn,
+		Plan:    "free",
+	}
+	models := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{
+		{Model: "glm-5.2:cloud", RequiredPlan: "pro"},
+		{Model: "gemma4:31b-cloud", RequiredPlan: "free"},
+	})
+	p, err := NewClaudeDesktop(ClaudeDesktopConfig{
+		ListenAddr: "127.0.0.1:0",
+		OllamaURL:  upstream.URL,
+		Model:      models[0].OllamaModel,
+		Models:     models,
+		ResolveAccessState: func(context.Context) (ClaudeDesktopAccessState, error) {
+			return state, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := p.Close(ctx); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	postMessage := func(model string) (int, string) {
+		t.Helper()
+		resp, err := http.Post(
+			"http://"+p.Addr()+"/v1/messages",
+			"application/json",
+			strings.NewReader(`{"model":"`+model+`","messages":[{"role":"user","content":"hi"}]}`),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp.StatusCode, string(body)
+	}
+	assertMessage := func(model string, status int, want string) {
+		t.Helper()
+		gotStatus, body := postMessage(model)
+		if gotStatus != status || !strings.Contains(body, want) {
+			t.Fatalf("status/body = %d/%q, want %d containing %q", gotStatus, body, status, want)
+		}
+	}
+
+	assertMessage("claude-fable-5", http.StatusForbidden, "requires an Ollama pro plan")
+	if routed.Load() != 0 {
+		t.Fatalf("ineligible Pro request reached upstream")
+	}
+
+	assertMessage("claude-opus-5", http.StatusOK, `"ok":true`)
+	if routed.Load() != 1 {
+		t.Fatalf("free model routed %d times, want 1", routed.Load())
+	}
+
+	// Account and Cloud settings can change while Claude is open. Each request
+	// resolves them again so an old conversation cannot retain stale access.
+	state.Cloud = ClaudeDesktopCloudOff
+	assertMessage("claude-opus-5", http.StatusForbidden, "Turn on Cloud in Ollama Settings")
+	if routed.Load() != 1 {
+		t.Fatalf("Cloud-disabled request reached upstream")
+	}
+}
+
+func assertResponseContains(t *testing.T, response *http.Response, status int, want string) {
+	t.Helper()
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != status || !strings.Contains(string(body), want) {
+		t.Fatalf("response = %d %s, want %d containing %q", response.StatusCode, body, status, want)
+	}
+}
+
+func TestGatewaySetModelsReplacesCatalogAndRoutesExactModel(t *testing.T) {
+	var routedModel string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		routedModel = requestModel(t, r)
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer upstream.Close()
+	p := startTestGateway(t, upstream.URL)
+
+	available := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{
+		{Model: "glm-5.2:cloud", RequiredPlan: "pro"},
+		{Model: "qwen3.8:27b"},
+	})
+	selected := SelectClaudeDesktopModels(available, []string{"qwen3.8:27b"})
+	if err := p.SetModels(selected); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get("http://" + p.Addr() + "/v1/models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var catalog struct {
+		Data []gatewayModel `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&catalog); err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.Data) != 1 || catalog.Data[0].DisplayName != "qwen3.8:27b" {
+		t.Fatalf("catalog = %+v", catalog.Data)
+	}
+
+	message, err := http.Post(
+		"http://"+p.Addr()+"/v1/messages",
+		"application/json",
+		strings.NewReader(`{"model":"qwen3.8:27b","messages":[]}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer message.Body.Close()
+	if message.StatusCode != http.StatusOK || routedModel != "qwen3.8:27b" {
+		t.Fatalf("status/model = %d/%q", message.StatusCode, routedModel)
+	}
+}
+
+func TestGatewayRefreshesEntitlementsWithoutRestart(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer upstream.Close()
+	initial := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "changing-model:cloud", RequiredPlan: "free"}})
+	updated := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "changing-model:cloud", RequiredPlan: "pro"}})
+	p, err := NewClaudeDesktop(ClaudeDesktopConfig{
+		ListenAddr: "127.0.0.1:0",
+		OllamaURL:  upstream.URL,
+		Model:      initial[0].OllamaModel,
+		Models:     initial,
+		RefreshModels: func(context.Context, []ClaudeDesktopModel) ([]ClaudeDesktopModel, error) {
+			return updated, nil
+		},
+		ResolveAccessState: func(context.Context) (ClaudeDesktopAccessState, error) {
+			return ClaudeDesktopAccessState{Cloud: ClaudeDesktopCloudOn, Account: ClaudeDesktopAccountSignedIn, Plan: "free"}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = p.Close(ctx)
+	})
+
+	resp, err := http.Post(
+		"http://"+p.Addr()+"/v1/messages",
+		"application/json",
+		strings.NewReader(`{"model":"claude-fable-5","messages":[]}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertResponseContains(t, resp, http.StatusBadRequest, "model catalog changed")
+
+	resp, err = http.Post(
+		"http://"+p.Addr()+"/v1/messages",
+		"application/json",
+		strings.NewReader(`{"model":"claude-fable-5","messages":[]}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertResponseContains(t, resp, http.StatusForbidden, "requires an Ollama pro plan")
+}
+
+func TestGatewayDiscardsRefreshThatRacesWithModelUpdate(t *testing.T) {
+	initial := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "model-a:cloud", RequiredPlan: "free"}})
+	updated := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "model-b:cloud", RequiredPlan: "free"}})
+	started := make(chan struct{})
+	release := make(chan struct{})
+	p, err := NewClaudeDesktop(ClaudeDesktopConfig{
+		ListenAddr: "127.0.0.1:0",
+		OllamaURL:  "http://127.0.0.1:11434",
+		Model:      initial[0].OllamaModel,
+		Models:     initial,
+		RefreshModels: func(_ context.Context, current []ClaudeDesktopModel) ([]ClaudeDesktopModel, error) {
+			close(started)
+			<-release
+			return current, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- p.refreshModelCatalog(context.Background()) }()
+	<-started
+	if err := p.SetModels(updated); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	models := p.Models()
+	if len(models) != 1 || models[0].OllamaModel != "model-b:cloud" {
+		t.Fatalf("models after racing refresh = %+v, want model B", models)
+	}
+}
+
+func TestGatewayRejectsRequestWhenSlotChangesDuringRefresh(t *testing.T) {
+	var upstreamCalls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		upstreamCalls.Add(1)
+	}))
+	defer upstream.Close()
+	initial := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "model-a:cloud", RequiredPlan: "free"}})
+	updated := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "model-b:cloud", RequiredPlan: "free"}})
+	started := make(chan struct{})
+	release := make(chan struct{})
+	p, err := NewClaudeDesktop(ClaudeDesktopConfig{
+		ListenAddr: "127.0.0.1:0",
+		OllamaURL:  upstream.URL,
+		Model:      initial[0].OllamaModel,
+		Models:     initial,
+		RefreshModels: func(_ context.Context, current []ClaudeDesktopModel) ([]ClaudeDesktopModel, error) {
+			close(started)
+			<-release
+			return current, nil
+		},
+		ResolveAccessState: func(context.Context) (ClaudeDesktopAccessState, error) {
+			return ClaudeDesktopAccessState{Cloud: ClaudeDesktopCloudOn, Account: ClaudeDesktopAccountSignedIn, Plan: "free"}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = p.Close(ctx)
+	})
+
+	type messageResponse struct {
+		status int
+		body   string
+	}
+	response := make(chan messageResponse, 1)
+	requestErr := make(chan error, 1)
+	go func() {
+		resp, err := http.Post(
+			"http://"+p.Addr()+"/v1/messages",
+			"application/json",
+			strings.NewReader(`{"model":"claude-fable-5","messages":[]}`),
+		)
+		if err != nil {
+			requestErr <- err
+			return
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			requestErr <- err
+			return
+		}
+		response <- messageResponse{status: resp.StatusCode, body: string(body)}
+	}()
+	<-started
+	if err := p.SetModels(updated); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	select {
+	case err := <-requestErr:
+		t.Fatal(err)
+	case resp := <-response:
+		if resp.status != http.StatusBadRequest || !strings.Contains(resp.body, "model catalog changed") {
+			t.Fatalf("response = (%d, %q), want status %d containing %q", resp.status, resp.body, http.StatusBadRequest, "model catalog changed")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for request")
+	}
+	if got := upstreamCalls.Load(); got != 0 {
+		t.Fatalf("upstream calls = %d, want 0 after a slot change", got)
+	}
+}
+
+func TestGatewayRejectsAdmittedRequestAfterSlotReassignment(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		initial []ClaudeDesktopModel
+		updated []ClaudeDesktopModel
+	}{
+		{
+			name:    "cloud",
+			initial: ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "cloud-a:cloud", RequiredPlan: "free"}}),
+			updated: ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "cloud-b:cloud", RequiredPlan: "free"}}),
+		},
+		{
+			name:    "local",
+			initial: SelectClaudeDesktopModels(nil, []string{"local-a"}),
+			updated: SelectClaudeDesktopModels(nil, []string{"local-b"}),
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := NewClaudeDesktop(ClaudeDesktopConfig{
+				ListenAddr: "127.0.0.1:0",
+				OllamaURL:  "http://127.0.0.1:11434",
+				Model:      tt.initial[0].OllamaModel,
+				Models:     tt.initial,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			generation, admitted := p.modelSnapshotWithGeneration()
+			if err := p.SetModels(tt.updated); err != nil {
+				t.Fatal(err)
+			}
+			request := httptest.NewRequest(
+				http.MethodPost,
+				"http://127.0.0.1/v1/messages",
+				strings.NewReader(`{"model":"claude-fable-5","messages":[]}`),
+			)
+			err = p.routeModel(request, generation, admitted)
+			if err == nil || !strings.Contains(err.Error(), "model catalog changed") {
+				t.Fatalf("route error = %v, want catalog-changed rejection", err)
+			}
+		})
+	}
+}
+
+func TestGatewayLocalRequestSkipsAccountResolution(t *testing.T) {
+	var accessCalls atomic.Int32
+	var refreshCalls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer upstream.Close()
+	models := SelectClaudeDesktopModels(nil, []string{"qwen3:8b"})
+	p, err := NewClaudeDesktop(ClaudeDesktopConfig{
+		ListenAddr: "127.0.0.1:0",
+		OllamaURL:  upstream.URL,
+		Model:      models[0].OllamaModel,
+		Models:     models,
+		RefreshModels: func(context.Context, []ClaudeDesktopModel) ([]ClaudeDesktopModel, error) {
+			refreshCalls.Add(1)
+			return models, nil
+		},
+		ResolveAccessState: func(context.Context) (ClaudeDesktopAccessState, error) {
+			accessCalls.Add(1)
+			return ClaudeDesktopAccessState{}, errors.New("offline")
+		},
+		ListLocalModels: func(context.Context) ([]string, error) {
+			return []string{"qwen3:8b"}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = p.Close(ctx)
+	})
+	discovery, err := http.Get("http://" + p.Addr() + "/v1/models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertResponseContains(t, discovery, http.StatusOK, "qwen3:8b")
+
+	resp, err := http.Post(
+		"http://"+p.Addr()+"/v1/messages",
+		"application/json",
+		strings.NewReader(`{"model":"claude-fable-5","messages":[]}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertResponseContains(t, resp, http.StatusOK, `"ok":true`)
+	if got := accessCalls.Load(); got != 0 {
+		t.Fatalf("account resolution calls = %d, want 0 for a local model", got)
+	}
+	if got := refreshCalls.Load(); got != 0 {
+		t.Fatalf("recommendation refresh calls = %d, want 0 for an all-local catalog", got)
 	}
 }
 
@@ -231,7 +794,7 @@ func TestGatewayCountsTokensLocally(t *testing.T) {
 	resp, err := http.Post(
 		"http://"+p.Addr()+"/v1/messages/count_tokens",
 		"application/json",
-		strings.NewReader(`{"model":"claude-sonnet","messages":[{"role":"user","content":"hello world"}]}`),
+		strings.NewReader(`{"model":"glm-5.2:cloud","messages":[{"role":"user","content":"hello world"}]}`),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -251,6 +814,37 @@ func TestGatewayCountsTokensLocally(t *testing.T) {
 	}
 	if upstreamCalls != 0 {
 		t.Fatalf("upstream calls = %d, want 0", upstreamCalls)
+	}
+}
+
+func TestGatewayRejectsUnknownModelRequests(t *testing.T) {
+	var upstreamCalls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		upstreamCalls.Add(1)
+	}))
+	defer upstream.Close()
+	p := startTestGateway(t, upstream.URL)
+
+	for _, path := range []string{"/v1/messages", "/v1/messages/count_tokens"} {
+		resp, err := http.Post(
+			"http://"+p.Addr()+path,
+			"application/json",
+			strings.NewReader(`{"model":"claude-stale","messages":[]}`),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "unknown Claude model") {
+			t.Fatalf("%s status/body = %d/%q", path, resp.StatusCode, body)
+		}
+	}
+	if got := upstreamCalls.Load(); got != 0 {
+		t.Fatalf("upstream calls = %d, want 0", got)
 	}
 }
 
@@ -396,23 +990,18 @@ func TestGatewayLazilyRetriesUnsupportedVision(t *testing.T) {
 	}{
 		{
 			name:     "message image",
-			body:     `{"model":"claude-sonnet-5","messages":[{"role":"user","content":[{"type":"text","text":"Describe this"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}}]}],"stream":true}`,
+			body:     `{"model":"deepseek-v4-pro:cloud","messages":[{"role":"user","content":[{"type":"text","text":"Describe this"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}}]}],"stream":true}`,
 			preserve: "Describe this",
 		},
 		{
 			name:     "tool result image",
-			body:     `{"model":"claude-fable-5","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool_1","content":[{"type":"text","text":"Screenshot"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}}]}]}]}`,
+			body:     `{"model":"glm-5.2:cloud","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool_1","content":[{"type":"text","text":"Screenshot"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}}]}]}]}`,
 			preserve: "tool_1",
 		},
 		{
 			name:     "historical image with later text",
-			body:     `{"model":"claude-fable-5","messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}},{"type":"text","text":"what dis"}]},{"role":"assistant","content":[{"type":"text","text":"I cannot inspect it"}]},{"role":"user","content":[{"type":"text","text":"kk"}]}]}`,
+			body:     `{"model":"glm-5.2:cloud","messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}},{"type":"text","text":"what dis"}]},{"role":"assistant","content":[{"type":"text","text":"I cannot inspect it"}]},{"role":"user","content":[{"type":"text","text":"kk"}]}]}`,
 			preserve: "kk",
-		},
-		{
-			name:     "unknown ID uses non-vision fallback",
-			body:     `{"model":"claude-unknown","messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}}]}]}`,
-			preserve: unsupportedImageNotice,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -472,7 +1061,7 @@ func TestGatewayDoesNotSanitizeImagesOnSuccessfulRequest(t *testing.T) {
 	defer upstream.Close()
 	p := startTestGateway(t, upstream.URL)
 
-	body := `{"model":"claude-fable-5","messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}},{"type":"text","text":"what dis"}]}]}`
+	body := `{"model":"glm-5.2:cloud","messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}},{"type":"text","text":"what dis"}]}]}`
 	resp, err := http.Post("http://"+p.Addr()+"/v1/messages", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -500,7 +1089,7 @@ func TestGatewayDoesNotRetryImageFreeBadRequest(t *testing.T) {
 	defer upstream.Close()
 	p := startTestGateway(t, upstream.URL)
 
-	body := `{"model":"claude-fable-5","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`
+	body := `{"model":"glm-5.2:cloud","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`
 	resp, err := http.Post("http://"+p.Addr()+"/v1/messages", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -525,7 +1114,7 @@ func TestGatewayDoesNotRetryUnrelatedBadRequestWithImage(t *testing.T) {
 	defer upstream.Close()
 	p := startTestGateway(t, upstream.URL)
 
-	body := `{"model":"claude-fable-5","messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}}]}]}`
+	body := `{"model":"glm-5.2:cloud","messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}}]}]}`
 	resp, err := http.Post("http://"+p.Addr()+"/v1/messages", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -553,7 +1142,7 @@ func TestGatewayDoesNotRetryUnstructuredImageError(t *testing.T) {
 	defer upstream.Close()
 	p := startTestGateway(t, upstream.URL)
 
-	body := `{"model":"claude-fable-5","messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}}]}]}`
+	body := `{"model":"glm-5.2:cloud","messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}}]}]}`
 	resp, err := http.Post("http://"+p.Addr()+"/v1/messages", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -571,18 +1160,10 @@ func TestGatewayDoesNotRetryUnstructuredImageError(t *testing.T) {
 	}
 }
 
-func TestGatewayLogsUnknownModelFallback(t *testing.T) {
-	var logs bytes.Buffer
-	p := &ClaudeDesktop{
-		logger: slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
-	}
-
-	model := p.modelForClaudeID("claude-future", "kimi-k3:cloud")
-	if model.OllamaModel != "kimi-k3:cloud" {
-		t.Fatalf("fallback model = %q", model.OllamaModel)
-	}
-	if output := logs.String(); !strings.Contains(output, "requested_model=claude-future") || !strings.Contains(output, "default_model=kimi-k3:cloud") {
-		t.Fatalf("fallback log = %q", output)
+func TestGatewayRejectsUnknownModel(t *testing.T) {
+	p := &ClaudeDesktop{models: DefaultClaudeDesktopModels()}
+	if _, err := p.modelForClaudeID("claude-future"); err == nil || !strings.Contains(err.Error(), "unknown Claude model") {
+		t.Fatalf("error = %v, want unknown Claude model", err)
 	}
 }
 
@@ -610,7 +1191,7 @@ func TestGatewayAllowsVisionForSupportedModel(t *testing.T) {
 	defer upstream.Close()
 	p := startTestGateway(t, upstream.URL)
 
-	body := `{"model":"claude-opus-5","messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}}]}]}`
+	body := `{"model":"kimi-k3:cloud","messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}}]}]}`
 	resp, err := http.Post("http://"+p.Addr()+"/v1/messages", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -638,7 +1219,7 @@ func TestGatewayDoesNotRetryVisionModelBadRequest(t *testing.T) {
 	defer upstream.Close()
 	p := startTestGateway(t, upstream.URL)
 
-	body := `{"model":"claude-opus-5","messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}}]}]}`
+	body := `{"model":"kimi-k3:cloud","messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}}]}]}`
 	resp, err := http.Post("http://"+p.Addr()+"/v1/messages", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -660,7 +1241,7 @@ func TestGatewayCountsUnsupportedVisionWithoutUpstream(t *testing.T) {
 	defer upstream.Close()
 	p := startTestGateway(t, upstream.URL)
 
-	body := `{"model":"claude-haiku-4-5-20251001","messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}}]}]}`
+	body := `{"model":"deepseek-v4-flash:0731:cloud","messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}}]}]}`
 	resp, err := http.Post("http://"+p.Addr()+"/v1/messages/count_tokens", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -698,7 +1279,7 @@ func TestGatewayWaitsForColdUpstream(t *testing.T) {
 		resp, err := http.Post(
 			"http://"+p.Addr()+"/v1/messages",
 			"application/json",
-			strings.NewReader(`{"model":"claude-sonnet-5","messages":[]}`),
+			strings.NewReader(`{"model":"deepseek-v4-pro:cloud","messages":[]}`),
 		)
 		if err != nil {
 			errs <- err

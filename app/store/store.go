@@ -175,6 +175,9 @@ type Settings struct {
 
 	// AutoUpdateEnabled indicates if automatic updates should be downloaded
 	AutoUpdateEnabled bool
+
+	// ClaudeDesktopUsed records whether Claude Desktop has ever been connected through Ollama.
+	ClaudeDesktopUsed bool
 }
 
 // Keep in sync with CURRENT_ONBOARDING_VERSION in app/ui/app/src/lib/onboarding.ts.

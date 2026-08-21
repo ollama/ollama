@@ -196,6 +196,53 @@ export async function getModels(query?: string): Promise<Model[]> {
   }
 }
 
+export async function getClaudeDesktopAvailableModels(): Promise<Model[]> {
+  try {
+    const { models: modelsResponse } = await ollama.list();
+
+    const seen = new Set<string>();
+    return modelsResponse
+      .filter((model: ModelResponse) => {
+        const response = model as ModelResponse & {
+          remote_model?: string;
+          remote_host?: string;
+        };
+        const name = model.name.replace(/:latest$/, "");
+        return (
+          !response.remote_model &&
+          !response.remote_host &&
+          !name.endsWith("cloud")
+        );
+      })
+      .filter((model: ModelResponse) => {
+        const base = model.name.replace(/:latest$/, "");
+        if (!base || seen.has(base)) return false;
+
+        const families = model.details?.families;
+        const supported =
+          !families ||
+          families.length === 0 ||
+          !families.every((family: string) =>
+            family.toLowerCase().includes("bert"),
+          );
+        if (supported) seen.add(base);
+        return supported;
+      })
+      .map(
+        (model: ModelResponse) =>
+          new Model({
+            model: model.name.replace(/:latest$/, ""),
+            digest: model.digest,
+            modified_at: model.modified_at
+              ? new Date(model.modified_at)
+              : undefined,
+          }),
+      );
+  } catch (err) {
+    throw new Error(`Failed to fetch Ollama models: ${err}`);
+  }
+}
+
 export async function getModelCapabilities(
   modelName: string,
 ): Promise<ModelCapabilitiesResponse> {
