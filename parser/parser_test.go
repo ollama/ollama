@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf16"
 
@@ -918,6 +919,64 @@ func TestCreateRequestFiles(t *testing.T) {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 	}
+}
+
+// countingWriteCloser records bytes written and whether Close was called.
+type countingWriteCloser struct {
+	written int64
+	closed  bool
+}
+
+func (c *countingWriteCloser) Write(p []byte) (int, error) { c.written += int64(len(p)); return len(p), nil }
+func (c *countingWriteCloser) Close() error                { c.closed = true; return nil }
+
+func TestCreateRequestWithProgressReportsPerFileHashProgress(t *testing.T) {
+	n1, _ := createBinFile(t, nil, nil)
+	n2, _ := createBinFile(t, map[string]any{"foo": "bar"}, nil)
+
+	modelfile, err := ParseFile(strings.NewReader(fmt.Sprintf("FROM %s\nFROM %s", n1, n2)))
+	require.NoError(t, err)
+
+	type call struct {
+		size int64
+		w    *countingWriteCloser
+	}
+	seen := map[string]*call{}
+	var mu sync.Mutex
+
+	hashProgress := func(path string, size int64) io.WriteCloser {
+		w := &countingWriteCloser{}
+		mu.Lock()
+		defer mu.Unlock()
+		seen[path] = &call{size: size, w: w}
+		return w
+	}
+
+	_, err = modelfile.CreateRequestWithProgress("", hashProgress)
+	require.NoError(t, err)
+
+	require.Len(t, seen, 2)
+	for _, path := range []string{n1, n2} {
+		c, ok := seen[path]
+		require.True(t, ok, "missing hash progress call for %s", path)
+
+		fi, err := os.Stat(path)
+		require.NoError(t, err)
+		assert.Equal(t, fi.Size(), c.size, "size reported to callback should match file size")
+		assert.Equal(t, fi.Size(), c.w.written, "bytes written to progress writer should equal file size")
+		assert.True(t, c.w.closed, "progress writer should be closed after hashing")
+	}
+}
+
+func TestCreateRequestWithProgressNilCallbackIsSilent(t *testing.T) {
+	n1, d1 := createBinFile(t, nil, nil)
+
+	modelfile, err := ParseFile(strings.NewReader(fmt.Sprintf("FROM %s", n1)))
+	require.NoError(t, err)
+
+	req, err := modelfile.CreateRequestWithProgress("", nil)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{n1: d1}, req.Files)
 }
 
 func TestFilesForModel(t *testing.T) {
