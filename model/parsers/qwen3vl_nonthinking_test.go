@@ -2,6 +2,7 @@ package parsers
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -883,5 +884,31 @@ func TestQwen3VLNonThinkingToolCallWhitespaceHandling(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+
+// Regression for https://github.com/ollama/ollama/issues/17647: when a
+// tool-call payload fails to parse, the error returned from Add() (which the
+// server surfaces verbatim to HTTP clients via routes.go) must identify the
+// failure as a tool-call parsing error rather than leak the raw underlying
+// JSON error with no context. The same wrap is applied identically in
+// qwen3.go, qwen35.go, qwen3coder.go, and glm46.go.
+func TestQwen3VLParserWrapsToolCallParseErrors(t *testing.T) {
+	parser := &Qwen3VLParser{hasThinkingSupport: false}
+	parser.Init([]api.Tool{
+		{Type: "function", Function: api.ToolFunction{Name: "foo"}},
+	}, nil, nil)
+
+	// Malformed JSON inside a well-formed <tool_call> block: the outer parser
+	// extracts the raw payload, parseJSONToolCall's json.Unmarshal fails, and
+	// the error bubbles up through Add().
+	_, _, _, err := parser.Add(`<tool_call>{"name":"foo","arguments":{broken</tool_call>`, true)
+	if err == nil {
+		t.Fatal("expected an error for malformed tool-call JSON, got nil")
+	}
+	want := "failed to parse model-generated tool call"
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("expected error to contain %q, got %q", want, err.Error())
 	}
 }
