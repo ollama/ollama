@@ -68,8 +68,19 @@ func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking st
 		case qwenEventRawToolCall:
 			toolCall, err := parseToolCall(event, p.tools)
 			if err != nil {
-				slog.Warn("qwen tool call parsing failed", "error", err)
-				return "", "", nil, err
+				// Returning the error here fails the request, and the caller has
+				// nothing to fail towards: a turn can already have run commands
+				// before the malformed call arrived, so there is no safe automatic
+				// retry, and the user is left pressing Retry by hand
+				// (mann1x/cline#54). The block is the model's own output, so hand it
+				// back as content -- the model then sees what it emitted and can
+				// correct itself on the next turn, which is what the manual retry
+				// was achieving anyway.
+				slog.Warn("qwen tool call parsing failed; returning it as content", "error", err)
+				sb.WriteString(toolOpenTag)
+				sb.WriteString(event.raw)
+				sb.WriteString(toolCloseTag)
+				continue
 			}
 			toolCall.Function.Index = p.callIndex
 			p.callIndex++
@@ -234,7 +245,16 @@ func parseToolCall(raw qwenEventRawToolCall, tools []api.Tool) (api.ToolCall, er
 	var functionCall XMLFunctionCall
 	err := xml.Unmarshal([]byte(xmlString), &functionCall)
 	if err != nil {
-		return api.ToolCall{}, err
+		repaired, ok := repairToolCallXML(xmlString)
+		if !ok {
+			return api.ToolCall{}, err
+		}
+		if repairErr := xml.Unmarshal([]byte(repaired), &functionCall); repairErr != nil {
+			// Report what the model actually produced, not what the repair made
+			// of it -- the first error is the one that describes the defect.
+			return api.ToolCall{}, err
+		}
+		slog.Warn("qwen tool call was missing closing tags; recovered", "error", err)
 	}
 
 	toolCall.Function = api.ToolCallFunction{
@@ -404,7 +424,80 @@ func parseTypedToolValue(raw string, paramType api.PropertyType) any {
 var (
 	qwenTagRegex    = regexp.MustCompile(`<(\w+)=([^>]+)>`)
 	qwenXMLTagRegex = regexp.MustCompile(`</?(?:function|parameter)(?:\s+name="[^"]*")?>`)
+
+	qwenFunctionOpenRegex  = regexp.MustCompile(`<function\b[^>]*>`)
+	qwenParameterOpenRegex = regexp.MustCompile(`<parameter\b[^>]*>`)
 )
+
+// repairToolCallXML closes tags the model left open, so that a dropped closing
+// tag costs a warning rather than the whole request.
+//
+// Under long context the model stops emitting `</parameter>`. Measured on a
+// single agent session (2026-08-21), the same model produced both shapes: a
+// value running into the next tag ("element <parameter> closed by </function>")
+// and a block that closes nothing at all ("unexpected EOF"). Either one fails
+// `Unmarshal`, and the error travels all the way out as a failed request.
+//
+// The repair is possible because parameters do not nest: a value ends where the
+// next tag begins whether or not the model said so. Doing it as a textual
+// repair and re-parsing keeps escaping and attribute decoding in the one place
+// that already does them, rather than growing a second half-parser here.
+//
+// Reports false when there is nothing to repair towards -- without a
+// `<function>` header there is no name, and a call with no name cannot be
+// dispatched to a tool.
+func repairToolCallXML(xmlString string) (string, bool) {
+	header := qwenFunctionOpenRegex.FindStringIndex(xmlString)
+	if header == nil {
+		return "", false
+	}
+
+	var repaired strings.Builder
+	repaired.WriteString(xmlString[:header[1]])
+
+	body := xmlString[header[1]:]
+	opens := qwenParameterOpenRegex.FindAllStringIndex(body, -1)
+	cursor := 0
+	for i, open := range opens {
+		// Anything between the previous parameter and this one is text the model
+		// put outside a parameter; it is not ours to interpret, so it is copied
+		// through untouched.
+		repaired.WriteString(body[cursor:open[1]])
+
+		// The value ends at the first of: its own closing tag, the next
+		// parameter's opening tag, the function's closing tag, or the end of the
+		// block. Only the first of those is the model closing the tag itself.
+		end := len(body)
+		if i+1 < len(opens) {
+			end = opens[i+1][0]
+		}
+		value := body[open[1]:end]
+		for _, terminator := range []string{"</parameter>", "</function>"} {
+			if idx := strings.Index(value, terminator); idx >= 0 {
+				value = value[:idx]
+				end = open[1] + idx
+				// The model's own `</parameter>` is consumed here and re-emitted
+				// below, so that a closed and an unclosed parameter leave the
+				// cursor in the same place; `</function>` is left for the tail.
+				if terminator == "</parameter>" {
+					end += len(terminator)
+				}
+				break
+			}
+		}
+		repaired.WriteString(value)
+		repaired.WriteString("</parameter>")
+		cursor = end
+	}
+
+	rest := body[cursor:]
+	repaired.WriteString(rest)
+	if !strings.Contains(rest, "</function>") {
+		repaired.WriteString("</function>")
+	}
+
+	return repaired.String(), true
+}
 
 // transformToXML transforms a raw qwen tool call with xml-like tags into valid
 // xml so that it can be parsed by any xml parser
