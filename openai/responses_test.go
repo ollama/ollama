@@ -576,7 +576,7 @@ func TestFromResponsesRequest_NamespaceTools(t *testing.T) {
 					},
 					{
 						"type": "function",
-						"name": "muse.read_file",
+						"name": "muse__read_file",
 						"description": "Reads a file",
 						"strict": true,
 						"parameters": {
@@ -613,13 +613,13 @@ func TestFromResponsesRequest_NamespaceTools(t *testing.T) {
 		t.Fatalf("expected 3 converted tools, got %d: %v", len(chatReq.Tools), chatReq.Tools)
 	}
 
-	// Member functions carry the namespace-qualified name; an already
-	// qualified member is not double-prefixed.
-	if got := chatReq.Tools[0].Function.Name; got != "muse.bash" {
-		t.Errorf("expected function name 'muse.bash', got %q", got)
+	// Member functions use Codex's double-underscore namespace boundary; an
+	// already qualified member is not double-prefixed.
+	if got := chatReq.Tools[0].Function.Name; got != "muse__bash" {
+		t.Errorf("expected function name 'muse__bash', got %q", got)
 	}
-	if got := chatReq.Tools[1].Function.Name; got != "muse.read_file" {
-		t.Errorf("expected function name 'muse.read_file', got %q", got)
+	if got := chatReq.Tools[1].Function.Name; got != "muse__read_file" {
+		t.Errorf("expected function name 'muse__read_file', got %q", got)
 	}
 	if got := chatReq.Tools[2].Function.Name; got != "plain" {
 		t.Errorf("expected function name 'plain', got %q", got)
@@ -635,6 +635,124 @@ func TestFromResponsesRequest_NamespaceTools(t *testing.T) {
 	if chatReq.Tools[0].Type != "function" {
 		t.Errorf("expected member type 'function', got %q", chatReq.Tools[0].Type)
 	}
+}
+
+func TestResponsesNamespaceToolCalls(t *testing.T) {
+	description := "Run a command"
+	strict := true
+	namespace := ResponsesTool{
+		Type: "namespace",
+		Name: "mcp__outer__",
+		Tools: []ResponsesTool{{
+			Type: "namespace",
+			Name: "inner",
+			Tools: []ResponsesTool{{
+				Type:        "function",
+				Name:        "run",
+				Description: &description,
+				Strict:      &strict,
+				Parameters:  map[string]any{"type": "object"},
+			}},
+		}},
+	}
+
+	t.Run("recursive declaration", func(t *testing.T) {
+		chatReq, err := FromResponsesRequest(ResponsesRequest{Model: "test", Input: ResponsesInput{Text: "hello"}, Tools: []ResponsesTool{namespace}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(chatReq.Tools) != 1 {
+			t.Fatalf("got %d tools, want 1", len(chatReq.Tools))
+		}
+		if got := chatReq.Tools[0].Function.Name; got != "mcp__outer__inner__run" {
+			t.Fatalf("flattened name = %q, want %q", got, "mcp__outer__inner__run")
+		}
+	})
+
+	t.Run("history input", func(t *testing.T) {
+		reqJSON := `{"model":"test","input":[{"type":"function_call","call_id":"call_1","namespace":"mcp__outer__inner","name":"run","arguments":"{}"}]}`
+		var req ResponsesRequest
+		if err := json.Unmarshal([]byte(reqJSON), &req); err != nil {
+			t.Fatal(err)
+		}
+		chatReq, err := FromResponsesRequest(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := chatReq.Messages[0].ToolCalls[0].Function.Name; got != "mcp__outer__inner__run" {
+			t.Fatalf("history name = %q", got)
+		}
+	})
+
+	t.Run("nonstream output", func(t *testing.T) {
+		response := ToResponse("test", "resp", "item", api.ChatResponse{
+			CreatedAt: time.Now(),
+			Message: api.Message{ToolCalls: []api.ToolCall{{
+				ID:       "call_1",
+				Function: api.ToolCallFunction{Name: "mcp__outer__inner__run", Arguments: testArgs(map[string]any{})},
+			}}},
+		}, ResponsesRequest{Tools: []ResponsesTool{namespace}})
+		if got := response.Output[0]; got.Name != "run" || got.Namespace != "mcp__outer__inner" {
+			t.Fatalf("output name/namespace = %q/%q", got.Name, got.Namespace)
+		}
+	})
+
+	t.Run("flat collision", func(t *testing.T) {
+		tools := []ResponsesTool{{Type: "function", Name: "mcp__outer__inner__run"}, namespace}
+		response := ToResponse("test", "resp", "item", api.ChatResponse{
+			CreatedAt: time.Now(),
+			Message: api.Message{ToolCalls: []api.ToolCall{{
+				ID:       "call_1",
+				Function: api.ToolCallFunction{Name: "mcp__outer__inner__run", Arguments: testArgs(map[string]any{})},
+			}}},
+		}, ResponsesRequest{Tools: tools})
+		if got := response.Output[0]; got.Name != "mcp__outer__inner__run" || got.Namespace != "" {
+			t.Fatalf("collision output name/namespace = %q/%q", got.Name, got.Namespace)
+		}
+	})
+
+	t.Run("stream output", func(t *testing.T) {
+		converter := NewResponsesStreamConverter("resp", "item", "test", ResponsesRequest{Tools: []ResponsesTool{namespace}})
+		events := converter.Process(api.ChatResponse{Message: api.Message{ToolCalls: []api.ToolCall{{
+			ID:       "call_1",
+			Function: api.ToolCallFunction{Name: "mcp__outer__inner__run", Arguments: testArgs(map[string]any{})},
+		}}}})
+		for _, event := range events {
+			data := event.Data.(map[string]any)
+			if data["type"] != "response.output_item.done" {
+				continue
+			}
+			item := data["item"].(map[string]any)
+			if item["type"] == "function_call" {
+				if item["name"] != "run" || item["namespace"] != "mcp__outer__inner" {
+					t.Fatalf("stream name/namespace = %q/%q", item["name"], item["namespace"])
+				}
+				return
+			}
+		}
+		t.Fatal("missing streamed function_call item")
+	})
+
+	t.Run("stream metadata preserves namespace tree", func(t *testing.T) {
+		converter := NewResponsesStreamConverter("resp", "item", "test", ResponsesRequest{Tools: []ResponsesTool{namespace}})
+		events := converter.Process(api.ChatResponse{})
+		data := events[0].Data.(map[string]any)
+		response := data["response"].(map[string]any)
+		encoded, err := json.Marshal(response["tools"])
+		if err != nil {
+			t.Fatal(err)
+		}
+		var tools []ResponsesTool
+		if err := json.Unmarshal(encoded, &tools); err != nil {
+			t.Fatal(err)
+		}
+		if len(tools) != 1 || len(tools[0].Tools) != 1 || len(tools[0].Tools[0].Tools) != 1 {
+			t.Fatalf("streamed namespace metadata is incomplete: %#v", tools)
+		}
+		if got := tools[0].Tools[0].Tools[0].Name; got != "run" {
+			t.Fatalf("streamed leaf name = %q", got)
+		}
+	})
 }
 
 func TestFromResponsesRequest_ReasoningEffort(t *testing.T) {
