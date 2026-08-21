@@ -1202,8 +1202,15 @@ func TestSchedAlreadyCanceled(t *testing.T) {
 	s.Run(ctx)
 	time.Sleep(5 * time.Millisecond)
 	require.Empty(t, s.pendingReqCh)
-	require.Empty(t, scenario1a.req.errCh)
 	require.Empty(t, scenario1a.req.successCh)
+	// The scheduler must report the cancellation on errCh; otherwise the caller
+	// (scheduleRunner) blocks on errCh/successCh forever and leaks its goroutine.
+	select {
+	case err := <-scenario1a.req.errCh:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-ctx.Done():
+		t.Fatal("timeout: cancelled request was dropped without notifying the caller")
+	}
 }
 
 // hasLoadedRunner is a test helper that checks if any runner is loaded.
