@@ -218,6 +218,15 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 
 		bindClaudeDesktop(wv)
 
+		wv.Bind("restartClaudeDesktop", func(models []string) claudeDesktopActionResult {
+			err := restartClaudeDesktopWithModels(models)
+			result := claudeDesktopActionResult{Status: getClaudeDesktopConnectionStatus()}
+			if err != nil {
+				result.Error = err.Error()
+			}
+			return result
+		})
+
 		wv.Bind("close", func() {
 			hideWindow(wv.Window())
 		})

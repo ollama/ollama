@@ -111,9 +111,10 @@ type Server struct {
 	Dev bool
 
 	// Updater for checking and downloading updates
-	Updater                *updater.Updater
-	UpdateAvailableFunc    func()
-	ClaudeDesktopInstalled func() bool
+	Updater              *updater.Updater
+	UpdateAvailableFunc  func()
+	IntegrationInstalled func(string) bool
+	ListCloudModels      func(context.Context) (*api.ListResponse, error)
 }
 
 func (s *Server) log() *slog.Logger {
@@ -294,6 +295,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/settings", handle(s.settings))
 	mux.Handle("GET /api/v1/cloud", handle(s.getCloudSetting))
 	mux.Handle("POST /api/v1/cloud", handle(s.cloudSetting))
+	mux.Handle("GET /api/v1/models/cloud", handle(s.getCloudModels))
 	mux.Handle("GET /api/v1/integrations", handle(s.getIntegrationStatuses))
 
 	// Ollama proxy endpoints
@@ -317,62 +319,59 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
-func supportsClaudeDesktopIntegration(goos string) bool {
-	return goos == "darwin"
-}
-
 func (s *Server) getIntegrationStatuses(w http.ResponseWriter, _ *http.Request) error {
+	isInstalled := s.IntegrationInstalled
+	if isInstalled == nil {
+		isInstalled = launch.IsIntegrationInstalled
+	}
+
 	type integrationStatus struct {
 		ID          string `json:"id"`
 		Name        string `json:"name"`
 		Description string `json:"description"`
 		Installed   *bool  `json:"installed,omitempty"`
+		Action      string `json:"action"`
 		Command     string `json:"command,omitempty"`
 	}
 
 	infos := launch.ListIntegrationInfos()
 	statuses := make([]integrationStatus, 0, len(infos)+2)
-	if supportsClaudeDesktopIntegration(runtime.GOOS) {
-		var claudeDesktopInstalled bool
-		if s.ClaudeDesktopInstalled != nil {
-			claudeDesktopInstalled = s.ClaudeDesktopInstalled()
-		} else {
-			claudeDesktopInstalled = launch.IsIntegrationInstalled("claude-desktop")
-		}
-		statuses = append(statuses, integrationStatus{
-			ID:          "claude-desktop",
-			Name:        "Claude",
-			Description: "Use Ollama models in Claude Desktop",
-			Installed:   &claudeDesktopInstalled,
-		})
-	}
+	claudeDesktopInstalled := isInstalled("claude-desktop")
+	statuses = append(statuses, integrationStatus{
+		ID:          "claude-desktop",
+		Name:        "Claude",
+		Description: "Use Ollama models in Claude Desktop",
+		Installed:   &claudeDesktopInstalled,
+		Action:      "connect",
+	})
 
 	byName := make(map[string]launch.IntegrationInfo, len(infos))
 	for _, info := range infos {
 		byName[info.Name] = info
 	}
-	// Apps prioritizes the primary terminal agents; unlisted entries retain launcher order.
-	preferredOrder := []string{"claude", "codex", "openclaw", "opencode", "droid", "pi", "cline"}
-	seen := make(map[string]bool, len(preferredOrder))
+	seen := map[string]bool{"chatgpt": true}
+	launcherMenuOrder := []string{"claude", "codex", "openclaw", "opencode", "droid", "pi", "cline"}
 	orderedInfos := make([]launch.IntegrationInfo, 0, len(infos))
-	for _, name := range preferredOrder {
+	for _, name := range launcherMenuOrder {
 		if info, ok := byName[name]; ok {
 			orderedInfos = append(orderedInfos, info)
 			seen[name] = true
 		}
 	}
 	for _, info := range infos {
-		if info.Name == "chatgpt" || seen[info.Name] {
-			continue
+		if !seen[info.Name] {
+			orderedInfos = append(orderedInfos, info)
 		}
-		orderedInfos = append(orderedInfos, info)
 	}
 
 	for _, info := range orderedInfos {
+		installed := isInstalled(info.Name)
 		statuses = append(statuses, integrationStatus{
 			ID:          info.Name,
 			Name:        info.DisplayName,
 			Description: info.Description,
+			Installed:   &installed,
+			Action:      "copy",
 			Command:     "ollama launch " + info.Name,
 		})
 	}
@@ -381,6 +380,7 @@ func (s *Server) getIntegrationStatuses(w http.ResponseWriter, _ *http.Request) 
 		ID:          "terminal",
 		Name:        "Terminal",
 		Description: "Run local models from your terminal",
+		Action:      "copy",
 		Command:     "ollama",
 	})
 
@@ -1540,6 +1540,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 	var request struct {
 		store.Settings
 		OnboardingVersion *int
+		ClaudeDesktopUsed *bool
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		return fmt.Errorf("invalid request body: %w", err)
@@ -1550,6 +1551,11 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 		settings.OnboardingVersion = old.OnboardingVersion
 	} else {
 		settings.OnboardingVersion = *request.OnboardingVersion
+	}
+	if request.ClaudeDesktopUsed == nil {
+		settings.ClaudeDesktopUsed = old.ClaudeDesktopUsed
+	} else {
+		settings.ClaudeDesktopUsed = *request.ClaudeDesktopUsed
 	}
 
 	if err := s.Store.SetSettings(settings); err != nil {
@@ -1618,6 +1624,58 @@ func (s *Server) writeCloudStatus(w http.ResponseWriter) error {
 		"disabled": disabled,
 		"source":   source,
 	})
+}
+
+func (s *Server) getCloudModels(w http.ResponseWriter, r *http.Request) error {
+	w.Header().Set("Content-Type", "application/json")
+	disabled, _, err := s.Store.CloudStatus()
+	if err != nil {
+		return fmt.Errorf("failed to load cloud status: %w", err)
+	}
+	if disabled {
+		return json.NewEncoder(w).Encode(api.ListResponse{Models: []api.ListModelResponse{}})
+	}
+
+	list := s.ListCloudModels
+	if list == nil {
+		list = s.listCloudModels
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	models, err := list(ctx)
+	if err != nil {
+		var authErr api.AuthorizationError
+		if errors.As(err, &authErr) && (authErr.StatusCode == http.StatusUnauthorized || authErr.StatusCode == http.StatusForbidden) {
+			return json.NewEncoder(w).Encode(api.ListResponse{Models: []api.ListModelResponse{}})
+		}
+		return fmt.Errorf("failed to list cloud models: %w", err)
+	}
+	if models == nil {
+		models = &api.ListResponse{Models: []api.ListModelResponse{}}
+	}
+
+	return json.NewEncoder(w).Encode(models)
+}
+
+func (s *Server) listCloudModels(ctx context.Context) (*api.ListResponse, error) {
+	resp, err := s.doSelfSigned(ctx, http.MethodGet, "/api/tags")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return nil, api.AuthorizationError{StatusCode: resp.StatusCode}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ollama.com/api/tags returned %s", resp.Status)
+	}
+
+	var models api.ListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&models); err != nil {
+		return nil, fmt.Errorf("failed to parse cloud models: %w", err)
+	}
+	return &models, nil
 }
 
 func (s *Server) getInferenceCompute(w http.ResponseWriter, r *http.Request) error {

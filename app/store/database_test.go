@@ -221,6 +221,41 @@ func TestOnboardingVersionDefaultsAndMigration(t *testing.T) {
 	})
 }
 
+func TestClaudeDesktopUsedDefaultsAndMigration(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "claude-history.db")
+	db, err := newDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	settings, err := db.getSettings()
+	if err != nil {
+		t.Fatalf("failed to read settings: %v", err)
+	}
+	if settings.ClaudeDesktopUsed {
+		t.Fatal("expected fresh installs to have no Claude Desktop history")
+	}
+
+	if _, err := db.conn.Exec(`
+		ALTER TABLE settings DROP COLUMN claude_desktop_used;
+		UPDATE settings SET schema_version = 17;
+	`); err != nil {
+		t.Fatalf("failed to seed v17 settings row: %v", err)
+	}
+	if err := db.migrate(); err != nil {
+		t.Fatalf("migration from v17 to v18 failed: %v", err)
+	}
+
+	settings, err = db.getSettings()
+	if err != nil {
+		t.Fatalf("failed to read migrated settings: %v", err)
+	}
+	if settings.ClaudeDesktopUsed {
+		t.Fatal("expected existing installs to start with no inferred Claude Desktop history")
+	}
+}
+
 func TestChatDeletionWithCascade(t *testing.T) {
 	t.Run("chat deletion cascades to related messages", func(t *testing.T) {
 		tmpDir := t.TempDir()

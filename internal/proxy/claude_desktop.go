@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/anthropic"
-	"github.com/ollama/ollama/internal/modelref"
 )
 
 const (
@@ -34,61 +33,6 @@ const (
 	healthHeader                   = "X-Ollama-Claude-Gateway"
 	unsupportedImageNotice         = "[Image omitted by Ollama because the selected model does not support image recognition.]"
 )
-
-// claudeModels are Claude-compatible IDs for Ollama models
-var claudeModels = []gatewayModel{
-	{
-		ID:                  "claude-fable-5",
-		Type:                "model",
-		DisplayName:         "GLM 5.2",
-		CreatedAt:           "2026-06-09T00:00:00Z",
-		MaxTokens:           128_000,
-		AnthropicFamilyTier: "fable",
-		IsFamilyDefault:     true,
-		OllamaModel:         "glm-5.2:cloud",
-	},
-	{
-		ID:                  "claude-opus-5",
-		Type:                "model",
-		DisplayName:         "Kimi K3",
-		CreatedAt:           "2026-07-24T00:00:00Z",
-		MaxTokens:           262_144,
-		AnthropicFamilyTier: "opus",
-		IsFamilyDefault:     true,
-		OllamaModel:         "kimi-k3:cloud",
-		SupportsVision:      true,
-	},
-	{
-		ID:                  "claude-sonnet-5",
-		Type:                "model",
-		DisplayName:         "DeepSeek V4 Pro",
-		CreatedAt:           "2026-06-30T00:00:00Z",
-		MaxTokens:           128_000,
-		AnthropicFamilyTier: "sonnet",
-		IsFamilyDefault:     true,
-		OllamaModel:         "deepseek-v4-pro:cloud",
-	},
-	{
-		ID:                  "claude-haiku-4-5-20251001",
-		Type:                "model",
-		DisplayName:         "DeepSeek V4 Flash",
-		CreatedAt:           "2025-10-01T00:00:00Z",
-		MaxTokens:           64_000,
-		AnthropicFamilyTier: "haiku",
-		IsFamilyDefault:     true,
-		OllamaModel:         "deepseek-v4-flash:0731:cloud",
-	},
-	{
-		ID:                  "claude-sonnet-5-20251001",
-		Type:                "model",
-		DisplayName:         "Qwen3.8 MLX",
-		CreatedAt:           "2025-10-01T00:00:00Z",
-		MaxTokens:           64_000,
-		AnthropicFamilyTier: "sonnet",
-		IsFamilyDefault:     false,
-		OllamaModel:         "qwen3.8:27b-mlx",
-	},
-}
 
 type gatewayModel struct {
 	ID                  string `json:"id"`
@@ -107,6 +51,7 @@ type ClaudeDesktopConfig struct {
 	ListenAddr           string
 	OllamaURL            string
 	Model                string
+	Models               []ClaudeDesktopModel
 	Logger               *slog.Logger
 	OnCountsChanged      func(ClaudeDesktopCounts)
 	CloudModelsAvailable func(context.Context) bool
@@ -133,6 +78,8 @@ type ClaudeDesktop struct {
 	ollamaProxy          *httputil.ReverseProxy
 	logger               *slog.Logger
 	model                string
+	modelsMu             sync.RWMutex
+	models               []ClaudeDesktopModel
 	onCountsChanged      func(ClaudeDesktopCounts)
 	cloudModelsAvailable func(context.Context) bool
 	listLocalModels      func(context.Context) ([]string, error)
@@ -183,12 +130,16 @@ func NewClaudeDesktop(config ClaudeDesktopConfig) (*ClaudeDesktop, error) {
 		ollamaURL:            ollamaURL,
 		logger:               logger,
 		model:                config.Model,
+		models:               SelectClaudeDesktopModels(config.Models, nil),
 		onCountsChanged:      config.OnCountsChanged,
 		cloudModelsAvailable: config.CloudModelsAvailable,
 		listLocalModels:      config.ListLocalModels,
 		shutdown:             make(chan struct{}),
 		readyWait:            upstreamReadyTimeout,
 		readyPoll:            upstreamReadyPoll,
+	}
+	if len(p.models) == 0 {
+		p.models = SelectClaudeDesktopModels(DefaultClaudeDesktopModels(), nil)
 	}
 	dialer := &net.Dialer{Timeout: upstreamReadyPoll}
 	p.dial = dialer.DialContext
@@ -198,7 +149,7 @@ func NewClaudeDesktop(config ClaudeDesktopConfig) (*ClaudeDesktop, error) {
 		http.Error(w, "Ollama gateway unavailable", http.StatusBadGateway)
 	}
 	proxy.ModifyResponse = func(response *http.Response) error {
-		retried, err := retryWithoutUnsupportedImages(response, transport)
+		retried, err := p.retryWithoutUnsupportedImages(response, transport)
 		if err != nil {
 			logger.Warn("Claude gateway image fallback failed", "path", response.Request.URL.Path, "error", err)
 			return nil
@@ -292,13 +243,39 @@ func (p *ClaudeDesktop) Counts() ClaudeDesktopCounts {
 	return ClaudeDesktopCounts{Routed: p.routed.Load()}
 }
 
+// Models returns the model subset currently advertised to Claude Desktop.
+func (p *ClaudeDesktop) Models() []ClaudeDesktopModel {
+	p.modelsMu.RLock()
+	defer p.modelsMu.RUnlock()
+	return cloneClaudeDesktopModels(p.models)
+}
+
+// SetModels replaces the complete model subset advertised to Claude Desktop.
+func (p *ClaudeDesktop) SetModels(models []ClaudeDesktopModel) error {
+	if len(models) == 0 {
+		return errors.New("Claude Desktop requires at least one model")
+	}
+	models = SelectClaudeDesktopModels(models, nil)
+	p.modelsMu.Lock()
+	p.models = cloneClaudeDesktopModels(models)
+	p.model = models[0].OllamaModel
+	p.modelsMu.Unlock()
+	return nil
+}
+
+func (p *ClaudeDesktop) modelSnapshot() (string, []ClaudeDesktopModel) {
+	p.modelsMu.RLock()
+	defer p.modelsMu.RUnlock()
+	return p.model, cloneClaudeDesktopModels(p.models)
+}
+
 func (p *ClaudeDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !p.allowsHost(r.Host) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 
-	model := p.model
+	_, models := p.modelSnapshot()
 	switch r.URL.Path {
 	case healthPath:
 		if r.Method != http.MethodGet {
@@ -313,21 +290,21 @@ func (p *ClaudeDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			methodNotAllowed(w, http.MethodGet)
 			return
 		}
-		p.serveModels(w, r.Context())
+		p.serveModels(w, r.Context(), models)
 		return
 	case "/v1/messages/count_tokens":
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
 			return
 		}
-		p.serveTokenCount(w, r, model)
+		p.serveTokenCount(w, r)
 		return
 	case "/v1/messages":
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
 			return
 		}
-		if err := p.routeModel(r, model); err != nil {
+		if err := p.routeModel(r); err != nil {
 			writeAnthropicError(w, http.StatusBadRequest, err)
 			return
 		}
@@ -456,7 +433,7 @@ func (p *ClaudeDesktop) markUpstreamNotReady() {
 	p.readyMu.Unlock()
 }
 
-func (p *ClaudeDesktop) serveModels(w http.ResponseWriter, ctx context.Context) {
+func (p *ClaudeDesktop) serveModels(w http.ResponseWriter, ctx context.Context, configured []ClaudeDesktopModel) {
 	cloudModelsAvailable := p.cloudModelsAvailable == nil || p.cloudModelsAvailable(ctx)
 	var localModels map[string]struct{}
 	if p.listLocalModels != nil {
@@ -471,9 +448,10 @@ func (p *ClaudeDesktop) serveModels(w http.ResponseWriter, ctx context.Context) 
 		}
 	}
 
-	models := make([]gatewayModel, 0, len(claudeModels))
-	for _, model := range claudeModels {
-		if modelref.HasExplicitCloudSource(model.OllamaModel) {
+	models := make([]gatewayModel, 0, len(configured))
+	for _, configuredModel := range configured {
+		model := configuredModel.gateway
+		if configuredModel.Cloud {
 			if cloudModelsAvailable {
 				models = append(models, model)
 			}
@@ -508,7 +486,7 @@ func (p *ClaudeDesktop) serveModels(w http.ResponseWriter, ctx context.Context) 
 	}
 }
 
-func (p *ClaudeDesktop) serveTokenCount(w http.ResponseWriter, r *http.Request, model string) {
+func (p *ClaudeDesktop) serveTokenCount(w http.ResponseWriter, r *http.Request) {
 	body, err := readRequestBody(r)
 	if err != nil {
 		writeAnthropicError(w, http.StatusBadRequest, err)
@@ -519,7 +497,11 @@ func (p *ClaudeDesktop) serveTokenCount(w http.ResponseWriter, r *http.Request, 
 		writeAnthropicError(w, http.StatusBadRequest, fmt.Errorf("decode Claude token-count request: %w", err))
 		return
 	}
-	selected := p.modelForClaudeID(request.Model, model)
+	selected, err := p.modelForClaudeID(request.Model)
+	if err != nil {
+		writeAnthropicError(w, http.StatusBadRequest, err)
+		return
+	}
 	request.Model = selected.OllamaModel
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(anthropic.CountTokensResponse{
@@ -529,7 +511,7 @@ func (p *ClaudeDesktop) serveTokenCount(w http.ResponseWriter, r *http.Request, 
 	}
 }
 
-func (p *ClaudeDesktop) routeModel(r *http.Request, model string) error {
+func (p *ClaudeDesktop) routeModel(r *http.Request) error {
 	body, err := readRequestBody(r)
 	if err != nil {
 		return err
@@ -542,7 +524,10 @@ func (p *ClaudeDesktop) routeModel(r *http.Request, model string) error {
 	if err := json.Unmarshal(payload["model"], &requestedModel); err != nil || strings.TrimSpace(requestedModel) == "" {
 		return errors.New("decode Claude gateway request: model is required")
 	}
-	selected := p.modelForClaudeID(requestedModel, model)
+	selected, err := p.modelForClaudeID(requestedModel)
+	if err != nil {
+		return err
+	}
 	targetModel := selected.OllamaModel
 	if targetModel == requestedModel {
 		setRequestBody(r, body)
@@ -558,7 +543,7 @@ func (p *ClaudeDesktop) routeModel(r *http.Request, model string) error {
 	return nil
 }
 
-func retryWithoutUnsupportedImages(response *http.Response, transport http.RoundTripper) (bool, error) {
+func (p *ClaudeDesktop) retryWithoutUnsupportedImages(response *http.Response, transport http.RoundTripper) (bool, error) {
 	if response.StatusCode != http.StatusBadRequest || response.Request.Method != http.MethodPost || response.Request.URL.Path != "/v1/messages" || response.Request.GetBody == nil {
 		return false, nil
 	}
@@ -587,7 +572,8 @@ func retryWithoutUnsupportedImages(response *http.Response, transport http.Round
 	if err := json.Unmarshal(payload["model"], &targetModel); err != nil {
 		return false, nil
 	}
-	selected, _ := gatewayModelForClaudeID(targetModel, targetModel)
+	_, models := p.modelSnapshot()
+	selected, _ := gatewayModelForOllamaModel(models, targetModel)
 	if selected.SupportsVision {
 		return false, nil
 	}
@@ -657,26 +643,23 @@ func setRequestBody(r *http.Request, body []byte) {
 	r.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
 }
 
-func (p *ClaudeDesktop) modelForClaudeID(id, fallback string) gatewayModel {
-	model, known := gatewayModelForClaudeID(id, fallback)
-	if !known {
-		p.logger.Debug("Claude gateway using default for unknown model", "requested_model", id, "default_model", model.OllamaModel)
+func (p *ClaudeDesktop) modelForClaudeID(id string) (gatewayModel, error) {
+	_, models := p.modelSnapshot()
+	for _, model := range models {
+		if model.gateway.ID == id || model.OllamaModel == id {
+			return model.gateway, nil
+		}
 	}
-	return model
+	return gatewayModel{}, fmt.Errorf("unknown Claude model %q", id)
 }
 
-func gatewayModelForClaudeID(id, fallback string) (gatewayModel, bool) {
-	for _, model := range claudeModels {
-		if model.ID == id {
-			return model, true
+func gatewayModelForOllamaModel(models []ClaudeDesktopModel, route string) (gatewayModel, bool) {
+	for _, model := range models {
+		if model.OllamaModel == route {
+			return model.gateway, true
 		}
 	}
-	for _, model := range claudeModels {
-		if model.OllamaModel == fallback {
-			return model, false
-		}
-	}
-	return gatewayModel{DisplayName: fallback, OllamaModel: fallback}, false
+	return gatewayModel{}, false
 }
 
 func replaceUnsupportedImages(payload map[string]json.RawMessage) (bool, error) {

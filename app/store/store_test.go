@@ -253,6 +253,32 @@ func TestOnboardingVersionRoundTrip(t *testing.T) {
 	}
 }
 
+func TestClaudeDesktopUsedRoundTrip(t *testing.T) {
+	s, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	settings, err := s.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.ClaudeDesktopUsed {
+		t.Fatal("expected Claude Desktop history to be false by default")
+	}
+
+	settings.ClaudeDesktopUsed = true
+	if err := s.SetSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := s.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.ClaudeDesktopUsed {
+		t.Fatal("expected Claude Desktop history to persist")
+	}
+}
+
 // setupTestStore creates a temporary store for testing
 func setupTestStore(t *testing.T) (*Store, func()) {
 	t.Helper()

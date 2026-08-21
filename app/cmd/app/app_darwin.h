@@ -45,6 +45,7 @@ void drag(uintptr_t wndPtr);
 void doubleClick(uintptr_t wndPtr);
 void handleConnectURL();
 bool SetClaudeGatewayInstalled(bool installed, bool restartClaude);
+bool HasUsedClaudeDesktopIntegration(void);
 bool RestoreClaudeGatewayForShutdown(void);
 bool IsClaudeGatewayConfigured(void);
 bool IsClaudeDesktopInstalled(void);
@@ -63,3 +64,5 @@ enum ClaudeInstallResult
     ClaudeInstallFailed,
 };
 enum ClaudeInstallResult installClaudeDesktop(void);
+char *ClaudeDesktopDownloadURL(void);
+bool InstallClaudeDesktopArchive(const char *archivePath);

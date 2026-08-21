@@ -614,6 +614,92 @@ func TestUserAgentTransport(t *testing.T) {
 	t.Logf("User-Agent transport successfully set: %s", receivedUA)
 }
 
+func TestGetCloudModels(t *testing.T) {
+	t.Run("lists models when cloud is enabled and account is authorized", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("OLLAMA_NO_CLOUD", "")
+		testStore := &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
+		defer testStore.Close()
+
+		server := &Server{
+			Store: testStore,
+			ListCloudModels: func(context.Context) (*api.ListResponse, error) {
+				return &api.ListResponse{Models: []api.ListModelResponse{
+					{Name: "glm-5.2", Model: "glm-5.2"},
+				}}, nil
+			},
+		}
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/models/cloud", nil)
+		rr := httptest.NewRecorder()
+		if err := server.getCloudModels(rr, req); err != nil {
+			t.Fatal(err)
+		}
+
+		var got api.ListResponse
+		if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Models) != 1 || got.Models[0].Name != "glm-5.2" {
+			t.Fatalf("models = %+v, want glm-5.2", got.Models)
+		}
+	})
+
+	t.Run("does not call ollama.com when cloud is disabled", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("OLLAMA_NO_CLOUD", "1")
+		testStore := &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
+		defer testStore.Close()
+
+		server := &Server{
+			Store: testStore,
+			ListCloudModels: func(context.Context) (*api.ListResponse, error) {
+				t.Fatal("cloud model list called while cloud was disabled")
+				return nil, nil
+			},
+		}
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/models/cloud", nil)
+		rr := httptest.NewRecorder()
+		if err := server.getCloudModels(rr, req); err != nil {
+			t.Fatal(err)
+		}
+
+		var got api.ListResponse
+		if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Models) != 0 {
+			t.Fatalf("models = %+v, want none", got.Models)
+		}
+	})
+
+	t.Run("returns no cloud models when account is unauthorized", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("OLLAMA_NO_CLOUD", "")
+		testStore := &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
+		defer testStore.Close()
+
+		server := &Server{
+			Store: testStore,
+			ListCloudModels: func(context.Context) (*api.ListResponse, error) {
+				return nil, api.AuthorizationError{StatusCode: http.StatusUnauthorized}
+			},
+		}
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/models/cloud", nil)
+		rr := httptest.NewRecorder()
+		if err := server.getCloudModels(rr, req); err != nil {
+			t.Fatal(err)
+		}
+
+		var got api.ListResponse
+		if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Models) != 0 {
+			t.Fatalf("models = %+v, want none", got.Models)
+		}
+	})
+}
+
 func TestInferenceClientUsesUserAgent(t *testing.T) {
 	var gotUserAgent atomic.Value
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -851,6 +937,51 @@ func TestSettingsPreservesOnboardingVersionWhenOmitted(t *testing.T) {
 	}
 	if saved.OnboardingVersion != 1 {
 		t.Fatalf("OnboardingVersion = %d, want 1", saved.OnboardingVersion)
+	}
+}
+
+func TestSettingsPreservesClaudeDesktopUsedWhenOmitted(t *testing.T) {
+	testStore := &store.Store{
+		DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
+	}
+	defer testStore.Close()
+
+	settings, err := testStore.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.ClaudeDesktopUsed = true
+	if err := testStore.SetSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+
+	payload, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		t.Fatal(err)
+	}
+	delete(fields, "ClaudeDesktopUsed")
+	payload, err = json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server := &Server{Store: testStore, Restart: func() {}}
+	req := httptest.NewRequest("POST", "/api/v1/settings", bytes.NewReader(payload))
+	rr := httptest.NewRecorder()
+	if err := server.settings(rr, req); err != nil {
+		t.Fatalf("settings() error = %v", err)
+	}
+
+	saved, err := testStore.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !saved.ClaudeDesktopUsed {
+		t.Fatal("expected ClaudeDesktopUsed to be preserved")
 	}
 }
 

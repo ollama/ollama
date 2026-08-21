@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -940,6 +941,138 @@ func TestClaudeDesktopSetInstalledFromDesktopRequiresRestartConfirmation(t *test
 	err := (&ClaudeDesktop{}).SetInstalledFromDesktop(true, false)
 	if err == nil || !strings.Contains(err.Error(), "restart confirmation is required") {
 		t.Fatalf("SetInstalledFromDesktop error = %v, want restart confirmation error", err)
+	}
+}
+
+func TestClaudeDesktopModelsPersistInLauncherConfig(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	want := []string{"qwen3.8:27b", "glm-5.2:cloud"}
+	if err := SaveClaudeDesktopModels(want); err != nil {
+		t.Fatal(err)
+	}
+	if got := ClaudeDesktopModels(); !slices.Equal(got, want) {
+		t.Fatalf("ClaudeDesktopModels() = %v, want %v", got, want)
+	}
+	if err := SaveClaudeDesktopModels(nil); err == nil {
+		t.Fatal("SaveClaudeDesktopModels(nil) succeeded")
+	}
+}
+
+func TestClaudeDesktopConfigureOmitsInferenceModelsWithoutMappedIDs(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withClaudeDesktopPlatform(t, "darwin")
+
+	paths, err := claudeDesktopConfigPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.desktopConfig), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.meta), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.desktopConfig, []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.meta, []byte(`{"entries":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Persisted selections keep exact Ollama routes, but the generic configure
+	// path must not write them as inferenceModels: Claude Desktop autodiscovers
+	// the Claude-facing IDs the gateway advertises instead.
+	persisted := []string{"glm-5.2:cloud", "deepseek-v4-flash:cloud", "gemma4:26b:cloud", "qwen3:8b"}
+	if err := SaveClaudeDesktopModels(persisted); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&ClaudeDesktop{}).ConfigureAutodiscovery(); err != nil {
+		t.Fatal(err)
+	}
+
+	profile := claudeDesktopReadJSON(t, paths.profile)
+	if models, ok := profile["inferenceModels"]; ok {
+		t.Fatalf("inferenceModels = %v, want omitted so Claude discovers gateway models", models)
+	}
+	if got := ClaudeDesktopModels(); !slices.Equal(got, persisted) {
+		t.Fatalf("persisted models = %v, want Ollama routes %v", got, persisted)
+	}
+}
+
+func TestClaudeDesktopSetInstalledFromDesktopUsesGatewayDiscovery(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	withClaudeDesktopPlatform(t, "darwin")
+	openCalls := 0
+	withClaudeDesktopProcessHooks(t,
+		func() bool { return false },
+		func() error { t.Fatal("stopped Claude should not be quit"); return nil },
+		func() error { openCalls++; return nil },
+	)
+
+	paths, err := claudeDesktopConfigPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.profile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.profile, []byte(`{"customSetting":{"nested":true},"inferenceModels":["kimi-k3:cloud"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Settings persist exact Ollama routes while Claude discovers that selected
+	// catalog from the gateway instead of a stale profile list.
+	persisted := []string{"kimi-k3:cloud", "gemma4:26b:cloud"}
+	if err := SaveClaudeDesktopModels(persisted); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&ClaudeDesktop{}).SetInstalledFromDesktop(true, false); err != nil {
+		t.Fatalf("SetInstalledFromDesktop returned error: %v", err)
+	}
+	if openCalls != 1 {
+		t.Fatalf("open calls = %d, want 1", openCalls)
+	}
+
+	profile := claudeDesktopReadJSON(t, paths.profile)
+	if models, ok := profile["inferenceModels"]; ok {
+		t.Fatalf("inferenceModels = %v, want gateway discovery", models)
+	}
+	custom, _ := profile["customSetting"].(map[string]any)
+	if custom["nested"] != true {
+		t.Fatalf("unknown profile fields were not preserved: %v", profile)
+	}
+	if got := ClaudeDesktopModels(); !slices.Equal(got, persisted) {
+		t.Fatalf("persisted models = %v, want Ollama routes %v", got, persisted)
+	}
+}
+
+func TestClaudeDesktopSetInstalledFromDesktopOmitsInferenceModelsWithoutMappedIDs(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	withClaudeDesktopPlatform(t, "darwin")
+	withClaudeDesktopProcessHooks(t,
+		func() bool { return false },
+		func() error { t.Fatal("stopped Claude should not be quit"); return nil },
+		func() error { return nil },
+	)
+
+	paths, err := claudeDesktopConfigPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.profile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.profile, []byte(`{"inferenceModels":["kimi-k3:cloud"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&ClaudeDesktop{}).SetInstalledFromDesktop(true, false); err != nil {
+		t.Fatalf("SetInstalledFromDesktop returned error: %v", err)
+	}
+	profile := claudeDesktopReadJSON(t, paths.profile)
+	if models, ok := profile["inferenceModels"]; ok {
+		t.Fatalf("inferenceModels = %v, want omitted without mapped IDs", models)
 	}
 }
 

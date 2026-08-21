@@ -8,13 +8,245 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/app/store"
+	"github.com/ollama/ollama/cmd/launch"
 	"github.com/ollama/ollama/internal/proxy"
 )
+
+func TestMain(m *testing.M) {
+	previousLoader := claudeModelsLoader
+	claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
+		return proxy.DefaultClaudeDesktopModels(), "fallback"
+	}
+	code := m.Run()
+	claudeModelsLoader = previousLoader
+	os.Exit(code)
+}
+
+func TestLoadClaudeDesktopModelsUsesAppEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/experimental/model-recommendations" || r.URL.Query().Get("app") != "claude-desktop" {
+			t.Fatalf("request URL = %q", r.URL.String())
+		}
+		_, _ = w.Write([]byte(`{"recommendations":[{"model":"glm-5.2:cloud","description":"Cloud model","max_output_tokens":262144,"required_plan":"pro"},{"model":"gemma4:26b","description":"Local model","max_output_tokens":262144}]}`))
+	}))
+	defer server.Close()
+
+	previousClient := claudeRecommendationsClient
+	previousEndpoint := claudeRecommendationsEndpoint
+	claudeRecommendationsClient = server.Client()
+	claudeRecommendationsEndpoint = func() string {
+		return server.URL + "/api/experimental/model-recommendations?app=claude-desktop"
+	}
+	t.Cleanup(func() {
+		claudeRecommendationsClient = previousClient
+		claudeRecommendationsEndpoint = previousEndpoint
+	})
+
+	models, source := loadClaudeDesktopModels(context.Background())
+	if source != "endpoint" || len(models) != 1 || models[0].Name != "glm-5.2:cloud" {
+		t.Fatalf("models/source = %+v/%q", models, source)
+	}
+}
+
+func TestClaudeDesktopDownloadEndpointUsesTypedZipContract(t *testing.T) {
+	endpoint := claudeDesktopDownloadEndpoint("http://127.0.0.1:18080/")
+	if endpoint != "http://127.0.0.1:18080/download-app?app=claude-desktop&type=mac-zip" {
+		t.Fatalf("endpoint = %q", endpoint)
+	}
+}
+
+func TestResolveClaudeDesktopCatalogUsesPersistedSelection(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	available, selected, source := resolveClaudeDesktopCatalog(context.Background())
+	if source != "fallback" || len(selected) != len(available) {
+		t.Fatalf("default catalog = %d/%d source %q, want all fallback models selected", len(selected), len(available), source)
+	}
+
+	if err := launch.SaveClaudeDesktopModels([]string{"qwen3:8b"}); err != nil {
+		t.Fatal(err)
+	}
+	available, selected, source = resolveClaudeDesktopCatalog(context.Background())
+	if source != "user" {
+		t.Fatalf("source = %q, want user", source)
+	}
+	if len(selected) != 1 || selected[0].Name != "qwen3:8b" {
+		t.Fatalf("selected models = %+v, want persisted qwen3:8b", selected)
+	}
+	if got := available[len(available)-1].Name; got != "qwen3:8b" {
+		t.Fatalf("last available model = %q, want persisted qwen3:8b", got)
+	}
+}
+
+func TestIncludeSelectedClaudeDesktopModelsKeepsCustomModels(t *testing.T) {
+	available := proxy.DefaultClaudeDesktopModels()
+	selected := proxy.SelectClaudeDesktopModels(available, []string{"qwen3:8b"})
+	models := includeSelectedClaudeDesktopModels(available, selected)
+	if got := models[len(models)-1].Name; got != "qwen3:8b" {
+		t.Fatalf("last available model = %q, want qwen3:8b", got)
+	}
+}
+
+func TestSelectKnownClaudeDesktopModelsAllowsInstalledModelsOnly(t *testing.T) {
+	available := proxy.DefaultClaudeDesktopModels()
+	selected, err := selectKnownClaudeDesktopModels(available, nil, []string{"qwen3:8b"}, []string{"qwen3:8b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(selected) != 1 || selected[0].Name != "qwen3:8b" {
+		t.Fatalf("selected models = %+v, want installed qwen3:8b", selected)
+	}
+
+	selected, err = selectKnownClaudeDesktopModels(available, nil, nil, []string{"deepseek-v4-flash:0731:cloud"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(selected) != 1 || selected[0].Name != "deepseek-v4-flash" || selected[0].OllamaModel != "deepseek-v4-flash:0731:cloud" {
+		t.Fatalf("selected cloud model = %+v", selected)
+	}
+
+	if _, err := selectKnownClaudeDesktopModels(available, nil, []string{"qwen3:8b"}, []string{"made-up-model"}); err == nil {
+		t.Fatal("expected an arbitrary model name to be rejected")
+	}
+
+	// The five-model selection cap must not make later installed models
+	// unselectable. The cap applies to the final selection, not the inventory.
+	localNames := []string{"local-1", "local-2", "local-3", "local-4", "local-5", "local-6"}
+	selected, err = selectKnownClaudeDesktopModels(available, nil, localNames, []string{"local-6"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(selected) != 1 || selected[0].Name != "local-6" {
+		t.Fatalf("later installed model selection = %+v, want local-6", selected)
+	}
+}
+
+type fakeClaudeDesktopController struct {
+	configured bool
+	installed  bool
+	restart    bool
+}
+
+func (f *fakeClaudeDesktopController) UsesOllamaGateway() bool { return f.configured }
+
+func (f *fakeClaudeDesktopController) SetInstalledFromDesktop(installed, restart bool) error {
+	f.installed = installed
+	f.restart = restart
+	return nil
+}
+
+func (f *fakeClaudeDesktopController) RestoreForShutdown(context.Context) error { return nil }
+
+func TestRestartClaudeDesktopWithModelsPersistsSelection(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	previousInstalled := claudeDesktopInstalled
+	previousAddr := claudeProxyListenAddr
+	previousDesktop := claudeDesktop
+	claudeDesktopInstalled = func() bool { return true }
+	claudeProxyListenAddr = "127.0.0.1:0"
+	fake := &fakeClaudeDesktopController{configured: true}
+	claudeDesktop = fake
+	t.Cleanup(func() {
+		stopClaudeAppProxy()
+		claudeDesktopInstalled = previousInstalled
+		claudeProxyListenAddr = previousAddr
+		claudeDesktop = previousDesktop
+	})
+
+	if err := restartClaudeDesktopWithModels([]string{"kimi-k3:cloud"}); err != nil {
+		t.Fatal(err)
+	}
+	if !fake.installed {
+		t.Fatal("expected the Claude profile to be installed")
+	}
+	if got, want := launch.ClaudeDesktopModels(), []string{"kimi-k3:cloud"}; !slices.Equal(got, want) {
+		t.Fatalf("persisted models = %v, want Ollama routes %v", got, want)
+	}
+}
+
+func TestRestartClaudeDesktopWithModelsCapsSelectionAtLiteralSlots(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	previousInstalled := claudeDesktopInstalled
+	previousDesktop := claudeDesktop
+	claudeDesktopInstalled = func() bool { return true }
+	fake := &fakeClaudeDesktopController{configured: true}
+	claudeDesktop = fake
+	t.Cleanup(func() {
+		claudeDesktopInstalled = previousInstalled
+		claudeDesktop = previousDesktop
+	})
+
+	err := restartClaudeDesktopWithModels([]string{
+		"glm-5.2:cloud",
+		"kimi-k3:cloud",
+		"deepseek-v4-pro",
+		"deepseek-v4-flash",
+		"gemma4:26b:cloud",
+		"qwen3:8b",
+	})
+	if err == nil || !strings.Contains(err.Error(), "at most 5") {
+		t.Fatalf("error = %v, want a clear at most 5 message", err)
+	}
+	if fake.installed {
+		t.Fatal("the Claude profile must not change when the selection exceeds the model limit")
+	}
+}
+
+func TestClaudeDesktopIntegrationHistoryPersists(t *testing.T) {
+	previousStore := appStore
+	appStore = &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
+	t.Cleanup(func() {
+		_ = appStore.Close()
+		appStore = previousStore
+	})
+
+	if hasUsedClaudeDesktopIntegration() {
+		t.Fatal("expected no Claude Desktop integration history initially")
+	}
+	if err := markClaudeDesktopIntegrationUsed(); err != nil {
+		t.Fatal(err)
+	}
+	if !hasUsedClaudeDesktopIntegration() {
+		t.Fatal("expected Claude Desktop integration history after marking it used")
+	}
+}
+
+func TestLoadClaudeDesktopModelsFallsBackWithoutMLX(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	previousClient := claudeRecommendationsClient
+	previousEndpoint := claudeRecommendationsEndpoint
+	claudeRecommendationsClient = server.Client()
+	claudeRecommendationsEndpoint = func() string { return server.URL }
+	t.Cleanup(func() {
+		claudeRecommendationsClient = previousClient
+		claudeRecommendationsEndpoint = previousEndpoint
+	})
+
+	models, source := loadClaudeDesktopModels(context.Background())
+	if source != "fallback" || len(models) != 4 {
+		t.Fatalf("models/source = %+v/%q", models, source)
+	}
+	for _, model := range models {
+		if strings.Contains(strings.ToLower(model.Name), "mlx") {
+			t.Fatalf("fallback contains MLX model %q", model.Name)
+		}
+	}
+}
 
 func TestClaudeCloudModelsAvailable(t *testing.T) {
 	tests := []struct {
@@ -101,7 +333,7 @@ func TestClaudeLocalModels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(models, ","); got != "qwen3.8:27b-mlx,alias:latest,original:latest" {
+	if got := strings.Join(models, ","); got != "qwen3.8:27b-mlx,alias:latest,alias,original:latest,original" {
 		t.Fatalf("local models = %q", got)
 	}
 	models, err = claudeLocalModels(context.Background(), func(context.Context) (*api.ListResponse, error) {

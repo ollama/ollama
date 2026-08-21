@@ -114,10 +114,6 @@ func (*appCallbacks) UIRunning() bool {
 	return wv.IsRunning()
 }
 
-func (*appCallbacks) UIOnboarding() bool {
-	return wv.OnboardingActive()
-}
-
 func (app *appCallbacks) Quit() {
 	app.t.Quit()
 	wv.Terminate()
@@ -426,6 +422,32 @@ func runInBackground() {
 func drag(ptr unsafe.Pointer) {}
 
 func doubleClick(ptr unsafe.Pointer) {}
+
+func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
+	return claudeDesktopStatus{Supported: false}
+}
+
+func setClaudeDesktopConnection(_ bool) error {
+	return errors.New("Claude Desktop connection is only supported on macOS")
+}
+
+func openClaudeDesktopApplication() error {
+	return errors.New("Claude Desktop connection is only supported on macOS")
+}
+
+func restartClaudeDesktopWithModels(_ []string) error {
+	return errors.New("Claude Desktop connection is only supported on macOS")
+}
+
+func requestClaudeDesktopInstall() claudeDesktopInstallResult {
+	return claudeDesktopInstallFailed
+}
+
+func getShowAppsInMenu() bool {
+	return false
+}
+
+func setShowAppsInMenu(_ bool) {}
 
 // checkAndHandleExistingInstance checks if another instance is running and sends the URL to it
 func checkAndHandleExistingInstance(urlSchemeRequest string) {

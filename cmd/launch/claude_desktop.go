@@ -63,6 +63,9 @@ func (c *ClaudeDesktop) AutodiscoveredModel() string {
 	return claudeDesktopModelLabel
 }
 
+// ConfigureAutodiscovery points Claude Desktop at Ollama's local gateway
+// without pinning a model list, so Claude discovers the selected catalog and
+// exact Ollama route names the gateway advertises.
 func (c *ClaudeDesktop) ConfigureAutodiscovery() error {
 	if err := claudeDesktopSupported(); err != nil {
 		return err
@@ -169,6 +172,21 @@ func restoreClaudeDesktopProfile() error {
 
 func (c *ClaudeDesktop) Onboard() error {
 	return config.MarkIntegrationOnboarded(claudeDesktopIntegrationName)
+}
+
+// ClaudeDesktopModels returns the user's explicitly saved Claude Desktop
+// model subset. A nil result means the recommendation source should decide.
+func ClaudeDesktopModels() []string {
+	return config.IntegrationModels(claudeDesktopIntegrationName)
+}
+
+// SaveClaudeDesktopModels persists the user's explicit Claude Desktop model
+// subset in the shared launcher configuration.
+func SaveClaudeDesktopModels(models []string) error {
+	if len(models) == 0 {
+		return errors.New("select at least one Claude Desktop model")
+	}
+	return config.SaveIntegration(claudeDesktopIntegrationName, models)
 }
 
 func (c *ClaudeDesktop) RequiresInteractiveOnboarding() bool {
