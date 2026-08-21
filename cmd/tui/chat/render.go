@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -308,8 +309,10 @@ func (m chatModel) bottomLines(width, maxHeight int) []string {
 		}
 	}
 
-	lines = append(lines, actionStatusLines...)
 	lines = append(lines, approvalLines...)
+	if m.customStatusText == "" {
+		lines = append(lines, actionStatusLines...)
+	}
 	modelLines := m.renderModelStatusLines(width)
 	fixedLines := len(lines) + 2
 	if len(modelLines) > 0 {
@@ -334,25 +337,167 @@ func (m chatModel) renderModelStatusLines(width int) []string {
 	if m.modelPicker != nil {
 		return nil
 	}
-	var parts []string
-	if model := strings.TrimSpace(m.opts.Model); model != "" {
-		parts = append(parts, model)
-	}
-	if contextStatus := m.contextStatus(); contextStatus != "" {
-		parts = append(parts, contextStatus)
-	}
-	if notice := m.permissionModeNotice(); notice != "" {
-		parts = append(parts, notice)
-	}
-	if len(parts) == 0 {
-		return nil
-	}
 	indent := inputBoxTextIndent()
-	lines := wrapChatText(strings.Join(parts, "   "), max(20, width-lipgloss.Width(indent)))
-	for i := range lines {
-		lines[i] = renderFooterPlainLine(indent + lines[i])
+	innerWidth := max(20, width-lipgloss.Width(indent))
+
+	var lines []string
+	statusline := m.renderNativeStatusline(innerWidth)
+	switch {
+	case m.customStatusText != "":
+		for _, wrapped := range wrapChatText(m.customStatusText, innerWidth) {
+			lines = append(lines, renderFooterPlainLine(indent+wrapped))
+		}
+	case statusline != "":
+		// The native statusline already shows access level inline, so the
+		// separate permission-mode notice line would just duplicate it.
+		lines = append(lines, renderFooterPlainLine(indent+statusline))
+	default:
+		if notice := m.permissionModeNotice(); notice != "" {
+			for _, wrapped := range wrapChatText(notice, innerWidth) {
+				lines = append(lines, renderFooterPlainLine(indent+wrapped))
+			}
+		}
 	}
 	return lines
+}
+
+// contextPercent reports the percentage of the model's context window
+// currently in use. ok is false when the context window size isn't known
+// yet, so callers can omit the segment instead of showing a misleading 0%.
+func (m chatModel) contextPercent() (percent int, ok bool) {
+	window := m.displayContextWindowTokens()
+	if window <= 0 {
+		return 0, false
+	}
+	used := max(m.contextTokens, 0)
+	return (used*100 + window/2) / window, true
+}
+
+const statuslineBarCells = 10
+
+// statuslineBarColor maps a context-usage percentage to the progress bar's
+// color: grey 0-50%, yellow 51-65%, orange 66-85%, red 86-100%.
+func statuslineBarColor(percent int) string {
+	switch {
+	case percent > 85:
+		return chatAnsiRed
+	case percent > 65:
+		return chatAnsiOrange
+	case percent > 50:
+		return chatAnsiYellow
+	default:
+		return chatAnsiBrightBlack
+	}
+}
+
+func renderProgressBar(percent int) string {
+	percent = max(0, min(100, percent))
+	filled := (percent*statuslineBarCells + 50) / 100
+	filled = max(0, min(statuslineBarCells, filled))
+
+	bar := strings.Repeat("█", filled) + strings.Repeat("░", statuslineBarCells-filled)
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(statuslineBarColor(percent))).Render(bar)
+}
+
+func renderElapsed(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	total := int(d.Seconds())
+	hours := total / 3600
+	minutes := (total % 3600) / 60
+	seconds := total % 60
+	if hours > 0 {
+		return fmt.Sprintf("%dh%02dm", hours, minutes)
+	}
+	return fmt.Sprintf("%dm%02ds", minutes, seconds)
+}
+
+// justifyThreeColumns lays out left/center/right segments on a single line
+// of the given width. When space is tight, segments are dropped in priority
+// order (center first, then right, then left is truncated) rather than
+// overlapping. Segments may carry ANSI styling (e.g. the colored progress
+// bar), so the line is assembled via string concatenation with widths
+// measured through lipgloss.Width, never by indexing into a rune slice.
+func justifyThreeColumns(left, center, right string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	lw, rw := lipgloss.Width(left), lipgloss.Width(right)
+	cw := lipgloss.Width(center)
+
+	if cw > 0 && lw+rw+cw+2 > width {
+		center, cw = "", 0
+	}
+	if lw+rw+1 > width && rw > 0 {
+		avail := width - lw - 1
+		if avail < 1 {
+			right, rw = "", 0
+		} else {
+			right = runewidth.Truncate(right, avail, "")
+			rw = lipgloss.Width(right)
+		}
+	}
+	if lw > width {
+		left = runewidth.Truncate(left, width, "")
+		lw = lipgloss.Width(left)
+		right, rw = "", 0
+	}
+
+	if cw == 0 {
+		return left + strings.Repeat(" ", max(0, width-lw-rw)) + right
+	}
+
+	centerStart := (width - cw) / 2
+	if centerStart < lw {
+		centerStart = lw
+	}
+	if centerStart+cw > width-rw {
+		centerStart = width - rw - cw
+	}
+	if centerStart < lw {
+		// still doesn't fit alongside both neighbors; drop it
+		return left + strings.Repeat(" ", max(0, width-lw-rw)) + right
+	}
+
+	gap1 := strings.Repeat(" ", centerStart-lw)
+	gap2 := strings.Repeat(" ", max(0, width-rw-centerStart-cw))
+	return left + gap1 + center + gap2 + right
+}
+
+// accessLevelLabel renders the access-level word. Only "full access" gets a
+// distinguishing color; "review" stays plain, matching the working directory.
+func (m chatModel) accessLevelLabel() string {
+	if m.accessLevelName() == "full-access" {
+		return chatFullAccessStyle.Render("full access")
+	}
+	return chatFooterStyle.Render("review")
+}
+
+// renderNativeStatusline assembles the statusline. Every segment other than
+// the progress bar and the "full access" label is wrapped in chatFooterStyle
+// explicitly (rather than relying on the outer renderFooterPlainLine wrap),
+// because the bar/access-level ANSI codes reset mid-line and would otherwise
+// leave everything after them unstyled.
+func (m chatModel) renderNativeStatusline(width int) string {
+	model := strings.TrimSpace(m.opts.Model)
+	if model == "" {
+		return ""
+	}
+
+	dir := filepath.Base(m.workingDir)
+	left := chatFooterStyle.Render(dir+" (") + m.accessLevelLabel() + chatFooterStyle.Render(")")
+
+	var center string
+	if m.compacting {
+		center = chatFooterStyle.Render(m.compactingLabel())
+	} else if percent, ok := m.contextPercent(); ok {
+		center = renderProgressBar(percent) + chatFooterStyle.Render(fmt.Sprintf(" %d%% ctx", percent))
+	}
+
+	right := chatFooterStyle.Render(fmt.Sprintf("%s (%s) • %s", model, thinkValueLabel(m.opts.Think), renderElapsed(time.Since(m.sessionStartedAt))))
+
+	return justifyThreeColumns(left, center, right, width)
 }
 
 func (m chatModel) renderActionStatusLines(width int) []string {
@@ -1546,15 +1691,19 @@ func (m chatModel) activityLine() string {
 	return statusWithSpinner(m.spinnerFrame(), label)
 }
 
+func (m chatModel) compactingLabel() string {
+	if m.compactingTokens > 0 {
+		return "Compacting " + formatTokenCount(m.compactingTokens)
+	}
+	return "Compacting"
+}
+
 func (m chatModel) activityLabel() string {
 	if m.status == "canceling" {
 		return "canceling"
 	}
 	if m.compacting {
-		if m.compactingTokens > 0 {
-			return "Compacting " + formatTokenCount(m.compactingTokens)
-		}
-		return "Compacting"
+		return m.compactingLabel()
 	}
 	if m.thinking {
 		return thinkingActivityLabel(m.thinkingTokens)
