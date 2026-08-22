@@ -940,10 +940,14 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 				}
 			}
 		} else {
+			var truncated bool
 			var err error
-			text, _, err = truncateInput(text)
+			text, truncated, err = truncateInput(text)
 			if err != nil {
 				return nil, 0, err
+			}
+			if truncated {
+				slog.Warn("embedding input truncated to fit context window", "model", req.Model)
 			}
 		}
 

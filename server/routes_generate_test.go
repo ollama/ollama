@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -109,6 +110,10 @@ func (mockRunner) Tokenize(_ context.Context, s string) (tokens []int, err error
 func (mockRunner) Ping(_ context.Context) error { return nil }
 
 func (m mockRunner) ContextLength() int { return m.contextLength }
+
+func (mockRunner) Embedding(_ context.Context, _ string) ([]float32, int, error) {
+	return []float32{0.1, 0.2}, 1, nil
+}
 
 func TestOptionsForPromptUsesEffectiveContextLength(t *testing.T) {
 	opts := &api.Options{Runner: api.Runner{NumCtx: 4096}}
@@ -3215,5 +3220,32 @@ func TestImageGenerateUnsupported(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "image generation models are not currently supported") {
 		t.Fatalf("expected unsupported error in body, got %q", w.Body.String())
+	}
+}
+
+func TestEmbedHandlerWarnsOnTruncation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	// Capture slog output at Warn level.
+	var logBuf bytes.Buffer
+	orig := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(orig) })
+
+	// llama.context_length=3: after BOS/EOS adjustment the limit is 1.
+	// Tokenize splits on whitespace, so a 5-word input (5 tokens) triggers truncation.
+	mock := mockRunner{}
+	s := newServerWithMockRunner(t, &mock)
+	createMinimalGGUFModel(t, s, "embed-model", ggml.KV{"llama.context_length": uint32(3)}, "", nil)
+
+	w := createRequest(t, s.EmbedHandler, api.EmbedRequest{
+		Model: "embed-model",
+		Input: "one two three four five",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(logBuf.String(), "embedding input truncated") {
+		t.Errorf("expected truncation warning in log, got: %s", logBuf.String())
 	}
 }
