@@ -188,7 +188,7 @@ func TestCohereParseMalformedActions(t *testing.T) {
 		t.Fatalf("braces inside string values must not split objects, got %v", v)
 	}
 
-	// Unparseable garbage yields no calls and no panic.
+	// Unparsable garbage yields no calls and no panic.
 	p = &CohereParser{}
 	p.Init(nil, nil, nil)
 	_, _, calls = cohereAddAll(t, p, []string{"x<|END_THINKING|><|START_ACTION|>[!!!]<|END_ACTION|>"})

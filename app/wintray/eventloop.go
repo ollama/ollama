@@ -104,7 +104,7 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 		}
 		err = t.wcex.unregister()
 		if err != nil {
-			slog.Error(fmt.Sprintf("failed to uregister windo %s", err))
+			slog.Error(fmt.Sprintf("failed to uregister window %s", err))
 		}
 	case WM_DESTROY:
 		// slog.Debug("XXX WM_DESTROY triggered")

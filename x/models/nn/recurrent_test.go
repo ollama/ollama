@@ -379,7 +379,7 @@ func TestCausalConv1DSegmentEquivalenceBatched(t *testing.T) {
 	// Each row's boundary i (offset i+1) must equal a B=1 single-shot conv over
 	// that row's real prefix: row 0 advances the full length, row 1 freezes once
 	// it reaches its real length 3. Per-row B=1 references avoid the ambiguity of
-	// re-declaring a ragged length over a uniform input slice.
+	// redeclaring a ragged length over a uniform input slice.
 	rowReal := []int32{int32(L), 3}
 	for i := range segStates {
 		for r := range B {
