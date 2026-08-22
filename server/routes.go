@@ -917,6 +917,8 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		if err != nil {
 			return "", false, err
 		}
+
+		slog.Warn("truncating embedding input", "model", req.Model, "tokens", len(tokens), "limit", ctxLen)
 		return truncated, true, nil
 	}
 
