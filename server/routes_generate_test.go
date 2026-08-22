@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -62,6 +63,7 @@ type mockRunner struct {
 	Template      string
 	TemplateFn    func(context.Context, llm.ChatRequest) (string, error)
 	DetokenizeFn  func(context.Context, []int) (string, error)
+	EmbeddingFn   func(context.Context, string) ([]float32, int, error)
 	contextLength int
 }
 
@@ -104,6 +106,13 @@ func (mockRunner) Tokenize(_ context.Context, s string) (tokens []int, err error
 	}
 
 	return
+}
+
+func (m *mockRunner) Embedding(ctx context.Context, s string) ([]float32, int, error) {
+	if m.EmbeddingFn != nil {
+		return m.EmbeddingFn(ctx, s)
+	}
+	return []float32{0.1, 0.2}, len(strings.Fields(s)), nil
 }
 
 func (mockRunner) Ping(_ context.Context) error { return nil }
@@ -3215,5 +3224,41 @@ func TestImageGenerateUnsupported(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "image generation models are not currently supported") {
 		t.Fatalf("expected unsupported error in body, got %q", w.Body.String())
+	}
+}
+
+func TestEmbeddingsHandlerPreservesUpstreamStatus(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name     string
+		err      error
+		wantCode int
+	}{
+		{"client error keeps its status", api.StatusError{
+			StatusCode:   http.StatusBadRequest,
+			ErrorMessage: "the input length exceeds the context length",
+		}, http.StatusBadRequest},
+		{"plain error is still a server error", errors.New("boom"), http.StatusInternalServerError},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := mockRunner{
+				EmbeddingFn: func(context.Context, string) ([]float32, int, error) {
+					return nil, 0, tt.err
+				},
+			}
+			s := newServerWithMockRunner(t, &mock)
+			createMinimalGGUFModel(t, s, "embeddings-status", ggml.KV{}, "", nil)
+
+			w := createRequest(t, s.EmbeddingsHandler, api.EmbeddingRequest{
+				Model:  "embeddings-status",
+				Prompt: "some text",
+			})
+			if w.Code != tt.wantCode {
+				t.Errorf("status = %d, want %d: %s", w.Code, tt.wantCode, w.Body.String())
+			}
+		})
 	}
 }
