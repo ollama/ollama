@@ -222,9 +222,18 @@ components:
           items:
             $ref: "#/components/schemas/ToolCall"
           description: Tool call requests produced by the model
+        tool_name:
+          type: string
+          description: Name of the tool whose result is provided in this message (when role is `tool`)
+        tool_call_id:
+          type: string
+          description: Identifier of the tool call this message is the result of (when role is `tool`)
     ToolCall:
       type: object
       properties:
+        id:
+          type: string
+          description: Unique identifier for this tool call, used to match a tool result message to its tool call
         function:
           type: object
           required: [name]
@@ -238,6 +247,9 @@ components:
             arguments:
               type: object
               description: JSON object of arguments to pass to the function
+            index:
+              type: integer
+              description: Position of this tool call among multiple tool calls in the same turn
     ToolDefinition:
       type: object
       required: [type, function]

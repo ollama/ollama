@@ -504,6 +504,7 @@ The `message` object has the following fields:
 - `images` (optional): a list of images to include in the message (for multimodal models such as `llava`)
 - `tool_calls` (optional): a list of tools in JSON that the model wants to use
 - `tool_name` (optional): add the name of the tool that was executed to inform the model of the result
+- `tool_call_id` (optional): the identifier of the tool call this message responds to (for `role: tool` messages)
 
 Advanced parameters (optional):
 
