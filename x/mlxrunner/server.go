@@ -13,12 +13,72 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/x/internal/mlxthread"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/sample"
 )
+
+// planWired returns the MLX wired (resident) cap in bytes for the given free RAM,
+// held below free memory so a model larger than free RAM pages from disk instead
+// of OOM-killing the runner.
+func planWired(free int) int {
+	return free * 4 / 5
+}
+
+// planCache returns the MLX cache limit in bytes for a model of modelSize against
+// the free RAM the host had at startup. The pool is tightened only when the model
+// did not fit under the wired cap (so it pages); a return of 0 leaves MLX's
+// default, so a resident model keeps full buffer reuse.
+func planCache(modelSize, startupFree int) int {
+	if modelSize > planWired(startupFree) {
+		return startupFree / 5
+	}
+	return 0
+}
+
+// configureMLXMemory caps MLX's wired footprint to the host's free RAM at startup
+// so that a model the scheduler has already admitted pages instead of MLX wiring
+// its whole resident set and OOM-killing the runner. This is a post-admission
+// safeguard only; it does not change the Client.Load fit check that governs
+// whether an oversized model is loaded at all. It returns the free RAM read
+// (0 if unavailable) for the post-load cache decision. Must run on the MLX thread.
+func configureMLXMemory() int {
+	mem, err := discover.GetCPUMem()
+	free := int(mem.FreeMemory)
+	if err != nil || free <= 0 {
+		return 0 // without a free-memory reading, keep MLX's defaults
+	}
+	wired := planWired(free)
+	if wired > 0 {
+		mlx.SetWiredLimit(wired)
+	}
+	slog.Info("capped MLX wired memory",
+		"free", format.HumanBytes2(uint64(free)),
+		"wired", format.HumanBytes2(uint64(wired)))
+	return free
+}
+
+// tuneMLXMemory tightens MLX's buffer cache once the model is loaded and its size
+// is known — but only when the model did not fit in the startup free RAM (so it
+// pages). A model that fit keeps MLX's default pool. Must run on the MLX thread.
+func tuneMLXMemory(startupFree int) {
+	if startupFree <= 0 {
+		return
+	}
+	modelSize := mlx.ActiveMemory()
+	cache := planCache(modelSize, startupFree)
+	if cache > 0 {
+		mlx.SetCacheLimit(cache)
+		slog.Info("tightened MLX cache (model exceeds free RAM)",
+			"model", format.HumanBytes2(uint64(modelSize)),
+			"free", format.HumanBytes2(uint64(startupFree)),
+			"cache", format.HumanBytes2(uint64(cache)))
+	}
+}
 
 func Execute(args []string) error {
 	slog.SetDefault(logutil.NewLogger(os.Stderr, envconfig.LogLevel()))
@@ -34,6 +94,7 @@ func Execute(args []string) error {
 	_ = flagSet.Bool("verbose", false, "Enable debug logging")
 	flagSet.Parse(args)
 
+	var startupFree int // free RAM at engine init, for the post-load cache decision
 	worker, err := mlxthread.Start("mlxrunner", func() error {
 		if err := mlx.CheckInit(); err != nil {
 			return fmt.Errorf("MLX not available: %w", err)
@@ -41,6 +102,7 @@ func Execute(args []string) error {
 
 		if mlx.GPUIsAvailable() {
 			mlx.SetDefaultDeviceGPU()
+			startupFree = configureMLXMemory()
 			slog.Info("MLX engine initialized", "MLX version", mlx.Version(), "device", "gpu")
 		} else {
 			slog.Info("MLX engine initialized", "MLX version", mlx.Version(), "device", "cpu")
@@ -64,7 +126,11 @@ func Execute(args []string) error {
 	}
 
 	if err := worker.Do(context.Background(), func() error {
-		return runner.Load(modelName)
+		if err := runner.Load(modelName); err != nil {
+			return err
+		}
+		tuneMLXMemory(startupFree)
+		return nil
 	}); err != nil {
 		return err
 	}
