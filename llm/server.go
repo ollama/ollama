@@ -209,7 +209,6 @@ type CompletionRequest struct {
 	Media   []MediaData
 	Options *api.Options
 
-	Grammar         string // set before sending the request to the subprocess
 	Shift           bool
 	Truncate        bool
 	PreservedTokens []string // parser tokens to render as text; ignored by non-llama-server runners

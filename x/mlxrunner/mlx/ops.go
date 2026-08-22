@@ -71,6 +71,12 @@ func (t *Array) AsStrided(shape []int, strides []int, offset int) *Array {
 	return out
 }
 
+func (t *Array) BitwiseAnd(other *Array) *Array {
+	out := New("BITWISE_AND")
+	C.mlx_bitwise_and(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
+	return out
+}
+
 func (t *Array) Concatenate(axis int, others ...*Array) *Array {
 	if len(others) == 0 {
 		return t.Clone()
@@ -211,6 +217,12 @@ func (t *Array) Reshape(axes ...int) *Array {
 
 	out := New("RESHAPE")
 	C.mlx_reshape(&out.ctx, t.ctx, unsafe.SliceData(cAxes), C.size_t(len(cAxes)), DefaultStream().ctx)
+	return out
+}
+
+func (t *Array) RightShift(other *Array) *Array {
+	out := New("RIGHT_SHIFT")
+	C.mlx_right_shift(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
 	return out
 }
 
