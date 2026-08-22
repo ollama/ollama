@@ -3,6 +3,7 @@ package convert
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"math"
 	"slices"
@@ -64,6 +65,30 @@ type gemma4Model struct {
 		ConvKernelSize    uint32  `json:"conv_kernel_size"`
 		RMSNormEps        float32 `json:"rms_norm_eps"`
 	} `json:"audio_config"`
+}
+
+// UnmarshalJSON handles both Gemma4 config.json layouts: multimodal
+// Gemma4ForConditionalGeneration checkpoints nest the text fields under
+// "text_config", while text-only Gemma4ForCausalLM checkpoints keep them at
+// the top level. Without the fallback, text-only imports produce all-zero
+// gemma4.* metadata.
+func (p *gemma4Model) UnmarshalJSON(data []byte) error {
+	type gemma4ModelNoCustomUnmarshal gemma4Model
+	if err := json.Unmarshal(data, (*gemma4ModelNoCustomUnmarshal)(p)); err != nil {
+		return err
+	}
+
+	var layout struct {
+		TextConfig json.RawMessage `json:"text_config"`
+	}
+	if err := json.Unmarshal(data, &layout); err != nil {
+		return err
+	}
+	if len(layout.TextConfig) == 0 {
+		// text-only checkpoint: text fields live at the top level
+		return json.Unmarshal(data, &p.TextModel)
+	}
+	return nil
 }
 
 func (p *gemma4Model) KV(t *Tokenizer) KV {
