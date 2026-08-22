@@ -67,6 +67,13 @@ func (s *Server) CreateHandler(c *gin.Context) {
 	config.Parser = r.Parser
 	config.Requires = r.Requires
 
+	// renderPrompt returns early when a renderer is set, so a model that sets both a
+	// renderer and a template never uses the template. This is easy to hit by copying the output of
+	// "ollama show --modelfile" and adding a TEMPLATE to it.
+	if r.Template != "" && r.Renderer != "" {
+		slog.Warn("template is ignored because the model sets an explicit renderer", "renderer", r.Renderer)
+	}
+
 	for v, digest := range r.Files {
 		if !fs.ValidPath(v) {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": errFilePath.Error()})
@@ -166,7 +173,9 @@ func (s *Server) CreateHandler(c *gin.Context) {
 							if cfgFile, fErr := os.Open(configPath); fErr == nil {
 								var baseConfig model.ConfigV2
 								if decErr := json.NewDecoder(cfgFile).Decode(&baseConfig); decErr == nil {
-									if config.Renderer == "" {
+									// Inheriting the parent's renderer would silently override a template
+									// the child model set for itself.
+									if config.Renderer == "" && r.Template == "" {
 										config.Renderer = baseConfig.Renderer
 									}
 									if config.Parser == "" {
@@ -797,9 +806,15 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 				// need architecture-based renderer/parser/stop defaults.
 				if config.Renderer == "" || config.Parser == "" {
 					arch := layer.GGML.KV().Architecture()
+					// A template set by the model file takes precedence over a renderer, so
+					// don't auto-detect one here. The parser and stop tokens still apply: they
+					// describe the output and the architecture, not the prompt format.
+					autodetect := r.Template == ""
 					switch arch {
 					case "gemma4":
-						config.Renderer = cmp.Or(config.Renderer, gemma4RendererLegacy)
+						if autodetect {
+							config.Renderer = cmp.Or(config.Renderer, gemma4RendererLegacy)
+						}
 						config.Parser = cmp.Or(config.Parser, "gemma4")
 						if _, ok := r.Parameters["stop"]; !ok {
 							if r.Parameters == nil {
@@ -808,10 +823,14 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 							r.Parameters["stop"] = []string{"<turn|>"}
 						}
 					case "laguna":
-						config.Renderer = cmp.Or(config.Renderer, "laguna")
+						if autodetect {
+							config.Renderer = cmp.Or(config.Renderer, "laguna")
+						}
 						config.Parser = cmp.Or(config.Parser, "laguna")
 					case "nemotron_h", "nemotron_h_moe", "nemotron_h_omni":
-						config.Renderer = cmp.Or(config.Renderer, "nemotron-3-nano")
+						if autodetect {
+							config.Renderer = cmp.Or(config.Renderer, "nemotron-3-nano")
+						}
 						config.Parser = cmp.Or(config.Parser, "nemotron-3-nano")
 					}
 				}
