@@ -931,6 +931,8 @@ type GenerateResponse struct {
 
 // ModelDetails provides details about a model.
 type ModelDetails struct {
+	ProjectedContextLength int `json:"projected_context_length,omitempty"`
+
 	ParentModel       string   `json:"parent_model"`
 	Format            string   `json:"format"`
 	Family            string   `json:"family"`
