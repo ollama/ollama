@@ -108,8 +108,42 @@ func TestExtractFileDataWAV(t *testing.T) {
 		t.Fatalf("failed to write test audio: %v", err)
 	}
 
-	input := "before " + fp + " after"
+	input = "before " + fp + " after"
 	cleaned, imgs, err := extractFileData(input)
+	assert.NoError(t, err)
+	assert.Len(t, imgs, 1)
+	assert.Equal(t, "before  after", cleaned)
+}
+
+func TestNormalizeFilePathBackslashEscapedAndQuoted(t *testing.T) {
+	assert.Equal(t, "/path/to/my image (1).png", normalizeFilePath(`"/path/to/my\ image\ \(1\).png"`))
+	assert.Equal(t, "/path/to/my image (1).png", normalizeFilePath(`'/path/to/my\ image\ \(1\).png'`))
+}
+
+func TestExtractFileDataBackslashEscapedAndQuoted(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "my image (1).jpg")
+	data := make([]byte, 600)
+	copy(data, []byte{
+		0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 'J', 'F', 'I', 'F',
+		0x00, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0xff, 0xd9,
+	})
+	if err := os.WriteFile(fp, data, 0o600); err != nil {
+		t.Fatalf("failed to write test image: %v", err)
+	}
+
+	// Escaped path
+	escapedFp := filepath.Join(dir, `my\ image\ \(1\).jpg`)
+	input := "before " + escapedFp + " after"
+	cleaned, imgs, err := extractFileData(input)
+	assert.NoError(t, err)
+	assert.Len(t, imgs, 1)
+	assert.Equal(t, "before  after", cleaned)
+
+	// Double-quoted escaped path
+	input = `before "` + escapedFp + `" after`
+	cleaned, imgs, err = extractFileData(input)
 	assert.NoError(t, err)
 	assert.Len(t, imgs, 1)
 	assert.Equal(t, "before  after", cleaned)
