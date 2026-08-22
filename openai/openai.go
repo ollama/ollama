@@ -659,8 +659,6 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 
 	if r.Temperature != nil {
 		options["temperature"] = *r.Temperature
-	} else {
-		options["temperature"] = 1.0
 	}
 
 	if r.Seed != nil {
