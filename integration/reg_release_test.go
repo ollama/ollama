@@ -84,6 +84,7 @@ func init() {
 		integrationTestCase("embedding-api", "all-minilm", runAllMiniLMEmbeddings),
 		integrationTestCase("embed-api", "all-minilm", runAllMiniLMEmbed),
 		integrationTestCase("embed-api-batch", "all-minilm", runAllMiniLMBatchEmbed),
+		integrationTestCase("embed-api-normalize", "all-minilm", runAllMiniLMEmbedNormalize),
 		integrationTestCase("embed-api-truncate", "all-minilm", runAllMiniLMEmbedTruncate),
 		integrationModelsTestCase("embed-truncation", releaseEmbedModels, runEmbedTruncation),
 		integrationModelsTestCase("embed-large-input", releaseEmbedModels, runEmbedLargeInput),

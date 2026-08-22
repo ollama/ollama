@@ -980,15 +980,22 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			if err != nil {
 				return err
 			}
-			// TODO: this first normalization should be done by the model
-			embedding, err = normalize(embedding)
-			if err != nil {
-				return err
-			}
-			if req.Dimensions > 0 && req.Dimensions < len(embedding) {
-				embedding, err = normalize(embedding[:req.Dimensions])
+			// Normalization defaults to true to preserve the previous behavior.
+			normalizeEmbeddings := req.Normalize == nil || *req.Normalize
+			if normalizeEmbeddings {
+				// TODO: this first normalization should be done by the model
+				embedding, err = normalize(embedding)
 				if err != nil {
 					return err
+				}
+			}
+			if req.Dimensions > 0 && req.Dimensions < len(embedding) {
+				embedding = embedding[:req.Dimensions]
+				if normalizeEmbeddings {
+					embedding, err = normalize(embedding)
+					if err != nil {
+						return err
+					}
 				}
 			}
 			embeddings[i] = embedding
