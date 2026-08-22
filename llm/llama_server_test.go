@@ -1363,6 +1363,32 @@ func TestSetupLlamaServerCommandEnv(t *testing.T) {
 	}
 }
 
+func TestSetupLlamaServerCommandEnvStripsLlamaAPIKey(t *testing.T) {
+	exeDir := t.TempDir()
+	exe := filepath.Join(exeDir, "llama-server")
+	if err := os.WriteFile(exe, nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// A stray LLAMA_API_KEY in the parent environment (e.g. left over from
+	// an unrelated llama.cpp install) must not reach the llama-server
+	// subprocess: Ollama's own internal calls to it never send an
+	// Authorization header, so llama-server would reject them with 401 if
+	// it picked up an API key and started requiring auth.
+	t.Setenv("LLAMA_API_KEY", "stray-value-from-another-tool")
+	t.Setenv("llama_api_key", "should-also-be-stripped-case-insensitively")
+
+	cmd := exec.Command("echo")
+	SetupLlamaServerCommandEnv(cmd, exe, nil, nil)
+
+	for _, kv := range cmd.Env {
+		key, _, ok := strings.Cut(kv, "=")
+		if ok && strings.EqualFold(key, "LLAMA_API_KEY") {
+			t.Fatalf("cmd.Env contains %q, want LLAMA_API_KEY stripped", kv)
+		}
+	}
+}
+
 func TestFilteredEnvLogValue(t *testing.T) {
 	attrs := filteredEnv([]string{
 		"OLLAMA_DEBUG=1",
