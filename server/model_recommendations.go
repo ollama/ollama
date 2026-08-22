@@ -199,6 +199,9 @@ func (c *modelRecommendationsCache) refresh(ctx context.Context) error {
 		return err
 	}
 	req.Header.Set("Accept", "application/json")
+	if err := cloudProxySignRequest(reqCtx, req); err != nil {
+		return fmt.Errorf("sign model recommendations request: %w", err)
+	}
 
 	resp, err := c.client.Do(req)
 	if err != nil {

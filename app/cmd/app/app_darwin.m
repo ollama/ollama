@@ -768,6 +768,29 @@ static NSImage *ollamaApplicationIcon(void) {
         return ClaudeInstallCancelled;
     }
 
+    char *downloadAuthorization = NULL;
+    char *downloadURL = ClaudeDesktopDownloadRequest(&downloadAuthorization);
+    NSString *downloadURLString = downloadURL == NULL
+        ? nil
+        : [NSString stringWithUTF8String:downloadURL];
+    NSString *authorization = downloadAuthorization == NULL
+        ? nil
+        : [NSString stringWithUTF8String:downloadAuthorization];
+    free(downloadURL);
+    free(downloadAuthorization);
+    NSURL *url = downloadURLString == nil
+        ? nil
+        : [NSURL URLWithString:downloadURLString];
+    if (url == nil || authorization.length == 0) {
+        NSError *error = [NSError
+            errorWithDomain:@"com.ollama.app"
+                       code:3
+                   userInfo:@{NSLocalizedDescriptionKey:
+                       @"Ollama could not authenticate the download request."}];
+        [self showClaudeDownloadFailure:error];
+        return ClaudeInstallFailed;
+    }
+
     [self.claudeAppRow setInactiveStatusText:@"Downloading Claude…"];
     [self.claudeAppRow.integrationSwitch setEnabled:NO];
 
@@ -797,13 +820,10 @@ static NSImage *ollamaApplicationIcon(void) {
         sessionWithConfiguration:configuration
                         delegate:self
                    delegateQueue:[NSOperationQueue mainQueue]];
-    char *downloadURL = ClaudeDesktopDownloadURL();
-    NSString *downloadURLString = downloadURL == NULL
-        ? nil
-        : [NSString stringWithUTF8String:downloadURL];
-    free(downloadURL);
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
+    [request setValue:authorization forHTTPHeaderField:@"Authorization"];
     self.claudeDownloadTask = [self.claudeDownloadSession
-        downloadTaskWithURL:[NSURL URLWithString:downloadURLString]];
+        downloadTaskWithRequest:request];
 
     [NSApp activateIgnoringOtherApps:YES];
     [self.claudeDownloadTask resume];
@@ -820,6 +840,22 @@ static NSImage *ollamaApplicationIcon(void) {
         return [self finishClaudeDownload];
     }
     return ClaudeInstallCancelled;
+}
+
+- (void)URLSession:(NSURLSession *)session
+              task:(NSURLSessionTask *)task
+willPerformHTTPRedirection:(NSHTTPURLResponse *)response
+        newRequest:(NSURLRequest *)request
+  completionHandler:(void (^)(NSURLRequest * _Nullable))completionHandler {
+    (void)response;
+    if (session != self.claudeDownloadSession ||
+        task != self.claudeDownloadTask) {
+        completionHandler(request);
+        return;
+    }
+    NSMutableURLRequest *redirect = [request mutableCopy];
+    [redirect setValue:nil forHTTPHeaderField:@"Authorization"];
+    completionHandler(redirect);
 }
 
 - (void)URLSession:(NSURLSession *)session

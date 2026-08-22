@@ -65,5 +65,5 @@ enum ClaudeInstallResult
     ClaudeInstallFailed,
 };
 enum ClaudeInstallResult installClaudeDesktop(void);
-char *ClaudeDesktopDownloadURL(void);
+char *ClaudeDesktopDownloadRequest(char **authorization);
 bool InstallClaudeDesktopArchive(const char *archivePath);

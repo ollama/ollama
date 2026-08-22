@@ -44,9 +44,16 @@ func TestMain(m *testing.M) {
 }
 
 func TestLoadClaudeDesktopModelsUsesAppEndpoint(t *testing.T) {
+	useTestOllamaRequestSigner(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/experimental/model-recommendations" || r.URL.Query().Get("app") != "claude-desktop" {
 			t.Fatalf("request URL = %q", r.URL.String())
+		}
+		if r.URL.Query().Get("ts") == "" {
+			t.Fatal("model recommendations request is missing its signed timestamp")
+		}
+		if r.Header.Get("Authorization") != "test-public-key:test-signature" {
+			t.Fatal("model recommendations request is missing public-key identity")
 		}
 		_, _ = w.Write([]byte(`{"recommendations":[{"model":"glm-5.2:cloud","description":"Cloud model","max_output_tokens":262144,"required_plan":"pro"},{"model":"gemma4:26b","description":"Local model","max_output_tokens":262144}]}`))
 	}))
@@ -70,10 +77,92 @@ func TestLoadClaudeDesktopModelsUsesAppEndpoint(t *testing.T) {
 }
 
 func TestClaudeDesktopDownloadEndpointUsesTypedZipContract(t *testing.T) {
-	endpoint := claudeDesktopDownloadEndpoint("http://127.0.0.1:18080/")
-	if endpoint != "http://127.0.0.1:18080/download-app?app=claude-desktop&type=mac-zip" {
-		t.Fatalf("endpoint = %q", endpoint)
+	useTestOllamaRequestSigner(t)
+	req, err := newSignedOllamaRequest(context.Background(), http.MethodGet, claudeDesktopDownloadEndpoint("http://127.0.0.1:18080/"))
+	if err != nil {
+		t.Fatal(err)
 	}
+	if got, want := req.URL.Path, "/download-app"; got != want {
+		t.Fatalf("path = %q, want %q", got, want)
+	}
+	if query := req.URL.Query(); query.Get("app") != "claude-desktop" || query.Get("type") != "mac-zip" || query.Get("ts") == "" {
+		t.Fatalf("query = %q", req.URL.RawQuery)
+	}
+	if req.Header.Get("Authorization") != "test-public-key:test-signature" {
+		t.Fatal("Claude Desktop download request is missing public-key identity")
+	}
+}
+
+func TestClaudeEndpointRequestsSignCompleteRequestURI(t *testing.T) {
+	previousSigner := signOllamaData
+	t.Cleanup(func() {
+		signOllamaData = previousSigner
+	})
+
+	for _, endpoint := range []string{
+		"https://ollama.com/api/experimental/model-recommendations?app=claude-desktop",
+		"https://ollama.com/download-app?app=claude-desktop&type=mac-zip",
+	} {
+		var challenge string
+		signOllamaData = func(_ context.Context, data []byte) (string, error) {
+			challenge = string(data)
+			return "test-public-key:test-signature", nil
+		}
+		req, err := newSignedOllamaRequest(context.Background(), http.MethodGet, endpoint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := http.MethodGet + "," + req.URL.RequestURI(); challenge != want {
+			t.Fatalf("challenge = %q, want %q", challenge, want)
+		}
+	}
+}
+
+func TestClaudeEndpointRequestsAreNotSentUnsigned(t *testing.T) {
+	previousSigner := signOllamaData
+	signOllamaData = func(context.Context, []byte) (string, error) {
+		return "", errors.New("signing unavailable")
+	}
+	t.Cleanup(func() {
+		signOllamaData = previousSigner
+	})
+
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		called = true
+	}))
+	defer server.Close()
+	previousClient := claudeRecommendationsClient
+	previousEndpoint := claudeRecommendationsEndpoint
+	claudeRecommendationsClient = server.Client()
+	claudeRecommendationsEndpoint = func() string {
+		return server.URL + "/api/experimental/model-recommendations?app=claude-desktop"
+	}
+	t.Cleanup(func() {
+		claudeRecommendationsClient = previousClient
+		claudeRecommendationsEndpoint = previousEndpoint
+	})
+
+	if _, source := loadClaudeDesktopModels(context.Background()); source != "fallback" {
+		t.Fatalf("model source = %q, want fallback", source)
+	}
+	if called {
+		t.Fatal("model recommendations request was sent without identity")
+	}
+	if _, err := newSignedOllamaRequest(context.Background(), http.MethodGet, claudeDesktopDownloadEndpoint(server.URL)); err == nil {
+		t.Fatal("Claude Desktop download request succeeded without identity")
+	}
+}
+
+func useTestOllamaRequestSigner(t *testing.T) {
+	t.Helper()
+	previous := signOllamaData
+	signOllamaData = func(context.Context, []byte) (string, error) {
+		return "test-public-key:test-signature", nil
+	}
+	t.Cleanup(func() {
+		signOllamaData = previous
+	})
 }
 
 func TestResolveClaudeDesktopCatalogUsesPersistedSelection(t *testing.T) {
@@ -526,6 +615,7 @@ func TestClaudeDesktopIntegrationHistoryPersists(t *testing.T) {
 }
 
 func TestLoadClaudeDesktopModelsFallsBackWithoutMLX(t *testing.T) {
+	useTestOllamaRequestSigner(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "unavailable", http.StatusServiceUnavailable)
 	}))

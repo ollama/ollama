@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -52,15 +51,15 @@ func (m ClaudeDesktopModel) GatewayID() string {
 	return m.gateway.ID
 }
 
-// FetchClaudeDesktopModels fetches the public app-aware recommendation
-// contract. Callers are responsible for falling back when this fails.
-func FetchClaudeDesktopModels(ctx context.Context, client *http.Client, endpoint string) ([]ClaudeDesktopModel, error) {
+// FetchClaudeDesktopModels fetches the app-aware recommendation contract.
+// Callers own request construction and are responsible for falling back when
+// the request or response fails.
+func FetchClaudeDesktopModels(client *http.Client, req *http.Request) ([]ClaudeDesktopModel, error) {
 	if client == nil {
 		return nil, errors.New("Claude Desktop recommendation client is required")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create Claude Desktop recommendation request: %w", err)
+	if req == nil {
+		return nil, errors.New("Claude Desktop recommendation request is required")
 	}
 	resp, err := client.Do(req)
 	if err != nil {
