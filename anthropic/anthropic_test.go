@@ -817,6 +817,43 @@ func TestToMessagesResponse_WithToolCalls(t *testing.T) {
 	}
 }
 
+func TestToMessagesResponse_ParameterlessToolCall(t *testing.T) {
+	resp := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Role: "assistant",
+			ToolCalls: []api.ToolCall{
+				{
+					ID:       "call_123",
+					Function: api.ToolCallFunction{Name: "get_time"},
+				},
+			},
+		},
+		Done:       true,
+		DoneReason: "stop",
+	}
+
+	result := ToMessagesResponse("msg_123", resp)
+
+	data, err := json.Marshal(result.Content[0])
+	if err != nil {
+		t.Fatalf("failed to marshal content block: %v", err)
+	}
+
+	var block map[string]any
+	if err := json.Unmarshal(data, &block); err != nil {
+		t.Fatalf("failed to unmarshal content block: %v", err)
+	}
+
+	input, ok := block["input"]
+	if !ok {
+		t.Fatalf("tool_use block missing required 'input' field: %s", data)
+	}
+	if m, ok := input.(map[string]any); !ok || len(m) != 0 {
+		t.Errorf("expected input to be an empty object, got %v", input)
+	}
+}
+
 func TestToMessagesResponse_WithThinking(t *testing.T) {
 	resp := api.ChatResponse{
 		Model: "test-model",
