@@ -141,6 +141,13 @@ func mergeCloudModelLimits(base map[string]cloudModelLimit, overlay map[string]c
 	return out
 }
 
+// DefaultCloudSuggest, when set (the cmd package wires it up), offers the
+// ":cloud" variant of a model whose pull failed because its default tag
+// doesn't exist. It returns the cloud model name to continue with when the
+// user accepts; otherwise it returns the error the caller should surface
+// (the original one, possibly augmented with a hint).
+var DefaultCloudSuggest func(ctx context.Context, client *api.Client, model string, pullErr error) (string, error)
+
 // missingModelPolicy controls how model-not-found errors should be handled.
 type missingModelPolicy int
 
