@@ -583,6 +583,18 @@ func NewCreateRequest(name string, opts runOptions) *api.CreateRequest {
 }
 
 func normalizeFilePath(fp string) string {
+	// Remove file:// prefix
+	fp = strings.TrimPrefix(fp, "file://")
+	// Remove leading and trailing single/double quotes
+	fp = strings.Trim(fp, "\"'")
+
+	// Expand tilde to home directory
+	if strings.HasPrefix(fp, "~/") || strings.HasPrefix(fp, "~\\") {
+		if home, err := os.UserHomeDir(); err == nil {
+			fp = filepath.Join(home, fp[2:])
+		}
+	}
+
 	return strings.NewReplacer(
 		"\\ ", " ", // Escaped space
 		"\\(", "(", // Escaped left parenthesis
@@ -599,14 +611,23 @@ func normalizeFilePath(fp string) string {
 		"\\*", "*", // Escaped asterisk
 		"\\?", "?", // Escaped question mark
 		"\\~", "~", // Escaped tilde
+		"\\!", "!", // Escaped exclamation mark
+		"\\#", "#", // Escaped hash
+		"\\|", "|", // Escaped pipe
+		"\\<", "<", // Escaped less than
+		"\\>", ">", // Escaped greater than
+		"\\^", "^", // Escaped caret
+		"\\\"", "\"", // Escaped double quote
+		"\\`", "`", // Escaped backtick
+		"%20", " ", // URL-encoded space
 	).Replace(fp)
 }
 
 func extractFileNames(input string) []string {
-	// Regex to match file paths starting with optional drive letter, / ./ \ or .\ and include escaped or unescaped spaces (\ or %20)
+	// Regex to match file paths starting with optional drive letter, / ./ \ .\ or ~/ and include escaped or unescaped spaces (\ or %20)
 	// and followed by more characters and a file extension
 	// This will capture non filename strings, but we'll check for file existence to remove mismatches
-	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav)\b`
+	regexPattern := `(?:file://)?(?:'|")?(?:[a-zA-Z]:)?(?:\./|/|\\|~/|~\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav)\b(?:'|")?`
 	re := regexp.MustCompile(regexPattern)
 
 	return re.FindAllString(input, -1)
@@ -620,6 +641,7 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 		nfp := normalizeFilePath(fp)
 		data, err := getImageData(nfp)
 		if errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(os.Stderr, "Warning: couldn't find image at %q (original path: %q)\n", nfp, fp)
 			continue
 		} else if err != nil {
 			fmt.Fprintf(os.Stderr, "Couldn't process file: %q\n", err)
