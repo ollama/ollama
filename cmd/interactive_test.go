@@ -64,6 +64,22 @@ d:\path with\spaces\thirteen.WEBP some ending
 	assert.Contains(t, res[12], "d:")
 }
 
+// A path whose parent directory name ends in a valid image extension must be
+// captured as a single path, not fractured at the intermediate extension.
+func TestExtractFilenamesNestedExtensions(t *testing.T) {
+	cases := []struct {
+		input    string
+		expected []string
+	}{
+		{"./image.png/image.png", []string{"./image.png/image.png"}},
+		{"/a/photo.png/real.jpg", []string{"/a/photo.png/real.jpg"}},
+		{`c:\dir.webp\sub.jpeg\final.png`, []string{`c:\dir.webp\sub.jpeg\final.png`}},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.expected, extractFileNames(tc.input), "input %q", tc.input)
+	}
+}
+
 // Ensure that file paths wrapped in single quotes are removed with the quotes.
 func TestExtractFileDataRemovesQuotedFilepath(t *testing.T) {
 	dir := t.TempDir()
