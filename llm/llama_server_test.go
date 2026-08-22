@@ -1599,6 +1599,50 @@ func TestQwenVLServerArgs(t *testing.T) {
 	}
 }
 
+func TestResolveKvCacheType(t *testing.T) {
+	tests := []struct {
+		name   string
+		opts   api.Options
+		envVar string
+		want   string
+	}{
+		{
+			name: "neither set",
+			want: "",
+		},
+		{
+			name:   "env var only",
+			envVar: "q8_0",
+			want:   "q8_0",
+		},
+		{
+			name: "model parameter only",
+			opts: api.Options{Runner: api.Runner{KvCacheType: "q4_0"}},
+			want: "q4_0",
+		},
+		{
+			name:   "model parameter overrides env var",
+			opts:   api.Options{Runner: api.Runner{KvCacheType: "f16"}},
+			envVar: "q8_0",
+			want:   "f16",
+		},
+		{
+			name: "model parameter is lowercased",
+			opts: api.Options{Runner: api.Runner{KvCacheType: "Q8_0"}},
+			want: "q8_0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OLLAMA_KV_CACHE_TYPE", tt.envVar)
+			if got := resolveKvCacheType(tt.opts); got != tt.want {
+				t.Fatalf("resolveKvCacheType() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLlamaServerTokenize(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/tokenize" {
