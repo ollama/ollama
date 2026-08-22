@@ -966,3 +966,83 @@ func TestToolPropertiesMap_NestedProperties(t *testing.T) {
 		assert.Equal(t, expected, string(data))
 	})
 }
+
+func TestToolPropertyEffectiveTypes(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected PropertyType
+	}{
+		{
+			name:     "plain type",
+			input:    `{"type": "string"}`,
+			expected: PropertyType{"string"},
+		},
+		{
+			name:     "no type",
+			input:    `{"description": "untyped"}`,
+			expected: nil,
+		},
+		{
+			name:     "anyOf union",
+			input:    `{"anyOf": [{"type": "string"}, {"type": "object"}]}`,
+			expected: PropertyType{"string", "object"},
+		},
+		{
+			name:     "oneOf union",
+			input:    `{"oneOf": [{"type": "string"}, {"type": "object"}]}`,
+			expected: PropertyType{"string", "object"},
+		},
+		{
+			name:     "nested union",
+			input:    `{"oneOf": [{"type": "string"}, {"anyOf": [{"type": "integer"}, {"type": "object"}]}]}`,
+			expected: PropertyType{"string", "integer", "object"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var prop ToolProperty
+			if err := json.Unmarshal([]byte(tt.input), &prop); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			assert.Equal(t, tt.expected, prop.EffectiveTypes())
+		})
+	}
+}
+
+// EffectiveTypes must not append into the backing array of Type, which would
+// corrupt a caller still holding the original slice.
+func TestToolPropertyEffectiveTypesDoesNotAliasType(t *testing.T) {
+	prop := ToolProperty{
+		Type:  append(make(PropertyType, 0, 4), "null"),
+		OneOf: []ToolProperty{{Type: PropertyType{"object"}}},
+	}
+
+	require.Equal(t, PropertyType{"null", "object"}, prop.EffectiveTypes())
+	assert.Equal(t, PropertyType{"null"}, prop.Type)
+}
+
+func TestToolPropertyOneOfRoundTrip(t *testing.T) {
+	input := `{"oneOf":[{"type":"string"},{"type":"object"}]}`
+
+	var prop ToolProperty
+	if err := json.Unmarshal([]byte(input), &prop); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(prop.OneOf) != 2 {
+		t.Fatalf("OneOf = %v, want 2 branches", prop.OneOf)
+	}
+	if got := prop.ToTypeScriptType(); got != "string | Record<string, any>" {
+		t.Errorf("ToTypeScriptType() = %q, want %q", got, "string | Record<string, any>")
+	}
+
+	// oneOf must survive being handed back to a model, not be silently dropped.
+	out, err := json.Marshal(prop)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(out) != input {
+		t.Errorf("round trip = %s, want %s", out, input)
+	}
+}
