@@ -116,6 +116,7 @@ type ChatCompletionRequest struct {
 	TopP             *float64        `json:"top_p"`
 	ResponseFormat   *ResponseFormat `json:"response_format"`
 	Tools            []api.Tool      `json:"tools"`
+	Options          map[string]any  `json:"options"`
 	Reasoning        *Reasoning      `json:"reasoning,omitempty"`
 	ReasoningEffort  *string         `json:"reasoning_effort,omitempty"`
 	Logprobs         *bool           `json:"logprobs"`
@@ -655,6 +656,10 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 
 	if r.MaxTokens != nil {
 		options["num_predict"] = *r.MaxTokens
+	}
+
+	for k, v := range r.Options {
+		options[k] = v
 	}
 
 	if r.Temperature != nil {
