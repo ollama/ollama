@@ -3,9 +3,11 @@ package gguf_test
 import (
 	"bytes"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -224,6 +226,97 @@ func TestRead(t *testing.T) {
 	if b.Len() != int(ti.NumBytes()) {
 		t.Errorf(`ReadFrom TensorReader("output.weight") length = %d, want %d`, b.Len(), ti.NumBytes())
 	}
+}
+
+func TestOpenCleansUpPartialLazyReader(t *testing.T) {
+	p := createFile(t, []byte{
+		'G', 'G', 'U', 'F',
+		3, 0, 0, 0,
+		0, 0, 0, 0, 0, 0, 0, 0,
+	})
+
+	runtime.GC()
+	before := runtime.NumGoroutine()
+
+	for range 20 {
+		f, err := gguf.Open(p)
+		if err == nil {
+			f.Close()
+			t.Fatal("gguf.Open truncated header succeeded")
+		}
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		runtime.GC()
+		runtime.Gosched()
+		if runtime.NumGoroutine() <= before+2 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if after := runtime.NumGoroutine(); after > before+2 {
+		t.Fatalf("goroutines after repeated failed gguf.Open = %d, want at most %d", after, before+2)
+	}
+}
+
+func FuzzOpen(f *testing.F) {
+	validPath := createBinFile(f)
+	validData, err := os.ReadFile(validPath)
+	if err != nil {
+		f.Fatal(err)
+	}
+	f.Add(validData)
+	f.Add([]byte{})
+	f.Add([]byte{'G', 'G', 'U', 'F'})
+	f.Add([]byte{
+		'G', 'G', 'U', 'F',
+		3, 0, 0, 0,
+		1, 0, 0, 0, 0, 0, 0, 0,
+	})
+	f.Add([]byte{
+		'G', 'G', 'U', 'F',
+		3, 0, 0, 0,
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+	})
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		if len(data) > 1<<20 {
+			t.Skip("bounded fuzz input")
+		}
+
+		g, err := gguf.Open(createFile(t, data))
+		if err != nil {
+			return
+		}
+		defer g.Close()
+
+		for i, kv := range g.KeyValues() {
+			if i > 4096 {
+				break
+			}
+			_ = kv.Valid()
+		}
+		for i, tensor := range g.TensorInfos() {
+			if i > 4096 {
+				break
+			}
+			_ = tensor.Valid()
+		}
+		_ = g.Err()
+	})
+}
+
+func createFile(tb testing.TB, b []byte) string {
+	tb.Helper()
+
+	p := tb.TempDir() + "/model.gguf"
+	if err := os.WriteFile(p, b, 0o600); err != nil {
+		tb.Fatal(err)
+	}
+
+	return p
 }
 
 func BenchmarkRead(b *testing.B) {

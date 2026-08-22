@@ -394,15 +394,15 @@ func TestTinyLagunaLoadWeightsKeepsBF16SourceLayout(t *testing.T) {
 func TestTinyLagunaLoadWeightsKeepsMixedExpertPrecision(t *testing.T) {
 	skipIfNoMLX(t)
 	cfg := &Config{
-		HiddenSize:                8,
-		IntermediateSize:          12,
-		MoeIntermediateSize:       4,
-		SharedExpertIntermediate:  4,
+		HiddenSize:                32,
+		IntermediateSize:          32,
+		MoeIntermediateSize:       32,
+		SharedExpertIntermediate:  32,
 		NumHiddenLayers:           2,
 		NumAttentionHeads:         2,
 		NumAttentionHeadsPerLayer: []int32{2, 2},
 		NumKeyValueHeads:          1,
-		HeadDim:                   4,
+		HeadDim:                   16,
 		VocabSize:                 16,
 		LayerTypes:                []string{"full_attention", "sliding_attention"},
 		MLPOnlyLayers:             []int32{0},
@@ -411,17 +411,20 @@ func TestTinyLagunaLoadWeightsKeepsMixedExpertPrecision(t *testing.T) {
 		NumExpertsPerTok:          1,
 		MoeRoutedScalingFactor:    2.5,
 		RMSNormEps:                1e-5,
-		QuantGroupSize:            4,
+		QuantGroupSize:            32,
 		QuantBits:                 4,
 		QuantMode:                 "affine",
 	}
 
-	tensors := tinyLagunaTensors()
+	tensors := lagunaTensors(16, 32, 32, 32, 32, 16)
 	for expert := range 2 {
 		prefix := "model.layers.1.mlp.experts." + string(rune('0'+expert))
 		for _, proj := range []string{"gate_proj", "up_proj"} {
 			key := prefix + "." + proj + ".weight"
-			weight, scales, biases := mlx.Quantize(tensors[key], cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode)
+			weight, scales, biases, err := mlx.Quantize(tensors[key], cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode)
+			if err != nil {
+				t.Fatalf("Quantize(%s) error = %v", key, err)
+			}
 			tensors[key] = weight
 			tensors[key+"_scale"] = scales
 			tensors[key+"_qbias"] = biases
@@ -648,8 +651,14 @@ func TestSwitchMLPMixedQuantizedGateUpDenseDownMatchesDense(t *testing.T) {
 	gateWeight := makePatternExpertWeight(2, 32, 32, 0.011)
 	upWeight := makePatternExpertWeight(2, 32, 32, 0.017)
 	downWeight := makePatternExpertWeight(2, 32, 32, 0.013)
-	gateQ, gateScales, gateBiases := mlx.Quantize(gateWeight, 32, 8, "mxfp8")
-	upQ, upScales, upBiases := mlx.Quantize(upWeight, 32, 8, "mxfp8")
+	gateQ, gateScales, gateBiases, err := mlx.Quantize(gateWeight, 32, 8, "mxfp8")
+	if err != nil {
+		t.Fatalf("Quantize(gateWeight) error = %v", err)
+	}
+	upQ, upScales, upBiases, err := mlx.Quantize(upWeight, 32, 8, "mxfp8")
+	if err != nil {
+		t.Fatalf("Quantize(upWeight) error = %v", err)
+	}
 	mlx.Eval(gateQ, gateScales, upQ, upScales)
 
 	mixed := &SwitchMLP{
@@ -679,7 +688,10 @@ func TestSwitchMLPMixedQuantizedGateUpDenseDownMatchesDense(t *testing.T) {
 func TestDenseExpertWeightForGatherMMDequantizesQuantizedWeight(t *testing.T) {
 	skipIfNoMLX(t)
 	weight := makePatternExpertWeight(2, 4, 32, 0.011)
-	qweight, scales, qbiases := mlx.Quantize(weight, 32, 8, "mxfp8")
+	qweight, scales, qbiases, err := mlx.Quantize(weight, 32, 8, "mxfp8")
+	if err != nil {
+		t.Fatalf("Quantize(weight) error = %v", err)
+	}
 	mlx.Eval(qweight, scales)
 
 	got := denseExpertWeightForGatherMM(&stackedExpertWeights{
@@ -722,39 +734,43 @@ func TestCombinedTensorGlobalScaleIgnoresInputGlobalScale(t *testing.T) {
 }
 
 func tinyLagunaTensors() map[string]*mlx.Array {
+	return lagunaTensors(16, 8, 12, 4, 4, 4)
+}
+
+func lagunaTensors(vocab, hidden, intermediate, moeIntermediate, sharedExpertIntermediate, headDim int) map[string]*mlx.Array {
 	tensors := map[string]*mlx.Array{
-		"model.embed_tokens.weight": weights(16, 8),
-		"model.norm.weight":         ones(8),
-		"lm_head.weight":            weights(16, 8),
+		"model.embed_tokens.weight": weights(vocab, hidden),
+		"model.norm.weight":         ones(hidden),
+		"lm_head.weight":            weights(vocab, hidden),
 	}
 	for layer := range 2 {
 		prefix := "model.layers." + string(rune('0'+layer))
-		tensors[prefix+".input_layernorm.weight"] = ones(8)
-		tensors[prefix+".post_attention_layernorm.weight"] = ones(8)
-		tensors[prefix+".self_attn.q_proj.weight"] = weights(8, 8)
-		tensors[prefix+".self_attn.k_proj.weight"] = weights(4, 8)
-		tensors[prefix+".self_attn.v_proj.weight"] = weights(4, 8)
-		tensors[prefix+".self_attn.o_proj.weight"] = weights(8, 8)
-		tensors[prefix+".self_attn.g_proj.weight"] = weights(2, 8)
-		tensors[prefix+".self_attn.q_norm.weight"] = ones(4)
-		tensors[prefix+".self_attn.k_norm.weight"] = ones(4)
+		tensors[prefix+".input_layernorm.weight"] = ones(hidden)
+		tensors[prefix+".post_attention_layernorm.weight"] = ones(hidden)
+		tensors[prefix+".self_attn.q_proj.weight"] = weights(hidden, hidden)
+		tensors[prefix+".self_attn.k_proj.weight"] = weights(headDim, hidden)
+		tensors[prefix+".self_attn.v_proj.weight"] = weights(headDim, hidden)
+		tensors[prefix+".self_attn.o_proj.weight"] = weights(hidden, hidden)
+		tensors[prefix+".self_attn.g_proj.weight"] = weights(2, hidden)
+		tensors[prefix+".self_attn.q_norm.weight"] = ones(headDim)
+		tensors[prefix+".self_attn.k_norm.weight"] = ones(headDim)
 	}
 
-	tensors["model.layers.0.mlp.gate_proj.weight"] = weights(12, 8)
-	tensors["model.layers.0.mlp.up_proj.weight"] = weights(12, 8)
-	tensors["model.layers.0.mlp.down_proj.weight"] = weights(8, 12)
+	tensors["model.layers.0.mlp.gate_proj.weight"] = weights(intermediate, hidden)
+	tensors["model.layers.0.mlp.up_proj.weight"] = weights(intermediate, hidden)
+	tensors["model.layers.0.mlp.down_proj.weight"] = weights(hidden, intermediate)
 
-	tensors["model.layers.1.mlp.gate.weight"] = weights(2, 8)
+	tensors["model.layers.1.mlp.gate.weight"] = weights(2, hidden)
 	tensors["model.layers.1.mlp.experts.e_score_correction_bias"] = mlx.FromValues([]float32{0.1, -0.1}, 2)
 	for expert := range 2 {
 		prefix := "model.layers.1.mlp.experts." + string(rune('0'+expert))
-		tensors[prefix+".gate_proj.weight"] = weights(4, 8)
-		tensors[prefix+".up_proj.weight"] = weights(4, 8)
-		tensors[prefix+".down_proj.weight"] = weights(8, 4)
+		tensors[prefix+".gate_proj.weight"] = weights(moeIntermediate, hidden)
+		tensors[prefix+".up_proj.weight"] = weights(moeIntermediate, hidden)
+		tensors[prefix+".down_proj.weight"] = weights(hidden, moeIntermediate)
 	}
-	tensors["model.layers.1.mlp.shared_expert.gate_proj.weight"] = weights(4, 8)
-	tensors["model.layers.1.mlp.shared_expert.up_proj.weight"] = weights(4, 8)
-	tensors["model.layers.1.mlp.shared_expert.down_proj.weight"] = weights(8, 4)
+	tensors["model.layers.1.mlp.shared_expert.gate_proj.weight"] = weights(sharedExpertIntermediate, hidden)
+	tensors["model.layers.1.mlp.shared_expert.up_proj.weight"] = weights(sharedExpertIntermediate, hidden)
+	tensors["model.layers.1.mlp.shared_expert.down_proj.weight"] = weights(hidden, sharedExpertIntermediate)
 	return tensors
 }
 

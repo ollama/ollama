@@ -4,8 +4,6 @@ package integration
 
 import (
 	"context"
-	"io"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,34 +15,6 @@ import (
 )
 
 const testdataModelsDir = "testdata/models"
-
-// skipIfRemote skips the test if OLLAMA_HOST points to a non-local server.
-// Safetensors creation requires localhost since it reads model files.
-// from disk and uses the --experimental CLI path.
-func skipIfRemote(t *testing.T) {
-	t.Helper()
-	host := os.Getenv("OLLAMA_HOST")
-	if host == "" {
-		return // default is localhost
-	}
-	// Strip scheme if present
-	_, hostport, ok := strings.Cut(host, "://")
-	if !ok {
-		hostport = host
-	}
-	h, _, err := net.SplitHostPort(hostport)
-	if err != nil {
-		h = hostport
-	}
-	if h == "" || h == "localhost" {
-		return
-	}
-	ip := net.ParseIP(h)
-	if ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
-		return
-	}
-	t.Skipf("safetensors creation requires a local server (OLLAMA_HOST=%s)", host)
-}
 
 // findHFCLI returns the path to the HuggingFace CLI, or "" if not found.
 func findHFCLI() string {
@@ -120,19 +90,21 @@ func ensureMLXLibraryPath(t *testing.T) {
 	}
 }
 
-// runOllamaCreate runs "ollama create" as a subprocess. Skips the test if
-// the error indicates the server is remote.
+// runOllamaCreate runs "ollama create" as a subprocess.
 func runOllamaCreate(ctx context.Context, t *testing.T, args ...string) {
 	t.Helper()
 	createCmd := exec.CommandContext(ctx, ollamaBin(), append([]string{"create"}, args...)...)
-	var createStderr strings.Builder
 	createCmd.Stdout = os.Stdout
-	createCmd.Stderr = io.MultiWriter(os.Stderr, &createStderr)
+	createCmd.Stderr = os.Stderr
 	if err := createCmd.Run(); err != nil {
-		if strings.Contains(createStderr.String(), "remote") {
-			t.Skip("safetensors creation requires a local server")
-		}
 		t.Fatalf("ollama create failed: %v", err)
+	}
+}
+
+func isolateCreateModelStore(t *testing.T) {
+	t.Helper()
+	if os.Getenv("OLLAMA_TEST_EXISTING") == "" {
+		t.Setenv("OLLAMA_MODELS", t.TempDir())
 	}
 }
 
@@ -140,8 +112,7 @@ func runCreateSafetensorsLLM(t *testing.T) {
 	if testModel != "" {
 		t.Skip("exercises create pipeline with a fixed source model, not applicable with model override")
 	}
-	skipIfRemote(t)
-
+	isolateCreateModelStore(t)
 	modelDir := filepath.Join(testdataModelsDir, "TinyLlama-1.1B")
 	downloadHFModel(t, "TinyLlama/TinyLlama-1.1B-Chat-v1.0", modelDir)
 
@@ -172,7 +143,7 @@ func runCreateSafetensorsLLM(t *testing.T) {
 		t.Fatalf("Failed to write Modelfile: %v", err)
 	}
 
-	runOllamaCreate(ctx, t, modelName, "--experimental", "-f", tmpModelfile)
+	runOllamaCreate(ctx, t, modelName, "-f", tmpModelfile)
 
 	// Verify model exists via show
 	showReq := &api.ShowRequest{Name: modelName}
@@ -218,6 +189,7 @@ func runCreateGGUF(t *testing.T) {
 	if testModel != "" {
 		t.Skip("exercises create pipeline with a fixed source model, not applicable with model override")
 	}
+	isolateCreateModelStore(t)
 	modelDir := filepath.Join(testdataModelsDir, "Llama-3.2-1B-GGUF")
 	downloadHFModel(t, "bartowski/Llama-3.2-1B-Instruct-GGUF", modelDir,
 		"--include", "Llama-3.2-1B-Instruct-IQ3_M.gguf")
