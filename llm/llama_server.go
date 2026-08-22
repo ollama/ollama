@@ -179,6 +179,7 @@ type llamaServerLaunchConfig struct {
 	opts                 api.Options
 	numParallel          int
 	kvCacheType          string
+	flashAttention       ml.FlashAttentionType
 	embedding            bool
 	config               LlamaServerConfig
 	gpus                 []ml.DeviceInfo
@@ -395,7 +396,7 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 		params = append(params, "--cache-type-k", launch.kvCacheType, "--cache-type-v", launch.kvCacheType)
 	}
 
-	params = appendFlashAttentionArgs(params, launch.gpus)
+	params = appendFlashAttentionArgs(params, launch.flashAttention)
 
 	params = appendBatchArgs(params, launch.opts, launch.embedding, launch.numParallel)
 
@@ -594,7 +595,7 @@ func appendBatchArgs(params []string, opts api.Options, embedding bool, numParal
 }
 
 // LlamaServerFlashAttention resolves the flash-attention mode passed to llama-server.
-func LlamaServerFlashAttention(gpus []ml.DeviceInfo) ml.FlashAttentionType {
+func LlamaServerFlashAttention(f *ggml.GGML, gpus []ml.DeviceInfo) ml.FlashAttentionType {
 	enabled := envconfig.FlashAttention(false)
 	userSet := enabled == envconfig.FlashAttention(true)
 	if userSet {
@@ -607,11 +608,22 @@ func LlamaServerFlashAttention(gpus []ml.DeviceInfo) ml.FlashAttentionType {
 	if !ml.FlashAttentionSupported(gpus) {
 		return ml.FlashAttentionDisabled
 	}
+
+	// Architectures that default to flash attention ask for it explicitly rather
+	// than relying on llama-server's auto mode. Auto probes the reserve graph and
+	// turns flash attention off whenever a layer and its flash-attention node land
+	// on different devices, which happens routinely on partial offload. Without
+	// flash attention llama.cpp materializes the full attention matrix, so the
+	// compute buffer grows with num_ctx*num_batch and long contexts fail to
+	// allocate. ref: https://github.com/ollama/ollama/issues/17430
+	if f != nil && f.FlashAttention() && f.SupportsFlashAttention() {
+		return ml.FlashAttentionEnabled
+	}
 	return ml.FlashAttentionAuto
 }
 
-func appendFlashAttentionArgs(params []string, gpus []ml.DeviceInfo) []string {
-	switch LlamaServerFlashAttention(gpus) {
+func appendFlashAttentionArgs(params []string, flashAttention ml.FlashAttentionType) []string {
+	switch flashAttention {
 	case ml.FlashAttentionEnabled:
 		return append(params, "--flash-attn", "on")
 	case ml.FlashAttentionDisabled:
@@ -928,21 +940,22 @@ func NewLlamaServerRunner(
 	serverEnvs["LLAMA_MEDIA_MARKER"] = mediaMarker
 
 	launch := llamaServerLaunchConfig{
-		modelPath:    modelPath,
-		modelArch:    arch,
-		draftType:    draftType,
-		projectors:   slices.Clone(projectors),
-		mmprojMemory: mmprojMemory,
-		modelLayers:  f.KV().BlockCount() + 1,
-		adapters:     slices.Clone(adapters),
-		opts:         opts,
-		numParallel:  numParallel,
-		kvCacheType:  kvCacheType,
-		embedding:    isEmbedding,
-		config:       config,
-		gpus:         slices.Clone(gpus),
-		gpuLibs:      slices.Clone(gpuLibs),
-		extraEnvs:    cloneStringMap(serverEnvs),
+		modelPath:      modelPath,
+		modelArch:      arch,
+		draftType:      draftType,
+		projectors:     slices.Clone(projectors),
+		mmprojMemory:   mmprojMemory,
+		modelLayers:    f.KV().BlockCount() + 1,
+		adapters:       slices.Clone(adapters),
+		opts:           opts,
+		numParallel:    numParallel,
+		kvCacheType:    kvCacheType,
+		flashAttention: LlamaServerFlashAttention(f, gpus),
+		embedding:      isEmbedding,
+		config:         config,
+		gpus:           slices.Clone(gpus),
+		gpuLibs:        slices.Clone(gpuLibs),
+		extraEnvs:      cloneStringMap(serverEnvs),
 	}
 
 	s := &llamaServerRunner{
