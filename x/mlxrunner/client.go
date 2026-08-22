@@ -277,6 +277,11 @@ func (c *Client) HasExited() bool {
 	}
 }
 
+// Done implements llm.LlamaServer. Returns the subprocess-exit channel.
+func (c *Client) Done() <-chan struct{} {
+	return c.done
+}
+
 // Load checks whether the model fits in GPU memory and starts the subprocess.
 func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error) {
 	if len(gpus) > 0 {

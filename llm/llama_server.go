@@ -224,6 +224,14 @@ func (s *llamaServerRunner) HasExited() bool {
 	return s.cmd != nil && s.cmd.ProcessState != nil && s.cmd.ProcessState.ExitCode() >= 0
 }
 
+// Done returns the process-exit channel. It is closed by the reaper goroutine
+// started in startProcess as soon as the llama-server subprocess terminates.
+// A nil channel (process not started yet) never fires, matching the behavior
+// of a not-yet-running runner.
+func (s *llamaServerRunner) Done() <-chan struct{} {
+	return s.done
+}
+
 func (s *llamaServerRunner) llamaServerMediaMarker() string {
 	if s.mediaMarker != "" {
 		return s.mediaMarker
