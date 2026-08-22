@@ -1022,6 +1022,12 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 
 	mf, manifestData, err := pullModelManifest(ctx, n, regOpts)
 	if err != nil {
+		// The Hugging Face registry refuses sharded GGUF tags instead of
+		// serving a manifest, so fall back to fetching the shards directly and
+		// merging them through the create path. See ollama/ollama#5245.
+		if shards, total, ok := shardedFallbackCandidate(ctx, n, err); ok {
+			return pullShardedGGUF(ctx, n, shards, total, fn)
+		}
 		return fmt.Errorf("pull model manifest: %s", err)
 	}
 	if hasTensorLayers(mf.Layers) {
