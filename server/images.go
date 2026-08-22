@@ -473,13 +473,7 @@ func (m *Model) filterUnsupportedCapabilities(capabilities []model.Capability, m
 }
 
 func suppressVisionCapability(m *Model) bool {
-	if isGemma4Renderer(m.Config.Renderer) && m.Config.ModelFormat == "safetensors" {
-		return true
-	}
-
-	// The current MLX Nemotron path is text-only. Do not advertise vision for
-	// safetensors manifests until the runner can load and serve that modality.
-	return isNemotron3NanoSafetensors(m)
+	return isGemma4Renderer(m.Config.Renderer) && m.Config.ModelFormat == "safetensors"
 }
 
 func suppressAudioCapability(m *Model, arch string) bool {
@@ -489,7 +483,7 @@ func suppressAudioCapability(m *Model, arch string) bool {
 	if m.Config.ModelFormat == "safetensors" && m.Config.Renderer == "glimmer" {
 		return true
 	}
-	if isNemotron3NanoSafetensors(m) {
+	if isNemotronSafetensors(m) {
 		return true
 	}
 
@@ -503,14 +497,16 @@ func suppressAudioCapability(m *Model, arch string) bool {
 	return false
 }
 
-func isNemotron3NanoSafetensors(m *Model) bool {
-	return isNemotron3NanoSafetensorsConfig(m.Config)
+func isNemotronSafetensors(m *Model) bool {
+	return isNemotronSafetensorsConfig(m.Config)
 }
 
-func isNemotron3NanoSafetensorsConfig(cfg model.ConfigV2) bool {
+func isNemotronSafetensorsConfig(cfg model.ConfigV2) bool {
 	return cfg.ModelFormat == "safetensors" &&
 		(cfg.Parser == "nemotron-3-nano" ||
 			cfg.Renderer == "nemotron-3-nano" ||
+			cfg.Parser == "nemotron-3.5-nano" ||
+			cfg.Renderer == "nemotron-3.5-nano" ||
 			cfg.ModelFamily == "nemotron_h_omni" ||
 			slices.Contains(cfg.ModelFamilies, "nemotron_h_omni"))
 }

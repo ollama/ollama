@@ -70,7 +70,7 @@ func TestModelListCacheHydratesSummary(t *testing.T) {
 	}
 }
 
-func TestModelListCacheSuppressesNemotronSafetensorsMedia(t *testing.T) {
+func TestModelListCacheSuppressesNemotronSafetensorsAudio(t *testing.T) {
 	caps := []model.Capability{
 		model.CapabilityCompletion,
 		model.CapabilityTools,
@@ -78,25 +78,28 @@ func TestModelListCacheSuppressesNemotronSafetensorsMedia(t *testing.T) {
 		model.CapabilityVision,
 		model.CapabilityAudio,
 	}
-	got := filterUnsupportedModelListCapabilities(caps, model.ConfigV2{
-		ModelFormat: "safetensors",
-		Renderer:    "nemotron-3-nano",
-		Parser:      "nemotron-3-nano",
-	})
+	for _, protocol := range []string{"nemotron-3-nano", "nemotron-3.5-nano"} {
+		t.Run(protocol, func(t *testing.T) {
+			got := filterUnsupportedModelListCapabilities(caps, model.ConfigV2{
+				ModelFormat: "safetensors",
+				Renderer:    protocol,
+				Parser:      protocol,
+			})
 
-	for _, capability := range []model.Capability{
-		model.CapabilityCompletion,
-		model.CapabilityTools,
-		model.CapabilityThinking,
-	} {
-		if !slices.Contains(got, capability) {
-			t.Fatalf("capabilities = %v, want %s", got, capability)
-		}
-	}
-	for _, capability := range []model.Capability{model.CapabilityVision, model.CapabilityAudio} {
-		if slices.Contains(got, capability) {
-			t.Fatalf("capabilities = %v, did not expect %s", got, capability)
-		}
+			for _, capability := range []model.Capability{
+				model.CapabilityCompletion,
+				model.CapabilityTools,
+				model.CapabilityThinking,
+				model.CapabilityVision,
+			} {
+				if !slices.Contains(got, capability) {
+					t.Fatalf("capabilities = %v, want %s", got, capability)
+				}
+			}
+			if slices.Contains(got, model.CapabilityAudio) {
+				t.Fatalf("capabilities = %v, did not expect audio", got)
+			}
+		})
 	}
 }
 

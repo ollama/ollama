@@ -9,6 +9,7 @@ import (
 	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/mlxrunner/model"
 )
 
 func TestParseConfigNestedWrapper(t *testing.T) {
@@ -392,5 +393,180 @@ func assertAllClose(t *testing.T, name string, got, want []float32, tol float64)
 		if math.Abs(float64(got[i]-want[i])) > tol {
 			t.Fatalf("%s[%d] = %v, want %v", name, i, got[i], want[i])
 		}
+	}
+}
+
+func TestParseVisionConfigOmniDefaults(t *testing.T) {
+	cfg, err := parseVisionConfig([]byte(`{
+		"vision_config": {
+			"version": "radio_v2.5-h",
+			"patch_size": 16,
+			"min_num_patches": 1024,
+			"max_num_patches": 13312
+		},
+		"patch_size": 16,
+		"downsample_ratio": 0.5,
+		"img_context_token_id": 18,
+		"img_context_token": "<image>",
+		"img_start_token": "<img>",
+		"img_end_token": "</img>",
+		"vit_hidden_size": 1280,
+		"projector_hidden_size": 20480
+	}`), []byte(`{
+		"patch_size": 16,
+		"downsample_ratio": 0.5,
+		"norm_mean": [0.48145466, 0.4578275, 0.40821073],
+		"norm_std": [0.26862954, 0.26130258, 0.27577711]
+	}`))
+	if err != nil {
+		t.Fatalf("parseVisionConfig returned error: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("parseVisionConfig returned nil config")
+	}
+	if got, want := cfg.HiddenSize, int32(1280); got != want {
+		t.Fatalf("HiddenSize = %d, want %d", got, want)
+	}
+	if got, want := cfg.NumHiddenLayers, int32(32); got != want {
+		t.Fatalf("NumHiddenLayers = %d, want %d", got, want)
+	}
+	if got, want := cfg.HeadDim, int32(80); got != want {
+		t.Fatalf("HeadDim = %d, want %d", got, want)
+	}
+	if got, want := cfg.DownsampleFactor, int32(2); got != want {
+		t.Fatalf("DownsampleFactor = %d, want %d", got, want)
+	}
+	if got, want := cfg.ImageTokenID, int32(18); got != want {
+		t.Fatalf("ImageTokenID = %d, want %d", got, want)
+	}
+	if got, want := cfg.MinNumPatches, 1024; got != want {
+		t.Fatalf("MinNumPatches = %d, want %d", got, want)
+	}
+	if got, want := cfg.MaxNumPatches, 13312; got != want {
+		t.Fatalf("MaxNumPatches = %d, want %d", got, want)
+	}
+	if got, want := cfg.MaxModelLen, 16384; got != want {
+		t.Fatalf("MaxModelLen = %d, want %d", got, want)
+	}
+}
+
+func TestParseVisionConfigRejectsMalformedNormalization(t *testing.T) {
+	config := []byte(`{
+		"vision_config": {"version": "c-radio_v4-h"},
+		"norm_mean": [0.1, 0.2]
+	}`)
+	if _, err := parseVisionConfig(config, nil); err == nil {
+		t.Fatal("expected malformed config norm_mean error")
+	}
+
+	config = []byte(`{"vision_config": {"version": "c-radio_v4-h"}}`)
+	preprocessor := []byte(`{"norm_std": [0.1, 0.2, 0.3, 0.4]}`)
+	if _, err := parseVisionConfig(config, preprocessor); err == nil {
+		t.Fatal("expected malformed preprocessor norm_std error")
+	}
+}
+
+func TestParseVisionConfigRequiresDynamicResolutionBounds(t *testing.T) {
+	for _, config := range []string{
+		`{"vision_config":{"version":"c-radio_v4-h","min_num_patches":1024}}`,
+		`{"vision_config":{"version":"c-radio_v4-h","max_num_patches":13312}}`,
+		`{"vision_config":{"version":"c-radio_v4-h"}}`,
+	} {
+		if _, err := parseVisionConfig([]byte(config), nil); err == nil || !strings.Contains(err.Error(), "requires min_num_patches and max_num_patches") {
+			t.Fatalf("parseVisionConfig error = %v, want missing dynamic-resolution bounds", err)
+		}
+	}
+
+	_, err := parseVisionConfig([]byte(`{
+		"vision_config": {
+			"version": "c-radio_v4-h",
+			"min_num_patches": 2048,
+			"max_num_patches": 1024
+		}
+	}`), nil)
+	if err == nil || !strings.Contains(err.Error(), "min_num_patches (2048) exceeds max_num_patches (1024)") {
+		t.Fatalf("parseVisionConfig error = %v, want reversed bounds error", err)
+	}
+}
+
+func TestLoadVisionWeightsRejectsNonSquarePositionGrid(t *testing.T) {
+	mlxtest.Setup(t)
+
+	const prefix = "vision_model.radio_model.model."
+	tensors := map[string]*mlx.Array{
+		prefix + "patch_generator.embedder.weight": mlx.Zeros(mlx.DTypeBFloat16, 4, 3),
+		prefix + "patch_generator.cls_token.token": mlx.Zeros(mlx.DTypeBFloat16, 1, 4),
+		prefix + "patch_generator.pos_embed":       mlx.Zeros(mlx.DTypeBFloat16, 1, 6, 4),
+	}
+	m := &Model{
+		VisionConfig:  &VisionConfig{},
+		VisionEncoder: &RadioVisionEncoder{},
+		Projector:     &VisionProjector{},
+	}
+	linears := model.NewLinearFactory(tensors, 0, 0, "", nil)
+	if err := m.loadVisionWeights(tensors, linears); err == nil || !strings.Contains(err.Error(), "6 positions, want a square grid") {
+		t.Fatalf("loadVisionWeights error = %v, want non-square position-grid error", err)
+	}
+}
+
+func TestResizeGrid2DPreservesSourceDType(t *testing.T) {
+	mlxtest.Setup(t)
+
+	x := mlx.FromValues([]float32{0, 1, 2, 3}, 1, 2, 2, 1).AsType(mlx.DTypeBFloat16)
+	got := resizeGrid2D(x, 3, 3)
+	mlx.Eval(got)
+	if got.DType() != mlx.DTypeBFloat16 {
+		t.Fatalf("resizeGrid2D dtype = %s, want bfloat16", got.DType())
+	}
+}
+
+func TestNemotronImagePatchBudget(t *testing.T) {
+	cfg := &VisionConfig{
+		DownsampleFactor: 2,
+		MinNumPatches:    1024,
+		MaxNumPatches:    13312,
+		MaxModelLen:      16384,
+	}
+
+	// Context-bound, not memory-bound: base.MediaModel requires PrepareMedia
+	// to be deterministic for given segments.
+	if got, want := nemotronImagePatchBudget(cfg), 13312; got != want {
+		t.Fatalf("budget = %d, want %d", got, want)
+	}
+	if got, want := nemotronImagePatchBudget(&VisionConfig{DownsampleFactor: 2, MinNumPatches: 1024, MaxNumPatches: 13312, MaxModelLen: 512}), 2032; got != want {
+		t.Fatalf("context-limited budget = %d, want %d", got, want)
+	}
+}
+
+func TestNemotronImagePatchGrid(t *testing.T) {
+	cfg := &VisionConfig{
+		PatchSize:        16,
+		DownsampleFactor: 2,
+		MinNumPatches:    1024,
+		MaxNumPatches:    13312,
+	}
+
+	for _, tt := range []struct {
+		name       string
+		height     int
+		width      int
+		budget     int
+		wantMax    int
+		wantMin    int
+		wantFactor int
+	}{
+		{name: "square minimum", height: 512, width: 512, budget: 1024, wantMax: 1024, wantMin: 1024, wantFactor: 2},
+		{name: "large square capped", height: 2048, width: 2048, budget: 13312, wantMax: 13312, wantMin: 1024, wantFactor: 2},
+		{name: "wide image capped", height: 512, width: 2048, budget: 4096, wantMax: 4096, wantMin: 1024, wantFactor: 2},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			patchH, patchW := nemotronImagePatchGrid(tt.height, tt.width, tt.budget, cfg)
+			if got := patchH * patchW; got > tt.wantMax || got < tt.wantMin {
+				t.Fatalf("patches = %d (%dx%d), want within [%d,%d]", got, patchH, patchW, tt.wantMin, tt.wantMax)
+			}
+			if patchH%tt.wantFactor != 0 || patchW%tt.wantFactor != 0 {
+				t.Fatalf("patch grid = %dx%d, want both divisible by %d", patchH, patchW, tt.wantFactor)
+			}
+		})
 	}
 }
