@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -3743,4 +3744,50 @@ func fakeRunningCmd() *exec.Cmd {
 	// pass *testing.T here without changing all call sites. The OS will
 	// SIGKILL children when the test process exits.
 	return cmd
+}
+
+func TestWarnIfCPUFallback(t *testing.T) {
+	gpu := ml.DeviceInfo{DeviceID: ml.DeviceID{ID: "0", Library: "CUDA"}, Name: "CUDA0"}
+
+	tests := []struct {
+		name     string
+		numGPU   int
+		gpus     []ml.DeviceInfo
+		line     string
+		wantWarn bool
+	}{
+		{"no layers offloaded", -1, []ml.DeviceInfo{gpu}, "llm_load_tensors: offloaded 0/33 layers to GPU\n", true},
+		{"partial offload", -1, []ml.DeviceInfo{gpu}, "llm_load_tensors: offloaded 22/33 layers to GPU\n", false},
+		{"full offload", -1, []ml.DeviceInfo{gpu}, "llm_load_tensors: offloaded 33/33 layers to GPU\n", false},
+		{"cpu requested", 0, []ml.DeviceInfo{gpu}, "llm_load_tensors: offloaded 0/33 layers to GPU\n", false},
+		{"no gpus", -1, nil, "llm_load_tensors: offloaded 0/33 layers to GPU\n", false},
+		{"nothing parsed", -1, []ml.DeviceInfo{gpu}, "llm_load_tensors: loading model\n", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &llamaServerRunner{
+				modelPath:        "/models/test.gguf",
+				options:          api.Options{Runner: api.Runner{NumGPU: tt.numGPU}},
+				gpus:             tt.gpus,
+				vramByDevice:     make(map[string]uint64),
+				systemFreeAtLoad: make(map[string]uint64),
+			}
+
+			w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+			if _, err := w.Write([]byte(tt.line)); err != nil {
+				t.Fatal(err)
+			}
+
+			var buf bytes.Buffer
+			restore := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+			runner.warnIfCPUFallback()
+			slog.SetDefault(restore)
+
+			if warned := strings.Contains(buf.String(), "entirely on CPU"); warned != tt.wantWarn {
+				t.Errorf("warned = %v, want %v (log: %q)", warned, tt.wantWarn, buf.String())
+			}
+		})
+	}
 }
