@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -400,6 +401,11 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 	}
 
 	stream := r.Stream
+	messages, tools, err := applyToolChoice(messages, tools, r.ToolChoice)
+	if err != nil {
+		return nil, err
+	}
+
 	convertedRequest := &api.ChatRequest{
 		Model:    r.Model,
 		Messages: messages,
@@ -411,6 +417,40 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 	logutil.Trace("anthropic: converted request", "req", TraceChatRequest(convertedRequest))
 
 	return convertedRequest, nil
+}
+
+// applyToolChoice maps an Anthropic tool_choice onto the converted request.
+// The underlying capability layer has no native constraint mechanism, so
+// "none" strips tools and forced modes append a system instruction; a named
+// tool is additionally constrained by only exposing that tool to the template.
+func applyToolChoice(messages []api.Message, tools api.Tools, choice *ToolChoice) ([]api.Message, api.Tools, error) {
+	if choice == nil || choice.Type == "" || choice.Type == "auto" {
+		return messages, tools, nil
+	}
+
+	switch choice.Type {
+	case "none":
+		tools = nil
+	case "any":
+		if len(tools) == 0 {
+			return messages, tools, errors.New("'tools' must be specified when 'tool_choice' type is \"any\"")
+		}
+		messages = append(messages, api.Message{Role: "system", Content: "You must call one of the available tools instead of replying with plain text."})
+	case "tool":
+		if choice.Name == "" {
+			return messages, tools, errors.New("'tool_choice.name' is required when 'tool_choice' type is \"tool\"")
+		}
+		idx := slices.IndexFunc(tools, func(t api.Tool) bool { return t.Function.Name == choice.Name })
+		if idx < 0 {
+			return messages, tools, fmt.Errorf("invalid value for 'tool_choice': no tool named %q was provided in 'tools'", choice.Name)
+		}
+		tools = tools[idx : idx+1]
+		messages = append(messages, api.Message{Role: "system", Content: fmt.Sprintf("You must call the %q function instead of replying with plain text.", choice.Name)})
+	default:
+		return messages, tools, fmt.Errorf("invalid value for 'tool_choice.type': %q (must be \"auto\", \"any\", \"tool\", or \"none\")", choice.Type)
+	}
+
+	return messages, tools, nil
 }
 
 // convertMessage converts an Anthropic MessageParam to Ollama api.Message(s)
