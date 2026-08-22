@@ -58,7 +58,7 @@ export function SidebarLayout({
         )}
       </div>
       <div
-        className={`flex max-h-screen flex-col transition-[width] duration-300 ${
+        className={`flex max-h-screen flex-col ${
           sidebarOpen
             ? "w-48 border-r border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-950/40"
             : "w-0"
