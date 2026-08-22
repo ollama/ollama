@@ -2684,19 +2684,42 @@ func PredictServerVRAM(modelPath string, f *ggml.GGML, numCtx int) uint64 {
 		weights = uint64(info.Size())
 	}
 
-	// KV cache: 2 (K+V) * layers * kv_heads * head_dim * context * 2 bytes (f16)
-	layers := f.KV().BlockCount()
-	kvHeads := f.KV().HeadCountKVMin()
-	if kvHeads == 0 {
-		kvHeads = 1
-	}
-	headDim := uint64(0)
-	if f.KV().HeadCountMax() > 0 {
-		headDim = f.KV().EmbeddingLength() / f.KV().HeadCountMax()
-	}
-	kvCache := 2 * layers * kvHeads * headDim * uint64(numCtx) * 2
+	return weights + predictKVCacheSize(f, numCtx)
+}
 
-	return weights + kvCache
+// predictKVCacheSize estimates the attention KV cache for numCtx tokens:
+// (k_head_dim + v_head_dim) * kv_heads * context * 2 bytes (f16) per attention
+// layer. Layers that don't run full attention are skipped — hybrid
+// architectures (qwen35, qwen3next) interleave linear attention layers that
+// keep a small fixed-size state instead of a per-token cache.
+func predictKVCacheSize(f *ggml.GGML, numCtx int) uint64 {
+	headDimK := f.KV().EmbeddingHeadCountK()
+	headDimV := f.KV().EmbeddingHeadCountV()
+	if headDimK == 0 && headDimV == 0 {
+		// Models that don't record explicit key/value lengths use a uniform
+		// head size derived from the embedding length.
+		if heads := f.KV().HeadCountMax(); heads > 0 {
+			headDimK = f.KV().EmbeddingLength() / heads
+			headDimV = headDimK
+		}
+	}
+
+	// Hybrid models record a single (max) head count for every block, so the
+	// full attention layers have to be derived from the interval instead.
+	interval := uint64(f.KV().Uint("full_attention_interval"))
+
+	var kvCache uint64
+	for i, kvHeads := range f.KV().HeadCountKV() {
+		if kvHeads == 0 {
+			continue
+		}
+		if interval > 0 && (uint64(i)+1)%interval != 0 {
+			continue
+		}
+		kvCache += (headDimK + headDimV) * kvHeads * uint64(numCtx) * 2
+	}
+
+	return kvCache
 }
 
 // memoryParsingWriter wraps an io.Writer and parses llama-server log output

@@ -3686,6 +3686,78 @@ func TestLlamaServerChatMessageConvertsMediaParts(t *testing.T) {
 	}
 }
 
+func TestPredictServerVRAM(t *testing.T) {
+	const numCtx = 4096
+
+	tests := []struct {
+		name string
+		kv   ggml.KV
+		// wantKV is the KV cache portion of the prediction, in bytes.
+		wantKV uint64
+	}{
+		{
+			// Hybrid architecture: only every full_attention_interval-th block
+			// runs full attention, the rest keep a small recurrent state. The
+			// converter records a single (max) head_count_kv for every block.
+			name: "qwen35moe hybrid attention",
+			kv: ggml.KV{
+				"general.architecture":              "qwen35moe",
+				"qwen35moe.block_count":             uint32(48),
+				"qwen35moe.embedding_length":        uint32(2048),
+				"qwen35moe.attention.head_count":    uint32(16),
+				"qwen35moe.attention.head_count_kv": uint32(2),
+				"qwen35moe.attention.key_length":    uint32(256),
+				"qwen35moe.attention.value_length":  uint32(256),
+				"qwen35moe.full_attention_interval": uint32(4),
+			},
+			// 48/4 attention layers * (256+256) * 2 heads * 2 bytes * numCtx
+			wantKV: 12 * (256 + 256) * 2 * 2 * numCtx,
+		},
+		{
+			// head_dim is larger than embedding_length/head_count across the
+			// qwen3 family, so the explicit key/value lengths must be used.
+			name: "qwen3moe explicit head dim",
+			kv: ggml.KV{
+				"general.architecture":             "qwen3moe",
+				"qwen3moe.block_count":             uint32(48),
+				"qwen3moe.embedding_length":        uint32(2048),
+				"qwen3moe.attention.head_count":    uint32(32),
+				"qwen3moe.attention.head_count_kv": uint32(4),
+				"qwen3moe.attention.key_length":    uint32(128),
+				"qwen3moe.attention.value_length":  uint32(128),
+			},
+			wantKV: 48 * (128 + 128) * 4 * 2 * numCtx,
+		},
+		{
+			name: "llama without explicit head dim",
+			kv: ggml.KV{
+				"general.architecture":          "llama",
+				"llama.block_count":             uint32(32),
+				"llama.embedding_length":        uint32(4096),
+				"llama.attention.head_count":    uint32(32),
+				"llama.attention.head_count_kv": uint32(32),
+			},
+			wantKV: 32 * (128 + 128) * 32 * 2 * numCtx,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			modelPath, f := writeTestGGML(t, tt.kv, nil)
+			info, err := os.Stat(modelPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			got := PredictServerVRAM(modelPath, f, numCtx)
+			if want := uint64(info.Size()) + tt.wantKV; got != want {
+				t.Errorf("PredictServerVRAM() = %d, want %d (kv cache %d, want %d)",
+					got, want, got-uint64(info.Size()), tt.wantKV)
+			}
+		})
+	}
+}
+
 func TestFindLlamaServer(t *testing.T) {
 	// This just tests that the function doesn't panic and returns a reasonable error
 	// when the binary doesn't exist in the expected locations
