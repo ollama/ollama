@@ -27,6 +27,26 @@ Model names follow a `model:tag` format, where `model` can have an optional name
 
 All durations are returned in nanoseconds.
 
+### Errors
+
+Ollama uses standard HTTP status codes to report errors. When an error occurs, the response body contains a JSON object with a single `error` field holding a human-readable error message:
+
+```json
+{
+  "error": "model 'llama3' not found"
+}
+```
+
+Common status codes:
+
+| Code | Meaning |
+|------|---------|
+| 400 | Malformed request (invalid parameters, bad JSON body) |
+| 404 | Model or resource not found |
+| 500 | Internal server error |
+
+Streaming responses can fail mid-stream. In that case, the stream terminates and the final JSON object contains the `error` field instead of a normal chunk.
+
 ### Streaming responses
 
 Certain endpoints stream responses as JSON objects. Streaming can be disabled by providing `{"stream": false}` for these endpoints.
