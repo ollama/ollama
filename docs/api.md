@@ -100,7 +100,8 @@ The final response in the stream also includes additional data about the generat
 - `total_duration`: time spent generating the response
 - `load_duration`: time spent in nanoseconds loading the model
 - `prompt_eval_count`: number of tokens in the prompt
-- `prompt_eval_duration`: time spent in nanoseconds evaluating the prompt
+- `prompt_eval_cached_count`: number of prompt tokens read from the cache
+- `prompt_eval_duration`: time spent in nanoseconds evaluating uncached prompt tokens
 - `eval_count`: number of tokens in the response
 - `eval_duration`: time in nanoseconds spent generating the response
 - `context`: an encoding of the conversation used in this response, this can be sent in the next request to keep a conversational memory

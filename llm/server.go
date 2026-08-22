@@ -214,6 +214,8 @@ type CompletionRequest struct {
 	PreservedTokens []string // parser tokens to render as text; ignored by non-llama-server runners
 	ToolCallTag     string   // raw generic tool parser tag, if any
 	LeadingBOS      string   // textual BOS emitted by Go rendering, if any
+	// IncludeIntermediateMetrics adds cumulative metrics to non-final responses; final responses always include metrics.
+	IncludeIntermediateMetrics bool
 
 	// Logprobs specifies whether to include log probabilities in the response
 	Logprobs bool
@@ -235,14 +237,15 @@ type ChatRequest struct {
 }
 
 type ChatResponse struct {
-	Message            api.Message   `json:"message"`
-	DoneReason         DoneReason    `json:"done_reason"`
-	Done               bool          `json:"done"`
-	PromptEvalCount    int           `json:"prompt_eval_count"`
-	PromptEvalDuration time.Duration `json:"prompt_eval_duration"`
-	EvalCount          int           `json:"eval_count"`
-	EvalDuration       time.Duration `json:"eval_duration"`
-	Logprobs           []Logprob     `json:"logprobs,omitempty"`
+	Message               api.Message   `json:"message"`
+	DoneReason            DoneReason    `json:"done_reason"`
+	Done                  bool          `json:"done"`
+	PromptEvalCount       int           `json:"prompt_eval_count"`
+	PromptEvalCachedCount int           `json:"prompt_eval_cached_count"`
+	PromptEvalDuration    time.Duration `json:"prompt_eval_duration"`
+	EvalCount             int           `json:"eval_count"`
+	EvalDuration          time.Duration `json:"eval_duration"`
+	Logprobs              []Logprob     `json:"logprobs,omitempty"`
 }
 
 // DoneReason represents the reason why a completion response is done
@@ -278,13 +281,14 @@ type Logprob struct {
 }
 
 type CompletionResponse struct {
-	Content            string        `json:"content"`
-	DoneReason         DoneReason    `json:"done_reason"`
-	Done               bool          `json:"done"`
-	PromptEvalCount    int           `json:"prompt_eval_count"`
-	PromptEvalDuration time.Duration `json:"prompt_eval_duration"`
-	EvalCount          int           `json:"eval_count"`
-	EvalDuration       time.Duration `json:"eval_duration"`
+	Content               string        `json:"content"`
+	DoneReason            DoneReason    `json:"done_reason"`
+	Done                  bool          `json:"done"`
+	PromptEvalCount       int           `json:"prompt_eval_count"`
+	PromptEvalCachedCount int           `json:"prompt_eval_cached_count"`
+	PromptEvalDuration    time.Duration `json:"prompt_eval_duration"`
+	EvalCount             int           `json:"eval_count"`
+	EvalDuration          time.Duration `json:"eval_duration"`
 
 	// Logprobs contains log probability information if requested
 	Logprobs []Logprob `json:"logprobs,omitempty"`

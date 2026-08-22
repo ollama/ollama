@@ -279,13 +279,14 @@ func TestChatHandlerChatTemplateRoute(t *testing.T) {
 	mock := mockRunner{
 		ChatFn: func(_ context.Context, req llm.ChatRequest, fn func(llm.ChatResponse)) error {
 			fn(llm.ChatResponse{
-				Message:            api.Message{Role: "assistant", Content: "chat template response"},
-				Done:               true,
-				DoneReason:         llm.DoneReasonStop,
-				PromptEvalCount:    1,
-				PromptEvalDuration: time.Millisecond,
-				EvalCount:          2,
-				EvalDuration:       2 * time.Millisecond,
+				Message:               api.Message{Role: "assistant", Content: "chat template response"},
+				Done:                  true,
+				DoneReason:            llm.DoneReasonStop,
+				PromptEvalCount:       2,
+				PromptEvalCachedCount: 1,
+				PromptEvalDuration:    time.Millisecond,
+				EvalCount:             2,
+				EvalDuration:          2 * time.Millisecond,
 			})
 			return nil
 		},
@@ -313,6 +314,9 @@ func TestChatHandlerChatTemplateRoute(t *testing.T) {
 	}
 	if actual.Message.Content != "chat template response" {
 		t.Fatalf("expected chat template response, got %q", actual.Message.Content)
+	}
+	if actual.PromptEvalCount != 2 || actual.PromptEvalCachedCount != 1 {
+		t.Errorf("prompt counts = (%d, %d), want (2, 1)", actual.PromptEvalCount, actual.PromptEvalCachedCount)
 	}
 	if len(mock.ChatRequest.Messages) != 1 || mock.ChatRequest.Messages[0].Content != "hello" {
 		t.Fatalf("chat_template request messages = %#v", mock.ChatRequest.Messages)
@@ -753,12 +757,13 @@ func TestGenerateChat(t *testing.T) {
 
 	mock := mockRunner{
 		CompletionResponse: llm.CompletionResponse{
-			Done:               true,
-			DoneReason:         llm.DoneReasonStop,
-			PromptEvalCount:    1,
-			PromptEvalDuration: 1,
-			EvalCount:          1,
-			EvalDuration:       1,
+			Done:                  true,
+			DoneReason:            llm.DoneReasonStop,
+			PromptEvalCount:       2,
+			PromptEvalCachedCount: 1,
+			PromptEvalDuration:    1,
+			EvalCount:             1,
+			EvalDuration:          1,
 		},
 	}
 
@@ -969,6 +974,9 @@ func TestGenerateChat(t *testing.T) {
 
 		if actual.PromptEvalCount == 0 {
 			t.Errorf("expected prompt eval count > 0, got 0")
+		}
+		if actual.PromptEvalCachedCount != 1 {
+			t.Errorf("expected cached prompt eval count 1, got %d", actual.PromptEvalCachedCount)
 		}
 
 		if actual.PromptEvalDuration == 0 {
@@ -2574,6 +2582,35 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 		}
 	})
 
+	earlyFirstPassMetrics := api.Metrics{
+		PromptEvalCount:       4,
+		PromptEvalCachedCount: 1,
+		PromptEvalDuration:    5 * time.Millisecond,
+		EvalCount:             6,
+		EvalDuration:          7 * time.Millisecond,
+	}
+	firstPassMetrics := api.Metrics{
+		PromptEvalCount:       10,
+		PromptEvalCachedCount: 4,
+		PromptEvalDuration:    11 * time.Millisecond,
+		EvalCount:             12,
+		EvalDuration:          13 * time.Millisecond,
+	}
+	secondPassMetrics := api.Metrics{
+		PromptEvalCount:       20_000,
+		PromptEvalCachedCount: 19_000,
+		PromptEvalDuration:    21 * time.Millisecond,
+		EvalCount:             22,
+		EvalDuration:          23 * time.Millisecond,
+	}
+	wantMetrics := api.Metrics{
+		PromptEvalCount:       firstPassMetrics.PromptEvalCount,
+		PromptEvalCachedCount: firstPassMetrics.PromptEvalCachedCount,
+		PromptEvalDuration:    firstPassMetrics.PromptEvalDuration,
+		EvalCount:             firstPassMetrics.EvalCount + secondPassMetrics.EvalCount,
+		EvalDuration:          firstPassMetrics.EvalDuration + secondPassMetrics.PromptEvalDuration + secondPassMetrics.EvalDuration,
+	}
+
 	t.Run("structured outputs restart non-stream", func(t *testing.T) {
 		var (
 			requestsMu sync.Mutex
@@ -2596,10 +2633,22 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 			switch callNum {
 			case 1:
 				fn(llm.CompletionResponse{
-					Content:            " I am thinking through this problem. </think> {\"answer\":\"42\"}",
-					Done:               false,
-					PromptEvalCount:    1,
-					PromptEvalDuration: 1,
+					Content:               " I am thinking through this problem.",
+					Done:                  false,
+					PromptEvalCount:       earlyFirstPassMetrics.PromptEvalCount,
+					PromptEvalCachedCount: earlyFirstPassMetrics.PromptEvalCachedCount,
+					PromptEvalDuration:    earlyFirstPassMetrics.PromptEvalDuration,
+					EvalCount:             earlyFirstPassMetrics.EvalCount,
+					EvalDuration:          earlyFirstPassMetrics.EvalDuration,
+				})
+				fn(llm.CompletionResponse{
+					Content:               " </think> {\"answer\":\"42\"}",
+					Done:                  false,
+					PromptEvalCount:       firstPassMetrics.PromptEvalCount,
+					PromptEvalCachedCount: firstPassMetrics.PromptEvalCachedCount,
+					PromptEvalDuration:    firstPassMetrics.PromptEvalDuration,
+					EvalCount:             firstPassMetrics.EvalCount,
+					EvalDuration:          firstPassMetrics.EvalDuration,
 				})
 
 				select {
@@ -2611,13 +2660,14 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 				}
 			case 2:
 				fn(llm.CompletionResponse{
-					Content:            `{"answer":"42"}`,
-					Done:               true,
-					DoneReason:         llm.DoneReasonStop,
-					PromptEvalCount:    1,
-					PromptEvalDuration: 1,
-					EvalCount:          1,
-					EvalDuration:       1,
+					Content:               `{"answer":"42"}`,
+					Done:                  true,
+					DoneReason:            llm.DoneReasonStop,
+					PromptEvalCount:       secondPassMetrics.PromptEvalCount,
+					PromptEvalCachedCount: secondPassMetrics.PromptEvalCachedCount,
+					PromptEvalDuration:    secondPassMetrics.PromptEvalDuration,
+					EvalCount:             secondPassMetrics.EvalCount,
+					EvalDuration:          secondPassMetrics.EvalDuration,
 				})
 				return nil
 			default:
@@ -2650,9 +2700,15 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 		if requests[0].Format != nil {
 			t.Errorf("expected first completion format to be nil, got %q", requests[0].Format)
 		}
+		if !requests[0].IncludeIntermediateMetrics {
+			t.Error("expected first completion to request per-token metrics")
+		}
 
 		if !bytes.Equal([]byte(format), []byte(requests[1].Format)) {
 			t.Errorf("expected second completion format to match original format")
+		}
+		if requests[1].IncludeIntermediateMetrics {
+			t.Error("expected second completion to use terminal metrics")
 		}
 
 		var resp api.ChatResponse
@@ -2674,6 +2730,15 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 
 		if resp.DoneReason != "stop" {
 			t.Errorf("expected done reason stop, got %s", resp.DoneReason)
+		}
+		if resp.PromptEvalCount != wantMetrics.PromptEvalCount || resp.EvalCount != wantMetrics.EvalCount {
+			t.Errorf("response counts = (%d, %d), want (%d, %d)", resp.PromptEvalCount, resp.EvalCount, wantMetrics.PromptEvalCount, wantMetrics.EvalCount)
+		}
+		if resp.PromptEvalCachedCount != wantMetrics.PromptEvalCachedCount {
+			t.Errorf("response cached prompt count = %d, want %d", resp.PromptEvalCachedCount, wantMetrics.PromptEvalCachedCount)
+		}
+		if resp.PromptEvalDuration != wantMetrics.PromptEvalDuration || resp.EvalDuration != wantMetrics.EvalDuration {
+			t.Errorf("response durations = (%s, %s), want (%s, %s)", resp.PromptEvalDuration, resp.EvalDuration, wantMetrics.PromptEvalDuration, wantMetrics.EvalDuration)
 		}
 	})
 
@@ -2699,10 +2764,22 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 			switch callNum {
 			case 1:
 				fn(llm.CompletionResponse{
-					Content:            " I am thinking through this problem. </think> {\"answer\":\"42\"}",
-					Done:               false,
-					PromptEvalCount:    1,
-					PromptEvalDuration: 1,
+					Content:               " I am thinking through this problem.",
+					Done:                  false,
+					PromptEvalCount:       earlyFirstPassMetrics.PromptEvalCount,
+					PromptEvalCachedCount: earlyFirstPassMetrics.PromptEvalCachedCount,
+					PromptEvalDuration:    earlyFirstPassMetrics.PromptEvalDuration,
+					EvalCount:             earlyFirstPassMetrics.EvalCount,
+					EvalDuration:          earlyFirstPassMetrics.EvalDuration,
+				})
+				fn(llm.CompletionResponse{
+					Content:               " </think> {\"answer\":\"42\"}",
+					Done:                  false,
+					PromptEvalCount:       firstPassMetrics.PromptEvalCount,
+					PromptEvalCachedCount: firstPassMetrics.PromptEvalCachedCount,
+					PromptEvalDuration:    firstPassMetrics.PromptEvalDuration,
+					EvalCount:             firstPassMetrics.EvalCount,
+					EvalDuration:          firstPassMetrics.EvalDuration,
 				})
 
 				select {
@@ -2714,13 +2791,14 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 				}
 			case 2:
 				fn(llm.CompletionResponse{
-					Content:            `{"answer":"42"}`,
-					Done:               true,
-					DoneReason:         llm.DoneReasonStop,
-					PromptEvalCount:    1,
-					PromptEvalDuration: 1,
-					EvalCount:          1,
-					EvalDuration:       1,
+					Content:               `{"answer":"42"}`,
+					Done:                  true,
+					DoneReason:            llm.DoneReasonStop,
+					PromptEvalCount:       secondPassMetrics.PromptEvalCount,
+					PromptEvalCachedCount: secondPassMetrics.PromptEvalCachedCount,
+					PromptEvalDuration:    secondPassMetrics.PromptEvalDuration,
+					EvalCount:             secondPassMetrics.EvalCount,
+					EvalDuration:          secondPassMetrics.EvalDuration,
 				})
 				return nil
 			default:
@@ -2753,9 +2831,15 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 		if requests[0].Format != nil {
 			t.Errorf("expected first completion format to be nil, got %q", requests[0].Format)
 		}
+		if !requests[0].IncludeIntermediateMetrics {
+			t.Error("expected first completion to request per-token metrics")
+		}
 
 		if !bytes.Equal([]byte(format), []byte(requests[1].Format)) {
 			t.Errorf("expected second completion format to match original format")
+		}
+		if requests[1].IncludeIntermediateMetrics {
+			t.Error("expected second completion to use terminal metrics")
 		}
 
 		decoder := json.NewDecoder(w.Body)
@@ -2778,8 +2862,15 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 		}
 
 		first := events[0]
-		if first.Message.Thinking != "I am thinking through this problem. " {
-			t.Errorf("expected first event thinking %q, got %q", "I am thinking through this problem. ", first.Message.Thinking)
+		var thinking strings.Builder
+		for _, event := range events {
+			thinking.WriteString(event.Message.Thinking)
+			if !event.Done && (event.PromptEvalCount != 0 || event.PromptEvalCachedCount != 0 || event.PromptEvalDuration != 0 || event.EvalCount != 0 || event.EvalDuration != 0) {
+				t.Errorf("non-terminal event unexpectedly exposed metrics: %+v", event.Metrics)
+			}
+		}
+		if got := thinking.String(); got != "I am thinking through this problem. " {
+			t.Errorf("thinking = %q, want %q", got, "I am thinking through this problem. ")
 		}
 
 		if first.Message.Content != "" {
@@ -2789,7 +2880,6 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 		if first.Done {
 			t.Error("expected first event to be non-terminal")
 		}
-
 		last := events[len(events)-1]
 		if last.Message.Thinking != "" {
 			t.Errorf("expected final event thinking to be empty, got %q", last.Message.Thinking)
@@ -2805,6 +2895,15 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 
 		if last.DoneReason != "stop" {
 			t.Errorf("expected final done reason stop, got %s", last.DoneReason)
+		}
+		if last.PromptEvalCount != wantMetrics.PromptEvalCount || last.EvalCount != wantMetrics.EvalCount {
+			t.Errorf("final counts = (%d, %d), want (%d, %d)", last.PromptEvalCount, last.EvalCount, wantMetrics.PromptEvalCount, wantMetrics.EvalCount)
+		}
+		if last.PromptEvalCachedCount != wantMetrics.PromptEvalCachedCount {
+			t.Errorf("final cached prompt count = %d, want %d", last.PromptEvalCachedCount, wantMetrics.PromptEvalCachedCount)
+		}
+		if last.PromptEvalDuration != wantMetrics.PromptEvalDuration || last.EvalDuration != wantMetrics.EvalDuration {
+			t.Errorf("final durations = (%s, %s), want (%s, %s)", last.PromptEvalDuration, last.EvalDuration, wantMetrics.PromptEvalDuration, wantMetrics.EvalDuration)
 		}
 	})
 }

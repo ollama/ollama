@@ -111,12 +111,13 @@ func (c *Client) WaitUntilRunning(ctx context.Context) error {
 }
 
 type CompletionRequest struct {
-	Prompt      string
-	Media       []llm.MediaData
-	Format      json.RawMessage
-	Options     api.Options
-	Logprobs    bool
-	TopLogprobs int
+	Prompt                     string
+	Media                      []llm.MediaData
+	Format                     json.RawMessage
+	Options                    api.Options
+	Logprobs                   bool
+	TopLogprobs                int
+	IncludeIntermediateMetrics bool
 }
 
 type CompletionResponse struct {
@@ -124,10 +125,11 @@ type CompletionResponse struct {
 	Done       bool
 	DoneReason int
 
-	PromptEvalCount    int
-	PromptEvalDuration time.Duration
-	EvalCount          int
-	EvalDuration       time.Duration
+	PromptEvalCount       int
+	PromptEvalCachedCount int
+	PromptEvalDuration    time.Duration
+	EvalCount             int
+	EvalDuration          time.Duration
 
 	Logprobs []llm.Logprob
 
@@ -156,11 +158,12 @@ func (c *Client) Close() error {
 // Completion implements llm.LlamaServer.
 func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
 	creq := CompletionRequest{
-		Prompt:      req.Prompt,
-		Media:       req.Media,
-		Format:      req.Format,
-		Logprobs:    req.Logprobs,
-		TopLogprobs: req.TopLogprobs,
+		Prompt:                     req.Prompt,
+		Media:                      req.Media,
+		Format:                     req.Format,
+		Logprobs:                   req.Logprobs,
+		TopLogprobs:                req.TopLogprobs,
+		IncludeIntermediateMetrics: req.IncludeIntermediateMetrics,
 	}
 	if req.Options != nil {
 		creq.Options = *req.Options
@@ -205,14 +208,15 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 		}
 
 		cresp := llm.CompletionResponse{
-			Content:            raw.Content,
-			Done:               raw.Done,
-			DoneReason:         llm.DoneReason(raw.DoneReason),
-			PromptEvalCount:    raw.PromptEvalCount,
-			PromptEvalDuration: raw.PromptEvalDuration,
-			EvalCount:          raw.EvalCount,
-			EvalDuration:       raw.EvalDuration,
-			Logprobs:           raw.Logprobs,
+			Content:               raw.Content,
+			Done:                  raw.Done,
+			DoneReason:            llm.DoneReason(raw.DoneReason),
+			PromptEvalCount:       raw.PromptEvalCount,
+			PromptEvalCachedCount: raw.PromptEvalCachedCount,
+			PromptEvalDuration:    raw.PromptEvalDuration,
+			EvalCount:             raw.EvalCount,
+			EvalDuration:          raw.EvalDuration,
+			Logprobs:              raw.Logprobs,
 		}
 
 		fn(cresp)

@@ -154,13 +154,13 @@ func TestContextShiftPromptLimit(t *testing.T) {
 func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	// Simulate llama-server SSE streaming response
 	sseLines := []string{
-		`data: {"content":"Hello","stop":false}`,
+		`data: {"content":"Hello","stop":false,"timings":{"cache_n":2,"prompt_n":3,"prompt_ms":10.5,"predicted_n":1,"predicted_ms":9.1}}`,
 		``,
 		`:`,
-		`data: {"content":" world","stop":false}`,
+		`data: {"content":" world","stop":false,"timings":{"cache_n":2,"prompt_n":3,"prompt_ms":10.5,"predicted_n":2,"predicted_ms":20.3}}`,
 		``,
 		`:`,
-		`data: {"content":"","stop":true,"stop_type":"eos","timings":{"prompt_n":5,"prompt_ms":10.5,"predicted_n":2,"predicted_ms":20.3}}`,
+		`data: {"content":"","stop":true,"stop_type":"eos","timings":{"cache_n":2,"prompt_n":3,"prompt_ms":10.5,"predicted_n":2,"predicted_ms":20.3}}`,
 		``,
 	}
 
@@ -186,6 +186,9 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 		if !reqBody.Stream {
 			t.Error("stream should be true")
 		}
+		if !reqBody.TimingsPerToken {
+			t.Error("timings_per_token should be true")
+		}
 
 		w.Header().Set("Content-Type", "text/event-stream")
 		for _, line := range sseLines {
@@ -208,8 +211,9 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	var responses []CompletionResponse
 	opts := api.DefaultOptions()
 	err := runner.Completion(t.Context(), CompletionRequest{
-		Prompt:  "test prompt",
-		Options: &opts,
+		Prompt:                     "test prompt",
+		Options:                    &opts,
+		IncludeIntermediateMetrics: true,
 	}, func(cr CompletionResponse) {
 		responses = append(responses, cr)
 	})
@@ -228,10 +232,28 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	if responses[0].Done {
 		t.Error("response[0] should not be done")
 	}
+	if responses[0].PromptEvalCount != 5 || responses[0].EvalCount != 1 {
+		t.Errorf("response[0] counts = (%d, %d), want (5, 1)", responses[0].PromptEvalCount, responses[0].EvalCount)
+	}
+	if responses[0].PromptEvalCachedCount != 2 {
+		t.Errorf("response[0] cached prompt count = %d, want 2", responses[0].PromptEvalCachedCount)
+	}
+	if responses[0].PromptEvalDuration != 10500*time.Microsecond || responses[0].EvalDuration != 9100*time.Microsecond {
+		t.Errorf("response[0] durations = (%s, %s), want (10.5ms, 9.1ms)", responses[0].PromptEvalDuration, responses[0].EvalDuration)
+	}
 
 	// Second token
 	if responses[1].Content != " world" {
 		t.Errorf("response[1].Content = %q, want %q", responses[1].Content, " world")
+	}
+	if responses[1].PromptEvalCount != 5 || responses[1].EvalCount != 2 {
+		t.Errorf("response[1] counts = (%d, %d), want (5, 2)", responses[1].PromptEvalCount, responses[1].EvalCount)
+	}
+	if responses[1].PromptEvalCachedCount != 2 {
+		t.Errorf("response[1] cached prompt count = %d, want 2", responses[1].PromptEvalCachedCount)
+	}
+	if responses[1].PromptEvalDuration != 10500*time.Microsecond || responses[1].EvalDuration != 20300*time.Microsecond {
+		t.Errorf("response[1] durations = (%s, %s), want (10.5ms, 20.3ms)", responses[1].PromptEvalDuration, responses[1].EvalDuration)
 	}
 
 	// Final response
@@ -243,6 +265,9 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	}
 	if responses[2].PromptEvalCount != 5 {
 		t.Errorf("PromptEvalCount = %d, want 5", responses[2].PromptEvalCount)
+	}
+	if responses[2].PromptEvalCachedCount != 2 {
+		t.Errorf("PromptEvalCachedCount = %d, want 2", responses[2].PromptEvalCachedCount)
 	}
 	if responses[2].EvalCount != 2 {
 		t.Errorf("EvalCount = %d, want 2", responses[2].EvalCount)
@@ -290,6 +315,9 @@ func TestLlamaServerCompletionPromptEvalCountIncludesCache(t *testing.T) {
 	}
 	if responses[0].PromptEvalCount != 17 {
 		t.Errorf("PromptEvalCount = %d, want 17", responses[0].PromptEvalCount)
+	}
+	if responses[0].PromptEvalCachedCount != 12 {
+		t.Errorf("PromptEvalCachedCount = %d, want 12", responses[0].PromptEvalCachedCount)
 	}
 	if responses[0].PromptEvalDuration != 10*time.Millisecond {
 		t.Errorf("PromptEvalDuration = %s, want 10ms", responses[0].PromptEvalDuration)
@@ -340,6 +368,9 @@ func TestLlamaServerChatPromptEvalCountIncludesCache(t *testing.T) {
 	}
 	if responses[1].PromptEvalCount != 17 {
 		t.Errorf("PromptEvalCount = %d, want 17", responses[1].PromptEvalCount)
+	}
+	if responses[1].PromptEvalCachedCount != 12 {
+		t.Errorf("PromptEvalCachedCount = %d, want 12", responses[1].PromptEvalCachedCount)
 	}
 	if responses[1].PromptEvalDuration != 10*time.Millisecond {
 		t.Errorf("PromptEvalDuration = %s, want 10ms", responses[1].PromptEvalDuration)

@@ -17,6 +17,20 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
+func TestMetricsSummaryLinesCachedPromptTokens(t *testing.T) {
+	lines := metricsSummaryLines(&api.Metrics{
+		PromptEvalCount:       10,
+		PromptEvalCachedCount: 4,
+		PromptEvalDuration:    time.Second,
+	})
+	got := strings.Join(lines, "\n")
+	for _, want := range []string{"prompt eval count:    10 token(s)", "prompt eval cached:   4 token(s)", "prompt eval rate:     6.00 tokens/s"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("summary missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestChatAssistantEntryHasNoLabel(t *testing.T) {
 	m := chatModel{}
 

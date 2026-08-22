@@ -582,9 +582,13 @@ func metricsSummaryLines(metrics *api.Metrics) []string {
 	if metrics.PromptEvalCount > 0 {
 		lines = append(lines, fmt.Sprintf("prompt eval count:    %d token(s)", metrics.PromptEvalCount))
 	}
+	if metrics.PromptEvalCachedCount > 0 {
+		lines = append(lines, fmt.Sprintf("prompt eval cached:   %d token(s)", metrics.PromptEvalCachedCount))
+	}
 	if metrics.PromptEvalDuration > 0 {
 		lines = append(lines, fmt.Sprintf("prompt eval duration: %s", metrics.PromptEvalDuration))
-		lines = append(lines, fmt.Sprintf("prompt eval rate:     %.2f tokens/s", float64(metrics.PromptEvalCount)/metrics.PromptEvalDuration.Seconds()))
+		uncached := max(0, metrics.PromptEvalCount-metrics.PromptEvalCachedCount)
+		lines = append(lines, fmt.Sprintf("prompt eval rate:     %.2f tokens/s", float64(uncached)/metrics.PromptEvalDuration.Seconds()))
 	}
 	if metrics.EvalCount > 0 {
 		lines = append(lines, fmt.Sprintf("eval count:           %d token(s)", metrics.EvalCount))
@@ -600,6 +604,7 @@ func metricsEmpty(metrics api.Metrics) bool {
 	return metrics.TotalDuration <= 0 &&
 		metrics.LoadDuration <= 0 &&
 		metrics.PromptEvalCount <= 0 &&
+		metrics.PromptEvalCachedCount <= 0 &&
 		metrics.PromptEvalDuration <= 0 &&
 		metrics.EvalCount <= 0 &&
 		metrics.EvalDuration <= 0
