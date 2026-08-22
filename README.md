@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://ollama.com">
-    <img src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7" alt="ollama" width="200"/>
+   <img src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7" alt="ollama" width="200"/>
   </a>
 </p>
 
@@ -55,7 +55,7 @@ The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `olla
 ollama
 ```
 
-You'll be prompted to run a model or connect Ollama to your existing agents or applications such as `Claude Code`, `OpenClaw`, `OpenCode` , `Codex`, `Copilot`,  and more.
+You'll be prompted to run a model or connect Ollama to your existing agents or applications such as `Claude Code`, `OpenClaw`, `OpenCode` , `Codex`, `Copilot`, and more.
 
 ### Coding
 
@@ -95,8 +95,8 @@ Ollama has a REST API for running and managing models.
 curl http://localhost:11434/api/chat -d '{
   "model": "gemma4",
   "messages": [{
-    "role": "user",
-    "content": "Why is the sky blue?"
+   "role": "user",
+   "content": "Why is the sky blue?"
   }],
   "stream": false
 }'
@@ -115,8 +115,8 @@ from ollama import chat
 
 response = chat(model='gemma4', messages=[
   {
-    'role': 'user',
-    'content': 'Why is the sky blue?',
+   'role': 'user',
+   'content': 'Why is the sky blue?',
   },
 ])
 print(response.message.content)
