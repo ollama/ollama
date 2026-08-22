@@ -1006,6 +1006,25 @@ func selectLlamaServerPlacement(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, 
 		return selected, launchOpts
 	}
 
+	// An explicit tensor_split is the caller overruling placement outright, so the
+	// library grouping must not apply: bestGPUGroupByAvailableMemory keeps exactly one
+	// backend's devices, and its discrete-before-memory tie-break drops an iGPU group
+	// no matter how much memory it has. That happens before --tensor-split is ever
+	// built, so the split would silently address a device list the iGPU was already
+	// removed from -- the same silent no-op appendTensorSplitArgs uses --device to
+	// avoid, one layer further up.
+	//
+	// Handing back every device is what makes a cross-library split expressible:
+	// gpu.Name is the backend-prefixed ggml device name, so a mixed group emits
+	// --device CUDA0,Vulkan1, and ml.LibraryPaths already unions the library
+	// directories of whatever devices it is given.
+	if hasExplicitTensorSplit(opts) {
+		slog.Info("explicit tensor_split: bypassing GPU library grouping",
+			"gpu_count", len(gpus),
+			"libraries", deviceLibraries(gpus))
+		return gpus, launchOpts
+	}
+
 	if !envconfig.SchedSpread() && predictedVRAM > 0 {
 		gpu, available, ok := bestSingleGPUFit(systemInfo, groups, predictedVRAM)
 		if ok {
@@ -1028,6 +1047,34 @@ func selectLlamaServerPlacement(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, 
 	selected := bestGPUGroupByAvailableMemory(systemInfo, groups)
 	logSelectedGPUGroup(gpus, selected)
 	return selected, launchOpts
+}
+
+// hasExplicitTensorSplit reports whether a split was requested, per-request or
+// server-wide. It deliberately mirrors the precedence in appendTensorSplitArgs --
+// request option first, OLLAMA_TENSOR_SPLIT second -- so the scheduler and the
+// llama-server command line cannot disagree about whether a split is in play.
+//
+// main_gpu is not consulted here: it is handled earlier and pins the model to a
+// single device, which appendTensorSplitArgs then treats as overriding the split.
+func hasExplicitTensorSplit(opts api.Options) bool {
+	if strings.TrimSpace(opts.TensorSplit) != "" {
+		return true
+	}
+
+	return strings.TrimSpace(envconfig.TensorSplit()) != ""
+}
+
+// deviceLibraries lists the distinct backend libraries in a device group, so the
+// bypass log line shows at a glance whether a split really did span backends.
+func deviceLibraries(gpus []ml.DeviceInfo) []string {
+	libs := make([]string, 0, len(gpus))
+	for _, gpu := range gpus {
+		if !slices.Contains(libs, gpu.Library) {
+			libs = append(libs, gpu.Library)
+		}
+	}
+
+	return libs
 }
 
 func singleLlamaServerGPUPlacement(gpu ml.DeviceInfo, opts api.Options) ([]ml.DeviceInfo, api.Options) {

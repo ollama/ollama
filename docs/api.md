@@ -405,6 +405,7 @@ curl http://localhost:11434/api/generate -d '{
     "num_batch": 2,
     "num_gpu": 1,
     "main_gpu": 0,
+    "tensor_split": "0.3,0.7",
     "use_mmap": true,
     "num_thread": 8
   }
