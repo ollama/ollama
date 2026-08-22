@@ -1863,6 +1863,11 @@ func (s *Server) GenerateRoutes() (http.Handler, error) {
 		"x-stainless-runtime",
 		"x-stainless-runtime-version",
 		"x-stainless-timeout",
+
+		// Anthropic-compatible client headers (e.g. Claude for Microsoft Office)
+		"x-api-key",
+		"anthropic-version",
+		"anthropic-beta",
 	}
 	corsConfig.AllowOrigins = envconfig.AllowedOrigins()
 
