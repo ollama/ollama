@@ -7,7 +7,7 @@
 include(ExternalProject)
 
 set(OLLAMA_LLAMA_BACKENDS "" CACHE STRING
-    "Semicolon-separated llama-server GPU backends to build: cuda_v12;cuda_v13;rocm_v7_1;rocm_v7_2;vulkan;cuda_jetpack5;cuda_jetpack6")
+    "Semicolon-separated llama-server GPU backends to build: cuda_v12;cuda_v13;rocm_v7_1;rocm_v7_2;vulkan;sycl;cuda_jetpack5;cuda_jetpack6")
 set(_ollama_mlx_backends_doc "Semicolon-separated MLX backends to build: cuda_v13;metal_v3;metal_v4")
 set(OLLAMA_VERSION "0.0.0" CACHE STRING "Ollama version embedded in the local Go binary")
 set(OLLAMA_PAYLOAD_INSTALL_PREFIX "${CMAKE_BINARY_DIR}" CACHE PATH
@@ -382,7 +382,7 @@ function(ollama_rocm_preset backend output)
 endfunction()
 
 function(ollama_add_llama_server_build name)
-    cmake_parse_arguments(ARG "" "PRESET;RUNNER_DIR" "TARGETS;CMAKE_ARGS" ${ARGN})
+    cmake_parse_arguments(ARG "" "PRESET;RUNNER_DIR;GENERATOR" "TARGETS;CMAKE_ARGS" ${ARGN})
     if(NOT ARG_TARGETS)
         message(FATAL_ERROR "ollama_add_llama_server_build(${name}) requires TARGETS")
     endif()
@@ -393,8 +393,36 @@ function(ollama_add_llama_server_build name)
     else()
         set(_build_dir ${CMAKE_BINARY_DIR}/llama-server-${name})
     endif()
+
+    # Nested builds explicitly inherit the superbuild's generator (and
+    # platform) instead of falling back to CMake's default, which on Windows
+    # silently switches to Visual Studio. Some backends (e.g. SYCL/oneAPI)
+    # override with their own generator so their toolchain can drive the
+    # build directly.
+    set(_generator_override_args)
+    if(ARG_GENERATOR)
+        list(APPEND _generator_override_args -G "${ARG_GENERATOR}")
+    elseif(CMAKE_GENERATOR)
+        list(APPEND _generator_override_args -G "${CMAKE_GENERATOR}")
+        if(CMAKE_GENERATOR_PLATFORM)
+            list(APPEND _generator_override_args -A "${CMAKE_GENERATOR_PLATFORM}")
+        endif()
+    endif()
     ollama_collect_cache_args_with_prefix("GGML_" _ggml_cache_args)
     ollama_collect_cache_args_with_prefix("LLAMA_" _llama_cache_args)
+    # Forward the superbuild's MSVC compiler by short name so nested Ninja
+    # builds do not fall back to another toolchain found earlier in PATH
+    # (e.g. MinGW gcc). The short name resolves through vcvars at configure
+    # time; passing the resolved full path would trigger MSBuild-based
+    # compiler checks. Backend-specific CMAKE_ARGS (e.g. SYCL's icx) are
+    # appended later and take precedence.
+    set(_cmake_compiler_args)
+    if(WIN32 AND CMAKE_C_COMPILER MATCHES "cl\\.exe$")
+        list(APPEND _cmake_compiler_args -DCMAKE_C_COMPILER=cl)
+    endif()
+    if(WIN32 AND CMAKE_CXX_COMPILER MATCHES "cl\\.exe$")
+        list(APPEND _cmake_compiler_args -DCMAKE_CXX_COMPILER=cl)
+    endif()
     set(_cmake_args
         -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
         -DCMAKE_INSTALL_PREFIX=${OLLAMA_PAYLOAD_INSTALL_PREFIX}
@@ -404,6 +432,7 @@ function(ollama_add_llama_server_build name)
         -DOLLAMA_LLAMA_CPP_SKIP_COMPAT_PATCH=ON
         -DGGML_NATIVE=OFF
         -DGGML_OPENMP=OFF
+        ${_cmake_compiler_args}
         ${ARG_CMAKE_ARGS}
         ${_ggml_cache_args}
         ${_llama_cache_args}
@@ -423,7 +452,7 @@ function(ollama_add_llama_server_build name)
     # MSBuild's CUDA integration ignores -DCUDAToolkit_ROOT for nvcc selection.
     # Prefer user-specified CUDAToolkit_ROOT before falling back to auto-discovery.
     set(_generator_args)
-    if(WIN32 AND CMAKE_GENERATOR MATCHES "Visual Studio")
+    if(NOT ARG_GENERATOR AND WIN32 AND CMAKE_GENERATOR MATCHES "Visual Studio")
         set(_cuda_root "${CUDAToolkit_ROOT}")
         if("${_cuda_root}" STREQUAL "")
             ollama_backend_cuda_major("${name}" _cuda_major)
@@ -434,12 +463,14 @@ function(ollama_add_llama_server_build name)
         endif()
     endif()
     set(_configure_command ${CMAKE_COMMAND}
+        ${_generator_override_args}
         ${_generator_args}
         -S ${CMAKE_SOURCE_DIR}/llama/server
         -B <BINARY_DIR>
         ${_cmake_args})
     if(ARG_PRESET)
         set(_configure_command ${CMAKE_COMMAND}
+            ${_generator_override_args}
             ${_generator_args}
             -S ${CMAKE_SOURCE_DIR}/llama/server
             --preset ${ARG_PRESET}
@@ -685,6 +716,40 @@ if(OLLAMA_HAVE_LLAMA_SERVER)
                 RUNNER_DIR ${_backend}
                 TARGETS ggml-hip
                 CMAKE_ARGS ${_rocm_args})
+            list(APPEND _backend_targets ollama-llama-server-${_backend})
+        elseif(_backend STREQUAL "sycl")
+            # Intel oneAPI SYCL backend. The DPC++/C++ compiler (icx) drives a
+            # Ninja sub-build, mirroring llama.cpp's official SYCL build
+            # instructions. Requires the Intel oneAPI environment (setvars)
+            # to be active during configuration. GGML_SYCL_F16 defaults to ON
+            # for better long-prompt performance and can be overridden from the
+            # superbuild cache (e.g. -DGGML_SYCL_F16=OFF).
+            set(_sycl_args
+                -DBUILD_SHARED_LIBS=ON
+                -DGGML_BACKEND_DL=ON
+                -DGGML_SYCL=ON
+                -DOLLAMA_GPU_BACKEND=sycl)
+            if(NOT DEFINED GGML_SYCL_F16)
+                list(APPEND _sycl_args -DGGML_SYCL_F16=ON)
+            endif()
+            if(WIN32)
+                # C code (ggml core, llama, server) is compiled with MSVC's cl;
+                # only the SYCL device code needs the DPC++ compiler.
+                list(APPEND _sycl_args
+                    -DCMAKE_C_COMPILER=cl
+                    -DCMAKE_CXX_COMPILER=icx)
+            else()
+                # On Linux, llama.cpp's official SYCL build uses the Intel
+                # DPC++ compiler (icx) for both C and C++.
+                list(APPEND _sycl_args
+                    -DCMAKE_C_COMPILER=icx
+                    -DCMAKE_CXX_COMPILER=icx)
+            endif()
+            ollama_add_llama_server_build(sycl
+                GENERATOR Ninja
+                RUNNER_DIR sycl
+                TARGETS ggml-sycl
+                CMAKE_ARGS ${_sycl_args})
             list(APPEND _backend_targets ollama-llama-server-${_backend})
         elseif(_backend STREQUAL "vulkan")
             ollama_add_llama_server_build(vulkan
