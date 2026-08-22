@@ -60,17 +60,31 @@ func (r *Runner) Prepare(request *Request) error {
 		return fmt.Errorf("input length (%d tokens) exceeds the model's maximum context length (%d tokens)", len(tokens), r.contextLength)
 	}
 
-	// Cap generation to stay within the model's context length
-	maxGenerate := r.contextLength - len(tokens)
-	if request.Options.NumPredict <= 0 {
-		request.Options.NumPredict = maxGenerate
-	} else {
-		request.Options.NumPredict = min(request.Options.NumPredict, maxGenerate)
-	}
+	request.Options.NumPredict = generationBudget(request.Options.NumPredict, request.Options.NumCtx, r.contextLength, len(tokens))
 
 	request.Tokens = tokens
 	request.MediaItems = items
 	return nil
+}
+
+// generationBudget resolves how many tokens a request may generate. The
+// model's context length bounds every request, and an open-ended num_predict
+// is additionally bounded by the context window the request was scheduled
+// with, the same way llama-server's runner bounds it.
+//
+// contextLength is the checkpoint's max_position_embeddings, which on a large
+// model is 128k tokens or more. Without the num_ctx bound an open-ended
+// request inherits that whole span as its budget, so a checkpoint that talks
+// past its stop token runs for hours and grows the KV cache well past the
+// context window the server advertises for the runner — the request reads as
+// an indefinite hang rather than as a completion.
+func generationBudget(numPredict, numCtx, contextLength, promptLen int) int {
+	maxGenerate := contextLength - promptLen
+	numPredict = llm.BoundedNumPredict(numPredict, numCtx)
+	if numPredict <= 0 {
+		return maxGenerate
+	}
+	return min(numPredict, maxGenerate)
 }
 
 // The runner serializes requests today so we just use a fixed slot ID.
