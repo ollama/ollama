@@ -50,7 +50,9 @@ type Runner struct {
 	spec *speculation
 }
 
-func (r *Runner) Load(modelName string) error {
+// Load reads the model's weights. progress, which may be nil, is called with
+// the fraction of the model materialized so far.
+func (r *Runner) Load(modelName string, progress func(float32)) error {
 	root, err := model.Open(modelName)
 	if err != nil {
 		return err
@@ -104,7 +106,7 @@ func (r *Runner) Load(modelName string) error {
 		mlx.Pin(arr)
 	}
 	mlx.Sweep()
-	mlx.Eval(collected...)
+	evalWithProgress(collected, progress)
 	configureWiredMemory()
 
 	r.Model = m
@@ -218,8 +220,29 @@ func loadTensorsFromManifest(root *model.Root) (map[string]*mlx.Array, error) {
 	return allTensors, nil
 }
 
-func (r *Runner) Run(host, port string, mux http.Handler) error {
+// Run serves HTTP and processes requests. The listener is bound before load
+// runs so the parent can poll /v1/status for load progress; load reports its
+// own status through the handlers' loadState.
+func (r *Runner) Run(host, port string, mux http.Handler, load func(context.Context) error) error {
 	g, ctx := errgroup.WithContext(context.Background())
+
+	ln, err := net.Listen("tcp", net.JoinHostPort(host, port))
+	if err != nil {
+		return err
+	}
+
+	slog.Info("Starting HTTP server", "host", host, "port", port)
+	srv := &http.Server{Handler: mux}
+
+	g.Go(func() error {
+		if err := load(ctx); err != nil {
+			// Wake up Serve so Wait returns the load failure rather than
+			// blocking forever on a runner that has no model.
+			srv.Close()
+			return err
+		}
+		return nil
+	})
 
 	g.Go(func() error {
 		for {
@@ -249,8 +272,10 @@ func (r *Runner) Run(host, port string, mux http.Handler) error {
 	})
 
 	g.Go(func() error {
-		slog.Info("Starting HTTP server", "host", host, "port", port)
-		return http.ListenAndServe(net.JoinHostPort(host, port), mux)
+		if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
 	})
 
 	return g.Wait()

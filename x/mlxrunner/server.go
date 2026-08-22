@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
+	"github.com/ollama/ollama/x/imagegen/manifest"
 	"github.com/ollama/ollama/x/internal/mlxthread"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/sample"
@@ -63,23 +65,34 @@ func Execute(args []string) error {
 		mlxThread: worker,
 	}
 
-	if err := worker.Do(context.Background(), func() error {
-		return runner.Load(modelName)
-	}); err != nil {
-		return err
+	state := newLoadState()
+
+	load := func(ctx context.Context) error {
+		if err := worker.Do(ctx, func() error {
+			return runner.Load(modelName, state.SetProgress)
+		}); err != nil {
+			return err
+		}
+		state.MarkReady(runner.contextLength)
+		return nil
 	}
 
 	readMemory := func() (uint64, error) {
 		return uint64(mlx.ActiveMemory() + mlx.CacheMemory()), nil
 	}
-	initialMemory, err := mlxthread.Call(context.Background(), worker, readMemory)
+	// Weight bytes from the manifest stand in until the model is loaded and the
+	// MLX worker is free to report real usage. Reporting zero instead would
+	// clobber the parent's own estimate, which it reads before the load ends.
+	modelManifest, err := manifest.LoadManifest(modelName)
 	if err != nil {
 		return err
 	}
+	loadingMemory := uint64(modelManifest.TotalTensorSize())
+
 	memoryCache := newStatusMemoryCache(
 		runnerCtx,
-		initialMemory,
-		time.Now(),
+		loadingMemory,
+		time.Time{},
 		statusMemoryRefreshWait,
 		func() (uint64, error) {
 			return mlxthread.Call(runnerCtx, worker, readMemory)
@@ -88,14 +101,20 @@ func Execute(args []string) error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
+		status := state.Status()
+
+		memory := loadingMemory
+		if status == llm.ServerStatusReady {
+			memory = memoryCache.Memory()
+		}
+
 		if err := json.NewEncoder(w).Encode(statusResponse{
-			Status:        0,
-			Progress:      100,
-			ContextLength: runner.contextLength,
-			Memory:        memoryCache.Memory(),
+			Status:        status,
+			Progress:      state.Progress(),
+			ContextLength: state.ContextLength(),
+			Memory:        memory,
 		}); err != nil {
 			slog.Error("Failed to encode response", "error", err)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
 	})
@@ -118,6 +137,12 @@ func Execute(args []string) error {
 	})
 
 	mux.HandleFunc("POST /v1/completions", func(w http.ResponseWriter, r *http.Request) {
+		// Acquires MarkReady: everything below reads what the load wrote.
+		if state.Status() != llm.ServerStatusReady {
+			http.Error(w, "model is still loading", http.StatusServiceUnavailable)
+			return
+		}
+
 		request := Request{Responses: make(chan CompletionResponse)}
 
 		if err := json.NewDecoder(r.Body).Decode(&request.CompletionRequest); err != nil {
@@ -182,6 +207,11 @@ func Execute(args []string) error {
 	})
 
 	mux.HandleFunc("POST /v1/tokenize", func(w http.ResponseWriter, r *http.Request) {
+		if state.Status() != llm.ServerStatusReady {
+			http.Error(w, "model is still loading", http.StatusServiceUnavailable)
+			return
+		}
+
 		var b bytes.Buffer
 		if _, err := io.Copy(&b, r.Body); err != nil {
 			slog.Error("Failed to read request body", "error", err)
@@ -220,10 +250,14 @@ func Execute(args []string) error {
 			level = slog.LevelWarn
 		case recorder.code >= 300:
 			return
+		case r.URL.Path == "/v1/status":
+			// Polled several times a second for the duration of a model
+			// load. Failures are already covered by the cases above.
+			level = logutil.LevelTrace
 		}
 
 		slog.Log(r.Context(), level, "ServeHTTP", "method", r.Method, "path", r.URL.Path, "took", time.Since(t), "status", recorder.Status())
-	}))
+	}), load)
 }
 
 type statusRecorder struct {

@@ -40,6 +40,7 @@ type Client struct {
 	doneErr           error // valid after done is closed
 	client            *http.Client
 	status            *llm.StatusWriter
+	loadStart         time.Time
 	mu                sync.Mutex
 	cmd               *exec.Cmd
 }
@@ -81,31 +82,75 @@ func checkPlatformSupport() error {
 	}
 }
 
-// WaitUntilRunning waits for the subprocess to be ready.
+// WaitUntilRunning waits for the subprocess to be ready. The load timeout is a
+// stall timeout, not a deadline: it is reset every time the runner reports
+// forward progress, so a slow but healthy load is not aborted.
 func (c *Client) WaitUntilRunning(ctx context.Context) error {
-	timeout := time.After(envconfig.LoadTimeout())
-	ticker := time.NewTicker(100 * time.Millisecond)
+	stallDuration := envconfig.LoadTimeout()    // If no progress happens
+	stallTimer := time.Now().Add(stallDuration) // give up if we stall
+
+	slog.Info("waiting for mlx runner to start responding")
+	var lastStatus llm.ServerStatus = -1
+	var lastPollErr error
+	var loadProgress float32
+	fullyLoaded := false
+
+	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			slog.Warn("client connection closed before mlx runner finished loading, aborting load")
+			return fmt.Errorf("timed out waiting for mlx runner to start: %w", ctx.Err())
 		case <-c.done:
 			if msg := c.status.LastError(); msg != "" {
 				return fmt.Errorf("mlx runner failed: %s (exit: %v)", msg, c.doneErr)
 			}
 			return fmt.Errorf("mlx runner exited unexpectedly: %w", c.doneErr)
-		case <-timeout:
-			if msg := c.status.LastError(); msg != "" {
-				return fmt.Errorf("timeout waiting for mlx runner: %s", msg)
-			}
-			return errors.New("timeout waiting for mlx runner to start")
 		case <-ticker.C:
-			if err := c.Ping(ctx); err == nil {
-				slog.Info("mlx runner is ready", "port", c.port)
-				return nil
+		}
+
+		if time.Now().After(stallTimer) {
+			// A runner that never bound its port leaves nothing on stderr.
+			detail := c.status.LastError()
+			if detail == "" && lastPollErr != nil {
+				detail = lastPollErr.Error()
 			}
+			return fmt.Errorf("timed out waiting for mlx runner to start - progress %0.2f - %s", loadProgress, detail)
+		}
+
+		pollCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+		status, err := c.getServerStatus(pollCtx)
+		cancel()
+		if err != nil {
+			// Not listening yet, or briefly unresponsive. An exited runner is
+			// caught by c.done and a wedged one by the stall timer.
+			lastPollErr = err
+			continue
+		}
+
+		if lastStatus != status.Status && status.Status != llm.ServerStatusReady {
+			// Only log on status changes
+			slog.Info("waiting for mlx runner to become available", "status", status.Status)
+		}
+		lastStatus = status.Status
+
+		if status.Status == llm.ServerStatusReady {
+			c.applyStatus(status)
+			slog.Info(fmt.Sprintf("mlx runner started in %0.2f seconds", time.Since(c.loadStart).Seconds()))
+			return nil
+		}
+
+		// Reset the timer as long as we're making forward progress on the load
+		if progress := max(status.Progress, loadProgress); progress != loadProgress {
+			loadProgress = progress
+			slog.Debug(fmt.Sprintf("model load progress %0.2f", loadProgress))
+			stallTimer = time.Now().Add(stallDuration)
+		} else if !fullyLoaded && loadProgress >= 1.0 {
+			slog.Debug("model load completed, waiting for mlx runner to become available", "status", status.Status)
+			stallTimer = time.Now().Add(stallDuration)
+			fullyLoaded = true
 		}
 	}
 }
@@ -389,6 +434,7 @@ func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo
 	cmd.Stderr = status
 
 	slog.Info("starting mlx runner subprocess", "model", c.modelName, "port", c.port)
+	c.loadStart = time.Now()
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start mlx runner: %w", err)
 	}
@@ -418,37 +464,63 @@ func (c *Client) Pid() int {
 }
 
 type statusResponse struct {
-	Status        int
-	Progress      int
+	Status        llm.ServerStatus
+	Progress      float32 // fraction of the model loaded, 0.0 to 1.0
 	ContextLength int
 	Memory        uint64
 }
 
-// Ping implements llm.LlamaServer.
-func (c *Client) Ping(ctx context.Context) error {
+// getServerStatus fetches the runner's health. The runner serves this endpoint
+// from the moment it starts listening, reporting its load status in the body,
+// so a successful response does not mean the model is ready.
+func (c *Client) getServerStatus(ctx context.Context) (statusResponse, error) {
+	var status statusResponse
+
 	reqURL := fmt.Sprintf("http://127.0.0.1:%d/v1/status", c.port)
 	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
-		return err
+		return status, err
 	}
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return err
+		return status, err
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("health check failed: %d", resp.StatusCode)
+		return status, fmt.Errorf("health check failed: %d", resp.StatusCode)
 	}
 
-	var status statusResponse
 	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return status, err
+	}
+
+	return status, nil
+}
+
+// Ping implements llm.LlamaServer.
+func (c *Client) Ping(ctx context.Context) error {
+	status, err := c.getServerStatus(ctx)
+	if err != nil {
 		return err
 	}
 
-	c.contextLength.Store(int64(c.reportedContextLength(status.ContextLength)))
-	c.memory.Store(status.Memory)
+	if status.Status != llm.ServerStatusReady {
+		return fmt.Errorf("mlx runner not ready: %s", status.Status)
+	}
+
+	c.applyStatus(status)
 
 	return nil
+}
+
+// applyStatus records the details the scheduler reads back from the runner.
+// Only ever called with a ready runner's status: while loading, the runner
+// reports no context length, and adopting that would replace what the
+// scheduler already knows with zero.
+func (c *Client) applyStatus(status statusResponse) {
+	c.contextLength.Store(int64(c.reportedContextLength(status.ContextLength)))
+	c.memory.Store(status.Memory)
 }
 
 // Tokenize implements llm.LlamaServer.
