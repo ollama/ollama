@@ -193,10 +193,11 @@ type ToolCall struct {
 }
 
 type Model struct {
-	Id      string `json:"id"`
-	Object  string `json:"object"`
-	Created int64  `json:"created"`
-	OwnedBy string `json:"owned_by"`
+	Id            string `json:"id"`
+	Object        string `json:"object"`
+	Created       int64  `json:"created"`
+	OwnedBy       string `json:"owned_by"`
+	ContextLength int    `json:"context_length,omitempty"`
 }
 
 type Embedding struct {
@@ -448,7 +449,7 @@ func ToCompleteChunk(id string, r api.GenerateResponse) CompletionChunk {
 
 // ToListCompletion converts an api.ListResponse to ListCompletion
 func ToListCompletion(r api.ListResponse) ListCompletion {
-	var data []Model
+	data := make([]Model, 0, len(r.Models))
 	for _, m := range r.Models {
 		id := m.Model
 		if id == "" {
@@ -456,10 +457,11 @@ func ToListCompletion(r api.ListResponse) ListCompletion {
 		}
 
 		data = append(data, Model{
-			Id:      id,
-			Object:  "model",
-			Created: m.ModifiedAt.Unix(),
-			OwnedBy: model.ParseName(id).Namespace,
+			Id:            id,
+			Object:        "model",
+			Created:       m.ModifiedAt.Unix(),
+			OwnedBy:       model.ParseName(id).Namespace,
+			ContextLength: m.Details.ContextLength,
 		})
 	}
 
@@ -513,10 +515,11 @@ func floatsToBase64(floats []float32) string {
 // ToModel converts an api.ShowResponse to Model
 func ToModel(r api.ShowResponse, m string) Model {
 	return Model{
-		Id:      m,
-		Object:  "model",
-		Created: r.ModifiedAt.Unix(),
-		OwnedBy: model.ParseName(m).Namespace,
+		Id:            m,
+		Object:        "model",
+		Created:       r.ModifiedAt.Unix(),
+		OwnedBy:       model.ParseName(m).Namespace,
+		ContextLength: r.Details.ContextLength,
 	}
 }
 

@@ -369,6 +369,7 @@ func TestToListCompletionUsesModelIdentity(t *testing.T) {
 				Name:       "legacy-name:latest",
 				Model:      "namespace/exposed-model:latest",
 				ModifiedAt: modified,
+				Details:    api.ModelDetails{ContextLength: 131072},
 			},
 			{
 				Name:       "fallback-name:latest",
@@ -393,12 +394,50 @@ func TestToListCompletionUsesModelIdentity(t *testing.T) {
 	if result.Data[0].Created != modified.Unix() {
 		t.Fatalf("created = %d, want %d", result.Data[0].Created, modified.Unix())
 	}
+	if result.Data[0].ContextLength != 131072 {
+		t.Fatalf("context_length = %d, want 131072", result.Data[0].ContextLength)
+	}
 
 	if result.Data[1].Id != "fallback-name:latest" {
 		t.Fatalf("fallback id = %q, want name field", result.Data[1].Id)
 	}
 	if result.Data[1].OwnedBy != "library" {
 		t.Fatalf("fallback owned_by = %q, want library", result.Data[1].OwnedBy)
+	}
+}
+
+func TestToListCompletionEmpty(t *testing.T) {
+	result := ToListCompletion(api.ListResponse{})
+	if result.Data == nil {
+		t.Fatal("Data is nil, want non-nil empty slice []")
+	}
+	if len(result.Data) != 0 {
+		t.Fatalf("len(Data) = %d, want 0", len(result.Data))
+	}
+}
+
+func TestToModel(t *testing.T) {
+	modified := time.Unix(1234567890, 0).UTC()
+	resp := api.ShowResponse{
+		ModifiedAt: modified,
+		Details:    api.ModelDetails{ContextLength: 262144},
+	}
+
+	model := ToModel(resp, "test-model:latest")
+	if model.Id != "test-model:latest" {
+		t.Fatalf("id = %q, want test-model:latest", model.Id)
+	}
+	if model.Object != "model" {
+		t.Fatalf("object = %q, want model", model.Object)
+	}
+	if model.Created != modified.Unix() {
+		t.Fatalf("created = %d, want %d", model.Created, modified.Unix())
+	}
+	if model.OwnedBy != "library" {
+		t.Fatalf("owned_by = %q, want library", model.OwnedBy)
+	}
+	if model.ContextLength != 262144 {
+		t.Fatalf("context_length = %d, want 262144", model.ContextLength)
 	}
 }
 
