@@ -11,6 +11,12 @@ import (
 	"golang.org/x/term"
 )
 
+// PlainStringer is an optional interface for States that can render
+// without ANSI animation sequences, used when output is not a TTY.
+type PlainStringer interface {
+	PlainString() string
+}
+
 const (
 	defaultTermWidth  = 80
 	defaultTermHeight = 24
@@ -29,13 +35,20 @@ type Progress struct {
 
 	states []State
 
+	tty     bool // true when w is a terminal that supports ANSI codes
+	printed int  // number of states already printed in non-TTY mode
+
 	stopOnce sync.Once
 	// done is closed to tell the render loop to exit.
 	done chan struct{}
 }
 
 func NewProgress(w io.Writer) *Progress {
-	p := &Progress{w: bufio.NewWriter(w), done: make(chan struct{})}
+	tty := false
+	if f, ok := w.(*os.File); ok {
+		tty = term.IsTerminal(int(f.Fd()))
+	}
+	p := &Progress{w: bufio.NewWriter(w), tty: tty, done: make(chan struct{})}
 	go p.start()
 	return p
 }
@@ -66,7 +79,7 @@ func (p *Progress) stop() (bool, int) {
 
 func (p *Progress) Stop() bool {
 	stopped, _ := p.stop()
-	if stopped {
+	if stopped && p.tty {
 		fmt.Fprint(p.w, "\n")
 		p.w.Flush()
 	}
@@ -115,6 +128,22 @@ func (p *Progress) renderLocked() {
 	}
 
 	defer p.w.Flush()
+
+	if !p.tty {
+		for i := p.printed; i < len(p.states); i++ {
+			var msg string
+			if ps, ok := p.states[i].(PlainStringer); ok {
+				msg = ps.PlainString()
+			} else {
+				msg = p.states[i].String()
+			}
+			if msg != "" {
+				fmt.Fprintln(p.w, msg)
+			}
+		}
+		p.printed = len(p.states)
+		return
+	}
 
 	// eliminate flickering on terminals that support synchronized output
 	fmt.Fprint(p.w, "\033[?2026h")
