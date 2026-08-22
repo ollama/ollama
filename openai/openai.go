@@ -72,10 +72,15 @@ type CompleteChunkChoice struct {
 	Logprobs     *ChoiceLogprobs `json:"logprobs,omitempty"`
 }
 
+type PromptTokensDetails struct {
+	CachedTokens int `json:"cached_tokens"`
+}
+
 type Usage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	PromptTokens        int                 `json:"prompt_tokens"`
+	PromptTokensDetails PromptTokensDetails `json:"prompt_tokens_details"`
+	CompletionTokens    int                 `json:"completion_tokens"`
+	TotalTokens         int                 `json:"total_tokens"`
 }
 
 type ResponseFormat struct {
@@ -239,9 +244,10 @@ func NewError(code int, message string) ErrorResponse {
 // ToUsage converts an api.ChatResponse to Usage
 func ToUsage(r api.ChatResponse) Usage {
 	return Usage{
-		PromptTokens:     r.Metrics.PromptEvalCount,
-		CompletionTokens: r.Metrics.EvalCount,
-		TotalTokens:      r.Metrics.PromptEvalCount + r.Metrics.EvalCount,
+		PromptTokens:        r.Metrics.PromptEvalCount,
+		PromptTokensDetails: PromptTokensDetails{CachedTokens: r.Metrics.PromptEvalCachedCount},
+		CompletionTokens:    r.Metrics.EvalCount,
+		TotalTokens:         r.Metrics.PromptEvalCount + r.Metrics.EvalCount,
 	}
 }
 
@@ -397,9 +403,10 @@ func FinishChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletio
 // ToUsageGenerate converts an api.GenerateResponse to Usage
 func ToUsageGenerate(r api.GenerateResponse) Usage {
 	return Usage{
-		PromptTokens:     r.Metrics.PromptEvalCount,
-		CompletionTokens: r.Metrics.EvalCount,
-		TotalTokens:      r.Metrics.PromptEvalCount + r.Metrics.EvalCount,
+		PromptTokens:        r.Metrics.PromptEvalCount,
+		PromptTokensDetails: PromptTokensDetails{CachedTokens: r.Metrics.PromptEvalCachedCount},
+		CompletionTokens:    r.Metrics.EvalCount,
+		TotalTokens:         r.Metrics.PromptEvalCount + r.Metrics.EvalCount,
 	}
 }
 

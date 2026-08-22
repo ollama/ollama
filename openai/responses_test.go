@@ -1743,6 +1743,32 @@ func TestToResponse_WithReasoning(t *testing.T) {
 	}
 }
 
+func TestToResponse_UsageIncludesCachedTokens(t *testing.T) {
+	response := ToResponse("gpt-oss:20b", "resp_123", "msg_456", api.ChatResponse{
+		CreatedAt: time.Now(),
+		Message:   api.Message{Content: "The answer is 42"},
+		Done:      true,
+		Metrics: api.Metrics{
+			PromptEvalCount:       10,
+			PromptEvalCachedCount: 4,
+			EvalCount:             3,
+		},
+	}, ResponsesRequest{})
+
+	if response.Usage == nil {
+		t.Fatal("expected usage")
+	}
+	if response.Usage.InputTokens != 10 {
+		t.Errorf("InputTokens = %d, want 10", response.Usage.InputTokens)
+	}
+	if response.Usage.InputTokensDetails.CachedTokens != 4 {
+		t.Errorf("CachedTokens = %d, want 4", response.Usage.InputTokensDetails.CachedTokens)
+	}
+	if response.Usage.TotalTokens != 13 {
+		t.Errorf("TotalTokens = %d, want 13", response.Usage.TotalTokens)
+	}
+}
+
 func TestFromResponsesRequest_Instructions(t *testing.T) {
 	reqJSON := `{
 		"model": "gpt-oss:20b",
@@ -2095,6 +2121,11 @@ func TestResponsesStreamConverter_OutputIncludesContent(t *testing.T) {
 	events := converter.Process(api.ChatResponse{
 		Message: api.Message{},
 		Done:    true,
+		Metrics: api.Metrics{
+			PromptEvalCount:       10,
+			PromptEvalCachedCount: 4,
+			EvalCount:             3,
+		},
 	})
 
 	// Find the output_item.done event
@@ -2143,6 +2174,11 @@ func TestResponsesStreamConverter_ResponseCompletedIncludesOutput(t *testing.T) 
 	events := converter.Process(api.ChatResponse{
 		Message: api.Message{},
 		Done:    true,
+		Metrics: api.Metrics{
+			PromptEvalCount:       10,
+			PromptEvalCachedCount: 4,
+			EvalCount:             3,
+		},
 	})
 
 	// Find the response.completed event
@@ -2171,6 +2207,12 @@ func TestResponsesStreamConverter_ResponseCompletedIncludesOutput(t *testing.T) 
 	item := output[0].(map[string]any)
 	if item["type"] != "message" {
 		t.Errorf("output[0].type = %q, want %q", item["type"], "message")
+	}
+
+	usage := response["usage"].(map[string]any)
+	inputTokensDetails := usage["input_tokens_details"].(map[string]any)
+	if inputTokensDetails["cached_tokens"] != 4 {
+		t.Errorf("cached_tokens = %v, want 4", inputTokensDetails["cached_tokens"])
 	}
 }
 
