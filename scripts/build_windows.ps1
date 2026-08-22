@@ -840,7 +840,8 @@ function mlxCuda13 {
                     $cudaFlags += "-DCMAKE_CUDA_FLAGS=$env:OLLAMA_CMAKE_CUDA_FLAGS"
                 }
                 $cudaToolsetArgs = cudaCMakeArgs $cuda
-                $configureArgs = @("-S", ".", "-B", "build\mlx_cuda_v$cudaMajorVer", "-DOLLAMA_MLX_BACKENDS=cuda_v$cudaMajorVer") + $cudaToolsetArgs + $cudaFlags + @("-DOLLAMA_PAYLOAD_INSTALL_PREFIX=$script:DIST_DIR", "--install-prefix", "$script:DIST_DIR")
+                $mlxDistDir = "${script:SRC_DIR}\dist\windows-amd64-mlx"
+                $configureArgs = @("-S", ".", "-B", "build\mlx_cuda_v$cudaMajorVer", "-DCMAKE_BUILD_TYPE=Release", "-DOLLAMA_MLX_BACKENDS=cuda_v$cudaMajorVer") + $cudaToolsetArgs + $cudaFlags + @("-DOLLAMA_PAYLOAD_INSTALL_PREFIX=$script:DIST_DIR", "-DOLLAMA_MLX_PAYLOAD_INSTALL_PREFIX=$mlxDistDir", "--install-prefix", "$script:DIST_DIR")
                 & cmake @configureArgs
                 if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
                 $buildArgs = @("--build", "build\mlx_cuda_v$cudaMajorVer", "--target", "ollama-mlx-cuda_v$cudaMajorVer", "--config", "Release", "--parallel", "$script:JOBS")
@@ -1245,8 +1246,8 @@ function zip {
                 $jobs += newDependencyAuditJob "${distDir}\windows-amd64-rocm" "windows-amd64-rocm" "${distDir}\dependency-audit-windows-amd64-rocm.txt" $amd64Dir
             }
 
-            # Stage MLX into its own directory for independent compression
-            if (stageComponents $amd64Dir "${distDir}\windows-amd64-mlx" "mlx_*" "MLX") {
+            # CMake installs the MLX overlay into its own staging directory.
+            if (Test-Path -Path "${distDir}\windows-amd64-mlx\lib\ollama") {
                 Write-Output "Generating ${distDir}\ollama-windows-amd64-mlx.zip"
                 $jobs += newZipJob "${distDir}\windows-amd64-mlx" "${distDir}\ollama-windows-amd64-mlx.zip"
                 $jobs += newDependencyAuditJob "${distDir}\windows-amd64-mlx" "windows-amd64-mlx" "${distDir}\dependency-audit-windows-amd64-mlx.txt" $amd64Dir
@@ -1287,7 +1288,6 @@ function zip {
     } finally {
         # Always restore staged components back into the main tree
         restoreComponents $amd64Dir "${distDir}\windows-amd64-rocm"
-        restoreComponents $amd64Dir "${distDir}\windows-amd64-mlx"
     }
 }
 
