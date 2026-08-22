@@ -218,6 +218,11 @@ func canonicalLocalPath(path string) (string, error) {
 func fileDigestMap(path string) (map[string]string, error) {
 	fl := make(map[string]string)
 
+	path, err := canonicalLocalPath(path)
+	if err != nil {
+		return nil, err
+	}
+
 	fi, err := os.Stat(path)
 	if err != nil {
 		return nil, err
