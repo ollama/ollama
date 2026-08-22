@@ -21,11 +21,18 @@ type qwenParserState int
 const (
 	toolOpenTag  = "<tool_call>"
 	toolCloseTag = "</tool_call>"
+	// functionOpenTag/functionCloseTag delimit the inner function block. Normally
+	// they are wrapped by toolOpenTag/toolCloseTag, but qwen3-coder occasionally
+	// emits the function block while omitting the opening <tool_call> tag, so we
+	// also accept a bare <function=...> block as a tool call (see eat).
+	functionOpenTag  = "<function="
+	functionCloseTag = "</function>"
 )
 
 const (
 	qwenParserState_LookingForToolStart qwenParserState = iota
 	qwenParserState_CollectingToolContent
+	qwenParserState_CollectingBareFunction
 )
 
 type Qwen3CoderParser struct {
@@ -135,29 +142,48 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 
 	switch p.state {
 	case qwenParserState_LookingForToolStart:
-		if strings.Contains(p.acc.String(), toolOpenTag) {
+		acc := p.acc.String()
+		toolIdx := strings.Index(acc, toolOpenTag)
+		fnIdx := strings.Index(acc, functionOpenTag)
+		if toolIdx >= 0 && (fnIdx < 0 || toolIdx <= fnIdx) {
 			// we found a full tool open tag, so we can emit the content before the
 			// tag, being sure to trim any trailing whitespace
-			split := strings.SplitN(p.acc.String(), toolOpenTag, 2)
-			before := split[0]
+			before := acc[:toolIdx]
 			before = strings.TrimRightFunc(before, unicode.IsSpace)
 			if len(before) > 0 {
 				events = append(events, qwenEventContent{content: before})
 			}
-			after := split[1]
+			after := acc[toolIdx+len(toolOpenTag):]
 			p.acc.Reset()
 			p.acc.WriteString(after)
 			p.state = qwenParserState_CollectingToolContent
 			return events, true
-		} else if overlap := overlap(p.acc.String(), toolOpenTag); overlap > 0 {
-			// we found a partial tool open tag, so we can emit the unambiguous part,
-			// which is the (trailing-whitespace trimmed) content before the partial
-			// tool open tag
-			beforePartialTag := p.acc.String()[:len(p.acc.String())-overlap]
+		} else if fnIdx >= 0 {
+			// we found a bare <function=...> block with no preceding <tool_call>.
+			// qwen3-coder sometimes omits the opening <tool_call> (while still
+			// emitting the function block and a stray closing </tool_call>), which
+			// would otherwise leak the entire tool call into content. Recover it by
+			// treating the function block itself as the tool call. We keep the
+			// <function= marker in the buffer so the collected raw matches the
+			// normal <tool_call>-wrapped form.
+			before := acc[:fnIdx]
+			before = strings.TrimRightFunc(before, unicode.IsSpace)
+			if len(before) > 0 {
+				events = append(events, qwenEventContent{content: before})
+			}
+			p.acc.Reset()
+			p.acc.WriteString(acc[fnIdx:])
+			p.state = qwenParserState_CollectingBareFunction
+			return events, true
+		} else if overlap := maxOverlap(acc, toolOpenTag, functionOpenTag); overlap > 0 {
+			// we found a partial open tag (either form), so we can emit the
+			// unambiguous part, which is the (trailing-whitespace trimmed) content
+			// before the partial open tag
+			beforePartialTag := acc[:len(acc)-overlap]
 			trailingWhitespaceLen := trailingWhitespaceLen(beforePartialTag)
 			ambiguousStart := len(beforePartialTag) - trailingWhitespaceLen
-			unambiguous := p.acc.String()[:ambiguousStart]
-			ambiguous := p.acc.String()[ambiguousStart:]
+			unambiguous := acc[:ambiguousStart]
+			ambiguous := acc[ambiguousStart:]
 			p.acc.Reset()
 			p.acc.WriteString(ambiguous)
 			if len(unambiguous) > 0 {
@@ -167,10 +193,10 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 		} else {
 			// we found content that is entirely not a tool call. We should withhold
 			// any trailing whitespace in case this is the end of the content
-			whitespaceLen := trailingWhitespaceLen(p.acc.String())
-			ambiguousStart := len(p.acc.String()) - whitespaceLen
-			unambiguous := p.acc.String()[:ambiguousStart]
-			ambiguous := p.acc.String()[ambiguousStart:]
+			whitespaceLen := trailingWhitespaceLen(acc)
+			ambiguousStart := len(acc) - whitespaceLen
+			unambiguous := acc[:ambiguousStart]
+			ambiguous := acc[ambiguousStart:]
 			p.acc.Reset()
 			p.acc.WriteString(ambiguous)
 			if len(unambiguous) > 0 {
@@ -178,6 +204,27 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 			}
 			return events, false
 		}
+	case qwenParserState_CollectingBareFunction:
+		// like CollectingToolContent, but entered via a bare <function=...> with no
+		// wrapping <tool_call>. We close on </function> and then swallow an optional
+		// trailing </tool_call> (with surrounding whitespace) that the model emits
+		// even though it omitted the opener.
+		if idx := strings.Index(p.acc.String(), functionCloseTag); idx >= 0 {
+			raw := p.acc.String()[:idx+len(functionCloseTag)]
+			rest := p.acc.String()[idx+len(functionCloseTag):]
+			rest = strings.TrimLeftFunc(rest, unicode.IsSpace)
+			rest = strings.TrimPrefix(rest, toolCloseTag)
+			rest = strings.TrimLeftFunc(rest, unicode.IsSpace)
+			p.acc.Reset()
+			p.acc.WriteString(rest)
+			events = append(events, qwenEventRawToolCall{raw: raw})
+			p.state = qwenParserState_LookingForToolStart
+			return events, true
+		}
+		// we haven't seen the full closing tag yet, so we keep collecting. As with
+		// CollectingToolContent we don't stream back the unparsed tool content, so
+		// there's no need to check for a partial tag here.
+		return events, false
 	case qwenParserState_CollectingToolContent:
 		if strings.Contains(p.acc.String(), toolCloseTag) {
 			split := strings.SplitN(p.acc.String(), toolCloseTag, 2)
@@ -202,6 +249,19 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 	default:
 		panic("unreachable")
 	}
+}
+
+// maxOverlap returns the largest suffix-of-s that is a prefix of any of the
+// given delimiters. It lets the parser withhold a trailing partial open tag
+// when more than one open tag (<tool_call> or <function=) is possible.
+func maxOverlap(s string, delims ...string) int {
+	best := 0
+	for _, delim := range delims {
+		if o := overlap(s, delim); o > best {
+			best = o
+		}
+	}
+	return best
 }
 
 type XMLFunctionCall struct {
