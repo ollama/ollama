@@ -224,6 +224,7 @@ console.log(response.message.content);
 - [VT Code](https://github.com/vinhnx/vtcode) - Rust-based terminal coding agent with Tree-sitter
 - [QodeAssist](https://github.com/Palm1r/QodeAssist) - AI coding assistant for Qt Creator
 - [AI Toolkit for VS Code](https://aka.ms/ai-tooklit/ollama-docs) - Microsoft-official VS Code extension
+- [AFK](https://docs.mooglest.com/providers#ollama) - Browser-based command center for coding-agent sessions with Ollama via a local model connection
 - [Open Interpreter](https://docs.openinterpreter.com/language-model-setup/local-models/ollama) - Natural language interface for computers
 
 ### Libraries & SDKs
