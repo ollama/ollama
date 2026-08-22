@@ -79,7 +79,7 @@ export function SidebarLayout({
         >
           {title && (
             <h1
-              className={`${sidebarOpen ? "pl-6" : isWindows ? "pl-16" : "pl-36"} font-rounded text-md font-medium dark:text-white`}
+              className={`${sidebarOpen ? "pl-6" : isWindows ? "pl-16" : "pl-36"} transition-[padding-left] duration-300 font-rounded text-md font-medium dark:text-white`}
             >
               {title}
             </h1>
