@@ -416,3 +416,9 @@ jobs:
         run: go test -count=1 -tags updater_live ./app/...
 
       - uses: golangci/golangci-lint-action@v9
+
+      - name: lint integration suites
+        if: ${{ startsWith(matrix.os, 'ubuntu') }}
+        uses: golangci/golangci-lint-action@v9
+        with:
+          args: --build-tags=integration,fast,release,library,create,generate ./integration/...
