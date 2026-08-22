@@ -28,33 +28,61 @@ type Progress struct {
 	pos int
 
 	ticker *time.Ticker
+	done   chan struct{}
 	states []State
 }
 
 func NewProgress(w io.Writer) *Progress {
-	p := &Progress{w: bufio.NewWriter(w)}
-	go p.start()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	p := &Progress{
+		w:      bufio.NewWriter(w),
+		ticker: ticker,
+		done:   make(chan struct{}),
+	}
+	go p.start(ticker)
 	return p
 }
 
-func (p *Progress) stop() bool {
+// stop halts rendering, draws the final state, and writes the closing output
+// in a single critical section so it cannot interleave with the render
+// goroutine on the shared writer. clear selects the StopAndClear epilogue
+// (erase the progress lines) over the Stop epilogue (trailing newline).
+func (p *Progress) stop(clear bool) bool {
 	p.mu.Lock()
-	states := p.states
-	ticker := p.ticker
-	if ticker != nil {
+	defer p.mu.Unlock()
+
+	if clear {
+		defer p.w.Flush()
+		fmt.Fprint(p.w, "\033[?25l")
+		defer fmt.Fprint(p.w, "\033[?25h")
+	}
+
+	if p.ticker != nil {
+		p.ticker.Stop()
 		p.ticker = nil
-	}
-	p.mu.Unlock()
+		close(p.done)
 
-	for _, state := range states {
-		if spinner, ok := state.(*Spinner); ok {
-			spinner.Stop()
+		for _, state := range p.states {
+			if spinner, ok := state.(*Spinner); ok {
+				spinner.Stop()
+			}
 		}
-	}
 
-	if ticker != nil {
-		ticker.Stop()
-		p.render()
+		p.renderLocked()
+
+		if clear {
+			// clear all progress lines
+			for i := range p.pos {
+				if i > 0 {
+					fmt.Fprint(p.w, "\033[A")
+				}
+				fmt.Fprint(p.w, "\033[2K\033[1G")
+			}
+		} else {
+			fmt.Fprint(p.w, "\n")
+			p.w.Flush()
+		}
+
 		return true
 	}
 
@@ -62,32 +90,11 @@ func (p *Progress) stop() bool {
 }
 
 func (p *Progress) Stop() bool {
-	stopped := p.stop()
-	if stopped {
-		fmt.Fprint(p.w, "\n")
-		p.w.Flush()
-	}
-	return stopped
+	return p.stop(false)
 }
 
 func (p *Progress) StopAndClear() bool {
-	defer p.w.Flush()
-
-	fmt.Fprint(p.w, "\033[?25l")
-	defer fmt.Fprint(p.w, "\033[?25h")
-
-	stopped := p.stop()
-	if stopped {
-		// clear all progress lines
-		for i := range p.pos {
-			if i > 0 {
-				fmt.Fprint(p.w, "\033[A")
-			}
-			fmt.Fprint(p.w, "\033[2K\033[1G")
-		}
-	}
-
-	return stopped
+	return p.stop(true)
 }
 
 func (p *Progress) Add(key string, state State) {
@@ -98,13 +105,16 @@ func (p *Progress) Add(key string, state State) {
 }
 
 func (p *Progress) render() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.renderLocked()
+}
+
+func (p *Progress) renderLocked() {
 	_, termHeight, err := term.GetSize(int(os.Stderr.Fd()))
 	if err != nil {
 		termHeight = defaultTermHeight
 	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
 
 	defer p.w.Flush()
 
@@ -133,14 +143,13 @@ func (p *Progress) render() {
 	p.pos = len(p.states)
 }
 
-func (p *Progress) start() {
-	ticker := time.NewTicker(100 * time.Millisecond)
-
-	p.mu.Lock()
-	p.ticker = ticker
-	p.mu.Unlock()
-
-	for range ticker.C {
-		p.render()
+func (p *Progress) start(ticker *time.Ticker) {
+	for {
+		select {
+		case <-p.done:
+			return
+		case <-ticker.C:
+			p.render()
+		}
 	}
 }
