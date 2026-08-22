@@ -659,9 +659,6 @@ jobs:
           build-args: ${{ matrix.build-args }}
           outputs: type=local,dest=dist/${{ matrix.os }}-${{ matrix.arch }}
           cache-from: ${{ matrix.cache-from }}
-      - name: Deduplicate CUDA libraries
-        run: |
-          ./scripts/deduplicate_cuda_libs.sh dist/${{ matrix.os }}-${{ matrix.arch }}
       - name: Verify Linux build payloads
         shell: bash
         run: |
@@ -673,6 +670,24 @@ jobs:
           do
             [ -f "$payload" ] || { echo "missing $payload"; exit 1; }
           done
+          if [ "${{ matrix.arch }}" = "amd64" ] && [ "${{ matrix.suffix }}" != "-rocm" ]; then
+            for payload in \
+              "$base/lib/ollama/mlx_cuda_v13/libopenblas.so.0" \
+              "$base/lib/ollama/mlx_cuda_v13/libgfortran.so.5" \
+              "$base/lib/ollama/mlx_cuda_v13/libquadmath.so.0"
+            do
+              [ -f "$payload" ] || { echo "missing $payload"; exit 1; }
+            done
+            mlx_deps="$(ldd "$base/lib/ollama/mlx_cuda_v13/libmlxc.so")"
+            echo "$mlx_deps"
+            for dependency in libgfortran.so.5 libquadmath.so.0
+            do
+              echo "$mlx_deps" | grep -E "^[[:space:]]*$dependency => .*mlx_cuda_v13/" >/dev/null || {
+                echo "$dependency does not resolve from the MLX payload"
+                exit 1
+              }
+            done
+          fi
       - run: |
           for COMPONENT in bin/* lib/ollama/*; do
             case "$COMPONENT" in
