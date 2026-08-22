@@ -769,7 +769,7 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 	var launchModels []LaunchModel
 	liveConfigMatches := slices.Equal(editor.Models(), models)
 	if needsConfigure || req.ModelOverride != "" || !savedMatchesModels(saved, models) || !liveConfigMatches {
-		launchModels = c.modelInventory().Resolve(ctx, models)
+		launchModels = c.resolveConfigModels(ctx, models)
 		if err := prepareEditorIntegration(name, editor, launchModels); err != nil {
 			return err
 		}
@@ -806,7 +806,7 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 		if err != nil {
 			return err
 		}
-		if err := prepareManagedSingleIntegration(name, managed, target, c.modelInventory().Resolve(ctx, configureModels)); err != nil {
+		if err := prepareManagedSingleIntegration(name, managed, target, c.resolveConfigModels(ctx, configureModels)); err != nil {
 			return err
 		}
 		if refresher, ok := managed.(ManagedRuntimeRefresher); ok {
@@ -1444,6 +1444,15 @@ func hasLocalModel(inventory []LaunchModel, name string) bool {
 
 func (c *launcherClient) resolveRunModels(ctx context.Context, models []string) []LaunchModel {
 	return c.modelInventory().Resolve(ctx, models)
+}
+
+// resolveConfigModels additionally enriches names the local model list could
+// not describe via Show. Run paths use resolveRunModels to avoid probing
+// saved models that are intentionally not validated.
+func (c *launcherClient) resolveConfigModels(ctx context.Context, models []string) []LaunchModel {
+	inventory := c.modelInventory()
+	resolved := inventory.Resolve(ctx, models)
+	return inventory.enrichUnresolvedFromShow(ctx, resolved)
 }
 
 func runIntegration(runner Runner, modelName string, models []LaunchModel, args []string) error {

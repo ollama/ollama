@@ -588,12 +588,10 @@ func (p *Pi) Edit(models []LaunchModel) error {
 				if !isPiOllamaModel(modelObj) {
 					newModels = append(newModels, m)
 				} else if selectedSet[id] {
-					// Rebuild stale managed cloud entries so createConfig refreshes
-					// the whole entry instead of patching it in place.
-					if !hasContextWindow(modelObj) {
-						if _, ok := lookupCloudModelLimit(id); ok {
-							continue
-						}
+					// Rebuild stale managed entries missing contextWindow when the
+					// freshly resolved models can now supply it.
+					if !hasContextWindow(modelObj) && freshContextAvailable(models, id) {
+						continue
 					}
 					newModels = append(newModels, m)
 					selectedSet[id] = false
@@ -672,6 +670,14 @@ func isPiOllamaModel(cfg map[string]any) bool {
 		return true
 	}
 	return false
+}
+
+// freshContextAvailable reports whether the models being written by Edit
+// contain id with context metadata.
+func freshContextAvailable(models []LaunchModel, id string) bool {
+	return slices.IndexFunc(models, func(m LaunchModel) bool {
+		return m.Name == id && m.ContextLength > 0
+	}) >= 0
 }
 
 func hasContextWindow(cfg map[string]any) bool {
