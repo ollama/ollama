@@ -4,7 +4,7 @@ Install prerequisites:
 
 - [Go](https://go.dev/doc/install)
 - [CMake](https://cmake.org/download/) 3.24 or newer
-- C/C++ compiler: Clang on macOS, Visual Studio 2022 C++ tools on Windows, or GCC/Clang on Linux
+- C/C++ compiler: Clang on macOS, Visual Studio 2022 C++ tools and GCC on Windows, or GCC/Clang on Linux
 - [Ninja](https://github.com/ninja-build/ninja/releases) in `PATH` is recommended, especially on Windows
 
 For pure Go iteration against an existing native payload, run Ollama from the repository root:
@@ -72,6 +72,7 @@ xcodebuild -downloadComponent MetalToolchain
 Additional prerequisites:
 
 - [Visual Studio 2022](https://visualstudio.microsoft.com/downloads/) including the Native Desktop Workload
+- GCC on path (e.g. install via [MSYS2](https://www.msys2.org/) pacman, add to PATH)
 - (Optional) AMD GPU support
     - [ROCm](https://rocm.docs.amd.com/en/latest/)
 - (Optional) NVIDIA GPU support
