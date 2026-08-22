@@ -276,6 +276,67 @@ func ConvertAdapter(fsys fs.FS, f *os.File, baseKV ofs.Config) error {
 	return writeFile(f, conv.KV(baseKV), conv.Tensors(ts))
 }
 
+// CheckArchitecture reads the config.json at configPath and returns an error if
+// the model architecture is not supported by ConvertModel. It returns nil when
+// config.json is missing, unreadable, or unparseable — those errors surface
+// with full context inside ConvertModel. The intent is to fail fast before any
+// large safetensors blobs are copied into the staging directory.
+func CheckArchitecture(configPath string) error {
+	bts, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil
+	}
+	bts = sanitizeNonFiniteJSON(bts)
+	var p ModelParameters
+	if err := json.Unmarshal(bts, &p); err != nil || len(p.Architectures) == 0 {
+		return nil
+	}
+	switch p.Architectures[0] {
+	case "LlamaForCausalLM",
+		"MllamaForConditionalGeneration",
+		"Llama4ForConditionalGeneration",
+		"Mistral3ForConditionalGeneration",
+		"Ministral3ForCausalLM",
+		"MixtralForCausalLM",
+		"GemmaForCausalLM",
+		"Gemma2ForCausalLM",
+		"Gemma3ForCausalLM",
+		"Gemma3ForConditionalGeneration",
+		"Gemma3TextModel",
+		"Gemma3nForConditionalGeneration",
+		"Gemma4ForCausalLM",
+		"Gemma4ForConditionalGeneration",
+		"Phi3ForCausalLM",
+		"Qwen2ForCausalLM",
+		"Qwen2_5_VLForConditionalGeneration",
+		"Qwen3VLForConditionalGeneration",
+		"Qwen3VLMoeForConditionalGeneration",
+		"Olmo3ForCausalLM",
+		"BertModel",
+		"NomicBertModel",
+		"NomicBertMoEModel",
+		"CohereForCausalLM",
+		"GptOssForCausalLM",
+		"DeepseekOCRForCausalLM",
+		"DeepseekV3ForCausalLM",
+		"Glm4MoeLiteForCausalLM",
+		"LagunaForCausalLM",
+		"GlmOcrForConditionalGeneration",
+		"Lfm2ForCausalLM",
+		"Lfm2MoeForCausalLM",
+		"Lfm2VlForConditionalGeneration",
+		"Qwen3NextForCausalLM",
+		"Qwen3_5ForConditionalGeneration",
+		"Qwen3_5MoeForConditionalGeneration",
+		"NemotronH_Nano_VL_V2",
+		"NemotronH_Nano_Omni_Reasoning_V3",
+		"NemotronHForCausalLM":
+		return nil
+	default:
+		return fmt.Errorf("unsupported architecture %q", p.Architectures[0])
+	}
+}
+
 func LoadModelMetadata(fsys fs.FS) (ModelKV, *Tokenizer, error) {
 	bts, err := fs.ReadFile(fsys, "config.json")
 	if err != nil {
