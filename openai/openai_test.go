@@ -1050,3 +1050,89 @@ func TestFromChatRequest_TopLogprobsRange(t *testing.T) {
 		})
 	}
 }
+
+func TestFromChatRequest_ToolChoice(t *testing.T) {
+	tools := []api.Tool{
+		{Type: "function", Function: api.ToolFunction{Name: "get_weather", Description: "Get the weather"}},
+		{Type: "function", Function: api.ToolFunction{Name: "get_time", Description: "Get the time"}},
+	}
+
+	forcedAny := "You must call one of the available tools instead of replying with plain text."
+	forcedTime := "You must call the \"get_time\" function instead of replying with plain text."
+
+	cases := []struct {
+		name        string
+		toolChoice  any
+		tools       []api.Tool
+		wantTools   int
+		wantForced  string
+		wantNoForce bool
+		wantErr     bool
+	}{
+		{name: "unset keeps tools", toolChoice: nil, tools: tools, wantTools: 2, wantNoForce: true},
+		{name: "auto keeps tools", toolChoice: "auto", tools: tools, wantTools: 2, wantNoForce: true},
+		{name: "none strips tools", toolChoice: "none", tools: tools, wantTools: 0, wantNoForce: true},
+		{name: "none without tools", toolChoice: "none", tools: nil, wantTools: 0, wantNoForce: true},
+		{name: "required forces a tool call", toolChoice: "required", tools: tools, wantTools: 2, wantForced: forcedAny},
+		{
+			name:       "named function constrains to that tool",
+			toolChoice: map[string]any{"type": "function", "function": map[string]any{"name": "get_time"}},
+			tools:      tools,
+			wantTools:  1,
+			wantForced: forcedTime,
+		},
+		{name: "unknown function errors", toolChoice: map[string]any{"type": "function", "function": map[string]any{"name": "nope"}}, tools: tools, wantErr: true},
+		{name: "required without tools errors", toolChoice: "required", tools: nil, wantErr: true},
+		{name: "invalid string errors", toolChoice: "sometimes", tools: tools, wantErr: true},
+		{name: "unsupported object type errors", toolChoice: map[string]any{"type": "allowed_tools"}, tools: tools, wantErr: true},
+		{name: "object missing function name errors", toolChoice: map[string]any{"type": "function", "function": map[string]any{}}, tools: tools, wantErr: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := ChatCompletionRequest{
+				Model:      "test-model",
+				Messages:   []Message{{Role: "user", Content: "Hello"}},
+				Tools:      tc.tools,
+				ToolChoice: tc.toolChoice,
+			}
+
+			result, err := FromChatRequest(req)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got none")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if len(result.Tools) != tc.wantTools {
+				t.Fatalf("expected %d tools, got %d", tc.wantTools, len(result.Tools))
+			}
+			if tc.wantTools == 1 && result.Tools[0].Function.Name != "get_time" {
+				t.Errorf("expected constrained tool 'get_time', got %q", result.Tools[0].Function.Name)
+			}
+
+			wantMessages := 1
+			var wantLast *api.Message
+			if !tc.wantNoForce {
+				wantMessages = 2
+				wantLast = &api.Message{Role: "system", Content: tc.wantForced}
+			}
+			if len(result.Messages) != wantMessages {
+				t.Fatalf("expected %d messages, got %d", wantMessages, len(result.Messages))
+			}
+			if tc.wantNoForce && result.Messages[0].Content != "Hello" {
+				t.Errorf("unexpected first message: %+v", result.Messages[0])
+			}
+			if wantLast != nil {
+				got := result.Messages[len(result.Messages)-1]
+				if got.Role != wantLast.Role || got.Content != wantLast.Content {
+					t.Errorf("expected forcing message %+v, got %+v", *wantLast, got)
+				}
+			}
+		})
+	}
+}

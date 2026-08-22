@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -116,6 +117,7 @@ type ChatCompletionRequest struct {
 	TopP             *float64        `json:"top_p"`
 	ResponseFormat   *ResponseFormat `json:"response_format"`
 	Tools            []api.Tool      `json:"tools"`
+	ToolChoice       any             `json:"tool_choice"`
 	Reasoning        *Reasoning      `json:"reasoning,omitempty"`
 	ReasoningEffort  *string         `json:"reasoning_effort,omitempty"`
 	Logprobs         *bool           `json:"logprobs"`
@@ -707,18 +709,93 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		return nil, err
 	}
 
+	messages, tools, err := applyToolChoice(messages, r.Tools, r.ToolChoice)
+	if err != nil {
+		return nil, err
+	}
+
 	return &api.ChatRequest{
 		Model:           r.Model,
 		Messages:        messages,
 		Format:          format,
 		Options:         options,
 		Stream:          &r.Stream,
-		Tools:           r.Tools,
+		Tools:           tools,
 		Think:           think,
 		Logprobs:        r.Logprobs != nil && *r.Logprobs,
 		TopLogprobs:     r.TopLogprobs,
 		DebugRenderOnly: r.DebugRenderOnly,
 	}, nil
+}
+
+// parseToolChoice parses an OpenAI tool_choice value (a string or a
+// {type: "function", function: {name: ...}} object) into a mode and an
+// optional forced function name.
+func parseToolChoice(choice any) (mode string, name string, err error) {
+	switch c := choice.(type) {
+	case nil:
+		return "", "", nil
+	case string:
+		switch strings.ToLower(strings.TrimSpace(c)) {
+		case "":
+			return "", "", nil
+		case "auto":
+			return "auto", "", nil
+		case "none":
+			return "none", "", nil
+		case "required":
+			return "required", "", nil
+		default:
+			return "", "", fmt.Errorf("invalid value for 'tool_choice': %q (must be \"auto\", \"none\", \"required\", or an object naming a function)", c)
+		}
+	case map[string]any:
+		t, _ := c["type"].(string)
+		if t != "function" {
+			return "", "", fmt.Errorf("invalid value for 'tool_choice': unsupported type %q (only \"function\" is supported)", t)
+		}
+		fn, ok := c["function"].(map[string]any)
+		if !ok {
+			return "", "", errors.New("invalid value for 'tool_choice': missing function")
+		}
+		name, ok = fn["name"].(string)
+		if !ok || name == "" {
+			return "", "", errors.New("invalid value for 'tool_choice': missing function name")
+		}
+		return "function", name, nil
+	default:
+		return "", "", fmt.Errorf("invalid type for 'tool_choice': %T", choice)
+	}
+}
+
+// applyToolChoice maps an OpenAI tool_choice onto the converted request. The
+// underlying capability layer has no native constraint mechanism, so "none"
+// strips tools and forced modes append a system instruction; a named function
+// is additionally constrained by only exposing that tool to the template.
+func applyToolChoice(messages []api.Message, tools api.Tools, choice any) ([]api.Message, api.Tools, error) {
+	mode, name, err := parseToolChoice(choice)
+	if err != nil {
+		return messages, tools, err
+	}
+
+	switch mode {
+	case "", "auto":
+	case "none":
+		tools = nil
+	case "required":
+		if len(tools) == 0 {
+			return messages, tools, errors.New("'tools' must be specified when 'tool_choice' is \"required\"")
+		}
+		messages = append(messages, api.Message{Role: "system", Content: "You must call one of the available tools instead of replying with plain text."})
+	case "function":
+		idx := slices.IndexFunc(tools, func(t api.Tool) bool { return t.Function.Name == name })
+		if idx < 0 {
+			return messages, tools, fmt.Errorf("invalid value for 'tool_choice': no function named %q was provided in 'tools'", name)
+		}
+		tools = tools[idx : idx+1]
+		messages = append(messages, api.Message{Role: "system", Content: fmt.Sprintf("You must call the %q function instead of replying with plain text.", name)})
+	}
+
+	return messages, tools, nil
 }
 
 func nameFromToolCallID(messages []Message, toolCallID string) string {
