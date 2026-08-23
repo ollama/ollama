@@ -29,13 +29,14 @@ import (
 )
 
 type LlmRequest struct {
-	ctx             context.Context //nolint:containedctx
-	model           *Model
-	opts            api.Options
-	sessionDuration *api.Duration
-	successCh       chan *runnerRef
-	errCh           chan error
-	schedAttempts   uint
+	ctx              context.Context //nolint:containedctx
+	model            *Model
+	opts             api.Options
+	sessionDuration  *api.Duration
+	successCh        chan *runnerRef
+	errCh            chan error
+	schedAttempts    uint
+	prefillCachePath string
 
 	// oomRetryAttempted is set after a llama-server load crash triggers an
 	// evict-all-and-retry. Prevents infinite retry on persistent load failures.
@@ -75,11 +76,12 @@ type Scheduler struct {
 	activeLoading llm.LlamaServer
 	loaded        map[string]*runnerRef
 
-	loadFn          func(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) bool
-	newServerFn     func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, adapters []string, projectors []string, opts api.Options, numParallel int, config llm.LlamaServerConfig) (llm.LlamaServer, error)
-	getGpuFn        func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo
-	getSystemInfoFn func() ml.SystemInfo
-	waitForRecovery time.Duration
+	loadFn           func(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) bool
+	newServerFn      func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, adapters []string, projectors []string, opts api.Options, numParallel int, config llm.LlamaServerConfig) (llm.LlamaServer, error)
+	getGpuFn         func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo
+	getSystemInfoFn  func() ml.SystemInfo
+	waitForRecovery  time.Duration
+	prefillCacheRoot string
 }
 
 // loadedModelsForName returns models still owned by loaded runners. The models
@@ -130,16 +132,18 @@ var ErrMaxQueue = errors.New("server busy, please try again.  maximum pending re
 
 func InitScheduler(ctx context.Context) *Scheduler {
 	maxQueue := envconfig.MaxQueue()
+	prefillCacheRoot := initPrefillCacheRoot(ctx)
 	sched := &Scheduler{
-		pendingReqCh:    make(chan *LlmRequest, maxQueue),
-		finishedReqCh:   make(chan *LlmRequest, maxQueue),
-		expiredCh:       make(chan *runnerRef, maxQueue),
-		unloadedCh:      make(chan any, maxQueue),
-		loaded:          make(map[string]*runnerRef),
-		newServerFn:     llm.NewLlamaServer,
-		getGpuFn:        discover.GPUDevices,
-		getSystemInfoFn: discover.GetSystemInfo,
-		waitForRecovery: 5 * time.Second,
+		pendingReqCh:     make(chan *LlmRequest, maxQueue),
+		finishedReqCh:    make(chan *LlmRequest, maxQueue),
+		expiredCh:        make(chan *runnerRef, maxQueue),
+		unloadedCh:       make(chan any, maxQueue),
+		loaded:           make(map[string]*runnerRef),
+		newServerFn:      llm.NewLlamaServer,
+		getGpuFn:         discover.GPUDevices,
+		getSystemInfoFn:  discover.GetSystemInfo,
+		waitForRecovery:  5 * time.Second,
+		prefillCacheRoot: prefillCacheRoot,
 	}
 	sched.loadFn = sched.load
 	return sched
@@ -474,6 +478,9 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 				runner.refMu.Unlock()
 				continue
 			}
+			// Save before taking the loaded lock: this talks to the runner over
+			// HTTP and is far too slow to hold the scheduler's lock across.
+			runner.savePrefillCache(ctx)
 
 			s.loadedMu.Lock()
 			slog.Debug("got lock to unload expired event", "runner", runner)
@@ -511,6 +518,7 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 				slog.Debug("runner terminated and removed from list, blocking for VRAM recovery", "runner", runner)
 				<-finished
 				runner.refMu.Unlock()
+				s.prunePrefillCache()
 				slog.Debug("sending an unloaded event", "runner", runner)
 				s.unloadedCh <- struct{}{}
 			}
@@ -568,6 +576,7 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 	var f *gguf.Model
 	loadGpus := gpus
 	var launchOpts api.Options
+	prefillCachePath := req.prefillCachePath
 
 	if llama == nil {
 		var err error
@@ -580,6 +589,9 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 				s.loadedMu.Unlock()
 				return false
 			}
+
+			// Preserve request options before placement tuning mutates them.
+			identityOpts := req.opts.Runner
 
 			predictedCtx := effectiveLlamaServerContext(req.opts.NumCtx, f, numParallel)
 			predicted := llm.PredictServerVRAM(req.model.ModelPath, f, predictedCtx)
@@ -625,6 +637,8 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 
 			config := llamaServerConfigForModel(req.model)
 			config.ContextShift = req.contextShift
+			prefillCachePath = s.llamaPrefillCachePath(req, identityOpts, numParallel)
+			config.PrefillCachePath = prefillCachePath
 			llama, err = s.newServerFn(systemInfo, loadGpus, req.model.ModelPath, f, req.model.AdapterPaths, req.model.ProjectorPaths, launchOpts, numParallel, config)
 			if err != nil {
 				// some older models are not compatible with newer versions of llama.cpp
@@ -645,6 +659,7 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 			return false
 		}
 
+		req.prefillCachePath = prefillCachePath
 		s.activeLoading = llama
 	} else {
 		wantPath := req.model.ModelPath
@@ -771,6 +786,7 @@ iGPUScan:
 		useMMapAuto:     req.useMMapAuto,
 		contextShift:    req.contextShift,
 		trainContext:    trainContext,
+		prefillCacheDir: prefillCachePath,
 	}
 	runner.numParallel = numParallel
 	runner.refMu.Lock() // hold lock until running or aborted
@@ -797,6 +813,7 @@ iGPUScan:
 			s.expiredCh <- runner
 			return
 		}
+		runner.restorePrefillCache(req.ctx)
 		slog.Debug("finished setting up", "runner", runner)
 		if runner.pid < 0 {
 			runner.pid = llama.Pid()
@@ -1398,15 +1415,16 @@ type runnerRef struct {
 	expireTimer     *time.Timer
 	expiresAt       time.Time
 
-	model        *Model
-	modelPath    string
-	modelKey     string
-	numParallel  int
-	numCtxAuto   bool
-	numBatchAuto bool
-	useMMapAuto  bool
-	contextShift bool
-	trainContext int
+	model           *Model
+	modelPath       string
+	modelKey        string
+	numParallel     int
+	numCtxAuto      bool
+	numBatchAuto    bool
+	useMMapAuto     bool
+	contextShift    bool
+	trainContext    int
+	prefillCacheDir string
 	*api.Options
 }
 
