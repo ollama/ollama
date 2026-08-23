@@ -51,6 +51,15 @@ func bindClaudeDesktop(wv webview.WebView) {
 		return result
 	})
 
+	wv.Bind("setClaudeDesktopAutoMode", func(enabled bool) claudeDesktopActionResult {
+		err := setClaudeDesktopAutoMode(enabled)
+		result := claudeDesktopActionResult{Status: getClaudeDesktopConnectionStatus()}
+		if err != nil {
+			result.Error = err.Error()
+		}
+		return result
+	})
+
 	wv.Bind("getShowAppsInMenu", func() bool {
 		return getShowAppsInMenu()
 	})

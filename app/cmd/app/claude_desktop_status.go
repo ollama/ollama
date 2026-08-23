@@ -23,6 +23,7 @@ type claudeDesktopStatus struct {
 	PortConflict bool                       `json:"portConflict"`
 	GatewayPort  int                        `json:"gatewayPort,omitempty"`
 	Error        string                     `json:"error,omitempty"`
+	AutoMode     bool                       `json:"autoMode"`
 	ModelSource  string                     `json:"modelSource,omitempty"`
 	Models       []claudeDesktopModelStatus `json:"models,omitempty"`
 }

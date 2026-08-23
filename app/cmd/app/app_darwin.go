@@ -904,6 +904,7 @@ func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
 		StartFailed:  proxyErr != nil,
 		PortConflict: proxyFailure == claudeProxyFailurePortConflict,
 		GatewayPort:  port,
+		AutoMode:     launch.ClaudeDesktopAutoModeEnabled(),
 		ModelSource:  modelSource,
 		Models:       modelStatuses,
 	}
@@ -936,6 +937,20 @@ func prepareClaudeDesktopConnection() error {
 
 func openClaudeDesktopApplication() error {
 	return launch.OpenClaudeDesktop()
+}
+
+func setClaudeDesktopAutoMode(enabled bool) error {
+	if err := launch.SaveClaudeDesktopAutoMode(enabled); err != nil {
+		return fmt.Errorf("save Claude Desktop auto mode: %w", err)
+	}
+	if !claudeDesktop.UsesOllamaGateway() {
+		// The preference takes effect the next time the profile is written.
+		return nil
+	}
+	if launch.ClaudeDesktopRunning() {
+		return claudeDesktop.RestartWithProfileChange(claudeDesktop.ConfigureAutodiscovery)
+	}
+	return claudeDesktop.ConfigureAutodiscovery()
 }
 
 func restartClaudeDesktopWithModels(names []string) error {

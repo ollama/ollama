@@ -23,6 +23,7 @@ interface ClaudeDesktopStatus {
   portConflict: boolean;
   gatewayPort?: number;
   error?: string;
+  autoMode?: boolean;
   modelSource?: "user" | "endpoint" | "fallback";
   maxModels?: number;
   models?: ClaudeDesktopModelStatus[];
@@ -75,6 +76,9 @@ declare global {
     setShowAppsInMenu?: (visible: boolean) => Promise<void>;
     restartClaudeDesktop?: (
       models: string[],
+    ) => Promise<ClaudeDesktopActionResult>;
+    setClaudeDesktopAutoMode?: (
+      enabled: boolean,
     ) => Promise<ClaudeDesktopActionResult>;
     setOnboardingWindow?: (enabled: boolean) => void;
     menu: (items: MenuItem[]) => Promise<string | null>;

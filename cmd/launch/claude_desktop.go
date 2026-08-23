@@ -214,6 +214,22 @@ func RestoreClaudeDesktopModels(models []string) error {
 	return config.SaveIntegration(claudeDesktopIntegrationName, models)
 }
 
+// ClaudeDesktopAutoModeEnabled reports the user's Claude Desktop auto mode
+// preference. It defaults to false when unset.
+func ClaudeDesktopAutoModeEnabled() bool {
+	integrationConfig, err := config.LoadIntegration(claudeDesktopIntegrationName)
+	if err != nil {
+		return false
+	}
+	return integrationConfig.AutoMode
+}
+
+// SaveClaudeDesktopAutoMode persists the user's Claude Desktop auto mode
+// preference in the shared launcher configuration.
+func SaveClaudeDesktopAutoMode(enabled bool) error {
+	return config.SaveIntegrationAutoMode(claudeDesktopIntegrationName, enabled)
+}
+
 func (c *ClaudeDesktop) RequiresInteractiveOnboarding() bool {
 	return false
 }
@@ -624,10 +640,7 @@ func writeClaudeDesktopGatewayProfile(path, baseURL, apiKey string, forceChooser
 	cfg["coworkEgressAllowedHosts"] = claudeDesktopEgressHosts
 	cfg["disableEssentialTelemetry"] = true
 	cfg["disableNonessentialTelemetry"] = true
-	// Auto mode sends separate classifier requests through the configured
-	// inference provider. Keep it disabled until the mapped models are tested
-	// for that classifier contract.
-	cfg["autoModeEnabled"] = false
+	cfg["autoModeEnabled"] = ClaudeDesktopAutoModeEnabled()
 	return writeClaudeDesktopJSON(path, cfg)
 }
 

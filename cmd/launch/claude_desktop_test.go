@@ -363,6 +363,45 @@ func TestClaudeDesktopConfigureAutodiscoveryRemovesExistingModelCatalog(t *testi
 	}
 }
 
+func TestClaudeDesktopConfigureWritesSavedAutoModePreference(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withClaudeDesktopPlatform(t, "darwin")
+	t.Setenv("OLLAMA_API_KEY", "test-api-key")
+
+	paths, err := claudeDesktopConfigPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ClaudeDesktopAutoModeEnabled() {
+		t.Fatal("auto mode should default to disabled")
+	}
+
+	if err := SaveClaudeDesktopAutoMode(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&ClaudeDesktop{}).ConfigureAutodiscovery(); err != nil {
+		t.Fatalf("ConfigureAutodiscovery returned error: %v", err)
+	}
+	profile := claudeDesktopReadJSON(t, paths.profile)
+	if profile["autoModeEnabled"] != true {
+		t.Fatalf("autoModeEnabled = %v, want true", profile["autoModeEnabled"])
+	}
+
+	// Disabling the preference flows to the profile on the next configure.
+	if err := SaveClaudeDesktopAutoMode(false); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&ClaudeDesktop{}).ConfigureAutodiscovery(); err != nil {
+		t.Fatalf("ConfigureAutodiscovery returned error: %v", err)
+	}
+	profile = claudeDesktopReadJSON(t, paths.profile)
+	if profile["autoModeEnabled"] != false {
+		t.Fatalf("autoModeEnabled = %v, want false", profile["autoModeEnabled"])
+	}
+}
+
 func TestClaudeDesktopWindowsConfigPathsUseLocalAppData(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)

@@ -79,6 +79,42 @@ describe("ClaudeDesktopModelsSettings", () => {
     expect(html).toContain("qwen3:8b");
   });
 
+  it("shows the auto mode switch checked when auto mode is enabled", () => {
+    const base = {
+      supported: true,
+      used: true,
+      installed: true,
+      connected: true,
+      running: false,
+      startFailed: false,
+      portConflict: false,
+      modelSource: "user" as const,
+      models: [
+        {
+          name: "qwen3:8b",
+          displayName: "qwen3:8b",
+          selected: true,
+        },
+      ],
+    };
+
+    const enabled = renderToStaticMarkup(
+      <ClaudeDesktopModelsSettings
+        initialStatus={{ ...base, autoMode: true }}
+      />,
+    );
+    expect(enabled).toContain("Enable auto mode");
+    expect(enabled).toContain('role="switch"');
+    expect(enabled).toContain('aria-checked="true"');
+
+    const disabled = renderToStaticMarkup(
+      <ClaudeDesktopModelsSettings initialStatus={base} />,
+    );
+    expect(disabled).toContain("Enable auto mode");
+    expect(disabled).toContain('role="switch"');
+    expect(disabled).toContain('aria-checked="false"');
+  });
+
   it("labels the built-in fallback without exposing MLX", () => {
     const html = renderToStaticMarkup(
       <ClaudeDesktopModelsSettings

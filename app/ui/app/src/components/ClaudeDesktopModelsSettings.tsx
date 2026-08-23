@@ -1,6 +1,8 @@
 import { getClaudeDesktopAvailableModels } from "@/api";
 import { Button } from "@/components/ui/button";
+import { Description, Field, Label } from "@/components/ui/fieldset";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import {
   addClaudeModelSelection,
   claudeDesktopRecoveryMessage,
@@ -83,6 +85,7 @@ export function ClaudeDesktopModelsSettings({
   const [modelsLoading, setModelsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [restarting, setRestarting] = useState(false);
+  const [autoModeOverride, setAutoModeOverride] = useState<boolean | null>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
 
   const applyStatus = useCallback((next: ClaudeDesktopStatus) => {
@@ -217,6 +220,9 @@ export function ClaudeDesktopModelsSettings({
     return !model?.availability || model.availability === "available";
   });
 
+  const confirmRestartIfRunning = (message: string) =>
+    !status?.running || window.confirm(`${message} Any running task will stop.`);
+
   const restartClaude = async () => {
     if (!window.restartClaudeDesktop) {
       setError("Claude restart is available in the Ollama macOS app.");
@@ -230,14 +236,8 @@ export function ClaudeDesktopModelsSettings({
       setError("Select a model available to your account.");
       return;
     }
-    if (
-      status?.running &&
-      !window.confirm(
-        "Restart Claude Desktop to update its models? Any running task will stop.",
-      )
-    ) {
+    if (!confirmRestartIfRunning("Restart Claude Desktop to update its models?"))
       return;
-    }
 
     setError(null);
     setRestarting(true);
@@ -252,12 +252,35 @@ export function ClaudeDesktopModelsSettings({
     }
   };
 
+  const toggleAutoMode = async (checked: boolean) => {
+    if (!window.setClaudeDesktopAutoMode) {
+      setError("Auto mode is available in the Ollama macOS app.");
+      return;
+    }
+    if (!confirmRestartIfRunning("Restart Claude to change auto mode?")) return;
+
+    setError(null);
+    setAutoModeOverride(checked);
+    setRestarting(true);
+    try {
+      const result = await window.setClaudeDesktopAutoMode(checked);
+      applyStatus(result.status);
+      if (result.error) setError(result.error);
+    } catch {
+      setError("Ollama could not update Claude auto mode.");
+    } finally {
+      setAutoModeOverride(null);
+      setRestarting(false);
+    }
+  };
+
   if (!status?.supported || !status.used) {
     return null;
   }
 
   const maxModels = claudeDesktopMaxModels(status);
   const selectionFull = selection.length >= maxModels;
+  const autoMode = autoModeOverride ?? status.autoMode ?? false;
   const guidance =
     claudeDesktopRecoveryMessage(status.error, error) ??
     (!hasAvailableSelection && models.length > 0
@@ -383,6 +406,24 @@ export function ClaudeDesktopModelsSettings({
                 </div>
               )}
             </div>
+
+            <Field className="mt-3 border-t border-neutral-200 pt-3 dark:border-neutral-700">
+              <div className="flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <Label>Enable auto mode</Label>
+                  <Description>
+                    Let Claude automatically choose the best model for each
+                    task.
+                  </Description>
+                </div>
+                <Switch
+                  checked={autoMode}
+                  disabled={restarting}
+                  onChange={(checked) => void toggleAutoMode(checked)}
+                  className="flex-shrink-0"
+                />
+              </div>
+            </Field>
 
             <div className="mt-3 flex items-center justify-between gap-4 max-sm:flex-col max-sm:items-stretch">
               <p
