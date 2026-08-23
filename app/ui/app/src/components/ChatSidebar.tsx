@@ -26,6 +26,12 @@ export function ChatSidebar({ currentChatId }: ChatSidebarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [shiftClicks, setShiftClicks] = useState<Record<string, number[]>>({});
   const [copiedChatId, setCopiedChatId] = useState<string | null>(null);
+  const [isMounting, setIsMounting] = useState(true);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setIsMounting(false), 100);
+    return () => clearTimeout(timer);
+  }, []);
 
   const handleMouseEnter = useCallback(
     (chatId: string) => {
@@ -259,7 +265,10 @@ export function ChatSidebar({ currentChatId }: ChatSidebarProps) {
   }
 
   return (
-    <nav className="flex flex-1 flex-col min-h-0 select-none">
+    <nav
+      className="flex flex-1 flex-col min-h-0 select-none"
+      style={isMounting ? { transition: 'none' } : {}}
+    >
       <header className="flex flex-col gap-0.5 px-4 pb-2">
         <AppNavigation current="chat" />
       </header>
