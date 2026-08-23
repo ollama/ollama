@@ -44,6 +44,7 @@ import (
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/parser"
@@ -333,6 +334,15 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		req.DraftQuantize = draftQuantize
 	}
 
+	fileNames := createRequestFileNames(req.Files)
+	adapterNames := createRequestFileNames(req.Adapters)
+	draftFileNames := createRequestFileNames(req.DraftFiles)
+	for _, files := range []map[string]string{fileNames, adapterNames, draftFileNames} {
+		if err := validateSplitGGUFFiles(files); err != nil {
+			return err
+		}
+	}
+
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
@@ -342,7 +352,6 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	g.SetLimit(max(runtime.GOMAXPROCS(0)-1, 1))
 
 	files := syncmap.NewSyncMap[string, string]()
-	fileNames := createRequestFileNames(req.Files)
 	for f, digest := range req.Files {
 		g.Go(func() error {
 			if _, err := createBlob(cmd, client, f, digest, p); err != nil {
@@ -355,7 +364,6 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	adapters := syncmap.NewSyncMap[string, string]()
-	adapterNames := createRequestFileNames(req.Adapters)
 	for f, digest := range req.Adapters {
 		g.Go(func() error {
 			if _, err := createBlob(cmd, client, f, digest, p); err != nil {
@@ -368,7 +376,6 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	draftFiles := syncmap.NewSyncMap[string, string]()
-	draftFileNames := createRequestFileNames(req.DraftFiles)
 	for f, digest := range req.DraftFiles {
 		g.Go(func() error {
 			if _, err := createBlob(cmd, client, f, digest, p); err != nil {
@@ -421,6 +428,41 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	return nil
+}
+
+func validateSplitGGUFFiles(files map[string]string) error {
+	filePaths := make([]string, 0, len(files))
+	for filePath := range files {
+		filePaths = append(filePaths, filePath)
+	}
+	sort.Strings(filePaths)
+
+	for _, filePath := range filePaths {
+		if err := func() error {
+			f, err := os.Open(filePath)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+
+			var magic [4]byte
+			if _, err := io.ReadFull(f, magic[:]); err != nil || ggml.DetectContentType(magic[:]) != "gguf" {
+				return nil
+			}
+			if _, err := f.Seek(0, io.SeekStart); err != nil {
+				return err
+			}
+
+			model, err := ggml.Decode(f, 0)
+			if err != nil {
+				return err
+			}
+			return server.ValidateSplitGGUFFile(files[filePath], model)
+		}(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
