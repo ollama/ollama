@@ -378,6 +378,8 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 	params = appendLlamaServerLogArgs(params)
 	params = appendJinjaArgs(params, launch.config)
 
+	params = appendPrefillCacheArgs(params, launch.config.PrefillCachePath)
+
 	params = appendMMProjArgs(params, launch)
 	params = appendDraftArgs(params, launch.draftType, launch.config.DraftModelPath, launch.opts)
 
@@ -576,6 +578,18 @@ func appendLlamaServerLogArgs(params []string) []string {
 		"--no-log-prefix",
 		"--no-log-timestamps",
 	)
+}
+
+func appendPrefillCacheArgs(params []string, cachePath string) []string {
+	if cachePath == "" {
+		return params
+	}
+	if err := os.MkdirAll(cachePath, 0o700); err != nil {
+		slog.Warn("failed to create prefill cache directory; continuing without prefill cache persistence", "path", cachePath, "error", err)
+		return params
+	}
+	path := filepath.Clean(cachePath) + string(os.PathSeparator)
+	return append(params, "--slot-save-path", path)
 }
 
 func appendBatchArgs(params []string, opts api.Options, embedding bool, numParallel int) []string {

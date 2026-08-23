@@ -77,11 +77,18 @@ type LlamaServer interface {
 	ContextLength() int
 }
 
+// PrefillCachePersistor saves and restores a runner's processed prompt state.
+type PrefillCachePersistor interface {
+	SavePrefillCache(context.Context) error
+	RestorePrefillCache(context.Context) error
+}
+
 type LlamaServerConfig struct {
-	DisableJinja   bool
-	ContextShift   bool
-	EnableMTP      bool
-	DraftModelPath string
+	DisableJinja     bool
+	ContextShift     bool
+	EnableMTP        bool
+	DraftModelPath   string
+	PrefillCachePath string
 }
 
 // LoadModel will load a model from disk. The model must be in the GGML format.
