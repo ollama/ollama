@@ -1735,30 +1735,84 @@ func TestCreateQwen35AndOrnithDefaults(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {
+		desc         string
 		arch         string
+		generalName  string
 		name         string
+		reqRenderer  string
+		reqParser    string
 		wantRenderer string
 		wantParser   string
 	}{
-		{arch: "qwen35", name: "qwen35-test", wantRenderer: "qwen3.5", wantParser: "qwen3.5"},
-		{arch: "qwen35moe", name: "qwen35moe-test", wantRenderer: "qwen3.5", wantParser: "qwen3.5"},
-		{arch: "qwen35moe", name: "ornith-1.5:35b", wantRenderer: "ornith", wantParser: "ornith"},
+		{
+			desc:         "qwen35 architecture defaults to qwen3.5",
+			arch:         "qwen35",
+			name:         "qwen35-test",
+			wantRenderer: "qwen3.5",
+			wantParser:   "qwen3.5",
+		},
+		{
+			desc:         "qwen35moe architecture defaults to qwen3.5",
+			arch:         "qwen35moe",
+			name:         "qwen35moe-test",
+			wantRenderer: "qwen3.5",
+			wantParser:   "qwen3.5",
+		},
+		{
+			desc:         "qwen35moe with Ornith general.name defaults to ornith",
+			arch:         "qwen35moe",
+			generalName:  "Ornith-1.5-35B",
+			name:         "custom-model-tag",
+			wantRenderer: "ornith",
+			wantParser:   "ornith",
+		},
+		{
+			desc:         "ornith architecture defaults to ornith",
+			arch:         "ornith",
+			name:         "custom-ornith-model",
+			wantRenderer: "ornith",
+			wantParser:   "ornith",
+		},
+		{
+			desc:         "non-ornith model with 'ornith' in name does not get ornith renderer",
+			arch:         "llama",
+			name:         "my-ornith-experiment",
+			wantRenderer: "",
+			wantParser:   "",
+		},
+		{
+			desc:         "explicit renderer and parser override auto-detection",
+			arch:         "qwen35moe",
+			generalName:  "Ornith-1.5-35B",
+			name:         "explicit-override",
+			reqRenderer:  "custom-renderer",
+			reqParser:    "custom-parser",
+			wantRenderer: "custom-renderer",
+			wantParser:   "custom-parser",
+		},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.desc, func(t *testing.T) {
 			p := t.TempDir()
 			t.Setenv("OLLAMA_MODELS", p)
 			var s Server
 
-			_, digest := createBinFile(t, ggml.KV{
+			kv := ggml.KV{
 				"general.architecture": tt.arch,
-			}, nil)
+			}
+			if tt.generalName != "" {
+				kv["general.name"] = tt.generalName
+			}
+
+			_, digest := createBinFile(t, kv, nil)
 
 			w := createRequest(t, s.CreateHandler, api.CreateRequest{
-				Name:   tt.name,
-				Files:  map[string]string{"test.gguf": digest},
-				Stream: &stream,
+				Name:     tt.name,
+				Files:    map[string]string{"test.gguf": digest},
+				Renderer: tt.reqRenderer,
+				Parser:   tt.reqParser,
+				Stream:   &stream,
 			})
 			if w.Code != http.StatusOK {
 				t.Fatalf("expected status code 200, actual %d", w.Code)
