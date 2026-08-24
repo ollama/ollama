@@ -22,6 +22,7 @@ interface ClaudeDesktopStatus {
   startFailed: boolean;
   portConflict: boolean;
   gatewayPort?: number;
+  routedRequests?: number;
   error?: string;
   modelSource?: "user" | "endpoint" | "fallback";
   maxModels?: number;
@@ -65,8 +66,11 @@ declare global {
     doubleClick?: () => void;
     activateOllama?: () => void;
     getClaudeDesktopStatus?: () => Promise<ClaudeDesktopStatus>;
+    getClaudeDesktopConnectionSummary?: () => Promise<ClaudeDesktopStatus>;
+    getClaudeDesktopRequestCount?: () => Promise<number>;
     setClaudeDesktopConnected?: (
       enabled: boolean,
+      restartConfirmed: boolean,
     ) => Promise<ClaudeDesktopActionResult>;
     prepareClaudeDesktopConnection?: () => Promise<ClaudeDesktopActionResult>;
     openClaudeDesktop?: () => Promise<string>;

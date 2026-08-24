@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, expect, it, vi } from "vitest";
 import {
   ClaudeConnectedIntro,
@@ -12,6 +13,7 @@ import {
   WelcomeScreen,
 } from "./Onboarding";
 import {
+  CLAUDE_CONNECTION_TIMEOUT_MS,
   CLAUDE_INSTALL_TIMEOUT_MS,
   isClaudeConnectionComplete,
   scheduleClaudeInstallTimeout,
@@ -115,7 +117,7 @@ describe("Onboarding", () => {
     expect(authenticationTimeoutAction(true, true)).toBe("ignore");
   });
 
-  it("finishes Claude connection states from the native status hook", () => {
+  it("detects when the menu bar already reached the requested Claude state", () => {
     const status = {
       supported: true,
       installed: true,
@@ -157,6 +159,131 @@ describe("Onboarding", () => {
       vi.advanceTimersByTime(1);
       expect(onTimeout).toHaveBeenCalledOnce();
     } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("preserves a late native error after the Connect Apps action times out", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+
+    const disconnectedStatus = {
+      supported: true,
+      used: false,
+      installed: true,
+      configured: false,
+      connected: false,
+      running: false,
+      startFailed: false,
+      portConflict: false,
+    };
+    const connectedStatus = {
+      ...disconnectedStatus,
+      configured: true,
+      connected: true,
+    };
+    let finishNativeAction!: (result: {
+      status: typeof connectedStatus;
+      error?: string;
+    }) => void;
+    const nativeAction = new Promise<{
+      status: typeof connectedStatus;
+      error?: string;
+    }>((resolve) => {
+      finishNativeAction = resolve;
+    });
+    const getClaudeStatus = vi
+      .fn()
+      .mockResolvedValueOnce(disconnectedStatus)
+      .mockResolvedValue(connectedStatus);
+    const setClaudeConnected = vi.fn().mockReturnValue(nativeAction);
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    vi.stubGlobal("window", {
+      OLLAMA_PLATFORM: "darwin",
+      innerHeight: 660,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      setTimeout: globalThis.setTimeout,
+      clearTimeout: globalThis.clearTimeout,
+      setInterval: globalThis.setInterval,
+      clearInterval: globalThis.clearInterval,
+      getClaudeDesktopConnectionSummary: getClaudeStatus,
+      setClaudeDesktopConnected: setClaudeConnected,
+    });
+
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <ConnectAppsScreen
+            initialClaudeStatus={disconnectedStatus}
+            initialIntegrations={[
+              {
+                id: "claude-desktop",
+                name: "Claude",
+                description: "Use Ollama models in Claude Desktop",
+                installed: true,
+                action: "connect",
+              },
+            ]}
+          />,
+        );
+        await Promise.resolve();
+      });
+
+      const claudeSwitch = () => renderer!.root.findByProps({ role: "switch" });
+      expect(claudeSwitch().props["aria-checked"]).toBe(false);
+      expect(claudeSwitch().props["aria-busy"]).toBeUndefined();
+      expect(claudeSwitch().props.disabled).toBe(false);
+
+      let clickResult!: Promise<void>;
+      await act(async () => {
+        clickResult = claudeSwitch().props.onClick();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(setClaudeConnected).toHaveBeenCalledWith(true, false);
+      expect(claudeSwitch().props["aria-checked"]).toBe(true);
+      expect(claudeSwitch().props["aria-busy"]).toBe(true);
+      expect(claudeSwitch().props.disabled).toBe(true);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(CLAUDE_CONNECTION_TIMEOUT_MS);
+        await clickResult;
+      });
+
+      expect(claudeSwitch().props["aria-checked"]).toBe(false);
+      expect(claudeSwitch().props["aria-busy"]).toBeUndefined();
+      expect(claudeSwitch().props.disabled).toBe(false);
+      expect(
+        renderer.root.findByProps({ role: "alert" }).children.join(""),
+      ).toContain("Claude is taking too long to connect");
+
+      await act(async () => {
+        finishNativeAction({
+          status: connectedStatus,
+          error: "Claude failed to restart.",
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(getClaudeStatus).toHaveBeenCalledOnce();
+      expect(claudeSwitch().props["aria-checked"]).toBe(true);
+      expect(claudeSwitch().props["aria-busy"]).toBeUndefined();
+      expect(claudeSwitch().props.disabled).toBe(false);
+      expect(
+        renderer.root.findByProps({ role: "alert" }).children.join(""),
+      ).toContain("Claude failed to restart.");
+      expect(
+        renderer.root.findAllByProps({ id: "claude-connected-title" }),
+      ).toHaveLength(0);
+    } finally {
+      if (renderer) {
+        act(() => renderer?.unmount());
+      }
       vi.useRealTimers();
       vi.unstubAllGlobals();
     }
@@ -366,6 +493,7 @@ describe("Onboarding", () => {
           running: false,
           startFailed: false,
           portConflict: false,
+          routedRequests: 12,
         }}
         initialIntegrations={[
           {
@@ -394,6 +522,7 @@ describe("Onboarding", () => {
     expect(html).not.toContain("Inactive");
     expect(html).toContain('aria-checked="true"');
     expect(html).toContain('aria-label="Disconnect Claude"');
+    expect(html).toContain("Connected to Ollama · 12 requests this session");
   });
 
   it("shows initial Claude recovery guidance without error styling", () => {

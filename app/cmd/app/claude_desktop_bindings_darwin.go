@@ -8,11 +8,17 @@ func bindClaudeDesktop(wv webview.WebView) {
 	wv.Bind("getClaudeDesktopStatus", func() claudeDesktopStatus {
 		return getClaudeDesktopConnectionStatus()
 	})
+	wv.Bind("getClaudeDesktopConnectionSummary", func() claudeDesktopStatus {
+		return getClaudeDesktopConnectionSummary()
+	})
+	wv.Bind("getClaudeDesktopRequestCount", func() uint64 {
+		return claudeDesktopRequestCount()
+	})
 
-	wv.Bind("setClaudeDesktopConnected", func(enabled bool) claudeDesktopActionResult {
-		err := setClaudeDesktopConnection(enabled)
+	wv.Bind("setClaudeDesktopConnected", func(enabled, restartConfirmed bool) claudeDesktopActionResult {
+		err := setClaudeDesktopConnection(enabled, restartConfirmed)
 		result := claudeDesktopActionResult{
-			Status: getClaudeDesktopConnectionStatus(),
+			Status: getClaudeDesktopConnectionSummary(),
 		}
 		if err != nil {
 			result.Error = err.Error()
@@ -23,7 +29,7 @@ func bindClaudeDesktop(wv webview.WebView) {
 	wv.Bind("prepareClaudeDesktopConnection", func() claudeDesktopActionResult {
 		err := prepareClaudeDesktopConnection()
 		result := claudeDesktopActionResult{
-			Status: getClaudeDesktopConnectionStatus(),
+			Status: getClaudeDesktopConnectionSummary(),
 		}
 		if err != nil {
 			result.Error = err.Error()

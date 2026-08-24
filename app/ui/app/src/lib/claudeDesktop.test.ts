@@ -1,12 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   addClaudeModelSelection,
+  ClaudeConnectionTimeoutError,
   claudeDesktopRecoveryMessage,
   claudeDesktopMaxModels,
   claudeDesktopMaxModelsMessage,
+  claudeDesktopRequestCountLabel,
   claudeDesktopUsableSelection,
   defaultClaudeDesktopMaxModels,
   isClaudeConfigured,
+  optimisticClaudeConnectionState,
+  withClaudeConnectionTimeout,
 } from "./claudeDesktop";
 
 describe("isClaudeConfigured", () => {
@@ -23,6 +27,68 @@ describe("isClaudeConfigured", () => {
         portConflict: true,
       }),
     ).toBe(true);
+  });
+});
+
+describe("optimisticClaudeConnectionState", () => {
+  it("shows the requested state while a connection change is pending", () => {
+    expect(optimisticClaudeConnectionState(false, true)).toBe(true);
+    expect(optimisticClaudeConnectionState(true, false)).toBe(false);
+  });
+
+  it("uses the confirmed state when no change is pending", () => {
+    expect(optimisticClaudeConnectionState(true, null)).toBe(true);
+    expect(optimisticClaudeConnectionState(false, null)).toBe(false);
+  });
+});
+
+describe("claudeDesktopRequestCountLabel", () => {
+  it("formats zero, singular, and plural session counts", () => {
+    expect(claudeDesktopRequestCountLabel(0)).toBe("0 requests this session");
+    expect(claudeDesktopRequestCountLabel(1)).toBe("1 request this session");
+    expect(claudeDesktopRequestCountLabel(2)).toBe("2 requests this session");
+  });
+});
+
+describe("withClaudeConnectionTimeout", () => {
+  it("returns a native result that finishes before the watchdog", async () => {
+    await expect(
+      withClaudeConnectionTimeout(Promise.resolve("connected"), 100),
+    ).resolves.toBe("connected");
+  });
+
+  it("reports when native work settles after the watchdog", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveNative!: (value: string) => void;
+      const nativeAction = new Promise<string>((resolve) => {
+        resolveNative = resolve;
+      });
+      const onLateSettled = vi.fn();
+      const result = withClaudeConnectionTimeout(
+        nativeAction,
+        100,
+        onLateSettled,
+      );
+      const timedOut = expect(result).rejects.toBeInstanceOf(
+        ClaudeConnectionTimeoutError,
+      );
+
+      await vi.advanceTimersByTimeAsync(100);
+      await timedOut;
+      expect(onLateSettled).not.toHaveBeenCalled();
+      resolveNative("late connection");
+      await Promise.resolve();
+
+      expect(onLateSettled).toHaveBeenCalledOnce();
+      expect(onLateSettled).toHaveBeenCalledWith({
+        status: "fulfilled",
+        value: "late connection",
+      });
+      await expect(result).rejects.toBeInstanceOf(ClaudeConnectionTimeoutError);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
