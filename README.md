@@ -4,7 +4,7 @@
   </a>
 </p>
 
-# Ollama
+# OllamaXX
 
 Start building with open models.
 
