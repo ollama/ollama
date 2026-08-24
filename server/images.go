@@ -787,6 +787,15 @@ func GetModel(name string) (*Model, error) {
 		}
 	}
 
+	if m.Config.Renderer == "" || m.Config.Parser == "" {
+		nameLower := strings.ToLower(m.Name)
+		shortNameLower := strings.ToLower(m.ShortName)
+		if strings.Contains(nameLower, "ornith") || strings.Contains(shortNameLower, "ornith") {
+			m.Config.Renderer = cmp.Or(m.Config.Renderer, "ornith")
+			m.Config.Parser = cmp.Or(m.Config.Parser, "ornith")
+		}
+	}
+
 	ggufCaps := chatTemplateCapabilities(nil, ggufChatTemplate)
 	goCaps := goTemplateCapabilities(m.Template)
 	usesHarmony := m.Template != nil && shouldUseHarmony(m)

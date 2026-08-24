@@ -82,6 +82,20 @@ func TestNemotron35MetadataInference(t *testing.T) {
 	}
 }
 
+func TestOrnithMetadataInference(t *testing.T) {
+	dir := t.TempDir()
+	config := `{"architectures":["OrnithForCausalLM"],"model_type":"ornith"}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := getParserName(dir), "ornith"; got != want {
+		t.Fatalf("parser = %q, want %q", got, want)
+	}
+	if got, want := getRendererName(dir), "ornith"; got != want {
+		t.Fatalf("renderer = %q, want %q", got, want)
+	}
+}
+
 func TestConfigFromModelfile(t *testing.T) {
 	modelfile, err := parser.ParseFile(strings.NewReader(`
 FROM ./model

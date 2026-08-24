@@ -1731,6 +1731,50 @@ func TestCreateNemotronHDefaultsKeepExplicitRendererParser(t *testing.T) {
 	}
 }
 
+func TestCreateQwen35AndOrnithDefaults(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		arch         string
+		name         string
+		wantRenderer string
+		wantParser   string
+	}{
+		{arch: "qwen35", name: "qwen35-test", wantRenderer: "qwen3.5", wantParser: "qwen3.5"},
+		{arch: "qwen35moe", name: "qwen35moe-test", wantRenderer: "qwen3.5", wantParser: "qwen3.5"},
+		{arch: "qwen35moe", name: "ornith-1.5:35b", wantRenderer: "ornith", wantParser: "ornith"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := t.TempDir()
+			t.Setenv("OLLAMA_MODELS", p)
+			var s Server
+
+			_, digest := createBinFile(t, ggml.KV{
+				"general.architecture": tt.arch,
+			}, nil)
+
+			w := createRequest(t, s.CreateHandler, api.CreateRequest{
+				Name:   tt.name,
+				Files:  map[string]string{"test.gguf": digest},
+				Stream: &stream,
+			})
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected status code 200, actual %d", w.Code)
+			}
+
+			cfg := readCreatedModelConfig(t, tt.name)
+			if cfg.Renderer != tt.wantRenderer {
+				t.Fatalf("expected renderer %q, got %q", tt.wantRenderer, cfg.Renderer)
+			}
+			if cfg.Parser != tt.wantParser {
+				t.Fatalf("expected parser %q, got %q", tt.wantParser, cfg.Parser)
+			}
+		})
+	}
+}
+
 func TestDetectModelTypeFromFiles(t *testing.T) {
 	t.Run("gguf file", func(t *testing.T) {
 		_, digest := createBinFile(t, nil, nil)
