@@ -1397,6 +1397,129 @@ func TestClaudeGatewayStartupWithLocalSelectionSkipsCloudLookupsButSettingsLoads
 	}
 }
 
+func TestClaudeGatewayLocalSelectionCatalogPolicy(t *testing.T) {
+	tests := []struct {
+		name               string
+		access             proxy.ClaudeDesktopAccessState
+		accessErr          error
+		recommendations    []proxy.ClaudeDesktopModel
+		wantLoaderCalls    int
+		wantSettingsModels []string
+	}{
+		{
+			name: "cloud off stays local",
+			access: proxy.ClaudeDesktopAccessState{
+				Cloud: proxy.ClaudeDesktopCloudOff,
+			},
+			wantSettingsModels: []string{"qwen3:8b"},
+		},
+		{
+			name:               "unknown cloud policy stays local",
+			accessErr:          errors.New("offline"),
+			wantSettingsModels: []string{"qwen3:8b"},
+		},
+		{
+			name: "cloud on restores recommendations",
+			access: proxy.ClaudeDesktopAccessState{
+				Cloud:   proxy.ClaudeDesktopCloudOn,
+				Account: proxy.ClaudeDesktopAccountSignedIn,
+				Plan:    "pro",
+			},
+			recommendations: proxy.ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{
+				Model:        "glm-5.2:cloud",
+				RequiredPlan: "pro",
+			}}),
+			wantLoaderCalls:    1,
+			wantSettingsModels: []string{"glm-5.2:cloud", "qwen3:8b"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("OLLAMA_HOST", "127.0.0.1:11434")
+			if err := launch.SaveClaudeDesktopModels([]string{"qwen3:8b"}); err != nil {
+				t.Fatal(err)
+			}
+			previousInstalled := claudeDesktopInstalled
+			previousStore := appStore
+			appStore = &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
+			if err := markClaudeDesktopIntegrationUsed(); err != nil {
+				t.Fatal(err)
+			}
+			previousAddr := claudeProxyListenAddr
+			previousLoader := claudeModelsLoader
+			previousAccess := claudeAccessStateResolver
+			previousLocal := claudeLocalModelsResolver
+			claudeProxyMu.Lock()
+			previousGateway := claudeAppProxy
+			previousAvailable := claudeAvailableModels
+			previousSource := claudeModelSource
+			previousUpdated := claudeCatalogUpdated
+			claudeAppProxy = nil
+			claudeAvailableModels = nil
+			claudeModelSource = ""
+			claudeCatalogUpdated = time.Time{}
+			claudeProxyMu.Unlock()
+			claudeDesktopInstalled = func() bool { return true }
+			claudeProxyListenAddr = "127.0.0.1:0"
+			loaderCalls := 0
+			accessCalls := 0
+			claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
+				loaderCalls++
+				return tt.recommendations, "endpoint"
+			}
+			claudeAccessStateResolver = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
+				accessCalls++
+				return tt.access, tt.accessErr
+			}
+			claudeLocalModelsResolver = func(context.Context) ([]string, error) {
+				return []string{"qwen3:8b"}, nil
+			}
+			t.Cleanup(func() {
+				stopClaudeAppProxy()
+				_ = appStore.Close()
+				appStore = previousStore
+				claudeDesktopInstalled = previousInstalled
+				claudeProxyListenAddr = previousAddr
+				claudeModelsLoader = previousLoader
+				claudeAccessStateResolver = previousAccess
+				claudeLocalModelsResolver = previousLocal
+				claudeProxyMu.Lock()
+				claudeAppProxy = previousGateway
+				claudeAvailableModels = previousAvailable
+				claudeModelSource = previousSource
+				claudeCatalogUpdated = previousUpdated
+				claudeProxyMu.Unlock()
+			})
+
+			if err := startClaudeAppProxy(); err != nil {
+				t.Fatal(err)
+			}
+			if loaderCalls != 0 || accessCalls != 0 {
+				t.Fatalf("cloud startup calls = recommendations:%d access:%d, want zero", loaderCalls, accessCalls)
+			}
+			status := getClaudeDesktopConnectionStatus()
+			gotSettingsModels := make([]string, len(status.Models))
+			for i, model := range status.Models {
+				gotSettingsModels[i] = model.Name
+			}
+			if !slices.Equal(gotSettingsModels, tt.wantSettingsModels) {
+				t.Fatalf("Settings models = %v, want %v", gotSettingsModels, tt.wantSettingsModels)
+			}
+			if loaderCalls != tt.wantLoaderCalls || accessCalls != 1 {
+				t.Fatalf("cloud status calls = recommendations:%d access:%d, want recommendations:%d access:1", loaderCalls, accessCalls, tt.wantLoaderCalls)
+			}
+			claudeProxyMu.Lock()
+			models := claudeAppProxy.Models()
+			claudeProxyMu.Unlock()
+			if len(models) != 1 || models[0].OllamaModel != "qwen3:8b" {
+				t.Fatalf("active gateway models = %+v, want local selection unchanged", models)
+			}
+		})
+	}
+}
+
 func TestRestoreClaudeBeforeQuit(t *testing.T) {
 	called := false
 	if err := restoreClaudeBeforeQuit(context.Background(), false, false, func(context.Context) error {

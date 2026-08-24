@@ -955,37 +955,45 @@ func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
 	used := hasUsedClaudeDesktopIntegration()
 	var availableModels, selectedModels []proxy.ClaudeDesktopModel
 	var modelSource string
-	if used {
-		claudeProxyMu.Lock()
-		gateway := claudeAppProxy
-		claudeProxyMu.Unlock()
-		var current []proxy.ClaudeDesktopModel
-		if gateway != nil {
-			current = gateway.Models()
-		}
-		// Settings needs the complete catalog even when Claude is currently
-		// configured with only local models. The startup path can skip cloud
-		// discovery, but reusing that local-only list here would make every cloud
-		// choice disappear from the model picker.
-		availableModels, selectedModels, modelSource = refreshClaudeDesktopCatalog(context.Background(), current, false)
-	}
-	selected := make(map[string]struct{})
-	for _, model := range selectedModels {
-		selected[model.Name] = struct{}{}
-	}
 	accessState := proxy.ClaudeDesktopAccessState{
 		Cloud:   proxy.ClaudeDesktopCloudUnknown,
 		Account: proxy.ClaudeDesktopAccountUnknown,
 	}
-	var localNames []string
-	var localErr error
-	if hasCloudClaudeDesktopModel(availableModels) {
+	if used {
+		claudeProxyMu.Lock()
+		gateway := claudeAppProxy
+		cachedCatalogHasCloud := hasCloudClaudeDesktopModel(claudeAvailableModels)
+		claudeProxyMu.Unlock()
 		var accessErr error
 		accessState, accessErr = claudeAccessStateResolver(context.Background())
 		if accessErr != nil {
 			slog.Debug("could not resolve Claude model access for Settings", "error", accessErr)
 		}
+		var current []proxy.ClaudeDesktopModel
+		if gateway != nil {
+			current = gateway.Models()
+		}
+		if accessErr == nil && accessState.Cloud == proxy.ClaudeDesktopCloudOn {
+			// Local-only startup deliberately seeds the cache with only the active
+			// routes. Settings still needs the recommendation catalog when Cloud is on.
+			availableModels, selectedModels, modelSource = refreshClaudeDesktopCatalog(context.Background(), current, !cachedCatalogHasCloud)
+		} else {
+			selectedModels = current
+			if len(selectedModels) == 0 {
+				selectedModels = proxy.SelectClaudeDesktopModels(nil, launch.ClaudeDesktopModels())
+			}
+			availableModels = selectedModels
+			if len(selectedModels) > 0 {
+				modelSource = "user"
+			}
+		}
 	}
+	selected := make(map[string]struct{})
+	for _, model := range selectedModels {
+		selected[model.Name] = struct{}{}
+	}
+	var localNames []string
+	var localErr error
 	if len(availableModels) > 0 {
 		localNames, localErr = claudeLocalModelsResolver(context.Background())
 		if localErr != nil {
