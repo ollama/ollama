@@ -57,23 +57,30 @@ describe("withClaudeConnectionTimeout", () => {
     ).resolves.toBe("connected");
   });
 
-  it("times out and ignores a late native result", async () => {
+  it("reports when native work settles after the watchdog", async () => {
     vi.useFakeTimers();
     try {
       let resolveNative!: (value: string) => void;
       const nativeAction = new Promise<string>((resolve) => {
         resolveNative = resolve;
       });
-      const result = withClaudeConnectionTimeout(nativeAction, 100);
+      const onLateSettled = vi.fn();
+      const result = withClaudeConnectionTimeout(
+        nativeAction,
+        100,
+        onLateSettled,
+      );
       const timedOut = expect(result).rejects.toBeInstanceOf(
         ClaudeConnectionTimeoutError,
       );
 
       await vi.advanceTimersByTimeAsync(100);
       await timedOut;
+      expect(onLateSettled).not.toHaveBeenCalled();
       resolveNative("late connection");
       await Promise.resolve();
 
+      expect(onLateSettled).toHaveBeenCalledOnce();
       await expect(result).rejects.toBeInstanceOf(ClaudeConnectionTimeoutError);
     } finally {
       vi.useRealTimers();

@@ -8,6 +8,7 @@ import {
 } from "@/api";
 import { INTEGRATION_ICONS } from "@/lib/launchCommands";
 import {
+  CLAUDE_CONNECTION_TIMEOUT_MS,
   ClaudeConnectionTimeoutError,
   claudeDesktopRecoveryMessage,
   claudeDesktopRequestCountLabel,
@@ -502,12 +503,14 @@ export function ConnectAppsScreen({
     }
     try {
       const status = await getClaudeConnectionSummary();
-      if (!status) return null;
+      if (!status || !screenMounted.current) return null;
       setClaudeStatus(status);
       setClaudeError(null);
       return status;
     } catch {
-      setClaudeError("Ollama could not read the Claude connection status.");
+      if (screenMounted.current) {
+        setClaudeError("Ollama could not read the Claude connection status.");
+      }
       return null;
     }
   }, [isWindows]);
@@ -571,6 +574,21 @@ export function ConnectAppsScreen({
     [openConnectedClaude],
   );
 
+  const reconcileLateClaudeAction = useCallback(
+    (enabled: boolean) => () => {
+      if (!screenMounted.current) return;
+      void (async () => {
+        const status = await refreshClaudeStatus();
+        if (!enabled || !status || !screenMounted.current) return;
+        const completionError = await finishClaudeConnection(status);
+        if (completionError && screenMounted.current) {
+          setClaudeError(completionError);
+        }
+      })();
+    },
+    [finishClaudeConnection, refreshClaudeStatus],
+  );
+
   const dismissClaudeConnectedIntro = async () => {
     if (!window.setClaudeDesktopConnected) return;
     setClaudePhase("launching");
@@ -599,6 +617,8 @@ export function ConnectAppsScreen({
       setShowClaudeConnectedIntro(false);
       const result = await withClaudeConnectionTimeout(
         window.setClaudeDesktopConnected(true, restartConfirmed),
+        CLAUDE_CONNECTION_TIMEOUT_MS,
+        reconcileLateClaudeAction(true),
       );
       setClaudeStatus(result.status);
       setClaudeError(result.error || null);
@@ -691,6 +711,8 @@ export function ConnectAppsScreen({
         claudeRestartConfirmed.current = false;
         const result = await withClaudeConnectionTimeout(
           setClaudeConnection(true, !status.used, false),
+          CLAUDE_CONNECTION_TIMEOUT_MS,
+          reconcileLateClaudeAction(true),
         );
         if (!screenMounted.current) return;
         setClaudeStatus(result.status);
@@ -727,7 +749,7 @@ export function ConnectAppsScreen({
       window.clearInterval(interval);
       window.clearTimeout(timeout);
     };
-  }, [claudePhase, finishClaudeConnection]);
+  }, [claudePhase, finishClaudeConnection, reconcileLateClaudeAction]);
 
   const copyLaunchCommand = async (item: IntegrationStatus) => {
     if (item.command && (await copyTextToClipboard(item.command))) {
@@ -831,6 +853,8 @@ export function ConnectAppsScreen({
           enabling && !status.used,
           restartConfirmed,
         ),
+        CLAUDE_CONNECTION_TIMEOUT_MS,
+        reconcileLateClaudeAction(enabling),
       );
       setClaudeStatus(result.status);
       let actionError = result.error || null;

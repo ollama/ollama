@@ -16,19 +16,29 @@ export class ClaudeConnectionTimeoutError extends Error {
 export function withClaudeConnectionTimeout<T>(
   action: Promise<T>,
   timeoutMs = CLAUDE_CONNECTION_TIMEOUT_MS,
+  onLateSettled?: () => void,
 ): Promise<T> {
   return new Promise((resolve, reject) => {
-    const timeout = globalThis.setTimeout(
-      () => reject(new ClaudeConnectionTimeoutError()),
-      timeoutMs,
-    );
+    let timedOut = false;
+    const timeout = globalThis.setTimeout(() => {
+      timedOut = true;
+      reject(new ClaudeConnectionTimeoutError());
+    }, timeoutMs);
     action.then(
       (value) => {
         globalThis.clearTimeout(timeout);
+        if (timedOut) {
+          onLateSettled?.();
+          return;
+        }
         resolve(value);
       },
       (error: unknown) => {
         globalThis.clearTimeout(timeout);
+        if (timedOut) {
+          onLateSettled?.();
+          return;
+        }
         reject(error);
       },
     );
