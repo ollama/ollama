@@ -22,7 +22,6 @@ import {
   CommandLineIcon,
   ShieldCheckIcon,
   Square2StackIcon,
-  XMarkIcon,
 } from "@heroicons/react/24/outline";
 import {
   CheckIcon,
@@ -49,13 +48,12 @@ type ClaudeConnectPhase =
 
 const CLAUDE_CONNECTION_POLL_INTERVAL_MS = 500;
 const CLAUDE_CONNECTION_TIMEOUT_MS = 45_000;
-const CLAUDE_CONNECTED_INTRO_KEY = "ollama.claude-connected-intro-seen";
 const MINIMUM_APP_WINDOW_HEIGHT = 660;
 const TERMINAL_ROW_HEIGHT_WITH_GAP = 80;
 const TERMINAL_LIST_RESERVED_HEIGHT = 296;
 
-function hasSeenClaudeConnectedIntro() {
-  return window.localStorage.getItem(CLAUDE_CONNECTED_INTRO_KEY) === "true";
+export function shouldShowClaudeConnectedIntro(status: ClaudeDesktopStatus) {
+  return status.connected && !status.startFailed && !status.used;
 }
 
 function setClaudeConnection(enabled: boolean, deferLaunch = false) {
@@ -375,6 +373,54 @@ function LaunchCommandIcon({ item }: { item: IntegrationStatus }) {
   );
 }
 
+export function ClaudeConnectedIntro({ onDone }: { onDone: () => void }) {
+  return (
+    <div className="claude-connected-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-6">
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="claude-connected-title"
+        aria-describedby="claude-connected-description"
+        className="claude-connected-dialog relative w-full max-w-md overflow-hidden rounded-2xl bg-white font-sans shadow-2xl ring-1 ring-black/10"
+      >
+        <img
+          src="/claude-connected.png"
+          alt="Ollama models in the Claude model picker"
+          width={900}
+          height={761}
+          className="h-auto w-full object-contain"
+          draggable={false}
+        />
+        <div className="p-6">
+          <h2
+            id="claude-connected-title"
+            className="font-rounded text-lg font-medium leading-6 text-neutral-950"
+          >
+            Easily access Ollama models in your Claude
+          </h2>
+          <p
+            id="claude-connected-description"
+            className="mt-2 text-[13px] leading-5 text-neutral-500"
+          >
+            Ollama models now show up in Claude so you can pick the right model
+            for the task.
+          </p>
+          <div className="mt-5 flex justify-end">
+            <button
+              type="button"
+              autoFocus
+              className="rounded-full bg-neutral-100 px-6 py-2 text-sm font-normal text-neutral-950 transition-colors hover:bg-neutral-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
+              onClick={onDone}
+            >
+              Continue
+            </button>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export function ConnectAppsScreen({
   initialIntegrations,
   initialClaudeStatus,
@@ -488,11 +534,7 @@ export function ConnectAppsScreen({
   const finishClaudeConnection = useCallback(
     async (status: ClaudeDesktopStatus) => {
       if (claudeConnectedIntroPending.current) return null;
-      if (
-        status.connected &&
-        !status.startFailed &&
-        !hasSeenClaudeConnectedIntro()
-      ) {
+      if (shouldShowClaudeConnectedIntro(status)) {
         claudeConnectedIntroPending.current = true;
         setShowClaudeConnectedIntro(true);
         window.activateOllama?.();
@@ -506,7 +548,6 @@ export function ConnectAppsScreen({
 
   const dismissClaudeConnectedIntro = async () => {
     claudeConnectedIntroPending.current = false;
-    window.localStorage.setItem(CLAUDE_CONNECTED_INTRO_KEY, "true");
     setShowClaudeConnectedIntro(false);
     if (!window.setClaudeDesktopConnected) return;
     setClaudePhase("launching");
@@ -606,10 +647,7 @@ export function ConnectAppsScreen({
         }
 
         setClaudePhase("connecting");
-        const result = await setClaudeConnection(
-          true,
-          !hasSeenClaudeConnectedIntro(),
-        );
+        const result = await setClaudeConnection(true, !status.used);
         if (!active) return;
         setClaudeStatus(result.status);
         let actionError = result.error || null;
@@ -698,7 +736,7 @@ export function ConnectAppsScreen({
     try {
       const result = await setClaudeConnection(
         enabling,
-        enabling && !hasSeenClaudeConnectedIntro(),
+        enabling && !status.used,
       );
       setClaudeStatus(result.status);
       let actionError = result.error || null;
@@ -883,12 +921,12 @@ export function ConnectAppsScreen({
             {integrationStatuses ? (
               <div className="space-y-7 pb-4 pt-2">
                 {claudeIntegration && (
-                  <section aria-labelledby="applications-heading">
+                  <section aria-labelledby="desktop-heading">
                     <h2
-                      id="applications-heading"
+                      id="desktop-heading"
                       className="px-4 text-xs font-medium uppercase tracking-wider text-neutral-400"
                     >
-                      Application
+                      Desktop
                     </h2>
                     <div className="mt-2 bg-white">{claudeRow}</div>
                   </section>
@@ -979,57 +1017,9 @@ export function ConnectAppsScreen({
         </section>
       </div>
       {showClaudeConnectedIntro && (
-        <div className="claude-connected-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-6">
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="claude-connected-title"
-            aria-describedby="claude-connected-description"
-            className="claude-connected-dialog relative w-full max-w-md overflow-hidden rounded-2xl bg-white font-sans shadow-2xl ring-1 ring-black/10"
-          >
-            <button
-              type="button"
-              aria-label="Close"
-              className="absolute right-3 top-3 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-neutral-500 transition-colors hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
-              onClick={() => void dismissClaudeConnectedIntro()}
-            >
-              <XMarkIcon aria-hidden="true" className="h-5 w-5" />
-            </button>
-            <img
-              src="/claude-connected.png"
-              alt="Ollama models in the Claude model picker"
-              width={900}
-              height={761}
-              className="h-auto w-full object-contain"
-              draggable={false}
-            />
-            <div className="p-6">
-              <h2
-                id="claude-connected-title"
-                className="font-rounded text-lg font-medium leading-6 text-neutral-950"
-              >
-                Easily access Ollama models in your Claude
-              </h2>
-              <p
-                id="claude-connected-description"
-                className="mt-2 text-[13px] leading-5 text-neutral-500"
-              >
-                Ollama models now show up in Claude so you can pick the right
-                model for the task.
-              </p>
-              <div className="mt-5 flex justify-end">
-                <button
-                  type="button"
-                  autoFocus
-                  className="min-w-24 rounded-full bg-neutral-100 px-6 py-2 text-sm font-normal text-neutral-950 transition-colors hover:bg-neutral-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
-                  onClick={() => void dismissClaudeConnectedIntro()}
-                >
-                  Done
-                </button>
-              </div>
-            </div>
-          </section>
-        </div>
+        <ClaudeConnectedIntro
+          onDone={() => void dismissClaudeConnectedIntro()}
+        />
       )}
     </main>
   );
