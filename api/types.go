@@ -1115,7 +1115,7 @@ func DefaultOptions() Options {
 			NumCtx:          int(envconfig.ContextLength()),
 			NumBatch:        512,
 			NumGPU:          -1, // -1 here indicates that NumGPU should be set dynamically
-			NumThread:       0,  // let the runtime decide
+			NumThread:       0,  // 0: derive a cgroup/affinity-aware default (see llm.appendThreadArgs)
 			DraftNumPredict: 4,
 			UseMMap:         nil,
 		},
