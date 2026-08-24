@@ -19,12 +19,13 @@ import {
 } from "@heroicons/react/20/solid";
 import { Settings as SettingsType } from "@/gotypes";
 import { isWindowsPlatform } from "@/lib/platform";
-import { cloudSettingMutationScope } from "@/lib/cloudSettingUpdates";
+import { settingsMutationScope } from "@/lib/settingsMutationScope";
 import { useUser } from "@/hooks/useUser";
 import { useCloudStatus } from "@/hooks/useCloudStatus";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   getSettings,
+  type CloudStatusSource,
   type CloudStatusResponse,
   updateCloudSetting,
   updateSettings,
@@ -46,12 +47,12 @@ function AnimatedDots() {
 }
 
 interface SettingsDefaultsActions {
-  updateSettings: (settings: SettingsType) => void;
-  updateCloud: (enabled: boolean) => void;
-  updateShowAppsInMenu: (visible: boolean) => void;
-  contextLength: number;
-  cloudDisabled: boolean;
-  cloudOverriddenByEnv: boolean;
+  updateSettings: (settings: SettingsType) => Promise<unknown>;
+  updateCloud: (enabled: boolean) => Promise<unknown>;
+  updateShowAppsInMenu: (visible: boolean) => Promise<unknown>;
+  currentSettings: SettingsType;
+  cloudSource?: CloudStatusSource;
+  onSaved: () => void;
 }
 
 interface CloudUpdateRequest {
@@ -61,29 +62,30 @@ interface CloudUpdateRequest {
 
 let latestCloudRequestId = 0;
 
-export function applySettingsDefaults({
+export async function applySettingsDefaults({
   updateSettings,
   updateCloud,
   updateShowAppsInMenu,
-  contextLength,
-  cloudDisabled,
-  cloudOverriddenByEnv,
-}: SettingsDefaultsActions) {
-  updateSettings(
+  currentSettings,
+  cloudSource,
+  onSaved,
+}: SettingsDefaultsActions): Promise<void> {
+  await updateSettings(
     new SettingsType({
       Expose: false,
       Browser: false,
       Models: "",
       Agent: false,
       Tools: false,
-      ContextLength: contextLength,
+      ContextLength: currentSettings.ContextLength,
       AutoUpdateEnabled: true,
     }),
   );
-  if (cloudDisabled && !cloudOverriddenByEnv) {
-    updateCloud(true);
+  if (cloudSource === "config" || cloudSource === "both") {
+    await updateCloud(true);
   }
-  updateShowAppsInMenu(true);
+  await updateShowAppsInMenu(true);
+  onSaved();
 }
 
 export default function Settings() {
@@ -92,6 +94,7 @@ export default function Settings() {
   const [restartMessage, setRestartMessage] = useState(false);
   const [showAppsInMenu, setShowAppsInMenuState] = useState(true);
   const [showAppsInMenuPending, setShowAppsInMenuPending] = useState(false);
+  const [resettingToDefaults, setResettingToDefaults] = useState(false);
   const {
     user,
     isAuthenticated,
@@ -106,6 +109,11 @@ export default function Settings() {
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [pollingInterval, setPollingInterval] = useState<number | null>(null);
   const { cloudDisabled, cloudStatus } = useCloudStatus();
+
+  const showSavedConfirmation = useCallback(() => {
+    setShowSaved(true);
+    setTimeout(() => setShowSaved(false), 1500);
+  }, []);
 
   const {
     data: settingsData,
@@ -126,16 +134,15 @@ export default function Settings() {
   const defaultContextLength = inferenceComputeResponse?.defaultContextLength;
 
   const updateSettingsMutation = useMutation({
+    scope: settingsMutationScope,
     mutationFn: updateSettings,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["settings"] });
-      setShowSaved(true);
-      setTimeout(() => setShowSaved(false), 1500);
     },
   });
 
   const updateCloudMutation = useMutation({
-    scope: cloudSettingMutationScope,
+    scope: settingsMutationScope,
     mutationFn: ({ enabled }: CloudUpdateRequest) =>
       updateCloudSetting(enabled),
     onMutate: async ({ enabled, requestId }: CloudUpdateRequest) => {
@@ -175,9 +182,6 @@ export default function Settings() {
         ["cloudStatus"],
         status,
       );
-
-      setShowSaved(true);
-      setTimeout(() => setShowSaved(false), 1500);
     },
     onSettled: (_status, _error, request) => {
       if (request.requestId !== latestCloudRequestId) return;
@@ -188,7 +192,7 @@ export default function Settings() {
 
   const requestCloudUpdate = (enabled: boolean) => {
     const requestId = ++latestCloudRequestId;
-    updateCloudMutation.mutate({ enabled, requestId });
+    return updateCloudMutation.mutateAsync({ enabled, requestId });
   };
 
   useEffect(() => {
@@ -260,46 +264,68 @@ export default function Settings() {
           setTimeout(() => setRestartMessage(false), 3000);
         }
 
-        updateSettingsMutation.mutate(updatedSettings);
+        updateSettingsMutation.mutate(updatedSettings, {
+          onSuccess: showSavedConfirmation,
+        });
       }
     },
-    [settings, updateSettingsMutation],
+    [settings, showSavedConfirmation, updateSettingsMutation],
   );
 
-  const handleShowAppsInMenu = async (checked: boolean) => {
+  const updateShowAppsInMenuVisibility = async (checked: boolean) => {
     const previous = showAppsInMenu;
     setShowAppsInMenuState(checked);
     setShowAppsInMenuPending(true);
     try {
       await window.setShowAppsInMenu?.(checked);
-      setShowSaved(true);
-      setTimeout(() => setShowSaved(false), 1500);
     } catch (error) {
       setShowAppsInMenuState(previous);
-      console.error("Failed to update menu app visibility:", error);
+      throw error;
     } finally {
       setShowAppsInMenuPending(false);
     }
+  };
+
+  const handleShowAppsInMenu = (checked: boolean) => {
+    void updateShowAppsInMenuVisibility(checked)
+      .then(showSavedConfirmation)
+      .catch((error) =>
+        console.error("Failed to update menu app visibility:", error),
+      );
+  };
+
+  const handleCloudUpdate = (enabled: boolean) => {
+    void requestCloudUpdate(enabled)
+      .then(showSavedConfirmation)
+      .catch((error) =>
+        console.error("Failed to update cloud setting:", error),
+      );
   };
 
   const cloudOverriddenByEnv =
     cloudStatus?.source === "env" || cloudStatus?.source === "both";
   const cloudToggleDisabled = cloudOverriddenByEnv;
 
-  const handleResetToDefaults = () => {
-    if (!settings) return;
+  const handleResetToDefaults = async () => {
+    if (!settings || resettingToDefaults) return;
 
-    applySettingsDefaults({
-      updateSettings: (defaultSettings) =>
-        updateSettingsMutation.mutate(defaultSettings),
-      updateCloud: requestCloudUpdate,
-      updateShowAppsInMenu: (visible) => {
-        void handleShowAppsInMenu(visible);
-      },
-      contextLength: settings.ContextLength,
-      cloudDisabled,
-      cloudOverriddenByEnv,
-    });
+    setResettingToDefaults(true);
+    setShowSaved(false);
+    try {
+      await applySettingsDefaults({
+        updateSettings: (defaultSettings) =>
+          updateSettingsMutation.mutateAsync(defaultSettings),
+        updateCloud: requestCloudUpdate,
+        updateShowAppsInMenu: updateShowAppsInMenuVisibility,
+        currentSettings: settings,
+        cloudSource: cloudStatus?.source,
+        onSaved: showSavedConfirmation,
+      });
+    } catch (error) {
+      console.error("Failed to reset settings:", error);
+    } finally {
+      setResettingToDefaults(false);
+    }
   };
 
   const handleConnectOllamaAccount = async () => {
@@ -485,7 +511,7 @@ export default function Settings() {
                         if (cloudOverriddenByEnv) {
                           return;
                         }
-                        requestCloudUpdate(checked);
+                        handleCloudUpdate(checked);
                       }}
                     />
                   </div>
@@ -691,7 +717,8 @@ export default function Settings() {
               type="button"
               color="white"
               className="px-3"
-              onClick={handleResetToDefaults}
+              disabled={resettingToDefaults}
+              onClick={() => void handleResetToDefaults()}
             >
               Reset to defaults
             </Button>
