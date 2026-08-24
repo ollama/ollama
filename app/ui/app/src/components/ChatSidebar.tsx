@@ -238,111 +238,100 @@ export function ChatSidebar({ currentChatId }: ChatSidebarProps) {
     [startEditing, handleDeleteChat],
   );
 
-  if (isLoading) {
-    return (
-      <nav className="flex min-h-0 flex-col">
-        <div className="flex flex-1 flex-col p-4">
-          <div className="p-4">Loading...</div>
-        </div>
-      </nav>
-    );
-  }
-
-  if (error) {
-    return (
-      <nav className="flex min-h-0 flex-col">
-        <div className="flex flex-1 flex-col p-4">
-          <div className="p-4 text-red-500">Error loading chats</div>
-        </div>
-      </nav>
-    );
-  }
-
   return (
-    <nav className="flex flex-1 flex-col min-h-0 select-none">
+    <nav
+      aria-busy={isLoading || undefined}
+      className="flex flex-1 flex-col min-h-0 select-none"
+    >
       <header className="flex flex-col gap-0.5 px-4 pb-2">
         <AppNavigation current="chat" />
       </header>
       <div className="flex flex-1 flex-col px-4 py-1 overflow-y-auto overscroll-auto scrollbar-gutter">
-        <div className="flex flex-col gap-3 pt-4">
-          {chatGroups.map((group) => (
-            <div key={group.name} className="flex flex-col gap-0.5">
-              <h3 className="text-xs font-medium text-neutral-400 dark:text-neutral-500 px-2 py-1 select-none">
-                {group.name}
-              </h3>
-              {group.chats.map((chat) => (
-                <div
-                  key={chat.id}
-                  className={`allow-context-menu flex items-center relative text-sm text-neutral-800 dark:text-neutral-400 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 ${
-                    chat.id === currentChatId
-                      ? "bg-neutral-100 text-black dark:bg-neutral-800"
-                      : ""
-                  }`}
-                  onMouseEnter={() => handleMouseEnter(chat.id)}
-                  onContextMenu={(e) =>
-                    handleContextMenu(
-                      e,
-                      chat.id,
-                      chat.title ||
-                        chat.userExcerpt ||
-                        chat.createdAt.toLocaleString(),
-                    )
-                  }
-                >
-                  {editingChatId === chat.id ? (
-                    <div className="flex-1 flex items-center min-w-0 px-2 py-2 bg-neutral-100 text-black dark:bg-neutral-800 rounded-lg">
-                      <span className="truncate font-sans text-sm w-full">
-                        <input
-                          ref={inputRef}
-                          type="text"
-                          value={editValue}
-                          onChange={(e) => setEditValue(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              saveRename();
-                            } else if (e.key === "Escape") {
-                              setEditingChatId(null);
-                              setEditValue("");
-                            }
-                          }}
-                          className="bg-transparent border-0 focus:outline-none w-full dark:text-white"
-                          style={{
-                            font: "inherit",
-                            lineHeight: "inherit",
-                            padding: 0,
-                            margin: 0,
-                          }}
-                        />
-                      </span>
-                    </div>
-                  ) : (
-                    <Link
-                      to="/c/$chatId"
-                      params={{ chatId: chat.id }}
-                      className="flex-1 flex items-center min-w-0 px-2 py-2 select-none"
-                      onClick={(e) => {
-                        handleShiftClick(e, chat.id);
-                      }}
-                      draggable={false}
-                    >
-                      <span className="truncate font-sans text-sm">
-                        {chat.title ||
+        {error ? (
+          <div className="px-2 pt-4 text-sm text-red-500">
+            Error loading chats
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3 pt-4">
+            {chatGroups.map((group) => (
+              <div key={group.name} className="flex flex-col gap-0.5">
+                <h3 className="text-xs font-medium text-neutral-400 dark:text-neutral-500 px-2 py-1 select-none">
+                  {group.name}
+                </h3>
+                {group.chats.map((chat) => (
+                  <div
+                    key={chat.id}
+                    className={`allow-context-menu flex items-center relative text-sm text-neutral-800 dark:text-neutral-400 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 ${
+                      chat.id === currentChatId
+                        ? "bg-neutral-100 text-black dark:bg-neutral-800"
+                        : ""
+                    }`}
+                    onMouseEnter={() => handleMouseEnter(chat.id)}
+                    onContextMenu={(e) =>
+                      handleContextMenu(
+                        e,
+                        chat.id,
+                        chat.title ||
                           chat.userExcerpt ||
-                          chat.createdAt.toLocaleString()}
-                      </span>
-                      {copiedChatId === chat.id && (
-                        <span className="ml-2 text-xs text-green-600 dark:text-green-400">
-                          Copied!
+                          chat.createdAt.toLocaleString(),
+                      )
+                    }
+                  >
+                    {editingChatId === chat.id ? (
+                      <div className="flex-1 flex items-center min-w-0 px-2 py-2 bg-neutral-100 text-black dark:bg-neutral-800 rounded-lg">
+                        <span className="truncate font-sans text-sm w-full">
+                          <input
+                            ref={inputRef}
+                            type="text"
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                saveRename();
+                              } else if (e.key === "Escape") {
+                                setEditingChatId(null);
+                                setEditValue("");
+                              }
+                            }}
+                            className="bg-transparent border-0 focus:outline-none w-full dark:text-white"
+                            style={{
+                              font: "inherit",
+                              lineHeight: "inherit",
+                              padding: 0,
+                              margin: 0,
+                            }}
+                          />
                         </span>
-                      )}
-                    </Link>
-                  )}
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
+                      </div>
+                    ) : (
+                      <Link
+                        to="/c/$chatId"
+                        params={{ chatId: chat.id }}
+                        className="flex-1 flex items-center min-w-0 px-2 py-2 select-none"
+                        onClick={(e) => {
+                          handleShiftClick(e, chat.id);
+                        }}
+                        draggable={false}
+                      >
+                        <span className="truncate font-sans text-sm">
+                          {chat.title ||
+                            chat.userExcerpt ||
+                            chat.createdAt.toLocaleString()}
+                        </span>
+                        {copiedChatId === chat.id && (
+                          <span className="ml-2 text-xs text-green-600 dark:text-green-400">
+                            Copied!
+                          </span>
+                        )}
+                      </Link>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </nav>
   );

@@ -613,12 +613,7 @@ static NSImage *ollamaApplicationIcon(void) {
 }
 
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)hasVisibleWindows {
-    if (IsOnboardingActive()) {
-        ShowUI();
-        return YES;
-    }
-
-    [self appsUI];
+    ShowUI();
     return YES;
 }
 

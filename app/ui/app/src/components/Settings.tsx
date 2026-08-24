@@ -19,6 +19,7 @@ import {
 } from "@heroicons/react/20/solid";
 import { Settings as SettingsType } from "@/gotypes";
 import { isWindowsPlatform } from "@/lib/platform";
+import { cloudSettingMutationScope } from "@/lib/cloudSettingUpdates";
 import { useUser } from "@/hooks/useUser";
 import { useCloudStatus } from "@/hooks/useCloudStatus";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -44,6 +45,47 @@ function AnimatedDots() {
   );
 }
 
+interface SettingsDefaultsActions {
+  updateSettings: (settings: SettingsType) => void;
+  updateCloud: (enabled: boolean) => void;
+  updateShowAppsInMenu: (visible: boolean) => void;
+  contextLength: number;
+  cloudDisabled: boolean;
+  cloudOverriddenByEnv: boolean;
+}
+
+interface CloudUpdateRequest {
+  enabled: boolean;
+  requestId: number;
+}
+
+let latestCloudRequestId = 0;
+
+export function applySettingsDefaults({
+  updateSettings,
+  updateCloud,
+  updateShowAppsInMenu,
+  contextLength,
+  cloudDisabled,
+  cloudOverriddenByEnv,
+}: SettingsDefaultsActions) {
+  updateSettings(
+    new SettingsType({
+      Expose: false,
+      Browser: false,
+      Models: "",
+      Agent: false,
+      Tools: false,
+      ContextLength: contextLength,
+      AutoUpdateEnabled: true,
+    }),
+  );
+  if (cloudDisabled && !cloudOverriddenByEnv) {
+    updateCloud(true);
+  }
+  updateShowAppsInMenu(true);
+}
+
 export default function Settings() {
   const queryClient = useQueryClient();
   const [showSaved, setShowSaved] = useState(false);
@@ -63,11 +105,7 @@ export default function Settings() {
   const [isAwaitingConnection, setIsAwaitingConnection] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [pollingInterval, setPollingInterval] = useState<number | null>(null);
-  const {
-    cloudDisabled,
-    cloudStatus,
-    isLoading: cloudStatusLoading,
-  } = useCloudStatus();
+  const { cloudDisabled, cloudStatus } = useCloudStatus();
 
   const {
     data: settingsData,
@@ -97,13 +135,16 @@ export default function Settings() {
   });
 
   const updateCloudMutation = useMutation({
-    mutationFn: (enabled: boolean) => updateCloudSetting(enabled),
-    onMutate: async (enabled: boolean) => {
+    scope: cloudSettingMutationScope,
+    mutationFn: ({ enabled }: CloudUpdateRequest) =>
+      updateCloudSetting(enabled),
+    onMutate: async ({ enabled, requestId }: CloudUpdateRequest) => {
       await queryClient.cancelQueries({ queryKey: ["cloudStatus"] });
 
       const previous = queryClient.getQueryData<CloudStatusResponse | null>([
         "cloudStatus",
       ]);
+      if (requestId !== latestCloudRequestId) return { previous };
       const envForcesDisabled =
         previous?.source === "env" || previous?.source === "both";
 
@@ -122,23 +163,33 @@ export default function Settings() {
 
       return { previous };
     },
-    onError: (_error, _enabled, context) => {
+    onError: (_error, request, context) => {
+      if (request.requestId !== latestCloudRequestId) return;
       if (context?.previous !== undefined) {
         queryClient.setQueryData(["cloudStatus"], context.previous);
       }
     },
-    onSuccess: (status) => {
+    onSuccess: (status, request) => {
+      if (request.requestId !== latestCloudRequestId) return;
       queryClient.setQueryData<CloudStatusResponse | null>(
         ["cloudStatus"],
         status,
       );
-      queryClient.invalidateQueries({ queryKey: ["models"] });
-      queryClient.invalidateQueries({ queryKey: ["cloudStatus"] });
 
       setShowSaved(true);
       setTimeout(() => setShowSaved(false), 1500);
     },
+    onSettled: (_status, _error, request) => {
+      if (request.requestId !== latestCloudRequestId) return;
+      queryClient.invalidateQueries({ queryKey: ["models"] });
+      queryClient.invalidateQueries({ queryKey: ["cloudStatus"] });
+    },
   });
+
+  const requestCloudUpdate = (enabled: boolean) => {
+    const requestId = ++latestCloudRequestId;
+    updateCloudMutation.mutate({ enabled, requestId });
+  };
 
   useEffect(() => {
     refetchUser();
@@ -215,21 +266,6 @@ export default function Settings() {
     [settings, updateSettingsMutation],
   );
 
-  const handleResetToDefaults = () => {
-    if (settings) {
-      const defaultSettings = new SettingsType({
-        Expose: false,
-        Browser: false,
-        Models: "",
-        Agent: false,
-        Tools: false,
-        ContextLength: 0,
-        AutoUpdateEnabled: true,
-      });
-      updateSettingsMutation.mutate(defaultSettings);
-    }
-  };
-
   const handleShowAppsInMenu = async (checked: boolean) => {
     const previous = showAppsInMenu;
     setShowAppsInMenuState(checked);
@@ -248,8 +284,23 @@ export default function Settings() {
 
   const cloudOverriddenByEnv =
     cloudStatus?.source === "env" || cloudStatus?.source === "both";
-  const cloudToggleDisabled =
-    cloudStatusLoading || updateCloudMutation.isPending || cloudOverriddenByEnv;
+  const cloudToggleDisabled = cloudOverriddenByEnv;
+
+  const handleResetToDefaults = () => {
+    if (!settings) return;
+
+    applySettingsDefaults({
+      updateSettings: (defaultSettings) =>
+        updateSettingsMutation.mutate(defaultSettings),
+      updateCloud: requestCloudUpdate,
+      updateShowAppsInMenu: (visible) => {
+        void handleShowAppsInMenu(visible);
+      },
+      contextLength: settings.ContextLength,
+      cloudDisabled,
+      cloudOverriddenByEnv,
+    });
+  };
 
   const handleConnectOllamaAccount = async () => {
     setConnectionError(null);
@@ -434,7 +485,7 @@ export default function Settings() {
                         if (cloudOverriddenByEnv) {
                           return;
                         }
-                        updateCloudMutation.mutate(checked);
+                        requestCloudUpdate(checked);
                       }}
                     />
                   </div>

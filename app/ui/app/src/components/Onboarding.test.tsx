@@ -1,11 +1,13 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import {
+  ClaudeConnectedIntro,
   FIRST_MODEL_COMMAND,
   ConnectAppsScreen,
   IntroScreen,
   default as Onboarding,
   RunOllamaScreen,
+  shouldShowClaudeConnectedIntro,
   terminalRowsForWindowHeight,
   WelcomeScreen,
 } from "./Onboarding";
@@ -90,7 +92,7 @@ describe("Onboarding", () => {
         />,
       );
 
-      expect(html).not.toContain('id="applications-heading"');
+      expect(html).not.toContain('id="desktop-heading"');
       expect(html).not.toContain("Use Ollama models in Claude Desktop");
       expect(html).toContain('id="terminal-heading"');
       expect(html).toContain("ollama launch claude");
@@ -158,6 +160,45 @@ describe("Onboarding", () => {
       vi.useRealTimers();
       vi.unstubAllGlobals();
     }
+  });
+
+  it("shows the Claude intro only before the integration has been used", () => {
+    const firstConnection = {
+      supported: true,
+      used: false,
+      installed: true,
+      configured: true,
+      connected: true,
+      running: false,
+      startFailed: false,
+      portConflict: false,
+    };
+
+    expect(shouldShowClaudeConnectedIntro(firstConnection)).toBe(true);
+    expect(
+      shouldShowClaudeConnectedIntro({ ...firstConnection, used: true }),
+    ).toBe(false);
+    expect(
+      shouldShowClaudeConnectedIntro({
+        ...firstConnection,
+        connected: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowClaudeConnectedIntro({
+        ...firstConnection,
+        startFailed: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("uses Continue as the only Claude intro action", () => {
+    const html = renderToStaticMarkup(
+      <ClaudeConnectedIntro onDone={vi.fn()} />,
+    );
+
+    expect(html).toContain(">Continue</button>");
+    expect(html).not.toContain('aria-label="Close"');
   });
 
   it("opens the device connection flow without relaunching the app", () => {
@@ -270,12 +311,12 @@ describe("Onboarding", () => {
     expect(html).toContain("Claude Code");
     expect(html).not.toContain("Search apps");
     expect(html).not.toContain('type="search"');
-    expect(html).toContain("Application");
-    expect(html).toContain('id="applications-heading"');
+    expect(html).toContain("Desktop");
+    expect(html).toContain('id="desktop-heading"');
     expect(html).toContain('id="terminal-heading"');
     expect(html).not.toContain("Ready to launch");
     expect(html).not.toContain('id="claude-apps-heading"');
-    expect(html.indexOf("Application")).toBeLessThan(
+    expect(html.indexOf("Desktop")).toBeLessThan(
       html.indexOf("Use Ollama models in Claude Desktop"),
     );
     expect(html).not.toContain(">Command</th>");
@@ -312,7 +353,7 @@ describe("Onboarding", () => {
     expect(html).not.toContain('viewBox="0 0 3400 3400"');
   });
 
-  it("keeps connected Claude in Application without an idle status", () => {
+  it("keeps connected Claude in Desktop without an idle status", () => {
     const html = renderToStaticMarkup(
       <ConnectAppsScreen
         completionError={null}
@@ -346,7 +387,7 @@ describe("Onboarding", () => {
       />,
     );
 
-    expect(html).toContain('id="applications-heading"');
+    expect(html).toContain('id="desktop-heading"');
     expect(html).not.toContain('id="claude-apps-heading"');
     expect(html).not.toContain("Ready to launch");
     expect(html).not.toContain("Active");
