@@ -44,6 +44,11 @@ func TestFetchClaudeDesktopModelsUsesAppAwareContract(t *testing.T) {
 	if models[1].DisplayName != "deepseek-v4-pro:cloud" {
 		t.Fatalf("display name = %q, want exact model identifier", models[1].DisplayName)
 	}
+	for _, model := range models {
+		if !model.Recommended {
+			t.Fatalf("endpoint model %q was not marked as recommended", model.Name)
+		}
+	}
 }
 
 func TestFetchClaudeDesktopModelsRejectsInvalidResponses(t *testing.T) {
@@ -107,6 +112,9 @@ func TestSelectClaudeDesktopModelsPrioritizesExplicitSelection(t *testing.T) {
 	}
 	if got, want := custom[0].GatewayID(), "claude-fable-5"; got != want {
 		t.Fatalf("custom gateway ID = %q, want validated slot %q", got, want)
+	}
+	if custom[0].Recommended {
+		t.Fatal("custom selection was marked as recommended")
 	}
 
 	withoutSentinel := SelectClaudeDesktopModels(available, []string{"Ollama Cloud", "ollama:cloud", "qwen3:8b"})

@@ -67,6 +67,16 @@ func (c *ClaudeDesktop) AutodiscoveredModel() string {
 // without pinning a model list, so Claude discovers the selected catalog and
 // exact Ollama route names the gateway advertises.
 func (c *ClaudeDesktop) ConfigureAutodiscovery() error {
+	autoMode, err := claudeDesktopAutoModePreference()
+	if err != nil {
+		return err
+	}
+	return c.ConfigureAutodiscoveryWithAutoMode(autoMode)
+}
+
+// ConfigureAutodiscoveryWithAutoMode writes the managed profile with the
+// effective Auto mode state selected by the Ollama app.
+func (c *ClaudeDesktop) ConfigureAutodiscoveryWithAutoMode(autoMode bool) error {
 	if err := claudeDesktopSupported(); err != nil {
 		return err
 	}
@@ -77,7 +87,7 @@ func (c *ClaudeDesktop) ConfigureAutodiscovery() error {
 	if err != nil {
 		return err
 	}
-	return configureClaudeDesktopTargets(targets, claudeDesktopGatewayBaseURL, "ollama")
+	return configureClaudeDesktopTargets(targets, claudeDesktopGatewayBaseURL, "ollama", autoMode)
 }
 
 func (c *ClaudeDesktop) RestoreHint() string {
@@ -93,11 +103,21 @@ func (c *ClaudeDesktop) RestoreSuccessMessage() string {
 }
 
 func (c *ClaudeDesktop) AutodiscoveryConfigured() bool {
+	autoMode, err := claudeDesktopAutoModePreference()
+	if err != nil {
+		return false
+	}
+	return c.AutodiscoveryConfiguredWithAutoMode(autoMode)
+}
+
+// AutodiscoveryConfiguredWithAutoMode reports whether the managed profile has
+// the effective Auto mode state selected by the Ollama app.
+func (c *ClaudeDesktop) AutodiscoveryConfiguredWithAutoMode(autoMode bool) bool {
 	targets, err := claudeDesktopTargetPaths()
 	if err != nil {
 		return false
 	}
-	return claudeDesktopTargetsConfigured(targets)
+	return claudeDesktopTargetsConfigured(targets, autoMode)
 }
 
 // UsesOllamaGateway reports whether Claude Desktop is currently routed through
@@ -113,13 +133,27 @@ func (c *ClaudeDesktop) UsesOllamaGateway() bool {
 
 // SetInstalledFromDesktop changes the Claude profile from the native Ollama app.
 func (c *ClaudeDesktop) SetInstalledFromDesktop(installed, restart bool) error {
+	autoMode := false
+	if installed {
+		var err error
+		autoMode, err = claudeDesktopAutoModePreference()
+		if err != nil {
+			return err
+		}
+	}
+	return c.SetInstalledFromDesktopWithAutoMode(installed, restart, autoMode)
+}
+
+// SetInstalledFromDesktopWithAutoMode changes the Claude profile from the
+// native Ollama app with its effective Auto mode state.
+func (c *ClaudeDesktop) SetInstalledFromDesktopWithAutoMode(installed, restart, autoMode bool) error {
 	if err := claudeDesktopSupported(); err != nil {
 		return err
 	}
 
 	applyProfile := restoreClaudeDesktopProfile
 	if installed {
-		applyProfile = c.ConfigureAutodiscovery
+		applyProfile = func() error { return c.ConfigureAutodiscoveryWithAutoMode(autoMode) }
 	}
 
 	running, err := claudeDesktopIsRunning(context.Background())
@@ -279,11 +313,7 @@ func (c *ClaudeDesktop) Restore() error {
 	})
 }
 
-func configureClaudeDesktopTargets(targets claudeDesktopTargets, baseURL, apiKey string) error {
-	autoMode, err := claudeDesktopAutoModePreference()
-	if err != nil {
-		return err
-	}
+func configureClaudeDesktopTargets(targets claudeDesktopTargets, baseURL, apiKey string, autoMode bool) error {
 	for _, target := range targets.thirdPartyProfiles {
 		if err := writeClaudeDesktopGatewayProfile(target.profile, baseURL, apiKey, true, autoMode); err != nil {
 			return err
@@ -733,12 +763,8 @@ func readClaudeDesktopDeploymentMode(path string) string {
 	return mode
 }
 
-func claudeDesktopTargetsConfigured(targets claudeDesktopTargets) bool {
+func claudeDesktopTargetsConfigured(targets claudeDesktopTargets, autoMode bool) bool {
 	if !claudeDesktopTargetsUseOllamaGateway(targets) {
-		return false
-	}
-	autoMode, err := claudeDesktopAutoModePreference()
-	if err != nil {
 		return false
 	}
 	for _, target := range targets.thirdPartyProfiles {

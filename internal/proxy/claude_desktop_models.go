@@ -42,6 +42,7 @@ type ClaudeDesktopModel struct {
 	RequiredPlan     string
 	OllamaModel      string
 	Cloud            bool
+	Recommended      bool
 	entitlementKnown bool
 	gateway          gatewayModel
 }
@@ -110,6 +111,7 @@ func ClaudeDesktopModelsFromRecommendations(recommendations []api.ModelRecommend
 			strings.TrimSpace(recommendation.RequiredPlan),
 			recommendation.MaxOutputTokens,
 		)
+		model.Recommended = true
 		model.entitlementKnown = true
 		models = append(models, model)
 	}

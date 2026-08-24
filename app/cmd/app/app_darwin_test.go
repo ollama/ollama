@@ -74,6 +74,9 @@ func TestLoadClaudeDesktopModelsUsesAppEndpoint(t *testing.T) {
 	if source != "endpoint" || len(models) != 1 || models[0].Name != "glm-5.2:cloud" {
 		t.Fatalf("models/source = %+v/%q", models, source)
 	}
+	if !models[0].Recommended {
+		t.Fatal("endpoint recommendation was not marked as recommended")
+	}
 }
 
 func TestClaudeDesktopDownloadEndpointUsesTypedZipContract(t *testing.T) {
@@ -143,8 +146,14 @@ func TestClaudeEndpointRequestsAreNotSentUnsigned(t *testing.T) {
 		claudeRecommendationsEndpoint = previousEndpoint
 	})
 
-	if _, source := loadClaudeDesktopModels(context.Background()); source != "fallback" {
+	models, source := loadClaudeDesktopModels(context.Background())
+	if source != "fallback" {
 		t.Fatalf("model source = %q, want fallback", source)
+	}
+	for _, model := range models {
+		if model.Recommended {
+			t.Fatalf("offline fallback model %q must not enable Auto mode", model.Name)
+		}
 	}
 	if called {
 		t.Fatal("model recommendations request was sent without identity")
@@ -396,15 +405,16 @@ type fakeClaudeDesktopController struct {
 	modelsAtSet    []string
 	configureOnSet bool
 	requireRestart bool
+	autoMode       bool
 }
 
 func (f *fakeClaudeDesktopController) UsesOllamaGateway() bool { return f.configured }
 
-func (f *fakeClaudeDesktopController) AutodiscoveryConfigured() bool {
-	return f.configured && f.profileCurrent
+func (f *fakeClaudeDesktopController) AutodiscoveryConfiguredWithAutoMode(autoMode bool) bool {
+	return f.configured && f.profileCurrent && f.autoMode == autoMode
 }
 
-func (f *fakeClaudeDesktopController) ConfigureAutodiscovery() error {
+func (f *fakeClaudeDesktopController) ConfigureAutodiscoveryWithAutoMode(autoMode bool) error {
 	f.configureCalls++
 	if f.configureErr != nil {
 		f.profileCurrent = false
@@ -412,15 +422,17 @@ func (f *fakeClaudeDesktopController) ConfigureAutodiscovery() error {
 	}
 	f.configured = true
 	f.profileCurrent = true
+	f.autoMode = autoMode
 	return nil
 }
 
-func (f *fakeClaudeDesktopController) SetInstalledFromDesktop(installed, restart bool) error {
+func (f *fakeClaudeDesktopController) SetInstalledFromDesktopWithAutoMode(installed, restart, autoMode bool) error {
 	if f.requireRestart && !restart {
 		return errors.New("Claude Desktop restart confirmation is required before changing its profile")
 	}
 	f.installed = installed
 	f.restart = restart
+	f.autoMode = autoMode
 	f.modelsAtSet = launch.ClaudeDesktopModels()
 	if f.configureOnSet {
 		f.configured = installed
@@ -539,15 +551,18 @@ func TestSetClaudeDesktopAutoModeAvoidsUnnecessaryRestart(t *testing.T) {
 	if err := launch.SaveClaudeDesktopAutoMode(true); err != nil {
 		t.Fatal(err)
 	}
+	previousAvailable := claudeAvailableModels
+	claudeAvailableModels = proxy.ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "glm-5.2:cloud"}})
 	previousDesktop := claudeDesktop
 	previousRunning := claudeDesktopRunning
-	fake := &fakeClaudeDesktopController{configured: true, profileCurrent: true}
+	fake := &fakeClaudeDesktopController{configured: true, profileCurrent: true, autoMode: true}
 	claudeDesktop = fake
 	claudeDesktopRunning = func() bool {
 		t.Fatal("unchanged current preference should not inspect the Claude process")
 		return false
 	}
 	t.Cleanup(func() {
+		claudeAvailableModels = previousAvailable
 		claudeDesktop = previousDesktop
 		claudeDesktopRunning = previousRunning
 	})
@@ -608,6 +623,60 @@ func TestSetClaudeDesktopAutoModeKeepsDesiredPreferenceAfterProfileFailure(t *te
 	}
 }
 
+func TestClaudeDesktopAutoModeModelEligibility(t *testing.T) {
+	recommended := proxy.ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{
+		{Model: "glm-5.2:cloud"},
+		{Model: "kimi-k3:cloud"},
+		{Model: "gemma4:31b-cloud"},
+	})
+	custom := proxy.SelectClaudeDesktopModels(nil, []string{"qwen3:8b"})
+
+	tests := []struct {
+		name   string
+		models []proxy.ClaudeDesktopModel
+		want   bool
+	}{
+		{name: "recommended model", models: recommended[:1], want: true},
+		{name: "recommended models", models: recommended[:2], want: true},
+		{name: "gemma4 excluded", models: recommended[2:]},
+		{name: "custom model excluded", models: custom},
+		{name: "mixed selection excluded", models: []proxy.ClaudeDesktopModel{recommended[0], custom[0]}},
+		{name: "empty selection excluded"},
+		{name: "offline fallback excluded", models: fallbackClaudeDesktopModels()},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := claudeDesktopModelsSupportAutoMode(tt.models); got != tt.want {
+				t.Fatalf("claudeDesktopModelsSupportAutoMode() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSetClaudeDesktopAutoModeRejectsUnsupportedSelection(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := launch.SaveClaudeDesktopAutoMode(false); err != nil {
+		t.Fatal(err)
+	}
+
+	previousAvailable := claudeAvailableModels
+	claudeAvailableModels = proxy.SelectClaudeDesktopModels(nil, []string{"qwen3:8b"})
+	t.Cleanup(func() { claudeAvailableModels = previousAvailable })
+
+	err := setClaudeDesktopAutoMode(true)
+	if err == nil || !strings.Contains(err.Error(), "Auto-compatible recommended model") {
+		t.Fatalf("setClaudeDesktopAutoMode() error = %v", err)
+	}
+	enabled, loadErr := launch.ClaudeDesktopAutoModeEnabled()
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if enabled {
+		t.Fatal("rejected Auto mode change modified the saved preference")
+	}
+}
+
 func TestRestartClaudeDesktopWithModelsPersistsSelection(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
@@ -630,6 +699,9 @@ func TestRestartClaudeDesktopWithModelsPersistsSelection(t *testing.T) {
 	}
 	if !fake.installed {
 		t.Fatal("expected the Claude profile to be installed")
+	}
+	if !fake.autoMode {
+		t.Fatal("expected the recommended model to keep Auto mode enabled")
 	}
 	if got, want := launch.ClaudeDesktopModels(), []string{"kimi-k3:cloud"}; !slices.Equal(got, want) {
 		t.Fatalf("persisted models = %v, want Ollama routes %v", got, want)

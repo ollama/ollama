@@ -36,6 +36,7 @@ interface ClaudeDesktopModelStatus {
   description?: string;
   cloud?: boolean;
   selected: boolean;
+  autoMode?: boolean;
   availability?: "unknown" | "available" | "unavailable";
   reason?:
     | "cloud_off"

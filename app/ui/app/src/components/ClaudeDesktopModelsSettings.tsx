@@ -64,6 +64,12 @@ function explicitCloudName(name: string): string {
   return name.endsWith(":cloud") ? name : `${name}:cloud`;
 }
 
+function formatModelList(names: string[]): string {
+  if (names.length < 2) return names[0] ?? "";
+  if (names.length === 2) return `${names[0]} or ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")}, or ${names[names.length - 1]}`;
+}
+
 export function ClaudeDesktopModelsSettings({
   initialStatus,
   initialLocalModels,
@@ -285,7 +291,20 @@ export function ClaudeDesktopModelsSettings({
 
   const maxModels = claudeDesktopMaxModels(status);
   const selectionFull = selection.length >= maxModels;
-  const autoMode = autoModeOverride ?? status.autoMode ?? false;
+  const autoModeModels = models.filter((model) => model.autoMode);
+  const autoModeModelNames = autoModeModels.map((model) => model.name);
+  const autoModeAvailable =
+    selection.length > 0 &&
+    selection.every((name) =>
+      autoModeModels.some((model) => model.name === name),
+    );
+  const autoMode =
+    autoModeAvailable && (autoModeOverride ?? status.autoMode ?? false);
+  const autoModeDescription = autoModeAvailable
+    ? "Let Claude decide when to ask before making changes."
+    : autoModeModelNames.length > 0
+      ? `Select only ${formatModelList(autoModeModelNames)} to use auto mode.`
+      : "Auto mode needs a recommended model from Ollama.com.";
   const guidance =
     claudeDesktopRecoveryMessage(status.error, error) ??
     (!hasAvailableSelection && models.length > 0
@@ -416,13 +435,11 @@ export function ClaudeDesktopModelsSettings({
               <div className="flex items-center justify-between gap-4">
                 <div className="min-w-0">
                   <Label>Enable auto mode</Label>
-                  <Description>
-                    Let Claude decide when to ask before making changes.
-                  </Description>
+                  <Description>{autoModeDescription}</Description>
                 </div>
                 <Switch
                   checked={autoMode}
-                  disabled={restarting}
+                  disabled={restarting || !autoModeAvailable}
                   onChange={(checked) => void toggleAutoMode(checked)}
                   className="flex-shrink-0"
                 />

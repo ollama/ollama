@@ -438,6 +438,43 @@ func TestClaudeDesktopAutoModeDefaultsEnabledForLegacyIntegrationConfig(t *testi
 	}
 }
 
+func TestClaudeDesktopEffectiveAutoModeDoesNotChangeSavedPreference(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withClaudeDesktopPlatform(t, "darwin")
+	t.Setenv("OLLAMA_API_KEY", "test-api-key")
+
+	if err := SaveClaudeDesktopAutoMode(true); err != nil {
+		t.Fatal(err)
+	}
+	c := &ClaudeDesktop{}
+	if err := c.ConfigureAutodiscoveryWithAutoMode(false); err != nil {
+		t.Fatal(err)
+	}
+
+	paths, err := claudeDesktopConfigPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := claudeDesktopReadJSON(t, paths.profile)
+	if profile["autoModeEnabled"] != false {
+		t.Fatalf("autoModeEnabled = %v, want effective false", profile["autoModeEnabled"])
+	}
+	if !c.AutodiscoveryConfiguredWithAutoMode(false) {
+		t.Fatal("expected profile to match the effective Auto mode state")
+	}
+	if c.AutodiscoveryConfigured() {
+		t.Fatal("saved preference check must detect the temporary effective state")
+	}
+	enabled, err := ClaudeDesktopAutoModeEnabled()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !enabled {
+		t.Fatal("effective Auto mode state changed the saved preference")
+	}
+}
+
 func TestClaudeDesktopConfigurePreservesProfileWhenAutoModePreferenceIsUnreadable(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
@@ -1273,7 +1310,8 @@ func TestClaudeDesktopSetInstalledFromDesktopOpensStoppedAppWhenEnabled(t *testi
 }
 
 func TestClaudeDesktopSetInstalledFromDesktopDoesNotOpenStoppedAppWhenDisabled(t *testing.T) {
-	setTestHome(t, t.TempDir())
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
 	withClaudeDesktopPlatform(t, "darwin")
 	c := &ClaudeDesktop{}
 	if err := c.ConfigureAutodiscovery(); err != nil {
@@ -1284,6 +1322,13 @@ func TestClaudeDesktopSetInstalledFromDesktopDoesNotOpenStoppedAppWhenDisabled(t
 		func() error { t.Fatal("stopped Claude should not be quit"); return nil },
 		func() error { t.Fatal("disabling should not open stopped Claude"); return nil },
 	)
+	configPath := filepath.Join(tmpDir, ".ollama", "config.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{invalid`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := c.SetInstalledFromDesktop(false, false); err != nil {
 		t.Fatalf("SetInstalledFromDesktop returned error: %v", err)

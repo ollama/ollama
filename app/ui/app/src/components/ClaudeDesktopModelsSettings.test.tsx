@@ -94,6 +94,7 @@ describe("ClaudeDesktopModelsSettings", () => {
           name: "qwen3:8b",
           displayName: "qwen3:8b",
           selected: true,
+          autoMode: true,
         },
       ],
     };
@@ -201,10 +202,56 @@ describe("ClaudeDesktopModelsSettings", () => {
     expect(index).toBeGreaterThan(-1);
     const label = html.slice(html.lastIndexOf("<label", index), index);
     expect(label).toContain("disabled");
-    expect((html.match(/disabled=""/g) ?? []).length).toBe(1);
     expect(html).toContain(
       "Claude supports up to 5 models. Deselect one to add another.",
     );
+  });
+
+  it("disables auto mode unless all selected models are recommended and not gemma4", () => {
+    const html = renderToStaticMarkup(
+      <ClaudeDesktopModelsSettings
+        initialStatus={{
+          supported: true,
+          used: true,
+          installed: true,
+          connected: true,
+          running: false,
+          startFailed: false,
+          portConflict: false,
+          autoMode: true,
+          modelSource: "endpoint",
+          models: [
+            {
+              name: "glm-5.2:cloud",
+              displayName: "glm-5.2:cloud",
+              cloud: true,
+              selected: false,
+              autoMode: true,
+            },
+            {
+              name: "kimi-k3:cloud",
+              displayName: "kimi-k3:cloud",
+              cloud: true,
+              selected: false,
+              autoMode: true,
+            },
+            {
+              name: "gemma4:31b-cloud",
+              displayName: "gemma4:31b-cloud",
+              cloud: true,
+              selected: true,
+              autoMode: false,
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(html).toContain(
+      "Select only glm-5.2:cloud or kimi-k3:cloud to use auto mode.",
+    );
+    expect(html).toContain('role="switch"');
+    expect(html).toContain('aria-checked="false" disabled=""');
   });
 
   it("honors a smaller maxModels limit from the status", () => {
