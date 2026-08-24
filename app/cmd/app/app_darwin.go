@@ -61,6 +61,7 @@ const (
 // claudeDesktopController abstracts launch's Claude Desktop profile management
 // so app flows can be tested without probing a live gateway.
 type claudeDesktopController interface {
+	AutodiscoveryConfigured() bool
 	UsesOllamaGateway() bool
 	ConfigureAutodiscovery() error
 	SetInstalledFromDesktop(installed, restart bool) error
@@ -81,6 +82,7 @@ var (
 	claudeDesktop      claudeDesktopController = &launch.ClaudeDesktop{}
 
 	claudeDesktopInstalled        = launch.ClaudeDesktopInstalled
+	claudeDesktopRunning          = launch.ClaudeDesktopRunning
 	claudeProxyListenAddr         = proxy.DefaultClaudeDesktopListenAddr
 	claudeProxyRetryWait          = 750 * time.Millisecond
 	claudeProxyRetryPoll          = 50 * time.Millisecond
@@ -283,7 +285,25 @@ func reconcileClaudeAppProxy() error {
 		stopClaudeAppProxy()
 		return nil
 	}
-	return startClaudeAppProxy()
+	if err := startClaudeAppProxy(); err != nil {
+		return err
+	}
+	return updateClaudeDesktopProfile()
+}
+
+func updateClaudeDesktopProfile() error {
+	if claudeDesktop.AutodiscoveryConfigured() {
+		return nil
+	}
+	// Claude writes settings during shutdown. Do not race that write during
+	// startup reconciliation; explicit settings changes use the restart path.
+	if claudeDesktopRunning() {
+		return nil
+	}
+	if err := claudeDesktop.ConfigureAutodiscovery(); err != nil {
+		return fmt.Errorf("update Claude Desktop profile: %w", err)
+	}
+	return nil
 }
 
 func startClaudeAppProxy() error {
@@ -931,8 +951,13 @@ func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
 	}
 
 	status := claudeDesktopConnectionSummary(used)
+	autoMode, autoModeErr := launch.ClaudeDesktopAutoModeEnabled()
+	status.AutoMode = autoMode
 	status.ModelSource = modelSource
 	status.Models = modelStatuses
+	if status.Error == "" && autoModeErr != nil {
+		status.Error = autoModeErr.Error()
+	}
 	return status
 }
 
@@ -959,6 +984,27 @@ func prepareClaudeDesktopConnection() error {
 
 func openClaudeDesktopApplication() error {
 	return launch.OpenClaudeDesktop()
+}
+
+func setClaudeDesktopAutoMode(enabled bool) error {
+	previous, err := launch.ClaudeDesktopAutoModeEnabled()
+	if err != nil {
+		return err
+	}
+	if previous == enabled && (!claudeDesktop.UsesOllamaGateway() || claudeDesktop.AutodiscoveryConfigured()) {
+		return nil
+	}
+	if err := launch.SaveClaudeDesktopAutoMode(enabled); err != nil {
+		return fmt.Errorf("save Claude Desktop auto mode: %w", err)
+	}
+	if !claudeDesktop.UsesOllamaGateway() {
+		// The preference takes effect the next time the profile is written.
+		return nil
+	}
+	if claudeDesktopRunning() {
+		return claudeDesktop.RestartWithProfileChange(claudeDesktop.ConfigureAutodiscovery)
+	}
+	return claudeDesktop.ConfigureAutodiscovery()
 }
 
 func restartClaudeDesktopWithModels(names []string) error {

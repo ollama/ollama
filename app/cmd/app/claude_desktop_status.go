@@ -24,6 +24,7 @@ type claudeDesktopStatus struct {
 	GatewayPort    int                        `json:"gatewayPort,omitempty"`
 	RoutedRequests uint64                     `json:"routedRequests"`
 	Error          string                     `json:"error,omitempty"`
+	AutoMode       bool                       `json:"autoMode"`
 	ModelSource    string                     `json:"modelSource,omitempty"`
 	Models         []claudeDesktopModelStatus `json:"models,omitempty"`
 }

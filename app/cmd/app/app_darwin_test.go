@@ -387,6 +387,9 @@ func TestSelectKnownClaudeDesktopModelsAllowsInstalledModelsOnly(t *testing.T) {
 
 type fakeClaudeDesktopController struct {
 	configured     bool
+	profileCurrent bool
+	configureCalls int
+	configureErr   error
 	installed      bool
 	restart        bool
 	setErr         error
@@ -397,8 +400,18 @@ type fakeClaudeDesktopController struct {
 
 func (f *fakeClaudeDesktopController) UsesOllamaGateway() bool { return f.configured }
 
+func (f *fakeClaudeDesktopController) AutodiscoveryConfigured() bool {
+	return f.configured && f.profileCurrent
+}
+
 func (f *fakeClaudeDesktopController) ConfigureAutodiscovery() error {
+	f.configureCalls++
+	if f.configureErr != nil {
+		f.profileCurrent = false
+		return f.configureErr
+	}
 	f.configured = true
+	f.profileCurrent = true
 	return nil
 }
 
@@ -448,6 +461,152 @@ func (f *fakeClaudeDesktopController) RestartWithProfileChange(change func() err
 }
 
 func (f *fakeClaudeDesktopController) RestoreForShutdown(context.Context) error { return nil }
+
+func TestUpdateClaudeDesktopProfileRepairsExistingConnectionOnce(t *testing.T) {
+	previousDesktop := claudeDesktop
+	previousRunning := claudeDesktopRunning
+	fake := &fakeClaudeDesktopController{configured: true}
+	claudeDesktop = fake
+	claudeDesktopRunning = func() bool { return false }
+	t.Cleanup(func() {
+		claudeDesktop = previousDesktop
+		claudeDesktopRunning = previousRunning
+	})
+
+	if err := updateClaudeDesktopProfile(); err != nil {
+		t.Fatal(err)
+	}
+	if !fake.configured || !fake.profileCurrent || fake.configureCalls != 1 {
+		t.Fatalf("updated profile = %+v, want one repair preserving the connection", fake)
+	}
+
+	if err := updateClaudeDesktopProfile(); err != nil {
+		t.Fatal(err)
+	}
+	if fake.configureCalls != 1 {
+		t.Fatalf("configure calls = %d, want idempotent repair", fake.configureCalls)
+	}
+}
+
+func TestUpdateClaudeDesktopProfileDefersRepairWhileClaudeRuns(t *testing.T) {
+	previousDesktop := claudeDesktop
+	previousRunning := claudeDesktopRunning
+	fake := &fakeClaudeDesktopController{configured: true}
+	claudeDesktop = fake
+	claudeDesktopRunning = func() bool { return true }
+	t.Cleanup(func() {
+		claudeDesktop = previousDesktop
+		claudeDesktopRunning = previousRunning
+	})
+
+	if err := updateClaudeDesktopProfile(); err != nil {
+		t.Fatal(err)
+	}
+	if fake.configureCalls != 0 || fake.profileCurrent {
+		t.Fatalf("startup reconciliation changed a live Claude profile: %+v", fake)
+	}
+}
+
+func TestSetClaudeDesktopAutoModePersistsUntilConnection(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	previousDesktop := claudeDesktop
+	previousRunning := claudeDesktopRunning
+	fake := &fakeClaudeDesktopController{}
+	claudeDesktop = fake
+	claudeDesktopRunning = func() bool {
+		t.Fatal("disconnected preference change should not inspect the Claude process")
+		return false
+	}
+	t.Cleanup(func() {
+		claudeDesktop = previousDesktop
+		claudeDesktopRunning = previousRunning
+	})
+
+	if err := setClaudeDesktopAutoMode(false); err != nil {
+		t.Fatal(err)
+	}
+	enabled, err := launch.ClaudeDesktopAutoModeEnabled()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enabled || fake.configureCalls != 0 {
+		t.Fatalf("enabled = %v, configure calls = %d, want saved preference without profile write", enabled, fake.configureCalls)
+	}
+}
+
+func TestSetClaudeDesktopAutoModeAvoidsUnnecessaryRestart(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := launch.SaveClaudeDesktopAutoMode(true); err != nil {
+		t.Fatal(err)
+	}
+	previousDesktop := claudeDesktop
+	previousRunning := claudeDesktopRunning
+	fake := &fakeClaudeDesktopController{configured: true, profileCurrent: true}
+	claudeDesktop = fake
+	claudeDesktopRunning = func() bool {
+		t.Fatal("unchanged current preference should not inspect the Claude process")
+		return false
+	}
+	t.Cleanup(func() {
+		claudeDesktop = previousDesktop
+		claudeDesktopRunning = previousRunning
+	})
+
+	if err := setClaudeDesktopAutoMode(true); err != nil {
+		t.Fatal(err)
+	}
+	if fake.configureCalls != 0 || fake.restart {
+		t.Fatalf("unchanged preference triggered profile lifecycle: %+v", fake)
+	}
+}
+
+func TestSetClaudeDesktopAutoModeRewritesProfileBeforeRestart(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	previousDesktop := claudeDesktop
+	previousRunning := claudeDesktopRunning
+	fake := &fakeClaudeDesktopController{configured: true, profileCurrent: true}
+	claudeDesktop = fake
+	claudeDesktopRunning = func() bool { return true }
+	t.Cleanup(func() {
+		claudeDesktop = previousDesktop
+		claudeDesktopRunning = previousRunning
+	})
+
+	if err := setClaudeDesktopAutoMode(false); err != nil {
+		t.Fatal(err)
+	}
+	if fake.configureCalls != 1 || !fake.profileCurrent || !fake.restart {
+		t.Fatalf("profile restart lifecycle = %+v, want one profile write followed by restart", fake)
+	}
+}
+
+func TestSetClaudeDesktopAutoModeKeepsDesiredPreferenceAfterProfileFailure(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	previousDesktop := claudeDesktop
+	previousRunning := claudeDesktopRunning
+	fake := &fakeClaudeDesktopController{configured: true, profileCurrent: true, configureErr: errors.New("profile write failed")}
+	claudeDesktop = fake
+	claudeDesktopRunning = func() bool { return false }
+	t.Cleanup(func() {
+		claudeDesktop = previousDesktop
+		claudeDesktopRunning = previousRunning
+	})
+
+	err := setClaudeDesktopAutoMode(false)
+	if err == nil || !strings.Contains(err.Error(), "profile write failed") {
+		t.Fatalf("setClaudeDesktopAutoMode error = %v, want profile write failure", err)
+	}
+	enabled, loadErr := launch.ClaudeDesktopAutoModeEnabled()
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if enabled {
+		t.Fatal("desired preference should remain disabled so reconciliation can retry")
+	}
+	if fake.profileCurrent {
+		t.Fatal("failed profile write should remain visibly out of date")
+	}
+}
 
 func TestRestartClaudeDesktopWithModelsPersistsSelection(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())

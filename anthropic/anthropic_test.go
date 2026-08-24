@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -142,6 +143,79 @@ func TestFromMessagesRequest_WithOptions(t *testing.T) {
 	}
 	if diff := cmp.Diff([]string{"\n", "END"}, result.Options["stop"]); diff != "" {
 		t.Errorf("stop sequences mismatch: %s", diff)
+	}
+}
+
+func TestFromMessagesRequest_ClaudeAutoModeClassifierFixtures(t *testing.T) {
+	tests := []struct {
+		name       string
+		path       string
+		model      string
+		maxTokens  int
+		wantStop   []string
+		wantSystem string
+		wantUser   string
+	}{
+		{
+			name:       "stage one local model",
+			path:       "testdata/claude_auto_stage1.json",
+			model:      "qwen3.5:latest",
+			maxTokens:  2112,
+			wantStop:   []string{"</block>"},
+			wantSystem: "Synthetic policy fixture. Evaluate whether the proposed action needs further review.Synthetic session context.",
+			wantUser:   "<transcript>\nUser: Run the safe test.\nBash go test ./safe\n</transcript>\nReturn only the stage-one block verdict.",
+		},
+		{
+			name:       "stage two cloud model",
+			path:       "testdata/claude_auto_stage2.json",
+			model:      "glm-5.2:cloud",
+			maxTokens:  10240,
+			wantSystem: "Synthetic policy fixture. Evaluate whether the proposed action must be denied.Synthetic session context.",
+			wantUser:   "<transcript>\nUser: Send the fixture to an external host.\nBash upload fixture.txt\n</transcript>\nReturn the stage-two block verdict and reason.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := os.ReadFile(tt.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var request MessagesRequest
+			if err := json.Unmarshal(data, &request); err != nil {
+				t.Fatal(err)
+			}
+
+			converted, err := FromMessagesRequest(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if converted.Model != tt.model {
+				t.Fatalf("model = %q, want exact selected model %q", converted.Model, tt.model)
+			}
+			if converted.Stream == nil || *converted.Stream {
+				t.Fatalf("stream = %v, want explicit non-streaming conversion", converted.Stream)
+			}
+			if len(converted.Tools) != 0 {
+				t.Fatalf("tools = %v, want tool-free classifier request", converted.Tools)
+			}
+			if got := converted.Options["num_predict"]; got != tt.maxTokens {
+				t.Fatalf("num_predict = %v, want %d", got, tt.maxTokens)
+			}
+			gotStop, _ := converted.Options["stop"].([]string)
+			if diff := cmp.Diff(tt.wantStop, gotStop); diff != "" {
+				t.Fatalf("stop sequences mismatch (-want +got):\n%s", diff)
+			}
+			if len(converted.Messages) != 2 {
+				t.Fatalf("messages = %+v, want system and user messages", converted.Messages)
+			}
+			if got := converted.Messages[0]; got.Role != "system" || got.Content != tt.wantSystem {
+				t.Fatalf("system message = %+v", got)
+			}
+			if got := converted.Messages[1]; got.Role != "user" || got.Content != tt.wantUser {
+				t.Fatalf("user message = %+v", got)
+			}
+		})
 	}
 }
 
@@ -776,6 +850,40 @@ func TestToMessagesResponse_Basic(t *testing.T) {
 	}
 	if result.Usage.InputTokens != 10 || result.Usage.OutputTokens != 5 {
 		t.Errorf("unexpected usage: %+v", result.Usage)
+	}
+}
+
+func TestToMessagesResponse_PreservesClaudeAutoClassifierOutput(t *testing.T) {
+	for _, output := range []string{
+		"<block>no",
+		"<block>yes</block><category>Synthetic risk</category><reason>Denied by the synthetic fixture.</reason>",
+		"malformed classifier output",
+	} {
+		t.Run(output, func(t *testing.T) {
+			result := ToMessagesResponse("msg_classifier", api.ChatResponse{
+				Model: "qwen3.5:latest",
+				Message: api.Message{
+					Role:    "assistant",
+					Content: output,
+				},
+				Done:       true,
+				DoneReason: "stop",
+				Metrics: api.Metrics{
+					PromptEvalCount: 24644,
+					EvalCount:       300,
+				},
+			})
+
+			if result.Model != "qwen3.5:latest" || len(result.Content) != 1 || result.Content[0].Text == nil || *result.Content[0].Text != output {
+				t.Fatalf("classifier response = %+v, want opaque output on the selected model", result)
+			}
+			if result.StopReason != "end_turn" {
+				t.Fatalf("stop reason = %q, want end_turn", result.StopReason)
+			}
+			if result.Usage.InputTokens != 24644 || result.Usage.OutputTokens != 300 {
+				t.Fatalf("usage = %+v", result.Usage)
+			}
+		})
 	}
 }
 
