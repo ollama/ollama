@@ -126,16 +126,43 @@ describe("getClaudeDesktopAvailableModels", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("does not use the global cloud model list", async () => {
+  it("loads the account cloud list in parallel when Cloud is available", async () => {
     listModels.mockResolvedValue({
       models: [{ name: "qwen3:8b", digest: "local" }],
     });
-    const fetch = vi.fn().mockRejectedValue(new Error("offline"));
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          models: [
+            { name: "glm-5.2", digest: "cloud" },
+            { name: "gemma4:31b-cloud", digest: "legacy-cloud" },
+            { name: "qwen3:8b", digest: "cloud-duplicate" },
+          ],
+        }),
+      ),
+    );
     vi.stubGlobal("fetch", fetch);
 
-    const models = await getClaudeDesktopAvailableModels();
+    const models = await getClaudeDesktopAvailableModels(true);
+
+    expect(models.map((model) => model.model)).toEqual([
+      "qwen3:8b",
+      "glm-5.2:cloud",
+      "gemma4:31b-cloud",
+    ]);
+    expect(fetch).toHaveBeenCalledWith(
+      "http://127.0.0.1:3001/api/v1/models/cloud",
+    );
+  });
+
+  it("keeps local models when the account cloud list fails", async () => {
+    listModels.mockResolvedValue({
+      models: [{ name: "qwen3:8b", digest: "local" }],
+    });
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+
+    const models = await getClaudeDesktopAvailableModels(true);
 
     expect(models.map((model) => model.model)).toEqual(["qwen3:8b"]);
-    expect(fetch).not.toHaveBeenCalled();
   });
 });

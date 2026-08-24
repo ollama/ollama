@@ -207,7 +207,7 @@ describe("ClaudeDesktopModelsSettings", () => {
     );
   });
 
-  it("enables auto mode when any selected model is recommended and not gemma4", () => {
+  it("enables auto mode when a selected model is in the account cloud list", () => {
     const html = renderToStaticMarkup(
       <ClaudeDesktopModelsSettings
         initialStatus={{
@@ -247,7 +247,7 @@ describe("ClaudeDesktopModelsSettings", () => {
     expect(html).not.toContain('aria-checked="true" disabled=""');
   });
 
-  it("disables auto mode when no selected model is recommended and not gemma4", () => {
+  it("disables auto mode when no selected model is in the account cloud list", () => {
     const html = renderToStaticMarkup(
       <ClaudeDesktopModelsSettings
         initialStatus={{
@@ -292,6 +292,43 @@ describe("ClaudeDesktopModelsSettings", () => {
     );
     expect(html).toContain('role="switch"');
     expect(html).toContain('aria-checked="false" disabled=""');
+  });
+
+  it("does not infer Auto eligibility from a cloud suffix", () => {
+    const status = {
+      supported: true,
+      used: true,
+      installed: true,
+      connected: true,
+      running: false,
+      startFailed: false,
+      portConflict: false,
+      autoMode: true,
+      modelSource: "user",
+      models: [
+        {
+          name: "custom:cloud",
+          displayName: "custom:cloud",
+          cloud: true,
+          selected: true,
+          autoMode: false,
+        },
+      ],
+    } as const;
+
+    const unavailable = renderToStaticMarkup(
+      <ClaudeDesktopModelsSettings initialStatus={status} />,
+    );
+    expect(unavailable).toContain('aria-checked="false" disabled=""');
+
+    const available = renderToStaticMarkup(
+      <ClaudeDesktopModelsSettings
+        initialStatus={status}
+        initialCloudModels={["custom:cloud"]}
+      />,
+    );
+    expect(available).toContain('aria-checked="true"');
+    expect(available).not.toContain('aria-checked="true" disabled=""');
   });
 
   it("honors a smaller maxModels limit from the status", () => {

@@ -43,6 +43,7 @@ type ClaudeDesktopModel struct {
 	OllamaModel      string
 	Cloud            bool
 	Recommended      bool
+	AccountCloud     bool
 	entitlementKnown bool
 	gateway          gatewayModel
 }
@@ -145,6 +146,36 @@ func UnverifyClaudeDesktopCloudEntitlements(models []ClaudeDesktopModel) []Claud
 		if models[i].Cloud {
 			models[i].entitlementKnown = false
 		}
+	}
+	return models
+}
+
+// ClaudeDesktopModelsFromCloudInventory converts an account-scoped cloud
+// inventory into selectable Claude routes. Presence in this inventory is the
+// entitlement and Auto-mode eligibility check; these models are not
+// recommendations.
+func ClaudeDesktopModelsFromCloudInventory(names []string) []ClaudeDesktopModel {
+	models := make([]ClaudeDesktopModel, 0, len(names))
+	seen := make(map[string]struct{}, len(names))
+	for _, rawName := range names {
+		name := strings.TrimSuffix(strings.TrimSpace(rawName), ":latest")
+		if !validClaudeDesktopModelName(name) {
+			continue
+		}
+		if !modelref.HasExplicitCloudSource(name) {
+			name += ":cloud"
+		}
+		if !validClaudeDesktopModelName(name) {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		model := newClaudeDesktopModel(name, "User-selected cloud model", "", 64_000)
+		model.AccountCloud = true
+		model.entitlementKnown = true
+		models = append(models, model)
 	}
 	return models
 }

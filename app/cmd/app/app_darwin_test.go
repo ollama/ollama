@@ -25,6 +25,7 @@ func TestMain(m *testing.M) {
 	previousLoader := claudeModelsLoader
 	previousAccessResolver := claudeAccessStateResolver
 	previousLocalResolver := claudeLocalModelsResolver
+	previousCloudResolver := claudeCloudModelsResolver
 	claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
 		return proxy.DefaultClaudeDesktopModels(), "fallback"
 	}
@@ -36,10 +37,12 @@ func TestMain(m *testing.M) {
 		}, nil
 	}
 	claudeLocalModelsResolver = func(context.Context) ([]string, error) { return nil, nil }
+	claudeCloudModelsResolver = func(context.Context) ([]proxy.ClaudeDesktopModel, error) { return nil, nil }
 	code := m.Run()
 	claudeModelsLoader = previousLoader
 	claudeAccessStateResolver = previousAccessResolver
 	claudeLocalModelsResolver = previousLocalResolver
+	claudeCloudModelsResolver = previousCloudResolver
 	os.Exit(code)
 }
 
@@ -79,6 +82,43 @@ func TestLoadClaudeDesktopModelsUsesAppEndpoint(t *testing.T) {
 	}
 }
 
+func TestCurrentClaudeDesktopCloudModelsUsesAccountEndpoint(t *testing.T) {
+	useTestOllamaRequestSigner(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/tags" || r.URL.Query().Get("ts") == "" {
+			t.Fatalf("request URL = %q", r.URL.String())
+		}
+		if r.Header.Get("Authorization") != "test-public-key:test-signature" {
+			t.Fatal("cloud model request is missing public-key identity")
+		}
+		_, _ = w.Write([]byte(`{"models":[{"name":"glm-5.2:cloud"},{"name":"qwen3:8b"}]}`))
+	}))
+	defer server.Close()
+
+	previousClient := claudeCloudModelsClient
+	previousEndpoint := claudeCloudModelsEndpoint
+	claudeCloudModelsClient = server.Client()
+	claudeCloudModelsEndpoint = func() string { return server.URL + "/api/tags" }
+	t.Cleanup(func() {
+		claudeCloudModelsClient = previousClient
+		claudeCloudModelsEndpoint = previousEndpoint
+	})
+
+	models, err := currentClaudeDesktopCloudModels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 2 || models[0].Name != "glm-5.2:cloud" || models[1].Name != "qwen3:8b:cloud" || models[0].Recommended {
+		t.Fatalf("cloud models = %+v, want normalized non-recommended account models", models)
+	}
+	access := proxy.EvaluateClaudeDesktopModelAccess(models[0], proxy.ClaudeDesktopAccessState{
+		Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn,
+	}, false, true)
+	if access.Availability != proxy.ClaudeDesktopAvailabilityAvailable {
+		t.Fatalf("cloud model access = %+v, want available", access)
+	}
+}
+
 func TestClaudeDesktopDownloadEndpointUsesTypedZipContract(t *testing.T) {
 	useTestOllamaRequestSigner(t)
 	req, err := newSignedOllamaRequest(context.Background(), http.MethodGet, claudeDesktopDownloadEndpoint("http://127.0.0.1:18080/"))
@@ -104,6 +144,7 @@ func TestClaudeEndpointRequestsSignCompleteRequestURI(t *testing.T) {
 
 	for _, endpoint := range []string{
 		"https://ollama.com/api/experimental/model-recommendations?app=claude-desktop",
+		"https://ollama.com/api/tags",
 		"https://ollama.com/download-app?app=claude-desktop&type=mac-zip",
 	} {
 		var challenge string
@@ -194,6 +235,86 @@ func TestResolveClaudeDesktopCatalogUsesPersistedSelection(t *testing.T) {
 	}
 	if got := available[len(available)-1].Name; got != "qwen3:8b" {
 		t.Fatalf("last available model = %q, want persisted qwen3:8b", got)
+	}
+}
+
+func TestResolveClaudeDesktopStartupCatalogVerifiesPersistedAccountCloudModel(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := launch.SaveClaudeDesktopModels([]string{"custom:cloud"}); err != nil {
+		t.Fatal(err)
+	}
+
+	previousResolver := claudeCloudModelsResolver
+	claudeCloudModelsResolver = func(context.Context) ([]proxy.ClaudeDesktopModel, error) {
+		return proxy.ClaudeDesktopModelsFromCloudInventory([]string{"custom:cloud"}), nil
+	}
+	t.Cleanup(func() { claudeCloudModelsResolver = previousResolver })
+
+	_, selected, source := resolveClaudeDesktopStartupCatalog(context.Background())
+	if source != "user" || len(selected) != 1 || selected[0].OllamaModel != "custom:cloud" {
+		t.Fatalf("selected/source = %+v/%q", selected, source)
+	}
+	access := proxy.EvaluateClaudeDesktopModelAccess(selected[0], proxy.ClaudeDesktopAccessState{
+		Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn,
+	}, false, true)
+	if access.Availability != proxy.ClaudeDesktopAvailabilityAvailable {
+		t.Fatalf("persisted cloud model access = %+v, want available", access)
+	}
+}
+
+func TestResolveClaudeDesktopStartupCatalogMarksDefaultAccountModelsAutoEligible(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	previousLoader := claudeModelsLoader
+	previousResolver := claudeCloudModelsResolver
+	claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
+		return proxy.ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "glm-5.2:cloud"}}), "endpoint"
+	}
+	claudeCloudModelsResolver = func(context.Context) ([]proxy.ClaudeDesktopModel, error) {
+		return proxy.ClaudeDesktopModelsFromCloudInventory([]string{"glm-5.2"}), nil
+	}
+	t.Cleanup(func() {
+		claudeModelsLoader = previousLoader
+		claudeCloudModelsResolver = previousResolver
+	})
+
+	available, selected, source := resolveClaudeDesktopStartupCatalog(context.Background())
+	if source != "endpoint" || len(available) != 1 || len(selected) != 1 {
+		t.Fatalf("catalog = %+v selected = %+v source = %q", available, selected, source)
+	}
+	if !claudeDesktopModelsSupportAutoMode(selected) {
+		t.Fatal("default account cloud model was not Auto-eligible")
+	}
+}
+
+func TestResolveClaudeDesktopStartupCatalogDoesNotListCloudWhenOff(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := launch.SaveClaudeDesktopModels([]string{"custom:cloud"}); err != nil {
+		t.Fatal(err)
+	}
+
+	previousAccess := claudeAccessStateResolver
+	previousResolver := claudeCloudModelsResolver
+	claudeAccessStateResolver = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
+		return proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOff}, nil
+	}
+	claudeCloudModelsResolver = func(context.Context) ([]proxy.ClaudeDesktopModel, error) {
+		t.Fatal("account cloud list called while Cloud was off")
+		return nil, nil
+	}
+	t.Cleanup(func() {
+		claudeAccessStateResolver = previousAccess
+		claudeCloudModelsResolver = previousResolver
+	})
+
+	_, selected, _ := resolveClaudeDesktopStartupCatalog(context.Background())
+	if len(selected) != 1 || selected[0].OllamaModel != "custom:cloud" {
+		t.Fatalf("selected = %+v", selected)
+	}
+	access := proxy.EvaluateClaudeDesktopModelAccess(selected[0], proxy.ClaudeDesktopAccessState{
+		Cloud: proxy.ClaudeDesktopCloudOff,
+	}, false, true)
+	if access.Reason != proxy.ClaudeDesktopAccessCloudOff {
+		t.Fatalf("cloud-off access = %+v", access)
 	}
 }
 
@@ -382,6 +503,15 @@ func TestSelectKnownClaudeDesktopModelsAllowsInstalledModelsOnly(t *testing.T) {
 		t.Fatal("expected an arbitrary model name to be rejected")
 	}
 
+	accountCloud := proxy.ClaudeDesktopModelsFromCloudInventory([]string{"custom:cloud"})
+	selected, err = selectKnownClaudeDesktopModels(append(available, accountCloud...), nil, nil, []string{"custom:cloud"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(selected) != 1 || selected[0].OllamaModel != "custom:cloud" || selected[0].Recommended {
+		t.Fatalf("account cloud selection = %+v", selected)
+	}
+
 	// The five-model selection cap must not make later installed models
 	// unselectable. The cap applies to the final selection, not the inventory.
 	localNames := []string{"local-1", "local-2", "local-3", "local-4", "local-5", "local-6"}
@@ -552,7 +682,11 @@ func TestSetClaudeDesktopAutoModeAvoidsUnnecessaryRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	previousAvailable := claudeAvailableModels
-	claudeAvailableModels = proxy.ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "glm-5.2:cloud"}})
+	claudeAvailableModels = mergeClaudeDesktopCloudInventory(
+		proxy.ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "glm-5.2:cloud"}}),
+		proxy.ClaudeDesktopModelsFromCloudInventory([]string{"glm-5.2:cloud"}),
+		false,
+	)
 	previousDesktop := claudeDesktop
 	previousRunning := claudeDesktopRunning
 	fake := &fakeClaudeDesktopController{configured: true, profileCurrent: true, autoMode: true}
@@ -629,19 +763,25 @@ func TestClaudeDesktopAutoModeModelEligibility(t *testing.T) {
 		{Model: "kimi-k3:cloud"},
 		{Model: "gemma4:31b-cloud"},
 	})
+	accountCloud := proxy.ClaudeDesktopModelsFromCloudInventory([]string{
+		"glm-5.2:cloud",
+		"gemma4:31b-cloud",
+	})
+	recommended = mergeClaudeDesktopCloudInventory(recommended, accountCloud, false)
 	custom := proxy.SelectClaudeDesktopModels(nil, []string{"qwen3:8b"})
+	tagOnly := proxy.SelectClaudeDesktopModels(nil, []string{"made-up:cloud"})
 
 	tests := []struct {
 		name   string
 		models []proxy.ClaudeDesktopModel
 		want   bool
 	}{
-		{name: "recommended model", models: recommended[:1], want: true},
-		{name: "recommended models", models: recommended[:2], want: true},
-		{name: "gemma4 excluded", models: recommended[2:]},
+		{name: "account cloud model", models: recommended[:1], want: true},
+		{name: "recommendation absent from account list", models: recommended[1:2]},
+		{name: "account gemma4 model", models: recommended[2:], want: true},
 		{name: "custom model excluded", models: custom},
-		{name: "recommended and gemma4", models: []proxy.ClaudeDesktopModel{recommended[0], recommended[2]}, want: true},
-		{name: "recommended and custom", models: []proxy.ClaudeDesktopModel{recommended[0], custom[0]}, want: true},
+		{name: "cloud suffix alone excluded", models: tagOnly},
+		{name: "account cloud and custom", models: []proxy.ClaudeDesktopModel{recommended[0], custom[0]}, want: true},
 		{name: "empty selection excluded"},
 		{name: "offline fallback excluded", models: fallbackClaudeDesktopModels()},
 	}
@@ -666,7 +806,7 @@ func TestSetClaudeDesktopAutoModeRejectsUnsupportedSelection(t *testing.T) {
 	t.Cleanup(func() { claudeAvailableModels = previousAvailable })
 
 	err := setClaudeDesktopAutoMode(true)
-	if err == nil || !strings.Contains(err.Error(), "at least one Auto-compatible recommended model") {
+	if err == nil || !strings.Contains(err.Error(), "cloud model available to your Ollama.com account") {
 		t.Fatalf("setClaudeDesktopAutoMode() error = %v", err)
 	}
 	enabled, loadErr := launch.ClaudeDesktopAutoModeEnabled()
@@ -684,15 +824,20 @@ func TestRestartClaudeDesktopWithModelsPersistsSelection(t *testing.T) {
 	previousInstalled := claudeDesktopInstalled
 	previousAddr := claudeProxyListenAddr
 	previousDesktop := claudeDesktop
+	previousCloudResolver := claudeCloudModelsResolver
 	claudeDesktopInstalled = func() bool { return true }
 	claudeProxyListenAddr = "127.0.0.1:0"
 	fake := &fakeClaudeDesktopController{configured: true}
 	claudeDesktop = fake
+	claudeCloudModelsResolver = func(context.Context) ([]proxy.ClaudeDesktopModel, error) {
+		return proxy.ClaudeDesktopModelsFromCloudInventory([]string{"kimi-k3:cloud"}), nil
+	}
 	t.Cleanup(func() {
 		stopClaudeAppProxy()
 		claudeDesktopInstalled = previousInstalled
 		claudeProxyListenAddr = previousAddr
 		claudeDesktop = previousDesktop
+		claudeCloudModelsResolver = previousCloudResolver
 	})
 
 	if err := restartClaudeDesktopWithModels([]string{"kimi-k3:cloud"}); err != nil {
@@ -702,7 +847,7 @@ func TestRestartClaudeDesktopWithModelsPersistsSelection(t *testing.T) {
 		t.Fatal("expected the Claude profile to be installed")
 	}
 	if !fake.autoMode {
-		t.Fatal("expected the recommended model to keep Auto mode enabled")
+		t.Fatal("expected the account cloud model to keep Auto mode enabled")
 	}
 	if got, want := launch.ClaudeDesktopModels(), []string{"kimi-k3:cloud"}; !slices.Equal(got, want) {
 		t.Fatalf("persisted models = %v, want Ollama routes %v", got, want)
@@ -1386,8 +1531,8 @@ func TestClaudeGatewayStartupWithLocalSelectionSkipsCloudLookupsButSettingsLoads
 	if !foundCloud || !foundSelectedLocal {
 		t.Fatalf("Settings models = %+v, want cloud choices and selected qwen3:8b", status.Models)
 	}
-	if loaderCalls != 1 || accessCalls != 1 {
-		t.Fatalf("Settings catalog calls = recommendations:%d access:%d, want one each", loaderCalls, accessCalls)
+	if loaderCalls != 1 || accessCalls != 2 {
+		t.Fatalf("Settings catalog calls = recommendations:%d access:%d, want recommendations:1 access:2", loaderCalls, accessCalls)
 	}
 	claudeProxyMu.Lock()
 	models := claudeAppProxy.Models()
@@ -1507,8 +1652,12 @@ func TestClaudeGatewayLocalSelectionCatalogPolicy(t *testing.T) {
 			if !slices.Equal(gotSettingsModels, tt.wantSettingsModels) {
 				t.Fatalf("Settings models = %v, want %v", gotSettingsModels, tt.wantSettingsModels)
 			}
-			if loaderCalls != tt.wantLoaderCalls || accessCalls != 1 {
-				t.Fatalf("cloud status calls = recommendations:%d access:%d, want recommendations:%d access:1", loaderCalls, accessCalls, tt.wantLoaderCalls)
+			wantAccessCalls := 1
+			if tt.accessErr == nil && tt.access.Cloud == proxy.ClaudeDesktopCloudOn {
+				wantAccessCalls++
+			}
+			if loaderCalls != tt.wantLoaderCalls || accessCalls != wantAccessCalls {
+				t.Fatalf("cloud status calls = recommendations:%d access:%d, want recommendations:%d access:%d", loaderCalls, accessCalls, tt.wantLoaderCalls, wantAccessCalls)
 			}
 			claudeProxyMu.Lock()
 			models := claudeAppProxy.Models()

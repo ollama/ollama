@@ -123,6 +123,33 @@ func TestSelectClaudeDesktopModelsPrioritizesExplicitSelection(t *testing.T) {
 	}
 }
 
+func TestClaudeDesktopModelsFromCloudInventoryVerifiesWithoutRecommending(t *testing.T) {
+	models := ClaudeDesktopModelsFromCloudInventory([]string{
+		"glm-5.2:cloud",
+		"glm-5.2:cloud",
+		"gemma4:31b-cloud",
+		"qwen3:8b",
+		"Ollama Cloud",
+	})
+	if len(models) != 3 {
+		t.Fatalf("models = %+v, want three account cloud models", models)
+	}
+	for _, model := range models {
+		if !model.Cloud || !model.entitlementKnown {
+			t.Fatalf("cloud inventory model = %+v, want verified cloud model", model)
+		}
+		if model.Recommended {
+			t.Fatalf("cloud inventory model %q must not be recommended", model.Name)
+		}
+		if !model.AccountCloud {
+			t.Fatalf("cloud inventory model %q is missing account membership", model.Name)
+		}
+	}
+	if models[2].OllamaModel != "qwen3:8b:cloud" {
+		t.Fatalf("normalized cloud route = %q", models[2].OllamaModel)
+	}
+}
+
 func claudeDesktopModelNames(models []ClaudeDesktopModel) []string {
 	names := make([]string, len(models))
 	for i, model := range models {

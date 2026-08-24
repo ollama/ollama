@@ -20,6 +20,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 interface ClaudeDesktopModelsSettingsProps {
   initialStatus?: ClaudeDesktopStatus;
   initialLocalModels?: string[];
+  initialCloudModels?: string[];
+  includeCloudModels?: boolean;
 }
 
 function isInvalidModelName(name: string): boolean {
@@ -60,10 +62,6 @@ function modelAccessLabel(model: ClaudeDesktopModelStatus): string | null {
   }
 }
 
-function explicitCloudName(name: string): string {
-  return name.endsWith(":cloud") ? name : `${name}:cloud`;
-}
-
 function formatModelList(names: string[]): string {
   if (names.length < 2) return names[0] ?? "";
   if (names.length === 2) return `${names[0]} or ${names[1]}`;
@@ -73,6 +71,8 @@ function formatModelList(names: string[]): string {
 export function ClaudeDesktopModelsSettings({
   initialStatus,
   initialLocalModels,
+  initialCloudModels,
+  includeCloudModels = false,
 }: ClaudeDesktopModelsSettingsProps) {
   const [status, setStatus] = useState<ClaudeDesktopStatus | null>(
     initialStatus ?? null,
@@ -85,6 +85,9 @@ export function ClaudeDesktopModelsSettings({
   );
   const [localModels, setLocalModels] = useState<string[]>(
     initialLocalModels ?? [],
+  );
+  const [accountCloudModels, setAccountCloudModels] = useState<string[]>(
+    initialCloudModels ?? [],
   );
   const [searchQuery, setSearchQuery] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -129,10 +132,15 @@ export function ClaudeDesktopModelsSettings({
     if (initialLocalModels || !status?.used) return;
     let cancelled = false;
     setModelsLoading(true);
-    void getClaudeDesktopAvailableModels()
+    void getClaudeDesktopAvailableModels(includeCloudModels)
       .then((installed) => {
         if (!cancelled) {
           setLocalModels(installed.map((model) => model.model));
+          setAccountCloudModels(
+            installed
+              .filter((model) => model.isCloud())
+              .map((model) => model.model),
+          );
         }
       })
       .catch(() => {
@@ -144,7 +152,7 @@ export function ClaudeDesktopModelsSettings({
     return () => {
       cancelled = true;
     };
-  }, [initialLocalModels, status?.used]);
+  }, [includeCloudModels, initialLocalModels, status?.used]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -160,11 +168,7 @@ export function ClaudeDesktopModelsSettings({
   }, []);
 
   const matchingLocalModels = useMemo(() => {
-    const current = new Set(
-      models.map((model) =>
-        model.cloud ? explicitCloudName(model.name) : model.name,
-      ),
-    );
+    const current = new Set(selection);
     const query = searchQuery.trim().toLowerCase();
     return localModels
       .filter(
@@ -174,7 +178,7 @@ export function ClaudeDesktopModelsSettings({
           (!query || name.toLowerCase().includes(query)),
       )
       .sort((left, right) => left.localeCompare(right));
-  }, [localModels, models, searchQuery]);
+  }, [localModels, searchQuery, selection]);
 
   const toggleModel = (name: string) => {
     setError(null);
@@ -291,20 +295,25 @@ export function ClaudeDesktopModelsSettings({
 
   const maxModels = claudeDesktopMaxModels(status);
   const selectionFull = selection.length >= maxModels;
-  const autoModeModels = models.filter((model) => model.autoMode);
-  const autoModeModelNames = autoModeModels.map((model) => model.name);
+  const autoModeModelNames = Array.from(
+    new Set([
+      ...models.filter((model) => model.autoMode).map((model) => model.name),
+      ...accountCloudModels,
+    ]),
+  );
+  const autoModeModelSet = new Set(autoModeModelNames);
   const autoModeAvailable =
     selection.length > 0 &&
-    selection.some((name) =>
-      autoModeModels.some((model) => model.name === name),
-    );
+    selection.some((name) => autoModeModelSet.has(name));
   const autoMode =
     autoModeAvailable && (autoModeOverride ?? status.autoMode ?? false);
   const autoModeDescription = autoModeAvailable
     ? "Let Claude decide when to ask before making changes."
-    : autoModeModelNames.length > 0
-      ? `Select one of ${formatModelList(autoModeModelNames)} to use auto mode.`
-      : "Auto mode needs a recommended model from Ollama.com.";
+    : accountCloudModels.length > 0
+      ? "Select a cloud model from Ollama.com to use auto mode."
+      : autoModeModelNames.length > 0
+        ? `Select one of ${formatModelList(autoModeModelNames)} to use auto mode.`
+        : "Auto mode needs a cloud model available to your Ollama.com account.";
   const guidance =
     claudeDesktopRecoveryMessage(status.error, error) ??
     (!hasAvailableSelection && models.length > 0
