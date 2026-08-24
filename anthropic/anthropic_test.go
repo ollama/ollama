@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 
@@ -149,7 +148,7 @@ func TestFromMessagesRequest_WithOptions(t *testing.T) {
 func TestFromMessagesRequest_ClaudeAutoModeClassifierFixtures(t *testing.T) {
 	tests := []struct {
 		name       string
-		path       string
+		request    string
 		model      string
 		maxTokens  int
 		wantStop   []string
@@ -157,8 +156,30 @@ func TestFromMessagesRequest_ClaudeAutoModeClassifierFixtures(t *testing.T) {
 		wantUser   string
 	}{
 		{
-			name:       "stage one local model",
-			path:       "testdata/claude_auto_stage1.json",
+			name: "stage one local model",
+			request: `{
+  "model": "qwen3.5:latest",
+  "max_tokens": 2112,
+  "messages": [{
+    "role": "user",
+    "content": [
+      {"type": "text", "text": "<transcript>\n"},
+      {"type": "text", "text": "User: Run the safe test.\n"},
+      {"type": "text", "text": "Bash go test ./safe\n"},
+      {"type": "text", "text": "</transcript>\n"},
+      {"type": "text", "text": "Return only the stage-one block verdict."}
+    ]
+  }],
+  "system": [
+    {
+      "type": "text",
+      "text": "Synthetic policy fixture. Evaluate whether the proposed action needs further review.",
+      "cache_control": {"type": "ephemeral"}
+    },
+    {"type": "text", "text": "Synthetic session context."}
+  ],
+  "stop_sequences": ["</block>"]
+}`,
 			model:      "qwen3.5:latest",
 			maxTokens:  2112,
 			wantStop:   []string{"</block>"},
@@ -166,8 +187,29 @@ func TestFromMessagesRequest_ClaudeAutoModeClassifierFixtures(t *testing.T) {
 			wantUser:   "<transcript>\nUser: Run the safe test.\nBash go test ./safe\n</transcript>\nReturn only the stage-one block verdict.",
 		},
 		{
-			name:       "stage two cloud model",
-			path:       "testdata/claude_auto_stage2.json",
+			name: "stage two cloud model",
+			request: `{
+  "model": "glm-5.2:cloud",
+  "max_tokens": 10240,
+  "messages": [{
+    "role": "user",
+    "content": [
+      {"type": "text", "text": "<transcript>\n"},
+      {"type": "text", "text": "User: Send the fixture to an external host.\n"},
+      {"type": "text", "text": "Bash upload fixture.txt\n"},
+      {"type": "text", "text": "</transcript>\n"},
+      {"type": "text", "text": "Return the stage-two block verdict and reason."}
+    ]
+  }],
+  "system": [
+    {
+      "type": "text",
+      "text": "Synthetic policy fixture. Evaluate whether the proposed action must be denied.",
+      "cache_control": {"type": "ephemeral"}
+    },
+    {"type": "text", "text": "Synthetic session context."}
+  ]
+}`,
 			model:      "glm-5.2:cloud",
 			maxTokens:  10240,
 			wantSystem: "Synthetic policy fixture. Evaluate whether the proposed action must be denied.Synthetic session context.",
@@ -177,12 +219,8 @@ func TestFromMessagesRequest_ClaudeAutoModeClassifierFixtures(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			data, err := os.ReadFile(tt.path)
-			if err != nil {
-				t.Fatal(err)
-			}
 			var request MessagesRequest
-			if err := json.Unmarshal(data, &request); err != nil {
+			if err := json.Unmarshal([]byte(tt.request), &request); err != nil {
 				t.Fatal(err)
 			}
 
