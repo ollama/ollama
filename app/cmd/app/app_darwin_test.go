@@ -640,7 +640,8 @@ func TestClaudeDesktopAutoModeModelEligibility(t *testing.T) {
 		{name: "recommended models", models: recommended[:2], want: true},
 		{name: "gemma4 excluded", models: recommended[2:]},
 		{name: "custom model excluded", models: custom},
-		{name: "mixed selection excluded", models: []proxy.ClaudeDesktopModel{recommended[0], custom[0]}},
+		{name: "recommended and gemma4", models: []proxy.ClaudeDesktopModel{recommended[0], recommended[2]}, want: true},
+		{name: "recommended and custom", models: []proxy.ClaudeDesktopModel{recommended[0], custom[0]}, want: true},
 		{name: "empty selection excluded"},
 		{name: "offline fallback excluded", models: fallbackClaudeDesktopModels()},
 	}
@@ -665,7 +666,7 @@ func TestSetClaudeDesktopAutoModeRejectsUnsupportedSelection(t *testing.T) {
 	t.Cleanup(func() { claudeAvailableModels = previousAvailable })
 
 	err := setClaudeDesktopAutoMode(true)
-	if err == nil || !strings.Contains(err.Error(), "Auto-compatible recommended model") {
+	if err == nil || !strings.Contains(err.Error(), "at least one Auto-compatible recommended model") {
 		t.Fatalf("setClaudeDesktopAutoMode() error = %v", err)
 	}
 	enabled, loadErr := launch.ClaudeDesktopAutoModeEnabled()

@@ -523,15 +523,12 @@ func claudeDesktopModelSupportsAutoMode(model proxy.ClaudeDesktopModel) bool {
 }
 
 func claudeDesktopModelsSupportAutoMode(models []proxy.ClaudeDesktopModel) bool {
-	if len(models) == 0 {
-		return false
-	}
 	for _, model := range models {
-		if !claudeDesktopModelSupportsAutoMode(model) {
-			return false
+		if claudeDesktopModelSupportsAutoMode(model) {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 func activeClaudeDesktopModels() []proxy.ClaudeDesktopModel {
@@ -1063,7 +1060,7 @@ func openClaudeDesktopApplication() error {
 func setClaudeDesktopAutoMode(enabled bool) error {
 	models := activeClaudeDesktopModels()
 	if enabled && !claudeDesktopModelsSupportAutoMode(models) {
-		return errors.New("select only an Auto-compatible recommended model in Claude settings")
+		return errors.New("select at least one Auto-compatible recommended model in Claude settings")
 	}
 	previous, err := launch.ClaudeDesktopAutoModeEnabled()
 	if err != nil {

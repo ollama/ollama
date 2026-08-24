@@ -295,7 +295,7 @@ export function ClaudeDesktopModelsSettings({
   const autoModeModelNames = autoModeModels.map((model) => model.name);
   const autoModeAvailable =
     selection.length > 0 &&
-    selection.every((name) =>
+    selection.some((name) =>
       autoModeModels.some((model) => model.name === name),
     );
   const autoMode =
@@ -303,7 +303,7 @@ export function ClaudeDesktopModelsSettings({
   const autoModeDescription = autoModeAvailable
     ? "Let Claude decide when to ask before making changes."
     : autoModeModelNames.length > 0
-      ? `Select only ${formatModelList(autoModeModelNames)} to use auto mode.`
+      ? `Select one of ${formatModelList(autoModeModelNames)} to use auto mode.`
       : "Auto mode needs a recommended model from Ollama.com.";
   const guidance =
     claudeDesktopRecoveryMessage(status.error, error) ??

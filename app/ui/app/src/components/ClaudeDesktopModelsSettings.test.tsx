@@ -207,7 +207,7 @@ describe("ClaudeDesktopModelsSettings", () => {
     );
   });
 
-  it("disables auto mode unless all selected models are recommended and not gemma4", () => {
+  it("enables auto mode when any selected model is recommended and not gemma4", () => {
     const html = renderToStaticMarkup(
       <ClaudeDesktopModelsSettings
         initialStatus={{
@@ -219,7 +219,47 @@ describe("ClaudeDesktopModelsSettings", () => {
           startFailed: false,
           portConflict: false,
           autoMode: true,
-          modelSource: "endpoint",
+          modelSource: "user",
+          models: [
+            {
+              name: "glm-5.2:cloud",
+              displayName: "glm-5.2:cloud",
+              cloud: true,
+              selected: true,
+              autoMode: true,
+            },
+            {
+              name: "gemma4:31b-cloud",
+              displayName: "gemma4:31b-cloud",
+              cloud: true,
+              selected: true,
+              autoMode: false,
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(html).toContain(
+      "Let Claude decide when to ask before making changes.",
+    );
+    expect(html).toContain('aria-checked="true"');
+    expect(html).not.toContain('aria-checked="true" disabled=""');
+  });
+
+  it("disables auto mode when no selected model is recommended and not gemma4", () => {
+    const html = renderToStaticMarkup(
+      <ClaudeDesktopModelsSettings
+        initialStatus={{
+          supported: true,
+          used: true,
+          installed: true,
+          connected: true,
+          running: false,
+          startFailed: false,
+          portConflict: false,
+          autoMode: true,
+          modelSource: "user",
           models: [
             {
               name: "glm-5.2:cloud",
@@ -248,7 +288,7 @@ describe("ClaudeDesktopModelsSettings", () => {
     );
 
     expect(html).toContain(
-      "Select only glm-5.2:cloud or kimi-k3:cloud to use auto mode.",
+      "Select one of glm-5.2:cloud or kimi-k3:cloud to use auto mode.",
     );
     expect(html).toContain('role="switch"');
     expect(html).toContain('aria-checked="false" disabled=""');
