@@ -5,10 +5,11 @@
 //
 // Key properties:
 //   - Only one path through the trie is "active" (backed by live MLX arrays)
-//     at a time. Switching paths pages out the frontier node and pages in the
-//     new path.
-//   - Snapshots are only captured at the frontier (end) of the active path.
-//     Intermediate node snapshots come from split prefill.
+//     at a time. Switching paths pages in the new path from its snapshots.
+//   - Every node carries its snapshots from creation: prefill captures for
+//     prompt segments, a page-out at close for generated ones. Sliceable
+//     (KV) layers always span exactly the node's edge; whole-state layers
+//     (recurrent, rotating) keep entries only at node ends.
 //   - All cache layers must stay at the same token offset.
 //   - Sibling edges must not share a common token prefix (compressed trie
 //     invariant).
@@ -62,7 +63,7 @@ type cacheSession struct {
 
 	// pendingSnapshots lists offsets where snapshots should be captured
 	// during prefill, sorted by offset. Entries are scheduled on the caches
-	// before prefill and drained or discarded after.
+	// before prefill and drained when the captures are attached.
 	pendingSnapshots []pendingSnapshot
 }
 
@@ -177,7 +178,7 @@ func (s *cacheSession) storedKeys() []trieKey {
 }
 
 // switchToPath transitions from the current active path to a new path,
-// paging out diverging segments and paging in the new path.
+// rewinding the caches and paging in the new path's snapshots.
 func (c *prefixCache) switchToPath(newPath []*trieNode, matched int) {
 	defer c.enforceEvictionPolicy()
 
@@ -195,33 +196,7 @@ func (c *prefixCache) switchToPath(newPath []*trieNode, matched int) {
 		ancestorOffset = c.activePath[commonLen-1].endOffset
 	}
 
-	var pageOutCount, pageInCount int
-
-	// Page out the leaf of the old path. Only the leaf's live cache
-	// state is correct — intermediate nodes already have snapshots
-	// captured during their creation (splitNode + prefill). Snapshotting
-	// non-leaf nodes here would produce wrong results for non-rewindable
-	// caches (e.g. RecurrentCache) whose state reflects the leaf, not
-	// the intermediate boundary.
-	leaf := len(c.activePath) - 1
-	leafDiverges := leaf >= commonLen
-	leafNeedsRewind := matched < c.activePath[leaf].endOffset
-	if leafDiverges || leafNeedsRewind {
-		node := c.activePath[leaf]
-		if !hasAllSnapshots(node, c.caches) {
-			fromOffset := node.startOffset()
-			snaps := make([]cache.Snapshot, len(c.caches))
-			for j, kv := range c.caches {
-				if kv == nil {
-					continue
-				}
-				snaps[j] = kv.Snapshot(fromOffset)
-			}
-			node.setSnapshots(snaps, &c.pagedOutBytes)
-			pageOutCount++
-			logutil.Trace(fmt.Sprintf("page out: [%d, %d)", fromOffset, node.endOffset))
-		}
-	}
+	var pageInCount int
 
 	// Rewind each cache to the target offset or free it. When matched
 	// falls within the ancestor's range (same-path case), we rewind
@@ -294,8 +269,8 @@ pageIn:
 		c.activePath[len(c.activePath)-1].lastUsed = time.Now()
 	}
 
-	if pageOutCount > 0 || pageInCount > 0 {
-		slog.Debug("switching cache path", "page_out", pageOutCount, "page_in", pageInCount)
+	if pageInCount > 0 {
+		slog.Debug("switching cache path", "page_in", pageInCount)
 	}
 }
 
@@ -347,29 +322,6 @@ func (s *cacheSession) schedulePrefillSnapshots(offsets []int) {
 	for _, kv := range c.caches {
 		if kv != nil {
 			kv.PrepareSnapshots(prepared)
-		}
-	}
-}
-
-// discardPrefillSnapshots drains and closes the snapshots scheduled by
-// schedulePrefillSnapshots without attaching them to the trie, releasing their
-// pinned/lazy state. It is a no-op once attachPrefillSnapshots has drained the
-// schedule, so close can call it unconditionally to clean up an abandoned
-// prefill.
-func (s *cacheSession) discardPrefillSnapshots() {
-	if len(s.pendingSnapshots) == 0 {
-		return
-	}
-	s.pendingSnapshots = nil
-
-	for _, kv := range s.cache.caches {
-		if kv == nil {
-			continue
-		}
-		for _, snap := range kv.TakeSnapshots() {
-			if snap != nil {
-				snap.Close()
-			}
 		}
 	}
 }
@@ -433,7 +385,9 @@ func (s *cacheSession) attachPrefillSnapshots() {
 			frontier.user = true
 		}
 		s.attachCapturedSnapshots(frontier, rows[i])
+		c.compactPath()
 	}
+	c.enforceEvictionPolicy()
 }
 
 // attachCapturedSnapshots stores pre-captured snapshots on a trie node. Unlike
@@ -441,17 +395,38 @@ func (s *cacheSession) attachPrefillSnapshots() {
 // whose offset the live cache has already advanced past: the snapshots come
 // from the capture scheduled earlier, not from the cache's current state. The
 // node takes ownership of the snapshots (TakeSnapshots already transferred it).
+// Each capture is clipped to the node's edge, and a layer that already has a
+// snapshot keeps it.
 func (s *cacheSession) attachCapturedSnapshots(node *trieNode, snaps []cache.Snapshot) {
 	c := s.cache
-	node.setSnapshots(snaps, &c.pagedOutBytes)
+	next := make([]cache.Snapshot, len(c.caches))
+	copy(next, node.snapshots)
+	for i, kv := range c.caches {
+		if kv == nil || i >= len(snaps) || snaps[i] == nil {
+			continue
+		}
+		if next[i] != nil {
+			snaps[i].Close()
+			continue
+		}
+		head, tail := kv.Split(snaps[i], node.startOffset())
+		if head != nil {
+			head.Close()
+		}
+		next[i] = tail
+	}
+	for i, old := range node.swapSnapshots(next, &c.pagedOutBytes) {
+		if old != nil && old != next[i] {
+			old.Close()
+		}
+	}
 	node.lastUsed = time.Now()
 	slog.Debug("created snapshot", "offset", node.endOffset)
-	c.enforceEvictionPolicy()
 }
 
 // advancePath advances the active path from the current frontier by matching
 // tokens against existing trie children, splitting partial matches, and
-// appending any remaining tokens as new nodes. Returns the new frontier.
+// appending any remaining tokens as a new child node. Returns the new frontier.
 func (c *prefixCache) advancePath(frontier *trieNode, tokens []trieKey, endOffset int) *trieNode {
 	// Check if existing children already cover some or all of tokens.
 	// tokens may span multiple trie nodes when extending a previous run's
@@ -474,18 +449,44 @@ func (c *prefixCache) advancePath(frontier *trieNode, tokens []trieKey, endOffse
 	dest := matchPath[len(matchPath)-1]
 
 	if len(remaining) > 0 {
-		// Drop non-user snapshots so appendTokens can extend in-place
-		// rather than creating a new child node.
-		if len(dest.children) == 0 && !dest.user {
-			dest.setSnapshots(nil, &c.pagedOutBytes)
-		}
-		newDest := dest.appendTokens(c.root, remaining, endOffset)
-		if newDest != dest {
-			c.activePath = append(c.activePath, newDest)
-		}
-		dest = newDest
+		dest = dest.appendChild(remaining, endOffset)
+		c.activePath = append(c.activePath, dest)
 	}
 	return dest
+}
+
+// compactPath absorbs the active path's last node into its parent when the
+// parent is a non-user node with no other children, keeping consecutive
+// non-user segments compressed into one node.
+func (c *prefixCache) compactPath() {
+	n := len(c.activePath)
+	if n < 2 {
+		return
+	}
+	parent := c.activePath[n-2]
+	if parent == c.root || parent.user || len(parent.children) != 1 {
+		return
+	}
+	mergeWithChild(parent, c.caches, &c.pagedOutBytes)
+	c.activePath = c.activePath[:n-1]
+}
+
+// pageOut captures a fresh node's state from the live caches, which rest
+// exactly at its end. Nodes reached by traversal already carry snapshots.
+func (c *prefixCache) pageOut(node *trieNode) {
+	if node.hasSnapshots() {
+		return
+	}
+	snaps := make([]cache.Snapshot, len(c.caches))
+	for i, kv := range c.caches {
+		if kv == nil {
+			continue
+		}
+		snaps[i] = kv.Snapshot(node.startOffset())
+	}
+	node.setSnapshots(snaps, &c.pagedOutBytes)
+	logutil.Trace(fmt.Sprintf("page out: [%d, %d)", node.startOffset(), node.endOffset))
+	c.enforceEvictionPolicy()
 }
 
 // freeAll releases all cache layers.
@@ -514,13 +515,10 @@ func (c *prefixCache) minCacheOffset() int {
 
 // close saves the token state if the forward pass ran.
 func (s *cacheSession) close() {
-	// Release any prefill snapshots the session scheduled but never attached to
-	// the trie. A successful prefill drains them in attachPrefillSnapshots (so
-	// this is a no-op then); an abandoned one (e.g. cancellation between
-	// schedule and attach) leaves them in the caches, where the next request's
-	// PrepareSnapshots would overwrite the schedule without closing them,
-	// leaking the pinned/lazy snapshots and their VRAM.
-	s.discardPrefillSnapshots()
+	// A cancelled prefill never reaches the success-path attach; attaching
+	// here keeps its crossed captures for the retry and drains the schedule
+	// PrepareSnapshots would otherwise overwrite, leaking them.
+	s.attachPrefillSnapshots()
 
 	offset := s.cache.minCacheOffset()
 	if offset <= 0 {
@@ -547,12 +545,15 @@ func (s *cacheSession) close() {
 		panic(fmt.Sprintf("cache: offset %d exceeds %d stored keys", offset, len(stored)))
 	}
 
-	// Advance the trie frontier with any newly generated tokens.
+	// Advance the trie frontier with any newly generated tokens and page
+	// the new segment out. Merging after the page-out combines covered
+	// snapshots.
 	if len(c.activePath) > 0 {
 		frontier := c.activePath[len(c.activePath)-1]
 		if offset > frontier.endOffset {
 			newTokens := stored[frontier.endOffset:offset]
-			c.advancePath(frontier, newTokens, offset)
+			c.pageOut(c.advancePath(frontier, newTokens, offset))
+			c.compactPath()
 		}
 		c.activePath[len(c.activePath)-1].lastUsed = time.Now()
 	}

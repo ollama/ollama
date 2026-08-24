@@ -43,16 +43,12 @@ func (d *DeepSeekHarness) Run(_ string, _ []LaunchModel, args []string) error {
 		return err
 	}
 
-	bin, err := deepSeekHarnessLookPath("dsh")
-	if err != nil {
-		return fmt.Errorf("dsh is not installed: %w", err)
-	}
 	patchPath, err := deepSeekHarnessPatchPath()
 	if err != nil {
 		return err
 	}
 
-	cmd, err := deepSeekHarnessExecutableCommand(bin, deepSeekHarnessLaunchArgs(patchPath, args))
+	cmd, err := deepSeekHarnessLaunchCommand(deepSeekHarnessLaunchArgs(patchPath, args))
 	if err != nil {
 		return err
 	}
@@ -119,7 +115,10 @@ func ensureDeepSeekHarnessInstalled() (string, error) {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("failed to install deepseek harness: %w", err)
+		if _, npxErr := deepSeekHarnessLookPath("npx"); npxErr != nil {
+			return "", fmt.Errorf("failed to install deepseek harness: %w", err)
+		}
+		return "", nil
 	}
 
 	path, err := deepSeekHarnessLookPath("dsh")
@@ -136,6 +135,21 @@ func deepSeekHarnessExecutableCommand(bin string, args []string) (*exec.Cmd, err
 
 func deepSeekHarnessNpmCommand(bin string, args []string) (*exec.Cmd, error) {
 	return deepSeekHarnessNodeShimCommand(bin, []string{"node_modules", "npm", "bin", "npm-cli.js"}, args)
+}
+
+func deepSeekHarnessLaunchCommand(args []string) (*exec.Cmd, error) {
+	bin, dshErr := deepSeekHarnessLookPath("dsh")
+	if dshErr == nil {
+		return deepSeekHarnessExecutableCommand(bin, args)
+	}
+
+	npx, err := deepSeekHarnessLookPath("npx")
+	if err != nil {
+		return nil, fmt.Errorf("dsh is not installed: %w", dshErr)
+	}
+	return deepSeekHarnessNodeShimCommand(npx,
+		[]string{"node_modules", "npm", "bin", "npx-cli.js"},
+		append([]string{"--yes", deepSeekHarnessNpmPackage}, args...))
 }
 
 // Windows npm binaries are .cmd shims, which cannot be passed safely to

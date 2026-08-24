@@ -6,19 +6,19 @@ import { Field, Label, Description } from "@/components/ui/fieldset";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
+import { ClaudeDesktopModelsSettings } from "@/components/ClaudeDesktopModelsSettings";
 import {
   WifiIcon,
   FolderIcon,
   BoltIcon,
   WrenchIcon,
   CloudIcon,
-  XMarkIcon,
   CogIcon,
-  ArrowLeftIcon,
   ArrowDownTrayIcon,
+  Squares2X2Icon,
 } from "@heroicons/react/20/solid";
 import { Settings as SettingsType } from "@/gotypes";
-import { useNavigate } from "@tanstack/react-router";
+import { isWindowsPlatform } from "@/lib/platform";
 import { useUser } from "@/hooks/useUser";
 import { useCloudStatus } from "@/hooks/useCloudStatus";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -48,6 +48,8 @@ export default function Settings() {
   const queryClient = useQueryClient();
   const [showSaved, setShowSaved] = useState(false);
   const [restartMessage, setRestartMessage] = useState(false);
+  const [showAppsInMenu, setShowAppsInMenuState] = useState(true);
+  const [showAppsInMenuPending, setShowAppsInMenuPending] = useState(false);
   const {
     user,
     isAuthenticated,
@@ -61,7 +63,6 @@ export default function Settings() {
   const [isAwaitingConnection, setIsAwaitingConnection] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [pollingInterval, setPollingInterval] = useState<number | null>(null);
-  const navigate = useNavigate();
   const {
     cloudDisabled,
     cloudStatus,
@@ -144,6 +145,15 @@ export default function Settings() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    window
+      .getShowAppsInMenu?.()
+      .then(setShowAppsInMenuState)
+      .catch((error) =>
+        console.error("Failed to load menu app visibility:", error),
+      );
+  }, []);
+
+  useEffect(() => {
     const handleFocus = () => {
       if (isAwaitingConnection && pollingInterval) {
         // Stop polling when window gets focus
@@ -220,6 +230,22 @@ export default function Settings() {
     }
   };
 
+  const handleShowAppsInMenu = async (checked: boolean) => {
+    const previous = showAppsInMenu;
+    setShowAppsInMenuState(checked);
+    setShowAppsInMenuPending(true);
+    try {
+      await window.setShowAppsInMenu?.(checked);
+      setShowSaved(true);
+      setTimeout(() => setShowSaved(false), 1500);
+    } catch (error) {
+      setShowAppsInMenuState(previous);
+      console.error("Failed to update menu app visibility:", error);
+    } finally {
+      setShowAppsInMenuPending(false);
+    }
+  };
+
   const cloudOverriddenByEnv =
     cloudStatus?.source === "env" || cloudStatus?.source === "both";
   const cloudToggleDisabled =
@@ -266,49 +292,18 @@ export default function Settings() {
 
   if (error || !settings) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
+      <div className="flex flex-1 items-center justify-center">
         <div className="text-red-500">Failed to load settings</div>
       </div>
     );
   }
 
-  const isWindows = navigator.platform.toLowerCase().includes("win");
-  const handleCloseSettings = () => {
-    const chatId = settings.LastHomeView === "chat" ? "new" : "launch";
-    navigate({ to: "/c/$chatId", params: { chatId } });
-  };
+  const isWindows = isWindowsPlatform();
 
   return (
-    <main className="flex h-screen w-full flex-col select-none dark:bg-neutral-900">
-      <header
-        className="w-full flex flex-none justify-between h-[52px] py-2.5 items-center border-b border-neutral-200 dark:border-neutral-800 select-none"
-        onMouseDown={() => window.drag && window.drag()}
-        onDoubleClick={() => window.doubleClick && window.doubleClick()}
-      >
-        <h1
-          className={`${isWindows ? "pl-4" : "pl-24"} flex items-center font-rounded text-md font-medium dark:text-white`}
-        >
-          {isWindows && (
-            <button
-              onClick={handleCloseSettings}
-              className="hover:bg-neutral-100 mr-3 dark:hover:bg-neutral-800 rounded-full p-1.5"
-            >
-              <ArrowLeftIcon className="w-5 h-5 dark:text-white" />
-            </button>
-          )}
-          Settings
-        </h1>
-        {!isWindows && (
-          <button
-            onClick={handleCloseSettings}
-            className="p-1 hover:bg-neutral-100 mr-3 dark:hover:bg-neutral-800 rounded-full"
-          >
-            <XMarkIcon className="w-6 h-6 dark:text-white" />
-          </button>
-        )}
-      </header>
+    <main className="flex min-h-0 w-full flex-1 flex-col select-none dark:bg-neutral-900">
       <div className="w-full p-6 overflow-y-auto flex-1 overscroll-contain">
-        <div className="space-y-4 max-w-2xl mx-auto">
+        <div className="mx-auto max-w-4xl space-y-4">
           {/* Connect Ollama Account */}
           <div className="overflow-hidden rounded-xl bg-white dark:bg-neutral-800">
             <div className="p-4">
@@ -446,6 +441,29 @@ export default function Settings() {
                 </div>
               </Field>
 
+              {!isWindows && (
+                <Field>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex flex-1 items-start space-x-3">
+                      <Squares2X2Icon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
+                      <div>
+                        <Label>Show apps in menu</Label>
+                        <Description>
+                          Show connected apps at the top of the Ollama menu.
+                        </Description>
+                      </div>
+                    </div>
+                    <div className="flex-shrink-0">
+                      <Switch
+                        checked={showAppsInMenu}
+                        disabled={showAppsInMenuPending}
+                        onChange={handleShowAppsInMenu}
+                      />
+                    </div>
+                  </div>
+                </Field>
+              )}
+
               {/* Auto Update */}
               <Field>
                 <div className="flex items-start justify-between gap-4">
@@ -463,7 +481,9 @@ export default function Settings() {
                   <div className="flex-shrink-0">
                     <Switch
                       checked={settings.AutoUpdateEnabled}
-                      onChange={(checked) => handleChange("AutoUpdateEnabled", checked)}
+                      onChange={(checked) =>
+                        handleChange("AutoUpdateEnabled", checked)
+                      }
                     />
                   </div>
                 </div>
@@ -544,7 +564,9 @@ export default function Settings() {
                     </Description>
                     <div className="mt-3">
                       <Slider
-                        value={settings.ContextLength || defaultContextLength || 0}
+                        value={
+                          settings.ContextLength || defaultContextLength || 0
+                        }
                         onChange={(value) => {
                           handleChange("ContextLength", value);
                         }}
@@ -565,6 +587,8 @@ export default function Settings() {
               </Field>
             </div>
           </div>
+
+          <ClaudeDesktopModelsSettings />
 
           {/* Agent Mode */}
           {window.OLLAMA_TOOLS && (

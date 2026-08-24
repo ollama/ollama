@@ -56,12 +56,18 @@ func (p *fakePending) take() []cache.Snapshot {
 func (p *fakePending) feedCapturing(start int, tokens []int32, capture func(from, reached int) cache.Snapshot, advance func([]int32)) {
 	end := start + len(tokens)
 	captureAt := func(reached int) {
+		fired := false
 		for i, o := range p.offsets {
 			if p.captured[i] == nil && o == reached {
 				p.captured[i] = capture(p.base, reached)
+				fired = true
 			}
 		}
-		p.base = reached
+		// The base advances only when a capture fires, mirroring
+		// pendingSnapshots.captureReached.
+		if fired {
+			p.base = reached
+		}
 	}
 
 	if len(p.offsets) == 0 {
@@ -1005,12 +1011,13 @@ func TestSnapshotBeyondPrefillSkipped(t *testing.T) {
 	})
 }
 
-// TestPrefillSnapshotsDiscardedOnCancel mirrors a prefill canceled after the
-// caches captured interior snapshots but before attachPrefillSnapshots ran. The
-// abandoned captures must be released when the session closes; otherwise the
-// next request's PrepareSnapshots overwrites the schedule without closing them,
-// leaking the snapshots (caught by checkSnapshotLeaks in the env cleanup).
-func TestPrefillSnapshotsDiscardedOnCancel(t *testing.T) {
+// TestPrefillSnapshotsKeptOnCancel mirrors a prefill canceled after the caches
+// captured interior snapshots but before the success-path attach ran. Closing
+// the session attaches the crossed captures so a retry can resume from them,
+// and drains the capture schedule; otherwise the next request's
+// PrepareSnapshots would overwrite it without closing the captures, leaking
+// them (caught by checkSnapshotLeaks in the env cleanup).
+func TestPrefillSnapshotsKeptOnCancel(t *testing.T) {
 	forEachEnv(t, func(t *testing.T, env *testEnv) {
 		pc := env.pc
 		inputs := []int32{1, 2, 3, 4, 5}
@@ -1018,21 +1025,17 @@ func TestPrefillSnapshotsDiscardedOnCancel(t *testing.T) {
 		session := pc.begin(inputs, nil)
 		session.schedulePrefillSnapshots([]int{3})
 		// Cross offset 3 so the caches capture it, then close the session as a
-		// canceled prefill would, before the captures are attached to the trie.
+		// canceled prefill would, before the success-path attach.
 		feedAll(pc.caches, inputs[pc.minCacheOffset():3])
 		session.close()
 
-		// close advances the trie over the committed tokens, but the abandoned
-		// captures must not be attached as snapshots to any node.
-		walkNodes(pc.root, func(n *trieNode) bool {
-			if n != pc.root && n.hasSnapshots() {
-				t.Errorf("abandoned capture attached as snapshot at offset %d", n.endOffset)
-			}
-			return true
-		})
+		// The crossed capture becomes a restore point for the retry.
+		if at := 3 - pc.draftLookahead; !nodeExistsAtOffset(pc.root, at) {
+			t.Errorf("no trie node at capture point %d after cancel", at)
+		}
 
 		// A second request re-prepares snapshots on the same caches: if the
-		// discarded ones were not closed, prepare() orphans them here.
+		// pending ones were not drained, prepare() orphans them here.
 		simulateRequest(t, pc, inputs, nil, 5)
 
 		checkTrieInvariants(t, pc.root)

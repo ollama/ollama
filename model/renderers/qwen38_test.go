@@ -99,13 +99,12 @@ Reminder:
 	developerToolHeader := strings.TrimSuffix(toolHeader, imEndTag+"\n") + "\n\nUse tools when requested." + imEndTag + "\n"
 
 	tests := []struct {
-		name            string
-		messages        []api.Message
-		tools           []api.Tool
-		think           *api.ThinkValue
-		jinjaEffort     string
-		want            string
-		matchesTemplate bool
+		name        string
+		messages    []api.Message
+		tools       []api.Tool
+		think       *api.ThinkValue
+		jinjaEffort string
+		want        string
 	}{
 		{
 			name:     "default xhigh injects system guidance",
@@ -117,7 +116,6 @@ Hello<|im_end|>
 <|im_start|>assistant
 <think>
 `,
-			matchesTemplate: true,
 		},
 		{
 			name: "developer instruction maps to system",
@@ -155,6 +153,54 @@ Hello<|im_end|>
 `,
 		},
 		{
+			name: "multiple leading system instructions merge",
+			messages: []api.Message{
+				{Role: "system", Content: "Base policy."},
+				{Role: "system", Content: "Request policy."},
+				{Role: "user", Content: "Hello"},
+			},
+			want: `<|im_start|>system
+` + qwen38RefXHigh + `
+
+Base policy.
+
+Request policy.<|im_end|>
+<|im_start|>user
+Hello<|im_end|>
+<|im_start|>assistant
+<think>
+`,
+		},
+		{
+			name: "request system after base conversation merges with base policy",
+			messages: []api.Message{
+				{Role: "system", Content: "Base policy."},
+				{Role: "user", Content: "Base question"},
+				{Role: "assistant", Content: "Base answer"},
+				{Role: "system", Content: "Request policy."},
+				{Role: "user", Content: "Current question"},
+			},
+			want: `<|im_start|>system
+` + qwen38RefXHigh + `
+
+Base policy.
+
+Request policy.<|im_end|>
+<|im_start|>user
+Base question<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+Base answer<|im_end|>
+<|im_start|>user
+Current question<|im_end|>
+<|im_start|>assistant
+<think>
+`,
+		},
+		{
 			name: "boolean true uses API medium effort",
 			messages: []api.Message{
 				{Role: "system", Content: " Be concise. \n"},
@@ -169,7 +215,6 @@ Hello<|im_end|>
 <|im_start|>assistant
 <think>
 `,
-			matchesTemplate: true,
 		},
 		{
 			name:        "low effort injects concise guidance",
@@ -183,7 +228,6 @@ Hello<|im_end|>
 <|im_start|>assistant
 <think>
 `,
-			matchesTemplate: true,
 		},
 		{
 			name:     "thinking disabled emits explicit empty block",
@@ -197,7 +241,6 @@ Hello<|im_end|>
 </think>
 
 `,
-			matchesTemplate: true,
 		},
 		{
 			name: "preserves reasoning metadata without extracting content tags",
@@ -222,7 +265,6 @@ Next<|im_end|>
 <|im_start|>assistant
 <think>
 `,
-			matchesTemplate: true,
 		},
 		{
 			name: "developer instruction with tools",
@@ -230,8 +272,9 @@ Next<|im_end|>
 				{Role: "developer", Content: "Use tools when requested."},
 				{Role: "user", Content: "Check the weather."},
 			},
-			tools: weather,
-			think: think(true),
+			tools:       weather,
+			think:       think(true),
+			jinjaEffort: "medium",
 			want: developerToolHeader + `<|im_start|>user
 Check the weather.<|im_end|>
 <|im_start|>assistant
@@ -279,7 +322,6 @@ Montréal
 <|im_start|>assistant
 <think>
 `,
-			matchesTemplate: true,
 		},
 		{
 			name: "image content",
@@ -297,7 +339,6 @@ Montréal
 </think>
 
 `,
-			matchesTemplate: true,
 		},
 	}
 
@@ -311,8 +352,12 @@ Montréal
 			if diff := cmp.Diff(tt.want, got); diff != "" {
 				t.Fatalf("renderer output mismatch (-want +got):\n%s", diff)
 			}
-			if verifyJinja && tt.matchesTemplate {
-				jinja := renderQwen38Jinja(t, tt.messages, tt.tools, tt.think, tt.jinjaEffort)
+			if verifyJinja {
+				normalized, err := normalizeQwen38Messages(tt.messages)
+				if err != nil {
+					t.Fatal(err)
+				}
+				jinja := renderQwen38Jinja(t, normalized, tt.tools, tt.think, tt.jinjaEffort)
 				if diff := cmp.Diff(jinja, tt.want); diff != "" {
 					t.Fatalf("hardcoded expected mismatch vs Jinja (-jinja +want):\n%s", diff)
 				}
@@ -635,8 +680,8 @@ print(tmpl.render(**kwargs), end="")
 
 func requireQwen38Jinja(t *testing.T) {
 	t.Helper()
-	if err := qwen38PythonCommand(t, "-c", "import transformers").Run(); err != nil {
-		t.Fatal("VERIFY_JINJA2=1 requires .venv/bin/python with transformers 5.x or uv with downloadable transformers")
+	if err := qwen38PythonCommand(t, "-c", "import jinja2, transformers").Run(); err != nil {
+		t.Fatal("VERIFY_JINJA2=1 requires .venv/bin/python with transformers 5.x and jinja2, or uv with downloadable dependencies")
 	}
 }
 
@@ -646,7 +691,7 @@ func qwen38PythonCommand(t *testing.T, args ...string) *exec.Cmd {
 		return exec.CommandContext(t.Context(), python, args...)
 	}
 
-	uvArgs := append([]string{"run", "--with", "transformers>=5,<6", "python"}, args...)
+	uvArgs := append([]string{"run", "--with", "transformers>=5,<6", "--with", "jinja2>=3.1,<4", "python"}, args...)
 	return exec.CommandContext(t.Context(), "uv", uvArgs...)
 }
 

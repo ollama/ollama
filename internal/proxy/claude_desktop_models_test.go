@@ -1,0 +1,266 @@
+package proxy
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/ollama/ollama/api"
+)
+
+func TestFetchClaudeDesktopModelsUsesAppAwareContract(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/experimental/model-recommendations" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.URL.Query().Get("app"); got != "claude-desktop" {
+			t.Fatalf("app = %q, want claude-desktop", got)
+		}
+		_ = json.NewEncoder(w).Encode(api.ModelRecommendationsResponse{Recommendations: []api.ModelRecommendation{
+			{Model: "glm-5.2:cloud", Description: "GLM", MaxOutputTokens: 131_072, RequiredPlan: "pro"},
+			{Model: "deepseek-v4-pro", Description: "DeepSeek", MaxOutputTokens: 65_536, RequiredPlan: "pro"},
+			{Model: "qwen3.8:27b", Description: "Qwen", MaxOutputTokens: 131_072},
+		}})
+	}))
+	defer server.Close()
+
+	req, err := http.NewRequest(http.MethodGet, server.URL+"/api/experimental/model-recommendations?app=claude-desktop", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	models, err := FetchClaudeDesktopModels(server.Client(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := claudeDesktopModelNames(models), []string{"glm-5.2:cloud", "deepseek-v4-pro"}; !slices.Equal(got, want) {
+		t.Fatalf("models = %v, want %v", got, want)
+	}
+	if models[1].OllamaModel != "deepseek-v4-pro:cloud" || !models[1].Cloud {
+		t.Fatalf("cloud adapter = %+v", models[1])
+	}
+	if models[1].DisplayName != "deepseek-v4-pro:cloud" {
+		t.Fatalf("display name = %q, want exact model identifier", models[1].DisplayName)
+	}
+}
+
+func TestFetchClaudeDesktopModelsRejectsInvalidResponses(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{name: "server error", status: http.StatusBadGateway, body: `{"error":"unavailable"}`},
+		{name: "malformed", status: http.StatusOK, body: `{`},
+		{name: "empty", status: http.StatusOK, body: `{"recommendations":[]}`},
+		{name: "local only", status: http.StatusOK, body: `{"recommendations":[{"model":"qwen3.8:27b"}]}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(test.status)
+				_, _ = w.Write([]byte(test.body))
+			}))
+			defer server.Close()
+			req, err := http.NewRequest(http.MethodGet, server.URL, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := FetchClaudeDesktopModels(server.Client(), req); err == nil {
+				t.Fatal("FetchClaudeDesktopModels succeeded")
+			}
+		})
+	}
+}
+
+func TestDefaultClaudeDesktopModelsExcludeMLX(t *testing.T) {
+	models := DefaultClaudeDesktopModels()
+	if got, want := claudeDesktopModelNames(models), []string{"glm-5.2:cloud", "kimi-k3:cloud", "deepseek-v4-pro", "deepseek-v4-flash", "gemma4:31b-cloud"}; !slices.Equal(got, want) {
+		t.Fatalf("fallback models = %v, want %v", got, want)
+	}
+	for _, model := range models {
+		if strings.Contains(strings.ToLower(model.Name), "mlx") {
+			t.Fatalf("fallback contains MLX model %q", model.Name)
+		}
+	}
+	if models[3].OllamaModel != "deepseek-v4-flash:0731:cloud" {
+		t.Fatalf("fallback Flash route = %q", models[3].OllamaModel)
+	}
+}
+
+func TestSelectClaudeDesktopModelsPrioritizesExplicitSelection(t *testing.T) {
+	available := DefaultClaudeDesktopModels()
+	selected := SelectClaudeDesktopModels(available, []string{"deepseek-v4-flash", "glm-5.2:cloud"})
+	if got, want := claudeDesktopModelNames(selected), []string{"deepseek-v4-flash", "glm-5.2:cloud"}; !slices.Equal(got, want) {
+		t.Fatalf("selected models = %v, want %v", got, want)
+	}
+
+	cloudRoute := SelectClaudeDesktopModels(available, []string{"deepseek-v4-flash:0731:cloud"})
+	if len(cloudRoute) != 1 || cloudRoute[0].Name != "deepseek-v4-flash" || cloudRoute[0].OllamaModel != "deepseek-v4-flash:0731:cloud" || !cloudRoute[0].Cloud {
+		t.Fatalf("cloud route selection = %+v", cloudRoute)
+	}
+
+	custom := SelectClaudeDesktopModels(available, []string{"custom-model"})
+	if len(custom) != 1 || custom[0].Name != "custom-model" || custom[0].OllamaModel != "custom-model" {
+		t.Fatalf("custom selection = %+v", custom)
+	}
+	if got, want := custom[0].GatewayID(), "claude-fable-5"; got != want {
+		t.Fatalf("custom gateway ID = %q, want validated slot %q", got, want)
+	}
+
+	withoutSentinel := SelectClaudeDesktopModels(available, []string{"Ollama Cloud", "ollama:cloud", "qwen3:8b"})
+	if got, want := claudeDesktopModelNames(withoutSentinel), []string{"qwen3:8b"}; !slices.Equal(got, want) {
+		t.Fatalf("selection without invalid sentinel = %v, want %v", got, want)
+	}
+}
+
+func claudeDesktopModelNames(models []ClaudeDesktopModel) []string {
+	names := make([]string, len(models))
+	for i, model := range models {
+		names[i] = model.Name
+	}
+	return names
+}
+
+func TestSelectClaudeDesktopModelsAssignsValidatedClaudeIDs(t *testing.T) {
+	available := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{
+		{Model: "glm-5.2:cloud", RequiredPlan: "pro"},
+		{Model: "kimi-k3:cloud", RequiredPlan: "pro"},
+		{Model: "deepseek-v4-pro", RequiredPlan: "pro"},
+		{Model: "deepseek-v4-flash", RequiredPlan: "pro"},
+		{Model: "gemma4:26b:cloud", RequiredPlan: "pro"},
+	})
+	selected := SelectClaudeDesktopModels(available, []string{
+		"glm-5.2:cloud",
+		"kimi-k3:cloud",
+		"deepseek-v4-pro",
+		"deepseek-v4-flash",
+		"gemma4:26b:cloud",
+	})
+	if len(selected) != 5 {
+		t.Fatalf("selected models = %v", claudeDesktopModelNames(selected))
+	}
+	wantIDs := []string{
+		"claude-fable-5",
+		"claude-opus-5",
+		"claude-sonnet-5",
+		"claude-haiku-4-5-20251001",
+		"claude-sonnet-4-6",
+	}
+	seen := make(map[string]struct{}, len(selected))
+	for i, model := range selected {
+		id := model.GatewayID()
+		if id != wantIDs[i] {
+			t.Fatalf("gateway ID %d = %q, want literal slot %q", i, id, wantIDs[i])
+		}
+		if _, ok := seen[id]; ok {
+			t.Fatalf("duplicate gateway ID %q in %v", id, selected)
+		}
+		seen[id] = struct{}{}
+	}
+
+	// Custom installed models use the same validated slots while preserving the
+	// Ollama route separately.
+	withCustom := SelectClaudeDesktopModels(available, []string{"kimi-k3:cloud", "mycustommodel:7b"})
+	if len(withCustom) != 2 || withCustom[1].Name != "mycustommodel:7b" {
+		t.Fatalf("custom selection = %v", claudeDesktopModelNames(withCustom))
+	}
+	if got, want := withCustom[1].GatewayID(), "claude-opus-5"; got != want {
+		t.Fatalf("custom gateway ID = %q, want validated slot %q", got, want)
+	}
+	if withCustom[1].OllamaModel != "mycustommodel:7b" {
+		t.Fatalf("custom Ollama route = %q", withCustom[1].OllamaModel)
+	}
+
+	// Reordering the persisted selection reassigns the slots in that same order.
+	// The gateway catalog and request router consume this one mapping together.
+	merged := append(append([]ClaudeDesktopModel(nil), available...), withCustom[1])
+	reordered := SelectClaudeDesktopModels(merged, []string{"mycustommodel:7b", "kimi-k3:cloud"})
+	if len(reordered) != 2 || reordered[0].GatewayID() != "claude-fable-5" || reordered[1].GatewayID() != "claude-opus-5" {
+		t.Fatalf("reordered gateway IDs = %q/%q", reordered[0].GatewayID(), reordered[1].GatewayID())
+	}
+}
+
+func TestSelectClaudeDesktopModelsIgnoresRecommendationReordering(t *testing.T) {
+	first := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{
+		{Model: "glm-5.2:cloud", RequiredPlan: "pro"},
+		{Model: "kimi-k3:cloud", RequiredPlan: "pro"},
+	})
+	second := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{
+		{Model: "kimi-k3:cloud", RequiredPlan: "pro"},
+		{Model: "glm-5.2:cloud", RequiredPlan: "pro"},
+	})
+	persisted := []string{"glm-5.2:cloud", "kimi-k3:cloud"}
+
+	for _, available := range [][]ClaudeDesktopModel{first, second} {
+		selected := SelectClaudeDesktopModels(available, persisted)
+		if len(selected) != 2 {
+			t.Fatalf("selected models = %+v", selected)
+		}
+		if selected[0].OllamaModel != "glm-5.2:cloud" || selected[0].GatewayID() != "claude-fable-5" {
+			t.Fatalf("GLM mapping = %q -> %q", selected[0].GatewayID(), selected[0].OllamaModel)
+		}
+		if selected[1].OllamaModel != "kimi-k3:cloud" || selected[1].GatewayID() != "claude-opus-5" {
+			t.Fatalf("Kimi mapping = %q -> %q", selected[1].GatewayID(), selected[1].OllamaModel)
+		}
+	}
+}
+
+func TestSelectClaudeDesktopModelsCapsAtLiteralSlots(t *testing.T) {
+	available := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{
+		{Model: "glm-5.2:cloud", RequiredPlan: "pro"},
+		{Model: "kimi-k3:cloud", RequiredPlan: "pro"},
+		{Model: "deepseek-v4-pro", RequiredPlan: "pro"},
+		{Model: "deepseek-v4-flash", RequiredPlan: "pro"},
+		{Model: "gemma4:26b:cloud", RequiredPlan: "pro"},
+		{Model: "qwen3.8:27b", RequiredPlan: ""},
+	})
+	if len(available) != 6 {
+		t.Fatalf("catalog = %d models, want 6", len(available))
+	}
+	if available[5].GatewayID() != "" {
+		t.Fatalf("unselected catalog entry ID = %q, want no assigned slot", available[5].GatewayID())
+	}
+
+	// Without an explicit selection the first five recommendations apply.
+	defaults := SelectClaudeDesktopModels(available, nil)
+	if len(defaults) != MaxClaudeDesktopModels {
+		t.Fatalf("default selection = %d models, want %d", len(defaults), MaxClaudeDesktopModels)
+	}
+
+	// Any recommendation can be selected explicitly even beyond the default five.
+	qwen := SelectClaudeDesktopModels(available, []string{"kimi-k3:cloud", "qwen3.8:27b"})
+	if len(qwen) != 2 || qwen[1].GatewayID() != "claude-opus-5" || qwen[1].OllamaModel != "qwen3.8:27b" {
+		t.Fatalf("unmapped catalog selection = %+v", qwen)
+	}
+
+	// Selections never exceed the five literal slots.
+	tooMany := SelectClaudeDesktopModels(available, []string{
+		"glm-5.2:cloud",
+		"kimi-k3:cloud",
+		"deepseek-v4-pro",
+		"deepseek-v4-flash",
+		"gemma4:26b:cloud",
+		"qwen3.8:27b",
+	})
+	if len(tooMany) != MaxClaudeDesktopModels {
+		t.Fatalf("capped selection = %d models, want %d", len(tooMany), MaxClaudeDesktopModels)
+	}
+	for _, name := range claudeDesktopModelNames(tooMany) {
+		if name == "qwen3.8:27b" {
+			t.Fatalf("sixth selection %q survived the cap", name)
+		}
+	}
+	seen := make(map[string]struct{}, len(tooMany))
+	for _, model := range tooMany {
+		id := model.GatewayID()
+		if id == "" {
+			t.Fatalf("selected model %q has no Claude ID", model.Name)
+		}
+		if _, ok := seen[id]; ok {
+			t.Fatalf("duplicate gateway ID %q", id)
+		}
+		seen[id] = struct{}{}
+	}
+}

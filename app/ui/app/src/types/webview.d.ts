@@ -12,6 +12,45 @@ interface MenuItem {
   separator?: boolean;
 }
 
+interface ClaudeDesktopStatus {
+  supported: boolean;
+  used: boolean;
+  installed: boolean;
+  configured?: boolean;
+  connected: boolean;
+  running: boolean;
+  startFailed: boolean;
+  portConflict: boolean;
+  gatewayPort?: number;
+  error?: string;
+  modelSource?: "user" | "endpoint" | "fallback";
+  maxModels?: number;
+  models?: ClaudeDesktopModelStatus[];
+}
+
+interface ClaudeDesktopModelStatus {
+  name: string;
+  displayName: string;
+  description?: string;
+  cloud?: boolean;
+  selected: boolean;
+  availability?: "unknown" | "available" | "unavailable";
+  reason?:
+    | "cloud_off"
+    | "sign_in_required"
+    | "upgrade_required"
+    | "verification_unavailable"
+    | "model_not_installed";
+  requiredPlan?: string;
+}
+
+interface ClaudeDesktopActionResult {
+  status: ClaudeDesktopStatus;
+  error?: string;
+}
+
+type ClaudeDesktopInstallResult = "opened" | "cancelled" | "failed";
+
 interface WebviewAPI {
   selectFile: () => Promise<ImageData | null>;
   selectMultipleFiles: () => Promise<ImageData[] | null>;
@@ -24,9 +63,24 @@ declare global {
     webview?: WebviewAPI;
     drag?: () => void;
     doubleClick?: () => void;
+    activateOllama?: () => void;
+    getClaudeDesktopStatus?: () => Promise<ClaudeDesktopStatus>;
+    setClaudeDesktopConnected?: (
+      enabled: boolean,
+    ) => Promise<ClaudeDesktopActionResult>;
+    prepareClaudeDesktopConnection?: () => Promise<ClaudeDesktopActionResult>;
+    openClaudeDesktop?: () => Promise<string>;
+    installClaudeDesktop?: () => Promise<ClaudeDesktopInstallResult>;
+    getShowAppsInMenu?: () => Promise<boolean>;
+    setShowAppsInMenu?: (visible: boolean) => Promise<void>;
+    restartClaudeDesktop?: (
+      models: string[],
+    ) => Promise<ClaudeDesktopActionResult>;
+    setOnboardingWindow?: (enabled: boolean) => void;
     menu: (items: MenuItem[]) => Promise<string | null>;
     OLLAMA_TOOLS?: boolean;
     OLLAMA_WEBSEARCH?: boolean;
+    OLLAMA_PLATFORM?: "darwin" | "windows";
   }
 
   namespace JSX {
@@ -46,4 +100,13 @@ declare global {
   }
 }
 
-export type { ImageData, WebviewAPI, ContextMenuItem, ContextMenuResult };
+export type {
+  ClaudeDesktopActionResult,
+  ClaudeDesktopInstallResult,
+  ClaudeDesktopModelStatus,
+  ClaudeDesktopStatus,
+  ContextMenuItem,
+  ContextMenuResult,
+  ImageData,
+  WebviewAPI,
+};

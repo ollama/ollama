@@ -368,6 +368,85 @@ func TestEnsureDeepSeekHarnessInstalledUsesPublicNpmPackage(t *testing.T) {
 	}
 }
 
+func TestDeepSeekHarnessFallsBackToNpxAfterGlobalInstallFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	home := t.TempDir()
+	setTestHome(t, home)
+	binDir := t.TempDir()
+	logPath := filepath.Join(home, "npx-invocation")
+	for name, script := range map[string]string{
+		"npm": "#!/bin/sh\nexit 1\n",
+		"npx": "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$DSH_NPX_LOG\"\nprintf '%s\\n' \"$OLLAMA_LAUNCH_DSH_API_KEY\" >> \"$DSH_NPX_LOG\"\n",
+	} {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", strings.Join([]string{binDir, "/bin", "/usr/bin"}, string(os.PathListSeparator)))
+	t.Setenv("DSH_NPX_LOG", logPath)
+
+	restore := withLaunchConfirmPolicy(launchConfirmPolicy{yes: true})
+	defer restore()
+	path, err := ensureDeepSeekHarnessInstalled()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "" {
+		t.Fatalf("fallback path = %q, want empty", path)
+	}
+
+	dsh := &DeepSeekHarness{}
+	if err := dsh.Run("qwen3.5", nil, []string{"--port", "0"}); err != nil {
+		t.Fatal(err)
+	}
+	patchPath, err := deepSeekHarnessPatchPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "--yes\n@deepseek-ai/dsh@latest\nweb\n--patch\n" + patchPath + "\n--port\n0\nollama\n"
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != want {
+		t.Fatalf("npx invocation = %q, want %q", data, want)
+	}
+}
+
+func TestEnsureDeepSeekHarnessInstalledPreservesGlobalFailureWhenNpxIsUnavailable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	binDir := t.TempDir()
+	npm := filepath.Join(binDir, "npm")
+	if err := os.WriteFile(npm, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	originalLookPath := deepSeekHarnessLookPath
+	deepSeekHarnessLookPath = func(file string) (string, error) {
+		if file == "npm" {
+			return npm, nil
+		}
+		return "", exec.ErrNotFound
+	}
+	t.Cleanup(func() { deepSeekHarnessLookPath = originalLookPath })
+
+	restore := withLaunchConfirmPolicy(launchConfirmPolicy{yes: true})
+	defer restore()
+	_, err := ensureDeepSeekHarnessInstalled()
+	if err == nil || !strings.Contains(err.Error(), "failed to install deepseek harness") {
+		t.Fatalf("error = %v", err)
+	}
+	if strings.Contains(err.Error(), "npx") {
+		t.Fatalf("error exposes fallback: %v", err)
+	}
+}
+
 func TestDeepSeekHarnessLaunchArgs(t *testing.T) {
 	got := deepSeekHarnessLaunchArgs("/tmp/ollama.cordis.yml", []string{"--port", "0"})
 	want := []string{"web", "--patch", "/tmp/ollama.cordis.yml", "--port", "0"}
@@ -381,9 +460,11 @@ func TestDeepSeekHarnessWindowsNodeShims(t *testing.T) {
 	node := filepath.Join(root, "node.exe")
 	dsh := filepath.Join(root, "npm", "dsh.cmd")
 	npm := filepath.Join(root, "node", "npm.cmd")
+	npx := filepath.Join(root, "node", "npx.cmd")
 	dshEntrypoint := filepath.Join(filepath.Dir(dsh), "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js")
 	npmEntrypoint := filepath.Join(filepath.Dir(npm), "node_modules", "npm", "bin", "npm-cli.js")
-	for _, path := range []string{node, dsh, npm, dshEntrypoint, npmEntrypoint} {
+	npxEntrypoint := filepath.Join(filepath.Dir(npx), "node_modules", "npm", "bin", "npx-cli.js")
+	for _, path := range []string{node, dsh, npm, npx, dshEntrypoint, npmEntrypoint, npxEntrypoint} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -396,8 +477,11 @@ func TestDeepSeekHarnessWindowsNodeShims(t *testing.T) {
 	originalLookPath := deepSeekHarnessLookPath
 	deepSeekHarnessGOOS = "windows"
 	deepSeekHarnessLookPath = func(file string) (string, error) {
-		if file == "node" {
+		switch file {
+		case "node":
 			return node, nil
+		case "npx":
+			return npx, nil
 		}
 		return "", exec.ErrNotFound
 	}
@@ -423,6 +507,17 @@ func TestDeepSeekHarnessWindowsNodeShims(t *testing.T) {
 			t.Fatal(err)
 		}
 		want := []string{node, npmEntrypoint, "install", "-g", deepSeekHarnessNpmPackage}
+		if !slices.Equal(cmd.Args, want) {
+			t.Fatalf("command args = %v, want %v", cmd.Args, want)
+		}
+	})
+
+	t.Run("npx", func(t *testing.T) {
+		cmd, err := deepSeekHarnessLaunchCommand([]string{"web"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []string{node, npxEntrypoint, "--yes", deepSeekHarnessNpmPackage, "web"}
 		if !slices.Equal(cmd.Args, want) {
 			t.Fatalf("command args = %v, want %v", cmd.Args, want)
 		}
