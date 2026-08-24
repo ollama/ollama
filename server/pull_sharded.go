@@ -182,11 +182,67 @@ func hfShardSet(ctx context.Context, repo, tag string) ([]hfTreeEntry, int64, er
 		return int(ai) - int(bi)
 	})
 
+	// Validate the set before anything is downloaded. The create path already
+	// rejects an unusable shard set, but only once every blob is in the store
+	// (see #17946), which on this path would mean paying for the whole transfer
+	// first. Everything checked here comes from the listing, so it costs
+	// nothing.
+	if err := validateShardSet(repo, tag, shards); err != nil {
+		return nil, 0, err
+	}
+
 	var total int64
 	for _, s := range shards {
 		total += s.Size
 	}
 	return shards, total, nil
+}
+
+// validateShardSet reports whether shards form exactly one complete split GGUF
+// set: a single prefix, a consistent count, and every shard present exactly
+// once. shards must be sorted by index.
+//
+// splitGGUFName returns a zero-based index, matching the split.no metadata,
+// while the filenames themselves are one-based, so indices run 0..count-1 here
+// and are reported one-based to match what a user sees.
+func validateShardSet(repo, tag string, shards []hfTreeEntry) error {
+	wantPrefix, _, wantCount, ok := splitGGUFName(shards[0].Path)
+	if !ok {
+		return fmt.Errorf("shard %q does not use the llama.cpp split filename pattern", shards[0].Path)
+	}
+
+	seen := make(map[uint16]string, len(shards))
+	for _, s := range shards {
+		prefix, index, count, ok := splitGGUFName(s.Path)
+		if !ok {
+			return fmt.Errorf("shard %q does not use the llama.cpp split filename pattern", s.Path)
+		}
+		if prefix != wantPrefix || count != wantCount {
+			return fmt.Errorf("tag %q in %s matches more than one shard set: %q and %q",
+				tag, repo, shards[0].Path, s.Path)
+		}
+		if index >= count {
+			return fmt.Errorf("shard %q is numbered %d of %d", s.Path, index+1, count)
+		}
+		if dup, exists := seen[index]; exists {
+			return fmt.Errorf("duplicate shard %d for tag %q in %s: %q and %q",
+				index+1, tag, repo, dup, s.Path)
+		}
+		seen[index] = s.Path
+	}
+
+	if len(seen) != int(wantCount) {
+		missing := make([]string, 0, int(wantCount)-len(seen))
+		for i := uint16(0); i < wantCount; i++ {
+			if _, exists := seen[i]; !exists {
+				missing = append(missing, fmt.Sprintf("%05d-of-%05d", i+1, wantCount))
+			}
+		}
+		return fmt.Errorf("incomplete shard set for tag %q in %s: found %d of %d shards, missing %s",
+			tag, repo, len(seen), wantCount, strings.Join(missing, ", "))
+	}
+
+	return nil
 }
 
 // hfNextPage returns the next tree API page from a standard HTTP Link header.
