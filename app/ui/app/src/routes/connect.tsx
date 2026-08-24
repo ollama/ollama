@@ -10,7 +10,7 @@ export const Route = createFileRoute("/connect")({
 function ConnectRoute() {
   return (
     <SidebarLayout
-      title="Connect your apps"
+      title="Apps"
       sidebar={<AppSidebar current="apps" />}
     >
       <ConnectAppsScreen />
