@@ -19,7 +19,10 @@ import {
   withClaudeConnectionTimeout,
 } from "@/lib/claudeDesktop";
 import { isWindowsPlatform } from "@/lib/platform";
-import type { ClaudeDesktopStatus } from "@/types/webview";
+import type {
+  ClaudeDesktopActionResult,
+  ClaudeDesktopStatus,
+} from "@/types/webview";
 import { copyTextToClipboard } from "@/utils/clipboard";
 import {
   ArrowPathIcon,
@@ -575,17 +578,43 @@ export function ConnectAppsScreen({
   );
 
   const reconcileLateClaudeAction = useCallback(
-    (enabled: boolean) => () => {
-      if (!screenMounted.current) return;
-      void (async () => {
-        const status = await refreshClaudeStatus();
-        if (!enabled || !status || !screenMounted.current) return;
-        const completionError = await finishClaudeConnection(status);
-        if (completionError && screenMounted.current) {
-          setClaudeError(completionError);
+    (enabled: boolean) =>
+      (settled: PromiseSettledResult<ClaudeDesktopActionResult>) => {
+        if (!screenMounted.current) return;
+
+        if (settled.status === "fulfilled") {
+          const result = settled.value;
+          setClaudeStatus(result.status);
+          setClaudeError(result.error || null);
+          if (result.error || !enabled) return;
+
+          void finishClaudeConnection(result.status).then(
+            (completionError) => {
+              if (completionError && screenMounted.current) {
+                setClaudeError(completionError);
+              }
+            },
+            () => {
+              if (screenMounted.current) {
+                setClaudeError(
+                  "Ollama connected Claude, but could not open the app.",
+                );
+              }
+            },
+          );
+          return;
         }
-      })();
-    },
+
+        void refreshClaudeStatus().then(() => {
+          if (screenMounted.current) {
+            setClaudeError(
+              enabled
+                ? "Ollama could not connect to Claude."
+                : "Ollama could not disconnect from Claude.",
+            );
+          }
+        });
+      },
     [finishClaudeConnection, refreshClaudeStatus],
   );
 

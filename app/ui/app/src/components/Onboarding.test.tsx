@@ -164,7 +164,7 @@ describe("Onboarding", () => {
     }
   });
 
-  it("reconciles the Connect Apps switch after a timed-out native action finishes", async () => {
+  it("preserves a late native error after the Connect Apps action times out", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 
@@ -185,12 +185,14 @@ describe("Onboarding", () => {
     };
     let finishNativeAction!: (result: {
       status: typeof connectedStatus;
+      error?: string;
     }) => void;
-    const nativeAction = new Promise<{ status: typeof connectedStatus }>(
-      (resolve) => {
-        finishNativeAction = resolve;
-      },
-    );
+    const nativeAction = new Promise<{
+      status: typeof connectedStatus;
+      error?: string;
+    }>((resolve) => {
+      finishNativeAction = resolve;
+    });
     const getClaudeStatus = vi
       .fn()
       .mockResolvedValueOnce(disconnectedStatus)
@@ -260,19 +262,24 @@ describe("Onboarding", () => {
       ).toContain("Claude is taking too long to connect");
 
       await act(async () => {
-        finishNativeAction({ status: connectedStatus });
+        finishNativeAction({
+          status: connectedStatus,
+          error: "Claude failed to restart.",
+        });
         await Promise.resolve();
         await Promise.resolve();
       });
 
-      expect(getClaudeStatus).toHaveBeenCalledTimes(2);
+      expect(getClaudeStatus).toHaveBeenCalledOnce();
       expect(claudeSwitch().props["aria-checked"]).toBe(true);
       expect(claudeSwitch().props["aria-busy"]).toBeUndefined();
       expect(claudeSwitch().props.disabled).toBe(false);
-      expect(renderer.root.findAllByProps({ role: "alert" })).toHaveLength(0);
       expect(
-        renderer.root.findByProps({ id: "claude-connected-title" }).children,
-      ).toContain("Easily access Ollama models in your Claude");
+        renderer.root.findByProps({ role: "alert" }).children.join(""),
+      ).toContain("Claude failed to restart.");
+      expect(
+        renderer.root.findAllByProps({ id: "claude-connected-title" }),
+      ).toHaveLength(0);
     } finally {
       if (renderer) {
         act(() => renderer?.unmount());

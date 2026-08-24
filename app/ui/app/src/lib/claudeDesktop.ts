@@ -16,7 +16,7 @@ export class ClaudeConnectionTimeoutError extends Error {
 export function withClaudeConnectionTimeout<T>(
   action: Promise<T>,
   timeoutMs = CLAUDE_CONNECTION_TIMEOUT_MS,
-  onLateSettled?: () => void,
+  onLateSettled?: (result: PromiseSettledResult<T>) => void,
 ): Promise<T> {
   return new Promise((resolve, reject) => {
     let timedOut = false;
@@ -28,7 +28,7 @@ export function withClaudeConnectionTimeout<T>(
       (value) => {
         globalThis.clearTimeout(timeout);
         if (timedOut) {
-          onLateSettled?.();
+          onLateSettled?.({ status: "fulfilled", value });
           return;
         }
         resolve(value);
@@ -36,7 +36,7 @@ export function withClaudeConnectionTimeout<T>(
       (error: unknown) => {
         globalThis.clearTimeout(timeout);
         if (timedOut) {
-          onLateSettled?.();
+          onLateSettled?.({ status: "rejected", reason: error });
           return;
         }
         reject(error);

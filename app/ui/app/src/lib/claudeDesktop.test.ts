@@ -81,6 +81,10 @@ describe("withClaudeConnectionTimeout", () => {
       await Promise.resolve();
 
       expect(onLateSettled).toHaveBeenCalledOnce();
+      expect(onLateSettled).toHaveBeenCalledWith({
+        status: "fulfilled",
+        value: "late connection",
+      });
       await expect(result).rejects.toBeInstanceOf(ClaudeConnectionTimeoutError);
     } finally {
       vi.useRealTimers();
