@@ -19,6 +19,7 @@ func TestNumThreadsForQuota(t *testing.T) {
 		{"quota above available keeps available", 4, 8, 4},
 		{"quota equal to available", 4, 4, 4},
 		{"never returns less than one", 1, 0, 1},
+		{"zero available still returns one", 0, 0, 1},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -36,6 +37,28 @@ func TestAppendThreadArgsExplicit(t *testing.T) {
 	want := []string{"-t", "6"}
 	if !slices.Equal(got, want) {
 		t.Errorf("appendThreadArgs with explicit NumThread = %v, want %v", got, want)
+	}
+}
+
+func TestAppendThreadArgsPreservesExistingParams(t *testing.T) {
+	opts := api.DefaultOptions()
+	opts.NumThread = 6
+	got := appendThreadArgs([]string{"--flash-attn", "on"}, opts)
+	want := []string{"--flash-attn", "on", "-t", "6"}
+	if !slices.Equal(got, want) {
+		t.Errorf("appendThreadArgs = %v, want %v", got, want)
+	}
+}
+
+func TestAppendThreadArgsNegativeTreatedAsDefault(t *testing.T) {
+	// NumThread < 0 has never been a valid explicit value (the old code's
+	// "> 0" guard already routed it to auto-detect); it now takes the same
+	// derived-default path as 0.
+	opts := api.DefaultOptions()
+	opts.NumThread = -1
+	got := appendThreadArgs(nil, opts)
+	if len(got) != 2 || got[0] != "-t" {
+		t.Fatalf("appendThreadArgs with NumThread == -1 = %v, want [-t <n>]", got)
 	}
 }
 
