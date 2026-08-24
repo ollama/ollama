@@ -115,7 +115,7 @@ describe("Onboarding", () => {
     expect(authenticationTimeoutAction(true, true)).toBe("ignore");
   });
 
-  it("finishes Claude connection states from the native status hook", () => {
+  it("detects when the menu bar already reached the requested Claude state", () => {
     const status = {
       supported: true,
       installed: true,
@@ -366,6 +366,7 @@ describe("Onboarding", () => {
           running: false,
           startFailed: false,
           portConflict: false,
+          routedRequests: 12,
         }}
         initialIntegrations={[
           {
@@ -394,6 +395,7 @@ describe("Onboarding", () => {
     expect(html).not.toContain("Inactive");
     expect(html).toContain('aria-checked="true"');
     expect(html).toContain('aria-label="Disconnect Claude"');
+    expect(html).toContain("Connected to Ollama · 12 requests this session");
   });
 
   it("shows initial Claude recovery guidance without error styling", () => {

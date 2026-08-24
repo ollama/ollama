@@ -401,7 +401,10 @@ func refreshClaudeDesktopCatalog(ctx context.Context, current []proxy.ClaudeDesk
 	defer claudeCatalogMu.Unlock()
 	claudeProxyMu.Lock()
 	previous := append([]proxy.ClaudeDesktopModel(nil), claudeAvailableModels...)
-	fresh := len(claudeAvailableModels) > 0 && claudeCatalogNow().Before(claudeCatalogUpdated.Add(claudeCatalogRefreshInterval))
+	// A local-only startup deliberately skips catalog discovery. Do not treat
+	// that selected-model snapshot as a complete catalog when Settings asks for
+	// all available choices.
+	fresh := hasCloudClaudeDesktopModel(claudeAvailableModels) && claudeCatalogNow().Before(claudeCatalogUpdated.Add(claudeCatalogRefreshInterval))
 	if !force && fresh {
 		available = append([]proxy.ClaudeDesktopModel(nil), claudeAvailableModels...)
 		source = claudeModelSource
@@ -818,27 +821,66 @@ func claudeGatewayPortConflict() bool {
 	return claudeProxyFail == claudeProxyFailurePortConflict
 }
 
-func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
-	used := hasUsedClaudeDesktopIntegration()
+func getClaudeDesktopConnectionSummary() claudeDesktopStatus {
+	return claudeDesktopConnectionSummary(hasUsedClaudeDesktopIntegration())
+}
+
+func claudeDesktopRequestCount() uint64 {
+	claudeProxyMu.Lock()
+	gateway := claudeAppProxy
+	claudeProxyMu.Unlock()
+	if gateway == nil {
+		return 0
+	}
+	return gateway.Counts().Routed
+}
+
+func claudeDesktopConnectionSummary(used bool) claudeDesktopStatus {
 	claudeProxyMu.Lock()
 	proxyErr := claudeProxyErr
 	proxyFailure := claudeProxyFail
-	gateway := claudeAppProxy
 	claudeProxyMu.Unlock()
+	port := 0
+	if portText, err := claudeGatewayPort(); err == nil {
+		port, _ = strconv.Atoi(portText)
+	}
+	installed := claudeDesktopInstalled()
+	configured := installed && claudeDesktop.UsesOllamaGateway()
+	status := claudeDesktopStatus{
+		Supported:      true,
+		Used:           used,
+		Installed:      installed,
+		Configured:     configured,
+		Connected:      configured && proxyErr == nil,
+		Running:        launch.ClaudeDesktopRunning(),
+		StartFailed:    proxyErr != nil,
+		PortConflict:   proxyFailure == claudeProxyFailurePortConflict,
+		GatewayPort:    port,
+		RoutedRequests: claudeDesktopRequestCount(),
+	}
+	if proxyErr != nil {
+		status.Error = proxyErr.Error()
+	}
+	return status
+}
+
+func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
+	used := hasUsedClaudeDesktopIntegration()
 	var availableModels, selectedModels []proxy.ClaudeDesktopModel
 	var modelSource string
 	if used {
+		claudeProxyMu.Lock()
+		gateway := claudeAppProxy
+		claudeProxyMu.Unlock()
 		var current []proxy.ClaudeDesktopModel
 		if gateway != nil {
 			current = gateway.Models()
 		}
-		if len(current) > 0 && !hasCloudClaudeDesktopModel(current) {
-			availableModels = current
-			selectedModels = current
-			modelSource = "user"
-		} else {
-			availableModels, selectedModels, modelSource = refreshClaudeDesktopCatalog(context.Background(), current, false)
-		}
+		// Settings needs the complete catalog even when Claude is currently
+		// configured with only local models. The startup path can skip cloud
+		// discovery, but reusing that local-only list here would make every cloud
+		// choice disappear from the model picker.
+		availableModels, selectedModels, modelSource = refreshClaudeDesktopCatalog(context.Background(), current, false)
 	}
 	selected := make(map[string]struct{})
 	for _, model := range selectedModels {
@@ -888,36 +930,17 @@ func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
 		})
 	}
 
-	port := 0
-	if portText, err := claudeGatewayPort(); err == nil {
-		port, _ = strconv.Atoi(portText)
-	}
-	installed := claudeDesktopInstalled()
-	configured := installed && claudeDesktop.UsesOllamaGateway()
-	status := claudeDesktopStatus{
-		Supported:    true,
-		Used:         used,
-		Installed:    installed,
-		Configured:   configured,
-		Connected:    configured && proxyErr == nil,
-		Running:      launch.ClaudeDesktopRunning(),
-		StartFailed:  proxyErr != nil,
-		PortConflict: proxyFailure == claudeProxyFailurePortConflict,
-		GatewayPort:  port,
-		ModelSource:  modelSource,
-		Models:       modelStatuses,
-	}
-	if proxyErr != nil {
-		status.Error = proxyErr.Error()
-	}
+	status := claudeDesktopConnectionSummary(used)
+	status.ModelSource = modelSource
+	status.Models = modelStatuses
 	return status
 }
 
-func setClaudeDesktopConnection(enabled bool) error {
+func setClaudeDesktopConnection(enabled, restartConfirmed bool) error {
 	if !claudeDesktopInstalled() {
 		return errors.New("Claude Desktop is not installed")
 	}
-	return setClaudeGatewayInstalled(enabled, launch.ClaudeDesktopRunning())
+	return setClaudeGatewayInstalled(enabled, restartConfirmed)
 }
 
 func prepareClaudeDesktopConnection() error {

@@ -149,7 +149,7 @@ func TestGetIntegrationStatuses(t *testing.T) {
 	if got[0].ID != "claude-desktop" || got[0].Action != "connect" || got[0].Command != "" {
 		t.Fatalf("first integration = %+v, want command-free Claude Desktop connect", got[0])
 	}
-	wantPrefix := []string{"claude-desktop", "claude", "codex", "openclaw", "opencode", "droid", "pi", "cline"}
+	wantPrefix := []string{"claude-desktop", "claude", "codex", "openclaw", "opencode", "hermes", "hermes-desktop", "droid", "pi", "cline"}
 	for i, want := range wantPrefix {
 		if got[i].ID != want {
 			t.Fatalf("integration %d = %q, want launcher menu order entry %q", i, got[i].ID, want)

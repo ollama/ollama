@@ -13,18 +13,19 @@ const (
 )
 
 type claudeDesktopStatus struct {
-	Supported    bool                       `json:"supported"`
-	Used         bool                       `json:"used"`
-	Installed    bool                       `json:"installed"`
-	Configured   bool                       `json:"configured"`
-	Connected    bool                       `json:"connected"`
-	Running      bool                       `json:"running"`
-	StartFailed  bool                       `json:"startFailed"`
-	PortConflict bool                       `json:"portConflict"`
-	GatewayPort  int                        `json:"gatewayPort,omitempty"`
-	Error        string                     `json:"error,omitempty"`
-	ModelSource  string                     `json:"modelSource,omitempty"`
-	Models       []claudeDesktopModelStatus `json:"models,omitempty"`
+	Supported      bool                       `json:"supported"`
+	Used           bool                       `json:"used"`
+	Installed      bool                       `json:"installed"`
+	Configured     bool                       `json:"configured"`
+	Connected      bool                       `json:"connected"`
+	Running        bool                       `json:"running"`
+	StartFailed    bool                       `json:"startFailed"`
+	PortConflict   bool                       `json:"portConflict"`
+	GatewayPort    int                        `json:"gatewayPort,omitempty"`
+	RoutedRequests uint64                     `json:"routedRequests"`
+	Error          string                     `json:"error,omitempty"`
+	ModelSource    string                     `json:"modelSource,omitempty"`
+	Models         []claudeDesktopModelStatus `json:"models,omitempty"`
 }
 
 type claudeDesktopModelStatus struct {

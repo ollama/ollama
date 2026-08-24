@@ -8,10 +8,14 @@ import {
 } from "@/api";
 import { INTEGRATION_ICONS } from "@/lib/launchCommands";
 import {
+  ClaudeConnectionTimeoutError,
   claudeDesktopRecoveryMessage,
+  claudeDesktopRequestCountLabel,
   isClaudeConfigured,
   isClaudeConnectionComplete,
+  optimisticClaudeConnectionState,
   scheduleClaudeInstallTimeout,
+  withClaudeConnectionTimeout,
 } from "@/lib/claudeDesktop";
 import { isWindowsPlatform } from "@/lib/platform";
 import type { ClaudeDesktopStatus } from "@/types/webview";
@@ -46,8 +50,6 @@ type ClaudeConnectPhase =
   | "launching"
   | "disconnecting";
 
-const CLAUDE_CONNECTION_POLL_INTERVAL_MS = 500;
-const CLAUDE_CONNECTION_TIMEOUT_MS = 45_000;
 const MINIMUM_APP_WINDOW_HEIGHT = 660;
 const TERMINAL_ROW_HEIGHT_WITH_GAP = 80;
 const TERMINAL_LIST_RESERVED_HEIGHT = 296;
@@ -56,14 +58,24 @@ export function shouldShowClaudeConnectedIntro(status: ClaudeDesktopStatus) {
   return status.connected && !status.startFailed && !status.used;
 }
 
-function setClaudeConnection(enabled: boolean, deferLaunch = false) {
+function setClaudeConnection(
+  enabled: boolean,
+  deferLaunch = false,
+  restartConfirmed = false,
+) {
   if (enabled && deferLaunch && window.prepareClaudeDesktopConnection) {
     return window.prepareClaudeDesktopConnection();
   }
   if (!window.setClaudeDesktopConnected) {
     throw new Error("Claude Desktop connection is unavailable");
   }
-  return window.setClaudeDesktopConnected(enabled);
+  return window.setClaudeDesktopConnected(enabled, restartConfirmed);
+}
+
+function getClaudeConnectionSummary() {
+  const getStatus =
+    window.getClaudeDesktopConnectionSummary ?? window.getClaudeDesktopStatus;
+  return getStatus?.() ?? Promise.resolve(null);
 }
 
 export function terminalRowsForWindowHeight(height: number): number {
@@ -435,6 +447,8 @@ export function ConnectAppsScreen({
   const [showClaudeConnectedIntro, setShowClaudeConnectedIntro] =
     useState(false);
   const claudeConnectedIntroPending = useRef(false);
+  const claudeRestartConfirmed = useRef(false);
+  const screenMounted = useRef(true);
   const [integrationStatuses, setIntegrationStatuses] =
     useState<IntegrationStatuses | null>(initialIntegrations ?? null);
   const [showAllIntegrations, setShowAllIntegrations] = useState(false);
@@ -447,6 +461,13 @@ export function ConnectAppsScreen({
       ),
   );
   const [statusError, setStatusError] = useState(false);
+
+  useEffect(() => {
+    screenMounted.current = true;
+    return () => {
+      screenMounted.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     const updateCollapsedIntegrationCount = () => {
@@ -473,9 +494,15 @@ export function ConnectAppsScreen({
 
   const refreshClaudeStatus = useCallback(async () => {
     if (isWindows) return null;
-    if (!window.getClaudeDesktopStatus) return null;
+    if (
+      !window.getClaudeDesktopConnectionSummary &&
+      !window.getClaudeDesktopStatus
+    ) {
+      return null;
+    }
     try {
-      const status = await window.getClaudeDesktopStatus();
+      const status = await getClaudeConnectionSummary();
+      if (!status) return null;
       setClaudeStatus(status);
       setClaudeError(null);
       return status;
@@ -492,9 +519,7 @@ export function ConnectAppsScreen({
       : getIntegrationStatuses();
     const claude = initialClaudeStatus
       ? Promise.resolve(initialClaudeStatus)
-      : window.getClaudeDesktopStatus
-        ? window.getClaudeDesktopStatus()
-        : Promise.resolve(null);
+      : getClaudeConnectionSummary();
 
     void Promise.allSettled([integrations, claude]).then(
       ([integrationResult, claudeResult]) => {
@@ -547,16 +572,42 @@ export function ConnectAppsScreen({
   );
 
   const dismissClaudeConnectedIntro = async () => {
-    claudeConnectedIntroPending.current = false;
-    setShowClaudeConnectedIntro(false);
     if (!window.setClaudeDesktopConnected) return;
     setClaudePhase("launching");
     try {
-      const result = await window.setClaudeDesktopConnected(true);
+      const liveStatus = await withClaudeConnectionTimeout(
+        getClaudeConnectionSummary(),
+      );
+      if (!liveStatus) {
+        throw new Error("Claude Desktop connection status is unavailable");
+      }
+      setClaudeStatus(liveStatus);
+
+      let restartConfirmed = claudeRestartConfirmed.current;
+      if (liveStatus.running && !restartConfirmed) {
+        restartConfirmed = window.confirm(
+          "Restart Claude Desktop to use Ollama? Any running task will stop.",
+        );
+        if (!restartConfirmed) {
+          setClaudePhase("idle");
+          return;
+        }
+      }
+
+      claudeConnectedIntroPending.current = false;
+      claudeRestartConfirmed.current = false;
+      setShowClaudeConnectedIntro(false);
+      const result = await withClaudeConnectionTimeout(
+        window.setClaudeDesktopConnected(true, restartConfirmed),
+      );
       setClaudeStatus(result.status);
       setClaudeError(result.error || null);
-    } catch {
-      setClaudeError("Ollama connected Claude, but could not open the app.");
+    } catch (error) {
+      setClaudeError(
+        error instanceof ClaudeConnectionTimeoutError
+          ? "Claude is taking too long to launch. Check Claude and try again."
+          : "Ollama connected Claude, but could not open the app.",
+      );
     } finally {
       setClaudePhase("idle");
     }
@@ -569,70 +620,60 @@ export function ConnectAppsScreen({
   }, [refreshClaudeStatus]);
 
   useEffect(() => {
-    if (claudePhase !== "connecting" && claudePhase !== "disconnecting") {
+    if (!claudeStatus?.connected || !window.getClaudeDesktopRequestCount) {
       return;
     }
-    if (!window.getClaudeDesktopStatus) return;
 
-    const enabling = claudePhase === "connecting";
     let active = true;
     let checking = false;
-
-    const checkConnection = async () => {
-      if (!active || checking || !window.getClaudeDesktopStatus) return;
+    const refreshRequestCount = async () => {
+      if (!active || checking || document.visibilityState === "hidden") return;
       checking = true;
       try {
-        const status = await window.getClaudeDesktopStatus();
-        if (!active) return;
-        setClaudeStatus(status);
-        if (!isClaudeConnectionComplete(enabling, status)) return;
-
-        const openError = enabling
-          ? await finishClaudeConnection(status)
-          : null;
-        if (!active) return;
-        setClaudeError(openError);
-        setClaudePhase("idle");
+        const routedRequests = await window.getClaudeDesktopRequestCount?.();
+        if (!active || routedRequests === undefined) return;
+        setClaudeStatus((current) => {
+          if (!current || current.routedRequests === routedRequests) {
+            return current;
+          }
+          return { ...current, routedRequests };
+        });
       } catch {
-        // Keep polling until the native action completes or the timeout fires.
+        // The next interval or window-focus refresh can recover the count.
       } finally {
         checking = false;
       }
     };
 
-    void checkConnection();
-    const interval = window.setInterval(
-      checkConnection,
-      CLAUDE_CONNECTION_POLL_INTERVAL_MS,
-    );
-    const timeout = window.setTimeout(() => {
-      if (!active) return;
-      setClaudeError(
-        enabling
-          ? "Claude is taking too long to connect. Check Claude and try again."
-          : "Claude is taking too long to disconnect. Try again.",
-      );
-      setClaudePhase("idle");
-    }, CLAUDE_CONNECTION_TIMEOUT_MS);
-
+    void refreshRequestCount();
+    const interval = window.setInterval(refreshRequestCount, 1000);
     return () => {
       active = false;
       window.clearInterval(interval);
-      window.clearTimeout(timeout);
     };
-  }, [claudePhase, finishClaudeConnection]);
+  }, [claudeStatus?.connected]);
 
   useEffect(() => {
     if (claudePhase !== "waiting-for-install") return;
 
     let active = true;
     let completing = false;
+    let checking = false;
     const checkForInstall = async () => {
-      if (!window.getClaudeDesktopStatus || !window.setClaudeDesktopConnected) {
+      if (checking) return;
+      if (
+        (!window.getClaudeDesktopConnectionSummary &&
+          !window.getClaudeDesktopStatus) ||
+        !window.setClaudeDesktopConnected
+      ) {
         return;
       }
+      checking = true;
       try {
-        const status = await window.getClaudeDesktopStatus();
+        const status = await withClaudeConnectionTimeout(
+          getClaudeConnectionSummary(),
+        );
+        if (!status) return;
         if (!active) return;
         setClaudeStatus(status);
         if (!status.installed || completing) return;
@@ -647,8 +688,11 @@ export function ConnectAppsScreen({
         }
 
         setClaudePhase("connecting");
-        const result = await setClaudeConnection(true, !status.used);
-        if (!active) return;
+        claudeRestartConfirmed.current = false;
+        const result = await withClaudeConnectionTimeout(
+          setClaudeConnection(true, !status.used, false),
+        );
+        if (!screenMounted.current) return;
         setClaudeStatus(result.status);
         let actionError = result.error || null;
         if (!actionError && result.status.connected) {
@@ -658,10 +702,16 @@ export function ConnectAppsScreen({
         }
         setClaudeError(actionError);
         setClaudePhase("idle");
-      } catch {
-        if (!active) return;
+      } catch (error) {
+        if (!screenMounted.current) return;
         setClaudePhase("idle");
-        setClaudeError("Ollama could not finish connecting Claude.");
+        setClaudeError(
+          error instanceof ClaudeConnectionTimeoutError
+            ? "Claude is taking too long to connect. Check Claude and try again."
+            : "Ollama could not finish connecting Claude.",
+        );
+      } finally {
+        checking = false;
       }
     };
 
@@ -688,18 +738,55 @@ export function ConnectAppsScreen({
 
   const connectClaude = async () => {
     if (claudePhase !== "idle") return;
-    if (!window.getClaudeDesktopStatus || !window.setClaudeDesktopConnected) {
+    if (
+      (!window.getClaudeDesktopConnectionSummary &&
+        !window.getClaudeDesktopStatus) ||
+      !window.setClaudeDesktopConnected
+    ) {
       setClaudeError("Claude connection is available in the Ollama macOS app.");
       return;
     }
 
     setCopiedCommand(null);
     setClaudeError(null);
-    const status = await refreshClaudeStatus();
-    if (!status) return;
-    const enabling = !isClaudeConfigured(status);
+    const enabling = claudeStatus ? !isClaudeConfigured(claudeStatus) : true;
+    setClaudePhase(enabling ? "connecting" : "disconnecting");
+
+    let status: ClaudeDesktopStatus | null;
+    try {
+      status = await withClaudeConnectionTimeout(getClaudeConnectionSummary());
+    } catch (error) {
+      setClaudePhase("idle");
+      setClaudeError(
+        error instanceof ClaudeConnectionTimeoutError
+          ? `Claude is taking too long to ${enabling ? "connect" : "disconnect"}. Try again.`
+          : "Ollama could not read the Claude connection status.",
+      );
+      return;
+    }
+    if (!status) {
+      setClaudePhase("idle");
+      setClaudeError("Ollama could not read the Claude connection status.");
+      return;
+    }
+    setClaudeStatus(status);
+
+    // The menu-bar control may have reached this target since the app last
+    // refreshed. Sync the row without repeating the profile change or
+    // restarting Claude, while preserving first-use completion behavior.
+    if (isClaudeConnectionComplete(enabling, status)) {
+      claudeRestartConfirmed.current = false;
+      const completionError = enabling
+        ? await finishClaudeConnection(status)
+        : null;
+      setClaudeError(completionError);
+      setClaudePhase("idle");
+      return;
+    }
+
     if (enabling && !status.installed) {
       if (!window.installClaudeDesktop) {
+        setClaudePhase("idle");
         setClaudeError("Ollama could not open the Claude installer.");
         return;
       }
@@ -723,20 +810,27 @@ export function ConnectAppsScreen({
       return;
     }
 
+    let restartConfirmed = false;
     if (status.running) {
-      const confirmed = window.confirm(
+      restartConfirmed = window.confirm(
         enabling
           ? "Restart Claude Desktop to use Ollama? Any running task will stop."
           : "Restart Claude Desktop to remove Ollama? Any running task will stop.",
       );
-      if (!confirmed) return;
+      if (!restartConfirmed) {
+        setClaudePhase("idle");
+        return;
+      }
     }
 
-    setClaudePhase(enabling ? "connecting" : "disconnecting");
+    claudeRestartConfirmed.current = restartConfirmed;
     try {
-      const result = await setClaudeConnection(
-        enabling,
-        enabling && !status.used,
+      const result = await withClaudeConnectionTimeout(
+        setClaudeConnection(
+          enabling,
+          enabling && !status.used,
+          restartConfirmed,
+        ),
       );
       setClaudeStatus(result.status);
       let actionError = result.error || null;
@@ -752,13 +846,18 @@ export function ConnectAppsScreen({
           : "Ollama could not disconnect from Claude.";
       }
       setClaudeError(actionError);
-    } catch {
+    } catch (error) {
       setClaudeError(
-        enabling
-          ? "Ollama could not connect to Claude."
-          : "Ollama could not disconnect from Claude.",
+        error instanceof ClaudeConnectionTimeoutError
+          ? `Claude is taking too long to ${enabling ? "connect" : "disconnect"}. Try again.`
+          : enabling
+            ? "Ollama could not connect to Claude."
+            : "Ollama could not disconnect from Claude.",
       );
     } finally {
+      if (!claudeConnectedIntroPending.current) {
+        claudeRestartConfirmed.current = false;
+      }
       setClaudePhase("idle");
     }
   };
@@ -774,6 +873,16 @@ export function ConnectAppsScreen({
   const claudeConfigured = claudeStatus
     ? isClaudeConfigured(claudeStatus)
     : false;
+  const pendingClaudeConnection =
+    claudePhase === "connecting" || claudePhase === "launching"
+      ? true
+      : claudePhase === "disconnecting"
+        ? false
+        : null;
+  const claudeToggleConfigured = optimisticClaudeConnectionState(
+    claudeConfigured,
+    pendingClaudeConnection,
+  );
   const claudeInstalled =
     claudeStatus?.installed ?? claudeIntegration?.installed ?? false;
   const isConnectingClaude = claudePhase !== "idle";
@@ -859,7 +968,7 @@ export function ConnectAppsScreen({
           >
             {claudeGuidance ??
               (claudeConnected
-                ? "Connected to Ollama"
+                ? `Connected to Ollama · ${claudeDesktopRequestCountLabel(claudeStatus?.routedRequests ?? 0)}`
                 : claudePhase === "installing"
                   ? "Ollama is downloading the Claude installer…"
                   : claudePhase === "waiting-for-install"
@@ -890,7 +999,7 @@ export function ConnectAppsScreen({
         <button
           type="button"
           role="switch"
-          aria-checked={claudeConfigured}
+          aria-checked={claudeToggleConfigured}
           aria-busy={isConnectingClaude || undefined}
           aria-label={
             claudeConfigured
@@ -902,11 +1011,11 @@ export function ConnectAppsScreen({
           title={claudeConfigured ? "Disconnect" : "Connect"}
           disabled={isConnectingClaude}
           onClick={connectClaude}
-          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait ${claudeConfigured ? "bg-neutral-950" : "bg-neutral-300"}`}
+          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait ${claudeToggleConfigured ? "bg-neutral-950" : "bg-neutral-300"}`}
         >
           <span
             aria-hidden="true"
-            className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${isConnectingClaude ? "animate-pulse" : ""} ${claudeConfigured ? "translate-x-4.5" : "translate-x-0.5"}`}
+            className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${isConnectingClaude ? "animate-pulse" : ""} ${claudeToggleConfigured ? "translate-x-4.5" : "translate-x-0.5"}`}
           />
         </button>
       </div>

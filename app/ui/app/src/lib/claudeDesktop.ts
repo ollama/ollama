@@ -4,6 +4,36 @@ import type {
 } from "@/types/webview";
 
 export const CLAUDE_INSTALL_TIMEOUT_MS = 120_000;
+export const CLAUDE_CONNECTION_TIMEOUT_MS = 45_000;
+
+export class ClaudeConnectionTimeoutError extends Error {
+  constructor() {
+    super("Claude connection timed out");
+    this.name = "ClaudeConnectionTimeoutError";
+  }
+}
+
+export function withClaudeConnectionTimeout<T>(
+  action: Promise<T>,
+  timeoutMs = CLAUDE_CONNECTION_TIMEOUT_MS,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeout = globalThis.setTimeout(
+      () => reject(new ClaudeConnectionTimeoutError()),
+      timeoutMs,
+    );
+    action.then(
+      (value) => {
+        globalThis.clearTimeout(timeout);
+        resolve(value);
+      },
+      (error: unknown) => {
+        globalThis.clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
+}
 
 export function isClaudeConnectionComplete(
   enabled: boolean,
@@ -17,6 +47,17 @@ export function isClaudeConnectionComplete(
 
 export function isClaudeConfigured(status: ClaudeDesktopStatus): boolean {
   return status.configured ?? status.connected;
+}
+
+export function optimisticClaudeConnectionState(
+  configured: boolean,
+  pending: boolean | null,
+): boolean {
+  return pending ?? configured;
+}
+
+export function claudeDesktopRequestCountLabel(count: number): string {
+  return `${count} ${count === 1 ? "request" : "requests"} this session`;
 }
 
 export function claudeDesktopRecoveryMessage(
