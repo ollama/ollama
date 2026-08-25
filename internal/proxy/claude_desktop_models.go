@@ -61,7 +61,7 @@ func DefaultClaudeDesktopMappings(fullAccess bool) map[string]string {
 	return map[string]string{
 		"claude-fable-5":            "kimi-k3:cloud",
 		"claude-opus-5":             "glm-5.2:cloud",
-		"claude-sonnet-5":           "glm-5.3-flash:cloud",
+		"claude-sonnet-5":           "deepseek-v4-flash:0731:cloud",
 		"claude-haiku-4-5-20251001": "gemma4:31b-cloud",
 		"claude-sonnet-4-6":         "deepseek-v4-pro:cloud",
 	}
@@ -79,7 +79,7 @@ func DefaultClaudeDesktopMappingsForModels(available []ClaudeDesktopModel, fullA
 		wanted = map[string]string{
 			"claude-fable-5":            "kimi-k3:cloud",
 			"claude-opus-5":             "glm-5.2:cloud",
-			"claude-sonnet-5":           "glm-5.3-flash:cloud",
+			"claude-sonnet-5":           "deepseek-v4-flash",
 			"claude-haiku-4-5-20251001": "gemma4:31b-cloud",
 			"claude-sonnet-4-6":         "deepseek-v4-pro",
 		}
@@ -88,6 +88,17 @@ func DefaultClaudeDesktopMappingsForModels(available []ClaudeDesktopModel, fullA
 		for route, name := range wanted {
 			if model.Name == name {
 				mappings[route] = model.OllamaModel
+			}
+		}
+	}
+	// Prefer the Ollama.com recommendation when it is present. The built-in
+	// DeepSeek mapping remains the offline fallback until the endpoint rolls
+	// GLM 5.3 Flash out to this app.
+	if fullAccess {
+		for _, model := range available {
+			if model.Name == "glm-5.3-flash:cloud" {
+				mappings["claude-sonnet-5"] = model.OllamaModel
+				break
 			}
 		}
 	}
@@ -188,9 +199,15 @@ func DefaultClaudeDesktopModels() []ClaudeDesktopModel {
 		{Model: "glm-5.2:cloud", Description: "Long-horizon coding and agentic engineering", MaxOutputTokens: 128_000, RequiredPlan: "pro"},
 		{Model: "kimi-k3:cloud", Description: "Long-horizon agentic reasoning with multimodal tool use", MaxOutputTokens: 262_144, RequiredPlan: "pro"},
 		{Model: "deepseek-v4-pro", Description: "High-performance coding and tool use", MaxOutputTokens: 128_000, RequiredPlan: "pro"},
-		{Model: "glm-5.3-flash:cloud", Description: "Fast reasoning for coding and long-horizon agentic work", MaxOutputTokens: 1_000_000, RequiredPlan: "pro"},
+		{Model: "deepseek-v4-flash", Description: "Fast coding and agentic tool use", MaxOutputTokens: 64_000, RequiredPlan: "pro"},
 		{Model: "gemma4:31b-cloud", Description: "Agentic workflows and multimodal reasoning", MaxOutputTokens: 262_144, RequiredPlan: "free"},
 	})
+	// Preserve the proven fallback route while the endpoint remains free to
+	// move the canonical DeepSeek alias independently.
+	models[3].OllamaModel = "deepseek-v4-flash:0731:cloud"
+	models[3].DisplayName = models[3].OllamaModel
+	models[3].gateway.DisplayName = models[3].OllamaModel
+	models[3].gateway.OllamaModel = models[3].OllamaModel
 	return models
 }
 

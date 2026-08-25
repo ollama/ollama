@@ -629,11 +629,11 @@ func TestSelectKnownClaudeDesktopModelsAllowsInstalledModelsOnly(t *testing.T) {
 		t.Fatalf("selected models = %+v, want installed qwen3:8b", selected)
 	}
 
-	selected, err = selectKnownClaudeDesktopModels(available, nil, nil, []string{"glm-5.3-flash:cloud"})
+	selected, err = selectKnownClaudeDesktopModels(available, nil, nil, []string{"deepseek-v4-flash:0731:cloud"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(selected) != 1 || selected[0].Name != "glm-5.3-flash:cloud" || selected[0].OllamaModel != "glm-5.3-flash:cloud" {
+	if len(selected) != 1 || selected[0].Name != "deepseek-v4-flash" || selected[0].OllamaModel != "deepseek-v4-flash:0731:cloud" {
 		t.Fatalf("selected cloud model = %+v", selected)
 	}
 

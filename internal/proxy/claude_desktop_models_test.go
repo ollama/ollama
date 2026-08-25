@@ -82,7 +82,7 @@ func TestFetchClaudeDesktopModelsRejectsInvalidResponses(t *testing.T) {
 
 func TestDefaultClaudeDesktopModelsExcludeMLX(t *testing.T) {
 	models := DefaultClaudeDesktopModels()
-	if got, want := claudeDesktopModelNames(models), []string{"glm-5.2:cloud", "kimi-k3:cloud", "deepseek-v4-pro", "glm-5.3-flash:cloud", "gemma4:31b-cloud"}; !slices.Equal(got, want) {
+	if got, want := claudeDesktopModelNames(models), []string{"glm-5.2:cloud", "kimi-k3:cloud", "deepseek-v4-pro", "deepseek-v4-flash", "gemma4:31b-cloud"}; !slices.Equal(got, want) {
 		t.Fatalf("fallback models = %v, want %v", got, want)
 	}
 	for _, model := range models {
@@ -90,17 +90,20 @@ func TestDefaultClaudeDesktopModelsExcludeMLX(t *testing.T) {
 			t.Fatalf("fallback contains MLX model %q", model.Name)
 		}
 	}
+	if models[3].OllamaModel != "deepseek-v4-flash:0731:cloud" {
+		t.Fatalf("fallback Flash route = %q", models[3].OllamaModel)
+	}
 }
 
 func TestSelectClaudeDesktopModelsPrioritizesExplicitSelection(t *testing.T) {
 	available := DefaultClaudeDesktopModels()
-	selected := SelectClaudeDesktopModels(available, []string{"glm-5.3-flash:cloud", "glm-5.2:cloud"})
-	if got, want := claudeDesktopModelNames(selected), []string{"glm-5.3-flash:cloud", "glm-5.2:cloud"}; !slices.Equal(got, want) {
+	selected := SelectClaudeDesktopModels(available, []string{"deepseek-v4-flash", "glm-5.2:cloud"})
+	if got, want := claudeDesktopModelNames(selected), []string{"deepseek-v4-flash", "glm-5.2:cloud"}; !slices.Equal(got, want) {
 		t.Fatalf("selected models = %v, want %v", got, want)
 	}
 
-	cloudRoute := SelectClaudeDesktopModels(available, []string{"glm-5.3-flash:cloud"})
-	if len(cloudRoute) != 1 || cloudRoute[0].Name != "glm-5.3-flash:cloud" || cloudRoute[0].OllamaModel != "glm-5.3-flash:cloud" || !cloudRoute[0].Cloud {
+	cloudRoute := SelectClaudeDesktopModels(available, []string{"deepseek-v4-flash:0731:cloud"})
+	if len(cloudRoute) != 1 || cloudRoute[0].Name != "deepseek-v4-flash" || cloudRoute[0].OllamaModel != "deepseek-v4-flash:0731:cloud" || !cloudRoute[0].Cloud {
 		t.Fatalf("cloud route selection = %+v", cloudRoute)
 	}
 
@@ -376,7 +379,7 @@ func TestDefaultClaudeDesktopMappingsFollowAccountTier(t *testing.T) {
 	wantPro := map[string]string{
 		"claude-fable-5":            "kimi-k3:cloud",
 		"claude-opus-5":             "glm-5.2:cloud",
-		"claude-sonnet-5":           "glm-5.3-flash:cloud",
+		"claude-sonnet-5":           "deepseek-v4-flash:0731:cloud",
 		"claude-haiku-4-5-20251001": "gemma4:31b-cloud",
 		"claude-sonnet-4-6":         "deepseek-v4-pro:cloud",
 	}
@@ -397,6 +400,7 @@ func TestDefaultClaudeDesktopMappingsUseCurrentCatalogRoutes(t *testing.T) {
 		{Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"},
 		{Model: "kimi-k3:cloud", RequiredPlan: "pro"},
 		{Model: "deepseek-v4-pro", RequiredPlan: "pro"},
+		{Model: "deepseek-v4-flash", RequiredPlan: "pro"},
 		{Model: "gemma4:31b-cloud", RequiredPlan: "free"},
 	})
 	paid := DefaultClaudeDesktopMappingsForModels(models, true)
@@ -409,6 +413,10 @@ func TestDefaultClaudeDesktopMappingsUseCurrentCatalogRoutes(t *testing.T) {
 	}
 	if !maps.Equal(paid, wantPaid) {
 		t.Fatalf("paid catalog defaults = %v, want %v", paid, wantPaid)
+	}
+	fallbackPaid := DefaultClaudeDesktopMappingsForModels(DefaultClaudeDesktopModels(), true)
+	if got, want := fallbackPaid["claude-sonnet-5"], "deepseek-v4-flash:0731:cloud"; got != want {
+		t.Fatalf("fallback Sonnet default = %q, want %q", got, want)
 	}
 
 	restricted := DefaultClaudeDesktopMappingsForModels(models, false)
