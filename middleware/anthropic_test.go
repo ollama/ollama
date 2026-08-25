@@ -2117,7 +2117,7 @@ func TestWebSearchStreamingUsageUsesObservedChunkMetrics(t *testing.T) {
 			Message:    api.Message{Role: "assistant", Content: "After search."},
 			Done:       true,
 			DoneReason: "stop",
-			Metrics:    api.Metrics{PromptEvalCount: 20, PromptEvalCachedCount: 5, EvalCount: 7},
+			Metrics:    api.Metrics{PromptEvalCount: 20, PromptEvalCachedCount: testIntPtr(5), EvalCount: 7},
 		}
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
@@ -2145,7 +2145,7 @@ func TestWebSearchStreamingUsageUsesObservedChunkMetrics(t *testing.T) {
 				Model:   "test-model",
 				Message: api.Message{Role: "assistant", Content: "Preface "},
 				Done:    false,
-				Metrics: api.Metrics{PromptEvalCount: 12, PromptEvalCachedCount: 4, EvalCount: 4},
+				Metrics: api.Metrics{PromptEvalCount: 12, PromptEvalCachedCount: testIntPtr(4), EvalCount: 4},
 			},
 			{
 				Model: "test-model",
@@ -2169,7 +2169,7 @@ func TestWebSearchStreamingUsageUsesObservedChunkMetrics(t *testing.T) {
 				Message:    api.Message{Role: "assistant"},
 				Done:       true,
 				DoneReason: "stop",
-				Metrics:    api.Metrics{PromptEvalCount: 12, PromptEvalCachedCount: 4, EvalCount: 4},
+				Metrics:    api.Metrics{PromptEvalCount: 12, PromptEvalCachedCount: testIntPtr(4), EvalCount: 4},
 			},
 		}
 		c.Writer.WriteHeader(http.StatusOK)
@@ -2215,8 +2215,8 @@ func TestWebSearchStreamingUsageUsesObservedChunkMetrics(t *testing.T) {
 	if messageDelta.Usage.InputTokens != 23 {
 		t.Fatalf("expected 23 uncached input tokens, got %d", messageDelta.Usage.InputTokens)
 	}
-	if messageDelta.Usage.CacheReadInputTokens != 9 {
-		t.Fatalf("expected 9 cached input tokens, got %d", messageDelta.Usage.CacheReadInputTokens)
+	if got := messageDelta.Usage.CacheReadInputTokens; got == nil || *got != 9 {
+		t.Fatalf("expected 9 cached input tokens, got %v", got)
 	}
 	if messageDelta.Usage.OutputTokens != 11 {
 		t.Fatalf("expected aggregated output tokens 11 (4 passthrough + 7 followup), got %d", messageDelta.Usage.OutputTokens)

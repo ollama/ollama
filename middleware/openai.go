@@ -705,7 +705,7 @@ func (w *WebSearchResponsesWriter) finishStream() error {
 	var toolCalls []api.ToolCall
 	for _, response := range w.buffered {
 		observed.PromptEvalCount = max(observed.PromptEvalCount, response.Metrics.PromptEvalCount)
-		observed.PromptEvalCachedCount = max(observed.PromptEvalCachedCount, response.Metrics.PromptEvalCachedCount)
+		observed.PromptEvalCachedCount = maxOptionalInts(observed.PromptEvalCachedCount, response.Metrics.PromptEvalCachedCount)
 		observed.EvalCount = max(observed.EvalCount, response.Metrics.EvalCount)
 		if response.Message.Content != "" {
 			contentBuilder.WriteString(response.Message.Content)
@@ -878,7 +878,7 @@ func (w *WebSearchResponsesWriter) runLoop(ctx context.Context, initial api.Chat
 			return api.ChatResponse{}, calls, usage, err
 		}
 		usage.PromptEvalCount += followUp.Metrics.PromptEvalCount
-		usage.PromptEvalCachedCount += followUp.Metrics.PromptEvalCachedCount
+		usage.PromptEvalCachedCount = addOptionalInts(usage.PromptEvalCachedCount, followUp.Metrics.PromptEvalCachedCount)
 		usage.EvalCount += followUp.Metrics.EvalCount
 
 		next, hasWebSearch, mixed := findWebSearchToolCall(followUp.Message.ToolCalls)
@@ -1025,7 +1025,7 @@ func (w *WebSearchResponsesWriter) writeWebSearchResponse(final api.ChatResponse
 		response.Usage.InputTokens = usage.PromptEvalCount
 		response.Usage.OutputTokens = usage.EvalCount
 		response.Usage.TotalTokens = usage.PromptEvalCount + usage.EvalCount
-		response.Usage.InputTokensDetails.CachedTokens = usage.PromptEvalCachedCount
+		response.Usage.InputTokensDetails.CachedTokens = optionalIntValue(usage.PromptEvalCachedCount)
 	}
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
 	w.done = true
@@ -1128,7 +1128,7 @@ func (w *WebSearchResponsesWriter) writeWebSearchError(err error, usage api.Metr
 			"input_tokens":         usage.PromptEvalCount,
 			"output_tokens":        usage.EvalCount,
 			"total_tokens":         usage.PromptEvalCount + usage.EvalCount,
-			"input_tokens_details": map[string]any{"cached_tokens": usage.PromptEvalCachedCount},
+			"input_tokens_details": map[string]any{"cached_tokens": optionalIntValue(usage.PromptEvalCachedCount)},
 		},
 	}
 	initialEvents := w.inner.converter.Process(api.ChatResponse{})

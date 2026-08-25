@@ -248,8 +248,8 @@ func ToUsage(r api.ChatResponse) Usage {
 		CompletionTokens: r.Metrics.EvalCount,
 		TotalTokens:      r.Metrics.PromptEvalCount + r.Metrics.EvalCount,
 	}
-	if r.Metrics.PromptEvalCachedCount > 0 {
-		usage.PromptTokensDetails = &PromptTokensDetails{CachedTokens: r.Metrics.PromptEvalCachedCount}
+	if r.Metrics.PromptEvalCachedCount != nil {
+		usage.PromptTokensDetails = &PromptTokensDetails{CachedTokens: *r.Metrics.PromptEvalCachedCount}
 	}
 	return usage
 }
@@ -410,8 +410,8 @@ func ToUsageGenerate(r api.GenerateResponse) Usage {
 		CompletionTokens: r.Metrics.EvalCount,
 		TotalTokens:      r.Metrics.PromptEvalCount + r.Metrics.EvalCount,
 	}
-	if r.Metrics.PromptEvalCachedCount > 0 {
-		usage.PromptTokensDetails = &PromptTokensDetails{CachedTokens: r.Metrics.PromptEvalCachedCount}
+	if r.Metrics.PromptEvalCachedCount != nil {
+		usage.PromptTokensDetails = &PromptTokensDetails{CachedTokens: *r.Metrics.PromptEvalCachedCount}
 	}
 	return usage
 }

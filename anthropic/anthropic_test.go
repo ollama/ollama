@@ -16,6 +16,10 @@ const (
 	testImage = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=`
 )
 
+func testIntPtr(v int) *int {
+	return &v
+}
+
 // textContent is a convenience for constructing []ContentBlock with a single text block in tests.
 func textContent(s string) []ContentBlock {
 	return []ContentBlock{{Type: "text", Text: &s}}
@@ -38,13 +42,13 @@ func TestUsageFromMetricsBoundsCacheReads(t *testing.T) {
 	}{
 		{
 			name:    "negative counts",
-			metrics: api.Metrics{PromptEvalCount: -1, PromptEvalCachedCount: -2, EvalCount: 3},
-			want:    Usage{OutputTokens: 3},
+			metrics: api.Metrics{PromptEvalCount: -1, PromptEvalCachedCount: testIntPtr(-2), EvalCount: 3},
+			want:    Usage{CacheReadInputTokens: testIntPtr(0), OutputTokens: 3},
 		},
 		{
 			name:    "cache reads exceed prompt",
-			metrics: api.Metrics{PromptEvalCount: 3, PromptEvalCachedCount: 5, EvalCount: 2},
-			want:    Usage{CacheReadInputTokens: 3, OutputTokens: 2},
+			metrics: api.Metrics{PromptEvalCount: 3, PromptEvalCachedCount: testIntPtr(5), EvalCount: 2},
+			want:    Usage{CacheReadInputTokens: testIntPtr(3), OutputTokens: 2},
 		},
 	}
 
@@ -52,6 +56,34 @@ func TestUsageFromMetricsBoundsCacheReads(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if diff := cmp.Diff(tt.want, UsageFromMetrics(tt.metrics)); diff != "" {
 				t.Errorf("usage mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestUsageCacheReadJSON(t *testing.T) {
+	tests := []struct {
+		name  string
+		count *int
+		want  string
+	}{
+		{name: "unreported", want: `{"input_tokens":10,"output_tokens":2}`},
+		{name: "zero", count: testIntPtr(0), want: `{"input_tokens":10,"cache_read_input_tokens":0,"output_tokens":2}`},
+		{name: "positive", count: testIntPtr(4), want: `{"input_tokens":6,"cache_read_input_tokens":4,"output_tokens":2}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := json.Marshal(UsageFromMetrics(api.Metrics{
+				PromptEvalCount:       10,
+				PromptEvalCachedCount: tt.count,
+				EvalCount:             2,
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := string(data); got != tt.want {
+				t.Errorf("json = %s, want %s", got, tt.want)
 			}
 		})
 	}
@@ -889,7 +921,7 @@ func TestToMessagesResponse_Basic(t *testing.T) {
 		DoneReason: "stop",
 		Metrics: api.Metrics{
 			PromptEvalCount:       10,
-			PromptEvalCachedCount: 4,
+			PromptEvalCachedCount: testIntPtr(4),
 			EvalCount:             5,
 		},
 	}
@@ -914,7 +946,7 @@ func TestToMessagesResponse_Basic(t *testing.T) {
 	if result.StopReason != "end_turn" {
 		t.Errorf("expected stop_reason 'end_turn', got %q", result.StopReason)
 	}
-	if result.Usage.InputTokens != 6 || result.Usage.CacheReadInputTokens != 4 || result.Usage.OutputTokens != 5 {
+	if result.Usage.InputTokens != 6 || intValue(result.Usage.CacheReadInputTokens) != 4 || result.Usage.OutputTokens != 5 {
 		t.Errorf("unexpected usage: %+v", result.Usage)
 	}
 
@@ -1108,7 +1140,7 @@ func TestStreamConverter_Basic(t *testing.T) {
 			Role:    "assistant",
 			Content: "Hello",
 		},
-		Metrics: api.Metrics{PromptEvalCount: 10, PromptEvalCachedCount: 4},
+		Metrics: api.Metrics{PromptEvalCount: 10, PromptEvalCachedCount: testIntPtr(4)},
 	}
 
 	events1 := conv.Process(resp1)
@@ -1136,7 +1168,7 @@ func TestStreamConverter_Basic(t *testing.T) {
 		},
 		Done:       true,
 		DoneReason: "stop",
-		Metrics:    api.Metrics{PromptEvalCount: 10, PromptEvalCachedCount: 4, EvalCount: 5},
+		Metrics:    api.Metrics{PromptEvalCount: 10, PromptEvalCachedCount: testIntPtr(4), EvalCount: 5},
 	}
 
 	events2 := conv.Process(resp2)
@@ -1154,7 +1186,7 @@ func TestStreamConverter_Basic(t *testing.T) {
 					t.Errorf("unexpected stop reason: %+v", data.Delta.StopReason)
 				}
 
-				if data.Usage.InputTokens != 6 || data.Usage.CacheReadInputTokens != 4 || data.Usage.OutputTokens != 5 {
+				if data.Usage.InputTokens != 6 || intValue(data.Usage.CacheReadInputTokens) != 4 || data.Usage.OutputTokens != 5 {
 					t.Errorf("unexpected usage: %+v", data.Usage)
 				}
 			} else {

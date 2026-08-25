@@ -235,8 +235,8 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	if responses[0].PromptEvalCount != 5 || responses[0].EvalCount != 1 {
 		t.Errorf("response[0] counts = (%d, %d), want (5, 1)", responses[0].PromptEvalCount, responses[0].EvalCount)
 	}
-	if responses[0].PromptEvalCachedCount != 2 {
-		t.Errorf("response[0] cached prompt count = %d, want 2", responses[0].PromptEvalCachedCount)
+	if got := responses[0].PromptEvalCachedCount; got == nil || *got != 2 {
+		t.Errorf("response[0] cached prompt count = %v, want 2", got)
 	}
 	if responses[0].PromptEvalDuration != 10500*time.Microsecond || responses[0].EvalDuration != 9100*time.Microsecond {
 		t.Errorf("response[0] durations = (%s, %s), want (10.5ms, 9.1ms)", responses[0].PromptEvalDuration, responses[0].EvalDuration)
@@ -249,8 +249,8 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	if responses[1].PromptEvalCount != 5 || responses[1].EvalCount != 2 {
 		t.Errorf("response[1] counts = (%d, %d), want (5, 2)", responses[1].PromptEvalCount, responses[1].EvalCount)
 	}
-	if responses[1].PromptEvalCachedCount != 2 {
-		t.Errorf("response[1] cached prompt count = %d, want 2", responses[1].PromptEvalCachedCount)
+	if got := responses[1].PromptEvalCachedCount; got == nil || *got != 2 {
+		t.Errorf("response[1] cached prompt count = %v, want 2", got)
 	}
 	if responses[1].PromptEvalDuration != 10500*time.Microsecond || responses[1].EvalDuration != 20300*time.Microsecond {
 		t.Errorf("response[1] durations = (%s, %s), want (10.5ms, 20.3ms)", responses[1].PromptEvalDuration, responses[1].EvalDuration)
@@ -266,8 +266,8 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	if responses[2].PromptEvalCount != 5 {
 		t.Errorf("PromptEvalCount = %d, want 5", responses[2].PromptEvalCount)
 	}
-	if responses[2].PromptEvalCachedCount != 2 {
-		t.Errorf("PromptEvalCachedCount = %d, want 2", responses[2].PromptEvalCachedCount)
+	if got := responses[2].PromptEvalCachedCount; got == nil || *got != 2 {
+		t.Errorf("PromptEvalCachedCount = %v, want 2", got)
 	}
 	if responses[2].EvalCount != 2 {
 		t.Errorf("EvalCount = %d, want 2", responses[2].EvalCount)
@@ -316,8 +316,8 @@ func TestLlamaServerCompletionPromptEvalCountIncludesCache(t *testing.T) {
 	if responses[0].PromptEvalCount != 17 {
 		t.Errorf("PromptEvalCount = %d, want 17", responses[0].PromptEvalCount)
 	}
-	if responses[0].PromptEvalCachedCount != 12 {
-		t.Errorf("PromptEvalCachedCount = %d, want 12", responses[0].PromptEvalCachedCount)
+	if got := responses[0].PromptEvalCachedCount; got == nil || *got != 12 {
+		t.Errorf("PromptEvalCachedCount = %v, want 12", got)
 	}
 	if responses[0].PromptEvalDuration != 10*time.Millisecond {
 		t.Errorf("PromptEvalDuration = %s, want 10ms", responses[0].PromptEvalDuration)
@@ -369,8 +369,8 @@ func TestLlamaServerChatPromptEvalCountIncludesCache(t *testing.T) {
 	if responses[1].PromptEvalCount != 17 {
 		t.Errorf("PromptEvalCount = %d, want 17", responses[1].PromptEvalCount)
 	}
-	if responses[1].PromptEvalCachedCount != 12 {
-		t.Errorf("PromptEvalCachedCount = %d, want 12", responses[1].PromptEvalCachedCount)
+	if got := responses[1].PromptEvalCachedCount; got == nil || *got != 12 {
+		t.Errorf("PromptEvalCachedCount = %v, want 12", got)
 	}
 	if responses[1].PromptEvalDuration != 10*time.Millisecond {
 		t.Errorf("PromptEvalDuration = %s, want 10ms", responses[1].PromptEvalDuration)

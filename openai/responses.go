@@ -885,6 +885,13 @@ type ResponsesUsage struct {
 	OutputTokensDetails ResponsesOutputTokensDetails `json:"output_tokens_details"`
 }
 
+func intValue(v *int) int {
+	if v == nil {
+		return 0
+	}
+	return *v
+}
+
 // derefFloat64 returns the value of a float64 pointer, or a default if nil.
 func derefFloat64(p *float64, def float64) float64 {
 	if p != nil {
@@ -1004,7 +1011,7 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse,
 			InputTokens:        chatResponse.PromptEvalCount,
 			OutputTokens:       chatResponse.EvalCount,
 			TotalTokens:        chatResponse.PromptEvalCount + chatResponse.EvalCount,
-			InputTokensDetails: ResponsesInputTokensDetails{CachedTokens: chatResponse.PromptEvalCachedCount},
+			InputTokensDetails: ResponsesInputTokensDetails{CachedTokens: intValue(chatResponse.PromptEvalCachedCount)},
 			// TODO(drifkin): wire through the actual values
 			OutputTokensDetails: ResponsesOutputTokensDetails{ReasoningTokens: 0},
 		},
@@ -1607,7 +1614,7 @@ func (c *ResponsesStreamConverter) processCompletion(r api.ChatResponse) []Respo
 		"output_tokens": r.EvalCount,
 		"total_tokens":  r.PromptEvalCount + r.EvalCount,
 		"input_tokens_details": map[string]any{
-			"cached_tokens": r.PromptEvalCachedCount,
+			"cached_tokens": intValue(r.PromptEvalCachedCount),
 		},
 		"output_tokens_details": map[string]any{
 			"reasoning_tokens": 0,

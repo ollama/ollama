@@ -1502,7 +1502,7 @@ type llamaServerChatResponse struct {
 }
 
 type llamaServerTimings struct {
-	CacheN    int     `json:"cache_n"`
+	CacheN    *int    `json:"cache_n"`
 	PromptN   int     `json:"prompt_n"`
 	PromptMS  float64 `json:"prompt_ms"`
 	PredictN  int     `json:"predicted_n"`
@@ -1510,7 +1510,10 @@ type llamaServerTimings struct {
 }
 
 func (t llamaServerTimings) promptEvalCount() int {
-	return t.CacheN + t.PromptN
+	if t.CacheN == nil {
+		return t.PromptN
+	}
+	return *t.CacheN + t.PromptN
 }
 
 type llamaServerApplyTemplateResponse struct {

@@ -12,12 +12,16 @@ import (
 	"github.com/ollama/ollama/llm"
 )
 
+func testIntPtr(v int) *int {
+	return &v
+}
+
 func TestClientCompletionRequestsIntermediateMetrics(t *testing.T) {
 	var request CompletionRequest
 	want := CompletionResponse{
 		Done:                  true,
 		PromptEvalCount:       10,
-		PromptEvalCachedCount: 4,
+		PromptEvalCachedCount: testIntPtr(4),
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -50,7 +54,7 @@ func TestClientCompletionRequestsIntermediateMetrics(t *testing.T) {
 	if !request.IncludeIntermediateMetrics {
 		t.Fatal("metrics per token was not forwarded to the MLX runner")
 	}
-	if got.PromptEvalCount != want.PromptEvalCount || got.PromptEvalCachedCount != want.PromptEvalCachedCount {
-		t.Errorf("prompt counts = (%d, %d), want (%d, %d)", got.PromptEvalCount, got.PromptEvalCachedCount, want.PromptEvalCount, want.PromptEvalCachedCount)
+	if got.PromptEvalCount != want.PromptEvalCount || got.PromptEvalCachedCount == nil || *got.PromptEvalCachedCount != *want.PromptEvalCachedCount {
+		t.Errorf("prompt counts = (%d, %v), want (%d, %d)", got.PromptEvalCount, got.PromptEvalCachedCount, want.PromptEvalCount, *want.PromptEvalCachedCount)
 	}
 }

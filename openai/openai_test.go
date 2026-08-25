@@ -31,6 +31,10 @@ const (
 	image  = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=`
 )
 
+func testIntPtr(v int) *int {
+	return &v
+}
+
 func TestFromChatRequest_Basic(t *testing.T) {
 	req := ChatCompletionRequest{
 		Model: "test-model",
@@ -182,7 +186,7 @@ func TestToUsage(t *testing.T) {
 	resp := api.ChatResponse{
 		Metrics: api.Metrics{
 			PromptEvalCount:       10,
-			PromptEvalCachedCount: 4,
+			PromptEvalCachedCount: testIntPtr(4),
 			EvalCount:             20,
 		},
 	}
@@ -213,7 +217,7 @@ func TestToUsage(t *testing.T) {
 	}
 }
 
-func TestToUsageOmitsCacheDetailsWithoutHits(t *testing.T) {
+func TestToUsageOmitsUnreportedCacheDetails(t *testing.T) {
 	usage := ToUsage(api.ChatResponse{Metrics: api.Metrics{PromptEvalCount: 10, EvalCount: 2}})
 	if usage.PromptTokensDetails != nil {
 		t.Fatalf("expected no cache details, got %#v", usage.PromptTokensDetails)
@@ -232,11 +236,30 @@ func TestToUsageOmitsCacheDetailsWithoutHits(t *testing.T) {
 	}
 }
 
+func TestToUsageIncludesZeroCacheDetails(t *testing.T) {
+	usage := ToUsage(api.ChatResponse{Metrics: api.Metrics{
+		PromptEvalCount:       10,
+		PromptEvalCachedCount: testIntPtr(0),
+		EvalCount:             2,
+	}})
+	if usage.PromptTokensDetails == nil || usage.PromptTokensDetails.CachedTokens != 0 {
+		t.Fatalf("expected zero cache details, got %#v", usage.PromptTokensDetails)
+	}
+
+	data, err := json.Marshal(usage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"prompt_tokens_details":{"cached_tokens":0}`) {
+		t.Errorf("unexpected usage json: %s", data)
+	}
+}
+
 func TestToCompletionUsageIncludesCachedTokens(t *testing.T) {
 	completion := ToCompletion("completion-id", api.GenerateResponse{
 		Metrics: api.Metrics{
 			PromptEvalCount:       10,
-			PromptEvalCachedCount: 4,
+			PromptEvalCachedCount: testIntPtr(4),
 			EvalCount:             2,
 		},
 	})

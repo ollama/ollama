@@ -456,7 +456,7 @@ func TestDecodeIntermediateMetrics(t *testing.T) {
 			IncludeIntermediateMetrics: true,
 		},
 	}
-	d := testDecoder(r, req, caches, []int32{1}, 1)
+	d := testDecoder(t, r, req, caches, []int32{1}, 1)
 	promptEval := 5 * time.Millisecond
 	if err := r.decode(context.Background(), req, session, d, promptEval); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -472,16 +472,16 @@ func TestDecodeIntermediateMetrics(t *testing.T) {
 		t.Fatalf("got %d responses, want 3", len(responses))
 	}
 	for i, resp := range responses[:2] {
-		if resp.PromptEvalCount != 2 || resp.PromptEvalCachedCount != 1 || resp.PromptEvalDuration != promptEval {
-			t.Errorf("response[%d] prompt metrics = (%d, %d, %s), want (2, 1, %s)", i, resp.PromptEvalCount, resp.PromptEvalCachedCount, resp.PromptEvalDuration, promptEval)
+		if resp.PromptEvalCount != 2 || resp.PromptEvalCachedCount == nil || *resp.PromptEvalCachedCount != 1 || resp.PromptEvalDuration != promptEval {
+			t.Errorf("response[%d] prompt metrics = (%d, %v, %s), want (2, 1, %s)", i, resp.PromptEvalCount, resp.PromptEvalCachedCount, resp.PromptEvalDuration, promptEval)
 		}
 		if resp.EvalCount != i+1 || resp.EvalDuration <= 0 {
 			t.Errorf("response[%d] eval metrics = (%d, %s), want count %d and positive duration", i, resp.EvalCount, resp.EvalDuration, i+1)
 		}
 	}
 	final := responses[2]
-	if final.PromptEvalCount != 2 || final.PromptEvalCachedCount != 1 || final.PromptEvalDuration != promptEval {
-		t.Errorf("final prompt metrics = (%d, %d, %s), want (2, 1, %s)", final.PromptEvalCount, final.PromptEvalCachedCount, final.PromptEvalDuration, promptEval)
+	if final.PromptEvalCount != 2 || final.PromptEvalCachedCount == nil || *final.PromptEvalCachedCount != 1 || final.PromptEvalDuration != promptEval {
+		t.Errorf("final prompt metrics = (%d, %v, %s), want (2, 1, %s)", final.PromptEvalCount, final.PromptEvalCachedCount, final.PromptEvalDuration, promptEval)
 	}
 	if final.EvalCount != 2 || final.EvalDuration <= 0 {
 		t.Errorf("final eval metrics = (%d, %s), want count 2 and positive duration", final.EvalCount, final.EvalDuration)

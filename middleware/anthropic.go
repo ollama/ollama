@@ -101,12 +101,12 @@ type WebSearchAnthropicWriter struct {
 	terminalSent bool
 
 	observedPromptEvalCount       int
-	observedPromptEvalCachedCount int
+	observedPromptEvalCachedCount *int
 	observedEvalCount             int
 
 	loopInFlight         bool
 	loopBaseInputTok     int
-	loopBaseCacheReadTok int
+	loopBaseCacheReadTok *int
 	loopBaseOutputTok    int
 	loopResultCh         chan webSearchLoopResult
 
@@ -317,7 +317,7 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 
 		followUpUsage := anthropic.UsageFromMetrics(followUpResponse.Metrics)
 		usage.InputTokens += followUpUsage.InputTokens
-		usage.CacheReadInputTokens += followUpUsage.CacheReadInputTokens
+		usage.CacheReadInputTokens = addOptionalInts(usage.CacheReadInputTokens, followUpUsage.CacheReadInputTokens)
 		usage.OutputTokens += followUpUsage.OutputTokens
 
 		nextToolCall, hasWebSearch, hasOtherTools := findWebSearchToolCall(followUpResponse.Message.ToolCalls)
@@ -434,9 +434,7 @@ func (w *WebSearchAnthropicWriter) recordObservedUsage(metrics api.Metrics) {
 	if metrics.PromptEvalCount > w.observedPromptEvalCount {
 		w.observedPromptEvalCount = metrics.PromptEvalCount
 	}
-	if metrics.PromptEvalCachedCount > w.observedPromptEvalCachedCount {
-		w.observedPromptEvalCachedCount = metrics.PromptEvalCachedCount
-	}
+	w.observedPromptEvalCachedCount = maxOptionalInts(w.observedPromptEvalCachedCount, metrics.PromptEvalCachedCount)
 	if metrics.EvalCount > w.observedEvalCount {
 		w.observedEvalCount = metrics.EvalCount
 	}
@@ -447,8 +445,9 @@ func (w *WebSearchAnthropicWriter) applyObservedUsageDeltaToUsage(usage *anthrop
 	if delta := observed.InputTokens - w.loopBaseInputTok; delta > 0 {
 		usage.InputTokens += delta
 	}
-	if delta := observed.CacheReadInputTokens - w.loopBaseCacheReadTok; delta > 0 {
-		usage.CacheReadInputTokens += delta
+	if observed.CacheReadInputTokens != nil {
+		delta := max(0, optionalIntValue(observed.CacheReadInputTokens)-optionalIntValue(w.loopBaseCacheReadTok))
+		usage.CacheReadInputTokens = addOptionalInts(usage.CacheReadInputTokens, &delta)
 	}
 	if deltaOut := w.observedEvalCount - w.loopBaseOutputTok; deltaOut > 0 {
 		usage.OutputTokens += deltaOut
@@ -465,7 +464,7 @@ func (w *WebSearchAnthropicWriter) currentObservedUsage() anthropic.Usage {
 
 func (w *WebSearchAnthropicWriter) usageWithObservedMetrics(metrics api.Metrics) anthropic.Usage {
 	metrics.PromptEvalCount = max(metrics.PromptEvalCount, w.observedPromptEvalCount)
-	metrics.PromptEvalCachedCount = max(metrics.PromptEvalCachedCount, w.observedPromptEvalCachedCount)
+	metrics.PromptEvalCachedCount = maxOptionalInts(metrics.PromptEvalCachedCount, w.observedPromptEvalCachedCount)
 	metrics.EvalCount = max(metrics.EvalCount, w.observedEvalCount)
 	return anthropic.UsageFromMetrics(metrics)
 }
@@ -557,7 +556,7 @@ func (w *WebSearchAnthropicWriter) ensureStreamMessageStart(usage anthropic.Usag
 	}
 
 	inputTokens := usage.InputTokens
-	if inputTokens == 0 && usage.CacheReadInputTokens == 0 {
+	if inputTokens == 0 && optionalIntValue(usage.CacheReadInputTokens) == 0 {
 		inputTokens = w.estimatedInputTokens
 	}
 

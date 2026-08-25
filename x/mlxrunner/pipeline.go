@@ -269,11 +269,12 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 		wantTopLogprobs: request.SamplerOpts.TopLogprobs,
 	}
 
+	cachedPromptCount := len(session.inputs) - len(session.remaining)
 	final := CompletionResponse{
 		Done:                  true,
 		DoneReason:            1,
 		PromptEvalCount:       len(request.Tokens),
-		PromptEvalCachedCount: len(session.inputs) - len(session.remaining),
+		PromptEvalCachedCount: &cachedPromptCount,
 	}
 	final.PromptEvalDuration = promptEval
 	now := time.Now()

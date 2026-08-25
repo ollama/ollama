@@ -16,6 +16,10 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
+func testIntPtr(v int) *int {
+	return &v
+}
+
 func createTestFlagOptions() flagOptions {
 	models := "test-model"
 	format := "benchstat"
@@ -1100,7 +1104,7 @@ func TestBenchmarkModel_PrefillExcludesCachedTokens(t *testing.T) {
 	format := "csv"
 	fOpt.format = &format
 	responses := defaultGenerateResponses()
-	responses[len(responses)-1].PromptEvalCachedCount = 4
+	responses[len(responses)-1].PromptEvalCachedCount = testIntPtr(4)
 
 	server := createMockOllamaServer(t, mockServerOptions{generateResponses: responses})
 	defer server.Close()
@@ -1111,7 +1115,7 @@ func TestBenchmarkModel_PrefillExcludesCachedTokens(t *testing.T) {
 			t.Errorf("BenchmarkModel: %v", err)
 		}
 	})
-	wantPrefix := fmt.Sprintf("test-model,prefill,%d,", responses[len(responses)-1].PromptEvalCount-responses[len(responses)-1].PromptEvalCachedCount)
+	wantPrefix := fmt.Sprintf("test-model,prefill,%d,", responses[len(responses)-1].PromptEvalCount-*responses[len(responses)-1].PromptEvalCachedCount)
 	var prefillRow string
 	for row := range strings.SplitSeq(output, "\n") {
 		if strings.HasPrefix(row, wantPrefix) {
@@ -1218,7 +1222,7 @@ func TestBuildGenerateRequest_VariesByEpoch(t *testing.T) {
 func TestOutputMetrics_Benchstat(t *testing.T) {
 	var buf bytes.Buffer
 	metrics := []Metrics{
-		{Model: "m1", Step: "prefill", Count: 10, CachedPromptCount: 4, Duration: 100 * time.Millisecond},
+		{Model: "m1", Step: "prefill", Count: 10, CachedPromptCount: testIntPtr(4), Duration: 100 * time.Millisecond},
 		{Model: "m1", Step: "generate", Count: 50, Duration: 500 * time.Millisecond},
 		{Model: "m1", Step: "ttft", Count: 1, Duration: 50 * time.Millisecond},
 		{Model: "m1", Step: "load", Count: 1, Duration: 50 * time.Millisecond},
@@ -1274,6 +1278,37 @@ func TestOutputMetrics_BenchstatFormat(t *testing.T) {
 	// Prefill/generate should use ns/token
 	if !strings.Contains(output, "ns/token") {
 		t.Errorf("Expected ns/token unit for prefill, got: %s", output)
+	}
+	if strings.Contains(output, "cached-prompt-token") {
+		t.Errorf("unexpected cached prompt count when unavailable: %s", output)
+	}
+}
+
+func TestOutputMetrics_CachedPromptAvailability(t *testing.T) {
+	tests := []struct {
+		name  string
+		count *int
+		want  string
+	}{
+		{name: "unavailable", want: "m1,prefill,10,10000000.00,100.00,"},
+		{name: "zero", count: testIntPtr(0), want: "m1,prefill,10,10000000.00,100.00,0"},
+		{name: "positive", count: testIntPtr(4), want: "m1,prefill,10,10000000.00,100.00,4"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			OutputMetrics(&buf, "csv", []Metrics{{
+				Model:             "m1",
+				Step:              "prefill",
+				Count:             10,
+				CachedPromptCount: tt.count,
+				Duration:          100 * time.Millisecond,
+			}}, false)
+			if got := strings.TrimSpace(buf.String()); got != tt.want {
+				t.Errorf("output = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

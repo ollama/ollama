@@ -49,11 +49,11 @@ func TestWebSearchResponsesWriterNonStreaming(t *testing.T) {
 			if strings.Contains(messages[1].Content, "Cite") || !strings.Contains(messages[1].Content, "URL: https://ollama.com/news") {
 				t.Fatalf("unexpected search result content: %q", messages[1].Content)
 			}
-			return api.ChatResponse{Done: true, Message: api.Message{Role: "assistant", Content: "Read [Ollama](https://ollama.com/news)."}, Metrics: api.Metrics{PromptEvalCount: 7, PromptEvalCachedCount: 3, EvalCount: 3}}, nil
+			return api.ChatResponse{Done: true, Message: api.Message{Role: "assistant", Content: "Read [Ollama](https://ollama.com/news)."}, Metrics: api.Metrics{PromptEvalCount: 7, PromptEvalCachedCount: testIntPtr(3), EvalCount: 3}}, nil
 		},
 	}
 
-	initial := api.ChatResponse{Done: true, Message: api.Message{ToolCalls: []api.ToolCall{{ID: "call_1", Function: api.ToolCallFunction{Name: "web_search", Arguments: testArgs(map[string]any{"query": "ollama news"})}}}}, Metrics: api.Metrics{PromptEvalCount: 5, PromptEvalCachedCount: 2, EvalCount: 2}}
+	initial := api.ChatResponse{Done: true, Message: api.Message{ToolCalls: []api.ToolCall{{ID: "call_1", Function: api.ToolCallFunction{Name: "web_search", Arguments: testArgs(map[string]any{"query": "ollama news"})}}}}, Metrics: api.Metrics{PromptEvalCount: 5, PromptEvalCachedCount: testIntPtr(2), EvalCount: 2}}
 	data, err := json.Marshal(initial)
 	if err != nil {
 		t.Fatal(err)

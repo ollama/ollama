@@ -217,20 +217,31 @@ type MessagesResponse struct {
 
 // Usage contains token usage information
 type Usage struct {
-	InputTokens          int `json:"input_tokens"`
-	CacheReadInputTokens int `json:"cache_read_input_tokens,omitempty"`
-	OutputTokens         int `json:"output_tokens"`
+	InputTokens          int  `json:"input_tokens"`
+	CacheReadInputTokens *int `json:"cache_read_input_tokens,omitempty"`
+	OutputTokens         int  `json:"output_tokens"`
 }
 
 // UsageFromMetrics separates total prompt tokens into uncached and cache-read counts.
 func UsageFromMetrics(metrics api.Metrics) Usage {
 	total := max(0, metrics.PromptEvalCount)
-	cached := min(max(0, metrics.PromptEvalCachedCount), total)
+	var cached *int
+	if metrics.PromptEvalCachedCount != nil {
+		count := min(max(0, *metrics.PromptEvalCachedCount), total)
+		cached = &count
+	}
 	return Usage{
-		InputTokens:          total - cached,
+		InputTokens:          total - intValue(cached),
 		CacheReadInputTokens: cached,
 		OutputTokens:         metrics.EvalCount,
 	}
+}
+
+func intValue(v *int) int {
+	if v == nil {
+		return 0
+	}
+	return *v
 }
 
 // Streaming event types
@@ -285,9 +296,9 @@ type MessageDelta struct {
 
 // DeltaUsage contains cumulative token usage
 type DeltaUsage struct {
-	InputTokens          int `json:"input_tokens"`
-	CacheReadInputTokens int `json:"cache_read_input_tokens,omitempty"`
-	OutputTokens         int `json:"output_tokens"`
+	InputTokens          int  `json:"input_tokens"`
+	CacheReadInputTokens *int `json:"cache_read_input_tokens,omitempty"`
+	OutputTokens         int  `json:"output_tokens"`
 }
 
 // MessageStopEvent signals the end of the message
@@ -731,7 +742,7 @@ type StreamConverter struct {
 	firstWrite           bool
 	contentIndex         int
 	inputTokens          int
-	cacheReadTokens      int
+	cacheReadTokens      *int
 	outputTokens         int
 	estimatedInputTokens int // Estimated tokens from request (used when actual metrics are 0)
 	thinkingStarted      bool
@@ -766,7 +777,7 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 		usage := UsageFromMetrics(r.Metrics)
 		c.inputTokens = usage.InputTokens
 		c.cacheReadTokens = usage.CacheReadInputTokens
-		if c.inputTokens == 0 && c.cacheReadTokens == 0 && c.estimatedInputTokens > 0 {
+		if c.inputTokens == 0 && intValue(c.cacheReadTokens) == 0 && c.estimatedInputTokens > 0 {
 			c.inputTokens = c.estimatedInputTokens
 		}
 

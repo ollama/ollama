@@ -126,7 +126,7 @@ type CompletionResponse struct {
 	DoneReason int
 
 	PromptEvalCount       int
-	PromptEvalCachedCount int
+	PromptEvalCachedCount *int
 	PromptEvalDuration    time.Duration
 	EvalCount             int
 	EvalDuration          time.Duration

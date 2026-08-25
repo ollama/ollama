@@ -1751,7 +1751,7 @@ func TestToResponse_UsageIncludesCachedTokens(t *testing.T) {
 		Done:      true,
 		Metrics: api.Metrics{
 			PromptEvalCount:       10,
-			PromptEvalCachedCount: 4,
+			PromptEvalCachedCount: testIntPtr(4),
 			EvalCount:             3,
 		},
 	}, ResponsesRequest{})
@@ -2174,7 +2174,7 @@ func TestResponsesStreamConverter_ResponseCompletedIncludesOutput(t *testing.T) 
 		Done:    true,
 		Metrics: api.Metrics{
 			PromptEvalCount:       10,
-			PromptEvalCachedCount: 4,
+			PromptEvalCachedCount: testIntPtr(4),
 			EvalCount:             3,
 		},
 	})

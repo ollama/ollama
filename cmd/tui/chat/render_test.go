@@ -17,10 +17,14 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
+func testIntPtr(v int) *int {
+	return &v
+}
+
 func TestMetricsSummaryLinesCachedPromptTokens(t *testing.T) {
 	lines := metricsSummaryLines(&api.Metrics{
 		PromptEvalCount:       10,
-		PromptEvalCachedCount: 4,
+		PromptEvalCachedCount: testIntPtr(4),
 		PromptEvalDuration:    time.Second,
 	})
 	got := strings.Join(lines, "\n")

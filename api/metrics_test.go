@@ -10,12 +10,38 @@ import (
 )
 
 func TestMetricsCachedPromptJSON(t *testing.T) {
-	data, err := json.Marshal(Metrics{PromptEvalCachedCount: 4})
-	if err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name  string
+		count *int
+		want  string
+	}{
+		{name: "unreported", want: `{}`},
+		{name: "zero", count: testIntPtr(0), want: `{"prompt_eval_cached_count":0}`},
+		{name: "positive", count: testIntPtr(4), want: `{"prompt_eval_cached_count":4}`},
 	}
-	if got, want := string(data), `{"prompt_eval_cached_count":4}`; got != want {
-		t.Errorf("json = %s, want %s", got, want)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := json.Marshal(Metrics{PromptEvalCachedCount: tt.count})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := string(data); got != tt.want {
+				t.Errorf("json = %s, want %s", got, tt.want)
+			}
+
+			var metrics Metrics
+			if err := json.Unmarshal(data, &metrics); err != nil {
+				t.Fatal(err)
+			}
+			if tt.count == nil {
+				if metrics.PromptEvalCachedCount != nil {
+					t.Errorf("cached count = %v, want nil", metrics.PromptEvalCachedCount)
+				}
+			} else if metrics.PromptEvalCachedCount == nil || *metrics.PromptEvalCachedCount != *tt.count {
+				t.Errorf("cached count = %v, want %d", metrics.PromptEvalCachedCount, *tt.count)
+			}
+		})
 	}
 }
 
@@ -30,7 +56,7 @@ func TestMetricsSummaryCachedPromptTokens(t *testing.T) {
 
 	(&Metrics{
 		PromptEvalCount:       10,
-		PromptEvalCachedCount: 4,
+		PromptEvalCachedCount: testIntPtr(4),
 		PromptEvalDuration:    time.Second,
 	}).Summary()
 	write.Close()

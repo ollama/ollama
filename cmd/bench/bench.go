@@ -39,7 +39,7 @@ type Metrics struct {
 	Model             string
 	Step              string
 	Count             int
-	CachedPromptCount int
+	CachedPromptCount *int
 	Duration          time.Duration
 }
 
@@ -224,7 +224,10 @@ func OutputMetrics(w io.Writer, format string, metrics []Metrics, verbose bool) 
 			if m.Step == "generate" || m.Step == "prefill" {
 				var promptCounts string
 				if m.Step == "prefill" {
-					promptCounts = fmt.Sprintf(" %d processed-prompt-token %d cached-prompt-token", m.Count, m.CachedPromptCount)
+					promptCounts = fmt.Sprintf(" %d processed-prompt-token", m.Count)
+					if m.CachedPromptCount != nil {
+						promptCounts += fmt.Sprintf(" %d cached-prompt-token", *m.CachedPromptCount)
+					}
 				}
 				if m.Count > 0 {
 					nsPerToken := float64(m.Duration.Nanoseconds()) / float64(m.Count)
@@ -245,6 +248,10 @@ func OutputMetrics(w io.Writer, format string, metrics []Metrics, verbose bool) 
 		}
 	case "csv":
 		for _, m := range metrics {
+			cachedPromptCount := ""
+			if m.CachedPromptCount != nil {
+				cachedPromptCount = fmt.Sprint(*m.CachedPromptCount)
+			}
 			if m.Step == "generate" || m.Step == "prefill" {
 				var nsPerToken float64
 				var tokensPerSec float64
@@ -252,9 +259,9 @@ func OutputMetrics(w io.Writer, format string, metrics []Metrics, verbose bool) 
 					nsPerToken = float64(m.Duration.Nanoseconds()) / float64(m.Count)
 					tokensPerSec = float64(m.Count) / (float64(m.Duration.Nanoseconds()) + 1e-12) * 1e9
 				}
-				fmt.Fprintf(w, "%s,%s,%d,%.2f,%.2f,%d\n", m.Model, m.Step, m.Count, nsPerToken, tokensPerSec, m.CachedPromptCount)
+				fmt.Fprintf(w, "%s,%s,%d,%.2f,%.2f,%s\n", m.Model, m.Step, m.Count, nsPerToken, tokensPerSec, cachedPromptCount)
 			} else {
-				fmt.Fprintf(w, "%s,%s,1,%d,0,0\n", m.Model, m.Step, m.Duration.Nanoseconds())
+				fmt.Fprintf(w, "%s,%s,1,%d,0,%s\n", m.Model, m.Step, m.Duration.Nanoseconds(), cachedPromptCount)
 			}
 		}
 	default:
@@ -433,11 +440,15 @@ func BenchmarkModel(fOpt flagOptions) error {
 				}
 			}
 
+			cachedPromptCount := 0
+			if responseMetrics.PromptEvalCachedCount != nil {
+				cachedPromptCount = *responseMetrics.PromptEvalCachedCount
+			}
 			metrics := []Metrics{
 				{
 					Model:             model,
 					Step:              "prefill",
-					Count:             max(0, responseMetrics.PromptEvalCount-responseMetrics.PromptEvalCachedCount),
+					Count:             max(0, responseMetrics.PromptEvalCount-cachedPromptCount),
 					CachedPromptCount: responseMetrics.PromptEvalCachedCount,
 					Duration:          responseMetrics.PromptEvalDuration,
 				},
@@ -470,8 +481,13 @@ func BenchmarkModel(fOpt flagOptions) error {
 			OutputMetrics(out, *fOpt.format, metrics, *fOpt.verbose)
 
 			if *fOpt.debug && *fOpt.promptTokens > 0 {
-				fmt.Fprintf(os.Stderr, "Generated prompt targeting ~%d tokens (actual: %d, cached: %d)\n",
-					*fOpt.promptTokens, responseMetrics.PromptEvalCount, responseMetrics.PromptEvalCachedCount)
+				if responseMetrics.PromptEvalCachedCount == nil {
+					fmt.Fprintf(os.Stderr, "Generated prompt targeting ~%d tokens (actual: %d, cached: unavailable)\n",
+						*fOpt.promptTokens, responseMetrics.PromptEvalCount)
+				} else {
+					fmt.Fprintf(os.Stderr, "Generated prompt targeting ~%d tokens (actual: %d, cached: %d)\n",
+						*fOpt.promptTokens, responseMetrics.PromptEvalCount, cachedPromptCount)
+				}
 			}
 
 			if *fOpt.keepAlive > 0 {
