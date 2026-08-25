@@ -68,6 +68,12 @@ function formatModelList(names: string[]): string {
   return `${names.slice(0, -1).join(", ")}, or ${names[names.length - 1]}`;
 }
 
+function sameModelSelection(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false;
+  const names = new Set(left);
+  return right.every((name) => names.has(name));
+}
+
 export function ClaudeDesktopModelsSettings({
   initialStatus,
   initialLocalModels,
@@ -302,18 +308,26 @@ export function ClaudeDesktopModelsSettings({
     ]),
   );
   const autoModeModelSet = new Set(autoModeModelNames);
+  const modelSelectionApplied = sameModelSelection(
+    selection,
+    selectedModelNames(status),
+  );
   const autoModeAvailable =
+    modelSelectionApplied &&
     selection.length > 0 &&
     selection.some((name) => autoModeModelSet.has(name));
-  const autoMode =
-    autoModeAvailable && (autoModeOverride ?? status.autoMode ?? false);
-  const autoModeDescription = autoModeAvailable
-    ? "Let Claude decide when to ask before making changes."
-    : accountCloudModels.length > 0
-      ? "Select a cloud model from Ollama.com to use auto mode."
-      : autoModeModelNames.length > 0
-        ? `Select one of ${formatModelList(autoModeModelNames)} to use auto mode.`
-        : "Auto mode needs a cloud model available to your Ollama.com account.";
+  const autoMode = modelSelectionApplied
+    ? autoModeAvailable && (autoModeOverride ?? status.autoMode ?? false)
+    : (status.autoMode ?? false);
+  const autoModeDescription = !modelSelectionApplied
+    ? "Restart Claude to apply model changes before changing auto mode."
+    : autoModeAvailable
+      ? "Let Claude decide when to ask before making changes."
+      : accountCloudModels.length > 0
+        ? "Select a cloud model from Ollama.com to use auto mode."
+        : autoModeModelNames.length > 0
+          ? `Select one of ${formatModelList(autoModeModelNames)} to use auto mode.`
+          : "Auto mode needs a cloud model available to your Ollama.com account.";
   const guidance =
     claudeDesktopRecoveryMessage(status.error, error) ??
     (!hasAvailableSelection && models.length > 0

@@ -150,6 +150,34 @@ func TestClaudeDesktopModelsFromCloudInventoryVerifiesWithoutRecommending(t *tes
 	}
 }
 
+func TestVerifyClaudeDesktopModelsWithCloudInventoryPreservesMetadata(t *testing.T) {
+	models := UnverifyClaudeDesktopCloudEntitlements(DefaultClaudeDesktopModels())
+	inventory := ClaudeDesktopModelsFromCloudInventory([]string{"glm-5.2"})
+
+	verified := VerifyClaudeDesktopModelsWithCloudInventory(models, inventory)
+	if !verified[0].AccountCloud || !verified[0].entitlementKnown {
+		t.Fatalf("verified model = %+v, want account entitlement", verified[0])
+	}
+	if verified[0].Description != models[0].Description ||
+		verified[0].RequiredPlan != models[0].RequiredPlan ||
+		verified[0].Recommended != models[0].Recommended ||
+		verified[0].OllamaModel != models[0].OllamaModel {
+		t.Fatalf("verified model metadata = %+v, want %+v", verified[0], models[0])
+	}
+	if verified[1].AccountCloud || verified[1].entitlementKnown {
+		t.Fatalf("unmatched model = %+v, want unverified", verified[1])
+	}
+
+	access := EvaluateClaudeDesktopModelAccess(verified[0], ClaudeDesktopAccessState{
+		Cloud:   ClaudeDesktopCloudOn,
+		Account: ClaudeDesktopAccountSignedIn,
+		Plan:    "pro",
+	}, false, true)
+	if access.Availability != ClaudeDesktopAvailabilityAvailable {
+		t.Fatalf("verified model access = %+v, want available", access)
+	}
+}
+
 func claudeDesktopModelNames(models []ClaudeDesktopModel) []string {
 	names := make([]string, len(models))
 	for i, model := range models {

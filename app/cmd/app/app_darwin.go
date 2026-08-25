@@ -665,22 +665,10 @@ func includeSelectedClaudeDesktopModels(available, selected []proxy.ClaudeDeskto
 }
 
 func mergeClaudeDesktopCloudInventory(available, cloudModels []proxy.ClaudeDesktopModel, appendMissing bool) []proxy.ClaudeDesktopModel {
-	models := append([]proxy.ClaudeDesktopModel(nil), available...)
-	byName := make(map[string]proxy.ClaudeDesktopModel, len(cloudModels)*2)
-	for _, model := range cloudModels {
-		byName[model.Name] = model
-		byName[model.OllamaModel] = model
-	}
+	models := proxy.VerifyClaudeDesktopModelsWithCloudInventory(available, cloudModels)
 	seen := make(map[string]struct{}, len(models))
-	for i, model := range models {
+	for _, model := range models {
 		seen[model.OllamaModel] = struct{}{}
-		if _, ok := byName[model.Name]; ok {
-			models[i].AccountCloud = true
-			continue
-		}
-		if _, ok := byName[model.OllamaModel]; ok {
-			models[i].AccountCloud = true
-		}
 	}
 	if !appendMissing {
 		return models

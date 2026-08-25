@@ -286,6 +286,48 @@ func TestResolveClaudeDesktopStartupCatalogMarksDefaultAccountModelsAutoEligible
 	}
 }
 
+func TestResolveClaudeDesktopStartupCatalogVerifiesFallbackFromAccountInventory(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := launch.SaveClaudeDesktopModels([]string{"glm-5.2:cloud"}); err != nil {
+		t.Fatal(err)
+	}
+
+	previousLoader := claudeModelsLoader
+	previousResolver := claudeCloudModelsResolver
+	previousAccess := claudeAccessStateResolver
+	claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
+		return fallbackClaudeDesktopModels(), "fallback"
+	}
+	claudeCloudModelsResolver = func(context.Context) ([]proxy.ClaudeDesktopModel, error) {
+		return proxy.ClaudeDesktopModelsFromCloudInventory([]string{"glm-5.2"}), nil
+	}
+	claudeAccessStateResolver = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
+		return proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn}, nil
+	}
+	t.Cleanup(func() {
+		claudeModelsLoader = previousLoader
+		claudeCloudModelsResolver = previousResolver
+		claudeAccessStateResolver = previousAccess
+	})
+
+	available, selected, source := resolveClaudeDesktopStartupCatalog(context.Background())
+	if source != "user" || len(available) == 0 || len(selected) != 1 {
+		t.Fatalf("catalog = %+v selected = %+v source = %q", available, selected, source)
+	}
+	if selected[0].OllamaModel != "glm-5.2:cloud" || !selected[0].AccountCloud {
+		t.Fatalf("selected model = %+v, want verified GLM route", selected[0])
+	}
+	access := proxy.EvaluateClaudeDesktopModelAccess(selected[0], proxy.ClaudeDesktopAccessState{
+		Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "pro",
+	}, false, true)
+	if access.Availability != proxy.ClaudeDesktopAvailabilityAvailable {
+		t.Fatalf("fallback account model access = %+v, want available", access)
+	}
+	if !claudeDesktopModelsSupportAutoMode(selected) {
+		t.Fatal("verified fallback account model was not Auto-eligible")
+	}
+}
+
 func TestResolveClaudeDesktopStartupCatalogDoesNotListCloudWhenOff(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if err := launch.SaveClaudeDesktopModels([]string{"custom:cloud"}); err != nil {

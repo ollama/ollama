@@ -180,6 +180,30 @@ func ClaudeDesktopModelsFromCloudInventory(names []string) []ClaudeDesktopModel 
 	return models
 }
 
+// VerifyClaudeDesktopModelsWithCloudInventory marks matching catalog models
+// as account-verified without replacing their recommendation metadata.
+func VerifyClaudeDesktopModelsWithCloudInventory(models, inventory []ClaudeDesktopModel) []ClaudeDesktopModel {
+	verified := cloneClaudeDesktopModels(models)
+	accountModels := make(map[string]struct{}, len(inventory)*2)
+	for _, model := range inventory {
+		if !model.AccountCloud {
+			continue
+		}
+		accountModels[model.Name] = struct{}{}
+		accountModels[model.OllamaModel] = struct{}{}
+	}
+	for i, model := range verified {
+		if _, ok := accountModels[model.Name]; !ok {
+			if _, ok := accountModels[model.OllamaModel]; !ok {
+				continue
+			}
+		}
+		verified[i].AccountCloud = true
+		verified[i].entitlementKnown = true
+	}
+	return verified
+}
+
 // SelectClaudeDesktopModels preserves the user's explicit order. Names that
 // are no longer recommended remain usable so a transient endpoint change or
 // outage cannot silently replace a saved user choice. Validated Claude IDs are
