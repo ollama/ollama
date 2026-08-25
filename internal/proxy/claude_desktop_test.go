@@ -1138,6 +1138,62 @@ func TestGatewayRejectsNonLoopbackHost(t *testing.T) {
 	}
 }
 
+func TestGatewayRejectsRequestsWithOrigin(t *testing.T) {
+	var upstreamCalls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		upstreamCalls.Add(1)
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+	}))
+	defer upstream.Close()
+	p := startTestGateway(t, upstream.URL)
+
+	messageBody, err := json.Marshal(map[string]any{
+		"model":    p.Models()[0].GatewayID(),
+		"messages": []any{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		name   string
+		method string
+		path   string
+		origin string
+		body   string
+	}{
+		{"messages from public site", http.MethodPost, "/v1/messages", "https://attacker.example", string(messageBody)},
+		{"messages from localhost site", http.MethodPost, "/v1/messages", "http://localhost:3000", string(messageBody)},
+		{"messages with opaque origin", http.MethodPost, "/v1/messages", "null", string(messageBody)},
+		{"models", http.MethodGet, "/v1/models", "https://attacker.example", ""},
+		{"token count", http.MethodPost, "/v1/messages/count_tokens", "https://attacker.example", string(messageBody)},
+		{"health", http.MethodGet, healthPath, "https://attacker.example", ""},
+		{"preflight", http.MethodOptions, "/v1/messages", "https://attacker.example", ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			req, err := http.NewRequest(test.method, "http://"+p.Addr()+test.path, strings.NewReader(test.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Origin", test.origin)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusForbidden {
+				t.Fatalf("status = %d, want 403", resp.StatusCode)
+			}
+			if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "" {
+				t.Fatalf("Access-Control-Allow-Origin = %q, want empty", got)
+			}
+		})
+	}
+	if got := upstreamCalls.Load(); got != 0 {
+		t.Fatalf("upstream calls = %d, want 0", got)
+	}
+}
+
 func TestGatewayRejectsHostWithWrongPort(t *testing.T) {
 	var upstreamCalls atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
