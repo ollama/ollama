@@ -888,7 +888,10 @@ export function ConnectAppsScreen({
     ? isClaudeConfigured(claudeStatus)
     : false;
   const pendingClaudeConnection =
-    claudePhase === "connecting" || claudePhase === "launching"
+    claudePhase === "installing" ||
+    claudePhase === "waiting-for-install" ||
+    claudePhase === "connecting" ||
+    claudePhase === "launching"
       ? true
       : claudePhase === "disconnecting"
         ? false
@@ -1016,7 +1019,7 @@ export function ConnectAppsScreen({
           title={claudeConfigured ? "Disconnect" : "Connect"}
           disabled={isConnectingClaude}
           onClick={connectClaude}
-          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait ${claudeToggleConfigured ? "bg-neutral-950" : "bg-neutral-300"}`}
+          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait disabled:opacity-50 ${claudeToggleConfigured ? "bg-neutral-950" : "bg-neutral-300"}`}
         >
           <span
             aria-hidden="true"
