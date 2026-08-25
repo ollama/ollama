@@ -495,7 +495,7 @@ func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *Llm
 		// The runner's llama-server process is no longer running. Handing it
 		// out would make every tokenize/embedding HTTP call fail with
 		// "connection refused" against its (closed) port.
-		slog.Debug("refusing to use exited runner", "runner", runner, "pid", runner.pid)
+		slog.Warn("refusing to use exited runner", "runner", runner, "pid", runner.pid)
 		return false
 	}
 	runner.refCount++
