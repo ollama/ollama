@@ -3,9 +3,12 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/ollama/ollama/cmd/internal/filedata"
 )
 
 func TestExtractFilenames(t *testing.T) {
@@ -14,7 +17,7 @@ func TestExtractFilenames(t *testing.T) {
  ./relative\ path/one.png inbetween1 ./not a valid two.jpg inbetween2 ./1.svg
 /unescaped space /three.jpeg inbetween3 /valid\ path/dir/four.png "./quoted with spaces/five.JPG
 /unescaped space /six.webp inbetween6 /valid\ path/dir/seven.WEBP`
-	res := extractFileNames(input)
+	res := filedata.ExtractNames(input)
 	assert.Len(t, res, 7)
 	assert.Contains(t, res[0], "one.png")
 	assert.Contains(t, res[1], "two.jpg")
@@ -37,7 +40,7 @@ d:\path with\spaces\seven.JPEG inbetween7 c:\users\jdoe\eight.png inbetween8
 c:/users/jdoe/eleven.webp inbetween11 c:/program files/someplace/twelve.WebP inbetween12
 d:\path with\spaces\thirteen.WEBP some ending
 `
-	res = extractFileNames(input)
+	res = filedata.ExtractNames(input)
 	assert.Len(t, res, 13)
 	assert.NotContains(t, res, "inbetween2")
 	assert.Contains(t, res[0], "one.png")
@@ -147,3 +150,43 @@ func TestExtractFileDataWAV(t *testing.T) {
 	assert.Len(t, imgs, 1)
 	assert.Equal(t, "before  after", cleaned)
 }
+
+func TestExtractFileDataEscapedTildeAndSpaces(t *testing.T) {
+	dir := t.TempDir()
+	iCloudDir := filepath.Join(dir, "com~apple~CloudDocs", "screenshots")
+	if err := os.MkdirAll(iCloudDir, 0o755); err != nil {
+		t.Fatalf("failed to create test dir: %v", err)
+	}
+	fp := filepath.Join(iCloudDir, "CleanShot 2025-04-17 at 21.26.40@2x.png")
+	data := make([]byte, 600)
+	copy(data, []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'})
+	if err := os.WriteFile(fp, data, 0o600); err != nil {
+		t.Fatalf("failed to write test image: %v", err)
+	}
+
+	escapedFP := strings.ReplaceAll(fp, "com~apple~CloudDocs", `com\~apple\~CloudDocs`)
+	escapedFP = strings.ReplaceAll(escapedFP, " ", `\ `)
+
+	input := "check this out " + escapedFP + " please"
+	cleaned, imgs, err := extractFileData(input)
+	assert.NoError(t, err)
+	assert.Len(t, imgs, 1)
+	assert.Equal(t, "check this out  please", cleaned)
+}
+
+func TestExtractFileDataDoubleQuoted(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "my image.png")
+	data := make([]byte, 600)
+	copy(data, []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'})
+	if err := os.WriteFile(fp, data, 0o600); err != nil {
+		t.Fatalf("failed to write test image: %v", err)
+	}
+
+	input := `before "` + fp + `" after`
+	cleaned, imgs, err := extractFileData(input)
+	assert.NoError(t, err)
+	assert.Len(t, imgs, 1)
+	assert.Equal(t, "before  after", cleaned)
+}
+

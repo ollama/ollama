@@ -199,6 +199,101 @@ func TestExtractWAV(t *testing.T) {
 	}
 }
 
+func TestNormalizePathEscapedCharacters(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "iCloud drive screenshot path",
+			input: `/Users/ollama/Library/Mobile\ Documents/com\~apple\~CloudDocs/screenshots/CleanShot\ 2025-04-17\ at\ 21.26.40@2x.png`,
+			want:  `/Users/ollama/Library/Mobile Documents/com~apple~CloudDocs/screenshots/CleanShot 2025-04-17 at 21.26.40@2x.png`,
+		},
+		{
+			name:  "double quoted path",
+			input: `"/Users/ollama/My Images/pic.png"`,
+			want:  `/Users/ollama/My Images/pic.png`,
+		},
+		{
+			name:  "single quoted path",
+			input: `'/Users/ollama/My Images/pic.png'`,
+			want:  `/Users/ollama/My Images/pic.png`,
+		},
+		{
+			name:  "escaped special characters",
+			input: `/dir/file\ with\ spaces\(\)\[\]\{\}\$\&\;\'\"\\\*\?\~\@\#\!\^\=\%\|\<\>.png`,
+			want:  `/dir/file with spaces()[]{}$&;'"\*?~@#!^=%|<>.png`,
+		},
+		{
+			name:  "raw percent encoded space",
+			input: `/path/to/my%20image.png`,
+			want:  `/path/to/my image.png`,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got := NormalizePath(tt.input)
+			if got != tt.want {
+				t.Fatalf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExtractEscapedTildeAndSpaces(t *testing.T) {
+	dir := t.TempDir()
+	iCloudDir := filepath.Join(dir, "com~apple~CloudDocs", "screenshots")
+	if err := os.MkdirAll(iCloudDir, 0o755); err != nil {
+		t.Fatalf("failed to create test dir: %v", err)
+	}
+	fp := filepath.Join(iCloudDir, "CleanShot 2025-04-17 at 21.26.40@2x.png")
+	data := make([]byte, 600)
+	copy(data, []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'})
+	if err := os.WriteFile(fp, data, 0o600); err != nil {
+		t.Fatalf("failed to write test image: %v", err)
+	}
+
+	// Escaped path like macOS Terminal pastes
+	escapedFP := strings.ReplaceAll(fp, "com~apple~CloudDocs", `com\~apple\~CloudDocs`)
+	escapedFP = strings.ReplaceAll(escapedFP, " ", `\ `)
+
+	input := "check this out " + escapedFP + " please"
+	cleaned, imgs, err := Extract(input)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(imgs) != 1 {
+		t.Fatalf("imgs = %d, want 1", len(imgs))
+	}
+	if cleaned != "check this out  please" {
+		t.Fatalf("cleaned = %q, want %q", cleaned, "check this out  please")
+	}
+}
+
+func TestExtractDoubleQuotedFilepath(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "my image.png")
+	data := make([]byte, 600)
+	copy(data, []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'})
+	if err := os.WriteFile(fp, data, 0o600); err != nil {
+		t.Fatalf("failed to write test image: %v", err)
+	}
+
+	input := `before "` + fp + `" after`
+	cleaned, imgs, err := Extract(input)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(imgs) != 1 {
+		t.Fatalf("imgs = %d, want 1", len(imgs))
+	}
+	if cleaned != "before  after" {
+		t.Fatalf("cleaned = %q, want %q", cleaned, "before  after")
+	}
+}
+
 func assertContains(t *testing.T, s, want string) {
 	t.Helper()
 	if !strings.Contains(s, want) {
