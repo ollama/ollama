@@ -897,6 +897,9 @@ function buildOllamaCLI {
         [string]$distDir
     )
     mkdir -Force -path "${distDir}\" | Out-Null
+    # build_windows.ps1 uses a root-level ollama.exe. Remove stale bin output
+    # left by other local build flows so zip packaging cannot pick it up.
+    Remove-Item -ea 0 -r "${distDir}\bin"
     & go build -trimpath -ldflags "-s -w -X=github.com/ollama/ollama/version.Version=$script:VERSION -X=github.com/ollama/ollama/server.mode=release" -o "${distDir}\ollama.exe" .
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
 }
@@ -1232,6 +1235,7 @@ function zip {
     $jobs = @()
     $distDir = "${script:SRC_DIR}\dist"
     $amd64Dir = "${distDir}\windows-amd64"
+    Remove-Item -ea 0 -r "${amd64Dir}\bin", "${amd64Dir}\logs"
 
     # Remove any stale zip files before starting
     Remove-Item -ea 0 "${distDir}\ollama-windows-*.zip"
@@ -1259,6 +1263,7 @@ function zip {
         }
 
         $arm64Dir = "${distDir}\windows-arm64"
+        Remove-Item -ea 0 -r "${arm64Dir}\bin", "${arm64Dir}\logs"
         if (Test-Path -Path $arm64Dir) {
             if ((Test-Path -Path "${arm64Dir}\ollama.exe") -and (Test-Path -Path "${arm64Dir}\lib\ollama\llama-server.exe")) {
                 verifyWindowsArm64Binaries $arm64Dir

@@ -27,6 +27,7 @@ import (
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/x/imagegen/manifest"
+	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
 // Client wraps an MLX runner subprocess to implement llm.LlamaServer for LLM models.
@@ -323,6 +324,10 @@ func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo
 	// Spawn subprocess: ollama runner --mlx-engine --model <name> --port <port>
 	cmd := exec.Command(exe, "runner", "--mlx-engine", "--model", c.modelName, "--port", strconv.Itoa(port))
 	cmd.Env = os.Environ()
+	loadedLibraryPath, err := mlx.LoadedLibraryPath()
+	if err != nil {
+		return nil, fmt.Errorf("unable to determine loaded MLX library path: %w", err)
+	}
 
 	// Set library path environment variable for MLX libraries
 	// Linux: LD_LIBRARY_PATH, Windows: PATH
@@ -335,16 +340,8 @@ func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo
 	}
 
 	if libPathEnvVar != "" {
-		libraryPaths := []string{ml.LibOllamaPath}
-		if mlxDirs, err := filepath.Glob(filepath.Join(ml.LibOllamaPath, "mlx_*")); err == nil {
-			libraryPaths = append(libraryPaths, mlxDirs...)
-		}
-
-		if existingPath, ok := os.LookupEnv(libPathEnvVar); ok {
-			libraryPaths = append(libraryPaths, filepath.SplitList(existingPath)...)
-		}
-
-		pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
+		libraryPaths := mlx.LibraryPathsForLoadedLibrary(ml.LibOllamaPath, loadedLibraryPath)
+		pathEnvVal := libraryPathEnv(libraryPaths, os.Getenv(libPathEnvVar))
 
 		found := false
 		for i := range cmd.Env {
@@ -368,15 +365,10 @@ func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo
 	// MLX resolves headers via $CUDA_PATH/include/*.h (and checks CUDA_HOME first).
 	// Always use bundled headers to avoid version mismatches with any
 	// system-installed CUDA toolkit.
-	if mlxDirs, err := filepath.Glob(filepath.Join(ml.LibOllamaPath, "mlx_cuda_*")); err == nil {
-		for _, d := range mlxDirs {
-			if _, err := os.Stat(filepath.Join(d, "include")); err == nil {
-				setEnv(cmd, "CUDA_PATH", d)
-				setEnv(cmd, "CUDA_HOME", d)
-				slog.Debug("mlx subprocess CUDA headers", "CUDA_PATH", d)
-				break
-			}
-		}
+	if cudaPath, ok := mlx.CUDAToolkitDirForLoadedLibrary(loadedLibraryPath); ok {
+		setEnv(cmd, "CUDA_PATH", cudaPath)
+		setEnv(cmd, "CUDA_HOME", cudaPath)
+		slog.Debug("mlx subprocess CUDA headers", "CUDA_PATH", cudaPath)
 	}
 
 	c.cmd = cmd
@@ -505,4 +497,32 @@ func setEnv(cmd *exec.Cmd, key, value string) {
 		}
 	}
 	cmd.Env = append(cmd.Env, entry)
+}
+
+func libraryPathEnv(preferred []string, existing string) string {
+	var paths []string
+	seen := map[string]bool{}
+	add := func(path string) {
+		if path == "" {
+			return
+		}
+		path = filepath.Clean(path)
+		key := path
+		if runtime.GOOS == "windows" {
+			key = strings.ToUpper(key)
+		}
+		if !seen[key] {
+			seen[key] = true
+			paths = append(paths, path)
+		}
+	}
+
+	for _, path := range preferred {
+		add(path)
+	}
+	for _, path := range filepath.SplitList(existing) {
+		add(path)
+	}
+
+	return strings.Join(paths, string(filepath.ListSeparator))
 }
