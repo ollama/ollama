@@ -55,6 +55,27 @@ ollama launch copilot --model kimi-k2.5:cloud
 
 Cloud models are also available at [ollama.com/search?c=cloud](https://ollama.com/search?c=cloud).
 
+## Remote usage
+
+If you want Copilot CLI to talk to a remote Ollama instance or a remote OpenAI-compatible provider, set the provider URL explicitly:
+
+```shell
+export COPILOT_PROVIDER_BASE_URL=https://remote.example.com/v1
+export COPILOT_PROVIDER_API_KEY=
+export COPILOT_PROVIDER_WIRE_API=responses
+export COPILOT_MODEL=qwen3.5
+copilot
+```
+
+If `COPILOT_PROVIDER_BASE_URL` is not set, `ollama launch copilot` will fall back to `OLLAMA_HOST` and then the local Ollama host.
+
+For example, this points Copilot CLI at a remote Ollama server:
+
+```shell
+export OLLAMA_HOST=https://remote.example.com
+ollama launch copilot --model qwen3.5
+```
+
 ## Non-interactive (headless) mode
 
 Run Copilot CLI without interaction for use in Docker, CI/CD, or scripts:
