@@ -20,7 +20,7 @@ func TestFetchClaudeDesktopModelsUsesAppAwareContract(t *testing.T) {
 			t.Fatalf("app = %q, want claude-desktop", got)
 		}
 		_ = json.NewEncoder(w).Encode(api.ModelRecommendationsResponse{Recommendations: []api.ModelRecommendation{
-			{Model: "glm-5.2:cloud", Description: "GLM", MaxOutputTokens: 131_072, RequiredPlan: "pro"},
+			{Model: "glm-5.2:cloud", Description: "GLM", ContextLength: 1_000_000, MaxOutputTokens: 131_072, RequiredPlan: "pro"},
 			{Model: "deepseek-v4-pro", Description: "DeepSeek", MaxOutputTokens: 65_536, RequiredPlan: "pro"},
 			{Model: "qwen3.8:27b", Description: "Qwen", MaxOutputTokens: 131_072},
 		}})
@@ -48,6 +48,24 @@ func TestFetchClaudeDesktopModelsUsesAppAwareContract(t *testing.T) {
 		if !model.Recommended {
 			t.Fatalf("endpoint model %q was not marked as recommended", model.Name)
 		}
+	}
+	if models[0].ContextLength != 1_000_000 || models[0].gateway.MaxInputTokens != 1_000_000 {
+		t.Fatalf("GLM context metadata = %+v, want 1M", models[0])
+	}
+	if models[1].ContextLength != 0 || models[1].gateway.MaxInputTokens != 0 {
+		t.Fatalf("missing context metadata was advertised: %+v", models[1])
+	}
+}
+
+func TestClaudeDesktopModelsFromRecommendationsDoesNotAdvertiseLocalContext(t *testing.T) {
+	models := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{
+		Model: "million-local", ContextLength: 2_000_000,
+	}})
+	if len(models) != 1 {
+		t.Fatalf("models = %+v, want one local model", models)
+	}
+	if models[0].Cloud || models[0].ContextLength != 0 || models[0].gateway.MaxInputTokens != 0 {
+		t.Fatalf("local context was advertised: %+v", models[0])
 	}
 }
 

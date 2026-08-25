@@ -546,11 +546,11 @@ func preserveClaudeDesktopEntitlements(fallback, previous []proxy.ClaudeDesktopM
 	}
 	for i, model := range models {
 		if prior, ok := known[model.Name]; ok {
-			models[i] = prior
+			models[i] = prior.WithContextLength(0)
 			continue
 		}
 		if prior, ok := known[model.OllamaModel]; ok {
-			models[i] = prior
+			models[i] = prior.WithContextLength(0)
 		}
 	}
 	return models

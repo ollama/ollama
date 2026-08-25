@@ -1177,6 +1177,23 @@ func TestLoadClaudeDesktopModelsFallsBackWithoutMLX(t *testing.T) {
 	}
 }
 
+func TestPreserveClaudeDesktopEntitlementsClearsStaleContext(t *testing.T) {
+	previous := proxy.ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{
+		Model: "glm-5.2:cloud", RequiredPlan: "pro", ContextLength: 1_048_576,
+	}})
+	fallback := proxy.UnverifyClaudeDesktopCloudEntitlements(proxy.DefaultClaudeDesktopModels())
+	models := preserveClaudeDesktopEntitlements(fallback, previous)
+	if len(models) == 0 || models[0].Name != "glm-5.2:cloud" {
+		t.Fatalf("preserved models = %+v", models)
+	}
+	if models[0].RequiredPlan != "pro" {
+		t.Fatalf("required plan = %q, want preserved entitlement", models[0].RequiredPlan)
+	}
+	if models[0].ContextLength != 0 {
+		t.Fatalf("stale context = %d, want capability withdrawn until refresh", models[0].ContextLength)
+	}
+}
+
 func TestResolveClaudeDesktopAccessState(t *testing.T) {
 	tests := []struct {
 		name        string

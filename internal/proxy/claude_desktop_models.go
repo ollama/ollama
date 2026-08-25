@@ -44,6 +44,7 @@ type ClaudeDesktopModel struct {
 	Cloud            bool
 	Recommended      bool
 	AccountCloud     bool
+	ContextLength    int
 	entitlementKnown bool
 	gateway          gatewayModel
 }
@@ -113,10 +114,22 @@ func ClaudeDesktopModelsFromRecommendations(recommendations []api.ModelRecommend
 			recommendation.MaxOutputTokens,
 		)
 		model.Recommended = true
+		model = model.WithContextLength(recommendation.ContextLength)
 		model.entitlementKnown = true
 		models = append(models, model)
 	}
 	return models
+}
+
+// WithContextLength returns a copy that advertises an authoritative cloud
+// input context limit to Claude Desktop. Local context remains unadvertised.
+func (m ClaudeDesktopModel) WithContextLength(contextLength int) ClaudeDesktopModel {
+	if !m.Cloud || contextLength < 0 {
+		contextLength = 0
+	}
+	m.ContextLength = contextLength
+	m.gateway.MaxInputTokens = contextLength
+	return m
 }
 
 // DefaultClaudeDesktopModels is the built-in offline fallback. Keep this list
@@ -139,12 +152,13 @@ func DefaultClaudeDesktopModels() []ClaudeDesktopModel {
 }
 
 // UnverifyClaudeDesktopCloudEntitlements prevents fallback metadata from
-// overriding a catalog that was already refreshed from the server.
+// asserting current plan or context capabilities without a live catalog.
 func UnverifyClaudeDesktopCloudEntitlements(models []ClaudeDesktopModel) []ClaudeDesktopModel {
 	models = cloneClaudeDesktopModels(models)
 	for i := range models {
 		if models[i].Cloud {
 			models[i].entitlementKnown = false
+			models[i] = models[i].WithContextLength(0)
 		}
 	}
 	return models
