@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { Switch } from "@/components/ui/switch";
 import { Text } from "@/components/ui/text";
 import { Input } from "@/components/ui/input";
@@ -115,6 +116,7 @@ export default function Settings() {
     isLoading,
     disconnectUser,
   } = useUser();
+  const navigate = useNavigate();
   const [isAwaitingConnection, setIsAwaitingConnection] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [pollingInterval, setPollingInterval] = useState<number | null>(null);
@@ -396,6 +398,15 @@ export default function Settings() {
     <main className="flex min-h-0 w-full flex-1 flex-col select-none dark:bg-neutral-900">
       <div className="w-full p-6 overflow-y-auto flex-1 overscroll-contain">
         <div className="mx-auto max-w-4xl space-y-4">
+          <button
+            type="button"
+            onClick={() => navigate({ to: "/" })}
+            aria-label="Back to chat"
+            className="inline-flex items-center gap-1 text-sm text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-white transition-colors"
+          >
+            <span aria-hidden="true">←</span>
+            <span>Back to chat</span>
+          </button>
           {/* Connect Ollama Account */}
           <div className="overflow-hidden rounded-xl bg-white dark:bg-neutral-800">
             <div className="p-4">
