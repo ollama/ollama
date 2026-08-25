@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,13 +18,19 @@ type Claude struct{}
 
 func (c *Claude) String() string { return "Claude Code" }
 
-func (c *Claude) args(model string, extra []string) []string {
+func (c *Claude) args(model string, extra []string) ([]string, error) {
 	var args []string
 	if model != "" {
 		args = append(args, "--model", model)
 	}
+
+	settings, err := c.settings(model)
+	if err != nil {
+		return nil, err
+	}
+	args = append(args, "--settings", settings)
 	args = append(args, extra...)
-	return args
+	return args, nil
 }
 
 func (c *Claude) findPath() (string, error) {
@@ -55,7 +62,12 @@ func (c *Claude) Run(model string, _ []LaunchModel, args []string) error {
 		return err
 	}
 
-	cmd := exec.Command(claudePath, c.args(model, args)...)
+	claudeArgs, err := c.args(model, args)
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.Command(claudePath, claudeArgs...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -74,10 +86,35 @@ func (c *Claude) envVars(model string) []string {
 		"DISABLE_ERROR_REPORTING=1",
 		"DISABLE_FEEDBACK_COMMAND=1",
 		"CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1",
+		"CLAUDE_CODE_USE_BEDROCK=",
+		"CLAUDE_CODE_USE_VERTEX=",
+		"CLAUDE_CODE_USE_FOUNDRY=",
+		"CLAUDE_CODE_USE_MANTLE=",
 	}
 
 	env = append(env, c.modelEnvVars(model)...)
 	return env
+}
+
+// settings returns command-line settings for Claude Code. Claude Code gives
+// these settings precedence over the user's settings.json, which can otherwise
+// override the routing environment inherited from Ollama.
+func (c *Claude) settings(model string) (string, error) {
+	env := make(map[string]string)
+	for _, entry := range c.envVars(model) {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			env[key] = value
+		}
+	}
+
+	data, err := json.Marshal(struct {
+		Env map[string]string `json:"env"`
+	}{Env: env})
+	if err != nil {
+		return "", fmt.Errorf("failed to encode Claude Code settings: %w", err)
+	}
+	return string(data), nil
 }
 
 func ensureClaudeInstalled() (string, error) {
