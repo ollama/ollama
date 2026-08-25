@@ -157,6 +157,7 @@
             "group": "Assistants",
             "expanded": true,
             "pages": [
+              "/integrations/claude-desktop",
               "/integrations/openclaw",
               "/integrations/hermes",
               "/integrations/hermes-desktop"
