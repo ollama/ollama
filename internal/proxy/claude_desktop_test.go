@@ -1319,6 +1319,16 @@ func TestGatewayLazilyRetriesUnsupportedVision(t *testing.T) {
 			body:     `{"model":"glm-5.2:cloud","messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}},{"type":"text","text":"what dis"}]},{"role":"assistant","content":[{"type":"text","text":"I cannot inspect it"}]},{"role":"user","content":[{"type":"text","text":"kk"}]}]}`,
 			preserve: "kk",
 		},
+		{
+			name:     "string message history",
+			body:     `{"model":"glm-5.2:cloud","messages":[{"role":"user","content":"plain history"},{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}},{"type":"text","text":"what dis"}]}]}`,
+			preserve: "plain history",
+		},
+		{
+			name:     "string tool result history",
+			body:     `{"model":"glm-5.2:cloud","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool_1","content":"plain tool output"}]},{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}},{"type":"text","text":"what dis"}]}]}`,
+			preserve: "plain tool output",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var upstreamBodies [][]byte
@@ -1360,6 +1370,13 @@ func TestGatewayLazilyRetriesUnsupportedVision(t *testing.T) {
 				t.Fatalf("sanitized fallback body = %s", upstreamBodies[1])
 			}
 		})
+	}
+}
+
+func TestReplaceImagesInContentRejectsUnsupportedShape(t *testing.T) {
+	_, _, err := replaceImagesInContent(json.RawMessage(`{"type":"text","text":"not a content array"}`))
+	if err == nil {
+		t.Fatal("expected unsupported content shape to fail")
 	}
 }
 

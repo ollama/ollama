@@ -900,6 +900,10 @@ func replaceUnsupportedImages(payload map[string]json.RawMessage) (bool, error) 
 func replaceImagesInContent(content json.RawMessage) (json.RawMessage, bool, error) {
 	var blocks []json.RawMessage
 	if err := json.Unmarshal(content, &blocks); err != nil {
+		var text string
+		if json.Unmarshal(content, &text) == nil {
+			return content, false, nil
+		}
 		return content, false, fmt.Errorf("decode Claude content for image fallback: %w", err)
 	}
 
