@@ -172,12 +172,8 @@ func qsaSparseAttention(q *mlx.Array, history *nn.KVHistory, indices, valid *mlx
 	kvHeads := cfg.NumKeyValueHeads
 	repeats := queryHeads / kvHeads
 
-	// The model is single-sequence today (PLE and every cache enforce B=1).
-	k := mlx.Squeeze(history.K(), 0)
-	v := mlx.Squeeze(history.V(), 0)
-	logical := mlx.Squeeze(indices, 0)
-	k = mlx.ExpandDims(mlx.Take(k, logical, 1), 0)
-	v = mlx.ExpandDims(mlx.Take(v, logical, 1), 0)
+	k := qsaGatherHistory(history.K(), indices)
+	v := qsaGatherHistory(history.V(), indices)
 
 	qr := mlx.Reshape(q, B, kvHeads, repeats, L, 1, D)
 	kr := mlx.Transpose(mlx.ExpandDims(k, 2), 0, 1, 2, 3, 5, 4)
@@ -192,4 +188,17 @@ func qsaSparseAttention(q *mlx.Array, history *nn.KVHistory, indices, valid *mlx
 	out := mlx.Matmul(mlx.ExpandDims(probs, 4), vr)
 	out = mlx.Squeeze(out, 4)
 	return mlx.Reshape(out, B, queryHeads, L, D).AsType(outputType)
+}
+
+// qsaGatherHistory selects each batch row's logical token indices from a
+// [B, H, K, D] cache history and returns [B, H, L, S, D].
+func qsaGatherHistory(history, indices *mlx.Array) *mlx.Array {
+	B, H, K, D := int32(history.Dim(0)), int32(history.Dim(1)), int32(history.Dim(2)), int32(history.Dim(3))
+	offsets := make([]int32, B)
+	for i := range offsets {
+		offsets[i] = int32(i) * K
+	}
+	logical := mlx.Add(indices, mlx.FromValues(offsets, int(B), 1, 1))
+	flattened := mlx.Reshape(mlx.Transpose(history, 1, 0, 2, 3), H, B*K, D)
+	return mlx.Transpose(mlx.Take(flattened, logical, 1), 1, 0, 2, 3, 4)
 }

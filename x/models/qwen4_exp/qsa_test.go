@@ -100,3 +100,26 @@ func TestQSASparseAttentionIgnoresInvalidRows(t *testing.T) {
 		t.Fatalf("sparse attention = %v, want %v", got, want)
 	}
 }
+
+func TestQSASparseAttentionKeepsBatchRowsIndependent(t *testing.T) {
+	mlxtest.Setup(t)
+	cfg := &Config{NumKeyValueHeads: 1, Scale: 1}
+	q := mlx.FromValues([]float32{1, 0, 1, 0}, 2, 1, 1, 2)
+	k := mlx.FromValues([]float32{
+		1, 0, 0, 1,
+		1, 0, 0, 1,
+	}, 2, 1, 2, 2)
+	v := mlx.FromValues([]float32{
+		10, 1, 20, 2,
+		30, 3, 40, 4,
+	}, 2, 1, 2, 2)
+	indices := mlx.FromValues([]int32{0, 1}, 2, 1, 1)
+	valid := mlx.FromValues([]bool{true, true}, 2, 1, 1)
+
+	out := qsaSparseAttention(q, nn.NewKVHistory(k, v, nil), indices, valid, cfg)
+	out = out.AsType(mlx.DTypeFloat32)
+	mlx.Eval(out)
+	if got, want := out.Floats(), []float32{10, 1, 40, 4}; !slices.Equal(got, want) {
+		t.Fatalf("sparse attention = %v, want %v", got, want)
+	}
+}

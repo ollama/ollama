@@ -66,9 +66,6 @@ func (a *linearAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, c
 func (a *fullAttention) Forward(x *mlx.Array, b *batch.Batch, c, side cache.Cache, positions, ropePositions *mlx.Array, cfg *Config) *mlx.Array {
 	dims := x.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
-	if B != 1 {
-		panic("QSA requires a single sequence")
-	}
 
 	qg := mlx.Reshape(a.QProj.Forward(x), B, L, cfg.NumAttentionHeads, cfg.HeadDim*2)
 	q := mlx.SliceStartStop(qg, []int32{0, 0, 0, 0}, []int32{B, L, cfg.NumAttentionHeads, cfg.HeadDim})
@@ -114,10 +111,14 @@ func (a *fullAttention) Forward(x *mlx.Array, b *batch.Batch, c, side cache.Cach
 	}
 
 	var out *mlx.Array
+	keyLength := L
+	for _, offset := range b.SeqOffsets {
+		keyLength = max(keyLength, offset+L)
+	}
 	if mainHistory == nil {
 		out = nn.ScaledDotProductAttention(b, q, cfg.Scale,
 			nn.WithKV(k, v, b.SeqQueryLens), nn.WithMask(nn.CausalMask()))
-	} else if mainHistory.K().Dim(2) <= int(cfg.IndexerBudget) {
+	} else if keyLength <= cfg.IndexerBudget {
 		// QSA selects the entire visible history within the indexer budget.
 		out = nn.ScaledDotProductAttention(b, q, cfg.Scale,
 			nn.WithKVHistory(mainHistory), nn.WithMask(nn.CausalMask()))
@@ -125,7 +126,7 @@ func (a *fullAttention) Forward(x *mlx.Array, b *batch.Batch, c, side cache.Cach
 		compressed := qsaCompressedKeys(indexHistory.K(), indexHistory.V(), a.Indexer, cfg)
 		scores := mlx.Matmul(indexQ.AsType(mlx.DTypeFloat32), mlx.Transpose(compressed.AsType(mlx.DTypeFloat32), 0, 1, 3, 2))
 		scores = mlx.DivScalar(mlx.Sum(mlx.ReLU(scores), 1, false), float32(math.Sqrt(float64(cfg.IndexerHeadDim))))
-		logical, valid := qsaLogicalIndices(scores, b, int32(mainHistory.K().Dim(2)), cfg)
+		logical, valid := qsaLogicalIndices(scores, b, keyLength, cfg)
 		out = qsaSparseAttention(q, mainHistory, logical, valid, cfg)
 	}
 	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), B, L, cfg.NumAttentionHeads*cfg.HeadDim)
