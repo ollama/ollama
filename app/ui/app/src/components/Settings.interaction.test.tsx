@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   updateCloudSetting: vi.fn(),
   setShowAppsInMenu: vi.fn(),
   refetchUser: vi.fn(),
+  isWindows: false,
   queryClient: {
     cancelQueries: vi.fn().mockResolvedValue(undefined),
     getQueryData: vi.fn(),
@@ -54,7 +55,7 @@ vi.mock("@/hooks/useCloudStatus", () => ({
 }));
 
 vi.mock("@/lib/platform", () => ({
-  isWindowsPlatform: () => false,
+  isWindowsPlatform: () => mocks.isWindows,
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -142,6 +143,7 @@ function deferred<T>() {
 describe("Settings reset interactions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.isWindows = false;
     mocks.settings = new SettingsType({ ContextLength: 65_536 });
     mocks.updateSettings.mockResolvedValue({ settings: mocks.settings });
     mocks.updateCloudSetting.mockResolvedValue({
@@ -219,6 +221,40 @@ describe("Settings reset interactions", () => {
 
       expect(renderer!.root.findByType("fieldset").props.disabled).toBe(false);
       expect(renderer!.root.findAllByType(Badge)).toHaveLength(1);
+    } finally {
+      await act(async () => {
+        renderer?.unmount();
+        await Promise.resolve();
+      });
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("hides Claude Desktop settings and skips its reset on Windows", async () => {
+    mocks.isWindows = true;
+
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(<Settings />);
+        await Promise.resolve();
+      });
+
+      expect(
+        renderer!.root.findAllByProps({ "aria-label": "Claude settings" }),
+      ).toHaveLength(0);
+
+      const resetButton = renderer!.root
+        .findAllByType("button")
+        .find((button) => textContent(button).includes("Reset to defaults"));
+      if (!resetButton) throw new Error("Reset button not found");
+
+      await act(async () => {
+        resetButton.props.onClick();
+        await vi.waitFor(() => expect(mocks.updateSettings).toHaveBeenCalled());
+      });
+
+      expect(mocks.resetClaudeMappings).not.toHaveBeenCalled();
     } finally {
       await act(async () => {
         renderer?.unmount();

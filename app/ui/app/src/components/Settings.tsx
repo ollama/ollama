@@ -759,13 +759,15 @@ export default function Settings() {
             </div>
           </div>
 
-          <ClaudeDesktopModelsSettings
-            ref={claudeModelsSettingsRef}
-            includeCloudModels={
-              isAuthenticated && cloudStatusKnown && !cloudDisabled
-            }
-            onDraftChange={setHasClaudeDraftChanges}
-          />
+          {!isWindows && (
+            <ClaudeDesktopModelsSettings
+              ref={claudeModelsSettingsRef}
+              includeCloudModels={
+                isAuthenticated && cloudStatusKnown && !cloudDisabled
+              }
+              onDraftChange={setHasClaudeDraftChanges}
+            />
+          )}
 
           {/* Agent Mode */}
           {window.OLLAMA_TOOLS && (
