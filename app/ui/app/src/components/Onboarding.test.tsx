@@ -157,6 +157,112 @@ describe("Onboarding", () => {
     }
   });
 
+  it("keeps the Claude switch on and busy through installer detection", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+
+    const disconnectedStatus = {
+      supported: true,
+      used: false,
+      installed: false,
+      configured: false,
+      connected: false,
+      running: false,
+      startFailed: false,
+      portConflict: false,
+    };
+    let finishInstall!: (result: "opened") => void;
+    const install = new Promise<"opened">((resolve) => {
+      finishInstall = resolve;
+    });
+
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    vi.stubGlobal("window", {
+      OLLAMA_PLATFORM: "darwin",
+      innerHeight: 660,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      setTimeout: globalThis.setTimeout,
+      clearTimeout: globalThis.clearTimeout,
+      setInterval: globalThis.setInterval,
+      clearInterval: globalThis.clearInterval,
+      getClaudeDesktopConnectionSummary: vi
+        .fn()
+        .mockResolvedValue(disconnectedStatus),
+      setClaudeDesktopConnected: vi.fn(),
+      installClaudeDesktop: vi.fn().mockReturnValue(install),
+    });
+
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <ConnectAppsScreen
+            initialClaudeStatus={disconnectedStatus}
+            initialIntegrations={[
+              {
+                id: "claude-desktop",
+                name: "Claude",
+                description: "Use Ollama models in Claude Desktop",
+                installed: false,
+                action: "connect",
+              },
+            ]}
+          />,
+        );
+        await Promise.resolve();
+      });
+
+      const claudeSwitch = () => renderer!.root.findByProps({ role: "switch" });
+      let clickResult!: Promise<void>;
+      await act(async () => {
+        clickResult = claudeSwitch().props.onClick();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(claudeSwitch().props["aria-checked"]).toBe(true);
+      expect(claudeSwitch().props["aria-busy"]).toBe(true);
+      expect(claudeSwitch().props.disabled).toBe(true);
+      expect(claudeSwitch().props.className).toContain("disabled:opacity-50");
+      expect(renderer.root.findByProps({ role: "status" }).children).toContain(
+        "Downloading…",
+      );
+      expect(
+        renderer.root.findAll(
+          (node) =>
+            typeof node.props.className === "string" &&
+            node.props.className.includes("animate-spin"),
+        ),
+      ).not.toHaveLength(0);
+
+      await act(async () => {
+        finishInstall("opened");
+        await clickResult;
+        await Promise.resolve();
+      });
+
+      expect(claudeSwitch().props["aria-checked"]).toBe(true);
+      expect(claudeSwitch().props["aria-busy"]).toBe(true);
+      expect(claudeSwitch().props.disabled).toBe(true);
+      expect(claudeSwitch().props.className).toContain("disabled:opacity-50");
+      expect(renderer.root.findByProps({ role: "status" }).children).toContain(
+        "Finish installing…",
+      );
+      expect(
+        renderer.root.findAll(
+          (node) =>
+            typeof node.props.className === "string" &&
+            node.props.className.includes("animate-spin"),
+        ),
+      ).not.toHaveLength(0);
+    } finally {
+      if (renderer) {
+        act(() => renderer?.unmount());
+      }
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("preserves a late native error after the Connect Apps action times out", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
