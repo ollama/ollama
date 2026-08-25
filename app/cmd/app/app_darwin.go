@@ -1106,16 +1106,6 @@ func claudeDesktopConnectionSummary(used bool) claudeDesktopStatus {
 }
 
 func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
-	return getClaudeDesktopConnectionStatusWithAccessResolver(claudeAccessStateResolver)
-}
-
-func getClaudeDesktopResetStatus() claudeDesktopStatus {
-	return getClaudeDesktopConnectionStatusWithAccessResolver(resolveClaudeDesktopAccessStateWithRetry)
-}
-
-func getClaudeDesktopConnectionStatusWithAccessResolver(
-	accessResolver func(context.Context) (proxy.ClaudeDesktopAccessState, error),
-) claudeDesktopStatus {
 	used := hasUsedClaudeDesktopIntegration()
 	var availableModels, selectedModels []proxy.ClaudeDesktopModel
 	var modelSource string
@@ -1123,13 +1113,13 @@ func getClaudeDesktopConnectionStatusWithAccessResolver(
 		Cloud:   proxy.ClaudeDesktopCloudUnknown,
 		Account: proxy.ClaudeDesktopAccountUnknown,
 	}
-	var accessErr error
 	if used {
 		claudeProxyMu.Lock()
 		gateway := claudeAppProxy
 		cachedCatalogHasCloud := hasCloudClaudeDesktopModel(claudeAvailableModels)
 		claudeProxyMu.Unlock()
-		accessState, accessErr = accessResolver(context.Background())
+		var accessErr error
+		accessState, accessErr = claudeAccessStateResolver(context.Background())
 		if accessErr != nil {
 			slog.Debug("could not resolve Claude model access for Settings", "error", accessErr)
 		}
@@ -1190,38 +1180,19 @@ func getClaudeDesktopConnectionStatusWithAccessResolver(
 		})
 	}
 	mappedModels := proxy.ClaudeDesktopMappings(selectedModels)
-	var defaultMappedModels map[string]string
-	defaultMappingsComplete := false
-	if accessErr == nil {
-		if fullDefaultAccess, accountTierKnown := claudeDesktopDefaultAccessTier(accessState); accountTierKnown {
-			defaultMappedModels = proxy.DefaultClaudeDesktopMappingsForModels(
-				availableModels,
-				fullDefaultAccess,
-			)
-			defaultMappingsComplete = claudeDesktopDefaultMappingsComplete(defaultMappedModels, fullDefaultAccess)
-			if !defaultMappingsComplete {
-				slog.Debug("could not resolve every Claude mapping default", "full_access", fullDefaultAccess, "resolved", len(defaultMappedModels))
-			}
-		}
-	}
-	if defaultMappingsComplete && len(launch.ClaudeDesktopModels()) == 0 {
-		mappedModels = defaultMappedModels
+	if len(launch.ClaudeDesktopModels()) == 0 {
+		mappedModels = proxy.DefaultClaudeDesktopMappingsForModels(
+			availableModels,
+			claudeDesktopHasFullDefaultAccess(accessState),
+		)
 	}
 	mappingStatuses := make([]claudeDesktopMappingStatus, 0, proxy.MaxClaudeDesktopModels)
-	defaultMappingStatuses := make([]claudeDesktopMappingStatus, 0, proxy.MaxClaudeDesktopModels)
 	for _, route := range proxy.ClaudeDesktopRoutes() {
 		mappingStatuses = append(mappingStatuses, claudeDesktopMappingStatus{
 			RouteID:   route.ID,
 			RouteName: route.DisplayName,
 			Model:     mappedModels[route.ID],
 		})
-		if defaultMappingsComplete {
-			defaultMappingStatuses = append(defaultMappingStatuses, claudeDesktopMappingStatus{
-				RouteID:   route.ID,
-				RouteName: route.DisplayName,
-				Model:     defaultMappedModels[route.ID],
-			})
-		}
 	}
 
 	status := claudeDesktopConnectionSummary(used)
@@ -1230,7 +1201,6 @@ func getClaudeDesktopConnectionStatusWithAccessResolver(
 	status.ModelSource = modelSource
 	status.Models = modelStatuses
 	status.Mappings = mappingStatuses
-	status.DefaultMappings = defaultMappingStatuses
 	if status.Error == "" && autoModeErr != nil {
 		status.Error = autoModeErr.Error()
 	}
@@ -1264,6 +1234,26 @@ func claudeDesktopDefaultMappingsComplete(mappings map[string]string, fullAccess
 		}
 	}
 	return true
+}
+
+func resolveClaudeDesktopDefaultMappings(ctx context.Context) (map[string]string, error) {
+	state, err := resolveClaudeDesktopAccessStateWithRetry(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve Claude model access: %w", err)
+	}
+	if state.Cloud != proxy.ClaudeDesktopCloudOn {
+		return nil, errors.New("Claude model mapping defaults require Cloud to be enabled")
+	}
+	fullAccess, known := claudeDesktopDefaultAccessTier(state)
+	if !known {
+		return nil, errors.New("Claude model mapping defaults require a signed-in account")
+	}
+	available, _ := claudeModelsLoader(ctx)
+	mappings := proxy.DefaultClaudeDesktopMappingsForModels(available, fullAccess)
+	if !claudeDesktopDefaultMappingsComplete(mappings, fullAccess) {
+		return nil, errors.New("could not resolve every Claude model mapping default")
+	}
+	return mappings, nil
 }
 
 func setClaudeDesktopConnection(enabled, restartConfirmed bool) error {
@@ -1324,14 +1314,30 @@ func setClaudeDesktopAutoMode(enabled, restartConfirmed bool) error {
 }
 
 func applyClaudeDesktopMappings(mappings map[string]string, restartConfirmed bool) (bool, error) {
-	return applyClaudeDesktopMappingsWithOptions(mappings, restartConfirmed, true, true)
+	return applyClaudeDesktopMappingsWithOpen(mappings, restartConfirmed, true)
 }
 
-func resetClaudeDesktopMappings(mappings map[string]string, restartConfirmed bool) (bool, error) {
-	return applyClaudeDesktopMappingsWithOptions(mappings, restartConfirmed, false, claudeDesktop.UsesOllamaGateway())
+func resetClaudeDesktopMappings(restartConfirmed bool) (bool, error) {
+	if !hasUsedClaudeDesktopIntegration() {
+		return false, nil
+	}
+	mappings, err := resolveClaudeDesktopDefaultMappings(context.Background())
+	if err != nil {
+		return false, err
+	}
+	if !claudeDesktop.UsesOllamaGateway() {
+		if maps.Equal(launch.ClaudeDesktopModelMappings(), mappings) {
+			return false, nil
+		}
+		if err := launch.SaveClaudeDesktopModelMappings(mappings); err != nil {
+			return false, fmt.Errorf("save Claude Desktop model mappings: %w", err)
+		}
+		return true, nil
+	}
+	return applyClaudeDesktopMappingsWithOpen(mappings, restartConfirmed, false)
 }
 
-func applyClaudeDesktopMappingsWithOptions(mappings map[string]string, restartConfirmed, openWhenStopped, activateIntegration bool) (bool, error) {
+func applyClaudeDesktopMappingsWithOpen(mappings map[string]string, restartConfirmed, openWhenStopped bool) (bool, error) {
 	if !claudeDesktopInstalled() {
 		return false, errors.New("Claude Desktop is not installed")
 	}
@@ -1405,15 +1411,6 @@ func applyClaudeDesktopMappingsWithOptions(mappings map[string]string, restartCo
 	// to repair its profile and launch Claude.
 	if !mappingsChanged && claudeDesktop.Running() {
 		return false, nil
-	}
-	if !activateIntegration {
-		if !mappingsChanged {
-			return false, nil
-		}
-		if err := launch.SaveClaudeDesktopModelMappings(normalized); err != nil {
-			return false, fmt.Errorf("save Claude Desktop model mappings: %w", err)
-		}
-		return true, nil
 	}
 	restoreState := func() error {
 		var rollbackErr error

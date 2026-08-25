@@ -29,7 +29,6 @@ function testStatus(model = "glm-5.2:cloud", running = false) {
     autoMode: false,
     modelSource: "user" as const,
     mappings: [{ ...fableRoute, model }],
-    defaultMappings: [{ ...fableRoute, model: "glm-5.2:cloud" }],
     models: [
       {
         name: "glm-5.2:cloud",
@@ -450,7 +449,6 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
       focus() {}
     }
     const currentStatus = testStatus("kimi-k3:cloud", true);
-    const getResetStatus = vi.fn().mockResolvedValue(currentStatus);
     const resetMappings = vi.fn().mockResolvedValue({
       status: currentStatus,
       restartConfirmationRequired: true,
@@ -460,7 +458,6 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
       HTMLElement: TestHTMLElement,
-      getClaudeDesktopResetStatus: getResetStatus,
       resetClaudeDesktopMappings: resetMappings,
       confirm,
     });
@@ -492,10 +489,7 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
 
       expect(resetSucceeded).toBe(false);
       expect(confirm).toHaveBeenCalledOnce();
-      expect(resetMappings).toHaveBeenCalledWith(
-        { "claude-fable-5": "glm-5.2:cloud" },
-        false,
-      );
+      expect(resetMappings).toHaveBeenCalledWith(false);
       const picker = renderer!.root.findByProps({
         "aria-label": "Ollama model for Fable 5",
       });
@@ -511,7 +505,7 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
     }
   });
 
-  it("resets sparse mappings to the defaults for the current account", async () => {
+  it("applies the native reset result and shows progress", async () => {
     class TestHTMLElement {
       focus() {}
     }
@@ -525,17 +519,10 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
           model: "kimi-k3:cloud",
         },
       ],
-      defaultMappings: [
-        { ...fableRoute, model: "kimi-k3:cloud" },
-        {
-          routeId: "claude-sonnet-5",
-          routeName: "Sonnet 5",
-        },
-      ],
     };
-    const refreshedStatus = {
+    const resetStatus = {
       ...initialStatus,
-      defaultMappings: [
+      mappings: [
         { ...fableRoute },
         {
           routeId: "claude-sonnet-5",
@@ -544,25 +531,19 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
         },
       ],
     };
-    let resolveResetStatus!: (status: typeof refreshedStatus) => void;
-    const resetStatus = new Promise<typeof refreshedStatus>((resolve) => {
-      resolveResetStatus = resolve;
-    });
-    const getResetStatus = vi.fn(() => resetStatus);
-    const getStatus = vi.fn();
-    const resetMappings = vi.fn().mockResolvedValue({
-      status: {
-        ...refreshedStatus,
-        mappings: refreshedStatus.defaultMappings,
-      },
+    const resetResult = {
+      status: resetStatus,
       mappingsApplied: true,
+    };
+    let resolveReset!: (result: typeof resetResult) => void;
+    const resetRequestResult = new Promise<typeof resetResult>((resolve) => {
+      resolveReset = resolve;
     });
+    const resetMappings = vi.fn(() => resetRequestResult);
     vi.stubGlobal("window", {
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
       HTMLElement: TestHTMLElement,
-      getClaudeDesktopStatus: getStatus,
-      getClaudeDesktopResetStatus: getResetStatus,
       resetClaudeDesktopMappings: resetMappings,
     });
     vi.stubGlobal("document", {
@@ -594,19 +575,14 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
       expect(actionButton(renderer!).props.disabled).toBe(true);
       expect(textContent(actionButton(renderer!))).toContain("Resetting…");
 
-      resolveResetStatus(refreshedStatus);
+      resolveReset(resetResult);
       let resetSucceeded = false;
       await act(async () => {
         resetSucceeded = (await resetRequest) ?? false;
       });
 
       expect(resetSucceeded).toBe(true);
-      expect(getResetStatus).toHaveBeenCalledTimes(1);
-      expect(getStatus).not.toHaveBeenCalled();
-      expect(resetMappings).toHaveBeenCalledWith(
-        { "claude-sonnet-5": "glm-5.2:cloud" },
-        false,
-      );
+      expect(resetMappings).toHaveBeenCalledWith(false);
 
       const fable = renderer!.root.findByProps({
         "aria-label": "Ollama model for Fable 5",

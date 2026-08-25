@@ -120,9 +120,7 @@ export default function Settings() {
   const [hasClaudeDraftChanges, setHasClaudeDraftChanges] = useState(false);
   const claudeModelsSettingsRef =
     useRef<ClaudeDesktopModelsSettingsHandle>(null);
-  const resetInFlightRef = useRef(false);
   const savedConfirmationTimeoutRef = useRef<number | null>(null);
-  const restartMessageTimeoutRef = useRef<number | null>(null);
   useBlocker({
     shouldBlockFn: () =>
       !window.confirm("Discard unapplied Claude routing changes?"),
@@ -148,7 +146,7 @@ export default function Settings() {
     isKnown: cloudStatusKnown,
   } = useCloudStatus();
 
-  const displaySavedConfirmation = useCallback(() => {
+  const showSavedConfirmation = useCallback(() => {
     if (savedConfirmationTimeoutRef.current !== null) {
       window.clearTimeout(savedConfirmationTimeoutRef.current);
     }
@@ -159,32 +157,10 @@ export default function Settings() {
     }, savedConfirmationDuration);
   }, []);
 
-  const showSavedConfirmation = useCallback(() => {
-    if (!resetInFlightRef.current) {
-      displaySavedConfirmation();
-    }
-  }, [displaySavedConfirmation]);
-
-  const clearSavedIndicators = useCallback(() => {
-    if (savedConfirmationTimeoutRef.current !== null) {
-      window.clearTimeout(savedConfirmationTimeoutRef.current);
-      savedConfirmationTimeoutRef.current = null;
-    }
-    if (restartMessageTimeoutRef.current !== null) {
-      window.clearTimeout(restartMessageTimeoutRef.current);
-      restartMessageTimeoutRef.current = null;
-    }
-    setShowSaved(false);
-    setRestartMessage(false);
-  }, []);
-
   useEffect(
     () => () => {
       if (savedConfirmationTimeoutRef.current !== null) {
         window.clearTimeout(savedConfirmationTimeoutRef.current);
-      }
-      if (restartMessageTimeoutRef.current !== null) {
-        window.clearTimeout(restartMessageTimeoutRef.current);
       }
     },
     [],
@@ -334,15 +310,12 @@ export default function Settings() {
 
         // If context length is being changed, show restart message
         if (field === "ContextLength" && value !== settings.ContextLength) {
-          if (restartMessageTimeoutRef.current !== null) {
-            window.clearTimeout(restartMessageTimeoutRef.current);
-          }
           setRestartMessage(true);
           // Hide restart message after 3 seconds
-          restartMessageTimeoutRef.current = window.setTimeout(() => {
-            setRestartMessage(false);
-            restartMessageTimeoutRef.current = null;
-          }, savedConfirmationDuration);
+          window.setTimeout(
+            () => setRestartMessage(false),
+            savedConfirmationDuration,
+          );
         }
 
         updateSettingsMutation.mutate(updatedSettings, {
@@ -391,9 +364,13 @@ export default function Settings() {
     const cloudSource = cloudStatus?.source;
     if (!settings || resettingToDefaults || !cloudSource) return;
 
-    resetInFlightRef.current = true;
     setResettingToDefaults(true);
-    clearSavedIndicators();
+    if (savedConfirmationTimeoutRef.current !== null) {
+      window.clearTimeout(savedConfirmationTimeoutRef.current);
+      savedConfirmationTimeoutRef.current = null;
+    }
+    setShowSaved(false);
+    setRestartMessage(false);
     setResetError(null);
     try {
       await applySettingsDefaults({
@@ -405,7 +382,7 @@ export default function Settings() {
           (await claudeModelsSettingsRef.current?.resetToDefaults()) ?? true,
         currentSettings: settings,
         cloudSource,
-        onSaved: displaySavedConfirmation,
+        onSaved: showSavedConfirmation,
       });
     } catch (error) {
       console.error("Failed to reset settings:", error);
@@ -413,7 +390,6 @@ export default function Settings() {
         "Ollama could not reset every setting. Check the settings above and try again.",
       );
     } finally {
-      resetInFlightRef.current = false;
       setResettingToDefaults(false);
     }
   };

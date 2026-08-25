@@ -300,9 +300,7 @@ export const ClaudeDesktopModelsSettings = forwardRef<
   const draftRef = useRef({ mappings, savedMappings });
   const statusRequestRef = useRef(0);
   const operationInFlightRef = useRef(false);
-  const statusRef = useRef(status);
   draftRef.current = { mappings, savedMappings };
-  statusRef.current = status;
 
   const applyStatus = useCallback(
     (next: ClaudeDesktopStatus, preserveDraft = false) => {
@@ -414,26 +412,13 @@ export const ClaudeDesktopModelsSettings = forwardRef<
     );
   };
 
-  const runMappingApply = useCallback(
+  const runMappingAction = useCallback(
     async (
-      nextMappings: ClaudeDesktopMappingStatus[],
-      applyMappings: (
-        mappings: Record<string, string>,
-        restartConfirmed: boolean,
-      ) => Promise<ClaudeDesktopActionResult>,
-      refreshedStatus?: ClaudeDesktopStatus,
+      action: (restartConfirmed: boolean) => Promise<ClaudeDesktopActionResult>,
+      failureMessage: string,
     ): Promise<boolean> => {
-      const mappingsToApply = mappingRecord(nextMappings);
-      if (Object.keys(mappingsToApply).length === 0) {
-        setError("Choose at least one Ollama model for Claude.");
-        return false;
-      }
-
-      if (refreshedStatus) {
-        applyStatus(refreshedStatus, true);
-      }
       try {
-        let result = await applyMappings(mappingsToApply, false);
+        let result = await action(false);
         if (result.restartConfirmationRequired) {
           applyStatus(result.status, true);
           if (
@@ -443,7 +428,7 @@ export const ClaudeDesktopModelsSettings = forwardRef<
           ) {
             return false;
           }
-          result = await applyMappings(mappingsToApply, true);
+          result = await action(true);
         }
         ++statusRequestRef.current;
         if (result.error) {
@@ -454,43 +439,16 @@ export const ClaudeDesktopModelsSettings = forwardRef<
         applyStatus(result.status);
         return true;
       } catch {
-        setError("Ollama could not apply the Claude model mappings.");
+        setError(failureMessage);
         return false;
       }
     },
     [applyStatus],
   );
 
-  const persistMappings = useCallback(
-    async (nextMappings: ClaudeDesktopMappingStatus[]): Promise<boolean> => {
-      if (!window.applyClaudeDesktopMappings) {
-        setError(
-          "Claude routing settings are available in the Ollama macOS app.",
-        );
-        return false;
-      }
-      if (operationInFlightRef.current) return false;
-
-      setApplying(true);
-      setError(null);
-      operationInFlightRef.current = true;
-      ++statusRequestRef.current;
-      try {
-        return await runMappingApply(
-          nextMappings,
-          window.applyClaudeDesktopMappings,
-        );
-      } finally {
-        ++statusRequestRef.current;
-        operationInFlightRef.current = false;
-        setApplying(false);
-      }
-    },
-    [runMappingApply],
-  );
-
   const applyChanges = async () => {
-    if (!window.applyClaudeDesktopMappings) {
+    const applyMappings = window.applyClaudeDesktopMappings;
+    if (!applyMappings) {
       setError(
         "Claude routing settings are available in the Ollama macOS app.",
       );
@@ -504,7 +462,23 @@ export const ClaudeDesktopModelsSettings = forwardRef<
       setError("Choose models available to your account and device.");
       return;
     }
-    await persistMappings(mappings);
+    if (operationInFlightRef.current) return;
+
+    const mappingsToApply = mappingRecord(mappings);
+    setApplying(true);
+    setError(null);
+    operationInFlightRef.current = true;
+    ++statusRequestRef.current;
+    try {
+      await runMappingAction(
+        (restartConfirmed) => applyMappings(mappingsToApply, restartConfirmed),
+        "Ollama could not apply the Claude model mappings.",
+      );
+    } finally {
+      ++statusRequestRef.current;
+      operationInFlightRef.current = false;
+      setApplying(false);
+    }
   };
 
   const toggleAutoMode = async (checked: boolean) => {
@@ -545,12 +519,9 @@ export const ClaudeDesktopModelsSettings = forwardRef<
 
   const resetToDefaults = useCallback(async (): Promise<boolean> => {
     if (operationInFlightRef.current) return false;
-    if (statusRef.current && !statusRef.current.used) return true;
 
-    const getResetStatus =
-      window.getClaudeDesktopResetStatus ?? window.getClaudeDesktopStatus;
-    if (!getResetStatus) return true;
-    if (!window.resetClaudeDesktopMappings) {
+    const resetMappings = window.resetClaudeDesktopMappings;
+    if (!resetMappings) {
       setError("Ollama could not reset the Claude model mappings.");
       return false;
     }
@@ -560,26 +531,16 @@ export const ClaudeDesktopModelsSettings = forwardRef<
     operationInFlightRef.current = true;
     ++statusRequestRef.current;
     try {
-      const next = await getResetStatus();
-      if (!next.used) return true;
-      if (!next.defaultMappings?.length) {
-        setError("Ollama could not refresh the Claude mapping defaults.");
-        return false;
-      }
-      return await runMappingApply(
-        next.defaultMappings,
-        window.resetClaudeDesktopMappings,
-        next,
+      return await runMappingAction(
+        resetMappings,
+        "Ollama could not reset the Claude model mappings.",
       );
-    } catch {
-      setError("Ollama could not refresh the Claude mapping defaults.");
-      return false;
     } finally {
       ++statusRequestRef.current;
       operationInFlightRef.current = false;
       setResettingMappings(false);
     }
-  }, [runMappingApply]);
+  }, [runMappingAction]);
 
   useImperativeHandle(ref, () => ({ resetToDefaults }), [resetToDefaults]);
 

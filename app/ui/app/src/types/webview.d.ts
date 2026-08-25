@@ -29,7 +29,6 @@ interface ClaudeDesktopStatus {
   maxModels?: number;
   models?: ClaudeDesktopModelStatus[];
   mappings?: ClaudeDesktopMappingStatus[];
-  defaultMappings?: ClaudeDesktopMappingStatus[];
 }
 
 interface ClaudeDesktopMappingStatus {
@@ -78,7 +77,6 @@ declare global {
     doubleClick?: () => void;
     activateOllama?: () => void;
     getClaudeDesktopStatus?: () => Promise<ClaudeDesktopStatus>;
-    getClaudeDesktopResetStatus?: () => Promise<ClaudeDesktopStatus>;
     getClaudeDesktopConnectionSummary?: () => Promise<ClaudeDesktopStatus>;
     getClaudeDesktopRequestCount?: () => Promise<number>;
     setClaudeDesktopConnected?: (
@@ -95,7 +93,6 @@ declare global {
       restartConfirmed: boolean,
     ) => Promise<ClaudeDesktopActionResult>;
     resetClaudeDesktopMappings?: (
-      mappings: Record<string, string>,
       restartConfirmed: boolean,
     ) => Promise<ClaudeDesktopActionResult>;
     setClaudeDesktopAutoMode?: (

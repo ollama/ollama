@@ -3,7 +3,6 @@ import { forwardRef, useImperativeHandle } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Settings as SettingsType } from "@/gotypes";
 import { Badge } from "./ui/badge";
-import { Slider } from "./ui/slider";
 import Settings from "./Settings";
 
 const mocks = vi.hoisted(() => ({
@@ -166,14 +165,8 @@ describe("Settings reset interactions", () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   });
 
-  it("locks every control and hides stale Saved state until reset succeeds", async () => {
-    const pendingSettingUpdate = deferred<{
-      settings: SettingsType | null;
-    }>();
+  it("locks every control and shows Saved after reset succeeds", async () => {
     const pendingClaudeReset = deferred<boolean>();
-    mocks.updateSettings
-      .mockImplementationOnce(() => pendingSettingUpdate.promise)
-      .mockResolvedValue({ settings: mocks.settings });
     mocks.resetClaudeMappings.mockImplementation(
       () => pendingClaudeReset.promise,
     );
@@ -184,12 +177,6 @@ describe("Settings reset interactions", () => {
         renderer = create(<Settings />);
         await Promise.resolve();
       });
-
-      await act(async () => {
-        renderer!.root.findByType(Slider).props.onChange(32_768);
-        await Promise.resolve();
-      });
-      expect(renderer!.root.findAllByType(Badge)).toHaveLength(1);
 
       const resetButton = renderer!.root
         .findAllByType("button")
@@ -204,12 +191,7 @@ describe("Settings reset interactions", () => {
       const settingsFieldset = renderer!.root.findByType("fieldset");
       expect(settingsFieldset.props.disabled).toBe(true);
       expect(settingsFieldset.props["aria-busy"]).toBe(true);
-      expect(renderer!.root.findAllByType(Badge)).toHaveLength(0);
-
-      await act(async () => {
-        pendingSettingUpdate.resolve({ settings: mocks.settings });
-        await pendingSettingUpdate.promise;
-      });
+      expect(textContent(resetButton)).toContain("Resetting…");
       expect(renderer!.root.findAllByType(Badge)).toHaveLength(0);
 
       await act(async () => {
