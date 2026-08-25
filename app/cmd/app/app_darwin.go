@@ -11,8 +11,10 @@ import "C"
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -61,9 +63,10 @@ const (
 // claudeDesktopController abstracts launch's Claude Desktop profile management
 // so app flows can be tested without probing a live gateway.
 type claudeDesktopController interface {
+	AutodiscoveryConfiguredWithAutoMode(autoMode bool) bool
 	UsesOllamaGateway() bool
-	ConfigureAutodiscovery() error
-	SetInstalledFromDesktop(installed, restart bool) error
+	ConfigureAutodiscoveryWithAutoMode(autoMode bool) error
+	SetInstalledFromDesktopWithAutoMode(installed, restart, autoMode bool) error
 	RestartWithProfileChange(change func() error) error
 	RestoreForShutdown(ctx context.Context) error
 }
@@ -81,6 +84,7 @@ var (
 	claudeDesktop      claudeDesktopController = &launch.ClaudeDesktop{}
 
 	claudeDesktopInstalled        = launch.ClaudeDesktopInstalled
+	claudeDesktopRunning          = launch.ClaudeDesktopRunning
 	claudeProxyListenAddr         = proxy.DefaultClaudeDesktopListenAddr
 	claudeProxyRetryWait          = 750 * time.Millisecond
 	claudeProxyRetryPoll          = 50 * time.Millisecond
@@ -93,11 +97,16 @@ var (
 	claudeRecommendationsEndpoint = func() string {
 		return strings.TrimRight(appui.OllamaDotCom, "/") + "/api/experimental/model-recommendations?app=claude-desktop"
 	}
-	signOllamaData        = ollamaAuth.Sign
-	claudeModelsLoader    = loadClaudeDesktopModels
-	claudeAvailableModels []proxy.ClaudeDesktopModel
-	claudeModelSource     string
-	claudeCatalogUpdated  time.Time
+	claudeCloudModelsClient   = &http.Client{Timeout: 3 * time.Second}
+	claudeCloudModelsEndpoint = func() string {
+		return strings.TrimRight(appui.OllamaDotCom, "/") + "/api/tags"
+	}
+	signOllamaData            = ollamaAuth.Sign
+	claudeModelsLoader        = loadClaudeDesktopModels
+	claudeCloudModelsResolver = currentClaudeDesktopCloudModels
+	claudeAvailableModels     []proxy.ClaudeDesktopModel
+	claudeModelSource         string
+	claudeCatalogUpdated      time.Time
 
 	claudeAccessStateResolver = currentClaudeDesktopAccessState
 	claudeLocalModelsResolver = currentClaudeDesktopLocalModels
@@ -283,7 +292,29 @@ func reconcileClaudeAppProxy() error {
 		stopClaudeAppProxy()
 		return nil
 	}
-	return startClaudeAppProxy()
+	if err := startClaudeAppProxy(); err != nil {
+		return err
+	}
+	return updateClaudeDesktopProfile()
+}
+
+func updateClaudeDesktopProfile() error {
+	autoMode, err := effectiveClaudeDesktopAutoMode(activeClaudeDesktopModels())
+	if err != nil {
+		return err
+	}
+	if claudeDesktop.AutodiscoveryConfiguredWithAutoMode(autoMode) {
+		return nil
+	}
+	// Claude writes settings during shutdown. Do not race that write during
+	// startup reconciliation; explicit settings changes use the restart path.
+	if claudeDesktopRunning() {
+		return nil
+	}
+	if err := claudeDesktop.ConfigureAutodiscoveryWithAutoMode(autoMode); err != nil {
+		return fmt.Errorf("update Claude Desktop profile: %w", err)
+	}
+	return nil
 }
 
 func startClaudeAppProxy() error {
@@ -362,7 +393,40 @@ func resolveClaudeDesktopStartupCatalog(ctx context.Context) (available, selecte
 			return selected, selected, "user"
 		}
 	}
-	return refreshClaudeDesktopCatalog(ctx, nil, true)
+	available, source = claudeModelsLoader(ctx)
+	selectable := available
+	state, err := claudeAccessStateResolver(ctx)
+	if err == nil && state.Cloud == proxy.ClaudeDesktopCloudOn {
+		cloudModels, err := claudeCloudModelsResolver(ctx)
+		if err != nil {
+			slog.Debug("could not load account cloud models for Claude startup", "error", err)
+		} else {
+			available = mergeClaudeDesktopCloudInventory(available, cloudModels, false)
+			if hasExplicitCloudClaudeDesktopModelName(selectedNames) {
+				selectable = mergeClaudeDesktopCloudInventory(available, cloudModels, true)
+			} else {
+				selectable = available
+			}
+		}
+	}
+	selected = proxy.SelectClaudeDesktopModels(selectable, selectedNames)
+	if len(selected) == 0 {
+		selected = available
+	}
+	available = includeSelectedClaudeDesktopModels(available, selected)
+	if len(selectedNames) > 0 {
+		source = "user"
+	}
+	return available, selected, source
+}
+
+func hasExplicitCloudClaudeDesktopModelName(names []string) bool {
+	for _, name := range names {
+		if modelref.HasExplicitCloudSource(name) {
+			return true
+		}
+	}
+	return false
 }
 
 func allClaudeDesktopModelsLocal(selected, installed []string) bool {
@@ -412,10 +476,39 @@ func refreshClaudeDesktopCatalog(ctx context.Context, current []proxy.ClaudeDesk
 	claudeProxyMu.Unlock()
 
 	reloaded := len(available) == 0
+	var cloudInventory []proxy.ClaudeDesktopModel
+	cloudInventoryKnown := false
 	if reloaded {
 		available, source = claudeModelsLoader(ctx)
 		if source == "fallback" && len(previous) > 0 {
 			available = preserveClaudeDesktopEntitlements(available, previous)
+		}
+		state, err := claudeAccessStateResolver(ctx)
+		if err == nil && state.Cloud == proxy.ClaudeDesktopCloudOn {
+			cloudModels, err := claudeCloudModelsResolver(ctx)
+			if err != nil {
+				slog.Debug("could not refresh account cloud models for Claude", "error", err)
+			} else {
+				cloudInventory = cloudModels
+				cloudInventoryKnown = true
+				available = mergeClaudeDesktopCloudInventory(available, cloudInventory, false)
+			}
+		}
+	}
+	// Preserve installed local choices. Preserve cloud choices only when the
+	// refreshed account inventory still contains their exact Ollama route.
+	for _, model := range current {
+		if !model.Cloud {
+			available = includeSelectedClaudeDesktopModels(available, []proxy.ClaudeDesktopModel{model})
+			continue
+		}
+		if cloudInventoryKnown {
+			for _, accountModel := range cloudInventory {
+				if accountModel.Name == model.Name || accountModel.OllamaModel == model.OllamaModel {
+					available = mergeClaudeDesktopCloudInventory(available, []proxy.ClaudeDesktopModel{accountModel}, true)
+					break
+				}
+			}
 		}
 	}
 	selectedNames := launch.ClaudeDesktopModels()
@@ -467,14 +560,92 @@ func loadClaudeDesktopModels(ctx context.Context) ([]proxy.ClaudeDesktopModel, s
 	req, err := newSignedOllamaRequest(ctx, http.MethodGet, claudeRecommendationsEndpoint())
 	if err != nil {
 		slog.Debug("could not prepare Claude Desktop model recommendations request", "error", err)
-		return proxy.UnverifyClaudeDesktopCloudEntitlements(proxy.DefaultClaudeDesktopModels()), "fallback"
+		return fallbackClaudeDesktopModels(), "fallback"
 	}
 	models, err := proxy.FetchClaudeDesktopModels(claudeRecommendationsClient, req)
 	if err == nil {
 		return models, "endpoint"
 	}
 	slog.Debug("could not fetch Claude Desktop model recommendations", "error", err)
-	return proxy.UnverifyClaudeDesktopCloudEntitlements(proxy.DefaultClaudeDesktopModels()), "fallback"
+	return fallbackClaudeDesktopModels(), "fallback"
+}
+
+func currentClaudeDesktopCloudModels(ctx context.Context) ([]proxy.ClaudeDesktopModel, error) {
+	req, err := newSignedOllamaRequest(ctx, http.MethodGet, claudeCloudModelsEndpoint())
+	if err != nil {
+		return nil, fmt.Errorf("prepare account cloud model request: %w", err)
+	}
+	resp, err := claudeCloudModelsClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch account cloud models: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+		return nil, fmt.Errorf("fetch account cloud models: status %d", resp.StatusCode)
+	}
+
+	var payload api.ListResponse
+	decoder := json.NewDecoder(io.LimitReader(resp.Body, (1<<20)+1))
+	if err := decoder.Decode(&payload); err != nil {
+		return nil, fmt.Errorf("decode account cloud models: %w", err)
+	}
+	names := make([]string, 0, len(payload.Models)*2)
+	for _, model := range payload.Models {
+		if model.Name != "" {
+			names = append(names, model.Name)
+		}
+		if model.Model != "" && model.Model != model.Name {
+			names = append(names, model.Model)
+		}
+	}
+	return proxy.ClaudeDesktopModelsFromCloudInventory(names), nil
+}
+
+func fallbackClaudeDesktopModels() []proxy.ClaudeDesktopModel {
+	models := proxy.UnverifyClaudeDesktopCloudEntitlements(proxy.DefaultClaudeDesktopModels())
+	for i := range models {
+		models[i].Recommended = false
+	}
+	return models
+}
+
+func claudeDesktopModelSupportsAutoMode(model proxy.ClaudeDesktopModel) bool {
+	return model.AccountCloud
+}
+
+func claudeDesktopModelsSupportAutoMode(models []proxy.ClaudeDesktopModel) bool {
+	for _, model := range models {
+		if claudeDesktopModelSupportsAutoMode(model) {
+			return true
+		}
+	}
+	return false
+}
+
+func activeClaudeDesktopModels() []proxy.ClaudeDesktopModel {
+	claudeProxyMu.Lock()
+	gateway := claudeAppProxy
+	available := append([]proxy.ClaudeDesktopModel(nil), claudeAvailableModels...)
+	claudeProxyMu.Unlock()
+	if gateway != nil {
+		if models := gateway.Models(); len(models) > 0 {
+			return models
+		}
+	}
+	selected := proxy.SelectClaudeDesktopModels(available, launch.ClaudeDesktopModels())
+	if len(selected) > 0 {
+		return selected
+	}
+	return available
+}
+
+func effectiveClaudeDesktopAutoMode(models []proxy.ClaudeDesktopModel) (bool, error) {
+	enabled, err := launch.ClaudeDesktopAutoModeEnabled()
+	if err != nil {
+		return false, err
+	}
+	return enabled && claudeDesktopModelsSupportAutoMode(models), nil
 }
 
 func includeSelectedClaudeDesktopModels(available, selected []proxy.ClaudeDesktopModel) []proxy.ClaudeDesktopModel {
@@ -489,6 +660,25 @@ func includeSelectedClaudeDesktopModels(available, selected []proxy.ClaudeDeskto
 		}
 		models = append(models, model)
 		seen[model.Name] = struct{}{}
+	}
+	return models
+}
+
+func mergeClaudeDesktopCloudInventory(available, cloudModels []proxy.ClaudeDesktopModel, appendMissing bool) []proxy.ClaudeDesktopModel {
+	models := proxy.VerifyClaudeDesktopModelsWithCloudInventory(available, cloudModels)
+	seen := make(map[string]struct{}, len(models))
+	for _, model := range models {
+		seen[model.OllamaModel] = struct{}{}
+	}
+	if !appendMissing {
+		return models
+	}
+	for _, model := range cloudModels {
+		if _, ok := seen[model.OllamaModel]; ok {
+			continue
+		}
+		models = append(models, model)
+		seen[model.OllamaModel] = struct{}{}
 	}
 	return models
 }
@@ -764,7 +954,15 @@ func setClaudeGatewayInstalled(installed, restart bool) error {
 			return err
 		}
 	}
-	err := claudeDesktop.SetInstalledFromDesktop(installed, restart)
+	autoMode := false
+	if installed {
+		var err error
+		autoMode, err = effectiveClaudeDesktopAutoMode(activeClaudeDesktopModels())
+		if err != nil {
+			return err
+		}
+	}
+	err := claudeDesktop.SetInstalledFromDesktopWithAutoMode(installed, restart, autoMode)
 	if !claudeDesktop.UsesOllamaGateway() {
 		stopClaudeAppProxy()
 	}
@@ -868,37 +1066,45 @@ func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
 	used := hasUsedClaudeDesktopIntegration()
 	var availableModels, selectedModels []proxy.ClaudeDesktopModel
 	var modelSource string
-	if used {
-		claudeProxyMu.Lock()
-		gateway := claudeAppProxy
-		claudeProxyMu.Unlock()
-		var current []proxy.ClaudeDesktopModel
-		if gateway != nil {
-			current = gateway.Models()
-		}
-		// Settings needs the complete catalog even when Claude is currently
-		// configured with only local models. The startup path can skip cloud
-		// discovery, but reusing that local-only list here would make every cloud
-		// choice disappear from the model picker.
-		availableModels, selectedModels, modelSource = refreshClaudeDesktopCatalog(context.Background(), current, false)
-	}
-	selected := make(map[string]struct{})
-	for _, model := range selectedModels {
-		selected[model.Name] = struct{}{}
-	}
 	accessState := proxy.ClaudeDesktopAccessState{
 		Cloud:   proxy.ClaudeDesktopCloudUnknown,
 		Account: proxy.ClaudeDesktopAccountUnknown,
 	}
-	var localNames []string
-	var localErr error
-	if hasCloudClaudeDesktopModel(availableModels) {
+	if used {
+		claudeProxyMu.Lock()
+		gateway := claudeAppProxy
+		cachedCatalogHasCloud := hasCloudClaudeDesktopModel(claudeAvailableModels)
+		claudeProxyMu.Unlock()
 		var accessErr error
 		accessState, accessErr = claudeAccessStateResolver(context.Background())
 		if accessErr != nil {
 			slog.Debug("could not resolve Claude model access for Settings", "error", accessErr)
 		}
+		var current []proxy.ClaudeDesktopModel
+		if gateway != nil {
+			current = gateway.Models()
+		}
+		if accessErr == nil && accessState.Cloud == proxy.ClaudeDesktopCloudOn {
+			// Local-only startup deliberately seeds the cache with only the active
+			// routes. Settings still needs the recommendation catalog when Cloud is on.
+			availableModels, selectedModels, modelSource = refreshClaudeDesktopCatalog(context.Background(), current, !cachedCatalogHasCloud)
+		} else {
+			selectedModels = current
+			if len(selectedModels) == 0 {
+				selectedModels = proxy.SelectClaudeDesktopModels(nil, launch.ClaudeDesktopModels())
+			}
+			availableModels = selectedModels
+			if len(selectedModels) > 0 {
+				modelSource = "user"
+			}
+		}
 	}
+	selected := make(map[string]struct{})
+	for _, model := range selectedModels {
+		selected[model.Name] = struct{}{}
+	}
+	var localNames []string
+	var localErr error
 	if len(availableModels) > 0 {
 		localNames, localErr = claudeLocalModelsResolver(context.Background())
 		if localErr != nil {
@@ -924,6 +1130,7 @@ func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
 			Description:  model.Description,
 			Cloud:        model.Cloud,
 			Selected:     isSelected,
+			AutoMode:     claudeDesktopModelSupportsAutoMode(model),
 			Availability: access.Availability,
 			Reason:       access.Reason,
 			RequiredPlan: access.RequiredPlan,
@@ -931,8 +1138,13 @@ func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
 	}
 
 	status := claudeDesktopConnectionSummary(used)
+	autoMode, autoModeErr := launch.ClaudeDesktopAutoModeEnabled()
+	status.AutoMode = autoMode
 	status.ModelSource = modelSource
 	status.Models = modelStatuses
+	if status.Error == "" && autoModeErr != nil {
+		status.Error = autoModeErr.Error()
+	}
 	return status
 }
 
@@ -950,7 +1162,10 @@ func prepareClaudeDesktopConnection() error {
 	if err := startClaudeAppProxy(); err != nil {
 		return err
 	}
-	err := claudeDesktop.ConfigureAutodiscovery()
+	autoMode, err := effectiveClaudeDesktopAutoMode(activeClaudeDesktopModels())
+	if err == nil {
+		err = claudeDesktop.ConfigureAutodiscoveryWithAutoMode(autoMode)
+	}
 	if !claudeDesktop.UsesOllamaGateway() {
 		stopClaudeAppProxy()
 	}
@@ -959,6 +1174,33 @@ func prepareClaudeDesktopConnection() error {
 
 func openClaudeDesktopApplication() error {
 	return launch.OpenClaudeDesktop()
+}
+
+func setClaudeDesktopAutoMode(enabled bool) error {
+	models := activeClaudeDesktopModels()
+	if enabled && !claudeDesktopModelsSupportAutoMode(models) {
+		return errors.New("select at least one cloud model available to your Ollama.com account")
+	}
+	previous, err := launch.ClaudeDesktopAutoModeEnabled()
+	if err != nil {
+		return err
+	}
+	if previous == enabled && (!claudeDesktop.UsesOllamaGateway() || claudeDesktop.AutodiscoveryConfiguredWithAutoMode(enabled)) {
+		return nil
+	}
+	if err := launch.SaveClaudeDesktopAutoMode(enabled); err != nil {
+		return fmt.Errorf("save Claude Desktop auto mode: %w", err)
+	}
+	if !claudeDesktop.UsesOllamaGateway() {
+		// The preference takes effect the next time the profile is written.
+		return nil
+	}
+	if claudeDesktopRunning() {
+		return claudeDesktop.RestartWithProfileChange(func() error {
+			return claudeDesktop.ConfigureAutodiscoveryWithAutoMode(enabled)
+		})
+	}
+	return claudeDesktop.ConfigureAutodiscoveryWithAutoMode(enabled)
 }
 
 func restartClaudeDesktopWithModels(names []string) error {
@@ -990,13 +1232,22 @@ func restartClaudeDesktopWithModels(names []string) error {
 	if localErr != nil {
 		slog.Debug("could not load local models for Claude Desktop selection", "error", localErr)
 	}
-	selected, err := selectKnownClaudeDesktopModels(available, current, localNames, names)
-	if err != nil {
-		return err
-	}
 	accessState, accessErr := claudeAccessStateResolver(context.Background())
 	if accessErr != nil {
 		slog.Debug("could not resolve Claude model access for selection", "error", accessErr)
+	}
+	selectable := available
+	if accessErr == nil && accessState.Cloud == proxy.ClaudeDesktopCloudOn && hasExplicitCloudClaudeDesktopModelName(names) {
+		cloudModels, err := claudeCloudModelsResolver(context.Background())
+		if err != nil {
+			slog.Debug("could not load account cloud models for Claude selection", "error", err)
+		} else {
+			selectable = mergeClaudeDesktopCloudInventory(available, cloudModels, true)
+		}
+	}
+	selected, err := selectKnownClaudeDesktopModels(selectable, current, localNames, names)
+	if err != nil {
+		return err
 	}
 	if err := validateClaudeDesktopModels(selected, accessState, localNames, localErr == nil); err != nil {
 		return err
@@ -1051,7 +1302,11 @@ func restartClaudeDesktopWithModels(names []string) error {
 		claudeAvailableModels = includeSelectedClaudeDesktopModels(available, selected)
 		claudeModelSource = "user"
 		claudeProxyMu.Unlock()
-		if err := claudeDesktop.ConfigureAutodiscovery(); err != nil {
+		autoMode, err := effectiveClaudeDesktopAutoMode(selected)
+		if err != nil {
+			return errors.Join(err, restoreState())
+		}
+		if err := claudeDesktop.ConfigureAutodiscoveryWithAutoMode(autoMode); err != nil {
 			return errors.Join(err, restoreState())
 		}
 		return nil
@@ -1074,7 +1329,7 @@ func selectKnownClaudeDesktopModels(available, current []proxy.ClaudeDesktopMode
 	}
 	for _, name := range names {
 		if _, ok := allowed[strings.TrimSpace(name)]; !ok {
-			return nil, fmt.Errorf("model %q is not installed or recommended for Claude Desktop", name)
+			return nil, fmt.Errorf("model %q is not installed, recommended, or available to this Ollama.com account", name)
 		}
 	}
 

@@ -79,6 +79,42 @@ describe("ClaudeDesktopModelsSettings", () => {
     expect(html).toContain("qwen3:8b");
   });
 
+  it("shows the auto mode switch checked when auto mode is enabled", () => {
+    const base = {
+      supported: true,
+      used: true,
+      installed: true,
+      connected: true,
+      running: false,
+      startFailed: false,
+      portConflict: false,
+      modelSource: "user" as const,
+      models: [
+        {
+          name: "qwen3:8b",
+          displayName: "qwen3:8b",
+          selected: true,
+          autoMode: true,
+        },
+      ],
+    };
+
+    const enabled = renderToStaticMarkup(
+      <ClaudeDesktopModelsSettings
+        initialStatus={{ ...base, autoMode: true }}
+      />,
+    );
+    expect(enabled).toContain("Enable auto mode");
+    expect(enabled).toContain("Let Claude decide when to ask");
+    expect(enabled).toContain('role="switch"');
+    expect(enabled).toContain('aria-checked="true"');
+
+    const disabled = renderToStaticMarkup(
+      <ClaudeDesktopModelsSettings initialStatus={base} />,
+    );
+    expect(disabled).toContain('aria-checked="false"');
+  });
+
   it("labels the built-in fallback without exposing MLX", () => {
     const html = renderToStaticMarkup(
       <ClaudeDesktopModelsSettings
@@ -166,10 +202,133 @@ describe("ClaudeDesktopModelsSettings", () => {
     expect(index).toBeGreaterThan(-1);
     const label = html.slice(html.lastIndexOf("<label", index), index);
     expect(label).toContain("disabled");
-    expect((html.match(/disabled=""/g) ?? []).length).toBe(1);
     expect(html).toContain(
       "Claude supports up to 5 models. Deselect one to add another.",
     );
+  });
+
+  it("enables auto mode when a selected model is in the account cloud list", () => {
+    const html = renderToStaticMarkup(
+      <ClaudeDesktopModelsSettings
+        initialStatus={{
+          supported: true,
+          used: true,
+          installed: true,
+          connected: true,
+          running: false,
+          startFailed: false,
+          portConflict: false,
+          autoMode: true,
+          modelSource: "user",
+          models: [
+            {
+              name: "glm-5.2:cloud",
+              displayName: "glm-5.2:cloud",
+              cloud: true,
+              selected: true,
+              autoMode: true,
+            },
+            {
+              name: "gemma4:31b-cloud",
+              displayName: "gemma4:31b-cloud",
+              cloud: true,
+              selected: true,
+              autoMode: false,
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(html).toContain(
+      "Let Claude decide when to ask before making changes.",
+    );
+    expect(html).toContain('aria-checked="true"');
+    expect(html).not.toContain('aria-checked="true" disabled=""');
+  });
+
+  it("disables auto mode when no selected model is in the account cloud list", () => {
+    const html = renderToStaticMarkup(
+      <ClaudeDesktopModelsSettings
+        initialStatus={{
+          supported: true,
+          used: true,
+          installed: true,
+          connected: true,
+          running: false,
+          startFailed: false,
+          portConflict: false,
+          autoMode: true,
+          modelSource: "user",
+          models: [
+            {
+              name: "glm-5.2:cloud",
+              displayName: "glm-5.2:cloud",
+              cloud: true,
+              selected: false,
+              autoMode: true,
+            },
+            {
+              name: "kimi-k3:cloud",
+              displayName: "kimi-k3:cloud",
+              cloud: true,
+              selected: false,
+              autoMode: true,
+            },
+            {
+              name: "gemma4:31b-cloud",
+              displayName: "gemma4:31b-cloud",
+              cloud: true,
+              selected: true,
+              autoMode: false,
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(html).toContain(
+      "Select one of glm-5.2:cloud or kimi-k3:cloud to use auto mode.",
+    );
+    expect(html).toContain('role="switch"');
+    expect(html).toContain('aria-checked="false" disabled=""');
+  });
+
+  it("does not infer Auto eligibility from a cloud suffix", () => {
+    const status = {
+      supported: true,
+      used: true,
+      installed: true,
+      connected: true,
+      running: false,
+      startFailed: false,
+      portConflict: false,
+      autoMode: true,
+      modelSource: "user",
+      models: [
+        {
+          name: "custom:cloud",
+          displayName: "custom:cloud",
+          cloud: true,
+          selected: true,
+          autoMode: false,
+        },
+      ],
+    } as const;
+
+    const unavailable = renderToStaticMarkup(
+      <ClaudeDesktopModelsSettings initialStatus={status} />,
+    );
+    expect(unavailable).toContain('aria-checked="false" disabled=""');
+
+    const available = renderToStaticMarkup(
+      <ClaudeDesktopModelsSettings
+        initialStatus={status}
+        initialCloudModels={["custom:cloud"]}
+      />,
+    );
+    expect(available).toContain('aria-checked="true"');
+    expect(available).not.toContain('aria-checked="true" disabled=""');
   });
 
   it("honors a smaller maxModels limit from the status", () => {

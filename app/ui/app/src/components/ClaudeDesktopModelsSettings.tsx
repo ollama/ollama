@@ -1,6 +1,8 @@
 import { getClaudeDesktopAvailableModels } from "@/api";
 import { Button } from "@/components/ui/button";
+import { Description, Field, Label } from "@/components/ui/fieldset";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import {
   addClaudeModelSelection,
   claudeDesktopRecoveryMessage,
@@ -18,6 +20,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 interface ClaudeDesktopModelsSettingsProps {
   initialStatus?: ClaudeDesktopStatus;
   initialLocalModels?: string[];
+  initialCloudModels?: string[];
+  includeCloudModels?: boolean;
 }
 
 function isInvalidModelName(name: string): boolean {
@@ -58,13 +62,23 @@ function modelAccessLabel(model: ClaudeDesktopModelStatus): string | null {
   }
 }
 
-function explicitCloudName(name: string): string {
-  return name.endsWith(":cloud") ? name : `${name}:cloud`;
+function formatModelList(names: string[]): string {
+  if (names.length < 2) return names[0] ?? "";
+  if (names.length === 2) return `${names[0]} or ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")}, or ${names[names.length - 1]}`;
+}
+
+function sameModelSelection(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false;
+  const names = new Set(left);
+  return right.every((name) => names.has(name));
 }
 
 export function ClaudeDesktopModelsSettings({
   initialStatus,
   initialLocalModels,
+  initialCloudModels,
+  includeCloudModels = false,
 }: ClaudeDesktopModelsSettingsProps) {
   const [status, setStatus] = useState<ClaudeDesktopStatus | null>(
     initialStatus ?? null,
@@ -78,11 +92,17 @@ export function ClaudeDesktopModelsSettings({
   const [localModels, setLocalModels] = useState<string[]>(
     initialLocalModels ?? [],
   );
+  const [accountCloudModels, setAccountCloudModels] = useState<string[]>(
+    initialCloudModels ?? [],
+  );
   const [searchQuery, setSearchQuery] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [restarting, setRestarting] = useState(false);
+  const [autoModeOverride, setAutoModeOverride] = useState<boolean | null>(
+    null,
+  );
   const pickerRef = useRef<HTMLDivElement>(null);
 
   const applyStatus = useCallback((next: ClaudeDesktopStatus) => {
@@ -118,10 +138,15 @@ export function ClaudeDesktopModelsSettings({
     if (initialLocalModels || !status?.used) return;
     let cancelled = false;
     setModelsLoading(true);
-    void getClaudeDesktopAvailableModels()
+    void getClaudeDesktopAvailableModels(includeCloudModels)
       .then((installed) => {
         if (!cancelled) {
           setLocalModels(installed.map((model) => model.model));
+          setAccountCloudModels(
+            installed
+              .filter((model) => model.isCloud())
+              .map((model) => model.model),
+          );
         }
       })
       .catch(() => {
@@ -133,7 +158,7 @@ export function ClaudeDesktopModelsSettings({
     return () => {
       cancelled = true;
     };
-  }, [initialLocalModels, status?.used]);
+  }, [includeCloudModels, initialLocalModels, status?.used]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -149,11 +174,7 @@ export function ClaudeDesktopModelsSettings({
   }, []);
 
   const matchingLocalModels = useMemo(() => {
-    const current = new Set(
-      models.map((model) =>
-        model.cloud ? explicitCloudName(model.name) : model.name,
-      ),
-    );
+    const current = new Set(selection);
     const query = searchQuery.trim().toLowerCase();
     return localModels
       .filter(
@@ -163,7 +184,7 @@ export function ClaudeDesktopModelsSettings({
           (!query || name.toLowerCase().includes(query)),
       )
       .sort((left, right) => left.localeCompare(right));
-  }, [localModels, models, searchQuery]);
+  }, [localModels, searchQuery, selection]);
 
   const toggleModel = (name: string) => {
     setError(null);
@@ -217,6 +238,10 @@ export function ClaudeDesktopModelsSettings({
     return !model?.availability || model.availability === "available";
   });
 
+  const confirmRestartIfRunning = (message: string) =>
+    !status?.running ||
+    window.confirm(`${message} Any running task will stop.`);
+
   const restartClaude = async () => {
     if (!window.restartClaudeDesktop) {
       setError("Claude restart is available in the Ollama macOS app.");
@@ -231,13 +256,9 @@ export function ClaudeDesktopModelsSettings({
       return;
     }
     if (
-      status?.running &&
-      !window.confirm(
-        "Restart Claude Desktop to update its models? Any running task will stop.",
-      )
-    ) {
+      !confirmRestartIfRunning("Restart Claude Desktop to update its models?")
+    )
       return;
-    }
 
     setError(null);
     setRestarting(true);
@@ -252,12 +273,61 @@ export function ClaudeDesktopModelsSettings({
     }
   };
 
+  const toggleAutoMode = async (checked: boolean) => {
+    if (!window.setClaudeDesktopAutoMode) {
+      setError("Auto mode is available in the Ollama macOS app.");
+      return;
+    }
+    if (!confirmRestartIfRunning("Restart Claude to change auto mode?")) return;
+
+    setError(null);
+    setAutoModeOverride(checked);
+    setRestarting(true);
+    try {
+      const result = await window.setClaudeDesktopAutoMode(checked);
+      applyStatus(result.status);
+      if (result.error) setError(result.error);
+    } catch {
+      setError("Ollama could not update Claude auto mode.");
+    } finally {
+      setAutoModeOverride(null);
+      setRestarting(false);
+    }
+  };
+
   if (!status?.supported || !status.used) {
     return null;
   }
 
   const maxModels = claudeDesktopMaxModels(status);
   const selectionFull = selection.length >= maxModels;
+  const autoModeModelNames = Array.from(
+    new Set([
+      ...models.filter((model) => model.autoMode).map((model) => model.name),
+      ...accountCloudModels,
+    ]),
+  );
+  const autoModeModelSet = new Set(autoModeModelNames);
+  const modelSelectionApplied = sameModelSelection(
+    selection,
+    selectedModelNames(status),
+  );
+  const autoModeAvailable =
+    modelSelectionApplied &&
+    selection.length > 0 &&
+    selection.some((name) => autoModeModelSet.has(name));
+  const autoMode = modelSelectionApplied
+    ? autoModeAvailable && (autoModeOverride ?? status.autoMode ?? false)
+    : (status.autoMode ?? false);
+  const autoModeDescription = !modelSelectionApplied
+    ? "Restart Claude to apply model changes before changing auto mode."
+    : autoModeAvailable
+      ? "Let Claude decide when to ask before making changes."
+      : accountCloudModels.length > 0
+        ? "Select a cloud model from Ollama.com to use auto mode."
+        : autoModeModelNames.length > 0
+          ? `Select one of ${formatModelList(autoModeModelNames)} to use auto mode.`
+          : "Auto mode needs a cloud model available to your Ollama.com account.";
   const guidance =
     claudeDesktopRecoveryMessage(status.error, error) ??
     (!hasAvailableSelection && models.length > 0
@@ -383,6 +453,21 @@ export function ClaudeDesktopModelsSettings({
                 </div>
               )}
             </div>
+
+            <Field className="mt-3 border-t border-neutral-200 pt-3 dark:border-neutral-700">
+              <div className="flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <Label>Enable auto mode</Label>
+                  <Description>{autoModeDescription}</Description>
+                </div>
+                <Switch
+                  checked={autoMode}
+                  disabled={restarting || !autoModeAvailable}
+                  onChange={(checked) => void toggleAutoMode(checked)}
+                  className="flex-shrink-0"
+                />
+              </div>
+            </Field>
 
             <div className="mt-3 flex items-center justify-between gap-4 max-sm:flex-col max-sm:items-stretch">
               <p

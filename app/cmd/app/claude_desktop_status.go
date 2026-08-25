@@ -24,6 +24,7 @@ type claudeDesktopStatus struct {
 	GatewayPort    int                        `json:"gatewayPort,omitempty"`
 	RoutedRequests uint64                     `json:"routedRequests"`
 	Error          string                     `json:"error,omitempty"`
+	AutoMode       bool                       `json:"autoMode"`
 	ModelSource    string                     `json:"modelSource,omitempty"`
 	Models         []claudeDesktopModelStatus `json:"models,omitempty"`
 }
@@ -34,6 +35,7 @@ type claudeDesktopModelStatus struct {
 	Description  string                          `json:"description,omitempty"`
 	Cloud        bool                            `json:"cloud"`
 	Selected     bool                            `json:"selected"`
+	AutoMode     bool                            `json:"autoMode"`
 	Availability proxy.ClaudeDesktopAvailability `json:"availability"`
 	Reason       proxy.ClaudeDesktopAccessReason `json:"reason,omitempty"`
 	RequiredPlan string                          `json:"requiredPlan,omitempty"`

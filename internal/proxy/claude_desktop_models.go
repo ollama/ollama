@@ -42,6 +42,8 @@ type ClaudeDesktopModel struct {
 	RequiredPlan     string
 	OllamaModel      string
 	Cloud            bool
+	Recommended      bool
+	AccountCloud     bool
 	entitlementKnown bool
 	gateway          gatewayModel
 }
@@ -110,6 +112,7 @@ func ClaudeDesktopModelsFromRecommendations(recommendations []api.ModelRecommend
 			strings.TrimSpace(recommendation.RequiredPlan),
 			recommendation.MaxOutputTokens,
 		)
+		model.Recommended = true
 		model.entitlementKnown = true
 		models = append(models, model)
 	}
@@ -145,6 +148,60 @@ func UnverifyClaudeDesktopCloudEntitlements(models []ClaudeDesktopModel) []Claud
 		}
 	}
 	return models
+}
+
+// ClaudeDesktopModelsFromCloudInventory converts an account-scoped cloud
+// inventory into selectable Claude routes. Presence in this inventory is the
+// entitlement and Auto-mode eligibility check; these models are not
+// recommendations.
+func ClaudeDesktopModelsFromCloudInventory(names []string) []ClaudeDesktopModel {
+	models := make([]ClaudeDesktopModel, 0, len(names))
+	seen := make(map[string]struct{}, len(names))
+	for _, rawName := range names {
+		name := strings.TrimSuffix(strings.TrimSpace(rawName), ":latest")
+		if !validClaudeDesktopModelName(name) {
+			continue
+		}
+		if !modelref.HasExplicitCloudSource(name) {
+			name += ":cloud"
+		}
+		if !validClaudeDesktopModelName(name) {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		model := newClaudeDesktopModel(name, "User-selected cloud model", "", 64_000)
+		model.AccountCloud = true
+		model.entitlementKnown = true
+		models = append(models, model)
+	}
+	return models
+}
+
+// VerifyClaudeDesktopModelsWithCloudInventory marks matching catalog models
+// as account-verified without replacing their recommendation metadata.
+func VerifyClaudeDesktopModelsWithCloudInventory(models, inventory []ClaudeDesktopModel) []ClaudeDesktopModel {
+	verified := cloneClaudeDesktopModels(models)
+	accountModels := make(map[string]struct{}, len(inventory)*2)
+	for _, model := range inventory {
+		if !model.AccountCloud {
+			continue
+		}
+		accountModels[model.Name] = struct{}{}
+		accountModels[model.OllamaModel] = struct{}{}
+	}
+	for i, model := range verified {
+		if _, ok := accountModels[model.Name]; !ok {
+			if _, ok := accountModels[model.OllamaModel]; !ok {
+				continue
+			}
+		}
+		verified[i].AccountCloud = true
+		verified[i].entitlementKnown = true
+	}
+	return verified
 }
 
 // SelectClaudeDesktopModels preserves the user's explicit order. Names that

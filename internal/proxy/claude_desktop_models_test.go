@@ -44,6 +44,11 @@ func TestFetchClaudeDesktopModelsUsesAppAwareContract(t *testing.T) {
 	if models[1].DisplayName != "deepseek-v4-pro:cloud" {
 		t.Fatalf("display name = %q, want exact model identifier", models[1].DisplayName)
 	}
+	for _, model := range models {
+		if !model.Recommended {
+			t.Fatalf("endpoint model %q was not marked as recommended", model.Name)
+		}
+	}
 }
 
 func TestFetchClaudeDesktopModelsRejectsInvalidResponses(t *testing.T) {
@@ -108,10 +113,68 @@ func TestSelectClaudeDesktopModelsPrioritizesExplicitSelection(t *testing.T) {
 	if got, want := custom[0].GatewayID(), "claude-fable-5"; got != want {
 		t.Fatalf("custom gateway ID = %q, want validated slot %q", got, want)
 	}
+	if custom[0].Recommended {
+		t.Fatal("custom selection was marked as recommended")
+	}
 
 	withoutSentinel := SelectClaudeDesktopModels(available, []string{"Ollama Cloud", "ollama:cloud", "qwen3:8b"})
 	if got, want := claudeDesktopModelNames(withoutSentinel), []string{"qwen3:8b"}; !slices.Equal(got, want) {
 		t.Fatalf("selection without invalid sentinel = %v, want %v", got, want)
+	}
+}
+
+func TestClaudeDesktopModelsFromCloudInventoryVerifiesWithoutRecommending(t *testing.T) {
+	models := ClaudeDesktopModelsFromCloudInventory([]string{
+		"glm-5.2:cloud",
+		"glm-5.2:cloud",
+		"gemma4:31b-cloud",
+		"qwen3:8b",
+		"Ollama Cloud",
+	})
+	if len(models) != 3 {
+		t.Fatalf("models = %+v, want three account cloud models", models)
+	}
+	for _, model := range models {
+		if !model.Cloud || !model.entitlementKnown {
+			t.Fatalf("cloud inventory model = %+v, want verified cloud model", model)
+		}
+		if model.Recommended {
+			t.Fatalf("cloud inventory model %q must not be recommended", model.Name)
+		}
+		if !model.AccountCloud {
+			t.Fatalf("cloud inventory model %q is missing account membership", model.Name)
+		}
+	}
+	if models[2].OllamaModel != "qwen3:8b:cloud" {
+		t.Fatalf("normalized cloud route = %q", models[2].OllamaModel)
+	}
+}
+
+func TestVerifyClaudeDesktopModelsWithCloudInventoryPreservesMetadata(t *testing.T) {
+	models := UnverifyClaudeDesktopCloudEntitlements(DefaultClaudeDesktopModels())
+	inventory := ClaudeDesktopModelsFromCloudInventory([]string{"glm-5.2"})
+
+	verified := VerifyClaudeDesktopModelsWithCloudInventory(models, inventory)
+	if !verified[0].AccountCloud || !verified[0].entitlementKnown {
+		t.Fatalf("verified model = %+v, want account entitlement", verified[0])
+	}
+	if verified[0].Description != models[0].Description ||
+		verified[0].RequiredPlan != models[0].RequiredPlan ||
+		verified[0].Recommended != models[0].Recommended ||
+		verified[0].OllamaModel != models[0].OllamaModel {
+		t.Fatalf("verified model metadata = %+v, want %+v", verified[0], models[0])
+	}
+	if verified[1].AccountCloud || verified[1].entitlementKnown {
+		t.Fatalf("unmatched model = %+v, want unverified", verified[1])
+	}
+
+	access := EvaluateClaudeDesktopModelAccess(verified[0], ClaudeDesktopAccessState{
+		Cloud:   ClaudeDesktopCloudOn,
+		Account: ClaudeDesktopAccountSignedIn,
+		Plan:    "pro",
+	}, false, true)
+	if access.Availability != ClaudeDesktopAvailabilityAvailable {
+		t.Fatalf("verified model access = %+v, want available", access)
 	}
 }
 

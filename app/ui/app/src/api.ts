@@ -196,26 +196,57 @@ export async function getModels(query?: string): Promise<Model[]> {
   }
 }
 
-export async function getClaudeDesktopAvailableModels(): Promise<Model[]> {
+export async function getClaudeDesktopAvailableModels(
+  includeCloudModels = false,
+): Promise<Model[]> {
   try {
-    const { models: modelsResponse } = await ollama.list();
+    const [localResult, cloudResult] = await Promise.all([
+      ollama.list(),
+      includeCloudModels
+        ? fetch(`${API_BASE}/api/v1/models/cloud`)
+            .then(async (response) => {
+              if (!response.ok) {
+                throw new Error(`cloud model list returned ${response.status}`);
+              }
+              return (await response.json()) as { models?: ModelResponse[] };
+            })
+            .catch((error) => {
+              console.warn("Failed to fetch cloud models:", error);
+              return { models: [] };
+            })
+        : Promise.resolve({ models: [] as ModelResponse[] }),
+    ]);
+
+    const localModels = localResult.models.filter((model: ModelResponse) => {
+      const response = model as ModelResponse & {
+        remote_model?: string;
+        remote_host?: string;
+      };
+      const name = model.name.replace(/:latest$/, "");
+      return (
+        !response.remote_model &&
+        !response.remote_host &&
+        !name.endsWith("cloud")
+      );
+    });
+    const cloudModels = (cloudResult.models ?? []).map((model) => {
+      const name = model.name.replace(/:latest$/, "");
+      const tag = name.slice(name.lastIndexOf(":") + 1).toLowerCase();
+      const explicitCloud =
+        name.endsWith(":cloud") ||
+        (name.includes(":") && tag.endsWith("-cloud"));
+      return {
+        ...model,
+        name: explicitCloud ? name : `${name}:cloud`,
+      };
+    });
 
     const seen = new Set<string>();
-    return modelsResponse
+    return [...localModels, ...cloudModels]
       .filter((model: ModelResponse) => {
-        const response = model as ModelResponse & {
-          remote_model?: string;
-          remote_host?: string;
-        };
-        const name = model.name.replace(/:latest$/, "");
-        return (
-          !response.remote_model &&
-          !response.remote_host &&
-          !name.endsWith("cloud")
-        );
-      })
-      .filter((model: ModelResponse) => {
-        const base = model.name.replace(/:latest$/, "");
+        const base = model.name
+          .replace(/:latest$/, "")
+          .replace(/:cloud$/, "");
         if (!base || seen.has(base)) return false;
 
         const families = model.details?.families;

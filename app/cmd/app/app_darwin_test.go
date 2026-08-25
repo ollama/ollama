@@ -25,6 +25,7 @@ func TestMain(m *testing.M) {
 	previousLoader := claudeModelsLoader
 	previousAccessResolver := claudeAccessStateResolver
 	previousLocalResolver := claudeLocalModelsResolver
+	previousCloudResolver := claudeCloudModelsResolver
 	claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
 		return proxy.DefaultClaudeDesktopModels(), "fallback"
 	}
@@ -36,10 +37,12 @@ func TestMain(m *testing.M) {
 		}, nil
 	}
 	claudeLocalModelsResolver = func(context.Context) ([]string, error) { return nil, nil }
+	claudeCloudModelsResolver = func(context.Context) ([]proxy.ClaudeDesktopModel, error) { return nil, nil }
 	code := m.Run()
 	claudeModelsLoader = previousLoader
 	claudeAccessStateResolver = previousAccessResolver
 	claudeLocalModelsResolver = previousLocalResolver
+	claudeCloudModelsResolver = previousCloudResolver
 	os.Exit(code)
 }
 
@@ -74,6 +77,46 @@ func TestLoadClaudeDesktopModelsUsesAppEndpoint(t *testing.T) {
 	if source != "endpoint" || len(models) != 1 || models[0].Name != "glm-5.2:cloud" {
 		t.Fatalf("models/source = %+v/%q", models, source)
 	}
+	if !models[0].Recommended {
+		t.Fatal("endpoint recommendation was not marked as recommended")
+	}
+}
+
+func TestCurrentClaudeDesktopCloudModelsUsesAccountEndpoint(t *testing.T) {
+	useTestOllamaRequestSigner(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/tags" || r.URL.Query().Get("ts") == "" {
+			t.Fatalf("request URL = %q", r.URL.String())
+		}
+		if r.Header.Get("Authorization") != "test-public-key:test-signature" {
+			t.Fatal("cloud model request is missing public-key identity")
+		}
+		_, _ = w.Write([]byte(`{"models":[{"name":"glm-5.2:cloud"},{"name":"qwen3:8b"}]}`))
+	}))
+	defer server.Close()
+
+	previousClient := claudeCloudModelsClient
+	previousEndpoint := claudeCloudModelsEndpoint
+	claudeCloudModelsClient = server.Client()
+	claudeCloudModelsEndpoint = func() string { return server.URL + "/api/tags" }
+	t.Cleanup(func() {
+		claudeCloudModelsClient = previousClient
+		claudeCloudModelsEndpoint = previousEndpoint
+	})
+
+	models, err := currentClaudeDesktopCloudModels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 2 || models[0].Name != "glm-5.2:cloud" || models[1].Name != "qwen3:8b:cloud" || models[0].Recommended {
+		t.Fatalf("cloud models = %+v, want normalized non-recommended account models", models)
+	}
+	access := proxy.EvaluateClaudeDesktopModelAccess(models[0], proxy.ClaudeDesktopAccessState{
+		Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn,
+	}, false, true)
+	if access.Availability != proxy.ClaudeDesktopAvailabilityAvailable {
+		t.Fatalf("cloud model access = %+v, want available", access)
+	}
 }
 
 func TestClaudeDesktopDownloadEndpointUsesTypedZipContract(t *testing.T) {
@@ -101,6 +144,7 @@ func TestClaudeEndpointRequestsSignCompleteRequestURI(t *testing.T) {
 
 	for _, endpoint := range []string{
 		"https://ollama.com/api/experimental/model-recommendations?app=claude-desktop",
+		"https://ollama.com/api/tags",
 		"https://ollama.com/download-app?app=claude-desktop&type=mac-zip",
 	} {
 		var challenge string
@@ -143,8 +187,14 @@ func TestClaudeEndpointRequestsAreNotSentUnsigned(t *testing.T) {
 		claudeRecommendationsEndpoint = previousEndpoint
 	})
 
-	if _, source := loadClaudeDesktopModels(context.Background()); source != "fallback" {
+	models, source := loadClaudeDesktopModels(context.Background())
+	if source != "fallback" {
 		t.Fatalf("model source = %q, want fallback", source)
+	}
+	for _, model := range models {
+		if model.Recommended {
+			t.Fatalf("offline fallback model %q must not enable Auto mode", model.Name)
+		}
 	}
 	if called {
 		t.Fatal("model recommendations request was sent without identity")
@@ -185,6 +235,128 @@ func TestResolveClaudeDesktopCatalogUsesPersistedSelection(t *testing.T) {
 	}
 	if got := available[len(available)-1].Name; got != "qwen3:8b" {
 		t.Fatalf("last available model = %q, want persisted qwen3:8b", got)
+	}
+}
+
+func TestResolveClaudeDesktopStartupCatalogVerifiesPersistedAccountCloudModel(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := launch.SaveClaudeDesktopModels([]string{"custom:cloud"}); err != nil {
+		t.Fatal(err)
+	}
+
+	previousResolver := claudeCloudModelsResolver
+	claudeCloudModelsResolver = func(context.Context) ([]proxy.ClaudeDesktopModel, error) {
+		return proxy.ClaudeDesktopModelsFromCloudInventory([]string{"custom:cloud"}), nil
+	}
+	t.Cleanup(func() { claudeCloudModelsResolver = previousResolver })
+
+	_, selected, source := resolveClaudeDesktopStartupCatalog(context.Background())
+	if source != "user" || len(selected) != 1 || selected[0].OllamaModel != "custom:cloud" {
+		t.Fatalf("selected/source = %+v/%q", selected, source)
+	}
+	access := proxy.EvaluateClaudeDesktopModelAccess(selected[0], proxy.ClaudeDesktopAccessState{
+		Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn,
+	}, false, true)
+	if access.Availability != proxy.ClaudeDesktopAvailabilityAvailable {
+		t.Fatalf("persisted cloud model access = %+v, want available", access)
+	}
+}
+
+func TestResolveClaudeDesktopStartupCatalogMarksDefaultAccountModelsAutoEligible(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	previousLoader := claudeModelsLoader
+	previousResolver := claudeCloudModelsResolver
+	claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
+		return proxy.ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "glm-5.2:cloud"}}), "endpoint"
+	}
+	claudeCloudModelsResolver = func(context.Context) ([]proxy.ClaudeDesktopModel, error) {
+		return proxy.ClaudeDesktopModelsFromCloudInventory([]string{"glm-5.2"}), nil
+	}
+	t.Cleanup(func() {
+		claudeModelsLoader = previousLoader
+		claudeCloudModelsResolver = previousResolver
+	})
+
+	available, selected, source := resolveClaudeDesktopStartupCatalog(context.Background())
+	if source != "endpoint" || len(available) != 1 || len(selected) != 1 {
+		t.Fatalf("catalog = %+v selected = %+v source = %q", available, selected, source)
+	}
+	if !claudeDesktopModelsSupportAutoMode(selected) {
+		t.Fatal("default account cloud model was not Auto-eligible")
+	}
+}
+
+func TestResolveClaudeDesktopStartupCatalogVerifiesFallbackFromAccountInventory(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := launch.SaveClaudeDesktopModels([]string{"glm-5.2:cloud"}); err != nil {
+		t.Fatal(err)
+	}
+
+	previousLoader := claudeModelsLoader
+	previousResolver := claudeCloudModelsResolver
+	previousAccess := claudeAccessStateResolver
+	claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
+		return fallbackClaudeDesktopModels(), "fallback"
+	}
+	claudeCloudModelsResolver = func(context.Context) ([]proxy.ClaudeDesktopModel, error) {
+		return proxy.ClaudeDesktopModelsFromCloudInventory([]string{"glm-5.2"}), nil
+	}
+	claudeAccessStateResolver = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
+		return proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn}, nil
+	}
+	t.Cleanup(func() {
+		claudeModelsLoader = previousLoader
+		claudeCloudModelsResolver = previousResolver
+		claudeAccessStateResolver = previousAccess
+	})
+
+	available, selected, source := resolveClaudeDesktopStartupCatalog(context.Background())
+	if source != "user" || len(available) == 0 || len(selected) != 1 {
+		t.Fatalf("catalog = %+v selected = %+v source = %q", available, selected, source)
+	}
+	if selected[0].OllamaModel != "glm-5.2:cloud" || !selected[0].AccountCloud {
+		t.Fatalf("selected model = %+v, want verified GLM route", selected[0])
+	}
+	access := proxy.EvaluateClaudeDesktopModelAccess(selected[0], proxy.ClaudeDesktopAccessState{
+		Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "pro",
+	}, false, true)
+	if access.Availability != proxy.ClaudeDesktopAvailabilityAvailable {
+		t.Fatalf("fallback account model access = %+v, want available", access)
+	}
+	if !claudeDesktopModelsSupportAutoMode(selected) {
+		t.Fatal("verified fallback account model was not Auto-eligible")
+	}
+}
+
+func TestResolveClaudeDesktopStartupCatalogDoesNotListCloudWhenOff(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := launch.SaveClaudeDesktopModels([]string{"custom:cloud"}); err != nil {
+		t.Fatal(err)
+	}
+
+	previousAccess := claudeAccessStateResolver
+	previousResolver := claudeCloudModelsResolver
+	claudeAccessStateResolver = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
+		return proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOff}, nil
+	}
+	claudeCloudModelsResolver = func(context.Context) ([]proxy.ClaudeDesktopModel, error) {
+		t.Fatal("account cloud list called while Cloud was off")
+		return nil, nil
+	}
+	t.Cleanup(func() {
+		claudeAccessStateResolver = previousAccess
+		claudeCloudModelsResolver = previousResolver
+	})
+
+	_, selected, _ := resolveClaudeDesktopStartupCatalog(context.Background())
+	if len(selected) != 1 || selected[0].OllamaModel != "custom:cloud" {
+		t.Fatalf("selected = %+v", selected)
+	}
+	access := proxy.EvaluateClaudeDesktopModelAccess(selected[0], proxy.ClaudeDesktopAccessState{
+		Cloud: proxy.ClaudeDesktopCloudOff,
+	}, false, true)
+	if access.Reason != proxy.ClaudeDesktopAccessCloudOff {
+		t.Fatalf("cloud-off access = %+v", access)
 	}
 }
 
@@ -373,6 +545,15 @@ func TestSelectKnownClaudeDesktopModelsAllowsInstalledModelsOnly(t *testing.T) {
 		t.Fatal("expected an arbitrary model name to be rejected")
 	}
 
+	accountCloud := proxy.ClaudeDesktopModelsFromCloudInventory([]string{"custom:cloud"})
+	selected, err = selectKnownClaudeDesktopModels(append(available, accountCloud...), nil, nil, []string{"custom:cloud"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(selected) != 1 || selected[0].OllamaModel != "custom:cloud" || selected[0].Recommended {
+		t.Fatalf("account cloud selection = %+v", selected)
+	}
+
 	// The five-model selection cap must not make later installed models
 	// unselectable. The cap applies to the final selection, not the inventory.
 	localNames := []string{"local-1", "local-2", "local-3", "local-4", "local-5", "local-6"}
@@ -387,27 +568,43 @@ func TestSelectKnownClaudeDesktopModelsAllowsInstalledModelsOnly(t *testing.T) {
 
 type fakeClaudeDesktopController struct {
 	configured     bool
+	profileCurrent bool
+	configureCalls int
+	configureErr   error
 	installed      bool
 	restart        bool
 	setErr         error
 	modelsAtSet    []string
 	configureOnSet bool
 	requireRestart bool
+	autoMode       bool
 }
 
 func (f *fakeClaudeDesktopController) UsesOllamaGateway() bool { return f.configured }
 
-func (f *fakeClaudeDesktopController) ConfigureAutodiscovery() error {
+func (f *fakeClaudeDesktopController) AutodiscoveryConfiguredWithAutoMode(autoMode bool) bool {
+	return f.configured && f.profileCurrent && f.autoMode == autoMode
+}
+
+func (f *fakeClaudeDesktopController) ConfigureAutodiscoveryWithAutoMode(autoMode bool) error {
+	f.configureCalls++
+	if f.configureErr != nil {
+		f.profileCurrent = false
+		return f.configureErr
+	}
 	f.configured = true
+	f.profileCurrent = true
+	f.autoMode = autoMode
 	return nil
 }
 
-func (f *fakeClaudeDesktopController) SetInstalledFromDesktop(installed, restart bool) error {
+func (f *fakeClaudeDesktopController) SetInstalledFromDesktopWithAutoMode(installed, restart, autoMode bool) error {
 	if f.requireRestart && !restart {
 		return errors.New("Claude Desktop restart confirmation is required before changing its profile")
 	}
 	f.installed = installed
 	f.restart = restart
+	f.autoMode = autoMode
 	f.modelsAtSet = launch.ClaudeDesktopModels()
 	if f.configureOnSet {
 		f.configured = installed
@@ -449,21 +646,240 @@ func (f *fakeClaudeDesktopController) RestartWithProfileChange(change func() err
 
 func (f *fakeClaudeDesktopController) RestoreForShutdown(context.Context) error { return nil }
 
+func TestUpdateClaudeDesktopProfileRepairsExistingConnectionOnce(t *testing.T) {
+	previousDesktop := claudeDesktop
+	previousRunning := claudeDesktopRunning
+	fake := &fakeClaudeDesktopController{configured: true}
+	claudeDesktop = fake
+	claudeDesktopRunning = func() bool { return false }
+	t.Cleanup(func() {
+		claudeDesktop = previousDesktop
+		claudeDesktopRunning = previousRunning
+	})
+
+	if err := updateClaudeDesktopProfile(); err != nil {
+		t.Fatal(err)
+	}
+	if !fake.configured || !fake.profileCurrent || fake.configureCalls != 1 {
+		t.Fatalf("updated profile = %+v, want one repair preserving the connection", fake)
+	}
+
+	if err := updateClaudeDesktopProfile(); err != nil {
+		t.Fatal(err)
+	}
+	if fake.configureCalls != 1 {
+		t.Fatalf("configure calls = %d, want idempotent repair", fake.configureCalls)
+	}
+}
+
+func TestUpdateClaudeDesktopProfileDefersRepairWhileClaudeRuns(t *testing.T) {
+	previousDesktop := claudeDesktop
+	previousRunning := claudeDesktopRunning
+	fake := &fakeClaudeDesktopController{configured: true}
+	claudeDesktop = fake
+	claudeDesktopRunning = func() bool { return true }
+	t.Cleanup(func() {
+		claudeDesktop = previousDesktop
+		claudeDesktopRunning = previousRunning
+	})
+
+	if err := updateClaudeDesktopProfile(); err != nil {
+		t.Fatal(err)
+	}
+	if fake.configureCalls != 0 || fake.profileCurrent {
+		t.Fatalf("startup reconciliation changed a live Claude profile: %+v", fake)
+	}
+}
+
+func TestSetClaudeDesktopAutoModePersistsUntilConnection(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	previousDesktop := claudeDesktop
+	previousRunning := claudeDesktopRunning
+	fake := &fakeClaudeDesktopController{}
+	claudeDesktop = fake
+	claudeDesktopRunning = func() bool {
+		t.Fatal("disconnected preference change should not inspect the Claude process")
+		return false
+	}
+	t.Cleanup(func() {
+		claudeDesktop = previousDesktop
+		claudeDesktopRunning = previousRunning
+	})
+
+	if err := setClaudeDesktopAutoMode(false); err != nil {
+		t.Fatal(err)
+	}
+	enabled, err := launch.ClaudeDesktopAutoModeEnabled()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enabled || fake.configureCalls != 0 {
+		t.Fatalf("enabled = %v, configure calls = %d, want saved preference without profile write", enabled, fake.configureCalls)
+	}
+}
+
+func TestSetClaudeDesktopAutoModeAvoidsUnnecessaryRestart(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := launch.SaveClaudeDesktopAutoMode(true); err != nil {
+		t.Fatal(err)
+	}
+	previousAvailable := claudeAvailableModels
+	claudeAvailableModels = mergeClaudeDesktopCloudInventory(
+		proxy.ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "glm-5.2:cloud"}}),
+		proxy.ClaudeDesktopModelsFromCloudInventory([]string{"glm-5.2:cloud"}),
+		false,
+	)
+	previousDesktop := claudeDesktop
+	previousRunning := claudeDesktopRunning
+	fake := &fakeClaudeDesktopController{configured: true, profileCurrent: true, autoMode: true}
+	claudeDesktop = fake
+	claudeDesktopRunning = func() bool {
+		t.Fatal("unchanged current preference should not inspect the Claude process")
+		return false
+	}
+	t.Cleanup(func() {
+		claudeAvailableModels = previousAvailable
+		claudeDesktop = previousDesktop
+		claudeDesktopRunning = previousRunning
+	})
+
+	if err := setClaudeDesktopAutoMode(true); err != nil {
+		t.Fatal(err)
+	}
+	if fake.configureCalls != 0 || fake.restart {
+		t.Fatalf("unchanged preference triggered profile lifecycle: %+v", fake)
+	}
+}
+
+func TestSetClaudeDesktopAutoModeRewritesProfileBeforeRestart(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	previousDesktop := claudeDesktop
+	previousRunning := claudeDesktopRunning
+	fake := &fakeClaudeDesktopController{configured: true, profileCurrent: true}
+	claudeDesktop = fake
+	claudeDesktopRunning = func() bool { return true }
+	t.Cleanup(func() {
+		claudeDesktop = previousDesktop
+		claudeDesktopRunning = previousRunning
+	})
+
+	if err := setClaudeDesktopAutoMode(false); err != nil {
+		t.Fatal(err)
+	}
+	if fake.configureCalls != 1 || !fake.profileCurrent || !fake.restart {
+		t.Fatalf("profile restart lifecycle = %+v, want one profile write followed by restart", fake)
+	}
+}
+
+func TestSetClaudeDesktopAutoModeKeepsDesiredPreferenceAfterProfileFailure(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	previousDesktop := claudeDesktop
+	previousRunning := claudeDesktopRunning
+	fake := &fakeClaudeDesktopController{configured: true, profileCurrent: true, configureErr: errors.New("profile write failed")}
+	claudeDesktop = fake
+	claudeDesktopRunning = func() bool { return false }
+	t.Cleanup(func() {
+		claudeDesktop = previousDesktop
+		claudeDesktopRunning = previousRunning
+	})
+
+	err := setClaudeDesktopAutoMode(false)
+	if err == nil || !strings.Contains(err.Error(), "profile write failed") {
+		t.Fatalf("setClaudeDesktopAutoMode error = %v, want profile write failure", err)
+	}
+	enabled, loadErr := launch.ClaudeDesktopAutoModeEnabled()
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if enabled {
+		t.Fatal("desired preference should remain disabled so reconciliation can retry")
+	}
+	if fake.profileCurrent {
+		t.Fatal("failed profile write should remain visibly out of date")
+	}
+}
+
+func TestClaudeDesktopAutoModeModelEligibility(t *testing.T) {
+	recommended := proxy.ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{
+		{Model: "glm-5.2:cloud"},
+		{Model: "kimi-k3:cloud"},
+		{Model: "gemma4:31b-cloud"},
+	})
+	accountCloud := proxy.ClaudeDesktopModelsFromCloudInventory([]string{
+		"glm-5.2:cloud",
+		"gemma4:31b-cloud",
+	})
+	recommended = mergeClaudeDesktopCloudInventory(recommended, accountCloud, false)
+	custom := proxy.SelectClaudeDesktopModels(nil, []string{"qwen3:8b"})
+	tagOnly := proxy.SelectClaudeDesktopModels(nil, []string{"made-up:cloud"})
+
+	tests := []struct {
+		name   string
+		models []proxy.ClaudeDesktopModel
+		want   bool
+	}{
+		{name: "account cloud model", models: recommended[:1], want: true},
+		{name: "recommendation absent from account list", models: recommended[1:2]},
+		{name: "account gemma4 model", models: recommended[2:], want: true},
+		{name: "custom model excluded", models: custom},
+		{name: "cloud suffix alone excluded", models: tagOnly},
+		{name: "account cloud and custom", models: []proxy.ClaudeDesktopModel{recommended[0], custom[0]}, want: true},
+		{name: "empty selection excluded"},
+		{name: "offline fallback excluded", models: fallbackClaudeDesktopModels()},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := claudeDesktopModelsSupportAutoMode(tt.models); got != tt.want {
+				t.Fatalf("claudeDesktopModelsSupportAutoMode() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSetClaudeDesktopAutoModeRejectsUnsupportedSelection(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := launch.SaveClaudeDesktopAutoMode(false); err != nil {
+		t.Fatal(err)
+	}
+
+	previousAvailable := claudeAvailableModels
+	claudeAvailableModels = proxy.SelectClaudeDesktopModels(nil, []string{"qwen3:8b"})
+	t.Cleanup(func() { claudeAvailableModels = previousAvailable })
+
+	err := setClaudeDesktopAutoMode(true)
+	if err == nil || !strings.Contains(err.Error(), "cloud model available to your Ollama.com account") {
+		t.Fatalf("setClaudeDesktopAutoMode() error = %v", err)
+	}
+	enabled, loadErr := launch.ClaudeDesktopAutoModeEnabled()
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if enabled {
+		t.Fatal("rejected Auto mode change modified the saved preference")
+	}
+}
+
 func TestRestartClaudeDesktopWithModelsPersistsSelection(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	previousInstalled := claudeDesktopInstalled
 	previousAddr := claudeProxyListenAddr
 	previousDesktop := claudeDesktop
+	previousCloudResolver := claudeCloudModelsResolver
 	claudeDesktopInstalled = func() bool { return true }
 	claudeProxyListenAddr = "127.0.0.1:0"
 	fake := &fakeClaudeDesktopController{configured: true}
 	claudeDesktop = fake
+	claudeCloudModelsResolver = func(context.Context) ([]proxy.ClaudeDesktopModel, error) {
+		return proxy.ClaudeDesktopModelsFromCloudInventory([]string{"kimi-k3:cloud"}), nil
+	}
 	t.Cleanup(func() {
 		stopClaudeAppProxy()
 		claudeDesktopInstalled = previousInstalled
 		claudeProxyListenAddr = previousAddr
 		claudeDesktop = previousDesktop
+		claudeCloudModelsResolver = previousCloudResolver
 	})
 
 	if err := restartClaudeDesktopWithModels([]string{"kimi-k3:cloud"}); err != nil {
@@ -471,6 +887,9 @@ func TestRestartClaudeDesktopWithModelsPersistsSelection(t *testing.T) {
 	}
 	if !fake.installed {
 		t.Fatal("expected the Claude profile to be installed")
+	}
+	if !fake.autoMode {
+		t.Fatal("expected the account cloud model to keep Auto mode enabled")
 	}
 	if got, want := launch.ClaudeDesktopModels(), []string{"kimi-k3:cloud"}; !slices.Equal(got, want) {
 		t.Fatalf("persisted models = %v, want Ollama routes %v", got, want)
@@ -1154,14 +1573,141 @@ func TestClaudeGatewayStartupWithLocalSelectionSkipsCloudLookupsButSettingsLoads
 	if !foundCloud || !foundSelectedLocal {
 		t.Fatalf("Settings models = %+v, want cloud choices and selected qwen3:8b", status.Models)
 	}
-	if loaderCalls != 1 || accessCalls != 1 {
-		t.Fatalf("Settings catalog calls = recommendations:%d access:%d, want one each", loaderCalls, accessCalls)
+	if loaderCalls != 1 || accessCalls != 2 {
+		t.Fatalf("Settings catalog calls = recommendations:%d access:%d, want recommendations:1 access:2", loaderCalls, accessCalls)
 	}
 	claudeProxyMu.Lock()
 	models := claudeAppProxy.Models()
 	claudeProxyMu.Unlock()
 	if len(models) != 1 || models[0].OllamaModel != "qwen3:8b" {
 		t.Fatalf("startup models = %+v", models)
+	}
+}
+
+func TestClaudeGatewayLocalSelectionCatalogPolicy(t *testing.T) {
+	tests := []struct {
+		name               string
+		access             proxy.ClaudeDesktopAccessState
+		accessErr          error
+		recommendations    []proxy.ClaudeDesktopModel
+		wantLoaderCalls    int
+		wantSettingsModels []string
+	}{
+		{
+			name: "cloud off stays local",
+			access: proxy.ClaudeDesktopAccessState{
+				Cloud: proxy.ClaudeDesktopCloudOff,
+			},
+			wantSettingsModels: []string{"qwen3:8b"},
+		},
+		{
+			name:               "unknown cloud policy stays local",
+			accessErr:          errors.New("offline"),
+			wantSettingsModels: []string{"qwen3:8b"},
+		},
+		{
+			name: "cloud on restores recommendations",
+			access: proxy.ClaudeDesktopAccessState{
+				Cloud:   proxy.ClaudeDesktopCloudOn,
+				Account: proxy.ClaudeDesktopAccountSignedIn,
+				Plan:    "pro",
+			},
+			recommendations: proxy.ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{
+				Model:        "glm-5.2:cloud",
+				RequiredPlan: "pro",
+			}}),
+			wantLoaderCalls:    1,
+			wantSettingsModels: []string{"glm-5.2:cloud", "qwen3:8b"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("OLLAMA_HOST", "127.0.0.1:11434")
+			if err := launch.SaveClaudeDesktopModels([]string{"qwen3:8b"}); err != nil {
+				t.Fatal(err)
+			}
+			previousInstalled := claudeDesktopInstalled
+			previousStore := appStore
+			appStore = &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
+			if err := markClaudeDesktopIntegrationUsed(); err != nil {
+				t.Fatal(err)
+			}
+			previousAddr := claudeProxyListenAddr
+			previousLoader := claudeModelsLoader
+			previousAccess := claudeAccessStateResolver
+			previousLocal := claudeLocalModelsResolver
+			claudeProxyMu.Lock()
+			previousGateway := claudeAppProxy
+			previousAvailable := claudeAvailableModels
+			previousSource := claudeModelSource
+			previousUpdated := claudeCatalogUpdated
+			claudeAppProxy = nil
+			claudeAvailableModels = nil
+			claudeModelSource = ""
+			claudeCatalogUpdated = time.Time{}
+			claudeProxyMu.Unlock()
+			claudeDesktopInstalled = func() bool { return true }
+			claudeProxyListenAddr = "127.0.0.1:0"
+			loaderCalls := 0
+			accessCalls := 0
+			claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
+				loaderCalls++
+				return tt.recommendations, "endpoint"
+			}
+			claudeAccessStateResolver = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
+				accessCalls++
+				return tt.access, tt.accessErr
+			}
+			claudeLocalModelsResolver = func(context.Context) ([]string, error) {
+				return []string{"qwen3:8b"}, nil
+			}
+			t.Cleanup(func() {
+				stopClaudeAppProxy()
+				_ = appStore.Close()
+				appStore = previousStore
+				claudeDesktopInstalled = previousInstalled
+				claudeProxyListenAddr = previousAddr
+				claudeModelsLoader = previousLoader
+				claudeAccessStateResolver = previousAccess
+				claudeLocalModelsResolver = previousLocal
+				claudeProxyMu.Lock()
+				claudeAppProxy = previousGateway
+				claudeAvailableModels = previousAvailable
+				claudeModelSource = previousSource
+				claudeCatalogUpdated = previousUpdated
+				claudeProxyMu.Unlock()
+			})
+
+			if err := startClaudeAppProxy(); err != nil {
+				t.Fatal(err)
+			}
+			if loaderCalls != 0 || accessCalls != 0 {
+				t.Fatalf("cloud startup calls = recommendations:%d access:%d, want zero", loaderCalls, accessCalls)
+			}
+			status := getClaudeDesktopConnectionStatus()
+			gotSettingsModels := make([]string, len(status.Models))
+			for i, model := range status.Models {
+				gotSettingsModels[i] = model.Name
+			}
+			if !slices.Equal(gotSettingsModels, tt.wantSettingsModels) {
+				t.Fatalf("Settings models = %v, want %v", gotSettingsModels, tt.wantSettingsModels)
+			}
+			wantAccessCalls := 1
+			if tt.accessErr == nil && tt.access.Cloud == proxy.ClaudeDesktopCloudOn {
+				wantAccessCalls++
+			}
+			if loaderCalls != tt.wantLoaderCalls || accessCalls != wantAccessCalls {
+				t.Fatalf("cloud status calls = recommendations:%d access:%d, want recommendations:%d access:%d", loaderCalls, accessCalls, tt.wantLoaderCalls, wantAccessCalls)
+			}
+			claudeProxyMu.Lock()
+			models := claudeAppProxy.Models()
+			claudeProxyMu.Unlock()
+			if len(models) != 1 || models[0].OllamaModel != "qwen3:8b" {
+				t.Fatalf("active gateway models = %+v, want local selection unchanged", models)
+			}
+		})
 	}
 }
 

@@ -280,6 +280,266 @@ func TestGatewayRoutesEveryMappedModelIDToExactOllamaRoute(t *testing.T) {
 	}
 }
 
+func TestGatewayRoutesClaudeAutoClassifierAsOrdinaryMessages(t *testing.T) {
+	local := SelectClaudeDesktopModels(nil, []string{"qwen3.5:latest"})
+	cloud := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "glm-5.2:cloud", RequiredPlan: "pro"}})
+	tests := []struct {
+		name          string
+		models        []ClaudeDesktopModel
+		ollamaModel   string
+		maxTokens     int
+		stopSequences []string
+		responseText  string
+		configure     func(*ClaudeDesktopConfig)
+	}{
+		{
+			name:          "stage one selected local model",
+			models:        local,
+			ollamaModel:   "qwen3.5:latest",
+			maxTokens:     2112,
+			stopSequences: []string{"</block>"},
+			responseText:  "malformed classifier output",
+			configure: func(config *ClaudeDesktopConfig) {
+				config.ListLocalModels = func(context.Context) ([]string, error) {
+					return []string{"qwen3.5:latest"}, nil
+				}
+			},
+		},
+		{
+			name:         "stage two selected cloud model",
+			models:       cloud,
+			ollamaModel:  "glm-5.2:cloud",
+			maxTokens:    10240,
+			responseText: "<block>yes</block><category>Synthetic risk</category><reason>Denied by the synthetic fixture.</reason>",
+			configure: func(config *ClaudeDesktopConfig) {
+				config.ResolveAccessState = func(context.Context) (ClaudeDesktopAccessState, error) {
+					return ClaudeDesktopAccessState{Cloud: ClaudeDesktopCloudOn, Account: ClaudeDesktopAccountSignedIn, Plan: "pro"}, nil
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var upstreamPayload map[string]json.RawMessage
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.RequestURI() != "/v1/messages?beta=true" {
+					t.Fatalf("request URI = %q", r.URL.RequestURI())
+				}
+				if r.Header.Get("Authorization") != "" || r.Header.Get("Cookie") != "" || r.Header.Get("Proxy-Authorization") != "" {
+					t.Fatal("Claude credentials leaked to the Ollama server")
+				}
+				if err := json.NewDecoder(r.Body).Decode(&upstreamPayload); err != nil {
+					t.Fatal(err)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(anthropic.MessagesResponse{
+					ID:    "msg_classifier",
+					Type:  "message",
+					Role:  "assistant",
+					Model: tt.ollamaModel,
+					Content: []anthropic.ContentBlock{{
+						Type: "text",
+						Text: &tt.responseText,
+					}},
+					StopReason: "end_turn",
+					Usage:      anthropic.Usage{InputTokens: 24644, OutputTokens: 300},
+				})
+			}))
+			defer upstream.Close()
+
+			config := ClaudeDesktopConfig{
+				ListenAddr: "127.0.0.1:0",
+				OllamaURL:  upstream.URL,
+				Model:      tt.ollamaModel,
+				Models:     tt.models,
+			}
+			tt.configure(&config)
+			p, err := NewClaudeDesktop(config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := p.Start(); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+				defer cancel()
+				if err := p.Close(ctx); err != nil {
+					t.Fatal(err)
+				}
+			})
+
+			requestBody := map[string]any{
+				"model":      p.Models()[0].GatewayID(),
+				"max_tokens": tt.maxTokens,
+				"system": []any{
+					map[string]any{"type": "text", "text": "Synthetic policy fixture.", "cache_control": map[string]any{"type": "ephemeral"}},
+					map[string]any{"type": "text", "text": "Synthetic session context."},
+				},
+				"messages": []any{map[string]any{
+					"role": "user",
+					"content": []any{
+						map[string]any{"type": "text", "text": "<transcript>\n"},
+						map[string]any{"type": "text", "text": "User: synthetic task\n"},
+						map[string]any{"type": "text", "text": "Bash synthetic action\n"},
+						map[string]any{"type": "text", "text": "</transcript>\n"},
+						map[string]any{"type": "text", "text": "Return the synthetic verdict."},
+					},
+				}},
+			}
+			if len(tt.stopSequences) > 0 {
+				requestBody["stop_sequences"] = tt.stopSequences
+			}
+			body, err := json.Marshal(requestBody)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req, err := http.NewRequest(http.MethodPost, "http://"+p.Addr()+"/v1/messages?beta=true", strings.NewReader(string(body)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer local-placeholder")
+			req.Header.Set("Cookie", "session=secret")
+			req.Header.Set("Proxy-Authorization", "Basic secret")
+			response, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			var message anthropic.MessagesResponse
+			if err := json.NewDecoder(response.Body).Decode(&message); err != nil {
+				t.Fatal(err)
+			}
+			if response.StatusCode != http.StatusOK || len(message.Content) != 1 || message.Content[0].Text == nil || *message.Content[0].Text != tt.responseText {
+				t.Fatalf("response = %d %+v, want opaque upstream classifier output", response.StatusCode, message)
+			}
+
+			var routedModel string
+			if err := json.Unmarshal(upstreamPayload["model"], &routedModel); err != nil {
+				t.Fatal(err)
+			}
+			if routedModel != tt.ollamaModel {
+				t.Fatalf("classifier routed to %q, want exact selected model %q", routedModel, tt.ollamaModel)
+			}
+			if _, ok := upstreamPayload["stream"]; ok {
+				t.Fatalf("classifier request unexpectedly gained stream: %s", upstreamPayload["stream"])
+			}
+			if _, ok := upstreamPayload["tools"]; ok {
+				t.Fatalf("classifier request unexpectedly gained tools: %s", upstreamPayload["tools"])
+			}
+			var maxTokens int
+			if err := json.Unmarshal(upstreamPayload["max_tokens"], &maxTokens); err != nil || maxTokens != tt.maxTokens {
+				t.Fatalf("max_tokens = %d, error = %v, want %d", maxTokens, err, tt.maxTokens)
+			}
+			var stopSequences []string
+			if raw := upstreamPayload["stop_sequences"]; raw != nil {
+				if err := json.Unmarshal(raw, &stopSequences); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if strings.Join(stopSequences, ",") != strings.Join(tt.stopSequences, ",") {
+				t.Fatalf("stop_sequences = %v, want %v", stopSequences, tt.stopSequences)
+			}
+		})
+	}
+}
+
+func TestGatewayPropagatesClaudeAutoClassifierCancellationAndTimeout(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		newContext func() (context.Context, context.CancelFunc)
+		cancel     bool
+		wantErr    error
+	}{
+		{
+			name: "caller cancellation",
+			newContext: func() (context.Context, context.CancelFunc) {
+				return context.WithCancel(context.Background())
+			},
+			cancel:  true,
+			wantErr: context.Canceled,
+		},
+		{
+			name: "caller timeout",
+			newContext: func() (context.Context, context.CancelFunc) {
+				return context.WithTimeout(context.Background(), 100*time.Millisecond)
+			},
+			wantErr: context.DeadlineExceeded,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			started := make(chan struct{})
+			canceled := make(chan struct{})
+
+			models := SelectClaudeDesktopModels(nil, []string{"qwen3.5:latest"})
+			p, err := NewClaudeDesktop(ClaudeDesktopConfig{
+				ListenAddr: "127.0.0.1:0",
+				OllamaURL:  "http://127.0.0.1:1",
+				Model:      "qwen3.5:latest",
+				Models:     models,
+				ListLocalModels: func(context.Context) ([]string, error) {
+					return []string{"qwen3.5:latest"}, nil
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.readyUntil = time.Now().Add(time.Minute)
+			p.ollamaProxy.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				close(started)
+				<-r.Context().Done()
+				close(canceled)
+				return nil, r.Context().Err()
+			})
+			if err := p.Start(); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+				defer cancel()
+				if err := p.Close(ctx); err != nil {
+					t.Fatal(err)
+				}
+			})
+
+			ctx, cancel := tt.newContext()
+			defer cancel()
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+p.Addr()+"/v1/messages?beta=true", strings.NewReader(`{"model":"claude-fable-5","max_tokens":2112,"messages":[{"role":"user","content":"synthetic classifier"}]}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := make(chan error, 1)
+			go func() {
+				resp, err := http.DefaultClient.Do(req)
+				if resp != nil {
+					_ = resp.Body.Close()
+				}
+				result <- err
+			}()
+			<-started
+			if tt.cancel {
+				cancel()
+			}
+			if err := <-result; !errors.Is(err, tt.wantErr) {
+				t.Fatalf("request error = %v, want %v", err, tt.wantErr)
+			}
+			select {
+			case <-canceled:
+			case <-time.After(time.Second):
+				t.Fatal("classifier cancellation did not reach the selected-model request")
+			}
+		})
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
 func TestGatewayPrunesCloudModelsWhenSignedOut(t *testing.T) {
 	upstream := httptest.NewServer(http.NotFoundHandler())
 	defer upstream.Close()

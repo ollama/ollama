@@ -108,7 +108,11 @@ export default function Settings() {
   const [isAwaitingConnection, setIsAwaitingConnection] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [pollingInterval, setPollingInterval] = useState<number | null>(null);
-  const { cloudDisabled, cloudStatus } = useCloudStatus();
+  const {
+    cloudDisabled,
+    cloudStatus,
+    isKnown: cloudStatusKnown,
+  } = useCloudStatus();
 
   const showSavedConfirmation = useCallback(() => {
     setShowSaved(true);
@@ -665,7 +669,11 @@ export default function Settings() {
             </div>
           </div>
 
-          <ClaudeDesktopModelsSettings />
+          <ClaudeDesktopModelsSettings
+            includeCloudModels={
+              isAuthenticated && cloudStatusKnown && !cloudDisabled
+            }
+          />
 
           {/* Agent Mode */}
           {window.OLLAMA_TOOLS && (
