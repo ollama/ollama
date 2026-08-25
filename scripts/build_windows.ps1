@@ -287,11 +287,6 @@ function checkEnv {
         $script:HIP_PATH=$script:HIP_PATH_V6
     }
     
-    $inoSetup=(get-item "C:\Program Files*\Inno Setup*\")
-    if ($inoSetup.length -gt 0) {
-        $script:INNO_SETUP_DIR=$inoSetup[0]
-    }
-
     $script:DIST_DIR="${script:SRC_DIR}\dist\windows-${script:TARGET_ARCH}"
     $env:CGO_ENABLED="1"
     if (-not $env:CGO_CFLAGS) {
@@ -1032,20 +1027,30 @@ function sign {
     }
 }
 
-function installer {
-    if ($null -eq ${script:INNO_SETUP_DIR}) {
-        Write-Output "ERROR: missing Inno Setup installation directory - install from https://jrsoftware.org/isdl.php"
-        exit 1
+function msi {
+    Write-Output "Building MSI packages via CMake"
+
+    # Payloads must be signed before building MSIs so signed files are packaged.
+    # The 'sign' step should have been run before this.
+    $cmakeArgs = @(
+        "-B", "${script:SRC_DIR}\build\msi",
+        "-S", "${script:SRC_DIR}\app\msi",
+        "-DOLLAMA_VERSION=${script:VERSION}",
+        "-DOLLAMA_PKG_VERSION=${script:PKG_VERSION}",
+        "-DOLLAMA_DIST_DIR=${script:SRC_DIR}\dist"
+    )
+
+    & cmake @cmakeArgs
+    if ($LASTEXITCODE -ne 0) {
+        Write-Output "ERROR: CMake configure failed"
+        exit($LASTEXITCODE)
     }
-    Write-Output "Building Ollama Installer"
-    cd "${script:SRC_DIR}\app"
-    $env:PKG_VERSION=$script:PKG_VERSION
-    if ("${env:KEY_CONTAINER}") {
-        & "${script:INNO_SETUP_DIR}\ISCC.exe" /DARCH=$script:TARGET_ARCH /SMySignTool="${script:SignTool} sign /fd sha256 /t http://timestamp.digicert.com /f ${script:OLLAMA_CERT} /csp `$qGoogle Cloud KMS Provider`$q /kc ${env:KEY_CONTAINER} `$f" .\ollama.iss
-    } else {
-        & "${script:INNO_SETUP_DIR}\ISCC.exe" /DARCH=$script:TARGET_ARCH .\ollama.iss
+
+    & cmake --build "${script:SRC_DIR}\build\msi" --target msi-all --parallel $script:JOBS
+    if ($LASTEXITCODE -ne 0) {
+        Write-Output "ERROR: MSI build failed"
+        exit($LASTEXITCODE)
     }
-    if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
 }
 
 function newZipJob($sourceDir, $destZip) {
@@ -1291,6 +1296,36 @@ function zip {
     }
 }
 
+function sums {
+    Write-Output "Generating sha256sum.txt for dist/ files"
+    $distPath = "${script:SRC_DIR}\dist"
+    if (-not (Test-Path $distPath)) {
+        Write-Output "ERROR: dist/ directory not found"
+        return
+    }
+
+    $outputFile = Join-Path $distPath "sha256sum.txt"
+    $extensions = @("*.msi", "*.exe", "*.zip", "*.tgz", "*.tar.zst", "*.dmg")
+    $files = @()
+    foreach ($ext in $extensions) {
+        $files += Get-ChildItem -Path $distPath -Filter $ext -File -ErrorAction SilentlyContinue
+    }
+
+    if ($files.Count -eq 0) {
+        Write-Output "No distribution files found in dist/"
+        return
+    }
+
+    $checksums = @()
+    foreach ($file in ($files | Sort-Object Name)) {
+        $hash = (Get-FileHash -Path $file.FullName -Algorithm SHA256).Hash.ToLower()
+        $checksums += "$hash  ./$($file.Name)"
+    }
+
+    $checksums | Out-File -FilePath $outputFile -Encoding utf8 -Force
+    Write-Output "Generated $outputFile with $($files.Count) entries"
+}
+
 function clean {
     Remove-Item -ea 0 -r "${script:SRC_DIR}\dist\"
     Remove-Item -ea 0 -r "${script:SRC_DIR}\build\"
@@ -1315,8 +1350,9 @@ try {
         appArm64
         deps
         sign
-        installer
+        msi
         zip
+        sums
     } else {
         for ( $i = 0; $i -lt $args.count; $i++ ) {
             Write-Output "running build step $($args[$i])"

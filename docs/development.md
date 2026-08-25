@@ -81,6 +81,13 @@ Additional prerequisites:
 - (Optional) MLX engine support
     - [CUDA 13+ SDK](https://developer.nvidia.com/cuda-downloads)
     - [cuDNN 9+](https://developer.nvidia.com/cudnn)
+- (Optional) MSI Packages
+    - [WiX v6 CLI](https://wixtoolset.org/) (`dotnet tool install -g wix`)
+
+
+```
+winget install --id=MartinStorsjo.LLVM-MinGW.UCRT -e
+```
 
 For Ninja builds, run CMake from a Developer PowerShell/Command Prompt or another shell where the Visual Studio compiler is available.
 
@@ -94,6 +101,66 @@ For Ninja builds, run CMake from a Developer PowerShell/Command Prompt or anothe
 > ```cmd
 > set VULKAN_SDK=C:\VulkanSDK\<version>
 > ```
+
+> [!IMPORTANT]
+> Prefer the build script for release-style GPU payloads. It wires the platform-specific compiler, SDK, and install layout details.
+
+Lastly, run Ollama:
+
+```powershell
+.\dist\windows-amd64\ollama.exe serve
+```
+
+For native CMake iteration, use the repository-root CMake build shown in [Native build model](#native-build-model). Ninja is recommended when available.
+
+Full build, including all Windows backends and MSI packages:
+
+```powershell
+.\scripts\build_windows.ps1
+```
+
+Individual build steps can be run separately:
+
+```powershell
+.\scripts\build_windows.ps1 cuda13 ollama
+```
+
+#### Pester Tests
+
+```powershell
+# Unit tests (fast, no system changes)
+Invoke-Pester scripts\tests\install.Tests.ps1 -Tag Unit
+
+# Integration tests (requires clean environment)
+Invoke-Pester scripts\tests\install.Tests.ps1 -Tag Integration
+```
+
+## Install/Upgrade Testing (Windows)
+
+### MSI install script
+
+1. Build MSIs:
+```powershell
+.\scripts\build_windows.ps1 msi
+```
+
+2. Test the installer script against the production download endpoint:
+```powershell
+# Default install (auto-detects GPU hardware)
+irm https://ollama.com/install.ps1 | iex
+
+# Minimal install (CPU-only, no GPU backends)
+$env:OLLAMA_INSTALL_MINIMAL = "1"
+irm https://ollama.com/install.ps1 | iex
+
+# Full install (all GPU backends)
+$env:OLLAMA_INSTALL_ALL = "1"
+irm https://ollama.com/install.ps1 | iex
+
+# Custom install directory
+$env:OLLAMA_INSTALL_DIR = "$env:TEMP\OllamaTest"
+irm https://ollama.com/install.ps1 | iex
+```
 
 ## Windows (ARM)
 
