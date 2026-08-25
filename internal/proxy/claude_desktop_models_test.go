@@ -422,3 +422,13 @@ func TestDefaultClaudeDesktopMappingsUseCurrentCatalogRoutes(t *testing.T) {
 		t.Fatalf("restricted catalog defaults = %v, want %v", restricted, wantRestricted)
 	}
 }
+
+func TestDefaultClaudeDesktopMappingsOnlyUseAvailableModels(t *testing.T) {
+	models := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{
+		{Model: "glm-5.2:cloud", RequiredPlan: "pro"},
+	})
+	want := map[string]string{"claude-opus-5": "glm-5.2:cloud"}
+	if got := DefaultClaudeDesktopMappingsForModels(models, true); !maps.Equal(got, want) {
+		t.Fatalf("partial catalog defaults = %v, want %v", got, want)
+	}
+}

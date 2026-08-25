@@ -1223,7 +1223,7 @@ func TestClaudeDesktopApplyProfileChangeDoesNotOpenStoppedClaude(t *testing.T) {
 	if err := (&ClaudeDesktop{}).ApplyProfileChange(func() error {
 		changed = true
 		return nil
-	}); err != nil {
+	}, true); err != nil {
 		t.Fatal(err)
 	}
 	if !changed {
@@ -1242,11 +1242,33 @@ func TestClaudeDesktopApplyProfileChangeRestartsRunningClaude(t *testing.T) {
 		func() error { openCalls++; return nil },
 	)
 
-	if err := (&ClaudeDesktop{}).ApplyProfileChange(func() error { return nil }); err != nil {
+	if err := (&ClaudeDesktop{}).ApplyProfileChange(func() error { return nil }, true); err != nil {
 		t.Fatal(err)
 	}
 	if quitCalls != 1 || openCalls != 1 {
 		t.Fatalf("quit/open calls = %d/%d, want 1/1", quitCalls, openCalls)
+	}
+}
+
+func TestClaudeDesktopApplyProfileChangeRequiresRestartConfirmation(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	withClaudeDesktopPlatform(t, "darwin")
+	changed := false
+	withClaudeDesktopProcessHooks(t,
+		func() bool { return true },
+		func() error { t.Fatal("unconfirmed change should not quit Claude"); return nil },
+		func() error { t.Fatal("unconfirmed change should not reopen Claude"); return nil },
+	)
+
+	err := (&ClaudeDesktop{}).ApplyProfileChange(func() error {
+		changed = true
+		return nil
+	}, false)
+	if !errors.Is(err, ErrClaudeDesktopRestartConfirmationRequired) {
+		t.Fatalf("error = %v, want restart confirmation", err)
+	}
+	if changed {
+		t.Fatal("unconfirmed profile change ran")
 	}
 }
 

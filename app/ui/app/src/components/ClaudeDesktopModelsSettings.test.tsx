@@ -164,6 +164,7 @@ describe("ClaudeDesktopModelsSettings", () => {
       <ClaudeDesktopModelsSettings initialStatus={status({ running: true })} />,
     );
     expect(runningHTML).toContain("Restart Claude");
+    expect(runningHTML).toContain("disabled");
   });
 
   it("stays hidden until Claude has been enabled once", () => {

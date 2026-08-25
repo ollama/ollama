@@ -97,6 +97,8 @@ export default function Settings() {
   const [showAppsInMenuPending, setShowAppsInMenuPending] = useState(false);
   const [resettingToDefaults, setResettingToDefaults] = useState(false);
   const [hasClaudeDraftChanges, setHasClaudeDraftChanges] = useState(false);
+  const [claudeMappingsResetVersion, setClaudeMappingsResetVersion] =
+    useState(0);
   useBlocker({
     shouldBlockFn: () =>
       !window.confirm("Discard unapplied Claude routing changes?"),
@@ -333,6 +335,7 @@ export default function Settings() {
         cloudSource: cloudStatus?.source,
         onSaved: showSavedConfirmation,
       });
+      setClaudeMappingsResetVersion((version) => version + 1);
     } catch (error) {
       console.error("Failed to reset settings:", error);
     } finally {
@@ -695,6 +698,7 @@ export default function Settings() {
               isAuthenticated && cloudStatusKnown && !cloudDisabled
             }
             onDraftChange={setHasClaudeDraftChanges}
+            resetVersion={claudeMappingsResetVersion}
           />
 
           {/* Agent Mode */}

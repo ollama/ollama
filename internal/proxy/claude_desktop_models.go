@@ -71,7 +71,7 @@ func DefaultClaudeDesktopMappings(fullAccess bool) map[string]string {
 // names to the exact Ollama routes in the current catalog. This preserves
 // server-owned aliases such as the current DeepSeek Flash revision.
 func DefaultClaudeDesktopMappingsForModels(available []ClaudeDesktopModel, fullAccess bool) map[string]string {
-	mappings := DefaultClaudeDesktopMappings(fullAccess)
+	mappings := make(map[string]string, MaxClaudeDesktopModels)
 	wanted := map[string]string{
 		"claude-sonnet-5": "gemma4:31b-cloud",
 	}

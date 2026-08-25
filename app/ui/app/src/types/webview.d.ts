@@ -29,6 +29,7 @@ interface ClaudeDesktopStatus {
   maxModels?: number;
   models?: ClaudeDesktopModelStatus[];
   mappings?: ClaudeDesktopMappingStatus[];
+  defaultMappings?: ClaudeDesktopMappingStatus[];
 }
 
 interface ClaudeDesktopMappingStatus {
@@ -57,6 +58,8 @@ interface ClaudeDesktopModelStatus {
 interface ClaudeDesktopActionResult {
   status: ClaudeDesktopStatus;
   error?: string;
+  mappingsApplied?: boolean;
+  restartConfirmationRequired?: boolean;
 }
 
 type ClaudeDesktopInstallResult = "opened" | "cancelled" | "failed";
@@ -88,9 +91,11 @@ declare global {
     setShowAppsInMenu?: (visible: boolean) => Promise<void>;
     applyClaudeDesktopMappings?: (
       mappings: Record<string, string>,
+      restartConfirmed: boolean,
     ) => Promise<ClaudeDesktopActionResult>;
     setClaudeDesktopAutoMode?: (
       enabled: boolean,
+      restartConfirmed: boolean,
     ) => Promise<ClaudeDesktopActionResult>;
     setOnboardingWindow?: (enabled: boolean) => void;
     menu: (items: MenuItem[]) => Promise<string | null>;

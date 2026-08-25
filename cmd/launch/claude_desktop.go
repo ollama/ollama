@@ -51,6 +51,10 @@ var (
 // inference mode using the Ollama app's local gateway.
 type ClaudeDesktop struct{}
 
+// ErrClaudeDesktopRestartConfirmationRequired reports that applying a profile
+// change would interrupt a running Claude Desktop process.
+var ErrClaudeDesktopRestartConfirmationRequired = errors.New("Claude Desktop restart confirmation is required before changing its profile")
+
 func (c *ClaudeDesktop) String() string { return "Claude Desktop" }
 
 func (c *ClaudeDesktop) Supported() error { return claudeDesktopSupported() }
@@ -170,7 +174,7 @@ func (c *ClaudeDesktop) SetInstalledFromDesktopWithAutoMode(installed, restart, 
 		return nil
 	}
 	if !restart {
-		return errors.New("Claude Desktop restart confirmation is required before changing its profile")
+		return ErrClaudeDesktopRestartConfirmationRequired
 	}
 	return restartClaudeDesktop(applyProfile)
 }
@@ -178,7 +182,7 @@ func (c *ClaudeDesktop) SetInstalledFromDesktopWithAutoMode(installed, restart, 
 // ApplyProfileChange applies a profile-dependent change immediately. Claude is
 // restarted only when it is already running; otherwise the change takes effect
 // the next time the user opens it.
-func (c *ClaudeDesktop) ApplyProfileChange(change func() error) error {
+func (c *ClaudeDesktop) ApplyProfileChange(change func() error, restartConfirmed bool) error {
 	if err := claudeDesktopSupported(); err != nil {
 		return err
 	}
@@ -188,6 +192,9 @@ func (c *ClaudeDesktop) ApplyProfileChange(change func() error) error {
 	}
 	if !running {
 		return change()
+	}
+	if !restartConfirmed {
+		return ErrClaudeDesktopRestartConfirmationRequired
 	}
 	return restartClaudeDesktop(change)
 }

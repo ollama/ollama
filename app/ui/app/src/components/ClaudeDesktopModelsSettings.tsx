@@ -24,6 +24,7 @@ interface ClaudeDesktopModelsSettingsProps {
   initialCloudModels?: string[];
   includeCloudModels?: boolean;
   onDraftChange?: (hasChanges: boolean) => void;
+  resetVersion?: number;
 }
 
 const fallbackRoutes: ClaudeDesktopMappingStatus[] = [
@@ -251,6 +252,7 @@ export function ClaudeDesktopModelsSettings({
   initialCloudModels,
   includeCloudModels = false,
   onDraftChange,
+  resetVersion = 0,
 }: ClaudeDesktopModelsSettingsProps) {
   const [status, setStatus] = useState<ClaudeDesktopStatus | null>(
     initialStatus ?? null,
@@ -278,6 +280,9 @@ export function ClaudeDesktopModelsSettings({
     null,
   );
   const draftRef = useRef({ mappings, savedMappings });
+  const statusRequestRef = useRef(0);
+  const operationInFlightRef = useRef(false);
+  const lastResetVersionRef = useRef(resetVersion);
   draftRef.current = { mappings, savedMappings };
 
   const applyStatus = useCallback(
@@ -299,10 +304,22 @@ export function ClaudeDesktopModelsSettings({
 
   const refreshStatus = useCallback(async () => {
     if (!window.getClaudeDesktopStatus) return;
+    const request = ++statusRequestRef.current;
     try {
-      applyStatus(await window.getClaudeDesktopStatus(), true);
+      const next = await window.getClaudeDesktopStatus();
+      if (
+        request === statusRequestRef.current &&
+        !operationInFlightRef.current
+      ) {
+        applyStatus(next, true);
+      }
     } catch {
-      setError("Ollama could not read the Claude connection status.");
+      if (
+        request === statusRequestRef.current &&
+        !operationInFlightRef.current
+      ) {
+        setError("Ollama could not read the Claude connection status.");
+      }
     }
   }, [applyStatus]);
 
@@ -367,6 +384,14 @@ export function ClaudeDesktopModelsSettings({
     onDraftChange?.(hasDraftChanges);
   }, [hasDraftChanges, onDraftChange]);
 
+  useEffect(() => {
+    if (resetVersion === lastResetVersionRef.current) return;
+    if (!status?.defaultMappings?.length) return;
+    lastResetVersionRef.current = resetVersion;
+    setError(null);
+    setMappings(status.defaultMappings.map((mapping) => ({ ...mapping })));
+  }, [resetVersion, status?.defaultMappings]);
+
   const updateMapping = (routeId: string, model: string) => {
     setError(null);
     setMappings((current) =>
@@ -393,21 +418,30 @@ export function ClaudeDesktopModelsSettings({
       setError("Choose models available to your account and device.");
       return;
     }
-    if (
-      status?.running &&
-      !window.confirm("Restart Claude Desktop? Any running task will stop.")
-    ) {
-      return;
-    }
-
     setApplying(true);
     setError(null);
+    operationInFlightRef.current = true;
+    ++statusRequestRef.current;
     try {
-      const result = await window.applyClaudeDesktopMappings(
+      let result = await window.applyClaudeDesktopMappings(
         mappingRecord(mappings),
+        false,
       );
-      if (result.error) {
+      if (result.restartConfirmationRequired) {
         applyStatus(result.status, true);
+        if (
+          !window.confirm("Restart Claude Desktop? Any running task will stop.")
+        ) {
+          return;
+        }
+        result = await window.applyClaudeDesktopMappings(
+          mappingRecord(mappings),
+          true,
+        );
+      }
+      ++statusRequestRef.current;
+      if (result.error) {
+        applyStatus(result.status, !result.mappingsApplied);
         setError(result.error);
       } else {
         applyStatus(result.status);
@@ -415,6 +449,8 @@ export function ClaudeDesktopModelsSettings({
     } catch {
       setError("Ollama could not apply the Claude model mappings.");
     } finally {
+      ++statusRequestRef.current;
+      operationInFlightRef.current = false;
       setApplying(false);
     }
   };
@@ -424,25 +460,32 @@ export function ClaudeDesktopModelsSettings({
       setError("Auto mode is available in the Ollama macOS app.");
       return;
     }
-    if (
-      status?.running &&
-      !window.confirm(
-        "Restart Claude to change auto mode? Any running task will stop.",
-      )
-    ) {
-      return;
-    }
-
     setError(null);
     setAutoModeOverride(checked);
     setAutoModeApplying(true);
+    operationInFlightRef.current = true;
+    ++statusRequestRef.current;
     try {
-      const result = await window.setClaudeDesktopAutoMode(checked);
+      let result = await window.setClaudeDesktopAutoMode(checked, false);
+      if (result.restartConfirmationRequired) {
+        applyStatus(result.status, true);
+        if (
+          !window.confirm(
+            "Restart Claude to change auto mode? Any running task will stop.",
+          )
+        ) {
+          return;
+        }
+        result = await window.setClaudeDesktopAutoMode(checked, true);
+      }
+      ++statusRequestRef.current;
       applyStatus(result.status);
       if (result.error) setError(result.error);
     } catch {
       setError("Ollama could not update Claude auto mode.");
     } finally {
+      ++statusRequestRef.current;
+      operationInFlightRef.current = false;
       setAutoModeOverride(null);
       setAutoModeApplying(false);
     }
@@ -516,7 +559,10 @@ export function ClaudeDesktopModelsSettings({
                 color="white"
                 onClick={applyChanges}
                 disabled={
-                  busy || assignedModels.length === 0 || hasInvalidMapping
+                  busy ||
+                  assignedModels.length === 0 ||
+                  hasInvalidMapping ||
+                  (status.running && !hasDraftChanges)
                 }
                 className="flex-shrink-0"
               >
