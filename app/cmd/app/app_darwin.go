@@ -389,11 +389,12 @@ func startClaudeAppProxy() error {
 
 func resolveClaudeDesktopStartupCatalog(ctx context.Context) (available, selected []proxy.ClaudeDesktopModel, source string) {
 	selectedNames := launch.ClaudeDesktopModels()
+	savedMappings := launch.ClaudeDesktopModelMappings()
 	if len(selectedNames) > 0 {
 		localNames, err := claudeLocalModelsResolver(ctx)
 		if err == nil && allClaudeDesktopModelsLocal(selectedNames, localNames) {
-			if mappings := launch.ClaudeDesktopModelMappings(); len(mappings) > 0 {
-				selected = proxy.MapClaudeDesktopModels(nil, mappings)
+			if len(savedMappings) > 0 {
+				selected = proxy.MapClaudeDesktopModels(nil, savedMappings)
 			} else {
 				selected = proxy.SelectClaudeDesktopModels(nil, selectedNames)
 			}
@@ -416,7 +417,9 @@ func resolveClaudeDesktopStartupCatalog(ctx context.Context) (available, selecte
 			}
 		}
 	}
-	if len(selectedNames) == 0 {
+	if len(savedMappings) > 0 {
+		selected = proxy.MapClaudeDesktopModels(selectable, savedMappings)
+	} else if len(selectedNames) == 0 {
 		selected = proxy.MapClaudeDesktopModels(
 			selectable,
 			proxy.DefaultClaudeDesktopMappingsForModels(
@@ -431,7 +434,7 @@ func resolveClaudeDesktopStartupCatalog(ctx context.Context) (available, selecte
 		selected = available
 	}
 	available = includeSelectedClaudeDesktopModels(available, selected)
-	if len(selectedNames) > 0 {
+	if len(selectedNames) > 0 || len(savedMappings) > 0 {
 		source = "user"
 	}
 	return available, selected, source
@@ -1238,14 +1241,19 @@ func setClaudeDesktopAutoMode(enabled, restartConfirmed bool) error {
 	if previous == enabled && (!claudeDesktop.UsesOllamaGateway() || claudeDesktop.AutodiscoveryConfiguredWithAutoMode(enabled)) {
 		return nil
 	}
-	if err := launch.SaveClaudeDesktopAutoMode(enabled); err != nil {
-		return fmt.Errorf("save Claude Desktop auto mode: %w", err)
-	}
 	if !claudeDesktop.UsesOllamaGateway() {
 		// The preference takes effect the next time the profile is written.
+		if err := launch.SaveClaudeDesktopAutoMode(enabled); err != nil {
+			return fmt.Errorf("save Claude Desktop auto mode: %w", err)
+		}
 		return nil
 	}
 	return claudeDesktop.ApplyProfileChange(func() error {
+		// Persist only after the native layer has established that a running
+		// Claude process may be restarted. Canceling consent must be a no-op.
+		if err := launch.SaveClaudeDesktopAutoMode(enabled); err != nil {
+			return fmt.Errorf("save Claude Desktop auto mode: %w", err)
+		}
 		return claudeDesktop.ConfigureAutodiscoveryWithAutoMode(enabled)
 	}, restartConfirmed)
 }

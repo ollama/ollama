@@ -1,5 +1,6 @@
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, expect, it, vi } from "vitest";
+import { Switch } from "./ui/switch";
 import { ClaudeDesktopModelsSettings } from "./ClaudeDesktopModelsSettings";
 
 const fableRoute = {
@@ -234,6 +235,72 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
     }
   });
 
+  it("restores Auto mode when restart confirmation is canceled", async () => {
+    class TestHTMLElement {
+      focus() {}
+    }
+    const runningStatus = {
+      ...testStatus("glm-5.2:cloud", true),
+      autoMode: true,
+      models: testStatus().models.map((model) => ({
+        ...model,
+        autoMode: true,
+      })),
+    };
+    const setAutoMode = vi.fn().mockResolvedValue({
+      status: runningStatus,
+      error:
+        "Claude Desktop restart confirmation is required before changing its profile",
+      restartConfirmationRequired: true,
+    });
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      HTMLElement: TestHTMLElement,
+      setClaudeDesktopAutoMode: setAutoMode,
+      confirm,
+    });
+    vi.stubGlobal("document", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <ClaudeDesktopModelsSettings
+            initialLocalModels={[]}
+            initialStatus={runningStatus}
+          />,
+        );
+        await Promise.resolve();
+      });
+      await act(async () => {
+        renderer!.root.findByType(Switch).props.onChange(false);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(setAutoMode).toHaveBeenCalledTimes(1);
+      expect(setAutoMode).toHaveBeenCalledWith(false, false);
+      expect(confirm).toHaveBeenCalledWith(
+        "Restart Claude to change auto mode? Any running task will stop.",
+      );
+      expect(
+        renderer!.root.findByProps({ role: "switch" }).props["aria-checked"],
+      ).toBe(true);
+    } finally {
+      await act(async () => {
+        renderer?.unmount();
+        await Promise.resolve();
+      });
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("ignores a stale focus refresh that finishes after apply", async () => {
     class TestHTMLElement {
       focus() {}
@@ -367,16 +434,6 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
     class TestHTMLElement {
       focus() {}
     }
-    vi.stubGlobal("window", {
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      HTMLElement: TestHTMLElement,
-    });
-    vi.stubGlobal("document", {
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-    });
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const initialStatus = {
       ...testStatus("glm-5.2:cloud"),
       mappings: [
@@ -388,6 +445,16 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
         },
       ],
       defaultMappings: [
+        { ...fableRoute, model: "kimi-k3:cloud" },
+        {
+          routeId: "claude-sonnet-5",
+          routeName: "Sonnet 5",
+        },
+      ],
+    };
+    const refreshedStatus = {
+      ...initialStatus,
+      defaultMappings: [
         { ...fableRoute },
         {
           routeId: "claude-sonnet-5",
@@ -396,6 +463,18 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
         },
       ],
     };
+    const getStatus = vi.fn().mockResolvedValue(refreshedStatus);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      HTMLElement: TestHTMLElement,
+      getClaudeDesktopStatus: getStatus,
+    });
+    vi.stubGlobal("document", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 
     let renderer: ReactTestRenderer | undefined;
     try {
@@ -408,7 +487,9 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
           />,
         );
         await Promise.resolve();
+        await Promise.resolve();
       });
+
       await act(async () => {
         renderer!.update(
           <ClaudeDesktopModelsSettings
@@ -418,7 +499,10 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
           />,
         );
         await Promise.resolve();
+        await Promise.resolve();
       });
+
+      expect(getStatus).toHaveBeenCalledTimes(1);
 
       const fable = renderer!.root.findByProps({
         "aria-label": "Ollama model for Fable 5",

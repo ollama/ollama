@@ -283,7 +283,9 @@ export function ClaudeDesktopModelsSettings({
   const statusRequestRef = useRef(0);
   const operationInFlightRef = useRef(false);
   const lastResetVersionRef = useRef(resetVersion);
+  const statusRef = useRef(status);
   draftRef.current = { mappings, savedMappings };
+  statusRef.current = status;
 
   const applyStatus = useCallback(
     (next: ClaudeDesktopStatus, preserveDraft = false) => {
@@ -386,11 +388,35 @@ export function ClaudeDesktopModelsSettings({
 
   useEffect(() => {
     if (resetVersion === lastResetVersionRef.current) return;
-    if (!status?.defaultMappings?.length) return;
-    lastResetVersionRef.current = resetVersion;
-    setError(null);
-    setMappings(status.defaultMappings.map((mapping) => ({ ...mapping })));
-  }, [resetVersion, status?.defaultMappings]);
+    let cancelled = false;
+
+    const resetToFreshDefaults = async () => {
+      try {
+        const next = window.getClaudeDesktopStatus
+          ? await window.getClaudeDesktopStatus()
+          : statusRef.current;
+        if (cancelled) return;
+        if (!next?.defaultMappings?.length) {
+          setError("Ollama could not refresh the Claude mapping defaults.");
+          return;
+        }
+        // Reset is an explicit action and wins over older focus refreshes.
+        ++statusRequestRef.current;
+        applyStatus(next, true);
+        setMappings(next.defaultMappings.map((mapping) => ({ ...mapping })));
+        lastResetVersionRef.current = resetVersion;
+      } catch {
+        if (!cancelled) {
+          setError("Ollama could not refresh the Claude mapping defaults.");
+        }
+      }
+    };
+
+    void resetToFreshDefaults();
+    return () => {
+      cancelled = true;
+    };
+  }, [applyStatus, resetVersion]);
 
   const updateMapping = (routeId: string, model: string) => {
     setError(null);
