@@ -61,7 +61,7 @@ func DefaultClaudeDesktopMappings(fullAccess bool) map[string]string {
 	return map[string]string{
 		"claude-fable-5":            "kimi-k3:cloud",
 		"claude-opus-5":             "glm-5.2:cloud",
-		"claude-sonnet-5":           "deepseek-v4-flash:0731:cloud",
+		"claude-sonnet-5":           "glm-5.3-flash:cloud",
 		"claude-haiku-4-5-20251001": "gemma4:31b-cloud",
 		"claude-sonnet-4-6":         "deepseek-v4-pro:cloud",
 	}
@@ -79,7 +79,7 @@ func DefaultClaudeDesktopMappingsForModels(available []ClaudeDesktopModel, fullA
 		wanted = map[string]string{
 			"claude-fable-5":            "kimi-k3:cloud",
 			"claude-opus-5":             "glm-5.2:cloud",
-			"claude-sonnet-5":           "deepseek-v4-flash",
+			"claude-sonnet-5":           "glm-5.3-flash:cloud",
 			"claude-haiku-4-5-20251001": "gemma4:31b-cloud",
 			"claude-sonnet-4-6":         "deepseek-v4-pro",
 		}

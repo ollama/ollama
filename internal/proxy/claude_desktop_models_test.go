@@ -379,7 +379,7 @@ func TestDefaultClaudeDesktopMappingsFollowAccountTier(t *testing.T) {
 	wantPro := map[string]string{
 		"claude-fable-5":            "kimi-k3:cloud",
 		"claude-opus-5":             "glm-5.2:cloud",
-		"claude-sonnet-5":           "deepseek-v4-flash:0731:cloud",
+		"claude-sonnet-5":           "glm-5.3-flash:cloud",
 		"claude-haiku-4-5-20251001": "gemma4:31b-cloud",
 		"claude-sonnet-4-6":         "deepseek-v4-pro:cloud",
 	}
@@ -397,16 +397,16 @@ func TestDefaultClaudeDesktopMappingsFollowAccountTier(t *testing.T) {
 func TestDefaultClaudeDesktopMappingsUseCurrentCatalogRoutes(t *testing.T) {
 	models := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{
 		{Model: "glm-5.2:cloud", RequiredPlan: "pro"},
+		{Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"},
 		{Model: "kimi-k3:cloud", RequiredPlan: "pro"},
 		{Model: "deepseek-v4-pro", RequiredPlan: "pro"},
-		{Model: "deepseek-v4-flash", RequiredPlan: "pro"},
 		{Model: "gemma4:31b-cloud", RequiredPlan: "free"},
 	})
 	paid := DefaultClaudeDesktopMappingsForModels(models, true)
 	wantPaid := map[string]string{
 		"claude-fable-5":            "kimi-k3:cloud",
 		"claude-opus-5":             "glm-5.2:cloud",
-		"claude-sonnet-5":           "deepseek-v4-flash:cloud",
+		"claude-sonnet-5":           "glm-5.3-flash:cloud",
 		"claude-haiku-4-5-20251001": "gemma4:31b-cloud",
 		"claude-sonnet-4-6":         "deepseek-v4-pro:cloud",
 	}
