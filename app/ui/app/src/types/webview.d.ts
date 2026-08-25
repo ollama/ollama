@@ -78,6 +78,7 @@ declare global {
     doubleClick?: () => void;
     activateOllama?: () => void;
     getClaudeDesktopStatus?: () => Promise<ClaudeDesktopStatus>;
+    getClaudeDesktopResetStatus?: () => Promise<ClaudeDesktopStatus>;
     getClaudeDesktopConnectionSummary?: () => Promise<ClaudeDesktopStatus>;
     getClaudeDesktopRequestCount?: () => Promise<number>;
     setClaudeDesktopConnected?: (
@@ -90,6 +91,10 @@ declare global {
     getShowAppsInMenu?: () => Promise<boolean>;
     setShowAppsInMenu?: (visible: boolean) => Promise<void>;
     applyClaudeDesktopMappings?: (
+      mappings: Record<string, string>,
+      restartConfirmed: boolean,
+    ) => Promise<ClaudeDesktopActionResult>;
+    resetClaudeDesktopMappings?: (
       mappings: Record<string, string>,
       restartConfirmed: boolean,
     ) => Promise<ClaudeDesktopActionResult>;

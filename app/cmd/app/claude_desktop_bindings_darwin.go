@@ -13,6 +13,9 @@ func bindClaudeDesktop(wv webview.WebView) {
 	wv.Bind("getClaudeDesktopStatus", func() claudeDesktopStatus {
 		return getClaudeDesktopConnectionStatus()
 	})
+	wv.Bind("getClaudeDesktopResetStatus", func() claudeDesktopStatus {
+		return getClaudeDesktopResetStatus()
+	})
 	wv.Bind("getClaudeDesktopConnectionSummary", func() claudeDesktopStatus {
 		return getClaudeDesktopConnectionSummary()
 	})
@@ -55,6 +58,18 @@ func bindClaudeDesktop(wv webview.WebView) {
 
 	wv.Bind("applyClaudeDesktopMappings", func(mappings map[string]string, restartConfirmed bool) claudeDesktopActionResult {
 		applied, err := applyClaudeDesktopMappings(mappings, restartConfirmed)
+		result := claudeDesktopActionResult{
+			Status:          getClaudeDesktopConnectionStatus(),
+			MappingsApplied: applied,
+		}
+		if err != nil {
+			result.Error = err.Error()
+			result.RestartConfirmationRequired = errors.Is(err, launch.ErrClaudeDesktopRestartConfirmationRequired)
+		}
+		return result
+	})
+	wv.Bind("resetClaudeDesktopMappings", func(mappings map[string]string, restartConfirmed bool) claudeDesktopActionResult {
+		applied, err := resetClaudeDesktopMappings(mappings, restartConfirmed)
 		result := claudeDesktopActionResult{
 			Status:          getClaudeDesktopConnectionStatus(),
 			MappingsApplied: applied,
