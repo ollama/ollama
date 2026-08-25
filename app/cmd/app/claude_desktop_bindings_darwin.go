@@ -2,7 +2,12 @@
 
 package main
 
-import "github.com/ollama/ollama/app/webview"
+import (
+	"errors"
+
+	"github.com/ollama/ollama/app/webview"
+	"github.com/ollama/ollama/cmd/launch"
+)
 
 func bindClaudeDesktop(wv webview.WebView) {
 	wv.Bind("getClaudeDesktopStatus", func() claudeDesktopStatus {
@@ -48,20 +53,25 @@ func bindClaudeDesktop(wv webview.WebView) {
 		return requestClaudeDesktopInstall()
 	})
 
-	wv.Bind("restartClaudeDesktop", func(models []string) claudeDesktopActionResult {
-		err := restartClaudeDesktopWithModels(models)
-		result := claudeDesktopActionResult{Status: getClaudeDesktopConnectionStatus()}
+	wv.Bind("applyClaudeDesktopMappings", func(mappings map[string]string, restartConfirmed bool) claudeDesktopActionResult {
+		applied, err := applyClaudeDesktopMappings(mappings, restartConfirmed)
+		result := claudeDesktopActionResult{
+			Status:          getClaudeDesktopConnectionStatus(),
+			MappingsApplied: applied,
+		}
 		if err != nil {
 			result.Error = err.Error()
+			result.RestartConfirmationRequired = errors.Is(err, launch.ErrClaudeDesktopRestartConfirmationRequired)
 		}
 		return result
 	})
 
-	wv.Bind("setClaudeDesktopAutoMode", func(enabled bool) claudeDesktopActionResult {
-		err := setClaudeDesktopAutoMode(enabled)
+	wv.Bind("setClaudeDesktopAutoMode", func(enabled, restartConfirmed bool) claudeDesktopActionResult {
+		err := setClaudeDesktopAutoMode(enabled, restartConfirmed)
 		result := claudeDesktopActionResult{Status: getClaudeDesktopConnectionStatus()}
 		if err != nil {
 			result.Error = err.Error()
+			result.RestartConfirmationRequired = errors.Is(err, launch.ErrClaudeDesktopRestartConfirmationRequired)
 		}
 		return result
 	})

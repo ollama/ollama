@@ -19,17 +19,79 @@ const (
 
 type claudeDesktopModelSlot struct {
 	id            string
+	displayName   string
 	family        string
 	createdAt     string
 	familyDefault bool
 }
 
 var claudeDesktopModelSlots = [MaxClaudeDesktopModels]claudeDesktopModelSlot{
-	{id: "claude-fable-5", family: "fable", createdAt: "2026-06-09T00:00:00Z", familyDefault: true},
-	{id: "claude-opus-5", family: "opus", createdAt: "2026-07-24T00:00:00Z", familyDefault: true},
-	{id: "claude-sonnet-5", family: "sonnet", createdAt: "2026-06-30T00:00:00Z", familyDefault: true},
-	{id: "claude-haiku-4-5-20251001", family: "haiku", createdAt: "2025-10-01T00:00:00Z", familyDefault: true},
-	{id: "claude-sonnet-4-6", family: "sonnet", createdAt: "2025-11-18T00:00:00Z"},
+	{id: "claude-fable-5", displayName: "Fable 5", family: "fable", createdAt: "2026-06-09T00:00:00Z", familyDefault: true},
+	{id: "claude-opus-5", displayName: "Opus 5", family: "opus", createdAt: "2026-07-24T00:00:00Z", familyDefault: true},
+	{id: "claude-sonnet-5", displayName: "Sonnet 5", family: "sonnet", createdAt: "2026-06-30T00:00:00Z", familyDefault: true},
+	{id: "claude-haiku-4-5-20251001", displayName: "Haiku 4.5", family: "haiku", createdAt: "2025-10-01T00:00:00Z", familyDefault: true},
+	{id: "claude-sonnet-4-6", displayName: "Sonnet 4.6", family: "sonnet", createdAt: "2025-11-18T00:00:00Z"},
+}
+
+// ClaudeDesktopRoute is one fixed model ID accepted by Claude Desktop. The
+// gateway advertises the mapped Ollama model as its display name.
+type ClaudeDesktopRoute struct {
+	ID          string
+	DisplayName string
+}
+
+// ClaudeDesktopRoutes returns the fixed routes in Claude's preferred order.
+func ClaudeDesktopRoutes() []ClaudeDesktopRoute {
+	routes := make([]ClaudeDesktopRoute, len(claudeDesktopModelSlots))
+	for i, slot := range claudeDesktopModelSlots {
+		routes[i] = ClaudeDesktopRoute{ID: slot.id, DisplayName: slot.displayName}
+	}
+	return routes
+}
+
+// DefaultClaudeDesktopMappings returns the initial Claude-to-Ollama mapping
+// for the current account tier. Accounts without Pro access expose only the
+// free Sonnet route; the remaining routes intentionally stay unassigned.
+func DefaultClaudeDesktopMappings(fullAccess bool) map[string]string {
+	if !fullAccess {
+		return map[string]string{
+			"claude-sonnet-5": "gemma4:31b-cloud",
+		}
+	}
+	return map[string]string{
+		"claude-fable-5":            "kimi-k3:cloud",
+		"claude-opus-5":             "glm-5.2:cloud",
+		"claude-sonnet-5":           "deepseek-v4-flash:0731:cloud",
+		"claude-haiku-4-5-20251001": "gemma4:31b-cloud",
+		"claude-sonnet-4-6":         "deepseek-v4-pro:cloud",
+	}
+}
+
+// DefaultClaudeDesktopMappingsForModels resolves the default recommendation
+// names to the exact Ollama routes in the current catalog. This preserves
+// server-owned aliases such as the current DeepSeek Flash revision.
+func DefaultClaudeDesktopMappingsForModels(available []ClaudeDesktopModel, fullAccess bool) map[string]string {
+	mappings := make(map[string]string, MaxClaudeDesktopModels)
+	wanted := map[string]string{
+		"claude-sonnet-5": "gemma4:31b-cloud",
+	}
+	if fullAccess {
+		wanted = map[string]string{
+			"claude-fable-5":            "kimi-k3:cloud",
+			"claude-opus-5":             "glm-5.2:cloud",
+			"claude-sonnet-5":           "deepseek-v4-flash",
+			"claude-haiku-4-5-20251001": "gemma4:31b-cloud",
+			"claude-sonnet-4-6":         "deepseek-v4-pro",
+		}
+	}
+	for _, model := range available {
+		for route, name := range wanted {
+			if model.Name == name {
+				mappings[route] = model.OllamaModel
+			}
+		}
+	}
+	return mappings
 }
 
 // ClaudeDesktopModel is one Ollama model adapted for Claude Desktop's model
@@ -212,6 +274,9 @@ func SelectClaudeDesktopModels(available []ClaudeDesktopModel, selected []string
 	var models []ClaudeDesktopModel
 	if len(selected) == 0 {
 		models = cloneClaudeDesktopModels(available)
+		if validClaudeDesktopRouteAssignments(models) {
+			return models
+		}
 	} else {
 		byName := make(map[string]ClaudeDesktopModel, len(available))
 		for _, model := range available {
@@ -246,6 +311,70 @@ func SelectClaudeDesktopModels(available []ClaudeDesktopModel, selected []string
 		models[i].assignClaudeDesktopSlot(claudeDesktopModelSlots[i])
 	}
 	return models
+}
+
+// MapClaudeDesktopModels assigns explicit Claude route IDs to Ollama models.
+// Empty routes are omitted and the same Ollama model may serve multiple routes.
+func MapClaudeDesktopModels(available []ClaudeDesktopModel, mappings map[string]string) []ClaudeDesktopModel {
+	byName := make(map[string]ClaudeDesktopModel, len(available)*2)
+	for _, model := range available {
+		byName[model.Name] = model
+		byName[model.OllamaModel] = model
+	}
+
+	models := make([]ClaudeDesktopModel, 0, len(claudeDesktopModelSlots))
+	for _, slot := range claudeDesktopModelSlots {
+		name := strings.TrimSpace(mappings[slot.id])
+		if !validClaudeDesktopModelName(name) {
+			continue
+		}
+		model, ok := byName[name]
+		if !ok {
+			model = newClaudeDesktopModel(name, "User-selected model", "", 64_000)
+		}
+		model.assignClaudeDesktopSlot(slot)
+		models = append(models, model)
+	}
+	return models
+}
+
+// ClaudeDesktopMappings returns the explicit route-to-model mapping represented
+// by an assigned model catalog.
+func ClaudeDesktopMappings(models []ClaudeDesktopModel) map[string]string {
+	mappings := make(map[string]string, len(models))
+	for _, model := range models {
+		if !isClaudeDesktopRouteID(model.gateway.ID) {
+			continue
+		}
+		mappings[model.gateway.ID] = model.OllamaModel
+	}
+	return mappings
+}
+
+func validClaudeDesktopRouteAssignments(models []ClaudeDesktopModel) bool {
+	if len(models) == 0 {
+		return false
+	}
+	seen := make(map[string]struct{}, len(models))
+	for _, model := range models {
+		if !isClaudeDesktopRouteID(model.gateway.ID) {
+			return false
+		}
+		if _, ok := seen[model.gateway.ID]; ok {
+			return false
+		}
+		seen[model.gateway.ID] = struct{}{}
+	}
+	return true
+}
+
+func isClaudeDesktopRouteID(id string) bool {
+	for _, slot := range claudeDesktopModelSlots {
+		if id == slot.id {
+			return true
+		}
+	}
+	return false
 }
 
 func validClaudeDesktopModelName(name string) bool {

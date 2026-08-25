@@ -23,6 +23,7 @@ import { settingsMutationScope } from "@/lib/settingsMutationScope";
 import { useUser } from "@/hooks/useUser";
 import { useCloudStatus } from "@/hooks/useCloudStatus";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useBlocker } from "@tanstack/react-router";
 import {
   getSettings,
   type CloudStatusSource,
@@ -95,6 +96,15 @@ export default function Settings() {
   const [showAppsInMenu, setShowAppsInMenuState] = useState(true);
   const [showAppsInMenuPending, setShowAppsInMenuPending] = useState(false);
   const [resettingToDefaults, setResettingToDefaults] = useState(false);
+  const [hasClaudeDraftChanges, setHasClaudeDraftChanges] = useState(false);
+  const [claudeMappingsResetVersion, setClaudeMappingsResetVersion] =
+    useState(0);
+  useBlocker({
+    shouldBlockFn: () =>
+      !window.confirm("Discard unapplied Claude routing changes?"),
+    enableBeforeUnload: hasClaudeDraftChanges,
+    disabled: !hasClaudeDraftChanges,
+  });
   const {
     user,
     isAuthenticated,
@@ -325,6 +335,7 @@ export default function Settings() {
         cloudSource: cloudStatus?.source,
         onSaved: showSavedConfirmation,
       });
+      setClaudeMappingsResetVersion((version) => version + 1);
     } catch (error) {
       console.error("Failed to reset settings:", error);
     } finally {
@@ -669,10 +680,25 @@ export default function Settings() {
             </div>
           </div>
 
+          {/* Reset button */}
+          <div className="flex justify-end px-4">
+            <Button
+              type="button"
+              color="white"
+              className="px-3"
+              disabled={resettingToDefaults}
+              onClick={() => void handleResetToDefaults()}
+            >
+              Reset to defaults
+            </Button>
+          </div>
+
           <ClaudeDesktopModelsSettings
             includeCloudModels={
               isAuthenticated && cloudStatusKnown && !cloudDisabled
             }
+            onDraftChange={setHasClaudeDraftChanges}
+            resetVersion={claudeMappingsResetVersion}
           />
 
           {/* Agent Mode */}
@@ -718,19 +744,6 @@ export default function Settings() {
               </div>
             </div>
           )}
-
-          {/* Reset button */}
-          <div className="mt-6 flex justify-end px-4">
-            <Button
-              type="button"
-              color="white"
-              className="px-3"
-              disabled={resettingToDefaults}
-              onClick={() => void handleResetToDefaults()}
-            >
-              Reset to defaults
-            </Button>
-          </div>
         </div>
 
         {/* Saved indicator */}

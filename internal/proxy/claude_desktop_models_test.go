@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -325,5 +326,109 @@ func TestSelectClaudeDesktopModelsCapsAtLiteralSlots(t *testing.T) {
 			t.Fatalf("duplicate gateway ID %q", id)
 		}
 		seen[id] = struct{}{}
+	}
+}
+
+func TestMapClaudeDesktopModelsSupportsUnassignedAndSharedModels(t *testing.T) {
+	available := DefaultClaudeDesktopModels()
+	mapped := MapClaudeDesktopModels(available, map[string]string{
+		"claude-fable-5":  "glm-5.2:cloud",
+		"claude-opus-5":   "glm-5.2:cloud",
+		"claude-sonnet-5": "",
+	})
+
+	if len(mapped) != 2 {
+		t.Fatalf("mapped models = %d, want 2 assigned routes", len(mapped))
+	}
+	if mapped[0].GatewayID() != "claude-fable-5" || mapped[1].GatewayID() != "claude-opus-5" {
+		t.Fatalf("gateway IDs = %q/%q", mapped[0].GatewayID(), mapped[1].GatewayID())
+	}
+	if mapped[0].OllamaModel != "glm-5.2:cloud" || mapped[1].OllamaModel != "glm-5.2:cloud" {
+		t.Fatalf("shared mappings = %q/%q", mapped[0].OllamaModel, mapped[1].OllamaModel)
+	}
+	if got := ClaudeDesktopMappings(mapped); !maps.Equal(got, map[string]string{
+		"claude-fable-5": "glm-5.2:cloud",
+		"claude-opus-5":  "glm-5.2:cloud",
+	}) {
+		t.Fatalf("mappings = %v", got)
+	}
+}
+
+func TestSelectClaudeDesktopModelsPreservesExplicitRouteAssignments(t *testing.T) {
+	mapped := MapClaudeDesktopModels(DefaultClaudeDesktopModels(), map[string]string{
+		"claude-sonnet-5": "kimi-k3:cloud",
+	})
+	selected := SelectClaudeDesktopModels(mapped, nil)
+	if len(selected) != 1 || selected[0].GatewayID() != "claude-sonnet-5" {
+		t.Fatalf("selected models = %+v", selected)
+	}
+}
+
+func TestClaudeDesktopRoutesExposeStableOrder(t *testing.T) {
+	routes := ClaudeDesktopRoutes()
+	if len(routes) != MaxClaudeDesktopModels {
+		t.Fatalf("routes = %d, want %d", len(routes), MaxClaudeDesktopModels)
+	}
+	if routes[0].ID != "claude-fable-5" || routes[0].DisplayName != "Fable 5" || routes[4].ID != "claude-sonnet-4-6" {
+		t.Fatalf("routes = %+v", routes)
+	}
+}
+
+func TestDefaultClaudeDesktopMappingsFollowAccountTier(t *testing.T) {
+	pro := DefaultClaudeDesktopMappings(true)
+	wantPro := map[string]string{
+		"claude-fable-5":            "kimi-k3:cloud",
+		"claude-opus-5":             "glm-5.2:cloud",
+		"claude-sonnet-5":           "deepseek-v4-flash:0731:cloud",
+		"claude-haiku-4-5-20251001": "gemma4:31b-cloud",
+		"claude-sonnet-4-6":         "deepseek-v4-pro:cloud",
+	}
+	if !maps.Equal(pro, wantPro) {
+		t.Fatalf("Pro defaults = %v, want %v", pro, wantPro)
+	}
+
+	free := DefaultClaudeDesktopMappings(false)
+	wantFree := map[string]string{"claude-sonnet-5": "gemma4:31b-cloud"}
+	if !maps.Equal(free, wantFree) {
+		t.Fatalf("free defaults = %v, want %v", free, wantFree)
+	}
+}
+
+func TestDefaultClaudeDesktopMappingsUseCurrentCatalogRoutes(t *testing.T) {
+	models := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{
+		{Model: "glm-5.2:cloud", RequiredPlan: "pro"},
+		{Model: "kimi-k3:cloud", RequiredPlan: "pro"},
+		{Model: "deepseek-v4-pro", RequiredPlan: "pro"},
+		{Model: "deepseek-v4-flash", RequiredPlan: "pro"},
+		{Model: "gemma4:31b-cloud", RequiredPlan: "free"},
+	})
+	paid := DefaultClaudeDesktopMappingsForModels(models, true)
+	wantPaid := map[string]string{
+		"claude-fable-5":            "kimi-k3:cloud",
+		"claude-opus-5":             "glm-5.2:cloud",
+		"claude-sonnet-5":           "deepseek-v4-flash:cloud",
+		"claude-haiku-4-5-20251001": "gemma4:31b-cloud",
+		"claude-sonnet-4-6":         "deepseek-v4-pro:cloud",
+	}
+	if !maps.Equal(paid, wantPaid) {
+		t.Fatalf("paid catalog defaults = %v, want %v", paid, wantPaid)
+	}
+
+	restricted := DefaultClaudeDesktopMappingsForModels(models, false)
+	wantRestricted := map[string]string{
+		"claude-sonnet-5": "gemma4:31b-cloud",
+	}
+	if !maps.Equal(restricted, wantRestricted) {
+		t.Fatalf("restricted catalog defaults = %v, want %v", restricted, wantRestricted)
+	}
+}
+
+func TestDefaultClaudeDesktopMappingsOnlyUseAvailableModels(t *testing.T) {
+	models := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{
+		{Model: "glm-5.2:cloud", RequiredPlan: "pro"},
+	})
+	want := map[string]string{"claude-opus-5": "glm-5.2:cloud"}
+	if got := DefaultClaudeDesktopMappingsForModels(models, true); !maps.Equal(got, want) {
+		t.Fatalf("partial catalog defaults = %v, want %v", got, want)
 	}
 }

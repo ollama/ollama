@@ -28,6 +28,14 @@ interface ClaudeDesktopStatus {
   modelSource?: "user" | "endpoint" | "fallback";
   maxModels?: number;
   models?: ClaudeDesktopModelStatus[];
+  mappings?: ClaudeDesktopMappingStatus[];
+  defaultMappings?: ClaudeDesktopMappingStatus[];
+}
+
+interface ClaudeDesktopMappingStatus {
+  routeId: string;
+  routeName: string;
+  model?: string;
 }
 
 interface ClaudeDesktopModelStatus {
@@ -50,6 +58,8 @@ interface ClaudeDesktopModelStatus {
 interface ClaudeDesktopActionResult {
   status: ClaudeDesktopStatus;
   error?: string;
+  mappingsApplied?: boolean;
+  restartConfirmationRequired?: boolean;
 }
 
 type ClaudeDesktopInstallResult = "opened" | "cancelled" | "failed";
@@ -79,11 +89,13 @@ declare global {
     installClaudeDesktop?: () => Promise<ClaudeDesktopInstallResult>;
     getShowAppsInMenu?: () => Promise<boolean>;
     setShowAppsInMenu?: (visible: boolean) => Promise<void>;
-    restartClaudeDesktop?: (
-      models: string[],
+    applyClaudeDesktopMappings?: (
+      mappings: Record<string, string>,
+      restartConfirmed: boolean,
     ) => Promise<ClaudeDesktopActionResult>;
     setClaudeDesktopAutoMode?: (
       enabled: boolean,
+      restartConfirmed: boolean,
     ) => Promise<ClaudeDesktopActionResult>;
     setOnboardingWindow?: (enabled: boolean) => void;
     menu: (items: MenuItem[]) => Promise<string | null>;
@@ -112,6 +124,7 @@ declare global {
 export type {
   ClaudeDesktopActionResult,
   ClaudeDesktopInstallResult,
+  ClaudeDesktopMappingStatus,
   ClaudeDesktopModelStatus,
   ClaudeDesktopStatus,
   ContextMenuItem,

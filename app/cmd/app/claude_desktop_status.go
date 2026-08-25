@@ -13,20 +13,28 @@ const (
 )
 
 type claudeDesktopStatus struct {
-	Supported      bool                       `json:"supported"`
-	Used           bool                       `json:"used"`
-	Installed      bool                       `json:"installed"`
-	Configured     bool                       `json:"configured"`
-	Connected      bool                       `json:"connected"`
-	Running        bool                       `json:"running"`
-	StartFailed    bool                       `json:"startFailed"`
-	PortConflict   bool                       `json:"portConflict"`
-	GatewayPort    int                        `json:"gatewayPort,omitempty"`
-	RoutedRequests uint64                     `json:"routedRequests"`
-	Error          string                     `json:"error,omitempty"`
-	AutoMode       bool                       `json:"autoMode"`
-	ModelSource    string                     `json:"modelSource,omitempty"`
-	Models         []claudeDesktopModelStatus `json:"models,omitempty"`
+	Supported       bool                         `json:"supported"`
+	Used            bool                         `json:"used"`
+	Installed       bool                         `json:"installed"`
+	Configured      bool                         `json:"configured"`
+	Connected       bool                         `json:"connected"`
+	Running         bool                         `json:"running"`
+	StartFailed     bool                         `json:"startFailed"`
+	PortConflict    bool                         `json:"portConflict"`
+	GatewayPort     int                          `json:"gatewayPort,omitempty"`
+	RoutedRequests  uint64                       `json:"routedRequests"`
+	Error           string                       `json:"error,omitempty"`
+	AutoMode        bool                         `json:"autoMode"`
+	ModelSource     string                       `json:"modelSource,omitempty"`
+	Models          []claudeDesktopModelStatus   `json:"models,omitempty"`
+	Mappings        []claudeDesktopMappingStatus `json:"mappings,omitempty"`
+	DefaultMappings []claudeDesktopMappingStatus `json:"defaultMappings,omitempty"`
+}
+
+type claudeDesktopMappingStatus struct {
+	RouteID   string `json:"routeId"`
+	RouteName string `json:"routeName"`
+	Model     string `json:"model,omitempty"`
 }
 
 type claudeDesktopModelStatus struct {
@@ -42,6 +50,8 @@ type claudeDesktopModelStatus struct {
 }
 
 type claudeDesktopActionResult struct {
-	Status claudeDesktopStatus `json:"status"`
-	Error  string              `json:"error,omitempty"`
+	Status                      claudeDesktopStatus `json:"status"`
+	Error                       string              `json:"error,omitempty"`
+	MappingsApplied             bool                `json:"mappingsApplied,omitempty"`
+	RestartConfirmationRequired bool                `json:"restartConfirmationRequired,omitempty"`
 }
