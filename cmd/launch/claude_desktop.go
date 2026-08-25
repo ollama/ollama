@@ -175,9 +175,10 @@ func (c *ClaudeDesktop) SetInstalledFromDesktopWithAutoMode(installed, restart, 
 	return restartClaudeDesktop(applyProfile)
 }
 
-// RestartWithProfileChange stops Claude before applying a profile-dependent
-// change, then reopens it after the change is complete.
-func (c *ClaudeDesktop) RestartWithProfileChange(change func() error) error {
+// ApplyProfileChange applies a profile-dependent change immediately. Claude is
+// restarted only when it is already running; otherwise the change takes effect
+// the next time the user opens it.
+func (c *ClaudeDesktop) ApplyProfileChange(change func() error) error {
 	if err := claudeDesktopSupported(); err != nil {
 		return err
 	}
@@ -186,10 +187,7 @@ func (c *ClaudeDesktop) RestartWithProfileChange(change func() error) error {
 		return fmt.Errorf("check whether Claude Desktop is running: %w", err)
 	}
 	if !running {
-		if err := change(); err != nil {
-			return err
-		}
-		return claudeDesktopOpenApp()
+		return change()
 	}
 	return restartClaudeDesktop(change)
 }
@@ -230,7 +228,36 @@ func (c *ClaudeDesktop) Onboard() error {
 // ClaudeDesktopModels returns the user's explicitly saved Claude Desktop
 // model subset. A nil result means the recommendation source should decide.
 func ClaudeDesktopModels() []string {
-	return config.IntegrationModels(claudeDesktopIntegrationName)
+	configured, err := config.LoadIntegration(claudeDesktopIntegrationName)
+	if err != nil {
+		return nil
+	}
+	if len(configured.Aliases) > 0 {
+		models := make([]string, 0, len(configured.Aliases))
+		for _, route := range proxy.ClaudeDesktopRoutes() {
+			if model := strings.TrimSpace(configured.Aliases[route.ID]); model != "" {
+				models = append(models, model)
+			}
+		}
+		return models
+	}
+	return configured.Models
+}
+
+// ClaudeDesktopModelMappings returns explicit Claude route assignments. An
+// empty map means the legacy ordered model selection or recommendations apply.
+func ClaudeDesktopModelMappings() map[string]string {
+	configured, err := config.LoadIntegration(claudeDesktopIntegrationName)
+	if err != nil || len(configured.Aliases) == 0 {
+		return nil
+	}
+	mappings := make(map[string]string, len(configured.Aliases))
+	for _, route := range proxy.ClaudeDesktopRoutes() {
+		if model := strings.TrimSpace(configured.Aliases[route.ID]); model != "" {
+			mappings[route.ID] = model
+		}
+	}
+	return mappings
 }
 
 // SaveClaudeDesktopModels persists the user's explicit Claude Desktop model
@@ -239,13 +266,48 @@ func SaveClaudeDesktopModels(models []string) error {
 	if len(models) == 0 {
 		return errors.New("select at least one Claude Desktop model")
 	}
-	return config.SaveIntegration(claudeDesktopIntegrationName, models)
+	if err := config.SaveIntegration(claudeDesktopIntegrationName, models); err != nil {
+		return err
+	}
+	return config.SaveAliases(claudeDesktopIntegrationName, nil)
+}
+
+// SaveClaudeDesktopModelMappings persists explicit route assignments. Empty
+// routes are omitted; sparse mappings and duplicate model values are valid.
+func SaveClaudeDesktopModelMappings(mappings map[string]string) error {
+	normalized := make(map[string]string)
+	models := make([]string, 0, len(mappings))
+	for _, route := range proxy.ClaudeDesktopRoutes() {
+		if model := strings.TrimSpace(mappings[route.ID]); model != "" {
+			normalized[route.ID] = model
+			models = append(models, model)
+		}
+	}
+	if len(models) == 0 {
+		return errors.New("map at least one Claude Desktop route")
+	}
+	if err := config.SaveIntegration(claudeDesktopIntegrationName, models); err != nil {
+		return err
+	}
+	return config.SaveAliases(claudeDesktopIntegrationName, normalized)
 }
 
 // RestoreClaudeDesktopModels restores a previously captured selection. A nil
 // selection restores the implicit recommendation defaults.
 func RestoreClaudeDesktopModels(models []string) error {
-	return config.SaveIntegration(claudeDesktopIntegrationName, models)
+	if err := config.SaveIntegration(claudeDesktopIntegrationName, models); err != nil {
+		return err
+	}
+	return config.SaveAliases(claudeDesktopIntegrationName, nil)
+}
+
+// RestoreClaudeDesktopModelMappings restores a previously captured explicit
+// mapping, including the legacy no-mapping state.
+func RestoreClaudeDesktopModelMappings(models []string, mappings map[string]string) error {
+	if err := config.SaveIntegration(claudeDesktopIntegrationName, models); err != nil {
+		return err
+	}
+	return config.SaveAliases(claudeDesktopIntegrationName, mappings)
 }
 
 // ClaudeDesktopAutoModeEnabled reports the user's Claude Desktop auto mode
@@ -980,12 +1042,22 @@ func ClaudeDesktopRunning() bool {
 	return running
 }
 
+// Running reports whether Claude Desktop is currently open.
+func (c *ClaudeDesktop) Running() bool {
+	return ClaudeDesktopRunning()
+}
+
 // OpenClaudeDesktop brings the installed Claude Desktop app to the foreground.
 func OpenClaudeDesktop() error {
 	if err := claudeDesktopSupported(); err != nil {
 		return err
 	}
 	return claudeDesktopOpenApp()
+}
+
+// Open launches or foregrounds Claude Desktop.
+func (c *ClaudeDesktop) Open() error {
+	return OpenClaudeDesktop()
 }
 
 func defaultClaudeDesktopRunning(ctx context.Context) (bool, error) {

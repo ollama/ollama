@@ -1,20 +1,21 @@
 import { getClaudeDesktopAvailableModels } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Description, Field, Label } from "@/components/ui/fieldset";
-import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import {
-  addClaudeModelSelection,
-  claudeDesktopRecoveryMessage,
-  claudeDesktopMaxModels,
-  claudeDesktopMaxModelsMessage,
-  claudeDesktopUsableSelection,
-} from "@/lib/claudeDesktop";
+import { claudeDesktopRecoveryMessage } from "@/lib/claudeDesktop";
+import { claudeDesktopModelStatusLabel } from "@/lib/claudeDesktopModelStatus";
 import type {
+  ClaudeDesktopMappingStatus,
   ClaudeDesktopModelStatus,
   ClaudeDesktopStatus,
 } from "@/types/webview";
-import { ArrowPathIcon } from "@heroicons/react/20/solid";
+import {
+  ArrowPathIcon,
+  ArrowRightIcon,
+  CheckIcon,
+  ChevronUpDownIcon,
+  MagnifyingGlassIcon,
+} from "@heroicons/react/20/solid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 interface ClaudeDesktopModelsSettingsProps {
@@ -22,7 +23,19 @@ interface ClaudeDesktopModelsSettingsProps {
   initialLocalModels?: string[];
   initialCloudModels?: string[];
   includeCloudModels?: boolean;
+  onDraftChange?: (hasChanges: boolean) => void;
 }
+
+const fallbackRoutes: ClaudeDesktopMappingStatus[] = [
+  { routeId: "claude-fable-5", routeName: "Fable 5" },
+  { routeId: "claude-opus-5", routeName: "Opus 5" },
+  { routeId: "claude-sonnet-5", routeName: "Sonnet 5" },
+  {
+    routeId: "claude-haiku-4-5-20251001",
+    routeName: "Haiku 4.5",
+  },
+  { routeId: "claude-sonnet-4-6", routeName: "Sonnet 4.6" },
+];
 
 function isInvalidModelName(name: string): boolean {
   const normalized = name.trim().toLowerCase().replace(/[-:]+/g, " ");
@@ -37,29 +50,63 @@ function visibleModels(
   );
 }
 
-function selectedModelNames(status: ClaudeDesktopStatus): string[] {
-  return claudeDesktopUsableSelection(
-    visibleModels(status),
-    status.modelSource !== "user",
-    claudeDesktopMaxModels(status),
+function modelIsAvailable(model: ClaudeDesktopModelStatus): boolean {
+  return !model.availability || model.availability === "available";
+}
+
+function initialMappings(
+  status: ClaudeDesktopStatus,
+): ClaudeDesktopMappingStatus[] {
+  const models = visibleModels(status);
+  const known = new Set(models.map((model) => model.name));
+  const available = new Set(
+    models.filter(modelIsAvailable).map((model) => model.name),
+  );
+  const routes = (
+    status.mappings?.length ? status.mappings : fallbackRoutes
+  ).map((route) => ({ ...route }));
+
+  if (!status.mappings?.length) {
+    const selected = models.filter(
+      (model) => model.selected && available.has(model.name),
+    );
+    selected.slice(0, routes.length).forEach((model, index) => {
+      routes[index].model = model.name;
+    });
+  }
+
+  for (const route of routes) {
+    if (route.model && !known.has(route.model)) route.model = undefined;
+  }
+  if (!routes.some((route) => route.model)) {
+    const first = models.find(modelIsAvailable);
+    if (first && routes.length > 0) routes[0].model = first.name;
+  }
+  return routes;
+}
+
+function mappingsEqual(
+  left: ClaudeDesktopMappingStatus[],
+  right: ClaudeDesktopMappingStatus[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every(
+      (route, index) =>
+        route.routeId === right[index]?.routeId &&
+        (route.model ?? "") === (right[index]?.model ?? ""),
+    )
   );
 }
 
-function modelAccessLabel(model: ClaudeDesktopModelStatus): string | null {
-  switch (model.reason) {
-    case "sign_in_required":
-      return "Sign in required";
-    case "upgrade_required":
-      return model.requiredPlan
-        ? `${model.requiredPlan} plan required`
-        : "Upgrade required";
-    case "verification_unavailable":
-      return "Access unavailable";
-    case "model_not_installed":
-      return "Not installed";
-    default:
-      return null;
-  }
+function mappingRecord(
+  mappings: ClaudeDesktopMappingStatus[],
+): Record<string, string> {
+  return Object.fromEntries(
+    mappings
+      .filter((route) => route.model)
+      .map((route) => [route.routeId, route.model ?? ""]),
+  );
 }
 
 function formatModelList(names: string[]): string {
@@ -68,10 +115,134 @@ function formatModelList(names: string[]): string {
   return `${names.slice(0, -1).join(", ")}, or ${names[names.length - 1]}`;
 }
 
-function sameModelSelection(left: string[], right: string[]): boolean {
-  if (left.length !== right.length) return false;
-  const names = new Set(left);
-  return right.every((name) => names.has(name));
+interface ClaudeModelPickerProps {
+  id: string;
+  routeName: string;
+  value?: string;
+  models: ClaudeDesktopModelStatus[];
+  disabled: boolean;
+  onChange: (model: string) => void;
+}
+
+function ClaudeModelPicker({
+  id,
+  routeName,
+  value,
+  models,
+  disabled,
+  onChange,
+}: ClaudeModelPickerProps) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const pickerRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredModels = models.filter((model) =>
+    model.displayName.toLowerCase().includes(normalizedQuery),
+  );
+
+  useEffect(() => {
+    if (!open) {
+      setQuery("");
+      return;
+    }
+    searchRef.current?.focus();
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!pickerRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  const choose = (model: string) => {
+    onChange(model);
+    setOpen(false);
+  };
+
+  return (
+    <div ref={pickerRef} className="relative min-w-0">
+      <button
+        id={id}
+        type="button"
+        aria-label={`Ollama model for ${routeName}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        disabled={disabled}
+        onClick={() => setOpen((current) => !current)}
+        className="flex min-h-9 w-full items-center gap-2 rounded-lg bg-neutral-50 px-3 py-1.5 text-left text-sm text-neutral-800 outline-none ring-1 ring-inset ring-neutral-200 hover:bg-neutral-100 focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-neutral-700 dark:text-neutral-100 dark:ring-neutral-600 dark:hover:bg-neutral-600"
+      >
+        <span
+          className={`min-w-0 flex-1 truncate ${value ? "" : "text-neutral-400"}`}
+        >
+          {value || "Select a model"}
+        </span>
+        <ChevronUpDownIcon className="h-4 w-4 flex-shrink-0 text-neutral-400" />
+      </button>
+
+      {open && (
+        <div className="absolute bottom-full right-0 z-50 mb-2 w-full min-w-64 overflow-hidden rounded-2xl border border-neutral-100 bg-white text-[15px] text-neutral-800 shadow-xl shadow-black/5 dark:border-neutral-600/40 dark:bg-neutral-800 dark:text-white">
+          <div className="flex items-center gap-2 border-b border-neutral-100 px-3 py-2 dark:border-neutral-700">
+            <MagnifyingGlassIcon className="h-4 w-4 flex-shrink-0 text-neutral-400" />
+            <input
+              ref={searchRef}
+              type="text"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Find model..."
+              aria-label={`Find model for ${routeName}`}
+              autoCorrect="off"
+              autoComplete="off"
+              className="min-w-0 flex-1 border-none bg-transparent py-0.5 outline-none"
+            />
+          </div>
+          <div role="listbox" className="max-h-64 overflow-y-auto py-1">
+            {filteredModels.map((model) => {
+              const available = modelIsAvailable(model);
+              const statusLabel = claudeDesktopModelStatusLabel(model);
+              const selected = value === model.name;
+              return (
+                <button
+                  key={model.name}
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  disabled={!available}
+                  onClick={() => choose(model.name)}
+                  className="flex w-full cursor-pointer items-start gap-2 px-3 py-2 text-left hover:bg-neutral-100 focus:bg-neutral-100 focus:outline-none disabled:cursor-not-allowed disabled:opacity-45 dark:hover:bg-neutral-700/60 dark:focus:bg-neutral-700/60"
+                >
+                  <span className="mt-0.5 h-4 w-4 flex-shrink-0">
+                    {selected && <CheckIcon className="h-4 w-4" />}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate">{model.displayName}</span>
+                    {statusLabel && (
+                      <span className="mt-0.5 block truncate text-xs text-neutral-400">
+                        {statusLabel}
+                      </span>
+                    )}
+                  </span>
+                </button>
+              );
+            })}
+            {filteredModels.length === 0 && (
+              <p className="px-3 py-2 text-neutral-400">No models found</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function ClaudeDesktopModelsSettings({
@@ -79,6 +250,7 @@ export function ClaudeDesktopModelsSettings({
   initialLocalModels,
   initialCloudModels,
   includeCloudModels = false,
+  onDraftChange,
 }: ClaudeDesktopModelsSettingsProps) {
   const [status, setStatus] = useState<ClaudeDesktopStatus | null>(
     initialStatus ?? null,
@@ -86,36 +258,49 @@ export function ClaudeDesktopModelsSettings({
   const [models, setModels] = useState<ClaudeDesktopModelStatus[]>(() =>
     initialStatus ? visibleModels(initialStatus) : [],
   );
-  const [selection, setSelection] = useState<string[]>(() =>
-    initialStatus ? selectedModelNames(initialStatus) : [],
+  const [mappings, setMappings] = useState<ClaudeDesktopMappingStatus[]>(() =>
+    initialStatus ? initialMappings(initialStatus) : [],
   );
+  const [savedMappings, setSavedMappings] = useState<
+    ClaudeDesktopMappingStatus[]
+  >(() => (initialStatus ? initialMappings(initialStatus) : []));
   const [localModels, setLocalModels] = useState<string[]>(
     initialLocalModels ?? [],
   );
   const [accountCloudModels, setAccountCloudModels] = useState<string[]>(
     initialCloudModels ?? [],
   );
-  const [searchQuery, setSearchQuery] = useState("");
-  const [pickerOpen, setPickerOpen] = useState(false);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [restarting, setRestarting] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [autoModeApplying, setAutoModeApplying] = useState(false);
   const [autoModeOverride, setAutoModeOverride] = useState<boolean | null>(
     null,
   );
-  const pickerRef = useRef<HTMLDivElement>(null);
+  const draftRef = useRef({ mappings, savedMappings });
+  draftRef.current = { mappings, savedMappings };
 
-  const applyStatus = useCallback((next: ClaudeDesktopStatus) => {
-    setStatus(next);
-    setModels(visibleModels(next));
-    setSelection(selectedModelNames(next));
-    setError(null);
-  }, []);
+  const applyStatus = useCallback(
+    (next: ClaudeDesktopStatus, preserveDraft = false) => {
+      const nextMappings = initialMappings(next);
+      const draft = draftRef.current;
+      const keepDraft =
+        preserveDraft && !mappingsEqual(draft.mappings, draft.savedMappings);
+      setStatus(next);
+      setModels(visibleModels(next));
+      if (!keepDraft) {
+        setMappings(nextMappings);
+        setSavedMappings(nextMappings);
+      }
+      setError(null);
+    },
+    [],
+  );
 
   const refreshStatus = useCallback(async () => {
     if (!window.getClaudeDesktopStatus) return;
     try {
-      applyStatus(await window.getClaudeDesktopStatus());
+      applyStatus(await window.getClaudeDesktopStatus(), true);
     } catch {
       setError("Ollama could not read the Claude connection status.");
     }
@@ -127,12 +312,6 @@ export function ClaudeDesktopModelsSettings({
     window.addEventListener("focus", handleFocus);
     return () => window.removeEventListener("focus", handleFocus);
   }, [initialStatus, refreshStatus]);
-
-  useEffect(() => {
-    if (!status) return;
-    setModels(visibleModels(status));
-    setSelection(selectedModelNames(status));
-  }, [status]);
 
   useEffect(() => {
     if (initialLocalModels || !status?.used) return;
@@ -160,116 +339,83 @@ export function ClaudeDesktopModelsSettings({
     };
   }, [includeCloudModels, initialLocalModels, status?.used]);
 
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        pickerRef.current &&
-        !pickerRef.current.contains(event.target as Node)
-      ) {
-        setPickerOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  const matchingLocalModels = useMemo(() => {
-    const current = new Set(selection);
-    const query = searchQuery.trim().toLowerCase();
-    return localModels
-      .filter(
-        (name) =>
-          !current.has(name) &&
-          !isInvalidModelName(name) &&
-          (!query || name.toLowerCase().includes(query)),
-      )
-      .sort((left, right) => left.localeCompare(right));
-  }, [localModels, searchQuery, selection]);
-
-  const toggleModel = (name: string) => {
-    setError(null);
-    setSelection((current) => {
-      if (!current.includes(name)) {
-        const result = addClaudeModelSelection(
-          current,
-          name,
-          claudeDesktopMaxModels(status),
-        );
-        if (result.error) {
-          setError(result.error);
-          return current;
-        }
-        return result.selection;
-      }
-      if (current.length === 1) {
-        setError("Select at least one model for Claude.");
-        return current;
-      }
-      return current.filter((model) => model !== name);
-    });
-  };
-
-  const addLocalModel = (name: string) => {
-    const maxModels = claudeDesktopMaxModels(status);
-    const result = addClaudeModelSelection(selection, name, maxModels);
-    if (result.error) {
-      setError(result.error);
-      return;
-    }
-    const cloud = name.endsWith(":cloud");
-    setModels((current) => [
-      ...current,
-      {
+  const catalogModels = useMemo(() => {
+    const current = new Set(models.map((model) => model.name));
+    const installed: ClaudeDesktopModelStatus[] = localModels
+      .filter((name) => !current.has(name) && !isInvalidModelName(name))
+      .sort((left, right) => left.localeCompare(right))
+      .map((name) => ({
         name,
         displayName: name,
-        cloud,
-        selected: true,
+        selected: false,
         availability: "available",
-      },
-    ]);
-    setSelection(result.selection);
-    setSearchQuery("");
-    setPickerOpen(false);
+      }));
+    return [...models, ...installed];
+  }, [localModels, models]);
+
+  const hasDraftChanges = !mappingsEqual(mappings, savedMappings);
+  const assignedModels = mappings
+    .map((route) => route.model)
+    .filter((model): model is string => Boolean(model));
+  const hasInvalidMapping = assignedModels.some((name) => {
+    const model = catalogModels.find((candidate) => candidate.name === name);
+    return !model || !modelIsAvailable(model);
+  });
+  const busy = applying || autoModeApplying;
+
+  useEffect(() => {
+    onDraftChange?.(hasDraftChanges);
+  }, [hasDraftChanges, onDraftChange]);
+
+  const updateMapping = (routeId: string, model: string) => {
     setError(null);
+    setMappings((current) =>
+      current.map((route) =>
+        route.routeId === routeId
+          ? { ...route, model: model || undefined }
+          : route,
+      ),
+    );
   };
 
-  const hasAvailableSelection = selection.some((name) => {
-    const model = models.find((candidate) => candidate.name === name);
-    return !model?.availability || model.availability === "available";
-  });
-
-  const confirmRestartIfRunning = (message: string) =>
-    !status?.running ||
-    window.confirm(`${message} Any running task will stop.`);
-
-  const restartClaude = async () => {
-    if (!window.restartClaudeDesktop) {
-      setError("Claude restart is available in the Ollama macOS app.");
+  const applyChanges = async () => {
+    if (!window.applyClaudeDesktopMappings) {
+      setError(
+        "Claude routing settings are available in the Ollama macOS app.",
+      );
       return;
     }
-    if (selection.length === 0) {
-      setError("Select at least one model for Claude.");
+    if (assignedModels.length === 0) {
+      setError("Choose at least one Ollama model for Claude.");
       return;
     }
-    if (!hasAvailableSelection) {
-      setError("Select a model available to your account.");
+    if (hasInvalidMapping) {
+      setError("Choose models available to your account and device.");
       return;
     }
     if (
-      !confirmRestartIfRunning("Restart Claude Desktop to update its models?")
-    )
+      status?.running &&
+      !window.confirm("Restart Claude Desktop? Any running task will stop.")
+    ) {
       return;
+    }
 
+    setApplying(true);
     setError(null);
-    setRestarting(true);
     try {
-      const result = await window.restartClaudeDesktop(selection);
-      applyStatus(result.status);
-      if (result.error) setError(result.error);
+      const result = await window.applyClaudeDesktopMappings(
+        mappingRecord(mappings),
+      );
+      if (result.error) {
+        applyStatus(result.status, true);
+        setError(result.error);
+      } else {
+        applyStatus(result.status);
+      }
     } catch {
-      setError("Ollama could not restart Claude.");
+      setError("Ollama could not apply the Claude model mappings.");
     } finally {
-      setRestarting(false);
+      setApplying(false);
     }
   };
 
@@ -278,11 +424,18 @@ export function ClaudeDesktopModelsSettings({
       setError("Auto mode is available in the Ollama macOS app.");
       return;
     }
-    if (!confirmRestartIfRunning("Restart Claude to change auto mode?")) return;
+    if (
+      status?.running &&
+      !window.confirm(
+        "Restart Claude to change auto mode? Any running task will stop.",
+      )
+    ) {
+      return;
+    }
 
     setError(null);
     setAutoModeOverride(checked);
-    setRestarting(true);
+    setAutoModeApplying(true);
     try {
       const result = await window.setClaudeDesktopAutoMode(checked);
       applyStatus(result.status);
@@ -291,16 +444,12 @@ export function ClaudeDesktopModelsSettings({
       setError("Ollama could not update Claude auto mode.");
     } finally {
       setAutoModeOverride(null);
-      setRestarting(false);
+      setAutoModeApplying(false);
     }
   };
 
-  if (!status?.supported || !status.used) {
-    return null;
-  }
+  if (!status?.supported || !status.used) return null;
 
-  const maxModels = claudeDesktopMaxModels(status);
-  const selectionFull = selection.length >= maxModels;
   const autoModeModelNames = Array.from(
     new Set([
       ...models.filter((model) => model.autoMode).map((model) => model.name),
@@ -308,19 +457,15 @@ export function ClaudeDesktopModelsSettings({
     ]),
   );
   const autoModeModelSet = new Set(autoModeModelNames);
-  const modelSelectionApplied = sameModelSelection(
-    selection,
-    selectedModelNames(status),
-  );
   const autoModeAvailable =
-    modelSelectionApplied &&
-    selection.length > 0 &&
-    selection.some((name) => autoModeModelSet.has(name));
-  const autoMode = modelSelectionApplied
-    ? autoModeAvailable && (autoModeOverride ?? status.autoMode ?? false)
+    !hasDraftChanges &&
+    assignedModels.length > 0 &&
+    assignedModels.some((name) => autoModeModelSet.has(name));
+  const autoMode = autoModeAvailable
+    ? (autoModeOverride ?? status.autoMode ?? false)
     : (status.autoMode ?? false);
-  const autoModeDescription = !modelSelectionApplied
-    ? "Restart Claude to apply model changes before changing auto mode."
+  const autoModeDescription = hasDraftChanges
+    ? "Start or restart Claude to apply model changes before changing auto mode."
     : autoModeAvailable
       ? "Let Claude decide when to ask before making changes."
       : accountCloudModels.length > 0
@@ -328,15 +473,12 @@ export function ClaudeDesktopModelsSettings({
         : autoModeModelNames.length > 0
           ? `Select one of ${formatModelList(autoModeModelNames)} to use auto mode.`
           : "Auto mode needs a cloud model available to your Ollama.com account.";
+
   const guidance =
     claudeDesktopRecoveryMessage(status.error, error) ??
-    (!hasAvailableSelection && models.length > 0
-      ? "Select a model available to your account."
-      : selectionFull
-        ? claudeDesktopMaxModelsMessage(maxModels)
-        : status.connected
-          ? "Restart Claude to refresh its model list."
-          : "These models will be available when Claude starts.");
+    (hasDraftChanges && status.running
+      ? "Restarting Claude will stop any running task."
+      : null);
 
   return (
     <section aria-labelledby="apps-settings-heading" className="space-y-2">
@@ -347,7 +489,7 @@ export function ClaudeDesktopModelsSettings({
         Apps
       </h2>
       <div
-        aria-labelledby="claude-models-settings-heading"
+        aria-labelledby="claude-settings-heading"
         className="overflow-visible rounded-xl bg-white p-4 dark:bg-neutral-800"
       >
         <div className="flex items-start space-x-3">
@@ -357,104 +499,72 @@ export function ClaudeDesktopModelsSettings({
             className="mt-0.5 h-5 w-5 flex-shrink-0"
           />
           <div className="min-w-0 flex-1">
-            <div className="flex items-center justify-between gap-3">
-              <h2
-                id="claude-models-settings-heading"
-                className="text-sm font-medium text-neutral-900 dark:text-white"
-              >
-                Claude
-              </h2>
-              {status.modelSource === "fallback" && models.length > 0 && (
-                <span className="text-xs text-neutral-400">
-                  Built-in defaults
-                </span>
-              )}
-            </div>
-
-            <div className="mt-3 grid grid-cols-2 gap-x-5 gap-y-2 max-[850px]:grid-cols-1">
-              {models.map((model) => {
-                const selected = selection.includes(model.name);
-                const accessLabel = modelAccessLabel(model);
-                const unavailable =
-                  model.availability !== undefined &&
-                  model.availability !== "available";
-                return (
-                  <label
-                    key={model.name}
-                    className="flex min-w-0 cursor-pointer items-center gap-2 rounded-md py-1 text-sm text-neutral-600 dark:text-neutral-300"
-                    title={accessLabel ?? model.description}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selected}
-                      disabled={
-                        restarting ||
-                        (!selected && (selectionFull || unavailable))
-                      }
-                      onChange={() => toggleModel(model.name)}
-                      className="h-4 w-4 rounded border-neutral-300 accent-neutral-900 dark:border-neutral-600 dark:accent-white"
-                    />
-                    <span className="truncate">{model.displayName}</span>
-                    {accessLabel && (
-                      <span className="flex-shrink-0 text-xs text-neutral-400">
-                        {accessLabel}
-                      </span>
-                    )}
-                  </label>
-                );
-              })}
-            </div>
-
-            <div ref={pickerRef} className="relative mt-3">
-              <Input
-                type="search"
-                value={searchQuery}
-                onFocus={() => setPickerOpen(true)}
-                onChange={(event) => {
-                  setSearchQuery(event.target.value);
-                  setPickerOpen(true);
-                }}
-                placeholder="Search Ollama models"
-                aria-label="Search Ollama models"
-                aria-expanded={pickerOpen}
-                aria-controls="claude-local-models"
-                disabled={restarting}
-                autoComplete="off"
-              />
-              {pickerOpen && (
-                <div
-                  id="claude-local-models"
-                  className="absolute z-20 mt-1 max-h-52 w-full overflow-y-auto rounded-lg border border-neutral-200 bg-white p-1 shadow-lg dark:border-neutral-600 dark:bg-neutral-800"
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2
+                  id="claude-settings-heading"
+                  className="text-sm font-medium text-neutral-900 dark:text-white"
                 >
-                  {modelsLoading ? (
-                    <p className="px-3 py-2 text-sm text-neutral-400">
-                      Loading models…
-                    </p>
-                  ) : selectionFull ? (
-                    <p className="px-3 py-2 text-sm text-neutral-400">
-                      {claudeDesktopMaxModelsMessage(maxModels)}
-                    </p>
-                  ) : matchingLocalModels.length > 0 ? (
-                    matchingLocalModels.map((name) => (
-                      <button
-                        key={name}
-                        type="button"
-                        onClick={() => addLocalModel(name)}
-                        className="block w-full rounded-md px-3 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-700"
-                      >
-                        {name}
-                      </button>
-                    ))
-                  ) : (
-                    <p className="px-3 py-2 text-sm text-neutral-400">
-                      No models found.
-                    </p>
-                  )}
-                </div>
-              )}
+                  Claude
+                </h2>
+                <p className="mt-1 text-base/6 text-zinc-500 sm:text-sm/6 dark:text-zinc-400">
+                  Choose which Ollama model Claude uses for each model option.
+                </p>
+              </div>
+              <Button
+                type="button"
+                color="white"
+                onClick={applyChanges}
+                disabled={
+                  busy || assignedModels.length === 0 || hasInvalidMapping
+                }
+                className="flex-shrink-0"
+              >
+                {applying && (
+                  <ArrowPathIcon data-slot="icon" className="animate-spin" />
+                )}
+                {applying
+                  ? status.running
+                    ? "Restarting…"
+                    : "Starting…"
+                  : status.running
+                    ? "Restart Claude"
+                    : "Start Claude"}
+              </Button>
             </div>
 
-            <Field className="mt-3 border-t border-neutral-200 pt-3 dark:border-neutral-700">
+            <div className="mt-4 w-full max-w-xl space-y-1">
+              {mappings.map((mapping) => (
+                <div
+                  key={mapping.routeId}
+                  className="relative grid min-h-12 grid-cols-[5.5rem_3.75rem_minmax(0,1fr)] items-center gap-2 py-1 max-sm:grid-cols-1 max-sm:gap-2"
+                >
+                  <div className="min-w-0">
+                    <span className="block text-sm font-medium text-neutral-800 dark:text-neutral-200">
+                      {mapping.routeName}
+                    </span>
+                  </div>
+                  <ArrowRightIcon
+                    aria-hidden="true"
+                    className="absolute left-[6.6625rem] h-4 w-4 -translate-x-1/2 text-neutral-300 dark:text-neutral-500 max-sm:hidden"
+                  />
+                  <div className="col-start-3 w-2/3 min-w-0 max-sm:col-start-auto max-sm:w-full">
+                    <ClaudeModelPicker
+                      id={`claude-route-${mapping.routeId}`}
+                      routeName={mapping.routeName}
+                      value={mapping.model ?? ""}
+                      disabled={busy || modelsLoading}
+                      models={catalogModels}
+                      onChange={(model) =>
+                        updateMapping(mapping.routeId, model)
+                      }
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <Field className="mt-3 w-full max-w-xl border-t border-neutral-200 pt-3 dark:border-neutral-700">
               <div className="flex items-center justify-between gap-4">
                 <div className="min-w-0">
                   <Label>Enable auto mode</Label>
@@ -462,41 +572,21 @@ export function ClaudeDesktopModelsSettings({
                 </div>
                 <Switch
                   checked={autoMode}
-                  disabled={restarting || !autoModeAvailable}
+                  disabled={busy || !autoModeAvailable}
                   onChange={(checked) => void toggleAutoMode(checked)}
                   className="flex-shrink-0"
                 />
               </div>
             </Field>
 
-            <div className="mt-3 flex items-center justify-between gap-4 max-sm:flex-col max-sm:items-stretch">
+            {guidance && (
               <p
-                role={error || status.error ? "alert" : undefined}
-                className="text-xs leading-5 text-neutral-500 dark:text-neutral-400"
+                role={error || status.error ? "alert" : "status"}
+                className="mt-3 w-full max-w-xl text-xs leading-5 text-neutral-500 dark:text-neutral-400"
               >
                 {guidance}
               </p>
-              <Button
-                type="button"
-                color="white"
-                onClick={restartClaude}
-                disabled={
-                  restarting || selection.length === 0 || !hasAvailableSelection
-                }
-                className="flex-shrink-0 max-sm:w-full"
-              >
-                {restarting && (
-                  <ArrowPathIcon data-slot="icon" className="animate-spin" />
-                )}
-                {restarting
-                  ? status.connected
-                    ? "Restarting…"
-                    : "Starting…"
-                  : status.connected
-                    ? "Restart Claude"
-                    : "Start Claude"}
-              </Button>
-            </div>
+            )}
           </div>
         </div>
       </div>

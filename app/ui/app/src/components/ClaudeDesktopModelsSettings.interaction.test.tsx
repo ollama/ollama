@@ -34,6 +34,13 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
               portConflict: false,
               autoMode: true,
               modelSource: "user",
+              mappings: [
+                {
+                  routeId: "claude-fable-5",
+                  routeName: "Fable 5",
+                  model: "glm-5.2:cloud",
+                },
+              ],
               models: [
                 {
                   name: "glm-5.2:cloud",
@@ -61,9 +68,15 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
       expect(autoModeSwitch().props.disabled).not.toBe(true);
       expect(autoModeSwitch().props["aria-checked"]).toBe(true);
 
-      const modelInputs = renderer!.root.findAllByType("input");
       await act(async () => {
-        modelInputs[1].props.onChange();
+        renderer!.root
+          .findByProps({ "aria-label": "Ollama model for Fable 5" })
+          .props.onClick();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        const options = renderer!.root.findAllByProps({ role: "option" });
+        options[1].props.onClick();
         await Promise.resolve();
       });
 
@@ -76,7 +89,7 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
             node.children
               .join("")
               .includes(
-                "Restart Claude to apply model changes before changing auto mode.",
+                "Start or restart Claude to apply model changes before changing auto mode.",
               ),
           ),
       ).toBe(true);

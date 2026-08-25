@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1169,6 +1170,83 @@ func TestClaudeDesktopModelsPersistInLauncherConfig(t *testing.T) {
 	}
 	if err := SaveClaudeDesktopModels(nil); err == nil {
 		t.Fatal("SaveClaudeDesktopModels(nil) succeeded")
+	}
+}
+
+func TestClaudeDesktopModelMappingsPersistSharedRoutes(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	want := map[string]string{
+		"claude-fable-5":            "qwen3.8:27b",
+		"claude-opus-5":             "qwen3.8:27b",
+		"claude-sonnet-5":           "qwen3.8:27b",
+		"claude-haiku-4-5-20251001": "qwen3.8:27b",
+		"claude-sonnet-4-6":         "qwen3.8:27b",
+	}
+	if err := SaveClaudeDesktopModelMappings(want); err != nil {
+		t.Fatal(err)
+	}
+	if got := ClaudeDesktopModelMappings(); !maps.Equal(got, want) {
+		t.Fatalf("ClaudeDesktopModelMappings() = %v, want %v", got, want)
+	}
+	if got, wantModels := ClaudeDesktopModels(), []string{"qwen3.8:27b", "qwen3.8:27b", "qwen3.8:27b", "qwen3.8:27b", "qwen3.8:27b"}; !slices.Equal(got, wantModels) {
+		t.Fatalf("ClaudeDesktopModels() = %v, want %v", got, wantModels)
+	}
+	if err := SaveClaudeDesktopModels([]string{"glm-5.2:cloud"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := ClaudeDesktopModelMappings(); len(got) != 0 {
+		t.Fatalf("legacy model selection left mappings behind: %v", got)
+	}
+}
+
+func TestClaudeDesktopModelMappingsAllowSparseRoutes(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	want := map[string]string{"claude-fable-5": "qwen3.8:27b"}
+	if err := SaveClaudeDesktopModelMappings(want); err != nil {
+		t.Fatal(err)
+	}
+	if got := ClaudeDesktopModelMappings(); !maps.Equal(got, want) {
+		t.Fatalf("ClaudeDesktopModelMappings() = %v, want %v", got, want)
+	}
+}
+
+func TestClaudeDesktopApplyProfileChangeDoesNotOpenStoppedClaude(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	withClaudeDesktopPlatform(t, "darwin")
+	withClaudeDesktopProcessHooks(t,
+		func() bool { return false },
+		func() error { t.Fatal("stopped Claude should not quit"); return nil },
+		func() error { t.Fatal("applying settings should not open Claude"); return nil },
+	)
+
+	changed := false
+	if err := (&ClaudeDesktop{}).ApplyProfileChange(func() error {
+		changed = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("profile change was not applied")
+	}
+}
+
+func TestClaudeDesktopApplyProfileChangeRestartsRunningClaude(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	withClaudeDesktopPlatform(t, "darwin")
+	running := true
+	quitCalls, openCalls := 0, 0
+	withClaudeDesktopProcessHooks(t,
+		func() bool { return running },
+		func() error { quitCalls++; running = false; return nil },
+		func() error { openCalls++; return nil },
+	)
+
+	if err := (&ClaudeDesktop{}).ApplyProfileChange(func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if quitCalls != 1 || openCalls != 1 {
+		t.Fatalf("quit/open calls = %d/%d, want 1/1", quitCalls, openCalls)
 	}
 }
 

@@ -23,6 +23,7 @@ func TestEvaluateClaudeDesktopModelAccess(t *testing.T) {
 		{name: "free account free model", model: free, state: ClaudeDesktopAccessState{Cloud: ClaudeDesktopCloudOn, Account: ClaudeDesktopAccountSignedIn, Plan: "free"}, want: ClaudeDesktopModelAccess{Availability: ClaudeDesktopAvailabilityAvailable, RequiredPlan: "free"}},
 		{name: "free account pro model", model: pro, state: ClaudeDesktopAccessState{Cloud: ClaudeDesktopCloudOn, Account: ClaudeDesktopAccountSignedIn, Plan: "free"}, want: ClaudeDesktopModelAccess{Availability: ClaudeDesktopAvailabilityUnavailable, Reason: ClaudeDesktopAccessUpgradeRequired, RequiredPlan: "pro"}},
 		{name: "pro account pro model", model: pro, state: ClaudeDesktopAccessState{Cloud: ClaudeDesktopCloudOn, Account: ClaudeDesktopAccountSignedIn, Plan: "pro"}, want: ClaudeDesktopModelAccess{Availability: ClaudeDesktopAvailabilityAvailable, RequiredPlan: "pro"}},
+		{name: "team account pro model", model: pro, state: ClaudeDesktopAccessState{Cloud: ClaudeDesktopCloudOn, Account: ClaudeDesktopAccountSignedIn, Plan: "team"}, want: ClaudeDesktopModelAccess{Availability: ClaudeDesktopAvailabilityAvailable, RequiredPlan: "pro"}},
 		{name: "future paid plan", model: pro, state: ClaudeDesktopAccessState{Cloud: ClaudeDesktopCloudOn, Account: ClaudeDesktopAccountSignedIn, Plan: "enterprise"}, want: ClaudeDesktopModelAccess{Availability: ClaudeDesktopAvailabilityAvailable, RequiredPlan: "pro"}},
 	}
 

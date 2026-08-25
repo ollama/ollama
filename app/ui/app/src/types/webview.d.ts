@@ -28,6 +28,13 @@ interface ClaudeDesktopStatus {
   modelSource?: "user" | "endpoint" | "fallback";
   maxModels?: number;
   models?: ClaudeDesktopModelStatus[];
+  mappings?: ClaudeDesktopMappingStatus[];
+}
+
+interface ClaudeDesktopMappingStatus {
+  routeId: string;
+  routeName: string;
+  model?: string;
 }
 
 interface ClaudeDesktopModelStatus {
@@ -79,8 +86,8 @@ declare global {
     installClaudeDesktop?: () => Promise<ClaudeDesktopInstallResult>;
     getShowAppsInMenu?: () => Promise<boolean>;
     setShowAppsInMenu?: (visible: boolean) => Promise<void>;
-    restartClaudeDesktop?: (
-      models: string[],
+    applyClaudeDesktopMappings?: (
+      mappings: Record<string, string>,
     ) => Promise<ClaudeDesktopActionResult>;
     setClaudeDesktopAutoMode?: (
       enabled: boolean,
@@ -112,6 +119,7 @@ declare global {
 export type {
   ClaudeDesktopActionResult,
   ClaudeDesktopInstallResult,
+  ClaudeDesktopMappingStatus,
   ClaudeDesktopModelStatus,
   ClaudeDesktopStatus,
   ContextMenuItem,

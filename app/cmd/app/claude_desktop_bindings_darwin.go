@@ -48,8 +48,8 @@ func bindClaudeDesktop(wv webview.WebView) {
 		return requestClaudeDesktopInstall()
 	})
 
-	wv.Bind("restartClaudeDesktop", func(models []string) claudeDesktopActionResult {
-		err := restartClaudeDesktopWithModels(models)
+	wv.Bind("applyClaudeDesktopMappings", func(mappings map[string]string) claudeDesktopActionResult {
+		err := applyClaudeDesktopMappings(mappings)
 		result := claudeDesktopActionResult{Status: getClaudeDesktopConnectionStatus()}
 		if err != nil {
 			result.Error = err.Error()
