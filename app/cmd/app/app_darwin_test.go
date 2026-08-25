@@ -739,6 +739,7 @@ type fakeClaudeDesktopController struct {
 	configureOnSet bool
 	requireRestart bool
 	autoMode       bool
+	restoreCalls   int
 }
 
 func (f *fakeClaudeDesktopController) UsesOllamaGateway() bool { return f.configured }
@@ -817,7 +818,13 @@ func (f *fakeClaudeDesktopController) ApplyProfileChange(change func() error, re
 	return f.setErr
 }
 
-func (f *fakeClaudeDesktopController) RestoreForShutdown(context.Context) error { return nil }
+func (f *fakeClaudeDesktopController) RestoreForShutdown(context.Context) error {
+	f.restoreCalls++
+	f.configured = false
+	f.profileCurrent = false
+	f.installed = false
+	return nil
+}
 
 func TestUpdateClaudeDesktopProfileRepairsExistingConnectionOnce(t *testing.T) {
 	previousDesktop := claudeDesktop
@@ -1370,6 +1377,19 @@ func TestResetClaudeDesktopMappingsDoesNotOpenStoppedClaude(t *testing.T) {
 }
 
 func TestResetClaudeDesktopMappingsSerializesDisconnectDuringCatalogRefresh(t *testing.T) {
+	testResetClaudeDesktopMappingsSerializesLifecycleChange(t, "disconnect", func() error {
+		return setClaudeDesktopConnection(false, false)
+	})
+}
+
+func TestResetClaudeDesktopMappingsSerializesShutdownDuringCatalogRefresh(t *testing.T) {
+	testResetClaudeDesktopMappingsSerializesLifecycleChange(t, "shutdown", func() error {
+		return restoreClaudeAppForTermination(context.Background(), false)
+	})
+}
+
+func testResetClaudeDesktopMappingsSerializesLifecycleChange(t *testing.T, name string, change func() error) {
+	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	previousMappings := sharedClaudeDesktopMappings("glm-5.2:cloud")
 	if err := launch.SaveClaudeDesktopModelMappings(previousMappings); err != nil {
@@ -1467,18 +1487,18 @@ func TestResetClaudeDesktopMappingsSerializesDisconnectDuringCatalogRefresh(t *t
 		t.Fatal("reset did not pause during the forced catalog refresh")
 	}
 
-	disconnectStarted := make(chan struct{})
-	disconnectDone := make(chan error, 1)
+	changeStarted := make(chan struct{})
+	changeDone := make(chan error, 1)
 	go func() {
-		close(disconnectStarted)
-		disconnectDone <- setClaudeDesktopConnection(false, false)
+		close(changeStarted)
+		changeDone <- change()
 	}()
-	<-disconnectStarted
+	<-changeStarted
 
-	disconnectedEarly := false
+	completedEarly := false
 	select {
-	case <-disconnectDone:
-		disconnectedEarly = true
+	case <-changeDone:
+		completedEarly = true
 	case <-time.After(50 * time.Millisecond):
 	}
 	close(releaseRefresh)
@@ -1492,26 +1512,29 @@ func TestResetClaudeDesktopMappingsSerializesDisconnectDuringCatalogRefresh(t *t
 	if reset.err != nil || !reset.applied {
 		t.Fatalf("reset mappings = %v/%v, want a persisted reset", reset.applied, reset.err)
 	}
-	if disconnectedEarly {
-		t.Fatal("disconnect completed while reset still owned the Claude profile lifecycle")
+	if completedEarly {
+		t.Fatalf("%s completed while reset still owned the Claude profile lifecycle", name)
 	}
 	select {
-	case err := <-disconnectDone:
+	case err := <-changeDone:
 		if err != nil {
 			t.Fatal(err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("disconnect did not finish after reset released the lifecycle")
+		t.Fatalf("%s did not finish after reset released the lifecycle", name)
 	}
 
 	if fake.configured || fake.installed {
-		t.Fatalf("Claude was reconnected after disconnect: %+v", fake)
+		t.Fatalf("Claude was reconnected after %s: %+v", name, fake)
+	}
+	if name == "shutdown" && fake.restoreCalls != 1 {
+		t.Fatalf("shutdown restores = %d, want 1", fake.restoreCalls)
 	}
 	claudeProxyMu.Lock()
 	activeGateway := claudeAppProxy
 	claudeProxyMu.Unlock()
 	if activeGateway != nil {
-		t.Fatal("Claude gateway remained active after disconnect")
+		t.Fatalf("Claude gateway remained active after %s", name)
 	}
 }
 

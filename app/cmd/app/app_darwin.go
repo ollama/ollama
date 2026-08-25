@@ -80,7 +80,7 @@ var (
 	launchAgentPath    = filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents", "com.ollama.ollama.plist")
 	claudeAppProxy     *proxy.ClaudeDesktop
 	claudeProxyStartMu sync.Mutex
-	// Serialize default resets with connect and disconnect decisions.
+	// Serialize default resets with connect, disconnect, and shutdown decisions.
 	claudeLifecycleMu sync.Mutex
 	claudeProxyMu     sync.Mutex
 	claudeCatalogMu   sync.Mutex
@@ -1683,6 +1683,9 @@ func restoreClaudeBeforeQuit(ctx context.Context, handoff, configured bool, rest
 }
 
 func restoreClaudeAppForTermination(ctx context.Context, handoff bool) error {
+	claudeLifecycleMu.Lock()
+	defer claudeLifecycleMu.Unlock()
+
 	if handoff {
 		stopClaudeAppProxy()
 		return nil
