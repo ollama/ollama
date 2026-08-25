@@ -207,11 +207,6 @@ func precomputeGemmaScaledWeights(m *Model) {
 		m.NormScaled = mlx.AddScalar(m.Norm.Weight, 1.0)
 	}
 
-	var scaled []*mlx.Array
-	if m.NormScaled != nil {
-		scaled = append(scaled, m.NormScaled)
-	}
-
 	for _, layer := range m.Layers {
 		if layer == nil || layer.Attention == nil {
 			continue
@@ -219,33 +214,23 @@ func precomputeGemmaScaledWeights(m *Model) {
 
 		if layer.InputNorm != nil {
 			layer.InputNormScaled = mlx.AddScalar(layer.InputNorm.Weight, 1.0)
-			scaled = append(scaled, layer.InputNormScaled)
 		}
 		if layer.PostAttnNorm != nil {
 			layer.PostAttnNormScaled = mlx.AddScalar(layer.PostAttnNorm.Weight, 1.0)
-			scaled = append(scaled, layer.PostAttnNormScaled)
 		}
 		if layer.PreFFNorm != nil {
 			layer.PreFFNormScaled = mlx.AddScalar(layer.PreFFNorm.Weight, 1.0)
-			scaled = append(scaled, layer.PreFFNormScaled)
 		}
 		if layer.PostFFNorm != nil {
 			layer.PostFFNormScaled = mlx.AddScalar(layer.PostFFNorm.Weight, 1.0)
-			scaled = append(scaled, layer.PostFFNormScaled)
 		}
 
 		if layer.Attention.QNorm != nil {
 			layer.Attention.QNormScaled = mlx.AddScalar(layer.Attention.QNorm.Weight, 1.0)
-			scaled = append(scaled, layer.Attention.QNormScaled)
 		}
 		if layer.Attention.KNorm != nil {
 			layer.Attention.KNormScaled = mlx.AddScalar(layer.Attention.KNorm.Weight, 1.0)
-			scaled = append(scaled, layer.Attention.KNormScaled)
 		}
-	}
-
-	if len(scaled) > 0 {
-		mlx.Eval(scaled...)
 	}
 }
 

@@ -354,10 +354,7 @@ func stackAndClone(parts []*mlx.Array) *mlx.Array {
 	if len(parts) == 0 {
 		return nil
 	}
-	stacked := mlx.Stack(parts, 0)
-	cloned := stacked.Clone()
-	mlx.Eval(cloned)
-	return cloned
+	return mlx.Stack(parts, 0).Clone()
 }
 
 func supportsGatherQMM(mode string, bits int) bool {
@@ -428,10 +425,7 @@ func transposeExpertWeightForGatherMM(w *mlx.Array) *mlx.Array {
 	if w == nil || !w.Valid() || w.NumDims() != 3 {
 		return w
 	}
-	t := mlx.Transpose(w, 0, 2, 1)
-	cloned := t.Clone()
-	mlx.Eval(cloned)
-	return cloned
+	return mlx.Transpose(w, 0, 2, 1).Clone()
 }
 
 func sliceAxis(a *mlx.Array, axis int, start, stop int32) *mlx.Array {
@@ -447,18 +441,14 @@ func sliceAxis(a *mlx.Array, axis int, start, stop int32) *mlx.Array {
 }
 
 func appendAndClone(dst, src *mlx.Array) *mlx.Array {
-	out := mlx.Concatenate([]*mlx.Array{dst, src}, 0).Clone()
-	mlx.Eval(out)
-	return out
+	return mlx.Concatenate([]*mlx.Array{dst, src}, 0).Clone()
 }
 
 func stackSlicesAndClone(slices []*mlx.Array) *mlx.Array {
 	if len(slices) == 0 {
 		return nil
 	}
-	out := mlx.Stack(slices, 0).Clone()
-	mlx.Eval(out)
-	return out
+	return mlx.Stack(slices, 0).Clone()
 }
 
 func foldSharedExperts(m *SparseMoE, cfg *Config) bool {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"slices"
@@ -66,6 +67,13 @@ func (r *Runner) Load(modelName string) error {
 	tensors, err := loadTensorsFromManifest(root)
 	if err != nil {
 		return err
+	}
+
+	// On Metal, materialize the loaded tensors with CPU reads before any
+	// weight graph exists, so the weight eval never commits a command buffer
+	// that waits on file data. CUDA loads read at dispatch and need no pre-pass.
+	if mlx.MetalIsAvailable() {
+		mlx.Eval(slices.Collect(maps.Values(tensors))...)
 	}
 
 	// Assign weights to model (model-specific logic). Target and draft weights
