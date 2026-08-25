@@ -86,6 +86,24 @@ ollama launch copilot --model kimi-k2.5:cloud --yes -- -p "how does this reposit
 
 The `--yes` flag auto-pulls the model, skips selectors, and requires `--model` to be specified. Arguments after `--` are passed directly to Copilot CLI.
 
+### CI example
+
+```yaml
+jobs:
+  copilot-headless:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Copilot CLI headlessly
+        env:
+          COPILOT_PROVIDER_BASE_URL: https://remote.example.com/v1
+          COPILOT_PROVIDER_API_KEY: ""
+          COPILOT_PROVIDER_WIRE_API: responses
+          OLLAMA_HOST: https://remote.example.com
+        run: |
+          ollama launch copilot --model qwen3.5 --yes -- -p "Summarize the repository and suggest next steps."
+```
+
 ## Manual setup
 
 Copilot CLI connects to Ollama using the OpenAI-compatible API via environment variables.
