@@ -35,6 +35,15 @@ func TensorQuantParams(
 // ResolveLinearQuantParams resolves quantization params for a quantized linear
 // tensor, preferring per-tensor metadata and falling back to shape-based
 // inference for affine packed tensors.
+//
+// Per-tensor metadata is written once per blob/model at import time and does
+// not always capture genuine mixed precision within that blob — e.g. a
+// GraniteMoe router kept at 8-bit while the rest of the model is 4-bit ships
+// with only a model-wide default in config.json, so every tensor in the blob
+// inherits that default regardless of how it was actually packed. Shape
+// inference recovers the true (groupSize, bits) from the packed tensor
+// itself, so it is trusted whenever the metadata-derived value is not even
+// geometrically consistent with the tensor's actual shape.
 func ResolveLinearQuantParams(
 	defaultGroupSize, defaultBits int,
 	defaultMode string,
@@ -51,8 +60,9 @@ func ResolveLinearQuantParams(
 	)
 
 	if mode == "affine" {
+		trustworthy := fromTensor && affineShapeConsistent(weight, scales, groupSize, bits)
 		if inferredGroupSize, inferredBits, ok := InferAffineQuantParamsFromShapes(weight, scales, bits); ok {
-			if !fromTensor || groupSize == 0 || bits == 0 {
+			if !trustworthy || groupSize == 0 || bits == 0 {
 				groupSize = inferredGroupSize
 				bits = inferredBits
 			}
@@ -60,6 +70,30 @@ func ResolveLinearQuantParams(
 	}
 
 	return groupSize, bits, mode
+}
+
+// affineShapeConsistent reports whether unpacking weight at the given
+// (groupSize, bits) would actually reproduce scales' group count — i.e.
+// whether metadata-declared params match how the tensor was really packed.
+func affineShapeConsistent(weight, scales *mlx.Array, groupSize, bits int) bool {
+	if weight == nil || scales == nil || groupSize <= 0 || bits <= 0 {
+		return false
+	}
+
+	weightShape := weight.Dims()
+	scaleShape := scales.Dims()
+	if len(weightShape) == 0 || len(scaleShape) == 0 {
+		return false
+	}
+
+	weightCols := weightShape[len(weightShape)-1]
+	scalesCols := scaleShape[len(scaleShape)-1]
+	if weightCols <= 0 || scalesCols <= 0 {
+		return false
+	}
+
+	inFeatures := weightCols * (32 / bits)
+	return inFeatures%groupSize == 0 && inFeatures/groupSize == scalesCols
 }
 
 // InferAffineQuantParamsFromShapes infers (groupSize,bits) for affine quantized
