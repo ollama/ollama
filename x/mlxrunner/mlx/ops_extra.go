@@ -113,6 +113,12 @@ func GatherQMM(x, w, scales *Array, biases, lhsIndices, rhsIndices *Array, trans
 
 // Missing tensor ops
 
+func Arange(start, stop, step float64, dtype DType) *Array {
+	out := New("ARANGE")
+	C.mlx_arange(&out.ctx, C.double(start), C.double(stop), C.double(step), C.mlx_dtype(dtype), DefaultStream().ctx)
+	return out
+}
+
 func Tile(a *Array, reps []int32) *Array {
 	cReps := make([]C.int, len(reps))
 	for i, r := range reps {
