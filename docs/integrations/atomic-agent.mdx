@@ -1,0 +1,52 @@
+---
+title: Atomic Agent
+---
+
+Atomic Agent is an open-source, local-first AI agent for the terminal with tools, memory, skills, and MCP support.
+
+## Quick start
+
+```bash
+ollama launch atomic
+```
+
+Ollama handles everything automatically:
+
+1. **Install** — If Atomic Agent isn't installed, Ollama prompts to install the command-line agent
+2. **Model** — Pick a model from the selector (local or cloud)
+3. **Configure** — Ollama points Atomic Agent at your local server and sets your model as the active provider
+
+## Recommended models
+
+**Local models:**
+
+- `qwen3.6` — Reasoning, coding, and agentic tool use (~24 GB)
+- `gemma4` — General reasoning (~16 GB)
+- `gemma4:e4b` — Light option for 8 GB machines
+
+**Cloud models:**
+
+- `qwen3.6:cloud` — Reasoning, coding, and agentic tool use
+- `glm-5.1:cloud` — Reasoning and code generation
+
+Models with tool-use support give the agent loop the best results. More models at [ollama.com/search](https://ollama.com/search).
+
+## Reconfigure
+
+Use the agent's own LLM panel to change providers or models later: open the TUI and switch in the **LLM** tab, or re-run `ollama launch atomic` and pick a different model.
+
+## Manual setup
+
+To install Atomic Agent directly:
+
+```bash
+curl -fsSL https://atomicagent.io/install | sh
+```
+
+On Windows:
+
+```powershell
+irm https://atomicagent.io/install.ps1 | iex
+```
+
+For manual Ollama configuration, see the [Atomic Agent Ollama guide](https://atomicagent.io/docs/guides/ollama).
