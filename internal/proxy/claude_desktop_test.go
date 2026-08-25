@@ -47,7 +47,7 @@ func TestGatewayRoutesClaudeProtocolToOllama(t *testing.T) {
 		{http.MethodPost, "/v1/messages", `{"model":"glm-5.2:cloud","messages":[]}`},
 		{http.MethodPost, "/v1/messages", `{"model":"kimi-k3:cloud","messages":[]}`},
 		{http.MethodPost, "/v1/messages", `{"model":"deepseek-v4-pro:cloud","messages":[]}`},
-		{http.MethodPost, "/v1/messages", `{"model":"deepseek-v4-flash:0731:cloud","messages":[]}`},
+		{http.MethodPost, "/v1/messages", `{"model":"glm-5.3-flash:cloud","messages":[]}`},
 	} {
 		req, err := http.NewRequest(request.method, "http://"+p.Addr()+request.path, strings.NewReader(request.body))
 		if err != nil {
@@ -101,7 +101,7 @@ func TestGatewayRoutesClaudeProtocolToOllama(t *testing.T) {
 			if strings.Join(gotIDs, ",") != wantIDs || catalog.FirstID != gotIDs[0] || catalog.LastID != gotIDs[len(gotIDs)-1] || catalog.HasMore {
 				t.Fatalf("gateway catalog = %+v", catalog.Data)
 			}
-			wantNames := "glm-5.2:cloud,kimi-k3:cloud,deepseek-v4-pro:cloud,deepseek-v4-flash:0731:cloud,gemma4:31b-cloud"
+			wantNames := "glm-5.2:cloud,kimi-k3:cloud,deepseek-v4-pro:cloud,glm-5.3-flash:cloud,gemma4:31b-cloud"
 			if strings.Join(gotNames, ",") != wantNames {
 				t.Fatalf("gateway display names = %v, want %s", gotNames, wantNames)
 			}
@@ -113,7 +113,7 @@ func TestGatewayRoutesClaudeProtocolToOllama(t *testing.T) {
 		"glm-5.2:cloud",
 		"kimi-k3:cloud",
 		"deepseek-v4-pro:cloud",
-		"deepseek-v4-flash:0731:cloud",
+		"glm-5.3-flash:cloud",
 	}
 	if strings.Join(messageModels, ",") != strings.Join(wantModels, ",") {
 		t.Fatalf("rewritten message models = %v", messageModels)
@@ -1574,7 +1574,7 @@ func TestGatewayCountsUnsupportedVisionWithoutUpstream(t *testing.T) {
 	defer upstream.Close()
 	p := startTestGateway(t, upstream.URL)
 
-	body := `{"model":"deepseek-v4-flash:0731:cloud","messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}}]}]}`
+	body := `{"model":"glm-5.2:cloud","messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}}]}]}`
 	resp, err := http.Post("http://"+p.Addr()+"/v1/messages/count_tokens", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)

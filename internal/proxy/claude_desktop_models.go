@@ -188,15 +188,9 @@ func DefaultClaudeDesktopModels() []ClaudeDesktopModel {
 		{Model: "glm-5.2:cloud", Description: "Long-horizon coding and agentic engineering", MaxOutputTokens: 128_000, RequiredPlan: "pro"},
 		{Model: "kimi-k3:cloud", Description: "Long-horizon agentic reasoning with multimodal tool use", MaxOutputTokens: 262_144, RequiredPlan: "pro"},
 		{Model: "deepseek-v4-pro", Description: "High-performance coding and tool use", MaxOutputTokens: 128_000, RequiredPlan: "pro"},
-		{Model: "deepseek-v4-flash", Description: "Fast coding and agentic tool use", MaxOutputTokens: 64_000, RequiredPlan: "pro"},
+		{Model: "glm-5.3-flash:cloud", Description: "Fast reasoning for coding and long-horizon agentic work", MaxOutputTokens: 1_000_000, RequiredPlan: "pro"},
 		{Model: "gemma4:31b-cloud", Description: "Agentic workflows and multimodal reasoning", MaxOutputTokens: 262_144, RequiredPlan: "free"},
 	})
-	// Preserve the proven fallback route while the endpoint remains free to
-	// move the canonical DeepSeek alias independently.
-	models[3].OllamaModel = "deepseek-v4-flash:0731:cloud"
-	models[3].DisplayName = models[3].OllamaModel
-	models[3].gateway.DisplayName = models[3].OllamaModel
-	models[3].gateway.OllamaModel = models[3].OllamaModel
 	return models
 }
 
