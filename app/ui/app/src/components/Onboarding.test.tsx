@@ -9,7 +9,6 @@ import {
   default as Onboarding,
   RunOllamaScreen,
   shouldShowClaudeConnectedIntro,
-  terminalRowsForWindowHeight,
   WelcomeScreen,
 } from "./Onboarding";
 import {
@@ -48,12 +47,6 @@ describe("Onboarding", () => {
     expect(html).toContain("Your prompt data is never logged or trained on.");
     expect(html).toContain("Continue");
     expect(html).not.toContain("Skip");
-  });
-
-  it("shows more terminal integrations as the window gets taller", () => {
-    expect(terminalRowsForWindowHeight(400)).toBe(1);
-    expect(terminalRowsForWindowHeight(660)).toBe(4);
-    expect(terminalRowsForWindowHeight(960)).toBe(8);
   });
 
   it("renders the apps screen without browser platform globals", () => {
@@ -365,7 +358,7 @@ describe("Onboarding", () => {
     expect(html).not.toContain("Sign up");
   });
 
-  it("groups disconnected Claude with applications and terminal separately", () => {
+  it("groups disconnected Claude with a scrollable terminal list", () => {
     const integrations: IntegrationStatuses = [
       {
         id: "claude-desktop",
@@ -463,10 +456,11 @@ describe("Onboarding", () => {
     expect(html).not.toContain("ChatGPT");
     expect(html).toContain("OpenCode");
     expect(html).toContain("Terminal");
-    expect(html).toContain('aria-label="Show more apps"');
-    expect(html).toContain('aria-expanded="false"');
-    expect(html).toContain("grid-rows-[0fr]");
-    expect(html).not.toContain("Collapse");
+    expect(html).toContain("overflow-y-auto");
+    expect(html).not.toContain('aria-label="Show more apps"');
+    expect(html).not.toContain("aria-expanded");
+    expect(html).not.toContain("grid-rows-[0fr]");
+    expect(html).not.toContain("inert");
     expect(html).toContain("/launch-icons/claude.svg");
     expect(html).toContain("/launch-icons/claude-code.svg");
     expect(html).not.toContain("<table");

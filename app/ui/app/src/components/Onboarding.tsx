@@ -31,11 +31,7 @@ import {
   ShieldCheckIcon,
   Square2StackIcon,
 } from "@heroicons/react/24/outline";
-import {
-  CheckIcon,
-  ChevronDownIcon,
-  ChevronUpIcon,
-} from "@heroicons/react/20/solid";
+import { CheckIcon } from "@heroicons/react/20/solid";
 import {
   useCallback,
   useEffect,
@@ -53,10 +49,6 @@ type ClaudeConnectPhase =
   | "connecting"
   | "launching"
   | "disconnecting";
-
-const MINIMUM_APP_WINDOW_HEIGHT = 660;
-const TERMINAL_ROW_HEIGHT_WITH_GAP = 80;
-const TERMINAL_LIST_RESERVED_HEIGHT = 296;
 
 export function shouldShowClaudeConnectedIntro(status: ClaudeDesktopStatus) {
   return status.connected && !status.startFailed && !status.used;
@@ -80,15 +72,6 @@ function getClaudeConnectionSummary() {
   const getStatus =
     window.getClaudeDesktopConnectionSummary ?? window.getClaudeDesktopStatus;
   return getStatus?.() ?? Promise.resolve(null);
-}
-
-export function terminalRowsForWindowHeight(height: number): number {
-  return Math.max(
-    1,
-    Math.floor(
-      (height - TERMINAL_LIST_RESERVED_HEIGHT) / TERMINAL_ROW_HEIGHT_WITH_GAP,
-    ),
-  );
 }
 
 interface ScreenProps {
@@ -455,34 +438,12 @@ export function ConnectAppsScreen({
   const screenMounted = useRef(true);
   const [integrationStatuses, setIntegrationStatuses] =
     useState<IntegrationStatuses | null>(initialIntegrations ?? null);
-  const [showAllIntegrations, setShowAllIntegrations] = useState(false);
-  const [collapsedIntegrationCount, setCollapsedIntegrationCount] = useState(
-    () =>
-      terminalRowsForWindowHeight(
-        typeof window === "undefined"
-          ? MINIMUM_APP_WINDOW_HEIGHT
-          : window.innerHeight,
-      ),
-  );
   const [statusError, setStatusError] = useState(false);
 
   useEffect(() => {
     screenMounted.current = true;
     return () => {
       screenMounted.current = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    const updateCollapsedIntegrationCount = () => {
-      setCollapsedIntegrationCount(
-        terminalRowsForWindowHeight(window.innerHeight),
-      );
-    };
-
-    window.addEventListener("resize", updateCollapsedIntegrationCount);
-    return () => {
-      window.removeEventListener("resize", updateCollapsedIntegrationCount);
     };
   }, []);
 
@@ -939,15 +900,6 @@ export function ConnectAppsScreen({
   const claudeInstalled =
     claudeStatus?.installed ?? claudeIntegration?.installed ?? false;
   const isConnectingClaude = claudePhase !== "idle";
-  const initialLaunchIntegrations = launchIntegrations.slice(
-    0,
-    collapsedIntegrationCount,
-  );
-  const additionalLaunchIntegrations = launchIntegrations.slice(
-    collapsedIntegrationCount,
-  );
-  const canToggleIntegrations =
-    launchIntegrations.length > collapsedIntegrationCount;
   const claudeStatusLabel =
     claudePhase === "installing"
       ? "Downloading…"
@@ -1102,60 +1054,10 @@ export function ConnectAppsScreen({
                     >
                       Terminal
                     </h2>
-                    <div className="mt-2 overflow-hidden bg-white">
+                    <div className="mt-2 bg-white">
                       <div className="space-y-2">
-                        {initialLaunchIntegrations.map(launchIntegrationRow)}
+                        {launchIntegrations.map(launchIntegrationRow)}
                       </div>
-                      {canToggleIntegrations && (
-                        <div
-                          aria-hidden={!showAllIntegrations}
-                          inert={!showAllIntegrations}
-                          className={`grid transition-[grid-template-rows] ease-in-out motion-reduce:duration-0 ${
-                            showAllIntegrations
-                              ? "duration-[750ms]"
-                              : "duration-[825ms]"
-                          } ${
-                            showAllIntegrations
-                              ? "grid-rows-[1fr]"
-                              : "grid-rows-[0fr]"
-                          }`}
-                        >
-                          <div className="min-h-0 overflow-hidden">
-                            <div className="space-y-2 pt-2">
-                              {additionalLaunchIntegrations.map(
-                                launchIntegrationRow,
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                      {canToggleIntegrations && (
-                        <button
-                          type="button"
-                          aria-label={
-                            showAllIntegrations
-                              ? "Collapse apps"
-                              : "Show more apps"
-                          }
-                          aria-expanded={showAllIntegrations}
-                          className="mx-auto mt-3 flex h-10 w-10 items-center justify-center rounded-full text-neutral-600 transition-colors hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
-                          onClick={() =>
-                            setShowAllIntegrations((current) => !current)
-                          }
-                        >
-                          {showAllIntegrations ? (
-                            <ChevronUpIcon
-                              aria-hidden="true"
-                              className="h-5 w-5"
-                            />
-                          ) : (
-                            <ChevronDownIcon
-                              aria-hidden="true"
-                              className="h-5 w-5"
-                            />
-                          )}
-                        </button>
-                      )}
                     </div>
                   </section>
                 )}
