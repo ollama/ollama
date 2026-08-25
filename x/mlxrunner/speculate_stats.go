@@ -74,7 +74,7 @@ func (s *speculationSession) logStats() {
 	for n := 1; n <= frontier; n++ {
 		rates = append(rates, fmt.Sprintf("%d:%.2f", n, d.acc.acceptance(n)))
 	}
-	limit := d.limit()
+	limit := d.limit(s.maxDraft)
 	tps := make([]string, 0, limit+1)
 	if d.cost.ready() {
 		for n := 0; n <= limit; n++ {

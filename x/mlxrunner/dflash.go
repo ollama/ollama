@@ -6,6 +6,7 @@ import (
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model/base"
+	sampler "github.com/ollama/ollama/x/mlxrunner/sample"
 )
 
 // dflashPendingFlushTokens bounds the pinned feature rows between flushes.
@@ -175,11 +176,58 @@ func (d *dflashDraftSession) propose(current *mlx.Array, maxTokens int) *draftCa
 	// Row i predicts the token at its own position, so the anchor row is
 	// unused. Rows 1..n are sampled from one batched distribution; penalties
 	// see only the committed history, not the other rows of the block.
-	logits := spec.draft.Unembed(hidden.Slice(mlx.Slice(), mlx.Slice(1, n+1), mlx.Slice()))
+	predicted := hidden.Slice(mlx.Slice(), mlx.Slice(1, n+1), mlx.Slice())
+	if pathDraft, ok := spec.draft.(base.PathBlockDraft); ok {
+		return d.samplePath(pathDraft, predicted, current)
+	}
+	logits := spec.draft.Unembed(predicted)
 	dist := r.Sampler.Distribution(pipelineSlot, logits, nil)
 	tokens := r.Sampler.SampleDistribution(pipelineSlot, dist)
 	return &draftCandidates{
 		tokens: tokens.ExpandDims(0),
 		dist:   dist,
+	}
+}
+
+func (d *dflashDraftSession) samplePath(draft base.PathBlockDraft, hidden, anchor *mlx.Array) *draftCandidates {
+	r := d.drafter.spec.r
+	ids, scores := draft.CandidateLattice(hidden, anchor)
+	n, k := ids.Dim(1), ids.Dim(2)
+	temperature := r.Sampler.Temperature(pipelineSlot)
+
+	tokens := make([]*mlx.Array, 0, n)
+	dists := make([]sampler.Distribution, 0, n)
+	var previous *mlx.Array
+	for position := range n {
+		candidateIDs := ids.Slice(mlx.Slice(), mlx.Slice(position, position+1), mlx.Slice()).Squeeze(1)
+		positionScores := scores.Slice(mlx.Slice(), mlx.Slice(position, position+1), mlx.Slice(), mlx.Slice()).Squeeze(1)
+		var row *mlx.Array
+		if position == 0 {
+			row = positionScores.Slice(mlx.Slice(), mlx.Slice(0, 1), mlx.Slice()).Squeeze(1)
+		} else {
+			index := mlx.Tile(previous.Reshape(1, 1, 1), []int32{1, 1, int32(k)})
+			row = positionScores.TakeAlongAxis(index, 1).Squeeze(1)
+		}
+
+		if temperature <= 0 {
+			previous = row.Argmax(-1, false).AsType(mlx.DTypeInt32)
+			token := candidateIDs.TakeAlongAxis(previous.ExpandDims(-1), -1).Squeeze(-1)
+			tokens = append(tokens, token)
+			dists = append(dists, sampler.Distribution{
+				IDs:   token.ExpandDims(-1),
+				Probs: mlx.AddScalar(mlx.MulScalar(token.AsType(mlx.DTypeFloat32).ExpandDims(-1), 0), 1),
+			})
+			continue
+		}
+
+		probs := mlx.SoftmaxAxis(mlx.DivScalar(row.AsType(mlx.DTypeFloat32), temperature), -1, true)
+		previous = r.Sampler.SampleDistribution(pipelineSlot, sampler.Distribution{Probs: probs})
+		tokens = append(tokens, candidateIDs.TakeAlongAxis(previous.ExpandDims(-1), -1).Squeeze(-1))
+		dists = append(dists, sampler.Distribution{IDs: candidateIDs, Probs: probs})
+	}
+
+	return &draftCandidates{
+		tokens: mlx.Stack(tokens, 1),
+		dist:   sampler.ConcatenateDistributions(dists),
 	}
 }

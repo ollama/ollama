@@ -18,13 +18,16 @@ import (
 
 func init() {
 	base.RegisterDraft("DFlashDraftModel", func(root *model.Root, target base.Model) (base.DraftModel, error) {
-		return newModel(root, target, false)
+		return newModel(root, target, false, false)
 	})
 	base.RegisterDraft("DFlashLagunaForCausalLM", func(root *model.Root, target base.Model) (base.DraftModel, error) {
-		return newModel(root, target, true)
+		return newModel(root, target, true, false)
 	})
 	base.RegisterDraft("MuseGlimmerAssistantModel", func(root *model.Root, target base.Model) (base.DraftModel, error) {
-		return newModel(root, target, false)
+		return newModel(root, target, false, false)
+	})
+	base.RegisterDraft("DFlash2DraftModel", func(root *model.Root, target base.Model) (base.DraftModel, error) {
+		return newModel(root, target, false, true)
 	})
 }
 
@@ -47,6 +50,14 @@ type Config struct {
 	VocabSize      int32
 	TargetLayerIDs []int
 
+	InputEmbeddingScale float32
+	OutputMultiplier    float32
+	FinalLogitSoftcap   float32
+	ConvKernelSize      int32
+	ConvGroupSize       int32
+	SelectorRank        int32
+	SelectorTopK        int
+
 	// RopeInterleaved selects the draft's rotary pairing convention:
 	// true pairs adjacent dims (torch view_as_complex over pairs, the glimmer
 	// publisher convention); false pairs split halves (HF rotate_half, the
@@ -57,6 +68,8 @@ type Config struct {
 	// Causal, when set, overrides every layer's attention direction;
 	// otherwise only sliding layers run causal.
 	Causal *bool
+
+	DFlash2 bool
 }
 
 // draftTarget is what dflash requires of its target beyond base.Model.
@@ -97,6 +110,7 @@ type Model struct {
 	target draftTarget
 
 	tensorPrefix string
+	Selector     *CandidateSelector
 
 	QuantGroupSize int
 	QuantBits      int
@@ -105,12 +119,14 @@ type Model struct {
 }
 
 type Layer struct {
-	InputNorm    *nn.RMSNorm
-	PostAttnNorm *nn.RMSNorm
-	Attention    *Attention
-	MLP          *MLP
-	IsSliding    bool
-	IsCausal     bool
+	InputNorm     *nn.RMSNorm
+	PostAttnNorm  *nn.RMSNorm
+	Attention     *Attention
+	MLP           *MLP
+	AttentionConv *GroupedDynamicConv
+	MLPConv       *GroupedDynamicConv
+	IsSliding     bool
+	IsCausal      bool
 }
 
 // Attention holds a q projection and a fused k|v projection: split
@@ -148,12 +164,20 @@ func parseConfig(data []byte) (*Config, error) {
 		} `json:"rope_parameters"`
 		BlockSize    int `json:"block_size"`
 		DFlashConfig struct {
-			BlockSize       int    `json:"block_size"`
-			MaskTokenID     *int32 `json:"mask_token_id"`
-			TargetLayerIDs  []int  `json:"target_layer_ids"`
-			NumTargetLayers int    `json:"num_target_layers"`
-			Causal          *bool  `json:"causal"`
+			BlockSize             int     `json:"block_size"`
+			MaskTokenID           *int32  `json:"mask_token_id"`
+			TargetLayerIDs        []int   `json:"target_layer_ids"`
+			NumTargetLayers       int     `json:"num_target_layers"`
+			Causal                *bool   `json:"causal"`
+			InputEmbeddingScale   float32 `json:"input_embedding_scale"`
+			OutputMultiplier      float32 `json:"output_multiplier"`
+			FinalLogitSoftcapping float32 `json:"final_logit_softcapping"`
+			ConvKernelSize        int32   `json:"conv_kernel_size"`
+			ConvGroupSize         int32   `json:"conv_group_size"`
+			SelectorRank          int32   `json:"selector_rank"`
+			SelectorTopK          int     `json:"selector_top_k"`
 		} `json:"dflash_config"`
+		IsCausal        *bool    `json:"is_causal"`
 		NumTargetLayers int      `json:"num_target_layers"`
 		VocabSize       int32    `json:"vocab_size"`
 		LayerTypes      []string `json:"layer_types"`
@@ -165,19 +189,35 @@ func parseConfig(data []byte) (*Config, error) {
 	}
 
 	cfg := &Config{
-		HiddenSize:        raw.HiddenSize,
-		NumHiddenLayers:   raw.NumHiddenLayers,
-		NumAttentionHeads: raw.NumAttentionHeads,
-		NumKeyValueHeads:  raw.NumKeyValueHeads,
-		HeadDim:           raw.HeadDim,
-		RMSNormEps:        raw.RMSNormEps,
-		RopeTheta:         raw.RopeTheta,
-		SlidingWindow:     raw.SlidingWindow,
-		LayerTypes:        raw.LayerTypes,
-		BlockSize:         raw.DFlashConfig.BlockSize,
-		VocabSize:         raw.VocabSize,
-		TargetLayerIDs:    raw.DFlashConfig.TargetLayerIDs,
-		Causal:            raw.DFlashConfig.Causal,
+		HiddenSize:          raw.HiddenSize,
+		NumHiddenLayers:     raw.NumHiddenLayers,
+		NumAttentionHeads:   raw.NumAttentionHeads,
+		NumKeyValueHeads:    raw.NumKeyValueHeads,
+		HeadDim:             raw.HeadDim,
+		RMSNormEps:          raw.RMSNormEps,
+		RopeTheta:           raw.RopeTheta,
+		SlidingWindow:       raw.SlidingWindow,
+		LayerTypes:          raw.LayerTypes,
+		BlockSize:           raw.DFlashConfig.BlockSize,
+		VocabSize:           raw.VocabSize,
+		TargetLayerIDs:      raw.DFlashConfig.TargetLayerIDs,
+		Causal:              raw.DFlashConfig.Causal,
+		InputEmbeddingScale: raw.DFlashConfig.InputEmbeddingScale,
+		OutputMultiplier:    raw.DFlashConfig.OutputMultiplier,
+		FinalLogitSoftcap:   raw.DFlashConfig.FinalLogitSoftcapping,
+		ConvKernelSize:      raw.DFlashConfig.ConvKernelSize,
+		ConvGroupSize:       raw.DFlashConfig.ConvGroupSize,
+		SelectorRank:        raw.DFlashConfig.SelectorRank,
+		SelectorTopK:        raw.DFlashConfig.SelectorTopK,
+	}
+	if cfg.Causal == nil {
+		cfg.Causal = raw.IsCausal
+	}
+	if cfg.InputEmbeddingScale == 0 {
+		cfg.InputEmbeddingScale = 1
+	}
+	if cfg.OutputMultiplier == 0 {
+		cfg.OutputMultiplier = 1
 	}
 	if raw.RopeInterleaved != nil {
 		cfg.RopeInterleaved = *raw.RopeInterleaved
@@ -232,7 +272,7 @@ func parseConfig(data []byte) (*Config, error) {
 	return cfg, nil
 }
 
-func newModel(root *model.Root, targetModel base.Model, ctxLayerNorm bool) (base.DraftModel, error) {
+func newModel(root *model.Root, targetModel base.Model, ctxLayerNorm, dflash2 bool) (base.DraftModel, error) {
 	if root == nil || root.Draft == nil {
 		return nil, fmt.Errorf("draft metadata missing")
 	}
@@ -248,6 +288,15 @@ func newModel(root *model.Root, targetModel base.Model, ctxLayerNorm bool) (base
 	cfg, err := parseConfig(configData)
 	if err != nil {
 		return nil, err
+	}
+	cfg.DFlash2 = dflash2
+	if dflash2 {
+		if cfg.ConvKernelSize <= 0 || cfg.ConvGroupSize <= 0 || cfg.HiddenSize%cfg.ConvGroupSize != 0 {
+			return nil, fmt.Errorf("invalid dflash2 convolution config")
+		}
+		if cfg.SelectorRank <= 0 || cfg.SelectorTopK <= 0 {
+			return nil, fmt.Errorf("invalid dflash2 selector config")
+		}
 	}
 
 	target, ok := targetModel.(draftTarget)
@@ -303,6 +352,9 @@ func newModel(root *model.Root, targetModel base.Model, ctxLayerNorm bool) (base
 			m.QuantGroupSize = gs
 		}
 	}
+	if dflash2 {
+		return &Model2{Model: m}, nil
+	}
 	return m, nil
 }
 
@@ -346,6 +398,10 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 			MLP: &MLP{
 				DownProj: linears.Make(layerPrefix + ".mlp.down_proj"),
 			},
+		}
+		if m.DFlash2 {
+			layer.AttentionConv = loadDynamicConv(linears, tensors, layerPrefix+".attention_conv", m.Config)
+			layer.MLPConv = loadDynamicConv(linears, tensors, layerPrefix+".mlp_conv", m.Config)
 		}
 		a := layer.Attention
 		qDim := m.NumAttentionHeads * m.HeadDim
@@ -402,7 +458,16 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		if layer.InputNorm == nil || layer.PostAttnNorm == nil {
 			return fmt.Errorf("dflash layer %d: missing norm weights", i)
 		}
+		if m.DFlash2 && (layer.AttentionConv == nil || layer.MLPConv == nil) {
+			return fmt.Errorf("dflash2 layer %d: missing convolution weights", i)
+		}
 		m.Layers[i] = layer
+	}
+	if m.DFlash2 {
+		m.Selector = loadCandidateSelector(linears, tensors, prefix, m)
+		if m.Selector == nil {
+			return fmt.Errorf("missing dflash2 candidate selector weights")
+		}
 	}
 	return nil
 }
@@ -577,6 +642,9 @@ func (m *Model) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (hidden, a
 		dims := b.InputIDs.Dims()
 		B, L = int32(dims[0]), int32(dims[1])
 		h = m.target.TokenEmbeddings(b.InputIDs)
+		if m.InputEmbeddingScale != 1 {
+			h = mlx.MulScalar(h, m.InputEmbeddingScale)
+		}
 		blockStart := b.SeqOffsets[0] + nCtx
 		bb = &batch.Batch{InputIDs: b.InputIDs, SeqOffsets: []int32{blockStart}, SeqQueryLens: b.SeqQueryLens}
 		blockPositions = mlx.FromValues([]int32{blockStart}, 1)
@@ -608,8 +676,27 @@ func (m *Model) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (hidden, a
 }
 
 func (l *Layer) Forward(x, ctxK, ctxV *mlx.Array, c cache.Cache, bb *batch.Batch, positions *mlx.Array, mask nn.AttentionMask, B, L int32, cfg *Config) *mlx.Array {
-	h := mlx.Add(x, l.Attention.Forward(l.InputNorm.Forward(x, cfg.RMSNormEps), ctxK, ctxV, c, bb, positions, mask, B, L, cfg))
-	return mlx.Add(h, l.MLP.Forward(l.PostAttnNorm.Forward(h, cfg.RMSNormEps)))
+	attnIn := l.InputNorm.Forward(x, cfg.RMSNormEps)
+	var attnKernel *mlx.Array
+	if l.AttentionConv != nil {
+		attnIn, attnKernel = l.AttentionConv.Prepare(attnIn)
+	}
+	attnOut := l.Attention.Forward(attnIn, ctxK, ctxV, c, bb, positions, mask, B, L, cfg)
+	if l.AttentionConv != nil {
+		attnOut = l.AttentionConv.Finish(attnOut, attnKernel)
+	}
+	h := mlx.Add(x, attnOut)
+
+	mlpIn := l.PostAttnNorm.Forward(h, cfg.RMSNormEps)
+	var mlpKernel *mlx.Array
+	if l.MLPConv != nil {
+		mlpIn, mlpKernel = l.MLPConv.Prepare(mlpIn)
+	}
+	mlpOut := l.MLP.Forward(mlpIn)
+	if l.MLPConv != nil {
+		mlpOut = l.MLPConv.Finish(mlpOut, mlpKernel)
+	}
+	return mlx.Add(h, mlpOut)
 }
 
 // contextKV projects feature rows into the layer's context K/V.
