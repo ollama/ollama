@@ -1369,6 +1369,152 @@ func TestResetClaudeDesktopMappingsDoesNotOpenStoppedClaude(t *testing.T) {
 	}
 }
 
+func TestResetClaudeDesktopMappingsSerializesDisconnectDuringCatalogRefresh(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	previousMappings := sharedClaudeDesktopMappings("glm-5.2:cloud")
+	if err := launch.SaveClaudeDesktopModelMappings(previousMappings); err != nil {
+		t.Fatal(err)
+	}
+
+	previousStore := appStore
+	appStore = &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
+	if err := markClaudeDesktopIntegrationUsed(); err != nil {
+		t.Fatal(err)
+	}
+
+	current := proxy.MapClaudeDesktopModels(proxy.DefaultClaudeDesktopModels(), previousMappings)
+	gateway, err := proxy.NewClaudeDesktop(proxy.ClaudeDesktopConfig{
+		ListenAddr: "127.0.0.1:0",
+		OllamaURL:  "http://127.0.0.1:11434",
+		Model:      current[0].OllamaModel,
+		Models:     current,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	previousInstalled := claudeDesktopInstalled
+	previousDesktop := claudeDesktop
+	previousLoader := claudeModelsLoader
+	previousAccess := claudeAccessStateResolver
+	previousLocal := claudeLocalModelsResolver
+	previousCloud := claudeCloudModelsResolver
+	claudeProxyMu.Lock()
+	previousGateway := claudeAppProxy
+	previousAvailable := claudeAvailableModels
+	previousSource := claudeModelSource
+	previousUpdated := claudeCatalogUpdated
+	claudeAppProxy = gateway
+	claudeAvailableModels = proxy.DefaultClaudeDesktopModels()
+	claudeModelSource = "endpoint"
+	claudeCatalogUpdated = claudeCatalogNow()
+	claudeProxyMu.Unlock()
+
+	claudeDesktopInstalled = func() bool { return true }
+	fake := &fakeClaudeDesktopController{configured: true, configureOnSet: true}
+	claudeDesktop = fake
+	refreshStarted := make(chan struct{})
+	releaseRefresh := make(chan struct{})
+	loaderCalls := 0
+	claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
+		loaderCalls++
+		if loaderCalls == 2 {
+			close(refreshStarted)
+			<-releaseRefresh
+		}
+		return proxy.DefaultClaudeDesktopModels(), "endpoint"
+	}
+	claudeAccessStateResolver = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
+		return proxy.ClaudeDesktopAccessState{
+			Cloud:   proxy.ClaudeDesktopCloudOn,
+			Account: proxy.ClaudeDesktopAccountSignedIn,
+			Plan:    "team",
+		}, nil
+	}
+	claudeLocalModelsResolver = func(context.Context) ([]string, error) { return nil, nil }
+	claudeCloudModelsResolver = func(context.Context) ([]proxy.ClaudeDesktopModel, error) { return nil, nil }
+	t.Cleanup(func() {
+		stopClaudeAppProxy()
+		_ = appStore.Close()
+		appStore = previousStore
+		claudeDesktopInstalled = previousInstalled
+		claudeDesktop = previousDesktop
+		claudeModelsLoader = previousLoader
+		claudeAccessStateResolver = previousAccess
+		claudeLocalModelsResolver = previousLocal
+		claudeCloudModelsResolver = previousCloud
+		claudeProxyMu.Lock()
+		claudeAppProxy = previousGateway
+		claudeAvailableModels = previousAvailable
+		claudeModelSource = previousSource
+		claudeCatalogUpdated = previousUpdated
+		claudeProxyMu.Unlock()
+	})
+
+	type resetResult struct {
+		applied bool
+		err     error
+	}
+	resetDone := make(chan resetResult, 1)
+	go func() {
+		applied, err := resetClaudeDesktopMappings(false)
+		resetDone <- resetResult{applied: applied, err: err}
+	}()
+
+	select {
+	case <-refreshStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reset did not pause during the forced catalog refresh")
+	}
+
+	disconnectStarted := make(chan struct{})
+	disconnectDone := make(chan error, 1)
+	go func() {
+		close(disconnectStarted)
+		disconnectDone <- setClaudeDesktopConnection(false, false)
+	}()
+	<-disconnectStarted
+
+	disconnectedEarly := false
+	select {
+	case <-disconnectDone:
+		disconnectedEarly = true
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(releaseRefresh)
+
+	var reset resetResult
+	select {
+	case reset = <-resetDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reset did not finish after the catalog refresh resumed")
+	}
+	if reset.err != nil || !reset.applied {
+		t.Fatalf("reset mappings = %v/%v, want a persisted reset", reset.applied, reset.err)
+	}
+	if disconnectedEarly {
+		t.Fatal("disconnect completed while reset still owned the Claude profile lifecycle")
+	}
+	select {
+	case err := <-disconnectDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("disconnect did not finish after reset released the lifecycle")
+	}
+
+	if fake.configured || fake.installed {
+		t.Fatalf("Claude was reconnected after disconnect: %+v", fake)
+	}
+	claudeProxyMu.Lock()
+	activeGateway := claudeAppProxy
+	claudeProxyMu.Unlock()
+	if activeGateway != nil {
+		t.Fatal("Claude gateway remained active after disconnect")
+	}
+}
+
 func TestApplyClaudeDesktopMappingsKeepsCommittedMappingsWhenOpenFails(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	previousInstalled := claudeDesktopInstalled

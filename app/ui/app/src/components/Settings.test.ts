@@ -39,18 +39,17 @@ describe("Settings defaults", () => {
         Expose: true,
         Models: "/custom/models",
       }),
+      currentShowAppsInMenu: false,
       cloudSource: "config",
       onSaved,
     });
 
-    await vi.waitFor(() => expect(resetClaudeMappings).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(updateSettings).toHaveBeenCalledOnce());
     expect(updateCloud).toHaveBeenCalledWith(true);
-    expect(updateSettings).not.toHaveBeenCalled();
     expect(updateShowAppsInMenu).not.toHaveBeenCalled();
+    expect(resetClaudeMappings).not.toHaveBeenCalled();
     expect(onSaved).not.toHaveBeenCalled();
 
-    resolveClaudeReset(true);
-    await vi.waitFor(() => expect(updateSettings).toHaveBeenCalledOnce());
     expect(updateSettings.mock.calls[0][0]).toMatchObject({
       Expose: false,
       Models: "",
@@ -59,21 +58,24 @@ describe("Settings defaults", () => {
     });
     expect(onSaved).not.toHaveBeenCalled();
     settingsUpdate.resolve();
+    await vi.waitFor(() => expect(resetClaudeMappings).toHaveBeenCalledOnce());
+    expect(updateShowAppsInMenu).toHaveBeenCalledWith(true);
+    expect(onSaved).not.toHaveBeenCalled();
+
+    resolveClaudeReset(true);
     await reset;
 
-    expect(updateShowAppsInMenu).toHaveBeenCalledWith(true);
-    expect(resetClaudeMappings).toHaveBeenCalledOnce();
     expect(onSaved).toHaveBeenCalledOnce();
     expect(updateCloud.mock.invocationCallOrder[0]).toBeLessThan(
-      resetClaudeMappings.mock.invocationCallOrder[0],
-    );
-    expect(resetClaudeMappings.mock.invocationCallOrder[0]).toBeLessThan(
       updateSettings.mock.invocationCallOrder[0],
     );
     expect(updateSettings.mock.invocationCallOrder[0]).toBeLessThan(
       updateShowAppsInMenu.mock.invocationCallOrder[0],
     );
     expect(updateShowAppsInMenu.mock.invocationCallOrder[0]).toBeLessThan(
+      resetClaudeMappings.mock.invocationCallOrder[0],
+    );
+    expect(resetClaudeMappings.mock.invocationCallOrder[0]).toBeLessThan(
       onSaved.mock.invocationCallOrder[0],
     );
   });
@@ -88,6 +90,7 @@ describe("Settings defaults", () => {
       updateShowAppsInMenu,
       resetClaudeMappings: vi.fn().mockResolvedValue(true),
       currentSettings: currentSettings(),
+      currentShowAppsInMenu: true,
       cloudSource: "env",
       onSaved: vi.fn(),
     });
@@ -109,6 +112,7 @@ describe("Settings defaults", () => {
       updateShowAppsInMenu: vi.fn().mockResolvedValue(undefined),
       resetClaudeMappings: vi.fn().mockResolvedValue(true),
       currentSettings: currentSettings(),
+      currentShowAppsInMenu: true,
       cloudSource: "both",
       onSaved: vi.fn(),
     });
@@ -129,6 +133,7 @@ describe("Settings defaults", () => {
       updateShowAppsInMenu: vi.fn().mockResolvedValue(undefined),
       resetClaudeMappings: vi.fn().mockResolvedValue(true),
       currentSettings: currentSettings(),
+      currentShowAppsInMenu: true,
       cloudSource: "none",
       onSaved: vi.fn(),
     });
@@ -136,7 +141,7 @@ describe("Settings defaults", () => {
     expect(updateCloud).not.toHaveBeenCalled();
   });
 
-  it("does not show Saved or continue after settings fail", async () => {
+  it("restores Cloud and leaves Claude untouched when settings fail", async () => {
     const updateCloud = vi.fn().mockResolvedValue(undefined);
     const updateShowAppsInMenu = vi.fn().mockResolvedValue(undefined);
     const resetClaudeMappings = vi.fn().mockResolvedValue(true);
@@ -152,18 +157,19 @@ describe("Settings defaults", () => {
           Expose: true,
           Models: "/custom/models",
         }),
-        cloudSource: "none",
+        currentShowAppsInMenu: false,
+        cloudSource: "config",
         onSaved,
       }),
     ).rejects.toThrow("restart failed");
 
-    expect(updateCloud).not.toHaveBeenCalled();
-    expect(resetClaudeMappings).toHaveBeenCalledOnce();
+    expect(updateCloud.mock.calls).toEqual([[true], [false]]);
+    expect(resetClaudeMappings).not.toHaveBeenCalled();
     expect(updateShowAppsInMenu).not.toHaveBeenCalled();
     expect(onSaved).not.toHaveBeenCalled();
   });
 
-  it("does not show Saved when a later reset update fails", async () => {
+  it("does not continue when the Cloud reset fails", async () => {
     const updateShowAppsInMenu = vi.fn().mockResolvedValue(undefined);
     const onSaved = vi.fn();
 
@@ -174,6 +180,7 @@ describe("Settings defaults", () => {
         updateShowAppsInMenu,
         resetClaudeMappings: vi.fn().mockResolvedValue(true),
         currentSettings: currentSettings(),
+        currentShowAppsInMenu: true,
         cloudSource: "config",
         onSaved,
       }),
@@ -183,25 +190,33 @@ describe("Settings defaults", () => {
     expect(onSaved).not.toHaveBeenCalled();
   });
 
-  it("restores Cloud and does not show Saved when Claude mappings cannot be reset", async () => {
+  it("rolls earlier changes back when Claude mappings cannot be reset", async () => {
     const onSaved = vi.fn();
     const updateSettings = vi.fn().mockResolvedValue(undefined);
     const updateCloud = vi.fn().mockResolvedValue(undefined);
+    const updateShowAppsInMenu = vi.fn().mockResolvedValue(undefined);
+    const previousSettings = currentSettings({
+      Expose: true,
+      Models: "/custom/models",
+    });
 
     await expect(
       applySettingsDefaults({
         updateSettings,
         updateCloud,
-        updateShowAppsInMenu: vi.fn().mockResolvedValue(undefined),
+        updateShowAppsInMenu,
         resetClaudeMappings: vi.fn().mockResolvedValue(false),
-        currentSettings: currentSettings(),
+        currentSettings: previousSettings,
+        currentShowAppsInMenu: false,
         cloudSource: "config",
         onSaved,
       }),
     ).rejects.toThrow("Claude model mappings could not be reset");
 
     expect(updateCloud.mock.calls).toEqual([[true], [false]]);
-    expect(updateSettings).not.toHaveBeenCalled();
+    expect(updateSettings).toHaveBeenCalledTimes(2);
+    expect(updateSettings.mock.calls[1][0]).toBe(previousSettings);
+    expect(updateShowAppsInMenu.mock.calls).toEqual([[true], [false]]);
     expect(onSaved).not.toHaveBeenCalled();
   });
 });

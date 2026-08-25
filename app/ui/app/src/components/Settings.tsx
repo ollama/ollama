@@ -57,6 +57,7 @@ interface SettingsDefaultsActions {
   updateShowAppsInMenu: (visible: boolean) => Promise<unknown>;
   resetClaudeMappings: () => Promise<boolean>;
   currentSettings: SettingsType;
+  currentShowAppsInMenu: boolean;
   cloudSource: CloudStatusSource;
   onSaved: () => void;
 }
@@ -75,37 +76,55 @@ export async function applySettingsDefaults({
   updateShowAppsInMenu,
   resetClaudeMappings,
   currentSettings,
+  currentShowAppsInMenu,
   cloudSource,
   onSaved,
 }: SettingsDefaultsActions): Promise<void> {
   const cloudNeedsReset = cloudSource === "config" || cloudSource === "both";
-  if (cloudNeedsReset) {
-    await updateCloud(true);
-  }
+  const rollbacks: Array<() => Promise<unknown>> = [];
 
   try {
+    if (cloudNeedsReset) {
+      await updateCloud(true);
+      rollbacks.push(() => updateCloud(false));
+    }
+
+    await updateSettings(
+      new SettingsType({
+        Expose: false,
+        Browser: false,
+        Models: "",
+        Agent: false,
+        Tools: false,
+        ContextLength: currentSettings.ContextLength,
+        AutoUpdateEnabled: true,
+      }),
+    );
+    rollbacks.push(() => updateSettings(currentSettings));
+
+    await updateShowAppsInMenu(true);
+    rollbacks.push(() => updateShowAppsInMenu(currentShowAppsInMenu));
+
+    // Apply Claude last so no later settings failure can leave its mappings
+    // reset while the rest of the page rolls back.
     if (!(await resetClaudeMappings())) {
       throw new Error("Claude model mappings could not be reset");
     }
   } catch (error) {
-    if (cloudNeedsReset) {
-      await updateCloud(false);
+    const rollbackErrors: unknown[] = [];
+    for (const rollback of rollbacks.reverse()) {
+      try {
+        await rollback();
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+    if (rollbackErrors.length > 0) {
+      console.error("Failed to roll back settings reset:", rollbackErrors);
     }
     throw error;
   }
 
-  await updateSettings(
-    new SettingsType({
-      Expose: false,
-      Browser: false,
-      Models: "",
-      Agent: false,
-      Tools: false,
-      ContextLength: currentSettings.ContextLength,
-      AutoUpdateEnabled: true,
-    }),
-  );
-  await updateShowAppsInMenu(true);
   onSaved();
 }
 
@@ -381,6 +400,7 @@ export default function Settings() {
         resetClaudeMappings: async () =>
           (await claudeModelsSettingsRef.current?.resetToDefaults()) ?? true,
         currentSettings: settings,
+        currentShowAppsInMenu: showAppsInMenu,
         cloudSource,
         onSaved: showSavedConfirmation,
       });

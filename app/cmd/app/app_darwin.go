@@ -80,11 +80,13 @@ var (
 	launchAgentPath    = filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents", "com.ollama.ollama.plist")
 	claudeAppProxy     *proxy.ClaudeDesktop
 	claudeProxyStartMu sync.Mutex
-	claudeProxyMu      sync.Mutex
-	claudeCatalogMu    sync.Mutex
-	claudeProxyErr     error
-	claudeProxyFail    claudeProxyFailure
-	claudeDesktop      claudeDesktopController = &launch.ClaudeDesktop{}
+	// Serialize default resets with connect and disconnect decisions.
+	claudeLifecycleMu sync.Mutex
+	claudeProxyMu     sync.Mutex
+	claudeCatalogMu   sync.Mutex
+	claudeProxyErr    error
+	claudeProxyFail   claudeProxyFailure
+	claudeDesktop     claudeDesktopController = &launch.ClaudeDesktop{}
 
 	claudeDesktopInstalled        = launch.ClaudeDesktopInstalled
 	claudeDesktopRunning          = launch.ClaudeDesktopRunning
@@ -985,6 +987,9 @@ func markClaudeDesktopIntegrationUsed() error {
 }
 
 func setClaudeGatewayInstalled(installed, restart bool) error {
+	claudeLifecycleMu.Lock()
+	defer claudeLifecycleMu.Unlock()
+
 	if installed && !claudeDesktopInstalled() {
 		return errors.New("Claude Desktop is not installed")
 	}
@@ -1318,6 +1323,9 @@ func applyClaudeDesktopMappings(mappings map[string]string, restartConfirmed boo
 }
 
 func resetClaudeDesktopMappings(restartConfirmed bool) (bool, error) {
+	claudeLifecycleMu.Lock()
+	defer claudeLifecycleMu.Unlock()
+
 	if !hasUsedClaudeDesktopIntegration() {
 		return false, nil
 	}
