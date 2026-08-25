@@ -5,6 +5,7 @@ import { Switch } from "@/components/ui/switch";
 import { claudeDesktopRecoveryMessage } from "@/lib/claudeDesktop";
 import { claudeDesktopModelStatusLabel } from "@/lib/claudeDesktopModelStatus";
 import type {
+  ClaudeDesktopActionResult,
   ClaudeDesktopMappingStatus,
   ClaudeDesktopModelStatus,
   ClaudeDesktopStatus,
@@ -16,7 +17,19 @@ import {
   ChevronUpDownIcon,
   MagnifyingGlassIcon,
 } from "@heroicons/react/20/solid";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+
+export interface ClaudeDesktopModelsSettingsHandle {
+  resetToDefaults: () => Promise<boolean>;
+}
 
 interface ClaudeDesktopModelsSettingsProps {
   initialStatus?: ClaudeDesktopStatus;
@@ -24,7 +37,6 @@ interface ClaudeDesktopModelsSettingsProps {
   initialCloudModels?: string[];
   includeCloudModels?: boolean;
   onDraftChange?: (hasChanges: boolean) => void;
-  resetVersion?: number;
 }
 
 const fallbackRoutes: ClaudeDesktopMappingStatus[] = [
@@ -246,14 +258,19 @@ function ClaudeModelPicker({
   );
 }
 
-export function ClaudeDesktopModelsSettings({
-  initialStatus,
-  initialLocalModels,
-  initialCloudModels,
-  includeCloudModels = false,
-  onDraftChange,
-  resetVersion = 0,
-}: ClaudeDesktopModelsSettingsProps) {
+export const ClaudeDesktopModelsSettings = forwardRef<
+  ClaudeDesktopModelsSettingsHandle,
+  ClaudeDesktopModelsSettingsProps
+>(function ClaudeDesktopModelsSettings(
+  {
+    initialStatus,
+    initialLocalModels,
+    initialCloudModels,
+    includeCloudModels = false,
+    onDraftChange,
+  },
+  ref,
+) {
   const [status, setStatus] = useState<ClaudeDesktopStatus | null>(
     initialStatus ?? null,
   );
@@ -275,6 +292,7 @@ export function ClaudeDesktopModelsSettings({
   const [modelsLoading, setModelsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
+  const [resettingMappings, setResettingMappings] = useState(false);
   const [autoModeApplying, setAutoModeApplying] = useState(false);
   const [autoModeOverride, setAutoModeOverride] = useState<boolean | null>(
     null,
@@ -282,10 +300,7 @@ export function ClaudeDesktopModelsSettings({
   const draftRef = useRef({ mappings, savedMappings });
   const statusRequestRef = useRef(0);
   const operationInFlightRef = useRef(false);
-  const lastResetVersionRef = useRef(resetVersion);
-  const statusRef = useRef(status);
   draftRef.current = { mappings, savedMappings };
-  statusRef.current = status;
 
   const applyStatus = useCallback(
     (next: ClaudeDesktopStatus, preserveDraft = false) => {
@@ -380,43 +395,11 @@ export function ClaudeDesktopModelsSettings({
     const model = catalogModels.find((candidate) => candidate.name === name);
     return !model || !modelIsAvailable(model);
   });
-  const busy = applying || autoModeApplying;
+  const busy = applying || resettingMappings || autoModeApplying;
 
   useEffect(() => {
     onDraftChange?.(hasDraftChanges);
   }, [hasDraftChanges, onDraftChange]);
-
-  useEffect(() => {
-    if (resetVersion === lastResetVersionRef.current) return;
-    let cancelled = false;
-
-    const resetToFreshDefaults = async () => {
-      try {
-        const next = window.getClaudeDesktopStatus
-          ? await window.getClaudeDesktopStatus()
-          : statusRef.current;
-        if (cancelled) return;
-        if (!next?.defaultMappings?.length) {
-          setError("Ollama could not refresh the Claude mapping defaults.");
-          return;
-        }
-        // Reset is an explicit action and wins over older focus refreshes.
-        ++statusRequestRef.current;
-        applyStatus(next, true);
-        setMappings(next.defaultMappings.map((mapping) => ({ ...mapping })));
-        lastResetVersionRef.current = resetVersion;
-      } catch {
-        if (!cancelled) {
-          setError("Ollama could not refresh the Claude mapping defaults.");
-        }
-      }
-    };
-
-    void resetToFreshDefaults();
-    return () => {
-      cancelled = true;
-    };
-  }, [applyStatus, resetVersion]);
 
   const updateMapping = (routeId: string, model: string) => {
     setError(null);
@@ -429,8 +412,43 @@ export function ClaudeDesktopModelsSettings({
     );
   };
 
+  const runMappingAction = useCallback(
+    async (
+      action: (restartConfirmed: boolean) => Promise<ClaudeDesktopActionResult>,
+      failureMessage: string,
+    ): Promise<boolean> => {
+      try {
+        let result = await action(false);
+        if (result.restartConfirmationRequired) {
+          applyStatus(result.status, true);
+          if (
+            !window.confirm(
+              "Restart Claude Desktop? Any running task will stop.",
+            )
+          ) {
+            return false;
+          }
+          result = await action(true);
+        }
+        ++statusRequestRef.current;
+        if (result.error) {
+          applyStatus(result.status, !result.mappingsApplied);
+          setError(result.error);
+          return Boolean(result.mappingsApplied);
+        }
+        applyStatus(result.status);
+        return true;
+      } catch {
+        setError(failureMessage);
+        return false;
+      }
+    },
+    [applyStatus],
+  );
+
   const applyChanges = async () => {
-    if (!window.applyClaudeDesktopMappings) {
+    const applyMappings = window.applyClaudeDesktopMappings;
+    if (!applyMappings) {
       setError(
         "Claude routing settings are available in the Ollama macOS app.",
       );
@@ -444,36 +462,18 @@ export function ClaudeDesktopModelsSettings({
       setError("Choose models available to your account and device.");
       return;
     }
+    if (operationInFlightRef.current) return;
+
+    const mappingsToApply = mappingRecord(mappings);
     setApplying(true);
     setError(null);
     operationInFlightRef.current = true;
     ++statusRequestRef.current;
     try {
-      let result = await window.applyClaudeDesktopMappings(
-        mappingRecord(mappings),
-        false,
+      await runMappingAction(
+        (restartConfirmed) => applyMappings(mappingsToApply, restartConfirmed),
+        "Ollama could not apply the Claude model mappings.",
       );
-      if (result.restartConfirmationRequired) {
-        applyStatus(result.status, true);
-        if (
-          !window.confirm("Restart Claude Desktop? Any running task will stop.")
-        ) {
-          return;
-        }
-        result = await window.applyClaudeDesktopMappings(
-          mappingRecord(mappings),
-          true,
-        );
-      }
-      ++statusRequestRef.current;
-      if (result.error) {
-        applyStatus(result.status, !result.mappingsApplied);
-        setError(result.error);
-      } else {
-        applyStatus(result.status);
-      }
-    } catch {
-      setError("Ollama could not apply the Claude model mappings.");
     } finally {
       ++statusRequestRef.current;
       operationInFlightRef.current = false;
@@ -516,6 +516,33 @@ export function ClaudeDesktopModelsSettings({
       setAutoModeApplying(false);
     }
   };
+
+  const resetToDefaults = useCallback(async (): Promise<boolean> => {
+    if (operationInFlightRef.current) return false;
+
+    const resetMappings = window.resetClaudeDesktopMappings;
+    if (!resetMappings) {
+      setError("Ollama could not reset the Claude model mappings.");
+      return false;
+    }
+
+    setResettingMappings(true);
+    setError(null);
+    operationInFlightRef.current = true;
+    ++statusRequestRef.current;
+    try {
+      return await runMappingAction(
+        resetMappings,
+        "Ollama could not reset the Claude model mappings.",
+      );
+    } finally {
+      ++statusRequestRef.current;
+      operationInFlightRef.current = false;
+      setResettingMappings(false);
+    }
+  }, [runMappingAction]);
+
+  useImperativeHandle(ref, () => ({ resetToDefaults }), [resetToDefaults]);
 
   if (!status?.supported || !status.used) return null;
 
@@ -592,16 +619,18 @@ export function ClaudeDesktopModelsSettings({
                 }
                 className="flex-shrink-0"
               >
-                {applying && (
+                {(applying || resettingMappings) && (
                   <ArrowPathIcon data-slot="icon" className="animate-spin" />
                 )}
-                {applying
-                  ? status.running
-                    ? "Restarting…"
-                    : "Starting…"
-                  : status.running
-                    ? "Restart Claude"
-                    : "Start Claude"}
+                {resettingMappings
+                  ? "Resetting…"
+                  : applying
+                    ? status.running
+                      ? "Restarting…"
+                      : "Starting…"
+                    : status.running
+                      ? "Restart Claude"
+                      : "Start Claude"}
               </Button>
             </div>
 
@@ -664,4 +693,4 @@ export function ClaudeDesktopModelsSettings({
       </div>
     </section>
   );
-}
+});

@@ -1,7 +1,16 @@
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import {
+  act,
+  create,
+  type ReactTestInstance,
+  type ReactTestRenderer,
+} from "react-test-renderer";
+import { createRef } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { Switch } from "./ui/switch";
-import { ClaudeDesktopModelsSettings } from "./ClaudeDesktopModelsSettings";
+import {
+  ClaudeDesktopModelsSettings,
+  type ClaudeDesktopModelsSettingsHandle,
+} from "./ClaudeDesktopModelsSettings";
 
 const fableRoute = {
   routeId: "claude-fable-5",
@@ -20,7 +29,6 @@ function testStatus(model = "glm-5.2:cloud", running = false) {
     autoMode: false,
     modelSource: "user" as const,
     mappings: [{ ...fableRoute, model }],
-    defaultMappings: [{ ...fableRoute, model: "glm-5.2:cloud" }],
     models: [
       {
         name: "glm-5.2:cloud",
@@ -63,6 +71,12 @@ function actionButton(renderer: ReactTestRenderer) {
     );
   if (!button) throw new Error("Claude action button not found");
   return button;
+}
+
+function textContent(node: ReactTestInstance): string {
+  return node.children
+    .map((child) => (typeof child === "string" ? child : textContent(child)))
+    .join("");
 }
 
 describe("ClaudeDesktopModelsSettings interactions", () => {
@@ -430,7 +444,68 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
     }
   });
 
-  it("resets sparse mappings to the defaults for the current account", async () => {
+  it("keeps the previous mappings when reset restart is canceled", async () => {
+    class TestHTMLElement {
+      focus() {}
+    }
+    const currentStatus = testStatus("kimi-k3:cloud", true);
+    const resetMappings = vi.fn().mockResolvedValue({
+      status: currentStatus,
+      restartConfirmationRequired: true,
+    });
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      HTMLElement: TestHTMLElement,
+      resetClaudeDesktopMappings: resetMappings,
+      confirm,
+    });
+    vi.stubGlobal("document", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+
+    let renderer: ReactTestRenderer | undefined;
+    const settingsRef = createRef<ClaudeDesktopModelsSettingsHandle>();
+    try {
+      await act(async () => {
+        renderer = create(
+          <ClaudeDesktopModelsSettings
+            ref={settingsRef}
+            initialLocalModels={[]}
+            initialStatus={currentStatus}
+          />,
+        );
+        await Promise.resolve();
+      });
+
+      let resetSucceeded = true;
+      await act(async () => {
+        resetSucceeded =
+          (await settingsRef.current?.resetToDefaults()) ?? false;
+      });
+
+      expect(resetSucceeded).toBe(false);
+      expect(confirm).toHaveBeenCalledOnce();
+      expect(resetMappings).toHaveBeenCalledWith(false);
+      const picker = renderer!.root.findByProps({
+        "aria-label": "Ollama model for Fable 5",
+      });
+      expect(picker.findAllByType("span")[0].children.join("")).toBe(
+        "kimi-k3:cloud",
+      );
+    } finally {
+      await act(async () => {
+        renderer?.unmount();
+        await Promise.resolve();
+      });
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("applies the native reset result and shows progress", async () => {
     class TestHTMLElement {
       focus() {}
     }
@@ -444,17 +519,10 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
           model: "kimi-k3:cloud",
         },
       ],
-      defaultMappings: [
-        { ...fableRoute, model: "kimi-k3:cloud" },
-        {
-          routeId: "claude-sonnet-5",
-          routeName: "Sonnet 5",
-        },
-      ],
     };
-    const refreshedStatus = {
+    const resetStatus = {
       ...initialStatus,
-      defaultMappings: [
+      mappings: [
         { ...fableRoute },
         {
           routeId: "claude-sonnet-5",
@@ -463,12 +531,20 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
         },
       ],
     };
-    const getStatus = vi.fn().mockResolvedValue(refreshedStatus);
+    const resetResult = {
+      status: resetStatus,
+      mappingsApplied: true,
+    };
+    let resolveReset!: (result: typeof resetResult) => void;
+    const resetRequestResult = new Promise<typeof resetResult>((resolve) => {
+      resolveReset = resolve;
+    });
+    const resetMappings = vi.fn(() => resetRequestResult);
     vi.stubGlobal("window", {
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
       HTMLElement: TestHTMLElement,
-      getClaudeDesktopStatus: getStatus,
+      resetClaudeDesktopMappings: resetMappings,
     });
     vi.stubGlobal("document", {
       addEventListener: vi.fn(),
@@ -477,32 +553,36 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 
     let renderer: ReactTestRenderer | undefined;
+    const settingsRef = createRef<ClaudeDesktopModelsSettingsHandle>();
     try {
       await act(async () => {
         renderer = create(
           <ClaudeDesktopModelsSettings
+            ref={settingsRef}
             initialLocalModels={[]}
             initialStatus={initialStatus}
-            resetVersion={0}
           />,
         );
         await Promise.resolve();
         await Promise.resolve();
       });
 
+      let resetRequest: Promise<boolean> | undefined;
       await act(async () => {
-        renderer!.update(
-          <ClaudeDesktopModelsSettings
-            initialLocalModels={[]}
-            initialStatus={initialStatus}
-            resetVersion={1}
-          />,
-        );
-        await Promise.resolve();
+        resetRequest = settingsRef.current?.resetToDefaults();
         await Promise.resolve();
       });
+      expect(actionButton(renderer!).props.disabled).toBe(true);
+      expect(textContent(actionButton(renderer!))).toContain("Resetting…");
 
-      expect(getStatus).toHaveBeenCalledTimes(1);
+      resolveReset(resetResult);
+      let resetSucceeded = false;
+      await act(async () => {
+        resetSucceeded = (await resetRequest) ?? false;
+      });
+
+      expect(resetSucceeded).toBe(true);
+      expect(resetMappings).toHaveBeenCalledWith(false);
 
       const fable = renderer!.root.findByProps({
         "aria-label": "Ollama model for Fable 5",

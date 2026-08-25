@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Switch } from "@/components/ui/switch";
 import { Text } from "@/components/ui/text";
 import { Input } from "@/components/ui/input";
@@ -6,7 +6,10 @@ import { Field, Label, Description } from "@/components/ui/fieldset";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { ClaudeDesktopModelsSettings } from "@/components/ClaudeDesktopModelsSettings";
+import {
+  ClaudeDesktopModelsSettings,
+  type ClaudeDesktopModelsSettingsHandle,
+} from "@/components/ClaudeDesktopModelsSettings";
 import {
   WifiIcon,
   FolderIcon,
@@ -15,6 +18,7 @@ import {
   CloudIcon,
   CogIcon,
   ArrowDownTrayIcon,
+  ArrowPathIcon,
   Squares2X2Icon,
 } from "@heroicons/react/20/solid";
 import { Settings as SettingsType } from "@/gotypes";
@@ -51,8 +55,10 @@ interface SettingsDefaultsActions {
   updateSettings: (settings: SettingsType) => Promise<unknown>;
   updateCloud: (enabled: boolean) => Promise<unknown>;
   updateShowAppsInMenu: (visible: boolean) => Promise<unknown>;
+  resetClaudeMappings: () => Promise<boolean>;
   currentSettings: SettingsType;
-  cloudSource?: CloudStatusSource;
+  currentShowAppsInMenu: boolean;
+  cloudSource: CloudStatusSource;
   onSaved: () => void;
 }
 
@@ -62,30 +68,63 @@ interface CloudUpdateRequest {
 }
 
 let latestCloudRequestId = 0;
+const savedConfirmationDuration = 3000;
 
 export async function applySettingsDefaults({
   updateSettings,
   updateCloud,
   updateShowAppsInMenu,
+  resetClaudeMappings,
   currentSettings,
+  currentShowAppsInMenu,
   cloudSource,
   onSaved,
 }: SettingsDefaultsActions): Promise<void> {
-  await updateSettings(
-    new SettingsType({
-      Expose: false,
-      Browser: false,
-      Models: "",
-      Agent: false,
-      Tools: false,
-      ContextLength: currentSettings.ContextLength,
-      AutoUpdateEnabled: true,
-    }),
-  );
-  if (cloudSource === "config" || cloudSource === "both") {
-    await updateCloud(true);
+  const cloudNeedsReset = cloudSource === "config" || cloudSource === "both";
+  const rollbacks: Array<() => Promise<unknown>> = [];
+
+  try {
+    if (cloudNeedsReset) {
+      await updateCloud(true);
+      rollbacks.push(() => updateCloud(false));
+    }
+
+    await updateSettings(
+      new SettingsType({
+        Expose: false,
+        Browser: false,
+        Models: "",
+        Agent: false,
+        Tools: false,
+        ContextLength: currentSettings.ContextLength,
+        AutoUpdateEnabled: true,
+      }),
+    );
+    rollbacks.push(() => updateSettings(currentSettings));
+
+    await updateShowAppsInMenu(true);
+    rollbacks.push(() => updateShowAppsInMenu(currentShowAppsInMenu));
+
+    // Apply Claude last so no later settings failure can leave its mappings
+    // reset while the rest of the page rolls back.
+    if (!(await resetClaudeMappings())) {
+      throw new Error("Claude model mappings could not be reset");
+    }
+  } catch (error) {
+    const rollbackErrors: unknown[] = [];
+    for (const rollback of rollbacks.reverse()) {
+      try {
+        await rollback();
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+    if (rollbackErrors.length > 0) {
+      console.error("Failed to roll back settings reset:", rollbackErrors);
+    }
+    throw error;
   }
-  await updateShowAppsInMenu(true);
+
   onSaved();
 }
 
@@ -96,9 +135,11 @@ export default function Settings() {
   const [showAppsInMenu, setShowAppsInMenuState] = useState(true);
   const [showAppsInMenuPending, setShowAppsInMenuPending] = useState(false);
   const [resettingToDefaults, setResettingToDefaults] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
   const [hasClaudeDraftChanges, setHasClaudeDraftChanges] = useState(false);
-  const [claudeMappingsResetVersion, setClaudeMappingsResetVersion] =
-    useState(0);
+  const claudeModelsSettingsRef =
+    useRef<ClaudeDesktopModelsSettingsHandle>(null);
+  const savedConfirmationTimeoutRef = useRef<number | null>(null);
   useBlocker({
     shouldBlockFn: () =>
       !window.confirm("Discard unapplied Claude routing changes?"),
@@ -125,9 +166,24 @@ export default function Settings() {
   } = useCloudStatus();
 
   const showSavedConfirmation = useCallback(() => {
+    if (savedConfirmationTimeoutRef.current !== null) {
+      window.clearTimeout(savedConfirmationTimeoutRef.current);
+    }
     setShowSaved(true);
-    setTimeout(() => setShowSaved(false), 1500);
+    savedConfirmationTimeoutRef.current = window.setTimeout(() => {
+      setShowSaved(false);
+      savedConfirmationTimeoutRef.current = null;
+    }, savedConfirmationDuration);
   }, []);
+
+  useEffect(
+    () => () => {
+      if (savedConfirmationTimeoutRef.current !== null) {
+        window.clearTimeout(savedConfirmationTimeoutRef.current);
+      }
+    },
+    [],
+  );
 
   const {
     data: settingsData,
@@ -275,7 +331,10 @@ export default function Settings() {
         if (field === "ContextLength" && value !== settings.ContextLength) {
           setRestartMessage(true);
           // Hide restart message after 3 seconds
-          setTimeout(() => setRestartMessage(false), 3000);
+          window.setTimeout(
+            () => setRestartMessage(false),
+            savedConfirmationDuration,
+          );
         }
 
         updateSettingsMutation.mutate(updatedSettings, {
@@ -321,23 +380,35 @@ export default function Settings() {
   const cloudToggleDisabled = cloudOverriddenByEnv;
 
   const handleResetToDefaults = async () => {
-    if (!settings || resettingToDefaults) return;
+    const cloudSource = cloudStatus?.source;
+    if (!settings || resettingToDefaults || !cloudSource) return;
 
     setResettingToDefaults(true);
+    if (savedConfirmationTimeoutRef.current !== null) {
+      window.clearTimeout(savedConfirmationTimeoutRef.current);
+      savedConfirmationTimeoutRef.current = null;
+    }
     setShowSaved(false);
+    setRestartMessage(false);
+    setResetError(null);
     try {
       await applySettingsDefaults({
         updateSettings: (defaultSettings) =>
           updateSettingsMutation.mutateAsync(defaultSettings),
         updateCloud: requestCloudUpdate,
         updateShowAppsInMenu: updateShowAppsInMenuVisibility,
+        resetClaudeMappings: async () =>
+          (await claudeModelsSettingsRef.current?.resetToDefaults()) ?? true,
         currentSettings: settings,
-        cloudSource: cloudStatus?.source,
+        currentShowAppsInMenu: showAppsInMenu,
+        cloudSource,
         onSaved: showSavedConfirmation,
       });
-      setClaudeMappingsResetVersion((version) => version + 1);
     } catch (error) {
       console.error("Failed to reset settings:", error);
+      setResetError(
+        "Ollama could not reset every setting. Check the settings above and try again.",
+      );
     } finally {
       setResettingToDefaults(false);
     }
@@ -395,7 +466,11 @@ export default function Settings() {
   return (
     <main className="flex min-h-0 w-full flex-1 flex-col select-none dark:bg-neutral-900">
       <div className="w-full p-6 overflow-y-auto flex-1 overscroll-contain">
-        <div className="mx-auto max-w-4xl space-y-4">
+        <fieldset
+          disabled={resettingToDefaults}
+          aria-busy={resettingToDefaults}
+          className="mx-auto max-w-4xl space-y-4 border-0 p-0"
+        >
           {/* Connect Ollama Account */}
           <div className="overflow-hidden rounded-xl bg-white dark:bg-neutral-800">
             <div className="p-4">
@@ -680,26 +755,15 @@ export default function Settings() {
             </div>
           </div>
 
-          {/* Reset button */}
-          <div className="flex justify-end px-4">
-            <Button
-              type="button"
-              color="white"
-              className="px-3"
-              disabled={resettingToDefaults}
-              onClick={() => void handleResetToDefaults()}
-            >
-              Reset to defaults
-            </Button>
-          </div>
-
-          <ClaudeDesktopModelsSettings
-            includeCloudModels={
-              isAuthenticated && cloudStatusKnown && !cloudDisabled
-            }
-            onDraftChange={setHasClaudeDraftChanges}
-            resetVersion={claudeMappingsResetVersion}
-          />
+          {!isWindows && (
+            <ClaudeDesktopModelsSettings
+              ref={claudeModelsSettingsRef}
+              includeCloudModels={
+                isAuthenticated && cloudStatusKnown && !cloudDisabled
+              }
+              onDraftChange={setHasClaudeDraftChanges}
+            />
+          )}
 
           {/* Agent Mode */}
           {window.OLLAMA_TOOLS && (
@@ -744,7 +808,33 @@ export default function Settings() {
               </div>
             </div>
           )}
-        </div>
+
+          {/* Reset button */}
+          <div className="flex items-center justify-between gap-4 px-4">
+            {resetError ? (
+              <p
+                role="alert"
+                className="text-xs text-red-600 dark:text-red-400"
+              >
+                {resetError}
+              </p>
+            ) : (
+              <span />
+            )}
+            <Button
+              type="button"
+              color="white"
+              className="px-3"
+              disabled={resettingToDefaults || !cloudStatusKnown}
+              onClick={() => void handleResetToDefaults()}
+            >
+              {resettingToDefaults && (
+                <ArrowPathIcon data-slot="icon" className="animate-spin" />
+              )}
+              {resettingToDefaults ? "Resetting…" : "Reset to defaults"}
+            </Button>
+          </div>
+        </fieldset>
 
         {/* Saved indicator */}
         {(showSaved || restartMessage) && (

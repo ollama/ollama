@@ -739,6 +739,7 @@ type fakeClaudeDesktopController struct {
 	configureOnSet bool
 	requireRestart bool
 	autoMode       bool
+	restoreCalls   int
 }
 
 func (f *fakeClaudeDesktopController) UsesOllamaGateway() bool { return f.configured }
@@ -817,7 +818,13 @@ func (f *fakeClaudeDesktopController) ApplyProfileChange(change func() error, re
 	return f.setErr
 }
 
-func (f *fakeClaudeDesktopController) RestoreForShutdown(context.Context) error { return nil }
+func (f *fakeClaudeDesktopController) RestoreForShutdown(context.Context) error {
+	f.restoreCalls++
+	f.configured = false
+	f.profileCurrent = false
+	f.installed = false
+	return nil
+}
 
 func TestUpdateClaudeDesktopProfileRepairsExistingConnectionOnce(t *testing.T) {
 	previousDesktop := claudeDesktop
@@ -1270,6 +1277,267 @@ func TestApplyClaudeDesktopMappingsStartsClaudeWhenStopped(t *testing.T) {
 	}
 }
 
+func TestResetClaudeDesktopMappingsDoesNotOpenStoppedClaude(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	previousStore := appStore
+	appStore = &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
+	if err := markClaudeDesktopIntegrationUsed(); err != nil {
+		t.Fatal(err)
+	}
+	if err := launch.SaveClaudeDesktopModels([]string{"glm-5.2:cloud"}); err != nil {
+		t.Fatal(err)
+	}
+	previousInstalled := claudeDesktopInstalled
+	previousDesktop := claudeDesktop
+	previousAddr := claudeProxyListenAddr
+	previousLoader := claudeModelsLoader
+	previousAccess := claudeAccessStateResolver
+	previousLocal := claudeLocalModelsResolver
+	previousCloud := claudeCloudModelsResolver
+	claudeProxyMu.Lock()
+	previousGateway := claudeAppProxy
+	previousAvailable := claudeAvailableModels
+	previousSource := claudeModelSource
+	previousUpdated := claudeCatalogUpdated
+	claudeAppProxy = nil
+	claudeAvailableModels = nil
+	claudeModelSource = ""
+	claudeCatalogUpdated = time.Time{}
+	claudeProxyMu.Unlock()
+	claudeDesktopInstalled = func() bool { return true }
+	claudeProxyListenAddr = "127.0.0.1:0"
+	fake := &fakeClaudeDesktopController{configured: true}
+	claudeDesktop = fake
+	plan := "team"
+	claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
+		return proxy.DefaultClaudeDesktopModels(), "endpoint"
+	}
+	claudeAccessStateResolver = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
+		return proxy.ClaudeDesktopAccessState{
+			Cloud:   proxy.ClaudeDesktopCloudOn,
+			Account: proxy.ClaudeDesktopAccountSignedIn,
+			Plan:    plan,
+		}, nil
+	}
+	claudeLocalModelsResolver = func(context.Context) ([]string, error) { return nil, nil }
+	claudeCloudModelsResolver = func(context.Context) ([]proxy.ClaudeDesktopModel, error) { return nil, nil }
+	t.Cleanup(func() {
+		stopClaudeAppProxy()
+		_ = appStore.Close()
+		appStore = previousStore
+		claudeDesktopInstalled = previousInstalled
+		claudeDesktop = previousDesktop
+		claudeProxyListenAddr = previousAddr
+		claudeModelsLoader = previousLoader
+		claudeAccessStateResolver = previousAccess
+		claudeLocalModelsResolver = previousLocal
+		claudeCloudModelsResolver = previousCloud
+		claudeProxyMu.Lock()
+		claudeAppProxy = previousGateway
+		claudeAvailableModels = previousAvailable
+		claudeModelSource = previousSource
+		claudeCatalogUpdated = previousUpdated
+		claudeProxyMu.Unlock()
+	})
+
+	paidMappings := proxy.DefaultClaudeDesktopMappings(true)
+	applied, err := resetClaudeDesktopMappings(false)
+	if err != nil || !applied {
+		t.Fatalf("reset mappings = %v/%v, want persisted change", applied, err)
+	}
+	if !fake.configured || !fake.installed || fake.opened || fake.restart {
+		t.Fatalf("stopped Claude reset = %+v, want configured without open or restart", fake)
+	}
+	if got := launch.ClaudeDesktopModelMappings(); !maps.Equal(got, paidMappings) {
+		t.Fatalf("persisted reset mappings = %v", got)
+	}
+
+	stopClaudeAppProxy()
+	fake.configured = false
+	fake.installed = false
+	fake.configureCalls = 0
+	plan = "free"
+	disconnectedMappings := proxy.DefaultClaudeDesktopMappings(false)
+	applied, err = resetClaudeDesktopMappings(false)
+	if err != nil || !applied {
+		t.Fatalf("disconnected reset mappings = %v/%v, want persisted change", applied, err)
+	}
+	if fake.configured || fake.installed || fake.opened || fake.restart || fake.configureCalls != 0 {
+		t.Fatalf("disconnected Claude reset = %+v, want no connection side effects", fake)
+	}
+	claudeProxyMu.Lock()
+	gateway := claudeAppProxy
+	claudeProxyMu.Unlock()
+	if gateway != nil {
+		t.Fatal("resetting disconnected Claude must not start the gateway")
+	}
+	if got := launch.ClaudeDesktopModelMappings(); !maps.Equal(got, disconnectedMappings) {
+		t.Fatalf("persisted disconnected reset mappings = %v", got)
+	}
+}
+
+func TestResetClaudeDesktopMappingsSerializesDisconnectDuringCatalogRefresh(t *testing.T) {
+	testResetClaudeDesktopMappingsSerializesLifecycleChange(t, "disconnect", func() error {
+		return setClaudeDesktopConnection(false, false)
+	})
+}
+
+func TestResetClaudeDesktopMappingsSerializesShutdownDuringCatalogRefresh(t *testing.T) {
+	testResetClaudeDesktopMappingsSerializesLifecycleChange(t, "shutdown", func() error {
+		return restoreClaudeAppForTermination(context.Background(), false)
+	})
+}
+
+func testResetClaudeDesktopMappingsSerializesLifecycleChange(t *testing.T, name string, change func() error) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	previousMappings := sharedClaudeDesktopMappings("glm-5.2:cloud")
+	if err := launch.SaveClaudeDesktopModelMappings(previousMappings); err != nil {
+		t.Fatal(err)
+	}
+
+	previousStore := appStore
+	appStore = &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
+	if err := markClaudeDesktopIntegrationUsed(); err != nil {
+		t.Fatal(err)
+	}
+
+	current := proxy.MapClaudeDesktopModels(proxy.DefaultClaudeDesktopModels(), previousMappings)
+	gateway, err := proxy.NewClaudeDesktop(proxy.ClaudeDesktopConfig{
+		ListenAddr: "127.0.0.1:0",
+		OllamaURL:  "http://127.0.0.1:11434",
+		Model:      current[0].OllamaModel,
+		Models:     current,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	previousInstalled := claudeDesktopInstalled
+	previousDesktop := claudeDesktop
+	previousLoader := claudeModelsLoader
+	previousAccess := claudeAccessStateResolver
+	previousLocal := claudeLocalModelsResolver
+	previousCloud := claudeCloudModelsResolver
+	claudeProxyMu.Lock()
+	previousGateway := claudeAppProxy
+	previousAvailable := claudeAvailableModels
+	previousSource := claudeModelSource
+	previousUpdated := claudeCatalogUpdated
+	claudeAppProxy = gateway
+	claudeAvailableModels = proxy.DefaultClaudeDesktopModels()
+	claudeModelSource = "endpoint"
+	claudeCatalogUpdated = claudeCatalogNow()
+	claudeProxyMu.Unlock()
+
+	claudeDesktopInstalled = func() bool { return true }
+	fake := &fakeClaudeDesktopController{configured: true, configureOnSet: true}
+	claudeDesktop = fake
+	refreshStarted := make(chan struct{})
+	releaseRefresh := make(chan struct{})
+	loaderCalls := 0
+	claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
+		loaderCalls++
+		if loaderCalls == 2 {
+			close(refreshStarted)
+			<-releaseRefresh
+		}
+		return proxy.DefaultClaudeDesktopModels(), "endpoint"
+	}
+	claudeAccessStateResolver = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
+		return proxy.ClaudeDesktopAccessState{
+			Cloud:   proxy.ClaudeDesktopCloudOn,
+			Account: proxy.ClaudeDesktopAccountSignedIn,
+			Plan:    "team",
+		}, nil
+	}
+	claudeLocalModelsResolver = func(context.Context) ([]string, error) { return nil, nil }
+	claudeCloudModelsResolver = func(context.Context) ([]proxy.ClaudeDesktopModel, error) { return nil, nil }
+	t.Cleanup(func() {
+		stopClaudeAppProxy()
+		_ = appStore.Close()
+		appStore = previousStore
+		claudeDesktopInstalled = previousInstalled
+		claudeDesktop = previousDesktop
+		claudeModelsLoader = previousLoader
+		claudeAccessStateResolver = previousAccess
+		claudeLocalModelsResolver = previousLocal
+		claudeCloudModelsResolver = previousCloud
+		claudeProxyMu.Lock()
+		claudeAppProxy = previousGateway
+		claudeAvailableModels = previousAvailable
+		claudeModelSource = previousSource
+		claudeCatalogUpdated = previousUpdated
+		claudeProxyMu.Unlock()
+	})
+
+	type resetResult struct {
+		applied bool
+		err     error
+	}
+	resetDone := make(chan resetResult, 1)
+	go func() {
+		applied, err := resetClaudeDesktopMappings(false)
+		resetDone <- resetResult{applied: applied, err: err}
+	}()
+
+	select {
+	case <-refreshStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reset did not pause during the forced catalog refresh")
+	}
+
+	changeStarted := make(chan struct{})
+	changeDone := make(chan error, 1)
+	go func() {
+		close(changeStarted)
+		changeDone <- change()
+	}()
+	<-changeStarted
+
+	completedEarly := false
+	select {
+	case <-changeDone:
+		completedEarly = true
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(releaseRefresh)
+
+	var reset resetResult
+	select {
+	case reset = <-resetDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reset did not finish after the catalog refresh resumed")
+	}
+	if reset.err != nil || !reset.applied {
+		t.Fatalf("reset mappings = %v/%v, want a persisted reset", reset.applied, reset.err)
+	}
+	if completedEarly {
+		t.Fatalf("%s completed while reset still owned the Claude profile lifecycle", name)
+	}
+	select {
+	case err := <-changeDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("%s did not finish after reset released the lifecycle", name)
+	}
+
+	if fake.configured || fake.installed {
+		t.Fatalf("Claude was reconnected after %s: %+v", name, fake)
+	}
+	if name == "shutdown" && fake.restoreCalls != 1 {
+		t.Fatalf("shutdown restores = %d, want 1", fake.restoreCalls)
+	}
+	claudeProxyMu.Lock()
+	activeGateway := claudeAppProxy
+	claudeProxyMu.Unlock()
+	if activeGateway != nil {
+		t.Fatalf("Claude gateway remained active after %s", name)
+	}
+}
+
 func TestApplyClaudeDesktopMappingsKeepsCommittedMappingsWhenOpenFails(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	previousInstalled := claudeDesktopInstalled
@@ -1670,6 +1938,124 @@ func TestEnsureClaudeDesktopModelsAvailableRetriesStartupRace(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("access checks = %d, want 2", calls)
+	}
+}
+
+func TestResolveClaudeDesktopDefaultMappingsHandlesAccountVerificationRestartRace(t *testing.T) {
+	previousLoader := claudeModelsLoader
+	previousAccess := claudeAccessStateResolver
+	previousRetryWait := claudeAccessRetryWait
+	previousRetryPoll := claudeAccessRetryPoll
+	claudeAccessRetryWait = 10 * time.Millisecond
+	claudeAccessRetryPoll = time.Millisecond
+	t.Cleanup(func() {
+		claudeModelsLoader = previousLoader
+		claudeAccessStateResolver = previousAccess
+		claudeAccessRetryWait = previousRetryWait
+		claudeAccessRetryPoll = previousRetryPoll
+	})
+
+	tests := []struct {
+		name             string
+		accessStateAfter int
+		plan             string
+		catalog          func() []proxy.ClaudeDesktopModel
+		wantDefaults     map[string]string
+	}{
+		{
+			name:             "retry restores paid defaults",
+			accessStateAfter: 2,
+			plan:             "team",
+			wantDefaults:     proxy.DefaultClaudeDesktopMappings(true),
+		},
+		{
+			name:             "free account restores only the free default",
+			accessStateAfter: 1,
+			plan:             "free",
+			wantDefaults:     proxy.DefaultClaudeDesktopMappings(false),
+		},
+		{
+			name:             "incomplete paid catalog does not clear routes",
+			accessStateAfter: 1,
+			plan:             "team",
+			catalog: func() []proxy.ClaudeDesktopModel {
+				return proxy.DefaultClaudeDesktopModels()[:4]
+			},
+		},
+		{
+			name:             "missing free default does not clear routes",
+			accessStateAfter: 1,
+			plan:             "free",
+			catalog: func() []proxy.ClaudeDesktopModel {
+				return proxy.DefaultClaudeDesktopModels()[:4]
+			},
+		},
+		{
+			name: "persistent failure does not synthesize free defaults",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
+				if tt.catalog != nil {
+					return tt.catalog(), "endpoint"
+				}
+				return proxy.DefaultClaudeDesktopModels(), "endpoint"
+			}
+			accessCalls := 0
+			claudeAccessStateResolver = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
+				accessCalls++
+				if tt.accessStateAfter == 0 || accessCalls < tt.accessStateAfter {
+					return proxy.ClaudeDesktopAccessState{}, errors.New("server restarting")
+				}
+				return proxy.ClaudeDesktopAccessState{
+					Cloud:   proxy.ClaudeDesktopCloudOn,
+					Account: proxy.ClaudeDesktopAccountSignedIn,
+					Plan:    tt.plan,
+				}, nil
+			}
+
+			gotDefaults, err := resolveClaudeDesktopDefaultMappings(context.Background())
+			if tt.wantDefaults == nil {
+				if err == nil {
+					t.Fatalf("reset defaults = %v, want an error", gotDefaults)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !maps.Equal(gotDefaults, tt.wantDefaults) {
+				t.Fatalf("reset defaults = %v, want %v after %d access checks", gotDefaults, tt.wantDefaults, accessCalls)
+			}
+			if tt.accessStateAfter > 0 && accessCalls < tt.accessStateAfter {
+				t.Fatalf("access checks = %d, want at least %d", accessCalls, tt.accessStateAfter)
+			}
+		})
+	}
+}
+
+func TestClaudeDesktopDefaultAccessTierRequiresVerifiedAccount(t *testing.T) {
+	tests := []struct {
+		name      string
+		state     proxy.ClaudeDesktopAccessState
+		wantFull  bool
+		wantKnown bool
+	}{
+		{name: "cloud off", state: proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOff}},
+		{name: "signed out", state: proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedOut}},
+		{name: "missing plan", state: proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn}},
+		{name: "free", state: proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "free"}, wantKnown: true},
+		{name: "team", state: proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "team"}, wantFull: true, wantKnown: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			full, known := claudeDesktopDefaultAccessTier(tt.state)
+			if full != tt.wantFull || known != tt.wantKnown {
+				t.Fatalf("default access tier = %v/%v, want %v/%v", full, known, tt.wantFull, tt.wantKnown)
+			}
+		})
 	}
 }
 

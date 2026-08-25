@@ -65,6 +65,18 @@ func bindClaudeDesktop(wv webview.WebView) {
 		}
 		return result
 	})
+	wv.Bind("resetClaudeDesktopMappings", func(restartConfirmed bool) claudeDesktopActionResult {
+		applied, err := resetClaudeDesktopMappings(restartConfirmed)
+		result := claudeDesktopActionResult{
+			Status:          getClaudeDesktopConnectionStatus(),
+			MappingsApplied: applied,
+		}
+		if err != nil {
+			result.Error = err.Error()
+			result.RestartConfirmationRequired = errors.Is(err, launch.ErrClaudeDesktopRestartConfirmationRequired)
+		}
+		return result
+	})
 
 	wv.Bind("setClaudeDesktopAutoMode", func(enabled, restartConfirmed bool) claudeDesktopActionResult {
 		err := setClaudeDesktopAutoMode(enabled, restartConfirmed)
