@@ -80,6 +80,7 @@ declare global {
     getClaudeDesktopStatus?: () => Promise<ClaudeDesktopStatus>;
     getClaudeDesktopConnectionSummary?: () => Promise<ClaudeDesktopStatus>;
     getClaudeDesktopRequestCount?: () => Promise<number>;
+    getClaudeDesktopIcon?: () => Promise<string>;
     setClaudeDesktopConnected?: (
       enabled: boolean,
       restartConfirmed: boolean,

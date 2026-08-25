@@ -1006,6 +1006,15 @@ func IsClaudeDesktopRunning() C.bool {
 	return C._Bool(launch.ClaudeDesktopRunning())
 }
 
+func claudeDesktopIconDataURL() string {
+	icon := C.ClaudeDesktopIconDataURL()
+	if icon == nil {
+		return ""
+	}
+	defer C.free(unsafe.Pointer(icon))
+	return C.GoString(icon)
+}
+
 //export IsClaudeGatewayConfigured
 func IsClaudeGatewayConfigured() C.bool {
 	return C._Bool(claudeDesktop.UsesOllamaGateway())

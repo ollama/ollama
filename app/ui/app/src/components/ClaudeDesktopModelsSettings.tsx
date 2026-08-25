@@ -1,4 +1,5 @@
 import { getClaudeDesktopAvailableModels } from "@/api";
+import { ClaudeDesktopIcon } from "@/components/ClaudeDesktopIcon";
 import { Button } from "@/components/ui/button";
 import { Description, Field, Label } from "@/components/ui/fieldset";
 import { Switch } from "@/components/ui/switch";
@@ -562,9 +563,8 @@ export function ClaudeDesktopModelsSettings({
         className="overflow-visible rounded-xl bg-white p-4 dark:bg-neutral-800"
       >
         <div className="flex items-start space-x-3">
-          <img
-            src="/launch-icons/claude.svg"
-            alt=""
+          <ClaudeDesktopIcon
+            installed={status.installed}
             className="mt-0.5 h-5 w-5 flex-shrink-0"
           />
           <div className="min-w-0 flex-1">

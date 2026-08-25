@@ -1,4 +1,5 @@
 import CopyButton from "@/components/CopyButton";
+import { ClaudeDesktopIcon } from "@/components/ClaudeDesktopIcon";
 import Logo from "@/components/Logo";
 import { nextOnboardingStep, type OnboardingStep } from "@/lib/onboarding";
 import {
@@ -354,12 +355,20 @@ export function RunOllamaScreen({
   );
 }
 
-function LaunchCommandIcon({ item }: { item: IntegrationStatus }) {
+function LaunchCommandIcon({
+  item,
+  installed = item.installed,
+}: {
+  item: IntegrationStatus;
+  installed?: boolean;
+}) {
   const icon = INTEGRATION_ICONS[item.id];
 
   return (
     <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-transparent">
-      {icon ? (
+      {item.id === "claude-desktop" ? (
+        <ClaudeDesktopIcon installed={installed} className="h-7 w-7" />
+      ) : icon ? (
         <img
           src={icon.src}
           alt=""
@@ -962,7 +971,10 @@ export function ConnectAppsScreen({
   const claudeRow = claudeIntegration ? (
     <div className="flex min-h-18 items-center justify-between gap-4 bg-white px-4 py-3">
       <div className="flex min-w-0 items-center gap-3">
-        <LaunchCommandIcon item={claudeIntegration} />
+        <LaunchCommandIcon
+          item={claudeIntegration}
+          installed={claudeInstalled}
+        />
         <div className="min-w-0">
           <p className="text-sm font-medium text-neutral-950">
             {claudeIntegration.name}
