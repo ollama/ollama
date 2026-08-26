@@ -520,6 +520,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 			t.Fatal(err)
 		}
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Anthropic-Beta", "context-1m-2025-08-07")
 
 		resp, err := local.Client().Do(req)
 		if err != nil {
@@ -546,6 +547,10 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 
 		if strings.Contains(capture.body, `"options"`) {
 			t.Fatalf("expected no converted Ollama options in upstream body, got %q", capture.body)
+		}
+
+		if got := capture.header.Get("Anthropic-Beta"); got != "context-1m-2025-08-07" {
+			t.Fatalf("Anthropic-Beta = %q, want 1M negotiation forwarded", got)
 		}
 	})
 

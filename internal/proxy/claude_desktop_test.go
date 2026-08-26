@@ -20,6 +20,7 @@ import (
 func TestGatewayRoutesClaudeProtocolToOllama(t *testing.T) {
 	var paths []string
 	var messageModels []string
+	var betaHeaders []string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.RequestURI())
 		if r.Header.Get("Authorization") != "" || r.Header.Get("Cookie") != "" {
@@ -30,6 +31,7 @@ func TestGatewayRoutesClaudeProtocolToOllama(t *testing.T) {
 		}
 		if r.URL.Path == "/v1/messages" {
 			messageModels = append(messageModels, requestModel(t, r))
+			betaHeaders = append(betaHeaders, r.Header.Get("Anthropic-Beta"))
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"ok":true}`)
@@ -55,6 +57,7 @@ func TestGatewayRoutesClaudeProtocolToOllama(t *testing.T) {
 		}
 		req.Header.Set("Authorization", "Bearer local-placeholder")
 		req.Header.Set("Cookie", "session=secret")
+		req.Header.Set("Anthropic-Beta", "context-1m-2025-08-07")
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -118,11 +121,88 @@ func TestGatewayRoutesClaudeProtocolToOllama(t *testing.T) {
 	if strings.Join(messageModels, ",") != strings.Join(wantModels, ",") {
 		t.Fatalf("rewritten message models = %v", messageModels)
 	}
+	for _, header := range betaHeaders {
+		if header != "context-1m-2025-08-07" {
+			t.Fatalf("Anthropic-Beta = %q, want 1M negotiation preserved", header)
+		}
+	}
 	if len(paths) != 4 {
 		t.Fatalf("upstream paths = %v", paths)
 	}
 	if got := p.Counts().Routed; got != 4 {
 		t.Fatalf("routed requests = %d, want 4", got)
+	}
+}
+
+func TestGatewayAdvertisesAuthoritativeInputContext(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer upstream.Close()
+
+	models := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{
+		{Model: "million:cloud", RequiredPlan: "pro", ContextLength: 1_000_000},
+		{Model: "small:cloud", RequiredPlan: "pro", ContextLength: 999_999},
+		{Model: "unknown:cloud", RequiredPlan: "pro"},
+	})
+	p, err := NewClaudeDesktop(ClaudeDesktopConfig{
+		ListenAddr: "127.0.0.1:0",
+		OllamaURL:  upstream.URL,
+		Model:      models[0].OllamaModel,
+		Models:     models,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := p.Close(ctx); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	fetch := func() []gatewayModel {
+		t.Helper()
+		resp, err := http.Get("http://" + p.Addr() + "/v1/models")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var catalog struct {
+			Data []gatewayModel `json:"data"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&catalog); err != nil {
+			t.Fatal(err)
+		}
+		return catalog.Data
+	}
+
+	catalog := fetch()
+	if len(catalog) != 3 || catalog[0].MaxInputTokens != 1_000_000 || catalog[1].MaxInputTokens != 999_999 || catalog[2].MaxInputTokens != 0 {
+		t.Fatalf("catalog context metadata = %+v", catalog)
+	}
+
+	if err := p.SetModels(models[1:2]); err != nil {
+		t.Fatal(err)
+	}
+	catalog = fetch()
+	if len(catalog) != 1 || catalog[0].MaxInputTokens != 999_999 {
+		t.Fatalf("small-model catalog after switch = %+v", catalog)
+	}
+	if err := p.SetModels(models[:1]); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.SetModels(models[:1]); err != nil {
+		t.Fatal(err)
+	}
+	catalog = fetch()
+	if len(catalog) != 1 || catalog[0].MaxInputTokens != 1_000_000 {
+		t.Fatalf("1M catalog after rollback = %+v", catalog)
 	}
 }
 

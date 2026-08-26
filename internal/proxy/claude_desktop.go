@@ -40,6 +40,7 @@ type gatewayModel struct {
 	DisplayName         string `json:"display_name"`
 	CreatedAt           string `json:"created_at"`
 	MaxTokens           int    `json:"max_tokens"`
+	MaxInputTokens      int    `json:"max_input_tokens,omitempty"`
 	AnthropicFamilyTier string `json:"anthropic_family_tier"`
 	IsFamilyDefault     bool   `json:"is_family_default"`
 	OllamaModel         string `json:"-"`
