@@ -589,7 +589,7 @@ export default function Settings() {
                       <Description>
                         {cloudOverriddenByEnv
                           ? "The OLLAMA_NO_CLOUD environment variable is currently forcing cloud off."
-                          : "Enable cloud models, web search, and online app configuration."}
+                          : "Enable cloud models and web search."}
                       </Description>
                     </div>
                   </div>
