@@ -725,21 +725,22 @@ func TestClaudeDesktopDefaultsFollowAccountPlan(t *testing.T) {
 }
 
 type fakeClaudeDesktopController struct {
-	configured     bool
-	profileCurrent bool
-	configureCalls int
-	configureErr   error
-	running        bool
-	opened         bool
-	installed      bool
-	restart        bool
-	setErr         error
-	openErr        error
-	modelsAtSet    []string
-	configureOnSet bool
-	requireRestart bool
-	autoMode       bool
-	restoreCalls   int
+	configured       bool
+	profileCurrent   bool
+	configureCalls   int
+	configureErr     error
+	running          bool
+	opened           bool
+	installed        bool
+	restart          bool
+	setErr           error
+	openErr          error
+	modelsAtSet      []string
+	configureOnSet   bool
+	requireRestart   bool
+	autoMode         bool
+	restoreCalls     int
+	restoreConfirmed bool
 }
 
 func (f *fakeClaudeDesktopController) UsesOllamaGateway() bool { return f.configured }
@@ -818,8 +819,12 @@ func (f *fakeClaudeDesktopController) ApplyProfileChange(change func() error, re
 	return f.setErr
 }
 
-func (f *fakeClaudeDesktopController) RestoreForShutdown(context.Context) error {
+func (f *fakeClaudeDesktopController) RestoreForShutdownWithConfirmation(_ context.Context, quitConfirmed bool) error {
 	f.restoreCalls++
+	f.restoreConfirmed = quitConfirmed
+	if f.running && !quitConfirmed {
+		return launch.ErrClaudeDesktopQuitConfirmationRequired
+	}
 	f.configured = false
 	f.profileCurrent = false
 	f.installed = false
@@ -1384,7 +1389,7 @@ func TestResetClaudeDesktopMappingsSerializesDisconnectDuringCatalogRefresh(t *t
 
 func TestResetClaudeDesktopMappingsSerializesShutdownDuringCatalogRefresh(t *testing.T) {
 	testResetClaudeDesktopMappingsSerializesLifecycleChange(t, "shutdown", func() error {
-		return restoreClaudeAppForTermination(context.Background(), false)
+		return restoreClaudeAppForTermination(context.Background(), false, true)
 	})
 }
 
@@ -2445,6 +2450,36 @@ func TestRestoreClaudeBeforeQuit(t *testing.T) {
 	}
 	if called {
 		t.Fatal("restore called during an app replacement handoff")
+	}
+}
+
+func TestRestoreClaudeAppForTerminationRequiresQuitConfirmation(t *testing.T) {
+	previousDesktop := claudeDesktop
+	fake := &fakeClaudeDesktopController{configured: true, running: true}
+	claudeDesktop = fake
+	t.Cleanup(func() {
+		claudeDesktop = previousDesktop
+	})
+
+	err := restoreClaudeAppForTermination(context.Background(), false, false)
+	if !errors.Is(err, launch.ErrClaudeDesktopQuitConfirmationRequired) {
+		t.Fatalf("unconfirmed restore error = %v, want quit confirmation error", err)
+	}
+	if fake.restoreCalls != 1 || fake.restoreConfirmed {
+		t.Fatalf("unconfirmed restore = calls:%d confirmed:%v", fake.restoreCalls, fake.restoreConfirmed)
+	}
+	if !fake.configured {
+		t.Fatal("unconfirmed restore changed Claude's profile")
+	}
+
+	if err := restoreClaudeAppForTermination(context.Background(), false, true); err != nil {
+		t.Fatalf("confirmed restore error = %v", err)
+	}
+	if fake.restoreCalls != 2 || !fake.restoreConfirmed {
+		t.Fatalf("confirmed restore = calls:%d confirmed:%v", fake.restoreCalls, fake.restoreConfirmed)
+	}
+	if fake.configured {
+		t.Fatal("confirmed restore left Claude configured")
 	}
 }
 

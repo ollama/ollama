@@ -336,6 +336,7 @@ static NSImage *integrationAppIcon(NSString *appName,
 @property(assign, nonatomic) BOOL claudeDownloadCompleted;
 @property(assign, nonatomic) BOOL claudeDownloadModalRunning;
 @property(assign, nonatomic) BOOL quitInProgress;
+@property(assign, nonatomic) BOOL hiddenModalInProgress;
 @property(assign, nonatomic) BOOL systemTerminationReplyPending;
 @property(strong, nonatomic) NSApplication *systemTerminationApplication;
 - (void)openClaudeApp:(id)sender;
@@ -598,17 +599,31 @@ static NSImage *ollamaApplicationIcon(void) {
 }
 
 - (void)applicationDidBecomeActive:(NSNotification *)notification {
+    if (self.hiddenModalInProgress) {
+        return;
+    }
+
+    BOOL hasVisibleWindows = NO;
+    for (NSWindow *window in [NSApp windows]) {
+        if ([window isVisible]) {
+            hasVisibleWindows = YES;
+            break;
+        }
+    }
+
     NSRunningApplication *currentApp = [NSRunningApplication currentApplication];
     if (currentApp.activationPolicy == NSApplicationActivationPolicyAccessory) {
-        for (NSWindow *window in [NSApp windows]) {
-            if ([window isVisible]) {
-                // Switch to regular activation policy since we have a visible window
-                [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
-                return;
-            }
+        if (hasVisibleWindows) {
+            // Switch to regular activation policy since we have a visible window
+            [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+            return;
         }
         [NSApp hide:nil];
         return;
+    }
+
+    if (!hasVisibleWindows) {
+        ShowUI();
     }
 }
 
@@ -1133,8 +1148,8 @@ didCompleteWithError:(NSError *)error {
         }
         self.quitInProgress = YES;
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-            BOOL succeeded = RestoreClaudeGatewayForShutdown();
-            if (!succeeded) {
+            enum ClaudeRestoreResult result = RestoreClaudeGatewayForShutdown(true);
+            if (result != ClaudeRestoreSucceeded) {
                 appLogInfo(@"Unable to restore Claude during system shutdown");
             }
             dispatch_async(dispatch_get_main_queue(), ^{
@@ -1205,6 +1220,78 @@ didCompleteWithError:(NSError *)error {
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
 }
 
+- (NSModalResponse)runModalWithoutShowingHiddenWindows:(NSAlert *)alert {
+    BOOL appWasHidden = [NSApp isHidden];
+    NSApplicationActivationPolicy activationPolicy = [NSApp activationPolicy];
+    if (appWasHidden) {
+        self.hiddenModalInProgress = YES;
+        NSWindow *alertWindow = [alert window];
+        for (NSWindow *window in [NSApp windows]) {
+            if (window != alertWindow && [window delegate] == self) {
+                [window orderOut:nil];
+            }
+        }
+    }
+
+    NSModalResponse response = [alert runModal];
+    if (appWasHidden) {
+        [NSApp hide:nil];
+        [NSApp setActivationPolicy:activationPolicy];
+        self.hiddenModalInProgress = NO;
+    }
+    return response;
+}
+
+- (void)restoreClaudeAndQuit:(BOOL)quitClaudeConfirmed {
+    self.quitInProgress = YES;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        enum ClaudeRestoreResult result =
+            RestoreClaudeGatewayForShutdown(quitClaudeConfirmed);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (self.systemTerminationReplyPending) {
+                if (result == ClaudeRestoreConfirmationRequired) {
+                    [self restoreClaudeAndQuit:YES];
+                    return;
+                }
+                if (result != ClaudeRestoreSucceeded) {
+                    appLogInfo(@"Unable to restore Claude during system shutdown");
+                }
+                [self completeSystemTermination];
+                return;
+            }
+            if (result == ClaudeRestoreSucceeded) {
+                [self quit];
+                return;
+            }
+
+            self.quitInProgress = NO;
+            if (result == ClaudeRestoreConfirmationRequired) {
+                NSAlert *alert = [[NSAlert alloc] init];
+                [alert setAlertStyle:NSAlertStyleWarning];
+                [alert setIcon:ollamaApplicationIcon()];
+                [alert setMessageText:@"Quit Claude and Ollama?"];
+                [alert setInformativeText:
+                    @"Claude must quit so Ollama can restore its settings. Any running task will stop."];
+                [alert addButtonWithTitle:@"Quit Claude and Ollama"];
+                [alert addButtonWithTitle:@"Cancel"];
+                if ([self runModalWithoutShowingHiddenWindows:alert] == NSAlertFirstButtonReturn) {
+                    [self restoreClaudeAndQuit:YES];
+                }
+                return;
+            }
+
+            [self refreshClaudeAppState];
+            NSAlert *alert = [[NSAlert alloc] init];
+            [alert setAlertStyle:NSAlertStyleWarning];
+            [alert setIcon:ollamaApplicationIcon()];
+            [alert setMessageText:@"Unable to quit Ollama"];
+            [alert setInformativeText:
+                @"Ollama couldn’t restore Claude’s settings, so Ollama is still running. Check the Ollama log and try again."];
+            [self runModalWithoutShowingHiddenWindows:alert];
+        });
+    });
+}
+
 - (void)requestQuit {
     if (self.quitInProgress) {
         return;
@@ -1214,48 +1301,7 @@ didCompleteWithError:(NSError *)error {
         return;
     }
 
-    BOOL restartClaude = IsClaudeDesktopRunning();
-    if (restartClaude) {
-        NSAlert *alert = [[NSAlert alloc] init];
-        [alert setAlertStyle:NSAlertStyleWarning];
-        [alert setIcon:ollamaApplicationIcon()];
-        [alert setMessageText:@"Restart Claude before quitting Ollama?"];
-        [alert setInformativeText:
-            @"Claude must restart before Ollama quits. Any running task will stop."];
-        [alert addButtonWithTitle:@"Restart Claude and Quit"];
-        [alert addButtonWithTitle:@"Cancel"];
-        if ([alert runModal] != NSAlertFirstButtonReturn) {
-            return;
-        }
-    }
-
-    self.quitInProgress = YES;
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        BOOL succeeded = SetClaudeGatewayInstalled(false, restartClaude);
-        dispatch_async(dispatch_get_main_queue(), ^{
-            if (self.systemTerminationReplyPending) {
-                if (!succeeded) {
-                    appLogInfo(@"Unable to restore Claude during system shutdown");
-                }
-                [self completeSystemTermination];
-                return;
-            }
-            if (succeeded) {
-                [self quit];
-                return;
-            }
-
-            self.quitInProgress = NO;
-            [self refreshClaudeAppState];
-            NSAlert *alert = [[NSAlert alloc] init];
-            [alert setAlertStyle:NSAlertStyleWarning];
-            [alert setIcon:ollamaApplicationIcon()];
-            [alert setMessageText:@"Unable to quit Ollama"];
-            [alert setInformativeText:
-                @"Ollama couldn’t update Claude, so it is still running. Check the Ollama log and try again."];
-            [alert runModal];
-        });
-    });
+    [self restoreClaudeAndQuit:NO];
 }
 
 - (void)quit {

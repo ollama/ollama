@@ -46,7 +46,13 @@ void doubleClick(uintptr_t wndPtr);
 void handleConnectURL();
 bool SetClaudeGatewayInstalled(bool installed, bool restartClaude);
 bool HasUsedClaudeDesktopIntegration(void);
-bool RestoreClaudeGatewayForShutdown(void);
+enum ClaudeRestoreResult
+{
+    ClaudeRestoreSucceeded,
+    ClaudeRestoreConfirmationRequired,
+    ClaudeRestoreFailed,
+};
+int RestoreClaudeGatewayForShutdown(bool quitClaudeConfirmed);
 bool IsClaudeGatewayConfigured(void);
 bool IsClaudeDesktopInstalled(void);
 bool IsClaudeDesktopRunning(void);
