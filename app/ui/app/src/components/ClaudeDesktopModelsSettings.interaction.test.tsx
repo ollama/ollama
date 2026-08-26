@@ -4,13 +4,95 @@ import {
   type ReactTestInstance,
   type ReactTestRenderer,
 } from "react-test-renderer";
-import { createRef } from "react";
+import {
+  createRef,
+  type ButtonHTMLAttributes,
+  type HTMLAttributes,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from "react";
 import { describe, expect, it, vi } from "vitest";
 import { Switch } from "./ui/switch";
 import {
   ClaudeDesktopModelsSettings,
   type ClaudeDesktopModelsSettingsHandle,
 } from "./ClaudeDesktopModelsSettings";
+
+vi.mock("@headlessui/react", async (importOriginal) => {
+  const React = await import("react");
+  const original = await importOriginal<typeof import("@headlessui/react")>();
+  type PopoverContextValue = {
+    open: boolean;
+    close: () => void;
+    toggle: () => void;
+  };
+  const PopoverContext = React.createContext<PopoverContextValue | null>(null);
+  const usePopover = () => {
+    const context = React.useContext(PopoverContext);
+    if (!context) throw new Error("Popover components must be nested");
+    return context;
+  };
+
+  function TestPopover({
+    children,
+    className,
+  }: {
+    children: ReactNode;
+    className?: string;
+  }) {
+    const [open, setOpen] = React.useState(false);
+    const context = {
+      open,
+      close: () => setOpen(false),
+      toggle: () => setOpen((current) => !current),
+    };
+    return (
+      <PopoverContext.Provider value={context}>
+        <div className={className}>{children}</div>
+      </PopoverContext.Provider>
+    );
+  }
+
+  function TestPopoverButton({
+    onClick,
+    ...props
+  }: ButtonHTMLAttributes<HTMLButtonElement>) {
+    const { open, toggle } = usePopover();
+    return (
+      <button
+        {...props}
+        aria-expanded={open}
+        onClick={(event: ReactMouseEvent<HTMLButtonElement>) => {
+          onClick?.(event);
+          toggle();
+        }}
+      />
+    );
+  }
+
+  function TestPopoverPanel({
+    anchor,
+    children,
+    ...props
+  }: HTMLAttributes<HTMLDivElement> & {
+    anchor?: unknown;
+    children: ReactNode | ((props: { close: () => void }) => ReactNode);
+  }) {
+    const { open, close } = usePopover();
+    if (!open) return null;
+    return (
+      <div {...props} data-anchor={JSON.stringify(anchor)}>
+        {typeof children === "function" ? children({ close }) : children}
+      </div>
+    );
+  }
+
+  return Object.assign({}, original, {
+    Popover: TestPopover,
+    PopoverButton: TestPopoverButton,
+    PopoverPanel: TestPopoverPanel,
+  });
+});
 
 const fableRoute = {
   routeId: "claude-fable-5",
@@ -50,15 +132,24 @@ function testStatus(model = "glm-5.2:cloud", running = false) {
 
 async function selectKimi(renderer: ReactTestRenderer) {
   await act(async () => {
-    renderer.root
-      .findByProps({ "aria-label": "Ollama model for Fable 5" })
-      .props.onClick();
+    pickerButton(renderer).props.onClick();
     await Promise.resolve();
   });
   await act(async () => {
     renderer.root.findAllByProps({ role: "option" })[1].props.onClick();
     await Promise.resolve();
   });
+}
+
+function pickerButton(renderer: ReactTestRenderer) {
+  const button = renderer.root
+    .findAllByType("button")
+    .find(
+      (candidate) =>
+        candidate.props["aria-label"] === "Ollama model for Fable 5",
+    );
+  if (!button) throw new Error("Claude model picker button not found");
+  return button;
 }
 
 function actionButton(renderer: ReactTestRenderer) {
@@ -80,10 +171,11 @@ function textContent(node: ReactTestInstance): string {
 }
 
 describe("ClaudeDesktopModelsSettings interactions", () => {
-  it("disables auto mode while model changes are not applied", async () => {
+  it("opens below without scrolling and disables auto mode for draft changes", async () => {
     class TestHTMLElement {
       focus() {}
     }
+    const focus = vi.fn();
     vi.stubGlobal("window", {
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
@@ -136,6 +228,10 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
               ],
             }}
           />,
+          {
+            createNodeMock: (element) =>
+              element.type === "input" ? { focus } : null,
+          },
         );
         await Promise.resolve();
       });
@@ -146,11 +242,19 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
       expect(autoModeSwitch().props["aria-checked"]).toBe(true);
 
       await act(async () => {
-        renderer!.root
-          .findByProps({ "aria-label": "Ollama model for Fable 5" })
-          .props.onClick();
+        pickerButton(renderer!).props.onClick();
         await Promise.resolve();
       });
+      expect(
+        renderer!.root.findByProps({
+          "data-anchor": JSON.stringify({
+            to: "bottom end",
+            gap: 8,
+            padding: 8,
+          }),
+        }),
+      ).toBeDefined();
+      expect(focus).toHaveBeenCalledWith({ preventScroll: true });
       await act(async () => {
         const options = renderer!.root.findAllByProps({ role: "option" });
         options[1].props.onClick();

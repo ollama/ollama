@@ -17,6 +17,7 @@ import {
   ChevronUpDownIcon,
   MagnifyingGlassIcon,
 } from "@heroicons/react/20/solid";
+import { Popover, PopoverButton, PopoverPanel } from "@headlessui/react";
 import {
   forwardRef,
   useCallback,
@@ -145,54 +146,13 @@ function ClaudeModelPicker({
   disabled,
   onChange,
 }: ClaudeModelPickerProps) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const pickerRef = useRef<HTMLDivElement>(null);
-  const searchRef = useRef<HTMLInputElement>(null);
-  const normalizedQuery = query.trim().toLowerCase();
-  const filteredModels = models.filter((model) =>
-    model.displayName.toLowerCase().includes(normalizedQuery),
-  );
-
-  useEffect(() => {
-    if (!open) {
-      setQuery("");
-      return;
-    }
-    searchRef.current?.focus();
-
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!pickerRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [open]);
-
-  const choose = (model: string) => {
-    onChange(model);
-    setOpen(false);
-  };
-
   return (
-    <div ref={pickerRef} className="relative min-w-0">
-      <button
+    <Popover className="relative min-w-0">
+      <PopoverButton
         id={id}
-        type="button"
         aria-label={`Ollama model for ${routeName}`}
         aria-haspopup="listbox"
-        aria-expanded={open}
         disabled={disabled}
-        onClick={() => setOpen((current) => !current)}
         className="flex min-h-9 w-full items-center gap-2 rounded-lg bg-neutral-50 px-3 py-1.5 text-left text-sm text-neutral-800 outline-none ring-1 ring-inset ring-neutral-200 hover:bg-neutral-100 focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-neutral-700 dark:text-neutral-100 dark:ring-neutral-600 dark:hover:bg-neutral-600"
       >
         <span
@@ -201,60 +161,98 @@ function ClaudeModelPicker({
           {value || "Select a model"}
         </span>
         <ChevronUpDownIcon className="h-4 w-4 flex-shrink-0 text-neutral-400" />
-      </button>
+      </PopoverButton>
 
-      {open && (
-        <div className="absolute bottom-full right-0 z-50 mb-2 w-full min-w-64 overflow-hidden rounded-2xl border border-neutral-100 bg-white text-[15px] text-neutral-800 shadow-xl shadow-black/5 dark:border-neutral-600/40 dark:bg-neutral-800 dark:text-white">
-          <div className="flex items-center gap-2 border-b border-neutral-100 px-3 py-2 dark:border-neutral-700">
-            <MagnifyingGlassIcon className="h-4 w-4 flex-shrink-0 text-neutral-400" />
-            <input
-              ref={searchRef}
-              type="text"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Find model..."
-              aria-label={`Find model for ${routeName}`}
-              autoCorrect="off"
-              autoComplete="off"
-              className="min-w-0 flex-1 border-none bg-transparent py-0.5 outline-none"
-            />
-          </div>
-          <div role="listbox" className="max-h-64 overflow-y-auto py-1">
-            {filteredModels.map((model) => {
-              const available = modelIsAvailable(model);
-              const statusLabel = claudeDesktopModelStatusLabel(model);
-              const selected = value === model.name;
-              return (
-                <button
-                  key={model.name}
-                  type="button"
-                  role="option"
-                  aria-selected={selected}
-                  disabled={!available}
-                  onClick={() => choose(model.name)}
-                  className="flex w-full cursor-pointer items-start gap-2 px-3 py-2 text-left hover:bg-neutral-100 focus:bg-neutral-100 focus:outline-none disabled:cursor-not-allowed disabled:opacity-45 dark:hover:bg-neutral-700/60 dark:focus:bg-neutral-700/60"
-                >
-                  <span className="mt-0.5 h-4 w-4 flex-shrink-0">
-                    {selected && <CheckIcon className="h-4 w-4" />}
+      <PopoverPanel
+        anchor={{ to: "bottom end", gap: 8, padding: 8 }}
+        className="z-50 flex w-[var(--button-width)] min-w-64 flex-col overflow-hidden rounded-2xl border border-neutral-100 bg-white text-[15px] text-neutral-800 shadow-xl shadow-black/5 [--anchor-max-height:19rem] dark:border-neutral-600/40 dark:bg-neutral-800 dark:text-white"
+      >
+        {({ close }) => (
+          <ClaudeModelPickerOptions
+            routeName={routeName}
+            value={value}
+            models={models}
+            onChange={(model) => {
+              onChange(model);
+              close();
+            }}
+          />
+        )}
+      </PopoverPanel>
+    </Popover>
+  );
+}
+
+function ClaudeModelPickerOptions({
+  routeName,
+  value,
+  models,
+  onChange,
+}: Pick<
+  ClaudeModelPickerProps,
+  "routeName" | "value" | "models" | "onChange"
+>) {
+  const [query, setQuery] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredModels = models.filter((model) =>
+    model.displayName.toLowerCase().includes(normalizedQuery),
+  );
+
+  useEffect(() => {
+    searchRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  return (
+    <>
+      <div className="flex flex-none items-center gap-2 border-b border-neutral-100 px-3 py-2 dark:border-neutral-700">
+        <MagnifyingGlassIcon className="h-4 w-4 flex-shrink-0 text-neutral-400" />
+        <input
+          ref={searchRef}
+          type="text"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Find model..."
+          aria-label={`Find model for ${routeName}`}
+          autoCorrect="off"
+          autoComplete="off"
+          className="min-w-0 flex-1 border-none bg-transparent py-0.5 outline-none"
+        />
+      </div>
+      <div role="listbox" className="min-h-0 overflow-y-auto py-1">
+        {filteredModels.map((model) => {
+          const available = modelIsAvailable(model);
+          const statusLabel = claudeDesktopModelStatusLabel(model);
+          const selected = value === model.name;
+          return (
+            <button
+              key={model.name}
+              type="button"
+              role="option"
+              aria-selected={selected}
+              disabled={!available}
+              onClick={() => onChange(model.name)}
+              className="flex w-full cursor-pointer items-start gap-2 px-3 py-2 text-left hover:bg-neutral-100 focus:bg-neutral-100 focus:outline-none disabled:cursor-not-allowed disabled:opacity-45 dark:hover:bg-neutral-700/60 dark:focus:bg-neutral-700/60"
+            >
+              <span className="mt-0.5 h-4 w-4 flex-shrink-0">
+                {selected && <CheckIcon className="h-4 w-4" />}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{model.displayName}</span>
+                {statusLabel && (
+                  <span className="mt-0.5 block truncate text-xs text-neutral-400">
+                    {statusLabel}
                   </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate">{model.displayName}</span>
-                    {statusLabel && (
-                      <span className="mt-0.5 block truncate text-xs text-neutral-400">
-                        {statusLabel}
-                      </span>
-                    )}
-                  </span>
-                </button>
-              );
-            })}
-            {filteredModels.length === 0 && (
-              <p className="px-3 py-2 text-neutral-400">No models found</p>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
+                )}
+              </span>
+            </button>
+          );
+        })}
+        {filteredModels.length === 0 && (
+          <p className="px-3 py-2 text-neutral-400">No models found</p>
+        )}
+      </div>
+    </>
   );
 }
 
