@@ -377,6 +377,13 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 		tools = append(tools, tool)
 	}
 
+	// tool_choice: {"type": "none"} means the model must not call any tool
+	// this turn. The model has no mechanism of its own to honor that, so the
+	// only reliable way to enforce it is to not give it any tools to call.
+	if r.ToolChoice != nil && r.ToolChoice.Type == "none" {
+		tools = nil
+	}
+
 	var think *api.ThinkValue
 	normalizedEffort := ""
 	if r.OutputConfig != nil {

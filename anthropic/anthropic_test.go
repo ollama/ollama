@@ -654,6 +654,70 @@ func TestFromMessagesRequest_WithTools(t *testing.T) {
 	}
 }
 
+func TestFromMessagesRequest_ToolChoiceNoneDropsTools(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "test-model",
+		MaxTokens: 1024,
+		Messages:  []MessageParam{{Role: "user", Content: textContent("Hello")}},
+		Tools: []Tool{
+			{
+				Name:        "get_weather",
+				Description: "Get current weather",
+				InputSchema: json.RawMessage(`{"type":"object","properties":{"location":{"type":"string"}},"required":["location"]}`),
+			},
+		},
+		ToolChoice: &ToolChoice{Type: "none"},
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Tools) != 0 {
+		t.Fatalf("expected tool_choice: none to drop all tools, got %d", len(result.Tools))
+	}
+}
+
+func TestFromMessagesRequest_ToolChoiceOtherKeepsTools(t *testing.T) {
+	cases := []struct {
+		name       string
+		toolChoice *ToolChoice
+	}{
+		{name: "nil", toolChoice: nil},
+		{name: "auto", toolChoice: &ToolChoice{Type: "auto"}},
+		{name: "any", toolChoice: &ToolChoice{Type: "any"}},
+		{name: "specific tool", toolChoice: &ToolChoice{Type: "tool", Name: "get_weather"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := MessagesRequest{
+				Model:     "test-model",
+				MaxTokens: 1024,
+				Messages:  []MessageParam{{Role: "user", Content: textContent("Hello")}},
+				Tools: []Tool{
+					{
+						Name:        "get_weather",
+						Description: "Get current weather",
+						InputSchema: json.RawMessage(`{"type":"object","properties":{"location":{"type":"string"}},"required":["location"]}`),
+					},
+				},
+				ToolChoice: tc.toolChoice,
+			}
+
+			result, err := FromMessagesRequest(req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if len(result.Tools) != 1 {
+				t.Fatalf("expected tool_choice %q to keep tools unchanged, got %d tools", tc.name, len(result.Tools))
+			}
+		})
+	}
+}
+
 func TestFromMessagesRequest_DropsCustomWebSearchWhenBuiltinPresent(t *testing.T) {
 	req := MessagesRequest{
 		Model:     "test-model",

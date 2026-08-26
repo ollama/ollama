@@ -116,11 +116,14 @@ type ChatCompletionRequest struct {
 	TopP             *float64        `json:"top_p"`
 	ResponseFormat   *ResponseFormat `json:"response_format"`
 	Tools            []api.Tool      `json:"tools"`
-	Reasoning        *Reasoning      `json:"reasoning,omitempty"`
-	ReasoningEffort  *string         `json:"reasoning_effort,omitempty"`
-	Logprobs         *bool           `json:"logprobs"`
-	TopLogprobs      int             `json:"top_logprobs"`
-	DebugRenderOnly  bool            `json:"_debug_render_only"`
+	// ToolChoice is either the string "none"/"auto"/"required" or an object
+	// forcing a specific function; only "none" is currently honored.
+	ToolChoice      any        `json:"tool_choice,omitempty"`
+	Reasoning       *Reasoning `json:"reasoning,omitempty"`
+	ReasoningEffort *string    `json:"reasoning_effort,omitempty"`
+	Logprobs        *bool      `json:"logprobs"`
+	TopLogprobs     int        `json:"top_logprobs"`
+	DebugRenderOnly bool       `json:"_debug_render_only"`
 }
 
 type ChatCompletion struct {
@@ -707,13 +710,21 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		return nil, err
 	}
 
+	tools := r.Tools
+	// tool_choice: "none" means the model must not call any tool this turn.
+	// The model has no mechanism of its own to honor that, so the only
+	// reliable way to enforce it is to not give it any tools to call.
+	if choice, ok := r.ToolChoice.(string); ok && choice == "none" {
+		tools = nil
+	}
+
 	return &api.ChatRequest{
 		Model:           r.Model,
 		Messages:        messages,
 		Format:          format,
 		Options:         options,
 		Stream:          &r.Stream,
-		Tools:           r.Tools,
+		Tools:           tools,
 		Think:           think,
 		Logprobs:        r.Logprobs != nil && *r.Logprobs,
 		TopLogprobs:     r.TopLogprobs,

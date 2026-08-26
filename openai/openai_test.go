@@ -110,6 +110,79 @@ func TestFromChatRequest_ReasoningEffort(t *testing.T) {
 	}
 }
 
+func TestFromChatRequest_ToolChoiceNoneDropsTools(t *testing.T) {
+	tools := []api.Tool{
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "get_weather",
+				Description: "Get current weather",
+			},
+		},
+	}
+
+	req := ChatCompletionRequest{
+		Model:      "test-model",
+		Messages:   []Message{{Role: "user", Content: "Hello"}},
+		Tools:      tools,
+		ToolChoice: "none",
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Tools) != 0 {
+		t.Fatalf("expected tool_choice: \"none\" to drop all tools, got %d", len(result.Tools))
+	}
+}
+
+func TestFromChatRequest_ToolChoiceOtherKeepsTools(t *testing.T) {
+	tools := []api.Tool{
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "get_weather",
+				Description: "Get current weather",
+			},
+		},
+	}
+
+	cases := []struct {
+		name       string
+		toolChoice any
+	}{
+		{name: "unset", toolChoice: nil},
+		{name: "auto", toolChoice: "auto"},
+		{name: "required", toolChoice: "required"},
+		{name: "specific function object", toolChoice: map[string]any{
+			"type":     "function",
+			"function": map[string]any{"name": "get_weather"},
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := ChatCompletionRequest{
+				Model:      "test-model",
+				Messages:   []Message{{Role: "user", Content: "Hello"}},
+				Tools:      tools,
+				ToolChoice: tc.toolChoice,
+			}
+
+			result, err := FromChatRequest(req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if len(result.Tools) != 1 {
+				t.Fatalf("expected tool_choice %q to keep tools unchanged, got %d tools", tc.name, len(result.Tools))
+			}
+		})
+	}
+}
+
 func TestFromChatRequest_WithImage(t *testing.T) {
 	imgData, _ := base64.StdEncoding.DecodeString(image)
 
