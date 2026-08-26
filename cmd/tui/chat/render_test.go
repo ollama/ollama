@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -2260,5 +2261,27 @@ func TestRenderMarkdownTablePreservesValidSeparator(t *testing.T) {
 	}
 	if !strings.Contains(plain, "Name") || !strings.Contains(plain, "Ollama") {
 		t.Fatalf("valid Markdown table was not rendered:\n%s", plain)
+	}
+}
+
+func TestRenderMarkdownTableStopsBeforeProse(t *testing.T) {
+	markdown := strings.Join([]string{
+		"| col | val |",
+		"| --- | --- |",
+		"| x | 1 |",
+		"Note: the `a | b` syntax pipes output.",
+	}, "\n")
+
+	plain := stripANSI(renderMarkdownForView(markdown, 70))
+	if !strings.Contains(plain, "Note: the a | b syntax pipes output.") {
+		t.Fatalf("prose after the table was reflowed into the grid:\n%s", plain)
+	}
+}
+
+func TestRenderMarkdownTableEscapedPipe(t *testing.T) {
+	cells := parseMarkdownTableRow(`| a \| b | c |`)
+	want := []string{"a | b", "c"}
+	if !slices.Equal(cells, want) {
+		t.Fatalf("parseMarkdownTableRow = %q, want %q", cells, want)
 	}
 }

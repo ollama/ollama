@@ -228,13 +228,21 @@ func renderMarkdownCodeLine(line string, width int) []string {
 }
 
 func renderMarkdownTable(lines []string, width int) ([]string, int) {
-	if len(lines) < 2 || !looksLikeMarkdownTableRow(lines[0]) || !isMarkdownTableSeparator(lines[1]) {
+	if len(lines) < 2 || !isMarkdownTableSeparator(lines[1]) {
+		return nil, 0
+	}
+	headerLeading, headerTrailing, ok := markdownTableRowShape(lines[0])
+	if !ok {
 		return nil, 0
 	}
 
 	var rows [][]string
 	consumed := 0
-	for consumed < len(lines) && looksLikeMarkdownTableRow(lines[consumed]) {
+	for consumed < len(lines) {
+		leading, trailing, ok := markdownTableRowShape(lines[consumed])
+		if !ok || leading != headerLeading || trailing != headerTrailing {
+			break
+		}
 		if consumed == 1 && isMarkdownTableSeparator(lines[consumed]) {
 			consumed++
 			continue
@@ -376,9 +384,16 @@ func markdownInlineWidth(cell string) int {
 	return width
 }
 
-func looksLikeMarkdownTableRow(line string) bool {
-	line = strings.TrimSpace(line)
-	return strings.Contains(line, "|") && strings.Count(line, "|") >= 1
+// markdownTableRowShape reports whether line is delimited by a leading and/or
+// trailing pipe, and whether it holds an unescaped pipe at all. Prose has
+// neither delimiter, so requiring the same shape as the header row keeps an
+// ordinary sentence that merely mentions a pipe out of the table grid.
+func markdownTableRowShape(line string) (leading, trailing, ok bool) {
+	cells := splitMarkdownTableCells(strings.TrimSpace(line))
+	if len(cells) < 2 {
+		return false, false, false
+	}
+	return cells[0] == "", cells[len(cells)-1] == "", true
 }
 
 func isMarkdownTableSeparator(line string) bool {
@@ -398,15 +413,35 @@ func isMarkdownTableSeparator(line string) bool {
 }
 
 func parseMarkdownTableRow(line string) []string {
-	line = strings.TrimSpace(line)
-	line = strings.TrimPrefix(line, "|")
-	line = strings.TrimSuffix(line, "|")
-	raw := strings.Split(line, "|")
-	cells := make([]string, 0, len(raw))
-	for _, cell := range raw {
-		cells = append(cells, strings.TrimSpace(cell))
+	cells := splitMarkdownTableCells(strings.TrimSpace(line))
+	// Leading and trailing pipes delimit the row, they do not open an empty cell.
+	if len(cells) > 1 && cells[0] == "" {
+		cells = cells[1:]
+	}
+	if len(cells) > 1 && cells[len(cells)-1] == "" {
+		cells = cells[:len(cells)-1]
 	}
 	return cells
+}
+
+// splitMarkdownTableCells splits a table row on unescaped pipes, turning the
+// GFM escape \| into a literal pipe within a cell.
+func splitMarkdownTableCells(line string) []string {
+	var cells []string
+	var cell strings.Builder
+	for i := 0; i < len(line); i++ {
+		switch {
+		case line[i] == '\\' && i+1 < len(line) && line[i+1] == '|':
+			cell.WriteByte('|')
+			i++
+		case line[i] == '|':
+			cells = append(cells, strings.TrimSpace(cell.String()))
+			cell.Reset()
+		default:
+			cell.WriteByte(line[i])
+		}
+	}
+	return append(cells, strings.TrimSpace(cell.String()))
 }
 
 func padPlainLine(line string, width int) string {
