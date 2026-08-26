@@ -92,6 +92,70 @@ type visionLayout struct {
 	delta     int32
 }
 
+// VisionAdapter exposes the shared Qwen3.5/Qwen 4 vision tower without
+// coupling another text architecture to this package's decoder internals.
+// The publisher uses the same tensor layout, image preprocessing, and MRoPE
+// layout for both families.
+type VisionAdapter struct {
+	// Model is exported so mlx.Collect traverses and pins every tower weight.
+	// An unexported wrapper field is invisible to the reflection collector.
+	Model *Model
+}
+
+type VisionAdapterConfig struct {
+	HiddenSize   int32
+	RopeDim      int32
+	RopeTheta    float32
+	MropeSection []int32
+	QuantGroup   int
+	QuantBits    int
+	QuantMode    string
+	TensorQuant  map[string]*model.TensorQuantInfo
+}
+
+// NewVisionAdapter returns nil when the config has no vision tower.
+func NewVisionAdapter(configData []byte, tensors map[string]*mlx.Array, cfg VisionAdapterConfig) (*VisionAdapter, error) {
+	mm, err := parseMultimodalConfig(configData)
+	if err != nil {
+		return nil, err
+	}
+	if mm.VisionConfig == nil {
+		return nil, nil
+	}
+	text := &Config{
+		HiddenSize:     cfg.HiddenSize,
+		RopeDim:        cfg.RopeDim,
+		RopeTheta:      cfg.RopeTheta,
+		MropeSection:   cfg.MropeSection,
+		QuantGroupSize: cfg.QuantGroup,
+		QuantBits:      cfg.QuantBits,
+		QuantMode:      cfg.QuantMode,
+		TensorQuant:    cfg.TensorQuant,
+	}
+	m := &Model{Config: text, MM: mm, Vision: mm.VisionConfig}
+	linears := model.NewLinearFactory(tensors, cfg.QuantGroup, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant)
+	if err := m.loadVisionWeights(tensors, linears); err != nil {
+		return nil, err
+	}
+	return &VisionAdapter{Model: m}, nil
+}
+
+func (a *VisionAdapter) PrepareMedia(segments []base.Segment) (*base.PreparedRequest, error) {
+	return a.Model.PrepareMedia(segments)
+}
+
+func (a *VisionAdapter) EncodeMedia(item *base.PreparedItem, data *mlx.Array) *mlx.Array {
+	return a.Model.EncodeMedia(item, data)
+}
+
+func (a *VisionAdapter) ScatterMedia(hidden *mlx.Array, b *batch.Batch, delta int) *mlx.Array {
+	return a.Model.scatterMedia(hidden, b, delta)
+}
+
+func (a *VisionAdapter) RopePositions(b *batch.Batch, length int32) []int32 {
+	return ropePositions(b, length)
+}
+
 // visionWeightRoot locates the tower's tensor prefix: the import pipeline
 // renames the reference's model.visual to vision_tower.
 func visionWeightRoot(tensors map[string]*mlx.Array) string {

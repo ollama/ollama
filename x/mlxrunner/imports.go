@@ -13,4 +13,5 @@ import (
 	_ "github.com/ollama/ollama/x/models/qwen3"
 	_ "github.com/ollama/ollama/x/models/qwen3_5"
 	_ "github.com/ollama/ollama/x/models/qwen3_5_moe"
+	_ "github.com/ollama/ollama/x/models/qwen4_exp"
 )
