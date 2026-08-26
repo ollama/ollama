@@ -20,11 +20,26 @@ func TestFetchClaudeDesktopModelsUsesAppAwareContract(t *testing.T) {
 		if got := r.URL.Query().Get("app"); got != "claude-desktop" {
 			t.Fatalf("app = %q, want claude-desktop", got)
 		}
-		_ = json.NewEncoder(w).Encode(api.ModelRecommendationsResponse{Recommendations: []api.ModelRecommendation{
-			{Model: "glm-5.2:cloud", Description: "GLM", MaxOutputTokens: 131_072, RequiredPlan: "pro"},
-			{Model: "deepseek-v4-pro", Description: "DeepSeek", MaxOutputTokens: 65_536, RequiredPlan: "pro"},
-			{Model: "qwen3.8:27b", Description: "Qwen", MaxOutputTokens: 131_072},
-		}})
+		_ = json.NewEncoder(w).Encode(api.ModelRecommendationsResponse{
+			Recommendations: []api.ModelRecommendation{
+				{Model: "glm-5.2:cloud", Description: "GLM", MaxOutputTokens: 131_072, RequiredPlan: "pro"},
+				{Model: "glm-5.3-flash:cloud", Description: "GLM Flash", MaxOutputTokens: 1_048_576, RequiredPlan: "pro"},
+				{Model: "gemma4:31b-cloud", Description: "Gemma", MaxOutputTokens: 262_144, RequiredPlan: "free"},
+				{Model: "deepseek-v4-pro", Description: "DeepSeek", MaxOutputTokens: 65_536, RequiredPlan: "pro"},
+				{Model: "qwen3.8:27b", Description: "Qwen", MaxOutputTokens: 131_072},
+			},
+			Mappings: &api.ModelRecommendationMappings{
+				Free: map[string]string{
+					"claude-sonnet-5": "gemma4:31b-cloud",
+				},
+				Paid: map[string]string{
+					"claude-opus-5":     "glm-5.2:cloud",
+					"claude-sonnet-5":   "glm-5.3-flash:cloud",
+					"unknown-route":     "deepseek-v4-pro",
+					"claude-sonnet-4-6": "missing-model:cloud",
+				},
+			},
+		})
 	}))
 	defer server.Close()
 
@@ -36,19 +51,30 @@ func TestFetchClaudeDesktopModelsUsesAppAwareContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := claudeDesktopModelNames(models), []string{"glm-5.2:cloud", "deepseek-v4-pro"}; !slices.Equal(got, want) {
+	if got, want := claudeDesktopModelNames(models), []string{"glm-5.2:cloud", "glm-5.3-flash:cloud", "gemma4:31b-cloud", "deepseek-v4-pro"}; !slices.Equal(got, want) {
 		t.Fatalf("models = %v, want %v", got, want)
 	}
-	if models[1].OllamaModel != "deepseek-v4-pro:cloud" || !models[1].Cloud {
-		t.Fatalf("cloud adapter = %+v", models[1])
+	if models[3].OllamaModel != "deepseek-v4-pro:cloud" || !models[3].Cloud {
+		t.Fatalf("cloud adapter = %+v", models[3])
 	}
-	if models[1].DisplayName != "deepseek-v4-pro:cloud" {
-		t.Fatalf("display name = %q, want exact model identifier", models[1].DisplayName)
+	if models[3].DisplayName != "deepseek-v4-pro:cloud" {
+		t.Fatalf("display name = %q, want exact model identifier", models[3].DisplayName)
 	}
 	for _, model := range models {
 		if !model.Recommended {
 			t.Fatalf("endpoint model %q was not marked as recommended", model.Name)
 		}
+	}
+	wantPaid := map[string]string{
+		"claude-opus-5":   "glm-5.2:cloud",
+		"claude-sonnet-5": "glm-5.3-flash:cloud",
+	}
+	if got := DefaultClaudeDesktopMappingsForModels(models, true); !maps.Equal(got, wantPaid) {
+		t.Fatalf("paid endpoint mappings = %v, want %v", got, wantPaid)
+	}
+	wantFree := map[string]string{"claude-sonnet-5": "gemma4:31b-cloud"}
+	if got := DefaultClaudeDesktopMappingsForModels(models, false); !maps.Equal(got, wantFree) {
+		t.Fatalf("free endpoint mappings = %v, want %v", got, wantFree)
 	}
 }
 
@@ -407,7 +433,7 @@ func TestDefaultClaudeDesktopMappingsUseCurrentCatalogRoutes(t *testing.T) {
 	wantPaid := map[string]string{
 		"claude-fable-5":            "kimi-k3:cloud",
 		"claude-opus-5":             "glm-5.2:cloud",
-		"claude-sonnet-5":           "glm-5.3-flash:cloud",
+		"claude-sonnet-5":           "deepseek-v4-flash:cloud",
 		"claude-haiku-4-5-20251001": "gemma4:31b-cloud",
 		"claude-sonnet-4-6":         "deepseek-v4-pro:cloud",
 	}

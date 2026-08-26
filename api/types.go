@@ -800,7 +800,14 @@ type ListResponse struct {
 
 // ModelRecommendationsResponse is the response from [Client.ModelRecommendationsExperimental].
 type ModelRecommendationsResponse struct {
-	Recommendations []ModelRecommendation `json:"recommendations"`
+	Recommendations []ModelRecommendation        `json:"recommendations"`
+	Mappings        *ModelRecommendationMappings `json:"mappings,omitempty"`
+}
+
+// ModelRecommendationMappings defines app-specific model routes by account tier.
+type ModelRecommendationMappings struct {
+	Free map[string]string `json:"free,omitempty"`
+	Paid map[string]string `json:"paid,omitempty"`
 }
 
 // ModelRecommendation is a single recommendation entry in [ModelRecommendationsResponse].

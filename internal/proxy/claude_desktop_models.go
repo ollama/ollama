@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"strings"
 
@@ -71,9 +72,18 @@ func DefaultClaudeDesktopMappings(fullAccess bool) map[string]string {
 // names to the exact Ollama routes in the current catalog. This preserves
 // server-owned aliases such as the current DeepSeek Flash revision.
 func DefaultClaudeDesktopMappingsForModels(available []ClaudeDesktopModel, fullAccess bool) map[string]string {
-	mappings := make(map[string]string, MaxClaudeDesktopModels)
 	wanted := map[string]string{
 		"claude-sonnet-5": "gemma4:31b-cloud",
+	}
+	for _, model := range available {
+		if model.defaultMappings == nil {
+			continue
+		}
+		wanted = model.defaultMappings.Free
+		if fullAccess {
+			wanted = model.defaultMappings.Paid
+		}
+		return resolveClaudeDesktopMappings(available, wanted)
 	}
 	if fullAccess {
 		wanted = map[string]string{
@@ -84,21 +94,15 @@ func DefaultClaudeDesktopMappingsForModels(available []ClaudeDesktopModel, fullA
 			"claude-sonnet-4-6":         "deepseek-v4-pro",
 		}
 	}
+	return resolveClaudeDesktopMappings(available, wanted)
+}
+
+func resolveClaudeDesktopMappings(available []ClaudeDesktopModel, wanted map[string]string) map[string]string {
+	mappings := make(map[string]string, len(wanted))
 	for _, model := range available {
 		for route, name := range wanted {
-			if model.Name == name {
+			if isClaudeDesktopRouteID(route) && (model.Name == name || model.OllamaModel == name) {
 				mappings[route] = model.OllamaModel
-			}
-		}
-	}
-	// Prefer the Ollama.com recommendation when it is present. The built-in
-	// DeepSeek mapping remains the offline fallback until the endpoint rolls
-	// GLM 5.3 Flash out to this app.
-	if fullAccess {
-		for _, model := range available {
-			if model.Name == "glm-5.3-flash:cloud" {
-				mappings["claude-sonnet-5"] = model.OllamaModel
-				break
 			}
 		}
 	}
@@ -118,6 +122,7 @@ type ClaudeDesktopModel struct {
 	Recommended      bool
 	AccountCloud     bool
 	entitlementKnown bool
+	defaultMappings  *api.ModelRecommendationMappings
 	gateway          gatewayModel
 }
 
@@ -160,6 +165,15 @@ func FetchClaudeDesktopModels(client *http.Client, req *http.Request) ([]ClaudeD
 	}
 	if len(cloudModels) == 0 {
 		return nil, errors.New("Claude Desktop recommendations contain no cloud models")
+	}
+	if payload.Mappings != nil {
+		mappings := &api.ModelRecommendationMappings{
+			Free: maps.Clone(payload.Mappings.Free),
+			Paid: maps.Clone(payload.Mappings.Paid),
+		}
+		for i := range cloudModels {
+			cloudModels[i].defaultMappings = mappings
+		}
 	}
 	return cloudModels, nil
 }
