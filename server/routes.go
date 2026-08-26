@@ -696,6 +696,13 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				}
 			} else if thinkingState != nil {
 				thinking, content := thinkingState.AddContent(cr.Content)
+				if cr.Done {
+					// The parser buffers partial tags; drain it so trailing
+					// content isn't dropped when generation stops mid-tag.
+					flushedThinking, flushedContent := thinkingState.Flush()
+					thinking += flushedThinking
+					content += flushedContent
+				}
 				res.Thinking = thinking
 				res.Response = content
 			}
@@ -2840,6 +2847,13 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 				if thinkingState != nil {
 					thinkingContent, remainingContent := thinkingState.AddContent(res.Message.Content)
+					if r.Done {
+						// The parser buffers partial tags; drain it so trailing
+						// content isn't dropped when generation stops mid-tag.
+						flushedThinking, flushedContent := thinkingState.Flush()
+						thinkingContent += flushedThinking
+						remainingContent += flushedContent
+					}
 					if thinkingContent == "" && remainingContent == "" && !r.Done {
 						// need to accumulate more to decide what to send
 						return
@@ -3140,7 +3154,8 @@ func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
 					ClosingTag: "</think>",
 				}
 				_, content := thinkingState.AddContent(msg.Content)
-				msgs[i].Content = content
+				_, flushed := thinkingState.Flush()
+				msgs[i].Content = content + flushed
 			}
 		}
 	}

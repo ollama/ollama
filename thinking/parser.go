@@ -73,6 +73,27 @@ func (s *Parser) AddContent(content string) (string, string) {
 	return thinkingSb.String(), remainingSb.String()
 }
 
+// Flush drains any content the parser is still buffering and reports it as
+// (thinking, content). AddContent buffers whenever the accumulated output is
+// still an ambiguous prefix of the opening tag or a partial closing tag, and
+// only drains that buffer on a later call. Callers must call Flush once the
+// stream is finished, otherwise those trailing bytes are never emitted.
+func (s *Parser) Flush() (string, string) {
+	acc := s.acc.String()
+	s.acc.Reset()
+	if acc == "" {
+		return "", ""
+	}
+	// A partial closing tag was buffered mid-thinking, so it is thinking text.
+	// Anything else was buffered before the opening tag was confirmed, which
+	// means thinking never started and the bytes are ordinary content.
+	if s.state == thinkingState_Thinking {
+		return acc, ""
+	}
+	s.state = thinkingState_ThinkingDone
+	return "", acc
+}
+
 // the additional bool return is true iff we should continue eating
 func eat(s *Parser) (string, string, bool) {
 	switch s.state {

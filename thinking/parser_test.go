@@ -285,3 +285,53 @@ func TestThinkingStreaming(t *testing.T) {
 		}
 	}
 }
+
+func TestFlush(t *testing.T) {
+	cases := []struct {
+		desc         string
+		inputs       []string
+		wantThinking string
+		wantContent  string
+	}{
+		{
+			desc:        "partial opening tag at end of stream",
+			inputs:      []string{"<thi"},
+			wantContent: "<thi",
+		},
+		{
+			desc:        "whitespace only",
+			inputs:      []string{"  "},
+			wantContent: "  ",
+		},
+		{
+			desc:         "partial closing tag at end of stream",
+			inputs:       []string{"<think>", "reasoning</"},
+			wantThinking: "</",
+		},
+		{
+			desc:   "nothing buffered after a complete thinking block",
+			inputs: []string{"<think>reasoning</think>answer"},
+		},
+		{
+			desc:   "nothing buffered when thinking was skipped",
+			inputs: []string{"answer"},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.desc, func(t *testing.T) {
+			parser := Parser{OpeningTag: "<think>", ClosingTag: "</think>"}
+			for _, input := range c.inputs {
+				parser.AddContent(input)
+			}
+			thinking, content := parser.Flush()
+			if thinking != c.wantThinking || content != c.wantContent {
+				t.Errorf("Flush() = (%q, %q), want (%q, %q)", thinking, content, c.wantThinking, c.wantContent)
+			}
+			// Flush must be idempotent: a second call has nothing left to drain.
+			if thinking, content := parser.Flush(); thinking != "" || content != "" {
+				t.Errorf("second Flush() = (%q, %q), want empty", thinking, content)
+			}
+		})
+	}
+}
