@@ -2535,9 +2535,19 @@ inline SIZE make_window_frame_size(HWND window, int width, int height,
   return {frame_width, frame_height};
 }
 
+inline bool is_dark_theme_enabled() {
+  constexpr auto *sub_key =
+      L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
+  reg_key key(HKEY_CURRENT_USER, sub_key, 0, KEY_READ);
+  if (!key.is_open()) {
+    // Default is light theme
+    return false;
+  }
+  return key.query_uint(L"AppsUseLightTheme", 1) == 0;
+}
+
 inline void apply_window_theme(HWND window) {
-  // Ollama uses a light-only application appearance.
-  constexpr bool dark_theme_enabled = false;
+  auto dark_theme_enabled = is_dark_theme_enabled();
 
   // Use "immersive dark mode" on systems that support it.
   // Changes the color of the window's title bar (light or dark).

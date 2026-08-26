@@ -105,14 +105,14 @@ function TitleBar({ onSignIn }: { onSignIn?: () => void }) {
 
   return (
     <header
-      className={`relative flex shrink-0 items-center justify-center bg-white ${isMacOS ? "h-[52px]" : "h-10"}`}
+      className={`relative flex shrink-0 items-center justify-center bg-white dark:bg-neutral-900 ${isMacOS ? "h-[52px]" : "h-10"}`}
       onDoubleClick={() => window.doubleClick?.()}
       onMouseDown={() => window.drag?.()}
     >
       {onSignIn && (
         <button
           type="button"
-          className="absolute inset-y-0 right-5 flex cursor-pointer items-center rounded-md px-2 text-sm font-normal leading-none text-neutral-500 hover:text-neutral-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
+          className="absolute inset-y-0 right-5 flex cursor-pointer items-center rounded-md px-2 text-sm font-normal leading-none text-neutral-500 hover:text-neutral-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 dark:text-neutral-400 dark:hover:text-neutral-100"
           onClick={onSignIn}
           onMouseDown={(event) => event.stopPropagation()}
         >
@@ -137,8 +137,8 @@ function OnboardingIcon({ compact = false }: { compact?: boolean }) {
 
 function OnboardingCard({ children }: { children: ReactNode }) {
   return (
-    <section className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto bg-white px-6 pb-10 pt-0">
-      <div className="flex w-full max-w-[760px] flex-col items-center justify-center bg-white px-10 py-6 text-center">
+    <section className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto bg-white px-6 pb-10 pt-0 dark:bg-neutral-900">
+      <div className="flex w-full max-w-[760px] flex-col items-center justify-center bg-white px-10 py-6 text-center dark:bg-neutral-900">
         {children}
       </div>
     </section>
@@ -173,7 +173,7 @@ export function IntroScreen({
   onRetryCompletion?: () => void;
 }) {
   return (
-    <main className="flex h-screen w-full flex-col overflow-hidden bg-white text-neutral-950">
+    <main className="flex h-screen w-full flex-col overflow-hidden bg-white text-neutral-950 dark:bg-neutral-900 dark:text-neutral-100">
       <TitleBar />
 
       <section className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-6 pb-10">
@@ -189,7 +189,7 @@ export function IntroScreen({
               Welcome to Ollama!
             </h1>
           </div>
-          <p className="mt-4 max-w-[380px] text-sm leading-6 text-neutral-500">
+          <p className="mt-4 max-w-[380px] text-sm leading-6 text-neutral-500 dark:text-neutral-400">
             Run open models with your coding agents so you can spend less while
             keeping your data private.
           </p>
@@ -199,12 +199,12 @@ export function IntroScreen({
 
               return (
                 <div key={feature.title} className="flex items-start gap-4">
-                  <Icon className="mt-0.5 h-7 w-7 shrink-0 stroke-[1.5] text-neutral-700" />
+                  <Icon className="mt-0.5 h-7 w-7 shrink-0 stroke-[1.5] text-neutral-700 dark:text-neutral-300" />
                   <div>
-                    <h2 className="text-sm font-medium text-neutral-950">
+                    <h2 className="text-sm font-medium text-neutral-950 dark:text-neutral-100">
                       {feature.title}
                     </h2>
-                    <p className="mt-0.5 text-[13px] leading-5 text-neutral-500">
+                    <p className="mt-0.5 text-[13px] leading-5 text-neutral-500 dark:text-neutral-400">
                       {feature.description}
                     </p>
                   </div>
@@ -215,7 +215,7 @@ export function IntroScreen({
 
           <button
             type="button"
-            className="mt-8 flex h-11 w-full max-w-[240px] cursor-pointer items-center justify-center rounded-full bg-neutral-900 px-5 font-sans text-sm font-normal text-white transition-colors hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
+            className="mt-8 flex h-11 w-full max-w-[240px] cursor-pointer items-center justify-center rounded-full bg-neutral-900 px-5 font-sans text-sm font-normal text-white transition-colors hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 dark:bg-white dark:text-neutral-950 dark:hover:bg-neutral-100"
             onClick={onContinue}
           >
             Continue
@@ -224,7 +224,7 @@ export function IntroScreen({
           {completionError && onRetryCompletion && (
             <button
               type="button"
-              className="mt-2 cursor-pointer rounded-md px-3 py-1 text-sm font-normal text-neutral-600 underline decoration-neutral-300 underline-offset-4 hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
+              className="mt-2 cursor-pointer rounded-md px-3 py-1 text-sm font-normal text-neutral-600 underline decoration-neutral-300 underline-offset-4 hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 dark:text-neutral-400 dark:decoration-neutral-600 dark:hover:text-neutral-100"
               onClick={onRetryCompletion}
             >
               Try again
@@ -263,24 +263,24 @@ export function WelcomeScreen({
   onRetryCompletion,
 }: WelcomeScreenProps) {
   return (
-    <main className="flex min-h-screen w-full flex-col bg-white text-neutral-950">
+    <main className="flex min-h-screen w-full flex-col bg-white text-neutral-950 dark:bg-neutral-900 dark:text-neutral-100">
       <TitleBar onSignIn={isAuthenticated ? undefined : onSignIn} />
       <OnboardingCard>
         <OnboardingIcon />
         <h1 className="mt-7 font-rounded text-2xl font-medium leading-8">
           Create an account
         </h1>
-        <p className="mt-3 max-w-[400px] text-sm leading-6 text-neutral-400">
+        <p className="mt-3 max-w-[400px] text-sm leading-6 text-neutral-400 dark:text-neutral-500">
           Create your account for access to faster, larger open models.
         </p>
-        <p className="mt-1 max-w-[400px] text-sm leading-6 text-neutral-400">
+        <p className="mt-1 max-w-[400px] text-sm leading-6 text-neutral-400 dark:text-neutral-500">
           Your data is never logged or trained on.
         </p>
 
         <div className="mt-7 flex w-full max-w-[240px] flex-col items-center">
           <button
             type="button"
-            className="flex h-11 w-full cursor-pointer items-center justify-center rounded-full bg-neutral-900 px-5 font-sans text-sm font-normal text-white transition-colors hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait disabled:opacity-70"
+            className="flex h-11 w-full cursor-pointer items-center justify-center rounded-full bg-neutral-900 px-5 font-sans text-sm font-normal text-white transition-colors hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait disabled:opacity-70 dark:bg-white dark:text-neutral-950 dark:hover:bg-neutral-100"
             onClick={onSignUp}
             disabled={isSigningIn}
             aria-busy={isSigningIn}
@@ -289,7 +289,7 @@ export function WelcomeScreen({
           </button>
           <button
             type="button"
-            className="mt-2 cursor-pointer rounded-md px-3 py-2 text-sm font-normal text-neutral-600 underline decoration-neutral-300 underline-offset-4 hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
+            className="mt-2 cursor-pointer rounded-md px-3 py-2 text-sm font-normal text-neutral-600 underline decoration-neutral-300 underline-offset-4 hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 dark:text-neutral-400 dark:decoration-neutral-600 dark:hover:text-neutral-100"
             onClick={onLocal}
           >
             No thanks, I&apos;ll use Ollama locally
@@ -298,7 +298,7 @@ export function WelcomeScreen({
           {completionError && onRetryCompletion && (
             <button
               type="button"
-              className="mt-2 cursor-pointer rounded-md px-3 py-1 text-sm font-normal text-neutral-600 underline decoration-neutral-300 underline-offset-4 hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
+              className="mt-2 cursor-pointer rounded-md px-3 py-1 text-sm font-normal text-neutral-600 underline decoration-neutral-300 underline-offset-4 hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 dark:text-neutral-400 dark:decoration-neutral-600 dark:hover:text-neutral-100"
               onClick={onRetryCompletion}
             >
               Try again
@@ -315,7 +315,7 @@ export function RunOllamaScreen({
   onRetryCompletion,
 }: RunOllamaScreenProps) {
   return (
-    <main className="flex min-h-screen w-full flex-col bg-white text-neutral-950">
+    <main className="flex min-h-screen w-full flex-col bg-white text-neutral-950 dark:bg-neutral-900 dark:text-neutral-100">
       <TitleBar />
       <OnboardingCard>
         <OnboardingIcon compact />
@@ -323,7 +323,7 @@ export function RunOllamaScreen({
           Run Ollama
         </h1>
 
-        <div className="mt-6 grid h-12 w-full max-w-[330px] grid-cols-[minmax(0,1fr)_32px] items-center rounded-full bg-neutral-100 px-4 pr-3">
+        <div className="mt-6 grid h-12 w-full max-w-[330px] grid-cols-[minmax(0,1fr)_32px] items-center rounded-full bg-neutral-100 px-4 pr-3 dark:bg-neutral-800">
           <code className="min-w-0 truncate text-left font-mono text-sm">
             {FIRST_MODEL_COMMAND}
           </code>
@@ -331,11 +331,11 @@ export function RunOllamaScreen({
             content={FIRST_MODEL_COMMAND}
             size="md"
             title="Copy command to clipboard"
-            className="shrink-0 text-neutral-400 hover:!bg-transparent hover:!text-neutral-400 dark:hover:!bg-transparent"
+            className="shrink-0 text-neutral-400 hover:!bg-transparent hover:!text-neutral-400 dark:text-neutral-500 dark:hover:!bg-transparent dark:hover:!text-neutral-500"
           />
         </div>
 
-        <p className="mt-3 max-w-xs text-[13px] leading-5 text-neutral-400">
+        <p className="mt-3 max-w-xs text-[13px] leading-5 text-neutral-400 dark:text-neutral-500">
           Run this command in your terminal to get started.
         </p>
 
@@ -343,7 +343,7 @@ export function RunOllamaScreen({
         {completionError && (
           <button
             type="button"
-            className="mt-2 cursor-pointer rounded-md px-3 py-1 text-sm font-normal text-neutral-600 underline decoration-neutral-300 underline-offset-4 hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
+            className="mt-2 cursor-pointer rounded-md px-3 py-1 text-sm font-normal text-neutral-600 underline decoration-neutral-300 underline-offset-4 hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 dark:text-neutral-400 dark:decoration-neutral-600 dark:hover:text-neutral-100"
             onClick={onRetryCompletion}
           >
             Try again
@@ -360,13 +360,22 @@ function LaunchCommandIcon({ item }: { item: IntegrationStatus }) {
   return (
     <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-transparent">
       {icon ? (
-        <img
-          src={icon.src}
-          alt=""
-          className={`${icon.className ?? "h-7 w-7"} rounded-sm object-contain`}
-        />
+        <>
+          <img
+            src={icon.src}
+            alt=""
+            className={`${icon.className ?? "h-7 w-7"} rounded-sm object-contain ${icon.darkSrc ? "dark:hidden" : ""}`}
+          />
+          {icon.darkSrc && (
+            <img
+              src={icon.darkSrc}
+              alt=""
+              className={`${icon.className ?? "h-7 w-7"} hidden rounded-sm object-contain dark:block`}
+            />
+          )}
+        </>
       ) : (
-        <CommandLineIcon className="h-6 w-6 stroke-[1.5] text-neutral-700" />
+        <CommandLineIcon className="h-6 w-6 stroke-[1.5] text-neutral-700 dark:text-neutral-300" />
       )}
     </div>
   );
@@ -374,13 +383,13 @@ function LaunchCommandIcon({ item }: { item: IntegrationStatus }) {
 
 export function ClaudeConnectedIntro({ onDone }: { onDone: () => void }) {
   return (
-    <div className="claude-connected-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-6">
+    <div className="claude-connected-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-6 dark:bg-black/50">
       <section
         role="dialog"
         aria-modal="true"
         aria-labelledby="claude-connected-title"
         aria-describedby="claude-connected-description"
-        className="claude-connected-dialog relative w-full max-w-md overflow-hidden rounded-2xl bg-white font-sans shadow-2xl ring-1 ring-black/10"
+        className="claude-connected-dialog relative w-full max-w-md overflow-hidden rounded-2xl bg-white font-sans shadow-2xl ring-1 ring-black/10 dark:bg-neutral-800 dark:ring-white/10"
       >
         <img
           src="/claude-connected.png"
@@ -393,13 +402,13 @@ export function ClaudeConnectedIntro({ onDone }: { onDone: () => void }) {
         <div className="p-6">
           <h2
             id="claude-connected-title"
-            className="font-rounded text-lg font-medium leading-6 text-neutral-950"
+            className="font-rounded text-lg font-medium leading-6 text-neutral-950 dark:text-neutral-100"
           >
             Easily access Ollama models in your Claude
           </h2>
           <p
             id="claude-connected-description"
-            className="mt-2 text-[13px] leading-5 text-neutral-500"
+            className="mt-2 text-[13px] leading-5 text-neutral-500 dark:text-neutral-400"
           >
             Ollama models now show up in Claude so you can pick the right model
             for the task.
@@ -408,7 +417,7 @@ export function ClaudeConnectedIntro({ onDone }: { onDone: () => void }) {
             <button
               type="button"
               autoFocus
-              className="rounded-full bg-neutral-100 px-6 py-2 text-sm font-normal text-neutral-950 transition-colors hover:bg-neutral-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
+              className="rounded-full bg-neutral-100 px-6 py-2 text-sm font-normal text-neutral-950 transition-colors hover:bg-neutral-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 dark:bg-white dark:hover:bg-neutral-100"
               onClick={onDone}
             >
               Continue
@@ -931,19 +940,21 @@ export function ConnectAppsScreen({
         <div className="flex min-w-0 items-center gap-3">
           <LaunchCommandIcon item={item} />
           <div className="min-w-0">
-            <p className="text-sm font-medium text-neutral-950">{item.name}</p>
-            <p className="truncate text-xs leading-5 text-neutral-500">
+            <p className="text-sm font-medium text-neutral-950 dark:text-neutral-100">
+              {item.name}
+            </p>
+            <p className="truncate text-xs leading-5 text-neutral-500 dark:text-neutral-400">
               {item.description}
             </p>
           </div>
         </div>
-        <div className="ml-auto flex min-w-0 shrink-0 items-center overflow-hidden rounded-lg bg-neutral-100 pl-3">
-          <code className="block flex-1 whitespace-nowrap py-2 pr-2 font-mono text-[13px] text-neutral-500">
+        <div className="ml-auto flex min-w-0 shrink-0 items-center overflow-hidden rounded-lg bg-neutral-100 pl-3 dark:bg-neutral-800">
+          <code className="block flex-1 whitespace-nowrap py-2 pr-2 font-mono text-[13px] text-neutral-500 dark:text-neutral-400">
             {item.command}
           </code>
           <button
             type="button"
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-neutral-500 transition-colors hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-neutral-500 transition-colors hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 dark:text-neutral-400 dark:hover:text-neutral-100"
             onClick={() => copyLaunchCommand(item)}
             aria-label={
               copied
@@ -963,16 +974,16 @@ export function ConnectAppsScreen({
     );
   };
   const claudeRow = claudeIntegration ? (
-    <div className="flex min-h-18 items-center justify-between gap-4 bg-white px-4 py-3">
+    <div className="flex min-h-18 items-center justify-between gap-4 bg-white px-4 py-3 dark:bg-neutral-900">
       <div className="flex min-w-0 items-center gap-3">
         <LaunchCommandIcon item={claudeIntegration} />
         <div className="min-w-0">
-          <p className="text-sm font-medium text-neutral-950">
+          <p className="text-sm font-medium text-neutral-950 dark:text-neutral-100">
             {claudeIntegration.name}
           </p>
           <p
             role={claudeGuidance ? "alert" : undefined}
-            className="truncate text-xs leading-5 text-neutral-500"
+            className="truncate text-xs leading-5 text-neutral-500 dark:text-neutral-400"
           >
             {claudeGuidance ??
               (claudeConnected
@@ -996,7 +1007,7 @@ export function ConnectAppsScreen({
           <span
             role="status"
             aria-live="polite"
-            className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-neutral-500"
+            className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-neutral-500 dark:text-neutral-400"
           >
             {isConnectingClaude && (
               <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
@@ -1019,11 +1030,11 @@ export function ConnectAppsScreen({
           title={claudeConfigured ? "Disconnect" : "Connect"}
           disabled={isConnectingClaude}
           onClick={connectClaude}
-          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait disabled:opacity-50 ${claudeToggleConfigured ? "bg-neutral-950" : "bg-neutral-300"}`}
+          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait disabled:opacity-50 ${claudeToggleConfigured ? "bg-neutral-950 dark:bg-white" : "bg-neutral-300 dark:bg-neutral-700"}`}
         >
           <span
             aria-hidden="true"
-            className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${isConnectingClaude ? "animate-pulse" : ""} ${claudeToggleConfigured ? "translate-x-4.5" : "translate-x-0.5"}`}
+            className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${isConnectingClaude ? "animate-pulse" : ""} ${claudeToggleConfigured ? "translate-x-4.5 dark:bg-neutral-900" : "translate-x-0.5"}`}
           />
         </button>
       </div>
@@ -1031,7 +1042,7 @@ export function ConnectAppsScreen({
   ) : null;
 
   return (
-    <main className="flex min-h-0 w-full flex-1 flex-col overflow-hidden bg-white text-neutral-950">
+    <main className="flex min-h-0 w-full flex-1 flex-col overflow-hidden bg-white text-neutral-950 dark:bg-neutral-900 dark:text-neutral-100">
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain p-6">
         <section className="min-h-0 flex-1">
           <div className="mx-auto w-full max-w-4xl text-left">
@@ -1041,11 +1052,13 @@ export function ConnectAppsScreen({
                   <section aria-labelledby="desktop-heading">
                     <h2
                       id="desktop-heading"
-                      className="px-4 text-xs font-medium uppercase tracking-wider text-neutral-400"
+                      className="px-4 text-xs font-medium uppercase tracking-wider text-neutral-400 dark:text-neutral-500"
                     >
                       Desktop
                     </h2>
-                    <div className="mt-2 bg-white">{claudeRow}</div>
+                    <div className="mt-2 bg-white dark:bg-neutral-900">
+                      {claudeRow}
+                    </div>
                   </section>
                 )}
 
@@ -1053,11 +1066,11 @@ export function ConnectAppsScreen({
                   <section aria-labelledby="terminal-heading">
                     <h2
                       id="terminal-heading"
-                      className="px-4 text-xs font-medium uppercase tracking-wider text-neutral-400"
+                      className="px-4 text-xs font-medium uppercase tracking-wider text-neutral-400 dark:text-neutral-500"
                     >
                       Terminal
                     </h2>
-                    <div className="mt-2 bg-white">
+                    <div className="mt-2 bg-white dark:bg-neutral-900">
                       <div className="space-y-2">
                         {launchIntegrations.map(launchIntegrationRow)}
                       </div>
@@ -1066,7 +1079,7 @@ export function ConnectAppsScreen({
                 )}
 
                 {!claudeIntegration && launchIntegrations.length === 0 && (
-                  <p className="py-12 text-center text-sm text-neutral-400">
+                  <p className="py-12 text-center text-sm text-neutral-400 dark:text-neutral-500">
                     No apps found.
                   </p>
                 )}
@@ -1076,7 +1089,7 @@ export function ConnectAppsScreen({
                 Couldn&apos;t load integrations.
               </p>
             ) : (
-              <p className="mt-8 text-sm text-neutral-400">
+              <p className="mt-8 text-sm text-neutral-400 dark:text-neutral-500">
                 Checking integrations…
               </p>
             )}
