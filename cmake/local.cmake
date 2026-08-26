@@ -174,7 +174,10 @@ if(OLLAMA_MLX_BACKENDS)
     # ml-explore/mlx-c. Then bump MLX_C_VERSION and delete mlx/compat/.
     find_package(Git REQUIRED)
     set(OLLAMA_MLX_C_COMPAT_PATCH_COMMAND
-        ${GIT_EXECUTABLE} apply ${CMAKE_SOURCE_DIR}/mlx/compat/0001-mlx-c-regen-0.32.1.patch
+        ${CMAKE_COMMAND}
+            -DPATCH_DIR=${CMAKE_SOURCE_DIR}/mlx/compat
+            -DPATCH_LABEL=mlx/compat
+            -P ${CMAKE_SOURCE_DIR}/cmake/apply-git-patches.cmake
         CACHE INTERNAL "MLX-C carry patch")
 
     if(DEFINED "FETCHCONTENT_SOURCE_DIR_MLX-C" AND NOT "${FETCHCONTENT_SOURCE_DIR_MLX-C}" STREQUAL "")

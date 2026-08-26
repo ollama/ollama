@@ -1,16 +1,21 @@
-# Idempotent patch applier used by compat.cmake.
+# Idempotent external-source patch applier.
 #
 # Invocation (from a CMake PATCH_COMMAND):
-#   cmake -DPATCH_DIR=<dir of *.patch> -P apply-patch.cmake
+#   cmake -DPATCH_DIR=<dir of *.patch> [-DPATCH_LABEL=<name>]
+#     -P cmake/apply-git-patches.cmake
 #
 # Every *.patch under PATCH_DIR is applied in numeric filename order in the
 # current working directory (which ExternalProject / FetchContent sets to the
 # fetched source's SOURCE_DIR). A patch already applied — detected via
 # `git apply --reverse --check` — is skipped. This makes re-configuring and
-# re-building safe.
+# re-building safe when the source directory outlives its CMake patch stamp.
 
 if(NOT DEFINED PATCH_DIR)
-    message(FATAL_ERROR "apply-patch.cmake: PATCH_DIR not set")
+    message(FATAL_ERROR "apply-git-patches.cmake: PATCH_DIR not set")
+endif()
+
+if(NOT DEFINED PATCH_LABEL)
+    set(PATCH_LABEL "external patches")
 endif()
 
 find_package(Git QUIET REQUIRED)
@@ -39,7 +44,7 @@ foreach(_patch_entry IN LISTS _patch_entries)
         OUTPUT_QUIET ERROR_QUIET
     )
     if(_reverse_check EQUAL 0)
-        message(STATUS "llama/compat: ${_patch_rel} already applied, skipping")
+        message(STATUS "${PATCH_LABEL}: ${_patch_rel} already applied, skipping")
         continue()
     endif()
 
@@ -51,10 +56,11 @@ foreach(_patch_entry IN LISTS _patch_entries)
     )
     if(NOT _apply_result EQUAL 0)
         message(FATAL_ERROR
-            "llama/compat: failed to apply ${_patch_rel}\n"
-            "This usually means the pinned llama.cpp source has changed. "
-            "Regenerate the patch against the pinned LLAMA_CPP_VERSION and retry.")
+            "${PATCH_LABEL}: failed to apply ${_patch_rel}\n"
+            "The pinned source is neither clean nor compatible with this patch. "
+            "Remove the retained source directory (${_patch_workdir}), or "
+            "regenerate the patch against the pinned source before retrying.")
     endif()
 
-    message(STATUS "llama/compat: applied ${_patch_rel}")
+    message(STATUS "${PATCH_LABEL}: applied ${_patch_rel}")
 endforeach()
