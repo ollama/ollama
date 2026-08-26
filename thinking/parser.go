@@ -161,6 +161,22 @@ func eat(s *Parser) (string, string, bool) {
 	}
 }
 
+// Flush drains any bytes AddContent is still holding back while it
+// disambiguates the opening or closing tag. Callers must invoke it once,
+// after the final AddContent call, when the stream ends (e.g. cr.Done):
+// AddContent has no other path to release those bytes, so without a Flush
+// call they are silently dropped.
+func (s *Parser) Flush() (thinking, content string) {
+	switch s.state {
+	case thinkingState_LookingForOpening:
+		content = s.acc.String()
+	case thinkingState_Thinking:
+		thinking = s.acc.String()
+	}
+	s.acc.Reset()
+	return thinking, content
+}
+
 // longest overlap between suffix of s and prefix of delim
 func overlap(s, delim string) int {
 	max := min(len(delim), len(s))
