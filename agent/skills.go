@@ -146,7 +146,8 @@ func (s Skill) resources() []string {
 // SkillCatalog contains valid skills and diagnostics for ignored invalid
 // entries, so one malformed skill cannot hide the rest.
 type SkillCatalog struct {
-	dir         string
+	// roots are the directories that were scanned, lowest-precedence first.
+	roots       []string
 	skills      map[string]Skill
 	diagnostics []error
 }
@@ -156,7 +157,7 @@ func DiscoverSkills(dir string) (*SkillCatalog, error) {
 	if err != nil {
 		return nil, err
 	}
-	catalog := &SkillCatalog{dir: dir, skills: make(map[string]Skill)}
+	catalog := &SkillCatalog{roots: []string{dir}, skills: make(map[string]Skill)}
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return catalog, nil
@@ -214,6 +215,9 @@ func LoadDefaultSkills(projectDir string) (*SkillCatalog, error) {
 		return nil, err
 	}
 	catalog := &SkillCatalog{skills: make(map[string]Skill)}
+	for _, root := range roots {
+		catalog.roots = append(catalog.roots, root.path)
+	}
 	bundled, err := bundledSkillCreator()
 	if err != nil {
 		return nil, err
@@ -649,11 +653,13 @@ func defaultSkillRoots(projectDir string) ([]skillRoot, error) {
 	return roots, nil
 }
 
+// Dir returns the single directory the catalog was built from, or "" when it
+// merges several roots and no one directory represents it.
 func (c *SkillCatalog) Dir() string {
-	if c == nil {
+	if c == nil || len(c.roots) != 1 {
 		return ""
 	}
-	return c.dir
+	return c.roots[0]
 }
 
 func (c *SkillCatalog) List() []Skill {
@@ -701,16 +707,19 @@ func (c *SkillCatalog) ExcludeNames(names []string) []string {
 }
 
 func (c *SkillCatalog) Load(name string) (Skill, error) {
+	if c == nil {
+		return Skill{}, errors.New("skills are unavailable")
+	}
 	name = strings.TrimSpace(name)
 	if !skillName.MatchString(name) {
 		return Skill{}, fmt.Errorf("invalid skill name %q", name)
 	}
-	if c == nil {
-		return Skill{}, errors.New("skills are unavailable")
-	}
 	skill, ok := c.skills[name]
 	if !ok {
-		return Skill{}, fmt.Errorf("skill %q not found in %s", name, c.dir)
+		if len(c.roots) == 0 {
+			return Skill{}, fmt.Errorf("skill %q not found", name)
+		}
+		return Skill{}, fmt.Errorf("skill %q not found in %s", name, strings.Join(c.roots, ", "))
 	}
 	return skill, nil
 }
