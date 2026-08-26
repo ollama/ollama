@@ -105,14 +105,14 @@ function TitleBar({ onSignIn }: { onSignIn?: () => void }) {
 
   return (
     <header
-      className={`relative flex shrink-0 items-center justify-center bg-white dark:bg-neutral-900 ${isMacOS ? "h-[52px]" : "h-10"}`}
+      className={`relative flex shrink-0 items-center justify-center bg-white ${isMacOS ? "h-[52px]" : "h-10"}`}
       onDoubleClick={() => window.doubleClick?.()}
       onMouseDown={() => window.drag?.()}
     >
       {onSignIn && (
         <button
           type="button"
-          className="absolute inset-y-0 right-5 flex cursor-pointer items-center rounded-md px-2 text-sm font-normal leading-none text-neutral-500 hover:text-neutral-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 dark:text-neutral-400 dark:hover:text-neutral-100"
+          className="absolute inset-y-0 right-5 flex cursor-pointer items-center rounded-md px-2 text-sm font-normal leading-none text-neutral-500 hover:text-neutral-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
           onClick={onSignIn}
           onMouseDown={(event) => event.stopPropagation()}
         >
@@ -137,8 +137,8 @@ function OnboardingIcon({ compact = false }: { compact?: boolean }) {
 
 function OnboardingCard({ children }: { children: ReactNode }) {
   return (
-    <section className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto bg-white px-6 pb-10 pt-0 dark:bg-neutral-900">
-      <div className="flex w-full max-w-[760px] flex-col items-center justify-center bg-white px-10 py-6 text-center dark:bg-neutral-900">
+    <section className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto bg-white px-6 pb-10 pt-0">
+      <div className="flex w-full max-w-[760px] flex-col items-center justify-center bg-white px-10 py-6 text-center">
         {children}
       </div>
     </section>
@@ -173,7 +173,7 @@ export function IntroScreen({
   onRetryCompletion?: () => void;
 }) {
   return (
-    <main className="flex h-screen w-full flex-col overflow-hidden bg-white text-neutral-950 dark:bg-neutral-900 dark:text-neutral-100">
+    <main className="light-only flex h-screen w-full flex-col overflow-hidden bg-white text-neutral-950">
       <TitleBar />
 
       <section className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-6 pb-10">
@@ -182,14 +182,14 @@ export function IntroScreen({
             <img
               src="/hello.png"
               alt="Ollama waving"
-              className="h-[72px] w-[72px] select-none object-contain dark:invert"
+              className="h-[72px] w-[72px] select-none object-contain"
               draggable={false}
             />
             <h1 className="font-rounded text-2xl font-medium leading-8">
               Welcome to Ollama!
             </h1>
           </div>
-          <p className="mt-4 max-w-[380px] text-sm leading-6 text-neutral-500 dark:text-neutral-400">
+          <p className="mt-4 max-w-[380px] text-sm leading-6 text-neutral-500">
             Run open models with your coding agents so you can spend less while
             keeping your data private.
           </p>
@@ -199,12 +199,12 @@ export function IntroScreen({
 
               return (
                 <div key={feature.title} className="flex items-start gap-4">
-                  <Icon className="mt-0.5 h-7 w-7 shrink-0 stroke-[1.5] text-neutral-700 dark:text-neutral-300" />
+                  <Icon className="mt-0.5 h-7 w-7 shrink-0 stroke-[1.5] text-neutral-700" />
                   <div>
-                    <h2 className="text-sm font-medium text-neutral-950 dark:text-neutral-100">
+                    <h2 className="text-sm font-medium text-neutral-950">
                       {feature.title}
                     </h2>
-                    <p className="mt-0.5 text-[13px] leading-5 text-neutral-500 dark:text-neutral-400">
+                    <p className="mt-0.5 text-[13px] leading-5 text-neutral-500">
                       {feature.description}
                     </p>
                   </div>
@@ -215,7 +215,7 @@ export function IntroScreen({
 
           <button
             type="button"
-            className="mt-8 flex h-11 w-full max-w-[240px] cursor-pointer items-center justify-center rounded-full bg-neutral-900 px-5 font-sans text-sm font-normal text-white transition-colors hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 dark:bg-white dark:text-neutral-950 dark:hover:bg-neutral-100"
+            className="mt-8 flex h-11 w-full max-w-[240px] cursor-pointer items-center justify-center rounded-full bg-neutral-900 px-5 font-sans text-sm font-normal text-white transition-colors hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
             onClick={onContinue}
           >
             Continue
@@ -224,7 +224,7 @@ export function IntroScreen({
           {completionError && onRetryCompletion && (
             <button
               type="button"
-              className="mt-2 cursor-pointer rounded-md px-3 py-1 text-sm font-normal text-neutral-600 underline decoration-neutral-300 underline-offset-4 hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 dark:text-neutral-400 dark:decoration-neutral-600 dark:hover:text-neutral-100"
+              className="mt-2 cursor-pointer rounded-md px-3 py-1 text-sm font-normal text-neutral-600 underline decoration-neutral-300 underline-offset-4 hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
               onClick={onRetryCompletion}
             >
               Try again
@@ -263,24 +263,24 @@ export function WelcomeScreen({
   onRetryCompletion,
 }: WelcomeScreenProps) {
   return (
-    <main className="flex min-h-screen w-full flex-col bg-white text-neutral-950 dark:bg-neutral-900 dark:text-neutral-100">
+    <main className="light-only flex min-h-screen w-full flex-col bg-white text-neutral-950">
       <TitleBar onSignIn={isAuthenticated ? undefined : onSignIn} />
       <OnboardingCard>
         <OnboardingIcon />
         <h1 className="mt-7 font-rounded text-2xl font-medium leading-8">
           Create an account
         </h1>
-        <p className="mt-3 max-w-[400px] text-sm leading-6 text-neutral-400 dark:text-neutral-500">
+        <p className="mt-3 max-w-[400px] text-sm leading-6 text-neutral-400">
           Create your account for access to faster, larger open models.
         </p>
-        <p className="mt-1 max-w-[400px] text-sm leading-6 text-neutral-400 dark:text-neutral-500">
+        <p className="mt-1 max-w-[400px] text-sm leading-6 text-neutral-400">
           Your data is never logged or trained on.
         </p>
 
         <div className="mt-7 flex w-full max-w-[240px] flex-col items-center">
           <button
             type="button"
-            className="flex h-11 w-full cursor-pointer items-center justify-center rounded-full bg-neutral-900 px-5 font-sans text-sm font-normal text-white transition-colors hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait disabled:opacity-70 dark:bg-white dark:text-neutral-950 dark:hover:bg-neutral-100"
+            className="flex h-11 w-full cursor-pointer items-center justify-center rounded-full bg-neutral-900 px-5 font-sans text-sm font-normal text-white transition-colors hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait disabled:opacity-70"
             onClick={onSignUp}
             disabled={isSigningIn}
             aria-busy={isSigningIn}
@@ -289,7 +289,7 @@ export function WelcomeScreen({
           </button>
           <button
             type="button"
-            className="mt-2 cursor-pointer rounded-md px-3 py-2 text-sm font-normal text-neutral-600 underline decoration-neutral-300 underline-offset-4 hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 dark:text-neutral-400 dark:decoration-neutral-600 dark:hover:text-neutral-100"
+            className="mt-2 cursor-pointer rounded-md px-3 py-2 text-sm font-normal text-neutral-600 underline decoration-neutral-300 underline-offset-4 hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
             onClick={onLocal}
           >
             No thanks, I&apos;ll use Ollama locally
@@ -298,7 +298,7 @@ export function WelcomeScreen({
           {completionError && onRetryCompletion && (
             <button
               type="button"
-              className="mt-2 cursor-pointer rounded-md px-3 py-1 text-sm font-normal text-neutral-600 underline decoration-neutral-300 underline-offset-4 hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 dark:text-neutral-400 dark:decoration-neutral-600 dark:hover:text-neutral-100"
+              className="mt-2 cursor-pointer rounded-md px-3 py-1 text-sm font-normal text-neutral-600 underline decoration-neutral-300 underline-offset-4 hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
               onClick={onRetryCompletion}
             >
               Try again
@@ -315,7 +315,7 @@ export function RunOllamaScreen({
   onRetryCompletion,
 }: RunOllamaScreenProps) {
   return (
-    <main className="flex min-h-screen w-full flex-col bg-white text-neutral-950 dark:bg-neutral-900 dark:text-neutral-100">
+    <main className="light-only flex min-h-screen w-full flex-col bg-white text-neutral-950">
       <TitleBar />
       <OnboardingCard>
         <OnboardingIcon compact />
@@ -323,7 +323,7 @@ export function RunOllamaScreen({
           Run Ollama
         </h1>
 
-        <div className="mt-6 grid h-12 w-full max-w-[330px] grid-cols-[minmax(0,1fr)_32px] items-center rounded-full bg-neutral-100 px-4 pr-3 dark:bg-neutral-800">
+        <div className="mt-6 grid h-12 w-full max-w-[330px] grid-cols-[minmax(0,1fr)_32px] items-center rounded-full bg-neutral-100 px-4 pr-3">
           <code className="min-w-0 truncate text-left font-mono text-sm">
             {FIRST_MODEL_COMMAND}
           </code>
@@ -331,11 +331,11 @@ export function RunOllamaScreen({
             content={FIRST_MODEL_COMMAND}
             size="md"
             title="Copy command to clipboard"
-            className="shrink-0 text-neutral-400 hover:!bg-transparent hover:!text-neutral-400 dark:text-neutral-500 dark:hover:!bg-transparent dark:hover:!text-neutral-500"
+            className="shrink-0 text-neutral-400 hover:!bg-transparent hover:!text-neutral-400"
           />
         </div>
 
-        <p className="mt-3 max-w-xs text-[13px] leading-5 text-neutral-400 dark:text-neutral-500">
+        <p className="mt-3 max-w-xs text-[13px] leading-5 text-neutral-400">
           Run this command in your terminal to get started.
         </p>
 
@@ -343,7 +343,7 @@ export function RunOllamaScreen({
         {completionError && (
           <button
             type="button"
-            className="mt-2 cursor-pointer rounded-md px-3 py-1 text-sm font-normal text-neutral-600 underline decoration-neutral-300 underline-offset-4 hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 dark:text-neutral-400 dark:decoration-neutral-600 dark:hover:text-neutral-100"
+            className="mt-2 cursor-pointer rounded-md px-3 py-1 text-sm font-normal text-neutral-600 underline decoration-neutral-300 underline-offset-4 hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
             onClick={onRetryCompletion}
           >
             Try again

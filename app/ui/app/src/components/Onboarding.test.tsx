@@ -33,7 +33,8 @@ describe("Onboarding", () => {
     expect(html.indexOf('alt="Ollama waving"')).toBeLessThan(
       html.indexOf("Welcome to Ollama!"),
     );
-    expect(html).toMatch(/alt="Ollama waving" class="[^"]*dark:invert/);
+    expect(html).toMatch(/<main class="light-only [^"]*bg-white/);
+    expect(html).not.toMatch(/alt="Ollama waving" class="[^"]*dark:/);
     expect(html).toContain(
       "Run open models with your coding agents so you can spend less while keeping your data private.",
     );
@@ -805,7 +806,7 @@ describe("Onboarding", () => {
     );
 
     expect(html).toContain("Create an account");
-    expect(html).toMatch(/<svg[^>]*class="[^"]*dark:invert/);
+    expect(html).toMatch(/<main class="light-only [^"]*bg-white/);
     expect(html).toContain(
       "Create your account for access to faster, larger open models.",
     );
@@ -842,6 +843,7 @@ describe("Onboarding", () => {
     );
 
     expect(html).toContain("Run Ollama");
+    expect(html).toMatch(/<main class="light-only [^"]*bg-white/);
     expect(html).toContain(FIRST_MODEL_COMMAND);
     expect(html).not.toContain("Finish");
     expect(html).not.toContain("Sign in");

@@ -2,6 +2,14 @@
 @plugin "@tailwindcss/typography";
 @import "katex/dist/katex.min.css";
 
+@custom-variant dark {
+  @media (prefers-color-scheme: dark) {
+    &:not(.light-only, .light-only *) {
+      @slot;
+    }
+  }
+}
+
 @theme {
   --font-sans: ui-sans-serif, system-ui, "Segoe UI", sans-serif;
   --font-rounded:
@@ -11,6 +19,10 @@
 @layer base {
   :root {
     color-scheme: light dark;
+  }
+
+  .light-only {
+    color-scheme: light;
   }
 
   a[href],
