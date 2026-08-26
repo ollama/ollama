@@ -169,6 +169,28 @@ func TestOrigins(t *testing.T) {
 			"vscode-webview://*",
 			"vscode-file://*",
 		}},
+		{"http://a.example, http://b.example ,,\thttp://c.example\t", []string{
+			"http://a.example",
+			"http://b.example",
+			"http://c.example",
+			"http://localhost",
+			"https://localhost",
+			"http://localhost:*",
+			"https://localhost:*",
+			"http://127.0.0.1",
+			"https://127.0.0.1",
+			"http://127.0.0.1:*",
+			"https://127.0.0.1:*",
+			"http://0.0.0.0",
+			"https://0.0.0.0",
+			"http://0.0.0.0:*",
+			"https://0.0.0.0:*",
+			"app://*",
+			"file://*",
+			"tauri://*",
+			"vscode-webview://*",
+			"vscode-file://*",
+		}},
 	}
 	for _, tt := range cases {
 		t.Run(tt.value, func(t *testing.T) {

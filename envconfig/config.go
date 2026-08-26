@@ -85,7 +85,11 @@ func ConnectableHost() *url.URL {
 // AllowedOrigins returns a list of allowed origins. AllowedOrigins can be configured via the OLLAMA_ORIGINS environment variable.
 func AllowedOrigins() (origins []string) {
 	if s := Var("OLLAMA_ORIGINS"); s != "" {
-		origins = strings.Split(s, ",")
+		for o := range strings.SplitSeq(s, ",") {
+			if o = strings.TrimSpace(o); o != "" {
+				origins = append(origins, o)
+			}
+		}
 	}
 
 	for _, origin := range []string{"localhost", "127.0.0.1", "0.0.0.0"} {
