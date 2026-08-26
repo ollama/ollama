@@ -24,10 +24,21 @@ jobs:
       changed: ${{ steps.changes.outputs.changed }}
       app_changed: ${{ steps.changes.outputs.app_changed }}
       enginehash: ${{ steps.changes.outputs.enginehash }}
+      stable_tag: ${{ steps.stable.outputs.tag }}
+      stable_darwin_url: ${{ steps.stable.outputs.darwin_url }}
+      stable_darwin_sha256: ${{ steps.stable.outputs.darwin_sha256 }}
+      stable_windows_amd64_url: ${{ steps.stable.outputs.windows_amd64_url }}
+      stable_windows_amd64_sha256: ${{ steps.stable.outputs.windows_amd64_sha256 }}
+      stable_windows_arm64_url: ${{ steps.stable.outputs.windows_arm64_url }}
+      stable_windows_arm64_sha256: ${{ steps.stable.outputs.windows_arm64_sha256 }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
       - id: changes
         run: |
           changed() {
@@ -55,12 +66,73 @@ jobs:
             'x/mlxrunner/xgrammar/native/**' \
             'x/mlxrunner/xgrammar/native/**/*' \
             '.github/**/*') | tee -a $GITHUB_OUTPUT
-          echo app_changed=$(changed \
-            'app/**' \
-            'app/**/*' \
-            'scripts/build_darwin.sh' \
-            'scripts/build_windows.ps1') | tee -a $GITHUB_OUTPUT
+          BASE=${{ github.event.pull_request.base.sha }}
+          HEAD=${{ github.event.pull_request.head.sha }}
+          MERGE_BASE=$(git merge-base $BASE $HEAD)
+          CHANGED_FILES=$(git diff-tree -r --no-commit-id --name-only "$MERGE_BASE" "$HEAD")
+
+          app_changed() {
+            local path root
+            while IFS= read -r path; do
+              case "$path" in
+                app/*|go.mod|go.sum|scripts/build_darwin.sh|scripts/build_windows.ps1|.github/workflows/test.yaml)
+                  echo True
+                  return
+                  ;;
+              esac
+              for root in "${@:2}"; do
+                if [[ "$path" == "$root" || "$path" == "$root/"* ]]; then
+                  echo True
+                  return
+                fi
+              done
+            done <<< "$1"
+            echo False
+          }
+
+          APP_ROOTS=()
+          for target in darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            PACKAGE_DIRS=$(GOOS=${target%/*} GOARCH=${target#*/} CGO_ENABLED=1 \
+              go list -e -deps -f '{{if not .Standard}}{{.Dir}}{{end}}' ./app/cmd/app)
+            while IFS= read -r dir; do
+              case "$dir" in "$PWD"/*) APP_ROOTS+=("${dir#"$PWD"/}") ;; esac
+            done <<< "$PACKAGE_DIRS"
+          done
+
+          test "$(app_changed api/client.go "${APP_ROOTS[@]}")" = True
+          test "$(app_changed docs/development.md "${APP_ROOTS[@]}")" = False
+          echo app_changed=$(app_changed "$CHANGED_FILES" "${APP_ROOTS[@]}") | tee -a $GITHUB_OUTPUT
           echo enginehash=$(cat LLAMA_CPP_VERSION)-$(cat MLX_VERSION)-$(cat MLX_C_VERSION) | tee -a $GITHUB_OUTPUT
+      - name: Resolve latest stable release
+        if: steps.changes.outputs.app_changed == 'True'
+        id: stable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release="$(mktemp)"
+          curl -fsSL --retry 3 \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -o "$release" https://api.github.com/repos/ollama/ollama/releases/latest
+
+          tag="$(jq -er .tag_name "$release")"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+          asset() {
+            local name=$1
+            local output=$2
+            local url digest
+            url="$(jq -er --arg name "$name" '.assets[] | select(.name == $name) | .browser_download_url' "$release")"
+            digest="$(jq -er --arg name "$name" '.assets[] | select(.name == $name) | .digest' "$release")"
+            case "$digest" in sha256:*) ;; *) exit 1 ;; esac
+            echo "${output}_url=$url" >> "$GITHUB_OUTPUT"
+            echo "${output}_sha256=${digest#sha256:}" >> "$GITHUB_OUTPUT"
+          }
+
+          asset ollama-darwin.tgz darwin
+          asset ollama-windows-amd64.zip windows_amd64
+          asset ollama-windows-arm64.zip windows_arm64
 
   app-darwin:
     needs: [changes]
@@ -77,27 +149,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Resolve latest stable release
-        id: stable
-        shell: bash
-        run: |
-          set -euo pipefail
-          release="$(mktemp)"
-          curl -fsSL --retry 3 \
-            -H "Authorization: Bearer ${{ github.token }}" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            -o "$release" https://api.github.com/repos/ollama/ollama/releases/latest
-          tag="$(jq -r .tag_name "$release")"
-          url="$(jq -r '.assets[] | select(.name == "ollama-darwin.tgz") | .browser_download_url' "$release")"
-          digest="$(jq -r '.assets[] | select(.name == "ollama-darwin.tgz") | .digest' "$release")"
-          test -n "$tag" && test -n "$url" && test "$digest" != null
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "url=$url" >> "$GITHUB_OUTPUT"
-          echo "sha256=${digest#sha256:}" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v4
         with:
           path: .cache/app-ci/ollama-darwin.tgz
-          key: app-ci-darwin-${{ steps.stable.outputs.tag }}
+          key: app-ci-darwin-${{ needs.changes.outputs.stable_tag }}-${{ needs.changes.outputs.stable_darwin_sha256 }}
       - name: Prepare stable Darwin runtime payload
         shell: bash
         run: |
@@ -105,9 +160,9 @@ jobs:
           archive=.cache/app-ci/ollama-darwin.tgz
           mkdir -p "$(dirname "$archive")"
           if [ ! -f "$archive" ]; then
-            curl -fL --retry 3 --retry-delay 2 -o "$archive" "${{ steps.stable.outputs.url }}"
+            curl -fL --retry 3 --retry-delay 2 -o "$archive" "${{ needs.changes.outputs.stable_darwin_url }}"
           fi
-          echo "${{ steps.stable.outputs.sha256 }}  $archive" | shasum -a 256 -c -
+          echo "${{ needs.changes.outputs.stable_darwin_sha256 }}  $archive" | shasum -a 256 -c -
 
           payload="$RUNNER_TEMP/ollama-darwin-stable"
           rm -rf "$payload" dist/darwin
@@ -122,8 +177,18 @@ jobs:
       - name: Verify macOS app outputs
         shell: bash
         run: |
-          test -x dist/Ollama.app/Contents/MacOS/Ollama
+          app=dist/Ollama.app/Contents/MacOS/Ollama
+          ollama=dist/Ollama.app/Contents/Resources/ollama
+          test -x "$app"
+          test -x "$ollama"
           test -f dist/Ollama-darwin.zip
+          lipo "$app" -verify_arch x86_64 arm64
+          lipo "$ollama" -verify_arch x86_64 arm64
+
+          expected="${{ needs.changes.outputs.stable_tag }}"
+          actual="$($ollama --version 2>&1)"
+          echo "$actual"
+          echo "$actual" | grep -Fqw "${expected#v}"
 
   app-windows:
     needs: [changes]
@@ -147,34 +212,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Resolve latest stable release
-        id: stable
-        run: |
-          $headers = @{
-            "Authorization" = "Bearer ${{ github.token }}"
-            "User-Agent" = "ollama-app-ci"
-            "X-GitHub-Api-Version" = "2022-11-28"
-          }
-          $release = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/ollama/ollama/releases/latest"
-          "tag=$($release.tag_name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          foreach ($arch in @("amd64", "arm64")) {
-            $name = "ollama-windows-$arch.zip"
-            $asset = $release.assets | Where-Object Name -eq $name | Select-Object -First 1
-            if (-not $asset -or -not $asset.digest) { throw "Latest stable release is missing $name or its digest" }
-            "${arch}_url=$($asset.browser_download_url)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-            "${arch}_sha256=$($asset.digest -replace '^sha256:', '')" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          }
       - uses: actions/cache@v4
         with:
           path: .cache/app-ci/ollama-windows-*.zip
-          key: app-ci-windows-${{ steps.stable.outputs.tag }}
+          key: app-ci-windows-${{ needs.changes.outputs.stable_tag }}-${{ needs.changes.outputs.stable_windows_amd64_sha256 }}-${{ needs.changes.outputs.stable_windows_arm64_sha256 }}
       - name: Prepare stable Windows runtime payload
         run: |
           $ProgressPreference = "SilentlyContinue"
           New-Item -ItemType Directory -Force -Path .cache\app-ci | Out-Null
           $assets = @(
-            @("amd64", "${{ steps.stable.outputs.amd64_url }}", "${{ steps.stable.outputs.amd64_sha256 }}"),
-            @("arm64", "${{ steps.stable.outputs.arm64_url }}", "${{ steps.stable.outputs.arm64_sha256 }}")
+            @("amd64", "${{ needs.changes.outputs.stable_windows_amd64_url }}", "${{ needs.changes.outputs.stable_windows_amd64_sha256 }}"),
+            @("arm64", "${{ needs.changes.outputs.stable_windows_arm64_url }}", "${{ needs.changes.outputs.stable_windows_arm64_sha256 }}")
           )
           foreach ($asset in $assets) {
             $arch, $url, $sha256 = $asset
@@ -191,11 +239,76 @@ jobs:
           Remove-Item -Force -ErrorAction SilentlyContinue "dist\windows-*\ollama app.exe", "dist\windows-ollama-app-*.exe"
       - name: Build Windows apps and installer
         run: ./scripts/build_windows.ps1 app appArm64 installer
-      - name: Verify Windows app outputs
+      - name: Verify Windows app payloads
         run: |
           if (-not (Test-Path dist\windows-ollama-app-amd64.exe)) { throw "missing amd64 app" }
           if (-not (Test-Path dist\windows-ollama-app-arm64.exe)) { throw "missing arm64 app" }
           if (-not (Test-Path dist\OllamaSetup.exe)) { throw "missing installer" }
+
+          function Assert-PEMachine($path, $expected) {
+            $stream = [IO.File]::OpenRead((Resolve-Path $path))
+            $reader = [IO.BinaryReader]::new($stream)
+            try {
+              $stream.Position = 0x3c
+              $stream.Position = $reader.ReadInt32() + 4
+              $actual = $reader.ReadUInt16()
+            } finally {
+              $reader.Dispose()
+              $stream.Dispose()
+            }
+            if ($actual -ne $expected) {
+              throw "unexpected PE machine type 0x$($actual.ToString('x4')) for $path"
+            }
+          }
+
+          Assert-PEMachine dist\windows-amd64\ollama.exe 0x8664
+          Assert-PEMachine dist\windows-arm64\ollama.exe 0xaa64
+          Assert-PEMachine dist\windows-ollama-app-amd64.exe 0x8664
+          Assert-PEMachine dist\windows-ollama-app-arm64.exe 0xaa64
+      - name: Smoke-test Windows installer
+        env:
+          APP_CI_INSTALL_DIR: ${{ runner.temp }}\ollama-app-ci
+        run: |
+          $arguments = @(
+            "/VERYSILENT",
+            "/NORESTART",
+            "/SUPPRESSMSGBOXES",
+            "/DIR=$env:APP_CI_INSTALL_DIR"
+          )
+          $installer = Start-Process -FilePath .\dist\OllamaSetup.exe -ArgumentList $arguments -PassThru
+          $installer.WaitForExit()
+          if ($installer.ExitCode -ne 0) { throw "installer failed with exit code $($installer.ExitCode)" }
+
+          $ollama = Join-Path $env:APP_CI_INSTALL_DIR "ollama.exe"
+          $app = Join-Path $env:APP_CI_INSTALL_DIR "ollama app.exe"
+          if (-not (Test-Path $ollama)) { throw "installer did not install ollama.exe" }
+          if (-not (Test-Path $app)) { throw "installer did not install ollama app.exe" }
+
+          $expected = "${{ needs.changes.outputs.stable_tag }}".TrimStart("v")
+          $actual = (& $ollama --version 2>&1 | Out-String).Trim()
+          $ollamaExitCode = $LASTEXITCODE
+          Write-Output $actual
+          if ($ollamaExitCode -ne 0) { throw "installed CLI exited with code $ollamaExitCode" }
+          if ($actual -notmatch "(^|\s)$([regex]::Escape($expected))(\s|$)") {
+            throw "installed CLI does not report expected version $expected"
+          }
+
+          $appVersion = (& $app --version 2>&1 | Out-String).Trim()
+          $appExitCode = $LASTEXITCODE
+          Write-Output "Ollama app version: $appVersion"
+          if ($appExitCode -ne 0) { throw "installed app exited with code $appExitCode" }
+      - name: Remove Windows smoke-test installation
+        if: always()
+        env:
+          APP_CI_INSTALL_DIR: ${{ runner.temp }}\ollama-app-ci
+        run: |
+          $uninstaller = Join-Path $env:APP_CI_INSTALL_DIR "unins000.exe"
+          if (Test-Path $uninstaller) {
+            $arguments = @("/VERYSILENT", "/NORESTART", "/SUPPRESSMSGBOXES")
+            $process = Start-Process -FilePath $uninstaller -ArgumentList $arguments -PassThru
+            $process.WaitForExit()
+            if ($process.ExitCode -ne 0) { throw "uninstaller failed with exit code $($process.ExitCode)" }
+          }
 
   patches:
     strategy:
