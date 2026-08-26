@@ -1148,7 +1148,7 @@ func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
 		})
 	}
 	mappedModels := proxy.ClaudeDesktopMappings(selectedModels)
-	if len(launch.ClaudeDesktopModels()) == 0 {
+	if len(mappedModels) == 0 && len(launch.ClaudeDesktopModels()) == 0 {
 		mappedModels = proxy.DefaultClaudeDesktopMappingsForModels(availableModels)
 	}
 	mappingStatuses := make([]claudeDesktopMappingStatus, 0, proxy.MaxClaudeDesktopModels)

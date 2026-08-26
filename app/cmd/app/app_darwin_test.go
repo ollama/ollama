@@ -2451,6 +2451,90 @@ func TestClaudeGatewayStartupWithLocalSelectionSkipsCloudLookupsButSettingsLoads
 	}
 }
 
+func TestClaudeDesktopConnectionStatusPrefersActiveGatewayMappings(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	previousStore := appStore
+	appStore = &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
+	if err := markClaudeDesktopIntegrationUsed(); err != nil {
+		t.Fatal(err)
+	}
+
+	activeCatalog := proxy.ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{
+		{Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"},
+		{Model: "gemma4:31b-cloud", RequiredPlan: "free"},
+	})
+	activeModels := proxy.MapClaudeDesktopModels(activeCatalog, map[string]string{
+		"claude-sonnet-5": "glm-5.3-flash:cloud",
+	})
+	gateway, err := proxy.NewClaudeDesktop(proxy.ClaudeDesktopConfig{
+		ListenAddr: "127.0.0.1:0",
+		OllamaURL:  "http://127.0.0.1:11434",
+		Model:      activeModels[0].OllamaModel,
+		Models:     activeModels,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	previousLoader := claudeModelsLoader
+	previousAccess := claudeAccessStateResolver
+	previousLocal := claudeLocalModelsResolver
+	previousCloud := claudeCloudModelsResolver
+	claudeProxyMu.Lock()
+	previousGateway := claudeAppProxy
+	previousAvailable := claudeAvailableModels
+	previousSource := claudeModelSource
+	previousUpdated := claudeCatalogUpdated
+	claudeAppProxy = gateway
+	claudeAvailableModels = activeCatalog
+	claudeModelSource = "endpoint"
+	claudeCatalogUpdated = time.Time{}
+	claudeProxyMu.Unlock()
+	claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
+		return fallbackClaudeDesktopModels(), "fallback"
+	}
+	claudeAccessStateResolver = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
+		return proxy.ClaudeDesktopAccessState{
+			Cloud:   proxy.ClaudeDesktopCloudOn,
+			Account: proxy.ClaudeDesktopAccountSignedIn,
+			Plan:    "pro",
+		}, nil
+	}
+	claudeLocalModelsResolver = func(context.Context) ([]string, error) { return nil, nil }
+	claudeCloudModelsResolver = func(context.Context) ([]proxy.ClaudeDesktopModel, error) {
+		return proxy.ClaudeDesktopModelsFromCloudInventory([]string{"glm-5.3-flash:cloud", "gemma4:31b-cloud"}), nil
+	}
+	t.Cleanup(func() {
+		_ = gateway.Close(context.Background())
+		_ = appStore.Close()
+		appStore = previousStore
+		claudeModelsLoader = previousLoader
+		claudeAccessStateResolver = previousAccess
+		claudeLocalModelsResolver = previousLocal
+		claudeCloudModelsResolver = previousCloud
+		claudeProxyMu.Lock()
+		claudeAppProxy = previousGateway
+		claudeAvailableModels = previousAvailable
+		claudeModelSource = previousSource
+		claudeCatalogUpdated = previousUpdated
+		claudeProxyMu.Unlock()
+	})
+
+	status := getClaudeDesktopConnectionStatus()
+	if got := proxy.ClaudeDesktopMappings(gateway.Models())["claude-sonnet-5"]; got != "glm-5.3-flash:cloud" {
+		t.Fatalf("active gateway Sonnet mapping = %q", got)
+	}
+	for _, mapping := range status.Mappings {
+		if mapping.RouteID == "claude-sonnet-5" {
+			if mapping.Model != "glm-5.3-flash:cloud" {
+				t.Fatalf("status Sonnet mapping = %q, want active gateway mapping", mapping.Model)
+			}
+			return
+		}
+	}
+	t.Fatal("status omitted Sonnet mapping")
+}
+
 func TestClaudeGatewayLocalSelectionCatalogPolicy(t *testing.T) {
 	tests := []struct {
 		name               string
