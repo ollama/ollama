@@ -269,7 +269,8 @@ func createLoginShortcut() error {
 	return nil
 }
 
-func LaunchNewApp() {
+func LaunchNewApp() bool {
+	return false
 }
 
 func logStartup() {

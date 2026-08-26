@@ -2448,6 +2448,47 @@ func TestRestoreClaudeBeforeQuit(t *testing.T) {
 	}
 }
 
+func TestHandoffNeedsForcedTermination(t *testing.T) {
+	tests := []struct {
+		name        string
+		terminated  bool
+		expectedPID int
+		actualPID   int
+		want        bool
+	}{
+		{
+			name:        "same process still running",
+			expectedPID: 123,
+			actualPID:   123,
+			want:        true,
+		},
+		{
+			name:        "graceful handoff completed",
+			terminated:  true,
+			expectedPID: 123,
+			actualPID:   123,
+		},
+		{
+			name:        "process identifier was reused",
+			expectedPID: 123,
+			actualPID:   456,
+		},
+		{
+			name:        "invalid expected process",
+			expectedPID: -1,
+			actualPID:   -1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := handoffNeedsForcedTermination(tt.terminated, tt.expectedPID, tt.actualPID); got != tt.want {
+				t.Fatalf("handoffNeedsForcedTermination() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSetClaudeGatewayInstalledRejectsMissingClaude(t *testing.T) {
 	previousInstalled := claudeDesktopInstalled
 	claudeDesktopInstalled = func() bool { return false }

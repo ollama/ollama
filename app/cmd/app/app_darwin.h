@@ -18,6 +18,7 @@ enum AppMove
 
 void run(bool showOnboarding, bool startHidden);
 void killOtherInstances();
+bool shouldForceTerminateHandoff(bool terminated, int expectedPID, int actualPID);
 bool otherOllamaInstanceRunning(void);
 enum AppMove askToMoveToApplications();
 int createSymlinkWithAuthorization();
@@ -30,7 +31,7 @@ bool IsOnboardingActive(void);
 void StopUI();
 void StartUpdate();
 void darwinStartHiddenTasks();
-void launchApp(const char *appPath);
+bool launchApp(const char *appPath);
 void updateAvailable();
 void quit();
 void uiRequest(char *path);

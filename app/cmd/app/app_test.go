@@ -42,6 +42,42 @@ func TestShouldShowOnboarding(t *testing.T) {
 	}
 }
 
+func TestLaunchUpdateAndShutdown(t *testing.T) {
+	t.Run("successful launch shuts down current instance", func(t *testing.T) {
+		launched := false
+		shutdown := false
+		if !launchUpdateAndShutdown(func() bool {
+			launched = true
+			return true
+		}, func() {
+			if !launched {
+				t.Fatal("current instance shut down before updated app launched")
+			}
+			shutdown = true
+		}) {
+			t.Fatal("launchUpdateAndShutdown() = false, want true")
+		}
+		if !launched {
+			t.Fatal("updated app was not launched")
+		}
+		if !shutdown {
+			t.Fatal("current instance was not shut down")
+		}
+	})
+
+	t.Run("failed launch keeps current instance running", func(t *testing.T) {
+		shutdown := false
+		if launchUpdateAndShutdown(func() bool { return false }, func() {
+			shutdown = true
+		}) {
+			t.Fatal("launchUpdateAndShutdown() = true, want false")
+		}
+		if shutdown {
+			t.Fatal("current instance shut down after failed launch")
+		}
+	})
+}
+
 func TestDispatchURLSchemeRequest(t *testing.T) {
 	tests := []struct {
 		name        string

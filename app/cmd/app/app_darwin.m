@@ -14,6 +14,7 @@ extern NSString *SystemWidePath;
 
 static NSString *const ClaudeDownloadPageURL = @"https://claude.com/download";
 static NSString *const ShowAppsInMenuDefaultsKey = @"ShowAppsInMenu";
+static const int64_t AppHandoffGracePeriod = 5 * NSEC_PER_SEC;
 static NSBundle *OllamaResourceBundle(void);
 
 static BOOL shouldShowAppsInMenu(void) {
@@ -1574,6 +1575,11 @@ bool otherOllamaInstanceRunning(void) {
     return false;
 }
 
+bool shouldForceTerminateHandoff(bool terminated, int expectedPID,
+                                 int actualPID) {
+    return !terminated && expectedPID > 0 && actualPID == expectedPID;
+}
+
 // killOtherInstances kills all other instances of the app currently
 // running. This way we can ensure that only the most recently started
 // instance of Ollama is running
@@ -1585,10 +1591,37 @@ void killOtherInstances() {
         if (isOllamaApplication(app)) {
             pid_t pid = app.processIdentifier;
             if (pid != myPid && pid > 0) {
-                appLogInfo([NSString stringWithFormat:@"terminating other ollama instance %d", pid]);
+                appLogInfo([NSString
+                    stringWithFormat:@"requesting handoff from ollama instance %d",
+                                     pid]);
                 // Preserve the Claude profile while the replacement instance
                 // takes ownership of the local gateway.
-                kill(pid, SIGUSR1);
+                if (kill(pid, SIGUSR1) != 0) {
+                    appLogInfo([NSString
+                        stringWithFormat:@"unable to signal ollama instance %d",
+                                         pid]);
+                }
+
+                // Older or unhealthy instances may not complete the graceful
+                // handoff. Give them time to clean up, then enforce the
+                // single-instance invariant if this exact process is still
+                // running.
+                dispatch_after(
+                    dispatch_time(DISPATCH_TIME_NOW, AppHandoffGracePeriod),
+                    dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+                      pid_t actualPID = app.processIdentifier;
+                      if (!shouldForceTerminateHandoff(
+                              [app isTerminated], pid, actualPID)) {
+                          return;
+                      }
+                      appLogInfo([NSString stringWithFormat:
+                          @"forcing stale ollama instance %d to terminate", pid]);
+                      if (kill(pid, SIGTERM) != 0) {
+                          appLogInfo([NSString stringWithFormat:
+                              @"unable to terminate stale ollama instance %d",
+                              pid]);
+                      }
+                    });
             } else if (pid == -1) {
                 appLogInfo([NSString stringWithFormat:@"skipping app with invalid pid: %@", app.bundleIdentifier]);
             }
@@ -1839,18 +1872,25 @@ enum AppMove askToMoveToApplications() {
     return MoveCompleted;
 }
 
-void launchApp(const char *appPath) {
+bool launchApp(const char *appPath) {
     pid_t pid = getpid();
     appLogInfo([NSString
         stringWithFormat:@"Launching %@ from PID=%d", @(appPath), pid]);
     NSError *error = nil;
     NSWorkspace *workspace = [NSWorkspace sharedWorkspace];
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    [workspace launchApplicationAtURL:[NSURL fileURLWithPath:@(appPath)]
-                              options:NSWorkspaceLaunchNewInstance |
-                                      NSWorkspaceLaunchDefault
-                        configuration:@{}
-                                error:&error];
+    NSRunningApplication *application =
+        [workspace launchApplicationAtURL:[NSURL fileURLWithPath:@(appPath)]
+                                  options:NSWorkspaceLaunchNewInstance |
+                                          NSWorkspaceLaunchDefault
+                            configuration:@{}
+                                    error:&error];
+    if (application == nil || error != nil) {
+        appLogInfo([NSString stringWithFormat:@"Unable to launch %@: %@",
+                                              @(appPath), error]);
+        return false;
+    }
+    return true;
 }
 
 int installSymlink(const char *cliPath) {

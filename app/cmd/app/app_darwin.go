@@ -162,9 +162,9 @@ func StartUpdate() {
 		return
 	}
 	slog.Debug("launching new version...")
-	// TODO - consider a timer that aborts if this takes too long and we haven't been killed yet...
-	LaunchNewApp()
-	// not reached if upgrade works, the new app will kill this process
+	if !launchUpdateAndShutdown(LaunchNewApp, func() { C.quit() }) {
+		slog.Error("failed to launch new version")
+	}
 }
 
 //export darwinStartHiddenTasks
@@ -216,6 +216,14 @@ func maybeMoveAndRestart() appMove {
 // handleExistingInstance handles existing instances on macOS
 func handleExistingInstance(_ bool) {
 	C.killOtherInstances()
+}
+
+func handoffNeedsForcedTermination(terminated bool, expectedPID, actualPID int) bool {
+	return bool(C.shouldForceTerminateHandoff(
+		C.bool(terminated),
+		C.int(expectedPID),
+		C.int(actualPID),
+	))
 }
 
 func installSymlink() {
@@ -1709,10 +1717,10 @@ func RestoreClaudeGatewayForShutdown() C.bool {
 	return C._Bool(true)
 }
 
-func LaunchNewApp() {
+func LaunchNewApp() bool {
 	appName := C.CString(updater.BundlePath)
 	defer C.free(unsafe.Pointer(appName))
-	C.launchApp(appName)
+	return bool(C.launchApp(appName))
 }
 
 func registerLaunchAgent(hasCompletedFirstRun bool) {

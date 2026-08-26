@@ -415,12 +415,23 @@ func startHiddenTasks() {
 				UpdateAvailable("")
 			} else {
 				slog.Debug("launching new version...")
-				// TODO - consider a timer that aborts if this takes too long and we haven't been killed yet...
-				LaunchNewApp()
-				os.Exit(0)
+				if !launchUpdateAndShutdown(LaunchNewApp, func() { os.Exit(0) }) {
+					slog.Error("failed to launch new version")
+				}
 			}
 		}
 	}
+}
+
+// launchUpdateAndShutdown keeps the current process alive if relaunch is rejected.
+// Once the replacement launch is accepted, this process owns its side of the
+// handoff and shuts down instead of relying on the new process to terminate it.
+func launchUpdateAndShutdown(launch func() bool, shutdown func()) bool {
+	if !launch() {
+		return false
+	}
+	shutdown()
+	return true
 }
 
 func checkUserLoggedIn(uiServerPort int) bool {
