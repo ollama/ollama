@@ -5,16 +5,17 @@ import (
 	"errors"
 	"log/slog"
 	"maps"
+	"math"
 	"net"
 	"net/http"
 	"slices"
 	"strings"
+	"sync/atomic"
 
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/x/internal/mlxthread"
-	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
@@ -71,7 +72,7 @@ func (r *Runner) Load(modelName string, progress func(float32)) error {
 	}
 
 	// Load all tensor blobs from manifest
-	tensors, err := loadTensorsFromManifest(root)
+	tensors, err := loadTensorsFromManifest(root, progress)
 	if err != nil {
 		return err
 	}
@@ -119,7 +120,7 @@ func (r *Runner) Load(modelName string, progress func(float32)) error {
 		mlx.Pin(arr)
 	}
 	mlx.Sweep()
-	evalWithProgress(collected, progress)
+	mlx.Eval(collected...)
 	configureWiredMemory()
 
 	r.Model = m
@@ -130,7 +131,11 @@ func (r *Runner) Load(modelName string, progress func(float32)) error {
 	r.cache = newPrefixCache(slices.Concat(caches, draftCaches))
 	r.Sampler = sample.New(r.contextLength)
 	r.spec = newSpeculation(r, draftModel, caches, draftCaches)
-	r.grammarEngine = newGrammarEngine(logitsWidth(m), r.Tokenizer)
+	if vocabSize, err := root.VocabSize(); err != nil {
+		slog.Warn("Structured output is unavailable", "error", err)
+	} else {
+		r.grammarEngine = newGrammarEngine(vocabSize, r.Tokenizer)
+	}
 
 	mlx.EnableCompile()
 
@@ -150,29 +155,6 @@ func newDraftCaches(draft base.DraftModel) []cache.Cache {
 		return nil
 	}
 	return draft.NewCaches()
-}
-
-// logitsWidth reads a model's logits width off a one-token forward's static
-// shape — the same Forward and Unembed path decode logits take. Nothing is
-// evaluated, and the probe's caches and graph are released before returning,
-// which sweeps every unpinned array: call this only at load, after the
-// model's weights are pinned.
-func logitsWidth(m base.Model) int {
-	caches := m.NewCaches()
-	hidden, _ := m.Forward(&batch.Batch{
-		InputIDs:     mlx.FromValues([]int32{0}, 1, 1),
-		SeqOffsets:   []int32{0},
-		SeqQueryLens: []int32{1},
-	}, caches)
-	logits := m.Unembed(hidden)
-	width := logits.Dim(logits.NumDims() - 1)
-	for _, c := range caches {
-		if c != nil {
-			c.Free()
-		}
-	}
-	mlx.Sweep()
-	return width
 }
 
 func configureWiredMemory() {
@@ -217,19 +199,25 @@ func configureWiredMemory() {
 // .bias → _qbias with complete knowledge of which base names have .scale
 // entries. This avoids a race condition where Go map iteration order could
 // cause .bias to be processed before .scale within the same blob.
-func loadTensorsFromManifest(root *model.Root) (map[string]*mlx.Array, error) {
+func loadTensorsFromManifest(root *model.Root, progress func(float32)) (map[string]*mlx.Array, error) {
 	// Phase 1: Load all tensors raw from all blobs
 	rawTensors := make(map[string]*mlx.Array)
 	seen := make(map[string]bool)
+	reportBytes := newLoadProgressReporter(root, progress)
 	for _, layer := range root.Manifest.GetTensorLayers("") {
 		if seen[layer.Digest] {
 			continue
 		}
 		seen[layer.Digest] = true
 		blobPath := root.Manifest.BlobPath(layer.Digest)
-		for name, arr := range mlx.Load(blobPath) {
+		sf, err := loadSafetensors(blobPath, reportBytes)
+		if err != nil {
+			return nil, err
+		}
+		for name, arr := range sf.Arrays() {
 			rawTensors[name] = arr
 		}
+		sf.Free()
 	}
 
 	// Phase 2: Identify all base names that have .scale tensors and remap them
@@ -262,6 +250,53 @@ func loadTensorsFromManifest(root *model.Root) (map[string]*mlx.Array, error) {
 
 	slog.Info("Loaded tensors from manifest", "count", len(allTensors))
 	return allTensors, nil
+}
+
+func loadSafetensors(path string, progress func(int64)) (*mlx.SafetensorsFile, error) {
+	if progress == nil {
+		return mlx.LoadSafetensorsNative(path)
+	}
+	return mlx.LoadSafetensorsWithProgress(path, progress)
+}
+
+func newLoadProgressReporter(root *model.Root, progress func(float32)) func(int64) {
+	if progress == nil || root == nil || root.Manifest == nil {
+		return nil
+	}
+
+	total := uniqueTensorLayerSize(root)
+	if total <= 0 {
+		return nil
+	}
+
+	var completed atomic.Int64
+	return func(n int64) {
+		if n <= 0 {
+			return
+		}
+		done := completed.Add(n)
+		frac := float32(done) / float32(total)
+		if frac >= 1 {
+			// Keep 1.0 reserved for MarkReady. Reading tensor bytes is necessary
+			// but not sufficient: LoadWeights, final eval, and runner setup still
+			// have to complete before requests are safe to serve.
+			frac = math.Nextafter32(1, 0)
+		}
+		progress(frac)
+	}
+}
+
+func uniqueTensorLayerSize(root *model.Root) int64 {
+	var total int64
+	seen := make(map[string]bool)
+	for _, layer := range root.Manifest.GetTensorLayers("") {
+		if seen[layer.Digest] {
+			continue
+		}
+		seen[layer.Digest] = true
+		total += layer.Size
+	}
+	return total
 }
 
 // Run serves HTTP and processes requests. The listener is bound before load

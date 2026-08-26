@@ -1,9 +1,12 @@
 package mlxrunner
 
 import (
+	"math"
 	"testing"
 
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/x/imagegen/manifest"
+	"github.com/ollama/ollama/x/mlxrunner/model"
 )
 
 func TestLoadStateStartsLoading(t *testing.T) {
@@ -32,6 +35,16 @@ func TestLoadStateReportsProgress(t *testing.T) {
 	}
 }
 
+func TestLoadStateProgressIsMonotonic(t *testing.T) {
+	state := newLoadState()
+	state.SetProgress(0.75)
+	state.SetProgress(0.25)
+
+	if got := state.Progress(); got != 0.75 {
+		t.Errorf("Progress() = %v, want 0.75", got)
+	}
+}
+
 func TestLoadStateMarkReady(t *testing.T) {
 	state := newLoadState()
 	state.SetProgress(0.5)
@@ -48,76 +61,50 @@ func TestLoadStateMarkReady(t *testing.T) {
 	}
 }
 
-func TestEvalChunksCoverEveryArrayOnce(t *testing.T) {
-	cases := []struct {
-		name  string
-		sizes []int
-	}{
-		{"single small array", []int{1024}},
-		{"many small arrays", []int{1024, 2048, 4096, 8192, 16384}},
-		{"one array larger than a chunk", []int{4 * evalChunkBytes}},
-		{"mixed sizes spanning chunks", []int{
-			evalChunkBytes / 2, evalChunkBytes / 2, 1024,
-			2 * evalChunkBytes, 512, evalChunkBytes,
-		}},
-		{"exact chunk boundary", []int{evalChunkBytes, evalChunkBytes}},
-		{"zero-byte arrays", []int{0, 0, 0}},
+func TestLoadProgressReporterUsesUniqueTensorLayerBytes(t *testing.T) {
+	root := &model.Root{Manifest: &manifest.ModelManifest{Manifest: &manifest.Manifest{
+		Layers: []manifest.ManifestLayer{
+			{MediaType: "application/vnd.ollama.image.tensor", Digest: "sha256:a", Size: 100},
+			{MediaType: "application/vnd.ollama.image.tensor", Digest: "sha256:a", Size: 100},
+			{MediaType: "application/vnd.ollama.image.tensor", Digest: "sha256:b", Size: 300},
+			{MediaType: "application/vnd.ollama.image.json", Digest: "sha256:c", Size: 1000},
+		},
+	}}}
+
+	var got []float32
+	report := newLoadProgressReporter(root, func(progress float32) {
+		got = append(got, progress)
+	})
+
+	report(100)
+	report(100)
+
+	if len(got) != 2 {
+		t.Fatalf("progress reports = %d, want 2", len(got))
 	}
-
-	for _, tt := range cases {
-		t.Run(tt.name, func(t *testing.T) {
-			chunks := evalChunks(tt.sizes)
-			if len(chunks) == 0 {
-				t.Fatal("no chunks emitted, arrays would never be evaluated")
-			}
-
-			next := 0
-			var last float32
-			for i, chunk := range chunks {
-				if chunk.start != next {
-					t.Fatalf("chunk %d starts at %d, want %d (gap or overlap)", i, chunk.start, next)
-				}
-				if chunk.end <= chunk.start {
-					t.Fatalf("chunk %d is empty: [%d,%d)", i, chunk.start, chunk.end)
-				}
-				if chunk.progress < last {
-					t.Errorf("chunk %d progress = %v, went backwards from %v", i, chunk.progress, last)
-				}
-				last = chunk.progress
-				next = chunk.end
-			}
-
-			if next != len(tt.sizes) {
-				t.Errorf("chunks cover %d arrays, want %d", next, len(tt.sizes))
-			}
-			if last != 1 {
-				t.Errorf("final progress = %v, want 1", last)
-			}
-		})
+	if got[0] != 0.25 {
+		t.Errorf("first progress = %v, want 0.25", got[0])
+	}
+	if got[1] != 0.5 {
+		t.Errorf("second progress = %v, want 0.5", got[1])
 	}
 }
 
-func TestEvalChunksSplitsLargeModels(t *testing.T) {
-	// A model several chunks wide must report progress more than once,
-	// otherwise the parent cannot tell a slow load from a stalled one.
-	sizes := make([]int, 64)
-	for i := range sizes {
-		sizes[i] = evalChunkBytes / 4
-	}
+func TestLoadProgressReporterReservesOneForReady(t *testing.T) {
+	root := &model.Root{Manifest: &manifest.ModelManifest{Manifest: &manifest.Manifest{
+		Layers: []manifest.ManifestLayer{
+			{MediaType: "application/vnd.ollama.image.tensor", Digest: "sha256:a", Size: 100},
+		},
+	}}}
 
-	if got := len(evalChunks(sizes)); got != 16 {
-		t.Errorf("got %d chunks for a 16-chunk model, want 16", got)
-	}
-}
+	var got float32
+	report := newLoadProgressReporter(root, func(progress float32) {
+		got = progress
+	})
 
-func TestEvalChunksHandlesNoArrays(t *testing.T) {
-	if got := evalChunks(nil); len(got) != 0 {
-		t.Errorf("got %d chunks for an empty model, want 0", len(got))
-	}
-}
+	report(100)
 
-func TestEvalWithProgressToleratesNoArrays(t *testing.T) {
-	// Guards against a divide-by-zero or nil-callback panic on a model that
-	// collects no arrays.
-	evalWithProgress(nil, nil)
+	if got != math.Nextafter32(1, 0) {
+		t.Errorf("progress = %v, want nextafter(1, 0)", got)
+	}
 }
