@@ -53,6 +53,8 @@ function useUserValue() {
 
   const disconnectMutation = useMutation({
     mutationFn: disconnectUser,
+    onMutate: () =>
+      queryClient.cancelQueries({ queryKey: ["user"], exact: true }),
     onSuccess: () => {
       queryClient.setQueryData(["user"], null);
     },

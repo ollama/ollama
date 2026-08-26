@@ -34,6 +34,14 @@ async function flushUpdates() {
   await vi.advanceTimersByTimeAsync(0);
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 describe("useUser account connection", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -134,6 +142,62 @@ describe("useUser account connection", () => {
         "focus",
         expect.any(Function),
       );
+    } finally {
+      await act(async () => {
+        renderer?.unmount();
+        await flushUpdates();
+      });
+      queryClient.clear();
+    }
+  });
+
+  it("keeps the user signed out when an older user request completes", async () => {
+    const oldUser = {
+      id: "old-user-id",
+      name: "Old User",
+      email: "old@example.com",
+    };
+    const staleUserResponse = deferred<typeof oldUser>();
+    apiMocks.fetchUser.mockReturnValue(staleUserResponse.promise);
+    apiMocks.disconnectUser.mockResolvedValue(undefined);
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    queryClient.setQueryData(["user"], oldUser, { updatedAt: 0 });
+
+    let state!: UserState;
+    let renderer: ReactTestRenderer | undefined;
+
+    try {
+      await act(async () => {
+        renderer = create(
+          <QueryClientProvider client={queryClient}>
+            <UserProvider>
+              <UserStateHarness onRender={(nextState) => (state = nextState)} />
+            </UserProvider>
+          </QueryClientProvider>,
+        );
+        await flushUpdates();
+      });
+
+      expect(state.user).toEqual(oldUser);
+      expect(apiMocks.fetchUser).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        state.disconnectUser();
+        await flushUpdates();
+      });
+
+      expect(state.user).toBeNull();
+
+      await act(async () => {
+        staleUserResponse.resolve(oldUser);
+        await flushUpdates();
+      });
+
+      expect(state.user).toBeNull();
+      expect(state.isAuthenticated).toBe(false);
     } finally {
       await act(async () => {
         renderer?.unmount();

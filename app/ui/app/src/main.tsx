@@ -3,7 +3,6 @@ import ReactDOM from "react-dom/client";
 import { RouterProvider, createRouter } from "@tanstack/react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { routeTree } from "./routeTree.gen";
-import { fetchUser } from "./api";
 import { StreamingProvider } from "./contexts/StreamingContext";
 import { UserProvider } from "./hooks/useUser";
 
@@ -16,12 +15,6 @@ const queryClient = new QueryClient({
       networkMode: "always", // Allow queries even when offline (local server)
     },
   },
-});
-
-fetchUser().then((userData) => {
-  if (userData) {
-    queryClient.setQueryData(["user"], userData);
-  }
 });
 
 const router = createRouter({
