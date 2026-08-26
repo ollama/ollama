@@ -92,13 +92,15 @@ function useUserValue() {
     const connectionAttempt = connectionAttemptRef.current;
     let checking = false;
     let settled = false;
-    let timeoutPending = false;
 
     const finishConnection = (error: string | null) => {
-      if (settled || connectionAttempt !== connectionAttemptRef.current) return;
+      if (settled || connectionAttempt !== connectionAttemptRef.current) {
+        return false;
+      }
       settled = true;
       setIsAwaitingConnection(false);
       setConnectionError(error);
+      return true;
     };
 
     const checkConnection = async () => {
@@ -118,9 +120,6 @@ function useUserValue() {
         console.error("Failed to check sign-in status:", error);
       } finally {
         checking = false;
-        if (timeoutPending) {
-          finishConnection(accountConnectionTimeoutMessage);
-        }
       }
     };
 
@@ -130,11 +129,9 @@ function useUserValue() {
       ACCOUNT_CONNECTION_POLL_INTERVAL_MS,
     );
     const timeout = window.setTimeout(() => {
-      if (checking) {
-        timeoutPending = true;
-        return;
+      if (finishConnection(accountConnectionTimeoutMessage)) {
+        void queryClient.cancelQueries({ queryKey: ["user"], exact: true });
       }
-      finishConnection(accountConnectionTimeoutMessage);
     }, ACCOUNT_CONNECTION_TIMEOUT_MS);
 
     window.addEventListener("focus", checkConnection);
@@ -144,7 +141,7 @@ function useUserValue() {
       window.clearTimeout(timeout);
       window.removeEventListener("focus", checkConnection);
     };
-  }, [isAwaitingConnection, refetchUser]);
+  }, [isAwaitingConnection, queryClient, refetchUser]);
 
   useEffect(() => {
     if (!isAuthenticated) return;

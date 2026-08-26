@@ -262,4 +262,73 @@ describe("useUser account connection", () => {
       queryClient.clear();
     }
   });
+
+  it("times out while the user check is still pending and ignores its late result", async () => {
+    const lateUser = {
+      id: "late-user-id",
+      name: "Late User",
+      email: "late@example.com",
+    };
+    const pendingUserResponse = deferred<typeof lateUser>();
+    apiMocks.fetchConnectUrl.mockResolvedValue(
+      "https://ollama.com/connect?name=MacBook&key=public-key&launch=true",
+    );
+    apiMocks.fetchUser.mockReturnValue(pendingUserResponse.promise);
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    queryClient.setQueryData(["user"], null);
+
+    let state!: UserState;
+    let renderer: ReactTestRenderer | undefined;
+
+    try {
+      await act(async () => {
+        renderer = create(
+          <QueryClientProvider client={queryClient}>
+            <UserProvider>
+              <UserStateHarness onRender={(nextState) => (state = nextState)} />
+            </UserProvider>
+          </QueryClientProvider>,
+        );
+        await flushUpdates();
+      });
+
+      await act(async () => {
+        await state.connectUser();
+        await flushUpdates();
+      });
+
+      expect(state.isConnecting).toBe(true);
+      expect(apiMocks.fetchUser).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(ACCOUNT_CONNECTION_TIMEOUT_MS);
+        await flushUpdates();
+      });
+
+      expect(state.isConnecting).toBe(false);
+      expect(state.connectionError).toBe(
+        "Connection is taking longer than expected. Please try again.",
+      );
+
+      await act(async () => {
+        pendingUserResponse.resolve(lateUser);
+        await flushUpdates();
+      });
+
+      expect(state.user).toBeNull();
+      expect(state.isAuthenticated).toBe(false);
+      expect(state.connectionError).toBe(
+        "Connection is taking longer than expected. Please try again.",
+      );
+    } finally {
+      await act(async () => {
+        renderer?.unmount();
+        await flushUpdates();
+      });
+      queryClient.clear();
+    }
+  });
 });
