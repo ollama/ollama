@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -726,6 +727,14 @@ func GetModel(name string) (*Model, error) {
 				ggufChatTemplate = f.KeyValue("tokenizer.chat_template").String()
 				m.HasChatTemplate = ggufChatTemplate != ""
 				modelHasPooling = f.KeyValue("pooling_type").Valid()
+				if m.Config.Renderer == "" || m.Config.Parser == "" {
+					arch := strings.ToLower(f.KeyValue("general.architecture").String())
+					generalName := strings.ToLower(f.KeyValue("general.name").String())
+					if arch == "ornith" || ((arch == "qwen35" || arch == "qwen35moe") && strings.Contains(generalName, "ornith")) {
+						m.Config.Renderer = cmp.Or(m.Config.Renderer, "ornith")
+						m.Config.Parser = cmp.Or(m.Config.Parser, "ornith")
+					}
+				}
 				f.Close()
 			}
 		case manifest.MediaTypeImageDraft:
