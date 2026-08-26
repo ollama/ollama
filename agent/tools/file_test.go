@@ -421,7 +421,7 @@ func TestReadDefaultsToEntireFile(t *testing.T) {
 	}
 }
 
-func TestReadAllowsAbsolutePath(t *testing.T) {
+func TestReadAllowsAbsolutePathInsideWorkingDir(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "note.txt")
 	content := "one\ntwo\nthree\n"
@@ -429,7 +429,7 @@ func TestReadAllowsAbsolutePath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := (&Read{}).Execute(context.Background(), agent.ToolContext{WorkingDir: t.TempDir()}, map[string]any{
+	result, err := (&Read{}).Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
 		"path": path,
 	})
 	if err != nil {
@@ -451,7 +451,7 @@ func TestReadRejectsAbsoluteSymlink(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 
-	_, err := (&Read{}).Execute(context.Background(), agent.ToolContext{WorkingDir: t.TempDir()}, map[string]any{
+	_, err := (&Read{}).Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
 		"path": link,
 	})
 	if err == nil {
@@ -567,5 +567,45 @@ func TestReadRejectsInvalidRange(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "end must") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestReadRejectsAbsolutePathOutsideWorkingDir(t *testing.T) {
+	outside := t.TempDir()
+	path := filepath.Join(outside, "id_rsa")
+	if err := os.WriteFile(path, []byte("secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := (&Read{}).Execute(context.Background(), agent.ToolContext{WorkingDir: t.TempDir()}, map[string]any{
+		"path": path,
+	})
+	if err == nil {
+		t.Fatal("expected absolute path outside the working directory to be rejected")
+	}
+	if !strings.Contains(err.Error(), "path escapes working directory") {
+		t.Fatalf("err = %v, want path escape rejection", err)
+	}
+}
+
+func TestReadRejectsAbsolutePathTraversingOutOfWorkingDir(t *testing.T) {
+	root := t.TempDir()
+	wd := filepath.Join(root, "project")
+	if err := os.Mkdir(wd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "id_rsa")
+	if err := os.WriteFile(path, []byte("secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := (&Read{}).Execute(context.Background(), agent.ToolContext{WorkingDir: wd}, map[string]any{
+		"path": filepath.Join(wd, "..", "id_rsa"),
+	})
+	if err == nil {
+		t.Fatal("expected traversal out of the working directory to be rejected")
+	}
+	if !strings.Contains(err.Error(), "path escapes working directory") {
+		t.Fatalf("err = %v, want path escape rejection", err)
 	}
 }

@@ -35,7 +35,7 @@ func (r *Read) Schema() api.ToolFunction {
 	props := api.NewToolPropertiesMap()
 	props.Set("path", api.ToolProperty{
 		Type:        api.PropertyType{"string"},
-		Description: "Path to the file to read, relative to the working directory.",
+		Description: "Path to the file to read, relative to the working directory. Absolute paths are accepted only when they point inside the working directory.",
 	})
 	props.Set("start", api.ToolProperty{
 		Type:        api.PropertyType{"integer"},
@@ -387,31 +387,16 @@ func openRegularFile(workingDir, path string, allowAbsolute bool) (*os.File, os.
 		return nil, nil, fmt.Errorf("path parameter is required")
 	}
 	if allowAbsolute && filepath.IsAbs(path) {
-		cleaned := filepath.Clean(path)
-		info, err := os.Lstat(cleaned)
+		// Rewrite to a working-directory-relative path and fall through, so
+		// absolute paths get the same os.Root confinement and symlink
+		// rejection as relative ones. Opening them directly would let the
+		// tool read anything on the filesystem, which both its schema and the
+		// symlink guard below say it must not do.
+		relative, err := workingDirRelative(workingDir, path)
 		if err != nil {
 			return nil, nil, err
 		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return nil, nil, fmt.Errorf("%s is a symlink; read the target file directly", path)
-		}
-		if err := rejectNonRegularFile(path, info); err != nil {
-			return nil, nil, err
-		}
-		file, err := os.Open(cleaned)
-		if err != nil {
-			return nil, nil, err
-		}
-		info, err = file.Stat()
-		if err != nil {
-			file.Close()
-			return nil, nil, err
-		}
-		if err := rejectNonRegularFile(path, info); err != nil {
-			file.Close()
-			return nil, nil, err
-		}
-		return file, info, nil
+		path = relative
 	}
 
 	rel, err := cleanRelativePath(path)
@@ -441,6 +426,29 @@ func openRegularFile(workingDir, path string, allowAbsolute bool) (*os.File, os.
 		return nil, nil, err
 	}
 	return file, info, nil
+}
+
+// workingDirRelative converts an absolute path into a path relative to the
+// working directory, rejecting anything that resolves outside it.
+func workingDirRelative(workingDir, path string) (string, error) {
+	base, err := workingDirAbs(workingDir)
+	if err != nil {
+		return "", err
+	}
+	// Canonicalize the parent chain so a symlinked working directory (/tmp on
+	// macOS, for example) still matches the canonicalized base. The final
+	// component is left as-is: resolving it here would silently follow a
+	// symlink that the os.Root walk is supposed to reject.
+	dir, name := filepath.Split(filepath.Clean(path))
+	parent, err := canonicalPath(dir)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(base, filepath.Join(parent, name))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("path escapes working directory")
+	}
+	return rel, nil
 }
 
 func regularRootFileInfo(root *os.Root, rel, path string) (os.FileInfo, error) {
