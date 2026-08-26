@@ -1,13 +1,47 @@
 ---
 title: Claude Desktop
+description: Use Ollama models in Claude on macOS.
 ---
 
-Claude Desktop is no longer supported by `ollama launch`.
+Connect Claude to Ollama, choose a model, and start a new chat.
 
-Existing installations can be restored to the usual Claude profile:
+## Supported features
+
+- **Subagents** - Split larger tasks across agents
+- **Web search** - Supported by default through [Ollama's web search](/capabilities/web-search)
+- **Cowork** - Run longer coding and research tasks in Claude's Cowork workspace
+- **Auto mode** - Let the agent decide when to ask before making changes
+
+## Prerequisites
+
+- The [Ollama app for macOS](https://ollama.com/download/mac). Windows support is coming soon.
+- To use a local model, [download it](/quickstart#3-start-a-chat) before setup.
+- To use a cloud model, sign in to Ollama and enable cloud models. Some models require a [paid plan](https://ollama.com/pricing).
+
+If Claude is not installed, Ollama offers to download it during setup.
+
+## Set up Claude
+
+1. Open Ollama and select **Apps**.
+2. Find **Claude** under **Desktop** and turn it on.
+3. If Claude is not installed, let Ollama download it and finish the installation.
+4. Open Ollama **Settings**. Under **Apps**, choose an Ollama model for at least one Claude model option.
+5. Select **Start Claude** or **Restart Claude**. In Claude, start a new chat.
+
+If Claude is open when its connection or model changes, Ollama asks to restart it. Restarting stops any running task.
+
+## Switch models
+
+Open Ollama **Settings**. Under **Apps**, choose a model for each Claude model option you want to use, then select **Restart Claude**. You can assign the same Ollama model to more than one option.
+
+## Disconnect Claude
+
+Open Ollama **Apps** and turn Claude off. Ollama restores Claude's previous configuration. If Claude is open, Ollama asks to restart it so the change takes effect.
+
+You can also restore Claude from the terminal:
 
 ```shell
 ollama launch claude-desktop --restore
 ```
 
-Use [Claude Code](/integrations/claude-code) for Anthropic-compatible coding workflows with Ollama.
+Quitting Ollama while Claude is connected also restores Claude's usual configuration.
