@@ -33,6 +33,7 @@ describe("Onboarding", () => {
     expect(html.indexOf('alt="Ollama waving"')).toBeLessThan(
       html.indexOf("Welcome to Ollama!"),
     );
+    expect(html).toMatch(/alt="Ollama waving" class="[^"]*dark:invert/);
     expect(html).toContain(
       "Run open models with your coding agents so you can spend less while keeping your data private.",
     );
@@ -514,6 +515,14 @@ describe("Onboarding", () => {
         command: "ollama launch droid",
       },
       {
+        id: "cline",
+        name: "Cline",
+        description: "Autonomous coding agent",
+        installed: false,
+        action: "copy",
+        command: "ollama launch cline",
+      },
+      {
         id: "terminal",
         name: "Terminal",
         description: "Run local models from your terminal",
@@ -569,6 +578,9 @@ describe("Onboarding", () => {
     expect(html).not.toContain("inert");
     expect(html).toContain("/launch-icons/claude.svg");
     expect(html).toContain("/launch-icons/claude-code.svg");
+    expect(html).toMatch(
+      /src="\/launch-icons\/cline\.svg"[^>]*class="[^"]*dark:invert/,
+    );
     expect(html).not.toContain("<table");
     expect(html).not.toContain("<footer");
     expect(html).not.toContain("Command copied. Run it in your terminal.");
@@ -793,6 +805,7 @@ describe("Onboarding", () => {
     );
 
     expect(html).toContain("Create an account");
+    expect(html).toMatch(/<svg[^>]*class="[^"]*dark:invert/);
     expect(html).toContain(
       "Create your account for access to faster, larger open models.",
     );

@@ -25,7 +25,10 @@ export const INTEGRATION_ICONS: Record<string, IntegrationIcon> = {
   droid: { src: "/launch-icons/droid.svg" },
   dsh: { src: "/launch-icons/deepseek-harness.svg" },
   pi: { src: "/launch-icons/pi.svg" },
-  cline: { src: "/launch-icons/cline.svg" },
+  cline: {
+    src: "/launch-icons/cline.svg",
+    className: "h-7 w-7 dark:invert",
+  },
   omp: { src: "/launch-icons/oh-my-pi.svg" },
   pool: { src: "/launch-icons/poolside.svg" },
   qwen: { src: "/launch-icons/qwen-code.svg" },

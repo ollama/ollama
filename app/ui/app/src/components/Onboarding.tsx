@@ -182,7 +182,7 @@ export function IntroScreen({
             <img
               src="/hello.png"
               alt="Ollama waving"
-              className="h-[72px] w-[72px] select-none object-contain"
+              className="h-[72px] w-[72px] select-none object-contain dark:invert"
               draggable={false}
             />
             <h1 className="font-rounded text-2xl font-medium leading-8">
