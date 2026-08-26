@@ -19,6 +19,9 @@ func bindClaudeDesktop(wv webview.WebView) {
 	wv.Bind("getClaudeDesktopRequestCount", func() uint64 {
 		return claudeDesktopRequestCount()
 	})
+	wv.Bind("getClaudeDesktopIcon", func() string {
+		return claudeDesktopIconDataURL()
+	})
 
 	wv.Bind("setClaudeDesktopConnected", func(enabled, restartConfirmed bool) claudeDesktopActionResult {
 		err := setClaudeDesktopConnection(enabled, restartConfirmed)

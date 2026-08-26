@@ -4,7 +4,6 @@ export interface IntegrationIcon {
 }
 
 export const INTEGRATION_ICONS: Record<string, IntegrationIcon> = {
-  "claude-desktop": { src: "/launch-icons/claude.svg" },
   claude: { src: "/launch-icons/claude-code.svg" },
   hermes: { src: "/launch-icons/hermes-agent.svg" },
   "hermes-desktop": { src: "/launch-icons/hermes-agent.svg" },

@@ -101,6 +101,7 @@ describe("ClaudeDesktopModelsSettings", () => {
     expect(html).toContain(
       "Choose which Ollama model Claude uses for each model option.",
     );
+    expect(html).not.toContain("/launch-icons/claude.svg");
     expect(html).not.toContain("routing");
     expect(html).not.toContain("Built-in defaults");
     expect(html).not.toContain("Unassigned");

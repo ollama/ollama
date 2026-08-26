@@ -567,7 +567,7 @@ describe("Onboarding", () => {
     expect(html).not.toContain("aria-expanded");
     expect(html).not.toContain("grid-rows-[0fr]");
     expect(html).not.toContain("inert");
-    expect(html).toContain("/launch-icons/claude.svg");
+    expect(html).not.toContain("/launch-icons/claude.svg");
     expect(html).toContain("/launch-icons/claude-code.svg");
     expect(html).not.toContain("<table");
     expect(html).not.toContain("<footer");

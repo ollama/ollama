@@ -50,6 +50,7 @@ bool RestoreClaudeGatewayForShutdown(void);
 bool IsClaudeGatewayConfigured(void);
 bool IsClaudeDesktopInstalled(void);
 bool IsClaudeDesktopRunning(void);
+char *ClaudeDesktopIconDataURL(void);
 bool ClaudeGatewayStartFailed(void);
 bool ClaudeGatewayPortConflict(void);
 char *ClaudeGatewayErrorMessage(void);

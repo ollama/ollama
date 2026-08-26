@@ -9,6 +9,7 @@
 #import <WebKit/WebKit.h>
 #import <objc/runtime.h>
 #include <stdlib.h>
+#include <string.h>
 
 extern NSString *SystemWidePath;
 
@@ -24,8 +25,7 @@ static BOOL shouldShowAppsInMenu(void) {
     return [defaults boolForKey:ShowAppsInMenuDefaultsKey];
 }
 
-static NSImage *integrationAppIcon(NSString *appName,
-                                   NSString *fallbackSymbolName) {
+static NSImage *installedIntegrationAppIcon(NSString *appName) {
     NSArray<NSString *> *candidates = @[
         [NSString stringWithFormat:@"/Applications/%@.app", appName],
         [NSHomeDirectory() stringByAppendingPathComponent:
@@ -41,14 +41,76 @@ static NSImage *integrationAppIcon(NSString *appName,
             return icon;
         }
     }
-    NSBundle *bundle = OllamaResourceBundle();
-    NSImage *bundledIcon = [bundle imageForResource:appName.lowercaseString];
-    if (bundledIcon != nil) {
-        [bundledIcon setTemplate:NO];
-        return bundledIcon;
+    return nil;
+}
+
+static NSImage *integrationAppIcon(NSString *appName,
+                                   NSString *fallbackSymbolName) {
+    NSImage *installedIcon = installedIntegrationAppIcon(appName);
+    if (installedIcon != nil) {
+        return installedIcon;
     }
     return [NSImage imageWithSystemSymbolName:fallbackSymbolName
                       accessibilityDescription:nil];
+}
+
+static NSData *pngDataForImage(NSImage *image, NSInteger size) {
+    NSBitmapImageRep *bitmap = [[NSBitmapImageRep alloc]
+        initWithBitmapDataPlanes:nil
+                      pixelsWide:size
+                      pixelsHigh:size
+                   bitsPerSample:8
+                 samplesPerPixel:4
+                        hasAlpha:YES
+                        isPlanar:NO
+                  colorSpaceName:NSDeviceRGBColorSpace
+                     bitmapFormat:0
+                      bytesPerRow:0
+                     bitsPerPixel:0];
+    if (bitmap == nil) {
+        return nil;
+    }
+
+    NSGraphicsContext *context =
+        [NSGraphicsContext graphicsContextWithBitmapImageRep:bitmap];
+    if (context == nil) {
+        return nil;
+    }
+
+    [NSGraphicsContext saveGraphicsState];
+    [NSGraphicsContext setCurrentContext:context];
+    [image drawInRect:NSMakeRect(0, 0, size, size)
+             fromRect:NSZeroRect
+            operation:NSCompositingOperationCopy
+             fraction:1];
+    [context flushGraphics];
+    [NSGraphicsContext restoreGraphicsState];
+
+    return [bitmap representationUsingType:NSBitmapImageFileTypePNG
+                                 properties:@{}];
+}
+
+char *ClaudeDesktopIconDataURL(void) {
+    __block NSString *dataURL = nil;
+    void (^loadIcon)(void) = ^{
+        NSImage *icon = installedIntegrationAppIcon(@"Claude");
+        if (icon == nil) {
+            return;
+        }
+        NSData *png = pngDataForImage(icon, 128);
+        if (png == nil) {
+            return;
+        }
+        NSString *encoded = [png base64EncodedStringWithOptions:0];
+        dataURL = [@"data:image/png;base64," stringByAppendingString:encoded];
+    };
+
+    if ([NSThread isMainThread]) {
+        loadIcon();
+    } else {
+        dispatch_sync(dispatch_get_main_queue(), loadIcon);
+    }
+    return dataURL == nil ? NULL : strdup(dataURL.UTF8String);
 }
 
 @interface MenuSwitch : NSButton
@@ -130,6 +192,7 @@ static NSImage *integrationAppIcon(NSString *appName,
                  toggleAction:(SEL)toggleAction;
 - (void)setIntegrationActive:(BOOL)active;
 - (void)setIntegrationReady:(BOOL)ready;
+- (void)setIcon:(NSImage *)icon;
 - (void)setActiveStatusText:(NSString *)status;
 - (void)setInactiveStatusText:(NSString *)status;
 - (void)resetHover;
@@ -301,6 +364,10 @@ static NSImage *integrationAppIcon(NSString *appName,
     self.action = ready ? self.integrationOpenAction : nil;
     self.openButton.enabled = ready;
     self.openButton.alphaValue = ready ? 1.0 : 0.45;
+}
+
+- (void)setIcon:(NSImage *)icon {
+    [self.openButton setImage:icon];
 }
 
 - (void)setActiveStatusText:(NSString *)status {
@@ -630,6 +697,7 @@ static NSImage *ollamaApplicationIcon(void) {
     [self.claudeMenuItem setHidden:!visible];
     [self.claudeMenuSeparatorItem setHidden:!visible];
     BOOL installed = IsClaudeDesktopInstalled();
+    [self.claudeAppRow setIcon:integrationAppIcon(@"Claude", @"sparkles")];
     BOOL startFailed = ClaudeGatewayStartFailed();
     BOOL portConflict = startFailed && ClaudeGatewayPortConflict();
     BOOL configured = installed && IsClaudeGatewayConfigured();
