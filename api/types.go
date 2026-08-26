@@ -805,8 +805,6 @@ type ModelRecommendationsResponse struct {
 }
 
 // ModelRecommendationMapping defines one app-specific route preference.
-// RequiredPlan is informational metadata; consumers must not treat an unknown
-// value as a reason to discard the mapping.
 type ModelRecommendationMapping struct {
 	Model        string `json:"model"`
 	RequiredPlan string `json:"required_plan,omitempty"`
