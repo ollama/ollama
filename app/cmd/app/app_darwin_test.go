@@ -2489,6 +2489,34 @@ func TestHandoffNeedsForcedTermination(t *testing.T) {
 	}
 }
 
+func TestInstallAndLaunchUpdateRetriesInstalledUpdate(t *testing.T) {
+	installed := false
+	installCalls := 0
+	launchCalls := 0
+	install := func() error {
+		installCalls++
+		installed = true
+		return nil
+	}
+	launch := func() bool {
+		launchCalls++
+		return launchCalls > 1
+	}
+
+	if err := installAndLaunchUpdate(func() bool { return installed }, install, launch); err == nil {
+		t.Fatal("first launch unexpectedly succeeded")
+	}
+	if err := installAndLaunchUpdate(func() bool { return installed }, install, launch); err != nil {
+		t.Fatalf("second launch failed: %v", err)
+	}
+	if installCalls != 1 {
+		t.Fatalf("install called %d times, want 1", installCalls)
+	}
+	if launchCalls != 2 {
+		t.Fatalf("launch called %d times, want 2", launchCalls)
+	}
+}
+
 func TestSetClaudeGatewayInstalledRejectsMissingClaude(t *testing.T) {
 	previousInstalled := claudeDesktopInstalled
 	claudeDesktopInstalled = func() bool { return false }

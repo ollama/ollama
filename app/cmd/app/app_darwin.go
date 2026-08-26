@@ -157,14 +157,31 @@ func StopUI() {
 
 //export StartUpdate
 func StartUpdate() {
-	if err := updater.DoUpgrade(true); err != nil {
+	err := installAndLaunchUpdate(
+		func() bool {
+			_, err := os.Stat(updater.UpgradeMarkerFile)
+			return err == nil
+		},
+		func() error { return updater.DoUpgrade(true) },
+		LaunchNewApp,
+	)
+	if err != nil {
 		slog.Error("upgrade failed", "error", err)
-		return
 	}
+}
+
+func installAndLaunchUpdate(installed func() bool, install func() error, launch func() bool) error {
+	if !installed() {
+		if err := install(); err != nil {
+			return err
+		}
+	}
+
 	slog.Debug("launching new version...")
-	if !launchUpdateAndShutdown(LaunchNewApp, func() { C.quit() }) {
-		slog.Error("failed to launch new version")
+	if !launch() {
+		return errors.New("failed to launch new version")
 	}
+	return nil
 }
 
 //export darwinStartHiddenTasks

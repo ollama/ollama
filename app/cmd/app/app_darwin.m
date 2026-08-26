@@ -1621,6 +1621,30 @@ void killOtherInstances() {
                               @"unable to terminate stale ollama instance %d",
                               pid]);
                       }
+
+                      // Ollama handles SIGTERM gracefully. If that shutdown
+                      // path is also stuck, check the same application after
+                      // one final bounded grace period and force it to
+                      // terminate.
+                      dispatch_after(
+                          dispatch_time(DISPATCH_TIME_NOW,
+                                        AppHandoffGracePeriod),
+                          dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+                            pid_t finalPID = app.processIdentifier;
+                            if (!shouldForceTerminateHandoff(
+                                    [app isTerminated], pid, finalPID)) {
+                                return;
+                            }
+                            appLogInfo([NSString stringWithFormat:
+                                @"force terminating stale ollama instance %d",
+                                pid]);
+                            if (![app forceTerminate]) {
+                                appLogInfo([NSString stringWithFormat:
+                                    @"unable to force terminate stale ollama "
+                                     "instance %d",
+                                    pid]);
+                            }
+                          });
                     });
             } else if (pid == -1) {
                 appLogInfo([NSString stringWithFormat:@"skipping app with invalid pid: %@", app.bundleIdentifier]);
