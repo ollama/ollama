@@ -1,6 +1,7 @@
 package model
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -101,6 +102,41 @@ func readDraftConfig(m *manifest.ModelManifest) *modeltypes.Draft {
 
 // Close is a no-op for now (future: release resources).
 func (r *Root) Close() {}
+
+type vocabConfig struct {
+	VocabSize  int             `json:"vocab_size"`
+	TextConfig json.RawMessage `json:"text_config"`
+}
+
+// VocabSize returns the text model vocabulary size from config.json.
+func (r *Root) VocabSize() (int, error) {
+	data, err := r.Manifest.ReadConfig("config.json")
+	if err != nil {
+		return 0, err
+	}
+	return configVocabSize(data)
+}
+
+func configVocabSize(data []byte) (int, error) {
+	var cfg vocabConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return 0, fmt.Errorf("parse config vocab_size: %w", err)
+	}
+
+	if len(cfg.TextConfig) > 0 && !bytes.Equal(bytes.TrimSpace(cfg.TextConfig), []byte("null")) {
+		var text vocabConfig
+		if err := json.Unmarshal(cfg.TextConfig, &text); err != nil {
+			return 0, fmt.Errorf("parse text_config vocab_size: %w", err)
+		}
+		if text.VocabSize > 0 {
+			return text.VocabSize, nil
+		}
+	}
+	if cfg.VocabSize > 0 {
+		return cfg.VocabSize, nil
+	}
+	return 0, fmt.Errorf("missing vocab_size in config.json")
+}
 
 // QuantType returns the quantization type detected from the first tensor blob metadata.
 func (r *Root) QuantType() string { return r.quantType }

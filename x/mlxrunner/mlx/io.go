@@ -26,11 +26,20 @@ func loadSafetensorsStream() C.mlx_stream {
 
 // LoadSafetensorsNative loads a safetensors file using MLX's native loader.
 func LoadSafetensorsNative(path string) (*SafetensorsFile, error) {
+	return loadSafetensorsNative(path, nil)
+}
+
+// LoadSafetensorsWithProgress loads a safetensors file through MLX's reader
+// API and calls progress with the number of newly-read bytes. The reader stays
+// alive until MLX releases it, which may be after this function returns because
+// safetensors arrays are lazily materialized.
+func LoadSafetensorsWithProgress(path string, progress func(int64)) (*SafetensorsFile, error) {
+	return loadSafetensorsNative(path, progress)
+}
+
+func loadSafetensorsNative(path string, progress func(int64)) (*SafetensorsFile, error) {
 	var arrays C.mlx_map_string_to_array
 	var metadata C.mlx_map_string_to_string
-
-	cPath := C.CString(path)
-	defer C.free(unsafe.Pointer(cPath))
 
 	stream := loadSafetensorsStream()
 	if err := mlxError(stream); err != nil {
@@ -38,11 +47,35 @@ func LoadSafetensorsNative(path string) (*SafetensorsFile, error) {
 	}
 	defer freeStream(stream)
 
-	if err := mlxError(C.mlx_load_safetensors(&arrays, &metadata, cPath, stream)); err != nil {
-		return nil, fmt.Errorf("failed to load safetensors %s: %w", path, err)
+	if progress == nil {
+		cPath := C.CString(path)
+		defer C.free(unsafe.Pointer(cPath))
+
+		if err := mlxError(C.mlx_load_safetensors(&arrays, &metadata, cPath, stream)); err != nil {
+			return nil, fmt.Errorf("failed to load safetensors %s: %w", path, err)
+		}
+	} else {
+		reader, err := newFileIOReader(path, progress)
+		if err != nil {
+			return nil, err
+		}
+
+		cReader := reader.newCReader()
+		defer freeIOReader(cReader)
+
+		if err := mlxError(C.mlx_load_safetensors_reader(&arrays, &metadata, cReader, stream)); err != nil {
+			return nil, fmt.Errorf("failed to load safetensors %s: %w", path, err)
+		}
+		if err := reader.Err(); err != nil {
+			return nil, fmt.Errorf("failed to read safetensors %s: %w", path, err)
+		}
 	}
 
 	return &SafetensorsFile{arrays: arrays, metadata: metadata}, nil
+}
+
+func freeIOReader(reader C.mlx_io_reader) {
+	mlxCheck(C.mlx_io_reader_free(reader))
 }
 
 // Get retrieves a tensor by name.
@@ -92,15 +125,9 @@ func (s *SafetensorsFile) Free() {
 	freeStringMap(s.metadata)
 }
 
-func Load(path string) iter.Seq2[string, *Array] {
+func (s *SafetensorsFile) Arrays() iter.Seq2[string, *Array] {
 	return func(yield func(string, *Array) bool) {
-		sf, err := LoadSafetensorsNative(path)
-		if err != nil {
-			return
-		}
-		defer sf.Free()
-
-		it := mlxCheck(C.mlx_map_string_to_array_iterator_new(sf.arrays))
+		it := mlxCheck(C.mlx_map_string_to_array_iterator_new(s.arrays))
 		defer freeArrayMapIterator(it)
 
 		for {
@@ -117,6 +144,26 @@ func Load(path string) iter.Seq2[string, *Array] {
 			name := C.GoString(key)
 			arr := New(name)
 			arr.ctx = value
+			if !yield(name, arr) {
+				break
+			}
+		}
+	}
+}
+
+func Load(path string) iter.Seq2[string, *Array] {
+	return load(path, nil)
+}
+
+func load(path string, progress func(int64)) iter.Seq2[string, *Array] {
+	return func(yield func(string, *Array) bool) {
+		sf, err := loadSafetensorsNative(path, progress)
+		if err != nil {
+			return
+		}
+		defer sf.Free()
+
+		for name, arr := range sf.Arrays() {
 			if !yield(name, arr) {
 				break
 			}
