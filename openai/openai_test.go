@@ -110,6 +110,50 @@ func TestFromChatRequest_ReasoningEffort(t *testing.T) {
 	}
 }
 
+func TestFromChatRequest_MaxCompletionTokens(t *testing.T) {
+	intPtr := func(n int) *int { return &n }
+
+	cases := []struct {
+		name                string
+		maxTokens           *int
+		maxCompletionTokens *int
+		want                any // expected options["num_predict"]; nil means absent
+	}{
+		{name: "neither set", want: nil},
+		{name: "max_tokens only", maxTokens: intPtr(10), want: 10},
+		{name: "max_completion_tokens only", maxCompletionTokens: intPtr(20), want: 20},
+		{name: "both set prefers max_completion_tokens", maxTokens: intPtr(10), maxCompletionTokens: intPtr(20), want: 20},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := ChatCompletionRequest{
+				Model:               "test-model",
+				Messages:            []Message{{Role: "user", Content: "hi"}},
+				MaxTokens:           tc.maxTokens,
+				MaxCompletionTokens: tc.maxCompletionTokens,
+			}
+			result, err := FromChatRequest(req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			got, ok := result.Options["num_predict"]
+			if tc.want == nil {
+				if ok {
+					t.Fatalf("expected no num_predict, got %v", got)
+				}
+				return
+			}
+			if !ok {
+				t.Fatalf("expected num_predict=%v, got none", tc.want)
+			}
+			if got != tc.want {
+				t.Fatalf("got num_predict=%v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestFromChatRequest_WithImage(t *testing.T) {
 	imgData, _ := base64.StdEncoding.DecodeString(image)
 
