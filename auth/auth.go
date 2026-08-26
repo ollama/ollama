@@ -3,8 +3,10 @@ package auth
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +19,48 @@ import (
 )
 
 const defaultPrivateKey = "id_ed25519"
+
+// EnsureKeypair creates the default signing keypair when it does not exist.
+func EnsureKeypair(out io.Writer) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	privKeyPath := filepath.Join(home, ".ollama", defaultPrivateKey)
+	pubKeyPath := privKeyPath + ".pub"
+	if _, err := os.Stat(privKeyPath); !os.IsNotExist(err) {
+		return nil
+	}
+
+	fmt.Fprintf(out, "Couldn't find '%s'. Generating new private key.\n", privKeyPath)
+	cryptoPublicKey, cryptoPrivateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return err
+	}
+
+	privateKeyBytes, err := ssh.MarshalPrivateKey(cryptoPrivateKey, "")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(privKeyPath), 0o755); err != nil {
+		return fmt.Errorf("could not create directory %w", err)
+	}
+	if err := os.WriteFile(privKeyPath, pem.EncodeToMemory(privateKeyBytes), 0o600); err != nil {
+		return err
+	}
+
+	sshPublicKey, err := ssh.NewPublicKey(cryptoPublicKey)
+	if err != nil {
+		return err
+	}
+	publicKeyBytes := ssh.MarshalAuthorizedKey(sshPublicKey)
+	if err := os.WriteFile(pubKeyPath, publicKeyBytes, 0o644); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "Your new public key is: \n\n%s\n", publicKeyBytes)
+	return nil
+}
 
 func GetPublicKey() (string, error) {
 	home, err := os.UserHomeDir()

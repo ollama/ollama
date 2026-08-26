@@ -115,6 +115,8 @@ type Server struct {
 	UpdateAvailableFunc  func()
 	IntegrationInstalled func(string) bool
 	ListCloudModels      func(context.Context) (*api.ListResponse, error)
+	featureFlagsMu       sync.Mutex
+	featureFlags         *featureFlagService
 }
 
 func (s *Server) log() *slog.Logger {
@@ -295,6 +297,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/settings", handle(s.settings))
 	mux.Handle("GET /api/v1/cloud", handle(s.getCloudSetting))
 	mux.Handle("POST /api/v1/cloud", handle(s.cloudSetting))
+	mux.Handle("GET /api/v1/feature-flags/{key}", handle(s.getFeatureFlag))
 	mux.Handle("GET /api/v1/models/cloud", handle(s.getCloudModels))
 	mux.Handle("GET /api/v1/integrations", handle(s.getIntegrationStatuses))
 

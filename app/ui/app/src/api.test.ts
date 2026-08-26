@@ -6,9 +6,50 @@ vi.mock("./lib/ollama-client", () => ({
 
 import {
   fetchConnectUrl,
+  getFeatureFlag,
   getClaudeDesktopAvailableModels,
   getIntegrationStatuses,
 } from "./api";
+
+describe("getFeatureFlag", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("returns boolean and string values from the local app service", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ value: true })))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ value: "compact" })),
+      );
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(getFeatureFlag("new-chat", false)).resolves.toBe(true);
+    await expect(getFeatureFlag("chat-layout", "standard")).resolves.toBe(
+      "compact",
+    );
+    expect(fetch).toHaveBeenNthCalledWith(
+      1,
+      "http://127.0.0.1:3001/api/v1/feature-flags/new-chat?type=boolean&default=false",
+    );
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      "http://127.0.0.1:3001/api/v1/feature-flags/chat-layout?type=string&default=standard",
+    );
+  });
+
+  it("returns the compiled fallback for unavailable or invalid responses", async () => {
+    const fetch = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ value: "wrong" })));
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(getFeatureFlag("new-chat", false)).resolves.toBe(false);
+    await expect(getFeatureFlag("new-chat", true)).resolves.toBe(true);
+  });
+});
 
 describe("fetchConnectUrl", () => {
   afterEach(() => {

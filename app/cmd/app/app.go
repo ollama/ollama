@@ -30,6 +30,7 @@ import (
 	"github.com/ollama/ollama/app/ui"
 	"github.com/ollama/ollama/app/updater"
 	"github.com/ollama/ollama/app/version"
+	ollamaAuth "github.com/ollama/ollama/auth"
 )
 
 var (
@@ -180,6 +181,9 @@ func main() {
 	// on macOS, offer the user to create a symlink
 	// from /usr/local/bin/ollama to the app bundle
 	installSymlink()
+	if err := ollamaAuth.EnsureKeypair(io.Discard); err != nil {
+		slog.Warn("failed to ensure signing identity", "error", err)
+	}
 
 	var ln net.Listener
 	if devMode {

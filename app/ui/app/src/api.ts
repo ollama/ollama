@@ -33,6 +33,38 @@ export interface CloudStatusResponse {
   source: CloudStatusSource;
 }
 
+export async function getFeatureFlag(
+  key: string,
+  defaultValue: boolean,
+): Promise<boolean>;
+export async function getFeatureFlag(
+  key: string,
+  defaultValue: string,
+): Promise<string>;
+export async function getFeatureFlag(
+  key: string,
+  defaultValue: boolean | string,
+): Promise<boolean | string> {
+  const type = typeof defaultValue === "boolean" ? "boolean" : "string";
+  const query = new URLSearchParams({
+    type,
+    default: String(defaultValue),
+  });
+
+  try {
+    const response = await fetch(
+      `${API_BASE}/api/v1/feature-flags/${encodeURIComponent(key)}?${query}`,
+    );
+    if (!response.ok) return defaultValue;
+    const data = await response.json();
+    return typeof data.value === typeof defaultValue
+      ? data.value
+      : defaultValue;
+  } catch {
+    return defaultValue;
+  }
+}
+
 export interface IntegrationStatus {
   id: string;
   name: string;

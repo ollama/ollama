@@ -3,10 +3,7 @@ package cmd
 import (
 	"bufio"
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -33,11 +30,11 @@ import (
 	"github.com/olekukonko/tablewriter"
 	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
-	"golang.org/x/crypto/ssh"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/launch"
 	"github.com/ollama/ollama/cmd/tui"
@@ -2031,49 +2028,7 @@ func RunServer(_ *cobra.Command, _ []string) error {
 }
 
 func initializeKeypair() error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-
-	privKeyPath := filepath.Join(home, ".ollama", "id_ed25519")
-	pubKeyPath := filepath.Join(home, ".ollama", "id_ed25519.pub")
-
-	_, err = os.Stat(privKeyPath)
-	if os.IsNotExist(err) {
-		fmt.Printf("Couldn't find '%s'. Generating new private key.\n", privKeyPath)
-		cryptoPublicKey, cryptoPrivateKey, err := ed25519.GenerateKey(rand.Reader)
-		if err != nil {
-			return err
-		}
-
-		privateKeyBytes, err := ssh.MarshalPrivateKey(cryptoPrivateKey, "")
-		if err != nil {
-			return err
-		}
-
-		if err := os.MkdirAll(filepath.Dir(privKeyPath), 0o755); err != nil {
-			return fmt.Errorf("could not create directory %w", err)
-		}
-
-		if err := os.WriteFile(privKeyPath, pem.EncodeToMemory(privateKeyBytes), 0o600); err != nil {
-			return err
-		}
-
-		sshPublicKey, err := ssh.NewPublicKey(cryptoPublicKey)
-		if err != nil {
-			return err
-		}
-
-		publicKeyBytes := ssh.MarshalAuthorizedKey(sshPublicKey)
-
-		if err := os.WriteFile(pubKeyPath, publicKeyBytes, 0o644); err != nil {
-			return err
-		}
-
-		fmt.Printf("Your new public key is: \n\n%s\n", publicKeyBytes)
-	}
-	return nil
+	return auth.EnsureKeypair(os.Stdout)
 }
 
 func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
