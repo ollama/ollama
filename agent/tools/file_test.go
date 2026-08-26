@@ -429,7 +429,9 @@ func TestReadAllowsAbsolutePath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := (&Read{}).Execute(context.Background(), agent.ToolContext{WorkingDir: t.TempDir()}, map[string]any{
+	// The absolute path resolves inside WorkingDir, so it's allowed even
+	// though it wasn't given relative to it.
+	result, err := (&Read{}).Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
 		"path": path,
 	})
 	if err != nil {
@@ -437,6 +439,24 @@ func TestReadAllowsAbsolutePath(t *testing.T) {
 	}
 	if result.Content != content {
 		t.Fatalf("content = %q", result.Content)
+	}
+}
+
+func TestReadRejectsAbsolutePathOutsideWorkingDir(t *testing.T) {
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "id_rsa")
+	if err := os.WriteFile(secret, []byte("-----BEGIN OPENSSH PRIVATE KEY-----"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := (&Read{}).Execute(context.Background(), agent.ToolContext{WorkingDir: t.TempDir()}, map[string]any{
+		"path": secret,
+	})
+	if err == nil {
+		t.Fatalf("expected absolute path outside WorkingDir to be rejected, got content %q", result.Content)
+	}
+	if !strings.Contains(err.Error(), "path escapes working directory") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -451,11 +471,39 @@ func TestReadRejectsAbsoluteSymlink(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 
-	_, err := (&Read{}).Execute(context.Background(), agent.ToolContext{WorkingDir: t.TempDir()}, map[string]any{
+	// link resolves inside WorkingDir, so this isolates the symlink check
+	// from the working-directory confinement check.
+	_, err := (&Read{}).Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
 		"path": link,
 	})
 	if err == nil {
 		t.Fatal("expected absolute symlink to be rejected")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("err = %v, want symlink rejection", err)
+	}
+}
+
+func TestReadRejectsAbsoluteSymlinkEscapingWorkingDir(t *testing.T) {
+	outside := t.TempDir()
+	target := filepath.Join(outside, "target.txt")
+	if err := os.WriteFile(target, []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	link := filepath.Join(dir, "alias")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	// The symlink itself resolves inside WorkingDir (so it passes the
+	// escape check), but it must still be rejected because it isn't a
+	// regular file, and this repo's os.Root confinement never follows it.
+	_, err := (&Read{}).Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+		"path": link,
+	})
+	if err == nil {
+		t.Fatal("expected symlink escaping WorkingDir to be rejected")
 	}
 	if !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("err = %v, want symlink rejection", err)

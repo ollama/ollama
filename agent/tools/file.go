@@ -386,35 +386,8 @@ func openRegularFile(workingDir, path string, allowAbsolute bool) (*os.File, os.
 	if path == "" {
 		return nil, nil, fmt.Errorf("path parameter is required")
 	}
-	if allowAbsolute && filepath.IsAbs(path) {
-		cleaned := filepath.Clean(path)
-		info, err := os.Lstat(cleaned)
-		if err != nil {
-			return nil, nil, err
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return nil, nil, fmt.Errorf("%s is a symlink; read the target file directly", path)
-		}
-		if err := rejectNonRegularFile(path, info); err != nil {
-			return nil, nil, err
-		}
-		file, err := os.Open(cleaned)
-		if err != nil {
-			return nil, nil, err
-		}
-		info, err = file.Stat()
-		if err != nil {
-			file.Close()
-			return nil, nil, err
-		}
-		if err := rejectNonRegularFile(path, info); err != nil {
-			file.Close()
-			return nil, nil, err
-		}
-		return file, info, nil
-	}
 
-	rel, err := cleanRelativePath(path)
+	rel, err := resolveWorkingDirPath(workingDir, path, allowAbsolute)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -441,6 +414,42 @@ func openRegularFile(workingDir, path string, allowAbsolute bool) (*os.File, os.
 		return nil, nil, err
 	}
 	return file, info, nil
+}
+
+// resolveWorkingDirPath turns a tool-supplied path into one relative to
+// workingDir, suitable for opening through the confined os.Root below. An
+// absolute path is only considered when allowAbsolute is set, and even then
+// must resolve inside workingDir: the tool's schema documents paths as
+// relative to the working directory, and the caller (e.g. the bash tool's
+// credential-path denylist) relies on that confinement holding for every
+// tool, not just the ones that only ever see relative paths.
+func resolveWorkingDirPath(workingDir, path string, allowAbsolute bool) (string, error) {
+	if !filepath.IsAbs(path) {
+		return cleanRelativePath(path)
+	}
+	if !allowAbsolute {
+		return "", fmt.Errorf("absolute paths are not allowed")
+	}
+	base, err := workingDirAbs(workingDir)
+	if err != nil {
+		return "", err
+	}
+	// Resolve symlinks in the parent directory chain, the same way
+	// workingDirAbs resolved base above, but leave the final path
+	// component untouched so a symlink there is still caught by the
+	// os.Root-confined Lstat below rather than silently followed here.
+	cleaned := filepath.Clean(path)
+	dir, err := canonicalPath(filepath.Dir(cleaned))
+	if err != nil {
+		return "", err
+	}
+	resolved := filepath.Join(dir, filepath.Base(cleaned))
+
+	rel, err := filepath.Rel(base, resolved)
+	if err != nil {
+		return "", fmt.Errorf("path escapes working directory")
+	}
+	return cleanRelativePath(rel)
 }
 
 func regularRootFileInfo(root *os.Root, rel, path string) (os.FileInfo, error) {
