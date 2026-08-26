@@ -12,10 +12,17 @@ type directURLContextKey struct{}
 
 var directURLPattern = regexp.MustCompile("https?://[^\\s<>\"'`]+")
 
+// trailingPunctuation is punctuation a URL can pick up from the prose around it.
+const trailingPunctuation = ".,;:!?)]}"
+
 func WithAllowedDirectURLs(ctx context.Context, text string) context.Context {
 	allowed := make(map[string]struct{})
 	for _, match := range directURLPattern.FindAllString(text, -1) {
+		// A URL extracted from prose may have swallowed the punctuation that
+		// followed it, but it may also genuinely end in punctuation, as
+		// Wikipedia disambiguation URLs do. Allow both readings.
 		addAllowedDirectURLToMap(allowed, match)
+		addAllowedDirectURLToMap(allowed, strings.TrimRight(match, trailingPunctuation))
 	}
 	return context.WithValue(ctx, directURLContextKey{}, allowed)
 }
@@ -30,7 +37,7 @@ func addAllowedDirectURLToMap(allowed map[string]struct{}, raw string) {
 		return
 	}
 
-	raw = cleanDirectURL(raw)
+	raw = normalizeDirectURL(raw)
 	if raw == "" {
 		return
 	}
@@ -40,18 +47,17 @@ func addAllowedDirectURLToMap(allowed map[string]struct{}, raw string) {
 
 func allowedDirectURL(ctx context.Context, raw string) bool {
 	allowed, _ := ctx.Value(directURLContextKey{}).(map[string]struct{})
-	cleaned := cleanDirectURL(raw)
-	if cleaned == "" || cleaned != raw {
+	raw = normalizeDirectURL(raw)
+	if raw == "" {
 		return false
 	}
 
-	_, ok := allowed[cleaned]
+	_, ok := allowed[raw]
 	return ok
 }
 
-func cleanDirectURL(raw string) string {
+func normalizeDirectURL(raw string) string {
 	raw = strings.TrimSpace(raw)
-	raw = strings.TrimRight(raw, ".,;:!?)]}")
 
 	if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") {
 		return ""
