@@ -935,7 +935,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 				return nil, 0, err
 			}
 			if truncated {
-				slog.Warn("embedding input truncated to fit context window", "model", req.Model)
+				slog.Debug("embedding input truncated to fit context window", "model", req.Model)
 			}
 		}
 
