@@ -20,11 +20,21 @@ func TestFetchClaudeDesktopModelsUsesAppAwareContract(t *testing.T) {
 		if got := r.URL.Query().Get("app"); got != "claude-desktop" {
 			t.Fatalf("app = %q, want claude-desktop", got)
 		}
-		_ = json.NewEncoder(w).Encode(api.ModelRecommendationsResponse{Recommendations: []api.ModelRecommendation{
-			{Model: "glm-5.2:cloud", Description: "GLM", MaxOutputTokens: 131_072, RequiredPlan: "pro"},
-			{Model: "deepseek-v4-pro", Description: "DeepSeek", MaxOutputTokens: 65_536, RequiredPlan: "pro"},
-			{Model: "qwen3.8:27b", Description: "Qwen", MaxOutputTokens: 131_072},
-		}})
+		_ = json.NewEncoder(w).Encode(api.ModelRecommendationsResponse{
+			Recommendations: []api.ModelRecommendation{
+				{Model: "glm-5.2:cloud", Description: "GLM", MaxOutputTokens: 131_072, RequiredPlan: "pro"},
+				{Model: "glm-5.3-flash:cloud", Description: "GLM Flash", MaxOutputTokens: 1_048_576, RequiredPlan: "pro"},
+				{Model: "gemma4:31b-cloud", Description: "Gemma", MaxOutputTokens: 262_144, RequiredPlan: "free"},
+				{Model: "deepseek-v4-pro", Description: "DeepSeek", MaxOutputTokens: 65_536, RequiredPlan: "pro"},
+				{Model: "qwen3.8:27b", Description: "Qwen", MaxOutputTokens: 131_072},
+			},
+			Mappings: &api.ModelRecommendationMappings{
+				"claude-opus-5":     "glm-5.2:cloud",
+				"claude-sonnet-5":   "glm-5.3-flash:cloud",
+				"unknown-route":     "deepseek-v4-pro",
+				"claude-sonnet-4-6": "missing-model:cloud",
+			},
+		})
 	}))
 	defer server.Close()
 
@@ -36,20 +46,111 @@ func TestFetchClaudeDesktopModelsUsesAppAwareContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := claudeDesktopModelNames(models), []string{"glm-5.2:cloud", "deepseek-v4-pro"}; !slices.Equal(got, want) {
+	if got, want := claudeDesktopModelNames(models), []string{"glm-5.2:cloud", "glm-5.3-flash:cloud", "gemma4:31b-cloud", "deepseek-v4-pro"}; !slices.Equal(got, want) {
 		t.Fatalf("models = %v, want %v", got, want)
 	}
-	if models[1].OllamaModel != "deepseek-v4-pro:cloud" || !models[1].Cloud {
-		t.Fatalf("cloud adapter = %+v", models[1])
+	if models[3].OllamaModel != "deepseek-v4-pro:cloud" || !models[3].Cloud {
+		t.Fatalf("cloud adapter = %+v", models[3])
 	}
-	if models[1].DisplayName != "deepseek-v4-pro:cloud" {
-		t.Fatalf("display name = %q, want exact model identifier", models[1].DisplayName)
+	if models[3].DisplayName != "deepseek-v4-pro:cloud" {
+		t.Fatalf("display name = %q, want exact model identifier", models[3].DisplayName)
 	}
 	for _, model := range models {
 		if !model.Recommended {
 			t.Fatalf("endpoint model %q was not marked as recommended", model.Name)
 		}
 	}
+	want := map[string]string{
+		"claude-opus-5":   "glm-5.2:cloud",
+		"claude-sonnet-5": "glm-5.3-flash:cloud",
+	}
+	for _, fullAccess := range []bool{false, true} {
+		if got := DefaultClaudeDesktopMappingsForModels(models, fullAccess); !maps.Equal(got, want) {
+			t.Fatalf("endpoint mappings with fullAccess=%t = %v, want %v", fullAccess, got, want)
+		}
+	}
+}
+
+func TestClaudeDesktopRecommendationMappingPresence(t *testing.T) {
+	recommendations := []api.ModelRecommendation{
+		{Model: "glm-5.2:cloud", RequiredPlan: "pro"},
+		{Model: "gemma4:31b-cloud", RequiredPlan: "free"},
+	}
+	tests := []struct {
+		name     string
+		mappings *api.ModelRecommendationMappings
+		want     map[string]string
+	}{
+		{
+			name: "omitted uses compatibility fallback",
+			want: map[string]string{
+				"claude-opus-5":             "glm-5.2:cloud",
+				"claude-haiku-4-5-20251001": "gemma4:31b-cloud",
+			},
+		},
+		{
+			name:     "empty is authoritative",
+			mappings: &api.ModelRecommendationMappings{},
+			want:     map[string]string{},
+		},
+		{
+			name: "partial does not fill missing routes",
+			mappings: &api.ModelRecommendationMappings{
+				"claude-sonnet-5":   "gemma4:31b-cloud",
+				"claude-opus-5":     "missing-model:cloud",
+				"unknown-route":     "glm-5.2:cloud",
+				"claude-sonnet-4-6": "",
+			},
+			want: map[string]string{"claude-sonnet-5": "gemma4:31b-cloud"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			models := fetchClaudeDesktopModelsForTest(t, api.ModelRecommendationsResponse{
+				Recommendations: recommendations,
+				Mappings:        tt.mappings,
+			})
+			if got := DefaultClaudeDesktopMappingsForModels(models, true); !maps.Equal(got, tt.want) {
+				t.Fatalf("mappings = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClaudeDesktopNullRecommendationMappingsUseFallback(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"recommendations":[{"model":"gemma4:31b-cloud","required_plan":"free"}],"mappings":null}`))
+	}))
+	defer server.Close()
+	req, err := http.NewRequest(http.MethodGet, server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	models, err := FetchClaudeDesktopModels(server.Client(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"claude-sonnet-5": "gemma4:31b-cloud"}
+	if got := DefaultClaudeDesktopMappingsForModels(models, false); !maps.Equal(got, want) {
+		t.Fatalf("null-contract mappings = %v, want fallback %v", got, want)
+	}
+}
+
+func fetchClaudeDesktopModelsForTest(t *testing.T, response api.ModelRecommendationsResponse) []ClaudeDesktopModel {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(response)
+	}))
+	t.Cleanup(server.Close)
+	req, err := http.NewRequest(http.MethodGet, server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	models, err := FetchClaudeDesktopModels(server.Client(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return models
 }
 
 func TestFetchClaudeDesktopModelsRejectsInvalidResponses(t *testing.T) {
@@ -60,6 +161,7 @@ func TestFetchClaudeDesktopModelsRejectsInvalidResponses(t *testing.T) {
 	}{
 		{name: "server error", status: http.StatusBadGateway, body: `{"error":"unavailable"}`},
 		{name: "malformed", status: http.StatusOK, body: `{`},
+		{name: "malformed mappings", status: http.StatusOK, body: `{"recommendations":[{"model":"glm-5.2:cloud"}],"mappings":[]}`},
 		{name: "empty", status: http.StatusOK, body: `{"recommendations":[]}`},
 		{name: "local only", status: http.StatusOK, body: `{"recommendations":[{"model":"qwen3.8:27b"}]}`},
 	} {
@@ -176,6 +278,22 @@ func TestVerifyClaudeDesktopModelsWithCloudInventoryPreservesMetadata(t *testing
 	}, false, true)
 	if access.Availability != ClaudeDesktopAvailabilityAvailable {
 		t.Fatalf("verified model access = %+v, want available", access)
+	}
+}
+
+func TestPreserveClaudeDesktopCloudEntitlementsKeepsOfflineRoutes(t *testing.T) {
+	fallback := UnverifyClaudeDesktopCloudEntitlements(DefaultClaudeDesktopModels())
+	previous := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{
+		{Model: "deepseek-v4-flash", RequiredPlan: "pro"},
+	})
+	previous = VerifyClaudeDesktopModelsWithCloudInventory(previous, ClaudeDesktopModelsFromCloudInventory([]string{"deepseek-v4-flash"}))
+
+	preserved := PreserveClaudeDesktopCloudEntitlements(fallback, previous)
+	if got := preserved[3].OllamaModel; got != "deepseek-v4-flash:0731:cloud" {
+		t.Fatalf("offline route = %q, want pinned fallback", got)
+	}
+	if !preserved[3].AccountCloud || !preserved[3].entitlementKnown {
+		t.Fatalf("preserved entitlement = %+v", preserved[3])
 	}
 }
 
@@ -407,7 +525,7 @@ func TestDefaultClaudeDesktopMappingsUseCurrentCatalogRoutes(t *testing.T) {
 	wantPaid := map[string]string{
 		"claude-fable-5":            "kimi-k3:cloud",
 		"claude-opus-5":             "glm-5.2:cloud",
-		"claude-sonnet-5":           "glm-5.3-flash:cloud",
+		"claude-sonnet-5":           "deepseek-v4-flash:cloud",
 		"claude-haiku-4-5-20251001": "gemma4:31b-cloud",
 		"claude-sonnet-4-6":         "deepseek-v4-pro:cloud",
 	}

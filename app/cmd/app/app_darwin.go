@@ -501,8 +501,12 @@ func refreshClaudeDesktopCatalog(ctx context.Context, current []proxy.ClaudeDesk
 	cloudInventoryKnown := false
 	if reloaded {
 		available, source = claudeModelsLoader(ctx)
-		if source == "fallback" && len(previous) > 0 {
-			available = preserveClaudeDesktopEntitlements(available, previous)
+		if source == "fallback" {
+			if len(previous) > 0 {
+				available = proxy.PreserveClaudeDesktopCloudEntitlements(available, previous)
+			}
+			available = proxy.WithoutClaudeDesktopRecommendationMappings(available)
+			current = proxy.WithoutClaudeDesktopRecommendationMappings(current)
 		}
 		state, err := claudeAccessStateResolver(ctx)
 		if err == nil && state.Cloud == proxy.ClaudeDesktopCloudOn {
@@ -561,25 +565,6 @@ func configuredClaudeDesktopModels(available, current []proxy.ClaudeDesktopModel
 		return proxy.MapClaudeDesktopModels(available, mappings)
 	}
 	return proxy.SelectClaudeDesktopModels(available, launch.ClaudeDesktopModels())
-}
-
-func preserveClaudeDesktopEntitlements(fallback, previous []proxy.ClaudeDesktopModel) []proxy.ClaudeDesktopModel {
-	models := proxy.UnverifyClaudeDesktopCloudEntitlements(fallback)
-	known := make(map[string]proxy.ClaudeDesktopModel, len(previous)*2)
-	for _, model := range previous {
-		known[model.Name] = model
-		known[model.OllamaModel] = model
-	}
-	for i, model := range models {
-		if prior, ok := known[model.Name]; ok {
-			models[i] = prior
-			continue
-		}
-		if prior, ok := known[model.OllamaModel]; ok {
-			models[i] = prior
-		}
-	}
-	return models
 }
 
 func loadClaudeDesktopModels(ctx context.Context) ([]proxy.ClaudeDesktopModel, string) {

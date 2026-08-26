@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"maps"
 	"net"
@@ -382,6 +383,135 @@ func TestResolveClaudeDesktopStartupCatalogUsesAccountDefaults(t *testing.T) {
 	}
 }
 
+func TestResolveClaudeDesktopStartupCatalogUsesEffectiveEndpointMappings(t *testing.T) {
+	recommendations := []api.ModelRecommendation{
+		{Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"},
+		{Model: "gemma4:31b-cloud", RequiredPlan: "free"},
+	}
+	tests := []struct {
+		name     string
+		state    proxy.ClaudeDesktopAccessState
+		mappings api.ModelRecommendationMappings
+		saved    map[string]string
+		want     map[string]string
+	}{
+		{
+			name:     "free effective mapping",
+			state:    proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "free"},
+			mappings: api.ModelRecommendationMappings{"claude-sonnet-5": "gemma4:31b-cloud"},
+			want:     map[string]string{"claude-sonnet-5": "gemma4:31b-cloud"},
+		},
+		{
+			name:     "paid effective mapping",
+			state:    proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "pro"},
+			mappings: api.ModelRecommendationMappings{"claude-sonnet-5": "glm-5.3-flash:cloud"},
+			want:     map[string]string{"claude-sonnet-5": "glm-5.3-flash:cloud"},
+		},
+		{
+			name:     "persisted user mapping wins",
+			state:    proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "pro"},
+			mappings: api.ModelRecommendationMappings{"claude-sonnet-5": "glm-5.3-flash:cloud"},
+			saved:    map[string]string{"claude-opus-5": "gemma4:31b-cloud"},
+			want:     map[string]string{"claude-opus-5": "gemma4:31b-cloud"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			if tt.saved != nil {
+				if err := launch.SaveClaudeDesktopModelMappings(tt.saved); err != nil {
+					t.Fatal(err)
+				}
+			}
+			models := claudeDesktopRecommendationModelsForTest(t, recommendations, &tt.mappings)
+
+			previousLoader := claudeModelsLoader
+			previousAccess := claudeAccessStateResolver
+			previousCloud := claudeCloudModelsResolver
+			claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
+				return models, "endpoint"
+			}
+			claudeAccessStateResolver = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
+				return tt.state, nil
+			}
+			claudeCloudModelsResolver = func(context.Context) ([]proxy.ClaudeDesktopModel, error) {
+				return proxy.ClaudeDesktopModelsFromCloudInventory([]string{"glm-5.3-flash:cloud", "gemma4:31b-cloud"}), nil
+			}
+			t.Cleanup(func() {
+				claudeModelsLoader = previousLoader
+				claudeAccessStateResolver = previousAccess
+				claudeCloudModelsResolver = previousCloud
+			})
+
+			_, selected, source := resolveClaudeDesktopStartupCatalog(context.Background())
+			if got := proxy.ClaudeDesktopMappings(selected); !maps.Equal(got, tt.want) {
+				t.Fatalf("startup mappings = %v, want %v (source %q)", got, tt.want, source)
+			}
+		})
+	}
+}
+
+func TestResolveClaudeDesktopStartupCatalogUpdatesDefaultsAfterReconnect(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	endpointModels := claudeDesktopRecommendationModelsForTest(t, []api.ModelRecommendation{
+		{Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"},
+	}, &api.ModelRecommendationMappings{"claude-sonnet-5": "glm-5.3-flash:cloud"})
+
+	previousLoader := claudeModelsLoader
+	previousAccess := claudeAccessStateResolver
+	previousCloud := claudeCloudModelsResolver
+	load := 0
+	claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
+		load++
+		if load == 1 {
+			return fallbackClaudeDesktopModels(), "fallback"
+		}
+		return endpointModels, "endpoint"
+	}
+	claudeAccessStateResolver = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
+		return proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "pro"}, nil
+	}
+	claudeCloudModelsResolver = func(context.Context) ([]proxy.ClaudeDesktopModel, error) {
+		return proxy.ClaudeDesktopModelsFromCloudInventory([]string{
+			"glm-5.3-flash:cloud", "glm-5.2:cloud", "kimi-k3:cloud", "deepseek-v4-pro:cloud", "deepseek-v4-flash:0731:cloud", "gemma4:31b-cloud",
+		}), nil
+	}
+	t.Cleanup(func() {
+		claudeModelsLoader = previousLoader
+		claudeAccessStateResolver = previousAccess
+		claudeCloudModelsResolver = previousCloud
+	})
+
+	_, offline, source := resolveClaudeDesktopStartupCatalog(context.Background())
+	if got := proxy.ClaudeDesktopMappings(offline)["claude-sonnet-5"]; source != "fallback" || got != "deepseek-v4-flash:0731:cloud" {
+		t.Fatalf("offline Sonnet/source = %q/%q", got, source)
+	}
+	_, reconnected, source := resolveClaudeDesktopStartupCatalog(context.Background())
+	if got := proxy.ClaudeDesktopMappings(reconnected); source != "endpoint" || !maps.Equal(got, map[string]string{"claude-sonnet-5": "glm-5.3-flash:cloud"}) {
+		t.Fatalf("reconnected mappings/source = %v/%q", got, source)
+	}
+}
+
+func claudeDesktopRecommendationModelsForTest(t *testing.T, recommendations []api.ModelRecommendation, mappings *api.ModelRecommendationMappings) []proxy.ClaudeDesktopModel {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(api.ModelRecommendationsResponse{
+			Recommendations: recommendations,
+			Mappings:        mappings,
+		})
+	}))
+	defer server.Close()
+	req, err := http.NewRequest(http.MethodGet, server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	models, err := proxy.FetchClaudeDesktopModels(server.Client(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return models
+}
+
 func TestResolveClaudeDesktopStartupCatalogVerifiesFallbackFromAccountInventory(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if err := launch.SaveClaudeDesktopModels([]string{"glm-5.2:cloud"}); err != nil {
@@ -508,6 +638,51 @@ func TestRefreshClaudeDesktopCatalogUpdatesPolicyAndPreservesSlots(t *testing.T)
 	}
 	if updated[0].GatewayID() != initialID {
 		t.Fatalf("gateway ID changed from %q to %q", initialID, updated[0].GatewayID())
+	}
+}
+
+func TestRefreshClaudeDesktopCatalogDropsStaleDefaultsOnFallback(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	endpointModels := claudeDesktopRecommendationModelsForTest(t, []api.ModelRecommendation{
+		{Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"},
+		{Model: "glm-5.2:cloud", RequiredPlan: "pro"},
+		{Model: "kimi-k3:cloud", RequiredPlan: "pro"},
+		{Model: "deepseek-v4-pro", RequiredPlan: "pro"},
+		{Model: "deepseek-v4-flash", RequiredPlan: "pro"},
+		{Model: "gemma4:31b-cloud", RequiredPlan: "free"},
+	}, &api.ModelRecommendationMappings{"claude-sonnet-5": "glm-5.3-flash:cloud"})
+	current := proxy.MapClaudeDesktopModels(endpointModels, map[string]string{"claude-sonnet-5": "glm-5.3-flash:cloud"})
+
+	previousLoader := claudeModelsLoader
+	claudeProxyMu.Lock()
+	previousAvailable := claudeAvailableModels
+	previousSource := claudeModelSource
+	previousUpdated := claudeCatalogUpdated
+	claudeAvailableModels = endpointModels
+	claudeModelSource = "endpoint"
+	claudeCatalogUpdated = time.Now()
+	claudeProxyMu.Unlock()
+	claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
+		return fallbackClaudeDesktopModels(), "fallback"
+	}
+	t.Cleanup(func() {
+		claudeModelsLoader = previousLoader
+		claudeProxyMu.Lock()
+		claudeAvailableModels = previousAvailable
+		claudeModelSource = previousSource
+		claudeCatalogUpdated = previousUpdated
+		claudeProxyMu.Unlock()
+	})
+
+	available, selected, source := refreshClaudeDesktopCatalog(context.Background(), current, true)
+	if source != "fallback" {
+		t.Fatalf("source = %q, want fallback", source)
+	}
+	if got := proxy.ClaudeDesktopMappings(selected); !maps.Equal(got, map[string]string{"claude-sonnet-5": "glm-5.3-flash:cloud"}) {
+		t.Fatalf("current mappings = %v, want preserved explicit mapping", got)
+	}
+	if got := proxy.DefaultClaudeDesktopMappingsForModels(available, true)["claude-sonnet-5"]; got != "deepseek-v4-flash:0731:cloud" {
+		t.Fatalf("offline default Sonnet = %q, want compatibility fallback", got)
 	}
 }
 
