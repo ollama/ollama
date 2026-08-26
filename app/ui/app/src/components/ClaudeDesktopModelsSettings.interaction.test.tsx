@@ -79,7 +79,157 @@ function textContent(node: ReactTestInstance): string {
     .join("");
 }
 
+async function openPickerAt({
+  top,
+  bottom,
+  innerHeight,
+}: {
+  top: number;
+  bottom: number;
+  innerHeight: number;
+}) {
+  let renderer!: ReactTestRenderer;
+  const menuClassesAtFocus: string[] = [];
+  const focus = vi.fn(() => {
+    const listbox = renderer.root.findByProps({ role: "listbox" });
+    menuClassesAtFocus.push(listbox.parent?.props.className ?? "");
+  });
+  class TestHTMLElement {
+    focus() {}
+  }
+  vi.stubGlobal("window", {
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    HTMLElement: TestHTMLElement,
+    innerHeight,
+    innerWidth: 1000,
+  });
+  vi.stubGlobal("document", {
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  });
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+
+  await act(async () => {
+    renderer = create(
+      <ClaudeDesktopModelsSettings
+        initialLocalModels={[]}
+        initialStatus={testStatus()}
+      />,
+      {
+        createNodeMock: (element) => {
+          if (element.type === "input") return { focus };
+          if (
+            element.type === "button" &&
+            element.props["aria-label"] === "Ollama model for Fable 5"
+          ) {
+            return {
+              getBoundingClientRect: () => ({
+                top,
+                bottom,
+                left: 400,
+                right: 600,
+                width: 200,
+              }),
+            };
+          }
+          return {
+            contains: vi.fn(() => true),
+            getBoundingClientRect: () => ({ height: 44 }),
+            scrollHeight: 256,
+          };
+        },
+      },
+    );
+    await Promise.resolve();
+  });
+
+  await act(async () => {
+    renderer.root
+      .findByProps({ "aria-label": "Ollama model for Fable 5" })
+      .props.onClick();
+    await Promise.resolve();
+  });
+
+  return { focus, menuClassesAtFocus, renderer };
+}
+
+async function cleanupPickerTest(renderer: ReactTestRenderer) {
+  await act(async () => {
+    renderer.unmount();
+    await Promise.resolve();
+  });
+  vi.unstubAllGlobals();
+}
+
 describe("ClaudeDesktopModelsSettings interactions", () => {
+  it("opens downward when the model menu does not fit above", async () => {
+    const { focus, menuClassesAtFocus, renderer } = await openPickerAt({
+      top: 24,
+      bottom: 60,
+      innerHeight: 600,
+    });
+    try {
+      const listbox = renderer.root.findByProps({ role: "listbox" });
+      expect(listbox.parent?.props["data-placement"]).toBe("down");
+      expect(listbox.parent?.props.style).toEqual({
+        left: 344,
+        top: 68,
+        width: 256,
+      });
+      expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+      expect(menuClassesAtFocus[0]).toContain("visible");
+      expect(menuClassesAtFocus[0]).not.toContain("invisible");
+    } finally {
+      await cleanupPickerTest(renderer);
+    }
+  });
+
+  it("opens downward when the model menu fits on both sides", async () => {
+    const { renderer } = await openPickerAt({
+      top: 350,
+      bottom: 386,
+      innerHeight: 800,
+    });
+    try {
+      const listbox = renderer.root.findByProps({ role: "listbox" });
+      expect(listbox.parent?.props["data-placement"]).toBe("down");
+      expect(listbox.parent?.props.style.top).toBe(394);
+    } finally {
+      await cleanupPickerTest(renderer);
+    }
+  });
+
+  it("opens upward when the model menu only fits above", async () => {
+    const { renderer } = await openPickerAt({
+      top: 400,
+      bottom: 436,
+      innerHeight: 600,
+    });
+    try {
+      const listbox = renderer.root.findByProps({ role: "listbox" });
+      expect(listbox.parent?.props["data-placement"]).toBe("up");
+      expect(listbox.parent?.props.style.top).toBe(90);
+    } finally {
+      await cleanupPickerTest(renderer);
+    }
+  });
+
+  it("uses the larger side and constrains the list when neither side fits", async () => {
+    const { renderer } = await openPickerAt({
+      top: 180,
+      bottom: 216,
+      innerHeight: 400,
+    });
+    try {
+      const listbox = renderer.root.findByProps({ role: "listbox" });
+      expect(listbox.parent?.props["data-placement"]).toBe("down");
+      expect(listbox.props.style).toEqual({ maxHeight: 122 });
+    } finally {
+      await cleanupPickerTest(renderer);
+    }
+  });
+
   it("disables auto mode while model changes are not applied", async () => {
     class TestHTMLElement {
       focus() {}

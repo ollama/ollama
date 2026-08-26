@@ -22,10 +22,12 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 
 export interface ClaudeDesktopModelsSettingsHandle {
   resetToDefaults: () => Promise<boolean>;
@@ -147,22 +149,109 @@ function ClaudeModelPicker({
 }: ClaudeModelPickerProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [placement, setPlacement] = useState<"up" | "down">("up");
+  const [listMaxHeight, setListMaxHeight] = useState(256);
+  const [layoutReady, setLayoutReady] = useState(false);
+  const [menuPosition, setMenuPosition] = useState({
+    left: 0,
+    top: 0,
+    width: 0,
+  });
   const pickerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const searchHeaderRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const normalizedQuery = query.trim().toLowerCase();
   const filteredModels = models.filter((model) =>
     model.displayName.toLowerCase().includes(normalizedQuery),
   );
+
+  useLayoutEffect(() => {
+    if (!open) return;
+
+    const updatePlacement = () => {
+      const trigger = triggerRef.current;
+      if (!trigger) return;
+
+      const viewportMargin = 8;
+      const menuGap = 8;
+      const triggerRect = trigger.getBoundingClientRect();
+      const roomAbove = Math.max(0, triggerRect.top - viewportMargin - menuGap);
+      const roomBelow = Math.max(
+        0,
+        window.innerHeight - triggerRect.bottom - viewportMargin - menuGap,
+      );
+      const headerHeight =
+        searchHeaderRef.current?.getBoundingClientRect().height ?? 0;
+      const preferredListHeight = Math.min(
+        listRef.current?.scrollHeight ?? 256,
+        256,
+      );
+      const preferredMenuHeight = headerHeight + preferredListHeight + 2;
+      const nextPlacement =
+        preferredMenuHeight <= roomBelow
+          ? "down"
+          : preferredMenuHeight <= roomAbove
+            ? "up"
+            : roomBelow >= roomAbove
+              ? "down"
+              : "up";
+      const availableHeight = nextPlacement === "up" ? roomAbove : roomBelow;
+      const nextListMaxHeight = Math.max(
+        0,
+        Math.min(256, Math.floor(availableHeight - headerHeight - 2)),
+      );
+      const menuHeight = headerHeight + nextListMaxHeight + 2;
+      const menuWidth = Math.min(
+        Math.max(triggerRect.width, 256),
+        window.innerWidth - viewportMargin * 2,
+      );
+      const menuLeft = Math.min(
+        Math.max(viewportMargin, triggerRect.right - menuWidth),
+        window.innerWidth - viewportMargin - menuWidth,
+      );
+
+      setPlacement(nextPlacement);
+      setListMaxHeight(nextListMaxHeight);
+      setMenuPosition({
+        left: menuLeft,
+        top:
+          nextPlacement === "up"
+            ? triggerRect.top - menuGap - menuHeight
+            : triggerRect.bottom + menuGap,
+        width: menuWidth,
+      });
+      setLayoutReady(true);
+    };
+
+    updatePlacement();
+    window.addEventListener("resize", updatePlacement);
+    window.addEventListener("scroll", updatePlacement, true);
+    return () => {
+      window.removeEventListener("resize", updatePlacement);
+      window.removeEventListener("scroll", updatePlacement, true);
+    };
+  }, [filteredModels.length, open]);
 
   useEffect(() => {
     if (!open) {
       setQuery("");
       return;
     }
-    searchRef.current?.focus();
+    if (!layoutReady) return;
+
+    searchRef.current?.focus({ preventScroll: true });
 
     const handlePointerDown = (event: MouseEvent) => {
-      if (!pickerRef.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (
+        !pickerRef.current?.contains(target) &&
+        !menuRef.current?.contains(target)
+      ) {
+        setOpen(false);
+      }
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -176,23 +265,100 @@ function ClaudeModelPicker({
       document.removeEventListener("mousedown", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [open]);
+  }, [layoutReady, open]);
+
+  const toggleOpen = () => {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    setLayoutReady(false);
+    setOpen(true);
+  };
 
   const choose = (model: string) => {
     onChange(model);
     setOpen(false);
   };
 
+  const menu = open ? (
+    <div
+      ref={menuRef}
+      className={`fixed z-50 overflow-hidden rounded-2xl border border-neutral-100 bg-white text-[15px] text-neutral-800 shadow-xl shadow-black/5 dark:border-neutral-600/40 dark:bg-neutral-800 dark:text-white ${
+        layoutReady ? "visible" : "invisible pointer-events-none"
+      }`}
+      data-placement={placement}
+      style={menuPosition}
+    >
+      <div
+        ref={searchHeaderRef}
+        className="flex items-center gap-2 border-b border-neutral-100 px-3 py-2 dark:border-neutral-700"
+      >
+        <MagnifyingGlassIcon className="h-4 w-4 flex-shrink-0 text-neutral-400" />
+        <input
+          ref={searchRef}
+          type="text"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Find model..."
+          aria-label={`Find model for ${routeName}`}
+          autoCorrect="off"
+          autoComplete="off"
+          className="min-w-0 flex-1 border-none bg-transparent py-0.5 outline-none"
+        />
+      </div>
+      <div
+        ref={listRef}
+        role="listbox"
+        className="overflow-y-auto py-1"
+        style={{ maxHeight: listMaxHeight }}
+      >
+        {filteredModels.map((model) => {
+          const available = modelIsAvailable(model);
+          const statusLabel = claudeDesktopModelStatusLabel(model);
+          const selected = value === model.name;
+          return (
+            <button
+              key={model.name}
+              type="button"
+              role="option"
+              aria-selected={selected}
+              disabled={!available}
+              onClick={() => choose(model.name)}
+              className="flex w-full cursor-pointer items-start gap-2 px-3 py-2 text-left hover:bg-neutral-100 focus:bg-neutral-100 focus:outline-none disabled:cursor-not-allowed disabled:opacity-45 dark:hover:bg-neutral-700/60 dark:focus:bg-neutral-700/60"
+            >
+              <span className="mt-0.5 h-4 w-4 flex-shrink-0">
+                {selected && <CheckIcon className="h-4 w-4" />}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{model.displayName}</span>
+                {statusLabel && (
+                  <span className="mt-0.5 block truncate text-xs text-neutral-400">
+                    {statusLabel}
+                  </span>
+                )}
+              </span>
+            </button>
+          );
+        })}
+        {filteredModels.length === 0 && (
+          <p className="px-3 py-2 text-neutral-400">No models found</p>
+        )}
+      </div>
+    </div>
+  ) : null;
+
   return (
     <div ref={pickerRef} className="relative min-w-0">
       <button
+        ref={triggerRef}
         id={id}
         type="button"
         aria-label={`Ollama model for ${routeName}`}
         aria-haspopup="listbox"
         aria-expanded={open}
         disabled={disabled}
-        onClick={() => setOpen((current) => !current)}
+        onClick={toggleOpen}
         className="flex min-h-9 w-full items-center gap-2 rounded-lg bg-neutral-50 px-3 py-1.5 text-left text-sm text-neutral-800 outline-none ring-1 ring-inset ring-neutral-200 hover:bg-neutral-100 focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-neutral-700 dark:text-neutral-100 dark:ring-neutral-600 dark:hover:bg-neutral-600"
       >
         <span
@@ -203,57 +369,9 @@ function ClaudeModelPicker({
         <ChevronUpDownIcon className="h-4 w-4 flex-shrink-0 text-neutral-400" />
       </button>
 
-      {open && (
-        <div className="absolute bottom-full right-0 z-50 mb-2 w-full min-w-64 overflow-hidden rounded-2xl border border-neutral-100 bg-white text-[15px] text-neutral-800 shadow-xl shadow-black/5 dark:border-neutral-600/40 dark:bg-neutral-800 dark:text-white">
-          <div className="flex items-center gap-2 border-b border-neutral-100 px-3 py-2 dark:border-neutral-700">
-            <MagnifyingGlassIcon className="h-4 w-4 flex-shrink-0 text-neutral-400" />
-            <input
-              ref={searchRef}
-              type="text"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Find model..."
-              aria-label={`Find model for ${routeName}`}
-              autoCorrect="off"
-              autoComplete="off"
-              className="min-w-0 flex-1 border-none bg-transparent py-0.5 outline-none"
-            />
-          </div>
-          <div role="listbox" className="max-h-64 overflow-y-auto py-1">
-            {filteredModels.map((model) => {
-              const available = modelIsAvailable(model);
-              const statusLabel = claudeDesktopModelStatusLabel(model);
-              const selected = value === model.name;
-              return (
-                <button
-                  key={model.name}
-                  type="button"
-                  role="option"
-                  aria-selected={selected}
-                  disabled={!available}
-                  onClick={() => choose(model.name)}
-                  className="flex w-full cursor-pointer items-start gap-2 px-3 py-2 text-left hover:bg-neutral-100 focus:bg-neutral-100 focus:outline-none disabled:cursor-not-allowed disabled:opacity-45 dark:hover:bg-neutral-700/60 dark:focus:bg-neutral-700/60"
-                >
-                  <span className="mt-0.5 h-4 w-4 flex-shrink-0">
-                    {selected && <CheckIcon className="h-4 w-4" />}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate">{model.displayName}</span>
-                    {statusLabel && (
-                      <span className="mt-0.5 block truncate text-xs text-neutral-400">
-                        {statusLabel}
-                      </span>
-                    )}
-                  </span>
-                </button>
-              );
-            })}
-            {filteredModels.length === 0 && (
-              <p className="px-3 py-2 text-neutral-400">No models found</p>
-            )}
-          </div>
-        </div>
-      )}
+      {menu && typeof document !== "undefined" && document.body
+        ? createPortal(menu, document.body)
+        : menu}
     </div>
   );
 }
