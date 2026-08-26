@@ -58,9 +58,6 @@ function useUserValue() {
     },
   });
 
-  // Background authentication checks should not replace account UI with its
-  // initial-loading state. In Chat, doing so would unmount the sign-in banner
-  // and cancel the connection attempt after its first check.
   const isLoading = userQuery.isLoading;
   const isAuthenticated = Boolean(userQuery.data?.name);
   const isConnecting = connectUrlQuery.isFetching || isAwaitingConnection;
