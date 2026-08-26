@@ -334,7 +334,10 @@ func TestResolveClaudeDesktopStartupCatalogMarksDefaultAccountModelsAutoEligible
 	previousLoader := claudeModelsLoader
 	previousResolver := claudeCloudModelsResolver
 	claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
-		return proxy.ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "glm-5.2:cloud"}}), "endpoint"
+		mappings := api.ModelRecommendationMappings{
+			"claude-opus-5": {Model: "glm-5.2:cloud", RequiredPlan: "pro"},
+		}
+		return claudeDesktopRecommendationModelsForTest(t, []api.ModelRecommendation{{Model: "glm-5.2:cloud"}}, &mappings), "endpoint"
 	}
 	claudeCloudModelsResolver = func(context.Context) ([]proxy.ClaudeDesktopModel, error) {
 		return proxy.ClaudeDesktopModelsFromCloudInventory([]string{"glm-5.2"}), nil
@@ -353,7 +356,7 @@ func TestResolveClaudeDesktopStartupCatalogMarksDefaultAccountModelsAutoEligible
 	}
 }
 
-func TestResolveClaudeDesktopStartupCatalogUsesAccountDefaults(t *testing.T) {
+func TestResolveClaudeDesktopStartupCatalogUsesSafeFallback(t *testing.T) {
 	states := []struct {
 		name  string
 		state proxy.ClaudeDesktopAccessState
@@ -373,9 +376,7 @@ func TestResolveClaudeDesktopStartupCatalogUsesAccountDefaults(t *testing.T) {
 			t.Cleanup(func() { claudeAccessStateResolver = previousAccess })
 
 			_, selected, source := resolveClaudeDesktopStartupCatalog(context.Background())
-			want := proxy.DefaultClaudeDesktopMappings(
-				claudeDesktopHasFullDefaultAccess(tt.state),
-			)
+			want := proxy.DefaultClaudeDesktopMappings()
 			if got := proxy.ClaudeDesktopMappings(selected); !maps.Equal(got, want) {
 				t.Fatalf("startup mappings = %v, want %v (source %q)", got, want, source)
 			}
@@ -396,21 +397,21 @@ func TestResolveClaudeDesktopStartupCatalogUsesEffectiveEndpointMappings(t *test
 		want     map[string]string
 	}{
 		{
-			name:     "free effective mapping",
+			name:     "mapping with free plan metadata",
 			state:    proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "free"},
-			mappings: api.ModelRecommendationMappings{"claude-sonnet-5": "gemma4:31b-cloud"},
+			mappings: api.ModelRecommendationMappings{"claude-sonnet-5": {Model: "gemma4:31b-cloud", RequiredPlan: "free"}},
 			want:     map[string]string{"claude-sonnet-5": "gemma4:31b-cloud"},
 		},
 		{
-			name:     "paid effective mapping",
-			state:    proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "pro"},
-			mappings: api.ModelRecommendationMappings{"claude-sonnet-5": "glm-5.3-flash:cloud"},
+			name:     "mapping plan metadata is informational",
+			state:    proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "free"},
+			mappings: api.ModelRecommendationMappings{"claude-sonnet-5": {Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"}},
 			want:     map[string]string{"claude-sonnet-5": "glm-5.3-flash:cloud"},
 		},
 		{
 			name:     "persisted user mapping wins",
 			state:    proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "pro"},
-			mappings: api.ModelRecommendationMappings{"claude-sonnet-5": "glm-5.3-flash:cloud"},
+			mappings: api.ModelRecommendationMappings{"claude-sonnet-5": {Model: "glm-5.3-flash:cloud"}},
 			saved:    map[string]string{"claude-opus-5": "gemma4:31b-cloud"},
 			want:     map[string]string{"claude-opus-5": "gemma4:31b-cloud"},
 		},
@@ -455,7 +456,7 @@ func TestResolveClaudeDesktopStartupCatalogUpdatesDefaultsAfterReconnect(t *test
 	t.Setenv("HOME", t.TempDir())
 	endpointModels := claudeDesktopRecommendationModelsForTest(t, []api.ModelRecommendation{
 		{Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"},
-	}, &api.ModelRecommendationMappings{"claude-sonnet-5": "glm-5.3-flash:cloud"})
+	}, &api.ModelRecommendationMappings{"claude-sonnet-5": {Model: "glm-5.3-flash:cloud"}})
 
 	previousLoader := claudeModelsLoader
 	previousAccess := claudeAccessStateResolver
@@ -483,7 +484,7 @@ func TestResolveClaudeDesktopStartupCatalogUpdatesDefaultsAfterReconnect(t *test
 	})
 
 	_, offline, source := resolveClaudeDesktopStartupCatalog(context.Background())
-	if got := proxy.ClaudeDesktopMappings(offline)["claude-sonnet-5"]; source != "fallback" || got != "deepseek-v4-flash:0731:cloud" {
+	if got := proxy.ClaudeDesktopMappings(offline)["claude-sonnet-5"]; source != "fallback" || got != "gemma4:31b-cloud" {
 		t.Fatalf("offline Sonnet/source = %q/%q", got, source)
 	}
 	_, reconnected, source := resolveClaudeDesktopStartupCatalog(context.Background())
@@ -650,7 +651,7 @@ func TestRefreshClaudeDesktopCatalogDropsStaleDefaultsOnFallback(t *testing.T) {
 		{Model: "deepseek-v4-pro", RequiredPlan: "pro"},
 		{Model: "deepseek-v4-flash", RequiredPlan: "pro"},
 		{Model: "gemma4:31b-cloud", RequiredPlan: "free"},
-	}, &api.ModelRecommendationMappings{"claude-sonnet-5": "glm-5.3-flash:cloud"})
+	}, &api.ModelRecommendationMappings{"claude-sonnet-5": {Model: "glm-5.3-flash:cloud"}})
 	current := proxy.MapClaudeDesktopModels(endpointModels, map[string]string{"claude-sonnet-5": "glm-5.3-flash:cloud"})
 
 	previousLoader := claudeModelsLoader
@@ -681,7 +682,7 @@ func TestRefreshClaudeDesktopCatalogDropsStaleDefaultsOnFallback(t *testing.T) {
 	if got := proxy.ClaudeDesktopMappings(selected); !maps.Equal(got, map[string]string{"claude-sonnet-5": "glm-5.3-flash:cloud"}) {
 		t.Fatalf("current mappings = %v, want preserved explicit mapping", got)
 	}
-	if got := proxy.DefaultClaudeDesktopMappingsForModels(available, true)["claude-sonnet-5"]; got != "deepseek-v4-flash:0731:cloud" {
+	if got := proxy.DefaultClaudeDesktopMappingsForModels(available)["claude-sonnet-5"]; got != "gemma4:31b-cloud" {
 		t.Fatalf("offline default Sonnet = %q, want compatibility fallback", got)
 	}
 }
@@ -872,28 +873,23 @@ func TestMapKnownClaudeDesktopModelsAllowsSharedModels(t *testing.T) {
 	}
 }
 
-func TestClaudeDesktopDefaultsFollowAccountPlan(t *testing.T) {
-	paidDefaults := proxy.DefaultClaudeDesktopMappings(true)
-	restrictedDefaults := proxy.DefaultClaudeDesktopMappings(false)
+func TestClaudeDesktopDefaultsDoNotDependOnAccountPlan(t *testing.T) {
+	want := proxy.DefaultClaudeDesktopMappings()
 	tests := []struct {
-		name         string
-		state        proxy.ClaudeDesktopAccessState
-		wantMappings map[string]string
+		name  string
+		state proxy.ClaudeDesktopAccessState
 	}{
-		{name: "signed out", state: proxy.ClaudeDesktopAccessState{Account: proxy.ClaudeDesktopAccountSignedOut}, wantMappings: restrictedDefaults},
-		{name: "free", state: proxy.ClaudeDesktopAccessState{Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "free"}, wantMappings: restrictedDefaults},
-		{name: "Pro", state: proxy.ClaudeDesktopAccessState{Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "pro"}, wantMappings: paidDefaults},
-		{name: "Team", state: proxy.ClaudeDesktopAccessState{Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "team"}, wantMappings: paidDefaults},
-		{name: "future paid plan", state: proxy.ClaudeDesktopAccessState{Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "enterprise"}, wantMappings: paidDefaults},
+		{name: "signed out", state: proxy.ClaudeDesktopAccessState{Account: proxy.ClaudeDesktopAccountSignedOut}},
+		{name: "free", state: proxy.ClaudeDesktopAccessState{Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "free"}},
+		{name: "Pro", state: proxy.ClaudeDesktopAccessState{Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "pro"}},
+		{name: "Team", state: proxy.ClaudeDesktopAccessState{Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "team"}},
+		{name: "future paid plan", state: proxy.ClaudeDesktopAccessState{Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "enterprise"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := proxy.DefaultClaudeDesktopMappingsForModels(
-				proxy.DefaultClaudeDesktopModels(),
-				claudeDesktopHasFullDefaultAccess(tt.state),
-			)
-			if !maps.Equal(got, tt.wantMappings) {
-				t.Fatalf("default mappings = %v, want %v", got, tt.wantMappings)
+			got := proxy.DefaultClaudeDesktopMappingsForModels(proxy.DefaultClaudeDesktopModels())
+			if !maps.Equal(got, want) {
+				t.Fatalf("default mappings for state %+v = %v, want %v", tt.state, got, want)
 			}
 		})
 	}
@@ -1515,7 +1511,7 @@ func TestResetClaudeDesktopMappingsDoesNotOpenStoppedClaude(t *testing.T) {
 		claudeProxyMu.Unlock()
 	})
 
-	paidMappings := proxy.DefaultClaudeDesktopMappings(true)
+	defaultMappings := proxy.DefaultClaudeDesktopMappings()
 	applied, err := resetClaudeDesktopMappings(false)
 	if err != nil || !applied {
 		t.Fatalf("reset mappings = %v/%v, want persisted change", applied, err)
@@ -1523,7 +1519,7 @@ func TestResetClaudeDesktopMappingsDoesNotOpenStoppedClaude(t *testing.T) {
 	if !fake.configured || !fake.installed || fake.opened || fake.restart {
 		t.Fatalf("stopped Claude reset = %+v, want configured without open or restart", fake)
 	}
-	if got := launch.ClaudeDesktopModelMappings(); !maps.Equal(got, paidMappings) {
+	if got := launch.ClaudeDesktopModelMappings(); !maps.Equal(got, defaultMappings) {
 		t.Fatalf("persisted reset mappings = %v", got)
 	}
 
@@ -1532,10 +1528,10 @@ func TestResetClaudeDesktopMappingsDoesNotOpenStoppedClaude(t *testing.T) {
 	fake.installed = false
 	fake.configureCalls = 0
 	plan = "free"
-	disconnectedMappings := proxy.DefaultClaudeDesktopMappings(false)
+	disconnectedMappings := proxy.DefaultClaudeDesktopMappings()
 	applied, err = resetClaudeDesktopMappings(false)
-	if err != nil || !applied {
-		t.Fatalf("disconnected reset mappings = %v/%v, want persisted change", applied, err)
+	if err != nil || applied {
+		t.Fatalf("disconnected reset mappings = %v/%v, want unchanged defaults", applied, err)
 	}
 	if fake.configured || fake.installed || fake.opened || fake.restart || fake.configureCalls != 0 {
 		t.Fatalf("disconnected Claude reset = %+v, want no connection side effects", fake)
@@ -1548,6 +1544,41 @@ func TestResetClaudeDesktopMappingsDoesNotOpenStoppedClaude(t *testing.T) {
 	}
 	if got := launch.ClaudeDesktopModelMappings(); !maps.Equal(got, disconnectedMappings) {
 		t.Fatalf("persisted disconnected reset mappings = %v", got)
+	}
+}
+
+func TestResetClaudeDesktopMappingsPreservesSavedMappingsForEmptyContract(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	saved := map[string]string{"claude-opus-5": "glm-5.2:cloud"}
+	if err := launch.SaveClaudeDesktopModelMappings(saved); err != nil {
+		t.Fatal(err)
+	}
+
+	previousStore := appStore
+	appStore = &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
+	if err := markClaudeDesktopIntegrationUsed(); err != nil {
+		t.Fatal(err)
+	}
+	empty := api.ModelRecommendationMappings{}
+	models := claudeDesktopRecommendationModelsForTest(t, []api.ModelRecommendation{
+		{Model: "gemma4:31b-cloud", RequiredPlan: "free"},
+	}, &empty)
+	previousLoader := claudeModelsLoader
+	claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
+		return models, "endpoint"
+	}
+	t.Cleanup(func() {
+		_ = appStore.Close()
+		appStore = previousStore
+		claudeModelsLoader = previousLoader
+	})
+
+	applied, err := resetClaudeDesktopMappings(false)
+	if err == nil || applied {
+		t.Fatalf("reset mappings = %v/%v, want authoritative empty-contract error", applied, err)
+	}
+	if got := launch.ClaudeDesktopModelMappings(); !maps.Equal(got, saved) {
+		t.Fatalf("persisted mappings = %v, want preserved %v", got, saved)
 	}
 }
 
@@ -2116,79 +2147,64 @@ func TestEnsureClaudeDesktopModelsAvailableRetriesStartupRace(t *testing.T) {
 	}
 }
 
-func TestResolveClaudeDesktopDefaultMappingsHandlesAccountVerificationRestartRace(t *testing.T) {
+func TestResolveClaudeDesktopDefaultMappingsUsesContractWithoutAccountLookup(t *testing.T) {
 	previousLoader := claudeModelsLoader
 	previousAccess := claudeAccessStateResolver
-	previousRetryWait := claudeAccessRetryWait
-	previousRetryPoll := claudeAccessRetryPoll
-	claudeAccessRetryWait = 10 * time.Millisecond
-	claudeAccessRetryPoll = time.Millisecond
 	t.Cleanup(func() {
 		claudeModelsLoader = previousLoader
 		claudeAccessStateResolver = previousAccess
-		claudeAccessRetryWait = previousRetryWait
-		claudeAccessRetryPoll = previousRetryPoll
 	})
 
 	tests := []struct {
-		name             string
-		accessStateAfter int
-		plan             string
-		catalog          func() []proxy.ClaudeDesktopModel
-		wantDefaults     map[string]string
+		name         string
+		catalog      func(*testing.T) []proxy.ClaudeDesktopModel
+		wantDefaults map[string]string
 	}{
 		{
-			name:             "retry restores paid defaults",
-			accessStateAfter: 2,
-			plan:             "team",
-			wantDefaults:     proxy.DefaultClaudeDesktopMappings(true),
+			name:         "omitted contract uses safe fallback",
+			catalog:      func(*testing.T) []proxy.ClaudeDesktopModel { return proxy.DefaultClaudeDesktopModels() },
+			wantDefaults: proxy.DefaultClaudeDesktopMappings(),
 		},
 		{
-			name:             "free account restores only the free default",
-			accessStateAfter: 1,
-			plan:             "free",
-			wantDefaults:     proxy.DefaultClaudeDesktopMappings(false),
+			name: "present contract supplies defaults",
+			catalog: func(t *testing.T) []proxy.ClaudeDesktopModel {
+				mappings := api.ModelRecommendationMappings{
+					"claude-sonnet-5": {Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"},
+				}
+				return claudeDesktopRecommendationModelsForTest(t, []api.ModelRecommendation{
+					{Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"},
+				}, &mappings)
+			},
+			wantDefaults: map[string]string{"claude-sonnet-5": "glm-5.3-flash:cloud"},
 		},
 		{
-			name:             "incomplete paid catalog does not clear routes",
-			accessStateAfter: 1,
-			plan:             "team",
-			catalog: func() []proxy.ClaudeDesktopModel {
-				return proxy.DefaultClaudeDesktopModels()[:4]
+			name: "present empty contract has no defaults",
+			catalog: func(t *testing.T) []proxy.ClaudeDesktopModel {
+				mappings := api.ModelRecommendationMappings{}
+				return claudeDesktopRecommendationModelsForTest(t, []api.ModelRecommendation{
+					{Model: "gemma4:31b-cloud", RequiredPlan: "free"},
+				}, &mappings)
 			},
 		},
 		{
-			name:             "missing free default does not clear routes",
-			accessStateAfter: 1,
-			plan:             "free",
-			catalog: func() []proxy.ClaudeDesktopModel {
-				return proxy.DefaultClaudeDesktopModels()[:4]
+			name: "missing fallback target has no defaults",
+			catalog: func(t *testing.T) []proxy.ClaudeDesktopModel {
+				return claudeDesktopRecommendationModelsForTest(t, []api.ModelRecommendation{
+					{Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"},
+				}, nil)
 			},
-		},
-		{
-			name: "persistent failure does not synthesize free defaults",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
-				if tt.catalog != nil {
-					return tt.catalog(), "endpoint"
-				}
-				return proxy.DefaultClaudeDesktopModels(), "endpoint"
+				return tt.catalog(t), "endpoint"
 			}
 			accessCalls := 0
 			claudeAccessStateResolver = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
 				accessCalls++
-				if tt.accessStateAfter == 0 || accessCalls < tt.accessStateAfter {
-					return proxy.ClaudeDesktopAccessState{}, errors.New("server restarting")
-				}
-				return proxy.ClaudeDesktopAccessState{
-					Cloud:   proxy.ClaudeDesktopCloudOn,
-					Account: proxy.ClaudeDesktopAccountSignedIn,
-					Plan:    tt.plan,
-				}, nil
+				return proxy.ClaudeDesktopAccessState{}, errors.New("account lookup must not run")
 			}
 
 			gotDefaults, err := resolveClaudeDesktopDefaultMappings(context.Background())
@@ -2196,39 +2212,19 @@ func TestResolveClaudeDesktopDefaultMappingsHandlesAccountVerificationRestartRac
 				if err == nil {
 					t.Fatalf("reset defaults = %v, want an error", gotDefaults)
 				}
+				if accessCalls != 0 {
+					t.Fatalf("account lookups = %d, want 0", accessCalls)
+				}
 				return
 			}
 			if err != nil {
 				t.Fatal(err)
 			}
 			if !maps.Equal(gotDefaults, tt.wantDefaults) {
-				t.Fatalf("reset defaults = %v, want %v after %d access checks", gotDefaults, tt.wantDefaults, accessCalls)
+				t.Fatalf("reset defaults = %v, want %v", gotDefaults, tt.wantDefaults)
 			}
-			if tt.accessStateAfter > 0 && accessCalls < tt.accessStateAfter {
-				t.Fatalf("access checks = %d, want at least %d", accessCalls, tt.accessStateAfter)
-			}
-		})
-	}
-}
-
-func TestClaudeDesktopDefaultAccessTierRequiresVerifiedAccount(t *testing.T) {
-	tests := []struct {
-		name      string
-		state     proxy.ClaudeDesktopAccessState
-		wantFull  bool
-		wantKnown bool
-	}{
-		{name: "cloud off", state: proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOff}},
-		{name: "signed out", state: proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedOut}},
-		{name: "missing plan", state: proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn}},
-		{name: "free", state: proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "free"}, wantKnown: true},
-		{name: "team", state: proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "team"}, wantFull: true, wantKnown: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			full, known := claudeDesktopDefaultAccessTier(tt.state)
-			if full != tt.wantFull || known != tt.wantKnown {
-				t.Fatalf("default access tier = %v/%v, want %v/%v", full, known, tt.wantFull, tt.wantKnown)
+			if accessCalls != 0 {
+				t.Fatalf("account lookups = %d, want 0", accessCalls)
 			}
 		})
 	}

@@ -804,9 +804,16 @@ type ModelRecommendationsResponse struct {
 	Mappings        *ModelRecommendationMappings `json:"mappings,omitempty"`
 }
 
-// ModelRecommendationMappings defines the effective app-specific model routes
-// selected for the current request identity.
-type ModelRecommendationMappings map[string]string
+// ModelRecommendationMapping defines one app-specific route preference.
+// RequiredPlan is informational metadata; consumers must not treat an unknown
+// value as a reason to discard the mapping.
+type ModelRecommendationMapping struct {
+	Model        string `json:"model"`
+	RequiredPlan string `json:"required_plan,omitempty"`
+}
+
+// ModelRecommendationMappings defines the app-specific model routes.
+type ModelRecommendationMappings map[string]ModelRecommendationMapping
 
 // ModelRecommendation is a single recommendation entry in [ModelRecommendationsResponse].
 type ModelRecommendation struct {

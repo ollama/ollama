@@ -50,49 +50,31 @@ func ClaudeDesktopRoutes() []ClaudeDesktopRoute {
 	return routes
 }
 
-// DefaultClaudeDesktopMappings returns the initial Claude-to-Ollama mapping
-// for the current account tier. Accounts without Pro access expose only the
-// free Sonnet route; the remaining routes intentionally stay unassigned.
-func DefaultClaudeDesktopMappings(fullAccess bool) map[string]string {
-	if !fullAccess {
-		return map[string]string{
-			"claude-sonnet-5": "gemma4:31b-cloud",
-		}
-	}
+// DefaultClaudeDesktopMappings returns the safe compatibility fallback used
+// when Ollama.com does not provide an app-specific mapping contract.
+func DefaultClaudeDesktopMappings() map[string]string {
 	return map[string]string{
-		"claude-fable-5":            "kimi-k3:cloud",
-		"claude-opus-5":             "glm-5.2:cloud",
-		"claude-sonnet-5":           "deepseek-v4-flash:0731:cloud",
-		"claude-haiku-4-5-20251001": "gemma4:31b-cloud",
-		"claude-sonnet-4-6":         "deepseek-v4-pro:cloud",
+		"claude-sonnet-5": "gemma4:31b-cloud",
 	}
 }
 
-// DefaultClaudeDesktopMappingsForModels resolves the default recommendation
-// names to the exact Ollama routes in the current catalog. This preserves
-// server-owned aliases such as the current DeepSeek Flash revision.
-func DefaultClaudeDesktopMappingsForModels(available []ClaudeDesktopModel, fullAccess bool) map[string]string {
-	wanted := map[string]string{
-		"claude-sonnet-5": "gemma4:31b-cloud",
-	}
+// DefaultClaudeDesktopMappingsForModels resolves the server contract, or the
+// compatibility fallback when it is absent, against the current catalog.
+func DefaultClaudeDesktopMappingsForModels(available []ClaudeDesktopModel) map[string]string {
+	wanted := DefaultClaudeDesktopMappings()
 	for _, model := range available {
 		if model.defaultMappings != nil {
-			return resolveClaudeDesktopMappings(available, *model.defaultMappings)
-		}
-	}
-	if fullAccess {
-		wanted = map[string]string{
-			"claude-fable-5":            "kimi-k3:cloud",
-			"claude-opus-5":             "glm-5.2:cloud",
-			"claude-sonnet-5":           "deepseek-v4-flash",
-			"claude-haiku-4-5-20251001": "gemma4:31b-cloud",
-			"claude-sonnet-4-6":         "deepseek-v4-pro",
+			wanted = make(map[string]string, len(*model.defaultMappings))
+			for route, mapping := range *model.defaultMappings {
+				wanted[route] = mapping.Model
+			}
+			break
 		}
 	}
 	return resolveClaudeDesktopMappings(available, wanted)
 }
 
-func resolveClaudeDesktopMappings(available []ClaudeDesktopModel, wanted api.ModelRecommendationMappings) map[string]string {
+func resolveClaudeDesktopMappings(available []ClaudeDesktopModel, wanted map[string]string) map[string]string {
 	mappings := make(map[string]string, len(wanted))
 	for _, model := range available {
 		for route, name := range wanted {

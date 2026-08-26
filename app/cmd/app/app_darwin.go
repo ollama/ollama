@@ -424,10 +424,7 @@ func resolveClaudeDesktopStartupCatalog(ctx context.Context) (available, selecte
 	} else if len(selectedNames) == 0 {
 		selected = proxy.MapClaudeDesktopModels(
 			selectable,
-			proxy.DefaultClaudeDesktopMappingsForModels(
-				selectable,
-				err == nil && claudeDesktopHasFullDefaultAccess(state),
-			),
+			proxy.DefaultClaudeDesktopMappingsForModels(selectable),
 		)
 	} else {
 		selected = proxy.SelectClaudeDesktopModels(selectable, selectedNames)
@@ -823,25 +820,6 @@ func ensureClaudeDesktopModelsAvailable(ctx context.Context, models []proxy.Clau
 	}
 }
 
-func resolveClaudeDesktopAccessStateWithRetry(ctx context.Context) (proxy.ClaudeDesktopAccessState, error) {
-	deadline := time.Now().Add(claudeAccessRetryWait)
-	for {
-		state, err := claudeAccessStateResolver(ctx)
-		if err == nil || time.Now().After(deadline) {
-			return state, err
-		}
-		slog.Debug("could not resolve Claude model access while refreshing defaults", "error", err)
-
-		timer := time.NewTimer(claudeAccessRetryPoll)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return state, ctx.Err()
-		case <-timer.C:
-		}
-	}
-}
-
 func hasCloudClaudeDesktopModel(models []proxy.ClaudeDesktopModel) bool {
 	for _, model := range models {
 		if model.Cloud {
@@ -1171,10 +1149,7 @@ func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
 	}
 	mappedModels := proxy.ClaudeDesktopMappings(selectedModels)
 	if len(launch.ClaudeDesktopModels()) == 0 {
-		mappedModels = proxy.DefaultClaudeDesktopMappingsForModels(
-			availableModels,
-			claudeDesktopHasFullDefaultAccess(accessState),
-		)
+		mappedModels = proxy.DefaultClaudeDesktopMappingsForModels(availableModels)
 	}
 	mappingStatuses := make([]claudeDesktopMappingStatus, 0, proxy.MaxClaudeDesktopModels)
 	for _, route := range proxy.ClaudeDesktopRoutes() {
@@ -1197,51 +1172,11 @@ func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
 	return status
 }
 
-func claudeDesktopHasFullDefaultAccess(state proxy.ClaudeDesktopAccessState) bool {
-	fullAccess, known := claudeDesktopDefaultAccessTier(state)
-	return known && fullAccess
-}
-
-func claudeDesktopDefaultAccessTier(state proxy.ClaudeDesktopAccessState) (fullAccess, known bool) {
-	if state.Account != proxy.ClaudeDesktopAccountSignedIn {
-		return false, false
-	}
-	plan := strings.TrimSpace(state.Plan)
-	if plan == "" {
-		return false, false
-	}
-	return !strings.EqualFold(plan, "free"), true
-}
-
-func claudeDesktopDefaultMappingsComplete(mappings map[string]string, fullAccess bool) bool {
-	required := proxy.DefaultClaudeDesktopMappings(fullAccess)
-	if len(mappings) != len(required) {
-		return false
-	}
-	for route := range required {
-		if strings.TrimSpace(mappings[route]) == "" {
-			return false
-		}
-	}
-	return true
-}
-
 func resolveClaudeDesktopDefaultMappings(ctx context.Context) (map[string]string, error) {
-	state, err := resolveClaudeDesktopAccessStateWithRetry(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("resolve Claude model access: %w", err)
-	}
-	if state.Cloud != proxy.ClaudeDesktopCloudOn {
-		return nil, errors.New("Claude model mapping defaults require Cloud to be enabled")
-	}
-	fullAccess, known := claudeDesktopDefaultAccessTier(state)
-	if !known {
-		return nil, errors.New("Claude model mapping defaults require a signed-in account")
-	}
 	available, _ := claudeModelsLoader(ctx)
-	mappings := proxy.DefaultClaudeDesktopMappingsForModels(available, fullAccess)
-	if !claudeDesktopDefaultMappingsComplete(mappings, fullAccess) {
-		return nil, errors.New("could not resolve every Claude model mapping default")
+	mappings := proxy.DefaultClaudeDesktopMappingsForModels(available)
+	if len(mappings) == 0 {
+		return nil, errors.New("no Claude model mapping defaults are available")
 	}
 	return mappings, nil
 }
