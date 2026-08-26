@@ -71,7 +71,7 @@ type claudeDesktopController interface {
 	ConfigureAutodiscoveryWithAutoMode(autoMode bool) error
 	SetInstalledFromDesktopWithAutoMode(installed, restart, autoMode bool) error
 	ApplyProfileChange(change func() error, restartConfirmed bool) error
-	RestoreForShutdown(ctx context.Context) error
+	RestoreForShutdownWithConfirmation(ctx context.Context, quitConfirmed bool) error
 }
 
 var (
@@ -1669,7 +1669,7 @@ func quit() {
 	ctx, cancel := context.WithTimeout(context.Background(), claudeShutdownTimeout)
 	defer cancel()
 	handoff := bool(C.otherOllamaInstanceRunning())
-	if err := restoreClaudeAppForTermination(ctx, handoff); err != nil {
+	if err := restoreClaudeAppForTermination(ctx, handoff, true); err != nil {
 		slog.Warn("failed to restore Claude before quitting", "error", err)
 	}
 	C.quit()
@@ -1682,7 +1682,7 @@ func restoreClaudeBeforeQuit(ctx context.Context, handoff, configured bool, rest
 	return restore(ctx)
 }
 
-func restoreClaudeAppForTermination(ctx context.Context, handoff bool) error {
+func restoreClaudeAppForTermination(ctx context.Context, handoff, quitClaudeConfirmed bool) error {
 	claudeLifecycleMu.Lock()
 	defer claudeLifecycleMu.Unlock()
 
@@ -1691,7 +1691,9 @@ func restoreClaudeAppForTermination(ctx context.Context, handoff bool) error {
 		return nil
 	}
 	configured := claudeDesktop.UsesOllamaGateway()
-	err := restoreClaudeBeforeQuit(ctx, handoff, configured, claudeDesktop.RestoreForShutdown)
+	err := restoreClaudeBeforeQuit(ctx, handoff, configured, func(ctx context.Context) error {
+		return claudeDesktop.RestoreForShutdownWithConfirmation(ctx, quitClaudeConfirmed)
+	})
 	if !claudeDesktop.UsesOllamaGateway() {
 		stopClaudeAppProxy()
 	}
@@ -1699,14 +1701,18 @@ func restoreClaudeAppForTermination(ctx context.Context, handoff bool) error {
 }
 
 //export RestoreClaudeGatewayForShutdown
-func RestoreClaudeGatewayForShutdown() C.bool {
+func RestoreClaudeGatewayForShutdown(quitClaudeConfirmed C.bool) C.int {
 	ctx, cancel := context.WithTimeout(context.Background(), claudeShutdownTimeout)
 	defer cancel()
-	if err := restoreClaudeAppForTermination(ctx, false); err != nil {
-		slog.Warn("failed to restore Claude during system shutdown", "error", err)
-		return C._Bool(false)
+	err := restoreClaudeAppForTermination(ctx, false, quitClaudeConfirmed != C._Bool(false))
+	if errors.Is(err, launch.ErrClaudeDesktopQuitConfirmationRequired) {
+		return C.int(C.ClaudeRestoreConfirmationRequired)
 	}
-	return C._Bool(true)
+	if err != nil {
+		slog.Warn("failed to restore Claude before quitting Ollama", "error", err)
+		return C.int(C.ClaudeRestoreFailed)
+	}
+	return C.int(C.ClaudeRestoreSucceeded)
 }
 
 func LaunchNewApp() {

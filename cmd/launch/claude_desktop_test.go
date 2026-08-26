@@ -1495,6 +1495,40 @@ func TestClaudeDesktopRestoreForShutdownDoesNotReopenApp(t *testing.T) {
 	}
 }
 
+func TestClaudeDesktopRestoreForShutdownRequiresQuitConfirmation(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withClaudeDesktopPlatform(t, "darwin")
+	c := &ClaudeDesktop{}
+	if err := c.ConfigureAutodiscovery(); err != nil {
+		t.Fatal(err)
+	}
+
+	quitCalls := 0
+	withClaudeDesktopProcessHooks(t,
+		func() bool { return true },
+		func() error {
+			quitCalls++
+			return nil
+		},
+		func() error {
+			t.Fatal("Claude reopened during shutdown")
+			return nil
+		},
+	)
+
+	err := c.RestoreForShutdownWithConfirmation(context.Background(), false)
+	if !errors.Is(err, ErrClaudeDesktopQuitConfirmationRequired) {
+		t.Fatalf("RestoreForShutdown error = %v, want quit confirmation error", err)
+	}
+	if quitCalls != 0 {
+		t.Fatalf("quit calls = %d, want 0 before confirmation", quitCalls)
+	}
+	if !c.UsesOllamaGateway() {
+		t.Fatal("Claude profile changed before quit confirmation")
+	}
+}
+
 func TestClaudeDesktopRestoreForShutdownBoundsHungQuit(t *testing.T) {
 	withClaudeDesktopPlatform(t, "darwin")
 	oldRunning := claudeDesktopIsRunning

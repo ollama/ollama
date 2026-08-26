@@ -55,6 +55,10 @@ type ClaudeDesktop struct{}
 // change would interrupt a running Claude Desktop process.
 var ErrClaudeDesktopRestartConfirmationRequired = errors.New("Claude Desktop restart confirmation is required before changing its profile")
 
+// ErrClaudeDesktopQuitConfirmationRequired reports that restoring Claude's
+// profile for shutdown would interrupt a running Claude Desktop process.
+var ErrClaudeDesktopQuitConfirmationRequired = errors.New("Claude Desktop quit confirmation is required before restoring its profile for shutdown")
+
 func (c *ClaudeDesktop) String() string { return "Claude Desktop" }
 
 func (c *ClaudeDesktop) Supported() error { return claudeDesktopSupported() }
@@ -201,6 +205,13 @@ func (c *ClaudeDesktop) ApplyProfileChange(change func() error, restartConfirmed
 
 // RestoreForShutdown restores Claude's usual profile without reopening the app.
 func (c *ClaudeDesktop) RestoreForShutdown(ctx context.Context) error {
+	return c.RestoreForShutdownWithConfirmation(ctx, true)
+}
+
+// RestoreForShutdownWithConfirmation restores Claude's usual profile without
+// reopening the app. A running Claude is left unchanged until quitConfirmed is
+// true.
+func (c *ClaudeDesktop) RestoreForShutdownWithConfirmation(ctx context.Context, quitConfirmed bool) error {
 	if err := claudeDesktopSupported(); err != nil {
 		return err
 	}
@@ -210,6 +221,9 @@ func (c *ClaudeDesktop) RestoreForShutdown(ctx context.Context) error {
 	}
 	if !running {
 		return restoreClaudeDesktopProfile()
+	}
+	if !quitConfirmed {
+		return ErrClaudeDesktopQuitConfirmationRequired
 	}
 	if err := claudeDesktopQuitApp(ctx); err != nil {
 		return fmt.Errorf("quit Claude Desktop: %w", err)
