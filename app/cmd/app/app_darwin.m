@@ -1582,6 +1582,8 @@ bool otherOllamaInstanceRunning(void) {
     return false;
 }
 
+// Pair each PID with its start time so PID reuse cannot redirect a signal or
+// keep the handoff waiting on an unrelated process.
 typedef struct {
     pid_t pid;
     uint64_t startSeconds;
@@ -1769,6 +1771,8 @@ bool killOtherInstances(void) {
         }
 
         for (size_t i = 0; i < count; i++) {
+            // Overlapping launches are ordered by process age. Only the newest
+            // candidate may terminate existing instances.
             if (processStartedAfter(processes[i], self)) {
                 appLogInfo([NSString stringWithFormat:
                     @"newer ollama instance %d owns the app handoff",
@@ -1784,6 +1788,8 @@ bool killOtherInstances(void) {
                 appLogInfo(@"ollama instance handoff complete");
                 return true;
             }
+            // Require two empty snapshots so a process that is still appearing
+            // in NSWorkspace cannot slip through the barrier.
             sawEmpty = true;
             now = monotonicNanos();
             if (now == 0 || now >= deadline) {
@@ -1802,6 +1808,8 @@ bool killOtherInstances(void) {
         OllamaWaitResult wait = waitForProcessesToExit(
             processes, count, terminateDeadline);
         if (wait == OllamaWaitTimedOut) {
+            // Graceful shutdown owns most of the deadline. Force only exact
+            // surviving identities so one stuck instance cannot block update.
             appLogInfo(@"graceful ollama instance handoff timed out; "
                         @"forcing remaining instances to exit");
             if (!signalProcesses(processes, count, SIGKILL, @"SIGKILL")) {
