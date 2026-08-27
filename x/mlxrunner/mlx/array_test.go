@@ -1,9 +1,13 @@
 package mlx
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/ollama/ollama/x/internal/mlxthreadtest"
+)
 
 func TestFromValue(t *testing.T) {
-	withMLXThread(t, func() {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
 		for got, want := range map[*Array]DType{
 			FromValue(true):              DTypeBool,
 			FromValue(false):             DTypeBool,
@@ -20,7 +24,7 @@ func TestFromValue(t *testing.T) {
 }
 
 func TestFromValues(t *testing.T) {
-	withMLXThread(t, func() {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
 		for got, want := range map[*Array]DType{
 			FromValues([]bool{true, false, true}, 3):           DTypeBool,
 			FromValues([]uint8{1, 2, 3}, 3):                    DTypeUint8,
@@ -43,12 +47,12 @@ func TestFromValues(t *testing.T) {
 }
 
 func TestComparisonOpsAndBernoulli(t *testing.T) {
-	withMLXThread(t, func() {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
 		testComparisonOpsAndBernoulli(t)
 	})
 }
 
-func testComparisonOpsAndBernoulli(t *testing.T) {
+func testComparisonOpsAndBernoulli(t *mlxthreadtest.T) {
 	a := FromValues([]float32{1, 2, 3}, 3)
 	b := FromValues([]float32{1, 1, 4}, 3)
 	eq := a.Equal(b).AsType(DTypeInt32)
@@ -66,15 +70,13 @@ func testComparisonOpsAndBernoulli(t *testing.T) {
 		"lessEqual": {le.Ints(), []int32{1, 0, 1}},
 		"bernoulli": {bern.Ints(), []int32{1, 0}},
 	} {
-		t.Run(name, func(t *testing.T) {
-			if len(tc.got) != len(tc.want) {
-				t.Fatalf("got %v, want %v", tc.got, tc.want)
+		if len(tc.got) != len(tc.want) {
+			t.Fatalf("%s: got %v, want %v", name, tc.got, tc.want)
+		}
+		for i := range tc.want {
+			if tc.got[i] != tc.want[i] {
+				t.Fatalf("%s: got %v, want %v", name, tc.got, tc.want)
 			}
-			for i := range tc.want {
-				if tc.got[i] != tc.want[i] {
-					t.Fatalf("got %v, want %v", tc.got, tc.want)
-				}
-			}
-		})
+		}
 	}
 }

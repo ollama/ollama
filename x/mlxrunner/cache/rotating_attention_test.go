@@ -42,7 +42,7 @@ func TestRotatingKVCacheDecodeParity(t *testing.T) {
 	var q, kLogical, vLogical, logicalMask *mlx.Array
 	var b *batch.Batch
 	var history *nn.KVHistory
-	mlxtest.Run(t, func(*testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
 		q = mlx.FromValues([]float32{0.7, -0.4, 0.2, 0.9}, 1, H, 1, D)
 
 		// Drive the cache: write positions 0..totalWrites-2 as a "history",
@@ -98,7 +98,7 @@ func TestRotatingKVCacheDecodeParity(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		mlxtest.RunSubtest(t, tc.name, func(t *testing.T) {
+		mlxtest.RunSubtest(t, tc.name, func(t *mlxtest.T) {
 			got := nn.ScaledDotProductAttention(b, q, scale,
 				nn.WithKVHistory(history),
 				nn.WithMask(tc.model))
@@ -131,7 +131,7 @@ func TestAssistantSharedHistoryL1MasksMatchNoMask(t *testing.T) {
 		h    *nn.KVHistory
 		mask nn.AttentionMask
 	}
-	mlxtest.Run(t, func(*testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
 		available = mlx.MetalIsAvailable()
 		if !available {
 			return
@@ -168,7 +168,7 @@ func TestAssistantSharedHistoryL1MasksMatchNoMask(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		mlxtest.RunSubtest(t, tc.name, func(t *testing.T) {
+		mlxtest.RunSubtest(t, tc.name, func(t *mlxtest.T) {
 			got := nn.ScaledDotProductAttention(b, q, scale, nn.WithKVHistory(tc.h), nn.WithMask(tc.mask))
 			want := mlx.FastScaledDotProductAttention(q, tc.h.K(), tc.h.V(), scale, "", nil)
 
@@ -194,7 +194,7 @@ func TestRotatingKVCachePrefillParity(t *testing.T) {
 
 	var q, k, v *mlx.Array
 	var b *batch.Batch
-	mlxtest.Run(t, func(*testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
 		qVals := make([]float32, 1*H*L*D)
 		kVals := make([]float32, 1*H*L*D)
 		vVals := make([]float32, 1*H*L*D)
@@ -223,7 +223,7 @@ func TestRotatingKVCachePrefillParity(t *testing.T) {
 
 	negInf := float32(math.Inf(-1))
 	for _, tc := range cases {
-		mlxtest.RunSubtest(t, tc.name, func(t *testing.T) {
+		mlxtest.RunSubtest(t, tc.name, func(t *mlxtest.T) {
 			c := NewRotatingKVCache(window)
 			history := c.Update(b, k, v)
 
@@ -275,81 +275,79 @@ func TestRotatingKVCachePrefillParity(t *testing.T) {
 // an identical write with no snapshots scheduled. Capture happens after the
 // write via lazy snapshots, so it must not perturb the write itself.
 func TestRotatingKVCacheScheduledSnapshotParity(t *testing.T) {
-	mlxtest.Run(t, testRotatingKVCacheScheduledSnapshotParity)
-}
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		const H, D = 1, 4
+		const window = 4
+		const before = 5 // past wrap before the batched write
+		const draft = 4
+		const scale = 1.0
 
-func testRotatingKVCacheScheduledSnapshotParity(t *testing.T) {
-	const H, D = 1, 4
-	const window = 4
-	const before = 5 // past wrap before the batched write
-	const draft = 4
-	const scale = 1.0
-
-	perPosKV := func(pos int) (k, v *mlx.Array) {
-		kVals := make([]float32, H*D)
-		vVals := make([]float32, H*D)
-		for i := range kVals {
-			kVals[i] = 0.1*float32(pos+1) + 0.01*float32(i)
-			vVals[i] = -0.1*float32(pos+1) + 0.01*float32(i)
-		}
-		return mlx.FromValues(kVals, 1, H, 1, D), mlx.FromValues(vVals, 1, H, 1, D)
-	}
-
-	// Build the batched K/V for offsets [before, before+draft).
-	batchK := make([]*mlx.Array, draft)
-	batchV := make([]*mlx.Array, draft)
-	for i := range draft {
-		batchK[i], batchV[i] = perPosKV(before + i)
-	}
-	kBatch := mlx.Concatenate(batchK, 2)
-	vBatch := mlx.Concatenate(batchV, 2)
-
-	qVals := make([]float32, H*draft*D)
-	for i := range qVals {
-		qVals[i] = 0.5 + 0.05*float32(i)
-	}
-	q := mlx.FromValues(qVals, 1, H, draft, D)
-	b := newKVBatch(before, draft)
-
-	// Run the same write twice: once with snapshots scheduled, once without.
-	run := func(schedule bool) []float32 {
-		c := NewRotatingKVCache(window)
-		for pos := range before {
-			k, v := perPosKV(pos)
-			c.Update(newKVBatch(c.Offset(), 1), k, v)
-		}
-		if schedule {
-			offsets := make([]int, draft)
-			for i := range offsets {
-				offsets[i] = before + i
+		perPosKV := func(pos int) (k, v *mlx.Array) {
+			kVals := make([]float32, H*D)
+			vVals := make([]float32, H*D)
+			for i := range kVals {
+				kVals[i] = 0.1*float32(pos+1) + 0.01*float32(i)
+				vVals[i] = -0.1*float32(pos+1) + 0.01*float32(i)
 			}
-			c.PrepareSnapshots(offsets)
+			return mlx.FromValues(kVals, 1, H, 1, D), mlx.FromValues(vVals, 1, H, 1, D)
 		}
-		history := c.Update(b, kBatch, vBatch)
-		out := nn.ScaledDotProductAttention(b, q, scale,
-			nn.WithKVHistory(history),
-			nn.WithMask(nn.CausalMask()))
-		if schedule {
-			for _, s := range c.TakeSnapshots() {
-				if s != nil {
-					s.Close()
+
+		// Build the batched K/V for offsets [before, before+draft).
+		batchK := make([]*mlx.Array, draft)
+		batchV := make([]*mlx.Array, draft)
+		for i := range draft {
+			batchK[i], batchV[i] = perPosKV(before + i)
+		}
+		kBatch := mlx.Concatenate(batchK, 2)
+		vBatch := mlx.Concatenate(batchV, 2)
+
+		qVals := make([]float32, H*draft*D)
+		for i := range qVals {
+			qVals[i] = 0.5 + 0.05*float32(i)
+		}
+		q := mlx.FromValues(qVals, 1, H, draft, D)
+		b := newKVBatch(before, draft)
+
+		// Run the same write twice: once with snapshots scheduled, once without.
+		run := func(schedule bool) []float32 {
+			c := NewRotatingKVCache(window)
+			for pos := range before {
+				k, v := perPosKV(pos)
+				c.Update(newKVBatch(c.Offset(), 1), k, v)
+			}
+			if schedule {
+				offsets := make([]int, draft)
+				for i := range offsets {
+					offsets[i] = before + i
+				}
+				c.PrepareSnapshots(offsets)
+			}
+			history := c.Update(b, kBatch, vBatch)
+			out := nn.ScaledDotProductAttention(b, q, scale,
+				nn.WithKVHistory(history),
+				nn.WithMask(nn.CausalMask()))
+			if schedule {
+				for _, s := range c.TakeSnapshots() {
+					if s != nil {
+						s.Close()
+					}
 				}
 			}
+			mlx.Eval(out)
+			return out.Floats()
 		}
-		mlx.Eval(out)
-		return out.Floats()
-	}
 
-	withSnap := run(true)
-	noSnap := run(false)
-	if len(withSnap) != len(noSnap) {
-		t.Fatalf("output length %d vs %d", len(withSnap), len(noSnap))
-	}
-	for i := range noSnap {
-		if math.Abs(float64(withSnap[i]-noSnap[i])) > 1e-5 {
-			t.Fatalf("index %d: scheduled=%v, unscheduled=%v", i, withSnap[i], noSnap[i])
+		withSnap := run(true)
+		noSnap := run(false)
+		if len(withSnap) != len(noSnap) {
+			t.Fatalf("output length %d vs %d", len(withSnap), len(noSnap))
 		}
-	}
+		for i := range noSnap {
+			if math.Abs(float64(withSnap[i]-noSnap[i])) > 1e-5 {
+				t.Fatalf("index %d: scheduled=%v, unscheduled=%v", i, withSnap[i], noSnap[i])
+			}
+		}
+	})
 }
 
 // TestRotatingKVCacheMLAParity drives a rotating cache with the MLA
@@ -358,38 +356,36 @@ func testRotatingKVCacheScheduledSnapshotParity(t *testing.T) {
 // a manual reference. Pins the cache+MLA integration that
 // glm4_moe_lite uses in production.
 func TestRotatingKVCacheMLAParity(t *testing.T) {
-	mlxtest.Run(t, testRotatingKVCacheMLAParity)
-}
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		const H, L, D, valueDim = 1, 3, 6, 4
+		const scale = 1.0
+		const window = 8 // window >= L so no window restriction
 
-func testRotatingKVCacheMLAParity(t *testing.T) {
-	const H, L, D, valueDim = 1, 3, 6, 4
-	const scale = 1.0
-	const window = 8 // window >= L so no window restriction
-
-	kVals := make([]float32, 1*H*L*D)
-	for i := range kVals {
-		kVals[i] = 0.1 * float32(i+1)
-	}
-	k := mlx.FromValues(kVals, 1, H, L, D)
-	v := mlx.Zeros(mlx.DTypeFloat32, 1, H, L, 0)
-
-	q := mlx.Zeros(mlx.DTypeFloat32, 1, H, L, D)
-	b := newKVBatch(0, L)
-
-	c := NewRotatingKVCache(window)
-	history := c.Update(b, k, v)
-	got := nn.ScaledDotProductAttention(b, q, scale,
-		nn.WithMLAHistory(history, valueDim),
-		nn.WithMask(nn.CausalMask()))
-
-	vRef := k.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(), mlx.Slice(0, valueDim))
-	want := mlx.FastScaledDotProductAttention(q, k, vRef, scale, "causal", nil)
-
-	mlx.Eval(got, want)
-	gs, ws := got.Floats(), want.Floats()
-	for i := range ws {
-		if math.Abs(float64(gs[i]-ws[i])) > 1e-5 {
-			t.Fatalf("index %d: got %v, want %v", i, gs[i], ws[i])
+		kVals := make([]float32, 1*H*L*D)
+		for i := range kVals {
+			kVals[i] = 0.1 * float32(i+1)
 		}
-	}
+		k := mlx.FromValues(kVals, 1, H, L, D)
+		v := mlx.Zeros(mlx.DTypeFloat32, 1, H, L, 0)
+
+		q := mlx.Zeros(mlx.DTypeFloat32, 1, H, L, D)
+		b := newKVBatch(0, L)
+
+		c := NewRotatingKVCache(window)
+		history := c.Update(b, k, v)
+		got := nn.ScaledDotProductAttention(b, q, scale,
+			nn.WithMLAHistory(history, valueDim),
+			nn.WithMask(nn.CausalMask()))
+
+		vRef := k.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(), mlx.Slice(0, valueDim))
+		want := mlx.FastScaledDotProductAttention(q, k, vRef, scale, "causal", nil)
+
+		mlx.Eval(got, want)
+		gs, ws := got.Floats(), want.Floats()
+		for i := range ws {
+			if math.Abs(float64(gs[i]-ws[i])) > 1e-5 {
+				t.Fatalf("index %d: got %v, want %v", i, gs[i], ws[i])
+			}
+		}
+	})
 }

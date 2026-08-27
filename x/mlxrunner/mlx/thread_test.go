@@ -7,51 +7,35 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/x/internal/mlxthread"
+	"github.com/ollama/ollama/x/internal/mlxthreadtest"
 )
 
-var (
-	testThreadOnce sync.Once
-	testThread     *mlxthread.Thread
-	testThreadErr  error
-)
-
-func skipIfNoMLX(t *testing.T) {
-	t.Helper()
-	if err := CheckInit(); err != nil {
-		t.Skipf("MLX not available: %v", err)
-	}
-}
-
-func mlxTestThread(t *testing.T) *mlxthread.Thread {
-	t.Helper()
-
-	testThreadOnce.Do(func() {
-		testThread, testThreadErr = mlxthread.Start("mlx-test", func() error {
-			if err := CheckInit(); err != nil {
-				return err
-			}
-			if GPUIsAvailable() {
-				SetDefaultDeviceGPU()
-			}
-			return nil
-		})
-	})
-	if testThreadErr != nil {
-		t.Skipf("MLX not available: %v", testThreadErr)
-	}
-
-	return testThread
-}
-
-func withMLXThread(t *testing.T, fn func()) {
-	t.Helper()
-
-	if err := mlxTestThread(t).Do(context.Background(), func() error {
-		fn()
+var testThread = sync.OnceValues(func() (*mlxthread.Thread, error) {
+	return mlxthread.Start("mlx-test", func() error {
+		if err := CheckInit(); err != nil {
+			return err
+		}
+		if GPUIsAvailable() {
+			SetDefaultDeviceGPU()
+		}
 		return nil
-	}); err != nil {
-		t.Fatal(err)
+	})
+})
+
+func mlxTestThread(tb testing.TB) *mlxthread.Thread {
+	tb.Helper()
+
+	thread, err := testThread()
+	if err != nil {
+		tb.Skipf("MLX not available: %v", err)
 	}
+
+	return thread
+}
+
+func withMLXThread(t *testing.T, fn func(*mlxthreadtest.T)) {
+	t.Helper()
+	mlxthreadtest.Run(t, mlxTestThread(t), fn)
 }
 
 func TestThreadedMLXOperations(t *testing.T) {

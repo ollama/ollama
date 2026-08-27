@@ -26,7 +26,7 @@ func patternArray(rows, cols int) *mlx.Array {
 	return mlx.FromValues(values, rows, cols).AsType(mlx.DTypeBFloat16)
 }
 
-func assertBitEqual(t *testing.T, label string, got, want *mlx.Array) {
+func assertBitEqual(t *mlxtest.T, label string, got, want *mlx.Array) {
 	t.Helper()
 	if got == nil || want == nil {
 		if got != want {
@@ -58,91 +58,85 @@ func scatterRows(packed *mlx.Array, perm []int32) *mlx.Array {
 }
 
 func TestPackGatedDeltaProjectionsNativeMatchesSplit(t *testing.T) {
-	mlxtest.Run(t, testPackGatedDeltaProjectionsNativeMatchesSplit)
-}
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		cfg := gdnTestConfig()
+		keyDim := int(cfg.LinearNumKeyHeads * cfg.LinearKeyHeadDim)
+		valueDim := int(cfg.LinearNumValueHeads * cfg.LinearValueHeadDim)
+		in := 8
 
-func testPackGatedDeltaProjectionsNativeMatchesSplit(t *testing.T) {
-	cfg := gdnTestConfig()
-	keyDim := int(cfg.LinearNumKeyHeads * cfg.LinearKeyHeadDim)
-	valueDim := int(cfg.LinearNumValueHeads * cfg.LinearValueHeadDim)
-	in := 8
+		qkvW := patternArray(2*keyDim+valueDim, in)
+		zW := patternArray(valueDim, in)
+		bW := patternArray(int(cfg.LinearNumValueHeads), in)
+		aW := patternArray(int(cfg.LinearNumValueHeads), in)
 
-	qkvW := patternArray(2*keyDim+valueDim, in)
-	zW := patternArray(valueDim, in)
-	bW := patternArray(int(cfg.LinearNumValueHeads), in)
-	aW := patternArray(int(cfg.LinearNumValueHeads), in)
+		fromSplitQKVZ, fromSplitBA, err := packGatedDeltaProjections(
+			nn.NewLinear(qkvW, nil), nn.NewLinear(zW, nil),
+			nn.NewLinear(bW, nil), nn.NewLinear(aW, nil),
+			nil, nil, cfg,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	fromSplitQKVZ, fromSplitBA, err := packGatedDeltaProjections(
-		nn.NewLinear(qkvW, nil), nn.NewLinear(zW, nil),
-		nn.NewLinear(bW, nil), nn.NewLinear(aW, nil),
-		nil, nil, cfg,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
+		packedQKVZ := mlx.Concatenate([]*mlx.Array{qkvW, zW}, 0)
+		packedBA := mlx.Concatenate([]*mlx.Array{bW, aW}, 0)
+		nativeQKVZ := scatterRows(packedQKVZ, nativeQKVZPerm(cfg))
+		nativeBA := scatterRows(packedBA, nativeBAPerm(cfg))
 
-	packedQKVZ := mlx.Concatenate([]*mlx.Array{qkvW, zW}, 0)
-	packedBA := mlx.Concatenate([]*mlx.Array{bW, aW}, 0)
-	nativeQKVZ := scatterRows(packedQKVZ, nativeQKVZPerm(cfg))
-	nativeBA := scatterRows(packedBA, nativeBAPerm(cfg))
+		fromNativeQKVZ, fromNativeBA, err := packGatedDeltaProjections(
+			nil, nil, nil, nil,
+			nn.NewLinear(nativeQKVZ, nil), nn.NewLinear(nativeBA, nil),
+			cfg,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	fromNativeQKVZ, fromNativeBA, err := packGatedDeltaProjections(
-		nil, nil, nil, nil,
-		nn.NewLinear(nativeQKVZ, nil), nn.NewLinear(nativeBA, nil),
-		cfg,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	assertBitEqual(t, "qkvz", fromNativeQKVZ.(*nn.Linear).Weight, fromSplitQKVZ.(*nn.Linear).Weight)
-	assertBitEqual(t, "ba", fromNativeBA.(*nn.Linear).Weight, fromSplitBA.(*nn.Linear).Weight)
+		assertBitEqual(t, "qkvz", fromNativeQKVZ.(*nn.Linear).Weight, fromSplitQKVZ.(*nn.Linear).Weight)
+		assertBitEqual(t, "ba", fromNativeBA.(*nn.Linear).Weight, fromSplitBA.(*nn.Linear).Weight)
+	})
 }
 
 func TestConcatProjectionPairQuantized(t *testing.T) {
-	mlxtest.Run(t, testConcatProjectionPairQuantized)
-}
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		in := 64
+		hi := nn.NewQuantizedLinear(patternArray(16, in).AsType(mlx.DTypeFloat32), nil, 32, 4, "affine")
+		lo := nn.NewQuantizedLinear(patternArray(8, in).AsType(mlx.DTypeFloat32), nil, 32, 4, "affine")
 
-func testConcatProjectionPairQuantized(t *testing.T) {
-	in := 64
-	hi := nn.NewQuantizedLinear(patternArray(16, in).AsType(mlx.DTypeFloat32), nil, 32, 4, "affine")
-	lo := nn.NewQuantizedLinear(patternArray(8, in).AsType(mlx.DTypeFloat32), nil, 32, 4, "affine")
-
-	packed, err := concatProjectionPair(hi, lo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	q, ok := packed.(*nn.QuantizedLinear)
-	if !ok {
-		t.Fatalf("packed projection is %T, want *nn.QuantizedLinear", packed)
-	}
-	assertBitEqual(t, "weight", q.Weight, mlx.Concatenate([]*mlx.Array{hi.Weight, lo.Weight}, 0))
-	assertBitEqual(t, "scales", q.Scales, mlx.Concatenate([]*mlx.Array{hi.Scales, lo.Scales}, 0))
+		packed, err := concatProjectionPair(hi, lo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		q, ok := packed.(*nn.QuantizedLinear)
+		if !ok {
+			t.Fatalf("packed projection is %T, want *nn.QuantizedLinear", packed)
+		}
+		assertBitEqual(t, "weight", q.Weight, mlx.Concatenate([]*mlx.Array{hi.Weight, lo.Weight}, 0))
+		assertBitEqual(t, "scales", q.Scales, mlx.Concatenate([]*mlx.Array{hi.Scales, lo.Scales}, 0))
+	})
 }
 
 func TestConcatProjectionPairMixedFallsBackToDense(t *testing.T) {
-	mlxtest.Run(t, testConcatProjectionPairMixedFallsBackToDense)
-}
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		in := 64
+		hi := nn.NewQuantizedLinear(patternArray(16, in).AsType(mlx.DTypeFloat32), nil, 32, 4, "affine")
+		loW := patternArray(8, in)
 
-func testConcatProjectionPairMixedFallsBackToDense(t *testing.T) {
-	in := 64
-	hi := nn.NewQuantizedLinear(patternArray(16, in).AsType(mlx.DTypeFloat32), nil, 32, 4, "affine")
-	loW := patternArray(8, in)
-
-	packed, err := concatProjectionPair(hi, nn.NewLinear(loW, nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	dense, ok := packed.(*nn.Linear)
-	if !ok {
-		t.Fatalf("packed projection is %T, want *nn.Linear", packed)
-	}
-	want := mlx.Concatenate([]*mlx.Array{
-		mlx.Dequantize(hi.Weight, hi.Scales, hi.QBiases, hi.GroupSize, hi.Bits, hi.Mode, nil),
-		loW.AsType(mlx.DTypeFloat16),
-	}, 0)
-	if dense.Weight.Dim(0) != 24 {
-		t.Fatalf("packed rows = %d, want 24", dense.Weight.Dim(0))
-	}
-	assertBitEqual(t, "weight", dense.Weight, want.AsType(dense.Weight.DType()))
+		packed, err := concatProjectionPair(hi, nn.NewLinear(loW, nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		dense, ok := packed.(*nn.Linear)
+		if !ok {
+			t.Fatalf("packed projection is %T, want *nn.Linear", packed)
+		}
+		want := mlx.Concatenate([]*mlx.Array{
+			mlx.Dequantize(hi.Weight, hi.Scales, hi.QBiases, hi.GroupSize, hi.Bits, hi.Mode, nil),
+			loW.AsType(mlx.DTypeFloat16),
+		}, 0)
+		if dense.Weight.Dim(0) != 24 {
+			t.Fatalf("packed rows = %d, want 24", dense.Weight.Dim(0))
+		}
+		assertBitEqual(t, "weight", dense.Weight, want.AsType(dense.Weight.DType()))
+	})
 }

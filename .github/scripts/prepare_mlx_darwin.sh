@@ -64,6 +64,8 @@ extract_payload() {
   tar -xzf "${tarball}" -C "${tmpdir}"
   mkdir -p "${target_dir}"
 
+  rm -rf "${target_dir}"/mlx_metal_v*
+
   local found=false
   local src dest
   for src in "${tmpdir}"/mlx_metal_v*; do

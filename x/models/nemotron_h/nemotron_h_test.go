@@ -323,56 +323,52 @@ func TestSupportsGatherQMM(t *testing.T) {
 }
 
 func TestApplyExpertWeightGlobalScale(t *testing.T) {
-	mlxtest.Run(t, testApplyExpertWeightGlobalScale)
-}
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		weight := mlx.FromValues([]float32{
+			1, 2,
+			3, 4,
+			5, 6,
+			7, 8,
+		}, 2, 2, 2)
+		scale := mlx.FromValues([]float32{2, 3}, 2)
 
-func testApplyExpertWeightGlobalScale(t *testing.T) {
-	weight := mlx.FromValues([]float32{
-		1, 2,
-		3, 4,
-		5, 6,
-		7, 8,
-	}, 2, 2, 2)
-	scale := mlx.FromValues([]float32{2, 3}, 2)
+		got := applyExpertWeightGlobalScale(weight, scale)
+		mlx.Eval(got)
 
-	got := applyExpertWeightGlobalScale(weight, scale)
-	mlx.Eval(got)
-
-	assertAllClose(t, "scaled expert weight", got.Floats(), []float32{
-		2, 4,
-		6, 8,
-		15, 18,
-		21, 24,
-	}, 1e-5)
+		assertAllClose(t, "scaled expert weight", got.Floats(), []float32{
+			2, 4,
+			6, 8,
+			15, 18,
+			21, 24,
+		}, 1e-5)
+	})
 }
 
 // The production form leans on MLX's fused fast RMS norm, so check it against
 // a reference that spells out every step.
 func TestGatedGroupRMSNormMatchesElementwiseReference(t *testing.T) {
-	mlxtest.Run(t, testGatedGroupRMSNormMatchesElementwiseReference)
-}
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		cfg := &Config{MambaNumHeads: 4, MambaHeadDim: 2, NGroups: 2, LayerNormEpsilon: 1e-5}
+		inner := cfg.MambaNumHeads * cfg.MambaHeadDim
+		groupSize := inner / cfg.NGroups
+		B, L := int32(2), int32(3)
 
-func testGatedGroupRMSNormMatchesElementwiseReference(t *testing.T) {
-	cfg := &Config{MambaNumHeads: 4, MambaHeadDim: 2, NGroups: 2, LayerNormEpsilon: 1e-5}
-	inner := cfg.MambaNumHeads * cfg.MambaHeadDim
-	groupSize := inner / cfg.NGroups
-	B, L := int32(2), int32(3)
+		y := testGatedValues(0.1, int(B), int(L), int(inner))
+		gate := testGatedValues(-0.2, int(B), int(L), int(inner))
+		weight := testGatedValues(0.9, int(inner))
 
-	y := testGatedValues(0.1, int(B), int(L), int(inner))
-	gate := testGatedValues(-0.2, int(B), int(L), int(inner))
-	weight := testGatedValues(0.9, int(inner))
+		got := gatedGroupRMSNorm(y, gate, weight, cfg, mlx.DTypeFloat32)
 
-	got := gatedGroupRMSNorm(y, gate, weight, cfg, mlx.DTypeFloat32)
+		ref := mlx.Mul(y, mlx.SiLU(gate))
+		ref = mlx.Reshape(ref, B, L, cfg.NGroups, groupSize)
+		variance := mlx.Mean(mlx.Mul(ref, ref), 3, true)
+		ref = mlx.Mul(ref, mlx.RSqrt(mlx.AddScalar(variance, cfg.LayerNormEpsilon)))
+		ref = mlx.Mul(ref, mlx.Reshape(weight, 1, 1, cfg.NGroups, groupSize))
+		ref = mlx.Reshape(ref, B, L, inner)
 
-	ref := mlx.Mul(y, mlx.SiLU(gate))
-	ref = mlx.Reshape(ref, B, L, cfg.NGroups, groupSize)
-	variance := mlx.Mean(mlx.Mul(ref, ref), 3, true)
-	ref = mlx.Mul(ref, mlx.RSqrt(mlx.AddScalar(variance, cfg.LayerNormEpsilon)))
-	ref = mlx.Mul(ref, mlx.Reshape(weight, 1, 1, cfg.NGroups, groupSize))
-	ref = mlx.Reshape(ref, B, L, inner)
-
-	mlx.Eval(got, ref)
-	assertAllClose(t, "gated group rmsnorm", got.Floats(), ref.Floats(), 1e-5)
+		mlx.Eval(got, ref)
+		assertAllClose(t, "gated group rmsnorm", got.Floats(), ref.Floats(), 1e-5)
+	})
 }
 
 func testGatedValues(seed float32, shape ...int) *mlx.Array {
@@ -387,7 +383,7 @@ func testGatedValues(seed float32, shape ...int) *mlx.Array {
 	return mlx.FromValues(vals, shape...)
 }
 
-func assertAllClose(t *testing.T, name string, got, want []float32, tol float64) {
+func assertAllClose(t *mlxtest.T, name string, got, want []float32, tol float64) {
 	t.Helper()
 	if len(got) != len(want) {
 		t.Fatalf("%s length = %d, want %d", name, len(got), len(want))

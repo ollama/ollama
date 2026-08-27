@@ -10,69 +10,67 @@ import (
 )
 
 func TestHyperConnectionMatchesReferenceFormula(t *testing.T) {
-	mlxtest.Run(t, testHyperConnectionMatchesReferenceFormula)
-}
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		cfg := &Config{HCCount: 2, HiddenSize: 2, HCLowRank: 2, RMSNormEps: 1e-6}
+		normWeight := []float32{1.1, 0.9, 1.2, 0.8}
+		downWeight := [][]float32{{0.2, -0.3, 0.4, 0.1}, {-0.1, 0.5, 0.2, -0.4}}
+		upWeight := [][]float32{{0.3, -0.2}, {0.1, 0.4}, {-0.5, 0.2}, {0.25, 0.15}}
+		injectWeight := [][]float32{{0.2, -0.1, 0.3, 0.4}, {-0.3, 0.2, 0.1, 0.5}}
+		input := []float32{1, 2, 3, 4}
 
-func testHyperConnectionMatchesReferenceFormula(t *testing.T) {
-	cfg := &Config{HCCount: 2, HiddenSize: 2, HCLowRank: 2, RMSNormEps: 1e-6}
-	normWeight := []float32{1.1, 0.9, 1.2, 0.8}
-	downWeight := [][]float32{{0.2, -0.3, 0.4, 0.1}, {-0.1, 0.5, 0.2, -0.4}}
-	upWeight := [][]float32{{0.3, -0.2}, {0.1, 0.4}, {-0.5, 0.2}, {0.25, 0.15}}
-	injectWeight := [][]float32{{0.2, -0.1, 0.3, 0.4}, {-0.3, 0.2, 0.1, 0.5}}
-	input := []float32{1, 2, 3, 4}
-
-	h := &hyperConnection{
-		Norm:         &streamRMSNorm{Weight: mlx.FromValues(normWeight, 2, 2)},
-		InputMixDown: nn.NewLinear(matrix(downWeight), nil),
-		InputMixUp:   nn.NewLinear(matrix(upWeight), nil),
-		BlockInject:  nn.NewLinear(matrix(injectWeight), nil),
-	}
-	residual := mlx.FromValues(input, 1, 1, 4)
-	branch, state := h.Prepare(residual, cfg)
-	got := h.Inject(state, branch, cfg).AsType(mlx.DTypeFloat32)
-	reduced := h.Reduce(residual, cfg).AsType(mlx.DTypeFloat32)
-	mlx.Eval(got, reduced)
-
-	normed := append([]float32(nil), input...)
-	for stream := range int(cfg.HCCount) {
-		start := stream * int(cfg.HiddenSize)
-		var square float64
-		for i := range int(cfg.HiddenSize) {
-			x := float64(input[start+i])
-			square += x * x
+		h := &hyperConnection{
+			Norm:         &streamRMSNorm{Weight: mlx.FromValues(normWeight, 2, 2)},
+			InputMixDown: nn.NewLinear(matrix(downWeight), nil),
+			InputMixUp:   nn.NewLinear(matrix(upWeight), nil),
+			BlockInject:  nn.NewLinear(matrix(injectWeight), nil),
 		}
-		invRMS := 1 / math.Sqrt(square/float64(cfg.HiddenSize)+float64(cfg.RMSNormEps))
-		for i := range int(cfg.HiddenSize) {
-			normed[start+i] = float32(float64(input[start+i]) * invRMS * float64(normWeight[start+i]))
-		}
-	}
+		residual := mlx.FromValues(input, 1, 1, 4)
+		branch, state := h.Prepare(residual, cfg)
+		got := h.Inject(state, branch, cfg).AsType(mlx.DTypeFloat32)
+		reduced := h.Reduce(residual, cfg).AsType(mlx.DTypeFloat32)
+		mlx.Eval(got, reduced)
 
-	down := matvec(downWeight, normed)
-	for i := range down {
-		down[i] /= float32(cfg.HCCount)
-		down[i] *= 1 / (1 + float32(math.Exp(float64(-down[i]))))
-	}
-	mix := matvec(upWeight, down)
-	wantBranch := make([]float32, cfg.HiddenSize)
-	for stream := range int(cfg.HCCount) {
-		for i := range int(cfg.HiddenSize) {
-			j := stream*int(cfg.HiddenSize) + i
-			gate := 1 / (1 + float32(math.Exp(float64(-mix[j]))))
-			wantBranch[i] += gate * normed[j] / float32(cfg.HCCount)
+		normed := append([]float32(nil), input...)
+		for stream := range int(cfg.HCCount) {
+			start := stream * int(cfg.HiddenSize)
+			var square float64
+			for i := range int(cfg.HiddenSize) {
+				x := float64(input[start+i])
+				square += x * x
+			}
+			invRMS := 1 / math.Sqrt(square/float64(cfg.HiddenSize)+float64(cfg.RMSNormEps))
+			for i := range int(cfg.HiddenSize) {
+				normed[start+i] = float32(float64(input[start+i]) * invRMS * float64(normWeight[start+i]))
+			}
 		}
-	}
 
-	injection := matvec(injectWeight, normed)
-	want := append([]float32(nil), input...)
-	for stream := range int(cfg.HCCount) {
-		weight := 2 / (1 + float32(math.Exp(float64(-injection[stream]/float32(cfg.HCCount)))))
-		for i := range int(cfg.HiddenSize) {
-			want[stream*int(cfg.HiddenSize)+i] += weight * wantBranch[i]
+		down := matvec(downWeight, normed)
+		for i := range down {
+			down[i] /= float32(cfg.HCCount)
+			down[i] *= 1 / (1 + float32(math.Exp(float64(-down[i]))))
 		}
-	}
+		mix := matvec(upWeight, down)
+		wantBranch := make([]float32, cfg.HiddenSize)
+		for stream := range int(cfg.HCCount) {
+			for i := range int(cfg.HiddenSize) {
+				j := stream*int(cfg.HiddenSize) + i
+				gate := 1 / (1 + float32(math.Exp(float64(-mix[j]))))
+				wantBranch[i] += gate * normed[j] / float32(cfg.HCCount)
+			}
+		}
 
-	assertClose(t, "mixed branch", reduced.Floats(), wantBranch)
-	assertClose(t, "injected streams", got.Floats(), want)
+		injection := matvec(injectWeight, normed)
+		want := append([]float32(nil), input...)
+		for stream := range int(cfg.HCCount) {
+			weight := 2 / (1 + float32(math.Exp(float64(-injection[stream]/float32(cfg.HCCount)))))
+			for i := range int(cfg.HiddenSize) {
+				want[stream*int(cfg.HiddenSize)+i] += weight * wantBranch[i]
+			}
+		}
+
+		assertClose(t, "mixed branch", reduced.Floats(), wantBranch)
+		assertClose(t, "injected streams", got.Floats(), want)
+	})
 }
 
 func matrix(rows [][]float32) *mlx.Array {
@@ -93,7 +91,7 @@ func matvec(weight [][]float32, input []float32) []float32 {
 	return output
 }
 
-func assertClose(t *testing.T, name string, got, want []float32) {
+func assertClose(t *mlxtest.T, name string, got, want []float32) {
 	t.Helper()
 	if len(got) != len(want) {
 		t.Fatalf("%s length = %d, want %d", name, len(got), len(want))

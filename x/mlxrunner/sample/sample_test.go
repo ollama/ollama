@@ -31,7 +31,7 @@ func batchLogits(rows ...[]float32) *mlx.Array {
 // sampleOne runs Sample on a freshly-added single slot and returns the
 // sampled token id. Used both for the single-slot options table and as the
 // reference oracle for the batched-equivalence test.
-func sampleOne(t *testing.T, opts Options, priorTokens []int32, values []float32) int32 {
+func sampleOne(t *mlxtest.T, opts Options, priorTokens []int32, values []float32) int32 {
 	t.Helper()
 	s := New(128)
 	defer func() {
@@ -126,7 +126,7 @@ func TestSampleSingleSlotOptions(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		mlxtest.RunSubtest(t, tc.name, func(t *testing.T) {
+		mlxtest.RunSubtest(t, tc.name, func(t *mlxtest.T) {
 			if got := sampleOne(t, tc.opts, tc.priors, tc.logits); got != tc.want {
 				t.Errorf("got %d, want %d", got, tc.want)
 			}
@@ -135,137 +135,129 @@ func TestSampleSingleSlotOptions(t *testing.T) {
 }
 
 func TestDistributionAppliesTopKBeforeTopP(t *testing.T) {
-	mlxtest.Run(t, testDistributionAppliesTopKBeforeTopP)
-}
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		s := New(128)
+		defer func() {
+			s.Free()
+			mlx.Sweep()
+		}()
+		s.Add(0, Options{Temperature: 1, TopK: 2, TopP: 0.7}, nil)
 
-func testDistributionAppliesTopKBeforeTopP(t *testing.T) {
-	s := New(128)
-	defer func() {
-		s.Free()
-		mlx.Sweep()
-	}()
-	s.Add(0, Options{Temperature: 1, TopK: 2, TopP: 0.7}, nil)
+		dist := s.Distribution(0, slotLogits([]float32{logOf(0.6), logOf(0.2), logOf(0.2)}), nil)
+		mlx.Eval(dist.Arrays()...)
 
-	dist := s.Distribution(0, slotLogits([]float32{logOf(0.6), logOf(0.2), logOf(0.2)}), nil)
-	mlx.Eval(dist.Arrays()...)
+		ids := dist.IDs.Ints()
+		probs := dist.Probs.Floats()
+		if len(ids) != 2 || len(probs) != 2 {
+			t.Fatalf("support = ids %v probs %v, want 2 sparse entries", ids, probs)
+		}
 
-	ids := dist.IDs.Ints()
-	probs := dist.Probs.Floats()
-	if len(ids) != 2 || len(probs) != 2 {
-		t.Fatalf("support = ids %v probs %v, want 2 sparse entries", ids, probs)
-	}
-
-	foundTop := false
-	for i, id := range ids {
-		switch id {
-		case 0:
-			foundTop = true
-			if math.Abs(float64(probs[i]-1)) > 1e-5 {
-				t.Fatalf("top token prob = %v, want 1; ids=%v probs=%v", probs[i], ids, probs)
-			}
-		default:
-			if math.Abs(float64(probs[i])) > 1e-5 {
-				t.Fatalf("non-top token %d prob = %v, want 0; ids=%v probs=%v", id, probs[i], ids, probs)
+		foundTop := false
+		for i, id := range ids {
+			switch id {
+			case 0:
+				foundTop = true
+				if math.Abs(float64(probs[i]-1)) > 1e-5 {
+					t.Fatalf("top token prob = %v, want 1; ids=%v probs=%v", probs[i], ids, probs)
+				}
+			default:
+				if math.Abs(float64(probs[i])) > 1e-5 {
+					t.Fatalf("non-top token %d prob = %v, want 0; ids=%v probs=%v", id, probs[i], ids, probs)
+				}
 			}
 		}
-	}
-	if !foundTop {
-		t.Fatalf("top-k support %v did not include token 0", ids)
-	}
+		if !foundTop {
+			t.Fatalf("top-k support %v did not include token 0", ids)
+		}
+	})
 }
 
 func TestDistributionResidualUsesTargetSupport(t *testing.T) {
-	mlxtest.Run(t, testDistributionResidualUsesTargetSupport)
-}
-
-func testDistributionResidualUsesTargetSupport(t *testing.T) {
-	target := Distribution{
-		IDs:   mlx.NewArrayInt32([]int32{2, 5}, []int32{1, 2}),
-		Probs: mlx.FromValues([]float32{0.7, 0.3}, 1, 2),
-	}
-	draft := Distribution{
-		IDs:   mlx.NewArrayInt32([]int32{2, 4}, []int32{1, 2}),
-		Probs: mlx.FromValues([]float32{0.2, 0.8}, 1, 2),
-	}
-
-	residual := target.ResidualAgainst(draft)
-	mlx.Eval(residual.Arrays()...)
-
-	ids := residual.IDs.Ints()
-	probs := residual.Probs.Floats()
-	want := map[int32]float64{2: 0.625, 5: 0.375}
-	if len(ids) != 2 || len(probs) != 2 {
-		t.Fatalf("residual = ids %v probs %v, want 2 sparse entries", ids, probs)
-	}
-	for i, id := range ids {
-		w, ok := want[id]
-		if !ok {
-			t.Fatalf("residual includes token %d outside target support: ids=%v probs=%v", id, ids, probs)
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		target := Distribution{
+			IDs:   mlx.NewArrayInt32([]int32{2, 5}, []int32{1, 2}),
+			Probs: mlx.FromValues([]float32{0.7, 0.3}, 1, 2),
 		}
-		if math.Abs(float64(probs[i])-w) > 1e-5 {
-			t.Fatalf("residual token %d prob = %v, want %v; ids=%v probs=%v", id, probs[i], w, ids, probs)
+		draft := Distribution{
+			IDs:   mlx.NewArrayInt32([]int32{2, 4}, []int32{1, 2}),
+			Probs: mlx.FromValues([]float32{0.2, 0.8}, 1, 2),
 		}
-	}
+
+		residual := target.ResidualAgainst(draft)
+		mlx.Eval(residual.Arrays()...)
+
+		ids := residual.IDs.Ints()
+		probs := residual.Probs.Floats()
+		want := map[int32]float64{2: 0.625, 5: 0.375}
+		if len(ids) != 2 || len(probs) != 2 {
+			t.Fatalf("residual = ids %v probs %v, want 2 sparse entries", ids, probs)
+		}
+		for i, id := range ids {
+			w, ok := want[id]
+			if !ok {
+				t.Fatalf("residual includes token %d outside target support: ids=%v probs=%v", id, ids, probs)
+			}
+			if math.Abs(float64(probs[i])-w) > 1e-5 {
+				t.Fatalf("residual token %d prob = %v, want %v; ids=%v probs=%v", id, probs[i], w, ids, probs)
+			}
+		}
+	})
 }
 
 func TestSeededSamplingIsReproducible(t *testing.T) {
-	mlxtest.Run(t, testSeededSamplingIsReproducible)
-}
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		seededSequence := func(seed int) []int32 {
+			s := New(128)
+			defer func() {
+				s.Free()
+				mlx.Sweep()
+			}()
+			s.Add(0, Options{Temperature: 1, TopK: 4, Seed: seed, UseSeed: true}, nil)
 
-func testSeededSamplingIsReproducible(t *testing.T) {
-	seededSequence := func(seed int) []int32 {
-		s := New(128)
-		defer func() {
-			s.Free()
-			mlx.Sweep()
-		}()
-		s.Add(0, Options{Temperature: 1, TopK: 4, Seed: seed, UseSeed: true}, nil)
-
-		logits := slotLogits([]float32{0, 0, 0, 0})
-		out := make([]int32, 32)
-		for i := range out {
-			token := s.Sample([]int{0}, logits).Token
-			mlx.Eval(token)
-			out[i] = token.Int()
+			logits := slotLogits([]float32{0, 0, 0, 0})
+			out := make([]int32, 32)
+			for i := range out {
+				token := s.Sample([]int{0}, logits).Token
+				mlx.Eval(token)
+				out[i] = token.Int()
+			}
+			return out
 		}
-		return out
-	}
 
-	a := seededSequence(1234)
-	b := seededSequence(1234)
-	if !slices.Equal(a, b) {
-		t.Fatalf("same seed produced different sequences:\n%v\n%v", a, b)
-	}
+		a := seededSequence(1234)
+		b := seededSequence(1234)
+		if !slices.Equal(a, b) {
+			t.Fatalf("same seed produced different sequences:\n%v\n%v", a, b)
+		}
 
-	c := seededSequence(5678)
-	if slices.Equal(a, c) {
-		t.Fatalf("different seeds produced the same sequence: %v", a)
-	}
+		c := seededSequence(5678)
+		if slices.Equal(a, c) {
+			t.Fatalf("different seeds produced the same sequence: %v", a)
+		}
+	})
 }
 
 func TestSeededBernoulliIsReproducible(t *testing.T) {
-	mlxtest.Run(t, testSeededBernoulliIsReproducible)
-}
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		seededMask := func() []int32 {
+			s := New(128)
+			defer func() {
+				s.Free()
+				mlx.Sweep()
+			}()
+			s.Add(0, Options{Seed: 99, UseSeed: true}, nil)
 
-func testSeededBernoulliIsReproducible(t *testing.T) {
-	seededMask := func() []int32 {
-		s := New(128)
-		defer func() {
-			s.Free()
-			mlx.Sweep()
-		}()
-		s.Add(0, Options{Seed: 99, UseSeed: true}, nil)
+			mask := s.Bernoulli(0, mlx.FromValues([]float32{0.5, 0.5, 0.5, 0.5, 0.5, 0.5}, 6)).AsType(mlx.DTypeInt32)
+			mlx.Eval(mask)
+			return mask.Ints()
+		}
 
-		mask := s.Bernoulli(0, mlx.FromValues([]float32{0.5, 0.5, 0.5, 0.5, 0.5, 0.5}, 6)).AsType(mlx.DTypeInt32)
-		mlx.Eval(mask)
-		return mask.Ints()
-	}
-
-	a := seededMask()
-	b := seededMask()
-	if !slices.Equal(a, b) {
-		t.Fatalf("same seed produced different bernoulli masks:\n%v\n%v", a, b)
-	}
+		a := seededMask()
+		b := seededMask()
+		if !slices.Equal(a, b) {
+			t.Fatalf("same seed produced different bernoulli masks:\n%v\n%v", a, b)
+		}
+	})
 }
 
 // TestSampleHistoryWindow verifies that penalty history respects the
@@ -273,164 +265,154 @@ func testSeededBernoulliIsReproducible(t *testing.T) {
 // and once the ring wraps, tokens that rotate out no longer contribute
 // to penalties.
 func TestSampleHistoryWindow(t *testing.T) {
-	mlxtest.Run(t, testSampleHistoryWindow)
-}
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		s := New(128)
+		defer func() {
+			s.Free()
+			mlx.Sweep()
+		}()
 
-func testSampleHistoryWindow(t *testing.T) {
-	s := New(128)
-	defer func() {
-		s.Free()
-		mlx.Sweep()
-	}()
+		// RepeatLastN=2 with priors {1, 2, 3}: makeHistoryRow keeps only
+		// {2, 3}. Token 1 was trimmed — its penalty is NOT active.
+		s.Add(0, Options{RepeatLastN: 2, PresencePenalty: 10}, []int32{1, 2, 3})
 
-	// RepeatLastN=2 with priors {1, 2, 3}: makeHistoryRow keeps only
-	// {2, 3}. Token 1 was trimmed — its penalty is NOT active.
-	s.Add(0, Options{RepeatLastN: 2, PresencePenalty: 10}, []int32{1, 2, 3})
+		// Step 1: logits favor token 1 (trimmed). If the trim were broken it
+		// would be penalized and the argmax would move.
+		step1 := s.Sample([]int{0}, slotLogits([]float32{0, 5, 0, 0, 0})).Token
+		mlx.Eval(step1)
+		if got := step1.Int(); got != 1 {
+			t.Fatalf("step 1 = %d, want 1 (token 1 trimmed from priors)", got)
+		}
+		// After step 1 the ring holds {1, 3}; token 2 has rotated out.
 
-	// Step 1: logits favor token 1 (trimmed). If the trim were broken it
-	// would be penalized and the argmax would move.
-	step1 := s.Sample([]int{0}, slotLogits([]float32{0, 5, 0, 0, 0})).Token
-	mlx.Eval(step1)
-	if got := step1.Int(); got != 1 {
-		t.Fatalf("step 1 = %d, want 1 (token 1 trimmed from priors)", got)
-	}
-	// After step 1 the ring holds {1, 3}; token 2 has rotated out.
-
-	// Step 2: logits favor token 2 (rotated out). If the ring wrap were
-	// wrong, token 2 would still be penalized.
-	step2 := s.Sample([]int{0}, slotLogits([]float32{0, 0, 5, 0, 0})).Token
-	mlx.Eval(step2)
-	if got := step2.Int(); got != 2 {
-		t.Fatalf("step 2 = %d, want 2 (token 2 rotated out of ring)", got)
-	}
+		// Step 2: logits favor token 2 (rotated out). If the ring wrap were
+		// wrong, token 2 would still be penalized.
+		step2 := s.Sample([]int{0}, slotLogits([]float32{0, 0, 5, 0, 0})).Token
+		mlx.Eval(step2)
+		if got := step2.Int(); got != 2 {
+			t.Fatalf("step 2 = %d, want 2 (token 2 rotated out of ring)", got)
+		}
+	})
 }
 
 func TestSpeculativeScoresUsesDraftHistoryWithoutCommit(t *testing.T) {
-	mlxtest.Run(t, testSpeculativeScoresUsesDraftHistoryWithoutCommit)
-}
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		s := New(128)
+		defer func() {
+			s.Free()
+			mlx.Sweep()
+		}()
 
-func testSpeculativeScoresUsesDraftHistoryWithoutCommit(t *testing.T) {
-	s := New(128)
-	defer func() {
-		s.Free()
-		mlx.Sweep()
-	}()
+		s.Add(0, Options{RepeatLastN: 2, RepeatPenalty: 10}, []int32{1, 2})
+		draftTokens := mlx.NewArrayInt32([]int32{3, 4}, []int32{1, 2})
+		scores := s.SpeculativeScores(0, batchLogits(
+			[]float32{0, 9, 9, 8, 0}, // history {1,2}; token 3 wins
+			[]float32{0, 0, 9, 9, 8}, // history {2,3}; token 4 wins
+			[]float32{0, 0, 9, 9, 8}, // history {3,4}; token 2 wins
+		), draftTokens)
+		tokens := scores.Argmax(-1, false).AsType(mlx.DTypeInt32)
+		mlx.Eval(tokens)
 
-	s.Add(0, Options{RepeatLastN: 2, RepeatPenalty: 10}, []int32{1, 2})
-	draftTokens := mlx.NewArrayInt32([]int32{3, 4}, []int32{1, 2})
-	scores := s.SpeculativeScores(0, batchLogits(
-		[]float32{0, 9, 9, 8, 0}, // history {1,2}; token 3 wins
-		[]float32{0, 0, 9, 9, 8}, // history {2,3}; token 4 wins
-		[]float32{0, 0, 9, 9, 8}, // history {3,4}; token 2 wins
-	), draftTokens)
-	tokens := scores.Argmax(-1, false).AsType(mlx.DTypeInt32)
-	mlx.Eval(tokens)
-
-	if got, want := tokens.Ints(), []int32{3, 4, 2}; len(got) != len(want) {
-		t.Fatalf("tokens = %v, want %v", got, want)
-	} else {
-		for i := range want {
-			if got[i] != want[i] {
-				t.Fatalf("tokens = %v, want %v", got, want)
+		if got, want := tokens.Ints(), []int32{3, 4, 2}; len(got) != len(want) {
+			t.Fatalf("tokens = %v, want %v", got, want)
+		} else {
+			for i := range want {
+				if got[i] != want[i] {
+					t.Fatalf("tokens = %v, want %v", got, want)
+				}
 			}
 		}
-	}
-	if s.byID[0].historyLen != 2 {
-		t.Fatalf("historyLen = %d, want 2", s.byID[0].historyLen)
-	}
+		if s.byID[0].historyLen != 2 {
+			t.Fatalf("historyLen = %d, want 2", s.byID[0].historyLen)
+		}
+	})
 }
 
 func TestDistributionSingleRowAppliesDraftPrefix(t *testing.T) {
-	mlxtest.Run(t, testDistributionSingleRowAppliesDraftPrefix)
-}
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		s := New(128)
+		defer func() {
+			s.Free()
+			mlx.Sweep()
+		}()
 
-func testDistributionSingleRowAppliesDraftPrefix(t *testing.T) {
-	s := New(128)
-	defer func() {
-		s.Free()
-		mlx.Sweep()
-	}()
+		// A proposal step passes one logits row with the chain's earlier drafts:
+		// the single row is the chain's final step, so every draft belongs to
+		// its history. Slot 0 exercises the batched history path (full ring),
+		// slot 1 the serial path (ring not yet full).
+		s.Add(0, Options{RepeatLastN: 2, RepeatPenalty: 10}, []int32{0, 1})
+		s.Add(1, Options{RepeatLastN: 8, RepeatPenalty: 10}, []int32{0, 1})
+		prefix := mlx.NewArrayInt32([]int32{3, 4}, []int32{1, 2})
 
-	// A proposal step passes one logits row with the chain's earlier drafts:
-	// the single row is the chain's final step, so every draft belongs to
-	// its history. Slot 0 exercises the batched history path (full ring),
-	// slot 1 the serial path (ring not yet full).
-	s.Add(0, Options{RepeatLastN: 2, RepeatPenalty: 10}, []int32{0, 1})
-	s.Add(1, Options{RepeatLastN: 8, RepeatPenalty: 10}, []int32{0, 1})
-	prefix := mlx.NewArrayInt32([]int32{3, 4}, []int32{1, 2})
-
-	for _, seqID := range []int{0, 1} {
-		// Drafts 3 and 4 are penalized, so token 2 wins over the higher raw
-		// scores; with the drafts absent from the history, token 3 would.
-		dist := s.Distribution(seqID, batchLogits([]float32{0, 0, 9, 9, 8}), prefix)
-		mlx.Eval(dist.IDs)
-		if got := dist.IDs.Ints()[0]; got != 2 {
-			t.Fatalf("seq %d token = %d, want 2 (drafts 3 and 4 penalized)", seqID, got)
+		for _, seqID := range []int{0, 1} {
+			// Drafts 3 and 4 are penalized, so token 2 wins over the higher raw
+			// scores; with the drafts absent from the history, token 3 would.
+			dist := s.Distribution(seqID, batchLogits([]float32{0, 0, 9, 9, 8}), prefix)
+			mlx.Eval(dist.IDs)
+			if got := dist.IDs.Ints()[0]; got != 2 {
+				t.Fatalf("seq %d token = %d, want 2 (drafts 3 and 4 penalized)", seqID, got)
+			}
 		}
-	}
+	})
 }
 
 func TestDistributionMultiRowWithoutChain(t *testing.T) {
-	mlxtest.Run(t, testDistributionMultiRowWithoutChain)
-}
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		s := New(128)
+		defer func() {
+			s.Free()
+			mlx.Sweep()
+		}()
 
-func testDistributionMultiRowWithoutChain(t *testing.T) {
-	s := New(128)
-	defer func() {
-		s.Free()
-		mlx.Sweep()
-	}()
+		// A block drafter's proposal batch samples every row from one call with
+		// no draft chain: each row sees the slot history unchanged. Slot 0
+		// exercises the batched history path (full ring), slot 1 the serial path
+		// (ring not yet full).
+		s.Add(0, Options{RepeatLastN: 2, RepeatPenalty: 10}, []int32{3, 4})
+		s.Add(1, Options{RepeatLastN: 8, RepeatPenalty: 10}, []int32{3, 4})
 
-	// A block drafter's proposal batch samples every row from one call with
-	// no draft chain: each row sees the slot history unchanged. Slot 0
-	// exercises the batched history path (full ring), slot 1 the serial path
-	// (ring not yet full).
-	s.Add(0, Options{RepeatLastN: 2, RepeatPenalty: 10}, []int32{3, 4})
-	s.Add(1, Options{RepeatLastN: 8, RepeatPenalty: 10}, []int32{3, 4})
-
-	for _, seqID := range []int{0, 1} {
-		// Tokens 3 and 4 are penalized in every row alike; rows 1 and 3
-		// share logits, so a chain alignment leaking between rows would
-		// split their winners.
-		dist := s.Distribution(seqID, batchLogits(
-			[]float32{0, 0, 8, 9, 9},
-			[]float32{0, 8, 0, 9, 9},
-			[]float32{0, 0, 8, 9, 9},
-		), nil)
-		top := dist.IDs.Slice(mlx.Slice(), mlx.Slice(0, 1))
-		mlx.Eval(top)
-		if got, want := top.Ints(), []int32{2, 1, 2}; !slices.Equal(got, want) {
-			t.Fatalf("seq %d top tokens = %v, want %v", seqID, got, want)
+		for _, seqID := range []int{0, 1} {
+			// Tokens 3 and 4 are penalized in every row alike; rows 1 and 3
+			// share logits, so a chain alignment leaking between rows would
+			// split their winners.
+			dist := s.Distribution(seqID, batchLogits(
+				[]float32{0, 0, 8, 9, 9},
+				[]float32{0, 8, 0, 9, 9},
+				[]float32{0, 0, 8, 9, 9},
+			), nil)
+			top := dist.IDs.Slice(mlx.Slice(), mlx.Slice(0, 1))
+			mlx.Eval(top)
+			if got, want := top.Ints(), []int32{2, 1, 2}; !slices.Equal(got, want) {
+				t.Fatalf("seq %d top tokens = %v, want %v", seqID, got, want)
+			}
 		}
-	}
+	})
 }
 
 func TestCommitBatchesRingWrites(t *testing.T) {
-	mlxtest.Run(t, testCommitBatchesRingWrites)
-}
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		s := New(128)
+		defer func() {
+			s.Free()
+			mlx.Sweep()
+		}()
 
-func testCommitBatchesRingWrites(t *testing.T) {
-	s := New(128)
-	defer func() {
-		s.Free()
-		mlx.Sweep()
-	}()
+		s.Add(0, Options{RepeatLastN: 4, RepeatPenalty: 1.1}, []int32{10, 11, 12})
+		s.Commit(0, []int32{20, 21, 22})
+		s.Commit(0, []int32{30, 31, 32, 33, 34})
+		mlx.Eval(s.history)
 
-	s.Add(0, Options{RepeatLastN: 4, RepeatPenalty: 1.1}, []int32{10, 11, 12})
-	s.Commit(0, []int32{20, 21, 22})
-	s.Commit(0, []int32{30, 31, 32, 33, 34})
-	mlx.Eval(s.history)
-
-	got := s.history.Ints()
-	want := []int32{32, 33, 34, 31}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("history = %v, want %v", got, want)
+		got := s.history.Ints()
+		want := []int32{32, 33, 34, 31}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("history = %v, want %v", got, want)
+			}
 		}
-	}
-	if s.byID[0].historyLen != 11 {
-		t.Fatalf("historyLen = %d, want 11", s.byID[0].historyLen)
-	}
+		if s.byID[0].historyLen != 11 {
+			t.Fatalf("historyLen = %d, want 11", s.byID[0].historyLen)
+		}
+	})
 }
 
 // TestBatchSamplingPreservesPerSlotBehavior is the core equivalence test:
@@ -492,7 +474,7 @@ func TestBatchSamplingPreservesPerSlotBehavior(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		mlxtest.RunSubtest(t, tc.name, func(t *testing.T) {
+		mlxtest.RunSubtest(t, tc.name, func(t *mlxtest.T) {
 			// Per-slot reference for each sampled seq.
 			want := make([]int32, len(tc.sample))
 			for i, id := range tc.sample {
@@ -532,34 +514,32 @@ func TestBatchSamplingPreservesPerSlotBehavior(t *testing.T) {
 // recycled row must start from its own priors only — no carryover from
 // the removed slot's history.
 func TestRemoveDoesNotLeakHistory(t *testing.T) {
-	mlxtest.Run(t, testRemoveDoesNotLeakHistory)
-}
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		opts := Options{RepeatLastN: 1, PresencePenalty: 10}
+		s := New(128)
+		defer func() {
+			s.Free()
+			mlx.Sweep()
+		}()
+		s.Add(1, opts, []int32{1})
+		s.Add(2, opts, []int32{2})
+		s.Remove(1)
+		s.Add(3, opts, []int32{0})
 
-func testRemoveDoesNotLeakHistory(t *testing.T) {
-	opts := Options{RepeatLastN: 1, PresencePenalty: 10}
-	s := New(128)
-	defer func() {
-		s.Free()
-		mlx.Sweep()
-	}()
-	s.Add(1, opts, []int32{1})
-	s.Add(2, opts, []int32{2})
-	s.Remove(1)
-	s.Add(3, opts, []int32{0})
-
-	// Slot 2 retains history {2}; slot 3 retains history {0}. With
-	// equal logits and PresencePenalty=10 the argmax drops to the first
-	// unpenalized token.
-	res := s.Sample([]int{2, 3}, batchLogits(
-		[]float32{3, 3, 0},
-		[]float32{3, 3, 0},
-	))
-	mlx.Eval(res.Token)
-	tokens := res.Token.Ints()
-	if tokens[0] != 0 {
-		t.Errorf("slot 2 = %d, want 0 (token 2 penalized)", tokens[0])
-	}
-	if tokens[1] != 1 {
-		t.Errorf("slot 3 = %d, want 1 (token 0 penalized, no slot-1 carryover)", tokens[1])
-	}
+		// Slot 2 retains history {2}; slot 3 retains history {0}. With
+		// equal logits and PresencePenalty=10 the argmax drops to the first
+		// unpenalized token.
+		res := s.Sample([]int{2, 3}, batchLogits(
+			[]float32{3, 3, 0},
+			[]float32{3, 3, 0},
+		))
+		mlx.Eval(res.Token)
+		tokens := res.Token.Ints()
+		if tokens[0] != 0 {
+			t.Errorf("slot 2 = %d, want 0 (token 2 penalized)", tokens[0])
+		}
+		if tokens[1] != 1 {
+			t.Errorf("slot 3 = %d, want 1 (token 0 penalized, no slot-1 carryover)", tokens[1])
+		}
+	})
 }

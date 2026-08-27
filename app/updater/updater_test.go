@@ -307,8 +307,8 @@ func TestBackgroundCheckerSkipsAlreadyStagedETagDownload(t *testing.T) {
 		callbacks <- ver
 		return nil
 	})
-	t.Cleanup(func() { stopChecker(t, cancel, checkerDone) })
-	t.Cleanup(updater.waitDownloadIdle)
+	defer updater.waitDownloadIdle()
+	defer stopChecker(t, cancel, checkerDone)
 
 	for range 2 {
 		select {
@@ -403,8 +403,8 @@ func TestBackgoundChecker(t *testing.T) {
 	}
 
 	checkerDone := updater.StartBackgroundUpdaterChecker(ctx, cb)
-	t.Cleanup(func() { stopChecker(t, cancel, checkerDone) })
-	t.Cleanup(updater.waitDownloadIdle)
+	defer updater.waitDownloadIdle()
+	defer stopChecker(t, cancel, checkerDone)
 	select {
 	case <-stallTimer.C:
 		t.Fatal("stalled")
@@ -462,13 +462,13 @@ func TestAutoUpdateDisabledSkipsDownload(t *testing.T) {
 	}
 
 	cb := func(ver string) error {
-		t.Fatal("callback should not be called when auto-update is disabled")
+		t.Error("callback should not be called when auto-update is disabled")
 		return nil
 	}
 
 	checkerDone := updater.StartBackgroundUpdaterChecker(ctx, cb)
-	t.Cleanup(func() { stopChecker(t, cancel, checkerDone) })
-	t.Cleanup(updater.waitDownloadIdle)
+	defer updater.waitDownloadIdle()
+	defer stopChecker(t, cancel, checkerDone)
 
 	// Wait enough time for multiple check cycles
 	time.Sleep(50 * time.Millisecond)
@@ -531,8 +531,8 @@ func TestAutoUpdateReenabledDownloadsUpdate(t *testing.T) {
 	}
 
 	checkerDone := upd.StartBackgroundUpdaterChecker(ctx, cb)
-	t.Cleanup(func() { stopChecker(t, cancel, checkerDone) })
-	t.Cleanup(upd.waitDownloadIdle)
+	defer upd.waitDownloadIdle()
+	defer stopChecker(t, cancel, checkerDone)
 
 	// Wait for a few cycles with auto-update disabled - no download should happen
 	time.Sleep(50 * time.Millisecond)
@@ -666,8 +666,8 @@ func TestTriggerImmediateCheck(t *testing.T) {
 	}
 
 	checkerDone := updater.StartBackgroundUpdaterChecker(ctx, cb)
-	t.Cleanup(func() { stopChecker(t, cancel, checkerDone) })
-	t.Cleanup(updater.waitDownloadIdle)
+	defer updater.waitDownloadIdle()
+	defer stopChecker(t, cancel, checkerDone)
 
 	// Wait for the initial check that fires after the initial delay
 	select {

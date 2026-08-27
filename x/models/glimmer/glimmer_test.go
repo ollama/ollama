@@ -226,23 +226,21 @@ func TestNewCachesMatchesAttentionSchedule(t *testing.T) {
 }
 
 func TestUnembedReturnsFloat32Logits(t *testing.T) {
-	mlxtest.Run(t, testUnembedReturnsFloat32Logits)
-}
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		input := mlx.FromValues([]float32{1}, 1, 1, 1).AsType(mlx.DTypeBFloat16)
+		weight := mlx.FromValues([]float32{1, 2}, 2, 1).AsType(mlx.DTypeBFloat16)
+		m := Model{
+			LMHead: nn.NewLinear(weight, nil),
+			Config: &Config{
+				OutputMultiplier:  0.19611613,
+				OutputSoftCapTemp: 20,
+			},
+		}
 
-func testUnembedReturnsFloat32Logits(t *testing.T) {
-	input := mlx.FromValues([]float32{1}, 1, 1, 1).AsType(mlx.DTypeBFloat16)
-	weight := mlx.FromValues([]float32{1, 2}, 2, 1).AsType(mlx.DTypeBFloat16)
-	m := Model{
-		LMHead: nn.NewLinear(weight, nil),
-		Config: &Config{
-			OutputMultiplier:  0.19611613,
-			OutputSoftCapTemp: 20,
-		},
-	}
-
-	if got := m.Unembed(input).DType(); got != mlx.DTypeFloat32 {
-		t.Fatalf("Unembed() dtype = %v, want %v", got, mlx.DTypeFloat32)
-	}
+		if got := m.Unembed(input).DType(); got != mlx.DTypeFloat32 {
+			t.Fatalf("Unembed() dtype = %v, want %v", got, mlx.DTypeFloat32)
+		}
+	})
 }
 
 func TestComputeImageSizeMatchesReference(t *testing.T) {
@@ -322,7 +320,7 @@ func TestApplyVisionRoPELayouts(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		mlxtest.RunSubtest(t, tt.name, func(t *testing.T) {
+		mlxtest.RunSubtest(t, tt.name, func(t *mlxtest.T) {
 			x := mlx.FromValues([]float32{1, 2, 3, 4}, 1, 1, 1, 4)
 			cos := mlx.FromValues([]float32{0.5, 0.25}, 1, 2)
 			sin := mlx.FromValues([]float32{0.75, 0.125}, 1, 2)

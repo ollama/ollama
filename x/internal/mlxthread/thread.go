@@ -135,18 +135,11 @@ func (t *Thread) loop(init func() error, initResult chan<- result) {
 	runtime.LockOSThread()
 	// Deliberately do not unlock. MLX thread-local state belongs to this worker
 	// until shutdown so it cannot leak back to arbitrary Go goroutines.
-	initDone := false
-	defer func() {
-		if !initDone {
-			initResult <- result{err: ErrStopped}
-		}
-		close(t.done)
-	}()
 
 	res := run(init)
-	initDone = true
 	initResult <- res
 	if res.err != nil || res.panic != nil {
+		close(t.done)
 		return
 	}
 
@@ -155,6 +148,7 @@ func (t *Thread) loop(init func() error, initResult chan<- result) {
 		res := run(j.fn)
 		j.result <- res
 		if j.stop {
+			close(t.done)
 			return
 		}
 	}
@@ -181,17 +175,7 @@ func (t *Thread) enqueue(ctx context.Context, fn func() error, stop, allowStoppi
 	case t.jobs <- j:
 	}
 
-	select {
-	case res := <-resultCh:
-		return res, nil
-	case <-t.done:
-		select {
-		case res := <-resultCh:
-			return res, nil
-		default:
-			return result{}, ErrStopped
-		}
-	}
+	return <-resultCh, nil
 }
 
 func run(fn func() error) (res result) {

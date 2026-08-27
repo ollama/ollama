@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/ollama/ollama/x/internal/mlxthread"
+	"github.com/ollama/ollama/x/internal/mlxthreadtest"
 )
 
 func TestGELUCompiledMatchesEager(t *testing.T) {
@@ -20,7 +20,7 @@ func TestGELUCompiledMatchesEager(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			withMLXThread(t, func() {
+			withMLXThread(t, func(t *mlxthreadtest.T) {
 				EnableCompile()
 				input := FromValues(values, len(values)).AsType(tt.dtype)
 				Pin(input)
@@ -53,34 +53,17 @@ func BenchmarkGELUCompiled(b *testing.B) {
 }
 
 func benchmarkGELU(b *testing.B, fn func(*Array) *Array) {
-	thread, err := mlxthread.Start("mlx-gelu-benchmark", func() error {
-		if err := CheckInit(); err != nil {
-			return err
-		}
-		if GPUIsAvailable() {
-			SetDefaultDeviceGPU()
-		}
-		EnableCompile()
-		return nil
-	})
-	if err != nil {
-		b.Skipf("MLX not available: %v", err)
-	}
-	defer func() {
-		if err := thread.Stop(b.Context(), func() {
-			Sweep()
-			ClearCache()
-			resetDefaultStreamCache()
-		}); err != nil {
-			b.Fatal(err)
-		}
-	}()
-
+	thread := mlxTestThread(b)
 	if err := thread.Do(b.Context(), func() error {
+		EnableCompile()
 		input := AddScalar(Zeros(DTypeBFloat16, 1, 4096, 8192), 1)
 		Eval(input)
 		Pin(input)
-		defer Unpin(input)
+		defer func() {
+			Unpin(input)
+			Sweep()
+			ClearCache()
+		}()
 
 		warmup := fn(input)
 		Eval(warmup)
@@ -100,7 +83,7 @@ func benchmarkGELU(b *testing.B, fn func(*Array) *Array) {
 
 func TestReLUSquared(t *testing.T) {
 	var got []float32
-	withMLXThread(t, func() {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
 		x := FromValues([]float32{-2, -0, 0.5, 2}, 4)
 		Pin(x)
 		defer Unpin(x)

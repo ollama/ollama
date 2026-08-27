@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/app/store"
@@ -1027,11 +1028,17 @@ func TestSettingsToggleAutoUpdateOn_NoPendingUpdate_TriggersCheck(t *testing.T) 
 	}}
 	defer upd.Store.Close()
 
-	// Initialize the checkNow channel by starting (and immediately stopping) the checker
-	// so TriggerImmediateCheck doesn't panic on nil channel
+	// Start the checker so TriggerImmediateCheck has a queue.
 	ctx, cancel := context.WithCancel(t.Context())
-	upd.StartBackgroundUpdaterChecker(ctx, func(string) error { return nil })
-	defer cancel()
+	checkerDone := upd.StartBackgroundUpdaterChecker(ctx, func(string) error { return nil })
+	defer func() {
+		cancel()
+		select {
+		case <-checkerDone:
+		case <-time.After(10 * time.Second):
+			t.Error("background update checker did not stop")
+		}
+	}()
 
 	var notificationCalled atomic.Bool
 	server := &Server{
