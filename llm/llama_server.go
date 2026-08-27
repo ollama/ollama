@@ -926,6 +926,7 @@ func NewLlamaServerRunner(
 		serverEnvs[k] = v
 	}
 	serverEnvs["LLAMA_MEDIA_MARKER"] = mediaMarker
+	applyArchServerEnvs(serverEnvs, arch)
 
 	launch := llamaServerLaunchConfig{
 		modelPath:    modelPath,
@@ -1027,6 +1028,41 @@ func (s *llamaServerRunner) startProcess() error {
 	}(s.cmd, s.done)
 
 	return nil
+}
+
+// ggmlCublasComputeTypeEnv is stock ggml's process-wide cuBLAS compute-type
+// override (ggml-cuda.cu, honored at pin b10488 for CUDA and HIP). Without
+// it, f16-weight mul_mats run with compute_type = src0->type, i.e. fp16
+// accumulation.
+const ggmlCublasComputeTypeEnv = "GGML_CUDA_CUBLAS_COMPUTE_TYPE"
+
+// applyArchServerEnvs adds per-architecture environment overrides for the
+// llama-server subprocess. Each runner serves one model, so a process-wide
+// ggml knob is effectively model-scoped here.
+//
+// qwen25vl: the mtmd/clip vision tower/merger runs its f16-weight matmuls as
+// fp16-accumulate cuBLAS GEMMs on CUDA/HIP, and the partial sums overflow on
+// specific images — qwen2.5vl:3b returns '?'x31 garbage and poisons the
+// runner slot — while the CPU backend always accumulates in fp32 and serves
+// the same image correctly. Forcing f32 compute keeps every cuBLAS GEMM in
+// fp32 accumulation, matching CPU numerics. Text-side cost is negligible for
+// quantized tags (MMQ/MMVQ carry the quantized matmuls and the f16 decode
+// vector kernels already accumulate in fp32); -fp16 text tags pay an
+// fp32-GEMM prefill cost. qwen2vl shares the clip graph builder but has no
+// measured trigger; add it here if one shows up. Diagnosis:
+// docs/maxusai/qwen25vl-3b-poison-image-garbage-decode.md (PR #214); knob
+// details: docs/maxusai/qwen25vl-cublas-f32-env.md.
+//
+// An operator-set GGML_CUDA_CUBLAS_COMPUTE_TYPE always wins: without this
+// guard SetupLlamaServerCommandEnv would overwrite the inherited value with
+// ours, and =f16 is the documented way to reproduce stock behavior.
+func applyArchServerEnvs(serverEnvs map[string]string, modelArch string) {
+	switch modelArch {
+	case "qwen25vl":
+		if _, ok := os.LookupEnv(ggmlCublasComputeTypeEnv); !ok {
+			serverEnvs[ggmlCublasComputeTypeEnv] = "f32"
+		}
+	}
 }
 
 func qwenVLServerArgs(modelArch string) []string {

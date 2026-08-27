@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -3736,4 +3737,57 @@ func fakeRunningCmd() *exec.Cmd {
 	// pass *testing.T here without changing all call sites. The OS will
 	// SIGKILL children when the test process exits.
 	return cmd
+}
+
+func TestApplyArchServerEnvs(t *testing.T) {
+	tests := []struct {
+		name     string
+		arch     string
+		operator string // pre-set GGML_CUDA_CUBLAS_COMPUTE_TYPE; "" = ensure unset
+		want     map[string]string
+	}{
+		{
+			name: "qwen25vl forces f32 cublas compute",
+			arch: "qwen25vl",
+			want: map[string]string{ggmlCublasComputeTypeEnv: "f32"},
+		},
+		{
+			// =f16 reproduces stock fp16-accumulate behavior for A/B; the
+			// arch default must not clobber an operator value.
+			name:     "operator override wins",
+			arch:     "qwen25vl",
+			operator: "f16",
+			want:     map[string]string{},
+		},
+		{
+			// qwen2vl shares the clip graph but has no measured poison
+			// trigger; it stays on stock behavior deliberately.
+			name: "qwen2vl untouched",
+			arch: "qwen2vl",
+			want: map[string]string{},
+		},
+		{
+			name: "other arch untouched",
+			arch: "llama",
+			want: map[string]string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.operator != "" {
+				t.Setenv(ggmlCublasComputeTypeEnv, tt.operator)
+			} else {
+				// t.Setenv registers restoration, then unset so a value
+				// inherited from the dev environment cannot leak in.
+				t.Setenv(ggmlCublasComputeTypeEnv, "")
+				os.Unsetenv(ggmlCublasComputeTypeEnv)
+			}
+			got := map[string]string{}
+			applyArchServerEnvs(got, tt.arch)
+			if !maps.Equal(got, tt.want) {
+				t.Fatalf("applyArchServerEnvs(%q) = %v, want %v", tt.arch, got, tt.want)
+			}
+		})
+	}
 }
