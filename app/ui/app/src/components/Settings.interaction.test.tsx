@@ -32,6 +32,10 @@ vi.mock("@/components/ClaudeDesktopModelsSettings", () => ({
   ),
 }));
 
+vi.mock("@/components/CodexDesktopModelsSettings", () => ({
+  CodexDesktopModelsSettings: () => <section aria-label="ChatGPT settings" />,
+}));
+
 vi.mock("@/hooks/useUser", () => ({
   useUser: () => ({
     user: { name: "Paid user", email: "paid@example.com", plan: "pro" },
@@ -224,6 +228,9 @@ describe("Settings reset interactions", () => {
 
       expect(
         renderer!.root.findAllByProps({ "aria-label": "Claude settings" }),
+      ).toHaveLength(0);
+      expect(
+        renderer!.root.findAllByProps({ "aria-label": "ChatGPT settings" }),
       ).toHaveLength(0);
 
       const resetButton = renderer!.root

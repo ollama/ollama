@@ -87,6 +87,146 @@ func TestCodexAppIntegration(t *testing.T) {
 	})
 }
 
+func TestCodexAppOllamaProfileLeavesRegularAppUntouched(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withCodexAppPlatform(t, "darwin")
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+	regularDir := filepath.Join(tmpDir, ".codex")
+	if err := os.MkdirAll(regularDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	regularConfig := []byte("model = \"gpt-5.5\"\nmodel_provider = \"openai\"\n")
+	regularAuth := []byte(`{"tokens":{"access_token":"regular"}}`)
+	if err := os.WriteFile(filepath.Join(regularDir, "config.toml"), regularConfig, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(regularDir, "auth.json"), regularAuth, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	profileConfigPath, err := codexAppOllamaProfileConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(profileConfigPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(profileConfigPath), "auth.json"), []byte(`{"tokens":{"access_token":"stale"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	oldRunning := codexAppProfileIsRunning
+	oldStart := codexAppStartProfile
+	oldStop := codexAppStopProfile
+	startCalls := 0
+	stopCalls := 0
+	codexAppProfileIsRunning = func() bool { return false }
+	codexAppStartProfile = func() error { startCalls++; return nil }
+	codexAppStopProfile = func() error { stopCalls++; return nil }
+	t.Cleanup(func() {
+		codexAppProfileIsRunning = oldRunning
+		codexAppStartProfile = oldStart
+		codexAppStopProfile = oldStop
+	})
+
+	app := &CodexApp{}
+	models := testLaunchModels("qwen3:8b")
+	if err := app.LaunchOllamaProfileFromDesktop("qwen3:8b", models); err != nil {
+		t.Fatal(err)
+	}
+	if startCalls != 1 {
+		t.Fatalf("profile start calls = %d, want 1", startCalls)
+	}
+	if got, err := os.ReadFile(filepath.Join(regularDir, "config.toml")); err != nil || string(got) != string(regularConfig) {
+		t.Fatalf("regular config changed: %q, %v", got, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(regularDir, "auth.json")); err != nil || string(got) != string(regularAuth) {
+		t.Fatalf("regular auth changed: %q, %v", got, err)
+	}
+
+	profileData, err := os.ReadFile(profileConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := codexParseConfig(string(profileData))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsed.RootString(codexRootModelKey); got != "qwen3:8b" {
+		t.Fatalf("isolated model = %q, want qwen3:8b", got)
+	}
+	if got := parsed.RootString(codexRootModelProviderKey); got != codexAppProfileName {
+		t.Fatalf("isolated provider = %q, want %q", got, codexAppProfileName)
+	}
+	if got := parsed.ProviderString(codexAppProfileName, "base_url"); got != codexBaseURL() {
+		t.Fatalf("isolated base URL = %q, want %q", got, codexBaseURL())
+	}
+	if got, err := os.ReadFile(filepath.Join(filepath.Dir(profileConfigPath), "auth.json")); err != nil || string(got) != string(regularAuth) {
+		t.Fatalf("isolated auth = %q, %v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(regularDir, codexAppModelCatalogFilename)); !os.IsNotExist(err) {
+		t.Fatalf("regular Codex home received isolated catalog: %v", err)
+	}
+
+	if err := app.StopOllamaProfileFromDesktop(); err != nil {
+		t.Fatal(err)
+	}
+	if stopCalls != 1 {
+		t.Fatalf("profile stop calls = %d, want 1", stopCalls)
+	}
+}
+
+func TestCodexAppOllamaProfileEnvironmentIsIsolated(t *testing.T) {
+	t.Setenv("CODEX_HOME", "/regular/codex-home")
+	t.Setenv("CODEX_ELECTRON_USER_DATA_PATH", "/regular/electron-data")
+	t.Setenv("CODEX_SPARKLE_ENABLED", "true")
+
+	env := codexAppOllamaProfileEnvironment("/ollama/codex-home", "/ollama/electron-data")
+	values := make(map[string][]string)
+	for _, item := range env {
+		name, value, ok := strings.Cut(item, "=")
+		if ok {
+			values[name] = append(values[name], value)
+		}
+	}
+	for name, want := range map[string]string{
+		"CODEX_HOME":                    "/ollama/codex-home",
+		"CODEX_ELECTRON_USER_DATA_PATH": "/ollama/electron-data",
+		"CODEX_SPARKLE_ENABLED":         "false",
+		"OLLAMA_CHATGPT_PROFILE":        "1",
+	} {
+		if got := values[name]; len(got) != 1 || got[0] != want {
+			t.Fatalf("%s = %v, want [%s]", name, got, want)
+		}
+	}
+}
+
+func TestCodexAppOllamaProfileRejectsStalePID(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	withCodexAppPlatform(t, "darwin")
+	if err := writeCodexAppOllamaProfilePID(424242); err != nil {
+		t.Fatal(err)
+	}
+
+	oldExecutable := codexAppProfileExecutable
+	oldCommand := codexAppProcessCommand
+	codexAppProfileExecutable = func() (string, error) { return "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT", nil }
+	codexAppProcessCommand = func(int) (string, error) { return "/usr/bin/unrelated --serve", nil }
+	t.Cleanup(func() {
+		codexAppProfileExecutable = oldExecutable
+		codexAppProcessCommand = oldCommand
+	})
+
+	err := defaultCodexAppStopOllamaProfile()
+	if err == nil || !strings.Contains(err.Error(), "identity could not be verified") {
+		t.Fatalf("stale PID error = %v, want identity verification", err)
+	}
+	if _, ok := codexAppOllamaProfilePID(); ok {
+		t.Fatal("stale PID was not cleared")
+	}
+}
+
 func TestCodexAppSupportedPlatforms(t *testing.T) {
 	for _, goos := range []string{"darwin", "windows"} {
 		t.Run(goos, func(t *testing.T) {

@@ -1,4 +1,5 @@
 import CopyButton from "@/components/CopyButton";
+import { CodexDesktopRow } from "@/components/CodexDesktopRow";
 import Logo from "@/components/Logo";
 import { nextOnboardingStep, type OnboardingStep } from "@/lib/onboarding";
 import {
@@ -22,6 +23,7 @@ import { isWindowsPlatform } from "@/lib/platform";
 import type {
   ClaudeDesktopActionResult,
   ClaudeDesktopStatus,
+  CodexDesktopStatus,
 } from "@/types/webview";
 import { copyTextToClipboard } from "@/utils/clipboard";
 import {
@@ -96,6 +98,7 @@ interface RunOllamaScreenProps {
 interface ConnectAppsScreenProps {
   initialIntegrations?: IntegrationStatuses;
   initialClaudeStatus?: ClaudeDesktopStatus;
+  initialCodexStatus?: CodexDesktopStatus;
 }
 
 function TitleBar({ onSignIn }: { onSignIn?: () => void }) {
@@ -432,6 +435,7 @@ export function ClaudeConnectedIntro({ onDone }: { onDone: () => void }) {
 export function ConnectAppsScreen({
   initialIntegrations,
   initialClaudeStatus,
+  initialCodexStatus,
 }: ConnectAppsScreenProps) {
   const isWindows = isWindowsPlatform();
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
@@ -888,9 +892,18 @@ export function ConnectAppsScreen({
   const claudeIntegration = isWindows
     ? undefined
     : integrationStatuses?.find((item) => item.id === "claude-desktop");
+  const codexIntegration = isWindows
+    ? undefined
+    : (integrationStatuses?.find((item) => item.id === "chatgpt") ?? {
+        id: "chatgpt",
+        name: "ChatGPT",
+        description: "Run Ollama alongside your normal ChatGPT",
+        installed: false,
+      });
   const launchIntegrations =
     integrationStatuses?.filter(
-      (item) => item.id !== "claude-desktop" && item.command,
+      (item) =>
+        item.id !== "claude-desktop" && item.id !== "chatgpt" && item.command,
     ) ?? [];
   const claudeConnected = claudeStatus?.connected ?? false;
   const claudeConfigured = claudeStatus
@@ -1048,7 +1061,7 @@ export function ConnectAppsScreen({
           <div className="mx-auto w-full max-w-4xl text-left">
             {integrationStatuses ? (
               <div className="space-y-7 pb-4 pt-2">
-                {claudeIntegration && (
+                {(claudeIntegration || codexIntegration) && (
                   <section aria-labelledby="desktop-heading">
                     <h2
                       id="desktop-heading"
@@ -1056,8 +1069,14 @@ export function ConnectAppsScreen({
                     >
                       Desktop
                     </h2>
-                    <div className="mt-2 bg-white dark:bg-neutral-900">
+                    <div className="mt-2 space-y-2 bg-white dark:bg-neutral-900">
                       {claudeRow}
+                      {codexIntegration && (
+                        <CodexDesktopRow
+                          integration={codexIntegration}
+                          initialStatus={initialCodexStatus}
+                        />
+                      )}
                     </div>
                   </section>
                 )}
@@ -1078,11 +1097,13 @@ export function ConnectAppsScreen({
                   </section>
                 )}
 
-                {!claudeIntegration && launchIntegrations.length === 0 && (
-                  <p className="py-12 text-center text-sm text-neutral-400 dark:text-neutral-500">
-                    No apps found.
-                  </p>
-                )}
+                {!claudeIntegration &&
+                  !codexIntegration &&
+                  launchIntegrations.length === 0 && (
+                    <p className="py-12 text-center text-sm text-neutral-400 dark:text-neutral-500">
+                      No apps found.
+                    </p>
+                  )}
               </div>
             ) : statusError ? (
               <p role="alert" className="mt-8 text-sm text-red-600">

@@ -214,7 +214,10 @@ describe("Onboarding", () => {
         await Promise.resolve();
       });
 
-      const claudeSwitch = () => renderer!.root.findByProps({ role: "switch" });
+      const claudeSwitch = () =>
+        renderer!.root
+          .findAllByProps({ role: "switch" })
+          .find((node) => String(node.props["aria-label"]).endsWith("Claude"))!;
       let clickResult!: Promise<void>;
       await act(async () => {
         clickResult = claudeSwitch().props.onClick();
@@ -333,7 +336,10 @@ describe("Onboarding", () => {
         await Promise.resolve();
       });
 
-      const claudeSwitch = () => renderer!.root.findByProps({ role: "switch" });
+      const claudeSwitch = () =>
+        renderer!.root
+          .findAllByProps({ role: "switch" })
+          .find((node) => String(node.props["aria-label"]).endsWith("Claude"))!;
       expect(claudeSwitch().props["aria-checked"]).toBe(false);
       expect(claudeSwitch().props["aria-busy"]).toBeUndefined();
       expect(claudeSwitch().props.disabled).toBe(false);
@@ -566,7 +572,9 @@ describe("Onboarding", () => {
     expect(html).not.toContain(">Command</th>");
     expect(html).toContain("ollama launch claude");
     expect(html).not.toContain("Installed");
-    expect(html).not.toContain("Not installed");
+    expect(html).toContain(
+      "Install ChatGPT to use Ollama models in the Codex app.",
+    );
     expect(html).toContain('aria-label="Connect Claude"');
     expect(html).toContain('role="switch"');
     expect(html).toContain('aria-checked="false"');
@@ -577,7 +585,10 @@ describe("Onboarding", () => {
     expect(html).toContain('aria-label="Copy OpenCode command"');
     expect(html).toContain('aria-label="Copy Terminal command"');
     expect(html).not.toContain(">Copy command</button>");
-    expect(html).not.toContain("ChatGPT");
+    expect(html).toContain("ChatGPT");
+    expect(html).toContain(
+      "Install ChatGPT to use Ollama models in the Codex app.",
+    );
     expect(html).toContain("OpenCode");
     expect(html).toContain("Terminal");
     expect(html).toContain("overflow-y-auto");
@@ -603,6 +614,40 @@ describe("Onboarding", () => {
     expect(html).not.toContain("Continue");
     expect(html).not.toContain("Run Ollama");
     expect(html).not.toContain('viewBox="0 0 3400 3400"');
+  });
+
+  it("places ChatGPT directly below Claude instead of in Terminal", () => {
+    const html = renderToStaticMarkup(
+      <ConnectAppsScreen
+        initialIntegrations={[
+          {
+            id: "claude-desktop",
+            name: "Claude",
+            description: "Use Ollama models in Claude Desktop",
+            installed: true,
+          },
+          {
+            id: "codex",
+            name: "Codex",
+            description: "OpenAI's coding agent",
+            command: "ollama launch codex",
+          },
+        ]}
+        initialCodexStatus={{
+          supported: true,
+          installed: true,
+          connected: false,
+          running: false,
+        }}
+      />,
+    );
+
+    expect(html.indexOf("Use Ollama models in Claude Desktop")).toBeLessThan(
+      html.indexOf(">ChatGPT</p>"),
+    );
+    expect(html).toContain('aria-label="Open ChatGPT · Ollama"');
+    expect(html).not.toContain('aria-label="Copy ChatGPT command"');
+    expect(html).toContain('aria-label="Copy Codex command"');
   });
 
   it("keeps connected Claude in Desktop without an idle status", () => {
@@ -757,8 +802,11 @@ describe("Onboarding", () => {
     expect(html).toContain('aria-label="Connect Claude"');
     expect(html).toContain("Download &amp; connect");
     expect(html).not.toContain("Inactive");
-    expect(html).not.toContain("Not installed");
-    expect(html).not.toContain('disabled=""');
+    const claudeButton = html.match(
+      /<button[^>]*aria-label="Connect Claude"[^>]*>/,
+    )?.[0];
+    expect(claudeButton).toBeDefined();
+    expect(claudeButton).not.toContain('disabled=""');
   });
 
   it("uses branded icons for the remaining launcher integrations", () => {

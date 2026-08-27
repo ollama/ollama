@@ -16,6 +16,7 @@
 extern NSString *SystemWidePath;
 
 static NSString *const ClaudeDownloadPageURL = @"https://claude.com/download";
+static NSString *const ChatGPTDownloadPageURL = @"https://chatgpt.com/download";
 static NSString *const ShowAppsInMenuDefaultsKey = @"ShowAppsInMenu";
 static NSBundle *OllamaResourceBundle(void);
 
@@ -328,6 +329,8 @@ static NSImage *integrationAppIcon(NSString *appName,
 @property(assign, nonatomic) BOOL claudeAppReady;
 @property(strong, nonatomic) IntegrationMenuRow *claudeAppRow;
 @property(strong, nonatomic) NSMenuItem *claudeMenuItem;
+@property(strong, nonatomic) IntegrationMenuRow *codexAppRow;
+@property(strong, nonatomic) NSMenuItem *codexMenuItem;
 @property(strong, nonatomic) NSMenuItem *claudeMenuSeparatorItem;
 @property(strong, nonatomic) NSURLSession *claudeDownloadSession;
 @property(strong, nonatomic) NSURLSessionDownloadTask *claudeDownloadTask;
@@ -348,6 +351,8 @@ static NSImage *integrationAppIcon(NSString *appName,
 - (void)showClaudeInstallFailure:(NSError *)error;
 - (void)toggleClaudeAppProxy:(NSButton *)sender;
 - (void)refreshClaudeAppState;
+- (void)toggleCodexApp:(NSButton *)sender;
+- (void)refreshCodexAppState;
 - (void)applyShowAppsInMenu:(BOOL)visible;
 - (void)requestQuit;
 - (void)completeSystemTermination;
@@ -438,6 +443,21 @@ static NSImage *ollamaApplicationIcon(void) {
     [self.claudeMenuItem setView:self.claudeAppRow];
     [menu addItem:self.claudeMenuItem];
     [self refreshClaudeAppState];
+
+    self.codexMenuItem = [[NSMenuItem alloc] initWithTitle:@"ChatGPT"
+                                                    action:nil
+                                             keyEquivalent:@""];
+    [self.codexMenuItem setEnabled:YES];
+    self.codexAppRow = [[IntegrationMenuRow alloc]
+        initWithTitle:@"ChatGPT"
+           symbolName:@"bubble.left.and.bubble.right"
+               target:self
+           openAction:nil
+         toggleAction:@selector(toggleCodexApp:)];
+    [self.codexMenuItem setView:self.codexAppRow];
+    [menu addItem:self.codexMenuItem];
+    [self refreshCodexAppState];
+
     self.claudeMenuSeparatorItem = [NSMenuItem separatorItem];
     [menu addItem:self.claudeMenuSeparatorItem];
     [self applyShowAppsInMenu:shouldShowAppsInMenu()];
@@ -625,13 +645,10 @@ static NSImage *ollamaApplicationIcon(void) {
         return;
     }
     [self refreshClaudeAppState];
+    [self refreshCodexAppState];
 }
 
 - (void)refreshClaudeAppState {
-    BOOL hasUsed = HasUsedClaudeDesktopIntegration();
-    BOOL visible = shouldShowAppsInMenu() && hasUsed;
-    [self.claudeMenuItem setHidden:!visible];
-    [self.claudeMenuSeparatorItem setHidden:!visible];
     BOOL installed = IsClaudeDesktopInstalled();
     BOOL startFailed = ClaudeGatewayStartFailed();
     BOOL portConflict = startFailed && ClaudeGatewayPortConflict();
@@ -648,17 +665,36 @@ static NSImage *ollamaApplicationIcon(void) {
     [self.claudeAppRow setIntegrationActive:self.claudeAppEnabled];
     [self.claudeAppRow setIntegrationReady:self.claudeAppReady];
     RefreshClaudeProxyMenu();
+    [self applyShowAppsInMenu:shouldShowAppsInMenu()];
+}
+
+- (void)refreshCodexAppState {
+    BOOL installed = IsCodexDesktopInstalled();
+    BOOL connected = IsCodexDesktopConnected();
+    [self.codexAppRow setActiveStatusText:connected
+        ? @"Running separately"
+        : nil];
+    [self.codexAppRow setInactiveStatusText:installed
+        ? @"Open alongside normal ChatGPT"
+        : @"Not installed"];
+    [self.codexAppRow setIntegrationActive:connected];
+    [self.codexAppRow setIntegrationReady:NO];
+    [self applyShowAppsInMenu:shouldShowAppsInMenu()];
 }
 
 - (void)applyShowAppsInMenu:(BOOL)visible {
-    visible = visible && HasUsedClaudeDesktopIntegration();
-    [self.claudeMenuItem setHidden:!visible];
-    [self.claudeMenuSeparatorItem setHidden:!visible];
+    BOOL claudeVisible = visible && HasUsedClaudeDesktopIntegration();
+    BOOL codexVisible = visible &&
+        (IsCodexDesktopInstalled() || IsCodexDesktopConnected());
+    [self.claudeMenuItem setHidden:!claudeVisible];
+    [self.codexMenuItem setHidden:!codexVisible];
+    [self.claudeMenuSeparatorItem setHidden:!(claudeVisible || codexVisible)];
 }
 
 - (void)menuDidClose:(NSMenu *)menu {
     if (menu == self.statusItem.menu) {
         [self.claudeAppRow resetHover];
+        [self.codexAppRow resetHover];
     }
 }
 
@@ -1095,6 +1131,62 @@ didCompleteWithError:(NSError *)error {
     });
 }
 
+- (void)toggleCodexApp:(NSButton *)sender {
+    BOOL enabled = sender.state == NSControlStateValueOn;
+    if (enabled && !IsCodexDesktopInstalled()) {
+        [self refreshCodexAppState];
+        NSAlert *installAlert = [[NSAlert alloc] init];
+        [installAlert setAlertStyle:NSAlertStyleInformational];
+        [installAlert setIcon:ollamaApplicationIcon()];
+        [installAlert setMessageText:@"ChatGPT is not installed"];
+        [installAlert setInformativeText:
+            @"Install ChatGPT to use Ollama models in the Codex app."];
+        [installAlert addButtonWithTitle:@"Open Download Page"];
+        [installAlert addButtonWithTitle:@"Cancel"];
+        if ([installAlert runModal] == NSAlertFirstButtonReturn) {
+            [[NSWorkspace sharedWorkspace]
+                openURL:[NSURL URLWithString:ChatGPTDownloadPageURL]];
+        }
+        return;
+    }
+
+    if (!enabled && IsCodexDesktopRunning()) {
+        NSAlert *restartAlert = [[NSAlert alloc] init];
+        [restartAlert setAlertStyle:NSAlertStyleWarning];
+        [restartAlert setIcon:ollamaApplicationIcon()];
+        [restartAlert setMessageText:@"Close ChatGPT · Ollama?"];
+        [restartAlert setInformativeText:
+            @"This closes only the separate Ollama profile. Your normal ChatGPT stays open. Any task running in ChatGPT · Ollama will stop."];
+        [restartAlert addButtonWithTitle:@"Close"];
+        [restartAlert addButtonWithTitle:@"Cancel"];
+        if ([restartAlert runModal] != NSAlertFirstButtonReturn) {
+            [self refreshCodexAppState];
+            return;
+        }
+    }
+
+    [sender setEnabled:NO];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        BOOL succeeded = SetCodexDesktopConnected(enabled);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [sender setEnabled:YES];
+            [self refreshCodexAppState];
+            if (!succeeded) {
+                NSAlert *alert = [[NSAlert alloc] init];
+                [alert setAlertStyle:NSAlertStyleWarning];
+                [alert setIcon:ollamaApplicationIcon()];
+                [alert setMessageText:enabled
+                    ? @"Unable to open ChatGPT · Ollama"
+                    : @"Unable to close ChatGPT · Ollama"];
+                [alert setInformativeText:
+                    @"Your normal ChatGPT app and settings were not changed. Check the Ollama log for details, then try again."];
+                [alert runModal];
+                return;
+            }
+        });
+    });
+}
+
 - (void)appsUI {
     [self uiRequest:@"/connect"];
 }
@@ -1126,7 +1218,8 @@ didCompleteWithError:(NSError *)error {
 
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
     if (self.systemShutdownInProgress) {
-        if (!IsClaudeGatewayConfigured()) {
+        BOOL codexRunning = IsCodexDesktopRunning();
+        if (!IsClaudeGatewayConfigured() && !codexRunning) {
             return NSTerminateNow;
         }
         self.systemTerminationApplication = sender;
@@ -1136,8 +1229,10 @@ didCompleteWithError:(NSError *)error {
         }
         self.quitInProgress = YES;
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-            BOOL succeeded = RestoreClaudeGatewayForShutdown();
-            if (!succeeded) {
+            if (codexRunning && !SetCodexDesktopConnected(false)) {
+                appLogInfo(@"Unable to close ChatGPT · Ollama during system shutdown");
+            }
+            if (IsClaudeGatewayConfigured() && !RestoreClaudeGatewayForShutdown()) {
                 appLogInfo(@"Unable to restore Claude during system shutdown");
             }
             dispatch_async(dispatch_get_main_queue(), ^{
@@ -1210,6 +1305,41 @@ didCompleteWithError:(NSError *)error {
 
 - (void)requestQuit {
     if (self.quitInProgress) {
+        return;
+    }
+    if (IsCodexDesktopRunning()) {
+        NSAlert *alert = [[NSAlert alloc] init];
+        [alert setAlertStyle:NSAlertStyleWarning];
+        [alert setIcon:ollamaApplicationIcon()];
+        [alert setMessageText:@"Close ChatGPT · Ollama before quitting Ollama?"];
+        [alert setInformativeText:
+            @"The separate Ollama-backed window must close before Ollama quits. Your normal ChatGPT app will stay open."];
+        [alert addButtonWithTitle:@"Close and Quit"];
+        [alert addButtonWithTitle:@"Cancel"];
+        if ([alert runModal] != NSAlertFirstButtonReturn) {
+            return;
+        }
+
+        self.quitInProgress = YES;
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            BOOL succeeded = SetCodexDesktopConnected(false);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                self.quitInProgress = NO;
+                [self refreshCodexAppState];
+                if (succeeded) {
+                    [self requestQuit];
+                    return;
+                }
+
+                NSAlert *errorAlert = [[NSAlert alloc] init];
+                [errorAlert setAlertStyle:NSAlertStyleWarning];
+                [errorAlert setIcon:ollamaApplicationIcon()];
+                [errorAlert setMessageText:@"Unable to quit Ollama"];
+                [errorAlert setInformativeText:
+                    @"ChatGPT · Ollama is still running. Close that window and try again; your normal ChatGPT app was not changed."];
+                [errorAlert runModal];
+            });
+        });
         return;
     }
     if (!IsClaudeGatewayConfigured()) {
