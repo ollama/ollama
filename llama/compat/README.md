@@ -27,8 +27,9 @@ intentionally skipped so a developer can iterate on a local llama.cpp tree.
   It currently touches `src/llama-model-loader.cpp` and `tools/mtmd/clip.cpp`.
 - `002-llama-cpp-ui-empty-assets.patch` - lets the llama.cpp UI embed helper
   generate an empty asset table when no UI assets are present.
-- `compat.cmake`, `apply-patch.cmake` - CMake glue and an idempotent applier
-  (used by `llama/server/CMakeLists.txt`) that applies every `*.patch` under
+- `compat.cmake` - CMake glue that invokes the shared
+  `cmake/apply-git-patches.cmake` idempotent applier (used by
+  `llama/server/CMakeLists.txt`) for every `*.patch` under
   this directory by numeric filename order — the hooks patch plus each
   `models/` architecture patch.
 - `models/` - the sibling **new-architecture** layer: implementations of

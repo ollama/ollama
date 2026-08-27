@@ -1160,7 +1160,6 @@ func TestLlamaServerCompletionRequestFormat(t *testing.T) {
 	tests := []struct {
 		name           string
 		format         string
-		grammar        string
 		wantGrammar    bool
 		wantJsonSchema bool
 		wantErr        bool
@@ -1185,11 +1184,6 @@ func TestLlamaServerCompletionRequestFormat(t *testing.T) {
 			name:           "json schema",
 			format:         `{"type":"object","properties":{"name":{"type":"string"}}}`,
 			wantJsonSchema: true,
-		},
-		{
-			name:        "raw grammar",
-			grammar:     `root ::= "hello"`,
-			wantGrammar: true,
 		},
 		{
 			name:    "invalid format",
@@ -1228,7 +1222,6 @@ func TestLlamaServerCompletionRequestFormat(t *testing.T) {
 			req := CompletionRequest{
 				Prompt:  "test",
 				Options: &opts,
-				Grammar: tt.grammar,
 			}
 			if tt.format != "" {
 				req.Format = json.RawMessage(tt.format)

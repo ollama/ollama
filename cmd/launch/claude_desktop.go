@@ -51,6 +51,10 @@ var (
 // inference mode using the Ollama app's local gateway.
 type ClaudeDesktop struct{}
 
+// ErrClaudeDesktopRestartConfirmationRequired reports that applying a profile
+// change would interrupt a running Claude Desktop process.
+var ErrClaudeDesktopRestartConfirmationRequired = errors.New("Claude Desktop restart confirmation is required before changing its profile")
+
 func (c *ClaudeDesktop) String() string { return "Claude Desktop" }
 
 func (c *ClaudeDesktop) Supported() error { return claudeDesktopSupported() }
@@ -67,6 +71,16 @@ func (c *ClaudeDesktop) AutodiscoveredModel() string {
 // without pinning a model list, so Claude discovers the selected catalog and
 // exact Ollama route names the gateway advertises.
 func (c *ClaudeDesktop) ConfigureAutodiscovery() error {
+	autoMode, err := claudeDesktopAutoModePreference()
+	if err != nil {
+		return err
+	}
+	return c.ConfigureAutodiscoveryWithAutoMode(autoMode)
+}
+
+// ConfigureAutodiscoveryWithAutoMode writes the managed profile with the
+// effective Auto mode state selected by the Ollama app.
+func (c *ClaudeDesktop) ConfigureAutodiscoveryWithAutoMode(autoMode bool) error {
 	if err := claudeDesktopSupported(); err != nil {
 		return err
 	}
@@ -77,7 +91,7 @@ func (c *ClaudeDesktop) ConfigureAutodiscovery() error {
 	if err != nil {
 		return err
 	}
-	return configureClaudeDesktopTargets(targets, claudeDesktopGatewayBaseURL, "ollama")
+	return configureClaudeDesktopTargets(targets, claudeDesktopGatewayBaseURL, "ollama", autoMode)
 }
 
 func (c *ClaudeDesktop) RestoreHint() string {
@@ -93,11 +107,21 @@ func (c *ClaudeDesktop) RestoreSuccessMessage() string {
 }
 
 func (c *ClaudeDesktop) AutodiscoveryConfigured() bool {
+	autoMode, err := claudeDesktopAutoModePreference()
+	if err != nil {
+		return false
+	}
+	return c.AutodiscoveryConfiguredWithAutoMode(autoMode)
+}
+
+// AutodiscoveryConfiguredWithAutoMode reports whether the managed profile has
+// the effective Auto mode state selected by the Ollama app.
+func (c *ClaudeDesktop) AutodiscoveryConfiguredWithAutoMode(autoMode bool) bool {
 	targets, err := claudeDesktopTargetPaths()
 	if err != nil {
 		return false
 	}
-	return claudeDesktopTargetsConfigured(targets)
+	return claudeDesktopTargetsConfigured(targets, autoMode)
 }
 
 // UsesOllamaGateway reports whether Claude Desktop is currently routed through
@@ -113,13 +137,27 @@ func (c *ClaudeDesktop) UsesOllamaGateway() bool {
 
 // SetInstalledFromDesktop changes the Claude profile from the native Ollama app.
 func (c *ClaudeDesktop) SetInstalledFromDesktop(installed, restart bool) error {
+	autoMode := false
+	if installed {
+		var err error
+		autoMode, err = claudeDesktopAutoModePreference()
+		if err != nil {
+			return err
+		}
+	}
+	return c.SetInstalledFromDesktopWithAutoMode(installed, restart, autoMode)
+}
+
+// SetInstalledFromDesktopWithAutoMode changes the Claude profile from the
+// native Ollama app with its effective Auto mode state.
+func (c *ClaudeDesktop) SetInstalledFromDesktopWithAutoMode(installed, restart, autoMode bool) error {
 	if err := claudeDesktopSupported(); err != nil {
 		return err
 	}
 
 	applyProfile := restoreClaudeDesktopProfile
 	if installed {
-		applyProfile = c.ConfigureAutodiscovery
+		applyProfile = func() error { return c.ConfigureAutodiscoveryWithAutoMode(autoMode) }
 	}
 
 	running, err := claudeDesktopIsRunning(context.Background())
@@ -136,14 +174,15 @@ func (c *ClaudeDesktop) SetInstalledFromDesktop(installed, restart bool) error {
 		return nil
 	}
 	if !restart {
-		return errors.New("Claude Desktop restart confirmation is required before changing its profile")
+		return ErrClaudeDesktopRestartConfirmationRequired
 	}
 	return restartClaudeDesktop(applyProfile)
 }
 
-// RestartWithProfileChange stops Claude before applying a profile-dependent
-// change, then reopens it after the change is complete.
-func (c *ClaudeDesktop) RestartWithProfileChange(change func() error) error {
+// ApplyProfileChange applies a profile-dependent change immediately. Claude is
+// restarted only when it is already running; otherwise the change takes effect
+// the next time the user opens it.
+func (c *ClaudeDesktop) ApplyProfileChange(change func() error, restartConfirmed bool) error {
 	if err := claudeDesktopSupported(); err != nil {
 		return err
 	}
@@ -152,10 +191,10 @@ func (c *ClaudeDesktop) RestartWithProfileChange(change func() error) error {
 		return fmt.Errorf("check whether Claude Desktop is running: %w", err)
 	}
 	if !running {
-		if err := change(); err != nil {
-			return err
-		}
-		return claudeDesktopOpenApp()
+		return change()
+	}
+	if !restartConfirmed {
+		return ErrClaudeDesktopRestartConfirmationRequired
 	}
 	return restartClaudeDesktop(change)
 }
@@ -196,7 +235,36 @@ func (c *ClaudeDesktop) Onboard() error {
 // ClaudeDesktopModels returns the user's explicitly saved Claude Desktop
 // model subset. A nil result means the recommendation source should decide.
 func ClaudeDesktopModels() []string {
-	return config.IntegrationModels(claudeDesktopIntegrationName)
+	configured, err := config.LoadIntegration(claudeDesktopIntegrationName)
+	if err != nil {
+		return nil
+	}
+	if len(configured.Aliases) > 0 {
+		models := make([]string, 0, len(configured.Aliases))
+		for _, route := range proxy.ClaudeDesktopRoutes() {
+			if model := strings.TrimSpace(configured.Aliases[route.ID]); model != "" {
+				models = append(models, model)
+			}
+		}
+		return models
+	}
+	return configured.Models
+}
+
+// ClaudeDesktopModelMappings returns explicit Claude route assignments. An
+// empty map means the legacy ordered model selection or recommendations apply.
+func ClaudeDesktopModelMappings() map[string]string {
+	configured, err := config.LoadIntegration(claudeDesktopIntegrationName)
+	if err != nil || len(configured.Aliases) == 0 {
+		return nil
+	}
+	mappings := make(map[string]string, len(configured.Aliases))
+	for _, route := range proxy.ClaudeDesktopRoutes() {
+		if model := strings.TrimSpace(configured.Aliases[route.ID]); model != "" {
+			mappings[route.ID] = model
+		}
+	}
+	return mappings
 }
 
 // SaveClaudeDesktopModels persists the user's explicit Claude Desktop model
@@ -205,13 +273,75 @@ func SaveClaudeDesktopModels(models []string) error {
 	if len(models) == 0 {
 		return errors.New("select at least one Claude Desktop model")
 	}
-	return config.SaveIntegration(claudeDesktopIntegrationName, models)
+	if err := config.SaveIntegration(claudeDesktopIntegrationName, models); err != nil {
+		return err
+	}
+	return config.SaveAliases(claudeDesktopIntegrationName, nil)
+}
+
+// SaveClaudeDesktopModelMappings persists explicit route assignments. Empty
+// routes are omitted; sparse mappings and duplicate model values are valid.
+func SaveClaudeDesktopModelMappings(mappings map[string]string) error {
+	normalized := make(map[string]string)
+	models := make([]string, 0, len(mappings))
+	for _, route := range proxy.ClaudeDesktopRoutes() {
+		if model := strings.TrimSpace(mappings[route.ID]); model != "" {
+			normalized[route.ID] = model
+			models = append(models, model)
+		}
+	}
+	if len(models) == 0 {
+		return errors.New("map at least one Claude Desktop route")
+	}
+	if err := config.SaveIntegration(claudeDesktopIntegrationName, models); err != nil {
+		return err
+	}
+	return config.SaveAliases(claudeDesktopIntegrationName, normalized)
 }
 
 // RestoreClaudeDesktopModels restores a previously captured selection. A nil
 // selection restores the implicit recommendation defaults.
 func RestoreClaudeDesktopModels(models []string) error {
-	return config.SaveIntegration(claudeDesktopIntegrationName, models)
+	if err := config.SaveIntegration(claudeDesktopIntegrationName, models); err != nil {
+		return err
+	}
+	return config.SaveAliases(claudeDesktopIntegrationName, nil)
+}
+
+// RestoreClaudeDesktopModelMappings restores a previously captured explicit
+// mapping, including the legacy no-mapping state.
+func RestoreClaudeDesktopModelMappings(models []string, mappings map[string]string) error {
+	if err := config.SaveIntegration(claudeDesktopIntegrationName, models); err != nil {
+		return err
+	}
+	return config.SaveAliases(claudeDesktopIntegrationName, mappings)
+}
+
+// ClaudeDesktopAutoModeEnabled reports the user's Claude Desktop auto mode
+// preference. It defaults to true when unset and returns configuration read
+// failures so callers do not mistake them for an explicit disabled setting.
+func ClaudeDesktopAutoModeEnabled() (bool, error) {
+	return claudeDesktopAutoModePreference()
+}
+
+// SaveClaudeDesktopAutoMode persists the user's Claude Desktop auto mode
+// preference in the shared launcher configuration.
+func SaveClaudeDesktopAutoMode(enabled bool) error {
+	return config.SaveIntegrationAutoMode(claudeDesktopIntegrationName, enabled)
+}
+
+func claudeDesktopAutoModePreference() (bool, error) {
+	integrationConfig, err := config.LoadIntegration(claudeDesktopIntegrationName)
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("load Claude Desktop auto mode preference: %w", err)
+	}
+	if integrationConfig.AutoMode == nil {
+		return true, nil
+	}
+	return *integrationConfig.AutoMode, nil
 }
 
 func (c *ClaudeDesktop) RequiresInteractiveOnboarding() bool {
@@ -252,9 +382,9 @@ func (c *ClaudeDesktop) Restore() error {
 	})
 }
 
-func configureClaudeDesktopTargets(targets claudeDesktopTargets, baseURL, apiKey string) error {
+func configureClaudeDesktopTargets(targets claudeDesktopTargets, baseURL, apiKey string, autoMode bool) error {
 	for _, target := range targets.thirdPartyProfiles {
-		if err := writeClaudeDesktopGatewayProfile(target.profile, baseURL, apiKey, true); err != nil {
+		if err := writeClaudeDesktopGatewayProfile(target.profile, baseURL, apiKey, true, autoMode); err != nil {
 			return err
 		}
 		if err := writeClaudeDesktopMeta(target.meta, claudeDesktopProfileID, claudeDesktopProfileName); err != nil {
@@ -608,7 +738,7 @@ func writeClaudeDesktopMeta(path, id, name string) error {
 	return writeClaudeDesktopJSON(path, meta)
 }
 
-func writeClaudeDesktopGatewayProfile(path, baseURL, apiKey string, forceChooser bool) error {
+func writeClaudeDesktopGatewayProfile(path, baseURL, apiKey string, forceChooser, autoMode bool) error {
 	cfg, err := readClaudeDesktopJSONAllowMissing(path)
 	if err != nil {
 		return fmt.Errorf("parse Claude Desktop Ollama profile: %w", err)
@@ -624,10 +754,7 @@ func writeClaudeDesktopGatewayProfile(path, baseURL, apiKey string, forceChooser
 	cfg["coworkEgressAllowedHosts"] = claudeDesktopEgressHosts
 	cfg["disableEssentialTelemetry"] = true
 	cfg["disableNonessentialTelemetry"] = true
-	// Auto mode sends separate classifier requests through the configured
-	// inference provider. Keep it disabled until the mapped models are tested
-	// for that classifier contract.
-	cfg["autoModeEnabled"] = false
+	cfg["autoModeEnabled"] = autoMode
 	return writeClaudeDesktopJSON(path, cfg)
 }
 
@@ -705,12 +832,12 @@ func readClaudeDesktopDeploymentMode(path string) string {
 	return mode
 }
 
-func claudeDesktopTargetsConfigured(targets claudeDesktopTargets) bool {
+func claudeDesktopTargetsConfigured(targets claudeDesktopTargets, autoMode bool) bool {
 	if !claudeDesktopTargetsUseOllamaGateway(targets) {
 		return false
 	}
 	for _, target := range targets.thirdPartyProfiles {
-		if !claudeDesktopThirdPartyProfileConfigured(target) {
+		if !claudeDesktopThirdPartyProfileConfigured(target, autoMode) {
 			return false
 		}
 	}
@@ -737,7 +864,7 @@ func claudeDesktopTargetsUseOllamaGateway(targets claudeDesktopTargets) bool {
 	return true
 }
 
-func claudeDesktopThirdPartyProfileConfigured(target claudeDesktopThirdPartyPaths) bool {
+func claudeDesktopThirdPartyProfileConfigured(target claudeDesktopThirdPartyPaths, autoMode bool) bool {
 	if !claudeDesktopThirdPartyProfileUsesOllamaGateway(target) {
 		return false
 	}
@@ -765,6 +892,9 @@ func claudeDesktopThirdPartyProfileConfigured(target claudeDesktopThirdPartyPath
 		return false
 	}
 	if disabled, _ := cfg["disableNonessentialTelemetry"].(bool); !disabled {
+		return false
+	}
+	if enabled, ok := cfg["autoModeEnabled"].(bool); !ok || enabled != autoMode {
 		return false
 	}
 	return true
@@ -919,12 +1049,22 @@ func ClaudeDesktopRunning() bool {
 	return running
 }
 
+// Running reports whether Claude Desktop is currently open.
+func (c *ClaudeDesktop) Running() bool {
+	return ClaudeDesktopRunning()
+}
+
 // OpenClaudeDesktop brings the installed Claude Desktop app to the foreground.
 func OpenClaudeDesktop() error {
 	if err := claudeDesktopSupported(); err != nil {
 		return err
 	}
 	return claudeDesktopOpenApp()
+}
+
+// Open launches or foregrounds Claude Desktop.
+func (c *ClaudeDesktop) Open() error {
+	return OpenClaudeDesktop()
 }
 
 func defaultClaudeDesktopRunning(ctx context.Context) (bool, error) {

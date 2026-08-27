@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ollama/ollama/cmd/config"
 )
 
 func withClaudeDesktopPlatform(t *testing.T, goos string) {
@@ -273,8 +276,8 @@ func TestClaudeDesktopConfigureWritesOllamaCloudProfile(t *testing.T) {
 	if profile["chatTabEnabled"] != true {
 		t.Fatalf("chatTabEnabled = %v, want true", profile["chatTabEnabled"])
 	}
-	if profile["autoModeEnabled"] != false {
-		t.Fatalf("autoModeEnabled = %v, want false", profile["autoModeEnabled"])
+	if profile["autoModeEnabled"] != true {
+		t.Fatalf("autoModeEnabled = %v, want true", profile["autoModeEnabled"])
 	}
 	assertClaudeDesktopEgressHosts(t, profile)
 	if profile["disableEssentialTelemetry"] != true {
@@ -336,7 +339,7 @@ func TestClaudeDesktopConfigureAutodiscoveryRemovesExistingModelCatalog(t *testi
 	if err := os.MkdirAll(filepath.Dir(paths.profile), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(paths.profile, []byte(`{"autoModeEnabled":true,"chatTabEnabled":false,"coworkEgressAllowedHosts":["old.example.com"],"disableEssentialTelemetry":false,"disableNonessentialTelemetry":false,"inferenceModels":["qwen3.5"],"inferenceGatewayApiKey":"old"}`), 0o644); err != nil {
+	if err := os.WriteFile(paths.profile, []byte(`{"autoModeEnabled":false,"chatTabEnabled":false,"coworkEgressAllowedHosts":["old.example.com"],"disableEssentialTelemetry":false,"disableNonessentialTelemetry":false,"inferenceModels":["qwen3.5"],"inferenceGatewayApiKey":"old","userOwned":{"keep":true}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -354,12 +357,159 @@ func TestClaudeDesktopConfigureAutodiscoveryRemovesExistingModelCatalog(t *testi
 	if profile["chatTabEnabled"] != true {
 		t.Fatalf("chatTabEnabled = %v, want true", profile["chatTabEnabled"])
 	}
-	if profile["autoModeEnabled"] != false {
-		t.Fatalf("autoModeEnabled = %v, want false", profile["autoModeEnabled"])
+	if profile["autoModeEnabled"] != true {
+		t.Fatalf("autoModeEnabled = %v, want true", profile["autoModeEnabled"])
+	}
+	userOwned, _ := profile["userOwned"].(map[string]any)
+	if userOwned["keep"] != true {
+		t.Fatalf("user-owned profile state was not preserved: %v", profile)
 	}
 	assertClaudeDesktopEgressHosts(t, profile)
 	if profile["disableEssentialTelemetry"] != true || profile["disableNonessentialTelemetry"] != true {
 		t.Fatalf("telemetry flags = %v/%v, want true/true", profile["disableEssentialTelemetry"], profile["disableNonessentialTelemetry"])
+	}
+	first, err := os.ReadFile(paths.profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (&ClaudeDesktop{}).ConfigureAutodiscovery(); err != nil {
+		t.Fatalf("second ConfigureAutodiscovery returned error: %v", err)
+	}
+	second, err := os.ReadFile(paths.profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(first, second) {
+		t.Fatalf("repeated configuration changed the managed profile:\nfirst: %s\nsecond: %s", first, second)
+	}
+}
+
+func TestClaudeDesktopConfigureWritesSavedAutoModePreference(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withClaudeDesktopPlatform(t, "darwin")
+	t.Setenv("OLLAMA_API_KEY", "test-api-key")
+
+	paths, err := claudeDesktopConfigPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if enabled, err := ClaudeDesktopAutoModeEnabled(); err != nil || !enabled {
+		t.Fatal("auto mode should default to enabled")
+	}
+
+	if err := SaveClaudeDesktopAutoMode(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&ClaudeDesktop{}).ConfigureAutodiscovery(); err != nil {
+		t.Fatalf("ConfigureAutodiscovery returned error: %v", err)
+	}
+	profile := claudeDesktopReadJSON(t, paths.profile)
+	if profile["autoModeEnabled"] != true {
+		t.Fatalf("autoModeEnabled = %v, want true", profile["autoModeEnabled"])
+	}
+
+	if err := SaveClaudeDesktopAutoMode(false); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&ClaudeDesktop{}).ConfigureAutodiscovery(); err != nil {
+		t.Fatalf("ConfigureAutodiscovery returned error: %v", err)
+	}
+	profile = claudeDesktopReadJSON(t, paths.profile)
+	if profile["autoModeEnabled"] != false {
+		t.Fatalf("autoModeEnabled = %v, want false", profile["autoModeEnabled"])
+	}
+}
+
+func TestClaudeDesktopAutoModeDefaultsEnabledForLegacyIntegrationConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	if err := config.SaveIntegration(claudeDesktopIntegrationName, []string{"model-a"}); err != nil {
+		t.Fatal(err)
+	}
+
+	enabled, err := ClaudeDesktopAutoModeEnabled()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !enabled {
+		t.Fatal("auto mode should default to enabled when a legacy integration has no saved preference")
+	}
+}
+
+func TestClaudeDesktopEffectiveAutoModeDoesNotChangeSavedPreference(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withClaudeDesktopPlatform(t, "darwin")
+	t.Setenv("OLLAMA_API_KEY", "test-api-key")
+
+	if err := SaveClaudeDesktopAutoMode(true); err != nil {
+		t.Fatal(err)
+	}
+	c := &ClaudeDesktop{}
+	if err := c.ConfigureAutodiscoveryWithAutoMode(false); err != nil {
+		t.Fatal(err)
+	}
+
+	paths, err := claudeDesktopConfigPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := claudeDesktopReadJSON(t, paths.profile)
+	if profile["autoModeEnabled"] != false {
+		t.Fatalf("autoModeEnabled = %v, want effective false", profile["autoModeEnabled"])
+	}
+	if !c.AutodiscoveryConfiguredWithAutoMode(false) {
+		t.Fatal("expected profile to match the effective Auto mode state")
+	}
+	if c.AutodiscoveryConfigured() {
+		t.Fatal("saved preference check must detect the temporary effective state")
+	}
+	enabled, err := ClaudeDesktopAutoModeEnabled()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !enabled {
+		t.Fatal("effective Auto mode state changed the saved preference")
+	}
+}
+
+func TestClaudeDesktopConfigurePreservesProfileWhenAutoModePreferenceIsUnreadable(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withClaudeDesktopPlatform(t, "darwin")
+
+	paths, err := claudeDesktopConfigPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.profile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte(`{"autoModeEnabled":true,"userOwned":"keep"}`)
+	if err := os.WriteFile(paths.profile, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(tmpDir, ".ollama", "config.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{invalid`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = (&ClaudeDesktop{}).ConfigureAutodiscovery()
+	if err == nil || !strings.Contains(err.Error(), "load Claude Desktop auto mode preference") {
+		t.Fatalf("ConfigureAutodiscovery error = %v, want unreadable preference error", err)
+	}
+	got, readErr := os.ReadFile(paths.profile)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !slices.Equal(got, original) {
+		t.Fatalf("profile changed after preference read failure:\ngot:  %s\nwant: %s", got, original)
 	}
 }
 
@@ -714,6 +864,37 @@ func TestClaudeDesktopAutodiscoveryConfiguredRequiresTelemetryDisabled(t *testin
 	}
 }
 
+func TestClaudeDesktopAutodiscoveryConfiguredRequiresSavedAutoModePreference(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withClaudeDesktopPlatform(t, "darwin")
+
+	c := &ClaudeDesktop{}
+	if err := SaveClaudeDesktopAutoMode(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.ConfigureAutodiscovery(); err != nil {
+		t.Fatalf("Configure returned error: %v", err)
+	}
+
+	paths, err := claudeDesktopConfigPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := claudeDesktopReadJSON(t, paths.profile)
+	profile["autoModeEnabled"] = false
+	if err := writeClaudeDesktopJSON(paths.profile, profile); err != nil {
+		t.Fatal(err)
+	}
+
+	if c.AutodiscoveryConfigured() {
+		t.Fatal("expected Auto mode preference drift to force Claude Desktop profile repair")
+	}
+	if !c.UsesOllamaGateway() {
+		t.Fatal("expected Auto mode drift to leave Ollama routing active")
+	}
+}
+
 func TestClaudeDesktopAutodiscoveryConfiguredRequiresEgressHosts(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
@@ -831,7 +1012,7 @@ func TestClaudeDesktopRestoreSwitchesBackToFirstPartyMode(t *testing.T) {
 	if err := os.WriteFile(paths.meta, []byte(`{"appliedId":"`+claudeDesktopProfileID+`","entries":[{"id":"`+claudeDesktopProfileID+`","name":"Ollama"}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(paths.profile, []byte(`{"autoModeEnabled":true,"coworkEgressAllowedHosts":["github.com"],"deploymentDisplayName":"Ollama","disableDeploymentModeChooser":true,"disableEssentialTelemetry":true,"disableNonessentialTelemetry":true,"inferenceGatewayApiKey":"keep","inferenceProvider":"gateway","inferenceGatewayBaseUrl":"https://ollama.com","inferenceGatewayAuthScheme":"bearer","inferenceModels":["legacy"]}`), 0o644); err != nil {
+	if err := os.WriteFile(paths.profile, []byte(`{"autoModeEnabled":true,"coworkEgressAllowedHosts":["github.com"],"deploymentDisplayName":"Ollama","disableDeploymentModeChooser":true,"disableEssentialTelemetry":true,"disableNonessentialTelemetry":true,"inferenceGatewayApiKey":"keep","inferenceProvider":"gateway","inferenceGatewayBaseUrl":"https://ollama.com","inferenceGatewayAuthScheme":"bearer","inferenceModels":["legacy"],"userOwned":"keep"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -853,6 +1034,9 @@ func TestClaudeDesktopRestoreSwitchesBackToFirstPartyMode(t *testing.T) {
 	}
 	if profile["inferenceGatewayApiKey"] != "keep" {
 		t.Fatal("restore should leave existing Ollama profile credentials in place")
+	}
+	if profile["userOwned"] != "keep" {
+		t.Fatalf("restore should preserve user-owned profile state: %v", profile)
 	}
 	for _, key := range []string{"inferenceProvider", "inferenceGatewayBaseUrl", "inferenceGatewayAuthScheme", "deploymentDisplayName", "inferenceModels", "coworkEgressAllowedHosts", "autoModeEnabled", "disableEssentialTelemetry", "disableNonessentialTelemetry"} {
 		if _, ok := profile[key]; ok {
@@ -986,6 +1170,105 @@ func TestClaudeDesktopModelsPersistInLauncherConfig(t *testing.T) {
 	}
 	if err := SaveClaudeDesktopModels(nil); err == nil {
 		t.Fatal("SaveClaudeDesktopModels(nil) succeeded")
+	}
+}
+
+func TestClaudeDesktopModelMappingsPersistSharedRoutes(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	want := map[string]string{
+		"claude-fable-5":            "qwen3.8:27b",
+		"claude-opus-5":             "qwen3.8:27b",
+		"claude-sonnet-5":           "qwen3.8:27b",
+		"claude-haiku-4-5-20251001": "qwen3.8:27b",
+		"claude-sonnet-4-6":         "qwen3.8:27b",
+	}
+	if err := SaveClaudeDesktopModelMappings(want); err != nil {
+		t.Fatal(err)
+	}
+	if got := ClaudeDesktopModelMappings(); !maps.Equal(got, want) {
+		t.Fatalf("ClaudeDesktopModelMappings() = %v, want %v", got, want)
+	}
+	if got, wantModels := ClaudeDesktopModels(), []string{"qwen3.8:27b", "qwen3.8:27b", "qwen3.8:27b", "qwen3.8:27b", "qwen3.8:27b"}; !slices.Equal(got, wantModels) {
+		t.Fatalf("ClaudeDesktopModels() = %v, want %v", got, wantModels)
+	}
+	if err := SaveClaudeDesktopModels([]string{"glm-5.2:cloud"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := ClaudeDesktopModelMappings(); len(got) != 0 {
+		t.Fatalf("legacy model selection left mappings behind: %v", got)
+	}
+}
+
+func TestClaudeDesktopModelMappingsAllowSparseRoutes(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	want := map[string]string{"claude-fable-5": "qwen3.8:27b"}
+	if err := SaveClaudeDesktopModelMappings(want); err != nil {
+		t.Fatal(err)
+	}
+	if got := ClaudeDesktopModelMappings(); !maps.Equal(got, want) {
+		t.Fatalf("ClaudeDesktopModelMappings() = %v, want %v", got, want)
+	}
+}
+
+func TestClaudeDesktopApplyProfileChangeDoesNotOpenStoppedClaude(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	withClaudeDesktopPlatform(t, "darwin")
+	withClaudeDesktopProcessHooks(t,
+		func() bool { return false },
+		func() error { t.Fatal("stopped Claude should not quit"); return nil },
+		func() error { t.Fatal("applying settings should not open Claude"); return nil },
+	)
+
+	changed := false
+	if err := (&ClaudeDesktop{}).ApplyProfileChange(func() error {
+		changed = true
+		return nil
+	}, true); err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("profile change was not applied")
+	}
+}
+
+func TestClaudeDesktopApplyProfileChangeRestartsRunningClaude(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	withClaudeDesktopPlatform(t, "darwin")
+	running := true
+	quitCalls, openCalls := 0, 0
+	withClaudeDesktopProcessHooks(t,
+		func() bool { return running },
+		func() error { quitCalls++; running = false; return nil },
+		func() error { openCalls++; return nil },
+	)
+
+	if err := (&ClaudeDesktop{}).ApplyProfileChange(func() error { return nil }, true); err != nil {
+		t.Fatal(err)
+	}
+	if quitCalls != 1 || openCalls != 1 {
+		t.Fatalf("quit/open calls = %d/%d, want 1/1", quitCalls, openCalls)
+	}
+}
+
+func TestClaudeDesktopApplyProfileChangeRequiresRestartConfirmation(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	withClaudeDesktopPlatform(t, "darwin")
+	changed := false
+	withClaudeDesktopProcessHooks(t,
+		func() bool { return true },
+		func() error { t.Fatal("unconfirmed change should not quit Claude"); return nil },
+		func() error { t.Fatal("unconfirmed change should not reopen Claude"); return nil },
+	)
+
+	err := (&ClaudeDesktop{}).ApplyProfileChange(func() error {
+		changed = true
+		return nil
+	}, false)
+	if !errors.Is(err, ErrClaudeDesktopRestartConfirmationRequired) {
+		t.Fatalf("error = %v, want restart confirmation", err)
+	}
+	if changed {
+		t.Fatal("unconfirmed profile change ran")
 	}
 }
 
@@ -1127,7 +1410,8 @@ func TestClaudeDesktopSetInstalledFromDesktopOpensStoppedAppWhenEnabled(t *testi
 }
 
 func TestClaudeDesktopSetInstalledFromDesktopDoesNotOpenStoppedAppWhenDisabled(t *testing.T) {
-	setTestHome(t, t.TempDir())
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
 	withClaudeDesktopPlatform(t, "darwin")
 	c := &ClaudeDesktop{}
 	if err := c.ConfigureAutodiscovery(); err != nil {
@@ -1138,6 +1422,13 @@ func TestClaudeDesktopSetInstalledFromDesktopDoesNotOpenStoppedAppWhenDisabled(t
 		func() error { t.Fatal("stopped Claude should not be quit"); return nil },
 		func() error { t.Fatal("disabling should not open stopped Claude"); return nil },
 	)
+	configPath := filepath.Join(tmpDir, ".ollama", "config.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{invalid`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := c.SetInstalledFromDesktop(false, false); err != nil {
 		t.Fatalf("SetInstalledFromDesktop returned error: %v", err)

@@ -22,10 +22,19 @@ interface ClaudeDesktopStatus {
   startFailed: boolean;
   portConflict: boolean;
   gatewayPort?: number;
+  routedRequests?: number;
   error?: string;
+  autoMode?: boolean;
   modelSource?: "user" | "endpoint" | "fallback";
   maxModels?: number;
   models?: ClaudeDesktopModelStatus[];
+  mappings?: ClaudeDesktopMappingStatus[];
+}
+
+interface ClaudeDesktopMappingStatus {
+  routeId: string;
+  routeName: string;
+  model?: string;
 }
 
 interface ClaudeDesktopModelStatus {
@@ -34,6 +43,7 @@ interface ClaudeDesktopModelStatus {
   description?: string;
   cloud?: boolean;
   selected: boolean;
+  autoMode?: boolean;
   availability?: "unknown" | "available" | "unavailable";
   reason?:
     | "cloud_off"
@@ -47,6 +57,8 @@ interface ClaudeDesktopModelStatus {
 interface ClaudeDesktopActionResult {
   status: ClaudeDesktopStatus;
   error?: string;
+  mappingsApplied?: boolean;
+  restartConfirmationRequired?: boolean;
 }
 
 type ClaudeDesktopInstallResult = "opened" | "cancelled" | "failed";
@@ -65,16 +77,27 @@ declare global {
     doubleClick?: () => void;
     activateOllama?: () => void;
     getClaudeDesktopStatus?: () => Promise<ClaudeDesktopStatus>;
+    getClaudeDesktopConnectionSummary?: () => Promise<ClaudeDesktopStatus>;
+    getClaudeDesktopRequestCount?: () => Promise<number>;
     setClaudeDesktopConnected?: (
       enabled: boolean,
+      restartConfirmed: boolean,
     ) => Promise<ClaudeDesktopActionResult>;
     prepareClaudeDesktopConnection?: () => Promise<ClaudeDesktopActionResult>;
     openClaudeDesktop?: () => Promise<string>;
     installClaudeDesktop?: () => Promise<ClaudeDesktopInstallResult>;
     getShowAppsInMenu?: () => Promise<boolean>;
     setShowAppsInMenu?: (visible: boolean) => Promise<void>;
-    restartClaudeDesktop?: (
-      models: string[],
+    applyClaudeDesktopMappings?: (
+      mappings: Record<string, string>,
+      restartConfirmed: boolean,
+    ) => Promise<ClaudeDesktopActionResult>;
+    resetClaudeDesktopMappings?: (
+      restartConfirmed: boolean,
+    ) => Promise<ClaudeDesktopActionResult>;
+    setClaudeDesktopAutoMode?: (
+      enabled: boolean,
+      restartConfirmed: boolean,
     ) => Promise<ClaudeDesktopActionResult>;
     setOnboardingWindow?: (enabled: boolean) => void;
     menu: (items: MenuItem[]) => Promise<string | null>;
@@ -103,6 +126,7 @@ declare global {
 export type {
   ClaudeDesktopActionResult,
   ClaudeDesktopInstallResult,
+  ClaudeDesktopMappingStatus,
   ClaudeDesktopModelStatus,
   ClaudeDesktopStatus,
   ContextMenuItem,

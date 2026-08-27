@@ -39,7 +39,7 @@ func batchLogits(rows ...[]float32) *mlx.Array {
 // sampleOne runs Sample on a freshly-added single slot and returns the
 // sampled token id. Used both for the single-slot options table and as the
 // reference oracle for the batched-equivalence test.
-func sampleOne(t *testing.T, opts Options, priorTokens []int32, values []float32) int {
+func sampleOne(t *testing.T, opts Options, priorTokens []int32, values []float32) int32 {
 	t.Helper()
 	s := New(128)
 	t.Cleanup(func() {
@@ -69,7 +69,7 @@ func TestSampleSingleSlotOptions(t *testing.T) {
 		opts   Options
 		priors []int32
 		logits []float32
-		want   int
+		want   int32
 	}{
 		{
 			name:   "presence penalty",
@@ -197,7 +197,7 @@ func TestDistributionResidualUsesTargetSupport(t *testing.T) {
 
 	ids := residual.IDs.Ints()
 	probs := residual.Probs.Floats()
-	want := map[int]float64{2: 0.625, 5: 0.375}
+	want := map[int32]float64{2: 0.625, 5: 0.375}
 	if len(ids) != 2 || len(probs) != 2 {
 		t.Fatalf("residual = ids %v probs %v, want 2 sparse entries", ids, probs)
 	}
@@ -215,7 +215,7 @@ func TestDistributionResidualUsesTargetSupport(t *testing.T) {
 func TestSeededSamplingIsReproducible(t *testing.T) {
 	skipIfNoMLX(t)
 
-	seededSequence := func(seed int) []int {
+	seededSequence := func(seed int) []int32 {
 		s := New(128)
 		t.Cleanup(func() {
 			s.Free()
@@ -224,7 +224,7 @@ func TestSeededSamplingIsReproducible(t *testing.T) {
 		s.Add(0, Options{Temperature: 1, TopK: 4, Seed: seed, UseSeed: true}, nil)
 
 		logits := slotLogits([]float32{0, 0, 0, 0})
-		out := make([]int, 32)
+		out := make([]int32, 32)
 		for i := range out {
 			token := s.Sample([]int{0}, logits).Token
 			mlx.Eval(token)
@@ -248,7 +248,7 @@ func TestSeededSamplingIsReproducible(t *testing.T) {
 func TestSeededBernoulliIsReproducible(t *testing.T) {
 	skipIfNoMLX(t)
 
-	seededMask := func() []int {
+	seededMask := func() []int32 {
 		s := New(128)
 		t.Cleanup(func() {
 			s.Free()
@@ -322,7 +322,7 @@ func TestSpeculativeScoresUsesDraftHistoryWithoutCommit(t *testing.T) {
 	tokens := scores.Argmax(-1, false).AsType(mlx.DTypeInt32)
 	mlx.Eval(tokens)
 
-	if got, want := tokens.Ints(), []int{3, 4, 2}; len(got) != len(want) {
+	if got, want := tokens.Ints(), []int32{3, 4, 2}; len(got) != len(want) {
 		t.Fatalf("tokens = %v, want %v", got, want)
 	} else {
 		for i := range want {
@@ -391,7 +391,7 @@ func TestDistributionMultiRowWithoutChain(t *testing.T) {
 		), nil)
 		top := dist.IDs.Slice(mlx.Slice(), mlx.Slice(0, 1))
 		mlx.Eval(top)
-		if got, want := top.Ints(), []int{2, 1, 2}; !slices.Equal(got, want) {
+		if got, want := top.Ints(), []int32{2, 1, 2}; !slices.Equal(got, want) {
 			t.Fatalf("seq %d top tokens = %v, want %v", seqID, got, want)
 		}
 	}
@@ -412,7 +412,7 @@ func TestCommitBatchesRingWrites(t *testing.T) {
 	mlx.Eval(s.history)
 
 	got := s.history.Ints()
-	want := []int{32, 33, 34, 31}
+	want := []int32{32, 33, 34, 31}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("history = %v, want %v", got, want)
@@ -484,7 +484,7 @@ func TestBatchSamplingPreservesPerSlotBehavior(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Per-slot reference for each sampled seq.
-			want := make([]int, len(tc.sample))
+			want := make([]int32, len(tc.sample))
 			for i, id := range tc.sample {
 				var spec slot
 				for _, s := range tc.slots {

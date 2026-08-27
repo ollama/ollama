@@ -185,9 +185,7 @@ func transposeForGatherMM(w *mlx.Array) *mlx.Array {
 	if w == nil || !w.Valid() || w.NumDims() != 3 {
 		return w
 	}
-	t := mlx.Transpose(w, 0, 2, 1).Clone()
-	mlx.Eval(t)
-	return t
+	return mlx.Transpose(w, 0, 2, 1).Clone()
 }
 
 // collectExpertProjection collects per-expert tensors, stacks them, and
@@ -242,15 +240,12 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *TextConfig, pre
 	}
 
 	stacked := mlx.Stack(weights, 0).Clone()
-	mlx.Eval(stacked)
 	out := &stackedExpertResult{Weight: stacked, Bits: bits, GroupSize: groupSize, Mode: mode}
 	if len(scales) == len(weights) {
 		out.Scales = mlx.Stack(scales, 0).Clone()
-		mlx.Eval(out.Scales)
 	}
 	if len(biases) == len(weights) {
 		out.Biases = mlx.Stack(biases, 0).Clone()
-		mlx.Eval(out.Biases)
 	}
 	return out
 }

@@ -568,11 +568,11 @@ func chatTemplateHasThinkingSupport(chatTemplate string) bool {
 }
 
 func alwaysSupportsThinking(architectures []string, modelType string) bool {
-	if isQwen35Family(modelType) {
+	if isQwen35Family(modelType) || isQwen4Family(modelType) {
 		return true
 	}
 	for _, arch := range architectures {
-		if isQwen35Family(arch) {
+		if isQwen35Family(arch) || isQwen4Family(arch) {
 			return true
 		}
 	}
@@ -582,6 +582,12 @@ func alwaysSupportsThinking(architectures []string, modelType string) bool {
 func isQwen35Family(s string) bool {
 	s = strings.ToLower(s)
 	return strings.Contains(s, "qwen3_5") || strings.Contains(s, "qwen3next")
+}
+
+func isQwen4Family(s string) bool {
+	s = strings.ToLower(s)
+	return strings.Contains(s, "qwen4exp") ||
+		strings.Contains(s, "qwen4_exp")
 }
 
 func qwen35RendererName(modelDir string) string {
@@ -676,6 +682,8 @@ func parserNameForIdentifier(modelDir, s string) string {
 		return "deepseek3"
 	case strings.Contains(s, "gemma4"):
 		return "gemma4"
+	case isQwen4Family(s):
+		return "qwen3.5"
 	case isQwen35Family(s):
 		return "qwen3.5"
 	case strings.Contains(s, "qwen3"):
@@ -739,6 +747,8 @@ func rendererNameForIdentifier(modelDir, s string) string {
 		return "glm-4.7"
 	case strings.Contains(s, "deepseek"):
 		return "deepseek3"
+	case isQwen4Family(s):
+		return "qwen3.8"
 	case isQwen35Family(s):
 		return qwen35RendererName(modelDir)
 	case strings.Contains(s, "qwen3"):

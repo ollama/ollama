@@ -350,7 +350,7 @@ func (s *Server) getIntegrationStatuses(w http.ResponseWriter, _ *http.Request) 
 		byName[info.Name] = info
 	}
 	seen := map[string]bool{"chatgpt": true}
-	launcherMenuOrder := []string{"claude", "codex", "openclaw", "opencode", "droid", "pi", "cline"}
+	launcherMenuOrder := []string{"claude", "codex", "openclaw", "opencode", "hermes", "hermes-desktop", "droid", "pi", "cline"}
 	orderedInfos := make([]launch.IntegrationInfo, 0, len(infos))
 	for _, name := range launcherMenuOrder {
 		if info, ok := byName[name]; ok {

@@ -1,15 +1,18 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, expect, it, vi } from "vitest";
 import {
+  ClaudeConnectedIntro,
   FIRST_MODEL_COMMAND,
   ConnectAppsScreen,
   IntroScreen,
   default as Onboarding,
   RunOllamaScreen,
-  terminalRowsForWindowHeight,
+  shouldShowClaudeConnectedIntro,
   WelcomeScreen,
 } from "./Onboarding";
 import {
+  CLAUDE_CONNECTION_TIMEOUT_MS,
   CLAUDE_INSTALL_TIMEOUT_MS,
   isClaudeConnectionComplete,
   scheduleClaudeInstallTimeout,
@@ -30,6 +33,8 @@ describe("Onboarding", () => {
     expect(html.indexOf('alt="Ollama waving"')).toBeLessThan(
       html.indexOf("Welcome to Ollama!"),
     );
+    expect(html).toMatch(/<main class="light-only [^"]*bg-white/);
+    expect(html).not.toMatch(/alt="Ollama waving" class="[^"]*dark:/);
     expect(html).toContain(
       "Run open models with your coding agents so you can spend less while keeping your data private.",
     );
@@ -44,12 +49,6 @@ describe("Onboarding", () => {
     expect(html).toContain("Your prompt data is never logged or trained on.");
     expect(html).toContain("Continue");
     expect(html).not.toContain("Skip");
-  });
-
-  it("shows more terminal integrations as the window gets taller", () => {
-    expect(terminalRowsForWindowHeight(400)).toBe(1);
-    expect(terminalRowsForWindowHeight(660)).toBe(4);
-    expect(terminalRowsForWindowHeight(960)).toBe(8);
   });
 
   it("renders the apps screen without browser platform globals", () => {
@@ -90,7 +89,7 @@ describe("Onboarding", () => {
         />,
       );
 
-      expect(html).not.toContain('id="applications-heading"');
+      expect(html).not.toContain('id="desktop-heading"');
       expect(html).not.toContain("Use Ollama models in Claude Desktop");
       expect(html).toContain('id="terminal-heading"');
       expect(html).toContain("ollama launch claude");
@@ -113,7 +112,7 @@ describe("Onboarding", () => {
     expect(authenticationTimeoutAction(true, true)).toBe("ignore");
   });
 
-  it("finishes Claude connection states from the native status hook", () => {
+  it("detects when the menu bar already reached the requested Claude state", () => {
     const status = {
       supported: true,
       installed: true,
@@ -160,6 +159,276 @@ describe("Onboarding", () => {
     }
   });
 
+  it("keeps the Claude switch on and busy through installer detection", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+
+    const disconnectedStatus = {
+      supported: true,
+      used: false,
+      installed: false,
+      configured: false,
+      connected: false,
+      running: false,
+      startFailed: false,
+      portConflict: false,
+    };
+    let finishInstall!: (result: "opened") => void;
+    const install = new Promise<"opened">((resolve) => {
+      finishInstall = resolve;
+    });
+
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    vi.stubGlobal("window", {
+      OLLAMA_PLATFORM: "darwin",
+      innerHeight: 660,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      setTimeout: globalThis.setTimeout,
+      clearTimeout: globalThis.clearTimeout,
+      setInterval: globalThis.setInterval,
+      clearInterval: globalThis.clearInterval,
+      getClaudeDesktopConnectionSummary: vi
+        .fn()
+        .mockResolvedValue(disconnectedStatus),
+      setClaudeDesktopConnected: vi.fn(),
+      installClaudeDesktop: vi.fn().mockReturnValue(install),
+    });
+
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <ConnectAppsScreen
+            initialClaudeStatus={disconnectedStatus}
+            initialIntegrations={[
+              {
+                id: "claude-desktop",
+                name: "Claude",
+                description: "Use Ollama models in Claude Desktop",
+                installed: false,
+                action: "connect",
+              },
+            ]}
+          />,
+        );
+        await Promise.resolve();
+      });
+
+      const claudeSwitch = () => renderer!.root.findByProps({ role: "switch" });
+      let clickResult!: Promise<void>;
+      await act(async () => {
+        clickResult = claudeSwitch().props.onClick();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(claudeSwitch().props["aria-checked"]).toBe(true);
+      expect(claudeSwitch().props["aria-busy"]).toBe(true);
+      expect(claudeSwitch().props.disabled).toBe(true);
+      expect(claudeSwitch().props.className).toContain("disabled:opacity-50");
+      expect(renderer.root.findByProps({ role: "status" }).children).toContain(
+        "Downloading…",
+      );
+      expect(
+        renderer.root.findAll(
+          (node) =>
+            typeof node.props.className === "string" &&
+            node.props.className.includes("animate-spin"),
+        ),
+      ).not.toHaveLength(0);
+
+      await act(async () => {
+        finishInstall("opened");
+        await clickResult;
+        await Promise.resolve();
+      });
+
+      expect(claudeSwitch().props["aria-checked"]).toBe(true);
+      expect(claudeSwitch().props["aria-busy"]).toBe(true);
+      expect(claudeSwitch().props.disabled).toBe(true);
+      expect(claudeSwitch().props.className).toContain("disabled:opacity-50");
+      expect(renderer.root.findByProps({ role: "status" }).children).toContain(
+        "Finish installing…",
+      );
+      expect(
+        renderer.root.findAll(
+          (node) =>
+            typeof node.props.className === "string" &&
+            node.props.className.includes("animate-spin"),
+        ),
+      ).not.toHaveLength(0);
+    } finally {
+      if (renderer) {
+        act(() => renderer?.unmount());
+      }
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("preserves a late native error after the Connect Apps action times out", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+
+    const disconnectedStatus = {
+      supported: true,
+      used: false,
+      installed: true,
+      configured: false,
+      connected: false,
+      running: false,
+      startFailed: false,
+      portConflict: false,
+    };
+    const connectedStatus = {
+      ...disconnectedStatus,
+      configured: true,
+      connected: true,
+    };
+    let finishNativeAction!: (result: {
+      status: typeof connectedStatus;
+      error?: string;
+    }) => void;
+    const nativeAction = new Promise<{
+      status: typeof connectedStatus;
+      error?: string;
+    }>((resolve) => {
+      finishNativeAction = resolve;
+    });
+    const getClaudeStatus = vi
+      .fn()
+      .mockResolvedValueOnce(disconnectedStatus)
+      .mockResolvedValue(connectedStatus);
+    const setClaudeConnected = vi.fn().mockReturnValue(nativeAction);
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    vi.stubGlobal("window", {
+      OLLAMA_PLATFORM: "darwin",
+      innerHeight: 660,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      setTimeout: globalThis.setTimeout,
+      clearTimeout: globalThis.clearTimeout,
+      setInterval: globalThis.setInterval,
+      clearInterval: globalThis.clearInterval,
+      getClaudeDesktopConnectionSummary: getClaudeStatus,
+      setClaudeDesktopConnected: setClaudeConnected,
+    });
+
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <ConnectAppsScreen
+            initialClaudeStatus={disconnectedStatus}
+            initialIntegrations={[
+              {
+                id: "claude-desktop",
+                name: "Claude",
+                description: "Use Ollama models in Claude Desktop",
+                installed: true,
+                action: "connect",
+              },
+            ]}
+          />,
+        );
+        await Promise.resolve();
+      });
+
+      const claudeSwitch = () => renderer!.root.findByProps({ role: "switch" });
+      expect(claudeSwitch().props["aria-checked"]).toBe(false);
+      expect(claudeSwitch().props["aria-busy"]).toBeUndefined();
+      expect(claudeSwitch().props.disabled).toBe(false);
+
+      let clickResult!: Promise<void>;
+      await act(async () => {
+        clickResult = claudeSwitch().props.onClick();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(setClaudeConnected).toHaveBeenCalledWith(true, false);
+      expect(claudeSwitch().props["aria-checked"]).toBe(true);
+      expect(claudeSwitch().props["aria-busy"]).toBe(true);
+      expect(claudeSwitch().props.disabled).toBe(true);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(CLAUDE_CONNECTION_TIMEOUT_MS);
+        await clickResult;
+      });
+
+      expect(claudeSwitch().props["aria-checked"]).toBe(false);
+      expect(claudeSwitch().props["aria-busy"]).toBeUndefined();
+      expect(claudeSwitch().props.disabled).toBe(false);
+      expect(
+        renderer.root.findByProps({ role: "alert" }).children.join(""),
+      ).toContain("Claude is taking too long to connect");
+
+      await act(async () => {
+        finishNativeAction({
+          status: connectedStatus,
+          error: "Claude failed to restart.",
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(getClaudeStatus).toHaveBeenCalledOnce();
+      expect(claudeSwitch().props["aria-checked"]).toBe(true);
+      expect(claudeSwitch().props["aria-busy"]).toBeUndefined();
+      expect(claudeSwitch().props.disabled).toBe(false);
+      expect(
+        renderer.root.findByProps({ role: "alert" }).children.join(""),
+      ).toContain("Claude failed to restart.");
+      expect(
+        renderer.root.findAllByProps({ id: "claude-connected-title" }),
+      ).toHaveLength(0);
+    } finally {
+      if (renderer) {
+        act(() => renderer?.unmount());
+      }
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("shows the Claude intro only before the integration has been used", () => {
+    const firstConnection = {
+      supported: true,
+      used: false,
+      installed: true,
+      configured: true,
+      connected: true,
+      running: false,
+      startFailed: false,
+      portConflict: false,
+    };
+
+    expect(shouldShowClaudeConnectedIntro(firstConnection)).toBe(true);
+    expect(
+      shouldShowClaudeConnectedIntro({ ...firstConnection, used: true }),
+    ).toBe(false);
+    expect(
+      shouldShowClaudeConnectedIntro({
+        ...firstConnection,
+        connected: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowClaudeConnectedIntro({
+        ...firstConnection,
+        startFailed: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("uses Continue as the only Claude intro action", () => {
+    const html = renderToStaticMarkup(
+      <ClaudeConnectedIntro onDone={vi.fn()} />,
+    );
+
+    expect(html).toContain(">Continue</button>");
+    expect(html).not.toContain('aria-label="Close"');
+  });
+
   it("opens the device connection flow without relaunching the app", () => {
     expect(
       onboardingConnectUrl(
@@ -197,7 +466,7 @@ describe("Onboarding", () => {
     expect(html).not.toContain("Sign up");
   });
 
-  it("groups disconnected Claude with applications and terminal separately", () => {
+  it("groups disconnected Claude with a scrollable terminal list", () => {
     const integrations: IntegrationStatuses = [
       {
         id: "claude-desktop",
@@ -247,6 +516,22 @@ describe("Onboarding", () => {
         command: "ollama launch droid",
       },
       {
+        id: "dsh",
+        name: "DeepSeek Harness",
+        description: "DeepSeek's open-source agent harness",
+        installed: false,
+        action: "copy",
+        command: "ollama launch dsh",
+      },
+      {
+        id: "cline",
+        name: "Cline",
+        description: "Autonomous coding agent",
+        installed: false,
+        action: "copy",
+        command: "ollama launch cline",
+      },
+      {
         id: "terminal",
         name: "Terminal",
         description: "Run local models from your terminal",
@@ -270,12 +555,12 @@ describe("Onboarding", () => {
     expect(html).toContain("Claude Code");
     expect(html).not.toContain("Search apps");
     expect(html).not.toContain('type="search"');
-    expect(html).toContain("Application");
-    expect(html).toContain('id="applications-heading"');
+    expect(html).toContain("Desktop");
+    expect(html).toContain('id="desktop-heading"');
     expect(html).toContain('id="terminal-heading"');
     expect(html).not.toContain("Ready to launch");
     expect(html).not.toContain('id="claude-apps-heading"');
-    expect(html.indexOf("Application")).toBeLessThan(
+    expect(html.indexOf("Desktop")).toBeLessThan(
       html.indexOf("Use Ollama models in Claude Desktop"),
     );
     expect(html).not.toContain(">Command</th>");
@@ -295,12 +580,20 @@ describe("Onboarding", () => {
     expect(html).not.toContain("ChatGPT");
     expect(html).toContain("OpenCode");
     expect(html).toContain("Terminal");
-    expect(html).toContain('aria-label="Show more apps"');
-    expect(html).toContain('aria-expanded="false"');
-    expect(html).toContain("grid-rows-[0fr]");
-    expect(html).not.toContain("Collapse");
+    expect(html).toContain("overflow-y-auto");
+    expect(html).not.toContain('aria-label="Show more apps"');
+    expect(html).not.toContain("aria-expanded");
+    expect(html).not.toContain("grid-rows-[0fr]");
+    expect(html).not.toContain("inert");
     expect(html).toContain("/launch-icons/claude.svg");
     expect(html).toContain("/launch-icons/claude-code.svg");
+    expect(html).toMatch(
+      /src="\/launch-icons\/cline\.svg"[^>]*class="[^"]*dark:invert/,
+    );
+    expect(html).toContain("/launch-icons/deepseek-harness.svg");
+    expect(html).not.toMatch(
+      /src="\/launch-icons\/deepseek-harness\.svg"[^>]*class="[^"]*dark:invert/,
+    );
     expect(html).not.toContain("<table");
     expect(html).not.toContain("<footer");
     expect(html).not.toContain("Command copied. Run it in your terminal.");
@@ -312,7 +605,7 @@ describe("Onboarding", () => {
     expect(html).not.toContain('viewBox="0 0 3400 3400"');
   });
 
-  it("keeps connected Claude in Application without an idle status", () => {
+  it("keeps connected Claude in Desktop without an idle status", () => {
     const html = renderToStaticMarkup(
       <ConnectAppsScreen
         completionError={null}
@@ -325,6 +618,7 @@ describe("Onboarding", () => {
           running: false,
           startFailed: false,
           portConflict: false,
+          routedRequests: 12,
         }}
         initialIntegrations={[
           {
@@ -346,13 +640,14 @@ describe("Onboarding", () => {
       />,
     );
 
-    expect(html).toContain('id="applications-heading"');
+    expect(html).toContain('id="desktop-heading"');
     expect(html).not.toContain('id="claude-apps-heading"');
     expect(html).not.toContain("Ready to launch");
     expect(html).not.toContain("Active");
     expect(html).not.toContain("Inactive");
     expect(html).toContain('aria-checked="true"');
     expect(html).toContain('aria-label="Disconnect Claude"');
+    expect(html).toContain("Connected to Ollama · 12 requests this session");
   });
 
   it("shows initial Claude recovery guidance without error styling", () => {
@@ -523,6 +818,7 @@ describe("Onboarding", () => {
     );
 
     expect(html).toContain("Create an account");
+    expect(html).toMatch(/<main class="light-only [^"]*bg-white/);
     expect(html).toContain(
       "Create your account for access to faster, larger open models.",
     );
@@ -559,6 +855,7 @@ describe("Onboarding", () => {
     );
 
     expect(html).toContain("Run Ollama");
+    expect(html).toMatch(/<main class="light-only [^"]*bg-white/);
     expect(html).toContain(FIRST_MODEL_COMMAND);
     expect(html).not.toContain("Finish");
     expect(html).not.toContain("Sign in");

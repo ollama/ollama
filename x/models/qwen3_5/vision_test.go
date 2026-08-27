@@ -7,8 +7,19 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxtest"
+	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model/base"
 )
+
+func TestVisionAdapterWeightsAreCollectable(t *testing.T) {
+	mlxtest.Setup(t)
+	weight := mlx.FromValue(float32(1))
+	adapter := &VisionAdapter{Model: &Model{VisionTower: &VisionTower{PosEmbed: weight}}}
+	if got := mlx.Collect(adapter); len(got) != 1 || got[0] != weight {
+		t.Fatalf("mlx.Collect(adapter) = %v, want the tower weight", got)
+	}
+}
 
 func TestSmartResize(t *testing.T) {
 	// Goldens from the reference smart_resize at the family's processor

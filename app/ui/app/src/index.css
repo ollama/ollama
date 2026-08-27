@@ -2,8 +2,13 @@
 @plugin "@tailwindcss/typography";
 @import "katex/dist/katex.min.css";
 
-/* Retain component class names while making the dark variant unreachable. */
-@custom-variant dark (@media not all);
+@custom-variant dark {
+  @media (prefers-color-scheme: dark) {
+    &:not(.light-only, .light-only *) {
+      @slot;
+    }
+  }
+}
 
 @theme {
   --font-sans: ui-sans-serif, system-ui, "Segoe UI", sans-serif;
@@ -13,13 +18,11 @@
 
 @layer base {
   :root {
-    color-scheme: light;
+    color-scheme: light dark;
   }
 
-  html,
-  body,
-  #root {
-    background-color: #fff;
+  .light-only {
+    color-scheme: light;
   }
 
   a[href],

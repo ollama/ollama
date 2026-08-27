@@ -49,6 +49,12 @@ func (t *Array) AsType(dtype DType) *Array {
 	return out
 }
 
+func (t *Array) BitwiseXor(other *Array) *Array {
+	out := New("BITWISE_XOR")
+	C.mlx_bitwise_xor(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
+	return out
+}
+
 func (t *Array) AsStrided(shape []int, strides []int, offset int) *Array {
 	cShape := make([]C.int, len(shape))
 	for i, s := range shape {
@@ -68,6 +74,12 @@ func (t *Array) AsStrided(shape []int, strides []int, offset int) *Array {
 		C.size_t(offset),
 		DefaultStream().ctx,
 	)
+	return out
+}
+
+func (t *Array) BitwiseAnd(other *Array) *Array {
+	out := New("BITWISE_AND")
+	C.mlx_bitwise_and(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
 	return out
 }
 
@@ -214,9 +226,27 @@ func (t *Array) Reshape(axes ...int) *Array {
 	return out
 }
 
+func (t *Array) RightShift(other *Array) *Array {
+	out := New("RIGHT_SHIFT")
+	C.mlx_right_shift(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
+	return out
+}
+
+func (t *Array) Remainder(other *Array) *Array {
+	out := New("REMAINDER")
+	C.mlx_remainder(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
+	return out
+}
+
 func (t *Array) Sigmoid() *Array {
 	out := New("SIGMOID")
 	C.mlx_sigmoid(&out.ctx, t.ctx, DefaultStream().ctx)
+	return out
+}
+
+func (t *Array) Sign() *Array {
+	out := New("SIGN")
+	C.mlx_sign(&out.ctx, t.ctx, DefaultStream().ctx)
 	return out
 }
 
