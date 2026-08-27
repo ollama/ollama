@@ -267,12 +267,16 @@ func runAppSyncBarrier(self appProcessIdentity, controller appProcessController,
 		if err != nil {
 			return err
 		}
+		// Overlapping launches are ordered by process age. Only the newest
+		// candidate may terminate existing instances.
 		for _, process := range processes {
 			if process.startedAfter(self) {
 				return fmt.Errorf("%w: pid %d", errNewerAppInstance, process.pid)
 			}
 		}
 
+		// Require two consecutive empty snapshots so a process that is still
+		// appearing in NSWorkspace cannot slip through the barrier.
 		if len(processes) == 0 {
 			if sawEmpty {
 				return nil
@@ -307,6 +311,8 @@ func runAppSyncBarrier(self appProcessIdentity, controller appProcessController,
 			}
 		}
 		if !exited {
+			// Graceful shutdown owns most of the deadline. Force only exact
+			// surviving identities so one stuck instance cannot block update.
 			for _, process := range processes {
 				if err := controller.stop(process, appProcessStopForcefully); err != nil {
 					return err
@@ -439,15 +445,21 @@ func runDarwinAppSyncBarrier() bool {
 			settlePeriod:     appSyncBarrierSettlePeriod,
 		})
 	}
-	if errors.Is(err, errNewerAppInstance) {
+	switch {
+	case errors.Is(err, errNewerAppInstance):
 		slog.Info("newer Ollama app instance owns the handoff")
-		return false
+	case err != nil:
+		slog.Warn("app instance sync barrier failed, continuing startup", "error", err)
 	}
-	if err != nil {
-		slog.Error("app instance sync barrier failed", "error", err)
-		return false
-	}
-	return true
+	return continueAfterBarrierError(err)
+}
+
+// continueAfterBarrierError reports whether startup may proceed after the sync
+// barrier. Losing the election to a newer instance is the only reason to block
+// launch; any other failure leaves at most a stale instance running, so the
+// app warns and continues rather than refusing to start.
+func continueAfterBarrierError(err error) bool {
+	return err == nil || !errors.Is(err, errNewerAppInstance)
 }
 
 // handleExistingInstance handles existing instances on macOS.

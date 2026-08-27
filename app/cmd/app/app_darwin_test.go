@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"net"
 	"net/http"
@@ -2811,6 +2812,27 @@ func TestRunAppSyncBarrierRequiresSettledEmptyList(t *testing.T) {
 	}
 	if queries != 2 {
 		t.Fatalf("discovery queries = %d, want 2", queries)
+	}
+}
+
+func TestContinueAfterBarrierErrorOnlyBlocksNewerInstance(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "success", err: nil, want: true},
+		{name: "discovery failure", err: errors.New("discover other Ollama app processes"), want: true},
+		{name: "handoff timeout", err: errors.New("timed out waiting for app instances to exit"), want: true},
+		{name: "newer instance", err: fmt.Errorf("%w: pid 2", errNewerAppInstance), want: false},
+		{name: "wrapped newer instance", err: fmt.Errorf("barrier: %w", fmt.Errorf("%w: pid 2", errNewerAppInstance)), want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := continueAfterBarrierError(tt.err); got != tt.want {
+				t.Fatalf("continueAfterBarrierError(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
 	}
 }
 
