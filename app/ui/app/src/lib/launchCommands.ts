@@ -18,6 +18,10 @@ export const INTEGRATION_ICONS: Record<string, IntegrationIcon> = {
     src: "/launch-icons/codex.svg",
     darkSrc: "/launch-icons/codex-dark.svg",
   },
+  chatgpt: {
+    src: "/launch-icons/codex.svg",
+    darkSrc: "/launch-icons/codex-dark.svg",
+  },
   copilot: {
     src: "/launch-icons/copilot.svg",
     darkSrc: "/launch-icons/copilot-dark.svg",

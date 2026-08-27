@@ -10,6 +10,7 @@ import {
   ClaudeDesktopModelsSettings,
   type ClaudeDesktopModelsSettingsHandle,
 } from "@/components/ClaudeDesktopModelsSettings";
+import { CodexDesktopModelsSettings } from "@/components/CodexDesktopModelsSettings";
 import {
   WifiIcon,
   FolderIcon,
@@ -137,14 +138,15 @@ export default function Settings() {
   const [resettingToDefaults, setResettingToDefaults] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
   const [hasClaudeDraftChanges, setHasClaudeDraftChanges] = useState(false);
+  const [hasCodexDraftChanges, setHasCodexDraftChanges] = useState(false);
   const claudeModelsSettingsRef =
     useRef<ClaudeDesktopModelsSettingsHandle>(null);
   const savedConfirmationTimeoutRef = useRef<number | null>(null);
   useBlocker({
     shouldBlockFn: () =>
-      !window.confirm("Discard unapplied Claude routing changes?"),
-    enableBeforeUnload: hasClaudeDraftChanges,
-    disabled: !hasClaudeDraftChanges,
+      !window.confirm("Discard unapplied app model changes?"),
+    enableBeforeUnload: hasClaudeDraftChanges || hasCodexDraftChanges,
+    disabled: !hasClaudeDraftChanges && !hasCodexDraftChanges,
   });
   const {
     user,
@@ -756,13 +758,28 @@ export default function Settings() {
           </div>
 
           {!isWindows && (
-            <ClaudeDesktopModelsSettings
-              ref={claudeModelsSettingsRef}
-              includeCloudModels={
-                isAuthenticated && cloudStatusKnown && !cloudDisabled
-              }
-              onDraftChange={setHasClaudeDraftChanges}
-            />
+            <section
+              aria-labelledby="apps-settings-heading"
+              className="space-y-2"
+            >
+              <h2
+                id="apps-settings-heading"
+                className="px-1 text-xs font-medium uppercase tracking-wider text-neutral-400 dark:text-neutral-500"
+              >
+                Apps
+              </h2>
+              <ClaudeDesktopModelsSettings
+                ref={claudeModelsSettingsRef}
+                includeCloudModels={
+                  isAuthenticated && cloudStatusKnown && !cloudDisabled
+                }
+                onDraftChange={setHasClaudeDraftChanges}
+                showSectionHeading={false}
+              />
+              <CodexDesktopModelsSettings
+                onDraftChange={setHasCodexDraftChanges}
+              />
+            </section>
           )}
 
           {/* Agent Mode */}

@@ -61,6 +61,35 @@ interface ClaudeDesktopActionResult {
   restartConfirmationRequired?: boolean;
 }
 
+interface CodexDesktopStatus {
+  supported: boolean;
+  installed: boolean;
+  connected: boolean;
+  running: boolean;
+  model?: string;
+  models?: string[];
+  maxModels?: number;
+}
+
+interface CodexDesktopActionResult {
+  status: CodexDesktopStatus;
+  error?: string;
+}
+
+interface CodexDesktopModelsSettings {
+  supported: boolean;
+  installed: boolean;
+  running: boolean;
+  selected: string[];
+  available: string[];
+  maxModels: number;
+}
+
+interface CodexDesktopModelsSettingsResult {
+  settings: CodexDesktopModelsSettings;
+  error?: string;
+}
+
 type ClaudeDesktopInstallResult = "opened" | "cancelled" | "failed";
 
 interface WebviewAPI {
@@ -85,6 +114,14 @@ declare global {
     ) => Promise<ClaudeDesktopActionResult>;
     prepareClaudeDesktopConnection?: () => Promise<ClaudeDesktopActionResult>;
     openClaudeDesktop?: () => Promise<string>;
+    getCodexDesktopStatus?: () => Promise<CodexDesktopStatus>;
+    setCodexDesktopConnected?: (
+      enabled: boolean,
+    ) => Promise<CodexDesktopActionResult>;
+    getCodexDesktopModelsSettings?: () => Promise<CodexDesktopModelsSettingsResult>;
+    applyCodexDesktopModels?: (
+      models: string[],
+    ) => Promise<CodexDesktopModelsSettingsResult>;
     installClaudeDesktop?: () => Promise<ClaudeDesktopInstallResult>;
     getShowAppsInMenu?: () => Promise<boolean>;
     setShowAppsInMenu?: (visible: boolean) => Promise<void>;
@@ -129,6 +166,10 @@ export type {
   ClaudeDesktopMappingStatus,
   ClaudeDesktopModelStatus,
   ClaudeDesktopStatus,
+  CodexDesktopActionResult,
+  CodexDesktopModelsSettings,
+  CodexDesktopModelsSettingsResult,
+  CodexDesktopStatus,
   ContextMenuItem,
   ContextMenuResult,
   ImageData,

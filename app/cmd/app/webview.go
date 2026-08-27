@@ -223,6 +223,7 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 		})
 
 		bindClaudeDesktop(wv)
+		bindCodexDesktop(wv)
 
 		wv.Bind("close", func() {
 			hideWindow(wv.Window())
