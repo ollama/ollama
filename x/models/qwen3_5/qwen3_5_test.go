@@ -8,13 +8,6 @@ import (
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
-func skipIfNoMLX(t *testing.T) {
-	t.Helper()
-	if err := mlx.CheckInit(); err != nil {
-		t.Skipf("MLX not available: %v", err)
-	}
-}
-
 func TestSanitizeConvWeight(t *testing.T) {
 	mlxtest.Setup(t)
 
@@ -209,7 +202,7 @@ func TestNewCachesLayout(t *testing.T) {
 }
 
 func TestLoadWeightsPreservesLinearAttentionNormWeightDType(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	cfg := &Config{
 		HiddenSize:            4,

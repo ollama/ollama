@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
@@ -108,7 +109,7 @@ func draftTokensOf(caches []cache.Cache) []int32 {
 }
 
 func TestDFlashCommittedBuffersPastFlushCap(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	_, draft, session, caches := newBlockTestSession(t, nil, 4)
 
 	// One prefill-sized run at the flush cap writes through immediately in a
@@ -144,7 +145,7 @@ func TestDFlashCommittedBuffersPastFlushCap(t *testing.T) {
 }
 
 func TestDFlashCommittedGapPanics(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	_, _, session, _ := newBlockTestSession(t, nil, 4)
 
 	session.committed(mlx.FromValues([]int32{1}, 1, 1), oneHotLogits([]int32{1}), 0, nil)
@@ -158,7 +159,7 @@ func TestDFlashCommittedGapPanics(t *testing.T) {
 }
 
 func TestDFlashRestoredPrefixResumes(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	r := mtpTestRunner(t, nil, []int32{7}, sampler.Options{})
 	caches, _ := newMTPTestCaches(2)
 	draft := &fakeBlockDraft{blockSize: 4, maskToken: 6, draftCaches: caches[1:]}
@@ -188,7 +189,7 @@ func TestDFlashRestoredPrefixResumes(t *testing.T) {
 }
 
 func TestDFlashProposeBounds(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	predict := map[int32]int32{1: 2, 2: 3, 3: 4, 4: 5}
 	_, draft, session, _ := newBlockTestSession(t, predict, 4)
 	current := mlx.FromValues([]int32{1}, 1)
@@ -217,7 +218,7 @@ func TestDFlashProposeBounds(t *testing.T) {
 }
 
 func TestDFlashBlockRewoundBeforeContextWrites(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	predict := map[int32]int32{2: 3, 3: 4, 4: 5}
 	_, draft, session, caches := newBlockTestSession(t, predict, 4)
 
@@ -248,7 +249,7 @@ func TestDFlashBlockRewoundBeforeContextWrites(t *testing.T) {
 }
 
 func TestDFlashCloseDrainsOutstandingBlock(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	predict := map[int32]int32{2: 3, 3: 4, 4: 5}
 	_, _, session, caches := newBlockTestSession(t, predict, 4)
 
@@ -265,7 +266,7 @@ func TestDFlashCloseDrainsOutstandingBlock(t *testing.T) {
 }
 
 func TestDecodeBlockDraft(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	// The block draft mirrors the target chain, so one proposal round accepts
 	// every draft and the bonus token is the EOS.
 	const eos int32 = 7

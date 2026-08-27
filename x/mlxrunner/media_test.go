@@ -4,6 +4,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model/base"
 )
@@ -72,7 +73,7 @@ func (m encodeCountingModel) EncodeMedia(item *base.PreparedItem, data *mlx.Arra
 }
 
 func TestBatchMediaLifecycle(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	calls := 0
 	prepared := &base.PreparedItem{

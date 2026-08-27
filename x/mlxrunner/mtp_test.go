@@ -20,15 +20,6 @@ import (
 	"github.com/ollama/ollama/x/tokenizer"
 )
 
-// skipIfNoMLX skips when MLX is unavailable and pins the test to its OS
-// thread. The pin is load-bearing: MLX caches its default stream per thread,
-// so a goroutine that migrates mid-run panics with "There is no Stream(gpu, 0)
-// in current thread".
-func skipIfNoMLX(t *testing.T) {
-	t.Helper()
-	mlxtest.Setup(t)
-}
-
 // The MTP fakes make hidden state and logits the same tensor (Forward returns
 // one-hot logits, Unembed is the identity), so tests fully script target and
 // draft predictions.
@@ -263,7 +254,7 @@ func resultIDs(results []sampler.Result) []int32 {
 }
 
 func TestAcceptMTPDraftsGreedyAcceptAll(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	// Target predicts 1->2->3->4 along the accepted chain; the draft proposed
 	// exactly that, so every draft token is accepted and the bonus token is the
 	// target's prediction after the last accepted token.
@@ -299,7 +290,7 @@ func TestAcceptMTPDraftsGreedyAcceptAll(t *testing.T) {
 }
 
 func TestAcceptMTPDraftsGreedyMismatch(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	// Target predicts 1->2->9 but the draft proposed 2 then 7: the second draft
 	// token mismatches, so only the first is accepted and the bonus is the
 	// target's own prediction (3) at the rejection point.
@@ -336,7 +327,7 @@ func TestAcceptMTPDraftsGreedyMismatch(t *testing.T) {
 }
 
 func TestAcceptMTPDraftsGreedyEOS(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	// The second accepted draft token is EOS: it is recorded but stops
 	// generation and no bonus token is produced. The EOS's own KV is rolled
 	// back so the caches rest one token behind the recorded outputs.
@@ -377,7 +368,7 @@ func TestAcceptMTPDraftsGreedyEOS(t *testing.T) {
 }
 
 func TestRunMTPDecodeGreedy(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	// The seed token 1 is the last prefill token; its prediction (2) is the
 	// first generated token. The decode then walks 2->3->4->EOS. The draft
 	// proposes the correct chain so steps are accepted in a single forward.
@@ -439,7 +430,7 @@ func TestRunMTPDecodeGreedy(t *testing.T) {
 }
 
 func TestRunMTPDecodeSampled(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	// The same chain at temperature 1: because oneHotLogits uses a large gap,
 	// the proposal and target distributions are effectively point masses, so the
 	// rejection-sampling accept path that the sampled and greedy paths now share
@@ -483,7 +474,7 @@ func TestRunMTPDecodeSampled(t *testing.T) {
 }
 
 func TestRunMTPDecodeWarmDrafter(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	// A drafter warmed by a prefill report proposes in the very first round:
 	// the last prompt token seeds the decode loop and is forwarded fused
 	// with the drafts, so generation runs no plain forward at all.
@@ -543,7 +534,7 @@ func TestRunMTPDecodeWarmDrafter(t *testing.T) {
 }
 
 func TestRunMTPDecodeEOSCutLeavesPositionsUnjudged(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	// An accepted EOS inside the draft ends the round at a terminator, not a
 	// target rejection. The persisted acceptance model records outcomes only
 	// up to the EOS: the positions past it lie beyond where the round stopped,
@@ -602,7 +593,7 @@ func TestRunMTPDecodeEOSCutLeavesPositionsUnjudged(t *testing.T) {
 }
 
 func TestDecodePlain(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	// The same chain with no speculationSession: decode's pipelined loop runs,
 	// dispatching the forward that produces the next token before the
 	// current one is emitted.
@@ -649,7 +640,7 @@ func TestDecodePlain(t *testing.T) {
 }
 
 func TestDecodeCancelledMidStream(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	// Cancelling while accepted drafts stream must leave the session
 	// consistent: every token committed to the caches is recorded in
 	// session.outputs, no speculation snapshot schedule is left pending on
@@ -703,7 +694,7 @@ func TestDecodeCancelledMidStream(t *testing.T) {
 }
 
 func TestLayoutRidesEveryForward(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	// The request's opaque layout state must reach every forward: parked
 	// pipelined dispatches, the fused verification forward, and the draft
 	// model's own forwards alike.
@@ -772,7 +763,7 @@ func testDecoder(t *testing.T, r *Runner, req Request, caches []cache.Cache, see
 }
 
 func TestDecodeKVDraft(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	// A draft with its own KV cache mirroring the target chain
 	// 1->2->3->4->5->6->EOS.
 	// The unprimed drafter parks the first call, whose pipelined tokens pair
@@ -855,7 +846,7 @@ func TestDecodeKVDraft(t *testing.T) {
 }
 
 func TestDecodeKVDraftRejectionRebuildsFromTarget(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	// The draft mispredicts mid-chain: it proposes 6 where the target's own
 	// next token is 4, so the round is accepted only up to the rejection and the
 	// loop re-proposes from the target's correction. The speculative draft KV
@@ -927,7 +918,7 @@ func TestDecodeKVDraftRejectionRebuildsFromTarget(t *testing.T) {
 }
 
 func TestDecodeMaintainsDraftCacheWithoutDrafting(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	// A request that cannot speculate (logprobs) on a model whose draft has
 	// its own KV cache still maintains it: the speculationSession permanently parks,
 	// so the inner pipelined decoder reports each forwarded token, the pairs
@@ -993,7 +984,7 @@ func TestDecodeMaintainsDraftCacheWithoutDrafting(t *testing.T) {
 }
 
 func TestSettleLevelsDraftCacheWithPrefill(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	// Prefill attaches its scheduled snapshots only at offsets every cache
 	// has crossed, so the pipeline settles the drafter with the seed first:
 	// the completed frontier pair brings the draft cache level with the
@@ -1030,7 +1021,7 @@ func TestSettleLevelsDraftCacheWithPrefill(t *testing.T) {
 }
 
 func TestFlushMediaHeldUntilEmbedded(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	// The deferred flush embeds prompt tokens after prefill has released the
 	// media features, so the session holds delivered feature rows itself:
 	// each flush carries the held rows, a row is dropped once the flush's
@@ -1070,7 +1061,7 @@ func TestFlushMediaHeldUntilEmbedded(t *testing.T) {
 }
 
 func TestCommittedRunBatchesPastFlushCap(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	// A committed run longer than the pending-flush cap still writes the draft
 	// caches in a single head forward: the run's completed pairs coalesce into
 	// one batched extend at the run's start, rather than splitting at the cap.
@@ -1114,7 +1105,7 @@ func TestCommittedRunBatchesPastFlushCap(t *testing.T) {
 }
 
 func TestRestoredPrefixRewritesBoundaryPair(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	// A finished generation levels the draft with the target, its boundary
 	// pair naming the never-committed EOS. The next request restores one
 	// token below the match (the draft look-ahead), so the re-evaluated
@@ -1170,7 +1161,7 @@ func TestRestoredPrefixRewritesBoundaryPair(t *testing.T) {
 }
 
 func TestDecodeParkedDraftResume(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	// Leaving a parked stretch: the inner decoder's in-flight sample is
 	// emitted without any new forward, becomes the round's current, and the
 	// next call drafts from it — with the draft pairs contiguous across the

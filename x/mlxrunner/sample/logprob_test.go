@@ -1,5 +1,3 @@
-//go:build mlx
-
 package sample
 
 import (
@@ -7,6 +5,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
@@ -56,7 +55,7 @@ func runSampleLogprobs(t *testing.T, logits []float32, topK int) (int32, float64
 }
 
 func TestSampleLogprobsBasic(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.SkipIfUnavailable(t)
 
 	tests := []struct {
 		name           string
@@ -83,6 +82,8 @@ func TestSampleLogprobsBasic(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			mlxtest.Setup(t)
+
 			selected, _, top := runSampleLogprobs(t, tt.logits, tt.topK)
 			if selected != tt.wantSelectedID {
 				t.Errorf("selected = %d, want %d", selected, tt.wantSelectedID)
@@ -95,7 +96,7 @@ func TestSampleLogprobsBasic(t *testing.T) {
 }
 
 func TestSampleLogprobsNumericalStability(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	logits := []float32{1000.0, 999.0, 998.0}
 	_, selLP, top := runSampleLogprobs(t, logits, 3)
@@ -116,7 +117,7 @@ func TestSampleLogprobsNumericalStability(t *testing.T) {
 }
 
 func TestSampleLogprobsProbabilityCorrectness(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.SkipIfUnavailable(t)
 
 	tests := []struct {
 		name   string
@@ -130,6 +131,8 @@ func TestSampleLogprobsProbabilityCorrectness(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			mlxtest.Setup(t)
+
 			selected, selLP, top := runSampleLogprobs(t, tt.logits, len(tt.logits))
 
 			if selLP > 0 {
@@ -174,7 +177,7 @@ func TestSampleLogprobsProbabilityCorrectness(t *testing.T) {
 }
 
 func TestSampleLogprobsSoftmaxCorrectness(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.SkipIfUnavailable(t)
 
 	tests := []struct {
 		name   string
@@ -189,6 +192,8 @@ func TestSampleLogprobsSoftmaxCorrectness(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			mlxtest.Setup(t)
+
 			_, _, top := runSampleLogprobs(t, tt.logits, len(tt.logits))
 			if len(top) != len(tt.logits) {
 				t.Fatalf("top-K length = %d, want %d", len(top), len(tt.logits))
@@ -211,7 +216,7 @@ func TestSampleLogprobsSoftmaxCorrectness(t *testing.T) {
 }
 
 func TestSampleLogprobsSelectedTokenCorrectness(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	logits := []float32{3.0, 1.0, 2.0, 0.5}
 
@@ -240,7 +245,7 @@ func TestSampleLogprobsSelectedTokenCorrectness(t *testing.T) {
 // sample call match the per-slot reference. The numerically-stable softmax
 // must reduce along the last axis only, not over the whole batch.
 func TestBatchedLogprobsPerRow(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	rowA := []float32{2, 1, 0}
 	rowB := []float32{0, 5, 0}
@@ -275,7 +280,7 @@ func TestBatchedLogprobsPerRow(t *testing.T) {
 }
 
 func TestSampleLogprobsTopKOrdering(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	// Logits chosen so argmax order differs from index order.
 	logits := []float32{2.0, 5.0, 1.0, 4.0, 3.0}

@@ -352,10 +352,12 @@ func (u *Updater) TriggerImmediateCheck() {
 	}
 }
 
-func (u *Updater) StartBackgroundUpdaterChecker(ctx context.Context, cb func(string) error) {
+func (u *Updater) StartBackgroundUpdaterChecker(ctx context.Context, cb func(string) error) <-chan struct{} {
 	u.checkNow = make(chan struct{}, 1)
 	u.checkNow <- struct{}{} // Trigger first check after initial delay
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		// Don't blast an update message immediately after startup
 		time.Sleep(UpdateCheckInitialDelay)
 		slog.Info("beginning update checker", "interval", UpdateCheckInterval)
@@ -406,4 +408,5 @@ func (u *Updater) StartBackgroundUpdaterChecker(ctx context.Context, cb func(str
 			}
 		}
 	}()
+	return done
 }

@@ -4,11 +4,12 @@ import (
 	"math"
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
 func TestApplyTokenMask(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	const (
 		bitsPerMaskWord       = 32
 		firstTokenID          = 0                   // Least-significant bit of the first mask word.

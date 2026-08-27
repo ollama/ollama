@@ -6,13 +6,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/models/nn"
 )
 
 func TestParseConfigLagunaXS(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	cfg, err := parseConfig([]byte(`{
 		"model_type": "laguna",
 		"hidden_size": 2048,
@@ -89,7 +90,7 @@ func TestParseConfigLagunaXS(t *testing.T) {
 }
 
 func TestParseConfigLagunaFP8RopeScaling(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	cfg, err := parseConfig([]byte(`{
 		"hidden_size": 2048,
 		"intermediate_size": 8192,
@@ -118,7 +119,7 @@ func TestParseConfigLagunaFP8RopeScaling(t *testing.T) {
 }
 
 func TestParseConfigLagunaGASchema(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	cfg, err := parseConfig([]byte(`{
 		"model_type": "laguna",
 		"hidden_size": 2048,
@@ -190,7 +191,7 @@ func TestParseConfigLagunaGASchema(t *testing.T) {
 }
 
 func TestTinyLagunaLoadAndForward(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	cfg, err := parseConfig([]byte(`{
 		"model_type": "laguna",
 		"hidden_size": 8,
@@ -277,7 +278,7 @@ func TestTinyLagunaLoadAndForward(t *testing.T) {
 }
 
 func TestTinyLagunaLoadWeightsFusesDenseGateUp(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	cfg, err := parseConfig([]byte(`{
 		"model_type": "laguna",
 		"hidden_size": 8,
@@ -330,7 +331,7 @@ func TestTinyLagunaLoadWeightsFusesDenseGateUp(t *testing.T) {
 }
 
 func TestTinyLagunaLoadWeightsKeepsBF16SourceLayout(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	cfg, err := parseConfig([]byte(`{
 		"model_type": "laguna",
 		"hidden_size": 8,
@@ -392,7 +393,7 @@ func TestTinyLagunaLoadWeightsKeepsBF16SourceLayout(t *testing.T) {
 }
 
 func TestTinyLagunaLoadWeightsKeepsMixedExpertPrecision(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	cfg := &Config{
 		HiddenSize:                8,
 		IntermediateSize:          12,
@@ -460,7 +461,7 @@ func TestTinyLagunaLoadWeightsKeepsMixedExpertPrecision(t *testing.T) {
 }
 
 func TestSparseMoERouteBiasAffectsSelectionNotRoutingWeights(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	cfg := &Config{
 		HiddenSize:       1,
 		NumExperts:       2,
@@ -501,7 +502,7 @@ func TestSparseMoERouteBiasAffectsSelectionNotRoutingWeights(t *testing.T) {
 }
 
 func TestLagunaSigmoidTopK8CompiledMatchesEager(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	gates := make([]float32, 2*16)
 	for i := range gates {
 		gates[i] = float32((i%13)-6) * 0.2
@@ -541,7 +542,7 @@ func TestLagunaSigmoidTopK8CompiledMatchesEager(t *testing.T) {
 }
 
 func TestLagunaSwiGLUGatheredGateScaleCompiledMatchesEager(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	gateValues := make([]float32, 2*8*4)
 	upValues := make([]float32, len(gateValues))
 	for i := range gateValues {
@@ -569,7 +570,7 @@ func TestLagunaSwiGLUGatheredGateScaleCompiledMatchesEager(t *testing.T) {
 }
 
 func TestLagunaMoEWeightedSumCompiledMatchesEager(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	expertValues := make([]float32, 1*2*8*4)
 	scoreValues := make([]float32, 1*2*8)
 	for i := range expertValues {
@@ -603,7 +604,7 @@ func TestLagunaMoEWeightedSumCompiledMatchesEager(t *testing.T) {
 }
 
 func TestSwitchMLPFusedGateUpMatchesSeparate(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	cfg := &Config{HiddenSize: 4, NumExpertsPerTok: 2}
 	B, L := int32(2), int32(3)
 	xVals := make([]float32, int(B*L*cfg.HiddenSize))
@@ -640,7 +641,7 @@ func TestSwitchMLPFusedGateUpMatchesSeparate(t *testing.T) {
 }
 
 func TestSwitchMLPMixedQuantizedGateUpDenseDownMatchesDense(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	cfg := &Config{HiddenSize: 32, NumExpertsPerTok: 2}
 	x := makePatternExpertWeight(1, 2, int(cfg.HiddenSize), 0.013)
 	indices := mlx.FromValues([]int32{0, 1, 1, 0}, 2, int(cfg.NumExpertsPerTok))
@@ -677,7 +678,7 @@ func TestSwitchMLPMixedQuantizedGateUpDenseDownMatchesDense(t *testing.T) {
 }
 
 func TestDenseExpertWeightForGatherMMDequantizesQuantizedWeight(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	weight := makePatternExpertWeight(2, 4, 32, 0.011)
 	qweight, scales, qbiases := mlx.Quantize(weight, 32, 8, "mxfp8")
 	mlx.Eval(qweight, scales)
@@ -704,7 +705,7 @@ func TestDenseExpertWeightForGatherMMDequantizesQuantizedWeight(t *testing.T) {
 }
 
 func TestCombinedTensorGlobalScaleIgnoresInputGlobalScale(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 	tensors := map[string]*mlx.Array{
 		"proj.weight.global_scale":       mlx.FromValues([]float32{0.25}, 1),
 		"proj.weight.input_global_scale": mlx.FromValues([]float32{8}, 1),
@@ -796,11 +797,4 @@ func ones(n int) *mlx.Array {
 		vals[i] = 1
 	}
 	return mlx.FromValues(vals, n)
-}
-
-func skipIfNoMLX(t *testing.T) {
-	t.Helper()
-	if err := mlx.CheckInit(); err != nil {
-		t.Skipf("MLX not available: %v", err)
-	}
 }

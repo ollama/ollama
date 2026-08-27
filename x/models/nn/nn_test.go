@@ -8,18 +8,13 @@ import (
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
-func skipIfNoMLX(t *testing.T) {
-	t.Helper()
-	mlxtest.Setup(t)
-}
-
 func approxEqual(a, b, tol float32) bool {
 	return float32(math.Abs(float64(a-b))) < tol
 }
 
 // TestLayerNormNoBias verifies LayerNorm without bias against manual computation.
 func TestLayerNormNoBias(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	// Input: [1, 4] — single row, 4 features
 	x := mlx.FromValues([]float32{1, 2, 3, 4}, 1, 4)
@@ -50,7 +45,7 @@ func TestLayerNormNoBias(t *testing.T) {
 
 // TestLayerNormWithBias verifies LayerNorm with weight and bias.
 func TestLayerNormWithBias(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	x := mlx.FromValues([]float32{1, 2, 3, 4}, 1, 4)
 	weight := mlx.FromValues([]float32{2, 2, 2, 2}, 4)
@@ -80,7 +75,7 @@ func TestLayerNormWithBias(t *testing.T) {
 
 // TestLayerNormBatched verifies LayerNorm normalizes each row independently.
 func TestLayerNormBatched(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	// Input: [2, 3] — two rows
 	x := mlx.FromValues([]float32{
@@ -120,7 +115,7 @@ func TestLayerNormBatched(t *testing.T) {
 
 // TestLayerNormDefaultEps verifies the default epsilon of 1e-5 is used when Eps is 0.
 func TestLayerNormDefaultEps(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	x := mlx.FromValues([]float32{1, 2, 3, 4}, 1, 4)
 	weight := mlx.FromValues([]float32{1, 1, 1, 1}, 4)
@@ -145,7 +140,7 @@ func TestLayerNormDefaultEps(t *testing.T) {
 }
 
 func TestQuantizedLinearMXFP4MatchesDequantizedWeight(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	weightVals := make([]float32, 3*32)
 	for i := range weightVals {

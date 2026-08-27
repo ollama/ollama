@@ -1,36 +1,11 @@
 package gemma4
 
 import (
-	"runtime"
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
-
-func useMLXTestThread(t *testing.T) {
-	t.Helper()
-
-	runtime.LockOSThread()
-	initialized := false
-	t.Cleanup(func() {
-		if initialized {
-			mlx.Sweep()
-			mlx.ClearCache()
-			if mlx.GPUIsAvailable() {
-				mlx.SetDefaultDeviceGPU()
-			}
-		}
-		runtime.UnlockOSThread()
-	})
-
-	if err := mlx.CheckInit(); err != nil {
-		t.Skipf("MLX not available: %v", err)
-	}
-	initialized = true
-	if mlx.GPUIsAvailable() {
-		mlx.SetDefaultDeviceGPU()
-	}
-}
 
 // onesLike creates a tensor of the given shape filled with a small constant.
 func onesLike(shape ...int) *mlx.Array {
@@ -73,7 +48,7 @@ func newMoEBlock(cfg *TextConfig) *MoEBlock {
 }
 
 func TestMoERouterForward(t *testing.T) {
-	useMLXTestThread(t)
+	mlxtest.Setup(t)
 
 	cfg := tinyMoEConfig()
 	B, L := int32(1), int32(3)
@@ -96,7 +71,7 @@ func TestMoERouterForward(t *testing.T) {
 }
 
 func TestMoEBlockForward(t *testing.T) {
-	useMLXTestThread(t)
+	mlxtest.Setup(t)
 
 	cfg := tinyMoEConfig()
 	B, L := int32(1), int32(3)
@@ -119,7 +94,7 @@ func TestMoEBlockForward(t *testing.T) {
 }
 
 func TestMoEBlockSortedForward(t *testing.T) {
-	useMLXTestThread(t)
+	mlxtest.Setup(t)
 
 	cfg := tinyMoEConfig()
 	B, L := int32(1), int32(128)
@@ -147,7 +122,7 @@ func TestMoEBlockSortedForward(t *testing.T) {
 // through to the dense branch and was loaded unquantized (the memory bloat
 // bug this fix addresses).
 func TestLoadFusedExpertsQuantized(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.SkipIfUnavailable(t)
 
 	const E, I, H = 4, 8, 16
 	m := &Model{TextConfig: &TextConfig{QuantGroupSize: 16, QuantBits: 4, QuantMode: "nvfp4"}}
@@ -157,6 +132,8 @@ func TestLoadFusedExpertsQuantized(t *testing.T) {
 		"model.language_model.layers.0.moe.switch_mlp", // create pipeline
 	} {
 		t.Run(prefix, func(t *testing.T) {
+			mlxtest.Setup(t)
+
 			gateUpKey := prefix + ".gate_up_proj"
 			downKey := prefix + ".down_proj"
 			tensors := map[string]*mlx.Array{
@@ -194,7 +171,7 @@ func TestLoadFusedExpertsQuantized(t *testing.T) {
 // TestLoadFusedExpertsDense verifies that a fused gate_up projection with no
 // scale companions is loaded onto the dense GatherMM path, kept fused.
 func TestLoadFusedExpertsDense(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Setup(t)
 
 	const E, I, H = 4, 8, 16
 	m := &Model{TextConfig: &TextConfig{}}
@@ -229,7 +206,7 @@ func TestLoadFusedExpertsDense(t *testing.T) {
 // normalized scores as the legacy path that softmaxes over every expert
 // first, gathers the top-k probabilities, then renormalizes.
 func TestRouterForwardMatchesLegacy(t *testing.T) {
-	useMLXTestThread(t)
+	mlxtest.Setup(t)
 
 	cfg := &TextConfig{
 		HiddenSize:  8,
