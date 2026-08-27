@@ -1,12 +1,134 @@
 package qwen4_exp
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
+	"github.com/ollama/ollama/mlxrunner/cache"
+	"github.com/ollama/ollama/mlxrunner/model"
 	"github.com/ollama/ollama/mlxrunner/nn"
 )
+
+type fullAttention struct {
+	QProj nn.LinearLayer
+	KProj nn.LinearLayer
+	VProj nn.LinearLayer
+	OProj nn.LinearLayer
+	QNorm *nn.RMSNorm
+	KNorm *nn.RMSNorm
+
+	Indexer *attentionIndexer
+}
+
+type attentionIndexer struct {
+	QKProj nn.LinearLayer
+	QNorm  *nn.RMSNorm
+	KNorm  *nn.RMSNorm
+}
+
+func loadFullAttention(linears model.LinearFactory, tensors map[string]*mlx.Array, prefix string, eps float32) (*fullAttention, error) {
+	a := &fullAttention{
+		QProj: linears.Make(prefix + ".q_proj"),
+		KProj: linears.Make(prefix + ".k_proj"),
+		VProj: linears.Make(prefix + ".v_proj"),
+		OProj: linears.Make(prefix + ".o_proj"),
+	}
+	var err error
+	if a.QProj == nil || a.KProj == nil || a.VProj == nil || a.OProj == nil {
+		return nil, fmt.Errorf("missing attention projection at %s", prefix)
+	}
+	if a.QNorm, err = loadNorm(tensors, prefix+".q_norm", eps); err != nil {
+		return nil, err
+	}
+	if a.KNorm, err = loadNorm(tensors, prefix+".k_norm", eps); err != nil {
+		return nil, err
+	}
+
+	idx := &attentionIndexer{}
+	if idx.QKProj, err = requiredLinear(linears, prefix+".indexer.index_qk_proj"); err != nil {
+		return nil, err
+	}
+	if idx.QNorm, err = loadNorm(tensors, prefix+".indexer.q_layernorm", eps); err != nil {
+		return nil, err
+	}
+	if idx.KNorm, err = loadNorm(tensors, prefix+".indexer.k_layernorm", eps); err != nil {
+		return nil, err
+	}
+	a.Indexer = idx
+	return a, nil
+}
+
+func (a *fullAttention) Forward(x *mlx.Array, b *batch.Batch, c, side cache.Cache, ropePositions *mlx.Array, cfg *Config) *mlx.Array {
+	dims := x.Dims()
+	B, L := int32(dims[0]), int32(dims[1])
+
+	qg := mlx.Reshape(a.QProj.Forward(x), B, L, cfg.NumAttentionHeads, cfg.HeadDim*2)
+	q := qg.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(), mlx.Slice(0, int(cfg.HeadDim)))
+	gate := qg.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(), mlx.Slice(int(cfg.HeadDim), mlx.End))
+	gate = mlx.Reshape(gate, B, L, cfg.NumAttentionHeads*cfg.HeadDim)
+
+	k := mlx.Reshape(a.KProj.Forward(x), B, L, cfg.NumKeyValueHeads, cfg.HeadDim)
+	v := mlx.Reshape(a.VProj.Forward(x), B, L, cfg.NumKeyValueHeads, cfg.HeadDim)
+	q = a.QNorm.Forward(q, cfg.RMSNormEps)
+	k = a.KNorm.Forward(k, cfg.RMSNormEps)
+	q = mlx.Transpose(q, 0, 2, 1, 3)
+	k = mlx.Transpose(k, 0, 2, 1, 3)
+	v = mlx.Transpose(v, 0, 2, 1, 3)
+	cos, sin := qsaRopeCosSin(cfg, ropePositions)
+	q = applyQwenRoPE(q, cos, sin, cfg.RopeDim)
+	k = applyQwenRoPE(k, cos, sin, cfg.RopeDim)
+
+	indexQ, rawIndexK := a.Indexer.Forward(x, cos, sin, cfg)
+
+	var mainHistory, indexHistory *nn.KVHistory
+	if c != nil {
+		mainHistory = c.(cache.Attention).Update(b, k, v)
+		if side == nil {
+			panic("QSA side cache is missing")
+		}
+		indexHistory = side.(cache.Attention).Update(b, rawIndexK, ropePositions)
+	}
+
+	var out *mlx.Array
+	keyLength := L
+	for _, offset := range b.SeqOffsets {
+		keyLength = max(keyLength, offset+L)
+	}
+	if mainHistory == nil {
+		out = nn.ScaledDotProductAttention(b, q, cfg.Scale,
+			nn.WithKV(k, v, b.SeqQueryLens), nn.WithMask(nn.CausalMask()))
+	} else if keyLength <= cfg.IndexerBudget {
+		// QSA selects the entire visible history within the indexer budget.
+		out = nn.ScaledDotProductAttention(b, q, cfg.Scale,
+			nn.WithKVHistory(mainHistory), nn.WithMask(nn.CausalMask()))
+	} else {
+		compressed := qsaCompressedKeys(indexHistory.K(), indexHistory.V(), a.Indexer, cfg)
+		scores := mlx.Matmul(indexQ.AsType(mlx.DTypeFloat32), mlx.Transpose(compressed.AsType(mlx.DTypeFloat32), 0, 1, 3, 2))
+		scores = mlx.DivScalar(mlx.Sum(mlx.ReLU(scores), 1, false), float32(math.Sqrt(float64(cfg.IndexerHeadDim))))
+		blocks, queryEnds := qsaLogicalBlocks(scores, b, keyLength, cfg)
+		out = qsaSparseAttention(q, mainHistory, blocks, queryEnds, cfg)
+	}
+	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), B, L, cfg.NumAttentionHeads*cfg.HeadDim)
+	out = mlx.Mul(out, mlx.Sigmoid(gate))
+	return a.OProj.Forward(out)
+}
+
+func (a *attentionIndexer) Forward(x, cos, sin *mlx.Array, cfg *Config) (*mlx.Array, *mlx.Array) {
+	B, L := int32(x.Dim(0)), int32(x.Dim(1))
+	projected := a.QKProj.Forward(x)
+	split := int(cfg.IndexerNumHeads * cfg.IndexerHeadDim)
+	q := projected.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, split))
+	k := projected.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(split, int((cfg.IndexerNumHeads+cfg.IndexerKVHeads)*cfg.IndexerHeadDim)))
+	q = mlx.Reshape(q, B, L, cfg.IndexerNumHeads, cfg.IndexerHeadDim)
+	q = a.QNorm.Forward(q, cfg.RMSNormEps)
+	q = applyQwenRoPE(mlx.Transpose(q, 0, 2, 1, 3), cos, sin, cfg.RopeDim)
+	// Keys must stay raw in the cache: compression averages in FP32 before
+	// normalization and applies RoPE at each complete block's first position.
+	k = mlx.Transpose(mlx.Reshape(k, B, L, cfg.IndexerKVHeads, cfg.IndexerHeadDim), 0, 2, 1, 3)
+	return q, k
+}
 
 // canonicalRopePositionRows returns exact [B, 1, L, 3] position rows. MRoPE
 // input is the channel-major [B][3][L] layout used by the vision path.
@@ -57,19 +179,10 @@ func qsaRopeCosSin(cfg *Config, positions *mlx.Array) (cos, sin *mlx.Array) {
 
 func applyQwenRoPE(x, cos, sin *mlx.Array, ropeDim int32) *mlx.Array {
 	headDim := int32(x.Dim(3))
-	rot := mlx.SliceStartStop(x,
-		[]int32{0, 0, 0, 0},
-		[]int32{int32(x.Dim(0)), int32(x.Dim(1)), int32(x.Dim(2)), ropeDim},
-	)
-	half := ropeDim / 2
-	left := mlx.SliceStartStop(rot,
-		[]int32{0, 0, 0, 0},
-		[]int32{int32(rot.Dim(0)), int32(rot.Dim(1)), int32(rot.Dim(2)), half},
-	)
-	right := mlx.SliceStartStop(rot,
-		[]int32{0, 0, 0, half},
-		[]int32{int32(rot.Dim(0)), int32(rot.Dim(1)), int32(rot.Dim(2)), ropeDim},
-	)
+	rot := x.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(), mlx.Slice(0, int(ropeDim)))
+	half := int(ropeDim / 2)
+	left := rot.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(), mlx.Slice(0, half))
+	right := rot.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(), mlx.Slice(half, mlx.End))
 	rotated := mlx.Concatenate([]*mlx.Array{mlx.Neg(right), left}, -1)
 	out := mlx.Add(
 		mlx.Mul(rot, cos.AsType(x.DType())),
@@ -78,10 +191,7 @@ func applyQwenRoPE(x, cos, sin *mlx.Array, ropeDim int32) *mlx.Array {
 	if ropeDim == headDim {
 		return out
 	}
-	pass := mlx.SliceStartStop(x,
-		[]int32{0, 0, 0, ropeDim},
-		[]int32{int32(x.Dim(0)), int32(x.Dim(1)), int32(x.Dim(2)), headDim},
-	)
+	pass := x.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(), mlx.Slice(int(ropeDim), mlx.End))
 	return mlx.Concatenate([]*mlx.Array{out, pass}, -1)
 }
 
@@ -89,30 +199,23 @@ func qsaCompressedKeys(rawKeys, positions *mlx.Array, indexer *attentionIndexer,
 	ratio := cfg.IndexerCompressRatio
 	groups := int32(rawKeys.Dim(2)) / ratio
 	complete := groups * ratio
-	rawKeys = mlx.SliceStartStop(rawKeys,
-		[]int32{0, 0, 0, 0},
-		[]int32{int32(rawKeys.Dim(0)), int32(rawKeys.Dim(1)), complete, int32(rawKeys.Dim(3))},
-	)
+	rawKeys = rawKeys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, int(complete)), mlx.Slice())
 	rawKeys = mlx.Reshape(rawKeys, int32(rawKeys.Dim(0)), int32(rawKeys.Dim(1)), groups, ratio, cfg.IndexerHeadDim)
 	pooled := mlx.Mean(rawKeys.AsType(mlx.DTypeFloat32), 3, false).AsType(rawKeys.DType())
 	pooled = indexer.KNorm.Forward(pooled, cfg.RMSNormEps)
 
-	positions = mlx.SliceStartStop(positions,
-		[]int32{0, 0, 0, 0},
-		[]int32{int32(positions.Dim(0)), int32(positions.Dim(1)), complete, int32(positions.Dim(3))},
-	)
+	positions = positions.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, int(complete)), mlx.Slice())
 	positions = mlx.Reshape(positions, int32(positions.Dim(0)), int32(positions.Dim(1)), groups, ratio, 3)
-	positions = mlx.Squeeze(mlx.SliceStartStop(positions,
-		[]int32{0, 0, 0, 0, 0},
-		[]int32{int32(positions.Dim(0)), int32(positions.Dim(1)), groups, 1, 3},
-	), 3)
+	positions = mlx.Squeeze(positions.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(), mlx.Slice(0), mlx.Slice()), 3)
 	cos, sin := qsaRopeCosSin(cfg, positions)
 	return applyQwenRoPE(pooled, cos, sin, cfg.RopeDim)
 }
 
-// qsaLogicalIndices reproduces the reference's compressed-block top-k and
-// incomplete-group tail. Invalid rows are kept as zero indices with a mask.
-func qsaLogicalIndices(scores *mlx.Array, b *batch.Batch, keyLength int32, cfg *Config) (indices, valid *mlx.Array) {
+// qsaLogicalBlocks reproduces the reference's compressed-block top-k.
+// Blocks outside a query's causal history are represented by -1; queryEnds
+// lets attention append the incomplete causal block without expanding the
+// selected blocks into per-token indices.
+func qsaLogicalBlocks(scores *mlx.Array, b *batch.Batch, keyLength int32, cfg *Config) (selected, queryEnds *mlx.Array) {
 	B, L := int32(scores.Dim(0)), int32(scores.Dim(1))
 	ratio := cfg.IndexerCompressRatio
 	blocks := keyLength / ratio
@@ -132,73 +235,19 @@ func qsaLogicalIndices(scores *mlx.Array, b *batch.Batch, keyLength int32, cfg *
 	if blocks > selectedCount {
 		fill := mlx.AddScalar(mlx.Zeros(scores.DType(), int(B), int(L), int(blocks)), -float32(math.MaxFloat32))
 		masked := mlx.Where(blockValid, scores, fill)
-		selected := mlx.Argpartition(mlx.Neg(masked), int(selectedCount)-1, -1)
-		indices = mlx.SliceStartStop(selected,
-			[]int32{0, 0, 0},
-			[]int32{B, L, selectedCount},
-		)
+		partitioned := mlx.Argpartition(mlx.Neg(masked), int(selectedCount)-1, -1)
+		selected = partitioned.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, int(selectedCount)))
 	} else {
-		indices = mlx.Tile(blockIDs, []int32{B, L, 1})
+		selected = mlx.Tile(blockIDs, []int32{B, L, 1})
 	}
-	blockValid = indices.Less(visibleBlocks)
+	blockValid = selected.Less(visibleBlocks)
+	invalid := mlx.AddScalar(mlx.Zeros(mlx.DTypeInt32, int(B), int(L), int(selectedCount)), -1)
+	selected = mlx.Where(blockValid, selected, invalid).AsType(mlx.DTypeInt32)
+	return selected, mlx.Reshape(visibleTokens, B, L).AsType(mlx.DTypeInt32)
+}
 
-	offsets := mlx.Reshape(mlx.Arange(0, float64(ratio), 1, mlx.DTypeInt32), 1, 1, 1, ratio)
-	expanded := mlx.Add(mlx.MulScalar(mlx.ExpandDims(indices, -1), float32(ratio)), offsets)
-	expandedValid := mlx.Mul(
-		mlx.ExpandDims(blockValid.AsType(mlx.DTypeInt32), -1),
-		expanded.Less(mlx.ExpandDims(visibleTokens, -1)).AsType(mlx.DTypeInt32),
+func qsaSparseAttention(q *mlx.Array, history *nn.KVHistory, blocks, queryEnds *mlx.Array, cfg *Config) *mlx.Array {
+	return mlx.IndexedBlockScaledDotProductAttention(
+		q, history.K(), history.V(), blocks, queryEnds, int(cfg.IndexerCompressRatio), cfg.Scale,
 	)
-	expanded = mlx.Reshape(expanded, B, L, selectedCount*ratio)
-	expandedValid = mlx.Reshape(expandedValid, B, L, selectedCount*ratio)
-
-	// The current partial compression group is always attended causally.
-	tailWidth := ratio - 1
-	tailOffsets := mlx.Reshape(mlx.Arange(0, float64(tailWidth), 1, mlx.DTypeInt32), 1, 1, tailWidth)
-	tailStart := mlx.MulScalar(mlx.FloorDivideScalar(visibleTokens, ratio), float32(ratio))
-	tail := mlx.Add(tailStart, tailOffsets)
-	tailCount := mlx.Sub(visibleTokens, tailStart)
-	tailValid := tailOffsets.Less(tailCount).AsType(mlx.DTypeInt32)
-
-	indices = mlx.Concatenate([]*mlx.Array{expanded, tail}, -1)
-	validInt := mlx.Concatenate([]*mlx.Array{expandedValid, tailValid}, -1)
-	valid = validInt.Greater(mlx.Zeros(mlx.DTypeInt32, int(B), int(L), validInt.Dim(2)))
-	indices = mlx.Where(valid, indices, mlx.Zeros(mlx.DTypeInt32, int(B), int(L), indices.Dim(2)))
-	return indices, valid
-}
-
-func qsaSparseAttention(q *mlx.Array, history *nn.KVHistory, indices, valid *mlx.Array, cfg *Config) *mlx.Array {
-	outputType := q.DType()
-	B, queryHeads, L, D := int32(q.Dim(0)), int32(q.Dim(1)), int32(q.Dim(2)), int32(q.Dim(3))
-	kvHeads := cfg.NumKeyValueHeads
-	repeats := queryHeads / kvHeads
-
-	k := qsaGatherHistory(history.K(), indices)
-	v := qsaGatherHistory(history.V(), indices)
-
-	qr := mlx.Reshape(q, B, kvHeads, repeats, L, 1, D)
-	kr := mlx.Transpose(mlx.ExpandDims(k, 2), 0, 1, 2, 3, 5, 4)
-	scores := mlx.Squeeze(mlx.Matmul(qr.AsType(mlx.DTypeFloat32), kr.AsType(mlx.DTypeFloat32)), 4)
-	scores = mlx.MulScalar(scores, cfg.Scale)
-	mask := mlx.ExpandDims(mlx.ExpandDims(valid, 1), 1)
-	fill := mlx.AddScalar(mlx.Zeros(scores.DType(), scores.Dims()...), -float32(math.MaxFloat32))
-	scores = mlx.Where(mask, scores, fill)
-	probs := mlx.SoftmaxAxis(scores, -1, true)
-
-	vr := mlx.ExpandDims(v.AsType(mlx.DTypeFloat32), 2)
-	out := mlx.Matmul(mlx.ExpandDims(probs, 4), vr)
-	out = mlx.Squeeze(out, 4)
-	return mlx.Reshape(out, B, queryHeads, L, D).AsType(outputType)
-}
-
-// qsaGatherHistory selects each batch row's logical token indices from a
-// [B, H, K, D] cache history and returns [B, H, L, S, D].
-func qsaGatherHistory(history, indices *mlx.Array) *mlx.Array {
-	B, H, K, D := int32(history.Dim(0)), int32(history.Dim(1)), int32(history.Dim(2)), int32(history.Dim(3))
-	offsets := make([]int32, B)
-	for i := range offsets {
-		offsets[i] = int32(i) * K
-	}
-	logical := mlx.Add(indices, mlx.FromValues(offsets, int(B), 1, 1))
-	flattened := mlx.Reshape(mlx.Transpose(history, 1, 0, 2, 3), H, B*K, D)
-	return mlx.Transpose(mlx.Take(flattened, logical, 1), 1, 0, 2, 3, 4)
 }
