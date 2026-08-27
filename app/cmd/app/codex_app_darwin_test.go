@@ -208,7 +208,12 @@ func TestBuildCodexDesktopModelsUsesAvailableRecommendations(t *testing.T) {
 		{Name: "llama3.2:latest"},
 	}
 
-	primary, models, err := buildCodexDesktopModels([]string{"llama3.2", "glm-5.2:cloud", "qwen3:8b"}, recommendations, listed)
+	primary, models, err := buildCodexDesktopModels(
+		[]string{"llama3.2", "glm-5.2:cloud", "qwen3:8b"},
+		recommendations,
+		listed,
+		[]string{"glm-5.2:cloud"},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,14 +239,45 @@ func TestBuildCodexDesktopModelsUsesAvailableRecommendations(t *testing.T) {
 }
 
 func TestBuildCodexDesktopModelsRejectsEmptyCatalog(t *testing.T) {
-	if _, _, err := buildCodexDesktopModels(nil, nil, nil); err == nil {
+	if _, _, err := buildCodexDesktopModels(nil, nil, nil, nil); err == nil {
 		t.Fatal("buildCodexDesktopModels returned nil error for empty catalog")
 	}
 }
 
 func TestBuildCodexDesktopModelsRejectsUnavailableLocalSelection(t *testing.T) {
-	if _, _, err := buildCodexDesktopModels([]string{"missing-local"}, nil, []api.ListModelResponse{{Name: "qwen3:8b"}}); err == nil {
+	if _, _, err := buildCodexDesktopModels([]string{"missing-local"}, nil, []api.ListModelResponse{{Name: "qwen3:8b"}}, nil); err == nil {
 		t.Fatal("buildCodexDesktopModels returned nil error for unavailable selection")
+	}
+}
+
+func TestBuildCodexDesktopModelsExcludesRecommendationOnlyCloudModels(t *testing.T) {
+	recommendations := []api.ModelRecommendation{
+		{Model: "kimi-k2.6:cloud", ContextLength: 262144},
+		{Model: "qwen3:8b", ContextLength: 8192},
+	}
+	listed := []api.ListModelResponse{{Name: "qwen3:8b"}}
+
+	primary, models, err := buildCodexDesktopModels(nil, recommendations, listed, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if primary != "qwen3:8b" || len(models) != 1 || models[0].Name != "qwen3:8b" {
+		t.Fatalf("models = %q, %#v; want only eligible local model", primary, models)
+	}
+}
+
+func TestBuildCodexDesktopModelsExcludesUnentitledListedCloudModels(t *testing.T) {
+	listed := []api.ListModelResponse{
+		{Name: "glm-5.2:cloud", RemoteModel: "glm-5.2"},
+		{Name: "qwen3:8b"},
+	}
+
+	primary, models, err := buildCodexDesktopModels(nil, nil, listed, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if primary != "qwen3:8b" || len(models) != 1 || models[0].Name != "qwen3:8b" {
+		t.Fatalf("models = %q, %#v; want cloud manifest excluded without account access", primary, models)
 	}
 }
 
@@ -256,7 +292,7 @@ func TestBuildCodexDesktopModelsLimitsCatalogToFive(t *testing.T) {
 		{Name: "preferred-model"},
 	}
 
-	primary, models, err := buildCodexDesktopModels([]string{"preferred-model", "model-1", "model-2", "model-3", "model-4"}, nil, listed)
+	primary, models, err := buildCodexDesktopModels([]string{"preferred-model", "model-1", "model-2", "model-3", "model-4"}, nil, listed, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +313,7 @@ func TestBuildCodexDesktopModelsRejectsMoreThanFiveSelections(t *testing.T) {
 	for _, name := range selected {
 		listed = append(listed, api.ListModelResponse{Name: name})
 	}
-	if _, _, err := buildCodexDesktopModels(selected, nil, listed); err == nil {
+	if _, _, err := buildCodexDesktopModels(selected, nil, listed, nil); err == nil {
 		t.Fatal("buildCodexDesktopModels returned nil error for six selections")
 	}
 }

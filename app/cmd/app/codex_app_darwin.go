@@ -33,6 +33,7 @@ var (
 	codexDesktop              codexDesktopController = &launch.CodexApp{}
 	codexDesktopClientFactory                        = api.ClientFromEnvironment
 	codexDesktopLoadModels                           = loadCodexDesktopModels
+	codexDesktopCloudModels                          = loadCodexDesktopAccountCloudModels
 	codexDesktopMu            sync.Mutex
 )
 
@@ -211,26 +212,60 @@ func loadCodexDesktopAvailableModels(ctx context.Context) ([]launch.LaunchModel,
 	if response, listErr := client.List(ctx); listErr == nil {
 		listed = response.Models
 	}
+	var accountCloud []string
+	if names, cloudErr := codexDesktopCloudModels(ctx); cloudErr == nil {
+		accountCloud = names
+	}
 
-	models := codexDesktopAvailableModels(recommendations, listed)
+	models := codexDesktopAvailableModels(recommendations, listed, accountCloud)
 	if len(models) == 0 {
 		return nil, errors.New("no Ollama models are available for ChatGPT")
 	}
 	return models, nil
 }
 
-func buildCodexDesktopModels(selected []string, recommendations []api.ModelRecommendation, listed []api.ListModelResponse) (string, []launch.LaunchModel, error) {
-	available := codexDesktopAvailableModels(recommendations, listed)
+func loadCodexDesktopAccountCloudModels(ctx context.Context) ([]string, error) {
+	models, err := currentClaudeDesktopCloudModels(ctx)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(models))
+	for _, model := range models {
+		name := strings.TrimSpace(model.OllamaModel)
+		if name == "" {
+			name = strings.TrimSpace(model.Name)
+		}
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	return names, nil
+}
+
+func buildCodexDesktopModels(selected []string, recommendations []api.ModelRecommendation, listed []api.ListModelResponse, accountCloud []string) (string, []launch.LaunchModel, error) {
+	available := codexDesktopAvailableModels(recommendations, listed, accountCloud)
 	return selectCodexDesktopModels(selected, available)
 }
 
-func codexDesktopAvailableModels(recommendations []api.ModelRecommendation, listed []api.ListModelResponse) []launch.LaunchModel {
+func codexDesktopAvailableModels(recommendations []api.ModelRecommendation, listed []api.ListModelResponse, accountCloud []string) []launch.LaunchModel {
 	installed := make(map[string]api.ListModelResponse, len(listed))
 	for _, model := range listed {
 		for _, name := range []string{model.Name, model.Model} {
 			if key := codexDesktopModelKey(name); key != "" {
 				installed[key] = model
 			}
+		}
+	}
+	accountCloudSet := make(map[string]bool, len(accountCloud))
+	for _, name := range accountCloud {
+		if key := codexDesktopModelKey(name); key != "" {
+			accountCloudSet[key] = true
+		}
+	}
+	recommended := make(map[string]api.ModelRecommendation, len(recommendations))
+	for _, recommendation := range recommendations {
+		if key := codexDesktopModelKey(recommendation.Model); key != "" {
+			recommended[key] = recommendation
 		}
 	}
 
@@ -251,11 +286,16 @@ func codexDesktopAvailableModels(recommendations []api.ModelRecommendation, list
 		if name == "" {
 			continue
 		}
-		if listedModel, ok := installed[codexDesktopModelKey(name)]; ok {
+		key := codexDesktopModelKey(name)
+		if listedModel, ok := installed[key]; ok && !codexDesktopListedModelIsCloud(listedModel) {
 			add(codexDesktopLaunchModel(listedModel))
 			continue
 		}
-		if !codexDesktopCloudModel(name) {
+		if !codexDesktopCloudModel(name) || !accountCloudSet[key] {
+			continue
+		}
+		if listedModel, ok := installed[key]; ok {
+			add(codexDesktopLaunchModel(listedModel))
 			continue
 		}
 		add(launch.LaunchModel{
@@ -266,10 +306,36 @@ func codexDesktopAvailableModels(recommendations []api.ModelRecommendation, list
 		})
 	}
 	for _, model := range listed {
+		if codexDesktopListedModelIsCloud(model) && !accountCloudSet[codexDesktopModelKey(model.Name)] && !accountCloudSet[codexDesktopModelKey(model.Model)] {
+			continue
+		}
 		add(codexDesktopLaunchModel(model))
+	}
+	for _, name := range accountCloud {
+		key := codexDesktopModelKey(name)
+		if listedModel, ok := installed[key]; ok {
+			add(codexDesktopLaunchModel(listedModel))
+			continue
+		}
+		if recommendation, ok := recommended[key]; ok {
+			add(launch.LaunchModel{
+				Name:            strings.TrimSpace(name),
+				Remote:          true,
+				ContextLength:   recommendation.ContextLength,
+				MaxOutputTokens: recommendation.MaxOutputTokens,
+			})
+			continue
+		}
+		add(launch.LaunchModel{Name: strings.TrimSpace(name), Remote: true})
 	}
 
 	return models
+}
+
+func codexDesktopListedModelIsCloud(model api.ListModelResponse) bool {
+	return model.RemoteModel != "" || model.RemoteHost != "" ||
+		codexDesktopCloudModel(model.Name) ||
+		codexDesktopCloudModel(model.Model)
 }
 
 func selectCodexDesktopModels(selected []string, available []launch.LaunchModel) (string, []launch.LaunchModel, error) {
@@ -333,7 +399,7 @@ func codexDesktopLaunchModel(model api.ListModelResponse) launch.LaunchModel {
 	}
 	return launch.LaunchModel{
 		Name:            name,
-		Remote:          model.RemoteModel != "" || codexDesktopCloudModel(name),
+		Remote:          model.RemoteModel != "" || model.RemoteHost != "" || codexDesktopCloudModel(name),
 		Capabilities:    append([]modelpkg.Capability(nil), model.Capabilities...),
 		ContextLength:   model.Details.ContextLength,
 		EmbeddingLength: model.Details.EmbeddingLength,
