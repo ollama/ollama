@@ -357,6 +357,85 @@ func TestResolveClaudeDesktopStartupCatalogMarksDefaultAccountModelsAutoEligible
 	}
 }
 
+func TestClaudeDesktopCatalogListsAccountModelsWithoutChangingDefaults(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	mappings := api.ModelRecommendationMappings{
+		"claude-sonnet-5": {Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"},
+	}
+	recommendations := claudeDesktopRecommendationModelsForTest(t, []api.ModelRecommendation{
+		{Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"},
+	}, &mappings)
+
+	previousLoader := claudeModelsLoader
+	previousAccess := claudeAccessStateResolver
+	previousCloud := claudeCloudModelsResolver
+	claudeProxyMu.Lock()
+	previousAvailable := claudeAvailableModels
+	previousSource := claudeModelSource
+	previousUpdated := claudeCatalogUpdated
+	claudeProxyMu.Unlock()
+	claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
+		return recommendations, "endpoint"
+	}
+	claudeAccessStateResolver = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
+		return proxy.ClaudeDesktopAccessState{
+			Cloud:   proxy.ClaudeDesktopCloudOn,
+			Account: proxy.ClaudeDesktopAccountSignedIn,
+			Plan:    "pro",
+		}, nil
+	}
+	claudeCloudModelsResolver = func(context.Context) ([]proxy.ClaudeDesktopModel, error) {
+		return proxy.ClaudeDesktopModelsFromCloudInventory([]string{
+			"glm-5.3-flash:cloud",
+			"deepseek-v4-flash:cloud",
+		}), nil
+	}
+	t.Cleanup(func() {
+		claudeModelsLoader = previousLoader
+		claudeAccessStateResolver = previousAccess
+		claudeCloudModelsResolver = previousCloud
+		claudeProxyMu.Lock()
+		claudeAvailableModels = previousAvailable
+		claudeModelSource = previousSource
+		claudeCatalogUpdated = previousUpdated
+		claudeProxyMu.Unlock()
+	})
+
+	assertCatalog := func(t *testing.T, available, selected []proxy.ClaudeDesktopModel) {
+		t.Helper()
+		if got := proxy.ClaudeDesktopMappings(selected); !maps.Equal(got, map[string]string{
+			"claude-sonnet-5": "glm-5.3-flash:cloud",
+		}) {
+			t.Fatalf("default mappings = %v, want GLM Flash for Sonnet 5", got)
+		}
+		for _, model := range available {
+			if model.OllamaModel != "deepseek-v4-flash:cloud" {
+				continue
+			}
+			if model.Recommended {
+				t.Fatal("account DeepSeek model was marked as recommended")
+			}
+			if !model.AccountCloud {
+				t.Fatal("account DeepSeek model is missing cloud inventory membership")
+			}
+			return
+		}
+		t.Fatal("account DeepSeek model is missing from the selectable catalog")
+	}
+
+	available, selected, source := resolveClaudeDesktopStartupCatalog(context.Background())
+	if source != "endpoint" {
+		t.Fatalf("source = %q, want endpoint", source)
+	}
+	assertCatalog(t, available, selected)
+
+	available, selected, source = refreshClaudeDesktopCatalog(context.Background(), selected, true)
+	if source != "endpoint" {
+		t.Fatalf("refreshed source = %q, want endpoint", source)
+	}
+	assertCatalog(t, available, selected)
+}
+
 func TestResolveClaudeDesktopStartupCatalogUsesSafeFallback(t *testing.T) {
 	states := []struct {
 		name  string
@@ -1079,7 +1158,6 @@ func TestSetClaudeDesktopAutoModeAvoidsUnnecessaryRestart(t *testing.T) {
 	claudeAvailableModels = mergeClaudeDesktopCloudInventory(
 		proxy.ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "glm-5.2:cloud"}}),
 		proxy.ClaudeDesktopModelsFromCloudInventory([]string{"glm-5.2:cloud"}),
-		false,
 	)
 	previousDesktop := claudeDesktop
 	previousRunning := claudeDesktopRunning
@@ -1186,7 +1264,7 @@ func TestClaudeDesktopAutoModeModelEligibility(t *testing.T) {
 		"glm-5.2:cloud",
 		"gemma4:31b-cloud",
 	})
-	recommended = mergeClaudeDesktopCloudInventory(recommended, accountCloud, false)
+	recommended = mergeClaudeDesktopCloudInventory(recommended, accountCloud)
 	custom := proxy.SelectClaudeDesktopModels(nil, []string{"qwen3:8b"})
 	tagOnly := proxy.SelectClaudeDesktopModels(nil, []string{"made-up:cloud"})
 
