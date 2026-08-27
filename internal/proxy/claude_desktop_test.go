@@ -971,7 +971,11 @@ func TestGatewayContinuesTokenCountWhenSlotChangesDuringRefresh(t *testing.T) {
 		_ = p.Close(ctx)
 	})
 
-	response := make(chan *http.Response, 1)
+	type tokenCountResponse struct {
+		status int
+		body   []byte
+	}
+	response := make(chan tokenCountResponse, 1)
 	requestErr := make(chan error, 1)
 	go func() {
 		resp, err := http.Post(
@@ -983,7 +987,13 @@ func TestGatewayContinuesTokenCountWhenSlotChangesDuringRefresh(t *testing.T) {
 			requestErr <- err
 			return
 		}
-		response <- resp
+		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			requestErr <- err
+			return
+		}
+		response <- tokenCountResponse{status: resp.StatusCode, body: body}
 	}()
 	<-started
 	if err := p.SetModels(updated); err != nil {
@@ -995,13 +1005,11 @@ func TestGatewayContinuesTokenCountWhenSlotChangesDuringRefresh(t *testing.T) {
 	case err := <-requestErr:
 		t.Fatal(err)
 	case resp := <-response:
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			t.Fatalf("response = (%d, %q), want status %d", resp.StatusCode, body, http.StatusOK)
+		if resp.status != http.StatusOK {
+			t.Fatalf("response = (%d, %q), want status %d", resp.status, resp.body, http.StatusOK)
 		}
 		var result anthropic.CountTokensResponse
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		if err := json.Unmarshal(resp.body, &result); err != nil {
 			t.Fatal(err)
 		}
 		if result.InputTokens <= 0 {
