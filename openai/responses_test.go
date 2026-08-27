@@ -661,6 +661,36 @@ func TestFromResponsesRequest_NamespaceTools(t *testing.T) {
 	}
 }
 
+func TestJoinNamespacePartsUsesPriorSegmentSeparator(t *testing.T) {
+	tests := []struct {
+		name  string
+		parts []string
+		want  string
+	}{
+		{"prior segment ends in separator", []string{"a__", "b"}, "a__b"},
+		{"leaf separator is preserved", []string{"a", "b__"}, "a__b__"},
+		{"nested path", []string{"a", "b__", "c", "d__", "e"}, "a__b__c__d__e"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := joinNamespaceParts(tt.parts); got != tt.want {
+				t.Fatalf("joinNamespaceParts(%q) = %q, want %q", tt.parts, got, tt.want)
+			}
+		})
+	}
+
+	t.Run("resolver rejects identical joined names", func(t *testing.T) {
+		_, err := newResponsesToolResolver(ResponsesRequest{Tools: []ResponsesTool{
+			responsesNamespace("a__", responsesFunction("b")),
+			responsesNamespace("a", responsesFunction("b")),
+		}})
+		if err == nil || !strings.Contains(err.Error(), "identity collision") {
+			t.Fatalf("resolver error = %v, want identity collision", err)
+		}
+	})
+}
+
 func TestResponsesToolIdentityRejectsAmbiguity(t *testing.T) {
 	nestedABC := responsesNamespace("a", responsesNamespace("b", responsesFunction("c")))
 	flatNamespaceABC := responsesNamespace("a__b", responsesFunction("c"))
