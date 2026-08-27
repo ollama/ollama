@@ -2150,6 +2150,7 @@ type mockLlm struct {
 	totalSize         uint64
 	contextLength     int
 	vramByGPU         map[ml.DeviceID]uint64
+	numCtx            int
 
 	// loadErr, if non-nil, is returned from Load() to simulate a post-spawn
 	// load failure (e.g. llama-server crashing due to under-predicted VRAM).
@@ -2222,6 +2223,7 @@ func (s *mockLlm) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo { return n
 func (s *mockLlm) HasExited() bool                                    { return false }
 func (s *mockLlm) GetActiveDeviceIDs() []ml.DeviceID                  { return nil }
 func (s *mockLlm) ContextLength() int                                 { return s.contextLength }
+func (s *mockLlm) RunnerOptions() map[string]any                      { return map[string]any{"num_ctx": int64(s.numCtx)} }
 
 func TestRunnerCanBeEvicted(t *testing.T) {
 	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
