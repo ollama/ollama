@@ -516,6 +516,14 @@ describe("Onboarding", () => {
         command: "ollama launch droid",
       },
       {
+        id: "dsh",
+        name: "DeepSeek Harness",
+        description: "DeepSeek's open-source agent harness",
+        installed: false,
+        action: "copy",
+        command: "ollama launch dsh",
+      },
+      {
         id: "cline",
         name: "Cline",
         description: "Autonomous coding agent",
@@ -581,6 +589,10 @@ describe("Onboarding", () => {
     expect(html).toContain("/launch-icons/claude-code.svg");
     expect(html).toMatch(
       /src="\/launch-icons\/cline\.svg"[^>]*class="[^"]*dark:invert/,
+    );
+    expect(html).toContain("/launch-icons/deepseek-harness.svg");
+    expect(html).not.toMatch(
+      /src="\/launch-icons\/deepseek-harness\.svg"[^>]*class="[^"]*dark:invert/,
     );
     expect(html).not.toContain("<table");
     expect(html).not.toContain("<footer");
