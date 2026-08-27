@@ -125,6 +125,11 @@ func boundedNumPredict(numPredict, numCtx int) int {
 	if numCtx <= 0 {
 		return numPredict
 	}
+	// num_predict==-2 means "fill the context buffer" — pass it through to
+	// llama-server which handles n_predict==-2 natively.
+	if numPredict == -2 {
+		return numPredict
+	}
 	// Ollama's default num_predict=-1 means "generate until a stop condition".
 	// llama-server still needs a finite request budget, so keep open-ended
 	// generations bounded while allowing several full context windows.
