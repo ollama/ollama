@@ -732,6 +732,18 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	ch := make(chan any)
+	// numPredict==-2 ("fill context") is handled at the Go level by
+	// counting tokens and stopping generation when the context buffer
+	// is full.  The prompt token count is obtained via an extra
+	// Tokenize call before generation begins.
+	var promptTokens int
+	if opts.NumPredict == -2 {
+		if tokens, err := r.Tokenize(c.Request.Context(), prompt); err == nil {
+			promptTokens = len(tokens)
+		}
+	}
+	var generatedTokens int
+	var contextFilled bool
 	go func() {
 		// TODO (jmorganca): avoid building the response twice both here and below
 		var sb strings.Builder
@@ -798,6 +810,24 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				ch <- gin.H{"error": err.Error()}
 			}
 
+			// Fill-context: count generated tokens and stop when the buffer is full.
+			if !contextFilled && promptTokens > 0 {
+				generatedTokens++
+				if promptTokens+generatedTokens >= opts.NumCtx {
+					contextFilled = true
+					res := api.GenerateResponse{
+						Model:      req.Model,
+						CreatedAt:  time.Now().UTC(),
+						Response:   sb.String(),
+						Done:       true,
+						DoneReason: "length",
+					}
+					ch <- res
+					cancel()
+					return
+				}
+			}
+
 			if cr.Done {
 				res.DoneReason = cr.DoneReason.String()
 				res.TotalDuration = time.Since(checkpointStart)
@@ -826,6 +856,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 			ch <- res
 		}); err != nil {
+			if contextFilled {
+				// Suppress the context.Canceled error — we already sent the
+				// done response when the context buffer was full.
+				return
+			}
 			if parserErr == nil {
 				s.sched.expireRunnersForRuntimeOOM(m, err)
 				var serr api.StatusError
@@ -3331,6 +3366,18 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 
 	ch := make(chan any)
+	// numPredict==-2 ("fill context") is handled at the Go level by
+	// counting tokens and stopping generation when the context buffer
+	// is full.  The prompt token count is obtained via an extra
+	// Tokenize call before generation begins.
+	var promptTokens int
+	if opts.NumPredict == -2 {
+		if tokens, err := r.Tokenize(c.Request.Context(), prompt); err == nil {
+			promptTokens = len(tokens)
+		}
+	}
+	var generatedTokens int
+	var contextFilled bool
 	go func() {
 		defer close(ch)
 
@@ -3440,12 +3487,33 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			}
 
 			ch <- res
+			// Fill-context: count generated tokens and stop when the buffer is full.
+			if !contextFilled && promptTokens > 0 {
+				generatedTokens++
+				if promptTokens+generatedTokens >= opts.NumCtx {
+					contextFilled = true
+					ch <- api.ChatResponse{
+						Model:      req.Model,
+						CreatedAt:  time.Now().UTC(),
+						Message:    api.Message{Role: "assistant"},
+						Done:       true,
+						DoneReason: "length",
+					}
+					cancel()
+					return
+				}
+			}
 		})
 		if parserErr != nil {
 			ch <- gin.H{"error": parserErr.Error()}
 			return
 		}
 		if err != nil {
+			if contextFilled {
+				// Suppress the context.Canceled error — we already sent the
+				// done response when the context buffer was full.
+				return
+			}
 			s.sched.expireRunnersForRuntimeOOM(m, err)
 			var serr api.StatusError
 			if errors.As(err, &serr) {
