@@ -812,7 +812,7 @@ func TestGatewayRefreshesEntitlementsWithoutRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertResponseContains(t, resp, http.StatusBadRequest, "model catalog changed")
+	assertResponseContains(t, resp, http.StatusOK, `"ok":true`)
 
 	resp, err = http.Post(
 		"http://"+p.Addr()+"/v1/messages",
@@ -860,7 +860,7 @@ func TestGatewayDiscardsRefreshThatRacesWithModelUpdate(t *testing.T) {
 	}
 }
 
-func TestGatewayRejectsRequestWhenSlotChangesDuringRefresh(t *testing.T) {
+func TestGatewayContinuesRequestWhenSlotChangesDuringRefresh(t *testing.T) {
 	var upstreamCalls atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		upstreamCalls.Add(1)
@@ -929,18 +929,98 @@ func TestGatewayRejectsRequestWhenSlotChangesDuringRefresh(t *testing.T) {
 	case err := <-requestErr:
 		t.Fatal(err)
 	case resp := <-response:
-		if resp.status != http.StatusBadRequest || !strings.Contains(resp.body, "model catalog changed") {
-			t.Fatalf("response = (%d, %q), want status %d containing %q", resp.status, resp.body, http.StatusBadRequest, "model catalog changed")
+		if resp.status != http.StatusOK {
+			t.Fatalf("response = (%d, %q), want status %d", resp.status, resp.body, http.StatusOK)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for request")
 	}
-	if got := upstreamCalls.Load(); got != 0 {
-		t.Fatalf("upstream calls = %d, want 0 after a slot change", got)
+	if got := upstreamCalls.Load(); got != 1 {
+		t.Fatalf("upstream calls = %d, want 1 after a slot change", got)
 	}
 }
 
-func TestGatewayRejectsAdmittedRequestAfterSlotReassignment(t *testing.T) {
+func TestGatewayContinuesTokenCountWhenSlotChangesDuringRefresh(t *testing.T) {
+	initial := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "model-a:cloud", RequiredPlan: "free"}})
+	updated := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "model-b:cloud", RequiredPlan: "free"}})
+	started := make(chan struct{})
+	release := make(chan struct{})
+	p, err := NewClaudeDesktop(ClaudeDesktopConfig{
+		ListenAddr: "127.0.0.1:0",
+		OllamaURL:  "http://127.0.0.1:11434",
+		Model:      initial[0].OllamaModel,
+		Models:     initial,
+		RefreshModels: func(_ context.Context, current []ClaudeDesktopModel) ([]ClaudeDesktopModel, error) {
+			close(started)
+			<-release
+			return current, nil
+		},
+		ResolveAccessState: func(context.Context) (ClaudeDesktopAccessState, error) {
+			return ClaudeDesktopAccessState{Cloud: ClaudeDesktopCloudOn, Account: ClaudeDesktopAccountSignedIn, Plan: "free"}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = p.Close(ctx)
+	})
+
+	type tokenCountResponse struct {
+		status int
+		body   []byte
+	}
+	response := make(chan tokenCountResponse, 1)
+	requestErr := make(chan error, 1)
+	go func() {
+		resp, err := http.Post(
+			"http://"+p.Addr()+"/v1/messages/count_tokens",
+			"application/json",
+			strings.NewReader(`{"model":"claude-fable-5","messages":[{"role":"user","content":"hello"}]}`),
+		)
+		if err != nil {
+			requestErr <- err
+			return
+		}
+		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			requestErr <- err
+			return
+		}
+		response <- tokenCountResponse{status: resp.StatusCode, body: body}
+	}()
+	<-started
+	if err := p.SetModels(updated); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+
+	select {
+	case err := <-requestErr:
+		t.Fatal(err)
+	case resp := <-response:
+		if resp.status != http.StatusOK {
+			t.Fatalf("response = (%d, %q), want status %d", resp.status, resp.body, http.StatusOK)
+		}
+		var result anthropic.CountTokensResponse
+		if err := json.Unmarshal(resp.body, &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.InputTokens <= 0 {
+			t.Fatalf("input_tokens = %d, want positive estimate", result.InputTokens)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for token-count response")
+	}
+}
+
+func TestGatewayRoutesAdmittedRequestAfterSlotReassignment(t *testing.T) {
 	for _, tt := range []struct {
 		name    string
 		initial []ClaudeDesktopModel
@@ -967,7 +1047,7 @@ func TestGatewayRejectsAdmittedRequestAfterSlotReassignment(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			generation, admitted := p.modelSnapshotWithGeneration()
+			_, admitted := p.modelSnapshot()
 			if err := p.SetModels(tt.updated); err != nil {
 				t.Fatal(err)
 			}
@@ -976,9 +1056,17 @@ func TestGatewayRejectsAdmittedRequestAfterSlotReassignment(t *testing.T) {
 				"http://127.0.0.1/v1/messages",
 				strings.NewReader(`{"model":"claude-fable-5","messages":[]}`),
 			)
-			err = p.routeModel(request, generation, admitted)
-			if err == nil || !strings.Contains(err.Error(), "model catalog changed") {
-				t.Fatalf("route error = %v, want catalog-changed rejection", err)
+			if err := p.routeModel(request, admitted); err != nil {
+				t.Fatal(err)
+			}
+			var payload struct {
+				Model string `json:"model"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload.Model != tt.initial[0].OllamaModel {
+				t.Fatalf("routed model = %q, want admitted model %q", payload.Model, tt.initial[0].OllamaModel)
 			}
 		})
 	}
