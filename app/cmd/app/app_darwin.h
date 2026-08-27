@@ -17,7 +17,7 @@ enum AppMove
 };
 
 void run(bool showOnboarding, bool startHidden);
-void killOtherInstances();
+bool killOtherInstances(void);
 bool otherOllamaInstanceRunning(void);
 enum AppMove askToMoveToApplications();
 int createSymlinkWithAuthorization();

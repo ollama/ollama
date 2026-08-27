@@ -8,12 +8,21 @@
 #import <ServiceManagement/ServiceManagement.h>
 #import <WebKit/WebKit.h>
 #import <objc/runtime.h>
+#include <errno.h>
+#include <libproc.h>
+#include <signal.h>
 #include <stdlib.h>
+#include <time.h>
+#include <unistd.h>
 
 extern NSString *SystemWidePath;
 
 static NSString *const ClaudeDownloadPageURL = @"https://claude.com/download";
 static NSString *const ShowAppsInMenuDefaultsKey = @"ShowAppsInMenu";
+static const uint64_t AppHandoffTerminateTimeoutNanos = 30 * NSEC_PER_SEC;
+static const uint64_t AppHandoffTimeoutNanos = 35 * NSEC_PER_SEC;
+static const useconds_t AppHandoffPollInterval = 50 * 1000;
+static const useconds_t AppHandoffSettleInterval = 100 * 1000;
 static NSBundle *OllamaResourceBundle(void);
 
 static BOOL shouldShowAppsInMenu(void) {
@@ -1573,24 +1582,238 @@ bool otherOllamaInstanceRunning(void) {
     return false;
 }
 
-// killOtherInstances kills all other instances of the app currently
-// running. This way we can ensure that only the most recently started
-// instance of Ollama is running
-void killOtherInstances() {
+typedef struct {
+    pid_t pid;
+    uint64_t startSeconds;
+    uint64_t startMicroseconds;
+} OllamaProcessIdentity;
+
+typedef enum {
+    OllamaProcessExited,
+    OllamaProcessRunning,
+    OllamaProcessUnknown,
+} OllamaProcessState;
+
+typedef enum {
+    OllamaWaitExited,
+    OllamaWaitTimedOut,
+    OllamaWaitFailed,
+} OllamaWaitResult;
+
+static uint64_t monotonicNanos(void) {
+    struct timespec now = {0};
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
+        return 0;
+    }
+    return (uint64_t)now.tv_sec * NSEC_PER_SEC + (uint64_t)now.tv_nsec;
+}
+
+static bool readProcessIdentity(pid_t pid, OllamaProcessIdentity *identity) {
+    struct proc_bsdinfo info = {0};
+    int size = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, sizeof(info));
+    if (size != sizeof(info)) {
+        return false;
+    }
+    identity->pid = pid;
+    identity->startSeconds = info.pbi_start_tvsec;
+    identity->startMicroseconds = info.pbi_start_tvusec;
+    return true;
+}
+
+static bool processStartedAfter(OllamaProcessIdentity process,
+                                OllamaProcessIdentity other) {
+    if (process.startSeconds != other.startSeconds) {
+        return process.startSeconds > other.startSeconds;
+    }
+    if (process.startMicroseconds != other.startMicroseconds) {
+        return process.startMicroseconds > other.startMicroseconds;
+    }
+    return process.pid > other.pid;
+}
+
+static OllamaProcessState processState(OllamaProcessIdentity expected) {
+    OllamaProcessIdentity actual = {0};
+    if (readProcessIdentity(expected.pid, &actual)) {
+        if (actual.startSeconds == expected.startSeconds &&
+            actual.startMicroseconds == expected.startMicroseconds) {
+            return OllamaProcessRunning;
+        }
+        return OllamaProcessExited;
+    }
+
+    if (kill(expected.pid, 0) == 0 || errno == EPERM) {
+        return OllamaProcessUnknown;
+    }
+    return errno == ESRCH ? OllamaProcessExited : OllamaProcessUnknown;
+}
+
+static bool otherOllamaProcesses(OllamaProcessIdentity **processes,
+                                 size_t *count) {
     pid_t myPid = getpid();
     NSArray *apps = [[NSWorkspace sharedWorkspace] runningApplications];
+    OllamaProcessIdentity *result = calloc(apps.count, sizeof(*result));
+    if (result == NULL && apps.count > 0) {
+        return false;
+    }
 
+    size_t resultCount = 0;
     for (NSRunningApplication *app in apps) {
-        if (isOllamaApplication(app)) {
-            pid_t pid = app.processIdentifier;
-            if (pid != myPid && pid > 0) {
-                appLogInfo([NSString stringWithFormat:@"terminating other ollama instance %d", pid]);
-                // Preserve the Claude profile while the replacement instance
-                // takes ownership of the local gateway.
-                kill(pid, SIGUSR1);
-            } else if (pid == -1) {
-                appLogInfo([NSString stringWithFormat:@"skipping app with invalid pid: %@", app.bundleIdentifier]);
+        pid_t pid = app.processIdentifier;
+        if (!isOllamaApplication(app) || pid == myPid) {
+            continue;
+        }
+        if (pid <= 0) {
+            appLogInfo([NSString stringWithFormat:
+                @"skipping app with invalid pid: %@", app.bundleIdentifier]);
+            continue;
+        }
+
+        OllamaProcessIdentity identity = {0};
+        if (readProcessIdentity(pid, &identity)) {
+            result[resultCount++] = identity;
+            continue;
+        }
+        if (kill(pid, 0) != 0 && errno == ESRCH) {
+            continue;
+        }
+        appLogInfo([NSString stringWithFormat:
+            @"unable to inspect ollama instance %d", pid]);
+        free(result);
+        return false;
+    }
+
+    *processes = result;
+    *count = resultCount;
+    return true;
+}
+
+static bool signalProcesses(OllamaProcessIdentity *processes, size_t count,
+                            int signal, NSString *signalName) {
+    bool signaled = true;
+    for (size_t i = 0; i < count; i++) {
+        pid_t pid = processes[i].pid;
+        OllamaProcessState state = processState(processes[i]);
+        if (state == OllamaProcessExited) {
+            continue;
+        }
+        if (state == OllamaProcessUnknown) {
+            appLogInfo([NSString stringWithFormat:
+                @"unable to inspect ollama instance %d before %@", pid,
+                signalName]);
+            signaled = false;
+            continue;
+        }
+
+        appLogInfo([NSString stringWithFormat:
+            @"sending %@ to ollama instance %d", signalName, pid]);
+        if (kill(pid, signal) != 0 && errno != ESRCH) {
+            appLogInfo([NSString stringWithFormat:
+                @"unable to send %@ to ollama instance %d", signalName, pid]);
+            signaled = false;
+        }
+    }
+    return signaled;
+}
+
+static OllamaWaitResult waitForProcessesToExit(
+    OllamaProcessIdentity *processes, size_t count, uint64_t deadline) {
+    while (true) {
+        bool running = false;
+        for (size_t i = 0; i < count; i++) {
+            OllamaProcessState state = processState(processes[i]);
+            if (state == OllamaProcessUnknown) {
+                appLogInfo([NSString stringWithFormat:
+                    @"unable to inspect ollama instance %d", processes[i].pid]);
+                return OllamaWaitFailed;
             }
+            running = running || state == OllamaProcessRunning;
+        }
+        if (!running) {
+            return OllamaWaitExited;
+        }
+        uint64_t now = monotonicNanos();
+        if (now == 0) {
+            appLogInfo(@"unable to read ollama instance handoff timer");
+            return OllamaWaitFailed;
+        }
+        if (now >= deadline) {
+            return OllamaWaitTimedOut;
+        }
+        usleep(AppHandoffPollInterval);
+    }
+}
+
+// killOtherInstances is a synchronous handoff barrier. It returns only after
+// every other packaged Ollama process has exited and the process list remains
+// empty, or after the handoff fails.
+bool killOtherInstances(void) {
+    uint64_t now = monotonicNanos();
+    if (now == 0) {
+        appLogInfo(@"unable to start ollama instance handoff timer");
+        return false;
+    }
+    OllamaProcessIdentity self = {0};
+    if (!readProcessIdentity(getpid(), &self)) {
+        appLogInfo(@"unable to inspect the current ollama instance");
+        return false;
+    }
+    uint64_t terminateDeadline = now + AppHandoffTerminateTimeoutNanos;
+    uint64_t deadline = now + AppHandoffTimeoutNanos;
+    bool sawEmpty = false;
+
+    while (true) {
+        OllamaProcessIdentity *processes = NULL;
+        size_t count = 0;
+        if (!otherOllamaProcesses(&processes, &count)) {
+            return false;
+        }
+
+        for (size_t i = 0; i < count; i++) {
+            if (processStartedAfter(processes[i], self)) {
+                appLogInfo([NSString stringWithFormat:
+                    @"newer ollama instance %d owns the app handoff",
+                    processes[i].pid]);
+                free(processes);
+                return false;
+            }
+        }
+
+        if (count == 0) {
+            free(processes);
+            if (sawEmpty) {
+                appLogInfo(@"ollama instance handoff complete");
+                return true;
+            }
+            sawEmpty = true;
+            now = monotonicNanos();
+            if (now == 0 || now >= deadline) {
+                return false;
+            }
+            usleep(AppHandoffSettleInterval);
+            continue;
+        }
+        sawEmpty = false;
+
+        if (!signalProcesses(processes, count, SIGTERM, @"SIGTERM")) {
+            free(processes);
+            return false;
+        }
+
+        OllamaWaitResult wait = waitForProcessesToExit(
+            processes, count, terminateDeadline);
+        if (wait == OllamaWaitTimedOut) {
+            appLogInfo(@"graceful ollama instance handoff timed out; "
+                        @"forcing remaining instances to exit");
+            if (!signalProcesses(processes, count, SIGKILL, @"SIGKILL")) {
+                free(processes);
+                return false;
+            }
+            wait = waitForProcessesToExit(processes, count, deadline);
+        }
+        free(processes);
+        if (wait != OllamaWaitExited) {
+            appLogInfo(@"ollama instance handoff failed");
+            return false;
         }
     }
 }

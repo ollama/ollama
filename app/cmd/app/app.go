@@ -175,7 +175,10 @@ func main() {
 
 	// Check if another instance is already running
 	// On Windows, focus the existing instance; on other platforms, kill it
-	handleExistingInstance(startHidden)
+	if !handleExistingInstance(startHidden) {
+		slog.Error("Ollama instance handoff did not complete")
+		return
+	}
 
 	// on macOS, offer the user to create a symlink
 	// from /usr/local/bin/ollama to the app bundle

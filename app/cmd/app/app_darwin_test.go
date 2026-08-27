@@ -2703,6 +2703,46 @@ func TestRestoreClaudeBeforeQuit(t *testing.T) {
 	}
 }
 
+func TestHandleExistingInstanceSkipsDevelopmentBuild(t *testing.T) {
+	oldIsApp := isApp
+	oldKillOtherInstances := killOtherInstances
+	t.Cleanup(func() {
+		isApp = oldIsApp
+		killOtherInstances = oldKillOtherInstances
+	})
+
+	isApp = false
+	called := false
+	killOtherInstances = func() bool {
+		called = true
+		return false
+	}
+
+	if !handleExistingInstance(false) {
+		t.Fatal("development instance did not continue startup")
+	}
+	if called {
+		t.Fatal("development instance entered the packaged app handoff barrier")
+	}
+}
+
+func TestHandleExistingInstanceReturnsBarrierResult(t *testing.T) {
+	oldIsApp := isApp
+	oldKillOtherInstances := killOtherInstances
+	t.Cleanup(func() {
+		isApp = oldIsApp
+		killOtherInstances = oldKillOtherInstances
+	})
+
+	isApp = true
+	for _, want := range []bool{true, false} {
+		killOtherInstances = func() bool { return want }
+		if got := handleExistingInstance(false); got != want {
+			t.Fatalf("handleExistingInstance() = %v, want %v", got, want)
+		}
+	}
+}
+
 func TestSetClaudeGatewayInstalledRejectsMissingClaude(t *testing.T) {
 	previousInstalled := claudeDesktopInstalled
 	claudeDesktopInstalled = func() bool { return false }

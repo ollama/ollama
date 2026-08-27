@@ -213,9 +213,14 @@ func maybeMoveAndRestart() appMove {
 	return status
 }
 
-// handleExistingInstance handles existing instances on macOS
-func handleExistingInstance(_ bool) {
-	C.killOtherInstances()
+var killOtherInstances = func() bool { return bool(C.killOtherInstances()) }
+
+// handleExistingInstance handles existing instances on macOS.
+func handleExistingInstance(_ bool) bool {
+	if !isApp {
+		return true
+	}
+	return killOtherInstances()
 }
 
 func installSymlink() {
@@ -268,8 +273,7 @@ func osRun(_ func(), hasCompletedFirstRun, startHidden, showOnboarding bool, _ s
 		select {
 		case <-handoffSignal:
 			slog.Info("received app handoff signal, shutting down")
-			stopClaudeAppProxy()
-			C.quit()
+			quit()
 		case <-handoffDone:
 		}
 	}()
