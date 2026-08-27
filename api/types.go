@@ -598,6 +598,7 @@ type Runner struct {
 	MainGPU         *int  `json:"main_gpu,omitempty"`
 	UseMMap         *bool `json:"use_mmap,omitempty"`
 	NumThread       int   `json:"num_thread,omitempty"`
+	NumParallel     int   `json:"num_parallel,omitempty"`
 	DraftNumPredict int   `json:"draft_num_predict,omitempty"`
 }
 
@@ -1240,6 +1241,7 @@ func DefaultOptions() Options {
 			NumBatch:        512,
 			NumGPU:          -1, // -1 here indicates that NumGPU should be set dynamically
 			NumThread:       0,  // let the runtime decide
+			NumParallel:     int(envconfig.NumParallel()),
 			DraftNumPredict: 4,
 			UseMMap:         nil,
 		},
