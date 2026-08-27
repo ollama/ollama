@@ -126,8 +126,8 @@ func (a *fullAttention) Forward(x *mlx.Array, b *batch.Batch, c, side cache.Cach
 		compressed := qsaCompressedKeys(indexHistory.K(), indexHistory.V(), a.Indexer, cfg)
 		scores := mlx.Matmul(indexQ.AsType(mlx.DTypeFloat32), mlx.Transpose(compressed.AsType(mlx.DTypeFloat32), 0, 1, 3, 2))
 		scores = mlx.DivScalar(mlx.Sum(mlx.ReLU(scores), 1, false), float32(math.Sqrt(float64(cfg.IndexerHeadDim))))
-		logical, valid := qsaLogicalIndices(scores, b, keyLength, cfg)
-		out = qsaSparseAttention(q, mainHistory, logical, valid, cfg)
+		blocks, queryEnds := qsaLogicalBlocks(scores, b, keyLength, cfg)
+		out = qsaSparseAttention(q, mainHistory, blocks, queryEnds, cfg)
 	}
 	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), B, L, cfg.NumAttentionHeads*cfg.HeadDim)
 	out = mlx.Mul(out, mlx.Sigmoid(gate))
