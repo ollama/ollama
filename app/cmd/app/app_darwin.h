@@ -1,5 +1,7 @@
 #import <Cocoa/Cocoa.h>
 #import <Security/Security.h>
+#include <stddef.h>
+#include <stdint.h>
 
 @interface AppDelegate : NSObject <NSApplicationDelegate>
 - (void)applicationDidFinishLaunching:(NSNotification *)aNotification;
@@ -17,8 +19,11 @@ enum AppMove
 };
 
 void run(bool showOnboarding, bool startHidden);
-bool killOtherInstances(void);
-bool otherOllamaInstanceRunning(void);
+typedef struct {
+    int pid;
+    int64_t started_at;
+} AppProcessIdentity;
+bool otherOllamaProcesses(AppProcessIdentity **processes, size_t *count);
 enum AppMove askToMoveToApplications();
 int createSymlinkWithAuthorization();
 int installSymlink(const char *cliPath);

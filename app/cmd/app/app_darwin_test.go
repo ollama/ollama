@@ -1590,7 +1590,7 @@ func TestResetClaudeDesktopMappingsSerializesDisconnectDuringCatalogRefresh(t *t
 
 func TestResetClaudeDesktopMappingsSerializesShutdownDuringCatalogRefresh(t *testing.T) {
 	testResetClaudeDesktopMappingsSerializesLifecycleChange(t, "shutdown", func() error {
-		return restoreClaudeAppForTermination(context.Background(), false)
+		return restoreClaudeAppForTermination(context.Background())
 	})
 }
 
@@ -2662,9 +2662,161 @@ func TestClaudeGatewayLocalSelectionCatalogPolicy(t *testing.T) {
 	}
 }
 
+func TestRunAppSyncBarrierStopsOlderInstances(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		stubborn  bool
+		wantStops []appProcessStopMode
+	}{
+		{name: "graceful", wantStops: []appProcessStopMode{appProcessStopGracefully}},
+		{name: "forced", stubborn: true, wantStops: []appProcessStopMode{appProcessStopGracefully, appProcessStopForcefully}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			self := appProcessIdentity{pid: 20, startedAt: 20}
+			older := appProcessIdentity{pid: 10, startedAt: 10}
+			alive := true
+			var stops []appProcessStopMode
+			controller := appProcessController{
+				discover: func() ([]appProcessIdentity, error) {
+					if alive {
+						return []appProcessIdentity{older}, nil
+					}
+					return nil, nil
+				},
+				running: func(process appProcessIdentity) (bool, error) {
+					return alive && process.sameProcess(older), nil
+				},
+				stop: func(process appProcessIdentity, mode appProcessStopMode) error {
+					if !process.sameProcess(older) {
+						t.Fatalf("stopped process %+v, want %+v", process, older)
+					}
+					stops = append(stops, mode)
+					if !test.stubborn || mode == appProcessStopForcefully {
+						alive = false
+					}
+					return nil
+				},
+			}
+
+			err := runAppSyncBarrier(self, controller, appSyncBarrierConfig{
+				gracePeriod:  time.Millisecond,
+				totalTimeout: time.Second,
+				pollInterval: time.Millisecond,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(stops, test.wantStops) {
+				t.Fatalf("stop modes = %v, want %v", stops, test.wantStops)
+			}
+		})
+	}
+}
+
+func TestRunAppSyncBarrierStopsEveryOlderInstance(t *testing.T) {
+	self := appProcessIdentity{pid: 30, startedAt: 30}
+	graceful := appProcessIdentity{pid: 10, startedAt: 10}
+	stubborn := appProcessIdentity{pid: 20, startedAt: 20}
+	late := appProcessIdentity{pid: 25, startedAt: 25}
+	alive := map[appProcessIdentity]bool{
+		graceful: true,
+		stubborn: true,
+	}
+	type stoppedProcess struct {
+		process appProcessIdentity
+		mode    appProcessStopMode
+	}
+	var stops []stoppedProcess
+	lateDiscovered := false
+	controller := appProcessController{
+		discover: func() ([]appProcessIdentity, error) {
+			if !alive[graceful] && !alive[stubborn] && !lateDiscovered {
+				alive[late] = true
+				lateDiscovered = true
+			}
+			var processes []appProcessIdentity
+			for _, process := range []appProcessIdentity{graceful, stubborn, late} {
+				if alive[process] {
+					processes = append(processes, process)
+				}
+			}
+			return processes, nil
+		},
+		running: func(process appProcessIdentity) (bool, error) {
+			return alive[process], nil
+		},
+		stop: func(process appProcessIdentity, mode appProcessStopMode) error {
+			if !alive[process] {
+				return nil
+			}
+			stops = append(stops, stoppedProcess{process: process, mode: mode})
+			if !process.sameProcess(stubborn) || mode == appProcessStopForcefully {
+				alive[process] = false
+			}
+			return nil
+		},
+	}
+
+	err := runAppSyncBarrier(self, controller, appSyncBarrierConfig{
+		gracePeriod:  time.Millisecond,
+		totalTimeout: time.Second,
+		pollInterval: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []stoppedProcess{
+		{process: graceful, mode: appProcessStopGracefully},
+		{process: stubborn, mode: appProcessStopGracefully},
+		{process: stubborn, mode: appProcessStopForcefully},
+		{process: late, mode: appProcessStopGracefully},
+	}
+	if !slices.Equal(stops, want) {
+		t.Fatalf("stops = %+v, want %+v", stops, want)
+	}
+}
+
+func TestRunAppSyncBarrierDefersToNewerInstance(t *testing.T) {
+	self := appProcessIdentity{pid: 10, startedAt: 10}
+	newer := appProcessIdentity{pid: 20, startedAt: 20}
+	stopped := false
+	err := runAppSyncBarrier(self, appProcessController{
+		discover: func() ([]appProcessIdentity, error) {
+			return []appProcessIdentity{newer}, nil
+		},
+		running: func(appProcessIdentity) (bool, error) { return true, nil },
+		stop: func(appProcessIdentity, appProcessStopMode) error {
+			stopped = true
+			return nil
+		},
+	}, appSyncBarrierConfig{totalTimeout: time.Second})
+	if err == nil || !strings.Contains(err.Error(), "newer app instance") {
+		t.Fatalf("barrier error = %v, want newer-instance error", err)
+	}
+	if stopped {
+		t.Fatal("older launch stopped the newer instance")
+	}
+}
+
+func TestRunAppSyncBarrierRequiresSettledEmptyList(t *testing.T) {
+	queries := 0
+	err := runAppSyncBarrier(appProcessIdentity{pid: 1, startedAt: 1}, appProcessController{
+		discover: func() ([]appProcessIdentity, error) {
+			queries++
+			return nil, nil
+		},
+	}, appSyncBarrierConfig{totalTimeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queries != 2 {
+		t.Fatalf("discovery queries = %d, want 2", queries)
+	}
+}
+
 func TestRestoreClaudeBeforeQuit(t *testing.T) {
 	called := false
-	if err := restoreClaudeBeforeQuit(context.Background(), false, false, func(context.Context) error {
+	if err := restoreClaudeBeforeQuit(context.Background(), false, func(context.Context) error {
 		called = true
 		return nil
 	}); err != nil {
@@ -2674,7 +2826,7 @@ func TestRestoreClaudeBeforeQuit(t *testing.T) {
 		t.Fatal("restore called while Claude was not configured")
 	}
 
-	if err := restoreClaudeBeforeQuit(context.Background(), false, true, func(context.Context) error {
+	if err := restoreClaudeBeforeQuit(context.Background(), true, func(context.Context) error {
 		called = true
 		return nil
 	}); err != nil {
@@ -2685,21 +2837,10 @@ func TestRestoreClaudeBeforeQuit(t *testing.T) {
 	}
 
 	wantErr := errors.New("restore failed")
-	if err := restoreClaudeBeforeQuit(context.Background(), false, true, func(context.Context) error {
+	if err := restoreClaudeBeforeQuit(context.Background(), true, func(context.Context) error {
 		return wantErr
 	}); !errors.Is(err, wantErr) {
 		t.Fatalf("restore error = %v, want %v", err, wantErr)
-	}
-
-	called = false
-	if err := restoreClaudeBeforeQuit(context.Background(), true, true, func(context.Context) error {
-		called = true
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if called {
-		t.Fatal("restore called during an app replacement handoff")
 	}
 }
 
@@ -2740,6 +2881,16 @@ func TestHandleExistingInstanceReturnsBarrierResult(t *testing.T) {
 		if got := handleExistingInstance(false); got != want {
 			t.Fatalf("handleExistingInstance() = %v, want %v", got, want)
 		}
+	}
+}
+
+func TestDarwinAppProcessRunningReportsExitedProcess(t *testing.T) {
+	running, err := darwinAppProcessRunning(appProcessIdentity{pid: 1 << 30, startedAt: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if running {
+		t.Fatal("nonexistent process reported as running")
 	}
 }
 
