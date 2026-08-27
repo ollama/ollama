@@ -1,6 +1,7 @@
 package parsers
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/ollama/ollama/api"
@@ -264,5 +265,37 @@ func TestCohereParseBareContentBeforeEndOfTurn(t *testing.T) {
 	})
 	if content != "plain answer" {
 		t.Errorf("content = %q, want %q", content, "plain answer")
+	}
+}
+
+func TestCoherePreservesEndOfTurn(t *testing.T) {
+	// The parser treats <|END_OF_TURN_TOKEN|> as a block boundary, so it has
+	// to survive detokenization. llama-server drops special tokens that are
+	// not listed in PreservedTokens, which would make that boundary invisible.
+	p := &CohereParser{}
+	if !slices.Contains(p.PreservedTokens(), cohereEndOfTurn) {
+		t.Errorf("PreservedTokens() = %v, missing %q", p.PreservedTokens(), cohereEndOfTurn)
+	}
+}
+
+func TestCohereParseTextThenActionSeparatedByEndOfTurn(t *testing.T) {
+	// A model that closes a text block with the end-of-turn marker instead of
+	// <|END_TEXT|> must still have the following action block parsed as a tool
+	// call rather than streamed to the user as literal text.
+	p := &CohereParser{}
+	p.Init(nil, nil, nil)
+
+	content, _, calls := cohereAddAll(t, p, []string{
+		`t<|END_THINKING|><|START_TEXT|>hi<|END_OF_TURN_TOKEN|>` +
+			`<|START_ACTION|>[{"tool_call_id":"1","tool_name":"get_weather","parameters":{"city":"SF"}}]<|END_ACTION|><|END_OF_TURN_TOKEN|>`,
+	})
+	if content != "hi" {
+		t.Errorf("content = %q, want %q", content, "hi")
+	}
+	if len(calls) != 1 {
+		t.Fatalf("calls = %v, want 1 tool call", calls)
+	}
+	if calls[0].Function.Name != "get_weather" {
+		t.Errorf("tool name = %q, want %q", calls[0].Function.Name, "get_weather")
 	}
 }
