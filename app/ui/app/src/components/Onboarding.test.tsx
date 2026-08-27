@@ -33,6 +33,8 @@ describe("Onboarding", () => {
     expect(html.indexOf('alt="Ollama waving"')).toBeLessThan(
       html.indexOf("Welcome to Ollama!"),
     );
+    expect(html).toMatch(/<main class="light-only [^"]*bg-white/);
+    expect(html).not.toMatch(/alt="Ollama waving" class="[^"]*dark:/);
     expect(html).toContain(
       "Run open models with your coding agents so you can spend less while keeping your data private.",
     );
@@ -514,6 +516,22 @@ describe("Onboarding", () => {
         command: "ollama launch droid",
       },
       {
+        id: "dsh",
+        name: "DeepSeek Harness",
+        description: "DeepSeek's open-source agent harness",
+        installed: false,
+        action: "copy",
+        command: "ollama launch dsh",
+      },
+      {
+        id: "cline",
+        name: "Cline",
+        description: "Autonomous coding agent",
+        installed: false,
+        action: "copy",
+        command: "ollama launch cline",
+      },
+      {
         id: "terminal",
         name: "Terminal",
         description: "Run local models from your terminal",
@@ -569,6 +587,13 @@ describe("Onboarding", () => {
     expect(html).not.toContain("inert");
     expect(html).toContain("/launch-icons/claude.svg");
     expect(html).toContain("/launch-icons/claude-code.svg");
+    expect(html).toMatch(
+      /src="\/launch-icons\/cline\.svg"[^>]*class="[^"]*dark:invert/,
+    );
+    expect(html).toContain("/launch-icons/deepseek-harness.svg");
+    expect(html).not.toMatch(
+      /src="\/launch-icons\/deepseek-harness\.svg"[^>]*class="[^"]*dark:invert/,
+    );
     expect(html).not.toContain("<table");
     expect(html).not.toContain("<footer");
     expect(html).not.toContain("Command copied. Run it in your terminal.");
@@ -793,6 +818,7 @@ describe("Onboarding", () => {
     );
 
     expect(html).toContain("Create an account");
+    expect(html).toMatch(/<main class="light-only [^"]*bg-white/);
     expect(html).toContain(
       "Create your account for access to faster, larger open models.",
     );
@@ -829,6 +855,7 @@ describe("Onboarding", () => {
     );
 
     expect(html).toContain("Run Ollama");
+    expect(html).toMatch(/<main class="light-only [^"]*bg-white/);
     expect(html).toContain(FIRST_MODEL_COMMAND);
     expect(html).not.toContain("Finish");
     expect(html).not.toContain("Sign in");

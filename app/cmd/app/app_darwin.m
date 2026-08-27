@@ -1542,7 +1542,6 @@ decidePolicyForNavigationAction:(WKNavigationAction *)action
 AppDelegate *appDelegate;
 void run(bool so, bool sh) {
     [NSApplication sharedApplication];
-    [NSApp setAppearance:[NSAppearance appearanceNamed:NSAppearanceNameAqua]];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
     appDelegate = [[AppDelegate alloc] init];
     [NSApp setDelegate:appDelegate];

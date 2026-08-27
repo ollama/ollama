@@ -99,7 +99,7 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 		// Windows-specific scrollbar styling
 		if runtime.GOOS == "windows" {
 			init += `
-				// Keep Edge WebView2 scrollbars aligned with the light-only app theme.
+				// Keep Edge WebView2 scrollbars aligned with the system theme.
 				function updateScrollbarStyles() {
 					const existingStyle = document.getElementById('scrollbar-style');
 					if (existingStyle) existingStyle.remove();
@@ -112,6 +112,12 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 						::-webkit-scrollbar-thumb { background: #c0c0c0 !important; border-radius: 6px !important; }
 						::-webkit-scrollbar-thumb:hover { background: #a0a0a0 !important; }
 						::-webkit-scrollbar-corner { background: #f0f0f0 !important; }
+						@media (prefers-color-scheme: dark) {
+							::-webkit-scrollbar-track { background: #1a1a1a !important; }
+							::-webkit-scrollbar-thumb { background: #404040 !important; }
+							::-webkit-scrollbar-thumb:hover { background: #505050 !important; }
+							::-webkit-scrollbar-corner { background: #1a1a1a !important; }
+						}
 						::-webkit-scrollbar-button {
 							background: transparent !important;
 							border: none !important;
