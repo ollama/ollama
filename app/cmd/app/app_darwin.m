@@ -8,7 +8,10 @@
 #import <ServiceManagement/ServiceManagement.h>
 #import <WebKit/WebKit.h>
 #import <objc/runtime.h>
+#include <errno.h>
+#include <libproc.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 extern NSString *SystemWidePath;
 
@@ -1561,38 +1564,74 @@ static BOOL isOllamaApplication(NSRunningApplication *app) {
         [bundleId isEqualToString:@"com.electron.ollama"];
 }
 
-bool otherOllamaInstanceRunning(void) {
-    pid_t myPid = getpid();
-    for (NSRunningApplication *app in
-         [[NSWorkspace sharedWorkspace] runningApplications]) {
-        if (isOllamaApplication(app) && app.processIdentifier > 0 &&
-            app.processIdentifier != myPid) {
-            return true;
-        }
-    }
-    return false;
-}
-
-// killOtherInstances kills all other instances of the app currently
-// running. This way we can ensure that only the most recently started
-// instance of Ollama is running
-void killOtherInstances() {
+bool otherOllamaProcesses(AppProcessIdentity **processes, size_t *count) {
     pid_t myPid = getpid();
     NSArray *apps = [[NSWorkspace sharedWorkspace] runningApplications];
-
-    for (NSRunningApplication *app in apps) {
-        if (isOllamaApplication(app)) {
-            pid_t pid = app.processIdentifier;
-            if (pid != myPid && pid > 0) {
-                appLogInfo([NSString stringWithFormat:@"terminating other ollama instance %d", pid]);
-                // Preserve the Claude profile while the replacement instance
-                // takes ownership of the local gateway.
-                kill(pid, SIGUSR1);
-            } else if (pid == -1) {
-                appLogInfo([NSString stringWithFormat:@"skipping app with invalid pid: %@", app.bundleIdentifier]);
-            }
-        }
+    AppProcessIdentity *result = calloc(apps.count, sizeof(*result));
+    if (result == NULL && apps.count > 0) {
+        return false;
     }
+
+    size_t resultCount = 0;
+    for (NSRunningApplication *app in apps) {
+        pid_t pid = app.processIdentifier;
+        if (!isOllamaApplication(app) || pid == myPid) {
+            continue;
+        }
+        if (pid <= 0) {
+            appLogInfo([NSString stringWithFormat:
+                @"skipping app with invalid pid: %@", app.bundleIdentifier]);
+            continue;
+        }
+
+        // Tie the NSWorkspace match to the kernel process. Re-read the start
+        // time after confirming the current app so PID reuse is rejected.
+        struct proc_bsdinfo before = {0};
+        int size = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &before,
+                               sizeof(before));
+        if (size != sizeof(before)) {
+            if (kill(pid, 0) != 0 && errno == ESRCH) {
+                continue;
+            }
+            appLogInfo([NSString stringWithFormat:
+                @"unable to inspect ollama instance %d", pid]);
+            free(result);
+            return false;
+        }
+
+        NSRunningApplication *current =
+            [NSRunningApplication runningApplicationWithProcessIdentifier:pid];
+        if (current == nil || current.isTerminated ||
+            !isOllamaApplication(current)) {
+            continue;
+        }
+
+        struct proc_bsdinfo after = {0};
+        size = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &after, sizeof(after));
+        if (size != sizeof(after)) {
+            if (kill(pid, 0) != 0 && errno == ESRCH) {
+                continue;
+            }
+            appLogInfo([NSString stringWithFormat:
+                @"unable to confirm ollama instance %d", pid]);
+            free(result);
+            return false;
+        }
+        if (before.pbi_start_tvsec != after.pbi_start_tvsec ||
+            before.pbi_start_tvusec != after.pbi_start_tvusec) {
+            continue;
+        }
+
+        result[resultCount++] = (AppProcessIdentity){
+            .pid = pid,
+            .started_at = (int64_t)after.pbi_start_tvsec * 1000000 +
+                after.pbi_start_tvusec,
+        };
+    }
+
+    *processes = result;
+    *count = resultCount;
+    return true;
 }
 
 // Move the source bundle to the system-wide applications location

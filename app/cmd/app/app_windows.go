@@ -74,11 +74,12 @@ func maybeMoveAndRestart() appMove {
 }
 
 // handleExistingInstance checks for existing instances and optionally focuses them
-func handleExistingInstance(startHidden bool) {
+func handleExistingInstance(startHidden bool) bool {
 	if wintray.CheckAndFocusExistingInstance(!startHidden) {
 		slog.Info("existing instance found, exiting")
 		os.Exit(0)
 	}
+	return true
 }
 
 func installSymlink() {}

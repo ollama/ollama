@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"net"
 	"net/http"
@@ -2662,9 +2663,182 @@ func TestClaudeGatewayLocalSelectionCatalogPolicy(t *testing.T) {
 	}
 }
 
+func TestRunAppSyncBarrierStopsOlderInstances(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		exitOn    appProcessStopMode
+		wantStops []appProcessStopMode
+	}{
+		{name: "handoff", exitOn: appProcessStopForHandoff, wantStops: []appProcessStopMode{appProcessStopForHandoff}},
+		{name: "graceful", exitOn: appProcessStopGracefully, wantStops: []appProcessStopMode{appProcessStopForHandoff, appProcessStopGracefully}},
+		{name: "forced", exitOn: appProcessStopForcefully, wantStops: []appProcessStopMode{appProcessStopForHandoff, appProcessStopGracefully, appProcessStopForcefully}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			self := appProcessIdentity{pid: 20, startedAt: 20}
+			older := appProcessIdentity{pid: 10, startedAt: 10}
+			alive := true
+			var stops []appProcessStopMode
+			controller := appProcessController{
+				discover: func() ([]appProcessIdentity, error) {
+					if alive {
+						return []appProcessIdentity{older}, nil
+					}
+					return nil, nil
+				},
+				running: func(process appProcessIdentity) (bool, error) {
+					return alive && process.sameProcess(older), nil
+				},
+				stop: func(process appProcessIdentity, mode appProcessStopMode) error {
+					if !process.sameProcess(older) {
+						t.Fatalf("stopped process %+v, want %+v", process, older)
+					}
+					stops = append(stops, mode)
+					if mode == test.exitOn {
+						alive = false
+					}
+					return nil
+				},
+			}
+
+			err := runAppSyncBarrier(self, controller, appSyncBarrierConfig{
+				killTimeout:  time.Second,
+				pollInterval: time.Millisecond,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(stops, test.wantStops) {
+				t.Fatalf("stop modes = %v, want %v", stops, test.wantStops)
+			}
+		})
+	}
+}
+
+func TestRunAppSyncBarrierStopsEveryOlderInstance(t *testing.T) {
+	self := appProcessIdentity{pid: 30, startedAt: 30}
+	graceful := appProcessIdentity{pid: 10, startedAt: 10}
+	stubborn := appProcessIdentity{pid: 20, startedAt: 20}
+	late := appProcessIdentity{pid: 25, startedAt: 25}
+	alive := map[appProcessIdentity]bool{
+		graceful: true,
+		stubborn: true,
+	}
+	type stoppedProcess struct {
+		process appProcessIdentity
+		mode    appProcessStopMode
+	}
+	var stops []stoppedProcess
+	lateDiscovered := false
+	controller := appProcessController{
+		discover: func() ([]appProcessIdentity, error) {
+			if !alive[graceful] && !alive[stubborn] && !lateDiscovered {
+				alive[late] = true
+				lateDiscovered = true
+			}
+			var processes []appProcessIdentity
+			for _, process := range []appProcessIdentity{graceful, stubborn, late} {
+				if alive[process] {
+					processes = append(processes, process)
+				}
+			}
+			return processes, nil
+		},
+		running: func(process appProcessIdentity) (bool, error) {
+			return alive[process], nil
+		},
+		stop: func(process appProcessIdentity, mode appProcessStopMode) error {
+			if !alive[process] {
+				return nil
+			}
+			stops = append(stops, stoppedProcess{process: process, mode: mode})
+			if !process.sameProcess(stubborn) || mode == appProcessStopForcefully {
+				alive[process] = false
+			}
+			return nil
+		},
+	}
+
+	err := runAppSyncBarrier(self, controller, appSyncBarrierConfig{
+		killTimeout:  time.Second,
+		pollInterval: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []stoppedProcess{
+		{process: graceful, mode: appProcessStopForHandoff},
+		{process: stubborn, mode: appProcessStopForHandoff},
+		{process: stubborn, mode: appProcessStopGracefully},
+		{process: stubborn, mode: appProcessStopForcefully},
+		{process: late, mode: appProcessStopForHandoff},
+	}
+	if !slices.Equal(stops, want) {
+		t.Fatalf("stops = %+v, want %+v", stops, want)
+	}
+}
+
+func TestRunAppSyncBarrierDefersToNewerInstance(t *testing.T) {
+	self := appProcessIdentity{pid: 10, startedAt: 10}
+	newer := appProcessIdentity{pid: 20, startedAt: 20}
+	stopped := false
+	err := runAppSyncBarrier(self, appProcessController{
+		discover: func() ([]appProcessIdentity, error) {
+			return []appProcessIdentity{newer}, nil
+		},
+		running: func(appProcessIdentity) (bool, error) { return true, nil },
+		stop: func(appProcessIdentity, appProcessStopMode) error {
+			stopped = true
+			return nil
+		},
+	}, appSyncBarrierConfig{killTimeout: time.Second})
+	if !errors.Is(err, errNewerAppInstance) {
+		t.Fatalf("barrier error = %v, want newer-instance error", err)
+	}
+	if stopped {
+		t.Fatal("older launch stopped the newer instance")
+	}
+}
+
+func TestRunAppSyncBarrierRequiresSettledEmptyList(t *testing.T) {
+	queries := 0
+	err := runAppSyncBarrier(appProcessIdentity{pid: 1, startedAt: 1}, appProcessController{
+		discover: func() ([]appProcessIdentity, error) {
+			queries++
+			return nil, nil
+		},
+	}, appSyncBarrierConfig{killTimeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queries != 2 {
+		t.Fatalf("discovery queries = %d, want 2", queries)
+	}
+}
+
+func TestContinueAfterBarrierErrorOnlyBlocksNewerInstance(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "success", err: nil, want: true},
+		{name: "discovery failure", err: errors.New("discover other Ollama app processes"), want: true},
+		{name: "handoff timeout", err: errors.New("timed out waiting for app instances to exit"), want: true},
+		{name: "newer instance", err: fmt.Errorf("%w: pid 2", errNewerAppInstance), want: false},
+		{name: "wrapped newer instance", err: fmt.Errorf("barrier: %w", fmt.Errorf("%w: pid 2", errNewerAppInstance)), want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := continueAfterBarrierError(tt.err); got != tt.want {
+				t.Fatalf("continueAfterBarrierError(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRestoreClaudeBeforeQuit(t *testing.T) {
 	called := false
-	if err := restoreClaudeBeforeQuit(context.Background(), false, false, func(context.Context) error {
+	if err := restoreClaudeBeforeQuit(context.Background(), false, func(context.Context) error {
 		called = true
 		return nil
 	}); err != nil {
@@ -2674,7 +2848,7 @@ func TestRestoreClaudeBeforeQuit(t *testing.T) {
 		t.Fatal("restore called while Claude was not configured")
 	}
 
-	if err := restoreClaudeBeforeQuit(context.Background(), false, true, func(context.Context) error {
+	if err := restoreClaudeBeforeQuit(context.Background(), true, func(context.Context) error {
 		called = true
 		return nil
 	}); err != nil {
@@ -2685,21 +2859,74 @@ func TestRestoreClaudeBeforeQuit(t *testing.T) {
 	}
 
 	wantErr := errors.New("restore failed")
-	if err := restoreClaudeBeforeQuit(context.Background(), false, true, func(context.Context) error {
+	if err := restoreClaudeBeforeQuit(context.Background(), true, func(context.Context) error {
 		return wantErr
 	}); !errors.Is(err, wantErr) {
 		t.Fatalf("restore error = %v, want %v", err, wantErr)
 	}
+}
 
-	called = false
-	if err := restoreClaudeBeforeQuit(context.Background(), true, true, func(context.Context) error {
-		called = true
-		return nil
-	}); err != nil {
+func TestRestoreClaudeAppForTerminationPreservesHandoffProfile(t *testing.T) {
+	previousDesktop := claudeDesktop
+	fake := &fakeClaudeDesktopController{configured: true}
+	claudeDesktop = fake
+	t.Cleanup(func() { claudeDesktop = previousDesktop })
+
+	if err := restoreClaudeAppForTermination(context.Background(), true); err != nil {
 		t.Fatal(err)
 	}
+	if fake.restoreCalls != 0 || !fake.configured {
+		t.Fatalf("handoff restore calls/configured = %d/%v, want 0/true", fake.restoreCalls, fake.configured)
+	}
+}
+
+func TestHandleExistingInstanceSkipsDevelopmentBuild(t *testing.T) {
+	oldIsApp := isApp
+	oldKillOtherInstances := killOtherInstances
+	t.Cleanup(func() {
+		isApp = oldIsApp
+		killOtherInstances = oldKillOtherInstances
+	})
+
+	isApp = false
+	called := false
+	killOtherInstances = func() bool {
+		called = true
+		return false
+	}
+
+	if !handleExistingInstance(false) {
+		t.Fatal("development instance did not continue startup")
+	}
 	if called {
-		t.Fatal("restore called during an app replacement handoff")
+		t.Fatal("development instance entered the packaged app handoff barrier")
+	}
+}
+
+func TestHandleExistingInstanceReturnsBarrierResult(t *testing.T) {
+	oldIsApp := isApp
+	oldKillOtherInstances := killOtherInstances
+	t.Cleanup(func() {
+		isApp = oldIsApp
+		killOtherInstances = oldKillOtherInstances
+	})
+
+	isApp = true
+	for _, want := range []bool{true, false} {
+		killOtherInstances = func() bool { return want }
+		if got := handleExistingInstance(false); got != want {
+			t.Fatalf("handleExistingInstance() = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestDarwinAppProcessRunningReportsExitedProcess(t *testing.T) {
+	running, err := darwinAppProcessRunning(appProcessIdentity{pid: 1 << 30, startedAt: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if running {
+		t.Fatal("nonexistent process reported as running")
 	}
 }
 
