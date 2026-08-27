@@ -21,10 +21,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -232,7 +234,8 @@ func (p appProcessIdentity) startedAfter(other appProcessIdentity) bool {
 type appProcessStopMode uint8
 
 const (
-	appProcessStopGracefully appProcessStopMode = iota
+	appProcessStopForHandoff appProcessStopMode = iota
+	appProcessStopGracefully
 	appProcessStopForcefully
 )
 
@@ -243,18 +246,20 @@ type appProcessController struct {
 }
 
 type appSyncBarrierConfig struct {
-	gracePeriod  time.Duration
-	totalTimeout time.Duration
-	pollInterval time.Duration
-	settlePeriod time.Duration
+	handoffTimeout   time.Duration
+	terminateTimeout time.Duration
+	killTimeout      time.Duration
+	pollInterval     time.Duration
+	settlePeriod     time.Duration
 }
 
 // runAppSyncBarrier elects the newest launch, stops every older instance, and
 // returns only after no other instances remain.
 func runAppSyncBarrier(self appProcessIdentity, controller appProcessController, config appSyncBarrierConfig) error {
 	started := time.Now()
-	graceDeadline := started.Add(config.gracePeriod)
-	deadline := started.Add(config.totalTimeout)
+	handoffDeadline := started.Add(config.handoffTimeout)
+	terminateDeadline := handoffDeadline.Add(config.terminateTimeout)
+	deadline := terminateDeadline.Add(config.killTimeout)
 	sawEmpty := false
 
 	for {
@@ -264,7 +269,7 @@ func runAppSyncBarrier(self appProcessIdentity, controller appProcessController,
 		}
 		for _, process := range processes {
 			if process.startedAfter(self) {
-				return fmt.Errorf("newer app instance %d owns the handoff", process.pid)
+				return fmt.Errorf("%w: pid %d", errNewerAppInstance, process.pid)
 			}
 		}
 
@@ -282,13 +287,24 @@ func runAppSyncBarrier(self appProcessIdentity, controller appProcessController,
 		sawEmpty = false
 
 		for _, process := range processes {
-			if err := controller.stop(process, appProcessStopGracefully); err != nil {
+			if err := controller.stop(process, appProcessStopForHandoff); err != nil {
 				return err
 			}
 		}
-		exited, err := waitForAppProcesses(processes, controller, graceDeadline, config.pollInterval)
+		exited, err := waitForAppProcesses(processes, controller, handoffDeadline, config.pollInterval)
 		if err != nil {
 			return err
+		}
+		if !exited {
+			for _, process := range processes {
+				if err := controller.stop(process, appProcessStopGracefully); err != nil {
+					return err
+				}
+			}
+			exited, err = waitForAppProcesses(processes, controller, terminateDeadline, config.pollInterval)
+			if err != nil {
+				return err
+			}
 		}
 		if !exited {
 			for _, process := range processes {
@@ -328,13 +344,20 @@ func waitForAppProcesses(processes []appProcessIdentity, controller appProcessCo
 }
 
 const (
-	appSyncBarrierGrace        = 35 * time.Second
-	appSyncBarrierTimeout      = 40 * time.Second
-	appSyncBarrierPollInterval = 50 * time.Millisecond
-	appSyncBarrierSettlePeriod = 100 * time.Millisecond
+	appSyncBarrierHandoffTimeout   = 5 * time.Second
+	appSyncBarrierTerminateTimeout = 30 * time.Second
+	appSyncBarrierKillTimeout      = 5 * time.Second
+	appSyncBarrierPollInterval     = 50 * time.Millisecond
+	appSyncBarrierSettlePeriod     = 100 * time.Millisecond
 )
 
+var errNewerAppInstance = errors.New("newer app instance owns the handoff")
+
 var killOtherInstances = runDarwinAppSyncBarrier
+
+// Once a replacement handoff starts, later shutdown signals must not restore
+// the Claude profile out from under the new app.
+var appHandoffInProgress atomic.Bool
 
 func darwinProcessIdentityForPID(pid int) (appProcessIdentity, error) {
 	process, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
@@ -385,12 +408,15 @@ func stopDarwinAppProcess(process appProcessIdentity, mode appProcessStopMode) e
 	if err != nil || !running {
 		return err
 	}
-	signal := syscall.SIGTERM
-	if mode == appProcessStopForcefully {
-		signal = syscall.SIGKILL
+	processSignal := syscall.SIGUSR1
+	switch mode {
+	case appProcessStopGracefully:
+		processSignal = syscall.SIGTERM
+	case appProcessStopForcefully:
+		processSignal = syscall.SIGKILL
 	}
-	slog.Info("signaling Ollama app process", "pid", process.pid, "signal", signal)
-	if err := syscall.Kill(process.pid, signal); err != nil && !errors.Is(err, syscall.ESRCH) {
+	slog.Info("signaling Ollama app process", "pid", process.pid, "signal", processSignal)
+	if err := syscall.Kill(process.pid, processSignal); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return fmt.Errorf("signal Ollama app process %d: %w", process.pid, err)
 	}
 	return nil
@@ -406,11 +432,16 @@ func runDarwinAppSyncBarrier() bool {
 			running:  darwinAppProcessRunning,
 			stop:     stopDarwinAppProcess,
 		}, appSyncBarrierConfig{
-			gracePeriod:  appSyncBarrierGrace,
-			totalTimeout: appSyncBarrierTimeout,
-			pollInterval: appSyncBarrierPollInterval,
-			settlePeriod: appSyncBarrierSettlePeriod,
+			handoffTimeout:   appSyncBarrierHandoffTimeout,
+			terminateTimeout: appSyncBarrierTerminateTimeout,
+			killTimeout:      appSyncBarrierKillTimeout,
+			pollInterval:     appSyncBarrierPollInterval,
+			settlePeriod:     appSyncBarrierSettlePeriod,
 		})
+	}
+	if errors.Is(err, errNewerAppInstance) {
+		slog.Info("newer Ollama app instance owns the handoff")
+		return false
 	}
 	if err != nil {
 		slog.Error("app instance sync barrier failed", "error", err)
@@ -468,6 +499,20 @@ func UpdateAvailable(ver string) error {
 }
 
 func osRun(_ func(), hasCompletedFirstRun, startHidden, showOnboarding bool, _ string) {
+	handoffSignal := make(chan os.Signal, 1)
+	handoffDone := make(chan struct{})
+	signal.Notify(handoffSignal, syscall.SIGUSR1)
+	defer signal.Stop(handoffSignal)
+	defer close(handoffDone)
+	go func() {
+		select {
+		case <-handoffSignal:
+			slog.Info("received app handoff signal, shutting down")
+			quitForHandoff()
+		case <-handoffDone:
+		}
+	}()
+
 	registerLaunchAgent(hasCompletedFirstRun)
 	if err := reconcileClaudeAppProxy(); err != nil {
 		slog.Warn("failed to start Claude gateway", "error", err)
@@ -1779,10 +1824,15 @@ func stopClaudeAppProxy() {
 	}
 }
 
+func quitForHandoff() {
+	appHandoffInProgress.Store(true)
+	quit()
+}
+
 func quit() {
 	ctx, cancel := context.WithTimeout(context.Background(), claudeShutdownTimeout)
 	defer cancel()
-	if err := restoreClaudeAppForTermination(ctx); err != nil {
+	if err := restoreClaudeAppForTermination(ctx, appHandoffInProgress.Load()); err != nil {
 		slog.Warn("failed to restore Claude before quitting", "error", err)
 	}
 	C.quit()
@@ -1795,10 +1845,14 @@ func restoreClaudeBeforeQuit(ctx context.Context, configured bool, restore func(
 	return restore(ctx)
 }
 
-func restoreClaudeAppForTermination(ctx context.Context) error {
+func restoreClaudeAppForTermination(ctx context.Context, handoff bool) error {
 	claudeLifecycleMu.Lock()
 	defer claudeLifecycleMu.Unlock()
 
+	if handoff {
+		stopClaudeAppProxy()
+		return nil
+	}
 	configured := claudeDesktop.UsesOllamaGateway()
 	err := restoreClaudeBeforeQuit(ctx, configured, claudeDesktop.RestoreForShutdown)
 	if !claudeDesktop.UsesOllamaGateway() {
@@ -1811,7 +1865,7 @@ func restoreClaudeAppForTermination(ctx context.Context) error {
 func RestoreClaudeGatewayForShutdown() C.bool {
 	ctx, cancel := context.WithTimeout(context.Background(), claudeShutdownTimeout)
 	defer cancel()
-	if err := restoreClaudeAppForTermination(ctx); err != nil {
+	if err := restoreClaudeAppForTermination(ctx, false); err != nil {
 		slog.Warn("failed to restore Claude during system shutdown", "error", err)
 		return C._Bool(false)
 	}

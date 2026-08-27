@@ -1590,7 +1590,7 @@ func TestResetClaudeDesktopMappingsSerializesDisconnectDuringCatalogRefresh(t *t
 
 func TestResetClaudeDesktopMappingsSerializesShutdownDuringCatalogRefresh(t *testing.T) {
 	testResetClaudeDesktopMappingsSerializesLifecycleChange(t, "shutdown", func() error {
-		return restoreClaudeAppForTermination(context.Background())
+		return restoreClaudeAppForTermination(context.Background(), false)
 	})
 }
 
@@ -2665,11 +2665,12 @@ func TestClaudeGatewayLocalSelectionCatalogPolicy(t *testing.T) {
 func TestRunAppSyncBarrierStopsOlderInstances(t *testing.T) {
 	for _, test := range []struct {
 		name      string
-		stubborn  bool
+		exitOn    appProcessStopMode
 		wantStops []appProcessStopMode
 	}{
-		{name: "graceful", wantStops: []appProcessStopMode{appProcessStopGracefully}},
-		{name: "forced", stubborn: true, wantStops: []appProcessStopMode{appProcessStopGracefully, appProcessStopForcefully}},
+		{name: "handoff", exitOn: appProcessStopForHandoff, wantStops: []appProcessStopMode{appProcessStopForHandoff}},
+		{name: "graceful", exitOn: appProcessStopGracefully, wantStops: []appProcessStopMode{appProcessStopForHandoff, appProcessStopGracefully}},
+		{name: "forced", exitOn: appProcessStopForcefully, wantStops: []appProcessStopMode{appProcessStopForHandoff, appProcessStopGracefully, appProcessStopForcefully}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			self := appProcessIdentity{pid: 20, startedAt: 20}
@@ -2691,7 +2692,7 @@ func TestRunAppSyncBarrierStopsOlderInstances(t *testing.T) {
 						t.Fatalf("stopped process %+v, want %+v", process, older)
 					}
 					stops = append(stops, mode)
-					if !test.stubborn || mode == appProcessStopForcefully {
+					if mode == test.exitOn {
 						alive = false
 					}
 					return nil
@@ -2699,8 +2700,7 @@ func TestRunAppSyncBarrierStopsOlderInstances(t *testing.T) {
 			}
 
 			err := runAppSyncBarrier(self, controller, appSyncBarrierConfig{
-				gracePeriod:  time.Millisecond,
-				totalTimeout: time.Second,
+				killTimeout:  time.Second,
 				pollInterval: time.Millisecond,
 			})
 			if err != nil {
@@ -2758,18 +2758,18 @@ func TestRunAppSyncBarrierStopsEveryOlderInstance(t *testing.T) {
 	}
 
 	err := runAppSyncBarrier(self, controller, appSyncBarrierConfig{
-		gracePeriod:  time.Millisecond,
-		totalTimeout: time.Second,
+		killTimeout:  time.Second,
 		pollInterval: time.Millisecond,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []stoppedProcess{
-		{process: graceful, mode: appProcessStopGracefully},
+		{process: graceful, mode: appProcessStopForHandoff},
+		{process: stubborn, mode: appProcessStopForHandoff},
 		{process: stubborn, mode: appProcessStopGracefully},
 		{process: stubborn, mode: appProcessStopForcefully},
-		{process: late, mode: appProcessStopGracefully},
+		{process: late, mode: appProcessStopForHandoff},
 	}
 	if !slices.Equal(stops, want) {
 		t.Fatalf("stops = %+v, want %+v", stops, want)
@@ -2789,8 +2789,8 @@ func TestRunAppSyncBarrierDefersToNewerInstance(t *testing.T) {
 			stopped = true
 			return nil
 		},
-	}, appSyncBarrierConfig{totalTimeout: time.Second})
-	if err == nil || !strings.Contains(err.Error(), "newer app instance") {
+	}, appSyncBarrierConfig{killTimeout: time.Second})
+	if !errors.Is(err, errNewerAppInstance) {
 		t.Fatalf("barrier error = %v, want newer-instance error", err)
 	}
 	if stopped {
@@ -2805,7 +2805,7 @@ func TestRunAppSyncBarrierRequiresSettledEmptyList(t *testing.T) {
 			queries++
 			return nil, nil
 		},
-	}, appSyncBarrierConfig{totalTimeout: time.Second})
+	}, appSyncBarrierConfig{killTimeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2841,6 +2841,20 @@ func TestRestoreClaudeBeforeQuit(t *testing.T) {
 		return wantErr
 	}); !errors.Is(err, wantErr) {
 		t.Fatalf("restore error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestRestoreClaudeAppForTerminationPreservesHandoffProfile(t *testing.T) {
+	previousDesktop := claudeDesktop
+	fake := &fakeClaudeDesktopController{configured: true}
+	claudeDesktop = fake
+	t.Cleanup(func() { claudeDesktop = previousDesktop })
+
+	if err := restoreClaudeAppForTermination(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	if fake.restoreCalls != 0 || !fake.configured {
+		t.Fatalf("handoff restore calls/configured = %d/%v, want 0/true", fake.restoreCalls, fake.configured)
 	}
 }
 

@@ -176,7 +176,6 @@ func main() {
 	// Check if another instance is already running
 	// On Windows, focus the existing instance; on other platforms, kill it
 	if !handleExistingInstance(startHidden) {
-		slog.Error("Ollama instance handoff did not complete")
 		return
 	}
 
