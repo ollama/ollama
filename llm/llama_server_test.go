@@ -26,6 +26,7 @@ import (
 	"github.com/ollama/ollama/ml"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -3736,4 +3737,21 @@ func fakeRunningCmd() *exec.Cmd {
 	// pass *testing.T here without changing all call sites. The OS will
 	// SIGKILL children when the test process exits.
 	return cmd
+}
+
+func TestLlamaServerNumThreadEnv(t *testing.T) {
+	t.Setenv("OLLAMA_NUM_THREAD", "6")
+
+	launch := llamaServerLaunchConfig{
+		modelPath: "fake.gguf",
+		opts:      api.DefaultOptions(),
+	}
+
+	numThreads := launch.opts.NumThread
+	if numThreads <= 0 && envconfig.NumThread() > 0 {
+		numThreads = int(envconfig.NumThread())
+	}
+	if numThreads != 6 {
+		t.Fatalf("expected numThreads 6 from env, got %d", numThreads)
+	}
 }

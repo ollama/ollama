@@ -409,10 +409,14 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 	}
 	// NumGPU == -1 (default): don't pass -ngl, let llama-server auto-detect
 
-	// Thread count — only pass if user explicitly set it.
+	// Thread count — only pass if user explicitly set it or OLLAMA_NUM_THREAD is set in environment.
 	// Default behavior: let llama-server auto-detect.
-	if launch.opts.NumThread > 0 {
-		params = append(params, "-t", strconv.Itoa(launch.opts.NumThread))
+	numThreads := launch.opts.NumThread
+	if numThreads <= 0 && envconfig.NumThread() > 0 {
+		numThreads = int(envconfig.NumThread())
+	}
+	if numThreads > 0 {
+		params = append(params, "-t", strconv.Itoa(numThreads))
 	}
 
 	params = appendMainGPUArgs(params, launch.opts)
