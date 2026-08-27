@@ -14,8 +14,10 @@ func approxEqual(a, b, tol float32) bool {
 
 // TestLayerNormNoBias verifies LayerNorm without bias against manual computation.
 func TestLayerNormNoBias(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testLayerNormNoBias)
+}
 
+func testLayerNormNoBias(t *testing.T) {
 	// Input: [1, 4] — single row, 4 features
 	x := mlx.FromValues([]float32{1, 2, 3, 4}, 1, 4)
 	weight := mlx.FromValues([]float32{1, 1, 1, 1}, 4)
@@ -45,8 +47,10 @@ func TestLayerNormNoBias(t *testing.T) {
 
 // TestLayerNormWithBias verifies LayerNorm with weight and bias.
 func TestLayerNormWithBias(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testLayerNormWithBias)
+}
 
+func testLayerNormWithBias(t *testing.T) {
 	x := mlx.FromValues([]float32{1, 2, 3, 4}, 1, 4)
 	weight := mlx.FromValues([]float32{2, 2, 2, 2}, 4)
 	bias := mlx.FromValues([]float32{10, 20, 30, 40}, 4)
@@ -75,8 +79,10 @@ func TestLayerNormWithBias(t *testing.T) {
 
 // TestLayerNormBatched verifies LayerNorm normalizes each row independently.
 func TestLayerNormBatched(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testLayerNormBatched)
+}
 
+func testLayerNormBatched(t *testing.T) {
 	// Input: [2, 3] — two rows
 	x := mlx.FromValues([]float32{
 		1, 2, 3,
@@ -115,8 +121,10 @@ func TestLayerNormBatched(t *testing.T) {
 
 // TestLayerNormDefaultEps verifies the default epsilon of 1e-5 is used when Eps is 0.
 func TestLayerNormDefaultEps(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testLayerNormDefaultEps)
+}
 
+func testLayerNormDefaultEps(t *testing.T) {
 	x := mlx.FromValues([]float32{1, 2, 3, 4}, 1, 4)
 	weight := mlx.FromValues([]float32{1, 1, 1, 1}, 4)
 	mlx.Eval(x, weight)
@@ -140,8 +148,10 @@ func TestLayerNormDefaultEps(t *testing.T) {
 }
 
 func TestQuantizedLinearMXFP4MatchesDequantizedWeight(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testQuantizedLinearMXFP4MatchesDequantizedWeight)
+}
 
+func testQuantizedLinearMXFP4MatchesDequantizedWeight(t *testing.T) {
 	weightVals := make([]float32, 3*32)
 	for i := range weightVals {
 		weightVals[i] = float32((i%11)-5) / 7

@@ -45,8 +45,10 @@ func settledActiveMemory() int {
 // snapshot stays lazy and is discarded before any overwrite. Compare against the
 // bytes an eager per-token copy would cost.
 func TestKVSpeculationCaptureAllocatesNothing(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testKVSpeculationCaptureAllocatesNothing)
+}
 
+func testKVSpeculationCaptureAllocatesNothing(t *testing.T) {
 	const before, draft, H, D = 16, 8, 4, 8
 
 	c := NewKVCache()
@@ -99,8 +101,10 @@ func TestKVSpeculationCaptureAllocatesNothing(t *testing.T) {
 // destructive write triggers copyOut the materialize hook fires with the
 // newly-allocated bytes and Size() reports the owned arrays.
 func TestKVLazySnapshotSizeZeroUntilMaterialized(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testKVLazySnapshotSizeZeroUntilMaterialized)
+}
 
+func testKVLazySnapshotSizeZeroUntilMaterialized(t *testing.T) {
 	const H, D = 4, 8
 
 	c := NewKVCache()
@@ -140,8 +144,10 @@ func TestKVLazySnapshotSizeZeroUntilMaterialized(t *testing.T) {
 // still reads the pre-overwrite data — both keys and values, across the whole
 // captured range (guarding the Slice+Contiguous copy-out representation).
 func TestKVLazySnapshotCopiedOutOnOverwrite(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testKVLazySnapshotCopiedOutOnOverwrite)
+}
 
+func testKVLazySnapshotCopiedOutOnOverwrite(t *testing.T) {
 	const H, D = 4, 8
 
 	c := NewKVCache()
@@ -185,8 +191,10 @@ func TestKVLazySnapshotCopiedOutOnOverwrite(t *testing.T) {
 // TestKVLazySnapshotCopiedOutOnFree verifies Free copies out outstanding lazy snapshots
 // so they survive after the cache buffer is gone.
 func TestKVLazySnapshotCopiedOutOnFree(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testKVLazySnapshotCopiedOutOnFree)
+}
 
+func testKVLazySnapshotCopiedOutOnFree(t *testing.T) {
 	const H, D = 4, 8
 
 	c := NewKVCache()
@@ -210,8 +218,10 @@ func TestKVLazySnapshotCopiedOutOnFree(t *testing.T) {
 // adjacent lazy snapshots are pure arithmetic — they produce lazy snapshots and allocate
 // nothing — while still tracking the correct offsets and data.
 func TestKVLazySnapshotSplitMergeNoCopy(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testKVLazySnapshotSplitMergeNoCopy)
+}
 
+func testKVLazySnapshotSplitMergeNoCopy(t *testing.T) {
 	const H, D = 4, 8
 
 	c := NewKVCache()
@@ -252,8 +262,10 @@ func TestKVLazySnapshotSplitMergeNoCopy(t *testing.T) {
 // different path (Restore feeds new data via appendKV, overwriting the old
 // leaf's slots). The paged-out snapshot must still hold the original tokens.
 func TestKVLazySnapshotSurvivesPathSwitch(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testKVLazySnapshotSurvivesPathSwitch)
+}
 
+func testKVLazySnapshotSurvivesPathSwitch(t *testing.T) {
 	const H, D = 4, 8
 
 	c := NewKVCache()
@@ -295,8 +307,10 @@ func TestKVLazySnapshotSurvivesPathSwitch(t *testing.T) {
 // the offset without cloning or replaying. This is the switchToPath sequence
 // where a paged-out leaf is restored before any write displaced it.
 func TestKVRestoreLiveLazySnapshotIsOffsetMove(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testKVRestoreLiveLazySnapshotIsOffsetMove)
+}
 
+func testKVRestoreLiveLazySnapshotIsOffsetMove(t *testing.T) {
 	const H, D = 4, 8
 
 	c := NewKVCache()

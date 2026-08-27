@@ -13,7 +13,10 @@ import (
 )
 
 func TestVisionAdapterWeightsAreCollectable(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testVisionAdapterWeightsAreCollectable)
+}
+
+func testVisionAdapterWeightsAreCollectable(t *testing.T) {
 	weight := mlx.FromValue(float32(1))
 	adapter := &VisionAdapter{Model: &Model{VisionTower: &VisionTower{PosEmbed: weight}}}
 	if got := mlx.Collect(adapter); len(got) != 1 || got[0] != weight {

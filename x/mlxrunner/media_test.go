@@ -73,8 +73,10 @@ func (m encodeCountingModel) EncodeMedia(item *base.PreparedItem, data *mlx.Arra
 }
 
 func TestBatchMediaLifecycle(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testBatchMediaLifecycle)
+}
 
+func testBatchMediaLifecycle(t *testing.T) {
 	calls := 0
 	prepared := &base.PreparedItem{
 		Range:     [2]int{2, 6},

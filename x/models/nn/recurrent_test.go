@@ -37,7 +37,10 @@ func convFromKernel(w *mlx.Array) *Conv1d {
 // Guards a biased conv silently losing the fused kernel: depthwiseConvWeight
 // returning nil sends WithConvSiLU down separate graph ops.
 func TestCausalConv1DBiasTakesFusedPath(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testCausalConv1DBiasTakesFusedPath)
+}
+
+func testCausalConv1DBiasTakesFusedPath(t *testing.T) {
 	B, L, D, convTail := 2, 3, 4, 2
 	K := convTail + 1
 
@@ -69,7 +72,10 @@ func TestCausalConv1DBiasTakesFusedPath(t *testing.T) {
 // short row must be the row's last convTail real positions (not the
 // padded tail), (c) the full row must be unaffected.
 func TestCausalConv1DPaddedRowParity(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testCausalConv1DPaddedRowParity)
+}
+
+func testCausalConv1DPaddedRowParity(t *testing.T) {
 	L, D, convTail := 4, 3, 2
 	qLenShort := 2
 	K := convTail + 1
@@ -213,7 +219,10 @@ func floatsClose(t *testing.T, label string, got, want []float32, tol float64) {
 // that each boundary state equals the single-shot state over the
 // corresponding prefix.
 func TestGatedDeltaSegmentEquivalence(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testGatedDeltaSegmentEquivalence)
+}
+
+func testGatedDeltaSegmentEquivalence(t *testing.T) {
 	B, T, Hk, Dk, Hv, Dv := 1, 5, 1, 32, 1, 32
 	packed, ba, dtBias, aExp := gatedDeltaPackedInputs(B, T, Hk, Dk, Hv, Dv)
 	prior := mlx.Zeros(mlx.DTypeFloat32, B, Hv, Dv, Dk)
@@ -253,7 +262,10 @@ func TestGatedDeltaSegmentEquivalence(t *testing.T) {
 // TestCausalConv1DSegmentEquivalence checks the conv segmented path matches the
 // single-shot conv for output, final conv tail, and each boundary conv state.
 func TestCausalConv1DSegmentEquivalence(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testCausalConv1DSegmentEquivalence)
+}
+
+func testCausalConv1DSegmentEquivalence(t *testing.T) {
 	B, L, D, convTail := 1, 4, 3, 2
 	K := convTail + 1
 
@@ -297,7 +309,10 @@ func TestCausalConv1DSegmentEquivalence(t *testing.T) {
 // row's padded positions so a short row's boundary state freezes at its
 // real end.
 func TestGatedDeltaSegmentEquivalenceBatched(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testGatedDeltaSegmentEquivalenceBatched)
+}
+
+func testGatedDeltaSegmentEquivalenceBatched(t *testing.T) {
 	B, T, Hk, Dk, Hv, Dv := 2, 4, 1, 32, 1, 32
 	packed, ba, dtBias, aExp := gatedDeltaPackedInputs(B, T, Hk, Dk, Hv, Dv)
 	prior := mlx.Zeros(mlx.DTypeFloat32, B, Hv, Dv, Dk)
@@ -355,7 +370,10 @@ func TestGatedDeltaSegmentEquivalenceBatched(t *testing.T) {
 // references for a ragged B>1 batch, where a short row must freeze its tail at
 // its real end rather than reach into padding.
 func TestCausalConv1DSegmentEquivalenceBatched(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testCausalConv1DSegmentEquivalenceBatched)
+}
+
+func testCausalConv1DSegmentEquivalenceBatched(t *testing.T) {
 	B, L, D, convTail := 2, 4, 3, 2
 	K := convTail + 1
 

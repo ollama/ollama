@@ -1,35 +1,9 @@
 package mlx
 
 // #include "generated.h"
-//
-// // MLX default streams are thread-local, so cache the C handle per thread.
-// static __thread mlx_stream ollama_default_stream;
-// static __thread int ollama_default_stream_set;
-//
-// static mlx_stream ollama_get_default_stream(void) {
-//     if (!ollama_default_stream_set) {
-//         mlx_device device = mlx_device_new();
-//         mlx_get_default_device(&device);
-//         ollama_default_stream = mlx_stream_new();
-//         mlx_get_default_stream(&ollama_default_stream, device);
-//         mlx_device_free(device);
-//         ollama_default_stream_set = 1;
-//     }
-//     return ollama_default_stream;
-// }
-//
-// static void ollama_reset_default_stream(void) {
-//     if (ollama_default_stream_set) {
-//         mlx_stream_free(ollama_default_stream);
-//         ollama_default_stream_set = 0;
-//     }
-// }
 import "C"
 
-import (
-	"log/slog"
-	"sync"
-)
+import "log/slog"
 
 type Device struct {
 	ctx C.mlx_device
@@ -43,22 +17,18 @@ func (d Device) LogValue() slog.Value {
 }
 
 var (
-	defaultDeviceMu  sync.Mutex
 	defaultDevice    Device
 	defaultDeviceSet bool
+	defaultStream    Stream
+	defaultStreamSet bool
 )
 
 func resetDefaultStreamCache() {
-	C.ollama_reset_default_stream()
-
-	defaultDeviceMu.Lock()
 	defaultDeviceSet = false
-	defaultDeviceMu.Unlock()
+	defaultStreamSet = false
 }
 
 func DefaultDevice() Device {
-	defaultDeviceMu.Lock()
-	defer defaultDeviceMu.Unlock()
 	if !defaultDeviceSet {
 		d := C.mlx_device_new()
 		C.mlx_get_default_device(&d)
@@ -80,14 +50,10 @@ func GPUIsAvailable() bool {
 
 // SetDefaultDeviceGPU sets the default MLX device to GPU.
 func SetDefaultDeviceGPU() {
-	defaultDeviceMu.Lock()
-	defer defaultDeviceMu.Unlock()
-
 	dev := C.mlx_device_new_type(C.MLX_GPU, 0)
 	C.mlx_set_default_device(dev)
 	C.mlx_device_free(dev)
-	C.ollama_reset_default_stream()
-	defaultDeviceSet = false
+	resetDefaultStreamCache()
 }
 
 type Stream struct {
@@ -101,7 +67,13 @@ func (s Stream) LogValue() slog.Value {
 	return slog.StringValue(C.GoString(C.mlx_string_data(str)))
 }
 
-// DefaultStream returns the calling thread's default stream.
 func DefaultStream() Stream {
-	return Stream{C.ollama_get_default_stream()}
+	if !defaultStreamSet {
+		s := C.mlx_stream_new()
+		C.mlx_get_default_stream(&s, DefaultDevice().ctx)
+		defaultStream = Stream{s}
+		defaultStreamSet = true
+	}
+
+	return defaultStream
 }

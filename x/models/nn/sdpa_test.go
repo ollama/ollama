@@ -31,7 +31,10 @@ func newBatch(seqOffsets []int32, L int, qLens []int32) *batch.Batch {
 }
 
 func TestAttentionMaskZero(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testAttentionMaskZero)
+}
+
+func testAttentionMaskZero(t *testing.T) {
 	var m AttentionMask
 	if !m.IsZero() {
 		t.Fatal("zero value should report IsZero")
@@ -54,7 +57,10 @@ func TestAttentionMaskZero(t *testing.T) {
 }
 
 func TestAttentionMaskAsArrayCausal(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testAttentionMaskAsArrayCausal)
+}
+
+func testAttentionMaskAsArrayCausal(t *testing.T) {
 	L, K := 4, 6
 	b := newBatch([]int32{2}, L, nil)
 	arr := CausalMask().AsArray(b, K, mlx.DTypeFloat32)
@@ -85,7 +91,10 @@ func TestAttentionMaskAsArrayCausal(t *testing.T) {
 }
 
 func TestAttentionMaskRelaxLazy(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testAttentionMaskRelaxLazy)
+}
+
+func testAttentionMaskRelaxLazy(t *testing.T) {
 	// Relax must not materialize a tensor — the perf invariant the
 	// causal-flag fast path relies on. Everything else (predicates,
 	// AsArray contents) is exercised by the materialization tests.
@@ -102,7 +111,10 @@ func TestAttentionMaskRelaxLazy(t *testing.T) {
 // inside the causal triangle — must produce the same materialized
 // tensor as plain causal.
 func TestAttentionMaskRelaxNoopRectsMatchCausal(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testAttentionMaskRelaxNoopRectsMatchCausal)
+}
+
+func testAttentionMaskRelaxNoopRectsMatchCausal(t *testing.T) {
 	L, K := 4, 6
 	b := newBatch([]int32{0}, L, nil)
 	want := CausalMask().AsArray(b, K, mlx.DTypeFloat32)
@@ -131,7 +143,10 @@ func TestAttentionMaskRelaxNoopRectsMatchCausal(t *testing.T) {
 }
 
 func TestAttentionMaskAsArrayWithRelax(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testAttentionMaskAsArrayWithRelax)
+}
+
+func testAttentionMaskAsArrayWithRelax(t *testing.T) {
 	L, K := 4, 6
 	b := newBatch([]int32{0}, L, nil)
 	arr := CausalMask().Relax(0, 1, 3, 2, 5).AsArray(b, K, mlx.DTypeFloat32)
@@ -162,7 +177,10 @@ func TestAttentionMaskAsArrayWithRelax(t *testing.T) {
 }
 
 func TestAttentionMaskAsArrayPerRow(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testAttentionMaskAsArrayPerRow)
+}
+
+func testAttentionMaskAsArrayPerRow(t *testing.T) {
 	L, K := 3, 5
 	b := newBatch([]int32{0, 2}, L, nil)
 	m := CausalMask().
@@ -209,7 +227,10 @@ func TestAttentionMaskAsArrayPerRow(t *testing.T) {
 }
 
 func TestQPaddingMask(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testQPaddingMask)
+}
+
+func testQPaddingMask(t *testing.T) {
 	L := 4
 	// Row 0 fully real; row 1 has 2 real queries.
 	b := newBatch([]int32{0, 0}, L, []int32{int32(L), 2})
@@ -233,7 +254,10 @@ func TestQPaddingMask(t *testing.T) {
 }
 
 func TestKPaddingMask(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testKPaddingMask)
+}
+
+func testKPaddingMask(t *testing.T) {
 	K := 5
 	// Row 0 full keys; row 1 has 3 real keys.
 	b := newBatch([]int32{0, 0}, 4, nil)
@@ -257,7 +281,10 @@ func TestKPaddingMask(t *testing.T) {
 }
 
 func TestQPaddingMaskZeroWhenFull(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testQPaddingMaskZeroWhenFull)
+}
+
+func testQPaddingMaskZeroWhenFull(t *testing.T) {
 	b := newBatch([]int32{0}, 4, nil)
 	m := QPaddingMask(b, mlx.DTypeFloat32)
 	if !m.IsZero() {
@@ -266,7 +293,10 @@ func TestQPaddingMaskZeroWhenFull(t *testing.T) {
 }
 
 func TestKPaddingMaskZeroWhenFull(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testKPaddingMaskZeroWhenFull)
+}
+
+func testKPaddingMaskZeroWhenFull(t *testing.T) {
 	K := 4
 	b := newBatch([]int32{0}, 4, nil)
 	kLens := []int32{int32(K)}
@@ -277,7 +307,10 @@ func TestKPaddingMaskZeroWhenFull(t *testing.T) {
 }
 
 func TestAttentionMaskCombineCausal(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testAttentionMaskCombineCausal)
+}
+
+func testAttentionMaskCombineCausal(t *testing.T) {
 	var z AttentionMask
 	got := z.Intersect(CausalMask())
 	if !got.IsCausal() {
@@ -294,7 +327,10 @@ func TestAttentionMaskCombineCausal(t *testing.T) {
 }
 
 func TestAttentionMaskCombineRelaxDroppedAgainstCausal(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testAttentionMaskCombineRelaxDroppedAgainstCausal)
+}
+
+func testAttentionMaskCombineRelaxDroppedAgainstCausal(t *testing.T) {
 	relaxed := CausalMask().Relax(0, 1, 3, 2, 5)
 	got := relaxed.Intersect(CausalMask())
 	if !got.IsCausal() {
@@ -314,7 +350,10 @@ func TestAttentionMaskCombineRelaxDroppedAgainstCausal(t *testing.T) {
 }
 
 func TestAttentionMaskCombineRelaxIntersect(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testAttentionMaskCombineRelaxIntersect)
+}
+
+func testAttentionMaskCombineRelaxIntersect(t *testing.T) {
 	L, K := 6, 6
 	b := newBatch([]int32{0}, L, nil)
 
@@ -354,7 +393,10 @@ func TestAttentionMaskCombineRelaxIntersect(t *testing.T) {
 }
 
 func TestAttentionMaskCombineRelaxKeptAgainstNonCausal(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testAttentionMaskCombineRelaxKeptAgainstNonCausal)
+}
+
+func testAttentionMaskCombineRelaxKeptAgainstNonCausal(t *testing.T) {
 	L, K := 4, 6
 	b := newBatch([]int32{0}, L, nil)
 
@@ -399,7 +441,10 @@ func TestAttentionMaskCombineRelaxKeptAgainstNonCausal(t *testing.T) {
 }
 
 func TestAttentionMaskCombineArrays(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testAttentionMaskCombineArrays)
+}
+
+func testAttentionMaskCombineArrays(t *testing.T) {
 	a := mlx.FromValues([]float32{0, 0, 0, 0}, 1, 1, 2, 2)
 	bb := mlx.FromValues([]float32{1, 2, 3, 4}, 1, 1, 2, 2)
 	sum := ArrayMask(a).Intersect(ArrayMask(bb))
@@ -417,7 +462,10 @@ func TestAttentionMaskCombineArrays(t *testing.T) {
 }
 
 func TestAttentionMaskRelaxPanicOnArray(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testAttentionMaskRelaxPanicOnArray)
+}
+
+func testAttentionMaskRelaxPanicOnArray(t *testing.T) {
 	a := mlx.FromValues([]float32{0}, 1, 1, 1, 1)
 	defer func() {
 		if r := recover(); r == nil {
@@ -428,7 +476,10 @@ func TestAttentionMaskRelaxPanicOnArray(t *testing.T) {
 }
 
 func TestAttentionMaskRelaxPanicOnZero(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testAttentionMaskRelaxPanicOnZero)
+}
+
+func testAttentionMaskRelaxPanicOnZero(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {
 			t.Fatal("Relax on zero mask should panic")
@@ -469,7 +520,10 @@ func sdpaInputs(L, K int) (q, k, v *mlx.Array) {
 }
 
 func TestSDPACausalParity(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testSDPACausalParity)
+}
+
+func testSDPACausalParity(t *testing.T) {
 	L, K := 4, 4
 	q, k, v := sdpaInputs(L, K)
 	b := newBatch([]int32{int32(K - L)}, L, nil)
@@ -488,7 +542,10 @@ func TestSDPACausalParity(t *testing.T) {
 }
 
 func TestSDPAZeroMaskParity(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testSDPAZeroMaskParity)
+}
+
+func testSDPAZeroMaskParity(t *testing.T) {
 	L, K := 4, 4
 	q, k, v := sdpaInputs(L, K)
 	b := newBatch([]int32{0}, L, nil)
@@ -504,7 +561,10 @@ func TestSDPAZeroMaskParity(t *testing.T) {
 }
 
 func TestSDPAArrayMaskParity(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testSDPAArrayMaskParity)
+}
+
+func testSDPAArrayMaskParity(t *testing.T) {
 	L, K := 3, 3
 	q, k, v := sdpaInputs(L, K)
 	b := newBatch([]int32{0}, L, nil)
@@ -528,7 +588,10 @@ func TestSDPAArrayMaskParity(t *testing.T) {
 }
 
 func TestSDPARelaxMaskMaterializes(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testSDPARelaxMaskMaterializes)
+}
+
+func testSDPARelaxMaskMaterializes(t *testing.T) {
 	L, K := 3, 5
 	q, k, v := sdpaInputs(L, K)
 	b := newBatch([]int32{int32(K - L)}, L, nil)
@@ -548,7 +611,10 @@ func TestSDPARelaxMaskMaterializes(t *testing.T) {
 }
 
 func TestSDPAPanicsWithBothKVAndHistory(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testSDPAPanicsWithBothKVAndHistory)
+}
+
+func testSDPAPanicsWithBothKVAndHistory(t *testing.T) {
 	L := 3
 	q, k, v := sdpaInputs(L, L)
 	b := newBatch([]int32{0}, L, nil)
@@ -562,7 +628,10 @@ func TestSDPAPanicsWithBothKVAndHistory(t *testing.T) {
 }
 
 func TestSDPAMLAHistorySlicesVFromK(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testSDPAMLAHistorySlicesVFromK)
+}
+
+func testSDPAMLAHistorySlicesVFromK(t *testing.T) {
 	L, D, valueDim := 2, 5, 3
 	kBuf := make([]float32, 1*1*L*D)
 	for i := range kBuf {
@@ -589,7 +658,10 @@ func TestSDPAMLAHistorySlicesVFromK(t *testing.T) {
 }
 
 func TestSDPAPanicsWithoutKV(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testSDPAPanicsWithoutKV)
+}
+
+func testSDPAPanicsWithoutKV(t *testing.T) {
 	q := mlx.FromValues(make([]float32, 4), 1, 1, 1, 4)
 	b := newBatch([]int32{0}, 1, nil)
 	defer func() {
@@ -618,7 +690,10 @@ func fillTensor(seed float32, B, H, T, D int) *mlx.Array {
 // central multi-sequence contract: right-padded rows must produce
 // per-row outputs that don't depend on the padded tails.
 func TestSDPAMultiSequenceParity(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testSDPAMultiSequenceParity)
+}
+
+func testSDPAMultiSequenceParity(t *testing.T) {
 	const H, D = 1, 4
 	const L, K = 4, 6
 	const qShort, kShort = 2, 2

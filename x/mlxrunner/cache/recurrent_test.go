@@ -14,7 +14,10 @@ import (
 // only succeeds when target exactly matches the snapshot's offset. Recurrent
 // state is cumulative, so it can't be rewound or fast-forwarded.
 func TestRecurrentCacheRestoreExactOffset(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testRecurrentCacheRestoreExactOffset)
+}
+
+func testRecurrentCacheRestoreExactOffset(t *testing.T) {
 	c := NewRecurrentCache(3, 12, 4, 8, 8)
 	b1 := &batch.Batch{InputIDs: mlx.Zeros(mlx.DTypeInt32, 1, 1)}
 	c.Get(b1, mlx.DTypeFloat16) // lazy-init
@@ -54,7 +57,10 @@ func TestRecurrentCacheRestoreExactOffset(t *testing.T) {
 }
 
 func TestRecurrentCacheGetLazyInit(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testRecurrentCacheGetLazyInit)
+}
+
+func testRecurrentCacheGetLazyInit(t *testing.T) {
 	c := NewRecurrentCache(3, 4, 2, 4, 4)
 	b := &batch.Batch{
 		InputIDs:     mlx.Zeros(mlx.DTypeInt32, 1, 1),
@@ -84,7 +90,10 @@ func TestRecurrentCacheGetLazyInit(t *testing.T) {
 // Pins the recurrent contract: a forward with padding produces the
 // same end-state as a forward with the real-prefix-only input.
 func TestRecurrentCachePaddedRoundTrip(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testRecurrentCachePaddedRoundTrip)
+}
+
+func testRecurrentCachePaddedRoundTrip(t *testing.T) {
 	const convTail, convDim = 2, 6
 	const numVHeads, headVDim, headKDim = 1, 4, 6
 	const L = 4
@@ -209,7 +218,10 @@ func TestRecurrentCachePaddedRoundTrip(t *testing.T) {
 }
 
 func TestRecurrentCachePutAdvances(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testRecurrentCachePutAdvances)
+}
+
+func testRecurrentCachePutAdvances(t *testing.T) {
 	c := NewRecurrentCache(3, 4, 2, 4, 4)
 	b := &batch.Batch{InputIDs: mlx.Zeros(mlx.DTypeInt32, 1, 2), SeqQueryLens: []int32{2}}
 	newConv := mlx.Zeros(mlx.DTypeFloat16, 1, 3, 4)

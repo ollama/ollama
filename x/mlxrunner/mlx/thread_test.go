@@ -9,6 +9,12 @@ import (
 	"github.com/ollama/ollama/x/internal/mlxthread"
 )
 
+var (
+	testThreadOnce sync.Once
+	testThread     *mlxthread.Thread
+	testThreadErr  error
+)
+
 func skipIfNoMLX(t *testing.T) {
 	t.Helper()
 	if err := CheckInit(); err != nil {
@@ -16,44 +22,31 @@ func skipIfNoMLX(t *testing.T) {
 	}
 }
 
-func startMLXThread(t *testing.T) *mlxthread.Thread {
+func mlxTestThread(t *testing.T) *mlxthread.Thread {
 	t.Helper()
 
-	thread, err := mlxthread.Start("mlx-test", func() error {
-		if err := CheckInit(); err != nil {
-			return err
-		}
-		if GPUIsAvailable() {
-			SetDefaultDeviceGPU()
-		}
-		return nil
+	testThreadOnce.Do(func() {
+		testThread, testThreadErr = mlxthread.Start("mlx-test", func() error {
+			if err := CheckInit(); err != nil {
+				return err
+			}
+			if GPUIsAvailable() {
+				SetDefaultDeviceGPU()
+			}
+			return nil
+		})
 	})
-	if err != nil {
-		t.Skipf("MLX not available: %v", err)
+	if testThreadErr != nil {
+		t.Skipf("MLX not available: %v", testThreadErr)
 	}
 
-	return thread
-}
-
-func stopMLXThread(t *testing.T, thread *mlxthread.Thread) {
-	t.Helper()
-
-	if err := thread.Stop(context.Background(), func() {
-		Sweep()
-		ClearCache()
-		resetDefaultStreamCache()
-	}); err != nil {
-		t.Fatal(err)
-	}
+	return testThread
 }
 
 func withMLXThread(t *testing.T, fn func()) {
 	t.Helper()
 
-	thread := startMLXThread(t)
-	defer stopMLXThread(t, thread)
-
-	if err := thread.Do(context.Background(), func() error {
+	if err := mlxTestThread(t).Do(context.Background(), func() error {
 		fn()
 		return nil
 	}); err != nil {
@@ -61,26 +54,8 @@ func withMLXThread(t *testing.T, fn func()) {
 	}
 }
 
-func TestDefaultStreamPerThread(t *testing.T) {
-	first := startMLXThread(t)
-	defer stopMLXThread(t, first)
-	second := startMLXThread(t)
-	defer stopMLXThread(t, second)
-
-	for _, thread := range []*mlxthread.Thread{first, second} {
-		if err := thread.Do(context.Background(), func() error {
-			a := FromValues([]float32{1, 2, 3, 4}, 2, 2)
-			Eval(Matmul(a, a))
-			return nil
-		}); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
 func TestThreadedMLXOperations(t *testing.T) {
-	thread := startMLXThread(t)
-	defer stopMLXThread(t, thread)
+	thread := mlxTestThread(t)
 
 	oldProcs := runtime.GOMAXPROCS(8)
 	defer runtime.GOMAXPROCS(oldProcs)

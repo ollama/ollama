@@ -26,7 +26,10 @@ func TestParseSuppressTokens(t *testing.T) {
 }
 
 func TestParseTextConfigE2B(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testParseTextConfigE2B)
+}
+
+func testParseTextConfigE2B(t *testing.T) {
 	data := []byte(`{
 		"architectures": ["Gemma4ForConditionalGeneration"],
 		"text_config": {
@@ -142,7 +145,10 @@ func TestParseTextConfigE2B(t *testing.T) {
 }
 
 func TestParseTextConfig26B(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testParseTextConfig26B)
+}
+
+func testParseTextConfig26B(t *testing.T) {
 	data := []byte(`{
 		"architectures": ["Gemma4ForConditionalGeneration"],
 		"text_config": {
@@ -221,7 +227,10 @@ func TestParseTextConfig26B(t *testing.T) {
 }
 
 func TestParseTextConfig31B(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testParseTextConfig31B)
+}
+
+func testParseTextConfig31B(t *testing.T) {
 	data := []byte(`{
 		"architectures": ["Gemma4ForConditionalGeneration"],
 		"text_config": {
@@ -320,8 +329,10 @@ func TestParseTextConfig31B(t *testing.T) {
 }
 
 func TestParseTextConfig12BUnified(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testParseTextConfig12BUnified)
+}
 
+func testParseTextConfig12BUnified(t *testing.T) {
 	layerTypes := make([]string, 0, 48)
 	for i := range 48 {
 		if i%6 == 5 {
@@ -429,7 +440,10 @@ func TestParseTextConfig12BUnified(t *testing.T) {
 }
 
 func TestParseTextConfigE4B(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testParseTextConfigE4B)
+}
+
+func testParseTextConfigE4B(t *testing.T) {
 	data := []byte(`{
 		"architectures": ["Gemma4ForConditionalGeneration"],
 		"text_config": {
@@ -658,9 +672,7 @@ func TestResolveWeightPrefix(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mlxtest.Setup(t)
-
+		mlxtest.RunSubtest(t, tt.name, func(t *testing.T) {
 			dummy := mlx.FromValue(float32(1.0))
 			mlx.Eval(dummy)
 			tensors := map[string]*mlx.Array{tt.key: dummy}

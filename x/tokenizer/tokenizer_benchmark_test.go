@@ -195,8 +195,6 @@ func BenchmarkTokenizerLoadFromBytes(b *testing.B) {
 }
 
 func BenchmarkTokenizerEncodeWordPiece(b *testing.B) {
-	// x/tokenizer's loader only supports BPE-flavored models; WordPiece
-	// support has never landed, so this benchmark could never pass.
 	b.Skip("WordPiece is not supported by x/tokenizer")
 	tok := benchmarkLoadFromBytes(b, []byte(benchmarkWordPieceJSON))
 	text := strings.Repeat("helloworldly", 16)
@@ -211,8 +209,6 @@ func BenchmarkTokenizerEncodeWordPiece(b *testing.B) {
 }
 
 func BenchmarkTokenizerDecodeWordPiece(b *testing.B) {
-	// x/tokenizer's loader only supports BPE-flavored models; WordPiece
-	// support has never landed, so this benchmark could never pass.
 	b.Skip("WordPiece is not supported by x/tokenizer")
 	tok := benchmarkLoadFromBytes(b, []byte(benchmarkWordPieceJSON))
 	text := strings.Repeat("helloworldly", 16)

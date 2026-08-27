@@ -9,7 +9,10 @@ import (
 )
 
 func TestApplyTokenMask(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testApplyTokenMask)
+}
+
+func testApplyTokenMask(t *testing.T) {
 	const (
 		bitsPerMaskWord       = 32
 		firstTokenID          = 0                   // Least-significant bit of the first mask word.

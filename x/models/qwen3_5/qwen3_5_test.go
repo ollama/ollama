@@ -9,8 +9,10 @@ import (
 )
 
 func TestSanitizeConvWeight(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testSanitizeConvWeight)
+}
 
+func testSanitizeConvWeight(t *testing.T) {
 	tests := []struct {
 		name  string
 		shape []int
@@ -202,8 +204,10 @@ func TestNewCachesLayout(t *testing.T) {
 }
 
 func TestLoadWeightsPreservesLinearAttentionNormWeightDType(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testLoadWeightsPreservesLinearAttentionNormWeightDType)
+}
 
+func testLoadWeightsPreservesLinearAttentionNormWeightDType(t *testing.T) {
 	cfg := &Config{
 		HiddenSize:            4,
 		IntermediateSize:      8,

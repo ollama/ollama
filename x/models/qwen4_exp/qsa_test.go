@@ -12,7 +12,10 @@ import (
 )
 
 func TestQSASelectsCompressedBlocksAndCausalTail(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testQSASelectsCompressedBlocksAndCausalTail)
+}
+
+func testQSASelectsCompressedBlocksAndCausalTail(t *testing.T) {
 	cfg := &Config{IndexerBudget: 8, IndexerCompressRatio: 4}
 	scores := mlx.FromValues([]float32{0.1, 4, 2, 3}, 1, 1, 4)
 	b := &batch.Batch{SeqOffsets: []int32{16}}
@@ -37,7 +40,10 @@ func TestQSASelectsCompressedBlocksAndCausalTail(t *testing.T) {
 }
 
 func TestQSASelectionMasksFutureBlocks(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testQSASelectionMasksFutureBlocks)
+}
+
+func testQSASelectionMasksFutureBlocks(t *testing.T) {
 	cfg := &Config{IndexerBudget: 8, IndexerCompressRatio: 4}
 	// Only block 0 and token 4 are visible. Give every future block a much
 	// larger score so the test fails if selection sees cached-but-causal-junk.
@@ -62,7 +68,10 @@ func TestQSASelectionMasksFutureBlocks(t *testing.T) {
 }
 
 func TestQSASparseAttentionMatchesReference(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testQSASparseAttentionMatchesReference)
+}
+
+func testQSASparseAttentionMatchesReference(t *testing.T) {
 	cfg := &Config{NumKeyValueHeads: 1, Scale: 1}
 	q := mlx.FromValues([]float32{1, 0}, 1, 1, 1, 2)
 	k := mlx.FromValues([]float32{1, 0, 0, 1, 2, 0}, 1, 1, 3, 2)
@@ -84,7 +93,10 @@ func TestQSASparseAttentionMatchesReference(t *testing.T) {
 }
 
 func TestQSASparseAttentionIgnoresInvalidRows(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testQSASparseAttentionIgnoresInvalidRows)
+}
+
+func testQSASparseAttentionIgnoresInvalidRows(t *testing.T) {
 	cfg := &Config{NumKeyValueHeads: 1, Scale: 1}
 	q := mlx.FromValues([]float32{1, 0}, 1, 1, 1, 2)
 	// Row 0 is intentionally dominant junk. Only row 1 is logically valid.
@@ -102,7 +114,10 @@ func TestQSASparseAttentionIgnoresInvalidRows(t *testing.T) {
 }
 
 func TestQSASparseAttentionKeepsBatchRowsIndependent(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testQSASparseAttentionKeepsBatchRowsIndependent)
+}
+
+func testQSASparseAttentionKeepsBatchRowsIndependent(t *testing.T) {
 	cfg := &Config{NumKeyValueHeads: 1, Scale: 1}
 	q := mlx.FromValues([]float32{1, 0, 1, 0}, 2, 1, 1, 2)
 	k := mlx.FromValues([]float32{

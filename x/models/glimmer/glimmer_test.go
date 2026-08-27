@@ -226,8 +226,10 @@ func TestNewCachesMatchesAttentionSchedule(t *testing.T) {
 }
 
 func TestUnembedReturnsFloat32Logits(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testUnembedReturnsFloat32Logits)
+}
 
+func testUnembedReturnsFloat32Logits(t *testing.T) {
 	input := mlx.FromValues([]float32{1}, 1, 1, 1).AsType(mlx.DTypeBFloat16)
 	weight := mlx.FromValues([]float32{1, 2}, 2, 1).AsType(mlx.DTypeBFloat16)
 	m := Model{
@@ -320,9 +322,7 @@ func TestApplyVisionRoPELayouts(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mlxtest.Setup(t)
-
+		mlxtest.RunSubtest(t, tt.name, func(t *testing.T) {
 			x := mlx.FromValues([]float32{1, 2, 3, 4}, 1, 1, 1, 4)
 			cos := mlx.FromValues([]float32{0.5, 0.25}, 1, 2)
 			sin := mlx.FromValues([]float32{0.75, 0.125}, 1, 2)

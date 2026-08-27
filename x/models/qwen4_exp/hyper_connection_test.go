@@ -10,8 +10,10 @@ import (
 )
 
 func TestHyperConnectionMatchesReferenceFormula(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testHyperConnectionMatchesReferenceFormula)
+}
 
+func testHyperConnectionMatchesReferenceFormula(t *testing.T) {
 	cfg := &Config{HCCount: 2, HiddenSize: 2, HCLowRank: 2, RMSNormEps: 1e-6}
 	normWeight := []float32{1.1, 0.9, 1.2, 0.8}
 	downWeight := [][]float32{{0.2, -0.3, 0.4, 0.1}, {-0.1, 0.5, 0.2, -0.4}}

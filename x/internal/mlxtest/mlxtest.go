@@ -3,10 +3,18 @@
 package mlxtest
 
 import (
-	"runtime"
+	"context"
+	"sync"
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxthread"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
+)
+
+var (
+	testThreadOnce sync.Once
+	testThread     *mlxthread.Thread
+	testThreadErr  error
 )
 
 // SkipIfUnavailable skips the test when the MLX dynamic library cannot be
@@ -18,22 +26,43 @@ func SkipIfUnavailable(t *testing.T) {
 	}
 }
 
-// Setup prepares a test that calls into MLX natively: it skips when MLX is
-// unavailable and pins the test goroutine to its OS thread for the duration
-// of the test.
-//
-// The thread pin is load-bearing, not defensive: MLX's default stream cache
-// is thread-local, and anything that migrates the goroutine mid-test (the
-// race detector's scheduler in particular) otherwise panics with
-// "There is no Stream(gpu, 0) in current thread".
-//
-// Setup leaves device and allocator state unchanged because some tests share
-// materialized arrays with subtests running on other threads.
-func Setup(t *testing.T) {
+// Run executes fn on the MLX thread shared by the package's test binary.
+func Run(t *testing.T, fn func(*testing.T)) {
 	t.Helper()
 
-	SkipIfUnavailable(t)
+	testThreadOnce.Do(func() {
+		testThread, testThreadErr = mlxthread.Start("mlx-test", func() error {
+			if err := mlx.CheckInit(); err != nil {
+				return err
+			}
+			if mlx.GPUIsAvailable() {
+				mlx.SetDefaultDeviceGPU()
+			}
+			return nil
+		})
+	})
+	if testThreadErr != nil {
+		t.Skipf("MLX not available: %v", testThreadErr)
+	}
 
-	runtime.LockOSThread()
-	t.Cleanup(runtime.UnlockOSThread)
+	if err := testThread.Do(context.Background(), func() error {
+		fn(t)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// RunSubtest runs a named subtest on the shared MLX test thread.
+func RunSubtest(t *testing.T, name string, fn func(*testing.T)) {
+	t.Helper()
+	t.Run(name, func(t *testing.T) { Run(t, fn) })
+}
+
+// Cleanup registers fn to run on the shared MLX test thread.
+func Cleanup(t *testing.T, fn func()) {
+	t.Helper()
+	t.Cleanup(func() {
+		Run(t, func(*testing.T) { fn() })
+	})
 }

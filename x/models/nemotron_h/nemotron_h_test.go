@@ -323,8 +323,10 @@ func TestSupportsGatherQMM(t *testing.T) {
 }
 
 func TestApplyExpertWeightGlobalScale(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testApplyExpertWeightGlobalScale)
+}
 
+func testApplyExpertWeightGlobalScale(t *testing.T) {
 	weight := mlx.FromValues([]float32{
 		1, 2,
 		3, 4,
@@ -347,8 +349,10 @@ func TestApplyExpertWeightGlobalScale(t *testing.T) {
 // The production form leans on MLX's fused fast RMS norm, so check it against
 // a reference that spells out every step.
 func TestGatedGroupRMSNormMatchesElementwiseReference(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testGatedGroupRMSNormMatchesElementwiseReference)
+}
 
+func testGatedGroupRMSNormMatchesElementwiseReference(t *testing.T) {
 	cfg := &Config{MambaNumHeads: 4, MambaHeadDim: 2, NGroups: 2, LayerNormEpsilon: 1e-5}
 	inner := cfg.MambaNumHeads * cfg.MambaHeadDim
 	groupSize := inner / cfg.NGroups

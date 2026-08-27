@@ -61,6 +61,34 @@ func TestDoPropagatesPanicToCaller(t *testing.T) {
 	})
 }
 
+func TestDoUnblocksWhenJobExits(t *testing.T) {
+	thread, err := Start("test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = thread.Do(context.Background(), func() error {
+		runtime.Goexit()
+		return nil
+	})
+	if !errors.Is(err, ErrStopped) {
+		t.Fatalf("got %v, want %v", err, ErrStopped)
+	}
+}
+
+func TestStartUnblocksWhenInitExits(t *testing.T) {
+	thread, err := Start("test", func() error {
+		runtime.Goexit()
+		return nil
+	})
+	if thread != nil {
+		t.Fatal("Start returned a thread after init exited")
+	}
+	if !errors.Is(err, ErrStopped) {
+		t.Fatalf("got %v, want %v", err, ErrStopped)
+	}
+}
+
 func TestDoCancelsBeforeJobStarts(t *testing.T) {
 	thread, err := Start("test", nil)
 	if err != nil {

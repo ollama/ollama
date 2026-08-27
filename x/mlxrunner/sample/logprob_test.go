@@ -81,9 +81,7 @@ func TestSampleLogprobsBasic(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mlxtest.Setup(t)
-
+		mlxtest.RunSubtest(t, tt.name, func(t *testing.T) {
 			selected, _, top := runSampleLogprobs(t, tt.logits, tt.topK)
 			if selected != tt.wantSelectedID {
 				t.Errorf("selected = %d, want %d", selected, tt.wantSelectedID)
@@ -96,8 +94,10 @@ func TestSampleLogprobsBasic(t *testing.T) {
 }
 
 func TestSampleLogprobsNumericalStability(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testSampleLogprobsNumericalStability)
+}
 
+func testSampleLogprobsNumericalStability(t *testing.T) {
 	logits := []float32{1000.0, 999.0, 998.0}
 	_, selLP, top := runSampleLogprobs(t, logits, 3)
 
@@ -130,9 +130,7 @@ func TestSampleLogprobsProbabilityCorrectness(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mlxtest.Setup(t)
-
+		mlxtest.RunSubtest(t, tt.name, func(t *testing.T) {
 			selected, selLP, top := runSampleLogprobs(t, tt.logits, len(tt.logits))
 
 			if selLP > 0 {
@@ -191,9 +189,7 @@ func TestSampleLogprobsSoftmaxCorrectness(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mlxtest.Setup(t)
-
+		mlxtest.RunSubtest(t, tt.name, func(t *testing.T) {
 			_, _, top := runSampleLogprobs(t, tt.logits, len(tt.logits))
 			if len(top) != len(tt.logits) {
 				t.Fatalf("top-K length = %d, want %d", len(top), len(tt.logits))
@@ -216,8 +212,10 @@ func TestSampleLogprobsSoftmaxCorrectness(t *testing.T) {
 }
 
 func TestSampleLogprobsSelectedTokenCorrectness(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testSampleLogprobsSelectedTokenCorrectness)
+}
 
+func testSampleLogprobsSelectedTokenCorrectness(t *testing.T) {
 	logits := []float32{3.0, 1.0, 2.0, 0.5}
 
 	maxIdx := int32(0)
@@ -245,8 +243,10 @@ func TestSampleLogprobsSelectedTokenCorrectness(t *testing.T) {
 // sample call match the per-slot reference. The numerically-stable softmax
 // must reduce along the last axis only, not over the whole batch.
 func TestBatchedLogprobsPerRow(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testBatchedLogprobsPerRow)
+}
 
+func testBatchedLogprobsPerRow(t *testing.T) {
 	rowA := []float32{2, 1, 0}
 	rowB := []float32{0, 5, 0}
 
@@ -254,17 +254,17 @@ func TestBatchedLogprobsPerRow(t *testing.T) {
 	_, wantB, _ := runSampleLogprobs(t, rowB, 0)
 
 	s := New(128)
-	t.Cleanup(func() {
+	defer func() {
 		s.Free()
 		mlx.Sweep()
-	})
+	}()
 	s.Add(1, Options{Logprobs: true}, nil)
 	s.Add(2, Options{Logprobs: true}, nil)
 
 	logits := mlx.FromValues(append(append([]float32{}, rowA...), rowB...), 2, 3)
 	res := s.Sample([]int{1, 2}, logits)
 	mlx.Pin(res.Arrays()...)
-	t.Cleanup(func() { mlx.Unpin(res.Arrays()...) })
+	defer mlx.Unpin(res.Arrays()...)
 	mlx.Eval(res.Arrays()...)
 
 	got := res.Logprob.Floats()
@@ -280,8 +280,10 @@ func TestBatchedLogprobsPerRow(t *testing.T) {
 }
 
 func TestSampleLogprobsTopKOrdering(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testSampleLogprobsTopKOrdering)
+}
 
+func testSampleLogprobsTopKOrdering(t *testing.T) {
 	// Logits chosen so argmax order differs from index order.
 	logits := []float32{2.0, 5.0, 1.0, 4.0, 3.0}
 	wantOrder := []int32{1, 3, 4, 0, 2}

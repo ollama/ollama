@@ -9,8 +9,10 @@ import (
 )
 
 func TestMakeEmbeddingLayerDense(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testMakeEmbeddingLayerDense)
+}
 
+func testMakeEmbeddingLayerDense(t *testing.T) {
 	weight := mlx.FromValues([]float32{
 		1, 2, 3, 4,
 		5, 6, 7, 8,
@@ -33,8 +35,10 @@ func TestMakeEmbeddingLayerDense(t *testing.T) {
 }
 
 func TestMakeEmbeddingLayerQuantized(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testMakeEmbeddingLayerQuantized)
+}
 
+func testMakeEmbeddingLayerQuantized(t *testing.T) {
 	denseWeight := mlx.FromValues(func() []float32 {
 		out := make([]float32, 2*64)
 		for i := range out {

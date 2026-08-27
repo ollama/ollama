@@ -109,7 +109,10 @@ func draftTokensOf(caches []cache.Cache) []int32 {
 }
 
 func TestDFlashCommittedBuffersPastFlushCap(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testDFlashCommittedBuffersPastFlushCap)
+}
+
+func testDFlashCommittedBuffersPastFlushCap(t *testing.T) {
 	_, draft, session, caches := newBlockTestSession(t, nil, 4)
 
 	// One prefill-sized run at the flush cap writes through immediately in a
@@ -145,7 +148,10 @@ func TestDFlashCommittedBuffersPastFlushCap(t *testing.T) {
 }
 
 func TestDFlashCommittedGapPanics(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testDFlashCommittedGapPanics)
+}
+
+func testDFlashCommittedGapPanics(t *testing.T) {
 	_, _, session, _ := newBlockTestSession(t, nil, 4)
 
 	session.committed(mlx.FromValues([]int32{1}, 1, 1), oneHotLogits([]int32{1}), 0, nil)
@@ -159,7 +165,10 @@ func TestDFlashCommittedGapPanics(t *testing.T) {
 }
 
 func TestDFlashRestoredPrefixResumes(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testDFlashRestoredPrefixResumes)
+}
+
+func testDFlashRestoredPrefixResumes(t *testing.T) {
 	r := mtpTestRunner(t, nil, []int32{7}, sampler.Options{})
 	caches, _ := newMTPTestCaches(2)
 	draft := &fakeBlockDraft{blockSize: 4, maskToken: 6, draftCaches: caches[1:]}
@@ -189,7 +198,10 @@ func TestDFlashRestoredPrefixResumes(t *testing.T) {
 }
 
 func TestDFlashProposeBounds(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testDFlashProposeBounds)
+}
+
+func testDFlashProposeBounds(t *testing.T) {
 	predict := map[int32]int32{1: 2, 2: 3, 3: 4, 4: 5}
 	_, draft, session, _ := newBlockTestSession(t, predict, 4)
 	current := mlx.FromValues([]int32{1}, 1)
@@ -218,7 +230,10 @@ func TestDFlashProposeBounds(t *testing.T) {
 }
 
 func TestDFlashBlockRewoundBeforeContextWrites(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testDFlashBlockRewoundBeforeContextWrites)
+}
+
+func testDFlashBlockRewoundBeforeContextWrites(t *testing.T) {
 	predict := map[int32]int32{2: 3, 3: 4, 4: 5}
 	_, draft, session, caches := newBlockTestSession(t, predict, 4)
 
@@ -249,7 +264,10 @@ func TestDFlashBlockRewoundBeforeContextWrites(t *testing.T) {
 }
 
 func TestDFlashCloseDrainsOutstandingBlock(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testDFlashCloseDrainsOutstandingBlock)
+}
+
+func testDFlashCloseDrainsOutstandingBlock(t *testing.T) {
 	predict := map[int32]int32{2: 3, 3: 4, 4: 5}
 	_, _, session, caches := newBlockTestSession(t, predict, 4)
 
@@ -266,7 +284,10 @@ func TestDFlashCloseDrainsOutstandingBlock(t *testing.T) {
 }
 
 func TestDecodeBlockDraft(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testDecodeBlockDraft)
+}
+
+func testDecodeBlockDraft(t *testing.T) {
 	// The block draft mirrors the target chain, so one proposal round accepts
 	// every draft and the bonus token is the EOS.
 	const eos int32 = 7

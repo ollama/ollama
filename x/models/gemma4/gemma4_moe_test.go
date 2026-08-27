@@ -48,8 +48,10 @@ func newMoEBlock(cfg *TextConfig) *MoEBlock {
 }
 
 func TestMoERouterForward(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testMoERouterForward)
+}
 
+func testMoERouterForward(t *testing.T) {
 	cfg := tinyMoEConfig()
 	B, L := int32(1), int32(3)
 	x := onesLike(int(B), int(L), int(cfg.HiddenSize))
@@ -71,8 +73,10 @@ func TestMoERouterForward(t *testing.T) {
 }
 
 func TestMoEBlockForward(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testMoEBlockForward)
+}
 
+func testMoEBlockForward(t *testing.T) {
 	cfg := tinyMoEConfig()
 	B, L := int32(1), int32(3)
 	x := onesLike(int(B), int(L), int(cfg.HiddenSize))
@@ -94,8 +98,10 @@ func TestMoEBlockForward(t *testing.T) {
 }
 
 func TestMoEBlockSortedForward(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testMoEBlockSortedForward)
+}
 
+func testMoEBlockSortedForward(t *testing.T) {
 	cfg := tinyMoEConfig()
 	B, L := int32(1), int32(128)
 	x := onesLike(int(B), int(L), int(cfg.HiddenSize))
@@ -131,9 +137,7 @@ func TestLoadFusedExpertsQuantized(t *testing.T) {
 		"model.language_model.layers.0.experts",        // gemma HF (bare .experts.)
 		"model.language_model.layers.0.moe.switch_mlp", // create pipeline
 	} {
-		t.Run(prefix, func(t *testing.T) {
-			mlxtest.Setup(t)
-
+		mlxtest.RunSubtest(t, prefix, func(t *testing.T) {
 			gateUpKey := prefix + ".gate_up_proj"
 			downKey := prefix + ".down_proj"
 			tensors := map[string]*mlx.Array{
@@ -171,8 +175,10 @@ func TestLoadFusedExpertsQuantized(t *testing.T) {
 // TestLoadFusedExpertsDense verifies that a fused gate_up projection with no
 // scale companions is loaded onto the dense GatherMM path, kept fused.
 func TestLoadFusedExpertsDense(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testLoadFusedExpertsDense)
+}
 
+func testLoadFusedExpertsDense(t *testing.T) {
 	const E, I, H = 4, 8, 16
 	m := &Model{TextConfig: &TextConfig{}}
 
@@ -206,8 +212,10 @@ func TestLoadFusedExpertsDense(t *testing.T) {
 // normalized scores as the legacy path that softmaxes over every expert
 // first, gathers the top-k probabilities, then renormalizes.
 func TestRouterForwardMatchesLegacy(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testRouterForwardMatchesLegacy)
+}
 
+func testRouterForwardMatchesLegacy(t *testing.T) {
 	cfg := &TextConfig{
 		HiddenSize:  8,
 		NumExperts:  4,

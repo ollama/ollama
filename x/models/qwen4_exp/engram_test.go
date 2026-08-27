@@ -10,8 +10,10 @@ import (
 )
 
 func TestEngramHashes(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testEngramHashes)
+}
 
+func testEngramHashes(t *testing.T) {
 	p := &PLE{
 		LayerMultipliers: mlx.FromValues([]int64{3, 5, 7}, 3),
 		HeadVocabSizes:   mlx.FromValues([]int64{11, 13, 17, 19}, 4),
@@ -32,9 +34,12 @@ func TestEngramHashes(t *testing.T) {
 }
 
 func TestEngramCacheCarriesChunkHistory(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testEngramCacheCarriesChunkHistory)
+}
+
+func testEngramCacheCarriesChunkHistory(t *testing.T) {
 	c := newEngramCache(2, 3, 1, 9)
-	t.Cleanup(c.Free)
+	defer c.Free()
 	b := &batch.Batch{
 		InputIDs:     mlx.FromValues([]int32{1, 2}, 1, 2),
 		SeqQueryLens: []int32{2},
@@ -54,9 +59,12 @@ func TestEngramCacheCarriesChunkHistory(t *testing.T) {
 }
 
 func TestEngramCacheRestoresScheduledSnapshot(t *testing.T) {
-	mlxtest.Setup(t)
+	mlxtest.Run(t, testEngramCacheRestoresScheduledSnapshot)
+}
+
+func testEngramCacheRestoresScheduledSnapshot(t *testing.T) {
 	c := newEngramCache(2, 3, 1, 9)
-	t.Cleanup(c.Free)
+	defer c.Free()
 	b := &batch.Batch{
 		InputIDs:     mlx.FromValues([]int32{1, 2}, 1, 2),
 		SeqQueryLens: []int32{2},
@@ -73,7 +81,7 @@ func TestEngramCacheRestoresScheduledSnapshot(t *testing.T) {
 		t.Fatalf("TakeSnapshots() = %v, want two captured snapshots", snapshots)
 	}
 	for _, snapshot := range snapshots {
-		t.Cleanup(snapshot.Close)
+		defer snapshot.Close()
 	}
 	first := snapshots[0].(*engramSnapshot)
 	mlx.Eval(first.history, first.convHistory)
