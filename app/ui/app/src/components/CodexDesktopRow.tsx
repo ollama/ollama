@@ -46,9 +46,11 @@ export function codexDesktopDescription(
     return "Install ChatGPT to use Ollama models in the Codex app.";
   }
   if (!status.connected) return integration.description;
-  return status.model
-    ? `ChatGPT · Ollama is running · ${status.model}`
-    : "ChatGPT · Ollama is running separately";
+  const modelCount = status.models?.length ?? (status.model ? 1 : 0);
+  if (modelCount > 0) {
+    return `Ollama is running · ${modelCount} ${modelCount === 1 ? "model" : "models"} available in ChatGPT`;
+  }
+  return "Ollama is running in a separate ChatGPT window";
 }
 
 export function CodexDesktopRow({
