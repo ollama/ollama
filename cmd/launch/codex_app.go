@@ -654,8 +654,10 @@ func codexAppModelMetadataFromLaunchModel(model LaunchModel) codexAppModelMetada
 }
 
 func codexAppCatalogEntry(model string, metadata codexAppModelMetadata, priority int, baseInstructions string) map[string]any {
-	var defaultReasoningLevel any
-	supportedReasoningLevels := []any{}
+	var defaultReasoningLevel any = "none"
+	supportedReasoningLevels := []any{
+		map[string]any{"effort": "none", "description": "Thinking is not supported for this model"},
+	}
 	if metadata.supportsThinking {
 		defaultReasoningLevel = "medium"
 		supportedReasoningLevels = []any{
