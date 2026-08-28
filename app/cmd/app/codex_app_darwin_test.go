@@ -249,6 +249,44 @@ func TestBuildCodexDesktopModelsUsesAvailableRecommendations(t *testing.T) {
 	}
 }
 
+func TestCodexDesktopDefaultModelsUsesEligibleRecommendationsInEndpointOrder(t *testing.T) {
+	recommendations := []api.ModelRecommendation{
+		{Model: "glm-5.3-flash:cloud"},
+		{Model: "missing-local"},
+		{Model: "llama3.1"},
+	}
+	available := codexDesktopAvailableModels(
+		recommendations,
+		[]api.ListModelResponse{{Name: "llama3.1:latest"}, {Name: "extra-local"}},
+		[]string{"glm-5.3-flash:cloud", "extra-cloud:cloud"},
+	)
+	inventory := codexDesktopModelInventory{
+		Available:   available,
+		Recommended: codexDesktopRecommendedModels(recommendations, available),
+	}
+
+	got := codexDesktopModelNames(codexDesktopDefaultModels(inventory))
+	want := []string{"glm-5.3-flash:cloud", "llama3.1:latest"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("default models = %v, want eligible endpoint recommendations %v", got, want)
+	}
+}
+
+func TestCodexDesktopDefaultModelsFallsBackWhenNoRecommendationIsEligible(t *testing.T) {
+	available := []launch.LaunchModel{
+		{Name: "model-1"},
+		{Name: "model-2"},
+		{Name: "model-3"},
+		{Name: "model-4"},
+		{Name: "model-5"},
+		{Name: "model-6"},
+	}
+	got := codexDesktopModelNames(codexDesktopDefaultModels(codexDesktopModelInventory{Available: available}))
+	if len(got) != codexDesktopMaxModels || got[0] != "model-1" || got[4] != "model-5" {
+		t.Fatalf("fallback default models = %v, want first five available models", got)
+	}
+}
+
 func TestBuildCodexDesktopModelsRejectsEmptyCatalog(t *testing.T) {
 	if _, _, err := buildCodexDesktopModels(nil, nil, nil, nil); err == nil {
 		t.Fatal("buildCodexDesktopModels returned nil error for empty catalog")
@@ -363,6 +401,7 @@ func TestReconcileCodexDesktopModelsDropsUnavailableSavedSelections(t *testing.T
 	primary, models, err := reconcileCodexDesktopModels(
 		[]string{"removed-model", "qwen3:8b", "expired:cloud", "glm-5.2:cloud"},
 		available,
+		nil,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -377,7 +416,7 @@ func TestReconcileCodexDesktopModelsDropsUnavailableSavedSelections(t *testing.T
 
 func TestReconcileCodexDesktopModelsFallsBackWhenAllSavedSelectionsAreUnavailable(t *testing.T) {
 	available := []launch.LaunchModel{{Name: "qwen3:8b"}, {Name: "llama3.2:latest"}}
-	primary, models, err := reconcileCodexDesktopModels([]string{"removed-model"}, available)
+	primary, models, err := reconcileCodexDesktopModels([]string{"removed-model"}, available, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,6 +425,24 @@ func TestReconcileCodexDesktopModelsFallsBackWhenAllSavedSelectionsAreUnavailabl
 	}
 	if got := codexDesktopModelNames(models); len(got) != 2 || got[0] != "qwen3:8b" || got[1] != "llama3.2:latest" {
 		t.Fatalf("models = %#v, want current defaults", got)
+	}
+}
+
+func TestReconcileCodexDesktopModelsUsesRecommendedDefaultsWhenSavedSelectionsAreUnavailable(t *testing.T) {
+	available := []launch.LaunchModel{
+		{Name: "recommended:cloud", Remote: true},
+		{Name: "extra-local"},
+	}
+	defaults := []launch.LaunchModel{available[0]}
+	primary, models, err := reconcileCodexDesktopModels([]string{"removed-model"}, available, defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if primary != "recommended:cloud" {
+		t.Fatalf("primary = %q, want recommended endpoint default", primary)
+	}
+	if got := codexDesktopModelNames(models); len(got) != 1 || got[0] != "recommended:cloud" {
+		t.Fatalf("models = %v, want only recommended endpoint defaults", got)
 	}
 }
 

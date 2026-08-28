@@ -69,6 +69,11 @@ type codexDesktopModelsSettingsResult struct {
 	Error    string                     `json:"error,omitempty"`
 }
 
+type codexDesktopModelInventory struct {
+	Available   []launch.LaunchModel
+	Recommended []launch.LaunchModel
+}
+
 func getCodexDesktopStatus() codexDesktopStatus {
 	running := codexDesktop.OllamaProfileRunning()
 	var models []string
@@ -131,18 +136,14 @@ func getCodexDesktopModelsSettings() (codexDesktopModelsSettings, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	available, err := loadCodexDesktopAvailableModels(ctx)
+	inventory, err := loadCodexDesktopModelInventory(ctx)
 	if err != nil {
 		return settings, err
 	}
-	settings.Available = codexDesktopModelNames(available)
+	settings.Available = codexDesktopModelNames(inventory.Available)
 	settings.Selected = config.IntegrationModels(codexDesktopIntegrationName)
 	if len(settings.Selected) == 0 {
-		_, defaults, selectErr := selectCodexDesktopModels(nil, available)
-		if selectErr != nil {
-			return settings, selectErr
-		}
-		settings.Selected = codexDesktopModelNames(defaults)
+		settings.Selected = codexDesktopModelNames(codexDesktopDefaultModels(inventory))
 	}
 	if len(settings.Selected) > codexDesktopMaxModels {
 		settings.Selected = settings.Selected[:codexDesktopMaxModels]
@@ -194,11 +195,14 @@ func applyCodexDesktopModels(selected []string) error {
 }
 
 func loadCodexDesktopModels(ctx context.Context, selected []string) (string, []launch.LaunchModel, error) {
-	available, err := loadCodexDesktopAvailableModels(ctx)
+	inventory, err := loadCodexDesktopModelInventory(ctx)
 	if err != nil {
 		return "", nil, err
 	}
-	primary, models, err := selectCodexDesktopModels(selected, available)
+	if len(selected) == 0 {
+		selected = codexDesktopModelNames(codexDesktopDefaultModels(inventory))
+	}
+	primary, models, err := selectCodexDesktopModels(selected, inventory.Available)
 	if err != nil {
 		return "", nil, err
 	}
@@ -206,11 +210,15 @@ func loadCodexDesktopModels(ctx context.Context, selected []string) (string, []l
 }
 
 func loadCodexDesktopConnectionModels(ctx context.Context, selected []string) (string, []launch.LaunchModel, error) {
-	available, err := loadCodexDesktopAvailableModels(ctx)
+	inventory, err := loadCodexDesktopModelInventory(ctx)
 	if err != nil {
 		return "", nil, err
 	}
-	primary, models, err := reconcileCodexDesktopModels(selected, available)
+	defaults := codexDesktopDefaultModels(inventory)
+	if len(selected) == 0 {
+		selected = codexDesktopModelNames(defaults)
+	}
+	primary, models, err := reconcileCodexDesktopModels(selected, inventory.Available, defaults)
 	if err != nil {
 		return "", nil, err
 	}
@@ -241,9 +249,14 @@ func hydrateCodexDesktopModelCapabilities(ctx context.Context, models []launch.L
 }
 
 func loadCodexDesktopAvailableModels(ctx context.Context) ([]launch.LaunchModel, error) {
+	inventory, err := loadCodexDesktopModelInventory(ctx)
+	return inventory.Available, err
+}
+
+func loadCodexDesktopModelInventory(ctx context.Context) (codexDesktopModelInventory, error) {
 	client, err := codexDesktopClientFactory()
 	if err != nil {
-		return nil, err
+		return codexDesktopModelInventory{}, err
 	}
 
 	for attempt := 0; attempt < codexDesktopModelLoadAttempts; attempt++ {
@@ -262,7 +275,10 @@ func loadCodexDesktopAvailableModels(ctx context.Context) ([]launch.LaunchModel,
 
 		models := codexDesktopAvailableModels(recommendations, listed, accountCloud)
 		if len(models) > 0 {
-			return models, nil
+			return codexDesktopModelInventory{
+				Available:   models,
+				Recommended: codexDesktopRecommendedModels(recommendations, models),
+			}, nil
 		}
 		if attempt+1 == codexDesktopModelLoadAttempts {
 			break
@@ -271,11 +287,11 @@ func loadCodexDesktopAvailableModels(ctx context.Context) ([]launch.LaunchModel,
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return nil, ctx.Err()
+			return codexDesktopModelInventory{}, ctx.Err()
 		case <-timer.C:
 		}
 	}
-	return nil, errors.New("no Ollama models are available for ChatGPT")
+	return codexDesktopModelInventory{}, errors.New("no Ollama models are available for ChatGPT")
 }
 
 func loadCodexDesktopAccountCloudModels(ctx context.Context) ([]string, error) {
@@ -386,6 +402,37 @@ func codexDesktopAvailableModels(recommendations []api.ModelRecommendation, list
 	return models
 }
 
+func codexDesktopRecommendedModels(recommendations []api.ModelRecommendation, available []launch.LaunchModel) []launch.LaunchModel {
+	byName := make(map[string]launch.LaunchModel, len(available))
+	for _, model := range available {
+		byName[codexDesktopModelKey(model.Name)] = model
+	}
+
+	models := make([]launch.LaunchModel, 0, min(len(recommendations), codexDesktopMaxModels))
+	seen := make(map[string]bool, cap(models))
+	for _, recommendation := range recommendations {
+		key := codexDesktopModelKey(recommendation.Model)
+		model, ok := byName[key]
+		if key == "" || !ok || seen[key] {
+			continue
+		}
+		seen[key] = true
+		models = append(models, model)
+		if len(models) == codexDesktopMaxModels {
+			break
+		}
+	}
+	return models
+}
+
+func codexDesktopDefaultModels(inventory codexDesktopModelInventory) []launch.LaunchModel {
+	models := inventory.Recommended
+	if len(models) == 0 {
+		models = inventory.Available
+	}
+	return append([]launch.LaunchModel(nil), models[:min(len(models), codexDesktopMaxModels)]...)
+}
+
 func codexDesktopListedModelIsCloud(model api.ListModelResponse) bool {
 	return model.RemoteModel != "" || model.RemoteHost != "" ||
 		codexDesktopCloudModel(model.Name) ||
@@ -440,8 +487,11 @@ func selectCodexDesktopModels(selected []string, available []launch.LaunchModel)
 // profile. Models that have since been removed or lost account access should
 // not prevent the remaining valid selection from starting. Explicit changes
 // from Settings continue to use selectCodexDesktopModels and remain strict.
-func reconcileCodexDesktopModels(selected []string, available []launch.LaunchModel) (string, []launch.LaunchModel, error) {
+func reconcileCodexDesktopModels(selected []string, available, defaults []launch.LaunchModel) (string, []launch.LaunchModel, error) {
 	if len(selected) == 0 {
+		if len(defaults) > 0 {
+			return selectCodexDesktopModels(codexDesktopModelNames(defaults), available)
+		}
 		return selectCodexDesktopModels(nil, available)
 	}
 
@@ -464,6 +514,9 @@ func reconcileCodexDesktopModels(selected []string, available []launch.LaunchMod
 		}
 	}
 	if len(resolved) == 0 {
+		if len(defaults) > 0 {
+			return selectCodexDesktopModels(codexDesktopModelNames(defaults), available)
+		}
 		return selectCodexDesktopModels(nil, available)
 	}
 	return resolved[0].Name, resolved, nil
