@@ -5,7 +5,11 @@ package main
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"testing"
+	"time"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
@@ -45,8 +49,12 @@ func (f *fakeCodexDesktopController) LaunchOllamaProfileFromDesktop(primary stri
 
 func stubCodexDesktopModelLoader(t *testing.T) {
 	originalLoadModels := codexDesktopLoadModels
-	t.Cleanup(func() { codexDesktopLoadModels = originalLoadModels })
-	codexDesktopLoadModels = func(_ context.Context, selected []string) (string, []launch.LaunchModel, error) {
+	originalLoadConnectionModels := codexDesktopLoadConnectionModels
+	t.Cleanup(func() {
+		codexDesktopLoadModels = originalLoadModels
+		codexDesktopLoadConnectionModels = originalLoadConnectionModels
+	})
+	loader := func(_ context.Context, selected []string) (string, []launch.LaunchModel, error) {
 		if len(selected) == 0 {
 			selected = []string{"qwen3:8b", "glm-5.2:cloud"}
 		}
@@ -56,6 +64,8 @@ func stubCodexDesktopModelLoader(t *testing.T) {
 		}
 		return selected[0], models, nil
 	}
+	codexDesktopLoadModels = loader
+	codexDesktopLoadConnectionModels = loader
 }
 func (f *fakeCodexDesktopController) StopOllamaProfileFromDesktop() error {
 	f.stopped = true
@@ -247,6 +257,91 @@ func TestBuildCodexDesktopModelsRejectsEmptyCatalog(t *testing.T) {
 func TestBuildCodexDesktopModelsRejectsUnavailableLocalSelection(t *testing.T) {
 	if _, _, err := buildCodexDesktopModels([]string{"missing-local"}, nil, []api.ListModelResponse{{Name: "qwen3:8b"}}, nil); err == nil {
 		t.Fatal("buildCodexDesktopModels returned nil error for unavailable selection")
+	}
+}
+
+func TestLoadCodexDesktopAvailableModelsRetriesEmptyStartupInventory(t *testing.T) {
+	tagRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			_, _ = w.Write([]byte(`{"recommendations":[]}`))
+		case "/api/tags":
+			tagRequests++
+			if tagRequests < 3 {
+				_, _ = w.Write([]byte(`{"models":[]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"models":[{"name":"qwen3:8b"}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	base, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := api.NewClient(base, server.Client())
+
+	originalClientFactory := codexDesktopClientFactory
+	originalCloudModels := codexDesktopCloudModels
+	originalAttempts := codexDesktopModelLoadAttempts
+	originalRetryWait := codexDesktopModelRetryWait
+	t.Cleanup(func() {
+		codexDesktopClientFactory = originalClientFactory
+		codexDesktopCloudModels = originalCloudModels
+		codexDesktopModelLoadAttempts = originalAttempts
+		codexDesktopModelRetryWait = originalRetryWait
+	})
+	codexDesktopClientFactory = func() (*api.Client, error) { return client, nil }
+	codexDesktopCloudModels = func(context.Context) ([]string, error) { return nil, nil }
+	codexDesktopModelLoadAttempts = 3
+	codexDesktopModelRetryWait = time.Millisecond
+
+	models, err := loadCodexDesktopAvailableModels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tagRequests != 3 {
+		t.Fatalf("tag requests = %d, want 3", tagRequests)
+	}
+	if got := codexDesktopModelNames(models); len(got) != 1 || got[0] != "qwen3:8b" {
+		t.Fatalf("models = %#v, want qwen3:8b", got)
+	}
+}
+
+func TestReconcileCodexDesktopModelsDropsUnavailableSavedSelections(t *testing.T) {
+	available := []launch.LaunchModel{
+		{Name: "qwen3:8b"},
+		{Name: "glm-5.2:cloud", Remote: true},
+	}
+	primary, models, err := reconcileCodexDesktopModels(
+		[]string{"removed-model", "qwen3:8b", "expired:cloud", "glm-5.2:cloud"},
+		available,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if primary != "qwen3:8b" {
+		t.Fatalf("primary = %q, want qwen3:8b", primary)
+	}
+	if got := codexDesktopModelNames(models); len(got) != 2 || got[0] != "qwen3:8b" || got[1] != "glm-5.2:cloud" {
+		t.Fatalf("models = %#v, want remaining available saved models", got)
+	}
+}
+
+func TestReconcileCodexDesktopModelsFallsBackWhenAllSavedSelectionsAreUnavailable(t *testing.T) {
+	available := []launch.LaunchModel{{Name: "qwen3:8b"}, {Name: "llama3.2:latest"}}
+	primary, models, err := reconcileCodexDesktopModels([]string{"removed-model"}, available)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if primary != "qwen3:8b" {
+		t.Fatalf("primary = %q, want qwen3:8b", primary)
+	}
+	if got := codexDesktopModelNames(models); len(got) != 2 || got[0] != "qwen3:8b" || got[1] != "llama3.2:latest" {
+		t.Fatalf("models = %#v, want current defaults", got)
 	}
 }
 

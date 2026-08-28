@@ -30,11 +30,14 @@ type codexDesktopController interface {
 }
 
 var (
-	codexDesktop              codexDesktopController = &launch.CodexApp{}
-	codexDesktopClientFactory                        = api.ClientFromEnvironment
-	codexDesktopLoadModels                           = loadCodexDesktopModels
-	codexDesktopCloudModels                          = loadCodexDesktopAccountCloudModels
-	codexDesktopMu            sync.Mutex
+	codexDesktop                     codexDesktopController = &launch.CodexApp{}
+	codexDesktopClientFactory                               = api.ClientFromEnvironment
+	codexDesktopLoadModels                                  = loadCodexDesktopModels
+	codexDesktopLoadConnectionModels                        = loadCodexDesktopConnectionModels
+	codexDesktopCloudModels                                 = loadCodexDesktopAccountCloudModels
+	codexDesktopModelLoadAttempts                           = 4
+	codexDesktopModelRetryWait                              = 250 * time.Millisecond
+	codexDesktopMu                   sync.Mutex
 )
 
 type codexDesktopStatus struct {
@@ -101,7 +104,7 @@ func setCodexDesktopConnection(enabled bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	selected := config.IntegrationModels(codexDesktopIntegrationName)
-	primary, models, err := codexDesktopLoadModels(ctx, selected)
+	primary, models, err := codexDesktopLoadConnectionModels(ctx, selected)
 	if err != nil {
 		return err
 	}
@@ -198,30 +201,50 @@ func loadCodexDesktopModels(ctx context.Context, selected []string) (string, []l
 	return selectCodexDesktopModels(selected, available)
 }
 
+func loadCodexDesktopConnectionModels(ctx context.Context, selected []string) (string, []launch.LaunchModel, error) {
+	available, err := loadCodexDesktopAvailableModels(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	return reconcileCodexDesktopModels(selected, available)
+}
+
 func loadCodexDesktopAvailableModels(ctx context.Context) ([]launch.LaunchModel, error) {
 	client, err := codexDesktopClientFactory()
 	if err != nil {
 		return nil, err
 	}
 
-	var recommendations []api.ModelRecommendation
-	if response, recommendationErr := client.ModelRecommendationsExperimental(ctx); recommendationErr == nil {
-		recommendations = response.Recommendations
-	}
-	var listed []api.ListModelResponse
-	if response, listErr := client.List(ctx); listErr == nil {
-		listed = response.Models
-	}
-	var accountCloud []string
-	if names, cloudErr := codexDesktopCloudModels(ctx); cloudErr == nil {
-		accountCloud = names
-	}
+	for attempt := 0; attempt < codexDesktopModelLoadAttempts; attempt++ {
+		var recommendations []api.ModelRecommendation
+		if response, recommendationErr := client.ModelRecommendationsExperimental(ctx); recommendationErr == nil {
+			recommendations = response.Recommendations
+		}
+		var listed []api.ListModelResponse
+		if response, listErr := client.List(ctx); listErr == nil {
+			listed = response.Models
+		}
+		var accountCloud []string
+		if names, cloudErr := codexDesktopCloudModels(ctx); cloudErr == nil {
+			accountCloud = names
+		}
 
-	models := codexDesktopAvailableModels(recommendations, listed, accountCloud)
-	if len(models) == 0 {
-		return nil, errors.New("no Ollama models are available for ChatGPT")
+		models := codexDesktopAvailableModels(recommendations, listed, accountCloud)
+		if len(models) > 0 {
+			return models, nil
+		}
+		if attempt+1 == codexDesktopModelLoadAttempts {
+			break
+		}
+		timer := time.NewTimer(codexDesktopModelRetryWait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
 	}
-	return models, nil
+	return nil, errors.New("no Ollama models are available for ChatGPT")
 }
 
 func loadCodexDesktopAccountCloudModels(ctx context.Context) ([]string, error) {
@@ -378,6 +401,39 @@ func selectCodexDesktopModels(selected []string, available []launch.LaunchModel)
 	}
 	if len(resolved) == 0 {
 		return "", nil, errors.New("choose at least one available Ollama model for ChatGPT")
+	}
+	return resolved[0].Name, resolved, nil
+}
+
+// reconcileCodexDesktopModels is used only when reopening the saved menu-bar
+// profile. Models that have since been removed or lost account access should
+// not prevent the remaining valid selection from starting. Explicit changes
+// from Settings continue to use selectCodexDesktopModels and remain strict.
+func reconcileCodexDesktopModels(selected []string, available []launch.LaunchModel) (string, []launch.LaunchModel, error) {
+	if len(selected) == 0 {
+		return selectCodexDesktopModels(nil, available)
+	}
+
+	byName := make(map[string]launch.LaunchModel, len(available))
+	for _, model := range available {
+		byName[codexDesktopModelKey(model.Name)] = model
+	}
+	resolved := make([]launch.LaunchModel, 0, min(len(selected), codexDesktopMaxModels))
+	seen := make(map[string]bool, codexDesktopMaxModels)
+	for _, name := range selected {
+		key := codexDesktopModelKey(name)
+		model, ok := byName[key]
+		if key == "" || !ok || seen[key] {
+			continue
+		}
+		seen[key] = true
+		resolved = append(resolved, model)
+		if len(resolved) == codexDesktopMaxModels {
+			break
+		}
+	}
+	if len(resolved) == 0 {
+		return selectCodexDesktopModels(nil, available)
 	}
 	return resolved[0].Name, resolved, nil
 }
