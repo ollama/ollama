@@ -36,17 +36,35 @@ describe("CodexDesktopRow", () => {
     expect(html).toContain('aria-checked="false"');
   });
 
-  it("shows the active Ollama model", () => {
+  it("shows how many Ollama models are available in ChatGPT", () => {
     const html = renderToStaticMarkup(
       <CodexDesktopRow
         integration={integration}
-        initialStatus={status({ connected: true, model: "qwen3:8b" })}
+        initialStatus={status({
+          connected: true,
+          model: "qwen3:8b",
+          models: ["qwen3:8b", "glm-5.3-flash:cloud", "kimi-k2.7-code:cloud"],
+        })}
       />,
     );
 
-    expect(html).toContain("ChatGPT · Ollama is running · qwen3:8b");
+    expect(html).toContain("Ollama is running · 3 models available in ChatGPT");
     expect(html).toContain('aria-label="Close ChatGPT · Ollama"');
     expect(html).toContain('aria-checked="true"');
+  });
+
+  it("uses singular copy for one Ollama model", () => {
+    const html = renderToStaticMarkup(
+      <CodexDesktopRow
+        integration={integration}
+        initialStatus={status({
+          connected: true,
+          model: "qwen3:8b",
+        })}
+      />,
+    );
+
+    expect(html).toContain("Ollama is running · 1 model available in ChatGPT");
   });
 
   it("disables the toggle when ChatGPT is not installed", () => {
