@@ -28,6 +28,7 @@ const (
 type codexDesktopController interface {
 	Installed() bool
 	OllamaProfileRunning() bool
+	OllamaProfileRequestCount() uint64
 	LaunchOllamaProfileFromDesktop(string, []launch.LaunchModel) error
 	StopOllamaProfileFromDesktop() error
 	Onboard() error
@@ -52,6 +53,7 @@ type codexDesktopStatus struct {
 	Model     string   `json:"model,omitempty"`
 	Models    []string `json:"models,omitempty"`
 	MaxModels int      `json:"maxModels"`
+	Requests  uint64   `json:"requests"`
 }
 
 type codexDesktopActionResult struct {
@@ -80,6 +82,10 @@ type codexDesktopModelInventory struct {
 
 func getCodexDesktopStatus() codexDesktopStatus {
 	running := codexDesktop.OllamaProfileRunning()
+	requests := uint64(0)
+	if running {
+		requests = codexDesktop.OllamaProfileRequestCount()
+	}
 	var models []string
 	if saved, err := config.LoadIntegration(codexDesktopIntegrationName); err == nil && len(saved.Models) > 0 {
 		models = append([]string(nil), saved.Models...)
@@ -96,6 +102,7 @@ func getCodexDesktopStatus() codexDesktopStatus {
 		Model:     model,
 		Models:    models,
 		MaxModels: codexDesktopMaxModels,
+		Requests:  requests,
 	}
 }
 

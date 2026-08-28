@@ -1259,6 +1259,11 @@ func IsCodexDesktopRunning() C.bool {
 	return C._Bool(codexDesktop.OllamaProfileRunning())
 }
 
+//export CodexDesktopRequestCount
+func CodexDesktopRequestCount() C.ulonglong {
+	return C.ulonglong(codexDesktop.OllamaProfileRequestCount())
+}
+
 //export SetCodexDesktopConnected
 func SetCodexDesktopConnected(connected C.bool) C.bool {
 	shouldConnect := connected != C._Bool(false)

@@ -47,10 +47,12 @@ export function codexDesktopDescription(
   }
   if (!status.connected) return integration.description;
   const modelCount = status.models?.length ?? (status.model ? 1 : 0);
+  const requestCount = status.requests ?? 0;
+  const requests = `${requestCount} ${requestCount === 1 ? "request" : "requests"} this session`;
   if (modelCount > 0) {
-    return `Ollama is running · ${modelCount} ${modelCount === 1 ? "model" : "models"} available in ChatGPT`;
+    return `Ollama is running · ${modelCount} ${modelCount === 1 ? "model" : "models"} · ${requests}`;
   }
-  return "Ollama is running in a separate ChatGPT window";
+  return `Ollama is running · ${requests}`;
 }
 
 export function CodexDesktopRow({
@@ -80,6 +82,36 @@ export function CodexDesktopRow({
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, [initialStatus, refreshStatus]);
+
+  useEffect(() => {
+    if (!status?.connected || !window.getCodexDesktopRequestCount) return;
+
+    let active = true;
+    let checking = false;
+    const refreshRequestCount = async () => {
+      if (!active || checking || document.visibilityState === "hidden") return;
+      checking = true;
+      try {
+        const requests = await window.getCodexDesktopRequestCount?.();
+        if (!active || requests === undefined) return;
+        setStatus((current) => {
+          if (!current || current.requests === requests) return current;
+          return { ...current, requests };
+        });
+      } catch {
+        // The next interval or window-focus refresh can recover the count.
+      } finally {
+        checking = false;
+      }
+    };
+
+    void refreshRequestCount();
+    const interval = window.setInterval(refreshRequestCount, 1000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [status?.connected]);
 
   const connected = status?.connected ?? false;
   const installed = status?.installed ?? integration.installed ?? false;
