@@ -34,7 +34,12 @@ vi.mock("@/components/ClaudeDesktopModelsSettings", () => ({
 
 vi.mock("@/hooks/useUser", () => ({
   useUser: () => ({
-    user: { name: "Paid user", email: "paid@example.com", plan: "pro" },
+    user: {
+      name: "Paid user",
+      email: "paid@example.com",
+      plan: "pro",
+      avatarurl: "https://example.com/avatar.png",
+    },
     isAuthenticated: true,
     refreshUser: vi.fn(),
     isRefreshing: false,
@@ -139,7 +144,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-describe("Settings reset interactions", () => {
+describe("Settings interactions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.isWindows = false;
@@ -163,6 +168,26 @@ describe("Settings reset interactions", () => {
       OLLAMA_TOOLS: false,
     });
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  });
+
+  it("top-aligns the account avatar with the identity block", async () => {
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(<Settings />);
+        await Promise.resolve();
+      });
+
+      const avatar = renderer!.root.findByProps({ alt: "Paid user" });
+      expect(avatar.parent?.props.className).toContain("items-start");
+      expect(avatar.parent?.props.className).not.toContain("items-center");
+    } finally {
+      await act(async () => {
+        renderer?.unmount();
+        await Promise.resolve();
+      });
+      vi.unstubAllGlobals();
+    }
   });
 
   it("locks every control and shows Saved after reset succeeds", async () => {

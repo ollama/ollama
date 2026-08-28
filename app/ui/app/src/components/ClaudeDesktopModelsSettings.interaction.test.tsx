@@ -171,6 +171,110 @@ function textContent(node: ReactTestInstance): string {
 }
 
 describe("ClaudeDesktopModelsSettings interactions", () => {
+  it("navigates available picker options with arrow keys and selects with Enter", async () => {
+    class TestHTMLElement {
+      focus() {}
+    }
+    const focus = vi.fn();
+    const scrollIntoView = vi.fn();
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      HTMLElement: TestHTMLElement,
+    });
+    vi.stubGlobal("document", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+
+    const initialStatus = testStatus();
+    initialStatus.models.splice(1, 0, {
+      name: "pro-only:cloud",
+      displayName: "pro-only:cloud",
+      cloud: true,
+      selected: false,
+      availability: "unavailable",
+      reason: "upgrade_required",
+    });
+
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <ClaudeDesktopModelsSettings
+            initialLocalModels={[]}
+            initialStatus={initialStatus}
+          />,
+          {
+            createNodeMock: (element) =>
+              element.type === "input"
+                ? { focus }
+                : element.type === "button" && element.props.role === "option"
+                  ? { scrollIntoView }
+                  : null,
+          },
+        );
+        await Promise.resolve();
+      });
+      await act(async () => {
+        pickerButton(renderer!).props.onClick();
+        await Promise.resolve();
+      });
+
+      const search = () =>
+        renderer!.root.findByProps({
+          "aria-label": "Find model for Fable 5",
+        });
+      const preventDefault = vi.fn();
+      expect(search().props.role).toBe("combobox");
+      expect(search().props["aria-controls"]).toBe(
+        "claude-route-claude-fable-5-listbox",
+      );
+      expect(search().props["aria-activedescendant"]).toBe(
+        "claude-route-claude-fable-5-listbox-option-0",
+      );
+
+      await act(async () => {
+        search().props.onKeyDown({ key: "ArrowDown", preventDefault });
+      });
+      expect(search().props["aria-activedescendant"]).toBe(
+        "claude-route-claude-fable-5-listbox-option-2",
+      );
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+
+      await act(async () => {
+        search().props.onKeyDown({ key: "ArrowUp", preventDefault });
+      });
+      expect(search().props["aria-activedescendant"]).toBe(
+        "claude-route-claude-fable-5-listbox-option-0",
+      );
+
+      await act(async () => {
+        search().props.onKeyDown({ key: "ArrowDown", preventDefault });
+      });
+      await act(async () => {
+        search().props.onKeyDown({ key: "Enter", preventDefault });
+        await Promise.resolve();
+      });
+      expect(
+        pickerButton(renderer!).findAllByType("span")[0].children.join(""),
+      ).toBe("kimi-k3:cloud");
+      expect(
+        renderer!.root.findAllByProps({
+          "aria-label": "Find model for Fable 5",
+        }),
+      ).toHaveLength(0);
+      expect(preventDefault).toHaveBeenCalledTimes(4);
+    } finally {
+      await act(async () => {
+        renderer?.unmount();
+        await Promise.resolve();
+      });
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("opens below without scrolling and disables auto mode for draft changes", async () => {
     class TestHTMLElement {
       focus() {}

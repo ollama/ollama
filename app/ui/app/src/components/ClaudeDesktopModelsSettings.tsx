@@ -20,6 +20,7 @@ import {
 import { Popover, PopoverButton, PopoverPanel } from "@headlessui/react";
 import {
   forwardRef,
+  type KeyboardEvent,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -169,6 +170,7 @@ function ClaudeModelPicker({
       >
         {({ close }) => (
           <ClaudeModelPickerOptions
+            id={id}
             routeName={routeName}
             value={value}
             models={models}
@@ -184,24 +186,69 @@ function ClaudeModelPicker({
 }
 
 function ClaudeModelPickerOptions({
+  id,
   routeName,
   value,
   models,
   onChange,
 }: Pick<
   ClaudeModelPickerProps,
-  "routeName" | "value" | "models" | "onChange"
+  "id" | "routeName" | "value" | "models" | "onChange"
 >) {
   const [query, setQuery] = useState("");
+  const [highlightedModel, setHighlightedModel] = useState(() => {
+    const selected = models.find(
+      (model) => model.name === value && modelIsAvailable(model),
+    );
+    return selected?.name ?? models.find(modelIsAvailable)?.name ?? "";
+  });
   const searchRef = useRef<HTMLInputElement>(null);
+  const optionRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const listboxId = `${id}-listbox`;
   const normalizedQuery = query.trim().toLowerCase();
   const filteredModels = models.filter((model) =>
     model.displayName.toLowerCase().includes(normalizedQuery),
   );
+  const availableModels = filteredModels.filter(modelIsAvailable);
+  const highlightedIndex = filteredModels.findIndex(
+    (model) => model.name === highlightedModel && modelIsAvailable(model),
+  );
+  const activeOptionId =
+    highlightedIndex >= 0
+      ? `${listboxId}-option-${highlightedIndex}`
+      : undefined;
 
   useEffect(() => {
     searchRef.current?.focus({ preventScroll: true });
   }, []);
+
+  const highlight = (model: ClaudeDesktopModelStatus) => {
+    setHighlightedModel(model.name);
+    optionRefs.current[model.name]?.scrollIntoView({ block: "nearest" });
+  };
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (availableModels.length === 0) return;
+
+    const currentIndex = availableModels.findIndex(
+      (model) => model.name === highlightedModel,
+    );
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      highlight(availableModels[(currentIndex + 1) % availableModels.length]);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      const previous =
+        currentIndex < 0
+          ? availableModels.length - 1
+          : (currentIndex - 1 + availableModels.length) %
+            availableModels.length;
+      highlight(availableModels[previous]);
+    } else if (event.key === "Enter" && currentIndex >= 0) {
+      event.preventDefault();
+      onChange(availableModels[currentIndex].name);
+    }
+  };
 
   return (
     <>
@@ -210,29 +257,49 @@ function ClaudeModelPickerOptions({
         <input
           ref={searchRef}
           type="text"
+          role="combobox"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={handleKeyDown}
           placeholder="Find model..."
           aria-label={`Find model for ${routeName}`}
+          aria-autocomplete="list"
+          aria-expanded="true"
+          aria-controls={listboxId}
+          aria-activedescendant={activeOptionId}
           autoCorrect="off"
           autoComplete="off"
           className="min-w-0 flex-1 border-none bg-transparent py-0.5 outline-none"
         />
       </div>
-      <div role="listbox" className="min-h-0 overflow-y-auto py-1">
-        {filteredModels.map((model) => {
+      <div
+        id={listboxId}
+        role="listbox"
+        aria-label={`Ollama models for ${routeName}`}
+        className="min-h-0 overflow-y-auto py-1"
+      >
+        {filteredModels.map((model, index) => {
           const available = modelIsAvailable(model);
           const statusLabel = claudeDesktopModelStatusLabel(model);
           const selected = value === model.name;
+          const highlighted = highlightedModel === model.name && available;
           return (
             <button
               key={model.name}
+              ref={(node) => {
+                optionRefs.current[model.name] = node;
+              }}
+              id={`${listboxId}-option-${index}`}
               type="button"
               role="option"
+              tabIndex={-1}
               aria-selected={selected}
               disabled={!available}
               onClick={() => onChange(model.name)}
-              className="flex w-full cursor-pointer items-start gap-2 px-3 py-2 text-left hover:bg-neutral-100 focus:bg-neutral-100 focus:outline-none disabled:cursor-not-allowed disabled:opacity-45 dark:hover:bg-neutral-700/60 dark:focus:bg-neutral-700/60"
+              onMouseEnter={() => available && setHighlightedModel(model.name)}
+              className={`flex w-full cursor-pointer items-start gap-2 px-3 py-2 text-left hover:bg-neutral-100 focus:bg-neutral-100 focus:outline-none disabled:cursor-not-allowed disabled:opacity-45 dark:hover:bg-neutral-700/60 dark:focus:bg-neutral-700/60 ${
+                highlighted ? "bg-neutral-100 dark:bg-neutral-700/60" : ""
+              }`}
             >
               <span className="mt-0.5 h-4 w-4 flex-shrink-0">
                 {selected && <CheckIcon className="h-4 w-4" />}
@@ -636,7 +703,7 @@ export const ClaudeDesktopModelsSettings = forwardRef<
               {mappings.map((mapping) => (
                 <div
                   key={mapping.routeId}
-                  className="relative grid min-h-12 grid-cols-[5.5rem_3.75rem_minmax(0,1fr)] items-center gap-2 py-1 max-sm:grid-cols-1 max-sm:gap-2"
+                  className="grid min-h-12 grid-cols-[5.5rem_3.75rem_minmax(0,1fr)] items-center gap-2 py-1 max-sm:grid-cols-1 max-sm:gap-2"
                 >
                   <div className="min-w-0">
                     <span className="block text-sm font-medium text-neutral-800 dark:text-neutral-200">
@@ -645,7 +712,7 @@ export const ClaudeDesktopModelsSettings = forwardRef<
                   </div>
                   <ArrowRightIcon
                     aria-hidden="true"
-                    className="absolute left-[6.6625rem] h-4 w-4 -translate-x-1/2 text-neutral-300 dark:text-neutral-500 max-sm:hidden"
+                    className="col-start-2 h-4 w-4 justify-self-center text-neutral-300 dark:text-neutral-500 max-sm:hidden"
                   />
                   <div className="col-start-3 w-2/3 min-w-0 max-sm:col-start-auto max-sm:w-full">
                     <ClaudeModelPicker
