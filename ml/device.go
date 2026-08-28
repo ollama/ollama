@@ -539,4 +539,3 @@ type FilteredRunnerDiscovery interface {
 	// This routine will not query the underlying device and will return immediately
 	GetActiveDeviceIDs() []DeviceID
 }
-
