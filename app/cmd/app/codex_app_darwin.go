@@ -19,8 +19,9 @@ import (
 const (
 	codexDesktopIntegrationName = "chatgpt"
 	codexDesktopMaxModels       = 5
-	// TODO: Move ChatGPT defaults into app-specific recommendations, following
-	// the Claude Desktop recommendation flow, instead of hard-coding Kimi here.
+	// TODO: Replace this hard-coded default with signed app-specific recommendations
+	// from /api/experimental/model-recommendations?app=chatgpt, following the Claude
+	// Desktop flow. ChatGPT needs recommendations only, not model mappings.
 	codexDesktopKimiDefault = "kimi-k2.7-code:cloud"
 )
 
