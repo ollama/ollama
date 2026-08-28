@@ -52,14 +52,17 @@ var (
 	codexAppCanOpenID = defaultCodexAppCanOpenBundleID
 	codexAppSleep     = time.Sleep
 
-	codexAppProfileExecutable = defaultCodexAppOllamaProfileExecutable
-	codexAppStartProfile      = defaultCodexAppStartOllamaProfile
-	codexAppStopProfile       = defaultCodexAppStopOllamaProfile
-	codexAppProfileIsRunning  = defaultCodexAppOllamaProfileIsRunning
-	codexAppProcessCommand    = defaultCodexAppProcessCommand
+	codexAppProfileApplication = defaultCodexAppOllamaProfileApplication
+	codexAppProfileExecutable  = defaultCodexAppOllamaProfileExecutable
+	codexAppOpenProfile        = defaultCodexAppOpenOllamaProfile
+	codexAppStartProfile       = defaultCodexAppStartOllamaProfile
+	codexAppStopProfile        = defaultCodexAppStopOllamaProfile
+	codexAppProfileIsRunning   = defaultCodexAppOllamaProfileIsRunning
+	codexAppProcessCommand     = defaultCodexAppProcessCommand
 
-	codexAppExitTimeout      = 5 * time.Second
-	codexAppForceExitTimeout = 5 * time.Second
+	codexAppProfileStartTimeout = 5 * time.Second
+	codexAppExitTimeout         = 5 * time.Second
+	codexAppForceExitTimeout    = 5 * time.Second
 )
 
 // CodexApp configures the desktop Codex app with one launch-selected default
@@ -981,10 +984,18 @@ func waitForCodexAppCondition(timeout time.Duration, cancel <-chan struct{}, don
 	return fmt.Errorf("ChatGPT did not quit; quit it manually and re-run the command")
 }
 
-func defaultCodexAppOllamaProfileExecutable() (string, error) {
+func defaultCodexAppOllamaProfileApplication() (string, error) {
 	appPath := codexAppAppPath()
 	if appPath == "" {
 		return "", fmt.Errorf("ChatGPT was not found; install it from https://chatgpt.com/download")
+	}
+	return appPath, nil
+}
+
+func defaultCodexAppOllamaProfileExecutable() (string, error) {
+	appPath, err := codexAppProfileApplication()
+	if err != nil {
+		return "", err
 	}
 	executable := filepath.Join(appPath, "Contents", "MacOS", "ChatGPT")
 	if info, err := codexAppStat(executable); err != nil || info.IsDir() {
@@ -994,7 +1005,7 @@ func defaultCodexAppOllamaProfileExecutable() (string, error) {
 }
 
 func defaultCodexAppStartOllamaProfile() error {
-	executable, err := codexAppProfileExecutable()
+	appPath, err := codexAppProfileApplication()
 	if err != nil {
 		return err
 	}
@@ -1016,32 +1027,50 @@ func defaultCodexAppStartOllamaProfile() error {
 	if err := resetCodexAppOllamaProfileRequestCount(); err != nil {
 		return err
 	}
-	cmd := exec.Command(executable,
+	if err := codexAppOpenProfile(appPath, codexHome, userDataDir); err != nil {
+		return fmt.Errorf("start ChatGPT · Ollama: %w", err)
+	}
+
+	deadline := time.Now().Add(codexAppProfileStartTimeout)
+	for {
+		if adoptCodexAppOllamaProfileSingleton(userDataDir) {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			break
+		}
+		codexAppSleep(50 * time.Millisecond)
+	}
+	return fmt.Errorf("ChatGPT did not start an independent Ollama profile")
+}
+
+// defaultCodexAppOpenOllamaProfile asks Launch Services to start ChatGPT as a
+// distinct application instance. Starting the app binary directly makes
+// macOS attribute ChatGPT's later workspace access to Ollama, which can cause
+// repeated Documents-folder permission prompts. Launch Services keeps
+// ChatGPT responsible for its own file access while still allowing the
+// isolated profile environment and Electron arguments to be supplied.
+func defaultCodexAppOpenOllamaProfile(appPath, codexHome, userDataDir string) error {
+	workingDir := filepath.Dir(codexHome)
+	if err := os.MkdirAll(workingDir, 0o700); err != nil {
+		return err
+	}
+	cmd := exec.Command("open", codexAppOllamaProfileOpenArgs(appPath, codexHome, userDataDir)...)
+	cmd.Dir = workingDir
+	return cmd.Run()
+}
+
+func codexAppOllamaProfileOpenArgs(appPath, codexHome, userDataDir string) []string {
+	args := []string{"-n", "-a", appPath}
+	for _, item := range codexAppOllamaProfileEnvironmentOverrides(codexHome, userDataDir) {
+		args = append(args, "--env", item)
+	}
+	return append(args,
+		"--args",
 		"--user-data-dir="+userDataDir,
 		"--no-first-run",
 		"--new-window",
 	)
-	cmd.Env = codexAppOllamaProfileEnvironment(codexHome, userDataDir)
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start ChatGPT · Ollama: %w", err)
-	}
-	pid := cmd.Process.Pid
-	if err := writeCodexAppOllamaProfilePID(pid); err != nil {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-		return err
-	}
-	go func() {
-		_ = cmd.Wait()
-		_ = removeCodexAppOllamaProfilePIDIf(pid)
-	}()
-	codexAppSleep(350 * time.Millisecond)
-	if !codexAppOllamaProfileProcessMatches(pid) {
-		_ = cmd.Process.Kill()
-		_ = removeCodexAppOllamaProfilePIDIf(pid)
-		return fmt.Errorf("ChatGPT did not start an independent Ollama profile")
-	}
-	return nil
 }
 
 func prepareCodexAppOllamaProfileUserData(userDataDir string) (bool, error) {
@@ -1088,22 +1117,14 @@ func codexAppOllamaProfileSingletonPID(userDataDir string) (int, bool) {
 	return pid, true
 }
 
-func codexAppOllamaProfileEnvironment(codexHome, userDataDir string) []string {
-	env := make([]string, 0, len(os.Environ())+4)
-	for _, item := range os.Environ() {
-		name, _, _ := strings.Cut(item, "=")
-		switch name {
-		case "CODEX_HOME", "CODEX_ELECTRON_USER_DATA_PATH", "CODEX_SPARKLE_ENABLED":
-			continue
-		}
-		env = append(env, item)
-	}
-	return append(env,
-		"CODEX_HOME="+codexHome,
-		"CODEX_ELECTRON_USER_DATA_PATH="+userDataDir,
+func codexAppOllamaProfileEnvironmentOverrides(codexHome, userDataDir string) []string {
+	return []string{
+		"CODEX_HOME=" + codexHome,
+		"CODEX_ELECTRON_USER_DATA_PATH=" + userDataDir,
 		"CODEX_SPARKLE_ENABLED=false",
 		"OLLAMA_CHATGPT_PROFILE=1",
-	)
+		"PWD=" + filepath.Dir(codexHome),
+	}
 }
 
 func defaultCodexAppOllamaProfileIsRunning() bool {
