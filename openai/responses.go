@@ -494,10 +494,18 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 					return nil, fmt.Errorf("failed to parse function call arguments: %w", err)
 				}
 			}
+			namespace, name := v.Namespace, v.Name
+			if namespace == "" {
+				// Normalize calls replayed from conversations created before namespace
+				// output support. Those items used namespace._member as a flat name.
+				if matchedNamespace, matchedName := responsesToolCallName(r.Tools, name); matchedNamespace != "" {
+					namespace, name = matchedNamespace, matchedName
+				}
+			}
 			toolCall := api.ToolCall{
 				ID: v.CallID,
 				Function: api.ToolCallFunction{
-					Name:      qualifyNamespaceToolName(v.Namespace, v.Name),
+					Name:      qualifyNamespaceToolName(namespace, name),
 					Arguments: args,
 				},
 			}
@@ -709,7 +717,9 @@ func responsesToolCallName(tools []ResponsesTool, qualified string) (namespace, 
 			if member.Type == "namespace" {
 				continue
 			}
-			if qualifyNamespaceToolName(tool.Name, member.Name) == qualified {
+			canonical := qualifyNamespaceToolName(tool.Name, member.Name)
+			legacy := tool.Name + "." + member.Name
+			if canonical == qualified || legacy == qualified {
 				return tool.Name, member.Name
 			}
 		}

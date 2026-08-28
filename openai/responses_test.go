@@ -674,23 +674,58 @@ func TestConvertToolsQualifiesNamespaceMemberNames(t *testing.T) {
 }
 
 func TestFromResponsesRequestPreservesFunctionCallNamespace(t *testing.T) {
-	req := ResponsesRequest{
-		Model: "test",
-		Input: ResponsesInput{Items: []ResponsesInputItem{ResponsesFunctionCall{
-			Type:      "function_call",
-			CallID:    "call_1",
-			Namespace: "mcp__codex_apps__notion",
-			Name:      "_search",
-			Arguments: `{}`,
-		}}},
+	tests := []struct {
+		name      string
+		call      ResponsesFunctionCall
+		want      string
+		withTools bool
+	}{
+		{
+			name: "namespaced call",
+			call: ResponsesFunctionCall{
+				Type:      "function_call",
+				CallID:    "call_1",
+				Namespace: "mcp__codex_apps__notion",
+				Name:      "_search",
+				Arguments: `{}`,
+			},
+			want: "mcp__codex_apps__notion_search",
+		},
+		{
+			name: "legacy dotted call",
+			call: ResponsesFunctionCall{
+				Type:      "function_call",
+				CallID:    "call_1",
+				Name:      "mcp__codex_apps__notion._search",
+				Arguments: `{}`,
+			},
+			want:      "mcp__codex_apps__notion_search",
+			withTools: true,
+		},
 	}
 
-	chatReq, err := FromResponsesRequest(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := chatReq.Messages[0].ToolCalls[0].Function.Name; got != "mcp__codex_apps__notion_search" {
-		t.Fatalf("tool name = %q, want qualified namespace member", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := ResponsesRequest{
+				Model: "test",
+				Input: ResponsesInput{Items: []ResponsesInputItem{tt.call}},
+			}
+			if tt.withTools {
+				req.Tools = []ResponsesTool{{
+					Type:  "namespace",
+					Name:  "mcp__codex_apps__notion",
+					Tools: []ResponsesTool{{Type: "function", Name: "_search"}},
+				}}
+			}
+
+			chatReq, err := FromResponsesRequest(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := chatReq.Messages[0].ToolCalls[0].Function.Name; got != tt.want {
+				t.Fatalf("tool name = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -732,6 +767,38 @@ func TestResponsesStreamConverterRestoresFunctionCallNamespace(t *testing.T) {
 		ID: "call_1",
 		Function: api.ToolCallFunction{
 			Name:      "mcp__codex_apps__notion_search",
+			Arguments: api.ToolCallFunctionArguments{},
+		},
+	}}}})
+
+	var item map[string]any
+	for _, event := range events {
+		if event.Event == "response.output_item.done" {
+			item = event.Data.(map[string]any)["item"].(map[string]any)
+		}
+	}
+	if item == nil {
+		t.Fatal("missing response.output_item.done")
+	}
+	if got := item["namespace"]; got != "mcp__codex_apps__notion" {
+		t.Fatalf("namespace = %q", got)
+	}
+	if got := item["name"]; got != "_search" {
+		t.Fatalf("name = %q", got)
+	}
+}
+
+func TestResponsesStreamConverterRestoresLegacyDottedFunctionCallNamespace(t *testing.T) {
+	request := ResponsesRequest{Tools: []ResponsesTool{{
+		Type:  "namespace",
+		Name:  "mcp__codex_apps__notion",
+		Tools: []ResponsesTool{{Type: "function", Name: "_search"}},
+	}}}
+	converter := NewResponsesStreamConverter("resp_1", "item_1", "test", request)
+	events := converter.Process(api.ChatResponse{Message: api.Message{ToolCalls: []api.ToolCall{{
+		ID: "call_1",
+		Function: api.ToolCallFunction{
+			Name:      "mcp__codex_apps__notion._search",
 			Arguments: api.ToolCallFunctionArguments{},
 		},
 	}}}})
