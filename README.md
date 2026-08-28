@@ -55,7 +55,7 @@ The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `olla
 ollama
 ```
 
-You'll be prompted to run a model or connect Ollama to your existing agents or applications such as `Claude Code`, `OpenClaw`, `OpenCode` , `Codex`, `Copilot`,  and more.
+You'll be prompted to run a model or connect Ollama to your existing agents or applications such as `Claude Code`, `OpenClaw`, `OpenCode` , `Codex`, `Copilot`, `Talos`,  and more.
 
 ### Coding
 
@@ -73,6 +73,12 @@ Use [OpenClaw](https://docs.ollama.com/integrations/openclaw) to turn Ollama int
 
 ```
 ollama launch openclaw
+```
+
+For a permission-gated agent that asks for approval before anything risky runs and records its actions in a checkable audit log, use [Talos](https://docs.ollama.com/integrations/talos):
+
+```
+ollama launch talos
 ```
 
 ### Chat with a model
