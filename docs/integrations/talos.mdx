@@ -1,0 +1,73 @@
+---
+title: Talos
+---
+
+[Talos](https://talos-agent.ch) is a permission-gated personal agent. Its kernel classifies every action as **allow**, **needs-human**, or **deny** before it runs, and records what happened in a checkable audit log — an agent whose actions are bounded, explained, and reviewable after the fact.
+
+![Talos with Ollama](/images/launch-icons/talos.svg)
+
+## Quick start
+
+```bash
+ollama launch talos
+```
+
+Ollama handles everything automatically:
+
+1. **Install** — If Talos isn't installed, Ollama offers to run the official installer. The installer verifies the sha256 checksum and an Ed25519 release signature before it unpacks anything, runs Talos's full test suite and adversarial suite in front of you, and starts nothing on its own. Talos supports macOS and Linux and needs Python 3.11 or newer.
+2. **Model** — Pick a model from the selector (local or cloud)
+3. **Onboarding** — Ollama sets Talos's provider to Ollama (`http://localhost:11434/v1`, no API key needed) and your model as the primary, through Talos's own `talos config set` surface. Cloud models use Talos's Ollama Cloud provider instead.
+4. **Launch** — Starts `talos chat`, an interactive session where Talos asks for your approval before anything risky runs
+
+## Recommended models
+
+**Cloud models**:
+
+- `kimi-k2.5:cloud` — Multimodal reasoning with subagents
+- `glm-5.1:cloud` — Reasoning and code generation
+- `qwen3.5:cloud` — Reasoning, coding, and agentic tool use with vision
+- `minimax-m2.7:cloud` — Fast, efficient coding and real-world productivity
+
+**Local models:**
+
+- `gemma4` — Reasoning and code generation locally (~16 GB VRAM)
+- `qwen3.6` — Reasoning, coding, and visual understanding locally (~24 GB VRAM)
+
+More models at [ollama.com/search](https://ollama.com/search?c=cloud).
+
+For cloud models, Talos needs an Ollama API key. Talos refuses secrets on its command line by design, so add it once via `talos setup model` or your Talos env file (`OLLAMA_API_KEY`).
+
+## Approvals and the audit log
+
+Inside `talos chat`, actions the kernel classes as **needs-human** pause for your approval at the terminal. Every decision lands in Talos's event log, so you can review what the agent did and why:
+
+```bash
+talos events
+```
+
+For a single turn without approvals, use `talos ask "..."`.
+
+## Manual setup
+
+If you'd rather drive Talos's own setup instead of `ollama launch talos`, install it directly:
+
+```bash
+curl -fsSL https://talos-agent.ch/install.sh | sh
+```
+
+The installer puts everything under `~/talos` (override with `TALOS_PREFIX`) and adds nothing to your PATH — invoke it as `~/talos/.venv/bin/python -m talos`.
+
+### Connect to Ollama
+
+Local Ollama needs no key:
+
+```bash
+~/talos/.venv/bin/python -m talos config set TALOS_MODEL_PROVIDER ollama
+~/talos/.venv/bin/python -m talos config set TALOS_MODEL gemma4
+```
+
+Or run the interactive wizard, which also handles the Ollama Cloud provider and its API key without echoing it:
+
+```bash
+~/talos/.venv/bin/python -m talos setup model
+```
