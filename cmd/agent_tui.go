@@ -265,6 +265,13 @@ func agentToolsRegistry(ctx context.Context, client *api.Client, modelName strin
 		registry.Register(&agenttools.Skill{Catalog: skillCatalog})
 	}
 
+	if os.Getenv("OLLAMA_AGENT_DISABLE_COMPUTER") == "" {
+		envRegistry := coreagent.NewEnvironmentRegistry()
+		if computerTool := agenttools.NewComputer(envRegistry); computerTool != nil {
+			registry.Register(computerTool)
+		}
+	}
+
 	if os.Getenv("OLLAMA_AGENT_DISABLE_WEBSEARCH") == "" {
 		if disabled, known := agentCloudStatusDisabled(ctx, client); !known || !disabled {
 			registry.Register(&agenttools.WebSearch{})
