@@ -19,7 +19,9 @@ import (
 const (
 	codexDesktopIntegrationName = "chatgpt"
 	codexDesktopMaxModels       = 5
-	codexDesktopKimiDefault     = "kimi-k2.7-code:cloud"
+	// TODO: Move ChatGPT defaults into app-specific recommendations, following
+	// the Claude Desktop recommendation flow, instead of hard-coding Kimi here.
+	codexDesktopKimiDefault = "kimi-k2.7-code:cloud"
 )
 
 type codexDesktopController interface {
