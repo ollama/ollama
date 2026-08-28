@@ -300,12 +300,12 @@ func TestCodexAppOllamaProfileCountsUserRequestsThisSession(t *testing.T) {
 	}
 }
 
-func TestCodexAppOllamaProfileEnvironmentIsIsolated(t *testing.T) {
+func TestCodexAppOllamaProfileEnvironmentOverridesAreIsolated(t *testing.T) {
 	t.Setenv("CODEX_HOME", "/regular/codex-home")
 	t.Setenv("CODEX_ELECTRON_USER_DATA_PATH", "/regular/electron-data")
 	t.Setenv("CODEX_SPARKLE_ENABLED", "true")
 
-	env := codexAppOllamaProfileEnvironment("/ollama/codex-home", "/ollama/electron-data")
+	env := codexAppOllamaProfileEnvironmentOverrides("/ollama/codex-home", "/ollama/electron-data")
 	values := make(map[string][]string)
 	for _, item := range env {
 		name, value, ok := strings.Cut(item, "=")
@@ -318,10 +318,112 @@ func TestCodexAppOllamaProfileEnvironmentIsIsolated(t *testing.T) {
 		"CODEX_ELECTRON_USER_DATA_PATH": "/ollama/electron-data",
 		"CODEX_SPARKLE_ENABLED":         "false",
 		"OLLAMA_CHATGPT_PROFILE":        "1",
+		"PWD":                           "/ollama",
 	} {
 		if got := values[name]; len(got) != 1 || got[0] != want {
 			t.Fatalf("%s = %v, want [%s]", name, got, want)
 		}
+	}
+	if len(values) != 5 {
+		t.Fatalf("environment overrides = %v, want only isolated profile values", values)
+	}
+}
+
+func TestCodexAppOllamaProfileOpenArgsUseLaunchServices(t *testing.T) {
+	got := codexAppOllamaProfileOpenArgs(
+		"/Applications/ChatGPT.app",
+		"/ollama/chatgpt-ollama/codex-home",
+		"/ollama/chatgpt-ollama/electron-data",
+	)
+	want := []string{
+		"-n", "-a", "/Applications/ChatGPT.app",
+		"--env", "CODEX_HOME=/ollama/chatgpt-ollama/codex-home",
+		"--env", "CODEX_ELECTRON_USER_DATA_PATH=/ollama/chatgpt-ollama/electron-data",
+		"--env", "CODEX_SPARKLE_ENABLED=false",
+		"--env", "OLLAMA_CHATGPT_PROFILE=1",
+		"--env", "PWD=/ollama/chatgpt-ollama",
+		"--args",
+		"--user-data-dir=/ollama/chatgpt-ollama/electron-data",
+		"--no-first-run",
+		"--new-window",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("Launch Services args = %q, want %q", got, want)
+	}
+}
+
+func TestCodexAppStartOllamaProfileAdoptsLaunchServicesProcess(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	withCodexAppPlatform(t, "darwin")
+
+	oldApplication := codexAppProfileApplication
+	oldExecutable := codexAppProfileExecutable
+	oldOpenProfile := codexAppOpenProfile
+	oldProcessCommand := codexAppProcessCommand
+	oldStartTimeout := codexAppProfileStartTimeout
+	oldSleep := codexAppSleep
+	t.Cleanup(func() {
+		codexAppProfileApplication = oldApplication
+		codexAppProfileExecutable = oldExecutable
+		codexAppOpenProfile = oldOpenProfile
+		codexAppProcessCommand = oldProcessCommand
+		codexAppProfileStartTimeout = oldStartTimeout
+		codexAppSleep = oldSleep
+	})
+
+	const appPath = "/Applications/ChatGPT.app"
+	const executable = appPath + "/Contents/MacOS/ChatGPT"
+	codexAppProfileApplication = func() (string, error) { return appPath, nil }
+	codexAppProfileExecutable = func() (string, error) { return executable, nil }
+	codexAppProfileStartTimeout = time.Second
+	codexAppSleep = func(time.Duration) {}
+
+	var openedCodexHome, openedUserDataDir string
+	codexAppOpenProfile = func(gotAppPath, codexHome, userDataDir string) error {
+		if gotAppPath != appPath {
+			t.Fatalf("app path = %q, want %q", gotAppPath, appPath)
+		}
+		openedCodexHome = codexHome
+		openedUserDataDir = userDataDir
+		return os.Symlink("test-host-424242", filepath.Join(userDataDir, codexAppSingletonLockName))
+	}
+	codexAppProcessCommand = func(pid int) (string, error) {
+		if pid != 424242 {
+			t.Fatalf("process PID = %d, want 424242", pid)
+		}
+		return executable + " --user-data-dir=" + openedUserDataDir, nil
+	}
+
+	if err := defaultCodexAppStartOllamaProfile(); err != nil {
+		t.Fatal(err)
+	}
+	if openedCodexHome == "" || openedUserDataDir == "" {
+		t.Fatal("Launch Services profile paths were not supplied")
+	}
+	if pid, ok := codexAppOllamaProfilePID(); !ok || pid != 424242 {
+		t.Fatalf("adopted PID = %d, %v; want 424242, true", pid, ok)
+	}
+}
+
+func TestCodexAppStartOllamaProfileReportsLaunchServicesFailure(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	withCodexAppPlatform(t, "darwin")
+
+	oldApplication := codexAppProfileApplication
+	oldOpenProfile := codexAppOpenProfile
+	codexAppProfileApplication = func() (string, error) { return "/Applications/ChatGPT.app", nil }
+	codexAppOpenProfile = func(string, string, string) error { return errors.New("launch services unavailable") }
+	t.Cleanup(func() {
+		codexAppProfileApplication = oldApplication
+		codexAppOpenProfile = oldOpenProfile
+	})
+
+	err := defaultCodexAppStartOllamaProfile()
+	if err == nil || !strings.Contains(err.Error(), "launch services unavailable") {
+		t.Fatalf("launch error = %v, want Launch Services failure", err)
+	}
+	if _, ok := codexAppOllamaProfilePID(); ok {
+		t.Fatal("failed Launch Services start wrote a profile PID")
 	}
 }
 
