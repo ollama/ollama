@@ -326,6 +326,23 @@ func TestSetDefaultParser(t *testing.T) {
 	}
 }
 
+func TestSetDefaultParserRefreshesCachedCapabilities(t *testing.T) {
+	m := &Model{
+		Config:             model.ConfigV2{ModelFamily: "mistral3"},
+		capabilities:       []model.Capability{model.CapabilityCompletion},
+		capabilitiesCached: true,
+	}
+
+	setDefaultParser(m)
+
+	if !m.capabilitiesCached {
+		t.Fatal("expected capabilities to remain cached")
+	}
+	if err := m.CheckCapabilities(model.CapabilityTools); err != nil {
+		t.Fatalf("expected default parser to refresh tool capability: %v", err)
+	}
+}
+
 func TestChatMistral3ParserHandlesNameArgument(t *testing.T) {
 	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
 	t.Setenv("OLLAMA_GO_TEMPLATE", "1")

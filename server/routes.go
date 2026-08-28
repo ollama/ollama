@@ -116,8 +116,20 @@ func usesNativeChatTemplate(m *Model) bool {
 }
 
 func setDefaultParser(m *Model) {
-	if m != nil && m.Config.Parser == "" {
-		m.Config.Parser = defaultParserForModel(m)
+	if m == nil || m.Config.Parser != "" {
+		return
+	}
+
+	parser := defaultParserForModel(m)
+	if parser == "" {
+		return
+	}
+
+	m.Config.Parser = parser
+	if m.capabilitiesCached {
+		m.capabilitiesCached = false
+		m.capabilities = m.Capabilities()
+		m.capabilitiesCached = true
 	}
 }
 
