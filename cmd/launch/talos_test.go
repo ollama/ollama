@@ -236,6 +236,61 @@ func TestTalosConfigureWrapsConfigSetFailure(t *testing.T) {
 	}
 }
 
+func TestTalosConfigureRejectsConflictingEnvOverride(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell test binaries")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	clearTalosEnvVars(t)
+	t.Setenv("PATH", tmpDir)
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+	t.Setenv("TALOS_MODEL", "qwen3.5")
+
+	log := filepath.Join(tmpDir, "talos-invocations.log")
+	writeTalosScript(t, tmpDir, "talos", fmt.Sprintf("#!/bin/sh\nprintf '[%%s]\\n' \"$*\" >> %q\n", log))
+
+	err := (&Talos{}).Configure("gemma4")
+	if err == nil || !strings.Contains(err.Error(), "TALOS_MODEL") || !strings.Contains(err.Error(), "overrides") {
+		t.Fatalf("expected env override error, got %v", err)
+	}
+
+	// Nothing may be written when the saved config would not take effect.
+	if _, statErr := os.Stat(log); !os.IsNotExist(statErr) {
+		t.Fatalf("expected no talos invocations, log exists")
+	}
+}
+
+func TestTalosConfigureAcceptsMatchingEnvOverride(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell test binaries")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	clearTalosEnvVars(t)
+	t.Setenv("PATH", tmpDir)
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+	t.Setenv("TALOS_MODEL_PROVIDER", "ollama")
+	t.Setenv("TALOS_MODEL", "gemma4")
+
+	log := filepath.Join(tmpDir, "talos-invocations.log")
+	writeTalosScript(t, tmpDir, "talos", fmt.Sprintf("#!/bin/sh\nprintf '[%%s]\\n' \"$*\" >> %q\n", log))
+
+	if err := (&Talos{}).Configure("gemma4"); err != nil {
+		t.Fatalf("Configure returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "[config set TALOS_MODEL gemma4]") {
+		t.Fatalf("expected config set calls, got %q", data)
+	}
+}
+
 func TestTalosCurrentModel(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
