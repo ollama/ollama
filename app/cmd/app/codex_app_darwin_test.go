@@ -258,7 +258,7 @@ func TestCodexDesktopDefaultModelsUsesEligibleRecommendationsInEndpointOrder(t *
 	available := codexDesktopAvailableModels(
 		recommendations,
 		[]api.ListModelResponse{{Name: "llama3.1:latest"}, {Name: "extra-local"}},
-		[]string{"glm-5.3-flash:cloud", "extra-cloud:cloud"},
+		[]string{"glm-5.3-flash:cloud", "kimi-k2.7-code:cloud", "extra-cloud:cloud"},
 	)
 	inventory := codexDesktopModelInventory{
 		Available:   available,
@@ -266,9 +266,18 @@ func TestCodexDesktopDefaultModelsUsesEligibleRecommendationsInEndpointOrder(t *
 	}
 
 	got := codexDesktopModelNames(codexDesktopDefaultModels(inventory))
-	want := []string{"glm-5.3-flash:cloud", "llama3.1:latest"}
-	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
-		t.Fatalf("default models = %v, want eligible endpoint recommendations %v", got, want)
+	want := []string{"glm-5.3-flash:cloud", "llama3.1:latest", "kimi-k2.7-code:cloud"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("default models = %v, want eligible preferred defaults %v", got, want)
+	}
+}
+
+func TestCodexDesktopDefaultModelsOmitsKimiWithoutAccountAccess(t *testing.T) {
+	recommendations := []api.ModelRecommendation{{Model: "glm-5.3-flash:cloud"}}
+	available := codexDesktopAvailableModels(recommendations, nil, []string{"glm-5.3-flash:cloud"})
+	defaults := codexDesktopRecommendedModels(recommendations, available)
+	if got := codexDesktopModelNames(defaults); len(got) != 1 || got[0] != "glm-5.3-flash:cloud" {
+		t.Fatalf("default models = %v, want no unavailable Kimi model", got)
 	}
 }
 
