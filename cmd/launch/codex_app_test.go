@@ -900,7 +900,7 @@ func TestCodexAppConfigurePopulatesCatalogFromEnrichedModels(t *testing.T) {
 	setTestHome(t, tmpDir)
 
 	models := []LaunchModel{
-		{Name: "gemma4", ContextLength: 65536 + len("gemma4"), Capabilities: []model.Capability{model.CapabilityVision}},
+		{Name: "gemma4", ContextLength: 65536 + len("gemma4"), Capabilities: []model.Capability{model.CapabilityVision, model.CapabilityThinking}},
 		{Name: "qwen3:8b"},
 		{Name: "llama3.2"},
 	}
@@ -934,12 +934,37 @@ func TestCodexAppConfigurePopulatesCatalogFromEnrichedModels(t *testing.T) {
 		if model["visibility"] != "list" {
 			t.Fatalf("visibility for %q = %v, want list", slug, model["visibility"])
 		}
-		if model["default_reasoning_level"] != nil {
-			t.Fatalf("default_reasoning_level for %q = %v, want nil", slug, model["default_reasoning_level"])
-		}
 		levels, ok := model["supported_reasoning_levels"].([]any)
-		if !ok || len(levels) != 0 {
-			t.Fatalf("supported_reasoning_levels for %q = %v, want empty list", slug, model["supported_reasoning_levels"])
+		if !ok {
+			t.Fatalf("supported_reasoning_levels for %q = %T, want list", slug, model["supported_reasoning_levels"])
+		}
+		if slug == "gemma4" {
+			if model["default_reasoning_level"] != "medium" {
+				t.Fatalf("default_reasoning_level for %q = %v, want medium", slug, model["default_reasoning_level"])
+			}
+			wantEfforts := []string{"low", "medium", "high", "max"}
+			gotEfforts := make([]string, 0, len(levels))
+			for _, level := range levels {
+				entry, ok := level.(map[string]any)
+				if !ok {
+					t.Fatalf("reasoning level for %q = %T, want object", slug, level)
+				}
+				effort, _ := entry["effort"].(string)
+				gotEfforts = append(gotEfforts, effort)
+				if description, _ := entry["description"].(string); description == "" {
+					t.Fatalf("reasoning level %q for %q has no description", effort, slug)
+				}
+			}
+			if strings.Join(gotEfforts, ",") != strings.Join(wantEfforts, ",") {
+				t.Fatalf("reasoning levels for %q = %v, want %v", slug, gotEfforts, wantEfforts)
+			}
+		} else {
+			if model["default_reasoning_level"] != nil {
+				t.Fatalf("default_reasoning_level for %q = %v, want nil", slug, model["default_reasoning_level"])
+			}
+			if len(levels) != 0 {
+				t.Fatalf("supported_reasoning_levels for %q = %v, want empty list", slug, levels)
+			}
 		}
 		wantContext := float64(128000)
 		wantModalities := []string{"text"}

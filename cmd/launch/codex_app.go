@@ -629,8 +629,9 @@ func codexAppCatalogModelKey(name string) string {
 }
 
 type codexAppModelMetadata struct {
-	contextWindow   int
-	inputModalities []string
+	contextWindow    int
+	inputModalities  []string
+	supportsThinking bool
 }
 
 func codexAppDefaultModelMetadata() codexAppModelMetadata {
@@ -648,16 +649,29 @@ func codexAppModelMetadataFromLaunchModel(model LaunchModel) codexAppModelMetada
 	if model.HasCapability("vision") {
 		metadata.inputModalities = []string{"text", "image"}
 	}
+	metadata.supportsThinking = model.HasCapability("thinking")
 	return metadata
 }
 
 func codexAppCatalogEntry(model string, metadata codexAppModelMetadata, priority int, baseInstructions string) map[string]any {
+	var defaultReasoningLevel any
+	supportedReasoningLevels := []any{}
+	if metadata.supportsThinking {
+		defaultReasoningLevel = "medium"
+		supportedReasoningLevels = []any{
+			map[string]any{"effort": "low", "description": "Fast responses with lighter thinking"},
+			map[string]any{"effort": "medium", "description": "Balances speed and thinking depth for everyday tasks"},
+			map[string]any{"effort": "high", "description": "Greater thinking depth for complex tasks"},
+			map[string]any{"effort": "max", "description": "Maximum thinking depth for the hardest tasks"},
+		}
+	}
+
 	return map[string]any{
 		"slug":                             model,
 		"display_name":                     model,
 		"description":                      "Ollama local model",
-		"default_reasoning_level":          nil,
-		"supported_reasoning_levels":       []any{},
+		"default_reasoning_level":          defaultReasoningLevel,
+		"supported_reasoning_levels":       supportedReasoningLevels,
 		"shell_type":                       "default",
 		"visibility":                       "list",
 		"supported_in_api":                 true,
