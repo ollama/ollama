@@ -87,6 +87,19 @@ func (t *Talos) Configure(model string) error {
 		configModel = base
 	}
 
+	// An exported TALOS_MODEL_* variable outranks talos.env in Talos's own
+	// loader, so a stale export would make launch save and report the
+	// requested model while the launched process runs another. Refuse before
+	// writing anything instead of silently configuring a lie.
+	for _, kv := range []struct{ key, want string }{
+		{talosProviderKey, provider},
+		{talosModelKey, configModel},
+	} {
+		if value, ok := os.LookupEnv(kv.key); ok && strings.TrimSpace(value) != "" && value != kv.want {
+			return fmt.Errorf("%s is set to %q in your environment and overrides Talos's config file\n\nUnset it or set it to %q, then re-run:\n  ollama launch talos", kv.key, value, kv.want)
+		}
+	}
+
 	if err := talosConfigSet(argv, talosProviderKey, provider); err != nil {
 		return err
 	}
