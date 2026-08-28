@@ -19,6 +19,7 @@ import (
 const (
 	codexDesktopIntegrationName = "chatgpt"
 	codexDesktopMaxModels       = 5
+	codexDesktopKimiDefault     = "kimi-k2.7-code:cloud"
 )
 
 type codexDesktopController interface {
@@ -419,8 +420,13 @@ func codexDesktopRecommendedModels(recommendations []api.ModelRecommendation, av
 		seen[key] = true
 		models = append(models, model)
 		if len(models) == codexDesktopMaxModels {
-			break
+			return models
 		}
+	}
+
+	key := codexDesktopModelKey(codexDesktopKimiDefault)
+	if model, ok := byName[key]; ok && !seen[key] {
+		models = append(models, model)
 	}
 	return models
 }
