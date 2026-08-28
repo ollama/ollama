@@ -637,6 +637,121 @@ func TestFromResponsesRequest_NamespaceTools(t *testing.T) {
 	}
 }
 
+func TestConvertToolsQualifiesNamespaceMemberNames(t *testing.T) {
+	tests := []struct {
+		name      string
+		namespace string
+		member    string
+		want      string
+	}{
+		{name: "dot member", namespace: "muse", member: "bash", want: "muse.bash"},
+		{name: "qualified dot member", namespace: "muse", member: "muse.read_file", want: "muse.read_file"},
+		{name: "Codex plugin member", namespace: "mcp__codex_apps__notion", member: "_search", want: "mcp__codex_apps__notion._search"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tools, err := convertTools(ResponsesTool{
+				Type: "namespace",
+				Name: tt.namespace,
+				Tools: []ResponsesTool{{
+					Type: "function",
+					Name: tt.member,
+				}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(tools) != 1 {
+				t.Fatalf("tools = %#v, want one tool", tools)
+			}
+			if got := tools[0].Function.Name; got != tt.want {
+				t.Fatalf("tool name = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFromResponsesRequestPreservesFunctionCallNamespace(t *testing.T) {
+	req := ResponsesRequest{
+		Model: "test",
+		Input: ResponsesInput{Items: []ResponsesInputItem{ResponsesFunctionCall{
+			Type:      "function_call",
+			CallID:    "call_1",
+			Namespace: "mcp__codex_apps__notion",
+			Name:      "_search",
+			Arguments: `{}`,
+		}}},
+	}
+
+	chatReq, err := FromResponsesRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := chatReq.Messages[0].ToolCalls[0].Function.Name; got != "mcp__codex_apps__notion._search" {
+		t.Fatalf("tool name = %q, want qualified namespace member", got)
+	}
+}
+
+func TestToResponseRestoresFunctionCallNamespace(t *testing.T) {
+	request := ResponsesRequest{Tools: []ResponsesTool{{
+		Type:  "namespace",
+		Name:  "mcp__codex_apps__notion",
+		Tools: []ResponsesTool{{Type: "function", Name: "_search"}},
+	}}}
+	response := ToResponse("test", "resp_1", "item_1", api.ChatResponse{
+		Message: api.Message{ToolCalls: []api.ToolCall{{
+			ID: "call_1",
+			Function: api.ToolCallFunction{
+				Name:      "mcp__codex_apps__notion._search",
+				Arguments: api.ToolCallFunctionArguments{},
+			},
+		}}},
+	}, request)
+
+	if len(response.Output) != 1 {
+		t.Fatalf("output = %#v, want one function call", response.Output)
+	}
+	if got := response.Output[0].Namespace; got != "mcp__codex_apps__notion" {
+		t.Fatalf("namespace = %q", got)
+	}
+	if got := response.Output[0].Name; got != "_search" {
+		t.Fatalf("name = %q", got)
+	}
+}
+
+func TestResponsesStreamConverterRestoresFunctionCallNamespace(t *testing.T) {
+	request := ResponsesRequest{Tools: []ResponsesTool{{
+		Type:  "namespace",
+		Name:  "mcp__codex_apps__notion",
+		Tools: []ResponsesTool{{Type: "function", Name: "_search"}},
+	}}}
+	converter := NewResponsesStreamConverter("resp_1", "item_1", "test", request)
+	events := converter.Process(api.ChatResponse{Message: api.Message{ToolCalls: []api.ToolCall{{
+		ID: "call_1",
+		Function: api.ToolCallFunction{
+			Name:      "mcp__codex_apps__notion._search",
+			Arguments: api.ToolCallFunctionArguments{},
+		},
+	}}}})
+
+	var item map[string]any
+	for _, event := range events {
+		if event.Event == "response.output_item.done" {
+			item = event.Data.(map[string]any)["item"].(map[string]any)
+		}
+	}
+	if item == nil {
+		t.Fatal("missing response.output_item.done")
+	}
+	if got := item["namespace"]; got != "mcp__codex_apps__notion" {
+		t.Fatalf("namespace = %q", got)
+	}
+	if got := item["name"]; got != "_search" {
+		t.Fatalf("name = %q", got)
+	}
+}
+
 func TestFromResponsesRequest_ReasoningEffort(t *testing.T) {
 	tests := []struct {
 		name      string

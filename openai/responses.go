@@ -159,7 +159,8 @@ type ResponsesFunctionCall struct {
 	Type      string `json:"type"`         // always "function_call"
 	CallID    string `json:"call_id"`      // the tool call ID
 	Name      string `json:"name"`         // function name
-	Arguments string `json:"arguments"`    // JSON arguments string
+	Namespace string `json:"namespace,omitempty"`
+	Arguments string `json:"arguments"` // JSON arguments string
 }
 
 func (ResponsesFunctionCall) responsesInputItem() {}
@@ -496,7 +497,7 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 			toolCall := api.ToolCall{
 				ID: v.CallID,
 				Function: api.ToolCallFunction{
-					Name:      v.Name,
+					Name:      qualifyNamespaceToolName(v.Namespace, v.Name),
 					Arguments: args,
 				},
 			}
@@ -675,13 +676,38 @@ func convertTools(t ResponsesTool) ([]api.Tool, error) {
 			return nil, err
 		}
 		for i := range expanded {
-			if prefix := t.Name + "."; t.Name != "" && !strings.HasPrefix(expanded[i].Function.Name, prefix) {
-				expanded[i].Function.Name = prefix + expanded[i].Function.Name
-			}
+			expanded[i].Function.Name = qualifyNamespaceToolName(t.Name, expanded[i].Function.Name)
 		}
 		tools = append(tools, expanded...)
 	}
 	return tools, nil
+}
+
+func qualifyNamespaceToolName(namespace, member string) string {
+	if namespace == "" || member == "" {
+		return member
+	}
+	if strings.HasPrefix(member, namespace+".") {
+		return member
+	}
+	return namespace + "." + member
+}
+
+func responsesToolCallName(tools []ResponsesTool, qualified string) (namespace, name string) {
+	for _, tool := range tools {
+		if tool.Type != "namespace" || tool.Name == "" {
+			continue
+		}
+		for _, member := range tool.Tools {
+			if member.Type == "namespace" {
+				continue
+			}
+			if qualifyNamespaceToolName(tool.Name, member.Name) == qualified {
+				return tool.Name, member.Name
+			}
+		}
+	}
+	return "", qualified
 }
 
 func convertTool(t ResponsesTool) (api.Tool, error) {
@@ -821,6 +847,7 @@ type ResponsesOutputItem struct {
 	Content   []ResponsesOutputContent  `json:"content,omitempty"`   // for message
 	CallID    string                    `json:"call_id,omitempty"`   // for function_call
 	Name      string                    `json:"name,omitempty"`      // for function_call
+	Namespace string                    `json:"namespace,omitempty"` // for namespaced function_call
 	Arguments string                    `json:"arguments,omitempty"` // for function_call
 	Action    *ResponsesWebSearchAction `json:"action,omitempty"`    // for web_search_call
 
@@ -916,12 +943,14 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse,
 	if len(chatResponse.Message.ToolCalls) > 0 {
 		toolCalls := ToToolCalls(chatResponse.Message.ToolCalls)
 		for i, tc := range toolCalls {
+			namespace, name := responsesToolCallName(request.Tools, tc.Function.Name)
 			output = append(output, ResponsesOutputItem{
 				ID:        fmt.Sprintf("fc_%s_%d", responseID, i),
 				Type:      "function_call",
 				Status:    "completed",
 				CallID:    tc.ID,
-				Name:      tc.Function.Name,
+				Name:      name,
+				Namespace: namespace,
 				Arguments: tc.Function.Arguments,
 			})
 		}
@@ -1320,28 +1349,37 @@ func (c *ResponsesStreamConverter) emitFunctionCallEvents(toolCalls []api.ToolCa
 	for i, tc := range converted {
 		outputIndex := c.outputIndex + i
 		fcItemID := fmt.Sprintf("fc_%d_%d", rand.Intn(999999), i)
+		namespace, name := responsesToolCallName(c.request.Tools, tc.Function.Name)
 
 		toolCallItem := map[string]any{
 			"id":        fcItemID,
 			"type":      "function_call",
 			"status":    "completed",
 			"call_id":   tc.ID,
-			"name":      tc.Function.Name,
+			"name":      name,
 			"arguments": tc.Function.Arguments,
 		}
+		if namespace != "" {
+			toolCallItem["namespace"] = namespace
+		}
 		c.completedItems = append(c.completedItems, toolCallItem)
+
+		inProgressItem := map[string]any{
+			"id":        fcItemID,
+			"type":      "function_call",
+			"status":    "in_progress",
+			"call_id":   tc.ID,
+			"name":      name,
+			"arguments": "",
+		}
+		if namespace != "" {
+			inProgressItem["namespace"] = namespace
+		}
 
 		events = append(events,
 			c.newEvent("response.output_item.added", map[string]any{
 				"output_index": outputIndex,
-				"item": map[string]any{
-					"id":        fcItemID,
-					"type":      "function_call",
-					"status":    "in_progress",
-					"call_id":   tc.ID,
-					"name":      tc.Function.Name,
-					"arguments": "",
-				},
+				"item":         inProgressItem,
 			}),
 			c.newEvent("response.function_call_arguments.delta", map[string]any{
 				"item_id":      fcItemID,
