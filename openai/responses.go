@@ -687,8 +687,15 @@ func qualifyNamespaceToolName(namespace, member string) string {
 	if namespace == "" || member == "" {
 		return member
 	}
-	if strings.HasPrefix(member, namespace+".") {
+	if strings.HasPrefix(member, namespace+".") || strings.HasPrefix(member, namespace+"_") {
 		return member
+	}
+	// Codex app namespace members are advertised with a leading underscore
+	// (for example, mcp__codex_apps__notion + _search). Preserve that naming
+	// convention in the flat api.Tool representation instead of introducing
+	// a dot that is not part of the callable tool name.
+	if strings.HasPrefix(member, "_") {
+		return namespace + member
 	}
 	return namespace + "." + member
 }

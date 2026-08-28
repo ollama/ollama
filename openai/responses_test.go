@@ -646,7 +646,8 @@ func TestConvertToolsQualifiesNamespaceMemberNames(t *testing.T) {
 	}{
 		{name: "dot member", namespace: "muse", member: "bash", want: "muse.bash"},
 		{name: "qualified dot member", namespace: "muse", member: "muse.read_file", want: "muse.read_file"},
-		{name: "Codex plugin member", namespace: "mcp__codex_apps__notion", member: "_search", want: "mcp__codex_apps__notion._search"},
+		{name: "Codex plugin member", namespace: "mcp__codex_apps__notion", member: "_search", want: "mcp__codex_apps__notion_search"},
+		{name: "qualified Codex plugin member", namespace: "mcp__codex_apps__notion", member: "mcp__codex_apps__notion_search", want: "mcp__codex_apps__notion_search"},
 	}
 
 	for _, tt := range tests {
@@ -688,7 +689,7 @@ func TestFromResponsesRequestPreservesFunctionCallNamespace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := chatReq.Messages[0].ToolCalls[0].Function.Name; got != "mcp__codex_apps__notion._search" {
+	if got := chatReq.Messages[0].ToolCalls[0].Function.Name; got != "mcp__codex_apps__notion_search" {
 		t.Fatalf("tool name = %q, want qualified namespace member", got)
 	}
 }
@@ -703,7 +704,7 @@ func TestToResponseRestoresFunctionCallNamespace(t *testing.T) {
 		Message: api.Message{ToolCalls: []api.ToolCall{{
 			ID: "call_1",
 			Function: api.ToolCallFunction{
-				Name:      "mcp__codex_apps__notion._search",
+				Name:      "mcp__codex_apps__notion_search",
 				Arguments: api.ToolCallFunctionArguments{},
 			},
 		}}},
@@ -730,7 +731,7 @@ func TestResponsesStreamConverterRestoresFunctionCallNamespace(t *testing.T) {
 	events := converter.Process(api.ChatResponse{Message: api.Message{ToolCalls: []api.ToolCall{{
 		ID: "call_1",
 		Function: api.ToolCallFunction{
-			Name:      "mcp__codex_apps__notion._search",
+			Name:      "mcp__codex_apps__notion_search",
 			Arguments: api.ToolCallFunctionArguments{},
 		},
 	}}}})
