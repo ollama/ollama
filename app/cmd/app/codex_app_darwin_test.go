@@ -14,6 +14,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/launch"
+	modelpkg "github.com/ollama/ollama/types/model"
 )
 
 type fakeCodexDesktopController struct {
@@ -308,6 +309,49 @@ func TestLoadCodexDesktopAvailableModelsRetriesEmptyStartupInventory(t *testing.
 	}
 	if got := codexDesktopModelNames(models); len(got) != 1 || got[0] != "qwen3:8b" {
 		t.Fatalf("models = %#v, want qwen3:8b", got)
+	}
+}
+
+func TestLoadCodexDesktopModelsHydratesAccountOnlyCloudCapabilities(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			_, _ = w.Write([]byte(`{"recommendations":[]}`))
+		case "/api/tags":
+			_, _ = w.Write([]byte(`{"models":[]}`))
+		case "/api/show":
+			_, _ = w.Write([]byte(`{"capabilities":["completion","thinking","tools","vision"]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	base, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := api.NewClient(base, server.Client())
+
+	originalClientFactory := codexDesktopClientFactory
+	originalCloudModels := codexDesktopCloudModels
+	t.Cleanup(func() {
+		codexDesktopClientFactory = originalClientFactory
+		codexDesktopCloudModels = originalCloudModels
+	})
+	codexDesktopClientFactory = func() (*api.Client, error) { return client, nil }
+	codexDesktopCloudModels = func(context.Context) ([]string, error) {
+		return []string{"glm-5.3-flash:cloud"}, nil
+	}
+
+	primary, models, err := loadCodexDesktopModels(context.Background(), []string{"glm-5.3-flash:cloud"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if primary != "glm-5.3-flash:cloud" || len(models) != 1 {
+		t.Fatalf("models = %q, %#v; want selected cloud model", primary, models)
+	}
+	if !models[0].HasCapability(modelpkg.CapabilityThinking) {
+		t.Fatalf("capabilities = %v, want thinking from /api/show", models[0].Capabilities)
 	}
 }
 

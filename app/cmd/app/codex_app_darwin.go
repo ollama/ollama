@@ -198,7 +198,11 @@ func loadCodexDesktopModels(ctx context.Context, selected []string) (string, []l
 	if err != nil {
 		return "", nil, err
 	}
-	return selectCodexDesktopModels(selected, available)
+	primary, models, err := selectCodexDesktopModels(selected, available)
+	if err != nil {
+		return "", nil, err
+	}
+	return primary, hydrateCodexDesktopModelCapabilities(ctx, models), nil
 }
 
 func loadCodexDesktopConnectionModels(ctx context.Context, selected []string) (string, []launch.LaunchModel, error) {
@@ -206,7 +210,34 @@ func loadCodexDesktopConnectionModels(ctx context.Context, selected []string) (s
 	if err != nil {
 		return "", nil, err
 	}
-	return reconcileCodexDesktopModels(selected, available)
+	primary, models, err := reconcileCodexDesktopModels(selected, available)
+	if err != nil {
+		return "", nil, err
+	}
+	return primary, hydrateCodexDesktopModelCapabilities(ctx, models), nil
+}
+
+// hydrateCodexDesktopModelCapabilities fills metadata that may be absent from
+// account-only cloud inventory. In particular, some cloud models are returned
+// by /api/show but not /api/tags, which otherwise hides their Thinking levels
+// from the generated ChatGPT catalog.
+func hydrateCodexDesktopModelCapabilities(ctx context.Context, models []launch.LaunchModel) []launch.LaunchModel {
+	client, err := codexDesktopClientFactory()
+	if err != nil {
+		return models
+	}
+
+	hydrated := append([]launch.LaunchModel(nil), models...)
+	for i := range hydrated {
+		response, err := client.Show(ctx, &api.ShowRequest{Model: hydrated[i].Name})
+		if err != nil {
+			continue
+		}
+		if len(response.Capabilities) > 0 {
+			hydrated[i].Capabilities = append([]modelpkg.Capability(nil), response.Capabilities...)
+		}
+	}
+	return hydrated
 }
 
 func loadCodexDesktopAvailableModels(ctx context.Context) ([]launch.LaunchModel, error) {
