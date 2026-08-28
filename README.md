@@ -194,6 +194,7 @@ console.log(response.message.content);
 - [Reins](https://github.com/ibrahimcetin/reins) - Parameter tuning and reasoning model support
 - [ConfiChat](https://github.com/1runeberg/confichat) - Privacy-focused with optional encryption
 - [LLocal.in](https://github.com/kartikm7/llocal) - Electron desktop client
+- [Remuda](https://github.com/magna-nz/remuda) - macOS app for testing and tuning models with a built-in Modelfile editor
 - [MindMac](https://mindmac.app) - AI chat client for Mac
 - [Msty](https://msty.app) - Multi-model desktop client
 - [BoltAI for Mac](https://boltai.com) - AI chat client for Mac
