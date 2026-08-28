@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Talos">
+  <title>Talos</title>
+  <!-- Vollfarbe. Master für helle und dunkle Untergründe. -->
+  <defs>
+    <linearGradient id="tm-bronze" x1="32" y1="4" x2="32" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#E7BC7C"/><stop offset=".45" stop-color="#C08A47"/><stop offset="1" stop-color="#9A6A2C"/>
+    </linearGradient>
+    <linearGradient id="tm-ridge" x1="32" y1="16" x2="32" y2="44" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#EEC78B"/><stop offset="1" stop-color="#D4A264"/>
+    </linearGradient>
+    <linearGradient id="tm-amber" x1="32" y1="26" x2="32" y2="34" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFD692"/><stop offset="1" stop-color="#E49726"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#tm-bronze)" stroke="#57390F" stroke-width="1.6" stroke-linejoin="round" d="M24 4h16l16 8v20l-4 12-8 12-8 4h-8l-8-4-8-12-4-12V12Z"/>
+  <path fill="#A5732F" d="M27 21h10v21l-5 5-5-5Z"/>
+  <path fill="url(#tm-ridge)" d="M15.5 16.5h33L50 18v2.5L48.5 22H35v18l-3 3.5-3-3.5V22H15.5L14 20.5V18Z"/>
+  <path fill="#14100B" d="M11 22.5 27 26.5v8L12 35.5Z"/>
+  <path fill="#14100B" d="M53 22.5 37 26.5v8l15 1Z"/>
+  <rect x="-5.25" y="-2.8" width="10.5" height="5.6" rx="2" fill="url(#tm-amber)" transform="translate(19 29.6) rotate(12)"/>
+  <rect x="-5.25" y="-2.8" width="10.5" height="5.6" rx="2" fill="url(#tm-amber)" transform="translate(45 29.6) rotate(-12)"/>
+  <path fill="#14100B" d="M25.4 47h13.2a1.4 1.4 0 0 1 1.4 1.4v.8a1.4 1.4 0 0 1-1.4 1.4H25.4a1.4 1.4 0 0 1-1.4-1.4v-.8A1.4 1.4 0 0 1 25.4 47Z"/>
+</svg>
