@@ -423,10 +423,10 @@ func restoreClaudeDesktopTargets(targets claudeDesktopTargets) error {
 }
 
 func claudeDesktopSupported() error {
-	if claudeDesktopGOOS == "darwin" {
+	if claudeDesktopGOOS == "darwin" || claudeDesktopGOOS == "windows" {
 		return nil
 	}
-	return errors.New("Claude Desktop launch is only supported on macOS")
+	return errors.New("Claude Desktop launch is only supported on macOS and Windows")
 }
 
 func claudeDesktopRestoreSupported() error {

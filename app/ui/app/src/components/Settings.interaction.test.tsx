@@ -212,7 +212,7 @@ describe("Settings reset interactions", () => {
     }
   });
 
-  it("hides Claude Desktop settings and skips its reset on Windows", async () => {
+  it("shows Claude Desktop settings and includes its reset on Windows", async () => {
     mocks.isWindows = true;
 
     let renderer;
@@ -224,7 +224,7 @@ describe("Settings reset interactions", () => {
 
       expect(
         renderer!.root.findAllByProps({ "aria-label": "Claude settings" }),
-      ).toHaveLength(0);
+      ).toHaveLength(1);
 
       const resetButton = renderer!.root
         .findAllByType("button")
@@ -236,7 +236,7 @@ describe("Settings reset interactions", () => {
         await vi.waitFor(() => expect(mocks.updateSettings).toHaveBeenCalled());
       });
 
-      expect(mocks.resetClaudeMappings).not.toHaveBeenCalled();
+      expect(mocks.resetClaudeMappings).toHaveBeenCalled();
     } finally {
       await act(async () => {
         renderer?.unmount();
