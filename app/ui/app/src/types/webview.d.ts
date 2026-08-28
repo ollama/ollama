@@ -69,6 +69,7 @@ interface CodexDesktopStatus {
   model?: string;
   models?: string[];
   maxModels?: number;
+  requests?: number;
 }
 
 interface CodexDesktopActionResult {
@@ -115,6 +116,7 @@ declare global {
     prepareClaudeDesktopConnection?: () => Promise<ClaudeDesktopActionResult>;
     openClaudeDesktop?: () => Promise<string>;
     getCodexDesktopStatus?: () => Promise<CodexDesktopStatus>;
+    getCodexDesktopRequestCount?: () => Promise<number>;
     setCodexDesktopConnected?: (
       enabled: boolean,
     ) => Promise<CodexDesktopActionResult>;

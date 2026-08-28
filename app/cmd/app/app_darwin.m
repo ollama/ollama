@@ -671,8 +671,12 @@ static NSImage *ollamaApplicationIcon(void) {
 - (void)refreshCodexAppState {
     BOOL installed = IsCodexDesktopInstalled();
     BOOL connected = IsCodexDesktopConnected();
+    unsigned long long requests = connected ? CodexDesktopRequestCount() : 0;
+    NSString *activeStatus = requests == 1
+        ? @"1 request this session"
+        : [NSString stringWithFormat:@"%llu requests this session", requests];
     [self.codexAppRow setActiveStatusText:connected
-        ? @"Running separately"
+        ? activeStatus
         : nil];
     [self.codexAppRow setInactiveStatusText:installed
         ? @"Open alongside normal ChatGPT"

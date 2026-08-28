@@ -26,11 +26,15 @@ type fakeCodexDesktopController struct {
 	onboarded  bool
 	launchErrs []error
 	launches   [][]string
+	requests   uint64
 }
 
 func (f *fakeCodexDesktopController) Installed() bool { return f.installed }
 func (f *fakeCodexDesktopController) OllamaProfileRunning() bool {
 	return f.running
+}
+func (f *fakeCodexDesktopController) OllamaProfileRequestCount() uint64 {
+	return f.requests
 }
 func (f *fakeCodexDesktopController) LaunchOllamaProfileFromDesktop(primary string, models []launch.LaunchModel) error {
 	names := codexDesktopModelNames(models)

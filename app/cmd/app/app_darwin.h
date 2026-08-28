@@ -58,6 +58,7 @@ bool IsClaudeDesktopRunning(void);
 bool IsCodexDesktopInstalled(void);
 bool IsCodexDesktopConnected(void);
 bool IsCodexDesktopRunning(void);
+unsigned long long CodexDesktopRequestCount(void);
 bool SetCodexDesktopConnected(bool connected);
 bool ClaudeGatewayStartFailed(void);
 bool ClaudeGatewayPortConflict(void);

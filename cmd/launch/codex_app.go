@@ -27,6 +27,7 @@ const (
 	codexAppOllamaCodexHomeName  = "codex-home"
 	codexAppOllamaUserDataName   = "electron-data"
 	codexAppOllamaPIDFilename    = "chatgpt.pid"
+	codexAppSessionStartFilename = "session-start"
 	codexAppSingletonLockName    = "SingletonLock"
 	codexAppSingletonSocketName  = "SingletonSocket"
 	codexAppSingletonCookieName  = "SingletonCookie"
@@ -480,6 +481,9 @@ func configureCodexAppOllamaProfile(primary string, models []LaunchModel) error 
 	if err := seedCodexAppOllamaProfileAuth(configPath); err != nil {
 		return err
 	}
+	if err := seedCodexAppOllamaProfileSkills(configPath); err != nil {
+		return err
+	}
 	if err := disableCodexAppOllamaProfileHotkey(configPath); err != nil {
 		return err
 	}
@@ -557,6 +561,10 @@ func (c *CodexApp) StopOllamaProfileFromDesktop() error {
 
 func (c *CodexApp) OllamaProfileRunning() bool {
 	return codexAppGOOS == "darwin" && codexAppProfileIsRunning()
+}
+
+func (c *CodexApp) OllamaProfileRequestCount() uint64 {
+	return codexAppOllamaProfileRequestCount()
 }
 
 func codexAppProfileConfigPath() (string, error) {
@@ -1004,6 +1012,9 @@ func defaultCodexAppStartOllamaProfile() error {
 	}
 	if alreadyRunning {
 		return nil
+	}
+	if err := resetCodexAppOllamaProfileRequestCount(); err != nil {
+		return err
 	}
 	cmd := exec.Command(executable,
 		"--user-data-dir="+userDataDir,

@@ -177,6 +177,129 @@ func TestCodexAppOllamaProfileLeavesRegularAppUntouched(t *testing.T) {
 	}
 }
 
+func TestCodexAppOllamaProfileSeedsPersonalSkillsOnly(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	regularSkills := filepath.Join(tmpDir, ".codex", "skills")
+	personalSkill := filepath.Join(regularSkills, "review-ollama")
+	if err := os.MkdirAll(filepath.Join(personalSkill, "references"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(personalSkill, "SKILL.md"), []byte("personal skill\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(personalSkill, "references", "guide.md"), []byte("guide\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(regularSkills, ".system", "managed"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(regularSkills, ".system", "managed", "SKILL.md"), []byte("regular system\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	profileConfigPath, err := codexAppOllamaProfileConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	isolatedSkills := filepath.Join(filepath.Dir(profileConfigPath), "skills")
+	if err := os.MkdirAll(filepath.Join(isolatedSkills, ".system", "managed"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(isolatedSkills, ".system", "managed", "SKILL.md"), []byte("isolated system\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(isolatedSkills, "isolated-only"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(isolatedSkills, "isolated-only", "SKILL.md"), []byte("keep me\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := seedCodexAppOllamaProfileSkills(profileConfigPath); err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]string{
+		filepath.Join(isolatedSkills, "review-ollama", "SKILL.md"):               "personal skill\n",
+		filepath.Join(isolatedSkills, "review-ollama", "references", "guide.md"): "guide\n",
+		filepath.Join(isolatedSkills, ".system", "managed", "SKILL.md"):          "isolated system\n",
+		filepath.Join(isolatedSkills, "isolated-only", "SKILL.md"):               "keep me\n",
+	} {
+		data, err := os.ReadFile(path)
+		if err != nil || string(data) != want {
+			t.Fatalf("%s = %q, %v; want %q", path, data, err, want)
+		}
+	}
+}
+
+func TestCodexAppOllamaProfileCountsUserRequestsThisSession(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	if err := resetCodexAppOllamaProfileRequestCount(); err != nil {
+		t.Fatal(err)
+	}
+	startPath, err := codexAppOllamaProfileSessionStartPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	startData, err := os.ReadFile(startPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(startData)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	codexHome, err := codexAppOllamaProfileCodexHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionPath := filepath.Join(codexHome, "sessions", "2026", "08", "28", "rollout.jsonl")
+	if err := os.MkdirAll(filepath.Dir(sessionPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	requestLine := func(at time.Time, kinds ...string) []byte {
+		line, err := json.Marshal(map[string]any{
+			"timestamp": at,
+			"type":      "response_item",
+			"payload": map[string]any{
+				"type": "message",
+				"role": "user",
+				"internal_chat_message_metadata_passthrough": map[string]any{
+					"content_item_kinds": kinds,
+				},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return append(line, '\n')
+	}
+	lines := append(requestLine(start.Add(-time.Second), "user.text"), requestLine(start.Add(time.Second), "plugins.recommendations")...)
+	lines = append(lines, requestLine(start.Add(2*time.Second), "user.text")...)
+	lines = append(lines, requestLine(start.Add(3*time.Second), "user.text")...)
+	if err := os.WriteFile(sessionPath, lines, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := codexAppOllamaProfileRequestCount(); got != 2 {
+		t.Fatalf("request count = %d, want 2", got)
+	}
+	file, err := os.OpenFile(sessionPath, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write(requestLine(start.Add(4*time.Second), "user.text")); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := codexAppOllamaProfileRequestCount(); got != 3 {
+		t.Fatalf("incremental request count = %d, want 3", got)
+	}
+}
+
 func TestCodexAppOllamaProfileEnvironmentIsIsolated(t *testing.T) {
 	t.Setenv("CODEX_HOME", "/regular/codex-home")
 	t.Setenv("CODEX_ELECTRON_USER_DATA_PATH", "/regular/electron-data")
