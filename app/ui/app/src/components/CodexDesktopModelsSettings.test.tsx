@@ -68,6 +68,7 @@ vi.mock("@headlessui/react", async (importOriginal) => {
     anchor?: unknown;
     children: ReactNode;
   }) {
+    void _anchor;
     const { open } = usePopover();
     return open ? <div {...props}>{children}</div> : null;
   }
@@ -224,6 +225,64 @@ describe("CodexDesktopModelsSettings", () => {
       });
       expect(picker.props.className).toContain("w-full");
       expect(dropdown.props.className).toContain("w-[var(--button-width)]");
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  });
+
+  it("navigates and selects dropdown models with the keyboard", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopModelsSettings
+            initialSettings={settings({ selected: [] })}
+          />,
+        );
+      });
+      await act(async () => {
+        const addButton = renderer!.root
+          .findAllByProps({ "aria-label": "Add ChatGPT model" })
+          .find((node) => node.type === "button");
+        if (!addButton) throw new Error("Add model button not found");
+        addButton.props.onClick();
+      });
+
+      const search = renderer!.root.findByProps({
+        "aria-label": "Find ChatGPT model",
+      });
+      const preventDefault = vi.fn();
+      await act(async () => {
+        search.props.onKeyDown({ key: "ArrowDown", preventDefault });
+      });
+      let options = renderer!.root.findAllByProps({ role: "option" });
+      expect(options[0].props.className).toContain("bg-neutral-100");
+
+      await act(async () => {
+        search.props.onKeyDown({ key: "ArrowDown", preventDefault });
+      });
+      options = renderer!.root.findAllByProps({ role: "option" });
+      expect(options[1].props.className).toContain("bg-neutral-100");
+
+      await act(async () => {
+        search.props.onKeyDown({ key: "ArrowUp", preventDefault });
+      });
+      await act(async () => {
+        renderer!.root
+          .findByProps({ "aria-label": "Find ChatGPT model" })
+          .props.onKeyDown({ key: "Enter", preventDefault });
+      });
+      expect(
+        renderer!.root.findAllByProps({
+          "aria-label": `Remove ${available[0]}`,
+        }),
+      ).toHaveLength(1);
+      expect(preventDefault).toHaveBeenCalledTimes(4);
     } finally {
       await act(async () => renderer?.unmount());
     }

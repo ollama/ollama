@@ -959,11 +959,15 @@ func TestCodexAppConfigurePopulatesCatalogFromEnrichedModels(t *testing.T) {
 				t.Fatalf("reasoning levels for %q = %v, want %v", slug, gotEfforts, wantEfforts)
 			}
 		} else {
-			if model["default_reasoning_level"] != nil {
-				t.Fatalf("default_reasoning_level for %q = %v, want nil", slug, model["default_reasoning_level"])
+			if model["default_reasoning_level"] != "none" {
+				t.Fatalf("default_reasoning_level for %q = %v, want none", slug, model["default_reasoning_level"])
 			}
-			if len(levels) != 0 {
-				t.Fatalf("supported_reasoning_levels for %q = %v, want empty list", slug, levels)
+			if len(levels) != 1 {
+				t.Fatalf("supported_reasoning_levels for %q = %v, want only none", slug, levels)
+			}
+			level, ok := levels[0].(map[string]any)
+			if !ok || level["effort"] != "none" {
+				t.Fatalf("supported_reasoning_levels for %q = %v, want only none", slug, levels)
 			}
 		}
 		wantContext := float64(128000)

@@ -55,7 +55,9 @@ function ModelOptions({
   onToggle: (model: string) => void;
 }) {
   const [query, setQuery] = useState("");
+  const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const searchRef = useRef<HTMLInputElement>(null);
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const selectedSet = useMemo(() => new Set(selected), [selected]);
   const normalizedQuery = query.trim().toLowerCase();
   const filtered = available.filter((model) =>
@@ -66,6 +68,31 @@ function ModelOptions({
     searchRef.current?.focus({ preventScroll: true });
   }, []);
 
+  useEffect(() => {
+    setHighlightedIndex(-1);
+  }, [normalizedQuery]);
+
+  useEffect(() => {
+    if (highlightedIndex < 0) return;
+    optionRefs.current[highlightedIndex]?.scrollIntoView({ block: "nearest" });
+  }, [highlightedIndex]);
+
+  const optionIsDisabled = (model: string) =>
+    !selectedSet.has(model) && selected.length >= maxModels;
+
+  const moveHighlight = (direction: -1 | 1) => {
+    setHighlightedIndex((current) => {
+      if (filtered.length === 0) return -1;
+      const start = current < 0 ? (direction === 1 ? -1 : 0) : current;
+      for (let offset = 1; offset <= filtered.length; offset += 1) {
+        const candidate =
+          (start + direction * offset + filtered.length) % filtered.length;
+        if (!optionIsDisabled(filtered[candidate])) return candidate;
+      }
+      return -1;
+    });
+  };
+
   return (
     <>
       <div className="flex items-center gap-2 border-b border-neutral-100 px-3 py-2 dark:border-neutral-700">
@@ -75,30 +102,64 @@ function ModelOptions({
           type="text"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowDown") {
+              event.preventDefault();
+              moveHighlight(1);
+            } else if (event.key === "ArrowUp") {
+              event.preventDefault();
+              moveHighlight(-1);
+            } else if (
+              event.key === "Enter" &&
+              highlightedIndex >= 0 &&
+              highlightedIndex < filtered.length
+            ) {
+              event.preventDefault();
+              onToggle(filtered[highlightedIndex]);
+            }
+          }}
           placeholder="Find model..."
           aria-label="Find ChatGPT model"
+          role="combobox"
+          aria-expanded="true"
+          aria-controls="chatgpt-model-options-listbox"
+          aria-activedescendant={
+            highlightedIndex >= 0
+              ? `chatgpt-model-option-${highlightedIndex}`
+              : undefined
+          }
           autoCorrect="off"
           autoComplete="off"
           className="min-w-0 flex-1 border-none bg-transparent py-0.5 outline-none"
         />
       </div>
       <div
+        id="chatgpt-model-options-listbox"
         role="listbox"
         aria-multiselectable="true"
         className="min-h-0 overflow-y-auto py-1"
       >
-        {filtered.map((model) => {
+        {filtered.map((model, index) => {
           const checked = selectedSet.has(model);
-          const disabled = !checked && selected.length >= maxModels;
+          const disabled = optionIsDisabled(model);
           return (
             <button
               key={model}
+              id={`chatgpt-model-option-${index}`}
+              ref={(element) => {
+                optionRefs.current[index] = element;
+              }}
               type="button"
               role="option"
               aria-selected={checked}
               disabled={disabled}
               onClick={() => onToggle(model)}
-              className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left hover:bg-neutral-100 focus:bg-neutral-100 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-neutral-700/60 dark:focus:bg-neutral-700/60"
+              onMouseEnter={() => setHighlightedIndex(index)}
+              className={`flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left hover:bg-neutral-100 focus:bg-neutral-100 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-neutral-700/60 dark:focus:bg-neutral-700/60 ${
+                highlightedIndex === index
+                  ? "bg-neutral-100 dark:bg-neutral-700/60"
+                  : ""
+              }`}
             >
               <span className="h-4 w-4 shrink-0">
                 {checked && <CheckIcon className="h-4 w-4" />}
