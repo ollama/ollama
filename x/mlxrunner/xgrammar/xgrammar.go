@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"sync"
 	"unsafe"
 )
@@ -77,7 +76,6 @@ type Compiler struct {
 	ctx       *C.ollama_xgrammar_compiler
 	path      string
 	vocabSize int
-	stops     []int32
 }
 
 // New loads the native library from dir — once per process, never unloaded —
@@ -127,7 +125,7 @@ func New(dir string, pieces []string, vocabSize int, stopIDs []int32, threads in
 	) != 0 {
 		return nil, nativeError("create grammar compiler", cError)
 	}
-	return &Compiler{ctx: ctx, path: path, vocabSize: vocabSize, stops: slices.Clone(stopIDs)}, nil
+	return &Compiler{ctx: ctx, path: path, vocabSize: vocabSize}, nil
 }
 
 // Path returns the loaded native library's location.
@@ -159,7 +157,7 @@ func (c *Compiler) Compile(kind Kind, source string) (*Matcher, error) {
 	) != 0 {
 		return nil, nativeError("compile grammar", cError)
 	}
-	return &Matcher{ctx: ctx, vocabSize: c.vocabSize, stops: c.stops}, nil
+	return &Matcher{ctx: ctx, vocabSize: c.vocabSize}, nil
 }
 
 func (c *Compiler) Close() {
@@ -175,19 +173,23 @@ func (c *Compiler) Close() {
 type Matcher struct {
 	ctx       *C.ollama_xgrammar_matcher
 	vocabSize int
-	stops     []int32
-	// terminated: a stop token was accepted, ending the grammar; the matcher
-	// no longer constrains sampling.
-	terminated bool
 }
 
 // Terminated reports whether an accepted stop token ended the grammar; a
-// terminated matcher no longer constrains sampling.
+// terminated matcher no longer constrains sampling. Rollback across the
+// stop token resumes constraining.
 func (m *Matcher) Terminated() bool {
-	if m == nil {
+	if m == nil || m.ctx == nil {
 		return true
 	}
-	return m.terminated
+	var terminated C.int
+	var cError *C.char
+	if C.ollama_xgrammar_dynamic_matcher_is_terminated(m.ctx, &terminated, &cError) != 0 {
+		// Still constraining: the fault surfaces at the next fill or accept.
+		C.free(unsafe.Pointer(cError))
+		return false
+	}
+	return terminated != 0
 }
 
 // Fill writes the packed allowed-token bitmask for the next position into
@@ -206,7 +208,8 @@ func (m *Matcher) Fill(row []int32) (bool, error) {
 	if want := (m.vocabSize + 31) / 32; len(row) != want {
 		return false, fmt.Errorf("mask row holds %d words; the vocabulary needs %d", len(row), want)
 	}
-	if m.terminated {
+	// The native fill rejects a terminated matcher outright.
+	if m.Terminated() {
 		return false, nil
 	}
 
@@ -233,8 +236,20 @@ func (m *Matcher) Accept(tokenID int32) error {
 	if accepted == 0 {
 		return fmt.Errorf("grammar rejected sampled token %d", tokenID)
 	}
-	if slices.Contains(m.stops, tokenID) {
-		m.terminated = true
+	return nil
+}
+
+// Rollback rewinds the matcher's last n accepted tokens.
+func (m *Matcher) Rollback(n int) error {
+	if m == nil || m.ctx == nil {
+		return errors.New("grammar matcher is closed")
+	}
+	if n == 0 {
+		return nil
+	}
+	var cError *C.char
+	if C.ollama_xgrammar_dynamic_matcher_rollback(m.ctx, C.int32_t(n), &cError) != 0 {
+		return nativeError("rollback", cError)
 	}
 	return nil
 }

@@ -168,6 +168,55 @@ func TestFillAfterTermination(t *testing.T) {
 	}
 }
 
+// Rollback restores earlier matcher state exactly: the refilled mask equals
+// the one filled before the rolled-back accepts, and the replay proceeds.
+func TestRollbackRestoresState(t *testing.T) {
+	compiler := testGrammarCompiler(t)
+	schema := `{"type":"object","properties":{"answer":{"type":"string","enum":["ok"]}},"required":["answer"],"additionalProperties":false}`
+	matcher, err := compiler.Compile(xgrammar.JSONSchema, schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer matcher.Close()
+
+	acceptPieces(t, matcher, "{", `"`)
+	before, _ := fillMask(t, matcher)
+	acceptPieces(t, matcher, "answer", `"`, ":")
+	if err := matcher.Rollback(3); err != nil {
+		t.Fatal(err)
+	}
+	after, constrained := fillMask(t, matcher)
+	if !constrained || !slices.Equal(before, after) {
+		t.Fatal("mask after rollback does not match the pre-accept mask")
+	}
+	acceptPieces(t, matcher, "answer", `"`, ":", `"`, "ok", `"`, "}")
+
+	// Rollback across the stop token resumes constraining.
+	acceptPieces(t, matcher, "<eos>")
+	if !matcher.Terminated() {
+		t.Fatal("matcher not terminated after the stop token")
+	}
+	if err := matcher.Rollback(1); err != nil {
+		t.Fatal(err)
+	}
+	if matcher.Terminated() {
+		t.Fatal("matcher still terminated after rolling back the stop token")
+	}
+	acceptPieces(t, matcher, "<eos>")
+
+	if err := matcher.Rollback(0); err != nil {
+		t.Fatal(err)
+	}
+	if err := matcher.Rollback(1000); err == nil {
+		t.Fatal("rollback past history unexpectedly succeeded")
+	}
+
+	matcher.Close()
+	if err := matcher.Rollback(1); err == nil {
+		t.Fatal("rollback on closed matcher unexpectedly succeeded")
+	}
+}
+
 func TestInvalidGrammarReturnsError(t *testing.T) {
 	compiler := testGrammarCompiler(t)
 	for _, tt := range []struct {

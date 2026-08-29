@@ -244,8 +244,9 @@ type decoder interface {
 
 	// drain ends production, returning any results sampled but never
 	// delivered through next and the position the next forward would have
-	// taken; the decoder remains closeable.
-	drain() ([]sampler.Result, int)
+	// taken, and surfaces the decoder's deferred fault; the decoder remains
+	// closeable.
+	drain() ([]sampler.Result, int, error)
 
 	close()
 }
@@ -257,7 +258,7 @@ type decoder interface {
 func (r *Runner) decode(ctx context.Context, request Request, session *cacheSession, d decoder, promptEval time.Duration) error {
 	// A sampled-but-undelivered result is still a produced token; record it.
 	defer func() {
-		results, _ := d.drain()
+		results, _, _ := d.drain()
 		for _, res := range results {
 			session.outputs = append(session.outputs, res.Token.Int())
 		}
@@ -396,7 +397,7 @@ func (r *Runner) pipelinedDecoder(spec *speculationSession, caches []cache.Cache
 		mlx.Sweep()
 		mlx.AsyncEval(logits)
 		var errs []error
-		logits, errs = r.grammarEngine.mask(t.grammars, logits)
+		logits, errs = r.grammarEngine.mask(t.grammars, logits, nil)
 		t.err = t.failRows(errs)
 	}
 	t.pending = t.sample(logits)
@@ -431,7 +432,7 @@ func (t *pipelinedDecoder) next(int) ([]sampler.Result, error) {
 		err := t.failRows(t.r.grammarEngine.accept(t.grammars, out.Token.Ints()))
 
 		var errs []error
-		logits, errs = t.r.grammarEngine.mask(t.grammars, logits)
+		logits, errs = t.r.grammarEngine.mask(t.grammars, logits, nil)
 		t.err = errors.Join(err, t.failRows(errs))
 	}
 
@@ -442,7 +443,7 @@ func (t *pipelinedDecoder) next(int) ([]sampler.Result, error) {
 }
 
 // forward runs the model one step over token, shaped [B, L], and returns the
-// final position's logits, still lazy.
+// final position's [B, 1, V] logits, still lazy.
 func (t *pipelinedDecoder) forward(token *mlx.Array) *mlx.Array {
 	hidden, auxHidden := t.r.Model.Forward(&batch.Batch{
 		InputIDs:     token,
@@ -453,14 +454,14 @@ func (t *pipelinedDecoder) forward(token *mlx.Array) *mlx.Array {
 	t.spec.committed(token, auxHidden, t.position, nil)
 	t.position += token.Dim(1)
 	logits := t.r.Model.Unembed(hidden)
-	return logits.Slice(mlx.Slice(), mlx.Slice(logits.Dim(1)-1), mlx.Slice()).Squeeze(1)
+	return logits.Slice(mlx.Slice(), mlx.Slice(logits.Dim(1)-1), mlx.Slice())
 }
 
 // sample dispatches the batched sample over the decoder's rows. On an
 // unconstrained step it fuses onto the forward's chain, so the whole step
 // is in flight before the previous tokens are synchronized.
 func (t *pipelinedDecoder) sample(logits *mlx.Array) sampler.Result {
-	next := t.r.Sampler.Sample([]int{pipelineSlot}, logits)
+	next := t.r.Sampler.Sample([]int{pipelineSlot}, logits.Squeeze(1))
 	mlx.Pin(next.Arrays()...)
 	mlx.Sweep()
 	mlx.AsyncEval(next.Arrays()...)
@@ -468,10 +469,15 @@ func (t *pipelinedDecoder) sample(logits *mlx.Array) sampler.Result {
 }
 
 // drain ends production: it returns the in-flight sample (sampled but never
-// forwarded) and the position its forward would have taken. The decoder
-// keeps the sample for close.
-func (t *pipelinedDecoder) drain() ([]sampler.Result, int) {
-	return []sampler.Result{t.pending}, t.position
+// forwarded) and the position its forward would have taken, surfacing the
+// decoder's deferred fault. The decoder keeps the sample for close.
+func (t *pipelinedDecoder) drain() ([]sampler.Result, int, error) {
+	err := t.err
+	if err == nil && t.r.grammarEngine.hasGrammar(t.grammars) {
+		// The sample leaves without its forward, so its accept runs here.
+		err = t.failRows(t.r.grammarEngine.accept(t.grammars, t.pending.Token.Ints()))
+	}
+	return []sampler.Result{t.pending}, t.position, err
 }
 
 func (t *pipelinedDecoder) close() {

@@ -217,6 +217,31 @@ int ollama_xgrammar_matcher_accept(
     });
 }
 
+int ollama_xgrammar_matcher_rollback(
+    ollama_xgrammar_matcher* matcher,
+    int32_t num_tokens) {
+    return protect([&] {
+        if (matcher == nullptr) {
+            throw std::invalid_argument("matcher is null");
+        }
+        if (num_tokens < 0) {
+            throw std::invalid_argument("negative rollback count");
+        }
+        matcher->matcher.Rollback(num_tokens);
+    });
+}
+
+int ollama_xgrammar_matcher_is_terminated(
+    ollama_xgrammar_matcher* matcher,
+    int* terminated) {
+    return protect([&] {
+        if (matcher == nullptr || terminated == nullptr) {
+            throw std::invalid_argument("matcher or result is null");
+        }
+        *terminated = matcher->matcher.IsTerminated() ? 1 : 0;
+    });
+}
+
 void ollama_xgrammar_matcher_free(ollama_xgrammar_matcher* matcher) {
     delete matcher;
 }

@@ -60,6 +60,12 @@ OLLAMA_XGRAMMAR_API int ollama_xgrammar_matcher_accept(
     ollama_xgrammar_matcher* matcher,
     int32_t token_id,
     int* accepted);
+OLLAMA_XGRAMMAR_API int ollama_xgrammar_matcher_rollback(
+    ollama_xgrammar_matcher* matcher,
+    int32_t num_tokens);
+OLLAMA_XGRAMMAR_API int ollama_xgrammar_matcher_is_terminated(
+    ollama_xgrammar_matcher* matcher,
+    int* terminated);
 
 #ifdef __cplusplus
 }
