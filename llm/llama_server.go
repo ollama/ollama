@@ -622,11 +622,17 @@ func appendFlashAttentionArgs(params []string, gpus []ml.DeviceInfo) []string {
 }
 
 // appendLoadModeArgs selects llama-server's single model loading mode. Direct I/O
-// skips the page cache on load for integrated CUDA/ROCm GPUs, which share system
-// memory with the CPU and would otherwise double-buffer weights.
+// skips the page cache on load for integrated CUDA/ROCm/Vulkan GPUs, which share
+// system memory with the CPU and would otherwise double-buffer weights.
+//
+// This also keeps load time bounded on integrated Vulkan devices that report no
+// mmap support (e.g. Virtio-GPU/Venus): llama.cpp's default "auto" load mode
+// silently falls back from mmap to an unbuffered read in that case, which is
+// dramatically slower on virtualized storage and can exceed OLLAMA_LOAD_TIMEOUT
+// well before the model finishes loading. See #18123.
 func appendLoadModeArgs(params []string, opts api.Options, gpus []ml.DeviceInfo) []string {
 	for _, g := range gpus {
-		if runtime.GOOS == "linux" && g.Integrated && (strings.EqualFold(g.Library, "CUDA") || strings.EqualFold(g.Library, "ROCm")) {
+		if runtime.GOOS == "linux" && g.Integrated && (strings.EqualFold(g.Library, "CUDA") || strings.EqualFold(g.Library, "ROCm") || strings.EqualFold(g.Library, "Vulkan")) {
 			return append(params, "--load-mode", "dio")
 		}
 	}

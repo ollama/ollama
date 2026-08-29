@@ -2070,7 +2070,9 @@ func TestAppendLoadModeArgs(t *testing.T) {
 
 	integratedCUDA := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, Integrated: true}}
 	integratedROCm := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "rocm"}, Integrated: true}}
+	integratedVulkan := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Vulkan"}, Integrated: true}}
 	discreteCUDA := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}}}
+	discreteVulkan := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Vulkan"}}}
 	integratedMetal := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Metal"}, Integrated: true}}
 
 	// Direct I/O is only selected on Linux, so the expectation depends on the host.
@@ -2118,6 +2120,17 @@ func TestAppendLoadModeArgs(t *testing.T) {
 			want: dio,
 		},
 		{
+			// Regression test for #18123: llama.cpp's "auto" load mode falls back
+			// from mmap to an unbuffered read on any device that reports no mmap
+			// support (integrated Vulkan GPUs, e.g. Virtio-GPU/Venus, always do).
+			// That fallback is dramatically slower on virtualized storage and can
+			// blow past OLLAMA_LOAD_TIMEOUT. Direct I/O keeps load time bounded.
+			name: "integrated vulkan selects dio",
+			opts: api.DefaultOptions(),
+			gpus: integratedVulkan,
+			want: dio,
+		},
+		{
 			name: "integrated metal does not select dio",
 			opts: api.DefaultOptions(),
 			gpus: integratedMetal,
@@ -2127,6 +2140,12 @@ func TestAppendLoadModeArgs(t *testing.T) {
 			name: "discrete cuda does not select dio",
 			opts: api.DefaultOptions(),
 			gpus: discreteCUDA,
+			want: []string{"base"},
+		},
+		{
+			name: "discrete vulkan does not select dio",
+			opts: api.DefaultOptions(),
+			gpus: discreteVulkan,
 			want: []string{"base"},
 		},
 		{
