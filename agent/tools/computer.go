@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"strings"
 	"sync"
@@ -15,36 +14,24 @@ import (
 // mouse, keyboard) through the agent tool interface. It supports explicit
 // environment targeting so the agent always knows WHERE it is operating.
 //
-// The tool exposes a single consolidated schema with an "action" discriminator
-// and an optional "target" parameter. When target is omitted, the local
-// environment is used by default.
+// Each environment provides its own ComputerBackend. The tool resolves:
+//
+//	target -> environment -> that environment's computer backend
+//
+// This ensures that a remote target never falls back to the local machine.
 type Computer struct {
-	mu       sync.Mutex
-	platform computerPlatform
-	envs     *agent.EnvironmentRegistry
+	mu   sync.Mutex
+	envs *agent.EnvironmentRegistry
 }
 
-// NewComputer returns a Computer backed by the current OS platform
-// implementation. Returns nil if the platform is not supported.
-// The envRegistry parameter provides environment targeting support; pass nil
-// to use local-only mode (backward compatible).
+// NewComputer returns a Computer backed by the environment registry.
+// The registry must already contain the local environment (registered by
+// NewLocalEnvironment). Returns nil if envRegistry is nil.
 func NewComputer(envRegistry *agent.EnvironmentRegistry) *Computer {
-	p := newPlatform()
-	if p == nil {
+	if envRegistry == nil {
 		return nil
 	}
-	c := &Computer{
-		platform: p,
-		envs:     envRegistry,
-	}
-	// Auto-register the local environment if a registry is provided
-	// and "local" is not already registered.
-	if envRegistry != nil {
-		if _, ok := envRegistry.Get("local"); !ok {
-			envRegistry.Register(agent.NewLocalEnvironment(true))
-		}
-	}
-	return c
+	return &Computer{envs: envRegistry}
 }
 
 func (c *Computer) Name() string {
@@ -52,9 +39,9 @@ func (c *Computer) Name() string {
 }
 
 func (c *Computer) Description() string {
-	return "Interact with the local computer through screenshots, mouse and keyboard input. " +
+	return "Interact with a computer environment through screenshots, mouse and keyboard input. " +
 		"Use the optional 'target' parameter to specify an environment (defaults to 'local'). " +
-		"The environment must support the 'computer' capability."
+		"The environment must support the 'computer' capability and have a configured backend."
 }
 
 func (c *Computer) Schema() api.ToolFunction {
@@ -127,8 +114,6 @@ func (c *Computer) RequiresApproval(map[string]any) bool {
 }
 
 // ApprovalScope returns a per-action, per-environment approval scope.
-// The scope encodes: "computer:<action>:<target>" for interaction actions
-// and "computer:screenshot:<target>" for observation.
 func (c *Computer) ApprovalScope(args map[string]any) string {
 	action := computerActionFromArgs(args)
 	target := computerTargetFromArgs(args)
@@ -160,23 +145,19 @@ func (c *Computer) ApprovalScope(args map[string]any) string {
 	}
 }
 
-// Execute dispatches the requested action to the platform implementation.
-// It validates the environment target and capability before execution.
-// Only one computer action can execute at a time per Computer instance to
-// prevent interleaving of mouse and keyboard events.
+// Execute dispatches the requested action to the environment's computer
+// backend. It resolves the target environment, obtains its backend, and
+// validates that the backend is available before execution.
 func (c *Computer) Execute(ctx context.Context, _ agent.ToolContext, args map[string]any) (agent.ToolResult, error) {
 	action := computerActionFromArgs(args)
 	if action == "" {
 		return agent.ToolResult{}, fmt.Errorf("action parameter is required and must be one of: screenshot, click, double_click, move, type, key, scroll")
 	}
 
-	// Resolve and validate environment target
-	env, err := c.resolveEnvironment(args)
+	// Resolve environment and its computer backend
+	env, backend, err := c.resolveBackend(args)
 	if err != nil {
 		return agent.ToolResult{}, err
-	}
-	if !env.SupportsCapability(agent.CapComputer) {
-		return agent.ToolResult{}, fmt.Errorf("environment %q does not support computer capability; supported capabilities: %v", env.ID(), env.Capabilities())
 	}
 
 	c.mu.Lock()
@@ -184,123 +165,125 @@ func (c *Computer) Execute(ctx context.Context, _ agent.ToolContext, args map[st
 
 	switch action {
 	case "screenshot":
-		return c.executeScreenshot(ctx, env)
+		return c.executeScreenshot(ctx, env.ID(), backend)
 	case "click":
-		return c.executeClick(ctx, env, args)
+		return c.executeClick(ctx, env.ID(), backend, args)
 	case "double_click":
-		return c.executeDoubleClick(ctx, env, args)
+		return c.executeDoubleClick(ctx, env.ID(), backend, args)
 	case "move":
-		return c.executeMove(ctx, env, args)
+		return c.executeMove(ctx, env.ID(), backend, args)
 	case "type":
-		return c.executeType(ctx, env, args)
+		return c.executeType(ctx, env.ID(), backend, args)
 	case "key":
-		return c.executeKey(ctx, env, args)
+		return c.executeKey(ctx, env.ID(), backend, args)
 	case "scroll":
-		return c.executeScroll(ctx, env, args)
+		return c.executeScroll(ctx, env.ID(), backend, args)
 	default:
 		return agent.ToolResult{}, fmt.Errorf("unknown action %q; supported actions: screenshot, click, double_click, move, type, key, scroll", action)
 	}
 }
 
-func (c *Computer) executeScreenshot(ctx context.Context, env agent.Environment) (agent.ToolResult, error) {
-	img, err := c.platform.Screenshot(ctx)
+func (c *Computer) executeScreenshot(ctx context.Context, envID string, backend agent.ComputerBackend) (agent.ToolResult, error) {
+	pngBytes, width, height, err := backend.Screenshot(ctx)
 	if err != nil {
-		return agent.ToolResult{}, fmt.Errorf("screen capture failed on environment %q: %w", env.ID(), err)
+		return agent.ToolResult{}, fmt.Errorf("screen capture failed on environment %q: %w", envID, err)
 	}
-	if img == nil {
-		return agent.ToolResult{}, fmt.Errorf("screen capture unavailable on environment %q", env.ID())
+	if len(pngBytes) == 0 {
+		return agent.ToolResult{}, fmt.Errorf("screen capture unavailable on environment %q", envID)
 	}
 
-	b64 := base64.StdEncoding.EncodeToString(img.Pixels)
 	return agent.ToolResult{
-		Content: fmt.Sprintf(`{"ok":true,"environment":"%s","width":%d,"height":%d,"image":"data:image/png;base64,%s"}`, env.ID(), img.Width, img.Height, b64),
+		Content: fmt.Sprintf("Screenshot captured from environment %q (%dx%d).", envID, width, height),
+		Images:  [][]byte{pngBytes},
 	}, nil
 }
 
-func (c *Computer) executeClick(ctx context.Context, env agent.Environment, args map[string]any) (agent.ToolResult, error) {
+func (c *Computer) executeClick(ctx context.Context, envID string, backend agent.ComputerBackend, args map[string]any) (agent.ToolResult, error) {
 	x, y, err := requiredXY(args)
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
-	if err := c.platform.Click(ctx, x, y); err != nil {
+	if err := backend.Click(ctx, x, y); err != nil {
 		return agent.ToolResult{}, err
 	}
-	return agent.ToolResult{Content: fmt.Sprintf(`{"ok":true,"environment":"%s","action":"click","x":%d,"y":%d}`, env.ID(), x, y)}, nil
+	return agent.ToolResult{Content: fmt.Sprintf("click at (%d,%d) on %q successful.", x, y, envID)}, nil
 }
 
-func (c *Computer) executeDoubleClick(ctx context.Context, env agent.Environment, args map[string]any) (agent.ToolResult, error) {
+func (c *Computer) executeDoubleClick(ctx context.Context, envID string, backend agent.ComputerBackend, args map[string]any) (agent.ToolResult, error) {
 	x, y, err := requiredXY(args)
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
-	if err := c.platform.DoubleClick(ctx, x, y); err != nil {
+	if err := backend.DoubleClick(ctx, x, y); err != nil {
 		return agent.ToolResult{}, err
 	}
-	return agent.ToolResult{Content: fmt.Sprintf(`{"ok":true,"environment":"%s","action":"double_click","x":%d,"y":%d}`, env.ID(), x, y)}, nil
+	return agent.ToolResult{Content: fmt.Sprintf("double click at (%d,%d) on %q successful.", x, y, envID)}, nil
 }
 
-func (c *Computer) executeMove(ctx context.Context, env agent.Environment, args map[string]any) (agent.ToolResult, error) {
+func (c *Computer) executeMove(ctx context.Context, envID string, backend agent.ComputerBackend, args map[string]any) (agent.ToolResult, error) {
 	x, y, err := requiredXY(args)
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
-	if err := c.platform.Move(ctx, x, y); err != nil {
+	if err := backend.Move(ctx, x, y); err != nil {
 		return agent.ToolResult{}, err
 	}
-	return agent.ToolResult{Content: fmt.Sprintf(`{"ok":true,"environment":"%s","action":"move","x":%d,"y":%d}`, env.ID(), x, y)}, nil
+	return agent.ToolResult{Content: fmt.Sprintf("move to (%d,%d) on %q successful.", x, y, envID)}, nil
 }
 
-func (c *Computer) executeType(ctx context.Context, env agent.Environment, args map[string]any) (agent.ToolResult, error) {
+func (c *Computer) executeType(ctx context.Context, envID string, backend agent.ComputerBackend, args map[string]any) (agent.ToolResult, error) {
 	text, ok := args["text"].(string)
 	if !ok || strings.TrimSpace(text) == "" {
 		return agent.ToolResult{}, fmt.Errorf("text parameter is required for the type action")
 	}
-	if err := c.platform.Type(ctx, text); err != nil {
+	if err := backend.Type(ctx, text); err != nil {
 		return agent.ToolResult{}, err
 	}
-	return agent.ToolResult{Content: fmt.Sprintf(`{"ok":true,"environment":"%s","action":"type"}`, env.ID())}, nil
+	return agent.ToolResult{Content: fmt.Sprintf("type on %q successful.", envID)}, nil
 }
 
-func (c *Computer) executeKey(ctx context.Context, env agent.Environment, args map[string]any) (agent.ToolResult, error) {
+func (c *Computer) executeKey(ctx context.Context, envID string, backend agent.ComputerBackend, args map[string]any) (agent.ToolResult, error) {
 	key, ok := args["key"].(string)
 	if !ok || strings.TrimSpace(key) == "" {
 		return agent.ToolResult{}, fmt.Errorf("key parameter is required for the key action")
 	}
-	if err := c.platform.Key(ctx, key); err != nil {
+	if err := backend.Key(ctx, key); err != nil {
 		return agent.ToolResult{}, err
 	}
-	return agent.ToolResult{Content: fmt.Sprintf(`{"ok":true,"environment":"%s","action":"key","key":"%s"}`, env.ID(), key)}, nil
+	return agent.ToolResult{Content: fmt.Sprintf("key %q on %q successful.", key, envID)}, nil
 }
 
-func (c *Computer) executeScroll(ctx context.Context, env agent.Environment, args map[string]any) (agent.ToolResult, error) {
+func (c *Computer) executeScroll(ctx context.Context, envID string, backend agent.ComputerBackend, args map[string]any) (agent.ToolResult, error) {
 	dx, dy, err := requiredDXDY(args)
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
-	if err := c.platform.Scroll(ctx, dx, dy); err != nil {
+	if err := backend.Scroll(ctx, dx, dy); err != nil {
 		return agent.ToolResult{}, err
 	}
-	return agent.ToolResult{Content: fmt.Sprintf(`{"ok":true,"environment":"%s","action":"scroll","dx":%d,"dy":%d}`, env.ID(), dx, dy)}, nil
+	return agent.ToolResult{Content: fmt.Sprintf("scroll (%d,%d) on %q successful.", dx, dy, envID)}, nil
 }
 
 // --- helpers ---
 
-func (c *Computer) resolveEnvironment(args map[string]any) (agent.Environment, error) {
+// resolveBackend resolves the target environment and obtains its computer
+// backend. Returns an error if the target is unknown, does not support
+// computer capability, or has no configured backend.
+func (c *Computer) resolveBackend(args map[string]any) (agent.Environment, agent.ComputerBackend, error) {
 	target := computerTargetFromArgs(args)
 
-	if c.envs != nil {
-		env, err := c.envs.ResolveTarget(target)
-		if err != nil {
-			return nil, fmt.Errorf("environment error: %w", err)
-		}
-		return env, nil
+	env, err := c.envs.ResolveTarget(target)
+	if err != nil {
+		return nil, nil, fmt.Errorf("environment error: %w", err)
 	}
-
-	// Fallback: no registry, only "local" is supported
-	if target != "" && target != "local" {
-		return nil, fmt.Errorf("environment targeting is not configured; only 'local' is available")
+	if !env.SupportsCapability(agent.CapComputer) {
+		return nil, nil, fmt.Errorf("environment %q does not support computer capability; supported capabilities: %v", env.ID(), env.Capabilities())
 	}
-	return agent.NewLocalEnvironment(true), nil
+	backend := env.ComputerBackend()
+	if backend == nil {
+		return nil, nil, fmt.Errorf("computer backend unavailable for environment %q", env.ID())
+	}
+	return env, backend, nil
 }
 
 func computerTargetFromArgs(args map[string]any) string {
@@ -358,26 +341,4 @@ func requiredDXDY(args map[string]any) (int, int, error) {
 		return 0, 0, fmt.Errorf("dy parameter must be a number")
 	}
 	return int(dxInt), int(dyInt), nil
-}
-
-// --- platform abstraction ---
-
-// ScreenImage holds a screenshot as raw RGBA pixels.
-type ScreenImage struct {
-	Pixels []byte
-	Width  int
-	Height int
-}
-
-// computerPlatform is the interface that OS-specific implementations must
-// satisfy. The agent layer never calls platform methods directly; it always
-// goes through Computer.Execute which holds the session lock.
-type computerPlatform interface {
-	Screenshot(ctx context.Context) (*ScreenImage, error)
-	Click(ctx context.Context, x, y int) error
-	DoubleClick(ctx context.Context, x, y int) error
-	Move(ctx context.Context, x, y int) error
-	Type(ctx context.Context, text string) error
-	Key(ctx context.Context, key string) error
-	Scroll(ctx context.Context, dx, dy int) error
 }

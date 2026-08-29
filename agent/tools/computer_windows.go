@@ -13,24 +13,26 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
+	"github.com/ollama/ollama/agent"
 	"golang.org/x/sys/windows"
 )
 
 var (
 	user32 = windows.NewLazySystemDLL("user32.dll")
 	gdi32  = windows.NewLazySystemDLL("gdi32.dll")
-	pSendInput          = user32.NewProc("SendInput")
-	pGetSystemMetrics   = user32.NewProc("GetSystemMetrics")
-	pGetDesktopWindow   = user32.NewProc("GetDesktopWindow")
-	pGetDC              = user32.NewProc("GetDC")
-	pReleaseDC          = user32.NewProc("ReleaseDC")
-	pCreateCompatibleDC = gdi32.NewProc("CreateCompatibleDC")
+
+	pSendInput             = user32.NewProc("SendInput")
+	pGetSystemMetrics      = user32.NewProc("GetSystemMetrics")
+	pGetDesktopWindow      = user32.NewProc("GetDesktopWindow")
+	pGetDC                 = user32.NewProc("GetDC")
+	pReleaseDC             = user32.NewProc("ReleaseDC")
+	pCreateCompatibleDC    = gdi32.NewProc("CreateCompatibleDC")
 	pCreateCompatibleBitmap = gdi32.NewProc("CreateCompatibleBitmap")
-	pSelectObject       = gdi32.NewProc("SelectObject")
-	pBitBlt             = gdi32.NewProc("BitBlt")
-	pDeleteObject       = gdi32.NewProc("DeleteObject")
-	pDeleteDC           = gdi32.NewProc("DeleteDC")
-	pGetDIBits          = gdi32.NewProc("GetDIBits")
+	pSelectObject          = gdi32.NewProc("SelectObject")
+	pBitBlt                = gdi32.NewProc("BitBlt")
+	pDeleteObject          = gdi32.NewProc("DeleteObject")
+	pDeleteDC              = gdi32.NewProc("DeleteDC")
+	pGetDIBits             = gdi32.NewProc("GetDIBits")
 )
 
 const (
@@ -41,14 +43,14 @@ const (
 	INPUT_MOUSE    = 0
 	INPUT_KEYBOARD = 1
 
-	MOUSEEVENTF_MOVE      = 0x0001
-	MOUSEEVENTF_LEFTDOWN  = 0x0002
-	MOUSEEVENTF_LEFTUP    = 0x0004
-	MOUSEEVENTF_ABSOLUTE  = 0x8000
-	MOUSEEVENTF_WHEEL     = 0x0800
-	MOUSEEVENTF_HWHEEL    = 0x1000
+	MOUSEEVENTF_MOVE     = 0x0001
+	MOUSEEVENTF_LEFTDOWN = 0x0002
+	MOUSEEVENTF_LEFTUP   = 0x0004
+	MOUSEEVENTF_ABSOLUTE = 0x8000
+	MOUSEEVENTF_WHEEL    = 0x0800
+	MOUSEEVENTF_HWHEEL   = 0x1000
 
-	KEYEVENTF_KEYUP    = 0x0002
+	KEYEVENTF_KEYUP      = 0x0002
 	KEYEVENTF_EXTENDEDKEY = 0x0001
 
 	VK_SHIFT    = 0x10
@@ -62,34 +64,92 @@ const (
 	VK_RMENU    = 0xA5
 )
 
-type mouseInput struct {
-	Type       uint32
-	Mi         mouseInputData
-	_          [8]byte // padding for alignment on 64-bit
-}
+// INPUT structure layout for 64-bit Windows:
+//
+//	typedef struct tagINPUT {
+//	    DWORD type;           // 4 bytes at offset 0
+//	    DWORD padding;        // 4 bytes implicit (union aligns to 8)
+//	    union {
+//	        MOUSEINPUT mi;    // 32 bytes at offset 8
+//	        KEYBDINPUT ki;
+//	        HARDWAREINPUT hi;
+//	    };
+//	} INPUT;                  // total: 40 bytes
+//
+// On 64-bit: unsafe.Sizeof(input) == 40.
+// On 32-bit: unsafe.Sizeof(input) == 28.
+//
+// The structures below match this layout exactly.
 
+// mouseInputData matches Windows MOUSEINPUT exactly.
+//
+//	typedef struct tagMOUSEINPUT {
+//	    LONG dx;
+//	    LONG dy;
+//	    DWORD mouseData;
+//	    DWORD dwFlags;
+//	    DWORD time;
+//	    ULONG_PTR dwExtraInfo;
+//	} MOUSEINPUT;
 type mouseInputData struct {
 	Dx          int32
 	Dy          int32
 	MouseData   uint32
 	DwFlags     uint32
 	Time        uint32
-	DwExtraInfo uintptr
+	DwExtraInfo uintptr // 4 bytes on 32-bit, 8 bytes on 64-bit
 }
 
-type keyboardInput struct {
+// mouseInput matches the Windows INPUT structure for mouse events.
+//
+//	Member layout: [Type:4][pad:4][Mi:sizeof(MOUSEINPUT)]
+//	On 64-bit: 4 + 4 + 32 = 40 bytes.
+type mouseInput struct {
 	Type uint32
-	Ki   keyboardInputData
-	_    [8]byte // padding for alignment on 64-bit
+	_pad [4]byte // align Mi to 8-byte boundary (matches Windows implicit padding)
+	Mi   mouseInputData
 }
 
+// keyboardInputData matches Windows KEYBDINPUT exactly.
+//
+//	typedef struct tagKEYBDINPUT {
+//	    WORD wVk;
+//	    WORD wScan;
+//	    DWORD dwFlags;
+//	    DWORD time;
+//	    ULONG_PTR dwExtraInfo;
+//	} KEYBDINPUT;
 type keyboardInputData struct {
 	WVk         uint16
-	_           uint16 // padding
-	DwScanCode  uint32
+	WScan       uint16
 	DwFlags     uint32
 	Time        uint32
 	DwExtraInfo uintptr
+}
+
+// keyboardInput matches the Windows INPUT structure for keyboard events.
+type keyboardInput struct {
+	Type uint32
+	_pad [4]byte
+	Ki   keyboardInputData
+}
+
+// Verify struct sizes at init time.
+func init() {
+	// Windows INPUT is 40 bytes on 64-bit, 28 bytes on 32-bit.
+	// pointer.Size is 8 on 64-bit, 4 on 32-bit.
+	expectedMouse := uintptr(40)
+	expectedKey := uintptr(40)
+	if unsafe.Sizeof(uintptr(0)) == 4 {
+		expectedMouse = 28
+		expectedKey = 28
+	}
+	if unsafe.Sizeof(mouseInput{}) != expectedMouse {
+		panic(fmt.Sprintf("computer_windows: mouseInput size = %d, want %d", unsafe.Sizeof(mouseInput{}), expectedMouse))
+	}
+	if unsafe.Sizeof(keyboardInput{}) != expectedKey {
+		panic(fmt.Sprintf("computer_windows: keyboardInput size = %d, want %d", unsafe.Sizeof(keyboardInput{}), expectedKey))
+	}
 }
 
 type bitmapInfoHeader struct {
@@ -106,52 +166,59 @@ type bitmapInfoHeader struct {
 	BiClrImportant  uint32
 }
 
-type fakeComputerPlatform struct{}
+type windowsComputerBackend struct{}
 
-func newPlatform() computerPlatform {
-	return &fakeComputerPlatform{}
+// NewComputerBackend returns a platform-specific computer backend for the
+// local machine. Returns nil if the platform is not supported.
+func NewComputerBackend() agent.ComputerBackend {
+	return &windowsComputerBackend{}
 }
 
-func (f *fakeComputerPlatform) Screenshot(ctx context.Context) (*ScreenImage, error) {
+func (w *windowsComputerBackend) Screenshot(ctx context.Context) ([]byte, int, int, error) {
 	select {
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, 0, 0, ctx.Err()
 	default:
 	}
 
 	screenW, _, _ := pGetSystemMetrics.Call(SM_CXSCREEN)
 	screenH, _, _ := pGetSystemMetrics.Call(SM_CYSCREEN)
 	if screenW == 0 || screenH == 0 {
-		return nil, fmt.Errorf("could not determine screen dimensions")
+		return nil, 0, 0, fmt.Errorf("could not determine screen dimensions")
 	}
 	w, h := int(screenW), int(screenH)
 
 	hWnd, _, _ := pGetDesktopWindow.Call()
 	hDC, _, _ := pGetDC.Call(hWnd)
 	if hDC == 0 {
-		return nil, fmt.Errorf("failed to get desktop device context")
+		return nil, 0, 0, fmt.Errorf("failed to get desktop device context")
 	}
 	defer pReleaseDC.Call(hWnd, hDC)
 
 	memDC, _, _ := pCreateCompatibleDC.Call(hDC)
 	if memDC == 0 {
-		return nil, fmt.Errorf("failed to create compatible device context")
+		return nil, 0, 0, fmt.Errorf("failed to create compatible device context")
 	}
 	defer pDeleteDC.Call(memDC)
 
 	hBitmap, _, _ := pCreateCompatibleBitmap.Call(hDC, uintptr(w), uintptr(h))
 	if hBitmap == 0 {
-		return nil, fmt.Errorf("failed to create compatible bitmap")
+		return nil, 0, 0, fmt.Errorf("failed to create compatible bitmap")
 	}
 	defer pDeleteObject.Call(hBitmap)
 
+	// Select bitmap into DC for capture
 	oldBmp, _, _ := pSelectObject.Call(memDC, hBitmap)
-	defer pSelectObject.Call(memDC, oldBmp)
 
 	ret, _, _ := pBitBlt.Call(memDC, 0, 0, uintptr(w), uintptr(h), hDC, 0, 0, SRCCOPY)
 	if ret == 0 {
-		return nil, fmt.Errorf("BitBlt failed")
+		pSelectObject.Call(memDC, oldBmp)
+		return nil, 0, 0, fmt.Errorf("BitBlt failed")
 	}
+
+	// CRITICAL: Restore old bitmap BEFORE calling GetDIBits.
+	// GetDIBits requires the bitmap to NOT be selected into a DC.
+	pSelectObject.Call(memDC, oldBmp)
 
 	bmi := bitmapInfoHeader{
 		BiSize:        uint32(unsafe.Sizeof(bitmapInfoHeader{})),
@@ -165,49 +232,45 @@ func (f *fakeComputerPlatform) Screenshot(ctx context.Context) (*ScreenImage, er
 	pixels := make([]byte, bufSize)
 	n, _, _ := pGetDIBits.Call(memDC, hBitmap, 0, uintptr(h), uintptr(unsafe.Pointer(&pixels[0])), uintptr(unsafe.Pointer(&bmi)), 0)
 	if n == 0 {
-		return nil, fmt.Errorf("GetDIBits failed")
+		return nil, 0, 0, fmt.Errorf("GetDIBits failed")
 	}
 
-	// Convert BGRA to RGBA and flip bottom-up to top-down.
+	// Convert BGRA to RGBA
 	rgba := make([]byte, bufSize)
 	for y := 0; y < h; y++ {
 		srcRow := pixels[y*w*4 : (y+1)*w*4]
 		dstRow := rgba[y*w*4 : (y+1)*w*4]
 		for x := 0; x < w; x++ {
-			srcOff := x * 4
-			dstOff := x * 4
-			dstRow[dstOff+0] = srcRow[srcOff+2] // R <- B
-			dstRow[dstOff+1] = srcRow[srcOff+1] // G <- G
-			dstRow[dstOff+2] = srcRow[srcOff+0] // B <- R
-			dstRow[dstOff+3] = 0xFF              // A
+			so := x * 4
+			do := x * 4
+			dstRow[do+0] = srcRow[so+2] // R <- B
+			dstRow[do+1] = srcRow[so+1] // G <- G
+			dstRow[do+2] = srcRow[so+0] // B <- R
+			dstRow[do+3] = 0xFF         // A
 		}
 	}
 
-	// Encode to PNG.
+	// Encode to PNG
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	copy(img.Pix, rgba)
 
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
-		return nil, fmt.Errorf("failed to encode screenshot: %w", err)
+		return nil, 0, 0, fmt.Errorf("failed to encode screenshot: %w", err)
 	}
 
-	return &ScreenImage{
-		Pixels: buf.Bytes(),
-		Width:  w,
-		Height: h,
-	}, nil
+	return buf.Bytes(), w, h, nil
 }
 
-func (f *fakeComputerPlatform) Click(ctx context.Context, x, y int) error {
-	return f.mouseClick(ctx, x, y, 1)
+func (w *windowsComputerBackend) Click(ctx context.Context, x, y int) error {
+	return w.mouseClick(ctx, x, y, 1)
 }
 
-func (f *fakeComputerPlatform) DoubleClick(ctx context.Context, x, y int) error {
-	return f.mouseClick(ctx, x, y, 2)
+func (w *windowsComputerBackend) DoubleClick(ctx context.Context, x, y int) error {
+	return w.mouseClick(ctx, x, y, 2)
 }
 
-func (f *fakeComputerPlatform) mouseClick(ctx context.Context, x, y int, count int) error {
+func (w *windowsComputerBackend) mouseClick(ctx context.Context, x, y int, count int) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -242,7 +305,7 @@ func (f *fakeComputerPlatform) mouseClick(ctx context.Context, x, y int, count i
 	return nil
 }
 
-func (f *fakeComputerPlatform) Move(ctx context.Context, x, y int) error {
+func (w *windowsComputerBackend) Move(ctx context.Context, x, y int) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -266,7 +329,7 @@ func (f *fakeComputerPlatform) Move(ctx context.Context, x, y int) error {
 	return nil
 }
 
-func (f *fakeComputerPlatform) Type(ctx context.Context, text string) error {
+func (w *windowsComputerBackend) Type(ctx context.Context, text string) error {
 	for _, r := range text {
 		select {
 		case <-ctx.Done():
@@ -280,7 +343,7 @@ func (f *fakeComputerPlatform) Type(ctx context.Context, text string) error {
 	return nil
 }
 
-func (f *fakeComputerPlatform) Key(ctx context.Context, key string) error {
+func (w *windowsComputerBackend) Key(ctx context.Context, key string) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -332,7 +395,7 @@ func (f *fakeComputerPlatform) Key(ctx context.Context, key string) error {
 	return nil
 }
 
-func (f *fakeComputerPlatform) Scroll(ctx context.Context, dx, dy int) error {
+func (w *windowsComputerBackend) Scroll(ctx context.Context, dx, dy int) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -341,11 +404,11 @@ func (f *fakeComputerPlatform) Scroll(ctx context.Context, dx, dy int) error {
 
 	// Vertical scroll: WHEEL_DELTA = 120
 	if dy != 0 {
-		steps := int32(float64(dy) * 120.0 / 3.0)
+		steps := int32(math.Round(float64(dy) * 120.0 / 3.0))
 		mi := mouseInput{
 			Type: INPUT_MOUSE,
 			Mi: mouseInputData{
-				DwFlags: MOUSEEVENTF_WHEEL,
+				DwFlags:  MOUSEEVENTF_WHEEL,
 				MouseData: uint32(steps),
 			},
 		}
@@ -353,11 +416,11 @@ func (f *fakeComputerPlatform) Scroll(ctx context.Context, dx, dy int) error {
 	}
 	// Horizontal scroll
 	if dx != 0 {
-		steps := int32(float64(dx) * 120.0 / 3.0)
+		steps := int32(math.Round(float64(dx) * 120.0 / 3.0))
 		mi := mouseInput{
 			Type: INPUT_MOUSE,
 			Mi: mouseInputData{
-				DwFlags: MOUSEEVENTF_HWHEEL,
+				DwFlags:  MOUSEEVENTF_HWHEEL,
 				MouseData: uint32(steps),
 			},
 		}
@@ -394,18 +457,15 @@ func toAbsoluteCoords(x, y, screenW, screenH int) (int32, int32) {
 	return absX, absY
 }
 
-// typeRune types a single Unicode rune using key-down/key-up events and
-// UnicodePacket for characters outside the basic ASCII range.
 func typeRune(r rune) error {
 	if r <= 0x7F {
-		// Map ASCII to virtual key codes.
 		vk := asciiToVK(byte(r))
-		if vk == 0 {
-			return fmt.Errorf("unsupported ASCII character: %c", r)
+		if vk != 0 {
+			return pressKey(vk, 0)
 		}
-		return pressKey(vk, 0)
+		// Fall back to Unicode input for unmapped ASCII characters
+		// (e.g. !, @, #, $, %, ^, &, *, (, ), <, >, ?, {, }, |, \", ~)
 	}
-	// For non-ASCII characters, use Unicode input.
 	return typeUnicode(r)
 }
 
@@ -418,11 +478,11 @@ func asciiToVK(ch byte) uint16 {
 	case ch >= '0' && ch <= '9':
 		return uint16(ch)
 	case ch == ' ':
-		return 0x20 // VK_SPACE
+		return 0x20
 	case ch == '\t':
-		return 0x09 // VK_TAB
+		return 0x09
 	case ch == '\n':
-		return 0x0D // VK_RETURN
+		return 0x0D
 	case ch == '\r':
 		return 0
 	case ch == '.':
@@ -460,8 +520,8 @@ func typeUnicode(r rune) error {
 		k := keyboardInput{
 			Type: INPUT_KEYBOARD,
 			Ki: keyboardInputData{
-				DwScanCode: uint32(buf[i]),
-				DwFlags:    KEYEVENTF_EXTENDEDKEY,
+				WScan: uint16(buf[i]),
+				DwFlags: KEYEVENTF_EXTENDEDKEY,
 			},
 		}
 		pSendInput.Call(1, uintptr(unsafe.Pointer(&k)), unsafe.Sizeof(k))
@@ -469,8 +529,8 @@ func typeUnicode(r rune) error {
 		kUp := keyboardInput{
 			Type: INPUT_KEYBOARD,
 			Ki: keyboardInputData{
-				DwScanCode: uint32(buf[i]),
-				DwFlags:    KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY,
+				WScan: uint16(buf[i]),
+				DwFlags: KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY,
 			},
 		}
 		pSendInput.Call(1, uintptr(unsafe.Pointer(&kUp)), unsafe.Sizeof(kUp))
@@ -479,40 +539,31 @@ func typeUnicode(r rune) error {
 }
 
 func pressKey(vk uint16, flags uint32) error {
-	kDown := keyboardInput{
-		Type: INPUT_KEYBOARD,
-		Ki: keyboardInputData{
-			WVk:     vk,
-			DwFlags: flags,
-		},
+	// Determine if this is a key-up-only call (used for modifier release).
+	releaseOnly := (flags & KEYEVENTF_KEYUP) != 0
+	extraFlags := flags & ^uint32(KEYEVENTF_KEYUP)
+
+	if !releaseOnly {
+		kDown := keyboardInput{
+			Type: INPUT_KEYBOARD,
+			Ki: keyboardInputData{
+				WVk:     vk,
+				DwFlags: extraFlags,
+			},
+		}
+		pSendInput.Call(1, uintptr(unsafe.Pointer(&kDown)), unsafe.Sizeof(kDown))
 	}
+
 	kUp := keyboardInput{
 		Type: INPUT_KEYBOARD,
 		Ki: keyboardInputData{
 			WVk:     vk,
-			DwFlags: KEYEVENTF_KEYUP | flags,
+			DwFlags: KEYEVENTF_KEYUP | extraFlags,
 		},
 	}
-	pSendInput.Call(1, uintptr(unsafe.Pointer(&kDown)), unsafe.Sizeof(kDown))
 	pSendInput.Call(1, uintptr(unsafe.Pointer(&kUp)), unsafe.Sizeof(kUp))
 	return nil
 }
-
-// parseKey parses a key specification string like "CTRL+C", "ENTER",
-// "ALT+TAB", "SHIFT+A" into a virtual key code. Returns the VK and
-// whether it's an extended key.
-// parseKey extracts the main key name from a key specification.
-// Modifier handling is done in the Key() method.
-func parseKey(key string) (mainKeyName string, err error) {
-	upper := strings.ToUpper(strings.TrimSpace(key))
-	parts := strings.Split(upper, "+")
-	if len(parts) == 0 {
-		return "", fmt.Errorf("invalid key specification: %s", key)
-	}
-	return strings.TrimSpace(parts[len(parts)-1]), nil
-}
-
-
 
 func mapKeyName(name string) (vk uint16, extended bool, err error) {
 	switch name {
@@ -586,7 +637,6 @@ func mapKeyName(name string) (vk uint16, extended bool, err error) {
 		return 0x5B, true, nil
 	}
 
-	// Single character keys
 	if len(name) == 1 {
 		ch := name[0]
 		if ch >= 'A' && ch <= 'Z' {
@@ -597,7 +647,6 @@ func mapKeyName(name string) (vk uint16, extended bool, err error) {
 		}
 	}
 
-	// Numpad keys
 	if strings.HasPrefix(name, "NUMPAD") {
 		numpad := strings.TrimPrefix(name, "NUMPAD")
 		if len(numpad) == 1 && numpad[0] >= '0' && numpad[0] <= '9' {
@@ -607,3 +656,6 @@ func mapKeyName(name string) (vk uint16, extended bool, err error) {
 
 	return 0, false, fmt.Errorf("unknown key name: %s", name)
 }
+
+// Ensure compile-time interface compliance.
+var _ agent.ComputerBackend = (*windowsComputerBackend)(nil)

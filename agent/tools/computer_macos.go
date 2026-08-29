@@ -8,8 +8,9 @@ package tools
 #include <CoreFoundation/CoreFoundation.h>
 #include <stdlib.h>
 
-// captureScreenshot captures the main display as a PNG.
-static CFDataRef captureScreenshot(int *width, int *height) {
+// captureScreenshot captures the main display and returns raw RGBA data.
+// Caller must free the returned buffer with free().
+static unsigned char* captureScreenshot(int *width, int *height, int *dataLen) {
 	CGDirectDisplayID mainDisplay = CGMainDisplayID();
 	size_t w = CGDisplayPixelsWide(mainDisplay);
 	size_t h = CGDisplayPixelsHigh(mainDisplay);
@@ -20,7 +21,6 @@ static CFDataRef captureScreenshot(int *width, int *height) {
 	*width = (int)w;
 	*height = (int)h;
 
-	// Create a bitmap context and render the image into it
 	CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
 	uint8_t *bitmapData = (uint8_t *)calloc(w * h * 4, 1);
 	CGContextRef context = CGBitmapContextCreate(
@@ -34,16 +34,11 @@ static CFDataRef captureScreenshot(int *width, int *height) {
 	}
 	CGContextDrawImage(context, CGRectMake(0, 0, w, h), image);
 	CGContextRelease(context);
-
-	// Encode to PNG using Apple's ImageIO (via CGImageDestination)
-	// We return raw RGBA and let Go encode to PNG
 	CGImageRelease(image);
 	CGColorSpaceRelease(colorSpace);
 
-	// Create CFData from raw pixels
-	CFDataRef data = CFDataCreate(NULL, bitmapData, (CFIndex)(w * h * 4));
-	free(bitmapData);
-	return data;
+	*dataLen = (int)(w * h * 4);
+	return bitmapData;
 }
 
 // moveMouse moves the cursor to (x, y) on the main display.
@@ -105,6 +100,13 @@ static void scrollMouse(int dx, int dy) {
 		CFRelease(event);
 	}
 }
+
+// pressMacKey presses and releases a virtual keycode.
+static void pressMacKey(int keycode, int down) {
+	CGEventRef event = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)keycode, down);
+	CGEventPost(kCGHIDEventTap, event);
+	CFRelease(event);
+}
 */
 import "C"
 
@@ -117,61 +119,57 @@ import (
 	"image/png"
 	"strings"
 	"unsafe"
+
+	"github.com/ollama/ollama/agent"
 )
 
-type darwinPlatform struct{}
+type darwinComputerBackend struct{}
 
-func newPlatform() computerPlatform {
-	return &darwinPlatform{}
+// NewComputerBackend returns a platform-specific computer backend for the
+// local machine. Returns nil if the platform is not supported.
+func NewComputerBackend() agent.ComputerBackend {
+	return &darwinComputerBackend{}
 }
 
-func (d *darwinPlatform) Screenshot(ctx context.Context) (*ScreenImage, error) {
+func (d *darwinComputerBackend) Screenshot(ctx context.Context) ([]byte, int, int, error) {
 	select {
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, 0, 0, ctx.Err()
 	default:
 	}
 
-	var w, h C.int
-	cfData := C.captureScreenshot(&w, &h)
-	if cfData == nil {
-		return nil, fmt.Errorf("screen capture failed — check screen recording permissions")
+	var w, h, dataLen C.int
+	rgba := C.captureScreenshot(&w, &h, &dataLen)
+	if rgba == nil {
+		return nil, 0, 0, fmt.Errorf("screen capture failed — check screen recording permissions")
 	}
-	defer C.CFRelease(C.CFTypeRef(cfData))
+	defer C.free(unsafe.Pointer(rgba))
 
 	width, height := int(w), int(h)
-	rawLen := width * height * 4
+	rawBytes := C.GoBytes(unsafe.Pointer(rgba), C.CFIndex(dataLen))
 
-	// Copy raw RGBA data from CFData
-	rawBytes := C.GoBytes(unsafe.Pointer(C.CFDataGetBytePtr(cfData)), C.CFIndex(rawLen))
-
-	// Encode as PNG
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
 			srcOff := (y*width + x) * 4
-			img.SetRGBA(x, y, color.RGBA{
-				R: rawBytes[srcOff+0],
-				G: rawBytes[srcOff+1],
-				B: rawBytes[srcOff+2],
-				A: rawBytes[srcOff+3],
-			})
+			img.SetRGBA(x, y, pixelRGBA(
+				rawBytes[srcOff+0],
+				rawBytes[srcOff+1],
+				rawBytes[srcOff+2],
+				rawBytes[srcOff+3],
+			))
 		}
 	}
 
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
-		return nil, fmt.Errorf("failed to encode screenshot: %w", err)
+		return nil, 0, 0, fmt.Errorf("failed to encode screenshot: %w", err)
 	}
 
-	return &ScreenImage{
-		Pixels: buf.Bytes(),
-		Width:  width,
-		Height: height,
-	}, nil
+	return buf.Bytes(), width, height, nil
 }
 
-func (d *darwinPlatform) Click(ctx context.Context, x, y int) error {
+func (d *darwinComputerBackend) Click(ctx context.Context, x, y int) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -181,7 +179,7 @@ func (d *darwinPlatform) Click(ctx context.Context, x, y int) error {
 	return nil
 }
 
-func (d *darwinPlatform) DoubleClick(ctx context.Context, x, y int) error {
+func (d *darwinComputerBackend) DoubleClick(ctx context.Context, x, y int) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -191,7 +189,7 @@ func (d *darwinPlatform) DoubleClick(ctx context.Context, x, y int) error {
 	return nil
 }
 
-func (d *darwinPlatform) Move(ctx context.Context, x, y int) error {
+func (d *darwinComputerBackend) Move(ctx context.Context, x, y int) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -201,7 +199,7 @@ func (d *darwinPlatform) Move(ctx context.Context, x, y int) error {
 	return nil
 }
 
-func (d *darwinPlatform) Type(ctx context.Context, text string) error {
+func (d *darwinComputerBackend) Type(ctx context.Context, text string) error {
 	for _, r := range text {
 		select {
 		case <-ctx.Done():
@@ -214,30 +212,53 @@ func (d *darwinPlatform) Type(ctx context.Context, text string) error {
 	return nil
 }
 
-func (d *darwinPlatform) Key(ctx context.Context, key string) error {
+func (d *darwinComputerBackend) Key(ctx context.Context, key string) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
 	}
 
-	vk, ok := darwinKeyMap(strings.ToUpper(strings.TrimSpace(key)))
-	if !ok {
-		return fmt.Errorf("unknown key name: %s", key)
+	upper := strings.ToUpper(strings.TrimSpace(key))
+	parts := strings.Split(upper, "+")
+
+	// Identify modifiers
+	var modifiers []int
+	for _, part := range parts[:len(parts)-1] {
+		trimmed := strings.TrimSpace(part)
+		vk, ok := macKeyMapSingle(trimmed)
+		if !ok {
+			return fmt.Errorf("unknown modifier: %s", trimmed)
+		}
+		modifiers = append(modifiers, vk)
 	}
 
-	CGKeyCodeDown := C.CGEventCreateKeyboardEvent(nil, C.CGKeyCode(vk), true)
-	defer C.CFRelease(C.CFTypeRef(CGKeyCodeDown))
-	C.CGEventPost(C.kCGHIDEventTap, CGKeyCodeDown)
+	// Press modifiers
+	for _, m := range modifiers {
+		C.pressMacKey(C.int(m), 1)
+	}
 
-	CGKeyCodeUp := C.CGEventCreateKeyboardEvent(nil, C.CGKeyCode(vk), false)
-	defer C.CFRelease(C.CFTypeRef(CGKeyCodeUp))
-	C.CGEventPost(C.kCGHIDEventTap, CGKeyCodeUp)
+	// Press and release the main key
+	mainKey := strings.TrimSpace(parts[len(parts)-1])
+	vk, ok := macKeyMapSingle(mainKey)
+	if !ok {
+		// Release modifiers on error
+		for i := len(modifiers) - 1; i >= 0; i-- {
+			C.pressMacKey(C.int(modifiers[i]), 0)
+		}
+		return fmt.Errorf("unknown key name: %s", mainKey)
+	}
+	C.pressMacKey(C.int(vk), 1)
+	C.pressMacKey(C.int(vk), 0)
 
+	// Release modifiers in reverse order
+	for i := len(modifiers) - 1; i >= 0; i-- {
+		C.pressMacKey(C.int(modifiers[i]), 0)
+	}
 	return nil
 }
 
-func (d *darwinPlatform) Scroll(ctx context.Context, dx, dy int) error {
+func (d *darwinComputerBackend) Scroll(ctx context.Context, dx, dy int) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -247,143 +268,77 @@ func (d *darwinPlatform) Scroll(ctx context.Context, dx, dy int) error {
 	return nil
 }
 
-// darwinKeyMap maps key name strings to macOS virtual key codes.
-func darwinKeyMap(name string) (int, bool) {
-	// Handle modifier combos like "CTRL+C"
-	parts := strings.Split(name, "+")
-	if len(parts) > 1 {
-		// For now, just handle the last key in the combo
-		name = strings.TrimSpace(parts[len(parts)-1])
-	}
+func pixelRGBA(r, g, b, a byte) color.RGBA {
+	return color.RGBA{R: r, G: g, B: b, A: a}
+}
 
+// macKeyMapSingle maps a single key name (no modifiers) to its macOS virtual keycode.
+func macKeyMapSingle(name string) (int, bool) {
 	switch name {
-	case "A":
-		return 0x00, true
-	case "S":
-		return 0x01, true
-	case "D":
-		return 0x02, true
-	case "F":
-		return 0x03, true
-	case "H":
-		return 0x04, true
-	case "G":
-		return 0x05, true
-	case "Z":
-		return 0x06, true
-	case "X":
-		return 0x07, true
-	case "C":
-		return 0x08, true
-	case "V":
-		return 0x09, true
-	case "B":
-		return 0x0B, true
-	case "Q":
-		return 0x0C, true
-	case "W":
-		return 0x0D, true
-	case "E":
-		return 0x0E, true
-	case "R":
-		return 0x0F, true
-	case "Y":
-		return 0x10, true
-	case "T":
-		return 0x11, true
-	case "1":
-		return 0x12, true
-	case "2":
-		return 0x13, true
-	case "3":
-		return 0x14, true
-	case "4":
-		return 0x15, true
-	case "6":
-		return 0x16, true
-	case "5":
-		return 0x17, true
-	case "7":
-		return 0x1A, true
-	case "8":
-		return 0x1C, true
-	case "9":
-		return 0x19, true
-	case "0":
-		return 0x1D, true
-	case "RETURN", "ENTER":
-		return 0x24, true
-	case "TAB":
-		return 0x30, true
-	case "SPACE":
-		return 0x31, true
-	case "DELETE", "BACKSPACE":
-		return 0x33, true
-	case "ESCAPE", "ESC":
-		return 0x35, true
-	case "COMMAND", "CMD":
-		return 0x37, true
-	case "SHIFT":
-		return 0x38, true
-	case "OPTION", "ALT":
-		return 0x3A, true
-	case "CONTROL", "CTRL":
-		return 0x3B, true
-	case "CAPSLOCK":
-		return 0x39, true
-	case "F1":
-		return 0x7A, true
-	case "F2":
-		return 0x78, true
-	case "F3":
-		return 0x63, true
-	case "F4":
-		return 0x76, true
-	case "F5":
-		return 0x60, true
-	case "F6":
-		return 0x61, true
-	case "F7":
-		return 0x62, true
-	case "F8":
-		return 0x64, true
-	case "F9":
-		return 0x65, true
-	case "F10":
-		return 0x6D, true
-	case "F11":
-		return 0x67, true
-	case "F12":
-		return 0x6F, true
-	case "LEFT":
-		return 0x7B, true
-	case "RIGHT":
-		return 0x7C, true
-	case "DOWN":
-		return 0x7D, true
-	case "UP":
-		return 0x7E, true
-	case "PAGEUP":
-		return 0x74, true
-	case "PAGEDOWN":
-		return 0x79, true
-	case "HOME":
-		return 0x73, true
-	case "END":
-		return 0x77, true
-	case "INSERT":
-		return 0x72, true
-	case "DELETE":
-		return 0x75, true
-	case "PRINTSCREEN", "PRTSC":
-		return 0x69, true
-	case "NUMLOCK":
-		return 0x47, true
+	case "A": return 0x00, true
+	case "S": return 0x01, true
+	case "D": return 0x02, true
+	case "F": return 0x03, true
+	case "H": return 0x04, true
+	case "G": return 0x05, true
+	case "Z": return 0x06, true
+	case "X": return 0x07, true
+	case "C": return 0x08, true
+	case "V": return 0x09, true
+	case "B": return 0x0B, true
+	case "Q": return 0x0C, true
+	case "W": return 0x0D, true
+	case "E": return 0x0E, true
+	case "R": return 0x0F, true
+	case "Y": return 0x10, true
+	case "T": return 0x11, true
+	case "1": return 0x12, true
+	case "2": return 0x13, true
+	case "3": return 0x14, true
+	case "4": return 0x15, true
+	case "6": return 0x16, true
+	case "5": return 0x17, true
+	case "7": return 0x1A, true
+	case "8": return 0x1C, true
+	case "9": return 0x19, true
+	case "0": return 0x1D, true
+	case "RETURN", "ENTER": return 0x24, true
+	case "TAB": return 0x30, true
+	case "SPACE": return 0x31, true
+	case "DELETE", "BACKSPACE": return 0x33, true
+	case "ESCAPE", "ESC": return 0x35, true
+	case "COMMAND", "CMD": return 0x37, true
+	case "SHIFT": return 0x38, true
+	case "OPTION", "ALT": return 0x3A, true
+	case "CONTROL", "CTRL": return 0x3B, true
+	case "CAPSLOCK": return 0x39, true
+	case "F1": return 0x7A, true
+	case "F2": return 0x78, true
+	case "F3": return 0x63, true
+	case "F4": return 0x76, true
+	case "F5": return 0x60, true
+	case "F6": return 0x61, true
+	case "F7": return 0x62, true
+	case "F8": return 0x64, true
+	case "F9": return 0x65, true
+	case "F10": return 0x6D, true
+	case "F11": return 0x67, true
+	case "F12": return 0x6F, true
+	case "LEFT": return 0x7B, true
+	case "RIGHT": return 0x7C, true
+	case "DOWN": return 0x7D, true
+	case "UP": return 0x7E, true
+	case "PAGEUP": return 0x74, true
+	case "PAGEDOWN": return 0x79, true
+	case "HOME": return 0x73, true
+	case "END": return 0x77, true
+	case "INSERT": return 0x72, true
+	case "PRINTSCREEN", "PRTSC": return 0x69, true
+	case "NUMLOCK": return 0x47, true
 	default:
 		return 0, false
 	}
 }
 
-// Ensure compliance with interface at compile time
-var _ computerPlatform = (*darwinPlatform)(nil)
-
+// Ensure compile-time interface compliance.
+var _ agent.ComputerBackend = (*darwinComputerBackend)(nil)

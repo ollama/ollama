@@ -7,23 +7,23 @@ import (
 // LocalEnvironment represents the machine running Ollama. It is the default
 // environment and supports shell, files, and computer capabilities.
 type LocalEnvironment struct {
-	caps        []Capability
-	mu          sync.RWMutex
-	computerCap bool // whether computer capability is available
+	caps    []Capability
+	mu      sync.RWMutex
+	backend ComputerBackend // nil if computer capability is not available
 }
 
-// NewLocalEnvironment creates a new local environment. The computerCapability
-// parameter indicates whether the platform supports computer-use primitives
-// (screenshot, mouse, keyboard). When false, only shell and file capabilities
-// are advertised.
-func NewLocalEnvironment(computerCapability bool) *LocalEnvironment {
+// NewLocalEnvironment creates a new local environment. The backend parameter
+// provides the computer execution backend. Pass nil if the platform does not
+// support computer-use primitives (only shell and file capabilities will be
+// advertised).
+func NewLocalEnvironment(backend ComputerBackend) *LocalEnvironment {
 	caps := []Capability{CapShell, CapFiles}
-	if computerCapability {
+	if backend != nil {
 		caps = append(caps, CapComputer)
 	}
 	return &LocalEnvironment{
-		caps:        caps,
-		computerCap: computerCapability,
+		caps:    caps,
+		backend: backend,
 	}
 }
 
@@ -54,10 +54,16 @@ func (l *LocalEnvironment) SupportsCapability(c Capability) bool {
 	return false
 }
 
+func (l *LocalEnvironment) ComputerBackend() ComputerBackend {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.backend
+}
+
 // HasComputerCapability reports whether the local environment supports
 // computer-use primitives.
 func (l *LocalEnvironment) HasComputerCapability() bool {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	return l.computerCap
+	return l.backend != nil
 }

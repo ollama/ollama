@@ -267,7 +267,11 @@ func agentToolsRegistry(ctx context.Context, client *api.Client, modelName strin
 
 	if os.Getenv("OLLAMA_AGENT_DISABLE_COMPUTER") == "" {
 		envRegistry := coreagent.NewEnvironmentRegistry()
-		if computerTool := agenttools.NewComputer(envRegistry); computerTool != nil {
+		backend := agenttools.NewComputerBackend()
+		localEnv := coreagent.NewLocalEnvironment(backend)
+		envRegistry.Register(localEnv)
+		computerTool := agenttools.NewComputer(envRegistry)
+		if computerTool != nil {
 			registry.Register(computerTool)
 		}
 	}

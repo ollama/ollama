@@ -41,6 +41,20 @@ const (
 	CapProcesses Capability = "processes"
 )
 
+// ComputerBackend is the interface that environment-specific computer
+// implementations must satisfy. Each environment that advertises CapComputer
+// must provide its own backend. This prevents a remote target from
+// accidentally executing actions on the local machine.
+type ComputerBackend interface {
+	Screenshot(ctx context.Context) ([]byte, int, int, error)
+	Click(ctx context.Context, x, y int) error
+	DoubleClick(ctx context.Context, x, y int) error
+	Move(ctx context.Context, x, y int) error
+	Type(ctx context.Context, text string) error
+	Key(ctx context.Context, key string) error
+	Scroll(ctx context.Context, dx, dy int) error
+}
+
 // Environment is the interface that all execution environments must satisfy.
 // An environment represents a target where the agent can execute actions.
 type Environment interface {
@@ -56,6 +70,12 @@ type Environment interface {
 
 	// SupportsCapability reports whether the environment has a given capability.
 	SupportsCapability(c Capability) bool
+
+	// ComputerBackend returns the computer execution backend for this
+	// environment. Returns nil if the environment does not have a configured
+	// computer backend (even if it advertises CapComputer in capabilities).
+	// Callers MUST check for nil before attempting to use the backend.
+	ComputerBackend() ComputerBackend
 }
 
 // EnvironmentDescriptor is a lightweight value describing an environment,

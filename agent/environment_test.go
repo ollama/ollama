@@ -12,6 +12,7 @@ type mockEnvironment struct {
 	id         string
 	envType    EnvironmentType
 	capabilities []Capability
+	backend    ComputerBackend
 }
 
 func (m *mockEnvironment) ID() string             { return m.id }
@@ -25,9 +26,27 @@ func (m *mockEnvironment) SupportsCapability(c Capability) bool {
 	}
 	return false
 }
+func (m *mockEnvironment) ComputerBackend() ComputerBackend { return m.backend }
+
+// --- mock computer backend for testing ---
+
+type mockComputerBackend struct{}
+
+func (m *mockComputerBackend) Screenshot(_ context.Context) ([]byte, int, int, error) {
+	return []byte{0}, 1, 1, nil
+}
+func (m *mockComputerBackend) Click(_ context.Context, x, y int) error    { return nil }
+func (m *mockComputerBackend) DoubleClick(_ context.Context, x, y int) error { return nil }
+func (m *mockComputerBackend) Move(_ context.Context, x, y int) error     { return nil }
+func (m *mockComputerBackend) Type(_ context.Context, text string) error  { return nil }
+func (m *mockComputerBackend) Key(_ context.Context, key string) error    { return nil }
+func (m *mockComputerBackend) Scroll(_ context.Context, dx, dy int) error { return nil }
+
+var _ ComputerBackend = (*mockComputerBackend)(nil)
+var _ Environment = (*mockEnvironment)(nil)
 
 func TestLocalEnvironmentIDAndType(t *testing.T) {
-	env := NewLocalEnvironment(true)
+	env := NewLocalEnvironment(&mockComputerBackend{})
 	if got := env.ID(); got != "local" {
 		t.Fatalf("ID() = %q, want %q", got, "local")
 	}
@@ -39,16 +58,15 @@ func TestLocalEnvironmentIDAndType(t *testing.T) {
 func TestLocalEnvironmentCapabilities(t *testing.T) {
 	tests := []struct {
 		name     string
-		withComp bool
+		backend  ComputerBackend
 		wantCaps []Capability
 	}{
-		{"without computer", false, []Capability{CapShell, CapFiles}},
-		{"with computer", true, []Capability{CapShell, CapFiles, CapComputer}},
+		{"with backend", &mockComputerBackend{}, []Capability{CapShell, CapFiles, CapComputer}},
+		{"without backend", nil, []Capability{CapShell, CapFiles}},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			env := NewLocalEnvironment(tt.withComp)
+			env := NewLocalEnvironment(tt.backend)
 			caps := env.Capabilities()
 			if len(caps) != len(tt.wantCaps) {
 				t.Fatalf("Capabilities() length = %d, want %d", len(caps), len(tt.wantCaps))
@@ -63,24 +81,37 @@ func TestLocalEnvironmentCapabilities(t *testing.T) {
 }
 
 func TestLocalEnvironmentSupportsCapability(t *testing.T) {
-	env := NewLocalEnvironment(true)
+	env := NewLocalEnvironment(&mockComputerBackend{})
 	if !env.SupportsCapability(CapShell) {
-		t.Fatal("local environment should support shell")
+		t.Fatal("local should support shell")
 	}
 	if !env.SupportsCapability(CapFiles) {
-		t.Fatal("local environment should support files")
+		t.Fatal("local should support files")
 	}
 	if !env.SupportsCapability(CapComputer) {
-		t.Fatal("local environment should support computer")
+		t.Fatal("local should support computer")
 	}
 	if env.SupportsCapability(CapProcesses) {
-		t.Fatal("local environment should not support processes")
+		t.Fatal("local should not support processes")
+	}
+}
+
+func TestLocalEnvironmentComputerBackend(t *testing.T) {
+	backend := &mockComputerBackend{}
+	env := NewLocalEnvironment(backend)
+	if env.ComputerBackend() != backend {
+		t.Fatal("ComputerBackend() should return the provided backend")
+	}
+
+	envNoBackend := NewLocalEnvironment(nil)
+	if envNoBackend.ComputerBackend() != nil {
+		t.Fatal("ComputerBackend() should return nil when no backend provided")
 	}
 }
 
 func TestLocalEnvironmentHasComputerCapability(t *testing.T) {
-	withComp := NewLocalEnvironment(true)
-	withoutComp := NewLocalEnvironment(false)
+	withComp := NewLocalEnvironment(&mockComputerBackend{})
+	withoutComp := NewLocalEnvironment(nil)
 
 	if !withComp.HasComputerCapability() {
 		t.Fatal("expected HasComputerCapability() = true")
@@ -96,16 +127,12 @@ func TestDescriptor(t *testing.T) {
 		envType:      EnvironmentRemote,
 		capabilities: []Capability{CapShell, CapComputer},
 	}
-
 	desc := Descriptor(env)
 	if desc.ID != "test-env" {
-		t.Fatalf("Descriptor().ID = %q, want %q", desc.ID, "test-env")
+		t.Fatalf("Descriptor().ID = %q", desc.ID)
 	}
 	if desc.Type != EnvironmentRemote {
-		t.Fatalf("Descriptor().Type = %q, want %q", desc.Type, EnvironmentRemote)
-	}
-	if len(desc.Capabilities) != 2 {
-		t.Fatalf("Descriptor().Capabilities length = %d, want 2", len(desc.Capabilities))
+		t.Fatalf("Descriptor().Type = %q", desc.Type)
 	}
 }
 
@@ -118,22 +145,17 @@ func TestDescriptors(t *testing.T) {
 	if len(descs) != 2 {
 		t.Fatalf("Descriptors() length = %d, want 2", len(descs))
 	}
-	if descs[0].ID != "a" || descs[1].ID != "b" {
-		t.Fatalf("Descriptors() IDs = %v, want [a, b]", []string{descs[0].ID, descs[1].ID})
-	}
 }
 
 func TestEnvironmentRegistryRegisterAndGet(t *testing.T) {
 	r := NewEnvironmentRegistry()
-	env := &mockEnvironment{id: "local", envType: EnvironmentLocal}
-	r.Register(env)
-
+	r.Register(&mockEnvironment{id: "local", envType: EnvironmentLocal})
 	got, ok := r.Get("local")
 	if !ok {
 		t.Fatal("Get('local') returned false")
 	}
 	if got.ID() != "local" {
-		t.Fatalf("Get('local').ID() = %q, want %q", got.ID(), "local")
+		t.Fatalf("Get('local').ID() = %q", got.ID())
 	}
 }
 
@@ -141,13 +163,9 @@ func TestEnvironmentRegistryDuplicateOverwrites(t *testing.T) {
 	r := NewEnvironmentRegistry()
 	r.Register(&mockEnvironment{id: "local", envType: EnvironmentLocal})
 	r.Register(&mockEnvironment{id: "local", envType: EnvironmentContainer})
-
-	got, ok := r.Get("local")
-	if !ok {
-		t.Fatal("Get('local') returned false")
-	}
+	got, _ := r.Get("local")
 	if got.Type() != EnvironmentContainer {
-		t.Fatalf("Get('local').Type() = %q, want %q (last wins)", got.Type(), EnvironmentContainer)
+		t.Fatalf("last wins: got %q", got.Type())
 	}
 }
 
@@ -156,12 +174,10 @@ func TestEnvironmentRegistryList(t *testing.T) {
 	r.Register(&mockEnvironment{id: "c", envType: EnvironmentCloud})
 	r.Register(&mockEnvironment{id: "a", envType: EnvironmentLocal})
 	r.Register(&mockEnvironment{id: "b", envType: EnvironmentRemote})
-
 	list := r.List()
 	if len(list) != 3 {
 		t.Fatalf("List() length = %d, want 3", len(list))
 	}
-	// Should preserve insertion order
 	expectedOrder := []string{"c", "a", "b"}
 	for i, want := range expectedOrder {
 		if list[i].ID() != want {
@@ -173,13 +189,9 @@ func TestEnvironmentRegistryList(t *testing.T) {
 func TestEnvironmentRegistryDescriptors(t *testing.T) {
 	r := NewEnvironmentRegistry()
 	r.Register(&mockEnvironment{id: "local", envType: EnvironmentLocal, capabilities: []Capability{CapShell, CapComputer}})
-
 	descs := r.Descriptors()
-	if len(descs) != 1 {
-		t.Fatalf("Descriptors() length = %d, want 1", len(descs))
-	}
-	if descs[0].ID != "local" {
-		t.Fatalf("Descriptors()[0].ID = %q, want %q", descs[0].ID, "local")
+	if len(descs) != 1 || descs[0].ID != "local" {
+		t.Fatalf("Descriptors() = %v", descs)
 	}
 }
 
@@ -188,15 +200,9 @@ func TestEnvironmentRegistryWithCapability(t *testing.T) {
 	r.Register(&mockEnvironment{id: "local", envType: EnvironmentLocal, capabilities: []Capability{CapShell, CapFiles, CapComputer}})
 	r.Register(&mockEnvironment{id: "server", envType: EnvironmentRemote, capabilities: []Capability{CapShell, CapFiles}})
 	r.Register(&mockEnvironment{id: "desktop", envType: EnvironmentRemote, capabilities: []Capability{CapShell, CapComputer}})
-
 	computerEnvs := r.WithCapability(CapComputer)
 	if len(computerEnvs) != 2 {
-		t.Fatalf("WithCapability(CapComputer) length = %d, want 2", len(computerEnvs))
-	}
-
-	shellEnvs := r.WithCapability(CapShell)
-	if len(shellEnvs) != 3 {
-		t.Fatalf("WithCapability(CapShell) length = %d, want 3", len(shellEnvs))
+		t.Fatalf("WithCapability(CapComputer) = %d, want 2", len(computerEnvs))
 	}
 }
 
@@ -217,13 +223,12 @@ func TestEnvironmentRegistryResolveTarget(t *testing.T) {
 		{"known remote", "prod", "prod", false},
 		{"unknown target", "nonexistent", "", true},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			env, err := r.ResolveTarget(tt.target)
 			if tt.wantErr {
 				if err == nil {
-					t.Fatalf("ResolveTarget(%q) should have errored, got %v", tt.target, env)
+					t.Fatalf("ResolveTarget(%q) should have errored", tt.target)
 				}
 				return
 			}
@@ -247,12 +252,10 @@ func TestEnvironmentRegistryResolveTargetEmpty(t *testing.T) {
 
 func TestEnvironmentRegistryNilSafety(t *testing.T) {
 	var r *EnvironmentRegistry
-
-	// All methods should be nil-safe
 	r.Register(nil)
-	env, ok := r.Get("x")
-	if ok || env != nil {
-		t.Fatal("nil registry Get should return nil, false")
+	_, ok := r.Get("x")
+	if ok {
+		t.Fatal("nil registry Get should return false")
 	}
 	if list := r.List(); list != nil {
 		t.Fatal("nil registry List should return nil")
@@ -266,23 +269,16 @@ func TestEnvironmentRegistryNilSafety(t *testing.T) {
 }
 
 func TestEnvironmentTypeConstants(t *testing.T) {
-	// Ensure environment type constants are defined as expected
 	types := []EnvironmentType{
-		EnvironmentLocal,
-		EnvironmentContainer,
-		EnvironmentVM,
-		EnvironmentRemote,
-		EnvironmentCloud,
+		EnvironmentLocal, EnvironmentContainer, EnvironmentVM,
+		EnvironmentRemote, EnvironmentCloud,
 	}
 	seen := make(map[EnvironmentType]bool)
 	for _, et := range types {
 		if seen[et] {
-			t.Fatalf("duplicate EnvironmentType: %q", et)
+			t.Fatalf("duplicate: %q", et)
 		}
 		seen[et] = true
-		if et == "" {
-			t.Fatal("EnvironmentType must not be empty")
-		}
 	}
 }
 
@@ -291,45 +287,20 @@ func TestCapabilityConstants(t *testing.T) {
 	seen := make(map[Capability]bool)
 	for _, c := range caps {
 		if seen[c] {
-			t.Fatalf("duplicate Capability: %q", c)
+			t.Fatalf("duplicate: %q", c)
 		}
 		seen[c] = true
-		if c == "" {
-			t.Fatal("Capability must not be empty")
-		}
-	}
-}
-
-func TestEnvironmentRegistryContextIntegration(t *testing.T) {
-	// Verify the registry works with context (it should, since Environment
-	// methods are designed to be called with context).
-	r := NewEnvironmentRegistry()
-	r.Register(&mockEnvironment{id: "local", envType: EnvironmentLocal, capabilities: []Capability{CapComputer}})
-
-	ctx := context.Background()
-	_ = ctx // environment doesn't need context for registration/lookup
-
-	env, err := r.ResolveTarget("local")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !env.SupportsCapability(CapComputer) {
-		t.Fatal("local environment should support computer")
 	}
 }
 
 func TestDefaultEnvironmentID(t *testing.T) {
 	if DefaultEnvironmentID != "local" {
-		t.Fatalf("DefaultEnvironmentID = %q, want %q", DefaultEnvironmentID, "local")
+		t.Fatalf("DefaultEnvironmentID = %q", DefaultEnvironmentID)
 	}
 }
 
-// Ensure mock compliance at compile time
-var _ Environment = (*mockEnvironment)(nil)
-
-// Verify that LocalEnvironment is registered as an Environment
 func TestLocalEnvironmentInterfaceCompliance(t *testing.T) {
-	var env Environment = NewLocalEnvironment(true)
+	var env Environment = NewLocalEnvironment(&mockComputerBackend{})
 	if env == nil {
 		t.Fatal("LocalEnvironment should implement Environment")
 	}

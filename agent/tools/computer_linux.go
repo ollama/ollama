@@ -6,13 +6,13 @@ package tools
 #cgo LDFLAGS: -lX11 -lXtst -lXfixes
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <X11/keysym.h>
 #include <X11/extensions/XTest.h>
 #include <X11/cursorfont.h>
 #include <stdlib.h>
 #include <string.h>
 
 // captureScreen captures the entire root window and returns raw RGBA pixels.
-// The caller must free the returned buffer.
 static unsigned char* captureScreen(Display *dpy, int *width, int *height) {
 	Window root = DefaultRootWindow(dpy);
 	XWindowAttributes attr;
@@ -27,7 +27,6 @@ static unsigned char* captureScreen(Display *dpy, int *width, int *height) {
 		return NULL;
 	}
 
-	// Convert XImage (typically BGRA or RGBA) to RGBA bytes
 	unsigned char *rgba = (unsigned char *)malloc(w * h * 4);
 	if (!rgba) {
 		XDestroyImage(image);
@@ -80,15 +79,13 @@ static void fakeDoubleClick(Display *dpy, int x, int y) {
 	XSync(dpy, False);
 }
 
-// fakeKey sends a key press and release for the given keycode.
+// fakeKey sends a key press or release for the given keycode.
 static void fakeKey(Display *dpy, int keycode, int press) {
 	XTestFakeKeyEvent(dpy, keycode, press, CurrentTime);
 	XSync(dpy, False);
 }
 
 // fakeScroll performs a scroll by the given amounts.
-// dy > 0 scrolls down (button 5), dy < 0 scrolls up (button 4).
-// dx > 0 scrolls right (button 7), dx < 0 scrolls left (button 6).
 static void fakeScroll(Display *dpy, int dx, int dy) {
 	if (dy > 0) {
 		for (int i = 0; i < dy; i++) {
@@ -115,6 +112,54 @@ static void fakeScroll(Display *dpy, int dx, int dy) {
 	XSync(dpy, False);
 }
 
+// typeUnicodeKey types a single Unicode character using XkbKeycodeToKeysym.
+// Returns 0 on success, -1 if the keysym has no keycode mapping.
+static int typeUnicodeKey(Display *dpy, KeySym keysym) {
+	KeyCode keycode = XKeysymToKeycode(dpy, keysym);
+	if (keycode == 0) {
+		return -1;
+	}
+
+	// Check if this keysym needs Shift (uppercase letters, symbols)
+	int needsShift = 0;
+	KeySym lower, upper;
+	XConvertCase(keysym, &lower, &upper);
+	if (upper != lower) {
+		// This keysym has shifted/unshifted variants
+		KeyCode shiftedKeycode = XKeysymToKeycode(dpy, upper);
+		KeyCode unshiftedKeycode = XKeysymToKeycode(dpy, lower);
+		if (shiftedKeycode == keycode && unshiftedKeycode != keycode) {
+			needsShift = 1;
+		}
+	}
+
+	// For common symbols, check if the unshifted keysym differs
+	if (!needsShift) {
+		// Check if keysym is in the unshifted position for this keycode
+		KeySym ks = XkbKeycodeToKeysym(dpy, keycode, 0, 0);
+		if (ks != keysym) {
+			// keysym is not in the unshifted position, try shifted
+			ks = XkbKeycodeToKeysym(dpy, keycode, 0, 1);
+			if (ks == keysym) {
+				needsShift = 1;
+			}
+		}
+	}
+
+	if (needsShift) {
+		KeyCode shiftKeycode = XKeysymToKeycode(dpy, XK_Shift_L);
+		XTestFakeKeyEvent(dpy, shiftKeycode, True, CurrentTime);
+		XTestFakeKeyEvent(dpy, keycode, True, CurrentTime);
+		XTestFakeKeyEvent(dpy, keycode, False, CurrentTime);
+		XTestFakeKeyEvent(dpy, shiftKeycode, False, CurrentTime);
+	} else {
+		XTestFakeKeyEvent(dpy, keycode, True, CurrentTime);
+		XTestFakeKeyEvent(dpy, keycode, False, CurrentTime);
+	}
+	XSync(dpy, False);
+	return 0;
+}
+
 // openDisplay opens the X11 display.
 static Display* openDisplay() {
 	return XOpenDisplay(NULL);
@@ -132,36 +177,39 @@ import (
 	"context"
 	"fmt"
 	"image"
+	"image/color"
 	"image/png"
 	"strings"
 	"unicode"
-	"image/color"
-	"unsafe"
+
+	"github.com/ollama/ollama/agent"
 )
 
-type linuxPlatform struct {
+type linuxComputerBackend struct {
 	display *C.Display
 }
 
-func newPlatform() computerPlatform {
+// NewComputerBackend returns a platform-specific computer backend for the
+// local machine. Returns nil if X11 display is not available.
+func NewComputerBackend() agent.ComputerBackend {
 	dpy := C.openDisplay()
 	if dpy == nil {
 		return nil
 	}
-	return &linuxPlatform{display: dpy}
+	return &linuxComputerBackend{display: dpy}
 }
 
-func (l *linuxPlatform) Screenshot(ctx context.Context) (*ScreenImage, error) {
+func (l *linuxComputerBackend) Screenshot(ctx context.Context) ([]byte, int, int, error) {
 	select {
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, 0, 0, ctx.Err()
 	default:
 	}
 
 	var w, h C.int
 	rgba := C.captureScreen(l.display, &w, &h)
 	if rgba == nil {
-		return nil, fmt.Errorf("screen capture failed — check X11 display")
+		return nil, 0, 0, fmt.Errorf("screen capture failed — check X11 display")
 	}
 	defer C.free(unsafe.Pointer(rgba))
 
@@ -169,33 +217,28 @@ func (l *linuxPlatform) Screenshot(ctx context.Context) (*ScreenImage, error) {
 	rawLen := width * height * 4
 	rawBytes := C.GoBytes(unsafe.Pointer(rgba), C.CFIndex(rawLen))
 
-	// Encode to PNG
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
 			srcOff := (y*width + x) * 4
-			img.SetRGBA(x, y, pixelFromRGBA(
-				rawBytes[srcOff+0],
-				rawBytes[srcOff+1],
-				rawBytes[srcOff+2],
-				rawBytes[srcOff+3],
-			))
+			img.SetRGBA(x, y, color.RGBA{
+				R: rawBytes[srcOff+0],
+				G: rawBytes[srcOff+1],
+				B: rawBytes[srcOff+2],
+				A: rawBytes[srcOff+3],
+			})
 		}
 	}
 
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
-		return nil, fmt.Errorf("failed to encode screenshot: %w", err)
+		return nil, 0, 0, fmt.Errorf("failed to encode screenshot: %w", err)
 	}
 
-	return &ScreenImage{
-		Pixels: buf.Bytes(),
-		Width:  width,
-		Height: height,
-	}, nil
+	return buf.Bytes(), width, height, nil
 }
 
-func (l *linuxPlatform) Click(ctx context.Context, x, y int) error {
+func (l *linuxComputerBackend) Click(ctx context.Context, x, y int) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -205,7 +248,7 @@ func (l *linuxPlatform) Click(ctx context.Context, x, y int) error {
 	return nil
 }
 
-func (l *linuxPlatform) DoubleClick(ctx context.Context, x, y int) error {
+func (l *linuxComputerBackend) DoubleClick(ctx context.Context, x, y int) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -215,7 +258,7 @@ func (l *linuxPlatform) DoubleClick(ctx context.Context, x, y int) error {
 	return nil
 }
 
-func (l *linuxPlatform) Move(ctx context.Context, x, y int) error {
+func (l *linuxComputerBackend) Move(ctx context.Context, x, y int) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -225,7 +268,7 @@ func (l *linuxPlatform) Move(ctx context.Context, x, y int) error {
 	return nil
 }
 
-func (l *linuxPlatform) Type(ctx context.Context, text string) error {
+func (l *linuxComputerBackend) Type(ctx context.Context, text string) error {
 	for _, r := range text {
 		select {
 		case <-ctx.Done():
@@ -239,24 +282,90 @@ func (l *linuxPlatform) Type(ctx context.Context, text string) error {
 	return nil
 }
 
-func (l *linuxPlatform) Key(ctx context.Context, key string) error {
+func (l *linuxComputerBackend) typeChar(r rune) error {
+	if r == '\n' {
+		C.fakeKey(l.display, C.int(36), 1) // Enter keycode
+		C.fakeKey(l.display, C.int(36), 0)
+		return nil
+	}
+	if r == '\t' {
+		C.fakeKey(l.display, C.int(23), 1) // Tab keycode
+		C.fakeKey(l.display, C.int(23), 0)
+		return nil
+	}
+	if r == ' ' {
+		C.fakeKey(l.display, C.int(65), 1) // Space keycode
+		C.fakeKey(l.display, C.int(65), 0)
+		return nil
+	}
+
+	// For all other characters, use X11's keysym/keycode mapping.
+	// This correctly handles: letters, digits, punctuation, symbols.
+	var keysym C.KeySym
+	if r <= 0x7F {
+		// ASCII range: use the character value directly as keysym
+		keysym = C.KeySym(r)
+	} else if unicode.IsPrint(r) {
+		// Non-ASCII printable: use Unicode keysym convention
+		keysym = C.KeySym(0x01000000 + r)
+	} else {
+		return fmt.Errorf("unsupported character: %c", r)
+	}
+
+	ret := C.typeUnicodeKey(l.display, keysym)
+	if ret != 0 {
+		return fmt.Errorf("no keycode mapping for character: %c (keysym 0x%x)", r, keysym)
+	}
+	return nil
+}
+
+func (l *linuxComputerBackend) Key(ctx context.Context, key string) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
 	}
 
-	vk, ok := linuxKeyMap(strings.ToUpper(strings.TrimSpace(key)))
-	if !ok {
-		return fmt.Errorf("unknown key name: %s", key)
+	upper := strings.ToUpper(strings.TrimSpace(key))
+	parts := strings.Split(upper, "+")
+
+	// Identify modifiers
+	var modifiers []uint32
+	for _, part := range parts[:len(parts)-1] {
+		trimmed := strings.TrimSpace(part)
+		vk, ok := linuxKeyMapSingle(trimmed)
+		if !ok {
+			return fmt.Errorf("unknown modifier: %s", trimmed)
+		}
+		modifiers = append(modifiers, vk)
 	}
 
-	C.fakeKey(l.display, C.int(vk), 1) // press
-	C.fakeKey(l.display, C.int(vk), 0) // release
+	// Press modifiers
+	for _, m := range modifiers {
+		C.fakeKey(l.display, C.int(m), 1)
+	}
+
+	// Press and release the main key
+	mainKey := strings.TrimSpace(parts[len(parts)-1])
+	vk, ok := linuxKeyMapSingle(mainKey)
+	if !ok {
+		// Release modifiers on error
+		for i := len(modifiers) - 1; i >= 0; i-- {
+			C.fakeKey(l.display, C.int(modifiers[i]), 0)
+		}
+		return fmt.Errorf("unknown key name: %s", mainKey)
+	}
+	C.fakeKey(l.display, C.int(vk), 1)
+	C.fakeKey(l.display, C.int(vk), 0)
+
+	// Release modifiers in reverse order
+	for i := len(modifiers) - 1; i >= 0; i-- {
+		C.fakeKey(l.display, C.int(modifiers[i]), 0)
+	}
 	return nil
 }
 
-func (l *linuxPlatform) Scroll(ctx context.Context, dx, dy int) error {
+func (l *linuxComputerBackend) Scroll(ctx context.Context, dx, dy int) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -266,258 +375,80 @@ func (l *linuxPlatform) Scroll(ctx context.Context, dx, dy int) error {
 	return nil
 }
 
-func (l *linuxPlatform) typeChar(r rune) error {
-	// Use XStringToKeysym and XkbKeycodeToKeysym approach
-	// For printable ASCII, we can use a simple approach
-	if r >= 32 && r <= 126 {
-		keycode := asciiToXKeycode(r)
-		if keycode != 0 {
-			C.fakeKey(l.display, C.int(keycode), 1)
-			C.fakeKey(l.display, C.int(keycode), 0)
-			return nil
-		}
-	}
-	// For non-ASCII characters, we'd need XIM which is complex.
-	// For now, skip unsupported characters.
-	if unicode.IsPrint(r) {
-		return fmt.Errorf("non-ASCII character input not yet supported: %c", r)
-	}
-	return nil
-}
-
-func pixelFromRGBA(r, g, b, a byte) color.RGBA {
-	return color.RGBA{R: r, G: g, B: b, A: a}
-}
-
-// Ensure compile-time interface compliance
-var _ computerPlatform = (*linuxPlatform)(nil)
-
-func asciiToXKeysym(ch rune) uint32 {
-	if ch >= 'A' && ch <= 'Z' {
-		return uint32(ch)
-	}
-	if ch >= 'a' && ch <= 'z' {
-		return uint32(ch - 32) // uppercase
-	}
-	if ch >= '0' && ch <= '9' {
-		return uint32(ch)
-	}
-	switch ch {
-	case ' ':
-		return 0x20
-	case '\n':
-		return 0xff0d
-	case '\t':
-		return 0xff09
-	case '.':
-		return 0x2e
-	case ',':
-		return 0x2c
-	case '/':
-		return 0x2f
-	case '\\':
-		return 0x5c
-	case ';':
-		return 0x3b
-	case '\'':
-		return 0x27
-	case '[':
-		return 0x5b
-	case ']':
-		return 0x5d
-	case '-':
-		return 0x2d
-	case '=':
-		return 0x3d
-	case '`':
-		return 0x60
-	}
-	return 0
-}
-
-func asciiToXKeycode(ch rune) uint32 {
-	// X11 keycodes are typically offset by 8 from the key position
-	// This is a simplified mapping; real apps use XKeysymToKeycode
-	switch {
-	case ch >= 'a' && ch <= 'z':
-		// a=38, b=56, c=54, etc. (standard X11 keycodes)
-	 keycodeMap := map[rune]uint32{
-		'a': 38, 'b': 56, 'c': 54, 'd': 40, 'e': 26,
-		'f': 41, 'g': 42, 'h': 43, 'i': 46, 'j': 44,
-		'k': 45, 'l': 46, 'm': 58, 'n': 57, 'o': 32,
-		'p': 33, 'q': 24, 'r': 27, 's': 39, 't': 28,
-		'u': 30, 'v': 55, 'w': 25, 'x': 53, 'y': 29,
-		'z': 52,
-	 }
-		if kc, ok := keycodeMap[ch]; ok {
-			return kc
-		}
-		return 0
-	case ch >= 'A' && ch <= 'Z':
-		return asciiToXKeycode(ch + 32)
-	case ch >= '0' && ch <= '9':
-		keycodeMap := map[rune]uint32{
-			'0': 19, '1': 10, '2': 11, '3': 12, '4': 13,
-			'5': 14, '6': 15, '7': 16, '8': 17, '9': 18,
-		}
-		if kc, ok := keycodeMap[ch]; ok {
-			return kc
-		}
-		return 0
-	case ch == ' ':
-		return 65
-	case ch == '\n':
-		return 36
-	case ch == '\t':
-		return 23
-	}
-	return 0
-}
-
-func linuxKeyMap(name string) (uint32, bool) {
-	// Handle modifier combos like "CTRL+C" — extract the main key
-	parts := strings.Split(name, "+")
-	if len(parts) > 1 {
-		name = strings.TrimSpace(parts[len(parts)-1])
-	}
-
+// linuxKeyMapSingle maps a single key name (no modifiers) to its X11 keycode.
+func linuxKeyMapSingle(name string) (uint32, bool) {
 	switch name {
-	case "A":
-		return 38, true
-	case "B":
-		return 56, true
-	case "C":
-		return 54, true
-	case "D":
-		return 40, true
-	case "E":
-		return 26, true
-	case "F":
-		return 41, true
-	case "G":
-		return 42, true
-	case "H":
-		return 43, true
-	case "I":
-		return 46, true
-	case "J":
-		return 44, true
-	case "K":
-		return 45, true
-	case "L":
-		return 46, true
-	case "M":
-		return 58, true
-	case "N":
-		return 57, true
-	case "O":
-		return 32, true
-	case "P":
-		return 33, true
-	case "Q":
-		return 24, true
-	case "R":
-		return 27, true
-	case "S":
-		return 39, true
-	case "T":
-		return 28, true
-	case "U":
-		return 30, true
-	case "V":
-		return 55, true
-	case "W":
-		return 25, true
-	case "X":
-		return 53, true
-	case "Y":
-		return 29, true
-	case "Z":
-		return 52, true
-	case "0":
-		return 19, true
-	case "1":
-		return 10, true
-	case "2":
-		return 11, true
-	case "3":
-		return 12, true
-	case "4":
-		return 13, true
-	case "5":
-		return 14, true
-	case "6":
-		return 15, true
-	case "7":
-		return 16, true
-	case "8":
-		return 17, true
-	case "9":
-		return 18, true
-	case "ENTER", "RETURN":
-		return 36, true
-	case "TAB":
-		return 23, true
-	case "SPACE":
-		return 65, true
-	case "BACKSPACE", "BACK":
-		return 22, true
-	case "DELETE", "DEL":
-		return 119, true
-	case "ESCAPE", "ESC":
-		return 9, true
-	case "SHIFT":
-		return 50, true
-	case "CTRL", "CONTROL":
-		return 37, true
-	case "ALT":
-		return 64, true
-	case "CAPSLOCK":
-		return 66, true
-	case "NUMLOCK":
-		return 77, true
-	case "LEFT":
-		return 113, true
-	case "RIGHT":
-		return 114, true
-	case "DOWN":
-		return 116, true
-	case "UP":
-		return 111, true
-	case "PAGEUP":
-		return 112, true
-	case "PAGEDOWN":
-		return 117, true
-	case "HOME":
-		return 110, true
-	case "END":
-		return 115, true
-	case "INSERT":
-		return 106, true
-	case "F1":
-		return 67, true
-	case "F2":
-		return 68, true
-	case "F3":
-		return 69, true
-	case "F4":
-		return 70, true
-	case "F5":
-		return 71, true
-	case "F6":
-		return 72, true
-	case "F7":
-		return 73, true
-	case "F8":
-		return 74, true
-	case "F9":
-		return 75, true
-	case "F10":
-		return 76, true
-	case "F11":
-		return 95, true
-	case "F12":
-		return 96, true
+	case "A": return 38, true
+	case "B": return 56, true
+	case "C": return 54, true
+	case "D": return 40, true
+	case "E": return 26, true
+	case "F": return 41, true
+	case "G": return 42, true
+	case "H": return 43, true
+	case "I": return 46, true
+	case "J": return 44, true
+	case "K": return 45, true
+	case "L": return 46, true
+	case "M": return 58, true
+	case "N": return 57, true
+	case "O": return 32, true
+	case "P": return 33, true
+	case "Q": return 24, true
+	case "R": return 27, true
+	case "S": return 39, true
+	case "T": return 28, true
+	case "U": return 30, true
+	case "V": return 55, true
+	case "W": return 25, true
+	case "X": return 53, true
+	case "Y": return 29, true
+	case "Z": return 52, true
+	case "0": return 19, true
+	case "1": return 10, true
+	case "2": return 11, true
+	case "3": return 12, true
+	case "4": return 13, true
+	case "5": return 14, true
+	case "6": return 15, true
+	case "7": return 16, true
+	case "8": return 17, true
+	case "9": return 18, true
+	case "ENTER", "RETURN": return 36, true
+	case "TAB": return 23, true
+	case "SPACE": return 65, true
+	case "BACKSPACE", "BACK": return 22, true
+	case "DELETE", "DEL": return 119, true
+	case "ESCAPE", "ESC": return 9, true
+	case "SHIFT": return 50, true
+	case "CTRL", "CONTROL": return 37, true
+	case "ALT": return 64, true
+	case "CAPSLOCK": return 66, true
+	case "NUMLOCK": return 77, true
+	case "LEFT": return 113, true
+	case "RIGHT": return 114, true
+	case "DOWN": return 116, true
+	case "UP": return 111, true
+	case "PAGEUP": return 112, true
+	case "PAGEDOWN": return 117, true
+	case "HOME": return 110, true
+	case "END": return 115, true
+	case "INSERT": return 106, true
+	case "F1": return 67, true
+	case "F2": return 68, true
+	case "F3": return 69, true
+	case "F4": return 70, true
+	case "F5": return 71, true
+	case "F6": return 72, true
+	case "F7": return 73, true
+	case "F8": return 74, true
+	case "F9": return 75, true
+	case "F10": return 76, true
+	case "F11": return 95, true
+	case "F12": return 96, true
 	}
 	return 0, false
 }
+
+// Ensure compile-time interface compliance.
+var _ agent.ComputerBackend = (*linuxComputerBackend)(nil)
