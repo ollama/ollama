@@ -499,7 +499,11 @@ func openInBrowser(url string) {
 	}
 
 	slog.Info("executing browser command", "cmd", cmd, "args", args)
-	if err := exec.Command(cmd, args...).Start(); err != nil {
+	browser := exec.Command(cmd, args...)
+	if runtime.GOOS == "windows" {
+		browser.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	}
+	if err := browser.Start(); err != nil {
 		slog.Error("failed to open URL in browser", "url", url, "cmd", cmd, "args", args, "error", err)
 	}
 }
