@@ -340,16 +340,14 @@ func (e *grammarEngine) hasGrammar(grammars []*grammar) bool {
 	return false
 }
 
-// accept advances a batch's grammars over its newly committed tokens —
-// every row's grammar accepts the row's token, constraining or not, with
-// grammars[i] and committed[i] aligned. Each token was sampled under its
-// own matcher's mask, so a rejection is an engine fault; errs[i] carries
-// row i's fault, which ends that request rather than the runner, and errs
-// is nil when every row succeeded.
+// accept advances each constraining row grammar over the row's newly
+// committed token, grammars[i] and committed[i] aligned. errs[i] carries a
+// row's rejection or fault, which ends that request rather than the runner;
+// errs is nil when every row succeeded.
 func (e *grammarEngine) accept(grammars []*grammar, committed []int32) []error {
 	var errs []error
 	for i, g := range grammars {
-		if g == nil {
+		if !g.constraining() {
 			continue
 		}
 		if err := g.m.Accept(committed[i]); err != nil {
@@ -362,44 +360,95 @@ func (e *grammarEngine) accept(grammars []*grammar, committed []int32) []error {
 	return errs
 }
 
-// mask fills each constraining row's packed token mask and applies them to
-// the batch's logits in one device op, logits row i masked under
-// grammars[i]. Unconstrained, terminated, and failed rows keep their logits
-// (all-ones mask rows add zero). errs as in accept.
-func (e *grammarEngine) mask(grammars []*grammar, logits *mlx.Array) (*mlx.Array, []error) {
-	var errs []error
-	packed := make([]int32, len(grammars)*e.words)
+// mask fills and applies each constraining row grammar's token masks over
+// the batch's [B, L, V] logits: row b's position i constrains the token
+// after drafts[b][:i], with nil drafts masking one position per row from
+// the current state. Each matcher advances through its drafts as the
+// positions fill and is rolled back before returning, so its state is
+// unchanged; positions past a rejected draft stay unmasked.
+func (e *grammarEngine) mask(grammars []*grammar, logits *mlx.Array, drafts [][]int32) (*mlx.Array, []error) {
+	positions := 1
+	for _, ids := range drafts {
+		positions = max(positions, len(ids)+1)
+	}
+	packed := make([]int32, len(grammars)*positions*e.words)
 	for i := range packed {
 		packed[i] = -1
 	}
+	var errs []error
 	apply := false
-	for i, g := range grammars {
+	for b, g := range grammars {
 		if !g.constraining() {
 			continue
 		}
-		row := packed[i*e.words : (i+1)*e.words]
-		constrained, err := g.m.Fill(row)
+		var ids []int32
+		if drafts != nil {
+			ids = drafts[b]
+		}
+		block := packed[b*positions*e.words : (b+1)*positions*e.words]
+		constrains, err := e.fill(g, block, ids)
 		if err != nil {
 			if errs == nil {
 				errs = make([]error, len(grammars))
 			}
-			errs[i] = fmt.Errorf("grammar: fill token mask: %w", err)
-			continue
-		}
-		// An all-zero mask would send every logit to -inf and sampling to NaN.
-		if constrained && !slices.ContainsFunc(row, func(w int32) bool { return w != 0 }) {
-			if errs == nil {
-				errs = make([]error, len(grammars))
+			errs[b] = err
+			// Nothing from a faulted row may constrain.
+			for j := range block {
+				block[j] = -1
 			}
-			errs[i] = errors.New("grammar: token mask rejects every vocabulary token")
 			continue
 		}
-		apply = apply || constrained
+		apply = apply || constrains
 	}
 	if !apply {
 		return logits, errs
 	}
-	return e.apply(logits, mlx.FromValues(packed, len(grammars), e.words)), errs
+	rows := len(grammars) * positions
+	masked := e.apply(logits.Reshape(rows, logits.Dim(2)), mlx.FromValues(packed, rows, e.words))
+	return masked.Reshape(len(grammars), positions, logits.Dim(2)), errs
+}
+
+// fill fills one row's per-position masks, advancing the matcher through
+// the drafts and rolling the whole advance back before returning.
+func (e *grammarEngine) fill(g *grammar, packed []int32, ids []int32) (bool, error) {
+	constrains := false
+	advanced := 0
+	var walkErr error
+	for i := range len(ids) + 1 {
+		row := packed[i*e.words : (i+1)*e.words]
+		constrained, err := g.m.Fill(row)
+		if err != nil {
+			walkErr = fmt.Errorf("grammar: fill token mask: %w", err)
+			break
+		}
+		if constrained && !slices.ContainsFunc(row, func(w int32) bool { return w != 0 }) {
+			// No token continues this state: fatal at position 0, whose state
+			// is committed; a later position is left unmasked, and a run kept
+			// into it fails at its accept.
+			if i == 0 {
+				walkErr = errors.New("grammar: token mask rejects every vocabulary token")
+			} else {
+				for j := range row {
+					row[j] = -1
+				}
+			}
+			break
+		}
+		constrains = constrains || constrained
+		if i == len(ids) {
+			break
+		}
+		if g.m.Accept(ids[i]) != nil {
+			// A rejected draft ends the walk; a fault resurfaces at the
+			// committed run's accept.
+			break
+		}
+		advanced++
+	}
+	if err := g.m.Rollback(advanced); err != nil && walkErr == nil {
+		walkErr = fmt.Errorf("grammar: rollback draft tokens: %w", err)
+	}
+	return constrains, walkErr
 }
 
 // apply masks logits under packed token masks, one row per sequence: logits

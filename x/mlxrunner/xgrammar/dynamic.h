@@ -21,5 +21,7 @@ int ollama_xgrammar_dynamic_matcher_new(
 void ollama_xgrammar_dynamic_matcher_free(ollama_xgrammar_matcher*);
 int ollama_xgrammar_dynamic_matcher_fill(ollama_xgrammar_matcher*, int32_t*, size_t, int*, char**);
 int ollama_xgrammar_dynamic_matcher_accept(ollama_xgrammar_matcher*, int32_t, int*, char**);
+int ollama_xgrammar_dynamic_matcher_rollback(ollama_xgrammar_matcher*, int32_t, char**);
+int ollama_xgrammar_dynamic_matcher_is_terminated(ollama_xgrammar_matcher*, int*, char**);
 
 #endif
