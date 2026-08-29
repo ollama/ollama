@@ -97,6 +97,9 @@ func Descriptor(env Environment) EnvironmentDescriptor {
 
 // Descriptors converts a slice of environments to their descriptor forms.
 func Descriptors(envs []Environment) []EnvironmentDescriptor {
+	if len(envs) == 0 {
+		return nil
+	}
 	out := make([]EnvironmentDescriptor, len(envs))
 	for i, env := range envs {
 		out[i] = Descriptor(env)
@@ -162,6 +165,9 @@ func (r *EnvironmentRegistry) List() []Environment {
 
 // Descriptors returns all registered environments as descriptors.
 func (r *EnvironmentRegistry) Descriptors() []EnvironmentDescriptor {
+	if r == nil {
+		return nil
+	}
 	return Descriptors(r.List())
 }
 

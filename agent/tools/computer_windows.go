@@ -128,10 +128,13 @@ type keyboardInputData struct {
 }
 
 // keyboardInput matches the Windows INPUT structure for keyboard events.
+// The union in INPUT is always the size of the largest member (MOUSEINPUT = 32 bytes
+// on 64-bit), so keyboardInput must have trailing padding to match.
 type keyboardInput struct {
 	Type uint32
 	_pad [4]byte
 	Ki   keyboardInputData
+	_    [8]byte // pad to match union size (32 bytes)
 }
 
 // Verify struct sizes at init time.
@@ -186,7 +189,7 @@ func (w *windowsComputerBackend) Screenshot(ctx context.Context) ([]byte, int, i
 	if screenW == 0 || screenH == 0 {
 		return nil, 0, 0, fmt.Errorf("could not determine screen dimensions")
 	}
-	w, h := int(screenW), int(screenH)
+	sw, sh := int(screenW), int(screenH)
 
 	hWnd, _, _ := pGetDesktopWindow.Call()
 	hDC, _, _ := pGetDC.Call(hWnd)
@@ -201,7 +204,7 @@ func (w *windowsComputerBackend) Screenshot(ctx context.Context) ([]byte, int, i
 	}
 	defer pDeleteDC.Call(memDC)
 
-	hBitmap, _, _ := pCreateCompatibleBitmap.Call(hDC, uintptr(w), uintptr(h))
+	hBitmap, _, _ := pCreateCompatibleBitmap.Call(hDC, uintptr(sw), uintptr(sh))
 	if hBitmap == 0 {
 		return nil, 0, 0, fmt.Errorf("failed to create compatible bitmap")
 	}
@@ -210,7 +213,7 @@ func (w *windowsComputerBackend) Screenshot(ctx context.Context) ([]byte, int, i
 	// Select bitmap into DC for capture
 	oldBmp, _, _ := pSelectObject.Call(memDC, hBitmap)
 
-	ret, _, _ := pBitBlt.Call(memDC, 0, 0, uintptr(w), uintptr(h), hDC, 0, 0, SRCCOPY)
+	ret, _, _ := pBitBlt.Call(memDC, 0, 0, uintptr(sw), uintptr(sh), hDC, 0, 0, SRCCOPY)
 	if ret == 0 {
 		pSelectObject.Call(memDC, oldBmp)
 		return nil, 0, 0, fmt.Errorf("BitBlt failed")
@@ -222,25 +225,25 @@ func (w *windowsComputerBackend) Screenshot(ctx context.Context) ([]byte, int, i
 
 	bmi := bitmapInfoHeader{
 		BiSize:        uint32(unsafe.Sizeof(bitmapInfoHeader{})),
-		BiWidth:       int32(w),
-		BiHeight:      -int32(h), // negative = top-down
+		BiWidth:       int32(sw),
+		BiHeight:      -int32(sh), // negative = top-down
 		BiPlanes:      1,
 		BiBitCount:    32,
 		BiCompression: 0,
 	}
-	bufSize := w * h * 4
+	bufSize := sw * sh * 4
 	pixels := make([]byte, bufSize)
-	n, _, _ := pGetDIBits.Call(memDC, hBitmap, 0, uintptr(h), uintptr(unsafe.Pointer(&pixels[0])), uintptr(unsafe.Pointer(&bmi)), 0)
+	n, _, _ := pGetDIBits.Call(memDC, hBitmap, 0, uintptr(sh), uintptr(unsafe.Pointer(&pixels[0])), uintptr(unsafe.Pointer(&bmi)), 0)
 	if n == 0 {
 		return nil, 0, 0, fmt.Errorf("GetDIBits failed")
 	}
 
 	// Convert BGRA to RGBA
 	rgba := make([]byte, bufSize)
-	for y := 0; y < h; y++ {
-		srcRow := pixels[y*w*4 : (y+1)*w*4]
-		dstRow := rgba[y*w*4 : (y+1)*w*4]
-		for x := 0; x < w; x++ {
+	for y := 0; y < sh; y++ {
+		srcRow := pixels[y*sw*4 : (y+1)*sw*4]
+		dstRow := rgba[y*sw*4 : (y+1)*sw*4]
+		for x := 0; x < sw; x++ {
 			so := x * 4
 			do := x * 4
 			dstRow[do+0] = srcRow[so+2] // R <- B
@@ -251,7 +254,7 @@ func (w *windowsComputerBackend) Screenshot(ctx context.Context) ([]byte, int, i
 	}
 
 	// Encode to PNG
-	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	img := image.NewRGBA(image.Rect(0, 0, sw, sh))
 	copy(img.Pix, rgba)
 
 	var buf bytes.Buffer
@@ -259,7 +262,7 @@ func (w *windowsComputerBackend) Screenshot(ctx context.Context) ([]byte, int, i
 		return nil, 0, 0, fmt.Errorf("failed to encode screenshot: %w", err)
 	}
 
-	return buf.Bytes(), w, h, nil
+	return buf.Bytes(), sw, sh, nil
 }
 
 func (w *windowsComputerBackend) Click(ctx context.Context, x, y int) error {
@@ -386,7 +389,11 @@ func (w *windowsComputerBackend) Key(ctx context.Context, key string) error {
 		}
 		return err
 	}
-	pressKey(vk, ext)
+	var flags uint32
+	if ext {
+		flags = KEYEVENTF_EXTENDEDKEY
+	}
+	pressKey(vk, flags)
 
 	// Release modifiers in reverse order
 	for i := len(mods) - 1; i >= 0; i-- {

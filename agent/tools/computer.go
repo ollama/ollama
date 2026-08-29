@@ -149,6 +149,12 @@ func (c *Computer) ApprovalScope(args map[string]any) string {
 // backend. It resolves the target environment, obtains its backend, and
 // validates that the backend is available before execution.
 func (c *Computer) Execute(ctx context.Context, _ agent.ToolContext, args map[string]any) (agent.ToolResult, error) {
+	select {
+	case <-ctx.Done():
+		return agent.ToolResult{}, ctx.Err()
+	default:
+	}
+
 	action := computerActionFromArgs(args)
 	if action == "" {
 		return agent.ToolResult{}, fmt.Errorf("action parameter is required and must be one of: screenshot, click, double_click, move, type, key, scroll")
