@@ -662,12 +662,8 @@ func resolveClaudeDesktopStartupCatalog(ctx context.Context) (available, selecte
 		if err != nil {
 			slog.Debug("could not load account cloud models for Claude startup", "error", err)
 		} else {
-			available = mergeClaudeDesktopCloudInventory(available, cloudModels, false)
-			if hasExplicitCloudClaudeDesktopModelName(selectedNames) {
-				selectable = mergeClaudeDesktopCloudInventory(available, cloudModels, true)
-			} else {
-				selectable = available
-			}
+			available = mergeClaudeDesktopCloudInventory(available, cloudModels)
+			selectable = available
 		}
 	}
 	if len(savedMappings) > 0 {
@@ -764,7 +760,7 @@ func refreshClaudeDesktopCatalog(ctx context.Context, current []proxy.ClaudeDesk
 			} else {
 				cloudInventory = cloudModels
 				cloudInventoryKnown = true
-				available = mergeClaudeDesktopCloudInventory(available, cloudInventory, false)
+				available = mergeClaudeDesktopCloudInventory(available, cloudInventory)
 			}
 		}
 	}
@@ -778,7 +774,7 @@ func refreshClaudeDesktopCatalog(ctx context.Context, current []proxy.ClaudeDesk
 		if cloudInventoryKnown {
 			for _, accountModel := range cloudInventory {
 				if accountModel.Name == model.Name || accountModel.OllamaModel == model.OllamaModel {
-					available = mergeClaudeDesktopCloudInventory(available, []proxy.ClaudeDesktopModel{accountModel}, true)
+					available = mergeClaudeDesktopCloudInventory(available, []proxy.ClaudeDesktopModel{accountModel})
 					break
 				}
 			}
@@ -923,14 +919,11 @@ func includeSelectedClaudeDesktopModels(available, selected []proxy.ClaudeDeskto
 	return models
 }
 
-func mergeClaudeDesktopCloudInventory(available, cloudModels []proxy.ClaudeDesktopModel, appendMissing bool) []proxy.ClaudeDesktopModel {
+func mergeClaudeDesktopCloudInventory(available, cloudModels []proxy.ClaudeDesktopModel) []proxy.ClaudeDesktopModel {
 	models := proxy.VerifyClaudeDesktopModelsWithCloudInventory(available, cloudModels)
 	seen := make(map[string]struct{}, len(models))
 	for _, model := range models {
 		seen[model.OllamaModel] = struct{}{}
-	}
-	if !appendMissing {
-		return models
 	}
 	for _, model := range cloudModels {
 		if _, ok := seen[model.OllamaModel]; ok {
@@ -1570,14 +1563,14 @@ func applyClaudeDesktopMappingsWithOpen(mappings map[string]string, restartConfi
 		if err != nil {
 			slog.Debug("could not load account cloud models for Claude selection", "error", err)
 		} else {
-			selectable = mergeClaudeDesktopCloudInventory(available, cloudModels, true)
+			selectable = mergeClaudeDesktopCloudInventory(available, cloudModels)
 		}
 	}
 	selected, err := mapKnownClaudeDesktopModels(selectable, current, localNames, mappings)
 	if err != nil {
 		return false, err
 	}
-	if err := validateClaudeDesktopModels(selected, accessState, localNames, localErr == nil); err != nil {
+	if err := ensureClaudeDesktopModelsAvailable(context.Background(), selected); err != nil {
 		return false, err
 	}
 
