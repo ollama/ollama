@@ -32,4 +32,5 @@ export const INTEGRATION_ICONS: Record<string, IntegrationIcon> = {
   omp: { src: "/launch-icons/oh-my-pi.svg" },
   pool: { src: "/launch-icons/poolside.svg" },
   qwen: { src: "/launch-icons/qwen-code.svg" },
+  openamer: { src: "/launch-icons/openamer.svg" },
 };
