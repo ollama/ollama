@@ -36,7 +36,7 @@ func InfoHandler(cmd *cobra.Command, args []string) error {
 }
 
 func prettyPrintClientInfo(out io.Writer) {
-	table := tablewriter.NewWriter(os.Stdout)
+	table := tablewriter.NewWriter(out)
 	table.SetAlignment(tablewriter.ALIGN_LEFT)
 	table.SetHeaderLine(false)
 	table.SetBorder(false)
@@ -67,7 +67,7 @@ func prettyPrintClientInfo(out io.Writer) {
 }
 
 func prettyPrintInfoResponse(out io.Writer, resp api.InfoResponse) {
-	table := tablewriter.NewWriter(os.Stdout)
+	table := tablewriter.NewWriter(out)
 	table.SetAlignment(tablewriter.ALIGN_LEFT)
 	table.SetHeaderLine(false)
 	table.SetBorder(false)
@@ -87,7 +87,7 @@ func prettyPrintInfoResponse(out io.Writer, resp api.InfoResponse) {
 }
 
 func prettyPrintModels(out io.Writer, indent string, resp api.InfoResponse) {
-	table := tablewriter.NewWriter(os.Stdout)
+	table := tablewriter.NewWriter(out)
 	table.SetAlignment(tablewriter.ALIGN_LEFT)
 	table.SetHeaderLine(false)
 	table.SetBorder(false)
@@ -123,7 +123,7 @@ func prettyPrintCompute(out io.Writer, indent string, resp api.InfoResponse) {
 }
 
 func prettyPrintSystem(out io.Writer, indent string, resp api.InfoResponse) {
-	table := tablewriter.NewWriter(os.Stdout)
+	table := tablewriter.NewWriter(out)
 	table.SetAlignment(tablewriter.ALIGN_LEFT)
 	table.SetHeaderLine(false)
 	table.SetBorder(false)
@@ -151,13 +151,23 @@ func prettyPrintSystem(out io.Writer, indent string, resp api.InfoResponse) {
 func prettyPrintSupportedGPUs(out io.Writer, indent string, resp api.InfoResponse) {
 	fmt.Fprintf(out, "%sSupported GPUs:\n", indent)
 	indent += " "
+
+	// Say so explicitly rather than leaving the heading bare: "did it find my GPU?"
+	// is the question this command exists to answer, and an empty section reads as
+	// a rendering fault rather than an answer. The system block above already states
+	// the CPU budget, so there is nothing to add here.
+	if len(resp.ComputeInfo.SupportedGPUs) == 0 {
+		fmt.Fprintf(out, "%sNone detected\n", indent)
+		return
+	}
+
 	for _, gpu := range resp.ComputeInfo.SupportedGPUs {
 		prettyPrintSupportedGPU(out, indent, gpu)
 	}
 }
 
 func prettyPrintSupportedGPU(out io.Writer, indent string, gpu api.GPUInfo) {
-	table := tablewriter.NewWriter(os.Stdout)
+	table := tablewriter.NewWriter(out)
 	table.SetAlignment(tablewriter.ALIGN_LEFT)
 	table.SetHeaderLine(false)
 	table.SetBorder(false)

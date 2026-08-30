@@ -205,3 +205,27 @@ func TestInfoHandlerReportsKnownComputeAndDriver(t *testing.T) {
 		t.Errorf("runner: got %q, want %q", gpu.Runner, "CUDA")
 	}
 }
+
+// A CPU-only server reports an empty device list rather than failing. The system
+// memory block is the whole compute budget in that case, so it must still be there.
+func TestInfoHandlerNoDevices(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	s := &Server{
+		sched: &Scheduler{
+			getSystemInfoFn: getSystemInfoFn,
+			getGpuFn: func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+				return nil
+			},
+		},
+	}
+
+	got := infoResponse(t, s)
+
+	if len(got.ComputeInfo.SupportedGPUs) != 0 {
+		t.Errorf("expected no GPUs, got %d", len(got.ComputeInfo.SupportedGPUs))
+	}
+	if got.ComputeInfo.SystemCompute.TotalMemory != 32*format.GigaByte {
+		t.Errorf("system memory should still be reported: got %d", got.ComputeInfo.SystemCompute.TotalMemory)
+	}
+}
