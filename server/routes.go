@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -1909,6 +1910,7 @@ func (s *Server) GenerateRoutes() (http.Handler, error) {
 	r.POST("/api/chat", s.withInferenceRequestLogging("/api/chat", s.ChatHandler)...)
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
+	r.GET("/api/info", s.InfoHandler)
 
 	// Inference (OpenAI compatibility)
 	// TODO(cloud-stage-a): apply Modelfile overlay deltas for local models with cloud
@@ -2435,6 +2437,74 @@ func writeChatResponse(c *gin.Context, req api.ChatRequest, ch chan any) {
 	}
 
 	streamResponse(c, ch)
+}
+
+func (s *Server) InfoHandler(c *gin.Context) {
+	// Read discovery through the scheduler's hooks rather than calling discover
+	// directly, so the reported devices are the same ones the scheduler places
+	// models on (and so this handler is testable with injected devices).
+	devices := s.sched.getGpuFn(c.Request.Context(), nil)
+
+	gpus := make([]api.GPUInfo, len(devices))
+	for i, dev := range devices {
+		gpus[i] = api.GPUInfo{
+			ID:          dev.ID,
+			Name:        dev.Name,
+			TotalMemory: dev.TotalMemory,
+			FreeMemory:  dev.FreeMemory,
+			Runner:      dev.Library,
+		}
+
+		// Compute capability and driver version are CUDA/ROCm concepts; a backend
+		// that doesn't report them (Metal) leaves the versions at zero, which would
+		// otherwise surface as a meaningless "0.0". Report them only when known.
+		if dev.ComputeMajor > 0 || dev.ComputeMinor > 0 {
+			gpus[i].Compute = dev.Compute()
+		}
+		if dev.DriverMajor > 0 || dev.DriverMinor > 0 {
+			gpus[i].Driver = dev.Driver()
+		}
+	}
+
+	ms, _ := manifest.Manifests(true)
+	var fsUsed uint64
+	counted := map[string]struct{}{}
+	for _, m := range ms {
+		for _, l := range m.Layers {
+			// a layer shared by several models occupies the store once
+			if _, dup := counted[l.Digest]; !dup {
+				counted[l.Digest] = struct{}{}
+				fsUsed += uint64(l.Size)
+			}
+		}
+	}
+
+	loaded := s.sched.loadedModels()
+	var vramUsed uint64
+	for _, r := range loaded {
+		vramUsed += uint64(r.sizeVRAM)
+	}
+
+	sysInfo := s.sched.getSystemInfoFn()
+	c.JSON(http.StatusOK, api.InfoResponse{
+		Version: version.Version,
+		Models: api.SystemModelInfo{
+			Store:          envconfig.Models(),
+			Count:          len(ms),
+			FilesystemUsed: fsUsed,
+			Running:        len(loaded),
+			VRAMUsed:       vramUsed,
+		},
+		ComputeInfo: api.ComputeInfo{
+			SystemCompute: api.SystemComputeInfo{
+				CPUCores:    runtime.NumCPU(),
+				TotalMemory: sysInfo.TotalMemory,
+				FreeMemory:  sysInfo.FreeMemory,
+				FreeSwap:    sysInfo.FreeSwap,
+			},
+			SupportedGPUs: gpus,
+		},
+	})
 }
 
 func (s *Server) ChatHandler(c *gin.Context) {
