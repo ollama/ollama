@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"iter"
@@ -423,6 +424,27 @@ type ToolProperty struct {
 	Enum        []any              `json:"enum,omitempty"`
 	Properties  *ToolPropertiesMap `json:"properties,omitempty"`
 	Required    []string           `json:"required,omitempty"`
+}
+
+func (tp *ToolProperty) UnmarshalJSON(data []byte) error {
+	type toolProperty ToolProperty
+	tp.Required = nil
+	var value struct {
+		*toolProperty
+		Required json.RawMessage `json:"required"`
+	}
+	value.toolProperty = (*toolProperty)(tp)
+
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+
+	required := bytes.TrimSpace(value.Required)
+	if len(required) == 0 || bytes.Equal(required, []byte("null")) || required[0] == '{' {
+		return nil
+	}
+
+	return json.Unmarshal(required, &tp.Required)
 }
 
 // ToTypeScriptType converts a ToolProperty to a TypeScript type string

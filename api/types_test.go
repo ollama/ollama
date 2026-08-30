@@ -688,6 +688,41 @@ func TestToolPropertyNestedProperties(t *testing.T) {
 	}
 }
 
+func TestToolPropertyNestedRequiredCompatibility(t *testing.T) {
+	var prop ToolProperty
+	err := json.Unmarshal([]byte(`{
+		"type": "object",
+		"required": ["outer"],
+		"properties": {
+			"outer": {
+				"type": "object",
+				"required": {"circle": ["radius"]},
+				"properties": {"radius": {"type": "number"}}
+			},
+			"nullable": {"type": "object", "required": null},
+			"inner": {"type": "object", "required": ["value"]}
+		}
+	}`), &prop)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"outer"}, prop.Required)
+	assert.Empty(t, prop.Properties.ToMap()["outer"].Required)
+	assert.Nil(t, prop.Properties.ToMap()["nullable"].Required)
+	assert.Equal(t, []string{"value"}, prop.Properties.ToMap()["inner"].Required)
+
+	var reused ToolProperty
+	require.NoError(t, json.Unmarshal([]byte(`{"required":["old"]}`), &reused))
+	require.NoError(t, json.Unmarshal([]byte(`{"required":{}}`), &reused))
+	assert.Empty(t, reused.Required)
+
+	var invalid ToolProperty
+	err = json.Unmarshal([]byte(`{"required": "outer"}`), &invalid)
+	assert.Error(t, err)
+
+	var params ToolFunctionParameters
+	err = json.Unmarshal([]byte(`{"type":"object","required":{},"properties":{}}`), &params)
+	assert.Error(t, err)
+}
+
 func TestToolFunctionParameters_String(t *testing.T) {
 	tests := []struct {
 		name     string
