@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -140,6 +141,61 @@ func TestDownload(t *testing.T) {
 	}
 	if lastTotal.Load() != blob1.Size+blob2.Size+blob3.Size {
 		t.Errorf("Wrong total: got %d, want %d", lastTotal.Load(), blob1.Size+blob2.Size+blob3.Size)
+	}
+}
+
+const proxyTestHelperEnv = "OLLAMA_TRANSFER_PROXY_TEST_HELPER"
+
+func TestDownloadUsesHTTPProxy(t *testing.T) {
+	if os.Getenv(proxyTestHelperEnv) == "1" {
+		downloadThroughHTTPProxy(t)
+		return
+	}
+
+	content := []byte("downloaded through HTTP proxy")
+	var requests atomic.Int32
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Host != "registry.test" {
+			http.Error(w, "unexpected proxy target", http.StatusBadGateway)
+			return
+		}
+		requests.Add(1)
+		w.Write(content)
+	}))
+	defer proxy.Close()
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestDownloadUsesHTTPProxy$")
+	cmd.Env = append(os.Environ(),
+		proxyTestHelperEnv+"=1",
+		"HTTP_PROXY="+proxy.URL,
+		"http_proxy="+proxy.URL,
+		"NO_PROXY=",
+		"no_proxy=",
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("download through HTTP proxy failed: %v\n%s", err, output)
+	}
+	if requests.Load() < 2 {
+		t.Fatalf("proxy received %d requests, want at least 2", requests.Load())
+	}
+}
+
+func downloadThroughHTTPProxy(t *testing.T) {
+	t.Helper()
+
+	content := []byte("downloaded through HTTP proxy")
+	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(content))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	err := Download(ctx, DownloadOptions{
+		Blobs:       []Blob{{Digest: digest, Size: int64(len(content))}},
+		BaseURL:     "http://registry.test",
+		DestDir:     t.TempDir(),
+		Concurrency: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
