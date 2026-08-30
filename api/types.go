@@ -426,9 +426,21 @@ type ToolProperty struct {
 	Required    []string           `json:"required,omitempty"`
 }
 
+func unmarshalToolRequired(data []byte) ([]string, error) {
+	required := bytes.TrimSpace(data)
+	if len(required) == 0 || bytes.Equal(required, []byte("null")) || required[0] == '{' {
+		return nil, nil
+	}
+
+	var values []string
+	if err := json.Unmarshal(required, &values); err != nil {
+		return nil, err
+	}
+	return values, nil
+}
+
 func (tp *ToolProperty) UnmarshalJSON(data []byte) error {
 	type toolProperty ToolProperty
-	tp.Required = nil
 	var value struct {
 		*toolProperty
 		Required json.RawMessage `json:"required"`
@@ -439,12 +451,9 @@ func (tp *ToolProperty) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	required := bytes.TrimSpace(value.Required)
-	if len(required) == 0 || bytes.Equal(required, []byte("null")) || required[0] == '{' {
-		return nil
-	}
-
-	return json.Unmarshal(required, &tp.Required)
+	var err error
+	tp.Required, err = unmarshalToolRequired(value.Required)
+	return err
 }
 
 // ToTypeScriptType converts a ToolProperty to a TypeScript type string
@@ -498,6 +507,23 @@ type ToolFunctionParameters struct {
 	Items      any                `json:"items,omitempty"`
 	Required   []string           `json:"required,omitempty"`
 	Properties *ToolPropertiesMap `json:"properties"`
+}
+
+func (t *ToolFunctionParameters) UnmarshalJSON(data []byte) error {
+	type toolFunctionParameters ToolFunctionParameters
+	var value struct {
+		*toolFunctionParameters
+		Required json.RawMessage `json:"required"`
+	}
+	value.toolFunctionParameters = (*toolFunctionParameters)(t)
+
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+
+	var err error
+	t.Required, err = unmarshalToolRequired(value.Required)
+	return err
 }
 
 func (t *ToolFunctionParameters) String() string {

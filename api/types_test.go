@@ -720,6 +720,14 @@ func TestToolPropertyNestedRequiredCompatibility(t *testing.T) {
 
 	var params ToolFunctionParameters
 	err = json.Unmarshal([]byte(`{"type":"object","required":{},"properties":{}}`), &params)
+	require.NoError(t, err)
+	assert.Empty(t, params.Required)
+
+	err = json.Unmarshal([]byte(`{"type":"object","required":null,"properties":{}}`), &params)
+	require.NoError(t, err)
+	assert.Nil(t, params.Required)
+
+	err = json.Unmarshal([]byte(`{"type":"object","required":"outer","properties":{}}`), &params)
 	assert.Error(t, err)
 }
 
