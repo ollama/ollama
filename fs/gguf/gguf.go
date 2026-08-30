@@ -84,7 +84,7 @@ func Open(path string) (f *File, err error) {
 	f.tensors.successFunc = func() error {
 		offset := f.reader.offset
 
-		alignment := cmp.Or(f.KeyValue("general.alignment").Int(), 32)
+		alignment := int64(cmp.Or(f.KeyValue("general.alignment").Uint(), 32))
 		if alignment <= 0 {
 			return fmt.Errorf("%w alignment %d", ErrUnsupported, alignment)
 		}

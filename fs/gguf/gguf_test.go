@@ -2,6 +2,7 @@ package gguf_test
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -223,6 +224,88 @@ func TestRead(t *testing.T) {
 
 	if b.Len() != int(ti.NumBytes()) {
 		t.Errorf(`ReadFrom TensorReader("output.weight") length = %d, want %d`, b.Len(), ti.NumBytes())
+	}
+}
+
+func createAlignedBinFile(tb testing.TB, alignment uint32, filler int) (string, [][]byte) {
+	tb.Helper()
+	f, err := os.CreateTemp(tb.TempDir(), "")
+	if err != nil {
+		tb.Fatal(err)
+	}
+	defer f.Close()
+
+	kv := ggml.KV{
+		"general.architecture": "llama",
+		// filler varies where the metadata section ends so that the tensor data
+		// starts on a boundary that is aligned for alignment but not for 32
+		"llama.filler": strings.Repeat("x", filler),
+	}
+	if alignment != 0 {
+		kv["general.alignment"] = alignment
+	}
+
+	want := [][]byte{
+		bytes.Repeat([]byte{0xAA}, 16),
+		bytes.Repeat([]byte{0xBB}, 16),
+		bytes.Repeat([]byte{0xCC}, 16),
+	}
+	tensors := make([]*ggml.Tensor, len(want))
+	for i, data := range want {
+		tensors[i] = &ggml.Tensor{
+			Name:     string(rune('a'+i)) + ".weight",
+			Kind:     0,
+			Shape:    []uint64{4},
+			WriterTo: bytes.NewBuffer(data),
+		}
+	}
+
+	if err := ggml.WriteGGUF(f, kv, tensors); err != nil {
+		tb.Fatal(err)
+	}
+
+	return f.Name(), want
+}
+
+func TestReadAlignment(t *testing.T) {
+	cases := map[string]uint32{
+		"default": 0,
+		"16":      16,
+		"64":      64,
+	}
+
+	for name, alignment := range cases {
+		t.Run(name, func(t *testing.T) {
+			for filler := range 32 {
+				p, want := createAlignedBinFile(t, alignment, filler)
+
+				f, err := gguf.Open(p)
+				if err != nil {
+					t.Fatalf("filler %d: Open error: %v", filler, err)
+				}
+
+				for i, want := range want {
+					name := string(rune('a'+i)) + ".weight"
+					_, r, err := f.TensorReader(name)
+					if err != nil {
+						t.Errorf("filler %d: TensorReader(%q) error: %v", filler, name, err)
+						continue
+					}
+
+					got, err := io.ReadAll(r)
+					if err != nil {
+						t.Errorf("filler %d: ReadAll TensorReader(%q) error: %v", filler, name, err)
+						continue
+					}
+
+					if !bytes.Equal(got, want) {
+						t.Errorf("filler %d: TensorReader(%q) = %x, want %x", filler, name, got, want)
+					}
+				}
+
+				f.Close()
+			}
+		})
 	}
 }
 
