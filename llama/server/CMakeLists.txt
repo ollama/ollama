@@ -539,6 +539,22 @@ else()
         RUNTIME DESTINATION ${_base_dest} COMPONENT llama-server OPTIONAL
         LIBRARY DESTINATION ${_base_dest} COMPONENT llama-server OPTIONAL)
 
+    get_target_property(_llama_cpp_license_source llama SOURCE_DIR)
+    if(NOT _llama_cpp_license_source OR _llama_cpp_license_source MATCHES "-NOTFOUND$")
+        message(FATAL_ERROR "llama.cpp source directory not found for license install")
+    endif()
+    get_filename_component(_llama_cpp_license_root "${_llama_cpp_license_source}/.." ABSOLUTE)
+    install(FILES
+        "${_llama_cpp_license_root}/LICENSE"
+        DESTINATION ${OLLAMA_LIB_DIR}
+        RENAME LLAMA_CPP_LICENSE
+        COMPONENT llama-server)
+    install(FILES
+        "${_llama_cpp_license_root}/vendor/cpp-httplib/LICENSE"
+        DESTINATION ${OLLAMA_LIB_DIR}
+        RENAME CPP_HTTPLIB_LICENSE
+        COMPONENT llama-server)
+
     # Bundle Windows CRT DLLs alongside the executables so zip installs
     # do not depend on host-global redistributables.
     ollama_install_windows_runtime_dlls("${_base_dest}")

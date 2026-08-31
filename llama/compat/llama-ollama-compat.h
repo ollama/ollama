@@ -79,6 +79,20 @@ bool maybe_load_text_tensor(const llama_model_loader * ml,
                             ggml_tensor * cur,
                             size_t file_offset);
 
+// Slab-serving variant for loaders that read tensor data in (offset, size)
+// byte ranges (llama_model_loader::load_data_range, used by llama-quantize
+// and other single-tensor read tools). Same registry and file-path lookup
+// as maybe_load_text_tensor, but serves one range of the op's destination
+// bytes per call: the first call for a tensor materializes the op's full
+// output and caches it, and subsequent ranges are served from that cache.
+// Returns the requested range (copied into buf when buf is non-null) or
+// nullptr when no load op exists for this tensor.
+const void * maybe_load_text_tensor_range(const llama_model_loader * ml,
+                                          ggml_tensor * cur,
+                                          size_t offs,
+                                          size_t size,
+                                          void * buf);
+
 // Called from clip_n_mmproj_embd() before the upstream switch. Returns a
 // positive embedding size only for Ollama compatibility cases whose projector
 // metadata already follows upstream naming, but whose legacy projector type
