@@ -1,12 +1,12 @@
 // Package orderedmap provides a generic ordered map that maintains insertion order.
-// It wraps github.com/wk8/go-ordered-map/v2 to encapsulate the dependency.
+// It wraps github.com/pb33f/ordered-map/v2 to encapsulate the dependency.
 package orderedmap
 
 import (
 	"encoding/json"
 	"iter"
 
-	orderedmap "github.com/wk8/go-ordered-map/v2"
+	orderedmap "github.com/pb33f/ordered-map/v2"
 )
 
 // Map is a generic ordered map that maintains insertion order.
