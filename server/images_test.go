@@ -296,6 +296,28 @@ func writeTestModelManifest(t *testing.T, name, digest, tmpl string) {
 	}
 }
 
+// loadTestMetadata fills in what GetModel would have read from the metadata
+// files, so
+// hand-built models resolve capabilities the same way loaded ones do.
+func loadTestMetadata(t *testing.T, m *Model) {
+	t.Helper()
+	if m.ModelPath != "" {
+		md, err := extractGGUFMetadata(m.ModelPath)
+		if err != nil {
+			t.Fatalf("metadata for %s: %v", m.ModelPath, err)
+		}
+		m.metadata = md
+	}
+	m.projectorMetadata = nil
+	for _, path := range m.ProjectorPaths {
+		md, err := extractGGUFMetadata(path)
+		if err != nil {
+			t.Fatalf("projector metadata for %s: %v", path, err)
+		}
+		m.projectorMetadata = append(m.projectorMetadata, md)
+	}
+}
+
 func TestModelCapabilities(t *testing.T) {
 	// Create completion model (llama architecture without vision)
 	completionModelPath, _ := createBinFile(t, ggml.KV{
@@ -593,6 +615,8 @@ func TestModelCapabilities(t *testing.T) {
 
 	for _, tt := range testModels {
 		t.Run(tt.name, func(t *testing.T) {
+			loadTestMetadata(t, &tt.model)
+
 			// Test Capabilities method
 			caps := tt.model.Capabilities()
 			if !compareCapabilities(caps, tt.expectedCaps) {
@@ -723,6 +747,8 @@ func TestModelCheckCapabilities(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			loadTestMetadata(t, &tt.model)
+
 			// Test CheckCapabilities method
 			err := tt.model.CheckCapabilities(tt.checkCaps...)
 			if tt.expectedErrMsg == "" {
