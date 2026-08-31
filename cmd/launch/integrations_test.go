@@ -925,7 +925,7 @@ func TestShowOrPull_ModelExists(t *testing.T) {
 	u, _ := url.Parse(srv.URL)
 	client := api.NewClient(u, srv.Client())
 
-	err := showOrPullWithPolicy(context.Background(), client, "test-model", missingModelPromptPull, false)
+	_, err := showOrPullWithPolicy(context.Background(), client, "test-model", missingModelPromptPull, false, nil)
 	if err != nil {
 		t.Errorf("showOrPull should return nil when model exists, got: %v", err)
 	}
@@ -945,7 +945,7 @@ func TestShowOrPullWithPolicy_ModelExists(t *testing.T) {
 	u, _ := url.Parse(srv.URL)
 	client := api.NewClient(u, srv.Client())
 
-	err := showOrPullWithPolicy(context.Background(), client, "test-model", missingModelFail, false)
+	_, err := showOrPullWithPolicy(context.Background(), client, "test-model", missingModelFail, false, nil)
 	if err != nil {
 		t.Errorf("showOrPullWithPolicy should return nil when model exists, got: %v", err)
 	}
@@ -978,7 +978,7 @@ func TestShowOrPullWithPolicy_ModelNotFound_FailDoesNotPromptOrPull(t *testing.T
 	u, _ := url.Parse(srv.URL)
 	client := api.NewClient(u, srv.Client())
 
-	err := showOrPullWithPolicy(context.Background(), client, "missing-model", missingModelFail, false)
+	_, err := showOrPullWithPolicy(context.Background(), client, "missing-model", missingModelFail, false, nil)
 	if err == nil {
 		t.Fatal("expected fail policy to return an error for missing model")
 	}
@@ -1019,7 +1019,7 @@ func TestShowOrPullWithPolicy_ModelNotFound_PromptPolicyPulls(t *testing.T) {
 	u, _ := url.Parse(srv.URL)
 	client := api.NewClient(u, srv.Client())
 
-	err := showOrPullWithPolicy(context.Background(), client, "missing-model", missingModelPromptPull, false)
+	_, err := showOrPullWithPolicy(context.Background(), client, "missing-model", missingModelPromptPull, false, nil)
 	if err != nil {
 		t.Fatalf("expected prompt policy to pull and succeed, got %v", err)
 	}
@@ -1055,7 +1055,7 @@ func TestShowOrPullWithPolicy_ModelNotFound_AutoPullPolicyPullsWithoutPrompt(t *
 	u, _ := url.Parse(srv.URL)
 	client := api.NewClient(u, srv.Client())
 
-	err := showOrPullWithPolicy(context.Background(), client, "missing-model", missingModelAutoPull, false)
+	_, err := showOrPullWithPolicy(context.Background(), client, "missing-model", missingModelAutoPull, false, nil)
 	if err != nil {
 		t.Fatalf("expected auto-pull policy to pull and succeed, got %v", err)
 	}
@@ -1096,7 +1096,7 @@ func TestShowOrPullWithPolicy_CloudModelNotFound_FailsEarlyForAllPolicies(t *tes
 			u, _ := url.Parse(srv.URL)
 			client := api.NewClient(u, srv.Client())
 
-			err := showOrPullWithPolicy(context.Background(), client, "glm-5.1:cloud", policy, true)
+			_, err := showOrPullWithPolicy(context.Background(), client, "glm-5.1:cloud", policy, true, nil)
 			if err == nil {
 				t.Fatalf("expected cloud model not-found error for policy %d", policy)
 			}
@@ -1137,7 +1137,7 @@ func TestShowOrPullWithPolicy_CloudModelShowUnavailableAllowsSelection(t *testin
 	u, _ := url.Parse(srv.URL)
 	client := api.NewClient(u, srv.Client())
 
-	if err := showOrPullWithPolicy(context.Background(), client, "glm-5.1:cloud", missingModelFail, true); err != nil {
+	if _, err := showOrPullWithPolicy(context.Background(), client, "glm-5.1:cloud", missingModelFail, true, nil); err != nil {
 		t.Fatalf("showOrPullWithPolicy returned error: %v", err)
 	}
 }
@@ -1150,7 +1150,7 @@ func TestShowOrPullWithPolicy_CloudModelShowUnreachableAllowsSelection(t *testin
 	client := api.NewClient(u, srv.Client())
 	srv.Close()
 
-	if err := showOrPullWithPolicy(context.Background(), client, "glm-5.1:cloud", missingModelFail, true); err != nil {
+	if _, err := showOrPullWithPolicy(context.Background(), client, "glm-5.1:cloud", missingModelFail, true, nil); err != nil {
 		t.Fatalf("showOrPullWithPolicy returned error: %v", err)
 	}
 }
@@ -1187,7 +1187,7 @@ func TestShowOrPullWithPolicy_CloudModelDisabled_FailsWithCloudDisabledError(t *
 			u, _ := url.Parse(srv.URL)
 			client := api.NewClient(u, srv.Client())
 
-			err := showOrPullWithPolicy(context.Background(), client, "glm-5.1:cloud", policy, true)
+			_, err := showOrPullWithPolicy(context.Background(), client, "glm-5.1:cloud", policy, true, nil)
 			if err == nil {
 				t.Fatalf("expected cloud disabled error for policy %d", policy)
 			}
@@ -1212,7 +1212,7 @@ func TestShowOrPull_ModelNotFound_NoTerminal(t *testing.T) {
 	client := api.NewClient(u, srv.Client())
 
 	// confirmPrompt will fail in test (no terminal), so showOrPull should return an error
-	err := showOrPullWithPolicy(context.Background(), client, "missing-model", missingModelPromptPull, false)
+	_, err := showOrPullWithPolicy(context.Background(), client, "missing-model", missingModelPromptPull, false, nil)
 	if err == nil {
 		t.Error("showOrPull should return error when model not found and no terminal available")
 	}
@@ -1237,7 +1237,7 @@ func TestShowOrPull_ShowCalledWithCorrectModel(t *testing.T) {
 	u, _ := url.Parse(srv.URL)
 	client := api.NewClient(u, srv.Client())
 
-	_ = showOrPullWithPolicy(context.Background(), client, "qwen3.5", missingModelPromptPull, false)
+	_, _ = showOrPullWithPolicy(context.Background(), client, "qwen3.5", missingModelPromptPull, false, nil)
 	if receivedModel != "qwen3.5" {
 		t.Errorf("expected Show to be called with %q, got %q", "qwen3.5", receivedModel)
 	}
@@ -1273,7 +1273,7 @@ func TestShowOrPull_ModelNotFound_ConfirmYes_Pulls(t *testing.T) {
 	u, _ := url.Parse(srv.URL)
 	client := api.NewClient(u, srv.Client())
 
-	err := showOrPullWithPolicy(context.Background(), client, "missing-model", missingModelPromptPull, false)
+	_, err := showOrPullWithPolicy(context.Background(), client, "missing-model", missingModelPromptPull, false, nil)
 	if err != nil {
 		t.Errorf("ShowOrPull should succeed after pull, got: %v", err)
 	}
@@ -1305,7 +1305,7 @@ func TestShowOrPull_ModelNotFound_ConfirmNo_Cancelled(t *testing.T) {
 	u, _ := url.Parse(srv.URL)
 	client := api.NewClient(u, srv.Client())
 
-	err := showOrPullWithPolicy(context.Background(), client, "missing-model", missingModelPromptPull, false)
+	_, err := showOrPullWithPolicy(context.Background(), client, "missing-model", missingModelPromptPull, false, nil)
 	if err == nil {
 		t.Error("ShowOrPull should return error when user declines")
 	}
@@ -1339,7 +1339,7 @@ func TestShowOrPull_CloudModel_NotFoundDoesNotPull(t *testing.T) {
 	u, _ := url.Parse(srv.URL)
 	client := api.NewClient(u, srv.Client())
 
-	err := showOrPullWithPolicy(context.Background(), client, "glm-5.1:cloud", missingModelPromptPull, true)
+	_, err := showOrPullWithPolicy(context.Background(), client, "glm-5.1:cloud", missingModelPromptPull, true, nil)
 	if err == nil {
 		t.Error("ShowOrPull should return not-found error for cloud model")
 	}
@@ -1379,7 +1379,7 @@ func TestShowOrPull_CloudLegacySuffix_NotFoundDoesNotPull(t *testing.T) {
 	u, _ := url.Parse(srv.URL)
 	client := api.NewClient(u, srv.Client())
 
-	err := showOrPullWithPolicy(context.Background(), client, "gpt-oss:20b-cloud", missingModelPromptPull, true)
+	_, err := showOrPullWithPolicy(context.Background(), client, "gpt-oss:20b-cloud", missingModelPromptPull, true, nil)
 	if err == nil {
 		t.Error("ShowOrPull should return not-found error for cloud model")
 	}
