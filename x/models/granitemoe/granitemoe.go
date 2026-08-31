@@ -4,28 +4,6 @@
 // GraniteMoe is dense Granite (see x/models/granite) with every layer's SwiGLU
 // MLP replaced by a sparse mixture of experts, plus the same four Llama-style
 // scalar multipliers (embeddings, attention, residual, logits).
-//
-// Routing (GraniteMoeTopKRouter/GraniteMoeTopKGating in transformers) selects
-// the top-k experts by raw router logits first, then applies softmax to just
-// those selected logits — unlike routers that softmax over all experts before
-// selecting the top-k. There is no shared expert in this architecture (that
-// is GraniteMoeSharedForCausalLM, a separate registration).
-//
-// Checkpoints ship each layer's expert weights pre-stacked (not as
-// per-expert tensors). mlx_lm's own GraniteMoe conversion — the layout
-// produced by `mlx_lm convert` and what most quantized checkpoints on the Hub
-// actually ship — stores gate/up/down as three separate stacked projections:
-//
-//	model.layers.<i>.block_sparse_moe.switch_mlp.gate_proj.weight  [E, intermediate, hidden]
-//	model.layers.<i>.block_sparse_moe.switch_mlp.up_proj.weight    [E, intermediate, hidden]
-//	model.layers.<i>.block_sparse_moe.switch_mlp.down_proj.weight  [E, hidden, intermediate]
-//	model.layers.<i>.block_sparse_moe.router.layer.weight          [E, hidden]
-//
-// A raw (unconverted) HF checkpoint instead ships a single fused [gate; up]
-// projection, which is split in half along the output axis at load time:
-//
-//	model.layers.<i>.block_sparse_moe.input_linear.weight   [E, 2*intermediate, hidden]
-//	model.layers.<i>.block_sparse_moe.output_linear.weight  [E, hidden, intermediate]
 package granitemoe
 
 import (

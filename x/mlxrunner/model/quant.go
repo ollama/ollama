@@ -37,13 +37,10 @@ func TensorQuantParams(
 // inference for affine packed tensors.
 //
 // Per-tensor metadata is written once per blob/model at import time and does
-// not always capture genuine mixed precision within that blob — e.g. a
-// GraniteMoe router kept at 8-bit while the rest of the model is 4-bit ships
-// with only a model-wide default in config.json, so every tensor in the blob
-// inherits that default regardless of how it was actually packed. Shape
-// inference recovers the true (groupSize, bits) from the packed tensor
-// itself, so it is trusted whenever the metadata-derived value is not even
-// geometrically consistent with the tensor's actual shape.
+// not always capture genuine mixed precision within that blob. Shape inference
+// recovers the true (groupSize, bits) from the packed tensor itself, so it is
+// trusted whenever the metadata-derived value is not even geometrically
+// consistent with the tensor's actual shape.
 func ResolveLinearQuantParams(
 	defaultGroupSize, defaultBits int,
 	defaultMode string,
