@@ -193,11 +193,25 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
+	var lastToken string
+	var tokenRepeat int
 	for scanner.Scan() {
 		var raw CompletionResponse
 		if err := json.Unmarshal(scanner.Bytes(), &raw); err != nil {
 			slog.Debug("mlx response parse error", "error", err, "line", string(scanner.Bytes()))
 			continue
+		}
+
+		switch token := strings.TrimSpace(raw.Content); {
+		case token == lastToken:
+			tokenRepeat++
+		default:
+			lastToken = token
+			tokenRepeat = 0
+		}
+		if tokenRepeat > 30 {
+			slog.Debug("prediction aborted, token repeat limit reached")
+			return ctx.Err()
 		}
 
 		if raw.Error != nil {
