@@ -230,6 +230,43 @@ func TestRead(t *testing.T) {
 	}
 }
 
+func TestTensorRange(t *testing.T) {
+	path := createBinFile(t)
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := gguf.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	seen := 0
+	for _, ti := range f.TensorInfos() {
+		offset, numBytes, err := f.TensorRange(ti)
+		if err != nil {
+			t.Fatalf("TensorRange(%q): %v", ti.Name, err)
+		}
+		if offset <= 0 || numBytes <= 0 || offset+numBytes > fileInfo.Size() {
+			t.Errorf("TensorRange(%q) = (%d, %d), not within file size %d", ti.Name, offset, numBytes, fileInfo.Size())
+		}
+		seen++
+	}
+	if seen == 0 {
+		t.Error("no tensors enumerated")
+	}
+	if err := f.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	// A descriptor that does not belong to this file must be rejected.
+	_, _, err = f.TensorRange(gguf.TensorInfo{Name: "bogus", Shape: []uint64{1}, Type: gguf.TensorTypeF32, Offset: 1 << 40})
+	if err == nil {
+		t.Error("TensorRange accepted an out-of-range descriptor")
+	}
+}
+
 func TestOpenCleansUpPartialLazyReader(t *testing.T) {
 	p := createFile(t, []byte{
 		'G', 'G', 'U', 'F',

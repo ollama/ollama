@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"sort"
 	"strings"
@@ -27,6 +28,7 @@ type TensorExtractor struct {
 	file       *os.File
 	dataOffset int64 // Start of tensor data region
 	header     map[string]tensorInfo
+	metadata   map[string]string
 }
 
 // TensorData holds tensor metadata and a reader for its raw bytes.
@@ -58,6 +60,12 @@ func (td *TensorData) WithName(name string) *TensorData {
 // Reader returns an io.Reader for the tensor's raw bytes.
 func (td *TensorData) Reader() io.Reader {
 	return td.reader
+}
+
+// Offset returns the byte offset used by the underlying section reader.
+func (td *TensorData) Offset() int64 {
+	_, offset, _ := td.reader.Outer()
+	return offset
 }
 
 // safetensorsHeader builds the JSON header for a minimal safetensors blob
@@ -244,6 +252,14 @@ func OpenForExtraction(path string) (*TensorExtractor, error) {
 		return nil, fmt.Errorf("failed to parse header: %w", err)
 	}
 
+	var envelope struct {
+		Metadata map[string]string `json:"__metadata__"`
+	}
+	if err := json.Unmarshal(headerBytes, &envelope); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("failed to parse metadata: %w", err)
+	}
+
 	delete(header, "__metadata__")
 	if err := validateTensorHeader(header, dataSize); err != nil {
 		f.Close()
@@ -254,7 +270,13 @@ func OpenForExtraction(path string) (*TensorExtractor, error) {
 		file:       f,
 		dataOffset: dataOffset,
 		header:     header,
+		metadata:   envelope.Metadata,
 	}, nil
+}
+
+// Metadata returns a copy of the file-level safetensors metadata.
+func (te *TensorExtractor) Metadata() map[string]string {
+	return maps.Clone(te.metadata)
 }
 
 type tensorRange struct {
