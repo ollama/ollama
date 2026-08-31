@@ -126,6 +126,12 @@ func performWebFetch(ctx context.Context, targetURL string) (*FetchResponse, err
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		var errorResp struct {
+			Error string `json:"error"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&errorResp); err == nil && errorResp.Error != "" {
+			return nil, fmt.Errorf("fetch API error (status %d): %s", resp.StatusCode, errorResp.Error)
+		}
 		return nil, fmt.Errorf("fetch API error (status %d)", resp.StatusCode)
 	}
 
