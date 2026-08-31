@@ -212,7 +212,7 @@ console.log(response.message.content);
 
 - [Cline](https://github.com/cline/cline) - VS Code extension for multi-file/whole-repo coding
 - [Continue](https://github.com/continuedev/continue) - Open-source AI code assistant for any IDE
-- [Void](https://github.com/voideditor/void) - Open source AI code editor, Cursor alternative
+- [Void](https://github.com/voideditor/void) - Open-source AI code editor, Cursor alternative
 - [Copilot for Obsidian](https://github.com/logancyang/obsidian-copilot) - AI assistant for Obsidian
 - [twinny](https://github.com/rjmacarthy/twinny) - Copilot and Copilot chat alternative
 - [gptel Emacs client](https://github.com/karthink/gptel) - LLM client for Emacs
@@ -265,7 +265,7 @@ console.log(response.message.content);
 - [Strands Agents](https://github.com/strands-agents/sdk-python) - Model-driven agent building by AWS
 - [Cheshire Cat](https://github.com/cheshire-cat-ai/core) - AI assistant framework
 - [any-agent](https://github.com/mozilla-ai/any-agent) - Unified agent framework interface by Mozilla
-- [Stakpak](https://github.com/stakpak/agent) - Open source DevOps agent
+- [Stakpak](https://github.com/stakpak/agent) - Open-source DevOps agent
 - [Hexabot](https://github.com/hexastack/hexabot) - Conversational AI builder
 - [Neuro SAN](https://github.com/cognizant-ai-lab/neuro-san-studio) - Multi-agent orchestration ([docs](https://github.com/cognizant-ai-lab/neuro-san-studio/blob/main/docs/user_guide.md#ollama))
 
