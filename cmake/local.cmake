@@ -568,6 +568,32 @@ endfunction()
 
 find_program(GO_EXECUTABLE go)
 
+if(GO_EXECUTABLE)
+    set(_go_license_include_app OFF)
+    if(APPLE OR WIN32)
+        set(_go_license_include_app ON)
+    endif()
+
+    add_custom_target(ollama-go-license
+        COMMAND ${CMAKE_COMMAND}
+            "-DGO_EXECUTABLE=${GO_EXECUTABLE}"
+            "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
+            "-DBINARY_DIR=${CMAKE_BINARY_DIR}"
+            "-DOUTPUT_DIR=${OLLAMA_PAYLOAD_INSTALL_PREFIX}/${OLLAMA_LIB_DIR}"
+            "-DINCLUDE_APP=${_go_license_include_app}"
+            -P "${CMAKE_SOURCE_DIR}/cmake/generate_go_license.cmake"
+        BYPRODUCTS "${OLLAMA_PAYLOAD_INSTALL_PREFIX}/${OLLAMA_LIB_DIR}/GO_LICENSE"
+        COMMENT "Collecting Go licenses"
+        VERBATIM)
+else()
+    add_custom_target(ollama-go-license
+        COMMAND ${CMAKE_COMMAND} -E echo
+            "Go executable not found. Install Go or set GO_EXECUTABLE to collect Go licenses."
+        COMMAND ${CMAKE_COMMAND} -E false
+        COMMENT "Collecting Go licenses"
+        VERBATIM)
+endif()
+
 if(OLLAMA_MLX_BACKENDS)
     if(GO_EXECUTABLE AND (NOT APPLE OR CMAKE_SYSTEM_PROCESSOR STREQUAL CMAKE_HOST_SYSTEM_PROCESSOR))
         add_custom_target(ollama-mlx-generate-wrappers

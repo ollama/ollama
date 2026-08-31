@@ -57,7 +57,10 @@ jobs:
             MLX_VERSION
             MLX_C_VERSION
       - name: Build unsigned Darwin runtime
-        run: ./scripts/build_darwin.sh build package
+        run: |
+          cmake -S . -B build/go-license -DOLLAMA_LLAMA_BACKENDS= -DOLLAMA_MLX_BACKENDS= -DOLLAMA_PAYLOAD_INSTALL_PREFIX=dist/darwin-arm64
+          cmake --build build/go-license --target ollama-go-license
+          ./scripts/build_darwin.sh build package
       - name: Log build results
         run: ls -l dist/
       - uses: actions/upload-artifact@v4
@@ -578,6 +581,12 @@ jobs:
           do
             [ -f "$payload" ] || { echo "missing $payload"; exit 1; }
           done
+      - name: Collect Go licenses
+        run: |
+          cmake -S . -B build/go-license -DOLLAMA_LLAMA_BACKENDS= -DOLLAMA_MLX_BACKENDS=
+          cmake --build build/go-license --target ollama-go-license
+          cmake -E copy_directory build/go-license/lib/ollama dist/windows-amd64/lib/ollama
+          cmake -E copy_directory build/go-license/lib/ollama dist/windows-arm64/lib/ollama
       - name: Build unsigned Windows installer and zips
         run: ./scripts/build_windows.ps1 deps installer zip
       - name: Log contents after build
