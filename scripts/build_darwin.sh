@@ -115,7 +115,7 @@ _merge_darwin_payload() {
         [ -d "$AMD_VARIANT" ] || AMD_VARIANT=dist/darwin-amd64/lib/ollama
         mkdir -p "$DEST"
 
-        for LIB in libmlx.dylib libmlxc.dylib; do
+        for LIB in libmlx.dylib libmlxc.dylib libollama_xgrammar.dylib; do
             if [ -f "$AMD_VARIANT/$LIB" ] && [ -f "$VARIANT$LIB" ]; then
                 lipo -create -output "$DEST/$LIB" "$AMD_VARIANT/$LIB" "$VARIANT$LIB"
             elif [ -f "$VARIANT$LIB" ]; then
@@ -128,7 +128,7 @@ _merge_darwin_payload() {
         for F in "$VARIANT"*; do
             [ -f "$F" ] && [ ! -L "$F" ] || continue
             case "$(basename "$F")" in
-                libmlx.dylib|libmlxc.dylib) continue ;;
+                libmlx.dylib|libmlxc.dylib|libollama_xgrammar.dylib) continue ;;
             esac
             cp "$F" "$DEST/"
         done

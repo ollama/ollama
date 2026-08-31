@@ -26,10 +26,24 @@ func prefillChunkSize() int {
 // Prepare tokenizes the prompt and validates it against the model's
 // context length. It is safe to call from any goroutine. On success it
 // populates request.Tokens and adjusts request.Options.NumPredict.
-func (r *Runner) Prepare(request *Request) error {
+func (r *Runner) Prepare(request *Request) (err error) {
 	if r.Model == nil {
 		return errors.New("model not loaded")
 	}
+
+	// Launched first so the compile overlaps tokenization and media
+	// preparation as well as prefill.
+	grammar, err := r.grammarEngine.prepare(request.Format)
+	if err != nil {
+		return err
+	}
+	request.Grammar = grammar
+	defer func() {
+		if err != nil {
+			request.Grammar.close()
+			request.Grammar = nil
+		}
+	}()
 
 	var tokens []int32
 	var items []mediaItem
@@ -113,11 +127,16 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	// Register the sampler after prefill completes.
 	r.Sampler.Add(pipelineSlot, request.SamplerOpts, inputs)
 
+	grammar, err := request.Grammar.resolve(ctx)
+	if err != nil {
+		return err
+	}
+
 	var d decoder
 	if spec != nil {
-		d = spec.decoder(seed, position)
+		d = spec.decoder(seed, position, grammar)
 	} else {
-		d = r.pipelinedDecoder(nil, caches, seed.ExpandDims(-1), position, media.rowLayout())
+		d = r.pipelinedDecoder(nil, caches, seed.ExpandDims(-1), position, media.rowLayout(), grammar)
 	}
 	defer d.close()
 	return r.decode(ctx, request, session, d, promptEval)
@@ -169,6 +188,10 @@ func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *specu
 	media.release(position)
 	for total-processed > 1 {
 		if err := ctx.Err(); err != nil {
+			// Settle the drafter with the next prompt token so the caches
+			// rest level with the recorded keys and a retry resumes exactly
+			// where this prefill stopped.
+			spec.settle(mlx.FromValues(tokens[processed:processed+1], 1))
 			return nil, 0, 0, err
 		}
 
@@ -236,7 +259,7 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 	defer func() {
 		results, _ := d.drain()
 		for _, res := range results {
-			session.outputs = append(session.outputs, int32(res.Token.Int()))
+			session.outputs = append(session.outputs, res.Token.Int())
 		}
 	}()
 
@@ -271,9 +294,7 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 		done := false
 		stream := len(results)
 		for i, res := range results {
-			// Int evaluates the array before reading it; a raw data read
-			// on a lazy array races its evaluation and returns garbage.
-			id := int32(res.Token.Int())
+			id := res.Token.Int()
 			session.outputs = append(session.outputs, id)
 			if done {
 				continue
@@ -322,31 +343,94 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 	}
 }
 
-// pipelinedDecoder decodes one token per call, one call ahead of emission:
-// the next token's chain is dispatched before the returned one is
-// synchronized, so the device runs ahead of host emission.
+// pipelinedDecoder decodes one token per row per call, one call ahead of
+// emission: the forward for the next tokens is dispatched before the
+// returned ones are synchronized, so the device runs ahead of host
+// emission. While no grammar constrains, the next sample is fused onto the
+// forward's chain. A constraining grammar's sample needs a token mask that
+// depends on the returned token's value, so only the forward runs ahead
+// and the host's grammar work overlaps it.
 type pipelinedDecoder struct {
 	r *Runner
 	// spec, when non-nil, receives every forwarded token and settles its
 	// drafter at close, keeping a non-drafting session's draft KV level.
 	spec     *speculationSession
 	caches   []cache.Cache
-	layout   []any // the request's per-row layout state, stamped on every forward
+	layout   []any      // the request's per-row layout state, stamped on every forward
+	grammars []*grammar // row i's grammar; nil rows are unconstrained
 	position int
-	sample   sampler.Result // in flight: sampled, not yet forwarded
+	pending  sampler.Result // in flight: sampled, not yet forwarded
+	// Steps run ahead asynchronously: when one faults, its token is already
+	// forwarded and still has to be returned, so err waits for the next call.
+	err error
 }
 
-func (r *Runner) pipelinedDecoder(spec *speculationSession, caches []cache.Cache, seed *mlx.Array, position int, layout []any) *pipelinedDecoder {
-	t := &pipelinedDecoder{r: r, spec: spec, caches: caches, layout: layout, position: position}
-	t.sample = t.dispatch(seed)
+func (r *Runner) pipelinedDecoder(spec *speculationSession, caches []cache.Cache, seed *mlx.Array, position int, layout []any, g *grammar) *pipelinedDecoder {
+	t := &pipelinedDecoder{
+		r: r, spec: spec, caches: caches, layout: layout, position: position,
+		grammars: []*grammar{g},
+	}
+	logits := t.forward(seed)
+	mlx.Pin(logits)
+	defer mlx.Unpin(logits)
+
+	if r.grammarEngine.hasGrammar(t.grammars) {
+		// Dispatch the forward before the host builds the first masks. The
+		// first sample commits nothing, so there is nothing to accept. A mask
+		// fault here is a step fault like any other: the seed is already
+		// forwarded, so the error waits for the first call.
+		mlx.Sweep()
+		mlx.AsyncEval(logits)
+		var errs []error
+		logits, errs = r.grammarEngine.mask(t.grammars, logits)
+		t.err = t.failRows(errs)
+	}
+	t.pending = t.sample(logits)
 	return t
 }
 
-// dispatch builds one forward-and-sample chain without reading the token's
-// value, so it is in flight before the previous token is synchronized.
-func (t *pipelinedDecoder) dispatch(token *mlx.Array) sampler.Result {
-	r := t.r
-	hidden, auxHidden := r.Model.Forward(&batch.Batch{
+// failRows clears the grammars of rows whose grammar work faulted — a dead
+// row does no further grammar work — and joins their errors.
+func (t *pipelinedDecoder) failRows(errs []error) error {
+	for i, err := range errs {
+		if err != nil {
+			t.grammars[i] = nil
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (t *pipelinedDecoder) next(int) ([]sampler.Result, error) {
+	if t.err != nil {
+		return nil, t.err
+	}
+	out := t.pending
+	logits := t.forward(out.Token.ExpandDims(-1))
+	mlx.Pin(logits)
+	defer mlx.Unpin(logits)
+
+	if t.r.grammarEngine.hasGrammar(t.grammars) {
+		// Dispatch the forward before the host's grammar work.
+		mlx.Sweep()
+		mlx.AsyncEval(logits)
+
+		err := t.failRows(t.r.grammarEngine.accept(t.grammars, out.Token.Ints()))
+
+		var errs []error
+		logits, errs = t.r.grammarEngine.mask(t.grammars, logits)
+		t.err = errors.Join(err, t.failRows(errs))
+	}
+
+	t.pending = t.sample(logits)
+
+	mlx.Unpin(out.Arrays()...)
+	return []sampler.Result{out}, nil
+}
+
+// forward runs the model one step over token, shaped [B, L], and returns the
+// final position's logits, still lazy.
+func (t *pipelinedDecoder) forward(token *mlx.Array) *mlx.Array {
+	hidden, auxHidden := t.r.Model.Forward(&batch.Batch{
 		InputIDs:     token,
 		SeqOffsets:   []int32{int32(t.position)},
 		SeqQueryLens: []int32{int32(token.Dim(1))},
@@ -354,33 +438,33 @@ func (t *pipelinedDecoder) dispatch(token *mlx.Array) sampler.Result {
 	}, t.caches)
 	t.spec.committed(token, auxHidden, t.position, nil)
 	t.position += token.Dim(1)
-	logits := r.Model.Unembed(hidden)
-	next := r.Sampler.Sample([]int{pipelineSlot}, logits.Slice(mlx.Slice(), mlx.Slice(logits.Dim(1)-1), mlx.Slice()).Squeeze(1))
+	logits := t.r.Model.Unembed(hidden)
+	return logits.Slice(mlx.Slice(), mlx.Slice(logits.Dim(1)-1), mlx.Slice()).Squeeze(1)
+}
+
+// sample dispatches the batched sample over the decoder's rows. On an
+// unconstrained step it fuses onto the forward's chain, so the whole step
+// is in flight before the previous tokens are synchronized.
+func (t *pipelinedDecoder) sample(logits *mlx.Array) sampler.Result {
+	next := t.r.Sampler.Sample([]int{pipelineSlot}, logits)
 	mlx.Pin(next.Arrays()...)
 	mlx.Sweep()
 	mlx.AsyncEval(next.Arrays()...)
 	return next
 }
 
-func (t *pipelinedDecoder) next(int) ([]sampler.Result, error) {
-	out := t.sample
-	t.sample = t.dispatch(out.Token.ExpandDims(-1))
-	mlx.Unpin(out.Arrays()...)
-	return []sampler.Result{out}, nil
-}
-
 // drain ends production: it returns the in-flight sample (sampled but never
 // forwarded) and the position its forward would have taken. The decoder
 // keeps the sample for close.
 func (t *pipelinedDecoder) drain() ([]sampler.Result, int) {
-	return []sampler.Result{t.sample}, t.position
+	return []sampler.Result{t.pending}, t.position
 }
 
 func (t *pipelinedDecoder) close() {
 	// The in-flight sample's forward was never dispatched; its report settles
 	// the drafter level with the caches' resting offset.
-	t.spec.settle(t.sample.Token)
-	mlx.Unpin(t.sample.Arrays()...)
+	t.spec.settle(t.pending.Token)
+	mlx.Unpin(t.pending.Arrays()...)
 }
 
 // detokenizer serializes sampled tokens into response chunks, holding bytes
@@ -395,10 +479,24 @@ type detokenizer struct {
 	wantTopLogprobs int
 }
 
+// clampLogprobs floors logprobs at -9999, the OpenAI-compatible bound;
+// tokens a grammar masked out would otherwise report -Inf, which JSON
+// cannot encode.
+func clampLogprobs(logprobs []llm.Logprob) {
+	for i := range logprobs {
+		logprobs[i].Logprob = max(logprobs[i].Logprob, -9999)
+		for j := range logprobs[i].TopLogprobs {
+			logprobs[i].TopLogprobs[j].Logprob = max(logprobs[i].TopLogprobs[j].Logprob, -9999)
+		}
+	}
+}
+
 func (d *detokenizer) detokenize(res sampler.Result) (CompletionResponse, bool) {
-	output := int32(res.Token.Int())
+	output := res.Token.Int()
 	d.buf.WriteString(d.tokenizer.Decode([]int32{output}))
-	d.logprobs = append(d.logprobs, buildLogprob(res, d.wantLogprobs, d.wantTopLogprobs, d.tokenizer.Decode)...)
+	logprobs := buildLogprob(res, d.wantLogprobs, d.wantTopLogprobs, d.tokenizer.Decode)
+	clampLogprobs(logprobs)
+	d.logprobs = append(d.logprobs, logprobs...)
 
 	content := flushValidUTF8Prefix(&d.buf)
 	if content == "" {
@@ -422,7 +520,7 @@ func buildLogprob(sample sampler.Result, wantLogprobs bool, wantTopLogprobs int,
 
 	out := llm.Logprob{
 		TokenLogprob: llm.TokenLogprob{
-			Token:   tok(int32(sample.Token.Int())),
+			Token:   tok(sample.Token.Int()),
 			Logprob: float64(sample.Logprob.Floats()[0]),
 		},
 	}
@@ -433,7 +531,7 @@ func buildLogprob(sample sampler.Result, wantLogprobs bool, wantTopLogprobs int,
 		pairs := make([]llm.TokenLogprob, len(ids))
 		for i, id := range ids {
 			pairs[i] = llm.TokenLogprob{
-				Token:   tok(int32(id)),
+				Token:   tok(id),
 				Logprob: float64(vals[i]),
 			}
 		}

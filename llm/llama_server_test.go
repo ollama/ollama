@@ -1160,7 +1160,6 @@ func TestLlamaServerCompletionRequestFormat(t *testing.T) {
 	tests := []struct {
 		name           string
 		format         string
-		grammar        string
 		wantGrammar    bool
 		wantJsonSchema bool
 		wantErr        bool
@@ -1185,11 +1184,6 @@ func TestLlamaServerCompletionRequestFormat(t *testing.T) {
 			name:           "json schema",
 			format:         `{"type":"object","properties":{"name":{"type":"string"}}}`,
 			wantJsonSchema: true,
-		},
-		{
-			name:        "raw grammar",
-			grammar:     `root ::= "hello"`,
-			wantGrammar: true,
 		},
 		{
 			name:    "invalid format",
@@ -1228,7 +1222,6 @@ func TestLlamaServerCompletionRequestFormat(t *testing.T) {
 			req := CompletionRequest{
 				Prompt:  "test",
 				Options: &opts,
-				Grammar: tt.grammar,
 			}
 			if tt.format != "" {
 				req.Format = json.RawMessage(tt.format)
@@ -3639,27 +3632,37 @@ func TestLlamaServerChatMessageConvertsToolCalls(t *testing.T) {
 
 func TestLlamaServerChatMessageConvertsMediaParts(t *testing.T) {
 	png := []byte("\x89PNG\r\n\x1a\n")
+	webp, err := base64.StdEncoding.DecodeString("UklGRhwAAABXRUJQVlA4TA8AAAAvAAAAAAcQ/Y/+ByKi/wEA")
+	if err != nil {
+		t.Fatal(err)
+	}
 	wav := []byte("RIFF\x00\x00\x00\x00WAVE")
 	mp3 := []byte("ID3\x04\x00\x00")
 
 	msg, err := llamaServerChatMessage(Message{
 		Role:    "user",
 		Content: "describe these",
-		Media:   []MediaData{NewMediaData(0, png), NewMediaData(1, wav), NewMediaData(2, mp3)},
+		Media:   []MediaData{NewMediaData(0, png), NewMediaData(1, webp), NewMediaData(2, wav), NewMediaData(3, mp3)},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	parts, ok := msg["content"].([]map[string]any)
-	if !ok || len(parts) != 4 {
-		t.Fatalf("expected four content parts, got %#v", msg["content"])
+	if !ok || len(parts) != 5 {
+		t.Fatalf("expected five content parts, got %#v", msg["content"])
 	}
 	if parts[1]["type"] != "image_url" {
 		t.Fatalf("expected image_url for PNG, got %#v", parts[1])
 	}
+	if imageURL := parts[1]["image_url"].(map[string]any)["url"]; imageURL != "data:image/png;base64,"+base64.StdEncoding.EncodeToString(png) {
+		t.Fatalf("expected PNG to pass through unchanged, got %#v", imageURL)
+	}
+	if imageURL := parts[2]["image_url"].(map[string]any)["url"].(string); !strings.HasPrefix(imageURL, "data:image/png;base64,") {
+		t.Fatalf("expected WebP to be converted to PNG, got %q", imageURL)
+	}
 	for i, want := range []string{"wav", "mp3"} {
-		part := parts[i+2]
+		part := parts[i+3]
 		if part["type"] != "input_audio" {
 			t.Fatalf("expected input_audio for %s, got %#v", want, part)
 		}

@@ -71,17 +71,13 @@ func (m *fakeMTPModel) Forward(b *batch.Batch, caches []cache.Cache) (hidden, au
 			break
 		}
 		if rc, ok := c.(*fakeRewindableCache); ok {
-			seg := make([]int32, len(ids))
-			for i, id := range ids {
-				seg[i] = int32(id)
-			}
-			rc.feed(seg)
+			rc.feed(ids)
 		}
 	}
 
 	preds := make([]int32, len(ids))
 	for i, id := range ids {
-		preds[i] = m.predict[int32(id)]
+		preds[i] = m.predict[id]
 	}
 	out := oneHotLogits(preds)
 	return out, out
@@ -121,7 +117,7 @@ func (d *fakeMTPDraft) NewCaches() []cache.Cache { return nil }
 func (d *fakeMTPDraft) Forward(b *batch.Batch, _, _ []cache.Cache) (hidden, auxHidden *mlx.Array) {
 	d.layouts = append(d.layouts, b.Layout)
 	mlx.Eval(b.InputIDs)
-	prev := int32(b.InputIDs.Ints()[0])
+	prev := b.InputIDs.Ints()[0]
 	d.calls = append(d.calls, draftCall{position: b.SeqOffsets[0], from: prev})
 	return oneHotLogits([]int32{d.predict[prev]}), mlx.Zeros(mlx.DTypeFloat32, 1, 1, mtpTestVocab)
 }
@@ -160,11 +156,7 @@ func (d *fakeKVDraft) NewCaches() []cache.Cache { return d.draftCaches }
 
 func (d *fakeKVDraft) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (hidden, auxHidden *mlx.Array) {
 	mlx.Eval(b.InputIDs, b.Hidden)
-	rawIDs := b.InputIDs.Ints()
-	ids := make([]int32, len(rawIDs))
-	for i, id := range rawIDs {
-		ids[i] = int32(id)
-	}
+	ids := b.InputIDs.Ints()
 
 	hot := make([]int32, b.Hidden.Dim(1))
 	flat := b.Hidden.Floats()
@@ -262,8 +254,8 @@ func collectResponses(ch chan CompletionResponse) (content string, final Complet
 }
 
 // resultIDs reads the token id of each result.
-func resultIDs(results []sampler.Result) []int {
-	ids := make([]int, 0, len(results))
+func resultIDs(results []sampler.Result) []int32 {
+	ids := make([]int32, 0, len(results))
 	for _, res := range results {
 		ids = append(ids, res.Token.Int())
 	}
@@ -295,7 +287,7 @@ func TestAcceptMTPDraftsGreedyAcceptAll(t *testing.T) {
 		t.Fatalf("accepted = %d, observed = %d, want 3 and 3", accepted, observed)
 	}
 	// The run is the accepted drafts followed by the bonus token (5).
-	if got := resultIDs(results); !slices.Equal(got, []int{2, 3, 4, 5}) {
+	if got := resultIDs(results); !slices.Equal(got, []int32{2, 3, 4, 5}) {
 		t.Fatalf("results = %v, want [2 3 4 5]", got)
 	}
 	if position != 4 {
@@ -332,7 +324,7 @@ func TestAcceptMTPDraftsGreedyMismatch(t *testing.T) {
 	}
 	// The run is the one accepted draft (2) followed by the target's own
 	// prediction at the rejection point (3).
-	if got := resultIDs(results); !slices.Equal(got, []int{2, 3}) {
+	if got := resultIDs(results); !slices.Equal(got, []int32{2, 3}) {
 		t.Fatalf("results = %v, want [2 3]", got)
 	}
 	if position != 2 {
@@ -370,7 +362,7 @@ func TestAcceptMTPDraftsGreedyEOS(t *testing.T) {
 	}
 	// The EOS ends generation, so the run is exactly the accepted tokens
 	// with no bonus appended.
-	if got := resultIDs(results); !slices.Equal(got, []int{2, int(eos)}) {
+	if got := resultIDs(results); !slices.Equal(got, []int32{2, eos}) {
 		t.Fatalf("results = %v, want [2 %d]", got, eos)
 	}
 	if len(results) != accepted {
@@ -406,7 +398,7 @@ func TestRunMTPDecodeGreedy(t *testing.T) {
 		CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
 		SamplerOpts:       sampler.Options{},
 	}
-	d := testDecoder(r, req, caches, []int32{1}, position)
+	d := testDecoder(t, r, req, caches, []int32{1}, position)
 	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -472,7 +464,7 @@ func TestRunMTPDecodeSampled(t *testing.T) {
 		t.Fatalf("open rejected a sampled request")
 	}
 	pinDraftLimit(spec, 4)
-	d := spec.decoder(mlx.FromValues([]int32{1}, 1), position)
+	d := spec.decoder(mlx.FromValues([]int32{1}, 1), position, nil)
 	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -517,7 +509,7 @@ func TestRunMTPDecodeWarmDrafter(t *testing.T) {
 	// hidden row, leaving the drafter ready to propose from slot 1.
 	spec.committed(mlx.FromValues([]int32{0}, 1, 1), oneHotLogits([]int32{1}), 0, nil)
 
-	d := spec.decoder(mlx.FromValues([]int32{1}, 1), position)
+	d := spec.decoder(mlx.FromValues([]int32{1}, 1), position, nil)
 	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -581,7 +573,7 @@ func TestRunMTPDecodeEOSCutLeavesPositionsUnjudged(t *testing.T) {
 	spec.limit = 4
 	spec.committed(mlx.FromValues([]int32{0}, 1, 1), oneHotLogits([]int32{1}), 0, nil)
 
-	d := spec.decoder(mlx.FromValues([]int32{1}, 1), position)
+	d := spec.decoder(mlx.FromValues([]int32{1}, 1), position, nil)
 	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -628,7 +620,7 @@ func TestDecodePlain(t *testing.T) {
 		CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
 		SamplerOpts:       sampler.Options{},
 	}
-	d := testDecoder(r, req, caches, []int32{1}, position)
+	d := testDecoder(t, r, req, caches, []int32{1}, position)
 	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -686,7 +678,7 @@ func TestDecodeCancelledMidStream(t *testing.T) {
 		CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
 		SamplerOpts:       sampler.Options{},
 	}
-	d := testDecoder(r, req, caches, []int32{1}, position)
+	d := testDecoder(t, r, req, caches, []int32{1}, position)
 	err := r.decode(ctx, req, session, d, 0)
 	d.close()
 	if !errors.Is(err, context.Canceled) {
@@ -731,7 +723,7 @@ func TestLayoutRidesEveryForward(t *testing.T) {
 	}
 	spec := r.spec.open(req, []any{"layout"})
 	pinDraftLimit(spec, 4)
-	d := spec.decoder(mlx.FromValues([]int32{1}, 1), 1)
+	d := spec.decoder(mlx.FromValues([]int32{1}, 1), 1, nil)
 	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -769,14 +761,14 @@ func pinDraftLimit(spec *speculationSession, limit int) {
 // testDecoder builds the decoder TextGenerationPipeline would construct for
 // this request, with the draft length pinned to a fixed width; tests close it
 // explicitly so close-time effects are visible to assertions.
-func testDecoder(r *Runner, req Request, caches []cache.Cache, seed []int32, position int) decoder {
+func testDecoder(t *testing.T, r *Runner, req Request, caches []cache.Cache, seed []int32, position int) decoder {
 	if spec := r.spec.open(req, nil); spec != nil {
 		if spec.enabled {
 			pinDraftLimit(spec, 4)
 		}
-		return spec.decoder(mlx.FromValues(seed, len(seed)), position)
+		return spec.decoder(mlx.FromValues(seed, len(seed)), position, nil)
 	}
-	return r.pipelinedDecoder(nil, caches, mlx.FromValues(seed, 1, len(seed)), position, nil)
+	return r.pipelinedDecoder(nil, caches, mlx.FromValues(seed, 1, len(seed)), position, nil, nil)
 }
 
 func TestDecodeKVDraft(t *testing.T) {
@@ -811,7 +803,7 @@ func TestDecodeKVDraft(t *testing.T) {
 	}
 	pinDraftLimit(spec, 4)
 	defer spec.close()
-	d := spec.decoder(mlx.FromValues([]int32{1}, 1), position)
+	d := spec.decoder(mlx.FromValues([]int32{1}, 1), position, nil)
 	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -893,7 +885,7 @@ func TestDecodeKVDraftRejectionRebuildsFromTarget(t *testing.T) {
 	spec := r.spec.open(req, nil)
 	pinDraftLimit(spec, 4)
 	defer spec.close()
-	d := spec.decoder(mlx.FromValues([]int32{1}, 1), position)
+	d := spec.decoder(mlx.FromValues([]int32{1}, 1), position, nil)
 	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -964,7 +956,7 @@ func TestDecodeMaintainsDraftCacheWithoutDrafting(t *testing.T) {
 	if spec == nil || spec.enabled {
 		t.Fatalf("want a permanent-park speculationSession, got %+v", spec)
 	}
-	d := spec.decoder(mlx.FromValues([]int32{1}, 1), position)
+	d := spec.decoder(mlx.FromValues([]int32{1}, 1), position, nil)
 	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -1144,7 +1136,7 @@ func TestRestoredPrefixRewritesBoundaryPair(t *testing.T) {
 	}
 	spec := r.spec.open(req, nil)
 	pinDraftLimit(spec, 4)
-	d := spec.decoder(mlx.FromValues([]int32{1}, 1), 0)
+	d := spec.decoder(mlx.FromValues([]int32{1}, 1), 0, nil)
 	if err := r.decode(context.Background(), req, session, d, 0); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -1201,15 +1193,15 @@ func TestDecodeParkedDraftResume(t *testing.T) {
 		t.Fatalf("want a drafting speculationSession, got %+v", spec)
 	}
 	pinDraftLimit(spec, 0)
-	d := spec.decoder(mlx.FromValues([]int32{1}, 1), 0).(*speculativeDecoder)
+	d := spec.decoder(mlx.FromValues([]int32{1}, 1), 0, nil).(*speculativeDecoder)
 
 	// Two parked calls arrive pipelined, one token each.
-	for _, want := range []int{2, 3} {
+	for _, want := range []int32{2, 3} {
 		results, err := d.next(20)
 		if err != nil {
 			t.Fatalf("parked next: %v", err)
 		}
-		if got := resultIDs(results); !slices.Equal(got, []int{want}) {
+		if got := resultIDs(results); !slices.Equal(got, []int32{want}) {
 			t.Fatalf("parked results = %v, want [%d]", got, want)
 		}
 	}
@@ -1223,7 +1215,7 @@ func TestDecodeParkedDraftResume(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resume next: %v", err)
 	}
-	if got := resultIDs(results); !slices.Equal(got, []int{4}) {
+	if got := resultIDs(results); !slices.Equal(got, []int32{4}) {
 		t.Fatalf("resume results = %v, want [4]", got)
 	}
 	if len(model.forwards) != forwards {
@@ -1236,7 +1228,7 @@ func TestDecodeParkedDraftResume(t *testing.T) {
 	if err != nil {
 		t.Fatalf("round next: %v", err)
 	}
-	if got := resultIDs(results); !slices.Equal(got, []int{5, 6, int(eos)}) {
+	if got := resultIDs(results); !slices.Equal(got, []int32{5, 6, eos}) {
 		t.Fatalf("round results = %v, want [5 6 %d]", got, eos)
 	}
 	wantForwards := []forwardCall{{0, 1}, {1, 1}, {2, 1}, {3, 3}}

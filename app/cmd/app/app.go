@@ -146,15 +146,10 @@ func main() {
 	// Do this after logging is set up so we can debug issues
 	if runtime.GOOS == "windows" && urlSchemeRequest != "" {
 		slog.Debug("checking for existing instance", "url", urlSchemeRequest)
-		if checkAndHandleExistingInstance(urlSchemeRequest) {
-			// The function will exit if it successfully sends to another instance
-			// If we reach here, we're the first/only instance
-		} else {
-			// No existing instance found, handle the URL scheme in this instance
-			go func() {
-				handleURLSchemeInCurrentInstance(urlSchemeRequest)
-			}()
-		}
+		// This exits after forwarding the request when another instance is
+		// running. First-instance requests are handled later by osRun, after the
+		// Windows UI dependencies are initialized and from the primary thread.
+		checkAndHandleExistingInstance(urlSchemeRequest)
 	}
 
 	// Detect if this is a first start after an upgrade, in
@@ -180,7 +175,9 @@ func main() {
 
 	// Check if another instance is already running
 	// On Windows, focus the existing instance; on other platforms, kill it
-	handleExistingInstance(startHidden)
+	if !handleExistingInstance(startHidden) {
+		return
+	}
 
 	// on macOS, offer the user to create a symlink
 	// from /usr/local/bin/ollama to the app bundle
@@ -205,6 +202,12 @@ func main() {
 	uiServerPort = port
 
 	st := &store.Store{}
+	if devMode {
+		if dbPath := strings.TrimSpace(os.Getenv("OLLAMA_APP_DB_PATH")); dbPath != "" {
+			st.DBPath = dbPath
+			slog.Debug("using development app database", "path", dbPath)
+		}
+	}
 	appStore = st
 
 	// Enable CORS in development mode
@@ -324,11 +327,11 @@ func main() {
 		quit()
 	}()
 
-	if urlSchemeRequest != "" {
+	if urlSchemeRequest != "" && runtime.GOOS != "windows" {
 		go func() {
 			handleURLSchemeInCurrentInstance(urlSchemeRequest)
 		}()
-	} else {
+	} else if urlSchemeRequest == "" {
 		slog.Debug("no URL scheme request to handle")
 	}
 
@@ -343,7 +346,13 @@ func main() {
 		}
 	}()
 
-	osRun(cancel, hasCompletedFirstRun, startHidden)
+	settings, settingsErr := st.Settings()
+	showOnboarding := shouldShowOnboarding(settings, settingsErr)
+	if settingsErr != nil {
+		slog.Error("failed to load onboarding state", "error", settingsErr)
+	}
+
+	osRun(cancel, hasCompletedFirstRun, startHidden, showOnboarding, urlSchemeRequest)
 
 	slog.Info("shutting down desktop server")
 	if err := srv.Close(); err != nil {
@@ -353,6 +362,33 @@ func main() {
 	slog.Info("shutting down ollama server")
 	cancel()
 	<-done
+}
+
+func shouldShowOnboarding(settings store.Settings, err error) bool {
+	return err != nil || settings.OnboardingVersion < store.CurrentOnboardingVersion
+}
+
+func runInitialWindowsUI(
+	startHidden bool,
+	showOnboarding bool,
+	urlSchemeRequest string,
+	startHiddenFn func(),
+	handleURLFn func(string),
+	showUIFn func(string),
+) {
+	if urlSchemeRequest != "" {
+		handleURLFn(urlSchemeRequest)
+		return
+	}
+	if startHidden {
+		startHiddenFn()
+		return
+	}
+	if showOnboarding {
+		showUIFn("/")
+		return
+	}
+	showUIFn("/connect")
 }
 
 func startHiddenTasks() {
@@ -375,7 +411,7 @@ func startHiddenTasks() {
 				return
 			}
 
-			if err := updater.DoUpgradeAtStartup(); err != nil {
+			if err := updater.DoUpgradeAtStartup(); err != nil { //nolint:staticcheck,nolintlint // DoUpgradeAtStartup may always return non-nil on Windows
 				slog.Info("unable to perform upgrade at startup", "error", err)
 				// Make sure the restart to upgrade menu shows so we can attempt an interactive upgrade to get authorization
 				UpdateAvailable("")
@@ -432,7 +468,7 @@ func checkUserLoggedIn(uiServerPort int) bool {
 func handleConnectURLScheme() {
 	if checkUserLoggedIn(uiServerPort) {
 		slog.Info("user is already logged in, opening app instead")
-		showWindow(wv.webview.Window())
+		openUI("/")
 		return
 	}
 
@@ -491,17 +527,23 @@ func parseURLScheme(urlSchemeRequest string) (isConnect bool, err error) {
 
 // handleURLSchemeInCurrentInstance processes URL scheme requests in the current instance
 func handleURLSchemeInCurrentInstance(urlSchemeRequest string) {
-	isConnect, err := parseURLScheme(urlSchemeRequest)
+	err := dispatchURLSchemeRequest(urlSchemeRequest, handleConnectURLScheme, func() {
+		openUI("/")
+	})
 	if err != nil {
 		slog.Error("failed to parse URL scheme request", "url", urlSchemeRequest, "error", err)
-		return
 	}
+}
 
-	if isConnect {
-		handleConnectURLScheme()
-	} else {
-		if wv.webview != nil {
-			showWindow(wv.webview.Window())
-		}
+func dispatchURLSchemeRequest(urlSchemeRequest string, connect, open func()) error {
+	isConnect, err := parseURLScheme(urlSchemeRequest)
+	if err != nil {
+		return err
 	}
+	if isConnect {
+		connect()
+	} else {
+		open()
+	}
+	return nil
 }

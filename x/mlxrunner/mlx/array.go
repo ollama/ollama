@@ -236,52 +236,31 @@ func (t *Array) DType() DType {
 
 // data utilities
 
-func (t *Array) Int() int {
-	switch dt := t.DType(); dt {
-	case DTypeInt32:
-		var item C.int32_t
-		C.mlx_array_item_int32(&item, t.ctx)
-		return int(item)
-	case DTypeUint32:
-		var item C.uint32_t
-		C.mlx_array_item_uint32(&item, t.ctx)
-		return int(item)
-	case DTypeInt64:
-		var item C.int64_t
-		C.mlx_array_item_int64(&item, t.ctx)
-		return int(item)
-	case DTypeUint64:
-		var item C.uint64_t
-		C.mlx_array_item_uint64(&item, t.ctx)
-		return int(item)
-	default:
-		panic(fmt.Sprintf("mlx: Int requires an integer array, got %v", dt))
+func (t *Array) Int() int32 {
+	if dt := t.DType(); dt != DTypeInt32 {
+		panic(fmt.Sprintf("mlx: Int requires a DTypeInt32 array, got %v", dt))
 	}
+	var item C.int32_t
+	C.mlx_array_item_int32(&item, t.ctx)
+	return int32(item)
 }
 
-func (t *Array) Float() float64 {
-	switch dt := t.DType(); dt {
-	case DTypeFloat32:
-		var item C.float
-		C.mlx_array_item_float32(&item, t.ctx)
-		return float64(item)
-	case DTypeFloat64:
-		var item C.double
-		C.mlx_array_item_float64(&item, t.ctx)
-		return float64(item)
-	default:
-		panic(fmt.Sprintf("mlx: Float requires a float32 or float64 array, got %v", dt))
+func (t *Array) Float() float32 {
+	if dt := t.DType(); dt != DTypeFloat32 {
+		panic(fmt.Sprintf("mlx: Float requires a DTypeFloat32 array, got %v", dt))
 	}
+	var item C.float
+	C.mlx_array_item_float32(&item, t.ctx)
+	return float32(item)
 }
 
-func (t *Array) Ints() []int {
+func (t *Array) Ints() []int32 {
 	if dt := t.DType(); dt != DTypeInt32 {
 		panic(fmt.Sprintf("mlx: Ints requires DTypeInt32, got %v", dt))
 	}
-	ints := make([]int, t.Size())
-	for i, f := range unsafe.Slice(C.mlx_array_data_int32(t.ctx), len(ints)) {
-		ints[i] = int(f)
-	}
+	Eval(t)
+	ints := make([]int32, t.Size())
+	copy(ints, unsafe.Slice((*int32)(unsafe.Pointer(C.mlx_array_data_int32(t.ctx))), len(ints)))
 	return ints
 }
 
@@ -289,10 +268,9 @@ func (t *Array) Floats() []float32 {
 	if dt := t.DType(); dt != DTypeFloat32 {
 		panic(fmt.Sprintf("mlx: Floats requires DTypeFloat32, got %v", dt))
 	}
+	Eval(t)
 	floats := make([]float32, t.Size())
-	for i, f := range unsafe.Slice(C.mlx_array_data_float32(t.ctx), len(floats)) {
-		floats[i] = float32(f)
-	}
+	copy(floats, unsafe.Slice((*float32)(unsafe.Pointer(C.mlx_array_data_float32(t.ctx))), len(floats)))
 	return floats
 }
 

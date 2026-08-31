@@ -2,18 +2,38 @@
 @plugin "@tailwindcss/typography";
 @import "katex/dist/katex.min.css";
 
+@custom-variant dark {
+  @media (prefers-color-scheme: dark) {
+    &:not(.light-only, .light-only *) {
+      @slot;
+    }
+  }
+}
+
 @theme {
   --font-sans: ui-sans-serif, system-ui, "Segoe UI", sans-serif;
   --font-rounded:
     "SF Pro Rounded", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
 }
 
-@media (prefers-color-scheme: dark) {
-  /* Dark mode styles go here */
+@layer base {
   :root {
-    /* Example dark mode variables */
-    --bg-color: #1a1a1a;
-    --text-color: #ffffff;
+    color-scheme: light dark;
+  }
+
+  .light-only {
+    color-scheme: light;
+  }
+
+  a[href],
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  [role="button"][aria-disabled="true"] {
+    cursor: not-allowed;
   }
 }
 
@@ -26,5 +46,34 @@
   }
   30% {
     opacity: 1;
+  }
+}
+
+@keyframes claude-connected-backdrop-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes claude-connected-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+}
+
+.claude-connected-backdrop {
+  animation: claude-connected-backdrop-in 280ms ease-in-out both;
+}
+
+.claude-connected-dialog {
+  animation: claude-connected-dialog-in 345ms cubic-bezier(0.4, 0, 0.2, 1) both;
+  will-change: opacity, transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .claude-connected-backdrop,
+  .claude-connected-dialog {
+    animation: none;
   }
 }

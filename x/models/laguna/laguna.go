@@ -590,18 +590,14 @@ func stackAndClone(parts []*mlx.Array) *mlx.Array {
 	if len(parts) == 0 {
 		return nil
 	}
-	stacked := mlx.Stack(parts, 0).Clone()
-	mlx.Eval(stacked)
-	return stacked
+	return mlx.Stack(parts, 0).Clone()
 }
 
 func transposeExpertWeightForGatherMM(w *mlx.Array) *mlx.Array {
 	if w == nil || !w.Valid() || w.NumDims() != 3 {
 		return w
 	}
-	t := mlx.Transpose(w, 0, 2, 1).Clone()
-	mlx.Eval(t)
-	return t
+	return mlx.Transpose(w, 0, 2, 1).Clone()
 }
 
 func transposeExpertWeightViewForGatherMM(w *mlx.Array) *mlx.Array {
@@ -762,9 +758,7 @@ func fuseExpertStacks(a, b *mlx.Array, axis int) *mlx.Array {
 	if a == nil || !a.Valid() || b == nil || !b.Valid() {
 		return nil
 	}
-	out := mlx.Concatenate([]*mlx.Array{a, b}, axis).Clone()
-	mlx.Eval(out)
-	return out
+	return mlx.Concatenate([]*mlx.Array{a, b}, axis).Clone()
 }
 
 func applyExpertGlobalScale(x, globalScale, idx *mlx.Array) *mlx.Array {
@@ -1069,9 +1063,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 				layerPrefix+".mlp.switch_mlp.e_score_correction_bias",
 			)
 			if moe.EScoreCorrectionBias != nil && moe.EScoreCorrectionBias.DType() != mlx.DTypeFloat32 {
-				bias := moe.EScoreCorrectionBias.AsType(mlx.DTypeFloat32).Clone()
-				mlx.Eval(bias)
-				moe.EScoreCorrectionBias = bias
+				moe.EScoreCorrectionBias = moe.EScoreCorrectionBias.AsType(mlx.DTypeFloat32).Clone()
 			}
 
 			gateW := loadStackedProjection(tensors, cfg, useQuantizedExperts,

@@ -643,6 +643,11 @@ func TestDetectCapabilities(t *testing.T) {
 			want:       modelCapabilities{thinking: true},
 		},
 		{
+			name:       "qwen4 always thinks",
+			configJSON: `{"architectures": ["Qwen4ExpForConditionalGeneration"], "model_type": "qwen4_exp"}`,
+			want:       modelCapabilities{vision: false, thinking: true},
+		},
+		{
 			name:       "vision config",
 			configJSON: `{"architectures": ["Gemma4ForConditionalGeneration"], "vision_config": {}}`,
 			want:       modelCapabilities{vision: true},
@@ -787,6 +792,11 @@ func TestGetParserName(t *testing.T) {
 			want:       "qwen3.5",
 		},
 		{
+			name:       "qwen4 model",
+			configJSON: `{"architectures": ["Qwen4ExpForConditionalGeneration"], "model_type": "qwen4_exp"}`,
+			want:       "qwen3.5",
+		},
+		{
 			name:       "deepseek model",
 			configJSON: `{"architectures": ["DeepseekV3ForCausalLM"]}`,
 			want:       "deepseek3",
@@ -867,6 +877,11 @@ func TestGetRendererName(t *testing.T) {
 			name:       "qwen3.5 model",
 			configJSON: `{"architectures": ["Qwen3_5ForConditionalGeneration"]}`,
 			want:       "qwen3.5",
+		},
+		{
+			name:       "qwen4 model",
+			configJSON: `{"architectures": ["Qwen4ExpForConditionalGeneration"], "model_type": "qwen4_exp"}`,
+			want:       "qwen3.8",
 		},
 		{
 			name:         "qwen3.8 embedded template",

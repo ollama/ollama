@@ -67,8 +67,8 @@ func writeBlob(spec BlobSpec, src *sourceFiles, store BlobStore) (LayerInfo, err
 	// take the MLX path.
 	var r io.Reader
 	if needsMLX {
-		blobData, err := quantizeBlob(items)
-		if err != nil {
+		blobData, err := quantizeBlob(items) //nolint:staticcheck,nolintlint // quantizeBlob can return nil via runOnMLXThread; staticcheck SA4023 false positive on closure-capture pattern
+		if err != nil {                      //nolint:staticcheck,nolintlint
 			return LayerInfo{}, fmt.Errorf("quantize blob %s: %w", spec.Name, err)
 		}
 		r = bytes.NewReader(blobData)

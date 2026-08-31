@@ -113,6 +113,7 @@ func (c *Client) WaitUntilRunning(ctx context.Context) error {
 type CompletionRequest struct {
 	Prompt      string
 	Media       []llm.MediaData
+	Format      json.RawMessage
 	Options     api.Options
 	Logprobs    bool
 	TopLogprobs int
@@ -157,6 +158,7 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 	creq := CompletionRequest{
 		Prompt:      req.Prompt,
 		Media:       req.Media,
+		Format:      req.Format,
 		Logprobs:    req.Logprobs,
 		TopLogprobs: req.TopLogprobs,
 	}

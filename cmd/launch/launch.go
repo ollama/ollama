@@ -307,6 +307,7 @@ Supported integrations:
 
 Examples:
   ollama launch
+  ollama launch claude-desktop --restore
   ollama launch claude
   ollama launch claude --model <model>
   ollama launch chatgpt
@@ -319,8 +320,11 @@ Examples:
   ollama launch codex -- --sandbox workspace-write`,
 		Args: cobra.ArbitraryArgs,
 		PreRunE: func(cmd *cobra.Command, args []string) error {
-			if restoreFlag || launchCommandCanSkipHeartbeat(args) {
+			if restoreFlag {
 				return nil
+			}
+			if len(args) > 0 && launchCommandIsClaudeDesktop(args[0]) {
+				return fmt.Errorf("Claude Desktop can only be restored from the command line: ollama launch claude-desktop --restore")
 			}
 			return checkServerHeartbeat(cmd, args)
 		},
@@ -357,10 +361,6 @@ Examples:
 				}
 				runTUI(cmd)
 				return nil
-			}
-
-			if !restoreFlag && launchCommandIsClaudeDesktop(name) {
-				return errClaudeDesktopUnsupported()
 			}
 
 			if modelFlag != "" && isCloudModelName(modelFlag) {
@@ -402,13 +402,6 @@ Examples:
 	cmd.Flags().BoolVar(&restoreFlag, "restore", false, "Restore an integration to its default profile")
 	cmd.Flags().BoolVarP(&yesFlag, "yes", "y", false, "Automatically answer yes to confirmation prompts")
 	return cmd
-}
-
-func launchCommandCanSkipHeartbeat(args []string) bool {
-	if len(args) == 0 {
-		return false
-	}
-	return launchCommandIsClaudeDesktop(args[0])
 }
 
 func launchCommandIsClaudeDesktop(name string) bool {
@@ -481,10 +474,6 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 	name, runner, err := LookupIntegration(req.Name)
 	if err != nil {
 		return err
-	}
-
-	if name == claudeDesktopIntegrationName && !req.Restore {
-		return errClaudeDesktopUnsupported()
 	}
 
 	policy := launchIntegrationPolicy(req)
@@ -859,7 +848,6 @@ func (c *launcherClient) launchManagedAutodiscoveryIntegration(ctx context.Conte
 	if err := c.ensureManagedAutodiscoveryUsable(ctx, autodiscovery, target); err != nil {
 		return err
 	}
-
 	needsConfigure := req.ForceConfigure || req.ConfigureOnly || !autodiscovery.AutodiscoveryConfigured() || !savedMatchesModels(saved, []string{target})
 
 	if needsConfigure {

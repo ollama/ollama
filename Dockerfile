@@ -74,7 +74,7 @@ RUN ln -s /usr/bin/python3 /usr/bin/python \
 ENV VULKAN_SDK=/usr/local
 
 #
-# llama-server stages — rebuild when LLAMA_CPP_VERSION, llama/server/, or llama/compat/ changes.
+# llama-server stages — rebuild when LLAMA_CPP_VERSION, llama/server/, llama/compat/, or cmake/ changes.
 #
 # CPU stage: llama-server + ggml-base + ggml-cpu variants → lib/ollama/
 # GPU stages: GPU backend .so only → lib/ollama/<variant>/
@@ -84,6 +84,7 @@ FROM cpu-deps AS llama-server-cpu
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
+COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset cpu \
         && cmake --build build/llama-server-cpu -- -l $(nproc) \
@@ -103,6 +104,7 @@ FROM cuda-12-deps AS llama-server-cuda_v12
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
+COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset llama_cuda_v12_linux \
         && cmake --build build/llama-server-cuda_v12 -- -l $(nproc) \
@@ -115,6 +117,7 @@ FROM cuda-13-deps AS llama-server-cuda_v13
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
+COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset llama_cuda_v13_linux \
         && cmake --build build/llama-server-cuda_v13 -- -l $(nproc) \
@@ -128,6 +131,7 @@ ENV CC=clang CXX=clang++ CXXFLAGS=--gcc-toolchain=/opt/rh/gcc-toolset-13/root/us
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
+COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset rocm_v7_2_linux \
         && cmake --build build/llama-server-rocm_v7_2 -- -l $(nproc) \
@@ -141,6 +145,7 @@ FROM vulkan-deps AS llama-server-vulkan
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
+COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset vulkan \
         && cmake --build build/llama-server-vulkan -- -l $(nproc) \
@@ -165,6 +170,7 @@ ENV CMAKE_GENERATOR=Ninja
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
+COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset llama_cuda_jetpack5 \
         && cmake --build build/llama-server-cuda_jetpack5 -- -l $(nproc) \
@@ -185,6 +191,7 @@ ENV CMAKE_GENERATOR=Ninja
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
+COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset llama_cuda_jetpack6 \
         && cmake --build build/llama-server-cuda_jetpack6 -- -l $(nproc) \
@@ -213,7 +220,9 @@ ENV CGO_LDFLAGS="-L/usr/local/cuda-13/lib64 -L/usr/local/cuda-13/targets/x86_64-
 WORKDIR /go/src/github.com/ollama/ollama
 COPY CMakeLists.txt CMakePresets.json .
 COPY cmake cmake
+COPY mlx mlx
 COPY x/mlxrunner/mlx x/mlxrunner/mlx
+COPY x/mlxrunner/xgrammar/native x/mlxrunner/xgrammar/native
 COPY go.mod go.sum .
 COPY MLX_VERSION MLX_C_VERSION .
 RUN curl -fsSL https://golang.org/dl/go$(awk '/^go/ { print $2 }' go.mod).linux-$(case $(uname -m) in x86_64) echo amd64 ;; aarch64) echo arm64 ;; esac).tar.gz | tar xz -C /usr/local

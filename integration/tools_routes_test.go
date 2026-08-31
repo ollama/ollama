@@ -265,6 +265,7 @@ func runAnthropicToolRoute(t *testing.T, ctx context.Context, endpoint, model st
 		},
 		"messages": []any{
 			map[string]any{"role": "user", "content": []any{map[string]any{"type": "text", "text": "Call get_weather for Paris."}}},
+			map[string]any{"role": "system", "content": []any{map[string]any{"type": "text", "text": "Runtime token budget update."}}},
 			map[string]any{"role": "assistant", "content": []any{map[string]any{
 				"type":  "tool_use",
 				"id":    toolRoutePreviousID,

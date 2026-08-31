@@ -133,27 +133,26 @@ func qwen38ReasoningInstructions(think *api.ThinkValue) (string, error) {
 	}
 }
 
-// Qwen3.8 has no developer role. Fold leading developer instructions into its
-// system turn so they retain precedence over user messages.
+// Qwen3.8 accepts exactly one leading system turn and has no developer role.
+// Fold instruction messages from the effective history into that turn while
+// preserving instruction order and the order of all conversation messages.
 func normalizeQwen38Messages(messages []api.Message) ([]api.Message, error) {
 	var instructionCount int
-	var hasDeveloper bool
 	var instructions []string
 	for _, message := range messages {
 		if message.Role != "system" && message.Role != "developer" {
-			break
+			continue
 		}
 		if len(message.Images) > 0 {
 			return nil, fmt.Errorf("%s message cannot contain images", message.Role)
 		}
 		instructionCount++
-		hasDeveloper = hasDeveloper || message.Role == "developer"
 		if content := strings.TrimSpace(message.Content); content != "" {
 			instructions = append(instructions, content)
 		}
 	}
 
-	if !hasDeveloper {
+	if instructionCount == 0 || (instructionCount == 1 && messages[0].Role == "system") {
 		return messages, nil
 	}
 
@@ -162,7 +161,11 @@ func normalizeQwen38Messages(messages []api.Message) ([]api.Message, error) {
 		Role:    "system",
 		Content: strings.Join(instructions, "\n\n"),
 	})
-	normalized = append(normalized, messages[instructionCount:]...)
+	for _, message := range messages {
+		if message.Role != "system" && message.Role != "developer" {
+			normalized = append(normalized, message)
+		}
+	}
 	return normalized, nil
 }
 
@@ -191,16 +194,6 @@ func (r *Qwen35Renderer) validateMessages(messages []api.Message) error {
 	}
 	if !foundUserQuery {
 		return fmt.Errorf("no user query found in messages")
-	}
-
-	for i, message := range messages {
-		switch message.Role {
-		case "system":
-			if i != 0 {
-				return fmt.Errorf("system message must be at the beginning")
-			}
-		case "user", "assistant", "tool":
-		}
 	}
 
 	return nil
@@ -297,6 +290,9 @@ func (r *Qwen35Renderer) Render(messages []api.Message, tools []api.Tool, think 
 		prefill := lastMessage && message.Role == "assistant"
 
 		if message.Role == "user" || (message.Role == "system" && i != 0) {
+			if r.variant == qwen35Renderer38 && message.Role == "system" {
+				slog.Warn("non-leading system message", "renderer", "qwen3.8")
+			}
 			sb.WriteString(imStartTag + message.Role + "\n" + content + imEndTag + "\n")
 		} else if message.Role == "assistant" {
 			renderAssistantThinkBlock := r.alwaysRenderAssistantThinkBlock || (isThinking && i > lastQueryIndex)

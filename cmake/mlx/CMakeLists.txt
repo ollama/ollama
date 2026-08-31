@@ -23,6 +23,10 @@ if(APPLE)
     set(CMAKE_BUILD_RPATH "@loader_path")
     set(CMAKE_INSTALL_RPATH "@loader_path")
     set(CMAKE_BUILD_WITH_INSTALL_RPATH ON)
+elseif(UNIX)
+    set(CMAKE_BUILD_RPATH "$ORIGIN")
+    set(CMAKE_INSTALL_RPATH "$ORIGIN")
+    set(CMAKE_BUILD_WITH_INSTALL_RPATH ON)
 endif()
 
 if(NOT DEFINED OLLAMA_SOURCE_DIR OR "${OLLAMA_SOURCE_DIR}" STREQUAL "")
@@ -56,6 +60,45 @@ foreach(_cudnn_var CUDNN_INCLUDE_PATH CUDNN_LIBRARY_PATH)
     endif()
 endforeach()
 add_subdirectory(${OLLAMA_SOURCE_DIR}/x/mlxrunner/mlx ${CMAKE_BINARY_DIR}/x/mlxrunner/mlx)
+
+include(FetchContent)
+set(XGRAMMAR_VERSION v0.2.5)
+FetchContent_Declare(xgrammar
+    GIT_REPOSITORY "https://github.com/mlc-ai/xgrammar.git"
+    GIT_TAG ${XGRAMMAR_VERSION}
+    GIT_SHALLOW TRUE
+    GIT_SUBMODULES 3rdparty/dlpack
+    # Do not add XGrammar's Python-oriented CMake project.
+    SOURCE_SUBDIR cmake/ollama)
+FetchContent_MakeAvailable(xgrammar)
+
+file(GLOB_RECURSE XGRAMMAR_SOURCES CONFIGURE_DEPENDS "${xgrammar_SOURCE_DIR}/cpp/*.cc")
+list(FILTER XGRAMMAR_SOURCES EXCLUDE REGEX "/cpp/tvm_ffi/.*\\.cc$")
+add_library(xgrammar STATIC ${XGRAMMAR_SOURCES})
+set_target_properties(xgrammar PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON)
+target_include_directories(xgrammar PUBLIC "${xgrammar_SOURCE_DIR}/include")
+target_include_directories(xgrammar SYSTEM PUBLIC
+    "${xgrammar_SOURCE_DIR}/3rdparty/picojson"
+    "${xgrammar_SOURCE_DIR}/3rdparty/dlpack/include")
+target_compile_definitions(xgrammar PUBLIC
+    XGRAMMAR_ENABLE_CPPTRACE=0
+    XGRAMMAR_ENABLE_INTERNAL_CHECK=0)
+
+add_library(ollama_xgrammar SHARED
+    "${OLLAMA_SOURCE_DIR}/x/mlxrunner/xgrammar/native/xgrammar.cpp")
+target_include_directories(ollama_xgrammar PRIVATE
+    "${OLLAMA_SOURCE_DIR}/x/mlxrunner/xgrammar/native")
+target_compile_definitions(ollama_xgrammar PRIVATE
+    OLLAMA_XGRAMMAR_BUILD=1
+    OLLAMA_XGRAMMAR_VERSION="${XGRAMMAR_VERSION}")
+# Export only the ollama_xgrammar_* API; xgrammar's own C++ symbols stay hidden.
+set_target_properties(ollama_xgrammar PROPERTIES
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON)
+target_link_libraries(ollama_xgrammar PRIVATE xgrammar Threads::Threads)
 
 # Find CUDA toolkit if MLX is built with CUDA support.
 find_package(CUDAToolkit)
@@ -94,12 +137,39 @@ endif()
 
 # Keep mlx/mlxc targets separate from runtime dependencies so --strip only
 # applies to the binaries we build, not vendor DLLs/libs.
-install(TARGETS mlx mlxc
+install(TARGETS mlx mlxc ollama_xgrammar
     RUNTIME_DEPENDENCY_SET mlx_runtime_deps
     RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
     LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
     FRAMEWORK DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
 )
+install(FILES
+    "${xgrammar_SOURCE_DIR}/LICENSE"
+    DESTINATION ${OLLAMA_INSTALL_DIR}
+    RENAME XGRAMMAR_LICENSE
+    COMPONENT MLX)
+install(FILES
+    "${xgrammar_SOURCE_DIR}/NOTICE"
+    DESTINATION ${OLLAMA_INSTALL_DIR}
+    RENAME XGRAMMAR_NOTICE
+    COMPONENT MLX)
+install(FILES
+    "${xgrammar_SOURCE_DIR}/3rdparty/dlpack/LICENSE"
+    DESTINATION ${OLLAMA_INSTALL_DIR}
+    RENAME DLPACK_LICENSE
+    COMPONENT MLX)
+file(READ "${xgrammar_SOURCE_DIR}/3rdparty/picojson/picojson.h" _picojson_header LIMIT 4096)
+string(FIND "${_picojson_header}" "*/" _picojson_license_end)
+if(_picojson_license_end EQUAL -1)
+    message(FATAL_ERROR "picojson license header not found")
+endif()
+math(EXPR _picojson_license_end "${_picojson_license_end} + 2")
+string(SUBSTRING "${_picojson_header}" 0 ${_picojson_license_end} _picojson_license)
+file(WRITE "${CMAKE_BINARY_DIR}/PICOJSON_LICENSE" "${_picojson_license}\n")
+install(FILES
+    "${CMAKE_BINARY_DIR}/PICOJSON_LICENSE"
+    DESTINATION ${OLLAMA_INSTALL_DIR}
+    COMPONENT MLX)
 install(RUNTIME_DEPENDENCY_SET mlx_runtime_deps
     DIRECTORIES ${MLX_RUNTIME_DIRS}
     PRE_INCLUDE_REGEXES ${MLX_INCLUDE_REGEXES}

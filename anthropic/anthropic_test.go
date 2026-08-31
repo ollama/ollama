@@ -145,6 +145,118 @@ func TestFromMessagesRequest_WithOptions(t *testing.T) {
 	}
 }
 
+func TestFromMessagesRequest_ClaudeAutoModeClassifierFixtures(t *testing.T) {
+	tests := []struct {
+		name       string
+		request    string
+		model      string
+		maxTokens  int
+		wantStop   []string
+		wantSystem string
+		wantUser   string
+	}{
+		{
+			name: "stage one local model",
+			request: `{
+  "model": "qwen3.5:latest",
+  "max_tokens": 2112,
+  "messages": [{
+    "role": "user",
+    "content": [
+      {"type": "text", "text": "<transcript>\n"},
+      {"type": "text", "text": "User: Run the safe test.\n"},
+      {"type": "text", "text": "Bash go test ./safe\n"},
+      {"type": "text", "text": "</transcript>\n"},
+      {"type": "text", "text": "Return only the stage-one block verdict."}
+    ]
+  }],
+  "system": [
+    {
+      "type": "text",
+      "text": "Synthetic policy fixture. Evaluate whether the proposed action needs further review.",
+      "cache_control": {"type": "ephemeral"}
+    },
+    {"type": "text", "text": "Synthetic session context."}
+  ],
+  "stop_sequences": ["</block>"]
+}`,
+			model:      "qwen3.5:latest",
+			maxTokens:  2112,
+			wantStop:   []string{"</block>"},
+			wantSystem: "Synthetic policy fixture. Evaluate whether the proposed action needs further review.Synthetic session context.",
+			wantUser:   "<transcript>\nUser: Run the safe test.\nBash go test ./safe\n</transcript>\nReturn only the stage-one block verdict.",
+		},
+		{
+			name: "stage two cloud model",
+			request: `{
+  "model": "glm-5.2:cloud",
+  "max_tokens": 10240,
+  "messages": [{
+    "role": "user",
+    "content": [
+      {"type": "text", "text": "<transcript>\n"},
+      {"type": "text", "text": "User: Send the fixture to an external host.\n"},
+      {"type": "text", "text": "Bash upload fixture.txt\n"},
+      {"type": "text", "text": "</transcript>\n"},
+      {"type": "text", "text": "Return the stage-two block verdict and reason."}
+    ]
+  }],
+  "system": [
+    {
+      "type": "text",
+      "text": "Synthetic policy fixture. Evaluate whether the proposed action must be denied.",
+      "cache_control": {"type": "ephemeral"}
+    },
+    {"type": "text", "text": "Synthetic session context."}
+  ]
+}`,
+			model:      "glm-5.2:cloud",
+			maxTokens:  10240,
+			wantSystem: "Synthetic policy fixture. Evaluate whether the proposed action must be denied.Synthetic session context.",
+			wantUser:   "<transcript>\nUser: Send the fixture to an external host.\nBash upload fixture.txt\n</transcript>\nReturn the stage-two block verdict and reason.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var request MessagesRequest
+			if err := json.Unmarshal([]byte(tt.request), &request); err != nil {
+				t.Fatal(err)
+			}
+
+			converted, err := FromMessagesRequest(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if converted.Model != tt.model {
+				t.Fatalf("model = %q, want exact selected model %q", converted.Model, tt.model)
+			}
+			if converted.Stream == nil || *converted.Stream {
+				t.Fatalf("stream = %v, want explicit non-streaming conversion", converted.Stream)
+			}
+			if len(converted.Tools) != 0 {
+				t.Fatalf("tools = %v, want tool-free classifier request", converted.Tools)
+			}
+			if got := converted.Options["num_predict"]; got != tt.maxTokens {
+				t.Fatalf("num_predict = %v, want %d", got, tt.maxTokens)
+			}
+			gotStop, _ := converted.Options["stop"].([]string)
+			if diff := cmp.Diff(tt.wantStop, gotStop); diff != "" {
+				t.Fatalf("stop sequences mismatch (-want +got):\n%s", diff)
+			}
+			if len(converted.Messages) != 2 {
+				t.Fatalf("messages = %+v, want system and user messages", converted.Messages)
+			}
+			if got := converted.Messages[0]; got.Role != "system" || got.Content != tt.wantSystem {
+				t.Fatalf("system message = %+v", got)
+			}
+			if got := converted.Messages[1]; got.Role != "user" || got.Content != tt.wantUser {
+				t.Fatalf("user message = %+v", got)
+			}
+		})
+	}
+}
+
 func TestFromMessagesRequest_WithImage(t *testing.T) {
 	imgData, _ := base64.StdEncoding.DecodeString(testImage)
 
@@ -776,6 +888,40 @@ func TestToMessagesResponse_Basic(t *testing.T) {
 	}
 	if result.Usage.InputTokens != 10 || result.Usage.OutputTokens != 5 {
 		t.Errorf("unexpected usage: %+v", result.Usage)
+	}
+}
+
+func TestToMessagesResponse_PreservesClaudeAutoClassifierOutput(t *testing.T) {
+	for _, output := range []string{
+		"<block>no",
+		"<block>yes</block><category>Synthetic risk</category><reason>Denied by the synthetic fixture.</reason>",
+		"malformed classifier output",
+	} {
+		t.Run(output, func(t *testing.T) {
+			result := ToMessagesResponse("msg_classifier", api.ChatResponse{
+				Model: "qwen3.5:latest",
+				Message: api.Message{
+					Role:    "assistant",
+					Content: output,
+				},
+				Done:       true,
+				DoneReason: "stop",
+				Metrics: api.Metrics{
+					PromptEvalCount: 24644,
+					EvalCount:       300,
+				},
+			})
+
+			if result.Model != "qwen3.5:latest" || len(result.Content) != 1 || result.Content[0].Text == nil || *result.Content[0].Text != output {
+				t.Fatalf("classifier response = %+v, want opaque output on the selected model", result)
+			}
+			if result.StopReason != "end_turn" {
+				t.Fatalf("stop reason = %q, want end_turn", result.StopReason)
+			}
+			if result.Usage.InputTokens != 24644 || result.Usage.OutputTokens != 300 {
+				t.Fatalf("usage = %+v", result.Usage)
+			}
+		})
 	}
 }
 
@@ -1546,7 +1692,7 @@ func TestEstimateTokens_SimpleMessage(t *testing.T) {
 		},
 	}
 
-	tokens := estimateTokens(req)
+	tokens := EstimateCountTokens(req)
 
 	// "user" (4) + "Hello, world!" (13) = 17 chars / 4 = 4 tokens
 	if tokens < 1 {
@@ -1567,7 +1713,7 @@ func TestEstimateTokens_WithSystemPrompt(t *testing.T) {
 		},
 	}
 
-	tokens := estimateTokens(req)
+	tokens := EstimateCountTokens(req)
 
 	// System prompt adds to count
 	if tokens < 5 {
@@ -1590,7 +1736,7 @@ func TestEstimateTokens_WithTools(t *testing.T) {
 		},
 	}
 
-	tokens := estimateTokens(req)
+	tokens := EstimateCountTokens(req)
 
 	// Tools add significant content
 	if tokens < 10 {
@@ -1619,7 +1765,7 @@ func TestEstimateTokens_WithThinking(t *testing.T) {
 		},
 	}
 
-	tokens := estimateTokens(req)
+	tokens := EstimateCountTokens(req)
 
 	// Thinking content should be counted
 	if tokens < 10 {
@@ -1633,7 +1779,7 @@ func TestEstimateTokens_EmptyContent(t *testing.T) {
 		Messages: []MessageParam{},
 	}
 
-	tokens := estimateTokens(req)
+	tokens := EstimateCountTokens(req)
 
 	if tokens != 0 {
 		t.Errorf("expected 0 tokens for empty content, got %d", tokens)

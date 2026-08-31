@@ -434,7 +434,7 @@ func IsUpdatePending() bool {
 func chownWithAuthorization(user string) bool {
 	u := C.CString(user)
 	defer C.free(unsafe.Pointer(u))
-	return (bool)(C.chownWithAuthorization(u))
+	return bool(C.chownWithAuthorization(u))
 }
 
 func verifyExtractedBundle(path string) error {

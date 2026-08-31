@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"slices"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/x/internal/mlxthread"
+	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
@@ -35,6 +37,7 @@ type Request struct {
 	MediaItems  []mediaItem
 	Layout      any // opaque PrepareMedia layout state, stamped on every batch
 	SamplerOpts sample.Options
+	Grammar     *grammarCompilation
 }
 
 type Runner struct {
@@ -45,6 +48,9 @@ type Runner struct {
 	cache         *prefixCache
 	contextLength int
 	mlxThread     *mlxthread.Thread
+	// grammarEngine is the structured-output subsystem; nil when the grammar
+	// library or vocabulary failed to load.
+	grammarEngine *grammarEngine
 	// spec is the speculative-decoding subsystem. Nil when the model ships no
 	// draft head.
 	spec *speculation
@@ -66,6 +72,13 @@ func (r *Runner) Load(modelName string) error {
 	tensors, err := loadTensorsFromManifest(root)
 	if err != nil {
 		return err
+	}
+
+	// On Metal, materialize the loaded tensors with CPU reads before any
+	// weight graph exists, so the weight eval never commits a command buffer
+	// that waits on file data. CUDA loads read at dispatch and need no pre-pass.
+	if mlx.MetalIsAvailable() {
+		mlx.Eval(slices.Collect(maps.Values(tensors))...)
 	}
 
 	// Assign weights to model (model-specific logic). Target and draft weights
@@ -115,10 +128,18 @@ func (r *Runner) Load(modelName string) error {
 	r.cache = newPrefixCache(slices.Concat(caches, draftCaches))
 	r.Sampler = sample.New(r.contextLength)
 	r.spec = newSpeculation(r, draftModel, caches, draftCaches)
+	r.grammarEngine = newGrammarEngine(logitsWidth(m), r.Tokenizer)
 
 	mlx.EnableCompile()
 
 	return nil
+}
+
+func (r *Runner) Close() {
+	if r.grammarEngine != nil {
+		r.grammarEngine.close()
+		r.grammarEngine = nil
+	}
 }
 
 // newDraftCaches returns nil when the model ships no draft.
@@ -127,6 +148,29 @@ func newDraftCaches(draft base.DraftModel) []cache.Cache {
 		return nil
 	}
 	return draft.NewCaches()
+}
+
+// logitsWidth reads a model's logits width off a one-token forward's static
+// shape — the same Forward and Unembed path decode logits take. Nothing is
+// evaluated, and the probe's caches and graph are released before returning,
+// which sweeps every unpinned array: call this only at load, after the
+// model's weights are pinned.
+func logitsWidth(m base.Model) int {
+	caches := m.NewCaches()
+	hidden, _ := m.Forward(&batch.Batch{
+		InputIDs:     mlx.FromValues([]int32{0}, 1, 1),
+		SeqOffsets:   []int32{0},
+		SeqQueryLens: []int32{1},
+	}, caches)
+	logits := m.Unembed(hidden)
+	width := logits.Dim(logits.NumDims() - 1)
+	for _, c := range caches {
+		if c != nil {
+			c.Free()
+		}
+	}
+	mlx.Sweep()
+	return width
 }
 
 func configureWiredMemory() {
@@ -257,6 +301,7 @@ func (r *Runner) Run(host, port string, mux http.Handler) error {
 }
 
 func (r *Runner) runRequest(request Request) error {
+	defer request.Grammar.close()
 	if r.mlxThread == nil {
 		return request.Pipeline(request.Ctx, request)
 	}

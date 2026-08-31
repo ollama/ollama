@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -24,11 +25,21 @@ import (
 	"github.com/ollama/ollama/app/webview"
 )
 
+const (
+	defaultWindowWidth     = 1360
+	defaultWindowHeight    = 960
+	onboardingWindowWidth  = 900
+	onboardingWindowHeight = 660
+	minimumWindowWidth     = onboardingWindowWidth
+	minimumWindowHeight    = onboardingWindowHeight
+)
+
 type Webview struct {
-	port    int
-	token   string
-	webview webview.WebView
-	mutex   sync.Mutex
+	port       int
+	token      string
+	webview    webview.WebView
+	mutex      sync.Mutex
+	onboarding atomic.Bool
 
 	Store *store.Store
 }
@@ -88,85 +99,38 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 		// Windows-specific scrollbar styling
 		if runtime.GOOS == "windows" {
 			init += `
-				// Fix scrollbar styling for Edge WebView2 on Windows only
+				// Keep Edge WebView2 scrollbars aligned with the system theme.
 				function updateScrollbarStyles() {
-					const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
 					const existingStyle = document.getElementById('scrollbar-style');
 					if (existingStyle) existingStyle.remove();
-					
+
 					const style = document.createElement('style');
 					style.id = 'scrollbar-style';
-					
-					if (isDark) {
-						style.textContent = ` + "`" + `
-							::-webkit-scrollbar { width: 6px !important; height: 6px !important; }
+					style.textContent = ` + "`" + `
+						::-webkit-scrollbar { width: 6px !important; height: 6px !important; }
+						::-webkit-scrollbar-track { background: #f0f0f0 !important; }
+						::-webkit-scrollbar-thumb { background: #c0c0c0 !important; border-radius: 6px !important; }
+						::-webkit-scrollbar-thumb:hover { background: #a0a0a0 !important; }
+						::-webkit-scrollbar-corner { background: #f0f0f0 !important; }
+						@media (prefers-color-scheme: dark) {
 							::-webkit-scrollbar-track { background: #1a1a1a !important; }
-							::-webkit-scrollbar-thumb { background: #404040 !important; border-radius: 6px !important; }
+							::-webkit-scrollbar-thumb { background: #404040 !important; }
 							::-webkit-scrollbar-thumb:hover { background: #505050 !important; }
 							::-webkit-scrollbar-corner { background: #1a1a1a !important; }
-							::-webkit-scrollbar-button { 
-								background: transparent !important;
-								border: none !important;
-								width: 0px !important;
-								height: 0px !important;
-								margin: 0 !important;
-								padding: 0 !important;
-							}
-							::-webkit-scrollbar-button:vertical:start:decrement {
-								background: transparent !important;
-								height: 0px !important;
-							}
-							::-webkit-scrollbar-button:vertical:end:increment {
-								background: transparent !important;
-								height: 0px !important;
-							}
-							::-webkit-scrollbar-button:horizontal:start:decrement {
-								background: transparent !important;
-								width: 0px !important;
-							}
-							::-webkit-scrollbar-button:horizontal:end:increment {
-								background: transparent !important;
-								width: 0px !important;
-							}
-						` + "`" + `;
-					} else {
-						style.textContent = ` + "`" + `
-							::-webkit-scrollbar { width: 6px !important; height: 6px !important; }
-							::-webkit-scrollbar-track { background: #f0f0f0 !important; }
-							::-webkit-scrollbar-thumb { background: #c0c0c0 !important; border-radius: 6px !important; }
-							::-webkit-scrollbar-thumb:hover { background: #a0a0a0 !important; }
-							::-webkit-scrollbar-corner { background: #f0f0f0 !important; }
-							::-webkit-scrollbar-button { 
-								background: transparent !important;
-								border: none !important;
-								width: 0px !important;
-								height: 0px !important;
-								margin: 0 !important;
-								padding: 0 !important;
-							}
-							::-webkit-scrollbar-button:vertical:start:decrement {
-								background: transparent !important;
-								height: 0px !important;
-							}
-							::-webkit-scrollbar-button:vertical:end:increment {
-								background: transparent !important;
-								height: 0px !important;
-							}
-							::-webkit-scrollbar-button:horizontal:start:decrement {
-								background: transparent !important;
-								width: 0px !important;
-							}
-							::-webkit-scrollbar-button:horizontal:end:increment {
-								background: transparent !important;
-								width: 0px !important;
-							}
-						` + "`" + `;
-					}
+						}
+						::-webkit-scrollbar-button {
+							background: transparent !important;
+							border: none !important;
+							width: 0px !important;
+							height: 0px !important;
+							margin: 0 !important;
+							padding: 0 !important;
+						}
+					` + "`" + `;
 					document.head.appendChild(style);
 				}
-				
+
 				window.addEventListener('load', updateScrollbarStyles);
-				window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', updateScrollbarStyles);
 			`
 		}
 		// on windows make ctrl+n open new chat
@@ -187,15 +151,32 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 			`
 		}
 
-		init += `
+		init += fmt.Sprintf(`
+			window.OLLAMA_PLATFORM = %q;
 			window.OLLAMA_WEBSEARCH = true;
-		`
+		`, runtime.GOOS)
 
 		wv.Init(init)
 
 		// Add keyboard handler for zoom
 		wv.Init(`
 			window.addEventListener('keydown', function(e) {
+				const isZoomShortcut = (e.metaKey || e.ctrlKey) && (
+					e.key === '+' || e.key === '=' || e.key === '-' ||
+					e.key === '_' || e.key === '0' ||
+					e.code === 'NumpadAdd' || e.code === 'NumpadSubtract'
+				);
+
+				// Keep fixed-scale onboarding and apps pages at their intended size.
+				const isFixedScalePage =
+					window.location.pathname === '/onboarding' ||
+					window.location.pathname === '/connect';
+				if (isFixedScalePage && isZoomShortcut) {
+					e.preventDefault();
+					e.stopImmediatePropagation();
+					return false;
+				}
+
 				// CMD/Ctrl + Plus/Equals (zoom in)
 				if ((e.metaKey || e.ctrlKey) && (e.key === '+' || e.key === '=')) {
 					e.preventDefault();
@@ -237,8 +218,39 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 			showWindow(wv.Window())
 		})
 
+		wv.Bind("activateOllama", func() {
+			showWindow(wv.Window())
+		})
+
+		bindClaudeDesktop(wv)
+
 		wv.Bind("close", func() {
 			hideWindow(wv.Window())
+		})
+
+		wv.Bind("setOnboardingWindow", func(enabled bool) {
+			w.onboarding.Store(enabled)
+			wv.Dispatch(func() {
+				if enabled {
+					wv.SetSize(onboardingWindowWidth, onboardingWindowHeight, webview.HintFixed)
+					setOnboardingWindowStyle(wv.Window(), true)
+					return
+				}
+
+				width, height := defaultWindowWidth, defaultWindowHeight
+				if w.Store != nil {
+					storedWidth, storedHeight, err := w.Store.WindowSize()
+					if err != nil {
+						slog.Error("failed to restore window size", "error", err)
+					} else if storedWidth > 0 && storedHeight > 0 {
+						width, height = storedWidth, storedHeight
+					}
+				}
+
+				wv.SetSize(width, height, webview.HintNone)
+				wv.SetSize(minimumWindowWidth, minimumWindowHeight, webview.HintMin)
+				setOnboardingWindowStyle(wv.Window(), false)
+			})
 		})
 
 		// Webviews do not allow access to the file system by default, so we need to
@@ -450,18 +462,18 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 			}()
 		}
 
+		width, height := defaultWindowWidth, defaultWindowHeight
 		if w.Store != nil {
-			width, height, err := w.Store.WindowSize()
+			storedWidth, storedHeight, err := w.Store.WindowSize()
 			if err != nil {
 				slog.Error("failed to get window size", "error", err)
 			}
-			if width > 0 && height > 0 {
-				wv.SetSize(width, height, webview.HintNone)
-			} else {
-				wv.SetSize(800, 600, webview.HintNone)
+			if storedWidth > 0 && storedHeight > 0 {
+				width, height = storedWidth, storedHeight
 			}
 		}
-		wv.SetSize(800, 600, webview.HintMin)
+		wv.SetSize(width, height, webview.HintNone)
+		wv.SetSize(minimumWindowWidth, minimumWindowHeight, webview.HintMin)
 
 		w.webview = wv
 		w.webview.Navigate(url)
@@ -476,6 +488,7 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 }
 
 func (w *Webview) Terminate() {
+	w.onboarding.Store(false)
 	w.mutex.Lock()
 	if w.webview == nil {
 		w.mutex.Unlock()
@@ -487,6 +500,10 @@ func (w *Webview) Terminate() {
 	w.mutex.Unlock()
 	wv.Terminate()
 	wv.Destroy()
+}
+
+func (w *Webview) OnboardingActive() bool {
+	return w.onboarding.Load()
 }
 
 func (w *Webview) IsRunning() bool {
