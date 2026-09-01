@@ -74,6 +74,16 @@ func TestKeepAliveParsingFromJSON(t *testing.T) {
 			req:  `{ "keep_alive": "-1m" }`,
 			exp:  &Duration{math.MaxInt64},
 		},
+		{
+			name: "Overflow Integer",
+			req:  `{ "keep_alive": 1000000000000 }`,
+			exp:  &Duration{math.MaxInt64},
+		},
+		{
+			name: "Overflow Float",
+			req:  `{ "keep_alive": 1e20 }`,
+			exp:  &Duration{math.MaxInt64},
+		},
 	}
 
 	for _, test := range tests {
