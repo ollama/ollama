@@ -1,7 +1,7 @@
 //go:build windows || darwin
 
 // package logrotate provides utilities for rotating logs
-// TODO (jmorgan): this most likely doesn't need it's own
+// TODO (jmorgan): this most likely doesn't need its own
 // package and can be moved to app where log files are created
 package logrotate
 
