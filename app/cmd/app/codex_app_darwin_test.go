@@ -254,12 +254,7 @@ func TestApplyCodexDesktopModelsRestoresPreviousProfileAfterLaunchFailure(t *tes
 	}
 }
 
-func TestBuildCodexDesktopModelsUsesAvailableRecommendations(t *testing.T) {
-	recommendations := []api.ModelRecommendation{
-		{Model: "missing-local", ContextLength: 4096},
-		{Model: "glm-5.2:cloud", ContextLength: 131072, MaxOutputTokens: 32768},
-		{Model: "qwen3:8b", ContextLength: 8192},
-	}
+func TestBuildCodexDesktopModelsUsesListedAndAccountModels(t *testing.T) {
 	listed := []api.ListModelResponse{
 		{Name: "qwen3:8b", Size: 42, Details: api.ModelDetails{ContextLength: 32768}},
 		{Name: "llama3.2:latest"},
@@ -267,7 +262,6 @@ func TestBuildCodexDesktopModelsUsesAvailableRecommendations(t *testing.T) {
 
 	primary, models, err := buildCodexDesktopModels(
 		[]string{"llama3.2", "glm-5.2:cloud", "qwen3:8b"},
-		recommendations,
 		listed,
 		[]string{"glm-5.2:cloud"},
 	)
@@ -291,43 +285,24 @@ func TestBuildCodexDesktopModelsUsesAvailableRecommendations(t *testing.T) {
 		}
 	}
 	if !byName["glm-5.2:cloud"] {
-		t.Fatalf("models = %#v, want remote cloud recommendation", models)
+		t.Fatalf("models = %#v, want account-accessible cloud model", models)
 	}
 }
 
-func TestCodexDesktopDefaultModelsUsesEligibleRecommendationsInEndpointOrder(t *testing.T) {
-	recommendations := []api.ModelRecommendation{
-		{Model: "glm-5.3-flash:cloud"},
-		{Model: "missing-local"},
-		{Model: "llama3.1"},
-	}
+func TestCodexDesktopDefaultModelsUsesAvailableOrder(t *testing.T) {
 	available := codexDesktopAvailableModels(
-		recommendations,
 		[]api.ListModelResponse{{Name: "llama3.1:latest"}, {Name: "extra-local"}},
 		[]string{"glm-5.3-flash:cloud", "kimi-k2.7-code:cloud", "extra-cloud:cloud"},
 	)
-	inventory := codexDesktopModelInventory{
-		Available:   available,
-		Recommended: codexDesktopRecommendedModels(recommendations, available),
-	}
 
-	got := codexDesktopModelNames(codexDesktopDefaultModels(inventory))
-	want := []string{"glm-5.3-flash:cloud", "llama3.1:latest"}
+	got := codexDesktopModelNames(codexDesktopDefaultModels(codexDesktopModelInventory{Available: available}))
+	want := []string{"llama3.1:latest", "extra-local", "glm-5.3-flash:cloud", "kimi-k2.7-code:cloud", "extra-cloud:cloud"}
 	if !slices.Equal(got, want) {
-		t.Fatalf("default models = %v, want eligible preferred defaults %v", got, want)
+		t.Fatalf("default models = %v, want first available models %v", got, want)
 	}
 }
 
-func TestCodexDesktopDefaultModelsOmitsKimiWithoutAccountAccess(t *testing.T) {
-	recommendations := []api.ModelRecommendation{{Model: "glm-5.3-flash:cloud"}}
-	available := codexDesktopAvailableModels(recommendations, nil, []string{"glm-5.3-flash:cloud"})
-	defaults := codexDesktopRecommendedModels(recommendations, available)
-	if got := codexDesktopModelNames(defaults); len(got) != 1 || got[0] != "glm-5.3-flash:cloud" {
-		t.Fatalf("default models = %v, want no unavailable Kimi model", got)
-	}
-}
-
-func TestCodexDesktopDefaultModelsFallsBackWhenNoRecommendationIsEligible(t *testing.T) {
+func TestCodexDesktopDefaultModelsLimitsSelectionToFive(t *testing.T) {
 	available := []launch.LaunchModel{
 		{Name: "model-1"},
 		{Name: "model-2"},
@@ -338,18 +313,18 @@ func TestCodexDesktopDefaultModelsFallsBackWhenNoRecommendationIsEligible(t *tes
 	}
 	got := codexDesktopModelNames(codexDesktopDefaultModels(codexDesktopModelInventory{Available: available}))
 	if len(got) != codexDesktopMaxModels || got[0] != "model-1" || got[4] != "model-5" {
-		t.Fatalf("fallback default models = %v, want first five available models", got)
+		t.Fatalf("default models = %v, want first five available models", got)
 	}
 }
 
 func TestBuildCodexDesktopModelsRejectsEmptyCatalog(t *testing.T) {
-	if _, _, err := buildCodexDesktopModels(nil, nil, nil, nil); err == nil {
+	if _, _, err := buildCodexDesktopModels(nil, nil, nil); err == nil {
 		t.Fatal("buildCodexDesktopModels returned nil error for empty catalog")
 	}
 }
 
 func TestBuildCodexDesktopModelsRejectsUnavailableLocalSelection(t *testing.T) {
-	if _, _, err := buildCodexDesktopModels([]string{"missing-local"}, nil, []api.ListModelResponse{{Name: "qwen3:8b"}}, nil); err == nil {
+	if _, _, err := buildCodexDesktopModels([]string{"missing-local"}, []api.ListModelResponse{{Name: "qwen3:8b"}}, nil); err == nil {
 		t.Fatal("buildCodexDesktopModels returned nil error for unavailable selection")
 	}
 }
@@ -358,8 +333,6 @@ func TestLoadCodexDesktopAvailableModelsRetriesEmptyStartupInventory(t *testing.
 	tagRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/experimental/model-recommendations":
-			_, _ = w.Write([]byte(`{"recommendations":[]}`))
 		case "/api/tags":
 			tagRequests++
 			if tagRequests < 3 {
@@ -408,8 +381,6 @@ func TestLoadCodexDesktopAvailableModelsRetriesEmptyStartupInventory(t *testing.
 func TestLoadCodexDesktopModelsHydratesAccountOnlyCloudCapabilities(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/experimental/model-recommendations":
-			_, _ = w.Write([]byte(`{"recommendations":[]}`))
 		case "/api/tags":
 			_, _ = w.Write([]byte(`{"models":[]}`))
 		case "/api/show":
@@ -486,9 +457,9 @@ func TestReconcileCodexDesktopModelsFallsBackWhenAllSavedSelectionsAreUnavailabl
 	}
 }
 
-func TestReconcileCodexDesktopModelsUsesRecommendedDefaultsWhenSavedSelectionsAreUnavailable(t *testing.T) {
+func TestReconcileCodexDesktopModelsUsesProvidedDefaultsWhenSavedSelectionsAreUnavailable(t *testing.T) {
 	available := []launch.LaunchModel{
-		{Name: "recommended:cloud", Remote: true},
+		{Name: "default:cloud", Remote: true},
 		{Name: "extra-local"},
 	}
 	defaults := []launch.LaunchModel{available[0]}
@@ -496,27 +467,11 @@ func TestReconcileCodexDesktopModelsUsesRecommendedDefaultsWhenSavedSelectionsAr
 	if err != nil {
 		t.Fatal(err)
 	}
-	if primary != "recommended:cloud" {
-		t.Fatalf("primary = %q, want recommended endpoint default", primary)
+	if primary != "default:cloud" {
+		t.Fatalf("primary = %q, want provided default", primary)
 	}
-	if got := codexDesktopModelNames(models); len(got) != 1 || got[0] != "recommended:cloud" {
-		t.Fatalf("models = %v, want only recommended endpoint defaults", got)
-	}
-}
-
-func TestBuildCodexDesktopModelsExcludesRecommendationOnlyCloudModels(t *testing.T) {
-	recommendations := []api.ModelRecommendation{
-		{Model: "kimi-k2.6:cloud", ContextLength: 262144},
-		{Model: "qwen3:8b", ContextLength: 8192},
-	}
-	listed := []api.ListModelResponse{{Name: "qwen3:8b"}}
-
-	primary, models, err := buildCodexDesktopModels(nil, recommendations, listed, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if primary != "qwen3:8b" || len(models) != 1 || models[0].Name != "qwen3:8b" {
-		t.Fatalf("models = %q, %#v; want only eligible local model", primary, models)
+	if got := codexDesktopModelNames(models); len(got) != 1 || got[0] != "default:cloud" {
+		t.Fatalf("models = %v, want only provided defaults", got)
 	}
 }
 
@@ -526,7 +481,7 @@ func TestBuildCodexDesktopModelsExcludesUnentitledListedCloudModels(t *testing.T
 		{Name: "qwen3:8b"},
 	}
 
-	primary, models, err := buildCodexDesktopModels(nil, nil, listed, nil)
+	primary, models, err := buildCodexDesktopModels(nil, listed, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -546,7 +501,7 @@ func TestBuildCodexDesktopModelsLimitsCatalogToFive(t *testing.T) {
 		{Name: "preferred-model"},
 	}
 
-	primary, models, err := buildCodexDesktopModels([]string{"preferred-model", "model-1", "model-2", "model-3", "model-4"}, nil, listed, nil)
+	primary, models, err := buildCodexDesktopModels([]string{"preferred-model", "model-1", "model-2", "model-3", "model-4"}, listed, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -567,7 +522,7 @@ func TestBuildCodexDesktopModelsRejectsMoreThanFiveSelections(t *testing.T) {
 	for _, name := range selected {
 		listed = append(listed, api.ListModelResponse{Name: name})
 	}
-	if _, _, err := buildCodexDesktopModels(selected, nil, listed, nil); err == nil {
+	if _, _, err := buildCodexDesktopModels(selected, listed, nil); err == nil {
 		t.Fatal("buildCodexDesktopModels returned nil error for six selections")
 	}
 }

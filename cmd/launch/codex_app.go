@@ -848,8 +848,7 @@ func codexAppModelMetadataFromLaunchModel(model LaunchModel) codexAppModelMetada
 // not evidence that every effort is supported, so unknown families get one
 // compatible enabled value instead of a misleading four-level picker.
 //
-// TODO: Move these exact ladders into server-owned model metadata returned by
-// the app-specific recommendations and /api/show endpoints.
+// TODO: Move these exact ladders into server-owned /api/show model metadata.
 func codexAppThinkingLevels(model LaunchModel) (string, []string) {
 	if !model.HasCapability(modelpkg.CapabilityThinking) {
 		return "", nil

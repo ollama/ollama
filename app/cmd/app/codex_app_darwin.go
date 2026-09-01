@@ -75,8 +75,7 @@ type codexDesktopModelsSettingsResult struct {
 }
 
 type codexDesktopModelInventory struct {
-	Available   []launch.LaunchModel
-	Recommended []launch.LaunchModel
+	Available []launch.LaunchModel
 }
 
 func getCodexDesktopStatus() codexDesktopStatus {
@@ -276,9 +275,6 @@ func loadCodexDesktopAvailableModels(ctx context.Context) ([]launch.LaunchModel,
 	return inventory.Available, err
 }
 
-// TODO: Load signed app-specific recommendations from
-// /api/experimental/model-recommendations?app=chatgpt, following the Claude
-// Desktop flow. ChatGPT needs recommendations only, not model mappings.
 func loadCodexDesktopModelInventory(ctx context.Context) (codexDesktopModelInventory, error) {
 	client, err := codexDesktopClientFactory()
 	if err != nil {
@@ -286,10 +282,6 @@ func loadCodexDesktopModelInventory(ctx context.Context) (codexDesktopModelInven
 	}
 
 	for attempt := 0; attempt < codexDesktopModelLoadAttempts; attempt++ {
-		var recommendations []api.ModelRecommendation
-		if response, recommendationErr := client.ModelRecommendationsExperimental(ctx); recommendationErr == nil {
-			recommendations = response.Recommendations
-		}
 		var listed []api.ListModelResponse
 		if response, listErr := client.List(ctx); listErr == nil {
 			listed = response.Models
@@ -299,12 +291,9 @@ func loadCodexDesktopModelInventory(ctx context.Context) (codexDesktopModelInven
 			accountCloud = names
 		}
 
-		models := codexDesktopAvailableModels(recommendations, listed, accountCloud)
+		models := codexDesktopAvailableModels(listed, accountCloud)
 		if len(models) > 0 {
-			return codexDesktopModelInventory{
-				Available:   models,
-				Recommended: codexDesktopRecommendedModels(recommendations, models),
-			}, nil
+			return codexDesktopModelInventory{Available: models}, nil
 		}
 		if attempt+1 == codexDesktopModelLoadAttempts {
 			break
@@ -338,12 +327,12 @@ func loadCodexDesktopAccountCloudModels(ctx context.Context) ([]string, error) {
 	return names, nil
 }
 
-func buildCodexDesktopModels(selected []string, recommendations []api.ModelRecommendation, listed []api.ListModelResponse, accountCloud []string) (string, []launch.LaunchModel, error) {
-	available := codexDesktopAvailableModels(recommendations, listed, accountCloud)
+func buildCodexDesktopModels(selected []string, listed []api.ListModelResponse, accountCloud []string) (string, []launch.LaunchModel, error) {
+	available := codexDesktopAvailableModels(listed, accountCloud)
 	return selectCodexDesktopModels(selected, available)
 }
 
-func codexDesktopAvailableModels(recommendations []api.ModelRecommendation, listed []api.ListModelResponse, accountCloud []string) []launch.LaunchModel {
+func codexDesktopAvailableModels(listed []api.ListModelResponse, accountCloud []string) []launch.LaunchModel {
 	installed := make(map[string]api.ListModelResponse, len(listed))
 	for _, model := range listed {
 		for _, name := range []string{model.Name, model.Model} {
@@ -358,14 +347,7 @@ func codexDesktopAvailableModels(recommendations []api.ModelRecommendation, list
 			accountCloudSet[key] = true
 		}
 	}
-	recommended := make(map[string]api.ModelRecommendation, len(recommendations))
-	for _, recommendation := range recommendations {
-		if key := codexDesktopModelKey(recommendation.Model); key != "" {
-			recommended[key] = recommendation
-		}
-	}
-
-	models := make([]launch.LaunchModel, 0, len(recommendations)+len(listed)+1)
+	models := make([]launch.LaunchModel, 0, len(listed)+len(accountCloud))
 	seen := make(map[string]bool, cap(models))
 	add := func(model launch.LaunchModel) {
 		model.Name = strings.TrimSpace(model.Name)
@@ -377,30 +359,6 @@ func codexDesktopAvailableModels(recommendations []api.ModelRecommendation, list
 		models = append(models, model)
 	}
 
-	for _, recommendation := range recommendations {
-		name := strings.TrimSpace(recommendation.Model)
-		if name == "" {
-			continue
-		}
-		key := codexDesktopModelKey(name)
-		if listedModel, ok := installed[key]; ok && !codexDesktopListedModelIsCloud(listedModel) {
-			add(codexDesktopLaunchModel(listedModel))
-			continue
-		}
-		if !codexDesktopCloudModel(name) || !accountCloudSet[key] {
-			continue
-		}
-		if listedModel, ok := installed[key]; ok {
-			add(codexDesktopLaunchModel(listedModel))
-			continue
-		}
-		add(launch.LaunchModel{
-			Name:            name,
-			Remote:          true,
-			ContextLength:   recommendation.ContextLength,
-			MaxOutputTokens: recommendation.MaxOutputTokens,
-		})
-	}
 	for _, model := range listed {
 		if codexDesktopListedModelIsCloud(model) && !accountCloudSet[codexDesktopModelKey(model.Name)] && !accountCloudSet[codexDesktopModelKey(model.Model)] {
 			continue
@@ -413,51 +371,14 @@ func codexDesktopAvailableModels(recommendations []api.ModelRecommendation, list
 			add(codexDesktopLaunchModel(listedModel))
 			continue
 		}
-		if recommendation, ok := recommended[key]; ok {
-			add(launch.LaunchModel{
-				Name:            strings.TrimSpace(name),
-				Remote:          true,
-				ContextLength:   recommendation.ContextLength,
-				MaxOutputTokens: recommendation.MaxOutputTokens,
-			})
-			continue
-		}
 		add(launch.LaunchModel{Name: strings.TrimSpace(name), Remote: true})
 	}
 
 	return models
 }
 
-func codexDesktopRecommendedModels(recommendations []api.ModelRecommendation, available []launch.LaunchModel) []launch.LaunchModel {
-	byName := make(map[string]launch.LaunchModel, len(available))
-	for _, model := range available {
-		byName[codexDesktopModelKey(model.Name)] = model
-	}
-
-	models := make([]launch.LaunchModel, 0, min(len(recommendations), codexDesktopMaxModels))
-	seen := make(map[string]bool, cap(models))
-	for _, recommendation := range recommendations {
-		key := codexDesktopModelKey(recommendation.Model)
-		model, ok := byName[key]
-		if key == "" || !ok || seen[key] {
-			continue
-		}
-		seen[key] = true
-		models = append(models, model)
-		if len(models) == codexDesktopMaxModels {
-			return models
-		}
-	}
-
-	return models
-}
-
 func codexDesktopDefaultModels(inventory codexDesktopModelInventory) []launch.LaunchModel {
-	models := inventory.Recommended
-	if len(models) == 0 {
-		models = inventory.Available
-	}
-	return append([]launch.LaunchModel(nil), models[:min(len(models), codexDesktopMaxModels)]...)
+	return append([]launch.LaunchModel(nil), inventory.Available[:min(len(inventory.Available), codexDesktopMaxModels)]...)
 }
 
 func codexDesktopListedModelIsCloud(model api.ListModelResponse) bool {
