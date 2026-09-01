@@ -220,7 +220,6 @@ ENV CGO_LDFLAGS="-L/usr/local/cuda-13/lib64 -L/usr/local/cuda-13/targets/x86_64-
 WORKDIR /go/src/github.com/ollama/ollama
 COPY CMakeLists.txt CMakePresets.json .
 COPY cmake cmake
-COPY mlx mlx
 COPY x/mlxrunner/mlx x/mlxrunner/mlx
 COPY x/mlxrunner/xgrammar/native x/mlxrunner/xgrammar/native
 COPY go.mod go.sum .
