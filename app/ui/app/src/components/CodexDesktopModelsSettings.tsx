@@ -310,9 +310,14 @@ export function CodexDesktopModelsSettings({
       <div className="flex items-start space-x-3">
         <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center">
           <img
-            src="/launch-icons/codex-color.svg"
+            src="/launch-icons/codex.svg"
             alt=""
-            className="h-6 w-6 max-w-none"
+            className="h-6 w-6 max-w-none dark:hidden"
+          />
+          <img
+            src="/launch-icons/codex-dark.svg"
+            alt=""
+            className="hidden h-6 w-6 max-w-none dark:block"
           />
         </span>
         <div className="min-w-0 flex-1">
