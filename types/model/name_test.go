@@ -357,3 +357,52 @@ func TestIsValidNamespace(t *testing.T) {
 		})
 	}
 }
+
+// TestNormalizeHyphens checks that Unicode hyphen-like characters are treated
+// identically to an ASCII hyphen-minus when parsing model names.
+func TestNormalizeHyphens(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		// U+2011 NON-BREAKING HYPHEN (the character reported in issue #15061)
+		{"granite4:tiny\u2011h", "granite4:tiny-h"},
+		// U+2010 HYPHEN
+		{"a\u2010b", "a-b"},
+		// U+2012 FIGURE DASH
+		{"a\u2012b", "a-b"},
+		// U+2013 EN DASH
+		{"a\u2013b", "a-b"},
+		// U+2014 EM DASH
+		{"a\u2014b", "a-b"},
+		// U+2212 MINUS SIGN
+		{"a\u2212b", "a-b"},
+		// ASCII hyphen – must be passed through unchanged
+		{"a-b", "a-b"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.in, func(t *testing.T) {
+			got := normalizeHyphens(tt.in)
+			if got != tt.want {
+				t.Errorf("normalizeHyphens(%q) = %q; want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestParseNameUnicodeHyphen verifies end-to-end that a model name containing
+// a non-breaking hyphen is parsed as valid and equivalent to the ASCII version.
+func TestParseNameUnicodeHyphen(t *testing.T) {
+	asciiName := ParseName("granite4:tiny-h")
+	unicodeName := ParseName("granite4:tiny\u2011h") // U+2011 NON-BREAKING HYPHEN
+
+	if !asciiName.IsValid() {
+		t.Fatal("ASCII version of name should be valid")
+	}
+	if !unicodeName.IsValid() {
+		t.Fatal("Unicode-hyphen version of name should be valid after normalization")
+	}
+	if asciiName.String() != unicodeName.String() {
+		t.Errorf("expected %q == %q after normalization", asciiName.String(), unicodeName.String())
+	}
+}
