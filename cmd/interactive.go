@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/spf13/cobra"
 
@@ -603,13 +604,50 @@ func normalizeFilePath(fp string) string {
 }
 
 func extractFileNames(input string) []string {
-	// Regex to match file paths starting with optional drive letter, / ./ \ or .\ and include escaped or unescaped spaces (\ or %20)
-	// and followed by more characters and a file extension
-	// This will capture non filename strings, but we'll check for file existence to remove mismatches
-	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav)\b`
-	re := regexp.MustCompile(regexPattern)
+	// First find path-like prefixes, then extend each candidate to the last valid image/audio extension
+	// before the next path-like prefix. This keeps nested extension-like directories attached to the
+	// same path without merging adjacent paths together.
+	startRe := regexp.MustCompile(`(?:[a-zA-Z]:)?(?:\./|/|\\)`)
+	extRe := regexp.MustCompile(`(?i:\.(?:jpg|jpeg|png|webp|wav)\b)`)
 
-	return re.FindAllString(input, -1)
+	starts := startRe.FindAllStringIndex(input, -1)
+	if len(starts) == 0 {
+		return nil
+	}
+
+	isBoundary := func(i int) bool {
+		if i == 0 {
+			return true
+		}
+		prev := rune(input[i-1])
+		return unicode.IsSpace(prev) || strings.ContainsRune(`"'([{<`, prev)
+	}
+
+	var matches []string
+	for i, loc := range starts {
+		start := loc[0]
+		if !isBoundary(start) {
+			continue
+		}
+
+		end := len(input)
+		for _, next := range starts[i+1:] {
+			if isBoundary(next[0]) {
+				end = next[0]
+				break
+			}
+		}
+
+		window := input[start:end]
+		exts := extRe.FindAllStringIndex(window, -1)
+		if len(exts) == 0 {
+			continue
+		}
+
+		matches = append(matches, window[:exts[len(exts)-1][1]])
+	}
+
+	return matches
 }
 
 func extractFileData(input string) (string, []api.ImageData, error) {
