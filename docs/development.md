@@ -39,7 +39,7 @@ cmake -B build . -DOLLAMA_LLAMA_BACKENDS="cuda_v13;vulkan"
 cmake --build build --parallel 8
 ```
 
-Supported backend values are `cuda_v12`, `cuda_v13`, `rocm_v7_1`, `rocm_v7_2`, `vulkan`, `cuda_jetpack5`, and `cuda_jetpack6`.
+Supported backend values are `cuda_v12`, `cuda_v13`, `rocm_v7_14`, `vulkan`, `cuda_jetpack5`, and `cuda_jetpack6`.
 
 Use standard CMake architecture overrides to narrow GPU builds for local hardware:
 
@@ -48,7 +48,7 @@ Use standard CMake architecture overrides to narrow GPU builds for local hardwar
 cmake -B build . -DOLLAMA_LLAMA_BACKENDS=cuda_v13 -DCMAKE_CUDA_ARCHITECTURES=native
 
 # ROCm / HIP
-cmake -B build . -DOLLAMA_LLAMA_BACKENDS=rocm_v7_2 -DCMAKE_HIP_ARCHITECTURES=gfx1100
+cmake -B build . -DOLLAMA_LLAMA_BACKENDS=rocm_v7_14 -DCMAKE_HIP_ARCHITECTURES=gfx1100
 ```
 
 You can tune GGML build options by setting `GGML_*` values during configure. For example, to disable CUDA flash attention kernels for local debugging:
