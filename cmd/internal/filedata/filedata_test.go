@@ -199,6 +199,59 @@ func TestExtractWAV(t *testing.T) {
 	}
 }
 
+func TestNormalizePathBackslashEscapedAndQuoted(t *testing.T) {
+	got1 := NormalizePath(`"/path/to/my\ image\ \(1\).png"`)
+	want1 := "/path/to/my image (1).png"
+	if got1 != want1 {
+		t.Fatalf("got = %q, want %q", got1, want1)
+	}
+
+	got2 := NormalizePath(`'/path/to/my\ image\ \(1\).png'`)
+	want2 := "/path/to/my image (1).png"
+	if got2 != want2 {
+		t.Fatalf("got = %q, want %q", got2, want2)
+	}
+}
+
+func TestExtractBackslashEscapedAndQuoted(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "my image (1).jpg")
+	data := make([]byte, 600)
+	copy(data, []byte{
+		0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 'J', 'F', 'I', 'F',
+		0x00, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0xff, 0xd9,
+	})
+	if err := os.WriteFile(fp, data, 0o600); err != nil {
+		t.Fatalf("failed to write test image: %v", err)
+	}
+
+	escapedFp := filepath.Join(dir, `my\ image\ \(1\).jpg`)
+	input := "before " + escapedFp + " after"
+	cleaned, imgs, err := Extract(input)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(imgs) != 1 {
+		t.Fatalf("imgs = %d, want 1", len(imgs))
+	}
+	if cleaned != "before  after" {
+		t.Fatalf("cleaned = %q, want %q", cleaned, "before  after")
+	}
+
+	input = `before "` + escapedFp + `" after`
+	cleaned, imgs, err = Extract(input)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(imgs) != 1 {
+		t.Fatalf("imgs = %d, want 1", len(imgs))
+	}
+	if cleaned != "before  after" {
+		t.Fatalf("cleaned = %q, want %q", cleaned, "before  after")
+	}
+}
+
 func assertContains(t *testing.T, s, want string) {
 	t.Helper()
 	if !strings.Contains(s, want) {
