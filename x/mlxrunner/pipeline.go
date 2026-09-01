@@ -70,12 +70,21 @@ func (r *Runner) Prepare(request *Request) (err error) {
 		return errors.New("empty prompt")
 	}
 
-	if len(tokens) >= r.contextLength {
-		return fmt.Errorf("input length (%d tokens) exceeds the model's maximum context length (%d tokens)", len(tokens), r.contextLength)
+	contextLength := r.contextLength
+	configuredContextLength := request.Options.NumCtx > 0 && (contextLength <= 0 || request.Options.NumCtx < contextLength)
+	if configuredContextLength {
+		contextLength = request.Options.NumCtx
 	}
 
-	// Cap generation to stay within the model's context length
-	maxGenerate := r.contextLength - len(tokens)
+	if len(tokens) >= contextLength {
+		if configuredContextLength {
+			return fmt.Errorf("input length (%d tokens) exceeds the configured context length (%d tokens)", len(tokens), contextLength)
+		}
+		return fmt.Errorf("input length (%d tokens) exceeds the model's maximum context length (%d tokens)", len(tokens), contextLength)
+	}
+
+	// Cap generation to stay within the effective context length
+	maxGenerate := contextLength - len(tokens)
 	if request.Options.NumPredict <= 0 {
 		request.Options.NumPredict = maxGenerate
 	} else {

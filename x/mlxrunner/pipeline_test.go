@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
@@ -41,6 +42,78 @@ func TestPrepareRejectsMediaWithoutSupport(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "does not support image input") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPrepareUsesRequestedContextLength(t *testing.T) {
+	tests := []struct {
+		name             string
+		modelContext     int
+		requestContext   int
+		prompt           string
+		numPredict       int
+		wantNumPredict   int
+		wantErrorMessage string
+	}{
+		{
+			name:             "request limit rejects input",
+			modelContext:     4096,
+			requestContext:   4,
+			prompt:           "0123",
+			numPredict:       1,
+			wantErrorMessage: "input length (4 tokens) exceeds the configured context length (4 tokens)",
+		},
+		{
+			name:           "request limit caps generation",
+			modelContext:   4096,
+			requestContext: 6,
+			prompt:         "0123",
+			numPredict:     100,
+			wantNumPredict: 2,
+		},
+		{
+			name:             "model limit remains upper bound",
+			modelContext:     4,
+			requestContext:   4096,
+			prompt:           "0123",
+			numPredict:       1,
+			wantErrorMessage: "input length (4 tokens) exceeds the model's maximum context length (4 tokens)",
+		},
+		{
+			name:           "unset request uses model limit",
+			modelContext:   6,
+			prompt:         "0123",
+			numPredict:     100,
+			wantNumPredict: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := mediaTestRunner(t)
+			r.contextLength = tt.modelContext
+			req := &Request{CompletionRequest: CompletionRequest{
+				Prompt: tt.prompt,
+				Options: api.Options{
+					Runner:     api.Runner{NumCtx: tt.requestContext},
+					NumPredict: tt.numPredict,
+				},
+			}}
+
+			err := r.Prepare(req)
+			if tt.wantErrorMessage != "" {
+				if err == nil || err.Error() != tt.wantErrorMessage {
+					t.Fatalf("Prepare() error = %v, want %q", err, tt.wantErrorMessage)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if req.Options.NumPredict != tt.wantNumPredict {
+				t.Fatalf("NumPredict = %d, want %d", req.Options.NumPredict, tt.wantNumPredict)
+			}
+		})
 	}
 }
 
