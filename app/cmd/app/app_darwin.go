@@ -1773,6 +1773,21 @@ func requestClaudeDesktopInstall() claudeDesktopInstallResult {
 	return claudeDesktopInstallResultFromCode(int(C.installClaudeDesktop()))
 }
 
+func requestCodexDesktopInstall() codexDesktopInstallResult {
+	return codexDesktopInstallResultFromCode(int(C.installCodexDesktop()))
+}
+
+func codexDesktopInstallResultFromCode(code int) codexDesktopInstallResult {
+	switch code {
+	case int(C.ClaudeInstallerOpened):
+		return codexDesktopInstallerOpened
+	case int(C.ClaudeInstallCancelled):
+		return codexDesktopInstallCancelled
+	default:
+		return codexDesktopInstallFailed
+	}
+}
+
 func claudeDesktopDownloadEndpoint(baseURL string) string {
 	return strings.TrimRight(baseURL, "/") + "/download-app?app=claude-desktop&type=mac-zip"
 }
@@ -1822,6 +1837,26 @@ func InstallClaudeDesktopArchive(path *C.cchar_t) C.bool {
 		return C._Bool(false)
 	}
 	slog.Info("installed Claude Desktop", "path", installedPath)
+	return C._Bool(true)
+}
+
+//export InstallCodexDesktopDiskImage
+func InstallCodexDesktopDiskImage(path *C.cchar_t) C.bool {
+	imagePath := C.GoString((*C.char)(unsafe.Pointer(path)))
+	installedPath, err := installCodexDesktopDiskImage(imagePath, codexDesktopInstallDestinations(), verifyCodexDesktopBundle)
+	if err != nil && installedPath != "" {
+		slog.Warn("installed ChatGPT but could not clean up its disk image", "path", installedPath, "error", err)
+		return C._Bool(true)
+	}
+	if errors.Is(err, errCodexDesktopDestinationExists) && codexDesktop.Installed() {
+		slog.Info("ChatGPT was installed while its download was in progress")
+		return C._Bool(true)
+	}
+	if err != nil {
+		slog.Warn("failed to install ChatGPT disk image", "error", err)
+		return C._Bool(false)
+	}
+	slog.Info("installed ChatGPT", "path", installedPath)
 	return C._Bool(true)
 }
 

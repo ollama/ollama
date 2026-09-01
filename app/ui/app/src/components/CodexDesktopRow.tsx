@@ -2,10 +2,20 @@ import type { IntegrationStatus } from "@/api";
 import { INTEGRATION_ICONS } from "@/lib/launchCommands";
 import type {
   CodexDesktopActionResult,
+  CodexDesktopInstallResult,
   CodexDesktopStatus,
 } from "@/types/webview";
 import { ArrowPathIcon, CommandLineIcon } from "@heroicons/react/24/outline";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+
+export const CODEX_DESKTOP_INSTALL_TIMEOUT_MS = 120_000;
+
+type CodexConnectPhase =
+  | "idle"
+  | "downloading"
+  | "waiting-for-install"
+  | "connecting"
+  | "disconnecting";
 
 interface CodexDesktopRowProps {
   integration: IntegrationStatus;
@@ -59,9 +69,17 @@ export function CodexDesktopRow({
   const [status, setStatus] = useState<CodexDesktopStatus | null>(
     initialStatus ?? null,
   );
-  const [pending, setPending] = useState(false);
+  const [phase, setPhase] = useState<CodexConnectPhase>("idle");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   const refreshStatus = useCallback(async () => {
     if (!window.getCodexDesktopStatus) return;
@@ -112,17 +130,129 @@ export function CodexDesktopRow({
     };
   }, [status?.connected]);
 
+  useEffect(() => {
+    if (phase !== "waiting-for-install") return;
+
+    let active = true;
+    let checking = false;
+    let completing = false;
+    const checkForInstall = async () => {
+      if (
+        !active ||
+        checking ||
+        completing ||
+        !window.getCodexDesktopStatus ||
+        !window.setCodexDesktopConnected
+      ) {
+        return;
+      }
+      checking = true;
+      try {
+        const next = await window.getCodexDesktopStatus();
+        if (!active || !mounted.current) return;
+        setStatus(next);
+        if (!next.installed) return;
+        completing = true;
+
+        if (next.running) {
+          setPhase("idle");
+          setError(
+            "ChatGPT is installed. Turn on the switch to restart it with Ollama models.",
+          );
+          return;
+        }
+
+        setPhase("connecting");
+        const result = await window.setCodexDesktopConnected(true);
+        if (!mounted.current) return;
+        setStatus(result.status);
+        if (result.error || !result.status.connected) {
+          setError(
+            result.error || "Ollama could not add its models to ChatGPT.",
+          );
+        } else {
+          setNotice("Ollama models added alongside Codex models");
+        }
+        setPhase("idle");
+      } catch {
+        if (!mounted.current) return;
+        setPhase("idle");
+        setError("Ollama could not finish connecting ChatGPT.");
+      } finally {
+        checking = false;
+      }
+    };
+
+    void checkForInstall();
+    const interval = window.setInterval(checkForInstall, 1000);
+    const timeout = window.setTimeout(() => {
+      if (!active || completing) return;
+      setPhase("idle");
+      setError("ChatGPT installation wasn’t detected. Try again.");
+    }, CODEX_DESKTOP_INSTALL_TIMEOUT_MS);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      window.clearTimeout(timeout);
+    };
+  }, [phase]);
+
   const connected = status?.connected ?? false;
   const installed = status?.installed ?? integration.installed ?? false;
+  const pending = phase !== "idle";
+  const displayedConnected =
+    phase === "disconnecting"
+      ? false
+      : connected ||
+        phase === "downloading" ||
+        phase === "waiting-for-install" ||
+        phase === "connecting";
+  const pendingLabel =
+    phase === "downloading"
+      ? "Downloading…"
+      : phase === "waiting-for-install"
+        ? "Finish installing…"
+        : phase === "connecting"
+          ? "Connecting…"
+          : phase === "disconnecting"
+            ? "Disconnecting…"
+            : null;
 
   const toggleConnection = async () => {
-    if (pending || (!installed && !connected)) return;
+    if (pending) return;
     if (!window.setCodexDesktopConnected) {
       setError("The ChatGPT integration is unavailable.");
       return;
     }
 
     const enabled = !connected;
+    if (enabled && !installed) {
+      if (!window.installCodexDesktop || !window.getCodexDesktopStatus) {
+        setError("Ollama could not install ChatGPT.");
+        return;
+      }
+      setPhase("downloading");
+      setError(null);
+      setNotice(null);
+      let installResult: CodexDesktopInstallResult = "failed";
+      try {
+        installResult = await window.installCodexDesktop();
+      } catch {
+        // The shared failure message below covers a rejected native request.
+      }
+      if (installResult === "cancelled") {
+        setPhase("idle");
+        return;
+      }
+      if (installResult !== "opened") {
+        setPhase("idle");
+        setError("Ollama could not install ChatGPT.");
+        return;
+      }
+      setPhase("waiting-for-install");
+      return;
+    }
+
     if (
       status?.running &&
       !window.confirm(
@@ -133,7 +263,7 @@ export function CodexDesktopRow({
     ) {
       return;
     }
-    setPending(true);
+    setPhase(enabled ? "connecting" : "disconnecting");
     setError(null);
     setNotice(null);
     try {
@@ -157,7 +287,7 @@ export function CodexDesktopRow({
           : "Ollama could not remove its models from ChatGPT.",
       );
     } finally {
-      setPending(false);
+      if (mounted.current) setPhase("idle");
     }
   };
 
@@ -185,13 +315,13 @@ export function CodexDesktopRow({
             className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-neutral-500 dark:text-neutral-400"
           >
             <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
-            Updating…
+            {pendingLabel}
           </span>
         )}
         <button
           type="button"
           role="switch"
-          aria-checked={connected}
+          aria-checked={displayedConnected}
           aria-busy={pending || undefined}
           aria-label={
             connected
@@ -203,15 +333,15 @@ export function CodexDesktopRow({
               ? "Remove Ollama models"
               : installed
                 ? "Add Ollama models"
-                : "Not installed"
+                : "Install ChatGPT and add Ollama models"
           }
-          disabled={pending || (!installed && !connected)}
+          disabled={pending}
           onClick={() => void toggleConnection()}
-          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-not-allowed disabled:opacity-50 ${connected ? "bg-neutral-950 dark:bg-white" : "bg-neutral-300 dark:bg-neutral-700"}`}
+          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-not-allowed disabled:opacity-50 ${displayedConnected ? "bg-neutral-950 dark:bg-white" : "bg-neutral-300 dark:bg-neutral-700"}`}
         >
           <span
             aria-hidden="true"
-            className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${pending ? "animate-pulse" : ""} ${connected ? "translate-x-4.5 dark:bg-neutral-900" : "translate-x-0.5"}`}
+            className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${pending ? "animate-pulse" : ""} ${displayedConnected ? "translate-x-4.5 dark:bg-neutral-900" : "translate-x-0.5"}`}
           />
         </button>
       </div>

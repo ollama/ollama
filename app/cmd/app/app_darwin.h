@@ -60,6 +60,7 @@ bool IsCodexDesktopConnected(void);
 bool IsCodexDesktopRunning(void);
 unsigned long long CodexDesktopRequestCount(void);
 bool SetCodexDesktopConnected(bool connected);
+bool OpenChatGPTDownloadPage(void);
 bool RestoreCodexProfileForShutdown(void);
 bool ClaudeGatewayStartFailed(void);
 bool ClaudeGatewayPortConflict(void);
@@ -76,5 +77,7 @@ enum ClaudeInstallResult
     ClaudeInstallFailed,
 };
 enum ClaudeInstallResult installClaudeDesktop(void);
+enum ClaudeInstallResult installCodexDesktop(void);
 char *ClaudeDesktopDownloadRequest(char **authorization);
 bool InstallClaudeDesktopArchive(const char *archivePath);
+bool InstallCodexDesktopDiskImage(const char *imagePath);

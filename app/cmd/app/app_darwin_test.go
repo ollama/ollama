@@ -3007,6 +3007,22 @@ func TestClaudeDesktopInstallResultFromCode(t *testing.T) {
 	}
 }
 
+func TestCodexDesktopInstallResultFromCode(t *testing.T) {
+	for _, tt := range []struct {
+		code int
+		want codexDesktopInstallResult
+	}{
+		{code: 0, want: codexDesktopInstallCancelled},
+		{code: 1, want: codexDesktopInstallerOpened},
+		{code: 2, want: codexDesktopInstallFailed},
+		{code: 99, want: codexDesktopInstallFailed},
+	} {
+		if got := codexDesktopInstallResultFromCode(tt.code); got != tt.want {
+			t.Errorf("codexDesktopInstallResultFromCode(%d) = %q, want %q", tt.code, got, tt.want)
+		}
+	}
+}
+
 func TestClaudeGatewayRejectsOllamaHostPortConflict(t *testing.T) {
 	t.Setenv("OLLAMA_HOST", "0.0.0.0:11435")
 
