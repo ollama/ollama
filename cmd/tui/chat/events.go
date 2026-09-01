@@ -68,6 +68,10 @@ type chatEventsClosedMsg struct{}
 
 type chatTickMsg struct{}
 
+type chatStatuslineTickMsg struct{}
+
+type customStatusLineMsg string
+
 func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 	contextChanged := false
 
@@ -338,6 +342,24 @@ func (m *chatModel) scheduleTick() tea.Cmd {
 func chatTickCmd() tea.Cmd {
 	return tea.Tick(350*time.Millisecond, func(time.Time) tea.Msg {
 		return chatTickMsg{}
+	})
+}
+
+// scheduleStatuslineTick reschedules unconditionally, independent of
+// run/idle state, so the statusline clock keeps ticking while the TUI is
+// idle. Each tick also checks whether anything statusline-relevant changed
+// and, if so (or on a coarse fallback interval), re-runs OLLAMA_STATUSLINE.
+func (m *chatModel) scheduleStatuslineTick() tea.Cmd {
+	if m.statuslineTickActive {
+		return nil
+	}
+	m.statuslineTickActive = true
+	return chatStatuslineTickCmd()
+}
+
+func chatStatuslineTickCmd() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg {
+		return chatStatuslineTickMsg{}
 	})
 }
 

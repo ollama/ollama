@@ -183,6 +183,7 @@ func (m *chatModel) submitInput(input string) (tea.Model, tea.Cmd) {
 		return *m, nil
 	}
 
+	m.persistedThinkValue = thinkValueLabel(m.opts.Think)
 	return m.startRun(input)
 }
 
