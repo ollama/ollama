@@ -188,7 +188,12 @@ describe("CodexDesktopModelsSettings", () => {
       expect(textContent(renderer!.root)).not.toContain("5 of 5 selected");
       expect(
         renderer!.root.findByProps({
-          src: "/launch-icons/codex-color.svg",
+          src: "/launch-icons/codex.svg",
+        }),
+      ).toBeTruthy();
+      expect(
+        renderer!.root.findByProps({
+          src: "/launch-icons/codex-dark.svg",
         }),
       ).toBeTruthy();
       expect(
