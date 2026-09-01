@@ -290,6 +290,7 @@ Supported integrations:
   chatgpt         ChatGPT (aliases: codex-app, codex-desktop, codex-gui)
   hermes          Hermes Agent
   openclaw        OpenClaw (aliases: clawdbot, moltbot)
+  atomcode        AtomCode
   opencode        OpenCode
   codex           Codex
   hermes-desktop  Hermes Desktop
