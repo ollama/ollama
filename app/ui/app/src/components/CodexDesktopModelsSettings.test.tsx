@@ -186,16 +186,14 @@ describe("CodexDesktopModelsSettings", () => {
         "Choose up to 5 Ollama models to use in ChatGPT.",
       );
       expect(textContent(renderer!.root)).not.toContain("5 of 5 selected");
-      expect(
-        renderer!.root.findByProps({
-          src: "/launch-icons/codex.svg",
-        }),
-      ).toBeTruthy();
-      expect(
-        renderer!.root.findByProps({
-          src: "/launch-icons/codex-dark.svg",
-        }),
-      ).toBeTruthy();
+      const lightIcon = renderer!.root.findByProps({
+        src: "/launch-icons/codex.svg",
+      });
+      const darkIcon = renderer!.root.findByProps({
+        src: "/launch-icons/codex-dark.svg",
+      });
+      expect(lightIcon.props.className).toContain("h-5 w-5");
+      expect(darkIcon.props.className).toContain("h-5 w-5");
       expect(
         renderer!.root.findByProps({
           id: "chatgpt-model-settings-heading",

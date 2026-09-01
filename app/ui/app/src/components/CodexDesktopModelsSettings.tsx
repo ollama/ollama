@@ -312,12 +312,12 @@ export function CodexDesktopModelsSettings({
           <img
             src="/launch-icons/codex.svg"
             alt=""
-            className="h-6 w-6 max-w-none dark:hidden"
+            className="h-5 w-5 dark:hidden"
           />
           <img
             src="/launch-icons/codex-dark.svg"
             alt=""
-            className="hidden h-6 w-6 max-w-none dark:block"
+            className="hidden h-5 w-5 dark:block"
           />
         </span>
         <div className="min-w-0 flex-1">
