@@ -449,6 +449,93 @@ func writeFP8BlockConfig(t *testing.T, dir string, rows, cols int) {
 	}
 }
 
+// writeRawSafetensors writes a safetensors file with an arbitrary JSON header
+// and no tensor data, allowing tests to exercise malformed headers.
+func writeRawSafetensors(t *testing.T, dir, header string) {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, binary.LittleEndian, int64(len(header))); err != nil {
+		t.Fatal(err)
+	}
+	buf.WriteString(header)
+	if err := os.WriteFile(filepath.Join(dir, "model-00001-of-00001.safetensors"), buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestParseSafetensorsRejectsMalformedHeader ensures a crafted safetensors
+// file yields an error instead of panicking. Model conversion runs on
+// attacker-controlled bytes (uploaded blobs referenced by /api/create) inside a
+// goroutine with no recover, so a panic here would crash the whole server.
+func TestParseSafetensorsRejectsMalformedHeader(t *testing.T) {
+	cases := []struct {
+		name   string
+		header string // if empty, raw bytes are written instead
+		raw    []byte
+		substr string
+	}{
+		{
+			name:   "empty data_offsets",
+			header: `{"t":{"dtype":"F32","shape":[1],"data_offsets":[]}}`,
+			substr: "data_offsets",
+		},
+		{
+			name:   "single data_offset",
+			header: `{"t":{"dtype":"F32","shape":[1],"data_offsets":[0]}}`,
+			substr: "data_offsets",
+		},
+		{
+			name:   "inverted data_offsets",
+			header: `{"t":{"dtype":"F32","shape":[1],"data_offsets":[100,0]}}`,
+			substr: "data_offsets",
+		},
+		{
+			name:   "negative data_offset",
+			header: `{"t":{"dtype":"F32","shape":[1],"data_offsets":[-8,0]}}`,
+			substr: "data_offsets",
+		},
+		{
+			name:   "offsets past end of data",
+			header: `{"t":{"dtype":"F32","shape":[1],"data_offsets":[0,999999]}}`,
+			substr: "data_offsets",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeRawSafetensors(t, dir, tc.header)
+			_, err := parseSafetensors(os.DirFS(dir), strings.NewReplacer(), "model-00001-of-00001.safetensors")
+			if err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.substr) {
+				t.Fatalf("expected error containing %q, got %v", tc.substr, err)
+			}
+		})
+	}
+}
+
+// TestParseSafetensorsRejectsOversizedHeaderLength ensures an out-of-range
+// header length prefix is rejected before it is used to size an in-memory
+// buffer, preventing a huge or negative allocation from a crafted file.
+func TestParseSafetensorsRejectsOversizedHeaderLength(t *testing.T) {
+	for _, n := range []int64{-1, 1 << 62, 0x7000000000000000} {
+		dir := t.TempDir()
+		var buf bytes.Buffer
+		if err := binary.Write(&buf, binary.LittleEndian, n); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "model-00001-of-00001.safetensors"), buf.Bytes(), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, err := parseSafetensors(os.DirFS(dir), strings.NewReplacer(), "model-00001-of-00001.safetensors")
+		if err == nil || !strings.Contains(err.Error(), "invalid safetensors header length") {
+			t.Fatalf("n=%d: expected invalid header length error, got %v", n, err)
+		}
+	}
+}
+
 func TestSafetensorKind(t *testing.T) {
 	tests := []struct {
 		name     string
