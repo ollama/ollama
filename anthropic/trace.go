@@ -215,7 +215,9 @@ func TraceTool(t Tool) map[string]any {
 		"name":         t.Name,
 		"description":  TraceTruncateString(t.Description),
 		"input_schema": TraceJSON(t.InputSchema),
-		"max_uses":     t.MaxUses,
+		"max_uses":         t.MaxUses,
+		"allowed_domains":  t.AllowedDomains,
+		"blocked_domains":  t.BlockedDomains,
 	}
 }
 
