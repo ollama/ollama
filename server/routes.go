@@ -258,6 +258,14 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	// See ChatHandler: videos become frames + audio before the request is used.
+	expandedImages, err := expandVideos(req.Images)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	req.Images = expandedImages
+
 	modelRef, err := parseAndValidateModelRef(req.Model)
 	if err != nil {
 		writeModelRefParseError(c, err, http.StatusNotFound, fmt.Sprintf("model '%s' not found", req.Model))
@@ -2451,6 +2459,13 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
+		return
+	}
+
+	// Decode videos into frames and audio before anything else inspects the
+	// request, so the rest of the pipeline only ever sees images and audio.
+	if err := expandVideoMessages(req.Messages); err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
