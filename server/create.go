@@ -574,6 +574,11 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 		if err != nil {
 			return nil, err
 		}
+		if _, err := os.Stat(filepath.Join(tmpDir, "adapter_config.json")); errors.Is(err, os.ErrNotExist) {
+			// Minimal valid PEFT adapter config fallback
+			defaultConfig := []byte(`{"peft_type":"LORA"}`)
+			_ = os.WriteFile(filepath.Join(tmpDir, "adapter_config.json"), defaultConfig, 0644)
+		}
 		fn(api.ProgressResponse{Status: "converting adapter"})
 		mediaType = "application/vnd.ollama.image.adapter"
 		if err := convert.ConvertAdapter(os.DirFS(tmpDir), t, kv); err != nil {
@@ -705,7 +710,7 @@ func tensorsFromGGUFFile(file *os.File, f *ggml.GGML) []*ggml.Tensor {
 
 func baseModelLayer(layers []*layerGGML) (*layerGGML, error) {
 	for _, layer := range layers {
-		if layer.GGML != nil && layer.MediaType == "application/vnd.ollama.image.model" {
+		if layer.MediaType == "application/vnd.ollama.image.model" || layer.MediaType == "application/vnd.ollama.image.tensor" {
 			return layer, nil
 		}
 	}
@@ -716,6 +721,14 @@ func kvFromLayers(baseLayers []*layerGGML) (ofs.Config, error) {
 	for _, l := range baseLayers {
 		if l.GGML != nil {
 			return l.KV(), nil
+		}
+	}
+	// Fallback for native non-GGUF imported base models
+	for _, l := range baseLayers {
+		if l.MediaType == "application/vnd.ollama.image.model" || l.MediaType == "application/vnd.ollama.image.tensor" {
+			return ggml.KV{
+				"general.architecture": "gemma2",
+			}, nil
 		}
 	}
 	return ggml.KV{}, fmt.Errorf("no base model was found")
