@@ -109,7 +109,7 @@ func TestAttentionMaskRelaxNoopRectsMatchCausal(t *testing.T) {
 		L, K := 4, 6
 		b := newBatch([]int32{0}, L, nil)
 		want := CausalMask().AsArray(b, K, mlx.DTypeFloat32)
-		mlx.Eval(want, b.InputIDs)
+		mlx.Eval(want)
 		wantF := want.Floats()
 
 		cases := []struct {

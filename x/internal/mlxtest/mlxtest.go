@@ -6,13 +6,12 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ollama/ollama/x/internal/mlxthread"
 	"github.com/ollama/ollama/x/internal/mlxthreadtest"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
-var testThread = sync.OnceValues(func() (*mlxthread.Thread, error) {
-	return mlxthread.Start("mlx-test", func() error {
+var testThread = sync.OnceValues(func() (*mlxthreadtest.Thread, error) {
+	return mlxthreadtest.Start("mlx-test", func() error {
 		if err := mlx.CheckInit(); err != nil {
 			return err
 		}

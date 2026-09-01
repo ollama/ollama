@@ -303,7 +303,7 @@ func TestBackgroundCheckerSkipsAlreadyStagedETagDownload(t *testing.T) {
 	defer cancel()
 
 	callbacks := make(chan string, 4)
-	checkerDone := updater.StartBackgroundUpdaterChecker(ctx, func(ver string) error {
+	checkerDone := updater.startBackgroundUpdaterChecker(ctx, func(ver string) error {
 		callbacks <- ver
 		return nil
 	})
@@ -402,7 +402,7 @@ func TestBackgoundChecker(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	checkerDone := updater.StartBackgroundUpdaterChecker(ctx, cb)
+	checkerDone := updater.startBackgroundUpdaterChecker(ctx, cb)
 	defer updater.waitDownloadIdle()
 	defer stopChecker(t, cancel, checkerDone)
 	select {
@@ -466,7 +466,7 @@ func TestAutoUpdateDisabledSkipsDownload(t *testing.T) {
 		return nil
 	}
 
-	checkerDone := updater.StartBackgroundUpdaterChecker(ctx, cb)
+	checkerDone := updater.startBackgroundUpdaterChecker(ctx, cb)
 	defer updater.waitDownloadIdle()
 	defer stopChecker(t, cancel, checkerDone)
 
@@ -530,7 +530,7 @@ func TestAutoUpdateReenabledDownloadsUpdate(t *testing.T) {
 		return nil
 	}
 
-	checkerDone := upd.StartBackgroundUpdaterChecker(ctx, cb)
+	checkerDone := upd.startBackgroundUpdaterChecker(ctx, cb)
 	defer upd.waitDownloadIdle()
 	defer stopChecker(t, cancel, checkerDone)
 
@@ -665,7 +665,7 @@ func TestTriggerImmediateCheck(t *testing.T) {
 		return nil
 	}
 
-	checkerDone := updater.StartBackgroundUpdaterChecker(ctx, cb)
+	checkerDone := updater.startBackgroundUpdaterChecker(ctx, cb)
 	defer updater.waitDownloadIdle()
 	defer stopChecker(t, cancel, checkerDone)
 

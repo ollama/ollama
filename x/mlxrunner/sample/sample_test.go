@@ -34,10 +34,10 @@ func batchLogits(rows ...[]float32) *mlx.Array {
 func sampleOne(t *mlxtest.T, opts Options, priorTokens []int32, values []float32) int32 {
 	t.Helper()
 	s := New(128)
-	defer func() {
+	t.Cleanup(func() {
 		s.Free()
 		mlx.Sweep()
-	}()
+	})
 	s.Add(0, opts, priorTokens)
 
 	got := s.Sample([]int{0}, slotLogits(values)).Token
@@ -137,10 +137,10 @@ func TestSampleSingleSlotOptions(t *testing.T) {
 func TestDistributionAppliesTopKBeforeTopP(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		s := New(128)
-		defer func() {
+		t.Cleanup(func() {
 			s.Free()
 			mlx.Sweep()
-		}()
+		})
 		s.Add(0, Options{Temperature: 1, TopK: 2, TopP: 0.7}, nil)
 
 		dist := s.Distribution(0, slotLogits([]float32{logOf(0.6), logOf(0.2), logOf(0.2)}), nil)
@@ -208,10 +208,10 @@ func TestSeededSamplingIsReproducible(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		seededSequence := func(seed int) []int32 {
 			s := New(128)
-			defer func() {
+			t.Cleanup(func() {
 				s.Free()
 				mlx.Sweep()
-			}()
+			})
 			s.Add(0, Options{Temperature: 1, TopK: 4, Seed: seed, UseSeed: true}, nil)
 
 			logits := slotLogits([]float32{0, 0, 0, 0})
@@ -241,10 +241,10 @@ func TestSeededBernoulliIsReproducible(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		seededMask := func() []int32 {
 			s := New(128)
-			defer func() {
+			t.Cleanup(func() {
 				s.Free()
 				mlx.Sweep()
-			}()
+			})
 			s.Add(0, Options{Seed: 99, UseSeed: true}, nil)
 
 			mask := s.Bernoulli(0, mlx.FromValues([]float32{0.5, 0.5, 0.5, 0.5, 0.5, 0.5}, 6)).AsType(mlx.DTypeInt32)
@@ -267,10 +267,10 @@ func TestSeededBernoulliIsReproducible(t *testing.T) {
 func TestSampleHistoryWindow(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		s := New(128)
-		defer func() {
+		t.Cleanup(func() {
 			s.Free()
 			mlx.Sweep()
-		}()
+		})
 
 		// RepeatLastN=2 with priors {1, 2, 3}: makeHistoryRow keeps only
 		// {2, 3}. Token 1 was trimmed — its penalty is NOT active.
@@ -298,10 +298,10 @@ func TestSampleHistoryWindow(t *testing.T) {
 func TestSpeculativeScoresUsesDraftHistoryWithoutCommit(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		s := New(128)
-		defer func() {
+		t.Cleanup(func() {
 			s.Free()
 			mlx.Sweep()
-		}()
+		})
 
 		s.Add(0, Options{RepeatLastN: 2, RepeatPenalty: 10}, []int32{1, 2})
 		draftTokens := mlx.NewArrayInt32([]int32{3, 4}, []int32{1, 2})
@@ -331,10 +331,10 @@ func TestSpeculativeScoresUsesDraftHistoryWithoutCommit(t *testing.T) {
 func TestDistributionSingleRowAppliesDraftPrefix(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		s := New(128)
-		defer func() {
+		t.Cleanup(func() {
 			s.Free()
 			mlx.Sweep()
-		}()
+		})
 
 		// A proposal step passes one logits row with the chain's earlier drafts:
 		// the single row is the chain's final step, so every draft belongs to
@@ -359,10 +359,10 @@ func TestDistributionSingleRowAppliesDraftPrefix(t *testing.T) {
 func TestDistributionMultiRowWithoutChain(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		s := New(128)
-		defer func() {
+		t.Cleanup(func() {
 			s.Free()
 			mlx.Sweep()
-		}()
+		})
 
 		// A block drafter's proposal batch samples every row from one call with
 		// no draft chain: each row sees the slot history unchanged. Slot 0
@@ -392,10 +392,10 @@ func TestDistributionMultiRowWithoutChain(t *testing.T) {
 func TestCommitBatchesRingWrites(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		s := New(128)
-		defer func() {
+		t.Cleanup(func() {
 			s.Free()
 			mlx.Sweep()
-		}()
+		})
 
 		s.Add(0, Options{RepeatLastN: 4, RepeatPenalty: 1.1}, []int32{10, 11, 12})
 		s.Commit(0, []int32{20, 21, 22})
@@ -490,10 +490,10 @@ func TestBatchSamplingPreservesPerSlotBehavior(t *testing.T) {
 
 			// Batched call.
 			s := New(128)
-			defer func() {
+			t.Cleanup(func() {
 				s.Free()
 				mlx.Sweep()
-			}()
+			})
 			for _, spec := range tc.slots {
 				s.Add(spec.id, spec.opts, spec.priors)
 			}
@@ -517,10 +517,10 @@ func TestRemoveDoesNotLeakHistory(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		opts := Options{RepeatLastN: 1, PresencePenalty: 10}
 		s := New(128)
-		defer func() {
+		t.Cleanup(func() {
 			s.Free()
 			mlx.Sweep()
-		}()
+		})
 		s.Add(1, opts, []int32{1})
 		s.Add(2, opts, []int32{2})
 		s.Remove(1)

@@ -8,6 +8,50 @@ import (
 	"github.com/ollama/ollama/x/internal/mlxthread"
 )
 
+// Thread is a pinned worker used by MLX tests.
+type Thread struct {
+	worker *mlxthread.Thread
+	id     uint64
+}
+
+// Start creates a pinned test worker.
+func Start(name string, init func() error) (*Thread, error) {
+	t := &Thread{}
+	thread, err := mlxthread.Start(name, func() error {
+		t.id = currentThreadID()
+		if init != nil {
+			return init()
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	t.worker = thread
+	return t, nil
+}
+
+// Do runs fn on the pinned worker.
+func (t *Thread) Do(ctx context.Context, fn func() error) error {
+	if t.onWorker() {
+		panic("mlxthreadtest.Thread.Do called from its pinned worker")
+	}
+	return t.worker.Do(ctx, fn)
+}
+
+// Stop shuts down the pinned worker after running cleanup on it.
+func (t *Thread) Stop(ctx context.Context, cleanup func()) error {
+	if t.onWorker() {
+		panic("mlxthreadtest.Thread.Stop called from its pinned worker")
+	}
+	return t.worker.Stop(ctx, cleanup)
+}
+
+func (t *Thread) onWorker() bool {
+	id := currentThreadID()
+	return id != 0 && id == t.id
+}
+
 // T is the subset of testing.T supported by MLX test bodies. Operations that
 // end a test are replayed by Run on the test goroutine so the MLX worker remains
 // alive.
@@ -31,16 +75,49 @@ type testReporter interface {
 	Logf(string, ...any)
 }
 
-// Run executes fn on thread.
-func Run(t *testing.T, thread *mlxthread.Thread, fn func(*T)) {
+// Run executes fn on thread. The callback must use its T argument; calling
+// FailNow or SkipNow on a captured *testing.T terminates the pinned worker.
+func Run(t *testing.T, thread *Thread, fn func(*T)) {
 	t.Helper()
+	if thread.onWorker() {
+		panic("mlxthreadtest.Run called recursively from its pinned worker")
+	}
 
 	mt := &T{testReporter: t}
-	if err := thread.Do(context.Background(), func() error {
-		mt.run(fn)
-		return nil
-	}); err != nil {
-		t.Fatal(err)
+	result := make(chan runResult, 1)
+	go func() {
+		defer func() {
+			if v := recover(); v != nil {
+				result <- runResult{panicValue: v}
+			}
+		}()
+		err := thread.Do(context.Background(), func() error {
+			returned := false
+			defer func() {
+				if v := recover(); v != nil {
+					panic(v)
+				}
+				if !returned {
+					result <- runResult{goexit: true}
+				}
+			}()
+
+			mt.run(fn)
+			returned = true
+			return nil
+		})
+		result <- runResult{err: err}
+	}()
+
+	res := <-result
+	if res.goexit {
+		panic("pinned test body called runtime.Goexit; use the test value passed to the callback")
+	}
+	if res.panicValue != nil {
+		panic(res.panicValue)
+	}
+	if res.err != nil {
+		t.Fatal(res.err)
 	}
 	if mt.skipped {
 		t.SkipNow()
@@ -48,6 +125,12 @@ func Run(t *testing.T, thread *mlxthread.Thread, fn func(*T)) {
 	if mt.aborted {
 		t.FailNow()
 	}
+}
+
+type runResult struct {
+	err        error
+	panicValue any
+	goexit     bool
 }
 
 // Cleanup registers fn to run on the MLX thread after the current body.
@@ -98,16 +181,17 @@ func (t *T) Skipped() bool {
 }
 
 func (t *T) run(fn func(*T)) {
-	var panicValue any
-	func() {
-		defer func() {
-			if v := recover(); v != nil && v != abortPanic {
-				panicValue = v
-			}
-		}()
-		fn(t)
+	defer func() {
+		if v := recover(); v != nil && v != abortPanic {
+			panic(v)
+		}
 	}()
+	defer t.runCleanups()
+	fn(t)
+}
 
+func (t *T) runCleanups() {
+	var panicValue any
 	for len(t.cleanups) > 0 {
 		last := len(t.cleanups) - 1
 		cleanup := t.cleanups[last]
@@ -121,7 +205,6 @@ func (t *T) run(fn func(*T)) {
 			cleanup()
 		}()
 	}
-
 	if panicValue != nil {
 		panic(panicValue)
 	}

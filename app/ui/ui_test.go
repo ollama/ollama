@@ -14,7 +14,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/app/store"
@@ -998,7 +997,7 @@ func TestSettingsToggleAutoUpdateOn_WithPendingUpdate_ShowsNotification(t *testi
 	}
 }
 
-func TestSettingsToggleAutoUpdateOn_NoPendingUpdate_TriggersCheck(t *testing.T) {
+func TestSettingsToggleAutoUpdateOn_NoPendingUpdate_DoesNotNotify(t *testing.T) {
 	testStore := &store.Store{
 		DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
 	}
@@ -1027,18 +1026,6 @@ func TestSettingsToggleAutoUpdateOn_NoPendingUpdate_TriggersCheck(t *testing.T) 
 		DBPath: filepath.Join(t.TempDir(), "db2.sqlite"),
 	}}
 	defer upd.Store.Close()
-
-	// Start the checker so TriggerImmediateCheck has a queue.
-	ctx, cancel := context.WithCancel(t.Context())
-	checkerDone := upd.StartBackgroundUpdaterChecker(ctx, func(string) error { return nil })
-	defer func() {
-		cancel()
-		select {
-		case <-checkerDone:
-		case <-time.After(10 * time.Second):
-			t.Error("background update checker did not stop")
-		}
-	}()
 
 	var notificationCalled atomic.Bool
 	server := &Server{
