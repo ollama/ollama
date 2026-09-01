@@ -1,6 +1,7 @@
 package convert
 
 import (
+	"log/slog"
 	"slices"
 	"strings"
 
@@ -67,7 +68,11 @@ func (q *qwen3Model) KV(t *Tokenizer) KV {
 	case "mrope", "default":
 		kv["rope.mrope_section"] = q.RopeScaling.MropeSection
 	default:
-		panic("unknown rope scaling type")
+		// RopeScaling.Type comes from attacker-controlled config.json.
+		// An unrecognized value is unknown metadata, not a security
+		// boundary, so skip it instead of panicking and crashing the
+		// (unrecovered) conversion goroutine.
+		slog.Warn("unknown rope scaling type, ignoring", "type", q.RopeScaling.Type)
 	}
 	return kv
 }
