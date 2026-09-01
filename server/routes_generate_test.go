@@ -2502,6 +2502,44 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 		"The answer is 4.",
 		true)
 
+	testChatRequest(t, "flushes partial closing tag at end of stream",
+		"Think until the response ends",
+		"unfinished reasoning</",
+		"unfinished reasoning</",
+		"",
+		true)
+
+	t.Run("generate flushes partial closing tag at end of stream", func(t *testing.T) {
+		mock.CompletionFn = func(_ context.Context, _ llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
+			fn(llm.CompletionResponse{Content: "unfinished reasoning</"})
+			fn(llm.CompletionResponse{Done: true, DoneReason: llm.DoneReasonStop})
+			return nil
+		}
+
+		think := true
+		noStream := false
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:  "test-thinking",
+			Prompt: "Think until the response ends",
+			Think:  &api.ThinkValue{Value: think},
+			Stream: &noStream,
+		})
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", w.Code)
+		}
+
+		var resp api.GenerateResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		if resp.Thinking != "unfinished reasoning</" {
+			t.Errorf("expected thinking %q, got %q", "unfinished reasoning</", resp.Thinking)
+		}
+		if resp.Response != "" {
+			t.Errorf("expected empty content, got %q", resp.Response)
+		}
+	})
+
 	// Test streaming response with template-added <think>
 	t.Run("streaming with thinking", func(t *testing.T) {
 		var wg sync.WaitGroup
