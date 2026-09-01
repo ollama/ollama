@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -77,6 +78,7 @@ type Model struct {
 	License            []string
 	Digest             string
 	Options            map[string]any
+	GenerationDefaults model.GenerationDefaults
 	Messages           []api.Message
 
 	Template *template.Template
@@ -91,6 +93,47 @@ func (m *Model) IsMLX() bool {
 
 func (m *Model) isGGUF() bool {
 	return m.Config.ModelFormat == "" || m.Config.ModelFormat == "gguf"
+}
+
+func generationDefaultsFromGGUF(f *gguf.File) model.GenerationDefaults {
+	return model.ParseGGUFGenerationDefaults(
+		func(key string) (int64, bool) {
+			return ggufIntGenerationDefault(f.KeyValue(key))
+		},
+		func(key string) (float64, bool) {
+			return ggufFloatGenerationDefault(f.KeyValue(key))
+		},
+	)
+}
+
+func ggufIntGenerationDefault(kv gguf.KeyValue) (int64, bool) {
+	if value, ok := kv.IntOK(); ok {
+		return value, true
+	}
+	if value, ok := kv.UintOK(); ok {
+		if value > math.MaxInt64 {
+			return 0, false
+		}
+		return int64(value), true
+	}
+	if value, ok := kv.FloatOK(); ok {
+		// Match api.Options.FromMap; rounding may be better for near-integers.
+		return int64(value), true
+	}
+	return 0, false
+}
+
+func ggufFloatGenerationDefault(kv gguf.KeyValue) (float64, bool) {
+	if value, ok := kv.FloatOK(); ok {
+		return value, true
+	}
+	if value, ok := kv.IntOK(); ok {
+		return float64(value), true
+	}
+	if value, ok := kv.UintOK(); ok {
+		return float64(value), true
+	}
+	return 0, false
 }
 
 func appendCapability(capabilities []model.Capability, capability model.Capability) []model.Capability {
@@ -703,6 +746,7 @@ func GetModel(name string) (*Model, error) {
 		if err := json.NewDecoder(configFile).Decode(&m.Config); err != nil {
 			return nil, err
 		}
+		m.GenerationDefaults = m.Config.GenerationDefaults
 	}
 
 	modelHasPooling := false
@@ -726,6 +770,7 @@ func GetModel(name string) (*Model, error) {
 				ggufChatTemplate = f.KeyValue("tokenizer.chat_template").String()
 				m.HasChatTemplate = ggufChatTemplate != ""
 				modelHasPooling = f.KeyValue("pooling_type").Valid()
+				m.GenerationDefaults = generationDefaultsFromGGUF(f)
 				f.Close()
 			}
 		case manifest.MediaTypeImageDraft:
