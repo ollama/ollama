@@ -32,6 +32,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/app/codexproxy"
 	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
@@ -1839,6 +1840,11 @@ func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 }
 
 func (s *Server) GenerateRoutes() (http.Handler, error) {
+	codexProxyHandler, err := newCodexProxyHandler()
+	if err != nil {
+		return nil, err
+	}
+
 	corsConfig := cors.DefaultConfig()
 	corsConfig.AllowWildcard = true
 	corsConfig.AllowBrowserExtensions = true
@@ -1879,6 +1885,7 @@ func (s *Server) GenerateRoutes() (http.Handler, error) {
 	r.HEAD("/api/version", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"version": version.Version}) })
 	r.GET("/api/version", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"version": version.Version}) })
 	r.GET("/api/status", s.StatusHandler)
+	r.Any(codexproxy.PathPrefix+"/*path", gin.WrapH(codexProxyHandler))
 
 	// Local model cache management (new implementation is at end of function)
 	r.POST("/api/pull", s.PullHandler)

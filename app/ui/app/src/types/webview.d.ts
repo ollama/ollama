@@ -80,6 +80,7 @@ interface CodexDesktopActionResult {
 interface CodexDesktopModelsSettings {
   supported: boolean;
   installed: boolean;
+  connected: boolean;
   running: boolean;
   selected: string[];
   available: string[];

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"testing"
 	"time"
 
@@ -39,6 +40,7 @@ func (f *fakeCodexDesktopController) Running() bool { return f.running }
 func (f *fakeCodexDesktopController) OllamaRequestCount() uint64 {
 	return f.requests
 }
+
 func (f *fakeCodexDesktopController) UseOllamaFromDesktop(primary string, models []launch.LaunchModel) error {
 	names := codexDesktopModelNames(models)
 	f.launches = append(f.launches, names)
@@ -310,8 +312,8 @@ func TestCodexDesktopDefaultModelsUsesEligibleRecommendationsInEndpointOrder(t *
 	}
 
 	got := codexDesktopModelNames(codexDesktopDefaultModels(inventory))
-	want := []string{"glm-5.3-flash:cloud", "llama3.1:latest", "kimi-k2.7-code:cloud"}
-	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+	want := []string{"glm-5.3-flash:cloud", "llama3.1:latest"}
+	if !slices.Equal(got, want) {
 		t.Fatalf("default models = %v, want eligible preferred defaults %v", got, want)
 	}
 }
@@ -411,7 +413,7 @@ func TestLoadCodexDesktopModelsHydratesAccountOnlyCloudCapabilities(t *testing.T
 		case "/api/tags":
 			_, _ = w.Write([]byte(`{"models":[]}`))
 		case "/api/show":
-			_, _ = w.Write([]byte(`{"capabilities":["completion","thinking","tools","vision"]}`))
+			_, _ = w.Write([]byte(`{"capabilities":["completion","thinking","tools","vision"],"details":{"family":"glm5_next"}}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -443,6 +445,9 @@ func TestLoadCodexDesktopModelsHydratesAccountOnlyCloudCapabilities(t *testing.T
 	}
 	if !models[0].HasCapability(modelpkg.CapabilityThinking) {
 		t.Fatalf("capabilities = %v, want thinking from /api/show", models[0].Capabilities)
+	}
+	if models[0].Details.Family != "glm5_next" {
+		t.Fatalf("family = %q, want model metadata from /api/show", models[0].Details.Family)
 	}
 }
 

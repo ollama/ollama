@@ -645,7 +645,7 @@ describe("Onboarding", () => {
     expect(html.indexOf("Use Ollama models in Claude Desktop")).toBeLessThan(
       html.indexOf(">ChatGPT</p>"),
     );
-    expect(html).toContain('aria-label="Use Ollama models in ChatGPT"');
+    expect(html).toContain('aria-label="Add Ollama models to ChatGPT"');
     expect(html).not.toContain('aria-label="Copy ChatGPT command"');
     expect(html).toContain('aria-label="Copy Codex command"');
   });

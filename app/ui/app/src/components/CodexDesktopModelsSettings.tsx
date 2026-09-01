@@ -195,6 +195,7 @@ export function CodexDesktopModelsSettings({
   const [loading, setLoading] = useState(!initialSettings);
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const draftRef = useRef({ selected, saved });
   draftRef.current = { selected, saved };
 
@@ -215,7 +216,12 @@ export function CodexDesktopModelsSettings({
   );
 
   const refresh = useCallback(async () => {
-    if (!window.getCodexDesktopModelsSettings || applying) return;
+    if (applying) return;
+    if (!window.getCodexDesktopModelsSettings) {
+      setError("ChatGPT model settings are unavailable in this Ollama build.");
+      setLoading(false);
+      return;
+    }
     try {
       applyResult(await window.getCodexDesktopModelsSettings(), true);
     } catch {
@@ -266,7 +272,7 @@ export function CodexDesktopModelsSettings({
     if (
       settings?.running &&
       !window.confirm(
-        "Restart ChatGPT to apply these Ollama models? Your account, chats, plugins, and skills will stay in the same profile. Codex CLI and IDE will also use this shared configuration while Ollama is enabled. Any running task will stop.",
+        `${settings.connected ? "Restart ChatGPT to update its Ollama models?" : "Restart ChatGPT to add Ollama models?"} Your ChatGPT profile will remain available. Any running task will stop.`,
       )
     ) {
       return;
@@ -274,6 +280,7 @@ export function CodexDesktopModelsSettings({
 
     setApplying(true);
     setError(null);
+    setNotice(null);
     try {
       const result = await window.applyCodexDesktopModels(selected);
       if (result.error) {
@@ -282,6 +289,7 @@ export function CodexDesktopModelsSettings({
         return;
       }
       applyResult(result);
+      setNotice("Your selected Ollama models are ready in ChatGPT.");
     } catch {
       setError("Ollama could not apply the ChatGPT models.");
     } finally {
@@ -289,7 +297,10 @@ export function CodexDesktopModelsSettings({
     }
   };
 
-  if (!settings?.supported && !loading) return null;
+  if (!settings?.supported && !loading && !error) return null;
+
+  const connected = settings?.connected ?? false;
+  const busy = applying;
 
   return (
     <div
@@ -314,34 +325,39 @@ export function CodexDesktopModelsSettings({
                 ChatGPT
               </h2>
               <p className="mt-1 text-base/6 text-zinc-500 sm:text-sm/6 dark:text-zinc-400">
-                Replace ChatGPT's OpenAI model list with up to {maxModels}{" "}
-                Ollama models. Your existing profile stays signed in. Codex CLI
-                and IDE share this configuration while Ollama is enabled.
+                Choose up to {maxModels} Ollama models to use in ChatGPT.
               </p>
             </div>
-            <Button
-              type="button"
-              color="white"
-              onClick={() => void applyChanges()}
-              disabled={
-                loading ||
-                applying ||
-                selected.length === 0 ||
-                (settings?.running && !hasChanges)
-              }
-              className="shrink-0"
-            >
-              {applying && (
-                <ArrowPathIcon data-slot="icon" className="animate-spin" />
-              )}
-              {applying
-                ? settings?.running
-                  ? "Restarting…"
-                  : "Starting…"
-                : settings?.running
-                  ? "Save & restart ChatGPT"
-                  : "Save & start ChatGPT"}
-            </Button>
+            <div className="shrink-0">
+              <Button
+                type="button"
+                color="white"
+                onClick={() => void applyChanges()}
+                disabled={
+                  loading ||
+                  busy ||
+                  selected.length === 0 ||
+                  (connected && settings?.running && !hasChanges)
+                }
+              >
+                {applying && (
+                  <ArrowPathIcon data-slot="icon" className="animate-spin" />
+                )}
+                {applying
+                  ? settings?.running
+                    ? "Restarting…"
+                    : "Starting…"
+                  : connected
+                    ? settings?.running
+                      ? "Save & restart ChatGPT"
+                      : hasChanges
+                        ? "Save & start ChatGPT"
+                        : "Start ChatGPT"
+                    : settings?.running
+                      ? "Save & restart ChatGPT"
+                      : "Save & start ChatGPT"}
+              </Button>
+            </div>
           </div>
 
           <div className="mt-4 w-full max-w-xl">
@@ -352,24 +368,33 @@ export function CodexDesktopModelsSettings({
               >
                 <PopoverButton
                   aria-label="Add ChatGPT model"
-                  disabled={loading || applying}
+                  disabled={loading || busy}
                   className="absolute inset-0 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed"
                 >
                   <span className="sr-only">Choose ChatGPT models</span>
                 </PopoverButton>
                 <div className="pointer-events-none relative z-10 flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
                   {selected.map((model) => (
-                    <button
+                    <span
                       key={model}
-                      type="button"
-                      aria-label={`Remove ${model}`}
-                      disabled={applying}
-                      onClick={() => toggleModel(model)}
-                      className="pointer-events-auto inline-flex max-w-full items-center gap-1 rounded-md bg-neutral-200/70 px-2 py-1 text-sm text-neutral-700 hover:bg-neutral-200 disabled:opacity-50 dark:bg-neutral-600 dark:text-neutral-100 dark:hover:bg-neutral-500"
+                      className="pointer-events-none inline-flex max-w-full items-stretch overflow-hidden rounded-md bg-neutral-200/70 text-sm text-neutral-700 dark:bg-neutral-600 dark:text-neutral-100"
                     >
-                      <span className="truncate">{model}</span>
-                      <XMarkIcon className="h-3.5 w-3.5 shrink-0" />
-                    </button>
+                      <span className="min-w-0 py-1 pl-2 pr-1">
+                        <span className="block truncate">{model}</span>
+                      </span>
+                      <button
+                        type="button"
+                        aria-label={`Remove ${model}`}
+                        disabled={busy}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          toggleModel(model);
+                        }}
+                        className="pointer-events-auto inline-flex shrink-0 items-center px-1.5 hover:bg-neutral-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 dark:hover:bg-neutral-500"
+                      >
+                        <XMarkIcon className="h-3.5 w-3.5" />
+                      </button>
+                    </span>
                   ))}
                   {selected.length === 0 && (
                     <span className="px-1 py-1 text-sm text-neutral-400">
@@ -399,6 +424,14 @@ export function CodexDesktopModelsSettings({
               className="mt-3 w-full max-w-xl text-xs leading-5 text-red-600 dark:text-red-400"
             >
               {error}
+            </p>
+          )}
+          {!error && notice && (
+            <p
+              role="status"
+              className="mt-3 w-full max-w-xl text-xs leading-5 text-neutral-500 dark:text-neutral-400"
+            >
+              {notice}
             </p>
           )}
         </div>

@@ -38,21 +38,18 @@ function CodexIcon({ integration }: { integration: IntegrationStatus }) {
   );
 }
 
-export function codexDesktopDescription(
-  status: CodexDesktopStatus | null,
-  integration: IntegrationStatus,
-): string {
+function codexDesktopDescription(status: CodexDesktopStatus | null): string {
   if (!status?.installed && !status?.connected) {
     return "Install ChatGPT to use Ollama models in the Codex app.";
   }
-  if (!status.connected) return integration.description;
+  if (!status.connected) return "Codex models · Ollama models not added";
   const modelCount = status.models?.length ?? (status.model ? 1 : 0);
   const requestCount = status.requests ?? 0;
-  const requests = `${requestCount} ${requestCount === 1 ? "request" : "requests"} this session`;
+  const requests = `${requestCount} Ollama ${requestCount === 1 ? "request" : "requests"} this session`;
   if (modelCount > 0) {
-    return `Using Ollama · ${modelCount} ${modelCount === 1 ? "model" : "models"} · ${requests}`;
+    return `Codex + Ollama · ${modelCount} Ollama ${modelCount === 1 ? "model" : "models"} · ${requests}`;
   }
-  return `Using Ollama · ${requests}`;
+  return `Codex + Ollama · ${requests}`;
 }
 
 export function CodexDesktopRow({
@@ -64,6 +61,7 @@ export function CodexDesktopRow({
   );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const refreshStatus = useCallback(async () => {
     if (!window.getCodexDesktopStatus) return;
@@ -71,6 +69,7 @@ export function CodexDesktopRow({
       const next = await window.getCodexDesktopStatus();
       setStatus(next);
       setError(null);
+      setNotice(null);
     } catch {
       setError("Ollama could not read the ChatGPT connection status.");
     }
@@ -117,7 +116,7 @@ export function CodexDesktopRow({
   const installed = status?.installed ?? integration.installed ?? false;
 
   const toggleConnection = async () => {
-    if (pending || !installed) return;
+    if (pending || (!installed && !connected)) return;
     if (!window.setCodexDesktopConnected) {
       setError("The ChatGPT integration is unavailable.");
       return;
@@ -128,14 +127,15 @@ export function CodexDesktopRow({
       status?.running &&
       !window.confirm(
         enabled
-          ? "Restart ChatGPT to use Ollama models? Your account, chats, plugins, and skills will stay in the same profile. Codex CLI and IDE will also use this shared configuration while Ollama is enabled. Any running task will stop."
-          : "Restart ChatGPT to restore its previous OpenAI provider and model list? Any running task will stop.",
+          ? "Restart ChatGPT to add Ollama models? Codex models, your account, chats, plugins, and skills will remain available. Any running task will stop."
+          : "Restart ChatGPT and remove the Ollama models? Codex models, your account, chats, plugins, and skills will remain available. Any running task will stop.",
       )
     ) {
       return;
     }
     setPending(true);
     setError(null);
+    setNotice(null);
     try {
       const result: CodexDesktopActionResult =
         await window.setCodexDesktopConnected(enabled);
@@ -145,11 +145,16 @@ export function CodexDesktopRow({
         setError(result.error);
         return;
       }
+      setNotice(
+        enabled
+          ? "Ollama models added alongside Codex models"
+          : "Ollama models removed · Codex models remain available",
+      );
     } catch {
       setError(
         enabled
-          ? "Ollama could not switch ChatGPT to Ollama models."
-          : "Ollama could not restore ChatGPT's OpenAI models.",
+          ? "Ollama could not add its models to ChatGPT."
+          : "Ollama could not remove its models from ChatGPT.",
       );
     } finally {
       setPending(false);
@@ -165,10 +170,10 @@ export function CodexDesktopRow({
             {integration.name}
           </p>
           <p
-            role={error ? "alert" : undefined}
+            role={error ? "alert" : notice ? "status" : undefined}
             className="truncate text-xs leading-5 text-neutral-500 dark:text-neutral-400"
           >
-            {error ?? codexDesktopDescription(status, integration)}
+            {error ?? notice ?? codexDesktopDescription(status)}
           </p>
         </div>
       </div>
@@ -180,7 +185,7 @@ export function CodexDesktopRow({
             className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-neutral-500 dark:text-neutral-400"
           >
             <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
-            {connected ? "Closing…" : "Opening…"}
+            Updating…
           </span>
         )}
         <button
@@ -190,14 +195,14 @@ export function CodexDesktopRow({
           aria-busy={pending || undefined}
           aria-label={
             connected
-              ? "Restore OpenAI models in ChatGPT"
-              : "Use Ollama models in ChatGPT"
+              ? "Remove Ollama models from ChatGPT"
+              : "Add Ollama models to ChatGPT"
           }
           title={
             connected
-              ? "Restore OpenAI"
+              ? "Remove Ollama models"
               : installed
-                ? "Use Ollama"
+                ? "Add Ollama models"
                 : "Not installed"
           }
           disabled={pending || (!installed && !connected)}
