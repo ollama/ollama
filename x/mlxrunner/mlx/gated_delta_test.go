@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"testing"
+
+	"github.com/ollama/ollama/x/internal/mlxthreadtest"
 )
 
 type gatedDeltaTestGeometry struct {
@@ -36,13 +38,12 @@ func gatedDeltaReference(in gatedDeltaTestInputs, captureAll bool) (y, nextState
 // metal::exp a float ulp apart, which after bf16 rounding leaves rare
 // differing inputs (beta sigmoid at -6.84375); the lattice here avoids them.
 func TestGatedDeltaMatchesGraph(t *testing.T) {
-	skipIfNoMLX(t)
-	withMLXThread(t, func() {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
 		testGatedDeltaMatchesGraph(t)
 	})
 }
 
-func testGatedDeltaMatchesGraph(t *testing.T) {
+func testGatedDeltaMatchesGraph(t *mlxthreadtest.T) {
 	geometries := []gatedDeltaTestGeometry{
 		{Hk: 16, Dk: 128, Hv: 32, Dv: 128},
 		{Hk: 4, Dk: 64, Hv: 8, Dv: 32},
@@ -76,15 +77,14 @@ func testGatedDeltaMatchesGraph(t *testing.T) {
 }
 
 func TestGatedDeltaGraphRouting(t *testing.T) {
-	skipIfNoMLX(t)
-	withMLXThread(t, func() {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
 		testGatedDeltaGraphRouting(t)
 	})
 }
 
 // Contract misses — T beyond the kernel cap and a float32 packed input —
 // run the same step as graph ops.
-func testGatedDeltaGraphRouting(t *testing.T) {
+func testGatedDeltaGraphRouting(t *mlxthreadtest.T) {
 	g := gatedDeltaTestGeometry{Hk: 4, Dk: 64, Hv: 8, Dv: 32}
 
 	check := func(name string, in gatedDeltaTestInputs, captureAll bool) {
@@ -144,14 +144,13 @@ func scaledGatedDeltaRow(base gatedDeltaTestInputs, scale float32) gatedDeltaTes
 }
 
 func TestGatedDeltaBatchedRows(t *testing.T) {
-	skipIfNoMLX(t)
-	withMLXThread(t, func() {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
 		testGatedDeltaBatchedRows(t)
 	})
 }
 
 // Each batched row must match its own single-row launch bit-for-bit.
-func testGatedDeltaBatchedRows(t *testing.T) {
+func testGatedDeltaBatchedRows(t *mlxthreadtest.T) {
 	g := gatedDeltaTestGeometry{Hk: 4, Dk: 64, Hv: 8, Dv: 32}
 	for _, T := range []int{1, 5, 11} {
 		rows := []gatedDeltaTestInputs{gatedDeltaTestInputs36(g, T)}
@@ -181,8 +180,7 @@ func testGatedDeltaBatchedRows(t *testing.T) {
 }
 
 func TestGatedDeltaRaggedRows(t *testing.T) {
-	skipIfNoMLX(t)
-	withMLXThread(t, func() {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
 		testGatedDeltaRaggedRows(t)
 	})
 }
@@ -191,7 +189,7 @@ func TestGatedDeltaRaggedRows(t *testing.T) {
 // ba tail poisoned to -inf — runs identity steps with zero output there: its
 // full output and final state must match a launch of only its real tokens
 // with zeros appended, while the full-length row is unaffected.
-func testGatedDeltaRaggedRows(t *testing.T) {
+func testGatedDeltaRaggedRows(t *mlxthreadtest.T) {
 	g := gatedDeltaTestGeometry{Hk: 4, Dk: 64, Hv: 8, Dv: 32}
 	const T, realLen = 6, 4
 	row0 := gatedDeltaTestInputs36(g, T)

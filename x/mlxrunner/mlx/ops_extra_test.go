@@ -3,14 +3,15 @@ package mlx
 import (
 	"math"
 	"testing"
+
+	"github.com/ollama/ollama/x/internal/mlxthreadtest"
 )
 
 // fp4Values decodes an fp4 (E2M1) code to its value.
 var fp4Values = [16]float32{0, 0.5, 1, 1.5, 2, 3, 4, 6, 0, -0.5, -1, -1.5, -2, -3, -4, -6}
 
 func TestDequantizeGlobalScale(t *testing.T) {
-	skipIfNoMLX(t)
-	withMLXThread(t, func() {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
 		testDequantizeGlobalScale(t)
 	})
 }
@@ -18,7 +19,7 @@ func TestDequantizeGlobalScale(t *testing.T) {
 // The quantized payload is built directly, the way an nvfp4 checkpoint ships
 // it: packed fp4 codes, e4m3 group-scale bytes, and a separate global scale.
 // Only the dequantize consumer path runs, so expectations are exact.
-func testDequantizeGlobalScale(t *testing.T) {
+func testDequantizeGlobalScale(t *mlxthreadtest.T) {
 	const rows, cols, group = 4, 64, 16
 	// Every group cycles through all 16 codes; group g of row r has scale
 	// 2^((r+g)%4-1), a power of two so every expected product is exact.
