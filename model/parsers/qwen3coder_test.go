@@ -1,7 +1,9 @@
 package parsers
 
 import (
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
@@ -1238,5 +1240,74 @@ func TestOverlapFunction(t *testing.T) {
 				t.Errorf("overlap(%q, %q) = %d, want %d", tc.s, tc.delim, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestQwen3CoderParserStreamToolCallDeltas(t *testing.T) {
+	parser := Qwen3CoderParser{}
+	parser.Init(nil, nil, nil)
+	parser.SetStreamToolCalls(true)
+
+	_, _, calls, err := parser.Add("<tool_call><function=editor><parameter=new_string>\n", false)
+	if err != nil {
+		t.Fatalf("step 1: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("step 1: expected 1 delta, got %d", len(calls))
+	}
+	if calls[0].Function.Name != "editor" {
+		t.Fatalf("step 1: name=%q", calls[0].Function.Name)
+	}
+	if calls[0].Function.ArgumentsDelta == "" {
+		t.Fatal("step 1: expected arguments_delta")
+	}
+	if calls[0].Function.Index != 0 {
+		t.Fatalf("step 1: index=%d", calls[0].Function.Index)
+	}
+
+	body := strings.Repeat("x", streamToolCallDeltaMinBytes)
+	_, _, calls, err = parser.Add(body, false)
+	if err != nil {
+		t.Fatalf("step 2: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("step 2: expected 1 delta after growth, got %d", len(calls))
+	}
+	if !strings.Contains(calls[0].Function.ArgumentsDelta, body) {
+		t.Fatal("step 2: delta should include new body")
+	}
+
+	_, _, calls, err = parser.Add("\n</parameter></function></tool_call>", true)
+	if err != nil {
+		t.Fatalf("step 3: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("step 3: expected final call, got %d", len(calls))
+	}
+	if calls[0].Function.ArgumentsDelta != "" {
+		t.Fatalf("step 3: final should not have arguments_delta, got %q", calls[0].Function.ArgumentsDelta)
+	}
+	if calls[0].Function.Name != "editor" {
+		t.Fatalf("step 3: name=%q", calls[0].Function.Name)
+	}
+	got, ok := calls[0].Function.Arguments.Get("new_string")
+	if !ok {
+		t.Fatal("step 3: missing new_string argument")
+	}
+	if !strings.Contains(fmt.Sprint(got), "xxx") {
+		t.Fatalf("step 3: unexpected new_string=%v", got)
+	}
+}
+
+func TestQwen3CoderParserStreamToolCallsOffNoDeltas(t *testing.T) {
+	parser := Qwen3CoderParser{}
+	parser.Init(nil, nil, nil)
+
+	_, _, calls, err := parser.Add("<tool_call><function=editor><parameter=new_string>\n"+strings.Repeat("y", 300), false)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no partial calls with streaming off, got %d", len(calls))
 	}
 }

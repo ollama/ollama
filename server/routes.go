@@ -2398,7 +2398,13 @@ func writeChatResponse(c *gin.Context, req api.ChatRequest, ch chan any) {
 				sbContent.WriteString(t.Message.Content)
 				resp = t
 				if len(req.Tools) > 0 {
-					toolCalls = append(toolCalls, t.Message.ToolCalls...)
+					for _, tc := range t.Message.ToolCalls {
+						// Skip progressive deltas — only keep final assembled calls.
+						if tc.Function.ArgumentsDelta != "" {
+							continue
+						}
+						toolCalls = append(toolCalls, tc)
+					}
 				}
 				if len(t.Logprobs) > 0 {
 					allLogprobs = append(allLogprobs, t.Logprobs...)
@@ -2689,6 +2695,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			}
 			// Initialize parser and get processed tools
 			processedTools = builtinParser.Init(req.Tools, lastMessage, req.Think)
+			if req.StreamToolCalls != nil && *req.StreamToolCalls {
+				if setter, ok := builtinParser.(parsers.StreamToolCallsSetter); ok {
+					setter.SetStreamToolCalls(true)
+				}
+			}
 		}
 	}
 
@@ -2747,6 +2758,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		defer close(ch)
 
 		structuredOutputsState := structuredOutputsState_None
+		// Stable tool call IDs across progressive arguments_delta chunks.
+		streamedToolCallIDs := map[int]string{}
 
 		for {
 			var tb strings.Builder
@@ -2817,7 +2830,14 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					res.Message.Content = content
 					res.Message.Thinking = thinking
 					for i := range toolCalls {
-						toolCalls[i].ID = toolCallId()
+						idx := toolCalls[i].Function.Index
+						if id, ok := streamedToolCallIDs[idx]; ok {
+							toolCalls[i].ID = id
+						} else {
+							id := toolCallId()
+							streamedToolCallIDs[idx] = id
+							toolCalls[i].ID = id
+						}
 					}
 					res.Message.ToolCalls = toolCalls
 
