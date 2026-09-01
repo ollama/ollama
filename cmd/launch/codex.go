@@ -30,6 +30,7 @@ const (
 	codexRootModelKey            = "model"
 	codexRootModelProviderKey    = "model_provider"
 	codexRootModelCatalogJSONKey = "model_catalog_json"
+	codexRootOpenAIBaseURLKey    = "openai_base_url"
 )
 
 func (c *Codex) args(model, modelCatalogPath string, extra []string) ([]string, error) {

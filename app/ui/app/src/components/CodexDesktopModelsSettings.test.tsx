@@ -107,6 +107,7 @@ function settings(overrides: Partial<ModelsSettings> = {}): ModelsSettings {
   return {
     supported: true,
     installed: true,
+    connected: false,
     running: false,
     selected: available.slice(0, 5),
     available,
@@ -120,6 +121,27 @@ afterEach(() => {
 });
 
 describe("CodexDesktopModelsSettings", () => {
+  it("stops loading and explains when the native settings bridge is unavailable", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(<CodexDesktopModelsSettings />);
+      });
+
+      expect(textContent(renderer!.root)).toContain(
+        "ChatGPT model settings are unavailable in this Ollama build.",
+      );
+      expect(textContent(renderer!.root)).not.toContain("Loading models…");
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  });
+
   it("treats null native model arrays as empty", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("window", {
@@ -161,7 +183,7 @@ describe("CodexDesktopModelsSettings", () => {
 
       expect(textContent(renderer!.root)).toContain("ChatGPT");
       expect(textContent(renderer!.root)).toContain(
-        "Replace ChatGPT's OpenAI model list with up to 5 Ollama models. Your existing profile stays signed in. Codex CLI and IDE share this configuration while Ollama is enabled.",
+        "Choose up to 5 Ollama models to use in ChatGPT.",
       );
       expect(textContent(renderer!.root)).not.toContain("5 of 5 selected");
       expect(
@@ -291,7 +313,7 @@ describe("CodexDesktopModelsSettings", () => {
   it("removes a model and applies the remaining selection", async () => {
     const next = available.slice(0, 4);
     const apply = vi.fn().mockResolvedValue({
-      settings: settings({ selected: next, running: true }),
+      settings: settings({ connected: true, selected: next, running: true }),
     });
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("window", {
@@ -309,12 +331,15 @@ describe("CodexDesktopModelsSettings", () => {
         );
       });
       await act(async () => {
+        const stopPropagation = vi.fn();
         renderer!.root
           .findByProps({
             "aria-label": `Remove ${available[4]}`,
           })
-          .props.onClick();
+          .props.onClick({ stopPropagation });
+        expect(stopPropagation).toHaveBeenCalledOnce();
       });
+      expect(renderer!.root.findAllByProps({ role: "option" })).toHaveLength(0);
       expect(textContent(renderer!.root)).not.toContain("4 of 5 selected");
 
       const applyButton = renderer!.root
@@ -356,7 +381,7 @@ describe("CodexDesktopModelsSettings", () => {
           .findByProps({
             "aria-label": `Remove ${available[4]}`,
           })
-          .props.onClick();
+          .props.onClick({ stopPropagation: vi.fn() });
       });
       const applyButton = renderer!.root
         .findAllByType("button")
@@ -364,12 +389,118 @@ describe("CodexDesktopModelsSettings", () => {
           textContent(button).includes("Save & restart ChatGPT"),
         );
       if (!applyButton) throw new Error("Apply button not found");
+      expect(Boolean(applyButton.props.disabled)).toBe(false);
       await act(async () => {
         await applyButton.props.onClick();
       });
 
       expect(window.confirm).toHaveBeenCalledOnce();
       expect(apply).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  });
+
+  it("uses a single save action without a separate removal button", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopModelsSettings
+            initialSettings={settings({ connected: true, running: true })}
+          />,
+        );
+      });
+      const content = textContent(renderer!.root);
+      expect(content).toContain("Save & restart ChatGPT");
+      expect(content).not.toContain("Remove Ollama models");
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  });
+
+  it("keeps pill bodies on the field trigger and reserves removal for the x", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopModelsSettings initialSettings={settings()} />,
+        );
+      });
+
+      const pill = renderer!.root.findAllByType("span").find(
+        (node) =>
+          textContent(node) === available[0] &&
+          String(node.props.className).includes("pointer-events-none inline-flex"),
+      );
+      if (!pill) throw new Error("Selected model pill not found");
+      expect(
+        renderer!.root
+          .findAllByType("button")
+          .filter((button) => textContent(button) === available[0]),
+      ).toHaveLength(0);
+      expect(pill.findAllByType("button")).toHaveLength(1);
+      expect(pill.findByType("button").props["aria-label"]).toBe(
+        `Remove ${available[0]}`,
+      );
+
+      const fieldTrigger = renderer!.root
+        .findAllByProps({ "aria-label": "Add ChatGPT model" })
+        .find((node) => node.type === "button");
+      if (!fieldTrigger) throw new Error("Model field trigger not found");
+      await act(async () => {
+        fieldTrigger.props.onClick({});
+      });
+
+      expect(renderer!.root.findAllByProps({ role: "option" })).toHaveLength(
+        available.length,
+      );
+      expect(
+        renderer!.root.findAllByProps({
+          "aria-label": `Remove ${available[0]}`,
+        }),
+      ).toHaveLength(1);
+      expect(
+        renderer!.root.findAllByProps({ role: "option" }).filter(
+          (option) => option.props["aria-selected"] === true,
+        ),
+      ).toHaveLength(5);
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  });
+
+  it("does not show an Ollama approval control", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopModelsSettings initialSettings={settings()} />,
+        );
+      });
+
+      expect(textContent(renderer!.root)).not.toContain("Approve for me");
+      expect(
+        renderer!.root.findAllByProps({ "aria-label": "Approve for me" }),
+      ).toHaveLength(0);
     } finally {
       await act(async () => renderer?.unmount());
     }

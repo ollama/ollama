@@ -1,8 +1,14 @@
 import type { IntegrationStatus } from "@/api";
 import type { CodexDesktopStatus } from "@/types/webview";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { act, create } from "react-test-renderer";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CodexDesktopRow } from "./CodexDesktopRow";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 const integration: IntegrationStatus = {
   id: "chatgpt",
@@ -31,8 +37,8 @@ describe("CodexDesktopRow", () => {
     );
 
     expect(html).toContain(">ChatGPT</p>");
-    expect(html).toContain("Use Ollama models in ChatGPT");
-    expect(html).toContain('aria-label="Use Ollama models in ChatGPT"');
+    expect(html).toContain("Codex models · Ollama models not added");
+    expect(html).toContain('aria-label="Add Ollama models to ChatGPT"');
     expect(html).toContain('aria-checked="false"');
   });
 
@@ -48,8 +54,10 @@ describe("CodexDesktopRow", () => {
       />,
     );
 
-    expect(html).toContain("Using Ollama · 3 models · 0 requests this session");
-    expect(html).toContain('aria-label="Restore OpenAI models in ChatGPT"');
+    expect(html).toContain(
+      "Codex + Ollama · 3 Ollama models · 0 Ollama requests this session",
+    );
+    expect(html).toContain('aria-label="Remove Ollama models from ChatGPT"');
     expect(html).toContain('aria-checked="true"');
   });
 
@@ -64,10 +72,12 @@ describe("CodexDesktopRow", () => {
       />,
     );
 
-    expect(html).toContain("Using Ollama · 1 model · 0 requests this session");
+    expect(html).toContain(
+      "Codex + Ollama · 1 Ollama model · 0 Ollama requests this session",
+    );
   });
 
-  it("shows the ChatGPT request count with singular copy", () => {
+  it("shows the Ollama request count with singular copy", () => {
     const html = renderToStaticMarkup(
       <CodexDesktopRow
         integration={integration}
@@ -79,7 +89,9 @@ describe("CodexDesktopRow", () => {
       />,
     );
 
-    expect(html).toContain("Using Ollama · 1 model · 1 request this session");
+    expect(html).toContain(
+      "Codex + Ollama · 1 Ollama model · 1 Ollama request this session",
+    );
   });
 
   it("disables the toggle when ChatGPT is not installed", () => {
@@ -96,7 +108,7 @@ describe("CodexDesktopRow", () => {
     expect(html).toContain('disabled=""');
   });
 
-  it("allows the normal profile to be restored if ChatGPT is removed", () => {
+  it("allows the normal profile to be restored if ChatGPT is removed", async () => {
     const html = renderToStaticMarkup(
       <CodexDesktopRow
         integration={{ ...integration, installed: false }}
@@ -104,7 +116,40 @@ describe("CodexDesktopRow", () => {
       />,
     );
 
-    expect(html).toContain('aria-label="Restore OpenAI models in ChatGPT"');
+    expect(html).toContain('aria-label="Remove Ollama models from ChatGPT"');
     expect(html).not.toContain('disabled=""');
+
+    const restore = vi.fn().mockResolvedValue({
+      status: status({ installed: false, connected: false }),
+    });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      setCodexDesktopConnected: restore,
+      confirm: vi.fn(() => true),
+    });
+
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopRow
+            integration={{ ...integration, installed: false }}
+            initialStatus={status({ installed: false, connected: true })}
+          />,
+        );
+      });
+      const restoreButton = renderer!.root.findByProps({
+        "aria-label": "Remove Ollama models from ChatGPT",
+      });
+      await act(async () => {
+        await restoreButton.props.onClick();
+      });
+
+      expect(restore).toHaveBeenCalledWith(false);
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
   });
 });

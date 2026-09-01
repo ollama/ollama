@@ -1159,11 +1159,11 @@ didCompleteWithError:(NSError *)error {
         [restartAlert setAlertStyle:NSAlertStyleWarning];
         [restartAlert setIcon:ollamaApplicationIcon()];
         [restartAlert setMessageText:enabled
-            ? @"Restart ChatGPT to use Ollama?"
-            : @"Restart ChatGPT to restore OpenAI?"];
+            ? @"Restart ChatGPT to add Ollama models?"
+            : @"Restart ChatGPT to remove Ollama models?"];
         [restartAlert setInformativeText:enabled
-            ? @"ChatGPT must restart to replace its OpenAI model list with your selected Ollama models. Your account, chats, plugins, and skills stay in the same profile. Codex CLI and IDE use this shared configuration while Ollama is enabled. Any running task will stop."
-            : @"ChatGPT must restart to restore its previous OpenAI provider and model list. Any running task will stop."];
+            ? @"ChatGPT must restart to add your selected Ollama models alongside its Codex models. Your account, chats, plugins, and skills stay in the same profile. Any running task will stop."
+            : @"ChatGPT must restart to remove the Ollama models. Your Codex models, account, chats, plugins, and skills remain available. Any running task will stop."];
         [restartAlert addButtonWithTitle:@"Restart ChatGPT"];
         [restartAlert addButtonWithTitle:@"Cancel"];
         if ([restartAlert runModal] != NSAlertFirstButtonReturn) {
@@ -1183,10 +1183,10 @@ didCompleteWithError:(NSError *)error {
                 [alert setAlertStyle:NSAlertStyleWarning];
                 [alert setIcon:ollamaApplicationIcon()];
                 [alert setMessageText:enabled
-                    ? @"Unable to switch ChatGPT to Ollama"
-                    : @"Unable to restore ChatGPT"];
+                    ? @"Unable to add Ollama models to ChatGPT"
+                    : @"Unable to remove Ollama models from ChatGPT"];
                 [alert setInformativeText:
-                    @"ChatGPT could not complete the profile change. Check the Ollama log for details, then try again."];
+                    @"ChatGPT could not complete the model update. Check the Ollama log for details, then try again."];
                 [alert runModal];
                 return;
             }
@@ -1320,8 +1320,8 @@ didCompleteWithError:(NSError *)error {
         [alert setIcon:ollamaApplicationIcon()];
         [alert setMessageText:@"Restore ChatGPT before quitting Ollama?"];
         [alert setInformativeText:IsCodexDesktopRunning()
-            ? @"ChatGPT will restart with its previous OpenAI provider and model list before Ollama quits. Any running task will stop."
-            : @"ChatGPT's previous OpenAI provider and model list will be restored before Ollama quits."];
+            ? @"ChatGPT will restart without the Ollama models before Ollama quits. Your Codex models and profile remain available. Any running task will stop."
+            : @"The Ollama models will be removed from ChatGPT before Ollama quits."];
         [alert addButtonWithTitle:@"Restore and Quit"];
         [alert addButtonWithTitle:@"Cancel"];
         if ([alert runModal] != NSAlertFirstButtonReturn) {

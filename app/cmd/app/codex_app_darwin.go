@@ -19,10 +19,6 @@ import (
 const (
 	codexDesktopIntegrationName = "chatgpt"
 	codexDesktopMaxModels       = 5
-	// TODO: Replace this hard-coded default with signed app-specific recommendations
-	// from /api/experimental/model-recommendations?app=chatgpt, following the Claude
-	// Desktop flow. ChatGPT needs recommendations only, not model mappings.
-	codexDesktopKimiDefault = "kimi-k2.7-code:cloud"
 )
 
 type codexDesktopController interface {
@@ -66,6 +62,7 @@ type codexDesktopActionResult struct {
 type codexDesktopModelsSettings struct {
 	Supported bool     `json:"supported"`
 	Installed bool     `json:"installed"`
+	Connected bool     `json:"connected"`
 	Running   bool     `json:"running"`
 	Selected  []string `json:"selected"`
 	Available []string `json:"available"`
@@ -139,7 +136,7 @@ func setCodexDesktopConnection(enabled bool) error {
 		_ = config.SaveIntegration(codexDesktopIntegrationName, previous)
 		if codexDesktop.OllamaConfigured() {
 			if restoreErr := codexDesktop.RestoreFromDesktop(); restoreErr != nil {
-				return errors.Join(err, fmt.Errorf("restore ChatGPT after failed switch: %w", restoreErr))
+				return errors.Join(err, fmt.Errorf("restore ChatGPT after failed update: %w", restoreErr))
 			}
 		}
 		return err
@@ -151,6 +148,7 @@ func getCodexDesktopModelsSettings() (codexDesktopModelsSettings, error) {
 	settings := codexDesktopModelsSettings{
 		Supported: true,
 		Installed: codexDesktop.Installed(),
+		Connected: codexDesktop.OllamaConfigured(),
 		Running:   codexDesktop.Running(),
 		Selected:  []string{},
 		Available: []string{},
@@ -195,11 +193,11 @@ func applyCodexDesktopModels(selected []string) error {
 		if codexDesktop.OllamaConfigured() {
 			if restoreErr := codexDesktop.RestoreFromDesktop(); restoreErr != nil {
 				_ = config.SaveIntegration(codexDesktopIntegrationName, previous)
-				return errors.Join(err, fmt.Errorf("restore ChatGPT after failed switch: %w", restoreErr))
+				return errors.Join(err, fmt.Errorf("restore ChatGPT after failed update: %w", restoreErr))
 			}
 		}
 		_ = config.SaveIntegration(codexDesktopIntegrationName, previous)
-		return fmt.Errorf("start ChatGPT with selected models: %w", err)
+		return fmt.Errorf("start ChatGPT with selected Ollama models: %w", err)
 	} else {
 		applyErr := err
 		_ = config.SaveIntegration(codexDesktopIntegrationName, previous)
@@ -266,6 +264,9 @@ func hydrateCodexDesktopModelCapabilities(ctx context.Context, models []launch.L
 		if len(response.Capabilities) > 0 {
 			hydrated[i].Capabilities = append([]modelpkg.Capability(nil), response.Capabilities...)
 		}
+		if response.Details.Family != "" || len(response.Details.Families) > 0 {
+			hydrated[i].Details = response.Details
+		}
 	}
 	return hydrated
 }
@@ -275,6 +276,9 @@ func loadCodexDesktopAvailableModels(ctx context.Context) ([]launch.LaunchModel,
 	return inventory.Available, err
 }
 
+// TODO: Load signed app-specific recommendations from
+// /api/experimental/model-recommendations?app=chatgpt, following the Claude
+// Desktop flow. ChatGPT needs recommendations only, not model mappings.
 func loadCodexDesktopModelInventory(ctx context.Context) (codexDesktopModelInventory, error) {
 	client, err := codexDesktopClientFactory()
 	if err != nil {
@@ -445,10 +449,6 @@ func codexDesktopRecommendedModels(recommendations []api.ModelRecommendation, av
 		}
 	}
 
-	key := codexDesktopModelKey(codexDesktopKimiDefault)
-	if model, ok := byName[key]; ok && !seen[key] {
-		models = append(models, model)
-	}
 	return models
 }
 
