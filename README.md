@@ -343,6 +343,7 @@ console.log(response.message.content);
 - [Google Cloud](https://cloud.google.com/run/docs/tutorials/gpu-gemma2-with-ollama)
 - [Fly.io](https://fly.io/docs/python/do-more/add-ollama/)
 - [Koyeb](https://www.koyeb.com/deploy/ollama)
+- [Sealos](https://sealos.io/products/app-store/ollama) - One-click CPU deployment with persistent model storage; add an authenticated network boundary for shared use
 - [Harbor](https://github.com/av/harbor) - Containerized LLM toolkit with Ollama as default backend
 
 #### Package Managers
