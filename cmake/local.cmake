@@ -568,6 +568,42 @@ endfunction()
 
 find_program(GO_EXECUTABLE go)
 
+if(GO_EXECUTABLE)
+    if(NOT DEFINED OLLAMA_GO_LICENSE_TARGETS)
+        execute_process(
+            COMMAND "${GO_EXECUTABLE}" env GOOS
+            OUTPUT_VARIABLE _go_license_goos
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            COMMAND_ERROR_IS_FATAL ANY)
+        execute_process(
+            COMMAND "${GO_EXECUTABLE}" env GOARCH
+            OUTPUT_VARIABLE _go_license_goarch
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            COMMAND_ERROR_IS_FATAL ANY)
+        set(OLLAMA_GO_LICENSE_TARGETS "${_go_license_goos}/${_go_license_goarch}" CACHE STRING
+            "Semicolon-separated GOOS/GOARCH targets included in GO_LICENSE")
+    endif()
+
+    add_custom_target(ollama-go-license
+        COMMAND ${CMAKE_COMMAND}
+            "-DGO_EXECUTABLE=${GO_EXECUTABLE}"
+            "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
+            "-DBINARY_DIR=${CMAKE_BINARY_DIR}"
+            "-DOUTPUT_DIR=${OLLAMA_PAYLOAD_INSTALL_PREFIX}/${OLLAMA_LIB_DIR}"
+            "-DTARGETS=${OLLAMA_GO_LICENSE_TARGETS}"
+            -P "${CMAKE_SOURCE_DIR}/cmake/generate_go_license.cmake"
+        BYPRODUCTS "${OLLAMA_PAYLOAD_INSTALL_PREFIX}/${OLLAMA_LIB_DIR}/GO_LICENSE"
+        COMMENT "Collecting Go licenses"
+        VERBATIM)
+else()
+    add_custom_target(ollama-go-license
+        COMMAND ${CMAKE_COMMAND} -E echo
+            "Go executable not found. Install Go or set GO_EXECUTABLE to collect Go licenses."
+        COMMAND ${CMAKE_COMMAND} -E false
+        COMMENT "Collecting Go licenses"
+        VERBATIM)
+endif()
+
 if(OLLAMA_MLX_BACKENDS)
     if(GO_EXECUTABLE AND (NOT APPLE OR CMAKE_SYSTEM_PROCESSOR STREQUAL CMAKE_HOST_SYSTEM_PROCESSOR))
         add_custom_target(ollama-mlx-generate-wrappers

@@ -23,6 +23,7 @@ jobs:
     outputs:
       changed: ${{ steps.changes.outputs.changed }}
       app_changed: ${{ steps.changes.outputs.app_changed }}
+      go_mod_changed: ${{ steps.changes.outputs.go_mod_changed }}
       enginehash: ${{ steps.changes.outputs.enginehash }}
     steps:
       - uses: actions/checkout@v4
@@ -56,6 +57,7 @@ jobs:
             'x/mlxrunner/xgrammar/native/**/*' \
             '.github/**/*') | tee -a $GITHUB_OUTPUT
           echo app_changed=$(changed 'app/**' 'app/**/*') | tee -a $GITHUB_OUTPUT
+          echo go_mod_changed=$(changed 'go.mod') | tee -a $GITHUB_OUTPUT
           echo enginehash=$(cat LLAMA_CPP_VERSION)-$(cat MLX_VERSION)-$(cat MLX_C_VERSION) | tee -a $GITHUB_OUTPUT
 
   patches:
@@ -367,6 +369,24 @@ jobs:
       - uses: actions/checkout@v4
       - name: check that 'go mod tidy' is clean
         run: go mod tidy --diff || (echo "Please run 'go mod tidy'." && exit 1)
+
+  go_license:
+    needs: [changes]
+    if: needs.changes.outputs.go_mod_changed == 'True'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Verify Go dependency licenses
+        run: |
+          # See cmake/generate_go_license.cmake for special case handling.
+          cmake -S . -B build/go-license \
+            -DOLLAMA_LLAMA_BACKENDS= \
+            -DOLLAMA_MLX_BACKENDS= \
+            "-DOLLAMA_GO_LICENSE_TARGETS=linux/amd64;linux/arm64;darwin/amd64;darwin/arm64;windows/amd64;windows/arm64"
+          cmake --build build/go-license --target ollama-go-license
 
   test:
     needs: [changes]

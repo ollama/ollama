@@ -57,7 +57,10 @@ jobs:
             MLX_VERSION
             MLX_C_VERSION
       - name: Build unsigned Darwin runtime
-        run: ./scripts/build_darwin.sh build package
+        run: |
+          cmake -S . -B build/go-license -DOLLAMA_LLAMA_BACKENDS= -DOLLAMA_MLX_BACKENDS= -DOLLAMA_PAYLOAD_INSTALL_PREFIX=dist/darwin-arm64 "-DOLLAMA_GO_LICENSE_TARGETS=darwin/amd64;darwin/arm64"
+          cmake --build build/go-license --target ollama-go-license
+          ./scripts/build_darwin.sh build package
       - name: Log build results
         run: ls -l dist/
       - uses: actions/upload-artifact@v4
@@ -577,6 +580,16 @@ jobs:
             dist/windows-arm64/lib/ollama/llama-server.exe
           do
             [ -f "$payload" ] || { echo "missing $payload"; exit 1; }
+          done
+      - name: Collect Go licenses
+        shell: bash
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            cmake -S . -B build/go-license -DOLLAMA_LLAMA_BACKENDS= -DOLLAMA_MLX_BACKENDS= \
+              "-DOLLAMA_PAYLOAD_INSTALL_PREFIX=dist/windows-${arch}" \
+              "-DOLLAMA_GO_LICENSE_TARGETS=windows/${arch}"
+            cmake --build build/go-license --target ollama-go-license
           done
       - name: Build unsigned Windows installer and zips
         run: ./scripts/build_windows.ps1 deps installer zip
