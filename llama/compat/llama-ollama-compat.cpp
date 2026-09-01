@@ -3438,6 +3438,71 @@ bool maybe_load_text_tensor(const llama_model_loader * ml,
     return load_tensor_with_op(cur, path.c_str(), buft, op);
 }
 
+// Slab-read cache slot (maybe_load_text_tensor_range). Holds AT MOST ONE
+// materialized tensor per loader: quantize reads a tensor's slabs
+// contiguously, so the previous entry is evicted when the next tensor's
+// first range arrives. This keeps peak memory at one op tensor at a time —
+// the same profile as the whole-tensor read this hook replaced. Growing a
+// per-tensor map instead would accumulate every layer's output for per-layer
+// ops (gemma4 MoE gate/up, qwen3.5 norm-shift) — most of the model in RAM by
+// the end of a quantize run.
+std::mutex g_text_range_mutex;
+std::unordered_map<const llama_model_loader *,
+                   std::pair<std::string, std::vector<uint8_t>>>
+    g_text_range_cache;
+
+const void * maybe_load_text_tensor_range(const llama_model_loader * ml,
+                                          ggml_tensor * cur,
+                                          size_t offs,
+                                          size_t size,
+                                          void * buf) {
+    if (compat_disabled()) return nullptr;
+    std::string path;
+    {
+        std::lock_guard<std::mutex> lk(g_loader_path_mutex);
+        auto it = g_loader_paths.find(ml);
+        if (it == g_loader_paths.end() || it->second.empty()) return nullptr;
+        path = it->second;
+    }
+
+    std::lock_guard<std::mutex> lk(g_text_range_mutex);
+    auto & slot = g_text_range_cache[ml];
+    auto cached = slot.first == ggml_get_name(cur) ? &slot.second : nullptr;
+    if (!cached) {
+        LoadOp op;
+        if (!take_load_op(ggml_get_name(cur), op)) return nullptr;
+
+        const auto start = std::chrono::steady_clock::now();
+        std::vector<uint8_t> full(ggml_nbytes(cur));
+        if (!op.apply(path.c_str(), full.data(), full.size())) {
+            OLLAMA_COMPAT_LOG_ERROR("%s: %s failed for %s after %.3f ms\n",
+                                    __func__, op.description, ggml_get_name(cur), elapsed_ms(start));
+            return nullptr;
+        }
+
+        const size_t dst_size = full.size();
+        slot = {std::string(ggml_get_name(cur)), std::move(full)};
+        cached = &slot.second;
+        const double ms = elapsed_ms(start);
+        const TransformTiming total = record_transform_timing(dst_size, ms);
+        OLLAMA_COMPAT_LOG_INFO("compat tensor transform: op=%s tensor=%s bytes=%zu duration_ms=%.3f total_ops=%llu total_bytes=%zu total_ms=%.3f\n",
+                               op.description, ggml_get_name(cur), dst_size, ms,
+                               (unsigned long long) total.count, total.bytes, total.ms);
+    }
+
+    if (offs + size > cached->size()) {
+        OLLAMA_COMPAT_LOG_ERROR("%s: range %zu+%zu out of bounds for %s (%zu bytes)\n",
+                                __func__, offs, size, ggml_get_name(cur), cached->size());
+        return nullptr;
+    }
+
+    const void * out = buf ? buf : cached->data() + offs;
+    if (buf) {
+        std::memcpy(buf, cached->data() + offs, size);
+    }
+    return out;
+}
+
 int maybe_clip_mmproj_embd(const char * projector_type, int projection_dim) {
     if (compat_disabled() || projection_dim <= 0) return 0;
     if (!clip_mmproj_embd_uses_projection_dim(projector_type)) return 0;
