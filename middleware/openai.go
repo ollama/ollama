@@ -383,7 +383,7 @@ func CompletionsMiddleware() gin.HandlerFunc {
 		w := &CompleteWriter{
 			BaseWriter:    BaseWriter{ResponseWriter: c.Writer},
 			stream:        req.Stream,
-			id:            fmt.Sprintf("cmpl-%d", rand.Intn(999)),
+			id:            fmt.Sprintf("cmpl-%x", rand.Int63()),
 			streamOptions: req.StreamOptions,
 		}
 
@@ -475,7 +475,7 @@ func ChatMiddleware() gin.HandlerFunc {
 		w := &ChatWriter{
 			BaseWriter:    BaseWriter{ResponseWriter: c.Writer},
 			stream:        req.Stream,
-			id:            fmt.Sprintf("chatcmpl-%d", rand.Intn(999)),
+			id:            fmt.Sprintf("chatcmpl-%x", rand.Int63()),
 			streamOptions: req.StreamOptions,
 		}
 
@@ -1191,8 +1191,8 @@ func ResponsesMiddleware() gin.HandlerFunc {
 
 		c.Request.Body = io.NopCloser(&b)
 
-		responseID := fmt.Sprintf("resp_%d", rand.Intn(999999))
-		itemID := fmt.Sprintf("msg_%d", rand.Intn(999999))
+		responseID := fmt.Sprintf("resp_%x", rand.Int63())
+		itemID := fmt.Sprintf("msg_%x", rand.Int63())
 
 		w := &ResponsesWriter{
 			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
