@@ -324,6 +324,58 @@ func TestDownloadSkipsExisting(t *testing.T) {
 	}
 }
 
+// TestDownloadRedownloadsCorruptedExisting reproduces
+// https://github.com/ollama/ollama/issues/17520: a blob on disk whose
+// content doesn't match its digest, but whose size happens to match, must
+// not be silently trusted just because a same-size file exists at its path.
+func TestDownloadRedownloadsCorruptedExisting(t *testing.T) {
+	serverDir := t.TempDir()
+	blob1, goodData := createTestBlob(t, serverDir, 1024)
+
+	// Pre-populate client dir with a same-size but corrupted blob, as a
+	// stalled write or disk error would leave behind.
+	clientDir := t.TempDir()
+	path := filepath.Join(clientDir, digestToPath(blob1.Digest))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	corrupted := make([]byte, len(goodData))
+	if err := os.WriteFile(path, corrupted, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var requestCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		digest := filepath.Base(r.URL.Path)
+		path := filepath.Join(serverDir, digestToPath(digest))
+		data, err := os.ReadFile(path)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write(data)
+	}))
+	defer server.Close()
+
+	err := Download(context.Background(), DownloadOptions{
+		Blobs:   []Blob{blob1},
+		BaseURL: server.URL,
+		DestDir: clientDir,
+	})
+	if err != nil {
+		t.Fatalf("Download failed: %v", err)
+	}
+
+	// The corrupted blob must have been re-fetched from the registry.
+	if requestCount.Load() == 0 {
+		t.Error("No requests made; corrupted same-size blob was trusted instead of re-downloaded")
+	}
+
+	verifyBlob(t, clientDir, blob1, goodData)
+}
+
 func TestDownloadResumeProgressTotal(t *testing.T) {
 	// Test that when resuming a download with some blobs already present:
 	// 1. Total reflects ALL blob sizes (not just remaining)
