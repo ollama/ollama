@@ -642,7 +642,7 @@ func parseRuneForState(r rune, cs state) (state, rune, error) {
 }
 
 func quote(s string) string {
-	if strings.Contains(s, "\n") || strings.HasPrefix(s, " ") || strings.HasSuffix(s, " ") {
+	if strings.Contains(s, "\n") || strings.HasPrefix(s, " ") || strings.HasSuffix(s, " ") || strings.HasPrefix(s, `"`) {
 		if strings.Contains(s, "\"") {
 			return `"""` + s + `"""`
 		}
