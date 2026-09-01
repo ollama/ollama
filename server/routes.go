@@ -1084,6 +1084,13 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 	embedding, _, err := r.Embedding(c.Request.Context(), req.Prompt)
 	if err != nil {
 		s.sched.expireRunnersForRuntimeOOM(m, err)
+
+		var serr api.StatusError
+		if errors.As(err, &serr) {
+			c.AbortWithStatusJSON(serr.StatusCode, gin.H{"error": serr.ErrorMessage})
+			return
+		}
+
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
 		return
 	}
