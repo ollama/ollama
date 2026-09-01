@@ -401,6 +401,27 @@ components:
         done:
           type: boolean
           description: True for the final event in the stream
+        done_reason:
+          type: string
+          description: Reason the stream ended (e.g. "stop", "length")
+        total_duration:
+          type: integer
+          description: Time spent generating the response in nanoseconds
+        load_duration:
+          type: integer
+          description: Time spent loading the model in nanoseconds
+        prompt_eval_count:
+          type: integer
+          description: Number of input tokens in the prompt
+        prompt_eval_duration:
+          type: integer
+          description: Time spent evaluating the prompt in nanoseconds
+        eval_count:
+          type: integer
+          description: Number of output tokens generated in the response
+        eval_duration:
+          type: integer
+          description: Time spent generating tokens in nanoseconds
     StatusEvent:
       type: object
       properties:
