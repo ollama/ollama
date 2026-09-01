@@ -364,9 +364,11 @@ func splitArguments(s string) []string {
 func parseOlmo3Value(s string) (any, error) {
 	s = strings.TrimSpace(s)
 
-	// Check for quoted string
-	if (strings.HasPrefix(s, `"`) && strings.HasSuffix(s, `"`)) ||
-		(strings.HasPrefix(s, `'`) && strings.HasSuffix(s, `'`)) {
+	// Check for quoted string. A lone quote character is both a prefix and a
+	// suffix match, so require an opening and a closing one.
+	if len(s) >= 2 &&
+		((strings.HasPrefix(s, `"`) && strings.HasSuffix(s, `"`)) ||
+			(strings.HasPrefix(s, `'`) && strings.HasSuffix(s, `'`))) {
 		// Remove quotes and unescape
 		inner := s[1 : len(s)-1]
 		return unescapeString(inner), nil
@@ -450,8 +452,9 @@ func parseOlmo3Object(s string) (map[string]any, error) {
 		valueStr := strings.TrimSpace(part[colonIdx+1:])
 
 		// Remove quotes from key if present
-		if (strings.HasPrefix(keyStr, `"`) && strings.HasSuffix(keyStr, `"`)) ||
-			(strings.HasPrefix(keyStr, `'`) && strings.HasSuffix(keyStr, `'`)) {
+		if len(keyStr) >= 2 &&
+			((strings.HasPrefix(keyStr, `"`) && strings.HasSuffix(keyStr, `"`)) ||
+				(strings.HasPrefix(keyStr, `'`) && strings.HasSuffix(keyStr, `'`))) {
 			keyStr = keyStr[1 : len(keyStr)-1]
 		}
 
