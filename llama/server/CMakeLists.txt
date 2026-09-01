@@ -187,6 +187,85 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(llama_cpp)
 
+if(NOT COMMAND license_add_file)
+    message(FATAL_ERROR "llama.cpp license registry (cmake/license.cmake) not found; check the llama.cpp update")
+endif()
+set(_llama_cpp_root "${llama_cpp_SOURCE_DIR}")
+
+file(GLOB_RECURSE _ollama_vendor_license_files
+     "${_llama_cpp_root}/vendor/*/LICENSE*")
+file(GLOB _llamacpp_repo_license_files
+     "${_llama_cpp_root}/licenses/LICENSE*")
+list(APPEND _ollama_vendor_license_files ${_llamacpp_repo_license_files})
+list(APPEND _ollama_vendor_license_files "${_llama_cpp_root}/LICENSE")
+foreach(_lic IN LISTS _ollama_vendor_license_files)
+    cmake_path(RELATIVE_PATH _lic BASE_DIRECTORY "${_llama_cpp_root}")
+    # upstream registers these itself; skip to avoid double entries
+    if(_lic STREQUAL "LICENSE" OR _lic STREQUAL "vendor/cpp-httplib/LICENSE")
+        continue()
+    endif()
+    set(_name "${_lic}")
+    if(_name MATCHES "^vendor/")
+        # registry name = component path without the vendor/ prefix
+        string(REGEX REPLACE "^vendor/" "" _name "${_name}")
+        string(REGEX REPLACE "/LICENSE[^/]*$" "" _name "${_name}")
+    endif()
+    string(REPLACE "/" "-" _name "${_name}")
+    license_add_file("${_name}" "${_llama_cpp_root}/${_lic}")
+endforeach()
+unset(_ollama_vendor_license_files)
+
+function(ollama_extract_vendor_license name src start_marker end_marker)
+    if(NOT EXISTS "${src}")
+        message(FATAL_ERROR
+            "llama.cpp vendored source missing: ${src}; check the llama.cpp update "
+            "and the embedded-license entry in llama/server/CMakeLists.txt")
+    endif()
+    file(READ "${src}" _txt)
+    string(FIND "${_txt}" "${start_marker}" _start)
+    if(_start EQUAL -1)
+        message(FATAL_ERROR
+            "llama.cpp embedded license anchor '${start_marker}' not found in "
+            "${src}; update llama/server/CMakeLists.txt")
+    endif()
+    string(FIND "${_txt}" "${end_marker}" _end)
+    if(_end EQUAL -1)
+        message(FATAL_ERROR
+            "llama.cpp embedded license end anchor '${end_marker}' not found in "
+            "${src}; update llama/server/CMakeLists.txt")
+    endif()
+    string(LENGTH "${end_marker}" _end_len)
+    math(EXPR _len "${_end} - ${_start} + ${_end_len}")
+    string(SUBSTRING "${_txt}" "${_start}" "${_len}" _lic)
+    set(_dst "${CMAKE_BINARY_DIR}/ollama-vendor-licenses/${name}.txt")
+    file(WRITE "${_dst}" "${_lic}")
+    license_add_file("${name}" "${_dst}")
+endfunction()
+
+ollama_extract_vendor_license(
+    "llamafile-sgemm"
+    "${_llama_cpp_root}/ggml/src/ggml-cpu/llamafile/sgemm.cpp"
+    "Copyright 2024 Mozilla Foundation"
+    "// SOFTWARE.")
+
+get_property(_reg_text GLOBAL PROPERTY LICENSE_TEXT)
+string(REPLACE "R\"=L=(" "" _reg_text "${_reg_text}")
+string(REPLACE ")=L=\"," "\n" _reg_text "${_reg_text}")
+set(_reg_ok TRUE)
+foreach(_anchor IN ITEMS "llama.cpp" "cpp-httplib" "llamafile-sgemm" "jsonhpp")
+    string(FIND "${_reg_text}" "${_anchor}" _pos)
+    if(_pos EQUAL -1)
+        set(_reg_ok FALSE)
+    endif()
+endforeach()
+string(LENGTH "${_reg_text}" _reg_len)
+if(NOT _reg_ok OR _reg_len LESS 256)
+    message(FATAL_ERROR "llama.cpp vendored license aggregate came out empty or incomplete; the registry mechanism changed upstream")
+endif()
+file(WRITE "${CMAKE_BINARY_DIR}/ollama-vendor-licenses/LLAMA_CPP_VENDORS_LICENSE" "${_reg_text}")
+unset(_reg_text)
+unset(_llama_cpp_root)
+
 # Link the Ollama-compat source files into the fetched llama target.
 # Kept separate from the hook patch so our .cpp/.h stay
 # on-disk in llama/compat/ rather than being copied into _deps/.
@@ -554,7 +633,10 @@ else()
         DESTINATION ${OLLAMA_LIB_DIR}
         RENAME CPP_HTTPLIB_LICENSE
         COMPONENT llama-server)
-
+    install(FILES
+        "${CMAKE_BINARY_DIR}/ollama-vendor-licenses/LLAMA_CPP_VENDORS_LICENSE"
+        DESTINATION ${OLLAMA_LIB_DIR}
+        COMPONENT llama-server)
     # Bundle Windows CRT DLLs alongside the executables so zip installs
     # do not depend on host-global redistributables.
     ollama_install_windows_runtime_dlls("${_base_dest}")

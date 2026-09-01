@@ -58,8 +58,10 @@ The layer runs at a small set of loader hook points:
    `llama-quantize`. Since llama.cpp b10729 replaced the whole-tensor
    `load_data_for` read with slabs via `load_data_range`, the quantize-style
    slab path goes through `maybe_load_text_tensor_range`, which materializes
-   the op's full destination bytes once per tensor and serves the requested
-   (offset, size) range from that cache.
+   the op's full output for one active tensor at a time (single-slot cache —
+   evicted when the next tensor's first range arrives) and serves each
+   requested (offset, size) range from it, so quantize memory stays at one
+   op tensor, matching the whole-tensor `load_data_for` read it replaced.
 4. `mtmd/clip` constructor: `translate_clip_metadata` rewrites a clip-facing
    view of monolithic GGUFs into the mmproj form expected by llama.cpp.
 5. `mtmd/clip` tensor load loop: `maybe_load_tensor` applies clip-side load

@@ -3438,12 +3438,17 @@ bool maybe_load_text_tensor(const llama_model_loader * ml,
     return load_tensor_with_op(cur, path.c_str(), buft, op);
 }
 
-// Per-loader cache of materialized load-op output for the slab-read path
-// (maybe_load_text_tensor_range). Only tensors with a registered op are
-// ever materialized, so the cache stays bounded by the op registry size.
+// Slab-read cache slot (maybe_load_text_tensor_range). Holds AT MOST ONE
+// materialized tensor per loader: quantize reads a tensor's slabs
+// contiguously, so the previous entry is evicted when the next tensor's
+// first range arrives. This keeps peak memory at one op tensor at a time —
+// the same profile as the whole-tensor read this hook replaced. Growing a
+// per-tensor map instead would accumulate every layer's output for per-layer
+// ops (gemma4 MoE gate/up, qwen3.5 norm-shift) — most of the model in RAM by
+// the end of a quantize run.
 std::mutex g_text_range_mutex;
 std::unordered_map<const llama_model_loader *,
-                   std::unordered_map<std::string, std::vector<uint8_t>>>
+                   std::pair<std::string, std::vector<uint8_t>>>
     g_text_range_cache;
 
 const void * maybe_load_text_tensor_range(const llama_model_loader * ml,
@@ -3461,9 +3466,9 @@ const void * maybe_load_text_tensor_range(const llama_model_loader * ml,
     }
 
     std::lock_guard<std::mutex> lk(g_text_range_mutex);
-    auto & per_loader = g_text_range_cache[ml];
-    auto cached = per_loader.find(ggml_get_name(cur));
-    if (cached == per_loader.end()) {
+    auto & slot = g_text_range_cache[ml];
+    auto cached = slot.first == ggml_get_name(cur) ? &slot.second : nullptr;
+    if (!cached) {
         LoadOp op;
         if (!take_load_op(ggml_get_name(cur), op)) return nullptr;
 
@@ -3476,9 +3481,8 @@ const void * maybe_load_text_tensor_range(const llama_model_loader * ml,
         }
 
         const size_t dst_size = full.size();
-        cached = per_loader
-            .emplace(std::string(ggml_get_name(cur)), std::move(full))
-            .first;
+        slot = {std::string(ggml_get_name(cur)), std::move(full)};
+        cached = &slot.second;
         const double ms = elapsed_ms(start);
         const TransformTiming total = record_transform_timing(dst_size, ms);
         OLLAMA_COMPAT_LOG_INFO("compat tensor transform: op=%s tensor=%s bytes=%zu duration_ms=%.3f total_ops=%llu total_bytes=%zu total_ms=%.3f\n",
@@ -3486,15 +3490,15 @@ const void * maybe_load_text_tensor_range(const llama_model_loader * ml,
                                (unsigned long long) total.count, total.bytes, total.ms);
     }
 
-    if (offs + size > cached->second.size()) {
+    if (offs + size > cached->size()) {
         OLLAMA_COMPAT_LOG_ERROR("%s: range %zu+%zu out of bounds for %s (%zu bytes)\n",
-                                __func__, offs, size, ggml_get_name(cur), cached->second.size());
+                                __func__, offs, size, ggml_get_name(cur), cached->size());
         return nullptr;
     }
 
-    const void * out = buf ? buf : cached->second.data() + offs;
+    const void * out = buf ? buf : cached->data() + offs;
     if (buf) {
-        std::memcpy(buf, cached->second.data() + offs, size);
+        std::memcpy(buf, cached->data() + offs, size);
     }
     return out;
 }

@@ -84,7 +84,9 @@ bool maybe_load_text_tensor(const llama_model_loader * ml,
 // and other single-tensor read tools). Same registry and file-path lookup
 // as maybe_load_text_tensor, but serves one range of the op's destination
 // bytes per call: the first call for a tensor materializes the op's full
-// output and caches it, and subsequent ranges are served from that cache.
+// output, and later ranges are served from that cache. To keep quantize
+// memory at a single op tensor (the same profile as the whole-tensor read
+// this hook replaced), the cache holds one active tensor per loader.
 // Returns the requested range (copied into buf when buf is non-null) or
 // nullptr when no load op exists for this tensor.
 const void * maybe_load_text_tensor_range(const llama_model_loader * ml,
