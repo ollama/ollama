@@ -216,7 +216,7 @@ describe("Settings reset interactions", () => {
     }
   });
 
-  it("hides Claude Desktop settings and skips its reset on Windows", async () => {
+  it("hides Claude and ChatGPT desktop settings on Windows", async () => {
     mocks.isWindows = true;
 
     let renderer;

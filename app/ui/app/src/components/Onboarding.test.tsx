@@ -62,7 +62,7 @@ describe("Onboarding", () => {
     }
   });
 
-  it("hides the Claude application on Windows", () => {
+  it("hides the Claude and ChatGPT desktop integrations on Windows", () => {
     vi.stubGlobal("window", {
       OLLAMA_PLATFORM: "windows",
       innerHeight: 660,
@@ -85,12 +85,21 @@ describe("Onboarding", () => {
               description: "Anthropic's coding tool with subagents",
               command: "ollama launch claude",
             },
+            {
+              id: "chatgpt",
+              name: "ChatGPT",
+              description: "Use Ollama models in ChatGPT",
+              installed: true,
+              command: "ollama launch chatgpt",
+            },
           ]}
         />,
       );
 
       expect(html).not.toContain('id="desktop-heading"');
       expect(html).not.toContain("Use Ollama models in Claude Desktop");
+      expect(html).not.toContain("Use Ollama models in ChatGPT");
+      expect(html).not.toContain("ollama launch chatgpt");
       expect(html).toContain('id="terminal-heading"');
       expect(html).toContain("ollama launch claude");
     } finally {
