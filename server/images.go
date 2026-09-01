@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -97,14 +98,42 @@ func (m *Model) isGGUF() bool {
 func generationDefaultsFromGGUF(f *gguf.File) model.GenerationDefaults {
 	return model.ParseGGUFGenerationDefaults(
 		func(key string) (int64, bool) {
-			kv := f.KeyValue(key)
-			return kv.IntOK()
+			return ggufIntGenerationDefault(f.KeyValue(key))
 		},
 		func(key string) (float64, bool) {
-			kv := f.KeyValue(key)
-			return kv.FloatOK()
+			return ggufFloatGenerationDefault(f.KeyValue(key))
 		},
 	)
+}
+
+func ggufIntGenerationDefault(kv gguf.KeyValue) (int64, bool) {
+	if value, ok := kv.IntOK(); ok {
+		return value, true
+	}
+	if value, ok := kv.UintOK(); ok {
+		if value > math.MaxInt64 {
+			return 0, false
+		}
+		return int64(value), true
+	}
+	if value, ok := kv.FloatOK(); ok {
+		// Match api.Options.FromMap; rounding may be better for near-integers.
+		return int64(value), true
+	}
+	return 0, false
+}
+
+func ggufFloatGenerationDefault(kv gguf.KeyValue) (float64, bool) {
+	if value, ok := kv.FloatOK(); ok {
+		return value, true
+	}
+	if value, ok := kv.IntOK(); ok {
+		return float64(value), true
+	}
+	if value, ok := kv.UintOK(); ok {
+		return float64(value), true
+	}
+	return 0, false
 }
 
 func appendCapability(capabilities []model.Capability, capability model.Capability) []model.Capability {

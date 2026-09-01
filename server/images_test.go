@@ -69,15 +69,15 @@ func TestGenerationDefaultsFromGGUF(t *testing.T) {
 
 	if err := ggml.WriteGGUF(file, ggml.KV{
 		"general.architecture":             "llama",
-		"general.sampling.top_k":           int32(0),
-		"general.sampling.top_p":           float32(0.7),
+		"general.sampling.top_k":           uint32(40),
+		"general.sampling.top_p":           int32(1),
 		"general.sampling.min_p":           float32(0),
 		"general.sampling.typ_p":           float32(0.95),
-		"general.sampling.temp":            float32(0.6),
-		"general.sampling.penalty_last_n":  int32(-1),
+		"general.sampling.temp":            uint32(1),
+		"general.sampling.penalty_last_n":  float32(64),
 		"general.sampling.penalty_repeat":  float32(1.05),
-		"general.sampling.penalty_freq":    float32(0.2),
-		"general.sampling.penalty_present": float32(0.1),
+		"general.sampling.penalty_freq":    uint32(0),
+		"general.sampling.penalty_present": int32(0),
 		"general.sampling.xtc_threshold":   float32(0.5),
 		"general.sampling.mirostat_tau":    float32(5),
 	}, nil); err != nil {
@@ -101,15 +101,15 @@ func TestGenerationDefaultsFromGGUF(t *testing.T) {
 		}
 	}
 
-	check("top_k", int64(0))
-	check("top_p", float64(float32(0.7)))
+	check("top_k", int64(40))
+	check("top_p", float64(1))
 	check("min_p", float64(0))
 	check("typical_p", float64(float32(0.95)))
-	check("temperature", float64(float32(0.6)))
-	check("repeat_last_n", int64(-1))
+	check("temperature", float64(1))
+	check("repeat_last_n", int64(64))
 	check("repeat_penalty", float64(float32(1.05)))
-	check("frequency_penalty", float64(float32(0.2)))
-	check("presence_penalty", float64(float32(0.1)))
+	check("frequency_penalty", float64(0))
+	check("presence_penalty", float64(0))
 	if _, ok := defaults["mirostat_tau"]; ok {
 		t.Fatal("mirostat_tau should not be mapped to an Ollama option")
 	}

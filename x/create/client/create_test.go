@@ -575,7 +575,7 @@ func TestNewManifestWriter_PopulatesGenerationDefaults(t *testing.T) {
 	}
 
 	writer := newManifestWriter(opts, []string{"completion"}, "qwen3", "qwen3")
-	if err := writer(opts.ModelName, create.LayerInfo{}, nil); err != nil {
+	if err := writer(opts.ModelName, create.LayerInfo{}, nil, create.Classification{}); err != nil {
 		t.Fatalf("newManifestWriter() error = %v", err)
 	}
 

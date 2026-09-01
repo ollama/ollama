@@ -412,7 +412,7 @@ func newManifestWriter(opts CreateOptions, capabilities []string, parserName, re
 		}
 		configData.Parser = resolveParserName(opts.Modelfile, parserName)
 		configData.Renderer = resolveRendererName(opts.Modelfile, rendererName)
-		if slices.Contains(caps, "completion") {
+		if slices.Contains(capabilities, "completion") {
 			defaults, err := readHFGenerationDefaults(opts.ModelDir)
 			if err != nil {
 				return fmt.Errorf("failed to read generation_config.json: %w", err)
