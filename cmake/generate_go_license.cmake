@@ -1,8 +1,19 @@
-foreach(_variable IN ITEMS GO_EXECUTABLE SOURCE_DIR BINARY_DIR OUTPUT_DIR)
+foreach(_variable IN ITEMS GO_EXECUTABLE SOURCE_DIR BINARY_DIR OUTPUT_DIR TARGETS)
     if(NOT DEFINED ${_variable})
         message(FATAL_ERROR "${_variable} is required")
     endif()
 endforeach()
+if(NOT TARGETS)
+    message(FATAL_ERROR "At least one GOOS/GOARCH target is required")
+endif()
+
+execute_process(
+    COMMAND "${GO_EXECUTABLE}" tool dist list
+    OUTPUT_VARIABLE _supported_targets
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    COMMAND_ERROR_IS_FATAL ANY)
+string(REPLACE "\r" "" _supported_targets "${_supported_targets}")
+string(REPLACE "\n" ";" _supported_targets "${_supported_targets}")
 
 set(_version v2.0.1)
 set(_tool_dir "${BINARY_DIR}/go-licenses-${_version}")
@@ -22,20 +33,38 @@ if(NOT EXISTS "${_tool}")
         COMMAND_ERROR_IS_FATAL ANY)
 endif()
 
-set(_packages .)
-if(INCLUDE_APP)
-    list(APPEND _packages ./app/cmd/app)
-endif()
-
 set(_staging_dir "${BINARY_DIR}/go-license-files")
-# Arrow's aggregate license includes a license that go-licenses cannot classify.
-execute_process(
-    COMMAND "${_tool}" save ${_packages}
-        --save_path "${_staging_dir}" --force
-        --ignore github.com/apache/arrow/go/arrow
-    WORKING_DIRECTORY "${SOURCE_DIR}"
-    COMMAND_ERROR_IS_FATAL ANY)
+file(REMOVE_RECURSE "${_staging_dir}")
 
+foreach(_target IN LISTS TARGETS)
+    list(FIND _supported_targets "${_target}" _target_index)
+    if(_target_index EQUAL -1)
+        message(FATAL_ERROR "Unsupported Go license target '${_target}'; expected a GOOS/GOARCH from 'go tool dist list'")
+    endif()
+    string(REPLACE "/" ";" _target_parts "${_target}")
+    list(GET _target_parts 0 _goos)
+    list(GET _target_parts 1 _goarch)
+
+    set(_packages .)
+    if(_goos STREQUAL "darwin" OR _goos STREQUAL "windows")
+        list(APPEND _packages ./app/cmd/app)
+    endif()
+
+    set(_target_staging_dir "${BINARY_DIR}/go-license-files-${_goos}-${_goarch}")
+    message(STATUS "Collecting Go licenses for ${_target}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "GOOS=${_goos}" "GOARCH=${_goarch}" "CGO_ENABLED=1"
+            "${_tool}" save ${_packages}
+            --save_path "${_target_staging_dir}" --force
+            --ignore github.com/apache/arrow/go/arrow
+        WORKING_DIRECTORY "${SOURCE_DIR}"
+        COMMAND_ERROR_IS_FATAL ANY)
+
+    file(COPY "${_target_staging_dir}/" DESTINATION "${_staging_dir}")
+endforeach()
+
+# Arrow's aggregate license includes a license that go-licenses cannot classify.
 execute_process(
     COMMAND "${GO_EXECUTABLE}" list -m -f "{{.Dir}}" github.com/apache/arrow/go/arrow
     WORKING_DIRECTORY "${SOURCE_DIR}"

@@ -58,7 +58,7 @@ jobs:
             MLX_C_VERSION
       - name: Build unsigned Darwin runtime
         run: |
-          cmake -S . -B build/go-license -DOLLAMA_LLAMA_BACKENDS= -DOLLAMA_MLX_BACKENDS= -DOLLAMA_PAYLOAD_INSTALL_PREFIX=dist/darwin-arm64
+          cmake -S . -B build/go-license -DOLLAMA_LLAMA_BACKENDS= -DOLLAMA_MLX_BACKENDS= -DOLLAMA_PAYLOAD_INSTALL_PREFIX=dist/darwin-arm64 "-DOLLAMA_GO_LICENSE_TARGETS=darwin/amd64;darwin/arm64"
           cmake --build build/go-license --target ollama-go-license
           ./scripts/build_darwin.sh build package
       - name: Log build results
@@ -582,11 +582,15 @@ jobs:
             [ -f "$payload" ] || { echo "missing $payload"; exit 1; }
           done
       - name: Collect Go licenses
+        shell: bash
         run: |
-          cmake -S . -B build/go-license -DOLLAMA_LLAMA_BACKENDS= -DOLLAMA_MLX_BACKENDS=
-          cmake --build build/go-license --target ollama-go-license
-          cmake -E copy_directory build/go-license/lib/ollama dist/windows-amd64/lib/ollama
-          cmake -E copy_directory build/go-license/lib/ollama dist/windows-arm64/lib/ollama
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            cmake -S . -B build/go-license -DOLLAMA_LLAMA_BACKENDS= -DOLLAMA_MLX_BACKENDS= \
+              "-DOLLAMA_PAYLOAD_INSTALL_PREFIX=dist/windows-${arch}" \
+              "-DOLLAMA_GO_LICENSE_TARGETS=windows/${arch}"
+            cmake --build build/go-license --target ollama-go-license
+          done
       - name: Build unsigned Windows installer and zips
         run: ./scripts/build_windows.ps1 deps installer zip
       - name: Log contents after build
