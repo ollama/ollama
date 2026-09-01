@@ -115,6 +115,96 @@ func TestNormalizePathFileURL(t *testing.T) {
 	}
 }
 
+// Dragging a file whose name contains an apostrophe into a shell prompt yields
+// a single-quoted path in which each apostrophe is spelled
+//
+//	'\''
+//
+// that is: close the quote, escape a literal apostrophe, reopen. The whole
+// four-character sequence collapses back to one apostrophe.
+func TestNormalizePathShellQuotedApostrophe(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "apostrophe",
+			in:   `/home/jdoe/Pictures/jdoe'\''s.png`,
+			want: `/home/jdoe/Pictures/jdoe's.png`,
+		},
+		{
+			name: "apostrophe and spaces",
+			in:   `/home/jdoe/my pictures/jdoe'\''s photo.png`,
+			want: `/home/jdoe/my pictures/jdoe's photo.png`,
+		},
+		{
+			name: "multiple apostrophes",
+			in:   `/home/jdoe/a'\''b'\''c.png`,
+			want: `/home/jdoe/a'b'c.png`,
+		},
+		{
+			name: "backslash escaped apostrophe still works",
+			in:   `/home/jdoe/jdoe\'s.png`,
+			want: `/home/jdoe/jdoe's.png`,
+		},
+		{
+			name: "bare apostrophe untouched",
+			in:   `/home/jdoe/jdoe's.png`,
+			want: `/home/jdoe/jdoe's.png`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NormalizePath(tt.in); got != tt.want {
+				t.Fatalf("path = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// The extraction regex anchors on the leading separator and stops at the
+// extension, so the wrapping quotes fall away on their own.
+func TestExtractNamesShellQuotedApostrophe(t *testing.T) {
+	input := `look at '/home/jdoe/Pictures/jdoe'\''s.png' please`
+	res := ExtractNames(input)
+	if len(res) != 1 {
+		t.Fatalf("len = %d, want 1", len(res))
+	}
+	if got, want := NormalizePath(res[0]), `/home/jdoe/Pictures/jdoe's.png`; got != want {
+		t.Fatalf("path = %q, want %q", got, want)
+	}
+}
+
+// End-to-end: a real file whose name contains an apostrophe, referenced the way
+// a shell quotes it on drag and drop, must still be found and read.
+func TestExtractShellQuotedApostropheFile(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "jdoe's photo.jpg")
+	data := make([]byte, 600)
+	copy(data, []byte{
+		0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 'J', 'F', 'I', 'F',
+		0x00, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0xff, 0xd9,
+	})
+	if err := os.WriteFile(fp, data, 0o600); err != nil {
+		t.Fatalf("failed to write test image: %v", err)
+	}
+
+	quoted := "'" + strings.ReplaceAll(fp, "'", `'\''`) + "'"
+	cleaned, imgs, err := Extract("before " + quoted + " after")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(imgs) != 1 {
+		t.Fatalf("imgs = %d, want 1", len(imgs))
+	}
+	if cleaned != "before  after" {
+		t.Fatalf("cleaned = %q, want %q", cleaned, "before  after")
+	}
+}
+
 func TestExtractRemovesQuotedFilepath(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "img.jpg")
