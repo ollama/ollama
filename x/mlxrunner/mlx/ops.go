@@ -103,7 +103,8 @@ func (t *Array) Concatenate(axis int, others ...*Array) *Array {
 
 func (t *Array) Cumsum(axis int, reverse, inclusive bool) *Array {
 	out := New("CUMSUM")
-	C.mlx_cumsum(&out.ctx, t.ctx, C.int(axis), C.bool(reverse), C.bool(inclusive), DefaultStream().ctx)
+	optDtype := C.mlx_optional_dtype{has_value: false}
+	C.mlx_cumsum_axis(&out.ctx, t.ctx, C.int(axis), C.bool(reverse), C.bool(inclusive), optDtype, DefaultStream().ctx)
 	return out
 }
 

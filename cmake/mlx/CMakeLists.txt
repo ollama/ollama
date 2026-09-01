@@ -129,7 +129,7 @@ list(APPEND MLX_RUNTIME_DIRS ${CMAKE_BINARY_DIR}/_deps/openblas-src/bin)
 list(APPEND MLX_RUNTIME_DIRS ${CMAKE_BINARY_DIR}/_deps/mlx-build/mlx/distributed/nccl/nccl_stub-prefix/src/nccl_stub-build/Release)
 
 # Base regexes for runtime dependencies (cross-platform).
-set(MLX_INCLUDE_REGEXES cublas cublasLt cudart cufft nvrtc nvrtc-builtins cudnn nccl openblas gfortran)
+set(MLX_INCLUDE_REGEXES cublas cublasLt cudart cufft nvrtc nvrtc-builtins cudnn nccl cusolver cusparse nv[Jj]it[Ll]ink openblas gfortran)
 # On Windows, also include dl.dll (dlfcn-win32 POSIX emulation layer).
 if(WIN32)
     list(APPEND MLX_INCLUDE_REGEXES "^dl\\.dll$")
@@ -169,6 +169,24 @@ file(WRITE "${CMAKE_BINARY_DIR}/PICOJSON_LICENSE" "${_picojson_license}\n")
 install(FILES
     "${CMAKE_BINARY_DIR}/PICOJSON_LICENSE"
     DESTINATION ${OLLAMA_LIB_DIR}
+    COMPONENT MLX)
+get_target_property(_mlx_license_source mlx SOURCE_DIR)
+if(NOT _mlx_license_source OR _mlx_license_source MATCHES "-NOTFOUND$")
+    message(FATAL_ERROR "MLX source directory not found for license install")
+endif()
+install(FILES
+    "${_mlx_license_source}/LICENSE"
+    DESTINATION ${OLLAMA_LIB_DIR}
+    RENAME MLX_LICENSE
+    COMPONENT MLX)
+get_target_property(_mlxc_license_source mlxc SOURCE_DIR)
+if(NOT _mlxc_license_source OR _mlxc_license_source MATCHES "-NOTFOUND$")
+    message(FATAL_ERROR "MLX-C source directory not found for license install")
+endif()
+install(FILES
+    "${_mlxc_license_source}/LICENSE"
+    DESTINATION ${OLLAMA_LIB_DIR}
+    RENAME MLX_C_LICENSE
     COMPONENT MLX)
 install(RUNTIME_DEPENDENCY_SET mlx_runtime_deps
     DIRECTORIES ${MLX_RUNTIME_DIRS}
@@ -386,11 +404,20 @@ if(CUDAToolkit_FOUND)
         "${CUDAToolkit_LIBRARY_DIR}/libnvrtc.so*"
         "${CUDAToolkit_LIBRARY_DIR}/libnvrtc-builtins.so*"
         "${CUDAToolkit_LIBRARY_DIR}/libcufft.so*"
+        "${CUDAToolkit_LIBRARY_DIR}/libcusolver.so*"
+        "${CUDAToolkit_LIBRARY_DIR}/libcusparse.so*"
+        "${CUDAToolkit_LIBRARY_DIR}/libnvJitLink.so*"
         "${CUDAToolkit_LIBRARY_DIR}/libcudnn*.so*")
     if(WIN32)
         file(GLOB MLX_CUDA_DLLS
             "${CUDAToolkit_BIN_DIR}/nvrtc-builtins64_*.dll"
-            "${CUDAToolkit_BIN_DIR}/x64/nvrtc-builtins64_*.dll")
+            "${CUDAToolkit_BIN_DIR}/x64/nvrtc-builtins64_*.dll"
+            "${CUDAToolkit_BIN_DIR}/cusolver64_*.dll"
+            "${CUDAToolkit_BIN_DIR}/x64/cusolver64_*.dll"
+            "${CUDAToolkit_BIN_DIR}/cusparse64_*.dll"
+            "${CUDAToolkit_BIN_DIR}/x64/cusparse64_*.dll"
+            "${CUDAToolkit_BIN_DIR}/nvJitLink_*.dll"
+            "${CUDAToolkit_BIN_DIR}/x64/nvJitLink_*.dll")
         list(APPEND MLX_CUDA_LIBS ${MLX_CUDA_DLLS})
     endif()
     find_library(MLX_CUDNN_LIBRARY NAMES cudnn HINTS "$ENV{CUDNN_LIBRARY_PATH}")
