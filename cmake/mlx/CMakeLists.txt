@@ -129,48 +129,7 @@ list(APPEND MLX_RUNTIME_DIRS ${CMAKE_BINARY_DIR}/_deps/openblas-src/bin)
 list(APPEND MLX_RUNTIME_DIRS ${CMAKE_BINARY_DIR}/_deps/mlx-build/mlx/distributed/nccl/nccl_stub-prefix/src/nccl_stub-build/Release)
 
 # Non-link-time deps stay explicit; link-time deps derive from the mlx target.
-set(MLX_INCLUDE_REGEXES cudart cudnn nccl openblas gfortran)
-get_target_property(_mlx_link_libs mlx LINK_LIBRARIES)
-foreach(_lib ${_mlx_link_libs})
-    if(_lib MATCHES "^CUDA::([A-Za-z0-9_]+)$")
-        list(APPEND _mlx_cuda_links "${CMAKE_MATCH_1}")
-    endif()
-endforeach()
-# Follow imported-target deps so transitive toolkit libs follow MLX's links.
-list(REMOVE_DUPLICATES _mlx_cuda_links)
-set(_mlx_missing)
-while(_mlx_cuda_links)
-    list(POP_FRONT _mlx_cuda_links _t)
-    if(_t STREQUAL "cudart" OR _t IN_LIST MLX_INCLUDE_REGEXES)
-        continue()
-    endif()
-    if(NOT TARGET CUDA::${_t})
-        list(APPEND _mlx_missing "${_t}")
-        continue()
-    endif()
-    list(APPEND MLX_INCLUDE_REGEXES "${_t}")
-    get_target_property(_dep_libs CUDA::${_t} INTERFACE_LINK_LIBRARIES)
-    foreach(_d ${_dep_libs})
-        if(_d MATCHES "^CUDA::([A-Za-z0-9_]+)$" AND NOT CMAKE_MATCH_1 STREQUAL "culibos")
-            list(APPEND _mlx_cuda_links "${CMAKE_MATCH_1}")
-        endif()
-    endforeach()
-endwhile()
-if(CUDAToolkit_FOUND AND _mlx_missing)
-    message(FATAL_ERROR
-        "MLX links toolkit libraries missing from this CUDA installation: "
-        "${_mlx_missing}. Update the workflow installer cuda-components list.")
-endif()
-if(CUDAToolkit_FOUND)
-    # Also include anything resolved inside the toolkit tree so transitive
-    # vendor deps ship even when they appear in no imported-target graph.
-    string(REPLACE "." "\\." _re "${CUDAToolkit_LIBRARY_DIR}")
-    list(APPEND MLX_INCLUDE_REGEXES "^${_re}/[^/]*$")
-    if(WIN32)
-        string(REPLACE "." "\\." _re "${CUDAToolkit_BIN_DIR}")
-        list(APPEND MLX_INCLUDE_REGEXES "^${_re}/[^/]*$")
-    endif()
-endif()
+set(MLX_INCLUDE_REGEXES cublas cublasLt cudart cufft nvrtc nvrtc-builtins cudnn nccl cusolver cusparse nv[Jj]it[Ll]ink openblas gfortran)
 # On Windows, also include dl.dll (dlfcn-win32 POSIX emulation layer).
 if(WIN32)
     list(APPEND MLX_INCLUDE_REGEXES "^dl\\.dll$")
@@ -459,30 +418,25 @@ endif()
 if(CUDAToolkit_FOUND)
     file(GLOB MLX_CUDA_LIBS
         "${CUDAToolkit_LIBRARY_DIR}/libcudart.so*"
-        "${CUDAToolkit_LIBRARY_DIR}/libcublas*.so*"
-        "${CUDAToolkit_LIBRARY_DIR}/libnvrtc*"
+        "${CUDAToolkit_LIBRARY_DIR}/libcublas.so*"
+        "${CUDAToolkit_LIBRARY_DIR}/libcublasLt.so*"
+        "${CUDAToolkit_LIBRARY_DIR}/libnvrtc.so*"
+        "${CUDAToolkit_LIBRARY_DIR}/libnvrtc-builtins.so*"
         "${CUDAToolkit_LIBRARY_DIR}/libcufft.so*"
+        "${CUDAToolkit_LIBRARY_DIR}/libcusolver.so*"
+        "${CUDAToolkit_LIBRARY_DIR}/libcusparse.so*"
+        "${CUDAToolkit_LIBRARY_DIR}/libnvJitLink.so*"
         "${CUDAToolkit_LIBRARY_DIR}/libcudnn*.so*")
     if(WIN32)
-        # Delay-load prefixes parsed from MLX's delayload.cpp
-        file(READ "${_mlx_license_source}/mlx/backend/cuda/delayload.cpp" _dll_src)
-        string(REPLACE "dll.starts_with(\"" ";" _dl_chunks "x${_dl_src}")
-        set(_mlx_delayload_prefixes)
-        foreach(_chunk IN LISTS _dl_chunks)
-            if(_chunk MATCHES "^\\\"([a-zA-Z0-9_]+)\\\"")
-                list(APPEND _mlx_delayload_prefixes "${CMAKE_MATCH_1}")
-            endif()
-        endforeach()
-        list(REMOVE_DUPLICATES _mlx_delayload_prefixes)
-        set(MLX_CUDA_DLLS)
-        foreach(_prefix ${_mlx_delayload_prefixes})
-            file(GLOB _dlls "${CUDAToolkit_BIN_DIR}/${_prefix}*.dll"
-                            "${CUDAToolkit_BIN_DIR}/x64/${_prefix}*.dll")
-            list(APPEND MLX_CUDA_DLLS ${_dlls})
-        endforeach()
-        file(GLOB _dlls "${CUDAToolkit_BIN_DIR}/nvrtc-builtins64_*.dll"
-                        "${CUDAToolkit_BIN_DIR}/x64/nvrtc-builtins64_*.dll")
-        list(APPEND MLX_CUDA_DLLS ${_dlls})
+        file(GLOB MLX_CUDA_DLLS
+            "${CUDAToolkit_BIN_DIR}/nvrtc-builtins64_*.dll"
+            "${CUDAToolkit_BIN_DIR}/x64/nvrtc-builtins64_*.dll"
+            "${CUDAToolkit_BIN_DIR}/cusolver64_*.dll"
+            "${CUDAToolkit_BIN_DIR}/x64/cusolver64_*.dll"
+            "${CUDAToolkit_BIN_DIR}/cusparse64_*.dll"
+            "${CUDAToolkit_BIN_DIR}/x64/cusparse64_*.dll"
+            "${CUDAToolkit_BIN_DIR}/nvJitLink_*.dll"
+            "${CUDAToolkit_BIN_DIR}/x64/nvJitLink_*.dll")
         list(APPEND MLX_CUDA_LIBS ${MLX_CUDA_DLLS})
     endif()
     find_library(MLX_CUDNN_LIBRARY NAMES cudnn HINTS "$ENV{CUDNN_LIBRARY_PATH}")
