@@ -603,10 +603,19 @@ func normalizeFilePath(fp string) string {
 }
 
 func extractFileNames(input string) []string {
-	// Regex to match file paths starting with optional drive letter, / ./ \ or .\ and include escaped or unescaped spaces (\ or %20)
-	// and followed by more characters and a file extension
+	// Regex to match file paths with specific media extensions.
+	// It uses an explicit directory traversal loop instead of a lazy match.
+	// This prevents the engine from splitting a path if an intermediate folder 
+	// name contains a matching extension (e.g., /path/image.png/real_file.png).
+	//
 	// This will capture non filename strings, but we'll check for file existence to remove mismatches
-	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav)\b`
+	//
+	// Legend:
+	// 1. (?:[a-zA-Z]:)?(?:\./|/|\\)  -> Captures Windows drive letters and leading path delimiters.
+	// 2. (?:[^\s\\.]*(?:\.|\\|/))*   -> Matches folder segments, ensuring internal dots/slashes are treated as directory paths.
+	// 3. [^\s\\.]+                   -> Matches the final, terminal file name body.
+	// 4. \.(?i:jpg|jpeg...)          -> Enforces case-insensitive matching for the actual file extension.
+	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)(?:[^\s\\.]*(?:\.|\\|/))*[^\s\\.]+\.(?i:jpg|jpeg|png|webp|wav)\b`
 	re := regexp.MustCompile(regexPattern)
 
 	return re.FindAllString(input, -1)
