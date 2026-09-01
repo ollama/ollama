@@ -433,6 +433,48 @@ func TestModelShowCacheCloudKeyNormalizesSourceTags(t *testing.T) {
 	}
 }
 
+func TestCloneShowResponseClonesToolCallArguments(t *testing.T) {
+	args := api.NewToolCallFunctionArguments()
+	args.Set("title", "original")
+	args.Set("metadata", map[string]any{"status": "original"})
+	args.Set("items", []any{map[string]any{"name": "original"}})
+
+	source := &api.ShowResponse{
+		Messages: []api.Message{{
+			ToolCalls: []api.ToolCall{{
+				Function: api.ToolCallFunction{Arguments: args},
+			}},
+		}},
+	}
+
+	clone := cloneShowResponse(source)
+	cloneArgs := &clone.Messages[0].ToolCalls[0].Function.Arguments
+	cloneArgs.Set("title", "changed")
+	cloneMetadata, ok := cloneArgs.Get("metadata")
+	if !ok {
+		t.Fatal("cloned metadata argument is missing")
+	}
+	cloneMetadata.(map[string]any)["status"] = "changed"
+	cloneItems, ok := cloneArgs.Get("items")
+	if !ok {
+		t.Fatal("cloned items argument is missing")
+	}
+	cloneItems.([]any)[0].(map[string]any)["name"] = "changed"
+
+	sourceArgs := &source.Messages[0].ToolCalls[0].Function.Arguments
+	if got, _ := sourceArgs.Get("title"); got != "original" {
+		t.Errorf("source title = %q, want original", got)
+	}
+	sourceMetadata, _ := sourceArgs.Get("metadata")
+	if got := sourceMetadata.(map[string]any)["status"]; got != "original" {
+		t.Errorf("source metadata status = %q, want original", got)
+	}
+	sourceItems, _ := sourceArgs.Get("items")
+	if got := sourceItems.([]any)[0].(map[string]any)["name"]; got != "original" {
+		t.Errorf("source item name = %q, want original", got)
+	}
+}
+
 func TestModelShowCacheCloudDisabledDoesNotServeStale(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())
