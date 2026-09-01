@@ -145,17 +145,17 @@ install(TARGETS mlx mlxc ollama_xgrammar
 )
 install(FILES
     "${xgrammar_SOURCE_DIR}/LICENSE"
-    DESTINATION ${OLLAMA_INSTALL_DIR}
+    DESTINATION ${OLLAMA_LIB_DIR}
     RENAME XGRAMMAR_LICENSE
     COMPONENT MLX)
 install(FILES
     "${xgrammar_SOURCE_DIR}/NOTICE"
-    DESTINATION ${OLLAMA_INSTALL_DIR}
+    DESTINATION ${OLLAMA_LIB_DIR}
     RENAME XGRAMMAR_NOTICE
     COMPONENT MLX)
 install(FILES
     "${xgrammar_SOURCE_DIR}/3rdparty/dlpack/LICENSE"
-    DESTINATION ${OLLAMA_INSTALL_DIR}
+    DESTINATION ${OLLAMA_LIB_DIR}
     RENAME DLPACK_LICENSE
     COMPONENT MLX)
 file(READ "${xgrammar_SOURCE_DIR}/3rdparty/picojson/picojson.h" _picojson_header LIMIT 4096)
@@ -168,7 +168,7 @@ string(SUBSTRING "${_picojson_header}" 0 ${_picojson_license_end} _picojson_lice
 file(WRITE "${CMAKE_BINARY_DIR}/PICOJSON_LICENSE" "${_picojson_license}\n")
 install(FILES
     "${CMAKE_BINARY_DIR}/PICOJSON_LICENSE"
-    DESTINATION ${OLLAMA_INSTALL_DIR}
+    DESTINATION ${OLLAMA_LIB_DIR}
     COMPONENT MLX)
 install(RUNTIME_DEPENDENCY_SET mlx_runtime_deps
     DIRECTORIES ${MLX_RUNTIME_DIRS}
