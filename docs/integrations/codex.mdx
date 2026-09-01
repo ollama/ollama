@@ -76,15 +76,29 @@ Then run:
 ```
 codex --profile ollama-launch
 ```
+## Reasoning effort
 
-## Web search
+If your Codex CLI configuration includes the `model_reasoning_effort` setting, make sure it uses a value supported by Ollama.
 
-Codex web-search requests sent through the Ollama profile are executed by
-Ollama for both local and cloud models. Sign in with `ollama signin` to use the
-web-search service.
+Supported values are:
 
-To disable web search for a Codex session:
+- `none`
+- `low`
+- `medium`
+- `high`
+- `max`
 
-```shell
-codex --profile ollama-launch -c 'web_search="disabled"'
+Values such as `minimal` and `xhigh` are not supported and will result in an error when sending requests through Ollama.
+
+For example, replace an unsupported value such as:
+
+```toml
+model_reasoning_effort = "minimal"
 ```
+
+with a supported value:
+
+```toml
+model_reasoning_effort = "none"
+```
+
