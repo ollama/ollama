@@ -153,7 +153,15 @@ func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *r
 		}
 		defer resp.Body.Close()
 
-		b.Total, _ = strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
+		// Without a usable Content-Length the loop below creates no parts, so
+		// the download completes instantly and promotes an empty file. That
+		// surfaces later as a digest mismatch, which reads like a corrupt or
+		// tampered blob rather than a registry that did not report a size.
+		contentLength := resp.Header.Get("Content-Length")
+		b.Total, err = strconv.ParseInt(contentLength, 10, 64)
+		if err != nil {
+			return fmt.Errorf("invalid Content-Length %q for %s: %w", contentLength, b.Digest[7:19], err)
+		}
 
 		size := b.Total / numDownloadParts
 		switch {

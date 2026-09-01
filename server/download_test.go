@@ -111,3 +111,58 @@ func TestDownloadChunkDetectsStallBeforeFirstByte(t *testing.T) {
 		t.Fatalf("downloadChunk() detected the stall after %v, want less than %v", elapsed, 5*downloadStallTimeout)
 	}
 }
+
+func TestPrepareRejectsMissingContentLength(t *testing.T) {
+	data := make([]byte, 512)
+	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(data))
+
+	// A non-numeric Content-Length is not covered here: net/http rejects it in
+	// the transport before Prepare ever sees the header.
+	cases := []struct {
+		name          string
+		contentLength string
+		wantErr       bool
+		wantParts     bool
+	}{
+		{name: "valid", contentLength: fmt.Sprint(len(data)), wantErr: false, wantParts: true},
+		// a genuinely empty blob is still legal and must keep working
+		{name: "zero", contentLength: "0", wantErr: false, wantParts: false},
+		{name: "missing", contentLength: "", wantErr: true},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tt.contentLength != "" {
+					w.Header().Set("Content-Length", tt.contentLength)
+				}
+				w.WriteHeader(http.StatusOK)
+			}))
+			t.Cleanup(server.Close)
+
+			requestURL, err := url.Parse(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			download := &blobDownload{
+				Name:   filepath.Join(t.TempDir(), "blob"),
+				Digest: digest,
+			}
+
+			err = download.Prepare(t.Context(), requestURL, &registryOptions{})
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected an error for an unusable Content-Length, got none")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if gotParts := len(download.Parts) > 0; gotParts != tt.wantParts {
+				t.Errorf("parts created = %v, want %v (total %d)", gotParts, tt.wantParts, download.Total)
+			}
+		})
+	}
+}
