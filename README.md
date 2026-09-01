@@ -186,6 +186,7 @@ console.log(response.message.content);
 - [PyGPT](https://github.com/szczyglis-dev/py-gpt) - AI desktop assistant for Linux, Windows, and Mac
 - [Alpaca](https://github.com/Jeffser/Alpaca) - GTK4 client for Linux and macOS
 - [SwiftChat](https://github.com/aws-samples/swift-chat) - Cross-platform including iOS, Android, and Apple Vision Pro
+- [TealKit](https://apps.microsoft.com/detail/9nb8trlrgwr2) - Privacy-first AI agent platform with MCP tool support and automation scripting; available for desktop, [mobile](https://play.google.com/store/apps/details?id=at.ls.gr.tealkit), and as a [headless CLI version](https://github.com/lschaffer/tealkit).
 - [Enchanted](https://github.com/AugustDev/enchanted) - Native macOS and iOS client
 - [RWKV-Runner](https://github.com/josStorer/RWKV-Runner) - Multi-model desktop runner
 - [Ollama Grid Search](https://github.com/dezoito/ollama-grid-search) - Evaluate and compare models
@@ -205,7 +206,7 @@ console.log(response.message.content);
 #### Mobile
 
 - [Ollama Android Chat](https://github.com/sunshine0523/OllamaServer) - One-click Ollama on Android
-
+- [TealKit](https://play.google.com/store/apps/details?id=at.ls.gr.tealkit) - Privacy-first AI agent platform with MCP support; available for Android, [iOS](https://apps.apple.com/us/app/tealkit-private-ai-agents/id6760420939), desktop, and a [headless CLI version](https://github.com/lschaffer/tealkit).
 > SwiftChat, Enchanted, Maid, Ollama App, Reins, and ConfiChat listed above also support mobile platforms.
 
 ### Code Editors & Development
