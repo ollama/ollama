@@ -59,6 +59,14 @@ type codexDesktopActionResult struct {
 	Error  string             `json:"error,omitempty"`
 }
 
+type codexDesktopInstallResult string
+
+const (
+	codexDesktopInstallCancelled codexDesktopInstallResult = "cancelled"
+	codexDesktopInstallerOpened  codexDesktopInstallResult = "opened"
+	codexDesktopInstallFailed    codexDesktopInstallResult = "failed"
+)
+
 type codexDesktopModelsSettings struct {
 	Supported bool     `json:"supported"`
 	Installed bool     `json:"installed"`

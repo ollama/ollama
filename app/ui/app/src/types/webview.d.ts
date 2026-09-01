@@ -93,6 +93,7 @@ interface CodexDesktopModelsSettingsResult {
 }
 
 type ClaudeDesktopInstallResult = "opened" | "cancelled" | "failed";
+type CodexDesktopInstallResult = "opened" | "cancelled" | "failed";
 
 interface WebviewAPI {
   selectFile: () => Promise<ImageData | null>;
@@ -121,6 +122,7 @@ declare global {
     setCodexDesktopConnected?: (
       enabled: boolean,
     ) => Promise<CodexDesktopActionResult>;
+    installCodexDesktop?: () => Promise<CodexDesktopInstallResult>;
     getCodexDesktopModelsSettings?: () => Promise<CodexDesktopModelsSettingsResult>;
     applyCodexDesktopModels?: (
       models: string[],
@@ -170,6 +172,7 @@ export type {
   ClaudeDesktopModelStatus,
   ClaudeDesktopStatus,
   CodexDesktopActionResult,
+  CodexDesktopInstallResult,
   CodexDesktopModelsSettings,
   CodexDesktopModelsSettingsResult,
   CodexDesktopStatus,
