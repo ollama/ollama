@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -85,6 +86,161 @@ func TestCodexAppIntegration(t *testing.T) {
 		var _ ConfigurationSuccessIntegration = c
 		var _ RestoreSuccessIntegration = c
 	})
+}
+
+func TestCodexAppDesktopUsesAndRestoresRegularProfile(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withCodexAppPlatform(t, "darwin")
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := "model = \"gpt-5.5\"\nmodel_provider = \"openai\"\n"
+	if err := os.WriteFile(configPath, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	authPath := filepath.Join(filepath.Dir(configPath), "auth.json")
+	auth := []byte(`{"tokens":{"access_token":"same-profile"}}`)
+	if err := os.WriteFile(authPath, auth, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	openCalls := 0
+	oldCanOpenID := codexAppCanOpenID
+	codexAppCanOpenID = func() bool { return true }
+	t.Cleanup(func() { codexAppCanOpenID = oldCanOpenID })
+	withCodexAppProcessHooks(t,
+		func() bool { return false },
+		func() error { return nil },
+		func() error { openCalls++; return nil },
+	)
+
+	app := &CodexApp{}
+	if err := app.UseOllamaFromDesktop("qwen3:8b", testLaunchModels("qwen3:8b", "glm-5.3-flash:cloud")); err != nil {
+		t.Fatal(err)
+	}
+	if !app.OllamaConfigured() || app.CurrentModel() != "qwen3:8b" {
+		t.Fatalf("regular profile was not configured for Ollama")
+	}
+	if got, err := os.ReadFile(authPath); err != nil || string(got) != string(auth) {
+		t.Fatalf("shared auth changed: %q, %v", got, err)
+	}
+	if openCalls != 1 {
+		t.Fatalf("open calls = %d, want 1", openCalls)
+	}
+
+	if err := app.RestoreFromDesktop(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(data)) != strings.TrimSpace(original) {
+		t.Fatalf("restored config = %q, want %q", data, original)
+	}
+	if openCalls != 1 {
+		t.Fatalf("stopped ChatGPT should remain stopped on restore; open calls = %d", openCalls)
+	}
+}
+
+func TestCodexAppDesktopAppliesProfileAfterRunningAppExits(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withCodexAppPlatform(t, "darwin")
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := "model = \"gpt-5.5\"\nmodel_provider = \"openai\"\n"
+	if err := os.WriteFile(configPath, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	running := true
+	events := []string{}
+	oldCanOpenID := codexAppCanOpenID
+	codexAppCanOpenID = func() bool { return true }
+	t.Cleanup(func() { codexAppCanOpenID = oldCanOpenID })
+	withCodexAppProcessHooks(t,
+		func() bool { return running },
+		func() error {
+			data, err := os.ReadFile(configPath)
+			if err != nil {
+				return err
+			}
+			if string(data) != original {
+				return fmt.Errorf("config changed before ChatGPT exited: %s", data)
+			}
+			events = append(events, "quit")
+			running = false
+			return nil
+		},
+		func() error {
+			events = append(events, "open")
+			running = true
+			return nil
+		},
+	)
+
+	if err := (&CodexApp{}).UseOllamaFromDesktop("qwen3:8b", testLaunchModels("qwen3:8b")); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(events, []string{"quit", "open"}) {
+		t.Fatalf("events = %v, want quit then open", events)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), fmt.Sprintf(`model_provider = %q`, codexAppProfileName)) {
+		t.Fatalf("config was not switched after exit:\n%s", data)
+	}
+}
+
+func TestCodexAppRestoreForShutdownDoesNotReopenChatGPT(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withCodexAppPlatform(t, "darwin")
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := "model = \"gpt-5.5\"\nmodel_provider = \"openai\"\n"
+	if err := os.WriteFile(configPath, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&CodexApp{}).ConfigureWithModels("qwen3:8b", testLaunchModels("qwen3:8b")); err != nil {
+		t.Fatal(err)
+	}
+
+	running := true
+	openCalls := 0
+	withCodexAppProcessHooks(t,
+		func() bool { return running },
+		func() error { running = false; return nil },
+		func() error { openCalls++; return nil },
+	)
+	if err := (&CodexApp{}).RestoreForShutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if openCalls != 0 {
+		t.Fatalf("shutdown restore reopened ChatGPT %d times", openCalls)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(data)) != strings.TrimSpace(original) {
+		t.Fatalf("shutdown restore config = %q, want %q", data, original)
+	}
 }
 
 func TestCodexAppOllamaProfileLeavesRegularAppUntouched(t *testing.T) {
@@ -297,6 +453,36 @@ func TestCodexAppOllamaProfileCountsUserRequestsThisSession(t *testing.T) {
 	}
 	if got := codexAppOllamaProfileRequestCount(); got != 3 {
 		t.Fatalf("incremental request count = %d, want 3", got)
+	}
+
+	if err := resetCodexAppRegularProfileRequestCount(); err != nil {
+		t.Fatal(err)
+	}
+	startPath, err = codexAppRegularProfileSessionStartPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	startData, err = os.ReadFile(startPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, err = time.Parse(time.RFC3339Nano, strings.TrimSpace(string(startData)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath, err := codexConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	regularSessionPath := filepath.Join(filepath.Dir(configPath), "sessions", "2026", "08", "28", "rollout.jsonl")
+	if err := os.MkdirAll(filepath.Dir(regularSessionPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(regularSessionPath, requestLine(start.Add(time.Second), "user.text"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := codexAppRegularProfileRequestCount(); got != 1 {
+		t.Fatalf("regular profile request count = %d, want 1", got)
 	}
 }
 

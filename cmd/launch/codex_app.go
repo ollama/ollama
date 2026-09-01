@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -328,10 +329,95 @@ func (c *CodexApp) Installed() bool {
 	return codexAppInstalled()
 }
 
+// OllamaConfigured reports whether the user's regular ChatGPT profile is
+// currently configured to route its model catalog through Ollama.
+func (c *CodexApp) OllamaConfigured() bool {
+	return c.CurrentModel() != ""
+}
+
+// Running reports whether the user's regular ChatGPT app is open.
+func (c *CodexApp) Running() bool {
+	return codexAppIsRunning()
+}
+
+// UseOllamaFromDesktop switches the user's regular ChatGPT profile to Ollama.
+// ChatGPT is stopped before the config changes so its shutdown persistence
+// cannot overwrite the new provider, then reopened with the same app profile.
+func (c *CodexApp) UseOllamaFromDesktop(primary string, models []LaunchModel) error {
+	if err := codexAppSupported(); err != nil {
+		return err
+	}
+	if !codexAppInstalled() {
+		return fmt.Errorf("ChatGPT is not installed")
+	}
+	if err := stopLegacyCodexAppOllamaProfile(); err != nil {
+		return err
+	}
+	return codexAppApplyProfileFromDesktop(func() error {
+		if err := resetCodexAppRegularProfileRequestCount(); err != nil {
+			return err
+		}
+		return c.ConfigureWithModels(primary, models)
+	}, true)
+}
+
+// RestoreFromDesktop restores the provider and model catalog that were active
+// before Ollama was enabled. A stopped ChatGPT app remains stopped.
+func (c *CodexApp) RestoreFromDesktop() error {
+	if err := codexAppSupported(); err != nil {
+		return err
+	}
+	if err := stopLegacyCodexAppOllamaProfile(); err != nil {
+		return err
+	}
+	return codexAppApplyProfileFromDesktop(restoreCodexAppProfile, false)
+}
+
+// RestoreForShutdown restores the normal ChatGPT provider without reopening
+// the app while Ollama itself is shutting down.
+func (c *CodexApp) RestoreForShutdown(ctx context.Context) error {
+	if err := codexAppSupported(); err != nil {
+		return err
+	}
+	if !c.OllamaConfigured() {
+		return nil
+	}
+	if codexAppIsRunning() {
+		if err := codexAppQuitApp(); err != nil {
+			return fmt.Errorf("quit ChatGPT: %w", err)
+		}
+		if err := waitForCodexAppExitContext(ctx); err != nil {
+			return err
+		}
+	}
+	return restoreCodexAppProfile()
+}
+
+func (c *CodexApp) OllamaRequestCount() uint64 {
+	return codexAppRegularProfileRequestCount()
+}
+
+func stopLegacyCodexAppOllamaProfile() error {
+	if codexAppGOOS != "darwin" || !codexAppProfileIsRunning() {
+		return nil
+	}
+	if err := codexAppStopProfile(); err != nil {
+		return fmt.Errorf("close the previous ChatGPT · Ollama profile: %w", err)
+	}
+	return nil
+}
+
 func (c *CodexApp) Restore() error {
 	if err := codexAppSupported(); err != nil {
 		return err
 	}
+	if err := restoreCodexAppProfile(); err != nil {
+		return err
+	}
+	return codexAppLaunchOrRestart("Restart ChatGPT to use your usual profile?", nil)
+}
+
+func restoreCodexAppProfile() error {
 	configPath, err := codexConfigPath()
 	if err != nil {
 		return err
@@ -349,7 +435,7 @@ func (c *CodexApp) Restore() error {
 			if err := codexAppRemoveOwnedCatalog(); err != nil {
 				return codexAppRestoreFailure(configPath, err)
 			}
-			return codexAppLaunchOrRestart("Restart ChatGPT to use your usual profile?", nil)
+			return nil
 		}
 		return codexAppRestoreFailure(configPath, err)
 	}
@@ -385,7 +471,7 @@ func (c *CodexApp) Restore() error {
 	if err := removeCodexAppRestoreState(); err != nil {
 		return codexAppRestoreFailure(configPath, err)
 	}
-	return codexAppLaunchOrRestart("Restart ChatGPT to use your usual profile?", nil)
+	return nil
 }
 
 func codexAppRestoreFailure(configPath string, err error) error {
@@ -925,13 +1011,88 @@ func codexAppLaunchOrRestart(prompt string, launchArgs []string) error {
 	if sp != nil {
 		sp.Stop()
 	}
-	if restartAppID != "" {
-		return codexAppOpenStart(restartAppID)
+	return codexAppOpenAfterRestart(restartAppID, restartAppPath, launchArgs)
+}
+
+func codexAppApplyProfileFromDesktop(change func() error, openWhenStopped bool) error {
+	if !codexAppIsRunning() {
+		if err := change(); err != nil {
+			return err
+		}
+		if openWhenStopped {
+			return codexAppOpenApp(nil)
+		}
+		return nil
 	}
-	if restartAppPath != "" {
-		return codexAppOpenPath(restartAppPath)
+
+	restartAppID, restartAppPath := codexAppRestartTarget()
+	if err := codexAppStopForRestart(nil); err != nil {
+		return err
+	}
+	if err := change(); err != nil {
+		changeErr := fmt.Errorf("change ChatGPT profile: %w", err)
+		if openErr := codexAppOpenAfterRestart(restartAppID, restartAppPath, nil); openErr != nil {
+			return errors.Join(changeErr, fmt.Errorf("reopen ChatGPT after profile failure: %w", openErr))
+		}
+		return changeErr
+	}
+	return codexAppOpenAfterRestart(restartAppID, restartAppPath, nil)
+}
+
+func codexAppRestartTarget() (appID, appPath string) {
+	if codexAppGOOS != "windows" {
+		return "", ""
+	}
+	if appID = codexAppStartID(); appID == "" {
+		appPath = codexAppRunPath()
+	}
+	return appID, appPath
+}
+
+func codexAppStopForRestart(cancel <-chan struct{}) error {
+	if err := codexAppQuitApp(); err != nil {
+		return fmt.Errorf("quit ChatGPT: %w", err)
+	}
+	gracefulErr := waitForCodexAppGracefulExit(codexAppExitTimeout, cancel)
+	if errors.Is(gracefulErr, ErrCancelled) {
+		return gracefulErr
+	}
+	if gracefulErr != nil && !codexAppForceQuitSupported() {
+		return gracefulErr
+	}
+	if codexAppForceQuitSupported() && codexAppIsRunning() {
+		if forceErr := codexAppForceQuit(); forceErr != nil {
+			return fmt.Errorf("force stop ChatGPT: %w", forceErr)
+		}
+		return waitForCodexAppExit(codexAppForceExitTimeout, cancel)
+	}
+	if gracefulErr != nil && codexAppIsRunning() {
+		return gracefulErr
+	}
+	return nil
+}
+
+func codexAppOpenAfterRestart(appID, appPath string, launchArgs []string) error {
+	if appID != "" {
+		return codexAppOpenStart(appID)
+	}
+	if appPath != "" {
+		return codexAppOpenPath(appPath)
 	}
 	return codexAppOpenApp(launchArgs)
+}
+
+func waitForCodexAppExitContext(ctx context.Context) error {
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for codexAppIsRunning() {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("wait for ChatGPT to quit: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
+	return nil
 }
 
 func codexAppForceQuitSupported() bool {

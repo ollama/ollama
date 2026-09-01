@@ -897,7 +897,7 @@ export function ConnectAppsScreen({
     : (integrationStatuses?.find((item) => item.id === "chatgpt") ?? {
         id: "chatgpt",
         name: "ChatGPT",
-        description: "Run Ollama alongside your normal ChatGPT",
+        description: "Use Ollama models in ChatGPT",
         installed: false,
       });
   const launchIntegrations =

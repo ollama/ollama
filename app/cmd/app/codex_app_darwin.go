@@ -27,10 +27,12 @@ const (
 
 type codexDesktopController interface {
 	Installed() bool
-	OllamaProfileRunning() bool
-	OllamaProfileRequestCount() uint64
-	LaunchOllamaProfileFromDesktop(string, []launch.LaunchModel) error
-	StopOllamaProfileFromDesktop() error
+	OllamaConfigured() bool
+	Running() bool
+	OllamaRequestCount() uint64
+	UseOllamaFromDesktop(string, []launch.LaunchModel) error
+	RestoreFromDesktop() error
+	RestoreForShutdown(context.Context) error
 	Onboard() error
 }
 
@@ -81,10 +83,10 @@ type codexDesktopModelInventory struct {
 }
 
 func getCodexDesktopStatus() codexDesktopStatus {
-	running := codexDesktop.OllamaProfileRunning()
+	connected := codexDesktop.OllamaConfigured()
 	requests := uint64(0)
-	if running {
-		requests = codexDesktop.OllamaProfileRequestCount()
+	if connected {
+		requests = codexDesktop.OllamaRequestCount()
 	}
 	var models []string
 	if saved, err := config.LoadIntegration(codexDesktopIntegrationName); err == nil && len(saved.Models) > 0 {
@@ -97,8 +99,8 @@ func getCodexDesktopStatus() codexDesktopStatus {
 	return codexDesktopStatus{
 		Supported: true,
 		Installed: codexDesktop.Installed(),
-		Connected: running,
-		Running:   running,
+		Connected: connected,
+		Running:   codexDesktop.Running(),
 		Model:     model,
 		Models:    models,
 		MaxModels: codexDesktopMaxModels,
@@ -111,7 +113,7 @@ func setCodexDesktopConnection(enabled bool) error {
 	defer codexDesktopMu.Unlock()
 
 	if !enabled {
-		return codexDesktop.StopOllamaProfileFromDesktop()
+		return codexDesktop.RestoreFromDesktop()
 	}
 	if !codexDesktop.Installed() {
 		return errors.New("ChatGPT is not installed")
@@ -124,14 +126,23 @@ func setCodexDesktopConnection(enabled bool) error {
 	if err != nil {
 		return err
 	}
-	if err := codexDesktop.LaunchOllamaProfileFromDesktop(primary, models); err != nil {
-		return err
-	}
-	if err := config.SaveIntegration(codexDesktopIntegrationName, codexDesktopModelNames(models)); err != nil {
+	previous := config.IntegrationModels(codexDesktopIntegrationName)
+	selected = codexDesktopModelNames(models)
+	if err := config.SaveIntegration(codexDesktopIntegrationName, selected); err != nil {
 		return fmt.Errorf("save ChatGPT integration: %w", err)
 	}
 	if err := codexDesktop.Onboard(); err != nil {
+		_ = config.SaveIntegration(codexDesktopIntegrationName, previous)
 		return fmt.Errorf("save ChatGPT integration state: %w", err)
+	}
+	if err := codexDesktop.UseOllamaFromDesktop(primary, models); err != nil {
+		_ = config.SaveIntegration(codexDesktopIntegrationName, previous)
+		if codexDesktop.OllamaConfigured() {
+			if restoreErr := codexDesktop.RestoreFromDesktop(); restoreErr != nil {
+				return errors.Join(err, fmt.Errorf("restore ChatGPT after failed switch: %w", restoreErr))
+			}
+		}
+		return err
 	}
 	return nil
 }
@@ -140,7 +151,7 @@ func getCodexDesktopModelsSettings() (codexDesktopModelsSettings, error) {
 	settings := codexDesktopModelsSettings{
 		Supported: true,
 		Installed: codexDesktop.Installed(),
-		Running:   codexDesktop.OllamaProfileRunning(),
+		Running:   codexDesktop.Running(),
 		Selected:  []string{},
 		Available: []string{},
 		MaxModels: codexDesktopMaxModels,
@@ -177,16 +188,16 @@ func applyCodexDesktopModels(selected []string) error {
 	if err := config.SaveIntegration(codexDesktopIntegrationName, selected); err != nil {
 		return fmt.Errorf("save ChatGPT models: %w", err)
 	}
-	wasRunning := codexDesktop.OllamaProfileRunning()
-	if wasRunning {
-		if err := codexDesktop.StopOllamaProfileFromDesktop(); err != nil {
-			_ = config.SaveIntegration(codexDesktopIntegrationName, previous)
-			return err
-		}
-	}
-	if err := codexDesktop.LaunchOllamaProfileFromDesktop(primary, models); err == nil {
+	wasConfigured := codexDesktop.OllamaConfigured()
+	if err := codexDesktop.UseOllamaFromDesktop(primary, models); err == nil {
 		return nil
-	} else if !wasRunning {
+	} else if !wasConfigured {
+		if codexDesktop.OllamaConfigured() {
+			if restoreErr := codexDesktop.RestoreFromDesktop(); restoreErr != nil {
+				_ = config.SaveIntegration(codexDesktopIntegrationName, previous)
+				return errors.Join(err, fmt.Errorf("restore ChatGPT after failed switch: %w", restoreErr))
+			}
+		}
 		_ = config.SaveIntegration(codexDesktopIntegrationName, previous)
 		return fmt.Errorf("start ChatGPT with selected models: %w", err)
 	} else {
@@ -196,7 +207,7 @@ func applyCodexDesktopModels(selected []string) error {
 		defer rollbackCancel()
 		rollbackPrimary, rollbackModels, rollbackErr := codexDesktopLoadModels(rollbackCtx, previous)
 		if rollbackErr == nil {
-			rollbackErr = codexDesktop.LaunchOllamaProfileFromDesktop(rollbackPrimary, rollbackModels)
+			rollbackErr = codexDesktop.UseOllamaFromDesktop(rollbackPrimary, rollbackModels)
 		}
 		if rollbackErr != nil {
 			return fmt.Errorf("apply ChatGPT models: %v; restore previous profile: %w", applyErr, rollbackErr)

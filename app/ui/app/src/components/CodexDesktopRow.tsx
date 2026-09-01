@@ -50,9 +50,9 @@ export function codexDesktopDescription(
   const requestCount = status.requests ?? 0;
   const requests = `${requestCount} ${requestCount === 1 ? "request" : "requests"} this session`;
   if (modelCount > 0) {
-    return `Ollama is running · ${modelCount} ${modelCount === 1 ? "model" : "models"} · ${requests}`;
+    return `Using Ollama · ${modelCount} ${modelCount === 1 ? "model" : "models"} · ${requests}`;
   }
-  return `Ollama is running · ${requests}`;
+  return `Using Ollama · ${requests}`;
 }
 
 export function CodexDesktopRow({
@@ -124,6 +124,16 @@ export function CodexDesktopRow({
     }
 
     const enabled = !connected;
+    if (
+      status?.running &&
+      !window.confirm(
+        enabled
+          ? "Restart ChatGPT to use Ollama models? Your account, chats, plugins, and skills will stay in the same profile. Codex CLI and IDE will also use this shared configuration while Ollama is enabled. Any running task will stop."
+          : "Restart ChatGPT to restore its previous OpenAI provider and model list? Any running task will stop.",
+      )
+    ) {
+      return;
+    }
     setPending(true);
     setError(null);
     try {
@@ -138,8 +148,8 @@ export function CodexDesktopRow({
     } catch {
       setError(
         enabled
-          ? "Ollama could not open ChatGPT · Ollama."
-          : "Ollama could not close ChatGPT · Ollama.",
+          ? "Ollama could not switch ChatGPT to Ollama models."
+          : "Ollama could not restore ChatGPT's OpenAI models.",
       );
     } finally {
       setPending(false);
@@ -179,9 +189,17 @@ export function CodexDesktopRow({
           aria-checked={connected}
           aria-busy={pending || undefined}
           aria-label={
-            connected ? "Close ChatGPT · Ollama" : "Open ChatGPT · Ollama"
+            connected
+              ? "Restore OpenAI models in ChatGPT"
+              : "Use Ollama models in ChatGPT"
           }
-          title={connected ? "Close" : installed ? "Open" : "Not installed"}
+          title={
+            connected
+              ? "Restore OpenAI"
+              : installed
+                ? "Use Ollama"
+                : "Not installed"
+          }
           disabled={pending || (!installed && !connected)}
           onClick={() => void toggleConnection()}
           className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-not-allowed disabled:opacity-50 ${connected ? "bg-neutral-950 dark:bg-white" : "bg-neutral-300 dark:bg-neutral-700"}`}

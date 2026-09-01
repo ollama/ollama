@@ -111,6 +111,10 @@ func resetCodexAppOllamaProfileRequestCount() error {
 	if err != nil {
 		return err
 	}
+	return resetCodexAppRequestCountAt(path)
+}
+
+func resetCodexAppRequestCountAt(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
@@ -144,6 +148,42 @@ func codexAppOllamaProfileRequestCount() uint64 {
 		return 0
 	}
 	return codexAppRequests.scan(filepath.Join(codexHome, "sessions"), start)
+}
+
+func resetCodexAppRegularProfileRequestCount() error {
+	path, err := codexAppRegularProfileSessionStartPath()
+	if err != nil {
+		return err
+	}
+	return resetCodexAppRequestCountAt(path)
+}
+
+func codexAppRegularProfileRequestCount() uint64 {
+	startPath, err := codexAppRegularProfileSessionStartPath()
+	if err != nil {
+		return 0
+	}
+	data, err := os.ReadFile(startPath)
+	if err != nil {
+		return 0
+	}
+	start, err := time.Parse(time.RFC3339Nano, string(bytes.TrimSpace(data)))
+	if err != nil {
+		return 0
+	}
+	configPath, err := codexConfigPath()
+	if err != nil {
+		return 0
+	}
+	return codexAppRequests.scan(filepath.Join(filepath.Dir(configPath), "sessions"), start)
+}
+
+func codexAppRegularProfileSessionStartPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".ollama", "launch", "chatgpt-session-start"), nil
 }
 
 func (c *codexAppRequestCursor) scan(root string, start time.Time) uint64 {

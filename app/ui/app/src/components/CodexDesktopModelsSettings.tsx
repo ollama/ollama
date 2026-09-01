@@ -266,7 +266,7 @@ export function CodexDesktopModelsSettings({
     if (
       settings?.running &&
       !window.confirm(
-        "Restart ChatGPT · Ollama to apply these models? Any running task in that window will stop.",
+        "Restart ChatGPT to apply these Ollama models? Your account, chats, plugins, and skills will stay in the same profile. Codex CLI and IDE will also use this shared configuration while Ollama is enabled. Any running task will stop.",
       )
     ) {
       return;
@@ -314,7 +314,9 @@ export function CodexDesktopModelsSettings({
                 ChatGPT
               </h2>
               <p className="mt-1 text-base/6 text-zinc-500 sm:text-sm/6 dark:text-zinc-400">
-                Select up to {maxModels} Ollama models to use in ChatGPT.
+                Replace ChatGPT's OpenAI model list with up to {maxModels}{" "}
+                Ollama models. Your existing profile stays signed in. Codex CLI
+                and IDE share this configuration while Ollama is enabled.
               </p>
             </div>
             <Button

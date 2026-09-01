@@ -1244,17 +1244,17 @@ func IsCodexDesktopInstalled() C.bool {
 
 //export IsCodexDesktopConnected
 func IsCodexDesktopConnected() C.bool {
-	return C._Bool(codexDesktop.OllamaProfileRunning())
+	return C._Bool(codexDesktop.OllamaConfigured())
 }
 
 //export IsCodexDesktopRunning
 func IsCodexDesktopRunning() C.bool {
-	return C._Bool(codexDesktop.OllamaProfileRunning())
+	return C._Bool(codexDesktop.Running())
 }
 
 //export CodexDesktopRequestCount
 func CodexDesktopRequestCount() C.ulonglong {
-	return C.ulonglong(codexDesktop.OllamaProfileRequestCount())
+	return C.ulonglong(codexDesktop.OllamaRequestCount())
 }
 
 //export SetCodexDesktopConnected
@@ -1262,6 +1262,17 @@ func SetCodexDesktopConnected(connected C.bool) C.bool {
 	shouldConnect := connected != C._Bool(false)
 	if err := setCodexDesktopConnection(shouldConnect); err != nil {
 		slog.Warn("failed to change ChatGPT integration", "connected", shouldConnect, "error", err)
+		return C._Bool(false)
+	}
+	return C._Bool(true)
+}
+
+//export RestoreCodexProfileForShutdown
+func RestoreCodexProfileForShutdown() C.bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := codexDesktop.RestoreForShutdown(ctx); err != nil {
+		slog.Warn("failed to restore ChatGPT profile during shutdown", "error", err)
 		return C._Bool(false)
 	}
 	return C._Bool(true)

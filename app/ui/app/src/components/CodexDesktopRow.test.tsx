@@ -7,7 +7,7 @@ import { CodexDesktopRow } from "./CodexDesktopRow";
 const integration: IntegrationStatus = {
   id: "chatgpt",
   name: "ChatGPT",
-  description: "Run Ollama alongside your normal ChatGPT",
+  description: "Use Ollama models in ChatGPT",
   installed: true,
   command: "ollama launch chatgpt",
 };
@@ -31,8 +31,8 @@ describe("CodexDesktopRow", () => {
     );
 
     expect(html).toContain(">ChatGPT</p>");
-    expect(html).toContain("Run Ollama alongside your normal ChatGPT");
-    expect(html).toContain('aria-label="Open ChatGPT · Ollama"');
+    expect(html).toContain("Use Ollama models in ChatGPT");
+    expect(html).toContain('aria-label="Use Ollama models in ChatGPT"');
     expect(html).toContain('aria-checked="false"');
   });
 
@@ -48,10 +48,8 @@ describe("CodexDesktopRow", () => {
       />,
     );
 
-    expect(html).toContain(
-      "Ollama is running · 3 models · 0 requests this session",
-    );
-    expect(html).toContain('aria-label="Close ChatGPT · Ollama"');
+    expect(html).toContain("Using Ollama · 3 models · 0 requests this session");
+    expect(html).toContain('aria-label="Restore OpenAI models in ChatGPT"');
     expect(html).toContain('aria-checked="true"');
   });
 
@@ -66,9 +64,7 @@ describe("CodexDesktopRow", () => {
       />,
     );
 
-    expect(html).toContain(
-      "Ollama is running · 1 model · 0 requests this session",
-    );
+    expect(html).toContain("Using Ollama · 1 model · 0 requests this session");
   });
 
   it("shows the ChatGPT request count with singular copy", () => {
@@ -83,9 +79,7 @@ describe("CodexDesktopRow", () => {
       />,
     );
 
-    expect(html).toContain(
-      "Ollama is running · 1 model · 1 request this session",
-    );
+    expect(html).toContain("Using Ollama · 1 model · 1 request this session");
   });
 
   it("disables the toggle when ChatGPT is not installed", () => {
@@ -102,7 +96,7 @@ describe("CodexDesktopRow", () => {
     expect(html).toContain('disabled=""');
   });
 
-  it("allows the isolated profile to close if ChatGPT is removed", () => {
+  it("allows the normal profile to be restored if ChatGPT is removed", () => {
     const html = renderToStaticMarkup(
       <CodexDesktopRow
         integration={{ ...integration, installed: false }}
@@ -110,7 +104,7 @@ describe("CodexDesktopRow", () => {
       />,
     );
 
-    expect(html).toContain('aria-label="Close ChatGPT · Ollama"');
+    expect(html).toContain('aria-label="Restore OpenAI models in ChatGPT"');
     expect(html).not.toContain('disabled=""');
   });
 });
