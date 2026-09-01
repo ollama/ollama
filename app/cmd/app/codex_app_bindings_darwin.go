@@ -9,7 +9,7 @@ func bindCodexDesktop(wv webview.WebView) {
 		return getCodexDesktopStatus()
 	})
 	wv.Bind("getCodexDesktopRequestCount", func() uint64 {
-		return codexDesktop.OllamaProfileRequestCount()
+		return codexDesktop.OllamaRequestCount()
 	})
 	wv.Bind("setCodexDesktopConnected", func(enabled bool) codexDesktopActionResult {
 		err := setCodexDesktopConnection(enabled)

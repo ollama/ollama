@@ -18,37 +18,44 @@ import (
 )
 
 type fakeCodexDesktopController struct {
-	installed  bool
-	running    bool
-	launched   string
-	models     []string
-	stopped    bool
-	onboarded  bool
-	launchErrs []error
-	launches   [][]string
-	requests   uint64
+	installed            bool
+	running              bool
+	configured           bool
+	launched             string
+	models               []string
+	stopped              bool
+	onboarded            bool
+	launchErrs           []error
+	launches             [][]string
+	requests             uint64
+	configureBeforeError bool
 }
 
 func (f *fakeCodexDesktopController) Installed() bool { return f.installed }
-func (f *fakeCodexDesktopController) OllamaProfileRunning() bool {
-	return f.running
+func (f *fakeCodexDesktopController) OllamaConfigured() bool {
+	return f.configured
 }
-func (f *fakeCodexDesktopController) OllamaProfileRequestCount() uint64 {
+func (f *fakeCodexDesktopController) Running() bool { return f.running }
+func (f *fakeCodexDesktopController) OllamaRequestCount() uint64 {
 	return f.requests
 }
-func (f *fakeCodexDesktopController) LaunchOllamaProfileFromDesktop(primary string, models []launch.LaunchModel) error {
+func (f *fakeCodexDesktopController) UseOllamaFromDesktop(primary string, models []launch.LaunchModel) error {
 	names := codexDesktopModelNames(models)
 	f.launches = append(f.launches, names)
 	if len(f.launchErrs) > 0 {
 		err := f.launchErrs[0]
 		f.launchErrs = f.launchErrs[1:]
 		if err != nil {
+			if f.configureBeforeError {
+				f.configured = true
+			}
 			return err
 		}
 	}
 	f.launched = primary
 	f.models = names
 	f.running = true
+	f.configured = true
 	return nil
 }
 
@@ -72,9 +79,15 @@ func stubCodexDesktopModelLoader(t *testing.T) {
 	codexDesktopLoadModels = loader
 	codexDesktopLoadConnectionModels = loader
 }
-func (f *fakeCodexDesktopController) StopOllamaProfileFromDesktop() error {
+func (f *fakeCodexDesktopController) RestoreFromDesktop() error {
+	f.stopped = true
+	f.configured = false
+	return nil
+}
+func (f *fakeCodexDesktopController) RestoreForShutdown(context.Context) error {
 	f.stopped = true
 	f.running = false
+	f.configured = false
 	return nil
 }
 func (f *fakeCodexDesktopController) Onboard() error {
@@ -82,7 +95,7 @@ func (f *fakeCodexDesktopController) Onboard() error {
 	return nil
 }
 
-func TestSetCodexDesktopConnectionControlsOnlyOllamaProfile(t *testing.T) {
+func TestSetCodexDesktopConnectionSwitchesRegularProfile(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	originalController := codexDesktop
 	t.Cleanup(func() {
@@ -96,7 +109,7 @@ func TestSetCodexDesktopConnectionControlsOnlyOllamaProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	if fake.launched != "qwen3:8b" || !fake.running || !fake.onboarded {
-		t.Fatalf("controller = %#v, want isolated profile launched and onboarded", fake)
+		t.Fatalf("controller = %#v, want regular profile switched and onboarded", fake)
 	}
 	saved, err := config.LoadIntegration(codexDesktopIntegrationName)
 	if err != nil {
@@ -109,12 +122,12 @@ func TestSetCodexDesktopConnectionControlsOnlyOllamaProfile(t *testing.T) {
 	if err := setCodexDesktopConnection(false); err != nil {
 		t.Fatal(err)
 	}
-	if !fake.stopped || fake.running {
-		t.Fatalf("controller = %#v, want only Ollama profile stopped", fake)
+	if !fake.stopped || fake.configured {
+		t.Fatalf("controller = %#v, want regular profile restored", fake)
 	}
 }
 
-func TestApplyCodexDesktopModelsRestartsOnlyIsolatedProfile(t *testing.T) {
+func TestSetCodexDesktopConnectionRestoresProfileAfterPartialSwitchFailure(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	originalController := codexDesktop
 	t.Cleanup(func() { codexDesktop = originalController })
@@ -123,13 +136,39 @@ func TestApplyCodexDesktopModelsRestartsOnlyIsolatedProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fake := &fakeCodexDesktopController{installed: true, running: true}
+	fake := &fakeCodexDesktopController{
+		installed:            true,
+		launchErrs:           []error{errors.New("reopen failed")},
+		configureBeforeError: true,
+	}
+	codexDesktop = fake
+	if err := setCodexDesktopConnection(true); err == nil {
+		t.Fatal("setCodexDesktopConnection returned nil after a partial switch failure")
+	}
+	if !fake.stopped || fake.configured {
+		t.Fatalf("controller = %#v, want the regular profile restored", fake)
+	}
+	if got := config.IntegrationModels(codexDesktopIntegrationName); len(got) != 1 || got[0] != "old-model" {
+		t.Fatalf("saved models = %v, want previous selection", got)
+	}
+}
+
+func TestApplyCodexDesktopModelsRestartsConfiguredProfile(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	originalController := codexDesktop
+	t.Cleanup(func() { codexDesktop = originalController })
+	stubCodexDesktopModelLoader(t)
+	if err := config.SaveIntegration(codexDesktopIntegrationName, []string{"old-model"}); err != nil {
+		t.Fatal(err)
+	}
+
+	fake := &fakeCodexDesktopController{installed: true, running: true, configured: true}
 	codexDesktop = fake
 	if err := applyCodexDesktopModels([]string{"qwen3:8b", "glm-5.2:cloud"}); err != nil {
 		t.Fatal(err)
 	}
-	if !fake.stopped || !fake.running {
-		t.Fatalf("controller = %#v, want isolated profile restarted", fake)
+	if !fake.running || !fake.configured {
+		t.Fatalf("controller = %#v, want configured profile restarted", fake)
 	}
 	if len(fake.models) != 2 || fake.models[0] != "qwen3:8b" || fake.models[1] != "glm-5.2:cloud" {
 		t.Fatalf("launched models = %#v", fake.models)
@@ -140,7 +179,7 @@ func TestApplyCodexDesktopModelsRestartsOnlyIsolatedProfile(t *testing.T) {
 	}
 }
 
-func TestApplyCodexDesktopModelsStartsStoppedIsolatedProfile(t *testing.T) {
+func TestApplyCodexDesktopModelsStartsStoppedRegularProfile(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	originalController := codexDesktop
 	t.Cleanup(func() { codexDesktop = originalController })
@@ -151,8 +190,8 @@ func TestApplyCodexDesktopModelsStartsStoppedIsolatedProfile(t *testing.T) {
 	if err := applyCodexDesktopModels([]string{"qwen3:8b", "glm-5.2:cloud"}); err != nil {
 		t.Fatal(err)
 	}
-	if fake.stopped || !fake.running {
-		t.Fatalf("controller = %#v, want stopped profile started without a stop", fake)
+	if fake.stopped || !fake.running || !fake.configured {
+		t.Fatalf("controller = %#v, want stopped regular profile configured and started", fake)
 	}
 	if len(fake.models) != 2 || fake.models[0] != "qwen3:8b" || fake.models[1] != "glm-5.2:cloud" {
 		t.Fatalf("launched models = %#v", fake.models)
@@ -196,6 +235,7 @@ func TestApplyCodexDesktopModelsRestoresPreviousProfileAfterLaunchFailure(t *tes
 
 	fake := &fakeCodexDesktopController{
 		installed:  true,
+		configured: true,
 		running:    true,
 		launchErrs: []error{errors.New("new profile failed"), nil},
 	}

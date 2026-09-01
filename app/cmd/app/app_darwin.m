@@ -679,7 +679,7 @@ static NSImage *ollamaApplicationIcon(void) {
         ? activeStatus
         : nil];
     [self.codexAppRow setInactiveStatusText:installed
-        ? @"Open alongside normal ChatGPT"
+        ? @"Use Ollama models in ChatGPT"
         : @"Not installed"];
     [self.codexAppRow setIntegrationActive:connected];
     [self.codexAppRow setIntegrationReady:NO];
@@ -1154,14 +1154,17 @@ didCompleteWithError:(NSError *)error {
         return;
     }
 
-    if (!enabled && IsCodexDesktopRunning()) {
+    if (IsCodexDesktopRunning()) {
         NSAlert *restartAlert = [[NSAlert alloc] init];
         [restartAlert setAlertStyle:NSAlertStyleWarning];
         [restartAlert setIcon:ollamaApplicationIcon()];
-        [restartAlert setMessageText:@"Close ChatGPT · Ollama?"];
-        [restartAlert setInformativeText:
-            @"This closes only the separate Ollama profile. Your normal ChatGPT stays open. Any task running in ChatGPT · Ollama will stop."];
-        [restartAlert addButtonWithTitle:@"Close"];
+        [restartAlert setMessageText:enabled
+            ? @"Restart ChatGPT to use Ollama?"
+            : @"Restart ChatGPT to restore OpenAI?"];
+        [restartAlert setInformativeText:enabled
+            ? @"ChatGPT must restart to replace its OpenAI model list with your selected Ollama models. Your account, chats, plugins, and skills stay in the same profile. Codex CLI and IDE use this shared configuration while Ollama is enabled. Any running task will stop."
+            : @"ChatGPT must restart to restore its previous OpenAI provider and model list. Any running task will stop."];
+        [restartAlert addButtonWithTitle:@"Restart ChatGPT"];
         [restartAlert addButtonWithTitle:@"Cancel"];
         if ([restartAlert runModal] != NSAlertFirstButtonReturn) {
             [self refreshCodexAppState];
@@ -1180,10 +1183,10 @@ didCompleteWithError:(NSError *)error {
                 [alert setAlertStyle:NSAlertStyleWarning];
                 [alert setIcon:ollamaApplicationIcon()];
                 [alert setMessageText:enabled
-                    ? @"Unable to open ChatGPT · Ollama"
-                    : @"Unable to close ChatGPT · Ollama"];
+                    ? @"Unable to switch ChatGPT to Ollama"
+                    : @"Unable to restore ChatGPT"];
                 [alert setInformativeText:
-                    @"Your normal ChatGPT app and settings were not changed. Check the Ollama log for details, then try again."];
+                    @"ChatGPT could not complete the profile change. Check the Ollama log for details, then try again."];
                 [alert runModal];
                 return;
             }
@@ -1222,8 +1225,8 @@ didCompleteWithError:(NSError *)error {
 
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
     if (self.systemShutdownInProgress) {
-        BOOL codexRunning = IsCodexDesktopRunning();
-        if (!IsClaudeGatewayConfigured() && !codexRunning) {
+        BOOL codexConfigured = IsCodexDesktopConnected();
+        if (!IsClaudeGatewayConfigured() && !codexConfigured) {
             return NSTerminateNow;
         }
         self.systemTerminationApplication = sender;
@@ -1233,8 +1236,8 @@ didCompleteWithError:(NSError *)error {
         }
         self.quitInProgress = YES;
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-            if (codexRunning && !SetCodexDesktopConnected(false)) {
-                appLogInfo(@"Unable to close ChatGPT · Ollama during system shutdown");
+            if (codexConfigured && !RestoreCodexProfileForShutdown()) {
+                appLogInfo(@"Unable to restore ChatGPT during system shutdown");
             }
             if (IsClaudeGatewayConfigured() && !RestoreClaudeGatewayForShutdown()) {
                 appLogInfo(@"Unable to restore Claude during system shutdown");
@@ -1311,14 +1314,15 @@ didCompleteWithError:(NSError *)error {
     if (self.quitInProgress) {
         return;
     }
-    if (IsCodexDesktopRunning()) {
+    if (IsCodexDesktopConnected()) {
         NSAlert *alert = [[NSAlert alloc] init];
         [alert setAlertStyle:NSAlertStyleWarning];
         [alert setIcon:ollamaApplicationIcon()];
-        [alert setMessageText:@"Close ChatGPT · Ollama before quitting Ollama?"];
-        [alert setInformativeText:
-            @"The separate Ollama-backed window must close before Ollama quits. Your normal ChatGPT app will stay open."];
-        [alert addButtonWithTitle:@"Close and Quit"];
+        [alert setMessageText:@"Restore ChatGPT before quitting Ollama?"];
+        [alert setInformativeText:IsCodexDesktopRunning()
+            ? @"ChatGPT will restart with its previous OpenAI provider and model list before Ollama quits. Any running task will stop."
+            : @"ChatGPT's previous OpenAI provider and model list will be restored before Ollama quits."];
+        [alert addButtonWithTitle:@"Restore and Quit"];
         [alert addButtonWithTitle:@"Cancel"];
         if ([alert runModal] != NSAlertFirstButtonReturn) {
             return;
@@ -1340,7 +1344,7 @@ didCompleteWithError:(NSError *)error {
                 [errorAlert setIcon:ollamaApplicationIcon()];
                 [errorAlert setMessageText:@"Unable to quit Ollama"];
                 [errorAlert setInformativeText:
-                    @"ChatGPT · Ollama is still running. Close that window and try again; your normal ChatGPT app was not changed."];
+                    @"ChatGPT's previous OpenAI configuration could not be restored. Check the Ollama log, then try again."];
                 [errorAlert runModal];
             });
         });

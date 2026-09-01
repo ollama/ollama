@@ -161,7 +161,7 @@ describe("CodexDesktopModelsSettings", () => {
 
       expect(textContent(renderer!.root)).toContain("ChatGPT");
       expect(textContent(renderer!.root)).toContain(
-        "Select up to 5 Ollama models to use in ChatGPT.",
+        "Replace ChatGPT's OpenAI model list with up to 5 Ollama models. Your existing profile stays signed in. Codex CLI and IDE share this configuration while Ollama is enabled.",
       );
       expect(textContent(renderer!.root)).not.toContain("5 of 5 selected");
       expect(
