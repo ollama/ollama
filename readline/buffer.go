@@ -29,6 +29,9 @@ func NewBuffer(prompt *Prompt) (*Buffer, error) {
 	}
 
 	lwidth := width - len(prompt.prompt())
+	if lwidth <= 0 {
+		lwidth = 1 // Ensure minimum width to prevent division by zero
+	}
 
 	b := &Buffer{
 		DisplayPos:   0,
