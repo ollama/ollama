@@ -2977,6 +2977,55 @@ func TestMemoryParsingWriter(t *testing.T) {
 			wantGPU:   47799.52,
 			wantTotal: 56779.74,
 		},
+		{
+			// A hybrid architecture allocates one KV cache per cache type and they
+			// coexist, so both belong in the device total. Taken verbatim from a
+			// Qwen3.8-Flash-Next load, where dropping the first cost 6144 MiB.
+			name: "simultaneous KV caches on one device are both counted",
+			lines: []string{
+				"load_tensors:   CPU_Mapped model buffer size =   644.14 MiB\n",
+				"load_tensors:        CUDA0 model buffer size = 78056.46 MiB\n",
+				"load_tensors:   CPU_Mapped model buffer size = 27465.95 MiB\n",
+				"llama_context:  CUDA_Host  output buffer size =     0.95 MiB\n",
+				"llama_kv_cache:      CUDA0 KV buffer size =  6144.00 MiB\n",
+				"llama_memory_recurrent:      CUDA0 RS buffer size =   112.57 MiB\n",
+				"llama_kv_cache:      CUDA0 KV buffer size =  2304.00 MiB\n",
+				"sched_reserve:      CUDA0 compute buffer size =  1809.09 MiB\n",
+				"sched_reserve:  CUDA_Host compute buffer size =   402.05 MiB\n",
+			},
+			wantGPU:   78056.46 + 6144.00 + 112.57 + 2304.00 + 1809.09,
+			wantTotal: 78056.46 + 6144.00 + 112.57 + 2304.00 + 1809.09 + 644.14 + 27465.95 + 0.95 + 402.05,
+		},
+		{
+			// The probe reports the same pair of caches the final load does. Counting
+			// per pass must not turn that into four caches.
+			name: "fit probe with multiple caches is replaced, not accumulated",
+			lines: []string{
+				"load_tensors:        CUDA0 model buffer size =  1000.00 MiB\n",
+				"llama_kv_cache:      CUDA0 KV buffer size =   500.00 MiB\n",
+				"llama_kv_cache:      CUDA0 KV buffer size =   250.00 MiB\n",
+				"sched_reserve:      CUDA0 compute buffer size =   300.00 MiB\n",
+				"load_tensors:        CUDA0 model buffer size =  1100.00 MiB\n",
+				"llama_kv_cache:      CUDA0 KV buffer size =   550.00 MiB\n",
+				"llama_kv_cache:      CUDA0 KV buffer size =   275.00 MiB\n",
+				"sched_reserve:      CUDA0 compute buffer size =   330.00 MiB\n",
+			},
+			wantGPU:   1100 + 550 + 275 + 330,
+			wantTotal: 1100 + 550 + 275 + 330,
+		},
+		{
+			// The scheduler re-reserves one compute buffer per graph it prepares, at a
+			// new size each time. That buffer is resized, not duplicated.
+			name: "repeated compute reservations replace rather than accumulate",
+			lines: []string{
+				"load_tensors:        CUDA0 model buffer size =  1000.00 MiB\n",
+				"llama_kv_cache:      CUDA0 KV buffer size =   500.00 MiB\n",
+				"sched_reserve:      CUDA0 compute buffer size =   756.03 MiB\n",
+				"sched_reserve:      CUDA0 compute buffer size =   648.03 MiB\n",
+			},
+			wantGPU:   1000 + 500 + 648.03,
+			wantTotal: 1000 + 500 + 648.03,
+		},
 	}
 
 	withinKiB := func(got, want uint64) bool {

@@ -2743,9 +2743,34 @@ type memoryParsingWriter struct {
 	inner   io.Writer
 	runner  *llamaServerRunner
 	buffers map[memoryBufferKey]memoryBuffer
+
+	// bufferSeq counts how many buffers of each slot the current load pass has
+	// reported, and sawNonModelBuffer tracks whether anything but model weights has
+	// been reported since the last model buffer. Together they detect the boundary
+	// between the fit probe and the final load: weights are always reported first, so
+	// a model buffer arriving after a cache or compute buffer means a new pass began.
+	bufferSeq         map[bufferSlot]int
+	sawNonModelBuffer bool
 }
 
 type memoryBufferKey struct {
+	component string
+	backend   string
+	kind      string
+	// seq distinguishes buffers that coexist rather than replace each other. A load
+	// can allocate several buffers of the same kind on one device — a hybrid
+	// architecture reports one KV cache per cache type, and a model with a draft
+	// reports one per context — and every one of them occupies memory at the same
+	// time. Without this they collide and only the last survives, under-reporting the
+	// device by the size of the ones dropped. It is reset per load pass so the fit
+	// probe's buffers are still replaced by the final load's rather than added to
+	// them; see bufferSlot.
+	seq int
+}
+
+// bufferSlot identifies a buffer's reporting slot, ignoring how many of them a load
+// has produced so far. It is the key of the per-pass occurrence counter.
+type bufferSlot struct {
 	component string
 	backend   string
 	kind      string
@@ -2833,7 +2858,39 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 					if w.buffers == nil {
 						w.buffers = make(map[memoryBufferKey]memoryBuffer)
 					}
+					slot := bufferSlot{
+						component: string(match[1]),
+						backend:   backendName,
+						kind:      string(match[3]),
+					}
+
+					// Weights after a non-weight buffer mean the fit probe finished and
+					// the real load started: begin numbering again so this pass's buffers
+					// replace the probe's instead of accumulating on top of them.
+					if slot.kind == "model" {
+						if w.sawNonModelBuffer {
+							w.bufferSeq = nil
+							w.sawNonModelBuffer = false
+						}
+					} else {
+						w.sawNonModelBuffer = true
+					}
+
+					// Compute buffers keep a single slot. Unlike an allocation, a
+					// reservation is re-reported at a new size when the scheduler reserves
+					// for a different graph, and the buffer is resized rather than added
+					// to, so the latest value replaces the previous one.
+					seq := 0
+					if slot.kind != "compute" {
+						if w.bufferSeq == nil {
+							w.bufferSeq = make(map[bufferSlot]int)
+						}
+						seq = w.bufferSeq[slot]
+						w.bufferSeq[slot] = seq + 1
+					}
+
 					w.buffers[memoryBufferKey{
+						seq:       seq,
 						component: string(match[1]),
 						backend:   backendName,
 						kind:      string(match[3]),
