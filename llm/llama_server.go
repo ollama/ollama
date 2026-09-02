@@ -2681,9 +2681,6 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 	return total, vram
 }
 
-// PredictServerVRAM estimates VRAM usage for a model without spawning llama-server.
-// Uses model file size as a proxy for weights plus a rough KV cache estimate.
-// This is intentionally conservative — it overestimates to avoid VRAM contention.
 // hostResidentTensorGroups are tensor groups that are looked up on the host and never
 // offloaded, so they must not be counted toward predicted VRAM. Per-layer token
 // embeddings are the notable case: architectures that use them (gemma3n, qwen4exp) carry
@@ -2692,11 +2689,18 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 // single device look like it needs several.
 var hostResidentTensorGroups = []string{"per_layer_token_embd"}
 
-func PredictServerVRAM(modelPath string, f *ggml.GGML, numCtx int) uint64 {
+// PredictServerVRAMParts estimates VRAM usage for a model without spawning llama-server,
+// split into the part that does not depend on context and the rate at which the rest grows
+// with it.
+//
+// The split exists so that a measured load can be extrapolated: VRAMCalibration anchors on
+// what a model actually used and needs a slope to move away from that point. Callers that
+// only want a number for one context length should use PredictServerVRAM.
+func PredictServerVRAMParts(modelPath string, f *ggml.GGML) (weights, bytesPerToken uint64) {
 	// Sum the tensors that are actually offloaded rather than taking the file size, which
 	// also covers host-resident tables. Fall back to the file size if tensor metadata is
 	// unavailable, preserving the previous (conservative) behavior.
-	var weights uint64
+
 	for name, layer := range f.Tensors().GroupLayers() {
 		if slices.Contains(hostResidentTensorGroups, name) {
 			continue
@@ -2710,21 +2714,13 @@ func PredictServerVRAM(modelPath string, f *ggml.GGML, numCtx int) uint64 {
 		}
 	}
 
-	// KV cache: 2 (K+V) * attention layers * kv_heads * head_dim * context * 2 bytes (f16).
-	// Only blocks that run attention hold a cache; hybrid architectures interleave
-	// recurrent blocks that do not.
-	layers := f.KV().AttentionLayerCount()
-	kvHeads := f.KV().HeadCountKVMin()
-	if kvHeads == 0 {
-		kvHeads = 1
-	}
-	headDim := uint64(0)
-	if f.KV().HeadCountMax() > 0 {
-		headDim = f.KV().EmbeddingLength() / f.KV().HeadCountMax()
-	}
-	kvCache := 2 * layers * kvHeads * headDim * uint64(numCtx) * 2
+	return weights, f.KV().KVCacheBytesPerToken()
+}
 
-	return weights + kvCache
+// PredictServerVRAM estimates VRAM usage for a model at a given context length.
+func PredictServerVRAM(modelPath string, f *ggml.GGML, numCtx int) uint64 {
+	weights, bytesPerToken := PredictServerVRAMParts(modelPath, f)
+	return weights + bytesPerToken*uint64(max(numCtx, 0))
 }
 
 // memoryParsingWriter wraps an io.Writer and parses llama-server log output

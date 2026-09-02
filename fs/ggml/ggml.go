@@ -159,6 +159,36 @@ func (kv KV) AttentionLayerCount() (n uint64) {
 	return n
 }
 
+// KVCacheBytesPerToken reports how many bytes of attention KV cache one token of context
+// occupies, summed over the blocks that actually run attention.
+//
+// Each such block holds a key and a value vector per KV head, so its width is
+// head_count_kv * (key_length + value_length). key_length and value_length are read from
+// the model rather than derived as embedding_length/head_count: architectures increasingly
+// set a head dimension that is not that ratio, and deriving it is then wrong by whatever
+// factor separates the two. Qwen3.8-Flash-Next publishes key_length 256 against an implied
+// 2560/24, so the derived figure is off by more than 2x.
+//
+// Elements are assumed to be 2 bytes, matching the default f16 cache. A quantized cache is
+// smaller, so this is an upper bound for one.
+//
+// This covers the caches the metadata describes. An architecture that allocates a further
+// cache the metadata does not describe uses more than this, and the shortfall grows with
+// context; measuring a load is the only way to capture that.
+func (kv KV) KVCacheBytesPerToken() uint64 {
+	headsKV := kv.HeadCountKV()
+	width := kv.EmbeddingHeadCountK() + kv.EmbeddingHeadCountV()
+
+	var total uint64
+	for i, isAttention := range kv.AttentionLayers() {
+		if !isAttention || i >= len(headsKV) {
+			continue
+		}
+		total += headsKV[i] * width * 2
+	}
+	return total
+}
+
 func (kv KV) EmbeddingHeadCountMax() uint64 {
 	if heads := kv.HeadCountMin(); heads > 0 {
 		return kv.EmbeddingLength() / heads

@@ -361,3 +361,90 @@ func TestAttentionLayers(t *testing.T) {
 		})
 	}
 }
+
+func TestKVCacheBytesPerToken(t *testing.T) {
+	cases := []struct {
+		name string
+		kv   KV
+		want uint64
+	}{
+		{
+			// Qwen3.8-Flash-Next: 48 blocks with attention on every fourth, 2 KV heads, and
+			// a published head dimension of 256 that is nothing like embedding_length /
+			// head_count (2560/24 = 106). Deriving the dimension instead of reading it is
+			// wrong by more than 2x here. Verified against the runtime, which reports
+			// 6144 MiB of cache over 262144 cells: 6144 MiB / 262144 = 24576 bytes.
+			name: "published key and value lengths are used",
+			kv: KV{
+				"general.architecture":          "abc",
+				"abc.block_count":               uint32(48),
+				"abc.embedding_length":          uint32(2560),
+				"abc.attention.head_count":      uint32(24),
+				"abc.attention.head_count_kv":   uint32(2),
+				"abc.attention.key_length":      uint32(256),
+				"abc.attention.value_length":    uint32(256),
+				"abc.attention.compress_ratios": &array[int32]{values: repeatRatios(48, 4), size: 48},
+			},
+			want: 12 * 2 * (256 + 256) * 2,
+		},
+		{
+			// Without published dimensions the head dimension is embedding_length divided by
+			// the head count, which is the historical behaviour and still correct for the
+			// architectures that do not publish it.
+			name: "head dimension is derived when not published",
+			kv: KV{
+				"general.architecture":        "abc",
+				"abc.block_count":             uint32(4),
+				"abc.embedding_length":        uint32(64),
+				"abc.attention.head_count":    uint32(8),
+				"abc.attention.head_count_kv": uint32(2),
+			},
+			want: 4 * 2 * (8 + 8) * 2,
+		},
+		{
+			// Recurrent blocks hold no attention cache, so a hybrid must not be charged for
+			// all of its blocks.
+			name: "recurrent blocks contribute nothing",
+			kv: KV{
+				"general.architecture":          "abc",
+				"abc.block_count":               uint32(8),
+				"abc.embedding_length":          uint32(64),
+				"abc.attention.head_count":      uint32(8),
+				"abc.attention.head_count_kv":   uint32(2),
+				"abc.attention.compress_ratios": &array[int32]{values: []int32{0, 0, 0, 4, 0, 0, 0, 4}, size: 8},
+			},
+			want: 2 * 2 * (8 + 8) * 2,
+		},
+		{
+			// Per-layer KV head counts vary across blocks and each block must be charged its
+			// own width rather than a single representative value.
+			name: "per-layer kv head counts are summed individually",
+			kv: KV{
+				"general.architecture":        "abc",
+				"abc.block_count":             uint32(3),
+				"abc.embedding_length":        uint32(64),
+				"abc.attention.head_count":    &array[uint32]{values: []uint32{8, 8, 8}, size: 3},
+				"abc.attention.head_count_kv": &array[uint32]{values: []uint32{1, 2, 4}, size: 3},
+			},
+			want: (1 + 2 + 4) * (8 + 8) * 2,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.kv.KVCacheBytesPerToken(); got != tt.want {
+				t.Errorf("KVCacheBytesPerToken() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+// repeatRatios builds a per-block compress ratio array with a non-zero entry on every
+// nth block, matching how hybrid architectures interleave attention.
+func repeatRatios(blocks, interval int) []int32 {
+	out := make([]int32, blocks)
+	for i := interval - 1; i < blocks; i += interval {
+		out[i] = int32(interval)
+	}
+	return out
+}
