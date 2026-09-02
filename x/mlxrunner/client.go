@@ -34,7 +34,7 @@ type Client struct {
 	port              int
 	modelName         string
 	contextLength     atomic.Int64
-	softContextLength int // recommended limit to avoid poor performance
+	softContextLength int // configured num_ctx; enforced as a hard cap on the subprocess, 0 means use the architecture max
 	memory            atomic.Uint64
 	done              chan struct{}
 	doneErr           error // valid after done is closed
@@ -322,8 +322,12 @@ func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo
 		exe = eval
 	}
 
-	// Spawn subprocess: ollama runner --mlx-engine --model <name> --port <port>
-	cmd := exec.Command(exe, "runner", "--mlx-engine", "--model", c.modelName, "--port", strconv.Itoa(port))
+	// Spawn subprocess: ollama runner --mlx-engine --model <name> --port <port> [--num-ctx <n>]
+	runnerArgs := []string{"runner", "--mlx-engine", "--model", c.modelName, "--port", strconv.Itoa(port)}
+	if c.softContextLength > 0 {
+		runnerArgs = append(runnerArgs, "--num-ctx", strconv.Itoa(c.softContextLength))
+	}
+	cmd := exec.Command(exe, runnerArgs...)
 	cmd.Env = os.Environ()
 
 	// Set library path environment variable for MLX libraries

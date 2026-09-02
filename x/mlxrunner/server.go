@@ -28,11 +28,13 @@ func Execute(args []string) error {
 	var (
 		modelName string
 		port      int
+		numCtx    int
 	)
 
 	flagSet := flag.NewFlagSet("mlxrunner", flag.ExitOnError)
 	flagSet.StringVar(&modelName, "model", "", "Model name")
 	flagSet.IntVar(&port, "port", 0, "Port to listen on")
+	flagSet.IntVar(&numCtx, "num-ctx", 0, "Context length to enforce; 0 uses the architecture's max")
 	_ = flagSet.Bool("verbose", false, "Enable debug logging")
 	flagSet.Parse(args)
 
@@ -66,7 +68,7 @@ func Execute(args []string) error {
 	}
 
 	if err := worker.Do(context.Background(), func() error {
-		return runner.Load(modelName)
+		return runner.Load(modelName, numCtx)
 	}); err != nil {
 		return err
 	}

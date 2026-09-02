@@ -56,7 +56,21 @@ type Runner struct {
 	spec *speculation
 }
 
-func (r *Runner) Load(modelName string) error {
+// effectiveContextLength returns the context length the runner should
+// enforce: numCtx if it's a positive value smaller than the architecture's
+// max context (archMax), otherwise archMax unchanged.
+func effectiveContextLength(archMax, numCtx int) int {
+	if numCtx > 0 && numCtx < archMax {
+		return numCtx
+	}
+	return archMax
+}
+
+// Load loads modelName and prepares the runner to serve requests. numCtx, if
+// positive and smaller than the architecture's max context, clamps the
+// runner's effective context length; zero or negative leaves it at the
+// architecture max.
+func (r *Runner) Load(modelName string, numCtx int) error {
 	root, err := model.Open(modelName)
 	if err != nil {
 		return err
@@ -122,7 +136,7 @@ func (r *Runner) Load(modelName string) error {
 
 	r.Model = m
 	r.Tokenizer = m.Tokenizer()
-	r.contextLength = m.MaxContextLength()
+	r.contextLength = effectiveContextLength(m.MaxContextLength(), numCtx)
 	caches := m.NewCaches()
 	draftCaches := newDraftCaches(draftModel)
 	r.cache = newPrefixCache(slices.Concat(caches, draftCaches))
