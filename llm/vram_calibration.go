@@ -16,8 +16,15 @@ const maxCalibrationSamples = 8
 // consulted — that is how a sample is invalidated when the thing it described changes.
 // ModelSize is included because a path can be rewritten to hold different weights.
 type CalibrationKey struct {
-	Model          string
-	ModelSize      uint64
+	Model     string
+	ModelSize uint64
+
+	// Projectors identifies the multimodal projectors loaded alongside the weights. Two
+	// models can share a weights blob and differ only by a projector -- ollama stores the
+	// projector as its own layer, so a vision variant and a text-only one of the same model
+	// have identical Model and ModelSize -- and the projector occupies VRAM, so their loads
+	// are not comparable.
+	Projectors     string
 	KVCacheType    string
 	FlashAttention bool
 	NumBatch       int

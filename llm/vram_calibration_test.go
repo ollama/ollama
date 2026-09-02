@@ -90,6 +90,7 @@ func TestCalibrationKeyChangeInvalidates(t *testing.T) {
 	changed := map[string]func(*CalibrationKey){
 		"model":           func(k *CalibrationKey) { k.Model = "/models/other.gguf" },
 		"model size":      func(k *CalibrationKey) { k.ModelSize = 5678 },
+		"projector":       func(k *CalibrationKey) { k.Projectors = "/blobs/sha256-abc" },
 		"kv cache type":   func(k *CalibrationKey) { k.KVCacheType = "q8_0" },
 		"flash attention": func(k *CalibrationKey) { k.FlashAttention = true },
 		"num batch":       func(k *CalibrationKey) { k.NumBatch = 512 },

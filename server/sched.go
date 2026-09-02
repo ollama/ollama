@@ -121,6 +121,7 @@ func vramCalibrationKey(req *LlmRequest, gpus []ml.DeviceInfo, numParallel int) 
 	return llm.CalibrationKey{
 		Model:          req.model.ModelPath,
 		ModelSize:      modelFileSize(req.model.ModelPath),
+		Projectors:     strings.Join(req.model.ProjectorPaths, ","),
 		KVCacheType:    envconfig.KvCacheType(),
 		FlashAttention: llm.LlamaServerFlashAttention(gpus) == ml.FlashAttentionEnabled,
 		NumBatch:       req.opts.NumBatch,
