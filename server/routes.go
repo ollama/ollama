@@ -2832,6 +2832,22 @@ func (s *Server) ChatHandler(c *gin.Context) {
 						return
 					}
 
+					// Some thinking models stop without ever emitting a closing thinking
+					// tag. The parser then classifies the whole generation as thinking and
+					// Content stays empty, so every consumer that keys off Content drops
+					// the answer: /v1/responses emits no message item at all when
+					// streaming, and a message item holding an empty string when not.
+					// Only do this when generation stopped on its own -- a length-capped
+					// or disconnected stream really does hold an unfinished thought, which
+					// should not be promoted to a final answer.
+					if r.Done && r.DoneReason == llm.DoneReasonStop &&
+						res.Message.Content == "" && len(res.Message.ToolCalls) == 0 && tb.Len() > 0 {
+						if reporter, ok := builtinParser.(parsers.ThinkingStateReporter); ok && reporter.UnclosedThinking() {
+							slog.Log(context.TODO(), logutil.LevelTrace, "promoting unclosed thinking to content", "parser", m.Config.Parser, "len", tb.Len())
+							res.Message.Content = tb.String()
+						}
+					}
+
 					if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || r.Done || len(res.Logprobs) > 0 {
 						slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser output", "parser", m.Config.Parser, "content", content, "thinking", thinking, "toolCalls", toolCalls, "done", r.Done)
 						ch <- res
