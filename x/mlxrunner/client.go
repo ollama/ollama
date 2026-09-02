@@ -281,7 +281,14 @@ func (c *Client) HasExited() bool {
 
 // Load checks whether the model fits in GPU memory and starts the subprocess.
 func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error) {
+	// Devices this model ends up resident on, reported back to the scheduler so
+	// /api/ps can attribute it. Empty means the CPU, so leaving it unset made a
+	// GPU-resident MLX model indistinguishable from a CPU one.
+	var placed []ml.DeviceID
+
 	if len(gpus) > 0 {
+		placed = []ml.DeviceID{gpus[0].DeviceID}
+
 		modelSize := c.memory.Load()
 		// We currently only use the first GPU with MLX
 		available := gpus[0].FreeMemory
@@ -401,7 +408,7 @@ func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo
 		close(c.done)
 	}()
 
-	return nil, nil
+	return placed, nil
 }
 
 // ModelPath implements llm.LlamaServer.
