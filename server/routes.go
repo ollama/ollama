@@ -2448,11 +2448,12 @@ func (s *Server) InfoHandler(c *gin.Context) {
 	gpus := make([]api.GPUInfo, len(devices))
 	for i, dev := range devices {
 		gpus[i] = api.GPUInfo{
-			ID:          dev.ID,
-			Name:        dev.Name,
-			TotalMemory: dev.TotalMemory,
-			FreeMemory:  dev.FreeMemory,
-			Runner:      dev.Library,
+			ID:             dev.ID,
+			Name:           dev.Name,
+			TotalMemory:    dev.TotalMemory,
+			PhysicalMemory: dev.PhysicalMemory,
+			FreeMemory:     dev.FreeMemory,
+			Runner:         dev.Library,
 		}
 
 		// Compute capability and driver version are CUDA/ROCm concepts; a backend

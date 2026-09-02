@@ -1395,8 +1395,15 @@ type GPUInfo struct {
 	// Name is the model or other identifying information about the GPU
 	Name string `json:"name"`
 
-	// TotalMemory is the amount of video memory on the GPU
+	// TotalMemory is the amount of video memory on the GPU usable for loading models
 	TotalMemory uint64 `json:"total_memory"`
+
+	// PhysicalMemory is the amount of video memory the device reports having. It is never
+	// smaller than TotalMemory: the driver reserves a portion of the card for itself which
+	// is present but cannot hold model weights. Placement uses TotalMemory; this is the
+	// figure to display as the machine's hardware, since it is what the system's own tools
+	// report. Omitted when no source distinguishes the two.
+	PhysicalMemory uint64 `json:"physical_memory,omitempty"`
 
 	// FreeMemory is the amount of video memory on the GPU available for loading new models
 	FreeMemory uint64 `json:"free_memory"`

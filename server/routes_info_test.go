@@ -229,3 +229,45 @@ func TestInfoHandlerNoDevices(t *testing.T) {
 		t.Errorf("system memory should still be reported: got %d", got.ComputeInfo.SystemCompute.TotalMemory)
 	}
 }
+
+// A device whose driver reserves memory for itself reports both figures: the usable one
+// that placement is decided from, and the physical one a tool should display as the
+// machine's hardware.
+func TestInfoHandlerReportsPhysicalMemoryWhenItDiffers(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	const usable, physical = 94*format.GibiByte, 95*format.GibiByte
+	s := &Server{
+		sched: &Scheduler{
+			getSystemInfoFn: getSystemInfoFn,
+			getGpuFn: func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+				return []ml.DeviceInfo{{
+					DeviceID:       ml.DeviceID{ID: "0", Library: "CUDA"},
+					Name:           "CUDA0",
+					TotalMemory:    usable,
+					PhysicalMemory: physical,
+					FreeMemory:     usable,
+				}}
+			},
+			loaded: map[string]*runnerRef{},
+		},
+	}
+
+	gpu := infoResponse(t, s).ComputeInfo.SupportedGPUs[0]
+	if gpu.TotalMemory != usable {
+		t.Errorf("total_memory: got %d, want %d", gpu.TotalMemory, usable)
+	}
+	if gpu.PhysicalMemory != physical {
+		t.Errorf("physical_memory: got %d, want %d", gpu.PhysicalMemory, physical)
+	}
+}
+
+// Where nothing distinguishes the two there is no second figure to report, and the field
+// must be absent rather than duplicating or zeroing the total.
+func TestInfoHandlerOmitsPhysicalMemoryWhenUnknown(t *testing.T) {
+	got := infoResponse(t, infoTestServer(t))
+
+	if gpu := got.ComputeInfo.SupportedGPUs[0]; gpu.PhysicalMemory != 0 {
+		t.Errorf("physical_memory: got %d, want 0 for a backend that doesn't distinguish it", gpu.PhysicalMemory)
+	}
+}
