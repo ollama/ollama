@@ -280,14 +280,20 @@ func (c *Client) HasExited() bool {
 }
 
 // Load checks whether the model fits in GPU memory and starts the subprocess.
+// placedDevices reports the devices a load will occupy, for the scheduler to
+// record. MLX uses only the first GPU, and an empty result means the CPU, so
+// returning nothing for a GPU-resident model would misreport it as CPU-bound.
+func placedDevices(gpus []ml.DeviceInfo) []ml.DeviceID {
+	if len(gpus) == 0 {
+		return nil
+	}
+	return []ml.DeviceID{gpus[0].DeviceID}
+}
+
 func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error) {
-	// Devices this model ends up resident on, reported back to the scheduler so
-	// /api/ps can attribute it. Empty means the CPU, so leaving it unset made a
-	// GPU-resident MLX model indistinguishable from a CPU one.
-	var placed []ml.DeviceID
+	placed := placedDevices(gpus)
 
 	if len(gpus) > 0 {
-		placed = []ml.DeviceID{gpus[0].DeviceID}
 
 		modelSize := c.memory.Load()
 		// We currently only use the first GPU with MLX
