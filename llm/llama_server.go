@@ -154,6 +154,12 @@ type llamaServerRunner struct {
 	// used to map DeviceIDs to device names for VRAMByGPU lookups.
 	gpus []ml.DeviceInfo
 
+	// deviceLogNames[i] is the name the child uses for gpus[i]. A child whose
+	// visible devices are filtered renumbers them from zero, so these differ
+	// from the discovery names whenever the selected devices are not the host's
+	// first ones. Buffer accounting is keyed by these, not by gpus[i].Name.
+	deviceLogNames []string
+
 	ggml          *ggml.GGML
 	totalLayers   uint64 // maximum offloadable model layers
 	loadStart     time.Time
@@ -954,6 +960,7 @@ func NewLlamaServerRunner(
 		vramByDevice:     make(map[string]uint64),
 		systemFreeAtLoad: make(map[string]uint64),
 		gpus:             gpus,
+		deviceLogNames:   ml.RunnerDeviceNames(gpus),
 		ggml:             f,
 		totalLayers:      f.KV().BlockCount() + 1,
 		rawEmbeddings:    legacyEmbeddingsWereRaw(f.KV()),
@@ -2605,7 +2612,8 @@ func (s *llamaServerRunner) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo 
 	infos := make([]ml.DeviceInfo, len(s.gpus))
 	for i, gpu := range s.gpus {
 		infos[i] = gpu
-		used := s.vramByDevice[gpu.Name]
+		name := s.deviceLogName(i)
+		used := s.vramByDevice[name]
 
 		// Our accounting: total minus what we allocated
 		var accountedFree uint64
@@ -2617,7 +2625,7 @@ func (s *llamaServerRunner) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo 
 		// we've allocated since. This captures external consumers on platforms
 		// where the driver reports accurately.
 		systemFree := accountedFree // default to our accounting
-		if sysFree, ok := s.systemFreeAtLoad[gpu.Name]; ok {
+		if sysFree, ok := s.systemFreeAtLoad[name]; ok {
 			if used < sysFree {
 				systemFree = sysFree - used
 			} else {
@@ -2874,16 +2882,24 @@ func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
 // VRAMByGPU returns the VRAM used by this runner on the specified device.
 // The values are parsed from llama-server's buffer size log output during model load
 // (model tensors + KV cache + compute buffers).
+// deviceLogName returns the name the child used for the device at index i,
+// falling back to the discovery name if the mapping is unavailable.
+func (s *llamaServerRunner) deviceLogName(i int) string {
+	if i < len(s.deviceLogNames) {
+		return s.deviceLogNames[i]
+	}
+	return s.gpus[i].Name
+}
+
 func (s *llamaServerRunner) VRAMByGPU(id ml.DeviceID) uint64 {
 	s.memoryMu.RLock()
 	defer s.memoryMu.RUnlock()
 
-	// Map DeviceID to the log device name used by llama-server.
-	// Discovery stores the device name (e.g., "CUDA0", "ROCm0", "MTL0") from
-	// --list-devices stdout, which matches the buffer log prefix.
-	for _, gpu := range s.gpus {
+	// Look up by the name the child used, which is not the discovery name when
+	// its visible devices were filtered (see ml.RunnerDeviceNames).
+	for i, gpu := range s.gpus {
 		if gpu.DeviceID == id {
-			return s.vramByDevice[gpu.Name]
+			return s.vramByDevice[s.deviceLogName(i)]
 		}
 	}
 	return 0
