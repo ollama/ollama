@@ -72,22 +72,22 @@ func ResetPeakMemory() {
 // for resident Metal allocations.
 func MaxRecommendedWorkingSetSize() (int, error) {
 	info := C.mlx_device_info_new()
-	if err := mlxCall("get device info failed", func() C.int {
-		return C.mlx_device_info_get(&info, DefaultDevice().ctx)
-	}); err != nil {
-		C.mlx_device_info_free(info)
+	defer C.mlx_device_info_free(info)
+	if err := mlxError(C.mlx_device_info_get(&info, DefaultDevice().ctx)); err != nil {
 		return 0, err
 	}
-	defer C.mlx_device_info_free(info)
 
 	key := C.CString("max_recommended_working_set_size")
 	defer C.free(unsafe.Pointer(key))
 
 	var size C.size_t
-	if err := mlxCall("max recommended working set size unavailable", func() C.int {
-		return C.mlx_device_info_get_size(&size, info, key)
-	}); err != nil {
+	rc := C.mlx_device_info_get_size(&size, info, key)
+	if err := lastError(); err != nil {
 		return 0, err
+	}
+	if rc != 0 {
+		// mlx-c reports a missing key with a non-zero return and no message.
+		return 0, fmt.Errorf("mlx: no max_recommended_working_set_size in device info")
 	}
 	return int(size), nil
 }
@@ -100,9 +100,7 @@ func SetWiredLimit(limit int) (int, error) {
 	}
 
 	var previous C.size_t
-	if err := mlxCall("set wired limit failed", func() C.int {
-		return C.mlx_set_wired_limit(&previous, C.size_t(limit))
-	}); err != nil {
+	if err := mlxError(C.mlx_set_wired_limit(&previous, C.size_t(limit))); err != nil {
 		return 0, err
 	}
 	return int(previous), nil
