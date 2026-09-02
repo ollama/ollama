@@ -760,7 +760,7 @@ func TestCodexAppConfigurePopulatesCatalogFromEnrichedModels(t *testing.T) {
 	setTestHome(t, tmpDir)
 
 	models := []LaunchModel{
-		{Name: "gemma4", ContextLength: 65536 + len("gemma4"), Capabilities: []model.Capability{model.CapabilityVision}},
+		{Name: "gemma4", Parameters: "num_ctx 32768\n", ContextLength: 65536 + len("gemma4"), Capabilities: []model.Capability{model.CapabilityVision}},
 		{Name: "qwen3:8b"},
 		{Name: "llama3.2"},
 	}
@@ -804,7 +804,7 @@ func TestCodexAppConfigurePopulatesCatalogFromEnrichedModels(t *testing.T) {
 		wantContext := float64(128000)
 		wantModalities := []string{"text"}
 		if slug == "gemma4" {
-			wantContext = float64(65536 + len(slug))
+			wantContext = float64(32768)
 			wantModalities = []string{"text", "image"}
 		}
 		if model["context_window"] != wantContext {
@@ -859,6 +859,28 @@ func TestCodexAppConfigureCatalogIncludesExactSelectedModel(t *testing.T) {
 	}
 	if got := catalog.Models[0]["context_window"]; got != float64(65_536) {
 		t.Fatalf("selected model context_window = %v, want 65536", got)
+	}
+}
+
+func TestModelfileNumCtx(t *testing.T) {
+	tests := []struct {
+		name       string
+		parameters string
+		want       int
+		wantOK     bool
+	}{
+		{name: "plain", parameters: "temperature 0.3\nnum_ctx 32768\n", want: 32768, wantOK: true},
+		{name: "quoted", parameters: "num_ctx \"16384\"\n", want: 16384, wantOK: true},
+		{name: "invalid", parameters: "num_ctx nope\n", wantOK: false},
+		{name: "missing", parameters: "temperature 0.3\n", wantOK: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := modelfileNumCtx(tt.parameters)
+			if ok != tt.wantOK || got != tt.want {
+				t.Fatalf("modelfileNumCtx() = %d, %v; want %d, %v", got, ok, tt.want, tt.wantOK)
+			}
+		})
 	}
 }
 
