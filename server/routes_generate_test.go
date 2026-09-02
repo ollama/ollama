@@ -2455,9 +2455,7 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 					{Role: "user", Content: userContent},
 				},
 				Stream: &streamRequest,
-			}
-			if think {
-				req.Think = &api.ThinkValue{Value: think}
+				Think:  &api.ThinkValue{Value: think},
 			}
 
 			w := createRequest(t, s.ChatHandler, req)
@@ -2476,6 +2474,49 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 
 			if resp.Message.Content != expectedContent {
 				t.Errorf("expected content %q, got %q", expectedContent, resp.Message.Content)
+			}
+		})
+	}
+
+	testGenerateRequest := func(t *testing.T, name string, prompt string, modelResponse string, expectedThinking string, expectedResponse string, think *bool) {
+		t.Run(name, func(t *testing.T) {
+			mock.CompletionResponse = llm.CompletionResponse{
+				Content:            modelResponse,
+				Done:               true,
+				DoneReason:         llm.DoneReasonStop,
+				PromptEvalCount:    1,
+				PromptEvalDuration: 1,
+				EvalCount:          1,
+				EvalDuration:       1,
+			}
+			mock.CompletionFn = nil
+
+			streamRequest := false
+			req := api.GenerateRequest{
+				Model:  "test-thinking",
+				Prompt: prompt,
+				Stream: &streamRequest,
+			}
+			if think != nil {
+				req.Think = &api.ThinkValue{Value: *think}
+			}
+
+			w := createRequest(t, s.GenerateHandler, req)
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected status 200, got %d", w.Code)
+			}
+
+			var resp api.GenerateResponse
+			if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+				t.Fatal(err)
+			}
+
+			if resp.Thinking != expectedThinking {
+				t.Errorf("expected thinking %q, got %q", expectedThinking, resp.Thinking)
+			}
+
+			if resp.Response != expectedResponse {
+				t.Errorf("expected response %q, got %q", expectedResponse, resp.Response)
 			}
 		})
 	}
@@ -2501,6 +2542,43 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 		"",
 		"The answer is 4.",
 		true)
+
+	testChatRequest(t, "chat with think: false does not leak thinking tags",
+		"Help me solve this problem",
+		" Let me think about this step by step... </think> The answer is 42.",
+		"Let me think about this step by step... ",
+		"The answer is 42.",
+		false)
+
+	thinkFalse := false
+	thinkTrue := true
+	testGenerateRequest(t, "generate with think: false does not leak thinking tags",
+		"What is 2+2?",
+		" Let me think about this step by step... </think> The answer is 4.",
+		"Let me think about this step by step... ",
+		"The answer is 4.",
+		&thinkFalse)
+
+	testGenerateRequest(t, "generate with think: false and empty thinking content",
+		"What is 2+2?",
+		"</think> The answer is 4.",
+		"",
+		"The answer is 4.",
+		&thinkFalse)
+
+	testGenerateRequest(t, "generate with think: true parses thinking",
+		"What is 2+2?",
+		" Let me think about this step by step... </think> The answer is 4.",
+		"Let me think about this step by step... ",
+		"The answer is 4.",
+		&thinkTrue)
+
+	testGenerateRequest(t, "generate with think omitted defaults to parsing thinking",
+		"What is 2+2?",
+		" Let me think about this step by step... </think> The answer is 4.",
+		"Let me think about this step by step... ",
+		"The answer is 4.",
+		nil)
 
 	// Test streaming response with template-added <think>
 	t.Run("streaming with thinking", func(t *testing.T) {
