@@ -276,6 +276,88 @@ func TestNemotron3NanoParser_Streaming(t *testing.T) {
 	}
 }
 
+func TestNemotron3NanoParser_DoneFlushesBufferedText(t *testing.T) {
+	tests := []struct {
+		name             string
+		thinkingEnabled  bool
+		chunks           []string
+		expectedContent  string
+		expectedThinking string
+	}{
+		{
+			name:             "partial think close",
+			thinkingEnabled:  true,
+			chunks:           []string{"reasoning ", "</thi"},
+			expectedThinking: "reasoning </thi",
+		},
+		{
+			name:             "partial tool opener",
+			thinkingEnabled:  true,
+			chunks:           []string{"reasoning ", "<tool_"},
+			expectedThinking: "reasoning <tool_",
+		},
+		{
+			name:             "partial leading think opener",
+			thinkingEnabled:  true,
+			chunks:           []string{"<th"},
+			expectedThinking: "<th",
+		},
+		{
+			name:             "thinking trailing whitespace",
+			thinkingEnabled:  true,
+			chunks:           []string{"reasoning "},
+			expectedThinking: "reasoning ",
+		},
+		{
+			name:            "content trailing whitespace",
+			thinkingEnabled: false,
+			chunks:          []string{"answer "},
+			expectedContent: "answer ",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &Nemotron3NanoParser{}
+			p.Init(nil, nil, &api.ThinkValue{Value: tt.thinkingEnabled})
+
+			var content, thinking string
+			for _, chunk := range tt.chunks {
+				gotContent, gotThinking, _, err := p.Add(chunk, false)
+				if err != nil {
+					t.Fatal(err)
+				}
+				content += gotContent
+				thinking += gotThinking
+			}
+			gotContent, gotThinking, _, err := p.Add("", true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			content += gotContent
+			thinking += gotThinking
+
+			if diff := cmp.Diff(content, tt.expectedContent); diff != "" {
+				t.Errorf("content mismatch (-got +want):\n%s", diff)
+			}
+			if diff := cmp.Diff(thinking, tt.expectedThinking); diff != "" {
+				t.Errorf("thinking mismatch (-got +want):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestNemotron3NanoParser_DoneRejectsUnterminatedToolCall(t *testing.T) {
+	p := &Nemotron3NanoParser{}
+	p.Init(nil, nil, &api.ThinkValue{Value: true})
+	if _, _, _, err := p.Add("reasoning<tool_call><function=test>", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := p.Add("", true); err == nil {
+		t.Fatal("expected unterminated tool call error")
+	}
+}
+
 func TestNemotron3NanoParser_HasToolSupport(t *testing.T) {
 	p := &Nemotron3NanoParser{}
 	if !p.HasToolSupport() {

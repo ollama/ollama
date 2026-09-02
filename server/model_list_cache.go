@@ -397,14 +397,14 @@ func buildModelListSummary(name model.Name, mf *manifest.Manifest) (modelListSum
 }
 
 func filterUnsupportedModelListCapabilities(capabilities []model.Capability, cfg model.ConfigV2) []model.Capability {
-	if cfg.ModelFormat == "safetensors" && (isGemma4Renderer(cfg.Renderer) || isNemotron3NanoSafetensorsConfig(cfg)) {
+	if cfg.ModelFormat == "safetensors" && isGemma4Renderer(cfg.Renderer) {
 		capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool {
 			return c == model.CapabilityVision || c == model.CapabilityAudio
 		})
 	}
 	// Mirrors suppressAudioCapability in images.go so /api/tags and /api/show
 	// agree for safetensors models whose MLX runner serves vision but not audio.
-	if cfg.ModelFormat == "safetensors" && cfg.Renderer == "glimmer" {
+	if cfg.ModelFormat == "safetensors" && (cfg.Renderer == "glimmer" || isNemotronSafetensorsConfig(cfg)) {
 		capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool {
 			return c == model.CapabilityAudio
 		})

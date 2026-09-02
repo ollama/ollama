@@ -27,10 +27,14 @@ func newNemotronHImportTransform(rawConfig json.RawMessage) (quantizePolicy, err
 	return nemotronHImportTransform{numLayers: numLayers}, nil
 }
 
-func nemotronHIsUnsupportedModalityTensor(name string) bool {
+// Nemotron's modality tower names do not match the shared predicates.
+func nemotronHIsVisionTower(name string) bool {
 	return strings.HasPrefix(name, "vision_model.") ||
-		strings.HasPrefix(name, "mlp1.") ||
-		strings.HasPrefix(name, "sound_encoder.") ||
+		strings.HasPrefix(name, "mlp1.")
+}
+
+func nemotronHIsAudioTower(name string) bool {
+	return strings.HasPrefix(name, "sound_encoder.") ||
 		strings.HasPrefix(name, "sound_projection.")
 }
 
@@ -65,7 +69,7 @@ func (t nemotronHImportTransform) promoteSensitive(name string) bool {
 }
 
 func (t nemotronHImportTransform) quantizationType(name string, shape []int32, quantize string) string {
-	if nemotronHIsUnsupportedModalityTensor(name) || nemotronHShouldKeepBF16ForDirectNonAffine(name) {
+	if nemotronHIsVisionTower(name) || nemotronHIsAudioTower(name) || nemotronHShouldKeepBF16ForDirectNonAffine(name) {
 		return ""
 	}
 
