@@ -677,10 +677,29 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 	kv = make([]uint64, f.KV().BlockCount())
 	kvSizeAttn := uint64(0)
 	kvSizeRecurrent := uint64(0)
+
+	// Some hybrid architectures report attention.head_count as a single scalar that
+	// broadcasts to every block, even though only a subset of layers actually run
+	// attention and hold a KV cache (the rest are recurrent). qwen4exp (Qwen3.x-Flash:
+	// Gated DeltaNet + sparse attention) is one: attention.compress_ratios is a per-block
+	// array that is non-zero exactly on the ~1-in-full_attention_interval attention
+	// layers. Honoring it stops us from counting a dense KV cache for all blocks when
+	// only a fraction have one, which otherwise overpredicts VRAM several-fold at long
+	// context and needlessly spreads the model across GPUs.
+	var attnLayerMask []int32
+	if f.KV().Architecture() == "qwen4exp" {
+		attnLayerMask = f.KV().Ints("attention.compress_ratios")
+	}
+
 	for i := range kv {
 		headsL := headsArr[i]
 		headsKVL := headsKVArr[i]
-		if headsL > 0 && headsKVL > 0 {
+		isAttention := headsL > 0 && headsKVL > 0
+		if i < len(attnLayerMask) {
+			// authoritative per-block metadata overrides the broadcast scalar
+			isAttention = attnLayerMask[i] != 0
+		}
+		if isAttention {
 			// full attention layer
 			// NOTE: Assumes uniform values for all attn layers
 			kv[i] = uint64(float64(context*(embeddingHeadsK+embeddingHeadsV)*headsKVL) * bytesPerElement)

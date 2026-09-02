@@ -1061,7 +1061,7 @@ func bestSingleGPUFit(systemInfo ml.SystemInfo, groups [][]ml.DeviceInfo, predic
 	for _, group := range groups {
 		for _, candidate := range group {
 			candidateAvailable := availableMemoryForGPU(systemInfo, candidate)
-			if predictedVRAM > candidateAvailable*80/100 {
+			if predictedVRAM > candidateAvailable*uint64(envconfig.SingleGPUFitPercent())/100 {
 				continue
 			}
 			if !ok || betterPlacementGPU(candidate, candidateAvailable, gpu, available) {
