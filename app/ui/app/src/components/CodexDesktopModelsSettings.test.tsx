@@ -1,4 +1,7 @@
-import type { CodexDesktopModelsSettings as ModelsSettings } from "@/types/webview";
+import type {
+  CodexDesktopModelsSettings as ModelsSettings,
+  CodexDesktopStatus,
+} from "@/types/webview";
 import type {
   ButtonHTMLAttributes,
   HTMLAttributes,
@@ -116,7 +119,20 @@ function settings(overrides: Partial<ModelsSettings> = {}): ModelsSettings {
   };
 }
 
+function codexStatus(
+  overrides: Partial<CodexDesktopStatus> = {},
+): CodexDesktopStatus {
+  return {
+    supported: true,
+    installed: true,
+    connected: true,
+    running: false,
+    ...overrides,
+  };
+}
+
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -137,6 +153,118 @@ describe("CodexDesktopModelsSettings", () => {
         "ChatGPT model settings are unavailable in this Ollama build.",
       );
       expect(textContent(renderer!.root)).not.toContain("Loading models…");
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  });
+
+  it("keeps restart available when live model inventory cannot refresh", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      getCodexDesktopModelsSettings: vi.fn().mockResolvedValue({
+        settings: settings({
+          connected: true,
+          running: true,
+          selected: ["qwen3:8b"],
+          available: [],
+        }),
+        warning:
+          "Couldn’t refresh available models. Your saved models are unchanged.",
+      }),
+    });
+
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(<CodexDesktopModelsSettings />);
+      });
+
+      expect(textContent(renderer!.root)).toContain(
+        "Couldn’t refresh available models. Your saved models are unchanged.",
+      );
+      const restartButton = renderer!.root
+        .findAllByType("button")
+        .find((button) => textContent(button) === "Restart ChatGPT");
+      if (!restartButton) throw new Error("Restart button not found");
+      expect(Boolean(restartButton.props.disabled)).toBe(false);
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  });
+
+  it("keeps one stable restart operation until ChatGPT is running", async () => {
+    vi.useFakeTimers();
+    const apply = vi
+      .fn()
+      .mockResolvedValueOnce({
+        settings: settings({ connected: true, running: true }),
+        restartConfirmationRequired: true,
+      })
+      .mockResolvedValueOnce({
+        settings: settings({ connected: true, running: false }),
+      });
+    const getStatus = vi
+      .fn()
+      .mockResolvedValueOnce(codexStatus())
+      .mockResolvedValueOnce(codexStatus({ running: true }));
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      applyCodexDesktopModels: apply,
+      getCodexDesktopStatus: getStatus,
+      confirm: vi.fn(() => true),
+    });
+
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopModelsSettings
+            initialSettings={settings({ connected: true, running: true })}
+          />,
+        );
+      });
+      const restartButton = renderer!.root
+        .findAllByType("button")
+        .find((button) => textContent(button) === "Restart ChatGPT");
+      if (!restartButton) throw new Error("Restart button not found");
+
+      await act(async () => {
+        restartButton.props.onClick();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(apply).toHaveBeenCalledTimes(2);
+      expect(getStatus).toHaveBeenCalledTimes(1);
+      const busyButton = renderer!.root
+        .findAllByType("button")
+        .find((button) => textContent(button) === "Restarting…");
+      if (!busyButton) throw new Error("Busy restart button not found");
+      expect(busyButton.props.disabled).toBe(true);
+      expect(textContent(renderer!.root)).not.toContain("Starting…");
+
+      await act(async () => {
+        restartButton.props.onClick();
+        await Promise.resolve();
+      });
+      expect(apply).toHaveBeenCalledTimes(2);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(250);
+      });
+
+      const readyButton = renderer!.root
+        .findAllByType("button")
+        .find((button) => textContent(button) === "Restart ChatGPT");
+      if (!readyButton) throw new Error("Ready restart button not found");
+      expect(Boolean(readyButton.props.disabled)).toBe(false);
+      expect(getStatus).toHaveBeenCalledTimes(2);
     } finally {
       await act(async () => renderer?.unmount());
     }
@@ -213,7 +341,7 @@ describe("CodexDesktopModelsSettings", () => {
           })
           .filter((node) => node.type === "button"),
       ).toHaveLength(1);
-      expect(textContent(renderer!.root)).toContain("Save & start ChatGPT");
+      expect(textContent(renderer!.root)).toContain("Start ChatGPT");
     } finally {
       await act(async () => renderer?.unmount());
     }
@@ -353,8 +481,12 @@ describe("CodexDesktopModelsSettings", () => {
         await applyButton.props.onClick();
       });
 
-      expect(apply).toHaveBeenCalledWith(next);
-      expect(applyButton.props.disabled).toBe(true);
+      expect(apply).toHaveBeenCalledWith(next, false);
+      const restartButton = renderer!.root
+        .findAllByType("button")
+        .find((button) => textContent(button) === "Restart ChatGPT");
+      if (!restartButton) throw new Error("Restart button not found");
+      expect(Boolean(restartButton.props.disabled)).toBe(false);
       expect(textContent(renderer!.root)).not.toContain(
         "Your selected Ollama models are ready in ChatGPT.",
       );
@@ -377,7 +509,11 @@ describe("CodexDesktopModelsSettings", () => {
   ])(
     "uses the native restart copy when connected is $connected",
     async ({ connected, confirmation }) => {
-      const apply = vi.fn();
+      const next = available.slice(0, 4);
+      const apply = vi.fn().mockResolvedValue({
+        settings: settings({ connected, running: true }),
+        restartConfirmationRequired: true,
+      });
       vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
       vi.stubGlobal("window", {
         addEventListener: vi.fn(),
@@ -414,14 +550,134 @@ describe("CodexDesktopModelsSettings", () => {
         });
 
         expect(window.confirm).toHaveBeenCalledWith(confirmation);
-        expect(apply).not.toHaveBeenCalled();
+        expect(apply).toHaveBeenCalledOnce();
+        expect(apply).toHaveBeenCalledWith(next, false);
       } finally {
         await act(async () => renderer?.unmount());
       }
     },
   );
 
-  it("uses a single save action without a separate removal button", async () => {
+  it("retries with live restart consent and applies the saved selection", async () => {
+    const next = available.slice(0, 4);
+    const apply = vi
+      .fn()
+      .mockResolvedValueOnce({
+        settings: settings({ connected: true, running: true }),
+        restartConfirmationRequired: true,
+      })
+      .mockResolvedValueOnce({
+        settings: settings({ connected: true, running: true, selected: next }),
+      });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      applyCodexDesktopModels: apply,
+      confirm: vi.fn(() => true),
+    });
+
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopModelsSettings
+            initialSettings={settings({ connected: true, running: false })}
+          />,
+        );
+      });
+      await act(async () => {
+        renderer!.root
+          .findByProps({ "aria-label": `Remove ${available[4]}` })
+          .props.onClick({ stopPropagation: vi.fn() });
+      });
+      const applyButton = renderer!.root
+        .findAllByType("button")
+        .find((button) => textContent(button).includes("Save & start ChatGPT"));
+      if (!applyButton) throw new Error("Apply button not found");
+      await act(async () => {
+        await applyButton.props.onClick();
+      });
+
+      expect(window.confirm).toHaveBeenCalledWith(
+        "Restart ChatGPT to update Ollama models? Any running task will stop.",
+      );
+      expect(apply.mock.calls).toEqual([
+        [next, false],
+        [next, true],
+      ]);
+      expect(
+        renderer!.root.findAllByProps({
+          "aria-label": `Remove ${available[4]}`,
+        }),
+      ).toHaveLength(0);
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  });
+
+  it("ignores a stale focus refresh that finishes after an apply", async () => {
+    const next = available.slice(0, 4);
+    let resolveRefresh!: (value: { settings: ModelsSettings }) => void;
+    const refresh = vi.fn(
+      () =>
+        new Promise<{ settings: ModelsSettings }>((resolve) => {
+          resolveRefresh = resolve;
+        }),
+    );
+    const apply = vi.fn().mockResolvedValue({
+      settings: settings({ connected: true, running: true, selected: next }),
+    });
+    let focusHandler: (() => void) | undefined;
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn((event: string, handler: () => void) => {
+        if (event === "focus") focusHandler = handler;
+      }),
+      removeEventListener: vi.fn(),
+      getCodexDesktopModelsSettings: refresh,
+      applyCodexDesktopModels: apply,
+      confirm: vi.fn(() => true),
+    });
+
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopModelsSettings initialSettings={settings()} />,
+        );
+      });
+      await act(async () => {
+        renderer!.root
+          .findByProps({ "aria-label": `Remove ${available[4]}` })
+          .props.onClick({ stopPropagation: vi.fn() });
+        focusHandler?.();
+      });
+      const applyButton = renderer!.root
+        .findAllByType("button")
+        .find((button) => textContent(button).includes("Save & start ChatGPT"));
+      if (!applyButton) throw new Error("Apply button not found");
+      await act(async () => {
+        await applyButton.props.onClick();
+      });
+      await act(async () => {
+        resolveRefresh({ settings: settings() });
+        await Promise.resolve();
+      });
+
+      expect(apply).toHaveBeenCalledWith(next, false);
+      expect(
+        renderer!.root.findAllByProps({
+          "aria-label": `Remove ${available[4]}`,
+        }),
+      ).toHaveLength(0);
+      expect(textContent(renderer!.root)).not.toContain("Save & start ChatGPT");
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  });
+
+  it("keeps restart available without a separate removal button", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("window", {
       addEventListener: vi.fn(),
@@ -438,8 +694,13 @@ describe("CodexDesktopModelsSettings", () => {
         );
       });
       const content = textContent(renderer!.root);
-      expect(content).toContain("Save & restart ChatGPT");
+      expect(content).toContain("Restart ChatGPT");
       expect(content).not.toContain("Remove Ollama models");
+      const restartButton = renderer!.root
+        .findAllByType("button")
+        .find((button) => textContent(button) === "Restart ChatGPT");
+      if (!restartButton) throw new Error("Restart button not found");
+      expect(Boolean(restartButton.props.disabled)).toBe(false);
     } finally {
       await act(async () => renderer?.unmount());
     }
@@ -460,11 +721,15 @@ describe("CodexDesktopModelsSettings", () => {
         );
       });
 
-      const pill = renderer!.root.findAllByType("span").find(
-        (node) =>
-          textContent(node) === available[0] &&
-          String(node.props.className).includes("pointer-events-none inline-flex"),
-      );
+      const pill = renderer!.root
+        .findAllByType("span")
+        .find(
+          (node) =>
+            textContent(node) === available[0] &&
+            String(node.props.className).includes(
+              "pointer-events-none inline-flex",
+            ),
+        );
       if (!pill) throw new Error("Selected model pill not found");
       expect(
         renderer!.root
@@ -493,9 +758,9 @@ describe("CodexDesktopModelsSettings", () => {
         }),
       ).toHaveLength(1);
       expect(
-        renderer!.root.findAllByProps({ role: "option" }).filter(
-          (option) => option.props["aria-selected"] === true,
-        ),
+        renderer!.root
+          .findAllByProps({ role: "option" })
+          .filter((option) => option.props["aria-selected"] === true),
       ).toHaveLength(5);
     } finally {
       await act(async () => renderer?.unmount());

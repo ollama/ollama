@@ -1265,10 +1265,10 @@ func CodexDesktopRequestCount() C.ulonglong {
 }
 
 //export SetCodexDesktopConnected
-func SetCodexDesktopConnected(connected C.bool) C.bool {
+func SetCodexDesktopConnected(connected, restartConfirmed C.bool) C.bool {
 	shouldConnect := connected != C._Bool(false)
-	// The native menu has already collected restart consent above.
-	if err := setCodexDesktopConnection(shouldConnect, true); err != nil {
+	confirmed := restartConfirmed != C._Bool(false)
+	if err := setCodexDesktopConnection(shouldConnect, confirmed); err != nil {
 		slog.Warn("failed to change ChatGPT integration", "connected", shouldConnect, "error", err)
 		return C._Bool(false)
 	}
@@ -1279,7 +1279,7 @@ func SetCodexDesktopConnected(connected C.bool) C.bool {
 func RestoreCodexProfileForShutdown() C.bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := codexDesktop.RestoreForShutdown(ctx); err != nil {
+	if err := restoreCodexAppForTermination(ctx, false); err != nil {
 		slog.Warn("failed to restore ChatGPT profile during shutdown", "error", err)
 		return C._Bool(false)
 	}
@@ -1919,12 +1919,38 @@ func quitForHandoff() {
 }
 
 func quit() {
+	handoff := appHandoffInProgress.Load()
 	ctx, cancel := context.WithTimeout(context.Background(), claudeShutdownTimeout)
 	defer cancel()
-	if err := restoreClaudeAppForTermination(ctx, appHandoffInProgress.Load()); err != nil {
-		slog.Warn("failed to restore Claude before quitting", "error", err)
-	}
+
+	// The profiles are independent. Restore them in parallel so adding ChatGPT
+	// cannot double the graceful-shutdown window Claude already had.
+	var restores sync.WaitGroup
+	restores.Add(2)
+	go func() {
+		defer restores.Done()
+		if err := restoreCodexAppForTermination(ctx, handoff); err != nil {
+			slog.Warn("failed to restore ChatGPT before quitting", "error", err)
+		}
+	}()
+	go func() {
+		defer restores.Done()
+		if err := restoreClaudeAppForTermination(ctx, handoff); err != nil {
+			slog.Warn("failed to restore Claude before quitting", "error", err)
+		}
+	}()
+	restores.Wait()
 	C.quit()
+}
+
+func restoreCodexAppForTermination(ctx context.Context, handoff bool) error {
+	codexDesktopMu.Lock()
+	defer codexDesktopMu.Unlock()
+
+	if handoff || !codexDesktop.OllamaConfigured() {
+		return nil
+	}
+	return codexDesktop.RestoreForShutdown(ctx)
 }
 
 func restoreClaudeBeforeQuit(ctx context.Context, configured bool, restore func(context.Context) error) error {

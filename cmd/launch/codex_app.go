@@ -74,6 +74,10 @@ var (
 // models to its catalog. A loopback router chooses the upstream per request.
 type CodexApp struct{}
 
+// ErrCodexAppRestartConfirmationRequired reports that changing the regular
+// ChatGPT profile would interrupt a running task.
+var ErrCodexAppRestartConfirmationRequired = errors.New("ChatGPT restart confirmation is required before changing its profile")
+
 func (c *CodexApp) String() string { return "ChatGPT" }
 
 func (c *CodexApp) Supported() error { return codexAppSupported() }
@@ -410,7 +414,7 @@ func (c *CodexApp) Running() bool {
 // UseOllamaFromDesktop adds Ollama models to the regular ChatGPT profile.
 // ChatGPT is stopped before its startup-only catalog changes, then reopened
 // with the same account, native models, chats, plugins, and skills.
-func (c *CodexApp) UseOllamaFromDesktop(primary string, models []LaunchModel) error {
+func (c *CodexApp) UseOllamaFromDesktop(primary string, models []LaunchModel, restartConfirmed bool) error {
 	if err := codexAppSupported(); err != nil {
 		return err
 	}
@@ -420,6 +424,12 @@ func (c *CodexApp) UseOllamaFromDesktop(primary string, models []LaunchModel) er
 	if err := codexAppRouterHealth(); err != nil {
 		return err
 	}
+	// Check before legacy cleanup so declining a restart is a complete no-op.
+	// codexAppApplyProfileFromDesktop checks again after cleanup so a ChatGPT
+	// instance that appears during preparation still requires consent.
+	if (codexAppIsRunning() || codexAppProfileIsRunning()) && !restartConfirmed {
+		return ErrCodexAppRestartConfirmationRequired
+	}
 	if err := stopLegacyCodexAppOllamaProfile(); err != nil {
 		return err
 	}
@@ -428,7 +438,7 @@ func (c *CodexApp) UseOllamaFromDesktop(primary string, models []LaunchModel) er
 			return err
 		}
 		return c.ConfigureWithModels(primary, models)
-	}, true)
+	}, true, restartConfirmed)
 }
 
 func defaultCodexAppRouterHealth() error {
@@ -467,14 +477,33 @@ func defaultCodexAppRouterHealth() error {
 
 // RestoreFromDesktop removes the additive Ollama catalog and restores the
 // prior base URL and model settings. A stopped ChatGPT app remains stopped.
-func (c *CodexApp) RestoreFromDesktop() error {
+func (c *CodexApp) RestoreFromDesktop(restartConfirmed bool) error {
 	if err := codexAppSupported(); err != nil {
 		return err
+	}
+	if (codexAppIsRunning() || codexAppProfileIsRunning()) && !restartConfirmed {
+		return ErrCodexAppRestartConfirmationRequired
 	}
 	if err := stopLegacyCodexAppOllamaProfile(); err != nil {
 		return err
 	}
-	return codexAppApplyProfileFromDesktop(restoreCodexAppProfile, false)
+	return codexAppApplyProfileFromDesktop(restoreCodexAppProfile, false, restartConfirmed)
+}
+
+// RestartFromDesktop restarts the existing regular ChatGPT profile without
+// rebuilding its model catalog. This keeps restart available when Ollama's
+// live model inventory is temporarily unavailable.
+func (c *CodexApp) RestartFromDesktop(restartConfirmed bool) error {
+	if err := codexAppSupported(); err != nil {
+		return err
+	}
+	if !codexAppInstalled() {
+		return errors.New("ChatGPT is not installed")
+	}
+	if !c.OllamaConfigured() {
+		return errors.New("ChatGPT is not configured to use Ollama")
+	}
+	return codexAppApplyProfileFromDesktop(func() error { return nil }, true, restartConfirmed)
 }
 
 // RestoreForShutdown removes the additive catalog and router without reopening
@@ -898,6 +927,8 @@ func codexAppCatalogEntry(model string, metadata codexAppModelMetadata, priority
 		})
 	}
 
+	// API-key sessions filter out entries with supported_in_api=false. The
+	// loopback router supports this model in both OpenAI auth modes.
 	return map[string]any{
 		"slug":                                 model,
 		"display_name":                         model,
@@ -906,7 +937,7 @@ func codexAppCatalogEntry(model string, metadata codexAppModelMetadata, priority
 		"supported_reasoning_levels":           supportedReasoningLevels,
 		"shell_type":                           "unified_exec",
 		"visibility":                           "list",
-		"supported_in_api":                     false,
+		"supported_in_api":                     true,
 		"priority":                             priority,
 		"additional_speed_tiers":               []any{},
 		"service_tiers":                        []any{},
@@ -1328,7 +1359,7 @@ func codexAppLaunchOrRestart(prompt string, launchArgs []string) error {
 	return codexAppOpenAfterRestart(restartAppID, restartAppPath, launchArgs)
 }
 
-func codexAppApplyProfileFromDesktop(change func() error, openWhenStopped bool) error {
+func codexAppApplyProfileFromDesktop(change func() error, openWhenStopped, restartConfirmed bool) error {
 	if !codexAppIsRunning() {
 		if err := change(); err != nil {
 			return err
@@ -1337,6 +1368,9 @@ func codexAppApplyProfileFromDesktop(change func() error, openWhenStopped bool) 
 			return codexAppOpenApp(nil)
 		}
 		return nil
+	}
+	if !restartConfirmed {
+		return ErrCodexAppRestartConfirmationRequired
 	}
 
 	restartAppID, restartAppPath := codexAppRestartTarget()
