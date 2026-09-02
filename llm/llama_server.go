@@ -2696,7 +2696,7 @@ var hostResidentTensorGroups = []string{"per_layer_token_embd"}
 // The split exists so that a measured load can be extrapolated: VRAMCalibration anchors on
 // what a model actually used and needs a slope to move away from that point. Callers that
 // only want a number for one context length should use PredictServerVRAM.
-func PredictServerVRAMParts(modelPath string, f *ggml.GGML) (weights, bytesPerToken uint64) {
+func PredictServerVRAMParts(modelPath string, projectorPaths []string, f *ggml.GGML) (weights, bytesPerToken uint64) {
 	// Sum the tensors that are actually offloaded rather than taking the file size, which
 	// also covers host-resident tables. Fall back to the file size if tensor metadata is
 	// unavailable, preserving the previous (conservative) behavior.
@@ -2714,12 +2714,27 @@ func PredictServerVRAMParts(modelPath string, f *ggml.GGML) (weights, bytesPerTo
 		}
 	}
 
+	// A projector is a separate file the runner loads alongside the weights, so it is
+	// absent from the model's own tensors. Its size is counted here because the memory has
+	// to be found somewhere, and counting it is the conservative direction: ollama declines
+	// to offload it under pressure, in which case this over-predicts rather than placing a
+	// model that then cannot fit.
+	//
+	// The file is very close to what the projector occupies before an image arrives; the
+	// runner reserves more than this for the largest image it will accept, and that figure
+	// is only known once it has loaded. A measured load supplies it thereafter.
+	for _, path := range projectorPaths {
+		if info, err := os.Stat(path); err == nil {
+			weights += uint64(info.Size())
+		}
+	}
+
 	return weights, f.KV().KVCacheBytesPerToken()
 }
 
 // PredictServerVRAM estimates VRAM usage for a model at a given context length.
-func PredictServerVRAM(modelPath string, f *ggml.GGML, numCtx int) uint64 {
-	weights, bytesPerToken := PredictServerVRAMParts(modelPath, f)
+func PredictServerVRAM(modelPath string, projectorPaths []string, f *ggml.GGML, numCtx int) uint64 {
+	weights, bytesPerToken := PredictServerVRAMParts(modelPath, projectorPaths, f)
 	return weights + bytesPerToken*uint64(max(numCtx, 0))
 }
 
@@ -2747,6 +2762,29 @@ type memoryParsingWriter struct {
 	// a model buffer arriving after a cache or compute buffer means a new pass began.
 	bufferSeq         map[bufferSlot]int
 	sawNonModelBuffer bool
+
+	// clipBackend is the backend the projector was placed on and mmprojBytes is what it
+	// occupies. They are reported on separate lines whose order is not guaranteed -- the
+	// size is reported first in practice -- so each is recorded as it arrives and the
+	// attribution is made once both are known.
+	clipBackend string
+	mmprojBytes uint64
+}
+
+// noteProjectorLocked attributes the projector's memory to the device holding it, once both
+// the device and the size are known.
+func (w *memoryParsingWriter) noteProjectorLocked() {
+	if w.clipBackend == "" || w.mmprojBytes == 0 {
+		return
+	}
+	if w.buffers == nil {
+		w.buffers = make(map[memoryBufferKey]memoryBuffer)
+	}
+	// One slot: the projector is reported as a total rather than per buffer, and a repeat
+	// report replaces rather than adds. The kind is its own so that it takes no part in the
+	// load-pass numbering the buffer-size lines use.
+	w.buffers[memoryBufferKey{component: "mtmd", backend: w.clipBackend, kind: "mmproj"}] = memoryBuffer{bytes: w.mmprojBytes}
+	w.updateRunnerMemoryLocked()
 }
 
 type memoryBufferKey struct {
@@ -2786,6 +2824,25 @@ var deviceFreeRegex = regexp.MustCompile(`using device (\S+)\s+\(.*\)\s+-\s+(\d+
 // bufferSizeRegex matches llama-server buffer size lines and captures the
 // component so repeated fit/probe values can be replaced by the final load.
 var bufferSizeRegex = regexp.MustCompile(`(?m)(?:^|\n)[^\n:]*?([A-Za-z_][A-Za-z0-9_]*):\s+(\S+)\s+(model|KV|compute|output|RS)\s+buffer size\s*=\s*([\d.]+)\s*MiB`)
+
+// clipBackendRegex captures the backend a multimodal projector was placed on:
+//
+//	clip_ctx: CLIP using CUDA0 backend
+//	clip_ctx: CLIP using CPU backend
+//
+// This is what distinguishes a projector that occupies VRAM from one that does not. Ollama
+// declines to offload it under memory pressure, and the line reports the outcome.
+var clipBackendRegex = regexp.MustCompile(`clip_ctx:\s+CLIP using (\S+) backend`)
+
+// mmprojMemoryRegex captures the projector's memory, which llama-server reports on its own
+// rather than through the buffer-size lines every other allocation uses:
+//
+//	srv load_model: [mtmd] estimated worst-case memory usage of mmproj is 1135.13 MiB
+//
+// It is a worst-case figure, covering the largest image the projector will accept, so it is
+// larger than what a projector holds before any image arrives. That is the right figure to
+// hold a device to: the memory has to be there when an image does arrive.
+var mmprojMemoryRegex = regexp.MustCompile(`\[mtmd\][^\n]*?mmproj is\s+([\d.]+)\s*MiB`)
 
 var (
 	offloadedLayersRegex      = regexp.MustCompile(`offloaded\s+(\d+)/(\d+)\s+layers to GPU`)
@@ -2846,6 +2903,16 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 				overflowing, err := strconv.ParseUint(string(match[1]), 10, 64)
 				if err == nil && overflowing > 0 {
 					w.runner.gpuLayerOverflow += int(overflowing)
+				}
+			}
+			if match := clipBackendRegex.FindSubmatch(b); match != nil {
+				w.clipBackend = string(match[1])
+				w.noteProjectorLocked()
+			}
+			for _, match := range mmprojMemoryRegex.FindAllSubmatch(b, -1) {
+				if mib, err := strconv.ParseFloat(string(match[1]), 64); err == nil {
+					w.mmprojBytes = uint64(mib * 1024 * 1024)
+					w.noteProjectorLocked()
 				}
 			}
 			for _, match := range bufferSizeRegex.FindAllSubmatch(b, -1) {

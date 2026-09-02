@@ -133,7 +133,7 @@ func vramCalibrationKey(req *LlmRequest, gpus []ml.DeviceInfo, numParallel int) 
 // predictLlamaServerVRAM estimates VRAM for a llama-server load, preferring a measurement
 // of an earlier load made from the same inputs over the metadata estimate.
 func predictLlamaServerVRAM(cal *llm.VRAMCalibration, req *LlmRequest, f *ggml.GGML, numCtx int, gpus []ml.DeviceInfo, numParallel int) uint64 {
-	weights, bytesPerToken := llm.PredictServerVRAMParts(req.model.ModelPath, f)
+	weights, bytesPerToken := llm.PredictServerVRAMParts(req.model.ModelPath, req.model.ProjectorPaths, f)
 	predicted, _ := cal.Predict(vramCalibrationKey(req, gpus, numParallel), numCtx, weights, bytesPerToken)
 	return predicted
 }

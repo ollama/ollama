@@ -3014,6 +3014,57 @@ func TestMemoryParsingWriter(t *testing.T) {
 			wantTotal: 1100 + 550 + 275 + 330,
 		},
 		{
+			// A projector is reported on its own line rather than as a buffer, and it is
+			// real VRAM when the runner placed it on a device.
+			name: "an offloaded projector counts toward the device",
+			lines: []string{
+				"load_tensors:        CUDA0 model buffer size =  1000.00 MiB\n",
+				"llama_kv_cache:      CUDA0 KV buffer size =   500.00 MiB\n",
+				// The size is reported before the backend it belongs to, so the
+				// attribution cannot depend on seeing them in a fixed order.
+				"srv    load_model: [mtmd] estimated worst-case memory usage of mmproj is 1135.13 MiB (took 25.80 ms)\n",
+				"clip_ctx: CLIP using CUDA0 backend\n",
+			},
+			wantGPU:   1000 + 500 + 1135.13,
+			wantTotal: 1000 + 500 + 1135.13,
+		},
+		{
+			// Ollama declines to offload the projector under memory pressure. It still
+			// occupies memory, but not on the device, and counting it there would reserve
+			// VRAM nothing is using.
+			name: "a projector left on the host does not count toward the device",
+			lines: []string{
+				"load_tensors:        CUDA0 model buffer size =  1000.00 MiB\n",
+				"llama_kv_cache:      CUDA0 KV buffer size =   500.00 MiB\n",
+				"srv    load_model: [mtmd] estimated worst-case memory usage of mmproj is 1135.13 MiB (took 25.80 ms)\n",
+				"clip_ctx: CLIP using CPU backend\n",
+			},
+			wantGPU:   1000 + 500,
+			wantTotal: 1000 + 500 + 1135.13,
+		},
+		{
+			// Reported once per load; a repeat replaces rather than doubling.
+			name: "a re-reported projector replaces its previous figure",
+			lines: []string{
+				"clip_ctx: CLIP using CUDA0 backend\n",
+				"srv    load_model: [mtmd] estimated worst-case memory usage of mmproj is 1135.13 MiB (took 25.80 ms)\n",
+				"srv    load_model: [mtmd] estimated worst-case memory usage of mmproj is 1161.02 MiB (took 24.38 ms)\n",
+			},
+			wantGPU:   1161.02,
+			wantTotal: 1161.02,
+		},
+		{
+			// Without a backend line there is nothing to attribute the figure to, so it is
+			// left out rather than guessed onto a device.
+			name: "a projector with no backend reported is ignored",
+			lines: []string{
+				"load_tensors:        CUDA0 model buffer size =  1000.00 MiB\n",
+				"srv    load_model: [mtmd] estimated worst-case memory usage of mmproj is 1135.13 MiB (took 25.80 ms)\n",
+			},
+			wantGPU:   1000,
+			wantTotal: 1000,
+		},
+		{
 			// The scheduler re-reserves one compute buffer per graph it prepares, at a
 			// new size each time. That buffer is resized, not duplicated.
 			name: "repeated compute reservations replace rather than accumulate",
@@ -3822,7 +3873,7 @@ func TestPredictServerVRAM(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := PredictServerVRAM(path, f, numCtx)
+	got := PredictServerVRAM(path, nil, f, numCtx)
 	if want := uint64(wantWeights + wantKV); got != want {
 		t.Errorf("unexpected predicted VRAM: got=%d want=%d", got, want)
 	}
@@ -3846,4 +3897,43 @@ func testTensorF32(name string, shape ...uint64) *ggml.Tensor {
 	}
 
 	return &ggml.Tensor{Name: name, Shape: shape, WriterTo: bytes.NewReader(make([]byte, elements*4))}
+}
+
+// A projector lives in its own file, so it contributes nothing to the model's tensors and
+// has to be added explicitly or a vision model is predicted as though it were text-only.
+func TestPredictServerVRAMCountsProjectors(t *testing.T) {
+	const numCtx = 128
+
+	kv := ggml.KV{
+		"general.architecture":        "abc",
+		"abc.block_count":             uint32(2),
+		"abc.embedding_length":        uint32(64),
+		"abc.attention.head_count":    uint32(8),
+		"abc.attention.head_count_kv": uint32(2),
+	}
+	path, _ := writeTestGGML(t, kv, []*ggml.Tensor{testTensorF32("blk.0.attn_q.weight", 2, 3)})
+
+	f, err := LoadModel(path, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	proj := filepath.Join(t.TempDir(), "mmproj-F16.gguf")
+	const projSize = 900 * 1024 * 1024
+	if err := os.WriteFile(proj, make([]byte, projSize), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	withoutProjector := PredictServerVRAM(path, nil, f, numCtx)
+	withProjector := PredictServerVRAM(path, []string{proj}, f, numCtx)
+
+	if got := withProjector - withoutProjector; got != projSize {
+		t.Errorf("projector contribution: got=%d want=%d", got, projSize)
+	}
+
+	// A path that cannot be read must not abort the prediction: an unreadable projector is
+	// a reason to predict slightly low, not to refuse to place the model.
+	if got := PredictServerVRAM(path, []string{"/nonexistent/mmproj.gguf"}, f, numCtx); got != withoutProjector {
+		t.Errorf("missing projector changed the prediction: got=%d want=%d", got, withoutProjector)
+	}
 }
