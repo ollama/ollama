@@ -270,6 +270,34 @@ func TestKeyValue(t *testing.T) {
 	}
 }
 
+func TestSupportsKVCacheType(t *testing.T) {
+	cases := []struct {
+		arch      string
+		cacheType string
+		want      bool
+	}{
+		// gpt-oss uses attention with sinks and only supports non-quantized cache
+		{"gptoss", "q8_0", false},
+		{"gpt-oss", "q8_0", false},
+		{"gptoss", "q4_0", false},
+		{"gptoss", "f16", true},
+		{"gptoss", "", true},
+		// other architectures support the usual quantized cache types
+		{"llama", "q8_0", true},
+		{"llama", "q4_0", true},
+		{"llama", "f16", true},
+		{"llama", "", true},
+		{"llama", "q4_1", false},
+	}
+
+	for _, tt := range cases {
+		kv := KV{"general.architecture": tt.arch}
+		if got := kv.SupportsKVCacheType(tt.cacheType); got != tt.want {
+			t.Errorf("SupportsKVCacheType(%q) for %q = %v, want %v", tt.cacheType, tt.arch, got, tt.want)
+		}
+	}
+}
+
 func TestHeadCount(t *testing.T) {
 	valuesArray := []int32{1, 5, 3, 4}
 	cases := []struct {
