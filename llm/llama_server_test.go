@@ -3737,3 +3737,64 @@ func fakeRunningCmd() *exec.Cmd {
 	// SIGKILL children when the test process exits.
 	return cmd
 }
+
+func TestPredictServerVRAM(t *testing.T) {
+	const numCtx = 128
+
+	// Four blocks with attention only on blocks 1 and 3 (non-zero compress ratios), plus a
+	// per-layer token embedding table, which is looked up on the host and never offloaded.
+	kv := ggml.KV{
+		"general.architecture":          "abc",
+		"abc.block_count":               uint32(4),
+		"abc.embedding_length":          uint32(64),
+		"abc.attention.head_count":      uint32(8),
+		"abc.attention.head_count_kv":   uint32(2),
+		"abc.attention.compress_ratios": []int32{0, 4, 0, 4},
+	}
+
+	tensors := []*ggml.Tensor{
+		testTensorF32("blk.0.attn_q.weight", 2, 3),
+		testTensorF32("blk.1.attn_q.weight", 2, 3),
+		testTensorF32("per_layer_token_embd.weight", 128, 128),
+	}
+
+	// Only the two blk tensors are offloaded; the embedding table is not.
+	const wantWeights = 2 * 2 * 3 * 4
+	// KV cache: 2 (K+V) * attention layers (2, not all 4 blocks) * kv heads (2) *
+	// head dim (embedding 64 / 8 heads) * context * 2 bytes.
+	const wantKV = 2 * 2 * 2 * (64 / 8) * numCtx * 2
+
+	path, _ := writeTestGGML(t, kv, tensors)
+
+	// Load with the same array bound the scheduler uses (see Scheduler.load), so per-block
+	// metadata such as attention.compress_ratios is materialized rather than skipped.
+	f, err := LoadModel(path, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := PredictServerVRAM(path, f, numCtx)
+	if want := uint64(wantWeights + wantKV); got != want {
+		t.Errorf("unexpected predicted VRAM: got=%d want=%d", got, want)
+	}
+
+	// Guard against regressing to the file size: the table is on disk but never in VRAM,
+	// so the prediction must come in well under the size of the file itself.
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got >= uint64(info.Size()) {
+		t.Errorf("prediction should exclude host-resident tensors: got=%d file=%d", got, info.Size())
+	}
+}
+
+func testTensorF32(name string, shape ...uint64) *ggml.Tensor {
+	elements := uint64(1)
+	for _, dim := range shape {
+		elements *= dim
+	}
+
+	return &ggml.Tensor{Name: name, Shape: shape, WriterTo: bytes.NewReader(make([]byte, elements*4))}
+}

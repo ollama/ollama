@@ -2676,14 +2676,36 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 // PredictServerVRAM estimates VRAM usage for a model without spawning llama-server.
 // Uses model file size as a proxy for weights plus a rough KV cache estimate.
 // This is intentionally conservative — it overestimates to avoid VRAM contention.
+// hostResidentTensorGroups are tensor groups that are looked up on the host and never
+// offloaded, so they must not be counted toward predicted VRAM. Per-layer token
+// embeddings are the notable case: architectures that use them (gemma3n, qwen4exp) carry
+// a very large table — 26.8 GiB of Qwen3.8-Flash-Next's 103.7 GiB file — that stays in
+// system memory. Counting it as VRAM overpredicts by ~25% and makes a model that fits a
+// single device look like it needs several.
+var hostResidentTensorGroups = []string{"per_layer_token_embd"}
+
 func PredictServerVRAM(modelPath string, f *ggml.GGML, numCtx int) uint64 {
+	// Sum the tensors that are actually offloaded rather than taking the file size, which
+	// also covers host-resident tables. Fall back to the file size if tensor metadata is
+	// unavailable, preserving the previous (conservative) behavior.
 	var weights uint64
-	if info, err := os.Stat(modelPath); err == nil {
-		weights = uint64(info.Size())
+	for name, layer := range f.Tensors().GroupLayers() {
+		if slices.Contains(hostResidentTensorGroups, name) {
+			continue
+		}
+		weights += layer.Size()
 	}
 
-	// KV cache: 2 (K+V) * layers * kv_heads * head_dim * context * 2 bytes (f16)
-	layers := f.KV().BlockCount()
+	if weights == 0 {
+		if info, err := os.Stat(modelPath); err == nil {
+			weights = uint64(info.Size())
+		}
+	}
+
+	// KV cache: 2 (K+V) * attention layers * kv_heads * head_dim * context * 2 bytes (f16).
+	// Only blocks that run attention hold a cache; hybrid architectures interleave
+	// recurrent blocks that do not.
+	layers := f.KV().AttentionLayerCount()
 	kvHeads := f.KV().HeadCountKVMin()
 	if kvHeads == 0 {
 		kvHeads = 1

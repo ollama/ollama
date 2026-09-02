@@ -119,6 +119,46 @@ func (kv KV) HeadCountKVMin() uint64 {
 	return uint64(kv.UintOrMinArrayValue("attention.head_count_kv", 1))
 }
 
+// AttentionLayers reports, for each block, whether that block carries an attention KV
+// cache.
+//
+// attention.head_count and attention.head_count_kv are frequently stored as scalars,
+// which broadcast across every block. For a hybrid architecture — recurrent layers
+// interleaved with attention, e.g. qwen4exp (Gated DeltaNet + sparse attention) — the
+// head counts therefore cannot distinguish an attention block from a recurrent one, and
+// treating every block as attention overestimates the KV cache by the ratio of total
+// blocks to attention blocks. When the architecture publishes a per-block
+// attention.compress_ratios array it is authoritative: entries are non-zero exactly on
+// the blocks that run attention.
+func (kv KV) AttentionLayers() []bool {
+	out := make([]bool, kv.BlockCount())
+
+	if ratios := kv.Ints("attention.compress_ratios"); len(ratios) > 0 {
+		for i := range out {
+			if i < len(ratios) {
+				out[i] = ratios[i] != 0
+			}
+		}
+		return out
+	}
+
+	heads, headsKV := kv.HeadCount(), kv.HeadCountKV()
+	for i := range out {
+		out[i] = i < len(heads) && i < len(headsKV) && heads[i] > 0 && headsKV[i] > 0
+	}
+	return out
+}
+
+// AttentionLayerCount returns the number of blocks that carry an attention KV cache.
+func (kv KV) AttentionLayerCount() (n uint64) {
+	for _, isAttention := range kv.AttentionLayers() {
+		if isAttention {
+			n++
+		}
+	}
+	return n
+}
+
 func (kv KV) EmbeddingHeadCountMax() uint64 {
 	if heads := kv.HeadCountMin(); heads > 0 {
 		return kv.EmbeddingLength() / heads
@@ -650,7 +690,6 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 
 	embedding := f.KV().EmbeddingLength()
 	heads := f.KV().HeadCountMax()
-	headsArr := f.KV().HeadCount()
 	headsKV := f.KV().HeadCountKVMax()
 	headsKVArr := f.KV().HeadCountKV()
 	vocab := uint64(f.KV()["tokenizer.ggml.tokens"].(*array[string]).size)
@@ -678,28 +717,14 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 	kvSizeAttn := uint64(0)
 	kvSizeRecurrent := uint64(0)
 
-	// Some hybrid architectures report attention.head_count as a single scalar that
-	// broadcasts to every block, even though only a subset of layers actually run
-	// attention and hold a KV cache (the rest are recurrent). qwen4exp (Qwen3.x-Flash:
-	// Gated DeltaNet + sparse attention) is one: attention.compress_ratios is a per-block
-	// array that is non-zero exactly on the ~1-in-full_attention_interval attention
-	// layers. Honoring it stops us from counting a dense KV cache for all blocks when
-	// only a fraction have one, which otherwise overpredicts VRAM several-fold at long
-	// context and needlessly spreads the model across GPUs.
-	var attnLayerMask []int32
-	if f.KV().Architecture() == "qwen4exp" {
-		attnLayerMask = f.KV().Ints("attention.compress_ratios")
-	}
+	// Which blocks actually hold a KV cache. For hybrid architectures the scalar head
+	// counts broadcast across every block and cannot distinguish attention blocks from
+	// recurrent ones, so consult the per-block metadata. See KV.AttentionLayers.
+	attentionLayers := f.KV().AttentionLayers()
 
 	for i := range kv {
-		headsL := headsArr[i]
 		headsKVL := headsKVArr[i]
-		isAttention := headsL > 0 && headsKVL > 0
-		if i < len(attnLayerMask) {
-			// authoritative per-block metadata overrides the broadcast scalar
-			isAttention = attnLayerMask[i] != 0
-		}
-		if isAttention {
+		if i < len(attentionLayers) && attentionLayers[i] {
 			// full attention layer
 			// NOTE: Assumes uniform values for all attn layers
 			kv[i] = uint64(float64(context*(embeddingHeadsK+embeddingHeadsV)*headsKVL) * bytesPerElement)
