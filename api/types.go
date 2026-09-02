@@ -851,6 +851,18 @@ type ProcessModelResponse struct {
 	ExpiresAt     time.Time    `json:"expires_at"`
 	SizeVRAM      int64        `json:"size_vram"`
 	ContextLength int          `json:"context_length"`
+
+	// GPUs lists the devices this model was placed on, in the same terms
+	// /api/info reports them. Empty when the model is running on the CPU.
+	// SizeVRAM is the total across all of them, not a per-device figure.
+	GPUs []ProcessGPU `json:"gpus,omitempty"`
+}
+
+// ProcessGPU identifies one device a loaded model occupies. The pair matches
+// GPUInfo's gpu_id/runner, since an id is only unique within its runner.
+type ProcessGPU struct {
+	ID     string `json:"gpu_id"`
+	Runner string `json:"runner,omitempty"`
 }
 
 type TokenResponse struct {

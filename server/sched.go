@@ -1738,6 +1738,7 @@ type loadedModel struct {
 	sizeVRAM      int64
 	contextLength int
 	expiresAt     time.Time
+	gpus          []ml.DeviceID
 }
 
 // loadedModels returns a snapshot of the currently loaded models for status
@@ -1765,6 +1766,7 @@ func (s *Scheduler) loadedModels() []loadedModel {
 			size:      int64(r.totalSize),
 			sizeVRAM:  int64(r.vramSize),
 			expiresAt: r.expiresAt,
+			gpus:      slices.Clone(r.gpus),
 		}
 		if r.llama != nil {
 			lm.contextLength = r.llama.ContextLength()
