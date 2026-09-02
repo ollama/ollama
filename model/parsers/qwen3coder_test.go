@@ -1035,6 +1035,105 @@ func TestQwenToolCallValueParsing(t *testing.T) {
 	}
 }
 
+func TestQwen3CoderParserTruncatedToolCallNoCloseTag(t *testing.T) {
+	parser := Qwen3CoderParser{}
+	parser.Init(nil, nil, nil)
+
+	// Simulate truncated output: tool call open tag and partial XML content,
+	// but generation ends before closing tag.
+	content, _, calls, err := parser.Add("<tool_call><function=write_file><parameter=path>/tmp/test.py</parameter><parameter=content>print('hel", true)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no tool calls, got %d", len(calls))
+	}
+	if content != "<function=write_file><parameter=path>/tmp/test.py</parameter><parameter=content>print('hel" {
+		t.Fatalf("expected truncated content as fallback, got %q", content)
+	}
+}
+
+func TestQwen3CoderParserTruncatedToolCallNoCloseTagStreaming(t *testing.T) {
+	parser := Qwen3CoderParser{}
+	parser.Init(nil, nil, nil)
+
+	// First chunk: content before tool call
+	content, _, calls, err := parser.Add("Here is the code:\n<tool_call>", false)
+	if err != nil {
+		t.Fatalf("step 1: unexpected error: %v", err)
+	}
+	if content != "Here is the code:" {
+		t.Fatalf("step 1: expected content %q, got %q", "Here is the code:", content)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("step 1: expected no calls, got %d", len(calls))
+	}
+
+	// Second chunk: partial tool content, generation done (truncated)
+	content, _, calls, err = parser.Add("<function=write_file><parameter=content>incomplete...", true)
+	if err != nil {
+		t.Fatalf("step 2: unexpected error: %v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("step 2: expected no calls, got %d", len(calls))
+	}
+	if content != "<function=write_file><parameter=content>incomplete..." {
+		t.Fatalf("step 2: expected truncated content as fallback, got %q", content)
+	}
+}
+
+func TestQwen3CoderParserInvalidToolCallXML(t *testing.T) {
+	parser := Qwen3CoderParser{}
+	parser.Init(nil, nil, nil)
+
+	// Tool call tags present but content inside is invalid XML
+	content, _, calls, err := parser.Add("<tool_call>this is not valid xml at all</tool_call>", true)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no tool calls, got %d", len(calls))
+	}
+	if content != "this is not valid xml at all" {
+		t.Fatalf("expected raw content as fallback, got %q", content)
+	}
+}
+
+func TestQwen3CoderParserValidToolCallAfterInvalid(t *testing.T) {
+	parser := Qwen3CoderParser{}
+	parser.Init(nil, nil, nil)
+
+	// Invalid tool call followed by valid one
+	input := "<tool_call>invalid content</tool_call>\n<tool_call><function=get_weather><parameter=location>SF</parameter></function></tool_call>"
+	content, _, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if content != "invalid content" {
+		t.Fatalf("expected invalid content as fallback, got %q", content)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+	if calls[0].Function.Name != "get_weather" {
+		t.Fatalf("expected tool name %q, got %q", "get_weather", calls[0].Function.Name)
+	}
+}
+
+func TestQwen3CoderParserContentDrainOnDone(t *testing.T) {
+	parser := Qwen3CoderParser{}
+	parser.Init(nil, nil, nil)
+
+	// Content with trailing whitespace — on done, should be flushed
+	content, _, _, err := parser.Add("Hello world\n", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if content != "Hello world\n" {
+		t.Fatalf("expected %q, got %q", "Hello world\n", content)
+	}
+}
+
 func TestQwen3CoderParserToolCallIndexing(t *testing.T) {
 	parser := Qwen3CoderParser{}
 	parser.Init(nil, nil, nil)
