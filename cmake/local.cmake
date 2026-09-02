@@ -533,7 +533,8 @@ function(ollama_add_mlx_build name)
         SOURCE_DIR ${CMAKE_SOURCE_DIR}/cmake/mlx
         BINARY_DIR ${_build_dir}
         CONFIGURE_COMMAND ${_configure_command}
-        BUILD_COMMAND ${OLLAMA_NATIVE_BUILD_TOOL_COMMAND}
+        BUILD_COMMAND ${_configure_command}
+            COMMAND ${OLLAMA_NATIVE_BUILD_TOOL_COMMAND}
             ${OLLAMA_NATIVE_CONFIG_ARG}
             ${OLLAMA_NATIVE_BUILD_TARGET_ARG} mlx
             ${OLLAMA_NATIVE_BUILD_TARGET_ARG} mlxc
