@@ -12,6 +12,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
 )
 
@@ -41,12 +42,19 @@ func psResponse(t *testing.T, runner *runnerRef) (api.ProcessResponse, string) {
 // A model split across two cards names both, so a client can attribute residency
 // per device by joining these ids against /api/info's supported_gpus.
 func TestPsHandlerReportsDevicesForSplitModel(t *testing.T) {
+	dev0 := ml.DeviceID{ID: "0", Library: "CUDA"}
+	dev1 := ml.DeviceID{ID: "1", Library: "CUDA"}
+
 	got, _ := psResponse(t, &runnerRef{
 		model:     &Model{ShortName: "llama3:70b"},
-		gpus:      []ml.DeviceID{{ID: "0", Library: "CUDA"}, {ID: "1", Library: "CUDA"}},
+		gpus:      []ml.DeviceID{dev0, dev1},
 		totalSize: 42 * format.GigaByte,
 		vramSize:  40 * format.GigaByte,
 		expiresAt: time.Now().Add(5 * time.Minute),
+		llama: &fakeRunner{vram: map[ml.DeviceID]uint64{
+			dev0: 25 * format.GigaByte,
+			dev1: 15 * format.GigaByte,
+		}, total: 42 * format.GigaByte, gpuTotal: 40 * format.GigaByte},
 	})
 
 	if len(got.Models) != 1 {
@@ -66,7 +74,15 @@ func TestPsHandlerReportsDevicesForSplitModel(t *testing.T) {
 		}
 	}
 
-	// SizeVRAM stays the total across devices; it is not divided between them.
+	// an uneven split is reported as it is, not divided evenly
+	if gpus[0].SizeVRAM != int64(25*format.GigaByte) {
+		t.Errorf("gpu 0 size_vram: got %d, want %d", gpus[0].SizeVRAM, 25*format.GigaByte)
+	}
+	if gpus[1].SizeVRAM != int64(15*format.GigaByte) {
+		t.Errorf("gpu 1 size_vram: got %d, want %d", gpus[1].SizeVRAM, 15*format.GigaByte)
+	}
+
+	// the model-level figure remains the total across devices
 	if got.Models[0].SizeVRAM != int64(40*format.GigaByte) {
 		t.Errorf("size_vram: got %d, want %d", got.Models[0].SizeVRAM, 40*format.GigaByte)
 	}
@@ -88,3 +104,16 @@ func TestPsHandlerOmitsDevicesOnCPU(t *testing.T) {
 		t.Errorf("gpus should be omitted for a CPU-resident model, got %s", raw)
 	}
 }
+
+// fakeRunner is the narrowest llm.LlamaServer that PsHandler exercises: the
+// memory accessors. Everything else panics if the handler ever grows a call.
+type fakeRunner struct {
+	llm.LlamaServer
+	vram     map[ml.DeviceID]uint64
+	total    uint64
+	gpuTotal uint64
+}
+
+func (f *fakeRunner) MemorySize() (uint64, uint64)    { return f.total, f.gpuTotal }
+func (f *fakeRunner) VRAMByGPU(id ml.DeviceID) uint64 { return f.vram[id] }
+func (f *fakeRunner) ContextLength() int              { return 4096 }

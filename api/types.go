@@ -852,17 +852,23 @@ type ProcessModelResponse struct {
 	SizeVRAM      int64        `json:"size_vram"`
 	ContextLength int          `json:"context_length"`
 
-	// GPUs lists the devices this model was placed on, in the same terms
-	// /api/info reports them. Empty when the model is running on the CPU.
-	// SizeVRAM is the total across all of them, not a per-device figure.
+	// GPUs lists the devices this model was placed on, with per-device VRAM,
+	// in the same terms /api/info reports them. Empty when the model is
+	// running on the CPU.
 	GPUs []ProcessGPU `json:"gpus,omitempty"`
 }
 
-// ProcessGPU identifies one device a loaded model occupies. The pair matches
-// GPUInfo's gpu_id/runner, since an id is only unique within its runner.
+// ProcessGPU reports one device a loaded model occupies and how much VRAM it
+// uses there. The id/runner pair matches GPUInfo's, since an id is only unique
+// within its runner.
 type ProcessGPU struct {
 	ID     string `json:"gpu_id"`
 	Runner string `json:"runner,omitempty"`
+
+	// SizeVRAM is this model's VRAM on this device: tensors, KV cache and
+	// compute buffers. Backends with a single device report the whole figure
+	// here, so it equals the model's total.
+	SizeVRAM int64 `json:"size_vram"`
 }
 
 type TokenResponse struct {
