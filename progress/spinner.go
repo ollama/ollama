@@ -97,3 +97,10 @@ func (s *Spinner) Stop() {
 
 	s.stopOnce.Do(func() { close(s.done) })
 }
+
+func (s *Spinner) PlainString() string {
+	if m, ok := s.message.Load().(string); ok {
+		return strings.TrimSpace(m)
+	}
+	return ""
+}
