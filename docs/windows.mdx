@@ -60,13 +60,55 @@ Here's a quick example showing API access from `powershell`
 
 ## Troubleshooting
 
-Ollama on Windows stores files in a few different locations. You can view them in
-the explorer window by hitting `<Ctrl>+R` and type in:
+### The `ollama` command is not found
 
-- `explorer %LOCALAPPDATA%\Ollama` contains logs, and downloaded updates
-  - _app.log_ contains most resent logs from the GUI application
-  - _server.log_ contains the most recent server logs
-  - _upgrade.log_ contains log output for upgrades
+The installer adds the default installation directory to your user `PATH`.
+Close and reopen any terminals that were open during installation, then check
+that the command is available:
+
+```powershell
+Get-Command ollama
+```
+
+If the command is still not found, open `Settings` and search for _environment
+variables_. Under _Edit environment variables for your account_, add the
+installation directory (by default, `%LOCALAPPDATA%\Programs\Ollama`) to your
+user `Path`. If you used the `/DIR` installer option, add the directory you
+selected instead.
+
+### The local API cannot be reached
+
+The Windows application runs in the background and serves the API at
+`http://localhost:11434`. Check whether the API is reachable from PowerShell:
+
+```powershell
+Invoke-WebRequest http://localhost:11434/api/tags
+```
+
+If the request fails, relaunch Ollama from the Start menu and check the
+application logs below. If you are using the standalone CLI zip, start the
+server explicitly with `ollama serve` before making API requests.
+
+### Finding installation and startup logs
+
+Open the Ollama log directory with:
+
+```powershell
+explorer "$env:LOCALAPPDATA\Ollama"
+```
+
+The most useful files are `app.log` for the desktop application,
+`server.log` for the local API and model server, and `upgrade.log` for
+installer and update failures. To inspect the latest server messages directly
+from PowerShell, run:
+
+```powershell
+Get-Content "$env:LOCALAPPDATA\Ollama\server.log" -Tail 100
+```
+
+Ollama on Windows stores files in a few different locations. You can open these
+locations from File Explorer by pressing the Windows key and `R`, then entering:
+
 - `explorer %LOCALAPPDATA%\Programs\Ollama` contains the binaries (The installer adds this to your user PATH)
 - `explorer %HOMEPATH%\.ollama` contains models and configuration
 - `explorer %TEMP%` contains temporary executable files in one or more `ollama*` directories
