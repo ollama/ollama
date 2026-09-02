@@ -532,8 +532,8 @@ func TestCodexAppDesktopAppliesProfileAfterRunningAppExits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := codexRootStringValue(string(data), codexRootModelProviderKey); got != "openai" {
-		t.Fatalf("model provider = %q, want built-in openai after exit:\n%s", got, data)
+	if got, ok := codexRootStringValueOK(string(data), codexRootModelProviderKey); ok {
+		t.Fatalf("model provider = %q, want omitted built-in default after exit:\n%s", got, data)
 	}
 	if got := codexRootStringValue(string(data), codexRootOpenAIBaseURLKey); got != "http://127.0.0.1:11434/api/codex/v1" {
 		t.Fatalf("openai_base_url = %q, want Codex router after exit:\n%s", got, data)
@@ -895,7 +895,6 @@ func TestCodexAppConfigureAddsOllamaModelsToBuiltInProvider(t *testing.T) {
 
 	for _, want := range []string{
 		`model = "llama3.2"`,
-		`model_provider = "openai"`,
 		fmt.Sprintf(`model_catalog_json = %q`, catalogPath),
 		`openai_base_url = "http://127.0.0.1:9999/api/codex/v1"`,
 		`[profiles.default]`,
@@ -906,6 +905,9 @@ func TestCodexAppConfigureAddsOllamaModelsToBuiltInProvider(t *testing.T) {
 	}
 	if got, ok := codexRootStringValueOK(content, "profile"); ok {
 		t.Fatalf("legacy root profile should be removed, got %q in:\n%s", got, content)
+	}
+	if got, ok := codexRootStringValueOK(content, codexRootModelProviderKey); ok {
+		t.Fatalf("root model_provider = %q, want omitted built-in default in:\n%s", got, content)
 	}
 	if strings.Contains(content, codexProfileHeaderFor(codexAppProfileName)) {
 		t.Fatalf("legacy app profile section should not be generated, got:\n%s", content)
@@ -956,6 +958,74 @@ func TestCodexAppConfigureAddsOllamaModelsToBuiltInProvider(t *testing.T) {
 	}
 	if _, ok := ollamaEntry["tool_mode"]; ok {
 		t.Fatalf("Ollama catalog must not opt into a native-only code tool mode: %#v", ollamaEntry)
+	}
+}
+
+func TestCodexAppReasoningEffortsExposeOffAndMaxWithoutDroppingUserChoices(t *testing.T) {
+	tests := []struct {
+		name    string
+		text    string
+		efforts []string
+		want    []string
+	}{
+		{
+			name:    "new desktop setting",
+			text:    `model = "gpt-5.6-sol"` + "\n",
+			efforts: []string{"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"},
+			want:    []string{"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"},
+		},
+		{
+			name: "existing section and multiline value",
+			text: "[desktop]\n" +
+				"enabled-reasoning-efforts = [\n" +
+				"  \"low\",\n" +
+				"  \"high\",\n" +
+				"]\n" +
+				`theme = "system"` + "\n",
+			efforts: []string{"none", "low", "high", "max"},
+			want:    []string{"none", "low", "high", "max"},
+		},
+		{
+			name:    "existing dotted root value",
+			text:    `desktop.enabled-reasoning-efforts = ["low", "ultra"]` + "\n",
+			efforts: []string{"none", "low", "max", "ultra"},
+			want:    []string{"none", "low", "max", "ultra"},
+		},
+		{
+			name:    "section without trailing newline",
+			text:    "[desktop]\n" + `theme = "system"`,
+			efforts: []string{"none", "medium", "max"},
+			want:    []string{"none", "medium", "max"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			updated := codexAppSetReasoningEfforts(tt.text, tt.efforts)
+			config, err := codexParseConfig(updated)
+			if err != nil {
+				t.Fatalf("updated config is invalid: %v\n%s", err, updated)
+			}
+			got, ok := codexAppConfigReasoningEfforts(config)
+			if !ok || !slices.Equal(got, tt.want) {
+				t.Fatalf("reasoning efforts = %v, %v; want %v", got, ok, tt.want)
+			}
+			if count := strings.Count(updated, codexAppReasoningEffortsKey); count != 1 {
+				t.Fatalf("reasoning setting count = %d, want 1 in:\n%s", count, updated)
+			}
+			if strings.Contains(tt.text, `theme = "system"`) {
+				if theme, ok := config.String("desktop", "theme"); !ok || theme != "system" {
+					t.Fatalf("desktop theme = %q, %v; want preserved", theme, ok)
+				}
+			}
+		})
+	}
+
+	if got, want := codexAppMergeReasoningEfforts([]string{"low", "high", "ultra", "persistent"}), []string{"none", "low", "high", "max", "ultra", "persistent"}; !slices.Equal(got, want) {
+		t.Fatalf("merged reasoning efforts = %v, want %v", got, want)
+	}
+	if got, want := codexAppReasoningEffortsForConfig(""), []string{"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}; !slices.Equal(got, want) {
+		t.Fatalf("default desktop reasoning efforts = %v, want %v", got, want)
 	}
 }
 
@@ -1011,8 +1081,8 @@ func TestCodexAppConfigureUsesAppSpecificProfileWithoutTouchingCLIProfile(t *tes
 	if got := codexRootStringValue(content, codexRootOpenAIBaseURLKey); got != "http://127.0.0.1:9999/api/codex/v1" {
 		t.Fatalf("openai_base_url = %q, want loopback Codex router", got)
 	}
-	if got := codexRootStringValue(content, codexRootModelProviderKey); got != "openai" {
-		t.Fatalf("model_provider = %q, want built-in openai", got)
+	if got, ok := codexRootStringValueOK(content, codexRootModelProviderKey); ok {
+		t.Fatalf("model_provider = %q, want omitted built-in default", got)
 	}
 	if strings.Contains(content, codexProviderHeaderFor(codexAppProfileName)) {
 		t.Fatalf("custom app provider should be removed, got:\n%s", content)
@@ -1098,13 +1168,15 @@ func TestCodexCLIConfigRefreshLeavesCodexAppConfigActive(t *testing.T) {
 	}
 	for key, want := range map[string]string{
 		"model":              "llama3.2",
-		"model_provider":     "openai",
 		"model_catalog_json": appCatalogPath,
 		"openai_base_url":    "http://127.0.0.1:9999/api/codex/v1",
 	} {
 		if got := codexRootStringValue(content, key); got != want {
 			t.Fatalf("root %s = %q, want %q in:\n%s", key, got, want, content)
 		}
+	}
+	if got, ok := codexRootStringValueOK(content, codexRootModelProviderKey); ok {
+		t.Fatalf("root model_provider = %q, want omitted built-in default in:\n%s", got, content)
 	}
 	if strings.Contains(content, codexProviderHeaderFor(codexAppProfileName)) {
 		t.Fatalf("additive app config should not leave a custom provider section:\n%s", content)
@@ -1202,8 +1274,8 @@ func TestCodexAppConfigureUsesConnectableHostForUnspecifiedBindAddress(t *testin
 	if got := codexRootStringValue(content, codexRootOpenAIBaseURLKey); got != "http://127.0.0.1:11434/api/codex/v1" {
 		t.Fatalf("openai_base_url = %q, want connectable loopback router URL", got)
 	}
-	if got := codexRootStringValue(content, "model_provider"); got != "openai" {
-		t.Fatalf("root model_provider = %q, want openai", got)
+	if got, ok := codexRootStringValueOK(content, codexRootModelProviderKey); ok {
+		t.Fatalf("root model_provider = %q, want omitted built-in default", got)
 	}
 }
 
@@ -1308,26 +1380,38 @@ func TestCodexAppCurrentModelRequiresManagedActiveProfile(t *testing.T) {
 	}
 }
 
-func TestCodexAppCurrentModelReadsManagedRootConfig(t *testing.T) {
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+func TestCodexAppCurrentModelRecognizesManagedRootProviderForms(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		providerLine string
+		want         string
+	}{
+		{name: "omitted default provider", want: "qwen3:8b"},
+		{name: "legacy explicit provider", providerLine: `model_provider = "openai"` + "\n", want: "qwen3:8b"},
+		{name: "different explicit provider", providerLine: `model_provider = "custom"` + "\n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			setTestHome(t, tmpDir)
+			t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
 
-	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	content := "" +
-		`model = "qwen3:8b"` + "\n" +
-		`model_provider = "openai"` + "\n" +
-		fmt.Sprintf(`model_catalog_json = %q`, mustWriteCodexAppTestCatalog(t, "qwen3:8b")) + "\n" +
-		`openai_base_url = "http://127.0.0.1:11434/api/codex/v1"` + "\n"
-	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
+			configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+			if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			content := "" +
+				`model = "qwen3:8b"` + "\n" +
+				tt.providerLine +
+				fmt.Sprintf(`model_catalog_json = %q`, mustWriteCodexAppTestCatalog(t, "qwen3:8b")) + "\n" +
+				`openai_base_url = "http://127.0.0.1:11434/api/codex/v1"` + "\n"
+			if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
 
-	if got := (&CodexApp{}).CurrentModel(); got != "qwen3:8b" {
-		t.Fatalf("CurrentModel = %q, want qwen3:8b", got)
+			if got := (&CodexApp{}).CurrentModel(); got != tt.want {
+				t.Fatalf("CurrentModel = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -1342,7 +1426,6 @@ func TestCodexAppOllamaConfiguredKeepsOffSwitchWhenCatalogIsMissing(t *testing.T
 	}
 	content := "" +
 		`model = "glm-5.3-flash:cloud"` + "\n" +
-		`model_provider = "openai"` + "\n" +
 		fmt.Sprintf(`model_catalog_json = %q`, codexAppModelCatalogPathForConfig(configPath)) + "\n" +
 		`openai_base_url = "http://127.0.0.1:11434/api/codex/v1"` + "\n"
 	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
@@ -1483,7 +1566,6 @@ func TestCodexAppCurrentModelAcceptsLatestSuffixDrift(t *testing.T) {
 	}
 	content := "" +
 		`model = "llama3.2:latest"` + "\n" +
-		`model_provider = "openai"` + "\n" +
 		fmt.Sprintf(`model_catalog_json = %q`, catalogPath) + "\n" +
 		`openai_base_url = "http://127.0.0.1:11434/api/codex/v1"` + "\n"
 	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
@@ -1542,7 +1624,7 @@ func TestCodexAppConfigurePopulatesCatalogFromEnrichedModels(t *testing.T) {
 			if model["default_reasoning_level"] != "medium" {
 				t.Fatalf("default_reasoning_level for %q = %v, want medium", slug, model["default_reasoning_level"])
 			}
-			wantEfforts := []string{"medium"}
+			wantEfforts := []string{"none", "medium"}
 			gotEfforts := make([]string, 0, len(levels))
 			for _, level := range levels {
 				entry, ok := level.(map[string]any)
@@ -1589,32 +1671,76 @@ func TestCodexAppConfigurePopulatesCatalogFromEnrichedModels(t *testing.T) {
 			t.Fatalf("web_search_tool_type for %q = %v, want text", slug, got)
 		}
 	}
+
+	configPath, err := codexConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	routingData, err := os.ReadFile(codexAppRoutingCatalogPathForConfig(configPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var routingCatalog struct {
+		Models []struct {
+			Slug     string `json:"slug"`
+			Thinking struct {
+				Supported bool     `json:"supported"`
+				Levels    []string `json:"levels"`
+			} `json:"thinking"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(routingData, &routingCatalog); err != nil {
+		t.Fatalf("routing catalog should be valid JSON: %v", err)
+	}
+	if len(routingCatalog.Models) != 3 {
+		t.Fatalf("routing catalog models = %#v, want 3 selected Ollama models", routingCatalog.Models)
+	}
+	gemmaThinking := routingCatalog.Models[0].Thinking
+	if routingCatalog.Models[0].Slug != "gemma4" || !gemmaThinking.Supported || !slices.Equal(gemmaThinking.Levels, []string{"none", "medium"}) {
+		t.Fatalf("gemma4 routing thinking = %+v, want binary off/medium metadata", gemmaThinking)
+	}
+	for _, routed := range routingCatalog.Models[1:] {
+		if routed.Thinking.Supported || len(routed.Thinking.Levels) != 0 {
+			t.Fatalf("non-thinking model %q routing metadata = %+v, want unsupported", routed.Slug, routed.Thinking)
+		}
+	}
 }
 
-func TestCodexAppThinkingLevelsUseExactFamilyContract(t *testing.T) {
+func TestCodexAppThinkingLevelsUseVerifiedContracts(t *testing.T) {
 	tests := []struct {
 		name        string
+		modelName   string
 		family      string
 		thinking    bool
-		wantDefault string
+		wantInitial string
 		wantLevels  []string
 	}{
 		{name: "non-thinking model"},
-		{name: "binary fallback", thinking: true, wantDefault: "medium", wantLevels: []string{"medium"}},
-		{name: "GLM 5.3", family: "glm5_next", thinking: true, wantDefault: "high", wantLevels: []string{"low", "high", "max"}},
-		{name: "GPT-OSS", family: "gpt-oss", thinking: true, wantDefault: "medium", wantLevels: []string{"low", "medium", "high"}},
+		{name: "binary fallback", thinking: true, wantInitial: "medium", wantLevels: []string{"none", "medium"}},
+		{name: "recommended GLM 5.3 Flash", modelName: "glm-5.3-flash:cloud", wantInitial: "max", wantLevels: []string{"low", "high", "max"}},
+		{name: "recommended GLM 5.3", modelName: "glm-5.3:cloud", wantInitial: "max", wantLevels: []string{"low", "high", "max"}},
+		{name: "recommended DeepSeek V4 Flash", modelName: "deepseek-v4-flash:cloud", wantInitial: "high", wantLevels: []string{"none", "high", "max"}},
+		{name: "recommended Gemma 4 cloud", modelName: "gemma4:31b-cloud", wantInitial: "medium", wantLevels: []string{"none", "medium"}},
+		{name: "recommended Gemma 4 local", modelName: "gemma4:26b", wantInitial: "medium", wantLevels: []string{"none", "medium"}},
+		{name: "similar unverified tag uses fallback", modelName: "glm-5.3-flash:custom", thinking: true, wantInitial: "medium", wantLevels: []string{"none", "medium"}},
+		{name: "GLM 5.3 family fallback", family: "glm5_next", thinking: true, wantInitial: "max", wantLevels: []string{"low", "high", "max"}},
+		{name: "GPT-OSS family", family: "gpt-oss", thinking: true, wantInitial: "medium", wantLevels: []string{"low", "medium", "high"}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			launchModel := LaunchModel{}
+			launchModel := LaunchModel{Name: tt.modelName}
 			launchModel.Details.Family = tt.family
 			if tt.thinking {
 				launchModel.Capabilities = []model.Capability{model.CapabilityThinking}
 			}
-			gotDefault, gotLevels := codexAppThinkingLevels(launchModel)
-			if gotDefault != tt.wantDefault || !slices.Equal(gotLevels, tt.wantLevels) {
-				t.Fatalf("thinking levels = %q, %v; want %q, %v", gotDefault, gotLevels, tt.wantDefault, tt.wantLevels)
+			metadata := codexAppModelMetadataFromLaunchModel(launchModel)
+			gotInitial, gotLevels := metadata.defaultThinkingLevel, metadata.thinkingLevels
+			if gotInitial != tt.wantInitial || !slices.Equal(gotLevels, tt.wantLevels) {
+				t.Fatalf("thinking levels = %q, %v; want %q, %v", gotInitial, gotLevels, tt.wantInitial, tt.wantLevels)
+			}
+			if metadata.supportsThinking != (len(tt.wantLevels) > 0) {
+				t.Fatalf("supports thinking = %v, want %v", metadata.supportsThinking, len(tt.wantLevels) > 0)
 			}
 		})
 	}
@@ -1765,7 +1891,9 @@ func TestCodexAppConfigureMigratesLegacyManagedConfigWithoutPollutingRestoreStat
 		`base_url = "http://127.0.0.1:9999/v1/"` + "\n" +
 		`wire_api = "responses"` + "\n\n" +
 		"[profiles.default]\n" +
-		`model = "gpt-5.5"` + "\n"
+		`model = "gpt-5.5"` + "\n\n" +
+		"[desktop]\n" +
+		`enabled-reasoning-efforts = ["low", "high"]` + "\n"
 	if err := os.WriteFile(configPath, []byte(existing), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1790,6 +1918,9 @@ func TestCodexAppConfigureMigratesLegacyManagedConfigWithoutPollutingRestoreStat
 	}
 	if state.HadModel || state.HadModelProvider || state.HadModelCatalogJSON {
 		t.Fatalf("legacy restore state should not capture managed root values: %+v", state)
+	}
+	if !state.HadDesktopReasoningEfforts || !slices.Equal(state.DesktopReasoningEfforts, []string{"low", "high"}) {
+		t.Fatalf("desktop reasoning restore state = (%v, %v), want original user choices", state.HadDesktopReasoningEfforts, state.DesktopReasoningEfforts)
 	}
 
 	data, err := os.ReadFile(configPath)
@@ -1823,6 +1954,13 @@ func TestCodexAppConfigureMigratesLegacyManagedConfigWithoutPollutingRestoreStat
 	}
 	if strings.Contains(restored, codexProfileHeaderFor(codexAppProfileName)) || strings.Contains(restored, codexProviderHeaderFor(codexAppProfileName)) {
 		t.Fatalf("owned app config should be removed on restore, got:\n%s", restored)
+	}
+	restoredConfig, err := codexParseConfig(restored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if efforts, ok := codexAppConfigReasoningEfforts(restoredConfig); !ok || !slices.Equal(efforts, []string{"low", "high"}) {
+		t.Fatalf("restored desktop reasoning efforts = %v, %v; want [low high]", efforts, ok)
 	}
 	if openCalls != 1 {
 		t.Fatalf("open calls = %d, want 1", openCalls)
@@ -1898,6 +2036,87 @@ func TestCodexAppRestoreRestoresPreviousProfile(t *testing.T) {
 	}
 }
 
+func TestCodexAppRestoreRestoresDesktopReasoningEffortsExactly(t *testing.T) {
+	tests := []struct {
+		name         string
+		desktopValue string
+		wantOriginal []string
+	}{
+		{
+			name:         "existing user choices",
+			desktopValue: `enabled-reasoning-efforts = ["minimal", "high", "persistent"]` + "\n",
+			wantOriginal: []string{"minimal", "high", "persistent"},
+		},
+		{name: "setting originally absent"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			setTestHome(t, tmpDir)
+			t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+			withCodexAppPlatform(t, "darwin")
+			withCodexAppProcessHooks(t, func() bool { return false }, func() error { return nil }, func() error { return nil })
+
+			configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+			if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			existing := `model = "gpt-5.6-sol"` + "\n\n" +
+				"[desktop]\n" +
+				tt.desktopValue +
+				`theme = "system"` + "\n"
+			if err := os.WriteFile(configPath, []byte(existing), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			app := &CodexApp{}
+			if err := app.ConfigureWithModels("gemma4", []LaunchModel{{
+				Name:         "gemma4",
+				Capabilities: []model.Capability{model.CapabilityThinking},
+			}}); err != nil {
+				t.Fatalf("ConfigureWithModels returned error: %v", err)
+			}
+
+			managedData, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			managedConfig, err := codexParseConfig(string(managedData))
+			if err != nil {
+				t.Fatal(err)
+			}
+			managedEfforts, ok := codexAppConfigReasoningEfforts(managedConfig)
+			if !ok || !slices.Contains(managedEfforts, "none") || !slices.Contains(managedEfforts, "max") {
+				t.Fatalf("managed reasoning efforts = %v, %v; want none and max enabled", managedEfforts, ok)
+			}
+
+			if err := app.Restore(); err != nil {
+				t.Fatalf("Restore returned error: %v", err)
+			}
+			restoredData, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			restoredConfig, err := codexParseConfig(string(restoredData))
+			if err != nil {
+				t.Fatal(err)
+			}
+			gotOriginal, hadOriginal := codexAppConfigReasoningEfforts(restoredConfig)
+			if tt.wantOriginal == nil {
+				if hadOriginal {
+					t.Fatalf("restored reasoning efforts = %v, want setting removed", gotOriginal)
+				}
+			} else if !hadOriginal || !slices.Equal(gotOriginal, tt.wantOriginal) {
+				t.Fatalf("restored reasoning efforts = %v, %v; want %v", gotOriginal, hadOriginal, tt.wantOriginal)
+			}
+			if theme, ok := restoredConfig.String("desktop", "theme"); !ok || theme != "system" {
+				t.Fatalf("desktop theme = %q, %v; want preserved", theme, ok)
+			}
+		})
+	}
+}
+
 func TestCodexAppRestorePreservesNativeModelSelectedWhileConnected(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
@@ -1935,7 +2154,7 @@ func TestCodexAppRestorePreservesNativeModelSelectedWhileConnected(t *testing.T)
 			if err := os.WriteFile(routingPath, []byte(tt.routing), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			managed := fmt.Sprintf("model = %q\nmodel_provider = \"openai\"\nmodel_catalog_json = %q\nopenai_base_url = %q\n", tt.current, catalogPath, codexAppProxyBaseURL())
+			managed := fmt.Sprintf("model = %q\nmodel_catalog_json = %q\nopenai_base_url = %q\n", tt.current, catalogPath, codexAppProxyBaseURL())
 			restored := codexAppRestoreRootValues(managed, state)
 			if got := codexRootStringValue(restored, codexRootModelKey); got != tt.wantModel {
 				t.Fatalf("restored model = %q, want %q in:\n%s", got, tt.wantModel, restored)

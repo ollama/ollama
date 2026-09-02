@@ -78,6 +78,191 @@ func TestHandlerRoutesCatalogModelToOllamaAndStripsCredentials(t *testing.T) {
 	}
 }
 
+func TestNormalizeOllamaThinkingUsesRoutedModelContract(t *testing.T) {
+	tests := []struct {
+		name          string
+		model         routingModel
+		effort        string
+		wantReasoning bool
+		wantEffort    string
+		omitEffort    bool
+	}{
+		{
+			name:          "legacy catalog preserves request",
+			effort:        "high",
+			wantReasoning: true,
+			wantEffort:    "high",
+		},
+		{
+			name:          "non-thinking model drops stale reasoning",
+			model:         routingModel{Thinking: &routingThinkingMetadata{}},
+			effort:        "high",
+			wantReasoning: false,
+		},
+		{
+			name: "binary thinking stays off",
+			model: routingModel{Thinking: &routingThinkingMetadata{
+				Supported: true,
+				Levels:    []string{"none", "medium"},
+			}},
+			effort:        "none",
+			wantReasoning: true,
+			wantEffort:    "none",
+		},
+		{
+			name: "binary thinking uses medium for its enabled choice",
+			model: routingModel{Thinking: &routingThinkingMetadata{
+				Supported: true,
+				Levels:    []string{"none", "medium"},
+			}},
+			effort:        "medium",
+			wantReasoning: true,
+			wantEffort:    "medium",
+		},
+		{
+			name: "binary thinking maps a stale enabled level to medium",
+			model: routingModel{Thinking: &routingThinkingMetadata{
+				Supported: true,
+				Levels:    []string{"none", "medium"},
+			}},
+			effort:        "high",
+			wantReasoning: true,
+			wantEffort:    "medium",
+		},
+		{
+			name: "exact GLM ladder clamps xhigh to max",
+			model: routingModel{Thinking: &routingThinkingMetadata{
+				Supported: true,
+				Levels:    []string{"low", "high", "max"},
+			}},
+			effort:        "xhigh",
+			wantReasoning: true,
+			wantEffort:    "max",
+		},
+		{
+			name: "exact GLM ladder omits unsupported medium",
+			model: routingModel{Thinking: &routingThinkingMetadata{
+				Supported: true,
+				Levels:    []string{"low", "high", "max"},
+			}},
+			effort:        "medium",
+			wantReasoning: true,
+			omitEffort:    true,
+		},
+		{
+			name: "always-thinking GLM omits stale off",
+			model: routingModel{Thinking: &routingThinkingMetadata{
+				Supported: true,
+				Levels:    []string{"low", "high", "max"},
+			}},
+			effort:        "none",
+			wantReasoning: true,
+			omitEffort:    true,
+		},
+		{
+			name: "minimal maps to Ollama low",
+			model: routingModel{Thinking: &routingThinkingMetadata{
+				Supported: true,
+				Levels:    []string{"low", "medium", "high"},
+			}},
+			effort:        "minimal",
+			wantReasoning: true,
+			wantEffort:    "low",
+		},
+		{
+			name: "stale xhigh clamps to the strongest supported effort",
+			model: routingModel{Thinking: &routingThinkingMetadata{
+				Supported: true,
+				Levels:    []string{"low", "medium", "high"},
+			}},
+			effort:        "xhigh",
+			wantReasoning: true,
+			wantEffort:    "high",
+		},
+		{
+			name: "unknown effort is omitted instead of enabling binary thinking",
+			model: routingModel{Thinking: &routingThinkingMetadata{
+				Supported: true,
+				Levels:    []string{"none", "medium"},
+			}},
+			effort:        "unexpected",
+			wantReasoning: true,
+			omitEffort:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, err := json.Marshal(map[string]any{
+				"model": "test-model",
+				"reasoning": map[string]any{
+					"effort":  tt.effort,
+					"summary": "auto",
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			normalized, err := normalizeOllamaRequestBody(body, tt.model)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(normalized, &payload); err != nil {
+				t.Fatal(err)
+			}
+			reasoning, ok := payload["reasoning"].(map[string]any)
+			if ok != tt.wantReasoning {
+				t.Fatalf("reasoning present = %v, want %v in %s", ok, tt.wantReasoning, normalized)
+			}
+			if !tt.wantReasoning {
+				return
+			}
+			gotEffort, hasEffort := reasoning["effort"].(string)
+			if tt.omitEffort {
+				if hasEffort {
+					t.Fatalf("reasoning effort = %q, want model default with no explicit effort in %s", gotEffort, normalized)
+				}
+			} else if !hasEffort || gotEffort != tt.wantEffort {
+				t.Fatalf("reasoning effort = %q, %v; want %q in %s", gotEffort, hasEffort, tt.wantEffort, normalized)
+			}
+			if got, _ := reasoning["summary"].(string); got != "auto" {
+				t.Fatalf("reasoning summary = %q, want preserved", got)
+			}
+		})
+	}
+}
+
+func TestNormalizeOllamaThinkingRejectsMalformedReasoning(t *testing.T) {
+	model := routingModel{Thinking: &routingThinkingMetadata{
+		Supported: true,
+		Levels:    []string{"none", "medium"},
+	}}
+	_, err := normalizeOllamaRequestBody([]byte(`{"model":"test-model","reasoning":"high"}`), model)
+	if err == nil || !strings.Contains(err.Error(), "decode reasoning") {
+		t.Fatalf("normalize error = %v, want malformed reasoning error", err)
+	}
+}
+
+func TestLoadCatalogModelsReadsOptionalThinkingMetadata(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ModelCatalogFilename)
+	data := []byte(`{"models":[{"slug":"legacy"},{"slug":"binary","thinking":{"supported":true,"levels":["none","medium"]}}]}`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	models, err := loadCatalogModels(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if models["legacy"].Thinking != nil {
+		t.Fatalf("legacy model thinking metadata = %+v, want absent", models["legacy"].Thinking)
+	}
+	binary := models["binary"].Thinking
+	if binary == nil || !binary.Supported || strings.Join(binary.Levels, ",") != "none,medium" {
+		t.Fatalf("binary model thinking metadata = %+v, want off/medium contract", binary)
+	}
+}
+
 func TestHandlerNormalizesCodexOnlyHistoryForOllama(t *testing.T) {
 	var gotBody []byte
 	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
