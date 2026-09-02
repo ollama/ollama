@@ -3,6 +3,7 @@ package convert
 import (
 	"io"
 	"io/fs"
+	"os"
 	"strings"
 
 	"github.com/nlpodyssey/gopickle/pytorch"
@@ -12,7 +13,33 @@ import (
 func parseTorch(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]Tensor, error) {
 	var ts []Tensor
 	for _, p := range ps {
-		pt, err := pytorch.Load(p)
+		f, err := fsys.Open(p)
+		if err != nil {
+			return nil, err
+		}
+
+		filePath := p
+		if osFile, ok := f.(*os.File); ok {
+			filePath = osFile.Name()
+			_ = f.Close()
+		} else {
+			tmp, err := os.CreateTemp("", "ollama-torch-*.bin")
+			if err != nil {
+				_ = f.Close()
+				return nil, err
+			}
+			defer os.Remove(tmp.Name())
+			if _, err := io.Copy(tmp, f); err != nil {
+				_ = f.Close()
+				_ = tmp.Close()
+				return nil, err
+			}
+			_ = f.Close()
+			_ = tmp.Close()
+			filePath = tmp.Name()
+		}
+
+		pt, err := pytorch.Load(filePath)
 		if err != nil {
 			return nil, err
 		}
