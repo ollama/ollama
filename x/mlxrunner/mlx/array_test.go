@@ -86,3 +86,15 @@ func TestComparisonOpsAndBernoulli(t *testing.T) {
 		})
 	}
 }
+
+// An empty array has no buffer, so its data pointer is null without an error.
+func TestEmptyArrayData(t *testing.T) {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
+		if got := Zeros(DTypeFloat32, 0).Floats(); len(got) != 0 {
+			t.Fatalf("Floats() = %v, want empty", got)
+		}
+		if got := Zeros(DTypeInt32, 0).Ints(); len(got) != 0 {
+			t.Fatalf("Ints() = %v, want empty", got)
+		}
+	})
+}
