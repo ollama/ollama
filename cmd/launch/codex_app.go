@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -35,6 +36,8 @@ const (
 	codexAppSingletonLockName      = "SingletonLock"
 	codexAppSingletonSocketName    = "SingletonSocket"
 	codexAppSingletonCookieName    = "SingletonCookie"
+	codexAppDesktopTableName       = "desktop"
+	codexAppReasoningEffortsKey    = "enabled-reasoning-efforts"
 	codexAppRestoreHint            = "To remove Ollama models from ChatGPT, run: ollama launch chatgpt --restore"
 	codexAppConfigurationSuccess   = "Ollama models added to ChatGPT."
 	codexAppRestoreSuccess         = "Ollama models removed from ChatGPT."
@@ -306,11 +309,13 @@ func writeCodexAppConfig(configPath, model, modelCatalogPath string) error {
 	text = codexRemoveRootValue(text, codexRootProfileKey)
 	text = codexAppRemoveOwnedSections(text)
 	text = codexSetRootStringValue(text, codexRootModelKey, model)
-	// Keep the built-in provider identity so native and Ollama tasks remain in
-	// one ChatGPT task list. The loopback base URL routes each request by model.
-	text = codexSetRootStringValue(text, codexRootModelProviderKey, "openai")
+	// Codex defaults an omitted model_provider to OpenAI. Leaving it unset keeps
+	// ChatGPT's native account controls visible while the loopback base URL
+	// continues to route each request by model.
+	text = codexRemoveRootValue(text, codexRootModelProviderKey)
 	text = codexSetRootStringValue(text, codexRootModelCatalogJSONKey, modelCatalogPath)
 	text = codexSetRootStringValue(text, codexRootOpenAIBaseURLKey, baseURL)
+	text = codexAppSetReasoningEfforts(text, codexAppReasoningEffortsForConfig(text))
 
 	parsed, err := codexParseConfig(text)
 	if err != nil {
@@ -335,12 +340,18 @@ func codexValidateAppConfigText(config codexParsedConfig, model, modelCatalogPat
 	if config.Exists("model_providers", codexAppProfileName) {
 		return fmt.Errorf("generated ChatGPT config still contains legacy model_providers.%s table", codexAppProfileName)
 	}
+	if got, ok := config.RootStringOK(codexRootModelProviderKey); ok {
+		return fmt.Errorf("generated ChatGPT config still contains explicit model_provider = %q", got)
+	}
+	efforts, ok := codexAppConfigReasoningEfforts(config)
+	if !ok || !slices.Contains(efforts, "none") || !slices.Contains(efforts, "max") {
+		return fmt.Errorf("generated ChatGPT config does not enable none and max thinking controls")
+	}
 	for _, check := range []struct {
 		path []string
 		want string
 	}{
 		{[]string{codexRootModelKey}, model},
-		{[]string{codexRootModelProviderKey}, "openai"},
 		{[]string{codexRootModelCatalogJSONKey}, modelCatalogPath},
 		{[]string{codexRootOpenAIBaseURLKey}, baseURL},
 	} {
@@ -349,6 +360,176 @@ func codexValidateAppConfigText(config codexParsedConfig, model, modelCatalogPat
 		}
 	}
 	return nil
+}
+
+func codexAppReasoningEffortsForConfig(text string) []string {
+	config, err := codexParseConfig(text)
+	if err == nil {
+		if existing, ok := codexAppConfigReasoningEfforts(config); ok {
+			return codexAppMergeReasoningEfforts(existing)
+		}
+	}
+	// Preserve ChatGPT's built-in desktop choices and add only the two values
+	// this integration needs for binary off and GLM's maximum effort.
+	return []string{"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
+}
+
+func codexAppConfigReasoningEfforts(config codexParsedConfig) ([]string, bool) {
+	desktop, ok := config.values[codexAppDesktopTableName].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	value, ok := desktop[codexAppReasoningEffortsKey]
+	if !ok {
+		return nil, false
+	}
+	items, ok := value.([]any)
+	if !ok {
+		if stringItems, stringsOK := value.([]string); stringsOK {
+			return append([]string(nil), stringItems...), true
+		}
+		return nil, false
+	}
+	efforts := make([]string, 0, len(items))
+	for _, item := range items {
+		effort, ok := item.(string)
+		if !ok {
+			return nil, false
+		}
+		efforts = append(efforts, effort)
+	}
+	return efforts, true
+}
+
+func codexAppMergeReasoningEfforts(existing []string) []string {
+	efforts := append([]string(nil), existing...)
+	if !slices.Contains(efforts, "none") {
+		efforts = append([]string{"none"}, efforts...)
+	}
+	if !slices.Contains(efforts, "max") {
+		insertAt := len(efforts)
+		for i, effort := range efforts {
+			if effort == "ultra" || effort == "persistent" {
+				insertAt = i
+				break
+			}
+		}
+		efforts = append(efforts, "")
+		copy(efforts[insertAt+1:], efforts[insertAt:])
+		efforts[insertAt] = "max"
+	}
+	return efforts
+}
+
+func codexAppSetReasoningEfforts(text string, efforts []string) string {
+	assignment := codexAppStringArrayAssignment(codexAppReasoningEffortsKey, efforts)
+	if start, end, found := codexSectionRange(text, []string{codexAppDesktopTableName}); found {
+		if assignmentStart, assignmentEnd, assignmentFound := codexAppSectionAssignmentRange(text, start, end, codexAppReasoningEffortsKey); assignmentFound {
+			return text[:assignmentStart] + assignment + codexAppReplacementLineEnding(text[assignmentStart:assignmentEnd]) + text[assignmentEnd:]
+		}
+		insert := assignment + "\n"
+		if end > start && !strings.HasSuffix(text[:end], "\n") {
+			insert = "\n" + insert
+		}
+		return text[:end] + insert + text[end:]
+	}
+
+	dottedKey := codexAppDesktopTableName + "." + codexAppReasoningEffortsKey
+	if start, end, found := codexAppRootAssignmentRange(text, dottedKey); found {
+		dottedAssignment := codexAppStringArrayAssignment(dottedKey, efforts)
+		return text[:start] + dottedAssignment + codexAppReplacementLineEnding(text[start:end]) + text[end:]
+	}
+
+	// A dotted root assignment is equivalent to a [desktop] table entry and can
+	// be removed cleanly when the user did not already have this setting.
+	dottedAssignment := codexAppStringArrayAssignment(dottedKey, efforts)
+	return codexAppInsertRootAssignment(text, dottedAssignment)
+}
+
+func codexAppRemoveReasoningEfforts(text string) string {
+	if start, end, found := codexSectionRange(text, []string{codexAppDesktopTableName}); found {
+		if assignmentStart, assignmentEnd, assignmentFound := codexAppSectionAssignmentRange(text, start, end, codexAppReasoningEffortsKey); assignmentFound {
+			return text[:assignmentStart] + text[assignmentEnd:]
+		}
+	}
+	dottedKey := codexAppDesktopTableName + "." + codexAppReasoningEffortsKey
+	if start, end, found := codexAppRootAssignmentRange(text, dottedKey); found {
+		return text[:start] + text[end:]
+	}
+	return text
+}
+
+func codexAppStringArrayAssignment(key string, values []string) string {
+	data, _ := json.Marshal(values)
+	return key + " = " + string(data)
+}
+
+func codexAppSectionAssignmentRange(text string, sectionStart, sectionEnd int, key string) (int, int, bool) {
+	return codexAppAssignmentRange(text, sectionStart, sectionEnd, key, "[desktop]\n")
+}
+
+func codexAppRootAssignmentRange(text, key string) (int, int, bool) {
+	rootEnd := len(text)
+	if index := strings.Index(text, "\n["); index >= 0 {
+		rootEnd = index + 1
+	} else if strings.HasPrefix(strings.TrimSpace(text), "[") {
+		rootEnd = 0
+	}
+	return codexAppAssignmentRange(text, 0, rootEnd, key, "")
+}
+
+func codexAppInsertRootAssignment(text, assignment string) string {
+	offset := 0
+	for _, line := range strings.SplitAfter(text, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "[") {
+			return text[:offset] + assignment + "\n" + text[offset:]
+		}
+		offset += len(line)
+	}
+	if text != "" && !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	return text + assignment + "\n"
+}
+
+func codexAppAssignmentRange(text string, start, end int, key, parsePrefix string) (int, int, bool) {
+	section := text[start:end]
+	lines := strings.SplitAfter(section, "\n")
+	offset := 0
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !codexAppAssignmentStartsWithKey(trimmed, key) {
+			offset += len(line)
+			continue
+		}
+		assignmentStart := start + offset
+		candidate := ""
+		candidateEnd := assignmentStart
+		for _, candidateLine := range lines[i:] {
+			candidate += candidateLine
+			candidateEnd += len(candidateLine)
+			if _, err := codexParseConfigText(parsePrefix + candidate); err == nil {
+				return assignmentStart, candidateEnd, true
+			}
+		}
+		return 0, 0, false
+	}
+	return 0, 0, false
+}
+
+func codexAppAssignmentStartsWithKey(line, key string) bool {
+	if !strings.HasPrefix(line, key) {
+		return false
+	}
+	rest := strings.TrimSpace(strings.TrimPrefix(line, key))
+	return strings.HasPrefix(rest, "=")
+}
+
+func codexAppReplacementLineEnding(replaced string) string {
+	if strings.HasSuffix(replaced, "\n") {
+		return "\n"
+	}
+	return ""
 }
 
 func codexAppProxyBaseURL() string {
@@ -768,9 +949,24 @@ func writeCodexAppRoutingCatalog(path string, models []LaunchModel) error {
 	if len(models) == 0 {
 		return fmt.Errorf("chatgpt routing catalog cannot be empty")
 	}
-	entries := make([]map[string]string, 0, len(models))
+	type thinkingMetadata struct {
+		Supported bool     `json:"supported"`
+		Levels    []string `json:"levels,omitempty"`
+	}
+	type routingEntry struct {
+		Slug     string           `json:"slug"`
+		Thinking thinkingMetadata `json:"thinking"`
+	}
+	entries := make([]routingEntry, 0, len(models))
 	for _, model := range models {
-		entries = append(entries, map[string]string{"slug": model.Name})
+		metadata := codexAppModelMetadataFromLaunchModel(model)
+		entries = append(entries, routingEntry{
+			Slug: model.Name,
+			Thinking: thinkingMetadata{
+				Supported: metadata.supportsThinking,
+				Levels:    metadata.thinkingLevels,
+			},
+		})
 	}
 	data, err := json.MarshalIndent(map[string]any{"models": entries}, "", "  ")
 	if err != nil {
@@ -847,6 +1043,7 @@ func codexAppCatalogModelKey(name string) string {
 type codexAppModelMetadata struct {
 	contextWindow        int
 	inputModalities      []string
+	supportsThinking     bool
 	defaultThinkingLevel string
 	thinkingLevels       []string
 	toolCapable          bool
@@ -868,17 +1065,34 @@ func codexAppModelMetadataFromLaunchModel(model LaunchModel) codexAppModelMetada
 		metadata.inputModalities = []string{"text", "image"}
 	}
 	metadata.defaultThinkingLevel, metadata.thinkingLevels = codexAppThinkingLevels(model)
+	metadata.supportsThinking = len(metadata.thinkingLevels) > 0
 	metadata.toolCapable = model.ToolCapable || model.HasCapability(modelpkg.CapabilityTools)
 	return metadata
 }
 
-// codexAppThinkingLevels translates Ollama's model-family contract into the
-// exact effort ladder ChatGPT may send. A binary Thinking capability alone is
-// not evidence that every effort is supported, so unknown families get one
-// compatible enabled value instead of a misleading four-level picker.
+// codexAppThinkingLevels translates Ollama's model contract into the exact
+// effort ladder ChatGPT may send. Keep the current recommendations explicit
+// until the server exposes per-model thinking levels in its model metadata.
+// A binary Thinking capability alone is not evidence that adjustable effort
+// is supported, so unknown families get only off and on.
 //
-// TODO: Move these exact ladders into server-owned /api/show model metadata.
+// TODO: Move these exact ladders into server-owned model metadata.
 func codexAppThinkingLevels(model LaunchModel) (string, []string) {
+	// These are the five models currently returned by the general model
+	// recommendations endpoint. Match exact slugs so this temporary contract
+	// cannot silently apply to a future model in the same family.
+	switch codexAppCatalogModelKey(strings.ToLower(strings.TrimSpace(model.Name))) {
+	case "glm-5.3-flash:cloud", "glm-5.3:cloud":
+		// GLM-5.3 reasoning is always enabled and accepts low, high, or max.
+		return "max", []string{"low", "high", "max"}
+	case "deepseek-v4-flash:cloud":
+		// DeepSeek V4 Flash exposes non-thinking, regular thinking, and max.
+		return "high", []string{"none", "high", "max"}
+	case "gemma4:31b-cloud", "gemma4:26b":
+		// Gemma 4 exposes a binary thinking control rather than effort levels.
+		return "medium", []string{"none", "medium"}
+	}
+
 	if !model.HasCapability(modelpkg.CapabilityThinking) {
 		return "", nil
 	}
@@ -889,18 +1103,22 @@ func codexAppThinkingLevels(model LaunchModel) (string, []string) {
 		switch normalized {
 		case "glm5next":
 			// GLM-5.3 reasoning is always enabled and accepts low, high, or max.
-			return "high", []string{"low", "high", "max"}
+			return "max", []string{"low", "high", "max"}
 		case "gptoss":
 			// GPT-OSS reasoning is always enabled and accepts low, medium, or high.
 			return "medium", []string{"low", "medium", "high"}
 		}
 	}
 
-	return "medium", []string{"medium"}
+	// A binary Thinking capability promises on/off control, but not adjustable
+	// effort. "none" maps to off and "medium" maps to on.
+	return "medium", []string{"none", "medium"}
 }
 
 func codexAppThinkingLevelDescription(level string) string {
 	switch level {
+	case "none":
+		return "Turn thinking off"
 	case "low":
 		return "Fast responses with lighter thinking"
 	case "medium":
@@ -1962,8 +2180,12 @@ func codexAppRootUsesProxy(config codexParsedConfig) bool {
 	if err != nil {
 		return false
 	}
-	return config.RootString(codexRootModelProviderKey) == "openai" &&
-		codexNormalizeURL(config.RootString(codexRootOpenAIBaseURLKey)) == codexNormalizeURL(codexAppProxyBaseURL()) &&
+	// Older managed configs explicitly selected the built-in OpenAI provider.
+	// Accept both forms so they remain detectable and restorable after upgrade.
+	if modelProvider, ok := config.RootStringOK(codexRootModelProviderKey); ok && modelProvider != "openai" {
+		return false
+	}
+	return codexNormalizeURL(config.RootString(codexRootOpenAIBaseURLKey)) == codexNormalizeURL(codexAppProxyBaseURL()) &&
 		config.RootString(codexRootModelCatalogJSONKey) == catalogPath
 }
 
@@ -2071,6 +2293,11 @@ func codexAppRestoreRootValues(text string, state codexAppRestoreState) string {
 	text = codexRestoreRootStringValue(text, codexRootModelProviderKey, state.HadModelProvider, state.ModelProvider)
 	text = codexRestoreRootStringValue(text, codexRootModelCatalogJSONKey, state.HadModelCatalogJSON, state.ModelCatalogJSON)
 	text = codexRestoreRootStringValue(text, codexRootOpenAIBaseURLKey, state.HadOpenAIBaseURL, state.OpenAIBaseURL)
+	if state.HadDesktopReasoningEfforts {
+		text = codexAppSetReasoningEfforts(text, state.DesktopReasoningEfforts)
+	} else {
+		text = codexAppRemoveReasoningEfforts(text)
+	}
 	return text
 }
 
@@ -2100,16 +2327,18 @@ func codexAppShouldPreserveCurrentModel(text string) bool {
 }
 
 type codexAppRestoreState struct {
-	HadProfile          bool   `json:"had_profile"`
-	Profile             string `json:"profile,omitempty"`
-	HadModel            bool   `json:"had_model"`
-	Model               string `json:"model,omitempty"`
-	HadModelProvider    bool   `json:"had_model_provider"`
-	ModelProvider       string `json:"model_provider,omitempty"`
-	HadModelCatalogJSON bool   `json:"had_model_catalog_json"`
-	ModelCatalogJSON    string `json:"model_catalog_json,omitempty"`
-	HadOpenAIBaseURL    bool   `json:"had_openai_base_url"`
-	OpenAIBaseURL       string `json:"openai_base_url,omitempty"`
+	HadProfile                 bool     `json:"had_profile"`
+	Profile                    string   `json:"profile,omitempty"`
+	HadModel                   bool     `json:"had_model"`
+	Model                      string   `json:"model,omitempty"`
+	HadModelProvider           bool     `json:"had_model_provider"`
+	ModelProvider              string   `json:"model_provider,omitempty"`
+	HadModelCatalogJSON        bool     `json:"had_model_catalog_json"`
+	ModelCatalogJSON           string   `json:"model_catalog_json,omitempty"`
+	HadOpenAIBaseURL           bool     `json:"had_openai_base_url"`
+	OpenAIBaseURL              string   `json:"openai_base_url,omitempty"`
+	HadDesktopReasoningEfforts bool     `json:"had_desktop_reasoning_efforts"`
+	DesktopReasoningEfforts    []string `json:"desktop_reasoning_efforts,omitempty"`
 }
 
 func saveCodexAppRestoreState(configPath string) error {
@@ -2153,8 +2382,13 @@ func saveCodexAppRestoreState(configPath string) error {
 		if codexAppRootStillManaged(configText) {
 			// Legacy restore state did not record root model settings. If the
 			// current config is still ours, do not save our generated root
-			// values as the user's restore target.
-			upgraded = codexAppRestoreState{}
+			// values as the user's restore target. The old integration did not
+			// manage desktop reasoning efforts, so their current value is still
+			// the user's original value and must be retained during the upgrade.
+			upgraded = codexAppRestoreState{
+				HadDesktopReasoningEfforts: upgraded.HadDesktopReasoningEfforts,
+				DesktopReasoningEfforts:    upgraded.DesktopReasoningEfforts,
+			}
 		}
 		upgraded.HadProfile = existing.HadProfile
 		upgraded.Profile = existing.Profile
@@ -2195,7 +2429,8 @@ func codexAppRestoreStateHasRootConfig(data []byte) (bool, error) {
 	_, hasModelProvider := raw["had_model_provider"]
 	_, hasModelCatalogJSON := raw["had_model_catalog_json"]
 	_, hasOpenAIBaseURL := raw["had_openai_base_url"]
-	return hasModel && hasModelProvider && hasModelCatalogJSON && hasOpenAIBaseURL, nil
+	_, hasDesktopReasoningEfforts := raw["had_desktop_reasoning_efforts"]
+	return hasModel && hasModelProvider && hasModelCatalogJSON && hasOpenAIBaseURL && hasDesktopReasoningEfforts, nil
 }
 
 func codexAppRestoreStateFromText(text string) codexAppRestoreState {
@@ -2208,17 +2443,20 @@ func codexAppRestoreStateFromText(text string) codexAppRestoreState {
 	modelProvider, hadModelProvider := config.RootStringOK(codexRootModelProviderKey)
 	modelCatalogJSON, hadModelCatalogJSON := config.RootStringOK(codexRootModelCatalogJSONKey)
 	openAIBaseURL, hadOpenAIBaseURL := config.RootStringOK(codexRootOpenAIBaseURLKey)
+	desktopReasoningEfforts, hadDesktopReasoningEfforts := codexAppConfigReasoningEfforts(config)
 	return codexAppRestoreState{
-		HadProfile:          hadProfile,
-		Profile:             profile,
-		HadModel:            hadModel,
-		Model:               model,
-		HadModelProvider:    hadModelProvider,
-		ModelProvider:       modelProvider,
-		HadModelCatalogJSON: hadModelCatalogJSON,
-		ModelCatalogJSON:    modelCatalogJSON,
-		HadOpenAIBaseURL:    hadOpenAIBaseURL,
-		OpenAIBaseURL:       openAIBaseURL,
+		HadProfile:                 hadProfile,
+		Profile:                    profile,
+		HadModel:                   hadModel,
+		Model:                      model,
+		HadModelProvider:           hadModelProvider,
+		ModelProvider:              modelProvider,
+		HadModelCatalogJSON:        hadModelCatalogJSON,
+		ModelCatalogJSON:           modelCatalogJSON,
+		HadOpenAIBaseURL:           hadOpenAIBaseURL,
+		OpenAIBaseURL:              openAIBaseURL,
+		HadDesktopReasoningEfforts: hadDesktopReasoningEfforts,
+		DesktopReasoningEfforts:    desktopReasoningEfforts,
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -210,6 +211,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	model, hasModel := extractModel(decodedBody)
 	routed := false
+	var routedModel routingModel
 	if hasModel {
 		models, err := loadCatalogModels(h.routingCatalogPath)
 		if err != nil {
@@ -217,7 +219,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusServiceUnavailable, "read Codex Ollama model catalog: "+err.Error())
 			return
 		}
-		_, routed = models[modelKey(model)]
+		routedModel, routed = models[modelKey(model)]
 	}
 
 	// The built-in OpenAI provider sends both authentication modes through
@@ -236,7 +238,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		targetBase = h.ollamaURL
 		targetSuffix = suffix
 		route = "ollama"
-		requestBody, err = normalizeOllamaRequestBody(decodedBody)
+		requestBody, err = normalizeOllamaRequestBody(decodedBody, routedModel)
 		if err != nil {
 			h.logActivity(started, r.Method, suffix, model, "ollama", http.StatusBadRequest, "request_error")
 			writeJSONError(w, http.StatusBadRequest, "prepare Codex request for Ollama: "+err.Error())
@@ -402,7 +404,17 @@ func (h *Handler) readBodies(r *http.Request) ([]byte, []byte, error) {
 	return raw, decoded, nil
 }
 
-func loadCatalogModels(path string) (map[string]struct{}, error) {
+type routingThinkingMetadata struct {
+	Supported bool     `json:"supported"`
+	Levels    []string `json:"levels,omitempty"`
+}
+
+type routingModel struct {
+	Slug     string                   `json:"slug"`
+	Thinking *routingThinkingMetadata `json:"thinking,omitempty"`
+}
+
+func loadCatalogModels(path string) (map[string]routingModel, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("model catalog path is empty")
 	}
@@ -411,17 +423,15 @@ func loadCatalogModels(path string) (map[string]struct{}, error) {
 		return nil, err
 	}
 	var catalog struct {
-		Models []struct {
-			Slug string `json:"slug"`
-		} `json:"models"`
+		Models []routingModel `json:"models"`
 	}
 	if err := json.Unmarshal(data, &catalog); err != nil {
 		return nil, err
 	}
-	models := make(map[string]struct{}, len(catalog.Models))
+	models := make(map[string]routingModel, len(catalog.Models))
 	for _, model := range catalog.Models {
 		if key := modelKey(model.Slug); key != "" {
-			models[key] = struct{}{}
+			models[key] = model
 		}
 	}
 	return models, nil
@@ -445,9 +455,91 @@ func extractModel(body []byte) (string, bool) {
 // the subset accepted by Ollama's OpenAI-compatible Responses endpoint.
 // Provider-specific native reasoning is omitted while Ollama reasoning stays
 // available to its own multi-step tool loop.
-func normalizeOllamaRequestBody(body []byte) ([]byte, error) {
+func normalizeOllamaRequestBody(body []byte, model routingModel) ([]byte, error) {
 	normalized, _, err := normalizeRequestInput(body, normalizeOllamaInputItem)
-	return normalized, err
+	if err != nil || model.Thinking == nil {
+		return normalized, err
+	}
+	return normalizeOllamaThinking(normalized, *model.Thinking)
+}
+
+func normalizeOllamaThinking(body []byte, metadata routingThinkingMetadata) ([]byte, error) {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+	if !metadata.Supported {
+		if _, ok := payload["reasoning"]; !ok {
+			return body, nil
+		}
+		delete(payload, "reasoning")
+		return json.Marshal(payload)
+	}
+
+	reasoningData, ok := payload["reasoning"]
+	if !ok || len(metadata.Levels) == 0 {
+		return body, nil
+	}
+	var reasoning map[string]json.RawMessage
+	if err := json.Unmarshal(reasoningData, &reasoning); err != nil {
+		return nil, fmt.Errorf("decode reasoning: %w", err)
+	}
+	var effort string
+	if rawEffort, ok := reasoning["effort"]; ok {
+		if err := json.Unmarshal(rawEffort, &effort); err != nil {
+			return nil, fmt.Errorf("decode reasoning effort: %w", err)
+		}
+	}
+	if effort == "" {
+		return body, nil
+	}
+
+	normalizedEffort := normalizeThinkingEffort(effort, metadata.Levels)
+	if normalizedEffort == "" {
+		// A stale selection from another model should not make this request fail.
+		// Omitting effort lets Ollama apply the selected model's own behavior.
+		delete(reasoning, "effort")
+	} else {
+		encodedEffort, err := json.Marshal(normalizedEffort)
+		if err != nil {
+			return nil, fmt.Errorf("encode reasoning effort: %w", err)
+		}
+		reasoning["effort"] = encodedEffort
+	}
+	encodedReasoning, err := json.Marshal(reasoning)
+	if err != nil {
+		return nil, fmt.Errorf("encode reasoning: %w", err)
+	}
+	payload["reasoning"] = encodedReasoning
+	return json.Marshal(payload)
+}
+
+func normalizeThinkingEffort(effort string, levels []string) string {
+	var normalized string
+	switch effort {
+	case "minimal":
+		normalized = "low"
+	case "xhigh", "ultra":
+		normalized = "max"
+	case "none", "low", "medium", "high", "max":
+		normalized = effort
+	default:
+		return ""
+	}
+
+	if slices.Equal(levels, []string{"none", "medium"}) && normalized != "none" {
+		// Ollama represents the enabled side of a binary thinking control as
+		// medium even when the underlying model has no adjustable effort ladder.
+		return "medium"
+	}
+	if slices.Contains(levels, normalized) {
+		return normalized
+	}
+	if normalized == "max" && slices.Contains(levels, "high") {
+		// A stale xhigh or ultra choice should use the strongest supported level.
+		return "high"
+	}
+	return ""
 }
 
 // normalizeNativeRequestBody removes Ollama reasoning items before a native
