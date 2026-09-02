@@ -91,6 +91,8 @@ interface CodexDesktopModelsSettings {
 interface CodexDesktopModelsSettingsResult {
   settings: CodexDesktopModelsSettings;
   error?: string;
+  warning?: string;
+  restartConfirmationRequired?: boolean;
 }
 
 type ClaudeDesktopInstallResult = "opened" | "cancelled" | "failed";
@@ -128,6 +130,7 @@ declare global {
     getCodexDesktopModelsSettings?: () => Promise<CodexDesktopModelsSettingsResult>;
     applyCodexDesktopModels?: (
       models: string[],
+      restartConfirmed: boolean,
     ) => Promise<CodexDesktopModelsSettingsResult>;
     installClaudeDesktop?: () => Promise<ClaudeDesktopInstallResult>;
     getShowAppsInMenu?: () => Promise<boolean>;

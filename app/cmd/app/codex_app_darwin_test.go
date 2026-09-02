@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,6 +31,8 @@ type fakeCodexDesktopController struct {
 	launches             [][]string
 	requests             uint64
 	configureBeforeError bool
+	shutdownRestores     int
+	restarts             int
 }
 
 func (f *fakeCodexDesktopController) Installed() bool { return f.installed }
@@ -41,7 +44,10 @@ func (f *fakeCodexDesktopController) OllamaRequestCount() uint64 {
 	return f.requests
 }
 
-func (f *fakeCodexDesktopController) UseOllamaFromDesktop(primary string, models []launch.LaunchModel) error {
+func (f *fakeCodexDesktopController) UseOllamaFromDesktop(primary string, models []launch.LaunchModel, restartConfirmed bool) error {
+	if f.running && !restartConfirmed {
+		return errCodexDesktopRestartConfirmationRequired
+	}
 	names := codexDesktopModelNames(models)
 	f.launches = append(f.launches, names)
 	if len(f.launchErrs) > 0 {
@@ -81,12 +87,25 @@ func stubCodexDesktopModelLoader(t *testing.T) {
 	codexDesktopLoadModels = loader
 	codexDesktopLoadConnectionModels = loader
 }
-func (f *fakeCodexDesktopController) RestoreFromDesktop() error {
+func (f *fakeCodexDesktopController) RestoreFromDesktop(restartConfirmed bool) error {
+	if f.running && !restartConfirmed {
+		return errCodexDesktopRestartConfirmationRequired
+	}
 	f.stopped = true
+	f.running = false
 	f.configured = false
 	return nil
 }
+func (f *fakeCodexDesktopController) RestartFromDesktop(restartConfirmed bool) error {
+	if f.running && !restartConfirmed {
+		return errCodexDesktopRestartConfirmationRequired
+	}
+	f.restarts++
+	f.running = true
+	return nil
+}
 func (f *fakeCodexDesktopController) RestoreForShutdown(context.Context) error {
+	f.shutdownRestores++
 	f.stopped = true
 	f.running = false
 	f.configured = false
@@ -153,6 +172,35 @@ func TestSetCodexDesktopConnectionRequiresRestartConfirmation(t *testing.T) {
 	}
 }
 
+func TestSetCodexDesktopConnectionIsIdempotent(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	originalController := codexDesktop
+	t.Cleanup(func() { codexDesktop = originalController })
+	stubCodexDesktopModelLoader(t)
+
+	t.Run("already connected", func(t *testing.T) {
+		fake := &fakeCodexDesktopController{installed: true, running: true, configured: true}
+		codexDesktop = fake
+		if err := setCodexDesktopConnection(true, false); err != nil {
+			t.Fatal(err)
+		}
+		if len(fake.launches) != 0 || fake.onboarded || fake.stopped {
+			t.Fatalf("idempotent connect changed controller: %#v", fake)
+		}
+	})
+
+	t.Run("already disconnected", func(t *testing.T) {
+		fake := &fakeCodexDesktopController{installed: true, running: true}
+		codexDesktop = fake
+		if err := setCodexDesktopConnection(false, false); err != nil {
+			t.Fatal(err)
+		}
+		if len(fake.launches) != 0 || fake.onboarded || fake.stopped {
+			t.Fatalf("idempotent disconnect changed controller: %#v", fake)
+		}
+	})
+}
+
 func TestSetCodexDesktopConnectionRestoresProfileAfterPartialSwitchFailure(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	originalController := codexDesktop
@@ -190,7 +238,7 @@ func TestApplyCodexDesktopModelsRestartsConfiguredProfile(t *testing.T) {
 
 	fake := &fakeCodexDesktopController{installed: true, running: true, configured: true}
 	codexDesktop = fake
-	if err := applyCodexDesktopModels([]string{"qwen3:8b", "glm-5.2:cloud"}); err != nil {
+	if err := applyCodexDesktopModels([]string{"qwen3:8b", "glm-5.2:cloud"}, true); err != nil {
 		t.Fatal(err)
 	}
 	if !fake.running || !fake.configured {
@@ -205,6 +253,119 @@ func TestApplyCodexDesktopModelsRestartsConfiguredProfile(t *testing.T) {
 	}
 }
 
+func TestApplyCodexDesktopModelsRequiresLiveRestartConfirmation(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	originalController := codexDesktop
+	t.Cleanup(func() { codexDesktop = originalController })
+	stubCodexDesktopModelLoader(t)
+	if err := config.SaveIntegration(codexDesktopIntegrationName, []string{"old-model"}); err != nil {
+		t.Fatal(err)
+	}
+
+	fake := &fakeCodexDesktopController{installed: true, running: true, configured: true}
+	codexDesktop = fake
+	err := applyCodexDesktopModels([]string{"new-model"}, false)
+	if !errors.Is(err, errCodexDesktopRestartConfirmationRequired) {
+		t.Fatalf("applyCodexDesktopModels error = %v, want restart confirmation", err)
+	}
+	if len(fake.launches) != 0 {
+		t.Fatalf("launches before confirmation = %v, want none", fake.launches)
+	}
+	if got := config.IntegrationModels(codexDesktopIntegrationName); !slices.Equal(got, []string{"old-model"}) {
+		t.Fatalf("saved models before confirmation = %v, want old selection", got)
+	}
+
+	if err := applyCodexDesktopModels([]string{"new-model"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if got := config.IntegrationModels(codexDesktopIntegrationName); !slices.Equal(got, []string{"new-model"}) {
+		t.Fatalf("saved models after confirmation = %v, want new selection", got)
+	}
+}
+
+func TestApplyCodexDesktopModelsRestartsUnchangedLiveProfileWhenRequested(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	originalController := codexDesktop
+	t.Cleanup(func() { codexDesktop = originalController })
+	stubCodexDesktopModelLoader(t)
+	if err := config.SaveIntegration(codexDesktopIntegrationName, []string{"same-model"}); err != nil {
+		t.Fatal(err)
+	}
+
+	fake := &fakeCodexDesktopController{installed: true, running: true, configured: true}
+	codexDesktop = fake
+	err := applyCodexDesktopModels([]string{"same-model"}, false)
+	if !errors.Is(err, errCodexDesktopRestartConfirmationRequired) {
+		t.Fatalf("applyCodexDesktopModels error = %v, want restart confirmation", err)
+	}
+	if len(fake.launches) != 0 || fake.stopped {
+		t.Fatalf("unchanged apply restarted ChatGPT before confirmation: %#v", fake)
+	}
+	if err := applyCodexDesktopModels([]string{"same-model"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.launches) != 1 || fake.launched != "same-model" {
+		t.Fatalf("confirmed restart did not relaunch ChatGPT: %#v", fake)
+	}
+}
+
+func TestApplyCodexDesktopModelsCanRestartWhenInventoryIsUnavailable(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	originalController := codexDesktop
+	t.Cleanup(func() { codexDesktop = originalController })
+	stubCodexDesktopModelLoader(t)
+	if err := config.SaveIntegration(codexDesktopIntegrationName, []string{"same-model"}); err != nil {
+		t.Fatal(err)
+	}
+	codexDesktopLoadModels = func(context.Context, []string) (string, []launch.LaunchModel, error) {
+		return "", nil, errors.New("inventory unavailable")
+	}
+
+	fake := &fakeCodexDesktopController{installed: true, running: true, configured: true}
+	codexDesktop = fake
+	err := applyCodexDesktopModels([]string{"same-model"}, false)
+	if !errors.Is(err, errCodexDesktopRestartConfirmationRequired) {
+		t.Fatalf("applyCodexDesktopModels error = %v, want restart confirmation", err)
+	}
+	if fake.restarts != 0 {
+		t.Fatalf("restarts before confirmation = %d, want none", fake.restarts)
+	}
+	if err := applyCodexDesktopModels([]string{"same-model"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if fake.restarts != 1 || len(fake.launches) != 0 {
+		t.Fatalf("controller = %#v, want one catalog-independent restart", fake)
+	}
+}
+
+func TestRestoreCodexAppForTermination(t *testing.T) {
+	originalController := codexDesktop
+	t.Cleanup(func() { codexDesktop = originalController })
+
+	tests := []struct {
+		name       string
+		configured bool
+		handoff    bool
+		want       int
+	}{
+		{name: "normal shutdown restores configured profile", configured: true, want: 1},
+		{name: "handoff preserves configured profile", configured: true, handoff: true},
+		{name: "normal shutdown skips regular profile", configured: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := &fakeCodexDesktopController{installed: true, configured: tt.configured}
+			codexDesktop = fake
+			if err := restoreCodexAppForTermination(context.Background(), tt.handoff); err != nil {
+				t.Fatal(err)
+			}
+			if fake.shutdownRestores != tt.want {
+				t.Fatalf("shutdown restores = %d, want %d", fake.shutdownRestores, tt.want)
+			}
+		})
+	}
+}
+
 func TestApplyCodexDesktopModelsStartsStoppedRegularProfile(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	originalController := codexDesktop
@@ -213,7 +374,7 @@ func TestApplyCodexDesktopModelsStartsStoppedRegularProfile(t *testing.T) {
 
 	fake := &fakeCodexDesktopController{installed: true}
 	codexDesktop = fake
-	if err := applyCodexDesktopModels([]string{"qwen3:8b", "glm-5.2:cloud"}); err != nil {
+	if err := applyCodexDesktopModels([]string{"qwen3:8b", "glm-5.2:cloud"}, false); err != nil {
 		t.Fatal(err)
 	}
 	if fake.stopped || !fake.running || !fake.configured {
@@ -238,7 +399,7 @@ func TestApplyCodexDesktopModelsRestoresSelectionAfterStoppedLaunchFailure(t *te
 		launchErrs: []error{errors.New("start failed")},
 	}
 	codexDesktop = fake
-	if err := applyCodexDesktopModels([]string{"new-model"}); err == nil {
+	if err := applyCodexDesktopModels([]string{"new-model"}, false); err == nil {
 		t.Fatal("applyCodexDesktopModels returned nil error after start failure")
 	}
 	if fake.running || fake.stopped || len(fake.launches) != 1 {
@@ -266,7 +427,7 @@ func TestApplyCodexDesktopModelsRestoresPreviousProfileAfterLaunchFailure(t *tes
 		launchErrs: []error{errors.New("new profile failed"), nil},
 	}
 	codexDesktop = fake
-	if err := applyCodexDesktopModels([]string{"new-model"}); err == nil {
+	if err := applyCodexDesktopModels([]string{"new-model"}, true); err == nil {
 		t.Fatal("applyCodexDesktopModels returned nil error after launch failure")
 	}
 	if !fake.running || fake.launched != "old-model" {
@@ -275,6 +436,34 @@ func TestApplyCodexDesktopModelsRestoresPreviousProfileAfterLaunchFailure(t *tes
 	saved := config.IntegrationModels(codexDesktopIntegrationName)
 	if len(saved) != 1 || saved[0] != "old-model" {
 		t.Fatalf("saved models = %#v, want previous selection", saved)
+	}
+}
+
+func TestApplyCodexDesktopModelsFallsBackToNormalProfileWhenRollbackFails(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	originalController := codexDesktop
+	t.Cleanup(func() { codexDesktop = originalController })
+	stubCodexDesktopModelLoader(t)
+	if err := config.SaveIntegration(codexDesktopIntegrationName, []string{"old-model"}); err != nil {
+		t.Fatal(err)
+	}
+
+	fake := &fakeCodexDesktopController{
+		installed:  true,
+		configured: true,
+		running:    true,
+		launchErrs: []error{errors.New("new profile failed"), errors.New("old profile failed")},
+	}
+	codexDesktop = fake
+	err := applyCodexDesktopModels([]string{"new-model"}, true)
+	if err == nil || !strings.Contains(err.Error(), "restored the normal ChatGPT profile") {
+		t.Fatalf("applyCodexDesktopModels error = %v, want safe fallback detail", err)
+	}
+	if !fake.stopped || fake.running || fake.configured {
+		t.Fatalf("controller = %#v, want normal stopped ChatGPT profile", fake)
+	}
+	if got := config.IntegrationModels(codexDesktopIntegrationName); !slices.Equal(got, []string{"old-model"}) {
+		t.Fatalf("saved models = %v, want previous selection", got)
 	}
 }
 
@@ -323,6 +512,34 @@ func TestCodexDesktopDefaultModelsUsesAvailableOrder(t *testing.T) {
 	want := []string{"llama3.1:latest", "extra-local", "glm-5.3-flash:cloud", "kimi-k2.7-code:cloud", "extra-cloud:cloud"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("default models = %v, want first available models %v", got, want)
+	}
+}
+
+func TestGetCodexDesktopModelsSettingsKeepsSelectionWhenInventoryFails(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	originalController := codexDesktop
+	originalClientFactory := codexDesktopClientFactory
+	t.Cleanup(func() {
+		codexDesktop = originalController
+		codexDesktopClientFactory = originalClientFactory
+	})
+	if err := config.SaveIntegration(codexDesktopIntegrationName, []string{"same-model"}); err != nil {
+		t.Fatal(err)
+	}
+	codexDesktop = &fakeCodexDesktopController{installed: true, running: true, configured: true}
+	codexDesktopClientFactory = func() (*api.Client, error) {
+		return nil, errors.New("inventory unavailable")
+	}
+
+	settings, err := getCodexDesktopModelsSettings()
+	if err == nil {
+		t.Fatal("getCodexDesktopModelsSettings returned nil inventory error")
+	}
+	if !slices.Equal(settings.Selected, []string{"same-model"}) {
+		t.Fatalf("selected models = %v, want saved selection", settings.Selected)
+	}
+	if !settings.Connected || !settings.Running {
+		t.Fatalf("settings = %#v, want live connected state", settings)
 	}
 }
 
@@ -548,5 +765,19 @@ func TestBuildCodexDesktopModelsRejectsMoreThanFiveSelections(t *testing.T) {
 	}
 	if _, _, err := buildCodexDesktopModels(selected, listed, nil); err == nil {
 		t.Fatal("buildCodexDesktopModels returned nil error for six selections")
+	}
+}
+
+func TestCodexDesktopModelRefreshErrorUsesUserFacingCopy(t *testing.T) {
+	withSavedModels := codexDesktopModelRefreshError(codexDesktopModelsSettings{
+		Selected: []string{"qwen3:8b"},
+	})
+	if withSavedModels != "Couldn’t refresh available models. Your saved models are unchanged." {
+		t.Fatalf("saved-model message = %q", withSavedModels)
+	}
+
+	withoutSavedModels := codexDesktopModelRefreshError(codexDesktopModelsSettings{})
+	if withoutSavedModels != "Couldn’t refresh available models. Try again." {
+		t.Fatalf("empty-selection message = %q", withoutSavedModels)
 	}
 }

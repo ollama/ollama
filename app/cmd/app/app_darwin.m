@@ -86,7 +86,7 @@ static NSImage *integrationAppIcon(NSString *appName,
     NSBundle *bundle = OllamaResourceBundle();
     NSImage *bundledIcon = [bundle imageForResource:appName.lowercaseString];
     if (bundledIcon != nil) {
-        [bundledIcon setTemplate:NO];
+        [bundledIcon setTemplate:[appName isEqualToString:@"ChatGPT"]];
         return bundledIcon;
     }
     return [NSImage imageWithSystemSymbolName:fallbackSymbolName
@@ -384,6 +384,7 @@ static NSImage *integrationAppIcon(NSString *appName,
 @property(assign, nonatomic) BOOL systemTerminationReplyPending;
 @property(strong, nonatomic) NSApplication *systemTerminationApplication;
 - (void)openClaudeApp:(id)sender;
+- (void)openChatGPTApp:(id)sender;
 - (enum ClaudeInstallResult)downloadClaude;
 - (enum ClaudeInstallResult)downloadChatGPT;
 - (enum ClaudeInstallResult)downloadDesktopApp:(DesktopDownloadKind)kind;
@@ -495,7 +496,7 @@ static NSImage *ollamaApplicationIcon(void) {
         initWithTitle:@"ChatGPT"
            symbolName:@"bubble.left.and.bubble.right"
                target:self
-           openAction:nil
+           openAction:@selector(openChatGPTApp:)
          toggleAction:@selector(toggleCodexApp:)];
     [self.codexMenuItem setView:self.codexAppRow];
     [menu addItem:self.codexMenuItem];
@@ -725,14 +726,15 @@ static NSImage *ollamaApplicationIcon(void) {
         ? @"Use Ollama models in ChatGPT"
         : @"Not installed"];
     [self.codexAppRow setIntegrationActive:connected];
-    [self.codexAppRow setIntegrationReady:NO];
+    [self.codexAppRow setIntegrationReady:installed && connected];
     [self applyShowAppsInMenu:shouldShowAppsInMenu()];
 }
 
 - (void)applyShowAppsInMenu:(BOOL)visible {
     BOOL claudeVisible = visible && HasUsedClaudeDesktopIntegration();
-    BOOL codexVisible = visible &&
-        (IsCodexDesktopInstalled() || IsCodexDesktopConnected());
+    // Keep ChatGPT discoverable before installation; its menu switch starts
+    // the download flow just like Claude's first-run switch.
+    BOOL codexVisible = visible;
     [self.claudeMenuItem setHidden:!claudeVisible];
     [self.codexMenuItem setHidden:!codexVisible];
     [self.claudeMenuSeparatorItem setHidden:!(claudeVisible || codexVisible)];
@@ -807,6 +809,49 @@ static NSImage *ollamaApplicationIcon(void) {
     [alert setAlertStyle:NSAlertStyleWarning];
     [alert setMessageText:@"Unable to open Claude"];
     [alert setInformativeText:@"Install Claude in Applications, then try again."];
+    [alert runModal];
+}
+
+- (void)openChatGPTApp:(id)sender {
+    (void)sender;
+    if (!IsCodexDesktopConnected()) {
+        return;
+    }
+    [self.statusItem.menu cancelTracking];
+
+    NSArray<NSString *> *candidates = @[
+        @"/Applications/ChatGPT.app",
+        [NSHomeDirectory() stringByAppendingPathComponent:@"Applications/ChatGPT.app"],
+        @"/Applications/Codex.app",
+        [NSHomeDirectory() stringByAppendingPathComponent:@"Applications/Codex.app"],
+    ];
+    for (NSString *path in candidates) {
+        if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
+            continue;
+        }
+        NSWorkspaceOpenConfiguration *configuration =
+            [NSWorkspaceOpenConfiguration configuration];
+        configuration.activates = YES;
+        configuration.createsNewApplicationInstance = NO;
+        [[NSWorkspace sharedWorkspace]
+            openApplicationAtURL:[NSURL fileURLWithPath:path]
+                   configuration:configuration
+               completionHandler:^(NSRunningApplication *application,
+                                   NSError *error) {
+                   (void)application;
+                   if (error != nil) {
+                       appLogInfo([NSString stringWithFormat:
+                           @"Unable to open ChatGPT: %@", error]);
+                   }
+               }];
+        return;
+    }
+
+    NSAlert *alert = [[NSAlert alloc] init];
+    [alert setAlertStyle:NSAlertStyleWarning];
+    [alert setMessageText:@"Unable to open ChatGPT"];
+    [alert setInformativeText:
+        @"Install ChatGPT in Applications, then try again."];
     [alert runModal];
 }
 
@@ -1317,7 +1362,7 @@ didCompleteWithError:(NSError *)error {
         [installAlert setIcon:ollamaApplicationIcon()];
         [installAlert setMessageText:@"ChatGPT is not installed"];
         [installAlert setInformativeText:
-            @"Download ChatGPT to add Ollama models to the Codex app."];
+            @"Download ChatGPT to add Ollama models to the ChatGPT app."];
         [installAlert addButtonWithTitle:@"Download ChatGPT"];
         [installAlert addButtonWithTitle:@"Cancel"];
         if ([installAlert runModal] == NSAlertFirstButtonReturn) {
@@ -1329,7 +1374,8 @@ didCompleteWithError:(NSError *)error {
         }
     }
 
-    if (IsCodexDesktopRunning()) {
+    BOOL restartChatGPT = IsCodexDesktopRunning();
+    if (restartChatGPT) {
         NSAlert *restartAlert = [[NSAlert alloc] init];
         [restartAlert setAlertStyle:NSAlertStyleWarning];
         [restartAlert setIcon:ollamaApplicationIcon()];
@@ -1345,7 +1391,7 @@ didCompleteWithError:(NSError *)error {
 
     [sender setEnabled:NO];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        BOOL succeeded = SetCodexDesktopConnected(enabled);
+        BOOL succeeded = SetCodexDesktopConnected(enabled, restartChatGPT);
         dispatch_async(dispatch_get_main_queue(), ^{
             [sender setEnabled:YES];
             [self refreshCodexAppState];
@@ -1485,48 +1531,33 @@ didCompleteWithError:(NSError *)error {
     if (self.quitInProgress) {
         return;
     }
-    if (IsCodexDesktopConnected()) {
+
+    BOOL codexConfigured = IsCodexDesktopConnected();
+    BOOL claudeConfigured = IsClaudeGatewayConfigured();
+    if (!codexConfigured && !claudeConfigured) {
+        [self quit];
+        return;
+    }
+
+    // Gather every interruption confirmation before changing either profile.
+    // Otherwise restoring ChatGPT first and then canceling Claude's dialog
+    // leaves Ollama running with only one integration disconnected.
+    BOOL restartChatGPT = codexConfigured && IsCodexDesktopRunning();
+    if (restartChatGPT) {
         NSAlert *alert = [[NSAlert alloc] init];
         [alert setAlertStyle:NSAlertStyleWarning];
         [alert setIcon:ollamaApplicationIcon()];
         [alert setMessageText:@"Restore ChatGPT before quitting Ollama?"];
-        [alert setInformativeText:IsCodexDesktopRunning()
-            ? @"ChatGPT will restart without the Ollama models before Ollama quits. Your Codex models and profile remain available. Any running task will stop."
-            : @"The Ollama models will be removed from ChatGPT before Ollama quits."];
+        [alert setInformativeText:
+            @"ChatGPT will restart without the Ollama models before Ollama quits. Your Codex models and profile remain available. Any running task will stop."];
         [alert addButtonWithTitle:@"Restore and Quit"];
         [alert addButtonWithTitle:@"Cancel"];
         if ([alert runModal] != NSAlertFirstButtonReturn) {
             return;
         }
-
-        self.quitInProgress = YES;
-        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-            BOOL succeeded = SetCodexDesktopConnected(false);
-            dispatch_async(dispatch_get_main_queue(), ^{
-                self.quitInProgress = NO;
-                [self refreshCodexAppState];
-                if (succeeded) {
-                    [self requestQuit];
-                    return;
-                }
-
-                NSAlert *errorAlert = [[NSAlert alloc] init];
-                [errorAlert setAlertStyle:NSAlertStyleWarning];
-                [errorAlert setIcon:ollamaApplicationIcon()];
-                [errorAlert setMessageText:@"Unable to quit Ollama"];
-                [errorAlert setInformativeText:
-                    @"ChatGPT's previous OpenAI configuration could not be restored. Check the Ollama log, then try again."];
-                [errorAlert runModal];
-            });
-        });
-        return;
-    }
-    if (!IsClaudeGatewayConfigured()) {
-        [self quit];
-        return;
     }
 
-    BOOL restartClaude = IsClaudeDesktopRunning();
+    BOOL restartClaude = claudeConfigured && IsClaudeDesktopRunning();
     if (restartClaude) {
         NSAlert *alert = [[NSAlert alloc] init];
         [alert setAlertStyle:NSAlertStyleWarning];
@@ -1543,28 +1574,38 @@ didCompleteWithError:(NSError *)error {
 
     self.quitInProgress = YES;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        BOOL succeeded = SetClaudeGatewayInstalled(false, restartClaude);
+        BOOL codexSucceeded = !codexConfigured ||
+            SetCodexDesktopConnected(false, restartChatGPT);
+        BOOL claudeSucceeded = !claudeConfigured;
+        if (codexSucceeded && claudeConfigured) {
+            claudeSucceeded = SetClaudeGatewayInstalled(false, restartClaude);
+        }
         dispatch_async(dispatch_get_main_queue(), ^{
             if (self.systemTerminationReplyPending) {
-                if (!succeeded) {
+                if (!codexSucceeded) {
+                    appLogInfo(@"Unable to restore ChatGPT during system shutdown");
+                }
+                if (!claudeSucceeded) {
                     appLogInfo(@"Unable to restore Claude during system shutdown");
                 }
                 [self completeSystemTermination];
                 return;
             }
-            if (succeeded) {
+            if (codexSucceeded && claudeSucceeded) {
                 [self quit];
                 return;
             }
 
             self.quitInProgress = NO;
+            [self refreshCodexAppState];
             [self refreshClaudeAppState];
             NSAlert *alert = [[NSAlert alloc] init];
             [alert setAlertStyle:NSAlertStyleWarning];
             [alert setIcon:ollamaApplicationIcon()];
             [alert setMessageText:@"Unable to quit Ollama"];
-            [alert setInformativeText:
-                @"Ollama couldn’t update Claude, so it is still running. Check the Ollama log and try again."];
+            [alert setInformativeText:!codexSucceeded
+                ? @"ChatGPT's previous OpenAI configuration could not be restored. Check the Ollama log, then try again."
+                : @"Ollama couldn’t update Claude, so it is still running. ChatGPT was restored normally. Check the Ollama log and try again."];
             [alert runModal];
         });
     });

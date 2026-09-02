@@ -31,10 +31,11 @@ const (
 
 	// RoutingCatalogFilename contains only Ollama model slugs. Keeping the
 	// router allow-list separate from the picker catalog ensures native Codex
-	// models continue to pass through to ChatGPT.
+	// models continue to pass through to their normal OpenAI upstream.
 	RoutingCatalogFilename = "ollama-launch-codex-routing.json"
 
 	defaultMaxBodyBytes = int64(64 << 20)
+	defaultOpenAIURL    = "https://api.openai.com/v1"
 )
 
 var hopByHopHeaders = map[string]struct{}{
@@ -50,11 +51,12 @@ var hopByHopHeaders = map[string]struct{}{
 	"upgrade":             {},
 }
 
-// Config describes the two upstreams and Ollama-only routing catalog.
+// Config describes the upstreams and Ollama-only routing catalog.
 type Config struct {
 	PathPrefix         string
 	OllamaURL          string
 	ChatGPTURL         string
+	OpenAIURL          string
 	RoutingCatalogPath string
 	ActivityLogPath    string
 	MaxBodyBytes       int64
@@ -63,11 +65,12 @@ type Config struct {
 }
 
 // Handler routes catalog-listed model slugs to Ollama and passes every other
-// request through to the authenticated ChatGPT Codex backend.
+// request to the native upstream selected by Codex's authentication mode.
 type Handler struct {
 	pathPrefix         string
 	ollamaURL          *url.URL
 	chatGPTURL         *url.URL
+	openAIURL          *url.URL
 	routingCatalogPath string
 	activityLogPath    string
 	maxBodyBytes       int64
@@ -113,6 +116,14 @@ func New(config Config) (*Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	openAIRawURL := strings.TrimSpace(config.OpenAIURL)
+	if openAIRawURL == "" {
+		openAIRawURL = defaultOpenAIURL
+	}
+	openAIURL, err := parseBaseURL("OpenAI API", openAIRawURL)
+	if err != nil {
+		return nil, err
+	}
 
 	maxBodyBytes := config.MaxBodyBytes
 	if maxBodyBytes <= 0 {
@@ -131,6 +142,7 @@ func New(config Config) (*Handler, error) {
 		pathPrefix:         pathPrefix,
 		ollamaURL:          ollamaURL,
 		chatGPTURL:         chatGPTURL,
+		openAIURL:          openAIURL,
 		routingCatalogPath: config.RoutingCatalogPath,
 		activityLogPath:    strings.TrimSpace(config.ActivityLogPath),
 		maxBodyBytes:       maxBodyBytes,
@@ -208,13 +220,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, routed = models[modelKey(model)]
 	}
 
-	targetBase := h.chatGPTURL
+	// The built-in OpenAI provider sends both authentication modes through
+	// openai_base_url. ChatGPT-account requests carry ChatGPT-Account-ID;
+	// API-key requests do not. Preserve Codex's normal auth-aware upstream.
+	targetBase := h.openAIURL
 	targetSuffix := strings.TrimPrefix(suffix, "/v1")
+	route := "openai"
+	if usesChatGPTBackend(r.Header) {
+		targetBase = h.chatGPTURL
+		route = "chatgpt"
+	}
 	requestBody := rawBody
 	requestBodyNormalized := false
 	if routed {
 		targetBase = h.ollamaURL
 		targetSuffix = suffix
+		route = "ollama"
 		requestBody, err = normalizeOllamaRequestBody(decodedBody)
 		if err != nil {
 			h.logActivity(started, r.Method, suffix, model, "ollama", http.StatusBadRequest, "request_error")
@@ -222,19 +243,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		requestBody, requestBodyNormalized, err = normalizeChatGPTRequestBody(decodedBody)
+		requestBody, requestBodyNormalized, err = normalizeNativeRequestBody(decodedBody)
 		if err != nil {
-			h.logActivity(started, r.Method, suffix, model, "chatgpt", http.StatusBadRequest, "request_error")
-			writeJSONError(w, http.StatusBadRequest, "prepare Codex request for ChatGPT: "+err.Error())
+			h.logActivity(started, r.Method, suffix, model, route, http.StatusBadRequest, "request_error")
+			writeJSONError(w, http.StatusBadRequest, "prepare Codex request for OpenAI: "+err.Error())
 			return
 		}
 		if !requestBodyNormalized {
 			requestBody = rawBody
 		}
-	}
-	route := "chatgpt"
-	if routed {
-		route = "ollama"
 	}
 	h.lastRoute.Store(routeSnapshot{Model: model, Route: route})
 	targetURL := resolveTarget(targetBase, targetSuffix, r.URL.RawQuery)
@@ -433,11 +450,11 @@ func normalizeOllamaRequestBody(body []byte) ([]byte, error) {
 	return normalized, err
 }
 
-// normalizeChatGPTRequestBody removes Ollama reasoning items before a native
-// request reaches ChatGPT. Ollama's Responses adapter currently serializes
-// plaintext thinking as encrypted_content, which ChatGPT correctly rejects as
+// normalizeNativeRequestBody removes Ollama reasoning items before a native
+// request reaches OpenAI. Ollama's Responses adapter currently serializes
+// plaintext thinking as encrypted_content, which OpenAI correctly rejects as
 // invalid ciphertext. Visible messages and tool history remain in the input.
-func normalizeChatGPTRequestBody(body []byte) ([]byte, bool, error) {
+func normalizeNativeRequestBody(body []byte) ([]byte, bool, error) {
 	return normalizeRequestInput(body, normalizeChatGPTInputItem)
 }
 
@@ -629,6 +646,10 @@ func isWebSocketUpgrade(r *http.Request) bool {
 	}
 	_, ok := connectionHeaderTokens(r.Header)["upgrade"]
 	return ok
+}
+
+func usesChatGPTBackend(header http.Header) bool {
+	return strings.TrimSpace(header.Get("ChatGPT-Account-ID")) != ""
 }
 
 func copyOllamaRequestHeaders(dst, src http.Header) {

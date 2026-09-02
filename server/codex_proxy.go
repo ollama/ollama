@@ -11,6 +11,7 @@ import (
 )
 
 const codexProxyChatGPTURL = "https://chatgpt.com/backend-api/codex"
+const codexProxyOpenAIURL = "https://api.openai.com/v1"
 const codexProxyLogFilename = "codex-proxy.log"
 
 func newCodexProxyHandler() (http.Handler, error) {
@@ -24,6 +25,7 @@ func newCodexProxyHandler() (http.Handler, error) {
 		PathPrefix:         codexproxy.PathPrefix,
 		OllamaURL:          envconfig.ConnectableHost().String(),
 		ChatGPTURL:         codexProxyChatGPTURL,
+		OpenAIURL:          codexProxyOpenAIURL,
 		RoutingCatalogPath: filepath.Join(home, ".codex", codexproxy.RoutingCatalogFilename),
 		ActivityLogPath:    filepath.Join(home, ".ollama", "logs", codexProxyLogFilename),
 		Logger:             slog.Default(),

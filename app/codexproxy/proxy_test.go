@@ -53,6 +53,7 @@ func TestHandlerRoutesCatalogModelToOllamaAndStripsCredentials(t *testing.T) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Content-Encoding", "zstd")
+	req.Header.Set("ChatGPT-Account-ID", "account-123")
 	req.Header.Set("Authorization", "Bearer chatgpt-secret")
 	req.Header.Set("X-Codex-Turn-Metadata", `{"thread":"secret"}`)
 
@@ -217,6 +218,7 @@ func TestHandlerPassesNativeModelToChatGPT(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.Header.Set("Authorization", "Bearer chatgpt-secret")
+	req.Header.Set("ChatGPT-Account-ID", "account-123")
 	req.Header.Set("X-Codex-Turn-Metadata", `{"thread":"kept"}`)
 
 	resp, err := http.DefaultClient.Do(req)
@@ -235,6 +237,65 @@ func TestHandlerPassesNativeModelToChatGPT(t *testing.T) {
 	}
 	if string(gotBody) != string(payload) {
 		t.Fatalf("ChatGPT body = %q, want %q", gotBody, payload)
+	}
+}
+
+func TestHandlerPassesNativeModelToOpenAIAPIWithAPIKey(t *testing.T) {
+	ollama := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("native model should not reach Ollama")
+	}))
+	defer ollama.Close()
+	chatGPT := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("API-key request should not reach the ChatGPT subscription endpoint")
+	}))
+	defer chatGPT.Close()
+
+	var gotPath, gotAuthorization, gotOrganization string
+	openAI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuthorization = r.Header.Get("Authorization")
+		gotOrganization = r.Header.Get("OpenAI-Organization")
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer openAI.Close()
+
+	handler, err := New(Config{
+		PathPrefix:         PathPrefix,
+		OllamaURL:          ollama.URL,
+		ChatGPTURL:         chatGPT.URL + "/backend-api/codex",
+		OpenAIURL:          openAI.URL + "/v1",
+		RoutingCatalogPath: writeCatalog(t, "glm-5.2:cloud"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httptest.NewServer(handler)
+	defer proxy.Close()
+
+	req, err := http.NewRequest(
+		http.MethodPost,
+		proxy.URL+PathPrefix+"/v1/responses",
+		strings.NewReader(`{"model":"gpt-5.6-sol"}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer sk-test")
+	req.Header.Set("OpenAI-Organization", "org-test")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if gotPath != "/v1/responses" {
+		t.Fatalf("OpenAI API path = %q", gotPath)
+	}
+	if gotAuthorization != "Bearer sk-test" || gotOrganization != "org-test" {
+		t.Fatalf("OpenAI API headers were not preserved: authorization=%q organization=%q", gotAuthorization, gotOrganization)
 	}
 }
 
@@ -271,6 +332,7 @@ func TestHandlerPreservesCompressedNativeRequestWithoutOllamaReasoning(t *testin
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Content-Encoding", "zstd")
+	req.Header.Set("ChatGPT-Account-ID", "account-123")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -330,6 +392,7 @@ func TestHandlerFiltersOllamaReasoningWhenSwitchingToNativeModel(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Content-Encoding", "zstd")
 	req.Header.Set("Authorization", "Bearer chatgpt-secret")
+	req.Header.Set("ChatGPT-Account-ID", "account-123")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -434,7 +497,13 @@ func TestHandlerStatusReportsObservedRoutes(t *testing.T) {
 		`{"model":"glm-5.2:cloud"}`,
 		`{"model":"gpt-5.6-sol"}`,
 	} {
-		resp, err := http.Post(proxy.URL+PathPrefix+"/v1/responses", "application/json", strings.NewReader(payload))
+		req, err := http.NewRequest(http.MethodPost, proxy.URL+PathPrefix+"/v1/responses", strings.NewReader(payload))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("ChatGPT-Account-ID", "account-123")
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -472,7 +541,12 @@ func TestHandlerCountersExcludeProbesAndFailedRetries(t *testing.T) {
 	proxy := httptest.NewServer(handler)
 	defer proxy.Close()
 
-	probeResp, err := http.Get(proxy.URL + PathPrefix + "/v1/responses")
+	probeReq, err := http.NewRequest(http.MethodGet, proxy.URL+PathPrefix+"/v1/responses", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	probeReq.Header.Set("ChatGPT-Account-ID", "account-123")
+	probeResp, err := http.DefaultClient.Do(probeReq)
 	if err != nil {
 		t.Fatal(err)
 	}

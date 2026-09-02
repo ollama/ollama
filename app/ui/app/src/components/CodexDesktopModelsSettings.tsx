@@ -2,6 +2,7 @@ import { Button } from "@/components/ui/button";
 import type {
   CodexDesktopModelsSettings as ModelsSettings,
   CodexDesktopModelsSettingsResult,
+  CodexDesktopStatus,
 } from "@/types/webview";
 import {
   ArrowPathIcon,
@@ -15,6 +16,33 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 interface CodexDesktopModelsSettingsProps {
   initialSettings?: ModelsSettings;
   onDraftChange?: (hasChanges: boolean) => void;
+}
+
+const CHATGPT_OPEN_POLL_INTERVAL_MS = 250;
+const CHATGPT_OPEN_TIMEOUT_MS = 30_000;
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => globalThis.setTimeout(resolve, milliseconds));
+}
+
+async function waitForChatGPTToOpen(): Promise<
+  CodexDesktopStatus | null | undefined
+> {
+  const getStatus = window.getCodexDesktopStatus;
+  if (!getStatus) return undefined;
+
+  const deadline = Date.now() + CHATGPT_OPEN_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    try {
+      const status = await getStatus();
+      if (status.running) return status;
+    } catch {
+      // ChatGPT may be between processes during a restart. Keep checking until
+      // it opens or the launch timeout expires.
+    }
+    await wait(CHATGPT_OPEN_POLL_INTERVAL_MS);
+  }
+  return null;
 }
 
 function selectionsEqual(
@@ -194,8 +222,14 @@ export function CodexDesktopModelsSettings({
   );
   const [loading, setLoading] = useState(!initialSettings);
   const [applying, setApplying] = useState(false);
+  const [launchAction, setLaunchAction] = useState<"start" | "restart">(
+    "start",
+  );
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const draftRef = useRef({ selected, saved });
+  const statusRequestRef = useRef(0);
+  const operationInFlightRef = useRef(false);
   draftRef.current = { selected, saved };
 
   const applyResult = useCallback(
@@ -210,25 +244,39 @@ export function CodexDesktopModelsSettings({
         setSaved(nextSettings.selected);
       }
       setError(result.error ?? null);
+      setWarning(result.warning ?? null);
     },
     [],
   );
 
   const refresh = useCallback(async () => {
-    if (applying) return;
     if (!window.getCodexDesktopModelsSettings) {
       setError("ChatGPT model settings are unavailable in this Ollama build.");
+      setWarning(null);
       setLoading(false);
       return;
     }
+    const request = ++statusRequestRef.current;
     try {
-      applyResult(await window.getCodexDesktopModelsSettings(), true);
+      const result = await window.getCodexDesktopModelsSettings();
+      if (
+        request === statusRequestRef.current &&
+        !operationInFlightRef.current
+      ) {
+        applyResult(result, true);
+      }
     } catch {
-      setError("Ollama could not load the ChatGPT model settings.");
+      if (
+        request === statusRequestRef.current &&
+        !operationInFlightRef.current
+      ) {
+        setError("Ollama could not load the ChatGPT model settings.");
+        setWarning(null);
+      }
     } finally {
-      setLoading(false);
+      if (request === statusRequestRef.current) setLoading(false);
     }
-  }, [applyResult, applying]);
+  }, [applyResult]);
 
   useEffect(() => {
     if (!initialSettings) void refresh();
@@ -250,6 +298,7 @@ export function CodexDesktopModelsSettings({
 
   const toggleModel = (model: string) => {
     setError(null);
+    setWarning(null);
     setSelected((current) => {
       if (current.includes(model)) {
         return current.filter((name) => name !== model);
@@ -268,37 +317,65 @@ export function CodexDesktopModelsSettings({
       setError("Choose at least one model for ChatGPT.");
       return;
     }
-    if (
-      settings?.running &&
-      !window.confirm(
-        settings.connected
-          ? "Restart ChatGPT to update Ollama models? Any running task will stop."
-          : "Restart ChatGPT to add Ollama models? Any running task will stop.",
-      )
-    ) {
-      return;
-    }
+    if (operationInFlightRef.current) return;
 
     setApplying(true);
+    setLaunchAction(settings?.running ? "restart" : "start");
     setError(null);
+    setWarning(null);
+    operationInFlightRef.current = true;
+    ++statusRequestRef.current;
     try {
-      const result = await window.applyCodexDesktopModels(selected);
+      let result = await window.applyCodexDesktopModels(selected, false);
+      if (result.restartConfirmationRequired) {
+        applyResult(result, true);
+        if (
+          !window.confirm(
+            result.settings.connected
+              ? "Restart ChatGPT to update Ollama models? Any running task will stop."
+              : "Restart ChatGPT to add Ollama models? Any running task will stop.",
+          )
+        ) {
+          return;
+        }
+        result = await window.applyCodexDesktopModels(selected, true);
+      }
+      ++statusRequestRef.current;
       if (result.error) {
         setSettings(normalizeSettings(result.settings));
         setError(result.error);
+        setWarning(result.warning ?? null);
         return;
       }
       applyResult(result);
+      const openedStatus = await waitForChatGPTToOpen();
+      if (openedStatus === null) {
+        setError("ChatGPT is taking longer than expected to open. Try again.");
+        return;
+      }
+      if (openedStatus) {
+        setSettings((current) =>
+          current
+            ? {
+                ...current,
+                installed: openedStatus.installed,
+                connected: openedStatus.connected,
+                running: openedStatus.running,
+              }
+            : current,
+        );
+      }
     } catch {
       setError("Ollama could not apply the ChatGPT models.");
     } finally {
+      ++statusRequestRef.current;
+      operationInFlightRef.current = false;
       setApplying(false);
     }
   };
 
   if (!settings?.supported && !loading && !error) return null;
 
-  const connected = settings?.connected ?? false;
   const busy = applying;
 
   return (
@@ -337,29 +414,22 @@ export function CodexDesktopModelsSettings({
                 type="button"
                 color="white"
                 onClick={() => void applyChanges()}
-                disabled={
-                  loading ||
-                  busy ||
-                  selected.length === 0 ||
-                  (connected && settings?.running && !hasChanges)
-                }
+                disabled={loading || busy || selected.length === 0}
               >
                 {applying && (
                   <ArrowPathIcon data-slot="icon" className="animate-spin" />
                 )}
                 {applying
-                  ? settings?.running
+                  ? launchAction === "restart"
                     ? "Restarting…"
                     : "Starting…"
-                  : connected
-                    ? settings?.running
+                  : settings?.running
+                    ? hasChanges
                       ? "Save & restart ChatGPT"
-                      : hasChanges
-                        ? "Save & start ChatGPT"
-                        : "Start ChatGPT"
-                    : settings?.running
-                      ? "Save & restart ChatGPT"
-                      : "Save & start ChatGPT"}
+                      : "Restart ChatGPT"
+                    : hasChanges
+                      ? "Save & start ChatGPT"
+                      : "Start ChatGPT"}
               </Button>
             </div>
           </div>
@@ -428,6 +498,14 @@ export function CodexDesktopModelsSettings({
               className="mt-3 w-full max-w-xl text-xs leading-5 text-red-600 dark:text-red-400"
             >
               {error}
+            </p>
+          )}
+          {warning && (
+            <p
+              role="status"
+              className="mt-3 w-full max-w-xl text-xs leading-5 text-zinc-500 dark:text-zinc-400"
+            >
+              {warning}
             </p>
           )}
         </div>

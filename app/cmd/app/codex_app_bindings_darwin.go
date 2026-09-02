@@ -9,6 +9,13 @@ import (
 	"github.com/ollama/ollama/app/webview"
 )
 
+func codexDesktopModelRefreshError(settings codexDesktopModelsSettings) string {
+	if len(settings.Selected) > 0 {
+		return "Couldn’t refresh available models. Your saved models are unchanged."
+	}
+	return "Couldn’t refresh available models. Try again."
+}
+
 func bindCodexDesktop(wv webview.WebView) {
 	wv.Bind("getCodexDesktopStatus", func() codexDesktopStatus {
 		return getCodexDesktopStatus()
@@ -34,18 +41,22 @@ func bindCodexDesktop(wv webview.WebView) {
 		settings, err := getCodexDesktopModelsSettings()
 		result := codexDesktopModelsSettingsResult{Settings: settings}
 		if err != nil {
-			result.Error = err.Error()
+			result.Warning = codexDesktopModelRefreshError(settings)
+			slog.Warn("failed to refresh available ChatGPT models", "error", err)
 		}
 		return result
 	})
-	wv.Bind("applyCodexDesktopModels", func(models []string) codexDesktopModelsSettingsResult {
-		err := applyCodexDesktopModels(models)
+	wv.Bind("applyCodexDesktopModels", func(models []string, restartConfirmed bool) codexDesktopModelsSettingsResult {
+		err := applyCodexDesktopModels(models, restartConfirmed)
 		settings, statusErr := getCodexDesktopModelsSettings()
 		result := codexDesktopModelsSettingsResult{Settings: settings}
-		if err != nil {
+		if errors.Is(err, errCodexDesktopRestartConfirmationRequired) {
+			result.RestartConfirmationRequired = true
+		} else if err != nil {
 			result.Error = err.Error()
 		} else if statusErr != nil {
-			result.Error = statusErr.Error()
+			result.Warning = codexDesktopModelRefreshError(settings)
+			slog.Warn("failed to refresh available ChatGPT models after applying settings", "error", statusErr)
 		}
 		return result
 	})

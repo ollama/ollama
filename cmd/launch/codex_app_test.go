@@ -267,7 +267,7 @@ func TestCodexAppDesktopChecksRouterBeforeChangingProfile(t *testing.T) {
 		func() error { openCalls++; return nil },
 	)
 
-	err := (&CodexApp{}).UseOllamaFromDesktop("qwen3:8b", testLaunchModels("qwen3:8b"))
+	err := (&CodexApp{}).UseOllamaFromDesktop("qwen3:8b", testLaunchModels("qwen3:8b"), false)
 	if !errors.Is(err, healthErr) {
 		t.Fatalf("UseOllamaFromDesktop error = %v", err)
 	}
@@ -280,6 +280,143 @@ func TestCodexAppDesktopChecksRouterBeforeChangingProfile(t *testing.T) {
 	}
 	if string(data) != original {
 		t.Fatalf("config changed before router health check: %q", data)
+	}
+}
+
+func TestCodexAppDesktopRequiresRestartConfirmationBeforeChangingProfile(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withCodexAppPlatform(t, "darwin")
+	withCodexAppRouterHealth(t, func() error { return nil })
+
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := "model = \"gpt-5.5\"\nmodel_provider = \"openai\"\n"
+	if err := os.WriteFile(configPath, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	openCalls := 0
+	quitCalls := 0
+	oldCanOpenID := codexAppCanOpenID
+	codexAppCanOpenID = func() bool { return true }
+	t.Cleanup(func() { codexAppCanOpenID = oldCanOpenID })
+	withCodexAppProcessHooks(t,
+		func() bool { return true },
+		func() error { quitCalls++; return nil },
+		func() error { openCalls++; return nil },
+	)
+
+	err := (&CodexApp{}).UseOllamaFromDesktop("qwen3:8b", testLaunchModels("qwen3:8b"), false)
+	if !errors.Is(err, ErrCodexAppRestartConfirmationRequired) {
+		t.Fatalf("UseOllamaFromDesktop error = %v, want restart confirmation", err)
+	}
+	if quitCalls != 0 || openCalls != 0 {
+		t.Fatalf("process calls = quit %d, open %d; want none", quitCalls, openCalls)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != original {
+		t.Fatalf("config changed before restart confirmation: %q", data)
+	}
+}
+
+func TestCodexAppDesktopRequiresConsentBeforeStoppingLegacyProfile(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withCodexAppPlatform(t, "darwin")
+	withCodexAppRouterHealth(t, func() error { return nil })
+
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := "model = \"gpt-5.5\"\nmodel_provider = \"openai\"\n"
+	if err := os.WriteFile(configPath, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	oldCanOpenID := codexAppCanOpenID
+	oldProfileRunning := codexAppProfileIsRunning
+	oldStopProfile := codexAppStopProfile
+	codexAppCanOpenID = func() bool { return true }
+	codexAppProfileIsRunning = func() bool { return true }
+	stopCalls := 0
+	codexAppStopProfile = func() error { stopCalls++; return nil }
+	t.Cleanup(func() {
+		codexAppCanOpenID = oldCanOpenID
+		codexAppProfileIsRunning = oldProfileRunning
+		codexAppStopProfile = oldStopProfile
+	})
+	withCodexAppProcessHooks(t,
+		func() bool { return false },
+		func() error { return nil },
+		func() error { return nil },
+	)
+
+	err := (&CodexApp{}).UseOllamaFromDesktop("qwen3:8b", testLaunchModels("qwen3:8b"), false)
+	if !errors.Is(err, ErrCodexAppRestartConfirmationRequired) {
+		t.Fatalf("UseOllamaFromDesktop error = %v, want restart confirmation", err)
+	}
+	if stopCalls != 0 {
+		t.Fatalf("legacy profile stops before confirmation = %d, want none", stopCalls)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != original {
+		t.Fatalf("config changed before legacy profile consent: %q", data)
+	}
+}
+
+func TestCodexAppDesktopRechecksRestartConfirmationBeforeProfileWrite(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withCodexAppPlatform(t, "darwin")
+	withCodexAppRouterHealth(t, func() error { return nil })
+
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := "model = \"gpt-5.5\"\nmodel_provider = \"openai\"\n"
+	if err := os.WriteFile(configPath, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	runningChecks := 0
+	openCalls := 0
+	quitCalls := 0
+	oldCanOpenID := codexAppCanOpenID
+	codexAppCanOpenID = func() bool { return true }
+	t.Cleanup(func() { codexAppCanOpenID = oldCanOpenID })
+	withCodexAppProcessHooks(t,
+		func() bool {
+			runningChecks++
+			return runningChecks > 1
+		},
+		func() error { quitCalls++; return nil },
+		func() error { openCalls++; return nil },
+	)
+
+	err := (&CodexApp{}).UseOllamaFromDesktop("qwen3:8b", testLaunchModels("qwen3:8b"), false)
+	if !errors.Is(err, ErrCodexAppRestartConfirmationRequired) {
+		t.Fatalf("UseOllamaFromDesktop error = %v, want late restart confirmation", err)
+	}
+	if quitCalls != 0 || openCalls != 0 {
+		t.Fatalf("process calls = quit %d, open %d; want none", quitCalls, openCalls)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != original {
+		t.Fatalf("config changed after ChatGPT opened during preparation: %q", data)
 	}
 }
 
@@ -315,7 +452,7 @@ func TestCodexAppDesktopUsesAndRestoresRegularProfile(t *testing.T) {
 	)
 
 	app := &CodexApp{}
-	if err := app.UseOllamaFromDesktop("qwen3:8b", testLaunchModels("qwen3:8b", "glm-5.3-flash:cloud")); err != nil {
+	if err := app.UseOllamaFromDesktop("qwen3:8b", testLaunchModels("qwen3:8b", "glm-5.3-flash:cloud"), false); err != nil {
 		t.Fatal(err)
 	}
 	if !app.OllamaConfigured() || app.CurrentModel() != "qwen3:8b" {
@@ -328,7 +465,7 @@ func TestCodexAppDesktopUsesAndRestoresRegularProfile(t *testing.T) {
 		t.Fatalf("open calls = %d, want 1", openCalls)
 	}
 
-	if err := app.RestoreFromDesktop(); err != nil {
+	if err := app.RestoreFromDesktop(false); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(configPath)
@@ -385,7 +522,7 @@ func TestCodexAppDesktopAppliesProfileAfterRunningAppExits(t *testing.T) {
 		},
 	)
 
-	if err := (&CodexApp{}).UseOllamaFromDesktop("qwen3:8b", testLaunchModels("qwen3:8b")); err != nil {
+	if err := (&CodexApp{}).UseOllamaFromDesktop("qwen3:8b", testLaunchModels("qwen3:8b"), true); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(events, []string{"quit", "open"}) {
@@ -400,6 +537,63 @@ func TestCodexAppDesktopAppliesProfileAfterRunningAppExits(t *testing.T) {
 	}
 	if got := codexRootStringValue(string(data), codexRootOpenAIBaseURLKey); got != "http://127.0.0.1:11434/api/codex/v1" {
 		t.Fatalf("openai_base_url = %q, want Codex router after exit:\n%s", got, data)
+	}
+}
+
+func TestCodexAppDesktopRestartsExistingProfileWithoutRebuildingCatalog(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withCodexAppPlatform(t, "darwin")
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+	app := &CodexApp{}
+	if err := app.ConfigureWithModels("qwen3:8b", testLaunchModels("qwen3:8b")); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	original, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	running := true
+	quitCalls := 0
+	openCalls := 0
+	oldCanOpenID := codexAppCanOpenID
+	codexAppCanOpenID = func() bool { return true }
+	t.Cleanup(func() { codexAppCanOpenID = oldCanOpenID })
+	withCodexAppProcessHooks(t,
+		func() bool { return running },
+		func() error {
+			quitCalls++
+			running = false
+			return nil
+		},
+		func() error {
+			openCalls++
+			running = true
+			return nil
+		},
+	)
+
+	if err := app.RestartFromDesktop(false); !errors.Is(err, ErrCodexAppRestartConfirmationRequired) {
+		t.Fatalf("RestartFromDesktop error = %v, want restart confirmation", err)
+	}
+	if quitCalls != 0 || openCalls != 0 {
+		t.Fatalf("process calls before confirmation = quit %d, open %d", quitCalls, openCalls)
+	}
+	if err := app.RestartFromDesktop(true); err != nil {
+		t.Fatal(err)
+	}
+	if quitCalls != 1 || openCalls != 1 {
+		t.Fatalf("process calls = quit %d, open %d; want one restart", quitCalls, openCalls)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(data, original) {
+		t.Fatal("restart changed the existing ChatGPT profile")
 	}
 }
 
@@ -746,7 +940,7 @@ func TestCodexAppConfigureAddsOllamaModelsToBuiltInProvider(t *testing.T) {
 	ollamaEntry := catalog.Models[0]
 	for key, want := range map[string]any{
 		"shell_type":                           "unified_exec",
-		"supported_in_api":                     false,
+		"supported_in_api":                     true,
 		"include_skills_usage_instructions":    true,
 		"include_plugin_usage_instructions":    true,
 		"include_apps_usage_instructions":      true,
