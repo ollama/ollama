@@ -195,7 +195,6 @@ export function CodexDesktopModelsSettings({
   const [loading, setLoading] = useState(!initialSettings);
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const draftRef = useRef({ selected, saved });
   draftRef.current = { selected, saved };
 
@@ -272,7 +271,9 @@ export function CodexDesktopModelsSettings({
     if (
       settings?.running &&
       !window.confirm(
-        `${settings.connected ? "Restart ChatGPT to update its Ollama models?" : "Restart ChatGPT to add Ollama models?"} Your ChatGPT profile will remain available. Any running task will stop.`,
+        settings.connected
+          ? "Restart ChatGPT to update Ollama models? Any running task will stop."
+          : "Restart ChatGPT to add Ollama models? Any running task will stop.",
       )
     ) {
       return;
@@ -280,7 +281,6 @@ export function CodexDesktopModelsSettings({
 
     setApplying(true);
     setError(null);
-    setNotice(null);
     try {
       const result = await window.applyCodexDesktopModels(selected);
       if (result.error) {
@@ -289,7 +289,6 @@ export function CodexDesktopModelsSettings({
         return;
       }
       applyResult(result);
-      setNotice("Your selected Ollama models are ready in ChatGPT.");
     } catch {
       setError("Ollama could not apply the ChatGPT models.");
     } finally {
@@ -429,14 +428,6 @@ export function CodexDesktopModelsSettings({
               className="mt-3 w-full max-w-xl text-xs leading-5 text-red-600 dark:text-red-400"
             >
               {error}
-            </p>
-          )}
-          {!error && notice && (
-            <p
-              role="status"
-              className="mt-3 w-full max-w-xl text-xs leading-5 text-neutral-500 dark:text-neutral-400"
-            >
-              {notice}
             </p>
           )}
         </div>

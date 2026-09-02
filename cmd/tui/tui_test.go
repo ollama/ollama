@@ -24,7 +24,7 @@ func launcherTestState() *launch.LauncherState {
 			},
 			"codex": {
 				Name:        "codex",
-				DisplayName: "Codex",
+				DisplayName: "Codex CLI",
 				Description: "OpenAI's open-source coding agent",
 				Selectable:  true,
 				Changeable:  true,

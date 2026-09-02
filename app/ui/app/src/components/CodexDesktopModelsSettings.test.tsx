@@ -355,54 +355,71 @@ describe("CodexDesktopModelsSettings", () => {
 
       expect(apply).toHaveBeenCalledWith(next);
       expect(applyButton.props.disabled).toBe(true);
+      expect(textContent(renderer!.root)).not.toContain(
+        "Your selected Ollama models are ready in ChatGPT.",
+      );
     } finally {
       await act(async () => renderer?.unmount());
     }
   });
 
-  it("does not restart a running profile when confirmation is canceled", async () => {
-    const apply = vi.fn();
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    vi.stubGlobal("window", {
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      applyCodexDesktopModels: apply,
-      confirm: vi.fn(() => false),
-    });
-
-    let renderer;
-    try {
-      await act(async () => {
-        renderer = create(
-          <CodexDesktopModelsSettings
-            initialSettings={settings({ running: true })}
-          />,
-        );
-      });
-      await act(async () => {
-        renderer!.root
-          .findByProps({
-            "aria-label": `Remove ${available[4]}`,
-          })
-          .props.onClick({ stopPropagation: vi.fn() });
-      });
-      const applyButton = renderer!.root
-        .findAllByType("button")
-        .find((button) =>
-          textContent(button).includes("Save & restart ChatGPT"),
-        );
-      if (!applyButton) throw new Error("Apply button not found");
-      expect(Boolean(applyButton.props.disabled)).toBe(false);
-      await act(async () => {
-        await applyButton.props.onClick();
+  it.each([
+    {
+      connected: false,
+      confirmation:
+        "Restart ChatGPT to add Ollama models? Any running task will stop.",
+    },
+    {
+      connected: true,
+      confirmation:
+        "Restart ChatGPT to update Ollama models? Any running task will stop.",
+    },
+  ])(
+    "uses the native restart copy when connected is $connected",
+    async ({ connected, confirmation }) => {
+      const apply = vi.fn();
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      vi.stubGlobal("window", {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        applyCodexDesktopModels: apply,
+        confirm: vi.fn(() => false),
       });
 
-      expect(window.confirm).toHaveBeenCalledOnce();
-      expect(apply).not.toHaveBeenCalled();
-    } finally {
-      await act(async () => renderer?.unmount());
-    }
-  });
+      let renderer;
+      try {
+        await act(async () => {
+          renderer = create(
+            <CodexDesktopModelsSettings
+              initialSettings={settings({ connected, running: true })}
+            />,
+          );
+        });
+        await act(async () => {
+          renderer!.root
+            .findByProps({
+              "aria-label": `Remove ${available[4]}`,
+            })
+            .props.onClick({ stopPropagation: vi.fn() });
+        });
+        const applyButton = renderer!.root
+          .findAllByType("button")
+          .find((button) =>
+            textContent(button).includes("Save & restart ChatGPT"),
+          );
+        if (!applyButton) throw new Error("Apply button not found");
+        expect(Boolean(applyButton.props.disabled)).toBe(false);
+        await act(async () => {
+          await applyButton.props.onClick();
+        });
+
+        expect(window.confirm).toHaveBeenCalledWith(confirmation);
+        expect(apply).not.toHaveBeenCalled();
+      } finally {
+        await act(async () => renderer?.unmount());
+      }
+    },
+  );
 
   it("uses a single save action without a separate removal button", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);

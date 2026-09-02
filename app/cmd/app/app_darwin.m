@@ -30,6 +30,34 @@ typedef NS_ENUM(NSInteger, DesktopDownloadKind) {
     DesktopDownloadChatGPT,
 };
 
+typedef NS_ENUM(NSInteger, ChatGPTRestartAction) {
+    ChatGPTRestartActionAddModels,
+    ChatGPTRestartActionUpdateModels,
+    ChatGPTRestartActionRemoveModels,
+};
+
+static void configureChatGPTRestartAlert(NSAlert *alert,
+                                         ChatGPTRestartAction action) {
+    switch (action) {
+    case ChatGPTRestartActionAddModels:
+        [alert setMessageText:@"Restart ChatGPT to add Ollama models?"];
+        [alert setInformativeText:
+            @"ChatGPT must restart to add Ollama models. Any running task will stop."];
+        break;
+    case ChatGPTRestartActionUpdateModels:
+        [alert setMessageText:@"Restart ChatGPT to update Ollama models?"];
+        [alert setInformativeText:
+            @"ChatGPT must restart to update Ollama models. Any running task will stop."];
+        break;
+    case ChatGPTRestartActionRemoveModels:
+        [alert setMessageText:@"Restart ChatGPT to remove Ollama models?"];
+        [alert setInformativeText:
+            @"ChatGPT must restart to remove Ollama models. Any running task will stop."];
+        break;
+    }
+    [alert addButtonWithTitle:@"Restart ChatGPT"];
+}
+
 static BOOL shouldShowAppsInMenu(void) {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     if ([defaults objectForKey:ShowAppsInMenuDefaultsKey] == nil) {
@@ -1305,13 +1333,9 @@ didCompleteWithError:(NSError *)error {
         NSAlert *restartAlert = [[NSAlert alloc] init];
         [restartAlert setAlertStyle:NSAlertStyleWarning];
         [restartAlert setIcon:ollamaApplicationIcon()];
-        [restartAlert setMessageText:enabled
-            ? @"Restart ChatGPT to add Ollama models?"
-            : @"Restart ChatGPT to remove Ollama models?"];
-        [restartAlert setInformativeText:enabled
-            ? @"ChatGPT must restart to add your selected Ollama models alongside its Codex models. Your account, chats, plugins, and skills stay in the same profile. Any running task will stop."
-            : @"ChatGPT must restart to remove the Ollama models. Your Codex models, account, chats, plugins, and skills remain available. Any running task will stop."];
-        [restartAlert addButtonWithTitle:@"Restart ChatGPT"];
+        configureChatGPTRestartAlert(restartAlert, enabled
+            ? ChatGPTRestartActionAddModels
+            : ChatGPTRestartActionRemoveModels);
         [restartAlert addButtonWithTitle:@"Cancel"];
         if ([restartAlert runModal] != NSAlertFirstButtonReturn) {
             [self refreshCodexAppState];
@@ -1722,6 +1746,12 @@ decidePolicyForNavigationAction:(WKNavigationAction *)action
         [alert setInformativeText:
             @"Claude Desktop must restart to remove Ollama. Any running task will stop."];
         [alert addButtonWithTitle:@"Restart Claude Desktop"];
+    } else if ([message hasPrefix:@"Restart ChatGPT to add Ollama models?"]) {
+        configureChatGPTRestartAlert(alert, ChatGPTRestartActionAddModels);
+    } else if ([message hasPrefix:@"Restart ChatGPT to update Ollama models?"]) {
+        configureChatGPTRestartAlert(alert, ChatGPTRestartActionUpdateModels);
+    } else if ([message hasPrefix:@"Restart ChatGPT to remove Ollama models?"]) {
+        configureChatGPTRestartAlert(alert, ChatGPTRestartActionRemoveModels);
     } else {
         [alert setMessageText:message];
         [alert addButtonWithTitle:@"Confirm"];

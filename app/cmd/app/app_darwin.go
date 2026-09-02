@@ -1260,7 +1260,8 @@ func CodexDesktopRequestCount() C.ulonglong {
 //export SetCodexDesktopConnected
 func SetCodexDesktopConnected(connected C.bool) C.bool {
 	shouldConnect := connected != C._Bool(false)
-	if err := setCodexDesktopConnection(shouldConnect); err != nil {
+	// The native menu has already collected restart consent above.
+	if err := setCodexDesktopConnection(shouldConnect, true); err != nil {
 		slog.Warn("failed to change ChatGPT integration", "connected", shouldConnect, "error", err)
 		return C._Bool(false)
 	}
