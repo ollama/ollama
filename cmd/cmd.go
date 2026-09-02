@@ -2092,6 +2092,44 @@ func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+func completeModelNames(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if len(args) > 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+
+	list, err := client.List(cmd.Context())
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+
+	var names []string
+	seen := make(map[string]struct{})
+	for _, m := range list.Models {
+		name := strings.TrimSpace(m.Name)
+		if name == "" {
+			name = strings.TrimSpace(m.Model)
+		}
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		if toComplete == "" || strings.HasPrefix(strings.ToLower(name), strings.ToLower(toComplete)) {
+			names = append(names, name)
+		}
+	}
+
+	sort.Strings(names)
+	return names, cobra.ShellCompDirectiveNoFileComp
+}
+
 func versionHandler(cmd *cobra.Command, _ []string) {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -2289,9 +2327,6 @@ func NewCLI() *cobra.Command {
 		Short:         "Large language model runner",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		CompletionOptions: cobra.CompletionOptions{
-			DisableDefaultCmd: true,
-		},
 		Run: func(cmd *cobra.Command, args []string) {
 			if version, _ := cmd.Flags().GetBool("version"); version {
 				versionHandler(cmd, args)
@@ -2341,11 +2376,12 @@ func NewCLI() *cobra.Command {
 	showCmd.Flags().BoolP("verbose", "v", false, "Show detailed model information")
 
 	runCmd := &cobra.Command{
-		Use:     "run MODEL [PROMPT]",
-		Short:   "Run a model",
-		Args:    cobra.MinimumNArgs(1),
-		PreRunE: checkServerHeartbeat,
-		RunE:    RunHandler,
+		Use:               "run MODEL [PROMPT]",
+		Short:             "Run a model",
+		Args:              cobra.MinimumNArgs(1),
+		PreRunE:           checkServerHeartbeat,
+		RunE:              RunHandler,
+		ValidArgsFunction: completeModelNames,
 	}
 
 	runCmd.Flags().String("keepalive", "", "Duration to keep a model loaded (e.g. 5m)")
