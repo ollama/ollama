@@ -269,7 +269,13 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 		wantTopLogprobs: request.SamplerOpts.TopLogprobs,
 	}
 
-	final := CompletionResponse{Done: true, PromptEvalCount: len(request.Tokens), DoneReason: 1}
+	cachedPromptCount := len(session.inputs) - len(session.remaining)
+	final := CompletionResponse{
+		Done:                  true,
+		DoneReason:            1,
+		PromptEvalCount:       len(request.Tokens),
+		PromptEvalCachedCount: &cachedPromptCount,
+	}
 	final.PromptEvalDuration = promptEval
 	now := time.Now()
 
@@ -316,6 +322,14 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 			resp, ok := detok.detokenize(res)
 			if !ok {
 				continue
+			}
+			// Two-pass structured output cancels the first pass before its final response.
+			if request.IncludeIntermediateMetrics {
+				resp.PromptEvalCount = len(request.Tokens)
+				resp.PromptEvalCachedCount = final.PromptEvalCachedCount
+				resp.PromptEvalDuration = promptEval
+				resp.EvalCount = generated
+				resp.EvalDuration = time.Since(now)
 			}
 			select {
 			case <-ctx.Done():

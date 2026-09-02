@@ -3,6 +3,7 @@ package openai
 import (
 	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,6 +30,10 @@ const (
 	prefix = `data:image/jpeg;base64,`
 	image  = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=`
 )
+
+func testIntPtr(v int) *int {
+	return &v
+}
 
 func TestFromChatRequest_Basic(t *testing.T) {
 	req := ChatCompletionRequest{
@@ -180,8 +185,9 @@ func TestFromCompleteRequest_Basic(t *testing.T) {
 func TestToUsage(t *testing.T) {
 	resp := api.ChatResponse{
 		Metrics: api.Metrics{
-			PromptEvalCount: 10,
-			EvalCount:       20,
+			PromptEvalCount:       10,
+			PromptEvalCachedCount: testIntPtr(4),
+			EvalCount:             20,
 		},
 	}
 
@@ -190,6 +196,9 @@ func TestToUsage(t *testing.T) {
 	if usage.PromptTokens != 10 {
 		t.Errorf("expected PromptTokens 10, got %d", usage.PromptTokens)
 	}
+	if usage.PromptTokensDetails == nil || usage.PromptTokensDetails.CachedTokens != 4 {
+		t.Errorf("expected CachedTokens 4, got %#v", usage.PromptTokensDetails)
+	}
 
 	if usage.CompletionTokens != 20 {
 		t.Errorf("expected CompletionTokens 20, got %d", usage.CompletionTokens)
@@ -197,6 +206,68 @@ func TestToUsage(t *testing.T) {
 
 	if usage.TotalTokens != 30 {
 		t.Errorf("expected TotalTokens 30, got %d", usage.TotalTokens)
+	}
+
+	data, err := json.Marshal(usage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"prompt_tokens_details":{"cached_tokens":4}`) {
+		t.Errorf("unexpected usage json: %s", data)
+	}
+}
+
+func TestToUsageOmitsUnreportedCacheDetails(t *testing.T) {
+	usage := ToUsage(api.ChatResponse{Metrics: api.Metrics{PromptEvalCount: 10, EvalCount: 2}})
+	if usage.PromptTokensDetails != nil {
+		t.Fatalf("expected no cache details, got %#v", usage.PromptTokensDetails)
+	}
+
+	data, err := json.Marshal(usage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := payload["prompt_tokens_details"]; ok {
+		t.Fatalf("unexpected cache details in %s", data)
+	}
+}
+
+func TestToUsageIncludesZeroCacheDetails(t *testing.T) {
+	usage := ToUsage(api.ChatResponse{Metrics: api.Metrics{
+		PromptEvalCount:       10,
+		PromptEvalCachedCount: testIntPtr(0),
+		EvalCount:             2,
+	}})
+	if usage.PromptTokensDetails == nil || usage.PromptTokensDetails.CachedTokens != 0 {
+		t.Fatalf("expected zero cache details, got %#v", usage.PromptTokensDetails)
+	}
+
+	data, err := json.Marshal(usage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"prompt_tokens_details":{"cached_tokens":0}`) {
+		t.Errorf("unexpected usage json: %s", data)
+	}
+}
+
+func TestToCompletionUsageIncludesCachedTokens(t *testing.T) {
+	completion := ToCompletion("completion-id", api.GenerateResponse{
+		Metrics: api.Metrics{
+			PromptEvalCount:       10,
+			PromptEvalCachedCount: testIntPtr(4),
+			EvalCount:             2,
+		},
+	})
+	if completion.Usage.PromptTokens != 10 || completion.Usage.TotalTokens != 12 {
+		t.Fatalf("unexpected usage: %#v", completion.Usage)
+	}
+	if details := completion.Usage.PromptTokensDetails; details == nil || details.CachedTokens != 4 {
+		t.Fatalf("expected 4 cached tokens, got %#v", details)
 	}
 }
 

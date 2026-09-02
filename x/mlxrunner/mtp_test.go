@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/x/internal/mlxtest"
@@ -436,6 +437,55 @@ func TestRunMTPDecodeGreedy(t *testing.T) {
 			t.Fatalf("draft calls = %v, want %v", draft.calls, wantDraft)
 		}
 	})
+}
+
+func TestDecodeIntermediateMetrics(t *testing.T) {
+	skipIfNoMLX(t)
+	const eos int32 = 7
+	predict := map[int32]int32{1: 2, 2: 3, 3: eos, eos: 0}
+	r := mtpTestRunner(t, predict, []int32{eos}, sampler.Options{})
+	caches, _ := newMTPTestCaches(1)
+	session, ch := newMTPTestSession(caches)
+	session.inputs = []int32{0, 1}
+	session.remaining = []int32{1}
+	req := Request{
+		Responses: ch,
+		Tokens:    session.inputs,
+		CompletionRequest: CompletionRequest{
+			Options:                    api.Options{NumPredict: 20},
+			IncludeIntermediateMetrics: true,
+		},
+	}
+	d := testDecoder(t, r, req, caches, []int32{1}, 1)
+	promptEval := 5 * time.Millisecond
+	if err := r.decode(context.Background(), req, session, d, promptEval); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	d.close()
+
+	var responses []CompletionResponse
+	for len(ch) > 0 {
+		resp := <-ch
+		responses = append(responses, resp)
+	}
+	if len(responses) != 3 {
+		t.Fatalf("got %d responses, want 3", len(responses))
+	}
+	for i, resp := range responses[:2] {
+		if resp.PromptEvalCount != 2 || resp.PromptEvalCachedCount == nil || *resp.PromptEvalCachedCount != 1 || resp.PromptEvalDuration != promptEval {
+			t.Errorf("response[%d] prompt metrics = (%d, %v, %s), want (2, 1, %s)", i, resp.PromptEvalCount, resp.PromptEvalCachedCount, resp.PromptEvalDuration, promptEval)
+		}
+		if resp.EvalCount != i+1 || resp.EvalDuration <= 0 {
+			t.Errorf("response[%d] eval metrics = (%d, %s), want count %d and positive duration", i, resp.EvalCount, resp.EvalDuration, i+1)
+		}
+	}
+	final := responses[2]
+	if final.PromptEvalCount != 2 || final.PromptEvalCachedCount == nil || *final.PromptEvalCachedCount != 1 || final.PromptEvalDuration != promptEval {
+		t.Errorf("final prompt metrics = (%d, %v, %s), want (2, 1, %s)", final.PromptEvalCount, final.PromptEvalCachedCount, final.PromptEvalDuration, promptEval)
+	}
+	if final.EvalCount != 2 || final.EvalDuration <= 0 {
+		t.Errorf("final eval metrics = (%d, %s), want count 2 and positive duration", final.EvalCount, final.EvalDuration)
+	}
 }
 
 func TestRunMTPDecodeSampled(t *testing.T) {
