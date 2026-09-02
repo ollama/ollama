@@ -75,6 +75,7 @@ interface CodexDesktopStatus {
 interface CodexDesktopActionResult {
   status: CodexDesktopStatus;
   error?: string;
+  restartConfirmationRequired?: boolean;
 }
 
 interface CodexDesktopModelsSettings {
@@ -121,6 +122,7 @@ declare global {
     getCodexDesktopRequestCount?: () => Promise<number>;
     setCodexDesktopConnected?: (
       enabled: boolean,
+      restartConfirmed: boolean,
     ) => Promise<CodexDesktopActionResult>;
     installCodexDesktop?: () => Promise<CodexDesktopInstallResult>;
     getCodexDesktopModelsSettings?: () => Promise<CodexDesktopModelsSettingsResult>;

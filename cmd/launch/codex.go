@@ -18,7 +18,7 @@ import (
 // Codex implements Runner for Codex integration
 type Codex struct{}
 
-func (c *Codex) String() string { return "Codex" }
+func (c *Codex) String() string { return "Codex CLI" }
 
 const (
 	codexProfileName           = "ollama-launch"

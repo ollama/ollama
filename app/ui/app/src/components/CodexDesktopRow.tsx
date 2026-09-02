@@ -12,7 +12,7 @@ export const CODEX_DESKTOP_INSTALL_TIMEOUT_MS = 120_000;
 
 type CodexConnectPhase =
   | "idle"
-  | "downloading"
+  | "installing"
   | "waiting-for-install"
   | "connecting"
   | "disconnecting";
@@ -48,11 +48,11 @@ function CodexIcon({ integration }: { integration: IntegrationStatus }) {
   );
 }
 
-function codexDesktopDescription(status: CodexDesktopStatus | null): string {
-  if (!status?.installed && !status?.connected) {
-    return "Install ChatGPT to use Ollama models in the Codex app.";
-  }
-  if (!status.connected) return "Codex models · Ollama models not added";
+function codexDesktopDescription(
+  status: CodexDesktopStatus | null,
+  defaultDescription: string,
+): string {
+  if (!status?.connected) return defaultDescription;
   const modelCount = status.models?.length ?? (status.model ? 1 : 0);
   const requestCount = status.requests ?? 0;
   const requests = `${requestCount} Ollama ${requestCount === 1 ? "request" : "requests"} this session`;
@@ -73,6 +73,7 @@ export function CodexDesktopRow({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const mounted = useRef(true);
+  const operationInFlight = useRef(false);
 
   useEffect(() => {
     mounted.current = true;
@@ -82,7 +83,7 @@ export function CodexDesktopRow({
   }, []);
 
   const refreshStatus = useCallback(async () => {
-    if (!window.getCodexDesktopStatus) return;
+    if (operationInFlight.current || !window.getCodexDesktopStatus) return;
     try {
       const next = await window.getCodexDesktopStatus();
       setStatus(next);
@@ -163,10 +164,14 @@ export function CodexDesktopRow({
         }
 
         setPhase("connecting");
-        const result = await window.setCodexDesktopConnected(true);
+        const result = await window.setCodexDesktopConnected(true, false);
         if (!mounted.current) return;
         setStatus(result.status);
-        if (result.error || !result.status.connected) {
+        if (result.restartConfirmationRequired) {
+          setError(
+            "ChatGPT is installed. Turn on the switch to restart it with Ollama models.",
+          );
+        } else if (result.error || !result.status.connected) {
           setError(
             result.error || "Ollama could not add its models to ChatGPT.",
           );
@@ -204,11 +209,12 @@ export function CodexDesktopRow({
     phase === "disconnecting"
       ? false
       : connected ||
-        phase === "downloading" ||
+        phase === "installing" ||
         phase === "waiting-for-install" ||
         phase === "connecting";
-  const pendingLabel =
-    phase === "downloading"
+  const isConnecting = phase !== "idle";
+  const statusLabel =
+    phase === "installing"
       ? "Downloading…"
       : phase === "waiting-for-install"
         ? "Finish installing…"
@@ -216,10 +222,24 @@ export function CodexDesktopRow({
           ? "Connecting…"
           : phase === "disconnecting"
             ? "Disconnecting…"
-            : null;
+            : !connected && !installed
+              ? "Download & connect"
+              : null;
+  const description =
+    error ??
+    notice ??
+    (phase === "installing"
+      ? "Ollama is downloading the ChatGPT installer…"
+      : phase === "waiting-for-install"
+        ? "Finish installing ChatGPT. Ollama will connect it automatically."
+        : phase === "connecting"
+          ? "Connecting ChatGPT to Ollama…"
+          : phase === "disconnecting"
+            ? "Restoring ChatGPT’s usual connection…"
+            : codexDesktopDescription(status, integration.description));
 
   const toggleConnection = async () => {
-    if (pending) return;
+    if (pending || operationInFlight.current) return;
     if (!window.setCodexDesktopConnected) {
       setError("The ChatGPT integration is unavailable.");
       return;
@@ -231,7 +251,7 @@ export function CodexDesktopRow({
         setError("Ollama could not install ChatGPT.");
         return;
       }
-      setPhase("downloading");
+      setPhase("installing");
       setError(null);
       setNotice(null);
       let installResult: CodexDesktopInstallResult = "failed";
@@ -253,26 +273,43 @@ export function CodexDesktopRow({
       return;
     }
 
-    if (
-      status?.running &&
-      !window.confirm(
-        enabled
-          ? "Restart ChatGPT to add Ollama models? Codex models, your account, chats, plugins, and skills will remain available. Any running task will stop."
-          : "Restart ChatGPT and remove the Ollama models? Codex models, your account, chats, plugins, and skills will remain available. Any running task will stop.",
-      )
-    ) {
-      return;
-    }
-    setPhase(enabled ? "connecting" : "disconnecting");
+    const nextPhase = enabled ? "connecting" : "disconnecting";
+    operationInFlight.current = true;
+    setPhase(nextPhase);
     setError(null);
     setNotice(null);
     try {
-      const result: CodexDesktopActionResult =
-        await window.setCodexDesktopConnected(enabled);
+      let result: CodexDesktopActionResult =
+        await window.setCodexDesktopConnected(enabled, false);
 
       setStatus(result.status);
+      if (result.restartConfirmationRequired) {
+        // Keep focus-driven status refreshes from discarding this operation
+        // while the native confirmation dialog temporarily owns focus.
+        if (
+          !window.confirm(
+            enabled
+              ? "Restart ChatGPT to add Ollama models? Any running task will stop."
+              : "Restart ChatGPT to remove Ollama models? Any running task will stop.",
+          )
+        ) {
+          return;
+        }
+        setPhase(nextPhase);
+        result = await window.setCodexDesktopConnected(enabled, true);
+        setStatus(result.status);
+      }
+
       if (result.error) {
         setError(result.error);
+        return;
+      }
+      if (result.status.connected !== enabled) {
+        setError(
+          enabled
+            ? "Ollama could not add its models to ChatGPT."
+            : "Ollama could not remove its models from ChatGPT.",
+        );
         return;
       }
       setNotice(
@@ -287,6 +324,7 @@ export function CodexDesktopRow({
           : "Ollama could not remove its models from ChatGPT.",
       );
     } finally {
+      operationInFlight.current = false;
       if (mounted.current) setPhase("idle");
     }
   };
@@ -303,19 +341,21 @@ export function CodexDesktopRow({
             role={error ? "alert" : notice ? "status" : undefined}
             className="truncate text-xs leading-5 text-neutral-500 dark:text-neutral-400"
           >
-            {error ?? notice ?? codexDesktopDescription(status)}
+            {description}
           </p>
         </div>
       </div>
       <div className="ml-auto flex shrink-0 items-center gap-2.5">
-        {pending && (
+        {statusLabel && (
           <span
             role="status"
             aria-live="polite"
             className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-neutral-500 dark:text-neutral-400"
           >
-            <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
-            {pendingLabel}
+            {isConnecting && (
+              <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
+            )}
+            {statusLabel}
           </span>
         )}
         <button
@@ -326,7 +366,9 @@ export function CodexDesktopRow({
           aria-label={
             connected
               ? "Remove Ollama models from ChatGPT"
-              : "Add Ollama models to ChatGPT"
+              : isConnecting
+                ? "Connecting ChatGPT"
+                : "Add Ollama models to ChatGPT"
           }
           title={
             connected
@@ -337,7 +379,7 @@ export function CodexDesktopRow({
           }
           disabled={pending}
           onClick={() => void toggleConnection()}
-          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-not-allowed disabled:opacity-50 ${displayedConnected ? "bg-neutral-950 dark:bg-white" : "bg-neutral-300 dark:bg-neutral-700"}`}
+          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait disabled:opacity-50 ${displayedConnected ? "bg-neutral-950 dark:bg-white" : "bg-neutral-300 dark:bg-neutral-700"}`}
         >
           <span
             aria-hidden="true"

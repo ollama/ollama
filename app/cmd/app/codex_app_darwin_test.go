@@ -107,7 +107,7 @@ func TestSetCodexDesktopConnectionSwitchesRegularProfile(t *testing.T) {
 
 	fake := &fakeCodexDesktopController{installed: true}
 	codexDesktop = fake
-	if err := setCodexDesktopConnection(true); err != nil {
+	if err := setCodexDesktopConnection(true, false); err != nil {
 		t.Fatal(err)
 	}
 	if fake.launched != "qwen3:8b" || !fake.running || !fake.onboarded {
@@ -121,11 +121,35 @@ func TestSetCodexDesktopConnectionSwitchesRegularProfile(t *testing.T) {
 		t.Fatalf("saved integration = %#v, want selected model", saved)
 	}
 
-	if err := setCodexDesktopConnection(false); err != nil {
+	if err := setCodexDesktopConnection(false, true); err != nil {
 		t.Fatal(err)
 	}
 	if !fake.stopped || fake.configured {
 		t.Fatalf("controller = %#v, want regular profile restored", fake)
+	}
+}
+
+func TestSetCodexDesktopConnectionRequiresRestartConfirmation(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	originalController := codexDesktop
+	t.Cleanup(func() { codexDesktop = originalController })
+	stubCodexDesktopModelLoader(t)
+
+	fake := &fakeCodexDesktopController{installed: true, running: true}
+	codexDesktop = fake
+	err := setCodexDesktopConnection(true, false)
+	if !errors.Is(err, errCodexDesktopRestartConfirmationRequired) {
+		t.Fatalf("setCodexDesktopConnection error = %v, want restart confirmation", err)
+	}
+	if fake.launched != "" || fake.onboarded || fake.configured {
+		t.Fatalf("controller changed before restart confirmation: %#v", fake)
+	}
+
+	if err := setCodexDesktopConnection(true, true); err != nil {
+		t.Fatal(err)
+	}
+	if fake.launched != "qwen3:8b" || !fake.onboarded || !fake.configured {
+		t.Fatalf("controller = %#v, want confirmed profile switch", fake)
 	}
 }
 
@@ -144,7 +168,7 @@ func TestSetCodexDesktopConnectionRestoresProfileAfterPartialSwitchFailure(t *te
 		configureBeforeError: true,
 	}
 	codexDesktop = fake
-	if err := setCodexDesktopConnection(true); err == nil {
+	if err := setCodexDesktopConnection(true, false); err == nil {
 		t.Fatal("setCodexDesktopConnection returned nil after a partial switch failure")
 	}
 	if !fake.stopped || fake.configured {

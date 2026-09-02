@@ -2,7 +2,12 @@
 
 package main
 
-import "github.com/ollama/ollama/app/webview"
+import (
+	"errors"
+	"log/slog"
+
+	"github.com/ollama/ollama/app/webview"
+)
 
 func bindCodexDesktop(wv webview.WebView) {
 	wv.Bind("getCodexDesktopStatus", func() codexDesktopStatus {
@@ -11,11 +16,14 @@ func bindCodexDesktop(wv webview.WebView) {
 	wv.Bind("getCodexDesktopRequestCount", func() uint64 {
 		return codexDesktop.OllamaRequestCount()
 	})
-	wv.Bind("setCodexDesktopConnected", func(enabled bool) codexDesktopActionResult {
-		err := setCodexDesktopConnection(enabled)
+	wv.Bind("setCodexDesktopConnected", func(enabled, restartConfirmed bool) codexDesktopActionResult {
+		err := setCodexDesktopConnection(enabled, restartConfirmed)
 		result := codexDesktopActionResult{Status: getCodexDesktopStatus()}
-		if err != nil {
+		if errors.Is(err, errCodexDesktopRestartConfirmationRequired) {
+			result.RestartConfirmationRequired = true
+		} else if err != nil {
 			result.Error = err.Error()
+			slog.Warn("failed to change ChatGPT integration from Settings", "connected", enabled, "error", err)
 		}
 		return result
 	})

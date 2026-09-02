@@ -21,6 +21,8 @@ const (
 	codexDesktopMaxModels       = 5
 )
 
+var errCodexDesktopRestartConfirmationRequired = errors.New("ChatGPT restart confirmation is required before changing its profile")
+
 type codexDesktopController interface {
 	Installed() bool
 	OllamaConfigured() bool
@@ -55,8 +57,9 @@ type codexDesktopStatus struct {
 }
 
 type codexDesktopActionResult struct {
-	Status codexDesktopStatus `json:"status"`
-	Error  string             `json:"error,omitempty"`
+	Status                      codexDesktopStatus `json:"status"`
+	Error                       string             `json:"error,omitempty"`
+	RestartConfirmationRequired bool               `json:"restartConfirmationRequired,omitempty"`
 }
 
 type codexDesktopInstallResult string
@@ -112,11 +115,14 @@ func getCodexDesktopStatus() codexDesktopStatus {
 	}
 }
 
-func setCodexDesktopConnection(enabled bool) error {
+func setCodexDesktopConnection(enabled, restartConfirmed bool) error {
 	codexDesktopMu.Lock()
 	defer codexDesktopMu.Unlock()
 
 	if !enabled {
+		if codexDesktop.Running() && !restartConfirmed {
+			return errCodexDesktopRestartConfirmationRequired
+		}
 		return codexDesktop.RestoreFromDesktop()
 	}
 	if !codexDesktop.Installed() {
@@ -129,6 +135,11 @@ func setCodexDesktopConnection(enabled bool) error {
 	primary, models, err := codexDesktopLoadConnectionModels(ctx, selected)
 	if err != nil {
 		return err
+	}
+	// Resolve model availability before asking to interrupt a running task, but
+	// do not persist or change the ChatGPT profile until consent is explicit.
+	if codexDesktop.Running() && !restartConfirmed {
+		return errCodexDesktopRestartConfirmationRequired
 	}
 	previous := config.IntegrationModels(codexDesktopIntegrationName)
 	selected = codexDesktopModelNames(models)

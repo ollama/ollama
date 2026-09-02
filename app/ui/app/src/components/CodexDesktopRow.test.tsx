@@ -37,7 +37,7 @@ describe("CodexDesktopRow", () => {
     );
 
     expect(html).toContain(">ChatGPT</p>");
-    expect(html).toContain("Codex models · Ollama models not added");
+    expect(html).toContain("Use Ollama models in ChatGPT");
     expect(html).toContain('aria-label="Add Ollama models to ChatGPT"');
     expect(html).toContain('aria-checked="false"');
   });
@@ -102,11 +102,133 @@ describe("CodexDesktopRow", () => {
       />,
     );
 
-    expect(html).toContain(
-      "Install ChatGPT to use Ollama models in the Codex app.",
-    );
+    expect(html).toContain("Use Ollama models in ChatGPT");
     expect(html).not.toContain('disabled=""');
     expect(html).toContain('title="Install ChatGPT and add Ollama models"');
+    expect(html).toContain("Download &amp; connect");
+  });
+
+  it("matches Claude's download and install progress states", async () => {
+    const notInstalled = status({ installed: false });
+    let finishInstall!: (result: "opened") => void;
+    const install = new Promise<"opened">((resolve) => {
+      finishInstall = resolve;
+    });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      setInterval: globalThis.setInterval,
+      clearInterval: globalThis.clearInterval,
+      setTimeout: globalThis.setTimeout,
+      clearTimeout: globalThis.clearTimeout,
+      getCodexDesktopStatus: vi.fn().mockResolvedValue(notInstalled),
+      setCodexDesktopConnected: vi.fn(),
+      installCodexDesktop: vi.fn().mockReturnValue(install),
+    });
+
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopRow
+            integration={{ ...integration, installed: false }}
+            initialStatus={notInstalled}
+          />,
+        );
+      });
+      const toggle = renderer!.root.findByProps({ role: "switch" });
+      await act(async () => {
+        toggle.props.onClick();
+        await Promise.resolve();
+      });
+
+      expect(toggle.props["aria-checked"]).toBe(true);
+      expect(toggle.props["aria-busy"]).toBe(true);
+      expect(toggle.props.disabled).toBe(true);
+      expect(toggle.props.className).toContain("disabled:cursor-wait");
+      expect(renderer!.root.findByProps({ role: "status" }).children).toContain(
+        "Downloading…",
+      );
+      expect(
+        renderer!.root.findAll((node) =>
+          node.children.includes(
+            "Ollama is downloading the ChatGPT installer…",
+          ),
+        ),
+      ).toHaveLength(1);
+
+      await act(async () => {
+        finishInstall("opened");
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(toggle.props["aria-checked"]).toBe(true);
+      expect(toggle.props["aria-busy"]).toBe(true);
+      expect(toggle.props.disabled).toBe(true);
+      expect(renderer!.root.findByProps({ role: "status" }).children).toContain(
+        "Finish installing…",
+      );
+      expect(
+        renderer!.root.findAll((node) =>
+          node.children.includes(
+            "Finish installing ChatGPT. Ollama will connect it automatically.",
+          ),
+        ),
+      ).toHaveLength(1);
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  });
+
+  it("matches Claude's connecting state", async () => {
+    let finishConnect!: (result: { status: CodexDesktopStatus }) => void;
+    const connect = new Promise<{ status: CodexDesktopStatus }>((resolve) => {
+      finishConnect = resolve;
+    });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      setCodexDesktopConnected: vi.fn().mockReturnValue(connect),
+    });
+
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopRow
+            integration={integration}
+            initialStatus={status()}
+          />,
+        );
+      });
+      const toggle = renderer!.root.findByProps({ role: "switch" });
+      await act(async () => {
+        toggle.props.onClick();
+        await Promise.resolve();
+      });
+
+      expect(toggle.props["aria-checked"]).toBe(true);
+      expect(toggle.props["aria-busy"]).toBe(true);
+      expect(toggle.props.disabled).toBe(true);
+      expect(renderer!.root.findByProps({ role: "status" }).children).toContain(
+        "Connecting…",
+      );
+      expect(
+        renderer!.root.findAll((node) =>
+          node.children.includes("Connecting ChatGPT to Ollama…"),
+        ),
+      ).toHaveLength(1);
+
+      await act(async () => {
+        finishConnect({ status: status({ connected: true }) });
+        await connect;
+      });
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
   });
 
   it("opens the installer and connects after ChatGPT is detected", async () => {
@@ -153,7 +275,7 @@ describe("CodexDesktopRow", () => {
 
       expect(openInstaller).toHaveBeenCalledOnce();
       expect(getStatus).toHaveBeenCalled();
-      expect(connect).toHaveBeenCalledWith(true);
+      expect(connect).toHaveBeenCalledWith(true, false);
       expect(
         renderer!.root.findByProps({
           "aria-label": "Remove Ollama models from ChatGPT",
@@ -253,6 +375,160 @@ describe("CodexDesktopRow", () => {
     }
   });
 
+  it("uses concise restart copy when adding Ollama models", async () => {
+    const confirm = vi.fn(() => false);
+    const runningStatus = status({ running: true });
+    const connect = vi.fn().mockResolvedValue({
+      status: runningStatus,
+      restartConfirmationRequired: true,
+    });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      setCodexDesktopConnected: connect,
+      confirm,
+    });
+
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopRow
+            integration={integration}
+            initialStatus={status({ running: true })}
+          />,
+        );
+      });
+      const toggle = renderer!.root.findByProps({
+        "aria-label": "Add Ollama models to ChatGPT",
+      });
+      await act(async () => {
+        await toggle.props.onClick();
+      });
+
+      expect(confirm).toHaveBeenCalledWith(
+        "Restart ChatGPT to add Ollama models? Any running task will stop.",
+      );
+      expect(connect).toHaveBeenCalledOnce();
+      expect(connect).toHaveBeenCalledWith(true, false);
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  });
+
+  it("adds Ollama models after the restart is confirmed", async () => {
+    const confirm = vi.fn(() => true);
+    const connectedStatus = status({
+      connected: true,
+      running: true,
+      models: ["glm-5.3-flash:cloud"],
+    });
+    const connect = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: status({ running: true }),
+        restartConfirmationRequired: true,
+      })
+      .mockResolvedValueOnce({ status: connectedStatus });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      setInterval: globalThis.setInterval,
+      clearInterval: globalThis.clearInterval,
+      setCodexDesktopConnected: connect,
+      confirm,
+    });
+
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopRow
+            integration={integration}
+            initialStatus={status({ running: true })}
+          />,
+        );
+      });
+      const toggle = renderer!.root.findByProps({
+        "aria-label": "Add Ollama models to ChatGPT",
+      });
+      await act(async () => {
+        await toggle.props.onClick();
+      });
+
+      expect(confirm).toHaveBeenCalledWith(
+        "Restart ChatGPT to add Ollama models? Any running task will stop.",
+      );
+      expect(connect).toHaveBeenNthCalledWith(1, true, false);
+      expect(connect).toHaveBeenNthCalledWith(2, true, true);
+      expect(
+        renderer!.root.findByProps({
+          "aria-label": "Remove Ollama models from ChatGPT",
+        }).props["aria-checked"],
+      ).toBe(true);
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  });
+
+  it("keeps a native restart failure visible after confirmation", async () => {
+    let onFocus: (() => void) | undefined;
+    const addEventListener = vi.fn((event: string, handler: () => void) => {
+      if (event === "focus") onFocus = handler;
+    });
+    const getStatus = vi.fn().mockResolvedValue(status({ running: true }));
+    const confirm = vi.fn(() => {
+      onFocus?.();
+      return true;
+    });
+    const connect = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: status({ running: true }),
+        restartConfirmationRequired: true,
+      })
+      .mockResolvedValueOnce({
+        status: status({ running: true }),
+        error: "quit ChatGPT: timed out waiting for ChatGPT to exit",
+      });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener,
+      removeEventListener: vi.fn(),
+      getCodexDesktopStatus: getStatus,
+      setCodexDesktopConnected: connect,
+      confirm,
+    });
+
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopRow
+            integration={integration}
+            initialStatus={status({ running: true })}
+          />,
+        );
+      });
+      const toggle = renderer!.root.findByProps({
+        "aria-label": "Add Ollama models to ChatGPT",
+      });
+      await act(async () => {
+        await toggle.props.onClick();
+      });
+
+      expect(getStatus).not.toHaveBeenCalled();
+      expect(renderer!.root.findByProps({ role: "alert" }).children).toContain(
+        "quit ChatGPT: timed out waiting for ChatGPT to exit",
+      );
+      expect(toggle.props["aria-checked"]).toBe(false);
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  });
+
   it("allows the normal profile to be restored if ChatGPT is removed", async () => {
     const html = renderToStaticMarkup(
       <CodexDesktopRow
@@ -292,7 +568,7 @@ describe("CodexDesktopRow", () => {
         await restoreButton.props.onClick();
       });
 
-      expect(restore).toHaveBeenCalledWith(false);
+      expect(restore).toHaveBeenCalledWith(false, false);
     } finally {
       await act(async () => renderer?.unmount());
     }
