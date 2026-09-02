@@ -124,8 +124,8 @@ func testCompileCallbackPanicRecovers(t *mlxthreadtest.T) {
 		if r == nil {
 			t.Fatal("expected panic from Call, got none")
 		}
-		if _, ok := r.(string); !ok {
-			t.Fatalf("expected string panic, got %T: %v", r, r)
+		if _, ok := r.(error); !ok {
+			t.Fatalf("expected error panic, got %T: %v", r, r)
 		}
 	}()
 	boom(x)

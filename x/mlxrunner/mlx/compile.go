@@ -63,9 +63,7 @@ func Compile(name string, fn CompileFunc, opts ...CompileOption) CompileFunc {
 			defer C.mlx_closure_free(src)
 
 			closure = C.mlx_closure_new()
-			mlxCheck(name+": compile failed", func() C.int {
-				return C.mlx_compile(&closure, src, C.bool(cfg.shapeless))
-			})
+			mlxCheck(C.mlx_compile(&closure, src, C.bool(cfg.shapeless)))
 		})
 
 		inVec := C.mlx_vector_array_new()
@@ -76,9 +74,7 @@ func Compile(name string, fn CompileFunc, opts ...CompileOption) CompileFunc {
 
 		outVec := C.mlx_vector_array_new()
 		defer C.mlx_vector_array_free(outVec)
-		mlxCheck(name+": closure apply failed", func() C.int {
-			return C.mlx_closure_apply(&outVec, closure, inVec)
-		})
+		mlxCheck(C.mlx_closure_apply(&outVec, closure, inVec))
 
 		n := int(C.mlx_vector_array_size(outVec))
 		outputs := make([]*Array, n)
