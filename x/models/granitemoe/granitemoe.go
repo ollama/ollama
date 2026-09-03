@@ -1,27 +1,5 @@
 // Package granitemoe provides a GraniteMoe-style sparse mixture-of-experts
 // decoder-only transformer for MLX.
-//
-// GraniteMoe is dense Granite (see x/models/granite) with every layer's SwiGLU
-// MLP replaced by a sparse mixture of experts, plus the same four Llama-style
-// scalar multipliers (embeddings, attention, residual, logits).
-//
-// Routing (GraniteMoeTopKRouter/GraniteMoeTopKGating in transformers) selects
-// the top-k experts by raw router logits first, then applies softmax to just
-// those selected logits — unlike routers that softmax over all experts before
-// selecting the top-k. There is no shared expert in this architecture (that
-// is GraniteMoeSharedForCausalLM, a separate registration).
-//
-// Checkpoints ship each layer's expert weights pre-stacked as a single fused
-// gate+up projection and a single down projection (not per-expert tensors):
-//
-//	model.layers.<i>.block_sparse_moe.input_linear.weight   [E, 2*intermediate, hidden]
-//	model.layers.<i>.block_sparse_moe.output_linear.weight  [E, hidden, intermediate]
-//	model.layers.<i>.block_sparse_moe.router.layer.weight   [E, hidden]
-//
-// mlx_lm's own GraniteMoe conversion splits input_linear into separate
-// gate_proj and up_proj tensors. The create pipeline fuses them back into a
-// single gate_up_proj tensor at import time so this model always uses the
-// fused layout.
 package granitemoe
 
 import (
@@ -270,10 +248,7 @@ func transposeExpertWeightForGatherMM(w *mlx.Array) *mlx.Array {
 	if w == nil || !w.Valid() || w.NumDims() != 3 {
 		return w
 	}
-	t := mlx.Transpose(w, 0, 2, 1)
-	cloned := t.Clone()
-	mlx.Eval(cloned)
-	return cloned
+	return mlx.Transpose(w, 0, 2, 1).Clone()
 }
 
 // splitLastAxisHalves views the two halves of a's last axis.
