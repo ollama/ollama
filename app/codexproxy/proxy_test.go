@@ -329,6 +329,59 @@ func TestHandlerNormalizesCodexOnlyHistoryForOllama(t *testing.T) {
 	}
 }
 
+func TestHandlerPreservesToolSearchAndOllamaCompactionForOllama(t *testing.T) {
+	var gotBody []byte
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ollama.Close()
+	chatGPT := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("Ollama model should not reach ChatGPT")
+	}))
+	defer chatGPT.Close()
+
+	handler := newTestHandler(t, ollama.URL, chatGPT.URL, writeCatalog(t, "glm-5.3-flash:cloud"))
+	proxy := httptest.NewServer(handler)
+	defer proxy.Close()
+
+	payload := `{
+		"model":"glm-5.3-flash:cloud",
+		"input":[
+			{"type":"compaction","encrypted_content":"native-opaque-state"},
+			{"type":"compaction","encrypted_content":"{\"type\":\"ollama_compaction\",\"version\":1,\"summary\":\"summary\",\"retained\":[]}"},
+			{"type":"tool_search_call","id":"ts_1","call_id":"call_search","execution":"client","status":"completed","arguments":{"query":"notion"}},
+			{"type":"tool_search_output","id":"tso_1","call_id":"call_search","execution":"client","status":"completed","tools":[{"type":"function","name":"notion.search"}]},
+			{"type":"message","role":"user","content":"continue"},
+			{"type":"compaction_trigger"}
+		]
+	}`
+	resp, err := http.Post(proxy.URL+PathPrefix+"/v1/responses", "application/json", strings.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+
+	var forwarded struct {
+		Input []map[string]any `json:"input"`
+	}
+	if err := json.Unmarshal(gotBody, &forwarded); err != nil {
+		t.Fatal(err)
+	}
+	if len(forwarded.Input) != 5 {
+		t.Fatalf("forwarded input = %#v", forwarded.Input)
+	}
+	wantTypes := []string{"compaction", "tool_search_call", "tool_search_output", "message", "compaction_trigger"}
+	for i, want := range wantTypes {
+		if got := forwarded.Input[i]["type"]; got != want {
+			t.Fatalf("forwarded input[%d] type = %#v, want %q", i, got, want)
+		}
+	}
+}
+
 func TestHandlerFiltersNativeReasoningWhenSwitchingToOllama(t *testing.T) {
 	var gotBody []byte
 	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -539,7 +592,7 @@ func TestHandlerPreservesCompressedNativeRequestWithoutOllamaReasoning(t *testin
 	}
 }
 
-func TestHandlerFiltersOllamaReasoningWhenSwitchingToNativeModel(t *testing.T) {
+func TestHandlerFiltersOllamaProviderStateWhenSwitchingToNativeModel(t *testing.T) {
 	ollama := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Fatal("native model should not reach Ollama")
 	}))
@@ -564,6 +617,8 @@ func TestHandlerFiltersOllamaReasoningWhenSwitchingToNativeModel(t *testing.T) {
 		"input":[
 			{"type":"reasoning","id":"rs_713083","encrypted_content":"The user wants info about the repo"},
 			{"type":"reasoning","id":"rs_resp_123456","encrypted_content":"More plaintext thinking"},
+			{"type":"compaction","encrypted_content":"{\"type\":\"ollama_compaction\",\"version\":1,\"summary\":\"local summary\",\"retained\":[]}"},
+			{"type":"compaction","encrypted_content":"gAAAAAB-native-compaction"},
 			{"type":"reasoning","id":"rs_098c6fb068ce51bf016a9709ab7dcc87d185ecc21991f0f39c","encrypted_content":"gAAAAAB-native"},
 			{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]}
 		]
@@ -604,15 +659,19 @@ func TestHandlerFiltersOllamaReasoningWhenSwitchingToNativeModel(t *testing.T) {
 	if err := json.Unmarshal(gotBody, &forwarded); err != nil {
 		t.Fatal(err)
 	}
-	if len(forwarded.Input) != 2 {
+	if len(forwarded.Input) != 3 {
 		t.Fatalf("forwarded input = %#v", forwarded.Input)
 	}
-	if forwarded.Input[0]["id"] != "rs_098c6fb068ce51bf016a9709ab7dcc87d185ecc21991f0f39c" ||
-		forwarded.Input[0]["encrypted_content"] != "gAAAAAB-native" {
-		t.Fatalf("native encrypted reasoning was not preserved: %#v", forwarded.Input[0])
+	if forwarded.Input[0]["type"] != "compaction" ||
+		forwarded.Input[0]["encrypted_content"] != "gAAAAAB-native-compaction" {
+		t.Fatalf("native encrypted compaction was not preserved: %#v", forwarded.Input[0])
 	}
-	if forwarded.Input[1]["type"] != "message" {
-		t.Fatalf("message was not preserved: %#v", forwarded.Input[1])
+	if forwarded.Input[1]["id"] != "rs_098c6fb068ce51bf016a9709ab7dcc87d185ecc21991f0f39c" ||
+		forwarded.Input[1]["encrypted_content"] != "gAAAAAB-native" {
+		t.Fatalf("native encrypted reasoning was not preserved: %#v", forwarded.Input[1])
+	}
+	if forwarded.Input[2]["type"] != "message" {
+		t.Fatalf("message was not preserved: %#v", forwarded.Input[2])
 	}
 }
 

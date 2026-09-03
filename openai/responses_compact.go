@@ -341,9 +341,20 @@ func messageToResponsesItems(message api.Message) ([]json.RawMessage, error) {
 		if message.ToolCallID == "" {
 			return nil, errors.New("retained tool message is missing tool_call_id")
 		}
-		values = append(values, map[string]any{
-			"type": "function_call_output", "call_id": message.ToolCallID, "output": message.Content,
-		})
+		if message.ToolName == "tool_search" {
+			var tools []json.RawMessage
+			if err := json.Unmarshal([]byte(message.Content), &tools); err != nil {
+				return nil, fmt.Errorf("retained tool search output is invalid: %w", err)
+			}
+			values = append(values, map[string]any{
+				"type": "tool_search_output", "call_id": message.ToolCallID,
+				"execution": "client", "status": "completed", "tools": tools,
+			})
+		} else {
+			values = append(values, map[string]any{
+				"type": "function_call_output", "call_id": message.ToolCallID, "output": message.Content,
+			})
+		}
 	} else if message.Content != "" || len(message.ToolCalls) == 0 {
 		values = append(values, map[string]any{
 			"type": "message", "role": message.Role, "content": message.Content,
@@ -353,13 +364,20 @@ func messageToResponsesItems(message api.Message) ([]json.RawMessage, error) {
 		if call.ID == "" || call.Function.Name == "" {
 			return nil, errors.New("retained function call is missing call_id or name")
 		}
-		arguments, err := json.Marshal(call.Function.Arguments)
-		if err != nil {
-			return nil, err
+		if call.Function.Name == "tool_search" {
+			values = append(values, map[string]any{
+				"type": "tool_search_call", "call_id": call.ID,
+				"execution": "client", "status": "completed", "arguments": call.Function.Arguments,
+			})
+		} else {
+			arguments, err := json.Marshal(call.Function.Arguments)
+			if err != nil {
+				return nil, err
+			}
+			values = append(values, map[string]any{
+				"type": "function_call", "call_id": call.ID, "name": call.Function.Name, "arguments": string(arguments),
+			})
 		}
-		values = append(values, map[string]any{
-			"type": "function_call", "call_id": call.ID, "name": call.Function.Name, "arguments": string(arguments),
-		})
 	}
 
 	items := make([]json.RawMessage, 0, len(values))
@@ -418,8 +436,9 @@ func compactionMessage(item ResponsesInputItem) (api.Message, string, error) {
 				return api.Message{}, "", fmt.Errorf("invalid function arguments: %w", err)
 			}
 		}
+		name := qualifyNamespaceToolName(value.Namespace, value.Name)
 		return api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
-			ID: value.CallID, Function: api.ToolCallFunction{Name: value.Name, Arguments: arguments},
+			ID: value.CallID, Function: api.ToolCallFunction{Name: name, Arguments: arguments},
 		}}}, "function_call", nil
 	case ResponsesFunctionCallOutput:
 		content := value.Output
@@ -432,6 +451,24 @@ func compactionMessage(item ResponsesInputItem) (api.Message, string, error) {
 			}
 		}
 		return api.Message{Role: "tool", Content: content, Images: images, ToolCallID: value.CallID}, "function_call_output", nil
+	case ResponsesToolSearchCall:
+		return api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+			ID: value.CallID, Function: api.ToolCallFunction{Name: "tool_search", Arguments: value.Arguments},
+		}}}, "function_call", nil
+	case ResponsesToolSearchOutput:
+		tools, err := json.Marshal(value.Tools)
+		if err != nil {
+			return api.Message{}, "", fmt.Errorf("invalid tool search output: %w", err)
+		}
+		return api.Message{
+			Role: "tool", Content: string(tools), ToolName: "tool_search", ToolCallID: value.CallID,
+		}, "function_call_output", nil
+	case ResponsesWebSearchCall:
+		content := "Web search completed."
+		if value.Action != nil && strings.TrimSpace(value.Action.Query) != "" {
+			content = "Web search: " + value.Action.Query
+		}
+		return api.Message{Role: "assistant", Content: content}, "web_search_call", nil
 	case ResponsesReasoningInput:
 		var summary strings.Builder
 		for _, part := range value.Summary {
@@ -522,12 +559,16 @@ func collectCompactionToolMetadata(tools []ResponsesTool) []compactionToolMetada
 	var add func(prefix string, tools []ResponsesTool)
 	add = func(prefix string, tools []ResponsesTool) {
 		for _, tool := range tools {
-			name := tool.Name
-			if prefix != "" && !strings.HasPrefix(name, prefix+".") {
-				name = prefix + "." + name
+			name := strings.TrimSpace(tool.Name)
+			if name == "" && (tool.Type == "tool_search" || tool.Type == "web_search") {
+				name = tool.Type
 			}
+			name = qualifyNamespaceToolName(prefix, name)
 			if tool.Type == "namespace" {
 				add(name, tool.Tools)
+				continue
+			}
+			if name == "" {
 				continue
 			}
 			description := ""
