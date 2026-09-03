@@ -10,9 +10,11 @@ import (
 	"github.com/ollama/ollama/envconfig"
 )
 
-const codexProxyChatGPTURL = "https://chatgpt.com/backend-api/codex"
-const codexProxyOpenAIURL = "https://api.openai.com/v1"
-const codexProxyLogFilename = "codex-proxy.log"
+const (
+	codexProxyChatGPTURL  = "https://chatgpt.com/backend-api/codex"
+	codexProxyOpenAIURL   = "https://api.openai.com/v1"
+	codexProxyLogFilename = "codex-proxy.log"
+)
 
 func newCodexProxyHandler() (http.Handler, error) {
 	home, err := os.UserHomeDir()

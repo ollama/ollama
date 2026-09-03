@@ -98,7 +98,7 @@ func resetResponsesRequestBody(r *http.Request, body []byte) {
 
 func (s *Server) handleResponsesCompaction(c *gin.Context, plan *openai.ResponsesCompactionPlan, stream bool) {
 	var validationErr error
-	for attempt := 0; attempt < 2; attempt++ {
+	for range 2 {
 		repair := ""
 		if validationErr != nil {
 			repair = validationErr.Error()

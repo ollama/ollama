@@ -125,8 +125,10 @@ func (c *codexAppRequestCursor) scanLocked(root string, start time.Time, allowed
 	}
 
 	paths := make([]string, 0)
-	_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil || entry.IsDir() || filepath.Ext(path) != ".jsonl" {
+	_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, _ error) error {
+		// Request counting is best-effort; skip paths that disappear or cannot
+		// be inspected while the session directory is changing.
+		if entry == nil || entry.IsDir() || filepath.Ext(path) != ".jsonl" {
 			return nil
 		}
 		paths = append(paths, path)

@@ -91,7 +91,7 @@ func newCompactionTestServer(t *testing.T, handler func(int, http.ResponseWriter
 	return local, capture
 }
 
-func postCompactionRequest(t *testing.T, server *httptest.Server, path, body string) (*http.Response, []byte) {
+func postCompactionRequest(t *testing.T, server *httptest.Server, path, body string) (int, http.Header, []byte) {
 	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+path, strings.NewReader(body))
 	if err != nil {
@@ -107,7 +107,7 @@ func postCompactionRequest(t *testing.T, server *httptest.Server, path, body str
 	if err != nil {
 		t.Fatal(err)
 	}
-	return response, responseBody
+	return response.StatusCode, response.Header.Clone(), responseBody
 }
 
 func TestResponsesCompactUsesOrdinarySelectedCloudModel(t *testing.T) {
@@ -116,14 +116,14 @@ func TestResponsesCompactUsesOrdinarySelectedCloudModel(t *testing.T) {
 		_, _ = w.Write(summaryResponse(t, "Continue the task.", nil))
 	})
 
-	response, body := postCompactionRequest(t, local, "/v1/responses/compact", `{
+	status, _, body := postCompactionRequest(t, local, "/v1/responses/compact", `{
 		"model":"fixture:cloud",
 		"instructions":"original agent instructions",
 		"input":[{"type":"message","role":"user","content":"hello"}],
 		"tools":[{"type":"function","name":"shell","description":"Run a command","strict":false,"parameters":{"type":"object"}}]
 	}`)
-	if response.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d body=%s", response.StatusCode, body)
+	if status != http.StatusOK {
+		t.Fatalf("status=%d body=%s", status, body)
 	}
 	var compacted openai.ResponsesCompactedResponse
 	if err := json.Unmarshal(body, &compacted); err != nil {
@@ -165,14 +165,14 @@ func TestResponsesCompactionTriggerReturnsCodexStream(t *testing.T) {
 		_, _ = w.Write(summaryResponse(t, "Compact summary.", nil))
 	})
 
-	response, body := postCompactionRequest(t, local, "/v1/responses", `{
+	status, header, body := postCompactionRequest(t, local, "/v1/responses", `{
 		"model":"fixture:cloud","stream":true,
 		"input":[{"type":"message","role":"user","content":"hello"},{"type":"compaction_trigger"}]
 	}`)
-	if response.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d body=%s", response.StatusCode, body)
+	if status != http.StatusOK {
+		t.Fatalf("status=%d body=%s", status, body)
 	}
-	if got := response.Header.Get("Content-Type"); !strings.HasPrefix(got, "text/event-stream") {
+	if got := header.Get("Content-Type"); !strings.HasPrefix(got, "text/event-stream") {
 		t.Fatalf("content-type=%q", got)
 	}
 	text := string(body)
@@ -198,9 +198,9 @@ func TestResponsesCompactionRepairsMalformedSummaryOnce(t *testing.T) {
 		_, _ = w.Write(summaryResponse(t, "Repaired summary.", nil))
 	})
 
-	response, body := postCompactionRequest(t, local, "/v1/responses/compact", `{"model":"fixture:cloud","input":"hello"}`)
-	if response.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d body=%s", response.StatusCode, body)
+	status, _, body := postCompactionRequest(t, local, "/v1/responses/compact", `{"model":"fixture:cloud","input":"hello"}`)
+	if status != http.StatusOK {
+		t.Fatalf("status=%d body=%s", status, body)
 	}
 	_, bodies := capture.snapshot()
 	if len(bodies) != 2 {
@@ -217,9 +217,9 @@ func TestResponsesCompactionFailsAfterOneRepair(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"bad","object":"response","output":[]}`))
 	})
 
-	response, body := postCompactionRequest(t, local, "/v1/responses/compact", `{"model":"fixture:cloud","input":"hello"}`)
-	if response.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("status=%d body=%s", response.StatusCode, body)
+	status, _, body := postCompactionRequest(t, local, "/v1/responses/compact", `{"model":"fixture:cloud","input":"hello"}`)
+	if status != http.StatusInternalServerError {
+		t.Fatalf("status=%d body=%s", status, body)
 	}
 	var errorResponse openai.ErrorResponse
 	if err := json.Unmarshal(body, &errorResponse); err != nil {
@@ -259,9 +259,9 @@ func TestResponsesCompactionPayloadIsExpandedBeforeCloudPassthrough(t *testing.T
 		t.Fatal(err)
 	}
 
-	response, body := postCompactionRequest(t, local, "/v1/responses", string(request))
-	if response.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d body=%s", response.StatusCode, body)
+	status, _, body := postCompactionRequest(t, local, "/v1/responses", string(request))
+	if status != http.StatusOK {
+		t.Fatalf("status=%d body=%s", status, body)
 	}
 	paths, bodies := capture.snapshot()
 	if len(paths) != 1 || paths[0] != "/v1/responses" {

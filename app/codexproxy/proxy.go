@@ -300,8 +300,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		targetBase = h.chatGPTURL
 		route = "chatgpt"
 	}
-	requestBody := rawBody
-	requestBodyNormalized := false
+	var (
+		requestBody           []byte
+		requestBodyNormalized bool
+	)
 	if routed {
 		targetBase = h.ollamaURL
 		targetSuffix = suffix
