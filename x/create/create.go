@@ -245,7 +245,9 @@ func isStackedExpertWeight(name string) bool {
 	return strings.Contains(name, ".experts.") ||
 		strings.Contains(name, ".mlp.switch_mlp.") ||
 		strings.Contains(name, ".mlp.shared_experts.") ||
-		strings.Contains(name, ".mixer.shared_experts.")
+		strings.Contains(name, ".mixer.shared_experts.") ||
+		strings.Contains(name, ".block_sparse_moe.input_linear") ||
+		strings.Contains(name, ".block_sparse_moe.output_linear")
 }
 
 // isRoutingGate reports the small MoE routing/gate weights that select the
