@@ -155,12 +155,29 @@ func (c *Client) Close() error {
 	return nil
 }
 
+// requestGrammar returns the structural tag the runner decodes under: the
+// API's format wrapped into a json_schema tag.
+func requestGrammar(req llm.CompletionRequest) json.RawMessage {
+	schema := req.Format
+	switch string(schema) {
+	case ``, `null`, `""`:
+		return nil
+	case `"json"`:
+		// The API documents "json" as producing a JSON object.
+		schema = json.RawMessage(`{"type":"object"}`)
+	}
+	tag := make(json.RawMessage, 0, len(schema)+64)
+	tag = append(tag, `{"type":"structural_tag","format":{"type":"json_schema","json_schema":`...)
+	tag = append(tag, schema...)
+	return append(tag, `}}`...)
+}
+
 // Completion implements llm.LlamaServer.
 func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
 	creq := CompletionRequest{
 		Prompt:                     req.Prompt,
 		Media:                      req.Media,
-		Format:                     req.Format,
+		Format:                     requestGrammar(req),
 		Logprobs:                   req.Logprobs,
 		TopLogprobs:                req.TopLogprobs,
 		IncludeIntermediateMetrics: req.IncludeIntermediateMetrics,

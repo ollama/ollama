@@ -16,6 +16,32 @@ func testIntPtr(v int) *int {
 	return &v
 }
 
+func TestRequestGrammar(t *testing.T) {
+	schema := `{"type":"object","properties":{"answer":{"type":"string"}}}`
+	tag := `{"type":"structural_tag","format":{"type":"json_schema","json_schema":` + schema + `}}`
+	for _, tt := range []struct {
+		name string
+		req  llm.CompletionRequest
+		want string
+	}{
+		{name: "unset"},
+		{name: "null", req: llm.CompletionRequest{Format: json.RawMessage(`null`)}},
+		{name: "empty", req: llm.CompletionRequest{Format: json.RawMessage(`""`)}},
+		{
+			name: "json",
+			req:  llm.CompletionRequest{Format: json.RawMessage(`"json"`)},
+			want: `{"type":"structural_tag","format":{"type":"json_schema","json_schema":{"type":"object"}}}`,
+		},
+		{name: "schema", req: llm.CompletionRequest{Format: json.RawMessage(schema)}, want: tag},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := string(requestGrammar(tt.req)); got != tt.want {
+				t.Fatalf("requestGrammar = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestClientCompletionRequestsIntermediateMetrics(t *testing.T) {
 	var request CompletionRequest
 	want := CompletionResponse{

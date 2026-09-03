@@ -15,12 +15,6 @@ import (
 	"unsafe"
 )
 
-type Kind int
-
-const (
-	JSONSchema Kind = C.OLLAMA_XGRAMMAR_JSON_SCHEMA
-)
-
 // The native library is loaded once per process and never unloaded.
 var (
 	loadOnce sync.Once
@@ -138,7 +132,8 @@ func (c *Compiler) Version() string {
 	return C.GoString(C.ollama_xgrammar_dynamic_version())
 }
 
-func (c *Compiler) Compile(kind Kind, source string) (*Matcher, error) {
+// Compile compiles a structural tag, given as its JSON text.
+func (c *Compiler) Compile(source string) (*Matcher, error) {
 	if c == nil {
 		return nil, errors.New("grammar compiler is unavailable")
 	}
@@ -153,7 +148,7 @@ func (c *Compiler) Compile(kind Kind, source string) (*Matcher, error) {
 	var ctx *C.ollama_xgrammar_matcher
 	var cError *C.char
 	if C.ollama_xgrammar_dynamic_matcher_new(
-		c.ctx, C.ollama_xgrammar_kind(kind), sourcePtr, C.size_t(len(source)), &ctx, &cError,
+		c.ctx, sourcePtr, C.size_t(len(source)), &ctx, &cError,
 	) != 0 {
 		return nil, nativeError("compile grammar", cError)
 	}
