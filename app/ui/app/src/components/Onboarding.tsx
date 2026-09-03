@@ -896,7 +896,7 @@ export function ConnectAppsScreen({
     ? undefined
     : (integrationStatuses?.find((item) => item.id === "chatgpt") ?? {
         id: "chatgpt",
-        name: "ChatGPT",
+        name: "ChatGPT (Desktop)",
         description: "Use Ollama models in ChatGPT",
         installed: false,
       });

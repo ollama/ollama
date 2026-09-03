@@ -135,6 +135,7 @@ func TestGetIntegrationStatuses(t *testing.T) {
 
 	var got []struct {
 		ID        string `json:"id"`
+		Name      string `json:"name"`
 		Installed *bool  `json:"installed"`
 		Action    string `json:"action"`
 		Command   string `json:"command"`
@@ -146,7 +147,7 @@ func TestGetIntegrationStatuses(t *testing.T) {
 	if len(got) < 5 {
 		t.Fatalf("got %d integrations, want the full registry", len(got))
 	}
-	if got[0].ID != "claude-desktop" || got[0].Action != "connect" || got[0].Command != "" {
+	if got[0].ID != "claude-desktop" || got[0].Name != "Claude Code (Desktop)" || got[0].Action != "connect" || got[0].Command != "" {
 		t.Fatalf("first integration = %+v, want command-free Claude Desktop connect", got[0])
 	}
 	wantPrefix := []string{"claude-desktop", "claude", "codex", "openclaw", "opencode", "hermes", "hermes-desktop", "droid", "pi", "cline"}

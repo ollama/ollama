@@ -129,7 +129,19 @@ func (c *CodexApp) ConfigureWithModels(primary string, models []LaunchModel) err
 	if err := writeCodexAppCombinedModelCatalog(catalogPath, models, nativeCatalog); err != nil {
 		return err
 	}
-	return writeCodexAppConfig(configPath, primary, catalogPath)
+	createdAuth, err := ensureCodexAppManagedAuth(configPath)
+	if err != nil {
+		return err
+	}
+	if err := writeCodexAppConfig(configPath, primary, catalogPath); err != nil {
+		if createdAuth {
+			if removeErr := removeCodexAppManagedAuth(configPath); removeErr != nil {
+				return errors.Join(err, fmt.Errorf("remove ChatGPT local auth after failed configuration: %w", removeErr))
+			}
+		}
+		return err
+	}
+	return nil
 }
 
 func (c *CodexApp) CurrentModel() string {
@@ -539,6 +551,74 @@ func codexAppProxyBaseURL() string {
 	return strings.TrimRight(envconfig.ConnectableHost().String(), "/") + codexproxy.PathPrefix + "/v1"
 }
 
+type codexAppManagedAuth struct {
+	OpenAIAPIKey string `json:"OPENAI_API_KEY"`
+	AuthMode     string `json:"auth_mode"`
+}
+
+// ensureCodexAppManagedAuth skips ChatGPT's login screen for a signed-out
+// user. An existing auth file always belongs to the user and is never read or
+// changed here.
+func ensureCodexAppManagedAuth(configPath string) (bool, error) {
+	authPath := filepath.Join(filepath.Dir(configPath), "auth.json")
+	if err := os.MkdirAll(filepath.Dir(authPath), 0o700); err != nil {
+		return false, err
+	}
+
+	data, err := json.MarshalIndent(codexAppManagedAuth{
+		OpenAIAPIKey: codexproxy.ManagedAPIKey,
+		AuthMode:     "apikey",
+	}, "", "  ")
+	if err != nil {
+		return false, err
+	}
+	data = append(data, '\n')
+
+	file, err := os.OpenFile(authPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = file.Close()
+			_ = os.Remove(authPath)
+		}
+	}()
+	if _, err := file.Write(data); err != nil {
+		return false, err
+	}
+	if err := file.Close(); err != nil {
+		return false, err
+	}
+	cleanup = false
+	return true, nil
+}
+
+// removeCodexAppManagedAuth removes only the exact local sentinel created by
+// Ollama. A real login or API key that replaced it is left untouched.
+func removeCodexAppManagedAuth(configPath string) error {
+	authPath := filepath.Join(filepath.Dir(configPath), "auth.json")
+	data, err := os.ReadFile(authPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var auth codexAppManagedAuth
+	if json.Unmarshal(data, &auth) != nil || auth.AuthMode != "apikey" || auth.OpenAIAPIKey != codexproxy.ManagedAPIKey {
+		return nil
+	}
+	if err := os.Remove(authPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 func (c *CodexApp) Onboard() error {
 	return config.MarkIntegrationOnboarded(chatGPTIntegrationName)
 }
@@ -599,6 +679,16 @@ func (c *CodexApp) Running() bool {
 // ChatGPT is stopped before its startup-only catalog changes, then reopened
 // with the same account, native models, chats, plugins, and skills.
 func (c *CodexApp) UseOllamaFromDesktop(primary string, models []LaunchModel, restartConfirmed bool) error {
+	return c.updateOllamaModelsFromDesktop(primary, models, true, restartConfirmed)
+}
+
+// UpdateOllamaModelsFromDesktop changes the Ollama catalog without opening a
+// stopped ChatGPT app. A running app still restarts after confirmation.
+func (c *CodexApp) UpdateOllamaModelsFromDesktop(primary string, models []LaunchModel, restartConfirmed bool) error {
+	return c.updateOllamaModelsFromDesktop(primary, models, false, restartConfirmed)
+}
+
+func (c *CodexApp) updateOllamaModelsFromDesktop(primary string, models []LaunchModel, openWhenStopped, restartConfirmed bool) error {
 	if err := codexAppSupported(); err != nil {
 		return err
 	}
@@ -622,7 +712,7 @@ func (c *CodexApp) UseOllamaFromDesktop(primary string, models []LaunchModel, re
 			return err
 		}
 		return c.ConfigureWithModels(primary, models)
-	}, true, restartConfirmed)
+	}, openWhenStopped, restartConfirmed)
 }
 
 func defaultCodexAppRouterHealth() error {
@@ -723,6 +813,9 @@ func restoreCodexAppProfile() error {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
+			if err := removeCodexAppManagedAuth(configPath); err != nil {
+				return codexAppRestoreFailure(configPath, err)
+			}
 			if err := removeCodexAppRestoreState(); err != nil {
 				return codexAppRestoreFailure(configPath, err)
 			}
@@ -763,6 +856,9 @@ func restoreCodexAppProfile() error {
 		return codexAppRestoreFailure(configPath, err)
 	}
 	if err := codexAppRemoveOwnedCatalogIfUnused(text); err != nil {
+		return codexAppRestoreFailure(configPath, err)
+	}
+	if err := removeCodexAppManagedAuth(configPath); err != nil {
 		return codexAppRestoreFailure(configPath, err)
 	}
 	if err := removeCodexAppRestoreState(); err != nil {

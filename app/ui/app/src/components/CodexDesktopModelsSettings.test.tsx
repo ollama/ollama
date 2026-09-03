@@ -8,9 +8,13 @@ import type {
   MouseEvent as ReactMouseEvent,
   ReactNode,
 } from "react";
+import { createRef } from "react";
 import { act, create } from "react-test-renderer";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CodexDesktopModelsSettings } from "./CodexDesktopModelsSettings";
+import {
+  CodexDesktopModelsSettings,
+  type CodexDesktopModelsSettingsHandle,
+} from "./CodexDesktopModelsSettings";
 
 vi.mock("@headlessui/react", async (importOriginal) => {
   const React = await import("react");
@@ -137,6 +141,97 @@ afterEach(() => {
 });
 
 describe("CodexDesktopModelsSettings", () => {
+  it("resets to native recommendation defaults through its settings handle", async () => {
+    const resetModels = vi.fn().mockResolvedValue({
+      settings: settings({
+        selected: ["glm-5.2:cloud", "kimi-k3:cloud"],
+      }),
+    });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      resetCodexDesktopModels: resetModels,
+    });
+    const ref = createRef<CodexDesktopModelsSettingsHandle>();
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopModelsSettings
+            ref={ref}
+            initialSettings={settings({ selected: ["qwen3:8b"] })}
+          />,
+        );
+      });
+
+      let succeeded = false;
+      await act(async () => {
+        succeeded = (await ref.current?.resetToDefaults()) ?? false;
+      });
+
+      expect(succeeded).toBe(true);
+      expect(resetModels).toHaveBeenCalledWith(false);
+      expect(
+        renderer!.root.findAllByProps({
+          "aria-label": "Remove glm-5.2:cloud",
+        }),
+      ).toHaveLength(1);
+      expect(
+        renderer!.root.findAllByProps({ "aria-label": "Remove qwen3:8b" }),
+      ).toHaveLength(0);
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  });
+
+  it("confirms before resetting models in running ChatGPT", async () => {
+    const resetModels = vi
+      .fn()
+      .mockResolvedValueOnce({
+        settings: settings({ connected: true, running: true }),
+        restartConfirmationRequired: true,
+      })
+      .mockResolvedValueOnce({
+        settings: settings({
+          connected: true,
+          running: true,
+          selected: ["glm-5.2:cloud"],
+        }),
+      });
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      resetCodexDesktopModels: resetModels,
+      confirm,
+    });
+    const ref = createRef<CodexDesktopModelsSettingsHandle>();
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopModelsSettings
+            ref={ref}
+            initialSettings={settings({ connected: true, running: true })}
+          />,
+        );
+      });
+
+      await act(async () => {
+        await ref.current?.resetToDefaults();
+      });
+
+      expect(resetModels.mock.calls).toEqual([[false], [true]]);
+      expect(confirm).toHaveBeenCalledWith(
+        "Restart ChatGPT to reset Ollama models? Any running task will stop.",
+      );
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  });
+
   it("stops loading and explains when the native settings bridge is unavailable", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("window", {
@@ -436,6 +531,110 @@ describe("CodexDesktopModelsSettings", () => {
         }),
       ).toHaveLength(1);
       expect(preventDefault).toHaveBeenCalledTimes(4);
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  });
+
+  it("keeps paid recommendations visible below the Free model", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopModelsSettings
+            initialSettings={settings({
+              selected: ["gemma4:31b-cloud"],
+              available: ["gemma4:31b-cloud"],
+              models: [
+                {
+                  name: "gemma4:31b-cloud",
+                  displayName: "gemma4:31b-cloud",
+                  selected: true,
+                  availability: "available",
+                  requiredPlan: "free",
+                },
+                {
+                  name: "glm-5.3-flash:cloud",
+                  displayName: "glm-5.3-flash:cloud",
+                  selected: false,
+                  availability: "unavailable",
+                  reason: "upgrade_required",
+                  requiredPlan: "pro",
+                },
+              ],
+            })}
+          />,
+        );
+      });
+      await act(async () => {
+        renderer!.root
+          .findAllByProps({ "aria-label": "Add ChatGPT model" })
+          .find((node) => node.type === "button")!
+          .props.onClick({});
+      });
+
+      const options = renderer!.root.findAllByProps({ role: "option" });
+      expect(textContent(options[0])).toContain("gemma4:31b-cloud");
+      expect(textContent(options[1])).toContain("glm-5.3-flash:cloud");
+      expect(textContent(options[1])).toContain("Pro plan required");
+      expect(options[1].props.disabled).toBe(true);
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  });
+
+  it("shows cloud recommendations to signed-out users", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopModelsSettings
+            initialSettings={settings({
+              selected: ["qwen3:8b"],
+              available: ["qwen3:8b"],
+              models: [
+                {
+                  name: "qwen3:8b",
+                  displayName: "qwen3:8b",
+                  selected: true,
+                  availability: "available",
+                },
+                {
+                  name: "glm-5.3-flash:cloud",
+                  displayName: "glm-5.3-flash:cloud",
+                  selected: false,
+                  availability: "unavailable",
+                  reason: "sign_in_required",
+                  requiredPlan: "pro",
+                },
+              ],
+            })}
+          />,
+        );
+      });
+      await act(async () => {
+        renderer!.root
+          .findAllByProps({ "aria-label": "Add ChatGPT model" })
+          .find((node) => node.type === "button")!
+          .props.onClick({});
+      });
+
+      const cloud = renderer!.root
+        .findAllByProps({ role: "option" })
+        .find((option) => textContent(option).includes("glm-5.3-flash:cloud"));
+      if (!cloud) throw new Error("Cloud recommendation not found");
+      expect(textContent(cloud)).toContain("Sign in required");
+      expect(cloud.props.disabled).toBe(true);
     } finally {
       await act(async () => renderer?.unmount());
     }

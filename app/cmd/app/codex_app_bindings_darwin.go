@@ -60,4 +60,18 @@ func bindCodexDesktop(wv webview.WebView) {
 		}
 		return result
 	})
+	wv.Bind("resetCodexDesktopModels", func(restartConfirmed bool) codexDesktopModelsSettingsResult {
+		err := resetCodexDesktopModels(restartConfirmed)
+		settings, statusErr := getCodexDesktopModelsSettings()
+		result := codexDesktopModelsSettingsResult{Settings: settings}
+		if errors.Is(err, errCodexDesktopRestartConfirmationRequired) {
+			result.RestartConfirmationRequired = true
+		} else if err != nil {
+			result.Error = err.Error()
+		} else if statusErr != nil {
+			result.Warning = codexDesktopModelRefreshError(settings)
+			slog.Warn("failed to refresh available ChatGPT models after resetting settings", "error", statusErr)
+		}
+		return result
+	})
 }

@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import type {
+  CodexDesktopModelStatus,
   CodexDesktopModelsSettings as ModelsSettings,
   CodexDesktopModelsSettingsResult,
   CodexDesktopStatus,
@@ -11,7 +12,19 @@ import {
   XMarkIcon,
 } from "@heroicons/react/20/solid";
 import { Popover, PopoverButton, PopoverPanel } from "@headlessui/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+
+export interface CodexDesktopModelsSettingsHandle {
+  resetToDefaults: () => Promise<boolean>;
+}
 
 interface CodexDesktopModelsSettingsProps {
   initialSettings?: ModelsSettings;
@@ -61,23 +74,55 @@ function normalizeSettings(
   settings: ModelsSettings & {
     selected?: string[] | null;
     available?: string[] | null;
+    models?: CodexDesktopModelStatus[] | null;
   },
 ): ModelsSettings {
+  const available = settings.available ?? [];
   return {
     ...settings,
     selected: settings.selected ?? [],
-    available: settings.available ?? [],
+    available,
+    models:
+      settings.models ??
+      available.map((name) => ({
+        name,
+        displayName: name,
+        selected: settings.selected?.includes(name) ?? false,
+        availability: "available" as const,
+      })),
     maxModels: settings.maxModels || 5,
   };
 }
 
+function modelIsAvailable(model: CodexDesktopModelStatus): boolean {
+  return !model.availability || model.availability === "available";
+}
+
+function modelStatusLabel(model: CodexDesktopModelStatus): string | null {
+  switch (model.reason) {
+    case "cloud_off":
+      return "Cloud models are off";
+    case "sign_in_required":
+      return "Sign in required";
+    case "upgrade_required":
+      return model.requiredPlan
+        ? `${model.requiredPlan[0]?.toUpperCase()}${model.requiredPlan.slice(1)} plan required`
+        : "Upgrade required";
+    case "verification_unavailable":
+      return "Access unavailable";
+    case "model_not_installed":
+      return "Not installed";
+  }
+  return null;
+}
+
 function ModelOptions({
-  available,
+  models,
   selected,
   maxModels,
   onToggle,
 }: {
-  available: string[];
+  models: CodexDesktopModelStatus[];
   selected: string[];
   maxModels: number;
   onToggle: (model: string) => void;
@@ -88,8 +133,10 @@ function ModelOptions({
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const selectedSet = useMemo(() => new Set(selected), [selected]);
   const normalizedQuery = query.trim().toLowerCase();
-  const filtered = available.filter((model) =>
-    model.toLowerCase().includes(normalizedQuery),
+  const filtered = models.filter((model) =>
+    `${model.displayName} ${model.name}`
+      .toLowerCase()
+      .includes(normalizedQuery),
   );
 
   useEffect(() => {
@@ -105,8 +152,9 @@ function ModelOptions({
     optionRefs.current[highlightedIndex]?.scrollIntoView({ block: "nearest" });
   }, [highlightedIndex]);
 
-  const optionIsDisabled = (model: string) =>
-    !selectedSet.has(model) && selected.length >= maxModels;
+  const optionIsDisabled = (model: CodexDesktopModelStatus) =>
+    !modelIsAvailable(model) ||
+    (!selectedSet.has(model.name) && selected.length >= maxModels);
 
   const moveHighlight = (direction: -1 | 1) => {
     setHighlightedIndex((current) => {
@@ -143,7 +191,7 @@ function ModelOptions({
               highlightedIndex < filtered.length
             ) {
               event.preventDefault();
-              onToggle(filtered[highlightedIndex]);
+              onToggle(filtered[highlightedIndex].name);
             }
           }}
           placeholder="Find model..."
@@ -168,11 +216,12 @@ function ModelOptions({
         className="min-h-0 overflow-y-auto py-1"
       >
         {filtered.map((model, index) => {
-          const checked = selectedSet.has(model);
+          const checked = selectedSet.has(model.name);
           const disabled = optionIsDisabled(model);
+          const statusLabel = modelStatusLabel(model);
           return (
             <button
-              key={model}
+              key={model.name}
               id={`chatgpt-model-option-${index}`}
               ref={(element) => {
                 optionRefs.current[index] = element;
@@ -181,7 +230,7 @@ function ModelOptions({
               role="option"
               aria-selected={checked}
               disabled={disabled}
-              onClick={() => onToggle(model)}
+              onClick={() => onToggle(model.name)}
               onMouseEnter={() => setHighlightedIndex(index)}
               className={`flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left hover:bg-neutral-100 focus:bg-neutral-100 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-neutral-700/60 dark:focus:bg-neutral-700/60 ${
                 highlightedIndex === index
@@ -192,7 +241,14 @@ function ModelOptions({
               <span className="h-4 w-4 shrink-0">
                 {checked && <CheckIcon className="h-4 w-4" />}
               </span>
-              <span className="min-w-0 flex-1 truncate">{model}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{model.displayName}</span>
+                {statusLabel && (
+                  <span className="mt-0.5 block truncate text-xs text-neutral-400">
+                    {statusLabel}
+                  </span>
+                )}
+              </span>
             </button>
           );
         })}
@@ -204,10 +260,13 @@ function ModelOptions({
   );
 }
 
-export function CodexDesktopModelsSettings({
-  initialSettings,
-  onDraftChange,
-}: CodexDesktopModelsSettingsProps) {
+export const CodexDesktopModelsSettings = forwardRef<
+  CodexDesktopModelsSettingsHandle,
+  CodexDesktopModelsSettingsProps
+>(function CodexDesktopModelsSettings(
+  { initialSettings, onDraftChange },
+  ref,
+) {
   const normalizedInitialSettings = initialSettings
     ? normalizeSettings(initialSettings)
     : null;
@@ -222,6 +281,7 @@ export function CodexDesktopModelsSettings({
   );
   const [loading, setLoading] = useState(!initialSettings);
   const [applying, setApplying] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [launchAction, setLaunchAction] = useState<"start" | "restart">(
     "start",
   );
@@ -291,9 +351,25 @@ export function CodexDesktopModelsSettings({
   }, [hasChanges, onDraftChange]);
 
   const maxModels = settings?.maxModels ?? 5;
-  const available = useMemo(
-    () => Array.from(new Set([...(settings?.available ?? []), ...selected])),
-    [selected, settings?.available],
+  const models = useMemo(() => {
+    const catalog = [...(settings?.models ?? [])];
+    const known = new Set(catalog.map((model) => model.name));
+    for (const name of selected) {
+      if (known.has(name)) continue;
+      known.add(name);
+      catalog.push({
+        name,
+        displayName: name,
+        selected: true,
+        availability: "unknown",
+        reason: "verification_unavailable",
+      });
+    }
+    return catalog;
+  }, [selected, settings?.models]);
+  const displayNames = useMemo(
+    () => new Map(models.map((model) => [model.name, model.displayName])),
+    [models],
   );
 
   const toggleModel = (model: string) => {
@@ -374,9 +450,57 @@ export function CodexDesktopModelsSettings({
     }
   };
 
+  const resetToDefaults = useCallback(async (): Promise<boolean> => {
+    if (operationInFlightRef.current) return false;
+
+    const resetModels = window.resetCodexDesktopModels;
+    if (!resetModels) {
+      setError("Ollama could not reset the ChatGPT models.");
+      return false;
+    }
+
+    setResetting(true);
+    setError(null);
+    setWarning(null);
+    operationInFlightRef.current = true;
+    ++statusRequestRef.current;
+    try {
+      let result = await resetModels(false);
+      if (result.restartConfirmationRequired) {
+        applyResult(result, true);
+        if (
+          !window.confirm(
+            "Restart ChatGPT to reset Ollama models? Any running task will stop.",
+          )
+        ) {
+          return false;
+        }
+        result = await resetModels(true);
+      }
+      ++statusRequestRef.current;
+      if (result.error) {
+        setSettings(normalizeSettings(result.settings));
+        setError(result.error);
+        setWarning(result.warning ?? null);
+        return false;
+      }
+      applyResult(result);
+      return true;
+    } catch {
+      setError("Ollama could not reset the ChatGPT models.");
+      return false;
+    } finally {
+      ++statusRequestRef.current;
+      operationInFlightRef.current = false;
+      setResetting(false);
+    }
+  }, [applyResult]);
+
+  useImperativeHandle(ref, () => ({ resetToDefaults }), [resetToDefaults]);
+
   if (!settings?.supported && !loading && !error) return null;
 
-  const busy = applying;
+  const busy = applying || resetting;
 
   return (
     <div
@@ -454,7 +578,9 @@ export function CodexDesktopModelsSettings({
                       className="pointer-events-none inline-flex max-w-full items-stretch overflow-hidden rounded-md bg-neutral-200/70 text-sm text-neutral-700 dark:bg-neutral-600 dark:text-neutral-100"
                     >
                       <span className="min-w-0 py-1 pl-2 pr-1">
-                        <span className="block truncate">{model}</span>
+                        <span className="block truncate">
+                          {displayNames.get(model) ?? model}
+                        </span>
                       </span>
                       <button
                         type="button"
@@ -483,7 +609,7 @@ export function CodexDesktopModelsSettings({
                 className="z-50 flex w-[var(--button-width)] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-2xl border border-neutral-100 bg-white text-[15px] text-neutral-800 shadow-xl shadow-black/5 [--anchor-max-height:19rem] dark:border-neutral-600/40 dark:bg-neutral-800 dark:text-white"
               >
                 <ModelOptions
-                  available={available}
+                  models={models}
                   selected={selected}
                   maxModels={maxModels}
                   onToggle={toggleModel}
@@ -512,4 +638,4 @@ export function CodexDesktopModelsSettings({
       </div>
     </div>
   );
-}
+});

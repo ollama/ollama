@@ -504,6 +504,134 @@ func TestCodexAppDesktopUsesAndRestoresRegularProfile(t *testing.T) {
 	}
 }
 
+func TestCodexAppDesktopUpdatesStoppedProfileWithoutOpening(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withCodexAppPlatform(t, "darwin")
+	withCodexAppRouterHealth(t, func() error { return nil })
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("model = \"gpt-5.5\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	openCalls := 0
+	oldCanOpenID := codexAppCanOpenID
+	codexAppCanOpenID = func() bool { return true }
+	t.Cleanup(func() { codexAppCanOpenID = oldCanOpenID })
+	withCodexAppProcessHooks(t,
+		func() bool { return false },
+		func() error { return nil },
+		func() error { openCalls++; return nil },
+	)
+
+	app := &CodexApp{}
+	if err := app.UpdateOllamaModelsFromDesktop("qwen3:8b", testLaunchModels("qwen3:8b"), false); err != nil {
+		t.Fatal(err)
+	}
+	if !app.OllamaConfigured() || app.CurrentModel() != "qwen3:8b" {
+		t.Fatal("stopped regular profile was not updated for Ollama")
+	}
+	if openCalls != 0 {
+		t.Fatalf("open calls = %d, want 0", openCalls)
+	}
+}
+
+func TestCodexAppManagedAuthLifecycle(t *testing.T) {
+	t.Run("signed out user gets local auth that restore removes", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+		app := &CodexApp{}
+		if err := app.ConfigureWithModels("qwen3:8b", testLaunchModels("qwen3:8b")); err != nil {
+			t.Fatal(err)
+		}
+
+		authPath := filepath.Join(tmpDir, ".codex", "auth.json")
+		data, err := os.ReadFile(authPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var auth codexAppManagedAuth
+		if err := json.Unmarshal(data, &auth); err != nil {
+			t.Fatal(err)
+		}
+		if auth.AuthMode != "apikey" || auth.OpenAIAPIKey != codexproxy.ManagedAPIKey {
+			t.Fatalf("managed auth = %+v", auth)
+		}
+		info, err := os.Stat(authPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Fatalf("auth mode = %o, want 600", got)
+		}
+
+		if err := restoreCodexAppProfile(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(authPath); !os.IsNotExist(err) {
+			t.Fatalf("managed auth should be removed on restore, err=%v", err)
+		}
+	})
+
+	t.Run("existing auth is preserved", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+		authPath := filepath.Join(tmpDir, ".codex", "auth.json")
+		if err := os.MkdirAll(filepath.Dir(authPath), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		original := []byte(`{"auth_mode":"chatgpt","tokens":{"access_token":"user-owned"}}`)
+		if err := os.WriteFile(authPath, original, 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		app := &CodexApp{}
+		if err := app.ConfigureWithModels("qwen3:8b", testLaunchModels("qwen3:8b")); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := os.ReadFile(authPath); err != nil || string(got) != string(original) {
+			t.Fatalf("auth after configure = %q, %v; want %q", got, err, original)
+		}
+		if err := restoreCodexAppProfile(); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := os.ReadFile(authPath); err != nil || string(got) != string(original) {
+			t.Fatalf("auth after restore = %q, %v; want %q", got, err, original)
+		}
+	})
+
+	t.Run("real login that replaces local auth is preserved", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+		app := &CodexApp{}
+		if err := app.ConfigureWithModels("qwen3:8b", testLaunchModels("qwen3:8b")); err != nil {
+			t.Fatal(err)
+		}
+		authPath := filepath.Join(tmpDir, ".codex", "auth.json")
+		replacement := []byte(`{"auth_mode":"apikey","OPENAI_API_KEY":"sk-user-owned"}`)
+		if err := os.WriteFile(authPath, replacement, 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := restoreCodexAppProfile(); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := os.ReadFile(authPath); err != nil || string(got) != string(replacement) {
+			t.Fatalf("replacement auth after restore = %q, %v; want %q", got, err, replacement)
+		}
+	})
+}
+
 func TestCodexAppDesktopAppliesProfileAfterRunningAppExits(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
@@ -2391,6 +2519,10 @@ func TestCodexAppRestoreMissingConfigRemovesRestoreState(t *testing.T) {
 	if err := os.WriteFile(codexAppRestoreStatePath(), []byte(restoreState), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	if created, err := ensureCodexAppManagedAuth(configPath); err != nil || !created {
+		t.Fatalf("create managed auth = %v, %v; want true, nil", created, err)
+	}
 
 	if err := (&CodexApp{}).Restore(); err != nil {
 		t.Fatalf("Restore returned error: %v", err)
@@ -2398,6 +2530,9 @@ func TestCodexAppRestoreMissingConfigRemovesRestoreState(t *testing.T) {
 
 	if _, err := os.Stat(codexAppRestoreStatePath()); !os.IsNotExist(err) {
 		t.Fatalf("restore state should be removed when config is missing, got err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(configPath), "auth.json")); !os.IsNotExist(err) {
+		t.Fatalf("managed auth should be removed when config is missing, got err=%v", err)
 	}
 	if openCalls != 1 {
 		t.Fatalf("open calls = %d, want 1", openCalls)

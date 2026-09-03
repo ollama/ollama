@@ -48,34 +48,36 @@ func TestHandlerRoutesCatalogModelToOllamaAndStripsCredentials(t *testing.T) {
 	compressed := encoder.EncodeAll(payload, nil)
 	encoder.Close()
 
-	req, err := http.NewRequest(http.MethodPost, proxy.URL+PathPrefix+"/v1/responses?trace=1", bytes.NewReader(compressed))
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Content-Encoding", "zstd")
-	req.Header.Set("ChatGPT-Account-ID", "account-123")
-	req.Header.Set("Authorization", "Bearer chatgpt-secret")
-	req.Header.Set("X-Codex-Turn-Metadata", `{"thread":"secret"}`)
+	for _, authorization := range []string{"Bearer chatgpt-secret", "Bearer " + ManagedAPIKey} {
+		req, err := http.NewRequest(http.MethodPost, proxy.URL+PathPrefix+"/v1/responses?trace=1", bytes.NewReader(compressed))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Encoding", "zstd")
+		req.Header.Set("ChatGPT-Account-ID", "account-123")
+		req.Header.Set("Authorization", authorization)
+		req.Header.Set("X-Codex-Turn-Metadata", `{"thread":"secret"}`)
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	responseBody, _ := io.ReadAll(resp.Body)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		responseBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK || string(responseBody) != "data: routed\n\n" {
-		t.Fatalf("response = %d %q", resp.StatusCode, responseBody)
-	}
-	if gotPath != "/v1/responses" || gotQuery != "trace=1" {
-		t.Fatalf("Ollama target = %s?%s", gotPath, gotQuery)
-	}
-	if gotAuthorization != "" || gotEncoding != "" || gotMetadata != "" {
-		t.Fatalf("credentials leaked to Ollama: authorization=%q encoding=%q metadata=%q", gotAuthorization, gotEncoding, gotMetadata)
-	}
-	if string(gotBody) != string(payload) {
-		t.Fatalf("Ollama body = %q, want decompressed %q", gotBody, payload)
+		if resp.StatusCode != http.StatusOK || string(responseBody) != "data: routed\n\n" {
+			t.Fatalf("response with %q = %d %q", authorization, resp.StatusCode, responseBody)
+		}
+		if gotPath != "/v1/responses" || gotQuery != "trace=1" {
+			t.Fatalf("Ollama target = %s?%s", gotPath, gotQuery)
+		}
+		if gotAuthorization != "" || gotEncoding != "" || gotMetadata != "" {
+			t.Fatalf("credentials leaked to Ollama: authorization=%q encoding=%q metadata=%q", gotAuthorization, gotEncoding, gotMetadata)
+		}
+		if string(gotBody) != string(payload) {
+			t.Fatalf("Ollama body = %q, want decompressed %q", gotBody, payload)
+		}
 	}
 }
 
@@ -934,6 +936,63 @@ func TestHandlerPassesNativeModelToOpenAIAPIWithAPIKey(t *testing.T) {
 	}
 	if gotAuthorization != "Bearer sk-test" || gotOrganization != "org-test" {
 		t.Fatalf("OpenAI API headers were not preserved: authorization=%q organization=%q", gotAuthorization, gotOrganization)
+	}
+}
+
+func TestHandlerRejectsManagedAPIKeyForNativeModel(t *testing.T) {
+	ollamaCalled := false
+	ollama := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		ollamaCalled = true
+	}))
+	defer ollama.Close()
+	chatGPTCalled := false
+	chatGPT := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		chatGPTCalled = true
+	}))
+	defer chatGPT.Close()
+	openAICalled := false
+	openAI := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		openAICalled = true
+	}))
+	defer openAI.Close()
+
+	handler, err := New(Config{
+		PathPrefix:         PathPrefix,
+		OllamaURL:          ollama.URL,
+		ChatGPTURL:         chatGPT.URL + "/backend-api/codex",
+		OpenAIURL:          openAI.URL + "/v1",
+		RoutingCatalogPath: writeCatalog(t, "glm-5.2:cloud"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httptest.NewServer(handler)
+	defer proxy.Close()
+
+	req, err := http.NewRequest(
+		http.MethodPost,
+		proxy.URL+PathPrefix+"/v1/responses",
+		strings.NewReader(`{"model":"gpt-5.6-sol"}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+ManagedAPIKey)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401: %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "OpenAI models require signing in") {
+		t.Fatalf("body = %q, want sign-in recovery", body)
+	}
+	if ollamaCalled || chatGPTCalled || openAICalled {
+		t.Fatalf("managed API key escaped local rejection: ollama=%v chatgpt=%v openai=%v", ollamaCalled, chatGPTCalled, openAICalled)
 	}
 }
 
