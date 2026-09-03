@@ -232,22 +232,18 @@ func chatTemplateCapabilities(capabilities []model.Capability, chatTemplate stri
 		return capabilities
 	}
 
-	if chatTemplateHasToolSupport(chatTemplate) {
+	if model.ChatTemplateHasToolSupport(chatTemplate) {
 		capabilities = appendCapability(capabilities, model.CapabilityTools)
 	}
-	if chatTemplateHasThinkingSupport(chatTemplate) {
+	if model.ChatTemplateHasThinkingSupport(chatTemplate) {
 		capabilities = appendCapability(capabilities, model.CapabilityThinking)
 	}
 
 	return capabilities
 }
 
-func chatTemplateHasToolSupport(chatTemplate string) bool {
-	return strings.Contains(chatTemplate, "tools") || strings.Contains(chatTemplate, "tool_call")
-}
-
 func chatTemplateHasToolRoundTrip(chatTemplate string) bool {
-	if !chatTemplateHasToolSupport(chatTemplate) {
+	if !model.ChatTemplateHasToolSupport(chatTemplate) {
 		return false
 	}
 
@@ -261,19 +257,6 @@ func chatTemplateHasToolRoundTrip(chatTemplate string) bool {
 		strings.Contains(chatTemplate, `message.role == 'tool'`) ||
 		strings.Contains(chatTemplate, `message.role == "tool"`) ||
 		strings.Contains(chatTemplate, "ipython"))
-}
-
-func chatTemplateHasThinkingSupport(chatTemplate string) bool {
-	if strings.Contains(chatTemplate, "<think>") && strings.Contains(chatTemplate, "</think>") {
-		return true
-	}
-
-	// Some Qwen/DeepSeek templates strip prior reasoning by splitting assistant
-	// content at </think>; llama.cpp can still extract reasoning from them.
-	return (strings.Contains(chatTemplate, "content.split('</think>')") ||
-		strings.Contains(chatTemplate, `content.split("</think>")`)) &&
-		!strings.Contains(chatTemplate, "reasoning_content") &&
-		!strings.Contains(chatTemplate, "<SPECIAL_12>")
 }
 
 func goTemplateCapabilities(t *template.Template) []model.Capability {
