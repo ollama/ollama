@@ -600,8 +600,12 @@ func (p *ResponsesCompactionPlan) Complete(body []byte) (ResponsesCompactionResu
 		return ResponsesCompactionResult{}, fmt.Errorf("expected one %s call, got %d", CreateSummaryToolName, len(calls))
 	}
 
+	arguments, ok := calls[0].Arguments.(string)
+	if !ok {
+		return ResponsesCompactionResult{}, fmt.Errorf("invalid %s arguments: expected a JSON string", CreateSummaryToolName)
+	}
 	var selection summarySelection
-	if err := json.Unmarshal([]byte(calls[0].Arguments), &selection); err != nil {
+	if err := json.Unmarshal([]byte(arguments), &selection); err != nil {
 		return ResponsesCompactionResult{}, fmt.Errorf("invalid %s arguments: %w", CreateSummaryToolName, err)
 	}
 	selection.Summary = strings.TrimSpace(selection.Summary)
