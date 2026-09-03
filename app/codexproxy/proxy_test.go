@@ -3,6 +3,7 @@ package codexproxy
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -250,16 +251,383 @@ func TestLoadCatalogModelsReadsOptionalThinkingMetadata(t *testing.T) {
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	models, err := loadCatalogModels(path)
+	catalog, err := loadRoutingCatalog(path)
 	if err != nil {
 		t.Fatal(err)
 	}
+	models := catalog.models
 	if models["legacy"].Thinking != nil {
 		t.Fatalf("legacy model thinking metadata = %+v, want absent", models["legacy"].Thinking)
 	}
 	binary := models["binary"].Thinking
 	if binary == nil || !binary.Supported || strings.Join(binary.Levels, ",") != "none,medium" {
 		t.Fatalf("binary model thinking metadata = %+v, want off/medium contract", binary)
+	}
+}
+
+func TestHandlerRoutesAutoReviewToConfiguredOllamaModel(t *testing.T) {
+	var gotBody []byte
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, autoReviewJSONResponse(`{"risk_level":"low","user_authorization":"high","outcome":"allow","rationale":"The user requested this action."}`))
+	}))
+	defer ollama.Close()
+
+	chatGPT := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("configured Auto-review request should not reach ChatGPT")
+	}))
+	defer chatGPT.Close()
+
+	handler := newTestHandler(t, ollama.URL, chatGPT.URL, writeCatalogWithAutoReview(t, "glm-5.3-flash:cloud", "glm-5.3-flash:cloud"))
+	proxy := httptest.NewServer(handler)
+	defer proxy.Close()
+
+	resp, err := http.Post(
+		proxy.URL+PathPrefix+"/v1/responses",
+		"application/json",
+		strings.NewReader(`{"model":"codex-auto-review","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"review"}]}]}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+
+	var forwarded struct {
+		Model string `json:"model"`
+		Tools []struct {
+			Type       string `json:"type"`
+			Name       string `json:"name"`
+			Strict     bool   `json:"strict"`
+			Parameters struct {
+				Required             []string `json:"required"`
+				AdditionalProperties bool     `json:"additionalProperties"`
+			} `json:"parameters"`
+		} `json:"tools"`
+		Input []struct {
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"input"`
+	}
+	if err := json.Unmarshal(gotBody, &forwarded); err != nil {
+		t.Fatal(err)
+	}
+	if forwarded.Model != "glm-5.3-flash:cloud" {
+		t.Fatalf("forwarded model = %q, want selected Ollama model", forwarded.Model)
+	}
+	if len(forwarded.Input) != 1 || len(forwarded.Input[0].Content) != 2 {
+		t.Fatalf("forwarded input = %#v", forwarded.Input)
+	}
+	instruction := forwarded.Input[0].Content[1]
+	if instruction.Type != "input_text" || !strings.Contains(instruction.Text, "call submit_guardian_decision exactly once") {
+		t.Fatalf("Auto-review decision instruction = %#v", instruction)
+	}
+	if len(forwarded.Tools) != 1 || forwarded.Tools[0].Type != "function" || forwarded.Tools[0].Name != guardianDecisionToolName || !forwarded.Tools[0].Strict {
+		t.Fatalf("Auto-review tools = %#v", forwarded.Tools)
+	}
+	if len(forwarded.Tools[0].Parameters.Required) != 4 || forwarded.Tools[0].Parameters.AdditionalProperties {
+		t.Fatalf("Auto-review tool schema = %#v", forwarded.Tools[0].Parameters)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(gotBody, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := raw["response_format"]; ok {
+		t.Fatalf("Auto-review request unexpectedly used structured outputs: %s", gotBody)
+	}
+	if _, ok := raw["text"]; ok {
+		t.Fatalf("Auto-review request unexpectedly added a structured text format: %s", gotBody)
+	}
+
+	var response struct {
+		Output []struct {
+			Type    string `json:"type"`
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"output"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Output) != 1 || response.Output[0].Type != "message" || len(response.Output[0].Content) != 1 || response.Output[0].Content[0].Text != `{"risk_level":"low","user_authorization":"high","outcome":"allow","rationale":"The user requested this action."}` {
+		t.Fatalf("translated Auto-review response = %#v", response.Output)
+	}
+}
+
+func TestPrepareAutoReviewRequestSupportsStringContentAndPreservesTools(t *testing.T) {
+	body := []byte(`{"model":"codex-auto-review","tools":[{"type":"function","name":"inspect","description":"Inspect","strict":true,"parameters":{"type":"object"}}],"input":[{"role":"user","content":"review"}]}`)
+	updated, err := prepareAutoReviewRequest(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Tools []struct {
+			Name string `json:"name"`
+		} `json:"tools"`
+		Input []struct {
+			Content string `json:"content"`
+		} `json:"input"`
+	}
+	if err := json.Unmarshal(updated, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Input) != 1 || !strings.HasPrefix(payload.Input[0].Content, "review") || !strings.Contains(payload.Input[0].Content, guardianDecisionToolName) {
+		t.Fatalf("updated input = %#v", payload.Input)
+	}
+	if len(payload.Tools) != 2 || payload.Tools[0].Name != "inspect" || payload.Tools[1].Name != guardianDecisionToolName {
+		t.Fatalf("updated tools = %#v", payload.Tools)
+	}
+}
+
+func TestPrepareAutoReviewRequestRejectsRequestsWithoutUserMessages(t *testing.T) {
+	body := []byte(`{"model":"codex-auto-review","input":[{"role":"developer","content":"policy"}]}`)
+	if _, err := prepareAutoReviewRequest(body); err == nil || !strings.Contains(err.Error(), "no user message") {
+		t.Fatalf("error = %v, want missing user message", err)
+	}
+}
+
+func TestPrepareAutoReviewRequestUsesLastUserMessage(t *testing.T) {
+	body := []byte(`{"input":[{"role":"user","content":"earlier"},{"role":"assistant","content":"reviewed"},{"role":"user","content":"latest"}]}`)
+	updated, err := prepareAutoReviewRequest(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Input []struct {
+			Content string `json:"content"`
+		} `json:"input"`
+	}
+	if err := json.Unmarshal(updated, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Input[0].Content != "earlier" {
+		t.Fatalf("earlier user message was changed: %q", payload.Input[0].Content)
+	}
+	if !strings.HasPrefix(payload.Input[2].Content, "latest") || !strings.Contains(payload.Input[2].Content, guardianDecisionToolName) {
+		t.Fatalf("latest user message = %q", payload.Input[2].Content)
+	}
+}
+
+func TestTransformAutoReviewEventStreamConvertsDecisionToolCall(t *testing.T) {
+	arguments := `{"risk_level":"medium","user_authorization":"low","outcome":"deny","rationale":"The action exceeds the user's authorization."}`
+	body := autoReviewEventStream(t, guardianDecisionToolName, arguments)
+	transformed, changed, err := transformAutoReviewResponse(body, "text/event-stream; charset=utf-8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("decision tool call was not transformed")
+	}
+	text := string(transformed)
+	if strings.Contains(text, "response.function_call_arguments") || strings.Contains(text, `"type":"function_call"`) {
+		t.Fatalf("transformed stream still contains the decision tool call:\n%s", text)
+	}
+	for _, want := range []string{
+		"event: response.output_text.delta",
+		"event: response.output_text.done",
+		`\"outcome\":\"deny\"`,
+		`"type":"message"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("transformed stream missing %q:\n%s", want, text)
+		}
+	}
+
+	events, err := parseServerSentEvents(transformed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, event := range events {
+		if bytes.Equal(bytes.TrimSpace(event.data), []byte("[DONE]")) {
+			continue
+		}
+		var payload struct {
+			Sequence int `json:"sequence_number"`
+		}
+		if err := json.Unmarshal(event.data, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.Sequence != i {
+			t.Fatalf("event %d sequence_number = %d", i, payload.Sequence)
+		}
+	}
+}
+
+func TestTransformAutoReviewResponsePassesThroughInvestigativeToolCall(t *testing.T) {
+	body := []byte(autoReviewJSONResponseForTool("inspect_command", `{"command":"rm -rf tmp"}`))
+	transformed, changed, err := transformAutoReviewResponse(body, "application/json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed || !bytes.Equal(transformed, body) {
+		t.Fatalf("investigative tool call changed: %s", transformed)
+	}
+}
+
+func TestTransformAutoReviewResponseRejectsInvalidDecision(t *testing.T) {
+	body := []byte(autoReviewJSONResponse(`{"risk_level":"low","user_authorization":"high","outcome":"maybe","rationale":"Invalid outcome."}`))
+	if _, _, err := transformAutoReviewResponse(body, "application/json"); err == nil || !strings.Contains(err.Error(), "invalid Guardian outcome") {
+		t.Fatalf("error = %v, want invalid outcome", err)
+	}
+}
+
+func TestTransformAutoReviewResponseRejectsTextDecision(t *testing.T) {
+	body := []byte(`{"id":"resp_1","status":"completed","output":[{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"{\\\"outcome\\\":\\\"allow\\\"}"}]}]}`)
+	if _, _, err := transformAutoReviewResponse(body, "application/json"); err == nil || !strings.Contains(err.Error(), "did not call") {
+		t.Fatalf("error = %v, want missing decision tool call", err)
+	}
+}
+
+func TestTransformAutoReviewJSONDiscardsProseWithValidDecision(t *testing.T) {
+	arguments := `{"risk_level":"low","user_authorization":"high","outcome":"allow","rationale":"The command is read-only and explicitly requested."}`
+	body := []byte(fmt.Sprintf(`{"id":"resp_1","status":"completed","output":[{"id":"fc_1","type":"function_call","status":"completed","call_id":"call_1","name":%q,"arguments":%q},{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Submitting approval."}]}]}`, guardianDecisionToolName, arguments))
+	transformed, changed, err := transformAutoReviewResponse(body, "application/json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("mixed decision response was not transformed")
+	}
+	var response struct {
+		Output []struct {
+			ID      string `json:"id"`
+			Type    string `json:"type"`
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"output"`
+	}
+	if err := json.Unmarshal(transformed, &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Output) != 1 || response.Output[0].ID != "fc_1" || response.Output[0].Type != "message" || len(response.Output[0].Content) != 1 || response.Output[0].Content[0].Text != arguments {
+		t.Fatalf("transformed output = %#v", response.Output)
+	}
+}
+
+func TestTransformAutoReviewEventStreamDiscardsProseWithValidDecision(t *testing.T) {
+	arguments := `{"risk_level":"low","user_authorization":"high","outcome":"allow","rationale":"The command is read-only and explicitly requested."}`
+	extraMessage := map[string]any{
+		"id": "msg_1", "type": "message", "status": "completed", "role": "assistant",
+		"content": []any{map[string]any{"type": "output_text", "text": "Submitting approval.", "annotations": []any{}, "logprobs": []any{}}},
+	}
+	body := autoReviewEventStream(t, guardianDecisionToolName, arguments, extraMessage)
+	transformed, changed, err := transformAutoReviewResponse(body, "text/event-stream")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("mixed decision stream was not transformed")
+	}
+	text := string(transformed)
+	if strings.Contains(text, "Submitting approval") || strings.Contains(text, "msg_1") {
+		t.Fatalf("transformed stream retained assistant prose:\n%s", text)
+	}
+	events, err := parseServerSentEvents(transformed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var completed map[string]any
+	for _, event := range events {
+		if event.event == "response.completed" {
+			if err := json.Unmarshal(event.data, &completed); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	response := completed["response"].(map[string]any)
+	output := response["output"].([]any)
+	if len(output) != 1 || itemString(output[0].(map[string]any), "id") != "fc_1" || itemString(output[0].(map[string]any), "type") != "message" {
+		t.Fatalf("completed output = %#v", output)
+	}
+}
+
+func TestTransformAutoReviewResponseRejectsDecisionWithAnotherToolCall(t *testing.T) {
+	decision := `{"risk_level":"low","user_authorization":"high","outcome":"allow","rationale":"Allowed."}`
+	body := []byte(fmt.Sprintf(`{"id":"resp_1","status":"completed","output":[{"id":"fc_1","type":"function_call","name":%q,"arguments":%q},{"id":"fc_2","type":"function_call","name":"inspect_command","arguments":"{}"}]}`, guardianDecisionToolName, decision))
+	if _, _, err := transformAutoReviewResponse(body, "application/json"); err == nil || !strings.Contains(err.Error(), "other terminal output") {
+		t.Fatalf("error = %v, want mixed terminal output", err)
+	}
+}
+
+func TestTransformAutoReviewResponsePreservesProviderFailure(t *testing.T) {
+	body := []byte(`{"id":"resp_1","status":"failed","output":[],"error":{"code":"provider_error","message":"unavailable"}}`)
+	transformed, changed, err := transformAutoReviewResponse(body, "application/json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed || !bytes.Equal(transformed, body) {
+		t.Fatalf("provider failure changed: %s", transformed)
+	}
+}
+
+func TestHandlerKeepsAutoReviewOnChatGPTByDefault(t *testing.T) {
+	ollama := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("native Auto-review request should not reach Ollama")
+	}))
+	defer ollama.Close()
+
+	var gotModel string
+	chatGPT := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		gotModel = payload.Model
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer chatGPT.Close()
+
+	handler := newTestHandler(t, ollama.URL, chatGPT.URL, writeCatalog(t, "glm-5.3-flash:cloud"))
+	proxy := httptest.NewServer(handler)
+	defer proxy.Close()
+
+	req, err := http.NewRequest(http.MethodPost, proxy.URL+PathPrefix+"/v1/responses", strings.NewReader(`{"model":"codex-auto-review"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("ChatGPT-Account-ID", "account-123")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if gotModel != autoReviewModel {
+		t.Fatalf("forwarded model = %q, want native reviewer alias", gotModel)
+	}
+}
+
+func TestHandlerRejectsAutoReviewModelOutsideRoutingCatalog(t *testing.T) {
+	called := false
+	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		called = true
+	}))
+	defer upstream.Close()
+
+	handler := newTestHandler(t, upstream.URL, upstream.URL, writeCatalogWithAutoReview(t, "qwen3:8b", "glm-5.3-flash:cloud"))
+	req := httptest.NewRequest(http.MethodPost, "http://localhost"+PathPrefix+"/v1/responses", strings.NewReader(`{"model":"codex-auto-review"}`))
+	req.RemoteAddr = "127.0.0.1:1234"
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503: %s", recorder.Code, recorder.Body.String())
+	}
+	if called {
+		t.Fatal("invalid Auto-review configuration reached an upstream")
 	}
 }
 
@@ -923,12 +1291,16 @@ func newTestHandler(t *testing.T, ollamaURL, chatGPTURL, catalogPath string) *Ha
 }
 
 func writeCatalog(t *testing.T, models ...string) string {
+	return writeCatalogWithAutoReview(t, "", models...)
+}
+
+func writeCatalogWithAutoReview(t *testing.T, autoReviewModel string, models ...string) string {
 	t.Helper()
 	entries := make([]map[string]string, 0, len(models))
 	for _, model := range models {
 		entries = append(entries, map[string]string{"slug": model})
 	}
-	data, err := json.Marshal(map[string]any{"models": entries})
+	data, err := json.Marshal(map[string]any{"models": entries, "auto_review_model": autoReviewModel})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -937,4 +1309,51 @@ func writeCatalog(t *testing.T, models ...string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func autoReviewJSONResponse(arguments string) string {
+	return autoReviewJSONResponseForTool(guardianDecisionToolName, arguments)
+}
+
+func autoReviewJSONResponseForTool(name, arguments string) string {
+	return fmt.Sprintf(`{"id":"resp_1","status":"completed","output":[{"id":"fc_1","type":"function_call","status":"completed","call_id":"call_1","name":%q,"arguments":%q}]}`, name, arguments)
+}
+
+func autoReviewEventStream(t *testing.T, name, arguments string, extraOutput ...map[string]any) []byte {
+	t.Helper()
+	inProgressItem := map[string]any{
+		"id": "fc_1", "type": "function_call", "status": "in_progress", "call_id": "call_1", "name": name, "arguments": "",
+	}
+	completedItem := map[string]any{
+		"id": "fc_1", "type": "function_call", "status": "completed", "call_id": "call_1", "name": name, "arguments": arguments,
+	}
+	events := []serverSentEvent{
+		newServerSentEvent("response.created", map[string]any{"response": map[string]any{"id": "resp_1", "status": "in_progress", "output": []any{}}}),
+		newServerSentEvent("response.output_item.added", map[string]any{"output_index": 0, "item": inProgressItem}),
+		newServerSentEvent("response.function_call_arguments.delta", map[string]any{"item_id": "fc_1", "output_index": 0, "delta": arguments}),
+		newServerSentEvent("response.function_call_arguments.done", map[string]any{"item_id": "fc_1", "output_index": 0, "arguments": arguments}),
+		newServerSentEvent("response.output_item.done", map[string]any{"output_index": 0, "item": completedItem}),
+	}
+	output := []any{completedItem}
+	for i, item := range extraOutput {
+		outputIndex := i + 1
+		itemID := itemString(item, "id")
+		content := item["content"].([]any)[0].(map[string]any)
+		text := itemString(content, "text")
+		events = append(events,
+			newServerSentEvent("response.output_item.added", map[string]any{"output_index": outputIndex, "item": map[string]any{"id": itemID, "type": "message", "status": "in_progress", "role": "assistant", "content": []any{}}}),
+			newServerSentEvent("response.content_part.added", map[string]any{"item_id": itemID, "output_index": outputIndex, "content_index": 0, "part": map[string]any{"type": "output_text", "text": "", "annotations": []any{}, "logprobs": []any{}}}),
+			newServerSentEvent("response.output_text.delta", map[string]any{"item_id": itemID, "output_index": outputIndex, "content_index": 0, "delta": text, "logprobs": []any{}}),
+			newServerSentEvent("response.output_text.done", map[string]any{"item_id": itemID, "output_index": outputIndex, "content_index": 0, "text": text, "logprobs": []any{}}),
+			newServerSentEvent("response.content_part.done", map[string]any{"item_id": itemID, "output_index": outputIndex, "content_index": 0, "part": content}),
+			newServerSentEvent("response.output_item.done", map[string]any{"output_index": outputIndex, "item": item}),
+		)
+		output = append(output, item)
+	}
+	events = append(events, newServerSentEvent("response.completed", map[string]any{"response": map[string]any{"id": "resp_1", "status": "completed", "output": output}}))
+	encoded, err := encodeServerSentEvents(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
 }
