@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/app/codexproxy"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
+	"github.com/ollama/ollama/internal/proxy"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -238,7 +238,7 @@ func TestCodexAppConfigureMarksOnlyOllamaModelsForNonChatGPTSessions(t *testing.
 func TestCodexAppRouterHealth(t *testing.T) {
 	t.Run("ready", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != codexproxy.PathPrefix+"/_health" {
+			if r.URL.Path != proxy.CodexDesktopPathPrefix+"/_health" {
 				t.Fatalf("health path = %q", r.URL.Path)
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -561,7 +561,7 @@ func TestCodexAppManagedAuthLifecycle(t *testing.T) {
 		if err := json.Unmarshal(data, &auth); err != nil {
 			t.Fatal(err)
 		}
-		if auth.AuthMode != "apikey" || auth.OpenAIAPIKey != codexproxy.ManagedAPIKey {
+		if auth.AuthMode != "apikey" || auth.OpenAIAPIKey != proxy.CodexDesktopManagedAPIKey {
 			t.Fatalf("managed auth = %+v", auth)
 		}
 		info, err := os.Stat(authPath)

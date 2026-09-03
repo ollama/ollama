@@ -1,4 +1,4 @@
-package codexproxy
+package proxy
 
 import (
 	"bytes"
@@ -15,7 +15,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
-func TestHandlerRoutesCatalogModelToOllamaAndStripsCredentials(t *testing.T) {
+func TestCodexDesktopRoutesCatalogModelToOllamaAndStripsCredentials(t *testing.T) {
 	var gotPath, gotQuery, gotAuthorization, gotEncoding, gotMetadata string
 	var gotBody []byte
 	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -36,7 +36,7 @@ func TestHandlerRoutesCatalogModelToOllamaAndStripsCredentials(t *testing.T) {
 	defer chatGPT.Close()
 
 	catalogPath := writeCatalog(t, "glm-5.2:cloud")
-	handler := newTestHandler(t, ollama.URL, chatGPT.URL+"/backend-api/codex", catalogPath)
+	handler := newTestCodexDesktop(t, ollama.URL, chatGPT.URL+"/backend-api/codex", catalogPath)
 	proxy := httptest.NewServer(handler)
 	defer proxy.Close()
 
@@ -48,8 +48,8 @@ func TestHandlerRoutesCatalogModelToOllamaAndStripsCredentials(t *testing.T) {
 	compressed := encoder.EncodeAll(payload, nil)
 	encoder.Close()
 
-	for _, authorization := range []string{"Bearer chatgpt-secret", "Bearer " + ManagedAPIKey} {
-		req, err := http.NewRequest(http.MethodPost, proxy.URL+PathPrefix+"/v1/responses?trace=1", bytes.NewReader(compressed))
+	for _, authorization := range []string{"Bearer chatgpt-secret", "Bearer " + CodexDesktopManagedAPIKey} {
+		req, err := http.NewRequest(http.MethodPost, proxy.URL+CodexDesktopPathPrefix+"/v1/responses?trace=1", bytes.NewReader(compressed))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -78,6 +78,49 @@ func TestHandlerRoutesCatalogModelToOllamaAndStripsCredentials(t *testing.T) {
 		if string(gotBody) != string(payload) {
 			t.Fatalf("Ollama body = %q, want decompressed %q", gotBody, payload)
 		}
+	}
+}
+
+func TestCodexDesktopRoutesOllamaAndNativeModelsThroughOneEndpoint(t *testing.T) {
+	var ollamaCalls, chatGPTCalls int
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		ollamaCalls++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ollama.Close()
+	chatGPT := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		chatGPTCalls++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer chatGPT.Close()
+
+	handler := newTestCodexDesktop(t, ollama.URL, chatGPT.URL+"/backend-api/codex", writeCatalog(t, "glm-5.2:cloud"))
+	endpoint := httptest.NewServer(handler)
+	defer endpoint.Close()
+
+	for _, model := range []string{"glm-5.2:cloud", "gpt-5.6-sol"} {
+		req, err := http.NewRequest(
+			http.MethodPost,
+			endpoint.URL+CodexDesktopPathPrefix+"/v1/responses",
+			strings.NewReader(fmt.Sprintf(`{"model":%q}`, model)),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer chatgpt-secret")
+		req.Header.Set("ChatGPT-Account-ID", "account-123")
+		resp, err := endpoint.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusNoContent {
+			t.Fatalf("model %q status = %d", model, resp.StatusCode)
+		}
+	}
+
+	if ollamaCalls != 1 || chatGPTCalls != 1 {
+		t.Fatalf("routes through one endpoint: Ollama calls=%d ChatGPT calls=%d", ollamaCalls, chatGPTCalls)
 	}
 }
 
@@ -272,7 +315,7 @@ func TestNormalizeOllamaThinkingRejectsMalformedReasoning(t *testing.T) {
 }
 
 func TestLoadCatalogModelsReadsOptionalThinkingMetadata(t *testing.T) {
-	path := filepath.Join(t.TempDir(), ModelCatalogFilename)
+	path := filepath.Join(t.TempDir(), CodexDesktopModelCatalogFilename)
 	data := []byte(`{"models":[{"slug":"legacy"},{"slug":"binary","thinking":{"supported":true,"levels":["none","medium"],"values":{"none":false,"medium":true}}}]}`)
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
@@ -294,7 +337,7 @@ func TestLoadCatalogModelsReadsOptionalThinkingMetadata(t *testing.T) {
 	}
 }
 
-func TestHandlerRoutesAutoReviewToConfiguredOllamaModel(t *testing.T) {
+func TestCodexDesktopRoutesAutoReviewToConfiguredOllamaModel(t *testing.T) {
 	var gotBody []byte
 	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotBody, _ = io.ReadAll(r.Body)
@@ -308,12 +351,12 @@ func TestHandlerRoutesAutoReviewToConfiguredOllamaModel(t *testing.T) {
 	}))
 	defer chatGPT.Close()
 
-	handler := newTestHandler(t, ollama.URL, chatGPT.URL, writeCatalogWithAutoReview(t, "glm-5.3-flash:cloud", "glm-5.3-flash:cloud"))
+	handler := newTestCodexDesktop(t, ollama.URL, chatGPT.URL, writeCatalogWithAutoReview(t, "glm-5.3-flash:cloud", "glm-5.3-flash:cloud"))
 	proxy := httptest.NewServer(handler)
 	defer proxy.Close()
 
 	resp, err := http.Post(
-		proxy.URL+PathPrefix+"/v1/responses",
+		proxy.URL+CodexDesktopPathPrefix+"/v1/responses",
 		"application/json",
 		strings.NewReader(`{"model":"codex-auto-review","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"review"}]}]}`),
 	)
@@ -597,7 +640,7 @@ func TestTransformAutoReviewResponsePreservesProviderFailure(t *testing.T) {
 	}
 }
 
-func TestHandlerKeepsAutoReviewOnChatGPTByDefault(t *testing.T) {
+func TestCodexDesktopKeepsAutoReviewOnChatGPTByDefault(t *testing.T) {
 	ollama := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Fatal("native Auto-review request should not reach Ollama")
 	}))
@@ -616,11 +659,11 @@ func TestHandlerKeepsAutoReviewOnChatGPTByDefault(t *testing.T) {
 	}))
 	defer chatGPT.Close()
 
-	handler := newTestHandler(t, ollama.URL, chatGPT.URL, writeCatalog(t, "glm-5.3-flash:cloud"))
+	handler := newTestCodexDesktop(t, ollama.URL, chatGPT.URL, writeCatalog(t, "glm-5.3-flash:cloud"))
 	proxy := httptest.NewServer(handler)
 	defer proxy.Close()
 
-	req, err := http.NewRequest(http.MethodPost, proxy.URL+PathPrefix+"/v1/responses", strings.NewReader(`{"model":"codex-auto-review"}`))
+	req, err := http.NewRequest(http.MethodPost, proxy.URL+CodexDesktopPathPrefix+"/v1/responses", strings.NewReader(`{"model":"codex-auto-review"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -639,15 +682,15 @@ func TestHandlerKeepsAutoReviewOnChatGPTByDefault(t *testing.T) {
 	}
 }
 
-func TestHandlerRejectsAutoReviewModelOutsideRoutingCatalog(t *testing.T) {
+func TestCodexDesktopRejectsAutoReviewModelOutsideRoutingCatalog(t *testing.T) {
 	called := false
 	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		called = true
 	}))
 	defer upstream.Close()
 
-	handler := newTestHandler(t, upstream.URL, upstream.URL, writeCatalogWithAutoReview(t, "qwen3:8b", "glm-5.3-flash:cloud"))
-	req := httptest.NewRequest(http.MethodPost, "http://localhost"+PathPrefix+"/v1/responses", strings.NewReader(`{"model":"codex-auto-review"}`))
+	handler := newTestCodexDesktop(t, upstream.URL, upstream.URL, writeCatalogWithAutoReview(t, "qwen3:8b", "glm-5.3-flash:cloud"))
+	req := httptest.NewRequest(http.MethodPost, "http://localhost"+CodexDesktopPathPrefix+"/v1/responses", strings.NewReader(`{"model":"codex-auto-review"}`))
 	req.RemoteAddr = "127.0.0.1:1234"
 	recorder := httptest.NewRecorder()
 
@@ -660,7 +703,7 @@ func TestHandlerRejectsAutoReviewModelOutsideRoutingCatalog(t *testing.T) {
 	}
 }
 
-func TestHandlerNormalizesCodexOnlyHistoryForOllama(t *testing.T) {
+func TestCodexDesktopNormalizesCodexOnlyHistoryForOllama(t *testing.T) {
 	var gotBody []byte
 	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotBody, _ = io.ReadAll(r.Body)
@@ -672,7 +715,7 @@ func TestHandlerNormalizesCodexOnlyHistoryForOllama(t *testing.T) {
 	}))
 	defer chatGPT.Close()
 
-	handler := newTestHandler(t, ollama.URL, chatGPT.URL, writeCatalog(t, "glm-5.2:cloud"))
+	handler := newTestCodexDesktop(t, ollama.URL, chatGPT.URL, writeCatalog(t, "glm-5.2:cloud"))
 	proxy := httptest.NewServer(handler)
 	defer proxy.Close()
 
@@ -688,7 +731,7 @@ func TestHandlerNormalizesCodexOnlyHistoryForOllama(t *testing.T) {
 			{"type":"future_codex_item","secret":"ignored"}
 		]
 	}`
-	resp, err := http.Post(proxy.URL+PathPrefix+"/v1/responses", "application/json", strings.NewReader(payload))
+	resp, err := http.Post(proxy.URL+CodexDesktopPathPrefix+"/v1/responses", "application/json", strings.NewReader(payload))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -726,7 +769,7 @@ func TestHandlerNormalizesCodexOnlyHistoryForOllama(t *testing.T) {
 	}
 }
 
-func TestHandlerPreservesToolSearchAndOllamaCompactionForOllama(t *testing.T) {
+func TestCodexDesktopPreservesToolSearchAndOllamaCompactionForOllama(t *testing.T) {
 	var gotBody []byte
 	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotBody, _ = io.ReadAll(r.Body)
@@ -738,7 +781,7 @@ func TestHandlerPreservesToolSearchAndOllamaCompactionForOllama(t *testing.T) {
 	}))
 	defer chatGPT.Close()
 
-	handler := newTestHandler(t, ollama.URL, chatGPT.URL, writeCatalog(t, "glm-5.3-flash:cloud"))
+	handler := newTestCodexDesktop(t, ollama.URL, chatGPT.URL, writeCatalog(t, "glm-5.3-flash:cloud"))
 	proxy := httptest.NewServer(handler)
 	defer proxy.Close()
 
@@ -753,7 +796,7 @@ func TestHandlerPreservesToolSearchAndOllamaCompactionForOllama(t *testing.T) {
 			{"type":"compaction_trigger"}
 		]
 	}`
-	resp, err := http.Post(proxy.URL+PathPrefix+"/v1/responses", "application/json", strings.NewReader(payload))
+	resp, err := http.Post(proxy.URL+CodexDesktopPathPrefix+"/v1/responses", "application/json", strings.NewReader(payload))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -779,7 +822,7 @@ func TestHandlerPreservesToolSearchAndOllamaCompactionForOllama(t *testing.T) {
 	}
 }
 
-func TestHandlerFiltersNativeReasoningWhenSwitchingToOllama(t *testing.T) {
+func TestCodexDesktopFiltersNativeReasoningWhenSwitchingToOllama(t *testing.T) {
 	var gotBody []byte
 	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotBody, _ = io.ReadAll(r.Body)
@@ -791,7 +834,7 @@ func TestHandlerFiltersNativeReasoningWhenSwitchingToOllama(t *testing.T) {
 	}))
 	defer chatGPT.Close()
 
-	handler := newTestHandler(t, ollama.URL, chatGPT.URL, writeCatalog(t, "glm-5.3-flash:cloud"))
+	handler := newTestCodexDesktop(t, ollama.URL, chatGPT.URL, writeCatalog(t, "glm-5.3-flash:cloud"))
 	proxy := httptest.NewServer(handler)
 	defer proxy.Close()
 
@@ -804,7 +847,7 @@ func TestHandlerFiltersNativeReasoningWhenSwitchingToOllama(t *testing.T) {
 			{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]}
 		]
 	}`
-	resp, err := http.Post(proxy.URL+PathPrefix+"/v1/responses", "application/json", strings.NewReader(payload))
+	resp, err := http.Post(proxy.URL+CodexDesktopPathPrefix+"/v1/responses", "application/json", strings.NewReader(payload))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -830,7 +873,7 @@ func TestHandlerFiltersNativeReasoningWhenSwitchingToOllama(t *testing.T) {
 	}
 }
 
-func TestHandlerPassesNativeModelToChatGPT(t *testing.T) {
+func TestCodexDesktopPassesNativeModelToChatGPT(t *testing.T) {
 	ollama := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Fatal("native model should not reach Ollama")
 	}))
@@ -848,12 +891,12 @@ func TestHandlerPassesNativeModelToChatGPT(t *testing.T) {
 	}))
 	defer chatGPT.Close()
 
-	handler := newTestHandler(t, ollama.URL, chatGPT.URL+"/backend-api/codex", writeCatalog(t, "glm-5.2:cloud"))
+	handler := newTestCodexDesktop(t, ollama.URL, chatGPT.URL+"/backend-api/codex", writeCatalog(t, "glm-5.2:cloud"))
 	proxy := httptest.NewServer(handler)
 	defer proxy.Close()
 
 	payload := []byte(`{"model":"gpt-5.6-sol","stream":true,"input":[{"type":"message","role":"developer","content":[{"type":"input_text","text":"native instructions"}]}]}`)
-	req, err := http.NewRequest(http.MethodPost, proxy.URL+PathPrefix+"/v1/responses", bytes.NewReader(payload))
+	req, err := http.NewRequest(http.MethodPost, proxy.URL+CodexDesktopPathPrefix+"/v1/responses", bytes.NewReader(payload))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -880,7 +923,7 @@ func TestHandlerPassesNativeModelToChatGPT(t *testing.T) {
 	}
 }
 
-func TestHandlerPassesNativeModelToOpenAIAPIWithAPIKey(t *testing.T) {
+func TestCodexDesktopPassesNativeModelToOpenAIAPIWithAPIKey(t *testing.T) {
 	ollama := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Fatal("native model should not reach Ollama")
 	}))
@@ -899,8 +942,7 @@ func TestHandlerPassesNativeModelToOpenAIAPIWithAPIKey(t *testing.T) {
 	}))
 	defer openAI.Close()
 
-	handler, err := New(Config{
-		PathPrefix:         PathPrefix,
+	handler, err := NewCodexDesktop(CodexDesktopConfig{
 		OllamaURL:          ollama.URL,
 		ChatGPTURL:         chatGPT.URL + "/backend-api/codex",
 		OpenAIURL:          openAI.URL + "/v1",
@@ -914,7 +956,7 @@ func TestHandlerPassesNativeModelToOpenAIAPIWithAPIKey(t *testing.T) {
 
 	req, err := http.NewRequest(
 		http.MethodPost,
-		proxy.URL+PathPrefix+"/v1/responses",
+		proxy.URL+CodexDesktopPathPrefix+"/v1/responses",
 		strings.NewReader(`{"model":"gpt-5.6-sol"}`),
 	)
 	if err != nil {
@@ -939,7 +981,7 @@ func TestHandlerPassesNativeModelToOpenAIAPIWithAPIKey(t *testing.T) {
 	}
 }
 
-func TestHandlerRejectsManagedAPIKeyForNativeModel(t *testing.T) {
+func TestCodexDesktopRejectsManagedAPIKeyForNativeModel(t *testing.T) {
 	ollamaCalled := false
 	ollama := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		ollamaCalled = true
@@ -956,8 +998,7 @@ func TestHandlerRejectsManagedAPIKeyForNativeModel(t *testing.T) {
 	}))
 	defer openAI.Close()
 
-	handler, err := New(Config{
-		PathPrefix:         PathPrefix,
+	handler, err := NewCodexDesktop(CodexDesktopConfig{
 		OllamaURL:          ollama.URL,
 		ChatGPTURL:         chatGPT.URL + "/backend-api/codex",
 		OpenAIURL:          openAI.URL + "/v1",
@@ -971,13 +1012,13 @@ func TestHandlerRejectsManagedAPIKeyForNativeModel(t *testing.T) {
 
 	req, err := http.NewRequest(
 		http.MethodPost,
-		proxy.URL+PathPrefix+"/v1/responses",
+		proxy.URL+CodexDesktopPathPrefix+"/v1/responses",
 		strings.NewReader(`{"model":"gpt-5.6-sol"}`),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("Authorization", "Bearer "+ManagedAPIKey)
+	req.Header.Set("Authorization", "Bearer "+CodexDesktopManagedAPIKey)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -996,7 +1037,7 @@ func TestHandlerRejectsManagedAPIKeyForNativeModel(t *testing.T) {
 	}
 }
 
-func TestHandlerPreservesCompressedNativeRequestWithoutOllamaReasoning(t *testing.T) {
+func TestCodexDesktopPreservesCompressedNativeRequestWithoutOllamaReasoning(t *testing.T) {
 	ollama := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Fatal("native model should not reach Ollama")
 	}))
@@ -1011,7 +1052,7 @@ func TestHandlerPreservesCompressedNativeRequestWithoutOllamaReasoning(t *testin
 	}))
 	defer chatGPT.Close()
 
-	handler := newTestHandler(t, ollama.URL, chatGPT.URL+"/backend-api/codex", writeCatalog(t, "glm-5.3-flash:cloud"))
+	handler := newTestCodexDesktop(t, ollama.URL, chatGPT.URL+"/backend-api/codex", writeCatalog(t, "glm-5.3-flash:cloud"))
 	proxy := httptest.NewServer(handler)
 	defer proxy.Close()
 
@@ -1023,7 +1064,7 @@ func TestHandlerPreservesCompressedNativeRequestWithoutOllamaReasoning(t *testin
 	compressed := encoder.EncodeAll(payload, nil)
 	encoder.Close()
 
-	req, err := http.NewRequest(http.MethodPost, proxy.URL+PathPrefix+"/v1/responses", bytes.NewReader(compressed))
+	req, err := http.NewRequest(http.MethodPost, proxy.URL+CodexDesktopPathPrefix+"/v1/responses", bytes.NewReader(compressed))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1046,7 +1087,7 @@ func TestHandlerPreservesCompressedNativeRequestWithoutOllamaReasoning(t *testin
 	}
 }
 
-func TestHandlerFiltersOllamaProviderStateWhenSwitchingToNativeModel(t *testing.T) {
+func TestCodexDesktopFiltersOllamaProviderStateWhenSwitchingToNativeModel(t *testing.T) {
 	ollama := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Fatal("native model should not reach Ollama")
 	}))
@@ -1062,7 +1103,7 @@ func TestHandlerFiltersOllamaProviderStateWhenSwitchingToNativeModel(t *testing.
 	}))
 	defer chatGPT.Close()
 
-	handler := newTestHandler(t, ollama.URL, chatGPT.URL+"/backend-api/codex", writeCatalog(t, "glm-5.3-flash:cloud"))
+	handler := newTestCodexDesktop(t, ollama.URL, chatGPT.URL+"/backend-api/codex", writeCatalog(t, "glm-5.3-flash:cloud"))
 	proxy := httptest.NewServer(handler)
 	defer proxy.Close()
 
@@ -1084,7 +1125,7 @@ func TestHandlerFiltersOllamaProviderStateWhenSwitchingToNativeModel(t *testing.
 	compressed := encoder.EncodeAll(payload, nil)
 	encoder.Close()
 
-	req, err := http.NewRequest(http.MethodPost, proxy.URL+PathPrefix+"/v1/responses", bytes.NewReader(compressed))
+	req, err := http.NewRequest(http.MethodPost, proxy.URL+CodexDesktopPathPrefix+"/v1/responses", bytes.NewReader(compressed))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1148,7 +1189,7 @@ func TestIsOllamaReasoningItemID(t *testing.T) {
 	}
 }
 
-func TestHandlerRequestsHTTPFallbackForWebSocketUpgrade(t *testing.T) {
+func TestCodexDesktopRequestsHTTPFallbackForWebSocketUpgrade(t *testing.T) {
 	ollama := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Fatal("WebSocket fallback should not reach Ollama")
 	}))
@@ -1158,11 +1199,11 @@ func TestHandlerRequestsHTTPFallbackForWebSocketUpgrade(t *testing.T) {
 	}))
 	defer chatGPT.Close()
 
-	handler := newTestHandler(t, ollama.URL, chatGPT.URL+"/backend-api/codex", writeCatalog(t, "glm-5.2:cloud"))
+	handler := newTestCodexDesktop(t, ollama.URL, chatGPT.URL+"/backend-api/codex", writeCatalog(t, "glm-5.2:cloud"))
 	proxy := httptest.NewServer(handler)
 	defer proxy.Close()
 
-	req, err := http.NewRequest(http.MethodGet, proxy.URL+PathPrefix+"/v1/responses", nil)
+	req, err := http.NewRequest(http.MethodGet, proxy.URL+CodexDesktopPathPrefix+"/v1/responses", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1181,7 +1222,7 @@ func TestHandlerRequestsHTTPFallbackForWebSocketUpgrade(t *testing.T) {
 	}
 }
 
-func TestHandlerStatusReportsObservedRoutes(t *testing.T) {
+func TestCodexDesktopStatusReportsObservedRoutes(t *testing.T) {
 	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -1192,7 +1233,7 @@ func TestHandlerStatusReportsObservedRoutes(t *testing.T) {
 	}))
 	defer chatGPT.Close()
 
-	handler := newTestHandler(t, ollama.URL, chatGPT.URL+"/backend-api/codex", writeCatalog(t, "glm-5.2:cloud"))
+	handler := newTestCodexDesktop(t, ollama.URL, chatGPT.URL+"/backend-api/codex", writeCatalog(t, "glm-5.2:cloud"))
 	proxy := httptest.NewServer(handler)
 	defer proxy.Close()
 
@@ -1200,7 +1241,7 @@ func TestHandlerStatusReportsObservedRoutes(t *testing.T) {
 		`{"model":"glm-5.2:cloud"}`,
 		`{"model":"gpt-5.6-sol"}`,
 	} {
-		req, err := http.NewRequest(http.MethodPost, proxy.URL+PathPrefix+"/v1/responses", strings.NewReader(payload))
+		req, err := http.NewRequest(http.MethodPost, proxy.URL+CodexDesktopPathPrefix+"/v1/responses", strings.NewReader(payload))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1213,7 +1254,7 @@ func TestHandlerStatusReportsObservedRoutes(t *testing.T) {
 		_ = resp.Body.Close()
 	}
 
-	resp, err := http.Get(proxy.URL + PathPrefix + "/_status")
+	resp, err := http.Get(proxy.URL + CodexDesktopPathPrefix + "/_status")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1230,7 +1271,7 @@ func TestHandlerStatusReportsObservedRoutes(t *testing.T) {
 	}
 }
 
-func TestHandlerCountersExcludeProbesAndFailedRetries(t *testing.T) {
+func TestCodexDesktopCountersExcludeProbesAndFailedRetries(t *testing.T) {
 	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
@@ -1240,11 +1281,11 @@ func TestHandlerCountersExcludeProbesAndFailedRetries(t *testing.T) {
 	}))
 	defer chatGPT.Close()
 
-	handler := newTestHandler(t, ollama.URL, chatGPT.URL+"/backend-api/codex", writeCatalog(t, "glm-5.2:cloud"))
+	handler := newTestCodexDesktop(t, ollama.URL, chatGPT.URL+"/backend-api/codex", writeCatalog(t, "glm-5.2:cloud"))
 	proxy := httptest.NewServer(handler)
 	defer proxy.Close()
 
-	probeReq, err := http.NewRequest(http.MethodGet, proxy.URL+PathPrefix+"/v1/responses", nil)
+	probeReq, err := http.NewRequest(http.MethodGet, proxy.URL+CodexDesktopPathPrefix+"/v1/responses", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1255,7 +1296,7 @@ func TestHandlerCountersExcludeProbesAndFailedRetries(t *testing.T) {
 	}
 	_ = probeResp.Body.Close()
 	failedResp, err := http.Post(
-		proxy.URL+PathPrefix+"/v1/responses",
+		proxy.URL+CodexDesktopPathPrefix+"/v1/responses",
 		"application/json",
 		strings.NewReader(`{"model":"glm-5.2:cloud"}`),
 	)
@@ -1264,7 +1305,7 @@ func TestHandlerCountersExcludeProbesAndFailedRetries(t *testing.T) {
 	}
 	_ = failedResp.Body.Close()
 
-	statusResp, err := http.Get(proxy.URL + PathPrefix + "/_status")
+	statusResp, err := http.Get(proxy.URL + CodexDesktopPathPrefix + "/_status")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1281,15 +1322,14 @@ func TestHandlerCountersExcludeProbesAndFailedRetries(t *testing.T) {
 	}
 }
 
-func TestHandlerWritesSafeActivityLog(t *testing.T) {
+func TestCodexDesktopWritesSafeActivityLog(t *testing.T) {
 	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer ollama.Close()
 
 	activityLogPath := filepath.Join(t.TempDir(), "logs", "codex-proxy.log")
-	handler, err := New(Config{
-		PathPrefix:         PathPrefix,
+	handler, err := NewCodexDesktop(CodexDesktopConfig{
 		OllamaURL:          ollama.URL,
 		ChatGPTURL:         "https://chatgpt.com/backend-api/codex",
 		RoutingCatalogPath: writeCatalog(t, "glm-5.2:cloud"),
@@ -1304,7 +1344,7 @@ func TestHandlerWritesSafeActivityLog(t *testing.T) {
 	prompt := "do-not-record-this-prompt"
 	req, err := http.NewRequest(
 		http.MethodPost,
-		proxy.URL+PathPrefix+"/v1/responses",
+		proxy.URL+CodexDesktopPathPrefix+"/v1/responses",
 		strings.NewReader(`{"model":"glm-5.2:cloud","input":"`+prompt+`"}`),
 	)
 	if err != nil {
@@ -1338,9 +1378,9 @@ func TestHandlerWritesSafeActivityLog(t *testing.T) {
 	}
 }
 
-func TestHandlerRejectsNonLoopbackClients(t *testing.T) {
-	handler := newTestHandler(t, "http://127.0.0.1:11434", "https://chatgpt.com/backend-api/codex", writeCatalog(t, "glm"))
-	req := httptest.NewRequest(http.MethodGet, "http://example.test"+PathPrefix+"/_health", nil)
+func TestCodexDesktopRejectsNonLoopbackClients(t *testing.T) {
+	handler := newTestCodexDesktop(t, "http://127.0.0.1:11434", "https://chatgpt.com/backend-api/codex", writeCatalog(t, "glm"))
+	req := httptest.NewRequest(http.MethodGet, "http://example.test"+CodexDesktopPathPrefix+"/_health", nil)
 	req.RemoteAddr = "192.0.2.10:1234"
 	recorder := httptest.NewRecorder()
 
@@ -1350,9 +1390,9 @@ func TestHandlerRejectsNonLoopbackClients(t *testing.T) {
 	}
 }
 
-func TestHandlerFailsClosedWhenCatalogIsMissing(t *testing.T) {
-	handler := newTestHandler(t, "http://127.0.0.1:11434", "https://chatgpt.com/backend-api/codex", filepath.Join(t.TempDir(), "missing.json"))
-	req := httptest.NewRequest(http.MethodPost, "http://localhost"+PathPrefix+"/v1/responses", strings.NewReader(`{"model":"glm"}`))
+func TestCodexDesktopFailsClosedWhenCatalogIsMissing(t *testing.T) {
+	handler := newTestCodexDesktop(t, "http://127.0.0.1:11434", "https://chatgpt.com/backend-api/codex", filepath.Join(t.TempDir(), "missing.json"))
+	req := httptest.NewRequest(http.MethodPost, "http://localhost"+CodexDesktopPathPrefix+"/v1/responses", strings.NewReader(`{"model":"glm"}`))
 	req.RemoteAddr = "127.0.0.1:1234"
 	recorder := httptest.NewRecorder()
 
@@ -1362,10 +1402,9 @@ func TestHandlerFailsClosedWhenCatalogIsMissing(t *testing.T) {
 	}
 }
 
-func newTestHandler(t *testing.T, ollamaURL, chatGPTURL, catalogPath string) *Handler {
+func newTestCodexDesktop(t *testing.T, ollamaURL, chatGPTURL, catalogPath string) *CodexDesktop {
 	t.Helper()
-	handler, err := New(Config{
-		PathPrefix:         PathPrefix,
+	handler, err := NewCodexDesktop(CodexDesktopConfig{
 		OllamaURL:          ollamaURL,
 		ChatGPTURL:         chatGPTURL,
 		RoutingCatalogPath: catalogPath,
@@ -1390,7 +1429,7 @@ func writeCatalogWithAutoReview(t *testing.T, autoReviewModel string, models ...
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(t.TempDir(), ModelCatalogFilename)
+	path := filepath.Join(t.TempDir(), CodexDesktopModelCatalogFilename)
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
