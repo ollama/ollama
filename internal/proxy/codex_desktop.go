@@ -1,4 +1,4 @@
-package codexproxy
+package proxy
 
 import (
 	"bytes"
@@ -22,24 +22,24 @@ import (
 )
 
 const (
-	// PathPrefix is the loopback-only Ollama server route used as Codex's
-	// openai_base_url. Codex appends /v1/responses and related paths to it.
-	PathPrefix = "/api/codex"
+	// CodexDesktopPathPrefix is the loopback-only Ollama server route used as
+	// Codex's openai_base_url. Codex appends /v1/responses and related paths.
+	CodexDesktopPathPrefix = "/api/codex"
 
-	// ModelCatalogFilename is the combined native and Ollama catalog shown by
-	// the Codex model picker.
-	ModelCatalogFilename = "ollama-launch-models.json"
+	// CodexDesktopModelCatalogFilename is the combined native and Ollama catalog
+	// shown by the Codex model picker.
+	CodexDesktopModelCatalogFilename = "ollama-launch-models.json"
 
-	// RoutingCatalogFilename contains only Ollama model slugs. Keeping the
-	// router allow-list separate from the picker catalog ensures native Codex
+	// CodexDesktopRoutingCatalogFilename contains only Ollama model slugs.
+	// Keeping the router allow-list separate from the picker catalog ensures native Codex
 	// models continue to pass through to their normal OpenAI upstream.
-	RoutingCatalogFilename = "ollama-launch-codex-routing.json"
+	CodexDesktopRoutingCatalogFilename = "ollama-launch-codex-routing.json"
 
-	// ManagedAPIKey is a local sentinel used to let signed-out ChatGPT users
-	// open Codex directly with Ollama models. It is never valid for an OpenAI
+	// CodexDesktopManagedAPIKey is a local sentinel used to let signed-out
+	// ChatGPT users open Codex directly with Ollama models. It is never valid for an OpenAI
 	// upstream and the router must reject it before any native request leaves
 	// the machine.
-	ManagedAPIKey = "ollama-local-codex"
+	CodexDesktopManagedAPIKey = "ollama-local-codex"
 
 	// autoReviewModel is the native Codex reviewer alias. The routing catalog
 	// may map requests for this alias to a selected Ollama model.
@@ -96,9 +96,8 @@ var hopByHopHeaders = map[string]struct{}{
 	"upgrade":             {},
 }
 
-// Config describes the upstreams and Ollama-only routing catalog.
-type Config struct {
-	PathPrefix         string
+// CodexDesktopConfig describes the upstreams and Ollama-only routing catalog.
+type CodexDesktopConfig struct {
 	OllamaURL          string
 	ChatGPTURL         string
 	OpenAIURL          string
@@ -109,10 +108,11 @@ type Config struct {
 	Transport          http.RoundTripper
 }
 
-// Handler routes catalog-listed model slugs to Ollama and passes every other
-// request to the native upstream selected by Codex's authentication mode.
-type Handler struct {
-	pathPrefix         string
+// CodexDesktop routes catalog-listed model slugs to Ollama and passes every
+// other request to the native upstream selected by Codex's authentication mode.
+// The Ollama server mounts this handler on its existing listener, so one
+// loopback port serves both routes.
+type CodexDesktop struct {
 	ollamaURL          *url.URL
 	chatGPTURL         *url.URL
 	openAIURL          *url.URL
@@ -144,15 +144,7 @@ type statusResponse struct {
 	LastUpstreamStatus int    `json:"last_upstream_status,omitempty"`
 }
 
-func New(config Config) (*Handler, error) {
-	pathPrefix := strings.TrimRight(strings.TrimSpace(config.PathPrefix), "/")
-	if pathPrefix == "" {
-		pathPrefix = PathPrefix
-	}
-	if !strings.HasPrefix(pathPrefix, "/") {
-		return nil, fmt.Errorf("Codex proxy path prefix must start with '/': %q", pathPrefix)
-	}
-
+func NewCodexDesktop(config CodexDesktopConfig) (*CodexDesktop, error) {
 	ollamaURL, err := parseBaseURL("Ollama", config.OllamaURL)
 	if err != nil {
 		return nil, err
@@ -183,8 +175,7 @@ func New(config Config) (*Handler, error) {
 		transport = http.DefaultTransport.(*http.Transport).Clone()
 	}
 
-	handler := &Handler{
-		pathPrefix:         pathPrefix,
+	handler := &CodexDesktop{
 		ollamaURL:          ollamaURL,
 		chatGPTURL:         chatGPTURL,
 		openAIURL:          openAIURL,
@@ -213,13 +204,13 @@ func parseBaseURL(name, raw string) (*url.URL, error) {
 	return u, nil
 }
 
-func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h *CodexDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !isLoopbackRequest(r) {
 		writeJSONError(w, http.StatusForbidden, "Codex proxy only accepts loopback requests")
 		return
 	}
 
-	suffix, ok := strings.CutPrefix(r.URL.Path, h.pathPrefix)
+	suffix, ok := strings.CutPrefix(r.URL.Path, CodexDesktopPathPrefix)
 	if !ok || suffix == "" {
 		http.NotFound(w, r)
 		return
@@ -412,7 +403,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.logActivity(started, r.Method, suffix, model, route, resp.StatusCode, result)
 }
 
-func (h *Handler) logActivity(started time.Time, method, path, model, route string, status int, result string) {
+func (h *CodexDesktop) logActivity(started time.Time, method, path, model, route string, status int, result string) {
 	h.writeActivity(
 		"route=%s model=%q method=%s path=%s status=%d duration=%s result=%s",
 		route,
@@ -425,7 +416,7 @@ func (h *Handler) logActivity(started time.Time, method, path, model, route stri
 	)
 }
 
-func (h *Handler) writeActivity(format string, args ...any) {
+func (h *CodexDesktop) writeActivity(format string, args ...any) {
 	if h.activityLogPath == "" {
 		return
 	}
@@ -449,7 +440,7 @@ func (h *Handler) writeActivity(format string, args ...any) {
 	}
 }
 
-func (h *Handler) writeStatus(w http.ResponseWriter) {
+func (h *CodexDesktop) writeStatus(w http.ResponseWriter) {
 	status := statusResponse{
 		OK:              true,
 		OllamaRequests:  h.ollamaRequests.Load(),
@@ -475,7 +466,7 @@ func isAcceptedModelRequest(method, path string, hasModel bool, status int) bool
 		status < http.StatusMultipleChoices
 }
 
-func (h *Handler) readBodies(r *http.Request) ([]byte, []byte, error) {
+func (h *CodexDesktop) readBodies(r *http.Request) ([]byte, []byte, error) {
 	if r.Body == nil {
 		return nil, nil, nil
 	}
@@ -1482,7 +1473,7 @@ func usesChatGPTBackend(header http.Header) bool {
 
 func usesManagedAPIKey(header http.Header) bool {
 	parts := strings.Fields(header.Get("Authorization"))
-	return len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") && parts[1] == ManagedAPIKey
+	return len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") && parts[1] == CodexDesktopManagedAPIKey
 }
 
 func copyOllamaRequestHeaders(dst, src http.Header) {

@@ -32,13 +32,13 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/app/codexproxy"
 	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/ggml"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
+	"github.com/ollama/ollama/internal/proxy"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/manifest"
@@ -1844,7 +1844,7 @@ func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 }
 
 func (s *Server) GenerateRoutes() (http.Handler, error) {
-	codexProxyHandler, err := newCodexProxyHandler()
+	codexDesktopProxy, err := newCodexDesktopProxy()
 	if err != nil {
 		return nil, err
 	}
@@ -1889,7 +1889,9 @@ func (s *Server) GenerateRoutes() (http.Handler, error) {
 	r.HEAD("/api/version", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"version": version.Version}) })
 	r.GET("/api/version", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"version": version.Version}) })
 	r.GET("/api/status", s.StatusHandler)
-	r.Any(codexproxy.PathPrefix+"/*path", gin.WrapH(codexProxyHandler))
+	// Codex uses this existing Ollama listener for both native and Ollama
+	// models. The proxy selects the upstream per request.
+	r.Any(proxy.CodexDesktopPathPrefix+"/*path", gin.WrapH(codexDesktopProxy))
 
 	// Local model cache management (new implementation is at end of function)
 	r.POST("/api/pull", s.PullHandler)

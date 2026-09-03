@@ -17,10 +17,10 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/app/codexproxy"
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/internal/proxy"
 	modelpkg "github.com/ollama/ollama/types/model"
 )
 
@@ -29,8 +29,8 @@ const (
 	codexAppIntegrationName        = "codex-app"
 	codexAppProfileName            = "ollama-launch-codex-app"
 	codexAppBundleID               = "com.openai.codex"
-	codexAppModelCatalogFilename   = codexproxy.ModelCatalogFilename
-	codexAppRoutingCatalogFilename = codexproxy.RoutingCatalogFilename
+	codexAppModelCatalogFilename   = proxy.CodexDesktopModelCatalogFilename
+	codexAppRoutingCatalogFilename = proxy.CodexDesktopRoutingCatalogFilename
 	codexAppAutoReviewModelEnv     = "OLLAMA_CODEX_AUTO_REVIEW_MODEL"
 	codexAppOllamaProfileDirName   = "chatgpt-ollama"
 	codexAppOllamaUserDataName     = "electron-data"
@@ -548,7 +548,7 @@ func codexAppReplacementLineEnding(replaced string) string {
 }
 
 func codexAppProxyBaseURL() string {
-	return strings.TrimRight(envconfig.ConnectableHost().String(), "/") + codexproxy.PathPrefix + "/v1"
+	return strings.TrimRight(envconfig.ConnectableHost().String(), "/") + proxy.CodexDesktopPathPrefix + "/v1"
 }
 
 type codexAppManagedAuth struct {
@@ -566,7 +566,7 @@ func ensureCodexAppManagedAuth(configPath string) (bool, error) {
 	}
 
 	data, err := json.MarshalIndent(codexAppManagedAuth{
-		OpenAIAPIKey: codexproxy.ManagedAPIKey,
+		OpenAIAPIKey: proxy.CodexDesktopManagedAPIKey,
 		AuthMode:     "apikey",
 	}, "", "  ")
 	if err != nil {
@@ -623,7 +623,7 @@ func isCodexAppManagedAuth(data []byte) bool {
 	if json.Unmarshal(data, &auth) != nil {
 		return false
 	}
-	return auth.AuthMode == "apikey" && auth.OpenAIAPIKey == codexproxy.ManagedAPIKey
+	return auth.AuthMode == "apikey" && auth.OpenAIAPIKey == proxy.CodexDesktopManagedAPIKey
 }
 
 func (c *CodexApp) Onboard() error {
@@ -726,7 +726,7 @@ func defaultCodexAppRouterHealth() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	endpoint := strings.TrimRight(envconfig.ConnectableHost().String(), "/") + codexproxy.PathPrefix + "/_health"
+	endpoint := strings.TrimRight(envconfig.ConnectableHost().String(), "/") + proxy.CodexDesktopPathPrefix + "/_health"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return fmt.Errorf("create ChatGPT router health check: %w", err)
