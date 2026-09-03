@@ -179,28 +179,69 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 			return events, false
 		}
 	case qwenParserState_CollectingToolContent:
-		if strings.Contains(p.acc.String(), toolCloseTag) {
-			split := strings.SplitN(p.acc.String(), toolCloseTag, 2)
-			before := split[0]
-			if len(before) == 0 {
-				slog.Warn("qwen tool call closing tag found but no content before it")
-			}
-			// remove any whitespace between the tool call and any content after it
-			after := strings.TrimLeftFunc(split[1], unicode.IsSpace)
-			p.acc.Reset()
-			p.acc.WriteString(after)
-			events = append(events, qwenEventRawToolCall{raw: before})
-			p.state = qwenParserState_LookingForToolStart
-			return events, true
-		} else {
+		acc := p.acc.String()
+		end := matchingToolCloseIndex(acc)
+		if end == -1 {
 			// note that we don't need to check the overlap here because we only plan
 			// on parsing the tool call once we see the full closing tag. We don't
 			// stream back the unparsed tool content, so there's no need to be eager
 			// here
 			return events, false
 		}
+
+		before := acc[:end]
+		if len(before) == 0 {
+			slog.Warn("qwen tool call closing tag found but no content before it")
+		}
+		// remove any whitespace between the tool call and any content after it
+		after := strings.TrimLeftFunc(acc[end+len(toolCloseTag):], unicode.IsSpace)
+		p.acc.Reset()
+		p.acc.WriteString(after)
+		events = append(events, qwenEventRawToolCall{raw: before})
+		p.state = qwenParserState_LookingForToolStart
+		return events, true
 	default:
 		panic("unreachable")
+	}
+}
+
+// matchingToolCloseIndex returns the byte offset in s of the toolCloseTag
+// that matches the single toolOpenTag already consumed to enter
+// qwenParserState_CollectingToolContent (depth starts at 1). A
+// toolOpenTag/toolCloseTag pair fully contained in s is treated as nested
+// and skipped over, so a tool call's own content (e.g. a parameter value)
+// can contain a complete, well-formed nested <tool_call>...</tool_call>
+// without truncating the outer call early. Returns -1 if the matching
+// close tag hasn't fully arrived yet.
+//
+// Note: this only resolves genuinely nested, fully-paired <tool_call>
+// blocks. A bare, unpaired toolCloseTag-shaped substring (e.g. literal
+// text "</tool_call>" inside a parameter value with no matching open) is
+// indistinguishable from a real terminator by depth counting alone, and
+// will still close the call early. Fixing that would require parameter-
+// boundary awareness, which eat() deliberately doesn't have.
+func matchingToolCloseIndex(s string) int {
+	depth := 1
+	pos := 0
+	for {
+		closeIdx := strings.Index(s[pos:], toolCloseTag)
+		if closeIdx == -1 {
+			return -1
+		}
+
+		openIdx := strings.Index(s[pos:], toolOpenTag)
+		if openIdx != -1 && openIdx < closeIdx {
+			depth++
+			pos += openIdx + len(toolOpenTag)
+			continue
+		}
+
+		depth--
+		closePos := pos + closeIdx
+		if depth == 0 {
+			return closePos
+		}
+		pos = closePos + len(toolCloseTag)
 	}
 }
 
