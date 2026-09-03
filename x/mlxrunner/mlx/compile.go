@@ -55,36 +55,32 @@ func Compile(name string, fn CompileFunc, opts ...CompileOption) CompileFunc {
 		once.Do(func() {
 			payload := (*cgo.Handle)(C.malloc(C.size_t(unsafe.Sizeof(cgo.Handle(0)))))
 			*payload = cgo.NewHandle(fn)
-			src := C.mlx_closure_new_func_payload(
+			src := mlxCheck(C.mlx_closure_new_func_payload(
 				(*[0]byte)(C.closureCallback),
 				unsafe.Pointer(payload),
 				(*[0]byte)(C.closureDestructor),
-			)
-			defer C.mlx_closure_free(src)
+			))
+			defer freeClosure(src)
 
-			closure = C.mlx_closure_new()
-			mlxCheck(name+": compile failed", func() C.int {
-				return C.mlx_compile(&closure, src, C.bool(cfg.shapeless))
-			})
+			closure = mlxCheck(C.mlx_closure_new())
+			mlxCheck(C.mlx_compile(&closure, src, C.bool(cfg.shapeless)))
 		})
 
-		inVec := C.mlx_vector_array_new()
-		defer C.mlx_vector_array_free(inVec)
+		inVec := mlxCheck(C.mlx_vector_array_new())
+		defer freeVectorArray(inVec)
 		for _, in := range inputs {
-			C.mlx_vector_array_append_value(inVec, in.ctx)
+			mlxCheck(C.mlx_vector_array_append_value(inVec, in.ctx))
 		}
 
-		outVec := C.mlx_vector_array_new()
-		defer C.mlx_vector_array_free(outVec)
-		mlxCheck(name+": closure apply failed", func() C.int {
-			return C.mlx_closure_apply(&outVec, closure, inVec)
-		})
+		outVec := mlxCheck(C.mlx_vector_array_new())
+		defer freeVectorArray(outVec)
+		mlxCheck(C.mlx_closure_apply(&outVec, closure, inVec))
 
-		n := int(C.mlx_vector_array_size(outVec))
+		n := int(mlxCheck(C.mlx_vector_array_size(outVec)))
 		outputs := make([]*Array, n)
 		for i := range n {
 			outputs[i] = New(name)
-			C.mlx_vector_array_get(&outputs[i].ctx, outVec, C.size_t(i))
+			mlxCheck(C.mlx_vector_array_get(&outputs[i].ctx, outVec, C.size_t(i)))
 		}
 		return outputs
 	}
@@ -154,7 +150,7 @@ func closureCallback(res *C.mlx_vector_array, input C.mlx_vector_array, payload 
 				panic("mlx: traced array was pinned during compilation")
 			}
 			if a.Valid() {
-				C.mlx_array_free(a.ctx)
+				mlxCheck(C.mlx_array_free(a.ctx))
 				a.ctx.ctx = nil
 			}
 		}
@@ -162,11 +158,11 @@ func closureCallback(res *C.mlx_vector_array, input C.mlx_vector_array, payload 
 		traceScratch = nil
 	}()
 
-	n := int(C.mlx_vector_array_size(input))
+	n := int(mlxCheck(C.mlx_vector_array_size(input)))
 	inputs := make([]*Array, n)
 	for i := range n {
 		a := New("")
-		C.mlx_vector_array_get(&a.ctx, input, C.size_t(i))
+		mlxCheck(C.mlx_vector_array_get(&a.ctx, input, C.size_t(i)))
 		inputs[i] = a
 	}
 
@@ -180,7 +176,7 @@ func closureCallback(res *C.mlx_vector_array, input C.mlx_vector_array, payload 
 		}
 		arrPtr = &handles[0]
 	}
-	C.mlx_vector_array_set_data(res, arrPtr, C.size_t(len(outputs)))
+	mlxCheck(C.mlx_vector_array_set_data(res, arrPtr, C.size_t(len(outputs))))
 	return 0
 }
 

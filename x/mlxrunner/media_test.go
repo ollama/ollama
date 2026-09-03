@@ -4,6 +4,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model/base"
 )
@@ -72,52 +73,52 @@ func (m encodeCountingModel) EncodeMedia(item *base.PreparedItem, data *mlx.Arra
 }
 
 func TestBatchMediaLifecycle(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		calls := 0
+		prepared := &base.PreparedItem{
+			Range:     [2]int{2, 6},
+			MediaData: []float32{1, 2},
+			Dims:      []int{2},
+			Opaque:    7,
+		}
+		r := &Runner{Model: encodeCountingModel{calls: &calls}}
+		request := Request{
+			Tokens:     make([]int32, 8),
+			MediaItems: []mediaItem{{pos: 2, length: 4, item: prepared}},
+		}
 
-	calls := 0
-	prepared := &base.PreparedItem{
-		Range:     [2]int{2, 6},
-		MediaData: []float32{1, 2},
-		Dims:      []int{2},
-		Opaque:    7,
-	}
-	r := &Runner{Model: encodeCountingModel{calls: &calls}}
-	request := Request{
-		Tokens:     make([]int32, 8),
-		MediaItems: []mediaItem{{pos: 2, length: 4, item: prepared}},
-	}
+		m := r.openMedia(request)
+		if m == nil {
+			t.Fatal("openMedia returned nil for a media request")
+		}
+		if m.manifest[0].Pos != 2 || m.manifest[0].Opaque != 7 {
+			t.Fatalf("manifest = %+v", m.manifest[0])
+		}
 
-	m := r.openMedia(request)
-	if m == nil {
-		t.Fatal("openMedia returned nil for a media request")
-	}
-	if m.manifest[0].Pos != 2 || m.manifest[0].Opaque != 7 {
-		t.Fatalf("manifest = %+v", m.manifest[0])
-	}
+		if items := m.batchMedia(0, 2); items[0].Features != nil || calls != 0 {
+			t.Fatal("non-overlapping chunk encoded features")
+		}
+		if items := m.batchMedia(0, 4); items[0].Features == nil || calls != 1 {
+			t.Fatalf("overlap did not encode once (calls=%d)", calls)
+		}
+		if items := m.batchMedia(4, 2); items[0].Features == nil || calls != 1 {
+			t.Fatalf("second overlap re-encoded (calls=%d)", calls)
+		}
 
-	if items := m.batchMedia(0, 2); items[0].Features != nil || calls != 0 {
-		t.Fatal("non-overlapping chunk encoded features")
-	}
-	if items := m.batchMedia(0, 4); items[0].Features == nil || calls != 1 {
-		t.Fatalf("overlap did not encode once (calls=%d)", calls)
-	}
-	if items := m.batchMedia(4, 2); items[0].Features == nil || calls != 1 {
-		t.Fatalf("second overlap re-encoded (calls=%d)", calls)
-	}
+		m.release(4)
+		if m.manifest[0].Features == nil {
+			t.Fatal("release dropped features before the expansion was evaluated")
+		}
+		m.release(6)
+		if m.manifest[0].Features != nil {
+			t.Fatal("release kept features past the expansion end")
+		}
+		m.close()
 
-	m.release(4)
-	if m.manifest[0].Features == nil {
-		t.Fatal("release dropped features before the expansion was evaluated")
-	}
-	m.release(6)
-	if m.manifest[0].Features != nil {
-		t.Fatal("release kept features past the expansion end")
-	}
-	m.close()
-
-	if r.openMedia(Request{Tokens: make([]int32, 8)}) != nil {
-		t.Fatal("openMedia returned non-nil for a text-only request")
-	}
+		if r.openMedia(Request{Tokens: make([]int32, 8)}) != nil {
+			t.Fatal("openMedia returned non-nil for a text-only request")
+		}
+	})
 }
 
 // Two prompts that differ only in their image diverge at the expansion's

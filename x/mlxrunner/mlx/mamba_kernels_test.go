@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"math"
 	"testing"
+
+	"github.com/ollama/ollama/x/internal/mlxthreadtest"
 )
 
 func TestMamba2ScanMatchesReference(t *testing.T) {
-	requireMamba2Metal(t)
-	var failures []error
-	withMLXThread(t, func() {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
+		requireMamba2Metal(t)
+		var failures []error
 		in := newMamba2TestInputs(1, 3, 2, 2, 2, 32)
 		gotY, gotState, interior := Mamba2Scan(in.hidden, in.bState, in.cState, in.dt, in.state, in.a, in.d, in.dtBias, nil, false)
 		if len(interior) != 0 {
@@ -18,15 +20,15 @@ func TestMamba2ScanMatchesReference(t *testing.T) {
 		wantY, wantState := mamba2ScanReference(in.hidden, in.bState, in.cState, in.dt, in.state, in.a, in.d, in.dtBias)
 		failures = appendArrayCloseError(failures, "mamba2 scan y", gotY, wantY, 1e-5)
 		failures = appendArrayCloseError(failures, "mamba2 scan state", gotState, wantState, 1e-5)
+		reportMamba2Failures(t, failures)
 	})
-	reportMamba2Failures(t, failures)
 }
 
 // Every interior state must match, not just one boundary.
 func TestMamba2ScanCaptureAllMatchesPerTokenReference(t *testing.T) {
-	requireMamba2Metal(t)
-	var failures []error
-	withMLXThread(t, func() {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
+		requireMamba2Metal(t)
+		var failures []error
 		const T = 4
 		in := newMamba2TestInputs(1, T, 2, 2, 2, 32)
 		gotY, gotEnd, gotInterior := Mamba2Scan(in.hidden, in.bState, in.cState, in.dt, in.state, in.a, in.d, in.dtBias, nil, true)
@@ -50,14 +52,14 @@ func TestMamba2ScanCaptureAllMatchesPerTokenReference(t *testing.T) {
 			}
 		}
 		failures = appendArrayCloseError(failures, "captureAll end state", gotEnd, state, 1e-5)
+		reportMamba2Failures(t, failures)
 	})
-	reportMamba2Failures(t, failures)
 }
 
 func TestMamba2ScanGroupedStatesMatchRepeatedReference(t *testing.T) {
-	requireMamba2Metal(t)
-	var failures []error
-	withMLXThread(t, func() {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
+		requireMamba2Metal(t)
+		var failures []error
 		in := newMamba2TestInputs(1, 2, 4, 2, 2, 32)
 		gotY, gotState, _ := Mamba2Scan(in.hidden, in.bState, in.cState, in.dt, in.state, in.a, in.d, in.dtBias, nil, false)
 		wantY, wantState := mamba2ScanReference(
@@ -68,15 +70,15 @@ func TestMamba2ScanGroupedStatesMatchRepeatedReference(t *testing.T) {
 		)
 		failures = appendArrayCloseError(failures, "grouped mamba2 y", gotY, wantY, 1e-5)
 		failures = appendArrayCloseError(failures, "grouped mamba2 state", gotState, wantState, 1e-5)
+		reportMamba2Failures(t, failures)
 	})
-	reportMamba2Failures(t, failures)
 }
 
 // A shape outside the kernel's contract must still compute the right answer
 // through the graph implementation rather than fail.
 func TestMamba2ScanUnsupportedShapeMatchesGraph(t *testing.T) {
-	var failures []error
-	withMLXThread(t, func() {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
+		var failures []error
 		in := newMamba2TestInputs(1, 2, 2, 2, 2, 31)
 		if _, ok := resolveMamba2ScanDims(in.hidden, in.bState, in.cState, in.dt, in.state, in.a, in.d, in.dtBias); ok {
 			failures = append(failures, fmt.Errorf("resolveMamba2ScanDims ok=true for unsupported S=31 shape"))
@@ -85,16 +87,16 @@ func TestMamba2ScanUnsupportedShapeMatchesGraph(t *testing.T) {
 		wantY, wantState := mamba2ScanReference(in.hidden, in.bState, in.cState, in.dt, in.state, in.a, in.d, in.dtBias)
 		failures = appendArrayCloseError(failures, "unsupported-shape y", gotY, wantY, 1e-5)
 		failures = appendArrayCloseError(failures, "unsupported-shape state", gotState, wantState, 1e-5)
+		reportMamba2Failures(t, failures)
 	})
-	reportMamba2Failures(t, failures)
 }
 
 // A padded position must be an identity step. Without the mask it still decays
 // the state by exp(dt*a).
 func TestMamba2ScanPaddedRowIsIdentity(t *testing.T) {
-	requireMamba2Metal(t)
-	var failures []error
-	withMLXThread(t, func() {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
+		requireMamba2Metal(t)
+		var failures []error
 		const (
 			B = 2
 			L = 3
@@ -127,8 +129,8 @@ func TestMamba2ScanPaddedRowIsIdentity(t *testing.T) {
 				failures = append(failures, fmt.Errorf("padded output[%d] = %v, want 0", i, v))
 			}
 		}
+		reportMamba2Failures(t, failures)
 	})
-	reportMamba2Failures(t, failures)
 }
 
 type mamba2TestInputs struct {
@@ -187,9 +189,8 @@ func onesTest(dtype DType, shape ...int) *Array {
 	return AddScalar(Zeros(dtype, shape...), 1)
 }
 
-func requireMamba2Metal(t *testing.T) {
+func requireMamba2Metal(t *mlxthreadtest.T) {
 	t.Helper()
-	skipIfNoMLX(t)
 	if !MetalIsAvailable() {
 		t.Skip("MLX Metal not available")
 	}
@@ -210,7 +211,7 @@ func appendArrayCloseError(failures []error, name string, got, want *Array, tol 
 	return failures
 }
 
-func reportMamba2Failures(t *testing.T, failures []error) {
+func reportMamba2Failures(t *mlxthreadtest.T, failures []error) {
 	t.Helper()
 	for _, err := range failures {
 		t.Error(err)

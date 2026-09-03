@@ -171,6 +171,7 @@ _sign_darwin() {
     if [ -n "$APPLE_IDENTITY" ]; then
         for F in dist/darwin/ollama dist/darwin/llama-server dist/darwin/llama-quantize dist/darwin/lib/ollama/* dist/darwin/lib/ollama/mlx_metal_v*/*; do
             [ -f "$F" ] && [ ! -L "$F" ] || continue
+            case "$F" in *_LICENSE|*_NOTICE) continue ;; esac
             codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime "$F"
         done
 
@@ -255,7 +256,7 @@ _build_macapp() {
 
     rm -f dist/Ollama-darwin.zip
     ditto -c -k --norsrc --keepParent dist/Ollama.app dist/Ollama-darwin.zip
-    (cd dist/Ollama.app/Contents/Resources/; tar -cf - ollama llama-server llama-quantize *.so *.dylib *.metallib mlx_metal_v*/ 2>/dev/null) | gzip -9vc > dist/ollama-darwin.tgz
+    (cd dist/Ollama.app/Contents/Resources/; tar -cf - ollama llama-server llama-quantize *.so *.dylib *.metallib *_LICENSE *_NOTICE mlx_metal_v*/ 2>/dev/null) | gzip -9vc > dist/ollama-darwin.tgz
 
     # Notarize and Staple
     if [ -n "$APPLE_IDENTITY" ]; then

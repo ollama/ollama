@@ -34,6 +34,18 @@ mlx_stream mlx_stream_new(void);
  */
 mlx_stream mlx_stream_new_device(mlx_device dev);
 /**
+ * Returns a new stream on a device that can be used from any thread.
+ *
+ * Streams are otherwise thread affine: a stream's GPU command encoder is
+ * registered per thread, so evaluating on a stream from a thread other than
+ * the one that created it fails. Streams returned here are registered
+ * globally instead.
+ *
+ * MLX applies no synchronization to these streams -- it is the caller's
+ * responsibility to ensure there are no data races on them.
+ */
+mlx_stream mlx_stream_new_thread_unsafe(mlx_device dev);
+/**
  * Set stream to provided src stream.
  */
 int mlx_stream_set(mlx_stream* stream, const mlx_stream src);

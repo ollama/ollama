@@ -997,7 +997,7 @@ func TestSettingsToggleAutoUpdateOn_WithPendingUpdate_ShowsNotification(t *testi
 	}
 }
 
-func TestSettingsToggleAutoUpdateOn_NoPendingUpdate_TriggersCheck(t *testing.T) {
+func TestSettingsToggleAutoUpdateOn_NoPendingUpdate_DoesNotNotify(t *testing.T) {
 	testStore := &store.Store{
 		DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
 	}
@@ -1026,12 +1026,6 @@ func TestSettingsToggleAutoUpdateOn_NoPendingUpdate_TriggersCheck(t *testing.T) 
 		DBPath: filepath.Join(t.TempDir(), "db2.sqlite"),
 	}}
 	defer upd.Store.Close()
-
-	// Initialize the checkNow channel by starting (and immediately stopping) the checker
-	// so TriggerImmediateCheck doesn't panic on nil channel
-	ctx, cancel := context.WithCancel(t.Context())
-	upd.StartBackgroundUpdaterChecker(ctx, func(string) error { return nil })
-	defer cancel()
 
 	var notificationCalled atomic.Bool
 	server := &Server{

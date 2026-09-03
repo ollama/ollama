@@ -28,6 +28,12 @@ extern "C" {
  */
 /**@{*/
 
+int mlx_fast_cross_entropy(
+    mlx_array* res,
+    const mlx_array logits,
+    const mlx_array targets,
+    const mlx_stream s);
+
 typedef struct mlx_fast_cuda_kernel_config_ {
   void* ctx;
 } mlx_fast_cuda_kernel_config;

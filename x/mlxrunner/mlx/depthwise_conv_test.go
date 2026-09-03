@@ -3,21 +3,16 @@ package mlx
 import (
 	"fmt"
 	"testing"
+
+	"github.com/ollama/ollama/x/internal/mlxthreadtest"
 )
 
 func TestDepthwiseConvSiLUMatchesGraph(t *testing.T) {
-	skipIfNoMLX(t)
-
-	// Collected, not reported inside the callback: a t.Fatal there calls
-	// runtime.Goexit, which the MLX worker cannot recover, so the job's result
-	// is never delivered and the test hangs until the binary timeout.
-	var mismatches []string
-	withMLXThread(t, func() {
-		mismatches = depthwiseConvSiLUMismatches()
+	withMLXThread(t, func(t *mlxthreadtest.T) {
+		for _, mismatch := range depthwiseConvSiLUMismatches() {
+			t.Error(mismatch)
+		}
 	})
-	for _, m := range mismatches {
-		t.Error(m)
-	}
 }
 
 func depthwiseConvSiLUMismatches() []string {

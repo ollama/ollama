@@ -217,8 +217,31 @@ type MessagesResponse struct {
 
 // Usage contains token usage information
 type Usage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens          int  `json:"input_tokens"`
+	CacheReadInputTokens *int `json:"cache_read_input_tokens,omitempty"`
+	OutputTokens         int  `json:"output_tokens"`
+}
+
+// UsageFromMetrics separates total prompt tokens into uncached and cache-read counts.
+func UsageFromMetrics(metrics api.Metrics) Usage {
+	total := max(0, metrics.PromptEvalCount)
+	var cached *int
+	if metrics.PromptEvalCachedCount != nil {
+		count := min(max(0, *metrics.PromptEvalCachedCount), total)
+		cached = &count
+	}
+	return Usage{
+		InputTokens:          total - intValue(cached),
+		CacheReadInputTokens: cached,
+		OutputTokens:         metrics.EvalCount,
+	}
+}
+
+func intValue(v *int) int {
+	if v == nil {
+		return 0
+	}
+	return *v
 }
 
 // Streaming event types
@@ -273,8 +296,9 @@ type MessageDelta struct {
 
 // DeltaUsage contains cumulative token usage
 type DeltaUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens          int  `json:"input_tokens"`
+	CacheReadInputTokens *int `json:"cache_read_input_tokens,omitempty"`
+	OutputTokens         int  `json:"output_tokens"`
 }
 
 // MessageStopEvent signals the end of the message
@@ -688,10 +712,7 @@ func ToMessagesResponse(id string, r api.ChatResponse) MessagesResponse {
 		Model:      r.Model,
 		Content:    content,
 		StopReason: stopReason,
-		Usage: Usage{
-			InputTokens:  r.Metrics.PromptEvalCount,
-			OutputTokens: r.Metrics.EvalCount,
-		},
+		Usage:      UsageFromMetrics(r.Metrics),
 	}
 }
 
@@ -721,6 +742,7 @@ type StreamConverter struct {
 	firstWrite           bool
 	contentIndex         int
 	inputTokens          int
+	cacheReadTokens      *int
 	outputTokens         int
 	estimatedInputTokens int // Estimated tokens from request (used when actual metrics are 0)
 	thinkingStarted      bool
@@ -752,8 +774,10 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 	if c.firstWrite {
 		c.firstWrite = false
 		// Use actual metrics if available, otherwise use estimate
-		c.inputTokens = r.Metrics.PromptEvalCount
-		if c.inputTokens == 0 && c.estimatedInputTokens > 0 {
+		usage := UsageFromMetrics(r.Metrics)
+		c.inputTokens = usage.InputTokens
+		c.cacheReadTokens = usage.CacheReadInputTokens
+		if c.inputTokens == 0 && intValue(c.cacheReadTokens) == 0 && c.estimatedInputTokens > 0 {
 			c.inputTokens = c.estimatedInputTokens
 		}
 
@@ -768,8 +792,9 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 					Model:   c.Model,
 					Content: []ContentBlock{},
 					Usage: Usage{
-						InputTokens:  c.inputTokens,
-						OutputTokens: 0,
+						InputTokens:          c.inputTokens,
+						CacheReadInputTokens: c.cacheReadTokens,
+						OutputTokens:         0,
 					},
 				},
 			},
@@ -950,8 +975,10 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 			})
 		}
 
-		c.inputTokens = r.Metrics.PromptEvalCount
-		c.outputTokens = r.Metrics.EvalCount
+		usage := UsageFromMetrics(r.Metrics)
+		c.inputTokens = usage.InputTokens
+		c.cacheReadTokens = usage.CacheReadInputTokens
+		c.outputTokens = usage.OutputTokens
 		stopReason := mapStopReason(r.DoneReason, len(c.toolCallsSent) > 0)
 
 		events = append(events, StreamEvent{
@@ -962,8 +989,9 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 					StopReason: stopReason,
 				},
 				Usage: DeltaUsage{
-					InputTokens:  c.inputTokens,
-					OutputTokens: c.outputTokens,
+					InputTokens:          c.inputTokens,
+					CacheReadInputTokens: c.cacheReadTokens,
+					OutputTokens:         c.outputTokens,
 				},
 			},
 		})

@@ -21,7 +21,7 @@ func FastScaledDotProductAttention(q, k, v *Array, scale float32, mode string, m
 	}
 
 	out := New("FAST_SDPA")
-	C.mlx_fast_scaled_dot_product_attention(&out.ctx, q.ctx, k.ctx, v.ctx, C.float(scale), cMode, maskCtx, sinks.ctx, C.bool(false), DefaultStream().ctx)
+	mlxCheck(C.mlx_fast_scaled_dot_product_attention(&out.ctx, q.ctx, k.ctx, v.ctx, C.float(scale), cMode, maskCtx, sinks.ctx, C.bool(false), DefaultStream().ctx))
 	return out
 }
 
@@ -32,7 +32,7 @@ type LayerNorm struct {
 
 func (r *LayerNorm) Forward(x *Array, eps float32) *Array {
 	out := New("FAST_LAYERNORM")
-	C.mlx_fast_layer_norm(&out.ctx, x.ctx, r.Weight.ctx, r.Bias.ctx, C.float(eps), DefaultStream().ctx)
+	mlxCheck(C.mlx_fast_layer_norm(&out.ctx, x.ctx, r.Weight.ctx, r.Bias.ctx, C.float(eps), DefaultStream().ctx))
 	return out
 }
 
@@ -42,6 +42,6 @@ type RMSNorm struct {
 
 func (r *RMSNorm) Forward(x *Array, eps float32) *Array {
 	out := New("FAST_RMSNORM")
-	C.mlx_fast_rms_norm(&out.ctx, x.ctx, r.Weight.ctx, C.float(eps), DefaultStream().ctx)
+	mlxCheck(C.mlx_fast_rms_norm(&out.ctx, x.ctx, r.Weight.ctx, C.float(eps), DefaultStream().ctx))
 	return out
 }
