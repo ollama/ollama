@@ -2906,6 +2906,436 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 			t.Errorf("final durations = (%s, %s), want (%s, %s)", last.PromptEvalDuration, last.EvalDuration, wantMetrics.PromptEvalDuration, wantMetrics.EvalDuration)
 		}
 	})
+
+	// the restart makes the chunk that triggered it non-terminal, otherwise a client
+	// that stops at the first done would never see the constrained answer
+	t.Run("transitional chunk is not terminal", func(t *testing.T) {
+		var (
+			requestsMu sync.Mutex
+			requests   []llm.CompletionRequest
+		)
+
+		format := json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}}}`)
+
+		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+			requestsMu.Lock()
+			requests = append(requests, r)
+			callNum := len(requests)
+			requestsMu.Unlock()
+
+			switch callNum {
+			case 1:
+				// thinking, content and done all arrive in a single chunk
+				fn(llm.CompletionResponse{
+					Content:            " I am thinking through this problem. </think> {\"answer\":\"42\"}",
+					Done:               true,
+					DoneReason:         llm.DoneReasonStop,
+					PromptEvalCount:    1,
+					PromptEvalDuration: 1,
+					EvalCount:          1,
+					EvalDuration:       1,
+					Logprobs: []llm.Logprob{
+						{TokenLogprob: llm.TokenLogprob{Token: "42", Logprob: -0.5}},
+					},
+				})
+
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(time.Second):
+					t.Errorf("timeout waiting for structured outputs cancellation")
+					return nil
+				}
+			case 2:
+				fn(llm.CompletionResponse{
+					Content:            `{"answer":"42"}`,
+					Done:               true,
+					DoneReason:         llm.DoneReasonStop,
+					PromptEvalCount:    1,
+					PromptEvalDuration: 1,
+					EvalCount:          1,
+					EvalDuration:       1,
+				})
+				return nil
+			default:
+				t.Errorf("unexpected number of completion calls: %d", callNum)
+				return nil
+			}
+		}
+		t.Cleanup(func() { mock.CompletionFn = nil })
+
+		streamRequest := true
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model:    "test-thinking",
+			Messages: []api.Message{{Role: "user", Content: "Please respond in JSON."}},
+			Think:    &api.ThinkValue{Value: true},
+			Stream:   &streamRequest,
+			Format:   format,
+			Logprobs: true,
+			Options:  map[string]any{"num_ctx": 4096},
+		})
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", w.Code)
+		}
+
+		if len(requests) != 2 {
+			t.Fatalf("expected two completion calls, got %d", len(requests))
+		}
+
+		decoder := json.NewDecoder(w.Body)
+		var events []api.ChatResponse
+		for {
+			var event api.ChatResponse
+			if err := decoder.Decode(&event); err == io.EOF {
+				break
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			events = append(events, event)
+		}
+
+		var done int
+		var thinking, content strings.Builder
+		for _, event := range events {
+			thinking.WriteString(event.Message.Thinking)
+			content.WriteString(event.Message.Content)
+			if event.Done {
+				done++
+			}
+		}
+
+		if done != 1 {
+			t.Errorf("expected exactly one terminal event, got %d of %d", done, len(events))
+		}
+
+		if !events[len(events)-1].Done {
+			t.Error("expected the last event to be the terminal one")
+		}
+
+		// the transitional event describes nothing but the thinking: the metrics and
+		// logprobs of the discarded answer must not reach the client
+		transitional := events[0]
+		if transitional.Message.Content != "" || len(transitional.Message.ToolCalls) > 0 {
+			t.Errorf("expected transitional event to carry only thinking, got %#v", transitional.Message)
+		}
+
+		if transitional.Metrics != (api.Metrics{}) {
+			t.Errorf("expected transitional event to carry no metrics, got %#v", transitional.Metrics)
+		}
+
+		if len(transitional.Logprobs) > 0 {
+			t.Errorf("expected transitional event to carry no logprobs, got %#v", transitional.Logprobs)
+		}
+
+		if transitional.DoneReason != "" {
+			t.Errorf("expected transitional event to carry no done reason, got %q", transitional.DoneReason)
+		}
+
+		if thinking.String() != "I am thinking through this problem. " {
+			t.Errorf("expected thinking %q, got %q", "I am thinking through this problem. ", thinking.String())
+		}
+
+		if content.String() != `{"answer":"42"}` {
+			t.Errorf("expected content %q, got %q", `{"answer":"42"}`, content.String())
+		}
+	})
+
+	// json.RawMessage is non-nil for `null` and `""`, but the runner ignores both,
+	// so there is no grammar to defer and no reason to spend a second request
+	for _, format := range []json.RawMessage{json.RawMessage("null"), json.RawMessage(`""`)} {
+		t.Run("no restart with format "+string(format), func(t *testing.T) {
+			var (
+				requestsMu sync.Mutex
+				requests   []llm.CompletionRequest
+			)
+
+			mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+				requestsMu.Lock()
+				requests = append(requests, r)
+				requestsMu.Unlock()
+
+				// a thinking turn: a restart would show up as a second call
+				fn(llm.CompletionResponse{
+					Content:            " I am thinking through this problem. </think> the answer is 42.",
+					Done:               true,
+					DoneReason:         llm.DoneReasonStop,
+					PromptEvalCount:    1,
+					PromptEvalDuration: 1,
+					EvalCount:          1,
+					EvalDuration:       1,
+				})
+				return nil
+			}
+			t.Cleanup(func() { mock.CompletionFn = nil })
+
+			streamRequest := false
+			w := createRequest(t, s.ChatHandler, api.ChatRequest{
+				Model:    "test-thinking",
+				Messages: []api.Message{{Role: "user", Content: "What is 17 * 23?"}},
+				Think:    &api.ThinkValue{Value: true},
+				Stream:   &streamRequest,
+				Format:   format,
+				Options:  map[string]any{"num_ctx": 4096},
+			})
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected status 200, got %d", w.Code)
+			}
+
+			if len(requests) != 1 {
+				t.Fatalf("expected a single completion call, got %d", len(requests))
+			}
+
+			if !bytes.Equal([]byte(format), []byte(requests[0].Format)) {
+				t.Errorf("expected the format to be passed through, got %q", requests[0].Format)
+			}
+		})
+	}
+
+	// a model that emits no thinking at all still has to end up constrained: the
+	// format was deferred for the first request, so it must be applied by a restart
+	t.Run("structured outputs restart with empty thinking", func(t *testing.T) {
+		var (
+			requestsMu sync.Mutex
+			requests   []llm.CompletionRequest
+		)
+
+		format := json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}}}`)
+
+		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+			requestsMu.Lock()
+			requests = append(requests, r)
+			callNum := len(requests)
+			requestsMu.Unlock()
+
+			switch callNum {
+			case 1:
+				fn(llm.CompletionResponse{
+					Content:            `</think>{"answer":"42"}`,
+					Done:               false,
+					PromptEvalCount:    1,
+					PromptEvalDuration: 1,
+				})
+
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(time.Second):
+					t.Errorf("timeout waiting for structured outputs cancellation")
+					return nil
+				}
+			case 2:
+				fn(llm.CompletionResponse{
+					Content:            `{"answer":"42"}`,
+					Done:               true,
+					DoneReason:         llm.DoneReasonStop,
+					PromptEvalCount:    1,
+					PromptEvalDuration: 1,
+					EvalCount:          1,
+					EvalDuration:       1,
+				})
+				return nil
+			default:
+				t.Errorf("unexpected number of completion calls: %d", callNum)
+				return nil
+			}
+		}
+		t.Cleanup(func() { mock.CompletionFn = nil })
+
+		streamRequest := false
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model:    "test-thinking",
+			Messages: []api.Message{{Role: "user", Content: "Please respond in JSON."}},
+			Think:    &api.ThinkValue{Value: true},
+			Stream:   &streamRequest,
+			Format:   format,
+			Options:  map[string]any{"num_ctx": 4096},
+		})
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", w.Code)
+		}
+
+		if len(requests) != 2 {
+			t.Fatalf("expected two completion calls, got %d", len(requests))
+		}
+
+		if !bytes.Equal([]byte(format), []byte(requests[1].Format)) {
+			t.Errorf("expected second completion format to match original format, got %q", requests[1].Format)
+		}
+
+		// nothing was thought, so there is no prefill to add to the prompt
+		if requests[1].Prompt != requests[0].Prompt {
+			t.Errorf("expected second completion prompt %q, got %q", requests[0].Prompt, requests[1].Prompt)
+		}
+
+		var resp api.ChatResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+
+		if resp.Message.Content != `{"answer":"42"}` {
+			t.Errorf("expected content %q, got %q", `{"answer":"42"}`, resp.Message.Content)
+		}
+	})
+}
+
+// TestChatFormatWithBuiltinParserThinking covers the structured outputs restart
+// for models with a builtin thinking parser, which can return thinking and
+// content from a single Add call - that thinking still has to reach the client.
+func TestChatFormatWithBuiltinParserThinking(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mock := &mockRunner{}
+
+	s := &Server{
+		sched: &Scheduler{
+			pendingReqCh:    make(chan *LlmRequest, 1),
+			finishedReqCh:   make(chan *LlmRequest, 1),
+			expiredCh:       make(chan *runnerRef, 1),
+			unloadedCh:      make(chan any, 1),
+			loaded:          make(map[string]*runnerRef),
+			newServerFn:     newMockServer(mock),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+			waitForRecovery: 250 * time.Millisecond,
+			loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				time.Sleep(time.Millisecond)
+				req.successCh <- &runnerRef{llama: mock}
+				return false
+			},
+		},
+	}
+
+	go s.sched.Run(t.Context())
+
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture":          "llama",
+		"llama.block_count":             uint32(1),
+		"llama.context_length":          uint32(8192),
+		"llama.embedding_length":        uint32(4096),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(8),
+		"tokenizer.ggml.tokens":         []string{""},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*ggml.Tensor{
+		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+	})
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:  "test-qwen3-thinking",
+		Files:  map[string]string{"file.gguf": digest},
+		Parser: "qwen3-thinking",
+		Template: `{{- range .Messages }}{{ .Role }}: {{ if .Thinking }}<think>{{ .Thinking }}</think>{{ end }}{{ .Content }}
+{{ end }}`,
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("create: expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	format := json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}}}`)
+
+	var (
+		requestsMu sync.Mutex
+		requests   []llm.CompletionRequest
+	)
+
+	// the parser returns the whole turn - thinking and content - from one Add call
+	mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+		requestsMu.Lock()
+		requests = append(requests, r)
+		callNum := len(requests)
+		requestsMu.Unlock()
+
+		switch callNum {
+		case 1:
+			fn(llm.CompletionResponse{
+				Content:            `I am thinking through this problem. </think>{"answer":"42"}`,
+				Done:               false,
+				PromptEvalCount:    1,
+				PromptEvalDuration: 1,
+			})
+
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Second):
+				t.Errorf("timeout waiting for structured outputs cancellation")
+				return nil
+			}
+		case 2:
+			fn(llm.CompletionResponse{
+				Content:            `{"answer":"42"}`,
+				Done:               true,
+				DoneReason:         llm.DoneReasonStop,
+				PromptEvalCount:    1,
+				PromptEvalDuration: 1,
+				EvalCount:          1,
+				EvalDuration:       1,
+			})
+			return nil
+		default:
+			t.Errorf("unexpected number of completion calls: %d", callNum)
+			return nil
+		}
+	}
+
+	streamRequest := false
+	w = createRequest(t, s.ChatHandler, api.ChatRequest{
+		Model:    "test-qwen3-thinking",
+		Messages: []api.Message{{Role: "user", Content: "Please respond in JSON."}},
+		Think:    &api.ThinkValue{Value: true},
+		Stream:   &streamRequest,
+		Format:   format,
+		Options:  map[string]any{"num_ctx": 4096},
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	if len(requests) != 2 {
+		t.Fatalf("expected two completion calls, got %d", len(requests))
+	}
+
+	if requests[0].Format != nil {
+		t.Errorf("expected first completion format to be nil, got %q", requests[0].Format)
+	}
+
+	if !bytes.Equal([]byte(format), []byte(requests[1].Format)) {
+		t.Errorf("expected second completion format to match original format, got %q", requests[1].Format)
+	}
+
+	// the qwen3 parser trims the whitespace around thinking
+	if !strings.Contains(requests[1].Prompt, "<think>I am thinking through this problem.</think>") {
+		t.Errorf("expected second completion prompt to carry the thinking, got %q", requests[1].Prompt)
+	}
+
+	var resp api.ChatResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.Message.Thinking != "I am thinking through this problem." {
+		t.Errorf("expected thinking %q, got %q", "I am thinking through this problem.", resp.Message.Thinking)
+	}
+
+	if resp.Message.Content != `{"answer":"42"}` {
+		t.Errorf("expected content %q, got %q", `{"answer":"42"}`, resp.Message.Content)
+	}
 }
 
 // TestChatFormatWithThinkFalse verifies that when a model uses a builtin
