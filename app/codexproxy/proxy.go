@@ -35,6 +35,12 @@ const (
 	// models continue to pass through to their normal OpenAI upstream.
 	RoutingCatalogFilename = "ollama-launch-codex-routing.json"
 
+	// ManagedAPIKey is a local sentinel used to let signed-out ChatGPT users
+	// open Codex directly with Ollama models. It is never valid for an OpenAI
+	// upstream and the router must reject it before any native request leaves
+	// the machine.
+	ManagedAPIKey = "ollama-local-codex"
+
 	// autoReviewModel is the native Codex reviewer alias. The routing catalog
 	// may map requests for this alias to a selected Ollama model.
 	autoReviewModel          = "codex-auto-review"
@@ -276,6 +282,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusBadRequest, "prepare Codex Auto-review request for Ollama: "+err.Error())
 			return
 		}
+	}
+	if !routed && usesManagedAPIKey(r.Header) {
+		h.lastRoute.Store(routeSnapshot{Model: model, Route: "none", UpstreamStatus: http.StatusUnauthorized})
+		h.logActivity(started, r.Method, suffix, model, "none", http.StatusUnauthorized, "auth_required")
+		writeJSONError(w, http.StatusUnauthorized, "OpenAI models require signing in to ChatGPT or adding an OpenAI API key")
+		return
 	}
 
 	// The built-in OpenAI provider sends both authentication modes through
@@ -1464,6 +1476,11 @@ func isWebSocketUpgrade(r *http.Request) bool {
 
 func usesChatGPTBackend(header http.Header) bool {
 	return strings.TrimSpace(header.Get("ChatGPT-Account-ID")) != ""
+}
+
+func usesManagedAPIKey(header http.Header) bool {
+	parts := strings.Fields(header.Get("Authorization"))
+	return len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") && parts[1] == ManagedAPIKey
 }
 
 func copyOllamaRequestHeaders(dst, src http.Header) {

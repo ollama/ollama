@@ -10,7 +10,10 @@ import {
   ClaudeDesktopModelsSettings,
   type ClaudeDesktopModelsSettingsHandle,
 } from "@/components/ClaudeDesktopModelsSettings";
-import { CodexDesktopModelsSettings } from "@/components/CodexDesktopModelsSettings";
+import {
+  CodexDesktopModelsSettings,
+  type CodexDesktopModelsSettingsHandle,
+} from "@/components/CodexDesktopModelsSettings";
 import {
   WifiIcon,
   FolderIcon,
@@ -56,6 +59,7 @@ interface SettingsDefaultsActions {
   updateSettings: (settings: SettingsType) => Promise<unknown>;
   updateCloud: (enabled: boolean) => Promise<unknown>;
   updateShowAppsInMenu: (visible: boolean) => Promise<unknown>;
+  resetChatGPTModels: () => Promise<boolean>;
   resetClaudeMappings: () => Promise<boolean>;
   currentSettings: SettingsType;
   currentShowAppsInMenu: boolean;
@@ -75,6 +79,7 @@ export async function applySettingsDefaults({
   updateSettings,
   updateCloud,
   updateShowAppsInMenu,
+  resetChatGPTModels,
   resetClaudeMappings,
   currentSettings,
   currentShowAppsInMenu,
@@ -106,8 +111,12 @@ export async function applySettingsDefaults({
     await updateShowAppsInMenu(true);
     rollbacks.push(() => updateShowAppsInMenu(currentShowAppsInMenu));
 
-    // Apply Claude last so no later settings failure can leave its mappings
-    // reset while the rest of the page rolls back.
+    // Reset app-specific model settings only after the rest of the page has
+    // succeeded, because those native profile changes cannot be rolled back
+    // with the settings API.
+    if (!(await resetChatGPTModels())) {
+      throw new Error("ChatGPT models could not be reset");
+    }
     if (!(await resetClaudeMappings())) {
       throw new Error("Claude model mappings could not be reset");
     }
@@ -141,6 +150,8 @@ export default function Settings() {
   const [hasCodexDraftChanges, setHasCodexDraftChanges] = useState(false);
   const claudeModelsSettingsRef =
     useRef<ClaudeDesktopModelsSettingsHandle>(null);
+  const codexModelsSettingsRef =
+    useRef<CodexDesktopModelsSettingsHandle>(null);
   const savedConfirmationTimeoutRef = useRef<number | null>(null);
   useBlocker({
     shouldBlockFn: () =>
@@ -399,6 +410,8 @@ export default function Settings() {
           updateSettingsMutation.mutateAsync(defaultSettings),
         updateCloud: requestCloudUpdate,
         updateShowAppsInMenu: updateShowAppsInMenuVisibility,
+        resetChatGPTModels: async () =>
+          (await codexModelsSettingsRef.current?.resetToDefaults()) ?? true,
         resetClaudeMappings: async () =>
           (await claudeModelsSettingsRef.current?.resetToDefaults()) ?? true,
         currentSettings: settings,
@@ -777,6 +790,7 @@ export default function Settings() {
                 showSectionHeading={false}
               />
               <CodexDesktopModelsSettings
+                ref={codexModelsSettingsRef}
                 onDraftChange={setHasCodexDraftChanges}
               />
             </section>

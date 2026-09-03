@@ -7,6 +7,7 @@ import Settings from "./Settings";
 
 const mocks = vi.hoisted(() => ({
   resetClaudeMappings: vi.fn(),
+  resetChatGPTModels: vi.fn(),
   updateSettings: vi.fn(),
   updateCloudSetting: vi.fn(),
   setShowAppsInMenu: vi.fn(),
@@ -33,7 +34,14 @@ vi.mock("@/components/ClaudeDesktopModelsSettings", () => ({
 }));
 
 vi.mock("@/components/CodexDesktopModelsSettings", () => ({
-  CodexDesktopModelsSettings: () => <section aria-label="ChatGPT settings" />,
+  CodexDesktopModelsSettings: forwardRef(
+    function MockCodexDesktopSettings(_props, ref) {
+      useImperativeHandle(ref, () => ({
+        resetToDefaults: mocks.resetChatGPTModels,
+      }));
+      return <section aria-label="ChatGPT settings" />;
+    },
+  ),
 }));
 
 vi.mock("@/hooks/useUser", () => ({
@@ -154,6 +162,7 @@ describe("Settings reset interactions", () => {
       source: "none",
     });
     mocks.setShowAppsInMenu.mockResolvedValue(undefined);
+    mocks.resetChatGPTModels.mockResolvedValue(true);
 
     vi.stubGlobal("window", {
       addEventListener: vi.fn(),
@@ -197,6 +206,7 @@ describe("Settings reset interactions", () => {
       expect(settingsFieldset.props["aria-busy"]).toBe(true);
       expect(textContent(resetButton)).toContain("Resetting…");
       expect(renderer!.root.findAllByType(Badge)).toHaveLength(0);
+      expect(mocks.resetChatGPTModels).toHaveBeenCalledOnce();
 
       await act(async () => {
         pendingClaudeReset.resolve(true);
@@ -244,6 +254,7 @@ describe("Settings reset interactions", () => {
       });
 
       expect(mocks.resetClaudeMappings).not.toHaveBeenCalled();
+      expect(mocks.resetChatGPTModels).not.toHaveBeenCalled();
     } finally {
       await act(async () => {
         renderer?.unmount();

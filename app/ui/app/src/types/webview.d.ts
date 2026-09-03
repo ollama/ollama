@@ -85,7 +85,24 @@ interface CodexDesktopModelsSettings {
   running: boolean;
   selected: string[];
   available: string[];
+  models?: CodexDesktopModelStatus[];
   maxModels: number;
+}
+
+interface CodexDesktopModelStatus {
+  name: string;
+  displayName: string;
+  description?: string;
+  recommended?: boolean;
+  selected: boolean;
+  availability?: "unknown" | "available" | "unavailable";
+  reason?:
+    | "cloud_off"
+    | "sign_in_required"
+    | "upgrade_required"
+    | "verification_unavailable"
+    | "model_not_installed";
+  requiredPlan?: string;
 }
 
 interface CodexDesktopModelsSettingsResult {
@@ -130,6 +147,9 @@ declare global {
     getCodexDesktopModelsSettings?: () => Promise<CodexDesktopModelsSettingsResult>;
     applyCodexDesktopModels?: (
       models: string[],
+      restartConfirmed: boolean,
+    ) => Promise<CodexDesktopModelsSettingsResult>;
+    resetCodexDesktopModels?: (
       restartConfirmed: boolean,
     ) => Promise<CodexDesktopModelsSettingsResult>;
     installClaudeDesktop?: () => Promise<ClaudeDesktopInstallResult>;
@@ -179,6 +199,7 @@ export type {
   CodexDesktopActionResult,
   CodexDesktopInstallResult,
   CodexDesktopModelsSettings,
+  CodexDesktopModelStatus,
   CodexDesktopModelsSettingsResult,
   CodexDesktopStatus,
   ContextMenuItem,

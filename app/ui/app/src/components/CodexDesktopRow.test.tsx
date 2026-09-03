@@ -36,7 +36,7 @@ describe("CodexDesktopRow", () => {
       <CodexDesktopRow integration={integration} initialStatus={status()} />,
     );
 
-    expect(html).toContain(">ChatGPT</p>");
+    expect(html).toContain(">ChatGPT (Desktop)</p>");
     expect(html).toContain("Use Ollama models in ChatGPT");
     expect(html).toContain('aria-label="Add Ollama models to ChatGPT"');
     expect(html).toContain('aria-checked="false"');

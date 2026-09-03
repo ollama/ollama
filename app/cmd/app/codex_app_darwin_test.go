@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -16,6 +17,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/launch"
+	"github.com/ollama/ollama/internal/proxy"
 	modelpkg "github.com/ollama/ollama/types/model"
 )
 
@@ -29,6 +31,7 @@ type fakeCodexDesktopController struct {
 	onboarded            bool
 	launchErrs           []error
 	launches             [][]string
+	updates              [][]string
 	requests             uint64
 	configureBeforeError bool
 	restarts             int
@@ -66,6 +69,28 @@ func (f *fakeCodexDesktopController) UseOllamaFromDesktop(primary string, models
 	return nil
 }
 
+func (f *fakeCodexDesktopController) UpdateOllamaModelsFromDesktop(primary string, models []launch.LaunchModel, restartConfirmed bool) error {
+	if f.running && !restartConfirmed {
+		return errCodexDesktopRestartConfirmationRequired
+	}
+	names := codexDesktopModelNames(models)
+	f.updates = append(f.updates, names)
+	if len(f.launchErrs) > 0 {
+		err := f.launchErrs[0]
+		f.launchErrs = f.launchErrs[1:]
+		if err != nil {
+			if f.configureBeforeError {
+				f.configured = true
+			}
+			return err
+		}
+	}
+	f.launched = primary
+	f.models = names
+	f.configured = true
+	return nil
+}
+
 func stubCodexDesktopModelLoader(t *testing.T) {
 	originalLoadModels := codexDesktopLoadModels
 	originalLoadConnectionModels := codexDesktopLoadConnectionModels
@@ -85,6 +110,21 @@ func stubCodexDesktopModelLoader(t *testing.T) {
 	}
 	codexDesktopLoadModels = loader
 	codexDesktopLoadConnectionModels = loader
+}
+
+func stubCodexDesktopCatalogSources(t *testing.T, recommendations []api.ModelRecommendation, access proxy.ClaudeDesktopAccessState) {
+	originalRecommendations := codexDesktopRecommendations
+	originalAccessState := codexDesktopAccessState
+	t.Cleanup(func() {
+		codexDesktopRecommendations = originalRecommendations
+		codexDesktopAccessState = originalAccessState
+	})
+	codexDesktopRecommendations = func(context.Context) ([]api.ModelRecommendation, error) {
+		return recommendations, nil
+	}
+	codexDesktopAccessState = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
+		return access, nil
+	}
 }
 func (f *fakeCodexDesktopController) RestoreFromDesktop(restartConfirmed bool) error {
 	if f.running && !restartConfirmed {
@@ -349,6 +389,103 @@ func TestApplyCodexDesktopModelsStartsStoppedRegularProfile(t *testing.T) {
 	}
 }
 
+func TestResetCodexDesktopModelsDoesNothingBeforeIntegrationIsUsed(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	originalController := codexDesktop
+	originalLoadModels := codexDesktopLoadModels
+	t.Cleanup(func() {
+		codexDesktop = originalController
+		codexDesktopLoadModels = originalLoadModels
+	})
+	codexDesktopLoadModels = func(context.Context, []string) (string, []launch.LaunchModel, error) {
+		t.Fatal("reset loaded models for an unused integration")
+		return "", nil, nil
+	}
+	fake := &fakeCodexDesktopController{installed: true}
+	codexDesktop = fake
+
+	if err := resetCodexDesktopModels(false); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.launches) != 0 || len(fake.updates) != 0 || fake.running || fake.configured {
+		t.Fatalf("controller changed during unused reset: %#v", fake)
+	}
+}
+
+func TestResetCodexDesktopModelsSavesDefaultsWithoutConnecting(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	originalController := codexDesktop
+	t.Cleanup(func() { codexDesktop = originalController })
+	stubCodexDesktopModelLoader(t)
+	if err := config.SaveIntegration(codexDesktopIntegrationName, []string{"old-model"}); err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeCodexDesktopController{installed: true, running: true}
+	codexDesktop = fake
+
+	if err := resetCodexDesktopModels(false); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.launches) != 0 || len(fake.updates) != 0 || !fake.running || fake.configured {
+		t.Fatalf("disconnected ChatGPT changed during reset: %#v", fake)
+	}
+	if got := config.IntegrationModels(codexDesktopIntegrationName); !slices.Equal(got, []string{"qwen3:8b", "glm-5.2:cloud"}) {
+		t.Fatalf("saved models = %v, want recommendation defaults", got)
+	}
+}
+
+func TestResetCodexDesktopModelsUpdatesStoppedProfileWithoutOpening(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	originalController := codexDesktop
+	t.Cleanup(func() { codexDesktop = originalController })
+	stubCodexDesktopModelLoader(t)
+	if err := config.SaveIntegration(codexDesktopIntegrationName, []string{"old-model"}); err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeCodexDesktopController{installed: true, configured: true}
+	codexDesktop = fake
+
+	if err := resetCodexDesktopModels(false); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.launches) != 0 || len(fake.updates) != 1 || fake.running || !fake.configured {
+		t.Fatalf("controller = %#v, want one stopped profile update", fake)
+	}
+	if !slices.Equal(fake.models, []string{"qwen3:8b", "glm-5.2:cloud"}) {
+		t.Fatalf("updated models = %v, want recommendation defaults", fake.models)
+	}
+}
+
+func TestResetCodexDesktopModelsRequiresConfirmationForRunningProfile(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	originalController := codexDesktop
+	t.Cleanup(func() { codexDesktop = originalController })
+	stubCodexDesktopModelLoader(t)
+	if err := config.SaveIntegration(codexDesktopIntegrationName, []string{"old-model"}); err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeCodexDesktopController{installed: true, configured: true, running: true}
+	codexDesktop = fake
+
+	err := resetCodexDesktopModels(false)
+	if !errors.Is(err, errCodexDesktopRestartConfirmationRequired) {
+		t.Fatalf("reset error = %v, want restart confirmation", err)
+	}
+	if len(fake.updates) != 0 {
+		t.Fatalf("updates before confirmation = %v, want none", fake.updates)
+	}
+	if got := config.IntegrationModels(codexDesktopIntegrationName); !slices.Equal(got, []string{"old-model"}) {
+		t.Fatalf("saved models before confirmation = %v, want old selection", got)
+	}
+
+	if err := resetCodexDesktopModels(true); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.updates) != 1 || !fake.running {
+		t.Fatalf("controller = %#v, want one confirmed running update", fake)
+	}
+}
+
 func TestApplyCodexDesktopModelsRestoresSelectionAfterStoppedLaunchFailure(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	originalController := codexDesktop
@@ -479,6 +616,258 @@ func TestCodexDesktopDefaultModelsUsesAvailableOrder(t *testing.T) {
 	}
 }
 
+func TestBuildCodexDesktopModelInventoryByAccount(t *testing.T) {
+	recommendations := []api.ModelRecommendation{
+		{Model: "glm-5.3-flash:cloud", RequiredPlan: "pro", Thinking: &api.ModelRecommendationThinking{Values: []any{"low", "high", "max"}, Default: "max"}},
+		{Model: "gemma4:31b-cloud", RequiredPlan: "free", Thinking: &api.ModelRecommendationThinking{Values: []any{false, true}, Default: false}},
+	}
+	local := []api.ListModelResponse{{Name: "qwen3:8b"}}
+
+	tests := []struct {
+		name         string
+		access       proxy.ClaudeDesktopAccessState
+		accountCloud []string
+		wantCatalog  []string
+		wantDefaults []string
+		wantReasons  map[string]proxy.ClaudeDesktopAccessReason
+	}{
+		{
+			name:         "signed out keeps cloud recommendations visible",
+			access:       proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedOut},
+			wantCatalog:  []string{"qwen3:8b", "glm-5.3-flash:cloud", "gemma4:31b-cloud"},
+			wantDefaults: []string{"qwen3:8b"},
+			wantReasons: map[string]proxy.ClaudeDesktopAccessReason{
+				"glm-5.3-flash:cloud": proxy.ClaudeDesktopAccessSignInRequired,
+				"gemma4:31b-cloud":    proxy.ClaudeDesktopAccessSignInRequired,
+			},
+		},
+		{
+			name:         "free puts Gemma before paid recommendations",
+			access:       proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "free"},
+			wantCatalog:  []string{"gemma4:31b-cloud", "qwen3:8b", "glm-5.3-flash:cloud"},
+			wantDefaults: []string{"gemma4:31b-cloud"},
+			wantReasons: map[string]proxy.ClaudeDesktopAccessReason{
+				"glm-5.3-flash:cloud": proxy.ClaudeDesktopAccessUpgradeRequired,
+			},
+		},
+		{
+			name:         "team uses recommendation order without account inventory entries",
+			access:       proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "team"},
+			wantCatalog:  []string{"glm-5.3-flash:cloud", "gemma4:31b-cloud", "qwen3:8b"},
+			wantDefaults: []string{"glm-5.3-flash:cloud", "gemma4:31b-cloud"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			inventory := buildCodexDesktopModelInventory(recommendations, local, tt.accountCloud, tt.access, true, true, true)
+			gotCatalog := make([]string, 0, len(inventory.Catalog))
+			for _, model := range inventory.Catalog {
+				gotCatalog = append(gotCatalog, model.Model.Name)
+				if wantReason, ok := tt.wantReasons[model.Model.Name]; ok && model.Reason != wantReason {
+					t.Errorf("%s reason = %q, want %q", model.Model.Name, model.Reason, wantReason)
+				}
+			}
+			if !slices.Equal(gotCatalog, tt.wantCatalog) {
+				t.Errorf("catalog = %v, want %v", gotCatalog, tt.wantCatalog)
+			}
+			if got := codexDesktopModelNames(inventory.Defaults); !slices.Equal(got, tt.wantDefaults) {
+				t.Errorf("defaults = %v, want %v", got, tt.wantDefaults)
+			}
+		})
+	}
+}
+
+func TestBuildCodexDesktopModelInventorySignedOutWithoutLocalModel(t *testing.T) {
+	recommendations := []api.ModelRecommendation{
+		{Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"},
+		{Model: "gemma4:31b-cloud", RequiredPlan: "free"},
+	}
+	inventory := buildCodexDesktopModelInventory(
+		recommendations,
+		nil,
+		nil,
+		proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedOut},
+		true,
+		true,
+		false,
+	)
+	if len(inventory.Catalog) != 2 {
+		t.Fatalf("catalog = %#v, want both cloud recommendations visible", inventory.Catalog)
+	}
+	if len(inventory.Available) != 0 || len(inventory.Defaults) != 0 {
+		t.Fatalf("available/defaults = %#v/%#v, want no signed-out cloud selection", inventory.Available, inventory.Defaults)
+	}
+	if _, _, err := selectCodexDesktopModels([]string{"glm-5.3-flash:cloud"}, inventory.Available); err == nil {
+		t.Fatal("signed-out cloud recommendation was selectable")
+	}
+}
+
+func TestCodexDesktopDefaultsForTeamAccountUsesFirstFiveRecommendations(t *testing.T) {
+	recommendations := make([]api.ModelRecommendation, 6)
+	want := make([]string, 6)
+	for i := range recommendations {
+		name := fmt.Sprintf("model-%d:cloud", i+1)
+		recommendations[i] = api.ModelRecommendation{Model: name, RequiredPlan: "pro"}
+		want[i] = name
+	}
+	inventory := buildCodexDesktopModelInventory(
+		recommendations,
+		nil,
+		nil,
+		proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "team"},
+		true,
+		true,
+		true,
+	)
+
+	got := codexDesktopModelNames(inventory.Defaults)
+	want = want[:codexDesktopMaxModels]
+	if !slices.Equal(got, want) {
+		t.Fatalf("defaults = %v, want first five recommendations %v", got, want)
+	}
+}
+
+func TestCodexDesktopDefaultsForTeamAccountMatchDeployedRecommendations(t *testing.T) {
+	recommendations := []api.ModelRecommendation{
+		{Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"},
+		{Model: "glm-5.2:cloud", RequiredPlan: "pro"},
+		{Model: "kimi-k3:cloud", RequiredPlan: "pro"},
+		{Model: "deepseek-v4-pro", RequiredPlan: "pro"},
+		{Model: "gemma4:31b-cloud", RequiredPlan: "free"},
+	}
+	inventory := buildCodexDesktopModelInventory(
+		recommendations,
+		[]api.ListModelResponse{{Name: "gemma4:12b"}},
+		[]string{"gemma4:31b:cloud"},
+		proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "team"},
+		true,
+		true,
+		true,
+	)
+
+	got := codexDesktopModelNames(inventory.Defaults)
+	want := []string{
+		"glm-5.3-flash:cloud",
+		"glm-5.2:cloud",
+		"kimi-k3:cloud",
+		"deepseek-v4-pro:cloud",
+		"gemma4:31b:cloud",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("defaults = %v, want deployed recommendation order %v", got, want)
+	}
+	if len(inventory.Catalog) != len(recommendations)+1 {
+		t.Fatalf("catalog = %#v, want five recommendations and one local model", inventory.Catalog)
+	}
+	for i, entry := range inventory.Catalog[:len(recommendations)] {
+		if !entry.Recommended || entry.Availability != proxy.ClaudeDesktopAvailabilityAvailable {
+			t.Fatalf("recommendation %d = %#v, want available recommendation", i, entry)
+		}
+	}
+}
+
+func TestCodexDesktopDefaultsForFreeAccountFollowRecommendationMetadata(t *testing.T) {
+	recommendations := []api.ModelRecommendation{
+		{Model: "paid-model:cloud", RequiredPlan: "pro"},
+		{Model: "new-free-model:cloud", RequiredPlan: "free"},
+	}
+	inventory := buildCodexDesktopModelInventory(
+		recommendations,
+		nil,
+		nil,
+		proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "free"},
+		true,
+		true,
+		true,
+	)
+
+	if got, want := codexDesktopModelNames(inventory.Defaults), []string{"new-free-model:cloud"}; !slices.Equal(got, want) {
+		t.Fatalf("defaults = %v, want endpoint-provided Free recommendation %v", got, want)
+	}
+}
+
+func TestBuildCodexDesktopModelInventoryMergesEquivalentCloudAliases(t *testing.T) {
+	inventory := buildCodexDesktopModelInventory(
+		[]api.ModelRecommendation{{Model: "gemma4:31b-cloud", RequiredPlan: "free"}},
+		nil,
+		[]string{"gemma4:31b:cloud"},
+		proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "team"},
+		true,
+		true,
+		true,
+	)
+
+	if len(inventory.Catalog) != 1 {
+		t.Fatalf("catalog = %#v, want one merged model", inventory.Catalog)
+	}
+	model := inventory.Catalog[0]
+	if model.Model.Name != "gemma4:31b:cloud" || model.DisplayName != "gemma4:31b-cloud" {
+		t.Fatalf("merged model = %#v, want inventory route with recommendation display name", model)
+	}
+	if got := codexDesktopModelNames(inventory.Defaults); !slices.Equal(got, []string{"gemma4:31b:cloud"}) {
+		t.Fatalf("defaults = %v, want the merged cloud route", got)
+	}
+}
+
+func TestCodexDesktopModelStatusesKeepsSavedUnavailableModel(t *testing.T) {
+	statuses := codexDesktopModelStatuses(codexDesktopModelInventory{}, []string{"saved-model:cloud"})
+	if len(statuses) != 1 {
+		t.Fatalf("statuses = %#v, want saved model", statuses)
+	}
+	status := statuses[0]
+	if status.Name != "saved-model:cloud" || !status.Selected ||
+		status.Availability != string(proxy.ClaudeDesktopAvailabilityUnknown) ||
+		status.Reason != string(proxy.ClaudeDesktopAccessVerificationUnavailable) {
+		t.Fatalf("status = %#v, want selected model with unverified access", status)
+	}
+}
+
+func TestCodexDesktopInventoryModelAccessReportsCloudOff(t *testing.T) {
+	availability, reason := codexDesktopInventoryModelAccess(
+		launch.LaunchModel{Name: "cloud-model:cloud", Remote: true},
+		proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOff},
+		true,
+		false,
+	)
+	if availability != proxy.ClaudeDesktopAvailabilityUnavailable || reason != proxy.ClaudeDesktopAccessCloudOff {
+		t.Fatalf("access = %q/%q, want unavailable/cloud_off", availability, reason)
+	}
+}
+
+func TestLoadCodexDesktopRecommendationsUsesCodexQualifier(t *testing.T) {
+	useTestOllamaRequestSigner(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/experimental/model-recommendations" || r.URL.Query().Get("app") != "codex-desktop" {
+			t.Fatalf("request URL = %q", r.URL.String())
+		}
+		if r.Header.Get("Authorization") != "test-public-key:test-signature" {
+			t.Fatal("recommendation request is missing public-key identity")
+		}
+		_, _ = w.Write([]byte(`{"recommendations":[{"model":"glm-5.3-flash:cloud","required_plan":"pro","thinking":{"values":["low","high","max"],"default":"max"}}],"mappings":{"ignored":{"model":"other"}}}`))
+	}))
+	defer server.Close()
+
+	previousClient := codexDesktopRecommendationsClient
+	previousEndpoint := codexDesktopRecommendationsEndpoint
+	codexDesktopRecommendationsClient = server.Client()
+	codexDesktopRecommendationsEndpoint = func() string {
+		return server.URL + "/api/experimental/model-recommendations?app=codex-desktop"
+	}
+	t.Cleanup(func() {
+		codexDesktopRecommendationsClient = previousClient
+		codexDesktopRecommendationsEndpoint = previousEndpoint
+	})
+
+	recommendations, err := loadCodexDesktopRecommendations(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recommendations) != 1 || recommendations[0].Model != "glm-5.3-flash:cloud" || recommendations[0].Thinking == nil {
+		t.Fatalf("recommendations = %#v, want Codex catalog with thinking metadata", recommendations)
+	}
+}
+
 func TestGetCodexDesktopModelsSettingsKeepsSelectionWhenInventoryFails(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	originalController := codexDesktop
@@ -535,6 +924,9 @@ func TestBuildCodexDesktopModelsRejectsUnavailableLocalSelection(t *testing.T) {
 }
 
 func TestLoadCodexDesktopAvailableModelsRetriesEmptyStartupInventory(t *testing.T) {
+	stubCodexDesktopCatalogSources(t, nil, proxy.ClaudeDesktopAccessState{
+		Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedOut,
+	})
 	tagRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -583,13 +975,78 @@ func TestLoadCodexDesktopAvailableModelsRetriesEmptyStartupInventory(t *testing.
 	}
 }
 
+func TestLoadCodexDesktopModelInventoryRetriesAccountAccessDuringServerRestart(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/tags" {
+			_, _ = w.Write([]byte(`{"models":[]}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	base, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := api.NewClient(base, server.Client())
+
+	originalClientFactory := codexDesktopClientFactory
+	originalCloudModels := codexDesktopCloudModels
+	originalRecommendations := codexDesktopRecommendations
+	originalAccessState := codexDesktopAccessState
+	originalAttempts := codexDesktopModelLoadAttempts
+	originalRetryWait := codexDesktopModelRetryWait
+	t.Cleanup(func() {
+		codexDesktopClientFactory = originalClientFactory
+		codexDesktopCloudModels = originalCloudModels
+		codexDesktopRecommendations = originalRecommendations
+		codexDesktopAccessState = originalAccessState
+		codexDesktopModelLoadAttempts = originalAttempts
+		codexDesktopModelRetryWait = originalRetryWait
+	})
+	codexDesktopClientFactory = func() (*api.Client, error) { return client, nil }
+	codexDesktopCloudModels = func(context.Context) ([]string, error) { return nil, nil }
+	codexDesktopRecommendations = func(context.Context) ([]api.ModelRecommendation, error) {
+		return []api.ModelRecommendation{{Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"}}, nil
+	}
+	accessRequests := 0
+	codexDesktopAccessState = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
+		accessRequests++
+		if accessRequests < 3 {
+			return proxy.ClaudeDesktopAccessState{}, errors.New("server is restarting")
+		}
+		return proxy.ClaudeDesktopAccessState{
+			Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "team",
+		}, nil
+	}
+	codexDesktopModelLoadAttempts = 3
+	codexDesktopModelRetryWait = time.Millisecond
+
+	inventory, err := loadCodexDesktopModelInventory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if accessRequests != 3 {
+		t.Fatalf("account access requests = %d, want 3", accessRequests)
+	}
+	if got := codexDesktopModelNames(inventory.Defaults); !slices.Equal(got, []string{"glm-5.3-flash:cloud"}) {
+		t.Fatalf("defaults = %v, want recommendation after server restart", got)
+	}
+}
+
 func TestLoadCodexDesktopModelsHydratesAccountOnlyCloudCapabilities(t *testing.T) {
+	stubCodexDesktopCatalogSources(t, []api.ModelRecommendation{{
+		Model: "glm-5.3-flash:cloud",
+		Thinking: &api.ModelRecommendationThinking{
+			Values: []any{"low", "high", "max"}, Default: "max",
+		},
+	}}, proxy.ClaudeDesktopAccessState{
+		Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "pro",
+	})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/tags":
 			_, _ = w.Write([]byte(`{"models":[]}`))
-		case "/api/experimental/model-recommendations":
-			_, _ = w.Write([]byte(`{"recommendations":[{"model":"glm-5.3-flash:cloud","thinking":{"values":["low","high","max"],"default":"max"}}]}`))
 		case "/api/show":
 			_, _ = w.Write([]byte(`{"capabilities":["completion","thinking","tools","vision"],"details":{"family":"glm5_next"}}`))
 		default:

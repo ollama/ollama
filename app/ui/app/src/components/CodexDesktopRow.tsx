@@ -335,7 +335,7 @@ export function CodexDesktopRow({
         <CodexIcon integration={integration} />
         <div className="min-w-0">
           <p className="text-sm font-medium text-neutral-950 dark:text-neutral-100">
-            {integration.name}
+            ChatGPT (Desktop)
           </p>
           <p
             role={error ? "alert" : notice ? "status" : undefined}

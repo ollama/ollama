@@ -489,7 +489,7 @@ describe("Onboarding", () => {
     const integrations: IntegrationStatuses = [
       {
         id: "claude-desktop",
-        name: "Claude",
+        name: "Claude Code (Desktop)",
         description: "Use Ollama models in Claude Desktop",
         installed: true,
         action: "connect",
@@ -569,7 +569,7 @@ describe("Onboarding", () => {
     expect(html).not.toContain(
       "Connect Claude, or copy a command to run in your terminal.",
     );
-    expect(html).toContain("Claude");
+    expect(html).toContain("Claude Code (Desktop)");
     expect(html).toContain("Use Ollama models in Claude Desktop");
     expect(html).toContain("Claude Code");
     expect(html).toContain("Codex CLI");
@@ -597,7 +597,7 @@ describe("Onboarding", () => {
     expect(html).toContain('aria-label="Copy OpenCode command"');
     expect(html).toContain('aria-label="Copy Terminal command"');
     expect(html).not.toContain(">Copy command</button>");
-    expect(html).toContain("ChatGPT");
+    expect(html).toContain("ChatGPT (Desktop)");
     expect(html).toContain("OpenCode");
     expect(html).toContain("Terminal");
     expect(html).toContain("overflow-y-auto");
@@ -653,7 +653,7 @@ describe("Onboarding", () => {
     );
 
     expect(html.indexOf("Use Ollama models in Claude Desktop")).toBeLessThan(
-      html.indexOf(">ChatGPT</p>"),
+      html.indexOf(">ChatGPT (Desktop)</p>"),
     );
     expect(html).toContain('aria-label="Add Ollama models to ChatGPT"');
     expect(html).not.toContain('aria-label="Copy ChatGPT command"');
