@@ -640,6 +640,16 @@ func normalizeOllamaInputItem(item json.RawMessage) (json.RawMessage, bool, erro
 		return converted, true, nil
 	case "function_call", "function_call_output":
 		return item, true, nil
+	case "tool_search_call", "tool_search_output", "compaction_trigger":
+		// These client-executed control items are handled by Ollama's Responses
+		// adapter. Preserve them so tool discovery and compaction work through the
+		// ChatGPT loopback router, not only when calling /v1/responses directly.
+		return item, true, nil
+	case "compaction":
+		// Native OpenAI compaction state is opaque and cannot be consumed by
+		// Ollama. Ollama compaction state is a versioned JSON payload and must
+		// reach the server middleware so it can be expanded before inference.
+		return item, isOllamaCompactionItem(item), nil
 	case "reasoning":
 		var reasoning struct {
 			ID string `json:"id"`
@@ -695,6 +705,20 @@ func normalizeOllamaInputItem(item json.RawMessage) (json.RawMessage, bool, erro
 	}
 }
 
+func isOllamaCompactionItem(item json.RawMessage) bool {
+	var wire struct {
+		EncryptedContent string `json:"encrypted_content"`
+	}
+	if json.Unmarshal(item, &wire) != nil || wire.EncryptedContent == "" {
+		return false
+	}
+	var payload struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal([]byte(wire.EncryptedContent), &payload) == nil &&
+		payload.Type == "ollama_compaction"
+}
+
 func normalizeChatGPTInputItem(item json.RawMessage) (json.RawMessage, bool, error) {
 	var header struct {
 		ID   string `json:"id"`
@@ -704,6 +728,13 @@ func normalizeChatGPTInputItem(item json.RawMessage) (json.RawMessage, bool, err
 		return nil, false, fmt.Errorf("decode input item: %w", err)
 	}
 	if header.Type == "reasoning" && isOllamaReasoningItemID(header.ID) {
+		return nil, false, nil
+	}
+	if header.Type == "compaction" && isOllamaCompactionItem(item) {
+		// Ollama's compaction payload is local plaintext state stored in the
+		// Responses encrypted_content field. OpenAI cannot decrypt it, so omit it
+		// on a provider switch just as native compaction state is omitted on the
+		// Ollama route.
 		return nil, false, nil
 	}
 	return item, true, nil
