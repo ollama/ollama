@@ -31,7 +31,6 @@ type fakeCodexDesktopController struct {
 	launches             [][]string
 	requests             uint64
 	configureBeforeError bool
-	shutdownRestores     int
 	restarts             int
 }
 
@@ -102,13 +101,6 @@ func (f *fakeCodexDesktopController) RestartFromDesktop(restartConfirmed bool) e
 	}
 	f.restarts++
 	f.running = true
-	return nil
-}
-func (f *fakeCodexDesktopController) RestoreForShutdown(context.Context) error {
-	f.shutdownRestores++
-	f.stopped = true
-	f.running = false
-	f.configured = false
 	return nil
 }
 func (f *fakeCodexDesktopController) Onboard() error {
@@ -335,34 +327,6 @@ func TestApplyCodexDesktopModelsCanRestartWhenInventoryIsUnavailable(t *testing.
 	}
 	if fake.restarts != 1 || len(fake.launches) != 0 {
 		t.Fatalf("controller = %#v, want one catalog-independent restart", fake)
-	}
-}
-
-func TestRestoreCodexAppForTermination(t *testing.T) {
-	originalController := codexDesktop
-	t.Cleanup(func() { codexDesktop = originalController })
-
-	tests := []struct {
-		name       string
-		configured bool
-		handoff    bool
-		want       int
-	}{
-		{name: "normal shutdown restores configured profile", configured: true, want: 1},
-		{name: "handoff preserves configured profile", configured: true, handoff: true},
-		{name: "normal shutdown skips regular profile", configured: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			fake := &fakeCodexDesktopController{installed: true, configured: tt.configured}
-			codexDesktop = fake
-			if err := restoreCodexAppForTermination(context.Background(), tt.handoff); err != nil {
-				t.Fatal(err)
-			}
-			if fake.shutdownRestores != tt.want {
-				t.Fatalf("shutdown restores = %d, want %d", fake.shutdownRestores, tt.want)
-			}
-		})
 	}
 }
 
@@ -624,6 +588,8 @@ func TestLoadCodexDesktopModelsHydratesAccountOnlyCloudCapabilities(t *testing.T
 		switch r.URL.Path {
 		case "/api/tags":
 			_, _ = w.Write([]byte(`{"models":[]}`))
+		case "/api/experimental/model-recommendations":
+			_, _ = w.Write([]byte(`{"recommendations":[{"model":"glm-5.3-flash:cloud","thinking":{"values":["low","high","max"],"default":"max"}}]}`))
 		case "/api/show":
 			_, _ = w.Write([]byte(`{"capabilities":["completion","thinking","tools","vision"],"details":{"family":"glm5_next"}}`))
 		default:
@@ -660,6 +626,9 @@ func TestLoadCodexDesktopModelsHydratesAccountOnlyCloudCapabilities(t *testing.T
 	}
 	if models[0].Details.Family != "glm5_next" {
 		t.Fatalf("family = %q, want model metadata from /api/show", models[0].Details.Family)
+	}
+	if models[0].Thinking == nil || !slices.Equal(models[0].Thinking.Values, []any{"low", "high", "max"}) || models[0].Thinking.Default != "max" {
+		t.Fatalf("thinking = %#v, want recommendation endpoint metadata", models[0].Thinking)
 	}
 }
 

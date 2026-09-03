@@ -1148,10 +1148,11 @@ func TestResponsesStreamConverterRestoresLegacyDottedFunctionCallNamespace(t *te
 
 func TestFromResponsesRequest_ReasoningEffort(t *testing.T) {
 	tests := []struct {
-		name      string
-		effort    string
-		wantThink any
-		wantErr   bool
+		name        string
+		effort      string
+		directThink *api.ThinkValue
+		wantThink   any
+		wantErr     bool
 	}{
 		{
 			name: "unset",
@@ -1197,6 +1198,23 @@ func TestFromResponsesRequest_ReasoningEffort(t *testing.T) {
 			wantThink: false,
 		},
 		{
+			name:        "Ollama boolean override takes precedence",
+			effort:      "medium",
+			directThink: &api.ThinkValue{Value: true},
+			wantThink:   true,
+		},
+		{
+			name:        "Ollama string override stays exact",
+			effort:      "high",
+			directThink: &api.ThinkValue{Value: "max"},
+			wantThink:   "max",
+		},
+		{
+			name:        "invalid Ollama override",
+			directThink: &api.ThinkValue{Value: 3},
+			wantErr:     true,
+		},
+		{
 			name:    "invalid",
 			effort:  "extreme",
 			wantErr: true,
@@ -1208,6 +1226,7 @@ func TestFromResponsesRequest_ReasoningEffort(t *testing.T) {
 			req := ResponsesRequest{
 				Model: "deepseek-v4-flash",
 				Input: ResponsesInput{Text: "hi"},
+				Think: tt.directThink,
 			}
 			if tt.effort != "" {
 				req.Reasoning.Effort = tt.effort

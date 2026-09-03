@@ -492,8 +492,9 @@ func (h *Handler) readBodies(r *http.Request) ([]byte, []byte, error) {
 }
 
 type routingThinkingMetadata struct {
-	Supported bool     `json:"supported"`
-	Levels    []string `json:"levels,omitempty"`
+	Supported bool                       `json:"supported"`
+	Levels    []string                   `json:"levels,omitempty"`
+	Values    map[string]json.RawMessage `json:"values,omitempty"`
 }
 
 type routingModel struct {
@@ -1123,8 +1124,10 @@ func normalizeOllamaThinking(body []byte, metadata routingThinkingMetadata) ([]b
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, err
 	}
+	_, hadThinkOverride := payload["think"]
+	delete(payload, "think")
 	if !metadata.Supported {
-		if _, ok := payload["reasoning"]; !ok {
+		if _, ok := payload["reasoning"]; !ok && !hadThinkOverride {
 			return body, nil
 		}
 		delete(payload, "reasoning")
@@ -1133,6 +1136,9 @@ func normalizeOllamaThinking(body []byte, metadata routingThinkingMetadata) ([]b
 
 	reasoningData, ok := payload["reasoning"]
 	if !ok || len(metadata.Levels) == 0 {
+		if hadThinkOverride {
+			return json.Marshal(payload)
+		}
 		return body, nil
 	}
 	var reasoning map[string]json.RawMessage
@@ -1146,6 +1152,9 @@ func normalizeOllamaThinking(body []byte, metadata routingThinkingMetadata) ([]b
 		}
 	}
 	if effort == "" {
+		if hadThinkOverride {
+			return json.Marshal(payload)
+		}
 		return body, nil
 	}
 
@@ -1160,6 +1169,12 @@ func normalizeOllamaThinking(body []byte, metadata routingThinkingMetadata) ([]b
 			return nil, fmt.Errorf("encode reasoning effort: %w", err)
 		}
 		reasoning["effort"] = encodedEffort
+		if rawValue, ok := metadata.Values[normalizedEffort]; ok {
+			// Codex exposes named reasoning efforts, while Ollama models may use
+			// boolean thinking controls. Preserve the server-advertised raw value
+			// in an Ollama-only extension consumed by the Responses adapter.
+			payload["think"] = rawValue
+		}
 	}
 	encodedReasoning, err := json.Marshal(reasoning)
 	if err != nil {

@@ -445,6 +445,10 @@ type ResponsesRequest struct {
 
 	Reasoning ResponsesReasoning `json:"reasoning"`
 
+	// Think is an Ollama extension used when a model's native thinking control
+	// cannot be represented exactly by OpenAI's string-valued reasoning effort.
+	Think *api.ThinkValue `json:"think,omitempty"`
+
 	// optional, default is 1.0
 	Temperature *float64 `json:"temperature"`
 
@@ -649,9 +653,17 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 		options["num_predict"] = *r.MaxOutputTokens
 	}
 
-	think, err := thinkFromReasoningEffort(r.Reasoning.Effort)
-	if err != nil {
-		return nil, err
+	think := r.Think
+	if think != nil {
+		if !think.IsValid() {
+			return nil, fmt.Errorf("invalid think value")
+		}
+	} else {
+		converted, err := thinkFromReasoningEffort(r.Reasoning.Effort)
+		if err != nil {
+			return nil, err
+		}
+		think = converted
 	}
 
 	// Convert tools from Responses API format to api.Tool format

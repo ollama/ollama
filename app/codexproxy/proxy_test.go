@@ -87,6 +87,8 @@ func TestNormalizeOllamaThinkingUsesRoutedModelContract(t *testing.T) {
 		wantReasoning bool
 		wantEffort    string
 		omitEffort    bool
+		wantThink     any
+		hasThink      bool
 	}{
 		{
 			name:          "legacy catalog preserves request",
@@ -105,40 +107,52 @@ func TestNormalizeOllamaThinkingUsesRoutedModelContract(t *testing.T) {
 			model: routingModel{Thinking: &routingThinkingMetadata{
 				Supported: true,
 				Levels:    []string{"none", "medium"},
+				Values:    map[string]json.RawMessage{"none": json.RawMessage("false"), "medium": json.RawMessage("true")},
 			}},
 			effort:        "none",
 			wantReasoning: true,
 			wantEffort:    "none",
+			wantThink:     false,
+			hasThink:      true,
 		},
 		{
 			name: "binary thinking uses medium for its enabled choice",
 			model: routingModel{Thinking: &routingThinkingMetadata{
 				Supported: true,
 				Levels:    []string{"none", "medium"},
+				Values:    map[string]json.RawMessage{"none": json.RawMessage("false"), "medium": json.RawMessage("true")},
 			}},
 			effort:        "medium",
 			wantReasoning: true,
 			wantEffort:    "medium",
+			wantThink:     true,
+			hasThink:      true,
 		},
 		{
 			name: "binary thinking maps a stale enabled level to medium",
 			model: routingModel{Thinking: &routingThinkingMetadata{
 				Supported: true,
 				Levels:    []string{"none", "medium"},
+				Values:    map[string]json.RawMessage{"none": json.RawMessage("false"), "medium": json.RawMessage("true")},
 			}},
 			effort:        "high",
 			wantReasoning: true,
 			wantEffort:    "medium",
+			wantThink:     true,
+			hasThink:      true,
 		},
 		{
 			name: "exact GLM ladder clamps xhigh to max",
 			model: routingModel{Thinking: &routingThinkingMetadata{
 				Supported: true,
 				Levels:    []string{"low", "high", "max"},
+				Values:    map[string]json.RawMessage{"low": json.RawMessage(`"low"`), "high": json.RawMessage(`"high"`), "max": json.RawMessage(`"max"`)},
 			}},
 			effort:        "xhigh",
 			wantReasoning: true,
 			wantEffort:    "max",
+			wantThink:     "max",
+			hasThink:      true,
 		},
 		{
 			name: "exact GLM ladder omits unsupported medium",
@@ -165,20 +179,26 @@ func TestNormalizeOllamaThinkingUsesRoutedModelContract(t *testing.T) {
 			model: routingModel{Thinking: &routingThinkingMetadata{
 				Supported: true,
 				Levels:    []string{"low", "medium", "high"},
+				Values:    map[string]json.RawMessage{"low": json.RawMessage(`"low"`), "medium": json.RawMessage(`"medium"`), "high": json.RawMessage(`"high"`)},
 			}},
 			effort:        "minimal",
 			wantReasoning: true,
 			wantEffort:    "low",
+			wantThink:     "low",
+			hasThink:      true,
 		},
 		{
 			name: "stale xhigh clamps to the strongest supported effort",
 			model: routingModel{Thinking: &routingThinkingMetadata{
 				Supported: true,
 				Levels:    []string{"low", "medium", "high"},
+				Values:    map[string]json.RawMessage{"low": json.RawMessage(`"low"`), "medium": json.RawMessage(`"medium"`), "high": json.RawMessage(`"high"`)},
 			}},
 			effort:        "xhigh",
 			wantReasoning: true,
 			wantEffort:    "high",
+			wantThink:     "high",
+			hasThink:      true,
 		},
 		{
 			name: "unknown effort is omitted instead of enabling binary thinking",
@@ -216,6 +236,10 @@ func TestNormalizeOllamaThinkingUsesRoutedModelContract(t *testing.T) {
 			if ok != tt.wantReasoning {
 				t.Fatalf("reasoning present = %v, want %v in %s", ok, tt.wantReasoning, normalized)
 			}
+			gotThink, hasThink := payload["think"]
+			if hasThink != tt.hasThink || (hasThink && gotThink != tt.wantThink) {
+				t.Fatalf("think = %#v, %v; want %#v, %v in %s", gotThink, hasThink, tt.wantThink, tt.hasThink, normalized)
+			}
 			if !tt.wantReasoning {
 				return
 			}
@@ -247,7 +271,7 @@ func TestNormalizeOllamaThinkingRejectsMalformedReasoning(t *testing.T) {
 
 func TestLoadCatalogModelsReadsOptionalThinkingMetadata(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ModelCatalogFilename)
-	data := []byte(`{"models":[{"slug":"legacy"},{"slug":"binary","thinking":{"supported":true,"levels":["none","medium"]}}]}`)
+	data := []byte(`{"models":[{"slug":"legacy"},{"slug":"binary","thinking":{"supported":true,"levels":["none","medium"],"values":{"none":false,"medium":true}}}]}`)
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -262,6 +286,9 @@ func TestLoadCatalogModelsReadsOptionalThinkingMetadata(t *testing.T) {
 	binary := models["binary"].Thinking
 	if binary == nil || !binary.Supported || strings.Join(binary.Levels, ",") != "none,medium" {
 		t.Fatalf("binary model thinking metadata = %+v, want off/medium contract", binary)
+	}
+	if string(binary.Values["none"]) != "false" || string(binary.Values["medium"]) != "true" {
+		t.Fatalf("binary model thinking values = %#v, want exact false/true values", binary.Values)
 	}
 }
 

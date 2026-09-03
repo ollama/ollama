@@ -257,6 +257,7 @@ type ModelItem struct {
 	RequiredPlan    string
 	ToolCapable     bool
 	Capabilities    []modelpkg.Capability
+	Thinking        *api.ModelRecommendationThinking
 	Size            int64
 	Details         api.ModelDetails
 }
@@ -769,7 +770,7 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 	var launchModels []LaunchModel
 	liveConfigMatches := slices.Equal(editor.Models(), models)
 	if needsConfigure || req.ModelOverride != "" || !savedMatchesModels(saved, models) || !liveConfigMatches {
-		launchModels = c.modelInventory().Resolve(ctx, models)
+		launchModels = c.resolveRunModels(ctx, models)
 		if err := prepareEditorIntegration(name, editor, launchModels); err != nil {
 			return err
 		}
@@ -806,7 +807,7 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 		if err != nil {
 			return err
 		}
-		if err := prepareManagedSingleIntegration(name, managed, target, c.modelInventory().Resolve(ctx, configureModels)); err != nil {
+		if err := prepareManagedSingleIntegration(name, managed, target, c.resolveRunModels(ctx, configureModels)); err != nil {
 			return err
 		}
 		if refresher, ok := managed.(ManagedRuntimeRefresher); ok {
@@ -1224,6 +1225,7 @@ func (c *launcherClient) requestRecommendations(ctx context.Context) ([]ModelIte
 			VRAMBytes:       rec.VRAMBytes,
 			MaxOutputTokens: rec.MaxOutputTokens,
 			RequiredPlan:    strings.TrimSpace(rec.RequiredPlan),
+			Thinking:        rec.Thinking.Clone(),
 			Details: api.ModelDetails{
 				ContextLength: rec.ContextLength,
 			},
@@ -1443,7 +1445,24 @@ func hasLocalModel(inventory []LaunchModel, name string) bool {
 }
 
 func (c *launcherClient) resolveRunModels(ctx context.Context, models []string) []LaunchModel {
-	return c.modelInventory().Resolve(ctx, models)
+	recommendations := c.recommendations(ctx)
+	resolved := c.modelInventory().Resolve(ctx, models)
+	byName := make(map[string]*api.ModelRecommendationThinking, len(recommendations))
+	for _, recommendation := range recommendations {
+		if recommendation.Thinking != nil {
+			byName[launchModelRecommendationKey(recommendation.Name)] = recommendation.Thinking
+		}
+	}
+	for i := range resolved {
+		if thinking := byName[launchModelRecommendationKey(resolved[i].Name)]; thinking != nil {
+			resolved[i].Thinking = thinking.Clone()
+		}
+	}
+	return resolved
+}
+
+func launchModelRecommendationKey(name string) string {
+	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(name), ":latest"))
 }
 
 func runIntegration(runner Runner, modelName string, models []LaunchModel, args []string) error {

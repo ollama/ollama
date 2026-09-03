@@ -1275,17 +1275,6 @@ func SetCodexDesktopConnected(connected, restartConfirmed C.bool) C.bool {
 	return C._Bool(true)
 }
 
-//export RestoreCodexProfileForShutdown
-func RestoreCodexProfileForShutdown() C.bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := restoreCodexAppForTermination(ctx, false); err != nil {
-		slog.Warn("failed to restore ChatGPT profile during shutdown", "error", err)
-		return C._Bool(false)
-	}
-	return C._Bool(true)
-}
-
 //export IsClaudeGatewayConfigured
 func IsClaudeGatewayConfigured() C.bool {
 	return C._Bool(claudeDesktop.UsesOllamaGateway())
@@ -1923,34 +1912,12 @@ func quit() {
 	ctx, cancel := context.WithTimeout(context.Background(), claudeShutdownTimeout)
 	defer cancel()
 
-	// The profiles are independent. Restore them in parallel so adding ChatGPT
-	// cannot double the graceful-shutdown window Claude already had.
-	var restores sync.WaitGroup
-	restores.Add(2)
-	go func() {
-		defer restores.Done()
-		if err := restoreCodexAppForTermination(ctx, handoff); err != nil {
-			slog.Warn("failed to restore ChatGPT before quitting", "error", err)
-		}
-	}()
-	go func() {
-		defer restores.Done()
-		if err := restoreClaudeAppForTermination(ctx, handoff); err != nil {
-			slog.Warn("failed to restore Claude before quitting", "error", err)
-		}
-	}()
-	restores.Wait()
-	C.quit()
-}
-
-func restoreCodexAppForTermination(ctx context.Context, handoff bool) error {
-	codexDesktopMu.Lock()
-	defer codexDesktopMu.Unlock()
-
-	if handoff || !codexDesktop.OllamaConfigured() {
-		return nil
+	// ChatGPT's loopback configuration is persistent. Leave it and the running
+	// app untouched so reopening Ollama resumes routing without another restart.
+	if err := restoreClaudeAppForTermination(ctx, handoff); err != nil {
+		slog.Warn("failed to restore Claude before quitting", "error", err)
 	}
-	return codexDesktop.RestoreForShutdown(ctx)
+	C.quit()
 }
 
 func restoreClaudeBeforeQuit(ctx context.Context, configured bool, restore func(context.Context) error) error {

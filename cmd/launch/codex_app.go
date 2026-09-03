@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/app/codexproxy"
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
@@ -52,8 +53,6 @@ var (
 	codexAppOpenPath        = defaultCodexAppOpenAppPath
 	codexAppOpenStart       = defaultCodexAppOpenStartAppID
 	codexAppQuitApp         = defaultCodexAppQuitApp
-	codexAppForceQuit       = defaultCodexAppForceQuitApp
-	codexAppHasWindow       = defaultCodexAppHasOpenWindow
 	codexAppIsRunning       = defaultCodexAppIsRunning
 	codexAppRunPath         = defaultCodexAppRunningAppPath
 	codexAppStartID         = defaultCodexAppStartAppID
@@ -70,8 +69,7 @@ var (
 	codexAppProfileIsRunning   = defaultCodexAppOllamaProfileIsRunning
 	codexAppProcessCommand     = defaultCodexAppProcessCommand
 
-	codexAppExitTimeout      = 5 * time.Second
-	codexAppForceExitTimeout = 5 * time.Second
+	codexAppExitTimeout = 5 * time.Second
 )
 
 // CodexApp keeps ChatGPT's built-in OpenAI provider and adds selected Ollama
@@ -676,9 +674,9 @@ func (c *CodexApp) RestoreFromDesktop(restartConfirmed bool) error {
 	return codexAppApplyProfileFromDesktop(restoreCodexAppProfile, false, restartConfirmed)
 }
 
-// RestartFromDesktop restarts the existing regular ChatGPT profile without
-// rebuilding its model catalog. This keeps restart available when Ollama's
-// live model inventory is temporarily unavailable.
+// RestartFromDesktop repairs the existing catalog's auth visibility and
+// restarts the regular ChatGPT profile without fetching live model inventory.
+// This keeps restart available when Ollama's inventory is temporarily offline.
 func (c *CodexApp) RestartFromDesktop(restartConfirmed bool) error {
 	if err := codexAppSupported(); err != nil {
 		return err
@@ -689,27 +687,7 @@ func (c *CodexApp) RestartFromDesktop(restartConfirmed bool) error {
 	if !c.OllamaConfigured() {
 		return errors.New("ChatGPT is not configured to use Ollama")
 	}
-	return codexAppApplyProfileFromDesktop(func() error { return nil }, true, restartConfirmed)
-}
-
-// RestoreForShutdown removes the additive catalog and router without reopening
-// ChatGPT while Ollama itself is shutting down.
-func (c *CodexApp) RestoreForShutdown(ctx context.Context) error {
-	if err := codexAppSupported(); err != nil {
-		return err
-	}
-	if !c.OllamaConfigured() {
-		return nil
-	}
-	if codexAppIsRunning() {
-		if err := codexAppQuitApp(); err != nil {
-			return fmt.Errorf("quit ChatGPT: %w", err)
-		}
-		if err := waitForCodexAppExitContext(ctx); err != nil {
-			return err
-		}
-	}
-	return restoreCodexAppProfile()
+	return codexAppApplyProfileFromDesktop(repairCodexAppCatalogAuthVisibility, true, restartConfirmed)
 }
 
 func (c *CodexApp) OllamaRequestCount() uint64 {
@@ -882,10 +860,10 @@ type codexAppRawModelCatalog struct {
 	Models []json.RawMessage `json:"models"`
 }
 
-// writeCodexAppCombinedModelCatalog prepends selected Ollama models to the
-// native catalog. The remote signed-in catalog can still merge over matching
-// native slugs, while the separately written routing catalog remains the only
-// authority for deciding which requests may be sent to Ollama.
+// writeCodexAppCombinedModelCatalog prepends selected Ollama models. Codex
+// filters non-ChatGPT sessions by supported_in_api, so Ollama entries remain
+// enabled while native entries are marked ChatGPT-only. The separately written
+// routing catalog remains the only authority for requests sent to Ollama.
 func writeCodexAppCombinedModelCatalog(path string, models []LaunchModel, nativeCatalogData []byte) error {
 	if len(models) == 0 {
 		return fmt.Errorf("chatgpt model catalog cannot be empty")
@@ -915,6 +893,10 @@ func writeCodexAppCombinedModelCatalog(path string, models []LaunchModel, native
 		if seen[codexAppCatalogModelKey(slug)] {
 			continue
 		}
+		entry, err = codexAppCatalogEntryWithAPISupport(entry, false)
+		if err != nil {
+			return fmt.Errorf("mark native Codex model %q as ChatGPT-only: %w", slug, err)
+		}
 		seen[codexAppCatalogModelKey(slug)] = true
 		entries = append(entries, entry)
 	}
@@ -927,6 +909,81 @@ func writeCodexAppCombinedModelCatalog(path string, models []LaunchModel, native
 		return err
 	}
 	return fileutil.WriteWithBackup(path, append(data, '\n'), codexAppIntegrationName)
+}
+
+func codexAppCatalogEntryWithAPISupport(entry json.RawMessage, supported bool) (json.RawMessage, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(entry, &fields); err != nil {
+		return nil, err
+	}
+	if supported {
+		fields["supported_in_api"] = json.RawMessage("true")
+	} else {
+		fields["supported_in_api"] = json.RawMessage("false")
+	}
+	return json.Marshal(fields)
+}
+
+// repairCodexAppCatalogAuthVisibility migrates catalogs written by older
+// builds without contacting Ollama. Entries in the routing catalog are Ollama
+// models; every other entry is a native model that Codex should only show for
+// ChatGPT-account sessions.
+func repairCodexAppCatalogAuthVisibility() error {
+	configPath, err := codexConfigPath()
+	if err != nil {
+		return fmt.Errorf("find ChatGPT configuration: %w", err)
+	}
+	routingModels, err := codexAppRoutingModels()
+	if err != nil {
+		return fmt.Errorf("read ChatGPT Ollama routing catalog: %w", err)
+	}
+	routed := make(map[string]bool, len(routingModels))
+	for _, model := range routingModels {
+		routed[codexAppCatalogModelKey(model)] = true
+	}
+
+	catalogPath := codexAppModelCatalogPathForConfig(configPath)
+	data, err := os.ReadFile(catalogPath)
+	if err != nil {
+		return fmt.Errorf("read ChatGPT model catalog: %w", err)
+	}
+	catalog, err := parseCodexAppModelCatalog(data)
+	if err != nil {
+		return fmt.Errorf("parse ChatGPT model catalog: %w", err)
+	}
+	changed := false
+	for i, entry := range catalog.Models {
+		slug, err := codexAppRawCatalogSlug(entry)
+		if err != nil {
+			return fmt.Errorf("parse ChatGPT model: %w", err)
+		}
+		want := routed[codexAppCatalogModelKey(slug)]
+		var metadata struct {
+			SupportedInAPI *bool `json:"supported_in_api"`
+		}
+		if err := json.Unmarshal(entry, &metadata); err != nil {
+			return fmt.Errorf("parse ChatGPT model %q: %w", slug, err)
+		}
+		if metadata.SupportedInAPI != nil && *metadata.SupportedInAPI == want {
+			continue
+		}
+		catalog.Models[i], err = codexAppCatalogEntryWithAPISupport(entry, want)
+		if err != nil {
+			return fmt.Errorf("update ChatGPT model %q: %w", slug, err)
+		}
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	data, err = json.MarshalIndent(catalog, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode ChatGPT model catalog: %w", err)
+	}
+	if err := fileutil.WriteWithBackup(catalogPath, append(data, '\n'), codexAppIntegrationName); err != nil {
+		return fmt.Errorf("update ChatGPT model catalog: %w", err)
+	}
+	return nil
 }
 
 func codexAppOllamaPriorityStart(nativeCatalog codexAppRawModelCatalog, ollamaModelCount int) int {
@@ -955,8 +1012,9 @@ func writeCodexAppRoutingCatalog(path string, models []LaunchModel, autoReviewMo
 		return fmt.Errorf("chatgpt routing catalog cannot be empty")
 	}
 	type thinkingMetadata struct {
-		Supported bool     `json:"supported"`
-		Levels    []string `json:"levels,omitempty"`
+		Supported bool           `json:"supported"`
+		Levels    []string       `json:"levels,omitempty"`
+		Values    map[string]any `json:"values,omitempty"`
 	}
 	type routingEntry struct {
 		Slug     string           `json:"slug"`
@@ -968,8 +1026,9 @@ func writeCodexAppRoutingCatalog(path string, models []LaunchModel, autoReviewMo
 		entries = append(entries, routingEntry{
 			Slug: model.Name,
 			Thinking: thinkingMetadata{
-				Supported: metadata.supportsThinking,
-				Levels:    metadata.thinkingLevels,
+				Supported: len(metadata.thinking.levels) > 0,
+				Levels:    metadata.thinking.levels,
+				Values:    metadata.thinking.values,
 			},
 		})
 	}
@@ -1071,12 +1130,16 @@ func codexAppCatalogModelKey(name string) string {
 }
 
 type codexAppModelMetadata struct {
-	contextWindow        int
-	inputModalities      []string
-	supportsThinking     bool
-	defaultThinkingLevel string
-	thinkingLevels       []string
-	toolCapable          bool
+	contextWindow   int
+	inputModalities []string
+	thinking        codexAppThinkingContract
+	toolCapable     bool
+}
+
+type codexAppThinkingContract struct {
+	defaultLevel string
+	levels       []string
+	values       map[string]any
 }
 
 func codexAppDefaultModelMetadata() codexAppModelMetadata {
@@ -1094,37 +1157,22 @@ func codexAppModelMetadataFromLaunchModel(model LaunchModel) codexAppModelMetada
 	if model.HasCapability("vision") {
 		metadata.inputModalities = []string{"text", "image"}
 	}
-	metadata.defaultThinkingLevel, metadata.thinkingLevels = codexAppThinkingLevels(model)
-	metadata.supportsThinking = len(metadata.thinkingLevels) > 0
+	metadata.thinking = codexAppThinkingContractForModel(model)
 	metadata.toolCapable = model.ToolCapable || model.HasCapability(modelpkg.CapabilityTools)
 	return metadata
 }
 
-// codexAppThinkingLevels translates Ollama's model contract into the exact
-// effort ladder ChatGPT may send. Keep the current recommendations explicit
-// until the server exposes per-model thinking levels in its model metadata.
-// A binary Thinking capability alone is not evidence that adjustable effort
-// is supported, so unknown families get only off and on.
-//
-// TODO: Move these exact ladders into server-owned model metadata.
-func codexAppThinkingLevels(model LaunchModel) (string, []string) {
-	// These are the five models currently returned by the general model
-	// recommendations endpoint. Match exact slugs so this temporary contract
-	// cannot silently apply to a future model in the same family.
-	switch codexAppCatalogModelKey(strings.ToLower(strings.TrimSpace(model.Name))) {
-	case "glm-5.3-flash:cloud", "glm-5.3:cloud":
-		// GLM-5.3 reasoning is always enabled and accepts low, high, or max.
-		return "max", []string{"low", "high", "max"}
-	case "deepseek-v4-flash:cloud":
-		// DeepSeek V4 Flash exposes non-thinking, regular thinking, and max.
-		return "high", []string{"none", "high", "max"}
-	case "gemma4:31b-cloud", "gemma4:26b":
-		// Gemma 4 exposes a binary thinking control rather than effort levels.
-		return "medium", []string{"none", "medium"}
+// codexAppThinkingContractForModel translates the server-owned Ollama think
+// contract into Codex picker levels. The raw value map is retained so the
+// loopback router can translate the selected Codex level back without losing
+// boolean thinking controls.
+func codexAppThinkingContractForModel(model LaunchModel) codexAppThinkingContract {
+	if contract, ok := codexAppThinkingContractFromRecommendation(model.Thinking); ok {
+		return contract
 	}
 
 	if !model.HasCapability(modelpkg.CapabilityThinking) {
-		return "", nil
+		return codexAppThinkingContract{}
 	}
 
 	families := append([]string{model.Details.Family}, model.Details.Families...)
@@ -1132,17 +1180,71 @@ func codexAppThinkingLevels(model LaunchModel) (string, []string) {
 		normalized := strings.NewReplacer("-", "", "_", "", ".", "").Replace(strings.ToLower(strings.TrimSpace(family)))
 		switch normalized {
 		case "glm5next":
-			// GLM-5.3 reasoning is always enabled and accepts low, high, or max.
-			return "max", []string{"low", "high", "max"}
+			return codexAppStringThinkingContract("max", "low", "high", "max")
 		case "gptoss":
-			// GPT-OSS reasoning is always enabled and accepts low, medium, or high.
-			return "medium", []string{"low", "medium", "high"}
+			return codexAppStringThinkingContract("medium", "low", "medium", "high")
 		}
 	}
 
 	// A binary Thinking capability promises on/off control, but not adjustable
 	// effort. "none" maps to off and "medium" maps to on.
-	return "medium", []string{"none", "medium"}
+	return codexAppThinkingContract{
+		defaultLevel: "medium",
+		levels:       []string{"none", "medium"},
+		values:       map[string]any{"none": false, "medium": true},
+	}
+}
+
+func codexAppThinkingContractFromRecommendation(thinking *api.ModelRecommendationThinking) (codexAppThinkingContract, bool) {
+	if thinking == nil || len(thinking.Values) == 0 || thinking.Default == nil {
+		return codexAppThinkingContract{}, false
+	}
+
+	contract := codexAppThinkingContract{values: make(map[string]any, len(thinking.Values))}
+	for _, value := range thinking.Values {
+		level, ok := codexAppThinkingLevelForOllamaValue(value)
+		if !ok {
+			return codexAppThinkingContract{}, false
+		}
+		if _, duplicate := contract.values[level]; duplicate {
+			return codexAppThinkingContract{}, false
+		}
+		contract.levels = append(contract.levels, level)
+		contract.values[level] = value
+	}
+
+	defaultLevel, ok := codexAppThinkingLevelForOllamaValue(thinking.Default)
+	advertisedDefault, advertised := contract.values[defaultLevel]
+	if !ok || !advertised || advertisedDefault != thinking.Default {
+		return codexAppThinkingContract{}, false
+	}
+	if len(contract.levels) == 1 && contract.levels[0] == "none" {
+		return codexAppThinkingContract{}, true
+	}
+	contract.defaultLevel = defaultLevel
+	return contract, true
+}
+
+func codexAppThinkingLevelForOllamaValue(value any) (string, bool) {
+	switch value := value.(type) {
+	case bool:
+		if value {
+			return "medium", true
+		}
+		return "none", true
+	case string:
+		think := api.ThinkValue{Value: value}
+		return value, think.IsValid()
+	}
+	return "", false
+}
+
+func codexAppStringThinkingContract(defaultLevel string, levels ...string) codexAppThinkingContract {
+	values := make(map[string]any, len(levels))
+	for _, level := range levels {
+		values[level] = level
+	}
+	return codexAppThinkingContract{defaultLevel: defaultLevel, levels: levels, values: values}
 }
 
 func codexAppThinkingLevelDescription(level string) string {
@@ -1164,11 +1266,11 @@ func codexAppThinkingLevelDescription(level string) string {
 
 func codexAppCatalogEntry(model string, metadata codexAppModelMetadata, priority int, baseInstructions string) map[string]any {
 	var defaultReasoningLevel any
-	if metadata.defaultThinkingLevel != "" {
-		defaultReasoningLevel = metadata.defaultThinkingLevel
+	if metadata.thinking.defaultLevel != "" {
+		defaultReasoningLevel = metadata.thinking.defaultLevel
 	}
-	supportedReasoningLevels := make([]any, 0, len(metadata.thinkingLevels))
-	for _, level := range metadata.thinkingLevels {
+	supportedReasoningLevels := make([]any, 0, len(metadata.thinking.levels))
+	for _, level := range metadata.thinking.levels {
 		supportedReasoningLevels = append(supportedReasoningLevels, map[string]any{
 			"effort":      level,
 			"description": codexAppThinkingLevelDescription(level),
@@ -1548,8 +1650,8 @@ func codexAppLaunchOrRestart(prompt string, launchArgs []string) error {
 	}
 
 	// A single spinner and cancellation channel span the entire restart flow
-	// (quit, wait, force-quit, wait, reopen) so that one Ctrl+C aborts the
-	// whole sequence rather than just the currently-active wait. The bubbletea
+	// (quit, wait, reopen) so that one Ctrl+C aborts the whole sequence rather
+	// than just the currently-active wait. The bubbletea
 	// spinner closes Cancelled() from its raw-mode Ctrl+C handler; the ANSI
 	// fallback relies on SIGINT terminating the process directly.
 	sp := StartSpinner(codexAppRestartMessage)
@@ -1573,30 +1675,8 @@ func codexAppLaunchOrRestart(prompt string, launchArgs []string) error {
 	if isCancelled() {
 		return ErrCancelled
 	}
-	gracefulErr := waitForCodexAppGracefulExit(codexAppExitTimeout, cancelled)
-	if isCancelled() {
-		return ErrCancelled
-	}
-	if errors.Is(gracefulErr, ErrCancelled) {
-		return gracefulErr
-	}
-	if gracefulErr != nil && !codexAppForceQuitSupported() {
-		return gracefulErr
-	}
-	if codexAppForceQuitSupported() && codexAppIsRunning() {
-		if isCancelled() {
-			return ErrCancelled
-		}
-		if forceErr := codexAppForceQuit(); forceErr != nil {
-			return fmt.Errorf("force stop ChatGPT: %w", forceErr)
-		}
-		if err := waitForCodexAppExit(codexAppForceExitTimeout, cancelled); err != nil {
-			return err
-		}
-	} else if gracefulErr != nil {
-		if codexAppIsRunning() {
-			return gracefulErr
-		}
+	if err := waitForCodexAppGracefulExit(codexAppExitTimeout, cancelled); err != nil {
+		return err
 	}
 	if isCancelled() {
 		return ErrCancelled
@@ -1649,23 +1729,7 @@ func codexAppStopForRestart(cancel <-chan struct{}) error {
 	if err := codexAppQuitApp(); err != nil {
 		return fmt.Errorf("quit ChatGPT: %w", err)
 	}
-	gracefulErr := waitForCodexAppGracefulExit(codexAppExitTimeout, cancel)
-	if errors.Is(gracefulErr, ErrCancelled) {
-		return gracefulErr
-	}
-	if gracefulErr != nil && !codexAppForceQuitSupported() {
-		return gracefulErr
-	}
-	if codexAppForceQuitSupported() && codexAppIsRunning() {
-		if forceErr := codexAppForceQuit(); forceErr != nil {
-			return fmt.Errorf("force stop ChatGPT: %w", forceErr)
-		}
-		return waitForCodexAppExit(codexAppForceExitTimeout, cancel)
-	}
-	if gracefulErr != nil && codexAppIsRunning() {
-		return gracefulErr
-	}
-	return nil
+	return waitForCodexAppGracefulExit(codexAppExitTimeout, cancel)
 }
 
 func codexAppOpenAfterRestart(appID, appPath string, launchArgs []string) error {
@@ -1678,33 +1742,7 @@ func codexAppOpenAfterRestart(appID, appPath string, launchArgs []string) error 
 	return codexAppOpenApp(launchArgs)
 }
 
-func waitForCodexAppExitContext(ctx context.Context) error {
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
-	for codexAppIsRunning() {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("wait for ChatGPT to quit: %w", ctx.Err())
-		case <-ticker.C:
-		}
-	}
-	return nil
-}
-
-func codexAppForceQuitSupported() bool {
-	return codexAppGOOS == "darwin" || codexAppGOOS == "windows"
-}
-
 func waitForCodexAppGracefulExit(timeout time.Duration, cancel <-chan struct{}) error {
-	return waitForCodexAppCondition(timeout, cancel, func() bool {
-		if codexAppGOOS == "windows" {
-			return !codexAppHasWindow()
-		}
-		return !codexAppIsRunning()
-	})
-}
-
-func waitForCodexAppExit(timeout time.Duration, cancel <-chan struct{}) error {
 	return waitForCodexAppCondition(timeout, cancel, func() bool {
 		return !codexAppIsRunning()
 	})
@@ -1718,8 +1756,8 @@ const codexAppRestartMessage = "Restarting ChatGPT..."
 // app has exited or timeout elapses. It watches cancel (closed by the spinner
 // when the user hits Ctrl+C) and returns ErrCancelled if the flow is aborted.
 // The spinner itself is owned by the caller so a single spinner spans the
-// whole restart sequence. When timeout is zero the loop never runs, so
-// force-quit paths that short-circuit the graceful wait return immediately.
+// whole restart sequence. Timing out never escalates to a forced termination;
+// the profile remains unchanged and the user can retry after closing ChatGPT.
 func waitForCodexAppCondition(timeout time.Duration, cancel <-chan struct{}, done func() bool) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -1738,7 +1776,7 @@ func waitForCodexAppCondition(timeout time.Duration, cancel <-chan struct{}, don
 	if done() {
 		return nil
 	}
-	return fmt.Errorf("ChatGPT did not quit; quit it manually and re-run the command")
+	return fmt.Errorf("ChatGPT did not quit. Close it manually, then try again")
 }
 
 func defaultCodexAppOllamaProfileApplication() (string, error) {
@@ -2010,46 +2048,6 @@ func defaultCodexAppQuitApp() error {
 		scriptErr = exec.Command("osascript", "-e", `tell application "Codex" to quit`).Run()
 	}
 	return scriptErr
-}
-
-func defaultCodexAppForceQuitApp() error {
-	if !codexAppForceQuitSupported() {
-		return nil
-	}
-	pids := codexAppMatchingProcessIDs()
-	if len(pids) == 0 {
-		return nil
-	}
-	pidArgs := make([]string, 0, len(pids))
-	for _, pid := range pids {
-		pidArgs = append(pidArgs, strconv.Itoa(pid))
-	}
-	switch codexAppGOOS {
-	case "windows":
-		script := "Stop-Process -Id " + strings.Join(pidArgs, ",") + " -Force -ErrorAction SilentlyContinue"
-		return runCodexAppForceQuitCommand(exec.Command("powershell.exe", "-NoProfile", "-Command", script))
-	case "darwin":
-		return runCodexAppForceQuitCommand(exec.Command("kill", append([]string{"-TERM"}, pidArgs...)...))
-	default:
-		return nil
-	}
-}
-
-func runCodexAppForceQuitCommand(cmd *exec.Cmd) error {
-	err := cmd.Run()
-	if err != nil && !codexAppIsRunning() {
-		return nil
-	}
-	return err
-}
-
-func defaultCodexAppHasOpenWindow() bool {
-	if codexAppGOOS != "windows" {
-		return codexAppIsRunning()
-	}
-	script := `(Get-Process ChatGPT,Codex -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1).Id`
-	out, err := exec.Command("powershell.exe", "-NoProfile", "-Command", script).Output()
-	return err == nil && strings.TrimSpace(string(out)) != ""
 }
 
 func defaultCodexAppIsRunning() bool {
