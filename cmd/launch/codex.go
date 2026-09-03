@@ -390,24 +390,6 @@ func codexValidateProfileConfigText(config codexParsedConfig, profileName, model
 	return nil
 }
 
-func codexUpsertSection(text, header string, lines []string) string {
-	block := strings.Join(append([]string{header}, lines...), "\n") + "\n"
-
-	if targetPath, ok := codexTableHeaderPath(header); ok {
-		if start, end, found := codexSectionRange(text, targetPath); found {
-			return text[:start] + block + text[end:]
-		}
-	}
-
-	if text != "" && !strings.HasSuffix(text, "\n") {
-		text += "\n"
-	}
-	if text != "" {
-		text += "\n"
-	}
-	return text + block
-}
-
 func codexRemoveSection(text, header string) string {
 	targetPath, ok := codexTableHeaderPath(header)
 	if !ok {

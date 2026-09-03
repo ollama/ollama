@@ -126,6 +126,7 @@ func stubCodexDesktopCatalogSources(t *testing.T, recommendations []api.ModelRec
 		return access, nil
 	}
 }
+
 func (f *fakeCodexDesktopController) RestoreFromDesktop(restartConfirmed bool) error {
 	if f.running && !restartConfirmed {
 		return errCodexDesktopRestartConfirmationRequired
@@ -135,6 +136,7 @@ func (f *fakeCodexDesktopController) RestoreFromDesktop(restartConfirmed bool) e
 	f.configured = false
 	return nil
 }
+
 func (f *fakeCodexDesktopController) RestartFromDesktop(restartConfirmed bool) error {
 	if f.running && !restartConfirmed {
 		return errCodexDesktopRestartConfirmationRequired
@@ -143,6 +145,7 @@ func (f *fakeCodexDesktopController) RestartFromDesktop(restartConfirmed bool) e
 	f.running = true
 	return nil
 }
+
 func (f *fakeCodexDesktopController) Onboard() error {
 	f.onboarded = true
 	return nil

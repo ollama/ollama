@@ -405,7 +405,7 @@ func loadCodexDesktopModelInventory(ctx context.Context) (codexDesktopModelInven
 	var access proxy.ClaudeDesktopAccessState
 	accessKnown := false
 	var last codexDesktopModelInventory
-	for attempt := 0; attempt < codexDesktopModelLoadAttempts; attempt++ {
+	for attempt := range codexDesktopModelLoadAttempts {
 		if !accessKnown {
 			resolved, accessErr := codexDesktopAccessState(ctx)
 			if accessErr == nil {

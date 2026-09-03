@@ -609,14 +609,21 @@ func removeCodexAppManagedAuth(configPath string) error {
 	if err != nil {
 		return err
 	}
-	var auth codexAppManagedAuth
-	if json.Unmarshal(data, &auth) != nil || auth.AuthMode != "apikey" || auth.OpenAIAPIKey != codexproxy.ManagedAPIKey {
+	if !isCodexAppManagedAuth(data) {
 		return nil
 	}
 	if err := os.Remove(authPath); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil
+}
+
+func isCodexAppManagedAuth(data []byte) bool {
+	var auth codexAppManagedAuth
+	if json.Unmarshal(data, &auth) != nil {
+		return false
+	}
+	return auth.AuthMode == "apikey" && auth.OpenAIAPIKey == codexproxy.ManagedAPIKey
 }
 
 func (c *CodexApp) Onboard() error {
@@ -2035,14 +2042,6 @@ func removeCodexAppOllamaProfilePID() error {
 		return err
 	}
 	return nil
-}
-
-func removeCodexAppOllamaProfilePIDIf(pid int) error {
-	current, ok := codexAppOllamaProfilePID()
-	if !ok || current != pid {
-		return nil
-	}
-	return removeCodexAppOllamaProfilePID()
 }
 
 func defaultCodexAppStopOllamaProfile() error {
