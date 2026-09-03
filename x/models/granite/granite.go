@@ -215,7 +215,6 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	} else if lmHead := linears.Make("lm_head"); lmHead != nil {
 		m.LMHead = lmHead
 	} else {
-		// Fallback used by many Llama checkpoints where output is tied.
 		m.LMHead = m.EmbedTokens.AsLinear()
 	}
 
