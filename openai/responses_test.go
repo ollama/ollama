@@ -248,6 +248,42 @@ func TestUnmarshalResponsesInputItem(t *testing.T) {
 		}
 	})
 
+	t.Run("tool_search_call item", func(t *testing.T) {
+		got, err := unmarshalResponsesInputItem([]byte(`{"type":"tool_search_call","id":"ts_1","call_id":"call_search","execution":"client","status":"completed","arguments":{"query":"order lookup","limit":5}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		call, ok := got.(ResponsesToolSearchCall)
+		if !ok {
+			t.Fatalf("got type %T, want ResponsesToolSearchCall", got)
+		}
+		if call.CallID != "call_search" || call.Execution != "client" {
+			t.Fatalf("call = %#v", call)
+		}
+		if query, ok := call.Arguments.Get("query"); !ok || query != "order lookup" {
+			t.Fatalf("query = %#v, %v", query, ok)
+		}
+	})
+
+	t.Run("tool_search_output item", func(t *testing.T) {
+		got, err := unmarshalResponsesInputItem([]byte(`{"type":"tool_search_output","id":"tso_1","call_id":"call_search","execution":"client","status":"completed","tools":[{"type":"function","name":"lookup_order","x_client_field":true}]}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		output, ok := got.(ResponsesToolSearchOutput)
+		if !ok {
+			t.Fatalf("got type %T, want ResponsesToolSearchOutput", got)
+		}
+		if output.CallID != "call_search" || len(output.Tools) != 1 {
+			t.Fatalf("output = %#v", output)
+		}
+		if !json.Valid(output.Tools[0]) {
+			t.Fatalf("tool is not valid JSON: %s", output.Tools[0])
+		}
+	})
+
 	t.Run("web_search_call item", func(t *testing.T) {
 		got, err := unmarshalResponsesInputItem([]byte(`{"type":"web_search_call","id":"ws_123","status":"completed","action":{"type":"search","query":"Parth Sareen"}}`))
 		if err != nil {
@@ -524,6 +560,212 @@ func TestFromResponsesRequest_WebSearchTool(t *testing.T) {
 	}
 }
 
+func TestFromResponsesRequest_ToolSearch(t *testing.T) {
+	description := "Find the project tools needed to continue."
+	request := ResponsesRequest{
+		Tools: []ResponsesTool{
+			{
+				Type:        "tool_search",
+				Execution:   "client",
+				Description: &description,
+				Parameters: map[string]any{
+					"type":       "object",
+					"properties": map[string]any{"query": map[string]any{"type": "string"}},
+					"required":   []any{"query"},
+				},
+			},
+			{Type: "function", Name: "tool_search"},
+			{Type: "function", Name: "exec_command"},
+		},
+	}
+
+	chat, err := FromResponsesRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.Tools) != 2 {
+		t.Fatalf("tools = %#v, want tool_search and exec_command", chat.Tools)
+	}
+	if got := chat.Tools[0].Function.Name; got != "tool_search" {
+		t.Fatalf("tool name = %q", got)
+	}
+	if got := chat.Tools[0].Function.Description; got != description {
+		t.Fatalf("description = %q", got)
+	}
+	if got := chat.Tools[0].Function.Parameters.Required; len(got) != 1 || got[0] != "query" {
+		t.Fatalf("required = %#v", got)
+	}
+	if got := chat.Tools[1].Function.Name; got != "exec_command" {
+		t.Fatalf("core tool name = %q", got)
+	}
+}
+
+func TestFromResponsesRequestRejectsHostedToolSearch(t *testing.T) {
+	_, err := FromResponsesRequest(ResponsesRequest{Tools: []ResponsesTool{{Type: "tool_search", Execution: "server"}}})
+	if err == nil {
+		t.Fatal("expected hosted tool search to be rejected")
+	}
+}
+
+func TestFromResponsesRequest_ToolSearchOutputBecomesToolContent(t *testing.T) {
+	var request ResponsesRequest
+	if err := json.Unmarshal([]byte(`{
+		"model":"test",
+		"tools":[{
+			"type":"tool_search",
+			"execution":"client",
+			"description":"Find tools",
+			"parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}
+		}],
+		"input":[
+			{"type":"tool_search_call","id":"ts_1","call_id":"call_search","execution":"client","status":"completed","arguments":{"query":"orders","limit":5}},
+			{"type":"tool_search_output","id":"tso_1","call_id":"call_search","execution":"client","status":"completed","tools":[
+				{"type":"function","name":"lookup_order","description":"Look up an order","defer_loading":true,"x_client_field":"preserved","parameters":{"type":"object"}}
+			]}
+		]
+	}`), &request); err != nil {
+		t.Fatal(err)
+	}
+
+	chat, err := FromResponsesRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.Messages) != 2 {
+		t.Fatalf("messages = %#v", chat.Messages)
+	}
+	call := chat.Messages[0]
+	if call.Role != "assistant" || len(call.ToolCalls) != 1 || call.ToolCalls[0].Function.Name != "tool_search" {
+		t.Fatalf("search call message = %#v", call)
+	}
+	if query, ok := call.ToolCalls[0].Function.Arguments.Get("query"); !ok || query != "orders" {
+		t.Fatalf("query = %#v, %v", query, ok)
+	}
+	output := chat.Messages[1]
+	if output.Role != "tool" || output.ToolName != "tool_search" || output.ToolCallID != "call_search" {
+		t.Fatalf("search output message = %#v", output)
+	}
+	var content []map[string]any
+	if err := json.Unmarshal([]byte(output.Content), &content); err != nil {
+		t.Fatal(err)
+	}
+	if len(content) != 1 || content[0]["name"] != "lookup_order" || content[0]["x_client_field"] != "preserved" {
+		t.Fatalf("content = %#v", content)
+	}
+	if len(chat.Tools) != 1 || chat.Tools[0].Function.Name != "tool_search" {
+		t.Fatalf("native tools = %#v; discovered tool must remain content-only", chat.Tools)
+	}
+}
+
+func TestFromResponsesRequest_ToolSearchOutputFlattensNamespaceMembers(t *testing.T) {
+	namespace := json.RawMessage(`{
+		"type":"namespace",
+		"name":"mcp__openaiDeveloperDocs",
+		"description":"Official OpenAI documentation tools",
+		"tools":[
+			{"type":"function","name":"search_openai_docs","description":"Search docs","strict":false,"defer_loading":true,"x_client_field":true,"parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}}
+		]
+	}`)
+	request := ResponsesRequest{
+		Tools: []ResponsesTool{{Type: "tool_search", Execution: "client"}},
+		Input: ResponsesInput{Items: []ResponsesInputItem{
+			ResponsesToolSearchCall{
+				Type:      "tool_search_call",
+				CallID:    "call_search",
+				Execution: "client",
+			},
+			ResponsesToolSearchOutput{
+				Type:      "tool_search_output",
+				CallID:    "call_search",
+				Execution: "client",
+				Tools: []json.RawMessage{
+					namespace,
+					json.RawMessage(`{"type":"namespace","name":"mcp__codex_apps__github","tools":[{"type":"function","name":"_search","parameters":{"type":"object"}}]}`),
+					json.RawMessage(`{"type":"function","name":"plain","x_client_field":"preserved"}`),
+				},
+			},
+		}},
+	}
+
+	chat, err := FromResponsesRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.Messages) != 2 {
+		t.Fatalf("messages = %#v", chat.Messages)
+	}
+	var content []map[string]any
+	if err := json.Unmarshal([]byte(chat.Messages[1].Content), &content); err != nil {
+		t.Fatal(err)
+	}
+	if len(content) != 3 {
+		t.Fatalf("tools = %#v", content)
+	}
+	if got := content[0]["name"]; got != "mcp__openaiDeveloperDocs.search_openai_docs" {
+		t.Fatalf("docs tool name = %#v", got)
+	}
+	if got := content[0]["description"]; got != "Search docs" {
+		t.Fatalf("docs description = %#v", got)
+	}
+	if got := content[0]["strict"]; got != false {
+		t.Fatalf("docs strict = %#v", got)
+	}
+	if got := content[0]["defer_loading"]; got != true {
+		t.Fatalf("docs defer_loading = %#v", got)
+	}
+	parameters, ok := content[0]["parameters"].(map[string]any)
+	if !ok || parameters["type"] != "object" {
+		t.Fatalf("docs parameters = %#v", content[0]["parameters"])
+	}
+	properties, ok := parameters["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("docs parameter properties = %#v", parameters["properties"])
+	}
+	query, ok := properties["query"].(map[string]any)
+	if !ok || query["type"] != "string" {
+		t.Fatalf("docs query parameter = %#v", properties["query"])
+	}
+	required, ok := parameters["required"].([]any)
+	if !ok || len(required) != 1 || required[0] != "query" {
+		t.Fatalf("docs required parameters = %#v", parameters["required"])
+	}
+	if got := content[0]["x_client_field"]; got != true {
+		t.Fatalf("docs custom field = %#v", got)
+	}
+	if got := content[1]["name"]; got != "mcp__codex_apps__github._search" {
+		t.Fatalf("app tool name = %#v", got)
+	}
+	if got := content[2]["name"]; got != "plain" {
+		t.Fatalf("plain tool name = %#v", got)
+	}
+	if got := string(request.Input.Items[1].(ResponsesToolSearchOutput).Tools[0]); got != string(namespace) {
+		t.Fatalf("Responses tool_search_output was mutated: %s", got)
+	}
+	if len(chat.Tools) != 1 || chat.Tools[0].Function.Name != "tool_search" {
+		t.Fatalf("native tools = %#v; discovered tools must remain content-only", chat.Tools)
+	}
+}
+
+func TestFromResponsesRequestRejectsIncompleteToolSearchNamespace(t *testing.T) {
+	tests := []json.RawMessage{
+		json.RawMessage(`{"type":"namespace","tools":[{"type":"function","name":"search"}]}`),
+		json.RawMessage(`{"type":"namespace","name":"docs","tools":[{"type":"function"}]}`),
+	}
+	for _, tool := range tests {
+		t.Run(string(tool), func(t *testing.T) {
+			_, err := FromResponsesRequest(ResponsesRequest{
+				Input: ResponsesInput{Items: []ResponsesInputItem{ResponsesToolSearchOutput{
+					Type:  "tool_search_output",
+					Tools: []json.RawMessage{tool},
+				}}},
+			})
+			if err == nil {
+				t.Fatal("expected incomplete namespace to be rejected")
+			}
+		})
+	}
+}
+
 func TestFromResponsesRequest_WebSearchIgnoresUnknownControls(t *testing.T) {
 	for _, declaration := range []string{
 		`{"type":"web_search","filters":{"allowed_domains":["example.com"]}}`,
@@ -753,6 +995,90 @@ func TestToResponseRestoresFunctionCallNamespace(t *testing.T) {
 	}
 	if got := response.Output[0].Name; got != "_search" {
 		t.Fatalf("name = %q", got)
+	}
+}
+
+func TestToResponseEmitsClientToolSearchCall(t *testing.T) {
+	response := ToResponse("test", "resp_1", "item_1", api.ChatResponse{
+		Message: api.Message{ToolCalls: []api.ToolCall{{
+			ID: "call_search",
+			Function: api.ToolCallFunction{
+				Name:      "tool_search",
+				Arguments: testArgs(map[string]any{"query": "orders", "limit": 5}),
+			},
+		}}},
+	}, ResponsesRequest{Tools: []ResponsesTool{{Type: "tool_search", Execution: "client"}}})
+
+	if len(response.Output) != 1 {
+		t.Fatalf("output = %#v", response.Output)
+	}
+	item := response.Output[0]
+	if item.Type != "tool_search_call" || item.CallID != "call_search" || item.Execution != "client" || item.Status != "completed" {
+		t.Fatalf("item = %#v", item)
+	}
+	encoded, err := json.Marshal(item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		Arguments map[string]any `json:"arguments"`
+	}
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if wire.Arguments["query"] != "orders" || wire.Arguments["limit"] != float64(5) {
+		t.Fatalf("arguments = %#v; want an object, not a JSON string", wire.Arguments)
+	}
+}
+
+func TestToResponseRestoresNamespaceFromToolSearchOutput(t *testing.T) {
+	request := ResponsesRequest{
+		Tools: []ResponsesTool{{Type: "tool_search", Execution: "client"}},
+		Input: ResponsesInput{Items: []ResponsesInputItem{ResponsesToolSearchOutput{
+			Type:      "tool_search_output",
+			CallID:    "call_search",
+			Execution: "client",
+			Tools: []json.RawMessage{
+				json.RawMessage(`{"type":"namespace","name":"mcp__codex_apps__notion","tools":[{"type":"function","name":"_search"}]}`),
+				json.RawMessage(`{"type":"namespace","name":"mcp__openaiDeveloperDocs","tools":[{"type":"function","name":"search_openai_docs"}]}`),
+			},
+		}}},
+	}
+
+	tests := []struct {
+		callName      string
+		wantNamespace string
+		wantName      string
+	}{
+		{callName: "mcp__openaiDeveloperDocs.search_openai_docs", wantNamespace: "mcp__openaiDeveloperDocs", wantName: "search_openai_docs"},
+		{callName: "mcp__openaiDeveloperDocs:search_openai_docs", wantNamespace: "mcp__openaiDeveloperDocs", wantName: "search_openai_docs"},
+		{callName: "mcp__codex_apps__notion._search", wantNamespace: "mcp__codex_apps__notion", wantName: "_search"},
+		{callName: "mcp__codex_apps__notion:_search", wantNamespace: "mcp__codex_apps__notion", wantName: "_search"},
+		{callName: "mcp__codex_apps__notion_search", wantNamespace: "mcp__codex_apps__notion", wantName: "_search"},
+		{callName: "mcp__other:search", wantName: "mcp__other:search"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.callName, func(t *testing.T) {
+			response := ToResponse("test", "resp_1", "item_1", api.ChatResponse{
+				Message: api.Message{ToolCalls: []api.ToolCall{{
+					ID: "call_1",
+					Function: api.ToolCallFunction{
+						Name:      tt.callName,
+						Arguments: api.ToolCallFunctionArguments{},
+					},
+				}}},
+			}, request)
+
+			if len(response.Output) != 1 {
+				t.Fatalf("output = %#v", response.Output)
+			}
+			if got := response.Output[0].Namespace; got != tt.wantNamespace {
+				t.Fatalf("namespace = %q, want %q", got, tt.wantNamespace)
+			}
+			if got := response.Output[0].Name; got != tt.wantName {
+				t.Fatalf("name = %q, want %q", got, tt.wantName)
+			}
+		})
 	}
 }
 
@@ -1577,6 +1903,49 @@ func TestResponsesStreamConverter_ToolCalls(t *testing.T) {
 	}
 	if events[5].Event != "response.output_item.done" {
 		t.Errorf("events[5].Event = %q, want %q", events[5].Event, "response.output_item.done")
+	}
+}
+
+func TestResponsesStreamConverter_ToolSearchCall(t *testing.T) {
+	request := ResponsesRequest{Tools: []ResponsesTool{{Type: "tool_search", Execution: "client"}}}
+	converter := NewResponsesStreamConverter("resp_123", "msg_456", "test", request)
+	events := converter.Process(api.ChatResponse{
+		Message: api.Message{ToolCalls: []api.ToolCall{{
+			ID: "call_search",
+			Function: api.ToolCallFunction{
+				Name:      "tool_search",
+				Arguments: testArgs(map[string]any{"query": "orders", "limit": 5}),
+			},
+		}}},
+	})
+
+	if len(events) != 4 {
+		t.Fatalf("events = %#v; want created, in_progress, item added, and item done", events)
+	}
+	if events[2].Event != "response.output_item.added" || events[3].Event != "response.output_item.done" {
+		t.Fatalf("events = %#v", events)
+	}
+	item := events[3].Data.(map[string]any)["item"].(map[string]any)
+	if item["type"] != "tool_search_call" || item["call_id"] != "call_search" || item["execution"] != "client" || item["status"] != "completed" {
+		t.Fatalf("item = %#v", item)
+	}
+	encoded, err := json.Marshal(item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		Arguments map[string]any `json:"arguments"`
+	}
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if wire.Arguments["query"] != "orders" || wire.Arguments["limit"] != float64(5) {
+		t.Fatalf("arguments = %#v", wire.Arguments)
+	}
+	for _, event := range events {
+		if event.Event == "response.function_call_arguments.delta" || event.Event == "response.function_call_arguments.done" {
+			t.Fatalf("tool_search_call must not use function_call argument events: %#v", events)
+		}
 	}
 }
 

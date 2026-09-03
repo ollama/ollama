@@ -228,6 +228,33 @@ func (o *ResponsesFunctionCallOutput) UnmarshalJSON(data []byte) error {
 
 func (ResponsesFunctionCallOutput) responsesInputItem() {}
 
+// ResponsesToolSearchCall records a client-executed tool search requested by
+// the model. Codex replays this item before the matching tool_search_output.
+type ResponsesToolSearchCall struct {
+	ID        string                        `json:"id,omitempty"`
+	Type      string                        `json:"type"` // always "tool_search_call"
+	CallID    string                        `json:"call_id"`
+	Execution string                        `json:"execution"` // always "client"
+	Status    string                        `json:"status,omitempty"`
+	Arguments api.ToolCallFunctionArguments `json:"arguments"`
+}
+
+func (ResponsesToolSearchCall) responsesInputItem() {}
+
+// ResponsesToolSearchOutput carries tool definitions selected by Codex. Keep
+// each definition raw for request replay and trusted namespace restoration;
+// the model-facing synthetic result may flatten namespace members.
+type ResponsesToolSearchOutput struct {
+	ID        string            `json:"id,omitempty"`
+	Type      string            `json:"type"` // always "tool_search_output"
+	CallID    string            `json:"call_id"`
+	Execution string            `json:"execution"` // always "client"
+	Status    string            `json:"status,omitempty"`
+	Tools     []json.RawMessage `json:"tools"`
+}
+
+func (ResponsesToolSearchOutput) responsesInputItem() {}
+
 // ResponsesReasoningInput represents a reasoning item passed back as input.
 // This is used when the client sends previous reasoning back for context.
 type ResponsesReasoningInput struct {
@@ -271,6 +298,18 @@ func unmarshalResponsesInputItem(data []byte) (ResponsesInputItem, error) {
 		return fc, nil
 	case "function_call_output":
 		var output ResponsesFunctionCallOutput
+		if err := json.Unmarshal(data, &output); err != nil {
+			return nil, err
+		}
+		return output, nil
+	case "tool_search_call":
+		var call ResponsesToolSearchCall
+		if err := json.Unmarshal(data, &call); err != nil {
+			return nil, err
+		}
+		return call, nil
+	case "tool_search_output":
+		var output ResponsesToolSearchOutput
 		if err := json.Unmarshal(data, &output); err != nil {
 			return nil, err
 		}
@@ -354,11 +393,13 @@ type ResponsesText struct {
 // ResponsesTool represents a tool in the Responses API format.
 // Note: This differs from api.Tool which nests fields under "function".
 type ResponsesTool struct {
-	Type        string         `json:"type"` // "function", "namespace", or "web_search"
-	Name        string         `json:"name"`
-	Description *string        `json:"description"` // nullable but required
-	Strict      *bool          `json:"strict"`      // nullable but required
-	Parameters  map[string]any `json:"parameters"`  // nullable but required
+	Type         string         `json:"type"` // "function", "namespace", "tool_search", or "web_search"
+	Name         string         `json:"name,omitempty"`
+	Description  *string        `json:"description,omitempty"`
+	Strict       *bool          `json:"strict,omitempty"`
+	Parameters   map[string]any `json:"parameters,omitempty"`
+	Execution    string         `json:"execution,omitempty"`
+	DeferLoading *bool          `json:"defer_loading,omitempty"`
 
 	// Tools carries a "namespace" declaration's member functions. The
 	// Responses API groups related tools by domain under a namespace tool
@@ -416,6 +457,7 @@ type ResponsesRequest struct {
 // FromResponsesRequest converts a ResponsesRequest to api.ChatRequest
 func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 	var messages []api.Message
+	availableTools := responsesRequestTools(r)
 
 	// Add instructions as system message if present
 	if r.Instructions != "" {
@@ -498,7 +540,7 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 			if namespace == "" {
 				// Normalize calls replayed from conversations created before namespace
 				// output support. Those items used namespace._member as a flat name.
-				if matchedNamespace, matchedName := responsesToolCallName(r.Tools, name); matchedNamespace != "" {
+				if matchedNamespace, matchedName := responsesToolCallName(availableTools, name); matchedNamespace != "" {
 					namespace, name = matchedNamespace, matchedName
 				}
 			}
@@ -510,25 +552,7 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 				},
 			}
 
-			// Merge tool call into existing assistant message if it has content or tool calls
-			if len(messages) > 0 && messages[len(messages)-1].Role == "assistant" {
-				lastMsg := &messages[len(messages)-1]
-				lastMsg.ToolCalls = append(lastMsg.ToolCalls, toolCall)
-				if pendingThinking != "" {
-					lastMsg.Thinking = pendingThinking
-					pendingThinking = ""
-				}
-			} else {
-				msg := api.Message{
-					Role:      "assistant",
-					ToolCalls: []api.ToolCall{toolCall},
-				}
-				if pendingThinking != "" {
-					msg.Thinking = pendingThinking
-					pendingThinking = ""
-				}
-				messages = append(messages, msg)
-			}
+			messages = appendResponseToolCall(messages, toolCall, &pendingThinking)
 		case ResponsesFunctionCallOutput:
 			content := v.Output
 			var images []api.ImageData
@@ -543,6 +567,33 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 				Role:       "tool",
 				Content:    content,
 				Images:     images,
+				ToolCallID: v.CallID,
+			})
+		case ResponsesToolSearchCall:
+			messages = appendResponseToolCall(messages, api.ToolCall{
+				ID: v.CallID,
+				Function: api.ToolCallFunction{
+					Name:      "tool_search",
+					Arguments: v.Arguments,
+				},
+			}, &pendingThinking)
+		case ResponsesToolSearchOutput:
+			tools := v.Tools
+			if tools == nil {
+				tools = []json.RawMessage{}
+			}
+			tools, err := modelToolSearchTools(tools)
+			if err != nil {
+				return nil, err
+			}
+			content, err := json.Marshal(tools)
+			if err != nil {
+				return nil, fmt.Errorf("failed to encode tool search output: %w", err)
+			}
+			messages = append(messages, api.Message{
+				Role:       "tool",
+				Content:    string(content),
+				ToolName:   "tool_search",
 				ToolCallID: v.CallID,
 			})
 		case ResponsesWebSearchCall:
@@ -589,9 +640,21 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 	// Convert tools from Responses API format to api.Tool format
 	var tools []api.Tool
 	hasWebSearch := HasWebSearchTool(r.Tools)
+	hasToolSearch := HasToolSearchTool(r.Tools)
 	for _, t := range r.Tools {
 		if isWebSearchTool(t) {
 			tools = append(tools, WebSearchFunctionTool())
+			continue
+		}
+		if isToolSearchTool(t) {
+			if t.Execution != "" && t.Execution != "client" {
+				return nil, fmt.Errorf("tool_search execution %q is not supported; use client execution", t.Execution)
+			}
+			tool, err := ToolSearchFunctionTool(t)
+			if err != nil {
+				return nil, err
+			}
+			tools = append(tools, tool)
 			continue
 		}
 		expanded, err := convertTools(t)
@@ -601,7 +664,8 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 		for _, tool := range expanded {
 			// The built-in tool owns this name. Keeping a user-declared function
 			// with the same name makes a model call ambiguous.
-			if hasWebSearch && tool.Function.Name == "web_search" {
+			if (hasWebSearch && tool.Function.Name == "web_search") ||
+				(hasToolSearch && tool.Function.Name == "tool_search") {
 				continue
 			}
 			tools = append(tools, tool)
@@ -629,7 +693,28 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 	}, nil
 }
 
+func appendResponseToolCall(messages []api.Message, toolCall api.ToolCall, pendingThinking *string) []api.Message {
+	if len(messages) > 0 && messages[len(messages)-1].Role == "assistant" {
+		last := &messages[len(messages)-1]
+		last.ToolCalls = append(last.ToolCalls, toolCall)
+		if *pendingThinking != "" {
+			last.Thinking = *pendingThinking
+			*pendingThinking = ""
+		}
+		return messages
+	}
+
+	msg := api.Message{Role: "assistant", ToolCalls: []api.ToolCall{toolCall}}
+	if *pendingThinking != "" {
+		msg.Thinking = *pendingThinking
+		*pendingThinking = ""
+	}
+	return append(messages, msg)
+}
+
 func isWebSearchTool(t ResponsesTool) bool { return t.Type == "web_search" }
+
+func isToolSearchTool(t ResponsesTool) bool { return t.Type == "tool_search" }
 
 // HasWebSearchTool reports whether a request declares the built-in Responses
 // web-search tool.
@@ -640,6 +725,26 @@ func HasWebSearchTool(tools []ResponsesTool) bool {
 		}
 	}
 	return false
+}
+
+// HasToolSearchTool reports whether a request declares client-executed tool
+// search. Ollama exposes it to the model as an ordinary function, while Codex
+// remains responsible for performing the search.
+func HasToolSearchTool(tools []ResponsesTool) bool {
+	for _, tool := range tools {
+		if isToolSearchTool(tool) {
+			return true
+		}
+	}
+	return false
+}
+
+// ToolSearchFunctionTool converts the Responses tool_search declaration into
+// the ordinary function contract understood by local and cloud models.
+func ToolSearchFunctionTool(t ResponsesTool) (api.Tool, error) {
+	t.Type = "function"
+	t.Name = "tool_search"
+	return convertTool(t)
 }
 
 // WebSearchFunctionTool is the private function contract passed to local
@@ -717,14 +822,79 @@ func responsesToolCallName(tools []ResponsesTool, qualified string) (namespace, 
 			if member.Type == "namespace" {
 				continue
 			}
-			canonical := qualifyNamespaceToolName(tool.Name, member.Name)
-			legacy := tool.Name + "." + member.Name
-			if canonical == qualified || legacy == qualified {
+			native := qualifyNamespaceToolName(tool.Name, member.Name)
+			dotted := tool.Name + "." + member.Name
+			colon := tool.Name + ":" + member.Name
+			if native == qualified || dotted == qualified || colon == qualified {
 				return tool.Name, member.Name
 			}
 		}
 	}
 	return "", qualified
+}
+
+// modelToolSearchTools flattens namespace members into the ordinary function
+// names understood by open models. Only the member name changes; every other
+// member field is preserved. The original tool_search_output remains unchanged
+// on the Responses request.
+func modelToolSearchTools(tools []json.RawMessage) ([]json.RawMessage, error) {
+	flattened := make([]json.RawMessage, 0, len(tools))
+	for _, raw := range tools {
+		var tool struct {
+			Type  string            `json:"type"`
+			Name  string            `json:"name"`
+			Tools []json.RawMessage `json:"tools"`
+		}
+		if err := json.Unmarshal(raw, &tool); err != nil {
+			return nil, fmt.Errorf("failed to decode tool search result: %w", err)
+		}
+		if tool.Type != "namespace" {
+			flattened = append(flattened, raw)
+			continue
+		}
+		if tool.Name == "" {
+			return nil, fmt.Errorf("tool search namespace is missing a name")
+		}
+
+		for _, rawMember := range tool.Tools {
+			var member map[string]json.RawMessage
+			if err := json.Unmarshal(rawMember, &member); err != nil {
+				return nil, fmt.Errorf("failed to decode tool search namespace %q member: %w", tool.Name, err)
+			}
+			var name string
+			if err := json.Unmarshal(member["name"], &name); err != nil || name == "" {
+				return nil, fmt.Errorf("tool search namespace %q has a member without a name", tool.Name)
+			}
+			qualifiedName, err := json.Marshal(tool.Name + "." + name)
+			if err != nil {
+				return nil, fmt.Errorf("failed to encode tool search namespace %q member name: %w", tool.Name, err)
+			}
+			member["name"] = qualifiedName
+			encoded, err := json.Marshal(member)
+			if err != nil {
+				return nil, fmt.Errorf("failed to encode tool search namespace %q member: %w", tool.Name, err)
+			}
+			flattened = append(flattened, encoded)
+		}
+	}
+	return flattened, nil
+}
+
+func responsesRequestTools(r ResponsesRequest) []ResponsesTool {
+	tools := append([]ResponsesTool(nil), r.Tools...)
+	for _, item := range r.Input.Items {
+		output, ok := item.(ResponsesToolSearchOutput)
+		if !ok {
+			continue
+		}
+		for _, raw := range output.Tools {
+			var tool ResponsesTool
+			if err := json.Unmarshal(raw, &tool); err == nil {
+				tools = append(tools, tool)
+			}
+		}
+	}
+	return tools
 }
 
 func convertTool(t ResponsesTool) (api.Tool, error) {
@@ -858,14 +1028,15 @@ type ResponsesResponse struct {
 
 type ResponsesOutputItem struct {
 	ID        string                    `json:"id"`
-	Type      string                    `json:"type"` // "message", "function_call", or "reasoning"
+	Type      string                    `json:"type"` // "message", "function_call", "tool_search_call", or "reasoning"
 	Status    string                    `json:"status,omitempty"`
 	Role      string                    `json:"role,omitempty"`      // for message
 	Content   []ResponsesOutputContent  `json:"content,omitempty"`   // for message
-	CallID    string                    `json:"call_id,omitempty"`   // for function_call
+	CallID    string                    `json:"call_id,omitempty"`   // for function_call or tool_search_call
 	Name      string                    `json:"name,omitempty"`      // for function_call
 	Namespace string                    `json:"namespace,omitempty"` // for namespaced function_call
-	Arguments string                    `json:"arguments,omitempty"` // for function_call
+	Execution string                    `json:"execution,omitempty"` // for tool_search_call
+	Arguments any                       `json:"arguments,omitempty"` // string for function_call, object for tool_search_call
 	Action    *ResponsesWebSearchAction `json:"action,omitempty"`    // for web_search_call
 
 	// Reasoning fields
@@ -959,8 +1130,20 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse,
 
 	if len(chatResponse.Message.ToolCalls) > 0 {
 		toolCalls := ToToolCalls(chatResponse.Message.ToolCalls)
+		availableTools := responsesRequestTools(request)
 		for i, tc := range toolCalls {
-			namespace, name := responsesToolCallName(request.Tools, tc.Function.Name)
+			if HasToolSearchTool(request.Tools) && tc.Function.Name == "tool_search" {
+				output = append(output, ResponsesOutputItem{
+					ID:        fmt.Sprintf("ts_%s_%d", responseID, i),
+					Type:      "tool_search_call",
+					Status:    "completed",
+					CallID:    tc.ID,
+					Execution: "client",
+					Arguments: toolSearchArguments(tc.Function.Arguments),
+				})
+				continue
+			}
+			namespace, name := responsesToolCallName(availableTools, tc.Function.Name)
 			output = append(output, ResponsesOutputItem{
 				ID:        fmt.Sprintf("fc_%s_%d", responseID, i),
 				Type:      "function_call",
@@ -1064,6 +1247,13 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse,
 		SafetyIdentifier: nil, // Not supported
 		PromptCacheKey:   nil, // Not supported
 	}
+}
+
+func toolSearchArguments(arguments string) json.RawMessage {
+	if !json.Valid([]byte(arguments)) {
+		return json.RawMessage(`{}`)
+	}
+	return json.RawMessage(arguments)
 }
 
 // Streaming events: <https://platform.openai.com/docs/api-reference/responses-streaming>
@@ -1176,20 +1366,9 @@ func (c *ResponsesStreamConverter) buildResponseObject(status string, output []a
 		truncation = *c.request.Truncation
 	}
 
-	var tools []any
-	if c.request.Tools != nil {
-		for _, t := range c.request.Tools {
-			tools = append(tools, map[string]any{
-				"type":        t.Type,
-				"name":        t.Name,
-				"description": t.Description,
-				"strict":      t.Strict,
-				"parameters":  t.Parameters,
-			})
-		}
-	}
+	tools := c.request.Tools
 	if tools == nil {
-		tools = []any{}
+		tools = []ResponsesTool{}
 	}
 
 	textFormat := map[string]any{"type": "text"}
@@ -1362,11 +1541,43 @@ func (c *ResponsesStreamConverter) processToolCalls(toolCalls []api.ToolCall) []
 func (c *ResponsesStreamConverter) emitFunctionCallEvents(toolCalls []api.ToolCall) []ResponsesStreamEvent {
 	var events []ResponsesStreamEvent
 	converted := ToToolCalls(toolCalls)
+	availableTools := responsesRequestTools(c.request)
 
 	for i, tc := range converted {
 		outputIndex := c.outputIndex + i
+		if HasToolSearchTool(c.request.Tools) && tc.Function.Name == "tool_search" {
+			itemID := fmt.Sprintf("ts_%d_%d", rand.Intn(999999), i)
+			arguments := toolSearchArguments(tc.Function.Arguments)
+			item := map[string]any{
+				"id":        itemID,
+				"type":      "tool_search_call",
+				"status":    "completed",
+				"call_id":   tc.ID,
+				"execution": "client",
+				"arguments": arguments,
+			}
+			c.completedItems = append(c.completedItems, item)
+			events = append(events,
+				c.newEvent("response.output_item.added", map[string]any{
+					"output_index": outputIndex,
+					"item": map[string]any{
+						"id":        itemID,
+						"type":      "tool_search_call",
+						"status":    "in_progress",
+						"call_id":   tc.ID,
+						"execution": "client",
+						"arguments": json.RawMessage(`{}`),
+					},
+				}),
+				c.newEvent("response.output_item.done", map[string]any{
+					"output_index": outputIndex,
+					"item":         item,
+				}),
+			)
+			continue
+		}
 		fcItemID := fmt.Sprintf("fc_%d_%d", rand.Intn(999999), i)
-		namespace, name := responsesToolCallName(c.request.Tools, tc.Function.Name)
+		namespace, name := responsesToolCallName(availableTools, tc.Function.Name)
 
 		toolCallItem := map[string]any{
 			"id":        fcItemID,
