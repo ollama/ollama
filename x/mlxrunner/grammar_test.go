@@ -20,50 +20,67 @@ import (
 	"github.com/ollama/ollama/x/mlxrunner/xgrammar"
 )
 
+// schemaTag wraps a JSON Schema into the structural tag the MLX client
+// sends for a schema format.
+func schemaTag(schema string) string {
+	return `{"type":"structural_tag","format":{"type":"json_schema","json_schema":` + schema + `}}`
+}
+
+func nestedGrammar(depth int) string {
+	return `{"type":"structural_tag","format":` + strings.Repeat("[", depth-1) + `0` + strings.Repeat("]", depth-1) + `}`
+}
+
 func TestParseGrammar(t *testing.T) {
+	invalidUTF8 := `{"type":"structural_tag","value":"` + "\xff" + `"}`
 	tests := []struct {
 		name    string
 		format  string
-		kind    xgrammar.Kind
-		source  string
-		want    bool
-		wantErr bool
+		want    string
+		wantErr string
 	}{
 		{name: "unset"},
 		{name: "null", format: `null`},
 		{name: "empty", format: `""`},
-		{name: "json", format: `"json"`, kind: xgrammar.JSONSchema, source: `{"type":"object"}`, want: true},
-		{name: "schema", format: `{"type":"integer"}`, kind: xgrammar.JSONSchema, source: `{"type":"integer"}`, want: true},
-		{name: "unsupported string", format: `"xml"`, wantErr: true},
-		{name: "whitespace JSON", format: ` "json" `, wantErr: true},
-		{name: "whitespace schema", format: ` {"type":"integer"} `, wantErr: true},
-		{name: "array", format: `[]`, wantErr: true},
-		{name: "invalid json", format: `{`, wantErr: true},
+		{name: "structural tag", format: schemaTag(`{"type":"integer"}`), want: schemaTag(`{"type":"integer"}`)},
+		{name: "type after nested members", format: `{"format":{"type":"any_text","excludes":["type"]},"type":"structural_tag"}`, want: `{"format":{"type":"any_text","excludes":["type"]},"type":"structural_tag"}`},
+		{name: "maximum depth", format: nestedGrammar(maxGrammarDepth), want: nestedGrammar(maxGrammarDepth)},
+		{name: "too deep", format: nestedGrammar(maxGrammarDepth + 1), wantErr: "nesting exceeds"},
+		{name: "too large", format: `{"value":"` + strings.Repeat("x", maxGrammarBytes) + `"}`, wantErr: "limit is 1048576"},
+		{name: "invalid UTF-8", format: invalidUTF8, wantErr: "not valid UTF-8"},
+		{name: "json", format: `"json"`, wantErr: "expected a structural tag"},
+		{name: "schema", format: `{"type":"integer"}`, wantErr: "expected a structural tag"},
+		{name: "untyped object", format: `{"format":{}}`, wantErr: "expected a structural tag"},
+		{name: "nested type only", format: `{"format":{"type":"structural_tag"}}`, wantErr: "expected a structural tag"},
+		{name: "whitespace", format: ` ` + schemaTag(`{}`) + ` `, wantErr: "expected a structural tag"},
+		{name: "array", format: `[]`, wantErr: "expected a structural tag"},
+		{name: "trailing value", format: `{"type":"structural_tag"} {}`, wantErr: "more than one JSON value"},
+		{name: "malformed", format: `{"type":`, wantErr: "unexpected end"},
+		{name: "invalid json", format: `{`, wantErr: "unexpected end"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := parseGrammar(json.RawMessage(tt.format))
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("parseGrammar error = %v, wantErr %v", err, tt.wantErr)
-			}
-			if tt.wantErr {
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("parseGrammar error = %v, want containing %q", err, tt.wantErr)
+				}
 				return
 			}
-			if (got != nil) != tt.want {
-				t.Fatalf("parseGrammar = %#v, want present %v", got, tt.want)
+			if err != nil {
+				t.Fatal(err)
 			}
-			if got != nil && (got.kind != tt.kind || got.source != tt.source) {
-				t.Errorf("parseGrammar = %#v, want kind %v source %q", got, tt.kind, tt.source)
+			if got != tt.want {
+				t.Errorf("parseGrammar = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
 func TestParseGrammarDoesNotEchoOversizedInput(t *testing.T) {
-	format := json.RawMessage("{" + strings.Repeat("x", maxGrammarSchemaBytes))
+	format := json.RawMessage("{" + strings.Repeat("x", maxGrammarBytes))
 	_, err := parseGrammar(format)
-	if err == nil || !strings.Contains(err.Error(), "schema is 1048577 bytes") {
+	if err == nil || !strings.Contains(err.Error(), "grammar is 1048577 bytes") {
 		t.Fatalf("parseGrammar error = %v, want bounded size error", err)
 	}
 	if len(err.Error()) > 256 {
@@ -71,62 +88,11 @@ func TestParseGrammarDoesNotEchoOversizedInput(t *testing.T) {
 	}
 }
 
-func nestedGrammarSchema(depth int) []byte {
-	return []byte(`{"value":` + strings.Repeat("[", depth-1) + `0` + strings.Repeat("]", depth-1) + `}`)
-}
-
-func grammarSchemaArray(entries int) []byte {
-	var b strings.Builder
-	b.WriteString(`{"enum":[`)
-	for i := range entries {
-		if i > 0 {
-			b.WriteByte(',')
-		}
-		b.WriteByte('0')
-	}
-	b.WriteString(`]}`)
-	return []byte(b.String())
-}
-
-func TestValidateGrammarSchema(t *testing.T) {
-	invalidUTF8 := append([]byte(`{"value":"`), 0xff)
-	invalidUTF8 = append(invalidUTF8, []byte(`"}`)...)
-	tests := []struct {
-		name    string
-		schema  []byte
-		wantErr string
-	}{
-		{name: "object", schema: []byte(`{"type":"object","properties":{"answer":{"type":"string"}}}`)},
-		{name: "maximum depth", schema: nestedGrammarSchema(maxGrammarSchemaDepth)},
-		{name: "too deep", schema: nestedGrammarSchema(maxGrammarSchemaDepth + 1), wantErr: "nesting exceeds"},
-		{name: "too many tokens", schema: grammarSchemaArray(maxGrammarSchemaTokens), wantErr: "more than 16384 JSON tokens"},
-		{name: "too large", schema: []byte(`{"value":"` + strings.Repeat("x", maxGrammarSchemaBytes) + `"}`), wantErr: "limit is 1048576"},
-		{name: "invalid UTF-8", schema: invalidUTF8, wantErr: "not valid UTF-8"},
-		{name: "trailing value", schema: []byte(`{} {}`), wantErr: "more than one JSON value"},
-		{name: "malformed", schema: []byte(`{"type":`), wantErr: "unexpected end"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateGrammarSchema(tt.schema)
-			if tt.wantErr == "" {
-				if err != nil {
-					t.Fatal(err)
-				}
-				return
-			}
-			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-				t.Fatalf("validateGrammarSchema error = %v, want containing %q", err, tt.wantErr)
-			}
-		})
-	}
-}
-
-func BenchmarkValidateGrammarSchema(b *testing.B) {
-	schema := []byte(`{"type":"object","properties":{"answer":{"type":"string","enum":["ok"]}},"required":["answer"],"additionalProperties":false}`)
+func BenchmarkParseGrammar(b *testing.B) {
+	grammar := json.RawMessage(schemaTag(`{"type":"object","properties":{"answer":{"type":"string","enum":["ok"]}},"required":["answer"],"additionalProperties":false}`))
 	b.ReportAllocs()
 	for b.Loop() {
-		if err := validateGrammarSchema(schema); err != nil {
+		if _, err := parseGrammar(grammar); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -137,20 +103,16 @@ func FuzzParseGrammar(f *testing.F) {
 		"",
 		`"json"`,
 		`{"type":"integer"}`,
+		schemaTag(`{"type":"integer"}`),
 		`{`,
 	} {
 		f.Add(format)
 	}
 
 	f.Fuzz(func(t *testing.T, format string) {
-		spec, err := parseGrammar(json.RawMessage(format))
-		if err != nil || spec == nil {
-			return
-		}
-		switch spec.kind {
-		case xgrammar.JSONSchema:
-		default:
-			t.Fatalf("parseGrammar kind = %d", spec.kind)
+		source, err := parseGrammar(json.RawMessage(format))
+		if err == nil && source != "" && source != format {
+			t.Fatalf("parseGrammar = %q, want the format verbatim", source)
 		}
 	})
 }
@@ -167,7 +129,6 @@ func TestValidateGrammarVocab(t *testing.T) {
 		{name: "input-only tokens past the head", logits: 31, tokenizer: 32},
 		{name: "invalid tokenizer", logits: 32, tokenizer: -1, wantErr: true},
 		{name: "invalid logits width", logits: 0, tokenizer: 32, wantErr: true},
-		{name: "allocation bound", logits: maxGrammarVocabSize + 1, tokenizer: 32, wantErr: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			err := validateGrammarVocab(tt.logits, tt.tokenizer)
@@ -194,7 +155,7 @@ func TestPrepareGrammarUnavailable(t *testing.T) {
 	}
 	request := &Request{CompletionRequest: CompletionRequest{
 		Prompt: "0",
-		Format: json.RawMessage(`"json"`),
+		Format: json.RawMessage(schemaTag(`{"type":"object"}`)),
 	}}
 	err := r.Prepare(request)
 	var statusErr api.StatusError
@@ -260,7 +221,7 @@ func testDigitGrammar(t *mlxtest.T, schema string) (*grammarEngine, *grammar) {
 		t.Fatal(err)
 	}
 	t.Cleanup(compiler.Close)
-	m, err := compiler.Compile(xgrammar.JSONSchema, schema)
+	m, err := compiler.Compile(schemaTag(schema))
 	if err != nil {
 		t.Fatal(err)
 	}

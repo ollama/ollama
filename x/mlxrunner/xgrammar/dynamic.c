@@ -49,7 +49,7 @@ static const char* (*version_fn)(void);
 static const char* (*last_error_fn)(void);
 static int (*compiler_new_fn)(const char*, size_t, const uint64_t*, size_t, int32_t, const int32_t*, size_t, int32_t, int64_t, ollama_xgrammar_compiler**);
 static void (*compiler_free_fn)(ollama_xgrammar_compiler*);
-static int (*matcher_new_fn)(ollama_xgrammar_compiler*, ollama_xgrammar_kind, const char*, size_t, ollama_xgrammar_matcher**);
+static int (*matcher_new_fn)(ollama_xgrammar_compiler*, const char*, size_t, ollama_xgrammar_matcher**);
 static void (*matcher_free_fn)(ollama_xgrammar_matcher*);
 static int (*matcher_fill_fn)(ollama_xgrammar_matcher*, int32_t*, size_t, int*);
 static int (*matcher_accept_fn)(ollama_xgrammar_matcher*, int32_t, int*);
@@ -140,8 +140,8 @@ int ollama_xgrammar_dynamic_compiler_new(const char* d, size_t ds, const uint64_
     return capture_error(compiler_new_fn(d, ds, o, n, v, s, ns, mt, cb, m), error);
 }
 void ollama_xgrammar_dynamic_compiler_free(ollama_xgrammar_compiler* m) { compiler_free_fn(m); }
-int ollama_xgrammar_dynamic_matcher_new(ollama_xgrammar_compiler* m, ollama_xgrammar_kind k, const char* s, size_t n, ollama_xgrammar_matcher** out, char** error) {
-    return capture_error(matcher_new_fn(m, k, s, n, out), error);
+int ollama_xgrammar_dynamic_matcher_new(ollama_xgrammar_compiler* m, const char* s, size_t n, ollama_xgrammar_matcher** out, char** error) {
+    return capture_error(matcher_new_fn(m, s, n, out), error);
 }
 void ollama_xgrammar_dynamic_matcher_free(ollama_xgrammar_matcher* m) { matcher_free_fn(m); }
 int ollama_xgrammar_dynamic_matcher_fill(ollama_xgrammar_matcher* m, int32_t* b, size_t n, int* a, char** error) {

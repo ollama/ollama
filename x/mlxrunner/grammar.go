@@ -21,14 +21,9 @@ import (
 	"github.com/ollama/ollama/x/tokenizer"
 )
 
-const maxGrammarVocabSize = 1 << 20
-
 const (
-	maxGrammarSchemaBytes = 1 << 20
-	maxGrammarSchemaDepth = 128
-	// The token cap bounds grammar compile cost, which the serial runner
-	// pays as head-of-line blocking of the request queue.
-	maxGrammarSchemaTokens = 1 << 14
+	maxGrammarBytes = 1 << 20
+	maxGrammarDepth = 128
 )
 
 const (
@@ -92,9 +87,6 @@ func validateGrammarVocab(logitsWidth, tokenizerSize int) error {
 	if logitsWidth <= 0 {
 		return fmt.Errorf("invalid model logits width %d", logitsWidth)
 	}
-	if logitsWidth > maxGrammarVocabSize {
-		return fmt.Errorf("model logits width %d exceeds structured output limit %d", logitsWidth, maxGrammarVocabSize)
-	}
 	return nil
 }
 
@@ -133,81 +125,64 @@ func (e *grammarEngine) close() {
 // returns nil. Safe on a nil subsystem, which reports structured output
 // unavailable.
 func (e *grammarEngine) prepare(format json.RawMessage) (*grammarCompilation, error) {
-	spec, err := parseGrammar(format)
-	if err != nil || spec == nil {
+	source, err := parseGrammar(format)
+	if err != nil || source == "" {
 		return nil, err
 	}
 	if e == nil {
 		return nil, api.StatusError{StatusCode: http.StatusNotImplemented, ErrorMessage: "structured output is unavailable"}
 	}
-	return e.compile(spec), nil
+	return e.compile(source), nil
 }
 
-type grammarSpec struct {
-	kind   xgrammar.Kind
-	source string
-}
-
-func parseGrammar(format json.RawMessage) (*grammarSpec, error) {
-	if len(format) > 0 {
-		switch string(format) {
-		case `null`, `""`:
-			return nil, nil
-		case `"json"`:
-			// The API documents "json" as producing a JSON object; the engine's
-			// builtin JSON grammar would also admit arrays and bare values.
-			return &grammarSpec{kind: xgrammar.JSONSchema, source: `{"type":"object"}`}, nil
-		default:
-			if format[0] != '{' {
-				return nil, errors.New("invalid format: expected \"json\" or a valid JSON Schema object")
-			}
-			if err := validateGrammarSchema(format); err != nil {
-				return nil, fmt.Errorf("invalid JSON Schema: %w", err)
-			}
-			return &grammarSpec{kind: xgrammar.JSONSchema, source: string(format)}, nil
-		}
+// parseGrammar returns the format's structural tag, or "" when the format
+// asks for no structured output.
+func parseGrammar(format json.RawMessage) (string, error) {
+	switch string(format) {
+	case ``, `null`, `""`:
+		return "", nil
 	}
-	return nil, nil
-}
-
-func validateGrammarSchema(schema []byte) error {
-	if len(schema) > maxGrammarSchemaBytes {
-		return fmt.Errorf("schema is %d bytes; limit is %d", len(schema), maxGrammarSchemaBytes)
+	if len(format) > maxGrammarBytes {
+		return "", fmt.Errorf("invalid format: grammar is %d bytes; limit is %d", len(format), maxGrammarBytes)
 	}
-	if !utf8.Valid(schema) {
-		return errors.New("schema is not valid UTF-8")
+	if !utf8.Valid(format) {
+		return "", errors.New("invalid format: grammar is not valid UTF-8")
+	}
+	if format[0] != '{' {
+		return "", errors.New("invalid format: expected a structural tag")
 	}
 
-	decoder := json.NewDecoder(bytes.NewReader(schema))
+	decoder := json.NewDecoder(bytes.NewReader(format))
 	decoder.UseNumber()
-	first, err := decoder.Token()
-	if err != nil {
-		return fmt.Errorf("invalid JSON: %w", err)
-	}
-	if first != json.Delim('{') {
-		return errors.New("schema must be a JSON object")
+	if _, err := decoder.Token(); err != nil {
+		return "", fmt.Errorf("invalid format: %w", err)
 	}
 
-	tokens, depth := 1, 1
+	depth, wantKey, key, structuralTag := 1, true, "", false
 	for depth > 0 {
 		token, err := decoder.Token()
 		if err != nil {
 			if err == io.EOF {
-				return errors.New("unexpected end of JSON")
+				return "", errors.New("invalid format: unexpected end of JSON")
 			}
-			return fmt.Errorf("invalid JSON: %w", err)
+			return "", fmt.Errorf("invalid format: %w", err)
 		}
-		tokens++
-		if tokens > maxGrammarSchemaTokens {
-			return fmt.Errorf("schema contains more than %d JSON tokens", maxGrammarSchemaTokens)
+		delim, isDelim := token.(json.Delim)
+		if depth == 1 && !(isDelim && (delim == '}' || delim == ']')) {
+			if wantKey {
+				key, _ = token.(string)
+			} else if key == "type" {
+				value, _ := token.(string)
+				structuralTag = value == "structural_tag"
+			}
+			wantKey = !wantKey
 		}
-
-		if delim, ok := token.(json.Delim); ok {
+		if isDelim {
 			switch delim {
 			case '{', '[':
 				depth++
-				if depth > maxGrammarSchemaDepth {
-					return fmt.Errorf("schema nesting exceeds %d levels", maxGrammarSchemaDepth)
+				if depth > maxGrammarDepth {
+					return "", fmt.Errorf("invalid format: grammar nesting exceeds %d levels", maxGrammarDepth)
 				}
 			case '}', ']':
 				depth--
@@ -217,14 +192,17 @@ func validateGrammarSchema(schema []byte) error {
 
 	if _, err := decoder.Token(); err != io.EOF {
 		if err != nil {
-			return fmt.Errorf("invalid JSON after schema object: %w", err)
+			return "", fmt.Errorf("invalid format: %w", err)
 		}
-		return errors.New("schema contains more than one JSON value")
+		return "", errors.New("invalid format: grammar contains more than one JSON value")
 	}
-	return nil
+	if !structuralTag {
+		return "", errors.New("invalid format: expected a structural tag")
+	}
+	return string(format), nil
 }
 
-func (e *grammarEngine) compile(spec *grammarSpec) *grammarCompilation {
+func (e *grammarEngine) compile(source string) *grammarCompilation {
 	c := &grammarCompilation{done: make(chan struct{})}
 	go func() {
 		defer close(c.done)
@@ -242,10 +220,10 @@ func (e *grammarEngine) compile(spec *grammarSpec) *grammarCompilation {
 			c.err = errors.New("grammar engine closed")
 			return
 		}
-		matcher, err := e.compiler.Compile(spec.kind, spec.source)
+		matcher, err := e.compiler.Compile(source)
 		if err != nil {
-			// A schema can pass validateGrammarSchema yet be rejected by
-			// the engine (e.g. an empty enum); that is still a request error.
+			// A grammar can pass parseGrammar yet be rejected by the engine
+			// (e.g. an empty enum); that is still a request error.
 			c.err = api.StatusError{
 				StatusCode:   http.StatusBadRequest,
 				ErrorMessage: fmt.Sprintf("invalid structured output grammar: %v", err),

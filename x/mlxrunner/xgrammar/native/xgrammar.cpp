@@ -152,7 +152,6 @@ int ollama_xgrammar_compiler_new(
 
 int ollama_xgrammar_matcher_new(
     ollama_xgrammar_compiler* compiler,
-    ollama_xgrammar_kind kind,
     const char* source,
     size_t source_size,
     ollama_xgrammar_matcher** matcher) {
@@ -166,14 +165,8 @@ int ollama_xgrammar_matcher_new(
         }
         const char* source_data = source == nullptr ? "" : source;
 
-        xgrammar::CompiledGrammar compiled = [&]() -> xgrammar::CompiledGrammar {
-            switch (kind) {
-            case OLLAMA_XGRAMMAR_JSON_SCHEMA:
-                return compiler->compiler.CompileJSONSchema(std::string(source_data, source_size));
-            default:
-                throw std::invalid_argument("unknown grammar kind");
-            }
-        }();
+        xgrammar::CompiledGrammar compiled =
+            compiler->compiler.CompileStructuralTag(std::string(source_data, source_size));
         *matcher = new ollama_xgrammar_matcher(compiler->vocab_size, std::move(compiled));
     });
 }

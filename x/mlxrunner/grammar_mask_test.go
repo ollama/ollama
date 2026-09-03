@@ -102,7 +102,7 @@ func testDraftGrammar(t *mlxtest.T, schema string) (*grammarEngine, *grammar) {
 		t.Fatal(err)
 	}
 	t.Cleanup(compiler.Close)
-	m, err := compiler.Compile(xgrammar.JSONSchema, schema)
+	m, err := compiler.Compile(schemaTag(schema))
 	if err != nil {
 		t.Fatal(err)
 	}
