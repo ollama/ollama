@@ -102,8 +102,6 @@ type SwitchMLP struct {
 	GateUpBits, DownBits           int
 	GateUpGroupSize, DownGroupSize int
 	GateUpMode, DownMode           string
-
-	UseQuantized bool
 }
 
 type stackedExpertWeights struct {
@@ -269,7 +267,7 @@ func splitLastAxisHalves(a *mlx.Array) (lo, hi *mlx.Array) {
 
 // loadStackedProjection loads an already-stacked (single tensor covering all
 // experts) projection by its exact checkpoint name.
-func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, useQuantized bool, base string) *stackedExpertWeights {
+func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, base string) *stackedExpertWeights {
 	key := base + ".weight"
 	w := tensors[key]
 	if w == nil {
@@ -286,7 +284,7 @@ func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, useQuanti
 		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant,
 		key, w, scales,
 	)
-	if useQuantized && supportsGatherQMM(mode, bits) {
+	if supportsGatherQMM(mode, bits) {
 		return &stackedExpertWeights{
 			Weight:    w,
 			Scales:    scales,
@@ -335,20 +333,6 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		m.LMHead = m.EmbedTokens.AsLinear()
 	}
 
-	useQuantizedExperts := supportsGatherQMM(cfg.QuantMode, cfg.QuantBits)
-	if !useQuantizedExperts && cfg.TensorQuant != nil {
-		for _, tq := range cfg.TensorQuant {
-			if tq == nil {
-				continue
-			}
-			_, bits, mode := model.QuantizationParams(tq.QuantType)
-			if supportsGatherQMM(mode, bits) {
-				useQuantizedExperts = true
-				break
-			}
-		}
-	}
-
 	for i := range m.NumHiddenLayers {
 		layerPrefix := fmt.Sprintf("%smodel.layers.%d", prefix, i)
 
@@ -383,21 +367,24 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 			return fmt.Errorf("layer %d: missing moe router weight", i)
 		}
 
-		gateUpW := loadStackedProjection(tensors, cfg, useQuantizedExperts, layerPrefix+".block_sparse_moe.input_linear")
-		downW := loadStackedProjection(tensors, cfg, useQuantizedExperts, layerPrefix+".block_sparse_moe.output_linear")
+		gateUpW := loadStackedProjection(tensors, cfg, layerPrefix+".block_sparse_moe.input_linear")
+		downW := loadStackedProjection(tensors, cfg, layerPrefix+".block_sparse_moe.output_linear")
 		if gateUpW == nil || downW == nil {
 			return fmt.Errorf("layer %d: missing moe expert weights", i)
 		}
 
 		switchMLP := &SwitchMLP{}
-		if gateUpW.Scales != nil && downW.Scales != nil {
-			switchMLP.UseQuantized = true
+		if gateUpW.Scales != nil {
 			switchMLP.GateUpWeightQ = gateUpW.Weight
 			switchMLP.GateUpScales = gateUpW.Scales
 			switchMLP.GateUpBiases = gateUpW.Biases
 			switchMLP.GateUpBits = gateUpW.Bits
 			switchMLP.GateUpGroupSize = gateUpW.GroupSize
 			switchMLP.GateUpMode = gateUpW.Mode
+		} else {
+			switchMLP.GateUpWeight = transposeExpertWeightForGatherMM(gateUpW.Weight)
+		}
+		if downW.Scales != nil {
 			switchMLP.DownWeightQ = downW.Weight
 			switchMLP.DownScales = downW.Scales
 			switchMLP.DownBiases = downW.Biases
@@ -405,7 +392,6 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 			switchMLP.DownGroupSize = downW.GroupSize
 			switchMLP.DownMode = downW.Mode
 		} else {
-			switchMLP.GateUpWeight = transposeExpertWeightForGatherMM(gateUpW.Weight)
 			switchMLP.DownWeight = transposeExpertWeightForGatherMM(downW.Weight)
 		}
 		moe.SwitchMLP = switchMLP
@@ -550,7 +536,7 @@ func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.
 	}
 
 	var gateUp, down *mlx.Array
-	if s.UseQuantized {
+	if s.GateUpWeightQ != nil {
 		gateUp = mlx.GatherQMM(xFlat, s.GateUpWeightQ, s.GateUpScales, s.GateUpBiases,
 			nil, idxFlat, true, s.GateUpGroupSize, s.GateUpBits, s.GateUpMode, doSort)
 	} else {
@@ -559,7 +545,7 @@ func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.
 	gate, up := splitLastAxisHalves(gateUp)
 	hidden := mlx.SwiGLU(gate, up)
 
-	if s.UseQuantized {
+	if s.DownWeightQ != nil {
 		down = mlx.GatherQMM(hidden, s.DownWeightQ, s.DownScales, s.DownBiases,
 			nil, idxFlat, true, s.DownGroupSize, s.DownBits, s.DownMode, doSort)
 	} else {
