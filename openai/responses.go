@@ -2,6 +2,7 @@ package openai
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -326,6 +327,18 @@ func unmarshalResponsesInputItem(data []byte) (ResponsesInputItem, error) {
 			return nil, err
 		}
 		return call, nil
+	case "compaction":
+		var compaction ResponsesCompactionItem
+		if err := json.Unmarshal(data, &compaction); err != nil {
+			return nil, err
+		}
+		return compaction, nil
+	case "compaction_trigger":
+		var trigger ResponsesCompactionTrigger
+		if err := json.Unmarshal(data, &trigger); err != nil {
+			return nil, err
+		}
+		return trigger, nil
 	default:
 		if itemType == "" {
 			return nil, fmt.Errorf("input item missing required 'type' field")
@@ -599,6 +612,10 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 		case ResponsesWebSearchCall:
 			// Built-in tool calls are history metadata. The assistant message
 			// that follows carries the model-visible result of the prior search.
+		case ResponsesCompactionItem:
+			return nil, errors.New("compaction items must be expanded before Responses conversion")
+		case ResponsesCompactionTrigger:
+			return nil, errors.New("compaction_trigger must be handled before Responses conversion")
 		}
 	}
 
