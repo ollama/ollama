@@ -5,7 +5,6 @@ package granitemoe
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
@@ -173,7 +172,7 @@ func newModel(root *model.Root) (base.Model, error) {
 		cfg.LogitsScaling = 1.0
 	}
 	if cfg.AttentionMultiplier == 0 {
-		cfg.AttentionMultiplier = float32(1.0 / math.Sqrt(float64(cfg.HeadDim)))
+		cfg.AttentionMultiplier = 1.0
 	}
 	// Granite's attention_multiplier replaces the standard 1/sqrt(head_dim)
 	// scaling factor used in attention.
