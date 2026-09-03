@@ -230,6 +230,18 @@
         "OLLAMA_RUNNER_DIR": "vulkan",
         "OLLAMA_GPU_BACKEND": "vulkan"
       }
+    },
+    {
+      "name": "sycl",
+      "inherits": ["default"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-sycl",
+      "cacheVariables": {
+        "GGML_SYCL": "ON",
+        "GGML_SYCL_F16": "ON",
+        "GGML_SYCL_TARGET": "INTEL",
+        "OLLAMA_RUNNER_DIR": "sycl",
+        "OLLAMA_GPU_BACKEND": "sycl"
+      }
     }
   ],
   "buildPresets": [
@@ -332,6 +344,11 @@
       "name": "vulkan",
       "configurePreset": "vulkan",
       "targets": ["ggml-vulkan"]
+    },
+    {
+      "name": "sycl",
+      "configurePreset": "sycl",
+      "targets": ["ggml-sycl"]
     }
   ]
 }
