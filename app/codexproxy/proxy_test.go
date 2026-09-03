@@ -284,6 +284,7 @@ func TestHandlerNormalizesCodexOnlyHistoryForOllama(t *testing.T) {
 		"stream":true,
 		"input":[
 			{"type":"compaction","encrypted_content":"opaque"},
+			{"type":"message","role":"developer","content":[{"type":"input_text","text":"<collaboration_mode>Plan Mode</collaboration_mode>"}]},
 			{"type":"custom_tool_call","id":"ctc_1","status":"completed","call_id":"call_1","name":"apply_patch","input":"*** Begin Patch"},
 			{"type":"custom_tool_call_output","call_id":"call_1","output":"Success"},
 			{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]},
@@ -305,22 +306,26 @@ func TestHandlerNormalizesCodexOnlyHistoryForOllama(t *testing.T) {
 	if err := json.Unmarshal(gotBody, &forwarded); err != nil {
 		t.Fatal(err)
 	}
-	if len(forwarded.Input) != 3 {
+	if len(forwarded.Input) != 4 {
 		t.Fatalf("forwarded input = %#v", forwarded.Input)
 	}
-	call := forwarded.Input[0]
+	developer := forwarded.Input[0]
+	if developer["type"] != "message" || developer["role"] != "system" {
+		t.Fatalf("developer instructions were not promoted for Ollama: %#v", developer)
+	}
+	call := forwarded.Input[1]
 	if call["type"] != "function_call" || call["call_id"] != "call_1" || call["name"] != "apply_patch" {
 		t.Fatalf("converted call = %#v", call)
 	}
 	if call["arguments"] != `{"input":"*** Begin Patch"}` {
 		t.Fatalf("converted arguments = %#v", call["arguments"])
 	}
-	output := forwarded.Input[1]
+	output := forwarded.Input[2]
 	if output["type"] != "function_call_output" || output["call_id"] != "call_1" || output["output"] != "Success" {
 		t.Fatalf("converted output = %#v", output)
 	}
-	if forwarded.Input[2]["type"] != "message" {
-		t.Fatalf("message was not preserved: %#v", forwarded.Input[2])
+	if forwarded.Input[3]["type"] != "message" || forwarded.Input[3]["role"] != "user" {
+		t.Fatalf("user message was not preserved: %#v", forwarded.Input[3])
 	}
 }
 
@@ -397,7 +402,7 @@ func TestHandlerPassesNativeModelToChatGPT(t *testing.T) {
 	proxy := httptest.NewServer(handler)
 	defer proxy.Close()
 
-	payload := []byte(`{"model":"gpt-5.6-sol","stream":true}`)
+	payload := []byte(`{"model":"gpt-5.6-sol","stream":true,"input":[{"type":"message","role":"developer","content":[{"type":"input_text","text":"native instructions"}]}]}`)
 	req, err := http.NewRequest(http.MethodPost, proxy.URL+PathPrefix+"/v1/responses", bytes.NewReader(payload))
 	if err != nil {
 		t.Fatal(err)

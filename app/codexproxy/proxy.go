@@ -613,11 +613,32 @@ func normalizeOllamaInputItem(item json.RawMessage) (json.RawMessage, bool, erro
 
 	// Ollama accepts message shorthand without an explicit type as well as
 	// the supported Responses item types below.
-	if header.Type == "" && header.Role != "" {
-		return item, true, nil
+	itemType := header.Type
+	if itemType == "" && header.Role != "" {
+		itemType = "message"
 	}
-	switch header.Type {
-	case "message", "function_call", "function_call_output":
+	switch itemType {
+	case "message":
+		if header.Role != "developer" {
+			return item, true, nil
+		}
+		// Codex carries collaboration-mode and safety instructions in developer
+		// messages. Ollama models and provider adapters do not consistently give
+		// that role instruction priority, while system is universally supported.
+		// Translate the role only on the Ollama route so Plan mode and the rest of
+		// Codex's instruction contract receive the highest broadly supported
+		// priority.
+		var message map[string]json.RawMessage
+		if err := json.Unmarshal(item, &message); err != nil {
+			return nil, false, fmt.Errorf("decode developer message: %w", err)
+		}
+		message["role"] = json.RawMessage(`"system"`)
+		converted, err := json.Marshal(message)
+		if err != nil {
+			return nil, false, fmt.Errorf("encode system message: %w", err)
+		}
+		return converted, true, nil
+	case "function_call", "function_call_output":
 		return item, true, nil
 	case "reasoning":
 		var reasoning struct {
