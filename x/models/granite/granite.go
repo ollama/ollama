@@ -8,6 +8,7 @@ package granite
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
@@ -24,16 +25,17 @@ func init() {
 
 // Config holds Granite model configuration.
 type Config struct {
-	HiddenSize            int32   `json:"hidden_size"`
-	NumHiddenLayers       int32   `json:"num_hidden_layers"`
-	IntermediateSize      int32   `json:"intermediate_size"`
-	NumAttentionHeads     int32   `json:"num_attention_heads"`
-	NumKeyValueHeads      int32   `json:"num_key_value_heads"`
-	VocabSize             int32   `json:"vocab_size"`
-	RMSNormEps            float32 `json:"rms_norm_eps"`
-	RopeTheta             float32 `json:"rope_theta"`
-	MaxPositionEmbeddings int32   `json:"max_position_embeddings"`
-	TieWordEmbeddings     bool    `json:"tie_word_embeddings"`
+	HiddenSize            int32              `json:"hidden_size"`
+	NumHiddenLayers       int32              `json:"num_hidden_layers"`
+	IntermediateSize      int32              `json:"intermediate_size"`
+	NumAttentionHeads     int32              `json:"num_attention_heads"`
+	NumKeyValueHeads      int32              `json:"num_key_value_heads"`
+	VocabSize             int32              `json:"vocab_size"`
+	RMSNormEps            float32            `json:"rms_norm_eps"`
+	RopeTheta             float32            `json:"rope_theta"`
+	RopeScaling           *nn.RopeParameters `json:"rope_scaling"`
+	MaxPositionEmbeddings int32              `json:"max_position_embeddings"`
+	TieWordEmbeddings     bool               `json:"tie_word_embeddings"`
 
 	// Granite-specific multipliers (all default to 1.0, except
 	// AttentionMultiplier which defaults to the standard 1/sqrt(head_dim)
@@ -50,8 +52,10 @@ type Config struct {
 	TensorQuant    map[string]*model.TensorQuantInfo `json:"-"`
 
 	// Computed fields.
-	HeadDim int32   `json:"-"`
-	Scale   float32 `json:"-"`
+	HeadDim    int32      `json:"-"`
+	Scale      float32    `json:"-"`
+	RopeFreqs  *mlx.Array `json:"-"`
+	RopeMScale float32    `json:"-"`
 }
 
 // Model is a Granite text model.
@@ -130,6 +134,16 @@ func newModel(root *model.Root) (base.Model, error) {
 	}
 	if cfg.RopeTheta == 0 {
 		cfg.RopeTheta = 10000
+	}
+	cfg.RopeMScale = 1
+	if cfg.RopeScaling != nil {
+		switch strings.ToLower(cfg.RopeScaling.TypeName()) {
+		case "", "none":
+		case "yarn":
+			cfg.RopeFreqs, cfg.RopeMScale = nn.BuildYarnRopeFreqs(int(cfg.HeadDim), cfg.RopeTheta, cfg.RopeScaling)
+		default:
+			return nil, fmt.Errorf("unsupported rope_scaling type %q", cfg.RopeScaling.TypeName())
+		}
 	}
 	if cfg.RMSNormEps == 0 {
 		cfg.RMSNormEps = 1e-5
@@ -325,8 +339,8 @@ func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positio
 	v = mlx.Reshape(v, B, L, cfg.NumKeyValueHeads, cfg.HeadDim)
 	v = mlx.Transpose(v, 0, 2, 1, 3)
 
-	q = mlx.RoPEWithBase(q, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, positions)
-	k = mlx.RoPEWithBase(k, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, positions)
+	q = nn.ScaleRotaryPart(mlx.RoPEWithFreqs(q, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, positions, cfg.RopeFreqs), int(cfg.HeadDim), cfg.RopeMScale)
+	k = nn.ScaleRotaryPart(mlx.RoPEWithFreqs(k, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, positions, cfg.RopeFreqs), int(cfg.HeadDim), cfg.RopeMScale)
 
 	// MLX SDPA supports grouped-query attention directly (Q heads can be a
 	// multiple of K/V heads), so avoid materializing repeated K/V tensors.
