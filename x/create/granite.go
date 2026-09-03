@@ -5,7 +5,9 @@ import (
 	"strings"
 )
 
-// graniteImportTransform adjusts quantization for dense Granite imports.
+// graniteImportTransform adjusts quantization for dense and MoE Granite
+// imports (GraniteForCausalLM, GraniteMoeForCausalLM): both use the same
+// self_attn.o_proj naming and are exposed to the same fp4 underflow.
 type graniteImportTransform struct{}
 
 func newGraniteImportTransform(_ json.RawMessage) (quantizePolicy, error) {

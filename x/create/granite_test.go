@@ -57,3 +57,19 @@ func TestGraniteQuantizationType(t *testing.T) {
 		})
 	}
 }
+
+func TestGraniteMoeRegistryUsesSameTransform(t *testing.T) {
+	for _, arch := range []string{"GraniteForCausalLM", "GraniteMoeForCausalLM"} {
+		factory, ok := tensorImportTransformRegistry[arch]
+		if !ok {
+			t.Fatalf("%s not registered", arch)
+		}
+		policy, err := factory(nil)
+		if err != nil {
+			t.Fatalf("%s: %v", arch, err)
+		}
+		if _, ok := policy.(graniteImportTransform); !ok {
+			t.Fatalf("%s registered to %T, want graniteImportTransform", arch, policy)
+		}
+	}
+}

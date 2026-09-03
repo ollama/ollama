@@ -500,6 +500,7 @@ var tensorImportTransformRegistry = map[string]tensorImportTransformFactory{
 	"NemotronH_Nano_Omni_Reasoning_V3":      newNemotronHImportTransform,
 	"NemotronHForCausalLM":                  newNemotronHImportTransform,
 	"GraniteForCausalLM":                    newGraniteImportTransform,
+	"GraniteMoeForCausalLM":                 newGraniteImportTransform,
 }
 
 func newTensorImportTransform(inv Inventory) (quantizePolicy, error) {
