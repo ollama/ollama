@@ -312,7 +312,8 @@ func GetTensorQuantization(name string, shape []int32, quantize string) string {
 
 	// Promote sensitive projections to 8-bit; fp4 skips experts since their kernels take a single mode.
 	if quantNorm == "int4" || ((quantNorm == "nvfp4" || quantNorm == "mxfp4") && !stackedExpert) {
-		if strings.Contains(name, ".v_proj") || strings.Contains(name, ".k_proj") || strings.Contains(name, "down_proj") {
+		if strings.Contains(name, ".v_proj") || strings.Contains(name, ".k_proj") ||
+			strings.Contains(name, ".o_proj") || strings.Contains(name, "down_proj") {
 			if e := eightBit(quantNorm); isAligned(shape, e) {
 				return e
 			}
