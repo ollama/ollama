@@ -61,7 +61,6 @@ bool IsCodexDesktopRunning(void);
 unsigned long long CodexDesktopRequestCount(void);
 bool SetCodexDesktopConnected(bool connected, bool restartConfirmed);
 bool OpenChatGPTDownloadPage(void);
-bool RestoreCodexProfileForShutdown(void);
 bool ClaudeGatewayStartFailed(void);
 bool ClaudeGatewayPortConflict(void);
 char *ClaudeGatewayErrorMessage(void);

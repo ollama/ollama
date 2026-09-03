@@ -816,12 +816,31 @@ type ModelRecommendationMappings map[string]ModelRecommendationMapping
 
 // ModelRecommendation is a single recommendation entry in [ModelRecommendationsResponse].
 type ModelRecommendation struct {
-	Model           string `json:"model"`
-	Description     string `json:"description"`
-	ContextLength   int    `json:"context_length,omitempty"`
-	MaxOutputTokens int    `json:"max_output_tokens,omitempty"`
-	VRAMBytes       int64  `json:"vram_bytes,omitempty"`
-	RequiredPlan    string `json:"required_plan,omitempty"`
+	Model           string                       `json:"model"`
+	Description     string                       `json:"description"`
+	ContextLength   int                          `json:"context_length,omitempty"`
+	MaxOutputTokens int                          `json:"max_output_tokens,omitempty"`
+	VRAMBytes       int64                        `json:"vram_bytes,omitempty"`
+	RequiredPlan    string                       `json:"required_plan,omitempty"`
+	Thinking        *ModelRecommendationThinking `json:"thinking,omitempty"`
+}
+
+// ModelRecommendationThinking advertises the exact values accepted by
+// Ollama's think field and the model's default. Values may be booleans for
+// binary thinking controls or strings for adjustable effort levels.
+type ModelRecommendationThinking struct {
+	Values  []any `json:"values,omitempty"`
+	Default any   `json:"default,omitempty"`
+}
+
+// Clone returns an independent copy.
+func (t *ModelRecommendationThinking) Clone() *ModelRecommendationThinking {
+	if t == nil {
+		return nil
+	}
+	clone := *t
+	clone.Values = append([]any(nil), t.Values...)
+	return &clone
 }
 
 // ProcessResponse is the response from [Client.Process].

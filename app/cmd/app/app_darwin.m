@@ -1442,8 +1442,7 @@ didCompleteWithError:(NSError *)error {
 
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
     if (self.systemShutdownInProgress) {
-        BOOL codexConfigured = IsCodexDesktopConnected();
-        if (!IsClaudeGatewayConfigured() && !codexConfigured) {
+        if (!IsClaudeGatewayConfigured()) {
             return NSTerminateNow;
         }
         self.systemTerminationApplication = sender;
@@ -1453,9 +1452,6 @@ didCompleteWithError:(NSError *)error {
         }
         self.quitInProgress = YES;
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-            if (codexConfigured && !RestoreCodexProfileForShutdown()) {
-                appLogInfo(@"Unable to restore ChatGPT during system shutdown");
-            }
             if (IsClaudeGatewayConfigured() && !RestoreClaudeGatewayForShutdown()) {
                 appLogInfo(@"Unable to restore Claude during system shutdown");
             }
@@ -1532,29 +1528,12 @@ didCompleteWithError:(NSError *)error {
         return;
     }
 
-    BOOL codexConfigured = IsCodexDesktopConnected();
+    // ChatGPT remains configured across Ollama exits so reopening Ollama can
+    // resume routing without interrupting the app or resetting the toggle.
     BOOL claudeConfigured = IsClaudeGatewayConfigured();
-    if (!codexConfigured && !claudeConfigured) {
+    if (!claudeConfigured) {
         [self quit];
         return;
-    }
-
-    // Gather every interruption confirmation before changing either profile.
-    // Otherwise restoring ChatGPT first and then canceling Claude's dialog
-    // leaves Ollama running with only one integration disconnected.
-    BOOL restartChatGPT = codexConfigured && IsCodexDesktopRunning();
-    if (restartChatGPT) {
-        NSAlert *alert = [[NSAlert alloc] init];
-        [alert setAlertStyle:NSAlertStyleWarning];
-        [alert setIcon:ollamaApplicationIcon()];
-        [alert setMessageText:@"Restore ChatGPT before quitting Ollama?"];
-        [alert setInformativeText:
-            @"ChatGPT will restart without the Ollama models before Ollama quits. Your Codex models and profile remain available. Any running task will stop."];
-        [alert addButtonWithTitle:@"Restore and Quit"];
-        [alert addButtonWithTitle:@"Cancel"];
-        if ([alert runModal] != NSAlertFirstButtonReturn) {
-            return;
-        }
     }
 
     BOOL restartClaude = claudeConfigured && IsClaudeDesktopRunning();
@@ -1574,24 +1553,16 @@ didCompleteWithError:(NSError *)error {
 
     self.quitInProgress = YES;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        BOOL codexSucceeded = !codexConfigured ||
-            SetCodexDesktopConnected(false, restartChatGPT);
-        BOOL claudeSucceeded = !claudeConfigured;
-        if (codexSucceeded && claudeConfigured) {
-            claudeSucceeded = SetClaudeGatewayInstalled(false, restartClaude);
-        }
+        BOOL claudeSucceeded = SetClaudeGatewayInstalled(false, restartClaude);
         dispatch_async(dispatch_get_main_queue(), ^{
             if (self.systemTerminationReplyPending) {
-                if (!codexSucceeded) {
-                    appLogInfo(@"Unable to restore ChatGPT during system shutdown");
-                }
                 if (!claudeSucceeded) {
                     appLogInfo(@"Unable to restore Claude during system shutdown");
                 }
                 [self completeSystemTermination];
                 return;
             }
-            if (codexSucceeded && claudeSucceeded) {
+            if (claudeSucceeded) {
                 [self quit];
                 return;
             }
@@ -1603,9 +1574,8 @@ didCompleteWithError:(NSError *)error {
             [alert setAlertStyle:NSAlertStyleWarning];
             [alert setIcon:ollamaApplicationIcon()];
             [alert setMessageText:@"Unable to quit Ollama"];
-            [alert setInformativeText:!codexSucceeded
-                ? @"ChatGPT's previous OpenAI configuration could not be restored. Check the Ollama log, then try again."
-                : @"Ollama couldn’t update Claude, so it is still running. ChatGPT was restored normally. Check the Ollama log and try again."];
+            [alert setInformativeText:
+                @"Ollama couldn’t update Claude, so it is still running. Check the Ollama log and try again."];
             [alert runModal];
         });
     });

@@ -32,7 +32,6 @@ type codexDesktopController interface {
 	UseOllamaFromDesktop(string, []launch.LaunchModel, bool) error
 	RestoreFromDesktop(bool) error
 	RestartFromDesktop(bool) error
-	RestoreForShutdown(context.Context) error
 	Onboard() error
 }
 
@@ -297,9 +296,9 @@ func loadCodexDesktopConnectionModels(ctx context.Context, selected []string) (s
 }
 
 // hydrateCodexDesktopModelCapabilities fills metadata that may be absent from
-// account-only cloud inventory. In particular, some cloud models are returned
-// by /api/show but not /api/tags, which otherwise hides their Thinking levels
-// from the generated ChatGPT catalog.
+// account-only cloud inventory. Recommendations provide the exact thinking
+// controls, while /api/show supplies capabilities and family metadata for the
+// fallback path used with models that are not current recommendations.
 func hydrateCodexDesktopModelCapabilities(ctx context.Context, models []launch.LaunchModel) []launch.LaunchModel {
 	client, err := codexDesktopClientFactory()
 	if err != nil {
@@ -307,7 +306,20 @@ func hydrateCodexDesktopModelCapabilities(ctx context.Context, models []launch.L
 	}
 
 	hydrated := append([]launch.LaunchModel(nil), models...)
+	recommendedThinking := make(map[string]*api.ModelRecommendationThinking)
+	if response, err := client.ModelRecommendationsExperimental(ctx); err == nil {
+		for _, recommendation := range response.Recommendations {
+			key := codexDesktopModelKey(recommendation.Model)
+			if key == "" || recommendation.Thinking == nil {
+				continue
+			}
+			recommendedThinking[key] = recommendation.Thinking.Clone()
+		}
+	}
 	for i := range hydrated {
+		if thinking := recommendedThinking[codexDesktopModelKey(hydrated[i].Name)]; thinking != nil {
+			hydrated[i].Thinking = thinking
+		}
 		response, err := client.Show(ctx, &api.ShowRequest{Model: hydrated[i].Name})
 		if err != nil {
 			continue
