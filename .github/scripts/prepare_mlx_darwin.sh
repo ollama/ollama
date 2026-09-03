@@ -7,11 +7,10 @@
 # match the current checkout, downloads that release's ollama-darwin.tgz, and
 # extracts only mlx_metal_v* into build/lib/ollama.
 #
-# The payload's libollama_xgrammar.dylib is built from Ollama's native
-# wrapper (x/mlxrunner/xgrammar/native) and the XGrammar pin recorded in
-# cmake/mlx/CMakeLists.txt. When the matched release tag differs from the
-# checkout in either, the helper rebuilds just that library from source
-# instead of the whole MLX build.
+# The payload also depends on Ollama's payload build rules (cmake glue and
+# carried mlx/compat patches) and the xgrammar native wrapper
+# (x/mlxrunner/xgrammar/native). Rule drift rebuilds the whole payload from
+# source; wrapper-only drift rebuilds just libollama_xgrammar.dylib.
 #
 # If no release matches the MLX pins (e.g. right after a pin bump), the
 # helper builds the minimal MLX payload for this platform: a single Metal
@@ -54,34 +53,64 @@ read_pin() {
 # sync with the ollama_xgrammar target in cmake/mlx/CMakeLists.txt.
 xgrammar_native_dir=x/mlxrunner/xgrammar/native
 
-# Paths whose content determines libollama_xgrammar.dylib: the build rules
-# (pinned version, target sources, compile definitions) and every file under
-# the native wrapper directory.
-xgrammar_inputs() {
-  printf '%s\n' cmake/mlx/CMakeLists.txt
+# Payload build rules beyond the MLX_VERSION/MLX_C_VERSION pins.
+payload_rule_files=(
+  "cmake/local.cmake"
+  "cmake/apply-git-patches.cmake"
+  "cmake/mlx/CMakeLists.txt"
+  "cmake/mlx/CMakePresets.json"
+  "x/mlxrunner/mlx/CMakeLists.txt"
+)
+
+# Build-rule inputs: the rule files plus carried MLX/MLX-C patch content.
+rule_inputs() {
+  local file
+  for file in "${payload_rule_files[@]}"; do
+    printf '%s\n' "${file}"
+  done
+  if [ -d mlx/compat ]; then
+    find mlx/compat -type f | sort
+  fi
+}
+
+wrapper_inputs() {
   find "${xgrammar_native_dir}" -type f | sort
 }
 
-xgrammar_fingerprint() {
+payload_inputs() {
+  rule_inputs
+  wrapper_inputs
+}
+
+payload_fingerprint() {
   local file
   {
-    xgrammar_inputs
+    payload_inputs
     while IFS= read -r file; do
       cat "${file}" 2>/dev/null || true
-    done < <(xgrammar_inputs)
+    done < <(payload_inputs)
   } | shasum -a 256 | awk '{print $1}'
 }
 
-# True when the tag carries the same XGrammar inputs as the checked-out tree.
-# Files present in the tree but not at the tag fail the fetch and count as a
-# mismatch.
-tag_xgrammar_matches() {
+# True when the tag matches the checkout on all payload inputs.
+tag_matches_payload() {
   local tag="$1" file
   while IFS= read -r file; do
     if ! curl -fsSL "https://raw.githubusercontent.com/${repo}/${tag}/${file}" 2>/dev/null | cmp -s - "${file}"; then
       return 1
     fi
-  done < <(xgrammar_inputs)
+  done < <(payload_inputs)
+  return 0
+}
+
+# True when the tag matches the checkout on the build rules.
+tag_matches_rules() {
+  local tag="$1" file
+  while IFS= read -r file; do
+    if ! curl -fsSL "https://raw.githubusercontent.com/${repo}/${tag}/${file}" 2>/dev/null | cmp -s - "${file}"; then
+      return 1
+    fi
+  done < <(rule_inputs)
   return 0
 }
 
@@ -197,7 +226,8 @@ build_ci_payload() {
       exit 0
       ;;
   esac
-  echo "No release carries MLX_VERSION=${current_mlx} MLX_C_VERSION=${current_mlxc}; building the ${backend} payload for unit tests"
+  echo "Building the ${backend} payload for unit tests"
+  rm -rf "${target_dir}"/mlx_metal_v*
   cmake --build "${ci_build_dir}" --target "ollama-mlx-${backend}" --parallel
   for variant in "${target_dir}"/mlx_metal_v*; do
     [ -d "${variant}" ] || continue
@@ -227,7 +257,7 @@ current_mlxc="$(read_pin MLX_C_VERSION)"
 # The release tarball only depends on the MLX pins; the extracted payload's
 # xgrammar library additionally depends on the tree's XGrammar inputs.
 component_pins="${current_mlx} ${current_mlxc}"
-current_pins="${component_pins} $(xgrammar_fingerprint)"
+current_pins="${component_pins} $(payload_fingerprint)"
 
 if has_matching_payload; then
   echo "MLX payload already present in ${target_dir}"
@@ -273,6 +303,7 @@ else
   )
 
   if [ -z "${matched_tag}" ]; then
+    echo "No release carries MLX_VERSION=${current_mlx} MLX_C_VERSION=${current_mlxc}"
     build_ci_payload
     exit 0
   fi
@@ -288,17 +319,22 @@ else
   extract_payload "${matched_tag}"
 fi
 
-if tag_xgrammar_matches "$(cat "${tag_file}")"; then
+if tag_matches_payload "$(cat "${tag_file}")"; then
   exit 0
 fi
 
-# Replace the payload's libollama_xgrammar.dylib with a build from the
-# checked-out tree.
 if [ "$(uname -m)" != "arm64" ]; then
-  warn "MLX unit tests need a fresh libollama_xgrammar, but only arm64 macOS can build the payload; tests will be skipped"
+  warn "MLX payload builds are only supported on arm64 macOS; MLX unit tests will be skipped"
   exit 0
 fi
 
-echo "Release payload XGrammar does not match this checkout; rebuilding libollama_xgrammar from source"
-rm -f "${target_dir}"/mlx_metal_v*/libollama_xgrammar.dylib
-build_ci_xgrammar
+if tag_matches_rules "$(cat "${tag_file}")"; then
+  # Only the xgrammar wrapper drifted; keep the rest of the release payload.
+  echo "Rebuilding libollama_xgrammar.dylib from source into ${target_dir}"
+  rm -f "${target_dir}"/mlx_metal_v*/libollama_xgrammar.dylib
+  build_ci_xgrammar
+  exit 0
+fi
+
+echo "Release payload build rules do not match this checkout"
+build_ci_payload
