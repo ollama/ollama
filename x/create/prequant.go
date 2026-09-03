@@ -1,6 +1,9 @@
 package create
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // prequantPattern describes how one producer packs an already-quantized weight
 // and its scale companions into safetensors files, and how to fuse them into
@@ -72,33 +75,150 @@ var prequantPatterns = []prequantPattern{
 // its scale companions into one blob, companions are not emitted on their own,
 // and any remaining tensors (norms, embeddings) pass through at source
 // precision.
+//
+// Some MLX-converted MoE checkpoints store the MoE gate and up projections as
+// separately-stacked gate_proj and up_proj tensors. These are concatenated into
+// a single input_linear tensor along axis 1 at import time so the inference
+// path always uses the fused layout.
 func planPrequantized(inv Inventory) ([]BlobSpec, error) {
-	fused := make(map[string]BlobSpec)
-	consumed := make(map[string]bool)
+	type entry struct {
+		spec     BlobSpec
+		consumed []string
+	}
+	byWeight := make(map[string]entry)
+
 	for _, name := range sortedTensorNames(inv) {
-		spec, sources, ok := matchPrequant(name, inv)
-		if !ok {
+		// Fused gate/up takes priority over the generic path so that the
+		// split gate_proj and up_proj weights are replaced by one fused blob.
+		if spec, consumed, ok, err := matchSplitMLXGateUp(name, inv); err != nil {
+			return nil, err
+		} else if ok {
+			byWeight[name] = entry{spec: spec, consumed: consumed}
 			continue
 		}
-		fused[name] = spec
-		for _, s := range sources {
-			consumed[s] = true
+		if spec, consumed, ok := matchPrequant(name, inv); ok {
+			byWeight[name] = entry{spec: spec, consumed: consumed}
+		}
+	}
+
+	allConsumed := make(map[string]bool)
+	for _, e := range byWeight {
+		for _, s := range e.consumed {
+			allConsumed[s] = true
 		}
 	}
 
 	specs := make([]BlobSpec, 0, len(inv.Tensors))
 	for _, name := range sortedTensorNames(inv) {
-		if spec, ok := fused[name]; ok {
-			specs = append(specs, spec)
+		if allConsumed[name] {
 			continue
 		}
-		if consumed[name] {
+		if e, ok := byWeight[name]; ok {
+			specs = append(specs, e.spec)
 			continue
 		}
 		t := inv.Tensors[name]
 		specs = append(specs, BlobSpec{Name: name, Tensors: []TensorSpec{{Name: name, Sources: []SourceTensor{t}}}})
 	}
 	return specs, nil
+}
+
+// matchSplitMLXGateUp detects an MLX-converted MoE checkpoint where the gate
+// and up expert projections are stored as separate
+// "...switch_mlp.gate_proj.weight" and "...switch_mlp.up_proj.weight" tensors
+// (each shape [E, I, H]) and returns a single BlobSpec for
+// "...input_linear.weight" (shape [E, 2*I, H]) that concatenates them along
+// axis 1. Scale and optional bias companions are fused identically.
+//
+// Returns ok=false when name is not a gate_proj weight with the expected
+// companions, and returns an error when the shapes are inconsistent.
+func matchSplitMLXGateUp(name string, inv Inventory) (spec BlobSpec, consumed []string, ok bool, err error) {
+	mlxPattern := prequantPatterns[0] // the "mlx" pattern
+	base, hasSuffix := strings.CutSuffix(name, mlxPattern.weightSuffix)
+	if !hasSuffix || !strings.HasSuffix(base, ".switch_mlp.gate_proj") {
+		return BlobSpec{}, nil, false, nil
+	}
+
+	gateSrc := base + mlxPattern.scaleSuffix
+	if !inv.Has(gateSrc) {
+		return BlobSpec{}, nil, false, nil
+	}
+
+	layerBase := strings.TrimSuffix(base, ".switch_mlp.gate_proj")
+	upBase := layerBase + ".switch_mlp.up_proj"
+	upWeightSrc := upBase + mlxPattern.weightSuffix
+	upScaleSrc := upBase + mlxPattern.scaleSuffix
+	if !inv.Has(upWeightSrc) || !inv.Has(upScaleSrc) {
+		return BlobSpec{}, nil, false, nil
+	}
+
+	gateW := inv.Tensors[name]
+	upW := inv.Tensors[upWeightSrc]
+	if len(gateW.Shape) != 3 {
+		return BlobSpec{}, nil, false, fmt.Errorf("gate_proj weight %s has unexpected shape %v (expected 3-D)", name, gateW.Shape)
+	}
+	if len(upW.Shape) != 3 {
+		return BlobSpec{}, nil, false, fmt.Errorf("up_proj weight %s has unexpected shape %v (expected 3-D)", upWeightSrc, upW.Shape)
+	}
+	E, I, H := gateW.Shape[0], gateW.Shape[1], gateW.Shape[2]
+	if upW.Shape[0] != E || upW.Shape[1] != I || upW.Shape[2] != H {
+		return BlobSpec{}, nil, false, fmt.Errorf("gate_proj shape %v and up_proj shape %v do not match", gateW.Shape, upW.Shape)
+	}
+	fusedShape := []int32{E, 2 * I, H}
+
+	outWeight := layerBase + ".input_linear.weight"
+	md := prequantMetadata(inv, mlxPattern)
+	consumed = append(consumed, upWeightSrc, gateSrc, upScaleSrc)
+
+	gateScale := inv.Tensors[gateSrc]
+	upScale := inv.Tensors[upScaleSrc]
+	var fusedScaleShape []int32
+	if len(gateScale.Shape) == 3 && gateScale.Shape[0] == E && gateScale.Shape[1] == I {
+		if upScale.Shape[0] == E && upScale.Shape[1] == I && upScale.Shape[2] == gateScale.Shape[2] {
+			fusedScaleShape = []int32{E, 2 * I, gateScale.Shape[2]}
+		}
+	}
+
+	tensors := []TensorSpec{
+		{
+			Name:      outWeight,
+			Sources:   []SourceTensor{gateW, upW},
+			Transform: TransformConcatAxis1,
+			OutShape:  fusedShape,
+		},
+	}
+
+	scaleTensor := TensorSpec{
+		Name:    outWeight + ".scale",
+		Sources: []SourceTensor{gateScale, upScale},
+	}
+	if fusedScaleShape != nil {
+		scaleTensor.Transform = TransformConcatAxis1
+		scaleTensor.OutShape = fusedScaleShape
+	}
+	tensors = append(tensors, scaleTensor)
+
+	if mlxPattern.biasSuffix != "" {
+		gateBiasSrc := base + mlxPattern.biasSuffix
+		upBiasSrc := upBase + mlxPattern.biasSuffix
+		if inv.Has(gateBiasSrc) && inv.Has(upBiasSrc) {
+			consumed = append(consumed, gateBiasSrc, upBiasSrc)
+			gateB := inv.Tensors[gateBiasSrc]
+			upB := inv.Tensors[upBiasSrc]
+			biasTensor := TensorSpec{
+				Name:    outWeight + ".bias",
+				Sources: []SourceTensor{gateB, upB},
+			}
+			if len(gateB.Shape) == 3 && gateB.Shape[0] == E && gateB.Shape[1] == I &&
+				upB.Shape[0] == E && upB.Shape[1] == I && upB.Shape[2] == gateB.Shape[2] {
+				biasTensor.Transform = TransformConcatAxis1
+				biasTensor.OutShape = []int32{E, 2 * I, gateB.Shape[2]}
+			}
+			tensors = append(tensors, biasTensor)
+		}
+	}
+
+	return BlobSpec{Name: outWeight, Tensors: tensors, Metadata: md}, consumed, true, nil
 }
 
 // matchPrequant returns the fused blob for a weight tensor if it matches a
