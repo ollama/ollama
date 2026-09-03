@@ -30,6 +30,7 @@ const (
 	codexAppBundleID               = "com.openai.codex"
 	codexAppModelCatalogFilename   = codexproxy.ModelCatalogFilename
 	codexAppRoutingCatalogFilename = codexproxy.RoutingCatalogFilename
+	codexAppAutoReviewModelEnv     = "OLLAMA_CODEX_AUTO_REVIEW_MODEL"
 	codexAppOllamaProfileDirName   = "chatgpt-ollama"
 	codexAppOllamaUserDataName     = "electron-data"
 	codexAppOllamaPIDFilename      = "chatgpt.pid"
@@ -102,6 +103,11 @@ func (c *CodexApp) ConfigureWithModels(primary string, models []LaunchModel) err
 	if primary == "" {
 		return fmt.Errorf("chatgpt requires a model")
 	}
+	models = codexAppCatalogModels(primary, models)
+	autoReviewModel, err := codexAppConfiguredAutoReviewModel(primary, models)
+	if err != nil {
+		return err
+	}
 
 	configPath, err := codexConfigPath()
 	if err != nil {
@@ -114,13 +120,12 @@ func (c *CodexApp) ConfigureWithModels(primary string, models []LaunchModel) err
 	if err != nil {
 		return fmt.Errorf("read native Codex model catalog: %w", err)
 	}
-	models = codexAppCatalogModels(primary, models)
 	catalogPath, err := codexAppModelCatalogPath()
 	if err != nil {
 		return err
 	}
 	routingCatalogPath := codexAppRoutingCatalogPathForConfig(configPath)
-	if err := writeCodexAppRoutingCatalog(routingCatalogPath, models); err != nil {
+	if err := writeCodexAppRoutingCatalog(routingCatalogPath, models, autoReviewModel); err != nil {
 		return err
 	}
 	if err := writeCodexAppCombinedModelCatalog(catalogPath, models, nativeCatalog); err != nil {
@@ -945,7 +950,7 @@ func codexAppOllamaPriorityStart(nativeCatalog codexAppRawModelCatalog, ollamaMo
 	return lowestNativePriority - ollamaModelCount
 }
 
-func writeCodexAppRoutingCatalog(path string, models []LaunchModel) error {
+func writeCodexAppRoutingCatalog(path string, models []LaunchModel, autoReviewModel string) error {
 	if len(models) == 0 {
 		return fmt.Errorf("chatgpt routing catalog cannot be empty")
 	}
@@ -968,7 +973,14 @@ func writeCodexAppRoutingCatalog(path string, models []LaunchModel) error {
 			},
 		})
 	}
-	data, err := json.MarshalIndent(map[string]any{"models": entries}, "", "  ")
+	catalog := struct {
+		Models          []routingEntry `json:"models"`
+		AutoReviewModel string         `json:"auto_review_model,omitempty"`
+	}{
+		Models:          entries,
+		AutoReviewModel: autoReviewModel,
+	}
+	data, err := json.MarshalIndent(catalog, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -976,6 +988,24 @@ func writeCodexAppRoutingCatalog(path string, models []LaunchModel) error {
 		return err
 	}
 	return fileutil.WriteWithBackup(path, append(data, '\n'), codexAppIntegrationName)
+}
+
+func codexAppConfiguredAutoReviewModel(primary string, models []LaunchModel) (string, error) {
+	configured := strings.TrimSpace(os.Getenv(codexAppAutoReviewModelEnv))
+	switch strings.ToLower(configured) {
+	case "", "selected", "ollama":
+		return primary, nil
+	case "native", "chatgpt":
+		return "", nil
+	}
+
+	target := codexAppCatalogModelKey(configured)
+	for _, model := range models {
+		if codexAppCatalogModelKey(model.Name) == target {
+			return model.Name, nil
+		}
+	}
+	return "", fmt.Errorf("%s=%q is not one of the configured Ollama models", codexAppAutoReviewModelEnv, configured)
 }
 
 func parseCodexAppModelCatalog(data []byte) (codexAppRawModelCatalog, error) {

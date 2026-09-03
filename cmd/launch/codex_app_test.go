@@ -1142,6 +1142,60 @@ func TestCodexAppConfigureIsIdempotentAndPreservesUnrelatedProvider(t *testing.T
 	}
 }
 
+func TestCodexAppConfigurePersistsAutoReviewModel(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		configured string
+		want       string
+	}{
+		{name: "selected model default", want: "glm-5.3:cloud"},
+		{name: "native explicit", configured: "native"},
+		{name: "chatgpt explicit", configured: "chatgpt"},
+		{name: "selected cloud model", configured: "selected", want: "glm-5.3:cloud"},
+		{name: "ollama alias", configured: "ollama", want: "glm-5.3:cloud"},
+		{name: "explicit configured model", configured: "qwen3:8b", want: "qwen3:8b"},
+		{name: "explicit configured cloud model", configured: "deepseek-v4-flash:cloud", want: "deepseek-v4-flash:cloud"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			setTestHome(t, tmpDir)
+			t.Setenv(codexAppAutoReviewModelEnv, test.configured)
+
+			if err := (&CodexApp{}).ConfigureWithModels("glm-5.3:cloud", testLaunchModels("glm-5.3:cloud", "deepseek-v4-flash:cloud", "qwen3:8b")); err != nil {
+				t.Fatal(err)
+			}
+
+			data, err := os.ReadFile(codexAppRoutingCatalogPathForConfig(filepath.Join(tmpDir, ".codex", "config.toml")))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var catalog struct {
+				AutoReviewModel string `json:"auto_review_model"`
+			}
+			if err := json.Unmarshal(data, &catalog); err != nil {
+				t.Fatal(err)
+			}
+			if catalog.AutoReviewModel != test.want {
+				t.Fatalf("auto_review_model = %q, want %q", catalog.AutoReviewModel, test.want)
+			}
+		})
+	}
+}
+
+func TestCodexAppConfigureRejectsUnknownAutoReviewModelBeforeWriting(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv(codexAppAutoReviewModelEnv, "missing-model")
+
+	err := (&CodexApp{}).ConfigureWithModels("llama3.2", testLaunchModels("llama3.2"))
+	if err == nil || !strings.Contains(err.Error(), codexAppAutoReviewModelEnv) {
+		t.Fatalf("ConfigureWithModels error = %v, want invalid Auto-review model", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, ".codex")); !os.IsNotExist(err) {
+		t.Fatalf("invalid Auto-review model wrote configuration: %v", err)
+	}
+}
+
 func TestCodexCLIConfigRefreshLeavesCodexAppConfigActive(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
