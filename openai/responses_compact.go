@@ -3,11 +3,13 @@ package openai
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -60,9 +62,11 @@ type compactionToolMetadata struct {
 	Description string `json:"description,omitempty"`
 }
 
-type compactionTranscript struct {
-	Items []CompactionTranscriptItem `json:"items"`
-	Tools []compactionToolMetadata   `json:"tools,omitempty"`
+type compactionTranscriptItemWire struct {
+	Ref        string      `json:"ref"`
+	Type       string      `json:"type"`
+	Message    api.Message `json:"message"`
+	ImageCount int         `json:"image_count,omitempty"`
 }
 
 type compactionToolGroup struct {
@@ -326,10 +330,6 @@ func payloadToResponsesItems(payload OllamaCompactionPayload) ([]json.RawMessage
 }
 
 func messageToResponsesItems(message api.Message) ([]json.RawMessage, error) {
-	if len(message.Images) > 0 {
-		return nil, errors.New("retained images are not supported")
-	}
-
 	var values []any
 	if message.Thinking != "" {
 		values = append(values, map[string]any{
@@ -342,6 +342,9 @@ func messageToResponsesItems(message api.Message) ([]json.RawMessage, error) {
 			return nil, errors.New("retained tool message is missing tool_call_id")
 		}
 		if message.ToolName == "tool_search" {
+			if len(message.Images) > 0 {
+				return nil, errors.New("retained tool search output cannot contain images")
+			}
 			var tools []json.RawMessage
 			if err := json.Unmarshal([]byte(message.Content), &tools); err != nil {
 				return nil, fmt.Errorf("retained tool search output is invalid: %w", err)
@@ -351,13 +354,21 @@ func messageToResponsesItems(message api.Message) ([]json.RawMessage, error) {
 				"execution": "client", "status": "completed", "tools": tools,
 			})
 		} else {
+			output, err := responsesContentValue(message.Content, message.Images)
+			if err != nil {
+				return nil, err
+			}
 			values = append(values, map[string]any{
-				"type": "function_call_output", "call_id": message.ToolCallID, "output": message.Content,
+				"type": "function_call_output", "call_id": message.ToolCallID, "output": output,
 			})
 		}
-	} else if message.Content != "" || len(message.ToolCalls) == 0 {
+	} else if message.Content != "" || len(message.Images) > 0 || len(message.ToolCalls) == 0 {
+		content, err := responsesContentValue(message.Content, message.Images)
+		if err != nil {
+			return nil, err
+		}
 		values = append(values, map[string]any{
-			"type": "message", "role": message.Role, "content": message.Content,
+			"type": "message", "role": message.Role, "content": content,
 		})
 	}
 	for _, call := range message.ToolCalls {
@@ -391,6 +402,41 @@ func messageToResponsesItems(message api.Message) ([]json.RawMessage, error) {
 	return items, nil
 }
 
+func responsesContentValue(text string, images []api.ImageData) (any, error) {
+	if len(images) == 0 {
+		return text, nil
+	}
+
+	content := make([]any, 0, len(images)+1)
+	if text != "" {
+		content = append(content, map[string]any{"type": "input_text", "text": text})
+	}
+	for _, image := range images {
+		block, err := responsesImageContent(image)
+		if err != nil {
+			return nil, err
+		}
+		content = append(content, block)
+	}
+	return content, nil
+}
+
+func responsesImageContent(image api.ImageData) (map[string]any, error) {
+	if len(image) == 0 {
+		return nil, errors.New("retained image is empty")
+	}
+	mimeType := http.DetectContentType(image)
+	switch mimeType {
+	case "image/jpeg", "image/png", "image/webp":
+	default:
+		return nil, fmt.Errorf("retained image has unsupported content type %q", mimeType)
+	}
+	return map[string]any{
+		"type": "input_image", "detail": "auto",
+		"image_url": "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(image),
+	}, nil
+}
+
 func newResponsesCompactionPlan(req rawResponsesRequest, rawItems []json.RawMessage) (*ResponsesCompactionPlan, error) {
 	if len(rawItems) == 0 {
 		return nil, errors.New("compaction input is empty")
@@ -405,9 +451,6 @@ func newResponsesCompactionPlan(req rawResponsesRequest, rawItems []json.RawMess
 		message, kind, err := compactionMessage(item)
 		if err != nil {
 			return nil, fmt.Errorf("input[%d]: %w", i, err)
-		}
-		if len(message.Images) > 0 {
-			return nil, fmt.Errorf("input[%d]: image inputs are not supported by compaction", i)
 		}
 		items = append(items, CompactionTranscriptItem{
 			Ref: fmt.Sprintf("item_%06d", i+1), Type: kind, Message: message,
@@ -427,6 +470,9 @@ func newResponsesCompactionPlan(req rawResponsesRequest, rawItems []json.RawMess
 func compactionMessage(item ResponsesInputItem) (api.Message, string, error) {
 	switch value := item.(type) {
 	case ResponsesInputMessage:
+		if err := validateCompactionContent(value.Content); err != nil {
+			return api.Message{}, "", err
+		}
 		message, err := convertInputMessage(value)
 		return message, "message", err
 	case ResponsesFunctionCall:
@@ -444,6 +490,9 @@ func compactionMessage(item ResponsesInputItem) (api.Message, string, error) {
 		content := value.Output
 		var images []api.ImageData
 		if len(value.OutputItems) > 0 {
+			if err := validateCompactionContent(value.OutputItems); err != nil {
+				return api.Message{}, "", err
+			}
 			var err error
 			content, images, err = convertResponsesContent(value.OutputItems)
 			if err != nil {
@@ -484,6 +533,22 @@ func compactionMessage(item ResponsesInputItem) (api.Message, string, error) {
 	default:
 		return api.Message{}, "", fmt.Errorf("unsupported compaction input type %T", item)
 	}
+}
+
+func validateCompactionContent(contents []ResponsesContent) error {
+	for _, content := range contents {
+		image, ok := content.(ResponsesImageContent)
+		if !ok {
+			continue
+		}
+		if image.FileID != "" {
+			return errors.New("file_id image inputs are not supported by Ollama compaction")
+		}
+		if image.ImageURL == "" {
+			return errors.New("compaction image input is missing image_url")
+		}
+	}
+	return nil
 }
 
 func analyzeCompactionToolState(items []CompactionTranscriptItem) ([]compactionToolGroup, map[string]struct{}, error) {
@@ -587,23 +652,22 @@ func collectCompactionToolMetadata(tools []ResponsesTool) []compactionToolMetada
 func (p *ResponsesCompactionPlan) SummaryRequest(repairError string) ([]byte, error) {
 	// TODO(compaction): enforce the 40% retained-context target after the
 	// selected model's prompt renderer and token budget are available here.
-	transcript, err := json.Marshal(compactionTranscript{Items: p.items, Tools: p.tools})
+	transcript, err := p.summaryTranscriptMessages()
 	if err != nil {
 		return nil, err
 	}
-	prompt := `Summarize the conversation for another coding agent. Preserve the goal, decisions, constraints, repository state, changed files, test results, failures, active work, and next actions. Use retain_item_ids only for exact source items that cannot safely be paraphrased. Tool calls and results are execution state; do not invent or edit them. Call create_summary exactly once.`
+	prompt := `Summarize the conversation for another coding agent. Preserve the goal, decisions, constraints, repository state, changed files, test results, failures, active work, and next actions. After optional tool metadata, each following user message is one ordered transcript item: its JSON input_text describes the source item, and its input_image blocks belong to that item. Use retain_item_ids for exact source items, including images, that cannot safely be paraphrased. Tool calls and results are execution state; do not invent or edit them. Call create_summary exactly once.`
 	if repairError != "" {
 		prompt += " Your previous create_summary call was invalid: " + repairError + ". Return one corrected create_summary call."
 	}
 
 	description := "Return the compact summary and the exact input item references that must remain verbatim."
 	strict := true
+	input := []any{map[string]any{"type": "message", "role": "system", "content": prompt}}
+	input = append(input, transcript...)
 	request := map[string]any{
 		"model": p.Model,
-		"input": []any{
-			map[string]any{"type": "message", "role": "system", "content": prompt},
-			map[string]any{"type": "message", "role": "user", "content": string(transcript)},
-		},
+		"input": input,
 		"tools": []ResponsesTool{{
 			Type: "function", Name: CreateSummaryToolName, Description: &description, Strict: &strict,
 			Parameters: map[string]any{
@@ -622,6 +686,41 @@ func (p *ResponsesCompactionPlan) SummaryRequest(repairError string) ([]byte, er
 		"stream":              false,
 	}
 	return json.Marshal(request)
+}
+
+func (p *ResponsesCompactionPlan) summaryTranscriptMessages() ([]any, error) {
+	messages := make([]any, 0, len(p.items)+1)
+	if len(p.tools) > 0 {
+		metadata, err := json.Marshal(struct {
+			Tools []compactionToolMetadata `json:"tools"`
+		}{Tools: p.tools})
+		if err != nil {
+			return nil, err
+		}
+		messages = append(messages, map[string]any{"type": "message", "role": "user", "content": string(metadata)})
+	}
+
+	for _, item := range p.items {
+		message := item.Message
+		images := message.Images
+		message.Images = nil
+		metadata, err := json.Marshal(compactionTranscriptItemWire{
+			Ref: item.Ref, Type: item.Type, Message: message, ImageCount: len(images),
+		})
+		if err != nil {
+			return nil, err
+		}
+		content := []any{map[string]any{"type": "input_text", "text": string(metadata)}}
+		for _, image := range images {
+			block, err := responsesImageContent(image)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", item.Ref, err)
+			}
+			content = append(content, block)
+		}
+		messages = append(messages, map[string]any{"type": "message", "role": "user", "content": content})
+	}
+	return messages, nil
 }
 
 // Complete validates create_summary and builds the stateless continuation.
