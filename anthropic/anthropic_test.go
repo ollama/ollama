@@ -2170,3 +2170,82 @@ func TestCitation(t *testing.T) {
 		t.Errorf("cited_text mismatch: expected 'Some cited text...', got %q", unmarshaled.CitedText)
 	}
 }
+
+func TestFromMessagesRequest_ToolChoice(t *testing.T) {
+	tools := []Tool{
+		{Name: "get_weather", Description: "Get the weather", InputSchema: json.RawMessage(`{"type":"object"}`)},
+		{Name: "get_time", Description: "Get the time", InputSchema: json.RawMessage(`{"type":"object"}`)},
+	}
+
+	forcedAny := "You must call one of the available tools instead of replying with plain text."
+	forcedTime := "You must call the \"get_time\" function instead of replying with plain text."
+
+	cases := []struct {
+		name        string
+		toolChoice  *ToolChoice
+		tools       []Tool
+		wantTools   int
+		wantForced  string
+		wantNoForce bool
+		wantErr     bool
+	}{
+		{name: "unset keeps tools", toolChoice: nil, tools: tools, wantTools: 2, wantNoForce: true},
+		{name: "auto keeps tools", toolChoice: &ToolChoice{Type: "auto"}, tools: tools, wantTools: 2, wantNoForce: true},
+		{name: "none strips tools", toolChoice: &ToolChoice{Type: "none"}, tools: tools, wantTools: 0, wantNoForce: true},
+		{name: "any forces a tool call", toolChoice: &ToolChoice{Type: "any"}, tools: tools, wantTools: 2, wantForced: forcedAny},
+		{name: "named tool constrains to that tool", toolChoice: &ToolChoice{Type: "tool", Name: "get_time"}, tools: tools, wantTools: 1, wantForced: forcedTime},
+		{name: "named tool without name errors", toolChoice: &ToolChoice{Type: "tool"}, tools: tools, wantErr: true},
+		{name: "unknown named tool errors", toolChoice: &ToolChoice{Type: "tool", Name: "nope"}, tools: tools, wantErr: true},
+		{name: "any without tools errors", toolChoice: &ToolChoice{Type: "any"}, tools: nil, wantErr: true},
+		{name: "invalid type errors", toolChoice: &ToolChoice{Type: "sometimes"}, tools: tools, wantErr: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := MessagesRequest{
+				Model:      "test-model",
+				MaxTokens:  1024,
+				Messages:   []MessageParam{{Role: "user", Content: textContent("Hello")}},
+				Tools:      tc.tools,
+				ToolChoice: tc.toolChoice,
+			}
+
+			result, err := FromMessagesRequest(req)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got none")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if len(result.Tools) != tc.wantTools {
+				t.Fatalf("expected %d tools, got %d", tc.wantTools, len(result.Tools))
+			}
+			if tc.wantTools == 1 && result.Tools[0].Function.Name != "get_time" {
+				t.Errorf("expected constrained tool 'get_time', got %q", result.Tools[0].Function.Name)
+			}
+
+			wantMessages := 1
+			var wantLast *api.Message
+			if !tc.wantNoForce {
+				wantMessages = 2
+				wantLast = &api.Message{Role: "system", Content: tc.wantForced}
+			}
+			if len(result.Messages) != wantMessages {
+				t.Fatalf("expected %d messages, got %d", wantMessages, len(result.Messages))
+			}
+			if tc.wantNoForce && result.Messages[0].Content != "Hello" {
+				t.Errorf("unexpected first message: %+v", result.Messages[0])
+			}
+			if wantLast != nil {
+				got := result.Messages[len(result.Messages)-1]
+				if got.Role != wantLast.Role || got.Content != wantLast.Content {
+					t.Errorf("expected forcing message %+v, got %+v", *wantLast, got)
+				}
+			}
+		})
+	}
+}
