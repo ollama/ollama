@@ -445,6 +445,20 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 func SetupLlamaServerCommandEnv(cmd *exec.Cmd, exe string, gpuLibs []string, extraEnvs map[string]string) {
 	cmd.Env = os.Environ()
 
+	// Ollama's llama-server subprocess is always a private, localhost-only
+	// child process — Ollama itself never sends an Authorization header to
+	// it (see tokenize/detokenize/completion calls in this file). If the
+	// host environment happens to carry a stray LLAMA_API_KEY (e.g. left
+	// over from an unrelated llama.cpp install), llama-server picks it up
+	// and starts requiring bearer-token auth on every request, so Ollama's
+	// own unauthenticated internal calls fail with 401 "Invalid API Key".
+	// Drop it unconditionally so a variable meant for some other tool can't
+	// leak in and break the subprocess Ollama itself manages.
+	cmd.Env = slices.DeleteFunc(cmd.Env, func(kv string) bool {
+		key, _, ok := strings.Cut(kv, "=")
+		return ok && strings.EqualFold(key, "LLAMA_API_KEY")
+	})
+
 	envUpdates := make(map[string]string, len(extraEnvs)+2)
 	for k, v := range extraEnvs {
 		envUpdates[k] = v
