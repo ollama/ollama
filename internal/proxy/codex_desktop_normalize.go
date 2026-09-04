@@ -44,6 +44,128 @@ func normalizeOllamaRequestBody(body []byte, model routingModel) ([]byte, error)
 	return normalizeOllamaThinking(normalized, *model.Thinking)
 }
 
+// normalizeFullAccessExecTool removes escalation-only arguments from the tool
+// contract when Codex is already running without a sandbox. If an Ollama model
+// redundantly emits require_escalated in this mode, Codex rejects the entire
+// command because its approval policy is Never. Keeping those arguments out of
+// the advertised schema makes the only representable call the direct one that
+// Full Access already authorizes.
+func normalizeFullAccessExecTool(body []byte) ([]byte, error) {
+	if codexSandboxMode(body) != "danger-full-access" {
+		return body, nil
+	}
+
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+	rawTools, ok := payload["tools"]
+	if !ok {
+		return body, nil
+	}
+	var tools []json.RawMessage
+	if err := json.Unmarshal(rawTools, &tools); err != nil {
+		return nil, fmt.Errorf("decode tools: %w", err)
+	}
+
+	changed := false
+	for i, rawTool := range tools {
+		var tool map[string]json.RawMessage
+		if err := json.Unmarshal(rawTool, &tool); err != nil {
+			return nil, fmt.Errorf("decode tool: %w", err)
+		}
+		var name string
+		if err := json.Unmarshal(tool["name"], &name); err != nil || name != "exec_command" {
+			continue
+		}
+
+		var parameters map[string]json.RawMessage
+		if err := json.Unmarshal(tool["parameters"], &parameters); err != nil {
+			return nil, fmt.Errorf("decode exec_command parameters: %w", err)
+		}
+		var properties map[string]json.RawMessage
+		if err := json.Unmarshal(parameters["properties"], &properties); err != nil {
+			return nil, fmt.Errorf("decode exec_command properties: %w", err)
+		}
+		toolChanged := false
+		for _, property := range []string{"sandbox_permissions", "justification", "prefix_rule"} {
+			if _, ok := properties[property]; ok {
+				delete(properties, property)
+				toolChanged = true
+			}
+		}
+		if !toolChanged {
+			continue
+		}
+		changed = true
+
+		encodedProperties, err := json.Marshal(properties)
+		if err != nil {
+			return nil, fmt.Errorf("encode exec_command properties: %w", err)
+		}
+		parameters["properties"] = encodedProperties
+		if rawRequired, ok := parameters["required"]; ok {
+			var required []string
+			if err := json.Unmarshal(rawRequired, &required); err != nil {
+				return nil, fmt.Errorf("decode exec_command required properties: %w", err)
+			}
+			required = slices.DeleteFunc(required, func(property string) bool {
+				return property == "sandbox_permissions" || property == "justification" || property == "prefix_rule"
+			})
+			parameters["required"], err = json.Marshal(required)
+			if err != nil {
+				return nil, fmt.Errorf("encode exec_command required properties: %w", err)
+			}
+		}
+		tool["parameters"], err = json.Marshal(parameters)
+		if err != nil {
+			return nil, fmt.Errorf("encode exec_command parameters: %w", err)
+		}
+		tools[i], err = json.Marshal(tool)
+		if err != nil {
+			return nil, fmt.Errorf("encode exec_command tool: %w", err)
+		}
+	}
+	if !changed {
+		return body, nil
+	}
+
+	encodedTools, err := json.Marshal(tools)
+	if err != nil {
+		return nil, fmt.Errorf("encode tools: %w", err)
+	}
+	payload["tools"] = encodedTools
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("encode request: %w", err)
+	}
+	return encoded, nil
+}
+
+func codexSandboxMode(body []byte) string {
+	var payload struct {
+		ClientMetadata map[string]json.RawMessage `json:"client_metadata"`
+	}
+	if json.Unmarshal(body, &payload) != nil {
+		return ""
+	}
+	raw := payload.ClientMetadata["x-codex-turn-metadata"]
+	if len(raw) == 0 {
+		return ""
+	}
+	var encoded string
+	if json.Unmarshal(raw, &encoded) == nil {
+		raw = []byte(encoded)
+	}
+	var metadata struct {
+		SandboxMode string `json:"sandbox_mode"`
+	}
+	if json.Unmarshal(raw, &metadata) != nil {
+		return ""
+	}
+	return strings.TrimSpace(metadata.SandboxMode)
+}
+
 func normalizeOllamaThinking(body []byte, metadata routingThinkingMetadata) ([]byte, error) {
 	var payload map[string]json.RawMessage
 	if err := json.Unmarshal(body, &payload); err != nil {

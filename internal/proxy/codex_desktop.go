@@ -72,6 +72,7 @@ type CodexDesktop struct {
 	upstreamErrors     atomic.Uint64
 	lastRoute          atomic.Value
 	activityLogMu      sync.Mutex
+	turnModels         turnModelCache
 }
 
 type routeSnapshot struct {
@@ -199,7 +200,7 @@ func (h *CodexDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusServiceUnavailable, "read Codex Ollama model catalog: "+err.Error())
 			return
 		}
-		model, decodedBody, err = autoReview.resolveModel(model, catalog, decodedBody)
+		model, decodedBody, err = autoReview.resolveModel(model, catalog, decodedBody, &h.turnModels)
 		if err != nil {
 			h.logActivity(started, r.Method, suffix, model, "ollama", http.StatusBadRequest, "request_error")
 			writeJSONError(w, http.StatusBadRequest, "prepare Codex Auto-review request for Ollama: "+err.Error())
@@ -242,6 +243,12 @@ func (h *CodexDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusBadRequest, "prepare Codex request for Ollama: "+err.Error())
 			return
 		}
+		requestBody, err = normalizeFullAccessExecTool(requestBody)
+		if err != nil {
+			h.logActivity(started, r.Method, suffix, model, "ollama", http.StatusBadRequest, "request_error")
+			writeJSONError(w, http.StatusBadRequest, "prepare Codex Full Access tools for Ollama: "+err.Error())
+			return
+		}
 	} else {
 		requestBody, requestBodyNormalized, err = normalizeNativeRequestBody(decodedBody)
 		if err != nil {
@@ -249,6 +256,7 @@ func (h *CodexDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusBadRequest, "prepare Codex request for OpenAI: "+err.Error())
 			return
 		}
+		requestBodyNormalized = requestBodyNormalized || autoReview.rewritten
 		if !requestBodyNormalized {
 			requestBody = rawBody
 		}
@@ -271,19 +279,25 @@ func (h *CodexDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	h.logger.Debug("routing Codex request", "path", suffix, "model", model, "ollama", routed)
 	recorder := &responseRecorder{ResponseWriter: w}
-	h.proxy.ServeHTTP(recorder, r.WithContext(context.WithValue(r.Context(), proxyRequestKey{}, state)))
+	aborted := h.serveReverseProxy(recorder, r.WithContext(context.WithValue(r.Context(), proxyRequestKey{}, state)))
 
 	result := state.result
 	if result == "" {
-		result = "ok"
-		if recorder.writeErr != nil {
-			if r.Context().Err() != nil && errors.Is(recorder.writeErr, r.Context().Err()) {
-				result = "canceled"
-			} else {
-				result = "stream_error"
-				h.upstreamErrors.Add(1)
+		switch {
+		case aborted && r.Context().Err() != nil:
+			result = "canceled"
+		case recorder.writeErr != nil && r.Context().Err() != nil && errors.Is(recorder.writeErr, r.Context().Err()):
+			result = "canceled"
+		case aborted || recorder.writeErr != nil:
+			result = "stream_error"
+			h.upstreamErrors.Add(1)
+			if recorder.writeErr != nil {
 				h.logger.Warn("Codex proxy response write failed", "path", suffix, "model", model, "ollama", routed, "error", recorder.writeErr)
+			} else {
+				h.logger.Warn("Codex proxy response stream aborted", "path", suffix, "model", model, "ollama", routed)
 			}
+		default:
+			result = "ok"
 		}
 	}
 	status := state.status
@@ -293,6 +307,26 @@ func (h *CodexDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.logActivity(started, r.Method, suffix, model, route, status, result)
 }
 
+// serveReverseProxy handles the sentinel panic ReverseProxy uses when a
+// streamed response fails after its headers have already been sent. A normal
+// net/http server suppresses this panic, but doing so outside this handler
+// would skip the terminal activity log and let middleware report a false 500.
+// All other panics remain programming errors and propagate unchanged.
+func (h *CodexDesktop) serveReverseProxy(w http.ResponseWriter, r *http.Request) (aborted bool) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			if recovered != http.ErrAbortHandler {
+				panic(recovered)
+			}
+			aborted = true
+		}
+	}()
+	h.proxy.ServeHTTP(w, r)
+	return
+}
+
+// proxyRequestKey carries the per-request routing state through the reverse
+// proxy hooks.
 type proxyRequestKey struct{}
 
 // proxyRequest shares routing and response state between reverse-proxy hooks.
@@ -548,8 +582,9 @@ type routingModel struct {
 }
 
 type routingCatalog struct {
-	models          map[string]routingModel
-	autoReviewModel string
+	models                  map[string]routingModel
+	autoReviewModel         string
+	autoReviewFallbackModel string
 }
 
 func loadRoutingCatalog(path string) (routingCatalog, error) {
@@ -561,8 +596,9 @@ func loadRoutingCatalog(path string) (routingCatalog, error) {
 		return routingCatalog{}, err
 	}
 	var catalog struct {
-		Models          []routingModel `json:"models"`
-		AutoReviewModel string         `json:"auto_review_model"`
+		Models                  []routingModel `json:"models"`
+		AutoReviewModel         string         `json:"auto_review_model"`
+		AutoReviewFallbackModel string         `json:"auto_review_fallback_model"`
 	}
 	if err := json.Unmarshal(data, &catalog); err != nil {
 		return routingCatalog{}, err
@@ -574,12 +610,21 @@ func loadRoutingCatalog(path string) (routingCatalog, error) {
 		}
 	}
 	autoReviewModel := strings.TrimSpace(catalog.AutoReviewModel)
-	if autoReviewModel != "" {
+	autoReviewFallbackModel := strings.TrimSpace(catalog.AutoReviewFallbackModel)
+	if modelKey(autoReviewModel) == modelKey(autoReviewSelectedModel) {
+		if _, ok := models[modelKey(autoReviewFallbackModel)]; !ok {
+			return routingCatalog{}, fmt.Errorf("Auto-review fallback model %q is not in the Ollama routing catalog", autoReviewFallbackModel)
+		}
+	} else if autoReviewModel != "" {
 		if _, ok := models[modelKey(autoReviewModel)]; !ok {
 			return routingCatalog{}, fmt.Errorf("Auto-review model %q is not in the Ollama routing catalog", autoReviewModel)
 		}
 	}
-	return routingCatalog{models: models, autoReviewModel: autoReviewModel}, nil
+	return routingCatalog{
+		models:                  models,
+		autoReviewModel:         autoReviewModel,
+		autoReviewFallbackModel: autoReviewFallbackModel,
+	}, nil
 }
 
 func modelKey(model string) string {

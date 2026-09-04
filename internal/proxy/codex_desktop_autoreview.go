@@ -8,13 +8,16 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 )
 
 const (
 	// autoReviewModel is the native Codex reviewer alias. The routing catalog
 	// may map requests for this alias to a selected Ollama model.
 	autoReviewModel          = "codex-auto-review"
+	autoReviewSelectedModel  = "selected"
 	guardianDecisionToolName = "submit_guardian_decision"
+	maxTrackedTurnModels     = 2048
 
 	guardianDecisionInstruction = `
 
@@ -52,23 +55,97 @@ var guardianDecisionTool = map[string]any{
 }
 
 type autoReviewState struct {
-	alias    bool // requested model is the native auto-review alias
-	eligible bool // routed auto-review call that needs translation
+	alias     bool // requested model is the native auto-review alias
+	eligible  bool // routed auto-review call that needs translation
+	rewritten bool // model alias was replaced in the decoded request body
 }
 
-func (s *autoReviewState) resolveModel(model string, catalog routingCatalog, body []byte) (string, []byte, error) {
+type turnModelCache struct {
+	mu     sync.Mutex
+	models map[string]string
+	order  []string
+}
+
+// resolveModel tracks each parent turn's selected model, then maps the native
+// auto-review alias according to the catalog policy and rewrites the request
+// body. Other requests pass through unchanged.
+func (s *autoReviewState) resolveModel(model string, catalog routingCatalog, body []byte, turnModels *turnModelCache) (string, []byte, error) {
 	if modelKey(model) != modelKey(autoReviewModel) {
+		turnID, _ := extractTurnMetadata(body)
+		turnModels.remember(turnID, model)
 		return model, body, nil
 	}
 	s.alias = true
-	if catalog.autoReviewModel == "" {
+	selectedModel := catalog.autoReviewModel
+	if modelKey(selectedModel) == modelKey(autoReviewSelectedModel) {
+		_, parentTurnID := extractTurnMetadata(body)
+		var ok bool
+		selectedModel, ok = turnModels.lookup(parentTurnID)
+		if !ok {
+			selectedModel = catalog.autoReviewFallbackModel
+		}
+	}
+	if selectedModel == "" {
 		return model, body, nil
 	}
-	replaced, err := replaceRequestModel(body, catalog.autoReviewModel)
+	replaced, err := replaceRequestModel(body, selectedModel)
 	if err != nil {
-		return catalog.autoReviewModel, body, err
+		return selectedModel, body, err
 	}
-	return catalog.autoReviewModel, replaced, nil
+	s.rewritten = true
+	return selectedModel, replaced, nil
+}
+
+func extractTurnMetadata(body []byte) (turnID, parentTurnID string) {
+	if len(body) == 0 {
+		return "", ""
+	}
+	var payload struct {
+		ClientMetadata struct {
+			TurnID       string `json:"turn_id"`
+			ParentTurnID string `json:"parent_turn_id"`
+		} `json:"client_metadata"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return "", ""
+	}
+	return strings.TrimSpace(payload.ClientMetadata.TurnID), strings.TrimSpace(payload.ClientMetadata.ParentTurnID)
+}
+
+func (c *turnModelCache) remember(turnID, model string) {
+	turnID = strings.TrimSpace(turnID)
+	model = strings.TrimSpace(model)
+	if turnID == "" || model == "" {
+		return
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.models == nil {
+		c.models = make(map[string]string)
+	}
+	if _, exists := c.models[turnID]; exists {
+		c.models[turnID] = model
+		return
+	}
+	if len(c.order) == maxTrackedTurnModels {
+		delete(c.models, c.order[0])
+		copy(c.order, c.order[1:])
+		c.order = c.order[:len(c.order)-1]
+	}
+	c.models[turnID] = model
+	c.order = append(c.order, turnID)
+}
+
+func (c *turnModelCache) lookup(turnID string) (string, bool) {
+	turnID = strings.TrimSpace(turnID)
+	if turnID == "" {
+		return "", false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	model, ok := c.models[turnID]
+	return model, ok
 }
 
 func (s *autoReviewState) prepareRequest(routed bool, suffix string, body []byte) ([]byte, error) {
@@ -89,6 +166,11 @@ func prepareAutoReviewRequest(body []byte) ([]byte, error) {
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, err
 	}
+	// Codex asks its native Guardian for structured assistant text. Ollama uses
+	// the proxy-owned decision tool instead, so do not send two competing final
+	// output contracts to the selected model.
+	delete(payload, "text")
+	delete(payload, "response_format")
 
 	var tools []json.RawMessage
 	if raw := bytes.TrimSpace(payload["tools"]); len(raw) > 0 && !bytes.Equal(raw, []byte("null")) {
@@ -290,6 +372,8 @@ func inspectAutoReviewOutput(output []json.RawMessage) (autoReviewInspection, er
 	result := autoReviewInspection{discardedMessageIDs: make(map[string]struct{})}
 	decisionCalls := 0
 	otherTerminalOutput := false
+	var decisionText string
+	messageCount := 0
 	for _, raw := range output {
 		var item autoReviewOutputItem
 		if err := json.Unmarshal(raw, &item); err != nil {
@@ -304,6 +388,10 @@ func inspectAutoReviewOutput(output []json.RawMessage) (autoReviewInspection, er
 				return result, errors.New("Guardian assistant message has no item ID")
 			}
 			result.discardedMessageIDs[item.ID] = struct{}{}
+			messageCount++
+			if messageCount == 1 {
+				decisionText, _ = autoReviewMessageText(raw)
+			}
 		case "function_call":
 			if item.Name != guardianDecisionToolName {
 				if decisionCalls > 0 {
@@ -331,12 +419,38 @@ func inspectAutoReviewOutput(output []json.RawMessage) (autoReviewInspection, er
 		return result, nil
 	}
 	if decisionCalls == 0 {
-		return result, errors.New("Guardian did not call submit_guardian_decision")
+		if otherTerminalOutput || messageCount != 1 || decisionText == "" {
+			return result, errors.New("Guardian did not call submit_guardian_decision")
+		}
+		if err := validateGuardianTextDecision(decisionText); err != nil {
+			return result, fmt.Errorf("Guardian did not call submit_guardian_decision and its text fallback is invalid: %w", err)
+		}
+		// A few providers occasionally ignore the requested decision tool and
+		// return the same JSON as their only assistant text. It already has the
+		// shape Codex expects, so preserve the response after strict validation.
+		result.passthrough = true
+		return result, nil
 	}
 	if result.passthrough || otherTerminalOutput {
 		return result, errors.New("Guardian mixed its decision with other terminal output")
 	}
 	return result, nil
+}
+
+func autoReviewMessageText(raw json.RawMessage) (string, error) {
+	var message struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(raw, &message); err != nil {
+		return "", err
+	}
+	if len(message.Content) != 1 || message.Content[0].Type != "output_text" {
+		return "", errors.New("Guardian assistant message is not a single output_text item")
+	}
+	return strings.TrimSpace(message.Content[0].Text), nil
 }
 
 func validateGuardianDecision(arguments string) (string, error) {
@@ -366,6 +480,31 @@ func validateGuardianDecision(arguments string) (string, error) {
 		return "", fmt.Errorf("encode Guardian decision: %w", err)
 	}
 	return string(encoded), nil
+}
+
+func validateGuardianTextDecision(text string) error {
+	if _, err := validateGuardianDecision(text); err == nil {
+		return nil
+	}
+
+	// Codex's Guardian contract permits this compact form for low-risk allows.
+	// Keep it text-only: decision tool calls must always provide the complete
+	// schema above, while any extra or unknown text field still fails closed.
+	decoder := json.NewDecoder(strings.NewReader(text))
+	decoder.DisallowUnknownFields()
+	var decision struct {
+		Outcome string `json:"outcome"`
+	}
+	if err := decoder.Decode(&decision); err != nil {
+		return fmt.Errorf("decode compact Guardian decision: %w", err)
+	}
+	if decoder.Decode(&struct{}{}) != io.EOF {
+		return errors.New("compact Guardian decision contains trailing data")
+	}
+	if decision.Outcome != "allow" {
+		return fmt.Errorf("invalid compact Guardian outcome %q", decision.Outcome)
+	}
+	return nil
 }
 
 func oneOf(value string, allowed ...string) bool {

@@ -2,13 +2,16 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -315,6 +318,67 @@ func TestNormalizeOllamaThinkingRejectsMalformedReasoning(t *testing.T) {
 	}
 }
 
+func TestNormalizeFullAccessExecToolRemovesEscalationArguments(t *testing.T) {
+	turnMetadata := `{"sandbox_mode":"danger-full-access"}`
+	body := []byte(fmt.Sprintf(`{
+		"model":"glm-5.3-flash:cloud",
+		"client_metadata":{"x-codex-turn-metadata":%q},
+		"tools":[
+			{"type":"function","name":"exec_command","parameters":{"type":"object","properties":{"cmd":{"type":"string"},"sandbox_permissions":{"type":"string"},"justification":{"type":"string"},"prefix_rule":{"type":"array"}},"required":["cmd","sandbox_permissions","justification","prefix_rule"],"additionalProperties":false}},
+			{"type":"function","name":"other_tool","parameters":{"type":"object","properties":{"sandbox_permissions":{"type":"string"}}}}
+		]
+	}`, turnMetadata))
+
+	normalized, err := normalizeFullAccessExecTool(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Tools []struct {
+			Name       string `json:"name"`
+			Parameters struct {
+				Properties map[string]json.RawMessage `json:"properties"`
+				Required   []string                   `json:"required"`
+			} `json:"parameters"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(normalized, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Tools) != 2 {
+		t.Fatalf("tools = %d, want 2", len(payload.Tools))
+	}
+	execTool := payload.Tools[0]
+	if _, ok := execTool.Parameters.Properties["cmd"]; !ok {
+		t.Fatal("exec_command cmd property was removed")
+	}
+	for _, property := range []string{"sandbox_permissions", "justification", "prefix_rule"} {
+		if _, ok := execTool.Parameters.Properties[property]; ok {
+			t.Fatalf("exec_command retained %q property", property)
+		}
+		if slices.Contains(execTool.Parameters.Required, property) {
+			t.Fatalf("exec_command retained required %q", property)
+		}
+	}
+	if !slices.Equal(execTool.Parameters.Required, []string{"cmd"}) {
+		t.Fatalf("exec_command required = %v, want [cmd]", execTool.Parameters.Required)
+	}
+	if _, ok := payload.Tools[1].Parameters.Properties["sandbox_permissions"]; !ok {
+		t.Fatal("non-exec tool was changed")
+	}
+}
+
+func TestNormalizeFullAccessExecToolLeavesSandboxedTurnUnchanged(t *testing.T) {
+	body := []byte(`{"client_metadata":{"x-codex-turn-metadata":"{\"sandbox_mode\":\"workspace-write\"}"},"tools":[{"name":"exec_command","parameters":{"properties":{"sandbox_permissions":{"type":"string"}}}}]}`)
+	normalized, err := normalizeFullAccessExecTool(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(normalized, body) {
+		t.Fatalf("sandboxed request changed:\n%s", normalized)
+	}
+}
+
 func TestLoadCatalogModelsReadsOptionalThinkingMetadata(t *testing.T) {
 	path := filepath.Join(t.TempDir(), CodexDesktopModelCatalogFilename)
 	data := []byte(`{"models":[{"slug":"legacy"},{"slug":"binary","thinking":{"supported":true,"levels":["none","medium"],"values":{"none":false,"medium":true}}}]}`)
@@ -335,6 +399,141 @@ func TestLoadCatalogModelsReadsOptionalThinkingMetadata(t *testing.T) {
 	}
 	if string(binary.Values["none"]) != "false" || string(binary.Values["medium"]) != "true" {
 		t.Fatalf("binary model thinking values = %#v, want exact false/true values", binary.Values)
+	}
+}
+
+func TestCodexDesktopRoutesAutoReviewToSelectedNativeModel(t *testing.T) {
+	ollama := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("native selected model should not reach Ollama")
+	}))
+	defer ollama.Close()
+
+	var models []string
+	var encodings []string
+	var guardianBody map[string]json.RawMessage
+	chatGPT := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		var model string
+		if err := json.Unmarshal(payload["model"], &model); err != nil {
+			t.Fatal(err)
+		}
+		models = append(models, model)
+		encodings = append(encodings, r.Header.Get("Content-Encoding"))
+		if len(models) == 2 {
+			guardianBody = payload
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer chatGPT.Close()
+
+	handler := newTestCodexDesktop(t, ollama.URL, chatGPT.URL, writeCatalogWithSelectedAutoReview(t, "glm-5.3-flash:cloud", "glm-5.3-flash:cloud"))
+	proxy := httptest.NewServer(handler)
+	defer proxy.Close()
+
+	postCodexRequest(t, proxy.URL, `{"model":"gpt-5.6-sol","client_metadata":{"turn_id":"turn-native"}}`, true)
+	postCompressedCodexRequest(t, proxy.URL, `{"model":"codex-auto-review","client_metadata":{"parent_turn_id":"turn-native"},"text":{"format":{"type":"json_schema"}}}`)
+
+	if strings.Join(models, ",") != "gpt-5.6-sol,gpt-5.6-sol" {
+		t.Fatalf("forwarded models = %q, want selected native model for Guardian", models)
+	}
+	if _, ok := guardianBody["text"]; !ok {
+		t.Fatalf("native Guardian structured output was removed: %#v", guardianBody)
+	}
+	if _, ok := guardianBody["tools"]; ok {
+		t.Fatalf("proxy decision tool was added to native Guardian: %#v", guardianBody)
+	}
+	if encodings[1] != "" {
+		t.Fatalf("rewritten native Guardian retained content encoding %q", encodings[1])
+	}
+}
+
+func TestCodexDesktopRoutesAutoReviewToSelectedOllamaModel(t *testing.T) {
+	var models []string
+	var guardianBody map[string]json.RawMessage
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		var model string
+		if err := json.Unmarshal(payload["model"], &model); err != nil {
+			t.Fatal(err)
+		}
+		models = append(models, model)
+		if len(models) == 2 {
+			guardianBody = payload
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, autoReviewJSONResponse(`{"risk_level":"low","user_authorization":"high","outcome":"allow","rationale":"Allowed."}`))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ollama.Close()
+	chatGPT := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("Ollama selected model should not reach ChatGPT")
+	}))
+	defer chatGPT.Close()
+
+	handler := newTestCodexDesktop(t, ollama.URL, chatGPT.URL, writeCatalogWithSelectedAutoReview(t, "glm-5.3-flash:cloud", "glm-5.3-flash:cloud", "deepseek-v3.1:671b-cloud"))
+	proxy := httptest.NewServer(handler)
+	defer proxy.Close()
+
+	postCodexRequest(t, proxy.URL, `{"model":"deepseek-v3.1:671b-cloud","client_metadata":{"turn_id":"turn-ollama"}}`, false)
+	postCodexRequest(t, proxy.URL, `{"model":"codex-auto-review","client_metadata":{"parent_turn_id":"turn-ollama"},"input":[{"role":"user","content":"review"}],"text":{"format":{"type":"json_schema"}}}`, false)
+
+	if strings.Join(models, ",") != "deepseek-v3.1:671b-cloud,deepseek-v3.1:671b-cloud" {
+		t.Fatalf("forwarded models = %q, want selected Ollama model for Guardian", models)
+	}
+	if _, ok := guardianBody["text"]; ok {
+		t.Fatalf("Ollama Guardian retained competing structured output: %#v", guardianBody)
+	}
+	if _, ok := guardianBody["tools"]; !ok {
+		t.Fatalf("Ollama Guardian decision tool is missing: %#v", guardianBody)
+	}
+}
+
+func TestCodexDesktopSelectedAutoReviewFallsBackWithoutParentTurn(t *testing.T) {
+	var gotModel string
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		gotModel = payload.Model
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, autoReviewJSONResponse(`{"risk_level":"low","user_authorization":"high","outcome":"allow","rationale":"Allowed."}`))
+	}))
+	defer ollama.Close()
+	chatGPT := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("selected Auto-review fallback should not reach ChatGPT")
+	}))
+	defer chatGPT.Close()
+
+	handler := newTestCodexDesktop(t, ollama.URL, chatGPT.URL, writeCatalogWithSelectedAutoReview(t, "glm-5.3-flash:cloud", "glm-5.3-flash:cloud"))
+	proxy := httptest.NewServer(handler)
+	defer proxy.Close()
+
+	postCodexRequest(t, proxy.URL, `{"model":"codex-auto-review","input":[{"role":"user","content":"review"}]}`, false)
+	if gotModel != "glm-5.3-flash:cloud" {
+		t.Fatalf("fallback model = %q, want launch primary", gotModel)
+	}
+}
+
+func TestTurnModelCacheIsBounded(t *testing.T) {
+	var cache turnModelCache
+	for i := 0; i <= maxTrackedTurnModels; i++ {
+		cache.remember(fmt.Sprintf("turn-%d", i), fmt.Sprintf("model-%d", i))
+	}
+	if _, ok := cache.lookup("turn-0"); ok {
+		t.Fatal("oldest turn was not evicted")
+	}
+	if model, ok := cache.lookup(fmt.Sprintf("turn-%d", maxTrackedTurnModels)); !ok || model != fmt.Sprintf("model-%d", maxTrackedTurnModels) {
+		t.Fatalf("newest turn = %q, %v", model, ok)
 	}
 }
 
@@ -359,7 +558,7 @@ func TestCodexDesktopRoutesAutoReviewToConfiguredOllamaModel(t *testing.T) {
 	resp, err := http.Post(
 		proxy.URL+CodexDesktopPathPrefix+"/v1/responses",
 		"application/json",
-		strings.NewReader(`{"model":"codex-auto-review","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"review"}]}]}`),
+		strings.NewReader(`{"model":"codex-auto-review","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"review"}]}],"text":{"format":{"type":"json_schema"}},"response_format":{"type":"json_object"}}`),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -552,9 +751,55 @@ func TestTransformAutoReviewResponseRejectsInvalidDecision(t *testing.T) {
 }
 
 func TestTransformAutoReviewResponseRejectsTextDecision(t *testing.T) {
-	body := []byte(`{"id":"resp_1","status":"completed","output":[{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"{\\\"outcome\\\":\\\"allow\\\"}"}]}]}`)
+	body := []byte(`{"id":"resp_1","status":"completed","output":[{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"{\\\"outcome\\\":\\\"deny\\\"}"}]}]}`)
 	if _, _, err := transformAutoReviewResponse(body, "application/json"); err == nil || !strings.Contains(err.Error(), "did not call") {
 		t.Fatalf("error = %v, want missing decision tool call", err)
+	}
+}
+
+func TestTransformAutoReviewResponseAcceptsValidatedTextFallback(t *testing.T) {
+	decision := `{"risk_level":"low","user_authorization":"high","outcome":"allow","rationale":"The user requested this benign local action."}`
+	jsonBody := []byte(fmt.Sprintf(`{"id":"resp_1","status":"completed","output":[{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":%q}]}]}`, decision))
+	for _, test := range []struct {
+		name        string
+		contentType string
+		body        []byte
+	}{
+		{name: "json", contentType: "application/json", body: jsonBody},
+		{name: "event stream", contentType: "text/event-stream", body: autoReviewTextEventStream(t, decision)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			transformed, changed, err := transformAutoReviewResponse(test.body, test.contentType)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if changed || !bytes.Equal(transformed, test.body) {
+				t.Fatalf("validated text fallback changed:\n%s", transformed)
+			}
+		})
+	}
+}
+
+func TestTransformAutoReviewResponseAcceptsCompactAllowTextFallback(t *testing.T) {
+	decision := `{"outcome":"allow"}`
+	jsonBody := []byte(fmt.Sprintf(`{"id":"resp_1","status":"completed","output":[{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":%q}]}]}`, decision))
+	for _, test := range []struct {
+		name        string
+		contentType string
+		body        []byte
+	}{
+		{name: "json", contentType: "application/json", body: jsonBody},
+		{name: "event stream", contentType: "text/event-stream", body: autoReviewTextEventStream(t, decision)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			transformed, changed, err := transformAutoReviewResponse(test.body, test.contentType)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if changed || !bytes.Equal(transformed, test.body) {
+				t.Fatalf("compact allow fallback changed:\n%s", transformed)
+			}
+		})
 	}
 }
 
@@ -1395,6 +1640,117 @@ func TestCodexDesktopWritesSafeActivityLog(t *testing.T) {
 	}
 }
 
+func TestCodexDesktopRecordsMidstreamAbortWithoutPanicking(t *testing.T) {
+	activityLogPath := filepath.Join(t.TempDir(), "codex-proxy.log")
+	streamErr := errors.New("upstream stream failed")
+	handler, err := NewCodexDesktop(CodexDesktopConfig{
+		OllamaURL:          "http://127.0.0.1:11434",
+		ChatGPTURL:         "https://chatgpt.com/backend-api/codex",
+		RoutingCatalogPath: writeCatalog(t, "glm-5.3-flash:cloud"),
+		ActivityLogPath:    activityLogPath,
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				Status:     "200 OK",
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body: io.NopCloser(io.MultiReader(
+					strings.NewReader("data: partial\n\n"),
+					errorReader{err: streamErr},
+				)),
+				Request: req,
+			}, nil
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"http://localhost"+CodexDesktopPathPrefix+"/v1/responses",
+		strings.NewReader(`{"model":"glm-5.3-flash:cloud"}`),
+	)
+	req.RemoteAddr = "127.0.0.1:1234"
+	req = req.WithContext(context.WithValue(req.Context(), http.ServerContextKey, &http.Server{}))
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	if got := recorder.Body.String(); got != "data: partial\n\n" {
+		t.Fatalf("body = %q, want partial event", got)
+	}
+	if got := handler.upstreamErrors.Load(); got != 1 {
+		t.Fatalf("upstream errors = %d, want 1", got)
+	}
+	data, err := os.ReadFile(activityLogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logText := string(data)
+	for _, want := range []string{
+		`route=ollama model="glm-5.3-flash:cloud"`,
+		"status=200",
+		"result=stream_error",
+	} {
+		if !strings.Contains(logText, want) {
+			t.Fatalf("activity log missing %q:\n%s", want, logText)
+		}
+	}
+}
+
+func TestCodexDesktopRecordsClientCanceledStream(t *testing.T) {
+	activityLogPath := filepath.Join(t.TempDir(), "codex-proxy.log")
+	handler, err := NewCodexDesktop(CodexDesktopConfig{
+		OllamaURL:          "http://127.0.0.1:11434",
+		ChatGPTURL:         "https://chatgpt.com/backend-api/codex",
+		RoutingCatalogPath: writeCatalog(t, "glm-5.3-flash:cloud"),
+		ActivityLogPath:    activityLogPath,
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				Status:     "200 OK",
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       io.NopCloser(strings.NewReader("data: ignored\n\n")),
+				Request:    req,
+			}, nil
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"http://localhost"+CodexDesktopPathPrefix+"/v1/responses",
+		strings.NewReader(`{"model":"glm-5.3-flash:cloud"}`),
+	)
+	req.RemoteAddr = "127.0.0.1:1234"
+	ctx, cancel := context.WithCancel(req.Context())
+	cancel()
+	req = req.WithContext(ctx)
+	recorder := &writeErrorResponseWriter{err: context.Canceled}
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.status)
+	}
+	if got := handler.upstreamErrors.Load(); got != 0 {
+		t.Fatalf("upstream errors = %d, want 0", got)
+	}
+	data, err := os.ReadFile(activityLogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logText := string(data)
+	if !strings.Contains(logText, "status=200") || !strings.Contains(logText, "result=canceled") {
+		t.Fatalf("activity log did not record cancellation:\n%s", logText)
+	}
+}
+
 func TestCodexDesktopRejectsNonLoopbackClients(t *testing.T) {
 	handler := newTestCodexDesktop(t, "http://127.0.0.1:11434", "https://chatgpt.com/backend-api/codex", writeCatalog(t, "glm"))
 	req := httptest.NewRequest(http.MethodGet, "http://example.test"+CodexDesktopPathPrefix+"/_health", nil)
@@ -1419,6 +1775,55 @@ func TestCodexDesktopFailsClosedWhenCatalogIsMissing(t *testing.T) {
 	}
 }
 
+func postCodexRequest(t *testing.T, proxyURL, body string, chatGPT bool) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, proxyURL+CodexDesktopPathPrefix+"/v1/responses", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if chatGPT {
+		req.Header.Set("Authorization", "Bearer chatgpt-secret")
+		req.Header.Set("ChatGPT-Account-ID", "account-123")
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		responseBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d: %s", resp.StatusCode, responseBody)
+	}
+}
+
+func postCompressedCodexRequest(t *testing.T, proxyURL, body string) {
+	t.Helper()
+	encoder, err := zstd.NewWriter(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compressed := encoder.EncodeAll([]byte(body), nil)
+	encoder.Close()
+	req, err := http.NewRequest(http.MethodPost, proxyURL+CodexDesktopPathPrefix+"/v1/responses", bytes.NewReader(compressed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "zstd")
+	req.Header.Set("Authorization", "Bearer chatgpt-secret")
+	req.Header.Set("ChatGPT-Account-ID", "account-123")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		responseBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d: %s", resp.StatusCode, responseBody)
+	}
+}
+
 func newTestCodexDesktop(t *testing.T, ollamaURL, chatGPTURL, catalogPath string) *CodexDesktop {
 	t.Helper()
 	handler, err := NewCodexDesktop(CodexDesktopConfig{
@@ -1437,12 +1842,24 @@ func writeCatalog(t *testing.T, models ...string) string {
 }
 
 func writeCatalogWithAutoReview(t *testing.T, autoReviewModel string, models ...string) string {
+	return writeRoutingCatalog(t, autoReviewModel, "", models...)
+}
+
+func writeCatalogWithSelectedAutoReview(t *testing.T, fallbackModel string, models ...string) string {
+	return writeRoutingCatalog(t, autoReviewSelectedModel, fallbackModel, models...)
+}
+
+func writeRoutingCatalog(t *testing.T, autoReviewModel, fallbackModel string, models ...string) string {
 	t.Helper()
 	entries := make([]map[string]string, 0, len(models))
 	for _, model := range models {
 		entries = append(entries, map[string]string{"slug": model})
 	}
-	data, err := json.Marshal(map[string]any{"models": entries, "auto_review_model": autoReviewModel})
+	data, err := json.Marshal(map[string]any{
+		"models":                     entries,
+		"auto_review_model":          autoReviewModel,
+		"auto_review_fallback_model": fallbackModel,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1455,6 +1872,35 @@ func writeCatalogWithAutoReview(t *testing.T, autoReviewModel string, models ...
 
 func autoReviewJSONResponse(arguments string) string {
 	return autoReviewJSONResponseForTool(guardianDecisionToolName, arguments)
+}
+
+type errorReader struct {
+	err error
+}
+
+func (r errorReader) Read([]byte) (int, error) {
+	return 0, r.err
+}
+
+type writeErrorResponseWriter struct {
+	header http.Header
+	status int
+	err    error
+}
+
+func (w *writeErrorResponseWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *writeErrorResponseWriter) WriteHeader(status int) {
+	w.status = status
+}
+
+func (w *writeErrorResponseWriter) Write([]byte) (int, error) {
+	return 0, w.err
 }
 
 func autoReviewJSONResponseForTool(name, arguments string) string {
@@ -1493,6 +1939,32 @@ func autoReviewEventStream(t *testing.T, name, arguments string, extraOutput ...
 		output = append(output, item)
 	}
 	events = append(events, newServerSentEvent("response.completed", map[string]any{"response": map[string]any{"id": "resp_1", "status": "completed", "output": output}}))
+	encoded, err := encodeServerSentEvents(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
+}
+
+func autoReviewTextEventStream(t *testing.T, text string) []byte {
+	t.Helper()
+	inProgressItem := map[string]any{
+		"id": "msg_1", "type": "message", "status": "in_progress", "role": "assistant", "content": []any{},
+	}
+	content := map[string]any{"type": "output_text", "text": text, "annotations": []any{}, "logprobs": []any{}}
+	completedItem := map[string]any{
+		"id": "msg_1", "type": "message", "status": "completed", "role": "assistant", "content": []any{content},
+	}
+	events := []serverSentEvent{
+		newServerSentEvent("response.created", map[string]any{"response": map[string]any{"id": "resp_1", "status": "in_progress", "output": []any{}}}),
+		newServerSentEvent("response.output_item.added", map[string]any{"output_index": 0, "item": inProgressItem}),
+		newServerSentEvent("response.content_part.added", map[string]any{"item_id": "msg_1", "output_index": 0, "content_index": 0, "part": map[string]any{"type": "output_text", "text": "", "annotations": []any{}, "logprobs": []any{}}}),
+		newServerSentEvent("response.output_text.delta", map[string]any{"item_id": "msg_1", "output_index": 0, "content_index": 0, "delta": text, "logprobs": []any{}}),
+		newServerSentEvent("response.output_text.done", map[string]any{"item_id": "msg_1", "output_index": 0, "content_index": 0, "text": text, "logprobs": []any{}}),
+		newServerSentEvent("response.content_part.done", map[string]any{"item_id": "msg_1", "output_index": 0, "content_index": 0, "part": content}),
+		newServerSentEvent("response.output_item.done", map[string]any{"output_index": 0, "item": completedItem}),
+		newServerSentEvent("response.completed", map[string]any{"response": map[string]any{"id": "resp_1", "status": "completed", "output": []any{completedItem}}}),
+	}
 	encoded, err := encodeServerSentEvents(events)
 	if err != nil {
 		t.Fatal(err)
