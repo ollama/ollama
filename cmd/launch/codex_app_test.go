@@ -235,6 +235,21 @@ func TestCodexAppConfigureMarksOnlyOllamaModelsForNonChatGPTSessions(t *testing.
 	}
 }
 
+func TestCodexAppCatalogModelsKeepsPickerOrderWhenPrimaryDiffers(t *testing.T) {
+	models := codexAppCatalogModels(
+		"gemma4:31b-cloud",
+		testLaunchModels("glm-5.3-flash:cloud", "glm-5.3:cloud", "gemma4:31b-cloud"),
+	)
+	got := make([]string, 0, len(models))
+	for _, model := range models {
+		got = append(got, model.Name)
+	}
+	want := []string{"glm-5.3-flash:cloud", "glm-5.3:cloud", "gemma4:31b-cloud"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("catalog order = %v, want picker order %v", got, want)
+	}
+}
+
 func TestCodexAppRouterHealth(t *testing.T) {
 	t.Run("ready", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1986,7 +2001,8 @@ func TestCodexAppThinkingLevelsUseRecommendationsThenFallbacks(t *testing.T) {
 		},
 		{name: "model name alone does not infer thinking", modelName: "glm-5.3-flash:cloud"},
 		{name: "similar unverified tag uses fallback", modelName: "glm-5.3-flash:custom", thinking: true, wantInitial: "medium", wantLevels: []string{"none", "medium"}},
-		{name: "GLM 5.3 family fallback", family: "glm5_next", thinking: true, wantInitial: "max", wantLevels: []string{"low", "high", "max"}},
+		{name: "GLM 5.3 Flash family fallback", family: "glm5_next", thinking: true, wantInitial: "max", wantLevels: []string{"low", "high", "max"}},
+		{name: "GLM 5.3 family fallback", modelName: "glm-5.3:cloud", family: "glm_dsa_moe", thinking: true, wantInitial: "max", wantLevels: []string{"low", "high", "max"}},
 		{name: "GPT-OSS family", family: "gpt-oss", thinking: true, wantInitial: "medium", wantLevels: []string{"low", "medium", "high"}},
 	}
 

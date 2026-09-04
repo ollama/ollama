@@ -60,13 +60,11 @@ func bindCodexDesktop(wv webview.WebView) {
 		}
 		return result
 	})
-	wv.Bind("resetCodexDesktopModels", func(restartConfirmed bool) codexDesktopModelsSettingsResult {
-		err := resetCodexDesktopModels(restartConfirmed)
+	wv.Bind("resetCodexDesktopModels", func() codexDesktopModelsSettingsResult {
+		err := resetCodexDesktopModels()
 		settings, statusErr := getCodexDesktopModelsSettings()
 		result := codexDesktopModelsSettingsResult{Settings: settings}
-		if errors.Is(err, errCodexDesktopRestartConfirmationRequired) {
-			result.RestartConfirmationRequired = true
-		} else if err != nil {
+		if err != nil {
 			result.Error = err.Error()
 		} else if statusErr != nil {
 			result.Warning = codexDesktopModelRefreshError(settings)

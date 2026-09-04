@@ -171,8 +171,8 @@ func TestSetCodexDesktopConnectionSwitchesRegularProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(saved.Models) != 2 || saved.Models[0] != "qwen3:8b" || saved.Models[1] != "glm-5.2:cloud" {
-		t.Fatalf("saved integration = %#v, want selected model", saved)
+	if len(saved.Models) != 0 {
+		t.Fatalf("saved integration = %#v, want recommendation defaults to remain implicit", saved)
 	}
 
 	if err := setCodexDesktopConnection(false, true); err != nil {
@@ -407,7 +407,7 @@ func TestResetCodexDesktopModelsDoesNothingBeforeIntegrationIsUsed(t *testing.T)
 	fake := &fakeCodexDesktopController{installed: true}
 	codexDesktop = fake
 
-	if err := resetCodexDesktopModels(false); err != nil {
+	if err := resetCodexDesktopModels(); err != nil {
 		t.Fatal(err)
 	}
 	if len(fake.launches) != 0 || len(fake.updates) != 0 || fake.running || fake.configured {
@@ -415,7 +415,7 @@ func TestResetCodexDesktopModelsDoesNothingBeforeIntegrationIsUsed(t *testing.T)
 	}
 }
 
-func TestResetCodexDesktopModelsSavesDefaultsWithoutConnecting(t *testing.T) {
+func TestResetCodexDesktopModelsClearsExplicitSelectionWithoutConnecting(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	originalController := codexDesktop
 	t.Cleanup(func() { codexDesktop = originalController })
@@ -426,66 +426,72 @@ func TestResetCodexDesktopModelsSavesDefaultsWithoutConnecting(t *testing.T) {
 	fake := &fakeCodexDesktopController{installed: true, running: true}
 	codexDesktop = fake
 
-	if err := resetCodexDesktopModels(false); err != nil {
+	if err := resetCodexDesktopModels(); err != nil {
 		t.Fatal(err)
 	}
 	if len(fake.launches) != 0 || len(fake.updates) != 0 || !fake.running || fake.configured {
 		t.Fatalf("disconnected ChatGPT changed during reset: %#v", fake)
 	}
-	if got := config.IntegrationModels(codexDesktopIntegrationName); !slices.Equal(got, []string{"qwen3:8b", "glm-5.2:cloud"}) {
-		t.Fatalf("saved models = %v, want recommendation defaults", got)
+	if got := config.IntegrationModels(codexDesktopIntegrationName); len(got) != 0 {
+		t.Fatalf("saved models = %v, want implicit recommendation defaults", got)
 	}
 }
 
-func TestResetCodexDesktopModelsUpdatesStoppedProfileWithoutOpening(t *testing.T) {
+func TestResetCodexDesktopModelsLeavesStoppedProfileAlone(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	originalController := codexDesktop
-	t.Cleanup(func() { codexDesktop = originalController })
-	stubCodexDesktopModelLoader(t)
+	originalLoadModels := codexDesktopLoadModels
+	t.Cleanup(func() {
+		codexDesktop = originalController
+		codexDesktopLoadModels = originalLoadModels
+	})
+	codexDesktopLoadModels = func(context.Context, []string) (string, []launch.LaunchModel, error) {
+		t.Fatal("reset loaded models instead of only clearing the saved selection")
+		return "", nil, nil
+	}
 	if err := config.SaveIntegration(codexDesktopIntegrationName, []string{"old-model"}); err != nil {
 		t.Fatal(err)
 	}
 	fake := &fakeCodexDesktopController{installed: true, configured: true}
 	codexDesktop = fake
 
-	if err := resetCodexDesktopModels(false); err != nil {
+	if err := resetCodexDesktopModels(); err != nil {
 		t.Fatal(err)
 	}
-	if len(fake.launches) != 0 || len(fake.updates) != 1 || fake.running || !fake.configured {
-		t.Fatalf("controller = %#v, want one stopped profile update", fake)
+	if len(fake.launches) != 0 || len(fake.updates) != 0 || fake.restarts != 0 || fake.running || !fake.configured {
+		t.Fatalf("controller changed during reset: %#v", fake)
 	}
-	if !slices.Equal(fake.models, []string{"qwen3:8b", "glm-5.2:cloud"}) {
-		t.Fatalf("updated models = %v, want recommendation defaults", fake.models)
+	if got := config.IntegrationModels(codexDesktopIntegrationName); len(got) != 0 {
+		t.Fatalf("saved models = %v, want implicit recommendation defaults", got)
 	}
 }
 
-func TestResetCodexDesktopModelsRequiresConfirmationForRunningProfile(t *testing.T) {
+func TestResetCodexDesktopModelsLeavesRunningProfileAlone(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	originalController := codexDesktop
-	t.Cleanup(func() { codexDesktop = originalController })
-	stubCodexDesktopModelLoader(t)
+	originalLoadModels := codexDesktopLoadModels
+	t.Cleanup(func() {
+		codexDesktop = originalController
+		codexDesktopLoadModels = originalLoadModels
+	})
+	codexDesktopLoadModels = func(context.Context, []string) (string, []launch.LaunchModel, error) {
+		t.Fatal("reset loaded models instead of only clearing the saved selection")
+		return "", nil, nil
+	}
 	if err := config.SaveIntegration(codexDesktopIntegrationName, []string{"old-model"}); err != nil {
 		t.Fatal(err)
 	}
 	fake := &fakeCodexDesktopController{installed: true, configured: true, running: true}
 	codexDesktop = fake
 
-	err := resetCodexDesktopModels(false)
-	if !errors.Is(err, errCodexDesktopRestartConfirmationRequired) {
-		t.Fatalf("reset error = %v, want restart confirmation", err)
-	}
-	if len(fake.updates) != 0 {
-		t.Fatalf("updates before confirmation = %v, want none", fake.updates)
-	}
-	if got := config.IntegrationModels(codexDesktopIntegrationName); !slices.Equal(got, []string{"old-model"}) {
-		t.Fatalf("saved models before confirmation = %v, want old selection", got)
-	}
-
-	if err := resetCodexDesktopModels(true); err != nil {
+	if err := resetCodexDesktopModels(); err != nil {
 		t.Fatal(err)
 	}
-	if len(fake.updates) != 1 || !fake.running {
-		t.Fatalf("controller = %#v, want one confirmed running update", fake)
+	if len(fake.launches) != 0 || len(fake.updates) != 0 || fake.restarts != 0 || !fake.running || !fake.configured {
+		t.Fatalf("controller changed during reset: %#v", fake)
+	}
+	if got := config.IntegrationModels(codexDesktopIntegrationName); len(got) != 0 {
+		t.Fatalf("saved models = %v, want implicit recommendation defaults", got)
 	}
 }
 
@@ -632,23 +638,26 @@ func TestBuildCodexDesktopModelInventoryByAccount(t *testing.T) {
 		accountCloud []string
 		wantCatalog  []string
 		wantDefaults []string
+		wantPrimary  string
 		wantReasons  map[string]proxy.ClaudeDesktopAccessReason
 	}{
 		{
-			name:         "signed out keeps cloud recommendations visible",
+			name:         "signed out uses the shared list with the Free primary",
 			access:       proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedOut},
-			wantCatalog:  []string{"qwen3:8b", "glm-5.3-flash:cloud", "gemma4:31b-cloud"},
-			wantDefaults: []string{"qwen3:8b"},
+			wantCatalog:  []string{"glm-5.3-flash:cloud", "gemma4:31b-cloud", "qwen3:8b"},
+			wantDefaults: []string{"glm-5.3-flash:cloud", "gemma4:31b-cloud"},
+			wantPrimary:  "gemma4:31b-cloud",
 			wantReasons: map[string]proxy.ClaudeDesktopAccessReason{
 				"glm-5.3-flash:cloud": proxy.ClaudeDesktopAccessSignInRequired,
 				"gemma4:31b-cloud":    proxy.ClaudeDesktopAccessSignInRequired,
 			},
 		},
 		{
-			name:         "free puts Gemma before paid recommendations",
+			name:         "free uses the shared list with the Free primary",
 			access:       proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "free"},
-			wantCatalog:  []string{"gemma4:31b-cloud", "qwen3:8b", "glm-5.3-flash:cloud"},
-			wantDefaults: []string{"gemma4:31b-cloud"},
+			wantCatalog:  []string{"glm-5.3-flash:cloud", "gemma4:31b-cloud", "qwen3:8b"},
+			wantDefaults: []string{"glm-5.3-flash:cloud", "gemma4:31b-cloud"},
+			wantPrimary:  "gemma4:31b-cloud",
 			wantReasons: map[string]proxy.ClaudeDesktopAccessReason{
 				"glm-5.3-flash:cloud": proxy.ClaudeDesktopAccessUpgradeRequired,
 			},
@@ -658,6 +667,7 @@ func TestBuildCodexDesktopModelInventoryByAccount(t *testing.T) {
 			access:       proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "team"},
 			wantCatalog:  []string{"glm-5.3-flash:cloud", "gemma4:31b-cloud", "qwen3:8b"},
 			wantDefaults: []string{"glm-5.3-flash:cloud", "gemma4:31b-cloud"},
+			wantPrimary:  "glm-5.3-flash:cloud",
 		},
 	}
 
@@ -677,11 +687,14 @@ func TestBuildCodexDesktopModelInventoryByAccount(t *testing.T) {
 			if got := codexDesktopModelNames(inventory.Defaults); !slices.Equal(got, tt.wantDefaults) {
 				t.Errorf("defaults = %v, want %v", got, tt.wantDefaults)
 			}
+			if inventory.DefaultPrimary != tt.wantPrimary {
+				t.Errorf("default primary = %q, want %q", inventory.DefaultPrimary, tt.wantPrimary)
+			}
 		})
 	}
 }
 
-func TestBuildCodexDesktopModelInventorySignedOutWithoutLocalModel(t *testing.T) {
+func TestBuildCodexDesktopModelInventorySignedOutKeepsRecommendationsSelectable(t *testing.T) {
 	recommendations := []api.ModelRecommendation{
 		{Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"},
 		{Model: "gemma4:31b-cloud", RequiredPlan: "free"},
@@ -698,11 +711,18 @@ func TestBuildCodexDesktopModelInventorySignedOutWithoutLocalModel(t *testing.T)
 	if len(inventory.Catalog) != 2 {
 		t.Fatalf("catalog = %#v, want both cloud recommendations visible", inventory.Catalog)
 	}
-	if len(inventory.Available) != 0 || len(inventory.Defaults) != 0 {
-		t.Fatalf("available/defaults = %#v/%#v, want no signed-out cloud selection", inventory.Available, inventory.Defaults)
+	want := []string{"glm-5.3-flash:cloud", "gemma4:31b-cloud"}
+	if got := codexDesktopModelNames(inventory.Available); !slices.Equal(got, want) {
+		t.Fatalf("available = %v, want shared recommendation list %v", got, want)
 	}
-	if _, _, err := selectCodexDesktopModels([]string{"glm-5.3-flash:cloud"}, inventory.Available); err == nil {
-		t.Fatal("signed-out cloud recommendation was selectable")
+	if got := codexDesktopModelNames(inventory.Defaults); !slices.Equal(got, want) {
+		t.Fatalf("defaults = %v, want shared recommendation list %v", got, want)
+	}
+	if inventory.DefaultPrimary != "gemma4:31b-cloud" {
+		t.Fatalf("default primary = %q, want Free recommendation", inventory.DefaultPrimary)
+	}
+	if _, _, err := selectCodexDesktopModels([]string{"glm-5.3-flash:cloud"}, inventory.Available); err != nil {
+		t.Fatalf("signed-out recommendation should remain configurable: %v", err)
 	}
 }
 
@@ -734,9 +754,9 @@ func TestCodexDesktopDefaultsForTeamAccountUsesFirstFiveRecommendations(t *testi
 func TestCodexDesktopDefaultsForTeamAccountMatchDeployedRecommendations(t *testing.T) {
 	recommendations := []api.ModelRecommendation{
 		{Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"},
-		{Model: "glm-5.2:cloud", RequiredPlan: "pro"},
+		{Model: "glm-5.3:cloud", RequiredPlan: "pro"},
 		{Model: "kimi-k3:cloud", RequiredPlan: "pro"},
-		{Model: "deepseek-v4-pro", RequiredPlan: "pro"},
+		{Model: "deepseek-v4-flash:cloud", RequiredPlan: "pro"},
 		{Model: "gemma4:31b-cloud", RequiredPlan: "free"},
 	}
 	inventory := buildCodexDesktopModelInventory(
@@ -752,9 +772,9 @@ func TestCodexDesktopDefaultsForTeamAccountMatchDeployedRecommendations(t *testi
 	got := codexDesktopModelNames(inventory.Defaults)
 	want := []string{
 		"glm-5.3-flash:cloud",
-		"glm-5.2:cloud",
+		"glm-5.3:cloud",
 		"kimi-k3:cloud",
-		"deepseek-v4-pro:cloud",
+		"deepseek-v4-flash:cloud",
 		"gemma4:31b:cloud",
 	}
 	if !slices.Equal(got, want) {
@@ -785,8 +805,131 @@ func TestCodexDesktopDefaultsForFreeAccountFollowRecommendationMetadata(t *testi
 		true,
 	)
 
-	if got, want := codexDesktopModelNames(inventory.Defaults), []string{"new-free-model:cloud"}; !slices.Equal(got, want) {
-		t.Fatalf("defaults = %v, want endpoint-provided Free recommendation %v", got, want)
+	if got, want := codexDesktopModelNames(inventory.Defaults), []string{"paid-model:cloud", "new-free-model:cloud"}; !slices.Equal(got, want) {
+		t.Fatalf("defaults = %v, want shared recommendation list %v", got, want)
+	}
+	if inventory.DefaultPrimary != "new-free-model:cloud" {
+		t.Fatalf("default primary = %q, want endpoint-provided Free recommendation", inventory.DefaultPrimary)
+	}
+}
+
+func TestCodexDesktopAutomaticSelectionFollowsCurrentAccount(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/tags" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"models":[]}`))
+	}))
+	defer server.Close()
+	base, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := api.NewClient(base, server.Client())
+
+	originalController := codexDesktop
+	originalClientFactory := codexDesktopClientFactory
+	originalRecommendations := codexDesktopRecommendations
+	originalAccessState := codexDesktopAccessState
+	originalCloudModels := codexDesktopCloudModels
+	originalAttempts := codexDesktopModelLoadAttempts
+	t.Cleanup(func() {
+		codexDesktop = originalController
+		codexDesktopClientFactory = originalClientFactory
+		codexDesktopRecommendations = originalRecommendations
+		codexDesktopAccessState = originalAccessState
+		codexDesktopCloudModels = originalCloudModels
+		codexDesktopModelLoadAttempts = originalAttempts
+	})
+	codexDesktop = &fakeCodexDesktopController{installed: true}
+	codexDesktopClientFactory = func() (*api.Client, error) { return client, nil }
+	codexDesktopRecommendations = func(context.Context) ([]api.ModelRecommendation, error) {
+		return []api.ModelRecommendation{
+			{Model: "paid-a:cloud", RequiredPlan: "pro"},
+			{Model: "paid-b:cloud", RequiredPlan: "pro"},
+			{Model: "free-e:cloud", RequiredPlan: "free"},
+		}, nil
+	}
+	codexDesktopCloudModels = func(context.Context) ([]string, error) { return nil, nil }
+	codexDesktopModelLoadAttempts = 1
+	plan := "free"
+	codexDesktopAccessState = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
+		return proxy.ClaudeDesktopAccessState{
+			Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: plan,
+		}, nil
+	}
+
+	freeSettings, err := getCodexDesktopModelsSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"paid-a:cloud", "paid-b:cloud", "free-e:cloud"}
+	if !freeSettings.UsesDefaults || !slices.Equal(freeSettings.Selected, want) {
+		t.Fatalf("free settings = %#v, want implicit shared defaults %v", freeSettings, want)
+	}
+	freePrimary, freeModels, err := loadCodexDesktopModels(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if freePrimary != "free-e:cloud" || !slices.Equal(codexDesktopModelNames(freeModels), want) {
+		t.Fatalf("free route = %q/%v, want Free primary with shared list", freePrimary, codexDesktopModelNames(freeModels))
+	}
+
+	plan = "team"
+	paidSettings, err := getCodexDesktopModelsSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !paidSettings.UsesDefaults || !slices.Equal(paidSettings.Selected, want) {
+		t.Fatalf("paid settings = %#v, want same implicit shared defaults %v", paidSettings, want)
+	}
+	paidPrimary, paidModels, err := loadCodexDesktopModels(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paidPrimary != "paid-a:cloud" || !slices.Equal(codexDesktopModelNames(paidModels), want) {
+		t.Fatalf("paid route = %q/%v, want paid primary with shared list", paidPrimary, codexDesktopModelNames(paidModels))
+	}
+	if got := config.IntegrationModels(codexDesktopIntegrationName); len(got) != 0 {
+		t.Fatalf("saved models = %v, want account defaults to remain implicit", got)
+	}
+
+	custom := []string{"paid-b:cloud", "free-e:cloud"}
+	if err := config.SaveIntegration(codexDesktopIntegrationName, custom); err != nil {
+		t.Fatal(err)
+	}
+	plan = "free"
+	customFreeSettings, err := getCodexDesktopModelsSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if customFreeSettings.UsesDefaults || !slices.Equal(customFreeSettings.Selected, custom) {
+		t.Fatalf("custom Free settings = %#v, want saved list %v", customFreeSettings, custom)
+	}
+	customFreePrimary, customFreeModels, err := loadCodexDesktopModels(context.Background(), custom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if customFreePrimary != "free-e:cloud" || !slices.Equal(codexDesktopModelNames(customFreeModels), custom) {
+		t.Fatalf("custom Free route = %q/%v, want preserved list with Free primary", customFreePrimary, codexDesktopModelNames(customFreeModels))
+	}
+
+	plan = "team"
+	customPaidSettings, err := getCodexDesktopModelsSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if customPaidSettings.UsesDefaults || !slices.Equal(customPaidSettings.Selected, custom) {
+		t.Fatalf("custom paid settings = %#v, want saved list %v", customPaidSettings, custom)
+	}
+	customPaidPrimary, customPaidModels, err := loadCodexDesktopModels(context.Background(), custom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if customPaidPrimary != "paid-b:cloud" || !slices.Equal(codexDesktopModelNames(customPaidModels), custom) {
+		t.Fatalf("custom paid route = %q/%v, want preserved list with first available paid model", customPaidPrimary, codexDesktopModelNames(customPaidModels))
 	}
 }
 

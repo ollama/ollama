@@ -87,14 +87,18 @@ const (
 )
 
 type codexDesktopModelsSettings struct {
-	Supported bool                      `json:"supported"`
-	Installed bool                      `json:"installed"`
-	Connected bool                      `json:"connected"`
-	Running   bool                      `json:"running"`
-	Selected  []string                  `json:"selected"`
-	Available []string                  `json:"available"`
-	Models    []codexDesktopModelStatus `json:"models"`
-	MaxModels int                       `json:"maxModels"`
+	Supported bool `json:"supported"`
+	Installed bool `json:"installed"`
+	Connected bool `json:"connected"`
+	Running   bool `json:"running"`
+	// UsesDefaults distinguishes recommendation-derived models from a user's
+	// explicit, device-wide selection. The automatic list remains implicit so
+	// it can receive endpoint updates without overwriting a saved preference.
+	UsesDefaults bool                      `json:"usesDefaults"`
+	Selected     []string                  `json:"selected"`
+	Available    []string                  `json:"available"`
+	Models       []codexDesktopModelStatus `json:"models"`
+	MaxModels    int                       `json:"maxModels"`
 }
 
 type codexDesktopModelStatus struct {
@@ -116,9 +120,10 @@ type codexDesktopModelsSettingsResult struct {
 }
 
 type codexDesktopModelInventory struct {
-	Available []launch.LaunchModel
-	Catalog   []codexDesktopCatalogModel
-	Defaults  []launch.LaunchModel
+	Available      []launch.LaunchModel
+	Catalog        []codexDesktopCatalogModel
+	Defaults       []launch.LaunchModel
+	DefaultPrimary string
 }
 
 type codexDesktopCatalogModel struct {
@@ -176,8 +181,8 @@ func setCodexDesktopConnection(enabled, restartConfirmed bool) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	selected := config.IntegrationModels(codexDesktopIntegrationName)
-	primary, models, err := codexDesktopLoadConnectionModels(ctx, selected)
+	savedSelection := config.IntegrationModels(codexDesktopIntegrationName)
+	primary, models, err := codexDesktopLoadConnectionModels(ctx, savedSelection)
 	if err != nil {
 		return err
 	}
@@ -187,8 +192,7 @@ func setCodexDesktopConnection(enabled, restartConfirmed bool) error {
 		return errCodexDesktopRestartConfirmationRequired
 	}
 	previous := config.IntegrationModels(codexDesktopIntegrationName)
-	selected = codexDesktopModelNames(models)
-	if err := config.SaveIntegration(codexDesktopIntegrationName, selected); err != nil {
+	if err := config.SaveIntegration(codexDesktopIntegrationName, savedSelection); err != nil {
 		return fmt.Errorf("save ChatGPT integration: %w", err)
 	}
 	if err := codexDesktop.Onboard(); err != nil {
@@ -225,6 +229,7 @@ func getCodexDesktopModelsSettings() (codexDesktopModelsSettings, error) {
 	// temporarily unavailable, so an existing ChatGPT setup never loses its
 	// visible restart action.
 	settings.Selected = config.IntegrationModels(codexDesktopIntegrationName)
+	settings.UsesDefaults = len(settings.Selected) == 0
 	if len(settings.Selected) > codexDesktopMaxModels {
 		settings.Selected = settings.Selected[:codexDesktopMaxModels]
 	}
@@ -248,23 +253,28 @@ func applyCodexDesktopModels(selected []string, restartConfirmed bool) error {
 	return applyCodexDesktopModelsLocked(selected, restartConfirmed, true)
 }
 
-func resetCodexDesktopModels(restartConfirmed bool) error {
+func resetCodexDesktopModels() error {
 	codexDesktopMu.Lock()
 	defer codexDesktopMu.Unlock()
 
 	// Resetting all settings should not opt a user into an integration they
-	// have never used. Once used, reset the saved selection to the current
-	// recommendation-derived defaults without opening a stopped ChatGPT app.
+	// have never used. Once used, clear the explicit selection so settings show
+	// the current recommendation-derived defaults. The running ChatGPT profile
+	// is left alone until the user explicitly chooses Restart ChatGPT.
 	if len(config.IntegrationModels(codexDesktopIntegrationName)) == 0 && !codexDesktop.OllamaConfigured() {
 		return nil
 	}
-	return applyCodexDesktopModelsLocked(nil, restartConfirmed, false)
+	if err := config.SaveIntegration(codexDesktopIntegrationName, nil); err != nil {
+		return fmt.Errorf("reset ChatGPT models: %w", err)
+	}
+	return nil
 }
 
 func applyCodexDesktopModelsLocked(selected []string, restartConfirmed, openWhenStopped bool) error {
 	previous := config.IntegrationModels(codexDesktopIntegrationName)
+	savedSelection := append([]string(nil), selected...)
 	wasConfigured := codexDesktop.OllamaConfigured()
-	selectionUnchanged := slices.Equal(selected, previous)
+	selectionUnchanged := slices.Equal(savedSelection, previous)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	primary, models, err := codexDesktopLoadModels(ctx, selected)
@@ -274,9 +284,8 @@ func applyCodexDesktopModelsLocked(selected []string, restartConfirmed, openWhen
 		}
 		return err
 	}
-	selected = codexDesktopModelNames(models)
 	if !wasConfigured && !openWhenStopped {
-		if err := config.SaveIntegration(codexDesktopIntegrationName, selected); err != nil {
+		if err := config.SaveIntegration(codexDesktopIntegrationName, savedSelection); err != nil {
 			return fmt.Errorf("save ChatGPT models: %w", err)
 		}
 		return nil
@@ -285,7 +294,7 @@ func applyCodexDesktopModelsLocked(selected []string, restartConfirmed, openWhen
 	if running && !restartConfirmed {
 		return errCodexDesktopRestartConfirmationRequired
 	}
-	if err := config.SaveIntegration(codexDesktopIntegrationName, selected); err != nil {
+	if err := config.SaveIntegration(codexDesktopIntegrationName, savedSelection); err != nil {
 		return fmt.Errorf("save ChatGPT models: %w", err)
 	}
 	updateModels := codexDesktop.UseOllamaFromDesktop
@@ -343,6 +352,7 @@ func loadCodexDesktopModels(ctx context.Context, selected []string) (string, []l
 	if err != nil {
 		return "", nil, err
 	}
+	primary = codexDesktopPreferredPrimary(inventory.DefaultPrimary, models)
 	return primary, hydrateCodexDesktopModelCapabilities(ctx, models), nil
 }
 
@@ -359,6 +369,7 @@ func loadCodexDesktopConnectionModels(ctx context.Context, selected []string) (s
 	if err != nil {
 		return "", nil, err
 	}
+	primary = codexDesktopPreferredPrimary(inventory.DefaultPrimary, models)
 	return primary, hydrateCodexDesktopModelCapabilities(ctx, models), nil
 }
 
@@ -430,7 +441,9 @@ func loadCodexDesktopModelInventory(ctx context.Context) (codexDesktopModelInven
 		}
 
 		last = buildCodexDesktopModelInventory(recommendations, listed, accountCloud, access, accessKnown, listKnown, cloudKnown)
-		if len(last.Available) > 0 {
+		// Account access chooses the automatic primary model. Retry a transient
+		// access lookup even when recommendations already provide a catalog.
+		if len(last.Available) > 0 && (accessKnown || attempt+1 == codexDesktopModelLoadAttempts) {
 			return last, nil
 		}
 		if attempt+1 == codexDesktopModelLoadAttempts {
@@ -508,8 +521,7 @@ func buildCodexDesktopModelInventory(
 	}
 
 	seen := make(map[string]bool, len(actual)+len(recommendations))
-	availableRecommended := make([]codexDesktopCatalogModel, 0, len(recommendations))
-	unavailableRecommended := make([]codexDesktopCatalogModel, 0, len(recommendations))
+	recommended := make([]codexDesktopCatalogModel, 0, len(recommendations))
 	for _, recommendation := range recommendations {
 		route := codexDesktopRecommendationRoute(recommendation)
 		key := codexDesktopModelKey(route)
@@ -549,11 +561,7 @@ func buildCodexDesktopModelInventory(
 			Reason:       reason,
 			RequiredPlan: strings.TrimSpace(recommendation.RequiredPlan),
 		}
-		if availability == proxy.ClaudeDesktopAvailabilityAvailable {
-			availableRecommended = append(availableRecommended, entry)
-		} else {
-			unavailableRecommended = append(unavailableRecommended, entry)
-		}
+		recommended = append(recommended, entry)
 	}
 
 	extras := make([]codexDesktopCatalogModel, 0, len(actual))
@@ -572,21 +580,27 @@ func buildCodexDesktopModelInventory(
 		})
 	}
 
-	catalog := make([]codexDesktopCatalogModel, 0, len(availableRecommended)+len(extras)+len(unavailableRecommended))
-	catalog = append(catalog, availableRecommended...)
+	// Recommendation order is the picker order for every account tier. Access
+	// changes a model's status, not whether it appears in the catalog.
+	catalog := make([]codexDesktopCatalogModel, 0, len(recommended)+len(extras))
+	catalog = append(catalog, recommended...)
 	catalog = append(catalog, extras...)
-	catalog = append(catalog, unavailableRecommended...)
 	available := make([]launch.LaunchModel, 0, len(catalog))
 	for _, entry := range catalog {
-		if entry.Availability == proxy.ClaudeDesktopAvailabilityAvailable {
+		// Recommended models stay configurable so automatic and user-edited
+		// picker lists survive sign-in and plan changes. Inventory-only models
+		// still require verified access.
+		if entry.Recommended || entry.Availability == proxy.ClaudeDesktopAvailabilityAvailable {
 			available = append(available, entry.Model)
 		}
 	}
+	defaults := codexDesktopRecommendationDefaults(catalog)
 
 	return codexDesktopModelInventory{
-		Available: available,
-		Catalog:   catalog,
-		Defaults:  codexDesktopDefaultsForAccount(catalog, access, accessKnown),
+		Available:      available,
+		Catalog:        catalog,
+		Defaults:       defaults,
+		DefaultPrimary: codexDesktopDefaultPrimary(catalog, defaults, access, accessKnown),
 	}
 }
 
@@ -667,33 +681,73 @@ func codexDesktopPlanSatisfies(plan, required string) bool {
 	return plan != "" && plan != "free"
 }
 
-func codexDesktopDefaultsForAccount(catalog []codexDesktopCatalogModel, access proxy.ClaudeDesktopAccessState, accessKnown bool) []launch.LaunchModel {
-	if accessKnown && access.Account == proxy.ClaudeDesktopAccountSignedIn {
-		limit := 1
-		if codexDesktopPlanSatisfies(access.Plan, "pro") {
-			limit = codexDesktopMaxModels
+func codexDesktopRecommendationDefaults(catalog []codexDesktopCatalogModel) []launch.LaunchModel {
+	defaults := make([]launch.LaunchModel, 0, codexDesktopMaxModels)
+	for _, entry := range catalog {
+		if !entry.Recommended {
+			continue
 		}
-		defaults := make([]launch.LaunchModel, 0, limit)
-		for _, entry := range catalog {
-			if !entry.Recommended || entry.Availability != proxy.ClaudeDesktopAvailabilityAvailable {
-				continue
-			}
-			defaults = append(defaults, entry.Model)
-			if len(defaults) == limit {
-				return defaults
-			}
-		}
-		if len(defaults) > 0 {
+		defaults = append(defaults, entry.Model)
+		if len(defaults) == codexDesktopMaxModels {
 			return defaults
 		}
 	}
+	if len(defaults) > 0 {
+		return defaults
+	}
 
+	// Inventory remains a useful fallback if recommendations cannot be loaded.
 	for _, entry := range catalog {
-		if !entry.Model.Remote && entry.Availability == proxy.ClaudeDesktopAvailabilityAvailable {
-			return []launch.LaunchModel{entry.Model}
+		if entry.Availability != proxy.ClaudeDesktopAvailabilityAvailable {
+			continue
+		}
+		defaults = append(defaults, entry.Model)
+		if len(defaults) == codexDesktopMaxModels {
+			break
 		}
 	}
-	return nil
+	return defaults
+}
+
+func codexDesktopDefaultPrimary(
+	catalog []codexDesktopCatalogModel,
+	defaults []launch.LaunchModel,
+	access proxy.ClaudeDesktopAccessState,
+	accessKnown bool,
+) string {
+	if len(defaults) == 0 {
+		return ""
+	}
+
+	// Paid accounts use the strongest (first) recommendation. Free and
+	// signed-out users use the Free recommendation so their first message does
+	// not unexpectedly target a paid model.
+	if accessKnown && access.Account == proxy.ClaudeDesktopAccountSignedIn && codexDesktopPlanSatisfies(access.Plan, "pro") {
+		return defaults[0].Name
+	}
+	for _, entry := range catalog {
+		if !entry.Recommended {
+			continue
+		}
+		required := strings.ToLower(strings.TrimSpace(entry.RequiredPlan))
+		if required == "" || required == "free" {
+			return entry.Model.Name
+		}
+	}
+	return defaults[0].Name
+}
+
+func codexDesktopPreferredPrimary(preferred string, models []launch.LaunchModel) string {
+	preferredKey := codexDesktopModelKey(preferred)
+	for _, model := range models {
+		if preferredKey != "" && codexDesktopModelKey(model.Name) == preferredKey {
+			return model.Name
+		}
+	}
+	if len(models) > 0 {
+		return models[0].Name
+	}
+	return ""
 }
 
 func codexDesktopModelStatuses(inventory codexDesktopModelInventory, selected []string) []codexDesktopModelStatus {

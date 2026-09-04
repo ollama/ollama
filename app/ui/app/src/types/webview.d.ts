@@ -83,6 +83,7 @@ interface CodexDesktopModelsSettings {
   installed: boolean;
   connected: boolean;
   running: boolean;
+  usesDefaults: boolean;
   selected: string[];
   available: string[];
   models?: CodexDesktopModelStatus[];
@@ -149,9 +150,7 @@ declare global {
       models: string[],
       restartConfirmed: boolean,
     ) => Promise<CodexDesktopModelsSettingsResult>;
-    resetCodexDesktopModels?: (
-      restartConfirmed: boolean,
-    ) => Promise<CodexDesktopModelsSettingsResult>;
+    resetCodexDesktopModels?: () => Promise<CodexDesktopModelsSettingsResult>;
     installClaudeDesktop?: () => Promise<ClaudeDesktopInstallResult>;
     getShowAppsInMenu?: () => Promise<boolean>;
     setShowAppsInMenu?: (visible: boolean) => Promise<void>;

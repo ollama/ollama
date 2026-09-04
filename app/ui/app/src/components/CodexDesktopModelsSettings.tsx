@@ -28,6 +28,7 @@ export interface CodexDesktopModelsSettingsHandle {
 
 interface CodexDesktopModelsSettingsProps {
   initialSettings?: ModelsSettings;
+  accountKey?: string;
   onDraftChange?: (hasChanges: boolean) => void;
 }
 
@@ -80,6 +81,7 @@ function normalizeSettings(
   const available = settings.available ?? [];
   return {
     ...settings,
+    usesDefaults: settings.usesDefaults ?? false,
     selected: settings.selected ?? [],
     available,
     models:
@@ -96,6 +98,10 @@ function normalizeSettings(
 
 function modelIsAvailable(model: CodexDesktopModelStatus): boolean {
   return !model.availability || model.availability === "available";
+}
+
+function modelCanBeSelected(model: CodexDesktopModelStatus): boolean {
+  return model.recommended || modelIsAvailable(model);
 }
 
 function modelStatusLabel(model: CodexDesktopModelStatus): string | null {
@@ -153,7 +159,7 @@ function ModelOptions({
   }, [highlightedIndex]);
 
   const optionIsDisabled = (model: CodexDesktopModelStatus) =>
-    !modelIsAvailable(model) ||
+    !modelCanBeSelected(model) ||
     (!selectedSet.has(model.name) && selected.length >= maxModels);
 
   const moveHighlight = (direction: -1 | 1) => {
@@ -264,7 +270,7 @@ export const CodexDesktopModelsSettings = forwardRef<
   CodexDesktopModelsSettingsHandle,
   CodexDesktopModelsSettingsProps
 >(function CodexDesktopModelsSettings(
-  { initialSettings, onDraftChange },
+  { initialSettings, accountKey, onDraftChange },
   ref,
 ) {
   const normalizedInitialSettings = initialSettings
@@ -288,6 +294,7 @@ export const CodexDesktopModelsSettings = forwardRef<
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const draftRef = useRef({ selected, saved });
+  const accountKeyRef = useRef(accountKey);
   const statusRequestRef = useRef(0);
   const operationInFlightRef = useRef(false);
   draftRef.current = { selected, saved };
@@ -344,6 +351,12 @@ export const CodexDesktopModelsSettings = forwardRef<
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, [initialSettings, refresh]);
+
+  useEffect(() => {
+    if (accountKeyRef.current === accountKey) return;
+    accountKeyRef.current = accountKey;
+    void refresh();
+  }, [accountKey, refresh]);
 
   const hasChanges = !selectionsEqual(selected, saved);
   useEffect(() => {
@@ -402,7 +415,9 @@ export const CodexDesktopModelsSettings = forwardRef<
     operationInFlightRef.current = true;
     ++statusRequestRef.current;
     try {
-      let result = await window.applyCodexDesktopModels(selected, false);
+      const modelsToApply =
+        !hasChanges && settings?.usesDefaults ? [] : selected;
+      let result = await window.applyCodexDesktopModels(modelsToApply, false);
       if (result.restartConfirmationRequired) {
         applyResult(result, true);
         if (
@@ -414,7 +429,7 @@ export const CodexDesktopModelsSettings = forwardRef<
         ) {
           return;
         }
-        result = await window.applyCodexDesktopModels(selected, true);
+        result = await window.applyCodexDesktopModels(modelsToApply, true);
       }
       ++statusRequestRef.current;
       if (result.error) {
@@ -465,18 +480,7 @@ export const CodexDesktopModelsSettings = forwardRef<
     operationInFlightRef.current = true;
     ++statusRequestRef.current;
     try {
-      let result = await resetModels(false);
-      if (result.restartConfirmationRequired) {
-        applyResult(result, true);
-        if (
-          !window.confirm(
-            "Restart ChatGPT to reset Ollama models? Any running task will stop.",
-          )
-        ) {
-          return false;
-        }
-        result = await resetModels(true);
-      }
+      const result = await resetModels();
       ++statusRequestRef.current;
       if (result.error) {
         setSettings(normalizeSettings(result.settings));

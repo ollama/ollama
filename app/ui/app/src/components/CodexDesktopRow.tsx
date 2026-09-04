@@ -53,13 +53,8 @@ function codexDesktopDescription(
   defaultDescription: string,
 ): string {
   if (!status?.connected) return defaultDescription;
-  const modelCount = status.models?.length ?? (status.model ? 1 : 0);
   const requestCount = status.requests ?? 0;
-  const requests = `${requestCount} Ollama ${requestCount === 1 ? "request" : "requests"} this session`;
-  if (modelCount > 0) {
-    return `Codex + Ollama · ${modelCount} Ollama ${modelCount === 1 ? "model" : "models"} · ${requests}`;
-  }
-  return `Codex + Ollama · ${requests}`;
+  return `${requestCount} Ollama ${requestCount === 1 ? "request" : "requests"} this session`;
 }
 
 export function CodexDesktopRow({

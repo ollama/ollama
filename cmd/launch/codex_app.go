@@ -1216,13 +1216,13 @@ func codexAppCatalogModels(primary string, models []LaunchModel) []LaunchModel {
 		out = append(out, model)
 	}
 
-	if model, ok := findLaunchModel(models, primary); ok {
-		model.Name = primary
-		add(model)
-	} else {
+	if _, ok := findLaunchModel(models, primary); !ok {
 		add(fallbackLaunchModel(primary))
 	}
 	for _, model := range models {
+		if launchModelMatches(model.Name, primary) {
+			model.Name = primary
+		}
 		add(model)
 	}
 	return out
@@ -1282,7 +1282,9 @@ func codexAppThinkingContractForModel(model LaunchModel) codexAppThinkingContrac
 	for _, family := range families {
 		normalized := strings.NewReplacer("-", "", "_", "", ".", "").Replace(strings.ToLower(strings.TrimSpace(family)))
 		switch normalized {
-		case "glm5next":
+		case "glm5next", "glmdsamoe":
+			// GLM 5.3 Flash and GLM 5.3 use different family identifiers,
+			// but expose the same adjustable thinking contract.
 			return codexAppStringThinkingContract("max", "low", "high", "max")
 		case "gptoss":
 			return codexAppStringThinkingContract("medium", "low", "medium", "high")

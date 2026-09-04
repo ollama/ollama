@@ -42,7 +42,7 @@ describe("CodexDesktopRow", () => {
     expect(html).toContain('aria-checked="false"');
   });
 
-  it("shows how many Ollama models are available in ChatGPT", () => {
+  it("shows only the Ollama request count when connected", () => {
     const html = renderToStaticMarkup(
       <CodexDesktopRow
         integration={integration}
@@ -54,27 +54,11 @@ describe("CodexDesktopRow", () => {
       />,
     );
 
-    expect(html).toContain(
-      "Codex + Ollama · 3 Ollama models · 0 Ollama requests this session",
-    );
+    expect(html).toContain("0 Ollama requests this session");
+    expect(html).not.toContain("Codex + Ollama");
+    expect(html).not.toContain("3 Ollama models");
     expect(html).toContain('aria-label="Remove Ollama models from ChatGPT"');
     expect(html).toContain('aria-checked="true"');
-  });
-
-  it("uses singular copy for one Ollama model", () => {
-    const html = renderToStaticMarkup(
-      <CodexDesktopRow
-        integration={integration}
-        initialStatus={status({
-          connected: true,
-          model: "qwen3:8b",
-        })}
-      />,
-    );
-
-    expect(html).toContain(
-      "Codex + Ollama · 1 Ollama model · 0 Ollama requests this session",
-    );
   });
 
   it("shows the Ollama request count with singular copy", () => {
@@ -89,9 +73,7 @@ describe("CodexDesktopRow", () => {
       />,
     );
 
-    expect(html).toContain(
-      "Codex + Ollama · 1 Ollama model · 1 Ollama request this session",
-    );
+    expect(html).toContain("1 Ollama request this session");
   });
 
   it("offers installation when ChatGPT is not installed", () => {

@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   updateCloudSetting: vi.fn(),
   setShowAppsInMenu: vi.fn(),
   refetchUser: vi.fn(),
+  disconnectUser: vi.fn(),
   isWindows: false,
   queryClient: {
     cancelQueries: vi.fn().mockResolvedValue(undefined),
@@ -46,14 +47,19 @@ vi.mock("@/components/CodexDesktopModelsSettings", () => ({
 
 vi.mock("@/hooks/useUser", () => ({
   useUser: () => ({
-    user: { name: "Paid user", email: "paid@example.com", plan: "pro" },
+    user: {
+      id: "paid-user-id",
+      name: "Paid user",
+      email: "paid@example.com",
+      plan: "pro",
+    },
     isAuthenticated: true,
     refreshUser: vi.fn(),
     isRefreshing: false,
     refetchUser: mocks.refetchUser,
     fetchConnectUrl: vi.fn(),
     isLoading: false,
-    disconnectUser: vi.fn(),
+    disconnectUser: mocks.disconnectUser,
   }),
 }));
 
@@ -163,6 +169,7 @@ describe("Settings reset interactions", () => {
     });
     mocks.setShowAppsInMenu.mockResolvedValue(undefined);
     mocks.resetChatGPTModels.mockResolvedValue(true);
+    mocks.disconnectUser.mockResolvedValue(undefined);
 
     vi.stubGlobal("window", {
       addEventListener: vi.fn(),
@@ -173,6 +180,7 @@ describe("Settings reset interactions", () => {
       setShowAppsInMenu: mocks.setShowAppsInMenu,
       open: vi.fn(),
       confirm: vi.fn(() => true),
+      location: { reload: vi.fn() },
       OLLAMA_TOOLS: false,
     });
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -255,6 +263,36 @@ describe("Settings reset interactions", () => {
 
       expect(mocks.resetClaudeMappings).not.toHaveBeenCalled();
       expect(mocks.resetChatGPTModels).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => {
+        renderer?.unmount();
+        await Promise.resolve();
+      });
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("reloads Settings after signing out", async () => {
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(<Settings />);
+        await Promise.resolve();
+      });
+
+      const signOutButton = renderer!.root
+        .findAllByType("button")
+        .find((button) => textContent(button) === "Sign out");
+      if (!signOutButton) throw new Error("Sign out button not found");
+
+      await act(async () => {
+        signOutButton.props.onClick();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(mocks.disconnectUser).toHaveBeenCalledOnce();
+      expect(window.location.reload).toHaveBeenCalledOnce();
     } finally {
       await act(async () => {
         renderer?.unmount();

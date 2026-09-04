@@ -88,13 +88,15 @@ vi.mock("@headlessui/react", async (importOriginal) => {
 });
 
 const available = [
-  "glm-5.2:cloud",
+  "glm-5.3-flash:cloud",
+  "glm-5.3:cloud",
   "kimi-k3:cloud",
+  "deepseek-v4-flash:cloud",
   "gemma4:31b-cloud",
   "llama3.1",
-  "llama3",
-  "qwen3:8b",
 ];
+
+const recommendationDefaults = available.slice(0, 5);
 
 function textContent(node: {
   children: Array<string | { children: unknown[] }>;
@@ -116,6 +118,7 @@ function settings(overrides: Partial<ModelsSettings> = {}): ModelsSettings {
     installed: true,
     connected: false,
     running: false,
+    usesDefaults: false,
     selected: available.slice(0, 5),
     available,
     maxModels: 5,
@@ -144,7 +147,8 @@ describe("CodexDesktopModelsSettings", () => {
   it("resets to native recommendation defaults through its settings handle", async () => {
     const resetModels = vi.fn().mockResolvedValue({
       settings: settings({
-        selected: ["glm-5.2:cloud", "kimi-k3:cloud"],
+        usesDefaults: true,
+        selected: recommendationDefaults,
       }),
     });
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -171,12 +175,17 @@ describe("CodexDesktopModelsSettings", () => {
       });
 
       expect(succeeded).toBe(true);
-      expect(resetModels).toHaveBeenCalledWith(false);
+      expect(resetModels).toHaveBeenCalledWith();
       expect(
         renderer!.root.findAllByProps({
-          "aria-label": "Remove glm-5.2:cloud",
+          "aria-label": "Remove glm-5.3-flash:cloud",
         }),
       ).toHaveLength(1);
+      for (const model of recommendationDefaults) {
+        expect(
+          renderer!.root.findAllByProps({ "aria-label": `Remove ${model}` }),
+        ).toHaveLength(1);
+      }
       expect(
         renderer!.root.findAllByProps({ "aria-label": "Remove qwen3:8b" }),
       ).toHaveLength(0);
@@ -185,21 +194,16 @@ describe("CodexDesktopModelsSettings", () => {
     }
   });
 
-  it("confirms before resetting models in running ChatGPT", async () => {
-    const resetModels = vi
-      .fn()
-      .mockResolvedValueOnce({
-        settings: settings({ connected: true, running: true }),
-        restartConfirmationRequired: true,
-      })
-      .mockResolvedValueOnce({
-        settings: settings({
-          connected: true,
-          running: true,
-          selected: ["glm-5.2:cloud"],
-        }),
-      });
-    const confirm = vi.fn(() => true);
+  it("resets models without restarting running ChatGPT", async () => {
+    const resetModels = vi.fn().mockResolvedValue({
+      settings: settings({
+        connected: true,
+        running: true,
+        usesDefaults: true,
+        selected: recommendationDefaults,
+      }),
+    });
+    const confirm = vi.fn();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("window", {
       addEventListener: vi.fn(),
@@ -223,10 +227,14 @@ describe("CodexDesktopModelsSettings", () => {
         await ref.current?.resetToDefaults();
       });
 
-      expect(resetModels.mock.calls).toEqual([[false], [true]]);
-      expect(confirm).toHaveBeenCalledWith(
-        "Restart ChatGPT to reset Ollama models? Any running task will stop.",
-      );
+      expect(resetModels).toHaveBeenCalledTimes(1);
+      expect(resetModels).toHaveBeenCalledWith();
+      expect(confirm).not.toHaveBeenCalled();
+      expect(
+        renderer!.root
+          .findAllByType("button")
+          .some((button) => textContent(button) === "Restart ChatGPT"),
+      ).toBe(true);
     } finally {
       await act(async () => renderer?.unmount());
     }
@@ -360,6 +368,92 @@ describe("CodexDesktopModelsSettings", () => {
       if (!readyButton) throw new Error("Ready restart button not found");
       expect(Boolean(readyButton.props.disabled)).toBe(false);
       expect(getStatus).toHaveBeenCalledTimes(2);
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  });
+
+  it("keeps untouched recommendation defaults implicit when starting ChatGPT", async () => {
+    const apply = vi.fn().mockResolvedValue({
+      settings: settings({
+        connected: true,
+        running: true,
+        usesDefaults: true,
+      }),
+    });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      applyCodexDesktopModels: apply,
+    });
+
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopModelsSettings
+            initialSettings={settings({ usesDefaults: true })}
+          />,
+        );
+      });
+      const startButton = renderer!.root
+        .findAllByType("button")
+        .find((button) => textContent(button) === "Start ChatGPT");
+      if (!startButton) throw new Error("Start button not found");
+
+      await act(async () => {
+        await startButton.props.onClick();
+      });
+
+      expect(apply).toHaveBeenCalledWith([], false);
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  });
+
+  it("keeps the same automatic list after the Ollama account changes", async () => {
+    const refresh = vi.fn().mockResolvedValue({
+      settings: settings({
+        usesDefaults: true,
+        selected: recommendationDefaults,
+      }),
+    });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      getCodexDesktopModelsSettings: refresh,
+    });
+
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopModelsSettings
+            accountKey="paid-user:team:cloud-on"
+            initialSettings={settings({ usesDefaults: true })}
+          />,
+        );
+      });
+      expect(refresh).not.toHaveBeenCalled();
+
+      await act(async () => {
+        renderer!.update(
+          <CodexDesktopModelsSettings
+            accountKey="free-user:free:cloud-on"
+            initialSettings={settings({ usesDefaults: true })}
+          />,
+        );
+        await Promise.resolve();
+      });
+
+      expect(refresh).toHaveBeenCalledOnce();
+      for (const model of recommendationDefaults) {
+        expect(
+          renderer!.root.findAllByProps({ "aria-label": `Remove ${model}` }),
+        ).toHaveLength(1);
+      }
     } finally {
       await act(async () => renderer?.unmount());
     }
@@ -536,7 +630,7 @@ describe("CodexDesktopModelsSettings", () => {
     }
   });
 
-  it("keeps paid recommendations visible below the Free model", async () => {
+  it("keeps paid recommendations visible and editable for a Free account", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("window", {
       addEventListener: vi.fn(),
@@ -549,22 +643,24 @@ describe("CodexDesktopModelsSettings", () => {
           <CodexDesktopModelsSettings
             initialSettings={settings({
               selected: ["gemma4:31b-cloud"],
-              available: ["gemma4:31b-cloud"],
+              available: ["glm-5.3-flash:cloud", "gemma4:31b-cloud"],
               models: [
-                {
-                  name: "gemma4:31b-cloud",
-                  displayName: "gemma4:31b-cloud",
-                  selected: true,
-                  availability: "available",
-                  requiredPlan: "free",
-                },
                 {
                   name: "glm-5.3-flash:cloud",
                   displayName: "glm-5.3-flash:cloud",
+                  recommended: true,
                   selected: false,
                   availability: "unavailable",
                   reason: "upgrade_required",
                   requiredPlan: "pro",
+                },
+                {
+                  name: "gemma4:31b-cloud",
+                  displayName: "gemma4:31b-cloud",
+                  recommended: true,
+                  selected: true,
+                  availability: "available",
+                  requiredPlan: "free",
                 },
               ],
             })}
@@ -579,10 +675,15 @@ describe("CodexDesktopModelsSettings", () => {
       });
 
       const options = renderer!.root.findAllByProps({ role: "option" });
-      expect(textContent(options[0])).toContain("gemma4:31b-cloud");
-      expect(textContent(options[1])).toContain("glm-5.3-flash:cloud");
-      expect(textContent(options[1])).toContain("Pro plan required");
-      expect(options[1].props.disabled).toBe(true);
+      expect(textContent(options[0])).toContain("glm-5.3-flash:cloud");
+      expect(textContent(options[0])).toContain("Pro plan required");
+      expect(options[0].props.disabled).toBe(false);
+      await act(async () => options[0].props.onClick());
+      expect(
+        renderer!.root.findAllByProps({
+          "aria-label": "Remove glm-5.3-flash:cloud",
+        }),
+      ).toHaveLength(1);
     } finally {
       await act(async () => renderer?.unmount());
     }
@@ -612,6 +713,7 @@ describe("CodexDesktopModelsSettings", () => {
                 {
                   name: "glm-5.3-flash:cloud",
                   displayName: "glm-5.3-flash:cloud",
+                  recommended: true,
                   selected: false,
                   availability: "unavailable",
                   reason: "sign_in_required",
@@ -634,7 +736,7 @@ describe("CodexDesktopModelsSettings", () => {
         .find((option) => textContent(option).includes("glm-5.3-flash:cloud"));
       if (!cloud) throw new Error("Cloud recommendation not found");
       expect(textContent(cloud)).toContain("Sign in required");
-      expect(cloud.props.disabled).toBe(true);
+      expect(cloud.props.disabled).toBe(false);
     } finally {
       await act(async () => renderer?.unmount());
     }

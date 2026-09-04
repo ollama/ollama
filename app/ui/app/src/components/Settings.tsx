@@ -464,6 +464,16 @@ export default function Settings() {
     }
   };
 
+  const handleDisconnectOllamaAccount = async () => {
+    setConnectionError(null);
+    try {
+      await disconnectUser();
+      window.location.reload();
+    } catch {
+      setConnectionError("Failed to disconnect Ollama account");
+    }
+  };
+
   if (loading) {
     return null;
   }
@@ -544,7 +554,7 @@ export default function Settings() {
                           type="button"
                           color="zinc"
                           className="px-3 py-2 text-sm"
-                          onClick={() => disconnectUser()}
+                          onClick={() => void handleDisconnectOllamaAccount()}
                         >
                           Sign out
                         </Button>
@@ -791,6 +801,7 @@ export default function Settings() {
               />
               <CodexDesktopModelsSettings
                 ref={codexModelsSettingsRef}
+                accountKey={`${user?.id ?? "signed-out"}:${user?.plan ?? ""}:${cloudDisabled ? "cloud-off" : "cloud-on"}`}
                 onDraftChange={setHasCodexDraftChanges}
               />
             </section>
