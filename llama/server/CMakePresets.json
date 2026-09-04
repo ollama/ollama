@@ -23,6 +23,16 @@
       }
     },
     {
+      "name": "cpu_s390x",
+      "inherits": ["default"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-cpu_s390x",
+      "cacheVariables": {
+        "GGML_CPU_ALL_VARIANTS": "ON",
+        "OLLAMA_RUNNER_DIR": "",
+        "OLLAMA_S390X_BIGENDIAN": "ON"
+      }
+    },
+    {
       "name": "cpu_windows",
       "inherits": ["cpu"],
       "cacheVariables": {
@@ -236,6 +246,11 @@
     {
       "name": "cpu",
       "configurePreset": "cpu",
+      "targets": ["llama-server", "llama-quantize"]
+    },
+    {
+      "name": "cpu_s390x",
+      "configurePreset": "cpu_s390x",
       "targets": ["llama-server", "llama-quantize"]
     },
     {

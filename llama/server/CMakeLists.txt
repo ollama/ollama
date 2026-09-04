@@ -178,6 +178,17 @@ set(LLAMA_CURL OFF CACHE BOOL "" FORCE)
 set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)
 set(LLAMA_SUBPROCESS OFF CACHE BOOL "" FORCE)
 
+# s390x big-endian support.
+# Auto-enable OLLAMA_S390X_BIGENDIAN on s390x hosts; allow explicit override.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^s390x?$")
+    set(_ollama_s390x_bigendian_default ON)
+else()
+    set(_ollama_s390x_bigendian_default OFF)
+endif()
+option(OLLAMA_S390X_BIGENDIAN
+    "Byte-swap little-endian GGUF tensor data at load time (required on s390x / IBM Z)"
+    ${_ollama_s390x_bigendian_default})
+
 FetchContent_Declare(
     llama_cpp
     GIT_REPOSITORY "https://github.com/ggml-org/llama.cpp.git"
@@ -296,6 +307,13 @@ if(_ollama_link_compat_sources AND DEFINED OLLAMA_LLAMA_CPP_COMPAT_DIR)
             ${OLLAMA_LLAMA_CPP_COMPAT_DIR}/models
             ${llama_cpp_SOURCE_DIR}/src)
     endif()
+endif()
+
+# Pass the OLLAMA_BIGENDIAN_BSWAP compile definition through to llama so the
+# bswap_buf / bswap_tensor_data functions in 003-tensor-data-big-endian-byteswap.patch
+# are compiled in when building on (or cross-compiling for) s390x.
+if(OLLAMA_S390X_BIGENDIAN AND TARGET llama)
+    target_compile_definitions(llama PRIVATE OLLAMA_BIGENDIAN_BSWAP)
 endif()
 
 # Find GPU toolkits for runtime dependency bundling.
