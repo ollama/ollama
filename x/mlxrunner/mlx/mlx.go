@@ -133,7 +133,7 @@ func doEval(outputs []*Array, async bool) {
 	defer freeVectorArray(vector)
 
 	for _, output := range outputs {
-		if output != nil && output.Valid() {
+		if output != nil {
 			mlxCheck(C.mlx_vector_array_append_value(vector, output.ctx))
 		}
 	}

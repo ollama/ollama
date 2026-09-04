@@ -186,7 +186,7 @@ func sliceAxis1(a *mlx.Array, start, stop int32) *mlx.Array {
 // transposeForGatherMM transposes stacked expert weights from [experts, out, in]
 // to [experts, in, out] for use with GatherMM (which computes a @ b[group]).
 func transposeForGatherMM(w *mlx.Array) *mlx.Array {
-	if w == nil || !w.Valid() || w.NumDims() != 3 {
+	if w == nil || w.NumDims() != 3 {
 		return w
 	}
 	return mlx.Transpose(w, 0, 2, 1).Clone()

@@ -153,7 +153,7 @@ func Conv1d(x, weight *Array, bias *Array, stride, padding, dilation, groups int
 		C.int(groups),
 		DefaultStream().ctx,
 	))
-	if bias != nil && bias.Valid() {
+	if bias != nil {
 		out = Add(out, bias)
 	}
 	return out
@@ -646,7 +646,7 @@ func collect(v reflect.Value, arrays *[]*Array, seen map[uintptr]bool) {
 		seen[ptr] = true
 
 		if arr, ok := v.Interface().(*Array); ok {
-			if arr != nil && arr.Valid() {
+			if arr != nil {
 				*arrays = append(*arrays, arr)
 			}
 			return
@@ -659,7 +659,7 @@ func collect(v reflect.Value, arrays *[]*Array, seen map[uintptr]bool) {
 	case reflect.Struct:
 		// Check if this struct IS an Array (not a pointer to one)
 		if arr, ok := v.Addr().Interface().(*Array); ok {
-			if arr != nil && arr.Valid() {
+			if arr != nil {
 				*arrays = append(*arrays, arr)
 			}
 			return
