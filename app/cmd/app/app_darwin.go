@@ -63,19 +63,6 @@ const (
 	claudeProxyFailurePortConflict
 )
 
-// claudeDesktopController abstracts launch's Claude Desktop profile management
-// so app flows can be tested without probing a live gateway.
-type claudeDesktopController interface {
-	AutodiscoveryConfiguredWithAutoMode(autoMode bool) bool
-	UsesOllamaGateway() bool
-	Running() bool
-	Open() error
-	ConfigureAutodiscoveryWithAutoMode(autoMode bool) error
-	SetInstalledFromDesktopWithAutoMode(installed, restart, autoMode bool) error
-	ApplyProfileChange(change func() error, restartConfirmed bool) error
-	RestoreForShutdown(ctx context.Context) error
-}
-
 var (
 	isApp              = updater.BundlePath != ""
 	appLogPath         = filepath.Join(os.Getenv("HOME"), ".ollama", "logs", "app.log")

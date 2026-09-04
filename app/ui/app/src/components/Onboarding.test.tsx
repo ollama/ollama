@@ -62,7 +62,7 @@ describe("Onboarding", () => {
     }
   });
 
-  it("hides the Claude application on Windows", () => {
+  it("shows the Claude application on Windows", () => {
     vi.stubGlobal("window", {
       OLLAMA_PLATFORM: "windows",
       innerHeight: 660,
@@ -89,8 +89,8 @@ describe("Onboarding", () => {
         />,
       );
 
-      expect(html).not.toContain('id="desktop-heading"');
-      expect(html).not.toContain("Use Ollama models in Claude Desktop");
+      expect(html).toContain('id="desktop-heading"');
+      expect(html).toContain("Use Ollama models in Claude Desktop");
       expect(html).toContain('id="terminal-heading"');
       expect(html).toContain("ollama launch claude");
     } finally {

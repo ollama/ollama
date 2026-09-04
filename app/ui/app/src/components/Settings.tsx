@@ -22,7 +22,6 @@ import {
   Squares2X2Icon,
 } from "@heroicons/react/20/solid";
 import { Settings as SettingsType } from "@/gotypes";
-import { isWindowsPlatform } from "@/lib/platform";
 import { settingsMutationScope } from "@/lib/settingsMutationScope";
 import { useUser } from "@/hooks/useUser";
 import { useCloudStatus } from "@/hooks/useCloudStatus";
@@ -461,8 +460,6 @@ export default function Settings() {
     );
   }
 
-  const isWindows = isWindowsPlatform();
-
   return (
     <main className="flex min-h-0 w-full flex-1 flex-col select-none dark:bg-neutral-900">
       <div className="w-full p-6 overflow-y-auto flex-1 overscroll-contain">
@@ -608,7 +605,7 @@ export default function Settings() {
                 </div>
               </Field>
 
-              {!isWindows && (
+              {window.getShowAppsInMenu && window.setShowAppsInMenu && (
                 <Field>
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex flex-1 items-start space-x-3">
@@ -755,15 +752,13 @@ export default function Settings() {
             </div>
           </div>
 
-          {!isWindows && (
-            <ClaudeDesktopModelsSettings
-              ref={claudeModelsSettingsRef}
-              includeCloudModels={
-                isAuthenticated && cloudStatusKnown && !cloudDisabled
-              }
-              onDraftChange={setHasClaudeDraftChanges}
-            />
-          )}
+          <ClaudeDesktopModelsSettings
+            ref={claudeModelsSettingsRef}
+            includeCloudModels={
+              isAuthenticated && cloudStatusKnown && !cloudDisabled
+            }
+            onDraftChange={setHasClaudeDraftChanges}
+          />
 
           {/* Agent Mode */}
           {window.OLLAMA_TOOLS && (

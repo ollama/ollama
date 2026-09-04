@@ -423,10 +423,10 @@ func restoreClaudeDesktopTargets(targets claudeDesktopTargets) error {
 }
 
 func claudeDesktopSupported() error {
-	if claudeDesktopGOOS == "darwin" {
+	if claudeDesktopGOOS == "darwin" || claudeDesktopGOOS == "windows" {
 		return nil
 	}
-	return errors.New("Claude Desktop launch is only supported on macOS")
+	return errors.New("Claude Desktop launch is only supported on macOS and Windows")
 }
 
 func claudeDesktopRestoreSupported() error {
@@ -1079,7 +1079,7 @@ func defaultClaudeDesktopRunning(ctx context.Context) (bool, error) {
 			return false, nil
 		}
 	case "windows":
-		out, err = exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-Command", `(Get-Process claude -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1).Id`).Output()
+		out, err = defaultClaudeDesktopProcessID(ctx)
 	default:
 		return false, nil
 	}
@@ -1116,7 +1116,7 @@ func defaultClaudeDesktopOpenApp() error {
 func defaultClaudeDesktopOpenAppPath(path string) error {
 	switch claudeDesktopGOOS {
 	case "windows":
-		return exec.Command("powershell.exe", "-NoProfile", "-Command", "Start-Process -FilePath "+quotePowerShellString(path)).Run()
+		return openClaudeDesktopWindowsPath(path)
 	case "darwin":
 		return openClaudeDesktopDarwin(path)
 	default:
@@ -1140,7 +1140,7 @@ func defaultClaudeDesktopRunningAppPath() string {
 		return ""
 	}
 	script := `(Get-Process claude -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 -and $_.Path } | Select-Object -First 1 -ExpandProperty Path)`
-	out, err := exec.Command("powershell.exe", "-NoProfile", "-Command", script).Output()
+	out, err := powershellCommand(script).Output()
 	if err != nil {
 		return ""
 	}
@@ -1150,7 +1150,7 @@ func defaultClaudeDesktopRunningAppPath() string {
 func defaultClaudeDesktopQuitApp(ctx context.Context) error {
 	if claudeDesktopGOOS == "windows" {
 		script := `Get-Process claude -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object { [void]$_.CloseMainWindow() }`
-		return exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-Command", script).Run()
+		return powershellCommandContext(ctx, script).Run()
 	}
 	return exec.CommandContext(ctx, "osascript", "-e", `tell application "Claude" to quit`).Run()
 }

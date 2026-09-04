@@ -18,7 +18,6 @@ import {
   scheduleClaudeInstallTimeout,
   withClaudeConnectionTimeout,
 } from "@/lib/claudeDesktop";
-import { isWindowsPlatform } from "@/lib/platform";
 import type {
   ClaudeDesktopActionResult,
   ClaudeDesktopStatus,
@@ -433,7 +432,6 @@ export function ConnectAppsScreen({
   initialIntegrations,
   initialClaudeStatus,
 }: ConnectAppsScreenProps) {
-  const isWindows = isWindowsPlatform();
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
   const [claudeError, setClaudeError] = useState<string | null>(null);
   const [claudeStatus, setClaudeStatus] = useState<ClaudeDesktopStatus | null>(
@@ -467,7 +465,6 @@ export function ConnectAppsScreen({
   }, [copiedCommand]);
 
   const refreshClaudeStatus = useCallback(async () => {
-    if (isWindows) return null;
     if (
       !window.getClaudeDesktopConnectionSummary &&
       !window.getClaudeDesktopStatus
@@ -486,7 +483,7 @@ export function ConnectAppsScreen({
       }
       return null;
     }
-  }, [isWindows]);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -764,7 +761,7 @@ export function ConnectAppsScreen({
         !window.getClaudeDesktopStatus) ||
       !window.setClaudeDesktopConnected
     ) {
-      setClaudeError("Claude connection is available in the Ollama macOS app.");
+      setClaudeError("Claude connection is unavailable in this Ollama app.");
       return;
     }
 
@@ -885,9 +882,9 @@ export function ConnectAppsScreen({
     }
   };
 
-  const claudeIntegration = isWindows
-    ? undefined
-    : integrationStatuses?.find((item) => item.id === "claude-desktop");
+  const claudeIntegration = integrationStatuses?.find(
+    (item) => item.id === "claude-desktop",
+  );
   const launchIntegrations =
     integrationStatuses?.filter(
       (item) => item.id !== "claude-desktop" && item.command,

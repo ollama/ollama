@@ -164,7 +164,7 @@ func reapServers() error {
 			continue
 		}
 
-		cmd := exec.Command("taskkill", "/F", "/T", "/PID", pidStr)
+		cmd := commandContext(context.Background(), "taskkill", "/F", "/T", "/PID", pidStr)
 		if err := cmd.Run(); err != nil {
 			slog.Warn("failed to kill ollama process", "pid", pid, "err", err)
 		}

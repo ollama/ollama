@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -120,12 +121,22 @@ func (*appCallbacks) UIOnboarding() bool {
 }
 
 func (app *appCallbacks) Quit() {
+	ctx, cancel := context.WithTimeout(context.Background(), claudeShutdownTimeout)
+	defer cancel()
+	if err := restoreClaudeAppForTermination(ctx); err != nil {
+		slog.Warn("failed to restore Claude before quitting", "error", err)
+	}
 	app.t.Quit()
 	wv.Terminate()
 }
 
 // TODO - reconcile with above for consistency between mac/windows
 func quit() {
+	ctx, cancel := context.WithTimeout(context.Background(), claudeShutdownTimeout)
+	defer cancel()
+	if err := restoreClaudeAppForTermination(ctx); err != nil {
+		slog.Warn("failed to restore Claude before quitting", "error", err)
+	}
 	wv.Terminate()
 }
 
@@ -174,6 +185,10 @@ func osRun(shutdown func(), hasCompletedFirstRun, startHidden, showOnboarding bo
 		UpdateAvailable("")
 	}
 
+	if err := reconcileClaudeAppProxy(); err != nil {
+		slog.Warn("failed to start Claude gateway", "error", err)
+	}
+
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 
@@ -181,6 +196,7 @@ func osRun(shutdown func(), hasCompletedFirstRun, startHidden, showOnboarding bo
 	go func() {
 		<-signals
 		slog.Debug("shutting down due to signal")
+		restoreClaudeAppForTermination(context.Background())
 		app.t.Quit()
 		wv.Terminate()
 	}()

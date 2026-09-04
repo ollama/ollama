@@ -137,11 +137,25 @@ func TestClaudeDesktopIntegration(t *testing.T) {
 	})
 }
 
-func TestClaudeDesktopSupportedOnlyOnDarwin(t *testing.T) {
-	withClaudeDesktopPlatform(t, "windows")
-	if err := (&ClaudeDesktop{}).Supported(); err == nil || !strings.Contains(err.Error(), "only supported on macOS") {
-		t.Fatalf("Supported error = %v, want macOS-only error", err)
-	}
+func TestClaudeDesktopSupportedOnDarwinAndWindows(t *testing.T) {
+	t.Run("unsupported on linux", func(t *testing.T) {
+		withClaudeDesktopPlatform(t, "linux")
+		if err := (&ClaudeDesktop{}).Supported(); err == nil || !strings.Contains(err.Error(), "only supported on macOS and Windows") {
+			t.Fatalf("Supported error = %v, want macOS/Windows-only error", err)
+		}
+	})
+	t.Run("supported on windows", func(t *testing.T) {
+		withClaudeDesktopPlatform(t, "windows")
+		if err := (&ClaudeDesktop{}).Supported(); err != nil {
+			t.Fatalf("Supported error = %v, want nil on Windows", err)
+		}
+	})
+	t.Run("supported on darwin", func(t *testing.T) {
+		withClaudeDesktopPlatform(t, "darwin")
+		if err := (&ClaudeDesktop{}).Supported(); err != nil {
+			t.Fatalf("Supported error = %v, want nil on darwin", err)
+		}
+	})
 }
 
 func TestClaudeDesktopConfigureRequiresOllamaGateway(t *testing.T) {
