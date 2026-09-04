@@ -201,6 +201,7 @@ console.log(response.message.content);
 - [Kerlig AI](https://www.kerlig.com/) - AI writing assistant for macOS
 - [Hillnote](https://hillnote.com) - Markdown-first AI workspace
 - [Perfect Memory AI](https://www.perfectmemory.ai/) - Productivity AI personalized by screen and meeting history
+- [TeeChat](https://www.teechat.ai) - Chats as Markdown files on your disk ([setup](https://www.teechat.ai/blog/local-ollama-and-web-search))
 
 #### Mobile
 
