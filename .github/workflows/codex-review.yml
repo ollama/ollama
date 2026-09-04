@@ -1,0 +1,90 @@
+name: Codex Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  codex-review:
+    # 跳過來自 fork 的 PR，避免 OPENAI_API_KEY 外洩。
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get PR diff
+        id: diff
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/codex
+          gh api \
+            -H "Accept: application/vnd.github.v3.diff" \
+            "repos/${REPO}/pulls/${PR_NUMBER}" > /tmp/codex/pr.diff
+          echo "diff_path=/tmp/codex/pr.diff" >> "$GITHUB_OUTPUT"
+          wc -l /tmp/codex/pr.diff
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Codex CLI
+        run: npm install -g @openai/codex
+
+      - name: Run Codex Review
+        id: codex
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          PROMPT=$(cat <<'EOF'
+          你是一位資深 Go 工程師，正在審查一個 Pull Request 的整個 diff。
+
+          **回覆語言：一律使用繁體中文。**
+
+          請針對 /tmp/codex/pr.diff 內的變更進行審查，重點包含：
+          1. 效能瓶頸與可優化之處
+          2. 可讀性、命名與結構
+          3. 測試覆蓋率是否足夠、建議新增哪些測試
+          4. 潛在 bug 與邊界情境
+          5. 安全性疑慮
+          6. 與 Go 慣例、本 repo `AGENTS.md` / `CLAUDE.md` 規範是否一致
+
+          輸出格式：
+          - 先給整體摘要
+          - 再以條列方式列出具體建議，指出檔案與行號
+          - 若沒有問題請直接說明「未發現重大問題」
+          EOF
+          )
+          codex exec --skip-git-repo-check "$PROMPT" \
+            --output-last-message /tmp/codex/review.md \
+            < /tmp/codex/pr.diff || {
+              echo "Codex CLI 執行失敗" > /tmp/codex/review.md
+            }
+          echo "review_path=/tmp/codex/review.md" >> "$GITHUB_OUTPUT"
+
+      - name: Post review as PR comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## 🤖 Codex 程式碼審查"
+            echo ""
+            cat /tmp/codex/review.md
+          } > /tmp/codex/comment.md
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file /tmp/codex/comment.md
