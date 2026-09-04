@@ -228,8 +228,7 @@ func (o *ResponsesFunctionCallOutput) UnmarshalJSON(data []byte) error {
 
 func (ResponsesFunctionCallOutput) responsesInputItem() {}
 
-// ResponsesToolSearchCall records a client-executed tool search requested by
-// the model. Codex replays this item before the matching tool_search_output.
+// ResponsesToolSearchCall is a tool_search_call input item.
 type ResponsesToolSearchCall struct {
 	ID        string                        `json:"id,omitempty"`
 	Type      string                        `json:"type"` // always "tool_search_call"
@@ -241,9 +240,7 @@ type ResponsesToolSearchCall struct {
 
 func (ResponsesToolSearchCall) responsesInputItem() {}
 
-// ResponsesToolSearchOutput carries tool definitions selected by Codex. Keep
-// each definition raw for request replay and trusted namespace restoration;
-// the model-facing synthetic result may flatten namespace members.
+// ResponsesToolSearchOutput is a tool_search_output input item.
 type ResponsesToolSearchOutput struct {
 	ID        string            `json:"id,omitempty"`
 	Type      string            `json:"type"` // always "tool_search_output"
@@ -538,8 +535,6 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 			}
 			namespace, name := v.Namespace, v.Name
 			if namespace == "" {
-				// Normalize calls replayed from conversations created before namespace
-				// output support. Those items used namespace._member as a flat name.
 				if matchedNamespace, matchedName := responsesToolCallName(availableTools, name); matchedNamespace != "" {
 					namespace, name = matchedNamespace, matchedName
 				}
@@ -727,9 +722,7 @@ func HasWebSearchTool(tools []ResponsesTool) bool {
 	return false
 }
 
-// HasToolSearchTool reports whether a request declares client-executed tool
-// search. Ollama exposes it to the model as an ordinary function, while Codex
-// remains responsible for performing the search.
+// HasToolSearchTool reports whether tools include tool_search.
 func HasToolSearchTool(tools []ResponsesTool) bool {
 	for _, tool := range tools {
 		if isToolSearchTool(tool) {
@@ -739,17 +732,14 @@ func HasToolSearchTool(tools []ResponsesTool) bool {
 	return false
 }
 
-// ToolSearchFunctionTool converts the Responses tool_search declaration into
-// the ordinary function contract understood by local and cloud models.
+// ToolSearchFunctionTool converts a tool_search declaration to an api.Tool.
 func ToolSearchFunctionTool(t ResponsesTool) (api.Tool, error) {
 	t.Type = "function"
 	t.Name = "tool_search"
 	return convertTool(t)
 }
 
-// WebSearchFunctionTool is the private function contract passed to local
-// models. Responses clients must only ever see their original web_search
-// declaration echoed back.
+// WebSearchFunctionTool returns the web search function declaration.
 func WebSearchFunctionTool() api.Tool {
 	properties := api.NewToolPropertiesMap()
 	properties.Set("query", api.ToolProperty{Type: api.PropertyType{"string"}, Description: "The search query."})
@@ -767,12 +757,7 @@ func WebSearchFunctionTool() api.Tool {
 	}
 }
 
-// convertTools converts one Responses-API tool declaration to api.Tools. A
-// "namespace" declaration groups member functions under a common name; it
-// expands to those members with namespace-qualified names, since api.Tool
-// carries only a flat function name. Dropping the members instead would
-// leave the model with one schema-less pseudo-function and make every
-// namespaced call undeclarable.
+// convertTools converts one Responses API tool declaration to api.Tools.
 func convertTools(t ResponsesTool) ([]api.Tool, error) {
 	if t.Type != "namespace" {
 		tool, err := convertTool(t)
@@ -803,10 +788,6 @@ func qualifyNamespaceToolName(namespace, member string) string {
 	if strings.HasPrefix(member, namespace+".") || strings.HasPrefix(member, namespace+"_") {
 		return member
 	}
-	// Codex app namespace members are advertised with a leading underscore
-	// (for example, mcp__codex_apps__notion + _search). Preserve that naming
-	// convention in the flat api.Tool representation instead of introducing
-	// a dot that is not part of the callable tool name.
 	if strings.HasPrefix(member, "_") {
 		return namespace + member
 	}
@@ -833,10 +814,7 @@ func responsesToolCallName(tools []ResponsesTool, qualified string) (namespace, 
 	return "", qualified
 }
 
-// modelToolSearchTools flattens namespace members into the ordinary function
-// names understood by open models. Only the member name changes; every other
-// member field is preserved. The original tool_search_output remains unchanged
-// on the Responses request.
+// modelToolSearchTools flattens namespace members.
 func modelToolSearchTools(tools []json.RawMessage) ([]json.RawMessage, error) {
 	flattened := make([]json.RawMessage, 0, len(tools))
 	for _, raw := range tools {
