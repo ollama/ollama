@@ -2973,6 +2973,22 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	writeChatResponse(c, req, ch)
 }
 
+// filterNamespaceTools removes namespace-type tools that are not supported by llama-server.
+// Namespace tools are group declarations sent by clients like Codex; the actual callable
+// tools are sent separately as function-type entries, so filtering namespaces is safe.
+func filterNamespaceTools(tools []api.Tool) []api.Tool {
+	if len(tools) == 0 {
+		return tools
+	}
+	filtered := make([]api.Tool, 0, len(tools))
+	for _, tool := range tools {
+		if tool.Type != "namespace" {
+			filtered = append(filtered, tool)
+		}
+	}
+	return filtered
+}
+
 func prepareNativeChatRequest(ctx context.Context, m *Model, r llm.LlamaServer, opts *api.Options, nativeReq llm.ChatRequest, truncate bool) (llm.ChatRequest, error) {
 	var err error
 	nativeReq.Messages, err = truncateNativeChatMessages(ctx, m, r, optionsForPrompt(opts, r), nativeReq, truncate)
@@ -2981,9 +2997,11 @@ func prepareNativeChatRequest(ctx context.Context, m *Model, r llm.LlamaServer, 
 
 func (s *Server) handleNativeChat(c *gin.Context, req api.ChatRequest, m *Model, r llm.LlamaServer, opts *api.Options, msgs []api.Message, checkpointStart, checkpointLoaded time.Time) {
 	truncate := req.Truncate == nil || *req.Truncate
+	// Filter out namespace tools as they are not supported by llama-server
+	filteredTools := filterNamespaceTools(req.Tools)
 	nativeReq, err := prepareNativeChatRequest(c.Request.Context(), m, r, opts, llm.ChatRequest{
 		Messages:    msgs,
-		Tools:       req.Tools,
+		Tools:       filteredTools,
 		Format:      req.Format,
 		Options:     opts,
 		Think:       req.Think,
