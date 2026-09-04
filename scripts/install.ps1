@@ -23,10 +23,12 @@
 
     Environment variables:
 
-        OLLAMA_VERSION       Target version (default: latest stable)
-        OLLAMA_INSTALL_DIR   Custom install directory
-        OLLAMA_UNINSTALL     Set to 1 to uninstall Ollama
-        OLLAMA_DEBUG         Enable verbose output
+        OLLAMA_VERSION         Target version (default: latest stable)
+        OLLAMA_INSTALL_DIR     Custom install directory
+        OLLAMA_UNINSTALL       Set to 1 to uninstall Ollama
+        OLLAMA_CACHE_ONLY      Set to 1 to download installer payloads without installing
+        OLLAMA_INSTALL_CACHED  Set to 1 to install from the Ollama installer cache without downloading
+        OLLAMA_DEBUG           Enable verbose output
 
 .EXAMPLE
     irm https://ollama.com/install.ps1 | iex
@@ -48,14 +50,145 @@ $ProgressPreference = "SilentlyContinue"
 $Version      = if ($env:OLLAMA_VERSION) { $env:OLLAMA_VERSION } else { "" }
 $InstallDir   = if ($env:OLLAMA_INSTALL_DIR) { $env:OLLAMA_INSTALL_DIR } else { "" }
 $Uninstall    = $env:OLLAMA_UNINSTALL -eq "1"
+$CacheOnly    = $env:OLLAMA_CACHE_ONLY -eq "1"
+$InstallCached = $env:OLLAMA_INSTALL_CACHED -eq "1"
 $DebugInstall = [bool]$env:OLLAMA_DEBUG
+
+if ($CacheOnly -and $InstallCached) {
+    throw "OLLAMA_CACHE_ONLY and OLLAMA_INSTALL_CACHED cannot both be set"
+}
+if ($Uninstall -and ($CacheOnly -or $InstallCached)) {
+    throw "OLLAMA_UNINSTALL cannot be combined with OLLAMA_CACHE_ONLY or OLLAMA_INSTALL_CACHED"
+}
+
+<#
+Returns a stable filesystem-safe cache key for an installer ETag.
+#>
+function Get-InstallerCacheKey {
+    param([string]$ETag)
+
+    $normalizedETag = $ETag.Trim().Trim('"')
+    if (-not $normalizedETag) {
+        throw "Installer ETag is required for installer cache"
+    }
+
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($normalizedETag)
+        $hash = $sha256.ComputeHash($bytes)
+        return -join ($hash | ForEach-Object { $_.ToString("x2") })
+    } finally {
+        $sha256.Dispose()
+    }
+}
+
+function Get-InstallerCacheRoot {
+    return Join-Path $env:LOCALAPPDATA "Ollama\install_cache"
+}
+
+function Get-TemporaryInstallerCacheRoot {
+    return Join-Path $env:TEMP "Ollama\install_cache"
+}
+
+function New-InstallerTarget {
+    param(
+        [string]$CacheRoot,
+        [string]$CacheDir,
+        [string]$ETag = "",
+        [bool]$ReplaceCacheRoot = $false
+    )
+
+    return [PSCustomObject]@{
+        Path             = (Join-Path $CacheDir "OllamaSetup.exe")
+        StagingPath      = (Join-Path "${CacheDir}.download" "OllamaSetup.exe")
+        CacheDir         = $CacheDir
+        StagingCacheDir  = "${CacheDir}.download"
+        CacheRoot        = $CacheRoot
+        ETag             = $ETag
+        ReplaceCacheRoot = $ReplaceCacheRoot
+    }
+}
+
+<#
+Removes a resolved installer cache entry after signature, ETag, or install failure.
+#>
+function Remove-InstallerCacheEntry {
+    param($Installer)
+
+    Remove-Item -LiteralPath $Installer.CacheDir -Recurse -Force -ErrorAction SilentlyContinue
+    if ($Installer.StagingCacheDir) {
+        Remove-Item -LiteralPath $Installer.StagingCacheDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+<#
+Resolves the installer URL into the exact local path this run should use.
+Cache-only mode uses the persistent cache. If ETags are unavailable, it refreshes the cache with a one-shot GUID entry.
+Normal installs fall back to a throwaway temp directory when ETags are unavailable.
+#>
+function Get-InstallerTarget {
+    param(
+        [string]$InstallerUrl,
+        [bool]$CacheOnlyMode = $false
+    )
+
+    $installerETag = Get-RemoteETag -Url $InstallerUrl
+    if ($installerETag) {
+        $cacheRoot = Get-InstallerCacheRoot
+        $cacheDir = Join-Path $cacheRoot (Get-InstallerCacheKey -ETag $installerETag)
+        $replaceCacheRoot = $true
+    } elseif ($CacheOnlyMode) {
+        Write-Status "  Installer ETag unavailable; refreshing installer cache without cache reuse."
+        $cacheRoot = Get-InstallerCacheRoot
+        $cacheDir = Join-Path $cacheRoot ([guid]::NewGuid().ToString("N"))
+        $replaceCacheRoot = $true
+    } else {
+        $cacheRoot = Get-TemporaryInstallerCacheRoot
+        $cacheDir = Join-Path $cacheRoot ([guid]::NewGuid().ToString("N"))
+        $replaceCacheRoot = $false
+    }
+
+    return New-InstallerTarget -CacheRoot $cacheRoot -CacheDir $cacheDir -ETag $installerETag -ReplaceCacheRoot $replaceCacheRoot
+}
+
+<#
+Finds the single completed installer cache entry for install-cached mode.
+#>
+function Get-CachedInstallerTarget {
+    $cacheRoot = Get-InstallerCacheRoot
+    if (-not (Test-Path -LiteralPath $cacheRoot)) {
+        throw "Cached installer not found in $cacheRoot"
+    }
+
+    $installers = @()
+    foreach ($entry in @(Get-ChildItem -LiteralPath $cacheRoot -Directory -ErrorAction SilentlyContinue)) {
+        if ($entry.Name.EndsWith(".download", [System.StringComparison]::OrdinalIgnoreCase)) {
+            continue
+        }
+        $candidate = Join-Path $entry.FullName "OllamaSetup.exe"
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            $installers += $candidate
+        }
+    }
+
+    if ($installers.Count -eq 0) {
+        throw "Cached installer not found in $cacheRoot"
+    }
+    if ($installers.Count -gt 1) {
+        # Cache-only replaces the cache root before staging a new installer, so
+        # multiple completed installers means the cache is stale or corrupt.
+        throw "Multiple cached installers found in $cacheRoot"
+    }
+
+    $cacheDir = Split-Path -Parent $installers[0]
+    return New-InstallerTarget -CacheRoot $cacheRoot -CacheDir $cacheDir
+}
 
 # --------------------------------------------------------------------------
 # Constants
 # --------------------------------------------------------------------------
 
-# OLLAMA_DOWNLOAD_URL for developer testing only
-$DownloadBaseURL = if ($env:OLLAMA_DOWNLOAD_URL) { $env:OLLAMA_DOWNLOAD_URL.TrimEnd('/') } else { "https://ollama.com/download" }
+$DownloadBaseURL = "https://ollama.com/download"
 $InnoSetupUninstallGuid = "{44E83376-CE68-45EB-8FC1-393500EB558C}_is1"
 
 # --------------------------------------------------------------------------
@@ -70,6 +203,51 @@ function Write-Status {
 function Write-Step {
     param([string]$Message)
     if ($DebugInstall) { Write-Host ">>> $Message" -ForegroundColor Cyan }
+}
+
+function Quote-ProcessArgument {
+    param([string]$Argument)
+
+    if ($null -eq $Argument -or $Argument.Length -eq 0) {
+        return '""'
+    }
+
+    # Quote args containing whitespace or a double quote: space, tab, LF, VT, FF, CR, or ".
+    $charsRequiringQuotes = @([char]32, [char]9, [char]10, [char]11, [char]12, [char]13, [char]34)
+    if ($Argument.IndexOfAny($charsRequiringQuotes) -lt 0) {
+        return $Argument
+    }
+
+    $quoted = [System.Text.StringBuilder]::new()
+    [void]$quoted.Append('"')
+    $backslashes = 0
+    foreach ($char in $Argument.ToCharArray()) {
+        if ($char -eq [char]92) {
+            $backslashes++
+            continue
+        }
+
+        if ($char -eq [char]34) {
+            if ($backslashes -gt 0) {
+                [void]$quoted.Append(('\' * ($backslashes * 2)))
+                $backslashes = 0
+            }
+            [void]$quoted.Append('\"')
+            continue
+        }
+
+        if ($backslashes -gt 0) {
+            [void]$quoted.Append(('\' * $backslashes))
+            $backslashes = 0
+        }
+        [void]$quoted.Append($char)
+    }
+
+    if ($backslashes -gt 0) {
+        [void]$quoted.Append(('\' * ($backslashes * 2)))
+    }
+    [void]$quoted.Append('"')
+    return $quoted.ToString()
 }
 
 function Test-Signature {
@@ -139,6 +317,7 @@ function Invoke-Download {
         $request = [System.Net.HttpWebRequest]::Create($Url)
         $request.AllowAutoRedirect = $true
         $response = $request.GetResponse()
+        $responseETag = $response.Headers["ETag"]
         $totalBytes = $response.ContentLength
         $stream = $response.GetResponseStream()
         $fileStream = [System.IO.FileStream]::new($OutFile, [System.IO.FileMode]::Create)
@@ -182,6 +361,7 @@ function Invoke-Download {
             $stream.Close()
             $response.Close()
         }
+        return $responseETag
     } catch {
         if ($_.Exception -is [System.Net.WebException]) {
             $webEx = [System.Net.WebException]$_.Exception
@@ -196,6 +376,25 @@ function Invoke-Download {
             }
         }
         throw "Download failed for ${Url}: $($_.Exception.Message)"
+    }
+}
+
+function Get-RemoteETag {
+    param([string]$Url)
+
+    try {
+        $request = [System.Net.HttpWebRequest]::Create($Url)
+        $request.AllowAutoRedirect = $true
+        $request.Method = "HEAD"
+        $response = $request.GetResponse()
+        try {
+            return $response.Headers["ETag"]
+        } finally {
+            $response.Close()
+        }
+    } catch {
+        Write-Status "  Unable to read remote ETag for ${Url}: $($_.Exception.Message)"
+        return ""
     }
 }
 
@@ -243,36 +442,157 @@ function Invoke-Uninstall {
 # Install
 # --------------------------------------------------------------------------
 
+<#
+Entry point for install behavior.
+Resolves the target, optionally populates the cache, then either returns for cache-only mode or runs the installer.
+#>
 function Invoke-Install {
-    # Determine installer URL
-    if ($Version) {
-        $installerUrl = "$DownloadBaseURL/OllamaSetup.exe?version=$Version"
+    $downloadedInstaller = $false
+    if ($InstallCached) {
+        $installer = Get-CachedInstallerTarget
     } else {
-        $installerUrl = "$DownloadBaseURL/OllamaSetup.exe"
+        # Determine installer URL
+        if ($Version) {
+            $installerUrl = "$DownloadBaseURL/OllamaSetup.exe?version=$Version"
+        } else {
+            $installerUrl = "$DownloadBaseURL/OllamaSetup.exe"
+        }
+
+        $installer = Get-InstallerTarget -InstallerUrl $installerUrl -CacheOnlyMode $CacheOnly
+        $downloadedInstaller = Prepare-InstallerPayload -Installer $installer -InstallerUrl $installerUrl
     }
 
-    # Download installer
-    Write-Step "Downloading Ollama"
-    if (-not $DebugInstall) {
+    if ($CacheOnly) {
+        if (-not $downloadedInstaller) {
+            Write-Step "Verifying signature"
+            if (-not $DebugInstall) {
+                Write-Host ">>> Verifying signature..."
+            }
+            if (-not (Test-Signature -FilePath $installer.Path)) {
+                Remove-InstallerCacheEntry -Installer $installer
+                throw "Installer signature verification failed"
+            }
+        }
+
+        if ($downloadedInstaller) {
+            Write-Host ""
+            if ($DebugInstall) {
+                Write-Host "Downloads complete. Installer cached in $($installer.CacheDir)"
+            } else {
+                Write-Host "Downloads complete."
+            }
+        } else {
+            if ($DebugInstall) {
+                Write-Host "Installer cache is current: $($installer.CacheDir)"
+            } else {
+                Write-Host "Installer cache is current."
+            }
+        }
+        return
+    }
+
+    Start-Installer -Installer $installer -SignatureVerifiedThisRun $downloadedInstaller
+}
+
+<#
+Ensures the resolved installer payload exists and is trusted.
+This may download the installer, reuse a warm cache, and validates the ETag/signature for new downloads before promotion.
+#>
+function Prepare-InstallerPayload {
+    param(
+        $Installer,
+        [string]$InstallerUrl
+    )
+
+    $cacheHasInstaller = Test-Path -LiteralPath $Installer.Path
+    $downloadedInstaller = $false
+    $downloadedInstallerETag = ""
+    $needsDownload = -not $cacheHasInstaller
+    if (-not $DebugInstall -and $needsDownload) {
         Write-Host ">>> Downloading Ollama for Windows..."
     }
+    if ($needsDownload) {
+        if ($Installer.ReplaceCacheRoot) {
+            Remove-Item -LiteralPath $Installer.CacheRoot -Recurse -Force -ErrorAction SilentlyContinue
+        } else {
+            Remove-InstallerCacheEntry -Installer $Installer
+        }
+        if (-not (Test-Path -LiteralPath $Installer.StagingCacheDir)) {
+            [System.IO.Directory]::CreateDirectory($Installer.StagingCacheDir) | Out-Null
+        }
 
-    $tempInstaller = Join-Path $env:TEMP "OllamaSetup.exe"
-    Invoke-Download -Url $installerUrl -OutFile $tempInstaller
-
-    # Verify signature
-    Write-Step "Verifying signature"
-    if (-not (Test-Signature -FilePath $tempInstaller)) {
-        Remove-Item $tempInstaller -Force -ErrorAction SilentlyContinue
-        throw "Installer signature verification failed"
+        Write-Step "Downloading Ollama"
+        try {
+            $downloadedInstallerETag = Invoke-Download -Url $InstallerUrl -OutFile $Installer.StagingPath
+        } catch {
+            Remove-InstallerCacheEntry -Installer $Installer
+            throw
+        }
+        $downloadedInstallerETag = if ($downloadedInstallerETag) { $downloadedInstallerETag.Trim() } else { "" }
+        $downloadedInstaller = $true
+    } else {
+        Write-Status "  Using cached installer: $($Installer.Path)"
     }
+
+    if ($downloadedInstaller) {
+        if ($Installer.ETag -and $downloadedInstallerETag -and ($downloadedInstallerETag -ne $Installer.ETag)) {
+            Remove-InstallerCacheEntry -Installer $Installer
+            throw "Downloaded installer ETag mismatch: expected $($Installer.ETag), found $downloadedInstallerETag"
+        }
+        Write-Step "Verifying signature"
+        if (-not $DebugInstall) {
+            Write-Host ">>> Verifying signature..."
+        }
+        if (-not (Test-Signature -FilePath $Installer.StagingPath)) {
+            Remove-InstallerCacheEntry -Installer $Installer
+            throw "Installer signature verification failed"
+        }
+        try {
+            Move-Item -LiteralPath $Installer.StagingCacheDir -Destination $Installer.CacheDir -ErrorAction Stop
+        } catch {
+            Remove-InstallerCacheEntry -Installer $Installer
+            throw "Failed to stage installer cache: $($_.Exception.Message)"
+        }
+    }
+    return $downloadedInstaller
+}
+
+<#
+Runs an already resolved installer payload.
+Cached installs recheck the signature immediately before launch; freshly downloaded installers verified by this same run do not need a second Authenticode pass.
+#>
+function Start-Installer {
+    param(
+        $Installer,
+        [bool]$SignatureVerifiedThisRun = $false
+    )
+
+    if (-not (Test-Path -LiteralPath $Installer.Path)) {
+        throw "Cached installer not found: $($Installer.Path)"
+    }
+
+    $markerDir = Join-Path $env:LOCALAPPDATA "Ollama"
+    $installerLog = Join-Path $markerDir "OllamaSetup.log"
 
     # Build installer arguments
-    $installerArgs = "/VERYSILENT /NORESTART /SUPPRESSMSGBOXES"
+    $installerArgs = @("/VERYSILENT", "/NORESTART", "/SUPPRESSMSGBOXES", "/LOG=$installerLog")
     if ($InstallDir) {
-        $installerArgs += " /DIR=`"$InstallDir`""
+        $installerArgs += "/DIR=$InstallDir"
     }
-    Write-Status "  Installer args: $installerArgs"
+    $installerArgumentList = (($installerArgs | ForEach-Object { Quote-ProcessArgument $_ }) -join " ")
+    Write-Status "  Installer args: $installerArgumentList"
+    Write-Status "  Installer log: $installerLog"
+
+    if (-not $SignatureVerifiedThisRun) {
+        Write-Step "Verifying signature"
+        if (-not $DebugInstall) {
+            Write-Host ">>> Verifying signature..."
+        }
+        if (-not (Test-Signature -FilePath $Installer.Path)) {
+            Remove-InstallerCacheEntry -Installer $Installer
+            throw "Installer signature verification failed before launch"
+        }
+    }
 
     # Run installer
     Write-Step "Installing Ollama"
@@ -282,7 +602,6 @@ function Invoke-Install {
 
     # Create upgrade marker so the app starts hidden
     # The app checks for this file on startup and removes it after
-    $markerDir = Join-Path $env:LOCALAPPDATA "Ollama"
     $markerFile = Join-Path $markerDir "upgraded"
     if (-not (Test-Path $markerDir)) {
         New-Item -ItemType Directory -Path $markerDir -Force | Out-Null
@@ -292,18 +611,18 @@ function Invoke-Install {
 
     # Start installer and wait for just the installer process (not children)
     # Using -Wait would wait for Ollama to exit too, which we don't want
-    $proc = Start-Process -FilePath $tempInstaller `
-        -ArgumentList $installerArgs `
+    $proc = Start-Process -FilePath $Installer.Path `
+        -ArgumentList $installerArgumentList `
         -PassThru
     $proc.WaitForExit()
 
     if ($proc.ExitCode -ne 0) {
-        Remove-Item $tempInstaller -Force -ErrorAction SilentlyContinue
-        throw "Installation failed with exit code $($proc.ExitCode)"
+        Remove-InstallerCacheEntry -Installer $Installer
+        throw "Installation failed with exit code $($proc.ExitCode). Installer log: $installerLog"
     }
 
     # Cleanup
-    Remove-Item $tempInstaller -Force -ErrorAction SilentlyContinue
+    Remove-InstallerCacheEntry -Installer $Installer
 
     # Update PATH in current session so 'ollama' works immediately
     Write-Step "Updating session PATH"
@@ -316,8 +635,10 @@ function Invoke-Install {
 # Main
 # --------------------------------------------------------------------------
 
-if ($Uninstall) {
-    Invoke-Uninstall
-} else {
-    Invoke-Install
+if ($MyInvocation.InvocationName -ne ".") {
+    if ($Uninstall) {
+        Invoke-Uninstall
+    } else {
+        Invoke-Install
+    }
 }
