@@ -91,9 +91,7 @@ type codexDesktopModelsSettings struct {
 	Installed bool `json:"installed"`
 	Connected bool `json:"connected"`
 	Running   bool `json:"running"`
-	// UsesDefaults distinguishes recommendation-derived models from a user's
-	// explicit, device-wide selection. The automatic list remains implicit so
-	// it can receive endpoint updates without overwriting a saved preference.
+	// UsesDefaults keeps recommendations implicit without overwriting saved choices.
 	UsesDefaults bool                      `json:"usesDefaults"`
 	Selected     []string                  `json:"selected"`
 	Available    []string                  `json:"available"`
@@ -186,8 +184,7 @@ func setCodexDesktopConnection(enabled, restartConfirmed bool) error {
 	if err != nil {
 		return err
 	}
-	// Resolve model availability before asking to interrupt a running task, but
-	// do not persist or change the ChatGPT profile until consent is explicit.
+	// Validate before requesting a restart; do not change the profile without consent.
 	if codexDesktop.Running() && !restartConfirmed {
 		return errCodexDesktopRestartConfirmationRequired
 	}
@@ -225,9 +222,7 @@ func getCodexDesktopModelsSettings() (codexDesktopModelsSettings, error) {
 		Models:    []codexDesktopModelStatus{},
 		MaxModels: codexDesktopMaxModels,
 	}
-	// Preserve the saved selection even when Ollama's live inventory is
-	// temporarily unavailable, so an existing ChatGPT setup never loses its
-	// visible restart action.
+	// Keep restart available when inventory cannot be loaded.
 	settings.Selected = config.IntegrationModels(codexDesktopIntegrationName)
 	settings.UsesDefaults = len(settings.Selected) == 0
 	if len(settings.Selected) > codexDesktopMaxModels {
@@ -257,10 +252,7 @@ func resetCodexDesktopModels() error {
 	codexDesktopMu.Lock()
 	defer codexDesktopMu.Unlock()
 
-	// Resetting all settings should not opt a user into an integration they
-	// have never used. Once used, clear the explicit selection so settings show
-	// the current recommendation-derived defaults. The running ChatGPT profile
-	// is left alone until the user explicitly chooses Restart ChatGPT.
+	// Reset preferences without enabling the integration or restarting ChatGPT.
 	if len(config.IntegrationModels(codexDesktopIntegrationName)) == 0 && !codexDesktop.OllamaConfigured() {
 		return nil
 	}
@@ -325,9 +317,7 @@ func applyCodexDesktopModelsLocked(selected []string, restartConfirmed, openWhen
 			rollbackErr = updateModels(rollbackPrimary, rollbackModels, true)
 		}
 		if rollbackErr != nil {
-			// If the previous Ollama selection is no longer usable, leave the
-			// user's normal ChatGPT profile working instead of keeping a broken
-			// router configuration behind.
+			// Restore the original profile if the previous selection is no longer usable.
 			if restoreErr := codexDesktop.RestoreFromDesktop(true); restoreErr != nil {
 				return errors.Join(
 					fmt.Errorf("apply ChatGPT models: %v; restore previous Ollama profile: %w", applyErr, rollbackErr),
@@ -348,11 +338,11 @@ func loadCodexDesktopModels(ctx context.Context, selected []string) (string, []l
 	if len(selected) == 0 {
 		selected = codexDesktopModelNames(codexDesktopDefaultModels(inventory))
 	}
-	primary, models, err := selectCodexDesktopModels(selected, inventory.Available)
+	_, models, err := selectCodexDesktopModels(selected, inventory.Available)
 	if err != nil {
 		return "", nil, err
 	}
-	primary = codexDesktopPreferredPrimary(inventory.DefaultPrimary, models)
+	primary := codexDesktopPreferredPrimary(inventory.DefaultPrimary, models)
 	return primary, hydrateCodexDesktopModelCapabilities(ctx, models), nil
 }
 
@@ -365,17 +355,15 @@ func loadCodexDesktopConnectionModels(ctx context.Context, selected []string) (s
 	if len(selected) == 0 {
 		selected = codexDesktopModelNames(defaults)
 	}
-	primary, models, err := reconcileCodexDesktopModels(selected, inventory.Available, defaults)
+	_, models, err := reconcileCodexDesktopModels(selected, inventory.Available, defaults)
 	if err != nil {
 		return "", nil, err
 	}
-	primary = codexDesktopPreferredPrimary(inventory.DefaultPrimary, models)
+	primary := codexDesktopPreferredPrimary(inventory.DefaultPrimary, models)
 	return primary, hydrateCodexDesktopModelCapabilities(ctx, models), nil
 }
 
-// hydrateCodexDesktopModelCapabilities fills metadata that may be absent from
-// account-only cloud inventory. The app-aware recommendations already supply
-// exact thinking controls; /api/show supplies capabilities and family metadata.
+// /api/show supplies capabilities and family metadata without replacing recommended thinking controls.
 func hydrateCodexDesktopModelCapabilities(ctx context.Context, models []launch.LaunchModel) []launch.LaunchModel {
 	client, err := codexDesktopClientFactory()
 	if err != nil {
@@ -441,8 +429,7 @@ func loadCodexDesktopModelInventory(ctx context.Context) (codexDesktopModelInven
 		}
 
 		last = buildCodexDesktopModelInventory(recommendations, listed, accountCloud, access, accessKnown, listKnown, cloudKnown)
-		// Account access chooses the automatic primary model. Retry a transient
-		// access lookup even when recommendations already provide a catalog.
+		// Retry access lookup failures even when recommendations are available.
 		if len(last.Available) > 0 && (accessKnown || attempt+1 == codexDesktopModelLoadAttempts) {
 			return last, nil
 		}
@@ -580,16 +567,16 @@ func buildCodexDesktopModelInventory(
 		})
 	}
 
-	// Recommendation order is the picker order for every account tier. Access
-	// changes a model's status, not whether it appears in the catalog.
+	// Sort recommendations only; preserve saved list order.
+	slices.SortStableFunc(recommended, func(a, b codexDesktopCatalogModel) int {
+		return codexDesktopRecommendationPriority(a.Model.Name) - codexDesktopRecommendationPriority(b.Model.Name)
+	})
 	catalog := make([]codexDesktopCatalogModel, 0, len(recommended)+len(extras))
 	catalog = append(catalog, recommended...)
 	catalog = append(catalog, extras...)
 	available := make([]launch.LaunchModel, 0, len(catalog))
 	for _, entry := range catalog {
-		// Recommended models stay configurable so automatic and user-edited
-		// picker lists survive sign-in and plan changes. Inventory-only models
-		// still require verified access.
+		// Recommendations remain configurable regardless of current availability.
 		if entry.Recommended || entry.Availability == proxy.ClaudeDesktopAvailabilityAvailable {
 			available = append(available, entry.Model)
 		}
@@ -601,6 +588,23 @@ func buildCodexDesktopModelInventory(
 		Catalog:        catalog,
 		Defaults:       defaults,
 		DefaultPrimary: codexDesktopDefaultPrimary(catalog, defaults, access, accessKnown),
+	}
+}
+
+func codexDesktopRecommendationPriority(name string) int {
+	switch codexDesktopModelKey(name) {
+	case "kimi-k3:cloud":
+		return 0
+	case "glm-5.3:cloud":
+		return 1
+	case "glm-5.3-flash:cloud":
+		return 2
+	case "deepseek-v4-flash:cloud":
+		return 3
+	case "gemma4:31b:cloud":
+		return 4
+	default:
+		return 5
 	}
 }
 
@@ -643,9 +647,7 @@ func codexDesktopRecommendationAccess(
 	if !codexDesktopPlanSatisfies(access.Plan, requiredPlan) {
 		return proxy.ClaudeDesktopAvailabilityUnavailable, proxy.ClaudeDesktopAccessUpgradeRequired
 	}
-	// The authenticated recommendation response is already plan-qualified.
-	// Match Claude Desktop by using /api/tags only for extra inventory rather
-	// than requiring every recommendation to also appear there.
+	// Recommended cloud models need not appear in /api/tags.
 	return proxy.ClaudeDesktopAvailabilityAvailable, ""
 }
 
@@ -696,7 +698,6 @@ func codexDesktopRecommendationDefaults(catalog []codexDesktopCatalogModel) []la
 		return defaults
 	}
 
-	// Inventory remains a useful fallback if recommendations cannot be loaded.
 	for _, entry := range catalog {
 		if entry.Availability != proxy.ClaudeDesktopAvailabilityAvailable {
 			continue
@@ -719,11 +720,9 @@ func codexDesktopDefaultPrimary(
 		return ""
 	}
 
-	// Paid accounts use the strongest (first) recommendation. Free and
-	// signed-out users use the Free recommendation so their first message does
-	// not unexpectedly target a paid model.
+	// Choose the starting model independently of picker order.
 	if accessKnown && access.Account == proxy.ClaudeDesktopAccountSignedIn && codexDesktopPlanSatisfies(access.Plan, "pro") {
-		return defaults[0].Name
+		return codexDesktopPreferredPrimary("glm-5.3-flash:cloud", defaults)
 	}
 	for _, entry := range catalog {
 		if !entry.Recommended {
@@ -899,10 +898,7 @@ func selectCodexDesktopModels(selected []string, available []launch.LaunchModel)
 	return resolved[0].Name, resolved, nil
 }
 
-// reconcileCodexDesktopModels is used only when reopening the saved menu-bar
-// profile. Models that have since been removed or lost account access should
-// not prevent the remaining valid selection from starting. Explicit changes
-// from Settings continue to use selectCodexDesktopModels and remain strict.
+// Reopening tolerates stale selections; explicit Settings changes use strict validation.
 func reconcileCodexDesktopModels(selected []string, available, defaults []launch.LaunchModel) (string, []launch.LaunchModel, error) {
 	if len(selected) == 0 {
 		if len(defaults) > 0 {

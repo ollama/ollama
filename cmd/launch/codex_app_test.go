@@ -235,18 +235,49 @@ func TestCodexAppConfigureMarksOnlyOllamaModelsForNonChatGPTSessions(t *testing.
 	}
 }
 
-func TestCodexAppCatalogModelsKeepsPickerOrderWhenPrimaryDiffers(t *testing.T) {
-	models := codexAppCatalogModels(
+func TestCodexAppConfigureKeepsPickerOrderWhenPrimaryDiffers(t *testing.T) {
+	want := []string{
+		"kimi-k3:cloud",
+		"glm-5.3:cloud",
+		"glm-5.3-flash:cloud",
+		"deepseek-v4-flash:cloud",
 		"gemma4:31b-cloud",
-		testLaunchModels("glm-5.3-flash:cloud", "glm-5.3:cloud", "gemma4:31b-cloud"),
-	)
-	got := make([]string, 0, len(models))
-	for _, model := range models {
-		got = append(got, model.Name)
 	}
-	want := []string{"glm-5.3-flash:cloud", "glm-5.3:cloud", "gemma4:31b-cloud"}
-	if !slices.Equal(got, want) {
-		t.Fatalf("catalog order = %v, want picker order %v", got, want)
+	for _, primary := range []string{"glm-5.3-flash:cloud", "gemma4:31b-cloud"} {
+		t.Run(primary, func(t *testing.T) {
+			setTestHome(t, t.TempDir())
+			app := &CodexApp{}
+			if err := app.ConfigureWithModels(primary, testLaunchModels(want...)); err != nil {
+				t.Fatal(err)
+			}
+			if got := app.CurrentModel(); got != primary {
+				t.Errorf("configured default = %q, want %q", got, primary)
+			}
+			data, err := os.ReadFile(mustCodexAppModelCatalogPath(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var catalog struct {
+				Models []struct {
+					Slug     string `json:"slug"`
+					Priority int    `json:"priority"`
+				} `json:"models"`
+			}
+			if err := json.Unmarshal(data, &catalog); err != nil {
+				t.Fatal(err)
+			}
+			if len(catalog.Models) != len(want)+1 {
+				t.Fatalf("catalog = %#v, want five Ollama models and the native model", catalog)
+			}
+			for i, model := range catalog.Models {
+				if i < len(want) && model.Slug != want[i] {
+					t.Errorf("model %d = %q, want %q", i, model.Slug, want[i])
+				}
+				if i > 0 && model.Priority <= catalog.Models[i-1].Priority {
+					t.Errorf("model %q priority = %d, want after %q", model.Slug, model.Priority, catalog.Models[i-1].Slug)
+				}
+			}
+		})
 	}
 }
 

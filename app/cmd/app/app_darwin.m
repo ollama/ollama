@@ -17,8 +17,6 @@ extern NSString *SystemWidePath;
 
 static NSString *const ClaudeDownloadPageURL = @"https://claude.com/download";
 static NSString *const ChatGPTDownloadPageURL = @"https://chatgpt.com/download";
-// OpenAI's official ChatGPT desktop documentation links to this latest
-// Apple-silicon disk image.
 static NSString *const ChatGPTDiskImageURL =
     @"https://persistent.oaistatic.com/codex-app-prod/Codex.dmg";
 static NSString *const ShowAppsInMenuDefaultsKey = @"ShowAppsInMenu";
@@ -732,8 +730,7 @@ static NSImage *ollamaApplicationIcon(void) {
 
 - (void)applyShowAppsInMenu:(BOOL)visible {
     BOOL claudeVisible = visible && HasUsedClaudeDesktopIntegration();
-    // Keep ChatGPT discoverable before installation; its menu switch starts
-    // the download flow just like Claude's first-run switch.
+    // Keep the installation flow accessible from the menu.
     BOOL codexVisible = visible;
     [self.claudeMenuItem setHidden:!claudeVisible];
     [self.codexMenuItem setHidden:!codexVisible];

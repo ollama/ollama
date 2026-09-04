@@ -51,17 +51,11 @@ var guardianDecisionTool = map[string]any{
 	},
 }
 
-// autoReviewState is the per-request seam between the core proxy and the
-// auto-review translation layer. The core calls its methods unconditionally;
-// every branch that knows about Codex's native auto-review alias lives here.
 type autoReviewState struct {
 	alias    bool // requested model is the native auto-review alias
 	eligible bool // routed auto-review call that needs translation
 }
 
-// resolveModel maps the native auto-review alias to the catalog's configured
-// Ollama model and rewrites the request body. Other requests pass through
-// unchanged.
 func (s *autoReviewState) resolveModel(model string, catalog routingCatalog, body []byte) (string, []byte, error) {
 	if modelKey(model) != modelKey(autoReviewModel) {
 		return model, body, nil
@@ -77,8 +71,6 @@ func (s *autoReviewState) resolveModel(model string, catalog routingCatalog, bod
 	return catalog.autoReviewModel, replaced, nil
 }
 
-// prepareRequest injects the Guardian decision tool into a routed auto-review
-// call to the Responses endpoint. Other requests pass through unchanged.
 func (s *autoReviewState) prepareRequest(routed bool, suffix string, body []byte) ([]byte, error) {
 	s.eligible = s.alias && routed && suffix == "/v1/responses"
 	if !s.eligible {
@@ -87,15 +79,11 @@ func (s *autoReviewState) prepareRequest(routed bool, suffix string, body []byte
 	return prepareAutoReviewRequest(body)
 }
 
-// buffersResponse reports whether a successful response must be fully read and
-// transformed before it is sent to the client.
 func (s *autoReviewState) buffersResponse(status int) bool {
 	return s.eligible && status >= http.StatusOK && status < http.StatusMultipleChoices
 }
 
-// prepareAutoReviewRequest gives Ollama a typed terminal action for the
-// Guardian decision. Codex does not know about this proxy-owned tool, so the
-// response path consumes it and returns the JSON text Codex already expects.
+// Codex expects JSON text, so consume the proxy-owned decision tool in the response path.
 func prepareAutoReviewRequest(body []byte) ([]byte, error) {
 	var payload map[string]json.RawMessage
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -311,9 +299,7 @@ func inspectAutoReviewOutput(output []json.RawMessage) (autoReviewInspection, er
 		case "reasoning":
 			continue
 		case "message":
-			// Some otherwise reliable tool-capable models emit explanatory prose
-			// alongside the decision call. The validated call is authoritative;
-			// record the prose item so both JSON and SSE paths can discard it.
+			// A validated decision call takes precedence over accompanying prose.
 			if item.ID == "" {
 				return result, errors.New("Guardian assistant message has no item ID")
 			}

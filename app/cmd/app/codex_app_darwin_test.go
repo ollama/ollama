@@ -751,7 +751,7 @@ func TestCodexDesktopDefaultsForTeamAccountUsesFirstFiveRecommendations(t *testi
 	}
 }
 
-func TestCodexDesktopDefaultsForTeamAccountMatchDeployedRecommendations(t *testing.T) {
+func TestCodexDesktopDefaultsKeepPickerOrderAcrossAccounts(t *testing.T) {
 	recommendations := []api.ModelRecommendation{
 		{Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"},
 		{Model: "glm-5.3:cloud", RequiredPlan: "pro"},
@@ -759,34 +759,58 @@ func TestCodexDesktopDefaultsForTeamAccountMatchDeployedRecommendations(t *testi
 		{Model: "deepseek-v4-flash:cloud", RequiredPlan: "pro"},
 		{Model: "gemma4:31b-cloud", RequiredPlan: "free"},
 	}
-	inventory := buildCodexDesktopModelInventory(
-		recommendations,
-		[]api.ListModelResponse{{Name: "gemma4:12b"}},
-		[]string{"gemma4:31b:cloud"},
-		proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "team"},
-		true,
-		true,
-		true,
-	)
-
-	got := codexDesktopModelNames(inventory.Defaults)
 	want := []string{
-		"glm-5.3-flash:cloud",
-		"glm-5.3:cloud",
 		"kimi-k3:cloud",
+		"glm-5.3:cloud",
+		"glm-5.3-flash:cloud",
 		"deepseek-v4-flash:cloud",
 		"gemma4:31b:cloud",
 	}
-	if !slices.Equal(got, want) {
-		t.Fatalf("defaults = %v, want deployed recommendation order %v", got, want)
-	}
-	if len(inventory.Catalog) != len(recommendations)+1 {
-		t.Fatalf("catalog = %#v, want five recommendations and one local model", inventory.Catalog)
-	}
-	for i, entry := range inventory.Catalog[:len(recommendations)] {
-		if !entry.Recommended || entry.Availability != proxy.ClaudeDesktopAvailabilityAvailable {
-			t.Fatalf("recommendation %d = %#v, want available recommendation", i, entry)
-		}
+	for _, plan := range []string{"signed out", "free", "pro", "max", "team"} {
+		t.Run(plan, func(t *testing.T) {
+			access := proxy.ClaudeDesktopAccessState{
+				Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: plan,
+			}
+			if plan == "signed out" {
+				access.Account = proxy.ClaudeDesktopAccountSignedOut
+				access.Plan = ""
+			}
+			inventory := buildCodexDesktopModelInventory(
+				recommendations,
+				[]api.ListModelResponse{{Name: "gemma4:12b"}},
+				[]string{"gemma4:31b:cloud"},
+				access,
+				true,
+				true,
+				true,
+			)
+			if got := codexDesktopModelNames(inventory.Defaults); !slices.Equal(got, want) {
+				t.Fatalf("defaults = %v, want picker order %v", got, want)
+			}
+			wantPrimary := "glm-5.3-flash:cloud"
+			if plan == "free" || plan == "signed out" {
+				wantPrimary = "gemma4:31b:cloud"
+			}
+			if inventory.DefaultPrimary != wantPrimary {
+				t.Errorf("default primary = %q, want %q", inventory.DefaultPrimary, wantPrimary)
+			}
+			if len(inventory.Catalog) != len(recommendations)+1 {
+				t.Fatalf("catalog = %#v, want five recommendations and one local model", inventory.Catalog)
+			}
+			for i, entry := range inventory.Catalog[:len(recommendations)] {
+				if !entry.Recommended || entry.Model.Name != want[i] {
+					t.Errorf("recommendation %d = %#v, want %q", i, entry, want[i])
+				}
+			}
+			custom := []string{"gemma4:31b:cloud", "kimi-k3:cloud", "glm-5.3-flash:cloud"}
+			_, selected, err := selectCodexDesktopModels(custom, inventory.Available)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := codexDesktopModelNames(selected); !slices.Equal(got, custom) {
+				t.Errorf("custom picker order = %v, want saved order %v", got, custom)
+			}
+		})
 	}
 }
 

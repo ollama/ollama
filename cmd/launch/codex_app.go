@@ -72,8 +72,7 @@ var (
 	codexAppExitTimeout = 5 * time.Second
 )
 
-// CodexApp keeps ChatGPT's built-in OpenAI provider and adds selected Ollama
-// models to its catalog. A loopback router chooses the upstream per request.
+// CodexApp adds Ollama models to ChatGPT's native catalog using a loopback router.
 type CodexApp struct{}
 
 // ErrCodexAppRestartConfirmationRequired reports that changing the regular
@@ -166,8 +165,7 @@ func (c *CodexApp) CurrentModel() string {
 		return codexAppFirstRoutingModel()
 	}
 
-	// Recognize older custom-provider layouts so an existing prototype can be
-	// migrated to the built-in OpenAI provider without losing restore state.
+	// Recognize legacy provider layouts without losing restore state.
 	for _, profileName := range codexAppManagedProfileNames() {
 		if parsed.RootString(codexRootModelProviderKey) == profileName {
 			baseURL := parsed.ProviderString(profileName, "base_url")
@@ -250,8 +248,7 @@ func codexAppCatalogHealthy(config codexParsedConfig, profileName string) bool {
 	return len(catalog.Models) > 0
 }
 
-// codexAppCatalogContainsModel reports whether model appears in the Ollama-only
-// routing catalog. Native ChatGPT models deliberately do not appear there.
+// Check the routing allow-list, not the combined picker catalog.
 func codexAppCatalogContainsModel(model string) bool {
 	if strings.TrimSpace(model) == "" {
 		return false
@@ -324,9 +321,7 @@ func writeCodexAppConfig(configPath, model, modelCatalogPath string) error {
 	text = codexRemoveRootValue(text, codexRootProfileKey)
 	text = codexAppRemoveOwnedSections(text)
 	text = codexSetRootStringValue(text, codexRootModelKey, model)
-	// Codex defaults an omitted model_provider to OpenAI. Leaving it unset keeps
-	// ChatGPT's native account controls visible while the loopback base URL
-	// continues to route each request by model.
+	// Leave model_provider unset to preserve ChatGPT's native account controls.
 	text = codexRemoveRootValue(text, codexRootModelProviderKey)
 	text = codexSetRootStringValue(text, codexRootModelCatalogJSONKey, modelCatalogPath)
 	text = codexSetRootStringValue(text, codexRootOpenAIBaseURLKey, baseURL)
@@ -384,8 +379,7 @@ func codexAppReasoningEffortsForConfig(text string) []string {
 			return codexAppMergeReasoningEfforts(existing)
 		}
 	}
-	// Preserve ChatGPT's built-in desktop choices and add only the two values
-	// this integration needs for binary off and GLM's maximum effort.
+	// Add missing thinking levels without replacing native choices.
 	return []string{"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
 }
 
@@ -556,9 +550,7 @@ type codexAppManagedAuth struct {
 	AuthMode     string `json:"auth_mode"`
 }
 
-// ensureCodexAppManagedAuth skips ChatGPT's login screen for a signed-out
-// user. An existing auth file always belongs to the user and is never read or
-// changed here.
+// Create local auth only when absent; never read or replace an existing auth file.
 func ensureCodexAppManagedAuth(configPath string) (bool, error) {
 	authPath := filepath.Join(filepath.Dir(configPath), "auth.json")
 	if err := os.MkdirAll(filepath.Dir(authPath), 0o700); err != nil {
@@ -598,8 +590,7 @@ func ensureCodexAppManagedAuth(configPath string) (bool, error) {
 	return true, nil
 }
 
-// removeCodexAppManagedAuth removes only the exact local sentinel created by
-// Ollama. A real login or API key that replaced it is left untouched.
+// Remove only Ollama's exact sentinel, never a user login or API key.
 func removeCodexAppManagedAuth(configPath string) error {
 	authPath := filepath.Join(filepath.Dir(configPath), "auth.json")
 	data, err := os.ReadFile(authPath)
@@ -668,8 +659,7 @@ func (c *CodexApp) OllamaConfigured() bool {
 	if err == nil {
 		if data, readErr := os.ReadFile(configPath); readErr == nil {
 			if parsed, parseErr := codexParseConfig(string(data)); parseErr == nil && codexAppRootUsesProxy(parsed) {
-				// Report the managed root independently of catalog health so a
-				// damaged or deleted catalog never hides the off-switch.
+				// A damaged catalog must not hide the off-switch.
 				return true
 			}
 		}
@@ -683,8 +673,7 @@ func (c *CodexApp) Running() bool {
 }
 
 // UseOllamaFromDesktop adds Ollama models to the regular ChatGPT profile.
-// ChatGPT is stopped before its startup-only catalog changes, then reopened
-// with the same account, native models, chats, plugins, and skills.
+// Its startup-only catalog requires a confirmed restart when running.
 func (c *CodexApp) UseOllamaFromDesktop(primary string, models []LaunchModel, restartConfirmed bool) error {
 	return c.updateOllamaModelsFromDesktop(primary, models, true, restartConfirmed)
 }
@@ -705,9 +694,7 @@ func (c *CodexApp) updateOllamaModelsFromDesktop(primary string, models []Launch
 	if err := codexAppRouterHealth(); err != nil {
 		return err
 	}
-	// Check before legacy cleanup so declining a restart is a complete no-op.
-	// codexAppApplyProfileFromDesktop checks again after cleanup so a ChatGPT
-	// instance that appears during preparation still requires consent.
+	// Check before cleanup so cancellation is a no-op; check again when applying the profile.
 	if (codexAppIsRunning() || codexAppProfileIsRunning()) && !restartConfirmed {
 		return ErrCodexAppRestartConfirmationRequired
 	}
@@ -771,9 +758,7 @@ func (c *CodexApp) RestoreFromDesktop(restartConfirmed bool) error {
 	return codexAppApplyProfileFromDesktop(restoreCodexAppProfile, false, restartConfirmed)
 }
 
-// RestartFromDesktop repairs the existing catalog's auth visibility and
-// restarts the regular ChatGPT profile without fetching live model inventory.
-// This keeps restart available when Ollama's inventory is temporarily offline.
+// RestartFromDesktop repairs and restarts the saved profile without requiring live inventory.
 func (c *CodexApp) RestartFromDesktop(restartConfirmed bool) error {
 	if err := codexAppSupported(); err != nil {
 		return err
@@ -963,10 +948,8 @@ type codexAppRawModelCatalog struct {
 	Models []json.RawMessage `json:"models"`
 }
 
-// writeCodexAppCombinedModelCatalog prepends selected Ollama models. Codex
-// filters non-ChatGPT sessions by supported_in_api, so Ollama entries remain
-// enabled while native entries are marked ChatGPT-only. The separately written
-// routing catalog remains the only authority for requests sent to Ollama.
+// supported_in_api controls visibility outside ChatGPT-account sessions.
+// The separate routing catalog, not this combined picker, determines upstreams.
 func writeCodexAppCombinedModelCatalog(path string, models []LaunchModel, nativeCatalogData []byte) error {
 	if len(models) == 0 {
 		return fmt.Errorf("chatgpt model catalog cannot be empty")
@@ -1027,10 +1010,7 @@ func codexAppCatalogEntryWithAPISupport(entry json.RawMessage, supported bool) (
 	return json.Marshal(fields)
 }
 
-// repairCodexAppCatalogAuthVisibility migrates catalogs written by older
-// builds without contacting Ollama. Entries in the routing catalog are Ollama
-// models; every other entry is a native model that Codex should only show for
-// ChatGPT-account sessions.
+// Repair legacy visibility using the routing catalog without contacting Ollama.
 func repairCodexAppCatalogAuthVisibility() error {
 	configPath, err := codexConfigPath()
 	if err != nil {
@@ -1265,10 +1245,7 @@ func codexAppModelMetadataFromLaunchModel(model LaunchModel) codexAppModelMetada
 	return metadata
 }
 
-// codexAppThinkingContractForModel translates the server-owned Ollama think
-// contract into Codex picker levels. The raw value map is retained so the
-// loopback router can translate the selected Codex level back without losing
-// boolean thinking controls.
+// Retain raw thinking values so the proxy can round-trip Codex levels, including booleans.
 func codexAppThinkingContractForModel(model LaunchModel) codexAppThinkingContract {
 	if contract, ok := codexAppThinkingContractFromRecommendation(model.Thinking); ok {
 		return contract
@@ -1283,16 +1260,14 @@ func codexAppThinkingContractForModel(model LaunchModel) codexAppThinkingContrac
 		normalized := strings.NewReplacer("-", "", "_", "", ".", "").Replace(strings.ToLower(strings.TrimSpace(family)))
 		switch normalized {
 		case "glm5next", "glmdsamoe":
-			// GLM 5.3 Flash and GLM 5.3 use different family identifiers,
-			// but expose the same adjustable thinking contract.
+			// These family identifiers share a thinking contract.
 			return codexAppStringThinkingContract("max", "low", "high", "max")
 		case "gptoss":
 			return codexAppStringThinkingContract("medium", "low", "medium", "high")
 		}
 	}
 
-	// A binary Thinking capability promises on/off control, but not adjustable
-	// effort. "none" maps to off and "medium" maps to on.
+	// Binary thinking maps "none" to off and "medium" to on.
 	return codexAppThinkingContract{
 		defaultLevel: "medium",
 		levels:       []string{"none", "medium"},
@@ -1382,8 +1357,7 @@ func codexAppCatalogEntry(model string, metadata codexAppModelMetadata, priority
 		})
 	}
 
-	// API-key sessions filter out entries with supported_in_api=false. The
-	// loopback router supports this model in both OpenAI auth modes.
+	// Keep Ollama models visible in API-key sessions.
 	return map[string]any{
 		"slug":                                 model,
 		"display_name":                         model,
@@ -1470,10 +1444,7 @@ func codexAppBaseInstructionsFromCatalog(catalog codexAppRawModelCatalog) string
 	return codexAppBaseInstructions()
 }
 
-// defaultCodexAppNativeModelCatalog asks the desktop app's Codex binary for a
-// clean native catalog using a scratch CODEX_HOME. The user's auth and cache
-// are copied read-only so signed-in model metadata remains available without
-// loading this integration's generated catalog.
+// Probe the native catalog in a scratch CODEX_HOME to avoid loading the generated catalog.
 func defaultCodexAppNativeModelCatalog(configPath string) ([]byte, error) {
 	var attempts []error
 	executable, executableErr := codexAppCodexExecutable()
@@ -1586,9 +1557,7 @@ func defaultCodexAppRunDebugModels(executable, codexHome string, bundled bool) (
 	}
 	cmd := exec.CommandContext(ctx, executable, args...)
 	cmd.Env = codexAppDebugModelsEnvironment(codexHome)
-	// Never inherit Ollama.app's launch directory. On macOS that directory can
-	// be Documents, which makes this read-only catalog probe trigger an unrelated
-	// Files & Folders permission prompt.
+	// Avoid inheriting Documents as cwd and triggering a Files & Folders prompt.
 	if codexHome != "" {
 		cmd.Dir = codexHome
 	} else {
@@ -1948,9 +1917,7 @@ func codexAppOllamaProfileSingletonPID(userDataDir string) (int, bool) {
 	return pid, true
 }
 
-// The current integration never starts a second ChatGPT instance. This legacy
-// detector remains only to close an isolated prototype process before the
-// single-profile integration is enabled or restored.
+// Detect isolated legacy processes for cleanup; this integration uses one profile.
 func defaultCodexAppOllamaProfileIsRunning() bool {
 	pid, ok := codexAppOllamaProfilePID()
 	if !ok {

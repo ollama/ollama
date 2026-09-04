@@ -35,10 +35,7 @@ func replaceRequestModel(body []byte, model string) ([]byte, error) {
 	return json.Marshal(payload)
 }
 
-// normalizeOllamaRequestBody translates Codex-specific Responses history into
-// the subset accepted by Ollama's OpenAI-compatible Responses endpoint.
-// Provider-specific native reasoning is omitted while Ollama reasoning stays
-// available to its own multi-step tool loop.
+// normalizeOllamaRequestBody removes incompatible provider state while preserving Ollama tool history.
 func normalizeOllamaRequestBody(body []byte, model routingModel) ([]byte, error) {
 	normalized, _, err := normalizeRequestInput(body, normalizeOllamaInputItem)
 	if err != nil || model.Thinking == nil {
@@ -88,8 +85,7 @@ func normalizeOllamaThinking(body []byte, metadata routingThinkingMetadata) ([]b
 
 	normalizedEffort := normalizeThinkingEffort(effort, metadata.Levels)
 	if normalizedEffort == "" {
-		// A stale selection from another model should not make this request fail.
-		// Omitting effort lets Ollama apply the selected model's own behavior.
+		// Omit stale effort selections so the model can use its default.
 		delete(reasoning, "effort")
 	} else {
 		encodedEffort, err := json.Marshal(normalizedEffort)
@@ -98,9 +94,7 @@ func normalizeOllamaThinking(body []byte, metadata routingThinkingMetadata) ([]b
 		}
 		reasoning["effort"] = encodedEffort
 		if rawValue, ok := metadata.Values[normalizedEffort]; ok {
-			// Codex exposes named reasoning efforts, while Ollama models may use
-			// boolean thinking controls. Preserve the server-advertised raw value
-			// in an Ollama-only extension consumed by the Responses adapter.
+			// Preserve boolean thinking values that Codex's named efforts cannot represent.
 			payload["think"] = rawValue
 		}
 	}
@@ -126,8 +120,7 @@ func normalizeThinkingEffort(effort string, levels []string) string {
 	}
 
 	if slices.Equal(levels, []string{"none", "medium"}) && normalized != "none" {
-		// Ollama represents the enabled side of a binary thinking control as
-		// medium even when the underlying model has no adjustable effort ladder.
+		// Binary thinking uses "medium" for on, not an adjustable effort level.
 		return "medium"
 	}
 	if slices.Contains(levels, normalized) {
@@ -140,10 +133,8 @@ func normalizeThinkingEffort(effort string, levels []string) string {
 	return ""
 }
 
-// normalizeNativeRequestBody removes Ollama reasoning items before a native
-// request reaches OpenAI. Ollama's Responses adapter currently serializes
-// plaintext thinking as encrypted_content, which OpenAI correctly rejects as
-// invalid ciphertext. Visible messages and tool history remain in the input.
+// normalizeNativeRequestBody strips Ollama state that OpenAI cannot decrypt,
+// preserving visible messages and tool history.
 func normalizeNativeRequestBody(body []byte) ([]byte, bool, error) {
 	return normalizeRequestInput(body, normalizeChatGPTInputItem)
 }
@@ -220,12 +211,7 @@ func normalizeOllamaInputItem(item json.RawMessage) (json.RawMessage, bool, erro
 		if header.Role != "developer" {
 			return item, true, nil
 		}
-		// Codex carries collaboration-mode and safety instructions in developer
-		// messages. Ollama models and provider adapters do not consistently give
-		// that role instruction priority, while system is universally supported.
-		// Translate the role only on the Ollama route so Plan mode and the rest of
-		// Codex's instruction contract receive the highest broadly supported
-		// priority.
+		// Map developer instructions to system for models without developer-role support.
 		var message map[string]json.RawMessage
 		if err := json.Unmarshal(item, &message); err != nil {
 			return nil, false, fmt.Errorf("decode developer message: %w", err)
@@ -239,14 +225,10 @@ func normalizeOllamaInputItem(item json.RawMessage) (json.RawMessage, bool, erro
 	case "function_call", "function_call_output":
 		return item, true, nil
 	case "tool_search_call", "tool_search_output", "compaction_trigger":
-		// These client-executed control items are handled by Ollama's Responses
-		// adapter. Preserve them so tool discovery and compaction work through the
-		// ChatGPT loopback router, not only when calling /v1/responses directly.
+		// Preserve client-executed control items for the Responses adapter.
 		return item, true, nil
 	case "compaction":
-		// Native OpenAI compaction state is opaque and cannot be consumed by
-		// Ollama. Ollama compaction state is a versioned JSON payload and must
-		// reach the server middleware so it can be expanded before inference.
+		// Only Ollama compaction state can be expanded by the server middleware.
 		return item, isOllamaCompactionItem(item), nil
 	case "reasoning":
 		var reasoning struct {
@@ -255,9 +237,7 @@ func normalizeOllamaInputItem(item json.RawMessage) (json.RawMessage, bool, erro
 		if err := json.Unmarshal(item, &reasoning); err != nil {
 			return nil, false, fmt.Errorf("decode reasoning item: %w", err)
 		}
-		// Native encrypted reasoning is provider-specific opaque state. Do not
-		// send it to Ollama, while retaining Ollama's own reasoning during its
-		// multi-step tool loop.
+		// Keep Ollama reasoning for tool loops, but omit native encrypted state.
 		return item, isOllamaReasoningItemID(reasoning.ID), nil
 	case "custom_tool_call":
 		var call struct {
@@ -296,9 +276,7 @@ func normalizeOllamaInputItem(item json.RawMessage) (json.RawMessage, bool, erro
 		})
 		return converted, true, err
 	default:
-		// Compaction data is encrypted for the native OpenAI backend, and other
-		// Codex-only item types have no Ollama Responses equivalent. Omitting
-		// them is preferable to rejecting the entire otherwise usable history.
+		// Ignore unsupported items without rejecting the remaining history.
 		return nil, false, nil
 	}
 }
@@ -329,10 +307,7 @@ func normalizeChatGPTInputItem(item json.RawMessage) (json.RawMessage, bool, err
 		return nil, false, nil
 	}
 	if header.Type == "compaction" && isOllamaCompactionItem(item) {
-		// Ollama's compaction payload is local plaintext state stored in the
-		// Responses encrypted_content field. OpenAI cannot decrypt it, so omit it
-		// on a provider switch just as native compaction state is omitted on the
-		// Ollama route.
+		// OpenAI cannot decrypt Ollama compaction state; omit it when switching providers.
 		return nil, false, nil
 	}
 	return item, true, nil

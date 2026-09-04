@@ -32,15 +32,12 @@ const (
 	// shown by the Codex model picker.
 	CodexDesktopModelCatalogFilename = "ollama-launch-models.json"
 
-	// CodexDesktopRoutingCatalogFilename contains only Ollama model slugs.
-	// Keeping the router allow-list separate from the picker catalog ensures native Codex
-	// models continue to pass through to their normal OpenAI upstream.
+	// CodexDesktopRoutingCatalogFilename is the Ollama-only routing allow-list,
+	// separate from the combined picker catalog.
 	CodexDesktopRoutingCatalogFilename = "ollama-launch-codex-routing.json"
 
-	// CodexDesktopManagedAPIKey is a local sentinel used to let signed-out
-	// ChatGPT users open Codex directly with Ollama models. It is never valid for an OpenAI
-	// upstream and the router must reject it before any native request leaves
-	// the machine.
+	// CodexDesktopManagedAPIKey is a local-only sentinel, never an OpenAI credential.
+	// Reject it before forwarding any request to OpenAI.
 	CodexDesktopManagedAPIKey = "ollama-local-codex"
 
 	defaultMaxBodyBytes = int64(64 << 20)
@@ -59,10 +56,8 @@ type CodexDesktopConfig struct {
 	Transport          http.RoundTripper
 }
 
-// CodexDesktop routes catalog-listed model slugs to Ollama and passes every
-// other request to the native upstream selected by Codex's authentication mode.
-// The Ollama server mounts this handler on its existing listener, so one
-// loopback port serves both routes.
+// CodexDesktop routes catalog-listed models to Ollama and other requests to
+// their native upstream, using the existing Ollama listener.
 type CodexDesktop struct {
 	ollamaURL          *url.URL
 	chatGPTURL         *url.URL
@@ -180,11 +175,7 @@ func (h *CodexDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	started := time.Now()
 	if isWebSocketUpgrade(r) {
-		// Codex's built-in OpenAI provider prefers the Responses WebSocket
-		// transport. This proxy deliberately routes each complete HTTP request by
-		// model, so tell Codex to use its supported HTTP fallback instead of
-		// retrying a failed WebSocket connection. Codex treats 426 as a permanent
-		// transport fallback for the current session.
+		// Codex treats 426 as a session-wide fallback to HTTP, which allows per-request routing.
 		h.logActivity(started, r.Method, suffix, "", "none", http.StatusUpgradeRequired, "http_fallback")
 		writeJSONError(w, http.StatusUpgradeRequired, "Codex proxy uses the HTTP Responses transport")
 		return
@@ -229,9 +220,7 @@ func (h *CodexDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The built-in OpenAI provider sends both authentication modes through
-	// openai_base_url. ChatGPT-account requests carry ChatGPT-Account-ID;
-	// API-key requests do not. Preserve Codex's normal auth-aware upstream.
+	// ChatGPT-Account-ID distinguishes account sessions from API-key requests.
 	targetBase := h.openAIURL
 	targetSuffix := strings.TrimPrefix(suffix, "/v1")
 	route := "openai"
@@ -284,8 +273,6 @@ func (h *CodexDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	recorder := &responseRecorder{ResponseWriter: w}
 	h.proxy.ServeHTTP(recorder, r.WithContext(context.WithValue(r.Context(), proxyRequestKey{}, state)))
 
-	// ReverseProxy owns the response write; recover the terminal result for the
-	// activity log from the state its hooks recorded and any client write error.
 	result := state.result
 	if result == "" {
 		result = "ok"
@@ -306,12 +293,9 @@ func (h *CodexDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.logActivity(started, r.Method, suffix, model, route, status, result)
 }
 
-// proxyRequestKey carries the per-request routing state through the reverse
-// proxy hooks.
 type proxyRequestKey struct{}
 
-// proxyRequest holds the routing decisions ServeHTTP made for one request;
-// the reverse proxy hooks apply them and record how the upstream responded.
+// proxyRequest shares routing and response state between reverse-proxy hooks.
 type proxyRequest struct {
 	started      time.Time
 	method       string
@@ -329,8 +313,6 @@ type proxyRequest struct {
 	result       string // terminal activity-log result set by a hook
 }
 
-// proxyError routes a hook failure to the exact response and activity-log
-// result the request path requires.
 type proxyError struct {
 	status  int
 	message string
@@ -347,8 +329,7 @@ func (h *CodexDesktop) rewrite(pr *httputil.ProxyRequest) {
 	pr.Out.Body = io.NopCloser(bytes.NewReader(state.body))
 	pr.Out.ContentLength = int64(len(state.body))
 	if state.routed {
-		// Only forward headers Ollama accepts; this also keeps Codex
-		// credentials from ever reaching the local server.
+		// Never forward Codex credentials to Ollama.
 		pr.Out.Header = make(http.Header)
 		copyOllamaRequestHeaders(pr.Out.Header, pr.In.Header)
 		return
@@ -356,9 +337,7 @@ func (h *CodexDesktop) rewrite(pr *httputil.ProxyRequest) {
 	if state.normalized {
 		pr.Out.Header.Del("Content-Encoding")
 	}
-	// ReverseProxy already stripped hop-by-hop and connection-token headers.
-	// X-Forwarded-* is opt-in via SetXForwarded and stays unset, matching the
-	// wire behavior of the previous hand-rolled forwarder.
+	// ReverseProxy strips hop-by-hop headers; leave X-Forwarded-* unset.
 }
 
 func (h *CodexDesktop) modifyResponse(resp *http.Response) error {
@@ -374,6 +353,11 @@ func (h *CodexDesktop) modifyResponse(resp *http.Response) error {
 			h.ollamaRequests.Add(1)
 		} else {
 			h.chatGPTRequests.Add(1)
+		}
+	}
+	if state.routed {
+		if err := h.rewriteAccessErrors(resp); err != nil {
+			return err
 		}
 	}
 	if !state.autoReview.buffersResponse(resp.StatusCode) {
@@ -405,7 +389,7 @@ func (h *CodexDesktop) modifyResponse(resp *http.Response) error {
 			result:  "response_error",
 		}
 	}
-	// Let the server compute the framing, as the previous write path did.
+	// Recompute framing after rewriting the response.
 	resp.Body.Close()
 	resp.Body = io.NopCloser(bytes.NewReader(responseBody))
 	resp.ContentLength = -1
@@ -433,8 +417,6 @@ func (h *CodexDesktop) upstreamError(w http.ResponseWriter, r *http.Request, err
 	writeJSONError(w, http.StatusBadGateway, err.Error())
 }
 
-// responseRecorder records how the response write to Codex went so
-// ServeHTTP can log the terminal result of the request.
 type responseRecorder struct {
 	http.ResponseWriter
 	writeErr error
