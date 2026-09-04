@@ -222,7 +222,7 @@ export default function Chat({ chatId }: { chatId: string }) {
           <section
             key={chatId} // This key forces React to recreate the element when chatId changes
             ref={containerRef}
-            className={`flex-1 overflow-y-auto overscroll-contain relative min-h-0 select-none ${isWindows ? "xl:pt-4" : "xl:pt-8"}`}
+            className={`flex-1 overflow-y-auto overscroll-contain [overflow-anchor:auto] relative min-h-0 select-none ${isWindows ? "xl:pt-4" : "xl:pt-8"}`}
           >
             <MessageList
               messages={messages}
