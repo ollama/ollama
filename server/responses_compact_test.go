@@ -159,6 +159,89 @@ func TestResponsesCompactUsesOrdinarySelectedCloudModel(t *testing.T) {
 	}
 }
 
+func TestResponsesCompactionPreservesSelectedImageIntoNextTurn(t *testing.T) {
+	const imageURL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+	local, capture := newCompactionTestServer(t, func(attempt int, w http.ResponseWriter, _ *http.Request, _ []byte) {
+		w.Header().Set("Content-Type", "application/json")
+		if attempt == 1 {
+			_, _ = w.Write(summaryResponse(t, "Keep the source image available.", []string{"item_000001"}))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"resp_next","object":"response","status":"completed","model":"fixture","output":[],"usage":null}`))
+	})
+
+	status, _, body := postCompactionRequest(t, local, "/v1/responses/compact", `{
+		"model":"fixture:cloud",
+		"input":[{"type":"message","role":"user","content":[
+			{"type":"input_text","text":"inspect this image"},
+			{"type":"input_image","detail":"auto","image_url":"`+imageURL+`"}
+		]}]
+	}`)
+	if status != http.StatusOK {
+		t.Fatalf("compact status=%d body=%s", status, body)
+	}
+	var compacted openai.ResponsesCompactedResponse
+	if err := json.Unmarshal(body, &compacted); err != nil {
+		t.Fatal(err)
+	}
+	if len(compacted.Output) != 1 {
+		t.Fatalf("unexpected compact response: %+v", compacted)
+	}
+
+	request, err := json.Marshal(map[string]any{
+		"model": "fixture:cloud", "stream": false,
+		"input": []any{
+			compacted.Output[0],
+			map[string]any{"type": "message", "role": "user", "content": "what was in it?"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, _, body = postCompactionRequest(t, local, "/v1/responses", string(request))
+	if status != http.StatusOK {
+		t.Fatalf("follow-up status=%d body=%s", status, body)
+	}
+
+	paths, bodies := capture.snapshot()
+	if len(paths) != 2 || paths[0] != "/v1/responses" || paths[1] != "/v1/responses" {
+		t.Fatalf("unexpected upstream requests: %v", paths)
+	}
+	var summaryRequest struct {
+		Input []struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"input"`
+	}
+	if err := json.Unmarshal(bodies[0], &summaryRequest); err != nil {
+		t.Fatal(err)
+	}
+	if len(summaryRequest.Input) != 2 {
+		t.Fatalf("unexpected summary input: %s", bodies[0])
+	}
+	var blocks []struct {
+		Type     string `json:"type"`
+		Text     string `json:"text"`
+		ImageURL string `json:"image_url"`
+	}
+	if err := json.Unmarshal(summaryRequest.Input[1].Content, &blocks); err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) != 2 || blocks[0].Type != "input_text" || blocks[1].Type != "input_image" || blocks[1].ImageURL != imageURL {
+		t.Fatalf("compactor did not receive the source image as multimodal input: %+v", blocks)
+	}
+	if strings.Contains(blocks[0].Text, "iVBOR") {
+		t.Fatalf("image bytes leaked into transcript text: %s", blocks[0].Text)
+	}
+
+	forwarded := string(bodies[1])
+	if strings.Contains(forwarded, `"type":"compaction"`) {
+		t.Fatalf("opaque compaction item reached the next model: %s", forwarded)
+	}
+	if strings.Count(forwarded, imageURL) != 1 || !strings.Contains(forwarded, `"type":"input_image"`) {
+		t.Fatalf("selected image was not replayed exactly once on the next turn: %s", forwarded)
+	}
+}
+
 func TestResponsesCompactionTriggerReturnsCodexStream(t *testing.T) {
 	local, capture := newCompactionTestServer(t, func(_ int, w http.ResponseWriter, _ *http.Request, _ []byte) {
 		w.Header().Set("Content-Type", "application/json")
