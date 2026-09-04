@@ -1,7 +1,5 @@
 import { getClaudeDesktopAvailableModels } from "@/api";
 import { Button } from "@/components/ui/button";
-import { Description, Field, Label } from "@/components/ui/fieldset";
-import { Switch } from "@/components/ui/switch";
 import { claudeDesktopRecoveryMessage } from "@/lib/claudeDesktop";
 import { claudeDesktopModelStatusLabel } from "@/lib/claudeDesktopModelStatus";
 import type {
@@ -35,7 +33,6 @@ export interface ClaudeDesktopModelsSettingsHandle {
 interface ClaudeDesktopModelsSettingsProps {
   initialStatus?: ClaudeDesktopStatus;
   initialLocalModels?: string[];
-  initialCloudModels?: string[];
   includeCloudModels?: boolean;
   onDraftChange?: (hasChanges: boolean) => void;
 }
@@ -121,12 +118,6 @@ function mappingRecord(
       .filter((route) => route.model)
       .map((route) => [route.routeId, route.model ?? ""]),
   );
-}
-
-function formatModelList(names: string[]): string {
-  if (names.length < 2) return names[0] ?? "";
-  if (names.length === 2) return `${names[0]} or ${names[1]}`;
-  return `${names.slice(0, -1).join(", ")}, or ${names[names.length - 1]}`;
 }
 
 interface ClaudeModelPickerProps {
@@ -263,7 +254,6 @@ export const ClaudeDesktopModelsSettings = forwardRef<
   {
     initialStatus,
     initialLocalModels,
-    initialCloudModels,
     includeCloudModels = false,
     onDraftChange,
   },
@@ -284,17 +274,10 @@ export const ClaudeDesktopModelsSettings = forwardRef<
   const [localModels, setLocalModels] = useState<string[]>(
     initialLocalModels ?? [],
   );
-  const [accountCloudModels, setAccountCloudModels] = useState<string[]>(
-    initialCloudModels ?? [],
-  );
   const [modelsLoading, setModelsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
   const [resettingMappings, setResettingMappings] = useState(false);
-  const [autoModeApplying, setAutoModeApplying] = useState(false);
-  const [autoModeOverride, setAutoModeOverride] = useState<boolean | null>(
-    null,
-  );
   const draftRef = useRef({ mappings, savedMappings });
   const statusRequestRef = useRef(0);
   const operationInFlightRef = useRef(false);
@@ -353,11 +336,6 @@ export const ClaudeDesktopModelsSettings = forwardRef<
       .then((installed) => {
         if (!cancelled) {
           setLocalModels(installed.map((model) => model.model));
-          setAccountCloudModels(
-            installed
-              .filter((model) => model.isCloud())
-              .map((model) => model.model),
-          );
         }
       })
       .catch(() => {
@@ -393,7 +371,7 @@ export const ClaudeDesktopModelsSettings = forwardRef<
     const model = catalogModels.find((candidate) => candidate.name === name);
     return !model || !modelIsAvailable(model);
   });
-  const busy = applying || resettingMappings || autoModeApplying;
+  const busy = applying || resettingMappings;
 
   useEffect(() => {
     onDraftChange?.(hasDraftChanges);
@@ -479,42 +457,6 @@ export const ClaudeDesktopModelsSettings = forwardRef<
     }
   };
 
-  const toggleAutoMode = async (checked: boolean) => {
-    if (!window.setClaudeDesktopAutoMode) {
-      setError("Auto mode is available in the Ollama macOS app.");
-      return;
-    }
-    setError(null);
-    setAutoModeOverride(checked);
-    setAutoModeApplying(true);
-    operationInFlightRef.current = true;
-    ++statusRequestRef.current;
-    try {
-      let result = await window.setClaudeDesktopAutoMode(checked, false);
-      if (result.restartConfirmationRequired) {
-        applyStatus(result.status, true);
-        if (
-          !window.confirm(
-            "Restart Claude to change auto mode? Any running task will stop.",
-          )
-        ) {
-          return;
-        }
-        result = await window.setClaudeDesktopAutoMode(checked, true);
-      }
-      ++statusRequestRef.current;
-      applyStatus(result.status);
-      if (result.error) setError(result.error);
-    } catch {
-      setError("Ollama could not update Claude auto mode.");
-    } finally {
-      ++statusRequestRef.current;
-      operationInFlightRef.current = false;
-      setAutoModeOverride(null);
-      setAutoModeApplying(false);
-    }
-  };
-
   const resetToDefaults = useCallback(async (): Promise<boolean> => {
     if (operationInFlightRef.current) return false;
 
@@ -543,30 +485,6 @@ export const ClaudeDesktopModelsSettings = forwardRef<
   useImperativeHandle(ref, () => ({ resetToDefaults }), [resetToDefaults]);
 
   if (!status?.supported || !status.used) return null;
-
-  const autoModeModelNames = Array.from(
-    new Set([
-      ...models.filter((model) => model.autoMode).map((model) => model.name),
-      ...accountCloudModels,
-    ]),
-  );
-  const autoModeModelSet = new Set(autoModeModelNames);
-  const autoModeAvailable =
-    !hasDraftChanges &&
-    assignedModels.length > 0 &&
-    assignedModels.some((name) => autoModeModelSet.has(name));
-  const autoMode = autoModeAvailable
-    ? (autoModeOverride ?? status.autoMode ?? false)
-    : (status.autoMode ?? false);
-  const autoModeDescription = hasDraftChanges
-    ? "Start or restart Claude to apply model changes before changing auto mode."
-    : autoModeAvailable
-      ? "Let Claude decide when to ask before making changes."
-      : accountCloudModels.length > 0
-        ? "Select a cloud model from Ollama.com to use auto mode."
-        : autoModeModelNames.length > 0
-          ? `Select one of ${formatModelList(autoModeModelNames)} to use auto mode.`
-          : "Auto mode needs a cloud model available to your Ollama.com account.";
 
   const guidance =
     claudeDesktopRecoveryMessage(status.error, error) ??
@@ -662,21 +580,6 @@ export const ClaudeDesktopModelsSettings = forwardRef<
                 </div>
               ))}
             </div>
-
-            <Field className="mt-3 w-full max-w-xl border-t border-neutral-200 pt-3 dark:border-neutral-700">
-              <div className="flex items-center justify-between gap-4">
-                <div className="min-w-0">
-                  <Label>Enable auto mode</Label>
-                  <Description>{autoModeDescription}</Description>
-                </div>
-                <Switch
-                  checked={autoMode}
-                  disabled={busy || !autoModeAvailable}
-                  onChange={(checked) => void toggleAutoMode(checked)}
-                  className="flex-shrink-0"
-                />
-              </div>
-            </Field>
 
             {guidance && (
               <p
