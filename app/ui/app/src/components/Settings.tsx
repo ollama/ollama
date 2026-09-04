@@ -149,16 +149,13 @@ export default function Settings() {
   const {
     user,
     isAuthenticated,
-    refreshUser,
-    isRefreshing,
     refetchUser,
-    fetchConnectUrl,
     isLoading,
     disconnectUser,
+    connectUser,
+    isConnecting,
+    connectionError,
   } = useUser();
-  const [isAwaitingConnection, setIsAwaitingConnection] = useState(false);
-  const [connectionError, setConnectionError] = useState<string | null>(null);
-  const [pollingInterval, setPollingInterval] = useState<number | null>(null);
   const {
     cloudDisabled,
     cloudStatus,
@@ -278,47 +275,6 @@ export default function Settings() {
       );
   }, []);
 
-  useEffect(() => {
-    const handleFocus = () => {
-      if (isAwaitingConnection && pollingInterval) {
-        // Stop polling when window gets focus
-        clearInterval(pollingInterval);
-        setPollingInterval(null);
-        // Reset awaiting connection state
-        setIsAwaitingConnection(false);
-        // Make one last refresh request
-        refreshUser();
-      }
-    };
-
-    window.addEventListener("focus", handleFocus);
-
-    return () => {
-      window.removeEventListener("focus", handleFocus);
-    };
-  }, [isAwaitingConnection, refreshUser, pollingInterval]);
-
-  // Check if user is authenticated after refresh
-  useEffect(() => {
-    if (isAwaitingConnection && isAuthenticated) {
-      setIsAwaitingConnection(false);
-      setConnectionError(null);
-      if (pollingInterval) {
-        clearInterval(pollingInterval);
-        setPollingInterval(null);
-      }
-    }
-  }, [isAuthenticated, isAwaitingConnection, pollingInterval]);
-
-  // Cleanup interval on unmount
-  useEffect(() => {
-    return () => {
-      if (pollingInterval) {
-        clearInterval(pollingInterval);
-      }
-    };
-  }, [pollingInterval]);
-
   const handleChange = useCallback(
     (field: keyof SettingsType, value: boolean | string | number) => {
       if (settings) {
@@ -411,41 +367,6 @@ export default function Settings() {
       );
     } finally {
       setResettingToDefaults(false);
-    }
-  };
-
-  const handleConnectOllamaAccount = async () => {
-    setConnectionError(null);
-
-    // If user is already authenticated, no need to connect
-    if (isAuthenticated) {
-      return;
-    }
-
-    try {
-      // If we don't have a user or user has no name, get connect URL
-      if (!user || !user?.name) {
-        const { data: connectUrl } = await fetchConnectUrl();
-        if (connectUrl) {
-          window.open(connectUrl, "_blank");
-          setIsAwaitingConnection(true);
-          // Start polling every 5 seconds
-          const interval = setInterval(() => {
-            refreshUser();
-          }, 5000);
-          setPollingInterval(interval);
-        } else {
-          setConnectionError("Failed to get connect URL");
-        }
-      }
-    } catch (error) {
-      console.error("Error connecting to Ollama account:", error);
-      setConnectionError(
-        error instanceof Error
-          ? error.message
-          : "Failed to connect to Ollama account",
-      );
-      setIsAwaitingConnection(false);
     }
   };
 
@@ -556,10 +477,10 @@ export default function Settings() {
                     <Button
                       type="button"
                       color="white"
-                      onClick={handleConnectOllamaAccount}
-                      disabled={isRefreshing || isAwaitingConnection}
+                      onClick={connectUser}
+                      disabled={isConnecting}
                     >
-                      {isRefreshing || isAwaitingConnection ? (
+                      {isConnecting ? (
                         <AnimatedDots />
                       ) : (
                         "Sign In"
