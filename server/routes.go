@@ -55,6 +55,14 @@ import (
 
 const signinURLStr = "https://ollama.com/connect?name=%s&key=%s"
 
+// maxConcurrentEmbedRequests bounds the number of in-flight llama-server
+// requests a single /api/embed call may open. The value was chosen
+// empirically: batches that opened thousands of simultaneous connections
+// could stall or crash the runner on Windows. Embedding models are always
+// scheduled with numParallel=1, so this limit bounds connection fan-out
+// rather than inference slot parallelism.
+const maxConcurrentEmbedRequests = 8
+
 const (
 	cloudErrRemoteInferenceUnavailable    = "remote model is unavailable"
 	cloudErrRemoteModelDetailsUnavailable = "remote model details are unavailable"
@@ -975,7 +983,14 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return r.Embedding(ctx, truncated)
 	}
 
+	// Bound the number of in-flight embedding calls. /api/embed fans out one
+	// goroutine per input; a large batch (thousands of chunks) would otherwise
+	// open thousands of simultaneous HTTP connections to the single
+	// llama-server runner and can crash or stall it mid-batch on Windows.
+	// Every call that lands after the runner exits fails with
+	// "connection refused" against its now-closed port.
 	var g errgroup.Group
+	g.SetLimit(maxConcurrentEmbedRequests)
 	embeddings := make([][]float32, len(input))
 	var totalTokens uint64
 	for i, text := range input {
