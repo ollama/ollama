@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -20,12 +21,34 @@ import (
 	"github.com/ollama/ollama/logutil"
 )
 
+// anthropicPingInterval is how often a "ping" keepalive event is sent while a
+// streaming response is otherwise silent (e.g. while the model is composing
+// tool-call arguments, which produces no chat chunks at all until the call is
+// complete). Anthropic's own streaming API sends the same event as a
+// heartbeat; without it, a client can read-timeout and retry the whole
+// request during a long silent stretch. A var (not const) so tests can drive
+// it without a real multi-second sleep.
+var anthropicPingInterval = 15 * time.Second
+
 // AnthropicWriter wraps the response writer to transform Ollama responses to Anthropic format
 type AnthropicWriter struct {
 	BaseWriter
 	stream    bool
 	id        string
 	converter *anthropic.StreamConverter
+
+	// mu serializes writes to ResponseWriter between the normal write path
+	// and the keepalive ping ticker started in AnthropicMessagesMiddleware,
+	// which write concurrently from a separate goroutine.
+	mu sync.Mutex
+}
+
+// writePing sends a "ping" keepalive SSE event, guarded by mu so it can't
+// interleave with a concurrent Write call from the normal response path.
+func (w *AnthropicWriter) writePing() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.writeEvent("ping", anthropic.PingEvent{Type: "ping"})
 }
 
 func (w *AnthropicWriter) writeError(data []byte) (int, error) {
@@ -77,6 +100,9 @@ func (w *AnthropicWriter) writeResponse(data []byte) (int, error) {
 }
 
 func (w *AnthropicWriter) Write(data []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	code := w.ResponseWriter.Status()
 	if code != http.StatusOK {
 		return w.writeError(data)
@@ -828,6 +854,33 @@ func AnthropicMessagesMiddleware() gin.HandlerFunc {
 			}
 		} else {
 			c.Writer = innerWriter
+
+			// Keep the connection alive while innerWriter is the sole writer.
+			// The web search path is excluded: WebSearchAnthropicWriter drives
+			// its own async follow-up calls and writes to the same underlying
+			// ResponseWriter without sharing innerWriter's write lock, so a
+			// concurrent ping there could interleave with its output.
+			if req.Stream {
+				stop := make(chan struct{})
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					ticker := time.NewTicker(anthropicPingInterval)
+					defer ticker.Stop()
+					for {
+						select {
+						case <-stop:
+							return
+						case <-ticker.C:
+							_ = innerWriter.writePing()
+						}
+					}
+				}()
+				defer func() {
+					close(stop)
+					<-done
+				}()
+			}
 		}
 
 		c.Next()
