@@ -419,7 +419,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cache/mlx-darwin-release
-          key: mlx-darwin-${{ hashFiles('MLX_VERSION', 'MLX_C_VERSION') }}
+          # Key on every payload input so a source-built payload survives pushes.
+          key: mlx-darwin-${{ hashFiles('MLX_VERSION', 'MLX_C_VERSION', 'cmake/local.cmake', 'cmake/apply-git-patches.cmake', 'cmake/mlx/CMakeLists.txt', 'cmake/mlx/CMakePresets.json', 'x/mlxrunner/mlx/CMakeLists.txt', 'mlx/compat/**', 'x/mlxrunner/xgrammar/native/**') }}
       - name: Prepare MLX Darwin release payload
         if: ${{ startsWith(matrix.os, 'macos') }}
         run: .github/scripts/prepare_mlx_darwin.sh
@@ -485,7 +486,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cache/mlx-darwin-release
-          key: mlx-darwin-${{ hashFiles('MLX_VERSION', 'MLX_C_VERSION') }}
+          # Key on every payload input so a source-built payload survives pushes.
+          key: mlx-darwin-${{ hashFiles('MLX_VERSION', 'MLX_C_VERSION', 'cmake/local.cmake', 'cmake/apply-git-patches.cmake', 'cmake/mlx/CMakeLists.txt', 'cmake/mlx/CMakePresets.json', 'x/mlxrunner/mlx/CMakeLists.txt', 'mlx/compat/**', 'x/mlxrunner/xgrammar/native/**') }}
       - name: Prepare MLX Darwin release payload
         if: ${{ startsWith(matrix.os, 'macos') }}
         run: .github/scripts/prepare_mlx_darwin.sh
