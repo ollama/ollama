@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
 )
 
@@ -134,7 +135,15 @@ type rocmLinuxSysfsDevice struct {
 	gfxTarget  string
 	integrated bool
 	known      bool
+	gttTotal   uint64
+	gttUsed    uint64
+	gttKnown   bool
 }
+
+const (
+	rocmLinuxFitTargetEnv            = "LLAMA_ARG_FIT_TARGET"
+	rocmLinuxIntegratedFitTargetUnit = uint64(1024 * 1024)
+)
 
 func refineLinuxROCmDevices(devices []ml.DeviceInfo) []ml.DeviceInfo {
 	if runtime.GOOS != "linux" {
@@ -248,6 +257,65 @@ func applyROCmLinuxSysfsDevice(device *ml.DeviceInfo, sysfsDevice rocmLinuxSysfs
 	if sysfsDevice.known {
 		device.Integrated = sysfsDevice.integrated
 	}
+	if sysfsDevice.known && sysfsDevice.integrated && sysfsDevice.gttKnown {
+		workaroundROCmLinuxIntegratedMemory(device, sysfsDevice)
+	}
+}
+
+// workaroundROCmLinuxIntegratedMemory handles a llama.cpp/ROCm UMA reporting bug
+// where free memory can exceed the real GTT budget. Remove this once bundled
+// llama.cpp reports sane free memory for Linux ROCm integrated devices.
+func workaroundROCmLinuxIntegratedMemory(device *ml.DeviceInfo, sysfsDevice rocmLinuxSysfsDevice) {
+	if sysfsDevice.gttTotal == 0 {
+		return
+	}
+
+	reportedFree := device.FreeMemory
+	gttFree := sysfsDevice.gttTotal
+	if sysfsDevice.gttUsed < sysfsDevice.gttTotal {
+		gttFree -= sysfsDevice.gttUsed
+	} else {
+		gttFree = 0
+	}
+
+	if device.TotalMemory == 0 {
+		device.TotalMemory = sysfsDevice.gttTotal
+	}
+	if device.FreeMemory > sysfsDevice.gttTotal || (device.TotalMemory > 0 && device.FreeMemory > device.TotalMemory) {
+		device.FreeMemory = gttFree
+		setROCmLinuxIntegratedFitTarget(device, reportedFree, gttFree)
+	}
+	if device.TotalMemory > 0 && device.FreeMemory > device.TotalMemory {
+		device.FreeMemory = device.TotalMemory
+	}
+}
+
+func setROCmLinuxIntegratedFitTarget(device *ml.DeviceInfo, reportedFree, gttFree uint64) {
+	if reportedFree <= gttFree {
+		return
+	}
+	overreportedFreeMiB := (reportedFree - gttFree + rocmLinuxIntegratedFitTargetUnit - 1) / rocmLinuxIntegratedFitTargetUnit
+	targetMiB := overreportedFreeMiB + llm.LlamaServerDefaultFitTargetMiB
+
+	if _, ok := os.LookupEnv(rocmLinuxFitTargetEnv); ok {
+		slog.Warn("skipping ROCm iGPU fit target correction because user already set environment override",
+			"env", rocmLinuxFitTargetEnv,
+			"computed_fit_target_mib", targetMiB,
+			"overreported_free_mib", overreportedFreeMiB,
+			"fit_target_pad_mib", llm.LlamaServerDefaultFitTargetMiB,
+			"reported_free", reportedFree,
+			"gtt_free", gttFree)
+		return
+	}
+	if device.RunnerEnvOverrides != nil {
+		if _, ok := device.RunnerEnvOverrides[rocmLinuxFitTargetEnv]; ok {
+			return
+		}
+	} else {
+		device.RunnerEnvOverrides = map[string]string{}
+	}
+
+	device.RunnerEnvOverrides[rocmLinuxFitTargetEnv] = strconv.FormatUint(targetMiB, 10)
 }
 
 func readROCmLinuxSysfsDevices(sysfsRoot string) ([]rocmLinuxSysfsDevice, error) {
@@ -366,6 +434,10 @@ func readROCmDRMDevice(sysfsRoot string, renderMinor int) (rocmLinuxSysfsDevice,
 	if !ok {
 		return device, nil
 	}
+	gttUsed, _ := readROCmLinuxMemoryInfo(resolvedDevicePath, "mem_info_gtt_used")
+	device.gttTotal = gttTotal
+	device.gttUsed = gttUsed
+	device.gttKnown = true
 
 	const (
 		maxIntegratedVRAM = 4 << 30
