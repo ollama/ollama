@@ -638,7 +638,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	var thinkingState *thinking.Parser
 	if builtinParser == nil {
 		openingTag, closingTag := thinking.InferTags(m.Template.Template)
-		if req.Think != nil && req.Think.Bool() && openingTag != "" && closingTag != "" {
+		// Parse thinking out of the response even when think is false. The option
+		// only disables thinking generation hints, but a model may still emit
+		// thinking traces; always separating them keeps `response` clean and
+		// matches the behavior of /api/chat. (If no thinking tags exist in the
+		// template, nothing is parsed and this is a no-op.)
+		if openingTag != "" && closingTag != "" {
 			thinkingState = &thinking.Parser{
 				OpeningTag: openingTag,
 				ClosingTag: closingTag,
