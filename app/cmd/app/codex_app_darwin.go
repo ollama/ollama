@@ -348,11 +348,11 @@ func loadCodexDesktopModels(ctx context.Context, selected []string) (string, []l
 	if len(selected) == 0 {
 		selected = codexDesktopModelNames(codexDesktopDefaultModels(inventory))
 	}
-	primary, models, err := selectCodexDesktopModels(selected, inventory.Available)
+	_, models, err := selectCodexDesktopModels(selected, inventory.Available)
 	if err != nil {
 		return "", nil, err
 	}
-	primary = codexDesktopPreferredPrimary(inventory.DefaultPrimary, models)
+	primary := codexDesktopPreferredPrimary(inventory.DefaultPrimary, models)
 	return primary, hydrateCodexDesktopModelCapabilities(ctx, models), nil
 }
 
@@ -365,11 +365,11 @@ func loadCodexDesktopConnectionModels(ctx context.Context, selected []string) (s
 	if len(selected) == 0 {
 		selected = codexDesktopModelNames(defaults)
 	}
-	primary, models, err := reconcileCodexDesktopModels(selected, inventory.Available, defaults)
+	_, models, err := reconcileCodexDesktopModels(selected, inventory.Available, defaults)
 	if err != nil {
 		return "", nil, err
 	}
-	primary = codexDesktopPreferredPrimary(inventory.DefaultPrimary, models)
+	primary := codexDesktopPreferredPrimary(inventory.DefaultPrimary, models)
 	return primary, hydrateCodexDesktopModelCapabilities(ctx, models), nil
 }
 
