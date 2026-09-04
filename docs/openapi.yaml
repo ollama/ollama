@@ -547,6 +547,10 @@ components:
         model:
           type: string
           description: Name of the model to download
+        force:
+          type: boolean
+          default: false
+          description: Download the model even when it is determined too large to run on this system
         insecure:
           type: boolean
           description: Allow downloading over insecure connections

@@ -82,12 +82,14 @@ func stubCloudSuggest(t *testing.T, interactive bool, confirm func(prompt string
 }
 
 type cloudSuggestServer struct {
-	cloudName   string // model name whose show/pull succeeds (e.g. "some-model:cloud")
-	cloudExists bool   // whether showing/pulling cloudName succeeds
-	pullErr     string // error message for failing pulls
+	cloudName    string // model name whose show/pull succeeds (e.g. "some-model:cloud")
+	cloudExists  bool   // whether showing/pulling cloudName succeeds
+	pullErr      string // error message for failing pulls
+	showFailures int    // initial successful-model show requests that return not found
 
 	showModels     []string
 	pullModels     []string
+	pullForces     []bool
 	generateModels []string
 }
 
@@ -108,6 +110,16 @@ func (s *cloudSuggestServer) start(t *testing.T) {
 			}
 			name := cmp.Or(req.Model, req.Name)
 			s.showModels = append(s.showModels, name)
+			if s.showFailures > 0 {
+				s.showFailures--
+				w.WriteHeader(http.StatusNotFound)
+				if err := json.NewEncoder(w).Encode(map[string]string{
+					"error": "model '" + name + "' not found",
+				}); err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+				}
+				return
+			}
 			if s.cloudExists && name == s.cloudName {
 				if err := json.NewEncoder(w).Encode(api.ShowResponse{
 					Capabilities: []model.Capability{model.CapabilityCompletion},
@@ -131,6 +143,7 @@ func (s *cloudSuggestServer) start(t *testing.T) {
 			}
 			name := cmp.Or(req.Model, req.Name)
 			s.pullModels = append(s.pullModels, name)
+			s.pullForces = append(s.pullForces, req.Force)
 			var body any
 			if s.cloudExists && name == s.cloudName {
 				body = api.ProgressResponse{Status: "success"}
@@ -181,6 +194,7 @@ func newPullTestCmd(t *testing.T) *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.SetContext(t.Context())
 	cmd.Flags().Bool("insecure", false, "")
+	cmd.Flags().Bool("force", false, "")
 	return cmd
 }
 
@@ -193,6 +207,7 @@ func newRunTestCmd(t *testing.T) *cobra.Command {
 	cmd.Flags().Int("dimensions", 0, "")
 	cmd.Flags().Bool("verbose", false, "")
 	cmd.Flags().Bool("insecure", false, "")
+	cmd.Flags().Bool("force", false, "")
 	cmd.Flags().Bool("nowordwrap", false, "")
 	cmd.Flags().String("format", "", "")
 	cmd.Flags().String("think", "", "")
@@ -216,16 +231,40 @@ func TestPullHandler_SuccessfulPullNoSuggestion(t *testing.T) {
 	}
 }
 
+func TestPullHandler_Force(t *testing.T) {
+	server := newCloudSuggestServer(t)
+	server.cloudName = "some-model"
+	stubCloudSuggest(t, true, nil)
+
+	cmd := newPullTestCmd(t)
+	if err := cmd.Flags().Set("force", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := PullHandler(cmd, []string{"some-model"}); err != nil {
+		t.Fatalf("PullHandler returned error: %v", err)
+	}
+	if want := []bool{true}; !slices.Equal(server.pullForces, want) {
+		t.Fatalf("pull force values = %v, want %v", server.pullForces, want)
+	}
+}
+
 func TestPullHandler_CloudSuggestionAccepted(t *testing.T) {
 	server := newCloudSuggestServer(t)
 	prompts := stubCloudSuggest(t, true, func(string) (bool, error) { return true, nil })
 
-	if err := PullHandler(newPullTestCmd(t), []string{"some-model"}); err != nil {
+	cmd := newPullTestCmd(t)
+	if err := cmd.Flags().Set("force", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := PullHandler(cmd, []string{"some-model"}); err != nil {
 		t.Fatalf("PullHandler returned error: %v", err)
 	}
 
 	if want := []string{"some-model", "some-model:cloud"}; !slices.Equal(server.pullModels, want) {
 		t.Fatalf("pulled models = %v, want %v", server.pullModels, want)
+	}
+	if want := []bool{true, false}; !slices.Equal(server.pullForces, want) {
+		t.Fatalf("pull force values = %v, want %v", server.pullForces, want)
 	}
 	if len(*prompts) != 1 || !strings.Contains((*prompts)[0], `"some-model:cloud"`) {
 		t.Fatalf("prompts = %v, want one prompt mentioning some-model:cloud", *prompts)
@@ -374,6 +413,27 @@ func TestRunHandler_CloudSuggestionAccepted_RunsCloudModel(t *testing.T) {
 		t.Fatalf("pulled models = %v, want %v", server.pullModels, want)
 	}
 	if want := []string{"some-model:cloud"}; !slices.Equal(server.generateModels, want) {
+		t.Fatalf("generate models = %v, want %v", server.generateModels, want)
+	}
+}
+
+func TestRunHandler_Force(t *testing.T) {
+	server := newCloudSuggestServer(t)
+	server.cloudName = "some-model"
+	server.showFailures = 1
+	stubCloudSuggest(t, true, nil)
+
+	cmd := newRunTestCmd(t)
+	if err := cmd.Flags().Set("force", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunHandler(cmd, []string{"some-model", "hi"}); err != nil {
+		t.Fatalf("RunHandler returned error: %v", err)
+	}
+	if want := []bool{true}; !slices.Equal(server.pullForces, want) {
+		t.Fatalf("pull force values = %v, want %v", server.pullForces, want)
+	}
+	if want := []string{"some-model"}; !slices.Equal(server.generateModels, want) {
 		t.Fatalf("generate models = %v, want %v", server.generateModels, want)
 	}
 }
