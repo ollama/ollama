@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -119,6 +120,42 @@ func TestPrepareTriggeredCompactionBuildsSummaryRequest(t *testing.T) {
 	}
 }
 
+func TestCompactionNamesBuiltInSearchToolMetadata(t *testing.T) {
+	body := []byte(`{
+		"model":"test",
+		"stream":true,
+		"tools":[{"type":"tool_search"},{"type":"web_search"}],
+		"input":[
+			{"type":"message","role":"user","content":"find current information"},
+			{"type":"compaction_trigger"}
+		]
+	}`)
+	plan, requested, err := PrepareTriggeredCompaction(body)
+	if err != nil || !requested {
+		t.Fatalf("prepare: requested=%v err=%v", requested, err)
+	}
+
+	requestBody, err := plan.SummaryRequest("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var request struct {
+		Input []struct {
+			Content string `json:"content"`
+		} `json:"input"`
+	}
+	if err := json.Unmarshal(requestBody, &request); err != nil {
+		t.Fatal(err)
+	}
+	if len(request.Input) != 2 || !strings.Contains(request.Input[1].Content, `"name":"tool_search"`) ||
+		!strings.Contains(request.Input[1].Content, `"name":"web_search"`) {
+		t.Fatalf("summary transcript is missing built-in tool names: %s", requestBody)
+	}
+	if strings.Contains(request.Input[1].Content, `"name":""`) {
+		t.Fatalf("summary transcript contains unnamed tool metadata: %s", requestBody)
+	}
+}
+
 func TestPrepareTriggeredCompactionRequiresStreaming(t *testing.T) {
 	body := []byte(`{"model":"test","input":[{"type":"message","role":"user","content":"hi"},{"type":"compaction_trigger"}]}`)
 	_, requested, err := PrepareTriggeredCompaction(body)
@@ -156,6 +193,103 @@ func TestCompactionSelectionKeepsCompleteToolGroupInOriginalOrder(t *testing.T) 
 	}
 	if len(payload.Retained[0].ToolCalls) != 1 || payload.Retained[1].Role != "tool" {
 		t.Fatalf("tool group order changed: %+v", payload.Retained)
+	}
+}
+
+func TestCompactionPreservesNamespacedFunctionCallIdentity(t *testing.T) {
+	body := []byte(`{
+		"model":"test",
+		"stream":true,
+		"tools":[{"type":"namespace","name":"mcp__codex_apps__github","tools":[{"type":"function","name":"_get_repo","parameters":{"type":"object"}}]}],
+		"input":[
+			{"type":"function_call","call_id":"call_repo","namespace":"mcp__codex_apps__github","name":"_get_repo","arguments":"{\"repo\":\"ollama/ollama\"}"},
+			{"type":"function_call_output","call_id":"call_repo","output":"found"},
+			{"type":"message","role":"assistant","content":"done"},
+			{"type":"compaction_trigger"}
+		]
+	}`)
+	plan, requested, err := PrepareTriggeredCompaction(body)
+	if err != nil || !requested {
+		t.Fatalf("prepare: requested=%v err=%v", requested, err)
+	}
+
+	requestBody, err := plan.SummaryRequest("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(requestBody, []byte(`mcp__codex_apps__github_get_repo`)) {
+		t.Fatalf("summary transcript lost the namespaced tool identity: %s", requestBody)
+	}
+
+	result, err := plan.Complete(compactionResponseBody(t, map[string]any{
+		"summary": "The repository was found.", "retain_item_ids": []string{"item_000002"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := decodeResultPayload(t, result)
+	if len(payload.Retained) != 2 {
+		t.Fatalf("expected complete namespaced tool group, got %+v", payload.Retained)
+	}
+	if got := payload.Retained[0].ToolCalls[0].Function.Name; got != "mcp__codex_apps__github_get_repo" {
+		t.Fatalf("retained tool name = %q", got)
+	}
+}
+
+func TestCompactionPreservesToolSearchStateAndAcceptsWebSearchHistory(t *testing.T) {
+	body := []byte(`{
+		"model":"test",
+		"stream":true,
+		"input":[
+			{"type":"message","role":"user","content":"find the issue"},
+			{"type":"tool_search_call","call_id":"call_search","execution":"client","status":"completed","arguments":{"query":"github"}},
+			{"type":"tool_search_output","call_id":"call_search","execution":"client","status":"completed","tools":[{"type":"namespace","name":"mcp__codex_apps__github","tools":[{"type":"function","name":"_search"}]}]},
+			{"type":"web_search_call","id":"ws_1","status":"completed","action":{"type":"search","query":"current issue"}},
+			{"type":"message","role":"assistant","content":"I found it."},
+			{"type":"compaction_trigger"}
+		]
+	}`)
+	plan, requested, err := PrepareTriggeredCompaction(body)
+	if err != nil || !requested {
+		t.Fatalf("prepare: requested=%v err=%v", requested, err)
+	}
+
+	result, err := plan.Complete(compactionResponseBody(t, map[string]any{
+		"summary": "The issue was found.", "retain_item_ids": []string{"item_000003"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := decodeResultPayload(t, result)
+	if len(payload.Retained) != 2 || payload.Retained[0].ToolCalls[0].Function.Name != "tool_search" || payload.Retained[1].ToolName != "tool_search" {
+		t.Fatalf("tool search state was not retained as a pair: %+v", payload.Retained)
+	}
+
+	expandedBody, err := json.Marshal(map[string]any{
+		"model": "test",
+		"input": []any{result.Item, map[string]any{"type": "message", "role": "user", "content": "continue"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rewritten, changed, err := ExpandResponsesCompactionInput(expandedBody)
+	if err != nil || !changed {
+		t.Fatalf("expand: changed=%v err=%v", changed, err)
+	}
+	var request struct {
+		Input []json.RawMessage `json:"input"`
+	}
+	if err := json.Unmarshal(rewritten, &request); err != nil {
+		t.Fatal(err)
+	}
+	wantTypes := []string{"function_call", "function_call_output", "tool_search_call", "tool_search_output", "message"}
+	if len(request.Input) != len(wantTypes) {
+		t.Fatalf("expanded input = %s", rewritten)
+	}
+	for i, want := range wantTypes {
+		if got := rawInputItemType(request.Input[i]); got != want {
+			t.Fatalf("expanded input[%d] type = %q, want %q: %s", i, got, want, rewritten)
+		}
 	}
 }
 

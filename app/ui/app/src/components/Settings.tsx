@@ -11,6 +11,10 @@ import {
   type ClaudeDesktopModelsSettingsHandle,
 } from "@/components/ClaudeDesktopModelsSettings";
 import {
+  CodexDesktopModelsSettings,
+  type CodexDesktopModelsSettingsHandle,
+} from "@/components/CodexDesktopModelsSettings";
+import {
   WifiIcon,
   FolderIcon,
   BoltIcon,
@@ -55,6 +59,7 @@ interface SettingsDefaultsActions {
   updateSettings: (settings: SettingsType) => Promise<unknown>;
   updateCloud: (enabled: boolean) => Promise<unknown>;
   updateShowAppsInMenu: (visible: boolean) => Promise<unknown>;
+  resetChatGPTModels: () => Promise<boolean>;
   resetClaudeMappings: () => Promise<boolean>;
   currentSettings: SettingsType;
   currentShowAppsInMenu: boolean;
@@ -74,6 +79,7 @@ export async function applySettingsDefaults({
   updateSettings,
   updateCloud,
   updateShowAppsInMenu,
+  resetChatGPTModels,
   resetClaudeMappings,
   currentSettings,
   currentShowAppsInMenu,
@@ -105,8 +111,12 @@ export async function applySettingsDefaults({
     await updateShowAppsInMenu(true);
     rollbacks.push(() => updateShowAppsInMenu(currentShowAppsInMenu));
 
-    // Apply Claude last so no later settings failure can leave its mappings
-    // reset while the rest of the page rolls back.
+    // Reset app-specific model settings only after the rest of the page has
+    // succeeded, because those native profile changes cannot be rolled back
+    // with the settings API.
+    if (!(await resetChatGPTModels())) {
+      throw new Error("ChatGPT models could not be reset");
+    }
     if (!(await resetClaudeMappings())) {
       throw new Error("Claude model mappings could not be reset");
     }
@@ -137,14 +147,17 @@ export default function Settings() {
   const [resettingToDefaults, setResettingToDefaults] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
   const [hasClaudeDraftChanges, setHasClaudeDraftChanges] = useState(false);
+  const [hasCodexDraftChanges, setHasCodexDraftChanges] = useState(false);
   const claudeModelsSettingsRef =
     useRef<ClaudeDesktopModelsSettingsHandle>(null);
+  const codexModelsSettingsRef =
+    useRef<CodexDesktopModelsSettingsHandle>(null);
   const savedConfirmationTimeoutRef = useRef<number | null>(null);
   useBlocker({
     shouldBlockFn: () =>
-      !window.confirm("Discard unapplied Claude routing changes?"),
-    enableBeforeUnload: hasClaudeDraftChanges,
-    disabled: !hasClaudeDraftChanges,
+      !window.confirm("Discard unapplied app model changes?"),
+    enableBeforeUnload: hasClaudeDraftChanges || hasCodexDraftChanges,
+    disabled: !hasClaudeDraftChanges && !hasCodexDraftChanges,
   });
   const {
     user,
@@ -397,6 +410,8 @@ export default function Settings() {
           updateSettingsMutation.mutateAsync(defaultSettings),
         updateCloud: requestCloudUpdate,
         updateShowAppsInMenu: updateShowAppsInMenuVisibility,
+        resetChatGPTModels: async () =>
+          (await codexModelsSettingsRef.current?.resetToDefaults()) ?? true,
         resetClaudeMappings: async () =>
           (await claudeModelsSettingsRef.current?.resetToDefaults()) ?? true,
         currentSettings: settings,
@@ -446,6 +461,16 @@ export default function Settings() {
           : "Failed to connect to Ollama account",
       );
       setIsAwaitingConnection(false);
+    }
+  };
+
+  const handleDisconnectOllamaAccount = async () => {
+    setConnectionError(null);
+    try {
+      await disconnectUser();
+      window.location.reload();
+    } catch {
+      setConnectionError("Failed to disconnect Ollama account");
     }
   };
 
@@ -529,7 +554,7 @@ export default function Settings() {
                           type="button"
                           color="zinc"
                           className="px-3 py-2 text-sm"
-                          onClick={() => disconnectUser()}
+                          onClick={() => void handleDisconnectOllamaAccount()}
                         >
                           Sign out
                         </Button>
@@ -756,13 +781,30 @@ export default function Settings() {
           </div>
 
           {!isWindows && (
-            <ClaudeDesktopModelsSettings
-              ref={claudeModelsSettingsRef}
-              includeCloudModels={
-                isAuthenticated && cloudStatusKnown && !cloudDisabled
-              }
-              onDraftChange={setHasClaudeDraftChanges}
-            />
+            <section
+              aria-labelledby="apps-settings-heading"
+              className="space-y-2"
+            >
+              <h2
+                id="apps-settings-heading"
+                className="px-1 text-xs font-medium uppercase tracking-wider text-neutral-400 dark:text-neutral-500"
+              >
+                Apps
+              </h2>
+              <ClaudeDesktopModelsSettings
+                ref={claudeModelsSettingsRef}
+                includeCloudModels={
+                  isAuthenticated && cloudStatusKnown && !cloudDisabled
+                }
+                onDraftChange={setHasClaudeDraftChanges}
+                showSectionHeading={false}
+              />
+              <CodexDesktopModelsSettings
+                ref={codexModelsSettingsRef}
+                accountKey={`${user?.id ?? "signed-out"}:${user?.plan ?? ""}:${cloudDisabled ? "cloud-off" : "cloud-on"}`}
+                onDraftChange={setHasCodexDraftChanges}
+              />
+            </section>
           )}
 
           {/* Agent Mode */}

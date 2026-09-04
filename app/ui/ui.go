@@ -339,7 +339,7 @@ func (s *Server) getIntegrationStatuses(w http.ResponseWriter, _ *http.Request) 
 	claudeDesktopInstalled := isInstalled("claude-desktop")
 	statuses = append(statuses, integrationStatus{
 		ID:          "claude-desktop",
-		Name:        "Claude",
+		Name:        "Claude Code (Desktop)",
 		Description: "Use Ollama models in Claude Desktop",
 		Installed:   &claudeDesktopInstalled,
 		Action:      "connect",

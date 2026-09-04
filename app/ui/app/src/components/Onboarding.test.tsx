@@ -62,7 +62,7 @@ describe("Onboarding", () => {
     }
   });
 
-  it("hides the Claude application on Windows", () => {
+  it("hides the Claude and ChatGPT desktop integrations on Windows", () => {
     vi.stubGlobal("window", {
       OLLAMA_PLATFORM: "windows",
       innerHeight: 660,
@@ -85,12 +85,21 @@ describe("Onboarding", () => {
               description: "Anthropic's coding tool with subagents",
               command: "ollama launch claude",
             },
+            {
+              id: "chatgpt",
+              name: "ChatGPT",
+              description: "Use Ollama models in ChatGPT",
+              installed: true,
+              command: "ollama launch chatgpt",
+            },
           ]}
         />,
       );
 
       expect(html).not.toContain('id="desktop-heading"');
       expect(html).not.toContain("Use Ollama models in Claude Desktop");
+      expect(html).not.toContain("Use Ollama models in ChatGPT");
+      expect(html).not.toContain("ollama launch chatgpt");
       expect(html).toContain('id="terminal-heading"');
       expect(html).toContain("ollama launch claude");
     } finally {
@@ -214,7 +223,10 @@ describe("Onboarding", () => {
         await Promise.resolve();
       });
 
-      const claudeSwitch = () => renderer!.root.findByProps({ role: "switch" });
+      const claudeSwitch = () =>
+        renderer!.root
+          .findAllByProps({ role: "switch" })
+          .find((node) => String(node.props["aria-label"]).endsWith("Claude"))!;
       let clickResult!: Promise<void>;
       await act(async () => {
         clickResult = claudeSwitch().props.onClick();
@@ -226,9 +238,11 @@ describe("Onboarding", () => {
       expect(claudeSwitch().props["aria-busy"]).toBe(true);
       expect(claudeSwitch().props.disabled).toBe(true);
       expect(claudeSwitch().props.className).toContain("disabled:opacity-50");
-      expect(renderer.root.findByProps({ role: "status" }).children).toContain(
-        "Downloading…",
-      );
+      expect(
+        renderer.root
+          .findAllByProps({ role: "status" })
+          .some((node) => node.children.includes("Downloading…")),
+      ).toBe(true);
       expect(
         renderer.root.findAll(
           (node) =>
@@ -247,9 +261,11 @@ describe("Onboarding", () => {
       expect(claudeSwitch().props["aria-busy"]).toBe(true);
       expect(claudeSwitch().props.disabled).toBe(true);
       expect(claudeSwitch().props.className).toContain("disabled:opacity-50");
-      expect(renderer.root.findByProps({ role: "status" }).children).toContain(
-        "Finish installing…",
-      );
+      expect(
+        renderer.root
+          .findAllByProps({ role: "status" })
+          .some((node) => node.children.includes("Finish installing…")),
+      ).toBe(true);
       expect(
         renderer.root.findAll(
           (node) =>
@@ -333,7 +349,10 @@ describe("Onboarding", () => {
         await Promise.resolve();
       });
 
-      const claudeSwitch = () => renderer!.root.findByProps({ role: "switch" });
+      const claudeSwitch = () =>
+        renderer!.root
+          .findAllByProps({ role: "switch" })
+          .find((node) => String(node.props["aria-label"]).endsWith("Claude"))!;
       expect(claudeSwitch().props["aria-checked"]).toBe(false);
       expect(claudeSwitch().props["aria-busy"]).toBeUndefined();
       expect(claudeSwitch().props.disabled).toBe(false);
@@ -470,7 +489,7 @@ describe("Onboarding", () => {
     const integrations: IntegrationStatuses = [
       {
         id: "claude-desktop",
-        name: "Claude",
+        name: "Claude Code (Desktop)",
         description: "Use Ollama models in Claude Desktop",
         installed: true,
         action: "connect",
@@ -485,7 +504,7 @@ describe("Onboarding", () => {
       },
       {
         id: "codex",
-        name: "Codex",
+        name: "Codex CLI",
         description: "OpenAI's open-source coding agent",
         installed: true,
         action: "copy",
@@ -550,9 +569,10 @@ describe("Onboarding", () => {
     expect(html).not.toContain(
       "Connect Claude, or copy a command to run in your terminal.",
     );
-    expect(html).toContain("Claude");
+    expect(html).toContain("Claude Code (Desktop)");
     expect(html).toContain("Use Ollama models in Claude Desktop");
     expect(html).toContain("Claude Code");
+    expect(html).toContain("Codex CLI");
     expect(html).not.toContain("Search apps");
     expect(html).not.toContain('type="search"');
     expect(html).toContain("Desktop");
@@ -566,18 +586,18 @@ describe("Onboarding", () => {
     expect(html).not.toContain(">Command</th>");
     expect(html).toContain("ollama launch claude");
     expect(html).not.toContain("Installed");
-    expect(html).not.toContain("Not installed");
+    expect(html).toContain("Use Ollama models in ChatGPT");
     expect(html).toContain('aria-label="Connect Claude"');
     expect(html).toContain('role="switch"');
     expect(html).toContain('aria-checked="false"');
     expect(html).not.toContain("Inactive");
-    expect(html).not.toContain("Download &amp; connect");
+    expect(html).toContain("Download &amp; connect");
     expect(html).not.toContain("Active");
     expect(html).toContain("bg-transparent");
     expect(html).toContain('aria-label="Copy OpenCode command"');
     expect(html).toContain('aria-label="Copy Terminal command"');
     expect(html).not.toContain(">Copy command</button>");
-    expect(html).not.toContain("ChatGPT");
+    expect(html).toContain("ChatGPT (Desktop)");
     expect(html).toContain("OpenCode");
     expect(html).toContain("Terminal");
     expect(html).toContain("overflow-y-auto");
@@ -587,6 +607,7 @@ describe("Onboarding", () => {
     expect(html).not.toContain("inert");
     expect(html).toContain("/launch-icons/claude.svg");
     expect(html).toContain("/launch-icons/claude-code.svg");
+    expect(html).toContain("/launch-icons/codex-color.svg");
     expect(html).toMatch(
       /src="\/launch-icons\/cline\.svg"[^>]*class="[^"]*dark:invert/,
     );
@@ -603,6 +624,40 @@ describe("Onboarding", () => {
     expect(html).not.toContain("Continue");
     expect(html).not.toContain("Run Ollama");
     expect(html).not.toContain('viewBox="0 0 3400 3400"');
+  });
+
+  it("places ChatGPT directly below Claude instead of in Terminal", () => {
+    const html = renderToStaticMarkup(
+      <ConnectAppsScreen
+        initialIntegrations={[
+          {
+            id: "claude-desktop",
+            name: "Claude",
+            description: "Use Ollama models in Claude Desktop",
+            installed: true,
+          },
+          {
+            id: "codex",
+            name: "Codex CLI",
+            description: "OpenAI's coding agent",
+            command: "ollama launch codex",
+          },
+        ]}
+        initialCodexStatus={{
+          supported: true,
+          installed: true,
+          connected: false,
+          running: false,
+        }}
+      />,
+    );
+
+    expect(html.indexOf("Use Ollama models in Claude Desktop")).toBeLessThan(
+      html.indexOf(">ChatGPT (Desktop)</p>"),
+    );
+    expect(html).toContain('aria-label="Add Ollama models to ChatGPT"');
+    expect(html).not.toContain('aria-label="Copy ChatGPT command"');
+    expect(html).toContain('aria-label="Copy Codex CLI command"');
   });
 
   it("keeps connected Claude in Desktop without an idle status", () => {
@@ -630,7 +685,7 @@ describe("Onboarding", () => {
           },
           {
             id: "codex",
-            name: "Codex",
+            name: "Codex CLI",
             description: "OpenAI's open-source coding agent",
             installed: true,
             action: "copy",
@@ -757,8 +812,11 @@ describe("Onboarding", () => {
     expect(html).toContain('aria-label="Connect Claude"');
     expect(html).toContain("Download &amp; connect");
     expect(html).not.toContain("Inactive");
-    expect(html).not.toContain("Not installed");
-    expect(html).not.toContain('disabled=""');
+    const claudeButton = html.match(
+      /<button[^>]*aria-label="Connect Claude"[^>]*>/,
+    )?.[0];
+    expect(claudeButton).toBeDefined();
+    expect(claudeButton).not.toContain('disabled=""');
   });
 
   it("uses branded icons for the remaining launcher integrations", () => {
