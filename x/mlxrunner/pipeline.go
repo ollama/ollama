@@ -90,21 +90,19 @@ func (r *Runner) Prepare(request *Request) (err error) {
 // The runner serializes requests today so we just use a fixed slot ID.
 const pipelineSlot = 0
 
-func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) error {
+func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) (err error) {
 	mlx.ResetPeakMemory()
+	mlx.Scoped(func() { err = r.generate(ctx, request) })
+	mlx.ClearCache()
 
-	defer func() {
-		r.Sampler.Remove(pipelineSlot)
-		mlx.Sweep()
-		mlx.ClearCache()
+	if slog.Default().Enabled(context.TODO(), logutil.LevelTrace) {
+		r.cache.dumpTree()
+	}
+	slog.Info("memory", "peak", mlx.PrettyBytes(mlx.PeakMemory()), "held", mlx.PrettyBytes(mlx.ActiveMemory()))
+	return err
+}
 
-		if slog.Default().Enabled(context.TODO(), logutil.LevelTrace) {
-			mlx.LogArrays()
-			r.cache.dumpTree()
-		}
-		slog.Info("peak memory", "size", mlx.PrettyBytes(mlx.PeakMemory()))
-	}()
-
+func (r *Runner) generate(ctx context.Context, request Request) error {
 	inputs := request.Tokens
 
 	session := r.cache.begin(inputs, request.MediaItems)
@@ -126,6 +124,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 
 	// Register the sampler after prefill completes.
 	r.Sampler.Add(pipelineSlot, request.SamplerOpts, inputs)
+	defer r.Sampler.Remove(pipelineSlot)
 
 	grammar, err := request.Grammar.resolve(ctx)
 	if err != nil {
@@ -166,7 +165,7 @@ func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *specu
 		snapshotOffsets = append(snapshotOffsets, end)
 	}
 
-	materializeCaches := func() {
+	cacheState := func() []*mlx.Array {
 		state := make([]*mlx.Array, 0, 2*len(caches))
 		for _, c := range caches {
 			if c == nil {
@@ -174,10 +173,7 @@ func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *specu
 			}
 			state = append(state, c.State()...)
 		}
-		if len(state) == 0 {
-			return
-		}
-		mlx.Eval(state...)
+		return state
 	}
 
 	session.schedulePrefillSnapshots(snapshotOffsets)
@@ -185,7 +181,7 @@ func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *specu
 	total, processed := len(tokens), 0
 	position := len(inputs) - len(tokens)
 	// Free restored items' buffers now: on a full cache hit the loop never runs.
-	media.release(position)
+	media.free(position)
 	for total-processed > 1 {
 		if err := ctx.Err(); err != nil {
 			// Settle the drafter with the next prompt token so the caches
@@ -198,26 +194,27 @@ func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *specu
 		n := min(prefillChunk, total-processed-1)
 		n = media.extendChunk(position, n)
 
-		chunkIDs := mlx.FromValues(tokens[processed:processed+n], 1, n)
-		manifest := media.batchMedia(position, n)
-		_, auxHidden := r.Model.Forward(&batch.Batch{
-			InputIDs:     chunkIDs,
-			SeqOffsets:   []int32{int32(position)},
-			SeqQueryLens: []int32{int32(n)},
-			Media:        manifest,
-			Layout:       media.rowLayout(),
-		}, caches)
-		// Report to the drafter only after the chunk's eval: a draft flush
-		// evaluates, and an eval before the sweep cannot free any buffer the
-		// chunk's live handles retain — on media chunks, the whole vision tower.
-		mlx.Pin(chunkIDs, auxHidden)
-		mlx.Sweep()
-		materializeCaches()
-		spec.committed(chunkIDs, auxHidden, position, manifest)
-		mlx.Unpin(chunkIDs, auxHidden)
-		// Released after committed so the drafter can capture rows its
-		// deferred flush still embeds.
-		media.release(position + n)
+		mlx.Scoped(func() {
+			chunkIDs := mlx.FromValues(tokens[processed:processed+n], 1, n)
+			chunkMedia := media.batchMedia(position, n)
+			auxHidden := mlx.ScopedArrays(func() []*mlx.Array {
+				_, auxHidden := r.Model.Forward(&batch.Batch{
+					InputIDs:     chunkIDs,
+					SeqOffsets:   []int32{int32(position)},
+					SeqQueryLens: []int32{int32(n)},
+					Media:        chunkMedia,
+					Layout:       media.rowLayout(),
+				}, caches)
+				return []*mlx.Array{auxHidden}
+			})[0]
+			mlx.Eval(cacheState()...)
+			// Report to the drafter only after the chunk's eval: a draft
+			// flush evaluates.
+			spec.committed(chunkIDs, auxHidden, position, chunkMedia)
+			// Freed after committed so the drafter can capture rows its
+			// deferred flush still embeds.
+			media.free(position + n)
+		})
 		processed += n
 		position += n
 		slog.Info("Prompt processing progress", "processed", processed, "total", total)
@@ -290,53 +287,61 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 			return err
 		}
 
-		results, err := d.next(request.Options.NumPredict - generated)
+		var done bool
+		var err error
+		mlx.Scoped(func() {
+			var results []sampler.Result
+			results, err = d.next(request.Options.NumPredict - generated)
+			if err != nil {
+				return
+			}
+
+			// Record the whole run before streaming any of it: a cancelled
+			// stream returns early and must not leave the caches ahead of
+			// session.outputs.
+			stream := len(results)
+			for i, res := range results {
+				id := res.Token.Int()
+				session.outputs = append(session.outputs, id)
+				if done {
+					continue
+				}
+				if r.Tokenizer.IsEOS(id) {
+					final.DoneReason = 0
+					done = true
+					stream = i
+					continue
+				}
+				generated++
+				if generated >= request.Options.NumPredict {
+					done = true
+					stream = i + 1
+				}
+			}
+
+			for _, res := range results[:stream] {
+				resp, ok := detok.detokenize(res)
+				if !ok {
+					continue
+				}
+				// Two-pass structured output cancels the first pass before its final response.
+				if request.IncludeIntermediateMetrics {
+					resp.PromptEvalCount = len(request.Tokens)
+					resp.PromptEvalCachedCount = final.PromptEvalCachedCount
+					resp.PromptEvalDuration = promptEval
+					resp.EvalCount = generated
+					resp.EvalDuration = time.Since(now)
+				}
+				select {
+				case <-ctx.Done():
+					err = ctx.Err()
+					return
+				case request.Responses <- resp:
+				}
+			}
+		})
 		if err != nil {
 			return err
-		}
-
-		// Record the whole run before streaming any of it: a cancelled
-		// stream returns early and must not leave the caches ahead of
-		// session.outputs.
-		done := false
-		stream := len(results)
-		for i, res := range results {
-			id := res.Token.Int()
-			session.outputs = append(session.outputs, id)
-			if done {
-				continue
-			}
-			if r.Tokenizer.IsEOS(id) {
-				final.DoneReason = 0
-				done = true
-				stream = i
-				continue
-			}
-			generated++
-			if generated >= request.Options.NumPredict {
-				done = true
-				stream = i + 1
-			}
-		}
-
-		for _, res := range results[:stream] {
-			resp, ok := detok.detokenize(res)
-			if !ok {
-				continue
-			}
-			// Two-pass structured output cancels the first pass before its final response.
-			if request.IncludeIntermediateMetrics {
-				resp.PromptEvalCount = len(request.Tokens)
-				resp.PromptEvalCachedCount = final.PromptEvalCachedCount
-				resp.PromptEvalDuration = promptEval
-				resp.EvalCount = generated
-				resp.EvalDuration = time.Since(now)
-			}
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case request.Responses <- resp:
-			}
 		}
 
 		if done {
@@ -375,6 +380,7 @@ type pipelinedDecoder struct {
 	grammars []*grammar // row i's grammar; nil rows are unconstrained
 	position int
 	pending  sampler.Result // in flight: sampled, not yet forwarded
+	scope    *mlx.Scope     // holds pending across steps
 	// Steps run ahead asynchronously: when one faults, its token is already
 	// forwarded and still has to be returned, so err waits for the next call.
 	err error
@@ -383,18 +389,15 @@ type pipelinedDecoder struct {
 func (r *Runner) pipelinedDecoder(spec *speculationSession, caches []cache.Cache, seed *mlx.Array, position int, layout []any, g *grammar) *pipelinedDecoder {
 	t := &pipelinedDecoder{
 		r: r, spec: spec, caches: caches, layout: layout, position: position,
-		grammars: []*grammar{g},
+		grammars: []*grammar{g}, scope: mlx.NewScope(),
 	}
 	logits := t.forward(seed)
-	mlx.Pin(logits)
-	defer mlx.Unpin(logits)
 
 	if r.grammarEngine.hasGrammar(t.grammars) {
 		// Dispatch the forward before the host builds the first masks. The
 		// first sample commits nothing, so there is nothing to accept. A mask
 		// fault here is a step fault like any other: the seed is already
 		// forwarded, so the error waits for the first call.
-		mlx.Sweep()
 		mlx.AsyncEval(logits)
 		var errs []error
 		logits, errs = r.grammarEngine.mask(t.grammars, logits, nil)
@@ -421,12 +424,9 @@ func (t *pipelinedDecoder) next(int) ([]sampler.Result, error) {
 	}
 	out := t.pending
 	logits := t.forward(out.Token.ExpandDims(-1))
-	mlx.Pin(logits)
-	defer mlx.Unpin(logits)
 
 	if t.r.grammarEngine.hasGrammar(t.grammars) {
 		// Dispatch the forward before the host's grammar work.
-		mlx.Sweep()
 		mlx.AsyncEval(logits)
 
 		err := t.failRows(t.r.grammarEngine.accept(t.grammars, out.Token.Ints()))
@@ -438,23 +438,25 @@ func (t *pipelinedDecoder) next(int) ([]sampler.Result, error) {
 
 	t.pending = t.sample(logits)
 
-	mlx.Unpin(out.Arrays()...)
+	t.scope.Detach(out.Arrays()...)
 	return []sampler.Result{out}, nil
 }
 
 // forward runs the model one step over token, shaped [B, L], and returns the
 // final position's [B, 1, V] logits, still lazy.
 func (t *pipelinedDecoder) forward(token *mlx.Array) *mlx.Array {
-	hidden, auxHidden := t.r.Model.Forward(&batch.Batch{
-		InputIDs:     token,
-		SeqOffsets:   []int32{int32(t.position)},
-		SeqQueryLens: []int32{int32(token.Dim(1))},
-		Layout:       t.layout,
-	}, t.caches)
-	t.spec.committed(token, auxHidden, t.position, nil)
-	t.position += token.Dim(1)
-	logits := t.r.Model.Unembed(hidden)
-	return logits.Slice(mlx.Slice(), mlx.Slice(logits.Dim(1)-1), mlx.Slice())
+	return mlx.ScopedArrays(func() []*mlx.Array {
+		hidden, auxHidden := t.r.Model.Forward(&batch.Batch{
+			InputIDs:     token,
+			SeqOffsets:   []int32{int32(t.position)},
+			SeqQueryLens: []int32{int32(token.Dim(1))},
+			Layout:       t.layout,
+		}, t.caches)
+		t.spec.committed(token, auxHidden, t.position, nil)
+		t.position += token.Dim(1)
+		logits := t.r.Model.Unembed(hidden)
+		return []*mlx.Array{logits.Slice(mlx.Slice(), mlx.Slice(logits.Dim(1)-1), mlx.Slice())}
+	})[0]
 }
 
 // sample dispatches the batched sample over the decoder's rows. On an
@@ -462,9 +464,8 @@ func (t *pipelinedDecoder) forward(token *mlx.Array) *mlx.Array {
 // is in flight before the previous tokens are synchronized.
 func (t *pipelinedDecoder) sample(logits *mlx.Array) sampler.Result {
 	next := t.r.Sampler.Sample([]int{pipelineSlot}, logits.Squeeze(1))
-	mlx.Pin(next.Arrays()...)
-	mlx.Sweep()
 	mlx.AsyncEval(next.Arrays()...)
+	t.scope.Attach(next.Arrays()...)
 	return next
 }
 
@@ -477,6 +478,9 @@ func (t *pipelinedDecoder) drain() ([]sampler.Result, int, error) {
 		// The sample leaves without its forward, so its accept runs here.
 		err = t.failRows(t.r.grammarEngine.accept(t.grammars, t.pending.Token.Ints()))
 	}
+	if err == nil {
+		t.scope.Detach(t.pending.Arrays()...)
+	}
 	return []sampler.Result{t.pending}, t.position, err
 }
 
@@ -484,7 +488,7 @@ func (t *pipelinedDecoder) close() {
 	// The in-flight sample's forward was never dispatched; its report settles
 	// the drafter level with the caches' resting offset.
 	t.spec.settle(t.pending.Token)
-	mlx.Unpin(t.pending.Arrays()...)
+	t.scope.Close()
 }
 
 // detokenizer serializes sampled tokens into response chunks, holding bytes

@@ -53,10 +53,7 @@ func Execute(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer worker.Stop(context.Background(), func() {
-		mlx.Sweep()
-		mlx.ClearCache()
-	})
+	defer worker.Stop(context.Background(), mlx.ClearCache)
 	runnerCtx, cancelRunner := context.WithCancel(context.Background())
 	defer cancelRunner()
 

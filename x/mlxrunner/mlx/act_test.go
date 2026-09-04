@@ -23,7 +23,6 @@ func TestGELUCompiledMatchesEager(t *testing.T) {
 			withMLXThread(t, func(t *mlxthreadtest.T) {
 				EnableCompile()
 				input := FromValues(values, len(values)).AsType(tt.dtype)
-				Pin(input)
 
 				want := gelu(input)
 				got := GELU(input)
@@ -38,7 +37,6 @@ func TestGELUCompiledMatchesEager(t *testing.T) {
 						t.Fatalf("%s GELU[%d] = %v, want %v (delta %v)", tt.name, i, gotValues[i], wantValues[i], delta)
 					}
 				}
-				Unpin(input)
 			})
 		})
 	}
@@ -58,22 +56,13 @@ func benchmarkGELU(b *testing.B, fn func(*Array) *Array) {
 		EnableCompile()
 		input := AddScalar(Zeros(DTypeBFloat16, 1, 4096, 8192), 1)
 		Eval(input)
-		Pin(input)
-		defer func() {
-			Unpin(input)
-			Sweep()
-			ClearCache()
-		}()
+		defer ClearCache()
 
-		warmup := fn(input)
-		Eval(warmup)
-		Sweep()
+		Scoped(func() { Eval(fn(input)) })
 
 		b.ResetTimer()
 		for range b.N {
-			output := fn(input)
-			Eval(output)
-			Sweep()
+			Scoped(func() { Eval(fn(input)) })
 		}
 		return nil
 	}); err != nil {
@@ -85,8 +74,6 @@ func TestReLUSquared(t *testing.T) {
 	var got []float32
 	withMLXThread(t, func(t *mlxthreadtest.T) {
 		x := FromValues([]float32{-2, -0, 0.5, 2}, 4)
-		Pin(x)
-		defer Unpin(x)
 
 		y := ReLUSquared(x)
 		Eval(y)

@@ -10,7 +10,7 @@ import (
 )
 
 // mtpPendingFlushTokens caps how many committed look-ahead tokens wait in the
-// pending buffer before a batched flush, bounding the pinned hidden states
+// pending buffer before a batched flush, bounding the held hidden states
 // regardless of what else triggers a flush.
 const mtpPendingFlushTokens = 256
 
@@ -37,7 +37,7 @@ func (d *mtpDrafter) draftLimit() int { return 0 }
 // open returns the drafting session for one request, its pairing frontier
 // synced to the draft caches' restored offset.
 func (d *mtpDrafter) open(layout []any) draftSession {
-	s := &mtpDraftSession{drafter: d, layout: layout}
+	s := &mtpDraftSession{drafter: d, layout: layout, scope: mlx.NewScope()}
 	if kv := d.spec.draftKV; len(kv) > 0 {
 		// A restored prefix arrives with the draft caches already written;
 		// pairing resumes from their absolute offset.
@@ -54,20 +54,22 @@ func (d *mtpDrafter) open(layout []any) draftSession {
 type mtpDraftSession struct {
 	drafter *mtpDrafter
 	layout  []any
+	scope   *mlx.Scope
 
 	// frontier is the slot after the last reported token; frontierHidden is
-	// the pinned target hidden at frontier-1, fused into the next pair.
+	// the held target hidden at frontier-1, fused into the next pair.
 	frontier       int
 	frontierHidden *mlx.Array
 
 	// committedDraftOffset is the slot after the last pair written to the
-	// draft caches; later pairs wait pinned in the pending lists until
+	// draft caches; later pairs wait held in the pending lists until
 	// flushed. pendingCount is the look-ahead tokens those lists hold, summed
 	// across the buffered runs.
 	committedDraftOffset int
 	pendingTokens        []*mlx.Array
 	pendingHiddens       []*mlx.Array
 	pendingCount         int
+	pending              *mlx.Scope // holds the lists' arrays until the flush
 
 	// heldHidden is the frontier row's pre-unembed hidden and heldAuxHidden
 	// its fusion hidden, carried from the last flush so the first proposal
@@ -76,7 +78,7 @@ type mtpDraftSession struct {
 	heldAuxHidden *mlx.Array
 
 	// pendingMedia holds manifest rows the deferred flush may still embed,
-	// pinned since prefill releases them after the target's chunk;
+	// on their own handles since prefill releases them after the target's chunk;
 	// lastDelivered marks each row's newest delivered end.
 	pendingMedia  map[int]batch.MediaItem
 	lastDelivered map[int]int
@@ -113,7 +115,7 @@ func (d *mtpDraftSession) committed(tokens, hiddens *mlx.Array, position int, me
 	d.setFrontierHidden(lastHiddenRow(hiddens))
 }
 
-// captureMedia pins the run's feature-bearing rows for the deferred
+// captureMedia holds the run's feature-bearing rows for the deferred
 // flush, which embeds them after prefill has released the features. A row
 // spanning chunks arrives once per chunk.
 func (d *mtpDraftSession) captureMedia(media []batch.MediaItem, end int) {
@@ -129,7 +131,8 @@ func (d *mtpDraftSession) captureMedia(media []batch.MediaItem, end int) {
 				d.pendingMedia = make(map[int]batch.MediaItem)
 				d.lastDelivered = make(map[int]int)
 			}
-			mlx.Pin(item.Features)
+			item.Features = item.Features.Clone()
+			d.scope.Attach(item.Features)
 			d.pendingMedia[item.Pos] = item
 		}
 		d.lastDelivered[item.Pos] = end
@@ -150,7 +153,8 @@ func (d *mtpDraftSession) flushMedia(embedEnd int) []batch.MediaItem {
 	slices.SortFunc(manifest, func(a, b batch.MediaItem) int { return a.Pos - b.Pos })
 	for pos, last := range d.lastDelivered {
 		if last <= embedEnd {
-			mlx.Unpin(d.pendingMedia[pos].Features)
+			// The flush's forward still reads the row; it dies with the build.
+			d.scope.Detach(d.pendingMedia[pos].Features)
 			delete(d.pendingMedia, pos)
 			delete(d.lastDelivered, pos)
 		}
@@ -160,7 +164,7 @@ func (d *mtpDraftSession) flushMedia(embedEnd int) []batch.MediaItem {
 
 func (d *mtpDraftSession) closeMedia() {
 	for pos, item := range d.pendingMedia {
-		mlx.Unpin(item.Features)
+		d.scope.Discard(item.Features)
 		delete(d.pendingMedia, pos)
 		delete(d.lastDelivered, pos)
 	}
@@ -174,7 +178,7 @@ func (d *mtpDraftSession) settle(next *mlx.Array) {
 		return
 	}
 	if d.frontierHidden != nil && d.frontier-1 == d.committedDraftOffset+d.pendingCount {
-		d.queueCacheWrites(next.ExpandDims(-1), d.frontierHidden)
+		d.queueCacheWrites(next.ExpandDims(-1), d.frontierHidden.Clone())
 	}
 	d.flush()
 }
@@ -184,14 +188,18 @@ func (d *mtpDraftSession) close() {
 	d.closeMedia()
 	d.setFrontierHidden(nil)
 	d.setHeld(nil, nil)
+	d.scope.Close()
 }
 
 // queueCacheWrites buffers completed draft-cache writes — look-ahead tokens
 // fused with their target hiddens — flushing once the buffer reaches the token
-// cap so the pinned hiddens stay bounded. flush coalesces the buffered writes
+// cap so the held hiddens stay bounded. flush coalesces the buffered writes
 // into one head forward, so a contiguous run lands in a single draft-cache extend.
 func (d *mtpDraftSession) queueCacheWrites(tokens, hiddens *mlx.Array) {
-	mlx.Pin(tokens, hiddens)
+	if d.pending == nil {
+		d.pending = mlx.NewScope()
+	}
+	d.pending.Attach(tokens, hiddens)
 	d.pendingTokens = append(d.pendingTokens, tokens)
 	d.pendingHiddens = append(d.pendingHiddens, hiddens)
 	d.pendingCount += tokens.Dim(1)
@@ -216,45 +224,51 @@ func (d *mtpDraftSession) flush() {
 		}
 	}
 
-	ids := mlx.Concatenate(d.pendingTokens, 1)
-	hiddens := mlx.Concatenate(d.pendingHiddens, 1)
-	// The pair at slot S embeds the look-ahead token S+1, so this flush
-	// embeds prompt tokens up to committedDraftOffset+len+1.
-	hidden, auxHidden := spec.draft.Forward(&batch.Batch{
-		InputIDs:     ids,
-		SeqOffsets:   []int32{int32(d.committedDraftOffset)},
-		SeqQueryLens: []int32{int32(ids.Dim(1))},
-		Hidden:       hiddens,
-		Media:        d.flushMedia(d.committedDraftOffset + ids.Dim(1) + 1),
-		Layout:       d.layout,
-	}, spec.targets, spec.draftKV)
-	d.setHeld(lastHiddenRow(hidden), lastHiddenRow(auxHidden))
-	d.committedDraftOffset += ids.Dim(1)
+	// Evaluating the state forces the draft writes: a session that never
+	// drafts would otherwise leave the flush chain unevaluated, holding
+	// every hidden until close.
+	n := d.pendingCount
+	out := mlx.ScopedAsyncEval(func() []*mlx.Array {
+		ids, hiddens := d.takePending()
+		// The pair at slot S embeds the look-ahead token S+1, so this flush
+		// embeds prompt tokens up to committedDraftOffset+len+1.
+		hidden, auxHidden := spec.draft.Forward(&batch.Batch{
+			InputIDs:     ids,
+			SeqOffsets:   []int32{int32(d.committedDraftOffset)},
+			SeqQueryLens: []int32{int32(n)},
+			Hidden:       hiddens,
+			Media:        d.flushMedia(d.committedDraftOffset + n + 1),
+			Layout:       d.layout,
+		}, spec.targets, spec.draftKV)
+		out := []*mlx.Array{lastHiddenRow(hidden), lastHiddenRow(auxHidden)}
+		for _, c := range spec.draftKV {
+			out = append(out, c.State()...)
+		}
+		return out
+	})
+	d.setHeld(out[0], out[1])
+	d.committedDraftOffset += n
+}
 
-	// Force the draft writes: a session that never drafts would otherwise
-	// leave the flush chain unevaluated, pinning every hidden until close.
-	state := make([]*mlx.Array, 0, 2*len(spec.draftKV))
-	for _, c := range spec.draftKV {
-		state = append(state, c.State()...)
-	}
-	mlx.AsyncEval(state...)
-
-	mlx.Unpin(d.pendingTokens...)
-	mlx.Unpin(d.pendingHiddens...)
-	d.pendingTokens, d.pendingHiddens = nil, nil
-	d.pendingCount = 0
+// takePending returns the buffered pairs as one batch, advancing past them.
+func (d *mtpDraftSession) takePending() (ids, hiddens *mlx.Array) {
+	ids = mlx.Concatenate(d.pendingTokens, 1)
+	hiddens = mlx.Concatenate(d.pendingHiddens, 1)
+	d.pending.Close()
+	d.pending, d.pendingTokens, d.pendingHiddens, d.pendingCount = nil, nil, nil, 0
+	return ids, hiddens
 }
 
 func (d *mtpDraftSession) setFrontierHidden(h *mlx.Array) {
-	mlx.Pin(h)
-	mlx.Unpin(d.frontierHidden)
+	d.scope.Attach(h)
+	d.scope.Discard(d.frontierHidden)
 	d.frontierHidden = h
 }
 
-// setHeld replaces the held flush outputs, pinned until the next flush or close.
+// setHeld replaces the held flush outputs, kept until the next flush or close.
 func (d *mtpDraftSession) setHeld(hidden, auxHidden *mlx.Array) {
-	mlx.Pin(hidden, auxHidden)
-	mlx.Unpin(d.heldHidden, d.heldAuxHidden)
+	d.scope.Attach(hidden, auxHidden)
+	d.scope.Discard(d.heldHidden, d.heldAuxHidden)
 	d.heldHidden, d.heldAuxHidden = hidden, auxHidden
 }
 
@@ -276,55 +290,60 @@ func (d *mtpDraftSession) propose(current *mlx.Array, maxTokens int) *draftCandi
 		}
 	}
 
-	lastToken := current.ExpandDims(-1)
-	lastHidden := d.frontierHidden
-	draftDists := make([]sampler.Distribution, 0, maxTokens)
-	var prefix *mlx.Array
+	var candidates *draftCandidates
+	mlx.ScopedArrays(func() []*mlx.Array {
+		lastToken := current.ExpandDims(-1)
+		lastHidden := d.frontierHidden
+		draftDists := make([]sampler.Distribution, 0, maxTokens)
+		var prefix *mlx.Array
 
-	for i := range maxTokens {
-		var hidden, auxHidden *mlx.Array
-		if i == 0 && len(spec.draftKV) > 0 {
-			// The settle flush already produced the frontier row; reuse it
-			// instead of re-running the head.
-			hidden, auxHidden = d.heldHidden, d.heldAuxHidden
-		} else {
-			// A head with draft caches writes each draft token to the next
-			// draft-cache slot, advancing one per step from the last committed
-			// slot (the held i==0 step stands in for that slot). A cacheless
-			// head stays at the last committed slot every step, re-attending
-			// the committed prefix read-only ("single-position").
-			pos := d.frontier - 1
-			if len(spec.draftKV) > 0 {
-				pos = d.frontier - 1 + i
+		for i := range maxTokens {
+			var hidden, auxHidden *mlx.Array
+			if i == 0 && len(spec.draftKV) > 0 {
+				// The settle flush already produced the frontier row; reuse it
+				// instead of re-running the head.
+				hidden, auxHidden = d.heldHidden, d.heldAuxHidden
+			} else {
+				// A head with draft caches writes each draft token to the next
+				// draft-cache slot, advancing one per step from the last committed
+				// slot (the held i==0 step stands in for that slot). A cacheless
+				// head stays at the last committed slot every step, re-attending
+				// the committed prefix read-only ("single-position").
+				pos := d.frontier - 1
+				if len(spec.draftKV) > 0 {
+					pos = d.frontier - 1 + i
+				}
+				hidden, auxHidden = spec.draft.Forward(&batch.Batch{
+					InputIDs:     lastToken,
+					SeqOffsets:   []int32{int32(pos)},
+					SeqQueryLens: []int32{1},
+					Hidden:       lastHidden,
+					Layout:       d.layout,
+				}, spec.targets, spec.draftKV)
 			}
-			hidden, auxHidden = spec.draft.Forward(&batch.Batch{
-				InputIDs:     lastToken,
-				SeqOffsets:   []int32{int32(pos)},
-				SeqQueryLens: []int32{1},
-				Hidden:       lastHidden,
-				Layout:       d.layout,
-			}, spec.targets, spec.draftKV)
-		}
-		// Unembed only the row being sampled, never the batch.
-		stepLogits := spec.draft.Unembed(hidden).Squeeze(1)
-		lastHidden = auxHidden
-		// The chain's earlier drafts ride along as the row's history, so
-		// penalties shape proposals the same way they shape validation.
-		dist := r.Sampler.Distribution(pipelineSlot, stepLogits, prefix)
-		nextToken := r.Sampler.SampleDistribution(pipelineSlot, dist)
+			// Unembed only the row being sampled, never the batch.
+			stepLogits := spec.draft.Unembed(hidden).Squeeze(1)
+			lastHidden = auxHidden
+			// The chain's earlier drafts ride along as the row's history, so
+			// penalties shape proposals the same way they shape validation.
+			dist := r.Sampler.Distribution(pipelineSlot, stepLogits, prefix)
+			nextToken := r.Sampler.SampleDistribution(pipelineSlot, dist)
 
-		lastToken = nextToken.ExpandDims(-1)
-		draftDists = append(draftDists, dist)
-		if prefix == nil {
-			prefix = lastToken
-		} else {
-			prefix = prefix.Concatenate(1, lastToken)
+			lastToken = nextToken.ExpandDims(-1)
+			draftDists = append(draftDists, dist)
+			if prefix == nil {
+				prefix = lastToken
+			} else {
+				prefix = prefix.Concatenate(1, lastToken)
+			}
 		}
-	}
-	return &draftCandidates{
-		tokens: prefix,
-		dist:   sampler.ConcatenateDistributions(draftDists),
-	}
+		candidates = &draftCandidates{
+			tokens: prefix,
+			dist:   sampler.ConcatenateDistributions(draftDists),
+		}
+		return candidates.Arrays()
+	})
+	return candidates
 }
 
 func lastHiddenRow(hidden *mlx.Array) *mlx.Array {

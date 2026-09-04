@@ -14,6 +14,7 @@ import (
 type engramCache struct {
 	history     *mlx.Array
 	convHistory *mlx.Array
+	scope       *mlx.Scope
 	offset      int
 	eosID       int64
 	width       int
@@ -27,24 +28,25 @@ type engramCache struct {
 type engramSnapshot struct {
 	history     *mlx.Array
 	convHistory *mlx.Array
+	scope       *mlx.Scope
 	offset      int
 }
 
 func newEngramCache(width, convTail, convDim int, eosID int64) *engramCache {
-	return &engramCache{width: width, convTail: convTail, convDim: convDim, eosID: eosID}
+	return &engramCache{width: width, convTail: convTail, convDim: convDim, eosID: eosID, scope: mlx.NewScope()}
 }
 
 func (c *engramCache) setHistory(value *mlx.Array) {
 	value = value.Clone()
-	mlx.Pin(value)
-	mlx.Unpin(c.history)
+	c.scope.Attach(value)
+	c.scope.Discard(c.history)
 	c.history = value
 }
 
 func (c *engramCache) setConvHistory(value *mlx.Array) {
 	value = value.Clone()
-	mlx.Pin(value)
-	mlx.Unpin(c.convHistory)
+	c.scope.Attach(value)
+	c.scope.Discard(c.convHistory)
 	c.convHistory = value
 }
 
@@ -126,7 +128,7 @@ func (c *engramCache) State() []*mlx.Array {
 }
 
 func (c *engramCache) Free() {
-	mlx.Unpin(c.history, c.convHistory)
+	c.scope.Close()
 	c.history = nil
 	c.convHistory = nil
 	c.offset = 0
@@ -176,8 +178,10 @@ func (c *engramCache) Restore(snapshot cache.Snapshot, target int) bool {
 	if !ok || value.offset != target {
 		return false
 	}
-	c.setHistory(value.history)
-	c.setConvHistory(value.convHistory)
+	mlx.Scoped(func() {
+		c.setHistory(value.history)
+		c.setConvHistory(value.convHistory)
+	})
 	c.offset = target
 	return true
 }
@@ -194,12 +198,12 @@ func (c *engramCache) Split(snapshot cache.Snapshot, _ int) (cache.Snapshot, cac
 }
 
 func newEngramSnapshot(history, convHistory *mlx.Array, offset int) *engramSnapshot {
-	snapshot := &engramSnapshot{history: history.Clone(), convHistory: convHistory.Clone(), offset: offset}
-	mlx.Pin(snapshot.history, snapshot.convHistory)
+	snapshot := &engramSnapshot{history: history.Clone(), convHistory: convHistory.Clone(), scope: mlx.NewScope(), offset: offset}
+	snapshot.scope.Attach(snapshot.history, snapshot.convHistory)
 	mlx.AsyncEval(snapshot.history, snapshot.convHistory)
 	return snapshot
 }
 
 func (s *engramSnapshot) Size() int                    { return s.history.NumBytes() + s.convHistory.NumBytes() }
 func (s *engramSnapshot) SetMaterializeHook(func(int)) {}
-func (s *engramSnapshot) Close()                       { mlx.Unpin(s.history, s.convHistory) }
+func (s *engramSnapshot) Close()                       { s.scope.Close() }

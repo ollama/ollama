@@ -15,7 +15,7 @@ type Cache interface {
 	Offset() int
 
 	// Snapshot copies cache state from fromOffset to current offset into
-	// pinned VRAM arrays. The active cache is unchanged.
+	// owned VRAM arrays. The active cache is unchanged.
 	Snapshot(fromOffset int) Snapshot
 
 	// PrepareSnapshots schedules the cache to capture a snapshot as its
@@ -67,7 +67,7 @@ type Snapshot interface {
 	// never lazy may treat this as a no-op.
 	SetMaterializeHook(func(delta int))
 
-	// Close unpins the snapshot's arrays so they can be freed by Sweep.
+	// Close frees the snapshot's arrays.
 	Close()
 }
 

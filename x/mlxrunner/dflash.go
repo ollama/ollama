@@ -8,7 +8,7 @@ import (
 	"github.com/ollama/ollama/x/mlxrunner/model/base"
 )
 
-// dflashPendingFlushTokens bounds the pinned feature rows between flushes.
+// dflashPendingFlushTokens bounds the held feature rows between flushes.
 const dflashPendingFlushTokens = 256
 
 // dflashDrafter drafts with a block-diffusion draft model (DFlash): one
@@ -48,6 +48,7 @@ type dflashDraftSession struct {
 	ctxOffset       int
 	pendingFeatures []*mlx.Array
 	pendingCount    int
+	pending         *mlx.Scope // holds the rows until the flush
 
 	// blockOutstanding tracks the proposal's scheduled rollback point, which
 	// commitBlock has to drain even when it needs no rewind.
@@ -66,7 +67,10 @@ func (d *dflashDraftSession) committed(tokens, features *mlx.Array, position int
 	}
 	if start < n {
 		f := features.Slice(mlx.Slice(), mlx.Slice(start, n), mlx.Slice())
-		mlx.Pin(f)
+		if d.pending == nil {
+			d.pending = mlx.NewScope()
+		}
+		d.pending.Attach(f)
 		d.pendingFeatures = append(d.pendingFeatures, f)
 		d.pendingCount += n - start
 		if d.pendingCount >= dflashPendingFlushTokens {
@@ -91,7 +95,8 @@ func (d *dflashDraftSession) takePending() *mlx.Array {
 		return nil
 	}
 	features := mlx.Concatenate(d.pendingFeatures, 1)
-	mlx.Unpin(d.pendingFeatures...)
+	d.pending.Close()
+	d.pending = nil
 	d.pendingFeatures = nil
 	d.ctxOffset += d.pendingCount
 	d.pendingCount = 0
@@ -116,24 +121,25 @@ func (d *dflashDraftSession) flush() {
 	spec := d.drafter.spec
 	d.commitBlock()
 
-	offset := d.ctxOffset
-	features := d.takePending()
-	if features == nil {
+	if len(d.pendingFeatures) == 0 {
 		return
 	}
-	spec.draft.Forward(&batch.Batch{
-		SeqOffsets: []int32{int32(offset)},
-		Hidden:     features,
-		Layout:     d.layout,
-	}, spec.targets, spec.draftKV)
-
-	// Force the cache writes: a session that never drafts would otherwise
-	// leave the flush chain unevaluated, pinning every feature until close.
-	state := make([]*mlx.Array, 0, 2*len(spec.draftKV))
-	for _, c := range spec.draftKV {
-		state = append(state, c.State()...)
-	}
-	mlx.AsyncEval(state...)
+	offset := d.ctxOffset
+	// Evaluating the cache state forces the writes: a session that never
+	// drafts would otherwise leave the flush chain unevaluated, holding
+	// every feature until close.
+	mlx.ScopedAsyncEval(func() []*mlx.Array {
+		spec.draft.Forward(&batch.Batch{
+			SeqOffsets: []int32{int32(offset)},
+			Hidden:     d.takePending(),
+			Layout:     d.layout,
+		}, spec.targets, spec.draftKV)
+		state := make([]*mlx.Array, 0, 2*len(spec.draftKV))
+		for _, c := range spec.draftKV {
+			state = append(state, c.State()...)
+		}
+		return state
+	})
 }
 
 // propose drafts a block after the not-yet-validated current token, one
@@ -152,34 +158,39 @@ func (d *dflashDraftSession) propose(current *mlx.Array, maxTokens int) *draftCa
 	// Send only the anchor and the rows being sampled, not the full trained
 	// block. Exact for causal layers, and measured as free for bidirectional
 	// ones.
-	masks := make([]int32, n)
-	for i := range masks {
-		masks[i] = d.drafter.maskToken
-	}
-	block := current.ExpandDims(-1).Concatenate(1, mlx.FromValues(masks, 1, len(masks)))
+	var candidates *draftCandidates
+	mlx.ScopedArrays(func() []*mlx.Array {
+		masks := make([]int32, n)
+		for i := range masks {
+			masks[i] = d.drafter.maskToken
+		}
+		block := current.ExpandDims(-1).Concatenate(1, mlx.FromValues(masks, 1, len(masks)))
 
-	offset := d.ctxOffset
-	features := d.takePending()
+		offset := d.ctxOffset
+		features := d.takePending()
 
-	scheduleSpeculation(spec.draftKV, d.ctxOffset, 1)
-	d.blockOutstanding = true
+		scheduleSpeculation(spec.draftKV, d.ctxOffset, 1)
+		d.blockOutstanding = true
 
-	hidden, _ := spec.draft.Forward(&batch.Batch{
-		InputIDs:     block,
-		SeqOffsets:   []int32{int32(offset)},
-		SeqQueryLens: []int32{int32(n + 1)},
-		Hidden:       features,
-		Layout:       d.layout,
-	}, spec.targets, spec.draftKV)
+		hidden, _ := spec.draft.Forward(&batch.Batch{
+			InputIDs:     block,
+			SeqOffsets:   []int32{int32(offset)},
+			SeqQueryLens: []int32{int32(n + 1)},
+			Hidden:       features,
+			Layout:       d.layout,
+		}, spec.targets, spec.draftKV)
 
-	// Row i predicts the token at its own position, so the anchor row is
-	// unused. Rows 1..n are sampled from one batched distribution; penalties
-	// see only the committed history, not the other rows of the block.
-	logits := spec.draft.Unembed(hidden.Slice(mlx.Slice(), mlx.Slice(1, n+1), mlx.Slice()))
-	dist := r.Sampler.Distribution(pipelineSlot, logits, nil)
-	tokens := r.Sampler.SampleDistribution(pipelineSlot, dist)
-	return &draftCandidates{
-		tokens: tokens.ExpandDims(0),
-		dist:   dist,
-	}
+		// Row i predicts the token at its own position, so the anchor row is
+		// unused. Rows 1..n are sampled from one batched distribution; penalties
+		// see only the committed history, not the other rows of the block.
+		logits := spec.draft.Unembed(hidden.Slice(mlx.Slice(), mlx.Slice(1, n+1), mlx.Slice()))
+		dist := r.Sampler.Distribution(pipelineSlot, logits, nil)
+		tokens := r.Sampler.SampleDistribution(pipelineSlot, dist)
+		candidates = &draftCandidates{
+			tokens: tokens.ExpandDims(0),
+			dist:   dist,
+		}
+		return candidates.Arrays()
+	})
+	return candidates
 }

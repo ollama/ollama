@@ -105,11 +105,11 @@ func TestBatchMediaLifecycle(t *testing.T) {
 			t.Fatalf("second overlap re-encoded (calls=%d)", calls)
 		}
 
-		m.release(4)
+		m.free(4)
 		if m.manifest[0].Features == nil {
 			t.Fatal("release dropped features before the expansion was evaluated")
 		}
-		m.release(6)
+		m.free(6)
 		if m.manifest[0].Features != nil {
 			t.Fatal("release kept features past the expansion end")
 		}
