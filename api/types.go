@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"iter"
@@ -299,7 +300,15 @@ func (t ToolCallFunctionArguments) MarshalJSON() ([]byte, error) {
 	if t.om == nil {
 		return []byte("{}"), nil
 	}
-	return json.Marshal(t.om)
+
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(t.ToMap()); err != nil {
+		return nil, err
+	}
+
+	return b.Bytes(), nil
 }
 
 type Tool struct {
@@ -407,7 +416,15 @@ func (t ToolPropertiesMap) MarshalJSON() ([]byte, error) {
 	if t.om == nil {
 		return []byte("null"), nil
 	}
-	return json.Marshal(t.om)
+
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(t.ToMap()); err != nil {
+		return nil, err
+	}
+
+	return b.Bytes(), nil
 }
 
 func (t *ToolPropertiesMap) UnmarshalJSON(data []byte) error {
