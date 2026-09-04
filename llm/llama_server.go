@@ -1700,9 +1700,9 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 				lastToken = strings.TrimSpace(lsResp.Content)
 				tokenRepeat = 0
 			}
-			if tokenRepeat > 30 {
+			if tokenRepeat > 100 {
 				slog.Debug("prediction aborted, token repeat limit reached")
-				return ctx.Err()
+				return fmt.Errorf("prediction aborted, token repeat limit reached")
 			}
 
 			if lsResp.Content != "" && !lsResp.Stop {
