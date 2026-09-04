@@ -17,7 +17,20 @@ describe("SidebarLayout", () => {
     );
 
     expect(html).toContain("pl-36");
+    expect(html).toContain("translate-y-px");
     expect(html).toContain("transition-[padding-left]");
     expect(html).toContain("duration-300");
+  });
+
+  it("keeps the titlebar control adjustment specific to macOS", () => {
+    vi.stubGlobal("window", { OLLAMA_PLATFORM: "windows" });
+
+    const html = renderToStaticMarkup(
+      <SidebarLayout title="Settings" sidebar={<nav />}>
+        <div />
+      </SidebarLayout>,
+    );
+
+    expect(html).not.toContain("translate-y-px");
   });
 });

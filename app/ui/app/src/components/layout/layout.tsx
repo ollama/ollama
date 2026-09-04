@@ -24,7 +24,7 @@ export function SidebarLayout({
   return (
     <div className="flex h-screen w-full overflow-hidden dark:bg-neutral-900">
       <div
-        className={`absolute flex mx-2 py-2 z-20 items-center transition-[left] duration-375 text-neutral-500 dark:text-neutral-400 ${sidebarOpen ? (isWindows ? "left-2" : "left-[140px]") : isWindows ? "left-2" : "left-20"}`}
+        className={`absolute flex mx-2 py-2 z-20 items-center transition-[left] duration-375 text-neutral-500 dark:text-neutral-400 ${isWindows ? "" : "translate-y-px"} ${sidebarOpen ? (isWindows ? "left-2" : "left-[140px]") : isWindows ? "left-2" : "left-20"}`}
       >
         <button
           onClick={toggleSidebar}

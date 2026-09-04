@@ -485,7 +485,7 @@ export default function Settings() {
                     <div className="h-10 w-10 bg-neutral-200 dark:bg-neutral-700 rounded-full animate-pulse"></div>
                   </div>
                 ) : user && user.name ? (
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-start justify-between">
                     <div>
                       <div className="flex items-center space-x-2">
                         <Label className="text-sm font-medium text-neutral-900 dark:text-white">
