@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ollama/ollama/api"
 	modelpkg "github.com/ollama/ollama/types/model"
@@ -44,6 +45,9 @@ func (m LaunchModel) WithCloudLimits() LaunchModel {
 	}
 	return m
 }
+
+// modelShowTimeout bounds Show metadata probes. Var so tests can shorten it.
+var modelShowTimeout = 5 * time.Second
 
 type modelInventory struct {
 	client *api.Client
@@ -114,6 +118,63 @@ func (i *modelInventory) Resolve(ctx context.Context, names []string) []LaunchMo
 		}
 	}
 	return resolved
+}
+
+// enrichUnresolvedFromShow fills gaps in entries the local model list could
+// not describe (typically unpulled ":cloud" models) via Show. Best-effort:
+// failures keep the fallback zero values.
+func (i *modelInventory) enrichUnresolvedFromShow(ctx context.Context, resolved []LaunchModel) []LaunchModel {
+	if i == nil || i.client == nil {
+		return resolved
+	}
+
+	i.mu.Lock()
+	loaded, loadErr := i.loaded, i.err
+	models := cloneLaunchModels(i.models)
+	i.mu.Unlock()
+
+	if !loaded || loadErr != nil {
+		return resolved
+	}
+
+	for j := range resolved {
+		if _, found := findLaunchModel(models, resolved[j].Name); !found {
+			resolved[j] = i.enrichFromShow(ctx, resolved[j])
+		}
+	}
+	return resolved
+}
+
+// enrichFromShow fills gaps in m from Show, preserving metadata already
+// resolved from the model list or cloud limit maps.
+func (i *modelInventory) enrichFromShow(ctx context.Context, m LaunchModel) LaunchModel {
+	ctx, cancel := context.WithTimeout(ctx, modelShowTimeout)
+	defer cancel()
+
+	resp, err := i.client.Show(ctx, &api.ShowRequest{Model: m.Name})
+	if err != nil {
+		return m
+	}
+
+	if len(m.Capabilities) == 0 {
+		m.Capabilities = append([]modelpkg.Capability(nil), resp.Capabilities...)
+		m.ToolCapable = m.HasCapability(modelpkg.CapabilityTools)
+	}
+
+	if m.ContextLength <= 0 {
+		if resp.Details.ContextLength > 0 {
+			m.ContextLength = resp.Details.ContextLength
+		} else if n, ok := modelInfoContextLength(resp.ModelInfo); ok {
+			// parser shared with the Kimi CLI integration (kimi.go)
+			m.ContextLength = n
+		}
+		if m.ContextLength > 0 {
+			// Mirror List-derived models for integrations reading Details.
+			m.Details.ContextLength = m.ContextLength
+		}
+	}
+
+	return m
 }
 
 func resolveLaunchModels(names []string, models []LaunchModel) ([]LaunchModel, bool) {
