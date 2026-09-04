@@ -1146,16 +1146,112 @@ func pushLayersForManifestList(parent manifest.Manifest) ([]manifest.Layer, erro
 	return layers, nil
 }
 
-func PullModel(ctx context.Context, name string, runner string, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
-	n := model.ParseName(name)
+type preparedModelPull struct {
+	name         model.Name
+	manifest     *manifest.Manifest
+	manifestData []byte
+	// selectedChildDigest is set when manifest is the runner-selected child
+	// of a manifest list rather than the manifest named by the pull.
+	selectedChildDigest string
+	regOpts             *registryOptions
+	progress            func(api.ProgressResponse)
+}
 
-	// build deleteMap to prune unused layers
+// prepareModelPull resolves the manifest that will be installed, selecting a
+// manifest list child for runner, and applies the version gate, without
+// downloading model layers.
+func prepareModelPull(ctx context.Context, name, runner string, regOpts *registryOptions, progress func(api.ProgressResponse)) (preparedModelPull, error) {
+	n := model.ParseName(name)
+	if n.ProtocolScheme == "http" && !regOpts.Insecure {
+		return preparedModelPull{}, errInsecureProtocol
+	}
+
+	progress(api.ProgressResponse{Status: "pulling manifest"})
+
+	mf, manifestData, err := pullModelManifest(ctx, n, regOpts)
+	if err != nil {
+		return preparedModelPull{}, fmt.Errorf("pull model manifest: %s", err)
+	}
+	selectedChildDigest := ""
+	if mf.MediaType == manifest.MediaTypeManifestList {
+		var childDigest string
+		mf, childDigest, err = pullSelectedManifest(ctx, n, mf, runner, regOpts, progress)
+		if err != nil {
+			return preparedModelPull{}, err
+		}
+		selectedChildDigest = childDigest
+	} else if runner != "" {
+		// The registry served a plain manifest, so there is no variant to
+		// select. Honor an explicit runner request by rejecting a declared
+		// mismatch instead of silently pulling whatever is stored. Manifests
+		// without runner metadata cannot be checked before their config blob
+		// is local, so they proceed as before.
+		if mf.Runner != "" && !strings.EqualFold(mf.Runner, runner) {
+			return preparedModelPull{}, fmt.Errorf("%w for runners: %s", manifest.ErrNoCompatibleManifest, runner)
+		}
+	}
+
+	if err := checkModelRequires(ctx, n, mf, regOpts); err != nil {
+		return preparedModelPull{}, err
+	}
+
+	return preparedModelPull{
+		name:                n,
+		manifest:            mf,
+		manifestData:        manifestData,
+		selectedChildDigest: selectedChildDigest,
+		regOpts:             regOpts,
+		progress:            progress,
+	}, nil
+}
+
+// PullModel pulls a model without server-level admission checks. Create uses
+// it to fetch source material that may be transformed into a smaller model, so
+// whether the source can run is irrelevant.
+func PullModel(ctx context.Context, name, runner string, regOpts *registryOptions, progress func(api.ProgressResponse)) error {
+	prepared, err := prepareModelPull(ctx, name, runner, regOpts, progress)
+	if err != nil {
+		return err
+	}
+	return prepared.pull(ctx)
+}
+
+// pullModel applies API pull admission before entering the common transfer
+// path. Backend-specific fit policy belongs to the scheduler assessment.
+func (s *Server) pullModel(ctx context.Context, name, runner string, regOpts *registryOptions, force bool, progress func(api.ProgressResponse)) error {
+	prepared, err := prepareModelPull(ctx, name, runner, regOpts, progress)
+	if err != nil {
+		return err
+	}
+	if !force && s.sched != nil {
+		// The named manifest is not written until every layer has been fetched
+		// and verified, so returning here leaves any previously installed
+		// version untouched.
+		if assessment := s.sched.assessManifestFit(ctx, prepared.manifest); assessment.Status == modelDoesNotFit {
+			return modelDoesNotFitError(name, assessment, s.fitRecommendations(ctx))
+		}
+	}
+	return prepared.pull(ctx)
+}
+
+// pull downloads, verifies, and commits a prepared model. It deliberately has
+// no scheduler dependency so create and admitted API pulls share this path.
+func (p preparedModelPull) pull(ctx context.Context) error {
+	n := p.name
+	mf := p.manifest
+	manifestData := p.manifestData
+	regOpts := p.regOpts
+	fn := p.progress
+	selectedChildDigest := p.selectedChildDigest
+
+	// Snapshot the installed manifest at execution time. Existing blobs remain
+	// cache hits, and a successful repeat pull prunes only replaced layers.
 	deleteMap := make(map[string]struct{})
 	existingDigests, err := manifest.ReferencedBlobDigestsForName(n)
 	if errors.Is(err, os.ErrNotExist) {
 		// noop
 	} else if err != nil {
-		slog.Warn("pulling model with bad existing manifest", "name", name, "error", err)
+		slog.Warn("pulling model with bad existing manifest", "name", n.String(), "error", err)
 	} else {
 		for _, digest := range existingDigests {
 			if blob, err := manifest.BlobsPath(digest); err == nil {
@@ -1166,35 +1262,6 @@ func PullModel(ctx context.Context, name string, runner string, regOpts *registr
 		}
 	}
 
-	if n.ProtocolScheme == "http" && !regOpts.Insecure {
-		return errInsecureProtocol
-	}
-
-	fn(api.ProgressResponse{Status: "pulling manifest"})
-
-	mf, manifestData, err := pullModelManifest(ctx, n, regOpts)
-	if err != nil {
-		return fmt.Errorf("pull model manifest: %s", err)
-	}
-	selectedChildDigest := ""
-	if mf.MediaType == manifest.MediaTypeManifestList {
-		var childDigest string
-		mf, childDigest, err = pullSelectedManifest(ctx, n, mf, runner, regOpts, fn)
-		if err != nil {
-			return err
-		}
-		selectedChildDigest = childDigest
-	} else if runner != "" {
-		// The registry served a plain manifest, so there is no variant to
-		// select. Honor an explicit runner request by rejecting a declared
-		// mismatch instead of silently pulling whatever is stored. Manifests
-		// without runner metadata cannot be checked before their config blob
-		// is local, so they proceed as before.
-		if mf.Runner != "" && !strings.EqualFold(mf.Runner, runner) {
-			return fmt.Errorf("%w for runners: %s", manifest.ErrNoCompatibleManifest, runner)
-		}
-	}
-
 	// Checked against the selected child: a manifest list carries no layers of
 	// its own, so testing the parent would skip the gate entirely.
 	if requiresMLX(mf) {
@@ -1202,10 +1269,6 @@ func PullModel(ctx context.Context, name string, runner string, regOpts *registr
 			slog.Debug("MLX is unavailable for safetensors model pull", "error", err)
 			return errors.New("this model requires MLX support, but the MLX runtime is not available")
 		}
-	}
-
-	if err := checkModelRequires(ctx, n, mf, regOpts); err != nil {
-		return err
 	}
 
 	var layers []manifest.Layer

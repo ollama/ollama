@@ -19,9 +19,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
+
 	"github.com/ollama/ollama/api"
 	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
@@ -1550,5 +1553,297 @@ func TestCheckPullRequiresUsesRunningVersion(t *testing.T) {
 	version.Version = "0.33.3"
 	if err := checkPullRequires("0.35.0", version.Version); err == nil {
 		t.Fatal("expected stamped client below requires to fail")
+	}
+}
+
+func TestPullModelRejectsNonFitBeforeBlobDownload(t *testing.T) {
+	modelsDir := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", modelsDir)
+	t.Setenv("OLLAMA_NO_CLOUD", "1")
+	t.Setenv("OLLAMA_GPU_OVERHEAD", "0")
+
+	var manifestRequests atomic.Int32
+	var tensorRequests atomic.Int32
+	// The requires gate reads the config before admission; model weights
+	// must not be fetched.
+	configData := []byte("{}")
+	configDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(configData))
+	const tensorDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/manifests/"):
+			manifestRequests.Add(1)
+			w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
+			mf := manifest.Manifest{
+				SchemaVersion: 2,
+				MediaType:     "application/vnd.docker.distribution.manifest.v2+json",
+				Config: manifest.Layer{
+					MediaType: "application/vnd.ollama.image.config",
+					Digest:    configDigest,
+					Size:      int64(len(configData)),
+				},
+				Layers: []manifest.Layer{{
+					MediaType: manifest.MediaTypeImageTensor,
+					Digest:    tensorDigest,
+					Size:      2 << 30,
+					Name:      "model.weight",
+				}},
+			}
+			if err := json.NewEncoder(w).Encode(mf); err != nil {
+				t.Errorf("encode manifest: %v", err)
+			}
+		case strings.HasSuffix(r.URL.Path, "/blobs/"+configDigest):
+			w.Header().Set("Content-Length", strconv.Itoa(len(configData)))
+			if r.Method == http.MethodGet {
+				_, _ = w.Write(configData)
+			}
+		case strings.Contains(r.URL.Path, "/blobs/"):
+			tensorRequests.Add(1)
+			http.Error(w, "tensor should not be requested", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	u, err := url.Parse(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := model.ParseName(u.Host + "/test/huge")
+	n.ProtocolScheme = "http"
+	s := &Server{sched: &Scheduler{
+		getGpuFn: func(context.Context, []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+			return []ml.DeviceInfo{{
+				DeviceID:    ml.DeviceID{Library: "Metal"},
+				TotalMemory: 1 << 30,
+				FreeMemory:  1 << 30,
+			}}
+		},
+	}}
+
+	err = s.pullModel(t.Context(), n.String(), "", &registryOptions{Insecure: true}, false, func(api.ProgressResponse) {})
+	want := n.String() + " may not fit on your system. Try a smaller model, or use --force to pull " + n.String() + " anyway."
+	if err == nil || err.Error() != want {
+		t.Fatalf("pullModel error = %q, want %q", err, want)
+	}
+	if manifestRequests.Load() != 1 {
+		t.Fatalf("manifest requests = %d, want 1", manifestRequests.Load())
+	}
+	if tensorRequests.Load() != 0 {
+		t.Fatalf("tensor requests = %d, want 0", tensorRequests.Load())
+	}
+	manifestPath, err := manifest.PathForName(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(manifestPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("rejected pull left manifest at %s: %v", manifestPath, err)
+	}
+}
+
+func TestPullModelRejectsNonFitManifestListChild(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	t.Setenv("OLLAMA_GPU_OVERHEAD", "0")
+	t.Setenv("OLLAMA_NO_CLOUD", "1")
+
+	const tensorDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	child := manifest.Manifest{
+		SchemaVersion: 2,
+		MediaType:     manifest.MediaTypeManifest,
+		Layers: []manifest.Layer{{
+			MediaType: manifest.MediaTypeImageTensor,
+			Digest:    tensorDigest,
+			Size:      2 << 30,
+			Name:      "model.weight",
+		}},
+	}
+	childData, err := json.Marshal(child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	childDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(childData))
+	childRef, err := manifest.NewManifestReference(childDigest, manifest.RunnerMLX, manifest.FormatSafetensors)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentData, err := json.Marshal(manifest.Manifest{
+		SchemaVersion: 2,
+		MediaType:     manifest.MediaTypeManifestList,
+		Manifests:     []manifest.Manifest{childRef},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var tensorRequests atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v2/library/test/manifests/latest":
+			w.Header().Set("Content-Type", manifest.MediaTypeManifestList)
+			_, _ = w.Write(parentData)
+		case r.URL.Path == "/v2/library/test/blobs/"+childDigest:
+			w.Header().Set("Content-Length", strconv.Itoa(len(childData)))
+			if r.Method == http.MethodGet {
+				_, _ = w.Write(childData)
+			}
+		case r.URL.Path == "/v2/library/test/blobs/"+tensorDigest:
+			tensorRequests.Add(1)
+			http.Error(w, "tensor should not be requested", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	s := &Server{sched: &Scheduler{
+		getGpuFn: func(context.Context, []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+			return []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Metal"}, TotalMemory: 1 << 30}}
+		},
+	}}
+	name := strings.TrimPrefix(ts.URL, "http://") + "/library/test:latest"
+	err = s.pullModel(t.Context(), name, manifest.RunnerMLX, &registryOptions{Insecure: true}, false, func(api.ProgressResponse) {})
+	if err == nil || !strings.Contains(err.Error(), "may not fit on your system") {
+		t.Fatalf("pullModel error = %v, want non-fit rejection of the selected child", err)
+	}
+	if tensorRequests.Load() != 0 {
+		t.Fatalf("tensor requests = %d, want 0", tensorRequests.Load())
+	}
+}
+
+func TestPullModelReportsRequiresBeforeNonFit(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	t.Setenv("OLLAMA_GPU_OVERHEAD", "0")
+	oldVersion := version.Version
+	t.Cleanup(func() { version.Version = oldVersion })
+	version.Version = "0.1.0"
+
+	configData := []byte(`{"requires":"99.0.0"}`)
+	configDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(configData))
+	const tensorDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/manifests/"):
+			w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
+			mf := manifest.Manifest{
+				SchemaVersion: 2,
+				MediaType:     "application/vnd.docker.distribution.manifest.v2+json",
+				Config: manifest.Layer{
+					MediaType: "application/vnd.docker.container.image.v1+json",
+					Digest:    configDigest,
+					Size:      int64(len(configData)),
+				},
+				Layers: []manifest.Layer{{
+					MediaType: manifest.MediaTypeImageTensor,
+					Digest:    tensorDigest,
+					Size:      2 << 30,
+					Name:      "model.weight",
+				}},
+			}
+			if err := json.NewEncoder(w).Encode(mf); err != nil {
+				t.Errorf("encode manifest: %v", err)
+			}
+		case strings.HasSuffix(r.URL.Path, "/blobs/"+configDigest):
+			w.Header().Set("Content-Length", strconv.Itoa(len(configData)))
+			if r.Method == http.MethodGet {
+				_, _ = w.Write(configData)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	s := &Server{sched: &Scheduler{
+		getGpuFn: func(context.Context, []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+			return []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Metal"}, TotalMemory: 1 << 30}}
+		},
+	}}
+	name := strings.TrimPrefix(ts.URL, "http://") + "/library/test:latest"
+	err := s.pullModel(t.Context(), name, "", &registryOptions{Insecure: true}, false, func(api.ProgressResponse) {})
+	if err == nil || !strings.Contains(err.Error(), "requires ollama version") {
+		t.Fatalf("pullModel error = %v, want the requires error rather than a fit rejection --force cannot get past", err)
+	}
+}
+
+func TestPullHandlerForceBypassesFitCheck(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	tensorData := []byte("hi")
+	tensorDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(tensorData))
+	var blobRequests atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/manifests/"):
+			w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
+			mf := manifest.Manifest{
+				SchemaVersion: 2,
+				MediaType:     "application/vnd.docker.distribution.manifest.v2+json",
+				Layers: []manifest.Layer{{
+					MediaType: manifest.MediaTypeImageTensor,
+					Digest:    tensorDigest,
+					Size:      int64(len(tensorData)),
+					Name:      "model.weight",
+				}},
+			}
+			if err := json.NewEncoder(w).Encode(mf); err != nil {
+				t.Errorf("encode manifest: %v", err)
+			}
+		case strings.Contains(r.URL.Path, "/blobs/"):
+			blobRequests.Add(1)
+			if _, err := w.Write(tensorData); err != nil {
+				t.Errorf("write tensor: %v", err)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	u, err := url.Parse(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := model.ParseName(u.Host + "/test/huge")
+	n.ProtocolScheme = "http"
+
+	var fitChecks atomic.Int32
+	s := &Server{sched: &Scheduler{
+		getGpuFn: func(context.Context, []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+			fitChecks.Add(1)
+			return []ml.DeviceInfo{{
+				DeviceID:    ml.DeviceID{Library: "Metal"},
+				TotalMemory: 1 << 30,
+				FreeMemory:  1 << 30,
+			}}
+		},
+	}}
+	router := gin.New()
+	router.POST("/api/pull", s.PullHandler)
+	apiServer := httptest.NewServer(router)
+	defer apiServer.Close()
+
+	apiURL, err := url.Parse(apiServer.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := api.NewClient(apiURL, apiServer.Client())
+	err = client.Pull(t.Context(), &api.PullRequest{
+		Model:    n.String(),
+		Force:    true,
+		Insecure: true,
+	}, func(api.ProgressResponse) error { return nil })
+	if fitChecks.Load() != 0 {
+		t.Fatalf("fit checks = %d, want 0", fitChecks.Load())
+	}
+	if err != nil && strings.Contains(err.Error(), "may not fit on your system") {
+		t.Fatalf("forced pull was rejected by fit check: %v", err)
+	}
+	if blobRequests.Load() == 0 {
+		if err == nil || !strings.Contains(err.Error(), "requires MLX support") {
+			t.Fatalf("forced pull stopped before blob transfer: %v", err)
+		}
+	} else if err != nil {
+		t.Fatalf("forced pull: %v", err)
 	}
 }
