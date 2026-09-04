@@ -791,7 +791,8 @@ func hasListedModelName(models []api.ListModelResponse, name string) bool {
 // pullWithCloudSuggestion), in which case the returned name is the cloud
 // name the caller should continue with. verb is the user-facing command
 // ("run" or "pull") used in hint text.
-func showOrPullModel(cmd *cobra.Command, client *api.Client, name string, insecure bool, verb string) (*api.ShowResponse, string, error) {
+func showOrPullModel(cmd *cobra.Command, client *api.Client, request api.PullRequest, verb string) (*api.ShowResponse, string, error) {
+	name := request.Model
 	info, err := client.Show(cmd.Context(), &api.ShowRequest{Model: name})
 	if err == nil {
 		return info, name, nil
@@ -802,7 +803,7 @@ func showOrPullModel(cmd *cobra.Command, client *api.Client, name string, insecu
 		return nil, name, err
 	}
 
-	resolved, err := pullWithCloudSuggestion(cmd.Context(), client, name, insecure, verb)
+	resolved, err := pullWithCloudSuggestion(cmd.Context(), client, request, verb)
 	if err != nil {
 		return nil, name, err
 	}
@@ -911,7 +912,11 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	info, name, err := showOrPullModel(cmd, client, args[0], insecure, "run")
+	force, err := cmd.Flags().GetBool("force")
+	if err != nil {
+		return err
+	}
+	info, name, err := showOrPullModel(cmd, client, api.PullRequest{Model: args[0], Insecure: insecure, Force: force}, "run")
 	if err != nil {
 		if handleCloudAuthorizationError(err) {
 			return nil
@@ -1595,21 +1600,25 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	force, err := cmd.Flags().GetBool("force")
+	if err != nil {
+		return err
+	}
 
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
 
-	_, err = pullWithCloudSuggestion(cmd.Context(), client, args[0], insecure, "pull")
+	_, err = pullWithCloudSuggestion(cmd.Context(), client, api.PullRequest{Model: args[0], Insecure: insecure, Force: force}, "pull")
 	return err
 }
 
-// pullModelWithProgress pulls name, rendering progress to stderr. When
+// pullModelWithProgress submits request, rendering progress to stderr. When
 // clearNotFound is set and the pull fails because the model doesn't exist,
 // the progress display is erased rather than left behind; callers set it
 // when a ":cloud" suggestion prompt may immediately follow the failure.
-func pullModelWithProgress(ctx context.Context, client *api.Client, name string, insecure, clearNotFound bool) error {
+func pullModelWithProgress(ctx context.Context, client *api.Client, request api.PullRequest, clearNotFound bool) error {
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
 
@@ -1670,7 +1679,6 @@ func pullModelWithProgress(ctx context.Context, client *api.Client, name string,
 		return nil
 	}
 
-	request := api.PullRequest{Name: name, Insecure: insecure}
 	err := client.Pull(ctx, &request, fn)
 	if clearNotFound && isPullNotFoundErr(err) {
 		// The deferred Stop becomes a no-op after this.
@@ -2218,7 +2226,7 @@ func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
 		return err
 	}
 
-	info, resolvedModel, err := showOrPullModel(cmd, client, modelName, false, "run")
+	info, resolvedModel, err := showOrPullModel(cmd, client, api.PullRequest{Model: modelName}, "run")
 	if err != nil {
 		if handleCloudAuthorizationError(err) {
 			return nil
@@ -2450,6 +2458,7 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().String("keepalive", "", "Duration to keep a model loaded (e.g. 5m)")
 	runCmd.Flags().Bool("verbose", false, "Show timings for response")
 	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	runCmd.Flags().Bool("force", false, "Pull the model even if it is determined too large for this system")
 	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
 	runCmd.Flags().String("format", "", "Response format (e.g. json)")
 	runCmd.Flags().String("think", "", "Enable thinking mode: true/false or high/medium/low for supported models")
@@ -2483,6 +2492,7 @@ func NewCLI() *cobra.Command {
 	}
 
 	pullCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	pullCmd.Flags().Bool("force", false, "Pull the model even if it is determined too large for this system")
 
 	pushCmd := &cobra.Command{
 		Use:     "push MODEL",
