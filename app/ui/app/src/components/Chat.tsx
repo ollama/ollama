@@ -47,7 +47,7 @@ export default function Chat({ chatId }: { chatId: string }) {
     index: number;
     originalMessage: Message;
   } | null>(null);
-  const prevChatIdRef = useRef<string>(chatId);
+  const prevChatIdRef = useRef<string | null>(null);
 
   const chatFormCallbackRef = useRef<
     | ((
@@ -120,8 +120,8 @@ export default function Chat({ chatId }: { chatId: string }) {
     ) {
       // Always scroll to the bottom when opening a chat
       containerRef.current.scrollTop = containerRef.current.scrollHeight;
+      prevChatIdRef.current = chatId;
     }
-    prevChatIdRef.current = chatId;
   }, [chatId, messages.length]);
 
   // Simplified submit handler - ChatForm handles all the attachment logic
