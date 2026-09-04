@@ -30,6 +30,8 @@ func TestQwen38RendererMatchesReferenceFlows(t *testing.T) {
 
 	weatherArgs := api.NewToolCallFunctionArguments()
 	weatherArgs.Set("city", "Montréal")
+	imageArgs := api.NewToolCallFunctionArguments()
+	imageArgs.Set("prompt", "A red fox sitting in a snowy forest at sunset")
 	weather := []api.Tool{
 		{
 			Type: "function",
@@ -56,6 +58,24 @@ func TestQwen38RendererMatchesReferenceFlows(t *testing.T) {
 					Required: []string{"city"},
 					Properties: testPropsOrdered([]orderedProp{{
 						Key:   "city",
+						Value: api.ToolProperty{Type: api.PropertyType{"string"}},
+					}}),
+				},
+			},
+		},
+	}
+
+	generateImage := []api.Tool{
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "generate_image",
+				Description: "Generate an image",
+				Parameters: api.ToolFunctionParameters{
+					Type:     "object",
+					Required: []string{"prompt"},
+					Properties: testPropsOrdered([]orderedProp{{
+						Key:   "prompt",
 						Value: api.ToolProperty{Type: api.PropertyType{"string"}},
 					}}),
 				},
@@ -97,6 +117,11 @@ Reminder:
 </IMPORTANT><|im_end|>
 `
 	developerToolHeader := strings.TrimSuffix(toolHeader, imEndTag+"\n") + "\n\nUse tools when requested." + imEndTag + "\n"
+
+	weatherToolsJSON := `{"type": "function", "function": {"name": "get_weather", "description": "Get weather", "parameters": {"type": "object", "required": ["city"], "properties": {"city": {"type": "string"}}}}}
+{"type": "function", "function": {"name": "get_uv", "description": "Get UV index", "parameters": {"type": "object", "required": ["city"], "properties": {"city": {"type": "string"}}}}}`
+	imageToolsJSON := `{"type": "function", "function": {"name": "generate_image", "description": "Generate an image", "parameters": {"type": "object", "required": ["prompt"], "properties": {"prompt": {"type": "string"}}}}}`
+	imageToolHeader := strings.TrimSuffix(strings.Replace(toolHeader, weatherToolsJSON, imageToolsJSON, 1), imEndTag+"\n") + "\n\nWhen generate_image returns a markdown image tag, include it verbatim." + imEndTag + "\n"
 
 	tests := []struct {
 		name        string
@@ -321,6 +346,49 @@ Montréal
 </tool_response><|im_end|>
 <|im_start|>assistant
 <think>
+`,
+		},
+		{
+			name: "markdown image tag in tool result preserved verbatim",
+			messages: []api.Message{
+				{Role: "system", Content: "When generate_image returns a markdown image tag, include it verbatim."},
+				{Role: "user", Content: "Generate an image of a fox."},
+				{
+					Role:    "assistant",
+					Content: "",
+					ToolCalls: []api.ToolCall{{Function: api.ToolCallFunction{
+						Name:      "generate_image",
+						Arguments: imageArgs,
+					}}},
+				},
+				{Role: "tool", Content: "![Generated image: A red fox sitting in a snowy forest at sunset](https://example.com/images/fox.png)"},
+			},
+			tools:           generateImage,
+			think:           think(false),
+			matchesTemplate: true,
+			want: imageToolHeader + `<|im_start|>user
+Generate an image of a fox.<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+<tool_call>
+<function=generate_image>
+<parameter=prompt>
+A red fox sitting in a snowy forest at sunset
+</parameter>
+</function>
+</tool_call><|im_end|>
+<|im_start|>user
+<tool_response>
+![Generated image: A red fox sitting in a snowy forest at sunset](https://example.com/images/fox.png)
+</tool_response><|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
 `,
 		},
 		{
