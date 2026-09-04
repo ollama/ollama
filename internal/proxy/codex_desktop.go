@@ -1,7 +1,9 @@
 package proxy
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,10 +11,10 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -41,60 +43,9 @@ const (
 	// the machine.
 	CodexDesktopManagedAPIKey = "ollama-local-codex"
 
-	// autoReviewModel is the native Codex reviewer alias. The routing catalog
-	// may map requests for this alias to a selected Ollama model.
-	autoReviewModel          = "codex-auto-review"
-	guardianDecisionToolName = "submit_guardian_decision"
-
-	defaultMaxBodyBytes         = int64(64 << 20)
-	defaultOpenAIURL            = "https://api.openai.com/v1"
-	guardianDecisionInstruction = `
-
-When you have finished reviewing the action, call submit_guardian_decision exactly once with your final decision. Do not return the final decision as assistant text.`
+	defaultMaxBodyBytes = int64(64 << 20)
+	defaultOpenAIURL    = "https://api.openai.com/v1"
 )
-
-var guardianDecisionTool = map[string]any{
-	"type":        "function",
-	"name":        guardianDecisionToolName,
-	"description": "Submit the final Codex Guardian approval decision after completing any necessary investigation.",
-	"strict":      true,
-	"parameters": map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"risk_level": map[string]any{
-				"type": "string",
-				"enum": []string{"low", "medium", "high", "critical"},
-			},
-			"user_authorization": map[string]any{
-				"type": "string",
-				"enum": []string{"unknown", "low", "medium", "high"},
-			},
-			"outcome": map[string]any{
-				"type": "string",
-				"enum": []string{"allow", "deny"},
-			},
-			"rationale": map[string]any{
-				"type":      "string",
-				"minLength": 1,
-			},
-		},
-		"required":             []string{"risk_level", "user_authorization", "outcome", "rationale"},
-		"additionalProperties": false,
-	},
-}
-
-var hopByHopHeaders = map[string]struct{}{
-	"connection":          {},
-	"content-length":      {},
-	"keep-alive":          {},
-	"proxy-authenticate":  {},
-	"proxy-authorization": {},
-	"proxy-connection":    {},
-	"te":                  {},
-	"trailer":             {},
-	"transfer-encoding":   {},
-	"upgrade":             {},
-}
 
 // CodexDesktopConfig describes the upstreams and Ollama-only routing catalog.
 type CodexDesktopConfig struct {
@@ -120,7 +71,7 @@ type CodexDesktop struct {
 	activityLogPath    string
 	maxBodyBytes       int64
 	logger             *slog.Logger
-	client             *http.Client
+	proxy              *httputil.ReverseProxy
 	ollamaRequests     atomic.Uint64
 	chatGPTRequests    atomic.Uint64
 	upstreamErrors     atomic.Uint64
@@ -183,12 +134,14 @@ func NewCodexDesktop(config CodexDesktopConfig) (*CodexDesktop, error) {
 		activityLogPath:    strings.TrimSpace(config.ActivityLogPath),
 		maxBodyBytes:       maxBodyBytes,
 		logger:             logger,
-		client: &http.Client{
-			Transport: transport,
-			CheckRedirect: func(*http.Request, []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		},
+	}
+	handler.proxy = &httputil.ReverseProxy{
+		Rewrite:        handler.rewrite,
+		ModifyResponse: handler.modifyResponse,
+		ErrorHandler:   handler.upstreamError,
+		Transport:      transport,
+		// Flush immediately so upstream SSE streams reach Codex as they arrive.
+		FlushInterval: -1,
 	}
 	return handler, nil
 }
@@ -245,8 +198,8 @@ func (h *CodexDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	model, hasModel := extractModel(decodedBody)
-	isAutoReview := hasModel && modelKey(model) == modelKey(autoReviewModel)
 	routed := false
+	var autoReview autoReviewState
 	var routedModel routingModel
 	if hasModel {
 		catalog, err := loadRoutingCatalog(h.routingCatalogPath)
@@ -255,24 +208,19 @@ func (h *CodexDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusServiceUnavailable, "read Codex Ollama model catalog: "+err.Error())
 			return
 		}
-		if modelKey(model) == modelKey(autoReviewModel) && catalog.autoReviewModel != "" {
-			model = catalog.autoReviewModel
-			decodedBody, err = replaceRequestModel(decodedBody, model)
-			if err != nil {
-				h.logActivity(started, r.Method, suffix, model, "ollama", http.StatusBadRequest, "request_error")
-				writeJSONError(w, http.StatusBadRequest, "prepare Codex Auto-review request for Ollama: "+err.Error())
-				return
-			}
-		}
-		routedModel, routed = catalog.models[modelKey(model)]
-	}
-	if isAutoReview && routed && suffix == "/v1/responses" {
-		decodedBody, err = prepareAutoReviewRequest(decodedBody)
+		model, decodedBody, err = autoReview.resolveModel(model, catalog, decodedBody)
 		if err != nil {
 			h.logActivity(started, r.Method, suffix, model, "ollama", http.StatusBadRequest, "request_error")
 			writeJSONError(w, http.StatusBadRequest, "prepare Codex Auto-review request for Ollama: "+err.Error())
 			return
 		}
+		routedModel, routed = catalog.models[modelKey(model)]
+	}
+	decodedBody, err = autoReview.prepareRequest(routed, suffix, decodedBody)
+	if err != nil {
+		h.logActivity(started, r.Method, suffix, model, "ollama", http.StatusBadRequest, "request_error")
+		writeJSONError(w, http.StatusBadRequest, "prepare Codex Auto-review request for Ollama: "+err.Error())
+		return
 	}
 	if !routed && usesManagedAPIKey(r.Header) {
 		h.lastRoute.Store(routeSnapshot{Model: model, Route: "none", UpstreamStatus: http.StatusUnauthorized})
@@ -317,90 +265,200 @@ func (h *CodexDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	h.lastRoute.Store(routeSnapshot{Model: model, Route: route})
-	targetURL := resolveTarget(targetBase, targetSuffix, r.URL.RawQuery)
 
-	outReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL.String(), bytes.NewReader(requestBody))
-	if err != nil {
-		h.logActivity(started, r.Method, suffix, model, route, http.StatusInternalServerError, "request_error")
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
-		return
+	state := &proxyRequest{
+		started:      started,
+		method:       r.Method,
+		suffix:       suffix,
+		model:        model,
+		hasModel:     hasModel,
+		routed:       routed,
+		route:        route,
+		autoReview:   autoReview,
+		target:       targetBase,
+		targetSuffix: targetSuffix,
+		body:         requestBody,
+		normalized:   requestBodyNormalized,
 	}
-	if routed {
-		copyOllamaRequestHeaders(outReq.Header, r.Header)
-	} else {
-		copyHeaders(outReq.Header, r.Header)
-		if requestBodyNormalized {
-			outReq.Header.Del("Content-Encoding")
+	h.logger.Debug("routing Codex request", "path", suffix, "model", model, "ollama", routed)
+	recorder := &responseRecorder{ResponseWriter: w}
+	h.proxy.ServeHTTP(recorder, r.WithContext(context.WithValue(r.Context(), proxyRequestKey{}, state)))
+
+	// ReverseProxy owns the response write; recover the terminal result for the
+	// activity log from the state its hooks recorded and any client write error.
+	result := state.result
+	if result == "" {
+		result = "ok"
+		if recorder.writeErr != nil {
+			if r.Context().Err() != nil && errors.Is(recorder.writeErr, r.Context().Err()) {
+				result = "canceled"
+			} else {
+				result = "stream_error"
+				h.upstreamErrors.Add(1)
+				h.logger.Warn("Codex proxy response write failed", "path", suffix, "model", model, "ollama", routed, "error", recorder.writeErr)
+			}
 		}
 	}
+	status := state.status
+	if status == 0 {
+		status = http.StatusBadGateway
+	}
+	h.logActivity(started, r.Method, suffix, model, route, status, result)
+}
 
-	h.logger.Debug("routing Codex request", "path", suffix, "model", model, "ollama", routed)
-	resp, err := h.client.Do(outReq)
-	if err != nil {
-		h.upstreamErrors.Add(1)
-		h.logActivity(started, r.Method, suffix, model, route, http.StatusBadGateway, "upstream_error")
-		writeJSONError(w, http.StatusBadGateway, err.Error())
+// proxyRequestKey carries the per-request routing state through the reverse
+// proxy hooks.
+type proxyRequestKey struct{}
+
+// proxyRequest holds the routing decisions ServeHTTP made for one request;
+// the reverse proxy hooks apply them and record how the upstream responded.
+type proxyRequest struct {
+	started      time.Time
+	method       string
+	suffix       string
+	model        string
+	hasModel     bool
+	routed       bool
+	route        string
+	autoReview   autoReviewState
+	target       *url.URL
+	targetSuffix string
+	body         []byte
+	normalized   bool
+	status       int    // upstream response status once known
+	result       string // terminal activity-log result set by a hook
+}
+
+// proxyError routes a hook failure to the exact response and activity-log
+// result the request path requires.
+type proxyError struct {
+	status  int
+	message string
+	result  string
+}
+
+func (e *proxyError) Error() string { return e.message }
+
+func (h *CodexDesktop) rewrite(pr *httputil.ProxyRequest) {
+	state := pr.In.Context().Value(proxyRequestKey{}).(*proxyRequest)
+	pr.Out.URL = resolveTarget(state.target, state.targetSuffix, pr.In.URL.RawQuery)
+	// An empty Host makes the outbound Host header follow the upstream URL.
+	pr.Out.Host = ""
+	pr.Out.Body = io.NopCloser(bytes.NewReader(state.body))
+	pr.Out.ContentLength = int64(len(state.body))
+	if state.routed {
+		// Only forward headers Ollama accepts; this also keeps Codex
+		// credentials from ever reaching the local server.
+		pr.Out.Header = make(http.Header)
+		copyOllamaRequestHeaders(pr.Out.Header, pr.In.Header)
 		return
 	}
-	defer resp.Body.Close()
-	h.lastRoute.Store(routeSnapshot{Model: model, Route: route, UpstreamStatus: resp.StatusCode})
+	if state.normalized {
+		pr.Out.Header.Del("Content-Encoding")
+	}
+	// ReverseProxy already stripped hop-by-hop and connection-token headers.
+	// X-Forwarded-* is opt-in via SetXForwarded and stays unset, matching the
+	// wire behavior of the previous hand-rolled forwarder.
+}
+
+func (h *CodexDesktop) modifyResponse(resp *http.Response) error {
+	state := resp.Request.Context().Value(proxyRequestKey{}).(*proxyRequest)
+	state.status = resp.StatusCode
+	h.lastRoute.Store(routeSnapshot{Model: state.model, Route: state.route, UpstreamStatus: resp.StatusCode})
 	if resp.StatusCode >= http.StatusInternalServerError {
 		h.upstreamErrors.Add(1)
+		state.result = "upstream_error"
 	}
-	if isAcceptedModelRequest(r.Method, suffix, hasModel, resp.StatusCode) {
-		if routed {
+	if isAcceptedModelRequest(state.method, state.suffix, state.hasModel, resp.StatusCode) {
+		if state.routed {
 			h.ollamaRequests.Add(1)
 		} else {
 			h.chatGPTRequests.Add(1)
 		}
 	}
-
-	result := "ok"
-	if resp.StatusCode >= http.StatusInternalServerError {
-		result = "upstream_error"
+	if !state.autoReview.buffersResponse(resp.StatusCode) {
+		return nil
 	}
-	if isAutoReview && routed && suffix == "/v1/responses" && resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
-		responseBody, readErr := io.ReadAll(io.LimitReader(resp.Body, h.maxBodyBytes+1))
-		if readErr != nil {
-			h.upstreamErrors.Add(1)
-			h.logActivity(started, r.Method, suffix, model, route, http.StatusBadGateway, "stream_error")
-			writeJSONError(w, http.StatusBadGateway, "read Codex Auto-review response from Ollama: "+readErr.Error())
-			return
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, h.maxBodyBytes+1))
+	if err != nil {
+		h.upstreamErrors.Add(1)
+		return &proxyError{
+			status:  http.StatusBadGateway,
+			message: "read Codex Auto-review response from Ollama: " + err.Error(),
+			result:  "stream_error",
 		}
-		if int64(len(responseBody)) > h.maxBodyBytes {
-			h.upstreamErrors.Add(1)
-			h.logActivity(started, r.Method, suffix, model, route, http.StatusBadGateway, "response_error")
-			writeJSONError(w, http.StatusBadGateway, fmt.Sprintf("Codex Auto-review response exceeds %d bytes", h.maxBodyBytes))
-			return
+	}
+	if int64(len(responseBody)) > h.maxBodyBytes {
+		h.upstreamErrors.Add(1)
+		return &proxyError{
+			status:  http.StatusBadGateway,
+			message: fmt.Sprintf("Codex Auto-review response exceeds %d bytes", h.maxBodyBytes),
+			result:  "response_error",
 		}
-		responseBody, _, err = transformAutoReviewResponse(responseBody, resp.Header.Get("Content-Type"))
-		if err != nil {
-			h.upstreamErrors.Add(1)
-			h.logActivity(started, r.Method, suffix, model, route, http.StatusBadGateway, "response_error")
-			writeJSONError(w, http.StatusBadGateway, "invalid Codex Auto-review response from Ollama: "+err.Error())
-			return
+	}
+	responseBody, _, err = transformAutoReviewResponse(responseBody, resp.Header.Get("Content-Type"))
+	if err != nil {
+		h.upstreamErrors.Add(1)
+		return &proxyError{
+			status:  http.StatusBadGateway,
+			message: "invalid Codex Auto-review response from Ollama: " + err.Error(),
+			result:  "response_error",
 		}
-		copyHeaders(w.Header(), resp.Header)
-		w.WriteHeader(resp.StatusCode)
-		if _, err := w.Write(responseBody); err != nil {
-			result = "stream_error"
-			h.upstreamErrors.Add(1)
-			h.logger.Warn("Codex proxy response write failed", "path", suffix, "model", model, "ollama", routed, "error", err)
+	}
+	// Let the server compute the framing, as the previous write path did.
+	resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(responseBody))
+	resp.ContentLength = -1
+	resp.Header.Del("Content-Length")
+	return nil
+}
+
+func (h *CodexDesktop) upstreamError(w http.ResponseWriter, r *http.Request, err error) {
+	state, _ := r.Context().Value(proxyRequestKey{}).(*proxyRequest)
+	if state != nil {
+		state.status = http.StatusBadGateway
+	}
+	var handled *proxyError
+	if errors.As(err, &handled) {
+		if state != nil {
+			state.result = handled.result
 		}
-		h.logActivity(started, r.Method, suffix, model, route, resp.StatusCode, result)
+		writeJSONError(w, handled.status, handled.message)
 		return
 	}
-	copyHeaders(w.Header(), resp.Header)
-	w.WriteHeader(resp.StatusCode)
-	if err := copyStreaming(w, resp.Body); err != nil {
-		result = "canceled"
-		if !errors.Is(err, r.Context().Err()) {
-			result = "stream_error"
-			h.upstreamErrors.Add(1)
-			h.logger.Warn("Codex proxy response stream failed", "path", suffix, "model", model, "ollama", routed, "error", err)
-		}
+	h.upstreamErrors.Add(1)
+	if state != nil {
+		state.result = "upstream_error"
 	}
-	h.logActivity(started, r.Method, suffix, model, route, resp.StatusCode, result)
+	writeJSONError(w, http.StatusBadGateway, err.Error())
+}
+
+// responseRecorder records how the response write to Codex went so
+// ServeHTTP can log the terminal result of the request.
+type responseRecorder struct {
+	http.ResponseWriter
+	writeErr error
+}
+
+func (r *responseRecorder) Write(body []byte) (int, error) {
+	n, err := r.ResponseWriter.Write(body)
+	if err != nil {
+		r.writeErr = err
+	}
+	return n, err
+}
+
+func (r *responseRecorder) Flush() {
+	if flusher, ok := r.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (r *responseRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hijacker, ok := r.ResponseWriter.(http.Hijacker); ok {
+		return hijacker.Hijack()
+	}
+	return nil, nil, errors.New("response writer does not support hijacking")
 }
 
 func (h *CodexDesktop) logActivity(started time.Time, method, path, model, route string, status int, result string) {
@@ -542,898 +600,6 @@ func loadRoutingCatalog(path string) (routingCatalog, error) {
 	return routingCatalog{models: models, autoReviewModel: autoReviewModel}, nil
 }
 
-func extractModel(body []byte) (string, bool) {
-	if len(body) == 0 {
-		return "", false
-	}
-	var payload struct {
-		Model string `json:"model"`
-	}
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return "", false
-	}
-	payload.Model = strings.TrimSpace(payload.Model)
-	return payload.Model, payload.Model != ""
-}
-
-func replaceRequestModel(body []byte, model string) ([]byte, error) {
-	var payload map[string]json.RawMessage
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, err
-	}
-	encodedModel, err := json.Marshal(model)
-	if err != nil {
-		return nil, err
-	}
-	payload["model"] = encodedModel
-	return json.Marshal(payload)
-}
-
-// prepareAutoReviewRequest gives Ollama a typed terminal action for the
-// Guardian decision. Codex does not know about this proxy-owned tool, so the
-// response path consumes it and returns the JSON text Codex already expects.
-func prepareAutoReviewRequest(body []byte) ([]byte, error) {
-	var payload map[string]json.RawMessage
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, err
-	}
-
-	var tools []json.RawMessage
-	if raw := bytes.TrimSpace(payload["tools"]); len(raw) > 0 && !bytes.Equal(raw, []byte("null")) {
-		if err := json.Unmarshal(raw, &tools); err != nil {
-			return nil, fmt.Errorf("decode tools: %w", err)
-		}
-	}
-	for _, raw := range tools {
-		var tool struct {
-			Name string `json:"name"`
-		}
-		if err := json.Unmarshal(raw, &tool); err != nil {
-			return nil, fmt.Errorf("decode tool: %w", err)
-		}
-		if tool.Name == guardianDecisionToolName {
-			return nil, fmt.Errorf("tool name %q is reserved by the Codex proxy", guardianDecisionToolName)
-		}
-	}
-	decisionTool, err := json.Marshal(guardianDecisionTool)
-	if err != nil {
-		return nil, fmt.Errorf("encode Guardian decision tool: %w", err)
-	}
-	tools = append(tools, decisionTool)
-	encodedTools, err := json.Marshal(tools)
-	if err != nil {
-		return nil, fmt.Errorf("encode tools: %w", err)
-	}
-	payload["tools"] = encodedTools
-
-	var input []json.RawMessage
-	if err := json.Unmarshal(payload["input"], &input); err != nil {
-		return nil, fmt.Errorf("decode input: %w", err)
-	}
-	foundUserMessage := false
-	for i := len(input) - 1; i >= 0; i-- {
-		var message struct {
-			Type    string          `json:"type"`
-			Role    string          `json:"role"`
-			Content json.RawMessage `json:"content"`
-		}
-		if err := json.Unmarshal(input[i], &message); err != nil {
-			return nil, fmt.Errorf("decode input item: %w", err)
-		}
-		if message.Role != "user" || (message.Type != "" && message.Type != "message") {
-			continue
-		}
-
-		content, changed, err := appendAutoReviewInstructionToContent(message.Content)
-		if err != nil {
-			return nil, err
-		}
-		if !changed {
-			continue
-		}
-		foundUserMessage = true
-
-		var item map[string]json.RawMessage
-		if err := json.Unmarshal(input[i], &item); err != nil {
-			return nil, fmt.Errorf("decode user message: %w", err)
-		}
-		item["content"] = content
-		input[i], err = json.Marshal(item)
-		if err != nil {
-			return nil, fmt.Errorf("encode user message: %w", err)
-		}
-		break
-	}
-	if !foundUserMessage {
-		return nil, errors.New("Guardian request has no user message")
-	}
-	encodedInput, err := json.Marshal(input)
-	if err != nil {
-		return nil, fmt.Errorf("encode input: %w", err)
-	}
-	payload["input"] = encodedInput
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("encode request: %w", err)
-	}
-	return encoded, nil
-}
-
-func appendAutoReviewInstructionToContent(content json.RawMessage) (json.RawMessage, bool, error) {
-	trimmed := bytes.TrimSpace(content)
-	if len(trimmed) == 0 {
-		return content, false, nil
-	}
-	if trimmed[0] == '"' {
-		var text string
-		if err := json.Unmarshal(trimmed, &text); err != nil {
-			return nil, false, fmt.Errorf("decode user message content: %w", err)
-		}
-		encoded, err := json.Marshal(text + guardianDecisionInstruction)
-		if err != nil {
-			return nil, false, fmt.Errorf("encode user message content: %w", err)
-		}
-		return encoded, true, nil
-	}
-	if trimmed[0] != '[' {
-		return content, false, nil
-	}
-
-	var parts []json.RawMessage
-	if err := json.Unmarshal(trimmed, &parts); err != nil {
-		return nil, false, fmt.Errorf("decode user message content: %w", err)
-	}
-	instruction, err := json.Marshal(map[string]string{
-		"type": "input_text",
-		"text": guardianDecisionInstruction,
-	})
-	if err != nil {
-		return nil, false, err
-	}
-	parts = append(parts, instruction)
-	encoded, err := json.Marshal(parts)
-	if err != nil {
-		return nil, false, fmt.Errorf("encode user message content: %w", err)
-	}
-	return encoded, true, nil
-}
-
-type guardianDecision struct {
-	RiskLevel         string `json:"risk_level"`
-	UserAuthorization string `json:"user_authorization"`
-	Outcome           string `json:"outcome"`
-	Rationale         string `json:"rationale"`
-}
-
-type autoReviewOutputItem struct {
-	ID        string `json:"id"`
-	Type      string `json:"type"`
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
-}
-
-func transformAutoReviewResponse(body []byte, contentType string) ([]byte, bool, error) {
-	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(contentType)), "text/event-stream") {
-		return transformAutoReviewEventStream(body)
-	}
-	return transformAutoReviewJSON(body)
-}
-
-func transformAutoReviewJSON(body []byte) ([]byte, bool, error) {
-	var response map[string]json.RawMessage
-	if err := json.Unmarshal(body, &response); err != nil {
-		return nil, false, fmt.Errorf("decode response: %w", err)
-	}
-	var status string
-	if err := json.Unmarshal(response["status"], &status); err != nil {
-		return nil, false, fmt.Errorf("decode response status: %w", err)
-	}
-	if status != "completed" {
-		return body, false, nil
-	}
-	var output []json.RawMessage
-	if err := json.Unmarshal(response["output"], &output); err != nil {
-		return nil, false, fmt.Errorf("decode response output: %w", err)
-	}
-	inspection, err := inspectAutoReviewOutput(output)
-	if err != nil || inspection.passthrough {
-		return body, false, err
-	}
-	transformedOutput := make([]json.RawMessage, 0, len(output)-len(inspection.discardedMessageIDs))
-	for i, raw := range output {
-		var item autoReviewOutputItem
-		if err := json.Unmarshal(raw, &item); err != nil {
-			return nil, false, fmt.Errorf("decode response output item: %w", err)
-		}
-		if _, discard := inspection.discardedMessageIDs[item.ID]; discard && item.Type == "message" {
-			continue
-		}
-		if item.Type == "function_call" && item.Name == guardianDecisionToolName {
-			output[i], err = json.Marshal(autoReviewDecisionMessage(inspection.itemID, inspection.decisionJSON))
-			if err != nil {
-				return nil, false, fmt.Errorf("encode Guardian decision message: %w", err)
-			}
-		}
-		transformedOutput = append(transformedOutput, output[i])
-	}
-	response["output"], err = json.Marshal(transformedOutput)
-	if err != nil {
-		return nil, false, fmt.Errorf("encode response output: %w", err)
-	}
-	transformed, err := json.Marshal(response)
-	if err != nil {
-		return nil, false, fmt.Errorf("encode response: %w", err)
-	}
-	return transformed, true, nil
-}
-
-type autoReviewInspection struct {
-	decisionJSON        string
-	itemID              string
-	discardedMessageIDs map[string]struct{}
-	passthrough         bool
-}
-
-func inspectAutoReviewOutput(output []json.RawMessage) (autoReviewInspection, error) {
-	result := autoReviewInspection{discardedMessageIDs: make(map[string]struct{})}
-	decisionCalls := 0
-	otherTerminalOutput := false
-	for _, raw := range output {
-		var item autoReviewOutputItem
-		if err := json.Unmarshal(raw, &item); err != nil {
-			return result, fmt.Errorf("decode response output item: %w", err)
-		}
-		switch item.Type {
-		case "reasoning":
-			continue
-		case "message":
-			// Some otherwise reliable tool-capable models emit explanatory prose
-			// alongside the decision call. The validated call is authoritative;
-			// record the prose item so both JSON and SSE paths can discard it.
-			if item.ID == "" {
-				return result, errors.New("Guardian assistant message has no item ID")
-			}
-			result.discardedMessageIDs[item.ID] = struct{}{}
-		case "function_call":
-			if item.Name != guardianDecisionToolName {
-				if decisionCalls > 0 {
-					otherTerminalOutput = true
-				} else {
-					result.passthrough = true
-				}
-				continue
-			}
-			decisionCalls++
-			if decisionCalls > 1 {
-				return result, errors.New("Guardian called the decision tool more than once")
-			}
-			decisionJSON, err := validateGuardianDecision(item.Arguments)
-			if err != nil {
-				return result, err
-			}
-			result.decisionJSON = decisionJSON
-			result.itemID = item.ID
-		default:
-			otherTerminalOutput = true
-		}
-	}
-	if result.passthrough && decisionCalls == 0 {
-		return result, nil
-	}
-	if decisionCalls == 0 {
-		return result, errors.New("Guardian did not call submit_guardian_decision")
-	}
-	if result.passthrough || otherTerminalOutput {
-		return result, errors.New("Guardian mixed its decision with other terminal output")
-	}
-	return result, nil
-}
-
-func validateGuardianDecision(arguments string) (string, error) {
-	decoder := json.NewDecoder(strings.NewReader(arguments))
-	decoder.DisallowUnknownFields()
-	var decision guardianDecision
-	if err := decoder.Decode(&decision); err != nil {
-		return "", fmt.Errorf("decode Guardian decision arguments: %w", err)
-	}
-	if decoder.Decode(&struct{}{}) != io.EOF {
-		return "", errors.New("Guardian decision arguments contain trailing data")
-	}
-	if !oneOf(decision.RiskLevel, "low", "medium", "high", "critical") {
-		return "", fmt.Errorf("invalid Guardian risk_level %q", decision.RiskLevel)
-	}
-	if !oneOf(decision.UserAuthorization, "unknown", "low", "medium", "high") {
-		return "", fmt.Errorf("invalid Guardian user_authorization %q", decision.UserAuthorization)
-	}
-	if !oneOf(decision.Outcome, "allow", "deny") {
-		return "", fmt.Errorf("invalid Guardian outcome %q", decision.Outcome)
-	}
-	if strings.TrimSpace(decision.Rationale) == "" {
-		return "", errors.New("Guardian rationale is empty")
-	}
-	encoded, err := json.Marshal(decision)
-	if err != nil {
-		return "", fmt.Errorf("encode Guardian decision: %w", err)
-	}
-	return string(encoded), nil
-}
-
-func oneOf(value string, allowed ...string) bool {
-	for _, candidate := range allowed {
-		if value == candidate {
-			return true
-		}
-	}
-	return false
-}
-
-func autoReviewDecisionMessage(itemID, decision string) map[string]any {
-	return map[string]any{
-		"id":     itemID,
-		"type":   "message",
-		"status": "completed",
-		"role":   "assistant",
-		"content": []any{map[string]any{
-			"type":        "output_text",
-			"text":        decision,
-			"annotations": []any{},
-			"logprobs":    []any{},
-		}},
-	}
-}
-
-type serverSentEvent struct {
-	event string
-	data  []byte
-}
-
-func transformAutoReviewEventStream(body []byte) ([]byte, bool, error) {
-	events, err := parseServerSentEvents(body)
-	if err != nil {
-		return nil, false, err
-	}
-	var completedOutput []json.RawMessage
-	terminalFailure := false
-	for _, event := range events {
-		if event.event == "response.failed" || event.event == "response.incomplete" {
-			terminalFailure = true
-		}
-		if event.event != "response.completed" {
-			continue
-		}
-		var payload struct {
-			Response struct {
-				Output []json.RawMessage `json:"output"`
-			} `json:"response"`
-		}
-		if err := json.Unmarshal(event.data, &payload); err != nil {
-			return nil, false, fmt.Errorf("decode response.completed event: %w", err)
-		}
-		completedOutput = payload.Response.Output
-	}
-	if completedOutput == nil {
-		if terminalFailure {
-			return body, false, nil
-		}
-		return nil, false, errors.New("Guardian stream has no response.completed event")
-	}
-	inspection, err := inspectAutoReviewOutput(completedOutput)
-	if err != nil || inspection.passthrough {
-		return body, false, err
-	}
-	outputIndexes := make(map[int]int, len(completedOutput)-len(inspection.discardedMessageIDs))
-	nextOutputIndex := 0
-	for oldOutputIndex, raw := range completedOutput {
-		var item autoReviewOutputItem
-		if err := json.Unmarshal(raw, &item); err != nil {
-			return nil, false, fmt.Errorf("decode completed output item: %w", err)
-		}
-		if _, discard := inspection.discardedMessageIDs[item.ID]; discard && item.Type == "message" {
-			continue
-		}
-		outputIndexes[oldOutputIndex] = nextOutputIndex
-		nextOutputIndex++
-	}
-
-	var transformed []serverSentEvent
-	addedDecisionMessage := false
-	finishedDecisionMessage := false
-	for _, event := range events {
-		if bytes.Equal(bytes.TrimSpace(event.data), []byte("[DONE]")) {
-			transformed = append(transformed, event)
-			continue
-		}
-		var payload map[string]any
-		if err := json.Unmarshal(event.data, &payload); err != nil {
-			return nil, false, fmt.Errorf("decode %s event: %w", event.event, err)
-		}
-		if _, discard := inspection.discardedMessageIDs[autoReviewEventItemID(payload)]; discard {
-			continue
-		}
-		if outputIndex, ok := payload["output_index"].(float64); ok {
-			if mapped, keep := outputIndexes[int(outputIndex)]; keep {
-				payload["output_index"] = mapped
-			}
-		}
-		switch event.event {
-		case "response.output_item.added":
-			item, _ := payload["item"].(map[string]any)
-			if itemString(item, "id") == inspection.itemID && itemString(item, "name") == guardianDecisionToolName {
-				outputIndex := payload["output_index"]
-				transformed = append(transformed,
-					newServerSentEvent("response.output_item.added", map[string]any{
-						"output_index": outputIndex,
-						"item": map[string]any{
-							"id": inspection.itemID, "type": "message", "status": "in_progress", "role": "assistant", "content": []any{},
-						},
-					}),
-					newServerSentEvent("response.content_part.added", map[string]any{
-						"item_id": inspection.itemID, "output_index": outputIndex, "content_index": 0,
-						"part": map[string]any{"type": "output_text", "text": "", "annotations": []any{}, "logprobs": []any{}},
-					}),
-				)
-				addedDecisionMessage = true
-				continue
-			}
-		case "response.function_call_arguments.delta", "response.function_call_arguments.done":
-			if itemString(payload, "item_id") == inspection.itemID {
-				continue
-			}
-		case "response.output_item.done":
-			item, _ := payload["item"].(map[string]any)
-			if itemString(item, "id") == inspection.itemID && itemString(item, "name") == guardianDecisionToolName {
-				if !addedDecisionMessage {
-					return nil, false, errors.New("Guardian decision stream has no output_item.added event")
-				}
-				outputIndex := payload["output_index"]
-				message := autoReviewDecisionMessage(inspection.itemID, inspection.decisionJSON)
-				content := message["content"].([]any)[0]
-				transformed = append(transformed,
-					newServerSentEvent("response.output_text.delta", map[string]any{
-						"item_id": inspection.itemID, "output_index": outputIndex, "content_index": 0, "delta": inspection.decisionJSON, "logprobs": []any{},
-					}),
-					newServerSentEvent("response.output_text.done", map[string]any{
-						"item_id": inspection.itemID, "output_index": outputIndex, "content_index": 0, "text": inspection.decisionJSON, "logprobs": []any{},
-					}),
-					newServerSentEvent("response.content_part.done", map[string]any{
-						"item_id": inspection.itemID, "output_index": outputIndex, "content_index": 0, "part": content,
-					}),
-					newServerSentEvent("response.output_item.done", map[string]any{
-						"output_index": outputIndex, "item": message,
-					}),
-				)
-				finishedDecisionMessage = true
-				continue
-			}
-		case "response.completed":
-			if !finishedDecisionMessage {
-				return nil, false, errors.New("Guardian decision stream has no output_item.done event")
-			}
-			response, ok := payload["response"].(map[string]any)
-			if !ok {
-				return nil, false, errors.New("response.completed event has no response object")
-			}
-			output, ok := response["output"].([]any)
-			if !ok {
-				return nil, false, errors.New("response.completed event has no output array")
-			}
-			transformedOutput := make([]any, 0, len(output)-len(inspection.discardedMessageIDs))
-			for _, value := range output {
-				item, _ := value.(map[string]any)
-				if _, discard := inspection.discardedMessageIDs[itemString(item, "id")]; discard && itemString(item, "type") == "message" {
-					continue
-				}
-				if itemString(item, "id") == inspection.itemID && itemString(item, "name") == guardianDecisionToolName {
-					value = autoReviewDecisionMessage(inspection.itemID, inspection.decisionJSON)
-				}
-				transformedOutput = append(transformedOutput, value)
-			}
-			response["output"] = transformedOutput
-		}
-		encoded, err := json.Marshal(payload)
-		if err != nil {
-			return nil, false, fmt.Errorf("encode %s event: %w", event.event, err)
-		}
-		transformed = append(transformed, serverSentEvent{event: event.event, data: encoded})
-	}
-	encoded, err := encodeServerSentEvents(transformed)
-	if err != nil {
-		return nil, false, err
-	}
-	return encoded, true, nil
-}
-
-func autoReviewEventItemID(payload map[string]any) string {
-	if itemID := itemString(payload, "item_id"); itemID != "" {
-		return itemID
-	}
-	item, _ := payload["item"].(map[string]any)
-	return itemString(item, "id")
-}
-
-func itemString(item map[string]any, key string) string {
-	value, _ := item[key].(string)
-	return value
-}
-
-func newServerSentEvent(event string, payload map[string]any) serverSentEvent {
-	payload["type"] = event
-	encoded, _ := json.Marshal(payload)
-	return serverSentEvent{event: event, data: encoded}
-}
-
-func parseServerSentEvents(body []byte) ([]serverSentEvent, error) {
-	normalized := bytes.ReplaceAll(body, []byte("\r\n"), []byte("\n"))
-	var events []serverSentEvent
-	for _, frame := range bytes.Split(normalized, []byte("\n\n")) {
-		if len(bytes.TrimSpace(frame)) == 0 {
-			continue
-		}
-		var event serverSentEvent
-		var dataLines [][]byte
-		for _, line := range bytes.Split(frame, []byte("\n")) {
-			switch {
-			case bytes.HasPrefix(line, []byte("event:")):
-				event.event = strings.TrimSpace(string(bytes.TrimPrefix(line, []byte("event:"))))
-			case bytes.HasPrefix(line, []byte("data:")):
-				dataLines = append(dataLines, bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:"))))
-			}
-		}
-		if event.event == "" || len(dataLines) == 0 {
-			return nil, errors.New("malformed Guardian event stream")
-		}
-		event.data = bytes.Join(dataLines, []byte("\n"))
-		events = append(events, event)
-	}
-	return events, nil
-}
-
-func encodeServerSentEvents(events []serverSentEvent) ([]byte, error) {
-	var result bytes.Buffer
-	sequenceNumber := 0
-	for _, event := range events {
-		data := event.data
-		if !bytes.Equal(bytes.TrimSpace(data), []byte("[DONE]")) {
-			var payload map[string]any
-			if err := json.Unmarshal(data, &payload); err != nil {
-				return nil, fmt.Errorf("decode transformed %s event: %w", event.event, err)
-			}
-			payload["type"] = event.event
-			payload["sequence_number"] = sequenceNumber
-			sequenceNumber++
-			var err error
-			data, err = json.Marshal(payload)
-			if err != nil {
-				return nil, fmt.Errorf("encode transformed %s event: %w", event.event, err)
-			}
-		}
-		fmt.Fprintf(&result, "event: %s\ndata: %s\n\n", event.event, data)
-	}
-	return result.Bytes(), nil
-}
-
-// normalizeOllamaRequestBody translates Codex-specific Responses history into
-// the subset accepted by Ollama's OpenAI-compatible Responses endpoint.
-// Provider-specific native reasoning is omitted while Ollama reasoning stays
-// available to its own multi-step tool loop.
-func normalizeOllamaRequestBody(body []byte, model routingModel) ([]byte, error) {
-	normalized, _, err := normalizeRequestInput(body, normalizeOllamaInputItem)
-	if err != nil || model.Thinking == nil {
-		return normalized, err
-	}
-	return normalizeOllamaThinking(normalized, *model.Thinking)
-}
-
-func normalizeOllamaThinking(body []byte, metadata routingThinkingMetadata) ([]byte, error) {
-	var payload map[string]json.RawMessage
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, err
-	}
-	_, hadThinkOverride := payload["think"]
-	delete(payload, "think")
-	if !metadata.Supported {
-		if _, ok := payload["reasoning"]; !ok && !hadThinkOverride {
-			return body, nil
-		}
-		delete(payload, "reasoning")
-		return json.Marshal(payload)
-	}
-
-	reasoningData, ok := payload["reasoning"]
-	if !ok || len(metadata.Levels) == 0 {
-		if hadThinkOverride {
-			return json.Marshal(payload)
-		}
-		return body, nil
-	}
-	var reasoning map[string]json.RawMessage
-	if err := json.Unmarshal(reasoningData, &reasoning); err != nil {
-		return nil, fmt.Errorf("decode reasoning: %w", err)
-	}
-	var effort string
-	if rawEffort, ok := reasoning["effort"]; ok {
-		if err := json.Unmarshal(rawEffort, &effort); err != nil {
-			return nil, fmt.Errorf("decode reasoning effort: %w", err)
-		}
-	}
-	if effort == "" {
-		if hadThinkOverride {
-			return json.Marshal(payload)
-		}
-		return body, nil
-	}
-
-	normalizedEffort := normalizeThinkingEffort(effort, metadata.Levels)
-	if normalizedEffort == "" {
-		// A stale selection from another model should not make this request fail.
-		// Omitting effort lets Ollama apply the selected model's own behavior.
-		delete(reasoning, "effort")
-	} else {
-		encodedEffort, err := json.Marshal(normalizedEffort)
-		if err != nil {
-			return nil, fmt.Errorf("encode reasoning effort: %w", err)
-		}
-		reasoning["effort"] = encodedEffort
-		if rawValue, ok := metadata.Values[normalizedEffort]; ok {
-			// Codex exposes named reasoning efforts, while Ollama models may use
-			// boolean thinking controls. Preserve the server-advertised raw value
-			// in an Ollama-only extension consumed by the Responses adapter.
-			payload["think"] = rawValue
-		}
-	}
-	encodedReasoning, err := json.Marshal(reasoning)
-	if err != nil {
-		return nil, fmt.Errorf("encode reasoning: %w", err)
-	}
-	payload["reasoning"] = encodedReasoning
-	return json.Marshal(payload)
-}
-
-func normalizeThinkingEffort(effort string, levels []string) string {
-	var normalized string
-	switch effort {
-	case "minimal":
-		normalized = "low"
-	case "xhigh", "ultra":
-		normalized = "max"
-	case "none", "low", "medium", "high", "max":
-		normalized = effort
-	default:
-		return ""
-	}
-
-	if slices.Equal(levels, []string{"none", "medium"}) && normalized != "none" {
-		// Ollama represents the enabled side of a binary thinking control as
-		// medium even when the underlying model has no adjustable effort ladder.
-		return "medium"
-	}
-	if slices.Contains(levels, normalized) {
-		return normalized
-	}
-	if normalized == "max" && slices.Contains(levels, "high") {
-		// A stale xhigh or ultra choice should use the strongest supported level.
-		return "high"
-	}
-	return ""
-}
-
-// normalizeNativeRequestBody removes Ollama reasoning items before a native
-// request reaches OpenAI. Ollama's Responses adapter currently serializes
-// plaintext thinking as encrypted_content, which OpenAI correctly rejects as
-// invalid ciphertext. Visible messages and tool history remain in the input.
-func normalizeNativeRequestBody(body []byte) ([]byte, bool, error) {
-	return normalizeRequestInput(body, normalizeChatGPTInputItem)
-}
-
-func normalizeRequestInput(
-	body []byte,
-	normalizeItem func(json.RawMessage) (json.RawMessage, bool, error),
-) ([]byte, bool, error) {
-	if len(body) == 0 {
-		return body, false, nil
-	}
-
-	var payload map[string]json.RawMessage
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, false, err
-	}
-	input, ok := payload["input"]
-	if !ok || len(input) == 0 || input[0] != '[' {
-		return body, false, nil
-	}
-
-	var items []json.RawMessage
-	if err := json.Unmarshal(input, &items); err != nil {
-		return nil, false, fmt.Errorf("decode input: %w", err)
-	}
-
-	normalized := make([]json.RawMessage, 0, len(items))
-	changed := false
-	for _, item := range items {
-		converted, keep, err := normalizeItem(item)
-		if err != nil {
-			return nil, false, err
-		}
-		if keep {
-			normalized = append(normalized, converted)
-		}
-		if !keep || !bytes.Equal(item, converted) {
-			changed = true
-		}
-	}
-	if !changed {
-		return body, false, nil
-	}
-
-	encodedInput, err := json.Marshal(normalized)
-	if err != nil {
-		return nil, false, fmt.Errorf("encode input: %w", err)
-	}
-	payload["input"] = encodedInput
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		return nil, false, fmt.Errorf("encode request: %w", err)
-	}
-	return encoded, true, nil
-}
-
-func normalizeOllamaInputItem(item json.RawMessage) (json.RawMessage, bool, error) {
-	var header struct {
-		Type string `json:"type"`
-		Role string `json:"role"`
-	}
-	if err := json.Unmarshal(item, &header); err != nil {
-		return nil, false, fmt.Errorf("decode input item: %w", err)
-	}
-
-	// Ollama accepts message shorthand without an explicit type as well as
-	// the supported Responses item types below.
-	itemType := header.Type
-	if itemType == "" && header.Role != "" {
-		itemType = "message"
-	}
-	switch itemType {
-	case "message":
-		if header.Role != "developer" {
-			return item, true, nil
-		}
-		// Codex carries collaboration-mode and safety instructions in developer
-		// messages. Ollama models and provider adapters do not consistently give
-		// that role instruction priority, while system is universally supported.
-		// Translate the role only on the Ollama route so Plan mode and the rest of
-		// Codex's instruction contract receive the highest broadly supported
-		// priority.
-		var message map[string]json.RawMessage
-		if err := json.Unmarshal(item, &message); err != nil {
-			return nil, false, fmt.Errorf("decode developer message: %w", err)
-		}
-		message["role"] = json.RawMessage(`"system"`)
-		converted, err := json.Marshal(message)
-		if err != nil {
-			return nil, false, fmt.Errorf("encode system message: %w", err)
-		}
-		return converted, true, nil
-	case "function_call", "function_call_output":
-		return item, true, nil
-	case "tool_search_call", "tool_search_output", "compaction_trigger":
-		// These client-executed control items are handled by Ollama's Responses
-		// adapter. Preserve them so tool discovery and compaction work through the
-		// ChatGPT loopback router, not only when calling /v1/responses directly.
-		return item, true, nil
-	case "compaction":
-		// Native OpenAI compaction state is opaque and cannot be consumed by
-		// Ollama. Ollama compaction state is a versioned JSON payload and must
-		// reach the server middleware so it can be expanded before inference.
-		return item, isOllamaCompactionItem(item), nil
-	case "reasoning":
-		var reasoning struct {
-			ID string `json:"id"`
-		}
-		if err := json.Unmarshal(item, &reasoning); err != nil {
-			return nil, false, fmt.Errorf("decode reasoning item: %w", err)
-		}
-		// Native encrypted reasoning is provider-specific opaque state. Do not
-		// send it to Ollama, while retaining Ollama's own reasoning during its
-		// multi-step tool loop.
-		return item, isOllamaReasoningItemID(reasoning.ID), nil
-	case "custom_tool_call":
-		var call struct {
-			ID     string `json:"id,omitempty"`
-			CallID string `json:"call_id"`
-			Name   string `json:"name"`
-			Input  string `json:"input"`
-		}
-		if err := json.Unmarshal(item, &call); err != nil {
-			return nil, false, fmt.Errorf("decode custom tool call: %w", err)
-		}
-		arguments, err := json.Marshal(map[string]string{"input": call.Input})
-		if err != nil {
-			return nil, false, fmt.Errorf("encode custom tool input: %w", err)
-		}
-		converted, err := json.Marshal(map[string]any{
-			"id":        call.ID,
-			"type":      "function_call",
-			"call_id":   call.CallID,
-			"name":      call.Name,
-			"arguments": string(arguments),
-		})
-		return converted, true, err
-	case "custom_tool_call_output":
-		var output struct {
-			CallID string          `json:"call_id"`
-			Output json.RawMessage `json:"output"`
-		}
-		if err := json.Unmarshal(item, &output); err != nil {
-			return nil, false, fmt.Errorf("decode custom tool output: %w", err)
-		}
-		converted, err := json.Marshal(map[string]any{
-			"type":    "function_call_output",
-			"call_id": output.CallID,
-			"output":  output.Output,
-		})
-		return converted, true, err
-	default:
-		// Compaction data is encrypted for the native OpenAI backend, and other
-		// Codex-only item types have no Ollama Responses equivalent. Omitting
-		// them is preferable to rejecting the entire otherwise usable history.
-		return nil, false, nil
-	}
-}
-
-func isOllamaCompactionItem(item json.RawMessage) bool {
-	var wire struct {
-		EncryptedContent string `json:"encrypted_content"`
-	}
-	if json.Unmarshal(item, &wire) != nil || wire.EncryptedContent == "" {
-		return false
-	}
-	var payload struct {
-		Type string `json:"type"`
-	}
-	return json.Unmarshal([]byte(wire.EncryptedContent), &payload) == nil &&
-		payload.Type == "ollama_compaction"
-}
-
-func normalizeChatGPTInputItem(item json.RawMessage) (json.RawMessage, bool, error) {
-	var header struct {
-		ID   string `json:"id"`
-		Type string `json:"type"`
-	}
-	if err := json.Unmarshal(item, &header); err != nil {
-		return nil, false, fmt.Errorf("decode input item: %w", err)
-	}
-	if header.Type == "reasoning" && isOllamaReasoningItemID(header.ID) {
-		return nil, false, nil
-	}
-	if header.Type == "compaction" && isOllamaCompactionItem(item) {
-		// Ollama's compaction payload is local plaintext state stored in the
-		// Responses encrypted_content field. OpenAI cannot decrypt it, so omit it
-		// on a provider switch just as native compaction state is omitted on the
-		// Ollama route.
-		return nil, false, nil
-	}
-	return item, true, nil
-}
-
-func isOllamaReasoningItemID(id string) bool {
-	suffix, ok := strings.CutPrefix(strings.TrimSpace(id), "rs_")
-	if !ok {
-		return false
-	}
-	if responseSuffix, ok := strings.CutPrefix(suffix, "resp_"); ok {
-		suffix = responseSuffix
-	}
-	if suffix == "" || len(suffix) > 6 {
-		return false
-	}
-	for _, char := range suffix {
-		if char < '0' || char > '9' {
-			return false
-		}
-	}
-	return true
-}
-
 func modelKey(model string) string {
 	return strings.TrimSuffix(strings.TrimSpace(model), ":latest")
 }
@@ -1463,8 +629,14 @@ func isWebSocketUpgrade(r *http.Request) bool {
 	if !strings.EqualFold(strings.TrimSpace(r.Header.Get("Upgrade")), "websocket") {
 		return false
 	}
-	_, ok := connectionHeaderTokens(r.Header)["upgrade"]
-	return ok
+	for _, raw := range r.Header.Values("Connection") {
+		for _, token := range strings.Split(raw, ",") {
+			if strings.EqualFold(strings.TrimSpace(token), "upgrade") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func usesChatGPTBackend(header http.Header) bool {
@@ -1480,63 +652,6 @@ func copyOllamaRequestHeaders(dst, src http.Header) {
 	for _, key := range []string{"Accept", "Content-Type", "OpenAI-Beta", "User-Agent"} {
 		for _, value := range src.Values(key) {
 			dst.Add(key, value)
-		}
-	}
-}
-
-func copyHeaders(dst, src http.Header) {
-	connectionTokens := connectionHeaderTokens(src)
-	for key, values := range src {
-		if isHopByHopHeader(key) || isConnectionTokenHeader(key, connectionTokens) {
-			continue
-		}
-		dst.Del(key)
-		for _, value := range values {
-			dst.Add(key, value)
-		}
-	}
-}
-
-func connectionHeaderTokens(header http.Header) map[string]struct{} {
-	tokens := map[string]struct{}{}
-	for _, raw := range header.Values("Connection") {
-		for _, token := range strings.Split(raw, ",") {
-			if token = strings.TrimSpace(strings.ToLower(token)); token != "" {
-				tokens[token] = struct{}{}
-			}
-		}
-	}
-	return tokens
-}
-
-func isHopByHopHeader(name string) bool {
-	_, ok := hopByHopHeaders[strings.ToLower(name)]
-	return ok
-}
-
-func isConnectionTokenHeader(name string, tokens map[string]struct{}) bool {
-	_, ok := tokens[strings.ToLower(name)]
-	return ok
-}
-
-func copyStreaming(dst http.ResponseWriter, src io.Reader) error {
-	flusher, canFlush := dst.(http.Flusher)
-	buffer := make([]byte, 32*1024)
-	for {
-		n, err := src.Read(buffer)
-		if n > 0 {
-			if _, writeErr := dst.Write(buffer[:n]); writeErr != nil {
-				return writeErr
-			}
-			if canFlush {
-				flusher.Flush()
-			}
-		}
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return nil
-			}
-			return err
 		}
 	}
 }

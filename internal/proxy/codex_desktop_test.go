@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 )
@@ -1357,11 +1358,27 @@ func TestCodexDesktopWritesSafeActivityLog(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 
-	data, err := os.ReadFile(activityLogPath)
-	if err != nil {
-		t.Fatal(err)
+	// logActivity runs when the server finishes the request, which can be a
+	// scheduler beat after the client has received the full response. Poll
+	// for the log line instead of assuming it is already on disk.
+	var logText string
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		data, readErr := os.ReadFile(activityLogPath)
+		if readErr == nil {
+			logText = string(data)
+			if strings.Contains(logText, `route=ollama model="glm-5.2:cloud"`) {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			t.Fatalf("activity log missing %q:\n%s", `route=ollama model="glm-5.2:cloud"`, logText)
+		}
+		time.Sleep(time.Millisecond)
 	}
-	logText := string(data)
 	for _, want := range []string{
 		`route=ollama model="glm-5.2:cloud"`,
 		"method=POST path=/v1/responses status=200",
@@ -1481,4 +1498,89 @@ func autoReviewEventStream(t *testing.T, name, arguments string, extraOutput ...
 		t.Fatal(err)
 	}
 	return encoded
+}
+
+func TestCodexDesktopDoesNotAddForwardedHeaders(t *testing.T) {
+	forwardedHeaders := func(r *http.Request) []string {
+		var forwarded []string
+		for _, key := range []string{"X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto"} {
+			forwarded = append(forwarded, r.Header.Values(key)...)
+		}
+		return forwarded
+	}
+	var ollamaForwarded, nativeForwarded []string
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ollamaForwarded = forwardedHeaders(r)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ollama.Close()
+
+	native := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		nativeForwarded = forwardedHeaders(r)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer native.Close()
+
+	catalogPath := writeCatalog(t, "glm-5.2:cloud")
+	handler := newTestCodexDesktop(t, ollama.URL, native.URL, catalogPath)
+	proxy := httptest.NewServer(handler)
+	defer proxy.Close()
+
+	for _, model := range []string{"glm-5.2:cloud", "gpt-native"} {
+		req, err := http.NewRequest(http.MethodPost, proxy.URL+CodexDesktopPathPrefix+"/v1/responses", strings.NewReader(`{"model":"`+model+`"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("ChatGPT-Account-ID", "account-123")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+	}
+	if len(ollamaForwarded) != 0 {
+		t.Fatalf("Ollama received forwarding headers: %q", ollamaForwarded)
+	}
+	if len(nativeForwarded) != 0 {
+		t.Fatalf("native upstream received forwarding headers: %q", nativeForwarded)
+	}
+}
+
+func TestCodexDesktopPassesThroughRedirectResponse(t *testing.T) {
+	native := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "https://example.com/moved")
+		w.WriteHeader(http.StatusFound)
+		_, _ = io.WriteString(w, "moved")
+	}))
+	defer native.Close()
+
+	ollama := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("native model should not reach Ollama")
+	}))
+	defer ollama.Close()
+
+	catalogPath := writeCatalog(t, "glm-5.2:cloud")
+	handler := newTestCodexDesktop(t, ollama.URL, native.URL, catalogPath)
+	proxy := httptest.NewServer(handler)
+	defer proxy.Close()
+
+	req, err := http.NewRequest(http.MethodPost, proxy.URL+CodexDesktopPathPrefix+"/v1/responses", strings.NewReader(`{"model":"gpt-native"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("ChatGPT-Account-ID", "account-123")
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "https://example.com/moved" || string(body) != "moved" {
+		t.Fatalf("redirect passthrough = %d %q %q", resp.StatusCode, resp.Header.Get("Location"), body)
+	}
 }
