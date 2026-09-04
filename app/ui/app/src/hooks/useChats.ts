@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getChats, getChat, sendMessage, type ChatEventUnion } from "../api";
-import { Chat, ErrorEvent, Model } from "@/gotypes";
+import { Chat, ChatEvent, ErrorEvent, Model } from "@/gotypes";
 import { Message } from "@/gotypes";
 import { useSelectedModel } from "./useSelectedModel";
 import { createQueryBatcher } from "./useQueryBatcher";
@@ -568,9 +568,9 @@ export const useSendMessage = (chatId: string) => {
                       thinkingTimeEnd: event.thinkingTimeEnd,
                     }),
                     {
-                      tool_result: (event as any).toolResultData,
-                      ...((event as any).toolName
-                        ? { tool_name: (event as any).toolName }
+                      tool_result: (event as ChatEvent).toolResultData,
+                      ...((event as ChatEvent).toolName
+                        ? { tool_name: (event as ChatEvent).toolName }
                         : {}),
                     },
                   ),

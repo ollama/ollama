@@ -89,7 +89,8 @@ export const ModelPicker = forwardRef<
 
   useEffect(() => {
     if (ref && typeof ref === "object" && ref.current) {
-      (ref.current as any).closeDropdown = () => setIsOpen(false);
+      const mutableRef = ref as React.MutableRefObject<HTMLButtonElement & { closeDropdown?: () => void }>;
+      mutableRef.current.closeDropdown = () => setIsOpen(false);
     }
   }, [ref, setIsOpen]);
 
