@@ -211,6 +211,7 @@ console.log(response.message.content);
 ### Code Editors & Development
 
 - [Cline](https://github.com/cline/cline) - VS Code extension for multi-file/whole-repo coding
+- [Windsurf](https://windsurf.com) - Agentic IDE with Ollama local model support
 - [Continue](https://github.com/continuedev/continue) - Open-source AI code assistant for any IDE
 - [Void](https://github.com/voideditor/void) - Open source AI code editor, Cursor alternative
 - [Copilot for Obsidian](https://github.com/logancyang/obsidian-copilot) - AI assistant for Obsidian
