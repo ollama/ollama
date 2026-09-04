@@ -55,38 +55,30 @@ func ReadInventory(dir string) (Inventory, error) {
 		return Inventory{}, fmt.Errorf("read tensor index: %w", err)
 	}
 
-	entries, err := os.ReadDir(dir)
+	files, err := inventoryShardFiles(dir, index)
 	if err != nil {
 		return Inventory{}, err
-	}
-
-	// Only the standard HF weights - a monolithic model.safetensors or the
-	// sharded model-*.safetensors set - are imported. Other safetensors in the
-	// same repo - notably Mistral's consolidated-*.safetensors - use a layout
-	// we don't support, and are skipped so they can't shadow or pollute the
-	// model tensors.
-	var monolithic bool
-	var files []string
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".safetensors") || !strings.HasPrefix(entry.Name(), "model") {
-			continue
-		}
-		if entry.Name() == "model.safetensors" {
-			monolithic = true
-		}
-		files = append(files, entry.Name())
-	}
-	if monolithic && len(files) > 1 {
-		return Inventory{}, fmt.Errorf("found both model.safetensors and sharded model-*.safetensors weights in %s: ambiguous source", dir)
 	}
 
 	tensors := make(map[string]SourceTensor)
 	for _, file := range files {
 		ext, err := safetensors.OpenForExtraction(filepath.Join(dir, file))
 		if err != nil {
+			if len(index) > 0 {
+				return Inventory{}, fmt.Errorf("source model is incomplete: open indexed shard %s: %w", file, err)
+			}
 			return Inventory{}, fmt.Errorf("open %s: %w", file, err)
 		}
 		for _, name := range ext.ListTensors() {
+			if expectedFile, indexed := index[name]; len(index) > 0 {
+				if !indexed {
+					continue
+				}
+				if expectedFile != file {
+					ext.Close()
+					return Inventory{}, fmt.Errorf("source model is incomplete: tensor %s is indexed in %q but found in %q", name, expectedFile, file)
+				}
+			}
 			td, err := ext.GetTensor(name)
 			if err != nil {
 				ext.Close()
@@ -111,14 +103,54 @@ func ReadInventory(dir string) (Inventory, error) {
 	// tensor) means missing weights, which must fail loudly here rather than
 	// silently importing an incomplete model.
 	for name, file := range index {
-		if _, ok := tensors[name]; !ok {
+		if tensor, ok := tensors[name]; !ok {
 			return Inventory{}, fmt.Errorf("source model is incomplete: tensor %s (indexed in %q) was not found", name, file)
+		} else if tensor.File != file {
+			return Inventory{}, fmt.Errorf("source model is incomplete: tensor %s is indexed in %q but found in %q", name, file, tensor.File)
 		}
 	}
 
 	if len(tensors) == 0 {
-		return Inventory{}, fmt.Errorf("no model.safetensors or model-*.safetensors weights found in %s", dir)
+		return Inventory{}, fmt.Errorf("no model weights found in %s", dir)
 	}
 
 	return Inventory{Dir: dir, Config: cfg, RawConfig: rawConfig, Tensors: tensors}, nil
+}
+
+func inventoryShardFiles(dir string, index map[string]string) ([]string, error) {
+	if len(index) > 0 {
+		files := make(map[string]struct{})
+		for _, file := range index {
+			if file == "" || filepath.Base(file) != file || !strings.HasSuffix(file, ".safetensors") {
+				return nil, fmt.Errorf("tensor index contains invalid shard path %q", file)
+			}
+			files[file] = struct{}{}
+		}
+		return sortedKeys(files), nil
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	// Without an index, only the standard HF weights - a monolithic
+	// model.safetensors or sharded model-*.safetensors set - are imported.
+	// Other safetensors in the same repo, notably Mistral consolidated files,
+	// are skipped so they cannot shadow or pollute the model tensors.
+	var monolithic bool
+	var files []string
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".safetensors") || !strings.HasPrefix(entry.Name(), "model") {
+			continue
+		}
+		if entry.Name() == "model.safetensors" {
+			monolithic = true
+		}
+		files = append(files, entry.Name())
+	}
+	if monolithic && len(files) > 1 {
+		return nil, fmt.Errorf("found both model.safetensors and sharded model-*.safetensors weights in %s: ambiguous source", dir)
+	}
+	return files, nil
 }

@@ -84,9 +84,22 @@ func (n *trieNode) hasSnapshots() bool {
 	return slices.ContainsFunc(n.snapshots, func(s cache.Snapshot) bool { return s != nil })
 }
 
-// hasAllSnapshots returns true if every layer has snapshot data.
-func (n *trieNode) hasAllSnapshots() bool {
-	return len(n.snapshots) > 0 && !slices.Contains(n.snapshots, nil)
+// hasAllSnapshots reports whether every stateful layer has snapshot data.
+// Stateless layers have a nil cache and never snapshot, so requiring one from
+// them would report every node as incompletely paged out.
+func hasAllSnapshots(n *trieNode, caches []cache.Cache) bool {
+	if len(n.snapshots) == 0 {
+		return false
+	}
+	for i, c := range caches {
+		if c == nil {
+			continue
+		}
+		if i >= len(n.snapshots) || n.snapshots[i] == nil {
+			return false
+		}
+	}
+	return true
 }
 
 // findBestMatch walks the trie matching input tokens, returning the path of
@@ -146,23 +159,17 @@ func findBestMatch(root *trieNode, tokens []trieKey) (path []*trieNode, matched 
 	return path, pos
 }
 
-// appendTokens either creates a new child node or extends the leaf in place,
-// returning the node that now holds the tokens.
-func (n *trieNode) appendTokens(root *trieNode, tokens []trieKey, endOffset int) *trieNode {
-	if n == root || len(n.children) > 0 || n.hasSnapshots() {
-		child := &trieNode{
-			tokens:    make([]trieKey, len(tokens)),
-			endOffset: endOffset,
-			parent:    n,
-			lastUsed:  n.lastUsed,
-		}
-		copy(child.tokens, tokens)
-		n.children = append(n.children, child)
-		return child
+// appendChild creates a child node holding the tokens.
+func (n *trieNode) appendChild(tokens []trieKey, endOffset int) *trieNode {
+	child := &trieNode{
+		tokens:    make([]trieKey, len(tokens)),
+		endOffset: endOffset,
+		parent:    n,
+		lastUsed:  n.lastUsed,
 	}
-	n.tokens = append(n.tokens, tokens...)
-	n.endOffset = endOffset
-	return n
+	copy(child.tokens, tokens)
+	n.children = append(n.children, child)
+	return child
 }
 
 // removeNode removes a leaf node from the trie.
@@ -216,7 +223,7 @@ func splitNode(node *trieNode, at int, caches []cache.Cache, counter *int64) *tr
 		parentSnaps := make([]cache.Snapshot, len(oldSnaps))
 		childSnaps := make([]cache.Snapshot, len(oldSnaps))
 		for i, snap := range oldSnaps {
-			if snap != nil {
+			if snap != nil && caches[i] != nil {
 				parentSnaps[i], childSnaps[i] = caches[i].Split(snap, newParent.endOffset)
 			}
 		}
@@ -259,6 +266,10 @@ func mergeWithChild(node *trieNode, caches []cache.Cache, counter *int64) {
 		childSnaps := child.swapSnapshots(nil, counter)
 		merged := make([]cache.Snapshot, len(caches))
 		for i := range caches {
+			if caches[i] == nil {
+				continue
+			}
+
 			var ps, cs cache.Snapshot
 			if nodeSnaps != nil {
 				ps = nodeSnaps[i]

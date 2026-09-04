@@ -32,11 +32,6 @@ type KVCache struct {
 	// copy (see kvSnapshot); the cache copies them out before overwriting or
 	// freeing the slots they name.
 	lazySnapshots []*kvSnapshot
-
-	// rewound is set when a restore moves offset backward. The buffer is
-	// append-only, so only an append after a rewind can clobber a still-lazy
-	// snapshot.
-	rewound bool
 }
 
 func NewKVCache() *KVCache {
@@ -57,18 +52,15 @@ func (c *KVCache) appendKV(keys, values *mlx.Array) (*mlx.Array, *mlx.Array) {
 
 	prev := c.offset
 
-	// This write fills slots [prev, prev+L). Only an append after a rewind can
-	// land on slots a still-lazy snapshot names and overwrite its data, so copy
-	// the overlapping snapshots out first. copyOut removes the snapshot from
-	// c.lazySnapshots, so range over a clone to avoid skipping entries as the
-	// slice shrinks.
-	if c.rewound {
-		for _, s := range slices.Clone(c.lazySnapshots) {
-			if s.fromOffset < prev+L && s.toOffset > prev {
-				s.copyOut()
-			}
+	// This write fills slots [prev, prev+L). Copy out any still-lazy snapshot
+	// whose slots it would overwrite — only appends refilling after a rewind
+	// find any, since ordinary appends stay above every snapshot. copyOut
+	// removes the snapshot from c.lazySnapshots, so range over a clone to
+	// avoid skipping entries as the slice shrinks.
+	for _, s := range slices.Clone(c.lazySnapshots) {
+		if s.fromOffset < prev+L && s.toOffset > prev {
+			s.copyOut()
 		}
-		c.rewound = false
 	}
 
 	// Grow buffer if needed
@@ -233,7 +225,6 @@ func (c *KVCache) Restore(snapshot Snapshot, target int) bool {
 			return false
 		}
 		c.offset = target
-		c.rewound = true
 		return true
 	}
 
@@ -249,7 +240,6 @@ func (c *KVCache) Restore(snapshot Snapshot, target int) bool {
 	// never clobbered.
 	if snap.cache == c && snap.keys == nil {
 		c.offset = min(target, snap.toOffset)
-		c.rewound = true
 		return true
 	}
 
@@ -257,10 +247,8 @@ func (c *KVCache) Restore(snapshot Snapshot, target int) bool {
 	// may still index into, so copy out first (no-op if already owned).
 	snap.copyOut()
 
-	// Rewind to snapshot start, then feed snapshot. The rewind may expose other
-	// outstanding lazy snapshots to the appendKV write, so flag it for the scan.
+	// Rewind to snapshot start, then feed snapshot.
 	c.offset = snap.fromOffset
-	c.rewound = true
 	c.appendKV(snap.keys, snap.values)
 
 	// Clamp to target if needed (target may be less than full snapshot).
@@ -373,7 +361,6 @@ func (c *KVCache) Free() {
 	mlx.Unpin(c.keys, c.values)
 	c.keys, c.values = nil, nil
 	c.offset = 0
-	c.rewound = false
 	c.snapshots = pendingSnapshots{}
 }
 

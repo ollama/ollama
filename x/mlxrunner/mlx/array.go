@@ -53,15 +53,15 @@ func FromValue[T scalarTypes](t T) *Array {
 	tt := New("")
 	switch v := any(t).(type) {
 	case bool:
-		tt.ctx = C.mlx_array_new_bool(C.bool(v))
+		tt.ctx = mlxCheck(C.mlx_array_new_bool(C.bool(v)))
 	case int:
-		tt.ctx = C.mlx_array_new_int(C.int(v))
+		tt.ctx = mlxCheck(C.mlx_array_new_int(C.int(v)))
 	case float32:
-		tt.ctx = C.mlx_array_new_float32(C.float(v))
+		tt.ctx = mlxCheck(C.mlx_array_new_float32(C.float(v)))
 	case float64:
-		tt.ctx = C.mlx_array_new_float64(C.double(v))
+		tt.ctx = mlxCheck(C.mlx_array_new_float64(C.double(v)))
 	case complex64:
-		tt.ctx = C.mlx_array_new_complex(C.float(real(v)), C.float(imag(v)))
+		tt.ctx = mlxCheck(C.mlx_array_new_complex(C.float(real(v)), C.float(imag(v))))
 	default:
 		panic("unsupported type")
 	}
@@ -121,17 +121,17 @@ func FromValues[S ~[]E, E arrayTypes](s S, shape ...int) *Array {
 	}
 
 	tt := New("")
-	tt.ctx = C.mlx_array_new_data(unsafe.Pointer(&bts[0]), unsafe.SliceData(cShape), C.int(len(cShape)), C.mlx_dtype(dtype))
+	tt.ctx = mlxCheck(C.mlx_array_new_data(unsafe.Pointer(&bts[0]), unsafe.SliceData(cShape), C.int(len(cShape)), C.mlx_dtype(dtype)))
 	return tt
 }
 
 func (t *Array) Set(other *Array) {
-	C.mlx_array_set(&t.ctx, other.ctx)
+	mlxCheck(C.mlx_array_set(&t.ctx, other.ctx))
 }
 
 func (t *Array) Clone() *Array {
 	tt := New(t.name)
-	C.mlx_array_set(&tt.ctx, t.ctx)
+	mlxCheck(C.mlx_array_set(&tt.ctx, t.ctx))
 	return tt
 }
 
@@ -168,7 +168,7 @@ func Sweep() {
 			arrays[n] = t
 			n++
 		} else if t.Valid() {
-			C.mlx_array_free(t.ctx)
+			mlxCheck(C.mlx_array_free(t.ctx))
 			t.ctx.ctx = nil
 		}
 	}
@@ -182,10 +182,10 @@ func (t *Array) Valid() bool {
 }
 
 func (t *Array) String() string {
-	str := C.mlx_string_new()
-	defer C.mlx_string_free(str)
-	C.mlx_array_tostring(&str, t.ctx)
-	return strings.TrimSpace(C.GoString(C.mlx_string_data(str)))
+	str := mlxCheck(C.mlx_string_new())
+	mlxCheck(C.mlx_array_tostring(&str, t.ctx))
+	defer freeString(str)
+	return strings.TrimSpace(C.GoString(mlxCheck(C.mlx_string_data(str))))
 }
 
 func (t *Array) LogValue() slog.Value {
@@ -206,15 +206,15 @@ func (t *Array) LogValue() slog.Value {
 // shape utilities
 
 func (t *Array) Size() int {
-	return int(C.mlx_array_size(t.ctx))
+	return int(mlxCheck(C.mlx_array_size(t.ctx)))
 }
 
 func (t *Array) NumBytes() int {
-	return int(C.mlx_array_nbytes(t.ctx))
+	return int(mlxCheck(C.mlx_array_nbytes(t.ctx)))
 }
 
 func (t *Array) NumDims() int {
-	return int(C.mlx_array_ndim(t.ctx))
+	return int(mlxCheck(C.mlx_array_ndim(t.ctx)))
 }
 
 func (t *Array) Dims() []int {
@@ -227,35 +227,45 @@ func (t *Array) Dims() []int {
 }
 
 func (t *Array) Dim(dim int) int {
-	return int(C.mlx_array_dim(t.ctx, C.int(dim)))
+	n := C.mlx_array_dim(t.ctx, C.int(dim))
+	if err := lastError(); err != nil {
+		panic(err)
+	}
+	return int(n)
 }
 
 func (t *Array) DType() DType {
-	return DType(C.mlx_array_dtype(t.ctx))
+	return DType(mlxCheck(C.mlx_array_dtype(t.ctx)))
 }
 
 // data utilities
 
-func (t *Array) Int() int {
-	var item C.int64_t
-	C.mlx_array_item_int64(&item, t.ctx)
-	return int(item)
+func (t *Array) Int() int32 {
+	if dt := t.DType(); dt != DTypeInt32 {
+		panic(fmt.Sprintf("mlx: Int requires a DTypeInt32 array, got %v", dt))
+	}
+	var item C.int32_t
+	mlxCheck(C.mlx_array_item_int32(&item, t.ctx))
+	return int32(item)
 }
 
-func (t *Array) Float() float64 {
-	var item C.double
-	C.mlx_array_item_float64(&item, t.ctx)
-	return float64(item)
+func (t *Array) Float() float32 {
+	if dt := t.DType(); dt != DTypeFloat32 {
+		panic(fmt.Sprintf("mlx: Float requires a DTypeFloat32 array, got %v", dt))
+	}
+	var item C.float
+	mlxCheck(C.mlx_array_item_float32(&item, t.ctx))
+	return float32(item)
 }
 
-func (t *Array) Ints() []int {
+func (t *Array) Ints() []int32 {
 	if dt := t.DType(); dt != DTypeInt32 {
 		panic(fmt.Sprintf("mlx: Ints requires DTypeInt32, got %v", dt))
 	}
-	ints := make([]int, t.Size())
-	for i, f := range unsafe.Slice(C.mlx_array_data_int32(t.ctx), len(ints)) {
-		ints[i] = int(f)
-	}
+	Eval(t)
+	data := mlxCheck(C.mlx_array_data_int32(t.ctx))
+	ints := make([]int32, t.Size())
+	copy(ints, unsafe.Slice((*int32)(unsafe.Pointer(data)), len(ints)))
 	return ints
 }
 
@@ -263,17 +273,19 @@ func (t *Array) Floats() []float32 {
 	if dt := t.DType(); dt != DTypeFloat32 {
 		panic(fmt.Sprintf("mlx: Floats requires DTypeFloat32, got %v", dt))
 	}
+	Eval(t)
+	data := mlxCheck(C.mlx_array_data_float32(t.ctx))
 	floats := make([]float32, t.Size())
-	for i, f := range unsafe.Slice(C.mlx_array_data_float32(t.ctx), len(floats)) {
-		floats[i] = float32(f)
-	}
+	copy(floats, unsafe.Slice((*float32)(unsafe.Pointer(data)), len(floats)))
 	return floats
 }
 
 func (t *Array) Save(name string) error {
 	cName := C.CString(name)
 	defer C.free(unsafe.Pointer(cName))
-	C.mlx_save(cName, t.ctx)
+	if err := mlxError(C.mlx_save(cName, t.ctx)); err != nil {
+		return fmt.Errorf("failed to save array to %s: %w", name, err)
+	}
 	return nil
 }
 

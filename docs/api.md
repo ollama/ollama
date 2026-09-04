@@ -16,7 +16,6 @@
 - [Generate Embeddings](#generate-embeddings)
 - [List Running Models](#list-running-models)
 - [Version](#version)
-- [Experimental: Image Generation](#image-generation-experimental)
 
 ## Conventions
 
@@ -101,7 +100,8 @@ The final response in the stream also includes additional data about the generat
 - `total_duration`: time spent generating the response
 - `load_duration`: time spent in nanoseconds loading the model
 - `prompt_eval_count`: number of tokens in the prompt
-- `prompt_eval_duration`: time spent in nanoseconds evaluating the prompt
+- `prompt_eval_cached_count`: number of prompt tokens read from the cache
+- `prompt_eval_duration`: time spent in nanoseconds evaluating uncached prompt tokens
 - `eval_count`: number of tokens in the response
 - `eval_duration`: time in nanoseconds spent generating the response
 - `context`: an encoding of the conversation used in this response, this can be sent in the next request to keep a conversational memory
@@ -1180,7 +1180,7 @@ Create a model from:
 - a safetensors directory; or
 - a GGUF file.
 
-If you are creating a model from a safetensors directory or from a GGUF file, you must [create a blob](#create-a-blob) for each of the files and then use the file name and SHA256 digest associated with each blob in the `files` field.
+If you are creating a model from a safetensors directory or from a GGUF file, you must [push a blob](#push-a-blob) for each of the files and then use the file name and SHA256 digest associated with each blob in the `files` field.
 
 ### Parameters
 

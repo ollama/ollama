@@ -1,5 +1,3 @@
-//go:build mlx
-
 package sample
 
 import (
@@ -7,13 +5,14 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
 // logprobEntry is the (token id, logprob) pair returned by the sampler's
 // top-K extraction, used after the test-side descending sort.
 type logprobEntry struct {
-	id      int
+	id      int32
 	logprob float64
 }
 
@@ -21,21 +20,21 @@ type logprobEntry struct {
 // and returns the greedily-sampled token id, its logprob, and the top-K
 // entries sorted descending by logprob. Logits must be a [vocab]-shaped
 // slice; the helper reshapes it to [1, vocab] before calling the sampler.
-func runSampleLogprobs(t *testing.T, logits []float32, topK int) (int, float64, []logprobEntry) {
+func runSampleLogprobs(t *mlxtest.T, logits []float32, topK int) (int32, float64, []logprobEntry) {
 	t.Helper()
 
 	s := New(128)
-	defer func() {
+	t.Cleanup(func() {
 		s.Free()
 		mlx.Sweep()
-	}()
+	})
 	s.Add(0, Options{Logprobs: true, TopLogprobs: topK}, nil)
 
 	tensor := mlx.FromValues(logits, 1, len(logits))
 	res := s.Sample([]int{0}, tensor)
 
 	mlx.Pin(res.Arrays()...)
-	defer mlx.Unpin(res.Arrays()...)
+	t.Cleanup(func() { mlx.Unpin(res.Arrays()...) })
 	mlx.Sweep()
 	mlx.Eval(res.Arrays()...)
 
@@ -56,13 +55,13 @@ func runSampleLogprobs(t *testing.T, logits []float32, topK int) (int, float64, 
 }
 
 func TestSampleLogprobsBasic(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.SkipIfUnavailable(t)
 
 	tests := []struct {
 		name           string
 		logits         []float32
 		topK           int
-		wantSelectedID int
+		wantSelectedID int32
 		wantTopLen     int
 	}{
 		{
@@ -82,7 +81,7 @@ func TestSampleLogprobsBasic(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		mlxtest.RunSubtest(t, tt.name, func(t *mlxtest.T) {
 			selected, _, top := runSampleLogprobs(t, tt.logits, tt.topK)
 			if selected != tt.wantSelectedID {
 				t.Errorf("selected = %d, want %d", selected, tt.wantSelectedID)
@@ -95,28 +94,28 @@ func TestSampleLogprobsBasic(t *testing.T) {
 }
 
 func TestSampleLogprobsNumericalStability(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		logits := []float32{1000.0, 999.0, 998.0}
+		_, selLP, top := runSampleLogprobs(t, logits, 3)
 
-	logits := []float32{1000.0, 999.0, 998.0}
-	_, selLP, top := runSampleLogprobs(t, logits, 3)
-
-	if math.IsInf(selLP, 0) || math.IsNaN(selLP) {
-		t.Errorf("selected logprob is not finite: %f", selLP)
-	}
-	for i, e := range top {
-		if math.IsInf(e.logprob, 0) || math.IsNaN(e.logprob) {
-			t.Errorf("top[%d] logprob is not finite: %f", i, e.logprob)
+		if math.IsInf(selLP, 0) || math.IsNaN(selLP) {
+			t.Errorf("selected logprob is not finite: %f", selLP)
 		}
-	}
-	for i := 1; i < len(top); i++ {
-		if top[i].logprob > top[i-1].logprob {
-			t.Errorf("top logprobs not descending: %f > %f", top[i].logprob, top[i-1].logprob)
+		for i, e := range top {
+			if math.IsInf(e.logprob, 0) || math.IsNaN(e.logprob) {
+				t.Errorf("top[%d] logprob is not finite: %f", i, e.logprob)
+			}
 		}
-	}
+		for i := 1; i < len(top); i++ {
+			if top[i].logprob > top[i-1].logprob {
+				t.Errorf("top logprobs not descending: %f > %f", top[i].logprob, top[i-1].logprob)
+			}
+		}
+	})
 }
 
 func TestSampleLogprobsProbabilityCorrectness(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.SkipIfUnavailable(t)
 
 	tests := []struct {
 		name   string
@@ -129,7 +128,7 @@ func TestSampleLogprobsProbabilityCorrectness(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		mlxtest.RunSubtest(t, tt.name, func(t *mlxtest.T) {
 			selected, selLP, top := runSampleLogprobs(t, tt.logits, len(tt.logits))
 
 			if selLP > 0 {
@@ -174,7 +173,7 @@ func TestSampleLogprobsProbabilityCorrectness(t *testing.T) {
 }
 
 func TestSampleLogprobsSoftmaxCorrectness(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.SkipIfUnavailable(t)
 
 	tests := []struct {
 		name   string
@@ -188,7 +187,7 @@ func TestSampleLogprobsSoftmaxCorrectness(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		mlxtest.RunSubtest(t, tt.name, func(t *mlxtest.T) {
 			_, _, top := runSampleLogprobs(t, tt.logits, len(tt.logits))
 			if len(top) != len(tt.logits) {
 				t.Fatalf("top-K length = %d, want %d", len(top), len(tt.logits))
@@ -211,90 +210,90 @@ func TestSampleLogprobsSoftmaxCorrectness(t *testing.T) {
 }
 
 func TestSampleLogprobsSelectedTokenCorrectness(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		logits := []float32{3.0, 1.0, 2.0, 0.5}
 
-	logits := []float32{3.0, 1.0, 2.0, 0.5}
-
-	maxIdx := 0
-	for i, v := range logits[1:] {
-		if v > logits[maxIdx] {
-			maxIdx = i + 1
+		maxIdx := int32(0)
+		for i, v := range logits[1:] {
+			if v > logits[maxIdx] {
+				maxIdx = int32(i + 1)
+			}
 		}
-	}
 
-	selected, selLP, top := runSampleLogprobs(t, logits, len(logits))
+		selected, selLP, top := runSampleLogprobs(t, logits, len(logits))
 
-	if selected != maxIdx {
-		t.Errorf("selected = %d, want argmax %d", selected, maxIdx)
-	}
+		if selected != maxIdx {
+			t.Errorf("selected = %d, want argmax %d", selected, maxIdx)
+		}
 
-	if top[0].id != maxIdx {
-		t.Errorf("top[0].id = %d, want argmax %d", top[0].id, maxIdx)
-	}
-	if math.Abs(top[0].logprob-selLP) > 1e-6 {
-		t.Errorf("top[0].logprob = %f, want selected %f", top[0].logprob, selLP)
-	}
+		if top[0].id != maxIdx {
+			t.Errorf("top[0].id = %d, want argmax %d", top[0].id, maxIdx)
+		}
+		if math.Abs(top[0].logprob-selLP) > 1e-6 {
+			t.Errorf("top[0].logprob = %f, want selected %f", top[0].logprob, selLP)
+		}
+	})
 }
 
 // TestBatchedLogprobsPerRow verifies that per-row logprobs in a batched
 // sample call match the per-slot reference. The numerically-stable softmax
 // must reduce along the last axis only, not over the whole batch.
 func TestBatchedLogprobsPerRow(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		rowA := []float32{2, 1, 0}
+		rowB := []float32{0, 5, 0}
 
-	rowA := []float32{2, 1, 0}
-	rowB := []float32{0, 5, 0}
+		_, wantA, _ := runSampleLogprobs(t, rowA, 0)
+		_, wantB, _ := runSampleLogprobs(t, rowB, 0)
 
-	_, wantA, _ := runSampleLogprobs(t, rowA, 0)
-	_, wantB, _ := runSampleLogprobs(t, rowB, 0)
+		s := New(128)
+		t.Cleanup(func() {
+			s.Free()
+			mlx.Sweep()
+		})
+		s.Add(1, Options{Logprobs: true}, nil)
+		s.Add(2, Options{Logprobs: true}, nil)
 
-	s := New(128)
-	t.Cleanup(func() {
-		s.Free()
-		mlx.Sweep()
+		logits := mlx.FromValues(append(append([]float32{}, rowA...), rowB...), 2, 3)
+		res := s.Sample([]int{1, 2}, logits)
+		mlx.Pin(res.Arrays()...)
+		t.Cleanup(func() { mlx.Unpin(res.Arrays()...) })
+		mlx.Eval(res.Arrays()...)
+
+		got := res.Logprob.Floats()
+		if len(got) != 2 {
+			t.Fatalf("Logprob length = %d, want 2", len(got))
+		}
+		if math.Abs(float64(got[0])-wantA) > 1e-5 {
+			t.Errorf("row 0 logprob = %f, want %f (per-slot reference)", got[0], wantA)
+		}
+		if math.Abs(float64(got[1])-wantB) > 1e-5 {
+			t.Errorf("row 1 logprob = %f, want %f (per-slot reference)", got[1], wantB)
+		}
 	})
-	s.Add(1, Options{Logprobs: true}, nil)
-	s.Add(2, Options{Logprobs: true}, nil)
-
-	logits := mlx.FromValues(append(append([]float32{}, rowA...), rowB...), 2, 3)
-	res := s.Sample([]int{1, 2}, logits)
-	mlx.Pin(res.Arrays()...)
-	t.Cleanup(func() { mlx.Unpin(res.Arrays()...) })
-	mlx.Eval(res.Arrays()...)
-
-	got := res.Logprob.Floats()
-	if len(got) != 2 {
-		t.Fatalf("Logprob length = %d, want 2", len(got))
-	}
-	if math.Abs(float64(got[0])-wantA) > 1e-5 {
-		t.Errorf("row 0 logprob = %f, want %f (per-slot reference)", got[0], wantA)
-	}
-	if math.Abs(float64(got[1])-wantB) > 1e-5 {
-		t.Errorf("row 1 logprob = %f, want %f (per-slot reference)", got[1], wantB)
-	}
 }
 
 func TestSampleLogprobsTopKOrdering(t *testing.T) {
-	skipIfNoMLX(t)
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		// Logits chosen so argmax order differs from index order.
+		logits := []float32{2.0, 5.0, 1.0, 4.0, 3.0}
+		wantOrder := []int32{1, 3, 4, 0, 2}
 
-	// Logits chosen so argmax order differs from index order.
-	logits := []float32{2.0, 5.0, 1.0, 4.0, 3.0}
-	wantOrder := []int{1, 3, 4, 0, 2}
+		_, _, top := runSampleLogprobs(t, logits, len(logits))
 
-	_, _, top := runSampleLogprobs(t, logits, len(logits))
-
-	if len(top) != len(wantOrder) {
-		t.Fatalf("top-K length = %d, want %d", len(top), len(wantOrder))
-	}
-	for i, e := range top {
-		if e.id != wantOrder[i] {
-			t.Errorf("top[%d].id = %d, want %d", i, e.id, wantOrder[i])
+		if len(top) != len(wantOrder) {
+			t.Fatalf("top-K length = %d, want %d", len(top), len(wantOrder))
 		}
-	}
-	for i := 1; i < len(top); i++ {
-		if top[i].logprob > top[i-1].logprob {
-			t.Errorf("top[%d].logprob (%f) > top[%d].logprob (%f)",
-				i, top[i].logprob, i-1, top[i-1].logprob)
+		for i, e := range top {
+			if e.id != wantOrder[i] {
+				t.Errorf("top[%d].id = %d, want %d", i, e.id, wantOrder[i])
+			}
 		}
-	}
+		for i := 1; i < len(top); i++ {
+			if top[i].logprob > top[i-1].logprob {
+				t.Errorf("top[%d].logprob (%f) > top[%d].logprob (%f)",
+					i, top[i].logprob, i-1, top[i-1].logprob)
+			}
+		}
+	})
 }

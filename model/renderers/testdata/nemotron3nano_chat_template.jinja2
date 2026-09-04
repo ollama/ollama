@@ -8,13 +8,12 @@
             {%- endif %}
         {%- endfor %}
     {%- endif %}
-{% endmacro %}
+{%- endmacro -%}
 {%- set enable_thinking = enable_thinking if enable_thinking is defined else True %}
 {%- set reasoning_budget = reasoning_budget if reasoning_budget is defined else None %}
 {%- set truncate_history_thinking = truncate_history_thinking if truncate_history_thinking is defined else True %}
-{%- set response_format = response_format if response_format is defined else None %}
 
-{# Scan messages for VLM thinking toggles to override enable_thinking #}
+{#- Scan messages for VLM thinking toggles to override enable_thinking -#}
 {%- set toggle = namespace(enable=enable_thinking) %}
 {%- for m in messages %}
     {%- if m['role'] == 'user' or m['role'] == 'system' -%}
@@ -25,18 +24,28 @@
             {%- elif '/no_think' in c -%}
                 {%- set toggle.enable = false -%}
             {%- endif -%}
+        {%- else -%}
+            {%- for part in m['content'] -%}
+                {%- if part['type'] == 'text' -%}
+                    {%- set c = part['text'] %}
+                    {%- if '/think' in c.replace('</think>', '') -%}
+                        {%- set toggle.enable = true -%}
+                    {%- elif '/no_think' in c -%}
+                        {%- set toggle.enable = false -%}
+                    {%- endif -%}
+                {%- endif -%}
+            {%- endfor -%}
         {%- endif -%}
     {%- endif -%}
-{%- endfor %}
-
-{# Prepare message iteration similar to LM template #}
+{%- endfor -%}
+{#- Prepare message iteration similar to LM template -#}
 {%- set ns = namespace(last_user_idx = -1) %}
 {%- set loop_messages = messages %}
 {%- for m in loop_messages %}
     {%- if m["role"] == "user" %}
         {%- set ns.last_user_idx = loop.index0 %}
     {%- endif %}
-{%- endfor %}
+{%- endfor -%}
 
 {%- if messages[0]["role"] == "system" %}
     {%- set system_message = messages[0]["content"] %}
@@ -48,15 +57,14 @@
 {%- if not tools is defined %}
     {%- set tools = [] %}
 {%- endif %}
-{# Recompute last_user_idx relative to loop_messages after handling system #}
+{#- Recompute last_user_idx relative to loop_messages after handling system -#}
 {%- set ns = namespace(last_user_idx = -1) %}
 {%- for m in loop_messages %}
     {%- if m["role"] == "user" %}
         {%- set ns.last_user_idx = loop.index0 %}
     {%- endif %}
-{%- endfor %}
-
-{# System preamble with LM formatting, sanitize thinking toggles #}
+{%- endfor -%}
+{#- System preamble with LM formatting, sanitize thinking toggles -#}
 {%- if system_message is defined %}
     {%- set sys_content = system_message | string %}
     {%- set sys_content = sys_content.replace('</think>', '<_end_think>').replace('/think', '').replace('/no_think', '').replace('<_end_think>', '</think>') %}
@@ -99,7 +107,7 @@
                 {{- '\n</parameter>' }}
             {%- endfor %}
         {%- endif %}
-        {% set handled_keys = ['type', 'properties', 'required'] %}
+        {%- set handled_keys = ['type', 'properties', 'required'] %}
         {{- render_extra_keys(tool.parameters, handled_keys) }}
         {%- if tool.parameters is defined and tool.parameters.required is defined %}
             {{- '\n<required>' ~ (tool.parameters.required | tojson | safe) ~ '</required>' }}
@@ -112,20 +120,18 @@
     {{- "\n</tools>" }}
 
     {{- '\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT>' }}
-{%- endif %}
-
+{%- endif -%}
 {%- if system_message is defined %}
     {{- '<|im_end|>\n' }}
 {%- else %}
     {%- if tools is iterable and tools | length > 0 %}
         {{- '<|im_end|>\n' }}
     {%- endif %}
-{%- endif %}
-
-{# Iterate conversation #}
+{%- endif -%}
+{#- Iterate conversation -#}
 {%- for message in loop_messages %}
     {%- if message.role == "assistant" %}
-        {# Use LM assistant handling #}
+        {#- Use LM assistant handling -#}
         {%- if message.reasoning_content is defined and message.reasoning_content is string and message.reasoning_content | trim | length > 0 %}
             {%- set content = "<think>\n" ~ message.reasoning_content ~ "\n</think>\n" ~ (message.content | default('', true)) %}
         {%- else %}
@@ -192,8 +198,54 @@
         {%- endif %}
     {%- elif message.role == "user" or message.role == "system" %}
         {{- '<|im_start|>' + message.role + '\n' }}
-        {%- set content = message.content | string %}
-        {{- content }}
+        {#- Build VLM multimodal content when content is a sequence -#}
+        {%- if message.content is string -%}
+            {%- set content = (message.content | string) %}
+        {%- else -%}
+            {%- set text_ns = namespace(val='') -%}
+            {%- set mm_content = '' -%}
+            {%- set counters = namespace(images=0, videos=0, audios=0) -%}
+            {%- for part in message['content'] -%}
+                {%- if part['type'] == 'image' or part['type'] == 'image_url' -%}
+                    {%- set counters.images = counters.images + 1 -%}
+                {%- elif part['type'] == 'video' or part['type'] == 'video_url' -%}
+                    {%- set counters.videos = counters.videos + 1 -%}
+                {%- elif part['type'] == 'audio' or part['type'] == 'audio_url' -%}
+                    {%- set counters.audios = counters.audios + 1 -%}
+                {%- elif part['type'] == 'text' -%}
+                    {%- set text_ns.val = text_ns.val + part['text'] -%}
+                {%- endif -%}
+            {%- endfor -%}
+            {%- if '<image>' in text_ns.val -%}
+                {%- set counters.images = 0 -%}
+            {%- endif -%}
+            {%- if '<video>' in text_ns.val -%}
+                {%- set counters.videos = 0 -%}
+            {%- endif -%}
+            {%- if '<so_embedding>' in text_ns.val -%}
+                {%- set counters.audios = 0 -%}
+            {%- endif -%}
+            {%- if counters.images > 1 -%}
+                {%- set image_tags = namespace(tags=[]) -%}
+                {%- for i in range(counters.images) -%}
+                    {%- set image_tags.tags = image_tags.tags + ['<image ' + (i + 1)|string + '><image>'] -%}
+                {%- endfor -%}
+                {%- set mm_content = ' '.join(image_tags.tags) + '\n' -%}
+            {%- elif counters.images == 1 -%}
+                {%- set mm_content = '<image>\n' -%}
+            {%- endif -%}
+            {%- set mm_content = mm_content + '<video>\n' * counters.videos -%}
+            {%- set mm_content = mm_content + '<so_embedding>\n' * counters.audios -%}
+            {%- set content = mm_content + text_ns.val.lstrip('\n') -%}
+        {%- endif -%}
+        {#- Sanitize thinking toggle directives from user/system content -#}
+        {%- set content = content.replace('</think>', '<_end_think>').replace('/think', '').replace('/no_think', '').replace('<_end_think>', '</think>') -%}
+        {%- set content = content | trim -%}
+        {%- if message.role == "user" and loop.index0 == ns.last_user_idx and reasoning_budget is not none -%}
+            {{- content + '\n\n{thinking token budget: ' + (reasoning_budget | string) + '}' -}}
+        {%- else -%}
+            {{- content -}}
+        {%- endif -%}
         {{- '<|im_end|>\n' }}
     {%- elif message.role == "tool" %}
         {%- if loop.previtem and loop.previtem.role != "tool" %}
@@ -210,9 +262,8 @@
     {%- else %}
         {{- '<|im_start|>' + message.role + '\n' + message.content + '<|im_end|>\n' }}
     {%- endif %}
-{%- endfor %}
-
-{# Generation prompt using computed thinking toggle #}
+{%- endfor -%}
+{#- Generation prompt using computed thinking toggle -#}
 {%- if add_generation_prompt %}
     {%- if toggle.enable %}
         {{- '<|im_start|>assistant\n<think>\n' }}

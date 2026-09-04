@@ -138,6 +138,9 @@ func (s *Server) modelOptionsWithEmbeddingBatchDefault(model *Model, requestOpts
 	draftNumPredictSet := hasOption(requestOpts, "draft_num_predict")
 	if model != nil {
 		draftNumPredictSet = draftNumPredictSet || hasOption(model.Options, "draft_num_predict")
+		if err := opts.FromMap(model.GenerationDefaults); err != nil {
+			return api.Options{}, err
+		}
 		if err := opts.FromMap(model.Options); err != nil {
 			return api.Options{}, err
 		}
@@ -199,14 +202,9 @@ func usesAutomaticNumBatch(model *Model, requestOpts map[string]any) bool {
 
 // scheduleRunner schedules a runner after validating inputs such as capabilities and model options.
 // It returns the allocated runner, model instance, and consolidated options if successful and error otherwise.
-func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.Capability, requestOpts map[string]any, keepAlive *api.Duration, shift *bool) (llm.LlamaServer, *Model, *api.Options, error) {
-	if name == "" {
+func (s *Server) scheduleRunner(ctx context.Context, model *Model, caps []model.Capability, requestOpts map[string]any, keepAlive *api.Duration, shift *bool) (llm.LlamaServer, *Model, *api.Options, error) {
+	if model == nil || model.Name == "" {
 		return nil, nil, nil, fmt.Errorf("model %w", errRequired)
-	}
-
-	model, err := GetModel(name)
-	if err != nil {
-		return nil, nil, nil, err
 	}
 
 	if slices.Contains(model.Config.ModelFamilies, "mllama") && len(model.ProjectorPaths) > 0 {
@@ -214,7 +212,7 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 	}
 
 	if err := model.CheckCapabilities(caps...); err != nil {
-		return nil, nil, nil, fmt.Errorf("%s %w", name, err)
+		return nil, nil, nil, fmt.Errorf("%s %w", model.Name, err)
 	}
 
 	numCtxAuto := usesAutomaticNumCtx(model, requestOpts)
@@ -287,7 +285,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	m, err := GetModel(name.String())
+	m, err := s.getModel(name.String())
 	if err != nil {
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
@@ -468,7 +466,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 	}
 
-	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), caps, req.Options, req.KeepAlive, req.Shift)
+	r, m, opts, err := s.scheduleRunner(c.Request.Context(), m, caps, req.Options, req.KeepAlive, req.Shift)
 	if errors.Is(err, errCapabilityCompletion) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support generate", req.Model)})
 		return
@@ -656,7 +654,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		// TODO (jmorganca): avoid building the response twice both here and below
 		var sb strings.Builder
 		defer close(ch)
-		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
+
+		ctx, cancel := context.WithCancel(c.Request.Context())
+		defer cancel()
+		var parserErr error
+
+		if err := r.Completion(ctx, llm.CompletionRequest{
 			Prompt:          prompt,
 			Media:           media,
 			Format:          req.Format,
@@ -674,10 +677,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				Response:  cr.Content,
 				Done:      cr.Done,
 				Metrics: api.Metrics{
-					PromptEvalCount:    cr.PromptEvalCount,
-					PromptEvalDuration: cr.PromptEvalDuration,
-					EvalCount:          cr.EvalCount,
-					EvalDuration:       cr.EvalDuration,
+					PromptEvalCount:       cr.PromptEvalCount,
+					PromptEvalCachedCount: cr.PromptEvalCachedCount,
+					PromptEvalDuration:    cr.PromptEvalDuration,
+					EvalCount:             cr.EvalCount,
+					EvalDuration:          cr.EvalDuration,
 				},
 				Logprobs: toAPILogprobs(cr.Logprobs),
 			}
@@ -685,7 +689,8 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			if builtinParser != nil {
 				content, thinking, toolCalls, err := builtinParser.Add(cr.Content, cr.Done)
 				if err != nil {
-					ch <- gin.H{"error": err.Error()}
+					parserErr = err
+					cancel()
 					return
 				}
 				res.Response = content
@@ -731,13 +736,18 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 			ch <- res
 		}); err != nil {
-			s.sched.expireRunnersForRuntimeOOM(m, err)
-			var serr api.StatusError
-			if errors.As(err, &serr) {
-				ch <- gin.H{"error": serr.ErrorMessage, "status": serr.StatusCode}
-			} else {
-				ch <- gin.H{"error": err.Error()}
+			if parserErr == nil {
+				s.sched.expireRunnersForRuntimeOOM(m, err)
+				var serr api.StatusError
+				if errors.As(err, &serr) {
+					ch <- gin.H{"error": serr.ErrorMessage, "status": serr.StatusCode}
+				} else {
+					ch <- gin.H{"error": err.Error()}
+				}
 			}
+		}
+		if parserErr != nil {
+			ch <- gin.H{"error": parserErr.Error()}
 		}
 	}()
 
@@ -839,7 +849,13 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive, nil)
+	m, err := s.getModel(name.String())
+	if err != nil {
+		handleScheduleError(c, req.Model, err)
+		return
+	}
+
+	r, m, opts, err := s.scheduleRunner(c.Request.Context(), m, []model.Capability{}, req.Options, req.KeepAlive, nil)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return
@@ -1051,7 +1067,13 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 
 	name := modelRef.Name
 
-	r, m, _, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive, nil)
+	m, err := s.getModel(name.String())
+	if err != nil {
+		handleScheduleError(c, req.Model, err)
+		return
+	}
+
+	r, m, _, err := s.scheduleRunner(c.Request.Context(), m, []model.Capability{}, req.Options, req.KeepAlive, nil)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return
@@ -2144,6 +2166,11 @@ func (s *Server) WebFetchExperimentalHandler(c *gin.Context) {
 }
 
 func (s *Server) webExperimentalProxyHandler(c *gin.Context, proxyPath, disabledOperation string) {
+	// This endpoint is authenticated by the server's cloud signature. A client
+	// may have supplied an unrelated provider credential (for example, Codex's
+	// Responses API key); it must not be sent to the web-search service.
+	c.Request.Header.Del("Authorization")
+
 	body, err := readRequestBody(c.Request)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -2439,7 +2466,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	if modelRef.Source == modelSourceCloud {
 		req.Model = modelRef.Base
-		if c.GetBool(legacyCloudAnthropicKey) {
+		if c.GetBool(cloudWebSearchOrchestrationKey) {
 			proxyCloudJSONRequestWithPath(c, req, "/api/chat", cloudErrRemoteInferenceUnavailable)
 			return
 		}
@@ -2455,7 +2482,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	m, err := GetModel(name.String())
+	m, err := s.getModel(name.String())
 	if err != nil {
 		switch {
 		case os.IsNotExist(err):
@@ -2608,7 +2635,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 	}
 
-	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), caps, req.Options, req.KeepAlive, req.Shift)
+	r, m, opts, err := s.scheduleRunner(c.Request.Context(), m, caps, req.Options, req.KeepAlive, req.Shift)
 	if errors.Is(err, errCapabilityCompletion) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support chat", req.Model)})
 		return
@@ -2724,6 +2751,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		defer close(ch)
 
 		structuredOutputsState := structuredOutputsState_None
+		var firstPassMetrics api.Metrics
 
 		for {
 			var tb strings.Builder
@@ -2742,35 +2770,55 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			if req.Format != nil && structuredOutputsState == structuredOutputsState_None && !forceImmediate && ((builtinParser != nil || thinkingState != nil) && slices.Contains(m.Capabilities(), model.CapabilityThinking)) {
 				currentFormat = nil
 			}
+			includeIntermediateMetrics := req.Format != nil && currentFormat == nil
 
 			// sets up new context given parent context per request
 			ctx, cancel := context.WithCancel(c.Request.Context())
 
+			var parserErr error
+
 			err := r.Completion(ctx, llm.CompletionRequest{
-				Prompt:          prompt,
-				Media:           media,
-				Format:          currentFormat,
-				Options:         opts,
-				Shift:           req.Shift == nil || *req.Shift,
-				Truncate:        truncate,
-				Logprobs:        req.Logprobs,
-				TopLogprobs:     req.TopLogprobs,
-				PreservedTokens: preservedTokensForCompletion(builtinParser),
-				ToolCallTag:     toolCallTagForCompletion(toolParser),
-				LeadingBOS:      leadingBOSForModel(m),
+				Prompt:                     prompt,
+				Media:                      media,
+				Format:                     currentFormat,
+				Options:                    opts,
+				Shift:                      req.Shift == nil || *req.Shift,
+				Truncate:                   truncate,
+				Logprobs:                   req.Logprobs,
+				TopLogprobs:                req.TopLogprobs,
+				PreservedTokens:            preservedTokensForCompletion(builtinParser),
+				ToolCallTag:                toolCallTagForCompletion(toolParser),
+				LeadingBOS:                 leadingBOSForModel(m),
+				IncludeIntermediateMetrics: includeIntermediateMetrics,
 			}, func(r llm.CompletionResponse) {
+				metrics := api.Metrics{
+					PromptEvalCount:       r.PromptEvalCount,
+					PromptEvalCachedCount: r.PromptEvalCachedCount,
+					PromptEvalDuration:    r.PromptEvalDuration,
+					EvalCount:             r.EvalCount,
+					EvalDuration:          r.EvalDuration,
+				}
+				if includeIntermediateMetrics {
+					firstPassMetrics = metrics
+					if !r.Done {
+						metrics = api.Metrics{}
+					}
+				} else if structuredOutputsState == structuredOutputsState_Applying && r.Done {
+					// Treat the restart as generation work: retain the original prompt metrics and fold in the second prefill.
+					metrics.PromptEvalCount = firstPassMetrics.PromptEvalCount
+					metrics.PromptEvalCachedCount = firstPassMetrics.PromptEvalCachedCount
+					metrics.PromptEvalDuration = firstPassMetrics.PromptEvalDuration
+					metrics.EvalCount += firstPassMetrics.EvalCount
+					metrics.EvalDuration += firstPassMetrics.EvalDuration + r.PromptEvalDuration
+				}
+
 				res := api.ChatResponse{
 					Model:     req.Model,
 					CreatedAt: time.Now().UTC(),
 					Message:   api.Message{Role: "assistant", Content: r.Content},
 					Done:      r.Done,
-					Metrics: api.Metrics{
-						PromptEvalCount:    r.PromptEvalCount,
-						PromptEvalDuration: r.PromptEvalDuration,
-						EvalCount:          r.EvalCount,
-						EvalDuration:       r.EvalDuration,
-					},
-					Logprobs: toAPILogprobs(r.Logprobs),
+					Metrics:   metrics,
+					Logprobs:  toAPILogprobs(r.Logprobs),
 				}
 
 				if r.Done {
@@ -2784,7 +2832,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 					content, thinking, toolCalls, err := builtinParser.Add(r.Content, r.Done)
 					if err != nil {
-						ch <- gin.H{"error": err.Error()}
+						parserErr = err
+						cancel()
 						return
 					}
 
@@ -2863,6 +2912,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 				ch <- res
 			})
+			if parserErr != nil {
+				ch <- gin.H{"error": parserErr.Error()}
+				return
+			}
 			if err != nil {
 				if structuredOutputsState == structuredOutputsState_ReadyToApply && strings.Contains(err.Error(), "context canceled") && c.Request.Context().Err() == nil {
 					// only ignores error if it's a context cancellation due to setting structured outputs
@@ -2973,10 +3026,11 @@ func (s *Server) handleNativeChat(c *gin.Context, req api.ChatRequest, m *Model,
 				Message:   r.Message,
 				Done:      r.Done,
 				Metrics: api.Metrics{
-					PromptEvalCount:    r.PromptEvalCount,
-					PromptEvalDuration: r.PromptEvalDuration,
-					EvalCount:          r.EvalCount,
-					EvalDuration:       r.EvalDuration,
+					PromptEvalCount:       r.PromptEvalCount,
+					PromptEvalCachedCount: r.PromptEvalCachedCount,
+					PromptEvalDuration:    r.PromptEvalDuration,
+					EvalCount:             r.EvalCount,
+					EvalDuration:          r.EvalDuration,
 				},
 				Logprobs: toAPILogprobs(r.Logprobs),
 			}

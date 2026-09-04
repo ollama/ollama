@@ -41,6 +41,47 @@ func TestModelfileConfig(t *testing.T) {
 	}
 }
 
+func TestNemotronNanoOmniMetadataInference(t *testing.T) {
+	dir := t.TempDir()
+	config := `{
+		"architectures": ["NemotronH_Nano_Omni_Reasoning_V3"],
+		"model_type": "NemotronH_Nano_Omni_Reasoning_V3",
+		"vision_config": {"patch_size": 16},
+		"sound_config": {"model_type": "parakeet"},
+		"llm_config": {"model_type": "nemotron_h"}
+	}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := getParserName(dir), "nemotron-3-nano"; got != want {
+		t.Fatalf("parser = %q, want %q", got, want)
+	}
+	if got, want := getRendererName(dir), "nemotron-3-nano"; got != want {
+		t.Fatalf("renderer = %q, want %q", got, want)
+	}
+	caps := inferSafetensorsCapabilities(dir, getParserName(dir))
+	if !slices.Equal(caps, []string{"completion", "vision", "audio", "tools", "thinking"}) {
+		t.Fatalf("capabilities = %v, want completion/vision/audio/tools/thinking", caps)
+	}
+}
+
+func TestNemotron35MetadataInference(t *testing.T) {
+	dir := t.TempDir()
+	config := `{"architectures":["NemotronHForCausalLM"],"model_type":"nemotron_h"}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "chat_template.jinja"), []byte("{reasoning effort: efficient}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := getParserName(dir), "nemotron-3.5-nano"; got != want {
+		t.Fatalf("parser = %q, want %q", got, want)
+	}
+	if got, want := getRendererName(dir), "nemotron-3.5-nano"; got != want {
+		t.Fatalf("renderer = %q, want %q", got, want)
+	}
+}
+
 func TestConfigFromModelfile(t *testing.T) {
 	modelfile, err := parser.ParseFile(strings.NewReader(`
 FROM ./model
@@ -400,6 +441,15 @@ func TestInferSafetensorsCapabilities(t *testing.T) {
 			want: []string{"completion", "audio"},
 		},
 		{
+			name: "model with sound config",
+			configJSON: `{
+				"architectures": ["SomeSoundModel"],
+				"model_type": "other",
+				"sound_config": {"model_type": "parakeet"}
+			}`,
+			want: []string{"completion", "audio"},
+		},
+		{
 			name: "non-qwen conditional generation model",
 			configJSON: `{
 				"architectures": ["SomeOtherForConditionalGeneration"],
@@ -464,17 +514,17 @@ func TestCreateModelfileLayersIncludesParameters(t *testing.T) {
 	}
 }
 
-func TestNewManifestWriter_PopulatesFileTypeFromQuantize(t *testing.T) {
+func TestNewManifestWriter_PopulatesFileTypeFromEffectiveQuantize(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
 	opts := CreateOptions{
 		ModelName: "test-quantized",
 		ModelDir:  t.TempDir(),
-		Quantize:  "MXFP8",
 	}
 
 	writer := newManifestWriter(opts, []string{"completion"}, "qwen3", "qwen3")
-	if err := writer(opts.ModelName, create.LayerInfo{}, nil); err != nil {
+	class := create.Classification{Kind: create.SourceBlockFP8, Quantize: "mxfp8"}
+	if err := writer(opts.ModelName, create.LayerInfo{}, nil, class); err != nil {
 		t.Fatalf("newManifestWriter() error = %v", err)
 	}
 
@@ -504,6 +554,67 @@ func TestNewManifestWriter_PopulatesFileTypeFromQuantize(t *testing.T) {
 	}
 }
 
+func TestNewManifestWriter_PopulatesGenerationDefaults(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	modelDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(modelDir, "generation_config.json"), []byte(`{
+		"temperature": 0,
+		"top_k": 12,
+		"top_p": 0.7,
+		"min_p": 0.05,
+		"repetition_penalty": 1.2,
+		"penalty_last_n": -1
+	}`), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	opts := CreateOptions{
+		ModelName: "test-generation-defaults",
+		ModelDir:  modelDir,
+	}
+
+	writer := newManifestWriter(opts, []string{"completion"}, "qwen3", "qwen3")
+	if err := writer(opts.ModelName, create.LayerInfo{}, nil, create.Classification{}); err != nil {
+		t.Fatalf("newManifestWriter() error = %v", err)
+	}
+
+	name := model.ParseName(opts.ModelName)
+	mf, err := manifest.ParseNamedManifest(name)
+	if err != nil {
+		t.Fatalf("ParseNamedManifest() error = %v", err)
+	}
+
+	configPath, err := manifest.BlobsPath(mf.Config.Digest)
+	if err != nil {
+		t.Fatalf("BlobsPath() error = %v", err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+
+	var cfg model.ConfigV2
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+
+	check := func(key string, want any) {
+		t.Helper()
+		if got := cfg.GenerationDefaults[key]; got != want {
+			t.Fatalf("%s = %#v, want %#v", key, got, want)
+		}
+	}
+
+	check("temperature", float64(0))
+	check("top_k", float64(12))
+	check("top_p", float64(0.7))
+	check("min_p", float64(0.05))
+	check("repeat_penalty", float64(1.2))
+	check("repeat_last_n", float64(-1))
+}
+
 func TestNewManifestWriter_PopulatesDraftMetadata(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
@@ -519,7 +630,7 @@ func TestNewManifestWriter_PopulatesDraftMetadata(t *testing.T) {
 	}
 
 	writer := newManifestWriter(opts, []string{"completion"}, "gemma4", "gemma4")
-	if err := writer(opts.ModelName, create.LayerInfo{}, nil); err != nil {
+	if err := writer(opts.ModelName, create.LayerInfo{}, nil, create.Classification{}); err != nil {
 		t.Fatalf("newManifestWriter() error = %v", err)
 	}
 
@@ -593,8 +704,18 @@ func TestDetectCapabilities(t *testing.T) {
 			want:       modelCapabilities{thinking: true},
 		},
 		{
+			name:       "qwen4 always thinks",
+			configJSON: `{"architectures": ["Qwen4ExpForConditionalGeneration"], "model_type": "qwen4_exp"}`,
+			want:       modelCapabilities{vision: false, thinking: true},
+		},
+		{
 			name:       "vision config",
 			configJSON: `{"architectures": ["Gemma4ForConditionalGeneration"], "vision_config": {}}`,
+			want:       modelCapabilities{vision: true},
+		},
+		{
+			name:       "flat vision flag",
+			configJSON: `{"architectures": ["MuseGlimmerForConditionalGeneration"], "model_type": "muse_glimmer", "has_vision": true}`,
 			want:       modelCapabilities{vision: true},
 		},
 		{
@@ -660,6 +781,11 @@ func TestInferSafetensorsCapabilitiesFromParser(t *testing.T) {
 			parserName: "functiongemma",
 			want:       []string{"completion", "tools"},
 		},
+		{
+			name:       "glimmer tools and thinking",
+			parserName: "glimmer",
+			want:       []string{"completion", "tools", "thinking"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -673,6 +799,23 @@ func TestInferSafetensorsCapabilitiesFromParser(t *testing.T) {
 				t.Fatalf("inferSafetensorsCapabilities() = %#v, want %#v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestInferSafetensorsCapabilitiesGlimmerPreservesVisionMetadata(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{
+		"architectures": ["MuseGlimmerForConditionalGeneration"],
+		"model_type": "muse_glimmer",
+		"has_vision": true
+	}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := inferSafetensorsCapabilities(dir, "glimmer")
+	want := []string{"completion", "vision", "tools", "thinking"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("inferSafetensorsCapabilities() = %#v, want %#v", got, want)
 	}
 }
 
@@ -710,6 +853,11 @@ func TestGetParserName(t *testing.T) {
 			want:       "qwen3.5",
 		},
 		{
+			name:       "qwen4 model",
+			configJSON: `{"architectures": ["Qwen4ExpForConditionalGeneration"], "model_type": "qwen4_exp"}`,
+			want:       "qwen3.5",
+		},
+		{
 			name:       "deepseek model",
 			configJSON: `{"architectures": ["DeepseekV3ForCausalLM"]}`,
 			want:       "deepseek3",
@@ -735,6 +883,26 @@ func TestGetParserName(t *testing.T) {
 			want:       "laguna",
 		},
 		{
+			name:       "glimmer model",
+			configJSON: `{"architectures": ["MuseGlimmerForConditionalGeneration"], "model_type": "muse_glimmer"}`,
+			want:       "glimmer",
+		},
+		{
+			name:       "nemotron text architecture",
+			configJSON: `{"architectures": ["NemotronHForCausalLM"], "model_type": "nemotron_h"}`,
+			want:       "nemotron-3-nano",
+		},
+		{
+			name:       "nemotron omni architecture",
+			configJSON: `{"architectures": ["NemotronH_Nano_Omni_Reasoning_V3"], "model_type": "NemotronH_Nano_Omni_Reasoning_V3"}`,
+			want:       "nemotron-3-nano",
+		},
+		{
+			name:       "nemotron nested llm config",
+			configJSON: `{"model_type": "nemotron_h_omni", "llm_config": {"model_type": "nemotron_h"}}`,
+			want:       "nemotron-3-nano",
+		},
+		{
 			name:       "no config",
 			configJSON: `{}`,
 			want:       "",
@@ -755,9 +923,11 @@ func TestGetParserName(t *testing.T) {
 
 func TestGetRendererName(t *testing.T) {
 	tests := []struct {
-		name       string
-		configJSON string
-		want       string
+		name           string
+		configJSON     string
+		chatTemplate   string
+		standaloneOnly bool
+		want           string
 	}{
 		{
 			name:       "qwen3 model",
@@ -768,6 +938,24 @@ func TestGetRendererName(t *testing.T) {
 			name:       "qwen3.5 model",
 			configJSON: `{"architectures": ["Qwen3_5ForConditionalGeneration"]}`,
 			want:       "qwen3.5",
+		},
+		{
+			name:       "qwen4 model",
+			configJSON: `{"architectures": ["Qwen4ExpForConditionalGeneration"], "model_type": "qwen4_exp"}`,
+			want:       "qwen3.8",
+		},
+		{
+			name:         "qwen3.8 embedded template",
+			configJSON:   `{"architectures": ["Qwen3_5ForConditionalGeneration"]}`,
+			chatTemplate: `{% set resolved_reasoning_effort = reasoning_effort|default('xhigh') %}{% if preserve_thinking %}{% endif %}`,
+			want:         "qwen3.8",
+		},
+		{
+			name:           "qwen3.8 standalone template",
+			configJSON:     `{"architectures": ["Qwen3_5ForConditionalGeneration"]}`,
+			chatTemplate:   `{% set resolved_reasoning_effort = reasoning_effort|default('xhigh') %}{% if preserve_thinking %}{% endif %}`,
+			standaloneOnly: true,
+			want:           "qwen3.8",
 		},
 		{
 			name:       "deepseek model",
@@ -789,12 +977,49 @@ func TestGetRendererName(t *testing.T) {
 			configJSON: `{"architectures": ["LagunaForCausalLM"], "model_type": "laguna"}`,
 			want:       "laguna",
 		},
+		{
+			name:       "glimmer model",
+			configJSON: `{"architectures": ["MuseGlimmerForConditionalGeneration"], "model_type": "muse_glimmer"}`,
+			want:       "glimmer",
+		},
+		{
+			name:       "nemotron text architecture",
+			configJSON: `{"architectures": ["NemotronHForCausalLM"], "model_type": "nemotron_h"}`,
+			want:       "nemotron-3-nano",
+		},
+		{
+			name:       "nemotron omni architecture",
+			configJSON: `{"architectures": ["NemotronH_Nano_Omni_Reasoning_V3"], "model_type": "NemotronH_Nano_Omni_Reasoning_V3"}`,
+			want:       "nemotron-3-nano",
+		},
+		{
+			name:       "nemotron nested llm config",
+			configJSON: `{"model_type": "nemotron_h_omni", "llm_config": {"model_type": "nemotron_h"}}`,
+			want:       "nemotron-3-nano",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
-			os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.configJSON), 0o644)
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.configJSON), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if tt.chatTemplate != "" {
+				if tt.standaloneOnly {
+					if err := os.WriteFile(filepath.Join(dir, "chat_template.jinja"), []byte(tt.chatTemplate), 0o644); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					data, err := json.Marshal(map[string]string{"chat_template": tt.chatTemplate})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(dir, "tokenizer_config.json"), data, 0o644); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
 
 			if got := getRendererName(dir); got != tt.want {
 				t.Errorf("getRendererName() = %q, want %q", got, tt.want)

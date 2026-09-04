@@ -84,6 +84,7 @@ func TestVision(t *testing.T) {
 		"vision-detail",
 		"vision-multi-image",
 		"vision-description",
+		"vision-ocr-document",
 		"vision-split-batch",
 		"vision-text",
 	)
@@ -119,6 +120,7 @@ func TestConcurrency(t *testing.T) {
 func TestTools(t *testing.T) {
 	runIntegrationGroup(t,
 		"tools",
+		"tools-routes",
 		"tools-stress",
 	)
 }

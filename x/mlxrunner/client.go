@@ -111,10 +111,13 @@ func (c *Client) WaitUntilRunning(ctx context.Context) error {
 }
 
 type CompletionRequest struct {
-	Prompt      string
-	Options     api.Options
-	Logprobs    bool
-	TopLogprobs int
+	Prompt                     string
+	Media                      []llm.MediaData
+	Format                     json.RawMessage
+	Options                    api.Options
+	Logprobs                   bool
+	TopLogprobs                int
+	IncludeIntermediateMetrics bool
 }
 
 type CompletionResponse struct {
@@ -122,10 +125,11 @@ type CompletionResponse struct {
 	Done       bool
 	DoneReason int
 
-	PromptEvalCount    int
-	PromptEvalDuration time.Duration
-	EvalCount          int
-	EvalDuration       time.Duration
+	PromptEvalCount       int
+	PromptEvalCachedCount *int
+	PromptEvalDuration    time.Duration
+	EvalCount             int
+	EvalDuration          time.Duration
 
 	Logprobs []llm.Logprob
 
@@ -151,12 +155,32 @@ func (c *Client) Close() error {
 	return nil
 }
 
+// requestGrammar returns the structural tag the runner decodes under: the
+// API's format wrapped into a json_schema tag.
+func requestGrammar(req llm.CompletionRequest) json.RawMessage {
+	schema := req.Format
+	switch string(schema) {
+	case ``, `null`, `""`:
+		return nil
+	case `"json"`:
+		// The API documents "json" as producing a JSON object.
+		schema = json.RawMessage(`{"type":"object"}`)
+	}
+	tag := make(json.RawMessage, 0, len(schema)+64)
+	tag = append(tag, `{"type":"structural_tag","format":{"type":"json_schema","json_schema":`...)
+	tag = append(tag, schema...)
+	return append(tag, `}}`...)
+}
+
 // Completion implements llm.LlamaServer.
 func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
 	creq := CompletionRequest{
-		Prompt:      req.Prompt,
-		Logprobs:    req.Logprobs,
-		TopLogprobs: req.TopLogprobs,
+		Prompt:                     req.Prompt,
+		Media:                      req.Media,
+		Format:                     requestGrammar(req),
+		Logprobs:                   req.Logprobs,
+		TopLogprobs:                req.TopLogprobs,
+		IncludeIntermediateMetrics: req.IncludeIntermediateMetrics,
 	}
 	if req.Options != nil {
 		creq.Options = *req.Options
@@ -201,14 +225,15 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 		}
 
 		cresp := llm.CompletionResponse{
-			Content:            raw.Content,
-			Done:               raw.Done,
-			DoneReason:         llm.DoneReason(raw.DoneReason),
-			PromptEvalCount:    raw.PromptEvalCount,
-			PromptEvalDuration: raw.PromptEvalDuration,
-			EvalCount:          raw.EvalCount,
-			EvalDuration:       raw.EvalDuration,
-			Logprobs:           raw.Logprobs,
+			Content:               raw.Content,
+			Done:                  raw.Done,
+			DoneReason:            llm.DoneReason(raw.DoneReason),
+			PromptEvalCount:       raw.PromptEvalCount,
+			PromptEvalCachedCount: raw.PromptEvalCachedCount,
+			PromptEvalDuration:    raw.PromptEvalDuration,
+			EvalCount:             raw.EvalCount,
+			EvalDuration:          raw.EvalDuration,
+			Logprobs:              raw.Logprobs,
 		}
 
 		fn(cresp)

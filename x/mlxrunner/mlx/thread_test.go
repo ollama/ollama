@@ -6,20 +6,11 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ollama/ollama/x/internal/mlxthread"
+	"github.com/ollama/ollama/x/internal/mlxthreadtest"
 )
 
-func skipIfNoMLX(t *testing.T) {
-	t.Helper()
-	if err := CheckInit(); err != nil {
-		t.Skipf("MLX not available: %v", err)
-	}
-}
-
-func startMLXThread(t *testing.T) *mlxthread.Thread {
-	t.Helper()
-
-	thread, err := mlxthread.Start("mlx-test", func() error {
+var testThread = sync.OnceValues(func() (*mlxthreadtest.Thread, error) {
+	return mlxthreadtest.Start("mlx-test", func() error {
 		if err := CheckInit(); err != nil {
 			return err
 		}
@@ -28,42 +19,26 @@ func startMLXThread(t *testing.T) *mlxthread.Thread {
 		}
 		return nil
 	})
+})
+
+func mlxTestThread(tb testing.TB) *mlxthreadtest.Thread {
+	tb.Helper()
+
+	thread, err := testThread()
 	if err != nil {
-		t.Skipf("MLX not available: %v", err)
+		tb.Skipf("MLX not available: %v", err)
 	}
 
 	return thread
 }
 
-func stopMLXThread(t *testing.T, thread *mlxthread.Thread) {
+func withMLXThread(t *testing.T, fn func(*mlxthreadtest.T)) {
 	t.Helper()
-
-	if err := thread.Stop(context.Background(), func() {
-		Sweep()
-		ClearCache()
-		resetDefaultStreamCache()
-	}); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func withMLXThread(t *testing.T, fn func()) {
-	t.Helper()
-
-	thread := startMLXThread(t)
-	defer stopMLXThread(t, thread)
-
-	if err := thread.Do(context.Background(), func() error {
-		fn()
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
+	mlxthreadtest.Run(t, mlxTestThread(t), fn)
 }
 
 func TestThreadedMLXOperations(t *testing.T) {
-	thread := startMLXThread(t)
-	defer stopMLXThread(t, thread)
+	thread := mlxTestThread(t)
 
 	oldProcs := runtime.GOMAXPROCS(8)
 	defer runtime.GOMAXPROCS(oldProcs)

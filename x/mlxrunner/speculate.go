@@ -1,8 +1,8 @@
 package mlxrunner
 
 import (
+	"errors"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/ollama/ollama/x/mlxrunner/batch"
@@ -12,9 +12,9 @@ import (
 	sampler "github.com/ollama/ollama/x/mlxrunner/sample"
 )
 
-// drafter proposes speculative tokens for the engine to validate, learning
-// the conversation through the committed-stream reports.
-type drafter interface {
+// draftSession proposes speculative tokens for one request, learning the
+// conversation through the committed-stream reports.
+type draftSession interface {
 	// propose returns up to maxTokens draft tokens with their proposal
 	// distributions, or nil to decode this round plainly.
 	propose(current *mlx.Array, maxTokens int) *draftCandidates
@@ -22,8 +22,11 @@ type drafter interface {
 	// committed reports a run of tokens committed to the target caches:
 	// tokens[i] sits at slot position+i and hiddens row i is the target
 	// hidden state at that slot. Runs arrive in slot order — prefill
-	// chunks, the decode seed, then each round's validated tokens.
-	committed(tokens, hiddens *mlx.Array, position int)
+	// chunks, the decode seed, then each round's validated tokens. media is
+	// the run's manifest (feature-bearing for items the run overlaps), valid
+	// only for the call; a session that defers its forward pins what it
+	// keeps. Nil outside prefill.
+	committed(tokens, hiddens *mlx.Array, position int, media []batch.MediaItem)
 
 	// settle completes any open frontier pair with next — the token after
 	// the last committed slot — and writes buffered reports through,
@@ -44,62 +47,46 @@ type speculation struct {
 	r     *Runner
 	draft base.DraftModel
 
-	// caches is the whole persistent slice, passed to every forward; draftKV
-	// are the draft head's own caches and targets are the rest — the caches the
-	// target forward writes, which speculation snapshots and rollback cover.
-	// Bound the first time the caches exist (the Runner reuses one cache slice
-	// for its life) and stable thereafter.
-	caches  []cache.Cache
-	draftKV []cache.Cache
+	// targets are the model's cache slots, which speculation snapshots and
+	// rolls back; draftKV are the drafter's. Both are built at load and
+	// never change.
 	targets []cache.Cache
+	draftKV []cache.Cache
 
-	// drafter is the persistent half of the MTP drafting machinery; each
+	// drafter is the persistent half of the drafting machinery; each
 	// request's session comes from drafter.open.
-	drafter *mtpDrafter
+	drafter drafter
 
 	// depth selects each request's draft length and owns the cost/acceptance
 	// models and probe cadence it learns across requests.
 	depth *depthController
 }
 
+// drafter is the per-model half of a drafting implementation, opening each
+// request's drafting session with the request's per-row layout state.
+type drafter interface {
+	open(layout []any) draftSession
+
+	// draftLimit is the deepest draft this drafter can produce, 0 when nothing
+	// bounds it. A depth past it is never measured, so the depth search must
+	// not schedule one.
+	draftLimit() int
+}
+
 // newSpeculation builds the speculative-decoding subsystem for a loaded model,
 // or nil when the checkpoint ships no draft head.
-func newSpeculation(r *Runner, draft base.DraftModel) *speculation {
+func newSpeculation(r *Runner, draft base.DraftModel, targets, draftKV []cache.Cache) *speculation {
 	if draft == nil {
 		return nil
 	}
-	s := &speculation{r: r, draft: draft, depth: newDepthController()}
-	s.bind(r.cache.caches)
-	s.drafter = newMTPDrafter(s)
+	s := &speculation{r: r, draft: draft, targets: targets, draftKV: draftKV, depth: newDepthController()}
+	if bd, ok := draft.(base.BlockDraft); ok {
+		s.drafter = newDFlashDrafter(s, bd)
+	} else {
+		s.drafter = newMTPDrafter(s)
+	}
+	s.depth.drafterLimit = s.drafter.draftLimit()
 	return s
-}
-
-// bind computes the draft/target cache partition the first time the persistent
-// caches exist; later requests reuse the same slice, so it runs once.
-func (s *speculation) bind(caches []cache.Cache) {
-	if s.caches != nil {
-		if !slices.Equal(s.caches, caches) {
-			panic("speculation: cache slice changed between requests")
-		}
-		return
-	}
-	draftKV := s.draft.DraftCaches(caches)
-
-	// Partition caches into target slots (everything not in draftKV) in one
-	// pass. The count check rejects a draft slot that isn't a member of caches.
-	targets := make([]cache.Cache, 0, len(caches))
-	for _, c := range caches {
-		if !slices.Contains(draftKV, c) {
-			targets = append(targets, c)
-		}
-	}
-	if len(caches)-len(targets) != len(draftKV) {
-		panic("speculation: DraftCaches must select slots of the cache slice")
-	}
-
-	s.caches = caches
-	s.draftKV = draftKV
-	s.targets = targets
 }
 
 // speculationSession is the per-request cursor over the persistent speculation:
@@ -107,9 +94,10 @@ func (s *speculation) bind(caches []cache.Cache) {
 // decode.
 type speculationSession struct {
 	spec    *speculation
-	drafter drafter
-	enabled bool // whether this request drafts; false parks (maintain-only)
-	limit   int  // current draft length
+	drafter draftSession
+	enabled bool  // whether this request drafts; false parks (maintain-only)
+	limit   int   // current draft length
+	layout  []any // the request's per-row layout state, stamped on every target forward
 	stats   specStats
 
 	// Cost sampling: each round's wall time (start to next start, spanning the
@@ -122,29 +110,32 @@ type speculationSession struct {
 
 // open returns the speculation cursor for this request or nil when the model ships
 // no draft head (a nil receiver), which decodes plainly.
-func (s *speculation) open(request Request, caches []cache.Cache) *speculationSession {
+func (s *speculation) open(request Request, layout []any) *speculationSession {
 	if s == nil {
 		return nil
 	}
-	s.bind(caches)
-	d := s.drafter.open()
+	d := s.drafter.open(layout)
 
 	// Logprobs are not yet supported, so a logprobs request keeps a speculationSession
 	// only to maintain a draft cache in lockstep (permanently parked).
 	opts := request.SamplerOpts
 	enabled := !opts.Logprobs && opts.TopLogprobs == 0
 
-	spec := &speculationSession{spec: s, drafter: d, enabled: enabled, prevDrafts: -1, roundDrafts: -1}
+	spec := &speculationSession{spec: s, drafter: d, layout: layout, enabled: enabled, prevDrafts: -1, roundDrafts: -1}
 	if enabled {
 		spec.limit = s.depth.scheduled
-		spec.stats.maxDraft = spec.limit
 	}
 	return spec
 }
 
 // beginRound records the previous round's cost sample (its wall time runs to
-// this round's start) and starts timing the new one.
+// this round's start) and starts timing the new one. A session that cannot
+// draft records nothing: its parked rounds carry logprobs work that would
+// skew the shared depth-0 cost.
 func (s *speculationSession) beginRound() {
+	if !s.enabled {
+		return
+	}
 	now := time.Now()
 	if !s.lastRoundStart.IsZero() && s.roundDrafts >= 0 {
 		if s.roundDrafts == s.prevDrafts {
@@ -161,6 +152,7 @@ func (s *speculationSession) beginRound() {
 // positions past it (a terminator, not a target rejection).
 func (s *speculationSession) endRound(drafted, accepted, observed int) {
 	s.roundDrafts = drafted
+	s.stats.maxDraft = max(s.stats.maxDraft, drafted)
 	s.stats.recordRound(drafted)
 	s.stats.iterations++
 	s.stats.drafted += drafted
@@ -170,15 +162,14 @@ func (s *speculationSession) endRound(drafted, accepted, observed int) {
 			s.spec.depth.acc.observe(observed, accepted)
 		}
 		s.limit = s.spec.depth.next()
-		s.stats.maxDraft = max(s.stats.maxDraft, s.limit)
 	}
 }
 
-func (s *speculationSession) committed(tokens, hiddens *mlx.Array, position int) {
+func (s *speculationSession) committed(tokens, hiddens *mlx.Array, position int, media []batch.MediaItem) {
 	if s == nil {
 		return
 	}
-	s.drafter.committed(tokens, hiddens, position)
+	s.drafter.committed(tokens, hiddens, position, media)
 }
 
 // settle completes the drafter's open frontier pair with next and writes
@@ -209,15 +200,16 @@ type speculativeDecoder struct {
 	position int
 	current  sampler.Result    // emitted (or the seed), not yet forwarded
 	inner    *pipelinedDecoder // pipelines plain tokens while parked; nil while drafting
+	grammar  *grammar
 }
 
 // decoder returns the decoder for this engine's session. A speculationSession that
 // cannot draft (logprobs) has no depth controller and permanently parks,
 // running the inner pipelined decoder whose reports keep the draft KV level.
-func (s *speculationSession) decoder(seed *mlx.Array, position int) decoder {
+func (s *speculationSession) decoder(seed *mlx.Array, position int, grammar *grammar) decoder {
 	current := sampler.Result{Token: seed}
 	mlx.Pin(current.Arrays()...)
-	return &speculativeDecoder{s: s, position: position, current: current}
+	return &speculativeDecoder{s: s, position: position, current: current, grammar: grammar}
 }
 
 func (st *speculativeDecoder) next(remaining int) ([]sampler.Result, error) {
@@ -225,7 +217,11 @@ func (st *speculativeDecoder) next(remaining int) ([]sampler.Result, error) {
 	// positive length and a primed drafter, else decode parked.
 	var results []sampler.Result
 	if s := st.s; st.inner != nil && s.limit > 0 {
-		results = st.resume()
+		var err error
+		results, err = st.resume()
+		if err != nil {
+			return nil, err
+		}
 	} else {
 		s.beginRound()
 		var candidates *draftCandidates
@@ -245,7 +241,7 @@ func (st *speculativeDecoder) next(remaining int) ([]sampler.Result, error) {
 			// draft-count read below; accept pins only its own intermediates.
 			mlx.Pin(candidates.tokens)
 			defer mlx.Unpin(candidates.tokens)
-			results, accepted, observed, err = st.s.accept(&st.position, st.current, candidates)
+			results, accepted, observed, err = st.s.accept(&st.position, st.current, candidates, st.grammar)
 		}
 		if err != nil {
 			return nil, err
@@ -272,8 +268,11 @@ func (st *speculativeDecoder) advance(next sampler.Result) {
 // resume ends a parked stretch: the inner decoder's in-flight sample (sampled
 // but never forwarded) is exactly the current token a drafting round expects,
 // so emit it and let the next call draft from it.
-func (st *speculativeDecoder) resume() []sampler.Result {
-	next, position := st.inner.drain()
+func (st *speculativeDecoder) resume() ([]sampler.Result, error) {
+	next, position, err := st.inner.drain()
+	if err != nil {
+		return nil, err
+	}
 	st.position = position
 	st.inner.close()
 	st.inner = nil
@@ -282,7 +281,7 @@ func (st *speculativeDecoder) resume() []sampler.Result {
 	st.s.stats.recordRound(0)
 	st.s.stats.iterations++
 	st.s.roundDrafts = -1
-	return next
+	return next, nil
 }
 
 // park decodes one pipelined plain token while the engine cannot draft. Each
@@ -291,18 +290,18 @@ func (st *speculativeDecoder) resume() []sampler.Result {
 func (st *speculativeDecoder) park(remaining int) ([]sampler.Result, error) {
 	s := st.s
 	if st.inner == nil {
-		st.inner = s.spec.r.pipelinedDecoder(s, s.spec.caches, st.current.Token.ExpandDims(-1), st.position)
+		st.inner = s.spec.r.pipelinedDecoder(s, s.spec.targets, st.current.Token.ExpandDims(-1), st.position, s.layout, st.grammar)
 	}
 	return st.inner.next(remaining)
 }
 
 // drain surrenders the inner decoder's undelivered sample while parked; a
 // drafting decoder has already delivered everything it sampled.
-func (st *speculativeDecoder) drain() ([]sampler.Result, int) {
+func (st *speculativeDecoder) drain() ([]sampler.Result, int, error) {
 	if st.inner != nil {
 		return st.inner.drain()
 	}
-	return nil, st.position
+	return nil, st.position, nil
 }
 
 func (st *speculativeDecoder) close() {
@@ -393,7 +392,7 @@ func commitSpeculation(caches []cache.Cache, accepted, draftCount, before int) {
 // The caller keeps current and the candidate tokens pinned across the call,
 // since accept sweeps before its eval and reads both afterward; accept pins
 // only the intermediates it produces.
-func (s *speculationSession) accept(position *int, current sampler.Result, candidates *draftCandidates) (results []sampler.Result, accepted, observed int, err error) {
+func (s *speculationSession) accept(position *int, current sampler.Result, candidates *draftCandidates, g *grammar) (results []sampler.Result, accepted, observed int, err error) {
 	r := s.spec.r
 	before := *position
 	draftCount := candidates.tokens.Dim(1)
@@ -413,17 +412,36 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 	}
 	defer commit(0)
 
-	hiddenSeq := r.Model.Forward(&batch.Batch{
+	dist := candidates.dist.Arrays()
+	mlx.Pin(dist...)
+	mlx.Sweep()
+	mlx.AsyncEval(candidates.tokens)
+	mlx.Unpin(dist...)
+
+	hiddenSeq, auxHiddenSeq := r.Model.Forward(&batch.Batch{
 		InputIDs:     current.Token.ExpandDims(-1).Concatenate(1, candidates.tokens),
 		SeqOffsets:   []int32{int32(before)},
 		SeqQueryLens: []int32{int32(draftCount + 1)},
-	}, s.spec.caches)
+		Layout:       s.layout,
+	}, s.spec.targets)
 
 	// Row i of the fused hidden is the state after the token at before+i, so
 	// the rows already line up with the drafts: row 0 (current's state)
 	// predicts draft 0, and the row after the last accepted draft is the
 	// bonus row. No separate base-logits forward exists on this path.
-	targetDist := r.Sampler.Distribution(pipelineSlot, r.Model.Unembed(hiddenSeq), candidates.tokens)
+	logits := r.Model.Unembed(hiddenSeq)
+
+	draftIDs := candidates.tokens.Ints()
+	constrained := g.constraining()
+	if constrained {
+		var errs []error
+		logits, errs = r.grammarEngine.mask([]*grammar{g}, logits, [][]int32{draftIDs})
+		if err := errors.Join(errs...); err != nil {
+			return nil, 0, 0, err
+		}
+	}
+
+	targetDist := r.Sampler.Distribution(pipelineSlot, logits, candidates.tokens)
 	draftDist := candidates.dist
 	acceptedMask := r.sampleAcceptedMask(targetDist.SliceRows(0, draftCount), draftDist, candidates.tokens)
 
@@ -435,17 +453,14 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 	residualTokens := r.Sampler.SampleDistribution(pipelineSlot, targetDist.SliceRows(0, draftCount).ResidualAgainst(draftDist))
 	bonusToken := r.sampleTokenAt(targetDist, draftCount)
 
-	// Pin the arrays read after the eval, then sweep so the draft proposal
-	// chain and this validation forward's intermediates are freed as the eval
-	// consumes them, the way the plain decode dispatch sweeps before its eval.
-	// current and the candidate tokens stay pinned by the caller across the call.
-	live := []*mlx.Array{hiddenSeq, acceptedMask, residualTokens, bonusToken}
+	// Pin the arrays read after the eval; current and the candidate tokens
+	// stay pinned by the caller across the call.
+	live := []*mlx.Array{hiddenSeq, auxHiddenSeq, acceptedMask, residualTokens, bonusToken}
 	mlx.Pin(live...)
 	defer mlx.Unpin(live...)
 	mlx.Sweep()
 	mlx.Eval(candidates.tokens, acceptedMask, residualTokens, bonusToken)
 
-	draftIDs := candidates.tokens.Ints()
 	acceptedFlags := acceptedMask.Ints()
 	for _, ok := range acceptedFlags {
 		if ok == 0 {
@@ -465,8 +480,8 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 	keep := accepted
 	done := false
 	for i, id := range draftIDs[:accepted] {
-		commitIDs = append(commitIDs, int32(id))
-		if r.Tokenizer.IsEOS(int32(id)) {
+		commitIDs = append(commitIDs, id)
+		if r.Tokenizer.IsEOS(id) {
 			done = true
 			accepted = i + 1
 			observed = accepted
@@ -479,34 +494,43 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 		}
 	}
 
+	var nextID int32
+	if !done {
+		if accepted < draftCount {
+			nextID = residualTokens.Ints()[accepted]
+		} else {
+			nextID = bonusToken.Int()
+		}
+		commitIDs = append(commitIDs, nextID)
+	}
+	if constrained {
+		// The grammar accepts the run the way it accepts every emitted token,
+		// before the caches commit it: on a rejection the deferred rollback
+		// keeps them level with the tokens decode has recorded.
+		for _, id := range commitIDs {
+			if err := errors.Join(r.grammarEngine.accept([]*grammar{g}, []int32{id})...); err != nil {
+				return nil, 0, 0, err
+			}
+		}
+	}
+
 	commit(keep)
 	*position = before + 1 + keep
 
 	// Report the validated run (current plus kept drafts) to the drafter before
 	// returning, so a cancelled emission still leaves it matching the caches. A
 	// done generation's final token is uncommitted; it reaches finish instead.
-	runIDs := append([]int32{int32(current.Token.Int())}, commitIDs[:keep]...)
+	runIDs := append([]int32{current.Token.Int()}, commitIDs[:keep]...)
 	s.drafter.committed(
 		mlx.FromValues(runIDs, 1, len(runIDs)),
-		hiddenSeq.Slice(mlx.Slice(), mlx.Slice(0, len(runIDs)), mlx.Slice()),
-		before)
+		auxHiddenSeq.Slice(mlx.Slice(), mlx.Slice(0, len(runIDs)), mlx.Slice()),
+		before, nil)
 
 	results = draftResults(draftIDs[:accepted])
-	if done {
-		r.Sampler.Commit(pipelineSlot, commitIDs)
-		return results, accepted, observed, nil
+	if !done {
+		results = append(results, sampler.Result{Token: mlx.FromValues([]int32{nextID}, 1)})
 	}
-
-	var nextID int32
-	if accepted < draftCount {
-		nextID = int32(residualTokens.Ints()[accepted])
-	} else {
-		nextID = int32(bonusToken.Int())
-	}
-	commitIDs = append(commitIDs, nextID)
 	r.Sampler.Commit(pipelineSlot, commitIDs)
-
-	results = append(results, sampler.Result{Token: mlx.FromValues([]int32{nextID}, 1)})
 	return results, accepted, observed, nil
 }
 
@@ -523,10 +547,10 @@ func (r *Runner) sampleTokenAt(dist sampler.Distribution, index int) *mlx.Array 
 
 // draftResults wraps accepted draft ids as sampler results; drafts carry no
 // logprobs, so only the token id is set.
-func draftResults(ids []int) []sampler.Result {
+func draftResults(ids []int32) []sampler.Result {
 	results := make([]sampler.Result, len(ids))
 	for i, id := range ids {
-		results[i] = sampler.Result{Token: mlx.FromValues([]int32{int32(id)}, 1)}
+		results[i] = sampler.Result{Token: mlx.FromValues([]int32{id}, 1)}
 	}
 	return results
 }

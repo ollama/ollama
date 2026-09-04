@@ -62,6 +62,50 @@ func TestReadInventoryIncomplete(t *testing.T) {
 	}
 }
 
+func TestReadInventoryUsesIndexShardNames(t *testing.T) {
+	dir := t.TempDir()
+	writeConfigJSON(t, dir, `{"architectures":["TestModel"]}`)
+	createTestSafetensors(t, filepath.Join(dir, "layers-0.safetensors"), []*st.TensorData{
+		st.NewTensorDataFromBytes("model.layers.0.weight", "BF16", []int32{4, 4}, make([]byte, 4*4*2)),
+		st.NewTensorDataFromBytes("unindexed.weight", "BF16", []int32{4, 4}, make([]byte, 4*4*2)),
+	})
+	createTestSafetensors(t, filepath.Join(dir, "outside.safetensors"), []*st.TensorData{
+		st.NewTensorDataFromBytes("model.embed.weight", "BF16", []int32{4, 8}, make([]byte, 4*8*2)),
+	})
+	index := `{"weight_map":{"model.layers.0.weight":"layers-0.safetensors","model.embed.weight":"outside.safetensors"}}`
+	if err := os.WriteFile(filepath.Join(dir, "model.safetensors.index.json"), []byte(index), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	inv, err := ReadInventory(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inv.Tensors) != 2 || !inv.Has("model.layers.0.weight") || !inv.Has("model.embed.weight") {
+		t.Fatalf("indexed tensors = %v, want layer and embedding weights", inv.Tensors)
+	}
+	if inv.Has("unindexed.weight") {
+		t.Fatal("unindexed tensor from an indexed shard must not be imported")
+	}
+	if got := inv.Tensors["model.layers.0.weight"].File; got != "layers-0.safetensors" {
+		t.Fatalf("layer shard = %q, want layers-0.safetensors", got)
+	}
+}
+
+func TestReadInventoryRejectsUnsafeIndexShardPath(t *testing.T) {
+	dir := t.TempDir()
+	writeConfigJSON(t, dir, `{"architectures":["TestModel"]}`)
+	index := `{"weight_map":{"model.weight":"../outside.safetensors"}}`
+	if err := os.WriteFile(filepath.Join(dir, "model.safetensors.index.json"), []byte(index), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := ReadInventory(dir)
+	if err == nil || !strings.Contains(err.Error(), "invalid shard path") {
+		t.Fatalf("ReadInventory() error = %v, want invalid shard path", err)
+	}
+}
+
 func TestReadInventorySkipsConsolidated(t *testing.T) {
 	dir := t.TempDir()
 	writeConfigJSON(t, dir, `{"architectures":["TestModel"]}`)

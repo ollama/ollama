@@ -27,8 +27,9 @@ intentionally skipped so a developer can iterate on a local llama.cpp tree.
   It currently touches `src/llama-model-loader.cpp` and `tools/mtmd/clip.cpp`.
 - `002-llama-cpp-ui-empty-assets.patch` - lets the llama.cpp UI embed helper
   generate an empty asset table when no UI assets are present.
-- `compat.cmake`, `apply-patch.cmake` - CMake glue and an idempotent applier
-  (used by `llama/server/CMakeLists.txt`) that applies every `*.patch` under
+- `compat.cmake` - CMake glue that invokes the shared
+  `cmake/apply-git-patches.cmake` idempotent applier (used by
+  `llama/server/CMakeLists.txt`) for every `*.patch` under
   this directory by numeric filename order — the hooks patch plus each
   `models/` architecture patch.
 - `models/` - the sibling **new-architecture** layer: implementations of
@@ -52,8 +53,15 @@ The layer runs at a small set of loader hook points:
    vision, audio, MTP, or other tensors that the text loader should not claim.
 3. Main model tensor reads: `maybe_load_text_tensor` applies registered
    text-side load operations, such as FFN concat or dtype promotion, before
-   the normal llama.cpp file read. This is wired into both full model loading
-   and single-tensor reads used by tools such as `llama-quantize`.
+   the normal llama.cpp file read. This is wired into full model loading
+   (`load_all_data`) and single-tensor reads used by tools such as
+   `llama-quantize`. Since llama.cpp b10729 replaced the whole-tensor
+   `load_data_for` read with slabs via `load_data_range`, the quantize-style
+   slab path goes through `maybe_load_text_tensor_range`, which materializes
+   the op's full output for one active tensor at a time (single-slot cache —
+   evicted when the next tensor's first range arrives) and serves each
+   requested (offset, size) range from it, so quantize memory stays at one
+   op tensor, matching the whole-tensor `load_data_for` read it replaced.
 4. `mtmd/clip` constructor: `translate_clip_metadata` rewrites a clip-facing
    view of monolithic GGUFs into the mmproj form expected by llama.cpp.
 5. `mtmd/clip` tensor load loop: `maybe_load_tensor` applies clip-side load

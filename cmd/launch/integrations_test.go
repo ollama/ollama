@@ -64,10 +64,14 @@ func TestIntegrationLookup(t *testing.T) {
 		{"codex app gui alias", "codex-gui", true, "ChatGPT"},
 		{"hermes desktop", "hermes-desktop", true, "Hermes Desktop"},
 		{"kimi", "kimi", true, "Kimi Code CLI"},
+		{"muse", "muse", true, "Muse Code"},
+		{"muse alias", "muse-code", true, "Muse Code"},
 		{"droid", "droid", true, "Droid"},
+		{"dsh", "dsh", true, "DeepSeek Harness"},
+		{"deepseek harness alias", "deepseek-harness", true, "DeepSeek Harness"},
 		{"opencode", "opencode", true, "OpenCode"},
-		{"omp", "omp", true, "OMP"},
-		{"pool", "pool", true, "Pool"},
+		{"omp", "omp", true, "Oh My Pi"},
+		{"pool", "pool", true, "Poolside"},
 		{"unknown integration", "unknown", false, ""},
 		{"empty string", "", false, ""},
 	}
@@ -86,7 +90,7 @@ func TestIntegrationLookup(t *testing.T) {
 }
 
 func TestIntegrationRegistry(t *testing.T) {
-	expectedIntegrations := []string{"claude", "claude-desktop", "cline", "codex", "chatgpt", "kimi", "droid", "opencode", "omp", "hermes", "hermes-desktop", "pool", "qwen"}
+	expectedIntegrations := []string{"claude", "claude-desktop", "cline", "codex", "chatgpt", "kimi", "muse", "droid", "dsh", "opencode", "omp", "hermes", "hermes-desktop", "pool", "qwen"}
 	for _, name := range expectedIntegrations {
 		t.Run(name, func(t *testing.T) {
 			r, ok := integrations[name]
@@ -127,7 +131,7 @@ func TestChatGPTMigratesLegacyCodexAppLaunchConfig(t *testing.T) {
 func TestHiddenIntegrationsExcludedFromVisibleLists(t *testing.T) {
 	for _, info := range ListIntegrationInfos() {
 		switch info.Name {
-		case "vscode", "kimi":
+		case "claude-desktop", "vscode", "kimi", "muse":
 			t.Fatalf("hidden integration %q should not appear in ListIntegrationInfos", info.Name)
 		}
 	}
@@ -1920,7 +1924,7 @@ func TestListIntegrationInfos(t *testing.T) {
 		}
 		wantPrefix := []string{"claude", "chatgpt", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp"}
 		if codexAppSupported() != nil {
-			wantPrefix = []string{"claude", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp"}
+			wantPrefix = slices.DeleteFunc(wantPrefix, func(name string) bool { return name == "chatgpt" })
 		}
 		if len(got) < len(wantPrefix) {
 			t.Fatalf("expected at least %d integrations, got %v", len(wantPrefix), got)
@@ -2005,11 +2009,19 @@ func TestListIntegrationInfos_HidesPoolsideOnWindows(t *testing.T) {
 	}
 }
 
-func TestListIntegrationInfos_HidesClaudeDesktop(t *testing.T) {
-	for _, info := range ListIntegrationInfos() {
-		if info.Name == "claude-desktop" {
-			t.Fatal("expected hidden claude-desktop to be absent")
-		}
+func TestListIntegrationInfos_HidesClaudeDesktopOnUnsupportedPlatform(t *testing.T) {
+	for _, goos := range []string{"linux", "windows"} {
+		t.Run(goos, func(t *testing.T) {
+			previous := claudeDesktopGOOS
+			claudeDesktopGOOS = goos
+			t.Cleanup(func() { claudeDesktopGOOS = previous })
+
+			for _, info := range ListIntegrationInfos() {
+				if info.Name == "claude-desktop" {
+					t.Fatal("expected claude-desktop to be absent on unsupported platforms")
+				}
+			}
+		})
 	}
 }
 

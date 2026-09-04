@@ -6,21 +6,19 @@ import (
 	"math"
 	"slices"
 	"testing"
+
+	"github.com/ollama/ollama/x/internal/mlxthreadtest"
 )
 
 func TestSetWiredLimitRejectsOversizeWithoutChangingLimit(t *testing.T) {
-	skipIfNoMLX(t)
-	if !GPUIsAvailable() {
-		t.Skip("MLX GPU not available")
-	}
-
-	var testErr error
-	withMLXThread(t, func() {
-		testErr = checkWiredLimitRejectsOversize()
+	withMLXThread(t, func(t *mlxthreadtest.T) {
+		if !GPUIsAvailable() {
+			t.Skip("MLX GPU not available")
+		}
+		if err := checkWiredLimitRejectsOversize(); err != nil {
+			t.Fatal(err)
+		}
 	})
-	if testErr != nil {
-		t.Fatal(testErr)
-	}
 }
 
 func checkWiredLimitRejectsOversize() (err error) {

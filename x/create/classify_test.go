@@ -48,20 +48,40 @@ func TestClassify(t *testing.T) {
 			wantQuant: "int8",
 		},
 		{
-			name:     "mlx prequantized (.scales)",
+			name:      "mlx prequantized (.scales)",
+			cfg:       sourceModelConfig{Quantization: sourceQuantization{Bits: 4, Mode: "affine", GroupSize: 32}},
+			tensors:   map[string]string{"model.layers.0.weight": "U32", "model.layers.0.scales": "BF16"},
+			wantKind:  SourcePrequantized,
+			wantQuant: "int4",
+		},
+		{
+			name:     "mlx prequantized without quantization metadata",
 			tensors:  map[string]string{"model.layers.0.weight": "U32", "model.layers.0.scales": "BF16"},
 			wantKind: SourcePrequantized,
 		},
 		{
 			// ModelOpt NVFP4 whose hf_quant_config.json sidecar is absent:
 			// recognized from the packed weight + scale companion (finding #7).
-			name:     "modelopt nvfp4 without config sidecar",
-			tensors:  map[string]string{"model.layers.0.weight": "U8", "model.layers.0.weight_scale": "F8_E4M3"},
-			wantKind: SourcePrequantized,
+			name:      "modelopt nvfp4 without config sidecar",
+			tensors:   map[string]string{"model.layers.0.weight": "U8", "model.layers.0.weight_scale": "F8_E4M3"},
+			wantKind:  SourcePrequantized,
+			wantQuant: "nvfp4",
 		},
 		{
-			name:     "compressed-tensors nvfp4 (.weight_packed)",
-			tensors:  map[string]string{"model.layers.0.weight_packed": "U8", "model.layers.0.weight_scale": "F8_E4M3"},
+			name:      "compressed-tensors nvfp4 (.weight_packed)",
+			tensors:   map[string]string{"model.layers.0.weight_packed": "U8", "model.layers.0.weight_scale": "F8_E4M3"},
+			wantKind:  SourcePrequantized,
+			wantQuant: "nvfp4",
+		},
+		{
+			name: "mixed prequantized formats have no single file type",
+			cfg:  sourceModelConfig{Quantization: sourceQuantization{Bits: 4, Mode: "affine", GroupSize: 32}},
+			tensors: map[string]string{
+				"model.layers.0.weight":        "U32",
+				"model.layers.0.scales":        "BF16",
+				"model.layers.1.weight_packed": "U8",
+				"model.layers.1.weight_scale":  "F8_E4M3",
+			},
 			wantKind: SourcePrequantized,
 		},
 		{

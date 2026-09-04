@@ -185,6 +185,30 @@ func TestNormalizePullName(t *testing.T) {
 	}
 }
 
+func TestHasExplicitTag(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{name: "no tag", input: "some-model", want: false},
+		{name: "explicit tag", input: "some-model:9b", want: true},
+		{name: "explicit latest tag", input: "some-model:latest", want: true},
+		{name: "namespace without tag", input: "user/some-model", want: false},
+		{name: "namespace with tag", input: "user/some-model:9b", want: true},
+		{name: "host port without tag", input: "registry.example.com:5000/some-model", want: false},
+		{name: "host port with tag", input: "registry.example.com:5000/some-model:9b", want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := HasExplicitTag(tt.input); got != tt.want {
+				t.Fatalf("HasExplicitTag(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseSourceSuffix(t *testing.T) {
 	tests := []struct {
 		name         string

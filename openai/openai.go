@@ -3,6 +3,7 @@ package openai
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -10,15 +11,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/types/model"
 )
-
-var finishReasonToolCalls = "tool_calls"
 
 type Error struct {
 	Message string  `json:"message"`
@@ -40,6 +38,15 @@ type Message struct {
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 }
 
+// Delta is used in streaming chunk responses. All fields use omitempty so
+// that a finish chunk produces a truly empty delta `{}` matching the OpenAI spec.
+type Delta struct {
+	Role      string     `json:"role,omitempty"`
+	Content   any        `json:"content,omitempty"`
+	Reasoning string     `json:"reasoning,omitempty"`
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+}
+
 type ChoiceLogprobs struct {
 	Content []api.Logprob `json:"content"`
 }
@@ -53,7 +60,7 @@ type Choice struct {
 
 type ChunkChoice struct {
 	Index        int             `json:"index"`
-	Delta        Message         `json:"delta"`
+	Delta        Delta           `json:"delta"`
 	FinishReason *string         `json:"finish_reason"`
 	Logprobs     *ChoiceLogprobs `json:"logprobs,omitempty"`
 }
@@ -65,10 +72,15 @@ type CompleteChunkChoice struct {
 	Logprobs     *ChoiceLogprobs `json:"logprobs,omitempty"`
 }
 
+type PromptTokensDetails struct {
+	CachedTokens int `json:"cached_tokens"`
+}
+
 type Usage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	PromptTokens        int                  `json:"prompt_tokens"`
+	PromptTokensDetails *PromptTokensDetails `json:"prompt_tokens_details,omitempty"`
+	CompletionTokens    int                  `json:"completion_tokens"`
+	TotalTokens         int                  `json:"total_tokens"`
 }
 
 type ResponseFormat struct {
@@ -231,11 +243,15 @@ func NewError(code int, message string) ErrorResponse {
 
 // ToUsage converts an api.ChatResponse to Usage
 func ToUsage(r api.ChatResponse) Usage {
-	return Usage{
+	usage := Usage{
 		PromptTokens:     r.Metrics.PromptEvalCount,
 		CompletionTokens: r.Metrics.EvalCount,
 		TotalTokens:      r.Metrics.PromptEvalCount + r.Metrics.EvalCount,
 	}
+	if r.Metrics.PromptEvalCachedCount != nil {
+		usage.PromptTokensDetails = &PromptTokensDetails{CachedTokens: *r.Metrics.PromptEvalCachedCount}
+	}
+	return usage
 }
 
 // ToToolCalls converts api.ToolCall to OpenAI ToolCall format
@@ -277,7 +293,7 @@ func ToChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 			Index:   0,
 			Message: Message{Role: r.Message.Role, Content: r.Message.Content, ToolCalls: toolCalls, Reasoning: r.Message.Thinking},
 			FinishReason: func(reason string) *string {
-				if len(toolCalls) > 0 {
+				if reason == "stop" && len(toolCalls) > 0 {
 					reason = "tool_calls"
 				}
 				if len(reason) > 0 {
@@ -291,7 +307,7 @@ func ToChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 	}
 }
 
-func toChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChunk {
+func toChunk(id string, r api.ChatResponse, includeRole bool) ChatCompletionChunk {
 	toolCalls := ToToolCalls(r.Message.ToolCalls)
 
 	var logprobs *ChoiceLogprobs
@@ -299,43 +315,53 @@ func toChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChu
 		logprobs = &ChoiceLogprobs{Content: r.Logprobs}
 	}
 
+	var role string
+	if includeRole {
+		role = "assistant"
+	}
+
+	// Content is typed as any with omitempty: nil is omitted, "" is kept.
+	// Use the string value from the response so empty-string content (e.g. first
+	// chunk or reasoning-only) is explicitly serialized as "content":"".
+	var content any = r.Message.Content
+
+	// Stamp the chunk with the response's timestamp; OpenAI reuses one created
+	// value across a stream. Fall back to now when the response carries none
+	// (e.g. synthetic responses).
+	created := r.CreatedAt.Unix()
+	if r.CreatedAt.IsZero() {
+		created = time.Now().Unix()
+	}
+
 	return ChatCompletionChunk{
 		Id:                id,
 		Object:            "chat.completion.chunk",
-		Created:           time.Now().Unix(),
+		Created:           created,
 		Model:             r.Model,
 		SystemFingerprint: "fp_ollama",
 		Choices: []ChunkChoice{{
-			Index: 0,
-			Delta: Message{Role: "assistant", Content: r.Message.Content, ToolCalls: toolCalls, Reasoning: r.Message.Thinking},
-			FinishReason: func(reason string) *string {
-				if len(reason) > 0 {
-					if toolCallSent || len(toolCalls) > 0 {
-						return &finishReasonToolCalls
-					}
-					return &reason
-				}
-				return nil
-			}(r.DoneReason),
+			Index:    0,
+			Delta:    Delta{Role: role, Content: content, ToolCalls: toolCalls, Reasoning: r.Message.Thinking},
 			Logprobs: logprobs,
 		}},
 	}
 }
 
-// ToChunks converts an api.ChatResponse to one or more ChatCompletionChunk values.
-func ToChunks(id string, r api.ChatResponse, toolCallSent bool) []ChatCompletionChunk {
+// ToStreamChunks converts an api.ChatResponse to one or more ChatCompletionChunk values.
+// includeRole controls whether the "role" field appears in the delta (should be true
+// only for the first chunk in a stream, matching the OpenAI spec).
+func ToStreamChunks(id string, r api.ChatResponse, includeRole bool) []ChatCompletionChunk {
 	hasMixedResponse := r.Message.Thinking != "" && (r.Message.Content != "" || len(r.Message.ToolCalls) > 0)
 	if !hasMixedResponse {
-		return []ChatCompletionChunk{toChunk(id, r, toolCallSent)}
+		return []ChatCompletionChunk{toChunk(id, r, includeRole)}
 	}
 
-	reasoningChunk := toChunk(id, r, toolCallSent)
+	reasoningChunk := toChunk(id, r, includeRole)
 	// The logprobs here might include tokens not in this chunk because we now split between thinking and content/tool calls.
-	reasoningChunk.Choices[0].Delta.Content = ""
+	reasoningChunk.Choices[0].Delta.Content = nil
 	reasoningChunk.Choices[0].Delta.ToolCalls = nil
-	reasoningChunk.Choices[0].FinishReason = nil
 
-	contentOrToolCallsChunk := toChunk(id, r, toolCallSent)
+	contentOrToolCallsChunk := toChunk(id, r, false)
 	// Keep both split chunks on the same timestamp since they represent one logical emission.
 	contentOrToolCallsChunk.Created = reasoningChunk.Created
 	contentOrToolCallsChunk.Choices[0].Delta.Reasoning = ""
@@ -347,18 +373,47 @@ func ToChunks(id string, r api.ChatResponse, toolCallSent bool) []ChatCompletion
 	}
 }
 
-// Deprecated: use ToChunks for streaming conversion.
-func ToChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChunk {
-	return toChunk(id, r, toolCallSent)
+// FinishChunk creates a dedicated finish-reason chunk with an empty delta,
+// matching the OpenAI spec where finish_reason is sent on its own chunk.
+func FinishChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChunk {
+	// Only remap known terminal reasons; pass anything else through untouched.
+	// tool_calls only overrides stop — an unfinished or unknown done reason
+	// must not be relabeled tool_calls.
+	reason := cmp.Or(r.DoneReason, "stop")
+	if reason == "stop" && toolCallSent {
+		reason = "tool_calls"
+	}
+	// Stamp the chunk with the completion's timestamp like OpenAI does; fall
+	// back to now when the response carries none (e.g. synthetic responses).
+	created := r.CreatedAt.Unix()
+	if r.CreatedAt.IsZero() {
+		created = time.Now().Unix()
+	}
+	return ChatCompletionChunk{
+		Id:                id,
+		Object:            "chat.completion.chunk",
+		Created:           created,
+		Model:             r.Model,
+		SystemFingerprint: "fp_ollama",
+		Choices: []ChunkChoice{{
+			Index:        0,
+			Delta:        Delta{},
+			FinishReason: &reason,
+		}},
+	}
 }
 
 // ToUsageGenerate converts an api.GenerateResponse to Usage
 func ToUsageGenerate(r api.GenerateResponse) Usage {
-	return Usage{
+	usage := Usage{
 		PromptTokens:     r.Metrics.PromptEvalCount,
 		CompletionTokens: r.Metrics.EvalCount,
 		TotalTokens:      r.Metrics.PromptEvalCount + r.Metrics.EvalCount,
 	}
+	if r.Metrics.PromptEvalCachedCount != nil {
+		usage.PromptTokensDetails = &PromptTokensDetails{CachedTokens: *r.Metrics.PromptEvalCachedCount}
+	}
+	return usage
 }
 
 // ToCompletion converts an api.GenerateResponse to Completion
@@ -475,6 +530,31 @@ func ToModel(r api.ShowResponse, m string) Model {
 		Object:  "model",
 		Created: r.ModifiedAt.Unix(),
 		OwnedBy: model.ParseName(m).Namespace,
+	}
+}
+
+// thinkFromReasoningEffort converts an OpenAI reasoning effort to the equivalent
+// Ollama think value. An empty effort leaves thinking at the model's default.
+//
+// OpenAI's scale extends past both ends of Ollama's ("minimal" below "low",
+// "xhigh" above "high"), and clients built on it add tiers of their own
+// ("ultra"). Clamp those to the nearest Ollama tier rather than rejecting the
+// request, since the alternative is a 400 for an effort the client considers
+// perfectly valid.
+func thinkFromReasoningEffort(effort string) (*api.ThinkValue, error) {
+	switch effort {
+	case "":
+		return nil, nil
+	case "none":
+		return &api.ThinkValue{Value: false}, nil
+	case "minimal":
+		return &api.ThinkValue{Value: "low"}, nil
+	case "low", "medium", "high", "max":
+		return &api.ThinkValue{Value: effort}, nil
+	case "xhigh", "ultra":
+		return &api.ThinkValue{Value: "max"}, nil
+	default:
+		return nil, fmt.Errorf("invalid reasoning value: %q (must be \"minimal\", \"low\", \"medium\", \"high\", \"xhigh\", \"ultra\", \"max\", or \"none\")", effort)
 	}
 }
 
@@ -627,7 +707,6 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		}
 	}
 
-	var think *api.ThinkValue
 	var effort string
 
 	if r.Reasoning != nil {
@@ -636,16 +715,9 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		effort = *r.ReasoningEffort
 	}
 
-	if effort != "" {
-		if !slices.Contains([]string{"high", "medium", "low", "max", "none"}, effort) {
-			return nil, fmt.Errorf("invalid reasoning value: '%s' (must be \"high\", \"medium\", \"low\", \"max\", or \"none\")", effort)
-		}
-
-		if effort == "none" {
-			think = &api.ThinkValue{Value: false}
-		} else {
-			think = &api.ThinkValue{Value: effort}
-		}
+	think, err := thinkFromReasoningEffort(effort)
+	if err != nil {
+		return nil, err
 	}
 
 	return &api.ChatRequest{

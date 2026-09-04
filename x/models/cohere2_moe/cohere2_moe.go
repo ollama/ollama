@@ -401,10 +401,7 @@ func transposeExpertWeightForGatherMM(w *mlx.Array) *mlx.Array {
 	if w == nil || !w.Valid() || w.NumDims() != 3 {
 		return w
 	}
-	t := mlx.Transpose(w, 0, 2, 1)
-	cloned := t.Clone()
-	mlx.Eval(cloned)
-	return cloned
+	return mlx.Transpose(w, 0, 2, 1).Clone()
 }
 
 // loadStackedProjection returns expert weights already stacked as a single 3D
@@ -439,7 +436,7 @@ func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, useQuanti
 	}
 
 	return &stackedExpertWeights{
-		Weight:    mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode),
+		Weight:    mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode, nil),
 		Bits:      bits,
 		GroupSize: groupSize,
 		Mode:      mode,
@@ -728,7 +725,7 @@ func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *
 	return mlx.Add(x, mlx.Add(attnOut, mlpOut))
 }
 
-func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
+func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
@@ -742,7 +739,8 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
 		h = layer.Forward(h, b, c, positions, B, L, m.Config)
 	}
 
-	return m.Norm.Forward(h)
+	out := m.Norm.Forward(h)
+	return out, out
 }
 
 func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
@@ -751,10 +749,6 @@ func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 		logits = mlx.MulScalar(logits, m.LogitScale)
 	}
 	return logits
-}
-
-func (m *Model) NumLayers() int {
-	return len(m.Layers)
 }
 
 func (m *Model) MaxContextLength() int {

@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image/png"
 	"io"
 	"log/slog"
 	"math/rand"
@@ -39,6 +40,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/image/webp"
 	"golang.org/x/sync/semaphore"
 
 	"github.com/ollama/ollama/api"
@@ -169,6 +171,7 @@ type llamaServerRunner struct {
 type llamaServerLaunchConfig struct {
 	modelPath            string
 	modelArch            string
+	draftType            string
 	projectors           []string
 	mmprojMemory         uint64
 	modelLayers          uint64
@@ -376,7 +379,7 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 	params = appendJinjaArgs(params, launch.config)
 
 	params = appendMMProjArgs(params, launch)
-	params = appendMTPDraftArgs(params, launch.config, launch.opts)
+	params = appendDraftArgs(params, launch.draftType, launch.config.DraftModelPath, launch.opts)
 
 	params = append(params, qwenVLServerArgs(launch.modelArch)...)
 
@@ -385,19 +388,7 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 		params = append(params, "--lora", adapter)
 	}
 
-	// UseMmap
-	if launch.opts.UseMMap != nil && !*launch.opts.UseMMap {
-		params = append(params, "--no-mmap")
-	}
-
-	// Direct I/O skips the page cache on load for integrated CUDA/ROCm GPUs, which
-	// share system memory with the CPU and would otherwise double-buffer weights.
-	for _, g := range launch.gpus {
-		if runtime.GOOS == "linux" && g.Integrated && (strings.EqualFold(g.Library, "CUDA") || strings.EqualFold(g.Library, "ROCm")) {
-			params = append(params, "--direct-io")
-			break
-		}
-	}
+	params = appendLoadModeArgs(params, launch.opts, launch.gpus)
 
 	// KV cache type
 	if launch.kvCacheType != "" {
@@ -630,6 +621,23 @@ func appendFlashAttentionArgs(params []string, gpus []ml.DeviceInfo) []string {
 	}
 }
 
+// appendLoadModeArgs selects llama-server's single model loading mode. Direct I/O
+// skips the page cache on load for integrated CUDA/ROCm GPUs, which share system
+// memory with the CPU and would otherwise double-buffer weights.
+func appendLoadModeArgs(params []string, opts api.Options, gpus []ml.DeviceInfo) []string {
+	for _, g := range gpus {
+		if runtime.GOOS == "linux" && g.Integrated && (strings.EqualFold(g.Library, "CUDA") || strings.EqualFold(g.Library, "ROCm")) {
+			return append(params, "--load-mode", "dio")
+		}
+	}
+
+	if opts.UseMMap != nil && !*opts.UseMMap {
+		return append(params, "--load-mode", "none")
+	}
+
+	return params
+}
+
 func appendMainGPUArgs(params []string, opts api.Options) []string {
 	if opts.MainGPU == nil {
 		return params
@@ -791,21 +799,39 @@ func appendContextShiftArgs(params []string, opts api.Options, enabled bool) []s
 	return params
 }
 
-func appendMTPDraftArgs(params []string, config LlamaServerConfig, opts api.Options) []string {
-	if !config.EnableMTP && config.DraftModelPath == "" {
+const (
+	draftTypeMTP    = "draft-mtp"
+	draftTypeDFlash = "draft-dflash"
+)
+
+func appendDraftArgs(params []string, draftType, draftModelPath string, opts api.Options) []string {
+	if draftType == "" {
 		return params
 	}
 	if opts.DraftNumPredict <= 0 {
 		return params
 	}
 
-	params = append(params, "--spec-type", "draft-mtp")
+	params = append(params, "--spec-type", draftType)
 	params = append(params, "--spec-draft-n-max", strconv.Itoa(opts.DraftNumPredict))
-	params = append(params, "--spec-draft-backend-sampling")
-	if config.DraftModelPath != "" {
-		params = append(params, "--spec-draft-model", config.DraftModelPath)
+	if draftType == draftTypeMTP {
+		params = append(params, "--spec-draft-backend-sampling")
+	}
+	if draftModelPath != "" {
+		params = append(params, "--spec-draft-model", draftModelPath)
 	}
 	return params
+}
+
+func externalDraftType(path string) (string, error) {
+	f, err := LoadModel(path, 1)
+	if err != nil {
+		return "", fmt.Errorf("load draft model metadata: %w", err)
+	}
+	if f.KV().Architecture() == "dflash" {
+		return draftTypeDFlash, nil
+	}
+	return draftTypeMTP, nil
 }
 
 func hasMTPDraft(f *ggml.GGML) bool {
@@ -876,6 +902,17 @@ func NewLlamaServerRunner(
 		config.EnableMTP = true
 	}
 
+	draftType := ""
+	if config.EnableMTP {
+		draftType = draftTypeMTP
+	}
+	if config.DraftModelPath != "" {
+		draftType, err = externalDraftType(config.DraftModelPath)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	gpuLibs := ml.LibraryPaths(gpus)
 	status := NewStatusWriter(os.Stderr)
 
@@ -893,6 +930,7 @@ func NewLlamaServerRunner(
 	launch := llamaServerLaunchConfig{
 		modelPath:    modelPath,
 		modelArch:    arch,
+		draftType:    draftType,
 		projectors:   slices.Clone(projectors),
 		mmprojMemory: mmprojMemory,
 		modelLayers:  f.KV().BlockCount() + 1,
@@ -1374,6 +1412,7 @@ type llamaServerCompletionRequest struct {
 	JsonSchema      json.RawMessage `json:"json_schema,omitempty"`
 	NProbs          int             `json:"n_probs,omitempty"`
 	PreservedTokens []string        `json:"preserved_tokens,omitempty"`
+	TimingsPerToken bool            `json:"timings_per_token,omitempty"`
 }
 
 func llamaServerPreservedTokens(parserTokens []string, toolCallTag string) []string {
@@ -1463,7 +1502,7 @@ type llamaServerChatResponse struct {
 }
 
 type llamaServerTimings struct {
-	CacheN    int     `json:"cache_n"`
+	CacheN    *int    `json:"cache_n"`
 	PromptN   int     `json:"prompt_n"`
 	PromptMS  float64 `json:"prompt_ms"`
 	PredictN  int     `json:"predicted_n"`
@@ -1471,7 +1510,10 @@ type llamaServerTimings struct {
 }
 
 func (t llamaServerTimings) promptEvalCount() int {
-	return t.CacheN + t.PromptN
+	if t.CacheN == nil {
+		return t.PromptN
+	}
+	return *t.CacheN + t.PromptN
 }
 
 type llamaServerApplyTemplateResponse struct {
@@ -1536,6 +1578,7 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 		TypicalP:        req.Options.TypicalP,
 		Seed:            req.Options.Seed,
 		PreservedTokens: llamaServerPreservedTokens(req.PreservedTokens, req.ToolCallTag),
+		TimingsPerToken: req.IncludeIntermediateMetrics,
 	}
 
 	if req.Logprobs {
@@ -1556,8 +1599,6 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 				return fmt.Errorf("invalid format: %q; expected \"json\" or a valid JSON Schema object", req.Format)
 			}
 		}
-	} else if req.Grammar != "" {
-		lsReq.Grammar = req.Grammar
 	}
 
 	// Convert media: replace Ollama's stable [img-N] markers with the per-process
@@ -1568,7 +1609,11 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 		for _, media := range req.Media {
 			marker := fmt.Sprintf("[img-%d]", media.ID)
 			promptStr = strings.Replace(promptStr, marker, s.llamaServerMediaMarker(), 1)
-			mediaData = append(mediaData, base64.StdEncoding.EncodeToString(media.Data))
+			data, err := llamaServerMediaBytes(media.Data)
+			if err != nil {
+				return err
+			}
+			mediaData = append(mediaData, base64.StdEncoding.EncodeToString(data))
 		}
 		lsReq.Prompt = llamaServerMultimodalPrompt{
 			PromptString:   promptStr,
@@ -1661,8 +1706,13 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 			}
 
 			if lsResp.Content != "" && !lsResp.Stop {
-				resp := CompletionResponse{
-					Content: lsResp.Content,
+				resp := CompletionResponse{Content: lsResp.Content}
+				if req.IncludeIntermediateMetrics {
+					resp.PromptEvalCount = lsResp.Timings.promptEvalCount()
+					resp.PromptEvalCachedCount = lsResp.Timings.CacheN
+					resp.PromptEvalDuration = time.Duration(lsResp.Timings.PromptMS * float64(time.Millisecond))
+					resp.EvalCount = lsResp.Timings.PredictN
+					resp.EvalDuration = time.Duration(lsResp.Timings.PredictMS * float64(time.Millisecond))
 				}
 				resp.Logprobs = convertLogprobs(lsResp.CompletionProbabilities, req.TopLogprobs > 0)
 				fn(resp)
@@ -1675,13 +1725,14 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 				}
 
 				finalResp = CompletionResponse{
-					Content:            lsResp.Content,
-					Done:               true,
-					DoneReason:         doneReason,
-					PromptEvalCount:    lsResp.Timings.promptEvalCount(),
-					PromptEvalDuration: time.Duration(lsResp.Timings.PromptMS * float64(time.Millisecond)),
-					EvalCount:          lsResp.Timings.PredictN,
-					EvalDuration:       time.Duration(lsResp.Timings.PredictMS * float64(time.Millisecond)),
+					Content:               lsResp.Content,
+					Done:                  true,
+					DoneReason:            doneReason,
+					PromptEvalCount:       lsResp.Timings.promptEvalCount(),
+					PromptEvalCachedCount: lsResp.Timings.CacheN,
+					PromptEvalDuration:    time.Duration(lsResp.Timings.PromptMS * float64(time.Millisecond)),
+					EvalCount:             lsResp.Timings.PredictN,
+					EvalDuration:          time.Duration(lsResp.Timings.PredictMS * float64(time.Millisecond)),
 				}
 				hasFinalResp = true
 			}
@@ -1978,6 +2029,7 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 				resp.Done = true
 				resp.DoneReason = doneReason
 				resp.PromptEvalCount = lsResp.Timings.promptEvalCount()
+				resp.PromptEvalCachedCount = lsResp.Timings.CacheN
 				resp.PromptEvalDuration = time.Duration(lsResp.Timings.PromptMS * float64(time.Millisecond))
 				resp.EvalCount = lsResp.Timings.PredictN
 				resp.EvalDuration = time.Duration(lsResp.Timings.PredictMS * float64(time.Millisecond))
@@ -2191,34 +2243,58 @@ func llamaServerChatMessage(msg Message) (map[string]any, error) {
 		})
 	}
 	for _, media := range msg.Media {
-		parts = append(parts, llamaServerChatMediaPart(media))
+		part, err := llamaServerChatMediaPart(media)
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, part)
 	}
 	converted["content"] = parts
 	return converted, nil
 }
 
-func llamaServerChatMediaPart(media MediaData) map[string]any {
-	encoded := base64.StdEncoding.EncodeToString(media.Data)
+func llamaServerChatMediaPart(media MediaData) (map[string]any, error) {
 	if format, ok := AudioFormat(media.Data); ok {
 		return map[string]any{
 			"type": "input_audio",
 			"input_audio": map[string]any{
-				"data":   encoded,
+				"data":   base64.StdEncoding.EncodeToString(media.Data),
 				"format": format,
 			},
-		}
+		}, nil
 	}
 
-	mime := http.DetectContentType(media.Data)
+	data, err := llamaServerMediaBytes(media.Data)
+	if err != nil {
+		return nil, err
+	}
+	mime := http.DetectContentType(data)
 	if !strings.HasPrefix(mime, "image/") {
 		mime = "image/jpeg"
 	}
 	return map[string]any{
 		"type": "image_url",
 		"image_url": map[string]any{
-			"url": "data:" + mime + ";base64," + encoded,
+			"url": "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data),
 		},
+	}, nil
+}
+
+func llamaServerMediaBytes(data []byte) ([]byte, error) {
+	if http.DetectContentType(data) != "image/webp" {
+		return data, nil
 	}
+
+	img, err := webp.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("decode WebP image: %w", err)
+	}
+
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return nil, fmt.Errorf("encode WebP image as PNG: %w", err)
+	}
+	return buf.Bytes(), nil
 }
 
 func llamaServerChatToolCalls(tcs []api.ToolCall) ([]llamaServerChatToolCall, error) {

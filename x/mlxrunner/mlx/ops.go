@@ -9,43 +9,49 @@ import (
 
 func (t *Array) Abs() *Array {
 	out := New("ABS")
-	C.mlx_abs(&out.ctx, t.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_abs(&out.ctx, t.ctx, DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) Add(other *Array) *Array {
 	out := New("ADD")
-	C.mlx_add(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_add(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) Addmm(a, b *Array, alpha, beta float32) *Array {
 	out := New("ADDMM")
-	C.mlx_addmm(&out.ctx, t.ctx, a.ctx, b.ctx, C.float(alpha), C.float(beta), DefaultStream().ctx)
+	mlxCheck(C.mlx_addmm(&out.ctx, t.ctx, a.ctx, b.ctx, C.float(alpha), C.float(beta), DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) Argmax(axis int, keepDims bool) *Array {
 	out := New("ARGMAX")
-	C.mlx_argmax_axis(&out.ctx, t.ctx, C.int(axis), C.bool(keepDims), DefaultStream().ctx)
+	mlxCheck(C.mlx_argmax_axis(&out.ctx, t.ctx, C.int(axis), C.bool(keepDims), DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) ArgpartitionAxis(kth int, axis int) *Array {
 	out := New("ARGPARTITION")
-	C.mlx_argpartition_axis(&out.ctx, t.ctx, C.int(kth), C.int(axis), DefaultStream().ctx)
+	mlxCheck(C.mlx_argpartition_axis(&out.ctx, t.ctx, C.int(kth), C.int(axis), DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) ArgsortAxis(axis int) *Array {
 	out := New("ARGSORT_AXIS")
-	C.mlx_argsort_axis(&out.ctx, t.ctx, C.int(axis), DefaultStream().ctx)
+	mlxCheck(C.mlx_argsort_axis(&out.ctx, t.ctx, C.int(axis), DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) AsType(dtype DType) *Array {
 	out := New("AS_TYPE")
-	C.mlx_astype(&out.ctx, t.ctx, C.mlx_dtype(dtype), DefaultStream().ctx)
+	mlxCheck(C.mlx_astype(&out.ctx, t.ctx, C.mlx_dtype(dtype), DefaultStream().ctx))
+	return out
+}
+
+func (t *Array) BitwiseXor(other *Array) *Array {
+	out := New("BITWISE_XOR")
+	mlxCheck(C.mlx_bitwise_xor(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx))
 	return out
 }
 
@@ -61,13 +67,19 @@ func (t *Array) AsStrided(shape []int, strides []int, offset int) *Array {
 	}
 
 	out := New("AS_STRIDED")
-	C.mlx_as_strided(
+	mlxCheck(C.mlx_as_strided(
 		&out.ctx, t.ctx,
 		unsafe.SliceData(cShape), C.size_t(len(shape)),
 		unsafe.SliceData(cStrides), C.size_t(len(strides)),
 		C.size_t(offset),
 		DefaultStream().ctx,
-	)
+	))
+	return out
+}
+
+func (t *Array) BitwiseAnd(other *Array) *Array {
+	out := New("BITWISE_AND")
+	mlxCheck(C.mlx_bitwise_and(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx))
 	return out
 }
 
@@ -76,46 +88,47 @@ func (t *Array) Concatenate(axis int, others ...*Array) *Array {
 		return t.Clone()
 	}
 
-	vector := C.mlx_vector_array_new()
-	defer C.mlx_vector_array_free(vector)
+	vector := mlxCheck(C.mlx_vector_array_new())
+	defer freeVectorArray(vector)
 
 	s := append([]*Array{t}, others...)
 	for _, other := range s {
-		C.mlx_vector_array_append_value(vector, other.ctx)
+		mlxCheck(C.mlx_vector_array_append_value(vector, other.ctx))
 	}
 
 	out := New("CONCATENATE")
-	C.mlx_concatenate_axis(&out.ctx, vector, C.int(axis), DefaultStream().ctx)
+	mlxCheck(C.mlx_concatenate_axis(&out.ctx, vector, C.int(axis), DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) Cumsum(axis int, reverse, inclusive bool) *Array {
 	out := New("CUMSUM")
-	C.mlx_cumsum(&out.ctx, t.ctx, C.int(axis), C.bool(reverse), C.bool(inclusive), DefaultStream().ctx)
+	optDtype := C.mlx_optional_dtype{has_value: false}
+	mlxCheck(C.mlx_cumsum_axis(&out.ctx, t.ctx, C.int(axis), C.bool(reverse), C.bool(inclusive), optDtype, DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) Divide(other *Array) *Array {
 	out := New("DIVIDE")
-	C.mlx_divide(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_divide(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) ExpandDims(axis int) *Array {
 	out := New("EXPAND_DIMS")
-	C.mlx_expand_dims(&out.ctx, t.ctx, C.int(axis), DefaultStream().ctx)
+	mlxCheck(C.mlx_expand_dims(&out.ctx, t.ctx, C.int(axis), DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) Flatten(startAxis, endAxis int) *Array {
 	out := New("FLATTEN")
-	C.mlx_flatten(&out.ctx, t.ctx, C.int(startAxis), C.int(endAxis), DefaultStream().ctx)
+	mlxCheck(C.mlx_flatten(&out.ctx, t.ctx, C.int(startAxis), C.int(endAxis), DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) FloorDivide(other *Array) *Array {
 	out := New("FLOOR_DIVIDE")
-	C.mlx_floor_divide(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_floor_divide(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx))
 	return out
 }
 
@@ -127,79 +140,79 @@ func (t *Array) GatherMM(other, lhs, rhs *Array, sorted bool) *Array {
 		rhs = New("")
 	}
 	out := New("GATHER_MM")
-	C.mlx_gather_mm(&out.ctx, t.ctx, other.ctx, lhs.ctx, rhs.ctx, C.bool(sorted), DefaultStream().ctx)
+	mlxCheck(C.mlx_gather_mm(&out.ctx, t.ctx, other.ctx, lhs.ctx, rhs.ctx, C.bool(sorted), DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) LogsumexpAxis(axis int, keepDims bool) *Array {
 	out := New("LOGSUMEXP_AXIS")
-	C.mlx_logsumexp_axis(&out.ctx, t.ctx, C.int(axis), C.bool(keepDims), DefaultStream().ctx)
+	mlxCheck(C.mlx_logsumexp_axis(&out.ctx, t.ctx, C.int(axis), C.bool(keepDims), DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) Equal(other *Array) *Array {
 	out := New("EQUAL")
-	C.mlx_equal(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_equal(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) Greater(other *Array) *Array {
 	out := New("GREATER")
-	C.mlx_greater(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_greater(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) Less(other *Array) *Array {
 	out := New("LESS")
-	C.mlx_less(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_less(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) LessEqual(other *Array) *Array {
 	out := New("LESS_EQUAL")
-	C.mlx_less_equal(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_less_equal(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) MaxAxis(axis int, keepDims bool) *Array {
 	out := New("MAX_AXIS")
-	C.mlx_max_axis(&out.ctx, t.ctx, C.int(axis), C.bool(keepDims), DefaultStream().ctx)
+	mlxCheck(C.mlx_max_axis(&out.ctx, t.ctx, C.int(axis), C.bool(keepDims), DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) Matmul(other *Array) *Array {
 	out := New("MATMUL")
-	C.mlx_matmul(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_matmul(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) Multiply(other *Array) *Array {
 	out := New("MULTIPLY")
-	C.mlx_multiply(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_multiply(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) Negative() *Array {
 	out := New("NEGATIVE")
-	C.mlx_negative(&out.ctx, t.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_negative(&out.ctx, t.ctx, DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) Power(exponent *Array) *Array {
 	out := New("POWER")
-	C.mlx_power(&out.ctx, t.ctx, exponent.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_power(&out.ctx, t.ctx, exponent.ctx, DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) PutAlongAxis(indices, values *Array, axis int) *Array {
 	out := New("PUT_ALONG_AXIS")
-	C.mlx_put_along_axis(&out.ctx, t.ctx, indices.ctx, values.ctx, C.int(axis), DefaultStream().ctx)
+	mlxCheck(C.mlx_put_along_axis(&out.ctx, t.ctx, indices.ctx, values.ctx, C.int(axis), DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) ScatterAddAxis(indices, values *Array, axis int) *Array {
 	out := New("SCATTER_ADD_AXIS")
-	C.mlx_scatter_add_axis(&out.ctx, t.ctx, indices.ctx, values.ctx, C.int(axis), DefaultStream().ctx)
+	mlxCheck(C.mlx_scatter_add_axis(&out.ctx, t.ctx, indices.ctx, values.ctx, C.int(axis), DefaultStream().ctx))
 	return out
 }
 
@@ -210,25 +223,43 @@ func (t *Array) Reshape(axes ...int) *Array {
 	}
 
 	out := New("RESHAPE")
-	C.mlx_reshape(&out.ctx, t.ctx, unsafe.SliceData(cAxes), C.size_t(len(cAxes)), DefaultStream().ctx)
+	mlxCheck(C.mlx_reshape(&out.ctx, t.ctx, unsafe.SliceData(cAxes), C.size_t(len(cAxes)), DefaultStream().ctx))
+	return out
+}
+
+func (t *Array) RightShift(other *Array) *Array {
+	out := New("RIGHT_SHIFT")
+	mlxCheck(C.mlx_right_shift(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx))
+	return out
+}
+
+func (t *Array) Remainder(other *Array) *Array {
+	out := New("REMAINDER")
+	mlxCheck(C.mlx_remainder(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) Sigmoid() *Array {
 	out := New("SIGMOID")
-	C.mlx_sigmoid(&out.ctx, t.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_sigmoid(&out.ctx, t.ctx, DefaultStream().ctx))
+	return out
+}
+
+func (t *Array) Sign() *Array {
+	out := New("SIGN")
+	mlxCheck(C.mlx_sign(&out.ctx, t.ctx, DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) Sqrt() *Array {
 	out := New("SQRT")
-	C.mlx_sqrt(&out.ctx, t.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_sqrt(&out.ctx, t.ctx, DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) Squeeze(axis int) *Array {
 	out := New("SQUEEZE")
-	C.mlx_squeeze_axis(&out.ctx, t.ctx, C.int(axis), DefaultStream().ctx)
+	mlxCheck(C.mlx_squeeze_axis(&out.ctx, t.ctx, C.int(axis), DefaultStream().ctx))
 	return out
 }
 
@@ -239,41 +270,41 @@ func (t *Array) StackAxis(axis int, others ...*Array) *Array {
 		vectorData[i+1] = others[i].ctx
 	}
 
-	vector := C.mlx_vector_array_new_data(unsafe.SliceData(vectorData), C.size_t(len(vectorData)))
-	defer C.mlx_vector_array_free(vector)
+	vector := mlxCheck(C.mlx_vector_array_new_data(unsafe.SliceData(vectorData), C.size_t(len(vectorData))))
+	defer freeVectorArray(vector)
 
 	out := New("STACK_AXIS")
-	C.mlx_stack_axis(&out.ctx, vector, C.int(axis), DefaultStream().ctx)
+	mlxCheck(C.mlx_stack_axis(&out.ctx, vector, C.int(axis), DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) Subtract(other *Array) *Array {
 	out := New("SUBTRACT")
-	C.mlx_subtract(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_subtract(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) SumAxis(axis int, keepDims bool) *Array {
 	out := New("SUM_AXIS")
-	C.mlx_sum_axis(&out.ctx, t.ctx, C.int(axis), C.bool(keepDims), DefaultStream().ctx)
+	mlxCheck(C.mlx_sum_axis(&out.ctx, t.ctx, C.int(axis), C.bool(keepDims), DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) TakeAxis(indices *Array, axis int) *Array {
 	out := New("TAKE_AXIS")
-	C.mlx_take_axis(&out.ctx, t.ctx, indices.ctx, C.int(axis), DefaultStream().ctx)
+	mlxCheck(C.mlx_take_axis(&out.ctx, t.ctx, indices.ctx, C.int(axis), DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) TakeAlongAxis(indices *Array, axis int) *Array {
 	out := New("TAKE_ALONG_AXIS")
-	C.mlx_take_along_axis(&out.ctx, t.ctx, indices.ctx, C.int(axis), DefaultStream().ctx)
+	mlxCheck(C.mlx_take_along_axis(&out.ctx, t.ctx, indices.ctx, C.int(axis), DefaultStream().ctx))
 	return out
 }
 
 func (t *Array) Tanh() *Array {
 	out := New("TANH")
-	C.mlx_tanh(&out.ctx, t.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_tanh(&out.ctx, t.ctx, DefaultStream().ctx))
 	return out
 }
 
@@ -284,7 +315,7 @@ func (t *Array) Transpose(axes ...int) *Array {
 	}
 
 	out := New("TRANSPOSE")
-	C.mlx_transpose_axes(&out.ctx, t.ctx, unsafe.SliceData(cAxes), C.size_t(len(cAxes)), DefaultStream().ctx)
+	mlxCheck(C.mlx_transpose_axes(&out.ctx, t.ctx, unsafe.SliceData(cAxes), C.size_t(len(cAxes)), DefaultStream().ctx))
 	return out
 }
 
@@ -295,6 +326,6 @@ func Zeros(dtype DType, shape ...int) *Array {
 	}
 
 	t := New("ZEROS")
-	C.mlx_zeros(&t.ctx, unsafe.SliceData(cAxes), C.size_t(len(cAxes)), C.mlx_dtype(dtype), DefaultStream().ctx)
+	mlxCheck(C.mlx_zeros(&t.ctx, unsafe.SliceData(cAxes), C.size_t(len(cAxes)), C.mlx_dtype(dtype), DefaultStream().ctx))
 	return t
 }

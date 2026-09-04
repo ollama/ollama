@@ -1,4 +1,4 @@
-// Package gemma4 provides the Gemma 4 text model implementation for MLX.
+// Package gemma4 provides the Gemma 4 model implementation for MLX.
 package gemma4
 
 import (
@@ -66,7 +66,10 @@ type TextConfig struct {
 	TopKExperts            int32                  `json:"top_k_experts"`
 	ExpertIntermediateSize int32                  `json:"moe_intermediate_size"`
 	RopeParameters         map[string]*RopeParams `json:"rope_parameters"`
-	ImageTokenIDValue      int32                  `json:"image_token_id"`
+	// UseBidirectionalAttention selects the image-span mask semantics:
+	// "vision" relaxes sliding layers over soft-token runs, empty means
+	// causal even with images; the reference's "all" is rejected at load.
+	UseBidirectionalAttention string `json:"use_bidirectional_attention"`
 
 	// Quantization parameters.
 	QuantGroupSize int                               `json:"-"`
@@ -75,13 +78,14 @@ type TextConfig struct {
 	TensorQuant    map[string]*model.TensorQuantInfo `json:"-"`
 
 	// Computed fields.
-	SlidingScale    float32    `json:"-"` // 1/sqrt(HeadDim) for sliding layers
-	FullScale       float32    `json:"-"` // 1/sqrt(GlobalHeadDim) for full layers
-	SlidingRopeDims int        `json:"-"` // HeadDim (full rotation for sliding)
-	FullRopeDims    int        `json:"-"` // GlobalHeadDim (partial rotation via custom freqs)
-	SlidingRopeBase float32    `json:"-"`
-	FullRopeBase    float32    `json:"-"`
-	FullRopeFreqs   *mlx.Array `json:"-"` // Precomputed proportional RoPE frequencies
+	BidirectionalVisionAttention bool       `json:"-"` // UseBidirectionalAttention == "vision"
+	SlidingScale                 float32    `json:"-"` // 1/sqrt(HeadDim) for sliding layers
+	FullScale                    float32    `json:"-"` // 1/sqrt(GlobalHeadDim) for full layers
+	SlidingRopeDims              int        `json:"-"` // HeadDim (full rotation for sliding)
+	FullRopeDims                 int        `json:"-"` // GlobalHeadDim (partial rotation via custom freqs)
+	SlidingRopeBase              float32    `json:"-"`
+	FullRopeBase                 float32    `json:"-"`
+	FullRopeFreqs                *mlx.Array `json:"-"` // Precomputed proportional RoPE frequencies
 
 	// Precomputed scale factors (avoid per-forward math.Sqrt/Pow).
 	EmbedScale      float32 `json:"-"` // sqrt(hidden_size)
@@ -185,9 +189,7 @@ func transposeForGatherMM(w *mlx.Array) *mlx.Array {
 	if w == nil || !w.Valid() || w.NumDims() != 3 {
 		return w
 	}
-	t := mlx.Transpose(w, 0, 2, 1).Clone()
-	mlx.Eval(t)
-	return t
+	return mlx.Transpose(w, 0, 2, 1).Clone()
 }
 
 // collectExpertProjection collects per-expert tensors, stacks them, and
@@ -242,15 +244,12 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *TextConfig, pre
 	}
 
 	stacked := mlx.Stack(weights, 0).Clone()
-	mlx.Eval(stacked)
 	out := &stackedExpertResult{Weight: stacked, Bits: bits, GroupSize: groupSize, Mode: mode}
 	if len(scales) == len(weights) {
 		out.Scales = mlx.Stack(scales, 0).Clone()
-		mlx.Eval(out.Scales)
 	}
 	if len(biases) == len(weights) {
 		out.Biases = mlx.Stack(biases, 0).Clone()
-		mlx.Eval(out.Biases)
 	}
 	return out
 }
@@ -389,6 +388,22 @@ type Model struct {
 	NormScaled             *mlx.Array
 	PerLayerProjNormWeight *mlx.Array
 
+	// Vision components; at most one of VisionTower and UnifiedEmbedder is
+	// set, per the checkpoint's vision_config model type.
+	VisionTower     *VisionTower
+	UnifiedEmbedder *UnifiedVisionEmbedder
+	EmbedVision     *MultimodalEmbedder
+	Vision          *VisionConfig
+
+	// Audio components.
+	AudioTower *AudioTower
+	EmbedAudio *MultimodalEmbedder
+	Audio      *AudioConfig
+
+	MM multimodalConfig
+	// Soft-token placeholder IDs of the configured media modalities.
+	mediaPlaceholderIDs []int32
+
 	tok *tokenizer.Tokenizer
 	*TextConfig
 
@@ -438,6 +453,8 @@ func parseTextConfig(configData []byte) (TextConfig, error) {
 	if cfg.MaxPositionEmbeddings == 0 {
 		cfg.MaxPositionEmbeddings = 131072
 	}
+
+	cfg.BidirectionalVisionAttention = cfg.UseBidirectionalAttention == "vision"
 
 	// Gemma 4 uses scaling=1.0 (no 1/sqrt(head_dim) scaling); the Q/K norms
 	// handle magnitude control. This differs from Gemma 3 which uses
@@ -616,6 +633,12 @@ func newModel(root *model.Root) (base.Model, error) {
 		return nil, err
 	}
 
+	// The reference's "all" mode makes every layer bidirectional over the
+	// whole sequence, which chunked prefill and prefix reuse cannot serve.
+	if b := cfg.UseBidirectionalAttention; b != "" && b != "vision" {
+		return nil, fmt.Errorf("unsupported use_bidirectional_attention %q", b)
+	}
+
 	if qt := root.QuantType(); qt != "" {
 		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams(qt)
 		if gs := root.GroupSize(); gs > 0 {
@@ -646,12 +669,31 @@ func newModel(root *model.Root) (base.Model, error) {
 		return nil, fmt.Errorf("parse tokenizer: %w", err)
 	}
 
+	mm, err := parseMultimodalConfig(configData)
+	if err != nil {
+		return nil, err
+	}
+
 	m := &Model{
 		Layers:            make([]*DecoderLayer, cfg.NumHiddenLayers),
 		TextConfig:        &cfg,
+		MM:                mm,
+		Vision:            mm.VisionConfig,
+		Audio:             mm.AudioConfig,
 		tok:               tok,
 		SuppressLogitBias: makeSuppressLogitBias(suppressTokens, cfg.VocabSize),
 	}
+
+	if m.Vision != nil {
+		if err := validateVisionSoftTokenBudget(m.visionSoftTokenBudget()); err != nil {
+			return nil, err
+		}
+		m.mediaPlaceholderIDs = append(m.mediaPlaceholderIDs, mm.ImageTokenID)
+	}
+	if m.Audio != nil {
+		m.mediaPlaceholderIDs = append(m.mediaPlaceholderIDs, mm.AudioTokenID)
+	}
+	m.validateMediaTokens()
 
 	for i := range m.Layers {
 		donor, isShared := cfg.KVShareMap[int32(i)]
@@ -981,21 +1023,49 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		return fmt.Errorf("missing precomputed final norm weight")
 	}
 
+	if m.Vision != nil {
+		if err := m.loadVisionWeights(tensors, linears); err != nil {
+			return err
+		}
+	}
+	if m.Audio != nil {
+		if err := m.loadAudioWeights(tensors, linears); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
-func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
+func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
-	h := m.EmbedTokens.Forward(b.InputIDs)
-	h = mlx.MulScalar(h, m.EmbedScale)
 
-	// Compute PLE inputs if configured.
+	// Media placeholder rows embed the pad token and are then overwritten
+	// by the feature scatter.
+	ids := b.InputIDs
+	if len(b.Media) > 0 {
+		for _, id := range m.mediaPlaceholderIDs {
+			ids = mlx.Where(b.InputIDs.Equal(mlx.FromValue(int(id))), mlx.FromValue(0), ids)
+		}
+	}
+
+	h := m.EmbedTokens.Forward(ids)
+	h = mlx.MulScalar(h, m.EmbedScale)
+	if len(b.Media) > 0 {
+		h = m.scatterMedia(h, b)
+	}
+
+	// PLE's token-identity component reads the masked IDs, but its
+	// projection component reads the merged hidden — media rows project
+	// their features, not the pad embedding.
 	var perLayerInputs *mlx.Array
 	if m.HiddenSizePerLayer > 0 && m.EmbedTokensPerLayer != nil {
-		perLayerInputs = m.computePLEInputs(b.InputIDs, h)
+		perLayerInputs = m.computePLEInputs(ids, h)
 	}
+
+	slidingMask, fullMask := m.buildMasks(b)
 
 	// KV sharing: each donor layer stores its KVHistory here so later
 	// shared layers can reuse it in lieu of their own cache update.
@@ -1024,8 +1094,13 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
 			}
 		}
 
+		mask := fullMask
+		if layer.IsSliding {
+			mask = slidingMask
+		}
+
 		var donorKV *sharedHistory
-		h, donorKV = layer.Forward(h, b, c, positions, B, L, m.TextConfig, pleInput, donor)
+		h, donorKV = layer.Forward(h, b, c, positions, B, L, m.TextConfig, pleInput, donor, mask)
 
 		// If this layer is a donor, store its cached KV for later shared layers.
 		if layer.IsDonor && donorKV != nil {
@@ -1033,7 +1108,8 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
 		}
 	}
 
-	return mlx.RMSNormFn(h, m.NormScaled, m.RMSNormEps)
+	out := mlx.RMSNormFn(h, m.NormScaled, m.RMSNormEps)
+	return out, out
 }
 
 func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
@@ -1078,10 +1154,6 @@ func suppressTokenLogits(logits, bias *mlx.Array) *mlx.Array {
 	}
 
 	return logits.Add(bias.AsType(logits.DType()))
-}
-
-func (m *Model) NumLayers() int {
-	return len(m.Layers)
 }
 
 func (m *Model) MaxContextLength() int {
@@ -1158,9 +1230,9 @@ func sliceLayerDim(combined *mlx.Array, layerIdx, B, L, pleDim int32) *mlx.Array
 	return mlx.Squeeze(sliced, 2)
 }
 
-func (l *DecoderLayer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *TextConfig, pleInput *mlx.Array, donor *sharedHistory) (*mlx.Array, *sharedHistory) {
+func (l *DecoderLayer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *TextConfig, pleInput *mlx.Array, donor *sharedHistory, mask nn.AttentionMask) (*mlx.Array, *sharedHistory) {
 	normed := mlx.RMSNormFn(x, l.InputNormScaled, cfg.RMSNormEps)
-	attnOut, kv := l.Attention.Forward(normed, b, c, positions, B, L, l.IsSliding, cfg, donor)
+	attnOut, kv := l.Attention.Forward(normed, b, c, positions, B, L, l.IsSliding, cfg, donor, mask)
 	attnOut = mlx.RMSNormFn(attnOut, l.PostAttnNormScaled, cfg.RMSNormEps)
 	h := mlx.Add(x, attnOut)
 
@@ -1208,7 +1280,7 @@ func (l *DecoderLayer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, posi
 	return h, kv
 }
 
-func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, isSliding bool, cfg *TextConfig, donor *sharedHistory) (*mlx.Array, *sharedHistory) {
+func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, isSliding bool, cfg *TextConfig, donor *sharedHistory, baseMask nn.AttentionMask) (*mlx.Array, *sharedHistory) {
 	// Determine head dim and scale based on layer type.
 	headDim := cfg.HeadDim
 	scale := cfg.SlidingScale
@@ -1284,7 +1356,7 @@ func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positio
 		// kernel only handles L < 4 (generation). For prefill, we fall back
 		// to explicit matmul+softmax+matmul on CUDA.
 		var k, v *mlx.Array
-		mask := nn.CausalMask().Intersect(nn.QPaddingMask(b, q.DType()))
+		mask := baseMask.Intersect(nn.QPaddingMask(b, q.DType()))
 		if kv.history != nil {
 			k, v = kv.history.K(), kv.history.V()
 			mask = kv.history.Mask(mask)
@@ -1314,7 +1386,7 @@ func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positio
 		out = mlx.Reshape(out, B, cfg.NumAttentionHeads, L, headDim)
 	} else {
 		var opt nn.SDPAOption
-		mask := nn.CausalMask()
+		mask := baseMask
 		if kv.history != nil {
 			opt = nn.WithKVHistory(kv.history)
 		} else {

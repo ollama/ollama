@@ -28,6 +28,12 @@ extern "C" {
  */
 /**@{*/
 
+int mlx_fast_cross_entropy(
+    mlx_array* res,
+    const mlx_array logits,
+    const mlx_array targets,
+    const mlx_stream s);
+
 typedef struct mlx_fast_cuda_kernel_config_ {
   void* ctx;
 } mlx_fast_cuda_kernel_config;
@@ -195,6 +201,7 @@ int mlx_fast_scaled_dot_product_attention(
     const char* mask_mode,
     const mlx_array mask_arr /* may be null */,
     const mlx_array sinks /* may be null */,
+    bool force_fused,
     const mlx_stream s);
 
 /**@}*/
