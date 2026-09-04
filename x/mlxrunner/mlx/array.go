@@ -8,40 +8,22 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
-	"sort"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"unsafe"
-
-	"github.com/ollama/ollama/logutil"
 )
 
+// An Array's lifetime is governed by the scope it belongs to; see scope.go.
 type Array struct {
-	ctx    C.mlx_array
-	name   string
-	pinned atomic.Int32
+	ctx   C.mlx_array
+	name  string
+	scope *Scope
 }
-
-var (
-	arrays   []*Array
-	arraysMu sync.Mutex
-)
 
 // constructor utilities
 
 func New(name string) *Array {
 	t := &Array{name: name}
-
-	if tracing {
-		traceScratch = append(traceScratch, t)
-	} else {
-		arraysMu.Lock()
-		defer arraysMu.Unlock()
-
-		arrays = append(arrays, t)
-	}
-
+	currentScope.take(t)
 	return t
 }
 
@@ -135,50 +117,15 @@ func (t *Array) Clone() *Array {
 	return tt
 }
 
-// lifecycle utilities
-
-// Pin marks arrays as in-use so they are retained during Sweep.
-func Pin(s ...*Array) {
-	for _, t := range s {
-		if t != nil {
-			t.pinned.Add(1)
-		}
-	}
-}
-
-// Unpin marks arrays as no longer in-use, allowing Sweep to free them.
-func Unpin(s ...*Array) {
-	for _, t := range s {
-		if t != nil {
-			if t.pinned.Add(-1) < 0 {
-				panic(fmt.Sprintf("mlx.Unpin: negative pin count on array %q", t.name))
-			}
-		}
-	}
-}
-
-// Sweep releases all unpinned arrays, primarily intermediate tensors. MLX will truly
-// free them when there are no other references, including dependencies in the graph.
-func Sweep() {
-	arraysMu.Lock()
-	defer arraysMu.Unlock()
-	n := 0
-	for _, t := range arrays {
-		if t.pinned.Load() > 0 && t.Valid() {
-			arrays[n] = t
-			n++
-		} else if t.Valid() {
-			mlxCheck(C.mlx_array_free(t.ctx))
-			t.ctx.ctx = nil
-		}
-	}
-	arrays = arrays[:n]
-}
-
 // misc. utilities
 
 func (t *Array) Valid() bool {
 	return t.ctx.ctx != nil
+}
+
+func (t *Array) free() {
+	mlxCheck(C.mlx_array_free(t.ctx))
+	t.ctx.ctx = nil
 }
 
 func (t *Array) String() string {
@@ -191,7 +138,6 @@ func (t *Array) String() string {
 func (t *Array) LogValue() slog.Value {
 	attrs := []slog.Attr{
 		slog.String("name", t.name),
-		slog.Int("pinned", int(t.pinned.Load())),
 	}
 	if t.Valid() {
 		attrs = append(attrs,
@@ -287,21 +233,4 @@ func (t *Array) Save(name string) error {
 		return fmt.Errorf("failed to save array to %s: %w", name, err)
 	}
 	return nil
-}
-
-// LogArrays logs all live arrays, sorted by size
-func LogArrays() {
-	arraysMu.Lock()
-	defer arraysMu.Unlock()
-	sort.Slice(arrays, func(i, j int) bool {
-		return arrays[i].NumBytes() > arrays[j].NumBytes()
-	})
-
-	var total int
-	for _, t := range arrays {
-		nb := t.NumBytes()
-		total += nb
-		logutil.Trace(fmt.Sprintf("tensor %-60s %5s %5s pinned=%d %v", t.name, t.DType(), PrettyBytes(nb), t.pinned.Load(), t.Dims()))
-	}
-	logutil.Trace(fmt.Sprintf("tensors total: %d, size: %s, active: %s", len(arrays), PrettyBytes(total), PrettyBytes(ActiveMemory())))
 }

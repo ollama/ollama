@@ -13,6 +13,7 @@ import (
 // RotatingKVCache implements sliding window attention with bounded memory.
 type RotatingKVCache struct {
 	keys, values *mlx.Array
+	scope        *mlx.Scope
 	offset       int
 	step         int
 	maxSize      int
@@ -29,7 +30,7 @@ type RotatingKVCache struct {
 }
 
 func NewRotatingKVCache(maxSize int) *RotatingKVCache {
-	return &RotatingKVCache{maxSize: maxSize, step: 256}
+	return &RotatingKVCache{maxSize: maxSize, step: 256, scope: mlx.NewScope()}
 }
 
 // Assumes B = 1; heterogeneous batches are not supported.
@@ -65,7 +66,7 @@ func (c *RotatingKVCache) concat(keys, values *mlx.Array) (newK *mlx.Array, newV
 
 	if c.keys == nil {
 		c.keys, c.values = keys.Clone(), values.Clone()
-		mlx.Pin(c.keys, c.values)
+		c.scope.Attach(c.keys, c.values)
 	} else {
 		if c.idx < c.keys.Dim(2) {
 			if c.offset <= c.maxSize {
@@ -123,7 +124,7 @@ func (c *RotatingKVCache) update(keys, values *mlx.Array) (*mlx.Array, *mlx.Arra
 			c.values.Set(c.values.Concatenate(2, newValues))
 		} else {
 			c.keys, c.values = newKeys, newValues
-			mlx.Pin(c.keys, c.values)
+			c.scope.Attach(c.keys, c.values)
 		}
 		c.idx = prev
 	}
@@ -194,18 +195,18 @@ func (c *RotatingKVCache) State() []*mlx.Array {
 	}
 }
 
-// replaceBuffer swaps in newK/newV as the cache's keys/values, unpinning the old
-// buffer and pinning the new one.
+// replaceBuffer swaps in newK/newV as the cache's keys/values, releasing the
+// old buffer and holding the new one.
 func (c *RotatingKVCache) replaceBuffer(newK, newV *mlx.Array) {
-	mlx.Unpin(c.keys, c.values)
+	c.scope.Discard(c.keys, c.values)
 	c.keys, c.values = newK, newV
-	mlx.Pin(c.keys, c.values)
+	c.scope.Attach(c.keys, c.values)
 }
 
 func (c *RotatingKVCache) Free() {
 	// Freeing drops the buffer lazy snapshots index into; copy them out first.
 	c.copyOutLazySnapshots()
-	mlx.Unpin(c.keys, c.values)
+	c.scope.Close()
 	c.keys, c.values = nil, nil
 	c.offset = 0
 	c.idx = 0
@@ -283,6 +284,7 @@ func (c *RotatingKVCache) lazyRotatingSnapshot(o int) Snapshot {
 // reorders or drops those slots.
 type rotatingSnapshot struct {
 	keys, values         *mlx.Array // owned window once copied out; nil while lazy
+	scope                *mlx.Scope // holds keys and values once copied out
 	fromOffset, toOffset int        // absolute offset range the window covers
 	idx                  int        // buffer write position a restore installs
 
@@ -307,7 +309,7 @@ func (s *rotatingSnapshot) Size() int {
 func (s *rotatingSnapshot) SetMaterializeHook(fn func(delta int)) { s.onMaterialize = fn }
 
 func (s *rotatingSnapshot) Close() {
-	mlx.Unpin(s.keys, s.values)
+	s.scope.Close()
 	if s.cache != nil {
 		s.cache.dropLazySnapshot(s)
 		s.cache = nil
@@ -322,14 +324,15 @@ func (s *rotatingSnapshot) copyOut() {
 		return
 	}
 	c := s.cache
-	kSlice := c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(s.sliceStart, s.sliceEnd), mlx.Slice())
-	vSlice := c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(s.sliceStart, s.sliceEnd), mlx.Slice())
-	k := mlx.Contiguous(kSlice, false)
-	v := mlx.Contiguous(vSlice, false)
-	mlx.Pin(k, v)
-	mlx.AsyncEval(k, v)
+	copies := mlx.ScopedAsyncEval(func() []*mlx.Array {
+		kSlice := c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(s.sliceStart, s.sliceEnd), mlx.Slice())
+		vSlice := c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(s.sliceStart, s.sliceEnd), mlx.Slice())
+		return []*mlx.Array{mlx.Contiguous(kSlice, false), mlx.Contiguous(vSlice, false)}
+	})
+	s.scope = mlx.NewScope()
+	s.scope.Attach(copies...)
 
-	s.keys, s.values = k, v
+	s.keys, s.values = copies[0], copies[1]
 	c.dropLazySnapshot(s)
 	s.cache = nil
 
@@ -363,11 +366,13 @@ func (c *RotatingKVCache) Snapshot(fromOffset int) Snapshot {
 	state := c.State()
 	k := state[0].Clone()
 	v := state[1].Clone()
-	mlx.Pin(k, v)
+	scope := mlx.NewScope()
+	scope.Attach(k, v)
 
 	return &rotatingSnapshot{
 		keys:       k,
 		values:     v,
+		scope:      scope,
 		fromOffset: fromOffset,
 		toOffset:   c.offset,
 		idx:        c.idx,
@@ -414,10 +419,12 @@ func (c *RotatingKVCache) Restore(snapshot Snapshot, target int) bool {
 		c.dropLazySnapshot(snap)
 		c.copyOutLazySnapshots()
 		liveLen := snap.sliceEnd - snap.sliceStart
-		c.replaceBuffer(
-			c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(snap.sliceStart, snap.sliceEnd), mlx.Slice()),
-			c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(snap.sliceStart, snap.sliceEnd), mlx.Slice()),
-		)
+		mlx.Scoped(func() {
+			c.replaceBuffer(
+				c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(snap.sliceStart, snap.sliceEnd), mlx.Slice()),
+				c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(snap.sliceStart, snap.sliceEnd), mlx.Slice()),
+			)
+		})
 		snap.sliceStart, snap.sliceEnd = 0, liveLen
 		c.lazySnapshots = append(c.lazySnapshots, snap)
 		c.offset = snap.toOffset
@@ -435,7 +442,7 @@ func (c *RotatingKVCache) Restore(snapshot Snapshot, target int) bool {
 	snap.copyOut()
 	c.copyOutLazySnapshots()
 
-	c.replaceBuffer(snap.keys.Clone(), snap.values.Clone())
+	mlx.Scoped(func() { c.replaceBuffer(snap.keys.Clone(), snap.values.Clone()) })
 	c.offset = snap.toOffset
 	c.idx = snap.idx
 

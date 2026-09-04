@@ -33,29 +33,27 @@ func testCompileFusion(t *mlxthreadtest.T) {
 
 	a := FromValues(data, n)
 	b := FromValues(data, n)
-	Pin(a, b)
-	defer Unpin(a, b)
 
 	// Compiled: ops fused into a single kernel.
 	EnableCompile()
 	fn := Compile2("diamond", body, Shapeless())
-	warm := fn(a, b)
-	Eval(warm)
-	Sweep()
+	Scoped(func() { Eval(fn(a, b)) })
 	ClearCache()
 	ResetPeakMemory()
-	y := fn(a, b)
-	Eval(y)
-	compiledPeak := PeakMemory()
-	Sweep()
+	var compiledPeak int
+	Scoped(func() {
+		Eval(fn(a, b))
+		compiledPeak = PeakMemory()
+	})
 
 	// Uncompiled: ops evaluated individually, intermediates materialized.
 	ClearCache()
 	ResetPeakMemory()
-	z := body(a, b)
-	Eval(z)
-	uncompiledPeak := PeakMemory()
-	Sweep()
+	var uncompiledPeak int
+	Scoped(func() {
+		Eval(body(a, b))
+		uncompiledPeak = PeakMemory()
+	})
 
 	if compiledPeak == 0 && uncompiledPeak == 0 {
 		t.Skip("peak memory tracking not available")
@@ -88,8 +86,6 @@ func testCompileNested(t *mlxthreadtest.T) {
 
 	gate := FromValues([]float32{0, 1, 2}, 3)
 	up := FromValues([]float32{1, 1, 1}, 3)
-	Pin(gate, up)
-	defer Unpin(gate, up)
 
 	y := outer(gate, up)
 	Eval(y)
@@ -116,8 +112,6 @@ func testCompileCallbackPanicRecovers(t *mlxthreadtest.T) {
 	})
 
 	x := FromValues([]float32{1}, 1)
-	Pin(x)
-	defer Unpin(x)
 
 	defer func() {
 		r := recover()
@@ -139,26 +133,22 @@ func TestCompileNoTrackingGrowth(t *testing.T) {
 
 func testCompileNoTrackingGrowth(t *mlxthreadtest.T) {
 	// Repeated invocations of a compiled kernel should not grow the
-	// tracked-arrays list; the callback's traceScratch collects
-	// intermediates during tracing and frees them when the callback returns.
+	// tracked-arrays list; the callback's scope collects intermediates
+	// during tracing and frees them when the callback returns.
 	fn := Compile2("mul_add", func(a, b *Array) *Array {
 		return a.Multiply(b).Add(b)
 	})
 
 	a := FromValues([]float32{1, 2}, 2)
 	b := FromValues([]float32{3, 4}, 2)
-	Pin(a, b)
-	defer Unpin(a, b)
 
-	Sweep()
-	before := len(arrays)
+	before := len(currentScope.arrays)
 
 	for range 100 {
-		_ = fn(a, b)
-		Sweep()
+		Scoped(func() { _ = fn(a, b) })
 	}
 
-	after := len(arrays)
+	after := len(currentScope.arrays)
 	if after > before+2 {
 		t.Fatalf("tracked arrays grew from %d to %d across 100 calls (includes initial trace)", before, after)
 	}

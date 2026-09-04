@@ -54,6 +54,7 @@ type requestMedia struct {
 	// toggled in place so every batch shares the same slice.
 	manifest []batch.MediaItem
 	features []*mlx.Array // parallel to items; nil until encoded
+	scope    *mlx.Scope
 
 	// layout is the request's one-row Batch.Layout, shared by every batch
 	// like the manifest; nil when the model returned no layout.
@@ -70,6 +71,7 @@ func (r *Runner) openMedia(request Request) *requestMedia {
 		inputLen: len(request.Tokens),
 		manifest: make([]batch.MediaItem, len(request.MediaItems)),
 		features: make([]*mlx.Array, len(request.MediaItems)),
+		scope:    mlx.NewScope(),
 	}
 	if request.Layout != nil {
 		m.layout = []any{request.Layout}
@@ -114,7 +116,7 @@ func (m *requestMedia) extendChunk(pos, n int) int {
 }
 
 // batchMedia returns the manifest for chunk [pos, pos+n), encoding and
-// pinning each item's features on first overlap; nothing evaluates here —
+// holding each item's features on first overlap; nothing evaluates here —
 // the consuming forward pulls the encoder.
 func (m *requestMedia) batchMedia(pos, n int) []batch.MediaItem {
 	if m == nil {
@@ -125,9 +127,11 @@ func (m *requestMedia) batchMedia(pos, n int) []batch.MediaItem {
 			continue
 		}
 		if m.features[i] == nil {
-			data := mlx.FromValues(item.item.MediaData, item.item.Dims...)
-			m.features[i] = m.model.EncodeMedia(item.item, data)
-			mlx.Pin(m.features[i])
+			m.features[i] = mlx.ScopedArrays(func() []*mlx.Array {
+				data := mlx.FromValues(item.item.MediaData, item.item.Dims...)
+				return []*mlx.Array{m.model.EncodeMedia(item.item, data)}
+			})[0]
+			m.scope.Attach(m.features[i])
 			// The upload copied the pixels; free them here — release never
 			// passes the end of an expansion reaching the prompt's last token.
 			item.item.MediaData = nil
@@ -137,9 +141,9 @@ func (m *requestMedia) batchMedia(pos, n int) []batch.MediaItem {
 	return m.manifest
 }
 
-// release frees what items fully evaluated or restored at position pos no
-// longer need: the pinned features and the preprocessed pixel buffer.
-func (m *requestMedia) release(pos int) {
+// free frees what items fully evaluated or restored at position pos no
+// longer need: the held features and the preprocessed pixel buffer.
+func (m *requestMedia) free(pos int) {
 	if m == nil {
 		return
 	}
@@ -147,7 +151,7 @@ func (m *requestMedia) release(pos int) {
 		if item.pos+item.length <= pos {
 			item.item.MediaData = nil
 			if m.features[i] != nil {
-				mlx.Unpin(m.features[i])
+				m.scope.Discard(m.features[i])
 				m.features[i] = nil
 				m.manifest[i].Features = nil
 			}
@@ -155,18 +159,16 @@ func (m *requestMedia) release(pos int) {
 	}
 }
 
-// close unpins whatever remains when the pipeline exits.
+// close frees whatever remains when the pipeline exits.
 func (m *requestMedia) close() {
 	if m == nil {
 		return
 	}
-	for i, f := range m.features {
-		if f != nil {
-			mlx.Unpin(f)
-			m.features[i] = nil
-			m.manifest[i].Features = nil
-		}
+	for i := range m.features {
+		m.features[i] = nil
+		m.manifest[i].Features = nil
 	}
+	m.scope.Close()
 }
 
 // expandMedia tokenizes the [img-N]-tagged prompt into segments, expands

@@ -176,22 +176,3 @@ func NewDraft(root *model.Root, target Model) (DraftModel, error) {
 
 	return fn(root, target)
 }
-
-// Weights returns a function that loads model weights, then pins all
-// arrays reachable from the model struct and sweeps everything else.
-func Weights(m Model) func(map[string]*mlx.Array) error {
-	return func(tensors map[string]*mlx.Array) error {
-		if err := m.LoadWeights(tensors); err != nil {
-			return err
-		}
-
-		collected := mlx.Collect(m)
-		for _, arr := range collected {
-			mlx.Pin(arr)
-		}
-		mlx.Sweep()
-		mlx.Eval(collected...)
-
-		return nil
-	}
-}

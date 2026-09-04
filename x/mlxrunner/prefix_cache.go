@@ -613,16 +613,18 @@ func (c *prefixCache) evictNode(node *trieNode) {
 func (c *prefixCache) dumpTree() {
 	// Summary stats
 	var cacheBytes int
-	for _, kv := range c.caches {
-		if kv == nil {
-			continue
-		}
-		for _, a := range kv.State() {
-			if a != nil {
-				cacheBytes += a.NumBytes()
+	mlx.Scoped(func() {
+		for _, kv := range c.caches {
+			if kv == nil {
+				continue
+			}
+			for _, a := range kv.State() {
+				if a != nil {
+					cacheBytes += a.NumBytes()
+				}
 			}
 		}
-	}
+	})
 
 	// Build active path set for marking.
 	active := make(map[*trieNode]bool, len(c.activePath))

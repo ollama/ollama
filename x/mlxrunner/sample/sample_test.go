@@ -36,7 +36,6 @@ func sampleOne(t *mlxtest.T, opts Options, priorTokens []int32, values []float32
 	s := New(128)
 	t.Cleanup(func() {
 		s.Free()
-		mlx.Sweep()
 	})
 	s.Add(0, opts, priorTokens)
 
@@ -139,7 +138,6 @@ func TestDistributionAppliesTopKBeforeTopP(t *testing.T) {
 		s := New(128)
 		t.Cleanup(func() {
 			s.Free()
-			mlx.Sweep()
 		})
 		s.Add(0, Options{Temperature: 1, TopK: 2, TopP: 0.7}, nil)
 
@@ -210,7 +208,6 @@ func TestSeededSamplingIsReproducible(t *testing.T) {
 			s := New(128)
 			t.Cleanup(func() {
 				s.Free()
-				mlx.Sweep()
 			})
 			s.Add(0, Options{Temperature: 1, TopK: 4, Seed: seed, UseSeed: true}, nil)
 
@@ -243,7 +240,6 @@ func TestSeededBernoulliIsReproducible(t *testing.T) {
 			s := New(128)
 			t.Cleanup(func() {
 				s.Free()
-				mlx.Sweep()
 			})
 			s.Add(0, Options{Seed: 99, UseSeed: true}, nil)
 
@@ -269,7 +265,6 @@ func TestSampleHistoryWindow(t *testing.T) {
 		s := New(128)
 		t.Cleanup(func() {
 			s.Free()
-			mlx.Sweep()
 		})
 
 		// RepeatLastN=2 with priors {1, 2, 3}: makeHistoryRow keeps only
@@ -300,7 +295,6 @@ func TestSpeculativeScoresUsesDraftHistoryWithoutCommit(t *testing.T) {
 		s := New(128)
 		t.Cleanup(func() {
 			s.Free()
-			mlx.Sweep()
 		})
 
 		s.Add(0, Options{RepeatLastN: 2, RepeatPenalty: 10}, []int32{1, 2})
@@ -333,7 +327,6 @@ func TestDistributionSingleRowAppliesDraftPrefix(t *testing.T) {
 		s := New(128)
 		t.Cleanup(func() {
 			s.Free()
-			mlx.Sweep()
 		})
 
 		// A proposal step passes one logits row with the chain's earlier drafts:
@@ -361,7 +354,6 @@ func TestDistributionMultiRowWithoutChain(t *testing.T) {
 		s := New(128)
 		t.Cleanup(func() {
 			s.Free()
-			mlx.Sweep()
 		})
 
 		// A block drafter's proposal batch samples every row from one call with
@@ -394,7 +386,6 @@ func TestCommitBatchesRingWrites(t *testing.T) {
 		s := New(128)
 		t.Cleanup(func() {
 			s.Free()
-			mlx.Sweep()
 		})
 
 		s.Add(0, Options{RepeatLastN: 4, RepeatPenalty: 1.1}, []int32{10, 11, 12})
@@ -492,7 +483,6 @@ func TestBatchSamplingPreservesPerSlotBehavior(t *testing.T) {
 			s := New(128)
 			t.Cleanup(func() {
 				s.Free()
-				mlx.Sweep()
 			})
 			for _, spec := range tc.slots {
 				s.Add(spec.id, spec.opts, spec.priors)
@@ -519,7 +509,6 @@ func TestRemoveDoesNotLeakHistory(t *testing.T) {
 		s := New(128)
 		t.Cleanup(func() {
 			s.Free()
-			mlx.Sweep()
 		})
 		s.Add(1, opts, []int32{1})
 		s.Add(2, opts, []int32{2})
