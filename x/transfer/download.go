@@ -92,6 +92,11 @@ func download(ctx context.Context, opts DownloadOptions) error {
 	if len(opts.Blobs) == 0 {
 		return nil
 	}
+	for _, b := range opts.Blobs {
+		if _, err := digestToPath(b.Digest); err != nil {
+			return err
+		}
+	}
 
 	// Calculate total from all blobs (for accurate progress reporting on resume)
 	var total int64
@@ -103,7 +108,8 @@ func download(ctx context.Context, opts DownloadOptions) error {
 	var blobs []Blob
 	var alreadyCompleted int64
 	for _, b := range opts.Blobs {
-		if fi, _ := os.Stat(filepath.Join(opts.DestDir, digestToPath(b.Digest))); fi != nil && fi.Size() == b.Size {
+		name, _ := digestToPath(b.Digest) // validated above
+		if fi, _ := os.Stat(filepath.Join(opts.DestDir, name)); fi != nil && fi.Size() == b.Size {
 			if opts.Logger != nil {
 				opts.Logger.Debug("blob already exists", "digest", b.Digest, "size", b.Size)
 			}
@@ -193,7 +199,11 @@ func (d *downloader) download(ctx context.Context, blob Blob) error {
 
 		// Preserve partial .tmp files for large blobs to enable resume
 		if blob.Size < resumeThreshold {
-			dest := filepath.Join(d.destDir, digestToPath(blob.Digest))
+			name, err := digestToPath(blob.Digest)
+			if err != nil {
+				return err
+			}
+			dest := filepath.Join(d.destDir, name)
 			os.Remove(dest + ".tmp")
 		}
 
@@ -218,6 +228,10 @@ func (d *downloader) downloadOnce(ctx context.Context, blob Blob) (int64, error)
 	if d.logger != nil {
 		d.logger.Debug("downloading blob", "digest", blob.Digest, "size", blob.Size)
 	}
+	name, err := digestToPath(blob.Digest)
+	if err != nil {
+		return 0, err
+	}
 
 	// Hold a body slot for the duration of the GET — released when the body
 	// has been read and the response closed.
@@ -234,7 +248,7 @@ func (d *downloader) downloadOnce(ctx context.Context, blob Blob) (int64, error)
 	}
 
 	// Check for existing partial .tmp file for resume
-	dest := filepath.Join(d.destDir, digestToPath(blob.Digest))
+	dest := filepath.Join(d.destDir, name)
 	tmp := dest + ".tmp"
 	var existingSize int64
 	if blob.Size >= resumeThreshold {
@@ -281,19 +295,23 @@ func (d *downloader) downloadOnce(ctx context.Context, blob Blob) (int64, error)
 }
 
 func (d *downloader) save(ctx context.Context, blob Blob, r io.Reader, existingSize int64) (int64, error) {
-	dest := filepath.Join(d.destDir, digestToPath(blob.Digest))
+	name, err := digestToPath(blob.Digest)
+	if err != nil {
+		return 0, err
+	}
+	dest := filepath.Join(d.destDir, name)
 	tmp := dest + ".tmp"
 	os.MkdirAll(filepath.Dir(dest), 0o755)
 
 	h := sha256.New()
 
 	var f *os.File
-	var err error
+	var fErr error
 
 	if existingSize > 0 {
 		// Resume — re-hash existing partial data, then append
-		f, err = os.OpenFile(tmp, os.O_RDWR, 0o644)
-		if err != nil {
+		f, fErr = os.OpenFile(tmp, os.O_RDWR, 0o644)
+		if fErr != nil {
 			// Can't open partial file, start fresh
 			existingSize = 0
 		} else {
@@ -310,9 +328,9 @@ func (d *downloader) save(ctx context.Context, blob Blob, r io.Reader, existingS
 	}
 
 	if existingSize == 0 {
-		f, err = os.Create(tmp)
-		if err != nil {
-			return 0, err
+		f, fErr = os.Create(tmp)
+		if fErr != nil {
+			return 0, fErr
 		}
 		setSparse(f)
 	}
