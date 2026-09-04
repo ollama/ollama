@@ -1219,6 +1219,15 @@ func weightForGatherMM(w *mlx.Array, sourceLayout bool) *mlx.Array {
 	return w
 }
 
+func lagunaGatherMM(a, b, lhs, rhs *mlx.Array, sorted bool) *mlx.Array {
+	dtype := a.DType()
+	out := mlx.GatherMM(a.AsType(mlx.DTypeFloat32), b.AsType(mlx.DTypeFloat32), lhs, rhs, sorted)
+	if dtype != mlx.DTypeFloat32 {
+		out = out.AsType(dtype)
+	}
+	return out
+}
+
 func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.Array {
 	dims := x.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
@@ -1257,15 +1266,15 @@ func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.
 			hidden = mlx.SwiGLU(gate, up)
 		}
 	case s.GateUpWeight != nil:
-		gateUp := mlx.GatherMM(xFlat, s.GateUpWeight, nil, idxFlat, doSort)
+		gateUp := lagunaGatherMM(xFlat, s.GateUpWeight, nil, idxFlat, doSort)
 		guDims := gateUp.Dims()
 		mid := int32(guDims[len(guDims)-1] / 2)
 		gate = mlx.SliceStartStop(gateUp, []int32{0, 0, 0, 0}, []int32{int32(guDims[0]), int32(guDims[1]), int32(guDims[2]), mid})
 		up = mlx.SliceStartStop(gateUp, []int32{0, 0, 0, mid}, []int32{int32(guDims[0]), int32(guDims[1]), int32(guDims[2]), int32(guDims[len(guDims)-1])})
 		hidden = mlx.SwiGLU(gate, up)
 	default:
-		gate = mlx.GatherMM(xFlat, weightForGatherMM(s.GateWeight, s.GateUpWeightsSourceLayout), nil, idxFlat, doSort)
-		up = mlx.GatherMM(xFlat, weightForGatherMM(s.UpWeight, s.GateUpWeightsSourceLayout), nil, idxFlat, doSort)
+		gate = lagunaGatherMM(xFlat, weightForGatherMM(s.GateWeight, s.GateUpWeightsSourceLayout), nil, idxFlat, doSort)
+		up = lagunaGatherMM(xFlat, weightForGatherMM(s.UpWeight, s.GateUpWeightsSourceLayout), nil, idxFlat, doSort)
 		hidden = mlx.SwiGLU(gate, up)
 	}
 
@@ -1273,7 +1282,7 @@ func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.
 	if s.DownWeightQ != nil {
 		down = mlx.GatherQMM(hidden, s.DownWeightQ, s.DownScales, s.DownBiases, nil, idxFlat, true, s.DownGroupSize, s.DownBits, s.DownMode, doSort)
 	} else {
-		down = mlx.GatherMM(hidden, weightForGatherMM(s.DownWeight, s.DownWeightSourceLayout), nil, idxFlat, doSort)
+		down = lagunaGatherMM(hidden, weightForGatherMM(s.DownWeight, s.DownWeightSourceLayout), nil, idxFlat, doSort)
 	}
 	if doSort {
 		down = mlx.Reshape(mlx.Take(mlx.Squeeze(mlx.Squeeze(down, 2), 1), invOrder, 0), B*L, topK, cfg.HiddenSize)

@@ -2,7 +2,10 @@ package gguf_test
 
 import (
 	"bytes"
+	"encoding/binary"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -224,6 +227,170 @@ func TestRead(t *testing.T) {
 	if b.Len() != int(ti.NumBytes()) {
 		t.Errorf(`ReadFrom TensorReader("output.weight") length = %d, want %d`, b.Len(), ti.NumBytes())
 	}
+}
+
+func TestScanMetadata(t *testing.T) {
+	info, err := gguf.ScanMetadata(createBinFile(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if info.Architecture != "llama" {
+		t.Fatalf("architecture = %q, want llama", info.Architecture)
+	}
+	if info.EmbeddingLength != 3 {
+		t.Fatalf("embedding length = %d, want 3", info.EmbeddingLength)
+	}
+	if info.HasFileType {
+		t.Fatalf("has file type = true, want false: %+v", info)
+	}
+	if info.HasEmbedding || info.HasVision || info.HasAudio {
+		t.Fatalf("unexpected capability metadata: %+v", info)
+	}
+}
+
+func TestScanMetadataCorrupt(t *testing.T) {
+	le32 := func(v uint32) []byte {
+		var b [4]byte
+		binary.LittleEndian.PutUint32(b[:], v)
+		return b[:]
+	}
+	le64 := func(v uint64) []byte {
+		var b [8]byte
+		binary.LittleEndian.PutUint64(b[:], v)
+		return b[:]
+	}
+	str := func(s string) []byte {
+		return append(le64(uint64(len(s))), s...)
+	}
+	// GGUF v3 little-endian header with zero tensors and one metadata entry.
+	header := func(entry []byte) []byte {
+		var b []byte
+		b = append(b, le32(0x46554747)...) // magic
+		b = append(b, le32(3)...)          // version
+		b = append(b, le64(0)...)          // tensor count
+		b = append(b, le64(1)...)          // kv count
+		return append(b, entry...)
+	}
+
+	// Value type ids from the GGUF spec: 8=string, 9=array, 10=uint64.
+	cases := map[string][]byte{
+		// Read path: a string value whose declared length would allocate
+		// exabytes must fail the MaxStringLength check, not make([]byte, n).
+		"huge string value": header(append(append(str("general.architecture"), le32(8)...), le64(1<<62)...)),
+		// Skip path: an array whose count*size multiply would overflow into a
+		// negative skip must fail the MaxArraySize check, not silently no-op.
+		"huge array count": header(append(append(append(str("tokenizer.ggml.tokens"), le32(9)...), le32(10)...), le64(1<<61)...)),
+		// Skip path: a skipped string with an absurd length must not desync.
+		"huge skipped string": header(append(append(str("some.ignored.key"), le32(8)...), le64(1<<62)...)),
+	}
+
+	for name, data := range cases {
+		t.Run(name, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "corrupt.gguf")
+			if err := os.WriteFile(p, data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := gguf.ScanMetadata(p); err == nil {
+				t.Fatal("expected error scanning corrupt metadata, got nil")
+			}
+		})
+	}
+}
+
+func TestOpenDoesNotPreallocateDeclaredArray(t *testing.T) {
+	const allocationLimit = 1 << 20
+
+	for _, elementType := range []uint32{0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12} {
+		t.Run(strconv.FormatUint(uint64(elementType), 10), func(t *testing.T) {
+			var data []byte
+			data = append(data, 'G', 'G', 'U', 'F')
+			data = binary.LittleEndian.AppendUint32(data, 3)
+			data = binary.LittleEndian.AppendUint64(data, 0)
+			data = binary.LittleEndian.AppendUint64(data, 1)
+			data = binary.LittleEndian.AppendUint64(data, 3)
+			data = append(data, "big"...)
+			data = binary.LittleEndian.AppendUint32(data, 9)
+			data = binary.LittleEndian.AppendUint32(data, elementType)
+			data = binary.LittleEndian.AppendUint64(data, 8_000_000)
+
+			runtime.GC()
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			g, err := gguf.Open(createFile(t, data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range g.KeyValues() {
+			}
+			if err := g.Close(); err != nil {
+				t.Fatal(err)
+			}
+			runtime.ReadMemStats(&after)
+
+			if allocated := after.TotalAlloc - before.TotalAlloc; allocated > allocationLimit {
+				t.Fatalf("declared array allocated %d bytes, want at most %d", allocated, allocationLimit)
+			}
+		})
+	}
+}
+
+func FuzzOpen(f *testing.F) {
+	validPath := createBinFile(f)
+	validData, err := os.ReadFile(validPath)
+	if err != nil {
+		f.Fatal(err)
+	}
+	f.Add(validData)
+	f.Add([]byte{})
+	f.Add([]byte{'G', 'G', 'U', 'F'})
+	f.Add([]byte{
+		'G', 'G', 'U', 'F',
+		3, 0, 0, 0,
+		1, 0, 0, 0, 0, 0, 0, 0,
+	})
+	f.Add([]byte{
+		'G', 'G', 'U', 'F',
+		3, 0, 0, 0,
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+	})
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		if len(data) > 1<<20 {
+			t.Skip("bounded fuzz input")
+		}
+
+		g, err := gguf.Open(createFile(t, data))
+		if err != nil {
+			return
+		}
+		defer g.Close()
+
+		for i, kv := range g.KeyValues() {
+			if i > 4096 {
+				break
+			}
+			_ = kv.Valid()
+		}
+		for i, tensor := range g.TensorInfos() {
+			if i > 4096 {
+				break
+			}
+			_ = tensor.Valid()
+		}
+		_ = g.Err()
+	})
+}
+
+func createFile(tb testing.TB, b []byte) string {
+	tb.Helper()
+
+	p := filepath.Join(tb.TempDir(), "model.gguf")
+	if err := os.WriteFile(p, b, 0o600); err != nil {
+		tb.Fatal(err)
+	}
+
+	return p
 }
 
 func BenchmarkRead(b *testing.B) {

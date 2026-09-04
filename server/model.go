@@ -23,40 +23,46 @@ var intermediateBlobs map[string]string = make(map[string]string)
 type layerGGML struct {
 	manifest.Layer
 	*ggml.GGML
-	// rewriteForCreate marks GGUF model layers that came from user-supplied
-	// files or safetensors conversion. Text-only GGUFs are validated with
-	// llama-quantize. GGUFs with embedded compatibility tensors stay in their
-	// existing layout so create does not drop tensors needed by the patch.
-	rewriteForCreate bool
-	splitParts       []splitGGUFPart
+	splitParts []splitGGUFPart
 }
 
-type splitGGUFPart struct {
-	Digest string
-	Name   string
-	GGML   *ggml.GGML
-}
-
-func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressResponse)) (layers []*layerGGML, err error) {
+func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressResponse)) ([]*layerGGML, model.ConfigV2, error) {
+	var config model.ConfigV2
 	m, err := manifest.ParseNamedManifest(name)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		if err := PullModel(ctx, name.String(), &registryOptions{}, fn); err != nil {
-			return nil, err
+		if err := PullModel(ctx, name.String(), "", &registryOptions{}, fn); err != nil {
+			return nil, config, err
 		}
 
 		m, err = manifest.ParseNamedManifest(name)
 		if err != nil {
-			return nil, err
+			return nil, config, err
 		}
 	case err != nil:
-		return nil, err
+		return nil, config, err
 	}
 
+	if m.Config.Digest == "" {
+		return nil, config, fmt.Errorf("model %s is missing its config", name.DisplayShortest())
+	}
+	configFile, err := m.Config.Open()
+	if err != nil {
+		return nil, config, fmt.Errorf("open config for %s: %w", name.DisplayShortest(), err)
+	}
+	if err := json.NewDecoder(configFile).Decode(&config); err != nil {
+		configFile.Close()
+		return nil, config, fmt.Errorf("decode config for %s: %w", name.DisplayShortest(), err)
+	}
+	if err := configFile.Close(); err != nil {
+		return nil, config, fmt.Errorf("close config for %s: %w", name.DisplayShortest(), err)
+	}
+
+	var layers []*layerGGML
 	for _, srcLayer := range m.Layers {
 		layer, err := manifest.NewLayerFromLayer(srcLayer.Digest, srcLayer.MediaType, name.DisplayShortest())
 		if err != nil {
-			return nil, err
+			return nil, config, err
 		}
 		layer.Name = srcLayer.Name
 
@@ -67,18 +73,18 @@ func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressRe
 			manifest.MediaTypeImageDraft:
 			blobpath, err := manifest.BlobsPath(layer.Digest)
 			if err != nil {
-				return nil, err
+				return nil, config, err
 			}
 
 			blob, err := os.Open(blobpath)
 			if err != nil {
-				return nil, err
+				return nil, config, err
 			}
 			defer blob.Close()
 
 			f, err := ggml.Decode(blob, -1)
 			if err != nil {
-				return nil, err
+				return nil, config, err
 			}
 
 			layers = append(layers, &layerGGML{Layer: layer, GGML: f})
@@ -87,7 +93,7 @@ func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressRe
 		}
 	}
 
-	return layers, nil
+	return layers, config, nil
 }
 
 func detectChatTemplate(layers []*layerGGML) ([]*layerGGML, error) {

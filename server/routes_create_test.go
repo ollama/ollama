@@ -3,8 +3,10 @@ package server
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -13,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -22,11 +25,13 @@ import (
 	gocmpopts "github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/convert"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
+	xcreate "github.com/ollama/ollama/x/create"
+	"github.com/ollama/ollama/x/mlxrunner"
+	st "github.com/ollama/ollama/x/safetensors"
 )
 
 var stream bool = false
@@ -35,15 +40,13 @@ func createBinFile(t *testing.T, kv map[string]any, ti []*ggml.Tensor) (string, 
 	t.Helper()
 	t.Setenv("OLLAMA_MODELS", cmp.Or(os.Getenv("OLLAMA_MODELS"), t.TempDir()))
 
-	modelDir := envconfig.Models()
-
 	f, err := os.CreateTemp(t.TempDir(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer f.Close()
 
-	var base convert.KV = map[string]any{"general.architecture": "test"}
+	base := ggml.KV{"general.architecture": "test"}
 	maps.Copy(base, kv)
 
 	if err := ggml.WriteGGUF(f, base, ti); err != nil {
@@ -59,11 +62,23 @@ func createBinFile(t *testing.T, kv map[string]any, ti []*ggml.Tensor) (string, 
 		t.Fatal(err)
 	}
 
-	if err := createLink(f.Name(), filepath.Join(modelDir, "blobs", fmt.Sprintf("sha256-%s", strings.TrimPrefix(digest, "sha256:")))); err != nil {
+	blobPath, err := manifest.BlobsPath(digest)
+	if err != nil {
 		t.Fatal(err)
 	}
+	linkOrCopyTestBlob(t, f.Name(), blobPath)
 
 	return f.Name(), digest
+}
+
+func linkOrCopyTestBlob(t *testing.T, src, dst string) {
+	t.Helper()
+	if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	if err := linkOrCopyFile(t.Context(), src, dst); err != nil {
+		t.Fatal(err)
+	}
 }
 
 type responseRecorder struct {
@@ -124,6 +139,20 @@ func TestCreateHandlerRejectsInvalidInfoTypes(t *testing.T) {
 			},
 			err: "context_length",
 		},
+		{
+			name: "capabilities_not_array",
+			info: map[string]any{
+				"capabilities": "completion",
+			},
+			err: "capabilities",
+		},
+		{
+			name: "capabilities_non_string",
+			info: map[string]any{
+				"capabilities": []any{"completion", float64(1)},
+			},
+			err: "capabilities",
+		},
 	}
 
 	for _, tt := range testCases {
@@ -149,6 +178,104 @@ func TestCreateHandlerRejectsInvalidInfoTypes(t *testing.T) {
 			}
 			if got := resp["error"]; !strings.Contains(got, tt.err) {
 				t.Fatalf("expected %s error, got %q", tt.err, got)
+			}
+		})
+	}
+}
+
+func TestCreateHandlerRejectsInvalidFiles(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	validDigest := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	tests := []struct {
+		name  string
+		files map[string]string
+	}{
+		{
+			name:  "invalid digest",
+			files: map[string]string{"model.gguf": "not-a-digest"},
+		},
+		{
+			name:  "dot path",
+			files: map[string]string{".": validDigest},
+		},
+		{
+			name:  "backslash path",
+			files: map[string]string{`nested\model.gguf`: validDigest},
+		},
+		{
+			name: "mixed model types",
+			files: map[string]string{
+				"model.gguf":        validDigest,
+				"model.safetensors": validDigest,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := createRequest(t, s.CreateHandler, api.CreateRequest{
+				Model:  "test-create-invalid-files",
+				Files:  tt.files,
+				Stream: &stream,
+			})
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400: %s", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestCreateHandlerRejectsInvalidQuantizeOptions(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	validDigest := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	tests := []struct {
+		name       string
+		req        api.CreateRequest
+		wantErrSub string
+	}{
+		{
+			name: "gguf quantize",
+			req: api.CreateRequest{
+				Files:    map[string]string{"model.gguf": validDigest},
+				Quantize: "Q4_K_M",
+			},
+			wantErrSub: "create-time quantization",
+		},
+		{
+			name: "safetensors quantize",
+			req: api.CreateRequest{
+				Files:    map[string]string{"model.safetensors": validDigest},
+				Quantize: "Q4_K_M",
+			},
+			wantErrSub: "unsupported quantize",
+		},
+		{
+			name: "safetensors draft quantize",
+			req: api.CreateRequest{
+				Files:         map[string]string{"model.safetensors": validDigest},
+				DraftFiles:    map[string]string{"model.safetensors": validDigest},
+				DraftQuantize: "Q4_K_M",
+			},
+			wantErrSub: "unsupported draft quantize",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.req.Model = "test-create-invalid-quantize"
+			tt.req.Stream = &stream
+			w := createRequest(t, s.CreateHandler, tt.req)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400: %s", w.Code, w.Body.String())
+			}
+			if !strings.Contains(w.Body.String(), tt.wantErrSub) {
+				t.Fatalf("error = %s, want substring %q", w.Body.String(), tt.wantErrSub)
 			}
 		})
 	}
@@ -184,163 +311,92 @@ func readCreatedModelConfig(t *testing.T, name string) model.ConfigV2 {
 	return cfg
 }
 
-func TestCreateModelPreservesEmbeddedCompatibilityGGUFWithoutQuantization(t *testing.T) {
+func TestCreateModelInfersGGUFFileTypesWithoutRewrite(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
-	oldRun := runLlamaQuantize
-	runLlamaQuantize = func(in, out *os.File, orig *ggml.GGML, fileType ggml.FileType, typeName string, progressFn func(uint64)) error {
-		t.Fatal("llama-quantize should not run for GGUFs with embedded compatibility tensors")
-		return nil
-	}
-	t.Cleanup(func() {
-		runLlamaQuantize = oldRun
-	})
 
-	_, digest := createBinFile(t, map[string]any{
-		"general.architecture": "gemma4",
-		"general.file_type":    uint32(ggml.FileTypeF32),
-	}, []*ggml.Tensor{
-		{
-			Name:     "v.patch_embd.weight",
-			Kind:     uint32(ggml.TensorTypeF32),
-			Shape:    []uint64{1, 1},
-			WriterTo: bytes.NewReader(make([]byte, 4)),
-		},
-	})
-	baseLayers, err := ggufLayers(digest, "test.gguf", func(api.ProgressResponse) {})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	name := model.ParseName("test-create-preserve-gguf:latest")
-	config := &model.ConfigV2{
-		OS:           "linux",
-		Architecture: "amd64",
-	}
-	req := api.CreateRequest{Model: name.String()}
-	if err := createModel(req, name, baseLayers, config, func(api.ProgressResponse) {}); err != nil {
-		t.Fatal(err)
-	}
-
-	mf, err := manifest.ParseNamedManifest(name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var found bool
-	for _, layer := range mf.Layers {
-		if layer.MediaType == "application/vnd.ollama.image.model" {
-			found = true
+	for fileType := ggml.FileTypeF32; fileType < ggml.FileTypeUnknown; fileType++ {
+		want := fileType.String()
+		if want == "unknown" {
+			continue
 		}
-	}
-	if !found {
-		t.Fatal("created manifest is missing a model layer")
-	}
-	if mf.Layers[0].Digest != digest {
-		t.Fatalf("model layer digest = %q, want original digest %q", mf.Layers[0].Digest, digest)
-	}
-}
 
-func TestCreateModelValidatesTextOnlyFileGGUFWithoutQuantization(t *testing.T) {
-	t.Setenv("OLLAMA_MODELS", t.TempDir())
-	var gotTypeName string
-	oldRun := runLlamaQuantize
-	runLlamaQuantize = func(in, out *os.File, orig *ggml.GGML, fileType ggml.FileType, typeName string, progressFn func(uint64)) error {
-		gotTypeName = typeName
-		return copyLlamaQuantizeInput(in, out, orig, fileType, typeName, progressFn)
-	}
-	t.Cleanup(func() {
-		runLlamaQuantize = oldRun
-	})
+		t.Run(want, func(t *testing.T) {
+			_, digest := createBinFile(t, map[string]any{
+				"general.architecture": "gemma4",
+				"general.file_type":    fileType.Value(),
+			}, []*ggml.Tensor{
+				{
+					Name:     "v.patch_embd.weight",
+					Kind:     uint32(ggml.TensorTypeF32),
+					Shape:    []uint64{1, 1},
+					WriterTo: bytes.NewReader(make([]byte, 4)),
+				},
+			})
+			baseLayers, err := ggufLayersWithMediaType(digest, "test.gguf", "", func(api.ProgressResponse) {})
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	_, digest := createBinFile(t, map[string]any{
-		"general.architecture": "llama",
-		"general.file_type":    uint32(ggml.FileTypeF32),
-	}, []*ggml.Tensor{
-		{
-			Name:     "blk.0.attn_q.weight",
-			Kind:     uint32(ggml.TensorTypeF32),
-			Shape:    []uint64{1, 1},
-			WriterTo: bytes.NewReader(make([]byte, 4)),
-		},
-	})
-	baseLayers, err := ggufLayers(digest, "test.gguf", func(api.ProgressResponse) {})
-	if err != nil {
-		t.Fatal(err)
-	}
+			name := model.ParseName(fmt.Sprintf("test-create-file-type-%d:latest", fileType.Value()))
+			config := new(model.ConfigV2)
+			req := api.CreateRequest{Model: name.String()}
+			if err := createModel(t.Context(), req, name, baseLayers, config, func(api.ProgressResponse) {}); err != nil {
+				t.Fatal(err)
+			}
 
-	name := model.ParseName("test-create-validate-gguf:latest")
-	config := &model.ConfigV2{
-		OS:           "linux",
-		Architecture: "amd64",
-	}
-	req := api.CreateRequest{Model: name.String()}
-	if err := createModel(req, name, baseLayers, config, func(api.ProgressResponse) {}); err != nil {
-		t.Fatal(err)
-	}
-
-	if gotTypeName != "COPY" {
-		t.Fatalf("llama-quantize type = %q, want COPY", gotTypeName)
-	}
-}
-
-func TestCreateModelValidatesSplitGGUFWithOriginalShardNames(t *testing.T) {
-	t.Setenv("OLLAMA_MODELS", t.TempDir())
-	var gotInput string
-	oldRun := runLlamaQuantize
-	runLlamaQuantize = func(in, out *os.File, orig *ggml.GGML, fileType ggml.FileType, typeName string, progressFn func(uint64)) error {
-		gotInput = in.Name()
-		if typeName != "COPY" {
-			t.Fatalf("llama-quantize type = %q, want COPY", typeName)
-		}
-		if got := filepath.Base(in.Name()); got != "model-00001-of-00002.gguf" {
-			t.Fatalf("llama-quantize input = %q, want first split shard name", got)
-		}
-		if _, err := os.Stat(filepath.Join(filepath.Dir(in.Name()), "model-00002-of-00002.gguf")); err != nil {
-			t.Fatalf("missing linked second split shard: %v", err)
-		}
-		return ggml.WriteGGUF(out, ggml.KV{
-			"general.architecture": "llama",
-			"general.file_type":    fileType,
-		}, []*ggml.Tensor{
-			{
-				Name:     "blk.0.attn_q.weight",
-				Kind:     uint32(ggml.TensorTypeF32),
-				Shape:    []uint64{1, 1},
-				WriterTo: bytes.NewReader(make([]byte, 4)),
-			},
+			mf, err := manifest.ParseNamedManifest(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var found bool
+			for _, layer := range mf.Layers {
+				if layer.MediaType == "application/vnd.ollama.image.model" {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatal("created manifest is missing a model layer")
+			}
+			if mf.Layers[0].Digest != digest {
+				t.Fatalf("model layer digest = %q, want original digest %q", mf.Layers[0].Digest, digest)
+			}
+			if got := readCreatedModelConfig(t, name.String()).FileType; got != want {
+				t.Fatalf("model file type = %q, want %q", got, want)
+			}
 		})
 	}
-	t.Cleanup(func() {
-		runLlamaQuantize = oldRun
-	})
+}
 
-	_, firstDigest := createBinFile(t, ggml.KV{
+func createSplitGGUFShard(t *testing.T, splitNo, splitCount uint32, tensorCount int32, tensorName string) string {
+	t.Helper()
+
+	return createSplitGGUFShardWithKV(t, ggml.KV{
 		"general.architecture":      "llama",
 		"general.file_type":         uint32(ggml.FileTypeF32),
-		"llama.split.no":            uint32(0),
-		"llama.split.count":         uint32(2),
-		"llama.split.tensors.count": int32(2),
-	}, []*ggml.Tensor{
+		"llama.split.no":            splitNo,
+		"llama.split.count":         splitCount,
+		"llama.split.tensors.count": tensorCount,
+	}, tensorName)
+}
+
+func createSplitGGUFShardWithKV(t *testing.T, kv ggml.KV, tensorName string) string {
+	t.Helper()
+
+	_, digest := createBinFile(t, kv, []*ggml.Tensor{
 		{
-			Name:     "blk.0.attn_q.weight",
+			Name:     tensorName,
 			Kind:     uint32(ggml.TensorTypeF32),
 			Shape:    []uint64{1, 1},
 			WriterTo: bytes.NewReader(make([]byte, 4)),
 		},
 	})
-	_, secondDigest := createBinFile(t, ggml.KV{
-		"general.architecture":      "llama",
-		"general.file_type":         uint32(ggml.FileTypeF32),
-		"llama.split.no":            uint32(1),
-		"llama.split.count":         uint32(2),
-		"llama.split.tensors.count": int32(2),
-	}, []*ggml.Tensor{
-		{
-			Name:     "blk.1.attn_q.weight",
-			Kind:     uint32(ggml.TensorTypeF32),
-			Shape:    []uint64{1, 1},
-			WriterTo: bytes.NewReader(make([]byte, 4)),
-		},
-	})
+	return digest
+}
+
+func TestCreateModelMergesSplitGGUF(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	firstDigest := createSplitGGUFShard(t, 0, 2, 2, "blk.0.attn_q.weight")
+	secondDigest := createSplitGGUFShard(t, 1, 2, 2, "blk.1.attn_q.weight")
 
 	baseLayers, err := convertModelFromFiles(map[string]string{
 		"model-00001-of-00002.gguf": firstDigest,
@@ -349,152 +405,39 @@ func TestCreateModelValidatesSplitGGUFWithOriginalShardNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(baseLayers) != 1 {
+		t.Fatalf("base layers = %d, want 1", len(baseLayers))
+	}
+	if got := len(baseLayers[0].splitParts); got != 2 {
+		t.Fatalf("split parts = %d, want 2", got)
+	}
 
-	name := model.ParseName("test-create-split-gguf:latest")
-	config := &model.ConfigV2{
-		OS:           "linux",
-		Architecture: "amd64",
-	}
+	name := model.ParseName("test-create-merge-split-gguf:latest")
+	config := new(model.ConfigV2)
 	req := api.CreateRequest{Model: name.String()}
-	if err := createModel(req, name, baseLayers, config, func(api.ProgressResponse) {}); err != nil {
+	if err := createModel(t.Context(), req, name, baseLayers, config, func(api.ProgressResponse) {}); err != nil {
 		t.Fatal(err)
-	}
-	if gotInput == "" {
-		t.Fatal("llama-quantize was not invoked")
 	}
 
 	mf, err := manifest.ParseNamedManifest(name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var modelLayers int
-	for _, layer := range mf.Layers {
+	var modelLayer *manifest.Layer
+	for i, layer := range mf.Layers {
 		if layer.MediaType == "application/vnd.ollama.image.model" {
-			modelLayers++
-		}
-	}
-	if modelLayers != 1 {
-		t.Fatalf("model layer count = %d, want 1", modelLayers)
-	}
-}
-
-func TestBaseLayerTensorsReadsAllSplitGGUFShards(t *testing.T) {
-	t.Setenv("OLLAMA_MODELS", t.TempDir())
-	firstData := []byte{1, 2, 3, 4}
-	secondData := []byte{5, 6, 7, 8}
-
-	_, firstDigest := createBinFile(t, ggml.KV{
-		"general.architecture":       "qwen35",
-		"general.file_type":          uint32(ggml.FileTypeF32),
-		"qwen35.split.no":            uint32(0),
-		"qwen35.split.count":         uint32(2),
-		"qwen35.split.tensors.count": int32(2),
-	}, []*ggml.Tensor{
-		{
-			Name:     "blk.0.attn_q.weight",
-			Kind:     uint32(ggml.TensorTypeF32),
-			Shape:    []uint64{1},
-			WriterTo: bytes.NewReader(firstData),
-		},
-	})
-	_, secondDigest := createBinFile(t, ggml.KV{
-		"general.architecture":       "qwen35",
-		"general.file_type":          uint32(ggml.FileTypeF32),
-		"qwen35.split.no":            uint32(1),
-		"qwen35.split.count":         uint32(2),
-		"qwen35.split.tensors.count": int32(2),
-	}, []*ggml.Tensor{
-		{
-			Name:     "blk.1.attn_q.weight",
-			Kind:     uint32(ggml.TensorTypeF32),
-			Shape:    []uint64{1},
-			WriterTo: bytes.NewReader(secondData),
-		},
-	})
-
-	baseLayers, err := convertModelFromFiles(map[string]string{
-		"model-00001-of-00002.gguf": firstDigest,
-		"model-00002-of-00002.gguf": secondDigest,
-	}, nil, false, func(api.ProgressResponse) {})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := len(baseLayers), 1; got != want {
-		t.Fatalf("base layers = %d, want %d", got, want)
-	}
-
-	tensors, cleanup, err := baseLayerTensors(baseLayers[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cleanup()
-
-	byName := map[string][]byte{}
-	for _, tensor := range tensors {
-		var b bytes.Buffer
-		if _, err := tensor.WriteTo(&b); err != nil {
-			t.Fatal(err)
-		}
-		byName[tensor.Name] = b.Bytes()
-	}
-
-	if got := byName["blk.0.attn_q.weight"]; !bytes.Equal(got, firstData) {
-		t.Fatalf("first shard tensor data = %v, want %v", got, firstData)
-	}
-	if got := byName["blk.1.attn_q.weight"]; !bytes.Equal(got, secondData) {
-		t.Fatalf("second shard tensor data = %v, want %v", got, secondData)
-	}
-}
-
-func TestCreateModelAddsDefaultLlavaProjectorType(t *testing.T) {
-	t.Setenv("OLLAMA_MODELS", t.TempDir())
-
-	_, digest := createBinFile(t, map[string]any{
-		"general.architecture":    "clip",
-		"clip.has_vision_encoder": true,
-		"clip.vision.block_count": uint32(1),
-	}, []*ggml.Tensor{
-		{
-			Name:     "mm.0.weight",
-			Kind:     uint32(ggml.TensorTypeF32),
-			Shape:    []uint64{1, 1},
-			WriterTo: bytes.NewReader(make([]byte, 4)),
-		},
-	})
-	baseLayers, err := ggufLayers(digest, "test.gguf", func(api.ProgressResponse) {})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	name := model.ParseName("test-create-llava-projector:latest")
-	config := &model.ConfigV2{
-		OS:           "linux",
-		Architecture: "amd64",
-	}
-	req := api.CreateRequest{Model: name.String()}
-	if err := createModel(req, name, baseLayers, config, func(api.ProgressResponse) {}); err != nil {
-		t.Fatal(err)
-	}
-
-	mf, err := manifest.ParseNamedManifest(name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var projectorLayer manifest.Layer
-	for _, layer := range mf.Layers {
-		if layer.MediaType == "application/vnd.ollama.image.projector" {
-			projectorLayer = layer
+			modelLayer = &mf.Layers[i]
 			break
 		}
 	}
-	if projectorLayer.Digest == "" {
-		t.Fatal("created manifest is missing a projector layer")
+	if modelLayer == nil {
+		t.Fatal("created manifest is missing a model layer")
 	}
-	if projectorLayer.Digest == digest {
-		t.Fatal("projector layer was not rewritten")
+	if modelLayer.Digest == firstDigest || modelLayer.Digest == secondDigest {
+		t.Fatalf("model layer digest = %q, want merged digest", modelLayer.Digest)
 	}
 
-	blobPath, err := manifest.BlobsPath(projectorLayer.Digest)
+	blobPath, err := manifest.BlobsPath(modelLayer.Digest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -504,12 +447,127 @@ func TestCreateModelAddsDefaultLlavaProjectorType(t *testing.T) {
 	}
 	defer blob.Close()
 
-	projector, err := ggml.Decode(blob, -1)
+	merged, err := ggml.Decode(blob, -1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := projector.KV().String("projector_type"); got != "mlp" {
-		t.Fatalf("clip.projector_type = %q, want mlp", got)
+	for _, key := range []string{"split.no", "split.count", "split.tensors.count"} {
+		if _, ok := splitGGUFUint64(merged.KV(), key); ok {
+			t.Fatalf("merged GGUF still has %q metadata", key)
+		}
+	}
+
+	tensorNames := make(map[string]struct{})
+	for _, tensor := range merged.Tensors().Items() {
+		tensorNames[tensor.Name] = struct{}{}
+	}
+	for _, name := range []string{"blk.0.attn_q.weight", "blk.1.attn_q.weight"} {
+		if _, ok := tensorNames[name]; !ok {
+			t.Fatalf("merged GGUF is missing tensor %q", name)
+		}
+	}
+}
+
+func TestCreateModelDoesNotMergeSplitGGUFsAcrossDirectories(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	firstDigest := createSplitGGUFShard(t, 0, 2, 2, "blk.0.attn_q.weight")
+	secondDigest := createSplitGGUFShard(t, 1, 2, 2, "blk.1.attn_q.weight")
+
+	_, err := convertModelFromFiles(map[string]string{
+		"first/model-00001-of-00002.gguf":  firstDigest,
+		"second/model-00002-of-00002.gguf": secondDigest,
+	}, nil, false, func(api.ProgressResponse) {})
+	if !errors.Is(err, errInvalidSplitGGUF) {
+		t.Fatalf("convertModelFromFiles() error = %v, want errInvalidSplitGGUF", err)
+	}
+}
+
+func TestCreateModelMergesSplitGGUFWithUnknownShardMetadata(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	firstDigest := createSplitGGUFShard(t, 0, 2, 2, "blk.0.attn_q.weight")
+	secondDigest := createSplitGGUFShardWithKV(t, ggml.KV{
+		"general.architecture":        "unknown",
+		"unknown.split.no":            uint32(1),
+		"unknown.split.count":         uint32(2),
+		"unknown.split.tensors.count": int32(2),
+	}, "blk.1.attn_q.weight")
+
+	baseLayers, err := convertModelFromFiles(map[string]string{
+		"model-00001-of-00002.gguf": firstDigest,
+		"model-00002-of-00002.gguf": secondDigest,
+	}, nil, false, func(api.ProgressResponse) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(baseLayers) != 1 {
+		t.Fatalf("base layers = %d, want 1", len(baseLayers))
+	}
+	if got := len(baseLayers[0].splitParts); got != 2 {
+		t.Fatalf("split parts = %d, want 2", got)
+	}
+}
+
+func TestCreateModelRejectsMissingSplitGGUFShard(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	firstDigest := createSplitGGUFShard(t, 0, 2, 2, "blk.0.attn_q.weight")
+
+	baseLayers, err := convertModelFromFiles(map[string]string{
+		"model-00001-of-00002.gguf": firstDigest,
+	}, nil, false, func(api.ProgressResponse) {})
+	if err == nil {
+		t.Fatalf("convertModelFromFiles() = %v, nil, want error", baseLayers)
+	}
+	if !errors.Is(err, errInvalidSplitGGUF) {
+		t.Fatalf("convertModelFromFiles() error = %v, want errInvalidSplitGGUF", err)
+	}
+	if !strings.Contains(err.Error(), "has 1 shards, expected 2") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCreateModelRejectsTooManySplitGGUFShards(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	digest := createSplitGGUFShard(t, 0, uint32(maxSplitGGUFParts+1), 1, "blk.0.attn_q.weight")
+
+	baseLayers, err := convertModelFromFiles(map[string]string{
+		fmt.Sprintf("model-00001-of-%05d.gguf", maxSplitGGUFParts+1): digest,
+	}, nil, false, func(api.ProgressResponse) {})
+	if err == nil {
+		t.Fatalf("convertModelFromFiles() = %v, nil, want error", baseLayers)
+	}
+	if !errors.Is(err, errInvalidSplitGGUF) {
+		t.Fatalf("convertModelFromFiles() error = %v, want errInvalidSplitGGUF", err)
+	}
+	if !strings.Contains(err.Error(), "too many shards") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCreateModelRejectsDuplicateSplitGGUFTensors(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	firstDigest := createSplitGGUFShard(t, 0, 2, 2, "blk.0.attn_q.weight")
+	secondDigest := createSplitGGUFShard(t, 1, 2, 2, "blk.0.attn_q.weight")
+
+	baseLayers, err := convertModelFromFiles(map[string]string{
+		"model-00001-of-00002.gguf": firstDigest,
+		"model-00002-of-00002.gguf": secondDigest,
+	}, nil, false, func(api.ProgressResponse) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	name := model.ParseName("test-create-reject-duplicate-split-gguf:latest")
+	config := new(model.ConfigV2)
+	req := api.CreateRequest{Model: name.String()}
+	err = createModel(t.Context(), req, name, baseLayers, config, func(api.ProgressResponse) {})
+	if err == nil {
+		t.Fatal("expected create to fail")
+	}
+	if !errors.Is(err, errInvalidSplitGGUF) {
+		t.Fatalf("createModel() error = %v, want errInvalidSplitGGUF", err)
+	}
+	if !strings.Contains(err.Error(), "duplicate tensor") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -539,7 +597,7 @@ func TestGGUFLayersClassifiesMMProjAsProjector(t *testing.T) {
 			WriterTo: bytes.NewReader(make([]byte, 4)),
 		},
 	})
-	layers, err := ggufLayers(digest, "mmproj-gemma-4-12B-it-bf16.gguf", func(api.ProgressResponse) {})
+	layers, err := ggufLayersWithMediaType(digest, "mmproj-gemma-4-12B-it-bf16.gguf", "", func(api.ProgressResponse) {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -551,151 +609,32 @@ func TestGGUFLayersClassifiesMMProjAsProjector(t *testing.T) {
 	}
 }
 
-func TestCreateModelQuantizeRestoresEmbeddedCompatibilityTensors(t *testing.T) {
+func TestCreateModelRejectsGGUFQuantize(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
-	oldRun := runLlamaQuantize
-	runLlamaQuantize = func(in, out *os.File, orig *ggml.GGML, fileType ggml.FileType, typeName string, progressFn func(uint64)) error {
-		kv := ggml.KV{
-			"general.architecture":             "qwen2vl",
-			"general.file_type":                fileType,
-			"qwen25vl.attention.head_count":    uint32(1),
-			"qwen25vl.attention.head_count_kv": uint32(1),
-		}
-		return ggml.WriteGGUF(out, kv, []*ggml.Tensor{
-			{
-				Name:     "blk.0.attn_q.weight",
-				Kind:     uint32(ggml.TensorTypeQ4_K),
-				Shape:    []uint64{256, 1},
-				WriterTo: bytes.NewReader(make([]byte, int(ggml.TensorTypeQ4_K.RowSize(256)))),
-			},
-		})
-	}
-	t.Cleanup(func() {
-		runLlamaQuantize = oldRun
-	})
-
 	_, digest := createBinFile(t, map[string]any{
-		"general.architecture":             "qwen25vl",
-		"general.file_type":                uint32(ggml.FileTypeF16),
-		"qwen25vl.attention.head_count":    uint32(8),
-		"qwen25vl.attention.head_count_kv": uint32(2),
+		"general.architecture": "llama",
+		"general.file_type":    uint32(ggml.FileTypeF16),
 	}, []*ggml.Tensor{
 		{
 			Name:     "blk.0.attn_q.weight",
-			Kind:     uint32(ggml.TensorTypeF16),
-			Shape:    []uint64{256, 1},
-			WriterTo: bytes.NewReader(make([]byte, 512)),
-		},
-		{
-			Name:     "v.patch_embd.weight",
 			Kind:     uint32(ggml.TensorTypeF16),
 			Shape:    []uint64{1, 1},
 			WriterTo: bytes.NewReader(make([]byte, 2)),
 		},
 	})
-	baseLayers, err := ggufLayers(digest, "test.gguf", func(api.ProgressResponse) {})
+	baseLayers, err := ggufLayersWithMediaType(digest, "test.gguf", "", func(api.ProgressResponse) {})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	name := model.ParseName("test-create-quantize-embedded-gguf:latest")
-	config := &model.ConfigV2{
-		OS:           "linux",
-		Architecture: "amd64",
-	}
+	config := new(model.ConfigV2)
 	req := api.CreateRequest{Model: name.String(), Quantize: "Q4_K_M"}
-	if err := createModel(req, name, baseLayers, config, func(api.ProgressResponse) {}); err != nil {
-		t.Fatal(err)
-	}
-
-	mf, err := manifest.ParseNamedManifest(name)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var modelLayer manifest.Layer
-	for _, layer := range mf.Layers {
-		if layer.MediaType == "application/vnd.ollama.image.model" {
-			modelLayer = layer
-			break
-		}
-	}
-	if modelLayer.Digest == "" {
-		t.Fatal("created manifest is missing a model layer")
-	}
-
-	blobPath, err := manifest.BlobsPath(modelLayer.Digest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	blob, err := os.Open(blobPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer blob.Close()
-
-	f, err := ggml.Decode(blob, -1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	byName := map[string]*ggml.Tensor{}
-	for _, tensor := range f.Tensors().Items() {
-		byName[tensor.Name] = tensor
-	}
-	if got := f.KV().FileType(); got != ggml.FileTypeQ4_K_M {
-		t.Fatalf("file type = %s, want Q4_K_M", got)
-	}
-	if got := f.KV().Architecture(); got != "qwen25vl" {
-		t.Fatalf("architecture = %q, want qwen25vl", got)
-	}
-	if got, _ := f.KV().Value("qwen25vl.attention.head_count").(uint32); got != 8 {
-		t.Fatalf("attention head count = %d, want 8", got)
-	}
-	if got := ggml.TensorType(byName["blk.0.attn_q.weight"].Kind); got != ggml.TensorTypeQ4_K {
-		t.Fatalf("text tensor type = %s, want Q4_K", got)
-	}
-	if got := ggml.TensorType(byName["v.patch_embd.weight"].Kind); got != ggml.TensorTypeF16 {
-		t.Fatalf("embedded tensor type = %s, want F16", got)
-	}
-}
-
-func TestCreateModelRejectsFileGGUFWhenValidationFails(t *testing.T) {
-	t.Setenv("OLLAMA_MODELS", t.TempDir())
-	oldRun := runLlamaQuantize
-	runLlamaQuantize = func(*os.File, *os.File, *ggml.GGML, ggml.FileType, string, func(uint64)) error {
-		return fmt.Errorf("load failed")
-	}
-	t.Cleanup(func() {
-		runLlamaQuantize = oldRun
-	})
-
-	_, digest := createBinFile(t, map[string]any{
-		"general.architecture": "llama",
-		"general.file_type":    uint32(ggml.FileTypeF32),
-	}, []*ggml.Tensor{
-		{
-			Name:     "blk.0.attn_q.weight",
-			Kind:     uint32(ggml.TensorTypeF32),
-			Shape:    []uint64{1, 1},
-			WriterTo: bytes.NewReader(make([]byte, 4)),
-		},
-	})
-	baseLayers, err := ggufLayers(digest, "test.gguf", func(api.ProgressResponse) {})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	name := model.ParseName("test-create-reject-gguf:latest")
-	config := &model.ConfigV2{
-		OS:           "linux",
-		Architecture: "amd64",
-	}
-	req := api.CreateRequest{Model: name.String()}
-	err = createModel(req, name, baseLayers, config, func(api.ProgressResponse) {})
+	err = createModel(t.Context(), req, name, baseLayers, config, func(api.ProgressResponse) {})
 	if err == nil {
 		t.Fatal("expected create to fail")
 	}
-	if !strings.Contains(err.Error(), "failed to validate GGUF with llama-quantize without compatibility patches") {
+	if !strings.Contains(err.Error(), "create-time quantization is only supported for safetensors imports") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -707,10 +646,42 @@ func checkFileExists(t *testing.T, p string, expect []string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if strings.HasSuffix(filepath.ToSlash(p), "/blobs/*") {
+		actual = slices.DeleteFunc(actual, isManifestBlobForTest)
+	}
 
 	if diff := gocmp.Diff(expect, actual, gocmpopts.SortSlices(strings.Compare), gocmpopts.EquateEmpty()); diff != "" {
 		t.Errorf("file exists mismatch (-want +got):\n%s", diff)
 	}
+}
+
+func checkManifestFiles(t *testing.T, names ...string) {
+	t.Helper()
+
+	expect := make([]string, len(names))
+	for i, name := range names {
+		p, err := manifest.V2PathForName(model.ParseName(name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		expect[i] = p
+	}
+
+	checkFileExists(t, filepath.Join(envconfig.Models(), "manifests-v2", "*", "*", "*", "*"), expect)
+}
+
+func isManifestBlobForTest(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+
+	var m manifest.Manifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		return false
+	}
+
+	return m.SchemaVersion != 0 && m.MediaType != "" && (m.Config.Digest != "" || len(m.Layers) > 0)
 }
 
 func TestCreateFromBin(t *testing.T) {
@@ -734,12 +705,10 @@ func TestCreateFromBin(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
-		filepath.Join(p, "blobs", "sha256-99759ad5b91e723db0393d698ffbb448b1b7df5ff6377a108c49254583b1bc8c"),
+		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 	})
 
@@ -794,9 +763,7 @@ func TestCreateFromModel(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:   "test2",
@@ -808,13 +775,10 @@ func TestCreateFromModel(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test2", "latest"),
-	})
+	checkManifestFiles(t, "test", "test2")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
-		filepath.Join(p, "blobs", "sha256-99759ad5b91e723db0393d698ffbb448b1b7df5ff6377a108c49254583b1bc8c"),
+		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 	})
 }
@@ -843,6 +807,7 @@ func TestCreateFromModelInheritsRendererParser(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
+	baseConfig := readCreatedModelConfig(t, "base")
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:   "child",
@@ -883,6 +848,9 @@ func TestCreateFromModelInheritsRendererParser(t *testing.T) {
 	if cfg.Parser != parser {
 		t.Fatalf("expected parser %q, got %q", parser, cfg.Parser)
 	}
+	if cfg.FileType != baseConfig.FileType {
+		t.Fatalf("expected file type %q, got %q", baseConfig.FileType, cfg.FileType)
+	}
 }
 
 func TestCreateRemovesLayers(t *testing.T) {
@@ -904,14 +872,12 @@ func TestCreateRemovesLayers(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 		filepath.Join(p, "blobs", "sha256-b507b9c2f6ca642bffcd06665ea7c91f235fd32daeefdf875a0f938db05fb315"),
-		filepath.Join(p, "blobs", "sha256-99759ad5b91e723db0393d698ffbb448b1b7df5ff6377a108c49254583b1bc8c"),
+		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
 	})
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
@@ -925,15 +891,229 @@ func TestCreateRemovesLayers(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
-		filepath.Join(p, "blobs", "sha256-99759ad5b91e723db0393d698ffbb448b1b7df5ff6377a108c49254583b1bc8c"),
+		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 		filepath.Join(p, "blobs", "sha256-fe7ac77b725cda2ccad03f88a880ecdfd7a33192d6cae08fce2c0ee1455991ed"),
 	})
+}
+
+func writeManifestListVariant(t *testing.T, name, modelFormat string) {
+	t.Helper()
+
+	configData, err := json.Marshal(model.ConfigV2{
+		ModelFormat:  modelFormat,
+		Capabilities: []string{"completion"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	configLayer, err := manifest.NewLayer(bytes.NewReader(configData), "application/vnd.docker.container.image.v1+json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	modelLayer, err := manifest.NewLayer(strings.NewReader(name+" layer"), "application/vnd.ollama.image.license")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := manifest.WriteManifest(model.ParseName(name), configLayer, []manifest.Layer{modelLayer}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCreateManifestList(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	writeManifestListVariant(t, "test-gguf", manifest.FormatGGUF)
+	writeManifestListVariant(t, "test-safetensors", manifest.FormatSafetensors)
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:  "test-list",
+		List:   []string{"test-gguf", "test-safetensors"},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d: %s", w.Code, w.Body.String())
+	}
+
+	data, err := manifest.ReadManifestData(model.ParseName("test-list"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var parent manifest.Manifest
+	if err := json.Unmarshal(data, &parent); err != nil {
+		t.Fatal(err)
+	}
+	if parent.MediaType != manifest.MediaTypeManifestList {
+		t.Fatalf("mediaType = %q, want %q", parent.MediaType, manifest.MediaTypeManifestList)
+	}
+	if len(parent.Manifests) != 2 {
+		t.Fatalf("manifest count = %d, want 2", len(parent.Manifests))
+	}
+
+	selected, err := manifest.ParseNamedManifest(model.ParseName("test-list"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Config.Digest == "" {
+		t.Fatal("selected manifest is missing config")
+	}
+
+	mlxInfo, err := GetModelInfo(api.ShowRequest{Model: "test-list", Runner: manifest.RunnerMLX})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mlxInfo.Details.Format != manifest.FormatSafetensors {
+		t.Fatalf("mlx show format = %q, want %q", mlxInfo.Details.Format, manifest.FormatSafetensors)
+	}
+
+	want := map[string]string{
+		manifest.RunnerGGML: manifest.FormatGGUF,
+		manifest.RunnerMLX:  manifest.FormatSafetensors,
+	}
+	for _, child := range parent.Manifests {
+		if got := want[child.Runner]; got != child.Format {
+			t.Fatalf("child runner/format = %q/%q, want one of %v", child.Runner, child.Format, want)
+		}
+		if child.BlobDigest() == "" {
+			t.Fatal("child manifest reference is missing digest")
+		}
+		if child.Config.Digest != "" || len(child.Layers) != 0 {
+			t.Fatalf("child manifest reference embedded config/layers: config=%q layers=%d", child.Config.Digest, len(child.Layers))
+		}
+
+		childBlob, err := manifest.BlobsPath(child.BlobDigest())
+		if err != nil {
+			t.Fatal(err)
+		}
+		childData, err := os.ReadFile(childBlob)
+		if err != nil {
+			t.Fatalf("child manifest blob missing: %v", err)
+		}
+		var resolved manifest.Manifest
+		if err := json.Unmarshal(childData, &resolved); err != nil {
+			t.Fatal(err)
+		}
+		if resolved.Config.Digest == "" || len(resolved.Layers) == 0 {
+			t.Fatalf("resolved child manifest missing config/layers: config=%q layers=%d", resolved.Config.Digest, len(resolved.Layers))
+		}
+	}
+}
+
+func TestCreateManifestListRejectsAmbiguousChildren(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	for _, tt := range []struct {
+		name      string
+		models    []string
+		wantError string
+	}{
+		{
+			name:      "duplicate digest",
+			models:    []string{"test-gguf-a", "test-gguf-a"},
+			wantError: "resolve to the same manifest",
+		},
+		{
+			name:      "duplicate runner",
+			models:    []string{"test-gguf-a", "test-gguf-b"},
+			wantError: "use the same runner",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OLLAMA_MODELS", t.TempDir())
+			var s Server
+
+			writeManifestListVariant(t, "test-gguf-a", manifest.FormatGGUF)
+			writeManifestListVariant(t, "test-gguf-b", manifest.FormatGGUF)
+
+			w := createRequest(t, s.CreateHandler, api.CreateRequest{
+				Model:  "test-list",
+				List:   tt.models,
+				Stream: &stream,
+			})
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status code = %d, want 400: %s", w.Code, w.Body.String())
+			}
+			if !strings.Contains(w.Body.String(), tt.wantError) {
+				t.Fatalf("error = %s, want substring %q", w.Body.String(), tt.wantError)
+			}
+		})
+	}
+}
+
+func TestCreateManifestListRejectsInvalidRequests(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		req       api.CreateRequest
+		wantError string
+	}{
+		{
+			name:      "empty list",
+			req:       api.CreateRequest{},
+			wantError: "must contain at least one model",
+		},
+		{
+			name: "from",
+			req: api.CreateRequest{
+				List: []string{"test-gguf", "test-safetensors"},
+				From: "base-model",
+			},
+			wantError: "cannot be combined",
+		},
+		{
+			name: "draft files",
+			req: api.CreateRequest{
+				List:       []string{"test-gguf", "test-safetensors"},
+				DraftFiles: map[string]string{"draft.gguf": "sha256-test"},
+			},
+			wantError: "cannot be combined",
+		},
+		{
+			name: "template",
+			req: api.CreateRequest{
+				List:     []string{"test-gguf", "test-safetensors"},
+				Template: "{{ .Prompt }}",
+			},
+			wantError: "cannot be combined",
+		},
+		{
+			name: "renderer",
+			req: api.CreateRequest{
+				List:     []string{"test-gguf", "test-safetensors"},
+				Renderer: "qwen3",
+			},
+			wantError: "cannot be combined",
+		},
+		{
+			name: "quantize",
+			req: api.CreateRequest{
+				List:     []string{"test-gguf", "test-safetensors"},
+				Quantize: "Q4_K_M",
+			},
+			wantError: "cannot be combined",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateCreateManifestListRequest(tt.req)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("error = %v, want substring %q", err, tt.wantError)
+			}
+			var requestErr manifestListRequestError
+			if !errors.As(err, &requestErr) {
+				t.Fatalf("error = %T, want manifestListRequestError so CreateHandler responds with %d", err, http.StatusBadRequest)
+			}
+		})
+	}
 }
 
 func TestCreateUnsetsSystem(t *testing.T) {
@@ -955,12 +1135,10 @@ func TestCreateUnsetsSystem(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
-		filepath.Join(p, "blobs", "sha256-99759ad5b91e723db0393d698ffbb448b1b7df5ff6377a108c49254583b1bc8c"),
+		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 		filepath.Join(p, "blobs", "sha256-f29e82a8284dbdf5910b1555580ff60b04238b8da9d5e51159ada67a4d0d5851"),
 	})
@@ -976,12 +1154,10 @@ func TestCreateUnsetsSystem(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
-		filepath.Join(p, "blobs", "sha256-99759ad5b91e723db0393d698ffbb448b1b7df5ff6377a108c49254583b1bc8c"),
+		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 	})
 }
@@ -1009,13 +1185,11 @@ func TestCreateMergeParameters(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-1d0ad71299d48c2fb7ae2b98e683643e771f8a5b72be34942af90d97a91c1e37"),
-		filepath.Join(p, "blobs", "sha256-99759ad5b91e723db0393d698ffbb448b1b7df5ff6377a108c49254583b1bc8c"),
+		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 	})
 
@@ -1034,10 +1208,7 @@ func TestCreateMergeParameters(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test2", "latest"),
-	})
+	checkManifestFiles(t, "test", "test2")
 
 	// Display contents of each blob in the directory
 	blobDir := filepath.Join(p, "blobs")
@@ -1057,7 +1228,7 @@ func TestCreateMergeParameters(t *testing.T) {
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-1d0ad71299d48c2fb7ae2b98e683643e771f8a5b72be34942af90d97a91c1e37"),
-		filepath.Join(p, "blobs", "sha256-99759ad5b91e723db0393d698ffbb448b1b7df5ff6377a108c49254583b1bc8c"),
+		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 		filepath.Join(p, "blobs", "sha256-e29a7b3c47287a2489c895d21fe413c20f859a85d20e749492f52a838e36e1ba"),
 	})
@@ -1092,15 +1263,12 @@ func TestCreateMergeParameters(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test2", "latest"),
-	})
+	checkManifestFiles(t, "test", "test2")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-12f58bb75cb3042d69a7e013ab87fb3c3c7088f50ddc62f0c77bd332f0d44d35"),
 		filepath.Join(p, "blobs", "sha256-1d0ad71299d48c2fb7ae2b98e683643e771f8a5b72be34942af90d97a91c1e37"),
-		filepath.Join(p, "blobs", "sha256-99759ad5b91e723db0393d698ffbb448b1b7df5ff6377a108c49254583b1bc8c"),
+		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 	})
 
@@ -1151,14 +1319,12 @@ func TestCreateReplacesMessages(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-298baeaf6928a60cf666d88d64a1ba606feb43a2865687c39e40652e407bffc4"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
-		filepath.Join(p, "blobs", "sha256-99759ad5b91e723db0393d698ffbb448b1b7df5ff6377a108c49254583b1bc8c"),
+		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
 	})
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
@@ -1185,14 +1351,11 @@ func TestCreateReplacesMessages(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test2", "latest"),
-	})
+	checkManifestFiles(t, "test", "test2")
 
 	// Old layers will not have been pruned
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
-		filepath.Join(p, "blobs", "sha256-99759ad5b91e723db0393d698ffbb448b1b7df5ff6377a108c49254583b1bc8c"),
+		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
 		filepath.Join(p, "blobs", "sha256-298baeaf6928a60cf666d88d64a1ba606feb43a2865687c39e40652e407bffc4"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 		filepath.Join(p, "blobs", "sha256-a60ecc9da299ec7ede453f99236e5577fd125e143689b646d9f0ddc9971bf4db"),
@@ -1245,12 +1408,10 @@ func TestCreateTemplateSystem(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
-		filepath.Join(p, "blobs", "sha256-99759ad5b91e723db0393d698ffbb448b1b7df5ff6377a108c49254583b1bc8c"),
+		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
 		filepath.Join(p, "blobs", "sha256-4c5f51faac758fecaff8db42f0b7382891a4d0c0bb885f7b86be88c814a7cc86"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 		filepath.Join(p, "blobs", "sha256-fe7ac77b725cda2ccad03f88a880ecdfd7a33192d6cae08fce2c0ee1455991ed"),
@@ -1472,14 +1633,12 @@ func TestCreateLicenses(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-	})
+	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-2af71558e438db0b73a20beab92dc278a94e1bbe974c00c1a33e3ab62d53a608"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
-		filepath.Join(p, "blobs", "sha256-99759ad5b91e723db0393d698ffbb448b1b7df5ff6377a108c49254583b1bc8c"),
+		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
 		filepath.Join(p, "blobs", "sha256-e5dcffe836b6ec8a58e492419b550e65fb8cbdc308503979e5dacb33ac7ea3b7"),
 	})
 
@@ -1527,7 +1686,7 @@ func TestCreateDetectTemplate(t *testing.T) {
 			filepath.Join(p, "blobs", "sha256-0d79f567714c62c048378f2107fb332dabee0135d080c302d884317da9433cc5"),
 			filepath.Join(p, "blobs", "sha256-3322a0c650c758b7386ff55629d27d07c07b6c3d3515e259dc3e5598c41e9f4e"),
 			filepath.Join(p, "blobs", "sha256-35360843d0c84fb1506952a131bbef13cd2bb4a541251f22535170c05b56e672"),
-			filepath.Join(p, "blobs", "sha256-99759ad5b91e723db0393d698ffbb448b1b7df5ff6377a108c49254583b1bc8c"),
+			filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
 		})
 	})
 
@@ -1544,7 +1703,7 @@ func TestCreateDetectTemplate(t *testing.T) {
 		}
 
 		checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
-			filepath.Join(p, "blobs", "sha256-99759ad5b91e723db0393d698ffbb448b1b7df5ff6377a108c49254583b1bc8c"),
+			filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
 			filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 		})
 	})
@@ -1738,7 +1897,10 @@ func TestDetectModelTypeFromFiles(t *testing.T) {
 			"model.gguf": digest,
 		}
 
-		modelType := detectModelTypeFromFiles(files)
+		modelType, err := detectModelTypeFromFiles(files)
+		if err != nil {
+			t.Fatalf("detectModelTypeFromFiles() error = %v", err)
+		}
 		if modelType != "gguf" {
 			t.Fatalf("expected model type 'gguf', got %q", modelType)
 		}
@@ -1750,7 +1912,10 @@ func TestDetectModelTypeFromFiles(t *testing.T) {
 			fmt.Sprintf("%x", digest): digest,
 		}
 
-		modelType := detectModelTypeFromFiles(files)
+		modelType, err := detectModelTypeFromFiles(files)
+		if err != nil {
+			t.Fatalf("detectModelTypeFromFiles() error = %v", err)
+		}
 		if modelType != "gguf" {
 			t.Fatalf("expected model type 'gguf', got %q", modelType)
 		}
@@ -1761,9 +1926,43 @@ func TestDetectModelTypeFromFiles(t *testing.T) {
 			"model.safetensors": "sha256:abc123",
 		}
 
-		modelType := detectModelTypeFromFiles(files)
+		modelType, err := detectModelTypeFromFiles(files)
+		if err != nil {
+			t.Fatalf("detectModelTypeFromFiles() error = %v", err)
+		}
 		if modelType != "safetensors" {
 			t.Fatalf("expected model type 'safetensors', got %q", modelType)
+		}
+	})
+
+	t.Run("safetensors file with sidecars", func(t *testing.T) {
+		p := t.TempDir()
+		t.Setenv("OLLAMA_MODELS", p)
+
+		configDigest := createTestBlob(t, []byte(`{"model_type":"test"}`))
+		files := map[string]string{
+			"model.safetensors": "sha256:abc123",
+			"config.json":       configDigest,
+		}
+
+		modelType, err := detectModelTypeFromFiles(files)
+		if err != nil {
+			t.Fatalf("detectModelTypeFromFiles() error = %v", err)
+		}
+		if modelType != "safetensors" {
+			t.Fatalf("expected model type 'safetensors', got %q", modelType)
+		}
+	})
+
+	t.Run("mixed file types", func(t *testing.T) {
+		files := map[string]string{
+			"model.gguf":        "sha256:abc123",
+			"model.safetensors": "sha256:def456",
+		}
+
+		_, err := detectModelTypeFromFiles(files)
+		if !errors.Is(err, errMixedModelFiles) {
+			t.Fatalf("detectModelTypeFromFiles() error = %v, want errMixedModelFiles", err)
 		}
 	})
 
@@ -1791,7 +1990,10 @@ func TestDetectModelTypeFromFiles(t *testing.T) {
 			"model.bin": digest,
 		}
 
-		modelType := detectModelTypeFromFiles(files)
+		modelType, err := detectModelTypeFromFiles(files)
+		if err != nil {
+			t.Fatalf("detectModelTypeFromFiles() error = %v", err)
+		}
 		if modelType != "" {
 			t.Fatalf("expected empty model type for unsupported file, got %q", modelType)
 		}
@@ -1821,9 +2023,36 @@ func TestDetectModelTypeFromFiles(t *testing.T) {
 			"noext": digest,
 		}
 
-		modelType := detectModelTypeFromFiles(files)
+		modelType, err := detectModelTypeFromFiles(files)
+		if err != nil {
+			t.Fatalf("detectModelTypeFromFiles() error = %v", err)
+		}
 		if modelType != "" {
 			t.Fatalf("expected empty model type for small file, got %q", modelType)
+		}
+	})
+
+	t.Run("blob read error", func(t *testing.T) {
+		p := t.TempDir()
+		t.Setenv("OLLAMA_MODELS", p)
+
+		digest := "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+		blobPath, err := manifest.BlobsPath(digest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(blobPath, 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = detectModelTypeFromFiles(map[string]string{
+			"noext": digest,
+		})
+		if err == nil {
+			t.Fatal("detectModelTypeFromFiles() error = nil, want blob read error")
+		}
+		if !strings.Contains(err.Error(), "read noext") {
+			t.Fatalf("detectModelTypeFromFiles() error = %v, want read noext", err)
 		}
 	})
 }
@@ -1843,6 +2072,477 @@ func createTestBlob(t *testing.T, data []byte) string {
 		t.Fatal(err)
 	}
 	return digest
+}
+
+func TestHeadBlobHandler(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	digest := createTestBlob(t, []byte("blob"))
+	missingDigest := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+	tests := []struct {
+		name   string
+		digest string
+		status int
+	}{
+		{
+			name:   "exists",
+			digest: digest,
+			status: http.StatusOK,
+		},
+		{
+			name:   "missing",
+			digest: missingDigest,
+			status: http.StatusNotFound,
+		},
+		{
+			name:   "invalid digest",
+			digest: "not-a-digest",
+			status: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := headBlobRequest(t, &s, tt.digest)
+			if w.Code != tt.status {
+				t.Fatalf("status = %d, want %d; body: %s", w.Code, tt.status, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestHeadBlobHandlerReturnsStatErrors(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod permission semantics differ on windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root can stat through chmod 0 directories")
+	}
+
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	digest := "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	blobPath, err := manifest.BlobsPath(digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blobDir := filepath.Dir(blobPath)
+	if err := os.MkdirAll(blobDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(blobDir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(blobDir, 0o755); err != nil {
+			t.Logf("failed to restore blob directory permissions: %v", err)
+		}
+	})
+
+	w := headBlobRequest(t, &s, digest)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusInternalServerError, w.Body.String())
+	}
+}
+
+func headBlobRequest(t *testing.T, s *Server, digest string) *httptest.ResponseRecorder {
+	t.Helper()
+	router := gin.New()
+	router.HEAD("/api/blobs/:digest", s.HeadBlobHandler)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodHead, "/api/blobs/"+digest, nil)
+	router.ServeHTTP(w, req)
+	return w
+}
+
+func createTestSafetensorsBlob(t *testing.T, tensors []*st.TensorData) string {
+	t.Helper()
+	data, err := io.ReadAll(st.BuildPackedSafetensorsReader(tensors))
+	if err != nil {
+		t.Fatalf("failed to build safetensors: %v", err)
+	}
+	return createTestBlob(t, data)
+}
+
+func createTestLayerInfo(t *testing.T, name, mediaType string, data []byte) xcreate.LayerInfo {
+	t.Helper()
+	return xcreate.LayerInfo{
+		Name:      name,
+		MediaType: mediaType,
+		Digest:    createTestBlob(t, data),
+		Size:      int64(len(data)),
+	}
+}
+
+func TestCreateSafetensorsRejectsUnsupportedArchitecture(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	modelDigest := createTestSafetensorsBlob(t, []*st.TensorData{
+		st.NewTensorDataFromBytes("model.embed_tokens.weight", "BF16", []int32{8, 8}, make([]byte, 8*8*2)),
+	})
+	configDigest := createTestBlob(t, []byte(`{"architectures":["UnsupportedForCausalLM"]}`))
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model: "unsupported-safetensors",
+		Files: map[string]string{
+			"model.safetensors": modelDigest,
+			"config.json":       configDigest,
+		},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), xcreate.ErrUnsupportedMLXArchitecture.Error()) {
+		t.Fatalf("response = %s, want unsupported architecture error", w.Body.String())
+	}
+	if _, err := manifest.ParseNamedManifest(model.ParseName("unsupported-safetensors")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unsupported model was created: %v", err)
+	}
+}
+
+func TestCreateSafetensorsRejectsInvalidInfo(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	modelDigest := createTestSafetensorsBlob(t, []*st.TensorData{
+		st.NewTensorDataFromBytes("model.embed_tokens.weight", "BF16", []int32{8, 8}, make([]byte, 8*8*2)),
+	})
+	configDigest := createTestBlob(t, []byte(`{"architectures":["Qwen3ForCausalLM"]}`))
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model: "invalid-info-safetensors",
+		Files: map[string]string{
+			"model.safetensors": modelDigest,
+			"config.json":       configDigest,
+		},
+		Info:   map[string]any{"context_length": 1.5},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "context_length") {
+		t.Fatalf("response = %s, want context_length error", w.Body.String())
+	}
+}
+
+func TestCreateSafetensorsRejectsInvalidRequires(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	modelDigest := createTestSafetensorsBlob(t, []*st.TensorData{
+		st.NewTensorDataFromBytes("model.embed_tokens.weight", "BF16", []int32{8, 8}, make([]byte, 8*8*2)),
+	})
+	configDigest := createTestBlob(t, []byte(`{"architectures":["Qwen3ForCausalLM"]}`))
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model: "invalid-requires-safetensors",
+		Files: map[string]string{
+			"model.safetensors": modelDigest,
+			"config.json":       configDigest,
+		},
+		Requires: "not-semver",
+		Stream:   &stream,
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "not valid semantic version") {
+		t.Fatalf("response = %s, want requires error", w.Body.String())
+	}
+}
+
+func TestCreateSafetensorsRuntimeErrorHidesLoaderDetails(t *testing.T) {
+	err := fmt.Errorf("%w: searched /private/server/path", mlxrunner.ErrRuntimeUnavailable)
+	resp := createSafetensorsErrorResponse(err)
+	if got, want := resp["status"], http.StatusServiceUnavailable; got != want {
+		t.Fatalf("status = %v, want %v", got, want)
+	}
+	if got, want := resp["error"], mlxrunner.ErrRuntimeUnavailable.Error(); got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
+func TestCreateSafetensorsRejectsMissingBlob(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	digest := "sha256:" + strings.Repeat("0", 64)
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:  "missing-safetensors",
+		Files:  map[string]string{"model.safetensors": digest},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "blob not found") {
+		t.Fatalf("response = %s, want missing blob error", w.Body.String())
+	}
+}
+
+func TestWriteSafetensorsManifestPreservesRequestMetadata(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	r := api.CreateRequest{
+		Model: "uploaded-safetensors",
+		Info: map[string]any{
+			"capabilities": []string{"completion", "thinking"},
+		},
+		Renderer: "test-renderer",
+		Parser:   "test-parser",
+		Requires: "0.20.0",
+		System:   "server-side import",
+	}
+	config := &model.ConfigV2{Renderer: r.Renderer, Parser: r.Parser, Requires: r.Requires}
+	if err := applyCreateInfo(config, r.Info); err != nil {
+		t.Fatal(err)
+	}
+
+	tensorData := []byte("tensor")
+	configData := []byte(`{"architectures":["TestModel"]}`)
+	tokenizerData := []byte(`{"version":"1.0"}`)
+	info := xcreate.ManifestInfo{Layers: []xcreate.LayerInfo{
+		createTestLayerInfo(t, "model.embed_tokens.weight", manifest.MediaTypeImageTensor, tensorData),
+		createTestLayerInfo(t, "config.json", "application/vnd.ollama.image.json", configData),
+		createTestLayerInfo(t, "tokenizer.json", "application/vnd.ollama.image.json", tokenizerData),
+	}}
+	info.ModelConfig = *config
+	if err := writeSafetensorsManifest(r, "", func(api.ProgressResponse) {})(context.Background(), r.Model, info); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := readCreatedModelConfig(t, "uploaded-safetensors")
+	if cfg.ModelFormat != "safetensors" {
+		t.Fatalf("ModelFormat = %q, want safetensors", cfg.ModelFormat)
+	}
+	if cfg.Parser != "test-parser" || cfg.Renderer != "test-renderer" {
+		t.Fatalf("parser/renderer = %q/%q, want test-parser/test-renderer", cfg.Parser, cfg.Renderer)
+	}
+	if cfg.Requires != "0.20.0" {
+		t.Fatalf("Requires = %q, want 0.20.0", cfg.Requires)
+	}
+	if !slices.Contains(cfg.Capabilities, "completion") || !slices.Contains(cfg.Capabilities, "thinking") {
+		t.Fatalf("Capabilities = %v, want completion and thinking", cfg.Capabilities)
+	}
+
+	mf, err := manifest.ParseNamedManifest(model.ParseName("uploaded-safetensors"))
+	if err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+	layerNames := map[string]string{}
+	for _, l := range mf.Layers {
+		layerNames[l.Name] = l.MediaType
+	}
+	if got := layerNames["model.embed_tokens.weight"]; got != manifest.MediaTypeImageTensor {
+		t.Fatalf("tensor layer media type = %q, want %q", got, manifest.MediaTypeImageTensor)
+	}
+	for _, name := range []string{"config.json", "tokenizer.json"} {
+		if layerNames[name] != "application/vnd.ollama.image.json" {
+			t.Fatalf("layer %q media type = %q, want image json", name, layerNames[name])
+		}
+	}
+	for _, l := range mf.Layers {
+		if l.MediaType == "application/vnd.ollama.image.system" {
+			return
+		}
+	}
+	t.Fatal("missing system layer")
+}
+
+func TestCreateSafetensorsRejectedReplacementPreservesOldModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	_, oldDigest := createBinFile(t, nil, nil)
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:  "replace-with-safetensors",
+		Files:  map[string]string{"model.gguf": oldDigest},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("create GGUF status = %d, want %d: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	oldBlob, err := manifest.BlobsPath(oldDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(oldBlob); err != nil {
+		t.Fatalf("stat old GGUF blob: %v", err)
+	}
+
+	modelDigest := createTestSafetensorsBlob(t, []*st.TensorData{
+		st.NewTensorDataFromBytes("model.embed_tokens.weight", "BF16", []int32{8, 8}, make([]byte, 8*8*2)),
+	})
+	configDigest := createTestBlob(t, []byte(`{"architectures":["TestModel"],"model_type":"test"}`))
+	w = createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model: "replace-with-safetensors",
+		Files: map[string]string{
+			"model.safetensors": modelDigest,
+			"config.json":       configDigest,
+		},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("replace with unsupported Safetensors status = %d, want %d: %s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+	if _, err := os.Stat(oldBlob); err != nil {
+		t.Fatalf("old GGUF blob was removed after rejected replacement: %v", err)
+	}
+	mf, err := manifest.ParseNamedManifest(model.ParseName("replace-with-safetensors"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mf.Layers) == 0 || mf.Layers[0].Digest != oldDigest {
+		t.Fatalf("manifest layers = %#v, want original GGUF %s", mf.Layers, oldDigest)
+	}
+}
+
+func TestWriteSafetensorsManifestIncludesDraft(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	draftDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(draftDir, "config.json"), []byte(`{"architectures":["TestDraftModel"],"model_type":"test_draft"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	mainData := []byte("main tensor")
+	draftData := []byte("draft tensor")
+	draftConfig := []byte(`{"architectures":["TestDraftModel"]}`)
+	info := xcreate.ManifestInfo{Layers: []xcreate.LayerInfo{
+		createTestLayerInfo(t, "model.embed_tokens.weight", manifest.MediaTypeImageTensor, mainData),
+		createTestLayerInfo(t, "draft.model.embed_tokens.weight", manifest.MediaTypeImageTensor, draftData),
+		createTestLayerInfo(t, "draft/config.json", "application/vnd.ollama.image.json", draftConfig),
+	}}
+	name := "uploaded-safetensors-with-draft"
+	if err := writeSafetensorsManifest(api.CreateRequest{Model: name}, draftDir, func(api.ProgressResponse) {})(context.Background(), name, info); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := readCreatedModelConfig(t, name)
+	if cfg.Draft == nil {
+		t.Fatal("created config is missing draft metadata")
+	}
+	if cfg.Draft.Architecture != "TestDraftModel" || cfg.Draft.TensorPrefix != "draft." || cfg.Draft.Config != "draft/config.json" {
+		t.Fatalf("draft metadata = %#v, want TestDraftModel with draft tensor/config prefixes", cfg.Draft)
+	}
+
+	mf, err := manifest.ParseNamedManifest(model.ParseName(name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotLayers := make(map[string]bool)
+	for _, layer := range mf.Layers {
+		gotLayers[layer.Name] = true
+	}
+	for _, name := range []string{"model.embed_tokens.weight", "draft.model.embed_tokens.weight", "draft/config.json"} {
+		if !gotLayers[name] {
+			t.Fatalf("created manifest is missing layer %q", name)
+		}
+	}
+}
+
+func TestCreateSafetensorsWithDraft(t *testing.T) {
+	if err := mlxrunner.CheckRuntime(); err != nil {
+		t.Skipf("MLX not available: %v", err)
+	}
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	modelDigest := createTestSafetensorsBlob(t, []*st.TensorData{
+		st.NewTensorDataFromBytes("model.embed_tokens.weight", "BF16", []int32{8, 8}, make([]byte, 8*8*2)),
+	})
+	modelConfigDigest := createTestBlob(t, []byte(`{"architectures":["Qwen3ForCausalLM"]}`))
+	draftDigest := createTestSafetensorsBlob(t, []*st.TensorData{
+		st.NewTensorDataFromBytes("model.embed_tokens.weight", "BF16", []int32{8, 8}, make([]byte, 8*8*2)),
+	})
+	draftConfigDigest := createTestBlob(t, []byte(`{"architectures":["DFlashDraftModel"]}`))
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model: "uploaded-safetensors-with-draft",
+		Files: map[string]string{
+			"model.safetensors": modelDigest,
+			"config.json":       modelConfigDigest,
+		},
+		DraftFiles: map[string]string{
+			"model.safetensors": draftDigest,
+			"config.json":       draftConfigDigest,
+		},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	cfg := readCreatedModelConfig(t, "uploaded-safetensors-with-draft")
+	if cfg.Draft == nil || cfg.Draft.Architecture != "DFlashDraftModel" {
+		t.Fatalf("draft config = %#v, want DFlashDraftModel", cfg.Draft)
+	}
+	mf, err := manifest.ParseNamedManifest(model.ParseName("uploaded-safetensors-with-draft"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantLayers := map[string]bool{
+		"model.embed_tokens.weight":       false,
+		"draft.model.embed_tokens.weight": false,
+		"draft/config.json":               false,
+	}
+	for _, layer := range mf.Layers {
+		if _, ok := wantLayers[layer.Name]; ok {
+			wantLayers[layer.Name] = true
+		}
+	}
+	for name, found := range wantLayers {
+		if !found {
+			t.Errorf("created manifest is missing layer %q", name)
+		}
+	}
+}
+
+func TestCreateSafetensorsRejectsUnsupportedInputs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	t.Run("from overlay", func(t *testing.T) {
+		w := createRequest(t, s.CreateHandler, api.CreateRequest{
+			Model:  "uploaded-safetensors",
+			From:   "llama3.2",
+			Files:  map[string]string{"model.safetensors": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+			Stream: &stream,
+		})
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected status 400, got %d: %s", w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), errSafetensorsFrom.Error()) {
+			t.Fatalf("expected FROM error, got %s", w.Body.String())
+		}
+	})
+
+	t.Run("adapters", func(t *testing.T) {
+		w := createRequest(t, s.CreateHandler, api.CreateRequest{
+			Model:    "uploaded-safetensors",
+			Files:    map[string]string{"model.safetensors": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+			Adapters: map[string]string{"adapter.gguf": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+			Stream:   &stream,
+		})
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected status 400, got %d: %s", w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), errSafetensorsAdapters.Error()) {
+			t.Fatalf("expected adapters error, got %s", w.Body.String())
+		}
+	})
 }
 
 // createSafetensorsTestModel creates a minimal safetensors model manifest for testing.
@@ -1880,14 +2580,27 @@ func TestCreateFromSafetensorsModel_PreservesConfig(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", p)
 	var s Server
 
-	// Create a source safetensors model with specific config fields
-	createSafetensorsTestModel(t, "source-model", model.ConfigV2{
-		ModelFormat:  "safetensors",
-		Capabilities: []string{"completion"},
-		Requires:     "0.14.0",
-		Renderer:     "gemma3",
-		Parser:       "gemma3",
-	}, nil)
+	sourceConfig := model.ConfigV2{
+		ModelFormat:   "safetensors",
+		ModelFamily:   "gemma3",
+		ModelFamilies: []string{"gemma3", "gemma"},
+		ModelType:     "4B",
+		FileType:      "nvfp4",
+		Renderer:      "gemma3",
+		Parser:        "gemma3",
+		Requires:      "0.19.0",
+		Capabilities:  []string{"completion", "vision"},
+		ContextLen:    131072,
+		EmbedLen:      2560,
+		BaseName:      "gemma-3",
+		Draft: &model.Draft{
+			ModelFormat:  "safetensors",
+			Architecture: "gemma3_mtp",
+			TensorPrefix: "draft.",
+			Config:       "draft/config.json",
+		},
+	}
+	createSafetensorsTestModel(t, "source-model", sourceConfig, nil)
 
 	// Create a derived model FROM the source
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
@@ -1923,25 +2636,8 @@ func TestCreateFromSafetensorsModel_PreservesConfig(t *testing.T) {
 		t.Fatalf("failed to unmarshal config: %v", err)
 	}
 
-	// Verify safetensors-specific config fields are preserved
-	if cfg.ModelFormat != "safetensors" {
-		t.Errorf("ModelFormat = %q, want %q", cfg.ModelFormat, "safetensors")
-	}
-
-	if !slices.Contains(cfg.Capabilities, "completion") {
-		t.Errorf("Capabilities = %v, want to contain %q", cfg.Capabilities, "completion")
-	}
-
-	if cfg.Requires != "0.14.0" {
-		t.Errorf("Requires = %q, want %q", cfg.Requires, "0.14.0")
-	}
-
-	if cfg.Renderer != "gemma3" {
-		t.Errorf("Renderer = %q, want %q", cfg.Renderer, "gemma3")
-	}
-
-	if cfg.Parser != "gemma3" {
-		t.Errorf("Parser = %q, want %q", cfg.Parser, "gemma3")
+	if diff := gocmp.Diff(sourceConfig, cfg); diff != "" {
+		t.Fatalf("derived config mismatch (-want +got):\n%s", diff)
 	}
 
 	// Verify system prompt was added
@@ -1973,31 +2669,142 @@ func TestCreateFromSafetensorsModel_PreservesConfig(t *testing.T) {
 	}
 }
 
+func TestCreateFromSafetensorsModel_AppliesOnlyExplicitOverrides(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	sourceConfig := model.ConfigV2{
+		ModelFormat:   "safetensors",
+		ModelFamily:   "qwen35",
+		ModelFamilies: []string{"qwen35"},
+		ModelType:     "2B",
+		FileType:      "nvfp4",
+		Renderer:      "source-renderer",
+		Parser:        "source-parser",
+		Requires:      "0.19.0",
+		Capabilities:  []string{"completion", "vision", "thinking"},
+		ContextLen:    262144,
+		EmbedLen:      2048,
+		BaseName:      "qwen3.5",
+	}
+	createSafetensorsTestModel(t, "source-overrides", sourceConfig, nil)
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:    "derived-overrides",
+		From:     "source-overrides",
+		Renderer: "request-renderer",
+		Parser:   "request-parser",
+		Requires: "0.20.0",
+		Info: map[string]any{
+			"capabilities": []string{"completion"},
+		},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("create status = %d, want %d: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	want := sourceConfig
+	want.Renderer = "request-renderer"
+	want.Parser = "request-parser"
+	want.Requires = "0.20.0"
+	want.Capabilities = []string{"completion"}
+	if diff := gocmp.Diff(want, readCreatedModelConfig(t, "derived-overrides")); diff != "" {
+		t.Fatalf("derived config mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestCreateFromRemoteModelPreservesRoutingAndMetadata(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:      "remote-source",
+		From:       "upstream-model",
+		RemoteHost: "https://ollama.com",
+		Info: map[string]any{
+			"capabilities":       []string{"completion", "tools"},
+			"model_family":       "gptoss",
+			"base_name":          "gpt-oss",
+			"context_length":     131072,
+			"embedding_length":   2880,
+			"quantization_level": "MXFP4",
+			"parameter_size":     "20.9B",
+		},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("create remote source status = %d, want %d: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+	sourceConfig := readCreatedModelConfig(t, "remote-source")
+
+	w = createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:  "remote-derived",
+		From:   "remote-source",
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("create derived remote status = %d, want %d: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	if diff := gocmp.Diff(sourceConfig, readCreatedModelConfig(t, "remote-derived")); diff != "" {
+		t.Fatalf("derived remote config mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestCreateFromModelRejectsCorruptConfig(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	configLayer, err := manifest.NewLayer(strings.NewReader("{"), "application/vnd.docker.container.image.v1+json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tensorDigest := createTestBlob(t, []byte("tensor"))
+	if err := manifest.WriteManifest(model.ParseName("corrupt-source"), configLayer, []manifest.Layer{{
+		MediaType: manifest.MediaTypeImageTensor,
+		Digest:    tensorDigest,
+		Size:      int64(len("tensor")),
+		Name:      "model.weight",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:  "corrupt-derived",
+		From:   "corrupt-source",
+		Stream: &stream,
+	})
+	if w.Code == http.StatusOK {
+		t.Fatalf("create status = %d, want failure: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "decode config") {
+		t.Fatalf("create error = %s, want config decode failure", w.Body.String())
+	}
+	if _, err := manifest.ParseNamedManifest(model.ParseName("corrupt-derived")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("derived manifest exists after rejected create: %v", err)
+	}
+}
+
 func TestCreateFromSafetensorsModel_OverrideSystem(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
 	var s Server
 
-	// Create source with a system prompt
+	systemLayer, err := manifest.NewLayer(strings.NewReader("Original system prompt"), "application/vnd.ollama.image.system")
+	if err != nil {
+		t.Fatal(err)
+	}
 	createSafetensorsTestModel(t, "source-with-system", model.ConfigV2{
 		ModelFormat:  "safetensors",
 		Capabilities: []string{"completion"},
-	}, nil)
+	}, []manifest.Layer{systemLayer})
 
-	// First create with system prompt
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Model:  "source-with-system",
-		From:   "source-with-system",
-		System: "Original system prompt",
-		Stream: &stream,
-	})
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	// Now create a derived model with a different system prompt
-	w = createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model:  "derived-new-system",
 		From:   "source-with-system",
 		System: "New system prompt",
@@ -2007,21 +2814,62 @@ func TestCreateFromSafetensorsModel_OverrideSystem(t *testing.T) {
 		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// Verify ModelFormat is preserved even after override
 	derivedName := model.ParseName("derived-new-system")
 	mf, err := manifest.ParseNamedManifest(derivedName)
 	if err != nil {
 		t.Fatalf("failed to parse derived manifest: %v", err)
 	}
 
-	configBlobPath, _ := manifest.BlobsPath(mf.Config.Digest)
-	configBlob, _ := os.ReadFile(configBlobPath)
-
-	var cfg model.ConfigV2
-	json.Unmarshal(configBlob, &cfg)
-
+	cfg := readCreatedModelConfig(t, "derived-new-system")
 	if cfg.ModelFormat != "safetensors" {
 		t.Errorf("ModelFormat = %q, want %q", cfg.ModelFormat, "safetensors")
+	}
+
+	var systems []string
+	for _, layer := range mf.Layers {
+		if layer.MediaType != "application/vnd.ollama.image.system" {
+			continue
+		}
+		f, err := layer.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, readErr := io.ReadAll(f)
+		closeErr := f.Close()
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if closeErr != nil {
+			t.Fatal(closeErr)
+		}
+		systems = append(systems, string(b))
+	}
+	if diff := gocmp.Diff([]string{"New system prompt"}, systems); diff != "" {
+		t.Fatalf("system layers mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestCreateFromModelRejectsInvalidTemplate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	createSafetensorsTestModel(t, "template-source", model.ConfigV2{
+		ModelFormat:  "safetensors",
+		Capabilities: []string{"completion"},
+	}, nil)
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:    "invalid-template",
+		From:     "template-source",
+		Template: "{{ if .Prompt }}",
+		Stream:   &stream,
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("create status = %d, want %d: %s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "template error") {
+		t.Fatalf("create error = %s, want template error", w.Body.String())
 	}
 }
 

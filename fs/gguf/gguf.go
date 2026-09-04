@@ -273,14 +273,15 @@ func readArrayData[T any](f *File, n uint64) (s []T, err error) {
 		return nil, err
 	}
 
-	s = make([]T, size)
-	for i := range size {
+	// The count comes from the file, so grow only as elements are read.
+	s = make([]T, 0, min(size, 4096))
+	for range size {
 		e, err := read[T](f)
 		if err != nil {
 			return nil, err
 		}
 
-		s[i] = e
+		s = append(s, e)
 	}
 
 	return s, nil
@@ -292,14 +293,15 @@ func readArrayString(f *File, n uint64) (s []string, err error) {
 		return nil, err
 	}
 
-	s = make([]string, size)
-	for i := range size {
+	// The count comes from the file, so grow only as elements are read.
+	s = make([]string, 0, min(size, 4096))
+	for range size {
 		e, err := readString(f)
 		if err != nil {
 			return nil, err
 		}
 
-		s[i] = e
+		s = append(s, e)
 	}
 
 	return s, nil
@@ -377,6 +379,18 @@ func (f *File) TensorInfo(name string) TensorInfo {
 
 func (f *File) NumTensors() int {
 	return int(f.tensors.count)
+}
+
+func (f *File) TensorDataOffset() int64 {
+	// The tensor data base offset is only known after all tensor metadata has
+	// been read because GGUF stores it after the tensor-info table.
+	_ = f.keyValues.rest()
+	_ = f.tensors.rest()
+	return f.offset
+}
+
+func (f *File) ReaderAt() io.ReaderAt {
+	return f.file
 }
 
 func (f *File) TensorInfos() iter.Seq2[int, TensorInfo] {
