@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -15,6 +16,7 @@ import (
 )
 
 const openCodeInstallScript = "curl -fsSL https://opencode.ai/install | bash"
+const openCodeRecommendedContext = 64 * 1024
 
 var openCodeGOOS = runtime.GOOS
 
@@ -135,6 +137,79 @@ func openCodeInstallerCommand(goos string) (string, []string, error) {
 	default:
 		return "", nil, fmt.Errorf("unsupported platform for opencode install: %s", goos)
 	}
+}
+
+func (o *OpenCode) prepareRunLaunchModels(ctx context.Context, client *launcherClient, primary string, models []LaunchModel) ([]LaunchModel, error) {
+	return o.prepareLaunchModels(ctx, client, primary, models, true)
+}
+
+func (o *OpenCode) prepareConfigLaunchModels(ctx context.Context, client *launcherClient, primary string, models []LaunchModel) []LaunchModel {
+	prepared, _ := o.prepareLaunchModels(ctx, client, primary, models, false)
+	return prepared
+}
+
+func (o *OpenCode) prepareLaunchModels(ctx context.Context, client *launcherClient, primary string, models []LaunchModel, warn bool) ([]LaunchModel, error) {
+	if primary == "" {
+		return models, nil
+	}
+
+	if !hasLocalLaunchModel(primary, models) {
+		return models, nil
+	}
+
+	contextLength, ok := client.localServerContextLength(ctx)
+	if !ok {
+		return models, nil
+	}
+
+	models = launchModelsWithOpenCodeLocalLimits(primary, models, contextLength)
+	if warn && !isCloudModelName(primary) && contextLength < openCodeRecommendedContext {
+		if err := confirmLocalContextWarning(o.String(), contextLength, openCodeRecommendedContext); err != nil {
+			return nil, err
+		}
+	}
+	return models, nil
+}
+
+func launchModelsWithOpenCodeLocalLimits(primary string, models []LaunchModel, contextLength int) []LaunchModel {
+	if contextLength <= 0 {
+		return models
+	}
+	if len(models) == 0 && primary != "" {
+		models = launchModelsFromNames([]string{primary})
+	}
+
+	out := cloneLaunchModels(models)
+	for i := range out {
+		if isCloudModelName(out[i].Name) {
+			continue
+		}
+		out[i].ContextLength = contextLength
+		out[i].MaxOutputTokens = openCodeLocalMaxOutputTokens(contextLength)
+	}
+	if primary != "" && !isCloudModelName(primary) && !hasLaunchModel(out, primary) {
+		model := fallbackLaunchModel(primary)
+		model.ContextLength = contextLength
+		model.MaxOutputTokens = openCodeLocalMaxOutputTokens(contextLength)
+		out = append([]LaunchModel{model}, out...)
+	}
+	return out
+}
+
+func openCodeLocalMaxOutputTokens(contextLength int) int {
+	return min(8192, max(2048, contextLength/4))
+}
+
+func hasLocalLaunchModel(primary string, models []LaunchModel) bool {
+	if primary != "" && !isCloudModelName(primary) {
+		return true
+	}
+	for _, model := range models {
+		if model.Name != "" && !isCloudModelName(model.Name) {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveContent returns the inline config to send via OPENCODE_CONFIG_CONTENT.
