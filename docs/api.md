@@ -1560,6 +1560,7 @@ Download a model from the ollama library. Cancelled pulls are resumed from where
 ### Parameters
 
 - `model`: name of the model to pull
+- `force`: (optional) if `true`, download the model even when it is determined too large to run on this system
 - `insecure`: (optional) allow insecure connections to the library. Only use this if you are pulling from your own library during development.
 - `stream`: (optional) if `false` the response will be returned as a single response object, rather than a stream of objects
 

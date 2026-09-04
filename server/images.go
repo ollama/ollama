@@ -1033,16 +1033,84 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	return nil
 }
 
-func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
-	n := model.ParseName(name)
+type preparedModelPull struct {
+	name         model.Name
+	manifest     *manifest.Manifest
+	manifestData []byte
+	regOpts      *registryOptions
+	progress     func(api.ProgressResponse)
+}
 
-	// build deleteMap to prune unused layers
+// prepareModelPull fetches the manifest needed for admission without
+// downloading or modifying model blobs.
+func prepareModelPull(ctx context.Context, name string, regOpts *registryOptions, progress func(api.ProgressResponse)) (preparedModelPull, error) {
+	n := model.ParseName(name)
+	if n.ProtocolScheme == "http" && !regOpts.Insecure {
+		return preparedModelPull{}, errInsecureProtocol
+	}
+
+	progress(api.ProgressResponse{Status: "pulling manifest"})
+
+	mf, manifestData, err := pullModelManifest(ctx, n, regOpts)
+	if err != nil {
+		return preparedModelPull{}, fmt.Errorf("pull model manifest: %s", err)
+	}
+
+	return preparedModelPull{
+		name:         n,
+		manifest:     mf,
+		manifestData: manifestData,
+		regOpts:      regOpts,
+		progress:     progress,
+	}, nil
+}
+
+// PullModel pulls a model without server-level admission checks. Create uses
+// it to fetch source material that may be transformed into a smaller model, so
+// whether the source can run is irrelevant.
+func PullModel(ctx context.Context, name string, regOpts *registryOptions, progress func(api.ProgressResponse)) error {
+	prepared, err := prepareModelPull(ctx, name, regOpts, progress)
+	if err != nil {
+		return err
+	}
+	return prepared.pull(ctx)
+}
+
+// pullModel applies API pull admission before entering the common transfer
+// path. Backend-specific fit policy belongs to the scheduler assessment.
+func (s *Server) pullModel(ctx context.Context, name string, regOpts *registryOptions, force bool, progress func(api.ProgressResponse)) error {
+	prepared, err := prepareModelPull(ctx, name, regOpts, progress)
+	if err != nil {
+		return err
+	}
+	if !force && s.sched != nil {
+		// The manifest is not persisted until every layer has been fetched and
+		// verified. Returning here discards the remote manifest while leaving
+		// any previously installed version untouched.
+		if err := s.sched.checkManifestFit(ctx, name, prepared.manifest); err != nil {
+			return err
+		}
+	}
+	return prepared.pull(ctx)
+}
+
+// pull downloads, verifies, and commits a prepared model. It deliberately has
+// no scheduler dependency so create and admitted API pulls share this path.
+func (p preparedModelPull) pull(ctx context.Context) error {
+	n := p.name
+	mf := p.manifest
+	manifestData := p.manifestData
+	regOpts := p.regOpts
+	fn := p.progress
+
+	// Snapshot the installed manifest at execution time. Existing blobs remain
+	// cache hits, and a successful repeat pull prunes only replaced layers.
 	deleteMap := make(map[string]struct{})
 	existingMf, err := manifest.ParseNamedManifest(n)
 	if errors.Is(err, os.ErrNotExist) {
 		// noop
 	} else if err != nil {
-		slog.Warn("pulling model with bad existing manifest", "name", name, "error", err)
+		slog.Warn("pulling model with bad existing manifest", "name", n.String(), "error", err)
 	} else {
 		for _, l := range existingMf.Layers {
 			deleteMap[l.Digest] = struct{}{}
@@ -1052,16 +1120,6 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		}
 	}
 
-	if n.ProtocolScheme == "http" && !regOpts.Insecure {
-		return errInsecureProtocol
-	}
-
-	fn(api.ProgressResponse{Status: "pulling manifest"})
-
-	mf, manifestData, err := pullModelManifest(ctx, n, regOpts)
-	if err != nil {
-		return fmt.Errorf("pull model manifest: %s", err)
-	}
 	if hasTensorLayers(mf.Layers) {
 		if err := mlx.CheckInit(); err != nil {
 			slog.Debug("MLX is unavailable for safetensors model pull", "error", err)

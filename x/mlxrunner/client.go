@@ -300,25 +300,15 @@ func (c *Client) HasExited() bool {
 	}
 }
 
-// Load checks whether the model fits in GPU memory and starts the subprocess.
+// Load rejects model weights that exceed available GPU memory, then starts
+// the subprocess.
 func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error) {
-	if len(gpus) > 0 {
-		modelSize := c.memory.Load()
-		// We currently only use the first GPU with MLX
-		available := gpus[0].FreeMemory
-		overhead := gpus[0].MinimumMemory() + envconfig.GpuOverhead()
-		if available > overhead {
-			available -= overhead
-		} else {
-			available = 0
+	estimate := EstimateLoad(c.memory.Load(), gpus)
+	if estimate.ExceedsAvailableMemory() {
+		if requireFull {
+			return nil, llm.ErrLoadRequiredFull
 		}
-
-		if modelSize > available {
-			if requireFull {
-				return nil, llm.ErrLoadRequiredFull
-			}
-			return nil, fmt.Errorf("model requires %s but only %s are available (after %s overhead)", format.HumanBytes2(modelSize), format.HumanBytes2(available), format.HumanBytes2(overhead))
-		}
+		return nil, fmt.Errorf("model requires %s but only %s are available (after %s overhead)", format.HumanBytes2(estimate.modelSize), format.HumanBytes2(estimate.available), format.HumanBytes2(estimate.overhead))
 	}
 
 	// Find a free port
