@@ -1901,13 +1901,9 @@ func quitForHandoff() {
 }
 
 func quit() {
-	handoff := appHandoffInProgress.Load()
 	ctx, cancel := context.WithTimeout(context.Background(), claudeShutdownTimeout)
 	defer cancel()
-
-	// ChatGPT's loopback configuration is persistent. Leave it and the running
-	// app untouched so reopening Ollama resumes routing without another restart.
-	if err := restoreClaudeAppForTermination(ctx, handoff); err != nil {
+	if err := restoreClaudeAppForTermination(ctx, appHandoffInProgress.Load()); err != nil {
 		slog.Warn("failed to restore Claude before quitting", "error", err)
 	}
 	C.quit()
