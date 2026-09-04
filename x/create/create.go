@@ -245,7 +245,9 @@ func isStackedExpertWeight(name string) bool {
 	return strings.Contains(name, ".experts.") ||
 		strings.Contains(name, ".mlp.switch_mlp.") ||
 		strings.Contains(name, ".mlp.shared_experts.") ||
-		strings.Contains(name, ".mixer.shared_experts.")
+		strings.Contains(name, ".mixer.shared_experts.") ||
+		strings.Contains(name, ".block_sparse_moe.input_linear") ||
+		strings.Contains(name, ".block_sparse_moe.output_linear")
 }
 
 // isRoutingGate reports the small MoE routing/gate weights that select the
@@ -499,6 +501,8 @@ var tensorImportTransformRegistry = map[string]tensorImportTransformFactory{
 	"NemotronH_Nano_VL_V2":                  newNemotronHImportTransform,
 	"NemotronH_Nano_Omni_Reasoning_V3":      newNemotronHImportTransform,
 	"NemotronHForCausalLM":                  newNemotronHImportTransform,
+	"GraniteForCausalLM":                    newGraniteImportTransform,
+	"GraniteMoeForCausalLM":                 newGraniteImportTransform,
 }
 
 func newTensorImportTransform(inv Inventory) (quantizePolicy, error) {

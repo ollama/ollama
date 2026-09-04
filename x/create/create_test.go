@@ -508,6 +508,52 @@ func TestGetTensorQuantization_StackedExpert3D(t *testing.T) {
 	}
 }
 
+func TestGetTensorQuantization_GraniteMoeFusedExperts(t *testing.T) {
+	// GraniteMoe ships experts pre-fused into a single [E, out, in] tensor
+	// named block_sparse_moe.{input,output}_linear, not one of the
+	// per-expert or switch_mlp/experts naming conventions. Before treating
+	// this name as a stacked expert weight, the 3D shape guard in
+	// GetTensorQuantization rejected it outright, silently skipping
+	// quantization regardless of the requested type.
+	gateUp := GetTensorQuantization(
+		"model.layers.0.block_sparse_moe.input_linear.weight",
+		[]int32{56, 3072, 2048},
+		"nvfp4",
+	)
+	if gateUp != "nvfp4" {
+		t.Fatalf("input_linear quantization = %q, want %q", gateUp, "nvfp4")
+	}
+
+	down := GetTensorQuantization(
+		"model.layers.0.block_sparse_moe.output_linear.weight",
+		[]int32{56, 2048, 1536},
+		"nvfp4",
+	)
+	if down != "nvfp4" {
+		t.Fatalf("output_linear quantization = %q, want %q", down, "nvfp4")
+	}
+
+	// language_model. prefix variant, as used by multimodal wrappers.
+	prefixed := GetTensorQuantization(
+		"language_model.model.layers.0.block_sparse_moe.output_linear.weight",
+		[]int32{56, 2048, 1536},
+		"int4",
+	)
+	if prefixed != "int4" {
+		t.Fatalf("prefixed output_linear quantization = %q, want %q", prefixed, "int4")
+	}
+
+	// Unaligned last dim still gets rejected, same as any other tensor.
+	unaligned := GetTensorQuantization(
+		"model.layers.0.block_sparse_moe.output_linear.weight",
+		[]int32{56, 2048, 24},
+		"nvfp4",
+	)
+	if unaligned != "" {
+		t.Fatalf("unaligned output_linear quantization = %q, want %q", unaligned, "")
+	}
+}
+
 func TestIsAligned(t *testing.T) {
 	tests := []struct {
 		name      string
