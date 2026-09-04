@@ -1525,6 +1525,20 @@ func TestCreateHandler(t *testing.T) {
 	}
 }
 
+func TestCreateHandlerRejectsUnsupportedQuantizeBeforeReadingModelfile(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.Flags().Bool("experimental", false, "")
+	cmd.Flags().String("draft-quantize", "", "")
+	cmd.Flags().String("quantize", "Q5_K_M", "")
+	cmd.Flags().String("file", filepath.Join(t.TempDir(), "missing"), "")
+	cmd.SetContext(t.Context())
+
+	err := CreateHandler(cmd, []string{"test-model"})
+	if err == nil || !strings.Contains(err.Error(), "unsupported quantization type Q5_K_M") {
+		t.Fatalf("error = %v, want unsupported quantization type", err)
+	}
+}
+
 func TestCreateRequestFileNamesPreservesModelDirectoryLayout(t *testing.T) {
 	root := t.TempDir()
 	files := map[string]string{

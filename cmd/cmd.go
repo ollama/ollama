@@ -44,6 +44,7 @@ import (
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/parser"
@@ -284,6 +285,13 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		}, p)
 	}
 
+	quantize, _ := cmd.Flags().GetString("quantize")
+	if quantize != "" {
+		if _, err := ggml.ParseFileType(strings.ToUpper(quantize)); err != nil {
+			return err
+		}
+	}
+
 	// Standard Modelfile + API path
 	var reader io.Reader
 
@@ -322,7 +330,6 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	spinner.Stop()
 
 	req.Model = modelName
-	quantize, _ := cmd.Flags().GetString("quantize")
 	if quantize != "" {
 		req.Quantize = quantize
 	}
