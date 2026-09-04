@@ -87,20 +87,22 @@ func (h *CodexDesktop) rewriteAccessErrorJSON(body []byte, status int) ([]byte, 
 		var code, errorType string
 		_ = json.Unmarshal(fields["code"], &code)
 		_ = json.Unmarshal(fields["type"], &errorType)
-		var rewritten string
+		var rewritten, reason string
 		switch {
 		case status == http.StatusUnauthorized || code == "authentication_error" || code == "unauthorized" || errorType == "authentication_error" || strings.EqualFold(strings.TrimSpace(message), "unauthorized"):
 			rewritten = codexSignInMessage
+			reason = "sign_in"
 			// Codex displays these errors as plain text, including raw HTTP error
 			// bodies. Keep device sign-in URLs out of the user-facing response.
 			delete(payload, "signin_url")
 			delete(fields, "signin_url")
 		case strings.Contains(strings.ToLower(message), "this model requires a subscription or extra usage"):
 			rewritten = codexSubscriptionMessage
+			reason = "subscription"
 		default:
 			return body, false
 		}
-		h.logger.Debug("Codex Ollama access error", "status", status, "code", code, "error", message)
+		h.logger.Debug("Codex Ollama access error", "status", status, "reason", reason)
 		encoded, _ := json.Marshal(rewritten)
 		if stringError {
 			payload["error"] = encoded

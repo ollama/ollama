@@ -1552,6 +1552,87 @@ func TestCodexAppConfigureUsesConnectableHostForUnspecifiedBindAddress(t *testin
 	}
 }
 
+func TestCodexAppHostChangePreservesRestoreState(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withCodexAppPlatform(t, "darwin")
+	withCodexAppProcessHooks(t, func() bool { return false }, func() error { return nil }, func() error { return nil })
+
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := "" +
+		`model = "gpt-5.6-sol"` + "\n" +
+		`model_provider = "openai"` + "\n" +
+		`openai_base_url = "https://api.openai.com/v1"` + "\n"
+	if err := os.WriteFile(configPath, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+	app := &CodexApp{}
+	if err := app.ConfigureWithModels("llama3.2", testLaunchModels("llama3.2")); err != nil {
+		t.Fatalf("initial ConfigureWithModels returned error: %v", err)
+	}
+
+	// A changed server address must not make the off-switch disappear or cause
+	// the next update to save Ollama's managed root as the user's restore target.
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:22434")
+	if !app.OllamaConfigured() {
+		t.Fatal("OllamaConfigured = false after host change, want managed config to remain detectable")
+	}
+	if err := app.ConfigureWithModels("gemma4", testLaunchModels("gemma4")); err != nil {
+		t.Fatalf("updated ConfigureWithModels returned error: %v", err)
+	}
+	if err := app.RestoreFromDesktop(false); err != nil {
+		t.Fatalf("RestoreFromDesktop returned error: %v", err)
+	}
+
+	restored, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]string{
+		codexRootModelKey:         "gpt-5.6-sol",
+		codexRootModelProviderKey: "openai",
+		codexRootOpenAIBaseURLKey: "https://api.openai.com/v1",
+	} {
+		if got := codexRootStringValue(string(restored), key); got != want {
+			t.Fatalf("restored %s = %q, want %q in:\n%s", key, got, want, restored)
+		}
+	}
+	if got, ok := codexRootStringValueOK(string(restored), codexRootModelCatalogJSONKey); ok {
+		t.Fatalf("restored model catalog = %q, want managed catalog removed in:\n%s", got, restored)
+	}
+	if _, err := os.Stat(codexAppRestoreStatePath()); !os.IsNotExist(err) {
+		t.Fatalf("restore state should be removed after successful restore, err=%v", err)
+	}
+}
+
+func TestCodexAppManagedProxyURLRequiresLoopback(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		url  string
+		want bool
+	}{
+		{name: "IPv4 loopback", url: "http://127.0.0.1:11434/api/codex/v1", want: true},
+		{name: "localhost", url: "http://localhost:22434/api/codex/v1/", want: true},
+		{name: "IPv6 loopback", url: "https://[::1]:11434/api/codex/v1", want: true},
+		{name: "remote hostname", url: "https://example.com/api/codex/v1"},
+		{name: "private address", url: "http://192.168.1.5:11434/api/codex/v1"},
+		{name: "credentials", url: "http://user@127.0.0.1:11434/api/codex/v1"},
+		{name: "query", url: "http://127.0.0.1:11434/api/codex/v1?owned=true"},
+		{name: "wrong path", url: "http://127.0.0.1:11434/v1"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := codexAppManagedProxyURL(tt.url); got != tt.want {
+				t.Fatalf("codexAppManagedProxyURL(%q) = %t, want %t", tt.url, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCodexAppConfigureRejectsMalformedTomlBeforeSideEffects(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
