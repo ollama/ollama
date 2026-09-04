@@ -2,8 +2,8 @@
 
 ## Download
 
-- [macOS](https://github.com/ollama/app/releases/download/latest/Ollama.dmg)
-- [Windows](https://github.com/ollama/app/releases/download/latest/OllamaSetup.exe)
+- [macOS](https://ollama.com/download/Ollama.dmg)
+- [Windows](https://ollama.com/download/OllamaSetup.exe)
 
 ## Development
 
