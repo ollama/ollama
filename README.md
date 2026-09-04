@@ -158,6 +158,7 @@ console.log(response.message.content);
 
 #### Web
 
+- [Doota](https://github.com/ollama4j/doota) - A modern Java-based agentic tool with web UI
 - [Open WebUI](https://github.com/open-webui/open-webui) - Extensible, self-hosted AI interface
 - [Onyx](https://github.com/onyx-dot-app/onyx) - Connected AI workspace
 - [LibreChat](https://github.com/danny-avila/LibreChat) - Enhanced ChatGPT clone with multi-provider support
