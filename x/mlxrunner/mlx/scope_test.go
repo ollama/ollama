@@ -22,17 +22,17 @@ func TestScopeFreesWhatIsNotReturned(t *testing.T) {
 				return []*Array{FromValue(3), nil, kept}
 			})
 			returned = out[0]
-			if !returned.Valid() {
+			if !returned.valid() {
 				t.Fatal("returned array was freed with the scope that created it")
 			}
-			if dropped.Valid() {
+			if dropped.valid() {
 				t.Fatal("array not returned survived its scope")
 			}
 		})
-		if returned.Valid() {
+		if returned.valid() {
 			t.Fatal("returned array survived the scope it was returned into")
 		}
-		if !kept.Valid() {
+		if !kept.valid() {
 			t.Fatal("returning a held array moved it out of its scope")
 		}
 	})
@@ -48,10 +48,10 @@ func TestScopedEvalEvaluatesAfterBuild(t *testing.T) {
 				tmp = FromValue(2)
 				return []*Array{FromValue(1).Add(tmp)}
 			})
-			if tmp.Valid() {
+			if tmp.valid() {
 				t.Fatal("intermediate survived the build scope")
 			}
-			if !out[0].Valid() || out[0].Int() != 3 {
+			if !out[0].valid() || out[0].Int() != 3 {
 				t.Fatal("returned array was not evaluated after the build scope")
 			}
 		})
@@ -72,11 +72,11 @@ func TestHeldScope(t *testing.T) {
 			kept, discarded, detached = FromValue(1), FromValue(2), FromValue(3)
 			held.Attach(kept, discarded, detached)
 			held.Discard(discarded)
-			if discarded.Valid() {
+			if discarded.valid() {
 				t.Fatal("discarded array survived")
 			}
 			Scoped(func() { held.Detach(detached) })
-			if detached.Valid() {
+			if detached.valid() {
 				t.Fatal("detached array survived the scope it was detached into")
 			}
 			if !panics(func() { other.Discard(kept) }) {
@@ -92,11 +92,11 @@ func TestHeldScope(t *testing.T) {
 				t.Fatal("no panic holding an array twice")
 			}
 		})
-		if !kept.Valid() {
+		if !kept.valid() {
 			t.Fatal("held array was freed with the scope that created it")
 		}
 		held.Close()
-		if kept.Valid() {
+		if kept.valid() {
 			t.Fatal("held array survived its scope's close")
 		}
 	})
@@ -115,7 +115,7 @@ func TestScopeEndsOnPanic(t *testing.T) {
 				panic("build failed")
 			})
 		}()
-		if a.Valid() {
+		if a.valid() {
 			t.Fatal("array survived the scope that panicked")
 		}
 		if currentScope != start {

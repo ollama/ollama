@@ -177,7 +177,7 @@ func (s *Scope) take(t *Array) {
 		if from == s {
 			return
 		}
-		if !t.Valid() {
+		if !t.valid() {
 			panic(fmt.Sprintf("mlx: array %q used after its scope ended", t.name))
 		}
 		if from.noEscape {

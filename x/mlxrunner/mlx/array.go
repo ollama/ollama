@@ -119,7 +119,9 @@ func (t *Array) Clone() *Array {
 
 // misc. utilities
 
-func (t *Array) Valid() bool {
+// valid reports whether t still refers to an array: false once its scope
+// freed it.
+func (t *Array) valid() bool {
 	return t.ctx.ctx != nil
 }
 
@@ -139,7 +141,7 @@ func (t *Array) LogValue() slog.Value {
 	attrs := []slog.Attr{
 		slog.String("name", t.name),
 	}
-	if t.Valid() {
+	if t.valid() {
 		attrs = append(attrs,
 			slog.Any("dtype", t.DType()),
 			slog.Any("shape", t.Dims()),

@@ -483,14 +483,14 @@ func stackAndClone(parts []*mlx.Array) *mlx.Array {
 }
 
 func transposeExpertWeightForGatherMM(w *mlx.Array) *mlx.Array {
-	if w == nil || !w.Valid() || w.NumDims() != 3 {
+	if w == nil || w.NumDims() != 3 {
 		return w
 	}
 	return mlx.Transpose(w, 0, 2, 1).Clone()
 }
 
 func fuseExpertStacks(a, b *mlx.Array, axis int) *mlx.Array {
-	if a == nil || !a.Valid() || b == nil || !b.Valid() {
+	if a == nil || b == nil {
 		return nil
 	}
 	return mlx.Concatenate([]*mlx.Array{a, b}, axis).Clone()
