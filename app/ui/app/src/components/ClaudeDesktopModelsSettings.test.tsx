@@ -104,6 +104,8 @@ describe("ClaudeDesktopModelsSettings", () => {
     expect(html).not.toContain("routing");
     expect(html).not.toContain("Built-in defaults");
     expect(html).not.toContain("Unassigned");
+    expect(html).not.toContain("Enable auto mode");
+    expect(html).not.toContain('role="switch"');
     expect(html).toContain("Select a model");
     expect(html).toContain("Start Claude");
   });

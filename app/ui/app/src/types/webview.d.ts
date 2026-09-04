@@ -24,7 +24,6 @@ interface ClaudeDesktopStatus {
   gatewayPort?: number;
   routedRequests?: number;
   error?: string;
-  autoMode?: boolean;
   modelSource?: "user" | "endpoint" | "fallback";
   maxModels?: number;
   models?: ClaudeDesktopModelStatus[];
@@ -43,7 +42,6 @@ interface ClaudeDesktopModelStatus {
   description?: string;
   cloud?: boolean;
   selected: boolean;
-  autoMode?: boolean;
   availability?: "unknown" | "available" | "unavailable";
   reason?:
     | "cloud_off"
@@ -93,10 +91,6 @@ declare global {
       restartConfirmed: boolean,
     ) => Promise<ClaudeDesktopActionResult>;
     resetClaudeDesktopMappings?: (
-      restartConfirmed: boolean,
-    ) => Promise<ClaudeDesktopActionResult>;
-    setClaudeDesktopAutoMode?: (
-      enabled: boolean,
       restartConfirmed: boolean,
     ) => Promise<ClaudeDesktopActionResult>;
     setOnboardingWindow?: (enabled: boolean) => void;
