@@ -901,7 +901,8 @@ static NSImage *ollamaApplicationIcon(void) {
     [alert addButtonWithTitle:@"Open download page"];
     [alert addButtonWithTitle:@"Cancel"];
     if ([alert runModal] == NSAlertFirstButtonReturn) {
-        OpenChatGPTDownloadPage();
+        [[NSWorkspace sharedWorkspace]
+            openURL:[NSURL URLWithString:ChatGPTDownloadPageURL]];
     }
 }
 
@@ -917,7 +918,8 @@ static NSImage *ollamaApplicationIcon(void) {
     [alert addButtonWithTitle:@"Open download page"];
     [alert addButtonWithTitle:@"Cancel"];
     if ([alert runModal] == NSAlertFirstButtonReturn) {
-        OpenChatGPTDownloadPage();
+        [[NSWorkspace sharedWorkspace]
+            openURL:[NSURL URLWithString:ChatGPTDownloadPageURL]];
     }
 }
 
@@ -1452,7 +1454,8 @@ didCompleteWithError:(NSError *)error {
         }
         self.quitInProgress = YES;
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-            if (IsClaudeGatewayConfigured() && !RestoreClaudeGatewayForShutdown()) {
+            BOOL succeeded = RestoreClaudeGatewayForShutdown();
+            if (!succeeded) {
                 appLogInfo(@"Unable to restore Claude during system shutdown");
             }
             dispatch_async(dispatch_get_main_queue(), ^{
@@ -1527,16 +1530,12 @@ didCompleteWithError:(NSError *)error {
     if (self.quitInProgress) {
         return;
     }
-
-    // ChatGPT remains configured across Ollama exits so reopening Ollama can
-    // resume routing without interrupting the app or resetting the toggle.
-    BOOL claudeConfigured = IsClaudeGatewayConfigured();
-    if (!claudeConfigured) {
+    if (!IsClaudeGatewayConfigured()) {
         [self quit];
         return;
     }
 
-    BOOL restartClaude = claudeConfigured && IsClaudeDesktopRunning();
+    BOOL restartClaude = IsClaudeDesktopRunning();
     if (restartClaude) {
         NSAlert *alert = [[NSAlert alloc] init];
         [alert setAlertStyle:NSAlertStyleWarning];
@@ -1553,22 +1552,21 @@ didCompleteWithError:(NSError *)error {
 
     self.quitInProgress = YES;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        BOOL claudeSucceeded = SetClaudeGatewayInstalled(false, restartClaude);
+        BOOL succeeded = SetClaudeGatewayInstalled(false, restartClaude);
         dispatch_async(dispatch_get_main_queue(), ^{
             if (self.systemTerminationReplyPending) {
-                if (!claudeSucceeded) {
+                if (!succeeded) {
                     appLogInfo(@"Unable to restore Claude during system shutdown");
                 }
                 [self completeSystemTermination];
                 return;
             }
-            if (claudeSucceeded) {
+            if (succeeded) {
                 [self quit];
                 return;
             }
 
             self.quitInProgress = NO;
-            [self refreshCodexAppState];
             [self refreshClaudeAppState];
             NSAlert *alert = [[NSAlert alloc] init];
             [alert setAlertStyle:NSAlertStyleWarning];
@@ -2345,22 +2343,6 @@ enum ClaudeInstallResult installCodexDesktop(void) {
         dispatch_sync(dispatch_get_main_queue(), install);
     }
     return result;
-}
-
-bool OpenChatGPTDownloadPage(void) {
-    __block BOOL opened = NO;
-    void (^openPage)(void) = ^{
-        NSURL *url = [NSURL URLWithString:ChatGPTDownloadPageURL];
-        if (url != nil) {
-            opened = [[NSWorkspace sharedWorkspace] openURL:url];
-        }
-    };
-    if ([NSThread isMainThread]) {
-        openPage();
-    } else {
-        dispatch_sync(dispatch_get_main_queue(), openPage);
-    }
-    return opened;
 }
 
 void quit() {
