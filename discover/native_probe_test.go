@@ -201,3 +201,34 @@ func TestMergeNativeProbeDevicesAvoidsUnreliableIndexMatch(t *testing.T) {
 		})
 	}
 }
+
+func TestMergeNativeProbeDevicesCarriesPhysicalMemory(t *testing.T) {
+	// Only the CUDA probe can tell the two totals apart, and it merges against a ggml
+	// device that reports just the usable figure. The distinction has to survive that.
+	ggml := []nativeProbeDevice{{
+		Library:             "CUDA",
+		Index:               0,
+		IndexMatchesBackend: true,
+		Description:         "NVIDIA RTX PRO 6000",
+		TotalMemory:         101972967424,
+	}}
+	cuda := []nativeProbeDevice{{
+		Library:             "CUDA",
+		Index:               0,
+		IndexMatchesBackend: true,
+		Description:         "NVIDIA RTX PRO 6000",
+		TotalMemory:         101972967424,
+		PhysicalMemory:      102641958912,
+	}}
+
+	merged := mergeNativeProbeDevices(ggml, cuda)
+	if len(merged) != 1 {
+		t.Fatalf("expected the devices to merge into one, got %d", len(merged))
+	}
+	if got, want := merged[0].PhysicalMemory, uint64(102641958912); got != want {
+		t.Errorf("PhysicalMemory: got %d, want %d", got, want)
+	}
+	if got, want := merged[0].TotalMemory, uint64(101972967424); got != want {
+		t.Errorf("TotalMemory should be untouched: got %d, want %d", got, want)
+	}
+}

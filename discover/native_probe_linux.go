@@ -110,10 +110,35 @@ static int ollama_call_nvml_system_get_driver_version(void * fn, char * version,
 	return ((ollama_nvml_system_get_driver_version_fn) fn)(version, len);
 }
 
+// nvmlMemory_t as of NVML 8. Only the leading three fields are read, and NVML has only
+// ever appended to this structure, so a newer library filling more of it is harmless.
+typedef struct {
+	unsigned long long total;
+	unsigned long long free;
+	unsigned long long used;
+} ollama_nvml_memory_t;
+
+typedef int (*ollama_nvml_device_get_handle_by_pci_bus_id_fn)(const char *, void **);
+typedef int (*ollama_nvml_device_get_memory_info_fn)(void *, ollama_nvml_memory_t *);
+
+static int ollama_call_nvml_device_get_handle_by_pci_bus_id(void * fn, const char * pci, void ** device) {
+	return ((ollama_nvml_device_get_handle_by_pci_bus_id_fn) fn)(pci, device);
+}
+
+static int ollama_call_nvml_device_get_memory_info(void * fn, void * device, unsigned long long * total) {
+	ollama_nvml_memory_t memory = {0};
+	int ret = ((ollama_nvml_device_get_memory_info_fn) fn)(device, &memory);
+	if (ret == 0) {
+		*total = memory.total;
+	}
+	return ret;
+}
+
 */
 import "C"
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -347,6 +372,20 @@ func probeCUDADriverLinux() ([]nativeProbeDevice, error) {
 		})
 	}
 
+	// CUDA reports what a context can address; NVML reports what the card holds. Fill the
+	// latter in where it is available, and leave it zero where it is not.
+	pciIDs := make([]string, 0, len(devices))
+	for _, d := range devices {
+		pciIDs = append(pciIDs, d.DeviceID)
+	}
+	if physical := nvmlPhysicalMemoryByPCI(pciIDs); len(physical) > 0 {
+		for i := range devices {
+			if total, ok := physical[devices[i].DeviceID]; ok && total >= devices[i].TotalMemory {
+				devices[i].PhysicalMemory = total
+			}
+		}
+	}
+
 	return devices, nil
 }
 
@@ -415,6 +454,68 @@ func probeNVIDIADriverMajorLinux() (int, error) {
 		return 0, fmt.Errorf("nvmlSystemGetDriverVersion failed: %d", int(ret))
 	}
 	return parseNVIDIADriverMajor(C.GoString(&version[0]))
+}
+
+// nvmlPhysicalMemoryByPCI reports the memory each device holds according to NVML, keyed by
+// PCI bus ID.
+//
+// This is a different quantity from the one CUDA reports, and larger. cuDeviceTotalMem
+// returns what a CUDA context can address, which excludes memory the driver has reserved
+// for itself; NVML reports the device's framebuffer. On an RTX PRO 6000 the two are
+// 94.97 GiB and 95.59 GiB — a 638 MiB gap that is not usable for models but is present on
+// the card, and that a user reading nvidia-smi will expect to see accounted for.
+//
+// A failure here is not an error: NVML may be absent, too old, or refuse a device. Callers
+// fall back to the CUDA figure, which is the one every decision is made from anyway.
+func nvmlPhysicalMemoryByPCI(pciIDs []string) map[string]uint64 {
+	if len(pciIDs) == 0 {
+		return nil
+	}
+
+	nvml, err := dlopenFirst([]string{"libnvidia-ml.so.1", "libnvidia-ml.so"}, false)
+	if err != nil {
+		slog.Debug("NVML unavailable, reporting CUDA's device memory total", "error", err)
+		return nil
+	}
+
+	initFn, initErr := dlsym(nvml, "nvmlInit_v2")
+	shutdownFn, shutdownErr := dlsym(nvml, "nvmlShutdown")
+	handleFn, handleErr := dlsym(nvml, "nvmlDeviceGetHandleByPciBusId_v2")
+	memoryFn, memoryErr := dlsym(nvml, "nvmlDeviceGetMemoryInfo")
+	if err := cmp.Or(initErr, shutdownErr, handleErr, memoryErr); err != nil {
+		slog.Debug("NVML missing a required symbol", "error", err)
+		return nil
+	}
+
+	if ret := C.ollama_call_nvml_init(initFn); ret != 0 {
+		slog.Debug("nvmlInit_v2 failed", "status", int(ret))
+		return nil
+	}
+	defer C.ollama_call_nvml_shutdown(shutdownFn)
+
+	out := make(map[string]uint64, len(pciIDs))
+	for _, pci := range pciIDs {
+		if pci == "" {
+			continue
+		}
+
+		cpci := C.CString(pci)
+		var handle unsafe.Pointer
+		ret := C.ollama_call_nvml_device_get_handle_by_pci_bus_id(handleFn, cpci, &handle)
+		C.free(unsafe.Pointer(cpci))
+		if ret != 0 {
+			slog.Debug("NVML did not recognize device", "pci_id", pci, "status", int(ret))
+			continue
+		}
+
+		var total C.ulonglong
+		if ret := C.ollama_call_nvml_device_get_memory_info(memoryFn, handle, &total); ret != 0 {
+			slog.Debug("nvmlDeviceGetMemoryInfo failed", "pci_id", pci, "status", int(ret))
+			continue
+		}
+		out[pci] = uint64(total)
+	}
+	return out
 }
 
 func cudaDeviceAttribute(fn unsafe.Pointer, attr int, device C.int) int {
