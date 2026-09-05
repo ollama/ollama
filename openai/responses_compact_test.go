@@ -44,6 +44,36 @@ func decodeResultPayload(t *testing.T, result ResponsesCompactionResult) OllamaC
 	return payload
 }
 
+func summaryTranscriptText(t *testing.T, requestBody []byte) string {
+	t.Helper()
+	var request struct {
+		Input []struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"input"`
+	}
+	if err := json.Unmarshal(requestBody, &request); err != nil {
+		t.Fatal(err)
+	}
+	var transcript strings.Builder
+	for _, input := range request.Input[1:] {
+		var text string
+		if json.Unmarshal(input.Content, &text) == nil {
+			transcript.WriteString(text)
+			continue
+		}
+		var blocks []struct {
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal(input.Content, &blocks); err != nil {
+			t.Fatal(err)
+		}
+		for _, block := range blocks {
+			transcript.WriteString(block.Text)
+		}
+	}
+	return transcript.String()
+}
+
 func TestPrepareTriggeredCompactionBuildsSummaryRequest(t *testing.T) {
 	description := "Read a file"
 	body := []byte(`{
@@ -76,8 +106,7 @@ func TestPrepareTriggeredCompactionBuildsSummaryRequest(t *testing.T) {
 	}
 	var request struct {
 		Input []struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
+			Role string `json:"role"`
 		} `json:"input"`
 		Tools        []ResponsesTool `json:"tools"`
 		Instructions string          `json:"instructions"`
@@ -95,11 +124,12 @@ func TestPrepareTriggeredCompactionBuildsSummaryRequest(t *testing.T) {
 	if len(request.Tools) != 1 || request.Tools[0].Name != CreateSummaryToolName {
 		t.Fatalf("unexpected callable tools: %+v", request.Tools)
 	}
-	if len(request.Input) != 2 || !strings.Contains(request.Input[1].Content, description) || !strings.Contains(request.Input[1].Content, "read_file") {
+	transcript := summaryTranscriptText(t, requestBody)
+	if len(request.Input) != 5 || !strings.Contains(transcript, description) || !strings.Contains(transcript, "read_file") {
 		t.Fatalf("summary transcript is missing tool metadata: %+v", request.Input)
 	}
-	if strings.Contains(request.Input[1].Content, `"instructions"`) {
-		t.Fatalf("original instructions leaked into transcript: %s", request.Input[1].Content)
+	if strings.Contains(transcript, `"instructions"`) {
+		t.Fatalf("original instructions leaked into transcript: %s", transcript)
 	}
 
 	result, err := plan.Complete(compactionResponseBody(t, map[string]any{
@@ -139,20 +169,213 @@ func TestCompactionNamesBuiltInSearchToolMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	transcript := summaryTranscriptText(t, requestBody)
+	if !strings.Contains(transcript, `"name":"tool_search"`) ||
+		!strings.Contains(transcript, `"name":"web_search"`) {
+		t.Fatalf("summary transcript is missing built-in tool names: %s", requestBody)
+	}
+	if strings.Contains(transcript, `"name":""`) {
+		t.Fatalf("summary transcript contains unnamed tool metadata: %s", requestBody)
+	}
+}
+
+const compactionTestPNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+
+func TestCompactionSendsImagesAsMultimodalInput(t *testing.T) {
+	body := []byte(`{
+		"model":"test","stream":true,
+		"input":[
+			{"type":"message","role":"user","content":[
+				{"type":"input_text","text":"describe this"},
+				{"type":"input_image","detail":"auto","image_url":"` + compactionTestPNG + `"}
+			]},
+			{"type":"compaction_trigger"}
+		]
+	}`)
+	plan, requested, err := PrepareTriggeredCompaction(body)
+	if err != nil || !requested {
+		t.Fatalf("prepare: requested=%v err=%v", requested, err)
+	}
+
+	requestBody, err := plan.SummaryRequest("")
+	if err != nil {
+		t.Fatal(err)
+	}
 	var request struct {
 		Input []struct {
-			Content string `json:"content"`
+			Content json.RawMessage `json:"content"`
 		} `json:"input"`
 	}
 	if err := json.Unmarshal(requestBody, &request); err != nil {
 		t.Fatal(err)
 	}
-	if len(request.Input) != 2 || !strings.Contains(request.Input[1].Content, `"name":"tool_search"`) ||
-		!strings.Contains(request.Input[1].Content, `"name":"web_search"`) {
-		t.Fatalf("summary transcript is missing built-in tool names: %s", requestBody)
+	if len(request.Input) != 2 {
+		t.Fatalf("input count=%d, want 2", len(request.Input))
 	}
-	if strings.Contains(request.Input[1].Content, `"name":""`) {
-		t.Fatalf("summary transcript contains unnamed tool metadata: %s", requestBody)
+	var blocks []struct {
+		Type     string `json:"type"`
+		Text     string `json:"text"`
+		ImageURL string `json:"image_url"`
+	}
+	if err := json.Unmarshal(request.Input[1].Content, &blocks); err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) != 2 || blocks[0].Type != "input_text" || blocks[1].Type != "input_image" {
+		t.Fatalf("unexpected transcript blocks: %+v", blocks)
+	}
+	if !strings.Contains(blocks[0].Text, `"ref":"item_000001"`) || !strings.Contains(blocks[0].Text, `"image_count":1`) {
+		t.Fatalf("image is not associated with its source item: %s", blocks[0].Text)
+	}
+	if strings.Contains(blocks[0].Text, "iVBOR") || blocks[1].ImageURL != compactionTestPNG {
+		t.Fatalf("image must be a real image block, not transcript text: %+v", blocks)
+	}
+	var responsesRequest ResponsesRequest
+	if err := json.Unmarshal(requestBody, &responsesRequest); err != nil {
+		t.Fatal(err)
+	}
+	chatRequest, err := FromResponsesRequest(responsesRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chatRequest.Messages) != 2 || len(chatRequest.Messages[1].Images) != 1 || !strings.Contains(chatRequest.Messages[1].Content, "item_000001") {
+		t.Fatalf("local Responses conversion lost the image-to-item association: %+v", chatRequest.Messages)
+	}
+}
+
+func TestCompactionImageRetentionIsModelSelectedAndReplayed(t *testing.T) {
+	body := []byte(`{
+		"model":"test","stream":true,
+		"input":[
+			{"type":"message","role":"user","content":[{"type":"input_image","detail":"auto","image_url":"` + compactionTestPNG + `"}]},
+			{"type":"message","role":"assistant","content":"I inspected it."},
+			{"type":"compaction_trigger"}
+		]
+	}`)
+	plan, requested, err := PrepareTriggeredCompaction(body)
+	if err != nil || !requested {
+		t.Fatalf("prepare: requested=%v err=%v", requested, err)
+	}
+
+	t.Run("selected", func(t *testing.T) {
+		result, err := plan.Complete(compactionResponseBody(t, map[string]any{
+			"summary": "The image was inspected.", "retain_item_ids": []string{"item_000001"},
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		payload := decodeResultPayload(t, result)
+		if len(payload.Retained) != 1 || len(payload.Retained[0].Images) != 1 {
+			t.Fatalf("selected image was not retained: %+v", payload.Retained)
+		}
+		request, err := json.Marshal(map[string]any{"model": "test", "input": []any{result.Item}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		expanded, changed, err := ExpandResponsesCompactionInput(request)
+		if err != nil || !changed {
+			t.Fatalf("expand: changed=%v err=%v", changed, err)
+		}
+		if !bytes.Contains(expanded, []byte(`"type":"input_image"`)) || !bytes.Contains(expanded, []byte(compactionTestPNG)) {
+			t.Fatalf("retained image was not replayed as Responses content: %s", expanded)
+		}
+	})
+
+	t.Run("not selected", func(t *testing.T) {
+		result, err := plan.Complete(compactionResponseBody(t, map[string]any{
+			"summary": "The image was inspected.", "retain_item_ids": []string{},
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if payload := decodeResultPayload(t, result); len(payload.Retained) != 0 {
+			t.Fatalf("unselected image was retained: %+v", payload.Retained)
+		}
+	})
+}
+
+func TestCompactionReplaysRetainedToolOutputImagesWithTheirCall(t *testing.T) {
+	body := []byte(`{
+		"model":"test","stream":true,
+		"input":[
+			{"type":"function_call","call_id":"call_1","name":"screenshot","arguments":"{}"},
+			{"type":"function_call_output","call_id":"call_1","output":[
+				{"type":"input_text","text":"captured"},
+				{"type":"input_image","detail":"auto","image_url":"` + compactionTestPNG + `"}
+			]},
+			{"type":"message","role":"assistant","content":"done"},
+			{"type":"compaction_trigger"}
+		]
+	}`)
+	plan, requested, err := PrepareTriggeredCompaction(body)
+	if err != nil || !requested {
+		t.Fatalf("prepare: requested=%v err=%v", requested, err)
+	}
+	summaryRequest, err := plan.SummaryRequest("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(summaryRequest, []byte(compactionTestPNG)) || !bytes.Contains(summaryRequest, []byte(`image_count\":1`)) {
+		t.Fatalf("compactor request did not associate the tool image with its transcript item: %s", summaryRequest)
+	}
+	result, err := plan.Complete(compactionResponseBody(t, map[string]any{
+		"summary": "A screenshot was captured.", "retain_item_ids": []string{"item_000002"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := decodeResultPayload(t, result)
+	if len(payload.Retained) != 2 || len(payload.Retained[0].ToolCalls) != 1 || len(payload.Retained[1].Images) != 1 {
+		t.Fatalf("tool call and image result were not retained together: %+v", payload.Retained)
+	}
+	items, err := payloadToResponsesItems(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 4 || rawInputItemType(items[2]) != "function_call" || rawInputItemType(items[3]) != "function_call_output" {
+		t.Fatalf("tool pairing or order changed: %s", items)
+	}
+	if !bytes.Contains(items[3], []byte(`"type":"input_image"`)) || !bytes.Contains(items[3], []byte(compactionTestPNG)) {
+		t.Fatalf("tool output image was not replayed: %s", items[3])
+	}
+}
+
+func TestCompactionForcesActiveToolOutputImage(t *testing.T) {
+	body := []byte(`{
+		"model":"test","stream":true,
+		"input":[
+			{"type":"function_call","call_id":"call_1","name":"screenshot","arguments":"{}"},
+			{"type":"function_call_output","call_id":"call_1","output":[{"type":"input_image","detail":"auto","image_url":"` + compactionTestPNG + `"}]},
+			{"type":"compaction_trigger"}
+		]
+	}`)
+	plan, requested, err := PrepareTriggeredCompaction(body)
+	if err != nil || !requested {
+		t.Fatalf("prepare: requested=%v err=%v", requested, err)
+	}
+	result, err := plan.Complete(compactionResponseBody(t, map[string]any{
+		"summary": "The screenshot tool just completed.", "retain_item_ids": []string{},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := decodeResultPayload(t, result)
+	if len(payload.Retained) != 2 || len(payload.Retained[1].Images) != 1 {
+		t.Fatalf("active tool state and its image must be forced: %+v", payload.Retained)
+	}
+}
+
+func TestCompactionRejectsUnsupportedImageSources(t *testing.T) {
+	for name, image := range map[string]string{
+		"file id":    `{"type":"input_image","detail":"auto","file_id":"file_123"}`,
+		"remote URL": `{"type":"input_image","detail":"auto","image_url":"https://example.com/image.png"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := []byte(`{"model":"test","stream":true,"input":[{"type":"message","role":"user","content":[` + image + `]},{"type":"compaction_trigger"}]}`)
+			_, requested, err := PrepareTriggeredCompaction(body)
+			if !requested || err == nil {
+				t.Fatalf("requested=%v err=%v", requested, err)
+			}
+		})
 	}
 }
 
