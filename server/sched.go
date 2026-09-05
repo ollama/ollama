@@ -132,9 +132,15 @@ func vramCalibrationKey(req *LlmRequest, gpus []ml.DeviceInfo, numParallel int) 
 
 // predictLlamaServerVRAM estimates VRAM for a llama-server load, preferring a measurement
 // of an earlier load made from the same inputs over the metadata estimate.
-func predictLlamaServerVRAM(cal *llm.VRAMCalibration, req *LlmRequest, f *ggml.GGML, numCtx int, gpus []ml.DeviceInfo, numParallel int) uint64 {
+//
+// The key is passed in rather than derived here because the inputs it describes are not
+// all settled at once: placement and batch size are themselves chosen from a first
+// estimate. A caller that has settled them must pass the key describing what will
+// actually run, so that the measurement this load produces is filed where the next
+// prediction for the same load will look for it.
+func predictLlamaServerVRAM(cal *llm.VRAMCalibration, key llm.CalibrationKey, req *LlmRequest, f *ggml.GGML, numCtx int) uint64 {
 	weights, bytesPerToken := llm.PredictServerVRAMParts(req.model.ModelPath, req.model.ProjectorPaths, f)
-	predicted, _ := cal.Predict(vramCalibrationKey(req, gpus, numParallel), numCtx, weights, bytesPerToken)
+	predicted, _ := cal.Predict(key, numCtx, weights, bytesPerToken)
 	return predicted
 }
 
@@ -559,6 +565,11 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 	// down from what llama-server actually chose, so it cannot be recomputed later.
 	var predictedCtx int
 
+	// The key describing the load that will actually run. It cannot be rebuilt later:
+	// applyAutomaticGenerationBatch rewrites req.opts.NumBatch, so a key built before it
+	// and a key built after it are different keys for the same load.
+	var calibrationKey llm.CalibrationKey
+
 	if llama == nil {
 		var err error
 		if !req.model.IsMLX() {
@@ -572,12 +583,23 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 			}
 
 			predictedCtx = effectiveLlamaServerContext(req.opts.NumCtx, f, numParallel)
-			predicted := predictLlamaServerVRAM(s.vramCalibration, req, f, predictedCtx, gpus, numParallel)
+
+			// Placement and batch size are chosen from an estimate, and both change what
+			// the load costs, so the first prediction is made from the devices on offer
+			// and the batch requested. It decides the placement and nothing else.
+			bootstrapKey := vramCalibrationKey(req, gpus, numParallel)
+			predicted := predictLlamaServerVRAM(s.vramCalibration, bootstrapKey, req, f, predictedCtx)
 			loadGpus, launchOpts = selectLlamaServerPlacement(systemInfo, gpus, predicted, req.opts)
 			availableForBatch, _, _ := availableMemoryForPlacement(systemInfo, loadGpus, launchOpts)
 			flashAttention := llm.LlamaServerFlashAttention(loadGpus)
 			req.applyAutomaticGenerationBatch(completion, predictedCtx, predicted, availableForBatch, flashAttention, loadGpus)
 			launchOpts.NumBatch = req.opts.NumBatch
+
+			// Both are settled now, so this key describes the load that will run. It is
+			// used for the prediction the fit decision is made from and for the sample
+			// that load records, which is what makes the two meet.
+			calibrationKey = vramCalibrationKey(req, loadGpus, numParallel)
+			predicted = predictLlamaServerVRAM(s.vramCalibration, calibrationKey, req, f, predictedCtx)
 			predictedForLoad := predicted + generationBatchSurchargeForCompletion(completion, launchOpts.NumBatch)
 
 			// Pre-flight check: estimate whether the model fits in remaining memory.
@@ -752,7 +774,7 @@ iGPUScan:
 		trainContext:    trainContext,
 	}
 	runner.numParallel = numParallel
-	runner.calibrationKey = vramCalibrationKey(req, gpus, numParallel)
+	runner.calibrationKey = calibrationKey
 	runner.calibrationCtx = predictedCtx
 	runner.refMu.Lock() // hold lock until running or aborted
 
@@ -822,7 +844,7 @@ func (req *LlmRequest) reduceAutoNumCtxForLoadOOM(cal *llm.VRAMCalibration, f *g
 
 	req.opts.NumCtx = newNumCtx
 	predictedCtx := effectiveLlamaServerContext(req.opts.NumCtx, f, numParallel)
-	predictedVRAM := predictLlamaServerVRAM(cal, req, f, predictedCtx, gpus, numParallel)
+	predictedVRAM := predictLlamaServerVRAM(cal, vramCalibrationKey(req, gpus, numParallel), req, f, predictedCtx)
 	available, _, _ := availableMemoryForPlacement(systemInfo, gpus, launchOpts)
 	req.applyAutomaticGenerationBatch(completion, predictedCtx, predictedVRAM, available, llm.LlamaServerFlashAttention(gpus), gpus)
 	newNumBatch = req.opts.NumBatch
@@ -1184,7 +1206,7 @@ func logSelectedGPUGroup(all, selected []ml.DeviceInfo) {
 
 func (s *Scheduler) applyLlamaServerMmapDefaults(req *LlmRequest, launchOpts api.Options, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, f *ggml.GGML, numParallel int) api.Options {
 	predictedCtx := effectiveLlamaServerContext(req.opts.NumCtx, f, numParallel)
-	predictedVRAM := predictLlamaServerVRAM(s.vramCalibration, req, f, predictedCtx, gpus, numParallel)
+	predictedVRAM := predictLlamaServerVRAM(s.vramCalibration, vramCalibrationKey(req, gpus, numParallel), req, f, predictedCtx)
 	availableVRAM, _, _ := availableMemoryForPlacement(systemInfo, gpus, launchOpts)
 
 	if reason := disableMmapDefaultReason(runtime.GOOS, req.opts, gpus, f.KV().BlockCount(), predictedVRAM, availableVRAM); reason != "" {
@@ -1248,7 +1270,7 @@ func (s *Scheduler) maybeDisableMmapForHostPressure(req *LlmRequest, launchOpts 
 	modelSize := modelFileSize(req.model.ModelPath)
 	loadedMmapSize := s.loadedMmapModelSizeLocked()
 	predictedCtx := effectiveLlamaServerContext(req.opts.NumCtx, f, numParallel)
-	predictedVRAM := predictLlamaServerVRAM(s.vramCalibration, req, f, predictedCtx, gpus, numParallel)
+	predictedVRAM := predictLlamaServerVRAM(s.vramCalibration, vramCalibrationKey(req, gpus, numParallel), req, f, predictedCtx)
 	availableVRAM, _, _ := availableMemoryForPlacement(systemInfo, gpus, launchOpts)
 	placementGpus := gpusForPlacement(gpus, launchOpts)
 
