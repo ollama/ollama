@@ -43,6 +43,11 @@ type LlmRequest struct {
 	// default rather than explicit request, model, or environment config.
 	numCtxAuto bool
 
+	// numCtxSource records which configuration level supplied NumCtx:
+	// "request", "modelfile", "env", or "default". Logging only; it does not
+	// affect scheduling decisions (numCtxAuto drives those).
+	numCtxSource string
+
 	// numBatchAuto is true when NumBatch came from Ollama's default options
 	// rather than an explicit request or model option.
 	numBatchAuto bool
@@ -166,7 +171,7 @@ func effectiveContext(numCtx, trainCtx int) int {
 	return numCtx
 }
 
-func (s *Scheduler) getRunner(c context.Context, m *Model, opts api.Options, sessionDuration *api.Duration, numCtxAuto bool, numBatchAuto bool, shift *bool) (chan *runnerRef, chan error) {
+func (s *Scheduler) getRunner(c context.Context, m *Model, opts api.Options, sessionDuration *api.Duration, numCtxAuto bool, numCtxSource string, numBatchAuto bool, shift *bool) (chan *runnerRef, chan error) {
 	if opts.NumCtx < 4 {
 		opts.NumCtx = 4
 	}
@@ -189,6 +194,7 @@ func (s *Scheduler) getRunner(c context.Context, m *Model, opts api.Options, ses
 		successCh:       make(chan *runnerRef, 1),
 		errCh:           make(chan error, 1),
 		numCtxAuto:      numCtxAuto,
+		numCtxSource:    numCtxSource,
 		numBatchAuto:    numBatchAuto,
 		contextShift:    contextShift,
 		shift:           shift,
@@ -707,6 +713,7 @@ iGPUScan:
 		loading:         true,
 		pid:             llama.Pid(),
 		numCtxAuto:      req.numCtxAuto,
+		numCtxSource:    req.numCtxSource,
 		numBatchAuto:    req.numBatchAuto,
 		useMMapAuto:     req.useMMapAuto,
 		contextShift:    req.contextShift,
@@ -1356,6 +1363,7 @@ type runnerRef struct {
 	modelKey     string
 	numParallel  int
 	numCtxAuto   bool
+	numCtxSource string
 	numBatchAuto bool
 	useMMapAuto  bool
 	contextShift bool
@@ -1523,7 +1531,10 @@ func (runner *runnerRef) LogValue() slog.Value {
 		slog.String("model", modelID),
 	)
 	if runner.Options != nil {
-		attrs = append(attrs, slog.Int("num_ctx", runner.Options.NumCtx))
+		attrs = append(attrs,
+			slog.Int("num_ctx", runner.Options.NumCtx),
+			slog.String("num_ctx_source", runner.numCtxSource),
+		)
 	}
 	return slog.GroupValue(attrs...)
 }

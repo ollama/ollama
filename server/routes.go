@@ -189,6 +189,23 @@ func usesAutomaticNumCtx(model *Model, requestOpts map[string]any) bool {
 	return envconfig.ContextLength() == 0
 }
 
+// numCtxSource reports which configuration level supplied the loaded num_ctx,
+// mirroring the resolution order in modelOptionsWithEmbeddingBatchDefault:
+// API request options, then Modelfile options, then OLLAMA_CONTEXT_LENGTH,
+// then the VRAM-based server default.
+func numCtxSource(model *Model, requestOpts map[string]any) string {
+	switch {
+	case hasOption(requestOpts, "num_ctx"):
+		return "request"
+	case model != nil && hasOption(model.Options, "num_ctx"):
+		return "modelfile"
+	case envconfig.ContextLength() > 0:
+		return "env"
+	default:
+		return "default"
+	}
+}
+
 func usesAutomaticNumBatch(model *Model, requestOpts map[string]any) bool {
 	if _, ok := requestOpts["num_batch"]; ok {
 		return false
@@ -217,6 +234,7 @@ func (s *Server) scheduleRunner(ctx context.Context, model *Model, caps []model.
 	}
 
 	numCtxAuto := usesAutomaticNumCtx(model, requestOpts)
+	numCtxSrc := numCtxSource(model, requestOpts)
 	embeddingBatchDefault := shouldApplyEmbeddingBatchDefault(model, requestOpts)
 	numBatchAuto := usesAutomaticNumBatch(model, requestOpts) && !embeddingBatchDefault
 	opts, err := s.modelOptionsWithEmbeddingBatchDefault(model, requestOpts, embeddingBatchDefault)
@@ -224,7 +242,7 @@ func (s *Server) scheduleRunner(ctx context.Context, model *Model, caps []model.
 		return nil, nil, nil, err
 	}
 
-	runnerCh, errCh := s.sched.getRunner(ctx, model, opts, keepAlive, numCtxAuto, numBatchAuto, shift)
+	runnerCh, errCh := s.sched.getRunner(ctx, model, opts, keepAlive, numCtxAuto, numCtxSrc, numBatchAuto, shift)
 	var runner *runnerRef
 	select {
 	case runner = <-runnerCh:
