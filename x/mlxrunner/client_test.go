@@ -12,16 +12,55 @@ import (
 	"github.com/ollama/ollama/llm"
 )
 
-func TestRunnerArgsIncludeContextLength(t *testing.T) {
-	got := runnerArgs("qwen3.5:27b", 49152, 65536)
-	want := []string{"runner", "--mlx-engine", "--model", "qwen3.5:27b", "--port", "49152", "--ctx-size", "65536"}
-	if len(got) != len(want) {
-		t.Fatalf("runnerArgs = %q, want %q", got, want)
+func TestRunnerArgsContextLengthPrecedence(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		hardContext int
+		want        []string
+	}{
+		{
+			name: "automatic soft context leaves runner at model capacity",
+			want: []string{"runner", "--mlx-engine", "--model", "qwen3.5:27b", "--port", "49152"},
+		},
+		{
+			name:        "explicit hard context is enforced",
+			hardContext: 65536,
+			want:        []string{"runner", "--mlx-engine", "--model", "qwen3.5:27b", "--port", "49152", "--ctx-size", "65536"},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := runnerArgs("qwen3.5:27b", 49152, tt.hardContext)
+			if len(got) != len(tt.want) {
+				t.Fatalf("runnerArgs = %q, want %q", got, tt.want)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Fatalf("runnerArgs[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("runnerArgs[%d] = %q, want %q", i, got[i], want[i])
-		}
+}
+
+func TestReportedContextLengthPrecedence(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		softContext  int
+		hardContext  int
+		modelContext int
+		want         int
+	}{
+		{name: "automatic context remains a soft reporting limit", softContext: 32768, modelContext: 262144, want: 32768},
+		{name: "model capacity caps automatic soft context", softContext: 524288, modelContext: 262144, want: 262144},
+		{name: "explicit hard context takes precedence over soft", softContext: 32768, hardContext: 65536, modelContext: 65536, want: 65536},
+		{name: "model capacity caps explicit hard context", softContext: 32768, hardContext: 524288, modelContext: 262144, want: 262144},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			client := Client{softContextLength: tt.softContext, hardContextLength: tt.hardContext}
+			if got := client.reportedContextLength(tt.modelContext); got != tt.want {
+				t.Fatalf("reportedContextLength(%d) = %d, want %d", tt.modelContext, got, tt.want)
+			}
+		})
 	}
 }
 

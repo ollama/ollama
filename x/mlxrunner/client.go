@@ -31,31 +31,33 @@ import (
 
 // Client wraps an MLX runner subprocess to implement llm.LlamaServer for LLM models.
 type Client struct {
-	port          int
-	modelName     string
-	contextLength atomic.Int64
-	requestedCtx  int
-	memory        atomic.Uint64
-	done          chan struct{}
-	doneErr       error // valid after done is closed
-	client        *http.Client
-	status        *llm.StatusWriter
-	mu            sync.Mutex
-	cmd           *exec.Cmd
+	port              int
+	modelName         string
+	contextLength     atomic.Int64
+	softContextLength int // recommended limit to avoid poor performance
+	hardContextLength int // explicit limit enforced by the runner
+	memory            atomic.Uint64
+	done              chan struct{}
+	doneErr           error // valid after done is closed
+	client            *http.Client
+	status            *llm.StatusWriter
+	mu                sync.Mutex
+	cmd               *exec.Cmd
 }
 
 // NewClient prepares a new MLX runner client for LLM models.
 // The subprocess is not started until Load() is called.
-func NewClient(modelName string, contextLength int) (*Client, error) {
+func NewClient(modelName string, softContextLength, hardContextLength int) (*Client, error) {
 	if err := checkPlatformSupport(); err != nil {
 		return nil, err
 	}
 
 	c := &Client{
-		modelName:    modelName,
-		requestedCtx: contextLength,
-		done:         make(chan struct{}),
-		client:       http.DefaultClient,
+		modelName:         modelName,
+		softContextLength: softContextLength,
+		hardContextLength: hardContextLength,
+		done:              make(chan struct{}),
+		client:            http.DefaultClient,
 	}
 
 	modelManifest, err := manifest.LoadManifest(modelName)
@@ -263,6 +265,17 @@ func (c *Client) ContextLength() int {
 	return int(c.contextLength.Load())
 }
 
+func (c *Client) reportedContextLength(modelContextLength int) int {
+	selectedContextLength := c.softContextLength
+	if c.hardContextLength > 0 {
+		selectedContextLength = c.hardContextLength
+	}
+	if selectedContextLength > 0 && (modelContextLength == 0 || selectedContextLength < modelContextLength) {
+		return selectedContextLength
+	}
+	return modelContextLength
+}
+
 // Detokenize implements llm.LlamaServer.
 func (c *Client) Detokenize(ctx context.Context, tokens []int) (string, error) {
 	return "", errors.New("not supported")
@@ -336,7 +349,7 @@ func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo
 		exe = eval
 	}
 
-	cmd := exec.Command(exe, runnerArgs(c.modelName, port, c.requestedCtx)...)
+	cmd := exec.Command(exe, runnerArgs(c.modelName, port, c.hardContextLength)...)
 	cmd.Env = os.Environ()
 
 	// Set library path environment variable for MLX libraries
@@ -460,19 +473,22 @@ func (c *Client) Ping(ctx context.Context) error {
 		return err
 	}
 
-	c.contextLength.Store(int64(status.ContextLength))
+	c.contextLength.Store(int64(c.reportedContextLength(status.ContextLength)))
 	c.memory.Store(status.Memory)
 
 	return nil
 }
 
-func runnerArgs(modelName string, port, contextLength int) []string {
-	return []string{
+func runnerArgs(modelName string, port, hardContextLength int) []string {
+	args := []string{
 		"runner", "--mlx-engine",
 		"--model", modelName,
 		"--port", strconv.Itoa(port),
-		"--ctx-size", strconv.Itoa(contextLength),
 	}
+	if hardContextLength > 0 {
+		args = append(args, "--ctx-size", strconv.Itoa(hardContextLength))
+	}
+	return args
 }
 
 // Tokenize implements llm.LlamaServer.
