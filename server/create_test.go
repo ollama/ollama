@@ -2,107 +2,167 @@ package server
 
 import (
 	"bytes"
-	"encoding/binary"
+	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/ollama/ollama/api"
+	"github.com/gin-gonic/gin"
+
 	"github.com/ollama/ollama/manifest"
 )
 
-func TestConvertFromSafetensors(t *testing.T) {
-	t.Setenv("OLLAMA_MODELS", t.TempDir())
-
-	// Helper function to create a new layer and return its digest
-	makeTemp := func(content string) string {
-		l, err := manifest.NewLayer(strings.NewReader(content), "application/octet-stream")
-		if err != nil {
-			t.Fatalf("Failed to create layer: %v", err)
-		}
-		return l.Digest
+func TestSplitGGUFTensorReaderRejectsShortSource(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tensor.bin")
+	if err := os.WriteFile(path, []byte{1, 2, 3}, 0o600); err != nil {
+		t.Fatal(err)
 	}
 
-	// Create a safetensors compatible file with empty JSON content
-	var buf bytes.Buffer
-	headerSize := int64(len("{}"))
-	binary.Write(&buf, binary.LittleEndian, headerSize)
-	buf.WriteString("{}")
+	var dst bytes.Buffer
+	n, err := (splitGGUFTensorReader{ctx: context.Background(), path: path, size: 4}).WriteTo(&dst)
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("WriteTo() error = %v, want io.EOF", err)
+	}
+	if n != 3 {
+		t.Fatalf("WriteTo() bytes = %d, want 3", n)
+	}
+}
 
-	model := makeTemp(buf.String())
-	config := makeTemp(`{
-		"architectures": ["LlamaForCausalLM"], 
-		"vocab_size": 32000
-	}`)
-	tokenizer := makeTemp(`{
-		"version": "1.0",
-		"truncation": null,
-		"padding": null,
-		"added_tokens": [
-			{
-				"id": 0,
-				"content": "<|endoftext|>",
-				"single_word": false,
-				"lstrip": false,
-				"rstrip": false,
-				"normalized": false,
-				"special": true
-			}
-		]
-	}`)
+type cancelAfterWrite struct {
+	cancel context.CancelFunc
+}
 
+func (w cancelAfterWrite) Write(p []byte) (int, error) {
+	w.cancel()
+	return len(p), nil
+}
+
+func TestSplitGGUFTensorReaderStopsAfterCancellation(t *testing.T) {
+	const size = 128 << 10
+	path := filepath.Join(t.TempDir(), "tensor.bin")
+	if err := os.WriteFile(path, make([]byte, size), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	n, err := (splitGGUFTensorReader{ctx: ctx, path: path, size: size}).WriteTo(cancelAfterWrite{cancel: cancel})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("WriteTo() error = %v, want context.Canceled", err)
+	}
+	if n <= 0 || n >= size {
+		t.Fatalf("WriteTo() bytes = %d, want partial copy", n)
+	}
+}
+
+func TestValidateCreateFilePath(t *testing.T) {
 	tests := []struct {
-		name     string
-		filePath string
-		wantErr  error
+		name string
+		path string
+		want bool
 	}{
-		// Invalid
-		{
-			name:     "InvalidRelativePathShallow",
-			filePath: filepath.Join("..", "file.safetensors"),
-			wantErr:  errFilePath,
-		},
-		{
-			name:     "InvalidRelativePathDeep",
-			filePath: filepath.Join("..", "..", "..", "..", "..", "..", "data", "file.txt"),
-			wantErr:  errFilePath,
-		},
-		{
-			name:     "InvalidNestedPath",
-			filePath: filepath.Join("dir", "..", "..", "..", "..", "..", "other.safetensors"),
-			wantErr:  errFilePath,
-		},
-		{
-			name:     "AbsolutePathOutsideRoot",
-			filePath: filepath.Join(os.TempDir(), "model.safetensors"),
-			wantErr:  errFilePath, // Should fail since it's outside tmpDir
-		},
-		{
-			name:     "ValidRelativePath",
-			filePath: "model.safetensors",
-			wantErr:  nil,
-		},
+		{name: "file", path: "model.safetensors", want: true},
+		{name: "nested", path: "weights/model.safetensors", want: true},
+		{name: "empty", path: ""},
+		{name: "dot", path: "."},
+		{name: "dot dot", path: ".."},
+		{name: "trailing separator", path: "weights/"},
+		{name: "absolute", path: "/model.safetensors"},
+		{name: "drive relative", path: "c:model.safetensors"},
+		{name: "unc", path: `\\server\share\model.safetensors`},
+		{name: "device path", path: `\\?\c:\model.safetensors`},
+		{name: "mixed separators", path: `weights\model.safetensors`},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create the minimum required file map for convertFromSafetensors
-			files := map[string]string{
-				tt.filePath:      model,
-				"config.json":    config,
-				"tokenizer.json": tokenizer,
-			}
-
-			_, err := convertFromSafetensors(files, nil, false, "", true, func(resp api.ProgressResponse) {})
-
-			if (tt.wantErr == nil && err != nil) ||
-				(tt.wantErr != nil && err == nil) ||
-				(tt.wantErr != nil && !errors.Is(err, tt.wantErr)) {
-				t.Errorf("convertFromSafetensors() error = %v, wantErr %v", err, tt.wantErr)
+			err := validateCreateFilePath(tt.path)
+			if got := err == nil; got != tt.want {
+				t.Fatalf("validateCreateFilePath(%q) success = %v, want %v (error: %v)", tt.path, got, tt.want, err)
 			}
 		})
+	}
+}
+
+func TestValidateCreateFilesRejectsTooManyFiles(t *testing.T) {
+	files := make(map[string]string, maxCreateFiles+1)
+	digest := "sha256:" + strings.Repeat("0", 64)
+	for i := range maxCreateFiles + 1 {
+		files[fmt.Sprintf("file-%04d.json", i)] = digest
+	}
+
+	err := validateCreateFiles(files)
+	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("exceeds maximum %d", maxCreateFiles)) {
+		t.Fatalf("validateCreateFiles() error = %v, want file count limit", err)
+	}
+}
+
+func TestStageSafetensorsSourceFilesRejectsOversizedMetadata(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	digest := "sha256:" + strings.Repeat("0", 64)
+	blobPath, err := manifest.BlobsPath(digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(blobPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(maxSafetensorsMetadataSize + 1); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	dir, cleanup, err := stageSafetensorsSourceFiles(t.Context(), map[string]string{"config.json": digest})
+	if cleanup != nil {
+		cleanup()
+	}
+	if err == nil {
+		t.Fatalf("stageSafetensorsSourceFiles() = %q, nil, want size error", dir)
+	}
+	if !strings.Contains(err.Error(), "exceeds maximum") {
+		t.Fatalf("stageSafetensorsSourceFiles() error = %v, want size error", err)
+	}
+}
+
+func TestRecoverCreatePanic(t *testing.T) {
+	var sent any
+	func() {
+		defer recoverCreatePanic(func(resp any) bool {
+			sent = resp
+			return true
+		})
+
+		panic("boom")
+	}()
+
+	h, ok := sent.(gin.H)
+	if !ok {
+		t.Fatalf("sent response type = %T, want gin.H", sent)
+	}
+
+	if got, want := h["error"], "internal server error"; got != want {
+		t.Fatalf("sent error = %q, want %q", got, want)
+	}
+}
+
+func TestRecoverCreatePanicNoPanic(t *testing.T) {
+	called := false
+	func() {
+		defer recoverCreatePanic(func(resp any) bool {
+			called = true
+			return true
+		})
+	}()
+
+	if called {
+		t.Fatal("recoverCreatePanic sent a response without a panic")
 	}
 }
 
@@ -255,34 +315,4 @@ func TestRemoteURL_Idempotent(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestSetTemplate(t *testing.T) {
-	t.Setenv("OLLAMA_MODELS", t.TempDir())
-
-	t.Run("valid template", func(t *testing.T) {
-		layers, err := setTemplate(nil, "{{ .Prompt }}")
-		if err != nil {
-			t.Fatalf("setTemplate returned error for valid template: %v", err)
-		}
-
-		if len(layers) != 1 {
-			t.Fatalf("expected 1 layer, got %d", len(layers))
-		}
-
-		if got, want := layers[0].MediaType, "application/vnd.ollama.image.template"; got != want {
-			t.Fatalf("unexpected media type: got %q, want %q", got, want)
-		}
-	})
-
-	t.Run("invalid template", func(t *testing.T) {
-		_, err := setTemplate(nil, "{{ if .Prompt }}")
-		if err == nil {
-			t.Fatal("expected error for invalid template, got nil")
-		}
-
-		if !errors.Is(err, errBadTemplate) {
-			t.Fatalf("expected errBadTemplate, got %v", err)
-		}
-	})
 }

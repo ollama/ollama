@@ -4,8 +4,7 @@ package integration
 
 import (
 	"context"
-	"io"
-	"net"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,35 +15,17 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-const testdataModelsDir = "testdata/models"
+const (
+	testdataModelsDir = "testdata/models"
 
-// skipIfRemote skips the test if OLLAMA_HOST points to a non-local server.
-// Safetensors creation requires localhost since it reads model files.
-// from disk and uses the --experimental CLI path.
-func skipIfRemote(t *testing.T) {
-	t.Helper()
-	host := os.Getenv("OLLAMA_HOST")
-	if host == "" {
-		return // default is localhost
-	}
-	// Strip scheme if present
-	_, hostport, ok := strings.Cut(host, "://")
-	if !ok {
-		hostport = host
-	}
-	h, _, err := net.SplitHostPort(hostport)
-	if err != nil {
-		h = hostport
-	}
-	if h == "" || h == "localhost" {
-		return
-	}
-	ip := net.ParseIP(h)
-	if ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
-		return
-	}
-	t.Skipf("safetensors creation requires a local server (OLLAMA_HOST=%s)", host)
-}
+	tinyLlamaRepo     = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+	tinyLlamaRevision = "fe8a4ea1ffedaf415f4da2f062534de366a451e6"
+	tinyLlamaModelDir = "TinyLlama-1.1B"
+
+	llama32GGUFRepo     = "bartowski/Llama-3.2-1B-Instruct-GGUF"
+	llama32GGUFRevision = "067b946cf014b7c697f3654f621d577a3e3afd1c"
+	llama32GGUFFile     = "Llama-3.2-1B-Instruct-IQ3_M.gguf"
+)
 
 // findHFCLI returns the path to the HuggingFace CLI, or "" if not found.
 func findHFCLI() string {
@@ -56,7 +37,7 @@ func findHFCLI() string {
 
 // downloadHFModel idempotently downloads a HuggingFace model to destDir.
 // Skips the test if CLI is missing and model isn't already present.
-func downloadHFModel(t *testing.T, repo, destDir string, extraArgs ...string) {
+func downloadHFModel(t *testing.T, repo, revision, destDir string, extraArgs ...string) {
 	t.Helper()
 
 	// Check if model already exists
@@ -74,12 +55,14 @@ func downloadHFModel(t *testing.T, repo, destDir string, extraArgs ...string) {
 	}
 
 	t.Logf("Downloading %s to %s", repo, destDir)
-	os.MkdirAll(destDir, 0o755)
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		t.Fatalf("Failed to create model directory %s: %v", destDir, err)
+	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Minute)
 	defer cancel()
 
-	args := []string{"download", repo, "--local-dir", destDir}
+	args := []string{"download", repo, "--revision", revision, "--local-dir", destDir}
 	args = append(args, extraArgs...)
 	cmd := exec.CommandContext(ctx, cli, args...)
 	cmd.Stdout = os.Stdout
@@ -120,69 +103,62 @@ func ensureMLXLibraryPath(t *testing.T) {
 	}
 }
 
-// runOllamaCreate runs "ollama create" as a subprocess. Skips the test if
-// the error indicates the server is remote.
+// runOllamaCreate runs "ollama create" as a subprocess.
 func runOllamaCreate(ctx context.Context, t *testing.T, args ...string) {
 	t.Helper()
 	createCmd := exec.CommandContext(ctx, ollamaBin(), append([]string{"create"}, args...)...)
-	var createStderr strings.Builder
 	createCmd.Stdout = os.Stdout
-	createCmd.Stderr = io.MultiWriter(os.Stderr, &createStderr)
+	createCmd.Stderr = os.Stderr
 	if err := createCmd.Run(); err != nil {
-		if strings.Contains(createStderr.String(), "remote") {
-			t.Skip("safetensors creation requires a local server")
-		}
 		t.Fatalf("ollama create failed: %v", err)
 	}
 }
 
-func runCreateSafetensorsLLM(t *testing.T) {
-	if testModel != "" {
-		t.Skip("exercises create pipeline with a fixed source model, not applicable with model override")
+func isolateCreateModelStore(t *testing.T) {
+	t.Helper()
+	if os.Getenv("OLLAMA_TEST_EXISTING") == "" {
+		t.Setenv("OLLAMA_MODELS", t.TempDir())
 	}
-	skipIfRemote(t)
+}
 
-	modelDir := filepath.Join(testdataModelsDir, "TinyLlama-1.1B")
-	downloadHFModel(t, "TinyLlama/TinyLlama-1.1B-Chat-v1.0", modelDir)
+func createIntegrationModelName(prefix string) string {
+	return fmt.Sprintf("%s-%x", prefix, time.Now().UnixNano())
+}
 
-	ensureMLXLibraryPath(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-
-	client, _, cleanup := InitServerConnection(ctx, t)
-	defer cleanup()
-
-	modelName := "test-tinyllama-safetensors"
-
+func tinyLlamaModelfile(t *testing.T, modelDir string) string {
+	t.Helper()
 	absModelDir, err := filepath.Abs(modelDir)
 	if err != nil {
 		t.Fatalf("Failed to get absolute path: %v", err)
 	}
 
-	// Create a Modelfile pointing to the model directory.
-	// Include a chat template since the safetensors importer doesn't extract
-	// chat_template from tokenizer_config.json yet.
-	modelfileContent := "FROM " + absModelDir + "\n" +
+	// Include an Ollama template because the importer does not convert a Hugging
+	// Face chat template into a Modelfile template.
+	contents := "FROM " + absModelDir + "\n" +
 		"TEMPLATE \"{{ if .System }}<|system|>\n{{ .System }}</s>\n{{ end }}" +
 		"{{ if .Prompt }}<|user|>\n{{ .Prompt }}</s>\n{{ end }}" +
 		"<|assistant|>\n{{ .Response }}</s>\n\"\n"
-	tmpModelfile := filepath.Join(t.TempDir(), "Modelfile")
-	if err := os.WriteFile(tmpModelfile, []byte(modelfileContent), 0o644); err != nil {
+	name := filepath.Join(t.TempDir(), "Modelfile")
+	if err := os.WriteFile(name, []byte(contents), 0o644); err != nil {
 		t.Fatalf("Failed to write Modelfile: %v", err)
 	}
+	return name
+}
 
-	runOllamaCreate(ctx, t, modelName, "--experimental", "-f", tmpModelfile)
+func cleanupCreatedModel(t *testing.T, client *api.Client, modelName string) {
+	t.Helper()
+	t.Cleanup(func() {
+		// The test context is canceled before cleanup functions run.
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if err := client.Delete(ctx, &api.DeleteRequest{Model: modelName}); err != nil {
+			t.Logf("failed to delete test model %s: %v", modelName, err)
+		}
+	})
+}
 
-	// Verify model exists via show
-	showReq := &api.ShowRequest{Name: modelName}
-	showResp, err := client.Show(ctx, showReq)
-	if err != nil {
-		t.Fatalf("Model show failed after create: %v", err)
-	}
-	t.Logf("Created model details: %+v", showResp.Details)
-
-	// Use the chat API for proper template application.
+func verifyTinyLlamaChat(ctx context.Context, t *testing.T, client *api.Client, modelName string) {
+	t.Helper()
 	chatReq := &api.ChatRequest{
 		Model: modelName,
 		Messages: []api.Message{
@@ -195,7 +171,7 @@ func runCreateSafetensorsLLM(t *testing.T) {
 	}
 
 	var output strings.Builder
-	err = client.Chat(ctx, chatReq, func(resp api.ChatResponse) error {
+	err := client.Chat(ctx, chatReq, func(resp api.ChatResponse) error {
 		output.WriteString(resp.Message.Content)
 		return nil
 	})
@@ -206,51 +182,64 @@ func runCreateSafetensorsLLM(t *testing.T) {
 	text := output.String()
 	t.Logf("Generated output: %q", text)
 	assertCoherentOutput(t, text)
+}
 
-	// Cleanup: delete the model
-	deleteReq := &api.DeleteRequest{Model: modelName}
-	if err := client.Delete(ctx, deleteReq); err != nil {
-		t.Logf("Warning: failed to delete test model: %v", err)
+func runCreateSafetensorsLLM(t *testing.T) {
+	if testModel != "" {
+		t.Skip("exercises create pipeline with a fixed source model, not applicable with model override")
 	}
+	isolateCreateModelStore(t)
+	modelDir := filepath.Join(testdataModelsDir, tinyLlamaModelDir)
+	downloadHFModel(t, tinyLlamaRepo, tinyLlamaRevision, modelDir)
+
+	ensureMLXLibraryPath(t)
+	t.Setenv("OLLAMA_CREATE_REMOTE", "1")
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
+	defer cancel()
+
+	client, _, cleanup := InitServerConnection(ctx, t)
+	t.Cleanup(cleanup)
+
+	modelName := createIntegrationModelName("test-tinyllama-safetensors")
+	cleanupCreatedModel(t, client, modelName)
+
+	runOllamaCreate(ctx, t, modelName, "-f", tinyLlamaModelfile(t, modelDir))
+
+	// Verify model exists via show
+	showReq := &api.ShowRequest{Name: modelName}
+	showResp, err := client.Show(ctx, showReq)
+	if err != nil {
+		t.Fatalf("Model show failed after create: %v", err)
+	}
+	t.Logf("Created model details: %+v", showResp.Details)
+
+	verifyTinyLlamaChat(ctx, t, client, modelName)
 }
 
 func runCreateGGUF(t *testing.T) {
 	if testModel != "" {
 		t.Skip("exercises create pipeline with a fixed source model, not applicable with model override")
 	}
+	isolateCreateModelStore(t)
 	modelDir := filepath.Join(testdataModelsDir, "Llama-3.2-1B-GGUF")
-	downloadHFModel(t, "bartowski/Llama-3.2-1B-Instruct-GGUF", modelDir,
-		"--include", "Llama-3.2-1B-Instruct-IQ3_M.gguf")
+	downloadHFModel(t, llama32GGUFRepo, llama32GGUFRevision, modelDir,
+		"--include", llama32GGUFFile)
 
-	// Find the GGUF file
-	entries, err := os.ReadDir(modelDir)
-	if err != nil {
-		t.Fatalf("Failed to read model dir: %v", err)
-	}
-
-	var ggufPath string
-	for _, e := range entries {
-		if filepath.Ext(e.Name()) == ".gguf" {
-			ggufPath = filepath.Join(modelDir, e.Name())
-			break
-		}
-	}
-	if ggufPath == "" {
-		t.Skip("No GGUF file found in model directory")
-	}
-
+	ggufPath := filepath.Join(modelDir, llama32GGUFFile)
 	absGGUF, err := filepath.Abs(ggufPath)
 	if err != nil {
 		t.Fatalf("Failed to get absolute path: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 
 	client, _, cleanup := InitServerConnection(ctx, t)
-	defer cleanup()
+	t.Cleanup(cleanup)
 
-	modelName := "test-llama32-gguf"
+	modelName := createIntegrationModelName("test-llama32-gguf")
+	cleanupCreatedModel(t, client, modelName)
 
 	// Create a Modelfile and use the CLI
 	tmpModelfile := filepath.Join(t.TempDir(), "Modelfile")
@@ -258,12 +247,7 @@ func runCreateGGUF(t *testing.T) {
 		t.Fatalf("Failed to write Modelfile: %v", err)
 	}
 
-	createCmd := exec.CommandContext(ctx, ollamaBin(), "create", modelName, "-f", tmpModelfile)
-	createCmd.Stdout = os.Stdout
-	createCmd.Stderr = os.Stderr
-	if err := createCmd.Run(); err != nil {
-		t.Fatalf("ollama create failed: %v", err)
-	}
+	runOllamaCreate(ctx, t, modelName, "-f", tmpModelfile)
 
 	// Verify model exists
 	showReq := &api.ShowRequest{Name: modelName}
@@ -294,12 +278,6 @@ func runCreateGGUF(t *testing.T) {
 	text := output.String()
 	t.Logf("Generated output: %q", text)
 	assertCoherentOutput(t, text)
-
-	// Cleanup
-	deleteReq := &api.DeleteRequest{Model: modelName}
-	if err := client.Delete(ctx, deleteReq); err != nil {
-		t.Logf("Warning: failed to delete test model: %v", err)
-	}
 }
 
 // assertCoherentOutput checks that model output looks like real language, not

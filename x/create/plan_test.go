@@ -204,6 +204,110 @@ func TestPlanFloatPrestackedExperts(t *testing.T) {
 	}
 }
 
+func TestPlanFloatPrestackedGemma4PublisherNames(t *testing.T) {
+	const (
+		gateUpName = "model.language_model.layers.0.experts.gate_up_proj"
+		downName   = "model.language_model.layers.0.experts.down_proj"
+	)
+	inv := Inventory{Dir: "test", Tensors: map[string]SourceTensor{
+		gateUpName: {Name: gateUpName, Dtype: "BF16", Shape: []int32{8, 256, 128}},
+		downName:   {Name: downName, Dtype: "BF16", Shape: []int32{8, 128, 128}},
+	}}
+
+	specs, err := Plan(inv, Classification{Kind: SourceFloat, Quantize: "int4"}, gemma4ImportTransform{numLayers: 30, numExperts: 128})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if len(specs) != 2 {
+		t.Fatalf("Plan() produced %d blobs, want 2: %v", len(specs), specNames(specs))
+	}
+
+	for name, wantQuantize := range map[string]string{gateUpName: "int4", downName: "int8"} {
+		spec, ok := specByName(specs, name)
+		if !ok {
+			t.Fatalf("missing publisher-named blob %q; got %v", name, specNames(specs))
+		}
+		if len(spec.Tensors) != 1 {
+			t.Fatalf("blob %q has %d tensors, want 1", name, len(spec.Tensors))
+		}
+		tensor := spec.Tensors[0]
+		if tensor.Name != name || len(tensor.Sources) != 1 || tensor.Sources[0].Name != name || tensor.Transform != TransformNone {
+			t.Errorf("blob %q changed the publisher tensor name or layout: %+v", name, tensor)
+		}
+		if tensor.Quantize != wantQuantize {
+			t.Errorf("blob %q quantize = %q, want %q", name, tensor.Quantize, wantQuantize)
+		}
+	}
+}
+
+func TestPlanExpertGroupInvalidIndices(t *testing.T) {
+	tests := []struct {
+		name    string
+		tensors map[string]string
+		wantErr string
+	}{
+		{
+			name: "missing zero",
+			tensors: map[string]string{
+				"model.layers.0.mlp.experts.1.gate_proj.weight": "BF16",
+			},
+			wantErr: "missing expert index 0",
+		},
+		{
+			name: "gap",
+			tensors: map[string]string{
+				"model.layers.0.mlp.experts.0.gate_proj.weight": "BF16",
+				"model.layers.0.mlp.experts.2.gate_proj.weight": "BF16",
+			},
+			wantErr: "missing expert index 1",
+		},
+		{
+			name: "duplicate numeric alias",
+			tensors: map[string]string{
+				"model.layers.0.mlp.experts.1.gate_proj.weight":  "BF16",
+				"model.layers.0.mlp.experts.01.gate_proj.weight": "BF16",
+			},
+			wantErr: `invalid expert index "01"`,
+		},
+		{
+			name: "negative",
+			tensors: map[string]string{
+				"model.layers.0.mlp.experts.-1.gate_proj.weight": "BF16",
+			},
+			wantErr: `invalid expert index "-1"`,
+		},
+		{
+			name: "projection count mismatch",
+			tensors: map[string]string{
+				"model.layers.0.mlp.experts.0.down_proj.weight": "BF16",
+				"model.layers.0.mlp.experts.0.gate_proj.weight": "BF16",
+				"model.layers.0.mlp.experts.1.gate_proj.weight": "BF16",
+			},
+			wantErr: "want 1 to match the other projections",
+		},
+		{
+			name: "projection index set mismatch",
+			tensors: map[string]string{
+				"model.layers.0.mlp.experts.0.down_proj.weight": "BF16",
+				"model.layers.0.mlp.experts.1.down_proj.weight": "BF16",
+				"model.layers.0.mlp.experts.0.gate_proj.weight": "BF16",
+				"model.layers.0.mlp.experts.2.gate_proj.weight": "BF16",
+			},
+			wantErr: "projection gate_proj is missing expert index 1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			inv := newInventory(sourceModelConfig{}, tt.tensors)
+			_, err := Plan(inv, Classification{Kind: SourceFloat}, defaultQuantPolicy{})
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Plan() error = %v, want error containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestPlanExpertGroupMismatchedLayout(t *testing.T) {
 	// Experts in the same projection with different shapes cannot be stacked.
 	inv := Inventory{Dir: "test", Tensors: map[string]SourceTensor{

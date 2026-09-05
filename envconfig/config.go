@@ -236,6 +236,8 @@ var (
 	EnableIntegratedGPU = BoolWithDefault("OLLAMA_IGPU_ENABLE")
 	// NoCloudEnv checks the OLLAMA_NO_CLOUD environment variable.
 	NoCloudEnv = Bool("OLLAMA_NO_CLOUD")
+	// CreateRemote forces safetensors model creation through the server API.
+	CreateRemote = Bool("OLLAMA_CREATE_REMOTE")
 )
 
 func String(s string) func() string {
@@ -334,6 +336,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_ORIGINS":              {"OLLAMA_ORIGINS", AllowedOrigins(), "A comma separated list of allowed origins"},
 		"OLLAMA_SCHED_SPREAD":         {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
 		"OLLAMA_CONTEXT_LENGTH":       {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 4k/32k/256k based on VRAM)"},
+		"OLLAMA_CREATE_REMOTE":        {"OLLAMA_CREATE_REMOTE", CreateRemote(), "Force safetensors model creation through the server API"},
 		"OLLAMA_EDITOR":               {"OLLAMA_EDITOR", Editor(), "Path to editor for interactive prompt editing (Ctrl+G)"},
 		"OLLAMA_REMOTES":              {"OLLAMA_REMOTES", Remotes(), "Allowed hosts for remote models (default \"ollama.com\")"},
 

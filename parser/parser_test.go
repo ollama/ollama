@@ -21,7 +21,6 @@ import (
 	"golang.org/x/text/encoding/unicode"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/convert"
 	"github.com/ollama/ollama/fs/ggml"
 )
 
@@ -864,7 +863,7 @@ func createBinFile(t *testing.T, kv map[string]any, ti []*ggml.Tensor) (string, 
 	}
 	defer f.Close()
 
-	var base convert.KV = map[string]any{"general.architecture": "test"}
+	base := ggml.KV{"general.architecture": "test"}
 	maps.Copy(base, kv)
 
 	if err := ggml.WriteGGUF(f, base, ti); err != nil {

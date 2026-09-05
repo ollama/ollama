@@ -46,7 +46,7 @@ func (kv KV) ParameterCount() uint64 {
 }
 
 func (kv KV) FileType() FileType {
-	if t := kv.Uint("general.file_type"); t > 0 {
+	if t, ok := keyValue(kv, "general.file_type", uint32(FileTypeUnknown)); ok {
 		return FileType(t)
 	}
 

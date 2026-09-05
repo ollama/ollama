@@ -428,7 +428,10 @@ func TestTinyLagunaLoadWeightsKeepsMixedExpertPrecision(t *testing.T) {
 			prefix := "model.layers.1.mlp.experts." + string(rune('0'+expert))
 			for _, proj := range []string{"gate_proj", "up_proj"} {
 				key := prefix + "." + proj + ".weight"
-				weight, scales, biases := mlx.Quantize(tensors[key], cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode)
+				weight, scales, biases, err := mlx.Quantize(tensors[key], cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode)
+				if err != nil {
+					t.Fatalf("Quantize(%s) error = %v", key, err)
+				}
 				tensors[key] = weight
 				tensors[key+"_scale"] = scales
 				tensors[key+"_qbias"] = biases
@@ -661,8 +664,14 @@ func TestSwitchMLPMixedQuantizedGateUpDenseDownMatchesDense(t *testing.T) {
 		gateWeight := makePatternExpertWeight(2, 32, 32, 0.011)
 		upWeight := makePatternExpertWeight(2, 32, 32, 0.017)
 		downWeight := makePatternExpertWeight(2, 32, 32, 0.013)
-		gateQ, gateScales, gateBiases := mlx.Quantize(gateWeight, 32, 8, "mxfp8")
-		upQ, upScales, upBiases := mlx.Quantize(upWeight, 32, 8, "mxfp8")
+		gateQ, gateScales, gateBiases, err := mlx.Quantize(gateWeight, 32, 8, "mxfp8")
+		if err != nil {
+			t.Fatalf("Quantize(gateWeight) error = %v", err)
+		}
+		upQ, upScales, upBiases, err := mlx.Quantize(upWeight, 32, 8, "mxfp8")
+		if err != nil {
+			t.Fatalf("Quantize(upWeight) error = %v", err)
+		}
 		mlx.Eval(gateQ, gateScales, upQ, upScales)
 
 		mixed := &SwitchMLP{
@@ -693,7 +702,10 @@ func TestSwitchMLPMixedQuantizedGateUpDenseDownMatchesDense(t *testing.T) {
 func TestDenseExpertWeightForGatherMMDequantizesQuantizedWeight(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		weight := makePatternExpertWeight(2, 4, 32, 0.011)
-		qweight, scales, qbiases := mlx.Quantize(weight, 32, 8, "mxfp8")
+		qweight, scales, qbiases, err := mlx.Quantize(weight, 32, 8, "mxfp8")
+		if err != nil {
+			t.Fatalf("Quantize(weight) error = %v", err)
+		}
 		mlx.Eval(qweight, scales)
 
 		got := denseExpertWeightForGatherMM(&stackedExpertWeights{

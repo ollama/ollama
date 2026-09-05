@@ -2,6 +2,26 @@ package ggml
 
 import "testing"
 
+func TestKVFileType(t *testing.T) {
+	tests := []struct {
+		name string
+		kv   KV
+		want FileType
+	}{
+		{name: "missing", kv: KV{}, want: FileTypeUnknown},
+		{name: "F32", kv: KV{"general.file_type": uint32(FileTypeF32)}, want: FileTypeF32},
+		{name: "Q4_K_M", kv: KV{"general.file_type": uint32(FileTypeQ4_K_M)}, want: FileTypeQ4_K_M},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.kv.FileType(); got != tt.want {
+				t.Fatalf("FileType() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFileTypeStringMatchesLlamaFType(t *testing.T) {
 	tests := []struct {
 		ftype FileType

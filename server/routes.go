@@ -118,10 +118,7 @@ func init() {
 	renderers.RenderImgTags = true
 }
 
-var (
-	errRequired    = errors.New("is required")
-	errBadTemplate = errors.New("template error")
-)
+var errRequired = errors.New("is required")
 
 func (s *Server) modelOptions(model *Model, requestOpts map[string]any) (api.Options, error) {
 	return s.modelOptionsWithEmbeddingBatchDefault(model, requestOpts, shouldApplyEmbeddingBatchDefault(model, requestOpts))
@@ -1431,7 +1428,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		QuantizationLevel: m.Config.FileType,
 	}
 
-	// For safetensors LLM models (experimental), populate details from config.json
+	// For safetensors LLM models, populate details from config.json.
 	if m.Config.ModelFormat == "safetensors" && slices.Contains(m.Config.Capabilities, "completion") {
 		if info, err := xserver.GetSafetensorsLLMInfo(name); err == nil {
 			if arch, ok := info["general.architecture"].(string); ok && arch != "" {
@@ -1542,7 +1539,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		return resp, nil
 	}
 
-	// For safetensors LLM models (experimental), populate ModelInfo from config.json
+	// For safetensors LLM models, populate ModelInfo from config.json.
 	if m.Config.ModelFormat == "safetensors" && slices.Contains(m.Config.Capabilities, "completion") {
 		if info, err := xserver.GetSafetensorsLLMInfo(name); err == nil {
 			resp.ModelInfo = info
@@ -1697,8 +1694,11 @@ func (s *Server) HeadBlobHandler(c *gin.Context) {
 		return
 	}
 
-	if _, err := os.Stat(path); err != nil {
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("blob %q not found", c.Param("digest"))})
+		return
+	} else if err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 

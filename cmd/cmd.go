@@ -34,6 +34,7 @@ import (
 	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/mod/semver"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
 
@@ -152,8 +153,6 @@ func ensureThinkingSupport(ctx context.Context, client *api.Client, name string)
 	fmt.Fprintf(os.Stderr, "warning: model %q does not support thinking output\n", name)
 }
 
-var errModelfileNotFound = errors.New("specified Modelfile wasn't found")
-
 func getModelfileName(cmd *cobra.Command) (string, error) {
 	filename, _ := cmd.Flags().GetString("file")
 
@@ -185,7 +184,7 @@ func isLocalhost() bool {
 	return ip != nil && (ip.IsLoopback() || ip.IsUnspecified())
 }
 
-func resolveExperimentalLocalModelDir(ref, filename string) string {
+func resolveCreateLocalModelDir(ref, filename string) string {
 	if ref == "" || filepath.IsAbs(ref) || filename == "" {
 		return ref
 	}
@@ -198,7 +197,7 @@ func resolveExperimentalLocalModelDir(ref, filename string) string {
 	return ref
 }
 
-func resolveExperimentalDraftDir(ref, filename string) (string, error) {
+func resolveCreateDraftDir(ref, filename string) (string, error) {
 	if ref == "" {
 		return "", nil
 	}
@@ -215,7 +214,86 @@ func resolveExperimentalDraftDir(ref, filename string) (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("DRAFT model references are not supported with --experimental yet: %s", ref)
+	return "", fmt.Errorf("DRAFT model references must be local safetensors directories for safetensors create: %s", ref)
+}
+
+func readCreateModelfile(cmd *cobra.Command) (*parser.Modelfile, string, error) {
+	var reader io.Reader
+	filename, err := getModelfileName(cmd)
+	if errors.Is(err, os.ErrNotExist) || filename == "" {
+		reader = strings.NewReader("FROM .\n")
+	} else if err != nil {
+		return nil, "", err
+	} else {
+		f, err := os.Open(filename)
+		if err != nil {
+			return nil, "", err
+		}
+		defer f.Close()
+		reader = f
+	}
+
+	modelfile, err := parser.ParseFile(reader)
+	if err != nil {
+		return nil, "", err
+	}
+	return modelfile, filename, nil
+}
+
+func safetensorsCreateOptions(modelfile *parser.Modelfile, filename, modelName string) (xcreateclient.CreateOptions, bool, error) {
+	modelDir, mfConfig, err := xcreateclient.ConfigFromModelfile(modelfile)
+	if err != nil {
+		return xcreateclient.CreateOptions{}, false, err
+	}
+
+	modelDir = resolveCreateLocalModelDir(modelDir, filename)
+	isSafetensors := xcreate.IsSafetensorsModelDir(modelDir)
+	isBaseModelWithDraft := mfConfig.Draft != "" && !isSafetensors && xcreate.IsSafetensorsLLMModel(modelDir)
+	if !isSafetensors && !isBaseModelWithDraft {
+		return xcreateclient.CreateOptions{}, false, nil
+	}
+
+	if mfConfig.Draft != "" {
+		draftDir, err := resolveCreateDraftDir(mfConfig.Draft, filename)
+		if err != nil {
+			if isSafetensors {
+				return xcreateclient.CreateOptions{}, false, err
+			}
+			// Existing safetensors models may still use a GGUF DRAFT layer;
+			// leave that combination on the standard create path.
+			return xcreateclient.CreateOptions{}, false, nil
+		}
+		mfConfig.Draft = draftDir
+	}
+
+	if mfConfig.Requires != "" {
+		requires := "v" + strings.TrimPrefix(mfConfig.Requires, "v")
+		minimum := "v" + xcreate.SafetensorsMinOllamaVersion
+		if semver.Compare(requires, minimum) < 0 {
+			return xcreateclient.CreateOptions{}, false, fmt.Errorf("requires %s is below the minimum supported version %s for safetensors models", mfConfig.Requires, xcreate.SafetensorsMinOllamaVersion)
+		}
+	}
+	var modelCount, draftCount int
+	for _, command := range modelfile.Commands {
+		switch command.Name {
+		case "model":
+			modelCount++
+		case "draft":
+			draftCount++
+		}
+	}
+	if modelCount != 1 {
+		return xcreateclient.CreateOptions{}, false, errors.New("safetensors imports require exactly one FROM source")
+	}
+	if draftCount > 1 {
+		return xcreateclient.CreateOptions{}, false, errors.New("safetensors imports support at most one DRAFT source")
+	}
+
+	return xcreateclient.CreateOptions{
+		ModelName: modelName,
+		ModelDir:  modelDir,
+		Modelfile: mfConfig,
+	}, true, nil
 }
 
 func CreateHandler(cmd *cobra.Command, args []string) error {
@@ -229,88 +307,45 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid model name: %s", modelName)
 	}
 
-	// Check for --experimental flag for safetensors model creation.
-	experimental, _ := cmd.Flags().GetBool("experimental")
 	draftQuantize, _ := cmd.Flags().GetString("draft-quantize")
-	if experimental {
-		if !isLocalhost() {
-			return errors.New("remote safetensor model creation not yet supported")
-		}
-
-		// Get Modelfile content - either from -f flag or default to "FROM ."
-		var reader io.Reader
-		filename, err := getModelfileName(cmd)
-		if os.IsNotExist(err) || filename == "" {
-			// No Modelfile specified or found - use default
-			reader = strings.NewReader("FROM .\n")
-		} else if err != nil {
-			return err
-		} else {
-			f, err := os.Open(filename)
-			if err != nil {
-				return err
-			}
-			defer f.Close()
-			reader = f
-		}
-
-		// Parse the Modelfile
-		modelfile, err := parser.ParseFile(reader)
-		if err != nil {
-			return fmt.Errorf("failed to parse Modelfile: %w", err)
-		}
-
-		modelDir, mfConfig, err := xcreateclient.ConfigFromModelfile(modelfile)
-		if err != nil {
-			return err
-		}
-
-		modelDir = resolveExperimentalLocalModelDir(modelDir, filename)
-		if mfConfig.Draft != "" {
-			draftDir, err := resolveExperimentalDraftDir(mfConfig.Draft, filename)
-			if err != nil {
-				return err
-			}
-			mfConfig.Draft = draftDir
-		}
-
-		quantize, _ := cmd.Flags().GetString("quantize")
-		return xcreateclient.CreateModel(xcreateclient.CreateOptions{
-			ModelName:     modelName,
-			ModelDir:      modelDir,
-			Quantize:      quantize,
-			DraftQuantize: draftQuantize,
-			Modelfile:     mfConfig,
-		}, p)
-	}
-
-	// Standard Modelfile + API path
-	var reader io.Reader
-
-	filename, err := getModelfileName(cmd)
-	if os.IsNotExist(err) {
-		if filename == "" {
-			reader = strings.NewReader("FROM .\n")
-		} else {
-			return errModelfileNotFound
-		}
-	} else if err != nil {
-		return err
-	} else {
-		f, err := os.Open(filename)
-		if err != nil {
-			return err
-		}
-
-		reader = f
-		defer f.Close()
-	}
-
-	modelfile, err := parser.ParseFile(reader)
+	quantize, _ := cmd.Flags().GetString("quantize")
+	force, _ := cmd.Flags().GetBool("force")
+	modelfile, filename, err := readCreateModelfile(cmd)
 	if err != nil {
 		return err
 	}
 
+	opts, isSafetensorsCreate, err := safetensorsCreateOptions(modelfile, filename, modelName)
+	if err != nil {
+		return err
+	}
+	if isSafetensorsCreate {
+		opts.Quantize = quantize
+		opts.DraftQuantize = draftQuantize
+		opts.Force = force
+		if !envconfig.CreateRemote() && isLocalhost() {
+			return xcreateclient.CreateModel(cmd.Context(), opts, p)
+		}
+		if force {
+			return errors.New("--force is only supported for local MLX safetensors imports")
+		}
+	} else if quantize != "" {
+		return errors.New("create-time quantization is only supported for safetensors imports; quantize GGUF models before importing")
+	} else if force {
+		return errors.New("--force is only supported for local MLX safetensors imports")
+	}
+	if err := checkServerHeartbeat(cmd, args); err != nil {
+		return err
+	}
+	if isSafetensorsCreate {
+		client, err := api.ClientFromEnvironment()
+		if err != nil {
+			return err
+		}
+		return xcreateclient.CreateModelRemote(cmd.Context(), client, opts, p)
+	}
+
+	// Standard Modelfile + API path
 	status := "gathering model components"
 	spinner := progress.NewSpinner(status)
 	p.Add(status, spinner)
@@ -322,17 +357,12 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	spinner.Stop()
 
 	req.Model = modelName
-	quantize, _ := cmd.Flags().GetString("quantize")
-	if quantize != "" {
-		req.Quantize = quantize
-	}
 	if draftQuantize != "" {
 		if len(req.DraftFiles) == 0 {
 			return errors.New("--draft-quantize requires a DRAFT model")
 		}
-		req.DraftQuantize = draftQuantize
+		return errors.New("draft quantization during create is only supported for safetensors imports; quantize GGUF draft models before importing")
 	}
-
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
@@ -2310,20 +2340,15 @@ func NewCLI() *cobra.Command {
 		Use:   "create MODEL",
 		Short: "Create a model",
 		Args:  cobra.ExactArgs(1),
-		PreRunE: func(cmd *cobra.Command, args []string) error {
-			// Skip server check for experimental mode (writes directly to disk)
-			if experimental, _ := cmd.Flags().GetBool("experimental"); experimental {
-				return nil
-			}
-			return checkServerHeartbeat(cmd, args)
-		},
-		RunE: CreateHandler,
+		RunE:  CreateHandler,
 	}
 
 	createCmd.Flags().StringP("file", "f", "", "Name of the Modelfile (default \"Modelfile\")")
-	createCmd.Flags().StringP("quantize", "q", "", "Quantize model to this level (e.g. q4_K_M)")
-	createCmd.Flags().String("draft-quantize", "", "Quantize draft model to this level")
-	createCmd.Flags().Bool("experimental", false, "Enable experimental safetensors model creation")
+	createCmd.Flags().StringP("quantize", "q", "", "Quantize safetensors model to this level (e.g. nvfp4)")
+	createCmd.Flags().String("draft-quantize", "", "Quantize safetensors draft model to this level")
+	createCmd.Flags().Bool("force", false, "Continue local creation when MLX validation fails")
+	createCmd.Flags().Bool("experimental", false, "Deprecated no-op")
+	createCmd.Flags().MarkHidden("experimental")
 
 	showCmd := &cobra.Command{
 		Use:     "show MODEL",
