@@ -379,7 +379,7 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 	params = appendJinjaArgs(params, launch.config)
 
 	params = appendMMProjArgs(params, launch)
-	params = appendDraftArgs(params, launch.draftType, launch.config.DraftModelPath, launch.opts)
+	params = appendDraftArgs(params, launch.draftType, launch.config.DraftModelPath, launch.opts, launch.gpus)
 
 	params = append(params, qwenVLServerArgs(launch.modelArch)...)
 
@@ -804,7 +804,7 @@ const (
 	draftTypeDFlash = "draft-dflash"
 )
 
-func appendDraftArgs(params []string, draftType, draftModelPath string, opts api.Options) []string {
+func appendDraftArgs(params []string, draftType, draftModelPath string, opts api.Options, gpus []ml.DeviceInfo) []string {
 	if draftType == "" {
 		return params
 	}
@@ -815,7 +815,12 @@ func appendDraftArgs(params []string, draftType, draftModelPath string, opts api
 	params = append(params, "--spec-type", draftType)
 	params = append(params, "--spec-draft-n-max", strconv.Itoa(opts.DraftNumPredict))
 	if draftType == draftTypeMTP {
-		params = append(params, "--spec-draft-backend-sampling")
+		// Metal backend sampling adds draft-side overhead without changing MTP acceptance.
+		if slices.ContainsFunc(gpus, func(gpu ml.DeviceInfo) bool { return gpu.Library == "Metal" }) {
+			params = append(params, "--no-spec-draft-backend-sampling")
+		} else {
+			params = append(params, "--spec-draft-backend-sampling")
+		}
 	}
 	if draftModelPath != "" {
 		params = append(params, "--spec-draft-model", draftModelPath)
