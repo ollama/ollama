@@ -6,6 +6,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
@@ -26,10 +27,6 @@ func runBlueSky(t *testing.T) {
 			},
 		},
 		Stream: &stream,
-		Options: map[string]any{
-			"temperature": 0,
-			"seed":        123,
-		},
 	}
 	ChatTestHelper(ctx, t, req, blueSkyExpected)
 }
@@ -53,8 +50,6 @@ func runUnicode(t *testing.T, model string) {
 		},
 		Stream: &stream,
 		Options: map[string]any{
-			"temperature": 0,
-			"seed":        123,
 			// Workaround deepseek context shifting bug
 			"num_ctx":     8192,
 			"num_predict": 2048,
@@ -93,10 +88,6 @@ func runExtendedUnicodeOutput(t *testing.T, model string) {
 			},
 		},
 		Stream: &stream,
-		Options: map[string]any{
-			"temperature": 0,
-			"seed":        123,
-		},
 	}
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
@@ -114,11 +105,12 @@ func runUnicodeModelDir(t *testing.T) {
 		t.Skip("runUnicodeModelDir only works for local testing, skipping")
 	}
 
-	modelDir, err := os.MkdirTemp("", "ollama_埃")
-	if err != nil {
+	// The unicode component is the point of this test, so it has to be in the
+	// path itself; t.TempDir() alone names the directory after the test.
+	modelDir := filepath.Join(t.TempDir(), "ollama_埃")
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(modelDir)
 	slog.Info("unicode", "OLLAMA_MODELS", modelDir)
 
 	t.Setenv("OLLAMA_MODELS", modelDir)
@@ -135,10 +127,6 @@ func runUnicodeModelDir(t *testing.T) {
 			},
 		},
 		Stream: &stream,
-		Options: map[string]any{
-			"temperature": 0,
-			"seed":        123,
-		},
 	}
 	ChatTestHelper(ctx, t, req, blueSkyExpected)
 }
@@ -164,8 +152,6 @@ func runNumPredict(t *testing.T, model string) {
 		Logprobs: true,
 		Options: map[string]any{
 			"num_predict": 10,
-			"temperature": 0,
-			"seed":        123,
 		},
 	}
 

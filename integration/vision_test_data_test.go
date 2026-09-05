@@ -383,6 +383,7 @@ yEUu0pztbKtys2RR9bUiUBGoCFQE5oTAL3/5y+ab3/xmc9JJJzWf+cxnmq9+9atzKXmuDGQuNaqFVAQq
 VBGoCFQElgKBykCWoptqJSsCFYGKwOIhUBnI4vVJrVFFoCJQEVgKBCoDWYpuqpWsCFQEKgKLh0BlIIvXJ7VGFYGKQEVgKRDYOWr5q6Woaa1kRaAiUBGoCCwU
 Av8fgwPy24mbuF8AAAAASUVORK5CYII=
 `
+
 // imageEncodingOllamaHome is a 415x293 JPEG of the ollama.com homepage.
 // Shows a cartoon llama character with text "Start building with open models".
 const imageEncodingOllamaHome = `/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4pLSwzOko+MzZGNywtQFdBRkxO
