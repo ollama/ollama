@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/ollama/ollama/cmd/internal/fileutil"
@@ -16,7 +17,9 @@ import (
 )
 
 // Codex implements Runner for Codex integration
-type Codex struct{}
+type Codex struct {
+	resolveContext func(LaunchModel, bool) contextWindowResolution
+}
 
 func (c *Codex) String() string { return "Codex CLI" }
 
@@ -33,7 +36,7 @@ const (
 	codexRootOpenAIBaseURLKey    = "openai_base_url"
 )
 
-func (c *Codex) args(model, modelCatalogPath string, extra []string) ([]string, error) {
+func (c *Codex) args(model, modelCatalogPath string, contextWindow int, extra []string) ([]string, error) {
 	if err := codexValidateExtraArgs(extra); err != nil {
 		return nil, err
 	}
@@ -41,6 +44,9 @@ func (c *Codex) args(model, modelCatalogPath string, extra []string) ([]string, 
 	args := []string{"--profile", codexProfileName}
 	for _, override := range codexManagedConfigOverrides(modelCatalogPath) {
 		args = append(args, "-c", override)
+	}
+	if contextWindow > 0 {
+		args = append(args, "-c", fmt.Sprintf("model_context_window=%d", contextWindow))
 	}
 	if model != "" {
 		args = append(args, "-m", model)
@@ -50,11 +56,33 @@ func (c *Codex) args(model, modelCatalogPath string, extra []string) ([]string, 
 }
 
 func (c *Codex) Run(model string, models []LaunchModel, args []string) error {
+	if err := codexValidateExtraArgs(args); err != nil {
+		return fmt.Errorf("failed to configure codex: %w", err)
+	}
 	if err := checkCodexVersion(); err != nil {
 		return err
 	}
 
-	if err := ensureCodexConfig(model, models); err != nil {
+	launchModel := codexCatalogModel(model, models)
+	resolution := c.contextWindow(launchModel)
+	codexWarnUnverifiedContext(model, resolution)
+	if resolution.ContextLength > 0 {
+		launchModel.ContextLength = resolution.ContextLength
+	}
+
+	inheritedContext, err := codexConfiguredContextWindow()
+	if err != nil {
+		return fmt.Errorf("failed to configure codex: %w", err)
+	}
+	effectiveContext, cleanArgs, corrected, err := codexReconcileContextWindow(resolution.ContextLength, inheritedContext, args)
+	if err != nil {
+		return fmt.Errorf("failed to configure codex: %w", err)
+	}
+	if corrected {
+		fmt.Fprintf(os.Stderr, "%s  Warning: configured model_context_window exceeds Ollama's %d-token context; using %d%s\n", ansiYellow, resolution.ContextLength, effectiveContext, ansiReset)
+	}
+
+	if err := ensureCodexConfig(model, []LaunchModel{launchModel}); err != nil {
 		return fmt.Errorf("failed to configure codex: %w", err)
 	}
 
@@ -63,7 +91,7 @@ func (c *Codex) Run(model string, models []LaunchModel, args []string) error {
 		return fmt.Errorf("failed to configure codex: %w", err)
 	}
 
-	codexArgs, err := c.args(model, catalogPath, args)
+	codexArgs, err := c.args(model, catalogPath, effectiveContext, cleanArgs)
 	if err != nil {
 		return fmt.Errorf("failed to configure codex: %w", err)
 	}
@@ -78,8 +106,122 @@ func (c *Codex) Run(model string, models []LaunchModel, args []string) error {
 	return cmd.Run()
 }
 
+func (c *Codex) contextWindow(model LaunchModel) contextWindowResolution {
+	if c != nil && c.resolveContext != nil {
+		return c.resolveContext(model, true)
+	}
+	return resolveLaunchContextFromEnvironment(model, true)
+}
+
+func codexWarnUnverifiedContext(model string, resolution contextWindowResolution) {
+	if resolution.RuntimeVerified || isCloudModelName(model) {
+		return
+	}
+	if resolution.ContextLength > 0 {
+		fmt.Fprintf(os.Stderr, "%s  Warning: could not verify %s's loaded context; using %d from %s%s\n", ansiYellow, model, resolution.ContextLength, resolution.Source, ansiReset)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "%s  Warning: could not determine %s's context; Codex will use its existing fallback%s\n", ansiYellow, model, ansiReset)
+}
+
+func codexConfiguredContextWindow() (int, error) {
+	configPath, err := codexCLIConfigPath()
+	if err != nil {
+		return 0, err
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	config, err := codexParseConfig(string(data))
+	if err != nil {
+		return 0, err
+	}
+	value, _ := config.Int("model_context_window")
+	return value, nil
+}
+
+func codexReconcileContextWindow(available, inherited int, extra []string) (int, []string, bool, error) {
+	if available <= 0 {
+		return 0, append([]string(nil), extra...), false, nil
+	}
+
+	requested, found, cleaned, err := codexExtractContextWindowOverride(extra)
+	if err != nil {
+		return 0, nil, false, err
+	}
+	if !found {
+		requested = inherited
+	}
+	if requested <= 0 {
+		requested = available
+	}
+	corrected := requested > available
+	if corrected {
+		requested = available
+	}
+	return requested, cleaned, corrected, nil
+}
+
+func codexExtractContextWindowOverride(args []string) (int, bool, []string, error) {
+	cleaned := make([]string, 0, len(args))
+	var requested int
+	var found bool
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if (arg == "-c" || arg == "--config") && i+1 < len(args) {
+			if value, ok, err := codexContextWindowAssignment(args[i+1]); ok || err != nil {
+				if err != nil {
+					return 0, false, nil, err
+				}
+				requested, found = value, true
+				i++
+				continue
+			}
+			cleaned = append(cleaned, arg, args[i+1])
+			i++
+			continue
+		}
+
+		assignment := ""
+		switch {
+		case strings.HasPrefix(arg, "--config="):
+			assignment = strings.TrimPrefix(arg, "--config=")
+		case strings.HasPrefix(arg, "-c") && len(arg) > len("-c"):
+			assignment = strings.TrimPrefix(strings.TrimPrefix(arg, "-c"), "=")
+		}
+		if assignment != "" {
+			if value, ok, err := codexContextWindowAssignment(assignment); ok || err != nil {
+				if err != nil {
+					return 0, false, nil, err
+				}
+				requested, found = value, true
+				continue
+			}
+		}
+		cleaned = append(cleaned, arg)
+	}
+	return requested, found, cleaned, nil
+}
+
+func codexContextWindowAssignment(assignment string) (int, bool, error) {
+	key, value, ok := strings.Cut(strings.TrimSpace(assignment), "=")
+	if !ok || strings.Trim(strings.TrimSpace(key), `"'`) != "model_context_window" {
+		return 0, false, nil
+	}
+	value = strings.ReplaceAll(strings.TrimSpace(value), "_", "")
+	n, err := strconv.Atoi(value)
+	if err != nil || n <= 0 {
+		return 0, true, fmt.Errorf("invalid model_context_window override %q", assignment)
+	}
+	return n, true, nil
+}
+
 func (c *Codex) Restore() error {
-	configPath, err := codexConfigPath()
+	configPath, err := codexCLIConfigPath()
 	if err != nil {
 		return err
 	}
@@ -207,7 +349,7 @@ func codexConfigOverrideConflicts(value string) bool {
 // ensureCodexConfig writes a Codex profile file and model catalog so Codex uses
 // the local Ollama server without changing app-visible root config.
 func ensureCodexConfig(modelName string, models []LaunchModel) error {
-	configPath, err := codexConfigPath()
+	configPath, err := codexCLIConfigPath()
 	if err != nil {
 		return err
 	}
@@ -237,8 +379,15 @@ func codexConfigPath() (string, error) {
 	return filepath.Join(home, ".codex", "config.toml"), nil
 }
 
+func codexCLIConfigPath() (string, error) {
+	if codexHome := os.Getenv("CODEX_HOME"); codexHome != "" {
+		return filepath.Join(codexHome, "config.toml"), nil
+	}
+	return codexConfigPath()
+}
+
 func codexModelCatalogPath() (string, error) {
-	configPath, err := codexConfigPath()
+	configPath, err := codexCLIConfigPath()
 	if err != nil {
 		return "", err
 	}
@@ -250,7 +399,7 @@ func codexModelCatalogPathForConfig(configPath string) string {
 }
 
 func codexProfileConfigPath() (string, error) {
-	configPath, err := codexConfigPath()
+	configPath, err := codexCLIConfigPath()
 	if err != nil {
 		return "", err
 	}
@@ -404,6 +553,31 @@ func codexRemoveSection(text, header string) string {
 
 type codexParsedConfig struct {
 	values map[string]any
+}
+
+func (c codexParsedConfig) Int(path ...string) (int, bool) {
+	if len(path) == 0 {
+		return 0, false
+	}
+	var current any = c.values
+	for _, part := range path {
+		table, ok := current.(map[string]any)
+		if !ok {
+			return 0, false
+		}
+		current, ok = table[part]
+		if !ok {
+			return 0, false
+		}
+	}
+	switch value := current.(type) {
+	case int64:
+		return int(value), value > 0
+	case int:
+		return value, value > 0
+	default:
+		return 0, false
+	}
 }
 
 func (c codexParsedConfig) String(path ...string) (string, bool) {
@@ -697,12 +871,6 @@ func buildCodexModelEntry(launchModel LaunchModel) map[string]any {
 	}
 	if l, ok := lookupCloudModelLimit(modelName); ok {
 		contextWindow = l.Context
-	}
-
-	if !isCloudModelName(modelName) && launchModel.Details.Format != "safetensors" {
-		if ctxLen := envconfig.ContextLength(); ctxLen > 0 {
-			contextWindow = int(ctxLen)
-		}
 	}
 
 	modalities := []string{"text"}
