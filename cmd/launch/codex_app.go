@@ -159,7 +159,9 @@ func (c *CodexApp) CurrentModel() string {
 	if err != nil {
 		return ""
 	}
-	if codexAppRootUsesProxy(parsed) && codexAppCatalogHealthy(parsed, "") {
+	if codexAppRootUsesProxy(parsed) &&
+		codexNormalizeURL(parsed.RootString(codexRootOpenAIBaseURLKey)) == codexNormalizeURL(codexAppProxyBaseURL()) &&
+		codexAppCatalogHealthy(parsed, "") {
 		model := strings.TrimSpace(parsed.RootString(codexRootModelKey))
 		if codexAppCatalogContainsModel(model) {
 			return model
@@ -2307,7 +2309,8 @@ func codexAppManagedProxyURL(raw string) bool {
 			return false
 		}
 	}
-	return strings.TrimSuffix(u.Path, "/") == proxy.CodexDesktopPathPrefix+"/v1"
+	// ConnectableHost preserves proxy path prefixes from OLLAMA_HOST.
+	return strings.HasSuffix(strings.TrimSuffix(u.Path, "/"), proxy.CodexDesktopPathPrefix+"/v1")
 }
 
 func codexAppRootReferencesCatalog(text string) bool {
