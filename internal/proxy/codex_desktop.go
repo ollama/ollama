@@ -305,13 +305,15 @@ func (h *CodexDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusBadGateway
 	}
 	h.logActivity(started, r.Method, suffix, model, route, status, result)
+	if aborted {
+		// net/http must terminate the response rather than finish a truncated
+		// stream successfully. Record the failure before propagating it.
+		panic(http.ErrAbortHandler)
+	}
 }
 
-// serveReverseProxy handles the sentinel panic ReverseProxy uses when a
-// streamed response fails after its headers have already been sent. A normal
-// net/http server suppresses this panic, but doing so outside this handler
-// would skip the terminal activity log and let middleware report a false 500.
-// All other panics remain programming errors and propagate unchanged.
+// serveReverseProxy catches stream aborts so ServeHTTP can record the outcome
+// before rethrowing the sentinel. All other panics propagate unchanged.
 func (h *CodexDesktop) serveReverseProxy(w http.ResponseWriter, r *http.Request) (aborted bool) {
 	defer func() {
 		if recovered := recover(); recovered != nil {

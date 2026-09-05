@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -1876,7 +1877,16 @@ func (s *Server) GenerateRoutes() (http.Handler, error) {
 	}
 	corsConfig.AllowOrigins = envconfig.AllowedOrigins()
 
-	r := gin.Default()
+	r := gin.New()
+	r.Use(gin.Logger(), gin.CustomRecoveryWithWriter(nil, func(c *gin.Context, recovered any) {
+		// ReverseProxy uses this sentinel to terminate incomplete responses.
+		// Let net/http close the connection or reset the HTTP/2 stream.
+		if recovered == http.ErrAbortHandler {
+			panic(recovered)
+		}
+		slog.Error("request panic recovered", "panic", recovered, "stack", string(debug.Stack()))
+		c.AbortWithStatus(http.StatusInternalServerError)
+	}))
 	r.HandleMethodNotAllowed = true
 	r.Use(
 		cors.New(corsConfig),
