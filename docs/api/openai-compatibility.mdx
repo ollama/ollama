@@ -257,6 +257,7 @@ curl -X POST http://localhost:11434/v1/chat/completions \
 
 - `created` corresponds to when the model was last modified
 - `owned_by` corresponds to the ollama username, defaulting to `"library"`
+- `context_length` contains the maximum context window size in tokens for the model (if available)
 
 ### `/v1/models/{model}`
 
@@ -264,6 +265,7 @@ curl -X POST http://localhost:11434/v1/chat/completions \
 
 - `created` corresponds to when the model was last modified
 - `owned_by` corresponds to the ollama username, defaulting to `"library"`
+- `context_length` contains the maximum context window size in tokens for the model (if available)
 
 ### `/v1/embeddings`
 
