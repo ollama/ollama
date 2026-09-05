@@ -28,6 +28,9 @@ const (
 	gemma4ToolCallCloseTag = "<tool_call|>"
 	gemma4ToolResponseTag  = "<|tool_response>"
 	gemma4StringDelimiter  = `<|"|>`
+	// The channel this parser treats as thinking, as the model names it after
+	// the opening tag.
+	gemma4ThinkingChannelName = "thought"
 )
 
 var gemma4QuotedStringRe = regexp.MustCompile(`(?s)<\|"\|>(.*?)<\|"\|>`)
@@ -40,6 +43,11 @@ type Gemma4Parser struct {
 	hasThinkingSupport    bool
 	thinkingEnabled       bool // true when both model supports and user requested thinking
 	needsChannelNameStrip bool // true when we just entered thinking and need to strip "thought\n"
+	// True immediately after a thinking block closed. A block closed by the
+	// reasoning-budget sampler is closed between the model's <|channel> token
+	// and the "thought\n" header it was about to write, so that header arrives
+	// with the block already over and would otherwise be emitted as the answer.
+	strayChannelName bool
 }
 
 func (p *Gemma4Parser) HasToolSupport() bool {
@@ -177,6 +185,29 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 
 	switch p.state {
 	case Gemma4CollectingContent:
+		// A channel header orphaned by the block closing under it.
+		//
+		// The reasoning-budget sampler forces its message and the closing tag
+		// the moment the budget is gone, and the moment it can see the budget
+		// is gone is the model's <|channel> token -- before the "thought\n"
+		// header that follows it has been written. The model writes it anyway,
+		// into a block that is already closed, and it reads on screen as the
+		// word "thought" sitting after the budget message. Measured live on
+		// gemma4 with a 16,000-token budget.
+		if p.strayChannelName {
+			if stripped, ok := strings.CutPrefix(bufStr, gemma4ThinkingChannelName); ok {
+				bufStr = strings.TrimLeftFunc(stripped, unicode.IsSpace)
+				p.buffer.Reset()
+				p.buffer.WriteString(bufStr)
+				p.strayChannelName = false
+			} else if !done && strings.HasPrefix(gemma4ThinkingChannelName, bufStr) {
+				// Split across chunks: "thou" now, the rest next.
+				return events, false
+			} else {
+				p.strayChannelName = false
+			}
+		}
+
 		// Check for thinking open tag
 		if idx := strings.Index(bufStr, gemma4ThinkingOpenTag); idx != -1 {
 			contentBefore := bufStr[:idx]
@@ -260,6 +291,7 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 			p.buffer.Reset()
 			p.buffer.WriteString(remaining)
 			p.state = Gemma4CollectingContent
+			p.strayChannelName = true
 
 			if len(thinking) > 0 {
 				events = append(events, gemma4EventThinkingContent{content: thinking})
