@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -2286,8 +2288,26 @@ func codexAppRootUsesProxy(config codexParsedConfig) bool {
 	if modelProvider, ok := config.RootStringOK(codexRootModelProviderKey); ok && modelProvider != "openai" {
 		return false
 	}
-	return codexNormalizeURL(config.RootString(codexRootOpenAIBaseURLKey)) == codexNormalizeURL(codexAppProxyBaseURL()) &&
+	return codexAppManagedProxyURL(config.RootString(codexRootOpenAIBaseURLKey)) &&
 		config.RootString(codexRootModelCatalogJSONKey) == catalogPath
+}
+
+func codexAppManagedProxyURL(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme == "" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+	host := u.Hostname()
+	if !strings.EqualFold(host, "localhost") {
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() {
+			return false
+		}
+	}
+	return strings.TrimSuffix(u.Path, "/") == proxy.CodexDesktopPathPrefix+"/v1"
 }
 
 func codexAppRootReferencesCatalog(text string) bool {
