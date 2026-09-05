@@ -1061,7 +1061,7 @@ func bestSingleGPUFit(systemInfo ml.SystemInfo, groups [][]ml.DeviceInfo, predic
 	for _, group := range groups {
 		for _, candidate := range group {
 			candidateAvailable := availableMemoryForGPU(systemInfo, candidate)
-			if predictedVRAM > candidateAvailable*80/100 {
+			if predictedVRAM > candidateAvailable*uint64(envconfig.SingleGPUFitPercent())/100 {
 				continue
 			}
 			if !ok || betterPlacementGPU(candidate, candidateAvailable, gpu, available) {
@@ -1738,6 +1738,8 @@ type loadedModel struct {
 	sizeVRAM      int64
 	contextLength int
 	expiresAt     time.Time
+	gpus          []ml.DeviceID
+	vramByGPU     map[ml.DeviceID]uint64
 }
 
 // loadedModels returns a snapshot of the currently loaded models for status
@@ -1765,12 +1767,21 @@ func (s *Scheduler) loadedModels() []loadedModel {
 			size:      int64(r.totalSize),
 			sizeVRAM:  int64(r.vramSize),
 			expiresAt: r.expiresAt,
+			gpus:      slices.Clone(r.gpus),
 		}
 		if r.llama != nil {
 			lm.contextLength = r.llama.ContextLength()
 			total, vram := r.llama.MemorySize()
 			lm.size = int64(total)
 			lm.sizeVRAM = int64(vram)
+
+			// Per-device residency. A backend with one device reports the whole
+			// figure for it; one whose device names don't map back reports zero
+			// rather than guessing.
+			lm.vramByGPU = make(map[ml.DeviceID]uint64, len(lm.gpus))
+			for _, dev := range lm.gpus {
+				lm.vramByGPU[dev] = r.llama.VRAMByGPU(dev)
+			}
 		}
 		// The scheduler waits to set expiresAt, so a model that is still
 		// loading may have the zero value. Estimate expiration from the
