@@ -138,7 +138,7 @@ func (p *Progress) renderLocked() {
 		}
 	}
 
-	p.pos = len(p.states)
+	p.pos = maxHeight
 }
 
 func (p *Progress) start() {
