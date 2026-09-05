@@ -121,6 +121,7 @@ var errMaxRetriesExceeded = errors.New("max retries exceeded")
 // defaultClient is a shared HTTP client with connection pooling.
 var defaultClient = &http.Client{
 	Transport: &http.Transport{
+		Proxy:               http.ProxyFromEnvironment,
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 100,
 		IdleConnTimeout:     90 * time.Second,
