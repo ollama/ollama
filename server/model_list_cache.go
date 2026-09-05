@@ -371,7 +371,15 @@ func buildModelListSummary(name model.Name, mf *manifest.Manifest) (modelListSum
 		if err != nil {
 			slog.Warn("model template contains errors", "model", name.String(), "error", err)
 		}
-		if slices.Contains(vars, "tools") || (builtinParser != nil && builtinParser.HasToolSupport()) {
+		hasToolsVar := slices.Contains(vars, "tools")
+		if !hasToolsVar && modelPath != "" {
+			if f, err := fsgguf.Open(modelPath); err == nil {
+				chatTmpl := f.KeyValue("tokenizer.chat_template").String()
+				f.Close()
+				hasToolsVar = strings.Contains(chatTmpl, "tools") || strings.Contains(chatTmpl, "tool_call")
+			}
+		}
+		if hasToolsVar || (builtinParser != nil && builtinParser.HasToolSupport()) {
 			summary.Capabilities = appendModelListCapability(summary.Capabilities, model.CapabilityTools)
 		}
 		if slices.Contains(vars, "suffix") {
@@ -498,7 +506,7 @@ const (
 )
 
 // readModelListGGUF scans only the small GGUF header values launch needs
-// and stops before tokenizer arrays. Using gguf.File.KeyValue for missing keys
+// and stops before tokenizer arrays. Using fsgguf.File.KeyValue for missing keys
 // can otherwise advance through large arrays just to discover absence.
 func readModelListGGUF(path string) (modelListGGUF, error) {
 	f, err := os.Open(path)
