@@ -73,6 +73,30 @@ func (s *Parser) AddContent(content string) (string, string) {
 	return thinkingSb.String(), remainingSb.String()
 }
 
+// Flush returns any content that was buffered while waiting to disambiguate a
+// partial tag. It should be called when no more content will be added.
+func (s *Parser) Flush() (thinking, content string) {
+	buffered := s.acc.String()
+	s.acc.Reset()
+
+	switch s.state {
+	case thinkingState_LookingForOpening:
+		content = buffered
+	case thinkingState_Thinking:
+		thinking = buffered
+	case thinkingState_ThinkingStartedEatingWhitespace,
+		thinkingState_ThinkingDoneEatingWhitespace:
+		// Whitespace adjacent to thinking tags is intentionally discarded.
+	case thinkingState_ThinkingDone:
+		content = buffered
+	default:
+		panic("unknown state")
+	}
+
+	s.state = thinkingState_ThinkingDone
+	return thinking, content
+}
+
 // the additional bool return is true iff we should continue eating
 func eat(s *Parser) (string, string, bool) {
 	switch s.state {

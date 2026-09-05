@@ -701,6 +701,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				}
 			} else if thinkingState != nil {
 				thinking, content := thinkingState.AddContent(cr.Content)
+				if cr.Done {
+					flushedThinking, flushedContent := thinkingState.Flush()
+					thinking += flushedThinking
+					content += flushedContent
+				}
 				res.Thinking = thinking
 				res.Response = content
 			}
@@ -2873,6 +2878,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 				if thinkingState != nil {
 					thinkingContent, remainingContent := thinkingState.AddContent(res.Message.Content)
+					if r.Done {
+						flushedThinking, flushedContent := thinkingState.Flush()
+						thinkingContent += flushedThinking
+						remainingContent += flushedContent
+					}
 					if thinkingContent == "" && remainingContent == "" && !r.Done {
 						// need to accumulate more to decide what to send
 						return
