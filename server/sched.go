@@ -337,11 +337,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 				// Trigger an expiration to unload once it's done
 				runnerToExpire.refMu.Lock()
 				slog.Debug("resetting model to expire immediately to make room", "runner", runnerToExpire, "refCount", runnerToExpire.refCount)
-				if runnerToExpire.expireTimer != nil {
-					runnerToExpire.expireTimer.Stop()
-					runnerToExpire.expireTimer = nil
-				}
-				runnerToExpire.sessionDuration = 0
+				runnerToExpire.markForExpiration()
 				if runnerToExpire.refCount <= 0 {
 					s.expiredCh <- runnerToExpire
 				}
@@ -414,7 +410,7 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 		case runner := <-s.expiredCh:
 			slog.Debug("runner expired event received", "runner", runner)
 			runner.refMu.Lock()
-			if runner.refCount > 0 {
+			if runner.refCount > 0 && !runner.HasExited() {
 				slog.Debug("expired event with positive ref count, retrying", "runner", runner, "refCount", runner.refCount)
 				go func(runner *runnerRef) {
 					// We can't unload yet, but want to as soon as the current request completes
@@ -480,7 +476,13 @@ func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *Llm
 		runner.expireTimer.Stop()
 		runner.expireTimer = nil
 	}
-	if pending.sessionDuration != nil {
+	// Do not resurrect a runner the scheduler has marked for expiration.
+	// Overwriting sessionDuration here would clobber the zero value set by
+	// markForExpiration (e.g. when evicting to make room for another model),
+	// which would arm a long expiration timer instead of unloading the runner
+	// once it goes idle, leaving processPending blocked forever waiting for an
+	// unload that never comes.
+	if !runner.expiring && pending.sessionDuration != nil {
 		runner.sessionDuration = pending.sessionDuration.Duration
 	}
 	pending.successCh <- runner
@@ -727,6 +729,18 @@ iGPUScan:
 	s.loaded[runner.modelKey] = runner
 	slog.Info("loaded runners", "count", len(s.loaded))
 	s.loadedMu.Unlock()
+
+	// Watch for the llama-server process dying while this runner is still
+	// considered loaded. Without this, a crashed runner stays in s.loaded
+	// (ollama ps keeps reporting it) and subsequent requests hang against a
+	// dead process — see #17428 / #17509. On exit we evict the runner
+	// through the same expiredCh path used by idle timeouts and evictions.
+	go func(runner *runnerRef, llama llm.LlamaServer) {
+		<-llama.Done()
+		slog.Warn("llama-server process exited while loaded; evicting runner",
+			"model", runner.modelKey, "pid", runner.pid)
+		s.expiredCh <- runner
+	}(runner, llama)
 
 	go func() {
 		defer runner.refMu.Unlock()
@@ -1351,6 +1365,14 @@ type runnerRef struct {
 	expireTimer     *time.Timer
 	expiresAt       time.Time
 
+	// expiring is set by markForExpiration when the scheduler has decided
+	// this runner must be unloaded (e.g. to make room for another model).
+	// Once set, concurrent requests taking the fast path must not overwrite
+	// sessionDuration, otherwise the runner would be "resurrected" with a
+	// long expiration timer and the scheduler's unload wait would never
+	// complete.
+	expiring bool
+
 	model        *Model
 	modelPath    string
 	modelKey     string
@@ -1361,6 +1383,19 @@ type runnerRef struct {
 	contextShift bool
 	trainContext int
 	*api.Options
+}
+
+// markForExpiration marks the runner for imminent unload. The refMu must
+// already be held when calling. It stops any pending expiration timer and
+// zeroes the session duration so the runner is unloaded as soon as it goes
+// idle, and sets expiring so concurrent requests cannot resurrect it.
+func (runner *runnerRef) markForExpiration() {
+	if runner.expireTimer != nil {
+		runner.expireTimer.Stop()
+		runner.expireTimer = nil
+	}
+	runner.sessionDuration = 0
+	runner.expiring = true
 }
 
 // The refMu must already be held when calling unload
@@ -1605,11 +1640,7 @@ func (s *Scheduler) evictAllAndWait(ctx context.Context, keepKey string) bool {
 	slog.Info("evicting all other loaded models for OOM retry", "count", len(runnersToExpire))
 	for _, runner := range runnersToExpire {
 		runner.refMu.Lock()
-		if runner.expireTimer != nil {
-			runner.expireTimer.Stop()
-			runner.expireTimer = nil
-		}
-		runner.sessionDuration = 0
+		runner.markForExpiration()
 		if runner.refCount <= 0 {
 			s.expiredCh <- runner
 		}
@@ -1648,11 +1679,7 @@ func (s *Scheduler) expireRunnersForRuntimeOOM(model *Model, err error) {
 	slog.Warn("runtime OOM detected; expiring loaded models to clear memory before next request", "model", schedulerModelKey(model), "error", err)
 	for _, runner := range runners {
 		runner.refMu.Lock()
-		if runner.expireTimer != nil {
-			runner.expireTimer.Stop()
-			runner.expireTimer = nil
-		}
-		runner.sessionDuration = 0
+		runner.markForExpiration()
 		if runner.refCount <= 0 {
 			s.expiredCh <- runner
 		}
@@ -1718,11 +1745,7 @@ func (s *Scheduler) expireRunner(model *Model) {
 	if ok {
 		runner.refMu.Lock()
 		runner.expiresAt = time.Now()
-		if runner.expireTimer != nil {
-			runner.expireTimer.Stop()
-			runner.expireTimer = nil
-		}
-		runner.sessionDuration = 0
+		runner.markForExpiration()
 		if runner.refCount <= 0 {
 			s.expiredCh <- runner
 		}

@@ -74,6 +74,13 @@ type LlamaServer interface {
 	GetPort() int
 	GetDeviceInfos(ctx context.Context) []ml.DeviceInfo
 	HasExited() bool
+	// Done returns a channel that is closed when the underlying llama-server
+	// process terminates for any reason (crash, kill, or normal exit).
+	// The scheduler listens on this channel so it can evict a runner whose
+	// process died while it was considered loaded — otherwise the server
+	// keeps reporting the model as loaded and requests hang against a dead
+	// process (see #17428 / #17509).
+	Done() <-chan struct{}
 	ContextLength() int
 }
 
