@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -186,12 +188,18 @@ printf '%%s\n' "$@" > %q
 		t.Fatal(err)
 	}
 
-	c := &Codex{resolveContext: func(model LaunchModel, load bool) contextWindowResolution {
-		if !load {
-			t.Fatal("Codex Run must load before resolving context")
-		}
-		return contextWindowResolution{ContextLength: 65_536, RuntimeVerified: true, Source: contextWindowSourceRuntime}
-	}}
+	c := &Codex{
+		resolveContext: func(model LaunchModel, load bool) contextWindowResolution {
+			if !load {
+				t.Fatal("Codex Run must load before resolving context")
+			}
+			return contextWindowResolution{ContextLength: 65_536, RuntimeVerified: true, Source: contextWindowSourceRuntime}
+		},
+		resolveModelMetadata: func(model LaunchModel) LaunchModel {
+			model.Thinking, _ = codexThinkingRecommendationForRenderer("qwen3.8")
+			return model
+		},
+	}
 	if err := c.Run("qwen3.8:27b-mlx", []LaunchModel{{Name: "qwen3.8:27b-mlx", ContextLength: 262_144}}, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -208,6 +216,10 @@ printf '%%s\n' "$@" > %q
 	}
 	if got := catalog.Models[0]["context_window"]; got != float64(65_536) {
 		t.Fatalf("catalog context_window = %v, want 65536", got)
+	}
+	levels, _ := catalog.Models[0]["supported_reasoning_levels"].([]any)
+	if len(levels) != 4 {
+		t.Fatalf("catalog supported_reasoning_levels length = %d, want 4", len(levels))
 	}
 	argsData, err := os.ReadFile(argsLog)
 	if err != nil {
@@ -844,4 +856,162 @@ func TestBuildCodexModelEntryContextWindow(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBuildCodexModelEntryReasoningLevels(t *testing.T) {
+	entry := buildCodexModelEntry(LaunchModel{
+		Name:         "qwen3.8:27b-mlx",
+		Capabilities: []modelpkg.Capability{modelpkg.CapabilityThinking},
+		Thinking: &api.ModelRecommendationThinking{
+			Values:  []any{false, "low", "medium", "high"},
+			Default: "high",
+		},
+	})
+
+	if got := entry["default_reasoning_level"]; got != "high" {
+		t.Fatalf("default_reasoning_level = %v, want high", got)
+	}
+
+	levels, ok := entry["supported_reasoning_levels"].([]any)
+	if !ok {
+		t.Fatalf("supported_reasoning_levels = %T, want []any", entry["supported_reasoning_levels"])
+	}
+	want := []string{"none", "low", "medium", "high"}
+	if len(levels) != len(want) {
+		t.Fatalf("supported_reasoning_levels length = %d, want %d", len(levels), len(want))
+	}
+	for i, level := range levels {
+		item, ok := level.(map[string]any)
+		if !ok {
+			t.Fatalf("reasoning level %d = %T, want object", i, level)
+		}
+		if got := item["effort"]; got != want[i] {
+			t.Errorf("reasoning level %d effort = %v, want %s", i, got, want[i])
+		}
+		if description, _ := item["description"].(string); description == "" {
+			t.Errorf("reasoning level %q has no description", want[i])
+		}
+	}
+}
+
+func TestCodexThinkingRecommendationForRenderer(t *testing.T) {
+	tests := []struct {
+		name         string
+		renderer     string
+		wantDefault  any
+		wantValues   []any
+		wantResolved bool
+	}{
+		{
+			name:         "Qwen 3.8 exposes graded effort",
+			renderer:     "qwen3.8",
+			wantDefault:  "high",
+			wantValues:   []any{false, "low", "medium", "high"},
+			wantResolved: true,
+		},
+		{
+			name:     "unknown renderer is left unchanged",
+			renderer: "qwen3.5",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := codexThinkingRecommendationForRenderer(tt.renderer)
+			if ok != tt.wantResolved {
+				t.Fatalf("resolved = %v, want %v", ok, tt.wantResolved)
+			}
+			if !ok {
+				return
+			}
+			if got.Default != tt.wantDefault {
+				t.Errorf("default = %#v, want %#v", got.Default, tt.wantDefault)
+			}
+			if !slices.Equal(got.Values, tt.wantValues) {
+				t.Errorf("values = %#v, want %#v", got.Values, tt.wantValues)
+			}
+		})
+	}
+}
+
+func TestCodexThinkingRecommendationFromShowUsesModelfileRenderer(t *testing.T) {
+	shown := &api.ShowResponse{
+		Modelfile: "FROM qwen3.8:27b-mlx\nTEMPLATE {{ .Prompt }}\nRENDERER qwen3.8\nPARSER qwen3.5\n",
+	}
+
+	got, ok := codexThinkingRecommendationFromShow(shown)
+	if !ok {
+		t.Fatal("expected Qwen 3.8 thinking recommendation")
+	}
+	if got.Default != "high" || !slices.Equal(got.Values, []any{false, "low", "medium", "high"}) {
+		t.Fatalf("thinking recommendation = %#v, want Qwen 3.8 levels", got)
+	}
+}
+
+func TestResolveCodexModelMetadataFromEnvironment(t *testing.T) {
+	t.Run("selected alias uses show metadata", func(t *testing.T) {
+		var requestedModel string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/show" {
+				t.Fatalf("path = %q, want /api/show", r.URL.Path)
+			}
+			var request api.ShowRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			requestedModel = request.Model
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{
+				Modelfile:    "FROM qwen3.8:27b-mlx\nRENDERER qwen3.8\nPARSER qwen3.5\n",
+				Capabilities: []modelpkg.Capability{modelpkg.CapabilityCompletion, modelpkg.CapabilityThinking},
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}))
+		defer server.Close()
+		t.Setenv("OLLAMA_HOST", server.URL)
+
+		got := resolveCodexModelMetadataFromEnvironment(LaunchModel{Name: "qwen-coding-alias"})
+		if requestedModel != "qwen-coding-alias" {
+			t.Fatalf("show model = %q, want selected alias", requestedModel)
+		}
+		if got.Thinking == nil || got.Thinking.Default != "high" {
+			t.Fatalf("thinking = %#v, want Qwen 3.8 recommendation", got.Thinking)
+		}
+		if !slices.Contains(got.Capabilities, modelpkg.CapabilityThinking) {
+			t.Fatalf("capabilities = %v, want thinking", got.Capabilities)
+		}
+	})
+
+	t.Run("show failure preserves inventory metadata", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+		}))
+		defer server.Close()
+		t.Setenv("OLLAMA_HOST", server.URL)
+		thinking := &api.ModelRecommendationThinking{Values: []any{false, true}, Default: true}
+		model := LaunchModel{Name: "thinking-alias", Thinking: thinking}
+
+		got := resolveCodexModelMetadataFromEnvironment(model)
+		if got.Thinking != thinking {
+			t.Fatalf("thinking = %#v, want preserved inventory metadata", got.Thinking)
+		}
+	})
+
+	t.Run("cloud model does not call local show", func(t *testing.T) {
+		called := false
+		server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			called = true
+		}))
+		defer server.Close()
+		t.Setenv("OLLAMA_HOST", server.URL)
+
+		model := LaunchModel{Name: "qwen3.8:cloud", Remote: true}
+		got := resolveCodexModelMetadataFromEnvironment(model)
+		if called {
+			t.Fatal("cloud model unexpectedly called local /api/show")
+		}
+		if got.Name != model.Name || !got.Remote {
+			t.Fatalf("model = %#v, want cloud metadata unchanged", got)
+		}
+	})
 }

@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/types/model"
@@ -18,7 +20,8 @@ import (
 
 // Codex implements Runner for Codex integration
 type Codex struct {
-	resolveContext func(LaunchModel, bool) contextWindowResolution
+	resolveContext       func(LaunchModel, bool) contextWindowResolution
+	resolveModelMetadata func(LaunchModel) LaunchModel
 }
 
 func (c *Codex) String() string { return "Codex CLI" }
@@ -69,6 +72,7 @@ func (c *Codex) Run(model string, models []LaunchModel, args []string) error {
 	if resolution.ContextLength > 0 {
 		launchModel.ContextLength = resolution.ContextLength
 	}
+	launchModel = c.modelMetadata(launchModel)
 
 	inheritedContext, err := codexConfiguredContextWindow()
 	if err != nil {
@@ -111,6 +115,53 @@ func (c *Codex) contextWindow(model LaunchModel) contextWindowResolution {
 		return c.resolveContext(model, true)
 	}
 	return resolveLaunchContextFromEnvironment(model, true)
+}
+
+func (c *Codex) modelMetadata(model LaunchModel) LaunchModel {
+	if c != nil && c.resolveModelMetadata != nil {
+		return c.resolveModelMetadata(model)
+	}
+	return resolveCodexModelMetadataFromEnvironment(model)
+}
+
+func resolveCodexModelMetadataFromEnvironment(launchModel LaunchModel) LaunchModel {
+	if launchModel.Remote || isCloudModelName(launchModel.Name) {
+		return launchModel
+	}
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return launchModel
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), launchContextLoadTimeout)
+	defer cancel()
+	shown, err := client.Show(ctx, &api.ShowRequest{Model: launchModel.Name})
+	if err != nil {
+		return launchModel
+	}
+	if len(shown.Capabilities) > 0 {
+		launchModel.Capabilities = append([]model.Capability(nil), shown.Capabilities...)
+	}
+	if thinking, ok := codexThinkingRecommendationFromShow(shown); ok {
+		launchModel.Thinking = thinking
+	}
+	return launchModel
+}
+
+func codexThinkingRecommendationFromShow(shown *api.ShowResponse) (*api.ModelRecommendationThinking, bool) {
+	if shown == nil {
+		return nil, false
+	}
+	renderer := shown.Renderer
+	if renderer == "" {
+		for line := range strings.SplitSeq(shown.Modelfile, "\n") {
+			fields := strings.Fields(line)
+			if len(fields) == 2 && strings.EqualFold(fields[0], "RENDERER") {
+				renderer = fields[1]
+				break
+			}
+		}
+	}
+	return codexThinkingRecommendationForRenderer(renderer)
 }
 
 func codexWarnUnverifiedContext(model string, resolution contextWindowResolution) {
@@ -883,6 +934,23 @@ func buildCodexModelEntry(launchModel LaunchModel) map[string]any {
 		truncationMode = "tokens"
 	}
 
+	var defaultReasoningLevel any
+	var supportedReasoningLevels []any
+	if thinking, ok := codexAppThinkingContractFromRecommendation(launchModel.Thinking); ok {
+		if thinking.defaultLevel != "" {
+			defaultReasoningLevel = thinking.defaultLevel
+		}
+		for _, level := range thinking.levels {
+			supportedReasoningLevels = append(supportedReasoningLevels, map[string]any{
+				"effort":      level,
+				"description": codexAppThinkingLevelDescription(level),
+			})
+		}
+	}
+	if supportedReasoningLevels == nil {
+		supportedReasoningLevels = []any{}
+	}
+
 	return map[string]any{
 		"slug":                         modelName,
 		"display_name":                 modelName,
@@ -898,8 +966,21 @@ func buildCodexModelEntry(launchModel LaunchModel) map[string]any {
 		"default_verbosity":            "low",
 		"supports_parallel_tool_calls": false,
 		"supports_reasoning_summaries": false,
-		"supported_reasoning_levels":   []any{},
+		"default_reasoning_level":      defaultReasoningLevel,
+		"supported_reasoning_levels":   supportedReasoningLevels,
 		"experimental_supported_tools": []any{},
+	}
+}
+
+func codexThinkingRecommendationForRenderer(renderer string) (*api.ModelRecommendationThinking, bool) {
+	switch strings.ToLower(strings.TrimSpace(renderer)) {
+	case "qwen3.8":
+		return &api.ModelRecommendationThinking{
+			Values:  []any{false, "low", "medium", "high"},
+			Default: "high",
+		}, true
+	default:
+		return nil, false
 	}
 }
 
