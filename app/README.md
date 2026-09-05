@@ -56,7 +56,7 @@ The `-dev` flag enables:
 - https://jrsoftware.org/isinfo.php
 
 
-**Dependencies** - either build a local copy of ollama, or use a github release
+**Dependencies** - either build a local copy of ollama, or use a GitHub release
 ```powershell
 # Local dependencies
 .\scripts\deps_local.ps1
