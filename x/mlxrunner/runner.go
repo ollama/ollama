@@ -56,7 +56,7 @@ type Runner struct {
 	spec *speculation
 }
 
-func (r *Runner) Load(modelName string) error {
+func (r *Runner) Load(modelName string, contextLength int) error {
 	root, err := model.Open(modelName)
 	if err != nil {
 		return err
@@ -122,7 +122,7 @@ func (r *Runner) Load(modelName string) error {
 
 	r.Model = m
 	r.Tokenizer = m.Tokenizer()
-	r.contextLength = m.MaxContextLength()
+	r.contextLength = effectiveContextLength(contextLength, m.MaxContextLength())
 	caches := m.NewCaches()
 	draftCaches := newDraftCaches(draftModel)
 	r.cache = newPrefixCache(slices.Concat(caches, draftCaches))
@@ -133,6 +133,13 @@ func (r *Runner) Load(modelName string) error {
 	mlx.EnableCompile()
 
 	return nil
+}
+
+func effectiveContextLength(requested, maximum int) int {
+	if requested <= 0 || requested > maximum {
+		return maximum
+	}
+	return requested
 }
 
 func (r *Runner) Close() {

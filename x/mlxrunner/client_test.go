@@ -12,6 +12,50 @@ import (
 	"github.com/ollama/ollama/llm"
 )
 
+func TestRunnerArgsIncludeContextLength(t *testing.T) {
+	got := runnerArgs("qwen3.5:27b", 49152, 65536)
+	want := []string{"runner", "--mlx-engine", "--model", "qwen3.5:27b", "--port", "49152", "--ctx-size", "65536"}
+	if len(got) != len(want) {
+		t.Fatalf("runnerArgs = %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("runnerArgs[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestPingReportsRunnerContextLength(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/status" {
+			t.Errorf("path = %q, want /v1/status", r.URL.Path)
+		}
+		if err := json.NewEncoder(w).Encode(statusResponse{ContextLength: 65536, Memory: 42}); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	_, portString, err := net.SplitHostPort(srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("parse server port: %v", err)
+	}
+	port, err := strconv.Atoi(portString)
+	if err != nil {
+		t.Fatalf("parse server port: %v", err)
+	}
+	client := &Client{port: port, client: srv.Client()}
+	if err := client.Ping(t.Context()); err != nil {
+		t.Fatalf("Ping: %v", err)
+	}
+	if got := client.ContextLength(); got != 65536 {
+		t.Fatalf("ContextLength = %d, want 65536", got)
+	}
+	if got := client.memory.Load(); got != 42 {
+		t.Fatalf("memory = %d, want 42", got)
+	}
+}
+
 func testIntPtr(v int) *int {
 	return &v
 }
