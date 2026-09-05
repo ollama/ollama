@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"image"
 	"image/png"
+	"math"
 	"strings"
 	"testing"
 
@@ -11,6 +12,21 @@ import (
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model/base"
 )
+
+func TestMRoPEUsesConfiguredFrequencies(t *testing.T) {
+	cfg := &Config{
+		RopeDim:      8,
+		RopeTheta:    10000,
+		RopeFreqVals: []float32{1, 10, 133.33333, 2000},
+	}
+	got := mropeInvFreqs(cfg)
+	want := []float32{1, 0.1, 0.0075, 0.0005}
+	for i := range want {
+		if math.Abs(float64(got[i]-want[i])) > 1e-6 {
+			t.Fatalf("mropeInvFreqs[%d] = %v, want %v", i, got[i], want[i])
+		}
+	}
+}
 
 func TestVisionAdapterWeightsAreCollectable(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {

@@ -129,6 +129,37 @@ func TestModelOptionsNumCtxPriority(t *testing.T) {
 	}
 }
 
+func TestUsesAutomaticNumCtxTracksExplicitSources(t *testing.T) {
+	t.Run("vram default is automatic", func(t *testing.T) {
+		t.Setenv("OLLAMA_CONTEXT_LENGTH", "")
+		if !usesAutomaticNumCtx(&Model{}, nil) {
+			t.Fatal("VRAM-derived default must remain a soft automatic context")
+		}
+	})
+
+	t.Run("request option is explicit", func(t *testing.T) {
+		t.Setenv("OLLAMA_CONTEXT_LENGTH", "")
+		if usesAutomaticNumCtx(&Model{}, map[string]any{"num_ctx": float64(65536)}) {
+			t.Fatal("request num_ctx must be treated as a hard context")
+		}
+	})
+
+	t.Run("model option is explicit", func(t *testing.T) {
+		t.Setenv("OLLAMA_CONTEXT_LENGTH", "")
+		m := &Model{Options: map[string]any{"num_ctx": float64(65536)}}
+		if usesAutomaticNumCtx(m, nil) {
+			t.Fatal("model num_ctx must be treated as a hard context")
+		}
+	})
+
+	t.Run("environment option is explicit", func(t *testing.T) {
+		t.Setenv("OLLAMA_CONTEXT_LENGTH", "65536")
+		if usesAutomaticNumCtx(&Model{}, nil) {
+			t.Fatal("OLLAMA_CONTEXT_LENGTH must be treated as a hard context")
+		}
+	})
+}
+
 func TestModelOptionsGenerationDefaultsPriority(t *testing.T) {
 	m := &Model{
 		GenerationDefaults: model.GenerationDefaults{

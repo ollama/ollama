@@ -207,6 +207,25 @@ func TestSchedVisionContextFloor(t *testing.T) {
 	})
 }
 
+func TestMLXContextLengthsPreserveAutomaticSoftLimit(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		numCtx    int
+		automatic bool
+		wantSoft  int
+		wantHard  int
+	}{
+		{name: "automatic selection is soft only", numCtx: 32768, automatic: true, wantSoft: 32768},
+		{name: "explicit selection is also hard", numCtx: 65536, wantSoft: 65536, wantHard: 65536},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			soft, hard := mlxContextLengths(tt.numCtx, tt.automatic)
+			require.Equal(t, tt.wantSoft, soft)
+			require.Equal(t, tt.wantHard, hard)
+		})
+	}
+}
+
 type reqBundle struct {
 	ctx     context.Context //nolint:containedctx
 	ctxDone func()

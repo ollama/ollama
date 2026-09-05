@@ -1,12 +1,83 @@
 package qwen3_5
 
 import (
+	"math"
 	"testing"
 
 	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
+
+func TestParseConfigYarnContextExtension(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		cfg, err := parseConfig([]byte(`{
+			"hidden_size": 5120,
+			"intermediate_size": 17408,
+			"num_hidden_layers": 1,
+			"num_attention_heads": 24,
+			"num_key_value_heads": 4,
+			"head_dim": 256,
+			"linear_num_value_heads": 48,
+			"linear_num_key_heads": 16,
+			"linear_key_head_dim": 128,
+			"linear_value_head_dim": 128,
+			"max_position_embeddings": 262144,
+			"rope_parameters": {
+				"rope_type": "yarn",
+				"rope_theta": 10000000,
+				"partial_rotary_factor": 0.25,
+				"factor": 4,
+				"original_max_position_embeddings": 262144,
+				"mrope_section": [11, 11, 10]
+			}
+		}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := (&Model{Config: &cfg}).MaxContextLength(); got != 1048576 {
+			t.Fatalf("MaxContextLength = %d, want 1048576", got)
+		}
+		if cfg.RopeFreqs == nil {
+			t.Fatal("RopeFreqs should be precomputed for YaRN")
+		}
+		wantScale := float32(0.1*math.Log(4) + 1)
+		if math.Abs(float64(cfg.RopeScale-wantScale)) > 1e-6 {
+			t.Fatalf("RopeScale = %v, want %v", cfg.RopeScale, wantScale)
+		}
+	})
+}
+
+func TestParseConfigDefaultRopeKeepsNativeContext(t *testing.T) {
+	data := []byte(`{
+		"hidden_size": 5120,
+		"intermediate_size": 17408,
+		"num_hidden_layers": 1,
+		"num_attention_heads": 24,
+		"num_key_value_heads": 4,
+		"head_dim": 256,
+		"linear_num_value_heads": 48,
+		"linear_num_key_heads": 16,
+		"linear_key_head_dim": 128,
+		"linear_value_head_dim": 128,
+		"max_position_embeddings": 262144,
+		"rope_parameters": {
+			"rope_type": "default",
+			"factor": 4,
+			"original_max_position_embeddings": 262144
+		}
+	}`)
+	cfg, err := parseConfig(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := (&Model{Config: &cfg}).MaxContextLength(); got != 262144 {
+		t.Fatalf("MaxContextLength = %d, want 262144", got)
+	}
+	if cfg.RopeFreqs != nil {
+		t.Fatal("RopeFreqs should remain nil without YaRN")
+	}
+}
 
 func TestSanitizeConvWeight(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {

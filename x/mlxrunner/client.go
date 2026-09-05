@@ -35,6 +35,7 @@ type Client struct {
 	modelName         string
 	contextLength     atomic.Int64
 	softContextLength int // recommended limit to avoid poor performance
+	hardContextLength int // explicit limit enforced by the runner
 	memory            atomic.Uint64
 	done              chan struct{}
 	doneErr           error // valid after done is closed
@@ -46,7 +47,7 @@ type Client struct {
 
 // NewClient prepares a new MLX runner client for LLM models.
 // The subprocess is not started until Load() is called.
-func NewClient(modelName string, softContextLength int) (*Client, error) {
+func NewClient(modelName string, softContextLength, hardContextLength int) (*Client, error) {
 	if err := checkPlatformSupport(); err != nil {
 		return nil, err
 	}
@@ -54,6 +55,7 @@ func NewClient(modelName string, softContextLength int) (*Client, error) {
 	c := &Client{
 		modelName:         modelName,
 		softContextLength: softContextLength,
+		hardContextLength: hardContextLength,
 		done:              make(chan struct{}),
 		client:            http.DefaultClient,
 	}
@@ -264,8 +266,12 @@ func (c *Client) ContextLength() int {
 }
 
 func (c *Client) reportedContextLength(modelContextLength int) int {
-	if c.softContextLength > 0 && (modelContextLength == 0 || c.softContextLength < modelContextLength) {
-		return c.softContextLength
+	selectedContextLength := c.softContextLength
+	if c.hardContextLength > 0 {
+		selectedContextLength = c.hardContextLength
+	}
+	if selectedContextLength > 0 && (modelContextLength == 0 || selectedContextLength < modelContextLength) {
+		return selectedContextLength
 	}
 	return modelContextLength
 }
@@ -343,8 +349,7 @@ func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo
 		exe = eval
 	}
 
-	// Spawn subprocess: ollama runner --mlx-engine --model <name> --port <port>
-	cmd := exec.Command(exe, "runner", "--mlx-engine", "--model", c.modelName, "--port", strconv.Itoa(port))
+	cmd := exec.Command(exe, runnerArgs(c.modelName, port, c.hardContextLength)...)
 	cmd.Env = os.Environ()
 
 	// Set library path environment variable for MLX libraries
@@ -472,6 +477,18 @@ func (c *Client) Ping(ctx context.Context) error {
 	c.memory.Store(status.Memory)
 
 	return nil
+}
+
+func runnerArgs(modelName string, port, hardContextLength int) []string {
+	args := []string{
+		"runner", "--mlx-engine",
+		"--model", modelName,
+		"--port", strconv.Itoa(port),
+	}
+	if hardContextLength > 0 {
+		args = append(args, "--ctx-size", strconv.Itoa(hardContextLength))
+	}
+	return args
 }
 
 // Tokenize implements llm.LlamaServer.

@@ -31,15 +31,6 @@ var (
 	_ base.MediaModel = (*Model)(nil)
 )
 
-// RopeParameters carries optional rope metadata embedded under rope_parameters.
-type RopeParameters struct {
-	Type                string  `json:"type"`
-	RopeType            string  `json:"rope_type"`
-	RopeTheta           float32 `json:"rope_theta"`
-	PartialRotaryFactor float32 `json:"partial_rotary_factor"`
-	MropeSection        []int32 `json:"mrope_section"`
-}
-
 // Config holds Qwen 3.5 text config (top-level or nested text_config).
 type Config struct {
 	ModelType             string   `json:"model_type"`
@@ -73,10 +64,10 @@ type Config struct {
 	NormTopKProb                 bool    `json:"norm_topk_prob"`
 	MLPOnlyLayers                []int32 `json:"mlp_only_layers"`
 
-	RopeTheta           float32         `json:"rope_theta"`
-	PartialRotaryFactor float32         `json:"partial_rotary_factor"`
-	RopeScaling         map[string]any  `json:"rope_scaling"`
-	RopeParameters      *RopeParameters `json:"rope_parameters"`
+	RopeTheta           float32            `json:"rope_theta"`
+	PartialRotaryFactor float32            `json:"partial_rotary_factor"`
+	RopeScaling         *nn.RopeParameters `json:"rope_scaling"`
+	RopeParameters      *nn.RopeParameters `json:"rope_parameters"`
 
 	MropeSection []int32 `json:"-"`
 
@@ -87,8 +78,12 @@ type Config struct {
 	TensorQuant    map[string]*model.TensorQuantInfo `json:"-"`
 
 	// Computed fields.
-	Scale   float32 `json:"-"`
-	RopeDim int32   `json:"-"`
+	Scale        float32    `json:"-"`
+	RopeDim      int32      `json:"-"`
+	RopeFreqs    *mlx.Array `json:"-"`
+	RopeFreqVals []float32  `json:"-"`
+	RopeScale    float32    `json:"-"`
+	MaxContext   int        `json:"-"`
 }
 
 // Model is the Qwen 3.5 model.
@@ -260,12 +255,16 @@ func parseConfig(configData []byte) (Config, error) {
 		return Config{}, fmt.Errorf("linear_num_value_heads (%d) must be divisible by linear_num_key_heads (%d)", cfg.LinearNumValueHeads, cfg.LinearNumKeyHeads)
 	}
 
-	if cfg.RopeParameters != nil {
-		if cfg.RopeParameters.RopeTheta > 0 {
-			cfg.RopeTheta = cfg.RopeParameters.RopeTheta
+	ropeParams := cfg.RopeParameters
+	if ropeParams == nil {
+		ropeParams = cfg.RopeScaling
+	}
+	if ropeParams != nil {
+		if ropeParams.RopeTheta > 0 {
+			cfg.RopeTheta = ropeParams.RopeTheta
 		}
-		if cfg.RopeParameters.PartialRotaryFactor > 0 {
-			cfg.PartialRotaryFactor = cfg.RopeParameters.PartialRotaryFactor
+		if ropeParams.PartialRotaryFactor > 0 {
+			cfg.PartialRotaryFactor = ropeParams.PartialRotaryFactor
 		}
 	}
 	if cfg.RopeTheta == 0 {
@@ -286,8 +285,18 @@ func parseConfig(configData []byte) (Config, error) {
 	}
 	cfg.RopeDim = ropeDim
 	cfg.MropeSection = []int32{11, 11, 10}
-	if cfg.RopeParameters != nil && len(cfg.RopeParameters.MropeSection) == 3 {
-		cfg.MropeSection = cfg.RopeParameters.MropeSection
+	if ropeParams != nil && len(ropeParams.MropeSection) == 3 {
+		cfg.MropeSection = ropeParams.MropeSection
+	}
+	cfg.RopeScale = 1
+	cfg.MaxContext = int(cfg.MaxPositionEmbeddings)
+	if ropeParams != nil && strings.EqualFold(ropeParams.TypeName(), "yarn") {
+		cfg.RopeFreqVals, cfg.RopeScale = nn.YarnRopeFreqValues(int(cfg.RopeDim), cfg.RopeTheta, ropeParams)
+		if cfg.RopeFreqVals != nil {
+			cfg.RopeFreqs = mlx.FromValues(cfg.RopeFreqVals, len(cfg.RopeFreqVals))
+			mlx.Eval(cfg.RopeFreqs)
+		}
+		cfg.MaxContext = yarnContextLength(cfg.MaxPositionEmbeddings, ropeParams)
 	}
 
 	if cfg.FullAttentionInterval <= 0 {
@@ -1056,9 +1065,15 @@ func (a *FullAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, pos
 		q = applyMRoPE(q, mropeCos, mropeSin, cfg.RopeDim)
 		k = applyMRoPE(k, mropeCos, mropeSin, cfg.RopeDim)
 	} else {
-		q = mlx.RoPEWithBase(q, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, positions)
-		k = mlx.RoPEWithBase(k, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, positions)
+		q = mlx.RoPEWithFreqs(q, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, positions, cfg.RopeFreqs)
+		k = mlx.RoPEWithFreqs(k, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, positions, cfg.RopeFreqs)
 	}
+	ropeScale := cfg.RopeScale
+	if ropeScale == 0 {
+		ropeScale = 1
+	}
+	q = nn.ScaleRotaryPart(q, int(cfg.RopeDim), ropeScale)
+	k = nn.ScaleRotaryPart(k, int(cfg.RopeDim), ropeScale)
 
 	var kv nn.SDPAOption
 	if c != nil {
@@ -1301,7 +1316,21 @@ func (m *Model) NumLayers() int {
 }
 
 func (m *Model) MaxContextLength() int {
-	return int(m.MaxPositionEmbeddings)
+	if m.MaxContext <= 0 {
+		return int(m.MaxPositionEmbeddings)
+	}
+	return m.MaxContext
+}
+
+func yarnContextLength(native int32, rp *nn.RopeParameters) int {
+	if rp == nil || !strings.EqualFold(rp.TypeName(), "yarn") || rp.Factor <= 1 || rp.OriginalMaxPositionEmbeddings <= 0 {
+		return int(native)
+	}
+	extended := float64(rp.OriginalMaxPositionEmbeddings) * float64(rp.Factor)
+	if extended <= float64(native) || extended > float64(math.MaxInt) {
+		return int(native)
+	}
+	return int(extended)
 }
 
 func (m *Model) Tokenizer() *tokenizer.Tokenizer {

@@ -158,6 +158,13 @@ func modelTrainContext(f *ggml.GGML) int {
 	return int(f.KV().ContextLength())
 }
 
+func mlxContextLengths(numCtx int, automatic bool) (soft, hard int) {
+	if automatic {
+		return numCtx, 0
+	}
+	return numCtx, numCtx
+}
+
 func effectiveContext(numCtx, trainCtx int) int {
 	if trainCtx > 0 && numCtx > trainCtx {
 		return trainCtx
@@ -585,7 +592,8 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 			}
 		} else {
 			modelName := req.model.ShortName
-			llama, err = mlxrunner.NewClient(modelName, req.opts.NumCtx)
+			softContextLength, hardContextLength := mlxContextLengths(req.opts.NumCtx, req.numCtxAuto)
+			llama, err = mlxrunner.NewClient(modelName, softContextLength, hardContextLength)
 		}
 		if err != nil {
 			slog.Info("failed to create server", "model", req.model.ShortName, "error", err)
