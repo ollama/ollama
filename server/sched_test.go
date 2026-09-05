@@ -2236,3 +2236,50 @@ func TestSchedulerTracksMultipleLoadedRunners(t *testing.T) {
 	expectedFree := uint64(24*format.GigaByte) - uint64(8*format.GigaByte) - uint64(4*format.GigaByte)
 	require.Equal(t, expectedFree, gpus[0].FreeMemory)
 }
+
+// TestCalibrationKeySurvivesTheAutomaticBatchRewrite pins down the ordering the calibration
+// depends on, because getting it wrong is silent in exactly the way that matters: samples
+// are still recorded, predictions are still made, and the two simply never meet.
+//
+// applyAutomaticGenerationBatch rewrites req.opts.NumBatch, and NumBatch is part of the
+// key. A key built before that call and a key built after it therefore address different
+// buckets for one load, so a load's measurement lands where no later prediction for the
+// same load will look for it -- the calibration never engages, while looking like it does.
+//
+// This guards the property rather than the call site. The call site is held by the
+// compiler: the settled key is a variable the load path must use, so reverting to a key
+// rebuilt from stale inputs fails to build.
+func TestCalibrationKeySurvivesTheAutomaticBatchRewrite(t *testing.T) {
+	req := &LlmRequest{
+		model:        &Model{ModelPath: "/models/test.gguf"},
+		opts:         api.Options{Runner: api.Runner{NumBatch: 512, NumCtx: 262144}},
+		numBatchAuto: true,
+	}
+
+	before := vramCalibrationKey(req, nil, 1)
+
+	// A long-context completion is the case where the automatic batch actually moves.
+	req.applyAutomaticGenerationBatch(true, 262144, 0, 0, ml.FlashAttentionAuto, nil)
+	after := vramCalibrationKey(req, nil, 1)
+
+	if req.opts.NumBatch == 512 {
+		t.Fatal("the automatic batch did not change NumBatch, so this test cannot detect the bug it exists for")
+	}
+	if before == after {
+		t.Fatal("the key did not change across the rewrite; if that is now true by design, this test is obsolete")
+	}
+
+	// A sample recorded under the settled key must be visible to a prediction made with
+	// that same key, and must not be reachable through the pre-rewrite one, which
+	// describes a batch size this load never ran at.
+	cal := llm.NewVRAMCalibration()
+	cal.Record(after, 8192, 20*1024*1024*1024)
+	cal.Record(after, 32768, 24*1024*1024*1024)
+
+	if _, calibrated := cal.Predict(after, 262144, 0, 0); !calibrated {
+		t.Error("a prediction using the settled key could not see the samples recorded under it")
+	}
+	if _, calibrated := cal.Predict(before, 262144, 0, 0); calibrated {
+		t.Error("the pre-rewrite key resolved to samples describing a different batch size")
+	}
+}

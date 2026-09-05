@@ -154,6 +154,12 @@ type llamaServerRunner struct {
 	// used to map DeviceIDs to device names for VRAMByGPU lookups.
 	gpus []ml.DeviceInfo
 
+	// deviceLogNames[i] is the name the child uses for gpus[i]. A child whose
+	// visible devices are filtered renumbers them from zero, so these differ
+	// from the discovery names whenever the selected devices are not the host's
+	// first ones. Buffer accounting is keyed by these, not by gpus[i].Name.
+	deviceLogNames []string
+
 	ggml          *ggml.GGML
 	totalLayers   uint64 // maximum offloadable model layers
 	loadStart     time.Time
@@ -954,6 +960,7 @@ func NewLlamaServerRunner(
 		vramByDevice:     make(map[string]uint64),
 		systemFreeAtLoad: make(map[string]uint64),
 		gpus:             gpus,
+		deviceLogNames:   ml.RunnerDeviceNames(gpus),
 		ggml:             f,
 		totalLayers:      f.KV().BlockCount() + 1,
 		rawEmbeddings:    legacyEmbeddingsWereRaw(f.KV()),
@@ -2617,7 +2624,8 @@ func (s *llamaServerRunner) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo 
 	infos := make([]ml.DeviceInfo, len(s.gpus))
 	for i, gpu := range s.gpus {
 		infos[i] = gpu
-		used := s.vramByDevice[gpu.Name]
+		name := s.deviceLogName(i)
+		used := s.vramByDevice[name]
 
 		// Our accounting: total minus what we allocated
 		var accountedFree uint64
@@ -2629,7 +2637,7 @@ func (s *llamaServerRunner) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo 
 		// we've allocated since. This captures external consumers on platforms
 		// where the driver reports accurately.
 		systemFree := accountedFree // default to our accounting
-		if sysFree, ok := s.systemFreeAtLoad[gpu.Name]; ok {
+		if sysFree, ok := s.systemFreeAtLoad[name]; ok {
 			if used < sysFree {
 				systemFree = sysFree - used
 			} else {
@@ -2685,28 +2693,61 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 	return total, vram
 }
 
-// PredictServerVRAM estimates VRAM usage for a model without spawning llama-server.
-// Uses model file size as a proxy for weights plus a rough KV cache estimate.
-// This is intentionally conservative — it overestimates to avoid VRAM contention.
-func PredictServerVRAM(modelPath string, f *ggml.GGML, numCtx int) uint64 {
-	var weights uint64
-	if info, err := os.Stat(modelPath); err == nil {
-		weights = uint64(info.Size())
+// hostResidentTensorGroups are tensor groups that are looked up on the host and never
+// offloaded, so they must not be counted toward predicted VRAM. Per-layer token
+// embeddings are the notable case: architectures that use them (gemma3n, qwen4exp) carry
+// a very large table — 26.8 GiB of Qwen3.8-Flash-Next's 103.7 GiB file — that stays in
+// system memory. Counting it as VRAM overpredicts by ~25% and makes a model that fits a
+// single device look like it needs several.
+var hostResidentTensorGroups = []string{"per_layer_token_embd"}
+
+// PredictServerVRAMParts estimates VRAM usage for a model without spawning llama-server,
+// split into the part that does not depend on context and the rate at which the rest grows
+// with it.
+//
+// The split exists so that a measured load can be extrapolated: VRAMCalibration anchors on
+// what a model actually used and needs a slope to move away from that point. Callers that
+// only want a number for one context length should use PredictServerVRAM.
+func PredictServerVRAMParts(modelPath string, projectorPaths []string, f *ggml.GGML) (weights, bytesPerToken uint64) {
+	// Sum the tensors that are actually offloaded rather than taking the file size, which
+	// also covers host-resident tables. Fall back to the file size if tensor metadata is
+	// unavailable, preserving the previous (conservative) behavior.
+
+	for name, layer := range f.Tensors().GroupLayers() {
+		if slices.Contains(hostResidentTensorGroups, name) {
+			continue
+		}
+		weights += layer.Size()
 	}
 
-	// KV cache: 2 (K+V) * layers * kv_heads * head_dim * context * 2 bytes (f16)
-	layers := f.KV().BlockCount()
-	kvHeads := f.KV().HeadCountKVMin()
-	if kvHeads == 0 {
-		kvHeads = 1
+	if weights == 0 {
+		if info, err := os.Stat(modelPath); err == nil {
+			weights = uint64(info.Size())
+		}
 	}
-	headDim := uint64(0)
-	if f.KV().HeadCountMax() > 0 {
-		headDim = f.KV().EmbeddingLength() / f.KV().HeadCountMax()
-	}
-	kvCache := 2 * layers * kvHeads * headDim * uint64(numCtx) * 2
 
-	return weights + kvCache
+	// A projector is a separate file the runner loads alongside the weights, so it is
+	// absent from the model's own tensors. Its size is counted here because the memory has
+	// to be found somewhere, and counting it is the conservative direction: ollama declines
+	// to offload it under pressure, in which case this over-predicts rather than placing a
+	// model that then cannot fit.
+	//
+	// The file is very close to what the projector occupies before an image arrives; the
+	// runner reserves more than this for the largest image it will accept, and that figure
+	// is only known once it has loaded. A measured load supplies it thereafter.
+	for _, path := range projectorPaths {
+		if info, err := os.Stat(path); err == nil {
+			weights += uint64(info.Size())
+		}
+	}
+
+	return weights, f.KV().KVCacheBytesPerToken()
+}
+
+// PredictServerVRAM estimates VRAM usage for a model at a given context length.
+func PredictServerVRAM(modelPath string, projectorPaths []string, f *ggml.GGML, numCtx int) uint64 {
+	weights, bytesPerToken := PredictServerVRAMParts(modelPath, projectorPaths, f)
+	return weights + bytesPerToken*uint64(max(numCtx, 0))
 }
 
 // memoryParsingWriter wraps an io.Writer and parses llama-server log output
@@ -2725,9 +2766,57 @@ type memoryParsingWriter struct {
 	inner   io.Writer
 	runner  *llamaServerRunner
 	buffers map[memoryBufferKey]memoryBuffer
+
+	// bufferSeq counts how many buffers of each slot the current load pass has
+	// reported, and sawNonModelBuffer tracks whether anything but model weights has
+	// been reported since the last model buffer. Together they detect the boundary
+	// between the fit probe and the final load: weights are always reported first, so
+	// a model buffer arriving after a cache or compute buffer means a new pass began.
+	bufferSeq         map[bufferSlot]int
+	sawNonModelBuffer bool
+
+	// clipBackend is the backend the projector was placed on and mmprojBytes is what it
+	// occupies. They are reported on separate lines whose order is not guaranteed -- the
+	// size is reported first in practice -- so each is recorded as it arrives and the
+	// attribution is made once both are known.
+	clipBackend string
+	mmprojBytes uint64
+}
+
+// noteProjectorLocked attributes the projector's memory to the device holding it, once both
+// the device and the size are known.
+func (w *memoryParsingWriter) noteProjectorLocked() {
+	if w.clipBackend == "" || w.mmprojBytes == 0 {
+		return
+	}
+	if w.buffers == nil {
+		w.buffers = make(map[memoryBufferKey]memoryBuffer)
+	}
+	// One slot: the projector is reported as a total rather than per buffer, and a repeat
+	// report replaces rather than adds. The kind is its own so that it takes no part in the
+	// load-pass numbering the buffer-size lines use.
+	w.buffers[memoryBufferKey{component: "mtmd", backend: w.clipBackend, kind: "mmproj"}] = memoryBuffer{bytes: w.mmprojBytes}
+	w.updateRunnerMemoryLocked()
 }
 
 type memoryBufferKey struct {
+	component string
+	backend   string
+	kind      string
+	// seq distinguishes buffers that coexist rather than replace each other. A load
+	// can allocate several buffers of the same kind on one device — a hybrid
+	// architecture reports one KV cache per cache type, and a model with a draft
+	// reports one per context — and every one of them occupies memory at the same
+	// time. Without this they collide and only the last survives, under-reporting the
+	// device by the size of the ones dropped. It is reset per load pass so the fit
+	// probe's buffers are still replaced by the final load's rather than added to
+	// them; see bufferSlot.
+	seq int
+}
+
+// bufferSlot identifies a buffer's reporting slot, ignoring how many of them a load
+// has produced so far. It is the key of the per-pass occurrence counter.
+type bufferSlot struct {
 	component string
 	backend   string
 	kind      string
@@ -2747,6 +2836,25 @@ var deviceFreeRegex = regexp.MustCompile(`using device (\S+)\s+\(.*\)\s+-\s+(\d+
 // bufferSizeRegex matches llama-server buffer size lines and captures the
 // component so repeated fit/probe values can be replaced by the final load.
 var bufferSizeRegex = regexp.MustCompile(`(?m)(?:^|\n)[^\n:]*?([A-Za-z_][A-Za-z0-9_]*):\s+(\S+)\s+(model|KV|compute|output|RS)\s+buffer size\s*=\s*([\d.]+)\s*MiB`)
+
+// clipBackendRegex captures the backend a multimodal projector was placed on:
+//
+//	clip_ctx: CLIP using CUDA0 backend
+//	clip_ctx: CLIP using CPU backend
+//
+// This is what distinguishes a projector that occupies VRAM from one that does not. Ollama
+// declines to offload it under memory pressure, and the line reports the outcome.
+var clipBackendRegex = regexp.MustCompile(`clip_ctx:\s+CLIP using (\S+) backend`)
+
+// mmprojMemoryRegex captures the projector's memory, which llama-server reports on its own
+// rather than through the buffer-size lines every other allocation uses:
+//
+//	srv load_model: [mtmd] estimated worst-case memory usage of mmproj is 1135.13 MiB
+//
+// It is a worst-case figure, covering the largest image the projector will accept, so it is
+// larger than what a projector holds before any image arrives. That is the right figure to
+// hold a device to: the memory has to be there when an image does arrive.
+var mmprojMemoryRegex = regexp.MustCompile(`\[mtmd\][^\n]*?mmproj is\s+([\d.]+)\s*MiB`)
 
 var (
 	offloadedLayersRegex      = regexp.MustCompile(`offloaded\s+(\d+)/(\d+)\s+layers to GPU`)
@@ -2809,13 +2917,55 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 					w.runner.gpuLayerOverflow += int(overflowing)
 				}
 			}
+			if match := clipBackendRegex.FindSubmatch(b); match != nil {
+				w.clipBackend = string(match[1])
+				w.noteProjectorLocked()
+			}
+			for _, match := range mmprojMemoryRegex.FindAllSubmatch(b, -1) {
+				if mib, err := strconv.ParseFloat(string(match[1]), 64); err == nil {
+					w.mmprojBytes = uint64(mib * 1024 * 1024)
+					w.noteProjectorLocked()
+				}
+			}
 			for _, match := range bufferSizeRegex.FindAllSubmatch(b, -1) {
 				backendName := string(match[2])
 				if mib, err := strconv.ParseFloat(string(match[4]), 64); err == nil {
 					if w.buffers == nil {
 						w.buffers = make(map[memoryBufferKey]memoryBuffer)
 					}
+					slot := bufferSlot{
+						component: string(match[1]),
+						backend:   backendName,
+						kind:      string(match[3]),
+					}
+
+					// Weights after a non-weight buffer mean the fit probe finished and
+					// the real load started: begin numbering again so this pass's buffers
+					// replace the probe's instead of accumulating on top of them.
+					if slot.kind == "model" {
+						if w.sawNonModelBuffer {
+							w.bufferSeq = nil
+							w.sawNonModelBuffer = false
+						}
+					} else {
+						w.sawNonModelBuffer = true
+					}
+
+					// Compute buffers keep a single slot. Unlike an allocation, a
+					// reservation is re-reported at a new size when the scheduler reserves
+					// for a different graph, and the buffer is resized rather than added
+					// to, so the latest value replaces the previous one.
+					seq := 0
+					if slot.kind != "compute" {
+						if w.bufferSeq == nil {
+							w.bufferSeq = make(map[bufferSlot]int)
+						}
+						seq = w.bufferSeq[slot]
+						w.bufferSeq[slot] = seq + 1
+					}
+
 					w.buffers[memoryBufferKey{
+						seq:       seq,
 						component: string(match[1]),
 						backend:   backendName,
 						kind:      string(match[3]),
@@ -2864,16 +3014,24 @@ func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
 // VRAMByGPU returns the VRAM used by this runner on the specified device.
 // The values are parsed from llama-server's buffer size log output during model load
 // (model tensors + KV cache + compute buffers).
+// deviceLogName returns the name the child used for the device at index i,
+// falling back to the discovery name if the mapping is unavailable.
+func (s *llamaServerRunner) deviceLogName(i int) string {
+	if i < len(s.deviceLogNames) {
+		return s.deviceLogNames[i]
+	}
+	return s.gpus[i].Name
+}
+
 func (s *llamaServerRunner) VRAMByGPU(id ml.DeviceID) uint64 {
 	s.memoryMu.RLock()
 	defer s.memoryMu.RUnlock()
 
-	// Map DeviceID to the log device name used by llama-server.
-	// Discovery stores the device name (e.g., "CUDA0", "ROCm0", "MTL0") from
-	// --list-devices stdout, which matches the buffer log prefix.
-	for _, gpu := range s.gpus {
+	// Look up by the name the child used, which is not the discovery name when
+	// its visible devices were filtered (see ml.RunnerDeviceNames).
+	for i, gpu := range s.gpus {
 		if gpu.DeviceID == id {
-			return s.vramByDevice[gpu.Name]
+			return s.vramByDevice[s.deviceLogName(i)]
 		}
 	}
 	return 0
