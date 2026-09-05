@@ -1363,14 +1363,15 @@ func TestCodexAppConfigureIsIdempotentAndPreservesUnrelatedProvider(t *testing.T
 
 func TestCodexAppConfigurePersistsAutoReviewModel(t *testing.T) {
 	for _, test := range []struct {
-		name       string
-		configured string
-		want       string
+		name         string
+		configured   string
+		want         string
+		wantFallback string
 	}{
-		{name: "selected model default", want: "glm-5.3:cloud"},
+		{name: "selected model default", want: "selected", wantFallback: "glm-5.3:cloud"},
 		{name: "native explicit", configured: "native"},
 		{name: "chatgpt explicit", configured: "chatgpt"},
-		{name: "selected cloud model", configured: "selected", want: "glm-5.3:cloud"},
+		{name: "selected cloud model", configured: "selected", want: "selected", wantFallback: "glm-5.3:cloud"},
 		{name: "ollama alias", configured: "ollama", want: "glm-5.3:cloud"},
 		{name: "explicit configured model", configured: "qwen3:8b", want: "qwen3:8b"},
 		{name: "explicit configured cloud model", configured: "deepseek-v4-flash:cloud", want: "deepseek-v4-flash:cloud"},
@@ -1389,13 +1390,17 @@ func TestCodexAppConfigurePersistsAutoReviewModel(t *testing.T) {
 				t.Fatal(err)
 			}
 			var catalog struct {
-				AutoReviewModel string `json:"auto_review_model"`
+				AutoReviewModel         string `json:"auto_review_model"`
+				AutoReviewFallbackModel string `json:"auto_review_fallback_model"`
 			}
 			if err := json.Unmarshal(data, &catalog); err != nil {
 				t.Fatal(err)
 			}
 			if catalog.AutoReviewModel != test.want {
 				t.Fatalf("auto_review_model = %q, want %q", catalog.AutoReviewModel, test.want)
+			}
+			if catalog.AutoReviewFallbackModel != test.wantFallback {
+				t.Fatalf("auto_review_fallback_model = %q, want %q", catalog.AutoReviewFallbackModel, test.wantFallback)
 			}
 		})
 	}
