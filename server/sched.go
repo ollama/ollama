@@ -1396,7 +1396,11 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 	optsExisting := runner.Options.Runner
 	optsNew := req.opts.Runner
 	optsNew.NumCtx = effectiveContext(optsNew.NumCtx, runner.trainContext)
-	if runner.numCtxAuto && req.numCtxAuto {
+	// A request that doesn't ask for a specific num_ctx should keep whatever
+	// is already loaded rather than reload down to today's automatic default,
+	// regardless of whether that loaded context was itself auto-derived or
+	// came from an earlier explicit request.
+	if req.numCtxAuto {
 		optsNew.NumCtx = optsExisting.NumCtx
 	}
 	if runner.numBatchAuto && req.numBatchAuto {
