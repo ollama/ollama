@@ -1,0 +1,40 @@
+name: ai-review
+
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review, synchronize]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: >-
+      !github.event.pull_request.draft &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      contains(fromJSON('["BruceMacD","ParthSareen","dhiltgen","drifkin","hogeheer499-commits","hoyyeva","jessegross","jmorganca","mxyng","pdevine"]'), github.event.pull_request.user.login)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Build review agent
+        run: go build -trimpath -o "$RUNNER_TEMP/ollama-ci-review" ./cmd/ci-review
+      - name: Review pull request
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+        run: "$RUNNER_TEMP/ollama-ci-review"
