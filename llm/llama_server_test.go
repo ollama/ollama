@@ -3768,3 +3768,26 @@ func fakeRunningCmd() *exec.Cmd {
 	// SIGKILL children when the test process exits.
 	return cmd
 }
+
+func TestAppendPromptCacheArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		want []string
+	}{
+		{name: "unset leaves llama-server default", env: "", want: []string{"base"}},
+		{name: "zero disables the cache", env: "0", want: []string{"base", "--cache-ram", "0"}},
+		{name: "explicit limit in MiB", env: "1024", want: []string{"base", "--cache-ram", "1024"}},
+		{name: "invalid value is ignored", env: "lots", want: []string{"base"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OLLAMA_CACHE_RAM", tt.env)
+			got := appendPromptCacheArgs([]string{"base"})
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("appendPromptCacheArgs = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

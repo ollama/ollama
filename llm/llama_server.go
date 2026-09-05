@@ -389,6 +389,7 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 	}
 
 	params = appendLoadModeArgs(params, launch.opts, launch.gpus)
+	params = appendPromptCacheArgs(params)
 
 	// KV cache type
 	if launch.kvCacheType != "" {
@@ -633,6 +634,22 @@ func appendLoadModeArgs(params []string, opts api.Options, gpus []ml.DeviceInfo)
 
 	if opts.UseMMap != nil && !*opts.UseMMap {
 		return append(params, "--load-mode", "none")
+	}
+
+	return params
+}
+
+// appendPromptCacheArgs bounds the prompt cache llama-server keeps in system
+// memory. When a slot is reused for a different prompt, llama-server saves the
+// evicted KV state on the host so a later request sharing a prefix can restore
+// it instead of re-processing the prompt; the upstream default allows 8 GiB of
+// these states per runner, allocated on top of the weights and KV cache and
+// invisible to Ollama's scheduler. OLLAMA_CACHE_RAM sets an explicit limit in
+// MiB (0 disables the cache). When it is unset no flag is passed, so an
+// inherited LLAMA_ARG_CACHE_RAM or llama-server's own default still applies.
+func appendPromptCacheArgs(params []string) []string {
+	if mib, ok := envconfig.CacheRAM(); ok {
+		return append(params, "--cache-ram", strconv.FormatUint(uint64(mib), 10))
 	}
 
 	return params
