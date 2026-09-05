@@ -125,7 +125,7 @@ func codexWarnUnverifiedContext(model string, resolution contextWindowResolution
 }
 
 func codexConfiguredContextWindow() (int, error) {
-	configPath, err := codexConfigPath()
+	configPath, err := codexCLIConfigPath()
 	if err != nil {
 		return 0, err
 	}
@@ -221,7 +221,7 @@ func codexContextWindowAssignment(assignment string) (int, bool, error) {
 }
 
 func (c *Codex) Restore() error {
-	configPath, err := codexConfigPath()
+	configPath, err := codexCLIConfigPath()
 	if err != nil {
 		return err
 	}
@@ -349,7 +349,7 @@ func codexConfigOverrideConflicts(value string) bool {
 // ensureCodexConfig writes a Codex profile file and model catalog so Codex uses
 // the local Ollama server without changing app-visible root config.
 func ensureCodexConfig(modelName string, models []LaunchModel) error {
-	configPath, err := codexConfigPath()
+	configPath, err := codexCLIConfigPath()
 	if err != nil {
 		return err
 	}
@@ -379,8 +379,15 @@ func codexConfigPath() (string, error) {
 	return filepath.Join(home, ".codex", "config.toml"), nil
 }
 
+func codexCLIConfigPath() (string, error) {
+	if codexHome := os.Getenv("CODEX_HOME"); codexHome != "" {
+		return filepath.Join(codexHome, "config.toml"), nil
+	}
+	return codexConfigPath()
+}
+
 func codexModelCatalogPath() (string, error) {
-	configPath, err := codexConfigPath()
+	configPath, err := codexCLIConfigPath()
 	if err != nil {
 		return "", err
 	}
@@ -392,7 +399,7 @@ func codexModelCatalogPathForConfig(configPath string) string {
 }
 
 func codexProfileConfigPath() (string, error) {
-	configPath, err := codexConfigPath()
+	configPath, err := codexCLIConfigPath()
 	if err != nil {
 		return "", err
 	}

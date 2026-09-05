@@ -28,6 +28,26 @@ func TestCodexIntegration(t *testing.T) {
 	})
 }
 
+func TestEnsureCodexConfigUsesCodexHome(t *testing.T) {
+	osHome := filepath.Join(t.TempDir(), "home")
+	codexHome := filepath.Join(t.TempDir(), "codex-home")
+	setTestHome(t, osHome)
+	t.Setenv("CODEX_HOME", codexHome)
+
+	if err := ensureCodexConfig("llama3.2", []LaunchModel{{Name: "llama3.2"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{"model.json", codexProfileName + ".config.toml"} {
+		if _, err := os.Stat(filepath.Join(codexHome, name)); err != nil {
+			t.Fatalf("expected %s in CODEX_HOME: %v", name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(osHome, ".codex", "model.json")); !os.IsNotExist(err) {
+		t.Fatalf("launcher wrote outside CODEX_HOME: %v", err)
+	}
+}
+
 func TestCodexArgs(t *testing.T) {
 	c := &Codex{}
 	catalogPath := filepath.Join("tmp", "model.json")
