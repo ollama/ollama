@@ -1193,6 +1193,7 @@ func TestLlamaServerCompletionRequestFormat(t *testing.T) {
 		format         string
 		wantGrammar    bool
 		wantJsonSchema bool
+		wantContains   string
 		wantErr        bool
 	}{
 		{
@@ -1215,6 +1216,18 @@ func TestLlamaServerCompletionRequestFormat(t *testing.T) {
 			name:           "json schema",
 			format:         `{"type":"object","properties":{"name":{"type":"string"}}}`,
 			wantJsonSchema: true,
+		},
+		{
+			name:           "json schema with escaped pattern in items",
+			format:         `{"type":"object","properties":{"a":{"type":"array","items":{"type":"string","pattern":"^[a\\-b]+$"}}}}`,
+			wantJsonSchema: true,
+			wantContains:   `"pattern":"^[a-b]+$"`,
+		},
+		{
+			name:           "json schema with escaped pattern in top-level property",
+			format:         `{"type":"object","properties":{"a":{"type":"string","pattern":"^x\\/y\\-z$"}}}`,
+			wantJsonSchema: true,
+			wantContains:   `"pattern":"^x/y-z$"`,
 		},
 		{
 			name:    "invalid format",
@@ -1279,6 +1292,9 @@ func TestLlamaServerCompletionRequestFormat(t *testing.T) {
 			if !tt.wantGrammar && !tt.wantJsonSchema && capturedReq.Grammar != "" {
 				t.Errorf("unexpected grammar: %s", capturedReq.Grammar)
 			}
+			if tt.wantContains != "" && !strings.Contains(string(capturedReq.JsonSchema), tt.wantContains) {
+				t.Errorf("json_schema = %s, want it to contain %s", capturedReq.JsonSchema, tt.wantContains)
+			}
 		})
 	}
 }
@@ -1317,6 +1333,153 @@ func TestLlamaServerPreservedTokens(t *testing.T) {
 			got := llamaServerPreservedTokens(tt.parserTokens, tt.toolCallTag)
 			if !slices.Equal(got, tt.want) {
 				t.Fatalf("llamaServerPreservedTokens = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+// firstPattern returns the first "pattern" string in a decoded JSON value, or
+// false when none is present.
+func firstPattern(v any) (string, bool) {
+	switch t := v.(type) {
+	case map[string]any:
+		if s, ok := t["pattern"].(string); ok {
+			return s, true
+		}
+		for _, val := range t {
+			if s, ok := firstPattern(val); ok {
+				return s, true
+			}
+		}
+	case []any:
+		for _, val := range t {
+			if s, ok := firstPattern(val); ok {
+				return s, true
+			}
+		}
+	}
+	return "", false
+}
+
+func TestLlamaServerChatRequestNormalizesToolPatterns(t *testing.T) {
+	tests := []struct {
+		name        string
+		schema      string
+		wantPattern any // string pattern forwarded to llama-server, or nil for none
+	}{
+		{
+			name:        "top-level string pattern is dropped by schema decoding",
+			schema:      `{"type":"object","properties":{"a":{"type":"string","pattern":"^[a\\-b]+$"}}}`,
+			wantPattern: nil,
+		},
+		{
+			name:        "escaped hyphen in array items",
+			schema:      `{"type":"object","properties":{"a":{"type":"array","items":{"type":"string","pattern":"^[a\\-b]+$"}}}}`,
+			wantPattern: `^[a-b]+$`,
+		},
+		{
+			name:        "escaped slash in array items",
+			schema:      `{"type":"object","properties":{"a":{"type":"array","items":{"type":"string","pattern":"^a\\/b$"}}}}`,
+			wantPattern: `^a/b$`,
+		},
+		{
+			name:        "escaped hyphen in object item property",
+			schema:      `{"type":"object","properties":{"a":{"type":"array","items":{"type":"object","properties":{"p":{"type":"string","pattern":"^[a\\-b]+$"}}}}}}`,
+			wantPattern: `^[a-b]+$`,
+		},
+		{
+			name:        "escaped slash and hyphen in path-like pattern",
+			schema:      `{"type":"object","properties":{"writes":{"type":"array","items":{"type":"object","properties":{"path":{"type":"string","pattern":"^(?!\\.\\.?(?:\\/|$))[A-Za-z0-9_\\-.~:@+]{1,200}$"}}}}}}`,
+			wantPattern: `^(?!\.\.?(?:/|$))[A-Za-z0-9_-.~:@+]{1,200}$`,
+		},
+		{
+			name:        "pattern without identity escapes unchanged",
+			schema:      `{"type":"object","properties":{"a":{"type":"array","items":{"type":"string","pattern":"^[a-b]+$"}}}}`,
+			wantPattern: `^[a-b]+$`,
+		},
+		{
+			name:        "escaped backslash keeps the following hyphen literal",
+			schema:      `{"type":"object","properties":{"a":{"type":"array","items":{"type":"string","pattern":"^x\\\\-y\\d+$"}}}}`,
+			wantPattern: `^x\\-y\d+$`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var params api.ToolFunctionParameters
+			if err := json.Unmarshal([]byte(tt.schema), &params); err != nil {
+				t.Fatal(err)
+			}
+
+			body, err := (&llamaServerRunner{}).llamaServerChatRequest(ChatRequest{
+				Messages: []api.Message{{Role: "user", Content: "hi"}},
+				Tools:    api.Tools{{Type: "function", Function: api.ToolFunction{Name: "t", Parameters: params}}},
+			}, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			raw, ok := body["tools"].(json.RawMessage)
+			if !ok {
+				t.Fatalf("tools = %T, want json.RawMessage", body["tools"])
+			}
+			var tools any
+			if err := json.Unmarshal(raw, &tools); err != nil {
+				t.Fatal(err)
+			}
+
+			got, found := firstPattern(tools)
+			if tt.wantPattern == nil {
+				if found {
+					t.Fatalf("expected no pattern forwarded to llama-server, got %q", got)
+				}
+				return
+			}
+			if !found {
+				t.Fatal("expected a pattern forwarded to llama-server, found none")
+			}
+			if want := tt.wantPattern.(string); got != want {
+				t.Fatalf("forwarded pattern = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestLlamaServerChatResponseFormatNormalizesPatterns(t *testing.T) {
+	format, err := llamaServerChatResponseFormat(json.RawMessage(`{"type":"object","properties":{"a":{"type":"array","items":{"type":"string","pattern":"^a\\/b$"}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := json.Marshal(format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"pattern":"^a/b$"`) {
+		t.Fatalf("response_format = %s, want pattern %q normalized", b, `^a/b$`)
+	}
+}
+
+func TestUnescapePatternLiterals(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{`^[a-b]+$`, `^[a-b]+$`},
+		{`^a\/b$`, `^a/b$`},
+		{`^[a\-b]+$`, `^[a-b]+$`},
+		{`\\-`, `\\-`}, // escaped backslash: the hyphen is already a literal
+		{`\\/`, `\\/`}, // escaped backslash: the slash is already a literal
+		{`^\d+\.?$`, `^\d+\.?$`},
+		{`^(?!\.\.?(?:\/|$))[a\-z_]+$`, `^(?!\.\.?(?:/|$))[a-z_]+$`},
+		{`a\`, `a\`},
+		{`^ü\-\/ö$`, `^ü-/ö$`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			if got := unescapePatternLiterals(tt.in); got != tt.want {
+				t.Fatalf("unescapePatternLiterals(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
 	}
@@ -3767,4 +3930,54 @@ func fakeRunningCmd() *exec.Cmd {
 	// pass *testing.T here without changing all call sites. The OS will
 	// SIGKILL children when the test process exits.
 	return cmd
+}
+
+func TestRewriteSchemaPatternsPreservesDocumentOrder(t *testing.T) {
+	in := []byte(`{"type":"object","properties":{"zeta_colour":{"type":"string","pattern":"^z\/c$"},"alpha_animal":{"type":"string","pattern":"^a\/n$"}},"big":9007199254740993,"dup":1,"dup":2}`)
+
+	got := rewriteSchemaPatterns(in)
+	s := string(got)
+
+	// property order preserved
+	zeta := strings.Index(s, "zeta_colour")
+	alpha := strings.Index(s, "alpha_animal")
+	if zeta < 0 || alpha < 0 || zeta > alpha {
+		t.Fatalf("property order not preserved: %s", s)
+	}
+	// patterns still normalized
+	if !strings.Contains(s, `"pattern":"^z/c$"`) || !strings.Contains(s, `"pattern":"^a/n$"`) {
+		t.Fatalf("pattern normalization lost: %s", s)
+	}
+	// number literals pass through without float64 rounding
+	if !strings.Contains(s, `"big":9007199254740993`) {
+		t.Fatalf("large integer literal not preserved: %s", s)
+	}
+	// duplicate keys pass through verbatim
+	if strings.Count(s, `"dup"`) != 2 {
+		t.Fatalf("duplicate keys collapsed: %s", s)
+	}
+	// leading "type" stays before "properties" as declared
+	typ := strings.Index(s, `"type"`)
+	props := strings.Index(s, `"properties"`)
+	if typ < 0 || props < 0 || typ > props {
+		t.Fatalf("top-level key order not preserved: %s", s)
+	}
+}
+
+func TestRewriteSchemaPatternsRejectsTrailingGarbage(t *testing.T) {
+	in := []byte(`{"a":{"pattern":"x\/y"}} trailing`)
+	got := rewriteSchemaPatterns(in)
+	// the whole document, pattern included, is forwarded unchanged for
+	// llama-server to reject
+	if !bytes.Equal(got, in) {
+		t.Fatalf("trailing garbage should forward the input unchanged, got %s", got)
+	}
+}
+
+func TestRewriteSchemaPatternsNoBackslashFastPath(t *testing.T) {
+	in := []byte(`{"type":"object"}`)
+	got := rewriteSchemaPatterns(in)
+	if !bytes.Equal(got, in) {
+		t.Fatalf("schema without backslashes must pass through unchanged, got %s", got)
+	}
 }

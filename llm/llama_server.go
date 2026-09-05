@@ -1594,7 +1594,7 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 			lsReq.Grammar = grammarJSON
 		default:
 			if req.Format[0] == '{' {
-				lsReq.JsonSchema = req.Format
+				lsReq.JsonSchema = normalizeSchemaJSON(req.Format)
 			} else {
 				return fmt.Errorf("invalid format: %q; expected \"json\" or a valid JSON Schema object", req.Format)
 			}
@@ -2178,7 +2178,11 @@ func (s *llamaServerRunner) llamaServerChatRequest(req ChatRequest, stream bool)
 		"seed":              req.Options.Seed,
 	}
 	if len(req.Tools) > 0 {
-		body["tools"] = req.Tools
+		tools, err := normalizeToolsJSON(req.Tools)
+		if err != nil {
+			return nil, err
+		}
+		body["tools"] = tools
 	}
 	if req.Logprobs {
 		body["logprobs"] = true
@@ -2326,23 +2330,199 @@ func llamaServerChatResponseFormat(format json.RawMessage) (map[string]any, erro
 	case `"json"`:
 		return map[string]any{"type": "json_object"}, nil
 	default:
-		if format[0] != '{' {
+		trimmed := bytes.TrimSpace(format)
+		if len(trimmed) == 0 || trimmed[0] != '{' {
 			return nil, fmt.Errorf("invalid format: %q; expected \"json\" or a valid JSON Schema object", format)
 		}
 
 		var schema map[string]any
-		if err := json.Unmarshal(format, &schema); err != nil {
+		if err := json.Unmarshal(trimmed, &schema); err != nil {
 			return nil, fmt.Errorf("invalid format: %q; expected \"json\" or a valid JSON Schema object", format)
 		}
 
+		// Embed the caller's schema bytes (pattern-normalized in place) rather
+		// than the decoded map, so the declared property order, number
+		// literals, and duplicate keys reach llama-server unchanged. Decoding
+		// into a map re-marshals with sorted keys and rebuilds the grammar in
+		// that fixed order (#18717).
 		return map[string]any{
 			"type": "json_schema",
 			"json_schema": map[string]any{
 				"name":   "schema",
-				"schema": schema,
+				"schema": rewriteSchemaPatterns(bytes.Clone(trimmed)),
 			},
 		}, nil
 	}
+}
+
+// normalizeToolsJSON marshals tools for llama-server, normalizing JSON schema
+// string patterns throughout. llama-server compiles tool schemas into the
+// grammar that constrains tool calls, and its regex dialect rejects the
+// identity escapes \/ and \- that ECMAScript permits, failing the whole
+// request. Patterns only survive Ollama's typed schema decoding where they are
+// kept verbatim, such as inside array items, so they must be normalized on the
+// wire regardless of where they are nested.
+func normalizeToolsJSON(tools api.Tools) (json.RawMessage, error) {
+	b, err := json.Marshal(tools)
+	if err != nil {
+		return nil, err
+	}
+	return rewriteSchemaPatterns(b), nil
+}
+
+// normalizeSchemaJSON normalizes JSON schema string patterns in a raw schema.
+// A schema that does not decode is forwarded unchanged for llama-server to reject.
+func normalizeSchemaJSON(raw json.RawMessage) json.RawMessage {
+	return rewriteSchemaPatterns(raw)
+}
+
+// rewriteSchemaPatterns rewrites \/ and \- identity escapes in pattern string
+// values while leaving the rest of the document byte-for-byte intact. The
+// rewrite walks the JSON token stream, so declared property order, number
+// literals, and duplicate keys all pass through unchanged. A schema that does
+// not decode is forwarded unchanged for llama-server to reject.
+func rewriteSchemaPatterns(raw []byte) json.RawMessage {
+	if bytes.IndexByte(raw, '\\') < 0 {
+		return raw
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var buf bytes.Buffer
+	if err := writeJSONValue(dec, &buf, false); err != nil {
+		return raw
+	}
+	// Reject trailing garbage, matching json.Unmarshal's behavior.
+	if dec.More() {
+		return raw
+	}
+	return json.RawMessage(buf.Bytes())
+}
+
+// writeJSONValue reads one JSON value from dec and writes it to buf. When
+// patternValue is set, a string value is the value of a "pattern" key and its
+// identity escapes are normalized.
+func writeJSONValue(dec *json.Decoder, buf *bytes.Buffer, patternValue bool) error {
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	switch t := tok.(type) {
+	case json.Delim:
+		switch t {
+		case '{':
+			buf.WriteByte('{')
+			first := true
+			for dec.More() {
+				if !first {
+					buf.WriteByte(',')
+				}
+				first = false
+				keyTok, err := dec.Token()
+				if err != nil {
+					return err
+				}
+				key, ok := keyTok.(string)
+				if !ok {
+					return fmt.Errorf("unexpected non-string object key %v", keyTok)
+				}
+				keyBytes, err := marshalStringNoHTMLEscape(key)
+				if err != nil {
+					return err
+				}
+				buf.Write(keyBytes)
+				buf.WriteByte(':')
+				if err := writeJSONValue(dec, buf, key == "pattern"); err != nil {
+					return err
+				}
+			}
+			if _, err := dec.Token(); err != nil { // consume '}'
+				return err
+			}
+			buf.WriteByte('}')
+		case '[':
+			buf.WriteByte('[')
+			first := true
+			for dec.More() {
+				if !first {
+					buf.WriteByte(',')
+				}
+				first = false
+				if err := writeJSONValue(dec, buf, false); err != nil {
+					return err
+				}
+			}
+			if _, err := dec.Token(); err != nil { // consume ']'
+				return err
+			}
+			buf.WriteByte(']')
+		default:
+			return fmt.Errorf("unexpected delimiter %v", t)
+		}
+	case string:
+		if patternValue {
+			t = unescapePatternLiterals(t)
+		}
+		strBytes, err := marshalStringNoHTMLEscape(t)
+		if err != nil {
+			return err
+		}
+		buf.Write(strBytes)
+	case json.Number:
+		buf.WriteString(t.String())
+	case bool:
+		if t {
+			buf.WriteString("true")
+		} else {
+			buf.WriteString("false")
+		}
+	case nil:
+		buf.WriteString("null")
+	default:
+		return fmt.Errorf("unexpected token %v", tok)
+	}
+	return nil
+}
+
+// marshalStringNoHTMLEscape marshals a string without escaping HTML
+// characters, matching how requests are encoded for llama-server.
+func marshalStringNoHTMLEscape(s string) ([]byte, error) {
+	var buffer bytes.Buffer
+	enc := json.NewEncoder(&buffer)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(s); err != nil {
+		return nil, err
+	}
+	return bytes.TrimRight(buffer.Bytes(), "\n"), nil
+}
+
+// unescapePatternLiterals replaces the regex identity escapes \/ and \- with
+// the characters they denote. Every regex dialect, including the one behind
+// llama-server's grammar, accepts the unescaped forms.
+func unescapePatternLiterals(s string) string {
+	if !strings.Contains(s, `\/`) && !strings.Contains(s, `\-`) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		if s[i] == '\\' && i+1 < len(s) {
+			switch s[i+1] {
+			case '/', '-':
+				b.WriteByte(s[i+1])
+				i += 2
+				continue
+			case '\\':
+				// An escaped backslash is consumed as a unit so a following
+				// escape sequence is not hidden behind it.
+				b.WriteString(`\\`)
+				i += 2
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
 }
 
 func (s *llamaServerRunner) Embedding(ctx context.Context, input string) ([]float32, int, error) {
