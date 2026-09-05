@@ -1193,6 +1193,7 @@ func TestLlamaServerCompletionRequestFormat(t *testing.T) {
 		format         string
 		wantGrammar    bool
 		wantJsonSchema bool
+		wantContains   string
 		wantErr        bool
 	}{
 		{
@@ -1215,6 +1216,18 @@ func TestLlamaServerCompletionRequestFormat(t *testing.T) {
 			name:           "json schema",
 			format:         `{"type":"object","properties":{"name":{"type":"string"}}}`,
 			wantJsonSchema: true,
+		},
+		{
+			name:           "json schema with escaped pattern in items",
+			format:         `{"type":"object","properties":{"a":{"type":"array","items":{"type":"string","pattern":"^[a\\-b]+$"}}}}`,
+			wantJsonSchema: true,
+			wantContains:   `"pattern":"^[a-b]+$"`,
+		},
+		{
+			name:           "json schema with escaped pattern in top-level property",
+			format:         `{"type":"object","properties":{"a":{"type":"string","pattern":"^x\\/y\\-z$"}}}`,
+			wantJsonSchema: true,
+			wantContains:   `"pattern":"^x/y-z$"`,
 		},
 		{
 			name:    "invalid format",
@@ -1279,6 +1292,9 @@ func TestLlamaServerCompletionRequestFormat(t *testing.T) {
 			if !tt.wantGrammar && !tt.wantJsonSchema && capturedReq.Grammar != "" {
 				t.Errorf("unexpected grammar: %s", capturedReq.Grammar)
 			}
+			if tt.wantContains != "" && !strings.Contains(string(capturedReq.JsonSchema), tt.wantContains) {
+				t.Errorf("json_schema = %s, want it to contain %s", capturedReq.JsonSchema, tt.wantContains)
+			}
 		})
 	}
 }
@@ -1317,6 +1333,153 @@ func TestLlamaServerPreservedTokens(t *testing.T) {
 			got := llamaServerPreservedTokens(tt.parserTokens, tt.toolCallTag)
 			if !slices.Equal(got, tt.want) {
 				t.Fatalf("llamaServerPreservedTokens = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+// firstPattern returns the first "pattern" string in a decoded JSON value, or
+// false when none is present.
+func firstPattern(v any) (string, bool) {
+	switch t := v.(type) {
+	case map[string]any:
+		if s, ok := t["pattern"].(string); ok {
+			return s, true
+		}
+		for _, val := range t {
+			if s, ok := firstPattern(val); ok {
+				return s, true
+			}
+		}
+	case []any:
+		for _, val := range t {
+			if s, ok := firstPattern(val); ok {
+				return s, true
+			}
+		}
+	}
+	return "", false
+}
+
+func TestLlamaServerChatRequestNormalizesToolPatterns(t *testing.T) {
+	tests := []struct {
+		name        string
+		schema      string
+		wantPattern any // string pattern forwarded to llama-server, or nil for none
+	}{
+		{
+			name:        "top-level string pattern is dropped by schema decoding",
+			schema:      `{"type":"object","properties":{"a":{"type":"string","pattern":"^[a\\-b]+$"}}}`,
+			wantPattern: nil,
+		},
+		{
+			name:        "escaped hyphen in array items",
+			schema:      `{"type":"object","properties":{"a":{"type":"array","items":{"type":"string","pattern":"^[a\\-b]+$"}}}}`,
+			wantPattern: `^[a-b]+$`,
+		},
+		{
+			name:        "escaped slash in array items",
+			schema:      `{"type":"object","properties":{"a":{"type":"array","items":{"type":"string","pattern":"^a\\/b$"}}}}`,
+			wantPattern: `^a/b$`,
+		},
+		{
+			name:        "escaped hyphen in object item property",
+			schema:      `{"type":"object","properties":{"a":{"type":"array","items":{"type":"object","properties":{"p":{"type":"string","pattern":"^[a\\-b]+$"}}}}}}`,
+			wantPattern: `^[a-b]+$`,
+		},
+		{
+			name:        "escaped slash and hyphen in path-like pattern",
+			schema:      `{"type":"object","properties":{"writes":{"type":"array","items":{"type":"object","properties":{"path":{"type":"string","pattern":"^(?!\\.\\.?(?:\\/|$))[A-Za-z0-9_\\-.~:@+]{1,200}$"}}}}}}`,
+			wantPattern: `^(?!\.\.?(?:/|$))[A-Za-z0-9_-.~:@+]{1,200}$`,
+		},
+		{
+			name:        "pattern without identity escapes unchanged",
+			schema:      `{"type":"object","properties":{"a":{"type":"array","items":{"type":"string","pattern":"^[a-b]+$"}}}}`,
+			wantPattern: `^[a-b]+$`,
+		},
+		{
+			name:        "escaped backslash keeps the following hyphen literal",
+			schema:      `{"type":"object","properties":{"a":{"type":"array","items":{"type":"string","pattern":"^x\\\\-y\\d+$"}}}}`,
+			wantPattern: `^x\\-y\d+$`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var params api.ToolFunctionParameters
+			if err := json.Unmarshal([]byte(tt.schema), &params); err != nil {
+				t.Fatal(err)
+			}
+
+			body, err := (&llamaServerRunner{}).llamaServerChatRequest(ChatRequest{
+				Messages: []api.Message{{Role: "user", Content: "hi"}},
+				Tools:    api.Tools{{Type: "function", Function: api.ToolFunction{Name: "t", Parameters: params}}},
+			}, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			raw, ok := body["tools"].(json.RawMessage)
+			if !ok {
+				t.Fatalf("tools = %T, want json.RawMessage", body["tools"])
+			}
+			var tools any
+			if err := json.Unmarshal(raw, &tools); err != nil {
+				t.Fatal(err)
+			}
+
+			got, found := firstPattern(tools)
+			if tt.wantPattern == nil {
+				if found {
+					t.Fatalf("expected no pattern forwarded to llama-server, got %q", got)
+				}
+				return
+			}
+			if !found {
+				t.Fatal("expected a pattern forwarded to llama-server, found none")
+			}
+			if want := tt.wantPattern.(string); got != want {
+				t.Fatalf("forwarded pattern = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestLlamaServerChatResponseFormatNormalizesPatterns(t *testing.T) {
+	format, err := llamaServerChatResponseFormat(json.RawMessage(`{"type":"object","properties":{"a":{"type":"array","items":{"type":"string","pattern":"^a\\/b$"}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := json.Marshal(format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"pattern":"^a/b$"`) {
+		t.Fatalf("response_format = %s, want pattern %q normalized", b, `^a/b$`)
+	}
+}
+
+func TestUnescapePatternLiterals(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{`^[a-b]+$`, `^[a-b]+$`},
+		{`^a\/b$`, `^a/b$`},
+		{`^[a\-b]+$`, `^[a-b]+$`},
+		{`\\-`, `\\-`}, // escaped backslash: the hyphen is already a literal
+		{`\\/`, `\\/`}, // escaped backslash: the slash is already a literal
+		{`^\d+\.?$`, `^\d+\.?$`},
+		{`^(?!\.\.?(?:\/|$))[a\-z_]+$`, `^(?!\.\.?(?:/|$))[a-z_]+$`},
+		{`a\`, `a\`},
+		{`^ü\-\/ö$`, `^ü-/ö$`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			if got := unescapePatternLiterals(tt.in); got != tt.want {
+				t.Fatalf("unescapePatternLiterals(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
 	}
